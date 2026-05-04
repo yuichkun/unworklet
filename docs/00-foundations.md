@@ -74,6 +74,14 @@ The constraint is enforced both by the TypeScript types of the primitive operato
 
 Rationale and rejected alternatives: see `decisions-log.md` Q1.
 
+### Vector types (opt-in SIMD)
+
+In addition to the scalar precision tags, unworklet exposes vector type tags — `'f32x4'` (in v0.1.0), with `'f64x2'`, `'i32x4'`, and others rolling out additively across v0.1.x — for SIMD-width values backed by WASM v128. These appear only when the user opts into the SIMD subset by importing from `@unworklet/core/simd`; scalar-only code never references them.
+
+The "no implicit widening" rule extends to vec ↔ scalar: a `Node<'f32'>` and a `Node<'f32x4'>` cannot be combined directly. Conversion is explicit (`splat(scalarNode)` to broadcast, `lane(vecNode, i)` to extract).
+
+Authoritative SIMD surface: `01-dsl.md` §7. Rationale and rejected alternatives: see `decisions-log.md` Q3.
+
 ## 5. Realtime-safety invariants
 
 <!-- The hard rules every component honors:

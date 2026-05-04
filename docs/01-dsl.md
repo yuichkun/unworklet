@@ -260,3 +260,78 @@ error: defineSubgraph 'onepole' must be instantiated in declaration scope
 <!-- `process(({ inputs, outputs, params, ctx })) => sample => ...` shape;
      `publish(({ state, emit, every }))` shape;
      scheduling and constraints of each. -->
+
+## 7. Opt-in SIMD
+
+unworklet exposes WASM SIMD as a separate, opt-in surface via the import path `@unworklet/core/simd`. Code that does not import this path never encounters vector types or vector primitives — the scalar surface is unchanged.
+
+### 7.1 Philosophy
+
+- **Opt-in**: importing `@unworklet/core/simd` is the only way to bring vector concepts into scope. Scalar-only authors and consumers never see `f32x4`, `splat`, or any vec primitive.
+- **Parallel families**: scalar primitives (`add`, `mul`, …) and vec primitives (`addVec`, `mulVec`, …) are distinct functions over distinct types. Scalar `Node<'f32'>` and vector `Node<'f32x4'>` cannot be combined in one operation; conversion is explicit (`splat`, `lane`).
+
+```typescript
+// Scalar-only author — never imports SIMD
+import { defineProcessor, state, add, mul } from '@unworklet/core';
+
+// SIMD-using author — separate import path
+import { vec4, splat, addVec, mulVec, loadVec, storeVec, lane } from '@unworklet/core/simd';
+```
+
+### 7.2 v0.1.0 surface (Minimal MVP)
+
+The v0.1.0 SIMD surface is the smallest set of primitives that lets DSP authors hand-vectorize hot paths (4-channel mixers, 4-tap filters, parallel-lane oscillators). Subsequent v0.1.x releases extend the surface additively (see Q14, `10-roadmap.md`).
+
+#### Vector types
+
+- `Node<'f32x4'>` — four 32-bit floats packed into a v128.
+
+#### Construction
+
+- `vec4(a: Node<'f32'>, b: Node<'f32'>, c: Node<'f32'>, d: Node<'f32'>): Node<'f32x4'>` — pack 4 scalars into a vec.
+- `splat(x: Node<'f32'>): Node<'f32x4'>` — broadcast a scalar to all four lanes.
+
+#### Arithmetic
+
+- `addVec`, `subVec`, `mulVec`, `divVec`: `(Node<'f32x4'>, Node<'f32x4'>) → Node<'f32x4'>`.
+
+#### Lane access
+
+- `lane(vec: Node<'f32x4'>, i: 0 | 1 | 2 | 3): Node<'f32'>` — extract one lane. The index `i` must be a compile-time constant; non-constant indices are a graph-capture-time error.
+
+#### Memory
+
+- `loadVec(buffer: Buffer<'f32'>, offset: Node<'i32'>): Node<'f32x4'>` — load four contiguous f32 lanes from a buffer (offset in element units).
+- `storeVec(buffer: Buffer<'f32'>, offset: Node<'i32'>, value: Node<'f32x4'>): void` — store four contiguous f32 lanes into a buffer.
+
+### 7.3 Beyond v0.1.0 (deferred to v0.1.x, additive)
+
+Adding any of the following does not change the v0.1.0 surface:
+
+- `Node<'f64x2'>` and `Node<'i32x4'>` types and their arithmetic.
+- Boolean / mask vectors and `selectVec`.
+- `shuffle` / `swizzle` lane permutations.
+- Comparison primitives (`ltVec`, `eqVec`, …).
+- Gather / scatter (load from non-contiguous offsets).
+
+Rollout order is settled by Q14 once early DSP packages report which extensions they need first.
+
+### 7.4 Use within L1 / L2 / processors
+
+Vec primitives are usable inside any expression scope (`process` lambdas, L1 helper bodies, subgraph `process` lambdas). They count as primitive operators for §5.5.5 / §5.6.5 purposes — bodies are still forbidden from declaring new state / buffer / param.
+
+L1 helpers can be precision-generic over scalar precisions (§5.5.4) but **not** generic over scalar / vec width. A helper that needs to support both widths is written as two helpers:
+
+```typescript
+// Scalar version — visible to @unworklet/core users only
+function softclip(x: Node<'f32'>): Node<'f32'> {
+  return tanh(mul(x, 1.5));
+}
+
+// Vec version — visible to @unworklet/core/simd users only
+function gainVec(x: Node<'f32x4'>, g: Node<'f32'>): Node<'f32x4'> {
+  return mulVec(x, splat(g));
+}
+```
+
+The duplication is intentional: it keeps the scalar API surface untouched and signals at the call site that the vec version is a deliberate choice.
