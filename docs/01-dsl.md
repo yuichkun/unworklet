@@ -30,10 +30,58 @@ skeleton
 <!-- message({...}) and event({...}) declaration shape (the runtime contract lives in 02-messaging.md;
      this section only covers DSL surface — how the user *declares* them). -->
 
-## 5. Authoring patterns
+## 5. Third-party DSP integration
 
-<!-- Q2 (user-defined macros) — how reusable DSP blocks (biquad, adsr, onepole, ...) are written.
-     Per-callsite state allocation rules, no JS control flow over Node values, etc. Lands here. -->
+unworklet exposes two integration layers for reusable DSP authored as either user code or third-party libraries. The split is the cleanest rule for choosing between them: **does the helper own internal state?**
+
+### 5.1 L1 — pure TS function
+
+A plain TypeScript function over `Node<T>` values. Inlined into the parent processor at compile time, so there is no per-call overhead.
+
+```typescript
+function softclip(x: Node<'f32'>): Node<'f32'> {
+  return tanh(mul(x, 1.5));
+}
+
+function lerp(a: Node<'f32'>, b: Node<'f32'>, t: Node<'f32'>): Node<'f32'> {
+  return add(a, mul(sub(b, a), t));
+}
+```
+
+Whether L1 helpers can also write to `state.*` references owned by the caller — and the typing rules for that — is settled in §5.5 (TBD, Q2-b).
+
+### 5.2 L2 — `defineSubgraph`
+
+A reusable DSP block that owns its internal state. Declares its own `state.*`, `buffer.*`, and `param.*` slots; instantiated zero or more times inside a parent `defineProcessor`. Each instantiation gets its own state, but every instance is inlined into the parent's WASM module — there is no per-instance function-call boundary at audio rate.
+
+```typescript
+const onepole = defineSubgraph((input: Node<'f32'>, coef: Node<'f32'>) => {
+  const z1 = state.f32(0);
+  const y = add(z1.load(), mul(coef, sub(input, z1.load())));
+  z1.store(y);
+  return y;
+});
+```
+
+Instantiation API, parameter declaration rules, and capture-time analysis are settled in §5.6 (TBD, Q2-c).
+
+### 5.3 Why two layers, not one
+
+A single layer that auto-promotes to a subgraph based on the presence of `state.*` calls inside the function body was rejected. Implicit promotion blurs the responsibility boundary between graph capture (`03-compiler.md` §3) and TypeScript type inference: whether a callsite is "an inlined expression" or "an instance of a stateful block" would depend on what the function happened to call. Explicit separation gives the static analyzer a clean rule and gives users a clear mental model for what they are authoring.
+
+### 5.4 No L3
+
+unworklet does not provide a "separate processor + connect" integration layer. The existing Web Audio mechanism — instantiating two `AudioWorkletNode`s and calling `.connect()` on the main thread — already covers this case and lives outside unworklet's API surface. Wrapping it would add weight without value.
+
+Rationale and rejected alternatives: see `decisions-log.md` Q2.
+
+### 5.5 L1 surface details
+
+TBD — settled by Q2-b.
+
+### 5.6 L2 surface details
+
+TBD — settled by Q2-c.
 
 ## 6. The two phases
 
