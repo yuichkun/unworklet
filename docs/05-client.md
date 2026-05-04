@@ -175,3 +175,46 @@ When the blob was produced by an older version of the processor, the migration c
 `restore()`'s `RestoreResult` reports any `skipped` or `missing` slots that resulted from incompatible blob content (post-migration). Consumers monitor this for "preset partially loaded" UX.
 
 Authoritative rationale and rejected alternatives: see `decisions-log.md` Q5.
+
+## 7. Latency compensation recipe
+
+When an unworklet processor performs lookahead (i.e. its internal computation introduces a fixed input → output sample delay), parallel paths in the audio graph fall out of phase unless the dry / non-lookahead path is delayed by the same amount. The web platform has no automatic plugin-latency compensation, so this delay is wired up by the application using the standard `audioContext.createDelay(...)` node.
+
+```typescript
+// Suppose `limiterProcessor` performs a 5 ms (~240 sample @ 48 kHz) lookahead.
+// Its author advertises this latency in the package's documentation; the
+// application configures the dry path accordingly.
+
+const limiter           = await createNode(audioContext, limiterProcessor);
+const lookaheadSamples  = 240;                                       // documented by the processor's author
+const compensationSec   = lookaheadSamples / audioContext.sampleRate;
+
+// Dry path: delay by the same amount as the limiter's internal lookahead.
+const dryDelay = audioContext.createDelay(compensationSec);
+dryDelay.delayTime.value = compensationSec;
+
+// Wet path: the limiter itself.
+source.connect(limiter.inputs.main);
+source.connect(dryDelay);
+
+const mixer = audioContext.createGain();
+limiter.outputs.main.connect(mixer);
+dryDelay.connect(mixer);
+mixer.connect(audioContext.destination);
+```
+
+The delay amount comes from the processor's documentation, **not** from a framework-exposed API. unworklet does not provide a `node.latency` property, an automatic-compensation manager, or compile-time delay insertion — see `decisions-log.md` Q8 for the full rationale.
+
+For cleanest results:
+
+- **Read the lookahead value from the processor's documentation**, not from runtime introspection. If the author of the processor wants to expose it programmatically, that is a package-level convention (e.g. a static `lookaheadProcessor.latencySamples` on the compiled artifact), not a unworklet-core feature.
+- **Compose the compensating `DelayNode` once at graph construction time.** Do not mutate `delayTime` afterwards unless you specifically want a transient.
+- **For chains of multiple lookahead processors**, sum the latencies and apply the total to the dry / parallel path:
+
+```typescript
+const totalLatencySec = (limiterSamples + analyzerSamples) / audioContext.sampleRate;
+const dryDelay = audioContext.createDelay(totalLatencySec);
+dryDelay.delayTime.value = totalLatencySec;
+```
+
+Multi-stage layouts where each stage has different lookahead requirements follow the same rule: at each branching / parallel point in the graph, the application inserts a `DelayNode` whose value equals the sum of lookaheads on the alternate path.
