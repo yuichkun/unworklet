@@ -8,8 +8,113 @@ skeleton
 
 ## 1. `defineProcessor` and I/O declarations
 
-<!-- defineProcessor(config) shape, audioInput / audioOutput, `inputs` and `outputs` records.
-     Q5 (multi-output processors) — explicit support, schema rules. Lands here. -->
+`defineProcessor` is the entry point. The body is a single lambda: declarations at the top, a `process` lambda inside the returned record. Audio inputs and outputs are declared explicitly via `audioInput()` / `audioOutput()` helpers — the same declaration-scope pattern as `state` / `buffer` / `param`.
+
+```typescript
+const splitter = defineProcessor((ctx) => {
+  // Declaration scope — audio I/O, state, params.
+  const main = audioInput({ channels: 2, name: 'main' });
+  const sc   = audioInput({ channels: 1, name: 'sidechain' });
+
+  const low  = audioOutput({ channels: 2, name: 'low' });
+  const mid  = audioOutput({ channels: 2, name: 'mid' });
+  const high = audioOutput({ channels: 2, name: 'high' });
+
+  // ... state / param declarations ...
+
+  return {
+    process: () => {
+      // Expression scope — per-sample DSP.
+      const l   = main.read(0);
+      const r   = main.read(1);
+      const scv = sc.read(0);
+      // ... 3-band split with sidechain ducking ...
+      low.write([lowL, lowR]);
+      mid.write([midL, midR]);
+      high.write([highL, highR]);
+    },
+  };
+});
+```
+
+### 1.1 `audioInput` and `audioOutput`
+
+Both helpers live in declaration scope only. Calling them inside a `process` lambda or any other expression scope is a graph-capture-time error.
+
+```typescript
+audioInput <C extends number>(options: { channels: C, name: string }): AudioInputHandle<C>;
+audioOutput<C extends number>(options: { channels: C, name: string }): AudioOutputHandle<C>;
+```
+
+Options:
+
+- **`channels: number`** — fixed channel count for that port, set at compile time. Maps directly to Web Audio's `outputChannelCount[i]` for outputs and is the input-side expectation for `read()`.
+- **`name: string`** — required. Used as the key in main-thread `node.inputs.<name>` / `node.outputs.<name>` access (see `05-client.md` §1) and as the slot identity for that I/O port. There is no default; explicit naming is uniform with state/buffer/param `name` and avoids index-based mental models in tooling and main-thread code.
+
+### 1.2 Reading from inputs
+
+`AudioInputHandle<C>.read(channelIndex)` returns a `Node<'f32'>` representing the current-sample value of that channel. The `channelIndex` argument is narrowed by TypeScript to the legal range for the declared channel count (`channels: 2` → `0 | 1`); out-of-range indices are TypeScript errors at the call site.
+
+```typescript
+const stereo = audioInput({ channels: 2, name: 'main' });
+const l = stereo.read(0);   // Node<'f32'>, channel 0
+const r = stereo.read(1);   // Node<'f32'>, channel 1
+const x = stereo.read(2);   // ❌ Type error: 2 is not assignable to 0 | 1
+```
+
+The actual channel count of the connected source is normalized by Web Audio's standard up-mix / down-mix rules (`channelInterpretation`, `channelCountMode`) before the worklet sees it; the framework does not intervene in this layer.
+
+### 1.3 Writing to outputs
+
+`AudioOutputHandle<C>.write(values)` accepts a tuple of `Node<'f32'>` values whose length must equal the declared `channels`. Tuple-length mismatch is a TypeScript error at the call site.
+
+```typescript
+const stereoOut = audioOutput({ channels: 2, name: 'main' });
+stereoOut.write([leftNode, rightNode]);    // ✓
+stereoOut.write([leftNode]);               // ❌ Tuple length mismatch
+stereoOut.write([leftNode, r, extra]);     // ❌ Tuple length mismatch
+```
+
+`write()` must be called exactly once per `process` invocation for each declared output, on every code path. Missing writes (output never written) and duplicate writes (output written twice in the same `process`) are graph-capture-time errors with refactor-hint messages.
+
+### 1.4 Multiple inputs / outputs
+
+There is no implicit cap on the number of `audioInput` / `audioOutput` declarations beyond Web Audio's `numberOfInputs` / `numberOfOutputs` (which are set from the declaration count). Each port is independent; channel counts can differ.
+
+```typescript
+const drumBus = defineProcessor((ctx) => {
+  const dry  = audioInput ({ channels: 2, name: 'dry'  });
+  const send = audioOutput({ channels: 2, name: 'send' });   // pre-fader to reverb
+  const main = audioOutput({ channels: 2, name: 'main' });   // dry mix
+  // ...
+});
+```
+
+### 1.5 No default I/O sugar
+
+A processor must declare every audio port it uses. There is no implicit "default mono in / default mono out" generated when `audioInput` / `audioOutput` are absent — a processor with zero I/O declarations has zero audio I/O on the resulting AudioWorkletNode.
+
+This is intentional: a single declaration pattern across all processor sizes (minimal sine generator → multi-band splitter) keeps the mental model uniform with state/buffer/param. The few extra lines on the smallest example are paid back the moment the processor grows.
+
+```typescript
+const sin440 = defineProcessor((ctx) => {
+  const out   = audioOutput({ channels: 1, name: 'main' });
+  const phase = state.f32(0, { name: 'phase' });
+  return {
+    process: () => {
+      const inc = 2 * Math.PI * 440 / ctx.sampleRate;
+      phase.store(add(phase.load(), inc));
+      out.write([sin(phase.load())]);
+    },
+  };
+});
+```
+
+### 1.6 Main-thread access
+
+The compiled `UnworkletNode<C>` exposes `node.inputs.<name>` and `node.outputs.<name>` typed accessors that wrap the underlying `AudioWorkletNode`'s indexed `connect()` calls. The raw `AudioWorkletNode` is always reachable as `node.node` for graph topologies the typed surface does not cover. See `05-client.md` §1 for the full main-thread surface.
+
+Authoritative rationale and rejected alternatives: see `decisions-log.md` Q6.
 
 ## 2. Primitive operators
 

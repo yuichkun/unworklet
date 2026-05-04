@@ -15,7 +15,7 @@ skeleton — populated as questions resolve
 | Q3 | SIMD scope for v1.0.0 | resolved — opt-in via `@unworklet/core/simd`; v1.0.0 = f32x4 MVP; parallel families | `00-foundations.md` §4 + `01-dsl.md` §7 |
 | Q4 | MIDI integration design | resolved — input+output; type-discriminated events; raw-bytes wire; transport API out of scope | `11-midi.md` |
 | Q5 | State snapshot / restore API | resolved — `Uint8Array` blob; hybrid profile (short form + per-profile record); block-atomic timing; declarative migration chain; full surface in v1.0.0 | `01-dsl.md` §3, §8 + `05-client.md` §2.6, §6 |
-| Q6 | Multi-output processors | (open) | `01-dsl.md` §1 |
+| Q6 | Multi-output processors | resolved — declaration helpers (`audioInput` / `audioOutput`); always explicit (no default I/O sugar); required `name`; typed `node.inputs.<name>` / `node.outputs.<name>` access | `01-dsl.md` §1 |
 | Q7 | Variable-rate control signals | (open; expected to defer) | `10-roadmap.md` §3 |
 | Q8 | Multi-block lookahead | (open) | TBD |
 | Q9 | Cross-processor communication | (open; expected to defer) | `10-roadmap.md` §3 |
@@ -331,3 +331,35 @@ Preset save/load and session restore are foundational to the kinds of audio devi
 - *No reachability validation* — silently allows unreachable schemas, where users with old blobs hit "blob format error" at runtime instead of seeing a build warning. Build-time validation is cheap and catches the developer before users do.
 - *Manual schema versioning (developer maintains a `version: 3` field)* — fragile (developer forgets to bump on schema-changing PRs), error-prone, and decouples version identity from actual schema content. Hash-derived identity is automatic and tracks reality.
 - *Auto-migrate everything (including type changes)* — lossy and silent. A type widening (`f32 → f64`) is reasonable to auto-handle, but a type narrowing or unit change is application-specific. The migration `migrate` callback is the right place for those decisions; making them implicit hides intent.
+
+---
+
+## Q6 — Multi-output processors
+
+**Status:** resolved.
+
+**Decision:** authoritative wording in `01-dsl.md` §1. Summary:
+
+- **Declaration helpers**: `audioInput({ channels, name })` and `audioOutput({ channels, name })` live in declaration scope only. Same pattern as `state` / `buffer` / `param`. Calling them in expression scope is a graph-capture-time error.
+- **Always explicit**: a processor has no audio I/O unless it declares it. No "default mono in / default mono out" sugar; no implicit return-value-as-output shortcut. Every audio port is a declaration.
+- **Required `name`**: every `audioInput` / `audioOutput` must carry a `name`. Names are slot identities for the port and the keys for main-thread typed access.
+- **Typed channel access**: `read(channelIndex)` narrows `channelIndex` to the legal range for the declared channel count (`channels: 2` → `0 | 1`). `write(values)` requires a tuple whose length equals `channels`. Both are checked at TypeScript / graph-capture time.
+- **Multi-port support is symmetric**: any number of inputs and outputs can coexist with arbitrary channel counts; the count is the declaration count, mapped directly to Web Audio's `numberOfInputs` / `numberOfOutputs` and `outputChannelCount[]`.
+- **Main-thread typed access**: `node.inputs.<name>` and `node.outputs.<name>` provide typed `connect()` / be-connected-to wrappers over the underlying `AudioWorkletNode`. The raw `AudioWorkletNode` is always reachable as `node.node` for advanced patching.
+
+**Rationale:**
+
+- *Declaration helper pattern over `ctx.inputs[i][j]` / `ctx.outputs[i][j]`*: the index-based form (a direct mirror of Web Audio's array-of-array I/O) does not narrow in TypeScript and gives no slot identity for tooling, snapshot, or main-thread access. The declaration pattern produces a typed handle, a stable name, and a uniform mental model with state/buffer/param.
+- *Always explicit (no default sugar)*: shipping a "declarations-zero processor returns a `Node<'f32'>` that becomes a default mono output" shortcut would make the API contract of `process` depend on whether declarations exist — two mental models for one feature, and a refactoring cliff when a single-output processor grows a second output. Forcing every processor to declare its I/O explicitly makes the shape stable and the rule one-line.
+- *Required `name` even for single I/O*: integrates with the slot-identity rule for snapshot (Q5), keeps main-thread access readable (`node.outputs.main` over `node.outputs.out0`), and matches the convention authors already use mentally when writing the processor.
+- *Typed channel access*: leveraging TypeScript's literal types for `channelIndex` and tuple length for `write()` catches a class of bugs (off-by-one channel access, mismatched stereo writes) at edit time rather than runtime — exactly the value proposition of TS-first DSP authoring.
+- *Pass-through to Web Audio mixing rules for input channel matching*: the source side of an `AudioWorkletNode` connection is governed by Web Audio's standard `channelInterpretation` / `channelCountMode`. Re-implementing that mixing logic in unworklet would either diverge from spec (surprise) or duplicate behavior already provided by the host (waste). The declaration's `channels` is the worklet's view; sources are normalized to it by the host.
+- *Raw `AudioWorkletNode` accessible as `node.node`*: typed wrappers are sufficient for the common cases, but consumers patching unusual graph topologies (input rate-converters, dynamic re-routing, channel splitter/merger nodes) need the raw node. Hiding it would cripple advanced use; exposing it costs nothing.
+
+**Rejected:**
+
+- *Index-based `ctx.outputs[i][j]` API* — direct mirror of Web Audio's I/O array structure, but (1) yields no TypeScript narrowing, (2) gives no slot identity for naming / snapshot / typed main-thread access, (3) does not match the declaration pattern that already governs state/buffer/param. The "Web Audio purism" benefit is hollow because the framework already abstracts most of Web Audio anyway.
+- *Default mono in / mono out sugar (declarations-zero processor)* — saves a few lines for the simplest example but introduces a two-mode API contract (declarations or no declarations) and a refactoring cliff. The boilerplate cost is paid once per processor file, the mental-model cost is paid every time someone reads code. The trade-off is one-sided.
+- *Optional `name` with default `'in0'` / `'out0'`* — generates names that read worse than the explicit form and split the slot-identity rule (snapshot already requires explicit names; making audio I/O optional creates a two-tier rule for the same concept).
+- *Process lambda return value as the default output* — clean for trivial cases but conflicts with the L1 helper return-shape rules (`01-dsl.md` §5.5.3) where return values become independent graph terminals. Reusing the same return-shape grammar for two different purposes (helper terminals vs default audio output) creates an ambiguity that has to be resolved by special cases.
+- *`channels: number` validated only at runtime* — undermines TS-first authoring; the framework's job is to surface DSP bugs at edit time, not to discover them via console errors after a deploy.
