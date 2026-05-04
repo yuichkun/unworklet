@@ -618,3 +618,101 @@ When `restore(blob)` runs:
 The result of `restore(blob)` reports `{ restored, skipped, missing }` so the consumer can surface "preset partially loaded" UX (see `05-client.md` §2.6 / §6).
 
 Authoritative rationale and rejected alternatives: see `decisions-log.md` Q5.
+
+## 9. Sub-rate computation (`everyNSamples`)
+
+Some processor-internal computations (LFO, envelope, FFT, modulation matrix, etc.) only need to update at a coarser rate than the audio rate. unworklet exposes a single primitive — `everyNSamples(N, callback)` — for this. The callback's body is graph-captured and compiled into a sub-block that runs once every `N` audio samples; `state` slots updated inside the callback retain their previous value (zero-order hold) on intermediate samples.
+
+```typescript
+const synth = defineProcessor((ctx) => {
+  const lfoVal = state.f32(0, { name: 'lfo' });
+  const fftMag = state.f32(0, { name: 'mag' });
+  const inBuf  = buffer.f32({ size: 1024, name: 'fftIn' });
+  const out    = audioOutput({ channels: 1, name: 'main' });
+
+  return {
+    process: () => {
+      // Audio-rate code (every sample).
+      const sample = audioIn.read(0);
+
+      // 1 ms (= 48 sample) sub-rate block: LFO update.
+      everyNSamples(48, () => {
+        lfoVal.store(computeLfo(...));
+      });
+
+      // ~5 ms (= 256 sample) sub-rate block: FFT magnitude update.
+      everyNSamples(256, () => {
+        const mag = computeFft(inBuf);
+        fftMag.store(mag);
+      });
+
+      // Audio-rate output uses held values from sub-rate slots.
+      out.write([applyFilter(sample, lfoVal.load(), fftMag.load())]);
+    },
+  };
+});
+```
+
+### 9.1 Semantics
+
+- **Graph-capture-time meta primitive**: `everyNSamples` is *not* a runtime callback. The callback body is evaluated once during graph capture; the resulting graph nodes are recorded as belonging to the `N`-rate sub-block.
+- **Compilation**: the sub-block compiles to a WASM branch keyed off an internal sample counter. On samples where `(counter % N) == 0`, the sub-block body executes; on other samples, it is skipped.
+- **State slots in the callback**: `state.<type>` slots written inside the callback hold their value between updates (zero-order hold). Reading them in the audio-rate body (`slot.load()`) returns the most recent stored value.
+- **Expression scope only**: callable from `process` lambdas, L1 helper bodies, and `defineSubgraph` `process` lambdas. Calling it from declaration scope is a graph-capture-time error.
+- **No new declarations inside the callback**: the callback body is an expression scope (same rules as `process` itself — see §5.5.5 / §5.6.5). New `state.*` / `buffer.*` / `param.*` / `defineSubgraph` declarations inside the callback are graph-capture-time errors.
+
+### 9.2 Multiple sub-rate blocks coexist
+
+A processor can have any number of `everyNSamples` blocks at any divisor; they share the audio-rate counter and execute independently:
+
+```typescript
+process: () => {
+  everyNSamples(8, () => {
+    smoothing.store(...);     // 8-sample rate
+  });
+  everyNSamples(48, () => {
+    lfo.store(...);           // 48-sample rate (1 ms)
+  });
+  everyNSamples(256, () => {
+    fftMag.store(...);        // 256-sample rate
+  });
+  out.write([...]);           // audio rate
+};
+```
+
+The counter advance is global to the processor instance; sub-blocks do not interfere.
+
+### 9.3 Relationship to `param` automation
+
+`everyNSamples` is for **internal computation rate-down**, not for changing how `AudioParam` automation arrives. AudioParam's own rate (`'a-rate'` / `'k-rate'`) is set on the `param` declaration (see §3.3) and governed by Web Audio's standard automation machinery; unworklet does not modify it.
+
+If a consumer wants to consume an automation value at a coarse rate (e.g. read `cutoff` only once per 8 samples), they wrap the read in an `everyNSamples` callback and store into a `state` slot:
+
+```typescript
+const cutoffSampled = state.f32(0, { name: 'cutoffSampled' });
+process: () => {
+  everyNSamples(8, () => {
+    cutoffSampled.store(/* read cutoff at the current sample */);
+  });
+  // audio-rate body uses cutoffSampled.load()
+};
+```
+
+The exact API for "read a `param` at the current sample inside a `process` body" is part of the graph-capture-model finalization (see Q22) and is not settled by Q7. The `everyNSamples` primitive itself is independent of that decision.
+
+### 9.4 CPU spike caveat (consumer responsibility)
+
+`everyNSamples` reduces **average CPU**, but the **worst-case sample** (when the sub-block fires) still pays the full computation cost. For heavy sub-blocks (e.g. a 1024-point FFT inside `everyNSamples(256, ...)`), this produces a periodic CPU spike on the audio thread.
+
+unworklet does not auto-distribute the spike. CPU smoothing is the consumer's responsibility:
+
+- **Partitioned algorithms**: split the heavy work across multiple samples (e.g. partitioned FFT processes one stage per audio sample, evening out cost).
+- **Out-of-band processing**: instantiate a separate `AudioWorkletNode` and route audio through it, decoupling the heavy work from the main processor's audio thread (cross-processor communication; see Q9 — currently open).
+
+The `everyNSamples` primitive remains a useful building block even when CPU spike matters: it makes the rate-down intent explicit in the source, and applicable algorithms (partitioned, deferred, cached) compose over it.
+
+### 9.5 v1.0.0 scope
+
+v1.0.0 ships `everyNSamples(N, callback)` only, where `N` is a compile-time positive integer (sample count). Future additive primitives (`everyTimeMs(ms, callback)`, `atSampleRate(rate, callback)`, etc.) can be introduced in v1.x.0 without breaking the v1.0.0 surface — they are additional helpers in the same primitive family, layered on top of the sample-counter mechanism.
+
+Authoritative rationale and rejected alternatives: see `decisions-log.md` Q7.
