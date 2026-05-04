@@ -13,13 +13,13 @@ skeleton — populated as questions resolve
 | Q1 | Scalar type defaults | f32 literal default; explicit conversion only; no implicit widening | `00-foundations.md` §4 |
 | Q2 | Third-party DSP helper integration layer | resolved — 2 layers (L1 + L2), no L3; L1/L2 surfaces and instantiation rules settled | `01-dsl.md` §5 |
 | Q3 | SIMD scope for v0.1 | resolved — opt-in via `@unworklet/core/simd`; v0.1.0 = f32x4 MVP; parallel families | `00-foundations.md` §4 + `01-dsl.md` §7 |
-| Q4 | MIDI integration design | partial — Q4-a/b/c resolved; Q4-d (clock / transport) TBD | `11-midi.md` |
+| Q4 | MIDI integration design | resolved — input+output; type-discriminated events; raw-bytes wire; transport API out of scope | `11-midi.md` |
 | Q5 | State snapshot / restore API | (open) | `05-client.md` (TBD section) |
 | Q6 | Multi-output processors | (open) | `01-dsl.md` §1 |
 | Q7 | Variable-rate control signals | (open; expected to defer) | `10-roadmap.md` §3 |
 | Q8 | Multi-block lookahead | (open) | TBD |
 | Q9 | Cross-processor communication | (open; expected to defer) | `10-roadmap.md` §3 |
-| Q10 | Transport / tempo sync | (open; expected to defer) | `10-roadmap.md` §3 |
+| Q10 | Transport / tempo sync | resolved — out of scope (third-party domain) | `11-midi.md` §5 |
 | Q11 | Browser quirk normalization | (open) | `08-deployment.md` §2 |
 | Q12 | Monorepo tool | (open) | `09-repo-structure.md` §1 |
 | Q13 | Initial package layout | (open) | `09-repo-structure.md` §2 |
@@ -136,7 +136,7 @@ skeleton — populated as questions resolve
 
 ## Q4 — MIDI integration design
 
-**Status:** partial — Q4-a (I/O scope), Q4-b (DSL surface), Q4-c (wire format & timing detail) resolved; Q4-d (MIDI clock / transport stance) TBD.
+**Status:** resolved.
 
 **Decision (Q4-a):** authoritative wording in `11-midi.md` §1 and §3. Summary: unworklet supports both MIDI ingestion and emission. Processors declare involvement via `midiInput()` / `midiOutput()` (either or both, both omittable). The main-thread API is source-agnostic: a low-level `unworkletNode.midi.send(event, atTime?)` plus a Web MIDI convenience bridge `unworkletNode.midi.connectFromWebMIDI(input)`. unworklet does not know or care where events originated; routing MIDI from any other source (DAW MIDI bridges, network, hardware, application logic) is the consumer's responsibility.
 
@@ -153,6 +153,8 @@ skeleton — populated as questions resolve
 - **`atSample` semantics (Q4-c-ii):** **block-local** (0 through `renderQuantum - 1`); stored as `u32` for headroom. Global timestamps are derived consumer-side via `audioContext.currentTime + atSample / sampleRate`.
 - **Sysex (Q4-c-iii):** **full support in v0.1.0**. Variable-length sysex bodies live in a separate variable-length content buffer; the main ring-buffer slot for a sysex event holds the status byte plus an index into the content buffer.
 - **Overflow (Q4-c-iv):** **drop-oldest + diagnostics counter**. The oldest event is overwritten on overflow, and a monotonic `overflowCount` counter is exposed via `midiIn.diagnostics.overflowCount()` for consumer monitoring.
+
+**Decision (Q4-d):** authoritative wording in `11-midi.md` §5. Summary: MIDI clock messages (`0xF8` timing clock, `0xFA` start, `0xFB` continue, `0xFC` stop) are ingested as ordinary `systemRealtime` events. unworklet does **not** provide a built-in transport API (BPM / beat position / play state); transport interpretation is **out of scope** and lives in consumer code or third-party packages. This same decision resolves Q10.
 
 **Rationale (Q4-a):**
 
@@ -174,6 +176,13 @@ skeleton — populated as questions resolve
 - *`atSample` block-local*: "this event fires N samples into the current block" is the question DSP code naturally asks. Global timestamps require subtracting the block start as an extra step. Block-local maps directly to per-sample dispatch logic.
 - *Sysex full support in v0.1.0*: sysex is part of the MIDI standard (device controllers, GM/GS/XG extensions, Universal Real Time messages). m4l/VST-equivalent devices commonly need it. Implementation cost is moderate (variable-length content buffer + length prefix); deferring would create a structural hole in the v0.1 surface.
 - *Drop-oldest + diagnostics counter*: drop-oldest and drop-newest both break MIDI semantics (phantom note off vs hanging note); neither is "correct". The actionable design is to make overflow detectable so consumers can resize capacity or fix the upstream burst. Drop-oldest is the natural ring-buffer behavior and the simplest to implement.
+
+**Rationale (Q4-d):**
+
+- *Out of scope, not deferred*: transport models vary by DAW culture (Ableton Link phase, Tone.js Transport step, Bitwig clip-driven, etc.). unworklet picking one constrains users whose context expects a different model. Keeping transport out of scope lets third-party packages serve different cultures without the framework enforcing a winner.
+- *Provide the raw material, not the abstraction*: ingesting `systemRealtime` events with sample-accurate `atSample` is the irreducible primitive; everything above (BPM estimation, beat-position state machines, look-ahead schedulers) can be built from it. unworklet's role ends at delivering the events.
+- *Not a feature reduction*: arpeggiator / sequencer / tempo-synced LFO use cases remain fully buildable — the raw material is provided. Only the *abstraction layer* lives elsewhere; that is scope clarification, not feature reduction (see `feedback_mental-model-vs-feature-reduction.md`).
+- *Multi-processor sharing already works via Web Audio*: when multiple processors need the same transport, MIDI clock can be routed via `AudioWorkletNode.connect()` or fanned out from the main thread. unworklet does not need to abstract this.
 
 **Rejected (Q4-a):**
 
@@ -198,3 +207,21 @@ skeleton — populated as questions resolve
 - *Sysex variant removed entirely from `MidiEvent`* (Q4-c-iii) — unworklet's scope explicitly covers MIDI-driven web devices; dropping a standard MIDI event class is a feature reduction, not mental-model unification.
 - *Drop-newest on overflow* (Q4-c-iv) — equally broken (hanging notes from dropped noteOff). Choosing it over drop-oldest does not improve safety; only detection (the counter) does.
 - *Halt or throw on overflow* (Q4-c-iv) — would crash the audio thread on a recoverable condition. The realtime-safe behavior is to drop and report.
+
+**Rejected (Q4-d):**
+
+- *Built-in `useTransport()` API in v0.1* — picks one transport model (BPM-and-beats, or phase-based, etc.) at the framework level, constraining users whose DAW context expects a different model. Premature commitment.
+- *Built-in transport "deferred" to a later v0.x* — implies unworklet eventually adopts one. The framework-level decision is that transport is the consumer's territory, full stop. "Deferred" sends the wrong signal about the project's scope.
+- *MIDI clock messages dropped from `MidiEvent`* — eliminates the raw material. arpeggiator / sequencer / tempo-synced LFO use cases would become unbuildable on unworklet alone, which is a feature reduction trap.
+
+---
+
+## Q10 — Transport / tempo sync convention
+
+**Status:** resolved — out of scope (third-party domain).
+
+**Decision:** unworklet does not provide a built-in transport API (BPM, beat position, play state, look-ahead scheduler, etc.). MIDI clock messages are delivered as ordinary `systemRealtime` events through the standard MIDI ingestion path; any abstraction above that lives in consumer code or third-party packages.
+
+This is settled together with Q4-d — see the Q4-d Decision / Rationale / Rejected entries above for the full reasoning.
+
+Authoritative wording: `11-midi.md` §5.

@@ -219,5 +219,34 @@ Overflow is anti-pattern in normal use — capacity should be sized to the workl
 
 ## 5. MIDI clock and transport
 
-<!-- - MIDI clock messages (0xF8 timing clock, 0xFA start, 0xFC stop, 0xFB continue) ingest as ordinary events; unworklet does not synthesize a transport from them.
-     - Transport-sync convention: deferred — see `10-roadmap.md` §3. -->
+MIDI clock messages (`0xF8` timing clock, `0xFA` start, `0xFB` continue, `0xFC` stop) are ingested as ordinary `systemRealtime` events through the same path as any other MIDI event (see §2). unworklet does **not** synthesize a transport (BPM, beat position, play state) from them — that abstraction is **out of scope**.
+
+### What unworklet provides
+
+`systemRealtime` events arrive at the worklet handler with sample-accurate `atSample`, just like any other MIDI event:
+
+```typescript
+defineProcessor((ctx) => {
+  const midiIn = midiInput();
+
+  return {
+    process: () => {
+      midiIn.onEvent('systemRealtime', ({ status, atSample }) => {
+        // status === 0xF8: timing clock (24 PPQN)
+        // status === 0xFA: start
+        // status === 0xFB: continue
+        // status === 0xFC: stop
+        // → user code interprets these as needed
+      });
+    },
+  };
+});
+```
+
+### What unworklet does NOT provide
+
+A built-in transport API (`useTransport()`, `transport.bpm.load()`, `transport.beatPosition.load()`, etc.) is intentionally **not part of unworklet**. Transport models vary by DAW culture (Ableton Link phase, Tone.js Transport step, Bitwig clip-driven, etc.), and unworklet picking one would constrain users whose context expects a different model.
+
+User-level transport abstractions live in consumer code or third-party packages. unworklet's role ends at delivering MIDI clock messages reliably; transport interpretation is the consumer's domain.
+
+Rationale and rejected alternatives: see `decisions-log.md` Q4 (Q4-d) and Q10.
