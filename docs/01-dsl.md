@@ -170,7 +170,90 @@ Detailed error-UX policy is settled in `03-compiler.md` §2 (Q22, TBD).
 
 ### 5.6 L2 surface details
 
-TBD — settled by Q2-c.
+L2 subgraphs are reusable, stateful DSP blocks defined with `defineSubgraph`. Each instantiation gets its own state slots, and every instance is inlined into the parent's WASM module.
+
+#### 5.6.1 Body structure (mirrors `defineProcessor`)
+
+A subgraph body has the same two-scope structure as `defineProcessor`: a declaration scope at the top and an expression scope inside a `process` lambda. The symmetry is intentional — L2 and root processors share one mental model.
+
+```typescript
+const onepole = defineSubgraph((input: Node<'f32'>, coef: Node<'f32'>) => {
+  // ━━━ Declaration scope ━━━
+  // Per-instantiation state slots; declared once per call site.
+  const z = state.f32(0);
+
+  return {
+    process: () => {
+      // ━━━ Expression scope ━━━
+      // Per-sample expression; evaluated each render quantum.
+      const y = add(z.load(), mul(coef, sub(input, z.load())));
+      z.store(y);
+      return y;
+    },
+  };
+});
+```
+
+#### 5.6.2 Instantiation syntax
+
+A `defineSubgraph` result is directly callable; the call instantiates a fresh subgraph with its own state slots.
+
+```typescript
+const yL = onepole(inputL, cutoff);  // instance #1: independent state
+const yR = onepole(inputR, cutoff);  // instance #2: independent state
+```
+
+The call signature mirrors L1 helpers (`onepole(args)`), so subgraphs and L1 helpers compose interchangeably from the consumer side.
+
+#### 5.6.3 Return shape
+
+The `process` lambda's return value becomes the subgraph's per-sample output, with the same shapes allowed for L1 helpers (§5.5.3):
+
+- single `Node<T>` — typical filter / oscillator,
+- tuple `[Node<...>, Node<...>, ...]` — multi-output (stereo, SVF low/band/high),
+- record `{ key: Node<...>, ... }` — named multi-output,
+- `void` — side-effect-only (e.g. accumulator bus).
+
+The instantiation expression's type is inferred from the `process` return.
+
+#### 5.6.4 Where subgraphs can be instantiated
+
+`defineSubgraph` results may only be **instantiated in declaration scope** — the body of `defineProcessor` or another `defineSubgraph`, before its `process` lambda. Instantiation inside an expression scope (a `process` lambda or an L1 helper body) is forbidden.
+
+Each instantiation is a *declaration of an independent state slot*; placing it in declaration scope keeps graph structure predictable (the number of instances is statically determined at compile time) and prevents the misread that subgraphs are runtime-allocated.
+
+Conditional output between configurations is expressed by instantiating both and choosing with `select`:
+
+```typescript
+const myProcessor = defineProcessor((ctx) => {
+  const lpfA = onepole(ctx.inputs[0][0], coefA);  // instance #1
+  const lpfB = onepole(ctx.inputs[0][0], coefB);  // instance #2
+  const useA = param({ default: 1, min: 0, max: 1, automationRate: 'k-rate' });
+
+  return {
+    process: () => {
+      return select(useA.at(0), lpfA, lpfB);
+      // Both instances evaluate every sample; select chooses one.
+    },
+  };
+});
+```
+
+#### 5.6.5 Body constraints
+
+Inside a subgraph body:
+
+- **Declaration scope** (top of the body, before `return { process }`) allows new `state.*` / `buffer.*` / `param.*` declarations and L2 instantiations of other subgraphs.
+- **Expression scope** (inside `process`) follows the same rules as L1 helpers (§5.5.5): no new declarations, no L2 instantiations; primitives and `load` / `store` on declared state are allowed.
+
+Violations are caught at graph-capture / static-analysis time with refactor-hint error messages, mirroring §5.5.6. Example:
+
+```text
+error: defineSubgraph 'onepole' must be instantiated in declaration scope
+       (defineProcessor or defineSubgraph body), not inside a process lambda.
+  Move the call to the parent body, or refactor the helper as an L1 function
+  if it does not need its own state.
+```
 
 ## 6. The two phases
 
