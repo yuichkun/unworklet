@@ -34,9 +34,85 @@ The exact shape of the `midiInput` / `midiOutput` handles (event subscription on
 
 ## 2. Sample-accurate event handling
 
-<!-- - `midi.onEvent('noteOn', ({ note, velocity, atSample }) => ...)` and similar shape.
-     - Sample-accuracy: events carry an in-block sample offset; handlers fire at that offset, not at block boundary like ordinary `messages` (see 02-messaging.md).
-     - Concurrent events at the same sample offset are processed in arrival order. -->
+### 2.1 Inbound: subscribing to MIDI events (worklet side)
+
+`midiInput()` returns a handle whose primary surface is `onEvent(eventType, handler)`. Handlers are **type-discriminated**: each registered handler observes one event type, and TypeScript narrows the handler's argument shape accordingly.
+
+```typescript
+defineProcessor((ctx) => {
+  const midiIn = midiInput();
+
+  return {
+    process: () => {
+      midiIn.onEvent('noteOn',  ({ channel, note, velocity, atSample }) => {
+        // ...handle noteOn
+      });
+      midiIn.onEvent('noteOff', ({ channel, note, atSample }) => {
+        // ...handle noteOff
+      });
+      midiIn.onEvent('cc',      ({ channel, controller, value, atSample }) => {
+        // ...handle continuous controller
+      });
+    },
+  };
+});
+```
+
+### 2.2 Event types (TypeScript surface)
+
+Inbound and outbound MIDI events use the same `MidiEvent` discriminated union on the API surface. Authors never see raw status bytes — the compiler generates serializers and deserializers between this union and the wire format (§4).
+
+```typescript
+type MidiEvent =
+  | { type: 'noteOn';          channel: number; note: number; velocity: number; atSample: number }
+  | { type: 'noteOff';         channel: number; note: number; velocity: number; atSample: number }
+  | { type: 'cc';              channel: number; controller: number; value: number; atSample: number }
+  | { type: 'pitchBend';       channel: number; value: number;                     atSample: number }
+  | { type: 'programChange';   channel: number; program: number;                   atSample: number }
+  | { type: 'channelPressure'; channel: number; pressure: number;                  atSample: number }
+  | { type: 'aftertouch';      channel: number; note: number; pressure: number;   atSample: number }
+  | { type: 'systemRealtime';  status: number;                                     atSample: number }  // 0xF8 / 0xFA / 0xFB / 0xFC
+  | { type: 'sysex';           data: Uint8Array;                                   atSample: number };
+```
+
+The exact set of variants and their fields is closed at v0.1.0. New variants (e.g. MIDI 2.0 high-resolution events) can be added additively in v0.1.x.
+
+### 2.3 `atSample` is always present
+
+Every handler argument carries `atSample` — the sample-offset within the current render quantum at which the event arrived. Handlers fire **at that sample offset, not at block boundary**, so MIDI-driven events maintain sample accuracy through the full ingestion path.
+
+```typescript
+midiIn.onEvent('noteOn', ({ note, atSample }) => {
+  // atSample tells us "this noteOn arrived 47 samples into the current block"
+  // → trigger the envelope from this sample onward, not the block boundary
+});
+```
+
+Concurrent events at the same sample offset are processed in arrival order on the wire.
+
+### 2.4 Outbound: emitting MIDI events (worklet → main)
+
+`midiOutput()` returns a handle whose only emission primitive is `emitIf(condition, event)`. There is no plain `emit(event)` — every emission is conditional, by design (see `decisions-log.md` Q4-b for the reasoning).
+
+```typescript
+const drumSequencer = defineProcessor((ctx) => {
+  const midiOut = midiOutput();
+  // ...
+  return {
+    process: () => {
+      midiOut.emitIf(crossedStep, {
+        type: 'noteOn',
+        channel: 9,
+        note: noteToEmit,
+        velocity: 100,
+        atSample: 0,   // sample offset within the current render quantum
+      });
+    },
+  };
+});
+```
+
+`emitIf(cond, event)` compiles to a graph node: only on samples where `cond` evaluates true does the event get pushed into the outbound ringbuffer. "Emit only at boundaries / state transitions" is structurally enforced — there is no path to accidentally enqueue events every sample.
 
 ## 3. Main-thread integration
 
@@ -81,9 +157,27 @@ For processors that declared `midiOutput()`, the main thread receives emitted ev
 
 ## 4. Wire format
 
-<!-- - Per-event encoding: raw MIDI status byte + data bytes, or structured (status, channel, data1, data2, atSample).
-     - Ring buffer (SAB-backed when available) vs postMessage path; degradation rules align with 02-messaging.md.
-     - Fixed-size event slots; overflow → onError per the messaging contract. -->
+### 4.1 Encoding
+
+Both inbound and outbound MIDI events travel on the wire as **raw MIDI status bytes**, not the structured `MidiEvent` union seen by authors. The compiler generates serializers (TS → bytes) and deserializers (bytes → TS) so the wire stays MIDI-standard while the user-facing API stays type-safe.
+
+Per-event slot (fixed size):
+
+```text
+| status (u8) | data1 (u8) | data2 (u8) | _pad (u8) | atSample (u32) |
+                                                      (= 8 bytes per slot)
+```
+
+Variable-length events (sysex) use a separate small ringbuffer and a status-byte indicator in the main slot — exact layout settled with Q4-c.
+
+### 4.2 Transport
+
+- **SAB available** (default): events flow through a `SharedArrayBuffer`-backed ringbuffer with `Atomics`-based head / tail pointers. Sample-accurate timing is preserved end-to-end.
+- **SAB unavailable** (no COOP/COEP headers): falls back to `postMessage` at render-quantum granularity. Sample-accurate timing **within a block** is preserved on the worklet side; main-side delivery picks up block-boundary latency. Full degradation policy lives in Q11.
+
+### 4.3 Capacity and overflow
+
+Inbound and outbound ringbuffers have fixed-size capacities chosen at processor instantiation (declared via `midiInput({ capacity })` / `midiOutput({ capacity })`; default value settled with Q4-c). Overflow surfaces through the messaging error contract (settled with Q22) — events are dropped, not silently buffered, and a counter-based diagnostic is exposed for runtime visibility.
 
 ## 5. MIDI clock and transport
 

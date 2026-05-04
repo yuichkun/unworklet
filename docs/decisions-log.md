@@ -13,7 +13,7 @@ skeleton — populated as questions resolve
 | Q1 | Scalar type defaults | f32 literal default; explicit conversion only; no implicit widening | `00-foundations.md` §4 |
 | Q2 | Third-party DSP helper integration layer | resolved — 2 layers (L1 + L2), no L3; L1/L2 surfaces and instantiation rules settled | `01-dsl.md` §5 |
 | Q3 | SIMD scope for v0.1 | resolved — opt-in via `@unworklet/core/simd`; v0.1.0 = f32x4 MVP; parallel families | `00-foundations.md` §4 + `01-dsl.md` §7 |
-| Q4 | MIDI integration design | partial — Q4-a (I/O scope) resolved: input+output both supported; Q4-b/c/d TBD | `11-midi.md` |
+| Q4 | MIDI integration design | partial — Q4-a (I/O scope) and Q4-b (DSL surface) resolved; Q4-c/d TBD | `11-midi.md` |
 | Q5 | State snapshot / restore API | (open) | `05-client.md` (TBD section) |
 | Q6 | Multi-output processors | (open) | `01-dsl.md` §1 |
 | Q7 | Variable-rate control signals | (open; expected to defer) | `10-roadmap.md` §3 |
@@ -136,9 +136,16 @@ skeleton — populated as questions resolve
 
 ## Q4 — MIDI integration design
 
-**Status:** partial — Q4-a (I/O scope) resolved; Q4-b (DSL surface), Q4-c (wire format & timing), Q4-d (MIDI clock / transport stance) TBD.
+**Status:** partial — Q4-a (I/O scope) and Q4-b (DSL surface) resolved; Q4-c (wire format & timing detail), Q4-d (MIDI clock / transport stance) TBD.
 
 **Decision (Q4-a):** authoritative wording in `11-midi.md` §1 and §3. Summary: unworklet supports both MIDI ingestion and emission. Processors declare involvement via `midiInput()` / `midiOutput()` (either or both, both omittable). The main-thread API is source-agnostic: a low-level `unworkletNode.midi.send(event, atTime?)` plus a Web MIDI convenience bridge `unworkletNode.midi.connectFromWebMIDI(input)`. unworklet does not know or care where events originated; routing MIDI from any other source (DAW MIDI bridges, network, hardware, application logic) is the consumer's responsibility.
+
+**Decision (Q4-b):** authoritative wording in `11-midi.md` §2 and §4. Summary:
+
+- Handler registration is **type-discriminated**: `midiIn.onEvent('noteOn', handler)` etc., one handler per event type, with TypeScript narrowing the argument shape per type.
+- Event type representation is **hybrid**: a `MidiEvent` discriminated union on the API surface (noteOn / noteOff / cc / pitchBend / programChange / channelPressure / aftertouch / systemRealtime / sysex), and raw MIDI status bytes on the wire. The compiler generates serializers / deserializers between the two.
+- Emission primitive is **`emitIf(cond, event)` only**. There is no unconditional `emit(event)` — every emission is structurally conditional.
+- `atSample` is **always present** on handler arguments (and required in `emitIf` events). Handlers fire at the in-block sample offset, not at block boundary; sample accuracy is preserved end-to-end.
 
 **Rationale (Q4-a):**
 
@@ -147,8 +154,23 @@ skeleton — populated as questions resolve
 - *Opt-in declaration*: processors that don't call `midiInput()` / `midiOutput()` never encounter MIDI concepts — no IDE noise, no runtime cost, no cognitive load for audio-only DSP.
 - *Source-agnostic main-thread API*: keeping the surface as `.send()` plus a Web MIDI convenience wrapper avoids coupling unworklet's design to any specific MIDI source category. Application code routes whatever it wants to `.send()`.
 
+**Rationale (Q4-b):**
+
+- *Type-discriminated `onEvent`*: TypeScript narrows the handler argument shape per event type; authors get full IDE completion and refactoring without re-discriminating a union inside a switch. Each handler is also independently graph-captured, simplifying inlining and dead-code elimination during compile.
+- *Hybrid type representation (union API / raw-bytes wire)*: gives TypeScript-first authors the type safety they came for, while keeping the wire MIDI-standard (compact, fast to parse, compatible with the byte format every audio engineer already knows). A bytes-only API would push status-byte decoding onto every author; a union-only wire would inflate transport size and cost on the postMessage degradation path.
+- *`emitIf` only, no plain `emit`*: every meaningful MIDI emission is conditional (boundary, state transition, input trigger). A plain `emit(event)` invocation in `process` would silently fire every sample (44.1 kHz) and saturate the ringbuffer — a footgun whose only "correct" form is `if (cond) emit(event)` anyway. Forcing the conditional into the primitive's shape eliminates the footgun structurally.
+- *`atSample` always required*: unworklet's MIDI integration exists to deliver sample-accurate events. Handlers without `atSample` discard the property the framework was built around. Carrying it unconditionally costs nothing (one number in the shape) and keeps the API uniform.
+
 **Rejected (Q4-a):**
 
 - *Input only (no MIDI emission)* — would structurally exclude arpeggiator / sequencer / MIDI-effect use cases, which are part of the "m4l/VST-equivalent web devices" scope (see `project_unworklet-scope-framing.md`).
 - *Input only in v0.1.0, Output deferred to v0.1.x* — breaks I/O symmetry from day one and forces consumers to wait for a non-trivial subset of m4l/VST coverage.
 - *MIDI source enumeration in unworklet's surface* (e.g. distinguishing "Web MIDI source" vs "application source" at the API level) — unnecessary specialization. A single `.send()` plus a Web MIDI convenience wrapper covers all cases without coupling to source categories.
+
+**Rejected (Q4-b):**
+
+- *Unified `onEvent((event) => switch (event.type) { ... })`* — forces authors to re-implement type narrowing inside a switch. Aggregating all event handling into one closure also defeats per-type graph capture and inlining.
+- *Raw-bytes-only API (`{ status, data1, data2, atSample }`)* — pushes MIDI status-byte parsing onto every author and erases the value of writing in TypeScript.
+- *Discriminated-union-only wire (no raw bytes underneath)* — bloats transport, especially on the postMessage degradation path, and diverges from the MIDI byte format that downstream consumers (Web MIDI Output, network bridges) expect.
+- *Allowing plain `emit(event)`* — silent footgun. Authors who forget the `if (cond)` wrap saturate the ringbuffer at sample rate. `emitIf` makes the conditional shape mandatory.
+- *`atSample` as opt-in* — introduces an API split for a property that costs nothing to include unconditionally and is fundamental to the framework's stated goal (sample-accurate ingestion).
