@@ -10,7 +10,7 @@ skeleton
 
 `unworklet` is a TypeScript-first framework for authoring realtime audio DSP that runs inside any spec-compliant `AudioWorkletGlobalScope`. The user declares a processor; the framework produces the WebAssembly binary, the `AudioWorkletProcessor` glue, and a typed main-thread client.
 
-The framework is **runtime-agnostic.** `AudioWorkletGlobalScope` originated in the Web Audio API for browsers, but the same surface is available wherever a host implements the spec — for example, the sibling project `unaudio` ships a Chromium-derived runtime that lets unworklet processors run inside VST hosts. unworklet itself contains no host-specific code: it produces processors that any spec-compliant Audio Worklet host can run.
+The framework is **runtime-agnostic.** unworklet targets the Web Audio API as specified for browsers and is published as an ordinary npm library. Because it produces only standards-compliant Audio Worklet artifacts and contains no host-specific code, the resulting processors will run on any host that implements the spec — but anything beyond producing those standards-compliant artifacts is outside unworklet's scope.
 
 ## 2. Goals and non-goals
 
@@ -26,7 +26,7 @@ The framework is **runtime-agnostic.** `AudioWorkletGlobalScope` originated in t
 ### Non-goals
 
 - **Not a DSP standard library.** unworklet provides primitives (`add`, `mul`, `sin`, `select`, …); high-level building blocks (filters, oscillators, envelopes, FFT helpers, …) are intentionally left to third-party packages. unworklet's job is to make those packages easy to author and consume.
-- **Not a host-format adapter.** VST/AU/CLAP packaging, plugin-metadata schemas, latency compensation reporting, preset banks, and similar host-format concerns belong to a separate layer (e.g. `unaudio` for the VST case). unworklet does not produce host-specific binaries or expose host-shaped APIs.
+- **Not a host-format adapter.** VST/AU/CLAP packaging, plugin-metadata schemas, latency compensation reporting, preset banks, and similar host-format concerns are out of scope. unworklet produces only standards-compliant Audio Worklet artifacts and does not expose host-shaped APIs.
 - **Not a music-making framework.** Sequencers, pattern editors, scale-theory libraries, and song-structure abstractions are application-level. unworklet *receives* MIDI events at the audio thread; it does not provide tools to *generate* or compose them.
 - **Not a replacement for hand-written WASM.** Users with extreme optimization needs should write WASM directly; unworklet targets the 90% case.
 - **Not a Faust replacement.** Faust's mathematical-DSP abstraction level is intentionally out of scope.
