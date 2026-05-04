@@ -13,7 +13,7 @@ skeleton — populated as questions resolve
 | Q1 | Scalar type defaults | f32 literal default; explicit conversion only; no implicit widening | `00-foundations.md` §4 |
 | Q2 | Third-party DSP helper integration layer | resolved — 2 layers (L1 + L2), no L3; L1/L2 surfaces and instantiation rules settled | `01-dsl.md` §5 |
 | Q3 | SIMD scope for v0.1 | resolved — opt-in via `@unworklet/core/simd`; v0.1.0 = f32x4 MVP; parallel families | `00-foundations.md` §4 + `01-dsl.md` §7 |
-| Q4 | MIDI integration design | partial — Q4-a (I/O scope) and Q4-b (DSL surface) resolved; Q4-c/d TBD | `11-midi.md` |
+| Q4 | MIDI integration design | partial — Q4-a/b/c resolved; Q4-d (clock / transport) TBD | `11-midi.md` |
 | Q5 | State snapshot / restore API | (open) | `05-client.md` (TBD section) |
 | Q6 | Multi-output processors | (open) | `01-dsl.md` §1 |
 | Q7 | Variable-rate control signals | (open; expected to defer) | `10-roadmap.md` §3 |
@@ -136,7 +136,7 @@ skeleton — populated as questions resolve
 
 ## Q4 — MIDI integration design
 
-**Status:** partial — Q4-a (I/O scope) and Q4-b (DSL surface) resolved; Q4-c (wire format & timing detail), Q4-d (MIDI clock / transport stance) TBD.
+**Status:** partial — Q4-a (I/O scope), Q4-b (DSL surface), Q4-c (wire format & timing detail) resolved; Q4-d (MIDI clock / transport stance) TBD.
 
 **Decision (Q4-a):** authoritative wording in `11-midi.md` §1 and §3. Summary: unworklet supports both MIDI ingestion and emission. Processors declare involvement via `midiInput()` / `midiOutput()` (either or both, both omittable). The main-thread API is source-agnostic: a low-level `unworkletNode.midi.send(event, atTime?)` plus a Web MIDI convenience bridge `unworkletNode.midi.connectFromWebMIDI(input)`. unworklet does not know or care where events originated; routing MIDI from any other source (DAW MIDI bridges, network, hardware, application logic) is the consumer's responsibility.
 
@@ -146,6 +146,13 @@ skeleton — populated as questions resolve
 - Event type representation is **hybrid**: a `MidiEvent` discriminated union on the API surface (noteOn / noteOff / cc / pitchBend / programChange / channelPressure / aftertouch / systemRealtime / sysex), and raw MIDI status bytes on the wire. The compiler generates serializers / deserializers between the two.
 - Emission primitive is **`emitIf(cond, event)` only**. There is no unconditional `emit(event)` — every emission is structurally conditional.
 - `atSample` is **always present** on handler arguments (and required in `emitIf` events). Handlers fire at the in-block sample offset, not at block boundary; sample accuracy is preserved end-to-end.
+
+**Decision (Q4-c):** authoritative wording in `11-midi.md` §4. Summary:
+
+- **Capacity (Q4-c-i):** ring buffers default to **256 slots** (8 bytes each = 2 KB). Override via `midiInput({ capacity })` / `midiOutput({ capacity })`. Sized for typical use; dense MIDI / sequencer / network-driven loads override.
+- **`atSample` semantics (Q4-c-ii):** **block-local** (0 through `renderQuantum - 1`); stored as `u32` for headroom. Global timestamps are derived consumer-side via `audioContext.currentTime + atSample / sampleRate`.
+- **Sysex (Q4-c-iii):** **full support in v0.1.0**. Variable-length sysex bodies live in a separate variable-length content buffer; the main ring-buffer slot for a sysex event holds the status byte plus an index into the content buffer.
+- **Overflow (Q4-c-iv):** **drop-oldest + diagnostics counter**. The oldest event is overwritten on overflow, and a monotonic `overflowCount` counter is exposed via `midiIn.diagnostics.overflowCount()` for consumer monitoring.
 
 **Rationale (Q4-a):**
 
@@ -161,6 +168,13 @@ skeleton — populated as questions resolve
 - *`emitIf` only, no plain `emit`*: every meaningful MIDI emission is conditional (boundary, state transition, input trigger). A plain `emit(event)` invocation in `process` would silently fire every sample (44.1 kHz) and saturate the ringbuffer — a footgun whose only "correct" form is `if (cond) emit(event)` anyway. Forcing the conditional into the primitive's shape eliminates the footgun structurally.
 - *`atSample` always required*: unworklet's MIDI integration exists to deliver sample-accurate events. Handlers without `atSample` discard the property the framework was built around. Carrying it unconditionally costs nothing (one number in the shape) and keeps the API uniform.
 
+**Rationale (Q4-c):**
+
+- *Capacity 256 default*: covers the vast majority of MIDI workloads with comfortable headroom against bursts. Override is one keyword for users with dense streams. The "user doesn't have to think" default is the unworklet stance.
+- *`atSample` block-local*: "this event fires N samples into the current block" is the question DSP code naturally asks. Global timestamps require subtracting the block start as an extra step. Block-local maps directly to per-sample dispatch logic.
+- *Sysex full support in v0.1.0*: sysex is part of the MIDI standard (device controllers, GM/GS/XG extensions, Universal Real Time messages). m4l/VST-equivalent devices commonly need it. Implementation cost is moderate (variable-length content buffer + length prefix); deferring would create a structural hole in the v0.1 surface.
+- *Drop-oldest + diagnostics counter*: drop-oldest and drop-newest both break MIDI semantics (phantom note off vs hanging note); neither is "correct". The actionable design is to make overflow detectable so consumers can resize capacity or fix the upstream burst. Drop-oldest is the natural ring-buffer behavior and the simplest to implement.
+
 **Rejected (Q4-a):**
 
 - *Input only (no MIDI emission)* — would structurally exclude arpeggiator / sequencer / MIDI-effect use cases, which are part of the "m4l/VST-equivalent web devices" scope (see `project_unworklet-scope-framing.md`).
@@ -174,3 +188,13 @@ skeleton — populated as questions resolve
 - *Discriminated-union-only wire (no raw bytes underneath)* — bloats transport, especially on the postMessage degradation path, and diverges from the MIDI byte format that downstream consumers (Web MIDI Output, network bridges) expect.
 - *Allowing plain `emit(event)`* — silent footgun. Authors who forget the `if (cond)` wrap saturate the ringbuffer at sample rate. `emitIf` makes the conditional shape mandatory.
 - *`atSample` as opt-in* — introduces an API split for a property that costs nothing to include unconditionally and is fundamental to the framework's stated goal (sample-accurate ingestion).
+
+**Rejected (Q4-c):**
+
+- *Computed-default capacity (e.g. `blockSize × 8`)* (Q4-c-i) — the user can't easily reason about the resulting size, and the formula provides no benefit over a clear constant. A simple `256` default with override is more transparent.
+- *Required explicit capacity* (Q4-c-i) — adds friction to the common case where the default is fine. Users who don't need to tune capacity shouldn't have to type a number.
+- *AudioContext-global `atSample`* (Q4-c-ii) — forces every per-sample handler to compute a block-relative offset to do anything useful. The natural DSP-side question is "how far into the current block?", which block-local answers directly.
+- *Sysex deferred to v0.1.x* (Q4-c-iii) — leaves a structural hole in the v0.1 surface for m4l/VST-equivalent devices. Sysex is part of MIDI; treating it as optional damages coverage.
+- *Sysex variant removed entirely from `MidiEvent`* (Q4-c-iii) — unworklet's scope explicitly covers MIDI-driven web devices; dropping a standard MIDI event class is a feature reduction, not mental-model unification.
+- *Drop-newest on overflow* (Q4-c-iv) — equally broken (hanging notes from dropped noteOff). Choosing it over drop-oldest does not improve safety; only detection (the counter) does.
+- *Halt or throw on overflow* (Q4-c-iv) — would crash the audio thread on a recoverable condition. The realtime-safe behavior is to drop and report.

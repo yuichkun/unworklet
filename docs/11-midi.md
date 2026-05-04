@@ -157,27 +157,65 @@ For processors that declared `midiOutput()`, the main thread receives emitted ev
 
 ## 4. Wire format
 
-### 4.1 Encoding
+### 4.1 Slot encoding (fixed-size events)
 
 Both inbound and outbound MIDI events travel on the wire as **raw MIDI status bytes**, not the structured `MidiEvent` union seen by authors. The compiler generates serializers (TS → bytes) and deserializers (bytes → TS) so the wire stays MIDI-standard while the user-facing API stays type-safe.
 
-Per-event slot (fixed size):
+Each event occupies one fixed-size **slot** in the ring buffer. Slot layout (8 bytes):
 
 ```text
 | status (u8) | data1 (u8) | data2 (u8) | _pad (u8) | atSample (u32) |
-                                                      (= 8 bytes per slot)
+                                                      = 8 bytes per slot
 ```
 
-Variable-length events (sysex) use a separate small ringbuffer and a status-byte indicator in the main slot — exact layout settled with Q4-c.
+Pointers into the ring buffer are slot-indexed (`head` and `tail` increment by 1 per event), not byte-indexed — slot-boundary misreads are structurally impossible.
 
-### 4.2 Transport
+### 4.2 `atSample` semantics
 
-- **SAB available** (default): events flow through a `SharedArrayBuffer`-backed ringbuffer with `Atomics`-based head / tail pointers. Sample-accurate timing is preserved end-to-end.
+`atSample` is the sample offset **within the current render quantum** (block-local) where the event fires. Valid values are 0 through `renderQuantum - 1`; the field is stored as `u32` for headroom against future block-size variation.
+
+A handler subscribed via `midi.onEvent` fires at the sample identified by `atSample`, not at the block boundary — sample accuracy is preserved end-to-end. A consumer that needs an absolute timestamp can derive it from `audioContext.currentTime + atSample / sampleRate`.
+
+The compiler converts the `atTime` parameter passed to `unworkletNode.midi.send(event, atTime)` into the corresponding block-local `atSample` value at injection time.
+
+### 4.3 Sysex (variable-length events)
+
+Sysex events have a `data: Uint8Array` field of arbitrary length and cannot fit into a fixed 8-byte slot. They are stored in a **separate variable-length content buffer** alongside the main ring buffer. The main slot for a sysex event holds the sysex status byte plus an index into the content buffer:
+
+```text
+sysex slot in main ring buffer:
+| status = 0xF0 | _pad | _pad | _pad | sysexIndex (u32) |
+
+sysex content buffer (separate, variable-length):
+| length (u32) | data (length bytes) | length (u32) | data (length bytes) | ...
+```
+
+v0.1.0 ships full sysex support. The sysex content buffer has its own capacity and overflow handling consistent with §4.5.
+
+### 4.4 Transport
+
+- **SAB available** (default): events flow through a `SharedArrayBuffer`-backed ring buffer with `Atomics`-based head / tail pointers. Sample-accurate timing is preserved end-to-end.
 - **SAB unavailable** (no COOP/COEP headers): falls back to `postMessage` at render-quantum granularity. Sample-accurate timing **within a block** is preserved on the worklet side; main-side delivery picks up block-boundary latency. Full degradation policy lives in Q11.
 
-### 4.3 Capacity and overflow
+### 4.5 Capacity and overflow
 
-Inbound and outbound ringbuffers have fixed-size capacities chosen at processor instantiation (declared via `midiInput({ capacity })` / `midiOutput({ capacity })`; default value settled with Q4-c). Overflow surfaces through the messaging error contract (settled with Q22) — events are dropped, not silently buffered, and a counter-based diagnostic is exposed for runtime visibility.
+Inbound and outbound ring buffers have fixed-size capacities chosen at processor instantiation:
+
+```typescript
+const midiIn = midiInput();                            // capacity: 256 (default)
+const heavy  = midiInput({ capacity: 1024 });          // override
+```
+
+256 slots × 8 bytes = 2 KB; 1024 slots = 8 KB. SAB usage is small either way. The default of 256 covers the vast majority of MIDI workloads; override is available for dense MIDI / sequencer / network-driven loads.
+
+When the producer fills the buffer (head catches tail), overflow handling is **drop-oldest + diagnostics counter**:
+
+- The oldest event in the buffer is overwritten by the new write.
+- A monotonic `overflowCount` counter, exposed as `midiIn.diagnostics.overflowCount()`, increments on each drop.
+
+Drop-oldest and drop-newest both break MIDI semantics in different ways (phantom note off vs hanging note); since neither is correct, what matters is **detection**, not the choice. Consumers monitor the counter via the `publish` phase and surface alerts to the UI when it advances.
+
+Overflow is anti-pattern in normal use — capacity should be sized to the workload. The diagnostics counter exists as a defensive measure for unusual conditions (file-load bursts, audio-thread starvation, etc.).
 
 ## 5. MIDI clock and transport
 
