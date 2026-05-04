@@ -75,7 +75,7 @@ type MidiEvent =
   | { type: 'sysex';           data: Uint8Array;                                   atSample: number };
 ```
 
-The exact set of variants and their fields is closed at v0.1.0. New variants (e.g. MIDI 2.0 high-resolution events) can be added additively in v0.1.x.
+The exact set of variants and their fields is closed at v1.0.0. New variants (e.g. MIDI 2.0 high-resolution events) can be added additively in v1.x.0.
 
 ### 2.3 `atSample` is always present
 
@@ -190,7 +190,7 @@ sysex content buffer (separate, variable-length):
 | length (u32) | data (length bytes) | length (u32) | data (length bytes) | ...
 ```
 
-v0.1.0 ships full sysex support. The sysex content buffer has its own capacity and overflow handling consistent with §4.5.
+v1.0.0 ships full sysex support. The sysex content buffer has its own capacity and overflow handling consistent with §4.5.
 
 ### 4.4 Transport
 

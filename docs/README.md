@@ -1,6 +1,6 @@
 # unworklet — implementation specification
 
-This `docs/` tree is the authoritative specification for the v0.1 implementation. It is **disposable**: it exists to align humans and AI implementers during v0.1 build-out and is not maintained after.
+This `docs/` tree is the authoritative specification for the v1.0.0 implementation. It is **disposable**: it exists to align humans and AI implementers during v1.0.0 build-out and is not maintained after.
 
 End-user documentation (tutorials, recipe guides, library reference) is **out of scope** for this tree and will live elsewhere.
 
@@ -34,7 +34,7 @@ If your work touches an area not covered here, **stop and surface the gap** to t
 Independent and can be picked up at any time:
 
 * `09-repo-structure.md` — monorepo tool, package layout, license, npm scope, TS version policy
-* `10-roadmap.md` — v0.1 acceptance criteria and beyond
+* `10-roadmap.md` — v1.0.0 acceptance criteria and beyond
 * `decisions-log.md` — cross-cutting reference
 
 ## Status

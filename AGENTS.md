@@ -1,10 +1,10 @@
 # AGENTS.md
 
-Guidance for AI agents implementing unworklet v0.1.
+Guidance for AI agents implementing unworklet v1.0.0.
 
 ## What this repository is
 
-A from-scratch implementation of `unworklet` — a TypeScript-first framework for declarative Audio Worklet DSP, compiled to WebAssembly. The v0.1 implementation is being driven by AI agents working in parallel against the specifications in `docs/`.
+A from-scratch implementation of `unworklet` — a TypeScript-first framework for declarative Audio Worklet DSP, compiled to WebAssembly. The v1.0.0 implementation is being driven by AI agents working in parallel against the specifications in `docs/`.
 
 ## Source of truth
 

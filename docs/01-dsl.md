@@ -21,9 +21,67 @@ skeleton
 
 ## 3. State, buffer, param declarations
 
-<!-- state.f32 / state.f64 / state.i32 / state.i64 / state.bool: load() / store(node);
-     buffer.* with size + name; access via readBuffer / writeBuffer / readBufferInterpolated;
-     param({ default, min, max, automationRate, unit? }): .at(i) access. -->
+The three primitive declaration kinds — scalar `state`, fixed-size `buffer`, and `AudioParam`-backed `param` — are the only places where new memory slots enter the graph. Each declaration accepts an optional `name` field for snapshot identity (see §8.1) and an optional `snapshot` field controlling persistence behavior (see §8.2).
+
+### 3.1 `state` — scalar slots
+
+```typescript
+const z1   = state.f32(0);                                    // f32 scalar, snapshot 'persistent' by default
+const acc  = state.f64(0, { name: 'accumulator' });           // explicit identity for snapshot()
+const tmp  = state.f32(0, { snapshot: 'transient' });         // excluded from all snapshot profiles
+const fl   = state.bool(false);
+const idx  = state.i32(0);
+```
+
+`state.<type>(initial, options?)` declares a scalar slot. `load()` reads the current value; `store(node)` writes a `Node<T>` value back. The slot is inlined into the WASM linear memory at compile time.
+
+Options:
+
+- **`name?: string`** — slot identity. Required when the parent processor calls `snapshot()` (graph-capture-time error otherwise). Used as the slot key in snapshot blobs.
+- **`snapshot?: 'persistent' | 'transient' | { [profile: string]: 'persistent' | 'transient' }`** — snapshot inclusion. Default is `'persistent'`. See §8.2.
+
+### 3.2 `buffer` — fixed-size arrays
+
+```typescript
+const ring = buffer.f32({ size: 44100, name: 'delayLine' });                          // default 'transient'
+const wave = buffer.f32({ size: 256,   name: 'wavetable', snapshot: 'persistent' });  // explicit include
+```
+
+Access goes through dedicated primitives (`readBuffer`, `writeBuffer`, `readBufferInterpolated`); bounds and interpolation behavior are explicit at each call site.
+
+Options:
+
+- **`size: number`** — element count, fixed at compile time. The buffer occupies `size × sizeof(type)` bytes in linear memory.
+- **`name?: string`** — slot identity (same rules as `state`).
+- **`snapshot?: 'persistent' | 'transient' | { ... }`** — default is `'transient'`. Most buffers are accumulation regions (delay lines, scratch buffers) whose contents lose meaning across preset boundaries; include explicitly when the contents *are* the slot's identity (wavetables, lookup tables).
+
+### 3.3 `param` — AudioParam-backed
+
+```typescript
+const cutoff = param({
+  default: 1000, min: 20, max: 20000,
+  automationRate: 'a-rate',
+  name: 'cutoff',
+});
+const route = param({
+  default: 0, min: 0, max: 7,
+  automationRate: 'k-rate',
+  name: 'route',
+  snapshot: 'transient',         // excluded — UI-only routing flag
+});
+```
+
+`param()` declares a slot bound to the standard Web Audio `AudioParam`. `.at(i)` reads the value at sample-offset `i` within the current render quantum (uniform for k-rate length-1 and a-rate length-128 arrays).
+
+Options:
+
+- **`default`, `min`, `max`** — initial value and clamp range.
+- **`automationRate: 'a-rate' | 'k-rate'`** — Web Audio automation rate.
+- **`unit?: string`** — display hint passed through to `AudioParamDescriptor` metadata.
+- **`name?: string`** — slot identity.
+- **`snapshot?: 'persistent' | 'transient' | { ... }`** — default is `'persistent'` (param values are typically the user-controlled state of a preset). Snapshots include only the **current value**; AudioParam automation queues (`setValueAtTime`, `linearRampToValueAtTime`, etc.) are not preserved.
+
+Authoritative rationale for the snapshot defaults: `decisions-log.md` Q5 (Q5-b).
 
 ## 4. Messages and events declarations
 
@@ -278,9 +336,9 @@ import { defineProcessor, state, add, mul } from '@unworklet/core';
 import { vec4, splat, addVec, mulVec, loadVec, storeVec, lane } from '@unworklet/core/simd';
 ```
 
-### 7.2 v0.1.0 surface (Minimal MVP)
+### 7.2 v1.0.0 surface (Minimal MVP)
 
-The v0.1.0 SIMD surface is the smallest set of primitives that lets DSP authors hand-vectorize hot paths (4-channel mixers, 4-tap filters, parallel-lane oscillators). Subsequent v0.1.x releases extend the surface additively (see Q14, `10-roadmap.md`).
+The v1.0.0 SIMD surface is the smallest set of primitives that lets DSP authors hand-vectorize hot paths (4-channel mixers, 4-tap filters, parallel-lane oscillators). Subsequent v1.x.0 releases extend the surface additively (see Q14, `10-roadmap.md`).
 
 #### Vector types
 
@@ -304,9 +362,9 @@ The v0.1.0 SIMD surface is the smallest set of primitives that lets DSP authors 
 - `loadVec(buffer: Buffer<'f32'>, offset: Node<'i32'>): Node<'f32x4'>` — load four contiguous f32 lanes from a buffer (offset in element units).
 - `storeVec(buffer: Buffer<'f32'>, offset: Node<'i32'>, value: Node<'f32x4'>): void` — store four contiguous f32 lanes into a buffer.
 
-### 7.3 Beyond v0.1.0 (deferred to v0.1.x, additive)
+### 7.3 Beyond v1.0.0 (deferred to v1.x.0, additive)
 
-Adding any of the following does not change the v0.1.0 surface:
+Adding any of the following does not change the v1.0.0 surface:
 
 - `Node<'f64x2'>` and `Node<'i32x4'>` types and their arithmetic.
 - Boolean / mask vectors and `selectVec`.
@@ -335,3 +393,123 @@ function gainVec(x: Node<'f32x4'>, g: Node<'f32'>): Node<'f32x4'> {
 ```
 
 The duplication is intentional: it keeps the scalar API surface untouched and signals at the call site that the vec version is a deliberate choice.
+
+## 8. Snapshot / restore declaration
+
+Processors that need preset save/load, session restore, or AB compare declare snapshot/restore behavior in two places: per-slot `snapshot` flags (§3) and an optional `migrations` array on the processor itself.
+
+### 8.1 Slot identity rules
+
+Every slot reachable from a `defineProcessor` body that calls `snapshot()` must carry a unique `name`. Names are used as keys in snapshot blobs. Subgraph instances must also carry a `name` option:
+
+```typescript
+const onepole = defineSubgraph((input: Node<'f32'>, coef: Node<'f32'>) => {
+  const z = state.f32(0, { name: 'z' });
+  return { process: () => { /* ... */ } };
+});
+
+const synth = defineProcessor((ctx) => {
+  const lpfL = onepole(inputL, cutoff, { name: 'lpfL' });   // slot path 'lpfL/z'
+  const lpfR = onepole(inputR, cutoff, { name: 'lpfR' });   // slot path 'lpfR/z'
+  // ...
+});
+```
+
+Slot path is the slash-joined chain from the root processor (`'lpfL/z'`, `'fxBus/reverb/tail'`, etc.). Graph capture validates uniqueness; missing `name` on any reachable slot or subgraph instance is a graph-capture-time error.
+
+### 8.2 Snapshot profiles
+
+The `snapshot` option on each declaration is one of:
+
+- `'persistent'` — included in every profile; included in `snapshot()` (no profile arg).
+- `'transient'` — excluded from every profile; excluded from `snapshot()` (no profile arg).
+- `{ [profile: string]: 'persistent' | 'transient' }` — per-profile flag; included in `snapshot({ profile })` only when that profile maps to `'persistent'`. `snapshot()` (no arg) includes the slot if **any** profile maps to `'persistent'`.
+
+Profile names are user-defined — `'preset'` and `'session'` are conventional examples but the framework reserves no names. The set of profiles a processor supports is the union of profile keys appearing across all declarations, computed at graph-capture time.
+
+### 8.3 `migrations` — declarative schema upgrades
+
+Schema changes between versions of a published processor (slot rename, type widening, buffer resize, profile rename, etc.) are handled by a chain of `migrations`. The framework walks the chain to bridge the blob's source schema to the current schema; the developer writes adjacent `from → to` steps only.
+
+```typescript
+const synth = defineProcessor((ctx) => {
+  // ...declarations...
+
+  migrations([
+    {
+      from: 'a3f2c1d0...',         // schema hash before this migration
+      to:   'b8c14fe2...',         // schema hash after this migration
+      migrate: (oldBlob, helpers) => {
+        // rename: 'lpfZ1' → 'lpfPoleZ1'
+        const v = helpers.parseSlot(oldBlob, 'lpfZ1', 'f32');
+        if (v !== undefined) helpers.writeSlot('lpfPoleZ1', 'f32', v);
+      },
+    },
+    {
+      from: 'b8c14fe2...',
+      to:   'd7e3a991...',
+      migrate: (oldBlob, helpers) => {
+        // resize delay buffer 44100 → 88200, copy old content into prefix
+        const old = helpers.parseBuffer(oldBlob, 'delayLine', 'f32');
+        const fresh = new Float32Array(88200);
+        if (old) fresh.set(old.subarray(0, Math.min(old.length, fresh.length)));
+        helpers.writeBuffer('delayLine', 'f32', fresh);
+      },
+    },
+  ]);
+
+  return { process: () => { /* ... */ } };
+});
+```
+
+Each entry's `from` and `to` are schema hashes emitted by `unworklet build` into `dist/schema-hash.json` (see `07-tooling.md`). The framework constructs a directed graph from the entries and finds the path `blob.schemaHash → currentSchemaHash`; entries are applied in order, with each step's output hash verified against its declared `to`.
+
+#### 8.3.1 `helpers` API
+
+```typescript
+type MigrationHelpers = {
+  // Read from old blob.
+  parseSlot:   <T extends ScalarType>(blob: Uint8Array, name: string, type: T) => ScalarOf<T> | undefined;
+  parseBuffer: <T extends ScalarType>(blob: Uint8Array, name: string, type: T) => TypedArrayOf<T> | undefined;
+  parseParam:  (blob: Uint8Array, name: string) => number | undefined;
+
+  // Profile-scoped read (used when migrating across profile renames).
+  parseSlotInProfile: <T extends ScalarType>(blob: Uint8Array, name: string, type: T, profile: string) => ScalarOf<T> | undefined;
+
+  // Write into the migration's output blob (= new schema's slot layout).
+  writeSlot:   <T extends ScalarType>(name: string, type: T, value: ScalarOf<T>) => void;
+  writeBuffer: <T extends ScalarType>(name: string, type: T, data: TypedArrayOf<T>) => void;
+  writeParam:  (name: string, value: number) => void;
+
+  // Profile-scoped write.
+  writeSlotInProfile: <T extends ScalarType>(name: string, type: T, value: ScalarOf<T>, profile: string) => void;
+
+  // Metadata about the input blob.
+  oldSchemaHash:  string;
+  oldProfileName: string | null;
+};
+```
+
+Slots not written by `migrate` are auto-carried from the old blob to the new blob whenever a slot of the same name and compatible type exists in the new schema. **Most migration entries are short** — only the slots that actually change need explicit handling.
+
+#### 8.3.2 Compile-time validation
+
+The migration array is validated at build time:
+
+- `from` / `to` hash format (lower-case hex, fixed length).
+- No duplicate `from` values; no cycles; no self-loops.
+- The current schema hash must be reachable from at least one entry's `from` chain.
+
+If the current schema is unreachable (i.e. the developer changed the schema but did not write a migration), the build emits a **warning by default** — name-match partial restore (§8.3.3) covers many cases without explicit migration. Pass `{ strict: true }` to `migrations()` to elevate this to an error.
+
+#### 8.3.3 Restore-time fallback
+
+When `restore(blob)` runs:
+
+1. If the blob's schema hash matches the current hash, slots are written back directly.
+2. If not, the framework searches the migration graph for a path `blob.schemaHash → currentSchemaHash`. If found, migrations are applied in order with hash verification at each step.
+3. If no migration path exists (or a step's hash check fails), the framework falls back to **name-match partial restore**: slots that share name and compatible type with the new schema are written back; the rest are reset to declaration defaults.
+
+The result of `restore(blob)` reports `{ restored, skipped, missing }` so the consumer can surface "preset partially loaded" UX (see `05-client.md` §2.6 / §6).
+
+Authoritative rationale and rejected alternatives: see `decisions-log.md` Q5.
