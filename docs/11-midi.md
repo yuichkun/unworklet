@@ -90,6 +90,36 @@ midiIn.onEvent('noteOn', ({ note, atSample }) => {
 
 Concurrent events at the same sample offset are processed in arrival order on the wire.
 
+`atSample` is a `Node<'i32'>` in the same dimension as the `i` parameter of a `forSample` callback (see `01-dsl.md` §10). In sugar-form processors, the `atSample` value can be ignored — the handler body runs at the firing sample implicitly, and sugar primitives (`audioIn.read(c)`, `param()`, etc.) inside the handler bind to that sample. In explicit-form processors that use `forSample`, `atSample` can be compared against `i` for sample-accurate trigger:
+
+```typescript
+defineProcessor((ctx) => {
+  const midiIn = midiInput();
+  const noteState = state.i32(-1, { name: 'note' });
+  const trigOffset = state.i32(-1, { name: 'trig' });
+  // ...
+
+  return {
+    process: () => {
+      // Handler captures noteOn into state slots (sugar form is fine here —
+      // the handler body runs at the firing sample, no `i` is needed).
+      midiIn.onEvent('noteOn', ({ note, atSample }) => {
+        noteState.store(note);
+        trigOffset.store(atSample);
+      });
+
+      // Per-sample iteration triggers the envelope at sample-offset i == trig.
+      forSample((i) => {
+        const fire = eq(i, trigOffset.load());
+        // ... use `fire: Node<'bool'>` to gate the envelope start ...
+      });
+    },
+  };
+});
+```
+
+The `atSample` is in the surrounding render quantum's coordinate system; consumers needing absolute time derive it as `audioContext.currentTime + atSample / sampleRate` on the main thread.
+
 ### 2.4 Outbound: emitting MIDI events (worklet → main)
 
 `midiOutput()` returns a handle whose only emission primitive is `emitIf(condition, event)`. There is no plain `emit(event)` — every emission is conditional, by design (see `decisions-log.md` Q4-b for the reasoning).
@@ -113,6 +143,38 @@ const drumSequencer = defineProcessor((ctx) => {
 ```
 
 `emitIf(cond, event)` compiles to a graph node: only on samples where `cond` evaluates true does the event get pushed into the outbound ringbuffer. "Emit only at boundaries / state transitions" is structurally enforced — there is no path to accidentally enqueue events every sample.
+
+The `atSample` field of the emitted event is a `Node<'i32'>` (or a compile-time-constant integer literal) in the same dimension as the surrounding iteration's sample-offset. Common patterns:
+
+- *Constant offset*: `atSample: 0` emits at the start of the render quantum (legacy / non-sample-accurate consumers).
+- *Current sample*: in an explicit-form processor, pass the surrounding `forSample` callback's `i` directly: `atSample: i`. The emitted event then carries the exact sample at which the conditional fired.
+- *State-driven offset*: read a previously-stored sample-offset from a `state.i32` slot.
+
+```typescript
+defineProcessor((ctx) => {
+  const midiOut = midiOutput();
+  const stepCounter = state.i32(0, { name: 'stepCounter' });
+
+  return {
+    process: () => {
+      forSample((i) => {
+        const c       = stepCounter.load();
+        const crossed = eq(c, /* threshold */);
+        midiOut.emitIf(crossed, {
+          type: 'noteOn',
+          channel: 9,
+          note: 60,
+          velocity: 100,
+          atSample: i,                                       // sample-accurate: emit at the firing sample
+        });
+        stepCounter.store(/* advance */);
+      });
+    },
+  };
+});
+```
+
+In sugar-form processors (no explicit `forSample`), `i` is not in scope; the natural sample-accurate equivalent stores the offset in a `state.i32` slot during the iteration and passes that slot's value to `atSample`.
 
 ## 3. Main-thread integration
 

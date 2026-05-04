@@ -33,9 +33,89 @@ The framework is **runtime-agnostic.** unworklet targets the Web Audio API as sp
 
 ## 3. Vocabulary
 
-<!-- Authoritative definitions of terms used across all component docs:
-     Processor, Node<T>, primitive, state, buffer, param, message, event,
-     `process` phase, `publish` phase, block, render quantum, AudioWorkletGlobalScope. -->
+Authoritative definitions of terms used across all component docs.
+
+### Processor
+
+A unit declared by `defineProcessor((ctx) => { ... })` and compiled to a single AudioWorkletProcessor. Each instantiation has its own state and parameter values.
+
+### Subgraph
+
+A reusable, stateful DSP block declared by `defineSubgraph((args) => { ... })`. Instantiated zero or more times inside a parent `defineProcessor` or another `defineSubgraph`. See `01-dsl.md` §5.6.
+
+### `Node<T>`
+
+A handle to a value computed during per-sample iteration. `T` is one of `'f32'`, `'f64'`, `'i32'`, `'i64'`, `'bool'` for scalars; `'f32x4'` and (post-v1.0.0) other vector tags for SIMD. `Node<T>` is a branded type — JavaScript operators (`+`, `*`, `===`, `if (...)`, etc.) are TypeScript type errors against `Node<T>` operands, directing authors to unworklet primitives (`add`, `mul`, `eq`, `select`).
+
+### Primitive
+
+A function that takes `Node<T>` arguments (and possibly other compile-time constants) and returns a `Node<T>`. Examples: `add`, `mul`, `tanh`, `select`, `loadVec`. Primitives execute at *graph capture time* (build time), constructing AST nodes; they do not run per sample.
+
+### Declaration scope
+
+The body of `defineProcessor` and `defineSubgraph`, before the returned `process` lambda. The only place where new `state.*`, `buffer.*`, `param.*`, `audioInput`, `audioOutput`, and `defineSubgraph` instantiations are created. Each declaration registers a slot in the graph and a region in WASM linear memory.
+
+### Expression scope
+
+The body of `process` lambdas, `forSample` callbacks, L1 helper bodies, `defineSubgraph` `process` lambdas, and `everyNSamples` callbacks. Per-sample expressions live here. New declarations are forbidden in expression scope.
+
+### Process body
+
+The function returned in the `process` field of `defineProcessor`'s and `defineSubgraph`'s return record. Runs once at build time as a meta-program; constructs an AST DAG that the framework emits as the body of a per-sample loop in WebAssembly. The audio thread executes the WASM loop; user TypeScript is not re-entered per sample. See `decisions-log.md` Q22 (Q22-a).
+
+### Sample-offset (`i`)
+
+A `Node<'i32'>` that, at WASM-emission time, binds to the loop counter of a `forSample` (or implicit `forSample`) iteration. Inside a `forSample` callback, `i` is the callback parameter. The value spans `[0, renderQuantum - 1]`. Outside any `forSample`, no `i` variable is in scope — explicit-form primitives (`audioIn.at(c, i)`, `param.at(i)`, `audioOut.set(c, i, v)`) cannot be called there, enforced by standard TypeScript scoping.
+
+### Sugar form / explicit form
+
+Two interchangeable shapes for a process body:
+
+- **Sugar form** — the body uses per-sample primitives directly (`audioIn.read(c)`, `param()`, `audioOut.write([...])`) without writing `forSample` explicitly. The framework treats the body as a single implicit `forSample` over the whole render quantum.
+- **Explicit form** — the body uses one or more `forSample(...)` calls (or `forSample.byN(stride, ...)` for SIMD-stride iteration). Each call is a phase, executed in declared order.
+
+A body may mix the two (top-level direct primitives plus parallel `forSample` calls); the framework treats each contiguous run of top-level direct primitives as an implicit `forSample` phase, and runs all phases — implicit and explicit — in declared (source) order. Sugar primitives (`read`, `write`, `param()`) work in both contexts; explicit primitives (`at`, `set`, `param.at(i)`) require `i` from a `forSample` callback parameter.
+
+See `decisions-log.md` Q22 (Q22-aprime, Q22-b).
+
+### `forSample` / `forSample.byN`
+
+The per-sample loop primitive (see `01-dsl.md` §10). `forSample(callback)` runs `callback` for each sample of the current render quantum (stride 1). `forSample.byN(stride, callback)` runs `callback` once per `stride` samples (typical use: `stride = 4` for SIMD bulk operations paired with `loadVec` / `storeVec`).
+
+### `everyNSamples`
+
+The sub-rate computation primitive (see `01-dsl.md` §9). `everyNSamples(N, callback)` evaluates `callback` once during graph capture; the framework emits the resulting AST as a sub-block that runs once every `N` samples (counter-modulo gating). State slots updated inside the callback hold their value (zero-order hold) on intermediate samples.
+
+### Render quantum
+
+The block size of an Audio Worklet's `process` invocation. The current Web Audio specification fixes this at 128 samples; future spec revisions may change it. unworklet treats render quantum as a runtime constant, not a compile-time-baked literal — see `04-worklet-runtime.md` §3.
+
+### Block
+
+Synonym for "render quantum's worth of samples" — the unit of work for one Audio Worklet `process` callback invocation.
+
+### `state` / `buffer` / `param`
+
+Three declaration kinds for sample-position-independent slots:
+
+- **`state.<type>(initial, options?)`** — scalar slot. `load()` / `store(v)`. Persists across render quanta.
+- **`buffer.<type>({ size, name, ... })`** — fixed-size array. `readBuffer(buf, idx)` / `writeBuffer(buf, idx, v)` / `readBufferInterpolated(buf, pos)`. Lives in WASM linear memory.
+- **`param({ default, min, max, automationRate, ... })`** — bound to a Web Audio `AudioParam`. Sugar form: `param()` (callable). Explicit form: `param.at(i)`.
+
+See `01-dsl.md` §3.
+
+### `process` phase / `publish` phase
+
+Two execution phases of a processor:
+
+- **`process`** — runs every render quantum on the audio thread. Mapped to the compiled WASM. Hard realtime constraints apply (no allocation, no unbounded loops, no I/O).
+- **`publish`** — runs on a separate scheduler. Reads state, emits events. Compiled to plain JavaScript; not realtime-critical.
+
+See `01-dsl.md` §6.
+
+### `AudioWorkletGlobalScope`
+
+The global scope inside which an `AudioWorkletProcessor` instance executes. Hosts the WASM module, the marshalling glue, and the message / event queue endpoints.
 
 ## 4. Type system
 

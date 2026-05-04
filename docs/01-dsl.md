@@ -1,37 +1,59 @@
 # 01 — DSL (`@unworklet/core` + `@unworklet/dsp`)
 
-The surface the user authors against. Defines `defineProcessor`, primitives, declarations (`state`, `buffer`, `param`), and authoring patterns for reusable DSP blocks.
+The surface the user authors against. Defines `defineProcessor`, primitives, declarations (`state`, `buffer`, `param`), the `forSample` per-sample loop primitive, and authoring patterns for reusable DSP blocks.
 
 ## Status
 
 skeleton
 
-## 1. `defineProcessor` and I/O declarations
+## 1. `defineProcessor`, the process body, and I/O declarations
 
-`defineProcessor` is the entry point. The body is a single lambda: declarations at the top, a `process` lambda inside the returned record. Audio inputs and outputs are declared explicitly via `audioInput()` / `audioOutput()` helpers — the same declaration-scope pattern as `state` / `buffer` / `param`.
+`defineProcessor` is the entry point. The body is a single lambda that runs once at build time (see `00-foundations.md` §3 for the meta-program semantics) — declarations come first; a `process` lambda is returned in the result record.
+
+A `process` body has two interchangeable shapes:
+
+- **Sugar form**: the body writes per-sample primitives directly (`audioIn.read(c)`, `param()`, `audioOut.write([...])`). The framework treats the entire body as a single implicit per-sample loop. Suitable for single-phase per-sample plugins (gain, oscillator, simple filter).
+- **Explicit form**: the body uses one or more `forSample(...)` calls (see §10). Each call is a phase; multi-phase processors (input-shaping → bulk SIMD → output-shaping) and SIMD-stride loops use this form. Inside the callback, `i` binds to the loop counter, and explicit-form primitives (`audioIn.at(c, i)`, `param.at(i)`, `audioOut.set(c, i, v)`) take the sample offset as a `Node<'i32'>`.
+
+The two forms can coexist in one body (top-level sugar primitives plus parallel `forSample` calls); the framework wraps top-level direct primitives in an implicit `forSample` and runs all phases in declared order. Mental-model coherence is a docs concern, not a framework constraint — see `decisions-log.md` Q22.
 
 ```typescript
+// Sugar form — single-phase per-sample.
 const splitter = defineProcessor((ctx) => {
-  // Declaration scope — audio I/O, state, params.
-  const main = audioInput({ channels: 2, name: 'main' });
-  const sc   = audioInput({ channels: 1, name: 'sidechain' });
-
-  const low  = audioOutput({ channels: 2, name: 'low' });
-  const mid  = audioOutput({ channels: 2, name: 'mid' });
-  const high = audioOutput({ channels: 2, name: 'high' });
-
-  // ... state / param declarations ...
+  const main = audioInput ({ channels: 2, name: 'main' });
+  const out  = audioOutput({ channels: 2, name: 'main' });
+  const gain = param({ default: 1.0, min: 0.0, max: 4.0, automationRate: 'a-rate', name: 'gain' });
 
   return {
     process: () => {
-      // Expression scope — per-sample DSP.
-      const l   = main.read(0);
-      const r   = main.read(1);
-      const scv = sc.read(0);
-      // ... 3-band split with sidechain ducking ...
-      low.write([lowL, lowR]);
-      mid.write([midL, midR]);
-      high.write([highL, highR]);
+      out.write([
+        mul(main.read(0), gain()),
+        mul(main.read(1), gain()),
+      ]);
+    },
+  };
+});
+
+// Explicit form — multi-phase, with `forSample`.
+const multibandSplit = defineProcessor((ctx) => {
+  const main = audioInput ({ channels: 2, name: 'main' });
+  const sc   = audioInput ({ channels: 1, name: 'sidechain' });
+  const low  = audioOutput({ channels: 2, name: 'low' });
+  const mid  = audioOutput({ channels: 2, name: 'mid' });
+  const high = audioOutput({ channels: 2, name: 'high' });
+  // ...declarations elided for brevity...
+
+  return {
+    process: () => {
+      forSample((i) => {
+        const l   = main.at(0, i);
+        const r   = main.at(1, i);
+        const scv = sc.at(0, i);
+        // ... 3-band split with sidechain ducking ...
+        low .set(0, i, lowL );  low .set(1, i, lowR );
+        mid .set(0, i, midL );  mid .set(1, i, midR );
+        high.set(0, i, highL);  high.set(1, i, highR);
+      });
     },
   };
 });
@@ -39,7 +61,7 @@ const splitter = defineProcessor((ctx) => {
 
 ### 1.1 `audioInput` and `audioOutput`
 
-Both helpers live in declaration scope only. Calling them inside a `process` lambda or any other expression scope is a graph-capture-time error.
+Both helpers live in declaration scope only. Calling them inside a `process` body, a `forSample` callback, or any other expression scope is a graph-capture-time error.
 
 ```typescript
 audioInput <C extends number>(options: { channels: C, name: string }): AudioInputHandle<C>;
@@ -48,34 +70,86 @@ audioOutput<C extends number>(options: { channels: C, name: string }): AudioOutp
 
 Options:
 
-- **`channels: number`** — fixed channel count for that port, set at compile time. Maps directly to Web Audio's `outputChannelCount[i]` for outputs and is the input-side expectation for `read()`.
-- **`name: string`** — required. Used as the key in main-thread `node.inputs.<name>` / `node.outputs.<name>` access (see `05-client.md` §1) and as the slot identity for that I/O port. There is no default; explicit naming is uniform with state/buffer/param `name` and avoids index-based mental models in tooling and main-thread code.
+- **`channels: number`** — fixed channel count, set at compile time. Maps directly to Web Audio's `outputChannelCount[i]` for outputs and is the input-side expectation for the read primitives.
+- **`name: string`** — required. Used as the key in main-thread `node.inputs.<name>` / `node.outputs.<name>` access (see `05-client.md` §1) and as the slot identity for that I/O port. There is no default; explicit naming is uniform with `state` / `buffer` / `param` `name` and avoids index-based mental models in tooling and main-thread code.
 
-### 1.2 Reading from inputs
+The returned handles expose **both** sugar and explicit primitives; the same handle is usable from a sugar process body and from inside any `forSample` callback in an explicit body.
 
-`AudioInputHandle<C>.read(channelIndex)` returns a `Node<'f32'>` representing the current-sample value of that channel. The `channelIndex` argument is narrowed by TypeScript to the legal range for the declared channel count (`channels: 2` → `0 | 1`); out-of-range indices are TypeScript errors at the call site.
+### 1.2 Reading audio inputs
+
+`AudioInputHandle<C>` exposes two methods:
+
+```typescript
+type AudioInputHandle<C extends number> = {
+  read(c: ChannelIndex<C>):                   Node<'f32'>;  // sugar form
+  at  (c: ChannelIndex<C>, i: Node<'i32'>):   Node<'f32'>;  // explicit form
+  channels: C;
+  name:     string;
+};
+```
+
+`read(c)` returns the channel-`c` value at the **current sample** of the surrounding iteration (implicit or explicit `forSample`). `at(c, i)` returns the channel-`c` value at the sample-offset `i` within the current render quantum, where `i` must be a `Node<'i32'>` originating from a `forSample` callback parameter.
+
+The channel index `c` is narrowed by TypeScript to the legal range for the declared channel count (`channels: 2` → `0 | 1`); out-of-range indices are TypeScript errors at the call site.
 
 ```typescript
 const stereo = audioInput({ channels: 2, name: 'main' });
-const l = stereo.read(0);   // Node<'f32'>, channel 0
-const r = stereo.read(1);   // Node<'f32'>, channel 1
-const x = stereo.read(2);   // ❌ Type error: 2 is not assignable to 0 | 1
+
+// Sugar form
+const l = stereo.read(0);          // Node<'f32'>, channel 0 at current sample
+const r = stereo.read(1);          // Node<'f32'>, channel 1 at current sample
+
+// Explicit form (inside a forSample callback)
+forSample((i) => {
+  const lE = stereo.at(0, i);      // Node<'f32'>, channel 0 at sample-offset i
+  const rE = stereo.at(1, i);
+});
+
+const x = stereo.read(2);          // ❌ Type error: 2 is not assignable to 0 | 1
+const y = stereo.at(0, i);         // ❌ Type error if outside any forSample (i is undefined)
 ```
 
 The actual channel count of the connected source is normalized by Web Audio's standard up-mix / down-mix rules (`channelInterpretation`, `channelCountMode`) before the worklet sees it; the framework does not intervene in this layer.
 
-### 1.3 Writing to outputs
+### 1.3 Writing audio outputs
 
-`AudioOutputHandle<C>.write(values)` accepts a tuple of `Node<'f32'>` values whose length must equal the declared `channels`. Tuple-length mismatch is a TypeScript error at the call site.
+`AudioOutputHandle<C>` exposes two methods:
+
+```typescript
+type AudioOutputHandle<C extends number> = {
+  write(values: TupleOf<C, Node<'f32'>>):                              void;  // sugar form
+  set  (c: ChannelIndex<C>, i: Node<'i32'>, v: Node<'f32'>):           void;  // explicit form
+  channels: C;
+  name:     string;
+};
+```
+
+`write(values)` is the sugar form: it accepts a tuple of `Node<'f32'>` values whose length must equal the declared `channels`, and writes all channels at the current sample of the surrounding iteration. Tuple-length mismatch is a TypeScript error at the call site.
+
+`set(c, i, v)` is the explicit form: it writes a single channel at sample-offset `i`, where `i` originates from a `forSample` callback parameter. Both `c` and the value type are checked at compile time.
 
 ```typescript
 const stereoOut = audioOutput({ channels: 2, name: 'main' });
+
+// Sugar form
 stereoOut.write([leftNode, rightNode]);    // ✓
 stereoOut.write([leftNode]);               // ❌ Tuple length mismatch
 stereoOut.write([leftNode, r, extra]);     // ❌ Tuple length mismatch
+
+// Explicit form
+forSample((i) => {
+  stereoOut.set(0, i, leftNode);           // ✓
+  stereoOut.set(1, i, rightNode);          // ✓
+  stereoOut.set(2, i, extraNode);          // ❌ Type error: 2 not assignable to 0 | 1
+});
 ```
 
-`write()` must be called exactly once per `process` invocation for each declared output, on every code path. Missing writes (output never written) and duplicate writes (output written twice in the same `process`) are graph-capture-time errors with refactor-hint messages.
+Per declared output, exactly one of the following must happen on every code path within each phase:
+
+- *Sugar form:* `write(...)` is called once per process invocation.
+- *Explicit form:* either `set(c, i, v)` is called for every channel `c` of that output inside the relevant `forSample` callback, or the output is left unwritten by that phase (downstream phases or the implicit phase may write it).
+
+Missing writes (output never written by any phase) and duplicate writes (same channel × same sample-offset written twice) are graph-capture-time errors with refactor-hint messages.
 
 ### 1.4 Multiple inputs / outputs
 
@@ -94,7 +168,7 @@ const drumBus = defineProcessor((ctx) => {
 
 A processor must declare every audio port it uses. There is no implicit "default mono in / default mono out" generated when `audioInput` / `audioOutput` are absent — a processor with zero I/O declarations has zero audio I/O on the resulting AudioWorkletNode.
 
-This is intentional: a single declaration pattern across all processor sizes (minimal sine generator → multi-band splitter) keeps the mental model uniform with state/buffer/param. The few extra lines on the smallest example are paid back the moment the processor grows.
+This is intentional: a single declaration pattern across all processor sizes (minimal sine generator → multi-band splitter) keeps the mental model uniform with `state` / `buffer` / `param`. The few extra lines on the smallest example are paid back the moment the processor grows.
 
 ```typescript
 const sin440 = defineProcessor((ctx) => {
@@ -102,7 +176,7 @@ const sin440 = defineProcessor((ctx) => {
   const phase = state.f32(0, { name: 'phase' });
   return {
     process: () => {
-      const inc = 2 * Math.PI * 440 / ctx.sampleRate;
+      const inc = 2 * Math.PI * 440 / ctx.sampleRate;          // build-time JS arithmetic
       phase.store(add(phase.load(), inc));
       out.write([sin(phase.load())]);
     },
@@ -114,7 +188,7 @@ const sin440 = defineProcessor((ctx) => {
 
 The compiled `UnworkletNode<C>` exposes `node.inputs.<name>` and `node.outputs.<name>` typed accessors that wrap the underlying `AudioWorkletNode`'s indexed `connect()` calls. The raw `AudioWorkletNode` is always reachable as `node.node` for graph topologies the typed surface does not cover. See `05-client.md` §1 for the full main-thread surface.
 
-Authoritative rationale and rejected alternatives: see `decisions-log.md` Q6.
+Authoritative rationale and rejected alternatives: see `decisions-log.md` Q6 (declaration shape) and Q22 (sugar / explicit forms).
 
 ## 2. Primitive operators
 
@@ -122,7 +196,7 @@ Authoritative rationale and rejected alternatives: see `decisions-log.md` Q6.
      math (sin/cos/tan/tanh/exp/log/sqrt/abs/floor/ceil/frac/min/max/clamp),
      control (select), memory (load/store/readBuffer/writeBuffer/readBufferInterpolated),
      type conversions (f32/f64/i32/i64).
-     Q14 (math precision: default vs `/precise` vs `/table` import paths). Lands here. -->
+     Q17 (math precision: default vs `/precise` vs `/table` import paths). Lands here. -->
 
 ## 3. State, buffer, param declarations
 
@@ -140,6 +214,8 @@ const idx  = state.i32(0);
 
 `state.<type>(initial, options?)` declares a scalar slot. `load()` reads the current value; `store(node)` writes a `Node<T>` value back. The slot is inlined into the WASM linear memory at compile time.
 
+State is sample-position-independent: the `state` reference itself does not depend on the surrounding `forSample` form. `load()` returns the value as updated by the most recent `store()`; in a per-sample iteration, `store()` updates the slot for subsequent samples in the same render quantum and beyond.
+
 Options:
 
 - **`name?: string`** — slot identity. Required when the parent processor calls `snapshot()` (graph-capture-time error otherwise). Used as the slot key in snapshot blobs.
@@ -152,7 +228,7 @@ const ring = buffer.f32({ size: 44100, name: 'delayLine' });                    
 const wave = buffer.f32({ size: 256,   name: 'wavetable', snapshot: 'persistent' });  // explicit include
 ```
 
-Access goes through dedicated primitives (`readBuffer`, `writeBuffer`, `readBufferInterpolated`); bounds and interpolation behavior are explicit at each call site.
+Access goes through dedicated primitives (`readBuffer`, `writeBuffer`, `readBufferInterpolated`); bounds and interpolation behavior are explicit at each call site. The index argument is an explicit `Node<'i32'>` supplied by the user — typically a ring-buffer write head from a `state.i32` slot, not a sample-position counter.
 
 Options:
 
@@ -176,7 +252,21 @@ const route = param({
 });
 ```
 
-`param()` declares a slot bound to the standard Web Audio `AudioParam`. `.at(i)` reads the value at sample-offset `i` within the current render quantum (uniform for k-rate length-1 and a-rate length-128 arrays).
+`param()` declares a slot bound to the standard Web Audio `AudioParam`. Reading the current value of a parameter has two equivalent forms:
+
+```typescript
+// Sugar form — inside any process body or forSample callback
+const v = cutoff();              // Node<'f32'>, current-sample value
+
+// Explicit form — inside a forSample callback
+forSample((i) => {
+  const v = cutoff.at(i);        // Node<'f32'>, value at sample-offset i
+});
+```
+
+The callable form `param()` returns the param's value at the current sample of the surrounding iteration (implicit or explicit). The method form `param.at(i)` returns the value at sample-offset `i` within the current render quantum, where `i` originates from a `forSample` callback. The two are semantically identical inside `forSample` (`cutoff()` ≡ `cutoff.at(i)` where `i` is the surrounding callback parameter).
+
+Both forms are uniform across `automationRate`: for `'k-rate'`, the value is constant across the block; for `'a-rate'`, the value can vary per sample, and the framework returns the appropriate per-sample value.
 
 Options:
 
@@ -186,7 +276,7 @@ Options:
 - **`name?: string`** — slot identity.
 - **`snapshot?: 'persistent' | 'transient' | { ... }`** — default is `'persistent'` (param values are typically the user-controlled state of a preset). Snapshots include only the **current value**; AudioParam automation queues (`setValueAtTime`, `linearRampToValueAtTime`, etc.) are not preserved.
 
-Authoritative rationale for the snapshot defaults: `decisions-log.md` Q5 (Q5-b).
+Authoritative rationale for the snapshot defaults: `decisions-log.md` Q5 (Q5-b). Authoritative rationale for the sugar / explicit forms: `decisions-log.md` Q22 (Q22-b).
 
 ## 4. Messages and events declarations
 
@@ -211,7 +301,11 @@ function lerp(a: Node<'f32'>, b: Node<'f32'>, t: Node<'f32'>): Node<'f32'> {
 }
 ```
 
-Whether L1 helpers can also write to `state.*` references owned by the caller — and the typing rules for that — is settled in §5.5 (TBD, Q2-b).
+L1 helpers compose freely from both sugar-form and explicit-form contexts; helpers that only manipulate `Node<T>` values (no audio I/O / param access) are sample-position-agnostic and can be called from anywhere.
+
+Helpers that need to access audio I/O or param values from inside their own body (rather than receiving the values pre-extracted from the caller) should accept `i: Node<'i32'>` as a parameter and use the explicit form internally — see §5.5.2.
+
+Whether L1 helpers can also write to `state.*` references owned by the caller — and the typing rules for that — is settled in §5.5.
 
 ### 5.2 L2 — `defineSubgraph`
 
@@ -226,11 +320,13 @@ const onepole = defineSubgraph((input: Node<'f32'>, coef: Node<'f32'>) => {
 });
 ```
 
-Instantiation API, parameter declaration rules, and capture-time analysis are settled in §5.6 (TBD, Q2-c).
+Subgraph `process` lambdas have the same two-form availability as `defineProcessor` `process` lambdas: a sugar form (per-sample primitives directly in the body) and an explicit form (using `forSample`). A subgraph instantiation invoked from the parent's sugar context behaves as if its body ran inside the parent's implicit `forSample`; from inside an explicit `forSample` callback, the instantiation's per-sample work runs at the surrounding `i`.
+
+Instantiation API, parameter declaration rules, and capture-time analysis are settled in §5.6.
 
 ### 5.3 Why two layers, not one
 
-A single layer that auto-promotes to a subgraph based on the presence of `state.*` calls inside the function body was rejected. Implicit promotion blurs the responsibility boundary between graph capture (`03-compiler.md` §3) and TypeScript type inference: whether a callsite is "an inlined expression" or "an instance of a stateful block" would depend on what the function happened to call. Explicit separation gives the static analyzer a clean rule and gives users a clear mental model for what they are authoring.
+A single layer that auto-promotes to a subgraph based on the presence of `state.*` calls inside the function body was rejected. Implicit promotion blurs the responsibility boundary between graph capture (`03-compiler.md` §2) and TypeScript type inference: whether a call site is "an inlined expression" or "an instance of a stateful block" would depend on what the function happened to call. Explicit separation gives the static analyzer a clean rule and gives users a clear mental model for what they are authoring.
 
 ### 5.4 No L3
 
@@ -247,11 +343,11 @@ L1 helpers are pure TypeScript functions that compose `Node<T>` values into new 
 unworklet code lives in two graph-capture-time scopes:
 
 - **Declaration scope** — the body of `defineProcessor` and `defineSubgraph` directly. New `state.*`, `buffer.*`, `param.*` declarations live here. Each declaration registers a slot in the graph (and ultimately a region in WASM linear memory).
-- **Expression scope** — the body of `process` lambdas and L1 helpers. Per-sample expressions live here. Already-declared `State<T>` and similar handles can be `load`/`store`d, but **no new declarations** are allowed.
+- **Expression scope** — the body of `process` lambdas, `forSample` callbacks, and L1 helpers. Per-sample expressions live here. Already-declared `State<T>` and similar handles can be `load`/`store`d, but **no new declarations** are allowed.
 
 L1 helpers exist purely in expression scope.
 
-(Authoritative scope and graph-capture-model definitions land in `00-foundations.md` §3 Vocabulary — TBD.)
+(Authoritative scope and graph-capture-model definitions: `00-foundations.md` §3.)
 
 #### 5.5.2 Parameters
 
@@ -259,7 +355,8 @@ L1 helpers can receive:
 
 - `Node<T>` values (the most common case),
 - `State<T>` references owned by the caller, including their `load` / `store` methods,
-- `Param` references owned by the caller, including `param.at(...)`,
+- `Param` references owned by the caller, callable as `param()` for the sugar form or `param.at(i)` for the explicit form,
+- `Node<'i32'>` for sample-offset `i` when the helper itself uses explicit-form audio I/O / param primitives,
 - non-`Node` literals where statically appropriate (e.g. compile-time constants).
 
 The caller-owned `State<T>` form lets a parent processor own state and delegate per-sample logic to a shared helper:
@@ -273,6 +370,47 @@ function smoothFollow(
   const y = add(prev.load(), mul(alpha, sub(x, prev.load())));
   prev.store(y);
   return y;
+}
+```
+
+A helper that needs to access an `audioInput` or `param` directly (rather than receive the values already extracted by the caller) takes the sample offset as a parameter:
+
+```typescript
+function envelopeFollow(
+  src: AudioInputHandle<2>,
+  i:   Node<'i32'>,
+  prev: State<'f32'>,
+  alpha: Node<'f32'>,
+): Node<'f32'> {
+  const peak = max(abs(src.at(0, i)), abs(src.at(1, i)));
+  const y    = add(prev.load(), mul(alpha, sub(peak, prev.load())));
+  prev.store(y);
+  return y;
+}
+
+// Caller — explicit form
+forSample((i) => {
+  const env = envelopeFollow(main, i, prev, alpha);
+  // ...
+});
+```
+
+Helpers that take audio I/O / param references but **not** an `i` parameter should use the sugar form internally and are usable only from sugar-form callers (or from inside `forSample`, where the sugar primitives bind to the surrounding `i`):
+
+```typescript
+function envelopeFollowSugar(
+  src: AudioInputHandle<2>,
+  prev: State<'f32'>,
+  alpha: Node<'f32'>,
+): Node<'f32'> {
+  const peak = max(abs(src.read(0)), abs(src.read(1)));
+  // ...
+}
+
+// Caller — sugar form
+process: () => {
+  const env = envelopeFollowSugar(main, prev, alpha);
+  // ...
 }
 ```
 
@@ -308,18 +446,21 @@ Inside an L1 body, the following are **forbidden** and produce a graph-capture-t
 
 - New `state.*` / `buffer.*` / `param.*` declarations.
 - New `defineSubgraph(...)` declarations or instantiations of an existing `defineSubgraph` result.
+- New `audioInput` / `audioOutput` declarations.
 - `message` / `event` declarations.
 
 The following are **allowed**:
 
 - Primitive operators (`add`, `mul`, `tanh`, `select`, …).
 - `load` / `store` on `State<T>` references received as parameters.
-- `param.at(...)` on `Param` references received as parameters.
+- `param()` (sugar) or `param.at(i)` (explicit) on `Param` references received as parameters.
+- `audioIn.read(c)` / `audioIn.at(c, i)` / `audioOut.write([...])` / `audioOut.set(c, i, v)` on handles received as parameters.
 - Calls to other L1 helpers.
+- `forSample(...)` calls — though these are unusual in L1 helpers; the typical pattern is to let the caller manage iteration and pass `i` as a parameter when needed.
 
 #### 5.5.6 Error UX
 
-Violations are caught at compile time (during graph capture or static analysis — see `03-compiler.md` §3) and surfaced as build errors before the WASM is emitted, never at runtime. Error messages include a concrete refactor hint pointing at one of the legal patterns. Example:
+Violations are caught at compile time (during graph capture or static analysis — see `03-compiler.md` §2) and surfaced as build errors before the WASM is emitted, never at runtime. Error messages include a concrete refactor hint pointing at one of the legal patterns. Example:
 
 ```text
 error: L1 helper 'badHelper' cannot declare state.
@@ -329,7 +470,7 @@ error: L1 helper 'badHelper' cannot declare state.
   See docs/01-dsl.md §5.2 for the L1 vs L2 boundary.
 ```
 
-Detailed error-UX policy is settled in `03-compiler.md` §2 (Q22, TBD).
+Detailed error-UX policy (Q22-d) is open — see `03-compiler.md` §2.
 
 ### 5.6 L2 surface details
 
@@ -337,7 +478,7 @@ L2 subgraphs are reusable, stateful DSP blocks defined with `defineSubgraph`. Ea
 
 #### 5.6.1 Body structure (mirrors `defineProcessor`)
 
-A subgraph body has the same two-scope structure as `defineProcessor`: a declaration scope at the top and an expression scope inside a `process` lambda. The symmetry is intentional — L2 and root processors share one mental model.
+A subgraph body has the same two-scope structure as `defineProcessor`: a declaration scope at the top and an expression scope inside a `process` lambda. The symmetry is intentional — L2 and root processors share one mental model, and subgraph `process` lambdas accept the same sugar / explicit forms as root `process` lambdas.
 
 ```typescript
 const onepole = defineSubgraph((input: Node<'f32'>, coef: Node<'f32'>) => {
@@ -347,8 +488,8 @@ const onepole = defineSubgraph((input: Node<'f32'>, coef: Node<'f32'>) => {
 
   return {
     process: () => {
-      // ━━━ Expression scope ━━━
-      // Per-sample expression; evaluated each render quantum.
+      // ━━━ Expression scope (sugar form) ━━━
+      // Per-sample expression; body is interpreted as the implicit per-sample iteration of the call site.
       const y = add(z.load(), mul(coef, sub(input, z.load())));
       z.store(y);
       return y;
@@ -356,6 +497,8 @@ const onepole = defineSubgraph((input: Node<'f32'>, coef: Node<'f32'>) => {
   };
 });
 ```
+
+Subgraphs that need explicit-form internals (e.g. SIMD bulk inside the subgraph body) can use `forSample` in their `process` body the same way root processors do.
 
 #### 5.6.2 Instantiation syntax
 
@@ -381,7 +524,7 @@ The instantiation expression's type is inferred from the `process` return.
 
 #### 5.6.4 Where subgraphs can be instantiated
 
-`defineSubgraph` results may only be **instantiated in declaration scope** — the body of `defineProcessor` or another `defineSubgraph`, before its `process` lambda. Instantiation inside an expression scope (a `process` lambda or an L1 helper body) is forbidden.
+`defineSubgraph` results may only be **instantiated in declaration scope** — the body of `defineProcessor` or another `defineSubgraph`, before its `process` lambda. Instantiation inside an expression scope (a `process` lambda, a `forSample` callback, an L1 helper body) is forbidden.
 
 Each instantiation is a *declaration of an independent state slot*; placing it in declaration scope keeps graph structure predictable (the number of instances is statically determined at compile time) and prevents the misread that subgraphs are runtime-allocated.
 
@@ -389,13 +532,19 @@ Conditional output between configurations is expressed by instantiating both and
 
 ```typescript
 const myProcessor = defineProcessor((ctx) => {
-  const lpfA = onepole(ctx.inputs[0][0], coefA);  // instance #1
-  const lpfB = onepole(ctx.inputs[0][0], coefB);  // instance #2
-  const useA = param({ default: 1, min: 0, max: 1, automationRate: 'k-rate' });
+  const main = audioInput ({ channels: 1, name: 'main' });
+  const out  = audioOutput({ channels: 1, name: 'main' });
+  const useA = param({ default: 1, min: 0, max: 1, automationRate: 'k-rate', name: 'useA' });
+
+  // Two filter instances, each with independent state.
+  // (Subgraph argument shape — handle-passing vs Node-passing — is the subject of §5.6.2;
+  // this example assumes both instances consume the same audio source.)
+  const lpfA = onepole(main, coefA);  // instance #1
+  const lpfB = onepole(main, coefB);  // instance #2
 
   return {
     process: () => {
-      return select(useA.at(0), lpfA, lpfB);
+      out.write([select(useA(), lpfA, lpfB)]);
       // Both instances evaluate every sample; select chooses one.
     },
   };
@@ -407,22 +556,25 @@ const myProcessor = defineProcessor((ctx) => {
 Inside a subgraph body:
 
 - **Declaration scope** (top of the body, before `return { process }`) allows new `state.*` / `buffer.*` / `param.*` declarations and L2 instantiations of other subgraphs.
-- **Expression scope** (inside `process`) follows the same rules as L1 helpers (§5.5.5): no new declarations, no L2 instantiations; primitives and `load` / `store` on declared state are allowed.
+- **Expression scope** (inside `process`, including any nested `forSample`) follows the same rules as L1 helpers (§5.5.5): no new declarations, no L2 instantiations; primitives, `load` / `store`, sugar / explicit audio-I/O and param access are allowed.
 
 Violations are caught at graph-capture / static-analysis time with refactor-hint error messages, mirroring §5.5.6. Example:
 
 ```text
 error: defineSubgraph 'onepole' must be instantiated in declaration scope
-       (defineProcessor or defineSubgraph body), not inside a process lambda.
+       (defineProcessor or defineSubgraph body), not inside a process lambda or forSample callback.
   Move the call to the parent body, or refactor the helper as an L1 function
   if it does not need its own state.
 ```
 
 ## 6. The two phases
 
-<!-- `process(({ inputs, outputs, params, ctx })) => sample => ...` shape;
-     `publish(({ state, emit, every }))` shape;
-     scheduling and constraints of each. -->
+unworklet processors expose two execution phases:
+
+- **`process`** — runs every render quantum on the audio thread. The lambda is build-time-evaluated to capture an AST DAG; the framework emits the DAG as the body of the per-sample loop in WebAssembly. Hard realtime constraints apply (no allocation, no unbounded loops, no I/O). Authoritative shape and semantics: §1, §10, and `decisions-log.md` Q22.
+- **`publish`** — runs on a separate scheduler (e.g., every 33 ms). Reads `state` slots and emits events. Compiled to plain JavaScript; not realtime-critical.
+
+<!-- TODO: publish phase full surface (lambda shape, event emission API, scheduler config). -->
 
 ## 7. Opt-in SIMD
 
@@ -432,6 +584,7 @@ unworklet exposes WASM SIMD as a separate, opt-in surface via the import path `@
 
 - **Opt-in**: importing `@unworklet/core/simd` is the only way to bring vector concepts into scope. Scalar-only authors and consumers never see `f32x4`, `splat`, or any vec primitive.
 - **Parallel families**: scalar primitives (`add`, `mul`, …) and vec primitives (`addVec`, `mulVec`, …) are distinct functions over distinct types. Scalar `Node<'f32'>` and vector `Node<'f32x4'>` cannot be combined in one operation; conversion is explicit (`splat`, `lane`).
+- **Bulk iteration via `forSample.byN`**: SIMD-stride iteration is expressed by the explicit-form loop primitive `forSample.byN(stride, callback)` (typically `stride = 4`) — see §10. The stride is user-chosen and visible in the source; the framework does not auto-vectorize a sugar-form per-sample body.
 
 ```typescript
 // Scalar-only author — never imports SIMD
@@ -443,7 +596,7 @@ import { vec4, splat, addVec, mulVec, loadVec, storeVec, lane } from '@unworklet
 
 ### 7.2 v1.0.0 surface (Minimal MVP)
 
-The v1.0.0 SIMD surface is the smallest set of primitives that lets DSP authors hand-vectorize hot paths (4-channel mixers, 4-tap filters, parallel-lane oscillators). Subsequent v1.x.0 releases extend the surface additively (see Q14, `10-roadmap.md`).
+The v1.0.0 SIMD surface is the smallest set of primitives that lets DSP authors hand-vectorize hot paths (4-channel mixers, 4-tap filters, parallel-lane oscillators, 4-sample-wide bulk processing). Subsequent v1.x.0 releases extend the surface additively (see `10-roadmap.md`).
 
 #### Vector types
 
@@ -464,7 +617,7 @@ The v1.0.0 SIMD surface is the smallest set of primitives that lets DSP authors 
 
 #### Memory
 
-- `loadVec(buffer: Buffer<'f32'>, offset: Node<'i32'>): Node<'f32x4'>` — load four contiguous f32 lanes from a buffer (offset in element units).
+- `loadVec(buffer: Buffer<'f32'>, offset: Node<'i32'>): Node<'f32x4'>` — load four contiguous f32 lanes from a buffer (offset in element units). Typically called inside a `forSample.byN(4, ...)` callback.
 - `storeVec(buffer: Buffer<'f32'>, offset: Node<'i32'>, value: Node<'f32x4'>): void` — store four contiguous f32 lanes into a buffer.
 
 ### 7.3 Beyond v1.0.0 (deferred to v1.x.0, additive)
@@ -481,7 +634,7 @@ Rollout order is settled by Q14 once early DSP packages report which extensions 
 
 ### 7.4 Use within L1 / L2 / processors
 
-Vec primitives are usable inside any expression scope (`process` lambdas, L1 helper bodies, subgraph `process` lambdas). They count as primitive operators for §5.5.5 / §5.6.5 purposes — bodies are still forbidden from declaring new state / buffer / param.
+Vec primitives are usable inside any expression scope (`process` bodies, `forSample` callbacks, L1 helper bodies, subgraph `process` lambdas). They count as primitive operators for §5.5.5 / §5.6.5 purposes — bodies are still forbidden from declaring new state / buffer / param.
 
 L1 helpers can be precision-generic over scalar precisions (§5.5.4) but **not** generic over scalar / vec width. A helper that needs to support both widths is written as two helpers:
 
@@ -498,6 +651,43 @@ function gainVec(x: Node<'f32x4'>, g: Node<'f32'>): Node<'f32x4'> {
 ```
 
 The duplication is intentional: it keeps the scalar API surface untouched and signals at the call site that the vec version is a deliberate choice.
+
+### 7.5 SIMD bulk in practice
+
+The canonical 4-sample-wide bulk pattern uses `forSample.byN(4, ...)` plus `loadVec` / `storeVec`:
+
+```typescript
+import { defineProcessor, audioInput, audioOutput, param, buffer, forSample } from '@unworklet/core';
+import { writeBuffer, readBuffer } from '@unworklet/dsp';
+import { loadVec, storeVec, mulVec, splat } from '@unworklet/core/simd';
+
+export const simdGain = defineProcessor((ctx) => {
+  const main = audioInput ({ channels: 1, name: 'main' });
+  const out  = audioOutput({ channels: 1, name: 'main' });
+  const scratch = buffer.f32({ size: 128, name: 'scratch' });
+  const gain    = param({ default: 1.0, min: 0.0, max: 4.0, automationRate: 'k-rate', name: 'gain' });
+
+  return {
+    process: () => {
+      // Phase 1: accumulate input into scratch (per-sample).
+      forSample((i) => {
+        writeBuffer(scratch, i, main.at(0, i));
+      });
+
+      // Phase 2: SIMD bulk gain.
+      forSample.byN(4, (i) => {
+        const v = loadVec(scratch, i);
+        storeVec(scratch, i, mulVec(v, splat(gain.at(i))));
+      });
+
+      // Phase 3: drain scratch to output (per-sample).
+      forSample((i) => {
+        out.set(0, i, readBuffer(scratch, i));
+      });
+    },
+  };
+});
+```
 
 ## 8. Snapshot / restore declaration
 
@@ -629,6 +819,7 @@ const synth = defineProcessor((ctx) => {
   const fftMag = state.f32(0, { name: 'mag' });
   const inBuf  = buffer.f32({ size: 1024, name: 'fftIn' });
   const out    = audioOutput({ channels: 1, name: 'main' });
+  const audioIn = audioInput({ channels: 1, name: 'main' });
 
   return {
     process: () => {
@@ -637,7 +828,7 @@ const synth = defineProcessor((ctx) => {
 
       // 1 ms (= 48 sample) sub-rate block: LFO update.
       everyNSamples(48, () => {
-        lfoVal.store(computeLfo(...));
+        lfoVal.store(computeLfo(/* ... */));
       });
 
       // ~5 ms (= 256 sample) sub-rate block: FFT magnitude update.
@@ -658,8 +849,9 @@ const synth = defineProcessor((ctx) => {
 - **Graph-capture-time meta primitive**: `everyNSamples` is *not* a runtime callback. The callback body is evaluated once during graph capture; the resulting graph nodes are recorded as belonging to the `N`-rate sub-block.
 - **Compilation**: the sub-block compiles to a WASM branch keyed off an internal sample counter. On samples where `(counter % N) == 0`, the sub-block body executes; on other samples, it is skipped.
 - **State slots in the callback**: `state.<type>` slots written inside the callback hold their value between updates (zero-order hold). Reading them in the audio-rate body (`slot.load()`) returns the most recent stored value.
-- **Expression scope only**: callable from `process` lambdas, L1 helper bodies, and `defineSubgraph` `process` lambdas. Calling it from declaration scope is a graph-capture-time error.
+- **Expression scope only**: callable from `process` lambdas, `forSample` callbacks, L1 helper bodies, and `defineSubgraph` `process` lambdas. Calling it from declaration scope is a graph-capture-time error.
 - **No new declarations inside the callback**: the callback body is an expression scope (same rules as `process` itself — see §5.5.5 / §5.6.5). New `state.*` / `buffer.*` / `param.*` / `defineSubgraph` declarations inside the callback are graph-capture-time errors.
+- **Sample-position primitives inside the callback**: both sugar (`audioIn.read(c)`, `param()`) and explicit (when invoked from inside a `forSample` whose `i` is in scope, `audioIn.at(c, i)`, `param.at(i)`) forms are valid. The "current sample" inside the callback is the firing sample (= the sample at which `(counter % N) == 0`).
 
 ### 9.2 Multiple sub-rate blocks coexist
 
@@ -668,15 +860,15 @@ A processor can have any number of `everyNSamples` blocks at any divisor; they s
 ```typescript
 process: () => {
   everyNSamples(8, () => {
-    smoothing.store(...);     // 8-sample rate
+    smoothing.store(/* ... */);     // 8-sample rate
   });
   everyNSamples(48, () => {
-    lfo.store(...);           // 48-sample rate (1 ms)
+    lfo.store(/* ... */);           // 48-sample rate (1 ms)
   });
   everyNSamples(256, () => {
-    fftMag.store(...);        // 256-sample rate
+    fftMag.store(/* ... */);        // 256-sample rate
   });
-  out.write([...]);           // audio rate
+  out.write([/* ... */]);           // audio rate
 };
 ```
 
@@ -692,13 +884,11 @@ If a consumer wants to consume an automation value at a coarse rate (e.g. read `
 const cutoffSampled = state.f32(0, { name: 'cutoffSampled' });
 process: () => {
   everyNSamples(8, () => {
-    cutoffSampled.store(/* read cutoff at the current sample */);
+    cutoffSampled.store(cutoff());
   });
   // audio-rate body uses cutoffSampled.load()
 };
 ```
-
-The exact API for "read a `param` at the current sample inside a `process` body" is part of the graph-capture-model finalization (see Q22) and is not settled by Q7. The `everyNSamples` primitive itself is independent of that decision.
 
 ### 9.4 CPU spike caveat (consumer responsibility)
 
@@ -707,12 +897,130 @@ The exact API for "read a `param` at the current sample inside a `process` body"
 unworklet does not auto-distribute the spike. CPU smoothing is the consumer's responsibility:
 
 - **Partitioned algorithms**: split the heavy work across multiple samples (e.g. partitioned FFT processes one stage per audio sample, evening out cost).
-- **Out-of-band processing**: instantiate a separate `AudioWorkletNode` and route audio through it, decoupling the heavy work from the main processor's audio thread (cross-processor communication; see Q9 — currently open).
+- **Out-of-band processing**: instantiate a separate `AudioWorkletNode` and route audio through it, decoupling the heavy work from the main processor's audio thread (see Q9).
 
 The `everyNSamples` primitive remains a useful building block even when CPU spike matters: it makes the rate-down intent explicit in the source, and applicable algorithms (partitioned, deferred, cached) compose over it.
 
 ### 9.5 v1.0.0 scope
 
-v1.0.0 ships `everyNSamples(N, callback)` only, where `N` is a compile-time positive integer (sample count). Future additive primitives (`everyTimeMs(ms, callback)`, `atSampleRate(rate, callback)`, etc.) can be introduced in v1.x.0 without breaking the v1.0.0 surface — they are additional helpers in the same primitive family, layered on top of the sample-counter mechanism.
+v1.0.0 ships `everyNSamples(N, callback)` only, where `N` is a compile-time positive integer (sample count). Future additive primitives (`everyTimeMs(ms, callback)`, `atSampleRate(rate, callback)`, etc.) can be introduced in v1.x.0 without breaking the v1.0.0 surface.
 
 Authoritative rationale and rejected alternatives: see `decisions-log.md` Q7.
+
+## 10. `forSample` — the per-sample loop primitive
+
+`forSample` is the explicit form of per-sample iteration. A `process` body that contains zero `forSample` calls and writes per-sample primitives directly is interpreted as having a single implicit `forSample` wrapping the body (the **sugar form**); a body that uses `forSample(...)` explicitly is the **explicit form**, which supports multi-phase processors and SIMD-stride iteration.
+
+### 10.1 Surface
+
+```typescript
+function forSample(callback: (i: Node<'i32'>) => void): void;
+
+forSample.byN: (
+  stride: number,                           // compile-time positive integer
+  callback: (i: Node<'i32'>) => void,
+) => void;
+```
+
+- `forSample(callback)` — the callback body is the per-sample loop body. `i` is a `Node<'i32'>` bound at WASM-emission time to the loop counter, advancing by 1 each iteration.
+- `forSample.byN(stride, callback)` — same shape, but `i` advances by `stride` each iteration. Typical use is `stride = 4` for SIMD bulk operations paired with `loadVec` / `storeVec`. The stride must be a compile-time-constant positive integer; non-constant strides are graph-capture-time errors.
+
+### 10.2 Semantics
+
+- **Graph-capture-time meta primitive**: like `everyNSamples`, the callback is evaluated once during graph capture; the resulting AST nodes are recorded as belonging to the per-sample (or per-`stride`) sub-block.
+- **`i` is loop-counter-bound**: inside the callback, `i` denotes the current sample-offset within the render quantum. It cannot be used to access the iteration counter at any other time; arithmetic on `i` (e.g. `add(i, 1)` for a one-sample look-ahead) is allowed and produces a `Node<'i32'>` that resolves to the offset value at WASM-emission time. Out-of-block access (`add(i, lookaheadSamples)` exceeding the render quantum) is a static-analysis error.
+- **Multiple `forSample` calls in one body**: each call is an independent phase. Phases execute in **declared order** within the render quantum.
+- **Sugar form is implicit-`forSample`**: a `process` body with top-level direct primitives (`audioIn.read(c)`, `param()`, `audioOut.write([...])`) is treated by the framework as if those statements lived inside a single implicit `forSample` callback. Top-level direct primitives plus parallel explicit `forSample` calls produce a multi-phase processor: the framework treats each contiguous run of top-level direct primitives as an implicit `forSample` phase, and runs all phases — implicit and explicit — in declared (source) order.
+
+### 10.3 Sugar / explicit equivalence
+
+Inside any `forSample` callback, sugar primitives bind to the surrounding `i`. The two forms are interchangeable in a single body, with no runtime cost:
+
+```typescript
+forSample((i) => {
+  const a = audioIn.read(0);          // sugar — equivalent to audioIn.at(0, i)
+  const b = audioIn.at(0, i);         // explicit — same value as `a`
+  const g = gain();                   // sugar — equivalent to gain.at(i)
+  const h = gain.at(i);               // explicit — same value as `g`
+});
+```
+
+The framework emits identical WASM for both forms; the choice is purely a readability concern. Authors typically prefer sugar inside `forSample` callbacks where `i` is not otherwise needed (e.g. when feeding `audioOut.write([...])`-style writes), and prefer explicit when `i` participates in arithmetic (look-ahead reads, buffer indexing, etc.).
+
+### 10.4 Body constraints
+
+Inside a `forSample` callback, the same rules as L1 helper bodies (§5.5.5) apply:
+
+- **Forbidden**: new `state.*` / `buffer.*` / `param.*` / `audioInput` / `audioOutput` declarations; new `defineSubgraph` declarations or instantiations.
+- **Allowed**: primitive operators, `state.load()` / `state.store()`, sugar / explicit audio-I/O and param access, calls to L1 helpers, `everyNSamples`, nested `forSample` (rare; typically used for tile iteration in 2D buffers).
+
+### 10.5 Examples
+
+#### 10.5.1 Sugar form (single-phase, no `forSample`)
+
+```typescript
+const gainSat = defineProcessor((ctx) => {
+  const main  = audioInput ({ channels: 2, name: 'main' });
+  const out   = audioOutput({ channels: 2, name: 'main' });
+  const gain  = param({ default: 1.0, ..., automationRate: 'a-rate', name: 'gain'  });
+  const drive = param({ default: 0.0, ..., automationRate: 'a-rate', name: 'drive' });
+
+  return {
+    process: () => {
+      // Implicit forSample wraps this body.
+      const inL = main.read(0);
+      const inR = main.read(1);
+      const g   = gain();
+      const d   = drive();
+      const cleanL = mul(inL, g);
+      const cleanR = mul(inR, g);
+      const satL   = tanh(mul(inL, mul(g, 3.0)));
+      const satR   = tanh(mul(inR, mul(g, 3.0)));
+      const m = sub(1, d);
+      out.write([
+        add(mul(cleanL, m), mul(satL, d)),
+        add(mul(cleanR, m), mul(satR, d)),
+      ]);
+    },
+  };
+});
+```
+
+#### 10.5.2 Explicit form (multi-phase, with `forSample.byN` for SIMD)
+
+```typescript
+const simdGain = defineProcessor((ctx) => {
+  const main = audioInput ({ channels: 1, name: 'main' });
+  const out  = audioOutput({ channels: 1, name: 'main' });
+  const scratch = buffer.f32({ size: 128, name: 'scratch' });
+  const gain    = param({ default: 1.0, ..., automationRate: 'k-rate', name: 'gain' });
+
+  return {
+    process: () => {
+      // Phase 1 — input shaping (per-sample).
+      forSample((i) => {
+        writeBuffer(scratch, i, main.at(0, i));
+      });
+
+      // Phase 2 — SIMD bulk gain (4-sample stride).
+      forSample.byN(4, (i) => {
+        const v = loadVec(scratch, i);
+        storeVec(scratch, i, mulVec(v, splat(gain.at(i))));
+      });
+
+      // Phase 3 — output drain (per-sample).
+      forSample((i) => {
+        out.set(0, i, readBuffer(scratch, i));
+      });
+    },
+  };
+});
+```
+
+### 10.6 v1.0.0 scope
+
+- `forSample(callback)` and `forSample.byN(stride, callback)` ship in v1.0.0.
+- The callback signature is `(i: Node<'i32'>) => void`; non-`void` returns are not part of the v1.0.0 surface.
+- Future additive primitives (`forSample.parallel(callback)` for unordered-iteration optimization opportunities, `forSampleRange(start, end, callback)` for partial-block iteration, etc.) can be introduced in v1.x.0 without breaking the v1.0.0 surface.
+
+Authoritative rationale and rejected alternatives: see `decisions-log.md` Q22 (Q22-aprime).

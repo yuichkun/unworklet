@@ -9,8 +9,9 @@ skeleton
 ## 1. Send / receive surface
 
 <!-- Main-thread sender:    delay.messages.<name>(payload)
-     Worklet handler:       sample.onMessage('<name>', handler)
-     Publish-phase emitter: emit.<name>(payload)
+     Worklet handler:       message.<name>.onReceive((payload) => { ... }) — exact shape TBD
+                            Registered inside the process body; fires at block boundary.
+     Publish-phase emitter: emit.<name>(payload) — fires from the publish phase
      Main-thread subscriber: delay.events.<name>.on(handler) → unsubscribe -->
 
 ## 2. Delivery semantics
