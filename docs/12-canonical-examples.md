@@ -55,7 +55,7 @@ The example set is designed so that the union of all examples touches every conc
 5. **Granular sampler** — bulk `message<T>` upload of sample buffer, voice-array state, `midiInput` note triggers, `buffer.publish` waveform display.
 6. **MIDI arpeggiator + sequencer** — `midiInput` ingest + `midiOutput` emission, generic `event<T>` for UI step indicator, `message<T>` for pattern reload.
 7. **Convolution reverb with snapshot/restore migration** — large IR buffer, partitioned FFT, snapshot persistence with declarative migration chain.
-8. **Polyphonic synth with sidechain ducking** — voice allocator subgraph, multi-`audioInput` (main + sidechain), `midiInput` voice triggers, waveform `buffer.publish` for UI scope.
+8. **Polyphonic synth with sidechain ducking** — voice allocator subgraph, sidechain `audioInput` driving the duck envelope, `midiInput` voice triggers, waveform `buffer.publish` for UI scope.
 
 ## 1. Stereo gain + level meter
 
