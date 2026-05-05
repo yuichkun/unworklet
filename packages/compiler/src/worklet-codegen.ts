@@ -137,6 +137,8 @@ export function generateWorkletModule(
       });
       this.exports = inst.exports;
       this.exports.init();
+      // Pre-warm: gate JIT tier-up before audio starts (docs/04 §1 step 4).
+      try { this.exports.prewarm?.(256); } catch {}
       this.mem = new Float32Array(this.exports.memory.buffer);
       this.memU8 = new Uint8Array(this.exports.memory.buffer);
       this.memI32 = new Int32Array(this.exports.memory.buffer);
@@ -325,8 +327,28 @@ export function generateWorkletModule(
           this.mem[dstStart] = arr[0];
         }
       }
-      // Run WASM process
-      this.exports.process(block);
+      // Run WASM process. Per docs/04 §8 / draft_spec §8.6: a runtime trap
+      // outputs silence + emits an error event but does not stop the audio
+      // thread (until the host calls dispose).
+      try {
+        this.exports.process(block);
+      } catch (err) {
+        if (!this._trapped) {
+          this._trapped = true;
+          this.port.postMessage({
+            type: "error",
+            kind: "wasm-trap",
+            message: String(err),
+          });
+        }
+        // Output silence
+        for (let p = 0; p < LAYOUT.audioOutputs.length; p++) {
+          const dst = outputs[p];
+          if (!dst) continue;
+          for (let c = 0; c < dst.length; c++) dst[c].fill(0);
+        }
+        return true;
+      }
       // Marshal outputs out
       for (let p = 0; p < LAYOUT.audioOutputs.length; p++) {
         const ao = LAYOUT.audioOutputs[p];

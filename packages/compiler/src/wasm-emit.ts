@@ -116,6 +116,11 @@ class Emit {
     // initial values + sets buffer regions to zero (already zero by default).
     this.buildInit();
 
+    // Build a pre-warm function (per docs/04 §1 step 4 + §5; draft_spec §12.6).
+    // Runs `process` N times to exercise both branches of every `select` and
+    // gate WASM tier-up before audio starts.
+    this.buildPrewarm();
+
     if (!m.validate()) {
       const text = m.emitText();
       throw new Error("WASM module validation failed:\n" + text);
@@ -142,6 +147,46 @@ class Emit {
   }
 
   // ─── init() ─────────────────────────────────────────────────────────────
+
+  // Pre-warm: invoke `process` N times with zero input to gate JIT tier-up
+  // and exercise both branches of select. Per docs/04 §1 step 4.
+  buildPrewarm() {
+    const m = this.m;
+    const i = 0; // local 0 = loop counter (no params)
+    const stmts: ExprRef[] = [];
+    const local = 0;
+    const body: ExprRef[] = [
+      // process(128) — typical render-quantum-sized warmup invocation (void)
+      m.call("process", [m.i32.const(128)], binaryen.none),
+      m.local.set(local, m.i32.add(m.local.get(local, binaryen.i32), m.i32.const(1))),
+    ];
+    // Default 256 iterations, configurable via the prewarm function param.
+    stmts.push(
+      m.local.set(local, m.i32.const(0)),
+      m.block("prewarm_break", [
+        m.loop(
+          "prewarm_loop",
+          m.block(null, [
+            m.if(
+              m.i32.ge_s(m.local.get(local, binaryen.i32), m.local.get(0, binaryen.i32)),
+              m.br("prewarm_break"),
+              m.nop(),
+            ),
+            ...body,
+            m.br("prewarm_loop"),
+          ]),
+        ),
+      ]),
+    );
+    m.addFunction(
+      "prewarm",
+      binaryen.createType([binaryen.i32]), // (iterations: i32)
+      binaryen.none,
+      [binaryen.i32], // 1 local: counter
+      m.block(null, stmts),
+    );
+    m.addFunctionExport("prewarm", "prewarm");
+  }
 
   buildInit() {
     const m = this.m;
