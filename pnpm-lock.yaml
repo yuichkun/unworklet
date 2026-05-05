@@ -45,6 +45,9 @@ importers:
       '@unworklet/client':
         specifier: workspace:*
         version: link:../../packages/client
+      '@unworklet/compiler':
+        specifier: workspace:*
+        version: link:../../packages/compiler
       '@unworklet/core':
         specifier: workspace:*
         version: link:../../packages/core

@@ -4,6 +4,12 @@ export { capture, type CaptureOptions, type ProcessorBodyForCapture } from "./ca
 export { planLayout, type MemoryLayout } from "./memory-layout.js";
 export { emitWasm } from "./wasm-emit.js";
 export { captureBackend } from "./backend.js";
+export {
+  generateWorkletModule,
+  generateWorkletBundle,
+  type WorkletModuleOptions,
+  type WorkletBundle,
+} from "./worklet-codegen.js";
 
 export * as ast from "./ast.js";
 
