@@ -35,6 +35,7 @@ Independent and can be picked up at any time:
 
 * `09-repo-structure.md` — monorepo tool, package layout, license, npm scope, TS version policy
 * `10-roadmap.md` — v1.0.0 acceptance criteria and beyond
+* `12-canonical-examples.md` — full-stack, self-contained reference plugins; **integrity anchor** that every other doc is checked against (see `AGENTS.md` "Canonical examples integrity rule")
 * `decisions-log.md` — cross-cutting reference
 
 ## Status
@@ -53,6 +54,7 @@ Independent and can be picked up at any time:
 | `09-repo-structure.md` | skeleton (Q12 / Q13 / Q15 / Q16 / Q26 will resolve) |
 | `10-roadmap.md` | skeleton (Q14 will resolve) |
 | `11-midi.md` | written |
+| `12-canonical-examples.md` | written (integrity anchor; updated together with any spec change — see `AGENTS.md`) |
 | `decisions-log.md` | populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index) |
 
 Content is filled in incrementally as design questions are resolved through dialogue. Anything not yet present in a doc is not yet decided — see `decisions-log.md` for what *has* been decided.

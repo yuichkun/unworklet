@@ -11,6 +11,25 @@ A from-scratch implementation of `unworklet` — a TypeScript-first framework fo
 - **`docs/`** is the authoritative specification. Read `docs/README.md` first to learn the read order and which component you own. Every component doc links to `docs/decisions-log.md` for the "why" behind any decision.
 - If your work touches an area that is not yet covered in `docs/`, **stop and surface the gap** to the human reviewer rather than inventing the missing decision.
 
+## Canonical examples integrity rule (HARD CONTRACT)
+
+`docs/12-canonical-examples.md` is the **integrity anchor** for the entire spec. It is a curated set of self-contained, end-to-end plugin examples that exercise the full surface of unworklet (every primitive, every declaration, every main-side method). Any change to any other file in `docs/` — primitive shapes, declaration shapes, surface listings, decisions, transport contracts — must be cross-checked against the examples there before the change is accepted.
+
+**Required process when modifying any `docs/*.md` (other than `12-canonical-examples.md` itself)**:
+
+1. Identify which examples in `12-canonical-examples.md` exercise the surface you are changing (the `## Coverage` table at the top of that doc maps concept → example numbers).
+2. Apply the proposed change to those examples (mentally or as a draft) and verify they still:
+   - Compile under the changed surface (no broken signatures, types, or references).
+   - Make sense for the realistic use case the example was designed for (no awkward workarounds, no apologetic comments).
+   - Preserve the user's mental-model simplicity — the change should not force a JUCE / VST / m4l / native-AudioWorklet author to re-learn a concept they already understood.
+3. **If any example breaks or becomes awkward, the proposed change is rejected** until either (a) the change is revised to preserve the example, or (b) the example is updated together with the change as a single coherent revision (and the resulting UX cost is made visible to the human reviewer in the same diff).
+
+This rule is non-negotiable. Spec changes that pass review without an accompanying check against `12-canonical-examples.md` are **out of process**.
+
+The same rule applies in the reverse direction: changes to `12-canonical-examples.md` itself trigger a re-read of the affected component docs to ensure the new example shape matches the spec — examples cannot drift from the spec, the spec cannot drift from the examples.
+
+The purpose of this rule is to keep one question answerable at any time during spec evolution: **"is the user experience still simple, coherent, and production-ready?"** If the canonical examples no longer read that way, the spec change is the wrong shape regardless of how clean it looks in isolation.
+
 ## Build, test, and lint — Vite+ only
 
 This project uses [Vite+](https://viteplus.dev). All workflows go through `vp`. **Never invoke `npm`, `pnpm`, `yarn`, or `npx` directly** — not in shell, not in scripts, not in CI config, not in test-plan commands.
