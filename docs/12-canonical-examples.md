@@ -360,7 +360,7 @@ node.outputs.main.connect(audioContext.destination);
 ```typescript
 import {
   defineProcessor, audioInput, audioOutput, param, state, buffer,
-  forSample, everyNSamples, emitIf, event,
+  forSample, emitIf, event,
   add, sub, mul, div, mod, max, min, abs, gt, lt, exp,
   type Node, type State,
 } from '@unworklet/core';
@@ -454,13 +454,6 @@ export const lookaheadLimiter = defineProcessor((ctx) => {
       // tracks recent rather than historical.
       dlyHead.store(mod(add(headBlock, 128), LOOKAHEAD_SAMPLES));
       gainReductionDb.store(mul(gainReductionDb.load(), 0.85));
-
-      // Sub-rate: every 1 ms, write the envelope value to a debug-grade slot
-      // (illustrates everyNSamples + state interaction without leaking spam to UI).
-      everyNSamples(48, (i) => {
-        // illustrative — a published env state could be added if useful.
-        void i;
-      });
     },
   };
 });
