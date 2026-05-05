@@ -791,7 +791,9 @@ Schema changes between versions of a published processor (slot rename, type wide
 const synth = defineProcessor((ctx) => {
   // ...declarations...
 
-  migrations([
+  return { process: () => { /* ... */ } };
+}, {
+  migrations: [
     {
       from: 'a3f2c1d0...',         // schema hash before this migration
       to:   'b8c14fe2...',         // schema hash after this migration
@@ -812,13 +814,11 @@ const synth = defineProcessor((ctx) => {
         helpers.writeBuffer('delayLine', 'f32', fresh);
       },
     },
-  ]);
-
-  return { process: () => { /* ... */ } };
+  ],
 });
 ```
 
-Each entry's `from` and `to` are schema hashes emitted by `unworklet build` into `dist/schema-hash.json` (see `07-tooling.md`). The framework constructs a directed graph from the entries and finds the path `blob.schemaHash → currentSchemaHash`; entries are applied in order, with each step's output hash verified against its declared `to`.
+The migration array lives on the **processor's options bag** (the second argument to `defineProcessor`), not in the declaration body — this keeps the processor body focused on the live runtime graph and isolates schema-evolution concerns from per-block / per-sample logic. Each entry's `from` and `to` are schema hashes emitted by `unworklet build` into `dist/schema-hash.json` (see `07-tooling.md`). The framework constructs a directed graph from the entries and finds the path `blob.schemaHash → currentSchemaHash`; entries are applied in order, with each step's output hash verified against its declared `to`.
 
 #### 8.3.1 `helpers` API
 
@@ -856,7 +856,7 @@ The migration array is validated at build time:
 - No duplicate `from` values; no cycles; no self-loops.
 - The current schema hash must be reachable from at least one entry's `from` chain.
 
-If the current schema is unreachable (i.e. the developer changed the schema but did not write a migration), the build emits a **warning by default** — name-match partial restore (§8.3.3) covers many cases without explicit migration. Pass `{ strict: true }` to `migrations()` to elevate this to an error.
+If the current schema is unreachable (i.e. the developer changed the schema but did not write a migration), the build emits a **warning by default** — name-match partial restore (§8.3.3) covers many cases without explicit migration. Set `migrationsStrict: true` in the processor's options bag (alongside `migrations`) to elevate this to an error.
 
 #### 8.3.3 Restore-time fallback
 

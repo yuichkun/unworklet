@@ -874,12 +874,31 @@ export const convolutionReverb = defineProcessor((ctx) => {
   };
 }, {
   // Snapshot migration chain — when older blob versions show up, lift them
-  // forward declaratively. v1 had a single mono ir buffer; v2 added stereo;
-  // v3 (current) added explicit dryGain. This is what makes presets stable
-  // across long-lived sessions.
+  // forward declaratively. Each entry's from/to is the schema hash emitted
+  // by `unworklet build` into dist/schema-hash.json. Earlier shapes of this
+  // processor stored a single mono IR named 'ir'; the current shape splits
+  // it into irL/irR, and dryGain was introduced later.
   migrations: [
-    { from: 1, to: 2, transform: (slots) => ({ ...slots, irR: slots.ir, irL: slots.ir }) },
-    { from: 2, to: 3, transform: (slots) => ({ ...slots, dryGain: 0.7 }) },
+    {
+      from: 'a3f2c1d0...',           // mono-IR schema
+      to:   'b8c14fe2...',           // stereo-IR schema
+      migrate: (oldBlob, helpers) => {
+        const ir = helpers.parseBuffer(oldBlob, 'ir', 'f32');
+        if (ir) {
+          helpers.writeBuffer('irL', 'f32', ir);
+          helpers.writeBuffer('irR', 'f32', ir);
+        }
+      },
+    },
+    {
+      from: 'b8c14fe2...',           // stereo-IR schema
+      to:   'd7e3a991...',           // current (dryGain added)
+      migrate: () => {
+        // dryGain is a new param; declaration default carries automatically.
+        // Slots unchanged across this step are auto-carried by name match,
+        // so the migrate body is empty.
+      },
+    },
   ],
 });
 
