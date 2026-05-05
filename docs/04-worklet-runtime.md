@@ -4,7 +4,7 @@ The audio-thread side: the generated `AudioWorkletProcessor` template that wraps
 
 ## Status
 
-skeleton
+partial (§7 publish scheduling written; §1–§6 + §8 placeholder)
 
 ## 1. Startup sequence
 

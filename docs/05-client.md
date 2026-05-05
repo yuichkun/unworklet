@@ -4,7 +4,7 @@ The main-thread API. Wraps the standard `AudioWorkletNode` with a typed surface 
 
 ## Status
 
-skeleton
+partial (§2 surface listing + §2.6 snapshot/restore + §5 event/state subscription + §6 timing + §7 latency-comp written; §1, §3, §4 placeholder)
 
 ## 1. `createNode`
 

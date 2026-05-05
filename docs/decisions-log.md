@@ -4,7 +4,7 @@ Cross-cutting reference: every resolved design question, recorded with its ratio
 
 ## Status
 
-skeleton — populated as questions resolve
+populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 
 ## Index
 

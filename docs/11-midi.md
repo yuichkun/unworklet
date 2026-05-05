@@ -6,7 +6,7 @@ The main thread injects events through a source-agnostic API; unworklet does not
 
 ## Status
 
-skeleton
+written
 
 ## 1. Declaration surface
 

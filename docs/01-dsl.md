@@ -4,7 +4,7 @@ The surface the user authors against. Defines `defineProcessor`, primitives, dec
 
 ## Status
 
-skeleton
+written
 
 ## 1. `defineProcessor`, the process body, and I/O declarations
 

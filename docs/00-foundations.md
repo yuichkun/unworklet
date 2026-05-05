@@ -4,7 +4,7 @@ Common ground every implementer reads before touching any component. Defines voc
 
 ## Status
 
-skeleton
+partial (§§1–4 written; §5 realtime-safety + §6 cross-cutting still placeholder)
 
 ## 1. What is being built
 

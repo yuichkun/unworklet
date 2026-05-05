@@ -4,7 +4,7 @@ The build-time pipeline that turns a `defineProcessor` definition into the artif
 
 ## Status
 
-skeleton
+partial (§2 graph capture + §2.4 three-layer error written; §1, §3–§8 placeholder)
 
 ## 1. Pipeline overview
 

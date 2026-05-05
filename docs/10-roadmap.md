@@ -6,7 +6,7 @@ This doc is independent of the component docs and can be picked up at any time.
 
 ## Status
 
-skeleton
+partial (§3.1 mandatory deferred mitigations written; §1, §2, §3.2 placeholder)
 
 ## 1. v1.0.0 acceptance criteria
 
