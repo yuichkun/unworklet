@@ -74,7 +74,7 @@ The framework throws structured errors when proxy evaluation reaches a violation
 - *Scope violations*: a declaration call (`state.f32(...)`, `audioInput(...)`, `defineSubgraph(...)`) inside expression scope (a `process` body, a `forSample` callback, or an L1 helper).
 - *Required-call violations*: a declared `audioOutput` whose `set(c, i, v)` is never called on every code path of every render quantum; a snapshot-using processor with a declaration missing a required `name`.
 - *Duplicate writes*: the same channel × same sample-offset written twice within one phase.
-- *Constraint violations*: `forSample.byN` called with a non-constant stride; `lane(vec, i)` called with a non-constant `i`; out-of-block sample-offset arithmetic (`add(i, lookahead)` exceeding the render quantum) when statically detectable; etc.
+- *Constraint violations*: `forSample.byN` called with a non-constant stride; `lane(vec, i)` called with a non-constant `i`; etc.
 
 Errors carry the source location (TypeScript file + line + column when source maps are in scope — see §7) and a refactor hint pointing at the legal pattern.
 
@@ -85,6 +85,8 @@ The compiler runs analysis passes over the captured DAG (see §3); violations de
 - *Allocation check*: an AST pattern that would require heap allocation on the audio thread.
 - *Loop boundedness*: a build-time loop that captured non-statically-bounded iteration.
 - *Memory budget*: total `state` + `buffer` size exceeds the configured limit.
+- *Out-of-block sample-offset arithmetic*: `add(i, lookahead)` exceeding `[0, renderQuantum - 1]` when statically detectable.
+- *Multi-phase output coverage*: across all per-sample phases of the render quantum, every declared output channel × every sample-offset must be written exactly once. Detected by phase-union analysis after capture.
 - *Type inference inconsistency*: a `Node<T>` whose inferred type conflicts with its expected use.
 
 ### 2.5 Open: Q22-d (error message format)

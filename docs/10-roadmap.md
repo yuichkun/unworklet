@@ -10,7 +10,7 @@ skeleton
 
 ## 1. v1.0.0 acceptance criteria
 
-<!-- Q11 — concrete deliverables that gate "v1.0.0 ships":
+<!-- Q14 — concrete deliverables that gate "v1.0.0 ships":
        - which primitives, declarations, phases must work
        - which tests must pass (renderOffline parity, browser smoke)
        - what the demo / acceptance run looks like

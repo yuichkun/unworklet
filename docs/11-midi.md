@@ -79,7 +79,7 @@ The exact set of variants and their fields is closed at v1.0.0. New variants (e.
 
 ### 2.3 `atSample` is always present
 
-Every handler argument carries `atSample` — the sample-offset within the current render quantum at which the event arrived. Handlers fire **at that sample offset, not at block boundary**, so MIDI-driven events maintain sample accuracy through the full ingestion path.
+Every handler argument carries `atSample` — the sample-offset within the current render quantum at which the event arrived. Handlers fire **at that sample-offset, not at block boundary**, so MIDI-driven events maintain sample accuracy through the full ingestion path.
 
 ```typescript
 midiIn.onEvent('noteOn', ({ note, atSample }) => {
@@ -88,7 +88,7 @@ midiIn.onEvent('noteOn', ({ note, atSample }) => {
 });
 ```
 
-Concurrent events at the same sample offset are processed in arrival order on the wire.
+Concurrent events at the same sample-offset are processed in arrival order on the wire.
 
 `atSample` is a `Node<'i32'>` in the same dimension as the `i` parameter of a `forSample` callback (see `01-dsl.md` §10). The handler body runs at the firing sample (the sample whose offset matches `atSample`); typically the handler stores the event details into `state` slots, and a subsequent `forSample` invocation compares `i` against the stored offset for sample-accurate trigger:
 
@@ -135,7 +135,7 @@ const drumSequencer = defineProcessor((ctx) => {
         channel: 9,
         note: noteToEmit,
         velocity: 100,
-        atSample: 0,   // sample offset within the current render quantum
+        atSample: 0,   // sample-offset within the current render quantum
       });
     },
   };
@@ -189,7 +189,7 @@ unworkletNode.midi.connectFromWebMIDI(input: MIDIInput): void;
 
 // (2) Source-agnostic injection.
 //     Anyone (Web MIDI subscriber, application logic, network bridge, etc.) calls this.
-unworkletNode.midi.send(event: MIDIEvent, atTime?: number): void;
+unworkletNode.midi.send(event: MidiEvent, atTime?: number): void;
 ```
 
 ### 3.2 Examples of consumers
@@ -211,7 +211,7 @@ ws.onmessage = (msg) => {
 };
 ```
 
-The worklet itself does not distinguish between sources; the audio thread sees an ordered ringbuffer of MIDI events with sample offsets and dispatches them through the user-defined `midi.onEvent(handler)` (§2).
+The worklet itself does not distinguish between sources; the audio thread sees an ordered ringbuffer of MIDI events with sample-offsets and dispatches them through the user-defined `midi.onEvent(handler)` (§2).
 
 ### 3.3 Outbound direction
 
@@ -234,7 +234,7 @@ Pointers into the ring buffer are slot-indexed (`head` and `tail` increment by 1
 
 ### 4.2 `atSample` semantics
 
-`atSample` is the sample offset **within the current render quantum** (block-local) where the event fires. Valid values are 0 through `renderQuantum - 1`; the field is stored as `u32` for headroom against future block-size variation.
+`atSample` is the sample-offset **within the current render quantum** (block-local) where the event fires. Valid values are 0 through `renderQuantum - 1`; the field is stored as `u32` for headroom against future block-size variation.
 
 A handler subscribed via `midi.onEvent` fires at the sample identified by `atSample`, not at the block boundary — sample accuracy is preserved end-to-end. A consumer that needs an absolute timestamp can derive it from `audioContext.currentTime + atSample / sampleRate`.
 

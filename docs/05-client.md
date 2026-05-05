@@ -18,11 +18,17 @@ skeleton
 ## 2. `UnworkletNode<C>` surface
 
 <!-- - .node:     raw AudioWorkletNode (for advanced graph wiring)
-     - .params:   typed AudioParam accessors
-     - .messages: typed senders (.<name>(payload))
-     - .events:   typed subscribers (.<name>.on(handler) → unsubscribe)
-     - .dispose(): tear down node, queues, worklet
-     - .onError(handler): error subscription (worklet traps, queue overflow, SAB-mode change). -->
+     - .inputs.<name>:  typed AudioInput connect()/be-connected-to wrapper per declared audioInput
+     - .outputs.<name>: typed AudioOutput connect()/be-connected-to wrapper per declared audioOutput
+     - .params.<name>:  real AudioParam (Web Audio standard; setValueAtTime / linearRamp / exponentialRamp / connection-from-AudioNode all work)
+     - .messages.<name>(payload):           typed sender per declared message
+     - .events.<name>.on(handler) → unsub:  typed subscriber per declared event
+     - .midi.send(event, atTime?):          source-agnostic MIDI inject (when midiInput is declared)
+     - .midi.connectFromWebMIDI(input):     Web MIDI bridge convenience (when midiInput is declared)
+     - .dispose():                          tear down node, queues, worklet
+     - .onError(handler):                   error subscription (worklet traps, queue overflow, SAB-mode change).
+     The .params.<name> shape is a real AudioParam — distinct from the worklet-side `param.at(i)` graph-capture form;
+     main-thread JS uses standard Web Audio APIs, the worklet-side primitive is graph-capture only. -->
 
 ### 2.6 Snapshot / restore / inspect
 
@@ -65,7 +71,7 @@ A processor that calls `snapshot()` without any `name`-bearing slot is a graph-c
 
 <!-- Standard AudioParam capabilities are preserved end-to-end:
      - setValueAtTime / linearRamp / exponentialRamp
-     - connection from other AudioNodes (LFO modulation) — example in §3.3 of 01-dsl.md. -->
+     - connection from other AudioNodes (LFO modulation) — wire-up via `node.params.<name>` returning a real AudioParam. -->
 
 ## 4. Lifecycle states
 

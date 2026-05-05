@@ -102,7 +102,7 @@ Three declaration kinds for sample-position-independent slots:
 
 - **`state.<type>(initial, options?)`** — scalar slot. `load()` / `store(v)`. Persists across render quanta.
 - **`buffer.<type>({ size, name, ... })`** — fixed-size array. `readBuffer(buf, idx)` / `writeBuffer(buf, idx, v)` / `readBufferInterpolated(buf, pos)`. Lives in WASM linear memory.
-- **`param({ default, min, max, automationRate, ... })`** — bound to a Web Audio `AudioParam`. Sugar form: `param()` (callable). Explicit form: `param.at(i)`.
+- **`param({ default, min, max, automationRate, ... })`** — bound to a Web Audio `AudioParam`. Single access form: `param.at(i)` (inside `forSample`, per-sample value at offset `i`) / `param.at(0)` (per-block phase, block-start value). No callable `param()` form, no `param.value` / `param.now()` property.
 
 See `01-dsl.md` §3.
 

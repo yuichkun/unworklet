@@ -8,13 +8,13 @@ skeleton
 
 ## 1. Bundler integration
 
-<!-- Q21 — which bundlers ship a first-party plugin (Vite first?), generic ESM strategy
+<!-- Q24 — which bundlers ship a first-party plugin (Vite first?), generic ESM strategy
      for the rest. .wasm asset resolution, Worklet module URL via
      `new URL(..., import.meta.url)` or equivalent. Lands here. -->
 
 ## 2. Browser compatibility matrix
 
-<!-- Q8 — how much of cross-browser variance unworklet normalizes vs surfaces:
+<!-- Q11 — how much of cross-browser variance unworklet normalizes vs surfaces:
      - parameters[name] length 0/1/128 normalization
      - processorOptions delivery timing
      - module loading order quirks

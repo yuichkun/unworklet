@@ -15,7 +15,7 @@ skeleton
        rms: number,
        hasNaN: boolean,
      }>
-     config: sampleRate, duration, params, paramAutomation, input(sampleIndex), messages[]. -->
+     config: sampleRate, duration, params, paramAutomation, input(sampleOffset), messages[]. -->
 
 ## 2. Backend choice and cross-validation
 

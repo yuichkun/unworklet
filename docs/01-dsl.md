@@ -78,7 +78,7 @@ Options:
 - **`channels: number`** — fixed channel count, set at compile time. Maps directly to Web Audio's `outputChannelCount[i]` for outputs and is the input-side expectation for `at`.
 - **`name: string`** — required. Used as the key in main-thread `node.inputs.<name>` / `node.outputs.<name>` access (see `05-client.md` §1) and as the slot identity for that I/O port. There is no default; explicit naming is uniform with `state` / `buffer` / `param` `name` and avoids index-based mental models in tooling and main-thread code.
 
-The returned handles expose **only** explicit-form sample-position primitives (`at` / `set`); both require a `Node<'i32'>` for the sample-offset and are valid only inside `forSample` callbacks.
+The returned handles expose sample-position primitives (`at` / `set`); both require a `Node<'i32'>` for the sample-offset and are valid only inside `forSample` callbacks.
 
 ### 1.2 Reading audio inputs
 
@@ -90,6 +90,10 @@ type AudioInputHandle<C extends number> = {
   channels: C;
   name:     string;
 };
+
+// `ChannelIndex<C>` is the union `0 | 1 | ... | (C - 1)`, narrowed by TypeScript
+// from the literal `channels: C` declared on the handle. Out-of-range indices are
+// TS errors at the call site.
 ```
 
 `audioIn.at(c, i)` returns the channel-`c` value at sample-offset `i` within the current render quantum. `i` must be a `Node<'i32'>` originating from a `forSample` callback parameter.
@@ -178,7 +182,7 @@ const sin440 = defineProcessor((ctx) => {
 
 The compiled `UnworkletNode<C>` exposes `node.inputs.<name>` and `node.outputs.<name>` typed accessors that wrap the underlying `AudioWorkletNode`'s indexed `connect()` calls. The raw `AudioWorkletNode` is always reachable as `node.node` for graph topologies the typed surface does not cover. See `05-client.md` §1 for the full main-thread surface.
 
-Authoritative rationale and rejected alternatives: see `decisions-log.md` Q6 (declaration shape) and Q22 (single explicit form for sample-position primitives).
+Authoritative rationale and rejected alternatives: see `decisions-log.md` Q6 (declaration shape) and Q22 (single form for sample-position primitives).
 
 ## 2. Primitive operators
 
@@ -268,7 +272,7 @@ Options:
 - **`name?: string`** — slot identity.
 - **`snapshot?: 'persistent' | 'transient' | { ... }`** — default is `'persistent'` (param values are typically the user-controlled state of a preset). Snapshots include only the **current value**; AudioParam automation queues (`setValueAtTime`, `linearRampToValueAtTime`, etc.) are not preserved.
 
-Authoritative rationale for the snapshot defaults: `decisions-log.md` Q5 (Q5-b). Authoritative rationale for the single explicit form: `decisions-log.md` Q22 (Q22-b).
+Authoritative rationale for the snapshot defaults: `decisions-log.md` Q5 (Q5-b). Authoritative rationale for the single form (no sugar): `decisions-log.md` Q22 (Q22-b).
 
 ## 4. Messages and events declarations
 
@@ -295,7 +299,7 @@ function lerp(a: Node<'f32'>, b: Node<'f32'>, t: Node<'f32'>): Node<'f32'> {
 
 L1 helpers compose freely from both per-block and per-sample contexts. Pure-`Node<T>`-arithmetic helpers (no audio I/O / param access) are sample-position-agnostic and can be called anywhere.
 
-Helpers that need to access audio I/O or param values from inside their own body should accept `i: Node<'i32'>` as a parameter and use it for the explicit-form primitives — see §5.5.2.
+Helpers that need to access audio I/O or param values from inside their own body should accept `i: Node<'i32'>` as a parameter and use it with the sample-position primitives — see §5.5.2.
 
 Whether L1 helpers can also write to `state.*` references owned by the caller — and the typing rules for that — is settled in §5.5.
 
@@ -539,7 +543,8 @@ const myProcessor = defineProcessor((ctx) => {
   return {
     process: () => {
       forSample((i) => {
-        out.set(0, i, select(useA.at(0), lpfA, lpfB));
+        // useA is k-rate 0|1; compare to 1 to get a Node<'bool'> for select.
+        out.set(0, i, select(eq(useA.at(i), 1), lpfA, lpfB));
         // Both instances evaluate every sample; select chooses one.
       });
     },
@@ -552,7 +557,7 @@ const myProcessor = defineProcessor((ctx) => {
 Inside a subgraph body:
 
 - **Declaration scope** (top of the body, before `return { process }`) allows new `state.*` / `buffer.*` / `param.*` declarations and L2 instantiations of other subgraphs.
-- **Expression scope** (inside `process`, including any nested `forSample`) follows the same rules as L1 helpers (§5.5.5): no new declarations, no L2 instantiations; primitives, `load` / `store`, and explicit-form audio-I/O / param access are allowed.
+- **Expression scope** (inside `process`, including any nested `forSample`) follows the same rules as L1 helpers (§5.5.5): no new declarations, no L2 instantiations; primitives, `load` / `store`, and audio-I/O / param access via `at` / `set` / `param.at(...)` are allowed.
 
 Violations are caught at graph-capture / static-analysis time with refactor-hint error messages, mirroring §5.5.6.
 
@@ -606,8 +611,10 @@ The v1.0.0 SIMD surface is the smallest set of primitives that lets DSP authors 
 
 #### Memory
 
-- `loadVec(buffer: Buffer<'f32'>, offset: Node<'i32'>): Node<'f32x4'>` — load four contiguous f32 lanes from a buffer (offset in element units). Typically called inside a `forSample.byN(4, ...)` callback, or at the per-block phase top level for bulk init.
+- `loadVec(buffer: Buffer<'f32'>, offset: Node<'i32'>): Node<'f32x4'>` — load four contiguous f32 lanes from a buffer (offset in element units; alignment-agnostic per WASM v128 semantics). Typically called inside a `forSample.byN(4, ...)` callback, or at the per-block phase top level (with build-time-loop unrolling) for bulk init.
 - `storeVec(buffer: Buffer<'f32'>, offset: Node<'i32'>, value: Node<'f32x4'>): void` — store four contiguous f32 lanes into a buffer.
+
+The `Buffer<T>` type referenced in these signatures is the type returned by `buffer.<T>({ size, name, ... })` declarations (see §3.2). Buffer access primitives (`readBuffer` / `writeBuffer` / `readBufferInterpolated` / `loadVec` / `storeVec`) all accept this type as their first argument.
 
 ### 7.3 Beyond v1.0.0 (deferred to v1.x.0, additive)
 

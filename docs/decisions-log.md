@@ -16,7 +16,7 @@ skeleton — populated as questions resolve
 | Q4 | MIDI integration design | resolved — input+output; type-discriminated events; raw-bytes wire; transport API out of scope | `11-midi.md` |
 | Q5 | State snapshot / restore API | resolved — `Uint8Array` blob; hybrid profile (short form + per-profile record); block-atomic timing; declarative migration chain; full surface in v1.0.0 | `01-dsl.md` §3, §8 + `05-client.md` §2.6, §6 |
 | Q6 | Multi-output processors | resolved — declaration helpers (`audioInput` / `audioOutput`); always explicit (no default I/O sugar); required `name`; typed `node.inputs.<name>` / `node.outputs.<name>` access | `01-dsl.md` §1 |
-| Q7 | Sub-rate computation | resolved — `everyNSamples(N, () => ...)` graph-capture-time meta primitive in expression scope; param automation rate untouched | `01-dsl.md` §9 |
+| Q7 | Sub-rate computation | resolved — `everyNSamples(N, () => ...)` callable only inside `forSample` callbacks (per-sample phase); param automation rate untouched | `01-dsl.md` §9 |
 | Q8 | Multi-block lookahead | resolved — out of scope (raw materials `buffer` + `state` + `defineSubgraph` + `createDelay` are sufficient; framework abstraction would violate either AudioContext ownership or declarative core philosophy) | `05-client.md` §7 (recipe) |
 | Q9 | Cross-processor communication | resolved — out of scope ((a)(b)(e) audio routing covered by Q6 `connect()`; (c) message relay covered by upcoming generic messaging Q; (d) audio-thread SAB sharing left to consumer via `processorOptions`) | `decisions-log.md` Q9 |
 | Q10 | Transport / tempo sync | resolved — out of scope (third-party domain) | `11-midi.md` §5 |
@@ -36,6 +36,7 @@ skeleton — populated as questions resolve
 | Q24 | Bundler integration scope | (open) | `08-deployment.md` §1 |
 | Q25 | Source maps | (open) | `03-compiler.md` §7 |
 | Q26 | TypeScript version | (open) | `09-repo-structure.md` §5 |
+| Q27 | Generic typed messaging core surface | (open) | `02-messaging.md` + `01-dsl.md` §4 |
 
 ---
 
@@ -372,7 +373,7 @@ Preset save/load and session restore are foundational to the kinds of audio devi
 
 **Decision:** authoritative wording in `01-dsl.md` §9. Summary:
 
-- **Single primitive `everyNSamples(N, callback)`** in expression scope. Callable from `process` lambdas, L1 helper bodies, and `defineSubgraph` `process` lambdas; not callable from declaration scope.
+- **Single primitive `everyNSamples(N, callback)`** callable only from inside a `forSample` callback (the per-sample phase). It requires a surrounding sample loop to gate against an internal sample counter; calling it at the per-block top level, in declaration scope, or in an L1 helper that is itself invoked from per-block context is a graph-capture-time error.
 - **Graph-capture-time meta primitive**: the callback body is evaluated once during graph capture; the resulting nodes are recorded as belonging to an `N`-rate sub-block. Compiled into a WASM branch keyed off the processor's internal sample counter.
 - **State slots inside the callback** hold their value between updates (zero-order hold). Reading them in the audio-rate body returns the most recent stored value.
 - **No new declarations inside the callback**: callback body is an expression scope; declarations are graph-capture-time errors. Same rule as L1 / subgraph `process` bodies.
@@ -532,7 +533,7 @@ There is **one form** for accessing sample-positioned values, and it is the **ex
 - Outside any `forSample` (per-block phase):
   - `state.load() / state.store(v)` — block-shared state (no sample dimension).
   - `readBuffer(buf, idx) / writeBuffer(buf, idx, v) / readBufferInterpolated(buf, pos)` — buffer access at any user-supplied index.
-  - `param.at(0): Node<'f32'>` — param value at sample-offset 0 of the current render quantum (k-rate params: the unique block value; a-rate params: the first-sample value, with the block-constant interpretation being the user's responsibility).
+  - `param.at(0): Node<'f32'>` — param value at sample-offset 0 of the current render quantum (k-rate params: the unique block value; a-rate params: the first-sample value, **with the explicit caveat that subsequent in-block automation samples are discarded** — use `param.at(i)` inside `forSample` for per-sample a-rate reads).
   - Arithmetic, comparison, `select`, type conversions, SIMD primitives (used for block-level bulk init / 1-pass computation).
 - Audio-I/O sample primitives (`at` / `set`) require `i: Node<'i32'>`. The only source of such a node is a `forSample` callback parameter — outside any `forSample`, `i` is not in scope, so writing `audioIn.at(0, i)` at the per-block phase is a TypeScript reference error caught in the IDE. Standard TypeScript scoping enforces the boundary; the framework adds nothing.
 - There is **no `audioIn.read(c)`** (sugar read), **no `audioOut.write([...])`** (sugar tuple write), and **no callable `param()`** (sugar current-sample param). Every per-sample access is via `forSample` + explicit `i`.

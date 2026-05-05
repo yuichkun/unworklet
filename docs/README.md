@@ -41,18 +41,18 @@ Independent and can be picked up at any time:
 
 | Doc | Status |
 |---|---|
-| `00-foundations.md` | skeleton |
-| `01-dsl.md` | skeleton |
-| `02-messaging.md` | skeleton |
-| `03-compiler.md` | skeleton |
-| `04-worklet-runtime.md` | skeleton |
-| `05-client.md` | skeleton |
+| `00-foundations.md` | partial (§§1–4 written; §5 realtime-safety + §6 cross-cutting still placeholder) |
+| `01-dsl.md` | written |
+| `02-messaging.md` | skeleton (Q27 will resolve) |
+| `03-compiler.md` | partial (§2 graph capture + §2.4 three-layer error written; §1, §3–§8 placeholder) |
+| `04-worklet-runtime.md` | skeleton (Q18 / Q19 / Q20 / Q21 will resolve) |
+| `05-client.md` | partial (§2.6 snapshot/restore + §6 timing + §7 latency-comp written; §1–§5 placeholder) |
 | `06-testing.md` | skeleton |
 | `07-tooling.md` | skeleton |
-| `08-deployment.md` | skeleton |
-| `09-repo-structure.md` | skeleton |
-| `10-roadmap.md` | skeleton |
-| `11-midi.md` | skeleton |
-| `decisions-log.md` | skeleton |
+| `08-deployment.md` | skeleton (Q11 / Q24 will resolve) |
+| `09-repo-structure.md` | skeleton (Q12 / Q13 / Q15 / Q16 / Q26 will resolve) |
+| `10-roadmap.md` | skeleton (Q14 will resolve) |
+| `11-midi.md` | written |
+| `decisions-log.md` | populated (Q1–Q10, Q22 resolved; remaining open Qs tracked in index) |
 
 Content is filled in incrementally as design questions are resolved through dialogue. Anything not yet present in a doc is not yet decided — see `decisions-log.md` for what *has* been decided.
