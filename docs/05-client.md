@@ -149,6 +149,9 @@ async function crossfadeRestore<C>(
   await newNode.restore(blob);
 
   // 2. Route old and new through separate gain nodes.
+  //    The raw `.node.disconnect()` form is intentional here — during a crossfade
+  //    we are tearing down every output of the old instance before the gain swap.
+  //    For partial routing (one output only), use `oldNode.outputs.<name>.disconnect()`.
   const oldGain = audioContext.createGain();
   const newGain = audioContext.createGain();
   oldNode.node.disconnect();
