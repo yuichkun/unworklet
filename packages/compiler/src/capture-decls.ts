@@ -577,20 +577,32 @@ export function everyNSamples(N: number, callback: () => void) {
 }
 
 // ─── defineSubgraph (inlined in capture) ───────────────────────────────────
+//
+// The returned function MUST be stable across multiple invocations from the
+// SAME body — so we key wrappers by `body` reference. Callers (incl. the
+// dispatch in @unworklet/core) call `defineSubgraph(body)` per invocation,
+// but the same body should always yield the same wrapper / subgraph id.
 
 export function defineSubgraph<A extends any[], R>(body: (...args: A) => R) {
   const c = getCtx();
-  const sgId = c.subgraphIdCounter++;
-  return function (...args: A): R {
+  let sgId = c.subgraphIdsByBody.get(body);
+  let wrapper = c.subgraphWrappersByBody.get(body) as ((...a: A) => R) | undefined;
+  if (sgId === undefined) {
+    sgId = c.subgraphIdCounter++;
+    c.subgraphIdsByBody.set(body, sgId);
+  }
+  if (wrapper) return wrapper;
+  const sId = sgId;
+  wrapper = function (...args: A): R {
     const cc = getCtx();
     const parentScope = cc.currentScope();
-    let pool = parentScope.subgraphInstances.get(sgId);
+    let pool = parentScope.subgraphInstances.get(sId);
     if (!pool) {
       pool = [];
-      parentScope.subgraphInstances.set(sgId, pool);
-      parentScope.subgraphCursors.set(sgId, 0);
+      parentScope.subgraphInstances.set(sId, pool);
+      parentScope.subgraphCursors.set(sId, 0);
     }
-    const cursor = parentScope.subgraphCursors.get(sgId) ?? 0;
+    const cursor = parentScope.subgraphCursors.get(sId) ?? 0;
     let inst = pool[cursor];
     if (!inst) {
       const childScope: any = {
@@ -598,7 +610,7 @@ export function defineSubgraph<A extends any[], R>(body: (...args: A) => R) {
         buffers: [],
         subgraphInstances: new Map(),
         subgraphCursors: new Map(),
-        pathPrefix: parentScope.pathPrefix + `__sg${sgId}_${cursor}/`,
+        pathPrefix: parentScope.pathPrefix + `__sg${sId}_${cursor}/`,
         declared: false,
         resetSubgraphCursors() {
           for (const [k] of this.subgraphCursors) this.subgraphCursors.set(k, 0);
@@ -607,12 +619,11 @@ export function defineSubgraph<A extends any[], R>(body: (...args: A) => R) {
       inst = { scope: childScope, cursor };
       pool.push(inst);
     }
-    parentScope.subgraphCursors.set(sgId, cursor + 1);
+    parentScope.subgraphCursors.set(sId, cursor + 1);
     cc.pushScope(inst.scope as any);
     let result: any;
     try {
       result = body(...args);
-      // Handle { process: () => R } shape
       if (result && typeof result === "object" && typeof result.process === "function") {
         result = result.process();
       }
@@ -621,4 +632,6 @@ export function defineSubgraph<A extends any[], R>(body: (...args: A) => R) {
     }
     return result as R;
   };
+  c.subgraphWrappersByBody.set(body, wrapper);
+  return wrapper;
 }

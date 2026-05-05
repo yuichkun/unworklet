@@ -1,4 +1,5 @@
 import type { Node } from "../types.js";
+import { getCaptureBackend } from "../capture-backend.js";
 
 // SIMD primitives operate on Float32Array of length 4 representing v128.
 
@@ -30,6 +31,8 @@ export function vec4(
   c: Node<"f32"> | number,
   d: Node<"f32"> | number,
 ): Node<"f32x4"> {
+  const cap = getCaptureBackend();
+  if (cap) return cap.vec4(a, b, c, d);
   const v = new Float32Array(4);
   v[0] = a as number;
   v[1] = b as number;
@@ -39,6 +42,8 @@ export function vec4(
 }
 
 export function splat(x: Node<"f32"> | number): Node<"f32x4"> {
+  const cap = getCaptureBackend();
+  if (cap) return cap.splat(x);
   const v = new Float32Array(4);
   v.fill(x as number);
   return wrap(v);
@@ -57,7 +62,23 @@ const elementWise =
     return wrap(out);
   };
 
-export const addVec = elementWise((a, b) => a + b);
-export const subVec = elementWise((a, b) => a - b);
-export const mulVec = elementWise((a, b) => a * b);
-export const divVec = elementWise((a, b) => a / b);
+export const addVec = (a: Node<"f32x4">, b: Node<"f32x4">): Node<"f32x4"> => {
+  const cap = getCaptureBackend();
+  if (cap) return cap.addVec(a, b);
+  return elementWise((x, y) => x + y)(a, b);
+};
+export const subVec = (a: Node<"f32x4">, b: Node<"f32x4">): Node<"f32x4"> => {
+  const cap = getCaptureBackend();
+  if (cap) return cap.subVec(a, b);
+  return elementWise((x, y) => x - y)(a, b);
+};
+export const mulVec = (a: Node<"f32x4">, b: Node<"f32x4">): Node<"f32x4"> => {
+  const cap = getCaptureBackend();
+  if (cap) return cap.mulVec(a, b);
+  return elementWise((x, y) => x * y)(a, b);
+};
+export const divVec = (a: Node<"f32x4">, b: Node<"f32x4">): Node<"f32x4"> => {
+  const cap = getCaptureBackend();
+  if (cap) return cap.divVec(a, b);
+  return elementWise((x, y) => x / y)(a, b);
+};

@@ -160,6 +160,19 @@ class Emit {
       if (!s) continue;
       stmts.push(this.storeStateLayout(slot.offset, slot.type, this.constExpr(s.initial, slot.type)));
     }
+    // Set param default values so unconnected processors still see defaults.
+    for (const pl of this.layout.params.layouts) {
+      const p = this.graph.declarations.params.find((x) => x.id === pl.paramId);
+      if (!p) continue;
+      if (pl.automationRate === "k-rate") {
+        stmts.push(m.f32.store(0, 4, m.i32.const(pl.offset), m.f32.const(p.default)));
+      } else {
+        // a-rate: fill all renderQuantum slots with default
+        for (let i = 0; i < this.layout.renderQuantum; i++) {
+          stmts.push(m.f32.store(0, 4, m.i32.const(pl.offset + i * 4), m.f32.const(p.default)));
+        }
+      }
+    }
     m.addFunction("init", binaryen.none, binaryen.none, [], m.block(null, stmts));
     m.addFunctionExport("init", "init");
   }

@@ -67,8 +67,10 @@ class CaptureCtx {
   midiInputIdCounter = 0;
   midiOutputIdCounter = 0;
 
-  // Subgraph definition counter (each defineSubgraph gets a unique id).
+  // Subgraph definition counter (each defineSubgraph body gets a unique id).
   subgraphIdCounter = 0;
+  subgraphIdsByBody: Map<Function, number> = new Map();
+  subgraphWrappersByBody: Map<Function, Function> = new Map();
 
   // While processing the user's process body, we register message/midi
   // handlers. We collect them here keyed by message/midi-input id and

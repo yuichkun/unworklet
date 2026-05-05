@@ -5,6 +5,12 @@ export { ProcessorRuntime, Scope, setCurrentRuntime, getCurrentRuntime } from ".
 
 export { Engine, type EngineOptions } from "./engine.js";
 
+export {
+  type CaptureBackend,
+  getCaptureBackend,
+  setCaptureBackend,
+} from "./capture-backend.js";
+
 export type {
   StateSlot,
   BufferSlot,

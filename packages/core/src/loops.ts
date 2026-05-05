@@ -1,4 +1,5 @@
 import { getCurrentRuntime, Scope, nextSubgraphId } from "./runtime.js";
+import { getCaptureBackend } from "./capture-backend.js";
 import type { Node } from "./types.js";
 
 export type ForSample = {
@@ -7,9 +8,13 @@ export type ForSample = {
 };
 
 const forSampleImpl = (callback: (i: Node<"i32">) => void): void => {
+  const cap = getCaptureBackend();
+  if (cap) return cap.forSample(callback as any);
   _forSampleImpl(1, callback);
 };
 (forSampleImpl as any).byN = function (stride: number, callback: (i: Node<"i32">) => void) {
+  const cap = getCaptureBackend();
+  if (cap) return cap.forSample.byN(stride, callback as any);
   if (!Number.isInteger(stride) || stride <= 0) {
     throw new Error(`forSample.byN stride must be a positive integer, got ${stride}`);
   }
@@ -38,6 +43,8 @@ function _forSampleImpl(stride: number, callback: (i: Node<"i32">) => void) {
 }
 
 export function everyNSamples(N: number, callback: () => void): void {
+  const cap = getCaptureBackend();
+  if (cap) return cap.everyNSamples(N, callback);
   if (!Number.isInteger(N) || N <= 0) {
     throw new Error(`everyNSamples N must be a positive integer, got ${N}`);
   }
@@ -63,8 +70,13 @@ export function everyNSamples(N: number, callback: () => void): void {
 export function defineSubgraph<A extends any[], R>(
   body: (...args: A) => R | { process: () => R },
 ): (...args: A) => R {
+  // Note: this runs at module load, not per-render. We can't pre-bind to a
+  // capture backend here because none is installed yet. Instead, the returned
+  // function dispatches per-call.
   const sgId = nextSubgraphId();
   return function (...args: A): R {
+    const cap = getCaptureBackend();
+    if (cap) return cap.defineSubgraph(body as any)(...(args as any));
     const rt = getCurrentRuntime();
     const parentScope = rt.currentScope();
     let instances = parentScope.subgraphInstances.get(sgId);

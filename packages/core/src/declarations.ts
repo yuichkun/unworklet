@@ -13,6 +13,7 @@ import {
   type MidiOutputSlot,
   type Scope,
 } from "./runtime.js";
+import { getCaptureBackend } from "./capture-backend.js";
 import type {
   ScalarType,
   StateOptions,
@@ -192,12 +193,31 @@ function declareState<T extends ScalarType>(
 }
 
 export const state = {
-  f32: (initial: number, options?: StateOptions<"f32">) => declareState("f32", initial, options),
-  f64: (initial: number, options?: StateOptions<"f64">) => declareState("f64", initial, options),
-  i32: (initial: number, options?: StateOptions<"i32">) => declareState("i32", initial, options),
-  i64: (initial: number, options?: StateOptions<"i64">) => declareState("i64", initial, options),
-  bool: (initial: boolean, options?: StateOptions<"bool">) =>
-    declareState("bool", initial, options),
+  f32: (initial: number, options?: StateOptions<"f32">) => {
+    const cap = getCaptureBackend();
+    if (cap) return cap.state.f32(initial, options);
+    return declareState("f32", initial, options);
+  },
+  f64: (initial: number, options?: StateOptions<"f64">) => {
+    const cap = getCaptureBackend();
+    if (cap) return cap.state.f64(initial, options);
+    return declareState("f64", initial, options);
+  },
+  i32: (initial: number, options?: StateOptions<"i32">) => {
+    const cap = getCaptureBackend();
+    if (cap) return cap.state.i32(initial, options);
+    return declareState("i32", initial, options);
+  },
+  i64: (initial: number, options?: StateOptions<"i64">) => {
+    const cap = getCaptureBackend();
+    if (cap) return cap.state.i64(initial, options);
+    return declareState("i64", initial, options);
+  },
+  bool: (initial: boolean, options?: StateOptions<"bool">) => {
+    const cap = getCaptureBackend();
+    if (cap) return cap.state.bool(initial, options);
+    return declareState("bool", initial, options);
+  },
 };
 
 function declareBuffer<T extends ScalarType>(type: T, options: BufferOptions<T>): Buffer<T> {
@@ -229,12 +249,26 @@ function declareBuffer<T extends ScalarType>(type: T, options: BufferOptions<T>)
 }
 
 export const buffer = {
-  f32: (options: BufferOptions<"f32">) => declareBuffer("f32", options),
-  f64: (options: BufferOptions<"f64">) => declareBuffer("f64", options),
-  i32: (options: BufferOptions<"i32">) => declareBuffer("i32", options),
+  f32: (options: BufferOptions<"f32">) => {
+    const cap = getCaptureBackend();
+    if (cap) return cap.buffer.f32(options);
+    return declareBuffer("f32", options);
+  },
+  f64: (options: BufferOptions<"f64">) => {
+    const cap = getCaptureBackend();
+    if (cap) return cap.buffer.f64(options);
+    return declareBuffer("f64", options);
+  },
+  i32: (options: BufferOptions<"i32">) => {
+    const cap = getCaptureBackend();
+    if (cap) return cap.buffer.i32(options);
+    return declareBuffer("i32", options);
+  },
 };
 
 export function param(options: ParamOptions): ParamHandle {
+  const cap = getCaptureBackend();
+  if (cap) return cap.param(options);
   const rt = getCurrentRuntime();
   // Params can only be declared at root setup time; subgraphs can also declare
   // them but we store them at processor level for AudioParam binding.
@@ -269,6 +303,12 @@ export function param(options: ParamOptions): ParamHandle {
 }
 
 export function audioInput<C extends number>(options: AudioInputOptions<C>): AudioInputHandle<C> {
+  const cap = getCaptureBackend();
+  if (cap) return cap.audioInput(options) as any;
+  return audioInputInterp(options);
+}
+
+function audioInputInterp<C extends number>(options: AudioInputOptions<C>): AudioInputHandle<C> {
   const rt = getCurrentRuntime();
   const slot: AudioInputSlot = {
     kind: "audioInput",
@@ -297,6 +337,14 @@ export function audioInput<C extends number>(options: AudioInputOptions<C>): Aud
 export function audioOutput<C extends number>(
   options: AudioOutputOptions<C>,
 ): AudioOutputHandle<C> {
+  const cap = getCaptureBackend();
+  if (cap) return cap.audioOutput(options) as any;
+  return audioOutputInterp(options);
+}
+
+function audioOutputInterp<C extends number>(
+  options: AudioOutputOptions<C>,
+): AudioOutputHandle<C> {
   const rt = getCurrentRuntime();
   const slot: AudioOutputSlot = {
     kind: "audioOutput",
@@ -323,6 +371,12 @@ export function audioOutput<C extends number>(
 }
 
 export function event<T>(options: EventOptions): EventDecl<T> {
+  const cap = getCaptureBackend();
+  if (cap) return cap.event<T>(options);
+  return eventInterp<T>(options);
+}
+
+function eventInterp<T>(options: EventOptions): EventDecl<T> {
   const rt = getCurrentRuntime();
   const slot: EventSlot = {
     kind: "event",
@@ -354,6 +408,12 @@ export function event<T>(options: EventOptions): EventDecl<T> {
 }
 
 export function message<T>(options: MessageOptions): MessageDecl<T> {
+  const cap = getCaptureBackend();
+  if (cap) return cap.message<T>(options);
+  return messageInterp<T>(options);
+}
+
+function messageInterp<T>(options: MessageOptions): MessageDecl<T> {
   const rt = getCurrentRuntime();
   const slot: MessageSlot = {
     kind: "message",
@@ -373,6 +433,12 @@ export function message<T>(options: MessageOptions): MessageDecl<T> {
 }
 
 export function midiInput(options: MidiOptions = {}): MidiInputHandle {
+  const cap = getCaptureBackend();
+  if (cap) return cap.midiInput(options);
+  return midiInputInterp(options);
+}
+
+function midiInputInterp(options: MidiOptions = {}): MidiInputHandle {
   const rt = getCurrentRuntime();
   const name = options.name ?? "midi";
   const slot: MidiInputSlot = {
@@ -396,6 +462,12 @@ export function midiInput(options: MidiOptions = {}): MidiInputHandle {
 }
 
 export function midiOutput(options: MidiOptions = {}): MidiOutputHandle {
+  const cap = getCaptureBackend();
+  if (cap) return cap.midiOutput(options);
+  return midiOutputInterp(options);
+}
+
+function midiOutputInterp(options: MidiOptions = {}): MidiOutputHandle {
   const rt = getCurrentRuntime();
   const name = options.name ?? "midiOut";
   const slot: MidiOutputSlot = {
