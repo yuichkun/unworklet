@@ -276,7 +276,7 @@ export const linearPhaseEQ = defineProcessor(() => {
   // Sliding history of input samples (1024).
   const history  = buffer.f32({ size: HISTORY_LEN, name: 'history' });
   // Write head into history.
-  const histHead = state.i32(0, { name: 'histHead' });
+  const histHead = state.i32(0, { name: 'histHead', snapshot: 'transient' });
 
   return {
     process: () => {
@@ -835,10 +835,10 @@ export const convolutionReverb = defineProcessor((ctx) => {
   // this scaffold shows the time-domain accumulation pattern with SIMD bulk.
   const histL = buffer.f32({ size: IR_LEN, name: 'histL', snapshot: 'transient' });
   const histR = buffer.f32({ size: IR_LEN, name: 'histR', snapshot: 'transient' });
-  const histHead = state.i32(0, { name: 'histHead' });
+  const histHead = state.i32(0, { name: 'histHead', snapshot: 'transient' });
 
   // Wet output level, published to UI.
-  const wetMeter = state.f32(0, { name: 'wetMeter', publish: { rateFps: 30 } });
+  const wetMeter = state.f32(0, { name: 'wetMeter', snapshot: 'transient', publish: { rateFps: 30 } });
 
   // Bulk IR upload from main.
   const uploadIR = message<{ irL: Float32Array; irR: Float32Array }>({ name: 'uploadIR' });
