@@ -6,31 +6,37 @@ import type { ASTValue } from "./ast.js";
 export const vec4 = (a: any, b: any, c: any, d: any): ASTValue => {
   const ctx = getCtx();
   const lanes = [lift(a), lift(b), lift(c), lift(d)];
-  return ctx.fresh({
-    kind: "vec-ctor",
-    type: "f32x4",
-    lanes,
-  });
+  return makeVecValue(
+    ctx.fresh({
+      kind: "vec-ctor",
+      type: "f32x4",
+      lanes,
+    }),
+  );
 };
 
 export const splat = (x: any): ASTValue => {
   const ctx = getCtx();
-  return ctx.fresh({
-    kind: "vec-splat",
-    type: "f32x4",
-    arg: lift(x, "f32"),
-  });
+  return makeVecValue(
+    ctx.fresh({
+      kind: "vec-splat",
+      type: "f32x4",
+      arg: lift(x, "f32"),
+    }),
+  );
 };
 
 function vecArith(op: "addVec" | "subVec" | "mulVec" | "divVec", a: any, b: any): ASTValue {
   const ctx = getCtx();
-  return ctx.fresh({
-    kind: "vec-arith",
-    type: "f32x4",
-    op,
-    a,
-    b,
-  });
+  return makeVecValue(
+    ctx.fresh({
+      kind: "vec-arith",
+      type: "f32x4",
+      op,
+      a,
+      b,
+    }),
+  );
 }
 
 export const addVec = (a: any, b: any) => vecArith("addVec", a, b);

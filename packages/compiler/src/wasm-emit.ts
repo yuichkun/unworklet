@@ -914,11 +914,11 @@ class Emit {
         break;
       }
       case "vec-ctor": {
-        // Build via splat + replace_lane
+        // Build via splat + replace_lane. binaryen API: replace_lane(vec, lane, value)
         const lane0 = this.emitValue(v.lanes[0]!, "f32");
         let acc = m.f32x4.splat(lane0);
         for (let i = 1; i < 4; i++) {
-          acc = m.f32x4.replace_lane(i, acc, this.emitValue(v.lanes[i]!, "f32"));
+          acc = m.f32x4.replace_lane(acc, i, this.emitValue(v.lanes[i]!, "f32"));
         }
         result = acc;
         actualType = "f32x4";
@@ -930,7 +930,8 @@ class Emit {
         break;
       }
       case "vec-lane": {
-        result = m.f32x4.extract_lane(v.lane, this.emitValue(v.vec, "f32x4"));
+        // binaryen API: extract_lane(vec, lane)
+        result = m.f32x4.extract_lane(this.emitValue(v.vec, "f32x4"), v.lane);
         break;
       }
       case "vec-arith": {
