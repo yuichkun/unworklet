@@ -36,7 +36,7 @@ skeleton — populated as questions resolve
 | Q24 | Bundler integration scope | (open) | `08-deployment.md` §1 |
 | Q25 | Source maps | (open) | `03-compiler.md` §7 |
 | Q26 | TypeScript version | (open) | `09-repo-structure.md` §5 |
-| Q27 | Generic typed messaging core surface | (open) | `02-messaging.md` + `01-dsl.md` §4 |
+| Q27 | Generic typed messaging core surface | resolved — 5-surface uniform (param / state.publish / event / message / midi); SAB+Atomics with postMessage fallback; bulk via state.buffer.publish or event/message variable-length payloads | `02-messaging.md` + `01-dsl.md` §3, §4 |
 
 ---
 
@@ -616,5 +616,108 @@ The following candidates for the process body's structure were considered during
 
 - *Single-layer error model (everything detected at runtime)* — incompatible with realtime safety. Errors on the audio thread cannot be recovered safely; pre-runtime detection is non-negotiable.
 - *Two-layer model (TS errors + runtime errors only)* — collapses graph-capture-time and static-analysis detection into "runtime errors", which lose specificity (the user cannot tell whether the error is about shape, scope, or memory budget). The three-layer structure preserves precise diagnosis.
+
+---
+
+## Q27 — Generic typed messaging core surface
+
+**Status:** resolved.
+
+**Decision:** the main↔worklet messaging surface composes from three new declaration kinds (`state.publish` extension, `event<T>`, `message<T>`) plus the existing `param` and `midiInput` / `midiOutput` surfaces. Five surfaces total cover every communication use case; no separate `bulk` declaration is needed.
+
+**Surface summary** (authoritative wording in `01-dsl.md` §3 / §4 + `02-messaging.md` + `05-client.md` §2):
+
+| Surface | Direction | Purpose | Delivery | Transport (SAB) | Transport (fallback) |
+|---|---|---|---|---|---|
+| `param` | main → worklet | continuous control values (knob, slider) | (Web Audio AudioParam) | (Web Audio internal) | (Web Audio internal) |
+| `state.publish` | worklet → main | continuous worklet-side values (meter, LFO, spectrum) | coalesce-latest at publish rate | shared region, atomic store/load | postMessage at render-quantum boundary |
+| `event<T>` | worklet → main | sample-accurate moments (zero-cross, threshold, user trigger) | preserve all events with `atSample` | SAB ringbuffer + `Atomics` head/tail | postMessage with same slot semantics |
+| `message<T>` | main → worklet | discrete commands (button press, preset request) | preserve all in-arrival-order, drained at block boundary | SAB ringbuffer + `Atomics` | postMessage |
+| `midiInput` / `midiOutput` | bidirectional | MIDI events (Q4) | (Q4-c) | (Q4-c) | (Q4-c) |
+
+**Decision (Q27-a — `state.publish` extension):**
+
+`state.<type>(initial, options?)` accepts an optional `publish: { rateFps: number }` field (default omitted = not published). When set, the framework copies the current slot value to a shared region every `1000/rateFps` ms; the main thread reads through `node.state.<name>.subscribe(handler)` or `.value`.
+
+- **Read-only on main**: the slot remains worklet-private for writes; main observes a snapshot at copy time. Concurrent worklet writes never tear (atomic store).
+- **One coalesce strategy**: latest-wins per slot. There is no queued history for state slots; for that, declare an `event` instead. The strategy is fixed at the declaration kind, not configurable per slot — this is what makes the user's intent visible at the declaration site.
+- **`rateFps` default** is 30. v1.0.0 surface accepts only a numeric `rateFps`; rate-mode variants (`rAF`-driven, per-state custom curves) are deferred to v1.x.0 additively.
+- **Buffer state publish**: `buffer.<type>({ size, name, publish: { rateFps } })` extends the same option to buffer-typed states; the framework copies the buffer region into the shared region every publish tick. This covers continuous large data (waveform snapshots, spectrum frames) without a separate declaration.
+
+**Decision (Q27-b — `event<T>` declaration):**
+
+`event<T>(options): EventDecl<T>` declares a typed event channel (worklet → main). Authored at declaration scope; emitted from inside `forSample` callbacks via `emitIf(cond, eventDecl, payload)`.
+
+- **Schema**: user-defined record type `T`. The payload always carries `atSample: number` (block-local sample-offset, `0..renderQuantum-1`) — uniform with MIDI Q4-c.
+- **`emitIf` only, no plain `emit`**: same structural-footgun-elimination as MIDI Q4-b. Plain `emit(...)` is rejected at the type level.
+- **Capacity**: ringbuffer default 256 slots, override via `event<T>({ name, capacity })`. Slot size depends on the largest payload variant; variable-length payload fields share the MIDI sysex pattern (separate content buffer + index in the slot) — see Q27-e.
+- **Overflow**: drop-oldest + monotonic `overflowCount` exposed via `node.events.<name>.diagnostics.overflowCount()` — uniform with MIDI Q4-c.
+
+**Decision (Q27-c — `message<T>` declaration):**
+
+`message<T>(options): MessageDecl<T>` declares a typed message channel (main → worklet). The worklet-side handler is registered via `messageDecl.onReceive(handler)` at the per-block phase top of the `process` body. Handler runs at the start of the next render quantum, before any `forSample`.
+
+- **Schema**: user-defined record type `T`. No `atSample` (main thread has no sample-offset concept; messages are coarse-grained by definition).
+- **Delivery**: in-arrival-order, drained at block boundary. Capacity / overflow same shape as `event<T>` (default 256, drop-oldest + counter).
+- **Handler placement**: inside the `process` body, at the per-block phase. Inside the handler body, only state writes / buffer writes / scalar arithmetic are allowed (no audio I/O — the sample-offset `i` is not in scope, by definition).
+
+**Decision (Q27-d — Transport):**
+
+API surface is identical across SAB-available and SAB-unavailable modes; transport differs:
+
+- **SAB available** (default, with COOP/COEP): `state.publish` slots in shared linear memory regions with `Atomics` store/load; `event<T>` / `message<T>` in `SharedArrayBuffer`-backed ring buffers with `Atomics`-based head/tail pointers (uniform with MIDI Q4-c and snapshot Q5).
+- **SAB unavailable**: `state.publish` propagates via flag-bearing postMessage at render-quantum boundary; `event<T>` and `message<T>` postMessage with structured-clone payloads. Sample-accurate `atSample` is preserved on the wire; main-side block-boundary latency is the only degradation. Full degradation policy lives in `08-deployment.md` §3.
+
+The audio thread never allocates and never blocks on these paths in either mode (per realtime-safety invariants in `00-foundations.md` §5).
+
+**Decision (Q27-e — Bulk payload path):**
+
+No separate `bulk` declaration. Large payloads route through the existing primitives:
+
+- **Continuous large data** (waveform display, 1024-sample scope frame): `buffer.<type>({ ..., publish: { rateFps } })` — buffer-typed state with publish option.
+- **One-shot large data, worklet → main** (snapshot capture, spectrum frame on demand): `event<T>` with a variable-length payload field; the framework routes large payloads through the variable-length content buffer + index pattern (= MIDI sysex pattern, Q4-c).
+- **One-shot large data, main → worklet** (IR load, wavetable upload, lookup table push): `message<T>` with a variable-length payload field; same content-buffer + index pattern.
+
+**Rationale (Q27-a):**
+
+- *State extension over a separate `publishedState` declaration*: `state` is already a core unworklet concept. Adding one option (`publish: { rateFps }`) keeps the learning curve at ~zero — authors who already understand `state` get publishing for free. A separate `publishedState` declaration would be a fourth primitive concept with no expressive gain.
+- *Coalesce-latest as the only strategy*: state-push use cases (meter, LFO display, spectrum bins) inherently want the latest value, not history. History needs are served by `event<T>` with explicit capacity. Forcing this split makes the user's intent visible at the declaration site — the choice between "I want the latest" and "I want every event" is made when typing `state.publish` vs `event`, not at runtime.
+- *`rateFps` as the only knob in v1.0.0*: rAF-driven rates and per-state custom schedules are valid extensions but would lock the v1.0.0 API into a more complex shape than needed. Deferred per `feedback_no-preemptive-defer.md`'s "additive parallel-worker territory" exception — the additions do not require breaking the v1.0.0 surface.
+
+**Rationale (Q27-b):**
+
+- *`event<T>` parallel to MIDI*: MIDI's `emitIf` + `atSample` + ringbuffer + drop-oldest pattern (Q4) is already a working solution for sample-accurate worklet → main delivery. Generalizing it to user-defined schemas — same shape, free choice of payload type — preserves the uniformity. Users who learn MIDI's pattern get generic events for free, and vice versa.
+- *No plain `emit(...)`*: the MIDI Q4-b rationale applies unchanged. Unconditional emission inside `forSample` would saturate the ringbuffer at sample rate; making the conditional structurally mandatory eliminates the footgun.
+- *Variable-length sysex pattern reused*: large payloads (waveform snapshot field) share the MIDI sysex implementation (separate content buffer + index in the slot). One transport implementation covers MIDI sysex, generic events, and messages.
+
+**Rationale (Q27-c):**
+
+- *Handler at per-block top*: messages are inherently coarse-grained (button press, preset load); they do not need per-sample dispatch. Running the handler before any `forSample` lets the user reflect the message into state slots that subsequent `forSample` invocations read, without per-sample dispatch overhead.
+- *No audio I/O in handler body*: handlers run outside any `forSample`, so sample-offset `i` is not in scope. TypeScript scope already rejects `audioIn.at(0, i)` here; the framework adds nothing. State and buffer writes are valid because they are sample-position-independent.
+- *Symmetry with `event<T>`*: same capacity / overflow shape; reading either surface tells users what to expect from the other.
+
+**Rationale (Q27-d):**
+
+- *Uniform with MIDI / snapshot transport*: transport choice (SAB + atomics vs postMessage) is decoupled from the API, and the same degradation policy serves all communication paths. One implementation, three consumers (MIDI, snapshot, generic messaging).
+- *Audio thread never allocates*: ringbuffer regions are pre-allocated at processor instantiation; publish slots are pre-allocated. State copies are `memcpy` of fixed regions. Nothing on the audio thread depends on heap allocation, GC, or main-thread response.
+- *COOP/COEP fallback policy*: SAB requires cross-origin isolation, which not every host configures. Failing closed (= "SAB unavailable means the messaging surface is broken") would push deployment burden onto every consumer; failing open (= same API, postMessage fallback, slightly higher latency) keeps unworklet usable in any web context.
+
+**Rationale (Q27-e):**
+
+- *Three primitives are enough*: continuous large data is conceptually "a published buffer" (= `buffer.publish`), one-shot large data is conceptually "an event with a large payload" or "a message with a large payload". A fourth `bulk` declaration would add a learning bump for use cases the existing primitives already express clearly.
+- *Variable-length transport is shared infrastructure*: MIDI sysex already needs it; reusing the same content-buffer + index pattern for `event<T>` / `message<T>` payloads adds nothing to the transport implementation.
+
+**Rejected:**
+
+- *Single `topic<T>` declaration with `direction` / `semantics` options* — coalesce-latest vs ringbuffer in one declaration controlled by a string option creates the same structural-footgun trap as plain `emit(...)` (Q4-b): a single typo (`semantics: 'state'` vs `semantics: 'event'`) flips the entire delivery contract. Multiple declaration kinds with distinct names make the intent visible at the declaration site.
+- *Separate `publishedState<T>` declaration* — a fourth primitive concept (alongside `state`, `event`, `message`) with no expressive gain over `state` + `publish: { ... }` option. The state extension reuses learned vocabulary.
+- *`pub.scalar.f32(...)` / `pub.buffer.f32(...)` namespace* — adds a second mental layer (`pub.*` vs `state.*`) and obscures the relationship to plain `state`. The flat extension is simpler.
+- *Two-declaration core (`event` + `message` only) with state-push delegated to L1 helpers / recipes* — pushes coalesce-latest pattern into user code, where backpressure handling becomes user responsibility. For the meter / spectrum / LFO use cases that production-grade plugin UIs depend on, this externalizes a pattern that should be load-bearing infrastructure.
+- *Separate `bulk` declaration for large payloads* — a fourth primitive that covers cases the existing three already express. Pure surface bloat.
+- *`event` / `message` payload size always fixed (no variable-length)* — would force users to tile large payloads across multiple events, defeating the "one-shot large data" use case. The MIDI sysex pattern already proved the variable-length implementation; reusing it costs nothing.
+- *Plain unconditional `emit(eventDecl, payload)` allowed inside `forSample`* — same footgun as plain MIDI emit (Q4-b). Saturates the ringbuffer at sample rate.
+- *State `publish` rate as only `rAF`-driven, no `rateFps`* — couples the publish rate to monitor refresh rate, which is browser-specific (60Hz / 120Hz / 144Hz / variable). For headless contexts (worker-only, OffscreenCanvas without animation, automated tests), `rAF` is unavailable. `rateFps` is the universal primitive; `rAF` is a v1.x.0 additive option.
+- *`onReceive` handler registration at declaration scope (= outside the `process` body)* — handlers would have to either close over declarations via outer scope only and not re-resolve them per block (= sometimes wrong if state was reset by snapshot/restore between blocks), or the framework would have to inject hidden re-binding per block. Per-block placement inside `process` resolves the lifetime cleanly without framework magic.
+- *Coalesce-latest as a configurable option on `event<T>`* — collapses the "preserve all events" and "latest only" semantics into one declaration, requiring a runtime check at every consumer site to know which mode is active. The two declaration kinds (`state.publish` vs `event`) carry the semantics in the type; consumers know what to expect from the type alone.
 
 **Open — Q22-d (Error message format and refactor-hint structure):** the format of error messages produced by each layer (TS type errors, graph-capture-time errors, static-analysis errors) and the structure of refactor hints attached to each error class is not yet resolved. To be addressed once `01-dsl.md` and `03-compiler.md` carry enough concrete examples to drive the format choice.

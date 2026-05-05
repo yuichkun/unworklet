@@ -17,18 +17,28 @@ skeleton
 
 ## 2. `UnworkletNode<C>` surface
 
-<!-- - .node:     raw AudioWorkletNode (for advanced graph wiring)
-     - .inputs.<name>:  typed AudioInput connect()/be-connected-to wrapper per declared audioInput
-     - .outputs.<name>: typed AudioOutput connect()/be-connected-to wrapper per declared audioOutput
-     - .params.<name>:  real AudioParam (Web Audio standard; setValueAtTime / linearRamp / exponentialRamp / connection-from-AudioNode all work)
-     - .messages.<name>(payload):           typed sender per declared message
-     - .events.<name>.on(handler) → unsub:  typed subscriber per declared event
-     - .midi.send(event, atTime?):          source-agnostic MIDI inject (when midiInput is declared)
-     - .midi.connectFromWebMIDI(input):     Web MIDI bridge convenience (when midiInput is declared)
-     - .dispose():                          tear down node, queues, worklet
-     - .onError(handler):                   error subscription (worklet traps, queue overflow, SAB-mode change).
-     The .params.<name> shape is a real AudioParam — distinct from the worklet-side `param.at(i)` graph-capture form;
-     main-thread JS uses standard Web Audio APIs, the worklet-side primitive is graph-capture only. -->
+The `UnworkletNode<C>` shape exposes the following members:
+
+- **`.node: AudioWorkletNode`** — raw `AudioWorkletNode` for advanced graph wiring not covered by the typed surface.
+- **`.inputs.<name>`** — typed `connect()` / disconnection wrapper per declared `audioInput`. See `01-dsl.md` §1.6.
+- **`.outputs.<name>`** — typed `connect()` / disconnection wrapper per declared `audioOutput`.
+- **`.params.<name>: AudioParam`** — real Web Audio `AudioParam` (`setValueAtTime` / `linearRampToValueAtTime` / `exponentialRampToValueAtTime` / connection-from-`AudioNode` all work).
+- **`.state.<name>.value: T`** — current value of a `state.publish` (or `buffer.publish`) slot. Returns the most recently published value synchronously. Read-only.
+- **`.state.<name>.subscribe(handler) → unsubscribe`** — listen for changes on a published state / buffer slot. Handler fires on each publish tick where the value differs from the last delivered value (see §5.2).
+- **`.events.<name>.on(handler) → unsubscribe`** — typed subscriber per declared `event<T>`. Handler receives the payload (including `atSample`).
+- **`.events.<name>.diagnostics.overflowCount(): number`** — monotonic counter of dropped events (see `02-messaging.md` §3).
+- **`.messages.<name>(payload): void`** — typed sender per declared `message<T>`. Fire-and-forget; in-arrival-order delivery, drained at the start of each render quantum on the worklet side.
+- **`.messages.<name>.diagnostics.overflowCount(): number`** — monotonic counter of dropped messages.
+- **`.midi.send(event, atTime?)`** — source-agnostic MIDI inject (when `midiInput` is declared). See `11-midi.md` §3.
+- **`.midi.connectFromWebMIDI(input)`** — Web MIDI bridge convenience (when `midiInput` is declared).
+- **`.midi.onEvent(type, handler) → unsubscribe`** — typed MIDI event subscriber on `midiOutput` (when declared). See `11-midi.md` §2.
+- **`.diagnostics.transport: 'sab' | 'postMessage'`** — active transport mode (see `02-messaging.md` §4 and `08-deployment.md` §3).
+- **`.dispose()`** — tear down node, queues, worklet runtime, all subscribers.
+- **`.onError(handler)`** — error subscription (worklet traps, queue overflow events, SAB-mode change diagnostics).
+
+The `.params.<name>` shape is a real `AudioParam` — distinct from the worklet-side `param.at(i)` graph-capture form. Main-thread JS uses standard Web Audio APIs; the worklet-side primitive is graph-capture only.
+
+The `.state.<name>` surface is **read-only on main**. Writing to a worklet-side state slot from main is not supported by design — main-driven state changes go through `params.<name>` (continuous values), `messages.<name>(payload)` (discrete commands), or `restore(blob)` (full state reload). Authoritative rationale: `decisions-log.md` Q27-a.
 
 ### 2.6 Snapshot / restore / inspect
 
@@ -78,10 +88,34 @@ A processor that calls `snapshot()` without any `name`-bearing slot is a graph-c
 <!-- creating → ready → running → disposed.
      Errors transition: any → errored (terminal). -->
 
-## 5. Event subscription details
+## 5. Event and state subscription details
 
-<!-- Tick scheduling for queue drain on main thread; backpressure if subscribers are slow;
-     unsubscribe semantics. -->
+### 5.1 Event drain on the main thread
+
+`node.events.<name>.on(handler)` registers a subscriber. The main-thread runtime drains the corresponding event ringbuffer on a recurring tick (default: per-`MessageChannel` ping in SAB mode, per-`postMessage` arrival in fallback mode). Each drained event is dispatched to all subscribers for that event in registration order.
+
+Subscribers run synchronously on the main thread; if a subscriber is slow, it blocks the dispatch loop for that tick — never the audio thread. The audio thread continues to write into the ringbuffer (drop-oldest on overflow), so a slow main-thread subscriber manifests as `overflowCount` advancing while the live UI lags. This is observable via `.diagnostics.overflowCount()`.
+
+### 5.2 State publish notification
+
+`node.state.<name>.subscribe(handler)` registers a listener for a `state.publish` (or `buffer.publish`) slot. The runtime watches the slot's per-slot version counter (see `02-messaging.md` §5.4). On each tick where the version has advanced — meaning the audio thread has copied a new value into the shared region — the runtime reads the value and invokes the handler.
+
+Equality is by value (`===` for scalars; byte-by-byte for buffers). Identical re-publishes are coalesced — handlers are not invoked when the published value matches the last delivered one.
+
+`.value` returns the most recent published value synchronously, without subscribing. It is safe to call in render loops on the main thread.
+
+### 5.3 Unsubscribe semantics
+
+Both `.events.<name>.on(handler)` and `.state.<name>.subscribe(handler)` return an unsubscribe function. Calling it removes the handler from the dispatch list; subsequent ticks will not invoke it. A pending in-flight dispatch (a tick already scheduled before unsubscribe) may still deliver one final invocation — handlers must be idempotent against this.
+
+`.dispose()` removes all subscribers as part of teardown; explicit unsubscribe is not required when the node is being discarded.
+
+### 5.4 Backpressure
+
+The audio thread does not back off based on main-thread responsiveness. The framework's contract is "deliver as much as the ring buffer can hold; report overflow accurately". Consumers who need flow control build it on top:
+
+- Round-trip throttle: send a `messages.<name>(payload)` request to the worklet, have the worklet reply with an `event<T>` only when ready for more.
+- Source-side throttle: monitor `overflowCount` on the consumer side and adjust emission cadence at the worklet author's level (e.g. wrap the emit site in `everyNSamples(N, () => emitIf(...))`).
 
 ## 6. Snapshot / restore semantics
 

@@ -43,10 +43,24 @@ skeleton
 <!-- Q21 — auto-detection of feedback paths via DAG cycle analysis, flush-to-zero injection
      points, opt-out, static-analysis warnings. Lands here. -->
 
-## 7. Publish-phase scheduling
+## 7. State publish scheduling
 
-<!-- Worklet-local scheduler; reads state, evaluates publish body, appends to event queue.
-     Decoupled from the audio thread's timing constraints. -->
+The worklet runtime drives `state.publish` and `buffer.publish` propagation directly from the audio thread. There is no separate publish lambda (see `01-dsl.md` §6 and `decisions-log.md` Q27-a).
+
+Per render quantum, after the user's `process` body completes:
+
+1. Runtime walks the list of `publish`-flagged slots. Each slot carries a per-slot counter in sample-units (initialized to 0 at instantiation) and a target threshold derived from `rateFps × renderQuantum / sampleRate`.
+2. Each slot's counter is incremented by `renderQuantum`. If the counter has met or exceeded the threshold, the slot is **due**: runtime copies the current scalar value (`Atomics.store` for `state.<type>`) or the buffer region (`memcpy` for `buffer.<type>`) into the shared region, increments the slot's version counter (see `02-messaging.md` §5.4), and resets the local counter (carrying the remainder).
+3. Runtime continues to the next render quantum.
+
+Cost per published slot is bounded: scalar copies are one `Atomics.store`; buffer copies are `memcpy` over a fixed region. Higher `rateFps` schedules more frequent copies but never blocks; lower `rateFps` simply skips the copy in most blocks. The audio thread never allocates and never waits on the main thread.
+
+In the SAB-unavailable fallback, the same scheduling logic runs on the audio thread; the "copy into shared region" step is replaced by enqueuing the current value (or buffer view) into a postMessage at the render-quantum boundary. Sample-accurate timing of internal updates is unaffected; main-side observation latency picks up the postMessage round-trip.
+
+Subscriber notification (main side) is described in `05-client.md` §5.
+
+Authoritative API: `01-dsl.md` §3 (declaration shape) + `05-client.md` §2 (main-side reader).
+Authoritative rationale: `decisions-log.md` Q27.
 
 ## 8. Error handling
 

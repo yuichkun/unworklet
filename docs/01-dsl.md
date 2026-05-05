@@ -214,6 +214,7 @@ Options:
 
 - **`name?: string`** — slot identity. Required when the parent processor calls `snapshot()` (graph-capture-time error otherwise). Used as the slot key in snapshot blobs.
 - **`snapshot?: 'persistent' | 'transient' | { [profile: string]: 'persistent' | 'transient' }`** — snapshot inclusion. Default is `'persistent'`. See §8.2.
+- **`publish?: { rateFps: number }`** — when set, the framework periodically copies the current slot value into a shared region readable from the main thread via `node.state.<name>.subscribe(handler)` or `.value`. Default omitted (= not published). The slot remains worklet-private for writes regardless of this option; main observes a snapshot at copy time. Authoritative rationale: `decisions-log.md` Q27-a.
 
 ### 3.2 `buffer` — fixed-size arrays
 
@@ -229,6 +230,7 @@ Options:
 - **`size: number`** — element count, fixed at compile time. The buffer occupies `size × sizeof(type)` bytes in linear memory.
 - **`name?: string`** — slot identity (same rules as `state`).
 - **`snapshot?: 'persistent' | 'transient' | { ... }`** — default is `'transient'`. Most buffers are accumulation regions (delay lines, scratch buffers) whose contents lose meaning across preset boundaries; include explicitly when the contents *are* the slot's identity (wavetables, lookup tables).
+- **`publish?: { rateFps: number }`** — same shape as `state.publish`. The framework copies the buffer region into a shared region every publish tick; main thread reads via `node.state.<name>.subscribe(handler)` (handler receives the typed array view) or `.value`. Used for continuous large data (waveform display, spectrum frame). See `decisions-log.md` Q27-a / Q27-e.
 
 ### 3.3 `param` — AudioParam-backed
 
@@ -276,8 +278,74 @@ Authoritative rationale for the snapshot defaults: `decisions-log.md` Q5 (Q5-b).
 
 ## 4. Messages and events declarations
 
-<!-- message({...}) and event({...}) declaration shape (the runtime contract lives in 02-messaging.md;
-     this section only covers DSL surface — how the user *declares* them). -->
+The two new declaration kinds added by Q27 — `event<T>` (worklet → main, sample-accurate) and `message<T>` (main → worklet, coarse-grained) — share an authoring shape. Both are declared at declaration scope and consumed inside the `process` body. Wire-level transport, queue policy, and SAB-vs-postMessage handling live in `02-messaging.md`; this section covers only the DSL surface.
+
+### 4.1 `event<T>` — worklet to main
+
+```typescript
+const peakEvt = event<{ level: number }>({ name: 'peak' });
+const noteFired = event<{ note: number; velocity: number }>({ name: 'noteFired', capacity: 512 });
+```
+
+`event<T>(options): EventDecl<T>` declares a typed worklet → main event channel. The payload type `T` is user-defined; an `atSample: number` field is **always carried on the wire** alongside `T` (mirroring MIDI Q4-c). Emission is via `emitIf(cond, eventDecl, payload)` from inside a `forSample` callback:
+
+```typescript
+forSample((i) => {
+  emitIf(gt(abs(audioIn.at(0, i)), thresh.at(i)),
+         peakEvt, { atSample: i, level: audioIn.at(0, i) });
+});
+```
+
+Plain unconditional `emit(...)` is **not offered** — every emission must carry a structural condition. Same footgun-elimination as MIDI Q4-b: an unconditional emission inside `forSample` would saturate the ringbuffer at sample rate.
+
+Options:
+
+- **`name: string`** — required. Used as the key for `node.events.<name>` on the main thread.
+- **`capacity?: number`** — ringbuffer slot count. Default 256, uniform with MIDI Q4-c.
+
+Overflow: drop-oldest + monotonic `overflowCount` counter, exposed as `node.events.<name>.diagnostics.overflowCount()`. Variable-length payload fields (e.g. `Float32Array`) follow §4.3.
+
+### 4.2 `message<T>` — main to worklet
+
+```typescript
+const reqReset   = message<void>({ name: 'requestReset' });
+const loadPreset = message<{ slot: number }>({ name: 'loadPreset' });
+const uploadIR   = message<{ samples: Float32Array }>({ name: 'uploadIR', capacity: 4 });
+```
+
+`message<T>(options): MessageDecl<T>` declares a typed main → worklet message channel. The worklet-side handler is registered inside the `process` body at the per-block phase top level via `messageDecl.onReceive(handler)`:
+
+```typescript
+return {
+  process: () => {
+    reqReset.onReceive(() => {
+      meterL.store(0);
+      meterR.store(0);
+    });
+
+    loadPreset.onReceive(({ slot }) => {
+      // restore state slots from a built-in preset table
+    });
+
+    forSample((i) => {
+      // ...
+    });
+  },
+};
+```
+
+Handler bodies run at the start of the current render quantum, before any `forSample`. Inside a handler, only state writes, buffer writes, and scalar arithmetic are allowed — sample-offset `i` is not in scope, so audio I/O primitives (`audioIn.at`, `audioOut.set`, `param.at(i)`) produce TypeScript reference errors at the call site (uniform with MIDI handler bodies, see `11-midi.md` §2).
+
+Options:
+
+- **`name: string`** — required. Used as the key for `node.messages.<name>(payload)` on the main thread.
+- **`capacity?: number`** — default 256. Same overflow semantics as `event<T>`.
+
+### 4.3 Variable-length payloads
+
+Both `event<T>` and `message<T>` allow variable-length payload fields (`Float32Array`, `Uint8Array`, etc.) within `T`. The wire format borrows the MIDI sysex pattern (Q4-c): the main slot in the ringbuffer holds the fixed-size header + an index into a separate variable-length content buffer. Authoritative wire format and capacity policy: `02-messaging.md` §5.
+
+Authoritative rationale and rejected alternatives: see `decisions-log.md` Q27.
 
 ## 5. Third-party DSP integration
 
@@ -561,14 +629,11 @@ Inside a subgraph body:
 
 Violations are caught at graph-capture / static-analysis time with refactor-hint error messages, mirroring §5.5.6.
 
-## 6. The two phases
+## 6. The `process` phase
 
-unworklet processors expose two execution phases:
+unworklet processors run a single execution body, the `process` lambda, on the audio thread every render quantum. Build-time evaluation of `process` captures an AST DAG; the framework emits the DAG as a per-block runtime program (per-block top-level statements run once per render quantum; `forSample` callbacks run per sample). Hard realtime constraints apply (no allocation, no unbounded loops, no I/O). Authoritative shape and semantics: §1, §10, and `decisions-log.md` Q22.
 
-- **`process`** — runs every render quantum on the audio thread. The lambda is build-time-evaluated to capture an AST DAG; the framework emits the DAG as a per-block runtime program (per-block top-level statements run once per render quantum; `forSample` callbacks run per sample). Hard realtime constraints apply (no allocation, no unbounded loops, no I/O). Authoritative shape and semantics: §1, §10, and `decisions-log.md` Q22.
-- **`publish`** — runs on a separate scheduler (e.g., every 33 ms). Reads `state` slots and emits events. Compiled to plain JavaScript; not realtime-critical.
-
-<!-- TODO: publish phase full surface (lambda shape, event emission API, scheduler config). -->
+There is **no separate `publish` lambda**. State that the main thread observes (meter, spectrum, etc.) is declared with the `publish` option on `state` / `buffer` (see §3 and `decisions-log.md` Q27-a); worklet → main event delivery is via `emitIf(cond, eventDecl, payload)` from inside `forSample` callbacks (see §4.1); main → worklet messages are handled by `onReceive` registered at the per-block phase top of the `process` body (see §4.2). The framework manages all scheduling — there is no user-visible publish-phase lambda.
 
 ## 7. Opt-in SIMD
 
