@@ -12,39 +12,39 @@ The example set is designed so that the union of all examples touches every conc
 
 | Concept | Examples |
 |---|---|
-| `audioInput` (mono / stereo / multi-port) | 1, 2, 3, 4, 5, 6, 7, 8 |
+| `audioInput` (mono / stereo / multi-port) | 1, 2, 3, 4, 5, 7, 8 |
 | `audioOutput` (mono / stereo / multi-port) | all |
-| `param` (k-rate / a-rate, automation curves) | 1, 2, 4, 7, 8 |
-| `state.f32` / `state.i32` / `state.bool` | 2, 4, 5, 6, 7, 8 |
-| `state.publish` (scalar UI feedback) | 1, 4, 7, 8 |
-| `buffer.f32` / `buffer.i32` (per-sample memory) | 3, 4, 5, 7 |
+| `param` (k-rate / a-rate, automation curves) | 1, 2, 4, 5, 7, 8 |
+| `state.f32` / `state.i32` / `state.bool` | 2, 3, 4, 5, 6, 7, 8 |
+| `state.publish` (scalar UI feedback) | 1, 4, 5, 6, 7, 8 |
+| `buffer.f32` (per-sample memory) | 3, 4, 5, 7, 8 |
 | `buffer.publish` (waveform / spectrum frame to UI) | 5, 8 |
-| `forSample` / `forSample.byN` (SIMD bulk) | all / 3, 7 |
-| `everyNSamples` (sub-rate FFT / envelope) | 3, 4, 7 |
+| `forSample` (per-sample loop) | all |
+| `forSample.byN` (SIMD-stride bulk) | 7 |
 | Arithmetic / comparison / `select` | all |
-| Math (`sin`, `cos`, `tan`, `tanh`, `exp`, `log`, `sqrt`) | 2, 3, 5, 8 |
-| Type conversion (`f32` / `f64` / `i32`) | 3, 5, 8 |
-| L1 helper (pure TS function) | 2, 3, 5, 7 |
+| Math (`sin`, `cos`, `exp`, `log`) | 2, 4, 5, 8 |
+| L1 helper (pure TS function over `Node<T>`) | 2, 4 |
 | L2 `defineSubgraph` (caller-owned reuse) | 2, 8 |
-| `State<T>` reference parameter | 2, 4, 5, 8 |
+| `State<T>` reference parameter | 2, 4 |
 | `event<T>` (worklet → main, sample-accurate) | 4, 5, 6, 8 |
-| `message<T>` (main → worklet, bulk + control) | 5, 6, 7 |
-| `emitIf` (conditional emission, MIDI-uniform) | 4, 6, 8 |
+| `message<T>` (main → worklet) | 5, 6, 7 |
+| `emitIf` (conditional emission) | 4, 6, 8 |
 | `onReceive` (per-block message handler) | 5, 6, 7 |
-| `midiInput` / `midiOutput` (Q4) | 5, 6, 8 |
-| `onEvent` MIDI (`noteOn` / `noteOff` / `cc` / sysex) | 5, 6, 8 |
+| `midiInput` / `midiOutput` | 5, 6, 8 |
+| `onEvent` MIDI (`noteOn` / `noteOff` only — others not yet exercised) | 5, 6, 8 |
 | MIDI emission via `emitIf` | 6 |
-| SIMD `f32x4`, `splat`, `loadVec`, `storeVec`, `mulVec` | 3, 7 |
-| `snapshot` policy (`'persistent'` / `'transient'` / per-profile) | 7 |
+| SIMD `f32x4`, `splat`, `loadVec`, `storeVec`, `mulVec`, `addVec`, `lane` | 3, 7 |
+| `snapshot` policy (`'persistent'` / `'transient'`) | 3, 5, 7 |
 | `migrations` chain (schema-versioned restore) | 7 |
-| Main side: `createNode`, `dispose`, `onError`, `diagnostics.transport` | all |
+| Main side: `createNode` | all |
 | Main side: `node.inputs.<name>` / `node.outputs.<name>` | all |
+| Main side: `dispose`, `onError`, `diagnostics.transport` | 1 (others vary) |
 | Main side: `node.params.<name>` (AudioParam) | 1, 2, 4, 7, 8 |
-| Main side: `node.state.<name>.subscribe` / `.value` | 1, 4, 5, 7, 8 |
+| Main side: `node.state.<name>.subscribe` / `.value` | 1, 4, 5, 6, 7, 8 |
 | Main side: `node.events.<name>.on` / `.diagnostics.overflowCount` | 4, 5, 6, 8 |
 | Main side: `node.messages.<name>` (incl. variable-length payload) | 5, 6, 7 |
 | Main side: `node.midi.send` / `connectFromWebMIDI` / `onEvent` | 5, 6, 8 |
-| Main side: `node.snapshot()` / `node.restore(blob)` | 7 |
+| Main side: `node.snapshot()` / `node.restore(blob)` | 3, 7 |
 
 ## Examples index
 
@@ -1111,5 +1111,11 @@ These are intentionally outside the example set today and are tracked as follow-
 - `defineSubgraph` instantiation argument scoping (Q22-c open: subgraph instances called with per-sample `Node<'f32'>` from declaration-scope context). Examples 2 and 8 show the user-facing shape; the framework's resolution mechanism is finalized as part of Round 2 grilling.
 - `forSampleRange(start, end, callback)` partial-block iteration (deferred to v1.x.0; nested `forSample` use cases such as 2D-tile iteration are not exercised).
 - `param.at(0)` literal-`0` lifting under `Node<'i32'>` context (Q22 / Q1 interaction; resolved at Round 2 type-rule grilling).
+- `everyNSamples` sub-rate work — the surface is decided (Q7) but no current example uses it. A canonical example will land once a use case (e.g. envelope follower at sub-rate) is selected.
+- Type conversion primitives (`f32(node)`, `f64(node)`, `i32(node)`) — the surface is in `01-dsl.md` §2 but no example exercises a cross-precision boundary today.
+- Math primitives `tan`, `tanh`, `sqrt` — listed in `01-dsl.md` §2 but unused across the example set.
+- `buffer.i32` — only `buffer.f32` is exercised.
+- MIDI variants beyond `noteOn` / `noteOff`: `cc`, `pitchBend`, `programChange`, `channelPressure`, `aftertouch`, `systemRealtime`, sysex are part of the Q4 surface but no current example uses them. Q4 covers the wire / handler shape; the canonical example set has a coverage gap here.
+- `midiOutput.diagnostics.overflowCount()` and `node.events.<name>.diagnostics.overflowCount()` are mentioned but not actively monitored in any example beyond Ex 4 (one polling block).
 
-When those resolutions land, the corresponding examples here are updated in the same revision.
+When those resolutions land or examples are added, the corresponding rows in the Coverage table above are updated in the same revision.
