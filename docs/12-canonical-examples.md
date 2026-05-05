@@ -256,7 +256,8 @@ import {
   add, sub, mul, mod, abs, max,
   type Node,
 } from '@unworklet/core';
-import { vec4, splat, loadVec, storeVec, mulVec, addVec } from '@unworklet/core/simd';
+import { vec4, splat, loadVec, storeVec, mulVec, addVec, lane } from '@unworklet/core/simd';
+import { writeBuffer } from '@unworklet/dsp';
 
 // Linear-phase EQ via 3 partitioned FIR taps over a single combined impulse.
 // Impulse buffer is precomputed in main and uploaded; this processor hosts the
@@ -317,12 +318,6 @@ export const linearPhaseEQ = defineProcessor(() => {
     },
   };
 });
-
-function writeBuffer<T>(b: ReturnType<typeof buffer.f32>, idx: Node<'i32'>, v: Node<'f32'>): void {
-  // primitive imported from '@unworklet/dsp' in real code
-  void b; void idx; void v;
-}
-function lane(v: Node<'f32x4'>, i: 0 | 1 | 2 | 3): Node<'f32'> { void v; void i; return null as unknown as Node<'f32'>; }
 ```
 
 ```typescript
@@ -361,9 +356,10 @@ node.outputs.main.connect(audioContext.destination);
 import {
   defineProcessor, audioInput, audioOutput, param, state, buffer,
   forSample, emitIf, event,
-  add, sub, mul, div, mod, max, min, abs, gt, lt, exp,
+  add, sub, mul, div, mod, max, min, abs, gt, lt, exp, select, log,
   type Node, type State,
 } from '@unworklet/core';
+import { writeBuffer, readBuffer } from '@unworklet/dsp';
 
 const LOOKAHEAD_SAMPLES = 240;   // 5 ms @ 48kHz
 
@@ -458,11 +454,6 @@ export const lookaheadLimiter = defineProcessor((ctx) => {
   };
 });
 
-// (signature stubs for primitives imported from '@unworklet/dsp')
-function writeBuffer<T>(b: ReturnType<typeof buffer.f32>, idx: Node<'i32'>, v: Node<'f32'>): void { void b; void idx; void v; }
-function readBuffer<T>(b: ReturnType<typeof buffer.f32>, idx: Node<'i32'>): Node<'f32'>           { void b; void idx; return null as unknown as Node<'f32'>; }
-function select<T>(c: Node<'bool'>, a: Node<'f32'>, b: Node<'f32'>): Node<'f32'>                  { void c; void a; void b; return null as unknown as Node<'f32'>; }
-function log(x: Node<'f32'>): Node<'f32'>                                                          { void x; return null as unknown as Node<'f32'>; }
 ```
 
 ```typescript
@@ -504,9 +495,10 @@ mixer.connect(audioContext.destination);
 import {
   defineProcessor, audioInput, audioOutput, param, state, buffer,
   forSample, midiInput, message, event,
-  add, sub, mul, div, sin, cos,
+  add, sub, mul, div, sin, cos, select, lte, gt, exp,
   type Node,
 } from '@unworklet/core';
+import { writeBuffer, readBuffer, readBufferInterpolated } from '@unworklet/dsp';
 
 const SAMPLE_BUFFER_LEN = 48000 * 4;        // 4 seconds @ 48kHz
 const NUM_VOICES        = 16;
@@ -652,14 +644,6 @@ export const granularSampler = defineProcessor((ctx) => {
   };
 });
 
-// (primitive stubs — see prior examples)
-function writeBuffer<T>(b: ReturnType<typeof buffer.f32>, idx: Node<'i32'> | number, v: Node<'f32'> | number): void { void b; void idx; void v; }
-function readBuffer<T>(b: ReturnType<typeof buffer.f32>, idx: Node<'i32'>): Node<'f32'> { void b; void idx; return null as unknown as Node<'f32'>; }
-function readBufferInterpolated<T>(b: ReturnType<typeof buffer.f32>, pos: Node<'f32'>): Node<'f32'> { void b; void pos; return null as unknown as Node<'f32'>; }
-function select<T>(c: Node<'bool'>, a: any, b: any): any { void c; void a; void b; return null; }
-function lte(a: Node<'i32'>, b: Node<'i32'> | number): Node<'bool'> { void a; void b; return null as unknown as Node<'bool'>; }
-function gt(a: Node<'i32'>, b: Node<'i32'> | number): Node<'bool'> { void a; void b; return null as unknown as Node<'bool'>; }
-function exp(x: Node<'f32'>): Node<'f32'> { void x; return null as unknown as Node<'f32'>; }
 ```
 
 ```typescript
@@ -690,7 +674,7 @@ import {
   defineProcessor, audioInput, audioOutput, state,
   forSample, everyNSamples,
   midiInput, midiOutput, message, event, emitIf,
-  add, sub, mul, mod, eq, gt,
+  add, sub, mul, mod, eq, gt, select,
   type Node,
 } from '@unworklet/core';
 
@@ -776,7 +760,6 @@ export const arpeggiator = defineProcessor((ctx) => {
   };
 });
 
-function select<T>(c: Node<'bool'>, a: any, b: any): any { void c; void a; void b; return null; }
 ```
 
 ```typescript
@@ -812,7 +795,8 @@ import {
   forSample, everyNSamples, message,
   add, sub, mul, mod, max, abs, type Node,
 } from '@unworklet/core';
-import { vec4, splat, loadVec, storeVec, mulVec, addVec } from '@unworklet/core/simd';
+import { vec4, splat, loadVec, storeVec, mulVec, addVec, lane } from '@unworklet/core/simd';
+import { writeBuffer } from '@unworklet/dsp';
 
 const IR_LEN          = 4096;     // ~85ms @ 48kHz
 const PARTITION_SIZE  = 128;
@@ -874,8 +858,8 @@ export const convolutionReverb = defineProcessor((ctx) => {
           accL = addVec(accL, mulVec(hL, iL));
           accR = addVec(accR, mulVec(hR, iR));
         }
-        const sumL = addLanes4(accL);
-        const sumR = addLanes4(accR);
+        const sumL = add(add(lane(accL, 0), lane(accL, 1)), add(lane(accL, 2), lane(accL, 3)));
+        const sumR = add(add(lane(accR, 0), lane(accR, 1)), add(lane(accR, 2), lane(accR, 3)));
 
         const dryL = mul(main.at(0, i), dryGain.at(0));
         const dryR = mul(main.at(1, i), dryGain.at(0));
@@ -903,8 +887,6 @@ export const convolutionReverb = defineProcessor((ctx) => {
   ],
 });
 
-function writeBuffer<T>(b: ReturnType<typeof buffer.f32>, idx: Node<'i32'> | number, v: Node<'f32'> | number): void { void b; void idx; void v; }
-function addLanes4(v: Node<'f32x4'>): Node<'f32'> { void v; return null as unknown as Node<'f32'>; }
 ```
 
 ```typescript
@@ -947,8 +929,9 @@ if (stored) {
 import {
   defineProcessor, defineSubgraph, audioInput, audioOutput, param, state, buffer,
   forSample, midiInput, event, emitIf,
-  add, sub, mul, div, max, abs, sin, exp, gt, lt, eq, type Node, type State,
+  add, sub, mul, div, mod, max, abs, sin, exp, gt, lt, eq, select, type Node, type State,
 } from '@unworklet/core';
+import { writeBuffer } from '@unworklet/dsp';
 
 const NUM_VOICES = 8;
 
@@ -1088,9 +1071,6 @@ export const polySynth = defineProcessor((ctx) => {
   };
 });
 
-function writeBuffer<T>(b: ReturnType<typeof buffer.f32>, idx: Node<'i32'> | number, v: Node<'f32'> | number): void { void b; void idx; void v; }
-function select<T>(c: Node<'bool'>, a: any, b: any): any { void c; void a; void b; return null; }
-function mod(a: Node<'i32'>, b: number | Node<'i32'>): Node<'i32'> { void a; void b; return null as unknown as Node<'i32'>; }
 ```
 
 ```typescript
