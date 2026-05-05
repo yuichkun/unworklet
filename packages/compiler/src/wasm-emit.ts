@@ -54,6 +54,17 @@ class Emit {
   // Persistent absolute sample counter slot (in linear memory at this offset)
   absoluteSampleCounterOffset: number;
 
+  // Reference counts for ASTValue ids in the current function. Values with
+  // refCount > 1 are hoisted into locals to ensure they are evaluated only
+  // once (preserves user `const x = ...` semantics; correct under state
+  // mutation).
+  refCounts: Map<number, number> = new Map();
+  // Map from value id -> local idx for hoisted values. Set when first emitted.
+  valueLocals: Map<number, { localIdx: number; type: Type }> = new Map();
+  // Set of value ids whose local has been "set" already (so subsequent
+  // emissions can use local.get).
+  emittedOnce: Set<number> = new Set();
+
   constructor(graph: CapturedGraph, layout: MemoryLayout) {
     this.graph = graph;
     this.layout = layout;
@@ -187,6 +198,10 @@ class Emit {
     const m = this.m;
     this.localTypes = [];
     this.loopVarLocals = [];
+    this.refCounts = new Map();
+    this.valueLocals = new Map();
+    this.emittedOnce = new Set();
+    this.computeRefCounts(this.graph.processBody);
     // Local 0: blockSize: i32 (function parameter)
     // We don't allocate it as a "local" — params count as locals 0..N
     // before the explicit locals.
@@ -539,9 +554,154 @@ class Emit {
     throw new Error(`unhandled stmt kind ${(s as any).kind}`);
   }
 
-  // ─── Value emission ──────────────────────────────────────────────────────
+  // ─── Reference counting (for hoisting shared values) ────────────────────
 
+  computeRefCounts(stmts: Statement[]) {
+    const visit = (v: ASTValue) => {
+      const id = (v as any).id;
+      if (typeof id !== "number") return;
+      const cnt = (this.refCounts.get(id) ?? 0) + 1;
+      this.refCounts.set(id, cnt);
+      // First visit: also recurse into children (so descendants are counted
+      // once per parent reference). This is what we want — a value referenced
+      // from N parents counts N times.
+      if (cnt === 1) {
+        switch (v.kind) {
+          case "arith":
+            for (const a of v.args) visit(a);
+            break;
+          case "compare":
+            visit(v.a);
+            visit(v.b);
+            break;
+          case "logic":
+            for (const a of v.args) visit(a);
+            break;
+          case "math":
+            visit(v.arg);
+            break;
+          case "select":
+            visit(v.cond);
+            visit(v.whenTrue);
+            visit(v.whenFalse);
+            break;
+          case "convert":
+            visit(v.arg);
+            break;
+          case "buffer-read":
+            visit(v.idx);
+            break;
+          case "buffer-read-interp":
+            visit(v.pos);
+            break;
+          case "buffer-load-vec":
+            visit(v.offset);
+            break;
+          case "audio-in-at":
+            visit(v.i);
+            break;
+          case "param-at":
+            visit(v.i);
+            break;
+          case "vec-ctor":
+            for (const a of v.lanes) visit(a);
+            break;
+          case "vec-splat":
+            visit(v.arg);
+            break;
+          case "vec-lane":
+            visit(v.vec);
+            break;
+          case "vec-arith":
+            visit(v.a);
+            visit(v.b);
+            break;
+          // const, instance-const, loop-var, state-load, message-field,
+          // midi-field, message-var-len: leaves
+        }
+      }
+    };
+    const visitStmt = (s: Statement) => {
+      switch (s.kind) {
+        case "state-store":
+          visit(s.value);
+          break;
+        case "buffer-write":
+          visit(s.idx);
+          visit(s.value);
+          break;
+        case "buffer-store-vec":
+          visit(s.offset);
+          visit(s.value);
+          break;
+        case "audio-out-set":
+          visit(s.i);
+          visit(s.value);
+          break;
+        case "emit-if":
+          visit(s.cond);
+          visit(s.atSample);
+          for (const f of s.fields) visit(f.value);
+          break;
+        case "midi-emit-if":
+          visit(s.cond);
+          visit(s.status);
+          visit(s.data1);
+          visit(s.data2);
+          visit(s.atSample);
+          break;
+        case "for-sample":
+          for (const inner of s.body) visitStmt(inner);
+          break;
+        case "every-n-samples":
+          for (const inner of s.body) visitStmt(inner);
+          break;
+      }
+    };
+    for (const s of stmts) visitStmt(s);
+  }
+
+  // ─── Value emission (with hoisting for shared subexpressions) ──────────
+
+  // Public emitValue: dispatches through the local-hoist machinery.
   emitValue(v: ASTValue, expectedType?: AnyType): ExprRef {
+    const m = this.m;
+    const id = (v as any).id;
+    // Trivial leaves never hoist (cheap to recompute, can't capture state).
+    const isTrivial =
+      v.kind === "const" ||
+      v.kind === "loop-var" ||
+      v.kind === "instance-const";
+    const refCount = typeof id === "number" ? this.refCounts.get(id) ?? 0 : 0;
+
+    if (!isTrivial && refCount > 1) {
+      // Multi-referenced value: emit once into a local, then read.
+      if (this.emittedOnce.has(id)) {
+        const slot = this.valueLocals.get(id)!;
+        let result = m.local.get(slot.localIdx, slot.type);
+        if (expectedType && bType(v.type) !== bType(expectedType)) {
+          result = this.coerce(result, v.type, expectedType);
+        }
+        return result;
+      }
+      // First emission: compute, tee into a fresh local, mark emitted.
+      const inner = this.emitValueInner(v, undefined);
+      const localIdx = this.localTypes.length + 1; // skip param 0
+      const t = bType(v.type);
+      this.localTypes.push(t);
+      this.valueLocals.set(id, { localIdx, type: t });
+      this.emittedOnce.add(id);
+      let result = m.local.tee(localIdx, inner, t);
+      if (expectedType && bType(v.type) !== bType(expectedType)) {
+        result = this.coerce(result, v.type, expectedType);
+      }
+      return result;
+    }
+
+    return this.emitValueInner(v, expectedType);
+  }
+
+  emitValueInner(v: ASTValue, expectedType?: AnyType): ExprRef {
     const m = this.m;
     let result: ExprRef;
     let actualType: AnyType = v.type;
@@ -595,9 +755,13 @@ class Emit {
         break;
       }
       case "select": {
-        const cond = this.emitValue(v.cond, "bool");
+        // Emit args in WASM stack-machine evaluation order: ifTrue, ifFalse, cond.
+        // This matters because emitValue may insert local.tee for hoisted
+        // shared subexpressions. The first emission (in eval order) sets the
+        // local; subsequent ones read it.
         const t = this.emitValue(v.whenTrue, v.type);
         const f = this.emitValue(v.whenFalse, v.type);
+        const cond = this.emitValue(v.cond, "bool");
         result = m.select(cond, t, f);
         break;
       }
