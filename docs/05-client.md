@@ -115,7 +115,7 @@ Both `.events.<name>.on(handler)` and `.state.<name>.subscribe(handler)` return 
 The audio thread does not back off based on main-thread responsiveness. The framework's contract is "deliver as much as the ring buffer can hold; report overflow accurately". Consumers who need flow control build it on top:
 
 - Round-trip throttle: send a `messages.<name>(payload)` request to the worklet, have the worklet reply with an `event<T>` only when ready for more.
-- Source-side throttle: monitor `overflowCount` on the consumer side and adjust emission cadence at the worklet author's level (e.g. wrap the emit site in `everyNSamples(N, () => emitIf(...))`).
+- Source-side throttle: monitor `overflowCount` on the consumer side and adjust emission cadence at the worklet author's level (e.g. wrap the emit site in `everyNSamples(N, () => eventDecl.emitIf(...))`).
 
 ## 6. Snapshot / restore semantics
 

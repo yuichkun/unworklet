@@ -18,8 +18,8 @@ Main thread (per `05-client.md` §2):
 
 Worklet (per `01-dsl.md` §3 / §4):
 
-- `state.<type>(initial, { ..., publish: { rateFps } })` / `buffer.<type>({ ..., publish: { rateFps } })` — declare a published state slot. Writes via `slot.store(...)` / `writeBuffer(...)` are visible on main at the next publish tick.
-- `emitIf(cond, eventDecl, payload)` — conditional emission inside `forSample`; the only path to push an event onto the worklet → main wire.
+- `state.<type>(initial, { ..., publish: { rateFps } })` / `buffer.<type>({ ..., publish: { rateFps } })` — declare a published state slot. Writes via `slot.store(...)` / `buf.write(...)` are visible on main at the next publish tick.
+- `eventDecl.emitIf(cond, payload)` — conditional emission inside `forSample`; the only path to push an event onto the worklet → main wire.
 - `messageDecl.onReceive(handler)` — register a handler at the per-block phase top of `process`. Runs at the start of the next render quantum, before any `forSample`.
 
 The same ringbuffer machinery serves MIDI (`midiInput` / `midiOutput`); MIDI's surface is type-discriminated by event class (`onEvent('noteOn', ...)` etc.), but underneath it shares the SAB ringbuffer + `Atomics` protocol described in §4 and §5.

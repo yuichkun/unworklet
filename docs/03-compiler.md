@@ -47,7 +47,7 @@ For each primitive call:
 
 - **Arithmetic / math / control / type conversion**: a typed AST node with the operator and operand handles, returning a fresh `Node<T>` of the inferred output type.
 - **`load` / `store`**: a memory-access AST node referencing the corresponding slot.
-- **Buffer access (`readBuffer` / `writeBuffer` / `readBufferInterpolated`)**: an indexed access AST node; the index argument is itself a `Node<'i32'>` (typically a ring-buffer write head).
+- **Buffer access (`buf.read` / `buf.write` / `buf.readInterpolated`)**: an indexed access AST node; the index argument is itself a `Node<'i32'>` (typically a ring-buffer write head).
 - **Audio I/O (`audioIn.at(c, i)` / `audioOut.set(c, i, v)`)**: a sample-position-aware AST node carrying the channel index, the sample-offset `i`, and (for `set`) the value to write. Valid only inside `forSample` callbacks where `i` is in scope.
 - **Param access (`param.at(i)` / `param.at(0)`)**: an AST node carrying the param slot reference and the sample-offset. `param.at(i)` is used inside `forSample` callbacks; `param.at(0)` at the per-block top level reads the block-start value.
 - **`select(cond, whenTrue, whenFalse)`**: a control-flow AST node; both branches are evaluated as graph nodes (no JS control flow over `Node<'bool'>`).
@@ -74,7 +74,7 @@ The framework throws structured errors when proxy evaluation reaches a violation
 - *Scope violations*: a declaration call (`state.f32(...)`, `audioInput(...)`, `defineSubgraph(...)`) inside expression scope (a `process` body, a `forSample` callback, or an L1 helper).
 - *Required-call violations*: a declared `audioOutput` whose `set(c, i, v)` is never called on every code path of every render quantum; a snapshot-using processor with a declaration missing a required `name`.
 - *Duplicate writes*: the same channel × same sample-offset written twice within one phase.
-- *Constraint violations*: `forSample.byN` called with a non-constant stride; `lane(vec, i)` called with a non-constant `i`; etc.
+- *Constraint violations*: `forSample.byN` called with a non-constant stride; `vec.lane(i)` called with a non-constant `i`; etc.
 
 Errors carry the source location (TypeScript file + line + column when source maps are in scope — see §7) and a refactor hint pointing at the legal pattern.
 

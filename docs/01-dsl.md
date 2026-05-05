@@ -54,8 +54,8 @@ const partitionedReverb = defineProcessor((ctx) => {
 
       // Per-sample phase: shovel input into inBuf, drain outBuf to output.
       forSample((i) => {
-        writeBuffer(inBuf, i, main.at(0, i));
-        out.set(0, i, readBuffer(outBuf, i));
+        inBuf.write(i, main.at(0, i));
+        out.set(0, i, outBuf.read(i));
       });
     },
   };
@@ -188,7 +188,8 @@ Authoritative rationale and rejected alternatives: see `decisions-log.md` Q6 (de
 
 <!-- Full inventory: arithmetic (add/sub/mul/div/mod/neg), comparison (eq/lt/gt/lte/gte),
      math (sin/cos/tan/tanh/exp/log/sqrt/abs/floor/ceil/frac/min/max/clamp),
-     control (select), memory (load/store/readBuffer/writeBuffer/readBufferInterpolated),
+     control (select), memory (load/store on State<T>; .read/.write/.readInterpolated as
+     methods on Buffer<T>),
      type conversions (f32/f64/i32/i64).
      Q17 (math precision: default vs `/precise` vs `/table` import paths). Lands here. -->
 
@@ -223,7 +224,22 @@ const ring = buffer.f32({ size: 44100, name: 'delayLine' });                    
 const wave = buffer.f32({ size: 256,   name: 'wavetable', snapshot: 'persistent' });  // explicit include
 ```
 
-Access goes through dedicated primitives (`readBuffer`, `writeBuffer`, `readBufferInterpolated`); bounds and interpolation behavior are explicit at each call site. The index argument is an explicit `Node<'i32'>` supplied by the user — this can be a ring-buffer write head from a `state.i32` slot (per-block or per-sample), the loop counter `i` of a surrounding `forSample` (per-sample), or any computed `Node<'i32'>` value.
+Access goes through methods on the `Buffer<T>` handle (`buf.read(idx)`, `buf.write(idx, v)`, `buf.readInterpolated(pos)`); bounds and interpolation behavior are explicit at each call site. The index argument is an explicit `Node<'i32'>` supplied by the user — this can be a ring-buffer write head from a `state.i32` slot (per-block or per-sample), the loop counter `i` of a surrounding `forSample` (per-sample), or any computed `Node<'i32'>` value.
+
+The `Buffer<T>` handle returned by `buffer.<T>(...)` exposes the following methods (these are part of the handle type, not free function imports):
+
+```typescript
+type Buffer<T extends ScalarType> = {
+  read(idx: Node<'i32'>): Node<T>;
+  write(idx: Node<'i32'>, v: Node<T>): void;
+  readInterpolated(pos: Node<'f32'>): Node<T>;
+  // SIMD methods (only typed when `@unworklet/core/simd` is imported — see §7):
+  loadVec(offset: Node<'i32'>): Node<'f32x4'>;
+  storeVec(offset: Node<'i32'>, value: Node<'f32x4'>): void;
+  size: number;
+  name: string;
+};
+```
 
 Options:
 
@@ -287,12 +303,12 @@ const peakEvt = event<{ level: number }>({ name: 'peak' });
 const noteFired = event<{ note: number; velocity: number }>({ name: 'noteFired', capacity: 512 });
 ```
 
-`event<T>(options): EventDecl<T>` declares a typed worklet → main event channel. The payload type `T` is user-defined; an `atSample: number` field is **always carried on the wire** alongside `T` (mirroring MIDI Q4-c). Emission is via `emitIf(cond, eventDecl, payload)` from inside a `forSample` callback:
+`event<T>(options): EventDecl<T>` declares a typed worklet → main event channel. The payload type `T` is user-defined; an `atSample: number` field is **always carried on the wire** alongside `T` (mirroring MIDI Q4-c). Emission is via the `emitIf` method on the event handle (`eventDecl.emitIf(cond, payload)`) from inside a `forSample` callback:
 
 ```typescript
 forSample((i) => {
-  emitIf(gt(abs(audioIn.at(0, i)), thresh.at(i)),
-         peakEvt, { atSample: i, level: audioIn.at(0, i) });
+  peakEvt.emitIf(gt(abs(audioIn.at(0, i)), thresh.at(i)),
+                 { atSample: i, level: audioIn.at(0, i) });
 });
 ```
 
@@ -518,7 +534,7 @@ The following are **allowed**:
 - `load` / `store` on `State<T>` references received as parameters.
 - `param.at(i)` (with `i` from a surrounding `forSample`) or `param.at(0)` (per-block context) on `Param` references received as parameters.
 - `audioIn.at(c, i)` / `audioOut.set(c, i, v)` on handles received as parameters (with `i` from a surrounding `forSample`).
-- Buffer access (`readBuffer` / `writeBuffer` / `readBufferInterpolated`) on buffer references received as parameters.
+- Buffer access methods (`buf.read` / `buf.write` / `buf.readInterpolated`) on buffer references received as parameters.
 - Calls to other L1 helpers.
 - `forSample(...)` invocations when the helper itself wants to iterate samples (rare; usually iteration is the caller's job and the helper is invoked from inside the caller's `forSample`).
 
@@ -633,7 +649,7 @@ Violations are caught at graph-capture / static-analysis time with refactor-hint
 
 unworklet processors run a single execution body, the `process` lambda, on the audio thread every render quantum. Build-time evaluation of `process` captures an AST DAG; the framework emits the DAG as a per-block runtime program (per-block top-level statements run once per render quantum; `forSample` callbacks run per sample). Hard realtime constraints apply (no allocation, no unbounded loops, no I/O). Authoritative shape and semantics: §1, §10, and `decisions-log.md` Q22.
 
-There is **no separate `publish` lambda**. State that the main thread observes (meter, spectrum, etc.) is declared with the `publish` option on `state` / `buffer` (see §3 and `decisions-log.md` Q27-a); worklet → main event delivery is via `emitIf(cond, eventDecl, payload)` from inside `forSample` callbacks (see §4.1); main → worklet messages are handled by `onReceive` registered at the per-block phase top of the `process` body (see §4.2). The framework manages all scheduling — there is no user-visible publish-phase lambda.
+There is **no separate `publish` lambda**. State that the main thread observes (meter, spectrum, etc.) is declared with the `publish` option on `state` / `buffer` (see §3 and `decisions-log.md` Q27-a); worklet → main event delivery is via `eventDecl.emitIf(cond, payload)` from inside `forSample` callbacks (see §4.1); main → worklet messages are handled by `onReceive` registered at the per-block phase top of the `process` body (see §4.2). The framework manages all scheduling — there is no user-visible publish-phase lambda.
 
 ## 7. Opt-in SIMD
 
@@ -642,7 +658,7 @@ unworklet exposes WASM SIMD as a separate, opt-in surface via the import path `@
 ### 7.1 Philosophy
 
 - **Opt-in**: importing `@unworklet/core/simd` is the only way to bring vector concepts into scope. Scalar-only authors and consumers never see `f32x4`, `splat`, or any vec primitive.
-- **Parallel families**: scalar primitives (`add`, `mul`, …) and vec primitives (`addVec`, `mulVec`, …) are distinct functions over distinct types. Scalar `Node<'f32'>` and vector `Node<'f32x4'>` cannot be combined in one operation; conversion is explicit (`splat`, `lane`).
+- **Parallel families**: scalar primitives (`add`, `mul`, …) and vec primitives (`addVec`, `mulVec`, …) are distinct functions over distinct types. Scalar `Node<'f32'>` and vector `Node<'f32x4'>` cannot be combined in one operation; conversion is explicit (`splat`, `vec.lane(i)`).
 - **Bulk iteration via `forSample.byN`**: SIMD-stride iteration is expressed by `forSample.byN(stride, callback)` (typically `stride = 4`) — see §10. The stride is user-chosen and visible in the source; the framework does not auto-vectorize a per-sample body.
 
 ```typescript
@@ -650,7 +666,10 @@ unworklet exposes WASM SIMD as a separate, opt-in surface via the import path `@
 import { defineProcessor, state, add, mul } from '@unworklet/core';
 
 // SIMD-using author — separate import path
-import { vec4, splat, addVec, mulVec, loadVec, storeVec, lane } from '@unworklet/core/simd';
+// vec4 / splat / addVec / mulVec / subVec / divVec are free functions.
+// Lane access (`vec.lane(i)`) and SIMD buffer access (`buf.loadVec` / `buf.storeVec`)
+// are methods on the value/handle, not free functions.
+import { vec4, splat, addVec, mulVec } from '@unworklet/core/simd';
 ```
 
 ### 7.2 v1.0.0 surface (Minimal MVP)
@@ -672,14 +691,31 @@ The v1.0.0 SIMD surface is the smallest set of primitives that lets DSP authors 
 
 #### Lane access
 
-- `lane(vec: Node<'f32x4'>, i: 0 | 1 | 2 | 3): Node<'f32'>` — extract one lane. The index `i` must be a compile-time constant; non-constant indices are a graph-capture-time error.
+Lane extraction is a method on the vec value, not a free function:
+
+```typescript
+type Vec4Methods = {
+  lane(i: 0 | 1 | 2 | 3): Node<'f32'>;
+};
+```
+
+`vec.lane(i)` extracts one lane from a `Node<'f32x4'>`. The index `i` must be a compile-time constant `0 | 1 | 2 | 3`; non-constant indices are a graph-capture-time error.
 
 #### Memory
 
-- `loadVec(buffer: Buffer<'f32'>, offset: Node<'i32'>): Node<'f32x4'>` — load four contiguous f32 lanes from a buffer (offset in element units; alignment-agnostic per WASM v128 semantics). Typically called inside a `forSample.byN(4, ...)` callback, or at the per-block phase top level (with build-time-loop unrolling) for bulk init.
-- `storeVec(buffer: Buffer<'f32'>, offset: Node<'i32'>, value: Node<'f32x4'>): void` — store four contiguous f32 lanes into a buffer.
+SIMD memory access is performed via methods on the `Buffer<'f32'>` handle (see §3.2). Importing `@unworklet/core/simd` makes these methods part of the buffer handle's type:
 
-The `Buffer<T>` type referenced in these signatures is the type returned by `buffer.<T>({ size, name, ... })` declarations (see §3.2). Buffer access primitives (`readBuffer` / `writeBuffer` / `readBufferInterpolated` / `loadVec` / `storeVec`) all accept this type as their first argument.
+```typescript
+type BufferSimdMethods = {
+  loadVec(offset: Node<'i32'>): Node<'f32x4'>;
+  storeVec(offset: Node<'i32'>, value: Node<'f32x4'>): void;
+};
+```
+
+- `buf.loadVec(offset)` — load four contiguous f32 lanes from the buffer (offset in element units; alignment-agnostic per WASM v128 semantics). Typically called inside a `forSample.byN(4, ...)` callback, or at the per-block phase top level (with build-time-loop unrolling) for bulk init.
+- `buf.storeVec(offset, value)` — store four contiguous f32 lanes into the buffer.
+
+The `Buffer<T>` handle is returned by `buffer.<T>({ size, name, ... })` declarations (see §3.2); the `.read` / `.write` / `.readInterpolated` scalar methods are always present, while `.loadVec` / `.storeVec` only become callable in modules that import `@unworklet/core/simd`.
 
 ### 7.3 Beyond v1.0.0 (deferred to v1.x.0, additive)
 
@@ -715,12 +751,11 @@ The duplication is intentional: it keeps the scalar API surface untouched and si
 
 ### 7.5 SIMD bulk in practice
 
-The canonical 4-sample-wide bulk pattern uses `forSample.byN(4, ...)` plus `loadVec` / `storeVec`:
+The canonical 4-sample-wide bulk pattern uses `forSample.byN(4, ...)` plus the buffer's `.loadVec` / `.storeVec` methods:
 
 ```typescript
 import { defineProcessor, audioInput, audioOutput, param, buffer, forSample } from '@unworklet/core';
-import { writeBuffer, readBuffer } from '@unworklet/dsp';
-import { loadVec, storeVec, mulVec, splat } from '@unworklet/core/simd';
+import { mulVec, splat } from '@unworklet/core/simd';
 
 export const simdGain = defineProcessor((ctx) => {
   const main = audioInput ({ channels: 1, name: 'main' });
@@ -732,18 +767,18 @@ export const simdGain = defineProcessor((ctx) => {
     process: () => {
       // Phase 1: accumulate input into scratch (per-sample).
       forSample((i) => {
-        writeBuffer(scratch, i, main.at(0, i));
+        scratch.write(i, main.at(0, i));
       });
 
       // Phase 2: SIMD bulk gain.
       forSample.byN(4, (i) => {
-        const v = loadVec(scratch, i);
-        storeVec(scratch, i, mulVec(v, splat(gain.at(i))));
+        const v = scratch.loadVec(i);
+        scratch.storeVec(i, mulVec(v, splat(gain.at(i))));
       });
 
       // Phase 3: drain scratch to output (per-sample).
       forSample((i) => {
-        out.set(0, i, readBuffer(scratch, i));
+        out.set(0, i, scratch.read(i));
       });
     },
   };
@@ -983,7 +1018,7 @@ forSample.byN: (
 ```
 
 - `forSample(callback)` — the callback body runs once per sample of the current render quantum. `i` is a `Node<'i32'>` bound at WASM-emission time to the loop counter, advancing by 1 each iteration.
-- `forSample.byN(stride, callback)` — same shape, but `i` advances by `stride` each iteration. Typical use is `stride = 4` for SIMD bulk operations paired with `loadVec` / `storeVec`. The stride must be a compile-time-constant positive integer; non-constant strides are graph-capture-time errors.
+- `forSample.byN(stride, callback)` — same shape, but `i` advances by `stride` each iteration. Typical use is `stride = 4` for SIMD bulk operations paired with `buf.loadVec` / `buf.storeVec` methods. The stride must be a compile-time-constant positive integer; non-constant strides are graph-capture-time errors.
 
 ### 10.2 Semantics
 
@@ -1047,18 +1082,18 @@ const simdProc = defineProcessor((ctx) => {
 
       // Per-sample: input shaping
       forSample((i) => {
-        writeBuffer(scratch, i, main.at(0, i));
+        scratch.write(i, main.at(0, i));
       });
 
       // Per-sample (SIMD stride): apply blockGain across the buffer.
       forSample.byN(4, (i) => {
-        const v = loadVec(scratch, i);
-        storeVec(scratch, i, mulVec(v, splat(blockGain)));
+        const v = scratch.loadVec(i);
+        scratch.storeVec(i, mulVec(v, splat(blockGain)));
       });
 
       // Per-sample: output drain
       forSample((i) => {
-        out.set(0, i, readBuffer(scratch, i));
+        out.set(0, i, scratch.read(i));
       });
     },
   };

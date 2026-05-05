@@ -122,7 +122,7 @@ The `atSample` is in the surrounding render quantum's coordinate system; consume
 
 ### 2.4 Outbound: emitting MIDI events (worklet → main)
 
-`midiOutput()` returns a handle whose only emission primitive is `emitIf(condition, event)`. There is no plain `emit(event)` — every emission is conditional, by design (see `decisions-log.md` Q4-b for the reasoning).
+`midiOutput()` returns a handle whose only emission primitive is the `emitIf` **method**: `midiOut.emitIf(condition, event)`. There is no plain `emit(event)` — every emission is conditional, by design (see `decisions-log.md` Q4-b for the reasoning). `emitIf` is dispatched off the handle (no free-function form); the same `handle.emitIf(cond, payload)` shape is used by generic `event<T>` declarations (see `01-dsl.md` §4).
 
 ```typescript
 const drumSequencer = defineProcessor((ctx) => {
@@ -142,7 +142,7 @@ const drumSequencer = defineProcessor((ctx) => {
 });
 ```
 
-`emitIf(cond, event)` compiles to a graph node: only on samples where `cond` evaluates true does the event get pushed into the outbound ringbuffer. "Emit only at boundaries / state transitions" is structurally enforced — there is no path to accidentally enqueue events every sample.
+`midiOut.emitIf(cond, event)` compiles to a graph node: only on samples where `cond` evaluates true does the event get pushed into the outbound ringbuffer. "Emit only at boundaries / state transitions" is structurally enforced — there is no path to accidentally enqueue events every sample.
 
 The `atSample` field of the emitted event is a `Node<'i32'>` (or a compile-time-constant integer literal) in the same dimension as the surrounding iteration's sample-offset. Common patterns:
 

@@ -49,7 +49,7 @@ A handle to a value computed during per-sample iteration. `T` is one of `'f32'`,
 
 ### Primitive
 
-A function that takes `Node<T>` arguments (and possibly other compile-time constants) and returns a `Node<T>`. Examples: `add`, `mul`, `tanh`, `select`, `loadVec`. Primitives execute at *graph capture time* (build time), constructing AST nodes; they do not run per sample.
+A function that takes `Node<T>` arguments (and possibly other compile-time constants) and returns a `Node<T>`. Examples: `add`, `mul`, `tanh`, `select`, `splat`. Primitives execute at *graph capture time* (build time), constructing AST nodes; they do not run per sample. Primitives appear both as free functions (`add(a, b)`) and as methods on handle types (`buf.loadVec(offset)`, `vec.lane(i)`); both shapes obey the same graph-capture-time semantics.
 
 ### Declaration scope
 
@@ -82,7 +82,7 @@ See `decisions-log.md` Q22 (Q22-aprime, Q22-b).
 
 ### `forSample` / `forSample.byN`
 
-The only sample-loop primitive (see `01-dsl.md` §10). `forSample(callback)` runs `callback` for each sample of the current render quantum (stride 1). `forSample.byN(stride, callback)` runs `callback` once per `stride` samples (typical use: `stride = 4` for SIMD bulk operations paired with `loadVec` / `storeVec`). The presence of a `forSample` invocation in a `process` body marks the per-sample phase; its absence at any given lexical position marks the per-block phase.
+The only sample-loop primitive (see `01-dsl.md` §10). `forSample(callback)` runs `callback` for each sample of the current render quantum (stride 1). `forSample.byN(stride, callback)` runs `callback` once per `stride` samples (typical use: `stride = 4` for SIMD bulk operations paired with `buf.loadVec` / `buf.storeVec`). The presence of a `forSample` invocation in a `process` body marks the per-sample phase; its absence at any given lexical position marks the per-block phase.
 
 ### `everyNSamples`
 
@@ -101,7 +101,7 @@ Synonym for "render quantum's worth of samples" — the unit of work for one Aud
 Three declaration kinds for sample-position-independent slots:
 
 - **`state.<type>(initial, options?)`** — scalar slot. `load()` / `store(v)`. Persists across render quanta.
-- **`buffer.<type>({ size, name, ... })`** — fixed-size array. `readBuffer(buf, idx)` / `writeBuffer(buf, idx, v)` / `readBufferInterpolated(buf, pos)`. Lives in WASM linear memory.
+- **`buffer.<type>({ size, name, ... })`** — fixed-size array. `buf.read(idx)` / `buf.write(idx, v)` / `buf.readInterpolated(pos)` for scalar access; `buf.loadVec(offset)` / `buf.storeVec(offset, value)` for SIMD bulk access (under `@unworklet/core/simd`). Lives in WASM linear memory.
 - **`param({ default, min, max, automationRate, ... })`** — bound to a Web Audio `AudioParam`. Single access form: `param.at(i)` (inside `forSample`, per-sample value at offset `i`) / `param.at(0)` (per-block phase, block-start value). No callable `param()` form, no `param.value` / `param.now()` property.
 
 See `01-dsl.md` §3.
@@ -160,7 +160,7 @@ Rationale and rejected alternatives: see `decisions-log.md` Q1.
 
 In addition to the scalar precision tags, unworklet exposes vector type tags — `'f32x4'` (in v1.0.0), with `'f64x2'`, `'i32x4'`, and others rolling out additively across v1.x.0 — for SIMD-width values backed by WASM v128. These appear only when the user opts into the SIMD subset by importing from `@unworklet/core/simd`; scalar-only code never references them.
 
-The "no implicit widening" rule extends to vec ↔ scalar: a `Node<'f32'>` and a `Node<'f32x4'>` cannot be combined directly. Conversion is explicit (`splat(scalarNode)` to broadcast, `lane(vecNode, i)` to extract).
+The "no implicit widening" rule extends to vec ↔ scalar: a `Node<'f32'>` and a `Node<'f32x4'>` cannot be combined directly. Conversion is explicit (`splat(scalarNode)` to broadcast, `vecNode.lane(i)` to extract).
 
 Authoritative SIMD surface: `01-dsl.md` §7. Rationale and rejected alternatives: see `decisions-log.md` Q3.
 

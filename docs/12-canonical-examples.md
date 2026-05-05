@@ -33,7 +33,7 @@ The example set is designed so that the union of all examples touches every conc
 | `midiInput` / `midiOutput` | 5, 6, 8 |
 | `onEvent` MIDI (`noteOn` / `noteOff` only — others not yet exercised) | 5, 6, 8 |
 | MIDI emission via `emitIf` | 6 |
-| SIMD `f32x4`, `splat`, `loadVec`, `storeVec`, `mulVec`, `addVec`, `lane` | 3, 7 |
+| SIMD `f32x4`, `splat`, `buf.loadVec`, `buf.storeVec`, `mulVec`, `addVec`, `vec.lane` | 3, 7 |
 | `snapshot` policy (`'persistent'` / `'transient'`) | 3, 5, 7 |
 | `migrations` chain (schema-versioned restore) | 7 |
 | Main side: `createNode` | all |
@@ -256,8 +256,7 @@ import {
   add, sub, mul, mod, abs, max,
   type Node,
 } from '@unworklet/core';
-import { vec4, splat, loadVec, storeVec, mulVec, addVec, lane } from '@unworklet/core/simd';
-import { writeBuffer } from '@unworklet/dsp';
+import { vec4, splat, mulVec, addVec } from '@unworklet/core/simd';
 
 // Linear-phase EQ via 3 partitioned FIR taps over a single combined impulse.
 // Impulse buffer is precomputed in main and uploaded; this processor hosts the
@@ -288,7 +287,7 @@ export const linearPhaseEQ = defineProcessor(() => {
       // Per-sample phase 1: shovel input into history ring buffer.
       forSample((i) => {
         const idx = mod(add(startHead, i), HISTORY_LEN);
-        writeBuffer(history, idx, main.at(0, i));
+        history.write(idx, main.at(0, i));
       });
 
       // Per-sample phase 2: SIMD bulk convolution accumulator. For each output
@@ -300,11 +299,11 @@ export const linearPhaseEQ = defineProcessor(() => {
         // Compile-time unroll of the inner loop, 4 samples per iteration.
         for (let k = 0; k < FIR_LEN; k += 4) {
           const histIdx = mod(add(sub(sub(outIdx, k), 3), HISTORY_LEN), HISTORY_LEN);
-          const hVec = loadVec(history, histIdx);
-          const iVec = loadVec(impulse, k);
+          const hVec = history.loadVec(histIdx);
+          const iVec = impulse.loadVec(k);
           acc        = addVec(acc, mulVec(hVec, iVec));
         }
-        const sum = add(add(lane(acc, 0), lane(acc, 1)), add(lane(acc, 2), lane(acc, 3)));
+        const sum = add(add(acc.lane(0), acc.lane(1)), add(acc.lane(2), acc.lane(3)));
         out.set(0, i, sum);
       });
 
@@ -351,11 +350,10 @@ node.outputs.main.connect(audioContext.destination);
 ```typescript
 import {
   defineProcessor, audioInput, audioOutput, param, state, buffer,
-  forSample, emitIf, event,
+  forSample, event,
   add, sub, mul, div, mod, max, min, abs, gt, lt, exp, select, log,
   type Node, type State,
 } from '@unworklet/core';
-import { writeBuffer, readBuffer } from '@unworklet/dsp';
 
 const LOOKAHEAD_SAMPLES = 240;   // 5 ms @ 48kHz
 
@@ -418,23 +416,23 @@ export const lookaheadLimiter = defineProcessor((ctx) => {
 
         // Push into delay line.
         const wIdx = mod(add(headBlock, i), LOOKAHEAD_SAMPLES);
-        writeBuffer(dlyL, wIdx, main.at(0, i));
-        writeBuffer(dlyR, wIdx, main.at(1, i));
+        dlyL.write(wIdx, main.at(0, i));
+        dlyR.write(wIdx, main.at(1, i));
 
         // Read from LOOKAHEAD_SAMPLES samples behind the write head (i.e.
         // the oldest sample, which corresponds to t - LOOKAHEAD_SAMPLES).
         const rIdx = mod(add(wIdx, 1), LOOKAHEAD_SAMPLES);
-        const xL   = readBuffer(dlyL, rIdx);
-        const xR   = readBuffer(dlyR, rIdx);
+        const xL   = dlyL.read(rIdx);
+        const xR   = dlyR.read(rIdx);
 
         out.set(0, i, mul(xL, gr));
         out.set(1, i, mul(xR, gr));
 
         // Fire an overshoot event on either channel that exceeded the ceiling
         // *before* gain reduction was applied (i.e. true peak in the input).
-        emitIf(gt(abs(main.at(0, i)), ceilingLin), overshoot,
+        overshoot.emitIf(gt(abs(main.at(0, i)), ceilingLin),
                { atSample: i, channel: 0, level: abs(main.at(0, i)) });
-        emitIf(gt(abs(main.at(1, i)), ceilingLin), overshoot,
+        overshoot.emitIf(gt(abs(main.at(1, i)), ceilingLin),
                { atSample: i, channel: 1, level: abs(main.at(1, i)) });
 
         // Track the most-negative GR (in dB) reached during this block; published
@@ -494,7 +492,6 @@ import {
   add, sub, mul, div, sin, cos, select, lte, gt, exp,
   type Node,
 } from '@unworklet/core';
-import { writeBuffer, readBuffer, readBufferInterpolated } from '@unworklet/dsp';
 
 const SAMPLE_BUFFER_LEN = 48000 * 4;        // 4 seconds @ 48kHz
 const NUM_VOICES        = 16;
@@ -561,7 +558,7 @@ export const granularSampler = defineProcessor((ctx) => {
       uploadSample.onReceive(({ samples }) => {
         const len = Math.min(samples.length, SAMPLE_BUFFER_LEN);
         for (let i = 0; i < len; i++) {
-          writeBuffer(sampleBuf, i, samples[i]);
+          sampleBuf.write(i, samples[i]);
         }
         sampleLen.store(len);
 
@@ -569,7 +566,7 @@ export const granularSampler = defineProcessor((ctx) => {
         const stride = Math.max(1, Math.floor(len / WAVEFORM_FRAME));
         for (let i = 0; i < WAVEFORM_FRAME; i++) {
           const src = i * stride;
-          writeBuffer(waveformView, i, src < len ? samples[src] : 0);
+          waveformView.write(i, src < len ? samples[src] : 0);
         }
       });
 
@@ -612,7 +609,7 @@ export const granularSampler = defineProcessor((ctx) => {
           const win    = mul(winLin, winLin);
 
           // Pitch-shifted read with linear interpolation.
-          const sample = readBufferInterpolated(sampleBuf, pos);
+          const sample = sampleBuf.readInterpolated(pos);
           const sig    = mul(sample, mul(win, activeVel.load()));
 
           // Accumulate (gated by voice activity).
@@ -669,7 +666,7 @@ node.events.grainSpawned.on(({ atSample, voice, pos }) => grainViz.flash(voice, 
 import {
   defineProcessor, audioInput, audioOutput, state,
   forSample, everyNSamples,
-  midiInput, midiOutput, message, event, emitIf,
+  midiInput, midiOutput, message, event,
   add, sub, mul, mod, eq, gt, select,
   type Node,
 } from '@unworklet/core';
@@ -741,13 +738,13 @@ export const arpeggiator = defineProcessor((ctx) => {
         }
         const fireNote = add(rootNote.load(), offset);
 
-        emitIf(roll, midiOut,
+        midiOut.emitIf(roll,
           { type: 'noteOn',  atSample: i, note: fireNote, velocity: lastVel.load(), channel: 0 });
         // Schedule a noteOff one step later by emitting at the boundary -1 sample.
         // (For brevity, a real arp tracks held notes and emits noteOff at the right time;
         // this minimal form fires both edges from the rollover.)
 
-        emitIf(roll, stepFired,
+        stepFired.emitIf(roll,
           { atSample: i, step: nextStep, note: fireNote });
 
         stepIdx.store(select(roll, nextStep, stepIdx.load()));
@@ -791,8 +788,7 @@ import {
   forSample, everyNSamples, message,
   add, sub, mul, mod, max, abs, type Node,
 } from '@unworklet/core';
-import { vec4, splat, loadVec, storeVec, mulVec, addVec, lane } from '@unworklet/core/simd';
-import { writeBuffer } from '@unworklet/dsp';
+import { vec4, splat, mulVec, addVec } from '@unworklet/core/simd';
 
 const IR_LEN          = 4096;     // ~85ms @ 48kHz
 const PARTITION_SIZE  = 128;
@@ -827,17 +823,17 @@ export const convolutionReverb = defineProcessor((ctx) => {
     process: () => {
       uploadIR.onReceive(({ irL: il, irR: ir }) => {
         const len = Math.min(il.length, IR_LEN);
-        for (let i = 0; i < len; i++) writeBuffer(irL, i, il[i]);
-        for (let i = 0; i < len; i++) writeBuffer(irR, i, ir[i]);
-        for (let i = len; i < IR_LEN; i++) { writeBuffer(irL, i, 0); writeBuffer(irR, i, 0); }
+        for (let i = 0; i < len; i++) irL.write(i, il[i]);
+        for (let i = 0; i < len; i++) irR.write(i, ir[i]);
+        for (let i = len; i < IR_LEN; i++) { irL.write(i, 0); irR.write(i, 0); }
       });
 
       const headBlock = histHead.load();
 
       forSample((i) => {
         const idx = mod(add(headBlock, i), IR_LEN);
-        writeBuffer(histL, idx, main.at(0, i));
-        writeBuffer(histR, idx, main.at(1, i));
+        histL.write(idx, main.at(0, i));
+        histR.write(idx, main.at(1, i));
       });
 
       // SIMD bulk convolution — scalar accumulator over 4-wide vectors.
@@ -847,15 +843,15 @@ export const convolutionReverb = defineProcessor((ctx) => {
         let accR = splat(0);
         for (let k = 0; k < IR_LEN; k += 4) {
           const histIdx = mod(add(sub(sub(outIdx, k), 3), IR_LEN), IR_LEN);
-          const hL = loadVec(histL, histIdx);
-          const hR = loadVec(histR, histIdx);
-          const iL = loadVec(irL,   k);
-          const iR = loadVec(irR,   k);
+          const hL = histL.loadVec(histIdx);
+          const hR = histR.loadVec(histIdx);
+          const iL = irL.loadVec(k);
+          const iR = irR.loadVec(k);
           accL = addVec(accL, mulVec(hL, iL));
           accR = addVec(accR, mulVec(hR, iR));
         }
-        const sumL = add(add(lane(accL, 0), lane(accL, 1)), add(lane(accL, 2), lane(accL, 3)));
-        const sumR = add(add(lane(accR, 0), lane(accR, 1)), add(lane(accR, 2), lane(accR, 3)));
+        const sumL = add(add(accL.lane(0), accL.lane(1)), add(accL.lane(2), accL.lane(3)));
+        const sumR = add(add(accR.lane(0), accR.lane(1)), add(accR.lane(2), accR.lane(3)));
 
         const dryL = mul(main.at(0, i), dryGain.at(0));
         const dryR = mul(main.at(1, i), dryGain.at(0));
@@ -943,10 +939,9 @@ if (stored) {
 ```typescript
 import {
   defineProcessor, defineSubgraph, audioInput, audioOutput, param, state, buffer,
-  forSample, midiInput, event, emitIf,
+  forSample, midiInput, event,
   add, sub, mul, div, mod, max, abs, sin, exp, gt, lt, eq, select, type Node, type State,
 } from '@unworklet/core';
-import { writeBuffer } from '@unworklet/dsp';
 
 const NUM_VOICES = 8;
 
@@ -1030,7 +1025,7 @@ export const polySynth = defineProcessor((ctx) => {
         }
         allocCursor.store(mod(add(v, 1), NUM_VOICES));
 
-        emitIf(true as unknown as Node<'bool'>, notePlayed,
+        notePlayed.emitIf(true as unknown as Node<'bool'>,
           { atSample, note, voice: v, velocity: velocity / 127 });
       });
 
@@ -1071,7 +1066,7 @@ export const polySynth = defineProcessor((ctx) => {
 
         // Push into the waveform thumbnail (downsampled by stride).
         const wp = mod(add(wpStart, i), 1024);
-        writeBuffer(waveform, wp, sig);
+        waveform.write(wp, sig);
       });
 
       wavePtr.store(mod(add(wpStart, 128), 1024));
