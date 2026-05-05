@@ -108,6 +108,8 @@ Each published `state.<type>` slot has a fixed shared region of size `sizeof(typ
 
 A small per-slot notification region (one `i32` "version" counter) is incremented on each publish tick where the value changed. Main-side subscribers observe this counter to deliver `subscribe(handler)` callbacks.
 
+> **v1.0.0 limitation — torn reads on multi-byte regions**: copying a published `buffer.<type>` into its shared region is **not atomic at the region level** (WebAssembly `memory.copy` is byte-wise). A main-thread reader observing the region during an audio-thread copy can see a partially-updated region. For visual UX (waveform, spectrum) the impact is one inconsistent frame restored within 33 ms — visually undetectable in practice. For main-side numerical analysis or persistence, this manifests as occasional outliers. Double-buffered region transport is a v1.x.0 mandatory upgrade — see `decisions-log.md` Q27-f and `10-roadmap.md` §3. Scalar `state.<type>` writes are unaffected (already atomic via `Atomics.store`).
+
 ### 5.5 `Atomics` protocol (SAB mode)
 
 Ring buffer header (one per `event<T>` / `message<T>` declaration):

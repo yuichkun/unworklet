@@ -678,6 +678,22 @@ No separate `bulk` declaration. Large payloads route through the existing primit
 - **One-shot large data, worklet → main** (snapshot capture, spectrum frame on demand): `event<T>` with a variable-length payload field; the framework routes large payloads through the variable-length content buffer + index pattern (= MIDI sysex pattern, Q4-c).
 - **One-shot large data, main → worklet** (IR load, wavetable upload, lookup table push): `message<T>` with a variable-length payload field; same content-buffer + index pattern.
 
+**Decision (Q27-f — Torn reads on multi-byte regions; deferred mitigation):**
+
+In v1.0.0, `buffer.publish` regions and variable-length `event<T>` / `message<T>` payloads use a single shared region per slot with byte-wise copy. This is **not atomic at the region level** — WebAssembly's `memory.copy` (and the equivalent main-thread `Atomics.copyWithin`) operate byte-by-byte, so a main-thread reader observing the shared region during an audio-thread copy can see a partially-updated region (a "torn read"). At publish rates around 30 fps over hour-long sessions, this is statistically guaranteed to occur.
+
+**Practical impact in v1.0.0**:
+
+- Visual displays (waveform scope, spectrum frame): one frame briefly inconsistent; restored within 33 ms or less. Continuity of audio signals makes this visually undetectable in practice.
+- Main-side numerical analysis on a published buffer (averaging, peak detection on the main thread): occasional outlier in derived values when a torn read happens to fall on the analysis tick.
+- Persistence (recording a published buffer): a torn snapshot may be saved.
+
+Scalar `state.<type>` publish is unaffected — single-word writes are already atomic via `Atomics.store`.
+
+**v1.x.0 mandatory mitigation** (tracked in `10-roadmap.md` §3): double-buffered shared regions for `buffer.publish` and variable-length payloads. Two regions per slot, atomic index switch from the audio thread, main-side readers consume the most-recent-completed region. API surface (`subscribe(handler)`, `.value`, `.on(handler)`) is **unchanged** when this upgrade lands; consumers do not modify code. Cost: 2× memory per published buffer, one extra atomic per publish tick.
+
+This is a **planned mandatory addition**, not optional. The v1.0.0 surface is forward-compatible — only the underlying transport implementation changes.
+
 **Rationale (Q27-a):**
 
 - *State extension over a separate `publishedState` declaration*: `state` is already a core unworklet concept. Adding one option (`publish: { rateFps }`) keeps the learning curve at ~zero — authors who already understand `state` get publishing for free. A separate `publishedState` declaration would be a fourth primitive concept with no expressive gain.
@@ -707,6 +723,13 @@ No separate `bulk` declaration. Large payloads route through the existing primit
 - *Three primitives are enough*: continuous large data is conceptually "a published buffer" (= `buffer.publish`), one-shot large data is conceptually "an event with a large payload" or "a message with a large payload". A fourth `bulk` declaration would add a learning bump for use cases the existing primitives already express clearly.
 - *Variable-length transport is shared infrastructure*: MIDI sysex already needs it; reusing the same content-buffer + index pattern for `event<T>` / `message<T>` payloads adds nothing to the transport implementation.
 
+**Rationale (Q27-f):**
+
+- *Limitation acknowledged in spec, mitigation deferred*: silently shipping a known torn-read window would push diagnosis cost onto every consumer who hits it. Acknowledging it explicitly with a forward-compatible upgrade path lets consumers choose their use cases knowingly in v1.0.0.
+- *Forward-compatible API*: the `subscribe(handler)`, `.value`, `.on(handler)` shapes are independent of single-buffered vs double-buffered transport. The v1.x.0 upgrade is implementation-only; consumer code does not change.
+- *Visual UX pragmatically tolerable for v1.0.0*: the most common consumer use case for `buffer.publish` (waveform scope, spectrum frame) tolerates the limitation in practice — torn reads are visually invisible in continuous audio signals. v1.0.0 ships the surface immediately; the deferred mitigation closes the gap for non-visual cases without blocking release.
+- *Scalar `state.publish` unaffected*: single-word writes are atomic via `Atomics.store`. The torn-read concern is specifically about multi-byte regions; scoping the limitation precisely matters for consumers evaluating whether their use case is affected.
+
 **Rejected:**
 
 - *Single `topic<T>` declaration with `direction` / `semantics` options* — coalesce-latest vs ringbuffer in one declaration controlled by a string option creates the same structural-footgun trap as plain `emit(...)` (Q4-b): a single typo (`semantics: 'state'` vs `semantics: 'event'`) flips the entire delivery contract. Multiple declaration kinds with distinct names make the intent visible at the declaration site.
@@ -719,5 +742,8 @@ No separate `bulk` declaration. Large payloads route through the existing primit
 - *State `publish` rate as only `rAF`-driven, no `rateFps`* — couples the publish rate to monitor refresh rate, which is browser-specific (60Hz / 120Hz / 144Hz / variable). For headless contexts (worker-only, OffscreenCanvas without animation, automated tests), `rAF` is unavailable. `rateFps` is the universal primitive; `rAF` is a v1.x.0 additive option.
 - *`onReceive` handler registration at declaration scope (= outside the `process` body)* — handlers would have to either close over declarations via outer scope only and not re-resolve them per block (= sometimes wrong if state was reset by snapshot/restore between blocks), or the framework would have to inject hidden re-binding per block. Per-block placement inside `process` resolves the lifetime cleanly without framework magic.
 - *Coalesce-latest as a configurable option on `event<T>`* — collapses the "preserve all events" and "latest only" semantics into one declaration, requiring a runtime check at every consumer site to know which mode is active. The two declaration kinds (`state.publish` vs `event`) carry the semantics in the type; consumers know what to expect from the type alone.
+- *Defer the entire `buffer.publish` surface to v1.x.0* (Q27-f) — would force every v1.0.0 consumer to roll their own waveform / spectrum bridge using `messages.<name>(payload)` request/reply patterns, externalizing what should be load-bearing infrastructure. The surface ships in v1.0.0; only the torn-read mitigation is deferred, behind a forward-compatible API.
+- *Mark torn read as "consumer responsibility, not framework"* (Q27-f) — torn read is structurally caused by the framework's choice of single-buffered shared region in v1.0.0, not by anything the consumer wrote. Pushing it to consumer-territory contradicts unworklet's "no traps for the user" stance.
+- *Implement double buffering at v1.0.0 instead of deferring* (Q27-f) — the implementation cost (additional region allocation per publish slot, additional atomic per tick, region indexing logic) was not in scope for the v1.0.0 audit window. Deferred per consumer instruction; tracked as mandatory v1.x.0 mitigation, not optional.
 
 **Open — Q22-d (Error message format and refactor-hint structure):** the format of error messages produced by each layer (TS type errors, graph-capture-time errors, static-analysis errors) and the structure of refactor hints attached to each error class is not yet resolved. To be addressed once `01-dsl.md` and `03-compiler.md` carry enough concrete examples to drive the format choice.

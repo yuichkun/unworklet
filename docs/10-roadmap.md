@@ -23,9 +23,17 @@ skeleton
 
 ## 3. Explicitly deferred
 
-<!-- Items raised during finalization that were intentionally pushed past v1.0.0:
-       - Q1.1 (variable-rate control signals)
-       - Q1.2 (multi-block lookahead helpers, beyond explicit `latency` declaration)
-       - Q1.6 (cross-processor fast path)
-       - Q1.7 (transport-sync convention)
-       Lands here as resolutions settle in `decisions-log.md`. -->
+The following items are intentionally postponed past v1.0.0. Each has a forward-compatible API surface — consumer code does not change when the upgrade lands.
+
+### 3.1 Mandatory mitigations (must ship in v1.x.0)
+
+- **Double-buffered `buffer.publish` regions** — eliminates torn reads on multi-byte published regions and variable-length `event<T>` / `message<T>` payloads. v1.0.0 ships single-buffered (acknowledged limitation in `decisions-log.md` Q27-f and `02-messaging.md` §5.4). v1.x.0 introduces 2× region per published slot with atomic index switch from the audio thread; main-side readers consume the most-recent-completed region. **Mandatory, not optional** — the v1.0.0 surface explicitly promises this upgrade.
+
+### 3.2 Additive surface extensions (no v1.0.0 promise; rolled out as demand surfaces)
+
+<!-- Will be filled in as additional resolutions settle in decisions-log.md. Candidates include:
+       - Variable-rate iteration (`forSampleRange(start, end, callback)`)
+       - rAF-driven `state.publish` rate variants
+       - SIMD f64x2 / i32x4 / shuffle / gather-scatter
+       - Time-unit sub-rate primitives (`everyTimeMs`)
+     -->
