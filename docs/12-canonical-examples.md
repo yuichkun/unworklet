@@ -253,7 +253,7 @@ node.onError((err) => console.error('[3bandEQ]', err));
 import {
   defineProcessor, audioInput, audioOutput, param, state, buffer,
   forSample, everyNSamples,
-  add, mul, abs, max,
+  add, sub, mul, mod, abs, max,
   type Node,
 } from '@unworklet/core';
 import { vec4, splat, loadVec, storeVec, mulVec, addVec } from '@unworklet/core/simd';
@@ -286,7 +286,7 @@ export const linearPhaseEQ = defineProcessor(() => {
 
       // Per-sample phase 1: shovel input into history ring buffer.
       forSample((i) => {
-        const idx = (startHead + i) % HISTORY_LEN;
+        const idx = mod(add(startHead, i), HISTORY_LEN);
         writeBuffer(history, idx, main.at(0, i));
       });
 
@@ -294,7 +294,7 @@ export const linearPhaseEQ = defineProcessor(() => {
       // sample `i`, accumulate impulse[k] * history[(head - k) % LEN] over k.
       // We process the inner k loop in chunks of 4 via SIMD.
       forSample((i) => {
-        const outIdx = (startHead + i) % HISTORY_LEN;
+        const outIdx = mod(add(startHead, i), HISTORY_LEN);
         // run the inner loop in compile-time-unrolled chunks of 4 across NUM_PARTS partitions.
         // Each partition is 128 samples — too long to unroll directly; we use forSample.byN
         // inside an everyNSamples to bound the per-block work to one partition refresh.
@@ -303,7 +303,7 @@ export const linearPhaseEQ = defineProcessor(() => {
         let acc = splat(0);
         // Compile-time unroll of the inner loop, 4 samples per iteration:
         for (let k = 0; k < FIR_LEN; k += 4) {
-          const histIdx = (outIdx - k - 3 + HISTORY_LEN) % HISTORY_LEN;
+          const histIdx = mod(add(sub(sub(outIdx, k), 3), HISTORY_LEN), HISTORY_LEN);
           const hVec = loadVec(history, histIdx);
           const iVec = loadVec(impulse, k);
           acc        = addVec(acc, mulVec(hVec, iVec));
@@ -313,7 +313,7 @@ export const linearPhaseEQ = defineProcessor(() => {
       });
 
       // Per-block: advance the head by one block.
-      histHead.store((startHead + 128) % HISTORY_LEN);
+      histHead.store(mod(add(startHead, 128), HISTORY_LEN));
     },
   };
 });
@@ -361,7 +361,7 @@ node.outputs.main.connect(audioContext.destination);
 import {
   defineProcessor, audioInput, audioOutput, param, state, buffer,
   forSample, everyNSamples, emitIf, event,
-  add, sub, mul, div, max, min, abs, gt, lt, exp,
+  add, sub, mul, div, mod, max, min, abs, gt, lt, exp,
   type Node, type State,
 } from '@unworklet/core';
 
@@ -425,13 +425,13 @@ export const lookaheadLimiter = defineProcessor((ctx) => {
         const grDb20 = mul(20 / Math.LN10, log(gr));
 
         // Push into delay line.
-        const wIdx = (headBlock + i) % LOOKAHEAD_SAMPLES;
+        const wIdx = mod(add(headBlock, i), LOOKAHEAD_SAMPLES);
         writeBuffer(dlyL, wIdx, main.at(0, i));
         writeBuffer(dlyR, wIdx, main.at(1, i));
 
         // Read from LOOKAHEAD_SAMPLES samples behind the write head (i.e.
         // the oldest sample, which corresponds to t - LOOKAHEAD_SAMPLES).
-        const rIdx = (wIdx + 1) % LOOKAHEAD_SAMPLES;
+        const rIdx = mod(add(wIdx, 1), LOOKAHEAD_SAMPLES);
         const xL   = readBuffer(dlyL, rIdx);
         const xR   = readBuffer(dlyR, rIdx);
 
@@ -452,7 +452,7 @@ export const lookaheadLimiter = defineProcessor((ctx) => {
 
       // Per-block: advance head, decay published GR back toward 0 dB so meter
       // tracks recent rather than historical.
-      dlyHead.store((headBlock + 128) % LOOKAHEAD_SAMPLES);
+      dlyHead.store(mod(add(headBlock, 128), LOOKAHEAD_SAMPLES));
       gainReductionDb.store(mul(gainReductionDb.load(), 0.85));
 
       // Sub-rate: every 1 ms, write the envelope value to a debug-grade slot
@@ -816,8 +816,8 @@ node.messages.loadPattern({
 ```typescript
 import {
   defineProcessor, audioInput, audioOutput, param, state, buffer,
-  forSample, forSample as _, everyNSamples, message,
-  add, mul, max, abs, type Node,
+  forSample, everyNSamples, message,
+  add, sub, mul, mod, max, abs, type Node,
 } from '@unworklet/core';
 import { vec4, splat, loadVec, storeVec, mulVec, addVec } from '@unworklet/core/simd';
 
@@ -862,18 +862,18 @@ export const convolutionReverb = defineProcessor((ctx) => {
       const headBlock = histHead.load();
 
       forSample((i) => {
-        const idx = (headBlock + i) % IR_LEN;
+        const idx = mod(add(headBlock, i), IR_LEN);
         writeBuffer(histL, idx, main.at(0, i));
         writeBuffer(histR, idx, main.at(1, i));
       });
 
       // SIMD bulk convolution — scalar accumulator over 4-wide vectors.
       forSample.byN(4, (i) => {
-        const outIdx = (headBlock + i) % IR_LEN;
+        const outIdx = mod(add(headBlock, i), IR_LEN);
         let accL = splat(0);
         let accR = splat(0);
         for (let k = 0; k < IR_LEN; k += 4) {
-          const histIdx = (outIdx - k - 3 + IR_LEN) % IR_LEN;
+          const histIdx = mod(add(sub(sub(outIdx, k), 3), IR_LEN), IR_LEN);
           const hL = loadVec(histL, histIdx);
           const hR = loadVec(histR, histIdx);
           const iL = loadVec(irL,   k);
@@ -895,7 +895,7 @@ export const convolutionReverb = defineProcessor((ctx) => {
         wetMeter.store(max(wetMeter.load(), max(abs(wetL), abs(wetR))));
       });
 
-      histHead.store((headBlock + 128) % IR_LEN);
+      histHead.store(mod(add(headBlock, 128), IR_LEN));
       wetMeter.store(mul(wetMeter.load(), 0.93));
     },
   };
