@@ -9,20 +9,37 @@ const N = (n: any): ASTValue => n as ASTValue;
 
 // ─── Arithmetic ─────────────────────────────────────────────────────────────
 
+function widen(arg: ASTValue, target: ScalarType): ASTValue {
+  if (arg.type === target) return arg;
+  if (arg.kind === "const") {
+    return { ...(arg as any), type: target };
+  }
+  const c = getCtx();
+  return c.fresh({
+    kind: "convert",
+    type: target,
+    from: arg.type,
+    arg,
+  } as any);
+}
+
 function arith(op: any, ...rawArgs: any[]): ASTValue {
   const c = getCtx();
   // Lift each arg, infer type
   const args = rawArgs.map((a) => lift(a));
   let t: ScalarType = "f32";
   if (args.length === 1) t = args[0]!.type as ScalarType;
-  else if (args.length >= 2) t = arithType(args[0]!, args[1]!);
-  // Narrow consts to inferred type
-  const narrowed = args.map((a) => narrowConst(a, t));
+  else if (args.length === 2) t = arithType(args[0]!, args[1]!);
+  else if (args.length === 3) {
+    // 3-arg ops (clamp): result follows the first operand; lo/hi widen to match.
+    t = args[0]!.type as ScalarType;
+  }
+  const widened = args.map((a) => widen(a, t));
   return c.fresh({
     kind: "arith",
     type: t,
     op,
-    args: narrowed,
+    args: widened,
   });
 }
 
@@ -48,8 +65,8 @@ function compare(op: any, a: any, b: any): ASTValue {
     kind: "compare",
     type: "bool",
     op,
-    a: narrowConst(av, t),
-    b: narrowConst(bv, t),
+    a: widen(av, t),
+    b: widen(bv, t),
   });
 }
 
@@ -64,7 +81,11 @@ export const gte = (a: any, b: any) => compare("gte", a, b);
 
 function math(op: any, precision: "default" | "precise" | "table", a: any): ASTValue {
   const c = getCtx();
-  const av = lift(a);
+  let av = lift(a);
+  // Math ops are always float. If the input is integer, widen to f32.
+  if (av.type === "i32" || av.type === "i64" || av.type === "bool") {
+    av = widen(av, "f32");
+  }
   return c.fresh({
     kind: "math",
     type: av.type,
@@ -111,8 +132,8 @@ export const select = (cond: any, whenTrue: any, whenFalse: any): ASTValue => {
     kind: "select",
     type: t,
     cond: cv,
-    whenTrue: narrowConst(tv, t),
-    whenFalse: narrowConst(fv, t),
+    whenTrue: widen(tv, t),
+    whenFalse: widen(fv, t),
   });
 };
 

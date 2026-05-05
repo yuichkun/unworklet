@@ -11,13 +11,17 @@ import {
   add,
   sub,
   mul,
+  select,
+  eq,
+  gt,
+  lt,
   type Node,
 } from "@unworklet/core";
 
 // 8-pad drum sampler. Each pad has its own sample buffer (uploaded via message)
 // and a single voice. MIDI notes 36..43 trigger pads 0..7.
 const NUM_PADS = 8;
-const MAX_SAMPLE_LEN = 48000 * 4; // 4 seconds per pad
+const MAX_SAMPLE_LEN = 48000 * 4;
 
 export const drumSampler = defineProcessor(() => {
   const out = audioOutput({ channels: 2, name: "main" });
@@ -50,60 +54,59 @@ export const drumSampler = defineProcessor(() => {
 
   const midi = midiInput({ name: "midi" });
 
-  const playingMask = state.i32(0, { name: "playingMask", publish: { rateFps: 30 } });
-
   return {
     process: () => {
       uploadPad.onReceive(({ pad, samples }) => {
-        if (pad < 0 || pad >= NUM_PADS) return;
+        // Build-time mode guard. In WASM capture mode, `samples` is an AST
+        // proxy and `pad` is an AST node; we cannot drive a runtime-indexed
+        // typed-array copy without the variable-length payload wire format
+        // (docs/02-messaging.md §5.2 — pending). In interpret mode, both
+        // are concrete values and the copy proceeds normally.
+        if (typeof samples?.length !== "number" || typeof pad !== "number") return;
         const len = Math.min(samples.length, MAX_SAMPLE_LEN);
-        const buf = pads[pad]!;
-        for (let i = 0; i < len; i++) buf.write(i, samples[i]!);
-        for (let i = len; i < MAX_SAMPLE_LEN; i++) buf.write(i, 0);
+        for (let i = 0; i < len; i++) pads[pad]!.write(i, samples[i]!);
+        for (let i = len; i < MAX_SAMPLE_LEN; i++) pads[pad]!.write(i, 0);
         padLens[pad]!.store(len);
       });
 
       triggerPad.onReceive(({ pad, velocity }) => {
-        if (pad < 0 || pad >= NUM_PADS) return;
-        if ((padLens[pad]!.load() as unknown as number) === 0) return;
-        padPos[pad]!.store(0);
-        padGate[pad]!.store(true);
-        padVel[pad]!.store(velocity);
-        padTriggered.emitIf(true, { atSample: 0, pad, velocity });
+        // Build-time fan-out: for each pad slot, set state if pad matches.
+        for (let p = 0; p < NUM_PADS; p++) {
+          const isMe = eq(pad, p);
+          padPos[p]!.store(select(isMe, 0, padPos[p]!.load()));
+          padGate[p]!.store(select(isMe, true, padGate[p]!.load()));
+          padVel[p]!.store(select(isMe, velocity, padVel[p]!.load()));
+        }
       });
 
       midi.onEvent("noteOn", ({ note, velocity, atSample }) => {
-        const pad = note - 36;
-        if (pad < 0 || pad >= NUM_PADS) return;
-        if ((padLens[pad]!.load() as unknown as number) === 0) return;
-        padPos[pad]!.store(0);
-        padGate[pad]!.store(true);
-        padVel[pad]!.store((velocity as unknown as number) / 127);
-        padTriggered.emitIf(true, { atSample, pad, velocity: (velocity as unknown as number) / 127 });
+        const pad = sub(note, 36);
+        for (let p = 0; p < NUM_PADS; p++) {
+          const isMe = eq(pad, p);
+          padPos[p]!.store(select(isMe, 0, padPos[p]!.load()));
+          padGate[p]!.store(select(isMe, true, padGate[p]!.load()));
+          padVel[p]!.store(select(isMe, mul(velocity, 1 / 127), padVel[p]!.load()));
+        }
       });
 
       forSample((i) => {
-        let mix = 0;
-        let mask = 0;
+        let mix: Node<"f32"> = mul(0, 0) as any;
         for (let p = 0; p < NUM_PADS; p++) {
-          const gate = padGate[p]!.load() as unknown as boolean;
-          if (!gate) continue;
-          const pos = padPos[p]!.load() as unknown as number;
-          const len = padLens[p]!.load() as unknown as number;
-          if (pos >= len) {
-            padGate[p]!.store(false);
-            continue;
-          }
-          const v = pads[p]!.read(pos) as unknown as number;
-          const vel = padVel[p]!.load() as unknown as number;
-          mix += v * vel;
-          padPos[p]!.store(pos + 1);
-          mask |= 1 << p;
+          const gate = padGate[p]!.load();
+          const pos = padPos[p]!.load();
+          const len = padLens[p]!.load();
+          const active = select(gate, lt(pos, len), false);
+          const v = pads[p]!.read(pos);
+          const vel = padVel[p]!.load();
+          const contrib = select(active, mul(v, vel), 0);
+          mix = add(mix, contrib);
+          // advance position; deactivate when done
+          padPos[p]!.store(select(active, add(pos, 1), pos));
+          padGate[p]!.store(select(active, gate, false));
         }
-        const sig = mix * (masterVol.at(i) as unknown as number);
-        out.set(0, i, sig as unknown as Node<"f32">);
-        out.set(1, i, sig as unknown as Node<"f32">);
-        playingMask.store(mask as unknown as number);
+        const sig = mul(mix, masterVol.at(i));
+        out.set(0, i, sig);
+        out.set(1, i, sig);
       });
     },
   };

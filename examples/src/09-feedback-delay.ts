@@ -7,8 +7,14 @@ import {
   buffer,
   forSample,
   add,
+  sub,
   mul,
   mod,
+  abs,
+  max,
+  gte,
+  select,
+  i32,
   type Node,
 } from "@unworklet/core";
 
@@ -64,16 +70,19 @@ export const feedbackDelay = defineProcessor((ctx) => {
 
   return {
     process: () => {
-      const dSamples = mul(delayMs.at(0), ctx.sampleRate / 1000) as unknown as number;
-      const fb = feedback.at(0) as unknown as number;
-      const w = wet.at(0) as unknown as number;
-      const d = dry.at(0) as unknown as number;
-      const pp = pingPong.at(0) as unknown as number;
+      const dSamples = i32(mul(delayMs.at(0), ctx.sampleRate / 1000));
+      const fb = feedback.at(0);
+      const w = wet.at(0);
+      const d = dry.at(0);
+      const pp = pingPong.at(0);
       const block = head.load();
 
       forSample((i) => {
         const wIdx = mod(add(block, i), MAX_DELAY_SAMPLES);
-        const rIdx = mod(add(sub_or_zero(wIdx, dSamples), MAX_DELAY_SAMPLES), MAX_DELAY_SAMPLES);
+        const rIdx = mod(
+          add(sub(wIdx, dSamples), MAX_DELAY_SAMPLES),
+          MAX_DELAY_SAMPLES,
+        );
 
         const inL = main.at(0, i);
         const inR = main.at(1, i);
@@ -81,9 +90,10 @@ export const feedbackDelay = defineProcessor((ctx) => {
         const taL = dlyL.read(rIdx);
         const taR = dlyR.read(rIdx);
 
-        // Cross-feed when ping-pong > 0.5
-        const newL = add(inL, mul(pp >= 0.5 ? taR : taL, fb));
-        const newR = add(inR, mul(pp >= 0.5 ? taL : taR, fb));
+        // ping-pong cross-feed when pp >= 0.5
+        const cross = gte(pp, 0.5);
+        const newL = add(inL, mul(select(cross, taR, taL), fb));
+        const newR = add(inR, mul(select(cross, taL, taR), fb));
 
         dlyL.write(wIdx, newL);
         dlyR.write(wIdx, newR);
@@ -93,11 +103,8 @@ export const feedbackDelay = defineProcessor((ctx) => {
         out.set(0, i, yL);
         out.set(1, i, yR);
 
-        // Track peaks
-        const aL = (yL as unknown as number) < 0 ? -(yL as unknown as number) : (yL as unknown as number);
-        const aR = (yR as unknown as number) < 0 ? -(yR as unknown as number) : (yR as unknown as number);
-        meterL.store((meterL.load() as unknown as number) > aL ? meterL.load() : aL);
-        meterR.store((meterR.load() as unknown as number) > aR ? meterR.load() : aR);
+        meterL.store(max(meterL.load(), abs(yL)));
+        meterR.store(max(meterR.load(), abs(yR)));
       });
 
       head.store(mod(add(block, 128), MAX_DELAY_SAMPLES));
@@ -106,9 +113,3 @@ export const feedbackDelay = defineProcessor((ctx) => {
     },
   };
 });
-
-// Helper that emulates safe negative subtraction for ring-buffer index.
-function sub_or_zero(a: Node<"i32"> | number, b: number): Node<"i32"> {
-  const r = (a as unknown as number) - b;
-  return (r < 0 ? r + MAX_DELAY_SAMPLES : r) as unknown as Node<"i32">;
-}

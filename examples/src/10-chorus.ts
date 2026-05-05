@@ -12,11 +12,13 @@ import {
   div,
   mod,
   sin,
+  gt,
+  select,
   type Node,
 } from "@unworklet/core";
 
 // Stereo chorus: two LFO-modulated delay lines mixed with the dry signal.
-const MAX_DELAY_SAMPLES = 4800; // up to ~100 ms
+const MAX_DELAY_SAMPLES = 4800;
 
 export const chorus = defineProcessor((ctx) => {
   const main = audioInput({ channels: 2, name: "main" });
@@ -59,23 +61,31 @@ export const chorus = defineProcessor((ctx) => {
   return {
     process: () => {
       const blockHead = head.load();
-      const inc = mul(rateHz.at(0), (2 * Math.PI) / ctx.sampleRate) as unknown as number;
-      const baseSamples = mul(baseMs.at(0), ctx.sampleRate / 1000) as unknown as number;
-      const depthSamples = mul(depthMs.at(0), ctx.sampleRate / 1000) as unknown as number;
-      const mixV = mix.at(0) as unknown as number;
+      const inc = mul(rateHz.at(0), (2 * Math.PI) / ctx.sampleRate);
+      const baseSamples = mul(baseMs.at(0), ctx.sampleRate / 1000);
+      const depthSamples = mul(depthMs.at(0), ctx.sampleRate / 1000);
+      const mixV = mix.at(0);
 
       forSample((i) => {
-        const phaseL = add(lfoPhase.load(), inc);
-        const phaseR = add(phaseL, Math.PI / 2);
-        lfoPhase.store(phaseL as unknown as number > 2 * Math.PI ? sub(phaseL, 2 * Math.PI) : phaseL);
+        const phaseLNew = add(lfoPhase.load(), inc);
+        const phaseR = add(phaseLNew, Math.PI / 2);
+        // wrap LFO phase to [0, 2π)
+        const phaseL = select(
+          gt(phaseLNew, 2 * Math.PI),
+          sub(phaseLNew, 2 * Math.PI),
+          phaseLNew,
+        );
+        lfoPhase.store(phaseL);
 
         const offL = add(baseSamples, mul(depthSamples, mul(0.5, add(1, sin(phaseL)))));
         const offR = add(baseSamples, mul(depthSamples, mul(0.5, add(1, sin(phaseR)))));
 
         const wIdx = mod(add(blockHead, i), MAX_DELAY_SAMPLES);
-        // Read with linear interpolation
-        const rL = readLerp(dlyL, sub(wIdx, offL));
-        const rR = readLerp(dlyR, sub(wIdx, offR));
+        // Read with linear interpolation via readInterpolated
+        const rIdxL = sub(wIdx, offL);
+        const rIdxR = sub(wIdx, offR);
+        const rL = dlyL.readInterpolated(rIdxL);
+        const rR = dlyR.readInterpolated(rIdxR);
 
         const inL = main.at(0, i);
         const inR = main.at(1, i);
@@ -90,16 +100,3 @@ export const chorus = defineProcessor((ctx) => {
     },
   };
 });
-
-function readLerp(buf: ReturnType<typeof buffer.f32>, pos: Node<"f32"> | number): Node<"f32"> {
-  // Clamp & linear-interpolate over a ring buffer
-  const p = pos as unknown as number;
-  const size = MAX_DELAY_SAMPLES;
-  let f = p - Math.floor(p);
-  let i0 = Math.floor(p) % size;
-  if (i0 < 0) i0 += size;
-  const i1 = (i0 + 1) % size;
-  const a = buf.read(i0) as unknown as number;
-  const b = buf.read(i1) as unknown as number;
-  return (a + (b - a) * f) as unknown as Node<"f32">;
-}

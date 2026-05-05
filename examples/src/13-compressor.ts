@@ -13,12 +13,14 @@ import {
   log,
   abs,
   max,
+  min,
   gt,
+  lt,
   select,
   type Node,
 } from "@unworklet/core";
 
-// Feed-forward dynamic range compressor with soft knee, attack, release, makeup.
+// Feed-forward dynamic range compressor with soft knee.
 export const compressor = defineProcessor((ctx) => {
   const main = audioInput({ channels: 2, name: "main" });
   const out = audioOutput({ channels: 2, name: "main" });
@@ -74,48 +76,55 @@ export const compressor = defineProcessor((ctx) => {
 
   return {
     process: () => {
-      const t = threshDb.at(0) as unknown as number;
-      const r = ratio.at(0) as unknown as number;
-      const k = kneeDb.at(0) as unknown as number;
-      const aMs = attackMs.at(0) as unknown as number;
-      const rMs = releaseMs.at(0) as unknown as number;
-      const aCoef = 1 - Math.exp(-1 / (aMs * 0.001 * ctx.sampleRate));
-      const rCoef = 1 - Math.exp(-1 / (rMs * 0.001 * ctx.sampleRate));
+      const t = threshDb.at(0);
+      const r = ratio.at(0);
+      const k = kneeDb.at(0);
+      const aMs = attackMs.at(0);
+      const rMs = releaseMs.at(0);
+      // a = 1 - exp(-1 / (ms * 0.001 * sr))
+      const aCoef = sub(1, exp(div(-1, mul(mul(aMs, 0.001), ctx.sampleRate))));
+      const rCoef = sub(1, exp(div(-1, mul(mul(rMs, 0.001), ctx.sampleRate))));
+      const log10over20 = 20 / Math.LN10;
+      const log10ToLn = Math.LN10 / 20;
 
       forSample((i) => {
-        const inL = main.at(0, i) as unknown as number;
-        const inR = main.at(1, i) as unknown as number;
-        const det = Math.max(Math.abs(inL), Math.abs(inR));
-        const e = env.load() as unknown as number;
-        const coef = det > e ? aCoef : rCoef;
-        const newE = e + coef * (det - e);
+        const inL = main.at(0, i);
+        const inR = main.at(1, i);
+        const det = max(abs(inL), abs(inR));
+        const e = env.load();
+        const coef = select(gt(det, e), aCoef, rCoef);
+        const newE = add(e, mul(coef, sub(det, e)));
         env.store(newE);
 
-        // Convert to dB
-        const eDb = 20 * Math.log10(newE + 1e-12);
-        // Soft knee
-        let grDb = 0;
-        if (eDb < t - k * 0.5) grDb = 0;
-        else if (eDb > t + k * 0.5) grDb = (eDb - t) - (eDb - t) / r;
-        else {
-          const x = eDb - t + k * 0.5;
-          const overshoot = ((1 / r - 1) * x * x) / (2 * k);
-          grDb = -overshoot;
-        }
-        // grDb is the negative gain reduction in dB
-        const grLin = Math.pow(10, -Math.abs(grDb) / 20);
-        const m = makeupDb.at(i) as unknown as number;
-        const mk = Math.pow(10, m / 20);
+        // dB envelope
+        const eDb = mul(log10over20, log(add(newE, 1e-12)));
+        // Soft knee: see classic compressor formulas
+        const xMinusT = sub(eDb, t);
+        // grDb = (xMinusT < -k/2) → 0
+        //       ((xMinusT > k/2) → xMinusT - xMinusT/r
+        //       else: ((1/r - 1) * (xMinusT + k/2)^2) / (2k)
+        const inKnee = sub(add(xMinusT, mul(0.5, k)), 0);
+        const overshoot = div(mul(sub(div(1, r), 1), mul(inKnee, inKnee)), mul(2, k));
+        // Choose region
+        const aboveK = gt(xMinusT, mul(0.5, k));
+        const belowK = lt(xMinusT, mul(-0.5, k));
+        const grDbAbove = sub(xMinusT, div(xMinusT, r));
+        const grDbKnee = sub(0, overshoot);
+        const grDb = select(belowK, 0, select(aboveK, grDbAbove, grDbKnee));
 
-        out.set(0, i, (inL * grLin * mk) as unknown as Node<"f32">);
-        out.set(1, i, (inR * grLin * mk) as unknown as Node<"f32">);
+        // grLin = exp(grDb * (LN10/20))   — note grDb is already negative-ish
+        const grLin = exp(mul(sub(0, abs(grDb)), log10ToLn));
+        const m = makeupDb.at(i);
+        const mk = exp(mul(m, log10ToLn));
 
-        // Track most-negative GR
-        const cur = gainReductionDb.load() as unknown as number;
-        gainReductionDb.store((cur < -Math.abs(grDb) ? cur : -Math.abs(grDb)) as unknown as number);
+        out.set(0, i, mul(mul(inL, grLin), mk));
+        out.set(1, i, mul(mul(inR, grLin), mk));
+
+        const cur = gainReductionDb.load();
+        const newGr = sub(0, abs(grDb));
+        gainReductionDb.store(min(cur, newGr));
       });
 
-      // Slow decay back toward 0 dB
       gainReductionDb.store(mul(gainReductionDb.load(), 0.86));
     },
   };

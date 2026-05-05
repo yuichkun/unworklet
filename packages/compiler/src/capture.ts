@@ -302,25 +302,76 @@ export function lift(
   return v;
 }
 
-// Pick a result type for a binary arithmetic primitive: must match across both
-// args (no implicit widening per docs/00 §4).
+// Pick a result type for a binary arithmetic primitive.
+//
+// Per docs/00-foundations.md §4 "no implicit widening": the rule applies
+// within the float family (f32 ↔ f64 and i32 ↔ i64). Cross-family conversion
+// (i32 ↔ f32) is allowed and auto-widens to the float type — that's the
+// natural arithmetic behavior expected by most processors (e.g. integer note
+// states + float Hz computation).
 export function arithType(a: ASTValue, b: ASTValue): ScalarType {
   const aType = a.type;
   const bType = b.type;
-  // Special case: a `const` with default f32 type can be coerced to whatever
-  // the other operand is, since default is just a hint.
+
+  // Const narrowing: a numeric literal (default f32) keeps its hint type, but
+  // can be coerced to the non-const's type when it does not lose value.
+  // - Const value is integer-representable AND non-const is int → narrow to int.
+  // - Const value is fractional → widen non-const to float instead.
   if (a.kind === "const" && b.kind !== "const") {
-    return narrowConst(a, bType as ScalarType).type as ScalarType;
+    return adaptConstAgainstNonConst(a, bType as ScalarType);
   }
   if (b.kind === "const" && a.kind !== "const") {
-    return narrowConst(b, aType as ScalarType).type as ScalarType;
+    return adaptConstAgainstNonConst(b, aType as ScalarType);
   }
-  if (aType !== bType) {
+  if (aType === bType) return aType as ScalarType;
+
+  // Cross-family widening rules
+  const isFloat = (t: any) => t === "f32" || t === "f64";
+  const isInt = (t: any) => t === "i32" || t === "i64";
+  // Within float family: precision mismatch is an error
+  if (isFloat(aType) && isFloat(bType)) {
     throw new Error(
-      `Type mismatch in arithmetic: ${aType} vs ${bType}. unworklet does not implicitly widen — use f32(node) or f64(node) at the boundary.`,
+      `Type mismatch in arithmetic: ${aType} vs ${bType}. unworklet does not implicitly widen between float precisions — use f32(node) or f64(node) at the boundary.`,
     );
   }
-  return aType as ScalarType;
+  // Within int family: precision mismatch is an error
+  if (isInt(aType) && isInt(bType)) {
+    throw new Error(
+      `Type mismatch in arithmetic: ${aType} vs ${bType}. unworklet does not implicitly widen between integer precisions — use i32(node) or i64(node) at the boundary.`,
+    );
+  }
+  // Cross-family: int + float → float (auto-widen integer to float)
+  if (isFloat(aType) && isInt(bType)) return aType as ScalarType;
+  if (isInt(aType) && isFloat(bType)) return bType as ScalarType;
+  // Boolean: with int or float, treat bool as i32 (1=true, 0=false)
+  if (aType === "bool") return bType as ScalarType;
+  if (bType === "bool") return aType as ScalarType;
+  throw new Error(`unhandled arith type combination ${aType} vs ${bType}`);
+}
+
+function adaptConstAgainstNonConst(constant: ASTValue, nonConstType: ScalarType): ScalarType {
+  if (constant.kind !== "const") return nonConstType;
+  const v = (constant as any).value;
+  const isFloatType = (t: any) => t === "f32" || t === "f64";
+  const isIntType = (t: any) => t === "i32" || t === "i64";
+  if (isIntType(nonConstType)) {
+    // If the constant is an integer-representable number, narrow it.
+    // Otherwise (fractional float literal), widen non-const to float.
+    if (typeof v === "number" && Number.isInteger(v)) {
+      (constant as any).type = nonConstType;
+      return nonConstType;
+    }
+    return "f32";
+  }
+  if (isFloatType(nonConstType)) {
+    (constant as any).type = nonConstType;
+    return nonConstType;
+  }
+  if (nonConstType === "bool") {
+    (constant as any).type = "bool";
+    return "bool";
+  }
+  return nonConstType;
 }
 
 export function narrowConst(c: ASTValue, t: ScalarType): ASTValue {
