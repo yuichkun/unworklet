@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      binaryen:
+        specifier: ^129.0.0
+        version: 129.0.0
     devDependencies:
       '@types/node':
         specifier: ^25.6.0
@@ -17,6 +21,9 @@ importers:
       '@unworklet/client':
         specifier: workspace:*
         version: link:packages/client
+      '@unworklet/compiler':
+        specifier: workspace:*
+        version: link:packages/compiler
       '@unworklet/core':
         specifier: workspace:*
         version: link:packages/core
@@ -87,6 +94,15 @@ importers:
       '@unworklet/core':
         specifier: workspace:*
         version: link:../core
+
+  packages/compiler:
+    dependencies:
+      '@unworklet/core':
+        specifier: workspace:*
+        version: link:../core
+      binaryen:
+        specifier: ^129.0.0
+        version: 129.0.0
 
   packages/core: {}
 
@@ -1010,6 +1026,10 @@ packages:
     resolution: {integrity: sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==}
     engines: {node: '>=12'}
 
+  binaryen@129.0.0:
+    resolution: {integrity: sha512-NyF5J0SfRoLDthpPh36FGTycOEv3Eqnkq3+mP5Cqt6iD9BLGGJMEVuPzu81nhLy2MMpPKmRTM9VLZihfyRQv8A==}
+    hasBin: true
+
   csstype@3.2.3:
     resolution: {integrity: sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==}
 
@@ -1906,6 +1926,8 @@ snapshots:
   '@vue/shared@3.5.33': {}
 
   assertion-error@2.0.1: {}
+
+  binaryen@129.0.0: {}
 
   csstype@3.2.3: {}
 
