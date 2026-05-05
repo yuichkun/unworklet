@@ -127,7 +127,7 @@ console.log('transport:', node.diagnostics.transport);   // 'sab' or 'postMessag
 ```typescript
 import {
   defineProcessor, defineSubgraph, audioInput, audioOutput, param, state,
-  forSample, add, sub, mul, div, sin, cos, sqrt, exp,
+  forSample, add, sub, mul, div, sin, cos, exp,
   type Node, type State,
 } from '@unworklet/core';
 
@@ -245,7 +245,7 @@ node.params.hiQ.value = 1.4;
 node.onError((err) => console.error('[3bandEQ]', err));
 ```
 
-> Denormal note: feedback paths through `z1` / `z2` decay toward zero on long tails of silence and may enter denormal float range on some hardware (CPU spike risk). v1.0.0's worklet runtime injects flush-to-zero on detected feedback loops; see `04-worklet-runtime.md` §6 (Q21).
+> Denormal note: feedback paths through `z1` / `z2` decay toward zero on long tails of silence and may enter denormal float range on some hardware (CPU spike risk). The mitigation policy (auto-detection, flush-to-zero, opt-out) is decided by Q21 (open) — see `04-worklet-runtime.md` §6.
 
 ## 3. Three-band linear-phase EQ (partitioned convolution)
 
@@ -296,13 +296,8 @@ export const linearPhaseEQ = defineProcessor(() => {
       // We process the inner k loop in chunks of 4 via SIMD.
       forSample((i) => {
         const outIdx = mod(add(startHead, i), HISTORY_LEN);
-        // run the inner loop in compile-time-unrolled chunks of 4 across NUM_PARTS partitions.
-        // Each partition is 128 samples — too long to unroll directly; we use forSample.byN
-        // inside an everyNSamples to bound the per-block work to one partition refresh.
-        // For brevity in this example, the inner loop is left as a SIMD scalar reduction
-        // shape; production-grade authors substitute their FFT-domain partitioned scheme.
         let acc = splat(0);
-        // Compile-time unroll of the inner loop, 4 samples per iteration:
+        // Compile-time unroll of the inner loop, 4 samples per iteration.
         for (let k = 0; k < FIR_LEN; k += 4) {
           const histIdx = mod(add(sub(sub(outIdx, k), 3), HISTORY_LEN), HISTORY_LEN);
           const hVec = loadVec(history, histIdx);
@@ -322,7 +317,7 @@ export const linearPhaseEQ = defineProcessor(() => {
 
 ```typescript
 // main thread — generate the impulse from a 3-band linear-phase EQ design and upload.
-import { createNode } from '@unworklet/client';
+import { createNode, inspect } from '@unworklet/client';
 
 const node = await createNode(audioContext, linearPhaseEQ, {
   initial: { /* none */ },
@@ -339,12 +334,13 @@ const impulse = designLinearPhaseImpulse({
   ],
 });
 
-// Upload via restore — impulse is a snapshotted buffer, so we drive it through
-// the snapshot path. (Alternatively a dedicated message<T> upload could be used;
-// see Example 5 for that pattern.)
+// Inspect the current blob to verify schema before authoring an updated one.
+// (For the routine "load a fresh impulse" path, message<T> uploads are used —
+// see Example 5 for that pattern. Snapshot-driven impulse swap is the long-
+// term-persistence path.)
 const blob = await node.snapshot();
 const inspected = inspect(blob);
-// (rebuild the blob with a new impulse and call node.restore — illustrative.)
+console.log('schema:', inspected.schemaHash, 'slots:', Object.keys(inspected.slots));
 
 source.connect(node.inputs.main);
 node.outputs.main.connect(audioContext.destination);
