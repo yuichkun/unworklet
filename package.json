@@ -14,11 +14,16 @@
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
+    "@unworklet/bench": "workspace:*",
     "@unworklet/cli": "workspace:*",
     "@unworklet/client": "workspace:*",
     "@unworklet/compiler": "workspace:*",
     "@unworklet/core": "workspace:*",
+    "@unworklet/dsp": "workspace:*",
     "@unworklet/examples": "workspace:*",
+    "@unworklet/test": "workspace:*",
+    "@unworklet/worklet": "workspace:*",
+    "fast-check": "^3.20.0",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3",
     "vite-plus": "^0.1.20"

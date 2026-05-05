@@ -15,6 +15,9 @@ importers:
       '@types/node':
         specifier: ^25.6.0
         version: 25.6.0
+      '@unworklet/bench':
+        specifier: workspace:*
+        version: link:packages/bench
       '@unworklet/cli':
         specifier: workspace:*
         version: link:packages/cli
@@ -27,9 +30,21 @@ importers:
       '@unworklet/core':
         specifier: workspace:*
         version: link:packages/core
+      '@unworklet/dsp':
+        specifier: workspace:*
+        version: link:packages/dsp
       '@unworklet/examples':
         specifier: workspace:*
         version: link:examples
+      '@unworklet/test':
+        specifier: workspace:*
+        version: link:packages/test
+      '@unworklet/worklet':
+        specifier: workspace:*
+        version: link:packages/worklet
+      fast-check:
+        specifier: ^3.20.0
+        version: 3.23.2
       tsx:
         specifier: ^4.21.0
         version: 4.21.0
@@ -83,11 +98,26 @@ importers:
         specifier: workspace:*
         version: link:../packages/core
 
+  packages/bench:
+    dependencies:
+      '@unworklet/cli':
+        specifier: workspace:*
+        version: link:../cli
+      '@unworklet/compiler':
+        specifier: workspace:*
+        version: link:../compiler
+      '@unworklet/core':
+        specifier: workspace:*
+        version: link:../core
+
   packages/cli:
     dependencies:
       '@unworklet/client':
         specifier: workspace:*
         version: link:../client
+      '@unworklet/compiler':
+        specifier: workspace:*
+        version: link:../compiler
       '@unworklet/core':
         specifier: workspace:*
         version: link:../core
@@ -108,6 +138,33 @@ importers:
         version: 129.0.0
 
   packages/core: {}
+
+  packages/dsp:
+    dependencies:
+      '@unworklet/core':
+        specifier: workspace:*
+        version: link:../core
+
+  packages/test:
+    dependencies:
+      '@unworklet/client':
+        specifier: workspace:*
+        version: link:../client
+      '@unworklet/compiler':
+        specifier: workspace:*
+        version: link:../compiler
+      '@unworklet/core':
+        specifier: workspace:*
+        version: link:../core
+
+  packages/worklet:
+    dependencies:
+      '@unworklet/compiler':
+        specifier: workspace:*
+        version: link:../compiler
+      '@unworklet/core':
+        specifier: workspace:*
+        version: link:../core
 
 packages:
 
@@ -1055,6 +1112,10 @@ packages:
   estree-walker@2.0.2:
     resolution: {integrity: sha512-Rfkk/Mp/DL7JVje3u18FxFujQlTNR2q6QfMSMB7AvCBx91NGj/ba3kCfza0f6dVDbw7YlRf/nDrn7pQrCCyQ/w==}
 
+  fast-check@3.23.2:
+    resolution: {integrity: sha512-h5+1OzzfCC3Ef7VbtKdcv7zsstUQwUDlYpUTvjeUsJAssPgLn7QzbboPtL5ro04Mq0rPOsMzl7q5hIbRs2wD1A==}
+    engines: {node: '>=8.0.0'}
+
   fdir@6.5.0:
     resolution: {integrity: sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==}
     engines: {node: '>=12.0.0'}
@@ -1213,6 +1274,9 @@ packages:
   postcss@8.5.14:
     resolution: {integrity: sha512-SoSL4+OSEtR99LHFZQiJLkT59C5B1amGO1NzTwj7TT1qCUgUO6hxOvzkOYxD+vMrXBM3XJIKzokoERdqQq/Zmg==}
     engines: {node: ^10 || ^12 || >=14}
+
+  pure-rand@6.1.0:
+    resolution: {integrity: sha512-bVWawvoZoBYpp6yIoQtQXHZjmz35RSVHnUOTefl8Vcjr8snTPY1wnpSPMWekcFwbxI6gtmT7rSYPFvz71ldiOA==}
 
   resolve-pkg-maps@1.0.0:
     resolution: {integrity: sha512-seS2Tj26TBVOC2NIc2rOe2y2ZO7efxITtLZcGSOnHHNOQ7CkiUBfw0Iw2ck6xkIhPwLhKNLS8BO+hEpngQlqzw==}
@@ -1971,6 +2035,10 @@ snapshots:
 
   estree-walker@2.0.2: {}
 
+  fast-check@3.23.2:
+    dependencies:
+      pure-rand: 6.1.0
+
   fdir@6.5.0(picomatch@4.0.4):
     optionalDependencies:
       picomatch: 4.0.4
@@ -2123,6 +2191,8 @@ snapshots:
       nanoid: 3.3.12
       picocolors: 1.1.1
       source-map-js: 1.2.1
+
+  pure-rand@6.1.0: {}
 
   resolve-pkg-maps@1.0.0: {}
 
