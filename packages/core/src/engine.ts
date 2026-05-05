@@ -35,8 +35,43 @@ const SLOT_KIND = {
   param: 20,
 } as const;
 
-const enc = new TextEncoder();
-const dec = new TextDecoder();
+// AudioWorkletGlobalScope on some Chromium versions does not expose TextEncoder
+// or TextDecoder. Provide a lazy fallback that only constructs the native ones
+// when available, and synthesises the few methods we use otherwise.
+let _enc: { encode(s: string): Uint8Array } | null = null;
+let _dec: { decode(b: Uint8Array): string } | null = null;
+function getEnc() {
+  if (_enc) return _enc;
+  if (typeof TextEncoder !== "undefined") {
+    _enc = new TextEncoder();
+  } else {
+    _enc = {
+      encode(s: string): Uint8Array {
+        const out = new Uint8Array(s.length);
+        for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i) & 0xff;
+        return out;
+      },
+    };
+  }
+  return _enc;
+}
+function getDec() {
+  if (_dec) return _dec;
+  if (typeof TextDecoder !== "undefined") {
+    _dec = new TextDecoder();
+  } else {
+    _dec = {
+      decode(b: Uint8Array): string {
+        let s = "";
+        for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]!);
+        return s;
+      },
+    };
+  }
+  return _dec;
+}
+const enc = { encode(s: string) { return getEnc().encode(s); } };
+const dec = { decode(b: Uint8Array) { return getDec().decode(b); } };
 
 function writeU8(arr: number[], v: number) {
   arr.push(v & 0xff);

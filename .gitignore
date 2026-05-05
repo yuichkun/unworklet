@@ -6,3 +6,4 @@ dist/
 .vp/
 .vite/
 *.log
+apps/playground/public/unworklet-worklet.js
