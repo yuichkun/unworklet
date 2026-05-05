@@ -16,6 +16,12 @@ export {
   type Diagnostic,
   type AnalysisResult,
 } from "./static-analysis.js";
+export {
+  UnworkletCompileError,
+  L2,
+  type StructuredError,
+  type ErrorLayer,
+} from "./errors.js";
 
 export * as ast from "./ast.js";
 
