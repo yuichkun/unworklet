@@ -1,6 +1,8 @@
 import { Engine } from "@unworklet/core/internal";
 import type { CompiledProcessor, MidiEvent } from "@unworklet/core";
 
+export { Lifecycle, type LifecycleState, type LifecycleListener } from "./lifecycle.js";
+
 export type CreateNodeOptions = {
   sampleRate?: number;
   blockSize?: number;
