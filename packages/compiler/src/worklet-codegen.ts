@@ -115,10 +115,27 @@ export function generateWorkletModule(
   const LAYOUT = ${layoutJson};
   const WASM_B64 = "${wasmB64}";
 
+  // AudioWorkletGlobalScope doesn't expose atob; decode base64 manually.
   function b64ToBytes(b64) {
-    const bin = atob(b64);
-    const out = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    const lut = new Uint8Array(128);
+    const table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    for (let i = 0; i < table.length; i++) lut[table.charCodeAt(i)] = i;
+    let pad = 0;
+    if (b64.charCodeAt(b64.length - 1) === 61) pad++;
+    if (b64.charCodeAt(b64.length - 2) === 61) pad++;
+    const outLen = (b64.length / 4) * 3 - pad;
+    const out = new Uint8Array(outLen);
+    let o = 0;
+    for (let i = 0; i < b64.length; i += 4) {
+      const a = lut[b64.charCodeAt(i)];
+      const b = lut[b64.charCodeAt(i + 1)];
+      const c = lut[b64.charCodeAt(i + 2)];
+      const d = lut[b64.charCodeAt(i + 3)];
+      const v = (a << 18) | (b << 12) | (c << 6) | d;
+      if (o < outLen) out[o++] = (v >> 16) & 0xff;
+      if (o < outLen) out[o++] = (v >> 8) & 0xff;
+      if (o < outLen) out[o++] = v & 0xff;
+    }
     return out;
   }
 
@@ -127,29 +144,41 @@ export function generateWorkletModule(
 
     constructor() {
       super();
-      const binary = b64ToBytes(WASM_B64);
-      const mod = new WebAssembly.Module(binary);
-      const inst = new WebAssembly.Instance(mod, {
-        math: {
-          sin: Math.sin, cos: Math.cos, tan: Math.tan, tanh: Math.tanh,
-          exp: Math.exp, log: Math.log, pow: Math.pow, atan2: Math.atan2,
-        },
-      });
-      this.exports = inst.exports;
-      this.exports.init();
-      // Pre-warm: gate JIT tier-up before audio starts (docs/04 §1 step 4).
-      try { this.exports.prewarm?.(256); } catch {}
-      this.mem = new Float32Array(this.exports.memory.buffer);
-      this.memU8 = new Uint8Array(this.exports.memory.buffer);
-      this.memI32 = new Int32Array(this.exports.memory.buffer);
-      this._eventReadHeads = new Map();
-      this._midiOutReadHeads = new Map();
-      this.port.onmessage = (e) => this._onMessage(e.data);
-      this.port.postMessage({
-        type: "ready",
-        layout: LAYOUT,
-        paramDescs: PARAM_DESCS,
-      });
+      try {
+        const binary = b64ToBytes(WASM_B64);
+        const mod = new WebAssembly.Module(binary);
+        const inst = new WebAssembly.Instance(mod, {
+          math: {
+            sin: Math.sin, cos: Math.cos, tan: Math.tan, tanh: Math.tanh,
+            exp: Math.exp, log: Math.log, pow: Math.pow, atan2: Math.atan2,
+          },
+        });
+        this.exports = inst.exports;
+        this.exports.init();
+        // Pre-warm: gate JIT tier-up before audio starts (docs/04 §1 step 4).
+        try { this.exports.prewarm?.(256); } catch {}
+        this.mem = new Float32Array(this.exports.memory.buffer);
+        this.memU8 = new Uint8Array(this.exports.memory.buffer);
+        this.memI32 = new Int32Array(this.exports.memory.buffer);
+        this._eventReadHeads = new Map();
+        this._midiOutReadHeads = new Map();
+        this.port.onmessage = (e) => this._onMessage(e.data);
+        this.port.postMessage({
+          type: "ready",
+          layout: LAYOUT,
+          paramDescs: PARAM_DESCS,
+        });
+      } catch (err) {
+        this._initError = err;
+        try {
+          this.port.postMessage({
+            type: "init-error",
+            message: (err && (err.message || String(err))) || "unknown",
+            stack: err && err.stack ? String(err.stack) : null,
+          });
+        } catch {}
+        throw err;
+      }
     }
 
     _onMessage(msg) {

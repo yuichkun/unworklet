@@ -20,6 +20,15 @@ import FmSynth from "./views/FmSynth.vue";
 
 import "./styles/main.css";
 
+// Expose compiler + examples on window for the headless audio test harness
+// (apps/playground/scripts/wasm-audio-test.ts). Production builds also
+// include this so end-to-end tests can drive the same module the live
+// playground uses.
+import * as _compiler from "@unworklet/compiler";
+import * as _examples from "@unworklet/examples";
+(window as any).__unworklet_compiler = _compiler;
+(window as any).__unworklet_examples = _examples;
+
 const routes = [
   { path: "/", name: "home", component: Home, meta: { title: "Home" } },
   { path: "/01-gain", name: "gain", component: StereoGain, meta: { title: "Stereo Gain + Meter" } },

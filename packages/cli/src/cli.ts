@@ -115,7 +115,7 @@ async function main() {
       const buf = await fs.readFile(String(args.flags["midi-json"]), "utf-8");
       midiEvents = JSON.parse(buf);
     }
-    const { result, outputPath } = await renderProcessorToWav({
+    const { result, outputPath, backend } = await renderProcessorToWav({
       processorPath: path.resolve(processorPath),
       outputPath: path.resolve(out),
       duration: Number(args.flags["duration"] ?? 2),
@@ -126,11 +126,12 @@ async function main() {
       outputName: args.flags["output-name"] ? String(args.flags["output-name"]) : undefined,
       exportName: args.flags["export"] ? String(args.flags["export"]) : undefined,
       format: (args.flags["format"] as any) || "float32",
+      backend: (args.flags["backend"] as any) === "js" ? "js" : "wasm",
       params: Object.keys(params).length ? params : undefined,
       messages,
       midiEvents,
     });
-    console.log(`Wrote ${outputPath}`);
+    console.log(`Wrote ${outputPath} (backend: ${backend})`);
     console.log(
       `  duration: ${result.output[Object.keys(result.output)[0]!]?.[0]?.length} samples`,
     );

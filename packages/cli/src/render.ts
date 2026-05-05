@@ -3,6 +3,7 @@ import {
   type RenderOfflineConfig,
   type RenderOfflineResult,
 } from "@unworklet/client";
+import { renderOfflineWasm } from "@unworklet/test";
 import type { CompiledProcessor } from "@unworklet/core";
 import { encodeWAV, decodeWAV, type WavFormat } from "./wav.js";
 import { promises as fs } from "node:fs";
@@ -10,24 +11,28 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 export type CliRenderOptions = {
-  processorPath: string; // Path to a TS/JS module that exports a CompiledProcessor (default export or named export)
-  exportName?: string; // Default: default export, falling back to first export that is a CompiledProcessor
-  outputPath: string; // Path to a .wav output file
-  outputName?: string; // Audio output port name (default: 'main')
-  duration: number; // Seconds
+  processorPath: string;
+  exportName?: string;
+  outputPath: string;
+  outputName?: string;
+  duration: number;
   sampleRate?: number;
   blockSize?: number;
-  inputWav?: string; // Path to a .wav input file
-  inputName?: string; // Audio input port name (default: 'main')
+  inputWav?: string;
+  inputName?: string;
   format?: WavFormat;
   params?: Record<string, number>;
   messages?: RenderOfflineConfig["messages"];
   midiEvents?: RenderOfflineConfig["midiEvents"];
+  // 'wasm' = compile to WASM via binaryen and run that (default).
+  // 'js'   = use the pure-JS interpreter (legacy / debug).
+  backend?: "wasm" | "js";
 };
 
 export async function renderProcessorToWav(options: CliRenderOptions): Promise<{
   result: RenderOfflineResult;
   outputPath: string;
+  backend: "wasm" | "js";
 }> {
   // Load the processor module
   const absPath = path.resolve(options.processorPath);
@@ -56,6 +61,7 @@ export async function renderProcessorToWav(options: CliRenderOptions): Promise<{
   const sampleRate = options.sampleRate ?? 48000;
   const inputName = options.inputName ?? "main";
   const outputName = options.outputName ?? "main";
+  const backend = options.backend ?? "wasm";
 
   let inputBuffers: Float32Array[] | undefined;
   if (options.inputWav) {
@@ -76,7 +82,23 @@ export async function renderProcessorToWav(options: CliRenderOptions): Promise<{
     cfg.input = { [inputName]: inputBuffers };
   }
 
-  const result = await renderOffline(processor, cfg);
+  let result: RenderOfflineResult;
+  if (backend === "wasm") {
+    // renderOfflineWasm returns the same shape (output / events / midiOut /
+    // peak / rms / hasNaN). Currently events / midiOut routing is not yet
+    // collected from WASM output; for those, fall back to JS.
+    const wasmResult = await renderOfflineWasm(processor, cfg as any);
+    result = {
+      output: wasmResult.output,
+      events: wasmResult.events,
+      midiOut: wasmResult.midiOut,
+      peak: wasmResult.peak,
+      rms: wasmResult.rms,
+      hasNaN: wasmResult.hasNaN,
+    };
+  } else {
+    result = await renderOffline(processor, cfg);
+  }
   const outChannels = result.output[outputName];
   if (!outChannels) {
     throw new Error(
@@ -88,5 +110,5 @@ export async function renderProcessorToWav(options: CliRenderOptions): Promise<{
   const wav = encodeWAV(outChannels, sampleRate, options.format ?? "float32");
   await fs.writeFile(options.outputPath, wav);
 
-  return { result, outputPath: options.outputPath };
+  return { result, outputPath: options.outputPath, backend };
 }

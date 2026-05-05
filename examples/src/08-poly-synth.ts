@@ -119,7 +119,7 @@ export const polySynth = defineProcessor((ctx) => {
         for (let s = 0; s < NUM_VOICES; s++) {
           const isMe = eq(v, s);
           voiceNote[s]!.store(select(isMe, note, voiceNote[s]!.load()));
-          voiceVel[s]!.store(select(isMe, velocity / 127, voiceVel[s]!.load()));
+          voiceVel[s]!.store(select(isMe, mul(velocity, 1 / 127), voiceVel[s]!.load()));
           voiceGate[s]!.store(select(isMe, true, voiceGate[s]!.load()));
         }
         allocCursor.store(mod(add(v, 1), NUM_VOICES));
@@ -128,7 +128,7 @@ export const polySynth = defineProcessor((ctx) => {
           atSample,
           note,
           voice: v as unknown as number,
-          velocity: velocity / 127,
+          velocity: mul(velocity, 1 / 127) as unknown as number,
         });
       });
 
