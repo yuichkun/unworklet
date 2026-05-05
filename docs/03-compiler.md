@@ -35,11 +35,11 @@ The body executes top-to-bottom; the framework recognises four phase boundaries:
 
 1. **Declaration scope** — the top of the `defineProcessor` body, before `return { process: ... }`. New `state.*`, `buffer.*`, `param.*`, `audioInput`, `audioOutput`, and `defineSubgraph` instantiations are recorded as graph slots. Each declaration registers a `name` (when supplied) for later snapshot identity (see `01-dsl.md` §8).
 
-2. **Expression scope (`process` body)** — the framework calls the returned `process` lambda. If the body contains zero `forSample` calls and uses sugar primitives directly, the framework wraps the entire body in an implicit `forSample` and treats it as a single per-sample loop body. If the body contains explicit `forSample(...)` calls, each call is recorded as a separate phase; phases run in declared order.
+2. **Per-block phase (`process` body top level)** — the framework calls the returned `process` lambda. Statements at the top level of the body (= outside any `forSample`) are recorded as the per-block phase: they emit code that runs once at the start of every render quantum. `forSample(...)` invocations within the body each delimit a per-sample phase (recorded as a separate phase boundary). Phases (top-level per-block statements + each `forSample` invocation) execute in declared (source) order within the render quantum.
 
-3. **`forSample` callback** — the callback is invoked once with a `Node<'i32'>` proxy bound as `i`. Primitive calls inside the callback construct AST nodes. The resulting AST is the per-sample loop body for that phase. `forSample.byN(stride, callback)` is identical except that the recorded AST is tagged with the stride for emission as a `stride`-step loop.
+3. **Per-sample phase (`forSample` callback)** — the callback is invoked once during graph capture with a `Node<'i32'>` proxy bound as `i`. Primitive calls inside the callback construct AST nodes. The resulting AST is the per-sample loop body for that phase. `forSample.byN(stride, callback)` is identical except that the recorded AST is tagged with the stride for emission as a `stride`-step loop.
 
-4. **Sub-rate callback (`everyNSamples`)** — same as `forSample`, but tagged with the divisor `N` for sub-block emission (see `01-dsl.md` §9).
+4. **Sub-rate callback (`everyNSamples`)** — invoked from inside a `forSample` callback. Recorded as a sub-block tagged with the divisor `N` for sub-rate emission (see `01-dsl.md` §9).
 
 ### 2.3 What the proxy captures
 
@@ -48,8 +48,8 @@ For each primitive call:
 - **Arithmetic / math / control / type conversion**: a typed AST node with the operator and operand handles, returning a fresh `Node<T>` of the inferred output type.
 - **`load` / `store`**: a memory-access AST node referencing the corresponding slot.
 - **Buffer access (`readBuffer` / `writeBuffer` / `readBufferInterpolated`)**: an indexed access AST node; the index argument is itself a `Node<'i32'>` (typically a ring-buffer write head).
-- **Audio I/O (`audioIn.read(c)` / `audioIn.at(c, i)` / `audioOut.write([...])` / `audioOut.set(c, i, v)`)**: a sample-position-aware AST node carrying the channel index, the sample-offset (`i` for explicit form, the surrounding iteration counter for sugar form), and (for `set` / `write`) the value to write.
-- **Param access (`param()` / `param.at(i)`)**: an AST node carrying the param slot reference and the sample-offset.
+- **Audio I/O (`audioIn.at(c, i)` / `audioOut.set(c, i, v)`)**: a sample-position-aware AST node carrying the channel index, the sample-offset `i`, and (for `set`) the value to write. Valid only inside `forSample` callbacks where `i` is in scope.
+- **Param access (`param.at(i)` / `param.at(0)`)**: an AST node carrying the param slot reference and the sample-offset. `param.at(i)` is used inside `forSample` callbacks; `param.at(0)` at the per-block top level reads the block-start value.
 - **`select(cond, whenTrue, whenFalse)`**: a control-flow AST node; both branches are evaluated as graph nodes (no JS control flow over `Node<'bool'>`).
 - **L1 helper calls**: inlined at the call site; the helper body executes with the same proxies, contributing AST nodes to the parent graph.
 - **L2 subgraph instantiations**: recorded as a state-bearing inline expansion; each instantiation gets its own state slots, but the per-sample work is inlined into the parent's WASM module (no per-instance function-call boundary at audio rate).
@@ -72,7 +72,7 @@ The branded `Node<T>` type rejects JavaScript operators. The IDE surfaces these 
 The framework throws structured errors when proxy evaluation reaches a violation that the type system cannot express:
 
 - *Scope violations*: a declaration call (`state.f32(...)`, `audioInput(...)`, `defineSubgraph(...)`) inside expression scope (a `process` body, a `forSample` callback, or an L1 helper).
-- *Required-call violations*: a declared `audioOutput` whose `write(...)` / `set(c, i, v)` is never called on any code path; a snapshot-using processor with a declaration missing a required `name`.
+- *Required-call violations*: a declared `audioOutput` whose `set(c, i, v)` is never called on every code path of every render quantum; a snapshot-using processor with a declaration missing a required `name`.
 - *Duplicate writes*: the same channel × same sample-offset written twice within one phase.
 - *Constraint violations*: `forSample.byN` called with a non-constant stride; `lane(vec, i)` called with a non-constant `i`; out-of-block sample-offset arithmetic (`add(i, lookahead)` exceeding the render quantum) when statically detectable; etc.
 

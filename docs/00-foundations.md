@@ -61,26 +61,28 @@ The body of `process` lambdas, `forSample` callbacks, L1 helper bodies, `defineS
 
 ### Process body
 
-The function returned in the `process` field of `defineProcessor`'s and `defineSubgraph`'s return record. Runs once at build time as a meta-program; constructs an AST DAG that the framework emits as the body of a per-sample loop in WebAssembly. The audio thread executes the WASM loop; user TypeScript is not re-entered per sample. See `decisions-log.md` Q22 (Q22-a).
+The function returned in the `process` field of `defineProcessor`'s and `defineSubgraph`'s return record. Runs once at build time as a meta-program; constructs an AST DAG that the framework emits as a per-block runtime program (per-block phase + zero or more per-sample phases) in WebAssembly. The audio thread executes the WASM; user TypeScript is not re-entered per sample or per block. See `decisions-log.md` Q22 (Q22-a, Q22-aprime).
 
 ### Sample-offset (`i`)
 
-A `Node<'i32'>` that, at WASM-emission time, binds to the loop counter of a `forSample` (or implicit `forSample`) iteration. Inside a `forSample` callback, `i` is the callback parameter. The value spans `[0, renderQuantum - 1]`. Outside any `forSample`, no `i` variable is in scope — explicit-form primitives (`audioIn.at(c, i)`, `param.at(i)`, `audioOut.set(c, i, v)`) cannot be called there, enforced by standard TypeScript scoping.
+A `Node<'i32'>` that, at WASM-emission time, binds to the loop counter of a `forSample` iteration. `i` is the callback parameter of `forSample(callback)` or `forSample.byN(stride, callback)`. The value spans `[0, renderQuantum - 1]`. Outside any `forSample`, no `i` variable is in scope — sample-position primitives (`audioIn.at(c, i)`, `param.at(i)`, `audioOut.set(c, i, v)`) cannot be called there, enforced by standard TypeScript scoping. There is no sugar form that hides `i`.
 
-### Sugar form / explicit form
+### Per-block phase / per-sample phase
 
-Two interchangeable shapes for a process body:
+The two execution phases of a `process` body, distinguished by **lexical position**:
 
-- **Sugar form** — the body uses per-sample primitives directly (`audioIn.read(c)`, `param()`, `audioOut.write([...])`) without writing `forSample` explicitly. The framework treats the body as a single implicit `forSample` over the whole render quantum.
-- **Explicit form** — the body uses one or more `forSample(...)` calls (or `forSample.byN(stride, ...)` for SIMD-stride iteration). Each call is a phase, executed in declared order.
+- **Per-block phase** — statements at the top level of the `process` body (= outside any `forSample`). Run once at the start of every render quantum on the audio thread. Sample-position primitives (`audioIn.at`, `audioOut.set`, `param.at(i)`) cannot appear here because `i` is not in scope; the per-block phase uses `state.load/store`, buffer access, `param.at(0)` (for block-start param values), arithmetic, and SIMD primitives (for block-level bulk init).
+- **Per-sample phase** — statements inside a `forSample(callback)` (or `forSample.byN(stride, callback)`) invocation. The callback body runs once per sample (or once per `stride` samples) of the render quantum, with `i` bound to the loop counter.
 
-A body may mix the two (top-level direct primitives plus parallel `forSample` calls); the framework treats each contiguous run of top-level direct primitives as an implicit `forSample` phase, and runs all phases — implicit and explicit — in declared (source) order. Sugar primitives (`read`, `write`, `param()`) work in both contexts; explicit primitives (`at`, `set`, `param.at(i)`) require `i` from a `forSample` callback parameter.
+A `process` body is read **top-to-bottom**; each statement (per-block direct code or `forSample` invocation) executes in declared (source) order. Per-block code can interleave freely with `forSample` invocations: per-block setup → per-sample work → more per-block code → another `forSample` → … — all valid.
+
+There is no sugar form. Every per-sample access uses `at` / `set` / `param.at(...)` with explicit `i`.
 
 See `decisions-log.md` Q22 (Q22-aprime, Q22-b).
 
 ### `forSample` / `forSample.byN`
 
-The per-sample loop primitive (see `01-dsl.md` §10). `forSample(callback)` runs `callback` for each sample of the current render quantum (stride 1). `forSample.byN(stride, callback)` runs `callback` once per `stride` samples (typical use: `stride = 4` for SIMD bulk operations paired with `loadVec` / `storeVec`).
+The only sample-loop primitive (see `01-dsl.md` §10). `forSample(callback)` runs `callback` for each sample of the current render quantum (stride 1). `forSample.byN(stride, callback)` runs `callback` once per `stride` samples (typical use: `stride = 4` for SIMD bulk operations paired with `loadVec` / `storeVec`). The presence of a `forSample` invocation in a `process` body marks the per-sample phase; its absence at any given lexical position marks the per-block phase.
 
 ### `everyNSamples`
 

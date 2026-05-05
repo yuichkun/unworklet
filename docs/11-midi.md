@@ -90,7 +90,7 @@ midiIn.onEvent('noteOn', ({ note, atSample }) => {
 
 Concurrent events at the same sample offset are processed in arrival order on the wire.
 
-`atSample` is a `Node<'i32'>` in the same dimension as the `i` parameter of a `forSample` callback (see `01-dsl.md` §10). In sugar-form processors, the `atSample` value can be ignored — the handler body runs at the firing sample implicitly, and sugar primitives (`audioIn.read(c)`, `param()`, etc.) inside the handler bind to that sample. In explicit-form processors that use `forSample`, `atSample` can be compared against `i` for sample-accurate trigger:
+`atSample` is a `Node<'i32'>` in the same dimension as the `i` parameter of a `forSample` callback (see `01-dsl.md` §10). The handler body runs at the firing sample (the sample whose offset matches `atSample`); typically the handler stores the event details into `state` slots, and a subsequent `forSample` invocation compares `i` against the stored offset for sample-accurate trigger:
 
 ```typescript
 defineProcessor((ctx) => {
@@ -101,14 +101,14 @@ defineProcessor((ctx) => {
 
   return {
     process: () => {
-      // Handler captures noteOn into state slots (sugar form is fine here —
-      // the handler body runs at the firing sample, no `i` is needed).
+      // Handler captures noteOn into state slots. The handler body runs at the firing
+      // sample (the sample whose offset matches the event's atSample value).
       midiIn.onEvent('noteOn', ({ note, atSample }) => {
         noteState.store(note);
         trigOffset.store(atSample);
       });
 
-      // Per-sample iteration triggers the envelope at sample-offset i == trig.
+      // Per-sample iteration triggers the envelope at sample-offset i == trigOffset.
       forSample((i) => {
         const fire = eq(i, trigOffset.load());
         // ... use `fire: Node<'bool'>` to gate the envelope start ...
@@ -174,7 +174,7 @@ defineProcessor((ctx) => {
 });
 ```
 
-In sugar-form processors (no explicit `forSample`), `i` is not in scope; the natural sample-accurate equivalent stores the offset in a `state.i32` slot during the iteration and passes that slot's value to `atSample`.
+At the per-block phase top level (where `i` is not in scope), the natural sample-accurate equivalent stores the offset in a `state.i32` slot during a `forSample` iteration and uses that slot's value as `atSample` in a subsequent emit.
 
 ## 3. Main-thread integration
 

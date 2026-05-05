@@ -60,11 +60,11 @@ skeleton — populated as questions resolve
 
 **Decision (Q2-b):** authoritative wording in `01-dsl.md` §5.5. Summary:
 
-- L1 helpers are stateless TypeScript functions inlined at the call site, living entirely in expression scope.
-- Parameters: `Node<T>`, caller-owned `State<T>` (with `load`/`store`), caller-owned `Param` (callable as `param()` or `param.at(i)`), caller-owned `AudioInputHandle` / `AudioOutputHandle`, optional `i: Node<'i32'>` for explicit-form internals, and compile-time constants.
+- L1 helpers are stateless TypeScript functions inlined at the call site, living entirely in expression scope (per-block top level or per-sample `forSample` callback).
+- Parameters: `Node<T>`, caller-owned `State<T>` (with `load`/`store`), caller-owned `Param` (read via `param.at(i)` for per-sample or `param.at(0)` for per-block), caller-owned `AudioInputHandle` / `AudioOutputHandle` (accessed via `at` / `set`), `i: Node<'i32'>` from a surrounding `forSample` for helpers that perform per-sample I/O, and compile-time constants.
 - Return: single `Node<T>`, tuples, records, or `void`. Each returned `Node` is an independent graph terminal.
 - Precision-generic via TypeScript generics over `'f32' | 'f64'`; Q1's no-implicit-widening still holds inside the body.
-- Body forbids new `state.*` / `buffer.*` / `param.*` / `audioInput` / `audioOutput` declarations, `defineSubgraph` declarations, L2 instantiations, and `message` / `event` declarations; allows primitives, `load` / `store` on parameter `State`, sugar (`param()`) and explicit (`param.at(i)`) param access on parameter `Param`, sugar (`audioIn.read(c)`, `audioOut.write([...])`) and explicit (`audioIn.at(c, i)`, `audioOut.set(c, i, v)`) audio I/O on parameter handles, calls to other L1 helpers, and `forSample(...)` (rare).
+- Body forbids new `state.*` / `buffer.*` / `param.*` / `audioInput` / `audioOutput` declarations, `defineSubgraph` declarations, L2 instantiations, and `message` / `event` declarations; allows primitives, `load` / `store` on parameter `State`, `param.at(i)` (inside `forSample`) or `param.at(0)` (per-block) on parameter `Param`, `audioIn.at(c, i)` and `audioOut.set(c, i, v)` (inside `forSample`) on parameter handles, buffer access, calls to other L1 helpers, and `forSample(...)` invocations when iteration is needed inside the helper.
 - Violations are caught at graph-capture / static-analysis time (compile time, never runtime) and surfaced with refactor-hint error messages. Detailed error-UX policy lives in `03-compiler.md` §2 (Q22).
 
 **Decision (Q2-c):** authoritative wording in `01-dsl.md` §5.6. Summary:
@@ -343,7 +343,7 @@ Preset save/load and session restore are foundational to the kinds of audio devi
 - **Declaration helpers**: `audioInput({ channels, name })` and `audioOutput({ channels, name })` live in declaration scope only. Same pattern as `state` / `buffer` / `param`. Calling them in expression scope is a graph-capture-time error.
 - **Always explicit**: a processor has no audio I/O unless it declares it. No "default mono in / default mono out" sugar; no implicit return-value-as-output shortcut. Every audio port is a declaration.
 - **Required `name`**: every `audioInput` / `audioOutput` must carry a `name`. Names are slot identities for the port and the keys for main-thread typed access.
-- **Typed channel access**: both forms narrow `channelIndex` to the legal range for the declared channel count (`channels: 2` → `0 | 1`). The sugar form `read(c)` and explicit form `at(c, i)` both narrow `c`; the sugar form `write(values)` requires a tuple whose length equals `channels`, while the explicit form `set(c, i, v)` narrows `c` and types `v` as `Node<'f32'>`. Both forms are checked at TypeScript / graph-capture time. The two-form split (sugar / explicit) is settled in Q22-b — see `decisions-log.md` Q22.
+- **Typed channel access**: `audioIn.at(c, i)` narrows `c` to the legal range for the declared channel count (`channels: 2` → `0 | 1`); `audioOut.set(c, i, v)` narrows `c` and types `v` as `Node<'f32'>`. Both are checked at TypeScript / graph-capture time. Sample-position primitives (`at` / `set`) are valid only inside `forSample` callbacks (Q22-b); the `i` argument is the callback parameter, scoped accordingly. There is no sugar form (`read(c)` / `write([...])`) — see `decisions-log.md` Q22 (Q22-b) for the rationale.
 - **Multi-port support is symmetric**: any number of inputs and outputs can coexist with arbitrary channel counts; the count is the declaration count, mapped directly to Web Audio's `numberOfInputs` / `numberOfOutputs` and `outputChannelCount[]`.
 - **Main-thread typed access**: `node.inputs.<name>` and `node.outputs.<name>` provide typed `connect()` / be-connected-to wrappers over the underlying `AudioWorkletNode`. The raw `AudioWorkletNode` is always reachable as `node.node` for advanced patching.
 
@@ -482,41 +482,70 @@ The umbrella "cross-processor communication" decomposes into five use cases; fou
 
 **Decision (Q22-a — Mental model):** authoritative wording in `00-foundations.md` §3 + `03-compiler.md` §2. Summary:
 
-- The `process` lambda is **a meta-program evaluated once at build time**. Calls inside its body — `add`, `mul`, `state.load()`, `audioIn.read(0)`, etc. — construct AST nodes; arithmetic does not execute, audio is not read, state is not stored. The lambda's role is to assemble a graph DAG that captures the user's intent.
-- The framework emits the captured DAG as the body of a per-sample loop in WebAssembly. The audio thread runs the WASM loop; user TypeScript is not re-entered per sample.
+- The `process` lambda is **a meta-program evaluated once at build time**. Calls inside its body — `add`, `mul`, `state.load()`, etc. — construct AST nodes; arithmetic does not execute, audio is not read, state is not stored. The lambda's role is to assemble a graph DAG that captures the user's intent.
+- The framework emits the captured DAG as a per-block runtime program: top-level statements run once at the start of every render quantum (per-block phase); statements inside `forSample` callbacks run per sample. The audio thread executes the WASM; user TypeScript is not re-entered per sample or per block.
 - **Build-time JavaScript is real JavaScript.** `if`, `for`, `+`, `*`, `Math.*` over build-time values (literals, build-time constants, results of static computation) execute normally and shape the captured graph statically. Compile-time loop unrolling, debug-flag pruning, and constant precomputation are first-class authoring patterns, not workarounds.
 - **`Node<T>` is incompatible with JavaScript operators at the type level.** Branded types reject `nodeA + nodeB`, `if (nodeBool) { ... }`, `for (... ; nodeCmp ; ...)`. The author writing such code gets an immediate TypeScript type error in the IDE, before any build runs. The framework leverages TS's type system as an **educational lever** that directs authors to `add` / `mul` / `select` without needing runtime checks or lint rules.
 
 **Decision (Q22-aprime — Process body structure):** authoritative wording in `01-dsl.md` §1, §10. Summary:
 
-- All per-sample loops are expressed via the **`forSample` primitive** (working name; the final spelling may be revised before v1.0.0 finalization).
-  - `forSample((i: Node<'i32'>) => void)` — the callback body is the per-sample loop body. `i` binds to the loop counter at WASM-emission time.
-  - `forSample.byN(stride: number, (i: Node<'i32'>) => void)` — same shape, but iterates with the given compile-time-constant stride. Typical use is `stride = 4` for SIMD bulk operations (paired with `loadVec` / `storeVec`); other strides are permitted.
-- A `process` body may contain zero, one, or many `forSample` / `forSample.byN` calls. Each call is a **phase**; multi-phase processors (e.g. input-shaping → bulk SIMD → output-shaping) are written as multiple `forSample` calls, executed in declared order.
-- A `process` body that contains zero `forSample` calls and writes per-sample primitives directly is interpreted as having **a single implicit `forSample` wrapping the entire body** — this is the **sugar form**. Single-phase per-sample plugins (gain, oscillator, simple filter) use this form to avoid `forSample(...)` boilerplate.
-- The `process` lambda **does not take an `i` argument**. The earlier candidate of `process: ({ i }) => void` is rejected: `forSample` strictly subsumes that form (single-phase `forSample` with no outer code is exactly equivalent), and parallel surfaces would split the mental model.
+- A processor's `process` body has **two execution phases** distinguished by **lexical position**:
+  - **Per-block phase** — statements at the top level of the `process` body. Run once at the start of every render quantum on the audio thread.
+  - **Per-sample phase** — statements inside a `forSample(callback)` or `forSample.byN(stride, callback)` invocation. The callback body runs once per sample (or once per `stride` samples) of the render quantum.
+- The `process` body is read **top-to-bottom**: each statement (whether direct per-block code or a `forSample` invocation) executes in declared (source) order. Multiple `forSample` invocations interleaved with per-block statements produce a multi-phase processor — every phase runs in source order.
+- **`forSample` is the only sample-loop primitive.** No separate `perBlock` primitive exists; the per-block phase is denoted by being **outside any `forSample` callback** in the `process` body. This eliminates "where does this statement run?" as a question — the answer is always determined by the lexical scope (inside `forSample` → per-sample, outside → per-block).
+- The `process` lambda **does not take an `i` argument**. The sample-offset `i` is the parameter of `forSample`'s callback, scoped to that callback only.
+- Per-block code can interleave freely with `forSample` invocations: per-block setup → forSample (sample loop) → per-block summary → forSample (output) → per-block publish update — all valid, all in declared order. This recovers the full expressive range of "JUCE processBlock body" with no loss of declarative purity.
+
+```typescript
+// Conceptual shape:
+return {
+  process: () => {
+    // per-block phase: setup
+    const idx = partitionIdx.load();
+    partitionIdx.store(mod(add(idx, 1), 8));
+
+    // per-sample phase: input shaping
+    forSample((i) => {
+      writeBuffer(scratch, i, audioIn.at(0, i));
+    });
+
+    // per-block phase: block-level summary
+    const peak = peakState.load();
+
+    // per-sample phase: output
+    forSample((i) => {
+      audioOut.set(0, i, mul(readBuffer(scratch, i), peak));
+    });
+  },
+};
+```
 
 **Decision (Q22-b — Sample-position primitives):** authoritative wording in `01-dsl.md` §1.2, §1.3, §3.3, §10. Summary:
 
-| Concept | Sugar form (implicit `forSample`) | Explicit form (inside `forSample` callback) |
-|---|---|---|
-| Read audio input | `audioIn.read(c): Node<'f32'>` | `audioIn.at(c, i): Node<'f32'>` |
-| Write audio output | `audioOut.write(values: tuple): void` | `audioOut.set(c, i, v): void` |
-| Read parameter | `param(): Node<'f32'>` (callable) | `param.at(i): Node<'f32'>` |
+There is **one form** for accessing sample-positioned values, and it is the **explicit form**. No sugar surface.
 
-- The two forms have **distinct method names** (`read` vs `at`, `write` vs `set`, callable `param()` vs `param.at(i)`). One glance at a call site reveals which form is in use; readers do not have to count arguments or check surrounding scope.
-- Explicit-form primitives (`at` / `set` / `param.at(i)`) require a `Node<'i32'>` argument that originates from a `forSample` callback parameter. A user writing `audioIn.at(0, i)` outside any `forSample` gets a TypeScript scope error (`i` is undefined) — no graph-capture-time error or lint rule needed; standard TypeScript scoping handles enforcement.
-- Sugar primitives (`read` / `write` / `param()`) work in **both** contexts. Outside `forSample` they refer to the implicit per-sample iteration; inside an explicit `forSample` they bind to the surrounding `i`. The two are semantically equivalent inside `forSample` (`audioIn.read(0)` ≡ `audioIn.at(0, i)` where `i` is the surrounding callback parameter).
-- State (`state.load()` / `state.store(v)`) and buffers (`readBuffer(buf, idx)` / `writeBuffer(buf, idx, v)`) are sample-position-independent primitives shared by both forms; their indices are explicit `Node<'i32'>` values supplied by the user (typically a ring-buffer write head, not a loop counter).
-- Mixing sugar and explicit `forSample` in one process body (= top-level direct primitives plus parallel `forSample` calls) is **technically valid**: framework wraps the top-level direct primitives in an implicit `forSample` and runs all phases in declared order. This produces a multi-phase processor. The mix is rarely the cleanest expression of intent (multi-phase processors are usually clearer with explicit `forSample` for every phase), but the framework neither prohibits nor warns; mental-model coherence is a docs / style-guide concern, not a framework-enforced invariant.
+- Inside a `forSample` callback (per-sample phase):
+  - `audioIn.at(c, i): Node<'f32'>` — channel `c` value at sample-offset `i`.
+  - `audioOut.set(c, i, v): void` — write `v` to channel `c` at sample-offset `i`.
+  - `param.at(i): Node<'f32'>` — param value at sample-offset `i`.
+- Outside any `forSample` (per-block phase):
+  - `state.load() / state.store(v)` — block-shared state (no sample dimension).
+  - `readBuffer(buf, idx) / writeBuffer(buf, idx, v) / readBufferInterpolated(buf, pos)` — buffer access at any user-supplied index.
+  - `param.at(0): Node<'f32'>` — param value at sample-offset 0 of the current render quantum (k-rate params: the unique block value; a-rate params: the first-sample value, with the block-constant interpretation being the user's responsibility).
+  - Arithmetic, comparison, `select`, type conversions, SIMD primitives (used for block-level bulk init / 1-pass computation).
+- Audio-I/O sample primitives (`at` / `set`) require `i: Node<'i32'>`. The only source of such a node is a `forSample` callback parameter — outside any `forSample`, `i` is not in scope, so writing `audioIn.at(0, i)` at the per-block phase is a TypeScript reference error caught in the IDE. Standard TypeScript scoping enforces the boundary; the framework adds nothing.
+- There is **no `audioIn.read(c)`** (sugar read), **no `audioOut.write([...])`** (sugar tuple write), and **no callable `param()`** (sugar current-sample param). Every per-sample access is via `forSample` + explicit `i`.
+
+The two-form sugar / explicit dichotomy that an earlier draft of Q22-b proposed is **rejected** — see Rejected (Q22-b) below for the full reasoning. The single explicit form makes the position of every sample-positioned operation lexically obvious: if you see `at` / `set` / `param.at(i)`, you are inside a `forSample`; if you don't see them, you are at the per-block phase.
 
 **Decision (Q22-c — Error layer structure):** authoritative wording in `03-compiler.md` §2. Summary:
 
 1. **TypeScript type error** (IDE level, before any build): the branded `Node<T>` rejects JS operators. `nodeA + nodeB`, `if (nodeBool)`, `for (... ; nodeCmp ; ...)`, `audioIn.at(0, i)` outside `forSample` (where `i` is undefined). The IDE surfaces these immediately; no framework runtime is involved.
-2. **Graph-capture-time error** (build-time, during proxy evaluation of the `process` lambda): scope violations (a declaration call inside expression scope), missing required calls (e.g. `audioOutput.write` not called for a declared output), duplicate stores, declarations missing required `name` for snapshot-using processors, declarations inside `forSample` callbacks, etc. Detected by the framework as it executes the `process` lambda with proxies.
+2. **Graph-capture-time error** (build-time, during proxy evaluation of the `process` lambda): scope violations (a declaration call inside expression scope), missing required calls (e.g. `audioOutput.set` not called for a declared output on every code path of every render quantum), duplicate writes (same channel × same sample-offset written twice within one phase), declarations missing required `name` for snapshot-using processors, declarations inside `forSample` callbacks, etc. Detected by the framework as it executes the `process` lambda with proxies.
 3. **Static-analysis error** (post-capture, before WASM emission): allocation check (an AST pattern would imply heap alloc), unbounded loops (build-time loops without a static bound), memory-size violations (sum of declarations exceeds the configured budget), type-inference inconsistencies. Detected by the framework's analysis pass over the captured DAG.
 
-The detailed format of error messages and refactor-hint structure (Q22-d) is open and will be resolved after `01-dsl.md` and `03-compiler.md` reach the level of detail where concrete examples drive the format choice.
+The detailed format of error messages and refactor-hint structure (Q22-d) is open.
 
 **Rationale (Q22-a):**
 
@@ -526,16 +555,18 @@ The detailed format of error messages and refactor-hint structure (Q22-d) is ope
 
 **Rationale (Q22-aprime):**
 
-- *Single primitive (`forSample`) for sample loops*: the SIMD-bulk requirement (Q3 — `loadVec(buf, offset)` for 4-sample-wide processing) demands user control over the loop step. Without an explicit loop primitive, the framework would have to either auto-vectorize (a magic rewrite that violates the declarative principle — see `feedback_framework-magic-anti-pattern.md`) or expose a separate "SIMD mode" parallel surface (which would fragment the API). `forSample` + `forSample.byN(stride, ...)` covers scalar and vector iteration with one primitive family.
-- *Multi-phase processors*: production-grade plugins (FFT-based effects, partitioned convolution, oversampling distortion, multiband compressors with bulk pre/post-process) need to express a per-block setup phase, multiple per-sample phases, or a mix. `forSample` exposes phase structure directly; the alternative (squashing everything into one per-sample iteration) either fails to express these patterns or pushes them into ad-hoc helper conventions.
-- *Sugar form (implicit `forSample`)*: single-phase per-sample plugins (gain, oscillator, simple filter) make up the majority of teaching examples and a meaningful share of production plugins. Forcing `forSample(...)` boilerplate on these would add visual weight without expressive gain. Treating a `forSample`-free process body as "wrap the whole body in one implicit `forSample`" recovers brevity at zero mental-model cost — the same primitives (`audioIn.read`, `param()`, etc.) work because they bind to the surrounding iteration in both contexts.
-- *Rejecting `process: ({ i }) => void`*: this earlier candidate is exactly equivalent to "single `forSample` with no outer setup". Adding it as a parallel surface would create two ways to write the same shape, splitting the mental model and forcing every reader to internalize "is this a `({ i })` processor or a `forSample` processor?". `forSample` is strictly more expressive (multi-phase, outer per-block code) and the sugar form covers the simple case; the `({ i })` form has no remaining niche.
+- *Lexical position determines phase, no separate phase primitive needed*: the user writes a `process` body that reads top-to-bottom. Every statement is in either the per-block phase (top level) or the per-sample phase (inside a `forSample`). Determining where a statement runs is reduced to **reading whether it's inside a `forSample(...)` or not** — a question that requires no framework rule or convention to answer, just the user's normal understanding of JavaScript scope.
+- *Free interleaving of per-block and per-sample code*: production-grade plugins (partitioned convolution, FFT spectral processing, oversampling, multiband processing, etc.) need to write per-block setup, run per-sample work, then run more per-block code (block-level summaries, publish state updates, partition advances), then potentially another `forSample`. A model where per-block code is locked into a fixed position (e.g., before all `forSample` calls) would cripple the DSL's expressive range — exactly the failure mode that limits Max gen~ for FFT-style work. The lexical-position model has no fixed ordering: per-block and per-sample phases interleave in declared (source) order.
+- *No `perBlock(callback)` primitive*: an explicit `perBlock` primitive was considered and rejected (see Rejected X1 below). Once per-block is "the top level of the `process` body", an additional `perBlock(...)` wrapper adds zero expressive power — the user already has a place to write per-block code (the top level) and a marker for per-sample code (`forSample`). Adding a second marker for the default phase only creates a "where do I write what?" question that the user must resolve. The single marker (`forSample`) cleanly separates the two phases by its presence or absence.
+- *No `process: ({ i }) => void`*: cannot express SIMD-stride iteration (4-sample-wide bulk operations) at the user's choice without auto-vectorization magic. Q3 commits unworklet to first-class SIMD via `forSample.byN(4, ...)`; the `({ i }) => void` shape is incompatible.
+- *JUCE / AudioWorklet `processBlock` analogue*: production audio engineers (JUCE / VST / AU / CLAP / native AudioWorklet authors) all share the mental model "a `process` body that runs once per block, with an inner sample loop the user writes". unworklet's lexical-position model maps to this universal mental model exactly: top level = the body of `processBlock`, `forSample` = the inner sample loop. Migration cost from JUCE to unworklet is 1-to-1 at the mental model level; only the primitives change.
 
 **Rationale (Q22-b):**
 
-- *Distinct method names*: `read` vs `at`, `write` vs `set`, `param()` vs `param.at(i)` make the form visible at every call site. A reader does not have to count arguments or check whether they are inside a `forSample` callback to know which form is active. Naming carries the "sugar form and explicit form should look obviously different" goal directly into the syntax.
-- *Scope-based enforcement (no graph-capture error needed)*: `audioIn.at(c, i)` requires a `Node<'i32'>` for `i`. The only source of such a node is a `forSample` callback parameter. Outside any `forSample`, the variable `i` is not in scope, so the call is a TypeScript reference error. The framework enforces nothing at graph-capture time; standard TS scoping does the work, and the user sees the error in the IDE before the build runs.
-- *Mixing is technically valid, naturally avoided*: a processor with both top-level direct primitives (sugar) and explicit `forSample` calls is interpreted as a multi-phase processor where the framework treats each contiguous run of top-level direct primitives as an implicit `forSample` phase, and runs all phases — implicit and explicit — in declared (source) order. This is well-defined. In practice, when authors need multiple phases they reach for explicit `forSample` for all of them; the mixed form is unusual rather than wrong, and the framework neither prohibits nor warns. Mental-model coherence is a docs / style-guide concern; the priority gradient is "TS type errors > graph-capture errors > static-analysis errors > runtime errors > docs guidance", and forced uniformity costs land in the lowest-priority bucket.
+- *Single form (no sugar)*: the value `i` representing the current sample-offset is what makes per-sample primitives different from per-block primitives. Hiding `i` (sugar) requires the framework to bind it implicitly based on context, which means the *same primitive call site* (`audioIn.read(0)`) means different things depending on lexical scope. Users have to track scope to interpret each call. The explicit form (`audioIn.at(0, i)`) makes the sample-position presence visible at every call: if there's an `i`, you're per-sample; if not, you're per-block. Lexical scope and primitive form align, removing one axis of mental tracking.
+- *No syntactic disadvantage worth keeping sugar for*: the price of explicit form is one extra argument per sample-position primitive — `audioIn.at(0, i)` vs `audioIn.read(0)`. For simple plugins, this means 1–2 extra characters per line. For production-grade plugins, the overhead vanishes against the rest of the DSP. The "simple plugin readability" argument is real but small, and is dominated by the value of having a single form across all plugins.
+- *No `param.value` / `param.now()` / callable `param()`*: same reasoning — these are sugar surfaces that hide `i`. The framework offers `param.at(i)` (per-sample) and `param.at(0)` (per-block, k-rate-friendly) as the only forms, both of which are explicit about which sample-offset is being read.
+- *Forbidding sugar inside `forSample`*: even though `forSample` provides an `i` in scope, allowing `audioIn.read(c)` inside the callback would partially restore the sugar surface and re-introduce the "form depends on lexical scope" mental cost. The cleaner rule is **no sugar at all** — every access uses `at` / `set` / `param.at(...)` regardless of where it is.
 
 **Rationale (Q22-c):**
 
@@ -548,15 +579,37 @@ The detailed format of error messages and refactor-hint structure (Q22-d) is ope
 
 **Rejected (Q22-aprime):**
 
-- *No loop primitive, only `process: ({ i }) => void`* — cannot express SIMD-stride iteration (4-sample-wide bulk operations) without either auto-vectorization magic or a parallel SIMD declaration. Q3 commits unworklet to first-class SIMD; this candidate is incompatible.
-- *Two parallel forms (`process: ({ i }) => void` for single-phase, `forSample` for multi-phase)* — splits mental model, forces readers to track which form a processor uses. `forSample` (with sugar for the single-phase case) covers both with one shape.
-- *Auto-vectorization (framework decides 1-step or N-step iteration based on opaque heuristics)* — framework magic. Performance becomes implementation-defined, debugging is opaque, and the rewrite changes observable graph behavior. See `feedback_framework-magic-anti-pattern.md`. The explicit `forSample.byN(N, ...)` lets the user opt into stride-N iteration with full visibility.
+The following candidates for the process body's structure were considered during grilling and rejected. The full grilling history is preserved here because each rejected option illuminates a structural property of the chosen design. (Internal candidate labels X1–X8 from the design conversation are kept for cross-reference.)
+
+- *X1: `perBlock(callback)` primitive injected into the `process` body, with sugar form retained for per-sample access*. This was the first concrete proposal after the plugin-robustness audit revealed the per-block phase gap. It would have placed `perBlock(callback)` and `forSample(callback)` as siblings within the `process` body, with sugar primitives (`audioIn.read(c)`, `param()`, etc.) interpreted as implicit-`forSample`-wrapped per-sample work. **Rejected**: the same `process` body would contain three time-axis-distinct kinds of statement (sugar = per-sample, `forSample(...)` = per-sample, `perBlock(...)` = per-block), and each statement's meaning would depend on its position relative to the others. Mental model triple-layered, the user would have to track "what scope am I in?" at every line. Identified by 余湖さん (2026-05-05) with the observation: "sugar syntax と両立しているのに、 同じ process 内で書く場所によって使えるものが違う". The criticism is structurally correct.
+
+- *X2: sugar form abolished + `perBlock` primitive*. Sugar primitives removed (`audioIn.read(c)`, `param()`, sugar `audioOut.write([...])` all gone), and `perBlock(callback)` introduced as a sibling to `forSample(callback)`. **Rejected**: still requires the user to write `perBlock(...)` to mark per-block code, even though that code could simply be at the top level of the `process` body. The `perBlock` primitive adds zero expressive power once "the top level is per-block" is recognized. More importantly, X2 still treats per-block as a "scope marker" rather than a "position", which in turn limits where per-block code can appear (= inside the `perBlock` callback only) — losing the free interleaving of per-block and per-sample code that production-grade plugins need.
+
+- *X3: `perBlock` as a separate top-level method on the processor's return record* (i.e., `return { perBlock: () => {...}, process: () => {...}, publish: () => {...} }`). **Rejected**: locks per-block code into "always before `process`", and per-block code that needs to run *between* `forSample` invocations (e.g., partitioned convolution that updates a partition pointer between input shaping and output drain) cannot be expressed. Also forces the user to pass per-block-computed values to per-sample code through state slots only (no shared closure variables across the methods), which is needlessly heavyweight. The method-separation appeal (= "method-level lifecycle phase") is real, but the expressive limitation (= "per-block always first, never interleaved") is structurally fatal for production-grade plugins. Identified during grilling on 2026-05-05.
+
+- *X4: `defineProcessor` body itself reinterpreted as per-block phase* — declaration would move to a separate method, eliminating the build-time / runtime distinction at the body's top level. **Rejected**: collapses two semantically different phases (declaration = build-time slot creation; per-block = runtime computation) into one, eliminating the static-graph guarantee. Framework magic.
+
+- *X5: Phase-tag abstraction (`processor.phase('block', () => ...)`, `processor.phase('sample', (i) => ...)`)*. **Rejected**: the phase tag is a string and the callback signature differs per phase, so the abstraction can't be statically enforced; the API erases the structural difference between per-block and per-sample work, making the framework's own type system weaker.
+
+- *X6: X2 + X3 (sugar abolished + `perBlock` as a separate method)*. **Rejected**: stacks the boilerplate cost of X2 (`forSample(...)` always required for sample work) with the expressive limitation of X3 (per-block always first, never interleaved). Worst of both.
+
+- *X7: Context-object delivery of phase primitives (`process: ({ block, sample }) => ...`)*. **Rejected**: a syntactic variant of X1 — same time-axis-distinct kinds of statement in one body, just delivered through different object methods. Doesn't address the underlying issue.
+
+- *X8: `perBlock` invoked in declaration scope (top of `defineProcessor` body, before `return`)*. **Rejected**: declaration scope has the time semantics "build-time, once per processor instance"; placing `perBlock(callback)` there would have the framework reinterpret one of those calls as a runtime per-block phase, blurring declaration's time semantics. Framework magic.
+
+- *(Earlier rejected) `process: ({ i }) => void`* — single-phase processor, `i` as the lambda parameter. **Rejected** earlier in the grilling: cannot express SIMD-stride iteration without either auto-vectorization magic or a parallel SIMD-only declaration surface, and once `forSample(callback)` is needed for SIMD it strictly subsumes this shape.
 
 **Rejected (Q22-b):**
 
-- *Same method name with arity overload (`audioIn.read(c)` and `audioIn.read(c, i)`, etc.)* — the two forms become visually indistinguishable at call sites. A reader has to count arguments or check the surrounding `forSample` context to know which form is active. Distinct names carry the form information at every call.
-- *Property-based current-sample sugar (`param.value` or `param.now()`)* — less direct than the callable form (`param()`). `value` carries the wrong implication ("which value? at what time?"), `now()` injects a sample-position vocabulary that the sugar form is trying to suppress. The callable form reads as "fetch the current value" without committing the sugar form to a sample-position language.
-- *Graph-capture-time error or lint rule for "mixing sugar and explicit forms"* — the mix is well-defined; forbidding it costs framework complexity to enforce a docs-level preference. TypeScript scoping already prevents the only invalid mix (using explicit-form `i` outside `forSample`). Other mixes are unusual but not wrong.
+- *Sugar form (callable `param()`, sugar `audioIn.read(c)`, sugar `audioOut.write([...])` at the top level, with implicit `forSample` wrapping)*. The original Q22-b draft (now rejected). **Rejected during grilling on 2026-05-05** with the structural insight that the same primitive call site means different things depending on lexical scope, forcing users to track context to interpret each line. Once the lexical-position model (per-block at top, per-sample inside `forSample`) is adopted for the body's structure, sugar primitives lose their footing — they would require the framework to bind `i` implicitly, which contradicts the "lexical position determines phase" principle that the body structure relies on. Distinct method names (`read` vs `at`, `write` vs `set`, `param()` vs `param.at(i)`) were considered as a way to keep both forms while making the difference visible per call, but adding the second surface only doubles the API while solving nothing the lexical-position model doesn't already solve.
+
+- *Sugar form retained inside `forSample` only (= `i` implicit since it's in scope from the callback parameter, but no sugar at the per-block top level)*. **Rejected**: re-introduces the "form depends on lexical scope" mental cost — the same primitive call (`audioIn.read(c)`) would be invalid at the top level but valid inside `forSample`, which means readers still have to track scope to interpret call sites. The cleaner rule is "no sugar anywhere" — every sample-position access uses `at` / `set` / `param.at(...)`, regardless of where it appears.
+
+- *Same method name with arity overload (`audioIn.read(c)` and `audioIn.read(c, i)`, etc.)*. **Rejected**: the two forms become visually indistinguishable at call sites; readers count arguments to know which form is active. Distinct names and removing sugar entirely both addressed this; the latter is structurally simpler.
+
+- *Property-based current-sample sugar (`param.value` or `param.now()`)*. **Rejected**: any form of sugar runs into the same issue — implicit `i` binding, lexical-scope-dependent meaning, double surface. No property variant escapes this.
+
+- *Graph-capture-time error or lint rule for "mixing sugar and explicit forms"*. Not relevant once sugar is abolished.
 
 **Rejected (Q22-c):**
 
