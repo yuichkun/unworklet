@@ -10,6 +10,12 @@ export {
   type WorkletModuleOptions,
   type WorkletBundle,
 } from "./worklet-codegen.js";
+export {
+  analyze,
+  formatDiagnostic,
+  type Diagnostic,
+  type AnalysisResult,
+} from "./static-analysis.js";
 
 export * as ast from "./ast.js";
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { renderProcessorToWav } from "./render.js";
+import { cmdBuild, cmdAnalyze, cmdBench } from "./commands.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -31,12 +32,19 @@ function parseArgs(argv: string[]): ParsedArgs {
 }
 
 function usage(): string {
-  return `unworklet — offline DSP rendering CLI
+  return `unworklet — DSP toolchain CLI
 
 Usage:
-  unworklet render <processor.ts> [options]
+  unworklet <command> <processor.ts> [options]
 
-Render commands:
+Commands:
+  render    Render audio offline to a WAV file
+  build     Compile to .wasm + .worklet.js + .meta.json + .wat
+  analyze   Static analysis report (cycles, memory, warnings)
+  bench     Latency / CPU / NaN-Inf benchmark
+  help      Show this help
+
+Render options:
   --output <path>          Output WAV file path (required)
   --duration <seconds>     Duration to render (default: 2)
   --sample-rate <hz>       Sample rate (default: 48000)
@@ -130,6 +138,64 @@ async function main() {
     if (result.events.length) console.log(`  events: ${result.events.length}`);
     if (result.midiOut.length) console.log(`  midiOut: ${result.midiOut.length}`);
     if (result.hasNaN) console.warn("  WARNING: output contained NaN");
+    return;
+  }
+
+  if (args.command === "build") {
+    const modulePath = args.positional[0];
+    if (!modulePath) {
+      console.error("Error: missing module path");
+      process.exit(1);
+    }
+    const out = (args.flags["out-dir"] as string) || "./dist-unworklet";
+    const arts = await cmdBuild({
+      modulePath,
+      exportName: args.flags["export"] ? String(args.flags["export"]) : undefined,
+      outDir: out,
+      sampleRate: args.flags["sample-rate"] ? Number(args.flags["sample-rate"]) : undefined,
+      renderQuantum: args.flags["render-quantum"] ? Number(args.flags["render-quantum"]) : undefined,
+    });
+    console.log(`Built:`);
+    console.log(`  wasm:    ${arts.wasmPath}`);
+    console.log(`  worklet: ${arts.workletPath}`);
+    console.log(`  meta:    ${arts.metaPath}`);
+    console.log(`  text:    ${arts.textPath}`);
+    return;
+  }
+
+  if (args.command === "analyze") {
+    const modulePath = args.positional[0];
+    if (!modulePath) {
+      console.error("Error: missing module path");
+      process.exit(1);
+    }
+    const fmt = ((args.flags["format"] as string) || "human") as "human" | "json" | "junit";
+    const r = await cmdAnalyze({
+      modulePath,
+      exportName: args.flags["export"] ? String(args.flags["export"]) : undefined,
+      format: fmt,
+      sampleRate: args.flags["sample-rate"] ? Number(args.flags["sample-rate"]) : undefined,
+    });
+    console.log(r.formatted);
+    process.exit(r.exitCode);
+  }
+
+  if (args.command === "bench") {
+    const modulePath = args.positional[0];
+    if (!modulePath) {
+      console.error("Error: missing module path");
+      process.exit(1);
+    }
+    const fmt = ((args.flags["format"] as string) || "human") as "human" | "json";
+    const r = await cmdBench({
+      modulePath,
+      exportName: args.flags["export"] ? String(args.flags["export"]) : undefined,
+      durationSec: args.flags["duration"] ? Number(args.flags["duration"]) : undefined,
+      sampleRate: args.flags["sample-rate"] ? Number(args.flags["sample-rate"]) : undefined,
+      blockSize: args.flags["block-size"] ? Number(args.flags["block-size"]) : undefined,
+      format: fmt,
+    });
+    console.log(r.formatted);
     return;
   }
 

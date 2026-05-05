@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@unworklet/client": "workspace:*",
+    "@unworklet/compiler": "workspace:*",
     "@unworklet/core": "workspace:*"
   }
 }
