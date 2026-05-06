@@ -471,6 +471,11 @@ export type MidiInputDecl = {
   kind: "midiInput";
   name: string;
   capacity: number;
+  // Per-input sysex content buffer. Required to receive sysex messages
+  // (status 0xF0); without it the worklet drops sysex events.
+  // Maximum bytes per sysex message — total content area is
+  // capacity * sysexMaxBytes bytes.
+  sysexMaxBytes?: number;
 };
 
 export type MidiOutputDecl = {

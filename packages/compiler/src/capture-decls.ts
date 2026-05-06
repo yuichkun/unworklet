@@ -463,13 +463,21 @@ function makePayloadAccessor(
 
 // ─── MIDI ──────────────────────────────────────────────────────────────────
 
-export function midiInput(options: { name?: string; capacity?: number } = {}) {
+export function midiInput(options: {
+  name?: string;
+  capacity?: number;
+  // Allocate a per-slot sysex content buffer of `sysexMaxBytes` bytes.
+  // When set, sysex events are routed through that buffer; the handler's
+  // `data` field becomes a buffer-like accessor (read/length).
+  sysexMaxBytes?: number;
+} = {}) {
   const c = getCtx();
   const decl: MidiInputDecl = {
     id: c.midiInputIdCounter++,
     kind: "midiInput",
     name: options.name ?? "midi",
     capacity: options.capacity ?? 256,
+    sysexMaxBytes: options.sysexMaxBytes,
   };
   c.graph.declarations.midiInputs.push(decl);
   const midiInputId = decl.id;
