@@ -190,6 +190,7 @@ export class ProcessorRuntime {
   midiHandlers: Map<string, Map<string, Array<(e: any) => void>>> = new Map();
   messageHandlers: Map<string, Array<(payload: any) => void>> = new Map();
   pendingMessages: Array<{ name: string; payload: any }> = [];
+  pendingMessageOverflow: Map<string, number> = new Map();
   pendingMidiEvents: Map<string, MidiEvent[]> = new Map();
 
   publishObservers: Map<string, ((value: any) => void)[]> = new Map();

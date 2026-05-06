@@ -59,6 +59,7 @@ export type BuildArtifacts = {
   workletPath: string;
   metaPath: string;
   textPath: string;
+  sourceMapPath: string;
 };
 
 export async function cmdBuild(opts: BuildOptions): Promise<BuildArtifacts> {
@@ -113,7 +114,12 @@ export async function cmdBuild(opts: BuildOptions): Promise<BuildArtifacts> {
   };
   const metaPath = path.join(opts.outDir, `${name}.meta.json`);
   await fs.writeFile(metaPath, JSON.stringify(meta, null, 2));
-  return { wasmPath, workletPath, metaPath, textPath };
+  // Source-location sidecar (per docs/03-compiler §7 / spec ID A10).
+  // Captured during graph build; maps statement paths to user-source
+  // (file:line:col). Loaded by error formatters and dev tooling.
+  const sourceMapPath = path.join(opts.outDir, `${name}.locations.json`);
+  await fs.writeFile(sourceMapPath, JSON.stringify(result.sourceLocations ?? { files: [], entries: [] }, null, 2));
+  return { wasmPath, workletPath, metaPath, textPath, sourceMapPath };
 }
 
 export type AnalyzeOptions = {

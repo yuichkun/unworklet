@@ -207,7 +207,9 @@ export async function createNode(
     const fn = ((payload: any) => {
       engine.postMessage(name, payload);
     }) as MessageSender;
-    fn.diagnostics = { overflowCount: () => 0 };
+    fn.diagnostics = {
+      overflowCount: () => engine.rt.pendingMessageOverflow.get(name) ?? 0,
+    };
     messages[name] = fn;
   }
 

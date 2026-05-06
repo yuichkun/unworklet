@@ -134,7 +134,15 @@ class Emit {
 
     const binary = m.emitBinary();
     const text = m.emitText();
-    return { binary, text, layout: this.layout };
+    // Build a sidecar source-location map: declarations + statement-level
+    // user source locations captured during graph build. Not a full SMC
+    // source map (the WASM offset → src.line projection requires
+    // setDebugLocation which only operates on live expression refs); but
+    // surfaces enough to power error formatting and dev tooling per
+    // docs/03-compiler §7. A future pass can promote this to a true
+    // .wasm.map alongside the binary.
+    const sourceLocations = collectSourceLocations(this.graph);
+    return { binary, text, layout: this.layout, sourceLocations };
   }
 
   declareMathImports() {
@@ -1431,7 +1439,69 @@ class Emit {
 export function emitWasm(
   graph: CapturedGraph,
   layout: MemoryLayout,
-): { binary: Uint8Array; text: string; layout: MemoryLayout } {
+): {
+  binary: Uint8Array;
+  text: string;
+  layout: MemoryLayout;
+  sourceLocations: SourceLocationsMap;
+} {
   const e = new Emit(graph, layout);
   return e.build();
+}
+
+export type SourceLocationsMap = {
+  files: string[];
+  // Each entry: {kind, ref, fileIdx, line, col}. `ref` identifies the
+  // captured AST element — declaration name or statement index path.
+  entries: Array<{
+    kind: "decl" | "stmt";
+    ref: string;
+    fileIdx: number;
+    line: number;
+    col: number;
+  }>;
+};
+
+export function collectSourceLocations(graph: CapturedGraph): SourceLocationsMap {
+  const files: string[] = [];
+  const fileIdx = (f: string) => {
+    let i = files.indexOf(f);
+    if (i < 0) {
+      i = files.length;
+      files.push(f);
+    }
+    return i;
+  };
+  const entries: SourceLocationsMap["entries"] = [];
+  function add(kind: "decl" | "stmt", ref: string, loc?: any) {
+    if (!loc || !loc.file || !loc.line) return;
+    entries.push({
+      kind,
+      ref,
+      fileIdx: fileIdx(loc.file),
+      line: loc.line,
+      col: loc.col ?? 0,
+    });
+  }
+  // Declarations don't carry loc today (they live in declarations.ts not
+  // the AST nodes), but each declaration walks its initial value /
+  // option literal which does. We can scrape from the first state-store
+  // statement targeting each slot.
+  function walkStmts(prefix: string, stmts: any[]) {
+    stmts.forEach((s: any, idx: number) => {
+      const ref = `${prefix}[${idx}]`;
+      add("stmt", ref, s.loc);
+      switch (s.kind) {
+        case "for-sample":
+        case "every-n-samples":
+        case "handler-for-range":
+          walkStmts(ref + "/body", s.body);
+          break;
+      }
+    });
+  }
+  walkStmts("processBody", graph.processBody);
+  for (const h of graph.messageHandlers) walkStmts(`messageHandler:${h.messageId}`, h.body);
+  for (const h of graph.midiHandlers) walkStmts(`midiHandler:${h.midiInputId}/${h.eventType}`, h.body);
+  return { files, entries };
 }

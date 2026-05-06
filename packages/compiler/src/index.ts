@@ -43,6 +43,7 @@ export type CompileResult = {
   layout: MemoryLayout;
   binary: Uint8Array;
   text: string;
+  sourceLocations: import("./wasm-emit.js").SourceLocationsMap;
 };
 
 // Capture + plan + emit. Accepts either a raw body or a CompiledProcessor
@@ -67,6 +68,6 @@ export function compileToWasm(
     setCaptureBackend(null);
   }
   const layout = planLayout(graph, { renderQuantum: opts.renderQuantum ?? 128 });
-  const { binary, text } = emitWasm(graph, layout);
-  return { graph, layout, binary, text };
+  const { binary, text, sourceLocations } = emitWasm(graph, layout);
+  return { graph, layout, binary, text, sourceLocations };
 }

@@ -137,7 +137,23 @@ export class Engine {
   }
 
   // Inject a message from main thread (queued for next render quantum).
+  // Honours the per-message capacity declared via `message({ capacity })` —
+  // when the queue is full we drop oldest and bump the overflow counter so
+  // node.messages.<name>.diagnostics.overflowCount() can surface it.
   postMessage(name: string, payload: any): void {
+    const decl = this.rt.messages.find((m) => m.slot.name === name);
+    const cap = decl?.slot.capacity ?? 256;
+    let count = 0;
+    for (const m of this.rt.pendingMessages) if (m.name === name) count++;
+    if (count >= cap) {
+      // Drop oldest pending message of this name + bump overflow.
+      const idx = this.rt.pendingMessages.findIndex((m) => m.name === name);
+      if (idx >= 0) this.rt.pendingMessages.splice(idx, 1);
+      this.rt.pendingMessageOverflow.set(
+        name,
+        (this.rt.pendingMessageOverflow.get(name) ?? 0) + 1,
+      );
+    }
     this.rt.pendingMessages.push({ name, payload });
   }
 

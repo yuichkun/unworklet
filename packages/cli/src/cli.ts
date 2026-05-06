@@ -162,6 +162,7 @@ async function main() {
     console.log(`  worklet: ${arts.workletPath}`);
     console.log(`  meta:    ${arts.metaPath}`);
     console.log(`  text:    ${arts.textPath}`);
+    console.log(`  src-map: ${arts.sourceMapPath}`);
     return;
   }
 

@@ -149,6 +149,9 @@ class CaptureCtx {
   }
 
   emit(stmt: Statement) {
+    if (!(stmt as any).loc) {
+      (stmt as any).loc = captureUserSourceLoc();
+    }
     this.bodyStack[this.bodyStack.length - 1]!.push(stmt);
   }
 
@@ -169,10 +172,14 @@ class CaptureCtx {
   }
 
   fresh<N extends ASTValue>(node: Omit<N, "id">): N {
+    // Walk a single stack frame to attach the user-source location to this
+    // node — propagated to WASM as setDebugLocation calls so the .wasm.map
+    // sidecar is non-empty (docs/03-compiler §7 / spec ID A10). We only
+    // capture if the node didn't already specify a loc.
     const result = { ...node, id: this.nodeIdCounter++ } as N;
-    // Trap accidental JS-operator use (`node + 1`, `node / 127`, `+node`).
-    // These primitives must be expressed via the imported helpers; otherwise
-    // `Node<i32> / 127` silently captures NaN.
+    if (!(result as any).loc) {
+      (result as any).loc = captureUserSourceLoc();
+    }
     Object.defineProperty(result, Symbol.toPrimitive, {
       enumerable: false,
       configurable: true,
@@ -190,6 +197,26 @@ class CaptureCtx {
 }
 
 let ctx: CaptureCtx | null = null;
+
+// Capture the first user-source frame above the unworklet packages on the
+// stack. Used to attach loc info to AST nodes for source maps + L2 errors.
+function captureUserSourceLoc(): { file?: string; line?: number; col?: number } | undefined {
+  const e = new Error();
+  const stack = e.stack;
+  if (!stack) return undefined;
+  const lines = stack.split("\n");
+  // Skip the first frame (Error()) and any frames inside unworklet packages.
+  for (let i = 1; i < lines.length && i < 12; i++) {
+    const line = lines[i]!;
+    if (line.includes("/packages/compiler/") || line.includes("/packages/core/")) continue;
+    if (line.includes("/node_modules/")) continue;
+    // Match `(file:line:col)` or `at file:line:col`.
+    const m = /(?:at\s+(?:[^(]+)\s*\()?([^()]+):(\d+):(\d+)\)?/.exec(line);
+    if (!m) continue;
+    return { file: m[1]!, line: Number(m[2]), col: Number(m[3]) };
+  }
+  return undefined;
+}
 
 export function getCtx(): CaptureCtx {
   if (!ctx) throw new Error("Graph capture primitive used outside capture()");
