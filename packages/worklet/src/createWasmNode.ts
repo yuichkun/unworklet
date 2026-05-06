@@ -9,6 +9,7 @@ import { compileToWasm, generateWorkletModule } from "@unworklet/compiler";
 import type { CompiledProcessor, MidiEvent } from "@unworklet/core";
 
 const moduleUrlCache = new WeakMap<CompiledProcessor, string>();
+const compiledCache = new WeakMap<CompiledProcessor, ReturnType<typeof compileToWasm>>();
 const moduleAddedFor = new WeakMap<BaseAudioContext, Set<CompiledProcessor>>();
 
 export type CreateWasmNodeOptions = {
@@ -41,6 +42,14 @@ export type WasmUnworkletNode = {
   };
   snapshot(opts?: { profile?: string }): Promise<Uint8Array>;
   restore(blob: Uint8Array): Promise<{ restored: number; skipped: string[]; missing: string[]; error?: string }>;
+  // Decode a snapshot blob's metadata without applying it.
+  inspect(blob: Uint8Array): {
+    version: number;
+    schemaHash: string;
+    format: "wasm" | "engine";
+    stateBytes?: number;
+    bufferCount?: number;
+  };
   dispose(): void;
 };
 
@@ -50,16 +59,19 @@ export async function createWasmNode(
   processorName: string,
   _options: CreateWasmNodeOptions = {},
 ): Promise<WasmUnworkletNode> {
-  // Compile (cached per processor reference).
+  // Compile (cached per processor reference) — keep both the URL and the
+  // CompileResult so subsequent reads of declarations don't re-run binaryen.
   let url = moduleUrlCache.get(processor);
-  if (!url) {
-    const result = compileToWasm(processor, { sampleRate: audioContext.sampleRate });
-    const source = generateWorkletModule(result.graph, result.layout, result.binary, {
+  let compiled = compiledCache.get(processor);
+  if (!url || !compiled) {
+    compiled = compileToWasm(processor, { sampleRate: audioContext.sampleRate });
+    const source = generateWorkletModule(compiled.graph, compiled.layout, compiled.binary, {
       processorName,
     });
     const blob = new Blob([source], { type: "application/javascript" });
     url = URL.createObjectURL(blob);
     moduleUrlCache.set(processor, url);
+    compiledCache.set(processor, compiled);
   }
 
   // addModule only once per context per processor.
@@ -135,9 +147,9 @@ export async function createWasmNode(
       index: i,
     };
   }
-  // Replace fallback names with declared names by re-compiling and reading the
-  // graph; we cached the result so do it again here.
-  const compiled = compileToWasm(processor, { sampleRate: audioContext.sampleRate });
+  // Replace fallback names with declared names from the cached compile
+  // result (no second compileToWasm — that's wasted work AND risks
+  // divergent layouts if anything in the build is non-deterministic).
   const inputNames = compiled.graph.declarations.audioInputs.map((a) => a.name);
   const outputNames = compiled.graph.declarations.audioOutputs.map((a) => a.name);
   for (let i = 0; i < inputNames.length; i++) {
@@ -295,6 +307,16 @@ export async function createWasmNode(
         }
       }
       if (lifecycle.state === "ready") lifecycle.transition("running");
+    } else if (
+      msg.type === "events" ||
+      msg.type === "midi-out" ||
+      msg.type === "first-process"
+    ) {
+      // Any sign of activity from the worklet implies the audio thread is
+      // actively rendering. The worklet posts `first-process` on its very
+      // first process() invocation specifically so processors that publish
+      // nothing still trigger the ready → running transition.
+      if (lifecycle.state === "ready") lifecycle.transition("running");
     } else if (msg.type === "overflow") {
       // Worklet reports an overflow on a queue; track per-name counts.
       if (msg.kind === "event") eventOverflow.set(msg.name, (eventOverflow.get(msg.name) ?? 0) + 1);
@@ -347,6 +369,29 @@ export async function createWasmNode(
       const p = new Promise<Uint8Array>((resolve) => pending.set(id, resolve));
       node.port.postMessage({ type: "snapshot", id, profile: opts?.profile });
       return p;
+    },
+    inspect(blob) {
+      // UWSN (WASM-format) decoder
+      if (
+        blob.length >= 12 &&
+        blob[0] === 0x55 && blob[1] === 0x57 && blob[2] === 0x53 && blob[3] === 0x4e
+      ) {
+        const dv = new DataView(blob.buffer, blob.byteOffset, blob.byteLength);
+        const version = dv.getUint32(4, true);
+        const hashLen = dv.getUint32(8, true);
+        let hash = "";
+        for (let i = 0; i < hashLen; i++) hash += String.fromCharCode(blob[12 + i]!);
+        const stateBytes = dv.getUint32(12 + hashLen, true);
+        const bufCount = dv.getUint32(16 + hashLen + stateBytes, true);
+        return { version, schemaHash: hash, format: "wasm", stateBytes, bufferCount: bufCount };
+      }
+      // Engine-format fallback
+      const dv = new DataView(blob.buffer, blob.byteOffset, blob.byteLength);
+      const version = dv.getUint32(0, true);
+      const hashLen = dv.getUint32(4, true);
+      let hash = "";
+      for (let i = 0; i < hashLen; i++) hash += String.fromCharCode(blob[8 + i]!);
+      return { version, schemaHash: hash, format: "engine" };
     },
     async restore(blob) {
       const id = nextRpcId++;

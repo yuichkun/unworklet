@@ -1,3 +1,5 @@
+export { policyKey } from "./types.js";
+
 export type {
   Node,
   ScalarType,

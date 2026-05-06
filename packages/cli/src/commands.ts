@@ -328,6 +328,11 @@ export async function cmdBench(opts: BenchOptions): Promise<{
   const blockNs = (blockSize / sampleRate) * 1e9;
   const cpuPercent = (mean / blockNs) * 100;
 
+  const memBuf = (exports.memory as WebAssembly.Memory).buffer as any;
+  const sharedMem =
+    typeof SharedArrayBuffer !== "undefined" && memBuf instanceof SharedArrayBuffer;
+  const hasSIMD = (result.text || "").includes("f32x4");
+  const tableCount = ((result.layout as any).mathTables ?? []).length as number;
   const measurements = {
     blocks: totalBlocks,
     perBlockNs: { min, p50, p95, p99, max, mean },
@@ -336,6 +341,11 @@ export async function cmdBench(opts: BenchOptions): Promise<{
     blockSize,
     hasNaN,
     hasInf,
+    transport: sharedMem ? "sab" : "postMessage",
+    simd: hasSIMD,
+    tables: tableCount,
+    memoryBytes: result.layout.totalBytes,
+    memoryPages: result.layout.initialPages,
   };
 
   const fmt = opts.format ?? "human";
@@ -347,7 +357,9 @@ export async function cmdBench(opts: BenchOptions): Promise<{
       `Bench ${name} @ ${sampleRate} Hz, ${blockSize} samples/block, ${totalBlocks} blocks (${dur}s):\n` +
       `  per-block (ns): min=${min.toFixed(0)}  p50=${p50.toFixed(0)}  p95=${p95.toFixed(0)}  p99=${p99.toFixed(0)}  max=${max.toFixed(0)}  mean=${mean.toFixed(0)}\n` +
       `  CPU usage:      ${cpuPercent.toFixed(2)}% of audio budget\n` +
-      `  output sanity:  hasNaN=${hasNaN}  hasInf=${hasInf}`;
+      `  output sanity:  hasNaN=${hasNaN}  hasInf=${hasInf}\n` +
+      `  transport:      ${measurements.transport}${hasSIMD ? "  +SIMD" : ""}${tableCount ? `  +tables(${tableCount})` : ""}\n` +
+      `  memory:         ${result.layout.totalBytes} bytes (${result.layout.initialPages} pages)`;
   }
   return { formatted, measurements };
 }

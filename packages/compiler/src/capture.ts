@@ -310,12 +310,13 @@ function computeSchemaHash(g: CapturedGraph): string {
   return h.toString(16).padStart(8, "0");
 }
 
+// Use the shared policyKey from @unworklet/core so engine + compiler
+// agree byte-for-byte on schema hashes. Without this, record-form
+// policies like { default: "persistent", quick: "transient" } produce
+// different hashes on the two sides and migrations silently fail.
+import { policyKey as policyKeyShared } from "@unworklet/core";
 function policyKey(p: SnapshotPolicy): string {
-  if (typeof p === "string") return p;
-  return Object.entries(p)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([k, v]) => `${k}:${v}`)
-    .join(",");
+  return policyKeyShared(p);
 }
 
 // ─── Numeric literal lifting helpers ────────────────────────────────────────

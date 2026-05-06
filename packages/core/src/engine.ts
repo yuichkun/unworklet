@@ -4,6 +4,7 @@ import {
   type StateRuntime,
   type BufferRuntime,
 } from "./runtime.js";
+import { policyKey } from "./types.js";
 import type { CompiledProcessor, MidiEvent } from "./types.js";
 
 export type EngineOptions = {
@@ -823,20 +824,9 @@ function getCurrent() {
   return null;
 }
 
-// Serialize a SnapshotPolicy stably. Without this, record-form policies
-// like { default: "persistent", quick: "transient" } stringify to
-// "[object Object]" — and then the compiler's hash (which DOES walk the
-// record) and this hash diverge silently, breaking host-walked migrations.
-function policyKey(p: any): string {
-  if (typeof p === "string") return p;
-  if (!p || typeof p !== "object") return String(p);
-  return Object.entries(p)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([k, v]) => `${k}:${v}`)
-    .join(",");
-}
-
-// Compute a stable schema hash from the runtime's declarations. Output
+// Compute a stable schema hash from the runtime's declarations.
+// policyKey is imported at the top of this file from ./types so the
+// compiler's hash (capture.ts) and this hash agree byte-for-byte. Output
 // MUST match @unworklet/compiler's compute (capture.ts) since migrations
 // look up registered chains by hash, and the WASM worklet rejects
 // snapshot blobs whose hash doesn't match its own schemaHash field.

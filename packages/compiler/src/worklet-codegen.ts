@@ -297,7 +297,17 @@ export function generateWorkletModule(
       for (let i = 0; i < LAYOUT.schemaHash.length; i++) out[p + i] = LAYOUT.schemaHash.charCodeAt(i);
       p += LAYOUT.schemaHash.length;
       dv.setUint32(p, stateBytes, true); p += 4;
-      out.set(this.memU8.subarray(LAYOUT.stateRegion.offset, LAYOUT.stateRegion.offset + stateBytes), p);
+      // Copy state region but zero out slots whose snapshot policy is
+      // "transient" so transient state doesn't leak into the blob.
+      // (Restore symmetrically skips transient slots.)
+      const stateView = new Uint8Array(out.buffer, p, stateBytes);
+      stateView.set(this.memU8.subarray(LAYOUT.stateRegion.offset, LAYOUT.stateRegion.offset + stateBytes));
+      for (const sl of LAYOUT.stateRegion.slots) {
+        if (sl.snapshot === "transient") {
+          const off = sl.offset - LAYOUT.stateRegion.offset;
+          for (let z = 0; z < 8; z++) stateView[off + z] = 0;
+        }
+      }
       p += stateBytes;
       dv.setUint32(p, persistentBuffers.length, true); p += 4;
       for (const b of persistentBuffers) {
@@ -332,7 +342,13 @@ export function generateWorkletModule(
         return;
       }
       const stateBytes = dv.getUint32(p, true); p += 4;
-      this.memU8.set(blob.subarray(p, p + stateBytes), LAYOUT.stateRegion.offset);
+      // Apply state slot-by-slot so transient slots in memory keep their
+      // current values (the blob has zeros there).
+      for (const sl of LAYOUT.stateRegion.slots) {
+        if (sl.snapshot === "transient") continue;
+        const blobOff = p + (sl.offset - LAYOUT.stateRegion.offset);
+        for (let z = 0; z < 8; z++) this.memU8[sl.offset + z] = blob[blobOff + z];
+      }
       p += stateBytes;
       const nBufs = dv.getUint32(p, true); p += 4;
       let restored = 1; const skipped = []; const missing = [];
@@ -493,6 +509,10 @@ export function generateWorkletModule(
           eventsOut[ev.name] = list;
           any = true;
           this._eventReadHeads.set(ev.name, head);
+          // Advance tail so main-side reader can detect drained slots.
+          const tailIdx = (ev.headerOffset + 4) >> 2;
+          if (sab) Atomics.store(this.memI32, tailIdx, head);
+          else this.memI32[tailIdx] = head;
         }
       }
       if (any) this.port.postMessage({ type: "events", events: eventsOut });
@@ -529,6 +549,10 @@ export function generateWorkletModule(
       }
       this._midiOutReadHeads.set(out.name, head);
       if (events.length) this.port.postMessage({ type: "midi-out", events });
+      this._midiOutReadHeads.set(out.name, head);
+      const tailIdx = (out.headerOffset + 4) >> 2;
+      if (sab) Atomics.store(this.memI32, tailIdx, head);
+      else this.memI32[tailIdx] = head;
     }
 
     process(inputs, outputs, parameters) {
@@ -605,6 +629,12 @@ export function generateWorkletModule(
       // Drain outbound events / midi
       this._drainOutboundEvents();
       this._drainOutboundMidi();
+      // Notify host on the very first process() so node.lifecycle can
+      // transition ready → running even for processors that don't publish.
+      if (!this._firstProcessSent) {
+        this._firstProcessSent = true;
+        this.port.postMessage({ type: "first-process" });
+      }
       // Drain published state / buffer slots — docs/02-messaging §5.4 +
       // 04-worklet-runtime §7. Each slot has its own per-FPS counter; only
       // emit when the value (or buffer view) changed since the last publish.

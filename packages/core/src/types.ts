@@ -60,6 +60,19 @@ export type SnapshotPolicy =
   | "transient"
   | { [profile: string]: "persistent" | "transient" };
 
+// Stable serialization of a SnapshotPolicy. Used by both the compiler's
+// schema-hash computation (capture.ts) and the engine's (engine.ts) so
+// they produce identical hashes — without this, record-form policies
+// stringify as "[object Object]" and silently break migration matching.
+export function policyKey(p: SnapshotPolicy | undefined): string {
+  if (!p) return "persistent";
+  if (typeof p === "string") return p;
+  return Object.entries(p)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}:${v}`)
+    .join(",");
+}
+
 export type PublishOptions = { rateFps: number };
 
 export type StateOptions<T extends ScalarType> = {
