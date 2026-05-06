@@ -17,3 +17,10 @@ export {
 // worklet module, instantiate the AudioWorkletNode, and surface the
 // node-shaped object documented in docs/05-client §2.
 export { createWasmNode, type WasmUnworkletNode, type CreateWasmNodeOptions } from "./createWasmNode.js";
+
+// Snapshot-format bridge: convert an engine-format (UWS1) snapshot blob
+// into a WASM-format (UWSN) blob suitable for `_handleRestore`. Used
+// internally by createWasmNode.restore to ferry migrated state from a
+// host-side JS Engine into the WASM worklet's linear memory. Exported so
+// host integrators can drive the same conversion.
+export { engineSnapshotToWasm } from "./snapshot-bridge.js";

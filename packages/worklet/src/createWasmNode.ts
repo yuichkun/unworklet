@@ -456,67 +456,15 @@ function getSnapshotHash(blob: Uint8Array): string | null {
 
 // Apply migrations on the host using a transient JS Engine, then re-encode
 // the resulting state into a WASM-format blob the worklet can ingest.
+// Delegates to the shared engineSnapshotToWasm helper so host integrators
+// can drive the same conversion themselves.
+import { engineSnapshotToWasm } from "./snapshot-bridge.js";
 async function migrateForWasm(
   processor: any,
   blob: Uint8Array,
   layout: any,
 ): Promise<Uint8Array | null> {
-  const core = await import("@unworklet/core/internal");
-  const eng = new (core as any).Engine(processor, { sampleRate: 48000, blockSize: 128 });
-  const result = eng.restore(blob);
-  if (!result || result.error) return null;
-  // Now serialize the engine's current state into WASM-format.
-  const stateRegion = layout.stateRegion;
-  const bufferRegion = layout.bufferRegion;
-  const persistentBufs = bufferRegion.buffers.filter((b: any) => b.snapshot === "persistent");
-  const stateBytes = stateRegion.size | 0;
-  const bufBytes = persistentBufs.reduce((s: number, b: any) => s + b.byteSize, 0);
-  const hashStr: string = layout.schemaHash;
-  const headerLen = 8 + 4 + hashStr.length + 4 + 4;
-  const total = headerLen + stateBytes + persistentBufs.length * 8 + bufBytes;
-  const out = new Uint8Array(total);
-  const dv = new DataView(out.buffer);
-  let p = 0;
-  out[p++] = 0x55; out[p++] = 0x57; out[p++] = 0x53; out[p++] = 0x4e;
-  dv.setUint32(p, 1, true); p += 4;
-  dv.setUint32(p, hashStr.length, true); p += 4;
-  for (let i = 0; i < hashStr.length; i++) out[p + i] = hashStr.charCodeAt(i);
-  p += hashStr.length;
-  dv.setUint32(p, stateBytes, true); p += 4;
-  // Walk engine's runtime state slots; map each into the WASM state region.
-  const stateView = new Uint8Array(out.buffer, p, stateBytes);
-  for (const slot of stateRegion.slots) {
-    const sr = (eng.rt.allScopes ?? []).flatMap((s: any) => s.states).find(
-      (s: any) => s.slot.path === slot.path,
-    );
-    if (!sr) continue;
-    const dv2 = new DataView(stateView.buffer, stateView.byteOffset, stateView.byteLength);
-    const off = slot.offset - stateRegion.offset;
-    if (slot.type === "f32") dv2.setFloat32(off, sr.read() as number, true);
-    else if (slot.type === "f64") dv2.setFloat64(off, sr.read() as number, true);
-    else if (slot.type === "i32" || slot.type === "bool")
-      dv2.setInt32(off, (sr.read() as number) | 0, true);
-    else if (slot.type === "i64") dv2.setBigInt64(off, BigInt(sr.read() as number), true);
-  }
-  p += stateBytes;
-  dv.setUint32(p, persistentBufs.length, true); p += 4;
-  for (const b of persistentBufs) {
-    dv.setUint32(p, b.bufferId, true); p += 4;
-    dv.setUint32(p, b.byteSize, true); p += 4;
-    const br = (eng.rt.allScopes ?? []).flatMap((s: any) => s.buffers).find(
-      (x: any) => x.slot.path === b.path,
-    );
-    if (br) {
-      const src = new Uint8Array(
-        (br.storage as Float32Array | Int32Array).buffer,
-        (br.storage as Float32Array | Int32Array).byteOffset,
-        b.byteSize,
-      );
-      out.set(src, p);
-    }
-    p += b.byteSize;
-  }
-  return out.subarray(0, p);
+  return engineSnapshotToWasm(processor, blob, layout);
 }
 
 // SAB-transport message enqueue. Mirrors the worklet's own _enqueueMessage
