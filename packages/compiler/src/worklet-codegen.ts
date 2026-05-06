@@ -114,6 +114,7 @@ export function generateWorkletModule(
           type: sl.type,
           offset: sl.offset,
           rateFps: decl.publish.rateFps,
+          versionOffset: layout.publishVersionRegion.stateOffsets[sl.slotId],
         };
       })
       .filter(Boolean),
@@ -129,6 +130,7 @@ export function generateWorkletModule(
           size: bl.size,
           byteSize: bl.byteSize,
           rateFps: decl.publish.rateFps,
+          versionOffset: layout.publishVersionRegion.bufferOffsets[bl.bufferId],
         };
       })
       .filter(Boolean),
@@ -681,6 +683,12 @@ export function generateWorkletModule(
           this._publishLast.set(sl.path, v);
           out[sl.path] = v;
           any = true;
+          // docs/02-messaging §5.4: bump per-slot version counter on
+          // change so SAB-side observers see the update without
+          // polling postMessage.
+          if (this._sab && typeof sl.versionOffset === "number") {
+            Atomics.add(this.memI32, sl.versionOffset >> 2, 1);
+          }
         }
       }
       for (const bl of LAYOUT.publishedBuffers) {
@@ -698,6 +706,9 @@ export function generateWorkletModule(
         else view = new Uint8Array(this.exports.memory.buffer, bl.offset, bl.byteSize).slice();
         out[bl.path] = view;
         any = true;
+        if (this._sab && typeof bl.versionOffset === "number") {
+          Atomics.add(this.memI32, bl.versionOffset >> 2, 1);
+        }
       }
       if (any) this.port.postMessage({ type: "publish", values: out });
     }

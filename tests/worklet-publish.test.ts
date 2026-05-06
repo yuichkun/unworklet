@@ -85,5 +85,13 @@ describe("state.publish in WASM worklet", () => {
     const path = ready.layout.publishedStates[0].path;
     expect(typeof last.values[path]).toBe("number");
     expect(last.values[path]).toBeGreaterThan(0);
+
+    // docs/02-messaging §5.4: the per-slot version counter in shared
+    // memory should also have been bumped (one i32, monotonically
+    // increasing on each value change).
+    const versionOff = ready.layout.publishedStates[0].versionOffset;
+    expect(typeof versionOff).toBe("number");
+    const versionView = new Int32Array(w.inst.exports.memory.buffer);
+    expect(versionView[versionOff >> 2]).toBeGreaterThan(0);
   });
 });

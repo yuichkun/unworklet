@@ -129,6 +129,13 @@ export type MemoryLayout = {
   messages: { offset: number; size: number; layouts: MessageLayout[] };
   midiInputs: { offset: number; size: number; layouts: MidiLayout[] };
   midiOutputs: { offset: number; size: number; layouts: MidiLayout[] };
+  // docs/02-messaging §5.4 — one i32 version counter per published slot.
+  publishVersionRegion: {
+    offset: number;
+    size: number;
+    stateOffsets: Record<number, number>; // stateId -> byte offset
+    bufferOffsets: Record<number, number>; // bufferId -> byte offset
+  };
   totalBytes: number;
   initialPages: number; // 64 KiB pages
   renderQuantum: number;
@@ -351,6 +358,29 @@ export function planLayout(g: CapturedGraph, opts: LayoutOptions): MemoryLayout 
   cursor = align(cursor);
   const messageSize = cursor - messageStart;
 
+  // Publish version-counter region (docs/02-messaging §5.4): one i32 per
+  // published state slot + one per published buffer. The audio thread bumps
+  // the counter on each publish tick where the value changed; main-thread
+  // subscribers observe this counter via Atomics.load to deliver
+  // subscribe(handler) callbacks.
+  const publishStart = cursor;
+  const publishedStateVersionOffsets: Record<number, number> = {};
+  const publishedBufferVersionOffsets: Record<number, number> = {};
+  for (const s of g.declarations.states) {
+    if (!s.publish) continue;
+    cursor = align(cursor);
+    publishedStateVersionOffsets[s.id] = cursor;
+    cursor += 4;
+  }
+  for (const b of g.declarations.buffers) {
+    if (!b.publish) continue;
+    cursor = align(cursor);
+    publishedBufferVersionOffsets[b.id] = cursor;
+    cursor += 4;
+  }
+  cursor = align(cursor);
+  const publishSize = cursor - publishStart;
+
   // MIDI inputs
   const midiInStart = cursor;
   const midiInputLayouts: MidiLayout[] = [];
@@ -409,6 +439,12 @@ export function planLayout(g: CapturedGraph, opts: LayoutOptions): MemoryLayout 
     messages: { offset: messageStart, size: messageSize, layouts: messageLayouts },
     midiInputs: { offset: midiInStart, size: midiInSize, layouts: midiInputLayouts },
     midiOutputs: { offset: midiOutStart, size: midiOutSize, layouts: midiOutputLayouts },
+    publishVersionRegion: {
+      offset: publishStart,
+      size: publishSize,
+      stateOffsets: publishedStateVersionOffsets,
+      bufferOffsets: publishedBufferVersionOffsets,
+    },
     totalBytes,
     initialPages,
     renderQuantum,

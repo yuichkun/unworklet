@@ -245,9 +245,15 @@ export async function createWasmNode(
     },
   };
 
-  // State publishing — drain comes via `publish` messages from the worklet.
+  // State publishing. The worklet posts `publish` messages on every
+  // change AND bumps a per-slot version counter in shared memory
+  // (docs/02-messaging §5.4). The postMessage path is sufficient for
+  // correctness; the version counter lets future tooling poll without
+  // a postMessage roundtrip and is exercised by tests/worklet-publish
+  // to verify the SAB contract.
   const stateLast = new Map<string, any>();
   const stateSubs = new Map<string, Array<(v: any) => void>>();
+  const lastVersionByPath = new Map<string, number>();
   const state: WasmUnworkletNode["state"] = {};
   const allPublished = [
     ...((layout.publishedStates ?? []) as Array<{ path: string; name?: string }>),
