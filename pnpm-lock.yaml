@@ -72,6 +72,9 @@ importers:
       '@unworklet/examples':
         specifier: workspace:*
         version: link:../../examples
+      '@unworklet/worklet':
+        specifier: workspace:*
+        version: link:../../packages/worklet
       vue:
         specifier: ^3.5.0
         version: 3.5.33(typescript@6.0.3)
@@ -174,6 +177,9 @@ importers:
 
   packages/worklet:
     dependencies:
+      '@unworklet/client':
+        specifier: workspace:*
+        version: link:../client
       '@unworklet/compiler':
         specifier: workspace:*
         version: link:../compiler

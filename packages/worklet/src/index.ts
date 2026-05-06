@@ -12,3 +12,8 @@ export {
   type WorkletModuleOptions,
   type WorkletBundle,
 } from "@unworklet/compiler";
+
+// Browser-side helper that ties everything together: compile, register the
+// worklet module, instantiate the AudioWorkletNode, and surface the
+// node-shaped object documented in docs/05-client §2.
+export { createWasmNode, type WasmUnworkletNode, type CreateWasmNodeOptions } from "./createWasmNode.js";
