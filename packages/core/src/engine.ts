@@ -326,11 +326,23 @@ export class Engine {
       const cur = (this.rt.publishCounters.get(path) ?? 0) + block;
       if (cur >= targetSamples) {
         this.rt.publishCounters.set(path, cur - targetSamples);
-        // Always fire — equality on buffers is expensive; let consumer compare.
-        const view = (br.storage as any).slice();
-        this.rt.publishLastValues.set(path, view);
-        const obs = this.rt.publishObservers.get(path);
-        if (obs) for (const o of obs) o(view);
+        // docs/02-messaging §5.2: "Identical re-publishes are coalesced."
+        // Cheap byte-by-byte compare against the last published view; if
+        // identical, skip notification.
+        const newView = (br.storage as any).slice();
+        const last = this.rt.publishLastValues.get(path);
+        let unchanged = false;
+        if (last && last.length === newView.length) {
+          unchanged = true;
+          for (let i = 0; i < newView.length; i++) {
+            if (last[i] !== newView[i]) { unchanged = false; break; }
+          }
+        }
+        if (!unchanged) {
+          this.rt.publishLastValues.set(path, newView);
+          const obs = this.rt.publishObservers.get(path);
+          if (obs) for (const o of obs) o(newView);
+        }
       } else {
         this.rt.publishCounters.set(path, cur);
       }

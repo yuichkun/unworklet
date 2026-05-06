@@ -235,8 +235,17 @@ export async function createNode(
   const midiOutListeners = new Map<string, Array<(e: any) => void>>();
 
   const midi: MidiAPI = {
-    send(event, _atTime) {
-      if (midiInputName) engine.postMidiEvent(midiInputName, event);
+    send(event, atTime) {
+      if (!midiInputName) return;
+      // atTime is a host-time offset in seconds (per docs/05-client + 11-midi).
+      // The JS Engine schedules per-block; convert atTime → atSample on the
+      // event's atSample field. If atTime omitted, queue at sample 0 of the
+      // next block (existing behaviour).
+      const sr = engine.rt.sampleRate;
+      const augmented: any = atTime !== undefined
+        ? { ...event, atSample: Math.max(0, Math.round((atTime as number) * sr)) }
+        : event;
+      engine.postMidiEvent(midiInputName, augmented);
     },
     connectFromWebMIDI(input: any) {
       if (!midiInputName) return;
