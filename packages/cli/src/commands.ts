@@ -122,6 +122,76 @@ export async function cmdBuild(opts: BuildOptions): Promise<BuildArtifacts> {
   return { wasmPath, workletPath, metaPath, textPath, sourceMapPath };
 }
 
+export async function cmdInspect(opts: { blobPath: string }): Promise<{ formatted: string }> {
+  // Parse the snapshot blob format emitted by either the JS Engine or the
+  // WASM worklet. Per docs/05-client §6 the inspect output is the same
+  // shape regardless of which transport produced the blob.
+  //
+  // WASM-format blobs carry a 4-byte magic 'UWSN' (0x55 0x57 0x53 0x4e)
+  // followed by version + schemaHash + state-region-bytes + buffer table.
+  // Engine-format blobs use the inspect-friendly path:type:bytes layout.
+  const blob = new Uint8Array(await fs.readFile(opts.blobPath));
+  const lines: string[] = [];
+  if (
+    blob.length >= 4 &&
+    blob[0] === 0x55 &&
+    blob[1] === 0x57 &&
+    blob[2] === 0x53 &&
+    blob[3] === 0x4e
+  ) {
+    const dv = new DataView(blob.buffer, blob.byteOffset, blob.byteLength);
+    const version = dv.getUint32(4, true);
+    const hashLen = dv.getUint32(8, true);
+    let p = 12;
+    let hash = "";
+    for (let i = 0; i < hashLen; i++) hash += String.fromCharCode(blob[p + i]!);
+    p += hashLen;
+    const stateBytes = dv.getUint32(p, true);
+    p += 4 + stateBytes;
+    const nBufs = dv.getUint32(p, true);
+    p += 4;
+    let totalBufBytes = 0;
+    for (let i = 0; i < nBufs; i++) {
+      const bid = dv.getUint32(p, true);
+      p += 4;
+      const sz = dv.getUint32(p, true);
+      p += 4;
+      totalBufBytes += sz;
+      p += sz;
+      lines.push(`  buffer #${bid}: ${sz} bytes`);
+    }
+    lines.unshift(`  format:        WASM (UWSN)`);
+    lines.unshift(`  size:          ${blob.byteLength} bytes`);
+    lines.unshift(`unworklet snapshot inspect: ${opts.blobPath}`);
+    lines.splice(3, 0, `  version:       ${version}`);
+    lines.splice(4, 0, `  schemaHash:    ${hash}`);
+    lines.splice(5, 0, `  state region:  ${stateBytes} bytes`);
+    lines.splice(6, 0, `  buffer count:  ${nBufs} (${totalBufBytes} bytes total)`);
+    return { formatted: lines.join("\n") };
+  }
+  // Fallback to Engine-format inspect.
+  const client = await import("@unworklet/client");
+  try {
+    const out: any = (client as any).inspect(blob);
+    lines.push(`unworklet snapshot inspect: ${opts.blobPath}`);
+    lines.push(`  size:          ${blob.byteLength} bytes`);
+    lines.push(`  format:        Engine`);
+    lines.push(`  schemaHash:    ${out.schemaHash}`);
+    lines.push(`  profile:       ${out.profile ?? "(default)"}`);
+    const slots = out.slots ?? {};
+    const names = Object.keys(slots);
+    lines.push(`  slots:         ${names.length}`);
+    for (const n of names.slice(0, 32)) {
+      const s = slots[n];
+      lines.push(`    ${n.padEnd(28)} ${s.kind} ${s.type ?? ""}`);
+    }
+    if (names.length > 32) lines.push(`    ... and ${names.length - 32} more`);
+    return { formatted: lines.join("\n") };
+  } catch (e: any) {
+    return { formatted: `inspect failed: ${e?.message ?? e}` };
+  }
+}
+
 export type AnalyzeOptions = {
   modulePath: string;
   exportName?: string;

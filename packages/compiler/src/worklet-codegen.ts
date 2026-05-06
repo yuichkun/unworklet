@@ -162,6 +162,7 @@ export function generateWorkletModule(
         };
       }),
     },
+    mathTables: (layout as any).mathTables ?? [],
     renderQuantum: layout.renderQuantum,
     schemaHash: graph.schemaHash,
   };
@@ -217,6 +218,19 @@ export function generateWorkletModule(
           },
         });
         this.exports = inst.exports;
+        // Populate any /table math approximation tables before init so the
+        // first call to process can use them (docs/01-dsl §2 / spec Q17).
+        const memMath = new Float32Array(this.exports.memory.buffer);
+        for (const tbl of LAYOUT.mathTables) {
+          const off = tbl.offset >> 2;
+          if (tbl.kind === "sin") {
+            for (let i = 0; i < tbl.length; i++) memMath[off + i] = Math.sin((2 * Math.PI * i) / tbl.length);
+          } else if (tbl.kind === "exp") {
+            for (let i = 0; i < tbl.length; i++) memMath[off + i] = Math.exp((i / tbl.length) * Math.LN2);
+          } else if (tbl.kind === "log") {
+            for (let i = 0; i < tbl.length; i++) memMath[off + i] = Math.log(1 + i / tbl.length);
+          }
+        }
         this.exports.init();
         // Pre-warm: gate JIT tier-up before audio starts (docs/04 §1 step 4).
         try { this.exports.prewarm?.(256); } catch {}

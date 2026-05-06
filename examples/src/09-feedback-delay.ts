@@ -14,6 +14,7 @@ import {
   max,
   gte,
   select,
+  flushDenormals,
   i32,
   type Node,
 } from "@unworklet/core";
@@ -92,8 +93,11 @@ export const feedbackDelay = defineProcessor((ctx) => {
 
         // ping-pong cross-feed when pp >= 0.5
         const cross = gte(pp, 0.5);
-        const newL = add(inL, mul(select(cross, taR, taL), fb));
-        const newR = add(inR, mul(select(cross, taL, taR), fb));
+        // Flush subnormals on the feedback tap before storing — without
+        // this, decaying tails can stall the audio thread on x86 CPUs that
+        // don't have FTZ enabled by default. (docs/04 §6.)
+        const newL = flushDenormals(add(inL, mul(select(cross, taR, taL), fb)));
+        const newR = flushDenormals(add(inR, mul(select(cross, taL, taR), fb)));
 
         dlyL.write(wIdx, newL);
         dlyR.write(wIdx, newR);
@@ -108,8 +112,8 @@ export const feedbackDelay = defineProcessor((ctx) => {
       });
 
       head.store(mod(add(block, 128), MAX_DELAY_SAMPLES));
-      meterL.store(mul(meterL.load(), 0.92));
-      meterR.store(mul(meterR.load(), 0.92));
+      meterL.store(flushDenormals(mul(meterL.load(), 0.92)));
+      meterR.store(flushDenormals(mul(meterR.load(), 0.92)));
     },
   };
 });

@@ -13,6 +13,7 @@ import {
   mod,
   max,
   abs,
+  flushDenormals,
 } from "@unworklet/core";
 import { splat, mulVec, addVec } from "@unworklet/core/simd";
 
@@ -106,8 +107,10 @@ export const convolutionReverb = defineProcessor(
 
           const dryL = mul(main.at(0, i), dryGain.at(0));
           const dryR = mul(main.at(1, i), dryGain.at(0));
-          const wetL = mul(sumL, wetGain.at(0));
-          const wetR = mul(sumR, wetGain.at(0));
+          // Flush subnormals on convolution output so a quiet tail doesn't
+          // produce denormals that stall the audio thread (docs/04 §6).
+          const wetL = flushDenormals(mul(sumL, wetGain.at(0)));
+          const wetR = flushDenormals(mul(sumR, wetGain.at(0)));
 
           out.set(0, i, add(dryL, wetL));
           out.set(1, i, add(dryR, wetR));
@@ -116,7 +119,9 @@ export const convolutionReverb = defineProcessor(
         });
 
         histHead.store(mod(add(headBlock, 128), IR_LEN));
-        wetMeter.store(mul(wetMeter.load(), 0.93));
+        // 0.93 is a one-pole release coefficient close enough to 1.0 that
+        // the meter would otherwise produce denormals on silence.
+        wetMeter.store(flushDenormals(mul(wetMeter.load(), 0.93)));
       },
     };
   },

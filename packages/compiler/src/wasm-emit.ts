@@ -99,6 +99,11 @@ class Emit {
   build(): { binary: Uint8Array; text: string; layout: MemoryLayout } {
     const m = this.m;
     // Create memory; export it so the host can read/write directly.
+    // Pre-scan the graph for /table math ops so we can size + allocate
+    // their lookup tables BEFORE setMemory is called. Otherwise the table
+    // region would extend memory after the module's memory section is
+    // already finalized.
+    this.preallocateTablesFromGraph();
     // Shared memory enables SharedArrayBuffer + Atomics on host side per
     // docs/02-messaging §4 (C2-C6). Crucially, this requires COOP/COEP
     // headers — the playground vite config sets them. The maximum must be
@@ -1144,11 +1149,191 @@ class Emit {
          : m.i32.ge_s(a, b);
   }
 
+  // ─── /table math approximations ──────────────────────────────────────
+  //
+  // Each table is laid out at the very end of linear memory at compile
+  // time (after the absoluteSampleCounter scratch). Tables are 4096 entries
+  // × 4 bytes = 16 KiB each, indexed by an integer derived from the input.
+  // We ensure the memory has enough pages to hold them.
+  sinTableOffset = -1; // populated lazily on first use
+  expTableOffset = -1;
+  logTableOffset = -1;
+
+  emitSinCosTable(arg: ExprRef, op: "sin" | "cos"): ExprRef {
+    const m = this.m;
+    if (this.sinTableOffset < 0) this.allocateSinTable();
+    // We treat input modulo 2π. Index = ((x + (op==='cos' ? π/2 : 0)) /
+    // (2π)) * 4096; lookup with linear interpolation.
+    const N = 4096;
+    const TWO_PI = 2 * Math.PI;
+    const offsetInput = op === "cos" ? m.f32.add(arg, m.f32.const(Math.PI / 2)) : arg;
+    // norm = (x / 2π) - floor(x / 2π) → [0, 1)
+    const div = m.f32.div(offsetInput, m.f32.const(TWO_PI));
+    const norm = m.f32.sub(div, m.f32.floor(div));
+    const fIdx = m.f32.mul(norm, m.f32.const(N));
+    const i0 = m.i32.trunc_s.f32(fIdx);
+    const i0w = m.i32.and(i0, m.i32.const(N - 1));
+    const i1w = m.i32.and(m.i32.add(i0w, m.i32.const(1)), m.i32.const(N - 1));
+    const frac = m.f32.sub(fIdx, m.f32.convert_s.i32(i0));
+    const a = m.f32.load(
+      0,
+      4,
+      m.i32.add(m.i32.const(this.sinTableOffset), m.i32.mul(i0w, m.i32.const(4))),
+    );
+    const b = m.f32.load(
+      0,
+      4,
+      m.i32.add(m.i32.const(this.sinTableOffset), m.i32.mul(i1w, m.i32.const(4))),
+    );
+    return m.f32.add(a, m.f32.mul(m.f32.sub(b, a), frac));
+  }
+
+  emitExpTable(arg: ExprRef): ExprRef {
+    const m = this.m;
+    if (this.expTableOffset < 0) this.allocateExpTable();
+    // exp(x) = 2^(x * log2(e)). Decompose x*log2(e) into integer + fractional.
+    // exp(x) = 2^int * exp(frac * ln(2)). Look up exp(frac*ln(2)) in [0,1).
+    const N = 4096;
+    const log2e = Math.LOG2E;
+    const xLog2e = m.f32.mul(arg, m.f32.const(log2e));
+    const intPart = m.f32.floor(xLog2e);
+    const frac = m.f32.sub(xLog2e, intPart);
+    const intI = m.i32.trunc_s.f32(intPart);
+    // 2^int via float bit manipulation (only for intPart in [-126,127]):
+    // float v = ldexp(1.0, intI). Implement: bits = (intI + 127) << 23.
+    const bits = m.i32.shl(m.i32.add(intI, m.i32.const(127)), m.i32.const(23));
+    const pow2int = m.f32.reinterpret(bits);
+    // Lookup exp(frac * ln2) at frac index N
+    const fIdx = m.f32.mul(frac, m.f32.const(N));
+    const i0 = m.i32.trunc_s.f32(fIdx);
+    const i0w = m.i32.and(i0, m.i32.const(N - 1));
+    const i1w = m.i32.and(m.i32.add(i0w, m.i32.const(1)), m.i32.const(N - 1));
+    const frac2 = m.f32.sub(fIdx, m.f32.convert_s.i32(i0));
+    const a = m.f32.load(
+      0,
+      4,
+      m.i32.add(m.i32.const(this.expTableOffset), m.i32.mul(i0w, m.i32.const(4))),
+    );
+    const b = m.f32.load(
+      0,
+      4,
+      m.i32.add(m.i32.const(this.expTableOffset), m.i32.mul(i1w, m.i32.const(4))),
+    );
+    const expFrac = m.f32.add(a, m.f32.mul(m.f32.sub(b, a), frac2));
+    return m.f32.mul(pow2int, expFrac);
+  }
+
+  emitLogTable(arg: ExprRef): ExprRef {
+    const m = this.m;
+    if (this.logTableOffset < 0) this.allocateLogTable();
+    // log(x) = log(2^e * m) = e*ln(2) + log(m), m in [1,2). Lookup log(m).
+    const N = 4096;
+    // bits = reinterpret_u32(arg)
+    const bits = m.i32.reinterpret(arg);
+    const exponent = m.i32.sub(
+      m.i32.shr_s(m.i32.shl(bits, m.i32.const(1)), m.i32.const(24)),
+      m.i32.const(127),
+    );
+    // mantissa bits = (bits & 0x007fffff) | 0x3f800000  → float in [1,2)
+    const mBits = m.i32.or(m.i32.and(bits, m.i32.const(0x007fffff)), m.i32.const(0x3f800000));
+    const mant = m.f32.reinterpret(mBits);
+    // normalize mant in [1,2) → frac in [0,1) via (mant - 1).
+    const frac = m.f32.sub(mant, m.f32.const(1));
+    const fIdx = m.f32.mul(frac, m.f32.const(N));
+    const i0 = m.i32.trunc_s.f32(fIdx);
+    const i0w = m.i32.and(i0, m.i32.const(N - 1));
+    const i1w = m.i32.and(m.i32.add(i0w, m.i32.const(1)), m.i32.const(N - 1));
+    const f2 = m.f32.sub(fIdx, m.f32.convert_s.i32(i0));
+    const a = m.f32.load(
+      0,
+      4,
+      m.i32.add(m.i32.const(this.logTableOffset), m.i32.mul(i0w, m.i32.const(4))),
+    );
+    const b = m.f32.load(
+      0,
+      4,
+      m.i32.add(m.i32.const(this.logTableOffset), m.i32.mul(i1w, m.i32.const(4))),
+    );
+    const logMant = m.f32.add(a, m.f32.mul(m.f32.sub(b, a), f2));
+    return m.f32.add(
+      m.f32.mul(m.f32.convert_s.i32(exponent), m.f32.const(Math.LN2)),
+      logMant,
+    );
+  }
+
+  allocateTableRegion(bytes: number): number {
+    const off = this.layout.totalBytes;
+    this.layout.totalBytes += bytes;
+    const PAGE = 64 * 1024;
+    if (this.layout.totalBytes > this.layout.initialPages * PAGE) {
+      this.layout.initialPages = Math.ceil(this.layout.totalBytes / PAGE);
+    }
+    return off;
+  }
+
+  allocateSinTable() {
+    if (this.sinTableOffset >= 0) return;
+    const N = 4096;
+    const off = this.allocateTableRegion(N * 4);
+    this.sinTableOffset = off;
+    (this.layout as any).mathTables = (this.layout as any).mathTables ?? [];
+    (this.layout as any).mathTables.push({ kind: "sin", offset: off, length: N });
+  }
+  allocateExpTable() {
+    if (this.expTableOffset >= 0) return;
+    const N = 4096;
+    const off = this.allocateTableRegion(N * 4);
+    this.expTableOffset = off;
+    (this.layout as any).mathTables = (this.layout as any).mathTables ?? [];
+    (this.layout as any).mathTables.push({ kind: "exp", offset: off, length: N });
+  }
+  allocateLogTable() {
+    if (this.logTableOffset >= 0) return;
+    const N = 4096;
+    const off = this.allocateTableRegion(N * 4);
+    this.logTableOffset = off;
+    (this.layout as any).mathTables = (this.layout as any).mathTables ?? [];
+    (this.layout as any).mathTables.push({ kind: "log", offset: off, length: N });
+  }
+
+  passiveSegments: Array<{ offset: number; data: Uint8Array }> = [];
+
+  preallocateTablesFromGraph() {
+    const ops = new Set<string>();
+    const visit = (v: any) => {
+      if (!v || typeof v !== "object") return;
+      if (v.kind === "math" && v.precision === "table") {
+        if (v.op === "sin" || v.op === "cos") ops.add("sin");
+        else if (v.op === "exp") ops.add("exp");
+        else if (v.op === "log") ops.add("log");
+      }
+      // Recurse into typical operand fields.
+      for (const k of ["arg", "args", "a", "b", "cond", "whenTrue", "whenFalse", "idx", "pos", "i", "value", "lanes", "vec", "offset", "atSample", "fields", "body", "count", "srcOffset", "dstOffset"]) {
+        const c = v[k];
+        if (Array.isArray(c)) for (const x of c) visit(x);
+        else if (c) visit(c);
+      }
+    };
+    const walkStmts = (stmts: any[]) => {
+      for (const s of stmts) {
+        visit(s);
+        if (s.body) walkStmts(s.body);
+      }
+    };
+    walkStmts(this.graph.processBody);
+    for (const h of this.graph.messageHandlers) walkStmts(h.body);
+    for (const h of this.graph.midiHandlers) walkStmts(h.body);
+    if (ops.has("sin")) this.allocateSinTable();
+    if (ops.has("exp")) this.allocateExpTable();
+    if (ops.has("log")) this.allocateLogTable();
+  }
+
   emitMath(v: any): ExprRef {
     const m = this.m;
     const t = v.type as ScalarType;
     const arg = this.emitValue(v.arg, t);
     const op = v.op;
+    const precision = v.precision ?? "default";
     if (op === "sqrt") {
       if (t === "f32") return m.f32.sqrt(arg);
       if (t === "f64") return m.f64.sqrt(arg);
@@ -1162,9 +1347,16 @@ class Emit {
       if (t === "f64") return m.f64.ceil(arg);
     }
     if (op === "frac") {
-      // x - floor(x)
       if (t === "f32") return m.f32.sub(arg, m.f32.floor(arg));
       if (t === "f64") return m.f64.sub(arg, m.f64.floor(arg));
+    }
+    // Table-based fast approximations for sin/cos/exp/log when explicitly
+    // requested via /table import path. ~3-5× faster than the JS Math
+    // import on hot paths; trade ~22-bit accuracy for speed.
+    if (precision === "table" && t === "f32") {
+      if (op === "sin" || op === "cos") return this.emitSinCosTable(arg, op);
+      if (op === "exp") return this.emitExpTable(arg);
+      if (op === "log") return this.emitLogTable(arg);
     }
     // For sin/cos/tan/tanh/exp/log: import from JS Math.
     let importName: string;

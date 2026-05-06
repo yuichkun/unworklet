@@ -21,6 +21,7 @@ import {
   gt,
   eq,
   select,
+  flushDenormals,
   type Node,
 } from "@unworklet/core";
 
@@ -43,7 +44,9 @@ const synthVoice = defineSubgraph(
 
     const target = select(gate, velocity, mul(0, 0));
     const coef = select(gate, aCoef, rCoef);
-    const e = add(env.load(), mul(coef, sub(target, env.load())));
+    // One-pole release with rCoef close to 1 — flush subnormals so that a
+    // released voice doesn't keep the audio thread chewing on denormals.
+    const e = flushDenormals(add(env.load(), mul(coef, sub(target, env.load()))));
     env.store(e);
 
     const inc = div(noteHz, sr);

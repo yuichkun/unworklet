@@ -1,14 +1,17 @@
-// @unworklet/dsp/table — table-based math approximations (per spec §12.4).
+// @unworklet/dsp/table — table-based math approximations (per spec Q17).
 //
-// Trades a small amount of accuracy for ~3-5× faster execution by reading
-// from a precomputed lookup table instead of calling Math.*. In WASM, the
-// table is stored in linear memory at compile time and reads are bounds-
-// safe modulo the table length.
+// Trades ~22-bit accuracy for 3-5× faster sin/cos/exp/log on hot paths.
+// The WASM emitter recognizes the `precision: "table"` tag set on these
+// primitives and lowers them to a 4096-entry quarter-wave / piecewise-linear
+// lookup table embedded at the end of linear memory at compile time.
 //
-// For v0.1 these import paths exist as alias entries; a full table-backed
-// codegen path is queued behind the open Q17 in docs/decisions-log.md
-// (math-precision import-path decision). Until then, these alias to the
-// default precision implementations so user code that imports from
-// @unworklet/dsp/table compiles correctly.
+// In interpret mode (Node tests, OfflineRender JS path) these still
+// dispatch to JS Math.* — the table approximation is only observable in
+// the compiled WASM output.
 
-export { sin, cos, exp, log } from "@unworklet/core";
+export {
+  sinTable as sin,
+  cosTable as cos,
+  expTable as exp,
+  logTable as log,
+} from "@unworklet/core";

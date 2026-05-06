@@ -17,6 +17,7 @@ import {
   gt,
   lt,
   select,
+  flushDenormals,
   type Node,
 } from "@unworklet/core";
 
@@ -93,7 +94,7 @@ export const compressor = defineProcessor((ctx) => {
         const det = max(abs(inL), abs(inR));
         const e = env.load();
         const coef = select(gt(det, e), aCoef, rCoef);
-        const newE = add(e, mul(coef, sub(det, e)));
+        const newE = flushDenormals(add(e, mul(coef, sub(det, e))));
         env.store(newE);
 
         // dB envelope
@@ -125,7 +126,7 @@ export const compressor = defineProcessor((ctx) => {
         gainReductionDb.store(min(cur, newGr));
       });
 
-      gainReductionDb.store(mul(gainReductionDb.load(), 0.86));
+      gainReductionDb.store(flushDenormals(mul(gainReductionDb.load(), 0.86)));
     },
   };
 });

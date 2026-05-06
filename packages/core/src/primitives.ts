@@ -112,6 +112,37 @@ export const log = mathOp("log", Math.log);
 export const sqrt = mathOp("sqrt", Math.sqrt);
 export const floor = mathOp("floor", Math.floor);
 export const ceil = mathOp("ceil", Math.ceil);
+
+// Precision-tagged variants for @unworklet/dsp/precise and /table import
+// paths (per spec Q17). The capture backend exposes corresponding
+// primitives that set the MathOp.precision tag; the WASM emitter then
+// chooses a different lowering (table-driven approximation vs. JS Math
+// import). In interpret mode they all dispatch to JS Math (which is
+// f64-precise), so only WASM compilation observes the difference.
+const mathOpPrecise = <N extends number>(name: string, fallback: (a: N) => N) =>
+  (a: any): Node<any> => {
+    const cap = c() as any;
+    if (cap) return cap[name + "Precise"]?.(a) ?? cap[name](a);
+    return (fallback(a as N) as unknown) as Node<any>;
+  };
+const mathOpTable = <N extends number>(name: string, fallback: (a: N) => N) =>
+  (a: any): Node<any> => {
+    const cap = c() as any;
+    if (cap) return cap[name + "Table"]?.(a) ?? cap[name](a);
+    return (fallback(a as N) as unknown) as Node<any>;
+  };
+
+export const sinPrecise = mathOpPrecise("sin", Math.sin);
+export const cosPrecise = mathOpPrecise("cos", Math.cos);
+export const tanPrecise = mathOpPrecise("tan", Math.tan);
+export const tanhPrecise = mathOpPrecise("tanh", Math.tanh);
+export const expPrecise = mathOpPrecise("exp", Math.exp);
+export const logPrecise = mathOpPrecise("log", Math.log);
+
+export const sinTable = mathOpTable("sin", Math.sin);
+export const cosTable = mathOpTable("cos", Math.cos);
+export const expTable = mathOpTable("exp", Math.exp);
+export const logTable = mathOpTable("log", Math.log);
 export const frac = (a: any): Node<any> => {
   const cap = c();
   if (cap) return cap.frac(a);

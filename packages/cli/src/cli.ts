@@ -43,6 +43,7 @@ Commands:
   dev       Watch a processor module and rebuild on change (hot reload)
   analyze   Static analysis report (cycles, memory, warnings)
   bench     Latency / CPU / NaN-Inf benchmark
+  inspect   Decode a snapshot blob — header, schema hash, slot summary
   help      Show this help
 
 Render options:
@@ -199,6 +200,18 @@ async function main() {
       sampleRate: args.flags["sample-rate"] ? Number(args.flags["sample-rate"]) : undefined,
       port,
     });
+    return;
+  }
+
+  if (args.command === "inspect") {
+    const target = args.positional[0];
+    if (!target) {
+      console.error("Error: missing snapshot blob path");
+      process.exit(1);
+    }
+    const { cmdInspect } = await import("./commands.js");
+    const r = await cmdInspect({ blobPath: path.resolve(target) });
+    console.log(r.formatted);
     return;
   }
 

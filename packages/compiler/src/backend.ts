@@ -45,6 +45,18 @@ export const captureBackend: CaptureBackend = {
   ceil: P.ceil,
   frac: P.frac,
 
+  // Precision-tagged variants
+  sinPrecise: P.sinPrecise,
+  cosPrecise: P.cosPrecise,
+  tanPrecise: P.tanPrecise,
+  tanhPrecise: P.tanhPrecise,
+  expPrecise: P.expPrecise,
+  logPrecise: P.logPrecise,
+  sinTable: P.sinTable,
+  cosTable: P.cosTable,
+  expTable: P.expTable,
+  logTable: P.logTable,
+
   // select
   select: P.select,
 

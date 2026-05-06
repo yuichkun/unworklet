@@ -38,6 +38,19 @@ export type CaptureBackend = {
   ceil: (a: any) => any;
   frac: (a: any) => any;
 
+  // Precision-tagged math variants (spec Q17 / docs/01-dsl §2). Optional;
+  // backends that don't implement these fall back to the default precision.
+  sinPrecise?: (a: any) => any;
+  cosPrecise?: (a: any) => any;
+  tanPrecise?: (a: any) => any;
+  tanhPrecise?: (a: any) => any;
+  expPrecise?: (a: any) => any;
+  logPrecise?: (a: any) => any;
+  sinTable?: (a: any) => any;
+  cosTable?: (a: any) => any;
+  expTable?: (a: any) => any;
+  logTable?: (a: any) => any;
+
   select: (cond: any, t: any, f: any) => any;
 
   f32: (a: any) => any;

@@ -1,8 +1,18 @@
-// @unworklet/dsp/precise — high-precision math variants (per spec docs §12.4).
+// @unworklet/dsp/precise — high-precision math variants (per spec Q17).
 //
-// The default math primitives in @unworklet/core (sin/cos/tan/exp/log) compile
-// to JS-imported Math.* in the WASM module. The "precise" variants here are
-// the same — JS Math.* IS the high-precision implementation. The "/precise"
-// import path exists per spec to make the choice explicit at the call site.
+// Re-exports the precision-tagged primitives from @unworklet/core. These
+// dispatch through the capture backend's `*Precise` hooks; in the default
+// WASM emitter, "precise" maps to the same JS-imported Math.* path as
+// `default` (which is already f64-accurate via the math import), but the
+// import-path distinction is preserved so future codegen can substitute
+// a higher-precision lowering without churning user call sites.
 
-export { sin, cos, tan, tanh, exp, log, sqrt } from "@unworklet/core";
+export {
+  sinPrecise as sin,
+  cosPrecise as cos,
+  tanPrecise as tan,
+  tanhPrecise as tanh,
+  expPrecise as exp,
+  logPrecise as log,
+  sqrt,
+} from "@unworklet/core";
