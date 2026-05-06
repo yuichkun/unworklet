@@ -520,7 +520,23 @@ export function inspect(blob: Uint8Array): {
   schemaHash: string;
   profile: string | null;
   slots: Record<string, any>;
+  format?: "engine" | "wasm";
 } {
+  // Detect WASM-side UWSN snapshot format and surface its metadata. The
+  // WASM blob doesn't carry slot-keyed payloads (only state-region bytes
+  // + buffer table), so `slots` will be empty for those — but at least
+  // version + schemaHash come through, which is what most callers want.
+  if (
+    blob.length >= 12 &&
+    blob[0] === 0x55 && blob[1] === 0x57 && blob[2] === 0x53 && blob[3] === 0x4e
+  ) {
+    const dv = new DataView(blob.buffer, blob.byteOffset, blob.byteLength);
+    const version = dv.getUint32(4, true);
+    const hashLen = dv.getUint32(8, true);
+    let h = "";
+    for (let i = 0; i < hashLen; i++) h += String.fromCharCode(blob[12 + i]!);
+    return { version, schemaHash: h, profile: null, slots: {}, format: "wasm" };
+  }
   // Standalone inspect — doesn't need an engine; we re-use the format.
   const dec = new TextDecoder();
   const view = new DataView(blob.buffer, blob.byteOffset, blob.byteLength);
@@ -580,7 +596,7 @@ export function inspect(blob: Uint8Array): {
       };
     } else if (kind === 20) slots[path] = { kind: "param", value: dv.getFloat64(0, true) };
   }
-  return { version: 1, schemaHash, profile, slots };
+  return { version: 1, schemaHash, profile, slots, format: "engine" };
 }
 
 function parseMidiBytes(data: Uint8Array): MidiEvent | null {
