@@ -20,12 +20,12 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q8 | Multi-block lookahead | resolved — out of scope (raw materials `buffer` + `state` + `defineSubgraph` + `createDelay` are sufficient; framework abstraction would violate either AudioContext ownership or declarative core philosophy) | `05-client.md` §7 (recipe) |
 | Q9 | Cross-processor communication | resolved — out of scope ((a)(b)(e) audio routing covered by Q6 `connect()`; (c) message relay covered by upcoming generic messaging Q; (d) audio-thread SAB sharing left to consumer via `processorOptions`) | `decisions-log.md` Q9 |
 | Q10 | Transport / tempo sync | resolved — out of scope (third-party domain) | `11-midi.md` §5 |
-| Q11 | Browser quirk normalization | (open) | `08-deployment.md` §2 |
-| Q12 | Monorepo tool | (open) | `09-repo-structure.md` §1 |
-| Q13 | Initial package layout | (open) | `09-repo-structure.md` §2 |
-| Q14 | v1.0.0 acceptance criteria | (open) | `10-roadmap.md` §1 |
-| Q15 | License | (open) | `09-repo-structure.md` §3 |
-| Q16 | npm scope | (open) | `09-repo-structure.md` §4 |
+| Q11 | Browser quirk normalization | (open) — Chromium-only headless test path verified; cross-browser matrix deferred | `08-deployment.md` §2 |
+| Q12 | Monorepo tool | resolved — pnpm workspaces with `packages/*` + `examples` + `apps/playground` | `09-repo-structure.md` §1 |
+| Q13 | Initial package layout | resolved — split per draft_spec §11: `core` / `compiler` / `client` / `worklet` / `dsp` (`/precise` `/table` subpaths) / `test` / `bench` / `cli` / `vite-plugin`; examples and playground are separate workspace entries | `09-repo-structure.md` §2 |
+| Q14 | v1.0.0 acceptance criteria | resolved — 14 canonical examples compile to WASM, run on a real Chromium AudioWorklet (headless smoke test) producing audible output for the 10 audio-driven examples; 129 unit + integration tests pass; binary lowering is bit-exact (golden WAV regression); SIMD parity covered; static analysis surfaces 7 layer-3 codes | `10-roadmap.md` §1 |
+| Q15 | License | resolved — Apache-2.0 | `09-repo-structure.md` §3 |
+| Q16 | npm scope | resolved — `@unworklet/*` | `09-repo-structure.md` §4 |
 | Q17 | Math precision variants | resolved — three import paths: `@unworklet/core` (default JS Math), `@unworklet/dsp/precise` (=default for now, reserved), `@unworklet/dsp/table` (4096-entry LUT for sin/cos/exp/log; tan/tanh excluded by design) | `01-dsl.md` §2 |
 | Q18 | Render quantum handling | resolved — process(blockSize) takes the size as an i32 param; renderQuantum is a runtime constant from the host (default 128) | `04-worklet-runtime.md` §3 |
 | Q19 | Channel-count specialization | (open) — codegen treats channel as an indexing dim today; specialization deferred behind benchmarks | `04-worklet-runtime.md` §4 |
@@ -35,7 +35,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q23 | Hot reload semantics | resolved — `unworklet dev` watches the source dir recursively, rebuilds, posts SSE events. Page receives `reload` or `schema-changed` (which forces fresh instance) | `07-tooling.md` §4 |
 | Q24 | Bundler integration scope | resolved — first-party `@unworklet/vite-plugin` exposes `?unworklet` import suffix; compiles the processor at build time, emits worklet JS as an asset (Blob URL in dev) | `08-deployment.md` §1 |
 | Q25 | Source maps | resolved — capture-time stack walking attaches `loc` to every AST node; wasm-emit calls binaryen `setDebugLocation` for top-level stmts and emits `<name>.wasm.map`; CLI also writes a `<name>.locations.json` structural sidecar | `03-compiler.md` §7 |
-| Q26 | TypeScript version | (open) | `09-repo-structure.md` §5 |
+| Q26 | TypeScript version | resolved — TS 6.x as the workspace root; ESM-only `"type": "module"`; packages publish source TS via `main: ./src/index.ts` (bundlers transpile per consumer) | `09-repo-structure.md` §5 |
 | Q27 | Generic typed messaging core surface | resolved — 5-surface uniform (param / state.publish / event / message / midi); SAB+Atomics with postMessage fallback; bulk via state.buffer.publish or event/message variable-length payloads | `02-messaging.md` + `01-dsl.md` §3, §4 |
 
 ---
