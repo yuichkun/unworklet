@@ -40,6 +40,20 @@ function sin(freq: number, dur: number) {
   return { main: [l, r] };
 }
 
+// Build a 0.2s sine click sample for the typed-array uploads.
+const sampleClick = (() => {
+  const buf = new Float32Array((0.2 * SR) | 0);
+  for (let i = 0; i < buf.length; i++) {
+    buf[i] = Math.sin((2 * Math.PI * 220 * i) / SR) * 0.6 * Math.exp(-i / (SR * 0.05));
+  }
+  return buf;
+})();
+const ir = (() => {
+  const buf = new Float32Array(64);
+  buf[0] = 1.0; // identity IR (passthrough)
+  return buf;
+})();
+
 const cases: Array<{ name: string; processor: any; opts?: any; inputs?: any }> = [
   { name: "01-stereo-gain", processor: stereoGain, inputs: sin(440, 0.05) },
   { name: "02-three-band-eq", processor: threeBandEQ, inputs: sin(440, 0.05) },
@@ -58,6 +72,25 @@ const cases: Array<{ name: string; processor: any; opts?: any; inputs?: any }> =
     processor: fmSynth,
     opts: { midi: [{ type: "noteOn", channel: 0, note: 60, velocity: 100, atSample: 0 }] },
   },
+  {
+    name: "07-convolution-reverb",
+    processor: convolutionReverb,
+    inputs: sin(440, 0.05),
+    opts: {
+      messages: [{ at: 0, name: "uploadIR", payload: { irL: ir, irR: ir } }],
+    },
+  },
+  {
+    name: "12-drum-sampler",
+    processor: drumSampler,
+    opts: {
+      durationSec: 0.2,
+      messages: [
+        { at: 0, name: "uploadPad", payload: { pad: 0, samples: sampleClick } },
+        { at: 0.005, name: "triggerPad", payload: { pad: 0, velocity: 1 } },
+      ],
+    },
+  },
 ];
 
 for (const c of cases) {
@@ -65,6 +98,7 @@ for (const c of cases) {
     sampleRate: SR,
     duration: c.opts?.durationSec ?? 0.1,
     midiEvents: (c.opts?.midi ?? []).map((event: any) => ({ at: 0, event })),
+    messages: c.opts?.messages,
   };
   if (c.inputs) {
     cfg.input = c.inputs;

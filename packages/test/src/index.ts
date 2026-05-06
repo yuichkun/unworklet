@@ -115,6 +115,30 @@ export async function renderOfflineWasm(
       if (off.type === "f32") mem[(slotPtr + off.offset) >> 2] = +v;
       else if (off.type === "i32" || off.type === "bool") memI32[(slotPtr + off.offset) >> 2] = (v as any) | 0;
     }
+    // Write typed-array payload fields into the per-slot content area
+    // (mirrors the worklet's _enqueueMessage logic).
+    const payloadFields = (ml as any).payloadFields ?? [];
+    if (payloadFields.length > 0) {
+      const slotPayloadBase = (ml as any).payloadBufferOffset + slotIdx * (ml as any).payloadStridePerSlot;
+      for (const pf of payloadFields) {
+        const arr = (payload as any)?.[pf.name];
+        const fieldBase = slotPayloadBase + pf.fieldOffsetWithinPayload;
+        memI32[(slotPtr + pf.slotOffsetField) >> 2] = fieldBase;
+        if (
+          arr instanceof Float32Array ||
+          arr instanceof Int32Array ||
+          arr instanceof Uint8Array
+        ) {
+          const len = Math.min(arr.length, pf.maxLength);
+          memI32[(slotPtr + pf.slotLengthField) >> 2] = len;
+          if (pf.elemType === "f32") mem.set((arr as Float32Array).subarray(0, len), fieldBase >> 2);
+          else if (pf.elemType === "i32") memI32.set((arr as Int32Array).subarray(0, len), fieldBase >> 2);
+          else memU8.set((arr as Uint8Array).subarray(0, len), fieldBase);
+        } else {
+          memI32[(slotPtr + pf.slotLengthField) >> 2] = 0;
+        }
+      }
+    }
     memI32[headOff >> 2] = head + 1;
   }
 

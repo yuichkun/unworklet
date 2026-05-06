@@ -18,6 +18,8 @@ import {
   compressor,
   polySynth,
   fmSynth,
+  drumSampler,
+  convolutionReverb,
 } from "@unworklet/examples";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -34,12 +36,26 @@ function sin(freq: number, dur: number) {
   return { main: [l, r] };
 }
 
+const sampleClick = (() => {
+  const buf = new Float32Array((0.2 * SR) | 0);
+  for (let i = 0; i < buf.length; i++) {
+    buf[i] = Math.sin((2 * Math.PI * 220 * i) / SR) * 0.6 * Math.exp(-i / (SR * 0.05));
+  }
+  return buf;
+})();
+const ir = (() => {
+  const buf = new Float32Array(64);
+  buf[0] = 1.0;
+  return buf;
+})();
+
 const cases: Array<{
   name: string;
   processor: any;
   golden: string;
   inputs?: any;
   midi?: any[];
+  messages?: any[];
   duration?: number;
 }> = [
   { name: "stereoGain", processor: stereoGain, golden: "01-stereo-gain.wav", inputs: sin(440, 0.05) },
@@ -63,6 +79,23 @@ const cases: Array<{
     midi: [{ type: "noteOn", channel: 0, note: 60, velocity: 100, atSample: 0 }],
     duration: 0.1,
   },
+  {
+    name: "convolutionReverb",
+    processor: convolutionReverb,
+    golden: "07-convolution-reverb.wav",
+    inputs: sin(440, 0.05),
+    messages: [{ at: 0, name: "uploadIR", payload: { irL: ir, irR: ir } }],
+  },
+  {
+    name: "drumSampler",
+    processor: drumSampler,
+    golden: "12-drum-sampler.wav",
+    duration: 0.2,
+    messages: [
+      { at: 0, name: "uploadPad", payload: { pad: 0, samples: sampleClick } },
+      { at: 0.005, name: "triggerPad", payload: { pad: 0, velocity: 1 } },
+    ],
+  },
 ];
 
 describe("Golden WAV regression", () => {
@@ -72,6 +105,7 @@ describe("Golden WAV regression", () => {
         sampleRate: SR,
         duration: c.duration ?? 0.1,
         midiEvents: (c.midi ?? []).map((event: any) => ({ at: 0, event })),
+        messages: c.messages,
       };
       if (c.inputs) cfg.input = c.inputs;
       const out = await renderOfflineWasm(c.processor, cfg);
