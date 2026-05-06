@@ -282,6 +282,24 @@ export async function createNode(
   // we transition straight to ready.
   lifecycle.transition("ready");
 
+  // Wrap engine.render so any thrown error fires registered onError
+  // handlers and transitions the lifecycle into "errored". Exposed via
+  // `node.__engine` for tests; production callers go through renderOffline
+  // (which routes errors the same way).
+  const engineUnderlyingRender = engine.render.bind(engine);
+  engine.render = ((...args: any[]) => {
+    try {
+      return engineUnderlyingRender(...args);
+    } catch (err: any) {
+      lifecycle.transition("errored");
+      const e = err instanceof Error ? err : new Error(String(err));
+      for (const h of errorHandlers) {
+        try { h(e); } catch (he) { console.error(he); }
+      }
+      throw err;
+    }
+  }) as typeof engine.render;
+
   const node: UnworkletNode = {
     node: null,
     inputs,

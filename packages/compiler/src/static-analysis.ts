@@ -163,6 +163,44 @@ export function analyze(
     });
   }
 
+  // ─── Duplicate output-write detection (docs/01-dsl §1.3) ─────────────
+  // Writing the same output channel twice in the same forSample iteration
+  // is almost always a bug — the second write silently shadows the first.
+  // We check at the AST level: if a single forSample body contains two
+  // `audio-out-set` statements with the same (outputId, channel), warn.
+  function checkDuplicateOutputWrites(stmts: Statement[]) {
+    for (const s of stmts) {
+      if (s.kind === "for-sample" || s.kind === "every-n-samples") {
+        const seen = new Map<string, number>();
+        const walk = (sub: Statement[]) => {
+          for (const inner of sub) {
+            if (inner.kind === "audio-out-set") {
+              const key = `${inner.outputId}:${inner.channel}`;
+              seen.set(key, (seen.get(key) ?? 0) + 1);
+            } else if (inner.kind === "for-sample" || inner.kind === "every-n-samples") {
+              walk(inner.body);
+            }
+          }
+        };
+        walk(s.body);
+        for (const [key, count] of seen) {
+          if (count > 1) {
+            const [oid, ch] = key.split(":");
+            const decl = decls.audioOutputs.find((a) => String(a.id) === oid);
+            diags.push({
+              level: "warning",
+              code: "duplicate-output-write",
+              message: `audioOutput "${decl?.name ?? oid}" channel ${ch} is written ${count}× in the same forSample/everyNSamples body — only the last write is observable.`,
+              refactorHint: `Combine the writes into a single .set() call, or guard each with a different sample-position so they don't collide.`,
+            });
+          }
+        }
+        checkDuplicateOutputWrites(s.body);
+      }
+    }
+  }
+  checkDuplicateOutputWrites(graph.processBody);
+
   // ─── Required-call: every audioOutput must be written somewhere ───────
   const writtenOutputs = new Set<string>();
   function findAudioOutSet(stmts: Statement[]) {

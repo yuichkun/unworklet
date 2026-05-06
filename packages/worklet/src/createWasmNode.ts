@@ -29,7 +29,7 @@ export type WasmUnworkletNode = {
   params: Record<string, AudioParam>;
   state: Record<string, { readonly value: any; subscribe(h: (v: any) => void): () => void }>;
   events: Record<string, { on(h: (p: any) => void): () => void; diagnostics: { overflowCount(): number } }>;
-  messages: Record<string, (payload: any) => void>;
+  messages: Record<string, ((payload: any) => void) & { diagnostics: { overflowCount(): number } }>;
   midi: {
     send(ev: MidiEvent): void;
     onEvent<K extends MidiEvent["type"]>(type: K, h: (e: Extract<MidiEvent, { type: K }>) => void): () => void;
@@ -199,24 +199,30 @@ export async function createWasmNode(
   }
   // Messages senders. When SAB transport is available, write the slot
   // directly into the shared linear memory + Atomics-bump the ring head;
-  // otherwise fall back to postMessage which the worklet enqueues.
-  const messages: WasmUnworkletNode["messages"] = {};
+  // otherwise fall back to postMessage which the worklet enqueues. Each
+  // sender carries a `.diagnostics.overflowCount()` (docs/05-client §6).
+  const messages: WasmUnworkletNode["messages"] = {} as any;
+  const messageOverflowEarly = new Map<string, number>();
   for (const m of layout.messages) {
+    let fn: any;
     if (sharedMem && memI32 && memU8 && memF32) {
       const ml = m;
-      messages[m.name] = (payload: any) => {
+      fn = (payload: any) => {
         try {
           enqueueSAB(ml, payload, memI32, memU8, memF32);
         } catch (e) {
-          // Fall back to postMessage if anything goes wrong.
           node.port.postMessage({ type: "message", name: ml.name, payload });
         }
       };
     } else {
-      messages[m.name] = (payload: any) => {
+      fn = (payload: any) => {
         node.port.postMessage({ type: "message", name: m.name, payload });
       };
     }
+    fn.diagnostics = {
+      overflowCount: () => messageOverflowEarly.get(m.name) ?? 0,
+    };
+    messages[m.name] = fn;
   }
   // MIDI
   const midiOutListeners = new Map<string, Array<(e: any) => void>>();
@@ -314,7 +320,9 @@ export async function createWasmNode(
   let nextRpcId = 1;
   const pending = new Map<number, (v: any) => void>();
   const eventOverflow = new Map<string, number>();
-  const messageOverflow = new Map<string, number>();
+  // Reuse the early-bound map so `messages.<name>.diagnostics.overflowCount()`
+  // sees the same numbers as `node.diagnostics.overflows().messages`.
+  const messageOverflow = messageOverflowEarly;
   const errorListeners: Array<(e: any) => void> = [];
 
   node.port.addEventListener("message", (e: MessageEvent) => {
