@@ -179,6 +179,17 @@ export function generateWorkletModule(
   const LAYOUT = ${layoutJson};
   const WASM_B64 = "${wasmB64}";
 
+  // Resolve a SnapshotPolicy to "persistent" | "transient" for the active
+  // profile. Spec docs/01-dsl §8.2: record-form policies map per-profile,
+  // string-form applies uniformly. Default profile name is "default".
+  function resolveSnapshot(policy, profile) {
+    if (typeof policy === "string") return policy;
+    if (policy && typeof policy === "object") {
+      return policy[profile ?? "default"] ?? policy.default ?? "persistent";
+    }
+    return "persistent";
+  }
+
   // AudioWorkletGlobalScope doesn't expose atob; decode base64 manually.
   function b64ToBytes(b64) {
     const lut = new Uint8Array(128);
@@ -280,9 +291,10 @@ export function generateWorkletModule(
       // docs/05-client §2.6: snapshot serializes the persistent state region
       // and (optionally) buffers, including a schemaHash so a later restore
       // can reject mismatched processors.
+      const profile = _profile ?? "default";
       const stateBytes = LAYOUT.stateRegion.size | 0;
       const persistentBuffers = LAYOUT.bufferRegion.buffers.filter(
-        (b) => b.snapshot === "persistent",
+        (b) => resolveSnapshot(b.snapshot, profile) === "persistent",
       );
       let bufBytes = 0;
       for (const b of persistentBuffers) bufBytes += b.byteSize;
@@ -303,7 +315,7 @@ export function generateWorkletModule(
       const stateView = new Uint8Array(out.buffer, p, stateBytes);
       stateView.set(this.memU8.subarray(LAYOUT.stateRegion.offset, LAYOUT.stateRegion.offset + stateBytes));
       for (const sl of LAYOUT.stateRegion.slots) {
-        if (sl.snapshot === "transient") {
+        if (resolveSnapshot(sl.snapshot, profile) === "transient") {
           const off = sl.offset - LAYOUT.stateRegion.offset;
           for (let z = 0; z < 8; z++) stateView[off + z] = 0;
         }
@@ -345,7 +357,7 @@ export function generateWorkletModule(
       // Apply state slot-by-slot so transient slots in memory keep their
       // current values (the blob has zeros there).
       for (const sl of LAYOUT.stateRegion.slots) {
-        if (sl.snapshot === "transient") continue;
+        if (resolveSnapshot(sl.snapshot, "default") === "transient") continue;
         const blobOff = p + (sl.offset - LAYOUT.stateRegion.offset);
         for (let z = 0; z < 8; z++) this.memU8[sl.offset + z] = blob[blobOff + z];
       }
@@ -356,7 +368,7 @@ export function generateWorkletModule(
         const bid = dv.getUint32(p, true); p += 4;
         const bsize = dv.getUint32(p, true); p += 4;
         const layout = LAYOUT.bufferRegion.buffers.find((b) => b.bufferId === bid);
-        if (!layout || layout.byteSize !== bsize || layout.snapshot !== "persistent") {
+        if (!layout || layout.byteSize !== bsize || resolveSnapshot(layout.snapshot, "default") !== "persistent") {
           skipped.push("buf:" + bid);
           p += bsize;
           continue;

@@ -10,9 +10,13 @@ export type CreateNodeOptions = {
   initial?: Record<string, number>;
 };
 
-// In-Node / pure-JS UnworkletNode. In a browser environment, this would wrap an
-// AudioWorkletNode, but the surface is the same.
+// In-Node / pure-JS UnworkletNode. In a browser environment this wraps a
+// real AudioWorkletNode (use `@unworklet/worklet`'s `createWasmNode` for
+// that path). The shape is the same; on the JS path `.node` is null.
 export type UnworkletNode = {
+  // Underlying AudioWorkletNode when the WASM transport is in use; null
+  // for the pure-JS path (offline rendering / Node tests).
+  node: AudioWorkletNode | null;
   inputs: Record<string, FakeAudioConnect>;
   outputs: Record<string, FakeAudioConnect>;
   params: Record<string, FakeAudioParam>;
@@ -270,6 +274,7 @@ export async function createNode(
   lifecycle.transition("ready");
 
   const node: UnworkletNode = {
+    node: null,
     inputs,
     outputs,
     params,

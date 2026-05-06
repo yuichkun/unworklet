@@ -8,9 +8,12 @@
 import { compileToWasm, generateWorkletModule } from "@unworklet/compiler";
 import type { CompiledProcessor, MidiEvent } from "@unworklet/core";
 
-const moduleUrlCache = new WeakMap<CompiledProcessor, string>();
-const compiledCache = new WeakMap<CompiledProcessor, ReturnType<typeof compileToWasm>>();
-const moduleAddedFor = new WeakMap<BaseAudioContext, Set<CompiledProcessor>>();
+// Caches keyed on (processor, sampleRate). Two contexts at different
+// sample rates produce structurally different WASM (constants like
+// 1/sampleRate are inlined), so we can't share a cache by processor only.
+const moduleUrlCache = new WeakMap<CompiledProcessor, Map<number, string>>();
+const compiledCache = new WeakMap<CompiledProcessor, Map<number, ReturnType<typeof compileToWasm>>>();
+const moduleAddedFor = new WeakMap<BaseAudioContext, Set<string>>();
 
 export type CreateWasmNodeOptions = {
   sampleRate?: number;
@@ -59,30 +62,36 @@ export async function createWasmNode(
   processorName: string,
   _options: CreateWasmNodeOptions = {},
 ): Promise<WasmUnworkletNode> {
-  // Compile (cached per processor reference) — keep both the URL and the
-  // CompileResult so subsequent reads of declarations don't re-run binaryen.
-  let url = moduleUrlCache.get(processor);
-  let compiled = compiledCache.get(processor);
+  // Compile cached on (processor, sampleRate). Different contexts may
+  // run at different sample rates, which inlines different constants.
+  const sr = audioContext.sampleRate;
+  let urlByRate = moduleUrlCache.get(processor);
+  if (!urlByRate) { urlByRate = new Map(); moduleUrlCache.set(processor, urlByRate); }
+  let compiledByRate = compiledCache.get(processor);
+  if (!compiledByRate) { compiledByRate = new Map(); compiledCache.set(processor, compiledByRate); }
+  let url = urlByRate.get(sr);
+  let compiled = compiledByRate.get(sr);
   if (!url || !compiled) {
-    compiled = compileToWasm(processor, { sampleRate: audioContext.sampleRate });
+    compiled = compileToWasm(processor, { sampleRate: sr });
     const source = generateWorkletModule(compiled.graph, compiled.layout, compiled.binary, {
       processorName,
     });
     const blob = new Blob([source], { type: "application/javascript" });
     url = URL.createObjectURL(blob);
-    moduleUrlCache.set(processor, url);
-    compiledCache.set(processor, compiled);
+    urlByRate.set(sr, url);
+    compiledByRate.set(sr, compiled);
   }
 
-  // addModule only once per context per processor.
+  // addModule only once per (context, processorName, sampleRate).
   let addedSet = moduleAddedFor.get(audioContext);
   if (!addedSet) {
     addedSet = new Set();
     moduleAddedFor.set(audioContext, addedSet);
   }
-  if (!addedSet.has(processor)) {
+  const addKey = `${processorName}@${sr}`;
+  if (!addedSet.has(addKey)) {
     await audioContext.audioWorklet.addModule(url);
-    addedSet.add(processor);
+    addedSet.add(addKey);
   }
 
   // Construct the AudioWorkletNode. We don't yet know the I/O shape, so use
@@ -109,6 +118,9 @@ export async function createWasmNode(
       if (e.data?.type === "ready") {
         node.port.removeEventListener("message", onMessage);
         resolve(e.data as Ready);
+      } else if (e.data?.type === "init-error") {
+        node.port.removeEventListener("message", onMessage);
+        reject(new Error(`worklet init failed: ${e.data.message ?? "unknown"}`));
       }
     };
     node.port.addEventListener("message", onMessage);

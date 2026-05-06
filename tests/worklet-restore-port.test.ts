@@ -1,12 +1,9 @@
-// Verify that createWasmNode.restore() ACTUALLY feeds the WASM worklet's
-// _handleRestore (rather than only running the host-side migration leg
-// without delivering anything to the worklet).
-//
-// We mount the worklet module source into a Node vm sandbox the same way
-// tests/worklet-codepath.test.ts does, then mock an AudioWorkletNode whose
-// .port forwards to the embedded class instance. The createWasmNode helper
-// is then driven against this mock and we assert the worklet receives
-// {type:"restore"} with the migrated blob and replies with restore-response.
+// Pins the wire-format contract on the worklet side: a snapshot blob
+// delivered through the {type:"restore"} port-message protocol must be
+// accepted by `_handleRestore` and applied to the linear-memory state
+// region. The production `createWasmNode.restore()` uses the same wire
+// format; the full host-wrapper roundtrip is covered separately in
+// tests/createwasmnode-real.test.ts.
 import { describe, expect, test } from "vite-plus/test";
 import vm from "node:vm";
 import {
@@ -52,7 +49,7 @@ function bootWorkletInstance(source: string, processorName: string) {
   return { inst, port };
 }
 
-describe("createWasmNode.restore → worklet", () => {
+describe("worklet wire-format restore (port message)", () => {
   test("restore message reaches _handleRestore and the state region is updated", async () => {
     const proc = defineProcessor(() => {
       const out = audioOutput({ channels: 1, name: "main" });
