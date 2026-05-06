@@ -58,18 +58,20 @@ export const convolutionReverb = defineProcessor(
       publish: { rateFps: 30 },
     });
 
-    const uploadIR = message<{ irL: Float32Array; irR: Float32Array }>({ name: "uploadIR" });
+    const uploadIR = message<{ irL: Float32Array; irR: Float32Array }>({
+      name: "uploadIR",
+      capacity: 2,
+      payload: {
+        irL: { type: "f32", maxLength: IR_LEN },
+        irR: { type: "f32", maxLength: IR_LEN },
+      },
+    });
 
     return {
       process: () => {
         uploadIR.onReceive(({ irL: il, irR: ir }) => {
-          const len = Math.min(il.length, IR_LEN);
-          for (let i = 0; i < len; i++) irL.write(i, il[i]!);
-          for (let i = 0; i < len; i++) irR.write(i, ir[i]!);
-          for (let i = len; i < IR_LEN; i++) {
-            irL.write(i, 0);
-            irR.write(i, 0);
-          }
+          il.copyTo(irL, 0, il.length());
+          ir.copyTo(irR, 0, ir.length());
         });
 
         const headBlock = histHead.load();

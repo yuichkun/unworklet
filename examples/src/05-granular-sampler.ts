@@ -12,10 +12,12 @@ import {
   sub,
   mul,
   div,
+  mod,
   sin,
   select,
   lte,
   gt,
+  eq,
   exp,
   type Node,
 } from "@unworklet/core";
@@ -84,7 +86,11 @@ export const granularSampler = defineProcessor((ctx) => {
   const activeVel = state.f32(0, { name: "activeVel" });
   const playingCount = state.i32(0, { name: "playingCount", publish: { rateFps: 10 } });
 
-  const uploadSample = message<{ samples: Float32Array }>({ name: "uploadSample" });
+  const uploadSample = message<{ samples: Float32Array; len: number }>({
+    name: "uploadSample",
+    capacity: 4,
+    payload: { samples: { type: "f32", maxLength: SAMPLE_BUFFER_LEN } },
+  });
   const grainSpawned = event<{ voice: number; pos: number }>({ name: "grainSpawned" });
 
   const midi = midiInput({ name: "midi" });
@@ -92,21 +98,16 @@ export const granularSampler = defineProcessor((ctx) => {
   return {
     process: () => {
       uploadSample.onReceive(({ samples }) => {
-        const len = Math.min(samples.length, SAMPLE_BUFFER_LEN);
-        for (let i = 0; i < len; i++) {
-          sampleBuf.write(i, samples[i]!);
-        }
-        sampleLen.store(len);
-        const stride = Math.max(1, Math.floor(len / WAVEFORM_FRAME));
-        for (let i = 0; i < WAVEFORM_FRAME; i++) {
-          const src = i * stride;
-          waveformView.write(i, src < len ? samples[src]! : 0);
-        }
+        // Copy the typed-array payload from the message slot into the persistent
+        // sampleBuf via a single memory.copy, then store the length for the
+        // render loop to read.
+        samples.copyTo(sampleBuf, 0, samples.length());
+        sampleLen.store(samples.length());
       });
 
       midi.onEvent("noteOn", ({ note, velocity }) => {
         activeNote.store(note);
-        activeVel.store(velocity / 127);
+        activeVel.store(mul(velocity, 1 / 127));
       });
       midi.onEvent("noteOff", () => {
         activeVel.store(0);
@@ -120,25 +121,23 @@ export const granularSampler = defineProcessor((ctx) => {
         const spawn = lte(cd, 0);
         nextSpawnIn.store(select(spawn, samplesPerSpawn, cd));
 
-        // On spawn: pick voice (round-robin)
+        // On spawn: assign the round-robin slot. We use `select` rather than a
+        // JS `if`, since the spawn / isMe values are graph nodes — JS branches
+        // would never see them and silently emit dead code.
         const rrSlot = voiceRR.load();
+        const startPos = mul(playbackPos.at(i), sampleLen.load());
         for (let v = 0; v < NUM_VOICES; v++) {
-          const isMe = spawn && rrSlot === v;
-          if (isMe) {
-            const startPos = (playbackPos.at(i) as unknown as number) * sampleLen.load();
-            voicePos[v]!.store(startPos);
-            voiceRemaining[v]!.store(grainSamples as unknown as number);
-            voiceGate[v]!.store(true);
-            grainSpawned.emitIf(true, {
-              atSample: i,
-              voice: v,
-              pos: voicePos[v]!.load() as unknown as number,
-            } as any);
-          }
+          const isMe = select(spawn, eq(rrSlot, v), false);
+          voicePos[v]!.store(select(isMe, startPos, voicePos[v]!.load()));
+          voiceRemaining[v]!.store(select(isMe, grainSamples, voiceRemaining[v]!.load()));
+          voiceGate[v]!.store(select(isMe, true, voiceGate[v]!.load()));
+          grainSpawned.emitIf(isMe, {
+            atSample: i,
+            voice: v,
+            pos: voicePos[v]!.load() as unknown as number,
+          } as any);
         }
-        if (spawn) {
-          voiceRR.store((rrSlot + 1) % NUM_VOICES);
-        }
+        voiceRR.store(select(spawn, mod(add(rrSlot, 1), NUM_VOICES), rrSlot));
 
         let lSum: Node<"f32"> = mul(0, 0);
         let rSum: Node<"f32"> = mul(0, 0);

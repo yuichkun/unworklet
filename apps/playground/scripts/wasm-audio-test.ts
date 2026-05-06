@@ -179,7 +179,15 @@ async function main() {
           { name: "triggerPad", payload: { pad: 0, velocity: 1 } },
         ],
       });
-      r.granularSampler = await renderProcessor("granularSampler", { duration: 0.05, midi: [note(60)] });
+      const granSample = new Float32Array(48000);
+      for (let i = 0; i < granSample.length; i++) {
+        granSample[i] = Math.sin((2 * Math.PI * 220 * i) / SR) * 0.6;
+      }
+      r.granularSampler = await renderProcessor("granularSampler", {
+        duration: 0.2,
+        midi: [note(60)],
+        messages: [{ name: "uploadSample", payload: { samples: granSample } }],
+      });
       const ir = new Float32Array(64);
       ir[0] = 1.0;
       r.convolutionReverb = await renderProcessor("convolutionReverb", {
@@ -206,8 +214,8 @@ async function main() {
       compressor: { silentOk: false, minPeak: 0.05 },
       polySynth: { silentOk: false, minPeak: 0.01 },
       fmSynth: { silentOk: false, minPeak: 0.01 },
-      drumSampler: { silentOk: true },
-      granularSampler: { silentOk: true },
+      drumSampler: { silentOk: false, minPeak: 0.05 },
+      granularSampler: { silentOk: false, minPeak: 0.01 },
       convolutionReverb: { silentOk: false, minPeak: 0.1 },
       arpeggiator: { silentOk: true },
       linearPhaseEQ: { silentOk: true },

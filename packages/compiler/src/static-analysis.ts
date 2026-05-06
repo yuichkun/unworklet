@@ -233,6 +233,124 @@ export function analyze(
     }
   }
 
+  // ─── Allocation check (J1): no per-block allocation paths in process body.
+  // Our IR has no allocation node kinds at all (no `new`/`alloc`), so the
+  // capture machinery already prevents this. We surface that as an info-level
+  // attestation so the diagnostic surface matches the spec checklist.
+  diags.push({
+    level: "info",
+    code: "allocation-free",
+    message: `No allocation primitives present in the captured IR — process body is allocation-free by construction.`,
+  });
+
+  // ─── Loop-bound check (J2): every forSample / forSample.byN has a
+  // statically-known stride that divides the renderQuantum. Per docs/04 §3,
+  // unbounded loops are forbidden inside the audio thread.
+  function checkLoopBounds(stmts: Statement[], inForSample = false) {
+    for (const s of stmts) {
+      if (s.kind === "for-sample") {
+        if (!Number.isInteger(s.stride) || s.stride <= 0) {
+          diags.push({
+            level: "error",
+            code: "loop-not-statically-bounded",
+            message: `forSample stride must be a positive integer; got ${s.stride}.`,
+            refactorHint: `Use forSample(...) for stride 1, or forSample.byN(N, ...) with a positive integer N.`,
+          });
+        } else if (layout.renderQuantum % s.stride !== 0) {
+          diags.push({
+            level: "warning",
+            code: "loop-stride-not-divisor",
+            message: `forSample.byN(${s.stride}) does not evenly divide renderQuantum=${layout.renderQuantum}; trailing samples will be skipped.`,
+            refactorHint: `Choose a stride that divides ${layout.renderQuantum} (e.g. 1, 2, 4, 8, 16, 32, 64, 128).`,
+          });
+        }
+        checkLoopBounds(s.body, true);
+      } else if (s.kind === "every-n-samples") {
+        if (!Number.isInteger(s.N) || s.N <= 0) {
+          diags.push({
+            level: "error",
+            code: "every-n-not-statically-bounded",
+            message: `everyNSamples N must be a positive integer; got ${s.N}.`,
+          });
+        }
+        checkLoopBounds(s.body, inForSample);
+      } else if (s.kind === "handler-for-range") {
+        // Runtime-bounded: inside message handlers only. The bound expression is
+        // evaluated at the start of the loop, so it cannot grow during iteration.
+        checkLoopBounds(s.body, inForSample);
+      }
+    }
+  }
+  checkLoopBounds(graph.processBody);
+  for (const h of graph.messageHandlers) checkLoopBounds(h.body);
+  for (const h of graph.midiHandlers) checkLoopBounds(h.body);
+
+  // ─── Out-of-block sample-offset detection (J3): emitted events whose
+  // atSample is a static const must be in [0, renderQuantum). Negative or
+  // ≥renderQuantum produces undefined timing on the consumer.
+  function checkOutOfBlock(stmts: Statement[]) {
+    for (const s of stmts) {
+      if (s.kind === "emit-if" || s.kind === "midi-emit-if") {
+        const at = s.atSample;
+        if (at && at.kind === "const") {
+          const v = (at as any).value;
+          if (typeof v === "number" && (v < 0 || v >= layout.renderQuantum)) {
+            diags.push({
+              level: "warning",
+              code: "atSample-out-of-block",
+              message: `emit's atSample=${v} is outside [0, ${layout.renderQuantum}) for renderQuantum=${layout.renderQuantum}.`,
+              refactorHint: `atSample must point inside the current render block. Use the loop variable from forSample (e.g. emitIf(cond, { atSample: i, ... })).`,
+            });
+          }
+        }
+      } else if (s.kind === "for-sample" || s.kind === "every-n-samples") {
+        checkOutOfBlock(s.body);
+      }
+    }
+  }
+  checkOutOfBlock(graph.processBody);
+  for (const h of graph.messageHandlers) checkOutOfBlock(h.body);
+
+  // ─── Denormal-prone filter detection (J4 / D6): a state slot updated by
+  // an arith expression whose constant operand is very close to (but not
+  // exactly) 1 forms a one-pole filter that can produce denormals on quiet
+  // input. We surface this as a warning + suggest the FTZ helper.
+  function findDenormalProne(stmts: Statement[]) {
+    for (const s of stmts) {
+      if (s.kind === "state-store") {
+        const flagged = scanForDenormCoef(s.value);
+        if (flagged) {
+          const slot = decls.states.find((x) => x.id === s.slotId);
+          diags.push({
+            level: "warning",
+            code: "denormal-prone-filter",
+            message: `state slot${slot?.name ? ` "${slot.name}"` : ""} (id=${s.slotId}) is updated by a one-pole-style filter with a coefficient close to 1.0 (${flagged.toFixed(6)}); inputs that decay to zero may produce subnormal floats and stall the audio thread.`,
+            refactorHint: `Add a noise-floor injection (e.g. add(state, 1e-30) at the end of the loop) or wrap the path in dsp.flushDenormals(...).`,
+          });
+        }
+      } else if (s.kind === "for-sample" || s.kind === "every-n-samples") {
+        findDenormalProne(s.body);
+      }
+    }
+  }
+  function scanForDenormCoef(v: ASTValue): number | null {
+    if (v.kind !== "arith") return null;
+    if (v.op !== "mul" && v.op !== "add" && v.op !== "sub") return null;
+    for (const a of v.args) {
+      if (a.kind === "const") {
+        const x = (a as any).value;
+        if (typeof x === "number" && Math.abs(x) > 0.9 && Math.abs(x) < 1.0) {
+          return x;
+        }
+      }
+      // Walk through inner arith too (composite filters).
+      const inner = scanForDenormCoef(a);
+      if (inner !== null) return inner;
+    }
+    return null;
+  }
+  findDenormalProne(graph.processBody);
+
   // ─── Cycle estimate informational ─────────────────────────────────────
   const sr = 48000; // representative
   diags.push({

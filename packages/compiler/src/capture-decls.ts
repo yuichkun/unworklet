@@ -140,6 +140,7 @@ function declareBuffer<T extends ScalarType>(type: T, options: any) {
     name: options.name,
     __isBuffer: true,
     __type: type,
+    __bufferId: bufferId,
   };
 }
 
@@ -311,53 +312,63 @@ export function event<T = any>(options: { name: string; capacity?: number }) {
   };
 }
 
-export function message<T = any>(options: { name: string; capacity?: number }) {
+type TypedArrayPayloadDecl = {
+  type: "f32" | "i32" | "u8";
+  maxLength: number;
+};
+
+export function message<T = any>(options: {
+  name: string;
+  capacity?: number;
+  // Declare typed-array payload fields. Each gets a per-slot content
+  // buffer in linear memory. Inside `onReceive` the user receives buffer-
+  // like accessors for these fields with `.read(idx)`, `.length()`, and
+  // `.copyTo(buffer, dstOffset?, count?)`.
+  payload?: Record<string, TypedArrayPayloadDecl>;
+}) {
   const c = getCtx();
+  const typedArrayFields = options.payload
+    ? Object.entries(options.payload).map(([name, decl]) => ({
+        name,
+        elemType: decl.type,
+        maxLength: decl.maxLength,
+      }))
+    : undefined;
   const decl: MessageDecl = {
     id: c.messageIdCounter++,
     kind: "message",
     name: options.name,
     capacity: options.capacity ?? 256,
     fields: [],
+    typedArrayFields,
   };
   c.graph.declarations.messages.push(decl);
   const messageId = decl.id;
+  const taFieldNames = new Set((typedArrayFields ?? []).map((f) => f.name));
   return {
     onReceive: (handler: (payload: any) => void) => {
-      // Run handler in capture mode with a payload proxy. We need to know the
-      // payload schema — we ask the user to declare via a special "schema"
-      // call, OR we observe via property access on a Proxy.
       const schema: Array<{ name: string; type: ScalarType }> = [];
-      let varField: { name: string; elemType: ScalarType } | undefined;
       const observed = new Set<string>();
 
-      // For variable-length fields (typed arrays), we need a different
-      // approach. Since we can't statically know whether a field is a
-      // typed-array, we accept a runtime convention: the user can declare
-      // `samples: Float32Array` in TS and we'll detect it via a name-based
-      // heuristic at codegen time. For now we capture all field accesses
-      // as scalar f32 reads and rely on call-site annotations.
-
-      // We create a payload proxy whose property accesses produce ParamConst-like
-      // AST values.
+      // Build a payload accessor proxy. Scalar fields produce a payload-field
+      // read; typed-array fields produce a buffer-like accessor.
       const payloadProxy = new Proxy(
         {},
         {
           get(_t, prop) {
             if (typeof prop !== "string") return undefined;
+            if (taFieldNames.has(prop)) {
+              const tf = (typedArrayFields ?? []).find((f) => f.name === prop)!;
+              return makePayloadAccessor(messageId, tf.name, tf.elemType);
+            }
             if (!observed.has(prop)) {
               observed.add(prop);
               schema.push({ name: prop, type: "f32" });
             }
-            // Return an AST value reading from the message-payload slot
             return c.fresh({
               kind: "param-at",
-              // Re-use param-at semantics for now: payload field reads are
-              // generated specially at WASM emission time. We'll mark the
-              // ASTValue with a special tag.
-              // TODO: introduce a dedicated MessageFieldRead node.
               type: "f32",
-              paramId: -1, // sentinel
+              paramId: -1,
               i: { id: -1, kind: "const", type: "i32", value: 0 } as any,
               // @ts-expect-error custom field
               __messagePayloadField: { messageId, name: prop, type: "f32" },
@@ -366,7 +377,6 @@ export function message<T = any>(options: { name: string; capacity?: number }) {
         },
       );
 
-      // Handler bodies emit into a fresh body list.
       const body: Statement[] = [];
       c.bodyStack.push(body);
       try {
@@ -374,17 +384,75 @@ export function message<T = any>(options: { name: string; capacity?: number }) {
       } finally {
         c.bodyStack.pop();
       }
-      // Update schema; merge with any prior calls.
       if (decl.fields.length === 0) {
         decl.fields = schema;
       }
       const list = c.messageHandlerBodies.get(messageId) ?? [];
-      list.push({ body, payloadFields: decl.fields, varField });
+      list.push({ body, payloadFields: decl.fields, varField: undefined });
       c.messageHandlerBodies.set(messageId, list);
     },
     __isMessage: true,
     __name: options.name,
     __messageId: messageId,
+  };
+}
+
+function makePayloadAccessor(
+  messageId: number,
+  fieldName: string,
+  elemType: "f32" | "i32" | "u8",
+) {
+  const c = getCtx();
+  return {
+    read: (idx: any) =>
+      c.fresh({
+        kind: "payload-read",
+        type: elemType === "u8" ? "i32" : elemType,
+        messageId,
+        fieldName,
+        elemType,
+        idx: lift(idx, "i32"),
+      } as any),
+    length: () =>
+      c.fresh({
+        kind: "payload-len",
+        type: "i32",
+        messageId,
+        fieldName,
+      } as any),
+    copyTo: (buf: any, dstOffset: any = 0, count?: any) => {
+      const bufferId = (buf as any).__isBuffer ? (buf as any).__bufferId ?? -1 : -1;
+      // The underlying declareBuffer doesn't yet expose __bufferId. Search
+      // by name — every buffer has a unique name in scope.
+      let bid = bufferId;
+      if (bid < 0) {
+        const bname: string | undefined = (buf as any).name;
+        const found = c.graph.declarations.buffers.find((b) => b.name === bname);
+        if (!found) {
+          throw new Error(
+            `payload.copyTo: target buffer ${bname ?? "(unknown)"} not declared in this graph`,
+          );
+        }
+        bid = found.id;
+      }
+      const cnt = count !== undefined
+        ? lift(count, "i32")
+        : c.fresh({
+            kind: "payload-len",
+            type: "i32",
+            messageId,
+            fieldName,
+          } as any);
+      c.emit({
+        kind: "payload-copy-to-buffer",
+        messageId,
+        fieldName,
+        bufferId: bid,
+        srcOffset: lift(0, "i32"),
+        dstOffset: lift(dstOffset, "i32"),
+        count: cnt,
+      });
+    },
   };
 }
 

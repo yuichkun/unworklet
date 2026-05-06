@@ -88,6 +88,25 @@ export type MessageLayout = {
   slotsOffset: number;
   slotSize: number;
   fieldOffsets: Record<string, { offset: number; type: ScalarType }>;
+  // Typed-array (variable-length) payload fields. Each gets a per-slot
+  // content area inside the message's content buffer. The slot fields
+  // record `<name>__off` (i32) and `<name>__len` (i32) offsets relative
+  // to the slot itself; the content lives at `payloadBufferOffset +
+  // slotIdx * payloadStridePerSlot + fieldOffsetWithinPayload`.
+  payloadFields: Array<{
+    name: string;
+    elemType: "f32" | "i32" | "u8";
+    maxLength: number;
+    bytesPerElem: number;
+    fieldOffsetWithinPayload: number;
+    fieldBytes: number;
+    // Position of the per-slot offset/length scalars inside the slot.
+    slotOffsetField: number;
+    slotLengthField: number;
+  }>;
+  payloadStridePerSlot: number; // bytes per slot in the content buffer
+  payloadBufferOffset: number;
+  payloadBufferBytes: number;
   totalBytes: number;
 };
 export type MidiLayout = {
@@ -245,7 +264,8 @@ export function planLayout(g: CapturedGraph, opts: LayoutOptions): MemoryLayout 
   cursor = align(cursor);
   const eventSize = cursor - eventStart;
 
-  // Message ring buffers
+  // Message ring buffers — slot scalars first, then per-slot content area
+  // for typed-array payload fields.
   const messageStart = cursor;
   const messageLayouts: MessageLayout[] = [];
   for (const m of g.declarations.messages) {
@@ -259,8 +279,40 @@ export function planLayout(g: CapturedGraph, opts: LayoutOptions): MemoryLayout 
       fieldOffsets[f.name] = { offset: slotSize, type: f.type };
       slotSize += sizeOf(f.type);
     }
+    // Reserve two i32s per typed-array field: __off, __len.
+    const payloadFields = (m.typedArrayFields ?? []).map((tf) => {
+      const slotOffsetField = slotSize;
+      slotSize += 4;
+      const slotLengthField = slotSize;
+      slotSize += 4;
+      return { tf, slotOffsetField, slotLengthField };
+    });
     slotSize = Math.max(8, (slotSize + 7) & ~7);
     cursor = slotsOffset + m.capacity * slotSize;
+    cursor = align(cursor);
+    // Per-slot content area
+    let payloadStridePerSlot = 0;
+    const expandedPayloadFields = payloadFields.map(({ tf, slotOffsetField, slotLengthField }) => {
+      const bytesPerElem = tf.elemType === "u8" ? 1 : 4;
+      const fieldBytes = tf.maxLength * bytesPerElem;
+      const fieldOffsetWithinPayload = payloadStridePerSlot;
+      payloadStridePerSlot += fieldBytes;
+      // Align between fields to 16
+      payloadStridePerSlot = (payloadStridePerSlot + 15) & ~15;
+      return {
+        name: tf.name,
+        elemType: tf.elemType,
+        maxLength: tf.maxLength,
+        bytesPerElem,
+        fieldOffsetWithinPayload,
+        fieldBytes,
+        slotOffsetField,
+        slotLengthField,
+      };
+    });
+    const payloadBufferOffset = cursor;
+    const payloadBufferBytes = payloadStridePerSlot * m.capacity;
+    cursor += payloadBufferBytes;
     cursor = align(cursor);
     const totalBytes = cursor - headerOffset;
     messageLayouts.push({
@@ -270,6 +322,10 @@ export function planLayout(g: CapturedGraph, opts: LayoutOptions): MemoryLayout 
       slotsOffset,
       slotSize,
       fieldOffsets,
+      payloadFields: expandedPayloadFields,
+      payloadStridePerSlot,
+      payloadBufferOffset,
+      payloadBufferBytes,
       totalBytes,
     });
   }

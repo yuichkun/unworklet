@@ -155,6 +155,35 @@ export type LoopVar = Base & {
   depth: number;
 };
 
+// Read a single element from a typed-array message payload field. The slot
+// the read targets is whichever message slot is currently being dispatched
+// (handler-local; the WASM body has access to the slot pointer when it runs
+// the user's onReceive body).
+export type PayloadRead = Base & {
+  kind: "payload-read";
+  messageId: number;
+  fieldName: string;
+  // Element type matches the typed-array's elemType.
+  elemType: "f32" | "i32" | "u8";
+  idx: ASTValue; // i32
+};
+
+// Read the length (in elements) of a typed-array payload field on the
+// currently-dispatched slot.
+export type PayloadLen = Base & {
+  kind: "payload-len";
+  messageId: number;
+  fieldName: string;
+};
+
+// Loop variable that ranges over [0, count) inside a message handler body
+// — used by message-handler `forEach` blocks. Distinct from forSample
+// because it doesn't tie to render quantum.
+export type HandlerLoopVar = Base & {
+  kind: "handler-loop-var";
+  loopId: number;
+};
+
 export type ASTValue =
   | ConstScalar
   | ParamConst
@@ -174,7 +203,10 @@ export type ASTValue =
   | VecSplat
   | VecLane
   | VecArithOp
-  | LoopVar;
+  | LoopVar
+  | PayloadRead
+  | PayloadLen
+  | HandlerLoopVar;
 
 // Statements — ordered side effects.
 export type StateStore = {
@@ -243,6 +275,30 @@ export type EveryNSamples = {
   loc?: SourceLoc;
 };
 
+// Copy elements from a message-handler typed-array payload field into a
+// declared buffer. Used for sample/IR upload and similar patterns.
+//   payload[fieldName][srcOffset..srcOffset+count] → buffer[bufferId][dstOffset..dstOffset+count]
+export type PayloadCopyToBuffer = {
+  kind: "payload-copy-to-buffer";
+  messageId: number;
+  fieldName: string;
+  bufferId: number;
+  srcOffset: ASTValue;
+  dstOffset: ASTValue;
+  count: ASTValue;
+  loc?: SourceLoc;
+};
+
+// Loop over a runtime-bounded counter (used inside message handlers).
+//   for (i = 0; i < count; i++) { body }
+export type HandlerForRange = {
+  kind: "handler-for-range";
+  loopId: number;
+  count: ASTValue; // i32
+  body: Statement[];
+  loc?: SourceLoc;
+};
+
 // forSample / forSample.byN body. Stride is statically known.
 export type ForSampleBlock = {
   kind: "for-sample";
@@ -259,7 +315,9 @@ export type Statement =
   | EmitIf
   | MidiEmitIf
   | EveryNSamples
-  | ForSampleBlock;
+  | ForSampleBlock
+  | PayloadCopyToBuffer
+  | HandlerForRange;
 
 // Top-level captured program.
 export type CapturedGraph = {
@@ -372,6 +430,15 @@ export type AudioOutputDecl = {
   channels: number;
 };
 
+export type TypedArrayField = {
+  name: string;
+  // Element type of the typed array.
+  elemType: "f32" | "i32" | "u8";
+  // Maximum number of elements per slot. Required so the per-slot content
+  // buffer can be sized at compile time.
+  maxLength: number;
+};
+
 export type EventDecl = {
   id: number;
   kind: "event";
@@ -388,7 +455,11 @@ export type MessageDecl = {
   name: string;
   capacity: number;
   fields: Array<{ name: string; type: ScalarType }>;
-  varField?: { name: string; elemType: ScalarType; capacity?: number };
+  // Typed-array payload fields (Float32Array / Int32Array / Uint8Array).
+  // Each gets a per-slot content buffer in the layout. Worklet writes
+  // these into linear memory when enqueueing; WASM-side handler reads them
+  // through a buffer-like API.
+  typedArrayFields?: TypedArrayField[];
 };
 
 export type MidiInputDecl = {

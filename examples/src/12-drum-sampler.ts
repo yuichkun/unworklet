@@ -47,7 +47,11 @@ export const drumSampler = defineProcessor(() => {
     padVel.push(state.f32(0, { name: `padVel_${p}` }));
   }
 
-  const uploadPad = message<{ pad: number; samples: Float32Array }>({ name: "uploadPad" });
+  const uploadPad = message<{ pad: number; samples: Float32Array }>({
+    name: "uploadPad",
+    capacity: 8,
+    payload: { samples: { type: "f32", maxLength: MAX_SAMPLE_LEN } },
+  });
   const triggerPad = message<{ pad: number; velocity: number }>({ name: "triggerPad" });
 
   const padTriggered = event<{ pad: number; velocity: number }>({ name: "padTriggered" });
@@ -57,16 +61,16 @@ export const drumSampler = defineProcessor(() => {
   return {
     process: () => {
       uploadPad.onReceive(({ pad, samples }) => {
-        // Build-time mode guard. In WASM capture mode, `samples` is an AST
-        // proxy and `pad` is an AST node; we cannot drive a runtime-indexed
-        // typed-array copy without the variable-length payload wire format
-        // (docs/02-messaging.md §5.2 — pending). In interpret mode, both
-        // are concrete values and the copy proceeds normally.
-        if (typeof samples?.length !== "number" || typeof pad !== "number") return;
-        const len = Math.min(samples.length, MAX_SAMPLE_LEN);
-        for (let i = 0; i < len; i++) pads[pad]!.write(i, samples[i]!);
-        for (let i = len; i < MAX_SAMPLE_LEN; i++) pads[pad]!.write(i, 0);
-        padLens[pad]!.store(len);
+        // Static fan-out: emit a copy per pad gated on pad index. The copy
+        // count is select(isMe, len, 0), so non-matching pads no-op (zero-
+        // byte memory.copy).
+        const len = samples.length();
+        for (let p = 0; p < NUM_PADS; p++) {
+          const isMe = eq(pad, p);
+          const cnt = select(isMe, len, 0) as unknown as Node<"i32">;
+          samples.copyTo(pads[p]!, 0, cnt);
+          padLens[p]!.store(select(isMe, len, padLens[p]!.load()));
+        }
       });
 
       triggerPad.onReceive(({ pad, velocity }) => {

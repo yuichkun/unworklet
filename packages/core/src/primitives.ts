@@ -118,6 +118,25 @@ export const frac = (a: any): Node<any> => {
   return (((a as N) - Math.floor(a as N)) as unknown) as Node<any>;
 };
 
+// flushDenormals — zero out values smaller in magnitude than 1e-30.
+// Equivalent to FTZ behaviour on x86; emit-side compiles to
+// `select(abs(x) < FTZ_THRESHOLD, 0, x)`. Use on feedback paths whose
+// coefficients are close to 1.0 (one-pole filters, reverbs) to avoid
+// subnormal stalls. See docs/04-worklet-runtime §6.
+const FTZ_THRESHOLD = 1e-30;
+export const flushDenormals = (a: any): Node<"f32"> => {
+  const cap = c();
+  if (cap) {
+    return cap.select(
+      cap.lt(cap.abs(a), FTZ_THRESHOLD),
+      0,
+      a,
+    ) as Node<"f32">;
+  }
+  const v = a as number;
+  return ((Math.abs(v) < FTZ_THRESHOLD ? 0 : v) as unknown) as Node<"f32">;
+};
+
 // select
 export const select = <T extends ScalarType | "f32x4">(
   cond: any,

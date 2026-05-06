@@ -169,7 +169,23 @@ class CaptureCtx {
   }
 
   fresh<N extends ASTValue>(node: Omit<N, "id">): N {
-    return { ...node, id: this.nodeIdCounter++ } as N;
+    const result = { ...node, id: this.nodeIdCounter++ } as N;
+    // Trap accidental JS-operator use (`node + 1`, `node / 127`, `+node`).
+    // These primitives must be expressed via the imported helpers; otherwise
+    // `Node<i32> / 127` silently captures NaN.
+    Object.defineProperty(result, Symbol.toPrimitive, {
+      enumerable: false,
+      configurable: true,
+      value: (hint: string) => {
+        if (hint === "string") return `[unworklet ${(result as any).kind}#${(result as any).id}]`;
+        throw new Error(
+          `unworklet: cannot coerce a graph node to a JS ${hint} (kind=${(result as any).kind}). ` +
+            `In capture mode, JS operators on graph nodes (e.g. \`x / 127\`, \`x + 1\`) silently break the captured AST. ` +
+            `Use the named helpers from @unworklet/core instead — \`div(x, 127)\`, \`add(x, 1)\`, \`select(cond, ...)\`.`,
+        );
+      },
+    });
+    return result;
   }
 }
 

@@ -40,6 +40,7 @@ Usage:
 Commands:
   render    Render audio offline to a WAV file
   build     Compile to .wasm + .worklet.js + .meta.json + .wat
+  dev       Watch a processor module and rebuild on change (hot reload)
   analyze   Static analysis report (cycles, memory, warnings)
   bench     Latency / CPU / NaN-Inf benchmark
   help      Show this help
@@ -179,6 +180,25 @@ async function main() {
     });
     console.log(r.formatted);
     process.exit(r.exitCode);
+  }
+
+  if (args.command === "dev") {
+    const modulePath = args.positional[0];
+    if (!modulePath) {
+      console.error("Error: missing module path");
+      process.exit(1);
+    }
+    const out = (args.flags["out-dir"] as string) || "./dist-unworklet";
+    const port = args.flags["port"] ? Number(args.flags["port"]) : 5174;
+    const { runDev } = await import("./dev.js");
+    await runDev({
+      modulePath: path.resolve(modulePath),
+      outDir: path.resolve(out),
+      exportName: args.flags["export"] ? String(args.flags["export"]) : undefined,
+      sampleRate: args.flags["sample-rate"] ? Number(args.flags["sample-rate"]) : undefined,
+      port,
+    });
+    return;
   }
 
   if (args.command === "bench") {

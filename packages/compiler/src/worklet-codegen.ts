@@ -80,6 +80,10 @@ export function generateWorkletModule(
         slotSize: ml.slotSize,
         fields: decl.fields,
         fieldOffsets: ml.fieldOffsets,
+        payloadFields: ml.payloadFields,
+        payloadStridePerSlot: ml.payloadStridePerSlot,
+        payloadBufferOffset: ml.payloadBufferOffset,
+        payloadBufferBytes: ml.payloadBufferBytes,
       };
     }),
     midiInputs: layout.midiInputs.layouts.map((ml) => {
@@ -100,7 +104,66 @@ export function generateWorkletModule(
         slotsOffset: ml.slotsOffset,
       };
     }),
+    publishedStates: layout.stateRegion.slots
+      .map((sl) => {
+        const decl = graph.declarations.states.find((s) => s.id === sl.slotId)!;
+        if (!decl.publish) return null;
+        return {
+          path: decl.path,
+          name: decl.name ?? decl.path,
+          type: sl.type,
+          offset: sl.offset,
+          rateFps: decl.publish.rateFps,
+        };
+      })
+      .filter(Boolean),
+    publishedBuffers: layout.bufferRegion.buffers
+      .map((bl) => {
+        const decl = graph.declarations.buffers.find((b) => b.id === bl.bufferId)!;
+        if (!decl.publish) return null;
+        return {
+          path: decl.path,
+          name: decl.name ?? decl.path,
+          type: bl.type,
+          offset: bl.offset,
+          size: bl.size,
+          byteSize: bl.byteSize,
+          rateFps: decl.publish.rateFps,
+        };
+      })
+      .filter(Boolean),
+    stateRegion: {
+      offset: layout.stateRegion.offset,
+      size: layout.stateRegion.size,
+      slots: layout.stateRegion.slots.map((sl) => {
+        const decl = graph.declarations.states.find((s) => s.id === sl.slotId)!;
+        return {
+          slotId: sl.slotId,
+          path: decl.path,
+          type: sl.type,
+          offset: sl.offset,
+          snapshot: decl.snapshot,
+        };
+      }),
+    },
+    bufferRegion: {
+      offset: layout.bufferRegion.offset,
+      size: layout.bufferRegion.size,
+      buffers: layout.bufferRegion.buffers.map((bl) => {
+        const decl = graph.declarations.buffers.find((b) => b.id === bl.bufferId)!;
+        return {
+          bufferId: bl.bufferId,
+          path: decl.path,
+          type: bl.type,
+          offset: bl.offset,
+          size: bl.size,
+          byteSize: bl.byteSize,
+          snapshot: decl.snapshot,
+        };
+      }),
+    },
     renderQuantum: layout.renderQuantum,
+    schemaHash: graph.schemaHash,
   };
 
   const paramDescsJson = JSON.stringify(paramDescs);
@@ -162,11 +225,21 @@ export function generateWorkletModule(
         this.memI32 = new Int32Array(this.exports.memory.buffer);
         this._eventReadHeads = new Map();
         this._midiOutReadHeads = new Map();
+        this._publishCounters = new Map();
+        this._publishLast = new Map();
+        // Shared linear memory enables Atomics-based ring updates from the
+        // main thread (docs/02 §4). memory.buffer is a SharedArrayBuffer
+        // because we compiled with shared=true.
+        const memBuf = this.exports.memory.buffer;
+        const sharedTransport = typeof SharedArrayBuffer !== "undefined" && memBuf instanceof SharedArrayBuffer;
+        this._sab = sharedTransport;
         this.port.onmessage = (e) => this._onMessage(e.data);
         this.port.postMessage({
           type: "ready",
           layout: LAYOUT,
           paramDescs: PARAM_DESCS,
+          memory: sharedTransport ? memBuf : null,
+          transport: sharedTransport ? "sab" : "postMessage",
         });
       } catch (err) {
         this._initError = err;
@@ -185,23 +258,109 @@ export function generateWorkletModule(
       if (!msg) return;
       if (msg.type === "message") this._enqueueMessage(msg.name, msg.payload);
       else if (msg.type === "midi") this._enqueueMidi(msg.event);
+      else if (msg.type === "snapshot") this._handleSnapshot(msg.id, msg.profile);
+      else if (msg.type === "restore") this._handleRestore(msg.id, msg.blob);
+    }
+
+    _handleSnapshot(id, _profile) {
+      // docs/05-client §2.6: snapshot serializes the persistent state region
+      // and (optionally) buffers, including a schemaHash so a later restore
+      // can reject mismatched processors.
+      const stateBytes = LAYOUT.stateRegion.size | 0;
+      const persistentBuffers = LAYOUT.bufferRegion.buffers.filter(
+        (b) => b.snapshot === "persistent",
+      );
+      let bufBytes = 0;
+      for (const b of persistentBuffers) bufBytes += b.byteSize;
+      const headerSize = 8 + 4 + LAYOUT.schemaHash.length + 4 + 4;
+      const total = headerSize + stateBytes + 4 + persistentBuffers.length * 8 + bufBytes;
+      const out = new Uint8Array(total);
+      const dv = new DataView(out.buffer);
+      let p = 0;
+      out[p++] = 0x55; out[p++] = 0x57; out[p++] = 0x53; out[p++] = 0x4e; // 'UWSN'
+      dv.setUint32(p, 1, true); p += 4; // version
+      dv.setUint32(p, LAYOUT.schemaHash.length, true); p += 4;
+      for (let i = 0; i < LAYOUT.schemaHash.length; i++) out[p + i] = LAYOUT.schemaHash.charCodeAt(i);
+      p += LAYOUT.schemaHash.length;
+      dv.setUint32(p, stateBytes, true); p += 4;
+      out.set(this.memU8.subarray(LAYOUT.stateRegion.offset, LAYOUT.stateRegion.offset + stateBytes), p);
+      p += stateBytes;
+      dv.setUint32(p, persistentBuffers.length, true); p += 4;
+      for (const b of persistentBuffers) {
+        dv.setUint32(p, b.bufferId, true); p += 4;
+        dv.setUint32(p, b.byteSize, true); p += 4;
+        out.set(this.memU8.subarray(b.offset, b.offset + b.byteSize), p);
+        p += b.byteSize;
+      }
+      this.port.postMessage({ type: "snapshot-response", id, blob: out.subarray(0, p) }, [out.buffer]);
+    }
+
+    _handleRestore(id, blob) {
+      const dv = new DataView(blob.buffer, blob.byteOffset, blob.byteLength);
+      let p = 0;
+      const ok = blob[0] === 0x55 && blob[1] === 0x57 && blob[2] === 0x53 && blob[3] === 0x4e;
+      if (!ok) {
+        this.port.postMessage({ type: "restore-response", id, result: { restored: 0, skipped: [], missing: [], error: "bad-magic" } });
+        return;
+      }
+      p = 4;
+      const version = dv.getUint32(p, true); p += 4;
+      if (version !== 1) {
+        this.port.postMessage({ type: "restore-response", id, result: { restored: 0, skipped: [], missing: [], error: "bad-version" } });
+        return;
+      }
+      const hashLen = dv.getUint32(p, true); p += 4;
+      let hash = "";
+      for (let i = 0; i < hashLen; i++) hash += String.fromCharCode(blob[p + i]);
+      p += hashLen;
+      if (hash !== LAYOUT.schemaHash) {
+        this.port.postMessage({ type: "restore-response", id, result: { restored: 0, skipped: ["schema-mismatch"], missing: [], error: "schema-mismatch" } });
+        return;
+      }
+      const stateBytes = dv.getUint32(p, true); p += 4;
+      this.memU8.set(blob.subarray(p, p + stateBytes), LAYOUT.stateRegion.offset);
+      p += stateBytes;
+      const nBufs = dv.getUint32(p, true); p += 4;
+      let restored = 1; const skipped = []; const missing = [];
+      for (let i = 0; i < nBufs; i++) {
+        const bid = dv.getUint32(p, true); p += 4;
+        const bsize = dv.getUint32(p, true); p += 4;
+        const layout = LAYOUT.bufferRegion.buffers.find((b) => b.bufferId === bid);
+        if (!layout || layout.byteSize !== bsize || layout.snapshot !== "persistent") {
+          skipped.push("buf:" + bid);
+          p += bsize;
+          continue;
+        }
+        this.memU8.set(blob.subarray(p, p + bsize), layout.offset);
+        p += bsize;
+        restored++;
+      }
+      this.port.postMessage({ type: "restore-response", id, result: { restored, skipped, missing } });
     }
 
     _enqueueMessage(name, payload) {
       const ml = LAYOUT.messages.find((m) => m.name === name);
       if (!ml) return;
-      // Write into ring buffer at head; advance head.
-      const headOff = ml.headerOffset;
-      const tailOff = ml.headerOffset + 4;
-      const overflowOff = ml.headerOffset + 8;
-      let head = this.memI32[headOff / 4];
-      let tail = this.memI32[tailOff / 4];
+      // Write into ring buffer at head; advance head. Use Atomics on the ring
+      // headers per docs/02 §4 so the audio-thread reader sees a coherent
+      // (head, slot) update.
+      const headIdx = ml.headerOffset >> 2;
+      const tailIdx = (ml.headerOffset + 4) >> 2;
+      const overflowIdx = (ml.headerOffset + 8) >> 2;
+      const sab = this._sab;
+      const head = sab ? Atomics.load(this.memI32, headIdx) : this.memI32[headIdx];
+      const tail = sab ? Atomics.load(this.memI32, tailIdx) : this.memI32[tailIdx];
       const slotIdx = head % ml.capacity;
       const slotPtr = ml.slotsOffset + slotIdx * ml.slotSize;
       // Drop-oldest if full
       if (head + 1 - tail >= ml.capacity) {
-        this.memI32[overflowOff / 4] += 1;
-        this.memI32[tailOff / 4] = tail + 1;
+        if (sab) {
+          Atomics.add(this.memI32, overflowIdx, 1);
+          Atomics.store(this.memI32, tailIdx, tail + 1);
+        } else {
+          this.memI32[overflowIdx] += 1;
+          this.memI32[tailIdx] = tail + 1;
+        }
       }
       // Write fields
       for (const field of ml.fields) {
@@ -215,7 +374,40 @@ export function generateWorkletModule(
           this.memI32[(slotPtr + off.offset) / 4] = v | 0;
         }
       }
-      this.memI32[headOff / 4] = head + 1;
+      // Write typed-array payload fields into the per-slot content area.
+      const payloadFields = ml.payloadFields ?? [];
+      if (payloadFields.length > 0) {
+        const slotPayloadBase = ml.payloadBufferOffset + slotIdx * ml.payloadStridePerSlot;
+        for (const pf of payloadFields) {
+          const arr = payload?.[pf.name];
+          const fieldBase = slotPayloadBase + pf.fieldOffsetWithinPayload;
+          // Always write the slot offset/length scalars so the WASM reader
+          // sees a consistent slot even if the field is omitted.
+          this.memI32[(slotPtr + pf.slotOffsetField) / 4] = fieldBase;
+          if (!arr || (
+            !(arr instanceof Float32Array) &&
+            !(arr instanceof Int32Array) &&
+            !(arr instanceof Uint8Array)
+          )) {
+            this.memI32[(slotPtr + pf.slotLengthField) / 4] = 0;
+            continue;
+          }
+          const len = Math.min(arr.length, pf.maxLength);
+          this.memI32[(slotPtr + pf.slotLengthField) / 4] = len;
+          if (pf.elemType === "f32") {
+            const v = arr.length === len ? arr : arr.subarray(0, len);
+            this.mem.set(v, fieldBase >> 2);
+          } else if (pf.elemType === "i32") {
+            const v = arr.length === len ? arr : arr.subarray(0, len);
+            this.memI32.set(v, fieldBase >> 2);
+          } else {
+            // u8
+            this.memU8.set(arr.subarray(0, len), fieldBase);
+          }
+        }
+      }
+      if (sab) Atomics.add(this.memI32, headIdx, 1);
+      else this.memI32[headIdx] = head + 1;
     }
 
     _enqueueMidi(ev) {
@@ -391,7 +583,59 @@ export function generateWorkletModule(
       // Drain outbound events / midi
       this._drainOutboundEvents();
       this._drainOutboundMidi();
+      // Drain published state / buffer slots — docs/02-messaging §5.4 +
+      // 04-worklet-runtime §7. Each slot has its own per-FPS counter; only
+      // emit when the value (or buffer view) changed since the last publish.
+      this._drainPublishedState(block);
       return true;
+    }
+
+    _drainPublishedState(block) {
+      const sr = sampleRate || 48000;
+      const out = {};
+      let any = false;
+      for (const sl of LAYOUT.publishedStates) {
+        const target = (sr / sl.rateFps) | 0;
+        const cur = (this._publishCounters.get(sl.path) ?? 0) + block;
+        if (cur < target) {
+          this._publishCounters.set(sl.path, cur);
+          continue;
+        }
+        this._publishCounters.set(sl.path, cur - target);
+        let v;
+        if (sl.type === "f32") v = this.mem[sl.offset >> 2];
+        else if (sl.type === "f64") v = new Float64Array(this.exports.memory.buffer, sl.offset, 1)[0];
+        else if (sl.type === "i32" || sl.type === "bool") v = this.memI32[sl.offset >> 2];
+        else if (sl.type === "i64") {
+          const lo = this.memI32[sl.offset >> 2];
+          const hi = this.memI32[(sl.offset >> 2) + 1];
+          v = (BigInt(hi) << 32n) | (BigInt(lo) & 0xffffffffn);
+          v = Number(v);
+        }
+        if (sl.type === "bool") v = !!v;
+        if (this._publishLast.get(sl.path) !== v) {
+          this._publishLast.set(sl.path, v);
+          out[sl.path] = v;
+          any = true;
+        }
+      }
+      for (const bl of LAYOUT.publishedBuffers) {
+        const target = (sr / bl.rateFps) | 0;
+        const cur = (this._publishCounters.get(bl.path) ?? 0) + block;
+        if (cur < target) {
+          this._publishCounters.set(bl.path, cur);
+          continue;
+        }
+        this._publishCounters.set(bl.path, cur - target);
+        // Buffers always fire (consumer compares).
+        let view;
+        if (bl.type === "f32") view = new Float32Array(this.exports.memory.buffer, bl.offset, bl.size).slice();
+        else if (bl.type === "i32") view = new Int32Array(this.exports.memory.buffer, bl.offset, bl.size).slice();
+        else view = new Uint8Array(this.exports.memory.buffer, bl.offset, bl.byteSize).slice();
+        out[bl.path] = view;
+        any = true;
+      }
+      if (any) this.port.postMessage({ type: "publish", values: out });
     }
   }
 

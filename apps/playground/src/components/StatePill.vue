@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watchEffect } from "vue";
-import type { BrowserUnworkletNode } from "../audio/createBrowserNode";
+import type { WasmUnworkletNode } from "../audio/createWasmNode";
 
 const props = defineProps<{
-  node: BrowserUnworkletNode | null;
+  node: WasmUnworkletNode | null;
   slot: string;
   label?: string;
   format?: (v: any) => string;

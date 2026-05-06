@@ -8,18 +8,17 @@ import MidiInputPicker from "../components/MidiInputPicker.vue";
 import StatePill from "../components/StatePill.vue";
 import type { MidiEvent } from "@unworklet/core";
 
-const { node } = useProcessor({ processorName: "arpeggiator" });
-let downstreamSynthNode: AudioWorkletNode | null = null;
+import { createWasmNode } from "../audio/createWasmNode";
+import { processorRegistry } from "../audio/registry";
 
-import { createBrowserNode } from "../audio/createBrowserNode";
+const { node } = useProcessor({ processorName: "arpeggiator" });
 
 // Spawn a downstream synth (the polySynth) so the arpeggiator's MIDI output drives audio.
 const downstream = ref<any | null>(null);
 onMounted(async () => {
   await ensureRunning();
   const ctx = audioContext();
-  const synth = await createBrowserNode(ctx, "polySynth");
-  // Connect to destination
+  const synth = await createWasmNode(ctx, processorRegistry.polySynth!, "polySynth");
   synth.outputs.main!.connect(ctx.destination);
   downstream.value = synth;
 });

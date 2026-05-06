@@ -67,6 +67,7 @@ export {
   max,
   clamp,
   select,
+  flushDenormals,
   f32,
   f64,
   i32,

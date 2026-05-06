@@ -421,14 +421,51 @@ function messageInterp<T>(options: MessageOptions): MessageDecl<T> {
     capacity: options.capacity ?? 256,
   };
   rt.messages.push({ slot, runtime: { slot } });
+  const payloadDecls = (options as any).payload as
+    | Record<string, { type: "f32" | "i32" | "u8"; maxLength: number }>
+    | undefined;
   return {
     onReceive: (handler: (payload: any) => void) => {
+      const wrapped = (payload: any) => {
+        if (!payloadDecls || !payload) return handler(payload);
+        const wrappedPayload: any = { ...payload };
+        for (const [field] of Object.entries(payloadDecls)) {
+          const arr = payload[field];
+          if (
+            arr instanceof Float32Array ||
+            arr instanceof Int32Array ||
+            arr instanceof Uint8Array
+          ) {
+            wrappedPayload[field] = makeJSPayloadAccessor(arr);
+          }
+        }
+        return handler(wrappedPayload);
+      };
       const list = rt.messageHandlers.get(options.name) ?? [];
-      list.push(handler);
+      list.push(wrapped);
       rt.messageHandlers.set(options.name, list);
     },
     __isMessage: true,
     __name: options.name,
+  };
+}
+
+function makeJSPayloadAccessor(arr: Float32Array | Int32Array | Uint8Array) {
+  return {
+    read: (idx: any) => arr[(idx as number) | 0]!,
+    length: () => arr.length,
+    copyTo: (buf: any, dstOffset: any = 0, count?: any) => {
+      const dst = (buf as any).__isBuffer ? buf : null;
+      if (!dst) return;
+      const off = ((dstOffset as number) | 0);
+      const cnt = count !== undefined ? ((count as number) | 0) : arr.length;
+      for (let i = 0; i < cnt; i++) {
+        dst.write(off + i, arr[i] as number);
+      }
+    },
+    // Permit users to also still treat the accessor as the underlying array
+    // when iterating manually in JS-only paths.
+    raw: arr,
   };
 }
 

@@ -75,7 +75,8 @@ class Emit {
         binaryen.Features.BulkMemoryOpt |
         binaryen.Features.SignExt |
         binaryen.Features.MutableGlobals |
-        binaryen.Features.NontrappingFPToInt,
+        binaryen.Features.NontrappingFPToInt |
+        binaryen.Features.Atomics,
     );
 
     // The absolute sample counter sits in a fixed location in state region
@@ -98,7 +99,12 @@ class Emit {
   build(): { binary: Uint8Array; text: string; layout: MemoryLayout } {
     const m = this.m;
     // Create memory; export it so the host can read/write directly.
-    m.setMemory(this.layout.initialPages, this.layout.initialPages, "memory");
+    // Shared memory enables SharedArrayBuffer + Atomics on host side per
+    // docs/02-messaging §4 (C2-C6). Crucially, this requires COOP/COEP
+    // headers — the playground vite config sets them. The maximum must be
+    // declared for shared memories.
+    const maxPages = Math.max(this.layout.initialPages, 256);
+    m.setMemory(this.layout.initialPages, maxPages, "memory", [], true);
 
     // Math imports
     this.declareMathImports();
@@ -1195,10 +1201,7 @@ class Emit {
       const ml = this.layout.messages.layouts.find((x) => x.messageId === handler.messageId);
       if (!ml) continue;
       this.localTypes = [];
-      // local 0: slotPtr (i32 param)
-      // We expose payload field reads via custom local helpers.
-      // Walk the handler body, replacing message-field nodes with loads.
-      const stmts = handler.body.map((s) => this.emitStmtInHandler(s, ml.fieldOffsets, "messages"));
+      const stmts = handler.body.map((s) => this.emitStmtInHandlerForLayout(s, ml));
       this.m.addFunction(
         `msgHandler_${handler.messageId}`,
         binaryen.createType([binaryen.i32]),
@@ -1233,40 +1236,129 @@ class Emit {
     fieldOffsets: Record<string, { offset: number; type: ScalarType }>,
     _kind: "messages",
   ): ExprRef {
-    // Use a custom emitValue that routes message-field through field offsets.
+    const ml = this.layout.messages.layouts.find(
+      (x) => x.fieldOffsets === fieldOffsets,
+    );
+    return this.emitStmtInHandlerForLayout(s, ml);
+  }
+
+  emitStmtInHandlerForLayout(s: Statement, ml: any): ExprRef {
+    const fieldOffsets = ml?.fieldOffsets ?? {};
+    const m = this.m;
     const origLoopVarLocals = this.loopVarLocals;
     this.loopVarLocals = [];
     const origEmitValue = this.emitValue.bind(this);
+    const handlerLoopLocals = new Map<number, number>();
+    const allocLoopLocal = (loopId: number): number => {
+      let idx = handlerLoopLocals.get(loopId);
+      if (idx === undefined) {
+        idx = 1 + this.localTypes.length; // +1 because local 0 is slotPtr
+        this.localTypes.push(binaryen.i32);
+        handlerLoopLocals.set(loopId, idx);
+      }
+      return idx;
+    };
+    const slotPtr = () => m.local.get(0, binaryen.i32);
+    const payloadField = (fieldName: string) =>
+      ml?.payloadFields.find((p: any) => p.name === fieldName);
+
     const replaced = (v: ASTValue, expected?: AnyType): ExprRef => {
       if (v.kind === "message-field") {
         const fl = fieldOffsets[v.fieldName];
-        if (!fl) return this.m.i32.const(0);
-        const ptr = this.m.i32.add(this.m.local.get(0, binaryen.i32), this.m.i32.const(fl.offset));
+        if (!fl) return m.i32.const(0);
+        const ptr = m.i32.add(slotPtr(), m.i32.const(fl.offset));
         let r: ExprRef;
-        if (fl.type === "f32") r = this.m.f32.load(0, 4, ptr);
-        else if (fl.type === "i32" || fl.type === "bool") r = this.m.i32.load(0, 4, ptr);
-        else r = this.m.f64.load(0, 8, ptr);
+        if (fl.type === "f32") r = m.f32.load(0, 4, ptr);
+        else if (fl.type === "i32" || fl.type === "bool") r = m.i32.load(0, 4, ptr);
+        else r = m.f64.load(0, 8, ptr);
         return expected ? this.coerce(r, fl.type, expected) : r;
       }
-      // The legacy "param-at" sentinel from the old capture-decls.ts was used
-      // for message fields when paramId === -1; treat them as message-field too.
       if (v.kind === "param-at" && (v as any).__messagePayloadField) {
         const sentinel = (v as any).__messagePayloadField;
         const fl = fieldOffsets[sentinel.name];
         if (fl) {
-          const ptr = this.m.i32.add(this.m.local.get(0, binaryen.i32), this.m.i32.const(fl.offset));
+          const ptr = m.i32.add(slotPtr(), m.i32.const(fl.offset));
           let r: ExprRef;
-          if (fl.type === "f32") r = this.m.f32.load(0, 4, ptr);
-          else if (fl.type === "i32" || fl.type === "bool") r = this.m.i32.load(0, 4, ptr);
-          else r = this.m.f64.load(0, 8, ptr);
+          if (fl.type === "f32") r = m.f32.load(0, 4, ptr);
+          else if (fl.type === "i32" || fl.type === "bool") r = m.i32.load(0, 4, ptr);
+          else r = m.f64.load(0, 8, ptr);
           return expected ? this.coerce(r, fl.type, expected) : r;
         }
+      }
+      if (v.kind === "payload-read") {
+        const pf = payloadField((v as any).fieldName);
+        if (!pf) return m.i32.const(0);
+        // ptr = i32.load(slotPtr + slotOffsetField) + idx * bytesPerElem
+        const baseOff = m.i32.load(0, 4, m.i32.add(slotPtr(), m.i32.const(pf.slotOffsetField)));
+        const idx = origEmitValue((v as any).idx, "i32");
+        const stride = pf.bytesPerElem;
+        const addr = m.i32.add(baseOff, m.i32.mul(idx, m.i32.const(stride)));
+        let r: ExprRef;
+        if (pf.elemType === "f32") r = m.f32.load(0, 4, addr);
+        else if (pf.elemType === "i32") r = m.i32.load(0, 4, addr);
+        else r = m.i32.load8_u(0, 1, addr);
+        const srcType: ScalarType = pf.elemType === "u8" ? "i32" : (pf.elemType as ScalarType);
+        return expected ? this.coerce(r, srcType, expected) : r;
+      }
+      if (v.kind === "payload-len") {
+        const pf = payloadField((v as any).fieldName);
+        if (!pf) return m.i32.const(0);
+        const r = m.i32.load(0, 4, m.i32.add(slotPtr(), m.i32.const(pf.slotLengthField)));
+        return expected ? this.coerce(r, "i32", expected) : r;
+      }
+      if (v.kind === "handler-loop-var") {
+        const idx = allocLoopLocal((v as any).loopId);
+        const r = m.local.get(idx, binaryen.i32);
+        return expected ? this.coerce(r, "i32", expected) : r;
       }
       return origEmitValue(v, expected);
     };
     this.emitValue = replaced as any;
-    try {
+
+    const emitStmt = (s: Statement): ExprRef => {
+      if (s.kind === "payload-copy-to-buffer") {
+        const pf = payloadField(s.fieldName);
+        if (!pf) return m.nop();
+        const buf = this.layout.bufferRegion.buffers.find((b) => b.bufferId === s.bufferId);
+        if (!buf) return m.nop();
+        // memory.copy(dst, src, byteCount) — uses payload-aware emitValue
+        // (this.emitValue points at `replaced` at this point so payload-len
+        // / payload-read inside the count expression resolve correctly).
+        const srcBase = m.i32.load(0, 4, m.i32.add(slotPtr(), m.i32.const(pf.slotOffsetField)));
+        const srcOff = this.emitValue(s.srcOffset, "i32");
+        const dstOff = this.emitValue(s.dstOffset, "i32");
+        const cnt = this.emitValue(s.count, "i32");
+        const stride = pf.bytesPerElem;
+        const elemBytes = stride;
+        const src = m.i32.add(srcBase, m.i32.mul(srcOff, m.i32.const(stride)));
+        const dst = m.i32.add(
+          m.i32.const(buf.offset),
+          m.i32.mul(dstOff, m.i32.const(elemBytes)),
+        );
+        const bytes = m.i32.mul(cnt, m.i32.const(elemBytes));
+        return m.memory.copy(dst, src, bytes);
+      }
+      if (s.kind === "handler-for-range") {
+        const idx = allocLoopLocal(s.loopId);
+        const cnt = this.emitValue(s.count, "i32");
+        const cntLocal = 1 + this.localTypes.length;
+        this.localTypes.push(binaryen.i32);
+        const initI = m.local.set(idx, m.i32.const(0));
+        const initN = m.local.set(cntLocal, cnt);
+        const bodyStmts = s.body.map(emitStmt);
+        const incr = m.local.set(idx, m.i32.add(m.local.get(idx, binaryen.i32), m.i32.const(1)));
+        const cond = m.i32.lt_s(m.local.get(idx, binaryen.i32), m.local.get(cntLocal, binaryen.i32));
+        const loopName = "uw_h_loop_" + s.loopId;
+        const blockName = "uw_h_break_" + s.loopId;
+        const loopBody = m.block(null, [...bodyStmts, incr, m.br(loopName)]);
+        const loop = m.loop(loopName, m.if(cond, loopBody, m.br(blockName)));
+        return m.block(blockName, [initI, initN, loop]);
+      }
       return this.emitStmt(s);
+    };
+
+    try {
+      return emitStmt(s);
     } finally {
       this.emitValue = origEmitValue;
       this.loopVarLocals = origLoopVarLocals;

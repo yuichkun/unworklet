@@ -22,6 +22,7 @@
     "@unworklet/dsp": "workspace:*",
     "@unworklet/examples": "workspace:*",
     "@unworklet/test": "workspace:*",
+    "@unworklet/vite-plugin": "workspace:*",
     "@unworklet/worklet": "workspace:*",
     "fast-check": "^3.20.0",
     "tsx": "^4.21.0",

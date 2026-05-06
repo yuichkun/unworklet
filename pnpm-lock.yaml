@@ -39,6 +39,9 @@ importers:
       '@unworklet/test':
         specifier: workspace:*
         version: link:packages/test
+      '@unworklet/vite-plugin':
+        specifier: workspace:*
+        version: link:packages/vite-plugin
       '@unworklet/worklet':
         specifier: workspace:*
         version: link:packages/worklet
@@ -156,6 +159,18 @@ importers:
       '@unworklet/core':
         specifier: workspace:*
         version: link:../core
+
+  packages/vite-plugin:
+    dependencies:
+      '@unworklet/compiler':
+        specifier: workspace:*
+        version: link:../compiler
+      '@unworklet/core':
+        specifier: workspace:*
+        version: link:../core
+      vite:
+        specifier: ^5.0.0 || ^6.0.0 || ^7.0.0
+        version: 7.3.2(@types/node@25.6.0)(lightningcss@1.32.0)(tsx@4.21.0)
 
   packages/worklet:
     dependencies:

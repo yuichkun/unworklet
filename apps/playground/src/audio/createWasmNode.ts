@@ -16,6 +16,8 @@ export type CreateWasmNodeOptions = {
   blockSize?: number;
 };
 
+import { Lifecycle, type LifecycleState } from "@unworklet/client";
+
 export type WasmUnworkletNode = {
   node: AudioWorkletNode;
   inputs: Record<string, { connect: (n: AudioNode) => void; disconnect: () => void; node: AudioWorkletNode; index: number }>;
@@ -29,7 +31,16 @@ export type WasmUnworkletNode = {
     onEvent<K extends MidiEvent["type"]>(type: K, h: (e: Extract<MidiEvent, { type: K }>) => void): () => void;
     connectFromWebMIDI(input: any): void;
   };
-  diagnostics: { transport: "wasm-worklet" };
+  diagnostics: {
+    transport: "audio-worklet" | "sab" | "postMessage";
+    overflows(): { events: Record<string, number>; messages: Record<string, number> };
+  };
+  lifecycle: {
+    state: LifecycleState;
+    onChange(h: (s: LifecycleState) => void): () => void;
+  };
+  snapshot(opts?: { profile?: string }): Promise<Uint8Array>;
+  restore(blob: Uint8Array): Promise<{ restored: number; skipped: string[]; missing: string[]; error?: string }>;
   dispose(): void;
 };
 
@@ -74,7 +85,13 @@ export async function createWasmNode(
   });
 
   // Wait for 'ready' to learn layout
-  type Ready = { type: "ready"; layout: any; paramDescs: any[] };
+  type Ready = {
+    type: "ready";
+    layout: any;
+    paramDescs: any[];
+    memory: SharedArrayBuffer | null;
+    transport: "sab" | "postMessage";
+  };
   const ready = await new Promise<Ready>((resolve, reject) => {
     const onMessage = (e: MessageEvent) => {
       if (e.data?.type === "ready") {
@@ -88,6 +105,10 @@ export async function createWasmNode(
   });
 
   const layout = ready.layout;
+  const sharedMem = ready.memory;
+  const memU8 = sharedMem ? new Uint8Array(sharedMem) : null;
+  const memI32 = sharedMem ? new Int32Array(sharedMem) : null;
+  const memF32 = sharedMem ? new Float32Array(sharedMem) : null;
 
   // Build .inputs / .outputs / .params surfaces
   const inputs: WasmUnworkletNode["inputs"] = {};
@@ -152,12 +173,26 @@ export async function createWasmNode(
       diagnostics: { overflowCount: () => 0 },
     };
   }
-  // Messages senders
+  // Messages senders. When SAB transport is available, write the slot
+  // directly into the shared linear memory + Atomics-bump the ring head;
+  // otherwise fall back to postMessage which the worklet enqueues.
   const messages: WasmUnworkletNode["messages"] = {};
   for (const m of layout.messages) {
-    messages[m.name] = (payload: any) => {
-      node.port.postMessage({ type: "message", name: m.name, payload });
-    };
+    if (sharedMem && memI32 && memU8 && memF32) {
+      const ml = m;
+      messages[m.name] = (payload: any) => {
+        try {
+          enqueueSAB(ml, payload, memI32, memU8, memF32);
+        } catch (e) {
+          // Fall back to postMessage if anything goes wrong.
+          node.port.postMessage({ type: "message", name: ml.name, payload });
+        }
+      };
+    } else {
+      messages[m.name] = (payload: any) => {
+        node.port.postMessage({ type: "message", name: m.name, payload });
+      };
+    }
   }
   // MIDI
   const midiOutListeners = new Map<string, Array<(e: any) => void>>();
@@ -186,8 +221,42 @@ export async function createWasmNode(
     },
   };
 
-  // State publishing not yet implemented in the WASM worklet — placeholder.
+  // State publishing — drain comes via `publish` messages from the worklet.
+  const stateLast = new Map<string, any>();
+  const stateSubs = new Map<string, Array<(v: any) => void>>();
   const state: WasmUnworkletNode["state"] = {};
+  const allPublished = [
+    ...((layout.publishedStates ?? []) as Array<{ path: string; name?: string }>),
+    ...((layout.publishedBuffers ?? []) as Array<{ path: string; name?: string }>),
+  ];
+  for (const pl of allPublished) {
+    const key = pl.name ?? pl.path;
+    stateSubs.set(pl.path, []);
+    state[key] = {
+      get value() {
+        return stateLast.get(pl.path);
+      },
+      subscribe(handler) {
+        const list = stateSubs.get(pl.path)!;
+        list.push(handler);
+        return () => {
+          const idx = list.indexOf(handler);
+          if (idx >= 0) list.splice(idx, 1);
+        };
+      },
+    };
+  }
+
+  // Lifecycle
+  const lifecycle = new Lifecycle();
+  lifecycle.transition("ready");
+
+  // Snapshot/restore plumbing
+  let nextRpcId = 1;
+  const pending = new Map<number, (v: any) => void>();
+  const eventOverflow = new Map<string, number>();
+  const messageOverflow = new Map<string, number>();
+  const errorListeners: Array<(e: any) => void> = [];
 
   node.port.addEventListener("message", (e: MessageEvent) => {
     const msg = e.data;
@@ -217,8 +286,37 @@ export async function createWasmNode(
           }
         }
       }
+    } else if (msg.type === "publish") {
+      for (const [path, value] of Object.entries(msg.values ?? {})) {
+        stateLast.set(path, value);
+        const subs = stateSubs.get(path);
+        if (subs) for (const h of subs) {
+          try { h(value); } catch (err) { console.error(err); }
+        }
+      }
+      if (lifecycle.state === "ready") lifecycle.transition("running");
+    } else if (msg.type === "overflow") {
+      // Worklet reports an overflow on a queue; track per-name counts.
+      if (msg.kind === "event") eventOverflow.set(msg.name, (eventOverflow.get(msg.name) ?? 0) + 1);
+      else if (msg.kind === "message") messageOverflow.set(msg.name, (messageOverflow.get(msg.name) ?? 0) + 1);
+    } else if (msg.type === "error") {
+      lifecycle.transition("errored");
+      for (const h of errorListeners) try { h(msg); } catch {}
+    } else if (msg.type === "snapshot-response" || msg.type === "restore-response") {
+      const cb = pending.get(msg.id);
+      if (cb) {
+        pending.delete(msg.id);
+        cb(msg.type === "snapshot-response" ? msg.blob : msg.result);
+      }
     }
   });
+
+  // Patch event diagnostics overflowCount to read the real counter.
+  for (const ev of layout.events) {
+    events[ev.name].diagnostics = {
+      overflowCount: () => eventOverflow.get(ev.name) ?? 0,
+    };
+  }
 
   return {
     node,
@@ -229,8 +327,37 @@ export async function createWasmNode(
     events,
     messages,
     midi,
-    diagnostics: { transport: "wasm-worklet" },
+    diagnostics: {
+      transport: ready.transport,
+      overflows: () => ({
+        events: Object.fromEntries(eventOverflow),
+        messages: Object.fromEntries(messageOverflow),
+      }),
+    },
+    lifecycle: {
+      get state() {
+        return lifecycle.state;
+      },
+      onChange(h) {
+        return lifecycle.on((s) => h(s));
+      },
+    },
+    async snapshot(opts) {
+      const id = nextRpcId++;
+      const p = new Promise<Uint8Array>((resolve) => pending.set(id, resolve));
+      node.port.postMessage({ type: "snapshot", id, profile: opts?.profile });
+      return p;
+    },
+    async restore(blob) {
+      const id = nextRpcId++;
+      const p = new Promise<{ restored: number; skipped: string[]; missing: string[]; error?: string }>(
+        (resolve) => pending.set(id, resolve),
+      );
+      node.port.postMessage({ type: "restore", id, blob }, [blob.buffer]);
+      return p;
+    },
     dispose() {
+      lifecycle.transition("disposed");
       try {
         node.disconnect();
       } catch {}
@@ -239,6 +366,58 @@ export async function createWasmNode(
       } catch {}
     },
   };
+}
+
+// SAB-transport message enqueue. Mirrors the worklet's own _enqueueMessage
+// shape: scalar fields go into the slot, typed-array payloads go into the
+// per-slot content area. Head bump uses Atomics.add to publish the slot to
+// the audio thread.
+function enqueueSAB(
+  ml: any,
+  payload: any,
+  memI32: Int32Array,
+  memU8: Uint8Array,
+  memF32: Float32Array,
+) {
+  const headIdx = ml.headerOffset >> 2;
+  const tailIdx = (ml.headerOffset + 4) >> 2;
+  const overflowIdx = (ml.headerOffset + 8) >> 2;
+  const head = Atomics.load(memI32, headIdx);
+  const tail = Atomics.load(memI32, tailIdx);
+  const slotIdx = ((head % ml.capacity) + ml.capacity) % ml.capacity;
+  const slotPtr = ml.slotsOffset + slotIdx * ml.slotSize;
+  if (head + 1 - tail >= ml.capacity) {
+    Atomics.add(memI32, overflowIdx, 1);
+    Atomics.store(memI32, tailIdx, tail + 1);
+  }
+  for (const f of ml.fields ?? []) {
+    const off = ml.fieldOffsets?.[f.name];
+    if (!off) continue;
+    const v = payload?.[f.name];
+    if (typeof v !== "number" && typeof v !== "boolean") continue;
+    if (off.type === "f32") memF32[(slotPtr + off.offset) >> 2] = +v;
+    else if (off.type === "i32" || off.type === "bool") memI32[(slotPtr + off.offset) >> 2] = (v as any) | 0;
+  }
+  for (const pf of ml.payloadFields ?? []) {
+    const arr = payload?.[pf.name];
+    const fieldBase = ml.payloadBufferOffset + slotIdx * ml.payloadStridePerSlot + pf.fieldOffsetWithinPayload;
+    memI32[(slotPtr + pf.slotOffsetField) >> 2] = fieldBase;
+    if (
+      arr instanceof Float32Array ||
+      arr instanceof Int32Array ||
+      arr instanceof Uint8Array
+    ) {
+      const len = Math.min((arr as any).length, pf.maxLength);
+      memI32[(slotPtr + pf.slotLengthField) >> 2] = len;
+      if (pf.elemType === "f32") memF32.set((arr as Float32Array).subarray(0, len), fieldBase >> 2);
+      else if (pf.elemType === "i32") memI32.set((arr as Int32Array).subarray(0, len), fieldBase >> 2);
+      else memU8.set((arr as Uint8Array).subarray(0, len), fieldBase);
+    } else {
+      memI32[(slotPtr + pf.slotLengthField) >> 2] = 0;
+    }
+  }
+  // Publish the slot.
+  Atomics.add(memI32, headIdx, 1);
 }
 
 function parseMidiBytes(data: Uint8Array): MidiEvent | null {
