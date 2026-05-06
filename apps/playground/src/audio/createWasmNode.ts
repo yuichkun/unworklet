@@ -353,7 +353,20 @@ export async function createWasmNode(
       const p = new Promise<{ restored: number; skipped: string[]; missing: string[]; error?: string }>(
         (resolve) => pending.set(id, resolve),
       );
-      node.port.postMessage({ type: "restore", id, blob }, [blob.buffer]);
+      // Apply migrations on the host side if the blob's hash differs from
+      // the worklet's current schemaHash. We use a transient JS Engine to
+      // walk the migration chain, then convert the resulting state into a
+      // WASM-format blob the worklet can apply.
+      let toSend = blob;
+      const wasmHash = layout.schemaHash;
+      if (wasmHash && getSnapshotHash(blob) && getSnapshotHash(blob) !== wasmHash) {
+        try {
+          toSend = await migrateForWasm(processor, blob, layout) ?? blob;
+        } catch (err) {
+          console.warn("[unworklet] migration failed:", err);
+        }
+      }
+      node.port.postMessage({ type: "restore", id, blob: toSend }, [toSend.buffer]);
       return p;
     },
     dispose() {
@@ -366,6 +379,99 @@ export async function createWasmNode(
       } catch {}
     },
   };
+}
+
+// Read the schemaHash out of either WASM-format (UWSN) or Engine-format
+// snapshot blobs. Returns null if the blob is unrecognized.
+function getSnapshotHash(blob: Uint8Array): string | null {
+  if (blob.length < 12) return null;
+  if (
+    blob[0] === 0x55 &&
+    blob[1] === 0x57 &&
+    blob[2] === 0x53 &&
+    blob[3] === 0x4e
+  ) {
+    const dv = new DataView(blob.buffer, blob.byteOffset, blob.byteLength);
+    const hashLen = dv.getUint32(8, true);
+    let h = "";
+    for (let i = 0; i < hashLen; i++) h += String.fromCharCode(blob[12 + i]!);
+    return h;
+  }
+  // Engine-format: u32 version | u32 hashLen | <hash> | ...
+  try {
+    const dv = new DataView(blob.buffer, blob.byteOffset, blob.byteLength);
+    const hashLen = dv.getUint32(4, true);
+    let h = "";
+    for (let i = 0; i < hashLen; i++) h += String.fromCharCode(blob[8 + i]!);
+    return h;
+  } catch {
+    return null;
+  }
+}
+
+// Apply migrations on the host using a transient JS Engine, then re-encode
+// the resulting state into a WASM-format blob the worklet can ingest.
+async function migrateForWasm(
+  processor: any,
+  blob: Uint8Array,
+  layout: any,
+): Promise<Uint8Array | null> {
+  const core = await import("@unworklet/core/internal");
+  const eng = new (core as any).Engine(processor, { sampleRate: 48000, blockSize: 128 });
+  const result = eng.restore(blob);
+  if (!result || result.error) return null;
+  // Now serialize the engine's current state into WASM-format.
+  const stateRegion = layout.stateRegion;
+  const bufferRegion = layout.bufferRegion;
+  const persistentBufs = bufferRegion.buffers.filter((b: any) => b.snapshot === "persistent");
+  const stateBytes = stateRegion.size | 0;
+  const bufBytes = persistentBufs.reduce((s: number, b: any) => s + b.byteSize, 0);
+  const hashStr: string = layout.schemaHash;
+  const headerLen = 8 + 4 + hashStr.length + 4 + 4;
+  const total = headerLen + stateBytes + persistentBufs.length * 8 + bufBytes;
+  const out = new Uint8Array(total);
+  const dv = new DataView(out.buffer);
+  let p = 0;
+  out[p++] = 0x55; out[p++] = 0x57; out[p++] = 0x53; out[p++] = 0x4e;
+  dv.setUint32(p, 1, true); p += 4;
+  dv.setUint32(p, hashStr.length, true); p += 4;
+  for (let i = 0; i < hashStr.length; i++) out[p + i] = hashStr.charCodeAt(i);
+  p += hashStr.length;
+  dv.setUint32(p, stateBytes, true); p += 4;
+  // Walk engine's runtime state slots; map each into the WASM state region.
+  const stateView = new Uint8Array(out.buffer, p, stateBytes);
+  for (const slot of stateRegion.slots) {
+    const sr = (eng.rt.allScopes ?? []).flatMap((s: any) => s.states).find(
+      (s: any) => s.slot.path === slot.path,
+    );
+    if (!sr) continue;
+    const dv2 = new DataView(stateView.buffer, stateView.byteOffset, stateView.byteLength);
+    const off = slot.offset - stateRegion.offset;
+    if (slot.type === "f32") dv2.setFloat32(off, sr.read() as number, true);
+    else if (slot.type === "f64") dv2.setFloat64(off, sr.read() as number, true);
+    else if (slot.type === "i32" || slot.type === "bool")
+      dv2.setInt32(off, (sr.read() as number) | 0, true);
+    else if (slot.type === "i64") dv2.setBigInt64(off, BigInt(sr.read() as number), true);
+  }
+  p += stateBytes;
+  dv.setUint32(p, persistentBufs.length, true); p += 4;
+  for (const b of persistentBufs) {
+    dv.setUint32(p, b.bufferId, true); p += 4;
+    dv.setUint32(p, b.byteSize, true); p += 4;
+    const br = (eng.rt.allScopes ?? []).flatMap((s: any) => s.buffers).find(
+      (x: any) => x.slot.path === b.path,
+    );
+    if (br) {
+      const src = new Uint8Array(
+        (br.storage as Float32Array | Int32Array).buffer,
+        (br.storage as Float32Array | Int32Array).byteOffset,
+        b.byteSize,
+      );
+      out.set(src, p);
+    }
+    p += b.byteSize;
+  }
+  return out.subarray(0, p);
 }
 
 // SAB-transport message enqueue. Mirrors the worklet's own _enqueueMessage
