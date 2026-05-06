@@ -20,6 +20,7 @@ import {
   fmSynth,
   drumSampler,
   convolutionReverb,
+  granularSampler,
 } from "@unworklet/examples";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -95,6 +96,14 @@ const cases: Array<{
       { at: 0, name: "uploadPad", payload: { pad: 0, samples: sampleClick } },
       { at: 0.005, name: "triggerPad", payload: { pad: 0, velocity: 1 } },
     ],
+  },
+  {
+    name: "granularSampler",
+    processor: granularSampler,
+    golden: "05-granular-sampler.wav",
+    duration: 0.2,
+    midi: [{ type: "noteOn", channel: 0, note: 60, velocity: 100, atSample: 0 }],
+    messages: [{ at: 0, name: "uploadSample", payload: { samples: sampleClick } }],
   },
 ];
 

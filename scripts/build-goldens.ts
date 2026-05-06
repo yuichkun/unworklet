@@ -91,6 +91,15 @@ const cases: Array<{ name: string; processor: any; opts?: any; inputs?: any }> =
       ],
     },
   },
+  {
+    name: "05-granular-sampler",
+    processor: granularSampler,
+    opts: {
+      durationSec: 0.2,
+      midi: [{ type: "noteOn", channel: 0, note: 60, velocity: 100, atSample: 0 }],
+      messages: [{ at: 0, name: "uploadSample", payload: { samples: sampleClick } }],
+    },
+  },
 ];
 
 for (const c of cases) {
