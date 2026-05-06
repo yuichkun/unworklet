@@ -292,6 +292,7 @@ export async function createWasmNode(
     const msg = e.data;
     if (!msg) return;
     if (msg.type === "events") {
+      if (lifecycle.state === "ready") lifecycle.transition("running");
       for (const [name, list] of Object.entries(msg.events ?? {})) {
         const subs = eventListeners.get(name);
         if (!subs) continue;
@@ -306,6 +307,7 @@ export async function createWasmNode(
         }
       }
     } else if (msg.type === "midi-out") {
+      if (lifecycle.state === "ready") lifecycle.transition("running");
       for (const item of msg.events ?? []) {
         const handlers = midiOutListeners.get(item.event.type) ?? [];
         for (const h of handlers) {
@@ -325,15 +327,10 @@ export async function createWasmNode(
         }
       }
       if (lifecycle.state === "ready") lifecycle.transition("running");
-    } else if (
-      msg.type === "events" ||
-      msg.type === "midi-out" ||
-      msg.type === "first-process"
-    ) {
-      // Any sign of activity from the worklet implies the audio thread is
-      // actively rendering. The worklet posts `first-process` on its very
-      // first process() invocation specifically so processors that publish
-      // nothing still trigger the ready → running transition.
+    } else if (msg.type === "first-process") {
+      // Worklet posts this on its first process() invocation so even
+      // processors with no published state, no events, and no MIDI out
+      // trigger the ready → running transition.
       if (lifecycle.state === "ready") lifecycle.transition("running");
     } else if (msg.type === "overflow") {
       // Worklet reports an overflow on a queue; track per-name counts.
