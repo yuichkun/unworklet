@@ -246,7 +246,23 @@ export function audioOutput(options: { channels: number; name: string }) {
 
 // ─── Events / Messages ──────────────────────────────────────────────────────
 
-export function event<T = any>(options: { name: string; capacity?: number }) {
+export function event<T = any>(options: {
+  name: string;
+  capacity?: number;
+  // Reserved (v1.x.0). Variable-length event payloads use the same
+  // content-buffer mechanism as message<T>, but the audio thread is the
+  // producer instead of main, so the SAB-side allocator is different.
+  // Setting this in v1.0.0 does nothing; we surface a console warning so
+  // users know the option won't yet take effect.
+  payloadCapacity?: number;
+}) {
+  if (options.payloadCapacity !== undefined) {
+    // Surface only once per processor compile.
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[unworklet] event<T>({ payloadCapacity }) is reserved for v1.x.0; the option is accepted but variable-length event payloads are not yet emitted in WASM. Use message<T>({ payload: {...} }) for typed-array payloads in the main → audio direction.`,
+    );
+  }
   const c = getCtx();
   // Defer the field schema until the first emit — we observe field names + types
   // from the payload literal. Default: empty fields, will be filled dynamically.
