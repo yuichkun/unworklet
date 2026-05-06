@@ -32,7 +32,7 @@ export type WasmUnworkletNode = {
     connectFromWebMIDI(input: any): void;
   };
   diagnostics: {
-    transport: "audio-worklet" | "sab" | "postMessage";
+    transport: "sab" | "postMessage";
     overflows(): { events: Record<string, number>; messages: Record<string, number> };
   };
   lifecycle: {

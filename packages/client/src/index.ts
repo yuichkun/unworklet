@@ -1,5 +1,6 @@
 import { Engine } from "@unworklet/core/internal";
 import type { CompiledProcessor, MidiEvent } from "@unworklet/core";
+import { Lifecycle, type LifecycleState } from "./lifecycle.js";
 
 export { Lifecycle, type LifecycleState, type LifecycleListener } from "./lifecycle.js";
 
@@ -20,8 +21,20 @@ export type UnworkletNode = {
   messages: Record<string, MessageSender>;
   midi: MidiAPI;
   diagnostics: { transport: "sab" | "postMessage" | "js" };
+  // Lifecycle state machine — see docs/05-client §4 + lifecycle.ts.
+  lifecycle: {
+    readonly state: LifecycleState;
+    onChange(handler: (state: LifecycleState) => void): () => void;
+  };
   snapshot(options?: { profile?: string }): Promise<Uint8Array>;
   restore(blob: Uint8Array): Promise<{ restored: number; skipped: string[]; missing: string[] }>;
+  // Decode a snapshot blob's slot summary without applying it.
+  inspect(blob: Uint8Array): {
+    version: number;
+    schemaHash: string;
+    profile?: string;
+    slots: Record<string, { kind: string; type?: string; value?: any; bytes?: number }>;
+  };
   dispose(): void;
   onError(handler: (err: Error) => void): void;
   __engine: Engine;
@@ -251,6 +264,10 @@ export async function createNode(
   };
 
   const errorHandlers: Array<(err: Error) => void> = [];
+  const lifecycle = new Lifecycle();
+  // The JS-engine path skips the load step (everything is in-process), so
+  // we transition straight to ready.
+  lifecycle.transition("ready");
 
   const node: UnworkletNode = {
     inputs,
@@ -261,13 +278,29 @@ export async function createNode(
     messages,
     midi,
     diagnostics: { transport: "js" },
+    lifecycle: {
+      get state() {
+        return lifecycle.state;
+      },
+      onChange(handler) {
+        return lifecycle.on((s) => handler(s));
+      },
+    },
     async snapshot(opts) {
+      if (lifecycle.state === "creating" || lifecycle.state === "ready") {
+        lifecycle.transition("running");
+      }
       return engine.snapshot(opts?.profile);
     },
     async restore(blob) {
       return engine.restore(blob);
     },
-    dispose() {},
+    inspect(blob) {
+      return inspect(blob);
+    },
+    dispose() {
+      lifecycle.transition("disposed");
+    },
     onError(h) {
       errorHandlers.push(h);
     },
@@ -279,17 +312,6 @@ export async function createNode(
   // dispatch helpers themselves. For renderOffline, the render() returns events
   // and the caller wires them.
   return node;
-}
-
-export function dispatchPendingEvents(node: UnworkletNode): void {
-  const eng = node.__engine;
-  for (const [name, list] of eng.rt.outboundEvents) {
-    const subscribers = (node.events[name] as any)?.__listeners as
-      | Array<(p: any) => void>
-      | undefined;
-    // We didn't expose listeners; workaround: read from internal map via closure
-  }
-  // Note: the proper dispatch happens inside renderOffline below.
 }
 
 // Public renderOffline entry point.

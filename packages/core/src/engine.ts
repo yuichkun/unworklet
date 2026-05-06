@@ -823,25 +823,39 @@ function getCurrent() {
   return null;
 }
 
-// Compute a stable schema hash from the runtime's declarations.
+// Serialize a SnapshotPolicy stably. Without this, record-form policies
+// like { default: "persistent", quick: "transient" } stringify to
+// "[object Object]" — and then the compiler's hash (which DOES walk the
+// record) and this hash diverge silently, breaking host-walked migrations.
+function policyKey(p: any): string {
+  if (typeof p === "string") return p;
+  if (!p || typeof p !== "object") return String(p);
+  return Object.entries(p)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}:${v}`)
+    .join(",");
+}
+
+// Compute a stable schema hash from the runtime's declarations. Output
+// MUST match @unworklet/compiler's compute (capture.ts) since migrations
+// look up registered chains by hash, and the WASM worklet rejects
+// snapshot blobs whose hash doesn't match its own schemaHash field.
 function computeSchemaHash(rt: ProcessorRuntime): string {
-  // Build canonical string representation
   const parts: string[] = [];
   for (const scope of rt.allScopes) {
     for (const sr of scope.states) {
-      parts.push(`s|${sr.slot.path}|${sr.slot.type}|${sr.slot.snapshot}`);
+      parts.push(`s|${sr.slot.path}|${sr.slot.type}|${policyKey(sr.slot.snapshot)}`);
     }
     for (const br of scope.buffers) {
-      parts.push(`b|${br.slot.path}|${br.slot.type}|${br.slot.size}|${br.slot.snapshot}`);
+      parts.push(`b|${br.slot.path}|${br.slot.type}|${br.slot.size}|${policyKey(br.slot.snapshot)}`);
     }
   }
   for (const p of rt.params) {
     parts.push(
-      `p|${p.slot.name}|${p.slot.automationRate}|${p.slot.default}|${p.slot.min}|${p.slot.max}`,
+      `p|${p.slot.name}|${p.slot.automationRate}|${p.slot.default}|${p.slot.min}|${p.slot.max}|${policyKey(p.slot.snapshot)}`,
     );
   }
   parts.sort();
-  // FNV-1a 32-bit hash, expressed as 8-char hex
   const s = parts.join(";");
   let h = 0x811c9dc5 >>> 0;
   for (let i = 0; i < s.length; i++) {

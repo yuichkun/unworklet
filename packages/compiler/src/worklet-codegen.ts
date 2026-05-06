@@ -427,16 +427,22 @@ export function generateWorkletModule(
     _enqueueMidi(ev) {
       const inp = LAYOUT.midiInputs[0];
       if (!inp) return;
-      const headOff = inp.headerOffset;
-      const tailOff = inp.headerOffset + 4;
-      const overflowOff = inp.headerOffset + 8;
-      let head = this.memI32[headOff / 4];
-      let tail = this.memI32[tailOff / 4];
+      const sab = this._sab;
+      const headIdx = inp.headerOffset >> 2;
+      const tailIdx = (inp.headerOffset + 4) >> 2;
+      const overflowIdx = (inp.headerOffset + 8) >> 2;
+      const head = sab ? Atomics.load(this.memI32, headIdx) : this.memI32[headIdx];
+      const tail = sab ? Atomics.load(this.memI32, tailIdx) : this.memI32[tailIdx];
       const slotIdx = head % inp.capacity;
       const slotPtr = inp.slotsOffset + slotIdx * 8;
       if (head + 1 - tail >= inp.capacity) {
-        this.memI32[overflowOff / 4] += 1;
-        this.memI32[tailOff / 4] = tail + 1;
+        if (sab) {
+          Atomics.add(this.memI32, overflowIdx, 1);
+          Atomics.store(this.memI32, tailIdx, tail + 1);
+        } else {
+          this.memI32[overflowIdx] += 1;
+          this.memI32[tailIdx] = tail + 1;
+        }
       }
       // Encode midi event to status / data1 / data2
       let status = 0, data1 = 0, data2 = 0;
@@ -455,17 +461,18 @@ export function generateWorkletModule(
       this.memU8[slotPtr + 1] = data1 & 0xff;
       this.memU8[slotPtr + 2] = data2 & 0xff;
       this.memU8[slotPtr + 3] = 0;
-      this.memI32[(slotPtr + 4) / 4] = (ev.atSample ?? 0) | 0;
-      this.memI32[headOff / 4] = head + 1;
+      this.memI32[(slotPtr + 4) >> 2] = (ev.atSample ?? 0) | 0;
+      if (sab) Atomics.add(this.memI32, headIdx, 1);
+      else this.memI32[headIdx] = head + 1;
     }
 
     _drainOutboundEvents() {
       let any = false;
       const eventsOut = {};
+      const sab = this._sab;
       for (const ev of LAYOUT.events) {
-        const headOff = ev.headerOffset;
-        const tailOff = ev.headerOffset + 4;
-        let head = this.memI32[headOff / 4];
+        const headIdx = ev.headerOffset >> 2;
+        const head = sab ? Atomics.load(this.memI32, headIdx) : this.memI32[headIdx];
         const last = this._eventReadHeads.get(ev.name) ?? 0;
         // Read entries from last to head
         if (head !== last) {
@@ -494,8 +501,9 @@ export function generateWorkletModule(
     _drainOutboundMidi() {
       const out = LAYOUT.midiOutputs[0];
       if (!out) return;
-      const headOff = out.headerOffset;
-      let head = this.memI32[headOff / 4];
+      const sab = this._sab;
+      const headIdx = out.headerOffset >> 2;
+      const head = sab ? Atomics.load(this.memI32, headIdx) : this.memI32[headIdx];
       const last = this._midiOutReadHeads.get(out.name) ?? 0;
       if (head === last) return;
       const events = [];

@@ -26,15 +26,15 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q14 | v1.0.0 acceptance criteria | (open) | `10-roadmap.md` §1 |
 | Q15 | License | (open) | `09-repo-structure.md` §3 |
 | Q16 | npm scope | (open) | `09-repo-structure.md` §4 |
-| Q17 | Math precision variants | (open) | `01-dsl.md` §2 |
-| Q18 | Render quantum handling | (open) | `04-worklet-runtime.md` §3 |
-| Q19 | Channel-count specialization | (open) | `04-worklet-runtime.md` §4 |
-| Q20 | Pre-warm correctness | (open) | `04-worklet-runtime.md` §5 |
-| Q21 | Denormal handling | (open) | `04-worklet-runtime.md` §6 |
+| Q17 | Math precision variants | resolved — three import paths: `@unworklet/core` (default JS Math), `@unworklet/dsp/precise` (=default for now, reserved), `@unworklet/dsp/table` (4096-entry LUT for sin/cos/exp/log; tan/tanh excluded by design) | `01-dsl.md` §2 |
+| Q18 | Render quantum handling | resolved — process(blockSize) takes the size as an i32 param; renderQuantum is a runtime constant from the host (default 128) | `04-worklet-runtime.md` §3 |
+| Q19 | Channel-count specialization | (open) — codegen treats channel as an indexing dim today; specialization deferred behind benchmarks | `04-worklet-runtime.md` §4 |
+| Q20 | Pre-warm correctness | resolved — exports.prewarm(N) runs process(blockSize) N times to gate JIT tier-up before first audio block | `04-worklet-runtime.md` §5 |
+| Q21 | Denormal handling | resolved — `flushDenormals(x)` primitive; static analysis warns on coefs in (0.9, 1.0); applied in feedbackDelay / convolutionReverb / compressor / polySynth | `04-worklet-runtime.md` §6 |
 | Q22 | Graph capture model and process body structure | resolved (a / aprime / b fixed; c 3-layer fixed; d open) | `00-foundations.md` §3 + `01-dsl.md` §1, §10 + `03-compiler.md` §2 |
-| Q23 | Hot reload semantics | (open) | `07-tooling.md` §4 |
-| Q24 | Bundler integration scope | (open) | `08-deployment.md` §1 |
-| Q25 | Source maps | (open) | `03-compiler.md` §7 |
+| Q23 | Hot reload semantics | resolved — `unworklet dev` watches the source dir recursively, rebuilds, posts SSE events. Page receives `reload` or `schema-changed` (which forces fresh instance) | `07-tooling.md` §4 |
+| Q24 | Bundler integration scope | resolved — first-party `@unworklet/vite-plugin` exposes `?unworklet` import suffix; compiles the processor at build time, emits worklet JS as an asset (Blob URL in dev) | `08-deployment.md` §1 |
+| Q25 | Source maps | resolved — capture-time stack walking attaches `loc` to every AST node; wasm-emit calls binaryen `setDebugLocation` for top-level stmts and emits `<name>.wasm.map`; CLI also writes a `<name>.locations.json` structural sidecar | `03-compiler.md` §7 |
 | Q26 | TypeScript version | (open) | `09-repo-structure.md` §5 |
 | Q27 | Generic typed messaging core surface | resolved — 5-surface uniform (param / state.publish / event / message / midi); SAB+Atomics with postMessage fallback; bulk via state.buffer.publish or event/message variable-length payloads | `02-messaging.md` + `01-dsl.md` §3, §4 |
 

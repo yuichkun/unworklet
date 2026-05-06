@@ -77,12 +77,15 @@ export async function runDev(opts: DevOptions): Promise<void> {
   // Initial build
   await rebuild();
 
-  // Watch the source file (and any sibling .ts files in the same directory).
+  // Watch recursively so nested imports under the source directory also
+  // trigger rebuilds. macOS / Linux both honour { recursive: true }.
   const watchDir = path.dirname(opts.modulePath);
   let pendingTimer: NodeJS.Timeout | null = null;
-  fs.watch(watchDir, { recursive: false }).then(async (watcher) => {
+  fs.watch(watchDir, { recursive: true }).then(async (watcher) => {
     for await (const event of watcher) {
-      if (!event.filename || !event.filename.endsWith(".ts")) continue;
+      if (!event.filename) continue;
+      const fname = event.filename.toString();
+      if (!fname.endsWith(".ts") && !fname.endsWith(".js")) continue;
       if (pendingTimer) clearTimeout(pendingTimer);
       pendingTimer = setTimeout(rebuild, 50);
     }

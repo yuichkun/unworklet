@@ -142,10 +142,29 @@ export type LayoutOptions = {
   maxOutputChannels?: number; // default 2
 };
 
+// Round up to the next power of two so audio-thread / main-thread can use
+// `head & (cap-1)` instead of `% cap` in the ring-buffer hot path.
+// docs/02-messaging §5.5 mandates power-of-2 capacities.
+function nextPow2(n: number): number {
+  if (n <= 1) return 1;
+  let v = n - 1;
+  v |= v >> 1;
+  v |= v >> 2;
+  v |= v >> 4;
+  v |= v >> 8;
+  v |= v >> 16;
+  return v + 1;
+}
+
 export function planLayout(g: CapturedGraph, opts: LayoutOptions): MemoryLayout {
   const renderQuantum = opts.renderQuantum;
   const maxInputCh = opts.maxInputChannels ?? Math.max(2, ...g.declarations.audioInputs.map((a) => a.channels));
   const maxOutputCh = opts.maxOutputChannels ?? Math.max(2, ...g.declarations.audioOutputs.map((a) => a.channels));
+  // Round all ring-buffer capacities up to power of 2 so wrap is a bitmask.
+  for (const e of g.declarations.events) e.capacity = nextPow2(e.capacity);
+  for (const m of g.declarations.messages) m.capacity = nextPow2(m.capacity);
+  for (const m of g.declarations.midiInputs) m.capacity = nextPow2(m.capacity);
+  for (const m of g.declarations.midiOutputs) m.capacity = nextPow2(m.capacity);
 
   let cursor = 0;
 
