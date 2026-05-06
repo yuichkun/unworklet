@@ -420,40 +420,45 @@ function makePayloadAccessor(
         messageId,
         fieldName,
       } as any),
+    copyToIf: (cond: any, buf: any, dstOffset: any = 0, count?: any) => {
+      copyToImpl(buf, dstOffset, count, cond);
+    },
     copyTo: (buf: any, dstOffset: any = 0, count?: any) => {
-      const bufferId = (buf as any).__isBuffer ? (buf as any).__bufferId ?? -1 : -1;
-      // The underlying declareBuffer doesn't yet expose __bufferId. Search
-      // by name — every buffer has a unique name in scope.
-      let bid = bufferId;
-      if (bid < 0) {
-        const bname: string | undefined = (buf as any).name;
-        const found = c.graph.declarations.buffers.find((b) => b.name === bname);
-        if (!found) {
-          throw new Error(
-            `payload.copyTo: target buffer ${bname ?? "(unknown)"} not declared in this graph`,
-          );
-        }
-        bid = found.id;
-      }
-      const cnt = count !== undefined
-        ? lift(count, "i32")
-        : c.fresh({
-            kind: "payload-len",
-            type: "i32",
-            messageId,
-            fieldName,
-          } as any);
-      c.emit({
-        kind: "payload-copy-to-buffer",
-        messageId,
-        fieldName,
-        bufferId: bid,
-        srcOffset: lift(0, "i32"),
-        dstOffset: lift(dstOffset, "i32"),
-        count: cnt,
-      });
+      copyToImpl(buf, dstOffset, count, undefined);
     },
   };
+  function copyToImpl(buf: any, dstOffset: any, count: any, cond: any) {
+    const bufferId = (buf as any).__isBuffer ? (buf as any).__bufferId ?? -1 : -1;
+    let bid = bufferId;
+    if (bid < 0) {
+      const bname: string | undefined = (buf as any).name;
+      const found = c.graph.declarations.buffers.find((b) => b.name === bname);
+      if (!found) {
+        throw new Error(
+          `payload.copyTo: target buffer ${bname ?? "(unknown)"} not declared in this graph`,
+        );
+      }
+      bid = found.id;
+    }
+    const cnt = count !== undefined
+      ? lift(count, "i32")
+      : c.fresh({
+          kind: "payload-len",
+          type: "i32",
+          messageId,
+          fieldName,
+        } as any);
+    c.emit({
+      kind: "payload-copy-to-buffer",
+      messageId,
+      fieldName,
+      bufferId: bid,
+      srcOffset: lift(0, "i32"),
+      dstOffset: lift(dstOffset, "i32"),
+      count: cnt,
+      cond: cond !== undefined ? lift(cond, "bool") : undefined,
+    });
+  }
 }
 
 // ─── MIDI ──────────────────────────────────────────────────────────────────

@@ -119,6 +119,11 @@ export async function cmdBuild(opts: BuildOptions): Promise<BuildArtifacts> {
   // (file:line:col). Loaded by error formatters and dev tooling.
   const sourceMapPath = path.join(opts.outDir, `${name}.locations.json`);
   await fs.writeFile(sourceMapPath, JSON.stringify(result.sourceLocations ?? { files: [], entries: [] }, null, 2));
+  // True wasm source map (binaryen) when we attached any debug locations.
+  if (result.sourceMap) {
+    const mapPath = path.join(opts.outDir, `${name}.wasm.map`);
+    await fs.writeFile(mapPath, result.sourceMap);
+  }
   return { wasmPath, workletPath, metaPath, textPath, sourceMapPath };
 }
 

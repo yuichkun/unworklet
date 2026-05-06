@@ -61,14 +61,13 @@ export const drumSampler = defineProcessor(() => {
   return {
     process: () => {
       uploadPad.onReceive(({ pad, samples }) => {
-        // Static fan-out: emit a copy per pad gated on pad index. The copy
-        // count is select(isMe, len, 0), so non-matching pads no-op (zero-
-        // byte memory.copy).
+        // Static fan-out: emit a guarded copy per pad. samples.copyToIf
+        // wraps the memory.copy in `if (cond)` in WASM so non-matching
+        // pads truly no-op (no spurious destination address evaluation).
         const len = samples.length();
         for (let p = 0; p < NUM_PADS; p++) {
           const isMe = eq(pad, p);
-          const cnt = select(isMe, len, 0) as unknown as Node<"i32">;
-          samples.copyTo(pads[p]!, 0, cnt);
+          samples.copyToIf(isMe, pads[p]!, 0, len);
           padLens[p]!.store(select(isMe, len, padLens[p]!.load()));
         }
       });

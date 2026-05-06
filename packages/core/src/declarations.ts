@@ -451,20 +451,22 @@ function messageInterp<T>(options: MessageOptions): MessageDecl<T> {
 }
 
 function makeJSPayloadAccessor(arr: Float32Array | Int32Array | Uint8Array) {
+  const doCopy = (buf: any, dstOffset: any, count: any) => {
+    const dst = (buf as any).__isBuffer ? buf : null;
+    if (!dst) return;
+    const off = ((dstOffset as number) | 0);
+    const cnt = count !== undefined ? ((count as number) | 0) : arr.length;
+    for (let i = 0; i < cnt; i++) {
+      dst.write(off + i, arr[i] as number);
+    }
+  };
   return {
     read: (idx: any) => arr[(idx as number) | 0]!,
     length: () => arr.length,
-    copyTo: (buf: any, dstOffset: any = 0, count?: any) => {
-      const dst = (buf as any).__isBuffer ? buf : null;
-      if (!dst) return;
-      const off = ((dstOffset as number) | 0);
-      const cnt = count !== undefined ? ((count as number) | 0) : arr.length;
-      for (let i = 0; i < cnt; i++) {
-        dst.write(off + i, arr[i] as number);
-      }
+    copyTo: (buf: any, dstOffset: any = 0, count?: any) => doCopy(buf, dstOffset, count),
+    copyToIf: (cond: any, buf: any, dstOffset: any = 0, count?: any) => {
+      if (cond) doCopy(buf, dstOffset, count);
     },
-    // Permit users to also still treat the accessor as the underlying array
-    // when iterating manually in JS-only paths.
     raw: arr,
   };
 }

@@ -286,6 +286,10 @@ export type PayloadCopyToBuffer = {
   srcOffset: ASTValue;
   dstOffset: ASTValue;
   count: ASTValue;
+  // Optional gate: skip the memory.copy entirely when cond evaluates to
+  // false. Lets callers express `if (eq(pad, p)) samples.copyTo(pads[p])`
+  // as a runtime-dispatched fan-out without a no-op for non-matching pads.
+  cond?: ASTValue;
   loc?: SourceLoc;
 };
 

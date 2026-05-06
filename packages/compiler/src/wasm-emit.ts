@@ -137,17 +137,21 @@ class Emit {
       throw new Error("WASM module validation failed:\n" + text);
     }
 
-    const binary = m.emitBinary();
+    // Emit binary with source map when we attached any debug locations.
+    let binary: Uint8Array;
+    let sourceMap: string | null = null;
+    if (this.hasAnyDebugLoc) {
+      const out = m.emitBinary("module.wasm.map");
+      binary = out.binary;
+      sourceMap = out.sourceMap ?? null;
+    } else {
+      binary = m.emitBinary();
+    }
     const text = m.emitText();
-    // Build a sidecar source-location map: declarations + statement-level
-    // user source locations captured during graph build. Not a full SMC
-    // source map (the WASM offset → src.line projection requires
-    // setDebugLocation which only operates on live expression refs); but
-    // surfaces enough to power error formatting and dev tooling per
-    // docs/03-compiler §7. A future pass can promote this to a true
-    // .wasm.map alongside the binary.
+    // Sidecar JSON map (always emitted) — gives dev tooling a structural
+    // map even when binaryen's source map is empty/incomplete.
     const sourceLocations = collectSourceLocations(this.graph);
-    return { binary, text, layout: this.layout, sourceLocations };
+    return { binary, text, layout: this.layout, sourceLocations, sourceMap };
   }
 
   declareMathImports() {
@@ -296,9 +300,14 @@ class Emit {
     // Reset event ring buffers? No — they're consumed by main reader; we
     // just write sample-accurate events as forSample iterates, per spec.
 
-    // Emit process body statements.
+    // Emit process body statements; remember each top-level stmt's expr ref
+    // so we can attach source locations after addFunction (binaryen's
+    // setDebugLocation needs the function ref + expression ref together).
+    const topLevelLocs: Array<{ expr: ExprRef; loc: any }> = [];
     for (const s of this.graph.processBody) {
-      stmts.push(this.emitStmt(s));
+      const expr = this.emitStmt(s);
+      stmts.push(expr);
+      if ((s as any).loc) topLevelLocs.push({ expr, loc: (s as any).loc });
     }
 
     // Advance absolute sample counter.
@@ -314,7 +323,7 @@ class Emit {
     );
 
     // Build locals types array
-    m.addFunction(
+    const fnRef = m.addFunction(
       "process",
       binaryen.createType([binaryen.i32]), // (blockSize: i32)
       binaryen.none,
@@ -322,6 +331,32 @@ class Emit {
       m.block(null, stmts),
     );
     m.addFunctionExport("process", "process");
+    // Attach source locations to each top-level statement so a real
+    // sourceMap can be emitted alongside the binary.
+    for (const { expr, loc } of topLevelLocs) {
+      this.attachLoc(fnRef, expr, loc);
+    }
+  }
+
+  // Cache file-name → binaryen file index. setDebugLocation requires
+  // ExpressionRefs returned during build of the same function; we attach
+  // by walking topLevelLocs after addFunction returns the FunctionRef.
+  fileIndices: Map<string, number> = new Map();
+  hasAnyDebugLoc = false;
+  attachLoc(fn: any, expr: ExprRef, loc: any) {
+    if (!loc || !loc.file || !loc.line) return;
+    let idx = this.fileIndices.get(loc.file);
+    if (idx === undefined) {
+      idx = this.m.addDebugInfoFileName(loc.file);
+      this.fileIndices.set(loc.file, idx);
+    }
+    try {
+      this.m.setDebugLocation(fn, expr, idx, loc.line, loc.col ?? 0);
+      this.hasAnyDebugLoc = true;
+    } catch {
+      // Some optimization passes invalidate ExpressionRefs after the fact.
+      // Swallow — the sidecar locations.json still carries the data.
+    }
   }
 
   // Generate the message-drain code: for each message, walk head..tail and
@@ -1521,9 +1556,6 @@ class Emit {
         if (!pf) return m.nop();
         const buf = this.layout.bufferRegion.buffers.find((b) => b.bufferId === s.bufferId);
         if (!buf) return m.nop();
-        // memory.copy(dst, src, byteCount) — uses payload-aware emitValue
-        // (this.emitValue points at `replaced` at this point so payload-len
-        // / payload-read inside the count expression resolve correctly).
         const srcBase = m.i32.load(0, 4, m.i32.add(slotPtr(), m.i32.const(pf.slotOffsetField)));
         const srcOff = this.emitValue(s.srcOffset, "i32");
         const dstOff = this.emitValue(s.dstOffset, "i32");
@@ -1536,7 +1568,12 @@ class Emit {
           m.i32.mul(dstOff, m.i32.const(elemBytes)),
         );
         const bytes = m.i32.mul(cnt, m.i32.const(elemBytes));
-        return m.memory.copy(dst, src, bytes);
+        const copyOp = m.memory.copy(dst, src, bytes);
+        if (s.cond) {
+          const cond = this.emitValue(s.cond, "bool");
+          return m.if(cond, copyOp);
+        }
+        return copyOp;
       }
       if (s.kind === "handler-for-range") {
         const idx = allocLoopLocal(s.loopId);
