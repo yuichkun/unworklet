@@ -17,6 +17,7 @@ import Distortion from "./views/Distortion.vue";
 import DrumSampler from "./views/DrumSampler.vue";
 import Compressor from "./views/Compressor.vue";
 import FmSynth from "./views/FmSynth.vue";
+import CodePlayground from "./views/CodePlayground.vue";
 
 import "./styles/main.css";
 
@@ -45,6 +46,7 @@ const routes = [
   { path: "/12-drum", name: "drum", component: DrumSampler, meta: { title: "Drum Sampler" } },
   { path: "/13-comp", name: "comp", component: Compressor, meta: { title: "Compressor" } },
   { path: "/14-fm", name: "fm", component: FmSynth, meta: { title: "FM Synth" } },
+  { path: "/15-playground", name: "codeplayground", component: CodePlayground, meta: { title: "Code Playground" } },
 ];
 
 const router = createRouter({

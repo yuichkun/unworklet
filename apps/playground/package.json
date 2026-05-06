@@ -14,6 +14,7 @@
     "@unworklet/core": "workspace:*",
     "@unworklet/examples": "workspace:*",
     "@unworklet/worklet": "workspace:*",
+    "monaco-editor": "^0.55.1",
     "vue": "^3.5.0",
     "vue-router": "^4.4.0"
   },

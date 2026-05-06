@@ -16,6 +16,7 @@ const cards = [
   { to: "/12-drum", title: "Drum Sampler", subtitle: "8-pad + MIDI triggers", group: "Instrument" },
   { to: "/13-comp", title: "Compressor", subtitle: "Soft-knee dynamic control", group: "Effect" },
   { to: "/14-fm", title: "FM Synth", subtitle: "6-voice 2-op FM", group: "Instrument" },
+  { to: "/15-playground", title: "Code Playground", subtitle: "Live editor + WASM compile + audio", group: "Live" },
 ];
 </script>
 
@@ -57,6 +58,15 @@ const cards = [
       <h2>MIDI</h2>
       <div class="grid">
         <RouterLink v-for="c in cards.filter(c => c.group === 'MIDI')" :key="c.to" :to="c.to" class="card panel">
+          <div class="title">{{ c.title }}</div>
+          <div class="muted">{{ c.subtitle }}</div>
+        </RouterLink>
+      </div>
+    </section>
+    <section>
+      <h2>Live</h2>
+      <div class="grid">
+        <RouterLink v-for="c in cards.filter(c => c.group === 'Live')" :key="c.to" :to="c.to" class="card panel">
           <div class="title">{{ c.title }}</div>
           <div class="muted">{{ c.subtitle }}</div>
         </RouterLink>
