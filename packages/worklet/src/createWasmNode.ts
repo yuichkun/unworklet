@@ -277,6 +277,35 @@ export async function createWasmNode(
     };
   }
 
+  // SAB-driven publish polling (docs/02-messaging §5.4). When the shared
+  // memory transport is available we ALSO observe the per-slot version
+  // counter via Atomics.load on a setInterval — this is non-blocking and
+  // lets host code observe high-FPS state changes without waiting for the
+  // worklet's postMessage tick. Currently runs at ~30 fps. The postMessage
+  // path remains active for backward compatibility.
+  let pollHandle: any = null;
+  if (sharedMem && memI32 && memF32) {
+    pollHandle = setInterval(() => {
+      for (const sl of (layout.publishedStates ?? []) as any[]) {
+        if (typeof sl.versionOffset !== "number") continue;
+        const vIdx = sl.versionOffset >> 2;
+        const seen = Atomics.load(memI32, vIdx);
+        const last = lastVersionByPath.get(sl.path) ?? 0;
+        if (seen === last) continue;
+        lastVersionByPath.set(sl.path, seen);
+        let v: any;
+        if (sl.type === "f32") v = memF32[sl.offset >> 2];
+        else if (sl.type === "i32" || sl.type === "bool") v = Atomics.load(memI32, sl.offset >> 2);
+        else continue;
+        if (sl.type === "bool") v = !!v;
+        if (stateLast.get(sl.path) === v) continue;
+        stateLast.set(sl.path, v);
+        const subs = stateSubs.get(sl.path);
+        if (subs) for (const h of subs) { try { h(v); } catch (e) { console.error(e); } }
+      }
+    }, 33);
+  }
+
   // Lifecycle
   const lifecycle = new Lifecycle();
   lifecycle.transition("ready");
@@ -431,6 +460,7 @@ export async function createWasmNode(
     },
     dispose() {
       lifecycle.transition("disposed");
+      if (pollHandle != null) clearInterval(pollHandle);
       try {
         node.disconnect();
       } catch {}
