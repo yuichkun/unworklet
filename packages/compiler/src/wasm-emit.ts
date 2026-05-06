@@ -175,11 +175,33 @@ class Emit {
   // and exercise both branches of select. Per docs/04 §1 step 4.
   buildPrewarm() {
     const m = this.m;
-    const i = 0; // local 0 = loop counter (no params)
     const stmts: ExprRef[] = [];
     const local = 0;
+    // Before each process() call, splat an alternating-sign waveform into
+    // every audio input scratch region so hot/cold branches of select
+    // (e.g. signum, abs, soft-clip) get exercised both ways across prewarm
+    // iterations. Without this, all-zero inputs leave half the branches
+    // cold and JIT tier-up doesn't cover them. (docs/04-worklet-runtime
+    // §1 step 4 / spec Q20.)
+    const setupInput: ExprRef[] = [];
+    for (const ai of this.layout.audioInputs.inputs) {
+      for (let c = 0; c < ai.channels; c++) {
+        const start = ai.offset + c * ai.channelStride;
+        // Write 4 alternating samples (the loop counter modulates sign).
+        for (let s = 0; s < this.layout.renderQuantum; s += 8) {
+          // Pattern: +0.25, -0.25, +0.25, -0.25, +0.5, -0.5, +0.75, -0.75
+          // (cycles through magnitudes too so coefficients-near-1 are hit).
+          const vals = [0.25, -0.25, 0.25, -0.25, 0.5, -0.5, 0.75, -0.75];
+          for (let k = 0; k < 8 && s + k < this.layout.renderQuantum; k++) {
+            setupInput.push(
+              m.f32.store(0, 4, m.i32.const(start + (s + k) * 4), m.f32.const(vals[k]!)),
+            );
+          }
+        }
+      }
+    }
     const body: ExprRef[] = [
-      // process(128) — typical render-quantum-sized warmup invocation (void)
+      ...setupInput,
       m.call("process", [m.i32.const(128)], binaryen.none),
       m.local.set(local, m.i32.add(m.local.get(local, binaryen.i32), m.i32.const(1))),
     ];

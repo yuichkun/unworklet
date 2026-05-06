@@ -123,6 +123,11 @@ export type MessageDecl<T> = {
 export type EventOptions = {
   name: string;
   capacity?: number;
+  // Reserved for future variable-length event payloads (per docs/01-dsl §4.3 +
+  // 02-messaging §5.2). v1.0.0 only ships variable-length payloads on the
+  // message<T> direction (see message({ payload })); event<T> v.l. is queued
+  // behind a roadmap item and accepting this option here is a no-op rather
+  // than a silent failure mode. v1.x.0 will plumb it through memory-layout.
   payloadCapacity?: number;
 };
 
