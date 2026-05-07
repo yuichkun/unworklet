@@ -168,8 +168,8 @@ export const granularSampler = defineProcessor((ctx) => {
           voiceGate[v]!.store(select(gate, gt(rem, 0), gate));
         }
 
-        out.set(0, i, lSum);
-        out.set(1, i, rSum);
+        out.left.set(i, lSum);
+        out.right.set(i, rSum);
       });
 
       let count: Node<"i32"> = 0 as unknown as Node<"i32">;

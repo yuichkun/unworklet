@@ -41,10 +41,10 @@ defineProcessor(() => {
     process: () => {
       const k = cutoff.at(0);
       forSample((i) => {
-        const y = add(lp.load(), mul(k, sub(inp.at(0, i), lp.load())));
+        const y = add(lp.load(), mul(k, sub(inp.left.at(i), lp.load())));
         lp.store(y);
-        out.set(0, i, y);
-        out.set(1, i, y);
+        out.left.set(i,  y);
+        out.right.set(i, y);
       });
     },
   };

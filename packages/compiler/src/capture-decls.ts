@@ -202,20 +202,26 @@ export function audioInput(options: { channels: number; name: string }) {
   };
   c.graph.declarations.audioInputs.push(decl);
   const inputId = decl.id;
-  return {
-    at: (channel: any, i: any) => {
-      return c.fresh({
-        kind: "audio-in-at",
-        type: "f32",
-        inputId,
-        channel: channel as number,
-        i: lift(i, "i32"),
-      } as any);
-    },
+  const at = (channel: any, i: any) => {
+    return c.fresh({
+      kind: "audio-in-at",
+      type: "f32",
+      inputId,
+      channel: channel as number,
+      i: lift(i, "i32"),
+    } as any);
+  };
+  const handle: any = {
+    at,
     channels: options.channels,
     name: options.name,
     __isAudioInput: true,
   };
+  if (options.channels === 2) {
+    handle.left = { at: (i: any) => at(0, i) };
+    handle.right = { at: (i: any) => at(1, i) };
+  }
+  return handle;
 }
 
 export function audioOutput(options: { channels: number; name: string }) {
@@ -228,20 +234,26 @@ export function audioOutput(options: { channels: number; name: string }) {
   };
   c.graph.declarations.audioOutputs.push(decl);
   const outputId = decl.id;
-  return {
-    set: (channel: any, i: any, v: any) => {
-      c.emit({
-        kind: "audio-out-set",
-        outputId,
-        channel: channel as number,
-        i: lift(i, "i32"),
-        value: lift(v, "f32"),
-      });
-    },
+  const set = (channel: any, i: any, v: any) => {
+    c.emit({
+      kind: "audio-out-set",
+      outputId,
+      channel: channel as number,
+      i: lift(i, "i32"),
+      value: lift(v, "f32"),
+    });
+  };
+  const handle: any = {
+    set,
     channels: options.channels,
     name: options.name,
     __isAudioOutput: true,
   };
+  if (options.channels === 2) {
+    handle.left = { set: (i: any, v: any) => set(0, i, v) };
+    handle.right = { set: (i: any, v: any) => set(1, i, v) };
+  }
+  return handle;
 }
 
 // ─── Events / Messages ──────────────────────────────────────────────────────

@@ -87,13 +87,13 @@ export const chorus = defineProcessor((ctx) => {
         const rL = dlyL.readInterpolated(rIdxL);
         const rR = dlyR.readInterpolated(rIdxR);
 
-        const inL = main.at(0, i);
-        const inR = main.at(1, i);
+        const inL = main.left.at(i);
+        const inR = main.right.at(i);
         dlyL.write(wIdx, inL);
         dlyR.write(wIdx, inR);
 
-        out.set(0, i, add(mul(inL, sub(1, mul(0.5, mixV))), mul(rL, mul(0.5, mixV))));
-        out.set(1, i, add(mul(inR, sub(1, mul(0.5, mixV))), mul(rR, mul(0.5, mixV))));
+        out.left.set(i, add(mul(inL, sub(1, mul(0.5, mixV))), mul(rL, mul(0.5, mixV))));
+        out.right.set(i, add(mul(inR, sub(1, mul(0.5, mixV))), mul(rR, mul(0.5, mixV))));
       });
 
       head.store(mod(add(blockHead, 128), MAX_DELAY_SAMPLES));

@@ -62,8 +62,8 @@ export const helloGain = defineProcessor(() => {
       forSample((i) => {
         // Multiply by zero — output must be silent if the new code is
         // actually picked up by Run.
-        out.set(0, i, mul(main.at(0, i), 0));
-        out.set(1, i, mul(main.at(1, i), 0));
+        out.left.set(i,  mul(main.left.at(i),  0));
+        out.right.set(i, mul(main.right.at(i), 0));
       });
     },
   };

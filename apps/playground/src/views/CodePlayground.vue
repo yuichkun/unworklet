@@ -50,15 +50,15 @@ export const myProcessor = defineProcessor((ctx) => {
       const k = cutoff.at(0);
       const d = drive.at(0);
       forSample((i) => {
-        const dryL = main.at(0, i);
-        const dryR = main.at(1, i);
+        const dryL = main.left.at(i);
+        const dryR = main.right.at(i);
         const sat = (x) => tanh(mul(x, d));
         const yL = flushDenormals(add(lpL.load(), mul(k, sub(sat(dryL), lpL.load()))));
         const yR = flushDenormals(add(lpR.load(), mul(k, sub(sat(dryR), lpR.load()))));
         lpL.store(yL);
         lpR.store(yR);
-        out.set(0, i, yL);
-        out.set(1, i, yR);
+        out.left.set(i,  yL);
+        out.right.set(i, yR);
       });
     },
   };

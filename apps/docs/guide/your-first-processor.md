@@ -11,8 +11,10 @@ export const myFirstProcessor = defineProcessor(() => {
     process: () => {
       // 3. Per-sample loop: runs 128 times per block, captured as a tight WASM loop.
       forSample((i) => {
-        out.set(0, i, main.at(0, i));
-        out.set(1, i, main.at(1, i));
+        // .left / .right are stereo shorthand for .at(0, i) / .at(1, i).
+        // Available whenever channels === 2.
+        out.left.set(i,  main.left.at(i));
+        out.right.set(i, main.right.at(i));
       });
     },
   };
@@ -34,8 +36,9 @@ export const myFirstProcessor = defineProcessor(() => {
   return {
     process: () => {
       forSample((i) => {
-        out.set(0, i, mul(main.at(0, i), gain.at(i)));
-        out.set(1, i, mul(main.at(1, i), gain.at(i)));
+        const g = gain.at(i);
+        out.left.set(i,  mul(main.left.at(i),  g));
+        out.right.set(i, mul(main.right.at(i), g));
       });
     },
   };
@@ -53,10 +56,11 @@ export const myFirstProcessor = defineProcessor(() => {
   return {
     process: () => {
       forSample((i) => {
-        const lOut = mul(main.at(0, i), gain.at(i));
-        const rOut = mul(main.at(1, i), gain.at(i));
-        out.set(0, i, lOut);
-        out.set(1, i, rOut);
+        const g = gain.at(i);
+        const lOut = mul(main.left.at(i),  g);
+        const rOut = mul(main.right.at(i), g);
+        out.left.set(i,  lOut);
+        out.right.set(i, rOut);
         // Track peak across the block. The publish: { rateFps: 30 }
         // option means main-thread subscribers see this slot at 30 fps.
         peak.store(max(peak.load(), max(abs(lOut), abs(rOut))));
@@ -88,8 +92,9 @@ export const stereoGainPlusEnv = defineProcessor(() => {
   return {
     process: () => {
       forSample((i) => {
-        out.set(0, i, oneChannel(main.at(0, i), gain.at(i), 0.05));
-        out.set(1, i, oneChannel(main.at(1, i), gain.at(i), 0.05));
+        const g = gain.at(i);
+        out.left.set(i,  oneChannel(main.left.at(i),  g, 0.05));
+        out.right.set(i, oneChannel(main.right.at(i), g, 0.05));
       });
     },
   };
@@ -118,11 +123,11 @@ Pass-through. The `forSample` callback runs at WASM speed — there is no JS fun
 The Run button gives you a slider for **gain**. It's a real `AudioParam` — connect oscillators or LFOs to it and they'll drive it sample-accurately.
 
 ::: warning JS operators on graph nodes
-Inside the captured body, `main.at(0, i)` and `gain.at(i)` are graph nodes (AST handles), not numbers. Use the named helpers — `mul(a, b)`, `add(a, b)`, `sub(a, b)`, `div(a, b)` — instead of `*`, `+`, `-`, `/`. The framework throws a clear error if you forget; it doesn't silently produce NaN.
+Inside the captured body, `main.left.at(i)` and `gain.at(i)` are graph nodes (AST handles), not numbers. Use the named helpers — `mul(a, b)`, `add(a, b)`, `sub(a, b)`, `div(a, b)` — instead of `*`, `+`, `-`, `/`. The framework throws a clear error if you forget; it doesn't silently produce NaN.
 
 ```ts
-mul(main.at(0, i), gain.at(i)) // ✓
-main.at(0, i) * gain.at(i)    // ✗ throws
+mul(main.left.at(i), gain.at(i)) // ✓
+main.left.at(i) * gain.at(i)    // ✗ throws
 ```
 :::
 

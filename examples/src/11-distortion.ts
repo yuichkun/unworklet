@@ -60,8 +60,8 @@ export const distortion = defineProcessor((ctx) => {
       const tanhDrv = tanh(drv);
 
       forSample((i) => {
-        const sL = main.at(0, i);
-        const sR = main.at(1, i);
+        const sL = main.left.at(i);
+        const sR = main.right.at(i);
 
         // one-pole LP for tone
         const lpLNew = add(mul(b, sL), mul(a, lpL.load()));
@@ -80,8 +80,8 @@ export const distortion = defineProcessor((ctx) => {
         const g = outGain.at(i);
         const oL = mul(yL, g);
         const oR = mul(yR, g);
-        out.set(0, i, oL);
-        out.set(1, i, oR);
+        out.left.set(i, oL);
+        out.right.set(i, oR);
 
         peak.store(max(peak.load(), max(abs(oL), abs(oR))));
       });

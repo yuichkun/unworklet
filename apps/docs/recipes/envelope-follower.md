@@ -20,15 +20,17 @@ export const envFollower = defineProcessor((ctx) => {
       const rCoef = sub(1, exp(div(-1, mul(mul(releaseMs.at(0), 0.001), ctx.sampleRate))));
 
       forSample((i) => {
-        const det = max(abs(main.at(0, i)), abs(main.at(1, i)));  // peak detector
+        const inL = main.left.at(i);
+        const inR = main.right.at(i);
+        const det = max(abs(inL), abs(inR));  // peak detector
         const e = env.load();
         const isAttacking = gt(det, e);
         const c = select(isAttacking, aCoef, rCoef);
         const newE = flushDenormals(add(e, mul(c, sub(det, e))));
         env.store(newE);
         // Pass-through audio so the processor has output.
-        out.set(0, i, main.at(0, i));
-        out.set(1, i, main.at(1, i));
+        out.left.set(i,  inL);
+        out.right.set(i, inR);
       });
     },
   };

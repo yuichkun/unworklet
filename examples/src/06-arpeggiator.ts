@@ -34,7 +34,8 @@ export const arpeggiator = defineProcessor((ctx) => {
   const rootNote = state.i32(60, { name: "rootNote" });
   const lastVel = state.i32(96, { name: "lastVel" });
   const stepIdx = state.i32(0, { name: "stepIdx", publish: { rateFps: 60 } });
-  const samplesPerStep = state.i32(48000 / 8, { name: "samplesPerStep" });
+  // 1/8 second per step, sample-rate-correct via ctx.samples (ms → samples).
+  const samplesPerStep = state.i32(ctx.samples(125), { name: "samplesPerStep" });
   const sampleAccum = state.i32(0, { name: "sampleAccum" });
 
   const stepFired = event<{ step: number; note: number }>({ name: "stepFired" });

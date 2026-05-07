@@ -41,19 +41,35 @@ export type ParamHandle = {
   __name: string;
 };
 
+export type StereoChannelInputView = {
+  at(i: Node<"i32"> | number): Node<"f32">;
+};
+
+export type StereoChannelOutputView = {
+  set(i: Node<"i32"> | number, v: Node<"f32"> | number): void;
+};
+
+type StereoInputShorthand<C extends number> = C extends 2
+  ? { left: StereoChannelInputView; right: StereoChannelInputView }
+  : {};
+
+type StereoOutputShorthand<C extends number> = C extends 2
+  ? { left: StereoChannelOutputView; right: StereoChannelOutputView }
+  : {};
+
 export type AudioInputHandle<C extends number> = {
   at(c: ChannelIndex<C>, i: Node<"i32"> | number): Node<"f32">;
   channels: C;
   name: string;
   __isAudioInput: true;
-};
+} & StereoInputShorthand<C>;
 
 export type AudioOutputHandle<C extends number> = {
   set(c: ChannelIndex<C>, i: Node<"i32"> | number, v: Node<"f32"> | number): void;
   channels: C;
   name: string;
   __isAudioOutput: true;
-};
+} & StereoOutputShorthand<C>;
 
 export type SnapshotPolicy =
   | "persistent"
@@ -213,6 +229,10 @@ export type ProcessorOptions = {
 export type ProcessorContext = {
   sampleRate: number;
   renderQuantum: number;
+  /** Convert milliseconds to an integer sample count at this processor's sample rate. */
+  samples(ms: number): number;
+  /** MIDI note number → frequency in Hz (A4=440, MIDI 69). */
+  hz(midiNote: number): number;
 };
 
 export type ProcessReturn = {

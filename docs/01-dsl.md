@@ -89,7 +89,12 @@ type AudioInputHandle<C extends number> = {
   at(c: ChannelIndex<C>, i: Node<'i32'>): Node<'f32'>;
   channels: C;
   name:     string;
-};
+} & (C extends 2 ? {
+  /** Channel-bound view over channel 0 (only present when channels === 2). */
+  left:  { at(i: Node<'i32'>): Node<'f32'> };
+  /** Channel-bound view over channel 1 (only present when channels === 2). */
+  right: { at(i: Node<'i32'>): Node<'f32'> };
+} : {});
 
 // `ChannelIndex<C>` is the union `0 | 1 | ... | (C - 1)`, narrowed by TypeScript
 // from the literal `channels: C` declared on the handle. Out-of-range indices are
@@ -124,8 +129,15 @@ type AudioOutputHandle<C extends number> = {
   set(c: ChannelIndex<C>, i: Node<'i32'>, v: Node<'f32'>): void;
   channels: C;
   name:     string;
-};
+} & (C extends 2 ? {
+  /** Channel-bound view over channel 0 (only present when channels === 2). */
+  left:  { set(i: Node<'i32'>, v: Node<'f32'>): void };
+  /** Channel-bound view over channel 1 (only present when channels === 2). */
+  right: { set(i: Node<'i32'>, v: Node<'f32'>): void };
+} : {});
 ```
+
+When `channels === 2`, both handles expose `.left` and `.right` views as a thin sugar over `.at(0, i)` / `.at(1, i)` and `.set(0, i, v)` / `.set(1, i, v)`. The shorthand is type-gated to stereo only — multi-channel ports keep the parametric `at(c, i)` / `set(c, i, v)` form (which works equally well for stereo, including JS `for (let c = 0; c < 2; c++)` loops that the capture machinery unrolls at compile time).
 
 `audioOut.set(c, i, v)` writes value `v` to channel `c` at sample-offset `i`. Both `c` and `i` follow the same scoping and narrowing rules as `at`.
 

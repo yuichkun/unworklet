@@ -4,9 +4,9 @@ const tryItCode0 = `import {
   add, sub, mul, mod, gte, select, i32, flushDenormals,
 } from "@unworklet/core";
 
-const MAX_DELAY = 96000;  // 2s @ 48kHz
-
 export const pingPong = defineProcessor((ctx) => {
+  // ctx.samples(ms) gives a sample-rate-correct integer count.
+  const MAX_DELAY = ctx.samples(2000);  // 2s of headroom
   const main = audioInput({ channels: 2, name: "main" });
   const out = audioOutput({ channels: 2, name: "main" });
 
@@ -31,8 +31,8 @@ export const pingPong = defineProcessor((ctx) => {
         const wIdx = mod(add(block, i), MAX_DELAY);
         const rIdx = mod(add(sub(wIdx, dSamples), MAX_DELAY), MAX_DELAY);
 
-        const inL = main.at(0, i);
-        const inR = main.at(1, i);
+        const inL = main.left.at(i);
+        const inR = main.right.at(i);
         const tapL = dlyL.read(rIdx);
         const tapR = dlyR.read(rIdx);
 
@@ -41,8 +41,8 @@ export const pingPong = defineProcessor((ctx) => {
         dlyR.write(wIdx, flushDenormals(add(inR, mul(tapL, fb))));
 
         // Output: dry + wet of the same-channel tap.
-        out.set(0, i, add(mul(inL, d), mul(tapL, w)));
-        out.set(1, i, add(mul(inR, d), mul(tapR, w)));
+        out.left.set(i,  add(mul(inL, d), mul(tapL, w)));
+        out.right.set(i, add(mul(inR, d), mul(tapR, w)));
       });
       head.store(mod(add(block, 128), MAX_DELAY));
     },

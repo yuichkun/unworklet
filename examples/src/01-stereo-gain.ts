@@ -28,10 +28,11 @@ export const stereoGain = defineProcessor(() => {
   return {
     process: () => {
       forSample((i) => {
-        const l = mul(main.at(0, i), gain.at(i));
-        const r = mul(main.at(1, i), gain.at(i));
-        out.set(0, i, l);
-        out.set(1, i, r);
+        const g = gain.at(i);
+        const l = mul(main.left.at(i), g);
+        const r = mul(main.right.at(i), g);
+        out.left.set(i, l);
+        out.right.set(i, r);
 
         meterL.store(max(meterL.load(), abs(l)));
         meterR.store(max(meterR.load(), abs(r)));

@@ -20,9 +20,9 @@ import {
 } from "@unworklet/core";
 
 // Stereo ping-pong feedback delay.
-const MAX_DELAY_SAMPLES = 96000; // 2 seconds at 48kHz
 
 export const feedbackDelay = defineProcessor((ctx) => {
+  const MAX_DELAY_SAMPLES = ctx.samples(2000); // 2 s of headroom at this SR
   const main = audioInput({ channels: 2, name: "main" });
   const out = audioOutput({ channels: 2, name: "main" });
 
@@ -85,8 +85,8 @@ export const feedbackDelay = defineProcessor((ctx) => {
           MAX_DELAY_SAMPLES,
         );
 
-        const inL = main.at(0, i);
-        const inR = main.at(1, i);
+        const inL = main.left.at(i);
+        const inR = main.right.at(i);
 
         const taL = dlyL.read(rIdx);
         const taR = dlyR.read(rIdx);
@@ -104,8 +104,8 @@ export const feedbackDelay = defineProcessor((ctx) => {
 
         const yL = add(mul(inL, d), mul(taL, w));
         const yR = add(mul(inR, d), mul(taR, w));
-        out.set(0, i, yL);
-        out.set(1, i, yR);
+        out.left.set(i, yL);
+        out.right.set(i, yR);
 
         meterL.store(max(meterL.load(), abs(yL)));
         meterR.store(max(meterR.load(), abs(yR)));

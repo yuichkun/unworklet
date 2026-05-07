@@ -89,8 +89,8 @@ export const compressor = defineProcessor((ctx) => {
       const log10ToLn = Math.LN10 / 20;
 
       forSample((i) => {
-        const inL = main.at(0, i);
-        const inR = main.at(1, i);
+        const inL = main.left.at(i);
+        const inR = main.right.at(i);
         const det = max(abs(inL), abs(inR));
         const e = env.load();
         const coef = select(gt(det, e), aCoef, rCoef);
@@ -118,8 +118,8 @@ export const compressor = defineProcessor((ctx) => {
         const m = makeupDb.at(i);
         const mk = exp(mul(m, log10ToLn));
 
-        out.set(0, i, mul(mul(inL, grLin), mk));
-        out.set(1, i, mul(mul(inR, grLin), mk));
+        out.left.set(i, mul(mul(inL, grLin), mk));
+        out.right.set(i, mul(mul(inR, grLin), mk));
 
         const cur = gainReductionDb.load();
         const newGr = sub(0, abs(grDb));

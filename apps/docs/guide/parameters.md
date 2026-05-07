@@ -21,8 +21,8 @@ export const tworate = defineProcessor(() => {
       const k = kRateGain.at(0);
       forSample((i) => {
         const a = aRateGain.at(i);
-        out.set(0, i, mul(mul(main.at(0, i), a), k));
-        out.set(1, i, mul(mul(main.at(1, i), a), k));
+        out.left.set(i,  mul(mul(main.left.at(i),  a), k));
+        out.right.set(i, mul(mul(main.right.at(i), a), k));
       });
     },
   };

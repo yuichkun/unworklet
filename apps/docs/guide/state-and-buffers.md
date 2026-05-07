@@ -21,9 +21,9 @@ const tryItCode1 = `import {
   forSample, add, sub, mul, mod, i32, flushDenormals,
 } from "@unworklet/core";
 
-const MAX_DELAY = 96000;
-
 export const simpleDelay = defineProcessor((ctx) => {
+  // ctx.samples(ms) → integer sample count at ctx.sampleRate.
+  const MAX_DELAY = ctx.samples(2000);   // 2s of headroom
   const main = audioInput({ channels: 1, name: "main" });
   const out = audioOutput({ channels: 1, name: "main" });
   const delayMs = param({ name: "delayMs", default: 350, min: 1, max: 1500, automationRate: "k-rate" });
@@ -83,7 +83,8 @@ The `publish: { rateFps: 30 }` option makes `n` visible to main-side `node.state
 `buffer.<type>({ size, name, snapshot? })` declares a fixed-size array. Indexed reads + writes, plus interpolated read for sub-sample positions:
 
 ```ts
-const delay = buffer.f32({ size: 96000, name: "delayLine" });   // 2-second @ 48kHz
+// ctx.samples(ms) gives a sample-rate-correct integer.
+const delay = buffer.f32({ size: ctx.samples(2000), name: "delayLine" });  // 2s
 const ir = buffer.f32({ size: 4096, name: "ir", snapshot: "persistent" });
 
 // Inside forSample:

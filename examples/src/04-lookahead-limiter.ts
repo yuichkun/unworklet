@@ -79,32 +79,34 @@ export const lookaheadLimiter = defineProcessor((ctx) => {
       const headBlock = dlyHead.load();
 
       forSample((i) => {
-        const peak = max(abs(main.at(0, i)), abs(main.at(1, i)));
+        const inL = main.left.at(i);
+        const inR = main.right.at(i);
+        const peak = max(abs(inL), abs(inR));
         const e = envelopeFollow(peak, attackCoef, releaseCoef, env);
 
         const gr = select(gt(e, ceilingLin), div(ceilingLin, e), 1);
         const grDb20 = mul(20 / Math.LN10, log(gr));
 
         const wIdx = mod(add(headBlock, i), LOOKAHEAD_SAMPLES);
-        dlyL.write(wIdx, main.at(0, i));
-        dlyR.write(wIdx, main.at(1, i));
+        dlyL.write(wIdx, inL);
+        dlyR.write(wIdx, inR);
 
         const rIdx = mod(add(wIdx, 1), LOOKAHEAD_SAMPLES);
         const xL = dlyL.read(rIdx);
         const xR = dlyR.read(rIdx);
 
-        out.set(0, i, mul(xL, gr));
-        out.set(1, i, mul(xR, gr));
+        out.left.set(i, mul(xL, gr));
+        out.right.set(i, mul(xR, gr));
 
-        overshoot.emitIf(gt(abs(main.at(0, i)), ceilingLin), {
+        overshoot.emitIf(gt(abs(inL), ceilingLin), {
           atSample: i,
           channel: 0,
-          level: abs(main.at(0, i)) as unknown as number,
+          level: abs(inL) as unknown as number,
         });
-        overshoot.emitIf(gt(abs(main.at(1, i)), ceilingLin), {
+        overshoot.emitIf(gt(abs(inR), ceilingLin), {
           atSample: i,
           channel: 1,
-          level: abs(main.at(1, i)) as unknown as number,
+          level: abs(inR) as unknown as number,
         });
 
         gainReductionDb.store(min(gainReductionDb.load(), grDb20));

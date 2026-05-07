@@ -108,8 +108,8 @@ export const drumSampler = defineProcessor(() => {
           padGate[p]!.store(select(active, gate, false));
         }
         const sig = mul(mix, masterVol.at(i));
-        out.set(0, i, sig);
-        out.set(1, i, sig);
+        out.left.set(i, sig);
+        out.right.set(i, sig);
       });
     },
   };

@@ -79,8 +79,8 @@ export const convolutionReverb = defineProcessor(
 
         forSample((i) => {
           const idx = mod(add(headBlock, i), IR_LEN);
-          histL.write(idx, main.at(0, i));
-          histR.write(idx, main.at(1, i));
+          histL.write(idx, main.left.at(i));
+          histR.write(idx, main.right.at(i));
         });
 
         forSample.byN(4, (i) => {
@@ -105,15 +105,15 @@ export const convolutionReverb = defineProcessor(
             add((accR as any).lane(2), (accR as any).lane(3)),
           );
 
-          const dryL = mul(main.at(0, i), dryGain.at(0));
-          const dryR = mul(main.at(1, i), dryGain.at(0));
+          const dryL = mul(main.left.at(i), dryGain.at(0));
+          const dryR = mul(main.right.at(i), dryGain.at(0));
           // Flush subnormals on convolution output so a quiet tail doesn't
           // produce denormals that stall the audio thread (docs/04 §6).
           const wetL = flushDenormals(mul(sumL, wetGain.at(0)));
           const wetR = flushDenormals(mul(sumR, wetGain.at(0)));
 
-          out.set(0, i, add(dryL, wetL));
-          out.set(1, i, add(dryR, wetR));
+          out.left.set(i, add(dryL, wetL));
+          out.right.set(i, add(dryR, wetR));
 
           wetMeter.store(max(wetMeter.load(), max(abs(wetL), abs(wetR))));
         });

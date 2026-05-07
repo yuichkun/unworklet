@@ -17,15 +17,15 @@ export const tanhSat = defineProcessor(() => {
   return {
     process: () => {
       forSample((i) => {
-        const dryL = main.at(0, i);
-        const dryR = main.at(1, i);
+        const dryL = main.left.at(i);
+        const dryR = main.right.at(i);
         const d = drive.at(i);
         const m = mix.at(i);
         // Wet = tanh(x * drive). Mix dry+wet.
         const wetL = tanh(mul(dryL, d));
         const wetR = tanh(mul(dryR, d));
-        out.set(0, i, add(mul(dryL, sub(1, m)), mul(wetL, m)));
-        out.set(1, i, add(mul(dryR, sub(1, m)), mul(wetR, m)));
+        out.left.set(i,  add(mul(dryL, sub(1, m)), mul(wetL, m)));
+        out.right.set(i, add(mul(dryR, sub(1, m)), mul(wetR, m)));
       });
     },
   };

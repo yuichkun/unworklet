@@ -58,7 +58,7 @@ export function compileToWasm(
   const body =
     typeof source === "function"
       ? (source as import("./capture.js").ProcessorBodyForCapture)
-      : ((ctx: { sampleRate: number; renderQuantum: number }) =>
+      : ((ctx: import("@unworklet/core").ProcessorContext) =>
           (source as CompiledProcessor).body(ctx));
 
   setCaptureBackend(captureBackend);

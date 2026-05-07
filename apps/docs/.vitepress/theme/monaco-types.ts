@@ -34,15 +34,33 @@ declare module '@unworklet/core' {
     /** Read the param at sample index i (use 0 for k-rate). */
     at(i: Node<'i32'> | number): Node<'f32'>;
   }
+  /** Channel-bound view exposed via .left / .right on stereo audioInput. */
+  export interface StereoChannelInputView {
+    /** Read input audio for this channel at sampleIndex. */
+    at(i: Node<'i32'> | number): Node<'f32'>;
+  }
+  /** Channel-bound view exposed via .left / .right on stereo audioOutput. */
+  export interface StereoChannelOutputView {
+    /** Write output audio for this channel at sampleIndex. */
+    set(i: Node<'i32'> | number, v: Node<'f32'> | number): void;
+  }
   export interface AudioInputHandle {
     /** Read input audio at (channel, sampleIndex). Channels are 0-indexed. */
     at(channel: number, i: Node<'i32'> | number): Node<'f32'>;
     readonly channels: number;
     readonly name: string;
+    /** Channel 0 view (only present when channels === 2). */
+    readonly left: StereoChannelInputView;
+    /** Channel 1 view (only present when channels === 2). */
+    readonly right: StereoChannelInputView;
   }
   export interface AudioOutputHandle {
     /** Write output audio at (channel, sampleIndex, value). */
     set(channel: number, i: Node<'i32'> | number, v: Node<'f32'> | number): void;
+    /** Channel 0 view (only present when channels === 2). */
+    readonly left: StereoChannelOutputView;
+    /** Channel 1 view (only present when channels === 2). */
+    readonly right: StereoChannelOutputView;
   }
 
   // ─── Declaration constructors ─────────────────────────────────────────
@@ -144,6 +162,10 @@ declare module '@unworklet/core' {
   export interface ProcessorContext {
     readonly sampleRate: number;
     readonly renderQuantum: number;
+    /** Convert milliseconds to integer sample count at this processor's sample rate. */
+    samples(ms: number): number;
+    /** MIDI note number → frequency in Hz (A4 = 440, MIDI 69). */
+    hz(midiNote: number): number;
   }
   export function defineProcessor(
     body: (ctx: ProcessorContext) => { process: () => void },

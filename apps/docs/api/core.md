@@ -9,14 +9,27 @@ defineProcessor(body, options?)
 defineSubgraph(body)
 ```
 
+The body receives a `ProcessorContext`:
+
+```ts
+interface ProcessorContext {
+  readonly sampleRate: number;
+  readonly renderQuantum: number;
+  /** ms → integer sample count at this sample rate. */
+  samples(ms: number): number;
+  /** MIDI note → frequency in Hz (A4 = 440, MIDI 69). */
+  hz(midiNote: number): number;
+}
+```
+
 ## Declarations
 
 ```ts
 state.f32(initial, options?)   state.i32(...)   state.bool(...)   state.f64(...)   state.i64(...)
 buffer.f32({ size, name, snapshot?, publish? })   buffer.i32(...)   buffer.f64(...)
 param({ name, default, min, max, automationRate, unit?, snapshot? })
-audioInput({ name, channels })
-audioOutput({ name, channels })
+audioInput({ name, channels })       // .at(c, i); when channels === 2 also exposes .left.at(i) / .right.at(i)
+audioOutput({ name, channels })      // .set(c, i, v); when channels === 2 also exposes .left.set(i, v) / .right.set(i, v)
 event<T>({ name, capacity? })
 message<T>({ name, capacity?, payload? })
 midiInput({ name?, capacity? })

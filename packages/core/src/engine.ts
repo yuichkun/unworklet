@@ -5,6 +5,7 @@ import {
   type BufferRuntime,
 } from "./runtime.js";
 import { policyKey } from "./types.js";
+import { buildProcessorContext } from "./ctx.js";
 import type { CompiledProcessor, MidiEvent } from "./types.js";
 
 export type EngineOptions = {
@@ -123,10 +124,12 @@ export class Engine {
       this.rt.inSetup = true;
       this.rt.inProcess = false;
       // Run processor body once. Declarations register slots; { process } captured.
-      const ret = this.processor.body({
-        sampleRate: this.rt.sampleRate,
-        renderQuantum: this.rt.currentBlockSize,
-      });
+      const ret = this.processor.body(
+        buildProcessorContext({
+          sampleRate: this.rt.sampleRate,
+          renderQuantum: this.rt.currentBlockSize,
+        }),
+      );
       this.rt.processFn = ret.process;
       this.rt.rootScope.fullyDeclared = true;
       this.rt.inSetup = false;

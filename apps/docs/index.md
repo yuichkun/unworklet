@@ -44,8 +44,9 @@ export const helloGain = defineProcessor(() => {
   return {
     process: () => {
       forSample((i) => {
-        out.set(0, i, mul(main.at(0, i), gain.at(i)));
-        out.set(1, i, mul(main.at(1, i), gain.at(i)));
+        const g = gain.at(i);
+        out.left.set(i,  mul(main.left.at(i),  g));
+        out.right.set(i, mul(main.right.at(i), g));
       });
     },
   };

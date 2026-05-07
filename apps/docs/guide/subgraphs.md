@@ -24,8 +24,8 @@ export const stereoChannel = defineProcessor(() => {
       const d = drive.at(0);
       forSample((i) => {
         // Two call sites of \`channel\` — each gets its own internal lp slot.
-        out.set(0, i, channel(main.at(0, i), k, d));
-        out.set(1, i, channel(main.at(1, i), k, d));
+        out.left.set(i,  channel(main.left.at(i),  k, d));
+        out.right.set(i, channel(main.right.at(i), k, d));
       });
     },
   };
@@ -82,8 +82,8 @@ forSample((i) => {
   for (let v = 0; v < NUM_VOICES; v++) {
     mix = add(mix, synthVoice(voiceHz[v]!.load(), voiceGate[v]!.load(), 0.01, 0.3, ctx.sampleRate));
   }
-  out.set(0, i, mix);
-  out.set(1, i, mix);
+  out.left.set(i,  mix);
+  out.right.set(i, mix);
 });
 ```
 

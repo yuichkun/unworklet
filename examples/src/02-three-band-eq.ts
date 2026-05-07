@@ -128,8 +128,8 @@ export const threeBandEQ = defineProcessor((ctx) => {
       const hiGv = hiG.at(0);
 
       forSample((i) => {
-        const xL = main.at(0, i);
-        const xR = main.at(1, i);
+        const xL = main.left.at(i);
+        const xR = main.right.at(i);
 
         const yL1 = peakingBand(xL, lowFv, lowQv, lowGv, ctx.sampleRate);
         const yL2 = peakingBand(yL1, midFv, midQv, midGv, ctx.sampleRate);
@@ -139,8 +139,8 @@ export const threeBandEQ = defineProcessor((ctx) => {
         const yR2 = peakingBand(yR1, midFv, midQv, midGv, ctx.sampleRate);
         const yR3 = peakingBand(yR2, hiFv, hiQv, hiGv, ctx.sampleRate);
 
-        out.set(0, i, yL3);
-        out.set(1, i, yR3);
+        out.left.set(i, yL3);
+        out.right.set(i, yR3);
       });
     },
   };

@@ -320,18 +320,24 @@ function audioInputInterp<C extends number>(options: AudioInputOptions<C>): Audi
     channels.push(new Float32Array(rt.currentBlockSize));
   }
   rt.audioInputs.push({ slot, runtime: { slot, channels } });
-  return {
-    at: (c: ChannelIndex<C>, i: Node<"i32"> | number) => {
-      const ch = channels[c as number];
-      if (!ch) return 0 as unknown as Node<"f32">;
-      const idx = (i as number) | 0;
-      if (idx < 0 || idx >= ch.length) return 0 as unknown as Node<"f32">;
-      return ch[idx]! as Node<"f32">;
-    },
+  const at = (c: ChannelIndex<C>, i: Node<"i32"> | number) => {
+    const ch = channels[c as number];
+    if (!ch) return 0 as unknown as Node<"f32">;
+    const idx = (i as number) | 0;
+    if (idx < 0 || idx >= ch.length) return 0 as unknown as Node<"f32">;
+    return ch[idx]! as Node<"f32">;
+  };
+  const handle: any = {
+    at,
     channels: options.channels,
     name: options.name,
     __isAudioInput: true,
   };
+  if (options.channels === 2) {
+    handle.left = { at: (i: Node<"i32"> | number) => at(0 as ChannelIndex<C>, i) };
+    handle.right = { at: (i: Node<"i32"> | number) => at(1 as ChannelIndex<C>, i) };
+  }
+  return handle as AudioInputHandle<C>;
 }
 
 export function audioOutput<C extends number>(
@@ -356,18 +362,28 @@ function audioOutputInterp<C extends number>(
     channels.push(new Float32Array(rt.currentBlockSize));
   }
   rt.audioOutputs.push({ slot, runtime: { slot, channels } });
-  return {
-    set: (c: ChannelIndex<C>, i: Node<"i32"> | number, v: Node<"f32"> | number) => {
-      const ch = channels[c as number];
-      if (!ch) return;
-      const idx = (i as number) | 0;
-      if (idx < 0 || idx >= ch.length) return;
-      ch[idx] = v as number;
-    },
+  const set = (c: ChannelIndex<C>, i: Node<"i32"> | number, v: Node<"f32"> | number) => {
+    const ch = channels[c as number];
+    if (!ch) return;
+    const idx = (i as number) | 0;
+    if (idx < 0 || idx >= ch.length) return;
+    ch[idx] = v as number;
+  };
+  const handle: any = {
+    set,
     channels: options.channels,
     name: options.name,
     __isAudioOutput: true,
   };
+  if (options.channels === 2) {
+    handle.left = {
+      set: (i: Node<"i32"> | number, v: Node<"f32"> | number) => set(0 as ChannelIndex<C>, i, v),
+    };
+    handle.right = {
+      set: (i: Node<"i32"> | number, v: Node<"f32"> | number) => set(1 as ChannelIndex<C>, i, v),
+    };
+  }
+  return handle as AudioOutputHandle<C>;
 }
 
 export function event<T>(options: EventOptions): EventDecl<T> {

@@ -173,8 +173,8 @@ export const polySynth = defineProcessor((ctx) => {
         }
 
         const sig = mul(mul(mix, masterVol.at(i)), duck);
-        out.set(0, i, sig);
-        out.set(1, i, sig);
+        out.left.set(i, sig);
+        out.right.set(i, sig);
 
         const wp = mod(add(wpStart, i), 1024);
         waveform.write(wp, sig);

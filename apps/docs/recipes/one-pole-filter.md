@@ -20,13 +20,13 @@ export const onePoleLP = defineProcessor(() => {
       const k = cutoff.at(0);
       forSample((i) => {
         // L
-        const yL = flushDenormals(add(lpL.load(), mul(k, sub(main.at(0, i), lpL.load()))));
+        const yL = flushDenormals(add(lpL.load(), mul(k, sub(main.left.at(i), lpL.load()))));
         lpL.store(yL);
-        out.set(0, i, yL);
+        out.left.set(i, yL);
         // R
-        const yR = flushDenormals(add(lpR.load(), mul(k, sub(main.at(1, i), lpR.load()))));
+        const yR = flushDenormals(add(lpR.load(), mul(k, sub(main.right.at(i), lpR.load()))));
         lpR.store(yR);
-        out.set(1, i, yR);
+        out.right.set(i, yR);
       });
     },
   };

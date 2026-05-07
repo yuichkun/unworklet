@@ -27,6 +27,8 @@ export type {
 
 export { defineProcessor } from "./runtime.js";
 
+export { buildProcessorContext } from "./ctx.js";
+
 export {
   state,
   buffer,

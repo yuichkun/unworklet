@@ -14,16 +14,16 @@ export const widener = defineProcessor(() => {
   return {
     process: () => {
       forSample((i) => {
-        const L = main.at(0, i);
-        const R = main.at(1, i);
+        const L = main.left.at(i);
+        const R = main.right.at(i);
         // Mid/Side encode (no √2 normalization — that gets folded into output).
         const M = mul(add(L, R), 0.5);
         const S = mul(sub(L, R), 0.5);
         // Scale side.
         const Sw = mul(S, width.at(i));
         // Decode.
-        out.set(0, i, add(M, Sw));
-        out.set(1, i, sub(M, Sw));
+        out.left.set(i,  add(M, Sw));
+        out.right.set(i, sub(M, Sw));
       });
     },
   };

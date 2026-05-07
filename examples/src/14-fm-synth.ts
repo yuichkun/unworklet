@@ -154,8 +154,8 @@ export const fmSynth = defineProcessor((ctx) => {
           );
         }
         const sig = mul(mix, masterVol.at(i));
-        out.set(0, i, sig);
-        out.set(1, i, sig);
+        out.left.set(i, sig);
+        out.right.set(i, sig);
       });
 
       let count: Node<"i32"> = 0 as unknown as Node<"i32">;

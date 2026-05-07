@@ -23,6 +23,8 @@ import type {
   MidiOutputDecl,
   SnapshotPolicy,
 } from "./ast.js";
+import { buildProcessorContext } from "@unworklet/core";
+import type { ProcessorContext } from "@unworklet/core";
 
 // ─── Capture context (module-private, set by `capture()`) ────────────────────
 
@@ -230,10 +232,9 @@ export type CaptureOptions = {
   renderQuantum?: number;
 };
 
-export type ProcessorBodyForCapture = (capCtx: {
-  sampleRate: number;
-  renderQuantum: number;
-}) => { process: () => void };
+export type ProcessorBodyForCapture = (capCtx: ProcessorContext) => {
+  process: () => void;
+};
 
 export function capture(
   body: ProcessorBodyForCapture,
@@ -244,7 +245,9 @@ export function capture(
   const c = new CaptureCtx({ sampleRate: opts.sampleRate, renderQuantum });
   ctx = c;
   try {
-    const ret = body({ sampleRate: c.sampleRate, renderQuantum: c.renderQuantum });
+    const ret = body(
+      buildProcessorContext({ sampleRate: c.sampleRate, renderQuantum: c.renderQuantum }),
+    );
     if (!ret || typeof ret.process !== "function") {
       throw new Error("defineProcessor body must return { process }");
     }
