@@ -7,11 +7,16 @@ A Max/MSP-style node-based patching environment built on top of unworklet — sa
 ## What it is
 
 - **A live patcher canvas**. Right-click to open a node palette; drag boxes; wire inlets to outlets with cords.
-- **~80 MSP-equivalent nodes**, each implemented using unworklet primitives. Oscillators, math, filters, delays, envelopes, dynamics, routing, conversion, sampling, viz — everything that comes up in 95% of real Max patches.
+- **120 MSP-equivalent nodes**, each implemented using unworklet primitives. Oscillators, math, filters, delays, envelopes, dynamics, routing, conversion, sampling, viz, MIDI — everything that comes up in 95% of real Max patches. (Verified live by `scripts/audit.ts` — 120 types loaded from the runtime registry.)
 - **A real compilation pipeline**: every patch edit re-runs `patchToProcessor → compileToWasm → createWasmNode`, the resulting `AudioWorkletNode` is crossfaded against the previous one over 50ms.
-- **A `gen~`-equivalent inline code node**: double-click, write a `defineSubgraph` body (every unworklet symbol is in scope, no imports), apply, get a WASM-compiled DSP block.
-- **A `patcher` (subpatch) node**: an inner canvas that compiles to a `defineSubgraph`, so each instance has its own state.
-- **8 example patches** that play audio in the browser:
+- **A `gen~`-equivalent inline code node**: double-click, get a real **Monaco editor** (with TypeScript IntelliSense for the unworklet DSL), write a `defineSubgraph` body (every unworklet symbol is in scope, no imports), apply, get a WASM-compiled DSP block.
+- **A `patcher` (subpatch) node**: an inner canvas that compiles to a `defineSubgraph`, so each instance has its own state. **Double-click descends** into the subpatch; a breadcrumb in the toolbar walks you back up.
+- **Live mic input**: toolbar "🎤 enable mic" wires `getUserMedia` to every `adc~` in the live patch.
+- **Web MIDI**: toolbar "🎹 enable MIDI" opens `requestMIDIAccess` and routes incoming MIDI to `notein` / `ctlin` / `pitchbend` AudioParams. Outgoing `noteout` / `ctlout` / `midiout` forward to every connected `MIDIOutput.send()`.
+- **Real visualization components**: `scope~` draws the latest 1024 samples; `meter~` shows VU + peak hold; `spectroscope~` runs an FFT on the published buffer; `number~` prints the latest sample.
+- **A breakpoint curve editor (`function`)**: drag points around; sample with a phasor; the build emits piecewise-linear interpolation at audio rate.
+- **`tapin~` / `tapout~` shared bus**: matching `attrs.bus` strings causes both nodes to share a single underlying delay buffer (Max convention). Multiple `tapout~` on one bus = multi-tap delay.
+- **25 example patches** that all play audio in the browser, every registered node appears in at least one example (smoke + audit verified):
 
 | # | Patch | What it shows |
 | --- | --- | --- |
@@ -23,6 +28,23 @@ A Max/MSP-style node-based patching environment built on top of unworklet — sa
 | 06 | tremolo + scope | Sine carrier × LFO modulator, with `scope~` and `meter~`. |
 | 07 | Karplus-Strong (gen~) | Plucked-string algorithm written inline as user code. |
 | 08 | subpatch chorus | A reusable single-voice chorus implemented as a `patcher`. |
+| 09 | oscillator tour | All 8 oscillators routed through `selector~` + `umenu`. |
+| 10 | filter bank | One saw fans out to all 8 filters; per-filter `gain~`. |
+| 11 | waveshaping | All 16 unary signal-rate transforms in series. |
+| 12 | multi-tap delay | One `tapin~`, three `tapout~` on the same bus. |
+| 13 | sidechain compressor | `compand~` ducked by a kick via `peakamp~`; `limit~` on output. |
+| 14 | stereo routing | `matrix~` M/S, `gate~`, `pong~` panning, `mute~`. |
+| 15 | SaH step seq | `sah~` on noise, `count~`, `rate~`, `adsr~` gated by metro. |
+| 16 | function envelope | Drag breakpoints in `function`; sampled by phasor → carrier amp. |
+| 17 | line~ smoothing | Slider→`line~` smooths cutoff at audio rate; `scope~`/`meter~`/`number~`. |
+| 18 | conversion tour | `mtof~` / `ftom~` / `dbtoa~` / `atodb~`. |
+| 19 | control routing | `loadbang`/`bang`/`t`/`metro`/`counter`/`sel`/`route`/`pak`/`unpack`/`random`/`expr`/`scale`/`abs`/`min`/`max`. |
+| 20 | control arithmetic | All control-rate `+`/`-`/`*`/`/`/`==`/`!=`/`<`/`>`/`<=`/`>=`/`gate`/`line`. |
+| 21 | UI tour | Every UI node placed once; the active path drives a cycle~. |
+| 22 | MIDI CC + note + pb | `notein` → mtof~, `ctlin`/`pitchbend` modulating filter cutoff/freq. |
+| 23 | MIDI out | `noteout`/`ctlout`/`midiout` forward to `MIDIOutput.send()`. |
+| 24 | signal math | `-~`/`/~`/`min~`/`max~` summed. |
+| 25 | adc~ passthrough | Mic → `biquad~` (with synth fallback for headless smoke). |
 
 ## How to run
 
@@ -36,8 +58,14 @@ Pick an example from the dropdown, click **▶ play**. Audio plays. Drag any dia
 To verify everything still produces audio in a fresh headless browser:
 
 ```sh
+# 1. start the dev server
+npm --prefix apps/patcher run dev &
+# 2. smoke each example
 node --experimental-strip-types apps/patcher/scripts/smoke.ts
-# expected:  8/8 examples produced audio
+# expected:  25/25 examples produced audio
+# 3. structural + coverage audit
+node --experimental-strip-types apps/patcher/scripts/audit.ts
+# expected:  120/120 covered, 0 fatals/errors
 ```
 
 ## Architecture
@@ -130,63 +158,79 @@ The whole patcher is just **using** unworklet's public API:
 
 Nothing under `packages/` is touched. The patcher proves that the library surface is enough.
 
-## Limitations / out of scope (for this PR)
+## Limitations / out of scope
 
-- No persistence beyond JSON copy/paste — the user can clipboard a patch but there's no project file format yet.
-- No undo/redo. (Browser back-button-style state isn't wired.)
-- No `tapin~`/`tapout~` cross-cord feedback (use `comb~`/`allpass~` for now — they have internal feedback).
-- No `groove~`/`play~` sample player (would need user-supplied audio file uploads).
-- Drum machine example is a single kick — a full step sequencer with `counter`/`sel` works in WASM but the `metro`-pulse + `curve~`-tracking interaction was finicky to tune for the smoke test, so the demo is intentionally minimal.
+Only items genuinely outside what the unworklet primitive surface and a single-page Vue app can carry:
+
+- **No `groove~` / `play~` sample player.** Sample upload would require a `message<{data: f32[]}>` round-trip from the main thread to the worklet, plus a UI for file selection. The plumbing is feasible but wasn't wired in this round; document and defer.
+- **No persistence beyond JSON copy/paste** — the user can clipboard a patch but there's no project file format yet.
+- **No undo/redo.** Browser back-button-style state isn't wired.
+- **WebMIDI on Safari.** Browsers without `requestMIDIAccess` show a notice rather than crashing. Chrome, Edge, and Chromium-based browsers work.
+- **No real-time peer collaboration**, no native `.maxpat` import, no OSC. Out of scope by design.
 
 ## Files at a glance
 
 ```
 apps/patcher/
-├── package.json                # @vue-flow/core + @unworklet/* + monaco
+├── package.json                # @vue-flow/core + @unworklet/* + monaco-editor
 ├── vite.config.ts              # COOP/COEP, port 5174
 ├── index.html
 ├── src/
-│   ├── main.ts
-│   ├── App.vue                 # toolbar + canvas + inspector
+│   ├── main.ts                 # Monaco worker registration + boot
+│   ├── App.vue                 # toolbar (mic/MIDI/play/meter), breadcrumb, canvas, inspector
 │   ├── style.css
-│   ├── types.ts                # Patch, NodeDef, BuildCtx, Cord
+│   ├── types.ts                # Patch, NodeDef, BuildCtx, ParamSpec, MidiSpec, Cord
 │   ├── compiler/
-│   │   ├── compile.ts          # patchToProcessor — the heart
-│   │   └── topo.ts             # topological sort over audio cords
+│   │   ├── compile.ts          # patchToProcessor — paramSpecs[], midi I/O routes, shared bus, feedback breaks
+│   │   └── topo.ts             # topological sort over audio cords (with feedback-break support)
 │   ├── runtime/
-│   │   └── AudioRuntime.ts     # createWasmNode + 50 ms crossfade swap
-│   ├── registry/               # ~80 node defs grouped by category
+│   │   ├── AudioRuntime.ts     # createWasmNode + 50 ms crossfade + Web MIDI in/out + ensureMic/ensureMidi
+│   │   └── runtime-singleton.ts # singleton AudioRuntime so visualization components can subscribe
+│   ├── registry/               # 120 node defs grouped by category
 │   │   ├── store.ts            # registry storage (avoids ESM TDZ)
 │   │   ├── index.ts            # public surface + side-effect registration
-│   │   ├── audio-osc.ts
-│   │   ├── audio-math.ts
-│   │   ├── audio-trig.ts
-│   │   ├── audio-filters.ts
-│   │   ├── audio-delays.ts
-│   │   ├── audio-envelopes.ts
-│   │   ├── audio-dynamics.ts
-│   │   ├── audio-routing.ts
-│   │   ├── audio-conv.ts
-│   │   ├── audio-sampling.ts
-│   │   ├── audio-viz.ts
-│   │   ├── audio-io.ts
-│   │   ├── control.ts
-│   │   ├── control-time.ts
-│   │   ├── midi.ts
-│   │   ├── ui.ts
+│   │   ├── audio-osc.ts        # cycle~/saw~/tri~/rect~/pulse~/phasor~/noise~/pinknoise~
+│   │   ├── audio-math.ts       # +~/-~/*~//~/%~/min~/max~/pow~ + abs~/neg~
+│   │   ├── audio-trig.ts       # sin~/cos~/tan~/tanh~/exp~/log~/sqrt~/floor~/ceil~/round~
+│   │   ├── audio-filters.ts    # onepole~/onepoleHP~/lores~/hires~/bandpass~/biquad~/comb~/allpass~
+│   │   ├── audio-delays.ts     # delay~/tapin~/tapout~ (shared bus via attrs.bus)
+│   │   ├── audio-envelopes.ts  # adsr~/curve~
+│   │   ├── audio-dynamics.ts   # peakamp~/compand~/limit~
+│   │   ├── audio-routing.ts    # selector~ (8-way)/gate~/mute~/pong~/matrix~/gain~
+│   │   ├── audio-conv.ts       # mtof~/ftom~/dbtoa~/atodb~/mstosamps~/sampstoms~/clip~/scale~
+│   │   ├── audio-sampling.ts   # sah~/count~/rate~
+│   │   ├── audio-viz.ts        # scope~/meter~/spectroscope~/number~ (publish to main thread)
+│   │   ├── audio-io.ts         # adc~/dac~
+│   │   ├── control.ts          # +/-/*/// + comparisons + sel/route/t/pak/unpack/random/expr/scale/abs/min/max/gate
+│   │   ├── control-time.ts     # metro/counter/line/bang/loadbang
+│   │   ├── midi.ts             # notein/ctlin/pitchbend/midiin (in) + noteout/ctlout/midiout (out)
+│   │   ├── ui.ts               # slider/vslider/dial/live.dial/live.slider/number-box/flonum/button/toggle/kslider (note+gate)/multislider/umenu/comment
+│   │   ├── ui-function.ts      # function (breakpoint curve editor)
 │   │   ├── gen.ts              # gen~ — inline-code defineSubgraph
 │   │   └── patcher.ts          # patcher (subpatch) + inlet/outlet
 │   ├── components/
-│   │   ├── Canvas.vue          # Vue Flow integration + node-palette
+│   │   ├── Canvas.vue          # Vue Flow integration + node-palette + descend forwarding
 │   │   ├── InspectorPanel.vue
 │   │   └── nodes/              # per-type renderers
 │   │       ├── AudioNodeView.vue
 │   │       ├── SliderView.vue, VSliderView.vue, DialView.vue
+│   │       ├── LiveDialView.vue, LiveSliderView.vue
 │   │       ├── NumberBoxView.vue, ButtonView.vue, ToggleView.vue
-│   │       ├── KsliderView.vue, MultisliderView.vue, UMenuView.vue
-│   │       ├── CommentView.vue
-│   │       ├── GenView.vue, PatcherView.vue
-│   └── examples/               # 8 .json patches loaded via import.meta.glob
+│   │       ├── KsliderView.vue (multi-paramSpec note+gate)
+│   │       ├── MultisliderView.vue, UMenuView.vue, CommentView.vue
+│   │       ├── ScopeView.vue (real oscilloscope canvas)
+│   │       ├── MeterView.vue (real VU + peak hold)
+│   │       ├── SpectroscopeView.vue (main-thread FFT)
+│   │       ├── NumberView.vue (live numeric readout)
+│   │       ├── FunctionView.vue (drag-to-edit breakpoint curve)
+│   │       ├── GenView.vue (Monaco editor + GEN_DTS for IntelliSense)
+│   │       ├── gen-monaco-types.ts (type declarations injected into Monaco)
+│   │       └── PatcherView.vue (double-click to descend into subpatch)
+│   └── examples/               # 25 .json patches loaded via import.meta.glob
 └── scripts/
-    └── smoke.ts                # headless playwright: 8/8 examples → audio
+    ├── smoke.ts                # headless playwright: 25/25 examples → audio
+    ├── smoke-debug.ts          # single-example deep-error capture
+    ├── audit.ts                # coverage matrix + structural assertions
+    ├── coverage-matrix.json    # generated by audit.ts: type → [example files]
+    └── list-types.ts           # dev-server probe: dump runtime registry
 ```

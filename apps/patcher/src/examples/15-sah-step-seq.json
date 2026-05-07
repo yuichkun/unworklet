@@ -1,0 +1,42 @@
+{
+  "name": "15 — SaH step sequencer",
+  "description": "phasor~ at slow rate triggers sah~ on noise~ → scale~ → cycle~ freq → adsr~ via metro+gate → dac~. Pseudo-random pitch sequence.",
+  "patch": {
+    "nodes": [
+      { "id": "metro",  "type": "metro",   "pos": { "x": 40,  "y": 40 }, "args": [240] },
+      { "id": "ph",     "type": "phasor~", "pos": { "x": 200, "y": 40 }, "args": [4] },
+
+      { "id": "noise", "type": "noise~", "pos": { "x": 40,  "y": 160 } },
+      { "id": "sah",   "type": "sah~",   "pos": { "x": 40,  "y": 260 }, "args": [0.99] },
+
+      { "id": "rate",  "type": "rate~",  "pos": { "x": 220, "y": 260 }, "args": [4] },
+      { "id": "cnt",   "type": "count~", "pos": { "x": 380, "y": 260 } },
+
+      { "id": "scale", "type": "scale~", "pos": { "x": 40,  "y": 360 }, "args": [-1, 1, 80, 800] },
+      { "id": "osc",   "type": "cycle~", "pos": { "x": 40,  "y": 460 } },
+
+      { "id": "env",   "type": "adsr~",  "pos": { "x": 200, "y": 460 }, "args": [10, 80, 0.6, 200] },
+      { "id": "vca",   "type": "*~",     "pos": { "x": 40,  "y": 580 } },
+      { "id": "lvl",   "type": "*~",     "pos": { "x": 40,  "y": 660 }, "args": [0.4] },
+      { "id": "out",   "type": "dac~",   "pos": { "x": 40,  "y": 740 } }
+    ],
+    "cords": [
+      { "src": { "node": "metro", "outlet": 0 }, "dst": { "node": "env", "inlet": 0 } },
+      { "src": { "node": "metro", "outlet": 0 }, "dst": { "node": "rate", "inlet": 0 } },
+      { "src": { "node": "metro", "outlet": 0 }, "dst": { "node": "cnt", "inlet": 0 } },
+
+      { "src": { "node": "ph",    "outlet": 0 }, "dst": { "node": "sah", "inlet": 1 } },
+      { "src": { "node": "noise", "outlet": 0 }, "dst": { "node": "sah", "inlet": 0 } },
+
+      { "src": { "node": "sah",   "outlet": 0 }, "dst": { "node": "scale", "inlet": 0 } },
+      { "src": { "node": "scale", "outlet": 0 }, "dst": { "node": "osc", "inlet": 0 } },
+
+      { "src": { "node": "osc", "outlet": 0 }, "dst": { "node": "vca", "inlet": 0 } },
+      { "src": { "node": "env", "outlet": 0 }, "dst": { "node": "vca", "inlet": 1 } },
+
+      { "src": { "node": "vca", "outlet": 0 }, "dst": { "node": "lvl", "inlet": 0 } },
+      { "src": { "node": "lvl", "outlet": 0 }, "dst": { "node": "out", "inlet": 0 } },
+      { "src": { "node": "lvl", "outlet": 0 }, "dst": { "node": "out", "inlet": 1 } }
+    ]
+  }
+}

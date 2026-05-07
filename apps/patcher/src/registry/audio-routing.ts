@@ -1,35 +1,34 @@
-import { select, type Node as UNode } from "@unworklet/core";
+import { num, select, type Node as UNode } from "@unworklet/core";
 import { register } from "./store";
 
-// selector~ — N audio inlets + 1 selector inlet. Outputs the N-th input
-// (rounded down). Implemented as a chain of `select` calls.
+// selector~ — 8 audio inlets + 1 selector inlet. Outputs the N-th input
+// (1..8; 0 / out-of-range emits silence). Implemented as a chain of
+// `select` calls; the chain is unrolled at compile time.
 register({
   type: "selector~",
   category: "audio-routing",
-  description: "N-of-1 audio multiplexer. Inlet 0: selector. Inlets 1..N: candidates.",
+  description: "N-of-1 audio multiplexer (1..8). Inlet 0: selector. Inlets 1..8: candidates.",
   inlets: [
     { kind: "audio", label: "sel" },
     { kind: "audio", label: "1" },
     { kind: "audio", label: "2" },
     { kind: "audio", label: "3" },
     { kind: "audio", label: "4" },
+    { kind: "audio", label: "5" },
+    { kind: "audio", label: "6" },
+    { kind: "audio", label: "7" },
+    { kind: "audio", label: "8" },
   ],
   outlets: [{ kind: "audio", label: "out" }],
   build: (ctx) => {
     const sel = ctx.inAudio(0);
-    const a = ctx.inAudio(1);
-    const b = ctx.inAudio(2);
-    const c = ctx.inAudio(3);
-    const d = ctx.inAudio(4);
+    const cands = [1, 2, 3, 4, 5, 6, 7, 8].map((idx) => ctx.inAudio(idx));
     const i = sel.toI32();
-    // chain: i==1?a : i==2?b : i==3?c : i==4?d : 0
-    return [
-      select(
-        i.eq(1),
-        a,
-        select(i.eq(2), b, select(i.eq(3), c, select(i.eq(4), d, 0))),
-      ) as UNode<"f32">,
-    ];
+    let acc: UNode<"f32"> = num(0) as UNode<"f32">;
+    for (let k = 8; k >= 1; k--) {
+      acc = select(i.eq(k), cands[k - 1]!, acc) as UNode<"f32">;
+    }
+    return [acc];
   },
 });
 

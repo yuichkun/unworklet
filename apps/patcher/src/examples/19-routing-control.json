@@ -1,0 +1,68 @@
+{
+  "name": "19 — control routing tour",
+  "description": "metro→counter→route distributes to one of 4 cycle~ frequencies; sel reports which step is active; t fans out the trigger; pak/unpack pass two values; loadbang/bang/random/expr/scale/abs are all wired in support roles.",
+  "patch": {
+    "nodes": [
+      { "id": "lb",     "type": "loadbang", "pos": { "x": 40,  "y": 40 } },
+      { "id": "bang",   "type": "bang",     "pos": { "x": 200, "y": 40 } },
+      { "id": "t",      "type": "t",        "pos": { "x": 360, "y": 40 } },
+
+      { "id": "metro",  "type": "metro",    "pos": { "x": 40,  "y": 160 }, "args": [240] },
+      { "id": "ctr",    "type": "counter",  "pos": { "x": 200, "y": 160 }, "args": [0, 4] },
+
+      { "id": "sel",    "type": "sel",      "pos": { "x": 360, "y": 160 }, "args": [0, 1, 2, 3] },
+      { "id": "route",  "type": "route",    "pos": { "x": 540, "y": 160 } },
+
+      { "id": "freqConst", "type": "scale", "pos": { "x": 40,  "y": 280 }, "args": [0, 1, 220, 220] },
+      { "id": "rnd",    "type": "random",   "pos": { "x": 200, "y": 280 }, "args": [12] },
+      { "id": "expr",   "type": "expr",     "pos": { "x": 360, "y": 280 }, "args": ["add"] },
+      { "id": "scl",    "type": "scale",    "pos": { "x": 540, "y": 280 }, "args": [0, 15, 110, 880] },
+      { "id": "absC",   "type": "abs",      "pos": { "x": 700, "y": 280 } },
+      { "id": "minC",   "type": "min",      "pos": { "x": 860, "y": 280 } },
+      { "id": "maxC",   "type": "max",      "pos": { "x": 700, "y": 380 } },
+
+      { "id": "pak",    "type": "pak",      "pos": { "x": 40,  "y": 400 } },
+      { "id": "unp",    "type": "unpack",   "pos": { "x": 200, "y": 400 } },
+
+      { "id": "osc",    "type": "cycle~",   "pos": { "x": 540, "y": 480 } },
+      { "id": "lvl",    "type": "*~",       "pos": { "x": 540, "y": 580 }, "args": [0.25] },
+      { "id": "out",    "type": "dac~",     "pos": { "x": 540, "y": 660 } }
+    ],
+    "cords": [
+      { "src": { "node": "lb",    "outlet": 0 }, "dst": { "node": "bang", "inlet": 0 } },
+      { "src": { "node": "bang",  "outlet": 0 }, "dst": { "node": "t", "inlet": 0 } },
+
+      { "src": { "node": "metro", "outlet": 0 }, "dst": { "node": "ctr", "inlet": 0 } },
+      { "src": { "node": "metro", "outlet": 0 }, "dst": { "node": "rnd", "inlet": 0 } },
+
+      { "src": { "node": "ctr",   "outlet": 0 }, "dst": { "node": "sel", "inlet": 0 } },
+      { "src": { "node": "ctr",   "outlet": 0 }, "dst": { "node": "route", "inlet": 1 } },
+
+      { "src": { "node": "rnd",   "outlet": 0 }, "dst": { "node": "expr", "inlet": 0 } },
+      { "src": { "node": "ctr",   "outlet": 0 }, "dst": { "node": "expr", "inlet": 1 } },
+
+      { "src": { "node": "expr",  "outlet": 0 }, "dst": { "node": "scl", "inlet": 0 } },
+      { "src": { "node": "scl",   "outlet": 0 }, "dst": { "node": "absC", "inlet": 0 } },
+      { "src": { "node": "absC",  "outlet": 0 }, "dst": { "node": "minC", "inlet": 0 } },
+      { "src": { "node": "scl",   "outlet": 0 }, "dst": { "node": "minC", "inlet": 1 } },
+      { "src": { "node": "absC",  "outlet": 0 }, "dst": { "node": "maxC", "inlet": 0 } },
+      { "src": { "node": "scl",   "outlet": 0 }, "dst": { "node": "maxC", "inlet": 1 } },
+      { "src": { "node": "absC",  "outlet": 0 }, "dst": { "node": "route", "inlet": 0 } },
+
+      { "src": { "node": "rnd",   "outlet": 0 }, "dst": { "node": "pak", "inlet": 0 } },
+      { "src": { "node": "ctr",   "outlet": 0 }, "dst": { "node": "pak", "inlet": 1 } },
+      { "src": { "node": "pak",   "outlet": 0 }, "dst": { "node": "unp", "inlet": 0 } },
+      { "src": { "node": "pak",   "outlet": 1 }, "dst": { "node": "unp", "inlet": 1 } },
+
+      { "src": { "node": "freqConst", "outlet": 0 }, "dst": { "node": "osc", "inlet": 0 } },
+      { "src": { "node": "route",     "outlet": 0 }, "dst": { "node": "osc", "inlet": 0 } },
+      { "src": { "node": "route",     "outlet": 1 }, "dst": { "node": "osc", "inlet": 0 } },
+      { "src": { "node": "route",     "outlet": 2 }, "dst": { "node": "osc", "inlet": 0 } },
+      { "src": { "node": "route",     "outlet": 3 }, "dst": { "node": "osc", "inlet": 0 } },
+
+      { "src": { "node": "osc",   "outlet": 0 }, "dst": { "node": "lvl", "inlet": 0 } },
+      { "src": { "node": "lvl",   "outlet": 0 }, "dst": { "node": "out", "inlet": 0 } },
+      { "src": { "node": "lvl",   "outlet": 0 }, "dst": { "node": "out", "inlet": 1 } }
+    ]
+  }
+}

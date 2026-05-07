@@ -1,0 +1,502 @@
+{
+  "!=": [
+    "20-arithmetic.json"
+  ],
+  "%~": [
+    "11-waveshaping.json"
+  ],
+  "*": [
+    "03-monosynth.json",
+    "20-arithmetic.json"
+  ],
+  "*~": [
+    "01-hello-sine.json",
+    "02-fm-synth.json",
+    "03-monosynth.json",
+    "04-feedback-delay.json",
+    "05-drum-machine.json",
+    "06-tremolo-scope.json",
+    "07-karplus-strong-gen.json",
+    "08-subpatch-chorus.json",
+    "09-osc-tour.json",
+    "10-filter-bank.json",
+    "11-waveshaping.json",
+    "12-multi-tap-delay.json",
+    "13-dynamics.json",
+    "14-stereo-routing.json",
+    "15-sah-step-seq.json",
+    "16-function-env.json",
+    "17-line-controls.json",
+    "18-conv-tour.json",
+    "19-routing-control.json",
+    "20-arithmetic.json",
+    "21-ui-tour.json",
+    "22-midi-cc.json",
+    "23-midi-out.json",
+    "24-audio-math.json",
+    "25-adc-passthrough.json"
+  ],
+  "+": [
+    "20-arithmetic.json"
+  ],
+  "+~": [
+    "02-fm-synth.json",
+    "08-subpatch-chorus.json",
+    "12-multi-tap-delay.json",
+    "13-dynamics.json",
+    "22-midi-cc.json",
+    "24-audio-math.json",
+    "25-adc-passthrough.json"
+  ],
+  "-": [
+    "20-arithmetic.json"
+  ],
+  "-~": [
+    "24-audio-math.json"
+  ],
+  "/": [
+    "20-arithmetic.json"
+  ],
+  "/~": [
+    "24-audio-math.json"
+  ],
+  "<": [
+    "20-arithmetic.json"
+  ],
+  "<=": [
+    "20-arithmetic.json"
+  ],
+  "==": [
+    "20-arithmetic.json"
+  ],
+  ">": [
+    "20-arithmetic.json"
+  ],
+  ">=": [
+    "20-arithmetic.json"
+  ],
+  "abs": [
+    "19-routing-control.json"
+  ],
+  "abs~": [
+    "11-waveshaping.json"
+  ],
+  "adc~": [
+    "25-adc-passthrough.json"
+  ],
+  "adsr~": [
+    "15-sah-step-seq.json"
+  ],
+  "allpass~": [
+    "10-filter-bank.json"
+  ],
+  "atodb~": [
+    "18-conv-tour.json"
+  ],
+  "bandpass~": [
+    "10-filter-bank.json"
+  ],
+  "bang": [
+    "19-routing-control.json"
+  ],
+  "biquad~": [
+    "10-filter-bank.json",
+    "25-adc-passthrough.json"
+  ],
+  "button": [
+    "21-ui-tour.json",
+    "23-midi-out.json"
+  ],
+  "ceil~": [
+    "11-waveshaping.json"
+  ],
+  "clip~": [
+    "11-waveshaping.json"
+  ],
+  "comb~": [
+    "04-feedback-delay.json",
+    "10-filter-bank.json"
+  ],
+  "comment": [
+    "12-multi-tap-delay.json",
+    "17-line-controls.json",
+    "21-ui-tour.json",
+    "22-midi-cc.json",
+    "23-midi-out.json",
+    "25-adc-passthrough.json"
+  ],
+  "compand~": [
+    "13-dynamics.json"
+  ],
+  "cos~": [
+    "11-waveshaping.json"
+  ],
+  "counter": [
+    "19-routing-control.json"
+  ],
+  "count~": [
+    "15-sah-step-seq.json"
+  ],
+  "ctlin": [
+    "22-midi-cc.json"
+  ],
+  "ctlout": [
+    "23-midi-out.json"
+  ],
+  "curve~": [
+    "05-drum-machine.json",
+    "13-dynamics.json"
+  ],
+  "cycle~": [
+    "01-hello-sine.json",
+    "02-fm-synth.json",
+    "05-drum-machine.json",
+    "06-tremolo-scope.json",
+    "08-subpatch-chorus.json",
+    "09-osc-tour.json",
+    "12-multi-tap-delay.json",
+    "13-dynamics.json",
+    "14-stereo-routing.json",
+    "15-sah-step-seq.json",
+    "16-function-env.json",
+    "18-conv-tour.json",
+    "19-routing-control.json",
+    "20-arithmetic.json",
+    "21-ui-tour.json",
+    "22-midi-cc.json",
+    "23-midi-out.json",
+    "24-audio-math.json",
+    "25-adc-passthrough.json"
+  ],
+  "dac~": [
+    "01-hello-sine.json",
+    "02-fm-synth.json",
+    "03-monosynth.json",
+    "04-feedback-delay.json",
+    "05-drum-machine.json",
+    "06-tremolo-scope.json",
+    "07-karplus-strong-gen.json",
+    "08-subpatch-chorus.json",
+    "09-osc-tour.json",
+    "10-filter-bank.json",
+    "11-waveshaping.json",
+    "12-multi-tap-delay.json",
+    "13-dynamics.json",
+    "14-stereo-routing.json",
+    "15-sah-step-seq.json",
+    "16-function-env.json",
+    "17-line-controls.json",
+    "18-conv-tour.json",
+    "19-routing-control.json",
+    "20-arithmetic.json",
+    "21-ui-tour.json",
+    "22-midi-cc.json",
+    "23-midi-out.json",
+    "24-audio-math.json",
+    "25-adc-passthrough.json"
+  ],
+  "dbtoa~": [
+    "18-conv-tour.json"
+  ],
+  "delay~": [
+    "08-subpatch-chorus.json"
+  ],
+  "dial": [
+    "02-fm-synth.json",
+    "03-monosynth.json",
+    "04-feedback-delay.json",
+    "05-drum-machine.json",
+    "06-tremolo-scope.json",
+    "07-karplus-strong-gen.json",
+    "08-subpatch-chorus.json",
+    "09-osc-tour.json",
+    "10-filter-bank.json",
+    "11-waveshaping.json",
+    "13-dynamics.json",
+    "14-stereo-routing.json",
+    "16-function-env.json",
+    "17-line-controls.json",
+    "18-conv-tour.json",
+    "21-ui-tour.json",
+    "23-midi-out.json"
+  ],
+  "expr": [
+    "19-routing-control.json"
+  ],
+  "exp~": [
+    "11-waveshaping.json"
+  ],
+  "flonum": [
+    "21-ui-tour.json"
+  ],
+  "floor~": [
+    "11-waveshaping.json"
+  ],
+  "ftom~": [
+    "18-conv-tour.json"
+  ],
+  "function": [
+    "16-function-env.json"
+  ],
+  "gain~": [
+    "10-filter-bank.json"
+  ],
+  "gate": [
+    "20-arithmetic.json"
+  ],
+  "gate~": [
+    "14-stereo-routing.json"
+  ],
+  "gen~": [
+    "07-karplus-strong-gen.json"
+  ],
+  "hires~": [
+    "10-filter-bank.json"
+  ],
+  "inlet": [
+    "08-subpatch-chorus.json"
+  ],
+  "kslider": [
+    "21-ui-tour.json",
+    "23-midi-out.json"
+  ],
+  "limit~": [
+    "04-feedback-delay.json",
+    "05-drum-machine.json",
+    "07-karplus-strong-gen.json",
+    "13-dynamics.json"
+  ],
+  "line": [
+    "20-arithmetic.json"
+  ],
+  "line~": [
+    "17-line-controls.json"
+  ],
+  "live.dial": [
+    "21-ui-tour.json"
+  ],
+  "live.slider": [
+    "21-ui-tour.json"
+  ],
+  "loadbang": [
+    "19-routing-control.json"
+  ],
+  "log~": [
+    "11-waveshaping.json"
+  ],
+  "lores~": [
+    "03-monosynth.json",
+    "10-filter-bank.json",
+    "13-dynamics.json",
+    "17-line-controls.json",
+    "22-midi-cc.json"
+  ],
+  "matrix~": [
+    "14-stereo-routing.json"
+  ],
+  "max": [
+    "19-routing-control.json"
+  ],
+  "max~": [
+    "24-audio-math.json"
+  ],
+  "meter~": [
+    "03-monosynth.json",
+    "04-feedback-delay.json",
+    "05-drum-machine.json",
+    "06-tremolo-scope.json",
+    "07-karplus-strong-gen.json",
+    "08-subpatch-chorus.json",
+    "17-line-controls.json"
+  ],
+  "metro": [
+    "05-drum-machine.json",
+    "13-dynamics.json",
+    "15-sah-step-seq.json",
+    "19-routing-control.json"
+  ],
+  "midiin": [
+    "22-midi-cc.json"
+  ],
+  "midiout": [
+    "23-midi-out.json"
+  ],
+  "min": [
+    "19-routing-control.json"
+  ],
+  "min~": [
+    "24-audio-math.json"
+  ],
+  "mstosamps~": [
+    "12-multi-tap-delay.json"
+  ],
+  "mtof~": [
+    "18-conv-tour.json",
+    "22-midi-cc.json"
+  ],
+  "multislider": [
+    "21-ui-tour.json"
+  ],
+  "mute~": [
+    "14-stereo-routing.json"
+  ],
+  "neg~": [
+    "11-waveshaping.json"
+  ],
+  "noise~": [
+    "04-feedback-delay.json",
+    "09-osc-tour.json",
+    "15-sah-step-seq.json"
+  ],
+  "notein": [
+    "22-midi-cc.json"
+  ],
+  "noteout": [
+    "23-midi-out.json"
+  ],
+  "number-box": [
+    "21-ui-tour.json"
+  ],
+  "number~": [
+    "17-line-controls.json",
+    "18-conv-tour.json"
+  ],
+  "onepoleHP~": [
+    "10-filter-bank.json"
+  ],
+  "onepole~": [
+    "10-filter-bank.json"
+  ],
+  "outlet": [
+    "08-subpatch-chorus.json"
+  ],
+  "pak": [
+    "19-routing-control.json"
+  ],
+  "patcher": [
+    "08-subpatch-chorus.json"
+  ],
+  "peakamp~": [
+    "13-dynamics.json"
+  ],
+  "phasor~": [
+    "09-osc-tour.json",
+    "15-sah-step-seq.json",
+    "16-function-env.json"
+  ],
+  "pinknoise~": [
+    "09-osc-tour.json"
+  ],
+  "pitchbend": [
+    "22-midi-cc.json"
+  ],
+  "pong~": [
+    "14-stereo-routing.json"
+  ],
+  "pow~": [
+    "11-waveshaping.json"
+  ],
+  "pulse~": [
+    "09-osc-tour.json"
+  ],
+  "random": [
+    "19-routing-control.json"
+  ],
+  "rate~": [
+    "15-sah-step-seq.json"
+  ],
+  "rect~": [
+    "09-osc-tour.json"
+  ],
+  "round~": [
+    "11-waveshaping.json"
+  ],
+  "route": [
+    "19-routing-control.json"
+  ],
+  "sah~": [
+    "15-sah-step-seq.json"
+  ],
+  "sampstoms~": [
+    "12-multi-tap-delay.json"
+  ],
+  "saw~": [
+    "03-monosynth.json",
+    "08-subpatch-chorus.json",
+    "09-osc-tour.json",
+    "10-filter-bank.json",
+    "11-waveshaping.json",
+    "13-dynamics.json",
+    "14-stereo-routing.json",
+    "17-line-controls.json"
+  ],
+  "scale": [
+    "19-routing-control.json",
+    "20-arithmetic.json",
+    "23-midi-out.json"
+  ],
+  "scale~": [
+    "05-drum-machine.json",
+    "11-waveshaping.json",
+    "15-sah-step-seq.json",
+    "22-midi-cc.json"
+  ],
+  "scope~": [
+    "06-tremolo-scope.json",
+    "17-line-controls.json"
+  ],
+  "sel": [
+    "19-routing-control.json"
+  ],
+  "selector~": [
+    "09-osc-tour.json"
+  ],
+  "sin~": [
+    "11-waveshaping.json"
+  ],
+  "slider": [
+    "17-line-controls.json",
+    "18-conv-tour.json",
+    "20-arithmetic.json",
+    "21-ui-tour.json"
+  ],
+  "spectroscope~": [
+    "16-function-env.json"
+  ],
+  "sqrt~": [
+    "11-waveshaping.json"
+  ],
+  "t": [
+    "19-routing-control.json"
+  ],
+  "tanh~": [
+    "11-waveshaping.json"
+  ],
+  "tan~": [
+    "11-waveshaping.json"
+  ],
+  "tapin~": [
+    "12-multi-tap-delay.json"
+  ],
+  "tapout~": [
+    "12-multi-tap-delay.json"
+  ],
+  "toggle": [
+    "21-ui-tour.json"
+  ],
+  "tri~": [
+    "09-osc-tour.json",
+    "14-stereo-routing.json",
+    "24-audio-math.json"
+  ],
+  "umenu": [
+    "09-osc-tour.json",
+    "21-ui-tour.json"
+  ],
+  "unpack": [
+    "19-routing-control.json"
+  ],
+  "vslider": [
+    "21-ui-tour.json"
+  ]
+}

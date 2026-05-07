@@ -1,0 +1,29 @@
+{
+  "name": "25 — adc~ mic passthrough (with synth fallback)",
+  "description": "adc~ mic → biquad~ filter → +~ mix with a quiet local tone (so smoke registers audio without a real mic). Click 'enable mic' to hear yourself.",
+  "patch": {
+    "nodes": [
+      { "id": "intro",  "type": "comment", "pos": { "x": 40, "y": 20 }, "attrs": { "text": "Click 'enable mic' in the toolbar; speak into the mic." } },
+
+      { "id": "mic",    "type": "adc~",    "pos": { "x": 40,  "y": 60 } },
+      { "id": "bq",     "type": "biquad~", "pos": { "x": 40,  "y": 180 }, "args": [0.5, -0.5, 0, -0.3, 0.4] },
+
+      { "id": "fb",     "type": "comment", "pos": { "x": 40, "y": 300 }, "attrs": { "text": "Fallback tone so smoke registers audio without a mic" } },
+      { "id": "tone",   "type": "cycle~",  "pos": { "x": 240, "y": 300 }, "args": [220] },
+      { "id": "tg",     "type": "*~",      "pos": { "x": 240, "y": 380 }, "args": [0.12] },
+
+      { "id": "mix",    "type": "+~",      "pos": { "x": 140, "y": 460 } },
+      { "id": "out",    "type": "dac~",    "pos": { "x": 140, "y": 540 } }
+    ],
+    "cords": [
+      { "src": { "node": "mic", "outlet": 0 }, "dst": { "node": "bq", "inlet": 0 } },
+      { "src": { "node": "bq",  "outlet": 0 }, "dst": { "node": "mix", "inlet": 0 } },
+
+      { "src": { "node": "tone", "outlet": 0 }, "dst": { "node": "tg", "inlet": 0 } },
+      { "src": { "node": "tg",   "outlet": 0 }, "dst": { "node": "mix", "inlet": 0 } },
+
+      { "src": { "node": "mix", "outlet": 0 }, "dst": { "node": "out", "inlet": 0 } },
+      { "src": { "node": "mix", "outlet": 0 }, "dst": { "node": "out", "inlet": 1 } }
+    ]
+  }
+}

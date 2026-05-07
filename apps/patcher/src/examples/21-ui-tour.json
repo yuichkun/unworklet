@@ -1,0 +1,39 @@
+{
+  "name": "21 — UI tour (button/toggle/dial/sliders/menus/comments)",
+  "description": "Every UI node placed in one patch — button, toggle, dial, slider, vslider, number-box, flonum, kslider, multislider, umenu, live.dial, live.slider, comment. The active controls drive a cycle~.",
+  "patch": {
+    "nodes": [
+      { "id": "intro", "type": "comment", "pos": { "x": 40, "y": 20 }, "attrs": { "text": "UI tour — every UI node, with comments" } },
+
+      { "id": "btn",   "type": "button",      "pos": { "x": 40,  "y": 60 }, "attrs": { "label": "bang" } },
+      { "id": "tog",   "type": "toggle",      "pos": { "x": 200, "y": 60 }, "attrs": { "label": "enable", "value": 1 } },
+      { "id": "dial",  "type": "dial",        "pos": { "x": 360, "y": 60 }, "attrs": { "min": 110, "max": 880, "value": 220, "label": "freq" } },
+      { "id": "ld",    "type": "live.dial",   "pos": { "x": 520, "y": 60 }, "attrs": { "min": 0, "max": 1, "value": 0.7, "label": "live.dial gain" } },
+
+      { "id": "sl",    "type": "slider",      "pos": { "x": 40,  "y": 220 }, "attrs": { "min": 0, "max": 1, "value": 0.5, "label": "slider" } },
+      { "id": "vsl",   "type": "vslider",     "pos": { "x": 220, "y": 220 }, "attrs": { "min": 0, "max": 1, "value": 0.7, "label": "vslider" } },
+      { "id": "ls",    "type": "live.slider", "pos": { "x": 380, "y": 220 }, "attrs": { "min": 0, "max": 1, "value": 0.6, "label": "live.slider" } },
+
+      { "id": "nb",    "type": "number-box",  "pos": { "x": 40,  "y": 340 }, "attrs": { "value": 220, "min": 110, "max": 880, "label": "number-box freq" } },
+      { "id": "fn",    "type": "flonum",      "pos": { "x": 220, "y": 340 }, "attrs": { "value": 0.6, "min": 0, "max": 1, "label": "flonum gain" } },
+
+      { "id": "menu",  "type": "umenu",       "pos": { "x": 380, "y": 340 }, "attrs": { "options": "[\"sine\",\"saw\",\"noise\"]", "value": 0 } },
+      { "id": "ks",    "type": "kslider",     "pos": { "x": 540, "y": 340 } },
+      { "id": "ms",    "type": "multislider", "pos": { "x": 720, "y": 340 } },
+
+      { "id": "kvBag", "type": "comment", "pos": { "x": 40, "y": 460 }, "attrs": { "text": "↓ active path: dial → cycle~ → vslider gain → out" } },
+
+      { "id": "osc",   "type": "cycle~",  "pos": { "x": 40,  "y": 500 } },
+      { "id": "vca",   "type": "*~",      "pos": { "x": 220, "y": 500 } },
+      { "id": "out",   "type": "dac~",    "pos": { "x": 220, "y": 600 } }
+    ],
+    "cords": [
+      { "src": { "node": "dial", "outlet": 0 }, "dst": { "node": "osc", "inlet": 0 } },
+      { "src": { "node": "osc",  "outlet": 0 }, "dst": { "node": "vca", "inlet": 0 } },
+      { "src": { "node": "vsl",  "outlet": 0 }, "dst": { "node": "vca", "inlet": 1 } },
+
+      { "src": { "node": "vca", "outlet": 0 }, "dst": { "node": "out", "inlet": 0 } },
+      { "src": { "node": "vca", "outlet": 0 }, "dst": { "node": "out", "inlet": 1 } }
+    ]
+  }
+}

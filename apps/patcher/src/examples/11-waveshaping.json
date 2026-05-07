@@ -1,0 +1,56 @@
+{
+  "name": "11 — waveshaping & rounding",
+  "description": "saw → tan~/tanh~/sin~/cos~/exp~/log~/sqrt~/pow~/abs~/neg~/floor~/ceil~/round~/clip~/scale~/%~ chain → dac~. Distinctly distorted output.",
+  "patch": {
+    "nodes": [
+      { "id": "src",   "type": "saw~",  "pos": { "x": 40,  "y": 40 }, "args": [180] },
+      { "id": "drive", "type": "dial",  "pos": { "x": 220, "y": 40 }, "attrs": { "min": 0.5, "max": 5, "value": 2, "label": "drive" } },
+      { "id": "preGain", "type": "*~",  "pos": { "x": 40,  "y": 140 } },
+
+      { "id": "tan",   "type": "tan~",   "pos": { "x": 40,  "y": 240 } },
+      { "id": "tanh",  "type": "tanh~",  "pos": { "x": 40,  "y": 320 } },
+      { "id": "sin",   "type": "sin~",   "pos": { "x": 40,  "y": 400 } },
+      { "id": "cos",   "type": "cos~",   "pos": { "x": 200, "y": 240 } },
+      { "id": "exp",   "type": "exp~",   "pos": { "x": 200, "y": 320 } },
+      { "id": "log",   "type": "log~",   "pos": { "x": 200, "y": 400 } },
+      { "id": "sqrt",  "type": "sqrt~",  "pos": { "x": 360, "y": 240 } },
+      { "id": "pow",   "type": "pow~",   "pos": { "x": 360, "y": 320 }, "args": [2] },
+      { "id": "abs",   "type": "abs~",   "pos": { "x": 360, "y": 400 } },
+      { "id": "neg",   "type": "neg~",   "pos": { "x": 520, "y": 240 } },
+      { "id": "floor", "type": "floor~", "pos": { "x": 520, "y": 320 } },
+      { "id": "ceil",  "type": "ceil~",  "pos": { "x": 520, "y": 400 } },
+      { "id": "round", "type": "round~", "pos": { "x": 680, "y": 240 } },
+      { "id": "clip",  "type": "clip~",  "pos": { "x": 680, "y": 320 }, "args": [-0.5, 0.5] },
+      { "id": "scale", "type": "scale~", "pos": { "x": 680, "y": 400 }, "args": [-1, 1, -0.4, 0.4] },
+      { "id": "mod",   "type": "%~",     "pos": { "x": 840, "y": 240 }, "args": [0.5] },
+
+      { "id": "wet",  "type": "*~",   "pos": { "x": 360, "y": 520 }, "args": [0.18] },
+      { "id": "out",  "type": "dac~", "pos": { "x": 360, "y": 600 } }
+    ],
+    "cords": [
+      { "src": { "node": "src",   "outlet": 0 }, "dst": { "node": "preGain", "inlet": 0 } },
+      { "src": { "node": "drive", "outlet": 0 }, "dst": { "node": "preGain", "inlet": 1 } },
+      { "src": { "node": "preGain", "outlet": 0 }, "dst": { "node": "tanh", "inlet": 0 } },
+
+      { "src": { "node": "tanh",  "outlet": 0 }, "dst": { "node": "tan", "inlet": 0 } },
+      { "src": { "node": "tan",   "outlet": 0 }, "dst": { "node": "sin", "inlet": 0 } },
+      { "src": { "node": "sin",   "outlet": 0 }, "dst": { "node": "cos", "inlet": 0 } },
+      { "src": { "node": "cos",   "outlet": 0 }, "dst": { "node": "exp", "inlet": 0 } },
+      { "src": { "node": "exp",   "outlet": 0 }, "dst": { "node": "log", "inlet": 0 } },
+      { "src": { "node": "log",   "outlet": 0 }, "dst": { "node": "sqrt", "inlet": 0 } },
+      { "src": { "node": "sqrt",  "outlet": 0 }, "dst": { "node": "pow", "inlet": 0 } },
+      { "src": { "node": "pow",   "outlet": 0 }, "dst": { "node": "abs", "inlet": 0 } },
+      { "src": { "node": "abs",   "outlet": 0 }, "dst": { "node": "neg", "inlet": 0 } },
+      { "src": { "node": "neg",   "outlet": 0 }, "dst": { "node": "floor", "inlet": 0 } },
+      { "src": { "node": "floor", "outlet": 0 }, "dst": { "node": "ceil", "inlet": 0 } },
+      { "src": { "node": "ceil",  "outlet": 0 }, "dst": { "node": "round", "inlet": 0 } },
+      { "src": { "node": "round", "outlet": 0 }, "dst": { "node": "clip", "inlet": 0 } },
+      { "src": { "node": "clip",  "outlet": 0 }, "dst": { "node": "scale", "inlet": 0 } },
+      { "src": { "node": "scale", "outlet": 0 }, "dst": { "node": "mod", "inlet": 0 } },
+
+      { "src": { "node": "mod", "outlet": 0 }, "dst": { "node": "wet", "inlet": 0 } },
+      { "src": { "node": "wet", "outlet": 0 }, "dst": { "node": "out", "inlet": 0 } },
+      { "src": { "node": "wet", "outlet": 0 }, "dst": { "node": "out", "inlet": 1 } }
+    ]
+  }
+}

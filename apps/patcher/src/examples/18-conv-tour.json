@@ -1,0 +1,42 @@
+{
+  "name": "18 — conversion tour (db/freq)",
+  "description": "MIDI → mtof~ → cycle~. Slider in dB → dbtoa~ → *~. atodb~/ftom~ readouts via number~. Demonstrates the conversion family.",
+  "patch": {
+    "nodes": [
+      { "id": "noteDial", "type": "dial",   "pos": { "x": 40,  "y": 40 }, "attrs": { "min": 36, "max": 84, "value": 60, "label": "MIDI note" } },
+      { "id": "mtof",     "type": "mtof~",  "pos": { "x": 40,  "y": 140 } },
+      { "id": "osc",      "type": "cycle~", "pos": { "x": 40,  "y": 240 } },
+
+      { "id": "dbDial", "type": "slider", "pos": { "x": 220, "y": 40 }, "attrs": { "min": -40, "max": 0, "value": -12, "label": "level dB" } },
+      { "id": "dbtoa",  "type": "dbtoa~", "pos": { "x": 220, "y": 140 } },
+
+      { "id": "vca",   "type": "*~",     "pos": { "x": 40,  "y": 340 } },
+
+      { "id": "atodb", "type": "atodb~", "pos": { "x": 220, "y": 340 } },
+      { "id": "ftom",  "type": "ftom~",  "pos": { "x": 380, "y": 340 } },
+
+      { "id": "n1", "type": "number~", "pos": { "x": 220, "y": 440 } },
+      { "id": "n2", "type": "number~", "pos": { "x": 380, "y": 440 } },
+
+      { "id": "out", "type": "dac~", "pos": { "x": 40,  "y": 460 } }
+    ],
+    "cords": [
+      { "src": { "node": "noteDial", "outlet": 0 }, "dst": { "node": "mtof", "inlet": 0 } },
+      { "src": { "node": "mtof",     "outlet": 0 }, "dst": { "node": "osc", "inlet": 0 } },
+
+      { "src": { "node": "dbDial", "outlet": 0 }, "dst": { "node": "dbtoa", "inlet": 0 } },
+
+      { "src": { "node": "osc",   "outlet": 0 }, "dst": { "node": "vca", "inlet": 0 } },
+      { "src": { "node": "dbtoa", "outlet": 0 }, "dst": { "node": "vca", "inlet": 1 } },
+
+      { "src": { "node": "vca",  "outlet": 0 }, "dst": { "node": "atodb", "inlet": 0 } },
+      { "src": { "node": "mtof", "outlet": 0 }, "dst": { "node": "ftom", "inlet": 0 } },
+
+      { "src": { "node": "atodb", "outlet": 0 }, "dst": { "node": "n1", "inlet": 0 } },
+      { "src": { "node": "ftom",  "outlet": 0 }, "dst": { "node": "n2", "inlet": 0 } },
+
+      { "src": { "node": "vca", "outlet": 0 }, "dst": { "node": "out", "inlet": 0 } },
+      { "src": { "node": "vca", "outlet": 0 }, "dst": { "node": "out", "inlet": 1 } }
+    ]
+  }
+}

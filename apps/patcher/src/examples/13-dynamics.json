@@ -1,0 +1,55 @@
+{
+  "name": "13 — sidechain compressor",
+  "description": "kick (cycle~ + env) → peakamp~ → compand~ on a saw pad → limit~ → dac~. Pad ducks under the kick.",
+  "patch": {
+    "nodes": [
+      { "id": "metro", "type": "metro",   "pos": { "x": 40,  "y": 40 }, "args": [120] },
+      { "id": "kfreq", "type": "curve~",  "pos": { "x": 40,  "y": 140 } },
+      { "id": "kosc",  "type": "cycle~",  "pos": { "x": 40,  "y": 240 }, "args": [60] },
+      { "id": "kenv",  "type": "curve~",  "pos": { "x": 200, "y": 140 } },
+      { "id": "kvca",  "type": "*~",      "pos": { "x": 40,  "y": 340 } },
+
+      { "id": "pad",  "type": "saw~",   "pos": { "x": 280, "y": 40 }, "args": [110] },
+      { "id": "padq", "type": "lores~", "pos": { "x": 280, "y": 140 } },
+      { "id": "co",   "type": "dial",   "pos": { "x": 460, "y": 60 }, "attrs": { "min": 200, "max": 4000, "value": 800, "label": "cutoff" } },
+      { "id": "qq",   "type": "dial",   "pos": { "x": 600, "y": 60 }, "attrs": { "min": 0.1, "max": 0.95, "value": 0.5, "label": "Q" } },
+
+      { "id": "side", "type": "peakamp~", "pos": { "x": 280, "y": 240 } },
+      { "id": "comp", "type": "compand~", "pos": { "x": 280, "y": 340 } },
+      { "id": "thr",  "type": "dial",     "pos": { "x": 460, "y": 240 }, "attrs": { "min": 0.05, "max": 0.5, "value": 0.15, "label": "thr" } },
+      { "id": "rat",  "type": "dial",     "pos": { "x": 600, "y": 240 }, "attrs": { "min": 1, "max": 8, "value": 4, "label": "ratio" } },
+
+      { "id": "padg",   "type": "*~",  "pos": { "x": 280, "y": 440 }, "args": [0.18] },
+      { "id": "kickg",  "type": "*~",  "pos": { "x": 40,  "y": 440 }, "args": [0.6] },
+      { "id": "mix",    "type": "+~",  "pos": { "x": 160, "y": 540 } },
+      { "id": "lim",    "type": "limit~", "pos": { "x": 160, "y": 640 }, "args": [0.92] },
+      { "id": "out",    "type": "dac~", "pos": { "x": 160, "y": 720 } }
+    ],
+    "cords": [
+      { "src": { "node": "metro", "outlet": 0 }, "dst": { "node": "kfreq", "inlet": 0 } },
+      { "src": { "node": "metro", "outlet": 0 }, "dst": { "node": "kenv", "inlet": 0 } },
+      { "src": { "node": "kfreq", "outlet": 0 }, "dst": { "node": "kosc", "inlet": 0 } },
+      { "src": { "node": "kosc",  "outlet": 0 }, "dst": { "node": "kvca", "inlet": 0 } },
+      { "src": { "node": "kenv",  "outlet": 0 }, "dst": { "node": "kvca", "inlet": 1 } },
+      { "src": { "node": "kvca",  "outlet": 0 }, "dst": { "node": "kickg", "inlet": 0 } },
+
+      { "src": { "node": "pad",  "outlet": 0 }, "dst": { "node": "padq", "inlet": 0 } },
+      { "src": { "node": "co",   "outlet": 0 }, "dst": { "node": "padq", "inlet": 1 } },
+      { "src": { "node": "qq",   "outlet": 0 }, "dst": { "node": "padq", "inlet": 2 } },
+
+      { "src": { "node": "kvca", "outlet": 0 }, "dst": { "node": "side", "inlet": 0 } },
+
+      { "src": { "node": "padq", "outlet": 0 }, "dst": { "node": "comp", "inlet": 0 } },
+      { "src": { "node": "thr",  "outlet": 0 }, "dst": { "node": "comp", "inlet": 1 } },
+      { "src": { "node": "rat",  "outlet": 0 }, "dst": { "node": "comp", "inlet": 2 } },
+
+      { "src": { "node": "comp",  "outlet": 0 }, "dst": { "node": "padg", "inlet": 0 } },
+      { "src": { "node": "padg",  "outlet": 0 }, "dst": { "node": "mix", "inlet": 0 } },
+      { "src": { "node": "kickg", "outlet": 0 }, "dst": { "node": "mix", "inlet": 0 } },
+
+      { "src": { "node": "mix", "outlet": 0 }, "dst": { "node": "lim", "inlet": 0 } },
+      { "src": { "node": "lim", "outlet": 0 }, "dst": { "node": "out", "inlet": 0 } },
+      { "src": { "node": "lim", "outlet": 0 }, "dst": { "node": "out", "inlet": 1 } }
+    ]
+  }
+}

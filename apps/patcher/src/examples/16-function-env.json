@@ -1,0 +1,28 @@
+{
+  "name": "16 — function envelope",
+  "description": "phasor~ sweeps a `function` curve (drag breakpoints!) → ftom~/dbtoa~ stack drives cycle~ amp + freq → spectroscope~ → dac~.",
+  "patch": {
+    "nodes": [
+      { "id": "rate",  "type": "dial",    "pos": { "x": 40,  "y": 40 }, "attrs": { "min": 0.5, "max": 6, "value": 1.5, "label": "rate" } },
+      { "id": "ph",    "type": "phasor~", "pos": { "x": 40,  "y": 140 } },
+      { "id": "fn",    "type": "function","pos": { "x": 40,  "y": 240 }, "attrs": { "minY": 0, "maxY": 1, "points": "[[0,0.05],[0.15,0.95],[0.35,0.4],[0.7,0.6],[1,0.05]]" } },
+
+      { "id": "carrier", "type": "cycle~", "pos": { "x": 40,  "y": 360 }, "args": [330] },
+      { "id": "amp",     "type": "*~",     "pos": { "x": 40,  "y": 460 } },
+
+      { "id": "spec",    "type": "spectroscope~", "pos": { "x": 240, "y": 460 } },
+      { "id": "out",     "type": "dac~",   "pos": { "x": 40,  "y": 560 } }
+    ],
+    "cords": [
+      { "src": { "node": "rate", "outlet": 0 }, "dst": { "node": "ph", "inlet": 0 } },
+      { "src": { "node": "ph",   "outlet": 0 }, "dst": { "node": "fn", "inlet": 0 } },
+
+      { "src": { "node": "carrier", "outlet": 0 }, "dst": { "node": "amp", "inlet": 0 } },
+      { "src": { "node": "fn",      "outlet": 0 }, "dst": { "node": "amp", "inlet": 1 } },
+
+      { "src": { "node": "amp", "outlet": 0 }, "dst": { "node": "spec", "inlet": 0 } },
+      { "src": { "node": "spec","outlet": 0 }, "dst": { "node": "out", "inlet": 0 } },
+      { "src": { "node": "spec","outlet": 0 }, "dst": { "node": "out", "inlet": 1 } }
+    ]
+  }
+}

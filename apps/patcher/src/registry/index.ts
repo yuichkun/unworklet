@@ -21,6 +21,7 @@ import "./audio-conv";
 import "./audio-sampling";
 import "./audio-viz";
 import "./ui";
+import "./ui-function";
 import "./control";
 import "./control-time";
 import "./midi";

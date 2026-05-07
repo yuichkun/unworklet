@@ -1,0 +1,43 @@
+{
+  "name": "14 — stereo routing",
+  "description": "Two oscs into matrix~ M/S encoder; gate~ chops the side; pong~ panner spreads; mute~ + dac~. Demonstrates matrix~/pong~/gate~/mute~.",
+  "patch": {
+    "nodes": [
+      { "id": "src1", "type": "saw~", "pos": { "x": 40,  "y": 40 }, "args": [110] },
+      { "id": "src2", "type": "tri~", "pos": { "x": 200, "y": 40 }, "args": [165] },
+
+      { "id": "mtx", "type": "matrix~", "pos": { "x": 120, "y": 160 }, "args": [0.7, 0.7, 0.7, -0.7] },
+
+      { "id": "lfo", "type": "cycle~", "pos": { "x": 380, "y": 60 }, "args": [3] },
+      { "id": "gate", "type": "gate~", "pos": { "x": 280, "y": 260 } },
+
+      { "id": "panL", "type": "pong~", "pos": { "x": 80,  "y": 360 } },
+      { "id": "panR", "type": "pong~", "pos": { "x": 280, "y": 360 } },
+      { "id": "panLcfg", "type": "dial", "pos": { "x": 80,  "y": 280 }, "attrs": { "min": -1, "max": 1, "value": -0.6, "label": "panL" } },
+      { "id": "panRcfg", "type": "dial", "pos": { "x": 280, "y": 280 }, "attrs": { "min": -1, "max": 1, "value": 0.6, "label": "panR" } },
+
+      { "id": "mt",  "type": "mute~", "pos": { "x": 180, "y": 460 }, "attrs": { "muted": false } },
+      { "id": "lvl", "type": "*~",    "pos": { "x": 180, "y": 540 }, "args": [0.3] },
+      { "id": "out", "type": "dac~",  "pos": { "x": 180, "y": 620 } }
+    ],
+    "cords": [
+      { "src": { "node": "src1", "outlet": 0 }, "dst": { "node": "mtx", "inlet": 0 } },
+      { "src": { "node": "src2", "outlet": 0 }, "dst": { "node": "mtx", "inlet": 1 } },
+
+      { "src": { "node": "mtx", "outlet": 1 }, "dst": { "node": "gate", "inlet": 0 } },
+      { "src": { "node": "lfo", "outlet": 0 }, "dst": { "node": "gate", "inlet": 1 } },
+
+      { "src": { "node": "mtx", "outlet": 0 }, "dst": { "node": "panL", "inlet": 0 } },
+      { "src": { "node": "panLcfg", "outlet": 0 }, "dst": { "node": "panL", "inlet": 1 } },
+      { "src": { "node": "gate","outlet": 0 }, "dst": { "node": "panR", "inlet": 0 } },
+      { "src": { "node": "panRcfg", "outlet": 0 }, "dst": { "node": "panR", "inlet": 1 } },
+
+      { "src": { "node": "panL", "outlet": 0 }, "dst": { "node": "mt", "inlet": 0 } },
+      { "src": { "node": "panR", "outlet": 1 }, "dst": { "node": "mt", "inlet": 0 } },
+
+      { "src": { "node": "mt",  "outlet": 0 }, "dst": { "node": "lvl", "inlet": 0 } },
+      { "src": { "node": "lvl", "outlet": 0 }, "dst": { "node": "out", "inlet": 0 } },
+      { "src": { "node": "lvl", "outlet": 0 }, "dst": { "node": "out", "inlet": 1 } }
+    ]
+  }
+}

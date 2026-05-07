@@ -20,6 +20,7 @@ register({
   description: "Oscilloscope. Passthrough; main-side reads buffer at 30 fps.",
   inlets: [{ kind: "audio", label: "in" }],
   outlets: [{ kind: "audio", label: "out" }],
+  component: "ScopeView",
   build: (ctx) => {
     const buf = ctx.buffer.f32({
       size: SCOPE_LEN,
@@ -42,6 +43,7 @@ register({
   description: "Peak meter. Passthrough; main-side reads peak via .value.",
   inlets: [{ kind: "audio", label: "in" }],
   outlets: [{ kind: "audio", label: "out" }],
+  component: "MeterView",
   build: (ctx) => {
     const peak = ctx.state.f32(0, {
       name: `${ctx.id}_peak`,
@@ -61,6 +63,7 @@ register({
   description: "Spectroscope. Passthrough; FFT done main-side over published buffer.",
   inlets: [{ kind: "audio", label: "in" }],
   outlets: [{ kind: "audio", label: "out" }],
+  component: "SpectroscopeView",
   build: (ctx) => {
     const buf = ctx.buffer.f32({
       size: SCOPE_LEN,
@@ -83,6 +86,7 @@ register({
   description: "Audio-rate number readout. Latest sample published to main.",
   inlets: [{ kind: "audio", label: "in" }],
   outlets: [{ kind: "audio", label: "out" }],
+  component: "NumberView",
   build: (ctx) => {
     const s = ctx.state.f32(0, {
       name: `${ctx.id}_val`,

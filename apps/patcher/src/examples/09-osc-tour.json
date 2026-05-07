@@ -1,0 +1,45 @@
+{
+  "name": "09 — oscillator tour",
+  "description": "All 8 oscillators (cycle/phasor/saw/tri/rect/pulse/noise/pinknoise) routed via selector~ + umenu. Drag the menu to switch source.",
+  "patch": {
+    "nodes": [
+      { "id": "menu", "type": "umenu", "pos": { "x": 40, "y": 40 }, "attrs": { "options": "[\"cycle\",\"saw\",\"tri\",\"rect\",\"pulse\",\"phasor\",\"noise\",\"pinknoise\"]", "value": 1 } },
+      { "id": "freq", "type": "dial",  "pos": { "x": 280, "y": 40 }, "attrs": { "min": 60, "max": 2000, "value": 220, "label": "freq" } },
+
+      { "id": "o1", "type": "cycle~",     "pos": { "x": 40,  "y": 200 }, "args": [220] },
+      { "id": "o2", "type": "saw~",       "pos": { "x": 160, "y": 200 }, "args": [220] },
+      { "id": "o3", "type": "tri~",       "pos": { "x": 280, "y": 200 }, "args": [220] },
+      { "id": "o4", "type": "rect~",      "pos": { "x": 400, "y": 200 }, "args": [220] },
+      { "id": "o5", "type": "pulse~",     "pos": { "x": 520, "y": 200 }, "args": [220] },
+      { "id": "o6", "type": "phasor~",    "pos": { "x": 640, "y": 200 }, "args": [220] },
+      { "id": "o7", "type": "noise~",     "pos": { "x": 760, "y": 200 } },
+      { "id": "o8", "type": "pinknoise~", "pos": { "x": 880, "y": 200 } },
+
+      { "id": "sel",  "type": "selector~", "pos": { "x": 400, "y": 320 }, "args": [8] },
+      { "id": "vol",  "type": "*~",        "pos": { "x": 400, "y": 420 }, "args": [0.25] },
+      { "id": "out",  "type": "dac~",      "pos": { "x": 400, "y": 520 } }
+    ],
+    "cords": [
+      { "src": { "node": "freq", "outlet": 0 }, "dst": { "node": "o1", "inlet": 0 } },
+      { "src": { "node": "freq", "outlet": 0 }, "dst": { "node": "o2", "inlet": 0 } },
+      { "src": { "node": "freq", "outlet": 0 }, "dst": { "node": "o3", "inlet": 0 } },
+      { "src": { "node": "freq", "outlet": 0 }, "dst": { "node": "o4", "inlet": 0 } },
+      { "src": { "node": "freq", "outlet": 0 }, "dst": { "node": "o5", "inlet": 0 } },
+      { "src": { "node": "freq", "outlet": 0 }, "dst": { "node": "o6", "inlet": 0 } },
+
+      { "src": { "node": "menu", "outlet": 0 }, "dst": { "node": "sel", "inlet": 0 } },
+      { "src": { "node": "o1", "outlet": 0 }, "dst": { "node": "sel", "inlet": 1 } },
+      { "src": { "node": "o2", "outlet": 0 }, "dst": { "node": "sel", "inlet": 2 } },
+      { "src": { "node": "o3", "outlet": 0 }, "dst": { "node": "sel", "inlet": 3 } },
+      { "src": { "node": "o4", "outlet": 0 }, "dst": { "node": "sel", "inlet": 4 } },
+      { "src": { "node": "o5", "outlet": 0 }, "dst": { "node": "sel", "inlet": 5 } },
+      { "src": { "node": "o6", "outlet": 0 }, "dst": { "node": "sel", "inlet": 6 } },
+      { "src": { "node": "o7", "outlet": 0 }, "dst": { "node": "sel", "inlet": 7 } },
+      { "src": { "node": "o8", "outlet": 0 }, "dst": { "node": "sel", "inlet": 8 } },
+
+      { "src": { "node": "sel", "outlet": 0 }, "dst": { "node": "vol", "inlet": 0 } },
+      { "src": { "node": "vol", "outlet": 0 }, "dst": { "node": "out", "inlet": 0 } },
+      { "src": { "node": "vol", "outlet": 0 }, "dst": { "node": "out", "inlet": 1 } }
+    ]
+  }
+}

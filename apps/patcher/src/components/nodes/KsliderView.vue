@@ -3,14 +3,17 @@ import { Handle, Position, type NodeProps } from "@vue-flow/core";
 import { computed, ref } from "vue";
 import type { NodeDef, PatchNode } from "../../types";
 
-const props = defineProps<NodeProps<{ node: PatchNode; def: NodeDef; onParam: (v: number) => void }>>();
+const props = defineProps<NodeProps<{
+  node: PatchNode;
+  def: NodeDef;
+  onParam: (v: number, outletIndex?: number, attrName?: string) => void;
+}>>();
 
 const lowNote = computed(() => Number(props.data.node.attrs?.lowNote ?? 48));
 const octaves = computed(() => Number(props.data.node.attrs?.octaves ?? 2));
 const noteCount = computed(() => octaves.value * 12);
 
 const heldNote = ref<number | null>(null);
-const PATTERN = [0, 2, 4, 5, 7, 9, 11]; // white-key offsets within an octave
 function isBlack(n: number) {
   const o = (n - lowNote.value) % 12;
   return [1, 3, 6, 8, 10].includes((o + 12) % 12);
@@ -18,15 +21,14 @@ function isBlack(n: number) {
 
 function press(n: number) {
   heldNote.value = n;
-  // Single paramSpec — we send the note number for now. (gate via a
-  // separate notein.gate paramSpec is left as a stretch; for the
-  // monosynth example we use kslider→mtof~→cycle~ + a separate toggle.)
-  props.data.onParam(n);
+  // outlet 0 = note number (paramSpec[0])
+  // outlet 1 = gate (paramSpec[1])
+  props.data.onParam(n, 0, "note");
+  props.data.onParam(1, 1, "gate");
 }
 function release() {
   heldNote.value = null;
-  // Set value to 0 (note off). In a full implementation we'd send gate=0
-  // on outlet 1.
+  props.data.onParam(0, 1, "gate");
 }
 </script>
 <template>

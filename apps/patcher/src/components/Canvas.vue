@@ -22,6 +22,13 @@ import UMenuView from "./nodes/UMenuView.vue";
 import CommentView from "./nodes/CommentView.vue";
 import GenView from "./nodes/GenView.vue";
 import PatcherView from "./nodes/PatcherView.vue";
+import LiveDialView from "./nodes/LiveDialView.vue";
+import LiveSliderView from "./nodes/LiveSliderView.vue";
+import ScopeView from "./nodes/ScopeView.vue";
+import MeterView from "./nodes/MeterView.vue";
+import SpectroscopeView from "./nodes/SpectroscopeView.vue";
+import NumberView from "./nodes/NumberView.vue";
+import FunctionView from "./nodes/FunctionView.vue";
 
 const props = defineProps<{
   patch: Patch;
@@ -31,7 +38,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: "select", id: string | null): void;
   (e: "change"): void;
-  (e: "param", payload: { nodeId: string; value: number }): void;
+  (e: "param", payload: { nodeId: string; value: number; outletIndex?: number; attrName?: string }): void;
+  (e: "descend", payload: { nodeId: string; label: string }): void;
 }>();
 
 // Map our component string → Vue component.
@@ -49,8 +57,13 @@ const nodeTypes = {
   CommentView,
   GenView,
   PatcherView,
-  LiveDialView: DialView,
-  LiveSliderView: SliderView,
+  LiveDialView,
+  LiveSliderView,
+  ScopeView,
+  MeterView,
+  SpectroscopeView,
+  NumberView,
+  FunctionView,
 };
 
 // Convert our Patch into VueFlow's nodes/edges.
@@ -64,8 +77,10 @@ const flowNodes = computed<FlowNode[]>(() => {
       data: {
         node: n,
         def,
-        onParam: (value: number) => emit("param", { nodeId: n.id, value }),
+        onParam: (value: number, outletIndex?: number, attrName?: string) =>
+          emit("param", { nodeId: n.id, value, outletIndex, attrName }),
         onAttrChange: () => emit("change"),
+        onDescend: (label: string) => emit("descend", { nodeId: n.id, label }),
       },
     };
   });

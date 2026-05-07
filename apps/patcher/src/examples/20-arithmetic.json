@@ -1,0 +1,67 @@
+{
+  "name": "20 — control arithmetic + comparisons",
+  "description": "4 sliders feed +, -, *, /, ==, !=, <, >, <=, >=, gate, line. Each output drives a cycle~ freq nudge. Demonstrates control-rate arithmetic / comparison operators.",
+  "patch": {
+    "nodes": [
+      { "id": "a", "type": "slider", "pos": { "x": 40,  "y": 40 }, "attrs": { "min": 0, "max": 8, "value": 4, "label": "a" } },
+      { "id": "b", "type": "slider", "pos": { "x": 200, "y": 40 }, "attrs": { "min": 0, "max": 8, "value": 2, "label": "b" } },
+      { "id": "c", "type": "slider", "pos": { "x": 360, "y": 40 }, "attrs": { "min": 0, "max": 8, "value": 1, "label": "c" } },
+      { "id": "d", "type": "slider", "pos": { "x": 520, "y": 40 }, "attrs": { "min": 0, "max": 8, "value": 0.5, "label": "d" } },
+
+      { "id": "addOp", "type": "+", "pos": { "x": 40,  "y": 160 } },
+      { "id": "subOp", "type": "-", "pos": { "x": 200, "y": 160 } },
+      { "id": "mulOp", "type": "*", "pos": { "x": 360, "y": 160 } },
+      { "id": "divOp", "type": "/", "pos": { "x": 520, "y": 160 } },
+
+      { "id": "eq", "type": "==", "pos": { "x": 40,  "y": 260 } },
+      { "id": "ne", "type": "!=", "pos": { "x": 200, "y": 260 } },
+      { "id": "lt", "type": "<",  "pos": { "x": 360, "y": 260 } },
+      { "id": "gt", "type": ">",  "pos": { "x": 520, "y": 260 } },
+      { "id": "lte","type": "<=", "pos": { "x": 680, "y": 260 } },
+      { "id": "gte","type": ">=", "pos": { "x": 840, "y": 260 } },
+
+      { "id": "gateC", "type": "gate", "pos": { "x": 40,  "y": 360 } },
+      { "id": "lineC", "type": "line", "pos": { "x": 200, "y": 360 }, "args": [50] },
+
+      { "id": "scaleC", "type": "scale", "pos": { "x": 360, "y": 360 }, "args": [0, 64, 110, 880] },
+
+      { "id": "osc", "type": "cycle~", "pos": { "x": 360, "y": 480 } },
+      { "id": "lvl", "type": "*~", "pos": { "x": 360, "y": 580 }, "args": [0.25] },
+      { "id": "out", "type": "dac~", "pos": { "x": 360, "y": 660 } }
+    ],
+    "cords": [
+      { "src": { "node": "a", "outlet": 0 }, "dst": { "node": "addOp", "inlet": 0 } },
+      { "src": { "node": "b", "outlet": 0 }, "dst": { "node": "addOp", "inlet": 1 } },
+      { "src": { "node": "a", "outlet": 0 }, "dst": { "node": "subOp", "inlet": 0 } },
+      { "src": { "node": "b", "outlet": 0 }, "dst": { "node": "subOp", "inlet": 1 } },
+      { "src": { "node": "a", "outlet": 0 }, "dst": { "node": "mulOp", "inlet": 0 } },
+      { "src": { "node": "c", "outlet": 0 }, "dst": { "node": "mulOp", "inlet": 1 } },
+      { "src": { "node": "a", "outlet": 0 }, "dst": { "node": "divOp", "inlet": 0 } },
+      { "src": { "node": "d", "outlet": 0 }, "dst": { "node": "divOp", "inlet": 1 } },
+
+      { "src": { "node": "a", "outlet": 0 }, "dst": { "node": "eq", "inlet": 0 } },
+      { "src": { "node": "b", "outlet": 0 }, "dst": { "node": "eq", "inlet": 1 } },
+      { "src": { "node": "a", "outlet": 0 }, "dst": { "node": "ne", "inlet": 0 } },
+      { "src": { "node": "b", "outlet": 0 }, "dst": { "node": "ne", "inlet": 1 } },
+      { "src": { "node": "a", "outlet": 0 }, "dst": { "node": "lt", "inlet": 0 } },
+      { "src": { "node": "b", "outlet": 0 }, "dst": { "node": "lt", "inlet": 1 } },
+      { "src": { "node": "a", "outlet": 0 }, "dst": { "node": "gt", "inlet": 0 } },
+      { "src": { "node": "b", "outlet": 0 }, "dst": { "node": "gt", "inlet": 1 } },
+      { "src": { "node": "a", "outlet": 0 }, "dst": { "node": "lte", "inlet": 0 } },
+      { "src": { "node": "b", "outlet": 0 }, "dst": { "node": "lte", "inlet": 1 } },
+      { "src": { "node": "a", "outlet": 0 }, "dst": { "node": "gte", "inlet": 0 } },
+      { "src": { "node": "b", "outlet": 0 }, "dst": { "node": "gte", "inlet": 1 } },
+
+      { "src": { "node": "addOp", "outlet": 0 }, "dst": { "node": "gateC", "inlet": 1 } },
+      { "src": { "node": "gt",    "outlet": 0 }, "dst": { "node": "gateC", "inlet": 0 } },
+
+      { "src": { "node": "addOp", "outlet": 0 }, "dst": { "node": "lineC", "inlet": 0 } },
+      { "src": { "node": "lineC", "outlet": 0 }, "dst": { "node": "scaleC", "inlet": 0 } },
+      { "src": { "node": "scaleC", "outlet": 0 }, "dst": { "node": "osc", "inlet": 0 } },
+
+      { "src": { "node": "osc", "outlet": 0 }, "dst": { "node": "lvl", "inlet": 0 } },
+      { "src": { "node": "lvl", "outlet": 0 }, "dst": { "node": "out", "inlet": 0 } },
+      { "src": { "node": "lvl", "outlet": 0 }, "dst": { "node": "out", "inlet": 1 } }
+    ]
+  }
+}

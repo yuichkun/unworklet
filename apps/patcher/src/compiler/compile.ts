@@ -20,15 +20,55 @@ import {
 } from "@unworklet/core";
 import type { CompiledProcessor } from "@unworklet/core";
 
-import type { Patch, PatchNode, BuildCtx, NodeDef } from "../types";
+import type { Patch, PatchNode, BuildCtx, NodeDef, ParamSpec } from "../types";
 import { topoSort } from "./topo";
 import { registry } from "../registry";
 
+export type ParamRoute = {
+  /** Patch node id this param belongs to. */
+  nodeId: string;
+  /** Which outlet index of that node the param drives. */
+  outletIndex: number;
+  /** The original ParamSpec, useful for runtime range/rate decisions. */
+  spec: ParamSpec;
+};
+
+export type MidiInputRoute = {
+  /** Patch node id (notein / ctlin / pitchbend). */
+  nodeId: string;
+  kind: "note" | "cc" | "pitchbend";
+  /** Optional channel filter (1..16); undefined = omni. */
+  channel?: number;
+  /** For cc: which controller number to listen for. */
+  controller?: number;
+};
+
+export type MidiOutputRoute = {
+  nodeId: string;
+  kind: "note" | "cc" | "raw";
+  /** Optional channel (1..16); undefined = ch1. */
+  channel: number;
+  /** For cc: which controller number to send. */
+  controller?: number;
+  /** Names of published state slots the runtime subscribes to.
+   *  - note: [noteName, velName, gateName]
+   *  - cc:   [valueName]
+   *  - raw:  [statusName]
+   *  These match the names declared in registry/midi.ts build() bodies. */
+  stateNames: string[];
+};
+
 export type CompileResult = {
   processor: CompiledProcessor;
-  /** Map of compiled param name → patch node id. The runtime uses this to
-   *  route slider/dial value changes to the right AudioParam. */
-  paramRouting: Record<string, string>;
+  /** Map compiled param name → ParamRoute. The runtime uses this to route
+   *  slider/dial value changes to the right AudioParam, and to know which
+   *  outlet each param drives for nodes with multiple param outlets
+   *  (kslider note+gate, notein note+vel+gate, etc.). */
+  paramRouting: Record<string, ParamRoute>;
+  /** MIDI input listeners: which patch nodes want which MIDI events. */
+  midiInputs: MidiInputRoute[];
+  /** MIDI output bus: which patch nodes emit events forwarded to MIDIOutputs. */
+  midiOutputs: MidiOutputRoute[];
   /** Adc / dac topology so the runtime knows how to connect mic / destination. */
   ioRouting: {
     inputs: Array<{ name: string; channels: number }>;
@@ -36,10 +76,18 @@ export type CompileResult = {
   };
 };
 
+function getParamSpecs(def: NodeDef): ParamSpec[] {
+  if (def.paramSpecs && def.paramSpecs.length > 0) return def.paramSpecs;
+  if (def.paramSpec) return [{ ...def.paramSpec, outletIndex: def.paramSpec.outletIndex ?? 0 }];
+  return [];
+}
+
 export function patchToProcessor(patch: Patch): CompileResult {
   // Collect nodes with paramSpec / ioSpec — these need to be declared at
   // setup time, before forSample.
-  const paramRouting: Record<string, string> = {};
+  const paramRouting: Record<string, ParamRoute> = {};
+  const midiInputs: MidiInputRoute[] = [];
+  const midiOutputs: MidiOutputRoute[] = [];
   const ioRouting: CompileResult["ioRouting"] = { inputs: [], outputs: [] };
 
   // Track which cords are audio cords (vs control). We treat any cord whose
@@ -55,14 +103,18 @@ export function patchToProcessor(patch: Patch): CompileResult {
   };
   const isAudioCord = (cord: any) => !isControlCord(cord);
 
-  // Detect feedback breaks: a cord whose dst is `tapout~` style (feedback
-  // sink) is treated as a backward edge during topo sort. We don't have
-  // tapout yet, so for now: nothing; cycles surface as compile errors.
+  // Feedback breaks: a cord from `tapin~` to `tapout~` (or any explicit
+  // feedback-write→feedback-read declarative pair) is removed from the
+  // topo graph. Data flows via the shared bus, not the cord, so the cord
+  // is only a visual / declarative connection. Without the break, a typical
+  // Karplus-Strong-style patch (`+~ → tapin~ → tapout~ → filter → +~`)
+  // forms a cycle.
   const feedbackBreaks: Array<{ from: string; to: string }> = [];
   for (const cord of patch.cords) {
+    const src = patch.nodes.find((n) => n.id === cord.src.node);
     const dst = patch.nodes.find((n) => n.id === cord.dst.node);
-    const def = dst && registry[dst.type];
-    if (def?.attrs?.some((a) => a.name === "__feedbackInlet")) {
+    if (!src || !dst) continue;
+    if (src.type === "tapin~" && dst.type === "tapout~") {
       feedbackBreaks.push({ from: cord.src.node, to: cord.dst.node });
     }
   }
@@ -78,8 +130,48 @@ export function patchToProcessor(patch: Patch): CompileResult {
   for (const n of patch.nodes) {
     const def = registry[n.type];
     if (!def) continue;
-    if (def.paramSpec) {
-      paramRouting[paramName(n.id)] = n.id;
+    const specs = getParamSpecs(def);
+    if (specs.length > 0) {
+      for (let si = 0; si < specs.length; si++) {
+        const spec = specs[si]!;
+        const cname = paramName(n.id, si);
+        paramRouting[cname] = {
+          nodeId: n.id,
+          outletIndex: spec.outletIndex ?? si,
+          spec,
+        };
+      }
+      // If the def declares a midiSpec direction:"in", route MIDI events to
+      // those params at runtime via setParam(nodeId, value, outletIndex).
+      if (def.midiSpec?.direction === "in") {
+        const channel = (n.attrs?.channel as number | undefined);
+        const controller = (n.attrs?.controller as number | undefined);
+        midiInputs.push({
+          nodeId: n.id,
+          kind: def.midiSpec.kind === "raw" ? "cc" : def.midiSpec.kind,
+          channel,
+          controller,
+        });
+      }
+    }
+    if (def.midiSpec?.direction === "out") {
+      const channel = ((n.attrs?.channel as number | undefined) ?? 1) || 1;
+      const controller = n.attrs?.controller as number | undefined;
+      let stateNames: string[];
+      if (def.midiSpec.kind === "note") {
+        stateNames = [`noteout_${n.id}_note`, `noteout_${n.id}_vel`, `noteout_${n.id}_gate`];
+      } else if (def.midiSpec.kind === "cc") {
+        stateNames = [`ctlout_${n.id}_v`];
+      } else {
+        stateNames = [`midiout_${n.id}_b`];
+      }
+      midiOutputs.push({
+        nodeId: n.id,
+        kind: def.midiSpec.kind === "pitchbend" ? "raw" : (def.midiSpec.kind as "note" | "cc" | "raw"),
+        channel: Math.max(1, Math.min(16, channel)),
+        controller,
+        stateNames,
+      });
     }
     if (def.ioSpec) {
       const meta = { name: ioName(n.id, def.ioSpec.direction), channels: def.ioSpec.channels };
@@ -93,7 +185,8 @@ export function patchToProcessor(patch: Patch): CompileResult {
     // I/O ports.
     const audioIns: Record<string, ReturnType<typeof audioInput>> = {};
     const audioOuts: Record<string, ReturnType<typeof audioOutput>> = {};
-    const params: Record<string, ReturnType<typeof param>> = {};
+    /** Per-node array of declared params (one per spec), aligned to outletIndex. */
+    const paramsByNode: Record<string, Array<{ p: ReturnType<typeof param>; spec: ParamSpec }>> = {};
 
     for (const n of patch.nodes) {
       const def = registry[n.type];
@@ -106,25 +199,46 @@ export function patchToProcessor(patch: Patch): CompileResult {
           audioOuts[n.id] = audioOutput({ channels: def.ioSpec.channels as any, name: cname });
         }
       }
-      if (def.paramSpec) {
-        const cname = paramName(n.id);
-        // Per-instance attrs (set by sliders/dials) override the registry
-        // defaults. AudioParam validates min ≤ default ≤ max — if the
-        // user overrode min/max, the default has to land inside.
-        const min = (n.attrs?.min as number) ?? def.paramSpec.min;
-        const max = (n.attrs?.max as number) ?? def.paramSpec.max;
-        const rawDefault =
-          (n.attrs?.[def.paramSpec.name] as number) ?? def.paramSpec.default;
-        const initial = Math.max(min, Math.min(max, rawDefault));
-        params[n.id] = param({
-          name: cname,
-          default: initial,
-          min,
-          max,
-          automationRate: def.paramSpec.automationRate,
-        });
+      const specs = getParamSpecs(def);
+      if (specs.length > 0) {
+        const arr: Array<{ p: ReturnType<typeof param>; spec: ParamSpec }> = [];
+        for (let si = 0; si < specs.length; si++) {
+          const spec = specs[si]!;
+          const cname = paramName(n.id, si);
+          // Per-instance attrs (set by sliders/dials) override the registry
+          // defaults. AudioParam validates min ≤ default ≤ max — if the
+          // user overrode min/max, the default has to land inside.
+          // For multi-paramSpec nodes (kslider note+gate), only the first
+          // spec reads min/max overrides — additional specs use spec defaults.
+          const min = si === 0 ? (n.attrs?.min as number) ?? spec.min : spec.min;
+          const max = si === 0 ? (n.attrs?.max as number) ?? spec.max : spec.max;
+          const rawDefault = (n.attrs?.[spec.name] as number) ?? spec.default;
+          const initial = Math.max(min, Math.min(max, rawDefault));
+          arr.push({
+            p: param({
+              name: cname,
+              default: initial,
+              min,
+              max,
+              automationRate: spec.automationRate,
+            }),
+            spec,
+          });
+        }
+        paramsByNode[n.id] = arr;
       }
     }
+
+    // Shared resources keyed by patch-level bus names — used so multiple
+    // tapin~/tapout~ on the same `bus` actually read/write the same buffer
+    // (Max convention; previously each node had its own private buffer).
+    const sharedRegistry = new Map<string, unknown>();
+    const shared = <T,>(key: string, factory: () => T): T => {
+      if (sharedRegistry.has(key)) return sharedRegistry.get(key) as T;
+      const v = factory();
+      sharedRegistry.set(key, v);
+      return v;
+    };
 
     return {
       process: () => {
@@ -148,11 +262,27 @@ export function patchToProcessor(patch: Patch): CompileResult {
               outs.set(node.id, outArr);
               continue;
             }
-            if (def.paramSpec) {
-              // slider / dial / number-box etc. — single control outlet
-              const p = params[node.id]!;
-              const val = def.paramSpec.automationRate === "a-rate" ? p.at(i) : p.at(0);
-              outs.set(node.id, [val]);
+            const specs = getParamSpecs(def);
+            if (specs.length > 0) {
+              // slider / dial / kslider / notein etc. — produce one Node<f32>
+              // per declared paramSpec, ordered by outletIndex.
+              const arr = paramsByNode[node.id] ?? [];
+              const outletCount = Math.max(
+                def.outlets.length,
+                ...arr.map((a) => (a.spec.outletIndex ?? 0) + 1),
+              );
+              const outsArr: UNode<"f32">[] = new Array(outletCount).fill(null as any);
+              for (let si = 0; si < arr.length; si++) {
+                const entry = arr[si]!;
+                const idx = entry.spec.outletIndex ?? si;
+                const v = entry.spec.automationRate === "a-rate" ? entry.p.at(i) : entry.p.at(0);
+                outsArr[idx] = v;
+              }
+              // Fill any remaining outlet slots with 0 to keep cord lookups safe.
+              for (let k = 0; k < outsArr.length; k++) {
+                if (outsArr[k] == null) outsArr[k] = num(0) as UNode<"f32">;
+              }
+              outs.set(node.id, outsArr);
               continue;
             }
 
@@ -166,6 +296,7 @@ export function patchToProcessor(patch: Patch): CompileResult {
               state: stateNs as any,
               buffer: bufferNs as any,
               id: node.id,
+              shared,
             };
 
             if (def.ioSpec?.direction === "out") {
@@ -190,18 +321,24 @@ export function patchToProcessor(patch: Patch): CompileResult {
     };
   });
 
-  return { processor, paramRouting, ioRouting };
+  return { processor, paramRouting, midiInputs, midiOutputs, ioRouting };
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
-export function paramName(nodeId: string): string {
+export function paramName(nodeId: string, outletIndex: number = 0): string {
   // The Web Audio AudioParam name has to be a valid identifier-ish thing.
-  return `p_${nodeId.replace(/[^A-Za-z0-9_]/g, "_")}`;
+  const safe = nodeId.replace(/[^A-Za-z0-9_]/g, "_");
+  return outletIndex === 0 ? `p_${safe}` : `p_${safe}_${outletIndex}`;
 }
 
 export function ioName(nodeId: string, direction: "in" | "out"): string {
   return `${direction}_${nodeId.replace(/[^A-Za-z0-9_]/g, "_")}`;
+}
+
+export function eventName(nodeId: string, suffix: string): string {
+  const safe = nodeId.replace(/[^A-Za-z0-9_]/g, "_");
+  return `evt_${safe}_${suffix.replace(/[^A-Za-z0-9_]/g, "_")}`;
 }
 
 function resolveAudio(

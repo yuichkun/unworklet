@@ -1,0 +1,36 @@
+{
+  "name": "23 — MIDI out (note + cc + raw)",
+  "description": "kslider drives noteout (echoes notes back to MIDIOutput). dial→ctlout sends CC#7 (volume). button → midiout sends a raw byte. Connect MIDI to test.",
+  "patch": {
+    "nodes": [
+      { "id": "intro", "type": "comment", "pos": { "x": 40, "y": 20 }, "attrs": { "text": "MIDI out — needs 'enable MIDI' + a MIDI output device" } },
+
+      { "id": "ks",  "type": "kslider", "pos": { "x": 40,  "y": 60 } },
+      { "id": "vol", "type": "dial",    "pos": { "x": 280, "y": 60 }, "attrs": { "min": 0, "max": 1, "value": 0.7, "label": "vol→CC7" } },
+      { "id": "btn", "type": "button",  "pos": { "x": 440, "y": 60 } },
+
+      { "id": "no",  "type": "noteout", "pos": { "x": 40,  "y": 220 } },
+      { "id": "co",  "type": "ctlout",  "pos": { "x": 280, "y": 220 }, "attrs": { "controller": 7, "channel": 1 } },
+      { "id": "rawConst", "type": "scale", "pos": { "x": 440, "y": 220 }, "args": [0, 1, 0, 240] },
+      { "id": "mo",  "type": "midiout", "pos": { "x": 440, "y": 320 } },
+
+      { "id": "fb",  "type": "comment", "pos": { "x": 40, "y": 400 }, "attrs": { "text": "Local fallback synth so smoke registers audio (constant 220 Hz tone)" } },
+      { "id": "osc",  "type": "cycle~", "pos": { "x": 40,  "y": 440 }, "args": [220] },
+      { "id": "vca",  "type": "*~", "pos": { "x": 40,  "y": 540 }, "args": [0.18] },
+      { "id": "out",  "type": "dac~", "pos": { "x": 40,  "y": 640 } }
+    ],
+    "cords": [
+      { "src": { "node": "ks", "outlet": 0 }, "dst": { "node": "no", "inlet": 0 } },
+      { "src": { "node": "ks", "outlet": 1 }, "dst": { "node": "no", "inlet": 2 } },
+
+      { "src": { "node": "vol", "outlet": 0 }, "dst": { "node": "co", "inlet": 0 } },
+
+      { "src": { "node": "btn", "outlet": 0 }, "dst": { "node": "rawConst", "inlet": 0 } },
+      { "src": { "node": "rawConst", "outlet": 0 }, "dst": { "node": "mo", "inlet": 0 } },
+
+      { "src": { "node": "osc", "outlet": 0 }, "dst": { "node": "vca", "inlet": 0 } },
+      { "src": { "node": "vca", "outlet": 0 }, "dst": { "node": "out", "inlet": 0 } },
+      { "src": { "node": "vca", "outlet": 0 }, "dst": { "node": "out", "inlet": 1 } }
+    ]
+  }
+}

@@ -92,7 +92,9 @@ register({
 });
 
 // kslider — mini piano keyboard. Click a key → emits MIDI note (0..127) on
-// outlet 0 and gate (0/1) on outlet 1. Implemented as two AudioParams.
+// outlet 0 and gate (0/1) on outlet 1. Implemented as two AudioParams via
+// paramSpecs[]; the runtime updates note + gate independently when the
+// view dispatches mouse-down / mouse-up events.
 register({
   type: "kslider",
   category: "ui",
@@ -105,9 +107,14 @@ register({
   attrs: [
     { name: "octaves", kind: "number", default: 2, min: 1, max: 4 },
     { name: "lowNote", kind: "number", default: 48 },
+    { name: "note", kind: "number", default: 60, min: 0, max: 127 },
+    { name: "gate", kind: "number", default: 0, min: 0, max: 1 },
   ],
-  // kslider is special: two paramSpecs. Compiler handles 1 paramSpec; for
-  // kslider we use a custom builder that declares two params.
+  defaultAttrs: { octaves: 2, lowNote: 48, note: 60, gate: 0 },
+  paramSpecs: [
+    { name: "note", default: 60, min: 0, max: 127, automationRate: "k-rate", outletIndex: 0 },
+    { name: "gate", default: 0, min: 0, max: 1, automationRate: "k-rate", outletIndex: 1 },
+  ],
   build: () => [],
   component: "KsliderView",
 });

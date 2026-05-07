@@ -1,0 +1,46 @@
+{
+  "name": "24 — signal math (-~ /~ min~ max~)",
+  "description": "Two oscillators combined via -~, /~, min~, max~ at signal-rate, summed → dac~. Demonstrates the binary signal-math operators not covered elsewhere.",
+  "patch": {
+    "nodes": [
+      { "id": "a", "type": "cycle~", "pos": { "x": 40,  "y": 40 }, "args": [220] },
+      { "id": "b", "type": "tri~",   "pos": { "x": 200, "y": 40 }, "args": [330] },
+
+      { "id": "sub",  "type": "-~",    "pos": { "x": 40,  "y": 160 } },
+      { "id": "div",  "type": "/~",    "pos": { "x": 200, "y": 160 } },
+      { "id": "minS", "type": "min~",  "pos": { "x": 360, "y": 160 } },
+      { "id": "maxS", "type": "max~",  "pos": { "x": 520, "y": 160 } },
+
+      { "id": "g1", "type": "*~", "pos": { "x": 40,  "y": 280 }, "args": [0.18] },
+      { "id": "g2", "type": "*~", "pos": { "x": 200, "y": 280 }, "args": [0.10] },
+      { "id": "g3", "type": "*~", "pos": { "x": 360, "y": 280 }, "args": [0.18] },
+      { "id": "g4", "type": "*~", "pos": { "x": 520, "y": 280 }, "args": [0.18] },
+
+      { "id": "mix", "type": "+~", "pos": { "x": 280, "y": 380 } },
+      { "id": "out", "type": "dac~", "pos": { "x": 280, "y": 480 } }
+    ],
+    "cords": [
+      { "src": { "node": "a", "outlet": 0 }, "dst": { "node": "sub", "inlet": 0 } },
+      { "src": { "node": "b", "outlet": 0 }, "dst": { "node": "sub", "inlet": 1 } },
+      { "src": { "node": "a", "outlet": 0 }, "dst": { "node": "div", "inlet": 0 } },
+      { "src": { "node": "b", "outlet": 0 }, "dst": { "node": "div", "inlet": 1 } },
+      { "src": { "node": "a", "outlet": 0 }, "dst": { "node": "minS", "inlet": 0 } },
+      { "src": { "node": "b", "outlet": 0 }, "dst": { "node": "minS", "inlet": 1 } },
+      { "src": { "node": "a", "outlet": 0 }, "dst": { "node": "maxS", "inlet": 0 } },
+      { "src": { "node": "b", "outlet": 0 }, "dst": { "node": "maxS", "inlet": 1 } },
+
+      { "src": { "node": "sub",  "outlet": 0 }, "dst": { "node": "g1", "inlet": 0 } },
+      { "src": { "node": "div",  "outlet": 0 }, "dst": { "node": "g2", "inlet": 0 } },
+      { "src": { "node": "minS", "outlet": 0 }, "dst": { "node": "g3", "inlet": 0 } },
+      { "src": { "node": "maxS", "outlet": 0 }, "dst": { "node": "g4", "inlet": 0 } },
+
+      { "src": { "node": "g1", "outlet": 0 }, "dst": { "node": "mix", "inlet": 0 } },
+      { "src": { "node": "g2", "outlet": 0 }, "dst": { "node": "mix", "inlet": 0 } },
+      { "src": { "node": "g3", "outlet": 0 }, "dst": { "node": "mix", "inlet": 0 } },
+      { "src": { "node": "g4", "outlet": 0 }, "dst": { "node": "mix", "inlet": 0 } },
+
+      { "src": { "node": "mix", "outlet": 0 }, "dst": { "node": "out", "inlet": 0 } },
+      { "src": { "node": "mix", "outlet": 0 }, "dst": { "node": "out", "inlet": 1 } }
+    ]
+  }
+}

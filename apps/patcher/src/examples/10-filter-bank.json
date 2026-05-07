@@ -1,0 +1,68 @@
+{
+  "name": "10 — filter bank (8 filters)",
+  "description": "Saw fans out to onepole~ / onepoleHP~ / lores~ / hires~ / bandpass~ / biquad~ / comb~ / allpass~. Each through gain~ → mix → dac~.",
+  "patch": {
+    "nodes": [
+      { "id": "src",    "type": "saw~", "pos": { "x": 40, "y": 40 }, "args": [120] },
+      { "id": "cutoff", "type": "dial", "pos": { "x": 220, "y": 40 }, "attrs": { "min": 100, "max": 5000, "value": 800, "label": "cutoff" } },
+
+      { "id": "f1", "type": "onepole~",   "pos": { "x": 40,  "y": 180 } },
+      { "id": "f2", "type": "onepoleHP~", "pos": { "x": 200, "y": 180 } },
+      { "id": "f3", "type": "lores~",     "pos": { "x": 360, "y": 180 } },
+      { "id": "f4", "type": "hires~",     "pos": { "x": 520, "y": 180 } },
+      { "id": "f5", "type": "bandpass~",  "pos": { "x": 680, "y": 180 } },
+      { "id": "f6", "type": "biquad~",    "pos": { "x": 840, "y": 180 }, "args": [0.2, 0.4, 0.2, -0.5, 0.3] },
+      { "id": "f7", "type": "comb~",      "pos": { "x": 1000, "y": 180 }, "args": [320, 0.6] },
+      { "id": "f8", "type": "allpass~",   "pos": { "x": 1160, "y": 180 }, "args": [120, 0.7] },
+
+      { "id": "g1", "type": "gain~", "pos": { "x": 40,   "y": 280 } },
+      { "id": "g2", "type": "gain~", "pos": { "x": 200,  "y": 280 } },
+      { "id": "g3", "type": "gain~", "pos": { "x": 360,  "y": 280 } },
+      { "id": "g4", "type": "gain~", "pos": { "x": 520,  "y": 280 } },
+      { "id": "g5", "type": "gain~", "pos": { "x": 680,  "y": 280 } },
+      { "id": "g6", "type": "gain~", "pos": { "x": 840,  "y": 280 } },
+      { "id": "g7", "type": "gain~", "pos": { "x": 1000, "y": 280 } },
+      { "id": "g8", "type": "gain~", "pos": { "x": 1160, "y": 280 } },
+
+      { "id": "lvl", "type": "*~", "pos": { "x": 600, "y": 380 }, "args": [0.12] },
+      { "id": "out", "type": "dac~", "pos": { "x": 600, "y": 460 } }
+    ],
+    "cords": [
+      { "src": { "node": "src", "outlet": 0 }, "dst": { "node": "f1", "inlet": 0 } },
+      { "src": { "node": "src", "outlet": 0 }, "dst": { "node": "f2", "inlet": 0 } },
+      { "src": { "node": "src", "outlet": 0 }, "dst": { "node": "f3", "inlet": 0 } },
+      { "src": { "node": "src", "outlet": 0 }, "dst": { "node": "f4", "inlet": 0 } },
+      { "src": { "node": "src", "outlet": 0 }, "dst": { "node": "f5", "inlet": 0 } },
+      { "src": { "node": "src", "outlet": 0 }, "dst": { "node": "f6", "inlet": 0 } },
+      { "src": { "node": "src", "outlet": 0 }, "dst": { "node": "f7", "inlet": 0 } },
+      { "src": { "node": "src", "outlet": 0 }, "dst": { "node": "f8", "inlet": 0 } },
+
+      { "src": { "node": "cutoff", "outlet": 0 }, "dst": { "node": "f1", "inlet": 1 } },
+      { "src": { "node": "cutoff", "outlet": 0 }, "dst": { "node": "f2", "inlet": 1 } },
+      { "src": { "node": "cutoff", "outlet": 0 }, "dst": { "node": "f3", "inlet": 1 } },
+      { "src": { "node": "cutoff", "outlet": 0 }, "dst": { "node": "f4", "inlet": 1 } },
+      { "src": { "node": "cutoff", "outlet": 0 }, "dst": { "node": "f5", "inlet": 1 } },
+
+      { "src": { "node": "f1", "outlet": 0 }, "dst": { "node": "g1", "inlet": 0 } },
+      { "src": { "node": "f2", "outlet": 0 }, "dst": { "node": "g2", "inlet": 0 } },
+      { "src": { "node": "f3", "outlet": 0 }, "dst": { "node": "g3", "inlet": 0 } },
+      { "src": { "node": "f4", "outlet": 0 }, "dst": { "node": "g4", "inlet": 0 } },
+      { "src": { "node": "f5", "outlet": 0 }, "dst": { "node": "g5", "inlet": 0 } },
+      { "src": { "node": "f6", "outlet": 0 }, "dst": { "node": "g6", "inlet": 0 } },
+      { "src": { "node": "f7", "outlet": 0 }, "dst": { "node": "g7", "inlet": 0 } },
+      { "src": { "node": "f8", "outlet": 0 }, "dst": { "node": "g8", "inlet": 0 } },
+
+      { "src": { "node": "g1", "outlet": 0 }, "dst": { "node": "lvl", "inlet": 0 } },
+      { "src": { "node": "g2", "outlet": 0 }, "dst": { "node": "lvl", "inlet": 0 } },
+      { "src": { "node": "g3", "outlet": 0 }, "dst": { "node": "lvl", "inlet": 0 } },
+      { "src": { "node": "g4", "outlet": 0 }, "dst": { "node": "lvl", "inlet": 0 } },
+      { "src": { "node": "g5", "outlet": 0 }, "dst": { "node": "lvl", "inlet": 0 } },
+      { "src": { "node": "g6", "outlet": 0 }, "dst": { "node": "lvl", "inlet": 0 } },
+      { "src": { "node": "g7", "outlet": 0 }, "dst": { "node": "lvl", "inlet": 0 } },
+      { "src": { "node": "g8", "outlet": 0 }, "dst": { "node": "lvl", "inlet": 0 } },
+
+      { "src": { "node": "lvl", "outlet": 0 }, "dst": { "node": "out", "inlet": 0 } },
+      { "src": { "node": "lvl", "outlet": 0 }, "dst": { "node": "out", "inlet": 1 } }
+    ]
+  }
+}

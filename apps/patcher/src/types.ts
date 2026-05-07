@@ -61,6 +61,11 @@ export type BuildCtx = {
   buffer: typeof import("@unworklet/core").buffer;
   /** Stable id for naming state/buffers. */
   id: string;
+  /** Shared resources keyed by an arbitrary string. Lets tapin~/tapout~
+   *  pairs and other multi-node primitives share a single underlying
+   *  buffer + head across the patch. The factory runs exactly once per key
+   *  per compile; subsequent calls return the cached value. */
+  shared: <T>(key: string, factory: () => T) => T;
 };
 
 export type NodeDef = {
@@ -102,18 +107,48 @@ export type NodeDef = {
   component?: string;
   /** Some nodes (sliders, dials, etc.) emit a control value via a Web Audio
    *  AudioParam declared on the compiled processor. The compiler picks up
-   *  the param meta to generate the param() declaration. */
-  paramSpec?: {
-    name: string; // mapped to a unique compiled name
-    default: number;
-    min: number;
-    max: number;
-    automationRate: "k-rate" | "a-rate";
-  };
+   *  the param meta to generate the param() declaration. Each spec drives
+   *  the outlet at the same index in `outlets[]`. */
+  paramSpecs?: ParamSpec[];
+  /** Backwards-compat shorthand for a single-outlet param node. Equivalent
+   *  to `paramSpecs: [{ outletIndex: 0, ...paramSpec }]`. */
+  paramSpec?: ParamSpec & { outletIndex?: 0 };
+  /** MIDI behaviour. The runtime listens for these events on the connected
+   *  Web MIDI input ports; matching events update the node's paramSpec[i].
+   *  Output nodes are dispatched to all connected MIDI output ports. */
+  midiSpec?: MidiSpec;
   /** Audio I/O spec for dac~/adc~ — declared on the compiled processor. */
   ioSpec?: {
     direction: "in" | "out";
     channels: number;
     name: string;
   };
+  /** Optional event-out spec: declares an `event<{...}>` decl on the compiled
+   *  processor. Used by noteout/ctlout/midiout to push MIDI bytes back to
+   *  the main thread, where the AudioRuntime forwards to MIDIOutput ports. */
+  eventOut?: { name: string; fields: string[] };
+};
+
+export type ParamSpec = {
+  /** Identifier within the node (used as the attribute key driving the value). */
+  name: string;
+  /** AudioParam initial / min / max / rate. */
+  default: number;
+  min: number;
+  max: number;
+  automationRate: "k-rate" | "a-rate";
+  /** Which outlet index this param drives. Defaults to 0. */
+  outletIndex?: number;
+};
+
+export type MidiSpec = {
+  /** Direction. "in" = read events from MIDI input. "out" = forward emitted events. */
+  direction: "in" | "out";
+  /** What kind of MIDI event this node cares about. */
+  kind: "note" | "cc" | "pitchbend" | "raw";
+  /** For note/pitchbend: which paramSpec index gets each datum.
+   *  - note: { note, velocity, gate } → outletIndex 0..2
+   *  - cc:   { value }                 → outletIndex 0
+   *  - pitchbend: { value (-1..+1) }   → outletIndex 0
+   *  - raw:  no params (data flows via event/message) */
 };

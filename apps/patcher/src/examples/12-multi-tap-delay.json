@@ -1,0 +1,55 @@
+{
+  "name": "12 — multi-tap delay (shared bus)",
+  "description": "tapin~ writes once; 3 tapout~ on the same bus read at different ms. Demonstrates shared-buffer tapin/tapout + mstosamps~ / sampstoms~.",
+  "patch": {
+    "nodes": [
+      { "id": "src",  "type": "cycle~", "pos": { "x": 40,  "y": 40 }, "args": [220] },
+      { "id": "burst","type": "*~",     "pos": { "x": 40,  "y": 140 }, "args": [0.3] },
+
+      { "id": "ms100", "type": "mstosamps~", "pos": { "x": 240, "y": 40 }, "args": [100] },
+      { "id": "ms200", "type": "mstosamps~", "pos": { "x": 360, "y": 40 }, "args": [200] },
+      { "id": "ms333", "type": "mstosamps~", "pos": { "x": 480, "y": 40 }, "args": [333] },
+
+      { "id": "tin",   "type": "tapin~",  "pos": { "x": 40,  "y": 240 }, "attrs": { "bus": "echo" } },
+      { "id": "tap1",  "type": "tapout~", "pos": { "x": 240, "y": 240 }, "attrs": { "bus": "echo" } },
+      { "id": "tap2",  "type": "tapout~", "pos": { "x": 360, "y": 240 }, "attrs": { "bus": "echo" } },
+      { "id": "tap3",  "type": "tapout~", "pos": { "x": 480, "y": 240 }, "attrs": { "bus": "echo" } },
+
+      { "id": "g1", "type": "*~", "pos": { "x": 240, "y": 340 }, "args": [0.6] },
+      { "id": "g2", "type": "*~", "pos": { "x": 360, "y": 340 }, "args": [0.4] },
+      { "id": "g3", "type": "*~", "pos": { "x": 480, "y": 340 }, "args": [0.25] },
+
+      { "id": "mix", "type": "+~", "pos": { "x": 360, "y": 440 } },
+      { "id": "out", "type": "dac~", "pos": { "x": 360, "y": 540 } },
+
+      { "id": "readback", "type": "sampstoms~", "pos": { "x": 640, "y": 40 } },
+      { "id": "ms100lbl", "type": "comment", "pos": { "x": 640, "y": 100 }, "attrs": { "text": "samps↔ms readback" } }
+    ],
+    "cords": [
+      { "src": { "node": "src",   "outlet": 0 }, "dst": { "node": "burst", "inlet": 0 } },
+      { "src": { "node": "burst", "outlet": 0 }, "dst": { "node": "tin", "inlet": 0 } },
+      { "src": { "node": "burst", "outlet": 0 }, "dst": { "node": "mix", "inlet": 0 } },
+
+      { "src": { "node": "tin",   "outlet": 0 }, "dst": { "node": "tap1", "inlet": 0 } },
+      { "src": { "node": "tin",   "outlet": 0 }, "dst": { "node": "tap2", "inlet": 0 } },
+      { "src": { "node": "tin",   "outlet": 0 }, "dst": { "node": "tap3", "inlet": 0 } },
+
+      { "src": { "node": "ms100", "outlet": 0 }, "dst": { "node": "tap1", "inlet": 1 } },
+      { "src": { "node": "ms200", "outlet": 0 }, "dst": { "node": "tap2", "inlet": 1 } },
+      { "src": { "node": "ms333", "outlet": 0 }, "dst": { "node": "tap3", "inlet": 1 } },
+
+      { "src": { "node": "ms100", "outlet": 0 }, "dst": { "node": "readback", "inlet": 0 } },
+
+      { "src": { "node": "tap1", "outlet": 0 }, "dst": { "node": "g1", "inlet": 0 } },
+      { "src": { "node": "tap2", "outlet": 0 }, "dst": { "node": "g2", "inlet": 0 } },
+      { "src": { "node": "tap3", "outlet": 0 }, "dst": { "node": "g3", "inlet": 0 } },
+
+      { "src": { "node": "g1", "outlet": 0 }, "dst": { "node": "mix", "inlet": 0 } },
+      { "src": { "node": "g2", "outlet": 0 }, "dst": { "node": "mix", "inlet": 0 } },
+      { "src": { "node": "g3", "outlet": 0 }, "dst": { "node": "mix", "inlet": 0 } },
+
+      { "src": { "node": "mix", "outlet": 0 }, "dst": { "node": "out", "inlet": 0 } },
+      { "src": { "node": "mix", "outlet": 0 }, "dst": { "node": "out", "inlet": 1 } }
+    ]
+  }
+}
