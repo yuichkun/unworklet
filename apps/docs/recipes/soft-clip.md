@@ -1,7 +1,7 @@
 <script setup>
 const tryItCode0 = `import {
   defineProcessor, audioInput, audioOutput, param, forSample,
-  mul, tanh,
+  add, sub, mul, tanh,
 } from "@unworklet/core";
 
 export const tanhSat = defineProcessor(() => {
@@ -21,11 +21,11 @@ export const tanhSat = defineProcessor(() => {
         const dryR = main.at(1, i);
         const d = drive.at(i);
         const m = mix.at(i);
-        // Wet = tanh(x * drive) / tanh(drive) for normalized output.
+        // Wet = tanh(x * drive). Mix dry+wet.
         const wetL = tanh(mul(dryL, d));
         const wetR = tanh(mul(dryR, d));
-        // Mix dry/wet.
-        out.set(0, i, mul(dryL, 0));  // start silent then mix
+        out.set(0, i, add(mul(dryL, sub(1, m)), mul(wetL, m)));
+        out.set(1, i, add(mul(dryR, sub(1, m)), mul(wetR, m)));
       });
     },
   };
@@ -39,14 +39,7 @@ export const tanhSat = defineProcessor(() => {
 
 <TryIt label="tanh saturator" :code="tryItCode0" />
 
-The starter above is intentionally incomplete — *change the last two lines* to actually apply mix:
-
-```ts
-out.set(0, i, add(mul(dryL, sub(1, m)), mul(wetL, m)));
-out.set(1, i, add(mul(dryR, sub(1, m)), mul(wetR, m)));
-```
-
-You'll need to add `add, sub` to the imports too. Hit Run and listen.
+The mix knob blends `(1 - mix) × dry + mix × wet`. Hit Run, drag **mix** between 0 (dry passes through unchanged) and 1 (full saturation). At `drive = 1` the soft-clip is gentle, near-transparent; raise it for harder distortion.
 
 ## Variants
 

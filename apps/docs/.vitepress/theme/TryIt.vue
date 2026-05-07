@@ -41,47 +41,50 @@ const heightPx = props.size === "tall" ? 360 : 240;
 
 onMounted(async () => {
   if (!editorRoot.value) return;
-  // Lazy-import monaco — keeps SSR happy and shrinks the initial bundle.
-  monaco = await import("monaco-editor");
-  const EditorWorker = (await import("monaco-editor/esm/vs/editor/editor.worker?worker")).default;
-  const TsWorker = (await import("monaco-editor/esm/vs/language/typescript/ts.worker?worker")).default;
-  (self as any).MonacoEnvironment = {
-    getWorker(_: unknown, label: string) {
-      if (label === "typescript" || label === "javascript") return new TsWorker();
-      return new EditorWorker();
-    },
-  };
-  monaco.languages.typescript.typescriptDefaults.setCompilerOptions({
-    target: monaco.languages.typescript.ScriptTarget.ES2022,
-    module: monaco.languages.typescript.ModuleKind.ESNext,
-    moduleResolution: monaco.languages.typescript.ModuleResolutionKind.NodeJs,
-    allowNonTsExtensions: true,
-    noImplicitAny: false,
-    strict: false,
-    esModuleInterop: true,
-    skipLibCheck: true,
-    typeRoots: [],
-    lib: ["es2022"],
-  });
-  monaco.languages.typescript.typescriptDefaults.addExtraLib(
-    UNWORKLET_DTS,
-    "file:///node_modules/@unworklet/types.d.ts",
-  );
-  editor = monaco.editor.create(editorRoot.value, {
-    value: props.code,
-    language: "typescript",
-    automaticLayout: true,
-    minimap: { enabled: false },
-    fontSize: 12,
-    theme: "vs-dark",
-    tabSize: 2,
-    scrollBeyondLastLine: false,
-    smoothScrolling: true,
-    lineNumbers: "off",
-    folding: false,
-    glyphMargin: false,
-    lineDecorationsWidth: 4,
-  });
+  try {
+    monaco = await import("monaco-editor");
+    const EditorWorker = (await import("monaco-editor/esm/vs/editor/editor.worker?worker")).default;
+    const TsWorker = (await import("monaco-editor/esm/vs/language/typescript/ts.worker?worker")).default;
+    (self as any).MonacoEnvironment = {
+      getWorker(_: unknown, label: string) {
+        if (label === "typescript" || label === "javascript") return new TsWorker();
+        return new EditorWorker();
+      },
+    };
+    monaco.languages.typescript.typescriptDefaults.setCompilerOptions({
+      target: monaco.languages.typescript.ScriptTarget.ES2022,
+      module: monaco.languages.typescript.ModuleKind.ESNext,
+      moduleResolution: monaco.languages.typescript.ModuleResolutionKind.NodeJs,
+      allowNonTsExtensions: true,
+      noImplicitAny: false,
+      strict: false,
+      esModuleInterop: true,
+      skipLibCheck: true,
+      typeRoots: [],
+      lib: ["es2022"],
+    });
+    monaco.languages.typescript.typescriptDefaults.addExtraLib(
+      UNWORKLET_DTS,
+      "file:///node_modules/@unworklet/types.d.ts",
+    );
+    editor = monaco.editor.create(editorRoot.value, {
+      value: props.code,
+      language: "typescript",
+      automaticLayout: true,
+      minimap: { enabled: false },
+      fontSize: 12,
+      theme: "vs-dark",
+      tabSize: 2,
+      scrollBeyondLastLine: false,
+      smoothScrolling: true,
+      lineNumbers: "off",
+      folding: false,
+      glyphMargin: false,
+      lineDecorationsWidth: 4,
+    });
+  } catch (err) {
+    console.error("[TryIt] failed to mount monaco:", err);
+  }
 });
 
 onBeforeUnmount(() => {
@@ -101,6 +104,7 @@ async function ensureCtx(): Promise<AudioContext> {
 async function run() {
   if (!editor) return;
   await stop();
+  status.value = { kind: "running", message: "compiling..." };
   const source = editor.getValue();
   const result = await evalProcessorSource(source);
   if (!result.ok) {
@@ -215,9 +219,7 @@ function onParamChange(p: { name: string; current: number }, value: number) {
       </span>
     </div>
     <div :style="{ height: heightPx + 'px' }" class="editor-wrap">
-      <ClientOnly>
-        <div ref="editorRoot" class="editor"></div>
-      </ClientOnly>
+      <div ref="editorRoot" class="editor"></div>
     </div>
     <div class="footer" v-if="params.length || status.kind === 'error' || status.kind === 'running'">
       <div v-if="params.length" class="params">

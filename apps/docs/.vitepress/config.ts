@@ -31,19 +31,23 @@ export default defineConfig({
     optimizeDeps: {
       // Monaco's split entries don't pre-bundle cleanly with the worker
       // imports — exclude them so they load as native ESM in dev.
-      // binaryen is a 4MB asm.js blob that breaks the commonjs resolver's
-      // regex literal stripper; exclude from prebundle/SSR scan and let
-      // it load lazily at runtime.
-      exclude: ["monaco-editor", "binaryen", "@unworklet/compiler"],
+      // binaryen is a 4MB asm.js blob with top-level await — ship it
+      // through the dep optimizer with a modern esbuild target.
+      exclude: ["monaco-editor"],
+      esbuildOptions: {
+        target: "esnext",
+        supported: { "top-level-await": true },
+      },
     },
     ssr: {
-      noExternal: [],
+      // Don't try to traverse binaryen during SSR — its size + TLA shape
+      // crashes the commonjs resolver. The TryIt component imports the
+      // compiler dynamically on the client only.
       external: ["binaryen", "@unworklet/compiler"],
     },
-    build: {
-      rollupOptions: {
-        external: (id: string) => /(^binaryen$|\/binaryen\/)/.test(id),
-      },
+    esbuild: {
+      target: "esnext",
+      supported: { "top-level-await": true },
     },
   },
   themeConfig: {

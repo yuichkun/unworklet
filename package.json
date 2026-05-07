@@ -25,6 +25,7 @@
     "@unworklet/vite-plugin": "workspace:*",
     "@unworklet/worklet": "workspace:*",
     "fast-check": "^3.20.0",
+    "playwright": "^1.59.1",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3",
     "vite-plus": "^0.1.20"
