@@ -3,7 +3,76 @@ export type VecType = "f32x4";
 export type AnyType = ScalarType | VecType;
 
 declare const NodeBrand: unique symbol;
-export type Node<T extends AnyType> = number & { readonly [NodeBrand]: T };
+
+// Method surface attached to every Node value (capture-mode AST nodes via
+// c.fresh and interp-mode wrapper instances). Methods delegate to the
+// free-function primitives — both styles are first-class and produce the
+// same graph/numeric result.
+type NumericArithMethods<T extends ScalarType> = {
+  add(b: Node<T> | number): Node<T>;
+  sub(b: Node<T> | number): Node<T>;
+  mul(b: Node<T> | number): Node<T>;
+  div(b: Node<T> | number): Node<T>;
+  mod(b: Node<T> | number): Node<T>;
+  neg(): Node<T>;
+  min(b: Node<T> | number): Node<T>;
+  max(b: Node<T> | number): Node<T>;
+  abs(): Node<T>;
+  clamp(lo: Node<T> | number, hi: Node<T> | number): Node<T>;
+  toF32(): Node<"f32">;
+  toF64(): Node<"f64">;
+  toI32(): Node<"i32">;
+  toI64(): Node<"i64">;
+};
+
+type ComparisonMethods<T extends ScalarType> = {
+  eq(b: Node<T> | number | boolean): Node<"bool">;
+  ne(b: Node<T> | number | boolean): Node<"bool">;
+  lt(b: Node<T> | number): Node<"bool">;
+  gt(b: Node<T> | number): Node<"bool">;
+  lte(b: Node<T> | number): Node<"bool">;
+  gte(b: Node<T> | number): Node<"bool">;
+};
+
+type FloatMathMethods<T extends "f32" | "f64"> = {
+  sin(): Node<T>;
+  cos(): Node<T>;
+  tan(): Node<T>;
+  tanh(): Node<T>;
+  exp(): Node<T>;
+  log(): Node<T>;
+  sqrt(): Node<T>;
+  floor(): Node<T>;
+  ceil(): Node<T>;
+  frac(): Node<T>;
+};
+
+type BoolMethods = {
+  eq(b: Node<"bool"> | boolean): Node<"bool">;
+  ne(b: Node<"bool"> | boolean): Node<"bool">;
+};
+
+type VecMethods = {
+  add(b: Node<"f32x4">): Node<"f32x4">;
+  sub(b: Node<"f32x4">): Node<"f32x4">;
+  mul(b: Node<"f32x4">): Node<"f32x4">;
+  div(b: Node<"f32x4">): Node<"f32x4">;
+  lane(i: 0 | 1 | 2 | 3): Node<"f32">;
+};
+
+type MethodsFor<T extends AnyType> = T extends "bool"
+  ? BoolMethods
+  : T extends "f32" | "f64"
+    ? NumericArithMethods<T> & ComparisonMethods<T> & FloatMathMethods<T>
+    : T extends "i32" | "i64"
+      ? NumericArithMethods<T> & ComparisonMethods<T>
+      : T extends "f32x4"
+        ? VecMethods
+        : {};
+
+export type Node<T extends AnyType> = number & {
+  readonly [NodeBrand]: T;
+} & MethodsFor<T>;
 
 export type ChannelIndex<C extends number> = C extends 1
   ? 0

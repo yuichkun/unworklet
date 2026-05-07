@@ -41,7 +41,8 @@ defineProcessor(() => {
     process: () => {
       const k = cutoff.at(0);
       forSample((i) => {
-        const y = add(lp.load(), mul(k, sub(inp.left.at(i), lp.load())));
+        // y = lp + k × (input − lp)  — one-pole LP, in DSP-flow order
+        const y = lp.load().add(k.mul(inp.left.at(i).sub(lp.load())));
         lp.store(y);
         out.left.set(i,  y);
         out.right.set(i, y);

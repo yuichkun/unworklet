@@ -8,17 +8,8 @@ import {
   midiInput,
   message,
   event,
-  add,
-  sub,
-  mul,
-  div,
-  mod,
-  sin,
+  num,
   select,
-  lte,
-  gt,
-  eq,
-  exp,
   type Node,
 } from "@unworklet/core";
 
@@ -106,28 +97,30 @@ export const granularSampler = defineProcessor((ctx) => {
       });
 
       midi.onEvent("noteOn", ({ note, velocity }) => {
+        // velocity is a raw JS number from the MIDI payload — wrap with
+        // num() to lift it into the graph for chain-style arithmetic.
         activeNote.store(note);
-        activeVel.store(mul(velocity, 1 / 127));
+        activeVel.store(num(velocity).mul(1 / 127));
       });
       midi.onEvent("noteOff", () => {
         activeVel.store(0);
       });
 
-      const samplesPerSpawn = div(ctx.sampleRate, grainDensity.at(0));
-      const grainSamples = mul(grainSize.at(0), ctx.sampleRate / 1000);
+      const samplesPerSpawn = num(ctx.sampleRate).div(grainDensity.at(0));
+      const grainSamples = grainSize.at(0).mul(ctx.sampleRate / 1000);
 
       forSample((i) => {
-        const cd = sub(nextSpawnIn.load(), 1);
-        const spawn = lte(cd, 0);
+        const cd = nextSpawnIn.load().sub(1);
+        const spawn = cd.lte(0);
         nextSpawnIn.store(select(spawn, samplesPerSpawn, cd));
 
         // On spawn: assign the round-robin slot. We use `select` rather than a
         // JS `if`, since the spawn / isMe values are graph nodes — JS branches
         // would never see them and silently emit dead code.
         const rrSlot = voiceRR.load();
-        const startPos = mul(playbackPos.at(i), sampleLen.load());
+        const startPos = playbackPos.at(i).mul(sampleLen.load());
         for (let v = 0; v < NUM_VOICES; v++) {
-          const isMe = select(spawn, eq(rrSlot, v), false);
+          const isMe = select(spawn, rrSlot.eq(v), false);
           voicePos[v]!.store(select(isMe, startPos, voicePos[v]!.load()));
           voiceRemaining[v]!.store(select(isMe, grainSamples, voiceRemaining[v]!.load()));
           voiceGate[v]!.store(select(isMe, true, voiceGate[v]!.load()));
@@ -137,44 +130,44 @@ export const granularSampler = defineProcessor((ctx) => {
             pos: voicePos[v]!.load() as unknown as number,
           } as any);
         }
-        voiceRR.store(select(spawn, mod(add(rrSlot, 1), NUM_VOICES), rrSlot));
+        voiceRR.store(select(spawn, rrSlot.add(1).mod(NUM_VOICES), rrSlot));
 
-        let lSum: Node<"f32"> = mul(0, 0);
-        let rSum: Node<"f32"> = mul(0, 0);
+        let lSum: Node<"f32"> = num(0);
+        let rSum: Node<"f32"> = num(0);
         for (let v = 0; v < NUM_VOICES; v++) {
           const gate = voiceGate[v]!.load();
           const pos = voicePos[v]!.load();
           const rem = voiceRemaining[v]!.load();
 
-          const phase = sub(1, div(rem, grainSamples));
-          const winLin = sin(mul(phase, Math.PI));
-          const win = mul(winLin, winLin);
+          const phase = num(1).sub(rem.div(grainSamples));
+          const winLin = phase.mul(Math.PI).sin();
+          const win = winLin.mul(winLin);
 
           const sample = sampleBuf.readInterpolated(pos);
-          const sig = mul(sample, mul(win, activeVel.load()));
+          const sig = sample.mul(win.mul(activeVel.load()));
 
-          const contrib = select(gate, sig, mul(0, 0));
-          lSum = add(lSum, contrib);
-          rSum = add(rSum, contrib);
+          const contrib = select(gate, sig, num(0));
+          lSum = lSum.add(contrib);
+          rSum = rSum.add(contrib);
 
           voicePos[v]!.store(
             select(
               gate,
-              add(pos, mul(pitch.at(i), exp(mul(sub(activeNote.load(), 60), Math.LN2 / 12)))),
+              pos.add(pitch.at(i).mul(activeNote.load().sub(60).mul(Math.LN2 / 12).exp())),
               pos,
             ),
           );
-          voiceRemaining[v]!.store(select(gate, sub(rem, 1), rem));
-          voiceGate[v]!.store(select(gate, gt(rem, 0), gate));
+          voiceRemaining[v]!.store(select(gate, rem.sub(1), rem));
+          voiceGate[v]!.store(select(gate, rem.gt(0), gate));
         }
 
         out.left.set(i, lSum);
         out.right.set(i, rSum);
       });
 
-      let count: Node<"i32"> = 0 as unknown as Node<"i32">;
+      let count: Node<"i32"> = num(0) as unknown as Node<"i32">;
       for (let v = 0; v < NUM_VOICES; v++) {
-        count = add(count, select(voiceGate[v]!.load(), 1, 0));
+        count = count.add(select(voiceGate[v]!.load(), 1, 0));
       }
       playingCount.store(count);
     },

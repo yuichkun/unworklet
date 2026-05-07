@@ -45,7 +45,9 @@ export const mulVec = (a: any, b: any) => vecArith("mulVec", a, b);
 export const divVec = (a: any, b: any) => vecArith("divVec", a, b);
 
 // Lane is a method on the vec value. We attach a `.lane()` method on the ASTValue
-// so the user code `acc.lane(0)` returns a new VecLane node.
+// so the user code `acc.lane(0)` returns a new VecLane node. We also attach
+// SIMD chain methods (`.add`, `.sub`, `.mul`, `.div`) that delegate to the
+// vec arithmetic primitives — symmetric with the scalar Node<T> chain surface.
 export function makeVecValue(v: ASTValue): ASTValue {
   const proxy: any = v;
   proxy.lane = (i: 0 | 1 | 2 | 3) => {
@@ -57,5 +59,9 @@ export function makeVecValue(v: ASTValue): ASTValue {
       lane: i,
     });
   };
+  proxy.add = (b: any) => vecArith("addVec", v, b);
+  proxy.sub = (b: any) => vecArith("subVec", v, b);
+  proxy.mul = (b: any) => vecArith("mulVec", v, b);
+  proxy.div = (b: any) => vecArith("divVec", v, b);
   return proxy;
 }

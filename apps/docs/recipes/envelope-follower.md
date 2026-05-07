@@ -1,7 +1,7 @@
 <script setup>
 const tryItCode0 = `import {
   defineProcessor, audioInput, audioOutput, param, state, forSample,
-  add, sub, mul, abs, max, gt, select, exp, div, flushDenormals,
+  num, select, flushDenormals,
 } from "@unworklet/core";
 
 export const envFollower = defineProcessor((ctx) => {
@@ -16,17 +16,16 @@ export const envFollower = defineProcessor((ctx) => {
   return {
     process: () => {
       // Attack/release coefficients (block-rate — values stable for 2.7ms at 48kHz).
-      const aCoef = sub(1, exp(div(-1, mul(mul(attackMs.at(0), 0.001), ctx.sampleRate))));
-      const rCoef = sub(1, exp(div(-1, mul(mul(releaseMs.at(0), 0.001), ctx.sampleRate))));
+      const aCoef = num(1).sub(num(-1).div(attackMs.at(0).mul(0.001 * ctx.sampleRate)).exp());
+      const rCoef = num(1).sub(num(-1).div(releaseMs.at(0).mul(0.001 * ctx.sampleRate)).exp());
 
       forSample((i) => {
         const inL = main.left.at(i);
         const inR = main.right.at(i);
-        const det = max(abs(inL), abs(inR));  // peak detector
+        const det = inL.abs().max(inR.abs());  // peak detector
         const e = env.load();
-        const isAttacking = gt(det, e);
-        const c = select(isAttacking, aCoef, rCoef);
-        const newE = flushDenormals(add(e, mul(c, sub(det, e))));
+        const c = select(det.gt(e), aCoef, rCoef);
+        const newE = flushDenormals(e.add(c.mul(det.sub(e))));
         env.store(newE);
         // Pass-through audio so the processor has output.
         out.left.set(i,  inL);
@@ -53,8 +52,8 @@ node.state.env.subscribe((v) => meterEl.style.width = `${Math.min(100, v * 100)}
 
 ## Why peak detector + asymmetric coefs
 
-- `max(abs(L), abs(R))` is the simplest sensible peak detector for stereo.
+- `L.abs().max(R.abs())` is the simplest sensible peak detector for stereo.
 - Attack faster than release matches how ears perceive transients — a fast attack means the env catches the leading edge; a slow release smooths the trailing meter.
 - A few ms attack + ~80 ms release is the standard "VU-ish" feel.
 
-For RMS instead of peak, replace the detector with `sqrt(mul(L, L) + mul(R, R))` (and adjust the coefs).
+For RMS instead of peak, replace the detector with `L.mul(L).add(R.mul(R)).sqrt()` (and adjust the coefs).

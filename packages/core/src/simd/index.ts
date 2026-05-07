@@ -1,26 +1,23 @@
 import type { Node } from "../types.js";
 import { getCaptureBackend } from "../capture-backend.js";
+import { wrap as wrapScalar } from "../node-value.js";
 
 // SIMD primitives operate on Float32Array of length 4 representing v128.
 
 type Vec4 = Float32Array;
 
 const wrap = (v: Vec4): Node<"f32x4"> => {
-  // Attach a `lane` method on each call result. We use a Proxy-like wrapper
-  // by extending the typed array with a `.lane()` method via a helper object
-  // since we can't easily prototype-extend Float32Array safely.
-  //
-  // Instead, we create a fresh object each time? That's heavy. Better: we
-  // return the Float32Array itself and provide lane() as an external function
-  // that's also attached to its instance via Object.defineProperty.
-  if (!(v as any).lane) {
-    Object.defineProperty(v, "lane", {
-      value: function (i: 0 | 1 | 2 | 3): Node<"f32"> {
-        return v[i]! as unknown as Node<"f32">;
-      },
-      enumerable: false,
-      configurable: true,
-    });
+  // Attach `lane` plus SIMD chain methods (`add` / `sub` / `mul` / `div`)
+  // on each call result. Direct assignment (vs Object.defineProperty) is
+  // ~10× faster and matters in tight convolution / FIR loops where every
+  // addVec/mulVec returns a freshly-attached vec.
+  const o = v as any;
+  if (!o.lane) {
+    o.lane = (i: 0 | 1 | 2 | 3) => wrapScalar(v[i]! as number);
+    o.add = (b: any) => addVec(v as unknown as Node<"f32x4">, b);
+    o.sub = (b: any) => subVec(v as unknown as Node<"f32x4">, b);
+    o.mul = (b: any) => mulVec(v as unknown as Node<"f32x4">, b);
+    o.div = (b: any) => divVec(v as unknown as Node<"f32x4">, b);
   }
   return v as unknown as Node<"f32x4">;
 };
@@ -82,3 +79,12 @@ export const divVec = (a: Node<"f32x4">, b: Node<"f32x4">): Node<"f32x4"> => {
   if (cap) return cap.divVec(a, b);
   return elementWise((x, y) => x / y)(a, b);
 };
+
+/**
+ * Attach SIMD chain methods (`.lane`, `.add`, `.sub`, `.mul`, `.div`) to
+ * an interp-mode f32x4 (Float32Array). Used by `wrap()` here and by
+ * buffer.loadVec in declarations.ts.
+ */
+export function attachVecMethods(v: Float32Array): Node<"f32x4"> {
+  return wrap(v);
+}

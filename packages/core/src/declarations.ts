@@ -14,6 +14,8 @@ import {
   type Scope,
 } from "./runtime.js";
 import { getCaptureBackend } from "./capture-backend.js";
+import { wrap, unwrap } from "./node-value.js";
+import { attachVecMethods } from "./simd/index.js";
 import type {
   ScalarType,
   StateOptions,
@@ -85,8 +87,8 @@ function pathOf(scope: Scope, name?: string): string {
 
 function makeStateHandle<T extends ScalarType>(sr: StateRuntime, type: T, name?: string): State<T> {
   return {
-    load: () => sr.read() as Node<T>,
-    store: (v) => sr.write(v as number | boolean),
+    load: () => wrap<Node<T>>(sr.read() as number | boolean),
+    store: (v) => sr.write(unwrap(v) as number | boolean),
     __isState: true,
     __type: type,
     __name: name,
@@ -100,7 +102,7 @@ function makeBufferHandle<T extends ScalarType>(br: BufferRuntime, type: T): Buf
   const read = (idx: number | Node<"i32">) => {
     let i = ((idx as number) | 0) % size;
     if (i < 0) i += size;
-    return storage[i]! as Node<T>;
+    return wrap<Node<T>>(storage[i]! as number);
   };
   const write = (idx: number | Node<"i32">, v: number | Node<T>) => {
     let i = ((idx as number) | 0) % size;
@@ -116,7 +118,7 @@ function makeBufferHandle<T extends ScalarType>(br: BufferRuntime, type: T): Buf
     const i1 = (i0 + 1) % size;
     const a = storage[i0]! as number;
     const b = storage[i1]! as number;
-    return (a + (b - a) * f) as unknown as Node<T>;
+    return wrap<Node<T>>(a + (b - a) * f);
   };
   const loadVec = (offset: number | Node<"i32">) => {
     const o = (offset as number) | 0;
@@ -128,12 +130,7 @@ function makeBufferHandle<T extends ScalarType>(br: BufferRuntime, type: T): Buf
       if (i < 0) i += size;
       out[k] = arr[i]!;
     }
-    Object.defineProperty(out, "lane", {
-      value: (i: 0 | 1 | 2 | 3) => out[i]! as Node<"f32">,
-      enumerable: false,
-      configurable: true,
-    });
-    return out as unknown as Node<"f32x4">;
+    return attachVecMethods(out);
   };
   const storeVec = (offset: number | Node<"i32">, value: Node<"f32x4">) => {
     const o = (offset as number) | 0;
@@ -293,9 +290,9 @@ export function param(options: ParamOptions): ParamHandle {
       const idx = (i as number) | 0;
       if (isARate) {
         const safe = idx < 0 ? 0 : idx >= values.length ? values.length - 1 : idx;
-        return values[safe]! as Node<"f32">;
+        return wrap<Node<"f32">>(values[safe]! as number);
       }
-      return values[0]! as Node<"f32">;
+      return wrap<Node<"f32">>(values[0]! as number);
     },
     __isParam: true,
     __name: slot.name,
@@ -322,10 +319,10 @@ function audioInputInterp<C extends number>(options: AudioInputOptions<C>): Audi
   rt.audioInputs.push({ slot, runtime: { slot, channels } });
   const at = (c: ChannelIndex<C>, i: Node<"i32"> | number) => {
     const ch = channels[c as number];
-    if (!ch) return 0 as unknown as Node<"f32">;
+    if (!ch) return wrap<Node<"f32">>(0);
     const idx = (i as number) | 0;
-    if (idx < 0 || idx >= ch.length) return 0 as unknown as Node<"f32">;
-    return ch[idx]! as Node<"f32">;
+    if (idx < 0 || idx >= ch.length) return wrap<Node<"f32">>(0);
+    return wrap<Node<"f32">>(ch[idx]! as number);
   };
   const handle: any = {
     at,
@@ -404,7 +401,7 @@ function eventInterp<T>(options: EventOptions): EventDecl<T> {
   rt.outboundEventOverflow.set(options.name, 0);
   return {
     emitIf: (cond: any, payload: any) => {
-      if (cond) {
+      if (unwrap(cond)) {
         const list = rt.outboundEvents.get(options.name)!;
         if (list.length >= slot.capacity) {
           list.shift();
@@ -477,11 +474,11 @@ function makeJSPayloadAccessor(arr: Float32Array | Int32Array | Uint8Array) {
     }
   };
   return {
-    read: (idx: any) => arr[(idx as number) | 0]!,
+    read: (idx: any) => wrap(arr[(idx as number) | 0]!),
     length: () => arr.length,
     copyTo: (buf: any, dstOffset: any = 0, count?: any) => doCopy(buf, dstOffset, count),
     copyToIf: (cond: any, buf: any, dstOffset: any = 0, count?: any) => {
-      if (cond) doCopy(buf, dstOffset, count);
+      if (unwrap(cond)) doCopy(buf, dstOffset, count);
     },
     raw: arr,
   };
@@ -533,7 +530,7 @@ function midiOutputInterp(options: MidiOptions = {}): MidiOutputHandle {
   rt.midiOutputs.push({ slot, runtime: { slot } });
   return {
     emitIf(cond: any, ev: MidiEvent) {
-      if (cond) {
+      if (unwrap(cond)) {
         if (rt.outboundMidi.length >= slot.capacity) {
           rt.outboundMidi.shift();
           rt.outboundMidiOverflow++;

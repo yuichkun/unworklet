@@ -6,15 +6,8 @@ import {
   state,
   buffer,
   forSample,
-  add,
-  sub,
-  mul,
-  div,
-  mod,
-  sin,
-  gt,
+  num,
   select,
-  type Node,
 } from "@unworklet/core";
 
 // Stereo chorus: two LFO-modulated delay lines mixed with the dry signal.
@@ -61,42 +54,42 @@ export const chorus = defineProcessor((ctx) => {
   return {
     process: () => {
       const blockHead = head.load();
-      const inc = mul(rateHz.at(0), (2 * Math.PI) / ctx.sampleRate);
-      const baseSamples = mul(baseMs.at(0), ctx.sampleRate / 1000);
-      const depthSamples = mul(depthMs.at(0), ctx.sampleRate / 1000);
+      const inc = rateHz.at(0).mul((2 * Math.PI) / ctx.sampleRate);
+      const baseSamples = baseMs.at(0).mul(ctx.sampleRate / 1000);
+      const depthSamples = depthMs.at(0).mul(ctx.sampleRate / 1000);
       const mixV = mix.at(0);
+      const halfMix = mixV.mul(0.5);
+      const dryGain = num(1).sub(halfMix);
 
       forSample((i) => {
-        const phaseLNew = add(lfoPhase.load(), inc);
-        const phaseR = add(phaseLNew, Math.PI / 2);
+        const phaseLNew = lfoPhase.load().add(inc);
+        const phaseR = phaseLNew.add(Math.PI / 2);
         // wrap LFO phase to [0, 2π)
         const phaseL = select(
-          gt(phaseLNew, 2 * Math.PI),
-          sub(phaseLNew, 2 * Math.PI),
+          phaseLNew.gt(2 * Math.PI),
+          phaseLNew.sub(2 * Math.PI),
           phaseLNew,
         );
         lfoPhase.store(phaseL);
 
-        const offL = add(baseSamples, mul(depthSamples, mul(0.5, add(1, sin(phaseL)))));
-        const offR = add(baseSamples, mul(depthSamples, mul(0.5, add(1, sin(phaseR)))));
+        const offL = baseSamples.add(depthSamples.mul(num(1).add(phaseL.sin()).mul(0.5)));
+        const offR = baseSamples.add(depthSamples.mul(num(1).add(phaseR.sin()).mul(0.5)));
 
-        const wIdx = mod(add(blockHead, i), MAX_DELAY_SAMPLES);
+        const wIdx = blockHead.add(i).mod(MAX_DELAY_SAMPLES);
         // Read with linear interpolation via readInterpolated
-        const rIdxL = sub(wIdx, offL);
-        const rIdxR = sub(wIdx, offR);
-        const rL = dlyL.readInterpolated(rIdxL);
-        const rR = dlyR.readInterpolated(rIdxR);
+        const rL = dlyL.readInterpolated(wIdx.sub(offL));
+        const rR = dlyR.readInterpolated(wIdx.sub(offR));
 
         const inL = main.left.at(i);
         const inR = main.right.at(i);
         dlyL.write(wIdx, inL);
         dlyR.write(wIdx, inR);
 
-        out.left.set(i, add(mul(inL, sub(1, mul(0.5, mixV))), mul(rL, mul(0.5, mixV))));
-        out.right.set(i, add(mul(inR, sub(1, mul(0.5, mixV))), mul(rR, mul(0.5, mixV))));
+        out.left.set(i, inL.mul(dryGain).add(rL.mul(halfMix)));
+        out.right.set(i, inR.mul(dryGain).add(rR.mul(halfMix)));
       });
 
-      head.store(mod(add(blockHead, 128), MAX_DELAY_SAMPLES));
+      head.store(blockHead.add(128).mod(MAX_DELAY_SAMPLES));
     },
   };
 });

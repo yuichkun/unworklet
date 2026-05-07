@@ -7,18 +7,8 @@ import {
   buffer,
   forSample,
   event,
-  add,
-  sub,
-  mul,
-  div,
-  mod,
-  max,
-  min,
-  abs,
-  gt,
-  exp,
+  num,
   select,
-  log,
   type Node,
   type State,
 } from "@unworklet/core";
@@ -31,9 +21,9 @@ function envelopeFollow(
   releaseCoef: Node<"f32">,
   prev: State<"f32">,
 ): Node<"f32"> {
-  const r = abs(x);
-  const coef = select(gt(r, prev.load()), attackCoef, releaseCoef);
-  const y = add(mul(coef, sub(r, prev.load())), prev.load());
+  const r = x.abs();
+  const coef = select(r.gt(prev.load()), attackCoef, releaseCoef);
+  const y = coef.mul(r.sub(prev.load())).add(prev.load());
   prev.store(y);
   return y;
 }
@@ -71,49 +61,49 @@ export const lookaheadLimiter = defineProcessor((ctx) => {
 
   return {
     process: () => {
-      const ceilingLin = exp(mul(ceiling.at(0), Math.LN10 * 0.05));
-      const releaseSamples = mul(releaseMs.at(0), ctx.sampleRate / 1000);
-      const releaseCoef = sub(1, exp(div(-1, releaseSamples)));
-      const attackCoef = 1.0 as unknown as Node<"f32">;
+      const ceilingLin = ceiling.at(0).mul(Math.LN10 * 0.05).exp();
+      const releaseSamples = releaseMs.at(0).mul(ctx.sampleRate / 1000);
+      const releaseCoef = num(1).sub(num(-1).div(releaseSamples).exp());
+      const attackCoef = num(1.0);
 
       const headBlock = dlyHead.load();
 
       forSample((i) => {
         const inL = main.left.at(i);
         const inR = main.right.at(i);
-        const peak = max(abs(inL), abs(inR));
+        const peak = inL.abs().max(inR.abs());
         const e = envelopeFollow(peak, attackCoef, releaseCoef, env);
 
-        const gr = select(gt(e, ceilingLin), div(ceilingLin, e), 1);
-        const grDb20 = mul(20 / Math.LN10, log(gr));
+        const gr = select(e.gt(ceilingLin), ceilingLin.div(e), 1);
+        const grDb20 = gr.log().mul(20 / Math.LN10);
 
-        const wIdx = mod(add(headBlock, i), LOOKAHEAD_SAMPLES);
+        const wIdx = headBlock.add(i).mod(LOOKAHEAD_SAMPLES);
         dlyL.write(wIdx, inL);
         dlyR.write(wIdx, inR);
 
-        const rIdx = mod(add(wIdx, 1), LOOKAHEAD_SAMPLES);
+        const rIdx = wIdx.add(1).mod(LOOKAHEAD_SAMPLES);
         const xL = dlyL.read(rIdx);
         const xR = dlyR.read(rIdx);
 
-        out.left.set(i, mul(xL, gr));
-        out.right.set(i, mul(xR, gr));
+        out.left.set(i, xL.mul(gr));
+        out.right.set(i, xR.mul(gr));
 
-        overshoot.emitIf(gt(abs(inL), ceilingLin), {
+        overshoot.emitIf(inL.abs().gt(ceilingLin), {
           atSample: i,
           channel: 0,
-          level: abs(inL) as unknown as number,
+          level: inL.abs() as unknown as number,
         });
-        overshoot.emitIf(gt(abs(inR), ceilingLin), {
+        overshoot.emitIf(inR.abs().gt(ceilingLin), {
           atSample: i,
           channel: 1,
-          level: abs(inR) as unknown as number,
+          level: inR.abs() as unknown as number,
         });
 
-        gainReductionDb.store(min(gainReductionDb.load(), grDb20));
+        gainReductionDb.store(gainReductionDb.load().min(grDb20));
       });
 
-      dlyHead.store(mod(add(headBlock, 128), LOOKAHEAD_SAMPLES));
-      gainReductionDb.store(mul(gainReductionDb.load(), 0.85));
+      dlyHead.store(headBlock.add(128).mod(LOOKAHEAD_SAMPLES));
+      gainReductionDb.store(gainReductionDb.load().mul(0.85));
     },
   };
 });

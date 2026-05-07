@@ -6,17 +6,8 @@ import {
   state,
   buffer,
   forSample,
-  add,
-  sub,
-  mul,
-  mod,
-  abs,
-  max,
-  gte,
   select,
   flushDenormals,
-  i32,
-  type Node,
 } from "@unworklet/core";
 
 // Stereo ping-pong feedback delay.
@@ -71,7 +62,7 @@ export const feedbackDelay = defineProcessor((ctx) => {
 
   return {
     process: () => {
-      const dSamples = i32(mul(delayMs.at(0), ctx.sampleRate / 1000));
+      const dSamples = delayMs.at(0).mul(ctx.sampleRate / 1000).toI32();
       const fb = feedback.at(0);
       const w = wet.at(0);
       const d = dry.at(0);
@@ -79,11 +70,8 @@ export const feedbackDelay = defineProcessor((ctx) => {
       const block = head.load();
 
       forSample((i) => {
-        const wIdx = mod(add(block, i), MAX_DELAY_SAMPLES);
-        const rIdx = mod(
-          add(sub(wIdx, dSamples), MAX_DELAY_SAMPLES),
-          MAX_DELAY_SAMPLES,
-        );
+        const wIdx = block.add(i).mod(MAX_DELAY_SAMPLES);
+        const rIdx = wIdx.sub(dSamples).add(MAX_DELAY_SAMPLES).mod(MAX_DELAY_SAMPLES);
 
         const inL = main.left.at(i);
         const inR = main.right.at(i);
@@ -92,28 +80,28 @@ export const feedbackDelay = defineProcessor((ctx) => {
         const taR = dlyR.read(rIdx);
 
         // ping-pong cross-feed when pp >= 0.5
-        const cross = gte(pp, 0.5);
+        const cross = pp.gte(0.5);
         // Flush subnormals on the feedback tap before storing — without
         // this, decaying tails can stall the audio thread on x86 CPUs that
         // don't have FTZ enabled by default. (docs/04 §6.)
-        const newL = flushDenormals(add(inL, mul(select(cross, taR, taL), fb)));
-        const newR = flushDenormals(add(inR, mul(select(cross, taL, taR), fb)));
+        const newL = flushDenormals(inL.add(select(cross, taR, taL).mul(fb)));
+        const newR = flushDenormals(inR.add(select(cross, taL, taR).mul(fb)));
 
         dlyL.write(wIdx, newL);
         dlyR.write(wIdx, newR);
 
-        const yL = add(mul(inL, d), mul(taL, w));
-        const yR = add(mul(inR, d), mul(taR, w));
+        const yL = inL.mul(d).add(taL.mul(w));
+        const yR = inR.mul(d).add(taR.mul(w));
         out.left.set(i, yL);
         out.right.set(i, yR);
 
-        meterL.store(max(meterL.load(), abs(yL)));
-        meterR.store(max(meterR.load(), abs(yR)));
+        meterL.store(meterL.load().max(yL.abs()));
+        meterR.store(meterR.load().max(yR.abs()));
       });
 
-      head.store(mod(add(block, 128), MAX_DELAY_SAMPLES));
-      meterL.store(flushDenormals(mul(meterL.load(), 0.92)));
-      meterR.store(flushDenormals(mul(meterR.load(), 0.92)));
+      head.store(block.add(128).mod(MAX_DELAY_SAMPLES));
+      meterL.store(flushDenormals(meterL.load().mul(0.92)));
+      meterR.store(flushDenormals(meterR.load().mul(0.92)));
     },
   };
 });

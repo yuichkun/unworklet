@@ -1,7 +1,7 @@
 <script setup>
 const tryItCode0 = `import {
   defineProcessor, audioInput, audioOutput, param, state, buffer, forSample,
-  add, sub, mul, mod, gte, select, i32, flushDenormals,
+  flushDenormals,
 } from "@unworklet/core";
 
 export const pingPong = defineProcessor((ctx) => {
@@ -21,15 +21,15 @@ export const pingPong = defineProcessor((ctx) => {
 
   return {
     process: () => {
-      const dSamples = i32(mul(delayMs.at(0), ctx.sampleRate / 1000));
+      const dSamples = delayMs.at(0).mul(ctx.sampleRate / 1000).toI32();
       const fb = feedback.at(0);
       const w = wet.at(0);
       const d = dry.at(0);
       const block = head.load();
 
       forSample((i) => {
-        const wIdx = mod(add(block, i), MAX_DELAY);
-        const rIdx = mod(add(sub(wIdx, dSamples), MAX_DELAY), MAX_DELAY);
+        const wIdx = block.add(i).mod(MAX_DELAY);
+        const rIdx = wIdx.sub(dSamples).add(MAX_DELAY).mod(MAX_DELAY);
 
         const inL = main.left.at(i);
         const inR = main.right.at(i);
@@ -37,14 +37,14 @@ export const pingPong = defineProcessor((ctx) => {
         const tapR = dlyR.read(rIdx);
 
         // Cross-feed: L gets in + R*fb; R gets in + L*fb.
-        dlyL.write(wIdx, flushDenormals(add(inL, mul(tapR, fb))));
-        dlyR.write(wIdx, flushDenormals(add(inR, mul(tapL, fb))));
+        dlyL.write(wIdx, flushDenormals(inL.add(tapR.mul(fb))));
+        dlyR.write(wIdx, flushDenormals(inR.add(tapL.mul(fb))));
 
         // Output: dry + wet of the same-channel tap.
-        out.left.set(i,  add(mul(inL, d), mul(tapL, w)));
-        out.right.set(i, add(mul(inR, d), mul(tapR, w)));
+        out.left.set(i,  inL.mul(d).add(tapL.mul(w)));
+        out.right.set(i, inR.mul(d).add(tapR.mul(w)));
       });
-      head.store(mod(add(block, 128), MAX_DELAY));
+      head.store(block.add(128).mod(MAX_DELAY));
     },
   };
 });

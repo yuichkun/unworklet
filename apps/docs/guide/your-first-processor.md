@@ -20,7 +20,7 @@ export const myFirstProcessor = defineProcessor(() => {
   };
 });
 `;
-const tryItCode1 = `import { defineProcessor, audioInput, audioOutput, param, forSample, mul } from "@unworklet/core";
+const tryItCode1 = `import { defineProcessor, audioInput, audioOutput, param, forSample } from "@unworklet/core";
 
 export const myFirstProcessor = defineProcessor(() => {
   const main = audioInput({ channels: 2, name: "main" });
@@ -37,14 +37,15 @@ export const myFirstProcessor = defineProcessor(() => {
     process: () => {
       forSample((i) => {
         const g = gain.at(i);
-        out.left.set(i,  mul(main.left.at(i),  g));
-        out.right.set(i, mul(main.right.at(i), g));
+        // Chain methods — read in DSP-flow order (input → operation → out).
+        out.left.set(i,  main.left.at(i).mul(g));
+        out.right.set(i, main.right.at(i).mul(g));
       });
     },
   };
 });
 `;
-const tryItCode2 = `import { defineProcessor, audioInput, audioOutput, param, state, forSample, mul, max, abs } from "@unworklet/core";
+const tryItCode2 = `import { defineProcessor, audioInput, audioOutput, param, state, forSample } from "@unworklet/core";
 
 export const myFirstProcessor = defineProcessor(() => {
   const main = audioInput({ channels: 2, name: "main" });
@@ -57,13 +58,13 @@ export const myFirstProcessor = defineProcessor(() => {
     process: () => {
       forSample((i) => {
         const g = gain.at(i);
-        const lOut = mul(main.left.at(i),  g);
-        const rOut = mul(main.right.at(i), g);
+        const lOut = main.left.at(i).mul(g);
+        const rOut = main.right.at(i).mul(g);
         out.left.set(i,  lOut);
         out.right.set(i, rOut);
         // Track peak across the block. The publish: { rateFps: 30 }
         // option means main-thread subscribers see this slot at 30 fps.
-        peak.store(max(peak.load(), max(abs(lOut), abs(rOut))));
+        peak.store(peak.load().max(lOut.abs().max(rOut.abs())));
       });
       // Decay the meter so it falls back to 0 between hits.
       // Runs at block boundary, not per sample.
@@ -73,15 +74,16 @@ export const myFirstProcessor = defineProcessor(() => {
 `;
 const tryItCode3 = `import {
   defineProcessor, defineSubgraph, audioInput, audioOutput, param, state,
-  forSample, add, sub, mul, max, abs,
+  forSample,
 } from "@unworklet/core";
 
 // L1 / L2 split: pure helpers compose; subgraphs own state + per-instance memory.
 const oneChannel = defineSubgraph((x, gain, alpha) => {
   const env = state.f32(0);
-  const e = add(env.load(), mul(alpha, sub(abs(x), env.load())));
+  // env = env + alpha * (|x| - env)  — one-pole envelope, in flow order.
+  const e = env.load().add(alpha.mul(x.abs().sub(env.load())));
   env.store(e);
-  return mul(x, gain);
+  return x.mul(gain);
 });
 
 export const stereoGainPlusEnv = defineProcessor(() => {
@@ -123,10 +125,11 @@ Pass-through. The `forSample` callback runs at WASM speed — there is no JS fun
 The Run button gives you a slider for **gain**. It's a real `AudioParam` — connect oscillators or LFOs to it and they'll drive it sample-accurately.
 
 ::: warning JS operators on graph nodes
-Inside the captured body, `main.left.at(i)` and `gain.at(i)` are graph nodes (AST handles), not numbers. Use the named helpers — `mul(a, b)`, `add(a, b)`, `sub(a, b)`, `div(a, b)` — instead of `*`, `+`, `-`, `/`. The framework throws a clear error if you forget; it doesn't silently produce NaN.
+Inside the captured body, `main.left.at(i)` and `gain.at(i)` are graph nodes (AST handles), not numbers. Use the chain methods — `.mul(b)`, `.add(b)`, `.sub(b)`, `.div(b)` — or the named free helpers `mul(a, b)`, `add(a, b)`, etc. instead of `*`, `+`, `-`, `/`. The framework throws a clear error if you forget; it doesn't silently produce NaN.
 
 ```ts
-mul(main.left.at(i), gain.at(i)) // ✓
+main.left.at(i).mul(gain.at(i)) // ✓ chain method
+mul(main.left.at(i), gain.at(i)) // ✓ free function (equivalent)
 main.left.at(i) * gain.at(i)    // ✗ throws
 ```
 :::

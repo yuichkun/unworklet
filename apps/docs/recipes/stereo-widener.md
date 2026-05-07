@@ -1,7 +1,6 @@
 <script setup>
 const tryItCode0 = `import {
   defineProcessor, audioInput, audioOutput, param, forSample,
-  add, sub, mul,
 } from "@unworklet/core";
 
 export const widener = defineProcessor(() => {
@@ -17,13 +16,13 @@ export const widener = defineProcessor(() => {
         const L = main.left.at(i);
         const R = main.right.at(i);
         // Mid/Side encode (no √2 normalization — that gets folded into output).
-        const M = mul(add(L, R), 0.5);
-        const S = mul(sub(L, R), 0.5);
+        const M = L.add(R).mul(0.5);
+        const S = L.sub(R).mul(0.5);
         // Scale side.
-        const Sw = mul(S, width.at(i));
+        const Sw = S.mul(width.at(i));
         // Decode.
-        out.left.set(i,  add(M, Sw));
-        out.right.set(i, sub(M, Sw));
+        out.left.set(i,  M.add(Sw));
+        out.right.set(i, M.sub(Sw));
       });
     },
   };

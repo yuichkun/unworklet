@@ -5,12 +5,8 @@ import {
   state,
   buffer,
   forSample,
-  add,
-  sub,
-  mul,
-  mod,
 } from "@unworklet/core";
-import { splat, mulVec, addVec } from "@unworklet/core/simd";
+import { splat } from "@unworklet/core/simd";
 
 const FIR_LEN = 1024;
 const PART_SIZE = 128;
@@ -30,27 +26,22 @@ export const linearPhaseEQ = defineProcessor(() => {
       const startHead = histHead.load();
 
       forSample((i) => {
-        const idx = mod(add(startHead, i), HISTORY_LEN);
+        const idx = startHead.add(i).mod(HISTORY_LEN);
         history.write(idx, main.at(0, i));
       });
 
       forSample((i) => {
-        const outIdx = mod(add(startHead, i), HISTORY_LEN);
+        const outIdx = startHead.add(i).mod(HISTORY_LEN);
         let acc = splat(0);
         for (let k = 0; k < FIR_LEN; k += 4) {
-          const histIdx = mod(add(sub(sub(outIdx, k), 3), HISTORY_LEN), HISTORY_LEN);
-          const hVec = history.loadVec(histIdx);
-          const iVec = impulse.loadVec(k);
-          acc = addVec(acc, mulVec(hVec, iVec));
+          const histIdx = outIdx.sub(k).sub(3).add(HISTORY_LEN).mod(HISTORY_LEN);
+          acc = acc.add(history.loadVec(histIdx).mul(impulse.loadVec(k)));
         }
-        const sum = add(
-          add((acc as any).lane(0), (acc as any).lane(1)),
-          add((acc as any).lane(2), (acc as any).lane(3)),
-        );
+        const sum = acc.lane(0).add(acc.lane(1)).add(acc.lane(2)).add(acc.lane(3));
         out.set(0, i, sum);
       });
 
-      histHead.store(mod(add(startHead, 128), HISTORY_LEN));
+      histHead.store(startHead.add(128).mod(HISTORY_LEN));
     },
   };
 });

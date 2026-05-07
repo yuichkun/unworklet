@@ -155,3 +155,9 @@ export const f32 = (a: any) => convert("f32", a);
 export const f64 = (a: any) => convert("f64", a);
 export const i32 = (a: any) => convert("i32", a);
 export const i64 = (a: any) => convert("i64", a);
+
+// Lift a JS number/boolean to a ConstScalar AST node — backing for the
+// chain-entry helper `num()`. Numbers default to f32 (per docs/00 §4);
+// booleans become bool consts. Non-literal arguments fall through `lift`
+// unchanged so `num(someNode)` is a no-op rather than an error.
+export const num = (v: any) => lift(v);

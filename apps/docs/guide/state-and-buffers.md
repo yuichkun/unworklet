@@ -1,5 +1,5 @@
 <script setup>
-const tryItCode0 = `import { defineProcessor, audioInput, audioOutput, state, forSample, add } from "@unworklet/core";
+const tryItCode0 = `import { defineProcessor, audioInput, audioOutput, state, forSample } from "@unworklet/core";
 
 export const counter = defineProcessor(() => {
   const main = audioInput({ channels: 1, name: "main" });
@@ -9,7 +9,7 @@ export const counter = defineProcessor(() => {
   return {
     process: () => {
       forSample((i) => {
-        n.store(add(n.load(), 1));
+        n.store(n.load().add(1));
         out.set(0, i, main.at(0, i));
       });
     },
@@ -18,7 +18,7 @@ export const counter = defineProcessor(() => {
 `;
 const tryItCode1 = `import {
   defineProcessor, audioInput, audioOutput, param, state, buffer,
-  forSample, add, sub, mul, mod, i32, flushDenormals,
+  forSample, flushDenormals,
 } from "@unworklet/core";
 
 export const simpleDelay = defineProcessor((ctx) => {
@@ -35,24 +35,24 @@ export const simpleDelay = defineProcessor((ctx) => {
 
   return {
     process: () => {
-      const dSamples = i32(mul(delayMs.at(0), ctx.sampleRate / 1000));
+      const dSamples = delayMs.at(0).mul(ctx.sampleRate / 1000).toI32();
       const fb = feedback.at(0);
       const w = wet.at(0);
       const block = head.load();
 
       forSample((i) => {
-        const wIdx = mod(add(block, i), MAX_DELAY);
-        const rIdx = mod(add(sub(wIdx, dSamples), MAX_DELAY), MAX_DELAY);
+        const wIdx = block.add(i).mod(MAX_DELAY);
+        const rIdx = wIdx.sub(dSamples).add(MAX_DELAY).mod(MAX_DELAY);
 
         const dry = main.at(0, i);
         const tap = line.read(rIdx);
         // Feedback path: write input + delayed-tap × feedback gain.
-        const newSample = flushDenormals(add(dry, mul(tap, fb)));
+        const newSample = flushDenormals(dry.add(tap.mul(fb)));
         line.write(wIdx, newSample);
         // Output: dry + wet × tap.
-        out.set(0, i, add(dry, mul(tap, w)));
+        out.set(0, i, dry.add(tap.mul(w)));
       });
-      head.store(mod(add(block, 128), MAX_DELAY));
+      head.store(block.add(128).mod(MAX_DELAY));
     },
   };
 });

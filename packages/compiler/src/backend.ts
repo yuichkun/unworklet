@@ -66,6 +66,9 @@ export const captureBackend: CaptureBackend = {
   i32: P.i32,
   i64: P.i64,
 
+  // Literal lift (chain-entry helper)
+  num: P.num,
+
   // Declarations
   state: D.state,
   buffer: D.buffer,

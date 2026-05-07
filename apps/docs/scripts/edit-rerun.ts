@@ -49,7 +49,7 @@ async function main() {
   await page.keyboard.press("Control+A");
   await page.keyboard.press("Delete");
   const SILENT = `import {
-  defineProcessor, audioInput, audioOutput, param, forSample, mul,
+  defineProcessor, audioInput, audioOutput, param, forSample,
 } from "@unworklet/core";
 
 export const helloGain = defineProcessor(() => {
@@ -62,8 +62,8 @@ export const helloGain = defineProcessor(() => {
       forSample((i) => {
         // Multiply by zero — output must be silent if the new code is
         // actually picked up by Run.
-        out.left.set(i,  mul(main.left.at(i),  0));
-        out.right.set(i, mul(main.right.at(i), 0));
+        out.left.set(i,  main.left.at(i).mul(0));
+        out.right.set(i, main.right.at(i).mul(0));
       });
     },
   };

@@ -1,5 +1,5 @@
 <script setup>
-const tryItCode0 = `import { defineProcessor, audioInput, audioOutput, param, forSample, mul } from "@unworklet/core";
+const tryItCode0 = `import { defineProcessor, audioInput, audioOutput, param, forSample } from "@unworklet/core";
 
 export const tworate = defineProcessor(() => {
   const main = audioInput({ channels: 2, name: "main" });
@@ -21,8 +21,8 @@ export const tworate = defineProcessor(() => {
       const k = kRateGain.at(0);
       forSample((i) => {
         const a = aRateGain.at(i);
-        out.left.set(i,  mul(mul(main.left.at(i),  a), k));
-        out.right.set(i, mul(mul(main.right.at(i), a), k));
+        out.left.set(i,  main.left.at(i).mul(a).mul(k));
+        out.right.set(i, main.right.at(i).mul(a).mul(k));
       });
     },
   };

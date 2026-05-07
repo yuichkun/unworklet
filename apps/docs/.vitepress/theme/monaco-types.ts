@@ -9,7 +9,59 @@
 export const UNWORKLET_DTS = String.raw`
 declare module '@unworklet/core' {
   export type ScalarType = 'f32' | 'f64' | 'i32' | 'i64' | 'bool';
-  export type Node<T extends ScalarType | 'f32x4' = ScalarType> = { readonly __unworkletType: T };
+
+  // Chain-method surface attached to every Node value. Methods delegate
+  // to the same primitives as the free functions; both styles work.
+  // Per-line policy: chain when input flows through processing, free
+  // function for literal-leading expressions (use \`num()\` to wrap a
+  // literal), \`select\`, \`flushDenormals\`.
+  interface NumericChain<T extends ScalarType> {
+    add(b: Node<T> | number): Node<T>;
+    sub(b: Node<T> | number): Node<T>;
+    mul(b: Node<T> | number): Node<T>;
+    div(b: Node<T> | number): Node<T>;
+    mod(b: Node<T> | number): Node<T>;
+    neg(): Node<T>;
+    min(b: Node<T> | number): Node<T>;
+    max(b: Node<T> | number): Node<T>;
+    abs(): Node<T>;
+    clamp(lo: Node<T> | number, hi: Node<T> | number): Node<T>;
+    eq(b: Node<T> | number): Node<'bool'>;
+    ne(b: Node<T> | number): Node<'bool'>;
+    lt(b: Node<T> | number): Node<'bool'>;
+    gt(b: Node<T> | number): Node<'bool'>;
+    lte(b: Node<T> | number): Node<'bool'>;
+    gte(b: Node<T> | number): Node<'bool'>;
+    toF32(): Node<'f32'>;
+    toF64(): Node<'f64'>;
+    toI32(): Node<'i32'>;
+    toI64(): Node<'i64'>;
+  }
+  interface FloatMath<T extends 'f32' | 'f64'> {
+    sin(): Node<T>; cos(): Node<T>; tan(): Node<T>; tanh(): Node<T>;
+    exp(): Node<T>; log(): Node<T>; sqrt(): Node<T>;
+    floor(): Node<T>; ceil(): Node<T>; frac(): Node<T>;
+  }
+  interface BoolChain {
+    eq(b: Node<'bool'> | boolean): Node<'bool'>;
+    ne(b: Node<'bool'> | boolean): Node<'bool'>;
+  }
+  interface VecChain {
+    add(b: Node<'f32x4'>): Node<'f32x4'>;
+    sub(b: Node<'f32x4'>): Node<'f32x4'>;
+    mul(b: Node<'f32x4'>): Node<'f32x4'>;
+    div(b: Node<'f32x4'>): Node<'f32x4'>;
+    lane(i: 0 | 1 | 2 | 3): Node<'f32'>;
+  }
+  type MethodsFor<T extends ScalarType | 'f32x4'> =
+    T extends 'bool' ? BoolChain :
+    T extends 'f32' | 'f64' ? NumericChain<T> & FloatMath<T> :
+    T extends 'i32' | 'i64' ? NumericChain<T> :
+    T extends 'f32x4' ? VecChain :
+    {};
+
+  export type Node<T extends ScalarType | 'f32x4' = ScalarType> =
+    { readonly __unworkletType: T } & MethodsFor<T>;
 
   // ─── Declarations ─────────────────────────────────────────────────────
   export interface State<T extends ScalarType> {
@@ -155,6 +207,10 @@ declare module '@unworklet/core' {
   export function f64(a: any): Node<'f64'>;
   export function i32(a: any): Node<'i32'>;
   export function i64(a: any): Node<'i64'>;
+  /** Chain-entry helper: lift a JS literal (number → f32, boolean → bool)
+   * into a graph node so subsequent .add / .sub / .mul methods resolve. */
+  export function num(v: number): Node<'f32'>;
+  export function num(v: boolean): Node<'bool'>;
   /** Zero out subnormal values (|x| < 1e-30) so feedback paths don't stall the audio thread on x86. */
   export function flushDenormals(a: Node<'f32'> | number): Node<'f32'>;
 

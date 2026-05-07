@@ -58,6 +58,10 @@ export type CaptureBackend = {
   i32: (a: any) => any;
   i64: (a: any) => any;
 
+  /** Lift a JS literal (number → f32, boolean → bool) into a graph node.
+   * Used by the chain-entry helper `num()`. */
+  num: (v: number | boolean) => any;
+
   // Declarations
   state: {
     f32: (initial: number, options?: any) => any;

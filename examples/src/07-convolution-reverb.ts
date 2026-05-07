@@ -7,15 +7,9 @@ import {
   buffer,
   forSample,
   message,
-  add,
-  sub,
-  mul,
-  mod,
-  max,
-  abs,
   flushDenormals,
 } from "@unworklet/core";
-import { splat, mulVec, addVec } from "@unworklet/core/simd";
+import { splat } from "@unworklet/core/simd";
 
 const IR_LEN = 4096;
 
@@ -78,50 +72,40 @@ export const convolutionReverb = defineProcessor(
         const headBlock = histHead.load();
 
         forSample((i) => {
-          const idx = mod(add(headBlock, i), IR_LEN);
+          const idx = headBlock.add(i).mod(IR_LEN);
           histL.write(idx, main.left.at(i));
           histR.write(idx, main.right.at(i));
         });
 
         forSample.byN(4, (i) => {
-          const outIdx = mod(add(headBlock, i), IR_LEN);
+          const outIdx = headBlock.add(i).mod(IR_LEN);
           let accL = splat(0);
           let accR = splat(0);
           for (let k = 0; k < IR_LEN; k += 4) {
-            const histIdx = mod(add(sub(sub(outIdx, k), 3), IR_LEN), IR_LEN);
-            const hL = histL.loadVec(histIdx);
-            const hR = histR.loadVec(histIdx);
-            const iL = irL.loadVec(k);
-            const iR = irR.loadVec(k);
-            accL = addVec(accL, mulVec(hL, iL));
-            accR = addVec(accR, mulVec(hR, iR));
+            const histIdx = outIdx.sub(k).sub(3).add(IR_LEN).mod(IR_LEN);
+            accL = accL.add(histL.loadVec(histIdx).mul(irL.loadVec(k)));
+            accR = accR.add(histR.loadVec(histIdx).mul(irR.loadVec(k)));
           }
-          const sumL = add(
-            add((accL as any).lane(0), (accL as any).lane(1)),
-            add((accL as any).lane(2), (accL as any).lane(3)),
-          );
-          const sumR = add(
-            add((accR as any).lane(0), (accR as any).lane(1)),
-            add((accR as any).lane(2), (accR as any).lane(3)),
-          );
+          const sumL = accL.lane(0).add(accL.lane(1)).add(accL.lane(2)).add(accL.lane(3));
+          const sumR = accR.lane(0).add(accR.lane(1)).add(accR.lane(2)).add(accR.lane(3));
 
-          const dryL = mul(main.left.at(i), dryGain.at(0));
-          const dryR = mul(main.right.at(i), dryGain.at(0));
+          const dryL = main.left.at(i).mul(dryGain.at(0));
+          const dryR = main.right.at(i).mul(dryGain.at(0));
           // Flush subnormals on convolution output so a quiet tail doesn't
           // produce denormals that stall the audio thread (docs/04 §6).
-          const wetL = flushDenormals(mul(sumL, wetGain.at(0)));
-          const wetR = flushDenormals(mul(sumR, wetGain.at(0)));
+          const wetL = flushDenormals(sumL.mul(wetGain.at(0)));
+          const wetR = flushDenormals(sumR.mul(wetGain.at(0)));
 
-          out.left.set(i, add(dryL, wetL));
-          out.right.set(i, add(dryR, wetR));
+          out.left.set(i, dryL.add(wetL));
+          out.right.set(i, dryR.add(wetR));
 
-          wetMeter.store(max(wetMeter.load(), max(abs(wetL), abs(wetR))));
+          wetMeter.store(wetMeter.load().max(wetL.abs().max(wetR.abs())));
         });
 
-        histHead.store(mod(add(headBlock, 128), IR_LEN));
+        histHead.store(headBlock.add(128).mod(IR_LEN));
         // 0.93 is a one-pole release coefficient close enough to 1.0 that
         // the meter would otherwise produce denormals on silence.
-        wetMeter.store(flushDenormals(mul(wetMeter.load(), 0.93)));
+        wetMeter.store(flushDenormals(wetMeter.load().mul(0.93)));
       },
     };
   },

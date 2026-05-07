@@ -5,20 +5,9 @@ import {
   param,
   state,
   forSample,
-  add,
-  sub,
-  mul,
-  div,
-  exp,
-  log,
-  abs,
-  max,
-  min,
-  gt,
-  lt,
+  num,
   select,
   flushDenormals,
-  type Node,
 } from "@unworklet/core";
 
 // Feed-forward dynamic range compressor with soft knee.
@@ -83,50 +72,50 @@ export const compressor = defineProcessor((ctx) => {
       const aMs = attackMs.at(0);
       const rMs = releaseMs.at(0);
       // a = 1 - exp(-1 / (ms * 0.001 * sr))
-      const aCoef = sub(1, exp(div(-1, mul(mul(aMs, 0.001), ctx.sampleRate))));
-      const rCoef = sub(1, exp(div(-1, mul(mul(rMs, 0.001), ctx.sampleRate))));
+      const aCoef = num(1).sub(num(-1).div(aMs.mul(0.001 * ctx.sampleRate)).exp());
+      const rCoef = num(1).sub(num(-1).div(rMs.mul(0.001 * ctx.sampleRate)).exp());
       const log10over20 = 20 / Math.LN10;
       const log10ToLn = Math.LN10 / 20;
+      const halfK = k.mul(0.5);
+      const negHalfK = halfK.neg();
+      const recipRMinus1 = num(1).div(r).sub(1);
 
       forSample((i) => {
         const inL = main.left.at(i);
         const inR = main.right.at(i);
-        const det = max(abs(inL), abs(inR));
+        const det = inL.abs().max(inR.abs());
         const e = env.load();
-        const coef = select(gt(det, e), aCoef, rCoef);
-        const newE = flushDenormals(add(e, mul(coef, sub(det, e))));
+        const coef = select(det.gt(e), aCoef, rCoef);
+        const newE = flushDenormals(e.add(coef.mul(det.sub(e))));
         env.store(newE);
 
         // dB envelope
-        const eDb = mul(log10over20, log(add(newE, 1e-12)));
+        const eDb = newE.add(1e-12).log().mul(log10over20);
         // Soft knee: see classic compressor formulas
-        const xMinusT = sub(eDb, t);
-        // grDb = (xMinusT < -k/2) → 0
-        //       ((xMinusT > k/2) → xMinusT - xMinusT/r
-        //       else: ((1/r - 1) * (xMinusT + k/2)^2) / (2k)
-        const inKnee = sub(add(xMinusT, mul(0.5, k)), 0);
-        const overshoot = div(mul(sub(div(1, r), 1), mul(inKnee, inKnee)), mul(2, k));
+        const xMinusT = eDb.sub(t);
+        const inKnee = xMinusT.add(halfK);
+        const overshoot = recipRMinus1.mul(inKnee.mul(inKnee)).div(k.mul(2));
         // Choose region
-        const aboveK = gt(xMinusT, mul(0.5, k));
-        const belowK = lt(xMinusT, mul(-0.5, k));
-        const grDbAbove = sub(xMinusT, div(xMinusT, r));
-        const grDbKnee = sub(0, overshoot);
+        const aboveK = xMinusT.gt(halfK);
+        const belowK = xMinusT.lt(negHalfK);
+        const grDbAbove = xMinusT.sub(xMinusT.div(r));
+        const grDbKnee = overshoot.neg();
         const grDb = select(belowK, 0, select(aboveK, grDbAbove, grDbKnee));
 
         // grLin = exp(grDb * (LN10/20))   — note grDb is already negative-ish
-        const grLin = exp(mul(sub(0, abs(grDb)), log10ToLn));
+        const grLin = grDb.abs().neg().mul(log10ToLn).exp();
         const m = makeupDb.at(i);
-        const mk = exp(mul(m, log10ToLn));
+        const mk = m.mul(log10ToLn).exp();
 
-        out.left.set(i, mul(mul(inL, grLin), mk));
-        out.right.set(i, mul(mul(inR, grLin), mk));
+        out.left.set(i, inL.mul(grLin).mul(mk));
+        out.right.set(i, inR.mul(grLin).mul(mk));
 
         const cur = gainReductionDb.load();
-        const newGr = sub(0, abs(grDb));
-        gainReductionDb.store(min(cur, newGr));
+        const newGr = grDb.abs().neg();
+        gainReductionDb.store(cur.min(newGr));
       });
 
-      gainReductionDb.store(flushDenormals(mul(gainReductionDb.load(), 0.86)));
+      gainReductionDb.store(flushDenormals(gainReductionDb.load().mul(0.86)));
     },
   };
 });

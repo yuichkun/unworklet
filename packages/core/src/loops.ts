@@ -1,5 +1,6 @@
 import { getCurrentRuntime, Scope, nextSubgraphId } from "./runtime.js";
 import { getCaptureBackend } from "./capture-backend.js";
+import { wrap } from "./node-value.js";
 import type { Node } from "./types.js";
 
 export type ForSample = {
@@ -35,7 +36,8 @@ function _forSampleImpl(stride: number, callback: (i: Node<"i32">) => void) {
     rt.iStack.push(i);
     for (const s of rt.allScopes) s.resetSubgraphCursors();
     try {
-      callback(i as unknown as Node<"i32">);
+      // Wrap so user code can chain methods on `i`: i.add(1), i.lt(64), etc.
+      callback(wrap<Node<"i32">>(i));
     } finally {
       rt.iStack.pop();
     }

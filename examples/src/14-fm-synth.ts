@@ -7,15 +7,7 @@ import {
   forSample,
   midiInput,
   event,
-  add,
-  sub,
-  mul,
-  div,
-  sin,
-  exp,
-  eq,
-  gt,
-  mod,
+  num,
   select,
   type Node,
 } from "@unworklet/core";
@@ -38,23 +30,23 @@ const fmVoice = defineSubgraph(
     const mPhase = state.f32(0);
     const env = state.f32(0);
 
-    const aCoef = sub(1, exp(div(-1, mul(aS, sr))));
-    const rCoef = sub(1, exp(div(-1, mul(rS, sr))));
-    const target = select(gate, velocity, mul(0, 0));
+    const aCoef = num(1).sub(num(-1).div(aS.mul(sr)).exp());
+    const rCoef = num(1).sub(num(-1).div(rS.mul(sr)).exp());
+    const target = select(gate, velocity, num(0));
     const coef = select(gate, aCoef, rCoef);
-    const e = add(env.load(), mul(coef, sub(target, env.load())));
+    const e = env.load().add(coef.mul(target.sub(env.load())));
     env.store(e);
 
-    const mInc = div(mul(carrierHz, modRatio), sr);
-    const mp = add(mPhase.load(), mInc);
-    mPhase.store(select(gt(mp, 1), sub(mp, 1), mp));
-    const modSig = sin(mul(mp, 2 * Math.PI));
+    const mInc = carrierHz.mul(modRatio).div(sr);
+    const mp = mPhase.load().add(mInc);
+    mPhase.store(select(mp.gt(1), mp.sub(1), mp));
+    const modSig = mp.mul(2 * Math.PI).sin();
 
-    const cInc = div(carrierHz, sr);
-    const cp = add(cPhase.load(), cInc);
-    cPhase.store(select(gt(cp, 1), sub(cp, 1), cp));
-    const sigPhase = add(mul(cp, 2 * Math.PI), mul(modIndex, modSig));
-    return mul(sin(sigPhase), e);
+    const cInc = carrierHz.div(sr);
+    const cp = cPhase.load().add(cInc);
+    cPhase.store(select(cp.gt(1), cp.sub(1), cp));
+    const sigPhase = cp.mul(2 * Math.PI).add(modIndex.mul(modSig));
+    return sigPhase.sin().mul(e);
   },
 );
 
@@ -117,24 +109,27 @@ export const fmSynth = defineProcessor((ctx) => {
     process: () => {
       midi.onEvent("noteOn", ({ note, velocity, atSample }) => {
         const v = allocCursor.load();
+        const velNorm = num(velocity).mul(1 / 127);
         for (let s = 0; s < NUM_VOICES; s++) {
-          const isMe = eq(v, s);
+          const isMe = v.eq(s);
           voiceNote[s]!.store(select(isMe, note, voiceNote[s]!.load()));
-          voiceVel[s]!.store(select(isMe, mul(velocity, 1 / 127), voiceVel[s]!.load()));
+          voiceVel[s]!.store(select(isMe, velNorm, voiceVel[s]!.load()));
           voiceGate[s]!.store(select(isMe, true, voiceGate[s]!.load()));
         }
-        allocCursor.store(mod(add(v, 1), NUM_VOICES));
+        allocCursor.store(v.add(1).mod(NUM_VOICES));
         notePlayed.emitIf(true, {
           atSample,
           note,
           voice: v as unknown as number,
-          velocity: mul(velocity, 1 / 127) as unknown as number,
+          velocity: velNorm as unknown as number,
         });
       });
 
       midi.onEvent("noteOff", ({ note }) => {
         for (let s = 0; s < NUM_VOICES; s++) {
-          voiceGate[s]!.store(select(eq(voiceNote[s]!.load(), note), false, voiceGate[s]!.load()));
+          voiceGate[s]!.store(
+            select(voiceNote[s]!.load().eq(note), false, voiceGate[s]!.load()),
+          );
         }
       });
 
@@ -142,25 +137,24 @@ export const fmSynth = defineProcessor((ctx) => {
 
       forSample((i) => {
         const idx = modIndex.at(i);
-        let mix: Node<"f32"> = mul(0, 0);
+        let mix: Node<"f32"> = num(0);
         for (let s = 0; s < NUM_VOICES; s++) {
           const note = voiceNote[s]!.load();
           const vel = voiceVel[s]!.load();
           const gate = voiceGate[s]!.load();
-          const hz = mul(440, exp(mul(sub(note, 69), Math.LN2 / 12)));
-          mix = add(
-            mix,
+          const hz = note.sub(69).mul(Math.LN2 / 12).exp().mul(440);
+          mix = mix.add(
             fmVoice(hz, ratio, idx, vel, gate as unknown as Node<"bool">, attack.at(0), release.at(0), ctx.sampleRate),
           );
         }
-        const sig = mul(mix, masterVol.at(i));
+        const sig = mix.mul(masterVol.at(i));
         out.left.set(i, sig);
         out.right.set(i, sig);
       });
 
-      let count: Node<"i32"> = 0 as unknown as Node<"i32">;
+      let count: Node<"i32"> = num(0) as unknown as Node<"i32">;
       for (let s = 0; s < NUM_VOICES; s++) {
-        count = add(count, select(voiceGate[s]!.load(), 1, 0));
+        count = count.add(select(voiceGate[s]!.load(), 1, 0));
       }
       activeVoices.store(count);
     },

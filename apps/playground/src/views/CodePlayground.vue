@@ -29,10 +29,6 @@ import {
   param,
   state,
   forSample,
-  add,
-  sub,
-  mul,
-  tanh,
   flushDenormals,
 } from "@unworklet/core";
 
@@ -50,11 +46,10 @@ export const myProcessor = defineProcessor((ctx) => {
       const k = cutoff.at(0);
       const d = drive.at(0);
       forSample((i) => {
-        const dryL = main.left.at(i);
-        const dryR = main.right.at(i);
-        const sat = (x) => tanh(mul(x, d));
-        const yL = flushDenormals(add(lpL.load(), mul(k, sub(sat(dryL), lpL.load()))));
-        const yR = flushDenormals(add(lpR.load(), mul(k, sub(sat(dryR), lpR.load()))));
+        // Chain style — DSP signal flow reads left to right.
+        const sat = (x) => x.mul(d).tanh();
+        const yL = flushDenormals(lpL.load().add(k.mul(sat(main.left.at(i)).sub(lpL.load()))));
+        const yR = flushDenormals(lpR.load().add(k.mul(sat(main.right.at(i)).sub(lpR.load()))));
         lpL.store(yL);
         lpR.store(yR);
         out.left.set(i,  yL);

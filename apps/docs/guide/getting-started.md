@@ -1,6 +1,6 @@
 <script setup>
 const tryItCode0 = `import {
-  defineProcessor, audioInput, audioOutput, param, forSample, mul,
+  defineProcessor, audioInput, audioOutput, param, forSample,
 } from "@unworklet/core";
 
 export const gain = defineProcessor(() => {
@@ -12,8 +12,8 @@ export const gain = defineProcessor(() => {
     process: () => {
       forSample((i) => {
         const gain = g.at(i);
-        out.left.set(i,  mul(main.left.at(i),  gain));
-        out.right.set(i, mul(main.right.at(i), gain));
+        out.left.set(i,  main.left.at(i).mul(gain));
+        out.right.set(i, main.right.at(i).mul(gain));
       });
     },
   };

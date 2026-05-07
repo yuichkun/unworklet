@@ -1,7 +1,6 @@
 <script setup>
 const tryItCode0 = `import {
-  defineProcessor, audioInput, audioOutput, param, forSample,
-  add, sub, mul, tanh,
+  defineProcessor, audioInput, audioOutput, param, forSample, num,
 } from "@unworklet/core";
 
 export const tanhSat = defineProcessor(() => {
@@ -21,11 +20,12 @@ export const tanhSat = defineProcessor(() => {
         const dryR = main.right.at(i);
         const d = drive.at(i);
         const m = mix.at(i);
-        // Wet = tanh(x * drive). Mix dry+wet.
-        const wetL = tanh(mul(dryL, d));
-        const wetR = tanh(mul(dryR, d));
-        out.left.set(i,  add(mul(dryL, sub(1, m)), mul(wetL, m)));
-        out.right.set(i, add(mul(dryR, sub(1, m)), mul(wetR, m)));
+        // Wet = tanh(x * drive). Mix dry+wet:  (1 - mix) × dry + mix × wet
+        const wetL = dryL.mul(d).tanh();
+        const wetR = dryR.mul(d).tanh();
+        const dryGain = num(1).sub(m);
+        out.left.set(i,  dryL.mul(dryGain).add(wetL.mul(m)));
+        out.right.set(i, dryR.mul(dryGain).add(wetR.mul(m)));
       });
     },
   };
@@ -50,7 +50,6 @@ The mix knob blends `(1 - mix) × dry + mix × wet`. Hit Run, drag **mix** betwe
 Asymmetric, branchless:
 
 ```ts
-const isPos = gt(x, 0);
-const driveUsed = select(isPos, driveUp, driveDn);
-const out = tanh(mul(x, driveUsed));
+const driveUsed = select(x.gt(0), driveUp, driveDn);
+const out = x.mul(driveUsed).tanh();
 ```

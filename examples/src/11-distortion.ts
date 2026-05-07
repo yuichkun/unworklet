@@ -5,15 +5,7 @@ import {
   param,
   state,
   forSample,
-  add,
-  sub,
-  mul,
-  div,
-  tanh,
-  abs,
-  max,
-  exp,
-  type Node,
+  num,
 } from "@unworklet/core";
 
 // Soft-knee waveshaper distortion with one-pole tilt EQ + output gain.
@@ -52,41 +44,42 @@ export const distortion = defineProcessor((ctx) => {
       const drv = drive.at(0);
       const t = tone.at(0);
       // cutoff ranges roughly 250 Hz (t=0) to 3.75 kHz (t=1)
-      const fc = add(2000, mul(sub(t, 0.5), 3500));
+      const fc = t.sub(0.5).mul(3500).add(2000);
       // a = exp(-2π fc / sr); b = 1 - a
-      const a = exp(div(mul(-2 * Math.PI, fc), ctx.sampleRate));
-      const b = sub(1, a);
+      const a = fc.mul(-2 * Math.PI / ctx.sampleRate).exp();
+      const b = num(1).sub(a);
       // tanh saturator gain compensation
-      const tanhDrv = tanh(drv);
+      const tanhDrv = drv.tanh();
+      // tilt: low component = lp; high component = original - lp
+      const oneMinusT = num(1).sub(t);
 
       forSample((i) => {
         const sL = main.left.at(i);
         const sR = main.right.at(i);
 
         // one-pole LP for tone
-        const lpLNew = add(mul(b, sL), mul(a, lpL.load()));
-        const lpRNew = add(mul(b, sR), mul(a, lpR.load()));
+        const lpLNew = b.mul(sL).add(a.mul(lpL.load()));
+        const lpRNew = b.mul(sR).add(a.mul(lpR.load()));
         lpL.store(lpLNew);
         lpR.store(lpRNew);
 
-        // tilt: low component = lpNew; high component = original - lp
-        const tiltL = add(mul(sub(1, t), lpLNew), mul(t, sub(sL, lpLNew)));
-        const tiltR = add(mul(sub(1, t), lpRNew), mul(t, sub(sR, lpRNew)));
+        const tiltL = oneMinusT.mul(lpLNew).add(t.mul(sL.sub(lpLNew)));
+        const tiltR = oneMinusT.mul(lpRNew).add(t.mul(sR.sub(lpRNew)));
 
         // tanh saturator
-        const yL = div(tanh(mul(tiltL, drv)), tanhDrv);
-        const yR = div(tanh(mul(tiltR, drv)), tanhDrv);
+        const yL = tiltL.mul(drv).tanh().div(tanhDrv);
+        const yR = tiltR.mul(drv).tanh().div(tanhDrv);
 
         const g = outGain.at(i);
-        const oL = mul(yL, g);
-        const oR = mul(yR, g);
+        const oL = yL.mul(g);
+        const oR = yR.mul(g);
         out.left.set(i, oL);
         out.right.set(i, oR);
 
-        peak.store(max(peak.load(), max(abs(oL), abs(oR))));
+        peak.store(peak.load().max(oL.abs().max(oR.abs())));
       });
 
-      peak.store(mul(peak.load(), 0.93));
+      peak.store(peak.load().mul(0.93));
     },
   };
 });

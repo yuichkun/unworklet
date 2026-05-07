@@ -5,9 +5,6 @@ import {
   param,
   state,
   forSample,
-  mul,
-  max,
-  abs,
 } from "@unworklet/core";
 
 export const stereoGain = defineProcessor(() => {
@@ -29,18 +26,18 @@ export const stereoGain = defineProcessor(() => {
     process: () => {
       forSample((i) => {
         const g = gain.at(i);
-        const l = mul(main.left.at(i), g);
-        const r = mul(main.right.at(i), g);
+        const l = main.left.at(i).mul(g);
+        const r = main.right.at(i).mul(g);
         out.left.set(i, l);
         out.right.set(i, r);
 
-        meterL.store(max(meterL.load(), abs(l)));
-        meterR.store(max(meterR.load(), abs(r)));
+        meterL.store(meterL.load().max(l.abs()));
+        meterR.store(meterR.load().max(r.abs()));
       });
 
       // Per-block decay so the meter does not stick at the most recent peak forever.
-      meterL.store(mul(meterL.load(), 0.95));
-      meterR.store(mul(meterR.load(), 0.95));
+      meterL.store(meterL.load().mul(0.95));
+      meterR.store(meterR.load().mul(0.95));
     },
   };
 });

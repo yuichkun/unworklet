@@ -9,17 +9,7 @@ import {
   forSample,
   midiInput,
   event,
-  add,
-  sub,
-  mul,
-  div,
-  mod,
-  max,
-  abs,
-  sin,
-  exp,
-  gt,
-  eq,
+  num,
   select,
   flushDenormals,
   type Node,
@@ -39,21 +29,21 @@ const synthVoice = defineSubgraph(
     const phase = state.f32(0);
     const env = state.f32(0);
 
-    const aCoef = sub(1, exp(div(-1, mul(attackS, sr))));
-    const rCoef = sub(1, exp(div(-1, mul(releaseS, sr))));
+    const aCoef = num(1).sub(num(-1).div(attackS.mul(sr)).exp());
+    const rCoef = num(1).sub(num(-1).div(releaseS.mul(sr)).exp());
 
-    const target = select(gate, velocity, mul(0, 0));
+    const target = select(gate, velocity, num(0));
     const coef = select(gate, aCoef, rCoef);
     // One-pole release with rCoef close to 1 — flush subnormals so that a
     // released voice doesn't keep the audio thread chewing on denormals.
-    const e = flushDenormals(add(env.load(), mul(coef, sub(target, env.load()))));
+    const e = flushDenormals(env.load().add(coef.mul(target.sub(env.load()))));
     env.store(e);
 
-    const inc = div(noteHz, sr);
-    const p = add(phase.load(), inc);
-    phase.store(select(gt(p, 1), sub(p, 1), p));
+    const inc = noteHz.div(sr);
+    const p = phase.load().add(inc);
+    phase.store(select(p.gt(1), p.sub(1), p));
 
-    return mul(sin(mul(p, 2 * Math.PI)), e);
+    return p.mul(2 * Math.PI).sin().mul(e);
   },
 );
 
@@ -118,49 +108,53 @@ export const polySynth = defineProcessor((ctx) => {
   return {
     process: () => {
       midi.onEvent("noteOn", ({ note, velocity, atSample }) => {
+        // note / velocity are raw JS numbers from the MIDI payload — wrap
+        // with num() to lift into the graph for chain arithmetic.
         const v = allocCursor.load();
+        const velNorm = num(velocity).mul(1 / 127);
         for (let s = 0; s < NUM_VOICES; s++) {
-          const isMe = eq(v, s);
+          const isMe = v.eq(s);
           voiceNote[s]!.store(select(isMe, note, voiceNote[s]!.load()));
-          voiceVel[s]!.store(select(isMe, mul(velocity, 1 / 127), voiceVel[s]!.load()));
+          voiceVel[s]!.store(select(isMe, velNorm, voiceVel[s]!.load()));
           voiceGate[s]!.store(select(isMe, true, voiceGate[s]!.load()));
         }
-        allocCursor.store(mod(add(v, 1), NUM_VOICES));
+        allocCursor.store(v.add(1).mod(NUM_VOICES));
 
         notePlayed.emitIf(true, {
           atSample,
           note,
           voice: v as unknown as number,
-          velocity: mul(velocity, 1 / 127) as unknown as number,
+          velocity: velNorm as unknown as number,
         });
       });
 
       midi.onEvent("noteOff", ({ note }) => {
         for (let s = 0; s < NUM_VOICES; s++) {
-          voiceGate[s]!.store(select(eq(voiceNote[s]!.load(), note), false, voiceGate[s]!.load()));
+          voiceGate[s]!.store(
+            select(voiceNote[s]!.load().eq(note), false, voiceGate[s]!.load()),
+          );
         }
       });
 
       const aCoef = 0.05;
-      const rCoef = sub(1, exp(div(-1, mul(0.2, ctx.sampleRate))));
+      const rCoef = num(1).sub(num(-1).div(num(0.2).mul(ctx.sampleRate)).exp());
 
       const wpStart = wavePtr.load();
 
       forSample((i) => {
-        const scPeak = max(abs(sidechain.at(0, i)), abs(sidechain.at(1, i)));
-        const scC = select(gt(scPeak, scEnv.load()), aCoef, rCoef);
-        scEnv.store(add(scEnv.load(), mul(scC, sub(scPeak, scEnv.load()))));
+        const scPeak = sidechain.at(0, i).abs().max(sidechain.at(1, i).abs());
+        const scC = select(scPeak.gt(scEnv.load()), aCoef, rCoef);
+        scEnv.store(scEnv.load().add(scC.mul(scPeak.sub(scEnv.load()))));
 
-        const duck = sub(1, mul(duckAmount.at(0), scEnv.load()));
+        const duck = num(1).sub(duckAmount.at(0).mul(scEnv.load()));
 
-        let mix: Node<"f32"> = mul(0, 0);
+        let mix: Node<"f32"> = num(0);
         for (let s = 0; s < NUM_VOICES; s++) {
           const note = voiceNote[s]!.load();
           const vel = voiceVel[s]!.load();
           const gate = voiceGate[s]!.load();
-          const hz = mul(440, exp(mul(sub(note, 69), Math.LN2 / 12)));
-          mix = add(
-            mix,
+          const hz = note.sub(69).mul(Math.LN2 / 12).exp().mul(440);
+          mix = mix.add(
             synthVoice(
               hz,
               vel,
@@ -172,19 +166,19 @@ export const polySynth = defineProcessor((ctx) => {
           );
         }
 
-        const sig = mul(mul(mix, masterVol.at(i)), duck);
+        const sig = mix.mul(masterVol.at(i)).mul(duck);
         out.left.set(i, sig);
         out.right.set(i, sig);
 
-        const wp = mod(add(wpStart, i), 1024);
+        const wp = wpStart.add(i).mod(1024);
         waveform.write(wp, sig);
       });
 
-      wavePtr.store(mod(add(wpStart, 128), 1024));
+      wavePtr.store(wpStart.add(128).mod(1024));
 
-      let count: Node<"i32"> = 0 as unknown as Node<"i32">;
+      let count: Node<"i32"> = num(0) as unknown as Node<"i32">;
       for (let s = 0; s < NUM_VOICES; s++) {
-        count = add(count, select(voiceGate[s]!.load(), 1, 0));
+        count = count.add(select(voiceGate[s]!.load(), 1, 0));
       }
       activeVoices.store(count);
     },

@@ -24,6 +24,7 @@ import type {
   SnapshotPolicy,
 } from "./ast.js";
 import { buildProcessorContext } from "@unworklet/core";
+import { attachMethods } from "@unworklet/core/internal";
 import type { ProcessorContext } from "@unworklet/core";
 
 // ─── Capture context (module-private, set by `capture()`) ────────────────────
@@ -190,10 +191,15 @@ class CaptureCtx {
         throw new Error(
           `unworklet: cannot coerce a graph node to a JS ${hint} (kind=${(result as any).kind}). ` +
             `In capture mode, JS operators on graph nodes (e.g. \`x / 127\`, \`x + 1\`) silently break the captured AST. ` +
-            `Use the named helpers from @unworklet/core instead — \`div(x, 127)\`, \`add(x, 1)\`, \`select(cond, ...)\`.`,
+            `Use the named helpers from @unworklet/core or the chain methods on the node — \`x.div(127)\`, \`x.add(1)\`, \`select(cond, ...)\`.`,
         );
       },
     });
+    // Attach the chain-method surface so `node.add(b).mul(c)` works inside
+    // the user's body. Methods delegate to free-function primitives, which
+    // dispatch back into capture mode via the backend — same shape as the
+    // interp-mode NodeImpl.
+    attachMethods(result);
     return result;
   }
 }

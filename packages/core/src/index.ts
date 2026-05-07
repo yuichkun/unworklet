@@ -1,3 +1,7 @@
+// Side-effect import: installs the chain-method surface on NodeImpl
+// (and exports attachMethods used by the compiler's c.fresh).
+import "./methods.js";
+
 export { policyKey } from "./types.js";
 
 export type {
@@ -76,6 +80,7 @@ export {
   f64,
   i32,
   i64,
+  num,
   sinPrecise,
   cosPrecise,
   tanPrecise,

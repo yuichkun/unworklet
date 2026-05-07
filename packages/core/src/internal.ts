@@ -11,6 +11,9 @@ export {
   setCaptureBackend,
 } from "./capture-backend.js";
 
+export { attachMethods } from "./methods.js";
+export { wrap, unwrap, NodeImpl } from "./node-value.js";
+
 export type {
   StateSlot,
   BufferSlot,

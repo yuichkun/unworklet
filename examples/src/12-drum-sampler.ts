@@ -8,13 +8,8 @@ import {
   midiInput,
   message,
   event,
-  add,
-  sub,
-  mul,
+  num,
   select,
-  eq,
-  gt,
-  lt,
   type Node,
 } from "@unworklet/core";
 
@@ -65,17 +60,19 @@ export const drumSampler = defineProcessor(() => {
         // wraps the memory.copy in `if (cond)` in WASM so non-matching
         // pads truly no-op (no spurious destination address evaluation).
         const len = samples.length();
+        // pad is a raw JS number from the message payload; lift before chaining.
+        const padNode = num(pad).toI32();
         for (let p = 0; p < NUM_PADS; p++) {
-          const isMe = eq(pad, p);
+          const isMe = padNode.eq(p);
           samples.copyToIf(isMe, pads[p]!, 0, len);
           padLens[p]!.store(select(isMe, len, padLens[p]!.load()));
         }
       });
 
       triggerPad.onReceive(({ pad, velocity }) => {
-        // Build-time fan-out: for each pad slot, set state if pad matches.
+        const padNode = num(pad).toI32();
         for (let p = 0; p < NUM_PADS; p++) {
-          const isMe = eq(pad, p);
+          const isMe = padNode.eq(p);
           padPos[p]!.store(select(isMe, 0, padPos[p]!.load()));
           padGate[p]!.store(select(isMe, true, padGate[p]!.load()));
           padVel[p]!.store(select(isMe, velocity, padVel[p]!.load()));
@@ -83,31 +80,32 @@ export const drumSampler = defineProcessor(() => {
       });
 
       midi.onEvent("noteOn", ({ note, velocity, atSample }) => {
-        const pad = sub(note, 36);
+        const pad = num(note).sub(36).toI32();
+        const velNorm = num(velocity).mul(1 / 127);
         for (let p = 0; p < NUM_PADS; p++) {
-          const isMe = eq(pad, p);
+          const isMe = pad.eq(p);
           padPos[p]!.store(select(isMe, 0, padPos[p]!.load()));
           padGate[p]!.store(select(isMe, true, padGate[p]!.load()));
-          padVel[p]!.store(select(isMe, mul(velocity, 1 / 127), padVel[p]!.load()));
+          padVel[p]!.store(select(isMe, velNorm, padVel[p]!.load()));
         }
       });
 
       forSample((i) => {
-        let mix: Node<"f32"> = mul(0, 0) as any;
+        let mix: Node<"f32"> = num(0);
         for (let p = 0; p < NUM_PADS; p++) {
           const gate = padGate[p]!.load();
           const pos = padPos[p]!.load();
           const len = padLens[p]!.load();
-          const active = select(gate, lt(pos, len), false);
+          const active = select(gate, pos.lt(len), false);
           const v = pads[p]!.read(pos);
           const vel = padVel[p]!.load();
-          const contrib = select(active, mul(v, vel), 0);
-          mix = add(mix, contrib);
+          const contrib = select(active, v.mul(vel), 0);
+          mix = mix.add(contrib);
           // advance position; deactivate when done
-          padPos[p]!.store(select(active, add(pos, 1), pos));
+          padPos[p]!.store(select(active, pos.add(1), pos));
           padGate[p]!.store(select(active, gate, false));
         }
-        const sig = mul(mix, masterVol.at(i));
+        const sig = mix.mul(masterVol.at(i));
         out.left.set(i, sig);
         out.right.set(i, sig);
       });

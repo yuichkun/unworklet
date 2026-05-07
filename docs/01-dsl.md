@@ -205,6 +205,51 @@ Authoritative rationale and rejected alternatives: see `decisions-log.md` Q6 (de
      type conversions (f32/f64/i32/i64).
      Q17 (math precision: default vs `/precise` vs `/table` import paths). Lands here. -->
 
+### 2.1 Free-function and chain-method dual surface
+
+Every binary / unary primitive is exposed two ways that produce identical
+captured ASTs: as a free function (`add(a, b)`, `mul(a, b)`, …) and as a
+chain method on the result type (`a.add(b)`, `a.mul(b)`, …). Both compile
+to the same `arith` AST node and the same WASM instruction; pick whichever
+reads better per line.
+
+```typescript
+// chain — DSP-flow order
+const y = main.left.at(i).sub(z.load()).mul(k).add(z.load());
+
+// free function — equivalent
+const y = add(z.load(), mul(k, sub(main.left.at(i), z.load())));
+```
+
+Per-type method surface: scalar `Node<T>` carries `add`/`sub`/`mul`/`div`/
+`mod`/`neg`/`min`/`max`/`abs`/`clamp`, comparison `eq`/`ne`/`lt`/`gt`/
+`lte`/`gte`, type conversion `toF32`/`toF64`/`toI32`/`toI64`. Float
+scalars (`f32`/`f64`) additionally carry `sin`/`cos`/`tan`/`tanh`/`exp`/
+`log`/`sqrt`/`floor`/`ceil`/`frac`. `Node<'bool'>` carries `eq`/`ne`
+only. SIMD `Node<'f32x4'>` carries `add`/`sub`/`mul`/`div` (lane-wise)
+plus the existing `lane(0..3)`.
+
+`select(cond, ifTrue, ifFalse)` and `flushDenormals(x)` are explicitly
+**not** methodized — `select` is 3-arg with no natural receiver, and
+`flushDenormals` is a guard / treatment, not a math op. Both stay free
+functions only.
+
+### 2.2 `num(v)` — chain-entry helper for literals
+
+JS literals can't have methods (`1.sub(m)` is a parse error). `num(v)`
+lifts a JS number / boolean into a graph node so chains can start from a
+literal:
+
+```typescript
+// (1 - mix) × dry + mix × wet
+const y = num(1).sub(mix).mul(dry).add(mix.mul(wet));
+```
+
+Numbers default to `f32`; booleans become `bool`. For type-explicit
+literal lifting (when you specifically need `f64` / `i32` / `i64`) use
+the existing type-conversion helpers `f32(1)` / `f64(1)` / `i32(1)` /
+`i64(1)` directly.
+
 ## 3. State, buffer, param declarations
 
 The three primitive declaration kinds — scalar `state`, fixed-size `buffer`, and `AudioParam`-backed `param` — are the only places where new memory slots enter the graph. Each declaration accepts an optional `name` field for snapshot identity (see §8.1) and an optional `snapshot` field controlling persistence behavior (see §8.2).

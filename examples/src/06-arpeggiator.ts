@@ -7,12 +7,8 @@ import {
   midiOutput,
   message,
   event,
-  add,
-  mod,
-  eq,
-  gt,
+  num,
   select,
-  mul,
   type Node,
 } from "@unworklet/core";
 
@@ -55,19 +51,19 @@ export const arpeggiator = defineProcessor((ctx) => {
       });
 
       forSample((i) => {
-        out.set(0, i, mul(0, 0));
+        out.set(0, i, num(0));
 
-        const acc = add(sampleAccum.load(), 1);
-        const roll = gt(acc, samplesPerStep.load());
+        const acc = sampleAccum.load().add(1);
+        const roll = acc.gt(samplesPerStep.load());
         sampleAccum.store(select(roll, 0, acc));
 
-        const nextStep = mod(add(stepIdx.load(), 1), PATTERN_LEN);
+        const nextStep = stepIdx.load().add(1).mod(PATTERN_LEN);
 
         let offset: Node<"i32"> = pattern[0]!.load();
         for (let s = 1; s < PATTERN_LEN; s++) {
-          offset = select(eq(nextStep, s), pattern[s]!.load(), offset);
+          offset = select(nextStep.eq(s), pattern[s]!.load(), offset);
         }
-        const fireNote = add(rootNote.load(), offset);
+        const fireNote = rootNote.load().add(offset);
 
         midiOut.emitIf(roll, {
           type: "noteOn",

@@ -1,7 +1,7 @@
 <script setup>
 const tryItCode0 = `import {
   defineProcessor, audioInput, audioOutput, param, state, forSample,
-  add, sub, mul, flushDenormals,
+  flushDenormals,
 } from "@unworklet/core";
 
 export const onePoleLP = defineProcessor(() => {
@@ -19,12 +19,12 @@ export const onePoleLP = defineProcessor(() => {
     process: () => {
       const k = cutoff.at(0);
       forSample((i) => {
-        // L
-        const yL = flushDenormals(add(lpL.load(), mul(k, sub(main.left.at(i), lpL.load()))));
+        // y = lp + k × (input − lp)  — chain reads in DSP-flow order
+        const yL = flushDenormals(lpL.load().add(k.mul(main.left.at(i).sub(lpL.load()))));
         lpL.store(yL);
         out.left.set(i, yL);
-        // R
-        const yR = flushDenormals(add(lpR.load(), mul(k, sub(main.right.at(i), lpR.load()))));
+
+        const yR = flushDenormals(lpR.load().add(k.mul(main.right.at(i).sub(lpR.load()))));
         lpR.store(yR);
         out.right.set(i, yR);
       });
@@ -49,7 +49,7 @@ Single-state IIR. Cheapest filter shape that still tracks signal envelopes meani
 If you want a real cutoff in Hz, the standard mapping is:
 
 ```ts
-const k = sub(1, exp(div(-2 * Math.PI * fc, ctx.sampleRate)));
+const k = num(1).sub(fc.mul(-2 * Math.PI / ctx.sampleRate).exp());
 ```
 
-where `fc` is the cutoff frequency in Hz.
+where `fc` is the cutoff frequency in Hz. (`num()` lifts the literal `1` so the chain can start with it.)

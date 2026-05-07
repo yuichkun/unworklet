@@ -33,7 +33,7 @@ features:
 
 <script setup>
 const helloCode = `import {
-  defineProcessor, audioInput, audioOutput, param, forSample, mul,
+  defineProcessor, audioInput, audioOutput, param, forSample,
 } from "@unworklet/core";
 
 export const helloGain = defineProcessor(() => {
@@ -45,8 +45,10 @@ export const helloGain = defineProcessor(() => {
     process: () => {
       forSample((i) => {
         const g = gain.at(i);
-        out.left.set(i,  mul(main.left.at(i),  g));
-        out.right.set(i, mul(main.right.at(i), g));
+        // Chain methods read in DSP-flow order:
+        // "take left input at sample i, multiply by gain, write to out.left."
+        out.left.set(i,  main.left.at(i).mul(g));
+        out.right.set(i, main.right.at(i).mul(g));
       });
     },
   };

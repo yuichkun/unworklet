@@ -6,13 +6,7 @@ import {
   param,
   state,
   forSample,
-  add,
-  sub,
-  mul,
-  div,
-  sin,
-  cos,
-  exp,
+  num,
   type Node,
   type State,
 } from "@unworklet/core";
@@ -28,9 +22,9 @@ function biquadDFIIT(
   z1: State<"f32">,
   z2: State<"f32">,
 ): Node<"f32"> {
-  const y = add(mul(b0, x), z1.load());
-  const z1n = sub(add(mul(b1, x), z2.load()), mul(a1, y));
-  const z2n = sub(mul(b2, x), mul(a2, y));
+  const y = b0.mul(x).add(z1.load());
+  const z1n = b1.mul(x).add(z2.load()).sub(a1.mul(y));
+  const z2n = b2.mul(x).sub(a2.mul(y));
   z1.store(z1n);
   z2.store(z2n);
   return y;
@@ -49,26 +43,28 @@ function peakingCoeffs(
   a1: Node<"f32">;
   a2: Node<"f32">;
 } {
-  const A = exp(mul(gainDb, 0.05 * Math.LN10));
-  const w0 = mul(freq, (2 * Math.PI) / sr);
-  const cosw0 = cos(w0);
-  const sinw0 = sin(w0);
-  const alpha = div(sinw0, mul(q, 2));
+  const A = gainDb.mul(0.05 * Math.LN10).exp();
+  const w0 = freq.mul((2 * Math.PI) / sr);
+  const cosw0 = w0.cos();
+  const sinw0 = w0.sin();
+  const alpha = sinw0.div(q.mul(2));
 
-  const b0Raw = add(1, mul(alpha, A));
-  const b1Raw = mul(-2, cosw0);
-  const b2Raw = sub(1, mul(alpha, A));
-  const a0Raw = add(1, div(alpha, A));
-  const a1Raw = mul(-2, cosw0);
-  const a2Raw = sub(1, div(alpha, A));
+  const alphaA = alpha.mul(A);
+  const alphaOverA = alpha.div(A);
+  const b0Raw = num(1).add(alphaA);
+  const b1Raw = cosw0.mul(-2);
+  const b2Raw = num(1).sub(alphaA);
+  const a0Raw = num(1).add(alphaOverA);
+  const a1Raw = cosw0.mul(-2);
+  const a2Raw = num(1).sub(alphaOverA);
 
-  const inv = div(1, a0Raw);
+  const inv = num(1).div(a0Raw);
   return {
-    b0: mul(b0Raw, inv),
-    b1: mul(b1Raw, inv),
-    b2: mul(b2Raw, inv),
-    a1: mul(a1Raw, inv),
-    a2: mul(a2Raw, inv),
+    b0: b0Raw.mul(inv),
+    b1: b1Raw.mul(inv),
+    b2: b2Raw.mul(inv),
+    a1: a1Raw.mul(inv),
+    a2: a2Raw.mul(inv),
   };
 }
 

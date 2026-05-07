@@ -1,13 +1,14 @@
 <script setup>
 const tryItCode0 = `import {
   defineProcessor, defineSubgraph, audioInput, audioOutput, param, state,
-  forSample, add, sub, mul, tanh, flushDenormals,
+  forSample, flushDenormals,
 } from "@unworklet/core";
 
 const channel = defineSubgraph((x, k, drive) => {
   const lp = state.f32(0);
-  const driven = tanh(mul(x, drive));
-  const out = flushDenormals(add(lp.load(), mul(k, sub(driven, lp.load()))));
+  // tanh saturate, then one-pole LP (read in DSP-flow order).
+  const driven = x.mul(drive).tanh();
+  const out = flushDenormals(lp.load().add(k.mul(driven.sub(lp.load()))));
   lp.store(out);
   return out;
 });
