@@ -101,6 +101,8 @@ async function ensureCtx(): Promise<AudioContext> {
   return audioContext;
 }
 
+let runCounter = 0;
+
 async function run() {
   if (!editor) return;
   await stop();
@@ -114,7 +116,12 @@ async function run() {
   try {
     const ctx = await ensureCtx();
     const { createWasmNode } = await import("@unworklet/worklet");
-    const n = await createWasmNode(ctx, result.processor, result.processorName);
+    // AudioWorkletGlobalScope.registerProcessor refuses to redefine a
+    // name that's already been registered. To make Run-after-edit work,
+    // every run gets a unique processor name. Without this, the second
+    // Run silently re-uses the previous processor's compiled WASM.
+    const uniqueName = `${result.processorName}_v${++runCounter}_${Date.now().toString(36)}`;
+    const n = await createWasmNode(ctx, result.processor, uniqueName);
     node.value = n;
     const list: Array<{ name: string; min: number; max: number; default: number; current: number }> = [];
     for (const [name, ap] of Object.entries(n.params)) {
