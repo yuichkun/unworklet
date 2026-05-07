@@ -1,19 +1,21 @@
 <script setup>
 const tryItCode0 = `import {
-  defineProcessor, audioInput, audioOutput, param, forSample,
+  defineProcessor, audioOutput, param, state, forSample,
 } from "@unworklet/core";
 
-export const gain = defineProcessor(() => {
-  const main = audioInput({ channels: 2, name: "main" });
-  const out = audioOutput({ channels: 2, name: "main" });
-  const g = param({ name: "gain", default: 0.5, min: 0, max: 2, automationRate: "a-rate" });
+export const helloSine = defineProcessor((ctx) => {
+  const out = audioOutput({ channels: 1, name: "main" });
+  const freq = param({ name: "freq", default: 220, min: 55, max: 1760, automationRate: "k-rate" });
+  const phase = state.f32(0, { name: "phase" });
+  const TWO_PI = 2 * Math.PI;
 
   return {
     process: () => {
+      const inc = freq.at(0).mul(TWO_PI / ctx.sampleRate);
       forSample((i) => {
-        const gain = g.at(i);
-        out.left.set(i,  main.left.at(i).mul(gain));
-        out.right.set(i, main.right.at(i).mul(gain));
+        const next = phase.load().add(inc).mod(TWO_PI);
+        phase.store(next);
+        out.set(0, i, next.sin().mul(0.5));
       });
     },
   };
@@ -72,38 +74,42 @@ export default defineConfig({
 });
 ```
 
-## Hello, gain
+## Hello, sine wave
 
-Try the canonical hello-world. **Hit Run** below — your code, your browser, real WASM in a real AudioWorklet:
+Try a complete synthesiser. **Hit Run** below — your code, your browser, real WASM in a real AudioWorklet:
 
-<TryIt label="quickstart" :code="tryItCode0" />
+<TryIt label="quickstart" :code="tryItCode0" source="silent" />
 
 In a real app you'd boot it like this:
 
 ```ts
 import { createWasmNode } from "@unworklet/worklet";
-import { gain } from "./my-processor";
+import { helloSine } from "./my-processor";
 
 const ctx = new AudioContext();
-const node = await createWasmNode(ctx, gain, "gain");
-
-// Connect a source
-const osc = ctx.createOscillator();
-osc.connect(node.inputs.main.node, 0, 0);
-osc.start();
+const node = await createWasmNode(ctx, helloSine, "helloSine");
 
 // Connect to speakers
 node.outputs.main.connect(ctx.destination);
 
-// Drive the param
-node.params.gain.value = 0.8;
+// Drive the freq param — it's a real AudioParam, automation works.
+node.params.freq.setValueAtTime(440, ctx.currentTime);
+node.params.freq.linearRampToValueAtTime(880, ctx.currentTime + 2);
 ```
 
 That's it. No `AudioWorkletProcessor` subclass. No `addModule()`. No `postMessage`. The `createWasmNode` helper compiles the processor to WASM, installs the worklet module, and returns a node-shaped object you connect like any other Web Audio node.
 
 ## What's next
 
-- [Your first processor (5-min walkthrough)](/guide/your-first-processor) — line-by-line breakdown.
+Hands-on tutorials, in order:
+
+1. **[Your first processor](/guide/your-first-processor)** — sine → freq knob → tremolo → filter. ~10 minutes, ends with a 4-knob synth voice.
+2. **[Build a synth](/guide/build-a-synth)** — detuned saws, ADSR envelope, resonant filter with envelope mod. A real instrument.
+3. **[Build a drum machine](/guide/build-a-drum)** — kick, hat, 16-step sequencer that plays itself.
+
+Then dig deeper into the building blocks:
+
 - [Audio I/O + forSample](/guide/audio-io) — the per-sample loop in detail.
-- [State + buffers](/guide/state-and-buffers) — declaring memory.
+- [State + buffers](/guide/state-and-buffers) — bigger memory: delay lines, IRs.
 - [Parameters](/guide/parameters) — `AudioParam`-backed controls.
+- [Subgraphs](/guide/subgraphs) — reusable DSP with per-instance state.

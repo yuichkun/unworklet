@@ -1,102 +1,153 @@
 <script setup>
-const tryItCode0 = `import { defineProcessor, audioInput, audioOutput, forSample } from "@unworklet/core";
+const tryItCode0 = `import {
+  defineProcessor, audioOutput, state, forSample,
+} from "@unworklet/core";
 
-export const myFirstProcessor = defineProcessor(() => {
-  // 1. Declare what flows in and out.
-  const main = audioInput({ channels: 2, name: "main" });
-  const out = audioOutput({ channels: 2, name: "main" });
+// Make a 220Hz sine wave from nothing.
+export const myFirstSound = defineProcessor((ctx) => {
+  // 1. Declare an output port. (No input — we're synthesising sound.)
+  const out = audioOutput({ channels: 1, name: "main" });
+
+  // 2. State for the oscillator phase. Persists across blocks.
+  const phase = state.f32(0, { name: "phase" });
+
+  // 3. Phase increment per sample to hit 220 Hz at this sample rate:
+  //    inc = 2π × frequency / sampleRate
+  const inc = 2 * Math.PI * 220 / ctx.sampleRate;
+  const TWO_PI = 2 * Math.PI;
 
   return {
-    // 2. The process phase: runs once per render block (128 samples).
     process: () => {
-      // 3. Per-sample loop: runs 128 times per block, captured as a tight WASM loop.
       forSample((i) => {
-        // .left / .right are stereo shorthand for .at(0, i) / .at(1, i).
-        // Available whenever channels === 2.
-        out.left.set(i,  main.left.at(i));
-        out.right.set(i, main.right.at(i));
+        // Advance phase, wrap at 2π via modulo so it doesn't drift to
+        // infinity. .mod(b) reads as "this modulo b" — DSP-flow order.
+        const next = phase.load().add(inc).mod(TWO_PI);
+        phase.store(next);
+
+        // Output sin(phase) at half amplitude so it doesn't clip.
+        out.set(0, i, next.sin().mul(0.5));
       });
     },
   };
 });
 `;
-const tryItCode1 = `import { defineProcessor, audioInput, audioOutput, param, forSample } from "@unworklet/core";
+const tryItCode1 = `import {
+  defineProcessor, audioOutput, param, state, forSample, num, select,
+} from "@unworklet/core";
 
-export const myFirstProcessor = defineProcessor(() => {
-  const main = audioInput({ channels: 2, name: "main" });
-  const out = audioOutput({ channels: 2, name: "main" });
-  const gain = param({
-    name: "gain",
-    default: 0.5,
-    min: 0,
-    max: 2,
-    automationRate: "a-rate",
+export const tunableSine = defineProcessor((ctx) => {
+  const out = audioOutput({ channels: 1, name: "main" });
+  const freq = param({
+    name: "freq", default: 220, min: 55, max: 1760, automationRate: "k-rate",
+  });
+  const phase = state.f32(0, { name: "phase" });
+  const TWO_PI = 2 * Math.PI;
+
+  return {
+    process: () => {
+      // freq.at(0) is the current k-rate value. Scale to phase increment.
+      const inc = freq.at(0).mul(TWO_PI / ctx.sampleRate);
+      forSample((i) => {
+        const next = phase.load().add(inc);
+        phase.store(select(next.gte(TWO_PI), next.sub(TWO_PI), next));
+        out.set(0, i, phase.load().sin().mul(0.5));
+      });
+    },
+  };
+});
+`;
+const tryItCode2 = `import {
+  defineProcessor, audioOutput, param, state, forSample, num, select,
+} from "@unworklet/core";
+
+// Sine voice with a tremolo (LFO-modulated amplitude).
+export const tremoloSine = defineProcessor((ctx) => {
+  const out = audioOutput({ channels: 1, name: "main" });
+  const freq = param({
+    name: "freq", default: 220, min: 55, max: 1760, automationRate: "k-rate",
+  });
+  const tremRateHz = param({
+    name: "tremRate", default: 5, min: 0.1, max: 20, automationRate: "k-rate",
+  });
+  const tremDepth = param({
+    name: "tremDepth", default: 0.6, min: 0, max: 1, automationRate: "k-rate",
   });
 
-  return {
-    process: () => {
-      forSample((i) => {
-        const g = gain.at(i);
-        // Chain methods — read in DSP-flow order (input → operation → out).
-        out.left.set(i,  main.left.at(i).mul(g));
-        out.right.set(i, main.right.at(i).mul(g));
-      });
-    },
-  };
-});
-`;
-const tryItCode2 = `import { defineProcessor, audioInput, audioOutput, param, state, forSample } from "@unworklet/core";
-
-export const myFirstProcessor = defineProcessor(() => {
-  const main = audioInput({ channels: 2, name: "main" });
-  const out = audioOutput({ channels: 2, name: "main" });
-  const gain = param({ name: "gain", default: 0.5, min: 0, max: 2, automationRate: "a-rate" });
-
-  const peak = state.f32(0, { name: "peak", publish: { rateFps: 30 } });
+  // Two oscillator phases — one for the carrier (the audible tone), one
+  // for the LFO (slow, sub-audio rate).
+  const phase = state.f32(0, { name: "phase" });
+  const lfoPhase = state.f32(0, { name: "lfoPhase" });
+  const TWO_PI = 2 * Math.PI;
 
   return {
     process: () => {
+      const inc = freq.at(0).mul(TWO_PI / ctx.sampleRate);
+      const lfoInc = tremRateHz.at(0).mul(TWO_PI / ctx.sampleRate);
+      const depth = tremDepth.at(0);
+
       forSample((i) => {
-        const g = gain.at(i);
-        const lOut = main.left.at(i).mul(g);
-        const rOut = main.right.at(i).mul(g);
-        out.left.set(i,  lOut);
-        out.right.set(i, rOut);
-        // Track peak across the block. The publish: { rateFps: 30 }
-        // option means main-thread subscribers see this slot at 30 fps.
-        peak.store(peak.load().max(lOut.abs().max(rOut.abs())));
+        // Advance both phases.
+        const p = phase.load().add(inc);
+        phase.store(select(p.gte(TWO_PI), p.sub(TWO_PI), p));
+        const lp = lfoPhase.load().add(lfoInc);
+        lfoPhase.store(select(lp.gte(TWO_PI), lp.sub(TWO_PI), lp));
+
+        // tremolo gain = 1 - depth × (1 - sin(lfo))/2  → ranges (1-depth) … 1
+        const tremGain = num(1).sub(depth.mul(num(1).sub(lp.sin()).mul(0.5)));
+        out.set(0, i, p.sin().mul(0.5).mul(tremGain));
       });
-      // Decay the meter so it falls back to 0 between hits.
-      // Runs at block boundary, not per sample.
     },
   };
 });
 `;
 const tryItCode3 = `import {
-  defineProcessor, defineSubgraph, audioInput, audioOutput, param, state,
-  forSample,
+  defineProcessor, audioOutput, param, state, forSample, num, select, flushDenormals,
 } from "@unworklet/core";
 
-// L1 / L2 split: pure helpers compose; subgraphs own state + per-instance memory.
-const oneChannel = defineSubgraph((x, gain, alpha) => {
-  const env = state.f32(0);
-  // env = env + alpha * (|x| - env)  — one-pole envelope, in flow order.
-  const e = env.load().add(alpha.mul(x.abs().sub(env.load())));
-  env.store(e);
-  return x.mul(gain);
-});
+// Sine + tremolo + one-pole low-pass for tone control.
+export const fullSynthVoice = defineProcessor((ctx) => {
+  const out = audioOutput({ channels: 1, name: "main" });
+  const freq = param({
+    name: "freq", default: 220, min: 55, max: 1760, automationRate: "k-rate",
+  });
+  const tremRateHz = param({
+    name: "tremRate", default: 4, min: 0.1, max: 20, automationRate: "k-rate",
+  });
+  const tremDepth = param({
+    name: "tremDepth", default: 0.5, min: 0, max: 1, automationRate: "k-rate",
+  });
+  const cutoff = param({
+    name: "cutoff", default: 0.5, min: 0.01, max: 0.999, automationRate: "k-rate",
+  });
 
-export const stereoGainPlusEnv = defineProcessor(() => {
-  const main = audioInput({ channels: 2, name: "main" });
-  const out = audioOutput({ channels: 2, name: "main" });
-  const gain = param({ name: "gain", default: 0.7, min: 0, max: 2, automationRate: "a-rate" });
+  const phase = state.f32(0, { name: "phase" });
+  const lfoPhase = state.f32(0, { name: "lfoPhase" });
+  const lp = state.f32(0, { name: "lp" });
+  const TWO_PI = 2 * Math.PI;
 
   return {
     process: () => {
+      const inc = freq.at(0).mul(TWO_PI / ctx.sampleRate);
+      const lfoInc = tremRateHz.at(0).mul(TWO_PI / ctx.sampleRate);
+      const depth = tremDepth.at(0);
+      const k = cutoff.at(0);
+
       forSample((i) => {
-        const g = gain.at(i);
-        out.left.set(i,  oneChannel(main.left.at(i),  g, 0.05));
-        out.right.set(i, oneChannel(main.right.at(i), g, 0.05));
+        const p = phase.load().add(inc);
+        phase.store(select(p.gte(TWO_PI), p.sub(TWO_PI), p));
+        const lpP = lfoPhase.load().add(lfoInc);
+        lfoPhase.store(select(lpP.gte(TWO_PI), lpP.sub(TWO_PI), lpP));
+
+        // Carrier × tremolo
+        const dry = p.sin().mul(0.5);
+        const tremGain = num(1).sub(depth.mul(num(1).sub(lpP.sin()).mul(0.5)));
+        const wet = dry.mul(tremGain);
+
+        // One-pole LP:  y = y₋₁ + k × (x - y₋₁)
+        const filtered = flushDenormals(lp.load().add(k.mul(wet.sub(lp.load()))));
+        lp.store(filtered);
+
+        out.set(0, i, filtered);
       });
     },
   };
@@ -104,75 +155,109 @@ export const stereoGainPlusEnv = defineProcessor(() => {
 `;
 </script>
 
-# Your first processor
+# Your first processor — make a sine wave
 
-This walkthrough builds a stereo gain + meter — small enough to read in five minutes, real enough to ship.
+This walkthrough builds a synth voice from nothing — first a pure sine wave, then frequency control, then tremolo, then a tone-shaping filter. By the end you'll have a four-knob instrument you can play with the sliders.
 
-## 1. The body
+Every block below is a real processor: hit **Run**, hear sound, drag the sliders, watch the meter, edit the code, hit **Run** again. Real WASM, real `AudioWorkletProcessor`, no faking.
 
-A processor is a single `defineProcessor` call. Its body is **captured** once at compile time: every primitive call records an AST node, and the framework lowers that AST to WASM.
+## 1. Hello, sine wave
 
-<TryIt label="step 1: skeleton" size="tall" :code="tryItCode0" />
+The simplest way to make a sound is to advance a phase, take its sine, and push the result to the output. That's it — three operations per sample.
 
-Pass-through. The `forSample` callback runs at WASM speed — there is no JS function-call overhead per sample. The capture machinery records what you wrote in the body and emits it as a single WASM loop.
+<TryIt label="step 1: 220 Hz sine" size="tall" :code="tryItCode0" source="silent" />
 
-## 2. Add a parameter
+Hit Run. You should hear a clean 220 Hz tone (an A3, just below middle C). Walk through the body line by line:
 
-`param({ ... })` returns a handle whose `.at(i)` reads the current value at sample `i`. `automationRate: "a-rate"` means the param can change every sample (Web Audio AudioParam scheduling). `"k-rate"` is per-block.
+- **`audioOutput({ channels: 1, name: "main" })`** — declares one mono output port. `name: "main"` is the key the host uses (`node.outputs.main`); a synth voice typically only has outputs.
+- **`state.f32(0, { name: "phase" })`** — a single 32-bit float in linear memory, initialised to zero. State persists across `process()` calls — that's how the oscillator remembers where it was.
+- **`forSample((i) => …)`** — runs the body once for each sample in the render block (128 by default). The `i` is the per-sample index, a graph node, not a JS integer.
+- **`phase.load().add(inc)`** — chain methods read in the order operations happen: load the current phase, add the per-sample increment, get the new phase.
+- **`select(next.gte(TWO_PI), next.sub(TWO_PI), next)`** — branchless ternary. JS `?:` can't operate on graph nodes; `select` lowers to a single WASM `select` instruction.
+- **`phase.load().sin().mul(0.5)`** — read the (just-stored) phase, take sine, halve the amplitude so the output stays in `[-0.5, 0.5]` and doesn't clip.
 
-<TryIt label="step 2: gain" size="tall" :code="tryItCode1" />
+::: tip Why the `select` instead of `if`?
+Inside a captured `forSample` body, every value is a graph node — JS branching never sees the runtime values, and `next > TWO_PI` would always evaluate truthy at capture time (graph nodes are objects). `select(cond, a, b)` is the unworklet equivalent of a branchless ternary; the WASM compiler emits a single `select` instruction.
 
-The Run button gives you a slider for **gain**. It's a real `AudioParam` — connect oscillators or LFOs to it and they'll drive it sample-accurately.
-
-::: warning JS operators on graph nodes
-Inside the captured body, `main.left.at(i)` and `gain.at(i)` are graph nodes (AST handles), not numbers. Use the chain methods — `.mul(b)`, `.add(b)`, `.sub(b)`, `.div(b)` — or the named free helpers `mul(a, b)`, `add(a, b)`, etc. instead of `*`, `+`, `-`, `/`. The framework throws a clear error if you forget; it doesn't silently produce NaN.
-
-```ts
-main.left.at(i).mul(gain.at(i)) // ✓ chain method
-mul(main.left.at(i), gain.at(i)) // ✓ free function (equivalent)
-main.left.at(i) * gain.at(i)    // ✗ throws
-```
+The framework throws a clear error with a refactor hint if you forget — try replacing the `select` line with a JS `?:` and hit Run.
 :::
 
-## 3. Add state
+## 2. Add a frequency knob
 
-`state.f32(initial)` declares a single 32-bit float slot in linear memory. `.load()` reads it, `.store(v)` writes it. State persists across `process()` calls — the foundation of every IIR filter, envelope, oscillator phase, etc.
+The 220 Hz constant is built into the code. Let's expose it as an `AudioParam` so the host can drag it.
 
-This adds a peak meter:
+<TryIt label="step 2: tunable sine" size="tall" :code="tryItCode1" source="silent" />
 
-<TryIt label="step 3: state + max" size="tall" :code="tryItCode2" />
+Hit Run, then drag the **freq** slider. The pitch slides smoothly because `param` is a real `AudioParam` — the host's automation lane handles the smoothing for free. Try `setValueAtTime` from the main thread, connect an `OscillatorNode` to it as an LFO, hook it up to a knob in your UI: it all just works because `node.params.freq` is the same `AudioParam` you'd get from `OscillatorNode.frequency`.
 
-In a real app you'd subscribe to the meter:
+::: tip a-rate vs k-rate
+`automationRate: "k-rate"` means the param is a single value per render block (128 samples). For a frequency that changes maybe a few times a second, that's fine. For a vibrato target or a per-sample envelope, use `"a-rate"` and read with `freq.at(i)` instead of `freq.at(0)`. See [Parameters](./parameters).
+:::
 
-```ts
-const node = await createWasmNode(ctx, myFirstProcessor, "myFirstProcessor");
-node.state.peak.subscribe((v) => {
-  meterEl.style.width = `${Math.min(100, v * 100)}%`;
-});
+## 3. Add tremolo (an LFO)
+
+A pure sine is mathematically perfect and musically boring. Let's modulate its amplitude with a slower sine — a low-frequency oscillator. Two phase accumulators, one fast (the carrier), one slow (the LFO).
+
+<TryIt label="step 3: tremolo" size="tall" :code="tryItCode2" source="silent" />
+
+The new bits:
+
+- A second `state.f32` for the LFO phase, advancing at sub-audio rates (default 5 Hz).
+- The amplitude is multiplied by `1 - depth × (1 - sin(lfo))/2`, which oscillates between `1 - depth` and `1`. At `depth = 0` the modulation is zero (constant amplitude); at `depth = 1` the amplitude swings all the way to silence on each LFO peak.
+
+Drag **tremRate** and **tremDepth** while it plays. Crank tremRate to ~15 Hz for a "vintage tremolo pedal" effect; bring it below 1 Hz for a slow swell.
+
+::: tip This is how every classic effect is built
+LFO-modulated amplitude → tremolo. LFO-modulated pitch → vibrato. LFO-modulated delay-time → chorus / flanger. LFO-modulated filter cutoff → wah / auto-filter. The pattern is identical — only the *target* changes.
+:::
+
+## 4. Add a tone control (one-pole LP)
+
+The sine has only one frequency component, but tremolo introduces small amplitude transients that benefit from a soft low-pass. More importantly, this is the simplest filter you'll ever build, and you'll use it everywhere.
+
+The math:
+
+```
+y[n] = y[n-1] + k × (x[n] - y[n-1])
 ```
 
-The framework drains the slot on the audio thread, bumps a per-slot version counter via `Atomics.add`, and the host observes via `Atomics.load`. No `postMessage` per sample.
+`k ∈ (0, 1)`. Smaller k → slower response, more low-pass cut. Larger k → closer to passthrough.
 
-## 4. Two-channel decoupling with subgraphs
+<TryIt label="step 4: full voice" size="tall" :code="tryItCode3" source="silent" />
 
-When the same DSP applies to both channels, factor it into a [`defineSubgraph`](./subgraphs):
+You now have a four-knob synth voice:
+- **freq** — pitch
+- **tremRate** — modulation speed
+- **tremDepth** — modulation amount
+- **cutoff** — tone (close it for "warm", open it for "bright")
 
-<TryIt label="step 4: subgraph" size="tall" :code="tryItCode3" />
+Drag them while it plays. Try freq = 110 + cutoff = 0.05 + tremRate = 2 + tremDepth = 0.7 — that's a slow ambient drone.
 
-Each call site of `oneChannel` gets its own `env` state slot — the framework allocates per-instance, so the L and R channels keep independent envelopes.
+The new line worth noting:
+
+```ts
+const filtered = flushDenormals(lp.load().add(k.mul(wet.sub(lp.load()))));
+```
+
+`flushDenormals(x)` zeros out values smaller than 1e-30. When the input goes silent, the filter state would otherwise decay through subnormal floats, and on x86 CPUs without FTZ enabled by default, subnormal arithmetic is *catastrophically* slow — slow enough to cause audio glitches. See [Denormals](./denormals) for the gritty detail.
 
 ## What you've learned
 
 - `defineProcessor` is the entry point.
-- Audio I/O comes through `audioInput`/`audioOutput`.
-- Per-sample work goes inside `forSample`.
-- `state.<type>` declares persistent slots.
-- `param` exposes a Web Audio `AudioParam`.
-- `state.publish` makes a slot visible to the main thread at a rate-limited tick.
-- `defineSubgraph` factors reusable DSP — each call site gets independent state.
+- Sound comes out of `audioOutput`. (No input needed for synthesis.)
+- `state.<type>` is your persistent memory — oscillator phases, filter state, envelope levels.
+- `param` exposes a real Web Audio `AudioParam`. Drag it from the host, connect LFOs to it, schedule automation curves on it.
+- `forSample((i) => …)` is the per-sample loop, captured into a tight WASM block.
+- Chain methods (`.add`, `.mul`, `.sin`, …) read in DSP-flow order. Free functions (`add`, `mul`, …) are equivalent.
+- `select(cond, a, b)` is branchless ternary on graph nodes.
+- `flushDenormals(x)` keeps feedback paths alive on x86 CPUs.
 
 ## Next
 
-- [Audio I/O + forSample](./audio-io) — channel up/down-mixing, sample-position semantics.
-- [State + buffers](./state-and-buffers) — multi-byte slots, fixed-size arrays.
-- [Parameters](./parameters) — a-rate vs k-rate, automation lanes.
+You've built a synth voice. Now make it polyphonic and sequenced:
+
+- [Build a synth](./build-a-synth) — ADSR envelope, resonant filter, MIDI input. ~50 lines for a real instrument.
+- [Build a drum machine](./build-a-drum) — kick from a sine, hi-hat from filtered noise, 16-step sequencer.
+- [Audio I/O](./audio-io) — how to take audio *in* (effects processors).
+- [State + buffers](./state-and-buffers) — bigger memory: delay lines, sample buffers, IRs.
+- [Subgraphs](./subgraphs) — factor out reusable DSP pieces and let the framework give each instance its own state.

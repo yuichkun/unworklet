@@ -14,6 +14,8 @@ const PAGES = [
   "/", // landing — has the hello TryIt
   "/guide/getting-started.html",
   "/guide/your-first-processor.html",
+  "/guide/build-a-synth.html",
+  "/guide/build-a-drum.html",
   "/guide/audio-io.html",
   "/guide/state-and-buffers.html",
   "/guide/parameters.html",

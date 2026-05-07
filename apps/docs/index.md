@@ -7,11 +7,14 @@ hero:
   tagline: Write declarative DSP in pure TS. Compile to WASM with SIMD. No glue code, no AudioWorkletProcessor boilerplate, no postMessage marshalling.
   actions:
     - theme: brand
-      text: Get started
-      link: /guide/getting-started
-    - theme: alt
-      text: First processor (5 min)
+      text: Make your first sound
       link: /guide/your-first-processor
+    - theme: alt
+      text: Build a synth
+      link: /guide/build-a-synth
+    - theme: alt
+      text: Build a drum machine
+      link: /guide/build-a-drum
     - theme: alt
       text: Why unworklet
       link: /guide/why
@@ -33,22 +36,24 @@ features:
 
 <script setup>
 const helloCode = `import {
-  defineProcessor, audioInput, audioOutput, param, forSample,
+  defineProcessor, audioOutput, param, state, forSample,
 } from "@unworklet/core";
 
-export const helloGain = defineProcessor(() => {
-  const main = audioInput({ channels: 2, name: "main" });
-  const out = audioOutput({ channels: 2, name: "main" });
-  const gain = param({ name: "gain", default: 0.5, min: 0, max: 1, automationRate: "a-rate" });
+// A 220Hz sine wave with a tunable frequency knob.
+// 4 lines of DSP, real WASM, real AudioWorkletNode.
+export const hello = defineProcessor((ctx) => {
+  const out = audioOutput({ channels: 1, name: "main" });
+  const freq = param({ name: "freq", default: 220, min: 55, max: 1760, automationRate: "k-rate" });
+  const phase = state.f32(0, { name: "phase" });
+  const TWO_PI = 2 * Math.PI;
 
   return {
     process: () => {
+      const inc = freq.at(0).mul(TWO_PI / ctx.sampleRate);
       forSample((i) => {
-        const g = gain.at(i);
-        // Chain methods read in DSP-flow order:
-        // "take left input at sample i, multiply by gain, write to out.left."
-        out.left.set(i,  main.left.at(i).mul(g));
-        out.right.set(i, main.right.at(i).mul(g));
+        const next = phase.load().add(inc).mod(TWO_PI);
+        phase.store(next);
+        out.set(0, i, next.sin().mul(0.5));
       });
     },
   };
@@ -56,10 +61,12 @@ export const helloGain = defineProcessor(() => {
 `;
 </script>
 
-## Hello, processor
+## Hello, sine wave
 
-Real, live, in-browser. Hit Run.
+Real, live, in-browser. Hit Run, drag the slider.
 
-<TryIt label="hello" :code="helloCode" />
+<TryIt label="hello" :code="helloCode" source="silent" />
 
-The code above is captured by the compiler, lowered to a real WASM binary, and instantiated inside a real AudioWorkletNode. Hit **Run** to hear it. Drag the **gain** slider while it plays. The slider is wired to a real `AudioParam` — same as Web Audio's built-in nodes.
+That's a complete synthesiser: an oscillator with a frequency knob, real `AudioWorkletNode`, real WASM. The compiler captures the body, lowers it through binaryen.js to a WASM module with f32x4 SIMD where it helps, and instantiates it on the audio thread. The slider is a real `AudioParam` — drag it, draw automation curves on it, connect oscillators to it as an LFO, just like every built-in Web Audio node.
+
+Ready to build something? **Make your first sound** walks through this from scratch (~10 minutes) and gets you to a four-knob synth voice. From there, **Build a synth** adds ADSR + resonant filter; **Build a drum machine** layers a kick, a hat, and a 16-step sequencer.

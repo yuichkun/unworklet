@@ -64,7 +64,14 @@ export default defineConfig({
           items: [
             { text: "Why unworklet", link: "/guide/why" },
             { text: "Install + quickstart", link: "/guide/getting-started" },
-            { text: "Your first processor", link: "/guide/your-first-processor" },
+            { text: "Your first processor (sine wave)", link: "/guide/your-first-processor" },
+          ],
+        },
+        {
+          text: "Hands-on tutorials",
+          items: [
+            { text: "Build a synth", link: "/guide/build-a-synth" },
+            { text: "Build a drum machine", link: "/guide/build-a-drum" },
           ],
         },
         {
