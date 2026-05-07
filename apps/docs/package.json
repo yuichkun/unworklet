@@ -1,0 +1,23 @@
+{
+  "name": "@unworklet/docs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "vitepress build",
+    "preview": "vitepress preview"
+  },
+  "dependencies": {
+    "@unworklet/client": "workspace:*",
+    "@unworklet/compiler": "workspace:*",
+    "@unworklet/core": "workspace:*",
+    "@unworklet/dsp": "workspace:*",
+    "@unworklet/worklet": "workspace:*",
+    "monaco-editor": "^0.55.1",
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "vitepress": "^1.5.0"
+  }
+}
