@@ -1,0 +1,34 @@
+{
+  "name": "07 — Karplus-Strong (gen~)",
+  "description": "Plucked-string algorithm written inline in a gen~ node. Showcases the inline-code DSL: every unworklet symbol is in scope, no imports required.",
+  "patch": {
+    "nodes": [
+      { "id": "trig", "type": "dial", "pos": { "x": 40, "y": 30 }, "attrs": { "min": 0, "max": 1, "value": 1, "label": "excite" } },
+      { "id": "freq", "type": "dial", "pos": { "x": 200, "y": 30 }, "attrs": { "min": 80, "max": 1000, "value": 220, "label": "freq" } },
+      { "id": "decay","type": "dial", "pos": { "x": 360, "y": 30 }, "attrs": { "min": 0.7, "max": 0.999, "value": 0.985, "label": "decay" } },
+      { "id": "amp",  "type": "dial", "pos": { "x": 520, "y": 30 }, "attrs": { "min": 0, "max": 1, "value": 0.4, "label": "amp" } },
+
+      { "id": "ks", "type": "gen~", "pos": { "x": 200, "y": 180 }, "attrs": {
+        "outletCount": 1,
+        "code": "// Karplus-Strong on a 4096-sample delay buffer.\n// in1 = freq (Hz), in2 = decay (0..1), in3 = retrigger period (samples).\nconst DELAY_LEN = 4096;\nconst buf = buffer.f32({ size: DELAY_LEN, name: 'ks_buf' });\nconst head = state.i32(0, { name: 'ks_head' });\nconst seed = state.i32(0xCAFEF00D | 0, { name: 'ks_seed' });\nconst pluckCount = state.i32(0, { name: 'ks_pluck' });\nconst tickAcc = state.i32(0, { name: 'ks_tick' });\n\n// Auto-retrigger every (sr / 2) samples so the demo plays continuously.\n// Period of one full pluck-and-decay cycle ≈ 0.5 s.\nconst RETRIG = 24000;\nconst tNext = tickAcc.load().add(1);\nconst tFire = tNext.gte(i32(RETRIG));\ntickAcc.store(select(tFire, i32(0), tNext));\n\n// Period in samples, computed from in1 (Hz).\nconst period = num(48000).div(in1.max(20)).toI32();\n// On retrigger: refill `period` samples with noise.\nconst pcDec = pluckCount.load().sub(1);\nconst pcClamped = select(pcDec.gte(0), pcDec, i32(0));\npluckCount.store(select(tFire, period, pcClamped));\n\n// PRNG.\nconst r = seed.load().mul(1103515245).add(12345);\nseed.store(r);\nconst noise = r.toF32().mul(1 / 2147483648);\n\nconst h = head.load();\nconst wIdx = h.mod(DELAY_LEN);\nconst rIdx = h.sub(period).add(DELAY_LEN).mod(DELAY_LEN);\n\n// Cheap LP (avg of two neighbours), apply decay.\nconst tap = buf.read(rIdx);\nconst tapPrev = buf.read(rIdx.sub(1).add(DELAY_LEN).mod(DELAY_LEN));\nconst lp = tap.add(tapPrev).mul(0.5);\nconst fed = flushDenormals(lp.mul(in2));\n\n// Noise during the pluck window; otherwise feedback through the filter.\nconst sample = select(pluckCount.load().gt(0), noise, fed);\nbuf.write(wIdx, sample);\nhead.store(h.add(1));\n\nreturn [sample];"
+      } },
+
+      { "id": "vca",   "type": "*~",     "pos": { "x": 200, "y": 320 } },
+      { "id": "limit", "type": "limit~", "pos": { "x": 200, "y": 400 }, "args": [0.95] },
+      { "id": "meter", "type": "meter~", "pos": { "x": 200, "y": 480 } },
+      { "id": "out",   "type": "dac~",   "pos": { "x": 200, "y": 560 } }
+    ],
+    "cords": [
+      { "src": { "node": "freq",  "outlet": 0 }, "dst": { "node": "ks", "inlet": 0 } },
+      { "src": { "node": "decay", "outlet": 0 }, "dst": { "node": "ks", "inlet": 1 } },
+      { "src": { "node": "trig",  "outlet": 0 }, "dst": { "node": "ks", "inlet": 2 } },
+
+      { "src": { "node": "ks",    "outlet": 0 }, "dst": { "node": "vca", "inlet": 0 } },
+      { "src": { "node": "amp",   "outlet": 0 }, "dst": { "node": "vca", "inlet": 1 } },
+      { "src": { "node": "vca",   "outlet": 0 }, "dst": { "node": "limit", "inlet": 0 } },
+      { "src": { "node": "limit", "outlet": 0 }, "dst": { "node": "meter", "inlet": 0 } },
+      { "src": { "node": "meter", "outlet": 0 }, "dst": { "node": "out", "inlet": 0 } },
+      { "src": { "node": "meter", "outlet": 0 }, "dst": { "node": "out", "inlet": 1 } }
+    ]
+  }
+}

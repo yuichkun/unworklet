@@ -1,0 +1,39 @@
+{
+  "name": "05 — kick drum (metro-driven)",
+  "description": "metro tick → curve~ pitch decay + curve~ amp decay → cycle~ → vca → dac~. Drag the BPM dial to tempo-shift the kick.",
+  "patch": {
+    "nodes": [
+      { "id": "bpm",       "type": "dial", "pos": { "x": 40,  "y": 30 }, "attrs": { "min": 60, "max": 200, "value": 120, "label": "BPM" } },
+      { "id": "kickAmp",   "type": "dial", "pos": { "x": 200, "y": 30 }, "attrs": { "min": 0, "max": 1, "value": 0.7, "label": "amp" } },
+
+      { "id": "metro",  "type": "metro",  "pos": { "x": 40,  "y": 150 } },
+
+      { "id": "ampEnv", "type": "curve~", "pos": { "x": 40,  "y": 250 }, "args": [0, 1] },
+      { "id": "pitchEnv","type": "curve~","pos": { "x": 220, "y": 250 }, "args": [0, 5] },
+
+      { "id": "freqMix","type": "scale~", "pos": { "x": 220, "y": 350 }, "args": [0, 1, 50, 180] },
+
+      { "id": "kick",   "type": "cycle~", "pos": { "x": 220, "y": 450 } },
+      { "id": "vca",    "type": "*~",     "pos": { "x": 220, "y": 550 } },
+      { "id": "ampScale","type": "*~",    "pos": { "x": 220, "y": 650 } },
+      { "id": "limit",  "type": "limit~", "pos": { "x": 220, "y": 750 }, "args": [0.95] },
+      { "id": "meter",  "type": "meter~", "pos": { "x": 220, "y": 830 } },
+      { "id": "out",    "type": "dac~",   "pos": { "x": 220, "y": 910 } }
+    ],
+    "cords": [
+      { "src": { "node": "bpm",   "outlet": 0 }, "dst": { "node": "metro", "inlet": 0 } },
+      { "src": { "node": "metro", "outlet": 0 }, "dst": { "node": "ampEnv", "inlet": 0 } },
+      { "src": { "node": "metro", "outlet": 0 }, "dst": { "node": "pitchEnv", "inlet": 0 } },
+      { "src": { "node": "pitchEnv", "outlet": 0 }, "dst": { "node": "freqMix", "inlet": 0 } },
+      { "src": { "node": "freqMix",  "outlet": 0 }, "dst": { "node": "kick", "inlet": 0 } },
+      { "src": { "node": "kick",   "outlet": 0 }, "dst": { "node": "vca", "inlet": 0 } },
+      { "src": { "node": "ampEnv", "outlet": 0 }, "dst": { "node": "vca", "inlet": 1 } },
+      { "src": { "node": "vca",     "outlet": 0 }, "dst": { "node": "ampScale", "inlet": 0 } },
+      { "src": { "node": "kickAmp", "outlet": 0 }, "dst": { "node": "ampScale", "inlet": 1 } },
+      { "src": { "node": "ampScale", "outlet": 0 }, "dst": { "node": "limit", "inlet": 0 } },
+      { "src": { "node": "limit", "outlet": 0 }, "dst": { "node": "meter", "inlet": 0 } },
+      { "src": { "node": "meter", "outlet": 0 }, "dst": { "node": "out", "inlet": 0 } },
+      { "src": { "node": "meter", "outlet": 0 }, "dst": { "node": "out", "inlet": 1 } }
+    ]
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "name": "06 — tremolo + scope~",
+  "description": "Sine carrier × LFO modulator → scope~ → meter~ → dac~. Demonstrates the visualization nodes.",
+  "patch": {
+    "nodes": [
+      { "id": "freq",     "type": "dial", "pos": { "x": 40,  "y": 30 }, "attrs": { "min": 80, "max": 1200, "value": 220, "label": "freq" } },
+      { "id": "tremRate", "type": "dial", "pos": { "x": 200, "y": 30 }, "attrs": { "min": 0.1, "max": 20, "value": 5, "label": "trem rate" } },
+      { "id": "tremDepth","type": "dial", "pos": { "x": 360, "y": 30 }, "attrs": { "min": 0, "max": 1, "value": 0.7, "label": "trem depth" } },
+      { "id": "amp",      "type": "dial", "pos": { "x": 520, "y": 30 }, "attrs": { "min": 0, "max": 1, "value": 0.4, "label": "amp" } },
+
+      { "id": "carrier", "type": "cycle~", "pos": { "x": 40, "y": 180 } },
+      { "id": "lfo",     "type": "cycle~", "pos": { "x": 200, "y": 180 } },
+      { "id": "lfo_g",   "type": "*~",     "pos": { "x": 200, "y": 280 } },
+      { "id": "tremolo", "type": "*~",     "pos": { "x": 40,  "y": 360 } },
+      { "id": "vca",     "type": "*~",     "pos": { "x": 40,  "y": 440 } },
+      { "id": "scope",   "type": "scope~", "pos": { "x": 40,  "y": 520 } },
+      { "id": "meter",   "type": "meter~", "pos": { "x": 40,  "y": 600 } },
+      { "id": "out",     "type": "dac~",   "pos": { "x": 40,  "y": 680 } }
+    ],
+    "cords": [
+      { "src": { "node": "freq",     "outlet": 0 }, "dst": { "node": "carrier", "inlet": 0 } },
+      { "src": { "node": "tremRate", "outlet": 0 }, "dst": { "node": "lfo", "inlet": 0 } },
+      { "src": { "node": "lfo",      "outlet": 0 }, "dst": { "node": "lfo_g", "inlet": 0 } },
+      { "src": { "node": "tremDepth","outlet": 0 }, "dst": { "node": "lfo_g", "inlet": 1 } },
+
+      { "src": { "node": "carrier", "outlet": 0 }, "dst": { "node": "tremolo", "inlet": 0 } },
+      { "src": { "node": "lfo_g",   "outlet": 0 }, "dst": { "node": "tremolo", "inlet": 1 } },
+      { "src": { "node": "tremolo", "outlet": 0 }, "dst": { "node": "vca", "inlet": 0 } },
+      { "src": { "node": "amp",     "outlet": 0 }, "dst": { "node": "vca", "inlet": 1 } },
+      { "src": { "node": "vca",     "outlet": 0 }, "dst": { "node": "scope", "inlet": 0 } },
+      { "src": { "node": "scope",   "outlet": 0 }, "dst": { "node": "meter", "inlet": 0 } },
+      { "src": { "node": "meter",   "outlet": 0 }, "dst": { "node": "out", "inlet": 0 } },
+      { "src": { "node": "meter",   "outlet": 0 }, "dst": { "node": "out", "inlet": 1 } }
+    ]
+  }
+}

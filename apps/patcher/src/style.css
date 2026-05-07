@@ -1,0 +1,92 @@
+* { box-sizing: border-box; }
+html, body, #app {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  background: #1a1b1e;
+  color: #d8d9dc;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue",
+    sans-serif;
+  font-size: 13px;
+  overflow: hidden;
+}
+button {
+  font: inherit;
+  background: #2c2d31;
+  color: #d8d9dc;
+  border: 1px solid #3d3e45;
+  border-radius: 4px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+button:hover { background: #3a3b41; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.primary { background: #00d4aa; color: #111; border-color: #00d4aa; }
+button.primary:hover { background: #00f0c0; }
+button.danger { background: #d44a4a; color: #fff; border-color: #d44a4a; }
+input[type=text], input[type=number] {
+  font: inherit;
+  background: #1a1b1e;
+  color: #d8d9dc;
+  border: 1px solid #3d3e45;
+  border-radius: 3px;
+  padding: 3px 6px;
+}
+
+/* ─── patcher node frame (Max-style boxy) ────────────────────────────── */
+.node-box {
+  background: #2c2d31;
+  border: 1px solid #494a52;
+  border-radius: 3px;
+  font-family: "JetBrains Mono", "SF Mono", monospace;
+  font-size: 11px;
+  color: #d8d9dc;
+  min-width: 80px;
+  user-select: none;
+}
+.node-box .header {
+  background: #21222a;
+  padding: 2px 6px;
+  border-bottom: 1px solid #494a52;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  color: #00d4aa;
+  font-size: 10px;
+  text-transform: lowercase;
+}
+.node-box .body {
+  padding: 4px 6px;
+  font-size: 11px;
+}
+
+.node-box.ui-node .body { padding: 6px 8px; }
+.node-box.ui-node .header { color: #ffb84d; }
+
+.node-box.structural .header { color: #b685ff; }
+
+/* ─── canvas / vue-flow background ───────────────────────────────────── */
+.vue-flow__background {
+  background: #1a1b1e;
+}
+.vue-flow__edge-path {
+  stroke: #6b6c75;
+  stroke-width: 1.5;
+}
+.vue-flow__edge.audio-cord .vue-flow__edge-path {
+  stroke: #00d4aa;
+  stroke-width: 2;
+}
+.vue-flow__edge.control-cord .vue-flow__edge-path {
+  stroke: #ffb84d;
+  stroke-dasharray: 4 3;
+}
+.vue-flow__handle {
+  width: 8px;
+  height: 8px;
+  background: #6b6c75;
+  border: 1px solid #494a52;
+}
+.vue-flow__handle.audio-handle { background: #00d4aa; }
+.vue-flow__handle.control-handle { background: #ffb84d; }

@@ -1,0 +1,36 @@
+{
+  "name": "04 — noise + comb resonator",
+  "description": "White noise → comb~ filter (with internal feedback) → tanh limit → dac~. Drag the delay-samples knob to change the resonant pitch (Karplus-Strong-ish).",
+  "patch": {
+    "nodes": [
+      { "id": "noiseAmp", "type": "dial", "pos": { "x": 40, "y": 40 }, "attrs": { "min": 0, "max": 1, "value": 0.3, "label": "noise amp" } },
+      { "id": "dly",      "type": "dial", "pos": { "x": 200, "y": 40 }, "attrs": { "min": 30, "max": 600, "value": 80, "label": "delay samples" } },
+      { "id": "fb",       "type": "dial", "pos": { "x": 360, "y": 40 }, "attrs": { "min": 0, "max": 0.97, "value": 0.92, "label": "feedback" } },
+      { "id": "amp",      "type": "dial", "pos": { "x": 520, "y": 40 }, "attrs": { "min": 0, "max": 1, "value": 0.5, "label": "amp" } },
+
+      { "id": "noise",  "type": "noise~", "pos": { "x": 40, "y": 200 } },
+      { "id": "src_g",  "type": "*~",     "pos": { "x": 40, "y": 300 } },
+      { "id": "comb",   "type": "comb~",  "pos": { "x": 200, "y": 300 } },
+
+      { "id": "vca",    "type": "*~",     "pos": { "x": 200, "y": 420 } },
+      { "id": "limit",  "type": "limit~", "pos": { "x": 200, "y": 500 }, "args": [0.95] },
+      { "id": "meter",  "type": "meter~", "pos": { "x": 200, "y": 580 } },
+      { "id": "out",    "type": "dac~",   "pos": { "x": 200, "y": 660 } }
+    ],
+    "cords": [
+      { "src": { "node": "noise",    "outlet": 0 }, "dst": { "node": "src_g", "inlet": 0 } },
+      { "src": { "node": "noiseAmp", "outlet": 0 }, "dst": { "node": "src_g", "inlet": 1 } },
+
+      { "src": { "node": "src_g", "outlet": 0 }, "dst": { "node": "comb", "inlet": 0 } },
+      { "src": { "node": "dly",   "outlet": 0 }, "dst": { "node": "comb", "inlet": 1 } },
+      { "src": { "node": "fb",    "outlet": 0 }, "dst": { "node": "comb", "inlet": 2 } },
+
+      { "src": { "node": "comb",  "outlet": 0 }, "dst": { "node": "vca", "inlet": 0 } },
+      { "src": { "node": "amp",   "outlet": 0 }, "dst": { "node": "vca", "inlet": 1 } },
+      { "src": { "node": "vca",   "outlet": 0 }, "dst": { "node": "limit", "inlet": 0 } },
+      { "src": { "node": "limit", "outlet": 0 }, "dst": { "node": "meter", "inlet": 0 } },
+      { "src": { "node": "meter", "outlet": 0 }, "dst": { "node": "out", "inlet": 0 } },
+      { "src": { "node": "meter", "outlet": 0 }, "dst": { "node": "out", "inlet": 1 } }
+    ]
+  }
+}

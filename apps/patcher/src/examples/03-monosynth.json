@@ -1,0 +1,37 @@
+{
+  "name": "03 — monosynth (saw + lores~)",
+  "description": "Detuned saw → resonant lores~ → meter~ → dac~. Drag freq / cutoff / Q / amp.",
+  "patch": {
+    "nodes": [
+      { "id": "freq",   "type": "dial", "pos": { "x": 40,  "y": 60 }, "attrs": { "min": 40, "max": 800, "value": 110, "label": "freq" } },
+      { "id": "cutoff", "type": "dial", "pos": { "x": 200, "y": 60 }, "attrs": { "min": 80, "max": 8000, "value": 600, "label": "cutoff" } },
+      { "id": "q",      "type": "dial", "pos": { "x": 360, "y": 60 }, "attrs": { "min": 0, "max": 0.95, "value": 0.7, "label": "Q" } },
+      { "id": "amp",    "type": "dial", "pos": { "x": 520, "y": 60 }, "attrs": { "min": 0, "max": 1, "value": 0.4, "label": "amp" } },
+
+      { "id": "saw1",   "type": "saw~", "pos": { "x": 40,  "y": 200 } },
+      { "id": "saw2",   "type": "saw~", "pos": { "x": 200, "y": 200 } },
+      { "id": "detune", "type": "*",    "pos": { "x": 200, "y": 130 }, "args": [1.005] },
+
+      { "id": "filt",   "type": "lores~", "pos": { "x": 100, "y": 320 } },
+      { "id": "vca",    "type": "*~",     "pos": { "x": 100, "y": 420 } },
+      { "id": "meter",  "type": "meter~", "pos": { "x": 100, "y": 500 } },
+      { "id": "out",    "type": "dac~",   "pos": { "x": 100, "y": 580 } }
+    ],
+    "cords": [
+      { "src": { "node": "freq",   "outlet": 0 }, "dst": { "node": "saw1", "inlet": 0 } },
+      { "src": { "node": "freq",   "outlet": 0 }, "dst": { "node": "detune", "inlet": 0 } },
+      { "src": { "node": "detune", "outlet": 0 }, "dst": { "node": "saw2", "inlet": 0 } },
+
+      { "src": { "node": "saw1", "outlet": 0 }, "dst": { "node": "filt", "inlet": 0 } },
+      { "src": { "node": "saw2", "outlet": 0 }, "dst": { "node": "filt", "inlet": 0 } },
+      { "src": { "node": "cutoff", "outlet": 0 }, "dst": { "node": "filt", "inlet": 1 } },
+      { "src": { "node": "q",      "outlet": 0 }, "dst": { "node": "filt", "inlet": 2 } },
+
+      { "src": { "node": "filt", "outlet": 0 }, "dst": { "node": "vca", "inlet": 0 } },
+      { "src": { "node": "amp",  "outlet": 0 }, "dst": { "node": "vca", "inlet": 1 } },
+      { "src": { "node": "vca",  "outlet": 0 }, "dst": { "node": "meter", "inlet": 0 } },
+      { "src": { "node": "meter","outlet": 0 }, "dst": { "node": "out", "inlet": 0 } },
+      { "src": { "node": "meter","outlet": 0 }, "dst": { "node": "out", "inlet": 1 } }
+    ]
+  }
+}

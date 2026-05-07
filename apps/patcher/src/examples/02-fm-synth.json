@@ -1,0 +1,35 @@
+{
+  "name": "02 — FM synth",
+  "description": "Two-operator FM. cycle~ modulator → *~ depth → +~ carrierHz → cycle~ → *~ amp → dac~. Drag the dials.",
+  "patch": {
+    "patch": null,
+    "nodes": [
+      { "id": "carrier_freq", "type": "dial", "pos": { "x": 60, "y": 60 }, "attrs": { "min": 80, "max": 880, "value": 220, "label": "carrier Hz" } },
+      { "id": "mod_ratio", "type": "dial", "pos": { "x": 240, "y": 60 }, "attrs": { "min": 0.25, "max": 8, "value": 2, "label": "mod ratio" } },
+      { "id": "mod_index", "type": "dial", "pos": { "x": 420, "y": 60 }, "attrs": { "min": 0, "max": 800, "value": 200, "label": "mod index" } },
+      { "id": "amp",        "type": "dial", "pos": { "x": 600, "y": 60 }, "attrs": { "min": 0, "max": 1, "value": 0.3, "label": "amp" } },
+
+      { "id": "mod_hz",  "type": "*~",     "pos": { "x": 240, "y": 180 }, "args": [1] },
+      { "id": "modulator","type": "cycle~","pos": { "x": 240, "y": 280 } },
+      { "id": "scale_mod","type": "*~",    "pos": { "x": 420, "y": 280 } },
+      { "id": "sum_freq","type": "+~",     "pos": { "x": 240, "y": 380 } },
+      { "id": "carrier", "type": "cycle~", "pos": { "x": 240, "y": 480 } },
+      { "id": "vca",     "type": "*~",     "pos": { "x": 420, "y": 480 } },
+      { "id": "out",     "type": "dac~",   "pos": { "x": 240, "y": 600 } }
+    ],
+    "cords": [
+      { "src": { "node": "carrier_freq", "outlet": 0 }, "dst": { "node": "mod_hz", "inlet": 0 } },
+      { "src": { "node": "mod_ratio",    "outlet": 0 }, "dst": { "node": "mod_hz", "inlet": 1 } },
+      { "src": { "node": "mod_hz",       "outlet": 0 }, "dst": { "node": "modulator", "inlet": 0 } },
+      { "src": { "node": "modulator",    "outlet": 0 }, "dst": { "node": "scale_mod", "inlet": 0 } },
+      { "src": { "node": "mod_index",    "outlet": 0 }, "dst": { "node": "scale_mod", "inlet": 1 } },
+      { "src": { "node": "carrier_freq", "outlet": 0 }, "dst": { "node": "sum_freq", "inlet": 0 } },
+      { "src": { "node": "scale_mod",    "outlet": 0 }, "dst": { "node": "sum_freq", "inlet": 1 } },
+      { "src": { "node": "sum_freq",     "outlet": 0 }, "dst": { "node": "carrier", "inlet": 0 } },
+      { "src": { "node": "carrier",      "outlet": 0 }, "dst": { "node": "vca", "inlet": 0 } },
+      { "src": { "node": "amp",          "outlet": 0 }, "dst": { "node": "vca", "inlet": 1 } },
+      { "src": { "node": "vca",          "outlet": 0 }, "dst": { "node": "out", "inlet": 0 } },
+      { "src": { "node": "vca",          "outlet": 0 }, "dst": { "node": "out", "inlet": 1 } }
+    ]
+  }
+}

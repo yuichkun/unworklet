@@ -1,0 +1,59 @@
+{
+  "name": "08 — subpatch chorus",
+  "description": "A reusable single-voice chorus implemented as a `patcher` subgraph (LFO-modulated delay) and instantiated. Compiles to a defineSubgraph; each instance has its own state.",
+  "patch": {
+    "nodes": [
+      { "id": "freq", "type": "dial", "pos": { "x": 40, "y": 30 }, "attrs": { "min": 80, "max": 800, "value": 220, "label": "tone Hz" } },
+      { "id": "amp",  "type": "dial", "pos": { "x": 200, "y": 30 }, "attrs": { "min": 0, "max": 1, "value": 0.3, "label": "amp" } },
+      { "id": "wet",  "type": "dial", "pos": { "x": 360, "y": 30 }, "attrs": { "min": 0, "max": 1, "value": 0.6, "label": "wet" } },
+
+      { "id": "src",   "type": "saw~", "pos": { "x": 40, "y": 200 } },
+      { "id": "src_g", "type": "*~",   "pos": { "x": 40, "y": 280 } },
+
+      { "id": "voice", "type": "patcher", "pos": { "x": 220, "y": 360 }, "attrs": {
+        "name": "chorus voice",
+        "inletCount": 1,
+        "outletCount": 1,
+        "patch": {
+          "nodes": [
+            { "id": "in1",    "type": "inlet",  "pos": { "x": 40,  "y": 30 }, "attrs": { "index": 0 } },
+            { "id": "lfo",    "type": "cycle~", "pos": { "x": 200, "y": 30 }, "args": [1.4] },
+            { "id": "lfo_dc", "type": "+~",     "pos": { "x": 200, "y": 110 }, "args": [1.5] },
+            { "id": "lfo_g",  "type": "*~",     "pos": { "x": 200, "y": 190 }, "args": [120] },
+            { "id": "delay",  "type": "delay~", "pos": { "x": 40,  "y": 290 } },
+            { "id": "out1",   "type": "outlet", "pos": { "x": 40,  "y": 380 }, "attrs": { "index": 0 } }
+          ],
+          "cords": [
+            { "src": { "node": "in1",    "outlet": 0 }, "dst": { "node": "delay", "inlet": 0 } },
+            { "src": { "node": "lfo",    "outlet": 0 }, "dst": { "node": "lfo_dc", "inlet": 0 } },
+            { "src": { "node": "lfo_dc", "outlet": 0 }, "dst": { "node": "lfo_g", "inlet": 0 } },
+            { "src": { "node": "lfo_g",  "outlet": 0 }, "dst": { "node": "delay", "inlet": 1 } },
+            { "src": { "node": "delay",  "outlet": 0 }, "dst": { "node": "out1", "inlet": 0 } }
+          ]
+        }
+      } },
+
+      { "id": "wet_g", "type": "*~", "pos": { "x": 220, "y": 480 } },
+      { "id": "mix_sum", "type": "+~", "pos": { "x": 120, "y": 580 } },
+
+      { "id": "meter", "type": "meter~", "pos": { "x": 120, "y": 660 } },
+      { "id": "out",   "type": "dac~",   "pos": { "x": 120, "y": 740 } }
+    ],
+    "cords": [
+      { "src": { "node": "freq",  "outlet": 0 }, "dst": { "node": "src", "inlet": 0 } },
+      { "src": { "node": "src",   "outlet": 0 }, "dst": { "node": "src_g", "inlet": 0 } },
+      { "src": { "node": "amp",   "outlet": 0 }, "dst": { "node": "src_g", "inlet": 1 } },
+
+      { "src": { "node": "src_g", "outlet": 0 }, "dst": { "node": "voice", "inlet": 0 } },
+      { "src": { "node": "voice", "outlet": 0 }, "dst": { "node": "wet_g", "inlet": 0 } },
+      { "src": { "node": "wet",   "outlet": 0 }, "dst": { "node": "wet_g", "inlet": 1 } },
+
+      { "src": { "node": "src_g", "outlet": 0 }, "dst": { "node": "mix_sum", "inlet": 0 } },
+      { "src": { "node": "wet_g", "outlet": 0 }, "dst": { "node": "mix_sum", "inlet": 0 } },
+
+      { "src": { "node": "mix_sum", "outlet": 0 }, "dst": { "node": "meter", "inlet": 0 } },
+      { "src": { "node": "meter",   "outlet": 0 }, "dst": { "node": "out", "inlet": 0 } },
+      { "src": { "node": "meter",   "outlet": 0 }, "dst": { "node": "out", "inlet": 1 } }
+    ]
+  }
+}

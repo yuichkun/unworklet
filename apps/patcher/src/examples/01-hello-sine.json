@@ -1,0 +1,30 @@
+{
+  "name": "01 — hello sine",
+  "description": "440 Hz sine through *~ 0.3 to dac~. The 5-second tutorial.",
+  "patch": {
+    "nodes": [
+      {
+        "id": "osc",
+        "type": "cycle~",
+        "pos": { "x": 80, "y": 80 },
+        "args": [440]
+      },
+      {
+        "id": "vol",
+        "type": "*~",
+        "pos": { "x": 80, "y": 180 },
+        "args": [0.3]
+      },
+      {
+        "id": "out",
+        "type": "dac~",
+        "pos": { "x": 80, "y": 280 }
+      }
+    ],
+    "cords": [
+      { "src": { "node": "osc", "outlet": 0 }, "dst": { "node": "vol", "inlet": 0 } },
+      { "src": { "node": "vol", "outlet": 0 }, "dst": { "node": "out", "inlet": 0 } },
+      { "src": { "node": "vol", "outlet": 0 }, "dst": { "node": "out", "inlet": 1 } }
+    ]
+  }
+}
