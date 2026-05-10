@@ -126,7 +126,7 @@ console.log('transport:', node.diagnostics.transport);   // 'sab' or 'postMessag
 
 ```typescript
 import {
-  defineProcessor, defineSubgraph, audioInput, audioOutput, param, state,
+  defineProcessor, defineSubgraph, createSubgraph, audioInput, audioOutput, param, state,
   forSample, add, sub, mul, div, sin, cos, exp,
   type Node, type State,
 } from '@unworklet/core';
@@ -176,15 +176,17 @@ function peakingCoeffs(
 }
 
 // L2 subgraph: one mono peaking-EQ band. Owns its own z1/z2 state pair.
-const peakingBand = defineSubgraph((
-  input: Node<'f32'>,
-  freq: Node<'f32'>, q: Node<'f32'>, gainDb: Node<'f32'>,
-  sr: number,
-) => {
+// Lambda argument `sr` is bound at createSubgraph time; method arguments
+// (input / freq / q / gainDb) are per-call.
+const peakingBand = defineSubgraph((sr: number) => {
   const z1 = state.f32(0);
   const z2 = state.f32(0);
-  const c  = peakingCoeffs(freq, q, gainDb, sr);
-  return biquadDFIIT(input, c.b0, c.b1, c.b2, c.a1, c.a2, z1, z2);
+  return {
+    process: (input: Node<'f32'>, freq: Node<'f32'>, q: Node<'f32'>, gainDb: Node<'f32'>) => {
+      const c = peakingCoeffs(freq, q, gainDb, sr);
+      return biquadDFIIT(input, c.b0, c.b1, c.b2, c.a1, c.a2, z1, z2);
+    },
+  };
 });
 
 export const threeBandEQ = defineProcessor((ctx) => {
@@ -203,6 +205,14 @@ export const threeBandEQ = defineProcessor((ctx) => {
   const hiQ  = param({ default: 0.7,  min: 0.1,   max: 8,     automationRate: 'k-rate', name: 'hiQ'      });
   const hiG  = param({ default: 0,    min: -24,   max: 24,    automationRate: 'k-rate', name: 'hiGain'   });
 
+  // Six independent peakingBand instances (3 bands × 2 channels), allocated in declaration scope.
+  const lowL = createSubgraph(peakingBand, ctx.sampleRate);
+  const midL = createSubgraph(peakingBand, ctx.sampleRate);
+  const hiL  = createSubgraph(peakingBand, ctx.sampleRate);
+  const lowR = createSubgraph(peakingBand, ctx.sampleRate);
+  const midR = createSubgraph(peakingBand, ctx.sampleRate);
+  const hiR  = createSubgraph(peakingBand, ctx.sampleRate);
+
   return {
     process: () => {
       // Read k-rate params at block start. (k-rate consumers fold to the same
@@ -215,14 +225,14 @@ export const threeBandEQ = defineProcessor((ctx) => {
         const xL = main.at(0, i);
         const xR = main.at(1, i);
 
-        // Cascaded peaking bands — each subgraph instance owns its own state.
-        const yL1 = peakingBand(xL,  lowFv, lowQv, lowGv, ctx.sampleRate);
-        const yL2 = peakingBand(yL1, midFv, midQv, midGv, ctx.sampleRate);
-        const yL3 = peakingBand(yL2, hiFv,  hiQv,  hiGv,  ctx.sampleRate);
+        // Cascaded peaking bands — each subgraph instance owns its own z1/z2 state pair.
+        const yL1 = lowL.process(xL,  lowFv, lowQv, lowGv);
+        const yL2 = midL.process(yL1, midFv, midQv, midGv);
+        const yL3 = hiL .process(yL2, hiFv,  hiQv,  hiGv);
 
-        const yR1 = peakingBand(xR,  lowFv, lowQv, lowGv, ctx.sampleRate);
-        const yR2 = peakingBand(yR1, midFv, midQv, midGv, ctx.sampleRate);
-        const yR3 = peakingBand(yR2, hiFv,  hiQv,  hiGv,  ctx.sampleRate);
+        const yR1 = lowR.process(xR,  lowFv, lowQv, lowGv);
+        const yR2 = midR.process(yR1, midFv, midQv, midGv);
+        const yR3 = hiR .process(yR2, hiFv,  hiQv,  hiGv);
 
         out.set(0, i, yL3);
         out.set(1, i, yR3);
@@ -947,7 +957,7 @@ if (stored) {
 
 ```typescript
 import {
-  defineProcessor, defineSubgraph, audioInput, audioOutput, param, state, buffer,
+  defineProcessor, defineSubgraph, createSubgraph, audioInput, audioOutput, param, state, buffer,
   forSample, midiInput, event,
   add, sub, mul, div, mod, max, abs, sin, exp, gt, lt, eq, select,
   f32, i32,
@@ -957,34 +967,37 @@ import {
 const NUM_VOICES = 8;
 
 // L2 voice subgraph: simple 1-osc synth voice with ADSR envelope.
-const synthVoice = defineSubgraph((
-  noteHz:    Node<'f32'>,
-  velocity:  Node<'f32'>,
-  gate:      Node<'bool'>,
-  attackS:   Node<'f32'>,
-  releaseS:  Node<'f32'>,
-  sr:        number,
-) => {
+// Lambda argument `sr` is bound at createSubgraph time; method arguments are per-call.
+const synthVoice = defineSubgraph((sr: number) => {
   const phase = state.f32(0);
   const env   = state.f32(0);
+  return {
+    process: (
+      noteHz:    Node<'f32'>,
+      velocity:  Node<'f32'>,
+      gate:      Node<'bool'>,
+      attackS:   Node<'f32'>,
+      releaseS:  Node<'f32'>,
+    ) => {
+      // Envelope coefficients (k-rate inputs).
+      const aCoef = sub(1, exp(div(-1, mul(attackS,  sr))));
+      const rCoef = sub(1, exp(div(-1, mul(releaseS, sr))));
 
-  // Envelope coefficients per-block (k-rate inputs).
-  const aCoef = sub(1, exp(div(-1, mul(attackS,  sr))));
-  const rCoef = sub(1, exp(div(-1, mul(releaseS, sr))));
+      // Update envelope sample-by-sample.
+      const target = select(gate, velocity, 0);
+      const coef   = select(gate, aCoef, rCoef);
+      const e      = add(env.load(), mul(coef, sub(target, env.load())));
+      env.store(e);
 
-  // Update envelope sample-by-sample.
-  const target = select(gate, velocity, 0);
-  const coef   = select(gate, aCoef, rCoef);
-  const e      = add(env.load(), mul(coef, sub(target, env.load())));
-  env.store(e);
+      // Update phase.
+      const inc = div(noteHz, sr);
+      const p   = add(phase.load(), inc);
+      phase.store(select(gt(p, 1), sub(p, 1), p));
 
-  // Update phase.
-  const inc = div(noteHz, sr);
-  const p   = add(phase.load(), inc);
-  phase.store(select(gt(p, 1), sub(p, 1), p));
-
-  // Sine osc + envelope.
-  return mul(sin(mul(p, 2 * Math.PI)), e);
+      // Sine osc + envelope.
+      return mul(sin(mul(p, 2 * Math.PI)), e);
+    },
+  };
 });
 
 export const polySynth = defineProcessor((ctx) => {
@@ -1021,6 +1034,12 @@ export const polySynth = defineProcessor((ctx) => {
   const notePlayed = event<{ note: number; voice: number; velocity: number }>({ name: 'notePlayed' });
 
   const midi = midiInput({ name: 'midi' });
+
+  // Eight independent synthVoice instances, allocated in declaration scope.
+  const voices = [];
+  for (let s = 0; s < NUM_VOICES; s++) {
+    voices.push(createSubgraph(synthVoice, ctx.sampleRate));
+  }
 
   return {
     process: () => {
@@ -1068,7 +1087,7 @@ export const polySynth = defineProcessor((ctx) => {
           const vel  = voiceVel [s].load();
           const gate = voiceGate[s].load();
           const hz   = mul(440, exp(mul(sub(note, 69), Math.LN2 / 12)));
-          mix = add(mix, synthVoice(hz, vel, gate, attack.at(0), release.at(0), ctx.sampleRate));
+          mix = add(mix, voices[s].process(hz, vel, gate, attack.at(0), release.at(0)));
         }
 
         const sig = mul(mul(mix, masterVol.at(i)), duck);
@@ -1129,7 +1148,7 @@ setInterval(() => {
 
 These are intentionally outside the example set today and are tracked as follow-up:
 
-- `defineSubgraph` instantiation argument scoping (Q22-c open: subgraph instances called with per-sample `Node<'f32'>` from declaration-scope context). Examples 2 and 8 show the user-facing shape; the framework's resolution mechanism is finalized as part of Round 2 grilling.
+- *(closed)* `defineSubgraph` instantiation argument scoping ── resolved at Q34 (= Q22-c-Round2). Examples 2 and 8 use `createSubgraph(subgraph, ...args)` in declaration scope and `.process(...)` per call.
 - `forSampleRange(start, end, callback)` partial-block iteration (deferred to v1.x.0; nested `forSample` use cases such as 2D-tile iteration are not exercised).
 - `param.at(0)` literal-`0` lifting under `Node<'i32'>` context (Q22 / Q1 interaction; resolved at Round 2 type-rule grilling).
 - `everyNSamples` sub-rate work — the surface is decided (Q7) but no current example uses it. A canonical example will land once a use case (e.g. envelope follower at sub-rate) is selected.

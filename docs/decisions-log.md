@@ -40,6 +40,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q31 | onReceive execution contract + bulk copy primitive (audit B1) | resolved — handler runs on audio thread (per Q27-c); audio-thread loops require build-time-constant bounds; `buf.copyFrom(typedArrayField)` for bulk transfer; state-slot-array copy via build-time unroll + `select`/`lt` mask | `02-messaging.md` §1 + `01-dsl.md` §3.2 |
 | Q32 | `emitIf` callable in MIDI / message handler context (audit B2) | resolved — `emitIf` is the single emission primitive across all expression contexts (forSample, MIDI handler, message handler); cond accepts `Node<'bool'> \| boolean` so handler-context unconditional emission is `emitIf(true, payload)`; static-analysis rejects constant-truthy cond inside `forSample` to preserve the Q4-b footgun barrier | `01-dsl.md` §4 + `02-messaging.md` §1 + `11-midi.md` §2.4 |
 | Q33 | Literal lifting in i32 / bool / context (audit B3) | resolved — Q1 拡 張: primitive 引 数 で の literal は context-dependent lift (周 辺 引 数 から `T` 推 論)、 ambiguous case は default `'f32'`、 対 象 type は f32 / f64 / i32 / bool; declaration / 全 lit 等 暗 黙 lift 対 象 外 は scalar constructor (`f32` / `f64` / `i32` / `i64` / `bool`) で explicit; i64 暗 黙 lift ナシ (BigInt 必 要) | `00-foundations.md` §4 + `01-dsl.md` §2 |
+| Q34 | Subgraph instantiation scope (audit Phase 1 #2、 Q22-c-Round2 解 決) | resolved — `createSubgraph(subgraph, ...args)` で declaration scope に instance 生 成 (state slot alloc); subgraph body は record return で key 名 著 作 者 free; method は forSample / handler / per-block 全 context で 呼 べる; method 戻 り 値 で の context 制 限 ナシ; nested subgraph は declaration scope で OK | `01-dsl.md` §5.6 |
 
 ---
 
@@ -482,7 +483,7 @@ The umbrella "cross-processor communication" decomposes into five use cases; fou
 
 ## Q22 — Graph capture model and process body structure
 
-**Status:** resolved (Q22-a / Q22-aprime / Q22-b / Q22-c three-layer structure fixed; Q22-d error message format and refactor-hint structure are open and tracked separately).
+**Status:** resolved (Q22-a / Q22-aprime / Q22-b / Q22-c three-layer structure fixed; Q22-d error message format and refactor-hint structure are open and tracked separately; Q22-c-Round2 = subgraph instantiation scope = 別 件 で Q34 で 解 決 済 み).
 
 **Decision (Q22-a — Mental model):** authoritative wording in `00-foundations.md` §3 + `03-compiler.md` §2. Summary:
 
@@ -1002,3 +1003,117 @@ i64 期 待 position で の literal 暗 黙 lift は 提 供 し ない。 JS �
 - *audio rate / 整 数 用 で primitive を 別 surface に 分 離 (= `addF32` / `addI32`)*: surface 倍 増、 不 自 然。
 - *primitive call site で type annotation 強 制 (= `mod<'i32'>(...)`)*: ugly、 user 学 習 cost 高。
 - *`i32lit` / `f32lit` 別 type で literal を 区 別*: JS number 1 種 と 衝 突、 spec 複 雑 化 で benefit ナシ。
+
+---
+
+## Q34 — Subgraph instantiation scope (audit Phase 1 #2、 Q22-c-Round2 解 決)
+
+**Status:** resolved.
+
+**Decision (Q34-a — `createSubgraph(subgraph, ...args)` で declaration scope 限 定):**
+
+`defineSubgraph` の 結 果 を 親 processor で 使 う surface = `createSubgraph(subgraph, ...args)` free function。 **declaration scope** (= `defineProcessor` body 直 下、 ある い は 別 `defineSubgraph` body 直 下) で 呼 び、 戻 り 値 = state slot を 持 つ instance。 expression scope (= `process` body / `forSample` callback / L1 helper body 等) で の 呼 び は **graph-capture-time error**。
+
+```typescript
+// declaration scope: instance 生 成 (= state slot alloc):
+const lpf = createSubgraph(onepole, /* subgraph 著 作 lambda の 引 数 */);
+
+// build-time loop で 配 列 alloc:
+const voices = [];
+for (let s = 0; s < NUM_VOICES; s++) {
+  voices.push(createSubgraph(synthVoice, ctx.sampleRate));
+}
+```
+
+`createSubgraph` の 第 2 引 数 以 降 = subgraph 著 作 lambda の 引 数 (= instance 生 成 時 に 1 度 だ け bind さ れ、 全 method で 共 有)。 forSample 内 でしか 取 れ ない `Node<T>` を ここ で 渡 そう と する と TS / graph-capture-time の 自 然 帰 結 で reject (= `i` 等 forSample callback parameter は declaration scope で 在 域 し ない)。
+
+**Decision (Q34-b — Subgraph body は record return、 key 名 著 作 者 free):**
+
+著 作 者 は body lambda が record を return する。 record の key 名 = method 名 で **著 作 者 free**:
+
+```typescript
+const oscillator = defineSubgraph((sr: number) => {
+  const phase = state.f32(0);
+  const freq  = state.f32(440);
+  return {
+    setFrequency: (hz: Node<'f32'>) => { freq.store(hz); },
+    tick: () => {
+      const inc = div(freq.load(), sr);
+      phase.store(add(phase.load(), inc));
+      return sin(mul(phase.load(), 2 * Math.PI));
+    },
+    reset: () => { phase.store(0); },
+  };
+});
+```
+
+各 method の 引 数 = per-call で 渡 す (= subgraph 著 作 lambda 引 数 と は 別)。 method の 戻 り 値 形 = §5.5.3 と 同 じ (= `Node<T>` / tuple / record / `void`)。
+
+**Decision (Q34-c — method は 全 context で 呼 べる、 制 約 ナシ):**
+
+`createSubgraph(...)` で 生 成 した instance の method は **全 context で 呼 べる**: `forSample` / `forSample.byN` / `everyNSamples` / `midiInput().onEvent(...)` handler / `messageDecl.onReceive(...)` handler / per-block phase 直 下 全 部 OK。
+
+method 戻 り 値 が `Node<T>` か `void` か で context 制 限 を **入 れ ない** (= 既 unworklet ルール = `state.load/store` / 算 術 primitive が 全 context OK と 同 形)。 user は 「どこ で 何 を 呼 べる か」 を 意 識 し なく て よ い。
+
+```typescript
+const osc = createSubgraph(oscillator, ctx.sampleRate);
+
+// MIDI handler 内:
+midi.onEvent('noteOn', ({ note }) => {
+  osc.setFrequency(noteToHz(note));     // OK (void method)
+  const sample = osc.tick();             // OK (Node<'f32'> method、 戻 り 値 を state に 保 存 等)
+});
+
+// message handler 内:
+reqReset.onReceive(() => {
+  osc.reset();                           // OK
+});
+
+// forSample 内:
+forSample((i) => {
+  const y = osc.tick();                  // OK
+  audioOut.set(0, i, y);
+});
+
+// per-block 直 下:
+return {
+  process: () => {
+    const blockY = osc.tick();           // OK (= block 開 始 時 点 の 1 sample 計 算)
+  },
+};
+```
+
+**Decision (Q34-d — Nested subgraph instantiation):**
+
+`defineSubgraph` body 内 (= subgraph の declaration scope) で 別 `createSubgraph(...)` を 呼 ぶ こと は **OK** (= 既 §5.6.5 の 「declaration scope で の 別 subgraph 呼 び 許 可」 と 整 合)。 instance state は build-time evaluate で 静 的 alloc。
+
+**Rationale (Q34-a):**
+
+- **既 spec の state alloc ルール と 同 形 で 統 一**: state.f32 等 declaration を expression scope で 呼 ぶ の は 既 graph-capture-time error。 `createSubgraph(...)` も state slot alloc を 含 む 動 作 = 同 ルール 適 用 で 「state alloc は declaration scope のみ」 1 ルール で 統 一、 user mental simple
+- **canonical Ex2 / Ex8 と の 既 矛 盾 解 消**: 既 canonical で `peakingBand(...)` を forSample 内 で 直 接 呼 ぶ pattern が 既 §5.6.4 「declaration scope only」 と 矛 盾 (= 12-canonical-examples §"What this set does not yet exercise" の Q22-c-Round2 marker)。 (A) 採 用 で 「declaration scope で `createSubgraph(...)` で instance 生 成、 forSample 内 で method 呼 び」 に 整 理 → 矛 盾 解 消
+- **declarative 純 度**: user が 明 示 で declaration scope に `createSubgraph(...)` を 書 く = state alloc 場 所 が code 上 で 視 覚 化、 framework 黒 魔 法 ナシ
+- **`createSubgraph` 命 名**: 既 main-side の `createNode` (= `05-client.md`) と 命 名 文 化 一 致、 declarative 動 詞、 OO factory pattern 文 化 を 持 ち 込 ま ない
+
+**Rationale (Q34-b):**
+
+- **key 名 著 作 者 free**: 「親 processor の `process` 名 と 一 致」 美 学 で `process` 強 制 する motivation 弱 い、 著 作 者 が `tick` / `render` / `compute` / `setX` / `reset` 等 自 由
+- **record return**: 親 `defineProcessor` body の `return { process: () => ... }` 形 と 構 造 一 致 (= 「subgraph も processor も 同 じ 構 造 を return」)、 method 数 が 1 個 でも 複 数 でも form 維 持
+- **lambda 引 数 = instance 生 成 時 bind / method 引 数 = per-call**: lambda 引 数 で build-time const (= sample rate 等) を bind、 method 引 数 で per-sample / per-call な `Node<T>` を 渡 す。 declaration scope で per-sample 値 を 渡 せ ない 自 然 帰 結 で TS / graph capture が reject
+
+**Rationale (Q34-c):**
+
+- **既 unworklet ルール の 自 然 帰 結**: `state.load/store` / 算 術 primitive 等 が 全 context OK と 同 形、 「method 戻 り 値 で context 制 限」 は artificial 制 約 で user mental に 不 要 負 担 = 入 れ ない
+- **method の use case が 全 context に わ た る**: trigger / config method (= `setX` / `reset`) は handler 内 で の 呼 び common、 per-sample method (= `tick` 等) は forSample 内 common だ が、 「block 開 始 時 の 1 sample 計 算」 「handler 内 で の 1 sample 計 算」 等 全 context で 意 味 ある 呼 び が 存 在
+- **(β) superset = optional 拡 張**: 単 一 method (= 例 え ば `process` 1 個) で 書 きた い 著 作 者 は そ の まま、 複 数 method 必 要 な 著 作 者 は 必 要 method declare、 user free。 単 一 形 が 複 数 形 の subset
+
+**Rejected:**
+
+- **`onepole.instance()` / `onepole.create()` (OO factory pattern)**: OO factory 文 化 (= class.new() 寄 り)、 unworklet declarative 哲 学 と 文 化 ズレ。 declarative 動 詞 で 統 一 する `createSubgraph` の 方 が 自 然
+- **既 spec の 「直 接 callable」 維 持 (= `const y = onepole(input, coef)`)**: per-sample 引 数 (= forSample i から の `Node<T>`) を declaration scope で 渡 せ ない、 (A) と 矛 盾 = canonical の 矛 盾 そ の も の
+- **`subgraph.use(onepole)` (React hook 系)**: `subgraph` namespace が 既 spec に 存 在 し ない 即 興 surface、 「巻 き 上 げ」 を 想 起 さ せる
+- **L2 廃 止 (= L1 + caller-owned state pattern のみ)**: stateful 部 品 の encapsulation 死 滅、 caller が 部 品 の 内 部 構 造 (= state 数 / 名 前 / 型) を 知 る 必 要、 「stateful 部 品 を 1 単 位 で 使 え る」 motivation 消 失
+- **lifecycle hook 合 成 (= subgraph 内 で `forSample` を 直 接 書 い て 親 forSample に 自 動 inline)**: 「ソース 上 で 書 い た 場 所」 と 「framework 内 部 で の 動 作 場 所」 が 違 う = framework 黒 魔 法、 declarative 哲 学 違 反。 親 が 複 数 forSample 持 つ 時 「subgraph 呼 び を どの forSample 内 で 書 く か」 で 動 作 phase 変 わる、 著 作 者 が 制 御 で きる スコープ を 超 える
+- **bind / invoke 引 数 分 離 surface (= per-block / per-sample 別 declare)**: subgraph 著 作 で per-block / per-sample 引 数 区 別 surface 追 加、 caller も 2 段 階。 motivation = 「per-block param を 1 度 だ け evaluate」 だ が、 (A) で も build-time loop 展 開 で 同 等、 surface 増 し で 価 値 弱 い
+- **method 戻 り 値 で context 自 動 制 限 (= `Node<T>` → forSample 内 限 定 / `void` → 全 context OK)**: 既 ルール 自 然 帰 結 で ない artificial 制 約、 user mental に 不 要 負 担 (= `feedback_no-artificial-constraint.md` 軸)
+- **key 名 `process` 強 制**: 「親 processor と 形 一 致」 美 学 軸 で 強 制 する motivation 弱 い、 user free が default
+- **lambda 直 接 return (= record wrap ナシ で `defineSubgraph((args) => Node<T>)`)**: 親 processor の `defineProcessor((ctx) => ({ process: () => ... }))` 形 と 構 造 ズレ、 method 追 加 で form 変 わる = 互 換 性 低 い

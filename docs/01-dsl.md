@@ -614,22 +614,21 @@ Detailed error-UX policy (Q22-d) is open — see `03-compiler.md` §2.
 
 L2 subgraphs are reusable, stateful DSP blocks defined with `defineSubgraph`. Each instantiation gets its own state slots, and every instance is inlined into the parent's WASM module.
 
-#### 5.6.1 Body structure (mirrors `defineProcessor`)
+#### 5.6.1 Body structure (record return, author-named methods)
 
-A subgraph body has the same two-scope structure as `defineProcessor`: a declaration scope at the top and an expression scope inside a `process` lambda. Inside the `process` lambda, the same per-block-top-level / per-sample-`forSample`-callback split applies. The symmetry is intentional — L2 and root processors share one mental model.
+A subgraph body has the same two-scope structure as `defineProcessor`: a **declaration scope** at the top of the body and **expression scope** inside each method. The `defineSubgraph` lambda returns a record whose keys are method names (author-free) and whose values are method lambdas:
 
 ```typescript
-const onepole = defineSubgraph((input: Node<'f32'>, coef: Node<'f32'>) => {
+const onepole = defineSubgraph((coef: Node<'f32'>) => {
   // ━━━ Declaration scope ━━━
-  // Per-instantiation state slots; declared once per call site.
+  // Per-instantiation state slots; lambda arguments (here `coef`) are bound at instance
+  // creation time and shared across all methods.
   const z = state.f32(0);
 
   return {
-    process: () => {
-      // ━━━ Expression scope ━━━
-      // For a single-statement subgraph (no per-sample iteration internally), the body is
-      // evaluated at the parent's surrounding context: per-block when called from the
-      // parent's per-block phase, per-sample when called from inside a forSample.
+    process: (input: Node<'f32'>) => {
+      // ━━━ Expression scope (per method) ━━━
+      // Method arguments (here `input`) are passed per-call.
       const y = add(z.load(), mul(coef, sub(input, z.load())));
       z.store(y);
       return y;
@@ -638,35 +637,95 @@ const onepole = defineSubgraph((input: Node<'f32'>, coef: Node<'f32'>) => {
 });
 ```
 
-Subgraphs that need internal per-sample iteration use `forSample` in their own `process` body.
-
-#### 5.6.2 Instantiation syntax
-
-A `defineSubgraph` result is directly callable; the call instantiates a fresh subgraph with its own state slots.
+Method record keys are author-free (`process`, `tick`, `render`, `compute`, `setFrequency`, `reset`, etc.); the framework imposes no naming convention. Multi-method subgraphs follow the same shape with multiple record entries:
 
 ```typescript
-const yL = onepole(inputL, cutoff);  // instance #1: independent state
-const yR = onepole(inputR, cutoff);  // instance #2: independent state
+const oscillator = defineSubgraph((sr: number) => {
+  const phase = state.f32(0);
+  const freq  = state.f32(440);
+  return {
+    setFrequency: (hz: Node<'f32'>) => { freq.store(hz); },
+    tick: () => {
+      const inc = div(freq.load(), sr);
+      phase.store(add(phase.load(), inc));
+      return sin(mul(phase.load(), 2 * Math.PI));
+    },
+    reset: () => { phase.store(0); },
+  };
+});
 ```
 
-The call signature mirrors L1 helpers (`onepole(args)`), so subgraphs and L1 helpers compose interchangeably from the consumer side.
+**Lambda arguments vs method arguments**: the outer `defineSubgraph` lambda's arguments (e.g. `sr`, `coef`) are bound **once per instance** at `createSubgraph(...)` time and shared across all methods (closure capture). Each method's own arguments (e.g. `input`, `hz`) are passed **per call**. Subgraphs that need internal per-sample iteration use `forSample` inside a method body.
 
-#### 5.6.3 Return shape
+#### 5.6.2 Instantiation via `createSubgraph(...)`
 
-The `process` lambda's return value becomes the subgraph's per-sample output, with the same shapes allowed for L1 helpers (§5.5.3):
+Parent processors instantiate subgraphs through the free function `createSubgraph(subgraph, ...lambdaArgs)`:
 
-- single `Node<T>` — typical filter / oscillator,
+```typescript
+const lpf = createSubgraph(onepole, 0.5);          // coef = 0.5 bound at instance creation
+
+forSample((i) => {
+  const y = lpf.process(audioIn.at(0, i));         // input passed per call
+  audioOut.set(0, i, y);
+});
+
+// 8-voice synth — build-time loop over NUM_VOICES allocates 8 independent instances:
+const voices = [];
+for (let s = 0; s < NUM_VOICES; s++) {
+  voices.push(createSubgraph(synthVoice, ctx.sampleRate));
+}
+forSample((i) => {
+  let mix = f32(0);
+  for (let s = 0; s < NUM_VOICES; s++) {
+    mix = add(mix, voices[s].process(hz, vel, gate, attackS, releaseS));
+  }
+});
+```
+
+`createSubgraph(...)` performs state slot allocation; the returned value is a record of methods that can be called from any expression context (§5.6.4).
+
+`createSubgraph` mirrors the main-side `createNode` naming convention (see `05-client.md`).
+
+#### 5.6.3 Return shape (per method)
+
+Each method's return value follows the same shapes allowed for L1 helpers (§5.5.3):
+
+- single `Node<T>` — typical filter / oscillator output,
 - tuple `[Node<...>, Node<...>, ...]` — multi-output (stereo, SVF low/band/high),
 - record `{ key: Node<...>, ... }` — named multi-output,
-- `void` — side-effect-only (e.g. accumulator bus).
+- `void` — side-effect-only (e.g. trigger / config method that only updates state slots).
 
-The instantiation expression's type is inferred from the `process` return.
+The method call expression's type is inferred from the corresponding return.
 
-#### 5.6.4 Where subgraphs can be instantiated
+#### 5.6.4 Where `createSubgraph(...)` can be called, and method context rules
 
-`defineSubgraph` results may only be **instantiated in declaration scope** — the body of `defineProcessor` or another `defineSubgraph`, before its `process` lambda. Instantiation inside an expression scope (a `process` body, a `forSample` callback, an L1 helper body) is forbidden.
+`createSubgraph(subgraph, ...args)` can only be called in **declaration scope** — the body of `defineProcessor` or another `defineSubgraph`, before the `return` of the body record. Calling it inside expression scope (a method body, a `forSample` callback, an L1 helper body, a handler body) is a graph-capture-time error. Each instantiation declares an independent state slot region; placing the call in declaration scope keeps state allocation static and the instance count statically determined at build time.
 
-Each instantiation is a *declaration of an independent state slot*; placing it in declaration scope keeps graph structure predictable (the number of instances is statically determined at compile time) and prevents the misread that subgraphs are runtime-allocated.
+The methods on the returned instance, however, can be called from **any expression context**: `forSample` / `forSample.byN` / `everyNSamples` callbacks, `midiInput().onEvent(...)` handlers, `messageDecl.onReceive(...)` handlers, and the per-block phase top level. Method context is unrestricted regardless of return type — `Node<T>`-returning and `void`-returning methods are both callable everywhere. This matches the existing context rules for `state.load/store` and the primitive operators.
+
+```typescript
+const osc = createSubgraph(oscillator, ctx.sampleRate);
+
+midi.onEvent('noteOn', ({ note }) => {
+  osc.setFrequency(noteToHz(note));     // OK (handler context)
+});
+
+reqReset.onReceive(() => {
+  osc.reset();                           // OK (handler context)
+});
+
+forSample((i) => {
+  const y = osc.tick();                  // OK (forSample context)
+  audioOut.set(0, i, y);
+});
+
+return {
+  process: () => {
+    const blockY = osc.tick();           // OK (per-block top level)
+    // ...
+  },
+};
+```
 
 Conditional output between configurations is expressed by instantiating both and choosing with `select`:
 
@@ -677,16 +736,15 @@ const myProcessor = defineProcessor((ctx) => {
   const useA = param({ default: 1, min: 0, max: 1, automationRate: 'k-rate', name: 'useA' });
 
   // Two filter instances, each with independent state.
-  // (Subgraph argument shape — handle-passing vs Node-passing — is the subject of §5.6.2;
-  // this example assumes both instances consume the same audio source.)
-  const lpfA = onepole(main, coefA);  // instance #1
-  const lpfB = onepole(main, coefB);  // instance #2
+  const lpfA = createSubgraph(onepole, coefA);
+  const lpfB = createSubgraph(onepole, coefB);
 
   return {
     process: () => {
       forSample((i) => {
+        const x = main.at(0, i);
         // useA is k-rate 0|1; compare to 1 to get a Node<'bool'> for select.
-        out.set(0, i, select(eq(useA.at(i), 1), lpfA, lpfB));
+        out.set(0, i, select(eq(useA.at(i), 1), lpfA.process(x), lpfB.process(x)));
         // Both instances evaluate every sample; select chooses one.
       });
     },
@@ -694,12 +752,14 @@ const myProcessor = defineProcessor((ctx) => {
 });
 ```
 
+Authoritative rationale and rejected alternatives: `decisions-log.md` Q34.
+
 #### 5.6.5 Body constraints
 
 Inside a subgraph body:
 
-- **Declaration scope** (top of the body, before `return { process }`) allows new `state.*` / `buffer.*` / `param.*` declarations and L2 instantiations of other subgraphs.
-- **Expression scope** (inside `process`, including any nested `forSample`) follows the same rules as L1 helpers (§5.5.5): no new declarations, no L2 instantiations; primitives, `load` / `store`, and audio-I/O / param access via `at` / `set` / `param.at(...)` are allowed.
+- **Declaration scope** (top of the body, before the `return` of the method record) allows new `state.*` / `buffer.*` / `param.*` declarations and `createSubgraph(...)` calls for nested subgraph instantiation.
+- **Expression scope** (inside any method body, including any nested `forSample`) follows the same rules as L1 helpers (§5.5.5): no new declarations, no `createSubgraph(...)` calls; primitives, `load` / `store`, audio-I/O / param access via `at` / `set` / `param.at(...)`, and method calls on subgraph instances passed in scope are allowed.
 
 Violations are caught at graph-capture / static-analysis time with refactor-hint error messages, mirroring §5.5.6.
 
