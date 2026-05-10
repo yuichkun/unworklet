@@ -309,16 +309,25 @@ const peakEvt = event<{ level: number }>({ name: 'peak' });
 const noteFired = event<{ note: number; velocity: number }>({ name: 'noteFired', capacity: 512 });
 ```
 
-`event<T>(options): EventDecl<T>` declares a typed worklet → main event channel. The payload type `T` is user-defined; an `atSample: number` field is **always carried on the wire** alongside `T` (mirroring MIDI Q4-c). Emission is via the `emitIf` method on the event handle (`eventDecl.emitIf(cond, payload)`) from inside a `forSample` callback:
+`event<T>(options): EventDecl<T>` declares a typed worklet → main event channel. The payload type `T` is user-defined; an `atSample: number` field is **always carried on the wire** alongside `T` (mirroring MIDI Q4-c). Emission is via the `emitIf` method on the event handle (`eventDecl.emitIf(cond, payload)`) from any expression context where the audio-thread graph is captured — `forSample` callbacks, MIDI / message handler bodies, and `everyNSamples` callbacks. `emitIf` is the **single emission primitive**; there is no plain `emit(...)` form.
 
 ```typescript
+// Inside forSample — cond gates per-sample emission.
 forSample((i) => {
   peakEvt.emitIf(gt(abs(audioIn.at(0, i)), thresh.at(i)),
                  { atSample: i, level: audioIn.at(0, i) });
 });
+
+// Inside a MIDI / message handler — `emitIf(true, payload)` is the canonical
+// form for handler-context unconditional 1:1 projection.
+midi.onEvent('noteOn', ({ note, velocity, atSample }) => {
+  notePlayed.emitIf(true, { atSample, note, velocity: velocity / 127 });
+});
 ```
 
-Plain unconditional `emit(...)` is **not offered** — every emission must carry a structural condition. Same footgun-elimination as MIDI Q4-b: an unconditional emission inside `forSample` would saturate the ringbuffer at sample rate.
+The `cond` parameter accepts `Node<'bool'> | boolean`. Literal `true` / `false` at the call site folds at graph capture: `emitIf(false, payload)` is dropped from the graph, and `emitIf(true, payload)` records an unconditional emission node.
+
+**Static-analysis: constant-truthy `cond` inside `forSample` is an error.** A `forSample` callback that contains `emitIf(true, payload)` (or any cond expression that folds to a build-time-constant truthy value) is rejected at WASM-emission time — unconditional emission at audio rate would fill the 256-slot ringbuffer in milliseconds and produce continuous overflow. The error message points at the three honest alternatives: gate with a state-edge expression, move the emission into a handler context, or use `everyNSamples(N, () => emitIf(...))` for periodic sub-rate emission. Authoritative wording: `decisions-log.md` Q32-c (footgun-elimination from MIDI Q4-b carries over uniformly).
 
 Options:
 
@@ -655,7 +664,7 @@ Violations are caught at graph-capture / static-analysis time with refactor-hint
 
 unworklet processors run a single execution body, the `process` lambda, on the audio thread every render quantum. Build-time evaluation of `process` captures an AST DAG; the framework emits the DAG as a per-block runtime program (per-block top-level statements run once per render quantum; `forSample` callbacks run per sample). Hard realtime constraints apply (no allocation, no unbounded loops, no I/O). Authoritative shape and semantics: §1, §10, and `decisions-log.md` Q22.
 
-There is **no separate `publish` lambda**. State that the main thread observes (meter, spectrum, etc.) is declared with the `publish` option on `state` / `buffer` (see §3 and `decisions-log.md` Q27-a); worklet → main event delivery is via `eventDecl.emitIf(cond, payload)` from inside `forSample` callbacks (see §4.1); main → worklet messages are handled by `onReceive` registered at the per-block phase top of the `process` body (see §4.2). The framework manages all scheduling — there is no user-visible publish-phase lambda.
+There is **no separate `publish` lambda**. State that the main thread observes (meter, spectrum, etc.) is declared with the `publish` option on `state` / `buffer` (see §3 and `decisions-log.md` Q27-a); worklet → main event delivery is via `eventDecl.emitIf(cond, payload)` callable from any expression context (`forSample`, MIDI / message handler bodies, `everyNSamples`) — see §4.1 and `decisions-log.md` Q32; main → worklet messages are handled by `onReceive` registered at the per-block phase top of the `process` body (see §4.2). The framework manages all scheduling — there is no user-visible publish-phase lambda.
 
 ## 7. Opt-in SIMD
 

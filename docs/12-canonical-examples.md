@@ -1033,7 +1033,7 @@ export const polySynth = defineProcessor((ctx) => {
         }
         allocCursor.store(mod(add(v, 1), NUM_VOICES));
 
-        notePlayed.emitIf(true as unknown as Node<'bool'>,
+        notePlayed.emitIf(true,
           { atSample, note, voice: v, velocity: velocity / 127 });
       });
 

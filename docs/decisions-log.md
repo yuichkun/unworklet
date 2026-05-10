@@ -38,6 +38,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q26 | TypeScript version | (open) | `09-repo-structure.md` §5 |
 | Q27 | Generic typed messaging core surface | resolved — 5-surface uniform (param / state.publish / event / message / midi); SAB+Atomics with postMessage fallback; bulk via state.buffer.publish or event/message variable-length payloads | `02-messaging.md` + `01-dsl.md` §3, §4 |
 | Q31 | onReceive execution contract + bulk copy primitive (audit B1) | resolved — handler runs on audio thread (per Q27-c); audio-thread loops require build-time-constant bounds; `buf.copyFrom(typedArrayField)` for bulk transfer; state-slot-array copy via build-time unroll + `select`/`lt` mask | `02-messaging.md` §1 + `01-dsl.md` §3.2 |
+| Q32 | `emitIf` callable in MIDI / message handler context (audit B2) | resolved — `emitIf` is the single emission primitive across all expression contexts (forSample, MIDI handler, message handler); cond accepts `Node<'bool'> \| boolean` so handler-context unconditional emission is `emitIf(true, payload)`; static-analysis rejects constant-truthy cond inside `forSample` to preserve the Q4-b footgun barrier | `01-dsl.md` §4 + `02-messaging.md` §1 + `11-midi.md` §2.4 |
 
 ---
 
@@ -647,7 +648,7 @@ The following candidates for the process body's structure were considered during
 
 **Decision (Q27-b — `event<T>` declaration):**
 
-`event<T>(options): EventDecl<T>` declares a typed event channel (worklet → main). Authored at declaration scope; emitted from inside `forSample` callbacks via **method form on the declaration: `eventDecl.emitIf(cond, payload)`** — uniform with MIDI Q4-b's `midiOut.emitIf(cond, event)` (authoritative wording in `11-midi.md` §2.4).
+`event<T>(options): EventDecl<T>` declares a typed event channel (worklet → main). Authored at declaration scope; emitted via **method form on the declaration: `eventDecl.emitIf(cond, payload)`** — uniform with MIDI Q4-b's `midiOut.emitIf(cond, event)` (authoritative wording in `11-midi.md` §2.4). The set of expression contexts where `emitIf` can be called (forSample callbacks, MIDI / message handler bodies, etc.) is finalized at Q32.
 
 - **Schema**: user-defined record type `T`. The payload always carries `atSample: number` (block-local sample-offset, `0..renderQuantum-1`) — uniform with MIDI Q4-c.
 - **`emitIf` only, no plain `emit`**: same structural-footgun-elimination as MIDI Q4-b. Plain `eventDecl.emit(...)` is rejected at the type level; only the `.emitIf(cond, payload)` method form exists on the declaration.
@@ -828,3 +829,92 @@ No new primitive is added — `select`, `lt`, and the existing typed-array-field
 - *Allow `samples[i]` indexing in onReceive's build-time loop, even when the upper bound is build-time-constant but `samples` is runtime-typed*: this is technically expressible (if the bound is `min(PATTERN_LEN, runtime)` masked with `select`, `samples[s]` for build-time `s` resolves to a typed-array-field-element graph node). It is preserved as the canonical state-slot-array pattern (Q31-d) precisely because `select` + `lt` makes the realtime-safety property structural — the unrolled bound is build-time-fixed, the per-slot mask is the only runtime quantity.
 
 **Open — Q22-d (Error message format and refactor-hint structure):** the format of error messages produced by each layer (TS type errors, graph-capture-time errors, static-analysis errors) and the structure of refactor hints attached to each error class is not yet resolved. To be addressed once `01-dsl.md` and `03-compiler.md` carry enough concrete examples to drive the format choice.
+
+---
+
+## Q32 — `emitIf` callable in MIDI / message handler context (audit B2)
+
+**Status:** resolved.
+
+**Decision (Q32-a — Single primitive across all expression contexts):**
+
+`eventDecl.emitIf(cond, payload)` and `midiOut.emitIf(cond, event)` are the **single emission primitive** across every expression context where the audio-thread graph is captured: `forSample` callbacks, `forSample.byN` callbacks, `everyNSamples` callbacks (which only run inside `forSample`), `midiInput().onEvent(...)` handlers, and `messageDecl.onReceive(...)` handlers. There is no `eventDecl.emit(...)` / `midiOut.emit(...)` plain method, no handler-only context-injected emit, and no separate handler-context emission surface. The Q27-b / Q4-b method-form rule (`handle.emitIf(cond, payload)`) is uniform across all of those contexts.
+
+**Decision (Q32-b — `cond` accepts `Node<'bool'> | boolean`):**
+
+The `cond` parameter type widens to a union:
+
+```typescript
+type EventDecl<T> = {
+  emitIf(cond: Node<'bool'> | boolean, payload: T): void;
+  diagnostics: { overflowCount(): number };
+  name: string;
+};
+
+type MidiOutputHandle = {
+  emitIf(cond: Node<'bool'> | boolean, event: MidiEvent): void;
+  diagnostics: { overflowCount(): number };
+  name: string;
+};
+```
+
+A boolean literal (`true` / `false`) at the call site is the canonical way to express handler-context unconditional emission:
+
+```typescript
+midi.onEvent('noteOn', ({ note, velocity, atSample }) => {
+  // Unconditional 1:1 projection from the MIDI handler to a UI event.
+  notePlayed.emitIf(true, { atSample, note, voice: v, velocity: velocity / 127 });
+});
+```
+
+The `boolean` arm of the union is restricted to **literal types** at the call site (`true` / `false` only; arbitrary `boolean` values from JS computation are not part of the build-time graph). This keeps cond a build-time-decidable structural property — `emitIf(false, ...)` folds away at graph capture, and `emitIf(true, ...)` records an unconditional emission node. (The exact type-level shape — literal narrowing via `cond: Node<'bool'> | true | false` vs `boolean`-with-build-time check — is finalized together with B3 below.)
+
+The `boolean → Node<'bool'>` lift mechanism (whether implicit at the cond position only, or via an explicit `bool(literal)` lifter, or as a general literal-lifting rule across the DSL) is **decided in B3 (literal lifting integer / bool context)**. Q32-b commits only that `emitIf(true, payload)` is the canonical handler-context spelling; B3 may refine the type signature.
+
+**Decision (Q32-c — Static-analysis: constant-truthy cond inside `forSample` is an error):**
+
+Inside `forSample` / `forSample.byN` / `everyNSamples` callbacks, an `emitIf` whose `cond` argument folds to a build-time-constant truthy value (literal `true`, or an expression statically equivalent to `true`) is a **static-analysis error** at WASM-emission time. The error message is:
+
+```
+error: emitIf with constant-true cond inside forSample saturates the ringbuffer at sample rate.
+  This emission would fire on every sample (or every Nth sample for forSample.byN), filling
+  256-slot ringbuffers in milliseconds and producing continuous overflow.
+  Either:
+    (a) gate with a state-edge expression — e.g. `eq(crossedThreshold, 1)`, `gt(level, ceiling)`,
+    (b) move the emission to a MIDI / message handler context (handlers fire 1:1 with input events,
+        not at audio rate), or
+    (c) use `everyNSamples(N, () => emitIf(...))` if periodic sub-rate emission is the intent.
+```
+
+Rejection is structural — the `forSample` callback's `i` loop counter is in scope, so the analyzer recognizes the surrounding context unambiguously. Outside `forSample` (handler bodies, per-block top-level code reachable only through handler-driven state), the analyzer permits constant-truthy cond.
+
+This restores the Q4-b footgun barrier (no unconditional emission inside `forSample`) at the static-analysis layer rather than the type layer. The cost — one explicit error class with a refactor hint — is paid by the small number of authors who would otherwise write the saturating form by accident; the benefit is that the single `emitIf` primitive covers every context.
+
+**Rationale (Q32-a):**
+
+- *Mental-model unification (single primitive)*: the same `emitIf` method on the same handle works in every expression context the user writes. Authors do not learn "in forSample use X, in handler use Y"; the IDE completion is the same shape across contexts. Q4-b / Q27-b already settled `emitIf` as the only emission primitive on the handle; Q32-a confirms that decision applies symmetrically across handler contexts too.
+- *No method-count growth*: handles do not grow a second emission method (`emit`). The surface area of `EventDecl<T>` and `MidiOutputHandle` is unchanged in shape — only the cond-type widens.
+- *No context-injected surface*: there is no `(payload, ctx) => ctx.emit(...)` form in the handler signature. Handler signatures stay as `(event) => void` / `(payload) => void`, matching `forSample`'s `(i: Node<'i32'>) => void` shape uniformity (one-argument lambda, no context bag).
+
+**Rationale (Q32-b):**
+
+- *Handler-context unconditional emission is a real use case*: 1:1 projection from a MIDI / message handler to an event channel — common in MIDI-triggered synths (UI key-flash event), MIDI thru patterns (ingest noteOn → emit noteOn on a different channel), and message-driven main-thread acknowledgements that need sample-accurate `atSample`.
+- *Literal `true` at the call site reads at the natural place*: `notePlayed.emitIf(true, { atSample, note })` says "emit, no condition" right at the call site. The alternative (introducing an `emit` method) would split the surface; the alternative (forcing `bool(true)` boilerplate) would add ceremony for a clearly-intentional case.
+- *State-driven cond from the handler body still works*: `emitIf(eq(activeNote.load(), 60), payload)` continues to be the spelling for "emit only when state matches X", since the handler can read state slots. Q32-b only widens cond, it does not remove the `Node<'bool'>` arm.
+- *Consistency with B3 literal lifting*: the cond type is a literal-lifting boundary in the same family as scalar literal lifting (Q1: numeric literal → `Node<'f32'>`). Treating booleans the same way at this position is the conservative shape; B3 may decide whether the lifting is implicit-everywhere or explicit-only — Q32-b is forward-compatible with either resolution.
+
+**Rationale (Q32-c):**
+
+- *Q4-b footgun stays barred*: the original concern (`if (cond) midiOut.emit(...)` becomes a 44.1 kHz spam) does not return. A user writing `notePlayed.emitIf(true, payload)` inside `forSample` gets a build-time error pointing at the three legal alternatives.
+- *Detectable structurally*: the `forSample` callback boundary is recognizable to the static analyzer (it is a primitive in the framework — see `01-dsl.md` §10.2). Cond is one AST node away. The check is local and cheap.
+- *Refactor hint matches the use case*: most authors hitting this error are either (a) trying to fire on a state edge — covered by hint (a), (b) writing handler logic that should not be inside `forSample` at all — covered by hint (b), or (c) writing periodic sub-rate emission — covered by hint (c). The error message names the three honest paths; no path is silently allowed.
+
+**Rejected:**
+
+- *Add a `handle.emit(payload)` method, callable only in handler context (option A in B2 grilling)*: handle would carry two emission methods (`emit` for handlers, `emitIf` for `forSample`) and authors would learn "context A → method 1, context B → method 2". Mental-model split with no concrete benefit beyond saving four characters per handler emission. The static-analysis cost (= context-checking) does not vanish — it merely shifts to checking `emit` instead of `emitIf` for context legality. Q32-a + Q32-b + Q32-c gives the same structural guarantee with one method instead of two.
+- *Allow `handle.emit(payload)` in every context (option B)*: re-introduces the Q4-b footgun (`emit(payload)` inside `forSample` saturates the ringbuffer). Already rejected at Q4-b for the same reason; revisiting at B2 would regress that decision.
+- *Cond accepts arbitrary `boolean` (not literal-restricted) without static-analysis check (option D)*: a JS-side `boolean` value reaches the cond at build time, so `emitIf(true, ...)` inside `forSample` would compile as unconditional sample-rate emission. Same footgun as option B. The literal-restriction-with-static-analysis (Q32-b + Q32-c) is the targeted form that avoids this.
+- *Make `emitIf` a 2-arity method (cond optional), `emitIf(payload)` for unconditional (option E)*: same footgun mechanism as D — `forSample((i) => emitIf(payload))` becomes a saturating emission with no syntactic warning. Rejected for identical reasons.
+- *Inject the emit primitive via a context bag in the handler signature, e.g. `midi.onEvent('noteOn', (evt, ctx) => ctx.emit(decl, payload))` (option F)*: re-introduces the yoda-notation problem (the subject of the action — the declaration — is buried as a method argument, the emit verb is on a context bag). The A4 + B method-form refactor (commit 3a7f1b4) eliminated yoda-notation across the DSL precisely because "what is being emitted" should be the leading subject of the call. Adding it back for handler context would split mental models.
+- *Spec the handler-context emission as `eventDecl.emit(payload)` and forbid `eventDecl.emitIf(...)` in handlers*: would force handler-side authors who *do* want a state-derived cond to refactor (e.g. `if (activeNote.load() === 60) emit(payload)` becomes `emitIf(eq(activeNote.load(), 60), payload)` only outside the handler). Asymmetric and surprising.
+- *Defer the surface to v1.x.0 by leaving handler-context emission as a TS-cast workaround (the `true as unknown as Node<'bool'>` form in Example 8)*: the cast hack is a documented signal that the spec has a hole. Shipping v1.0.0 with the hole open and "the cast is fine" as the official answer would violate `feedback_no-preemptive-defer.md` (no preemptive defer of known needs) — handler-context emission is a known need across MIDI / message handlers and is part of the v1.0.0 mental model.
