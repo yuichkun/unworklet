@@ -13,15 +13,28 @@ written
 A processor declares MIDI involvement explicitly in declaration scope. Two declarations exist — `midiInput()` and `midiOutput()` — and either can be omitted. A processor that calls neither has no MIDI surface at all (the concepts are absent from its API and IDE completion).
 
 ```typescript
+midiInput (options: { name: string; capacity?: number }): MidiInputHandle;
+midiOutput(options: { name: string; capacity?: number }): MidiOutputHandle;
+```
+
+```typescript
 const synth = defineProcessor((ctx) => {
-  const midiIn = midiInput();          // declare MIDI ingestion
+  const midiIn = midiInput({ name: 'midiIn' });          // declare MIDI ingestion
   // ...
   return { process: () => { /* ... */ } };
 });
 
 const arpeggiator = defineProcessor((ctx) => {
-  const midiIn  = midiInput();
-  const midiOut = midiOutput();        // declare MIDI emission
+  const midiIn  = midiInput ({ name: 'midiIn'  });
+  const midiOut = midiOutput({ name: 'midiOut' });       // declare MIDI emission
+  // ...
+});
+
+const dualPort = defineProcessor((ctx) => {
+  // Multiple ports per processor: each gets its own `name` and is reached
+  // through `node.midi.<name>` on the main thread.
+  const sync   = midiInput ({ name: 'sync'   });   // external clock / transport
+  const arpOut = midiOutput({ name: 'arpOut' });   // arp-generated notes
   // ...
 });
 
@@ -30,7 +43,12 @@ const audioOnly = defineProcessor((ctx) => {
 });
 ```
 
-The exact shape of the `midiInput` / `midiOutput` handles (event subscription on the worklet side, emission primitives, etc.) is settled in §2 and §4 (TBD, Q4-b/c).
+Options:
+
+- **`name: string`** — required. Used as the identifier in three places: (a) main-side access — `node.midi.<name>` resolves to this declaration's surface (`send` / `connectFromWebMIDI` / `onEvent` / `diagnostics.overflowCount`); (b) snapshot schema-hash identity — declarations participate in the structural hash that drives migration matching, even though the MIDI ringbuffer state itself is transient; (c) error and diagnostic messages — `midiInput 'sync' overflowed: 12 events dropped` is more actionable than `midiInput[0] overflowed`. Required for the same reasons as `name` on `state` / `buffer` / `param` / `event` / `message` declarations: the framework refuses index-based identity to keep declaration order non-load-bearing.
+- **`capacity?: number`** — ringbuffer slot count. Default 256 (per Q4-c-i). Override for dense MIDI / sequencer / network-driven loads.
+
+The exact shape of the `midiInput` / `midiOutput` handles (event subscription on the worklet side, emission primitives, etc.) is settled in §2 and §4.
 
 ## 2. Sample-accurate event handling
 

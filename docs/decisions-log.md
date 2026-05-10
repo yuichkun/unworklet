@@ -140,7 +140,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 
 **Status:** resolved.
 
-**Decision (Q4-a):** authoritative wording in `11-midi.md` §1 and §3. Summary: unworklet supports both MIDI ingestion and emission. Processors declare involvement via `midiInput()` / `midiOutput()` (either or both, both omittable). The main-thread API is source-agnostic: a low-level `unworkletNode.midi.send(event, atTime?)` plus a Web MIDI convenience bridge `unworkletNode.midi.connectFromWebMIDI(input)`. unworklet does not know or care where events originated; routing MIDI from any other source (DAW MIDI bridges, network, hardware, application logic) is the consumer's responsibility.
+**Decision (Q4-a):** authoritative wording in `11-midi.md` §1 and §3. Summary: unworklet supports both MIDI ingestion and emission. Processors declare involvement via `midiInput({ name, capacity? })` / `midiOutput({ name, capacity? })` (either or both, both omittable). `name` is required (uniform with the other declarations: state / buffer / param / event / message); it drives main-side access (`node.midi.<name>`), snapshot schema-hash identity, and diagnostic / error attribution. The main-thread API is source-agnostic: a low-level `unworkletNode.midi.<name>.send(event, atTime?)` plus a Web MIDI convenience bridge `unworkletNode.midi.<name>.connectFromWebMIDI(input)`. unworklet does not know or care where events originated; routing MIDI from any other source (DAW MIDI bridges, network, hardware, application logic) is the consumer's responsibility.
 
 **Decision (Q4-b):** authoritative wording in `11-midi.md` §2 and §4. Summary:
 
@@ -151,7 +151,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 
 **Decision (Q4-c):** authoritative wording in `11-midi.md` §4. Summary:
 
-- **Capacity (Q4-c-i):** ring buffers default to **256 slots** (8 bytes each = 2 KB). Override via `midiInput({ capacity })` / `midiOutput({ capacity })`. Sized for typical use; dense MIDI / sequencer / network-driven loads override.
+- **Capacity (Q4-c-i):** ring buffers default to **256 slots** (8 bytes each = 2 KB). Override via `midiInput({ name, capacity })` / `midiOutput({ name, capacity })` (`name` required, `capacity` optional). Sized for typical use; dense MIDI / sequencer / network-driven loads override.
 - **`atSample` semantics (Q4-c-ii):** **block-local** (0 through `renderQuantum - 1`); stored as `u32` for headroom. Global timestamps are derived consumer-side via `audioContext.currentTime + atSample / sampleRate`.
 - **Sysex (Q4-c-iii):** **full support in v1.0.0**. Variable-length sysex bodies live in a separate variable-length content buffer; the main ring-buffer slot for a sysex event holds the status byte plus an index into the content buffer.
 - **Overflow (Q4-c-iv):** **drop-oldest + diagnostics counter**. The oldest event is overwritten on overflow, and a monotonic `overflowCount` counter is exposed via `midiIn.diagnostics.overflowCount()` for consumer monitoring.
