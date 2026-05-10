@@ -490,6 +490,7 @@ import {
   defineProcessor, audioInput, audioOutput, param, state, buffer,
   forSample, midiInput, message, event,
   add, sub, mul, div, sin, cos, select, lte, gt, exp,
+  f32, i32,
   type Node,
 } from '@unworklet/core';
 
@@ -598,8 +599,8 @@ export const granularSampler = defineProcessor((ctx) => {
         //      a select chain — production authors keep it explicit.)
 
         // Voice mix: each voice contributes a windowed sample read.
-        let lSum = mul(0, 0);   // start as Node<'f32'> zero
-        let rSum = mul(0, 0);
+        let lSum = f32(0);
+        let rSum = f32(0);
         for (let v = 0; v < NUM_VOICES; v++) {
           const gate = voiceGate[v].load();
           const pos  = voicePos[v].load();
@@ -615,7 +616,7 @@ export const granularSampler = defineProcessor((ctx) => {
           const sig    = mul(sample, mul(win, activeVel.load()));
 
           // Accumulate (gated by voice activity).
-          const contrib = select(gate, sig, mul(0, 0));
+          const contrib = select(gate, sig, 0);
           lSum = add(lSum, contrib);
           rSum = add(rSum, contrib);
 
@@ -630,7 +631,7 @@ export const granularSampler = defineProcessor((ctx) => {
       });
 
       // Per-block: count active voices for UI.
-      let count: Node<'i32'> = 0 as unknown as Node<'i32'>;
+      let count = i32(0);
       for (let v = 0; v < NUM_VOICES; v++) {
         count = add(count, select(voiceGate[v].load(), 1, 0));
       }
@@ -725,7 +726,7 @@ export const arpeggiator = defineProcessor((ctx) => {
 
       forSample((i) => {
         // Output is silent; the arp only manipulates MIDI.
-        out.set(0, i, mul(0, 0));
+        out.set(0, i, 0);
 
         // Increment sample accumulator; on rollover, advance the step.
         const acc  = add(sampleAccum.load(), 1);
@@ -948,7 +949,9 @@ if (stored) {
 import {
   defineProcessor, defineSubgraph, audioInput, audioOutput, param, state, buffer,
   forSample, midiInput, event,
-  add, sub, mul, div, mod, max, abs, sin, exp, gt, lt, eq, select, type Node, type State,
+  add, sub, mul, div, mod, max, abs, sin, exp, gt, lt, eq, select,
+  f32, i32,
+  type Node, type State,
 } from '@unworklet/core';
 
 const NUM_VOICES = 8;
@@ -970,7 +973,7 @@ const synthVoice = defineSubgraph((
   const rCoef = sub(1, exp(div(-1, mul(releaseS, sr))));
 
   // Update envelope sample-by-sample.
-  const target = select(gate, velocity, mul(0, 0));
+  const target = select(gate, velocity, 0);
   const coef   = select(gate, aCoef, rCoef);
   const e      = add(env.load(), mul(coef, sub(target, env.load())));
   env.store(e);
@@ -1059,7 +1062,7 @@ export const polySynth = defineProcessor((ctx) => {
         const duck = sub(1, mul(duckAmount.at(0), scEnv.load()));
 
         // Sum voices.
-        let mix: Node<'f32'> = mul(0, 0);
+        let mix = f32(0);
         for (let s = 0; s < NUM_VOICES; s++) {
           const note = voiceNote[s].load();
           const vel  = voiceVel [s].load();
@@ -1080,7 +1083,7 @@ export const polySynth = defineProcessor((ctx) => {
       wavePtr.store(mod(add(wpStart, 128), 1024));
 
       // Count active voices for UI.
-      let count: Node<'i32'> = 0 as unknown as Node<'i32'>;
+      let count = i32(0);
       for (let s = 0; s < NUM_VOICES; s++) {
         count = add(count, select(voiceGate[s].load(), 1, 0));
       }

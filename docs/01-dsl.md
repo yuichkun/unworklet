@@ -186,12 +186,55 @@ Authoritative rationale and rejected alternatives: see `decisions-log.md` Q6 (de
 
 ## 2. Primitive operators
 
-<!-- Full inventory: arithmetic (add/sub/mul/div/mod/neg), comparison (eq/lt/gt/lte/gte),
-     math (sin/cos/tan/tanh/exp/log/sqrt/abs/floor/ceil/frac/min/max/clamp),
-     control (select), memory (load/store on State<T>; .read/.write/.readInterpolated as
-     methods on Buffer<T>),
-     type conversions (f32/f64/i32/i64).
-     Q17 (math precision: default vs `/precise` vs `/table` import paths). Lands here. -->
+Primitive operators are pure functions over `Node<T>` values. Each primitive's argument positions accept either a `Node<T>` or a JS `number` / `boolean` literal that lifts to `Node<T>` according to the **context-dependent literal lift rule** (see `00-foundations.md` §4 + `decisions-log.md` Q1 + Q33):
+
+- A literal in a primitive-argument position lifts to `Node<T>`, where `T` is inferred from sibling arguments
+- All-literal calls fall back to `T = 'f32'`
+- Implicit lift covers `'f32'` / `'f64'` / `'i32'` / `'bool'`. `'i64'` requires the explicit `i64(BigInt(...))` constructor
+
+### 2.1 Inventory
+
+- **Arithmetic** (generic over `T extends 'f32' | 'f64' | 'i32' | 'i64'`): `add`, `sub`, `mul`, `div`, `mod`, `neg`
+- **Comparison** (generic over `T`, returns `Node<'bool'>`): `eq`, `lt`, `gt`, `lte`, `gte`
+- **Math** (`Node<'f32'>` or `Node<'f64'>`): `sin`, `cos`, `tan`, `tanh`, `exp`, `log`, `sqrt`, `abs`, `floor`, `ceil`, `frac`, `min`, `max`, `clamp`
+- **Control**: `select(cond: Node<'bool'>, then: Node<T>, else_: Node<T>): Node<T>` (generic over `T`)
+- **Memory**: `load` / `store` on `State<T>`; `.read` / `.write` / `.readInterpolated` / `.copyFrom` / `.loadVec` / `.storeVec` as methods on `Buffer<T>` (see §3.2 and §7)
+
+Math-precision strategy (default vs `/precise` vs `/table` import paths) is settled by Q17 and lands here additively.
+
+### 2.2 Scalar constructors
+
+Five scalar constructors lift JS values to `Node<T>` explicitly. Used wherever the implicit lift does not apply — declarations, ambiguous-call disambiguation, i64 construction, and cross-precision conversion between `Node` types:
+
+```typescript
+f32(v: number): Node<'f32'>;
+f64(v: number): Node<'f64'>;
+i32(v: number): Node<'i32'>;
+i64(v: bigint): Node<'i64'>;
+bool(v: boolean): Node<'bool'>;
+```
+
+```typescript
+// Declaration (= outside primitive arguments, implicit lift not available):
+let count = i32(0);
+let mix   = f32(0);
+const def = bool(false);
+
+// Ambiguous-call disambiguation (all-literal call would default to f32):
+add(i32(0), i32(0))     // T = 'i32' fixed
+
+// i64: BigInt-required (no implicit lift):
+add(state.i64.load(), i64(BigInt(123)))
+
+// Cross-precision conversion between Node types:
+const wide   = f64(f32node);
+const narrow = f32(f64node);
+const idx    = i32(f32node);    // truncate
+```
+
+Constructor naming follows GLSL (`vec3(0.0)` / `float(0)`) and WGSL (`f32(0)`) convention.
+
+Authoritative rationale and rejected alternatives: `decisions-log.md` Q33.
 
 ## 3. State, buffer, param declarations
 

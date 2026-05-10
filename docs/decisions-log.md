@@ -10,7 +10,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 
 | # | Topic | Decision | Authoritative section |
 |---|---|---|---|
-| Q1 | Scalar type defaults | f32 literal default; explicit conversion only; no implicit widening | `00-foundations.md` §4 |
+| Q1 | Scalar type defaults | f32 literal default; explicit conversion only; no implicit widening (literal lift scope finalized at Q33) | `00-foundations.md` §4 |
 | Q2 | Third-party DSP helper integration layer | resolved — 2 layers (L1 + L2), no L3; L1/L2 surfaces and instantiation rules settled | `01-dsl.md` §5 |
 | Q3 | SIMD scope for v1.0.0 | resolved — opt-in via `@unworklet/core/simd`; v1.0.0 = f32x4 MVP; parallel families | `00-foundations.md` §4 + `01-dsl.md` §7 |
 | Q4 | MIDI integration design | resolved — input+output; type-discriminated events; raw-bytes wire; transport API out of scope | `11-midi.md` |
@@ -39,13 +39,14 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q27 | Generic typed messaging core surface | resolved — 5-surface uniform (param / state.publish / event / message / midi); SAB+Atomics with postMessage fallback; bulk via state.buffer.publish or event/message variable-length payloads | `02-messaging.md` + `01-dsl.md` §3, §4 |
 | Q31 | onReceive execution contract + bulk copy primitive (audit B1) | resolved — handler runs on audio thread (per Q27-c); audio-thread loops require build-time-constant bounds; `buf.copyFrom(typedArrayField)` for bulk transfer; state-slot-array copy via build-time unroll + `select`/`lt` mask | `02-messaging.md` §1 + `01-dsl.md` §3.2 |
 | Q32 | `emitIf` callable in MIDI / message handler context (audit B2) | resolved — `emitIf` is the single emission primitive across all expression contexts (forSample, MIDI handler, message handler); cond accepts `Node<'bool'> \| boolean` so handler-context unconditional emission is `emitIf(true, payload)`; static-analysis rejects constant-truthy cond inside `forSample` to preserve the Q4-b footgun barrier | `01-dsl.md` §4 + `02-messaging.md` §1 + `11-midi.md` §2.4 |
+| Q33 | Literal lifting in i32 / bool / context (audit B3) | resolved — Q1 拡 張: primitive 引 数 で の literal は context-dependent lift (周 辺 引 数 から `T` 推 論)、 ambiguous case は default `'f32'`、 対 象 type は f32 / f64 / i32 / bool; declaration / 全 lit 等 暗 黙 lift 対 象 外 は scalar constructor (`f32` / `f64` / `i32` / `i64` / `bool`) で explicit; i64 暗 黙 lift ナシ (BigInt 必 要) | `00-foundations.md` §4 + `01-dsl.md` §2 |
 
 ---
 
 ## Q1 — Scalar type defaults
 
-**Status:** resolved.
-**Decision:** authoritative wording in `00-foundations.md` §4. Summary: numeric literals lift to `Node<'f32'>`; cross-precision conversion is explicit (`f32(node)` / `f64(node)`); operations on mixed-precision operands are a compile-time type error.
+**Status:** resolved (literal lift scope finalized at Q33).
+**Decision:** authoritative wording in `00-foundations.md` §4. Summary: numeric literals lift to `Node<'f32'>` as the default; cross-precision conversion is explicit via scalar constructors (`f32(node)` / `f64(node)` / etc.); operations on mixed-precision operands are a compile-time type error. Q33 extends the lift rule to context-dependent inference (i32 / bool / f64 lift in primitive-argument position when siblings determine `T`).
 **Rationale:** AudioWorklet I/O is `Float32Array`-typed end-to-end; `f32` default avoids per-sample boundary conversions and matches the Web Audio data plane. Audio-rate DSP overwhelmingly uses f32.
 **Rejected:**
 - *`f64` literal default* — would force per-sample f32↔f64 conversions at every I/O boundary and double linear-memory footprint. Mismatched with the data plane.
@@ -918,3 +919,86 @@ This restores the Q4-b footgun barrier (no unconditional emission inside `forSam
 - *Inject the emit primitive via a context bag in the handler signature, e.g. `midi.onEvent('noteOn', (evt, ctx) => ctx.emit(decl, payload))` (option F)*: re-introduces the yoda-notation problem (the subject of the action — the declaration — is buried as a method argument, the emit verb is on a context bag). The A4 + B method-form refactor (commit 3a7f1b4) eliminated yoda-notation across the DSL precisely because "what is being emitted" should be the leading subject of the call. Adding it back for handler context would split mental models.
 - *Spec the handler-context emission as `eventDecl.emit(payload)` and forbid `eventDecl.emitIf(...)` in handlers*: would force handler-side authors who *do* want a state-derived cond to refactor (e.g. `if (activeNote.load() === 60) emit(payload)` becomes `emitIf(eq(activeNote.load(), 60), payload)` only outside the handler). Asymmetric and surprising.
 - *Defer the surface to v1.x.0 by leaving handler-context emission as a TS-cast workaround (the `true as unknown as Node<'bool'>` form in Example 8)*: the cast hack is a documented signal that the spec has a hole. Shipping v1.0.0 with the hole open and "the cast is fine" as the official answer would violate `feedback_no-preemptive-defer.md` (no preemptive defer of known needs) — handler-context emission is a known need across MIDI / message handlers and is part of the v1.0.0 mental model.
+
+---
+
+## Q33 — Literal lifting in i32 / bool / context (audit B3)
+
+**Status:** resolved.
+
+**Decision (Q33-a — Q1 拡 張: context-dependent literal lift):**
+
+Q1 の 「numeric literal → `Node<'f32'>`」 を **context-dependent lift** に 拡 張:
+
+- **primitive 引 数 で の number / boolean literal** は、 primitive の signature が 周 辺 引 数 から `T` を 推 論 で きる 場 合、 その `T` の `Node<T>` に lift される
+- **全 引 数 が literal で T 推 論 不 可 (= ambiguous case)** の default は `'f32'` (Q1 と 整 合)
+- 対 象 type = **f32 / f64 / i32 / bool** の 4 種。 i64 は 暗 黙 lift 対 象 外 (Q33-c 参 照)
+
+```typescript
+mul(meterL.load(), 0.95)           // meterL: Node<'f32'> → 0.95 → Node<'f32'>
+mod(add(head, i), HISTORY_LEN)     // head: Node<'i32'> → HISTORY_LEN → Node<'i32'>
+eq(stepCounter.load(), 16)         // stepCounter: Node<'i32'> → 16 → Node<'i32'>
+select(isMe, true, gate.load())    // gate: Node<'bool'> → true → Node<'bool'>
+add(0, 0)                          // 全 lit、 ambiguous → default Node<'f32'>
+```
+
+暗 黙 lift は **primitive 引 数 限 定**。 declaration / 変 数 直 接 assign / return value 等、 primitive 引 数 で ない context で は scalar constructor が 必 要 (Q33-b)。
+
+**Decision (Q33-b — Scalar constructors として の explicit lift):**
+
+`f32` / `f64` / `i32` / `i64` / `bool` を 「**scalar constructor**」 と し て v1.0.0 で 全 確 定:
+
+```typescript
+f32(v: number): Node<'f32'>;
+f64(v: number): Node<'f64'>;
+i32(v: number): Node<'i32'>;
+i64(v: bigint): Node<'i64'>;
+bool(v: boolean): Node<'bool'>;
+```
+
+主 な 用 途:
+
+- **declaration** (= primitive 引 数 で ない context、 暗 黙 lift 対 象 外):
+  ```typescript
+  let count = i32(0);
+  let lSum  = f32(0);
+  const def = bool(false);
+  ```
+- **ambiguous-call disambiguation** (= 全 lit primitive 呼 び で T を 固 定 し たい 場 合):
+  ```typescript
+  add(i32(0), i32(0))   // T = 'i32' 強 制 (= default f32 fallback を override)
+  ```
+- **i64 lit 構 築** (= 暗 黙 lift ナシ、 BigInt 受 け 取 り):
+  ```typescript
+  add(state.i64.load(), i64(BigInt(123)))
+  ```
+
+**Decision (Q33-c — i64 暗 黙 lift ナシ):**
+
+i64 期 待 position で の literal 暗 黙 lift は 提 供 し ない。 JS の number は IEEE 754 double precision で 安 全 整 数 範 囲 が `2^53 - 1`、 i64 (= 2^63) を 安 全 に 表 現 で きない。 i64 lit は scalar constructor `i64(BigInt(...))` の explicit 経 由 のみ。
+
+**Rationale (Q33-a):**
+
+- *Q1 と の 同 形 拡 張*: Q1 既 確 定 の 「primitive 引 数 で literal lift」 pattern を そ の まま i32 / bool / f64 へ 拡 張。 user の mental rule 数 増 加 ゼロ、 「素 数 字 / 真 偽 値 を primitive 引 数 で 直 接 書 ける」 1 rule で 全 type 統 一。
+- *boilerplate 最 小*: `param.at(0)` / `mod(add(head, i), HISTORY_LEN)` / `eq(stepCounter.load(), 16)` 等 canonical で 頻 出 の pattern が natural に 通 る、 explicit `i32(...)` 包 み 不 要。 既 example の 直 感 と 整 合。
+- *context-dependent 推 論 は TS generic で natural*: `add<T>(a: Node<T> | LiteralOf<T>, b: Node<T> | LiteralOf<T>): Node<T>` で 1 引 数 が `Node<T>` なら T 確 定、 反 対 引 数 の lit は その T へ lift。 user 側 hover で union は 通 常 出 ない (= ambiguous case のみ)。
+
+**Rationale (Q33-b):**
+
+- *Scalar constructor 用 語*: GLSL の `vec3(0.0)` / `float(0)`、 WGSL の `f32(0)` 等 graphics / audio DSL で の 確 立 文 化、 author の mental が 直 接 transfer。 「lift function」 等 関 数 型 jargon より natural。
+- *暗 黙 lift で カバー されない context で 必 須*: declaration (= `let count = i32(0)`)、 全 lit primitive 呼 び (= T 固 定)、 i64 構 築 (= BigInt 経 由) で 必 要。 5 surface で 全 type カバー。
+
+**Rationale (Q33-c):**
+
+- *JS number の 安 全 範 囲*: IEEE 754 double precision で `Number.MAX_SAFE_INTEGER = 2^53 - 1`、 i64 範 囲 (= 2^63) を 表 現 不 可。 暗 黙 lift OK にすると 大 きい 整 数 で precision 損 失 が silent に 起 きる。
+- *BigInt 必 然 性 を 自 明 化*: user が `i64(BigInt(...))` 包 み を 書 く 度 に 「BigInt が 必 要」 mental が 想 起 される、 暗 黙 lift の 罠 を 回 避。
+- *canonical で の i64 不 在*: v1.0.0 canonical examples で i64 literal が 出 て こ ない、 explicit のみ で 実 害 ナシ。 surface だ け 確 定。
+
+**Rejected:**
+
+- *(P) f32 だ け 暗 黙、 i32 / bool / i64 全 explicit (= GLSL 厳 格 解 釈)*: mental 純 度 高 い (= 「素 数 字 = f32」 1 rule + 例 外 1 個) が、 `param.at(i32(0))` / `mod(add(head, i), i32(HISTORY_LEN))` / `eq(stepCounter.load(), i32(16))` 等 で canonical 全 体 で boilerplate 増、 既 直 感 と 不 整 合。 「全 i32 書 か せる の 嫌」 (余 湖 さん 表 明 2026-05-10)。 (Q33) で 「context-dependent + i64 だ け explicit」 = 純 度 と boilerplate 軽 さ の 両 立。
+- *(P') f32 + bool 暗 黙、 i32 / i64 explicit*: bool は 暗 黙 OK だ が i32 だ け explicit = 半 端、 (P) の 純 度 も Q33 の boilerplate 軽 さ も 取 れ ない 中 間 で 良 い と こ ろ ナシ。
+- *primitive を f32 専 用 surface に (= `mod(Node<'f32'>, Node<'f32'>): Node<'f32'>`)*: i32 値 (= ring buffer head, forSample i, state.i32) を round-trip 強 制 = 整 数 演 算 で f32 精 度 損 失 (= 大 きい integer 値 で IEEE 754 限 界)、 表 現 力 損 失。 generic primitive (= `mod<T>(...)`) が 自 然。
+- *audio rate / 整 数 用 で primitive を 別 surface に 分 離 (= `addF32` / `addI32`)*: surface 倍 増、 不 自 然。
+- *primitive call site で type annotation 強 制 (= `mod<'i32'>(...)`)*: ugly、 user 学 習 cost 高。
+- *`i32lit` / `f32lit` 別 type で literal を 区 別*: JS number 1 種 と 衝 突、 spec 複 雑 化 で benefit ナシ。

@@ -123,22 +123,47 @@ The global scope inside which an `AudioWorkletProcessor` instance executes. Host
 
 unworklet primitives are statically typed `Node<T>` where `T` is one of `'f32'`, `'f64'`, `'i32'`, `'i64'`, `'bool'`.
 
-### Numeric literal default
+### Literal lift (context-dependent inside primitive arguments)
 
-A JavaScript number literal (e.g. `0.4`, `1`, `42`) appearing where a `Node<T>` is expected lifts to `Node<'f32'>`. Audio-rate DSP overwhelmingly uses `f32`, and AudioWorklet I/O (`inputs`, `outputs`, `parameters[name]`) is `Float32Array`-typed end-to-end — so defaulting to `f32` keeps user-side DSP aligned with the underlying buffer types and avoids per-sample boundary conversions.
-
-### Explicit precision
-
-Non-default precision is always declared explicitly:
+A JavaScript `number` or `boolean` literal appearing as a **primitive argument** lifts to `Node<T>`, where `T` is inferred from the surrounding primitive signature (context-dependent lift):
 
 ```typescript
-const acc    = state.f64(0);   // explicit f64 state
-const x      = f64(0.5);       // explicit f64 literal
-const wide   = f64(f32node);   // explicit widen  f32 → f64
-const narrow = f32(f64node);   // explicit narrow f64 → f32
+mul(meterL.load(), 0.95)           // meterL: Node<'f32'> → 0.95 lifts to Node<'f32'>
+mod(add(head, i), HISTORY_LEN)     // head: Node<'i32'> → HISTORY_LEN lifts to Node<'i32'>
+select(isMe, true, gate.load())    // gate: Node<'bool'> → true lifts to Node<'bool'>
 ```
 
-### No implicit widening
+When all primitive arguments are literals (e.g. `add(0, 0)`), TypeScript falls back to **`'f32'`** as the default — audio-rate DSP overwhelmingly uses `f32` and AudioWorklet I/O (`inputs`, `outputs`, `parameters[name]`) is `Float32Array`-typed end-to-end.
+
+Implicit lift covers `'f32'` / `'f64'` / `'i32'` / `'bool'`. **`'i64'` requires explicit construction** (see "Scalar constructors" below) because JavaScript `number` cannot safely represent integers beyond `2^53 - 1`.
+
+### Scalar constructors (explicit lift outside primitive arguments)
+
+Five scalar constructors lift JS values to `Node<T>` explicitly. They are required wherever the implicit lift does not apply — variable declarations, ambiguous-call disambiguation, i64 construction, and cross-precision conversion:
+
+```typescript
+f32(v: number): Node<'f32'>;
+f64(v: number): Node<'f64'>;
+i32(v: number): Node<'i32'>;
+i64(v: bigint): Node<'i64'>;
+bool(v: boolean): Node<'bool'>;
+```
+
+```typescript
+let count = i32(0);                          // declaration: explicit constructor required
+let lSum  = f32(0);                          // declaration: explicit constructor required
+add(i32(0), i32(0))                          // all-literal call: i32 constructor pins T = 'i32'
+add(state.i64.load(), i64(BigInt(123)))      // i64: BigInt-required, no implicit lift
+
+const acc    = state.f64(0);                 // explicit f64 state declaration
+const wide   = f64(f32node);                 // explicit widen  f32 → f64
+const narrow = f32(f64node);                 // explicit narrow f64 → f32
+const idx    = i32(f32node);                 // explicit truncate f32 → i32
+```
+
+The constructor convention mirrors GLSL (`vec3(0.0)` / `float(0)`) and WGSL (`f32(0)`) — author mental from audio / graphics DSL transfers directly.
+
+### No implicit widening between Node types
 
 Operations whose operands disagree on precision are a compile-time type error:
 
@@ -148,13 +173,13 @@ add(f32node, f32(f64node));     // ✓ Explicit narrow at the boundary
 add(f64(f32node), f64node);     // ✓ Explicit widen at the boundary
 ```
 
-The constraint is enforced both by the TypeScript types of the primitive operators in `@unworklet/dsp` (see `01-dsl.md` §2) and by the static-analysis pass during compilation (see `03-compiler.md` §3).
+The constraint is enforced both by the TypeScript types of the primitive operators (see `01-dsl.md` §2) and by the static-analysis pass during compilation (see `03-compiler.md` §3).
 
 ### Integer and boolean conversions
 
-`i32(node)`, `i64(node)`, and the comparison primitives (`eq`, `lt`, `gt`, …) returning `Node<'bool'>` follow the same explicit-only rule. There is no implicit numeric ↔ boolean coercion; control flow over a `Node<'bool'>` must use `select`, never a JavaScript `if`.
+`i32(node)`, `i64(node)`, `bool(node)` and the comparison primitives (`eq`, `lt`, `gt`, …) returning `Node<'bool'>` follow the explicit-only rule for **type narrowing / widening between `Node` types**. There is no implicit numeric ↔ boolean coercion; control flow over a `Node<'bool'>` must use `select`, never a JavaScript `if`.
 
-Rationale and rejected alternatives: see `decisions-log.md` Q1.
+Rationale and rejected alternatives: see `decisions-log.md` Q1 + Q33.
 
 ### Vector types (opt-in SIMD)
 
