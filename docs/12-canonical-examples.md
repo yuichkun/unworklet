@@ -554,19 +554,21 @@ export const granularSampler = defineProcessor((ctx) => {
 
   return {
     process: () => {
-      // Bulk upload handler: copy the incoming Float32Array into sampleBuf.
+      // Bulk upload handler: copy the incoming Float32Array into sampleBuf via
+      // a single memcpy (decisions-log Q31-c). The framework clamps the copy
+      // length to min(SAMPLE_BUFFER_LEN, samples.length) at runtime — no
+      // payload-driven for-loop on the audio thread.
       uploadSample.onReceive(({ samples }) => {
-        const len = Math.min(samples.length, SAMPLE_BUFFER_LEN);
-        for (let i = 0; i < len; i++) {
-          sampleBuf.write(i, samples[i]);
-        }
-        sampleLen.store(len);
+        sampleBuf.copyFrom(samples);
+        sampleLen.store(samples.length);
 
-        // Build downsampled thumbnail.
-        const stride = Math.max(1, Math.floor(len / WAVEFORM_FRAME));
+        // Downsampled thumbnail: build-time unroll over WAVEFORM_FRAME (a
+        // build-time constant); each slot reads from a payload-driven offset.
+        // Indices beyond the payload retain whatever was already in waveformView.
         for (let i = 0; i < WAVEFORM_FRAME; i++) {
-          const src = i * stride;
-          waveformView.write(i, src < len ? samples[src] : 0);
+          const stride = max(i32(1), div(samples.length, WAVEFORM_FRAME));
+          const srcIdx = mul(i, stride);
+          waveformView.write(i, select(lt(srcIdx, samples.length), samples.at(srcIdx), 0));
         }
       });
 
@@ -703,11 +705,13 @@ export const arpeggiator = defineProcessor((ctx) => {
 
   return {
     process: () => {
-      // Pattern reload handler.
+      // Pattern reload handler: build-time unroll over PATTERN_LEN (a build-time
+      // constant); per-slot select masks against the runtime payload length so
+      // entries beyond steps.length retain their existing values
+      // (decisions-log Q31-d).
       loadPattern.onReceive(({ steps }) => {
-        const len = Math.min(steps.length, PATTERN_LEN);
-        for (let s = 0; s < len; s++) {
-          pattern[s].store(steps[s]);
+        for (let s = 0; s < PATTERN_LEN; s++) {
+          pattern[s].store(select(lt(s, steps.length), steps.at(s), pattern[s].load()));
         }
       });
 
@@ -821,11 +825,15 @@ export const convolutionReverb = defineProcessor((ctx) => {
 
   return {
     process: () => {
+      // IR upload: bulk memcpy the typed-array payload fields into the irL / irR
+      // buffers (decisions-log Q31-c). The framework clamps to min(IR_LEN,
+      // <field>.length) at runtime — no payload-driven for-loop on the audio
+      // thread. (If the payload is shorter than IR_LEN, the tail of the buffer
+      // retains whatever was last written; consumers that need explicit zero-
+      // padding can pre-zero by issuing copyFrom with a zero-typed-array first.)
       uploadIR.onReceive(({ irL: il, irR: ir }) => {
-        const len = Math.min(il.length, IR_LEN);
-        for (let i = 0; i < len; i++) irL.write(i, il[i]);
-        for (let i = 0; i < len; i++) irR.write(i, ir[i]);
-        for (let i = len; i < IR_LEN; i++) { irL.write(i, 0); irR.write(i, 0); }
+        irL.copyFrom(il);
+        irR.copyFrom(ir);
       });
 
       const headBlock = histHead.load();

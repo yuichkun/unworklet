@@ -224,7 +224,9 @@ const ring = buffer.f32({ size: 44100, name: 'delayLine' });                    
 const wave = buffer.f32({ size: 256,   name: 'wavetable', snapshot: 'persistent' });  // explicit include
 ```
 
-Access goes through methods on the `Buffer<T>` handle (`buf.read(idx)`, `buf.write(idx, v)`, `buf.readInterpolated(pos)`); bounds and interpolation behavior are explicit at each call site. The index argument is an explicit `Node<'i32'>` supplied by the user — this can be a ring-buffer write head from a `state.i32` slot (per-block or per-sample), the loop counter `i` of a surrounding `forSample` (per-sample), or any computed `Node<'i32'>` value.
+Access goes through methods on the `Buffer<T>` handle (`buf.read(idx)`, `buf.write(idx, v)`, `buf.readInterpolated(pos)`, `buf.copyFrom(src)`); bounds and interpolation behavior are explicit at each call site. The index argument is an explicit `Node<'i32'>` supplied by the user — this can be a ring-buffer write head from a `state.i32` slot (per-block or per-sample), the loop counter `i` of a surrounding `forSample` (per-sample), or any computed `Node<'i32'>` value.
+
+For bulk transfer from a `message<T>` / `event<T>` payload (e.g. uploading a sample buffer or IR), use `buf.copyFrom(payloadField)`: the framework emits a single WASM `memory.copy` instruction, runtime-clamped to `min(buf.size, src.length)`. This is the canonical replacement for per-sample loops driven by payload length, which would violate the realtime-safety invariant (see `decisions-log.md` Q31).
 
 The `Buffer<T>` handle returned by `buffer.<T>(...)` exposes the following methods (these are part of the handle type, not free function imports):
 
@@ -233,6 +235,10 @@ type Buffer<T extends ScalarType> = {
   read(idx: Node<'i32'>): Node<T>;
   write(idx: Node<'i32'>, v: Node<T>): void;
   readInterpolated(pos: Node<'f32'>): Node<T>;
+  // Bulk copy from a typed-array field of the surrounding message / event payload (see §4).
+  // Compiles to a single WASM `memory.copy`; runtime length is clamped to min(buf.size, src.length).
+  // See `decisions-log.md` Q31-c.
+  copyFrom(src: TypedArrayFieldRef<T>): void;
   // SIMD methods (only typed when `@unworklet/core/simd` is imported — see §7):
   loadVec(offset: Node<'i32'>): Node<'f32x4'>;
   storeVec(offset: Node<'i32'>, value: Node<'f32x4'>): void;

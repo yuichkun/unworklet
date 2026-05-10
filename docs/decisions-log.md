@@ -37,6 +37,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q25 | Source maps | (open) | `03-compiler.md` §7 |
 | Q26 | TypeScript version | (open) | `09-repo-structure.md` §5 |
 | Q27 | Generic typed messaging core surface | resolved — 5-surface uniform (param / state.publish / event / message / midi); SAB+Atomics with postMessage fallback; bulk via state.buffer.publish or event/message variable-length payloads | `02-messaging.md` + `01-dsl.md` §3, §4 |
+| Q31 | onReceive execution contract + bulk copy primitive (audit B1) | resolved — handler runs on audio thread (per Q27-c); audio-thread loops require build-time-constant bounds; `buf.copyFrom(typedArrayField)` for bulk transfer; state-slot-array copy via build-time unroll + `select`/`lt` mask | `02-messaging.md` §1 + `01-dsl.md` §3.2 |
 
 ---
 
@@ -745,5 +746,85 @@ This is a **planned mandatory addition**, not optional. The v1.0.0 surface is fo
 - *Defer the entire `buffer.publish` surface to v1.x.0* (Q27-f) — would force every v1.0.0 consumer to roll their own waveform / spectrum bridge using `messages.<name>(payload)` request/reply patterns, externalizing what should be load-bearing infrastructure. The surface ships in v1.0.0; only the torn-read mitigation is deferred, behind a forward-compatible API.
 - *Mark torn read as "consumer responsibility, not framework"* (Q27-f) — torn read is structurally caused by the framework's choice of single-buffered shared region in v1.0.0, not by anything the consumer wrote. Pushing it to consumer-territory contradicts unworklet's "no traps for the user" stance.
 - *Implement double buffering at v1.0.0 instead of deferring* (Q27-f) — the implementation cost (additional region allocation per publish slot, additional atomic per tick, region indexing logic) was not in scope for the v1.0.0 audit window. Deferred per consumer instruction; tracked as mandatory v1.x.0 mitigation, not optional.
+
+---
+
+## Q31 — onReceive execution contract + bulk copy primitive (audit B1)
+
+**Status:** resolved.
+
+**Decision (Q31-a — `onReceive` runs on the audio thread):**
+
+`message<T>.onReceive(handler)` is graph-captured at build time and emitted as part of the worklet's `process` body, at the per-block phase top of the next render quantum (per Q27-c). The handler runs on the audio thread. Handler bodies are subject to the same realtime-safety invariants as the rest of the audio-thread code path: no allocation, no I/O, no unbounded loops.
+
+**Decision (Q31-b — Bounded-loop rule applies inside `onReceive`):**
+
+JavaScript `for` / `while` loops inside `onReceive` handler bodies obey the same rule that applies everywhere on the audio thread: the loop's upper bound must be a build-time constant. Loops driven by runtime payload values (e.g. `for (let i = 0; i < typedArrayField.length; i++)`) are **static-analysis errors** at WASM-emission time — the build refuses to produce an artifact, and the error message points to the bulk-copy primitive (Q31-c) or the state-slot-array pattern (Q31-d) as the canonical alternative.
+
+This is not a new constraint; it is the realtime-safety invariant from `00-foundations.md` §5 applied uniformly. `onReceive` handlers do not get a special pass.
+
+**Decision (Q31-c — Bulk copy primitive `buf.copyFrom`):**
+
+The `Buffer<T>` handle (returned by `buffer.<T>(...)`) gains a `copyFrom` method:
+
+```typescript
+type Buffer<T extends ScalarType> = {
+  // ...existing methods (read, write, readInterpolated, loadVec, storeVec)
+  copyFrom(src: TypedArrayFieldRef<T>): void;
+};
+```
+
+- `src` is a typed-array field reference resolved at graph capture time through the same payload proxy that exposes scalar fields elsewhere.
+- The framework emits a single `memory.copy` instruction at WASM level; on the audio thread the copy runs as one bounded-time bulk operation, not a per-element loop.
+- Length is clamped at runtime to `min(buf.size, src.length)`. Over-length payloads are truncated; under-length payloads leave the tail of the buffer untouched.
+- Element-type compatibility is checked at graph-capture time: the typed-array element type must match the buffer's `<T>` (e.g. `Float32Array` → `buffer.f32`, `Int32Array` → `buffer.i32`). Mismatch is a build-time error.
+
+**Decision (Q31-d — State-slot-array copy via build-time unroll + mask):**
+
+Parallel state-slot arrays (e.g. the 16 pattern steps in Example 6, the 8 voice slots in Example 8) follow the canonical pattern:
+
+```typescript
+loadPattern.onReceive(({ steps }) => {
+  for (let s = 0; s < PATTERN_LEN; s++) {     // PATTERN_LEN: build-time constant
+    pattern[s].store(select(lt(s, steps.length), steps[s], pattern[s].load()));
+  }
+});
+```
+
+- The loop's upper bound is the slot-array length (build-time constant) — the build-time JS loop unrolls into `PATTERN_LEN` graph operations.
+- `steps.length` resolves to a `Node<'i32'>` at graph capture (typed-array-field proxy).
+- `select(lt(s, steps.length), …)` masks per-slot updates against the runtime payload length: indices beyond the payload's length retain their existing slot values.
+
+No new primitive is added — `select`, `lt`, and the existing typed-array-field proxy access express the pattern.
+
+**Rationale (Q31-a):**
+
+- *Same audio-thread invariant as the rest of `process`*: `onReceive` handlers reflect into state slots that subsequent `forSample` invocations read. Placing them on a separate thread (worker, main, etc.) would force every consumer to think about cross-thread synchronization windows. Q27-c put the handler on the audio thread for this reason; Q31-a confirms it.
+
+**Rationale (Q31-b):**
+
+- *Uniform invariant*: the realtime-safety rule for audio-thread loops (build-time-constant upper bound) is the same rule already applied to every `forSample` body and `everyNSamples` callback. `onReceive` does not get an exception; the bulk-copy primitive (Q31-c) is the framework-supplied way to express bulk transfer that *would otherwise* be a payload-driven loop in naive code.
+- *Detectable at static-analysis*: the loop's bound is a structural property of the AST. The compiler walks each loop and verifies the bound folds to a build-time constant; if not, WASM emission is rejected. The error message references Q31-c / Q31-d as the canonical workaround.
+
+**Rationale (Q31-c):**
+
+- *Method form on the buffer handle*: matches the A4 + B method-form refactor (`buf.read` / `buf.write` / `buf.loadVec` / etc.). The buffer is the subject of the action; `copyFrom` reads as "copy into this buffer from the given source", echoing `Float32Array.prototype.set` and other host-platform conventions.
+- *Single `memory.copy` instruction*: the operation compiles to one WASM instruction. Audio-thread cost is `O(N)` in byte count with no per-element JavaScript overhead and no graph node per element. WASM allocators / SIMD-based memcpy implementations execute it in deterministic walltime.
+- *Length clamp at runtime*: keeps the API ergonomic. Authors do not write `Math.min(src.length, buf.size)` defensively; the framework guarantees no out-of-bounds write.
+- *Source type checked at graph-capture*: a `Float32Array` field cannot be copied into a `buffer.i32` and vice versa. Mismatches fire at build time with a TS or graph-capture-level message.
+
+**Rationale (Q31-d):**
+
+- *No new primitive needed*: existing `select` + `lt` primitives, combined with build-time JS loop unrolling over a build-time-constant slot-array length, fully express "copy as many entries as the payload provides, leave the rest untouched". A dedicated `copyToSlots` primitive would save a few characters at the cost of one more concept; existing primitives are enough.
+- *Pattern is documented in canonical examples*: Examples 5, 6, 8 demonstrate this shape; a recipe entry in `docs/recipes/` is a future addition once recipe authoring lands (see open recipe tasks).
+
+**Rejected:**
+
+- *`onReceive` on the main thread*: would change which thread the handler runs on. Authors who write `meterL.store(0)` in `reqReset.onReceive` expect the store to be visible to the next `forSample` of the same render quantum on the audio thread. Cross-thread synchronization (latency, consistency window) would have to enter the user's mental model. Q27-c put the handler on the audio thread for this reason; revisiting that for B1 would regress the contract.
+- *Amortized loop on the audio thread* (= 1 block copies 128 samples, the rest carries over to the next block): introduces a "buffer is partially populated" runtime state visible to user code. Authors would have to gate readers on a "ready" flag and reason about block-boundary transitions. Adds complexity for a use case (bulk copy of small-to-moderate typed arrays) that `memory.copy` already handles cleanly in one operation.
+- *A separate `bulkUpload<T>` declaration kind*: a fourth message-shape concept (alongside `state.publish` / `event<T>` / `message<T>`). It does separate "command messages" from "bulk uploads" cleanly at the declaration site, but the same job is achieved by `message<T>` + `buf.copyFrom` with one fewer concept. Concept-count discipline (see Q27 rejected list, "drop both `event` and `message` if state.publish covers it") prefers the latter.
+- *Inferred build-time bound from `typedArrayField.length`*: if the typed array's length were a build-time constant (e.g. `new Float32Array(1024)` declared at build time), the loop *would* unroll. But the audit's actual use case (`samples.length` from a runtime message payload) is precisely where it is not. Inferring per-call would silently grow the WASM module by the length of the longest possible payload, surprise the author when build artifact size balloons, and obscure the realtime-safety property. Static-analysis rejection with a pointer to `copyFrom` is the honest path.
+- *`copyFrom` accepting an unbounded JS array (not a typed array field)*: the typed-array constraint is what makes the memcpy single-instruction and zero-conversion. A plain `number[]` would need element-by-element JavaScript-side conversion to the buffer's element type — that is the per-element loop the user was trying to avoid.
+- *Allow `samples[i]` indexing in onReceive's build-time loop, even when the upper bound is build-time-constant but `samples` is runtime-typed*: this is technically expressible (if the bound is `min(PATTERN_LEN, runtime)` masked with `select`, `samples[s]` for build-time `s` resolves to a typed-array-field-element graph node). It is preserved as the canonical state-slot-array pattern (Q31-d) precisely because `select` + `lt` makes the realtime-safety property structural — the unrolled bound is build-time-fixed, the per-slot mask is the only runtime quantity.
 
 **Open — Q22-d (Error message format and refactor-hint structure):** the format of error messages produced by each layer (TS type errors, graph-capture-time errors, static-analysis errors) and the structure of refactor hints attached to each error class is not yet resolved. To be addressed once `01-dsl.md` and `03-compiler.md` carry enough concrete examples to drive the format choice.

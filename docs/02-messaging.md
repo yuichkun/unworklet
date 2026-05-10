@@ -20,7 +20,7 @@ Worklet (per `01-dsl.md` §3 / §4):
 
 - `state.<type>(initial, { ..., publish: { rateFps } })` / `buffer.<type>({ ..., publish: { rateFps } })` — declare a published state slot. Writes via `slot.store(...)` / `buf.write(...)` are visible on main at the next publish tick.
 - `eventDecl.emitIf(cond, payload)` — conditional emission inside `forSample`; the only path to push an event onto the worklet → main wire.
-- `messageDecl.onReceive(handler)` — register a handler at the per-block phase top of `process`. Runs at the start of the next render quantum, before any `forSample`.
+- `messageDecl.onReceive(handler)` — register a handler at the per-block phase top of `process`. Runs on the audio thread at the start of the next render quantum, before any `forSample`. Handler bodies obey the same realtime-safety invariants as the rest of the audio-thread code path: no allocation, no I/O, no unbounded loops. Build-time JS loops inside the handler must have a build-time-constant upper bound (see Q31-b); for bulk transfer of typed-array payload fields, use `buf.copyFrom(payloadField)` (Q31-c). For per-slot fan-out into a state-slot array, use the build-time-unroll + `select`/`lt` mask pattern (Q31-d).
 
 The same ringbuffer machinery serves MIDI (`midiInput` / `midiOutput`); MIDI's surface is type-discriminated by event class (`onEvent('noteOn', ...)` etc.), but underneath it shares the SAB ringbuffer + `Atomics` protocol described in §4 and §5.
 
