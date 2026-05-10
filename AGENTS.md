@@ -21,7 +21,7 @@ A from-scratch implementation of `unworklet` — a TypeScript-first framework fo
 2. Apply the proposed change to those examples (mentally or as a draft) and verify they still:
    - Compile under the changed surface (no broken signatures, types, or references).
    - Make sense for the realistic use case the example was designed for (no awkward workarounds, no apologetic comments).
-   - Preserve the user's mental-model simplicity — the change should not force a JUCE / VST / m4l / native-AudioWorklet author to re-learn a concept they already understood.
+   - Preserve the user's mental-model simplicity — the change should not force a production-grade audio plugin author to re-learn a concept they already understood.
 3. **If any example breaks or becomes awkward, the proposed change is rejected** until either (a) the change is revised to preserve the example, or (b) the example is updated together with the change as a single coherent revision (and the resulting UX cost is made visible to the human reviewer in the same diff).
 
 This rule is non-negotiable. Spec changes that pass review without an accompanying check against `12-canonical-examples.md` are **out of process**.

@@ -161,7 +161,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 
 **Rationale (Q4-a):**
 
-- *Both ingestion and emission*: MIDI-driven effects and generators (arpeggiators, sequencers, MIDI delays, harmonizers) are core m4l/VST-equivalent use cases on the web platform. Cutting emission would create a structural hole that no third-party package could fill — the feature-reduction trap conflated with mental-model unification (see `feedback_mental-model-vs-feature-reduction.md`).
+- *Both ingestion and emission*: MIDI-driven effects and generators (arpeggiators, sequencers, MIDI delays, harmonizers) are core production-grade audio device use cases on the web platform. Cutting emission would create a structural hole that no third-party package could fill — the feature-reduction trap conflated with mental-model unification (see `feedback_mental-model-vs-feature-reduction.md`).
 - *Symmetry of cost*: ingestion and emission share wire format, transport, and sample-accurate timing machinery. Implementation cost is roughly 1.3–1.5× ingestion alone, not 2×.
 - *Opt-in declaration*: processors that don't call `midiInput()` / `midiOutput()` never encounter MIDI concepts — no IDE noise, no runtime cost, no cognitive load for audio-only DSP.
 - *Source-agnostic main-thread API*: keeping the surface as `.send()` plus a Web MIDI convenience wrapper avoids coupling unworklet's design to any specific MIDI source category. Application code routes whatever it wants to `.send()`.
@@ -177,20 +177,20 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 
 - *Capacity 256 default*: covers the vast majority of MIDI workloads with comfortable headroom against bursts. Override is one keyword for users with dense streams. The "user doesn't have to think" default is the unworklet stance.
 - *`atSample` block-local*: "this event fires N samples into the current block" is the question DSP code naturally asks. Global timestamps require subtracting the block start as an extra step. Block-local maps directly to per-sample dispatch logic.
-- *Sysex full support in v1.0.0*: sysex is part of the MIDI standard (device controllers, GM/GS/XG extensions, Universal Real Time messages). m4l/VST-equivalent devices commonly need it. Implementation cost is moderate (variable-length content buffer + length prefix); deferring would create a structural hole in the v1.0.0 surface.
+- *Sysex full support in v1.0.0*: sysex is part of the MIDI standard (device controllers, GM/GS/XG extensions, Universal Real Time messages). Production-grade audio devices commonly need it. Implementation cost is moderate (variable-length content buffer + length prefix); deferring would create a structural hole in the v1.0.0 surface.
 - *Drop-oldest + diagnostics counter*: drop-oldest and drop-newest both break MIDI semantics (phantom note off vs hanging note); neither is "correct". The actionable design is to make overflow detectable so consumers can resize capacity or fix the upstream burst. Drop-oldest is the natural ring-buffer behavior and the simplest to implement.
 
 **Rationale (Q4-d):**
 
-- *Out of scope, not deferred*: transport models vary by DAW culture (Ableton Link phase, Tone.js Transport step, Bitwig clip-driven, etc.). unworklet picking one constrains users whose context expects a different model. Keeping transport out of scope lets third-party packages serve different cultures without the framework enforcing a winner.
+- *Out of scope, not deferred*: transport models vary across consumer applications (phase-based, step-based, clip-driven, etc.). unworklet picking one constrains users whose context expects a different model. Keeping transport out of scope lets third-party packages serve different consumer cultures without the framework enforcing a winner.
 - *Provide the raw material, not the abstraction*: ingesting `systemRealtime` events with sample-accurate `atSample` is the irreducible primitive; everything above (BPM estimation, beat-position state machines, look-ahead schedulers) can be built from it. unworklet's role ends at delivering the events.
 - *Not a feature reduction*: arpeggiator / sequencer / tempo-synced LFO use cases remain fully buildable — the raw material is provided. Only the *abstraction layer* lives elsewhere; that is scope clarification, not feature reduction (see `feedback_mental-model-vs-feature-reduction.md`).
 - *Multi-processor sharing already works via Web Audio*: when multiple processors need the same transport, MIDI clock can be routed via `AudioWorkletNode.connect()` or fanned out from the main thread. unworklet does not need to abstract this.
 
 **Rejected (Q4-a):**
 
-- *Input only (no MIDI emission)* — would structurally exclude arpeggiator / sequencer / MIDI-effect use cases, which are part of the "m4l/VST-equivalent web devices" scope (see `project_unworklet-scope-framing.md`).
-- *Input only in v1.0.0, Output deferred to v1.x.0* — breaks I/O symmetry from day one and forces consumers to wait for a non-trivial subset of m4l/VST coverage.
+- *Input only (no MIDI emission)* — would structurally exclude arpeggiator / sequencer / MIDI-effect use cases, which are part of the "production-grade audio web devices" scope (see `project_unworklet-scope-framing.md`).
+- *Input only in v1.0.0, Output deferred to v1.x.0* — breaks I/O symmetry from day one and forces consumers to wait for a non-trivial subset of MIDI device coverage.
 - *MIDI source enumeration in unworklet's surface* (e.g. distinguishing "Web MIDI source" vs "application source" at the API level) — unnecessary specialization. A single `.send()` plus a Web MIDI convenience wrapper covers all cases without coupling to source categories.
 
 **Rejected (Q4-b):**
@@ -206,7 +206,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 - *Computed-default capacity (e.g. `blockSize × 8`)* (Q4-c-i) — the user can't easily reason about the resulting size, and the formula provides no benefit over a clear constant. A simple `256` default with override is more transparent.
 - *Required explicit capacity* (Q4-c-i) — adds friction to the common case where the default is fine. Users who don't need to tune capacity shouldn't have to type a number.
 - *AudioContext-global `atSample`* (Q4-c-ii) — forces every per-sample handler to compute a block-relative offset to do anything useful. The natural DSP-side question is "how far into the current block?", which block-local answers directly.
-- *Sysex deferred to v1.x.0* (Q4-c-iii) — leaves a structural hole in the v1.0.0 surface for m4l/VST-equivalent devices. Sysex is part of MIDI; treating it as optional damages coverage.
+- *Sysex deferred to v1.x.0* (Q4-c-iii) — leaves a structural hole in the v1.0.0 surface for production-grade audio devices. Sysex is part of MIDI; treating it as optional damages coverage.
 - *Sysex variant removed entirely from `MidiEvent`* (Q4-c-iii) — unworklet's scope explicitly covers MIDI-driven web devices; dropping a standard MIDI event class is a feature reduction, not mental-model unification.
 - *Drop-newest on overflow* (Q4-c-iv) — equally broken (hanging notes from dropped noteOff). Choosing it over drop-oldest does not improve safety; only detection (the counter) does.
 - *Halt or throw on overflow* (Q4-c-iv) — would crash the audio thread on a recoverable condition. The realtime-safe behavior is to drop and report.
@@ -310,7 +310,7 @@ Preset save/load and session restore are foundational to the kinds of audio devi
 **Rejected (Q5-b):**
 
 - *Single `'persistent' | 'transient'` flag, no profile concept* — would force consumers to maintain two separate processors (one for preset, one for session) or to post-process the blob to drop unwanted slots. Both worse than letting declarations express the dimension natively. The "minimal v1.0.0 + add profile in v1.x.0" path was a defer trap (see `feedback_no-preemptive-defer.md`); the per-profile record is shape-on-API and additive insertion would create a two-tier mental model.
-- *Framework-reserved profile names (`'preset'`, `'session'` as enums)* — picks a DAW culture (Ableton vs Tone.js vs Bitwig vs custom apps) at the framework level, constraining consumers whose context expects a different taxonomy. Same trap as Q4-d.
+- *Framework-reserved profile names (`'preset'`, `'session'` as enums)* — picks a specific consumer-application taxonomy at the framework level, constraining consumers whose context expects a different model. Same trap as Q4-d.
 - *`'persistent'` default for `buffer`* — would cause large delay lines / FFT scratch buffers to bloat preset blobs by megabytes for the typical case, when the contents are usually irrelevant to preset identity. `'transient'` default with explicit `'persistent'` for wavetables tracks intent more closely.
 - *No `name` requirement* — would force the framework to identify slots by source position or AST hash, both of which break under refactoring (reordering declarations, extracting helpers). Explicit names give the developer a stable identity over time.
 
@@ -396,7 +396,7 @@ Preset save/load and session restore are foundational to the kinds of audio devi
 
 **Rejected:**
 
-- *Case A — no rate-down support* — would force users to write `select(eq(mod(c, N), 0), expr, prevValue)`, which two-side-evaluates `expr` every sample due to `select` semantics. Cannot rate-down heavy work (FFT, neural inference); structurally cripples the m4l / VST-equivalent processors that unworklet exists to enable. Same trap as the once-considered "no SIMD in v1.0.0" path (Q3).
+- *Case A — no rate-down support* — would force users to write `select(eq(mod(c, N), 0), expr, prevValue)`, which two-side-evaluates `expr` every sample due to `select` semantics. Cannot rate-down heavy work (FFT, neural inference); structurally cripples the production-grade audio processors that unworklet exists to enable. Same trap as the once-considered "no SIMD in v1.0.0" path (Q3).
 - *Case B — `state.f32(..., { updateEvery: N })` + `if (slot.shouldUpdate())`* — needs a graph-capture-time meta-`if` to work, contradicting unworklet's "no JS `if` in process body" rule. The callback form (case D) achieves the same outcome without breaking the rule.
 - *Case C — `controlState` + `controlProcess` two-layer model* — adds two new declaration kinds (`controlState`) and a new lambda (`controlProcess`) to express something that fits in one expression-scope primitive. Heavier on learning and on graph-capture machinery; no expressiveness gained over case D.
 - *Case E — implicit rate-flow analysis* — relies on framework inference to decide which expressions can be evaluated at coarser rates. Cannot express forced rate-down at arbitrary divisors (only the implicit a-rate / k-rate boundary), and the implicit decision-making makes performance unpredictable to the user.
@@ -498,7 +498,7 @@ The umbrella "cross-processor communication" decomposes into five use cases; fou
 - The `process` body is read **top-to-bottom**: each statement (whether direct per-block code or a `forSample` invocation) executes in declared (source) order. Multiple `forSample` invocations interleaved with per-block statements produce a multi-phase processor — every phase runs in source order.
 - **`forSample` is the only sample-loop primitive.** No separate `perBlock` primitive exists; the per-block phase is denoted by being **outside any `forSample` callback** in the `process` body. This eliminates "where does this statement run?" as a question — the answer is always determined by the lexical scope (inside `forSample` → per-sample, outside → per-block).
 - The `process` lambda **does not take an `i` argument**. The sample-offset `i` is the parameter of `forSample`'s callback, scoped to that callback only.
-- Per-block code can interleave freely with `forSample` invocations: per-block setup → forSample (sample loop) → per-block summary → forSample (output) → per-block publish update — all valid, all in declared order. This recovers the full expressive range of "JUCE processBlock body" with no loss of declarative purity.
+- Per-block code can interleave freely with `forSample` invocations: per-block setup → forSample (sample loop) → per-block summary → forSample (output) → per-block publish update — all valid, all in declared order. This recovers the full expressive range of an established `processBlock`-style body with no loss of declarative purity.
 
 ```typescript
 // Conceptual shape:
@@ -562,7 +562,7 @@ The detailed format of error messages and refactor-hint structure (Q22-d) is ope
 - *Free interleaving of per-block and per-sample code*: production-grade plugins (partitioned convolution, FFT spectral processing, oversampling, multiband processing, etc.) need to write per-block setup, run per-sample work, then run more per-block code (block-level summaries, publish state updates, partition advances), then potentially another `forSample`. A model where per-block code is locked into a fixed position (e.g., before all `forSample` calls) would cripple the DSL's expressive range — exactly the failure mode that limits Max gen~ for FFT-style work. The lexical-position model has no fixed ordering: per-block and per-sample phases interleave in declared (source) order.
 - *No `perBlock(callback)` primitive*: an explicit `perBlock` primitive was considered and rejected (see Rejected X1 below). Once per-block is "the top level of the `process` body", an additional `perBlock(...)` wrapper adds zero expressive power — the user already has a place to write per-block code (the top level) and a marker for per-sample code (`forSample`). Adding a second marker for the default phase only creates a "where do I write what?" question that the user must resolve. The single marker (`forSample`) cleanly separates the two phases by its presence or absence.
 - *No `process: ({ i }) => void`*: cannot express SIMD-stride iteration (4-sample-wide bulk operations) at the user's choice without auto-vectorization magic. Q3 commits unworklet to first-class SIMD via `forSample.byN(4, ...)`; the `({ i }) => void` shape is incompatible.
-- *JUCE / AudioWorklet `processBlock` analogue*: production audio engineers (JUCE / VST / AU / CLAP / native AudioWorklet authors) all share the mental model "a `process` body that runs once per block, with an inner sample loop the user writes". unworklet's lexical-position model maps to this universal mental model exactly: top level = the body of `processBlock`, `forSample` = the inner sample loop. Migration cost from JUCE to unworklet is 1-to-1 at the mental model level; only the primitives change.
+- *Established `processBlock`-style analogue*: production audio engineers (working across various established plugin frameworks and native AudioWorklet) all share the mental model "a `process` body that runs once per block, with an inner sample loop the user writes". unworklet's lexical-position model maps to this universal mental model exactly: top level = the body of the per-block code, `forSample` = the inner sample loop. Migration cost from established `processBlock`-style frameworks to unworklet is 1-to-1 at the mental model level; only the primitives change.
 
 **Rationale (Q22-b):**
 

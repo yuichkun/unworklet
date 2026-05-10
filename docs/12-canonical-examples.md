@@ -1,6 +1,6 @@
 # 12 — Canonical examples
 
-This document is the **integrity anchor** for the unworklet v1.0.0 spec. Every other file in `docs/` is checked against the examples here before a change is accepted (see `AGENTS.md` "Canonical examples integrity rule"). The examples are not tutorials — they are reference plugins that exercise the full surface of unworklet end to end, in shapes a JUCE / VST / m4l / native-AudioWorklet author would actually write. Every example is self-contained: top to bottom, no `// ...` elisions, no "imagine the rest". If a single change to any other doc would break or distort an example here, that change is out of scope until either it is revised or the example is updated together with it.
+This document is the **integrity anchor** for the unworklet v1.0.0 spec. Every other file in `docs/` is checked against the examples here before a change is accepted (see `AGENTS.md` "Canonical examples integrity rule"). The examples are not tutorials — they are reference plugins that exercise the full surface of unworklet end to end, in shapes a production-grade audio plugin author would actually write. Every example is self-contained: top to bottom, no `// ...` elisions, no "imagine the rest". If a single change to any other doc would break or distort an example here, that change is out of scope until either it is revised or the example is updated together with it.
 
 ## Status
 

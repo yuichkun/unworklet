@@ -327,7 +327,7 @@ defineProcessor((ctx) => {
 
 ### What unworklet does NOT provide
 
-A built-in transport API (`useTransport()`, `transport.bpm.load()`, `transport.beatPosition.load()`, etc.) is intentionally **not part of unworklet**. Transport models vary by DAW culture (Ableton Link phase, Tone.js Transport step, Bitwig clip-driven, etc.), and unworklet picking one would constrain users whose context expects a different model.
+A built-in transport API (`useTransport()`, `transport.bpm.load()`, `transport.beatPosition.load()`, etc.) is intentionally **not part of unworklet**. Transport models vary across consumer applications (phase-based, step-based, clip-driven, etc.), and unworklet picking one would constrain users whose context expects a different model.
 
 User-level transport abstractions live in consumer code or third-party packages. unworklet's role ends at delivering MIDI clock messages reliably; transport interpretation is the consumer's domain.
 
