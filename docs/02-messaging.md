@@ -24,6 +24,39 @@ Worklet (per `01-dsl.md` §3 / §4):
 
 The same ringbuffer machinery serves MIDI (`midiInput` / `midiOutput`); MIDI's surface is type-discriminated by event class (`onEvent('noteOn', ...)` etc.), but underneath it shares the SAB ringbuffer + `Atomics` protocol described in §4 and §5.
 
+### 1.1 Asset upload readiness pattern (no separate ack surface)
+
+`node.messages.<name>(payload)` is **fire-and-forget** by design — it returns `void`, not a Promise. Reflection of the payload onto the audio thread happens at the start of the next render quantum (when the audio thread drains the message ringbuffer and runs the registered `onReceive` handler). This is the same delivery latency for every transport mode (SAB / postMessage); main-side `await` would not change *when* the audio thread sees the data, only *whether* main can know it has been seen.
+
+Consequently, unworklet does not provide an ack-style message variant. When the main thread needs to observe that an upload has been reflected on the audio thread (e.g. clear a "loading" UI state, gate playback start), the canonical pattern is to publish a slot from inside the `onReceive` handler and subscribe on main:
+
+```typescript
+// worklet
+const sampleBuf = buffer.f32({ size: SAMPLE_BUFFER_LEN, name: 'sampleBuf' });
+const sampleLen = state.i32(0, { name: 'sampleLen', publish: { rateFps: 30 } });
+const upload    = message<{ samples: Float32Array }>({ name: 'upload' });
+
+upload.onReceive(({ samples }) => {
+  sampleBuf.copyFrom(samples);
+  sampleLen.store(samples.length);   // becomes visible on main at the next publish tick
+});
+
+// main
+node.messages.upload({ samples: decoded.getChannelData(0) });   // void
+
+const ready = new Promise<void>((resolve) => {
+  const unsub = node.state.sampleLen.subscribe((n) => {
+    if (n > 0) { unsub(); resolve(); }
+  });
+});
+await ready;
+playButton.disabled = false;
+```
+
+Authors that need "asset must be present before the first render quantum" use the snapshot/restore path instead — see `05-client.md` §2.6 (`createNode(..., { initial })` / `node.restore(blob)`). The audio-thread-side defense against "asset not yet uploaded" (e.g. gating voice triggers on `sampleLen.load() > 0`) lives in the processor's own state machine; the framework does not synthesize a generic readiness flag.
+
+Authoritative rationale: `decisions-log.md` Q27-a (publish surface) + Q27-c (`message<T>` fire-and-forget contract).
+
 ## 2. Delivery semantics
 
 | Surface | Coalesce | Ordering | Drained | Backpressure |
