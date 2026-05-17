@@ -184,6 +184,42 @@ The compiled `UnworkletNode<C>` exposes `node.inputs.<name>` and `node.outputs.<
 
 Authoritative rationale and rejected alternatives: see `decisions-log.md` Q6 (declaration shape) and Q22 (single form for sample-position primitives).
 
+### 1.7 Build-time constants
+
+The package exports build-time constants at the top level, alongside `defineProcessor` and the primitive operators:
+
+- **`SAMPLES_PER_BLOCK: 128`** — the render quantum length in samples. Web Audio specifies 128 samples per quantum across all environments; this value is fixed at build time. Used wherever processor code needs to refer to the block length by name rather than by the literal `128`.
+
+  ```typescript
+  import { defineProcessor, buffer, forSample, SAMPLES_PER_BLOCK } from 'unworklet';
+
+  defineProcessor(() => {
+    const scratch = buffer.f32({ size: SAMPLES_PER_BLOCK, name: 'scratch' });
+
+    return {
+      process: () => {
+        forSample((i) => {
+          // i runs 0 .. SAMPLES_PER_BLOCK - 1
+        });
+      },
+    };
+  });
+  ```
+
+  `SAMPLES_PER_BLOCK` is also usable in build-time JS contexts outside `defineProcessor`, such as in helper modules where `ctx` is not in scope:
+
+  ```typescript
+  // helpers.ts
+  import { SAMPLES_PER_BLOCK } from 'unworklet';
+
+  export const RING_CAP = SAMPLES_PER_BLOCK * 8;  // 1024
+  export const blockToMs = (sampleRate: number) => SAMPLES_PER_BLOCK * 1000 / sampleRate;
+  ```
+
+These constants are not exposed on the `ctx` object. `ctx` carries run-time values supplied by the host (e.g. `ctx.sampleRate`, which varies per `AudioContext`); build-time constants are kept off `ctx` so the two categories stay distinct.
+
+Authoritative rationale and rejected alternatives: see `decisions-log.md` Q35.
+
 ## 2. Primitive operators
 
 Primitive operators are pure functions over `Node<T>` values. Each primitive's argument positions accept either a `Node<T>` or a JS `number` / `boolean` literal that lifts to `Node<T>` according to the **context-dependent literal lift rule** (see `00-foundations.md` §4 + `decisions-log.md` Q1 + Q33):

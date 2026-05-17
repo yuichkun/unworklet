@@ -41,6 +41,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q32 | `emitIf` callable in MIDI / message handler context (audit B2) | resolved — `emitIf` is the single emission primitive across all expression contexts (forSample, MIDI handler, message handler); cond accepts `Node<'bool'> \| boolean` so handler-context unconditional emission is `emitIf(true, payload)`; static-analysis rejects constant-truthy cond inside `forSample` to preserve the Q4-b footgun barrier | `01-dsl.md` §4 + `02-messaging.md` §1 + `11-midi.md` §2.4 |
 | Q33 | Literal lifting in i32 / bool / context (audit B3) | resolved — Q1 拡 張: primitive 引 数 で の literal は context-dependent lift (周 辺 引 数 から `T` 推 論)、 ambiguous case は default `'f32'`、 対 象 type は f32 / f64 / i32 / bool; declaration / 全 lit 等 暗 黙 lift 対 象 外 は scalar constructor (`f32` / `f64` / `i32` / `i64` / `bool`) で explicit; i64 暗 黙 lift ナシ (BigInt 必 要) | `00-foundations.md` §4 + `01-dsl.md` §2 |
 | Q34 | Subgraph instantiation scope (audit Phase 1 #2、 Q22-c-Round2 解 決) | resolved — `createSubgraph(subgraph, ...args)` で declaration scope に instance 生 成 (state slot alloc); subgraph body は record return で key 名 著 作 者 free; method は forSample / handler / per-block 全 context で 呼 べる; method 戻 り 値 で の context 制 限 ナシ; nested subgraph は declaration scope で OK | `01-dsl.md` §5.6 |
+| Q35 | Render quantum length の user code 露 出 形 (audit Phase 1 #6) | resolved — `SAMPLES_PER_BLOCK: 128` を `unworklet` package の top-level constant と し て export; `ctx.renderQuantum` ナシ (= run-time 値 と build-time 定 数 を 区 別); ctx が 在 域 し な い build-time JS 文 脈 で も 引 用 可 | `01-dsl.md` §1.7 |
 
 ---
 
@@ -1117,3 +1118,28 @@ return {
 - **method 戻 り 値 で context 自 動 制 限 (= `Node<T>` → forSample 内 限 定 / `void` → 全 context OK)**: 既 ルール 自 然 帰 結 で ない artificial 制 約、 user mental に 不 要 負 担 (= `feedback_no-artificial-constraint.md` 軸)
 - **key 名 `process` 強 制**: 「親 processor と 形 一 致」 美 学 軸 で 強 制 する motivation 弱 い、 user free が default
 - **lambda 直 接 return (= record wrap ナシ で `defineSubgraph((args) => Node<T>)`)**: 親 processor の `defineProcessor((ctx) => ({ process: () => ... }))` 形 と 構 造 ズレ、 method 追 加 で form 変 わる = 互 換 性 低 い
+
+---
+
+## Q35 — Render quantum length の user code 露 出 形 (audit Phase 1 #6)
+
+**Status:** resolved.
+
+**Decision:** `SAMPLES_PER_BLOCK: 128` を `unworklet` package の top-level constant と し て export する。 user code は `import { SAMPLES_PER_BLOCK } from 'unworklet'` で 引 用 する。 `ctx.renderQuantum` 等 の ctx 経 由 surface は 追 加 し な い。 値 は Web Audio 仕 様 で 全 環 境 共 通 の 128。 authoritative wording は `01-dsl.md` §1.7。
+
+既 docs prose で `renderQuantum` 名 を 引 用 し て いる 箇 所 (= 00-foundations / 03-compiler / 11-midi / 02-messaging / decisions-log) は `SAMPLES_PER_BLOCK` に 寄 せ る、 既 canonical で の 直 値 128 (= 01-dsl.md L43-44 / L881 / L1193、 12-canonical-examples.md L276 / L321 / L455 / L809 / L886 / L1102) を 名 で 引 く 形 に 置 換 する mechanical 修 正 は #41 batch に 集 約。
+
+**Rationale:**
+
+- **build-time 定 数 と run-time 値 を 区 別**: `sampleRate` は AudioContext 単 位 で 異 な る run-time 値 = ctx 経 由 が 自 然。 `SAMPLES_PER_BLOCK` は Web Audio 仕 様 で 128 固 定 の build-time 定 数 = 意 味 が 異 な る、 ctx に 並 べる と 区 別 が 消 え る
+- **ctx scope 外 で の 引 用 可 能 性**: build-time JS 文 脈 (= 別 module の helper / 定 数 定 義 / processor 外 の build-time 計 算) で renderQuantum 値 を 引 用 し た い 場 面 が 自 然 に 発 生 (例: `export const RING_CAP = SAMPLES_PER_BLOCK * 8`)。 ctx 経 由 だ と こ れ が 不 可 能
+- **直 値 128 散 布 解 消**: 既 canonical で `const PART_SIZE = 128; // = renderQuantum, partition aligned with block` (= 12-canonical-examples.md L276) の よ う な 「注 釈 で 意 味 を 補 う」 形 が 既 出 = 名 で 引 け る 形 を user が 自 然 に 求 め る signal
+- **平 易 名 の 採 用**: 「render quantum」 は Web Audio 仕 様 用 語、 ど ち ら か と 言 え ば 非 直 観。 `SAMPLES_PER_BLOCK` は 「1 塊 あた り の サンプル 数」 が 名 か ら 自 明 で、 仕 様 用 語 を 学 ば な く て も 意 味 が 取 れ る。 docs prose を `SAMPLES_PER_BLOCK` 名 に 寄 せ れ ば 翻 訳 cost も 消 え る
+
+**Rejected:**
+
+- **`ctx.renderQuantum` (= ctx surface に 載 せ る)**: run-time 値 (`sampleRate`) と build-time 定 数 が 同 じ surface に 並 ぶ と 区 別 が 消 え る、 ctx 引 数 が 在 域 し な い 文 脈 で 引 け な い
+- **直 値 128 を 書 か せ る (= 露 出 し な い)**: magic number 散 布 + 「= renderQuantum」 注 釈 コメント が canonical で 既 必 要 に な っ て いる = user mental load
+- **平 易 別 名 を ctx 上 に (= `ctx.blockSize` / `ctx.samplesPerBlock`)**: build-time 定 数 を ctx に 載 せ る 上 記 問 題 を 引 き ず る
+- **ctx surface + module export を 両 方 出 す**: surface 二 重、 user が 「ど ち ら を 使 う か」 判 断 す る 不 要 負 担
+- **`forSample` callback 引 数 で `length` を 受 け る (= `forSample((i, length) => ...)`)**: per-block top level で `buffer.f32({ size: length, ... })` が 書 け な い (= callback scope 外)、 主 要 ユース ケース (= buffer サイズ 決 定) と 真 っ 向 矛 盾
