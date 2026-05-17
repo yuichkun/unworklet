@@ -282,7 +282,7 @@ Authoritative wording: `11-midi.md` §5.
   - **(a) detection**: blobs from incompatible schemas never silently corrupt — the framework either migrates, partial-restores by name, or rejects with a structured error.
   - **(b) name-match partial restore**: when no migration is registered, slots that share name and compatible type are written back; missing / mismatched slots are reset and reported in `RestoreResult.{ skipped, missing }`.
   - **(c) declarative migration chain**: developers register `migrations([{ from, to, migrate }, ...])`; the framework walks the resulting directed graph from `blob.schemaHash` to `currentSchemaHash`, applying entries in order with hash verification at each step. Adjacent `from → to` steps chain automatically — N-version-skipping migrations work without rewriting earlier steps (ORM-style).
-- Compile-time validation: hash format, no duplicate `from`, no cycles, current-schema reachability. Reachability failure is a build warning by default; `{ strict: true }` makes it an error.
+- Compile-time validation: hash format, no duplicate `from`, no cycles, current-schema reachability. Reachability failure is a build warning by default; `{ migrationsStrict: true }` makes it an error.
 - `migrate` receives `MigrationHelpers` (parse / write for slot / buffer / param, profile-scoped variants, metadata). Slots not explicitly written are auto-carried from the old blob to the new blob when name and type match in both schemas.
 
 **Rationale (Q5-a):**
@@ -315,7 +315,7 @@ Preset save/load and session restore are foundational to the kinds of audio devi
 - *Hash-based schema identity*: derived from declarations at compile time, so it tracks the actual schema state rather than a manually maintained version number. Developers cannot forget to bump it; renames or type changes automatically yield a different hash.
 - *Adjacent `from → to` chain (ORM-style)*: lets developers write each schema change once. N-version-skipping migrations work without re-deriving combined transforms — the graph traversal handles arbitrary skips. This is the only design that scales to long-lived plugins (DAW sessions can be opened years after authoring).
 - *Three-level fallback (migrate → name-match → declaration default)*: each level handles a distinct severity of mismatch. Migrate covers schema-aware transforms; name-match covers small additions / removals where slot names survived; declaration default covers slots the blob never had. Together they ensure `restore()` never silently corrupts state and always produces a defined result.
-- *Reachability validation as build-time warning, not error*: many schema changes are simple additions where name-match restore is sufficient. Forcing a migration entry for every such change would be friction for the common case. `{ strict: true }` lets stricter teams elevate it.
+- *Reachability validation as build-time warning, not error*: many schema changes are simple additions where name-match restore is sufficient. Forcing a migration entry for every such change would be friction for the common case. `{ migrationsStrict: true }` lets stricter teams elevate it.
 
 **Rejected (Q5-a):**
 

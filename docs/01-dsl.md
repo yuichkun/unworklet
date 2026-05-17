@@ -10,6 +10,20 @@ written
 
 `defineProcessor` is the entry point. The body is a single lambda that runs once at build time (see `00-foundations.md` §3 for the meta-program semantics) — declarations come first; a `process` lambda is returned in the result record.
 
+```typescript
+defineProcessor<C>(
+  body:     (ctx: ProcessorContext) => ProcessorBody,
+  options?: ProcessorOptions,
+): CompiledProcessor<C>;
+
+type ProcessorOptions = {
+  migrations?:       Migration[];   // see §8.3
+  migrationsStrict?: boolean;       // see §8.3.2; default false (= warning, not error)
+};
+```
+
+The second argument is the **options bag** — currently the host of `migrations` (§8.3) and `migrationsStrict` (§8.3.2). All fields are optional; processors that do not need schema migration omit the bag entirely. Future processor-level configuration lands on this same bag additively.
+
 A `process` body has **two execution phases distinguished by lexical position**:
 
 - **Per-block phase** — statements at the top level of the `process` body. Run once at the start of every render quantum on the audio thread.
