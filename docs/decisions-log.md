@@ -1590,6 +1590,105 @@ forSample.byN(4, (i, everyNSamples) => {
 - **options bag 経 由 (= `forSample((i, { everyNSamples }) => ...)`)**: 拡 張 性 あ る が v1.0.0 で everyN だ け な ら 直 接 引 数 で 十 分、 destructuring boilerplate 増
 - **counter を 1 塊 境 界 で reset**: 「N sample ご と」 が 1 塊 境 界 で 切 れ る、 名 と 動 作 が ズ レ
 
+## Q44 — ringbuffer capacity を power-of-2 制 約 で 受 け 取 る 形 (audit P1 #61 仕 様 ホ ー ル)
+
+**Status:** resolved.
+
+### Problem
+
+`midiInput` / `midiOutput` / `event<T>` / `message<T>` の `capacity` option は 内 部 実 装 で **power-of-2 が 必 須** (= ringbuffer の wrap が bitmask `index & (capacity - 1)` で 1 命 令 で 取 れ る、 modulo `%` は 数 倍 遅 い)。 ただし v1.0.0 で 「capacity option の 型 が `number` の ま ま」 だ と user は `capacity: 100` の よ う な 任 意 数 字 を 渡 せ て し ま い、 runtime check (= 「power-of-2 で な い」 で throw) に 落 ち る か silent な wrong-behavior に な る。 IDE 段 階 で 即 弾 く 形 が 求 め ら れ た。
+
+### Decision
+
+`capacity` option 値 を `@unworklet/core` の top-level SCREAMING_SNAKE constant **`CAPACITY_<N>`** 系 で 受 け 取 る:
+
+```typescript
+import { CAPACITY_256, CAPACITY_1024 } from '@unworklet/core';
+
+const ringIn  = midiInput({ name: 'midiIn', capacity: CAPACITY_256 });    // default
+const dense   = midiInput({ name: 'heavy',  capacity: CAPACITY_1024 });   // override
+const evt     = event<T>({ name: 'peak',    capacity: CAPACITY_512 });
+```
+
+- export 対 象: `CAPACITY_16 / CAPACITY_32 / CAPACITY_64 / CAPACITY_128 / CAPACITY_256 / CAPACITY_512 / CAPACITY_1024 / CAPACITY_2048 / CAPACITY_4096 / CAPACITY_8192 / CAPACITY_16384` (= 2^4 〜 2^14)
+- 型: `type Capacity = typeof CAPACITY_16 | typeof CAPACITY_32 | ... | typeof CAPACITY_16384` の literal union
+- `capacity?: Capacity` を option 型 に 持 つ
+- 任 意 数 字 リ テ ラ ル (= `capacity: 100`) は TS narrow で 別 物 扱 い、 IDE 段 階 で 即 TS エ ラ ー で 弾 く
+- build-time / runtime check 不 要 (= TS 段 階 で 全 部 弾 く)
+- option 名 (= `capacity`) と prefix (= `CAPACITY_`) が 1:1 で 揃 う
+
+`SAMPLES_PER_BLOCK` (Q35) と 同 軸 (= top-level constant export で コ ン パ イ ル 段 階 で 固 定)。 内 部 実 装 jargon (= ring / slot / bitmask) を user 露 出 し な い。
+
+### Why this and not alternatives
+
+- **`capacity: number` の ま ま で runtime check で 弾 く 棄 却**: user は IDE で エ ラ ー 出 な い ま ま run し て 初 め て 「あ あ、 power-of-2 必 須 だ っ た」 と 気 づ く = footgun、 spec で 弾 け る も の は IDE 段 階 で 弾 く 方 針 と 衝 突
+- **literal union `capacity?: 16 | 32 | 64 | ... | 16384` 棄 却**: TS 型 と し て は 弾 け る が、 user が 「な ぜ こ の 数 字 限 定?」 と 質 問 し た 時 docs を 読 み に 行 か な い と 答 え が 出 な い (= 命 名 が ガ イ ド し て く れ な い); 上 記 SCREAMING_SNAKE constant な ら 「あ あ こ の 一 覧 か ら 選 ぶ」 が IDE 補 完 で 即 分 か る
+- **prefix を `RING_<N>` / `SLOT_<N>` 棄 却**: 内 部 実 装 jargon (= ringbuffer / slot) を user 露 出、 余 湖 さ ん feedback 「RING の 方 が user 目 線 で 意 味 不 明」 で 棄 却、 option 名 `capacity` と prefix `CAPACITY_` を 揃 え る
+
+### Side effects
+
+- 01-dsl.md §4.1, §4.2: `capacity` option 型 を `Capacity` (= literal union) に refine、 import 行 を canonical examples に 追 加
+- 11-midi.md §1: `midiInput` / `midiOutput` の `capacity` option を 同 様 に refine
+- canonical examples (= Ex 5 / Ex 6 等): `capacity: 256` → `capacity: CAPACITY_256` 等 mechanical 修 正 (= 既 commit 6fea6b2 / d4d80dc で 反 映 済 み)
+
+---
+
+## Q45 — migration 関 数 が throw し た 時 の framework 振 る 舞 い (audit #63 仕 様 ホ ー ル)
+
+**Status:** resolved.
+
+### Problem
+
+`defineProcessor` の migration chain (= 01-dsl §8.3) は こ う 書 く:
+
+```typescript
+defineProcessor(() => { /* declarations */ }, {
+  migrations: [
+    { from: 'a...', to: 'b...', migrate: (oldBlob, helpers) => { /* lift */ } },
+    { from: 'b...', to: 'c...', migrate: (oldBlob, helpers) => { /* lift */ } },
+  ],
+});
+```
+
+`migrate` 関 数 内 で user が throw す る ケ ー ス が あ る (= schema 想 定 外、 invariant 違 反、 unexpected error)。 framework の 振 る 舞 い (= catch / skip / partial restore / propagate) と main 側 `node.restore(blob)` の 戻 り 値 で の 失 敗 情 報 報 告 形 が 未 spec だ っ た。
+
+### Decision
+
+migration chain 内 で `migrate` が throw し た 時:
+
+1. **framework が catch**: main 側 `node.restore(blob)` Promise は reject さ せ な い (= audio plugin 全 体 が pending に な ら な い)
+2. **chain 全 体 stop**: 失 敗 step 以 降 を walk し な い (= 後 続 step の input が 不 完 全 で 危 険 ため、 部 分 restore せ ず)
+3. **processor は default 値 で 起 動**: 既 Q5 「default 値 で 動 く」 通 り、 audio 出 力 は 止 ま ら ず default で 始 ま る
+4. **戻 り 値 で 失 敗 情 報 報 告**: `node.restore(blob)` の 戻 り 値 を discriminated union で 拡 張:
+
+```typescript
+type RestoreResult =
+  | { ok: true;  applied: string[]; restored: number; skipped: string[]; missing: string[] }
+  | { ok: false; error: { step: string; message: string; cause: unknown };
+                  applied: string[]; restored: number; skipped: string[]; missing: string[] };
+
+const result = await node.restore(blob);
+if (!result.ok) {
+  console.warn(`preset partially loaded; failed at ${result.error.step}:`, result.error.message);
+}
+```
+
+audio thread 上 で の 例 外 propagate ナ シ (= realtime safety 維 持)、 main 側 で UI / log に warning を 出 す pattern が canonical Ex 7 と 整 合。
+
+### Why this and not alternatives
+
+- **catch せ ず Promise reject 棄 却**: audio plugin で preset load 失 敗 = plugin 全 体 pending、 default 起 動 し な い と audio 出 ナ シ で UX 最 悪
+- **catch + 部 分 restore (= 失 敗 step 飛 ば し て 後 続 続 行) 棄 却**: 後 続 step の input が 不 完 全 = 二 重 bug 危 険、 chain stop が 安 全
+- **audio thread で 例 外 propagate 棄 却**: audio thread で の throw = 音 切 れ で UX 最 悪、 realtime safety 違 反
+
+### Side effects
+
+- 01-dsl.md §8.3.3: migration chain throw 時 の 振 る 舞 い 段 落 を 追 加
+- 05-client.md §2.6: `RestoreResult` を discriminated union (= `{ ok: true } | { ok: false, error: ... }`) に 拡 張、 既 `{ restored, skipped, missing }` field は 維 持
+- canonical Ex 7: `if (result.skipped.length || result.missing.length)` を `if (!result.ok || result.skipped.length || ...)` 等 に refine (= 既 commit fd138ce で 反 映)
+
+---
+
 ## Q46 — `MidiEvent` / `event<T>` の cross-thread 型 view 分 離 (audit Phase 2 #8、 #47)
 
 **Status:** resolved.
