@@ -44,6 +44,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q35 | Render quantum length の user code 露 出 形 (audit Phase 1 #6) | resolved — `SAMPLES_PER_BLOCK: 128` を `unworklet` package の top-level constant と し て export; `ctx.renderQuantum` ナシ (= run-time 値 と build-time 定 数 を 区 別); ctx が 在 域 し な い build-time JS 文 脈 で も 引 用 可 | `01-dsl.md` §1.7 |
 | Q36 | method 引 数 で の literal lift + typed-array-field proxy semantics + emitIf cond 型 確 定 (audit P0-1) | resolved — Q33 拡 張: method の 引 数 型 が `Node<X>` な ら literal は 自 動 で `Node<X>` に lift (= `param.at(0)` per-block / `emitIf(true, ...)` / `main.at(0, i)` 等 を 型 と 整 合); typed-array-field proxy = `.length: Node<'i32'>` + `.at(idx: Node<'i32'> \| number)` で runtime read / build 時 折 り 畳 み を 引 数 種 類 で 自 然 分 岐; emitIf cond 型 を `Node<'bool'> \| boolean` で 確 定 (= Q32-b の B3 pending を close) | `00-foundations.md` §4 + `01-dsl.md` §2, §3.3, §4.1, §4.3 |
 | Q37 | 出 力 channel の 書 き 込 み ル ー ル を 親 ホ ス ト (AudioWorklet) と 揃 え る (audit P0-2) | resolved — `out.set(c, i, v)` は 自 由 に 何 度 で も 書 け る、 同 sample 位 置 を 複 数 回 書 け ば source 順 で 後 書 き が 勝 つ、 触 ら な い sample 位 置 / channel は silence (= 0); 複 数 forSample 分 担 / 重 ね 書 き 全 部 OK; 静 的 解 析 で 弾 く の は real-time safety 違 反 の み (= 「全 sample カ バ ー」 「exactly once」 系 制 約 を 撤 去); forSample.byN 中 で の `out.set` も legal、 stride は 128 を 割 る 値 (= 1, 2, 4, 8, 16, 32, 64, 128) 限 定 | `01-dsl.md` §1.3, §10.1 + `03-compiler.md` §2.4 |
+| Q38 | `onReceive` (= main → worklet message handler) の 振 る 舞 い (audit P0-3、 Phase 1 #4) | resolved — (a) timing = 当 1 塊 開 始 時 (= worklet 視 点 で current、 main 視 点 の 「next」 表 記 は 視 点 違 い、 worklet 視 点 で 統 一); (b) 実 行 順 序 = 全 handler が 1 塊 開 始 時 に 先 行、 そ の あ と per-block 計 算 + forSample が source 順 で 走 る (= AudioWorklet `onmessage` 振 る 舞 い と 整 合); (c) 1 message に 複 数 `onReceive` OK、 登 録 順 で 全 部 走 る (= 上 書 き で は な い); (d) handler 内 `state.load()` = 前 1 塊 末 尾 の 値、 `state.store()` は 当 1 塊 の per-block 計 算 + forSample で 観 測 可 | `01-dsl.md` §4.2 + `02-messaging.md` §1 |
 
 ---
 
@@ -757,11 +758,11 @@ This is a **planned mandatory addition**, not optional. The v1.0.0 surface is fo
 
 ## Q31 — onReceive execution contract + bulk copy primitive (audit B1)
 
-**Status:** resolved.
+**Status:** resolved (timing / 実 行 順 序 / 複 数 handler / state 観 測 は Q38 で 確 定; 表 記 「next render quantum」 は 「当 1 塊 = current render quantum (worklet 視 点)」 で 統 一)。
 
 **Decision (Q31-a — `onReceive` runs on the audio thread):**
 
-`message<T>.onReceive(handler)` is graph-captured at build time and emitted as part of the worklet's `process` body, at the per-block phase top of the next render quantum (per Q27-c). The handler runs on the audio thread. Handler bodies are subject to the same realtime-safety invariants as the rest of the audio-thread code path: no allocation, no I/O, no unbounded loops.
+`message<T>.onReceive(handler)` is graph-captured at build time and emitted as part of the worklet's `process` body, running on the audio thread at the start of the **current** render quantum (worklet author's viewpoint; from the main thread's viewpoint, this corresponds to the next render quantum after `node.messages.<name>(...)` is called — they refer to the same moment, see Q38-a). Handler bodies are subject to the same realtime-safety invariants as the rest of the audio-thread code path: no allocation, no I/O, no unbounded loops.
 
 **Decision (Q31-b — Bounded-loop rule applies inside `onReceive`):**
 
@@ -1266,4 +1267,46 @@ stride 制 約: 1, 2, 4, 8, 16, 32, 64, 128 (= `SAMPLES_PER_BLOCK` = 128 を 割
 - **「1 度 も 書 か な か っ た sample は エ ラ ー、 二 重 書 き は OK」 (= 中 間 案)**: silence 暗 黙 fill ケ ー ス (= 一 部 sample だ け 書 い て 残 り 0) を 弾 く、 親 ホ ス ト と ズ レ、 「silence fill 意 図 な ら `out.set(c, i, 0)` で 明 示」 を user に 強 制 = 親 ホ ス ト で 不 要 な 手 数
 - **「forSample.byN 中 で out.set 禁 止 (= storeVec 必 須)」**: scalar set も 親 ホ ス ト で 普 通、 禁 止 は over-constrain
 - **「forSample.byN 中 の `out.set(0, i, v)` を 同 値 stride 個 並 べ る broadcast と 解 釈」**: SIMD 計 算 結 果 は 通 常 各 sample で 違 う 値、 同 値 連 続 ケ ー ス は ほ ぼ な い、 意 味 論 不 自 然
+
+---
+
+## Q38 — `onReceive` (= main → worklet message handler) の 振 る 舞 い (audit P0-3、 Phase 1 #4)
+
+**Status:** resolved.
+
+**Decision (Q38-a — timing = 当 1 塊 開 始 時):**
+
+handler は **当 1 塊 (= 走 っ て いる render quantum)** の 開 始 時 に audio thread 上 で 走 る。 worklet 著 作 者 視 点 で 「current render quantum」、 main 著 作 者 視 点 で 「次 render quantum (= `node.messages.<name>(...)` を 呼 ん だ 直 後 の 次 quantum)」、 同 じ 瞬 間 を 視 点 違 い で 呼 ん で いる だ け。 docs 表 記 は **worklet 著 作 者 視 点 (= 「current」 / 「当 1 塊」) に 統 一**。
+
+既 仕 様 で `01-dsl.md` §4.2 が 「current」、 `02-messaging.md` §1 と Q31-a が 「next」 と 混 在 し て い た の は worklet/main 視 点 の 混 在 = Q38 で 全 て worklet 視 点 に 統 一 (= main 視 点 の 「次」 説 明 が 必 要 な 箇 所 は cross-ref で 補 う)。
+
+**Decision (Q38-b — 実 行 順 序 = 全 handler が 先 行、 そ の あ と per-block + forSample):**
+
+著 作 者 が source 順 で 並 べ た handler 登 録 (= `messageDecl.onReceive(...)` / `midiInput().onEvent(...)` の 行) は **graph capture (= コ ン パ イ ル) 時 の 登 録 行 為**。 runtime で は 1 塊 開 始 時 に:
+
+1. 全 handler を message drain 順 で 全 部 走 ら せ る (= AudioWorklet の `port.onmessage` が process 開 始 前 に drain さ れ る 振 る 舞 い と 整 合)
+2. そ の あ と per-block (= forSample 外) 計 算 + forSample 群 が source 順 で 走 る
+
+`01-dsl.md` §1 「body は top-to-bottom (= source 順) で 動 く」 は **コ ン パ イ ル 時 の graph capture の 順 序 ル ー ル**、 runtime 実 行 順 序 は handler 群 が 必 ず 先 行 す る。
+
+**Decision (Q38-c — 1 message に 複 数 `onReceive` OK):**
+
+1 message に 対 し て `onReceive` を 複 数 登 録 可 能、 graph capture 中 に 登 録 さ れ た 順 で drain 時 に 全 部 走 る (= 後 か ら 登 録 し た handler が 前 の を 上 書 き す る わ け で は な く 両 方 走 る)。 user free が default で 制 約 ナ シ。
+
+**Decision (Q38-d — state 観 測):**
+
+- handler 内 で `state.load()` = **当 1 塊 開 始 時 の 値 (= 前 1 塊 末 尾 で 書 か れ た 値)** を 観 測
+- handler 内 で `state.store(v)` し た 値 は、 当 1 塊 の per-block 計 算 + forSample で 観 測 可 能 (= Q38-b の handler 先 行 か ら の 自 然 帰 結)
+
+**Rationale:**
+
+- **親 ホ ス ト 整 合**: AudioWorklet の `MessagePort.onmessage` は process 関 数 の 外 で 走 り、 process 開 始 時 に は 反 映 済 み = 「全 handler 先 行」 と 同 じ 効 果。 user が AudioWorklet で 持 つ mental を そ の ま ま 使 え る
+- **canonical Ex 5 の 構 造 を 正 統 化**: handler 登 録 → per-block 計 算 → forSample と い う 並 び で、 「per-block 計 算 で handler の `state.store(...)` を 読 め る」 が 期 待 通 り
+- **視 点 違 い 表 記 の 統 一 で 矛 盾 解 消**: 既 仕 様 3 箇 所 (`01-dsl.md` §4.2 / `02-messaging.md` §1 / Q31-a) の current/next 混 在 を worklet 視 点 で 統 一
+
+**Rejected:**
+
+- **source 順 (= handler 登 録 行 で 即 handler が 走 る、 そ の あ と 後 続 の per-block 文)**: 「handler 登 録 後 の per-block 文 で 反 映 済 み」 を user が source 上 で 直 接 確 認 で きる が、 graph capture と runtime の 区 別 を user が 強 く 意 識 す る、 AudioWorklet `onmessage` 振 る 舞 い と も ズ レ
+- **1 message = 1 handler 強 制 (= 2 度 目 の `onReceive` は コ ン パ イ ル 時 エ ラ ー)**: artificial 制 約、 user free が default
+- **timing 表 記 = 「next」 (= main 視 点 で 統 一)**: worklet 著 作 者 視 点 で 「次」 と 言 う と 「今 動 い て いる の は ど の 塊?」 と 違 和 感、 動 い て いる 塊 を 「当 1 塊 (= current)」 と 表 現 す る の が 自 然
 

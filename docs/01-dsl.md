@@ -450,7 +450,13 @@ return {
 };
 ```
 
-Handler bodies run at the start of the current render quantum, before any `forSample`. Inside a handler, only state writes, buffer writes, and scalar arithmetic are allowed — sample-offset `i` is not in scope, so audio I/O primitives (`audioIn.at`, `audioOut.set`, `param.at(i)`) produce TypeScript reference errors at the call site (uniform with MIDI handler bodies, see `11-midi.md` §2).
+Handler bodies run at the start of the current render quantum (= worklet author's viewpoint; from main, this is the next quantum after the `node.messages.<name>(...)` call — see Q38-a). At runtime, **all registered handlers (across all messages and MIDI inputs) drain first, before any per-block top-level statement or `forSample` runs** — even though the source order interleaves handler registrations with per-block code. The `process` body's top-to-bottom reading rule (§1) applies to graph capture; at runtime the order is always [handlers] → [per-block statements + forSamples, in source order]. This matches AudioWorklet's `MessagePort.onmessage` behavior (drained before `process` runs) — see Q38-b.
+
+A single message may have **multiple `onReceive` registrations**; all of them run in registration order at the start of the quantum (later registrations do not override earlier ones — Q38-c).
+
+State observation inside a handler (Q38-d): `state.load()` reads the value at the start of the current quantum (= the value written by the previous quantum's last write). State written by `state.store(v)` inside the handler is observable in the same quantum's per-block computation and `forSample` callbacks (i.e. handlers can stage values for the per-block code that follows).
+
+Inside a handler, only state writes, buffer writes, and scalar arithmetic are allowed — sample-offset `i` is not in scope, so audio I/O primitives (`audioIn.at`, `audioOut.set`, `param.at(i)`) produce TypeScript reference errors at the call site (uniform with MIDI handler bodies, see `11-midi.md` §2).
 
 Options:
 
