@@ -291,8 +291,8 @@ v1.0.0 ships full sysex support. The sysex content buffer has its own capacity a
 Inbound and outbound ring buffers have fixed-size capacities chosen at processor instantiation:
 
 ```typescript
-const midiIn = midiInput({ name: 'midiIn' });                              // capacity: 256 (default)
-const heavy  = midiInput({ name: 'heavy', capacity: 1024 });               // override
+const midiIn = midiInput({ name: 'midiIn' });                                                  // capacity: CAPACITY_256 (default)
+const heavy  = midiInput({ name: 'heavy', capacity: CAPACITY_1024 });                          // override
 ```
 
 256 slots × 8 bytes = 2 KB; 1024 slots = 8 KB. SAB usage is small either way. The default of 256 covers the vast majority of MIDI workloads; override is available for dense MIDI / sequencer / network-driven loads.

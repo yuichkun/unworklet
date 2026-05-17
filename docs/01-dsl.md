@@ -412,7 +412,7 @@ The two new declaration kinds added by Q27 — `event<T>` (worklet → main, sam
 
 ```typescript
 const peakEvt = event<{ level: number }>({ name: 'peak' });
-const noteFired = event<{ note: number; velocity: number }>({ name: 'noteFired', capacity: 512 });
+const noteFired = event<{ note: number; velocity: number }>({ name: 'noteFired', capacity: CAPACITY_512 });
 ```
 
 `event<T>(options): EventDecl<T>` declares a typed worklet → main event channel. The payload type `T` is user-defined; an `atSample: number` field is **always carried on the wire** alongside `T` (mirroring MIDI Q4-c). Emission is via the `emitIf` method on the event handle (`eventDecl.emitIf(cond, payload)`) from any expression context where the audio-thread graph is captured — `forSample` / `forSample.byN` callbacks, `everyNSamples` callbacks (taken from the surrounding `forSample` callback's second argument; see §9 and Q43), `messageDecl.onReceive(...)` and `midiInput().onEvent(...)` handler bodies, and the per-block top level (statements in the `process` body outside any `forSample`). `emitIf` is the **single emission primitive**; there is no plain `emit(...)` form.
@@ -447,7 +447,7 @@ Overflow: drop-oldest + monotonic `overflowCount` counter, exposed as `node.even
 ```typescript
 const reqReset   = message<void>({ name: 'requestReset' });
 const loadPreset = message<{ slot: number }>({ name: 'loadPreset' });
-const uploadIR   = message<{ samples: Float32Array }>({ name: 'uploadIR', capacity: 4 });
+const uploadIR   = message<{ samples: Float32Array }>({ name: 'uploadIR', capacity: CAPACITY_16 });
 ```
 
 `message<T>(options): MessageDecl<T>` declares a typed main → worklet message channel. The worklet-side handler is registered inside the `process` body at the per-block phase top level via `messageDecl.onReceive(handler)`:
