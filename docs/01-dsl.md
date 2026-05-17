@@ -300,7 +300,13 @@ Options:
 
 - **`name?: string`** — slot identity. Required when the parent processor calls `snapshot()` (graph-capture-time error otherwise). Used as the slot key in snapshot blobs.
 - **`snapshot?: 'persistent' | 'transient' | { [profile: string]: 'persistent' | 'transient' }`** — snapshot inclusion. Default is `'persistent'`. See §8.2.
-- **`publish?: { rateFps: number }`** — when set, the framework periodically copies the current slot value into a shared region readable from the main thread via `node.state.<name>.subscribe(handler)` or `.value`. Default omitted (= not published). The slot remains worklet-private for writes regardless of this option; main observes a snapshot at copy time. Authoritative rationale: `decisions-log.md` Q27-a.
+- **`publish?: { rateFps: number }`** — when set, the framework periodically copies the current slot value into a shared region readable from the main thread via `node.state.<name>.subscribe(handler)` or `.value`. Default omitted (= not published). The slot remains worklet-private for writes regardless of this option; main observes a snapshot at copy time.
+
+  **Type restriction (Q42, `decisions-log.md`)**: `publish` is accepted only on `state.f32` / `state.i32` / `state.bool` — all three are 32 bit single-word slots that audio thread and main can read/write in a single `Atomics` op (no torn reads). `state.f64` / `state.i64` reject the `publish` option at TypeScript level; their values span two 32-bit words and require a torn-read mitigation that is deferred to v1.x.0 (same axis as Q27-f). Use `f32` as a substitute when possible.
+
+  `state.bool` is represented internally as `i32` (0 / 1); the audio thread stores `cond ? 1 : 0` via `Atomics.store`, and the main side casts back to `boolean` when delivering to subscribers (so `node.state.<name>.value` is typed `boolean`).
+
+  Authoritative rationale: `decisions-log.md` Q27-a + Q42.
 
 ### 3.2 `buffer` — fixed-size arrays
 

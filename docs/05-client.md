@@ -23,7 +23,7 @@ The `UnworkletNode<C>` shape exposes the following members:
 - **`.inputs.<name>`** — typed `connect()` / disconnection wrapper per declared `audioInput`. See `01-dsl.md` §1.6.
 - **`.outputs.<name>`** — typed `connect()` / disconnection wrapper per declared `audioOutput`.
 - **`.params.<name>: AudioParam`** — real Web Audio `AudioParam` (`setValueAtTime` / `linearRampToValueAtTime` / `exponentialRampToValueAtTime` / connection-from-`AudioNode` all work).
-- **`.state.<name>.value: T`** — current value of a `state.publish` (or `buffer.publish`) slot. Returns the most recently published value synchronously. Read-only.
+- **`.state.<name>.value: T`** — current value of a `state.publish` (or `buffer.publish`) slot. Returns the most recently published value synchronously. Read-only. `T` follows the declared slot type: `number` for `state.f32` / `state.i32`, `boolean` for `state.bool` (the framework casts the internal `i32` 0/1 representation; see Q42 in `decisions-log.md`); typed-array view for `buffer.<type>`. `state.f64` / `state.i64` do not accept `publish` in v1.0.0.
 - **`.state.<name>.subscribe(handler) → unsubscribe`** — listen for updates on a published state / buffer slot. Handler fires on every publish tick where the version counter has advanced — the framework does not compare values, so handlers receive every published update including identical re-publishes (Q39-b, `decisions-log.md`; see §5.2 for the dedupe pattern if you need it).
 - **`.events.<name>.on(handler) → unsubscribe`** — typed subscriber per declared `event<T>`. Handler receives the payload (including `atSample`).
 - **`.events.<name>.diagnostics.overflowCount(): number`** — monotonic counter of dropped events (see `02-messaging.md` §3).

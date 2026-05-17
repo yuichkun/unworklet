@@ -48,6 +48,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q39 | publish の 版 counter increment ル ー ル + main 側 dedupe 政 策 (audit P0-4) | resolved — audio thread は due tick で 無 条 件 に 値 を SAB store + 版 counter inc (= 既 値 比 較 + branch ナ シ で real-time 友 好); main 側 は 版 advance 時 に handler を 必 ず 呼 ぶ (= framework で 値 比 較 / dedupe ナ シ); user が 同 値 dedupe 欲 し い な ら handler 内 で 1 行 で 比 較。 既 仕 様 02 §5.4 「値 変 化 時 だ け inc」 + 05 §5.2 「identical re-publish は coalesce」 prose は magic anti-pattern と し て 撤 去 | `02-messaging.md` §5.4 + `04-worklet-runtime.md` §7 + `05-client.md` §1, §5.2 |
 | Q40 | `node.midi` の main 側 surface 形 (audit P0-5、 Phase 1 #5) | resolved — `node.midi.<name>.send(...)` / `.onEvent(...)` / `.connectFromWebMIDI(...)` / `.diagnostics.overflowCount(...)` の namespaced 形 で 統 一 (= 既 Q4-a で ratify 済 み だ っ た が 11-midi §3 / 05-client §1 / canonical で flat 表 記 が 残 っ て いた、 audit で 反 映 不 足 が 露 出); 他 全 declaration (= node.inputs.<name> / node.events.<name> / node.state.<name> 等) と 一 貫、 multi-port も natural に 表 現 (= dualPort 等); single-port で も namespaced 形 で 書 く | `11-midi.md` §3, §4 + `05-client.md` §1 + Q4-a |
 | Q41 | `createSubgraph` の instance name 渡 し 方 (audit P0-6、 Phase 2 #16) | resolved — signature を `createSubgraph(subgraph, ...lambdaArgs, options?: { name?: string })` に 拡 張 (= Q34 既 form の 末 尾 options 追 加)、 **options 自 体 も optional、 name property も optional** (= snapshot 不 要 な subgraph で boilerplate ナ シ); snapshot を 取 る 場 面 で name ナ シ subgraph instance が あ れ ば build-time エ ラ ー で 弾 く、 snapshot path = `'<instance-name>/<inner-slot-name>'` (= 例 「'lpfL/z1'」) で 統 一 | `01-dsl.md` §5.6.2, §8.1 |
+| Q42 | `state.publish` 対 応 type と state.bool の WASM 表 現 (audit P0-7) | resolved — publish を 渡 せ る type を **f32 / i32 / bool の 3 つ に 限 定 ** (= 全 て 32 bit 1 word で 完 結、 JS `Atomics` で audio thread / main 両 方 が 安 全 に 1 回 で 読 み 書 き 可)、 state.bool は 内 部 で `i32` の 0/1 を 持 ち main 側 で boolean に cast、 main 側 `.value` 型 は state.bool→boolean / state.f32 と state.i32→number; state.f64 / state.i64 で publish オ プション を 渡 す と TypeScript エ ラ ー (= 64 bit が 2 回 に 分 け て 触 る ため torn read の 危 険、 v1.x.0 で mitigation と セ ット で 検 討) | `01-dsl.md` §3.1 + `02-messaging.md` §5.4 + `05-client.md` §1 |
 
 ---
 
@@ -1455,4 +1456,48 @@ graph-capture-time error:
 - **method chain `.named('lpfL')`**: name optional で も 「snapshot 取 る 時 に build-time エ ラ ー」 が 取 り に く い (= chain の 有 無 を 型 で 強 制 で きな い)
 - **snapshot 識 別 を name 不 要 (= subgraph 内 state は snapshot 対 象 外 or 自 動 識 別)**: subgraph 内 で persistent state を snapshot に 反 映 す る use case が 不 能、 declarative DSL の 表 現 力 後 退
 - **name は必 須 だ が optional な extra options を 末 尾 で**: name optional 化 で 「snapshot 不 要 な ら 何 も 書 か な い」 を 実 現 し た 上 で、 さ ら に options 自 体 も optional で OK = 「options object も optional」 と 「name も optional」 の 両 方 を 受 け 入 れ る 形 で boilerplate 最 小
+
+---
+
+## Q42 — `state.publish` 対 応 type と state.bool の WASM 表 現 (audit P0-7)
+
+**Status:** resolved.
+
+**Decision:**
+
+`state.<type>(initial, { publish: { rateFps } })` で publish オ プション を 渡 せ る type を **f32 / i32 / bool の 3 つ に 限 定**。 state.f64 / state.i64 で publish オ プション を 渡 す と TypeScript エ ラ ー。
+
+3 type は い ず れ も 値 が 32 bit 1 word で 完 結 す る ため、 audio thread が `Atomics.store` で 1 回 で 書 き、 main thread が `Atomics.load` で 1 回 で 読 ん で torn read ナ シ で 完 全 同 期。
+
+state.bool は WASM レ ベ ル で `i32` (= 0 / 1) で 表 現、 audio thread 側 で `condValue ? 1 : 0` を `Atomics.store` す る。 main side `.value` で boolean に cast し て 返 す:
+
+| type | `.value` の TS 型 | publish 可 否 |
+|---|---|---|
+| f32 | `number` | OK |
+| i32 | `number` | OK |
+| bool | `boolean` (内 部 i32 を cast) | OK |
+| f64 | `number` | TS エ ラ ー (v1.0.0 で 不 可) |
+| i64 | `bigint` | TS エ ラ ー (v1.0.0 で 不 可) |
+
+f64 / i64 publish エ ラ ー の hint:
+
+```typescript
+state.f64(0, { name: 'p', publish: { rateFps: 30 } });
+// TypeScript エ ラ ー:
+//   `publish` option は f32 / i32 / bool で の み 利 用 可 (v1.0.0)。
+//   Hint: f32 で 代 用 可 な ら f32 へ。 64 bit 精 度 が 必 要 な 場 合 は
+//         v1.x.0 で の 追 加 を 待 つ (= torn read mitigation と セ ット)。
+```
+
+**Rationale:**
+
+- **declarative + footgun 撤 廃 哲 学 と 整 合**: f64 / i64 を v1.0.0 で 開 放 す る と torn read footgun を user に 押 し 付 け る = `feedback_framework-magic-anti-pattern.md` 系 (= 「user が 書 い た 通 り に 動 か な い」 silent 不 整 合) を v1.0.0 で 入 れ な い
+- **既 Q27-f (= buffer publish の torn read を v1.x.0 で mitigation) と 同 軸**: scalar publish も 「torn read が 起 きる type は v1.0.0 で 提 供 し ない」 で 一 貫
+- **canonical の publish 使 用 実 績 は 全 て f32 / i32 / buffer.f32**: bool publish は 自 然 な use case (= 「note 鳴 っ て いる か」 「mute か」) で 採 用 価 値 あ り、 f64 / i64 publish の 実 用 要 求 は v1.0.0 内 で は ナ シ
+
+**Rejected:**
+
+- **全 type で publish OK + f64 / i64 は torn read 警 告 を doc に**: user に 警 告 押 し 付 け = footgun 開 放、 declarative 原 則 と ズ レ
+- **f32 / i32 だ け publish OK (= bool 除 外)**: bool flag を main に 出 す 自 然 な use case を 排 除、 過 度 制 約
+- **bool を bit-packed で 表 現 (= 32 個 を 1 word に 詰 め る)**: メ モ リ 効 率 あ る が atomic 操 作 が 複 雑 化 (= bit mask + compare-and-swap)、 cost が 利 益 を 上 回 る
 
