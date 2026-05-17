@@ -58,7 +58,7 @@ The exact shape of the `midiInput` / `midiOutput` handles (event subscription on
 
 ```typescript
 defineProcessor((ctx) => {
-  const midiIn = midiInput();
+  const midiIn = midiInput({ name: 'midiIn' });
 
   return {
     process: () => {
@@ -112,7 +112,7 @@ Concurrent events at the same sample-offset are processed in arrival order on th
 
 ```typescript
 defineProcessor((ctx) => {
-  const midiIn = midiInput();
+  const midiIn = midiInput({ name: 'midiIn' });
   const noteState = state.i32(-1, { name: 'note' });
   const trigOffset = state.i32(-1, { name: 'trig' });
   // ...
@@ -146,7 +146,7 @@ The `condition` parameter accepts `Node<'bool'> | boolean`. Inside a `forSample`
 
 ```typescript
 const drumSequencer = defineProcessor((ctx) => {
-  const midiOut = midiOutput();
+  const midiOut = midiOutput({ name: 'midiOut' });
   // ...
   return {
     process: () => {
@@ -172,7 +172,7 @@ The `atSample` field of the emitted event is a `Node<'i32'>` (or a compile-time-
 
 ```typescript
 defineProcessor((ctx) => {
-  const midiOut = midiOutput();
+  const midiOut = midiOutput({ name: 'midiOut' });
   const stepCounter = state.i32(0, { name: 'stepCounter' });
 
   return {
@@ -261,7 +261,7 @@ Pointers into the ring buffer are slot-indexed (`head` and `tail` increment by 1
 
 ### 4.2 `atSample` semantics
 
-`atSample` is the sample-offset **within the current render quantum** (block-local) where the event fires. Valid values are 0 through `renderQuantum - 1`; the field is stored as `u32` for headroom against future block-size variation.
+`atSample` is the sample-offset **within the current render quantum** (block-local) where the event fires. Valid values are 0 through `SAMPLES_PER_BLOCK - 1`; the field is stored as `u32` for headroom against future block-size variation.
 
 A handler subscribed via `midiIn.onEvent` fires at the sample identified by `atSample`, not at the block boundary — sample accuracy is preserved end-to-end. A consumer that needs an absolute timestamp can derive it from `audioContext.currentTime + atSample / sampleRate`.
 
@@ -291,8 +291,8 @@ v1.0.0 ships full sysex support. The sysex content buffer has its own capacity a
 Inbound and outbound ring buffers have fixed-size capacities chosen at processor instantiation:
 
 ```typescript
-const midiIn = midiInput();                            // capacity: 256 (default)
-const heavy  = midiInput({ capacity: 1024 });          // override
+const midiIn = midiInput({ name: 'midiIn' });                              // capacity: 256 (default)
+const heavy  = midiInput({ name: 'heavy', capacity: 1024 });               // override
 ```
 
 256 slots × 8 bytes = 2 KB; 1024 slots = 8 KB. SAB usage is small either way. The default of 256 covers the vast majority of MIDI workloads; override is available for dense MIDI / sequencer / network-driven loads.
@@ -316,7 +316,7 @@ MIDI clock messages (`0xF8` timing clock, `0xFA` start, `0xFB` continue, `0xFC` 
 
 ```typescript
 defineProcessor((ctx) => {
-  const midiIn = midiInput();
+  const midiIn = midiInput({ name: 'midiIn' });
 
   return {
     process: () => {

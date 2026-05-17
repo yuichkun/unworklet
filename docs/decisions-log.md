@@ -1133,7 +1133,7 @@ return {
 
 **Status:** resolved.
 
-**Decision:** `SAMPLES_PER_BLOCK: 128` を `unworklet` package の top-level constant と し て export する。 user code は `import { SAMPLES_PER_BLOCK } from 'unworklet'` で 引 用 する。 `ctx.renderQuantum` 等 の ctx 経 由 surface は 追 加 し な い。 値 は Web Audio 仕 様 で 全 環 境 共 通 の 128。 authoritative wording は `01-dsl.md` §1.7。
+**Decision:** `SAMPLES_PER_BLOCK: 128` を `@unworklet/core` package の top-level constant と し て export する。 user code は `import { SAMPLES_PER_BLOCK } from '@unworklet/core'` で 引 用 する。 `ctx.renderQuantum` 等 の ctx 経 由 surface は 追 加 し な い。 値 は Web Audio 仕 様 で 全 環 境 共 通 の 128。 authoritative wording は `01-dsl.md` §1.7。
 
 既 docs prose で `renderQuantum` 名 を 引 用 し て いる 箇 所 (= 00-foundations / 03-compiler / 11-midi / 02-messaging / decisions-log) は `SAMPLES_PER_BLOCK` に 寄 せ る、 既 canonical で の 直 値 128 (= 01-dsl.md L43-44 / L881 / L1193、 12-canonical-examples.md L276 / L321 / L455 / L809 / L886 / L1102) を 名 で 引 く 形 に 置 換 する mechanical 修 正 は #41 batch に 集 約。
 

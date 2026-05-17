@@ -69,7 +69,7 @@ Common guarantees:
 
 - **No mid-sample mutation**: `state.publish` copies happen at scheduler tick boundaries; main never sees a half-written slot. `event<T>` writes commit one slot at a time, atomically.
 - **Non-blocking on the audio thread**: emission and publish never wait for the main thread. If a ringbuffer is full, the oldest entry is overwritten and the overflow counter advances by 1.
-- **Sample-accurate `atSample` end-to-end**: every `event<T>` payload carries a block-local sample-offset (`0..renderQuantum-1`). The wire format preserves it; main-side handlers receive it as an unwrapped field.
+- **Sample-accurate `atSample` end-to-end**: every `event<T>` payload carries a block-local sample-offset (`0..SAMPLES_PER_BLOCK-1`). The wire format preserves it; main-side handlers receive it as an unwrapped field.
 - **No reordering**: `event<T>` consumers see events in the order they were emitted within a block; across blocks, this-block events are observed before next-block events.
 
 ## 3. Queue sizing and overflow policy

@@ -40,8 +40,8 @@ const gain = defineProcessor((ctx) => {
 const partitionedReverb = defineProcessor((ctx) => {
   const main       = audioInput ({ channels: 1, name: 'main' });
   const out        = audioOutput({ channels: 1, name: 'main' });
-  const inBuf      = buffer.f32({ size: 128, name: 'inBuf'  });
-  const outBuf     = buffer.f32({ size: 128, name: 'outBuf' });
+  const inBuf      = buffer.f32({ size: SAMPLES_PER_BLOCK, name: 'inBuf'  });
+  const outBuf     = buffer.f32({ size: SAMPLES_PER_BLOCK, name: 'outBuf' });
   const partIdx    = state.i32(0, { name: 'partIdx' });
   const NUM_PARTITIONS = 8;
 
@@ -97,6 +97,8 @@ type AudioInputHandle<C extends number> = {
 ```
 
 `audioIn.at(c, i)` returns the channel-`c` value at sample-offset `i` within the current render quantum. `i` must be a `Node<'i32'>` originating from a `forSample` callback parameter.
+
+> Naming note: in prose, `audioIn` / `audioOut` refer to the user's declared `audioInput` / `audioOutput` handles (named by the user via the required `name` option — e.g. `const main = audioInput({ channels: 2, name: 'main' })`). They are not framework-provided globals; the prose name is a placeholder for whatever variable the author bound the declaration to.
 
 The channel index `c` is narrowed by TypeScript to the legal range for the declared channel count (`channels: 2` → `0 | 1`); out-of-range indices are TypeScript errors at the call site.
 
@@ -195,7 +197,7 @@ The package exports build-time constants at the top level, alongside `defineProc
 - **`SAMPLES_PER_BLOCK: 128`** — the render quantum length in samples. Web Audio specifies 128 samples per quantum across all environments; this value is fixed at build time. Used wherever processor code needs to refer to the block length by name rather than by the literal `128`.
 
   ```typescript
-  import { defineProcessor, buffer, forSample, SAMPLES_PER_BLOCK } from 'unworklet';
+  import { defineProcessor, buffer, forSample, SAMPLES_PER_BLOCK } from '@unworklet/core';
 
   defineProcessor(() => {
     const scratch = buffer.f32({ size: SAMPLES_PER_BLOCK, name: 'scratch' });
@@ -214,7 +216,7 @@ The package exports build-time constants at the top level, alongside `defineProc
 
   ```typescript
   // helpers.ts
-  import { SAMPLES_PER_BLOCK } from 'unworklet';
+  import { SAMPLES_PER_BLOCK } from '@unworklet/core';
 
   export const RING_CAP = SAMPLES_PER_BLOCK * 8;  // 1024
   export const blockToMs = (sampleRate: number) => SAMPLES_PER_BLOCK * 1000 / sampleRate;
@@ -670,7 +672,7 @@ The Q1 "no implicit widening" rule still applies inside the body: mixed-precisio
 Inside an L1 body, the following are **forbidden** and produce a graph-capture-time error:
 
 - New `state.*` / `buffer.*` / `param.*` declarations.
-- New `defineSubgraph(...)` declarations or instantiations of an existing `defineSubgraph` result.
+- New `defineSubgraph(...)` declarations or `createSubgraph(...)` instantiations (Q34, `decisions-log.md`).
 - New `audioInput` / `audioOutput` declarations.
 - `message` / `event` declarations.
 
@@ -980,7 +982,7 @@ import { mulVec, splat } from '@unworklet/core/simd';
 export const simdGain = defineProcessor((ctx) => {
   const main = audioInput ({ channels: 1, name: 'main' });
   const out  = audioOutput({ channels: 1, name: 'main' });
-  const scratch = buffer.f32({ size: 128, name: 'scratch' });
+  const scratch = buffer.f32({ size: SAMPLES_PER_BLOCK, name: 'scratch' });
   const gain    = param({ default: 1.0, min: 0.0, max: 4.0, automationRate: 'k-rate', name: 'gain' });
 
   return {
@@ -1309,7 +1311,7 @@ const gainSat = defineProcessor((ctx) => {
 const simdProc = defineProcessor((ctx) => {
   const main    = audioInput ({ channels: 1, name: 'main' });
   const out     = audioOutput({ channels: 1, name: 'main' });
-  const scratch = buffer.f32({ size: 128, name: 'scratch' });
+  const scratch = buffer.f32({ size: SAMPLES_PER_BLOCK, name: 'scratch' });
   const gain    = param({ default: 1.0, ..., automationRate: 'k-rate', name: 'gain' });
 
   return {

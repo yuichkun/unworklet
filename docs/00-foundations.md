@@ -65,7 +65,7 @@ The function returned in the `process` field of `defineProcessor`'s and `defineS
 
 ### Sample-offset (`i`)
 
-A `Node<'i32'>` that, at WASM-emission time, binds to the loop counter of a `forSample` iteration. `i` is the callback parameter of `forSample(callback)` or `forSample.byN(stride, callback)`. The value spans `[0, renderQuantum - 1]`. Outside any `forSample`, no `i` variable is in scope — sample-position primitives (`audioIn.at(c, i)`, `param.at(i)`, `audioOut.set(c, i, v)`) cannot be called there, enforced by standard TypeScript scoping. There is no sugar form that hides `i`.
+A `Node<'i32'>` that, at WASM-emission time, binds to the loop counter of a `forSample` iteration. `i` is the callback parameter of `forSample(callback)` or `forSample.byN(stride, callback)`. The value spans `[0, SAMPLES_PER_BLOCK - 1]`. Outside any `forSample`, no `i` variable is in scope — sample-position primitives (`audioIn.at(c, i)`, `param.at(i)`, `audioOut.set(c, i, v)`) cannot be called there, enforced by standard TypeScript scoping. There is no sugar form that hides `i`.
 
 ### Per-block phase / per-sample phase
 
