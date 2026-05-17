@@ -190,6 +190,19 @@ The compiled `UnworkletNode<C>` exposes `node.inputs.<name>` and `node.outputs.<
 
 Authoritative rationale and rejected alternatives: see `decisions-log.md` Q6 (declaration shape) and Q22 (single form for sample-position primitives).
 
+### 1.6.1 Public TypeScript types
+
+Handle types for every declaration kind are exported from `@unworklet/core` for use in helper / subgraph signatures and main-side typing:
+
+- `AudioInputHandle<C>` / `AudioOutputHandle<C>` (§1.2 / §1.3)
+- `State<T>` / `Buffer<T>` / `Param` (§3)
+- `EventDecl<T>` / `MessageDecl<T>` (§4)
+- `MidiInputHandle` / `MidiOutputHandle` (`11-midi.md` §2)
+- `SubgraphInstance<S>` (§5.6) for the value returned by `createSubgraph(...)`
+- `Node<T>` (§2)
+
+L1 helper signatures and main-side type annotations import these directly (see canonical Ex 2 and Ex 4 for examples).
+
 ### 1.7 Build-time constants
 
 The package exports build-time constants at the top level, alongside `defineProcessor` and the primitive operators:
@@ -473,7 +486,7 @@ Options:
 
 ### 4.3 Variable-length payloads
 
-Both `event<T>` and `message<T>` allow variable-length payload fields (`Float32Array`, `Uint8Array`, etc.) within `T`. The wire format borrows the MIDI sysex pattern (Q4-c): the main slot in the ringbuffer holds the fixed-size header + an index into a separate variable-length content buffer. Authoritative wire format and capacity policy: `02-messaging.md` §5.
+Both `event<T>` and `message<T>` allow variable-length payload fields (`Float32Array`, `Uint8Array`, etc.) within `T`. The wire format borrows the MIDI sysex pattern (Q4-c): the main slot in the ringbuffer holds the fixed-size header + an index into a separate variable-length content buffer. The size of that content buffer is controlled by the `payloadCapacity` option on the declaration (`event<T>({ name, payloadCapacity })` / `message<T>({ name, payloadCapacity })`), measured in bytes. If omitted, the framework derives a default from the largest expected payload × ring-buffer slot count. Authoritative wire format and capacity policy: `02-messaging.md` §5.
 
 Inside a handler body, the variable-length field is **not** a plain JS typed array — it is exposed as a **typed-array-field proxy** with two methods (Q36-b, `decisions-log.md`):
 

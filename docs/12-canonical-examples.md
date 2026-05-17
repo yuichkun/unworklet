@@ -496,11 +496,10 @@ mixer.connect(audioContext.destination);
 
 ```typescript
 import {
-  defineProcessor, audioInput, audioOutput, param, state, buffer,
+  defineProcessor, audioOutput, param, state, buffer,
   forSample, midiInput, message, event,
-  add, sub, mul, div, sin, cos, select, lte, gt, exp,
+  add, sub, mul, div, sin, select, lte, gt, exp,
   f32, i32,
-  type Node,
 } from '@unworklet/core';
 
 const SAMPLE_BUFFER_LEN = 48000 * 4;        // 4 seconds @ 48kHz

@@ -8,12 +8,25 @@ partial (§2 surface listing + §2.6 snapshot/restore + §5 event/state subscrip
 
 ## 1. `createNode`
 
-<!-- createNode<C>(context, processor, options?): Promise<UnworkletNode<C>>
-     - context: BaseAudioContext
-     - processor: CompiledProcessor<C> (artifact from the compiler)
-     - options.initial: per-param initial values
-     - options.numberOfInputs / numberOfOutputs / outputChannelCount: AudioWorkletNodeOptions passthroughs
-     Loads WASM (cached), adds Worklet module, instantiates the node, awaits worklet readiness. -->
+```typescript
+createNode<C>(
+  context: BaseAudioContext,
+  processor: CompiledProcessor<C>,
+  options?: CreateNodeOptions<C>,
+): Promise<UnworkletNode<C>>;
+
+type CreateNodeOptions<C> = {
+  // Per-param initial values; key is the param `name`, value is the initial number.
+  initial?: Partial<Record<string, number>>;
+
+  // Snapshot blob to restore on creation (alternative to `initial`); applied
+  // before the first render quantum. Schema mismatch routed through the
+  // processor's `migrations` chain (see `01-dsl.md` §8.3).
+  restore?: Uint8Array;
+};
+```
+
+Loads the WASM module (cached across calls), adds the Worklet module to the `AudioWorkletGlobalScope` if not already present, instantiates the underlying `AudioWorkletNode` with `numberOfInputs` / `numberOfOutputs` / `outputChannelCount` derived from the processor's `audioInput` / `audioOutput` declarations (no overrides from main side — declaration count is authoritative), and awaits the worklet's readiness handshake before resolving the returned promise.
 
 ## 2. `UnworkletNode<C>` surface
 
