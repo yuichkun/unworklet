@@ -25,8 +25,23 @@ partial (§7 publish scheduling written; §1–§6 + §8 placeholder)
 
 ## 3. Render quantum handling
 
-<!-- Q18 — block size as runtime constant vs compile-time constant; default 128;
-     graceful behavior across spec revisions. Lands here. -->
+The Web Audio spec fixes the render quantum at 128 samples. unworklet bakes that value (`SAMPLES_PER_BLOCK = 128`, see Q35) **all the way into the emitted WASM** (Q18, `decisions-log.md`):
+
+- `forSample` / `forSample.byN` loop bounds are emitted as compile-time-constant 128 / `128 / stride` iteration counts.
+- Audio-I/O buffer offsets and SIMD lane mapping are resolved at compile time from the same constant.
+- The WASM code never reads the block size at runtime — no per-quantum branch on length, no dynamic loop bound.
+
+For safety against a future browser changing the render quantum size, the worklet's `process(inputs, outputs)` entry point performs a single runtime length check (`outputs[0][0].length === 128`) before invoking the WASM `process` function. If the check fails, the worklet logs an error and stops processing rather than producing garbled audio or silent output:
+
+```text
+runtime error (worklet):
+  Render quantum size mismatch: expected 128, got 256.
+  This unworklet build is compiled against the Web Audio spec's fixed 128-sample
+  render quantum. If a browser update changes that size, this processor build
+  must be regenerated against the new specification.
+```
+
+Adaptive emission (= a single build that handles multiple render-quantum sizes) is permanently out of v1.0.0 scope; if browser specs evolve, it can be added additively in v1.x.0 without changing the v1.0.0 surface.
 
 ## 4. Channel-count handling
 
