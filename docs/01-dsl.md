@@ -1143,9 +1143,10 @@ When `restore(blob)` runs:
 
 1. If the blob's schema hash matches the current hash, slots are written back directly.
 2. If not, the framework searches the migration graph for a path `blob.schemaHash → currentSchemaHash`. If found, migrations are applied in order with hash verification at each step.
-3. If no migration path exists (or a step's hash check fails), the framework falls back to **name-match partial restore**: slots that share name and compatible type with the new schema are written back; the rest are reset to declaration defaults.
+3. If a `migrate` function **throws** during step execution, the framework catches the exception, stops the chain (= no further steps run; their inputs would be incomplete), starts the processor with declaration defaults for slots not yet successfully restored, and surfaces the failure through the `restore(blob)` return value (Q45, `decisions-log.md`). Audio-thread state is never left mid-migration; the audio thread is never reached with a partial migration in progress.
+4. If no migration path exists (or a step's hash check fails without a thrown exception), the framework falls back to **name-match partial restore**: slots that share name and compatible type with the new schema are written back; the rest are reset to declaration defaults.
 
-The result of `restore(blob)` reports `{ restored, skipped, missing }` so the consumer can surface "preset partially loaded" UX (see `05-client.md` §2.6 / §6).
+The result of `restore(blob)` is a discriminated union `{ ok: true, ... } | { ok: false, error: { step, message, cause }, ... }` (Q45) so the consumer can distinguish a clean partial-restore (`ok: true` with non-empty `skipped` / `missing`) from a thrown-migration failure (`ok: false` with `error` carrying the throwing step and cause). See `05-client.md` §2.6 / §6 for the full type.
 
 Authoritative rationale and rejected alternatives: see `decisions-log.md` Q5.
 

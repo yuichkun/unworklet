@@ -63,12 +63,27 @@ The `.state.<name>` surface is **read-only on main**. Writing to a worklet-side 
 - **`restore(blob: Uint8Array): Promise<RestoreResult>`** — write the blob's slot values back into the running processor.
 
   ```typescript
-  type RestoreResult = {
-    restored: number;       // slots successfully written
-    skipped:  string[];     // slot names that existed in the blob but mismatched type/size in the current schema
-    missing:  string[];     // current schema slots that the blob did not carry — initialized from declaration default
-  };
+  type RestoreResult =
+    | {
+        ok: true;
+        restored: number;       // slots successfully written
+        skipped:  string[];     // slot names that existed in the blob but mismatched type/size in the current schema
+        missing:  string[];     // current schema slots that the blob did not carry — initialized from declaration default
+      }
+    | {
+        ok: false;
+        error: {
+          step:    string;      // 'fromHash → toHash' label of the migration step that threw
+          message: string;      // error message extracted from the thrown value
+          cause:   unknown;     // the thrown value itself (typically an Error instance)
+        };
+        restored: number;
+        skipped:  string[];
+        missing:  string[];
+      };
   ```
+
+  `ok: true` means the migration chain completed without throwing — `skipped` / `missing` may still be non-empty when the new schema dropped or renamed slots. `ok: false` means a `migrate` function threw; the framework caught it, stopped the migration chain, and started the processor with declaration defaults for unrestored slots (Q45, `decisions-log.md`). Audio output starts cleanly regardless of `ok`'s value — the failure surfaces only through the return value, never as audio dropout.
 
   Timing semantics (block-atomic, next-block-boundary application) are spelled out in §6.
 

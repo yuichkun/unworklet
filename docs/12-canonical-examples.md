@@ -944,7 +944,9 @@ const stored = localStorage.getItem('reverb-preset-1');
 if (stored) {
   const blob = Uint8Array.from(atob(stored), (c) => c.charCodeAt(0));
   const result = await node.restore(blob);
-  if (result.skipped.length || result.missing.length) {
+  if (!result.ok) {
+    console.error(`preset migration threw at step ${result.error.step}:`, result.error.message);
+  } else if (result.skipped.length || result.missing.length) {
     console.warn('preset partially loaded', result);
   }
 }
