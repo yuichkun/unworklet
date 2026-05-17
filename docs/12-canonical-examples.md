@@ -255,7 +255,7 @@ node.params.hiQ.value = 1.4;
 node.onError((err) => console.error('[3bandEQ]', err));
 ```
 
-> Denormal note: feedback paths through `z1` / `z2` decay toward zero on long tails of silence and may enter denormal float range on some hardware (CPU spike risk). The mitigation policy (auto-detection, flush-to-zero, opt-out) is decided by Q21 (open) — see `04-worklet-runtime.md` §6.
+> Denormal note: feedback paths through `z1` / `z2` decay toward zero on long tails of silence and would otherwise enter the IEEE 754 subnormal range (5–100× slower per op on most CPUs). unworklet's compiler auto-inserts a subnormal guard at every `state.f32` / `state.f64` `.store(v)` site, flushing values below `1e-30` to zero — see Q21 in `decisions-log.md` and `04-worklet-runtime.md` §6. No user-side mitigation is required.
 
 ## 3. Three-band linear-phase EQ (partitioned convolution)
 
