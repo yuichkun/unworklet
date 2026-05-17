@@ -340,9 +340,12 @@ Options:
 ### 3.2 `buffer` — fixed-size arrays
 
 ```typescript
-const ring = buffer.f32({ size: 44100, name: 'delayLine' });                          // default 'transient'
-const wave = buffer.f32({ size: 256,   name: 'wavetable', snapshot: 'persistent' });  // explicit include
+const ring     = buffer.f32({ size: 44100, name: 'delayLine' });                          // default 'transient'
+const wave     = buffer.f32({ size: 256,   name: 'wavetable', snapshot: 'persistent' });  // explicit include
+const sysexBuf = buffer.u8 ({ size: 64,    name: 'sysexBuf' });                           // byte buffer (= sysex emit; see 11-midi.md §2.5)
 ```
+
+The element-type factory exposes `buffer.f32` / `buffer.f64` / `buffer.i32` / `buffer.i64` / `buffer.bool` / `buffer.u8`. The `'u8'` variant exists specifically for sysex emission (Q49) — byte values are written and read through `Node<'i32'>` (the lower 8 bits are stored), so no separate `Node<'u8'>` type is introduced into the scalar type system.
 
 Access goes through methods on the `Buffer<T>` handle (`buf.read(idx)`, `buf.write(idx, v)`, `buf.readInterpolated(pos)`, `buf.copyFrom(src)`); bounds and interpolation behavior are explicit at each call site. The index argument type is `Node<'i32'> | number` (Q36-a, `decisions-log.md`) — this can be a ring-buffer write head from a `state.i32` slot (per-block or per-sample), the loop counter `i` of a surrounding `forSample` (per-sample), any computed `Node<'i32'>` value, or a JS literal that lifts to `Node<'i32'>`. Range constraints (non-negative, within capacity) are enforced at graph capture.
 

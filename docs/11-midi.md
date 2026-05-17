@@ -106,10 +106,12 @@ type MidiEventGraph =
   | { type: 'channelPressure'; channel: Node<'i32'>; pressure: Node<'i32'>;                        atSample: Node<'i32'> }
   | { type: 'aftertouch';      channel: Node<'i32'>; note: Node<'i32'>; pressure: Node<'i32'>;     atSample: Node<'i32'> }
   | { type: 'systemRealtime';  status: Node<'i32'>;                                                atSample: Node<'i32'> }
-  | { type: 'sysex';           data: TypedArrayFieldProxy<'u8'>;                                    atSample: Node<'i32'> };
+  | { type: 'sysex';           data: Buffer<'u8'> | TypedArrayFieldProxy<'u8'>; length: Node<'i32'>;     atSample: Node<'i32'> };
 ```
 
 The two types share variant tags and field names — only field types differ. Emit-side accepts number / boolean literals through the Q33 literal-lift rule (e.g. `atSample: 0` lifts to `Node<'i32'>` with value 0), so authors write the same literal numbers they would write in `MidiEvent`. Reading a field in a worklet handler returns a `Node<'i32'>` graph value usable in graph expressions: `noteState.store(note)` works because `note: Node<'i32'>` is what `state.i32.store` expects.
+
+**Sysex shape asymmetry**: the sysex variant carries an extra `length: Node<'i32'>` field on the worklet emit side that is absent from `MidiEvent`. This is because the worklet has no dynamic allocation — bytes live in a build-time-fixed-size `Buffer<'u8'>` (declared via `buffer.u8(...)`; see `01-dsl.md` §3.2) or in an ingested `TypedArrayFieldProxy<'u8'>` (= MIDI thru), and `length` tells the framework how many bytes of the buffer to ship. The framework copies `data[0 .. length-1]` into a fresh `Uint8Array` for main-side delivery, so main-side handlers receive the natural `data: Uint8Array` shape with no `length` field needed (Q49).
 
 The exact set of variants and their fields is closed at v1.0.0. New variants (e.g. MIDI 2.0 high-resolution events) can be added additively in v1.x.0; the `MidiEvent` / `MidiEventGraph` pair grows together.
 
@@ -214,6 +216,51 @@ defineProcessor((ctx) => {
 
 At the per-block phase top level (where `i` is not in scope), the natural sample-accurate equivalent stores the offset in a `state.i32` slot during a `forSample` iteration and uses that slot's value as `atSample` in a subsequent emit.
 
+### 2.5 Emitting sysex (worklet → main)
+
+Sysex events have variable-length `data` and cannot use a fixed-size MIDI event slot directly. Worklet-side construction follows the realtime-safety invariant — no `new Uint8Array(...)` at runtime — through one of two paths (Q49):
+
+**Newly-constructed sysex** uses a build-time-fixed `Buffer<'u8'>` (= `buffer.u8(...)` declaration, see `01-dsl.md` §3.2). The author writes bytes into the buffer with `buf.write(idx, byteValue)` and passes the buffer plus a `length: Node<'i32'>` to `emitIf`. The framework ships `data[0 .. length-1]` to main:
+
+```typescript
+defineProcessor((ctx) => {
+  const midiOut  = midiOutput({ name: 'midiOut' });
+  const sysexBuf = buffer.u8({ name: 'sysexBuf', size: 64 });           // build-time-fixed
+  const txLen    = state.i32(0, { name: 'txLen' });                     // dynamic send length
+
+  return {
+    process: () => {
+      // ... handler / forSample logic populates sysexBuf and txLen ...
+      forSample((i) => {
+        midiOut.emitIf(cond, {
+          type:     'sysex',
+          data:     sysexBuf,                                            // Buffer<'u8'> reference
+          length:   txLen.load(),                                        // Node<'i32'> — bytes to ship
+          atSample: i,
+        });
+      });
+    },
+  };
+});
+```
+
+`buffer.u8` exposes the same `Buffer<T>` surface as other element types (`write(idx, v)`, `read(idx)`, `copyFrom(src)`, `size`, `name`); byte values flow through `Node<'i32'>` (the lower 8 bits are stored). The buffer reserves `size` bytes in linear memory at compile time and the `length` parameter on each emit selects how many of those bytes form the actual sysex body — header / trailer bytes (e.g. `0xF0` ... `0xF7`) are the author's responsibility, as they would be on a hardware MIDI line.
+
+**Ingested sysex re-emitted** (= MIDI thru / sysex echo / pass-through filters) uses the `TypedArrayFieldProxy<'u8'>` received by the inbound handler. The proxy is read-only but can be passed through `emitIf` directly; the framework re-encodes from the source buffer:
+
+```typescript
+midiIn.onEvent('sysex', ({ data, atSample }) => {                       // data: TypedArrayFieldProxy<'u8'>
+  midiOut.emitIf(true, {
+    type:     'sysex',
+    data:     data,                                                      // proxy passed through
+    length:   data.length,                                                // Node<'i32'> from proxy
+    atSample,
+  });
+});
+```
+
+The `data` argument therefore accepts the union `Buffer<'u8'> | TypedArrayFieldProxy<'u8'>` (§2.2): authored buffers for new construction, proxies for thru. There is no path to construct sysex bytes through any other surface (no `Uint8Array` literals, no `new Uint8Array(...)`) — the build-time-fixed `Buffer<'u8'>` is the single primitive for new content.
+
 ## 3. Main-thread integration
 
 unworklet exposes a source-agnostic main-thread API. Any code that produces a MIDI event injects it through `.send()`; unworklet has no knowledge of where the event originated.
@@ -297,7 +344,7 @@ sysex content buffer (separate, variable-length):
 | length (u32) | data (length bytes) | length (u32) | data (length bytes) | ...
 ```
 
-v1.0.0 ships full sysex support. The sysex content buffer has its own capacity and overflow handling consistent with §4.5.
+v1.0.0 ships full sysex support in **both directions** — ingestion (main → worklet, structured as a `TypedArrayFieldProxy<'u8'>` in the inbound handler) and emission (worklet → main, sourced from either a declared `Buffer<'u8'>` for newly-constructed content or a proxy for thru / re-emit; see §2.5 and Q49). The sysex content buffer has its own capacity and overflow handling consistent with §4.5.
 
 ### 4.4 Transport
 

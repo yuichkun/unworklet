@@ -44,6 +44,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q46 | `MidiEvent` / `event<T>` の cross-thread 型 view 分 離 (audit Phase 2 #8、 #47) | resolved — main thread / wire 用 と worklet audio-thread 用 で **TypeScript 型 を 2 つ に 分 け る**; `MidiEvent` (= 全 numeric field `number`、 typed-array field 生 `Uint8Array` 等) は `node.midi.<name>.send(...)` / `.onEvent(...)` の main 側 surface 専 用、 `MidiEventGraph` (= 全 numeric field `Node<'i32'>`、 typed-array field は §4.3 typed-array-field proxy) は `midiInput().onEvent(...)` handler arg + `midiOutput().emitIf(...)` arg 専 用; emit 側 で の number / boolean literal は Q33 literal-lift で 自 動 に Node 化 す る た め user code は main / worklet で 同 じ literal を 書 け る; `event<T>` も 同 様 に main 側 `T & { atSample: number }` / worklet 側 lifted view (= 全 number → Node<'i32'>、 全 boolean → Node<'bool'>、 全 typed-array → §4.3 proxy) で 2 view 派 生; mapped 型 (= 1 型 + `ToGraph<T>` 派 生) は IDE hover で `ToGraph<MidiEvent & ...>` が 出 て user 認 知 負 担 高 い た め 棄 却、 明 示 2 型 で 命 名 直 接 | `11-midi.md` §2.2, §2.3, §2.4 + `01-dsl.md` §4.1 |
 | Q47 | diagnostics surface 統 一 (audit Phase 2 #10、 #49) | resolved — diagnostics counter (= `overflowCount` 等) を **main 側 だ け で 提 供**、 worklet 側 handle (= `midiIn.diagnostics.X()`) を spec か ら 削 除; 全 channel (= event / message / MIDI) で `node.<kind>.<name>.diagnostics.X()` の 統 一 形 (= 既 Q40 namespaced shape と 整 合)、 「diagnostics は 外 部 観 測」 を declarative 原 則 (= 副 作 用 観 測 は main の 役 割、 worklet `process` body は feedback loop を 持 た な い) と し て 確 立; worklet 内 で の self-throttle pattern が 必 要 な ら main 経 由 で feedback (= 1 周 余 計 だ が 構 造 明 確)、 v1.x.0 で worklet handle へ の `.diagnostics` 後 付 け は additive 可 | `11-midi.md` §4 overflow + `decisions-log.md` Q4-c-iv prose |
 | Q48 | `inspect(blob)` を free function に 留 め る か node method に 動 か す か (audit Phase 2 #9、 #48) | resolved — `inspect(blob: Uint8Array): InspectionResult` を **free function 維 持** (= `@unworklet/core` か ら import)、 node method に 動 か さ な い; `snapshot()` / `restore(blob)` は node 依 存 (= 現 state を 読 む / 書 く) で 必 然 的 に node method、 `inspect` は blob を decode す る pure function で node 不 要 (= preset library tool / server-side blob analyzer / debug script で audio context 起 動 ナ シ で 動 く); 「依 存 性 で 形 が 決 ま る = node 依 存 操 作 は method、 blob-only 操 作 は free function」 を 1 行 ル ー ル と し て 明 文 化、 視 覚 的 対 称 (= snapshot/restore/inspect 揃 い) よ り 依 存 性 の 実 体 通 り の form を 優 先; node method 形 (= `node.inspect(blob)`) は 嘘 の 依 存 性 を user に 強 制 し て fakeNode ハ ッ ク 招 く た め 棄 却 | `05-client.md` §2 |
+| Q49 | worklet 側 sysex emit の data 構 築 経 路 (audit Phase 2 #17 / H9、 #54) | resolved — worklet → main sysex emit を **declared `Buffer<'u8'>` + `length: Node<'i32'>` 経 由 で v1.0.0 完 全 spec**、 sunset は ナ シ; `buffer.u8({ size, name })` を 新 規 構 築 用 byte buffer 専 用 factory と し て 導 入 (= 既 `Buffer<T>` handle と 同 形、 read/write は `Node<'i32'>` で 受 け て 下 位 8 bit を 扱 う、 `Node<'u8'>` 型 は 導 入 し な い で ScalarType 拡 張 ナ シ で 整 合); `MidiEventGraph` sysex variant を `{ type: 'sysex'; data: Buffer<'u8'> \| TypedArrayFieldProxy<'u8'>; length: Node<'i32'>; atSample: Node<'i32'> }` に refine、 ingested proxy を そ の ま ま re-emit (= MIDI thru) も 同 path で 表 現; main 側 `MidiEvent` sysex は そ の ま ま `data: Uint8Array` (= framework が buffer の `data[0..length-1]` を copy し て 届 け る)、 main 側 は length 不 要 (= Uint8Array.length で 取 れ る); `new Uint8Array(...)` 経 路 は 永 久 排 除 (= realtime safety / declarative pattern と 整 合) | `11-midi.md` §2.2, §2.5, §4.3 + `01-dsl.md` §3.2 |
 | Q31 | onReceive execution contract + bulk copy primitive (audit B1) | resolved — handler runs on audio thread (per Q27-c); audio-thread loops require build-time-constant bounds; `buf.copyFrom(typedArrayField)` for bulk transfer; state-slot-array copy via build-time unroll + `select`/`lt` mask | `02-messaging.md` §1 + `01-dsl.md` §3.2 |
 | Q32 | `emitIf` callable in MIDI / message handler context (audit B2) | resolved — `emitIf` is the single emission primitive across all expression contexts (forSample / forSample.byN, everyNSamples, MIDI handler, message handler, per-block top level); cond accepts `Node<'bool'> \| boolean` so handler-context / per-block unconditional emission is `emitIf(true, payload)`; static-analysis rejects constant-truthy cond inside `forSample` to preserve the Q4-b footgun barrier | `01-dsl.md` §4 + `02-messaging.md` §1 + `11-midi.md` §2.4 |
 | Q33 | Literal lifting in i32 / bool / context (audit B3) | resolved — Q1 拡 張: primitive 引 数 で の literal は context-dependent lift (周 辺 引 数 から `T` 推 論)、 ambiguous case は default `'f32'`、 対 象 type は f32 / f64 / i32 / bool; declaration / 全 lit 等 暗 黙 lift 対 象 外 は scalar constructor (`f32` / `f64` / `i32` / `i64` / `bool`) で explicit; i64 暗 黙 lift ナシ (BigInt 必 要) | `00-foundations.md` §4 + `01-dsl.md` §2 |
@@ -1751,4 +1752,51 @@ const inspected = inspect(blob);                // ← free function (= import �
 - 05-client.md §2 の `inspect` 項 目 で 「free function、 node method で は な い、 node 依 存 ナ シ で 使 え る」 旨 + ル ー ル を 1 段 落 で 追 記
 - decisions-log Q5 entry (= snapshot/restore/inspect 全 体) は 既 free function 形 で 整 合、 修 正 ナ シ
 - 既 canonical Ex 3 L350 は `const inspected = inspect(blob)` で 既 整 合、 修 正 ナ シ
+
+## Q49 — worklet 側 sysex emit の data 構 築 経 路 (audit Phase 2 #17 / H9、 #54)
+
+**Status:** resolved.
+
+### Problem
+
+Q46 で `MidiEventGraph` (= worklet 側 emit 型) の sysex variant を `{ type: 'sysex'; data: TypedArrayFieldProxy<'u8'>; atSample: Node<'i32'> }` と し て 整 備 し た が、 worklet 内 で **新 規 に 動 的 な バ イ ト 列 を 構 築** す る path が 未 spec だ っ た:
+
+- `new Uint8Array(...)` = realtime safety 違 反 (= heap alloc 禁 止) で 即 dead
+- ingest し た sysex を re-emit (= MIDI thru) な ら proxy 参 照 を そ の ま ま 渡 す 経 路 は 既 Q39 で 表 現 可
+- patch dump / config push (= 動 的 構 築 し た sysex を hardware に 送 信) 用 の path は ナ シ
+
+audio device の typical use case (= patch dump、 arpeggiator config push) で worklet → main sysex emit が 必 要 な の に、 v1.0.0 spec で は 構 築 経 路 が な か っ た。
+
+### Decision
+
+worklet 側 sysex emit を **declared `Buffer<'u8'>` + `length: Node<'i32'>` 経 由 で 完 全 spec**。 sunset は ナ シ (= 既 known need を v1.0.0 で 落 と さ な い、 後 で 追 加 す る な ら sysex variant 自 体 が 破 壊 変 更 級 に な る)。
+
+具 体 構 造:
+
+1. **`buffer.u8({ size, name })` を 新 規 factory と し て 導 入**: 既 `Buffer<T>` handle と 同 形 (`read(idx)` / `write(idx, v)` / `copyFrom(src)` / `size` / `name`)、 byte 値 は `Node<'i32'>` で 受 け て 下 位 8 bit を 扱 う、 `Node<'u8'>` 型 は 導 入 ナ シ で ScalarType 拡 張 不 要
+2. **`MidiEventGraph` sysex variant を refine**:
+   ```typescript
+   { type: 'sysex'; data: Buffer<'u8'> | TypedArrayFieldProxy<'u8'>; length: Node<'i32'>; atSample: Node<'i32'> }
+   ```
+   - `data` を union 化 し て 「新 規 構 築 = Buffer<'u8'>」 「ingest re-emit = proxy」 両 path を 1 variant で 表 現
+   - `length: Node<'i32'>` で 実 送 信 長 を 指 定 (= buffer は build-time 固 定 size box、 動 的 長 は length で 表 現)
+3. **`MidiEvent` (main side) sysex は 変 更 ナ シ**: `{ type: 'sysex'; data: Uint8Array; atSample: number }` の ま ま (= framework が buffer の `data[0..length-1]` を copy し て Uint8Array に し て 届 け る、 main 側 で length 不 要)
+
+`MidiEvent` (main) と `MidiEventGraph` (worklet) で sysex variant の shape が 非 対 称 (= worklet 側 だ け `length` field 持 つ) に な る が、 これ は worklet 側 が 「build-time 固 定 size box + 実 長 指 定」 を 持 ち 込 む 必 然 (= realtime safety、 heap alloc な し) で あ り、 11-midi.md §2.2 で 「Sysex shape asymmetry」 段 落 を 設 け て 1 段 落 で 説 明。
+
+### Why this and not alternatives
+
+- **v1.0.0 sunset (= MidiEventGraph か ら sysex 削 除) 棄 却**: patch dump / config push は audio device の known need、 v1.0.0 で 落 と す = MIDI 完 全 サ ポ ー ト を 宣 言 で きな く な る; 後 で 追 加 す る と sysex variant の 追 加 が MidiEventGraph 型 変 更 = 破 壊 変 更 級 で あ り、 v1.0.0 で 決 め 切 る 方 が 自 然 (= memory `feedback_no-preemptive-defer.md` の 「API surface に 染 み 出 る 選 択 は 今 decide」 に 該 当)
+- **`Node<'u8'>` 型 を 導 入 し て scalar 体 系 拡 張 (= ScalarType に `'u8'` 追 加) 棄 却**: scalar primitive 全 体 (= add/sub/mul/...) を `'u8'` 対 応 さ せ る overhead 大、 sysex 1 use case の た め に 型 system 全 体 を 触 る の は 過 剰; `Node<'i32'>` で 下 位 8 bit を 扱 う で 十 分 (= JS 側 で も byte は number で 扱 う 慣 行 と 整 合)
+- **emit-side で `data: Uint8Array literal` を 許 す 棄 却**: heap alloc 経 路 を user に 開 く = realtime safety 違 反 経 路 を spec で 認 め る こと に な り、 declarative 原 則 (= build-time 固 定 構 造) と 衝 突
+
+採 用 案 = build-time 固 定 size buffer + 実 長 field で 「動 的 length を 静 的 構 造 で 表 現」、 既 declarative pattern と 整 合。
+
+### Side effects
+
+- 11-midi.md §2.2: `MidiEventGraph` sysex variant に `data: Buffer<'u8'> | TypedArrayFieldProxy<'u8'>` + `length: Node<'i32'>` を 入 れ る、 「Sysex shape asymmetry」 段 落 で main / worklet 非 対 称 を 1 段 落 で 説 明
+- 11-midi.md §2.5 (新 規 section): 「Emitting sysex (worklet → main)」 で **declared buffer 経 由 + 実 長 指 定** / **ingested proxy 経 由 で thru** の 2 path を code example 付 き で spec、 `new Uint8Array(...)` が realtime-safety 違 反 で 永 久 排 除 で あ る こと を 明 文 化
+- 11-midi.md §4.3: 「v1.0.0 ships full sysex support」 を 「**both directions** (ingestion + emission)」 に 拡 張、 §2.5 と Q49 へ の cross-ref
+- 01-dsl.md §3.2: buffer factory に `buffer.u8` を 追 加、 「sysex emit 専 用、 byte 値 は Node<'i32'> で 扱 う」 旨 を 1 段 落 で 説 明
+- canonical example 修 正 ナ シ (verified — 12-canonical-examples.md L1157 で 既 acknowledged coverage gap、 sysex variant を 使 う example が 存 在 し な い)
 
