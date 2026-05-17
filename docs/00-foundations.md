@@ -53,11 +53,11 @@ A function that takes `Node<T>` arguments (and possibly other compile-time const
 
 ### Declaration scope
 
-The body of `defineProcessor` and `defineSubgraph`, before the returned `process` lambda. The only place where new `state.*`, `buffer.*`, `param.*`, `audioInput`, `audioOutput`, and `defineSubgraph` instantiations are created. Each declaration registers a slot in the graph and a region in WASM linear memory.
+The body of `defineProcessor` and `defineSubgraph`, before the returned `process` lambda. The only place where new declarations are created: `state.*`, `buffer.*`, `param.*`, `audioInput`, `audioOutput`, `event<T>`, `message<T>`, `midiInput`, `midiOutput`, and subgraph instantiations via `createSubgraph(...)`. Each declaration registers a slot in the graph and a region in WASM linear memory.
 
 ### Expression scope
 
-The body of `process` lambdas, `forSample` callbacks, L1 helper bodies, `defineSubgraph` `process` lambdas, and `everyNSamples` callbacks. Per-sample expressions live here. New declarations are forbidden in expression scope.
+The body of `process` lambdas, `forSample` / `forSample.byN` callbacks, L1 helper bodies, subgraph method bodies, `messageDecl.onReceive(...)` handler bodies, and `midiInput().onEvent(...)` handler bodies. Per-sample and per-block expressions live here. New declarations are forbidden in expression scope.
 
 ### Process body
 
@@ -90,7 +90,7 @@ The sub-rate computation primitive (see `01-dsl.md` §9). `everyNSamples(N, call
 
 ### Render quantum
 
-The block size of an Audio Worklet's `process` invocation. The current Web Audio specification fixes this at 128 samples; future spec revisions may change it. unworklet treats render quantum as a runtime constant, not a compile-time-baked literal — see `04-worklet-runtime.md` §3.
+The block size of an Audio Worklet's `process` invocation. The current Web Audio specification fixes this at 128 samples and unworklet ships this value as the build-time constant `SAMPLES_PER_BLOCK` exported from the package top level (see `decisions-log.md` Q35 and `01-dsl.md` §1.7). User code refers to the block length by importing this constant rather than writing the literal `128`.
 
 ### Block
 
@@ -105,15 +105,6 @@ Three declaration kinds for sample-position-independent slots:
 - **`param({ default, min, max, automationRate, ... })`** — bound to a Web Audio `AudioParam`. Single access form: `param.at(i)` (inside `forSample`, per-sample value at offset `i`) / `param.at(0)` (per-block phase, block-start value). No callable `param()` form, no `param.value` / `param.now()` property.
 
 See `01-dsl.md` §3.
-
-### `process` phase / `publish` phase
-
-Two execution phases of a processor:
-
-- **`process`** — runs every render quantum on the audio thread. Mapped to the compiled WASM. Hard realtime constraints apply (no allocation, no unbounded loops, no I/O).
-- **`publish`** — runs on a separate scheduler. Reads state, emits events. Compiled to plain JavaScript; not realtime-critical.
-
-See `01-dsl.md` §6.
 
 ### `AudioWorkletGlobalScope`
 
