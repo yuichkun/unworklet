@@ -92,9 +92,55 @@ The compiler runs analysis passes over the captured DAG (see §3); violations de
 
 Output coverage is **not** enforced by static analysis: `audioOut.set(c, i, v)` follows the host (AudioWorklet / JUCE) `process` mental model — write freely, duplicates use source-order semantics, sample-offsets that no phase writes are emitted as silence (Q37, `decisions-log.md`).
 
-### 2.5 Open: Q22-d (error message format)
+### 2.5 Error message format
 
-The exact format of error messages for each layer (heading, refactor-hint structure, source-location formatting, follow-up-link convention) is not yet resolved. Tracked as Q22-d — see `decisions-log.md` Q22.
+Layer 2 (graph-capture-time) and Layer 3 (static-analysis) errors share a single Rust-style template (Q22-d, `decisions-log.md`):
+
+```text
+error[unworklet/<stable-id>]: <one-sentence summary>
+  --> <file>:<line>:<col>
+   |
+<line> |       <code excerpt>
+   |       <caret range>
+   |
+
+help: <1–3 sentence rationale and refactor direction>
+
+      <corrected code snippet, 1–3 lines>
+
+note: see `decisions-log.md` <Q-ref> for the underlying rule.
+```
+
+Concrete example (Layer 3, Q32-c constant-truthy `emitIf` rule):
+
+```text
+error[unworklet/constant-truthy-emitif]: constant-truthy `cond` in `emitIf` inside `forSample` would emit at audio rate and overflow the event ringbuffer.
+  --> audio-plugins/limiter.ts:42:8
+   |
+42 |       overshoot.emitIf(true, { atSample: i, level: 0 });
+   |                        ^^^^
+   |
+
+help: gate emission on a state-edge expression, move it into a handler
+      context, or use `everyNSamples` for periodic emission:
+
+      forSample((i, everyNSamples) => {
+        everyNSamples(48, () => overshoot.emitIf(cond, payload));
+      });
+
+note: see `decisions-log.md` Q32-c for the constant-truthy rule.
+```
+
+Components:
+
+- **heading** — `error[unworklet/<stable-id>]: <summary>`. `<stable-id>` is a kebab-case error identifier (e.g. `constant-truthy-emitif`, `output-coverage`, `illegal-stride`, `bounded-loop`) usable for grep, IDE filtering, and doc lookup.
+- **source location** — `--> <file>:<line>:<col>` followed by a 1–3 line excerpt with caret/tilde markers indicating the offending span.
+- **help section** — `help:` prefix + a 1–3 sentence direction + a corrected code snippet (1–3 lines).
+- **note section** — `note: see <decisions-log Q-ref>` linking to the underlying ratified rule.
+
+Layer 1 (= TypeScript-native type errors) is delegated to the TypeScript compiler / IDE; unworklet does not reformat or wrap those.
+
+The list of stable error IDs is maintained as a separate inventory and grows additively with each new check landed in §2.2–§2.4.
 
 ## 3. Static analysis phase
 

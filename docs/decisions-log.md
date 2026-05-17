@@ -494,7 +494,7 @@ The umbrella "cross-processor communication" decomposes into five use cases; fou
 
 ## Q22 — Graph capture model and process body structure
 
-**Status:** resolved (Q22-a / Q22-aprime / Q22-b / Q22-c three-layer structure fixed; Q22-d error message format and refactor-hint structure are open and tracked separately; Q22-c-Round2 = subgraph instantiation scope = 別 件 で Q34 で 解 決 済 み; Q22-b 不 変 量 「sample-position primitive は forSample 内 限 定」 は Q36-a で 「forSample 内 で 計 算 し た `i` を 受 け 取 る」 と 再 定 義、 literal `0` per-block 呼 び は Q36 の method 引 数 literal lift で 型 と 整 合).
+**Status:** resolved (Q22-a / Q22-aprime / Q22-b / Q22-c three-layer structure fixed; **Q22-d error message format も resolved** (= 03-compiler §2.5 で Rust-style template 確 定、 後 述); Q22-c-Round2 = subgraph instantiation scope = 別 件 で Q34 で 解 決 済 み; Q22-b 不 変 量 「sample-position primitive は forSample 内 限 定」 は Q36-a で 「forSample 内 で 計 算 し た `i` を 受 け 取 る」 と 再 定 義、 literal `0` per-block 呼 び は Q36 の method 引 数 literal lift で 型 と 整 合).
 
 **Decision (Q22-a — Mental model):** authoritative wording in `00-foundations.md` §3 + `03-compiler.md` §2. Summary:
 
@@ -561,7 +561,7 @@ The two-form sugar / explicit dichotomy that an earlier draft of Q22-b proposed 
 2. **Graph-capture-time error** (build-time, during proxy evaluation of the `process` lambda): scope violations (a declaration call inside expression scope), missing required calls (e.g. `audioOutput.set` not called for a declared output on every code path of every render quantum), duplicate writes (same channel × same sample-offset written twice within one phase), declarations missing required `name` for snapshot-using processors, declarations inside `forSample` callbacks, etc. Detected by the framework as it executes the `process` lambda with proxies.
 3. **Static-analysis error** (post-capture, before WASM emission): allocation check (an AST pattern would imply heap alloc), unbounded loops (build-time loops without a static bound), memory-size violations (sum of declarations exceeds the configured budget), type-inference inconsistencies. Detected by the framework's analysis pass over the captured DAG.
 
-The detailed format of error messages and refactor-hint structure (Q22-d) is open.
+The detailed format of error messages and refactor-hint structure (Q22-d) is resolved at the end of this entry (Rust-style template; `03-compiler.md` §2.5 is authoritative).
 
 **Rationale (Q22-a):**
 
@@ -841,7 +841,46 @@ No new primitive is added — `select`, `lt`, and the existing typed-array-field
 - *`copyFrom` accepting an unbounded JS array (not a typed array field)*: the typed-array constraint is what makes the memcpy single-instruction and zero-conversion. A plain `number[]` would need element-by-element JavaScript-side conversion to the buffer's element type — that is the per-element loop the user was trying to avoid.
 - *Allow `samples[i]` indexing in onReceive's build-time loop, even when the upper bound is build-time-constant but `samples` is runtime-typed*: this is technically expressible (if the bound is `min(PATTERN_LEN, runtime)` masked with `select`, `samples[s]` for build-time `s` resolves to a typed-array-field-element graph node). It is preserved as the canonical state-slot-array pattern (Q31-d) precisely because `select` + `lt` makes the realtime-safety property structural — the unrolled bound is build-time-fixed, the per-slot mask is the only runtime quantity.
 
-**Open — Q22-d (Error message format and refactor-hint structure):** the format of error messages produced by each layer (TS type errors, graph-capture-time errors, static-analysis errors) and the structure of refactor hints attached to each error class is not yet resolved. To be addressed once `01-dsl.md` and `03-compiler.md` carry enough concrete examples to drive the format choice.
+**Decision (Q22-d — Error message format and refactor-hint structure):**
+
+Layer 2 (graph-capture-time) と Layer 3 (static-analysis) の error message を Rust-style template に 統 一:
+
+```text
+error[unworklet/<stable-id>]: <one-sentence summary>
+  --> <file>:<line>:<col>
+   |
+<line> |       <code excerpt>
+   |       <caret range>
+   |
+
+help: <1-3 sentence で 修 正 方 針>
+
+      <修 正 後 の code snippet, 1-3 行>
+
+note: see `decisions-log.md` <Q-ref> for the underlying rule.
+```
+
+- **heading**: `error[unworklet/<stable-id>]: <summary>` — `<stable-id>` は error 種 別 を 表 す stable な ID (= `constant-truthy-emitif` / `output-coverage` / `illegal-stride` 等)、 grep / IDE filter / doc 検 索 用
+- **source location**: `--> <file>:<line>:<col>` (= Rust 慣 行) + 1〜3 行 の code excerpt + caret で 該 当 範 囲 明 示
+- **help section**: `help:` prefix + 1〜3 sentence で 修 正 方 針 + 修 正 後 code snippet
+- **note section**: `note: see <decisions-log link>` で 仕 様 根 拠 へ cross-ref
+
+Layer 1 (= TypeScript native type error) は unworklet が 触 ら ず、 TypeScript / IDE 標 準 の 表 示 (= `TS<code>: <msg>`) を そ の ま ま 通 す。
+
+authoritative wording は `03-compiler.md` §2.5。 全 stable-id 一 覧 は doc 化 が 必 要 (= 別 task で 補 完)。
+
+**Rationale (Q22-d):**
+
+- *Rust-style format は IDE / editor 親 和*: 既 言 語 慣 行 (= Rust compiler / TypeScript compiler) と 整 合 し、 ed・itor 側 で source location parsing 既 動 く、 user の 学 習 cost 小
+- *stable-id 経 由 で error 分 類 が grep / filter 可 能*: 「`unworklet/constant-truthy-emitif`」 で 検 索 し て 該 当 docs / FAQ に 到 達 で きる
+- *help section + corrected snippet で footgun 撤 廃*: user に 「何 が ダ メ で 何 を 書 け ば いい か」 を 1 つ の error message 内 で 完 結、 user mental に 「自 力 で 直 し 方 を 探 す」 cost を 押 し 付 け な い
+- *note section で decisions-log link*: 仕 様 根 拠 を 即 参 照 で きる、 「framework が な ぜ こ の error を 出 す か」 を 学 び た い user の 経 路 を 1 つ に 統 一
+
+**Rejected (Q22-d):**
+
+- *TypeScript-style (= `TS<code>: <msg>` + tilde 下 線 ナ シ)*: TypeScript native error と 区 別 つ き に く い、 stable-id 経 由 で の 分 類 が 取 り に く い
+- *plain text 1 line (= `error: ...`)*: 修 正 方 針 + source location + 仕 様 根 拠 link が ナ シ = footgun を user に 押 し 付 け る
+- *JSON structured error の み*: human-readable で な い、 user が console で 直 接 見 る 場 面 で 不 親 切
 
 ---
 
