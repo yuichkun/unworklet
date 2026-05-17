@@ -318,9 +318,9 @@ const heavy  = midiInput({ name: 'heavy', capacity: CAPACITY_1024 });           
 When the producer fills the buffer (head catches tail), overflow handling is **drop-oldest + diagnostics counter**:
 
 - The oldest event in the buffer is overwritten by the new write.
-- A monotonic `overflowCount` counter, exposed as `midiIn.diagnostics.overflowCount()`, increments on each drop.
+- A monotonic `overflowCount` counter is incremented on each drop, exposed on the main thread as `node.midi.<name>.diagnostics.overflowCount()` (uniform with `node.events.<name>.diagnostics` and `node.messages.<name>.diagnostics`; see Q47).
 
-Drop-oldest and drop-newest both break MIDI semantics in different ways (phantom note off vs hanging note); since neither is correct, what matters is **detection**, not the choice. Consumers monitor the counter via the `publish` phase and surface alerts to the UI when it advances.
+Drop-oldest and drop-newest both break MIDI semantics in different ways (phantom note off vs hanging note); since neither is correct, what matters is **detection**, not the choice. Consumers monitor the counter on the main thread and surface alerts to the UI when it advances. The counter is observation-only — the worklet does not read it for self-throttling logic (= keeps the declarative `process` body free of feedback loops; see Q47).
 
 Overflow is anti-pattern in normal use — capacity should be sized to the workload. The diagnostics counter exists as a defensive measure for unusual conditions (file-load bursts, audio-thread starvation, etc.).
 

@@ -42,6 +42,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q44 | ringbuffer capacity を power-of-2 制 約 で 受 け 取 る 形 (audit P1 #61 仕 様 ホ ー ル) | resolved — `midiInput` / `midiOutput` / `event<T>` / `message<T>` の `capacity` option 値 を `@unworklet/core` の top-level SCREAMING_SNAKE constant `CAPACITY_16 / CAPACITY_32 / CAPACITY_64 / CAPACITY_128 / CAPACITY_256 / CAPACITY_512 / CAPACITY_1024 / CAPACITY_2048 / CAPACITY_4096 / CAPACITY_8192 / CAPACITY_16384` (= 2^4 〜 2^14) で export (= 既 `SAMPLES_PER_BLOCK` (Q35) 同 軸)、 type は `Capacity = typeof CAPACITY_16 \| ...` literal union; option 名 (= `capacity`) と prefix (= `CAPACITY_`) を 揃 え て user は 「`capacity: CAPACITY_<N>`」 と 1:1 一 致 で 書 く、 任 意 数 字 / 直 接 数 字 リ テ ラ ル は TS narrow で 別 物 扱 い で 弾 か れ る; build-time / runtime check 不 要 で IDE 段 階 で 即 TS エ ラ ー; 内 部 実 装 jargon (= ring / slot) を user 露 出 し な い | `01-dsl.md` §4.1, §4.2 + `11-midi.md` §1 |
 | Q45 | migration 関 数 が throw し た 時 の framework 振 る 舞 い (audit #63 仕 様 ホ ー ル) | resolved — `migrate` 関 数 内 で throw が 出 た 時 framework が catch し て chain 全 体 stop (= 後 続 step の input が 不 完 全 で 危 険 ため、 部 分 restore せ ず); processor は default 値 で 起 動 (= 既 Q5 「default で 動 く」 通 り、 audio 出 力 が pending に な ら な い); main 側 `node.restore(blob)` の 戻 り 値 を discriminated union `{ ok: true, ... } \| { ok: false, error: { step, message, cause }, ... }` に 拡 張 (= 既 `{ restored, skipped, missing }` は 維 持、 `ok` discriminant + `error` で 失 敗 情 報 を narrow); audio thread 上 で の 例 外 propagate ナ シ で realtime safety 維 持 | `01-dsl.md` §8.3.3 + `05-client.md` §2.6 |
 | Q46 | `MidiEvent` / `event<T>` の cross-thread 型 view 分 離 (audit Phase 2 #8、 #47) | resolved — main thread / wire 用 と worklet audio-thread 用 で **TypeScript 型 を 2 つ に 分 け る**; `MidiEvent` (= 全 numeric field `number`、 typed-array field 生 `Uint8Array` 等) は `node.midi.<name>.send(...)` / `.onEvent(...)` の main 側 surface 専 用、 `MidiEventGraph` (= 全 numeric field `Node<'i32'>`、 typed-array field は §4.3 typed-array-field proxy) は `midiInput().onEvent(...)` handler arg + `midiOutput().emitIf(...)` arg 専 用; emit 側 で の number / boolean literal は Q33 literal-lift で 自 動 に Node 化 す る た め user code は main / worklet で 同 じ literal を 書 け る; `event<T>` も 同 様 に main 側 `T & { atSample: number }` / worklet 側 lifted view (= 全 number → Node<'i32'>、 全 boolean → Node<'bool'>、 全 typed-array → §4.3 proxy) で 2 view 派 生; mapped 型 (= 1 型 + `ToGraph<T>` 派 生) は IDE hover で `ToGraph<MidiEvent & ...>` が 出 て user 認 知 負 担 高 い た め 棄 却、 明 示 2 型 で 命 名 直 接 | `11-midi.md` §2.2, §2.3, §2.4 + `01-dsl.md` §4.1 |
+| Q47 | diagnostics surface 統 一 (audit Phase 2 #10、 #49) | resolved — diagnostics counter (= `overflowCount` 等) を **main 側 だ け で 提 供**、 worklet 側 handle (= `midiIn.diagnostics.X()`) を spec か ら 削 除; 全 channel (= event / message / MIDI) で `node.<kind>.<name>.diagnostics.X()` の 統 一 形 (= 既 Q40 namespaced shape と 整 合)、 「diagnostics は 外 部 観 測」 を declarative 原 則 (= 副 作 用 観 測 は main の 役 割、 worklet `process` body は feedback loop を 持 た な い) と し て 確 立; worklet 内 で の self-throttle pattern が 必 要 な ら main 経 由 で feedback (= 1 周 余 計 だ が 構 造 明 確)、 v1.x.0 で worklet handle へ の `.diagnostics` 後 付 け は additive 可 | `11-midi.md` §4 overflow + `decisions-log.md` Q4-c-iv prose |
 | Q31 | onReceive execution contract + bulk copy primitive (audit B1) | resolved — handler runs on audio thread (per Q27-c); audio-thread loops require build-time-constant bounds; `buf.copyFrom(typedArrayField)` for bulk transfer; state-slot-array copy via build-time unroll + `select`/`lt` mask | `02-messaging.md` §1 + `01-dsl.md` §3.2 |
 | Q32 | `emitIf` callable in MIDI / message handler context (audit B2) | resolved — `emitIf` is the single emission primitive across all expression contexts (forSample / forSample.byN, everyNSamples, MIDI handler, message handler, per-block top level); cond accepts `Node<'bool'> \| boolean` so handler-context / per-block unconditional emission is `emitIf(true, payload)`; static-analysis rejects constant-truthy cond inside `forSample` to preserve the Q4-b footgun barrier | `01-dsl.md` §4 + `02-messaging.md` §1 + `11-midi.md` §2.4 |
 | Q33 | Literal lifting in i32 / bool / context (audit B3) | resolved — Q1 拡 張: primitive 引 数 で の literal は context-dependent lift (周 辺 引 数 から `T` 推 論)、 ambiguous case は default `'f32'`、 対 象 type は f32 / f64 / i32 / bool; declaration / 全 lit 等 暗 黙 lift 対 象 外 は scalar constructor (`f32` / `f64` / `i32` / `i64` / `bool`) で explicit; i64 暗 黙 lift ナシ (BigInt 必 要) | `00-foundations.md` §4 + `01-dsl.md` §2 |
@@ -171,7 +172,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 - **Capacity (Q4-c-i):** ring buffers default to **256 slots** (8 bytes each = 2 KB). Override via `midiInput({ name, capacity })` / `midiOutput({ name, capacity })` (`name` required, `capacity` optional). Sized for typical use; dense MIDI / sequencer / network-driven loads override.
 - **`atSample` semantics (Q4-c-ii):** **block-local** (0 through `renderQuantum - 1`); stored as `u32` for headroom. Global timestamps are derived consumer-side via `audioContext.currentTime + atSample / sampleRate`.
 - **Sysex (Q4-c-iii):** **full support in v1.0.0**. Variable-length sysex bodies live in a separate variable-length content buffer; the main ring-buffer slot for a sysex event holds the status byte plus an index into the content buffer.
-- **Overflow (Q4-c-iv):** **drop-oldest + diagnostics counter**. The oldest event is overwritten on overflow, and a monotonic `overflowCount` counter is exposed via `midiIn.diagnostics.overflowCount()` for consumer monitoring.
+- **Overflow (Q4-c-iv):** **drop-oldest + diagnostics counter**. The oldest event is overwritten on overflow, and a monotonic `overflowCount` counter is exposed on the main thread via `node.midi.<name>.diagnostics.overflowCount()` for consumer monitoring (uniform with event / message diagnostics — see Q47; the original 11-midi prose referenced a worklet-side `midiIn.diagnostics` surface which Q47 removes).
 
 **Decision (Q4-d):** authoritative wording in `11-midi.md` §5. Summary: MIDI clock messages (`0xF8` timing clock, `0xFA` start, `0xFB` continue, `0xFC` stop) are ingested as ordinary `systemRealtime` events. unworklet does **not** provide a built-in transport API (BPM / beat position / play state); transport interpretation is **out of scope** and lives in consumer code or third-party packages. This same decision resolves Q10.
 
@@ -1669,4 +1670,49 @@ typed-array-field の 扱 い は Q36-b に follow (= proxy 経 由 で `.at(idx
 - 11-midi.md §2.4 emit-side prose で `MidiEventGraph` shape を 期 待、 literal は Q33 lift で 通 る 旨 を 明 示
 - 01-dsl.md §4.1 で `event<T>` の 2 view 派 生 を 1 段 落 で 追 加 (= main 側 `T & { atSample: number }` / worklet 側 lifted)
 - main / worklet で 同 じ MIDI ロ ジ ッ ク を 書 き た い user は 別 型 に 対 応 必 要 = ま ぁ context が 違 う か ら 自 然
+
+## Q47 — diagnostics surface 統 一 (audit Phase 2 #10、 #49)
+
+**Status:** resolved.
+
+### Problem
+
+main 側 で は diagnostics counter (= `overflowCount`) を 全 channel で 統 一 形 で 提 供 し て い た:
+
+```typescript
+node.events  .myEvt .diagnostics.overflowCount();
+node.messages.myMsg .diagnostics.overflowCount();
+node.midi    .midiIn.diagnostics.overflowCount();
+```
+
+し か し worklet 側 で は **MIDI handle だ け に** `.diagnostics` surface が 存 在 し て お り (= 11-midi.md §4 / decisions-log.md Q4-c-iv prose で 言 及):
+
+```typescript
+midiIn.diagnostics.overflowCount();    // ← MIDI だ け 存 在
+evtOut.diagnostics?.overflowCount();   // ← 存 在 し な い (event<T>)
+msgIn .diagnostics?.overflowCount();   // ← 存 在 し な い (message<T>)
+```
+
+= MIDI だ け 非 対 称、 「diagnostics は ど こ で 読 む か」 が user 学 習 で 1 答 え に な ら な い 状 態 (= MIDI 特 例 を 覚 え る 必 要)。
+
+### Decision
+
+diagnostics surface を **main 側 だ け に 統 一**:
+
+- 全 channel で `node.<kind>.<name>.diagnostics.X()` の 形 (= 既 Q40 namespaced shape) を 唯 一 path と す る
+- worklet 側 handle (= `midiIn.diagnostics`) を spec か ら 削 除、 v1.0.0 で は worklet 内 か ら diagnostics counter を 読 む path ナ シ
+- `overflowCount` は 外 部 観 測 専 用 (= main thread の UI / log で 監 視、 worklet `process` body 内 で 読 ん で 分 岐 す る ロ ジ ッ ク は 書 け な い)
+
+### Why this and not alternatives
+
+- **worklet 側 に も 全 channel で `.diagnostics` を 追 加 (= 案 2 棄 却)**: API surface 倍 増、 worklet 内 で diagnostics を 読 ん で 何 す る か (= self-adaptive throttle 等) の typical pattern が v1.0.0 で 未 成 熟、 必 要 性 が 出 て か ら v1.x.0 で additive で 十 分
+- **MIDI 特 例 維 持 (= 案 3 棄 却)**: hardware 接 続 性 質 を 理 由 と し た 非 対 称 だ が、 main で 同 じ 監 視 可 能、 mental model 学 習 負 担 > 特 例 の メ リ ット
+- **declarative 原 則**: unworklet は 「user が 書 い た 構 造 が そ の ま ま WASM」 が core; worklet 内 で diagnostics counter を 読 ん で 分 岐 = 「副 作 用 → 制 御」 の feedback loop で declarative と 相 性 悪 い (= 同 じ 効 果 は main で counter 監 視 → main か ら `message` で 制 御 信 号 を 戻 す 構 造 の 方 が 明 確)
+
+### Side effects
+
+- 11-midi.md §4 overflow prose: `midiIn.diagnostics.overflowCount()` → `node.midi.<name>.diagnostics.overflowCount()` に refine、 「Consumers monitor the counter via the `publish` phase」 を 削 除 (= publish phase は Q27 で 廃 止 済 み、 単 純 に main 側 監 視 と prose 整 合)
+- decisions-log.md Q4-c-iv prose: 同 様 に worklet 側 path を main 側 path に refine、 Q47 で removed 旨 を 注 記
+- 既 canonical examples で `midiIn.diagnostics` を 直 接 使 う 箇 所 は ナ シ (verified: Ex 4 / Ex 5 / Ex 6 / Ex 8 全 て main 側 path `node.events.<name>.diagnostics.overflowCount()` 経 由)
+- worklet 内 で の self-throttle pattern が 必 要 な user は v1.x.0 の additive 追 加 を 待 つ か、 main 経 由 feedback (= main で overflow 検 知 → main か ら message で 制 御 信 号) で 代 替
 
