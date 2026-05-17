@@ -47,6 +47,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q38 | `onReceive` (= main → worklet message handler) の 振 る 舞 い (audit P0-3、 Phase 1 #4) | resolved — (a) timing = 当 1 塊 開 始 時 (= worklet 視 点 で current、 main 視 点 の 「next」 表 記 は 視 点 違 い、 worklet 視 点 で 統 一); (b) 実 行 順 序 = 全 handler が 1 塊 開 始 時 に 先 行、 そ の あ と per-block 計 算 + forSample が source 順 で 走 る (= AudioWorklet `onmessage` 振 る 舞 い と 整 合); (c) 1 message に 複 数 `onReceive` OK、 登 録 順 で 全 部 走 る (= 上 書 き で は な い); (d) handler 内 `state.load()` = 前 1 塊 末 尾 の 値、 `state.store()` は 当 1 塊 の per-block 計 算 + forSample で 観 測 可 | `01-dsl.md` §4.2 + `02-messaging.md` §1 |
 | Q39 | publish の 版 counter increment ル ー ル + main 側 dedupe 政 策 (audit P0-4) | resolved — audio thread は due tick で 無 条 件 に 値 を SAB store + 版 counter inc (= 既 値 比 較 + branch ナ シ で real-time 友 好); main 側 は 版 advance 時 に handler を 必 ず 呼 ぶ (= framework で 値 比 較 / dedupe ナ シ); user が 同 値 dedupe 欲 し い な ら handler 内 で 1 行 で 比 較。 既 仕 様 02 §5.4 「値 変 化 時 だ け inc」 + 05 §5.2 「identical re-publish は coalesce」 prose は magic anti-pattern と し て 撤 去 | `02-messaging.md` §5.4 + `04-worklet-runtime.md` §7 + `05-client.md` §1, §5.2 |
 | Q40 | `node.midi` の main 側 surface 形 (audit P0-5、 Phase 1 #5) | resolved — `node.midi.<name>.send(...)` / `.onEvent(...)` / `.connectFromWebMIDI(...)` / `.diagnostics.overflowCount(...)` の namespaced 形 で 統 一 (= 既 Q4-a で ratify 済 み だ っ た が 11-midi §3 / 05-client §1 / canonical で flat 表 記 が 残 っ て いた、 audit で 反 映 不 足 が 露 出); 他 全 declaration (= node.inputs.<name> / node.events.<name> / node.state.<name> 等) と 一 貫、 multi-port も natural に 表 現 (= dualPort 等); single-port で も namespaced 形 で 書 く | `11-midi.md` §3, §4 + `05-client.md` §1 + Q4-a |
+| Q41 | `createSubgraph` の instance name 渡 し 方 (audit P0-6、 Phase 2 #16) | resolved — signature を `createSubgraph(subgraph, ...lambdaArgs, options?: { name?: string })` に 拡 張 (= Q34 既 form の 末 尾 options 追 加)、 **options 自 体 も optional、 name property も optional** (= snapshot 不 要 な subgraph で boilerplate ナ シ); snapshot を 取 る 場 面 で name ナ シ subgraph instance が あ れ ば build-time エ ラ ー で 弾 く、 snapshot path = `'<instance-name>/<inner-slot-name>'` (= 例 「'lpfL/z1'」) で 統 一 | `01-dsl.md` §5.6.2, §8.1 |
 
 ---
 
@@ -1398,4 +1399,60 @@ node.midi.controller.onEvent('controlChange', (e) => { ... });
 - **flat 形 (= `node.midi.send` / `node.midi.onEvent`)**: 既 canonical だ が multi-port 表 現 不 能、 他 全 declaration と 不 整 合
 - **hybrid (= 単 port 時 flat、 複 数 port 時 namespaced)**: surface 二 重、 1 → 2 port 追 加 時 に main 側 code 全 行 rewrite 必 要、 学 習 cost 大
 - **default 名 'midi' を 暗 黙 適 用 (= midiInput() で name 省 略 可、 main 側 で flat alias)**: 既 Q4-a (= name 必 須) と 矛 盾
+
+---
+
+## Q41 — `createSubgraph` の instance name 渡 し 方 (audit P0-6、 Phase 2 #16)
+
+**Status:** resolved.
+
+**Decision:**
+
+`createSubgraph` の signature を Q34 既 form の 末 尾 に optional options を 追 加 す る 形 で 拡 張:
+
+```typescript
+createSubgraph(
+  subgraph: SubgraphDecl,
+  ...lambdaArgs: LambdaArgs,
+  options?: { name?: string }
+)
+```
+
+**options 自 体 が optional、 name property も optional**。 snapshot を 取 ら な い subgraph (= 多 く の 一 般 ケ ー ス) は 何 も 渡 さ ず に 書 け る。
+
+```typescript
+// (A) snapshot 不 要 な subgraph (= 多 く の 一 般 ケ ー ス):
+const lowL = createSubgraph(peakingBand, ctx.sampleRate);   // options ナ シ で OK
+
+// (B) snapshot 必 要 な subgraph (= persistent state を 経 由 す る):
+const filterL = createSubgraph(filterCore, ctx.sampleRate, { name: 'filterL' });
+const filterR = createSubgraph(filterCore, ctx.sampleRate, { name: 'filterR' });
+```
+
+snapshot path は 「`<instance-name>/<inner-slot-name>`」 形 (= 例 「`filterL/z1`」)。 subgraph 内 に snapshot 'persistent' の state が あ り、 processor 側 が snapshot を 取 ろ う と し て いる が subgraph instance に name ナ シ の 場 合、 graph-capture-time で エ ラ ー:
+
+```text
+graph-capture-time error:
+  subgraph instance at line N requires a `name` option for snapshot path.
+  reason: this subgraph declares persistent state (e.g. filterCore's `z1`)
+          and the processor's snapshot would have no way to identify which
+          instance owns the value.
+  Hint: createSubgraph(filterCore, ..., { name: 'filterL' })
+```
+
+既 `01-dsl.md` §8.1 prose 「subgraph instances must also carry a name option」 は 「snapshot を 取 る 場 合 に は name option 必 須」 に 寄 せ る。 §8.1 の pre-Q34 直 接 callable form の example も Q34 + Q41 form (= `createSubgraph(..., { name: 'lpfL' })`) に 修 正。
+
+**Rationale:**
+
+- **user free が default、 制 約 は justify 必 要** (= `feedback_no-artificial-constraint.md`): name の 主 motivation は snapshot path identity だ け、 snapshot 取 ら な い subgraph で name 強 制 す る motivation 弱 い
+- **Q34 既 form を 維 持 し て 拡 張 だ け**: form 破 棄 ナ シ、 末 尾 に optional options を 追 加 で 既 canonical (= name ナ シ で 既 動 い て いる) も そ の ま ま 通 る
+- **snapshot path 不 整 合 は graph-capture-time で 弾 く**: silent footgun ナ シ、 build 時 で エ ラ ー が 出 て user は name 追 加 で 解 決
+
+**Rejected:**
+
+- **name 全 case 必 須**: snapshot 不 要 な subgraph で boilerplate 強 制 = user 不 要 負 担、 motivation 弱 い
+- **options を 第 1 引 数 化 (= `createSubgraph({ subgraph, name }, ...args)`)**: 既 Q34 form 破 棄、 canonical 全 rewrite、 form 変 更 の 価 値 (= 「options が 先 頭 で 整 合」) が cost を 上 回 ら な い
+- **method chain `.named('lpfL')`**: name optional で も 「snapshot 取 る 時 に build-time エ ラ ー」 が 取 り に く い (= chain の 有 無 を 型 で 強 制 で きな い)
+- **snapshot 識 別 を name 不 要 (= subgraph 内 state は snapshot 対 象 外 or 自 動 識 別)**: subgraph 内 で persistent state を snapshot に 反 映 す る use case が 不 能、 declarative DSL の 表 現 力 後 退
+- **name は必 須 だ が optional な extra options を 末 尾 で**: name optional 化 で 「snapshot 不 要 な ら 何 も 書 か な い」 を 実 現 し た 上 で、 さ ら に options 自 体 も optional で OK = 「options object も optional」 と 「name も optional」 の 両 方 を 受 け 入 れ る 形 で boilerplate 最 小
 

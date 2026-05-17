@@ -741,10 +741,18 @@ const oscillator = defineSubgraph((sr: number) => {
 
 #### 5.6.2 Instantiation via `createSubgraph(...)`
 
-Parent processors instantiate subgraphs through the free function `createSubgraph(subgraph, ...lambdaArgs)`:
+Parent processors instantiate subgraphs through the free function `createSubgraph(subgraph, ...lambdaArgs, options?)`. The trailing `options` argument is optional; when present, it carries instance-level configuration:
 
 ```typescript
-const lpf = createSubgraph(onepole, 0.5);          // coef = 0.5 bound at instance creation
+createSubgraph(
+  subgraph: SubgraphDecl,
+  ...lambdaArgs: LambdaArgs,
+  options?: { name?: string },
+)
+```
+
+```typescript
+const lpf = createSubgraph(onepole, 0.5);          // coef = 0.5 bound at instance creation; no options
 
 forSample((i) => {
   const y = lpf.process(audioIn.at(0, i));         // input passed per call
@@ -762,9 +770,15 @@ forSample((i) => {
     mix = add(mix, voices[s].process(hz, vel, gate, attackS, releaseS));
   }
 });
+
+// With `name` (required when the subgraph carries persistent state and the processor takes snapshots — see §8.1):
+const filterL = createSubgraph(filterCore, ctx.sampleRate, { name: 'filterL' });
+const filterR = createSubgraph(filterCore, ctx.sampleRate, { name: 'filterR' });
 ```
 
 `createSubgraph(...)` performs state slot allocation; the returned value is a record of methods that can be called from any expression context (§5.6.4).
+
+The `options.name` is **optional**: snapshot-free subgraphs need not provide one (Q41). When the subgraph declares persistent state and the parent processor takes snapshots, missing `name` is a graph-capture-time error — see §8.1.
 
 `createSubgraph` mirrors the main-side `createNode` naming convention (see `05-client.md`).
 
@@ -991,22 +1005,31 @@ Processors that need preset save/load, session restore, or AB compare declare sn
 
 ### 8.1 Slot identity rules
 
-Every slot reachable from a `defineProcessor` body that calls `snapshot()` must carry a unique `name`. Names are used as keys in snapshot blobs. Subgraph instances must also carry a `name` option:
+Every slot reachable from a `defineProcessor` body that calls `snapshot()` must carry a unique `name`. Names are used as keys in snapshot blobs.
+
+**Subgraph instances** carry a `name` only when the parent processor's snapshot path needs to identify which instance owns a slot (Q41). For snapshot-free subgraphs, `name` is omitted entirely:
 
 ```typescript
-const onepole = defineSubgraph((input: Node<'f32'>, coef: Node<'f32'>) => {
+const onepole = defineSubgraph((coef: Node<'f32'>) => {
   const z = state.f32(0, { name: 'z' });
-  return { process: () => { /* ... */ } };
+  return {
+    process: (input: Node<'f32'>) => {
+      const y = add(z.load(), mul(coef, sub(input, z.load())));
+      z.store(y);
+      return y;
+    },
+  };
 });
 
 const synth = defineProcessor((ctx) => {
-  const lpfL = onepole(inputL, cutoff, { name: 'lpfL' });   // slot path 'lpfL/z'
-  const lpfR = onepole(inputR, cutoff, { name: 'lpfR' });   // slot path 'lpfR/z'
+  // Snapshot-bearing: each instance's `z` becomes a distinct slot in the blob.
+  const lpfL = createSubgraph(onepole, cutoff, { name: 'lpfL' });   // slot path 'lpfL/z'
+  const lpfR = createSubgraph(onepole, cutoff, { name: 'lpfR' });   // slot path 'lpfR/z'
   // ...
 });
 ```
 
-Slot path is the slash-joined chain from the root processor (`'lpfL/z'`, `'fxBus/reverb/tail'`, etc.). Graph capture validates uniqueness; missing `name` on any reachable slot or subgraph instance is a graph-capture-time error.
+Slot path is the slash-joined chain from the root processor (`'lpfL/z'`, `'fxBus/reverb/tail'`, etc.). Graph capture validates uniqueness; missing `name` on any reachable slot is always an error. Missing `name` on a subgraph instance is an error only when the subgraph declares persistent state and the parent processor takes snapshots — for snapshot-free instances (the common case), no `name` is required.
 
 ### 8.2 Snapshot profiles
 
