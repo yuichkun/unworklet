@@ -43,6 +43,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q45 | migration 関 数 が throw し た 時 の framework 振 る 舞 い (audit #63 仕 様 ホ ー ル) | resolved — `migrate` 関 数 内 で throw が 出 た 時 framework が catch し て chain 全 体 stop (= 後 続 step の input が 不 完 全 で 危 険 ため、 部 分 restore せ ず); processor は default 値 で 起 動 (= 既 Q5 「default で 動 く」 通 り、 audio 出 力 が pending に な ら な い); main 側 `node.restore(blob)` の 戻 り 値 を discriminated union `{ ok: true, ... } \| { ok: false, error: { step, message, cause }, ... }` に 拡 張 (= 既 `{ restored, skipped, missing }` は 維 持、 `ok` discriminant + `error` で 失 敗 情 報 を narrow); audio thread 上 で の 例 外 propagate ナ シ で realtime safety 維 持 | `01-dsl.md` §8.3.3 + `05-client.md` §2.6 |
 | Q46 | `MidiEvent` / `event<T>` の cross-thread 型 view 分 離 (audit Phase 2 #8、 #47) | resolved — main thread / wire 用 と worklet audio-thread 用 で **TypeScript 型 を 2 つ に 分 け る**; `MidiEvent` (= 全 numeric field `number`、 typed-array field 生 `Uint8Array` 等) は `node.midi.<name>.send(...)` / `.onEvent(...)` の main 側 surface 専 用、 `MidiEventGraph` (= 全 numeric field `Node<'i32'>`、 typed-array field は §4.3 typed-array-field proxy) は `midiInput().onEvent(...)` handler arg + `midiOutput().emitIf(...)` arg 専 用; emit 側 で の number / boolean literal は Q33 literal-lift で 自 動 に Node 化 す る た め user code は main / worklet で 同 じ literal を 書 け る; `event<T>` も 同 様 に main 側 `T & { atSample: number }` / worklet 側 lifted view (= 全 number → Node<'i32'>、 全 boolean → Node<'bool'>、 全 typed-array → §4.3 proxy) で 2 view 派 生; mapped 型 (= 1 型 + `ToGraph<T>` 派 生) は IDE hover で `ToGraph<MidiEvent & ...>` が 出 て user 認 知 負 担 高 い た め 棄 却、 明 示 2 型 で 命 名 直 接 | `11-midi.md` §2.2, §2.3, §2.4 + `01-dsl.md` §4.1 |
 | Q47 | diagnostics surface 統 一 (audit Phase 2 #10、 #49) | resolved — diagnostics counter (= `overflowCount` 等) を **main 側 だ け で 提 供**、 worklet 側 handle (= `midiIn.diagnostics.X()`) を spec か ら 削 除; 全 channel (= event / message / MIDI) で `node.<kind>.<name>.diagnostics.X()` の 統 一 形 (= 既 Q40 namespaced shape と 整 合)、 「diagnostics は 外 部 観 測」 を declarative 原 則 (= 副 作 用 観 測 は main の 役 割、 worklet `process` body は feedback loop を 持 た な い) と し て 確 立; worklet 内 で の self-throttle pattern が 必 要 な ら main 経 由 で feedback (= 1 周 余 計 だ が 構 造 明 確)、 v1.x.0 で worklet handle へ の `.diagnostics` 後 付 け は additive 可 | `11-midi.md` §4 overflow + `decisions-log.md` Q4-c-iv prose |
+| Q48 | `inspect(blob)` を free function に 留 め る か node method に 動 か す か (audit Phase 2 #9、 #48) | resolved — `inspect(blob: Uint8Array): InspectionResult` を **free function 維 持** (= `@unworklet/core` か ら import)、 node method に 動 か さ な い; `snapshot()` / `restore(blob)` は node 依 存 (= 現 state を 読 む / 書 く) で 必 然 的 に node method、 `inspect` は blob を decode す る pure function で node 不 要 (= preset library tool / server-side blob analyzer / debug script で audio context 起 動 ナ シ で 動 く); 「依 存 性 で 形 が 決 ま る = node 依 存 操 作 は method、 blob-only 操 作 は free function」 を 1 行 ル ー ル と し て 明 文 化、 視 覚 的 対 称 (= snapshot/restore/inspect 揃 い) よ り 依 存 性 の 実 体 通 り の form を 優 先; node method 形 (= `node.inspect(blob)`) は 嘘 の 依 存 性 を user に 強 制 し て fakeNode ハ ッ ク 招 く た め 棄 却 | `05-client.md` §2 |
 | Q31 | onReceive execution contract + bulk copy primitive (audit B1) | resolved — handler runs on audio thread (per Q27-c); audio-thread loops require build-time-constant bounds; `buf.copyFrom(typedArrayField)` for bulk transfer; state-slot-array copy via build-time unroll + `select`/`lt` mask | `02-messaging.md` §1 + `01-dsl.md` §3.2 |
 | Q32 | `emitIf` callable in MIDI / message handler context (audit B2) | resolved — `emitIf` is the single emission primitive across all expression contexts (forSample / forSample.byN, everyNSamples, MIDI handler, message handler, per-block top level); cond accepts `Node<'bool'> \| boolean` so handler-context / per-block unconditional emission is `emitIf(true, payload)`; static-analysis rejects constant-truthy cond inside `forSample` to preserve the Q4-b footgun barrier | `01-dsl.md` §4 + `02-messaging.md` §1 + `11-midi.md` §2.4 |
 | Q33 | Literal lifting in i32 / bool / context (audit B3) | resolved — Q1 拡 張: primitive 引 数 で の literal は context-dependent lift (周 辺 引 数 から `T` 推 論)、 ambiguous case は default `'f32'`、 対 象 type は f32 / f64 / i32 / bool; declaration / 全 lit 等 暗 黙 lift 対 象 外 は scalar constructor (`f32` / `f64` / `i32` / `i64` / `bool`) で explicit; i64 暗 黙 lift ナシ (BigInt 必 要) | `00-foundations.md` §4 + `01-dsl.md` §2 |
@@ -1715,4 +1716,39 @@ diagnostics surface を **main 側 だ け に 統 一**:
 - decisions-log.md Q4-c-iv prose: 同 様 に worklet 側 path を main 側 path に refine、 Q47 で removed 旨 を 注 記
 - 既 canonical examples で `midiIn.diagnostics` を 直 接 使 う 箇 所 は ナ シ (verified: Ex 4 / Ex 5 / Ex 6 / Ex 8 全 て main 側 path `node.events.<name>.diagnostics.overflowCount()` 経 由)
 - worklet 内 で の self-throttle pattern が 必 要 な user は v1.x.0 の additive 追 加 を 待 つ か、 main 経 由 feedback (= main で overflow 検 知 → main か ら message で 制 御 信 号) で 代 替
+
+## Q48 — `inspect(blob)` を free function に 留 め る か node method に 動 か す か (audit Phase 2 #9、 #48)
+
+**Status:** resolved.
+
+### Problem
+
+05-client.md §2 で snapshot / restore / inspect の 3 つ は こ う 並 ん で い る:
+
+```typescript
+const blob      = await node.snapshot();        // node method
+const result    = await node.restore(blob);     // node method
+const inspected = inspect(blob);                // ← free function (= import で 取 る)
+```
+
+= `inspect` だ け **node method で な く free function**。 audit finding は こ の 非 対 称 を 二 択 (= node method に 動 か す か / free function に 留 め る か) と し て 挙 げ て い た。
+
+### Decision
+
+`inspect(blob: Uint8Array): InspectionResult` を **free function で 維 持** (= 既 spec 形)。 「依 存 性 で 形 が 決 ま る」 を 1 行 ル ー ル と し て 明 文 化:
+
+- node 依 存 操 作 (= `snapshot()` で 現 state を 読 む、 `restore(blob)` で 現 state に 書 く) → **node method**
+- blob-only 操 作 (= `inspect(blob)` で blob を decode) → **free function**
+
+### Why this and not alternatives
+
+- **node method 形 (= `node.inspect(blob)`) 棄 却**: `inspect` は blob を decode す る pure function、 node の 現 state / param と 無 関 係。 method で 提 供 = 嘘 の 依 存 性 (= 実 際 は 不 要 な node) を user に 強 制、 preset library 構 築 ツ ー ル / server-side blob analyzer / debug script で fakeNode ハ ッ ク を 編 み 出 さ せ る
+- **視 覚 的 対 称 (= snapshot/restore/inspect の 3 つ を 揃 え る) よ り 依 存 性 の 実 体 を 優 先**: form の 統 一 で mental model を 揃 え る の は 嘘 を 言 う 設 計 (= 「method = node-bound」 と 学 ん だ user に method な のに node 不 要 と い う 例 外 を 教 え る)、 依 存 性 の 実 体 通 り の form の 方 が 学 習 後 の 一 貫 性 高 い
+- **import 1 行 cost は 償 却 範 囲**: `import { inspect } from '@unworklet/core'` は 既 declarative API import (= `defineProcessor` / `event` / `message` 等) と 同 じ 形、 user の 学 ぶ form 増 ナ シ
+
+### Side effects
+
+- 05-client.md §2 の `inspect` 項 目 で 「free function、 node method で は な い、 node 依 存 ナ シ で 使 え る」 旨 + ル ー ル を 1 段 落 で 追 記
+- decisions-log Q5 entry (= snapshot/restore/inspect 全 体) は 既 free function 形 で 整 合、 修 正 ナ シ
+- 既 canonical Ex 3 L350 は `const inspected = inspect(blob)` で 既 整 合、 修 正 ナ シ
 

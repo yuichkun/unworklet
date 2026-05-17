@@ -87,7 +87,7 @@ The `.state.<name>` surface is **read-only on main**. Writing to a worklet-side 
 
   Timing semantics (block-atomic, next-block-boundary application) are spelled out in §6.
 
-- **`inspect(blob: Uint8Array): InspectionResult`** — non-realtime helper that decodes a blob into a debug-friendly structured view.
+- **`inspect(blob: Uint8Array): InspectionResult`** — non-realtime helper that decodes a blob into a debug-friendly structured view. Imported from `@unworklet/core` as a **free function**, not a node method, because the operation has no node dependency — it can run in preset-library tooling, debug scripts, or any process holding a blob without needing an `AudioContext` or a live processor. The shape rule is uniform across this surface: node-bound operations (`snapshot` / `restore`) are node methods, blob-only operations (`inspect`) are free functions (Q48).
 
   ```typescript
   type InspectionResult = {
