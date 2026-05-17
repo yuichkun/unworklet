@@ -400,7 +400,7 @@ const peakEvt = event<{ level: number }>({ name: 'peak' });
 const noteFired = event<{ note: number; velocity: number }>({ name: 'noteFired', capacity: 512 });
 ```
 
-`event<T>(options): EventDecl<T>` declares a typed worklet → main event channel. The payload type `T` is user-defined; an `atSample: number` field is **always carried on the wire** alongside `T` (mirroring MIDI Q4-c). Emission is via the `emitIf` method on the event handle (`eventDecl.emitIf(cond, payload)`) from any expression context where the audio-thread graph is captured — `forSample` callbacks, MIDI / message handler bodies, and `everyNSamples` callbacks. `emitIf` is the **single emission primitive**; there is no plain `emit(...)` form.
+`event<T>(options): EventDecl<T>` declares a typed worklet → main event channel. The payload type `T` is user-defined; an `atSample: number` field is **always carried on the wire** alongside `T` (mirroring MIDI Q4-c). Emission is via the `emitIf` method on the event handle (`eventDecl.emitIf(cond, payload)`) from any expression context where the audio-thread graph is captured — `forSample` / `forSample.byN` callbacks, `everyNSamples` callbacks (taken from the surrounding `forSample` callback's second argument; see §9 and Q43), `messageDecl.onReceive(...)` and `midiInput().onEvent(...)` handler bodies, and the per-block top level (statements in the `process` body outside any `forSample`). `emitIf` is the **single emission primitive**; there is no plain `emit(...)` form.
 
 ```typescript
 // Inside forSample — cond gates per-sample emission.

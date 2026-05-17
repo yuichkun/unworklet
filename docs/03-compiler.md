@@ -83,10 +83,11 @@ Errors carry the source location (TypeScript file + line + column when source ma
 The compiler runs analysis passes over the captured DAG (see §3); violations detected at this layer are reported with the same source-location format as Layer 2.
 
 - *Allocation check*: an AST pattern that would require heap allocation on the audio thread.
-- *Loop boundedness*: a build-time loop that captured non-statically-bounded iteration.
+- *Loop boundedness*: a build-time loop that captured non-statically-bounded iteration. Applies to all audio-thread contexts — `forSample` callback bodies, `everyNSamples` sub-blocks, subgraph method bodies, and `messageDecl.onReceive(...)` / `midiInput().onEvent(...)` handler bodies (Q31-b).
 - *Memory budget*: total `state` + `buffer` size exceeds the configured limit.
 - *Out-of-block sample-offset arithmetic*: `add(i, lookahead)` exceeding `[0, renderQuantum - 1]` when statically detectable.
 - *Illegal `forSample.byN` stride*: a non-constant stride, or a stride that does not divide `SAMPLES_PER_BLOCK` (= 128). Allowed: 1, 2, 4, 8, 16, 32, 64, 128 (Q37-b, `decisions-log.md`).
+- *Constant-truthy `emitIf` cond inside `forSample`*: an `emitIf(cond, payload)` whose `cond` folds to a build-time-constant truthy value (e.g. `emitIf(true, ...)` or `emitIf(FORCE_FLAG, ...)` where `FORCE_FLAG` is a build-time `true`) is rejected when the call site is inside a `forSample` / `forSample.byN` / `everyNSamples` callback. Handler / per-block-top-level contexts are exempt because their natural rate is per-block, not per-sample (Q32-c, `decisions-log.md`).
 - *Type inference inconsistency*: a `Node<T>` whose inferred type conflicts with its expected use.
 
 Output coverage is **not** enforced by static analysis: `audioOut.set(c, i, v)` follows the host (AudioWorklet / JUCE) `process` mental model — write freely, duplicates use source-order semantics, sample-offsets that no phase writes are emitted as silence (Q37, `decisions-log.md`).
