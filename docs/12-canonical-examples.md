@@ -43,7 +43,7 @@ The example set is designed so that the union of all examples touches every conc
 | Main side: `node.state.<name>.subscribe` / `.value` | 1, 4, 5, 6, 7, 8 |
 | Main side: `node.events.<name>.on` / `.diagnostics.overflowCount` | 4, 5, 6, 8 |
 | Main side: `node.messages.<name>` (incl. variable-length payload) | 5, 6, 7 |
-| Main side: `node.midi.send` / `connectFromWebMIDI` / `onEvent` | 5, 6, 8 |
+| Main side: `node.midi.<name>.send` / `.connectFromWebMIDI` / `.onEvent` | 5, 6, 8 |
 | Main side: `node.snapshot()` / `node.restore(blob)` | 3, 7 |
 
 ## Examples index
@@ -561,7 +561,7 @@ export const granularSampler = defineProcessor((ctx) => {
   const grainSpawned = event<{ voice: number; pos: number }>({ name: 'grainSpawned' });
 
   // MIDI in for note triggers.
-  const midi = midiInput({ name: 'midi' });
+  const noteIn = midiInput({ name: 'noteIn' });
 
   return {
     process: () => {
@@ -584,11 +584,11 @@ export const granularSampler = defineProcessor((ctx) => {
       });
 
       // MIDI handlers — store the latest note for grain pitch shifting.
-      midi.onEvent('noteOn',  ({ note, velocity }) => {
+      noteIn.onEvent('noteOn',  ({ note, velocity }) => {
         activeNote.store(note);
         activeVel .store(velocity / 127);
       });
-      midi.onEvent('noteOff', () => {
+      noteIn.onEvent('noteOff', () => {
         activeVel.store(0);
       });
 
@@ -660,7 +660,7 @@ node.outputs.main.connect(audioContext.destination);
 // Connect a Web MIDI keyboard.
 const midiAccess = await navigator.requestMIDIAccess();
 const firstInput = Array.from(midiAccess.inputs.values())[0];
-node.midi.connectFromWebMIDI(firstInput);
+node.midi.noteIn.connectFromWebMIDI(firstInput);
 
 // Upload a sample (loaded from a URL, decoded to Float32Array).
 const fetched = await fetch('/samples/voice-loop.wav');
@@ -692,8 +692,8 @@ export const arpeggiator = defineProcessor((ctx) => {
   // mono passthrough audioOutput so the AudioContext keeps the worklet alive.
   const out = audioOutput({ channels: 1, name: 'main' });
 
-  const midiIn  = midiInput ({ name: 'midiIn'  });
-  const midiOut = midiOutput({ name: 'midiOut' });
+  const noteIn = midiInput ({ name: 'noteIn' });
+  const arpOut = midiOutput({ name: 'arpOut' });
 
   // 16-step pattern of semitone offsets from the root note (Float32Array uploaded).
   // Shipped as state slots since each step is a small int — easier to snapshot.
@@ -727,7 +727,7 @@ export const arpeggiator = defineProcessor((ctx) => {
       });
 
       // MIDI in: track the most recent note as the root.
-      midiIn.onEvent('noteOn', ({ note, velocity }) => {
+      noteIn.onEvent('noteOn', ({ note, velocity }) => {
         rootNote.store(note);
         lastVel .store(velocity);
       });
@@ -753,7 +753,7 @@ export const arpeggiator = defineProcessor((ctx) => {
         }
         const fireNote = add(rootNote.load(), offset);
 
-        midiOut.emitIf(roll,
+        arpOut.emitIf(roll,
           { type: 'noteOn',  atSample: i, note: fireNote, velocity: lastVel.load(), channel: 0 });
         // Schedule a noteOff one step later by emitting at the boundary -1 sample.
         // (For brevity, a real arp tracks held notes and emits noteOff at the right time;
@@ -778,10 +778,10 @@ node.outputs.main.connect(audioContext.destination);   // silent passthrough
 const midiAccess = await navigator.requestMIDIAccess();
 const kbd  = Array.from(midiAccess.inputs.values())[0];
 const synthInput = Array.from(midiAccess.outputs.values())[0];
-node.midi.connectFromWebMIDI(kbd);
+node.midi.noteIn.connectFromWebMIDI(kbd);
 
 // Route arpeggiator output to a downstream synth (Web MIDI Output).
-node.midi.onEvent('noteOn', (evt) => {
+node.midi.arpOut.onEvent('noteOn', (evt) => {
   synthInput.send([0x90 | evt.channel, evt.note, evt.velocity], performance.now() + (evt.atSample / audioContext.sampleRate) * 1000);
 });
 
@@ -1033,7 +1033,7 @@ export const polySynth = defineProcessor((ctx) => {
   // Sample-accurate event for note triggers (UI key flash).
   const notePlayed = event<{ note: number; voice: number; velocity: number }>({ name: 'notePlayed' });
 
-  const midi = midiInput({ name: 'midi' });
+  const keys = midiInput({ name: 'keys' });
 
   // Eight independent synthVoice instances, allocated in declaration scope.
   const voices = [];
@@ -1043,7 +1043,7 @@ export const polySynth = defineProcessor((ctx) => {
 
   return {
     process: () => {
-      midi.onEvent('noteOn', ({ note, velocity, atSample }) => {
+      keys.onEvent('noteOn', ({ note, velocity, atSample }) => {
         // Round-robin voice allocator.
         const v = allocCursor.load();
         // Build-time unrolled selection: pick the slot that matches `v`.
@@ -1059,7 +1059,7 @@ export const polySynth = defineProcessor((ctx) => {
           { atSample, note, voice: v, velocity: velocity / 127 });
       });
 
-      midi.onEvent('noteOff', ({ note }) => {
+      keys.onEvent('noteOff', ({ note }) => {
         for (let s = 0; s < NUM_VOICES; s++) {
           voiceGate[s].store(select(eq(voiceNote[s].load(), note), false, voiceGate[s].load()));
         }
@@ -1123,7 +1123,7 @@ kickSource.connect(node.inputs.sidechain);
 
 // Web MIDI keyboard.
 const midiAccess = await navigator.requestMIDIAccess();
-node.midi.connectFromWebMIDI(Array.from(midiAccess.inputs.values())[0]);
+node.midi.keys.connectFromWebMIDI(Array.from(midiAccess.inputs.values())[0]);
 
 node.params.attack.value     = 0.02;
 node.params.release.value    = 0.4;

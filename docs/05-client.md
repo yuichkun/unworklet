@@ -29,9 +29,10 @@ The `UnworkletNode<C>` shape exposes the following members:
 - **`.events.<name>.diagnostics.overflowCount(): number`** — monotonic counter of dropped events (see `02-messaging.md` §3).
 - **`.messages.<name>(payload): void`** — typed sender per declared `message<T>`. Fire-and-forget; in-arrival-order delivery, drained at the start of each render quantum on the worklet side.
 - **`.messages.<name>.diagnostics.overflowCount(): number`** — monotonic counter of dropped messages.
-- **`.midi.send(event, atTime?)`** — source-agnostic MIDI inject (when `midiInput` is declared). See `11-midi.md` §3.
-- **`.midi.connectFromWebMIDI(input)`** — Web MIDI bridge convenience (when `midiInput` is declared).
-- **`.midi.onEvent(type, handler) → unsubscribe`** — typed MIDI event subscriber on `midiOutput` (when declared). See `11-midi.md` §2.
+- **`.midi.<name>.send(event, atTime?)`** — source-agnostic MIDI inject on a declared `midiInput({ name })`. Namespaced per port to allow multi-port processors (Q40, `decisions-log.md`). See `11-midi.md` §3.
+- **`.midi.<name>.connectFromWebMIDI(input)`** — Web MIDI bridge convenience on a declared `midiInput({ name })`.
+- **`.midi.<name>.onEvent(type, handler) → unsubscribe`** — typed MIDI event subscriber on a declared `midiOutput({ name })`. See `11-midi.md` §2.
+- **`.midi.<name>.diagnostics.overflowCount(): number`** — monotonic counter of dropped MIDI events for the named port.
 - **`.diagnostics.transport: 'sab' | 'postMessage'`** — active transport mode (see `02-messaging.md` §4 and `08-deployment.md` §3).
 - **`.dispose()`** — tear down node, queues, worklet runtime, all subscribers.
 - **`.onError(handler)`** — error subscription (worklet traps, queue overflow events, SAB-mode change diagnostics).

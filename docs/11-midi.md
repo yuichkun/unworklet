@@ -205,37 +205,44 @@ unworklet exposes a source-agnostic main-thread API. Any code that produces a MI
 ```typescript
 // (1) Standard Web MIDI bridge — convenience sugar.
 //     Internally wires MIDIInput events into (2) .send().
-unworkletNode.midi.connectFromWebMIDI(input: MIDIInput): void;
+unworkletNode.midi.<name>.connectFromWebMIDI(input: MIDIInput): void;
 
 // (2) Source-agnostic injection.
 //     Anyone (Web MIDI subscriber, application logic, network bridge, etc.) calls this.
-unworkletNode.midi.send(event: MidiEvent, atTime?: number): void;
+unworkletNode.midi.<name>.send(event: MidiEvent, atTime?: number): void;
 ```
+
+`<name>` matches the `name` passed to the worklet-side `midiInput({ name })` declaration. The same namespaced shape applies to every `midiInput` declaration; multi-port processors expose one sub-surface per declared port (Q40, `decisions-log.md`).
 
 ### 3.2 Examples of consumers
 
 ```typescript
-// Web MIDI input device → worklet
+// Web MIDI input device → worklet (single-port, name = 'main')
 const access = await navigator.requestMIDIAccess();
 const input  = access.inputs.values().next().value;
-unworkletNode.midi.connectFromWebMIDI(input);
+unworkletNode.midi.main.connectFromWebMIDI(input);
 
 // Application-generated event
 button.addEventListener('click', () => {
-  unworkletNode.midi.send({ type: 'noteOn', channel: 0, note: 60, velocity: 127 });
+  unworkletNode.midi.main.send({ type: 'noteOn', channel: 0, note: 60, velocity: 127 });
 });
 
 // Network message → MIDI
 ws.onmessage = (msg) => {
-  unworkletNode.midi.send(parseFromNetwork(msg.data), audioCtx.currentTime + 0.05);
+  unworkletNode.midi.main.send(parseFromNetwork(msg.data), audioCtx.currentTime + 0.05);
 };
+
+// Multi-port: keyboard + controller
+const kbdAccess = (await navigator.requestMIDIAccess()).inputs.get('keyboard-id');
+unworkletNode.midi.keyboard.connectFromWebMIDI(kbdAccess);
+unworkletNode.midi.controller.connectFromWebMIDI(controllerInput);
 ```
 
-The worklet itself does not distinguish between sources; the audio thread sees an ordered ringbuffer of MIDI events with sample-offsets and dispatches them through the user-defined `midi.onEvent(handler)` (§2).
+The worklet itself does not distinguish between sources within a port; the audio thread sees an ordered ringbuffer per port of MIDI events with sample-offsets and dispatches them through the user-defined `midiIn.onEvent(handler)` (§2).
 
 ### 3.3 Outbound direction
 
-For processors that declared `midiOutput()`, the main thread receives emitted events through a subscription API. Exact shape is settled in §4 (TBD, Q4-c). Typical use is to forward emitted MIDI to a Web MIDI output device or to application logic.
+For processors that declared `midiOutput({ name })`, the main thread subscribes per port via `unworkletNode.midi.<name>.onEvent(type, handler)`. Typical use is to forward emitted MIDI to a Web MIDI output device or to application logic. Diagnostics are exposed at `unworkletNode.midi.<name>.diagnostics.overflowCount()`.
 
 ## 4. Wire format
 
@@ -256,9 +263,9 @@ Pointers into the ring buffer are slot-indexed (`head` and `tail` increment by 1
 
 `atSample` is the sample-offset **within the current render quantum** (block-local) where the event fires. Valid values are 0 through `renderQuantum - 1`; the field is stored as `u32` for headroom against future block-size variation.
 
-A handler subscribed via `midi.onEvent` fires at the sample identified by `atSample`, not at the block boundary — sample accuracy is preserved end-to-end. A consumer that needs an absolute timestamp can derive it from `audioContext.currentTime + atSample / sampleRate`.
+A handler subscribed via `midiIn.onEvent` fires at the sample identified by `atSample`, not at the block boundary — sample accuracy is preserved end-to-end. A consumer that needs an absolute timestamp can derive it from `audioContext.currentTime + atSample / sampleRate`.
 
-The compiler converts the `atTime` parameter passed to `unworkletNode.midi.send(event, atTime)` into the corresponding block-local `atSample` value at injection time.
+The compiler converts the `atTime` parameter passed to `unworkletNode.midi.<name>.send(event, atTime)` into the corresponding block-local `atSample` value at injection time.
 
 ### 4.3 Sysex (variable-length events)
 

@@ -46,6 +46,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q37 | 出 力 channel の 書 き 込 み ル ー ル を 親 ホ ス ト (AudioWorklet) と 揃 え る (audit P0-2) | resolved — `out.set(c, i, v)` は 自 由 に 何 度 で も 書 け る、 同 sample 位 置 を 複 数 回 書 け ば source 順 で 後 書 き が 勝 つ、 触 ら な い sample 位 置 / channel は silence (= 0); 複 数 forSample 分 担 / 重 ね 書 き 全 部 OK; 静 的 解 析 で 弾 く の は real-time safety 違 反 の み (= 「全 sample カ バ ー」 「exactly once」 系 制 約 を 撤 去); forSample.byN 中 で の `out.set` も legal、 stride は 128 を 割 る 値 (= 1, 2, 4, 8, 16, 32, 64, 128) 限 定 | `01-dsl.md` §1.3, §10.1 + `03-compiler.md` §2.4 |
 | Q38 | `onReceive` (= main → worklet message handler) の 振 る 舞 い (audit P0-3、 Phase 1 #4) | resolved — (a) timing = 当 1 塊 開 始 時 (= worklet 視 点 で current、 main 視 点 の 「next」 表 記 は 視 点 違 い、 worklet 視 点 で 統 一); (b) 実 行 順 序 = 全 handler が 1 塊 開 始 時 に 先 行、 そ の あ と per-block 計 算 + forSample が source 順 で 走 る (= AudioWorklet `onmessage` 振 る 舞 い と 整 合); (c) 1 message に 複 数 `onReceive` OK、 登 録 順 で 全 部 走 る (= 上 書 き で は な い); (d) handler 内 `state.load()` = 前 1 塊 末 尾 の 値、 `state.store()` は 当 1 塊 の per-block 計 算 + forSample で 観 測 可 | `01-dsl.md` §4.2 + `02-messaging.md` §1 |
 | Q39 | publish の 版 counter increment ル ー ル + main 側 dedupe 政 策 (audit P0-4) | resolved — audio thread は due tick で 無 条 件 に 値 を SAB store + 版 counter inc (= 既 値 比 較 + branch ナ シ で real-time 友 好); main 側 は 版 advance 時 に handler を 必 ず 呼 ぶ (= framework で 値 比 較 / dedupe ナ シ); user が 同 値 dedupe 欲 し い な ら handler 内 で 1 行 で 比 較。 既 仕 様 02 §5.4 「値 変 化 時 だ け inc」 + 05 §5.2 「identical re-publish は coalesce」 prose は magic anti-pattern と し て 撤 去 | `02-messaging.md` §5.4 + `04-worklet-runtime.md` §7 + `05-client.md` §1, §5.2 |
+| Q40 | `node.midi` の main 側 surface 形 (audit P0-5、 Phase 1 #5) | resolved — `node.midi.<name>.send(...)` / `.onEvent(...)` / `.connectFromWebMIDI(...)` / `.diagnostics.overflowCount(...)` の namespaced 形 で 統 一 (= 既 Q4-a で ratify 済 み だ っ た が 11-midi §3 / 05-client §1 / canonical で flat 表 記 が 残 っ て いた、 audit で 反 映 不 足 が 露 出); 他 全 declaration (= node.inputs.<name> / node.events.<name> / node.state.<name> 等) と 一 貫、 multi-port も natural に 表 現 (= dualPort 等); single-port で も namespaced 形 で 書 く | `11-midi.md` §3, §4 + `05-client.md` §1 + Q4-a |
 
 ---
 
@@ -146,7 +147,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 
 ## Q4 — MIDI integration design
 
-**Status:** resolved.
+**Status:** resolved (multi-port main 側 surface = `node.midi.<name>.*` の body 反 映 + canonical 修 正 は Q40 で 完 成)。
 
 **Decision (Q4-a):** authoritative wording in `11-midi.md` §1 and §3. Summary: unworklet supports both MIDI ingestion and emission. Processors declare involvement via `midiInput({ name, capacity? })` / `midiOutput({ name, capacity? })` (either or both, both omittable). `name` is required (uniform with the other declarations: state / buffer / param / event / message); it drives main-side access (`node.midi.<name>`), snapshot schema-hash identity, and diagnostic / error attribution. The main-thread API is source-agnostic: a low-level `unworkletNode.midi.<name>.send(event, atTime?)` plus a Web MIDI convenience bridge `unworkletNode.midi.<name>.connectFromWebMIDI(input)`. unworklet does not know or care where events originated; routing MIDI from any other source (DAW MIDI bridges, network, hardware, application logic) is the consumer's responsibility.
 
@@ -1354,4 +1355,47 @@ main 側 `node.state.<name>.subscribe(handler)` の 振 る 舞 い:
 - **audio thread で 既 値 と 比 較 し て、 変 化 時 だ け 版 inc**: 全 publish slot で 毎 due tick で 比 較 + branch、 audio thread に 余 計 な cost = real-time 重 視 の unworklet 哲 学 と ズ レ
 - **main 側 で scalar slot だ け 値 比 較 で dedupe (= buffer は ナ シ)**: framework が user handler を skip = magic anti-pattern、 use case 別 で dedupe 要 不 要 が 違 う の に 一 律 強 制
 - **main 側 で buffer slot も 値 比 較 で dedupe**: 全 要 素 比 較 cost が main で 大 (= buffer は 数 百 〜 数 千 要 素)、 dedupe 利 益 が cost を 上 回 ら な い + magic anti-pattern
+
+---
+
+## Q40 — `node.midi` の main 側 surface 形 (audit P0-5、 Phase 1 #5)
+
+**Status:** resolved.
+
+**Decision:**
+
+main 側 で MIDI port に 触 る surface を **`node.midi.<name>.send(...)` / `.onEvent(...)` / `.connectFromWebMIDI(...)` / `.diagnostics.overflowCount(...)` の namespaced 形 に 統 一** す る。 single-port で も namespaced 形 で 書 く (= `node.midi.send` の よ う な flat 形 は 全 廃)。
+
+= 既 Q4-a で `node.midi.<name>` を ratify 済 み だ っ た が、 body docs (= `11-midi.md` §3 / §4) + `05-client.md` §1 + canonical (= Ex 5 / Ex 6 / Ex 8) で flat 表 記 (= `unworkletNode.midi.send` / `node.midi.connectFromWebMIDI` 等) が 残 っ て お り、 multi-port processor (= dualPort 等) を main か ら addressable に す る 経 路 が 仕 様 上 不 明 な 状 態 だ っ た。 Q40 で body 反 映 を 完 成 + canonical 修 正。
+
+```typescript
+// worklet 側 宣 言:
+const midi = midiInput({ name: 'main' });
+const out  = midiOutput({ name: 'controlOut' });
+
+// main 側 access:
+node.midi.main.send({ type: 'noteOn', note: 60, velocity: 127 });
+node.midi.main.connectFromWebMIDI(webMidiInput);
+node.midi.controlOut.onEvent('noteOn', (e) => { ... });
+const dropped = node.midi.main.diagnostics.overflowCount();
+
+// multi-port も natural:
+const inA = midiInput({ name: 'keyboard' });
+const inB = midiInput({ name: 'controller' });
+node.midi.keyboard.send({ type: 'noteOn', ... });
+node.midi.controller.onEvent('controlChange', (e) => { ... });
+```
+
+**Rationale:**
+
+- **他 全 declaration と 一 貫**: `node.inputs.<name>` / `node.outputs.<name>` / `node.events.<name>` / `node.messages.<name>` / `node.state.<name>` / `node.params.<name>` 全 て が namespaced 形、 midi も 同 形 で 揃 え る = user mental が 1 つ
+- **multi-port が natural に 表 現**: dualPort 等 で port ご と に send / onEvent を 区 別、 flat 形 で は 表 現 不 能
+- **single-port boilerplate は declaration 形 と 一 致**: `midiInput({ name: 'main' })` で declare し て `node.midi.main.send(...)` で 触 る、 declaration / access で name が 同 じ = 学 び 直 し ナ シ
+- **既 Q4-a で 既 に ratify 済 み の 形**: 別 案 で は な く 反 映 不 足 の 解 消
+
+**Rejected:**
+
+- **flat 形 (= `node.midi.send` / `node.midi.onEvent`)**: 既 canonical だ が multi-port 表 現 不 能、 他 全 declaration と 不 整 合
+- **hybrid (= 単 port 時 flat、 複 数 port 時 namespaced)**: surface 二 重、 1 → 2 port 追 加 時 に main 側 code 全 行 rewrite 必 要、 学 習 cost 大
+- **default 名 'midi' を 暗 黙 適 用 (= midiInput() で name 省 略 可、 main 側 で flat alias)**: 既 Q4-a (= name 必 須) と 矛 盾
 
