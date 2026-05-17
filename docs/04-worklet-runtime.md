@@ -11,9 +11,8 @@ partial (§7 publish scheduling written; §1–§6 + §8 placeholder)
 <!-- 1. Constructor receives processorOptions (WASM binary, optional SAB handles).
      2. Instantiate WASM, zero linear memory.
      3. Allocate message/event queues (SAB-backed if available; postMessage-backed otherwise).
-     4. Run pre-warm loop (Q20 — count, both-branch coverage of `select`, optional user training input).
-     5. Signal ready to main thread; createNode promise resolves.
-     Q20 (pre-warm correctness) lands in step 4. -->
+     4. Signal ready to main thread; createNode promise resolves.
+     Note: there is no framework-side pre-warm step (Q20). -->
 
 ## 2. Per-block execution
 
@@ -39,9 +38,15 @@ As a structural consequence (Q19's resolution also closes the long-standing #62 
 
 Upstream sources that connect with a different channel count than the worklet declared are normalized by Web Audio's standard up-mix / down-mix rules (`channelCountMode` / `channelInterpretation`) before the worklet sees them; unworklet does not intervene in that layer (= same behavior as `01-dsl.md` §1.2 already specifies).
 
-## 5. Pre-warm details
+## 5. Pre-warm
 
-<!-- See §1 step 4 — full design including `select` branch coverage and training-input config. -->
+unworklet does **not** provide a framework-side pre-warm step in v1.0.0 (Q20, `decisions-log.md`). The reasoning:
+
+- WASM is AOT-compiled by the browser before the worklet's `process` is first invoked, so the classic JS "first-N-blocks JIT spike" does not apply.
+- Hardware-level warmup (branch predictor, caches) settles within a few render quanta of real audio — the resulting transient is inaudible within the first few milliseconds of plugin output.
+- Having the framework run silent blocks through user-authored `process` code at start-up would mean injecting synthesized inputs the author did not request, conflicting with the declarative principle that user-authored structure is what runs.
+
+Consumers who genuinely need full-performance from the very first quantum (rare in practice) can warm up from the main side by feeding silent buffers through the AudioContext for a few quanta before connecting the real source. An opt-in `createNode(..., { preWarm: {...} })` option may be added additively in v1.x.0 if the need materializes (e.g. if a future browser switches WASM execution from AOT to partial JIT).
 
 ## 6. Denormal handling
 
