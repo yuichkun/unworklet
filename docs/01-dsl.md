@@ -1355,7 +1355,12 @@ const simdProc = defineProcessor((ctx) => {
 ### 10.5 v1.0.0 scope
 
 - `forSample(callback)` and `forSample.byN(stride, callback)` ship in v1.0.0.
-- The callback signature is `(i: Node<'i32'>) => void`; non-`void` returns are not part of the v1.0.0 surface.
-- Future additive primitives (`forSample.parallel(callback)` for unordered-iteration optimization opportunities, `forSampleRange(start, end, callback)` for partial-block iteration, etc.) can be introduced in v1.x.0 without breaking the v1.0.0 surface.
+- The callback signature is `(i: Node<'i32'>, everyNSamples?: EveryNSamples) => void`; non-`void` returns are not part of the v1.0.0 surface.
+- Future additive primitives admitted by Q29 (`decisions-log.md`):
+  - `forSample.parallel(callback)` — unordered-iteration optimization opportunities (v1.x.0 additive).
+  - `forSampleRange(start, end, callback)` — partial-block iteration (v1.x.0 additive; the v1.0.0 surface already expresses the same outputs via `forSample` + build-time `if`, so this is an efficiency addition rather than a missing capability).
+- Permanently excluded by Q29 (= not v1.0.0, not v1.x.0):
+  - `forSamplesUntil(cond, callback)` — runtime early-exit would make audio-thread work unpredictable in length, violating realtime safety.
+  - Runtime-variable stride for `forSample.byN` — the stride must be a compile-time constant; a runtime stride cannot be specialized in WASM emission and breaks the "user-authored structure compiles directly to WASM" principle.
 
-Authoritative rationale and rejected alternatives: see `decisions-log.md` Q22 (Q22-aprime).
+Authoritative rationale and rejected alternatives: see `decisions-log.md` Q22 (Q22-aprime) + Q29.
