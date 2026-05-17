@@ -45,6 +45,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q36 | method 引 数 で の literal lift + typed-array-field proxy semantics + emitIf cond 型 確 定 (audit P0-1) | resolved — Q33 拡 張: method の 引 数 型 が `Node<X>` な ら literal は 自 動 で `Node<X>` に lift (= `param.at(0)` per-block / `emitIf(true, ...)` / `main.at(0, i)` 等 を 型 と 整 合); typed-array-field proxy = `.length: Node<'i32'>` + `.at(idx: Node<'i32'> \| number)` で runtime read / build 時 折 り 畳 み を 引 数 種 類 で 自 然 分 岐; emitIf cond 型 を `Node<'bool'> \| boolean` で 確 定 (= Q32-b の B3 pending を close) | `00-foundations.md` §4 + `01-dsl.md` §2, §3.3, §4.1, §4.3 |
 | Q37 | 出 力 channel の 書 き 込 み ル ー ル を 親 ホ ス ト (AudioWorklet) と 揃 え る (audit P0-2) | resolved — `out.set(c, i, v)` は 自 由 に 何 度 で も 書 け る、 同 sample 位 置 を 複 数 回 書 け ば source 順 で 後 書 き が 勝 つ、 触 ら な い sample 位 置 / channel は silence (= 0); 複 数 forSample 分 担 / 重 ね 書 き 全 部 OK; 静 的 解 析 で 弾 く の は real-time safety 違 反 の み (= 「全 sample カ バ ー」 「exactly once」 系 制 約 を 撤 去); forSample.byN 中 で の `out.set` も legal、 stride は 128 を 割 る 値 (= 1, 2, 4, 8, 16, 32, 64, 128) 限 定 | `01-dsl.md` §1.3, §10.1 + `03-compiler.md` §2.4 |
 | Q38 | `onReceive` (= main → worklet message handler) の 振 る 舞 い (audit P0-3、 Phase 1 #4) | resolved — (a) timing = 当 1 塊 開 始 時 (= worklet 視 点 で current、 main 視 点 の 「next」 表 記 は 視 点 違 い、 worklet 視 点 で 統 一); (b) 実 行 順 序 = 全 handler が 1 塊 開 始 時 に 先 行、 そ の あ と per-block 計 算 + forSample が source 順 で 走 る (= AudioWorklet `onmessage` 振 る 舞 い と 整 合); (c) 1 message に 複 数 `onReceive` OK、 登 録 順 で 全 部 走 る (= 上 書 き で は な い); (d) handler 内 `state.load()` = 前 1 塊 末 尾 の 値、 `state.store()` は 当 1 塊 の per-block 計 算 + forSample で 観 測 可 | `01-dsl.md` §4.2 + `02-messaging.md` §1 |
+| Q39 | publish の 版 counter increment ル ー ル + main 側 dedupe 政 策 (audit P0-4) | resolved — audio thread は due tick で 無 条 件 に 値 を SAB store + 版 counter inc (= 既 値 比 較 + branch ナ シ で real-time 友 好); main 側 は 版 advance 時 に handler を 必 ず 呼 ぶ (= framework で 値 比 較 / dedupe ナ シ); user が 同 値 dedupe 欲 し い な ら handler 内 で 1 行 で 比 較。 既 仕 様 02 §5.4 「値 変 化 時 だ け inc」 + 05 §5.2 「identical re-publish は coalesce」 prose は magic anti-pattern と し て 撤 去 | `02-messaging.md` §5.4 + `04-worklet-runtime.md` §7 + `05-client.md` §1, §5.2 |
 
 ---
 
@@ -1309,4 +1310,48 @@ handler は **当 1 塊 (= 走 っ て いる render quantum)** の 開 始 時 
 - **source 順 (= handler 登 録 行 で 即 handler が 走 る、 そ の あ と 後 続 の per-block 文)**: 「handler 登 録 後 の per-block 文 で 反 映 済 み」 を user が source 上 で 直 接 確 認 で きる が、 graph capture と runtime の 区 別 を user が 強 く 意 識 す る、 AudioWorklet `onmessage` 振 る 舞 い と も ズ レ
 - **1 message = 1 handler 強 制 (= 2 度 目 の `onReceive` は コ ン パ イ ル 時 エ ラ ー)**: artificial 制 約、 user free が default
 - **timing 表 記 = 「next」 (= main 視 点 で 統 一)**: worklet 著 作 者 視 点 で 「次」 と 言 う と 「今 動 い て いる の は ど の 塊?」 と 違 和 感、 動 い て いる 塊 を 「当 1 塊 (= current)」 と 表 現 す る の が 自 然
+
+---
+
+## Q39 — publish の 版 counter increment ル ー ル + main 側 dedupe 政 策 (audit P0-4)
+
+**Status:** resolved.
+
+**Decision (Q39-a — audio thread = 無 条 件 で store + 版 inc):**
+
+audio thread の publish 処 理 は due tick (= `rateFps` で 決 ま る 周 期) で:
+
+1. 現 在 値 を SAB の shared region に store
+2. slot の 版 counter (= `02-messaging.md` §5.4 の 「version」 i32) を **無 条 件 で** inc (= 既 値 と の 比 較 + branch ナ シ)
+
+= audio thread に は 2 つ の atomic operation だ け、 値 比 較 cost を 載 せ な い、 real-time hard 制 約 と 整 合。
+
+**Decision (Q39-b — main 側 = 版 advance 時 に handler を 必 ず 呼 ぶ):**
+
+main 側 `node.state.<name>.subscribe(handler)` の 振 る 舞 い:
+
+- 版 counter が advance し た tick で、 新 値 を SAB か ら 読 ん で handler を **必 ず 呼 ぶ**
+- framework 側 で 値 比 較 し て handler skip し な い (= scalar / buffer / 全 type 共 通 ル ー ル)
+- user が 同 値 dedupe 欲 し い な ら handler 内 で 1 行 で 比 較 す る (= `if (newVal === lastVal) return`)
+
+既 仕 様 で 「dedupe / coalesce」 描 写 を 含 む prose 全 撤 去:
+
+- `02-messaging.md` §5.4 の 「incremented on each publish tick where the value changed」 → 「無 条 件 inc」 に 改 訂
+- `05-client.md` §1 の 「Handler fires on each publish tick where the value differs from the last delivered value」 → 「版 advance 時 に 必 ず 呼 ぶ」 に 改 訂
+- `05-client.md` §5.2 の 「Identical re-publishes are coalesced — handlers are not invoked when the published value matches the last delivered one」 → 撤 去、 「framework は 値 比 較 し な い、 dedupe が 欲 し い user は handler 内 で」 に 改 訂
+
+**Rationale:**
+
+- **real-time 友 好**: audio thread は 既 値 比 較 + branch 無 し で 2 atomic op の み = publish slot 数 ・ rateFps が 増 え て も audio thread cost が 線 形 + 軽 い
+- **use case 別 で dedupe 要 不 要 が 違 う**:
+  - UI 更 新 (= React state へ reflect) → React 側 で 既 dedupe、 unworklet 側 で の 追 加 dedupe 不 要
+  - periodic poll (= meter 値 を log / 録 画) → 同 値 で も 毎 tick 呼 ば れ た い、 dedupe は 邪 魔
+  - event-like notify (= state.bool で 「note 開 始」) → 変 化 時 だ け 呼 ば れ た い、 ただし user 1 行 で 解 決 可
+- **framework が user handler を skip = magic anti-pattern**: `feedback_framework-magic-anti-pattern.md` 軸、 framework が user 期 待 ナ シ で 動 作 削 る の は declarative 原 則 (= user が 書 い た 構 造 = framework 動 作) と ズ レ。 dedupe 機 構 は user choice に
+
+**Rejected:**
+
+- **audio thread で 既 値 と 比 較 し て、 変 化 時 だ け 版 inc**: 全 publish slot で 毎 due tick で 比 較 + branch、 audio thread に 余 計 な cost = real-time 重 視 の unworklet 哲 学 と ズ レ
+- **main 側 で scalar slot だ け 値 比 較 で dedupe (= buffer は ナ シ)**: framework が user handler を skip = magic anti-pattern、 use case 別 で dedupe 要 不 要 が 違 う の に 一 律 強 制
+- **main 側 で buffer slot も 値 比 較 で dedupe**: 全 要 素 比 較 cost が main で 大 (= buffer は 数 百 〜 数 千 要 素)、 dedupe 利 益 が cost を 上 回 ら な い + magic anti-pattern
 

@@ -24,7 +24,7 @@ The `UnworkletNode<C>` shape exposes the following members:
 - **`.outputs.<name>`** — typed `connect()` / disconnection wrapper per declared `audioOutput`.
 - **`.params.<name>: AudioParam`** — real Web Audio `AudioParam` (`setValueAtTime` / `linearRampToValueAtTime` / `exponentialRampToValueAtTime` / connection-from-`AudioNode` all work).
 - **`.state.<name>.value: T`** — current value of a `state.publish` (or `buffer.publish`) slot. Returns the most recently published value synchronously. Read-only.
-- **`.state.<name>.subscribe(handler) → unsubscribe`** — listen for changes on a published state / buffer slot. Handler fires on each publish tick where the value differs from the last delivered value (see §5.2).
+- **`.state.<name>.subscribe(handler) → unsubscribe`** — listen for updates on a published state / buffer slot. Handler fires on every publish tick where the version counter has advanced — the framework does not compare values, so handlers receive every published update including identical re-publishes (Q39-b, `decisions-log.md`; see §5.2 for the dedupe pattern if you need it).
 - **`.events.<name>.on(handler) → unsubscribe`** — typed subscriber per declared `event<T>`. Handler receives the payload (including `atSample`).
 - **`.events.<name>.diagnostics.overflowCount(): number`** — monotonic counter of dropped events (see `02-messaging.md` §3).
 - **`.messages.<name>(payload): void`** — typed sender per declared `message<T>`. Fire-and-forget; in-arrival-order delivery, drained at the start of each render quantum on the worklet side.
@@ -98,9 +98,20 @@ Subscribers run synchronously on the main thread; if a subscriber is slow, it bl
 
 ### 5.2 State publish notification
 
-`node.state.<name>.subscribe(handler)` registers a listener for a `state.publish` (or `buffer.publish`) slot. The runtime watches the slot's per-slot version counter (see `02-messaging.md` §5.4). On each tick where the version has advanced — meaning the audio thread has copied a new value into the shared region — the runtime reads the value and invokes the handler.
+`node.state.<name>.subscribe(handler)` registers a listener for a `state.publish` (or `buffer.publish`) slot. The runtime watches the slot's per-slot version counter (see `02-messaging.md` §5.4). On each tick where the version has advanced, the runtime reads the value and invokes the handler — including when the new value is identical to the previously delivered one. **The framework does not perform value-equality dedupe** (Q39-b, `decisions-log.md`): the audio thread increments the version counter unconditionally every due tick, and the main side delivers every advance.
 
-Equality is by value (`===` for scalars; byte-by-byte for buffers). Identical re-publishes are coalesced — handlers are not invoked when the published value matches the last delivered one.
+If you want same-value dedupe in your subscriber, do it inline:
+
+```typescript
+let last;
+const unsub = node.state.meter.subscribe((v) => {
+  if (v === last) return;
+  last = v;
+  // ... handle changed value
+});
+```
+
+For typed-array slots (`buffer.publish`), do equality the way that matches your use case (e.g. compare a content hash, or skip entirely if your handler is idempotent under same-value calls).
 
 `.value` returns the most recent published value synchronously, without subscribing. It is safe to call in render loops on the main thread.
 
