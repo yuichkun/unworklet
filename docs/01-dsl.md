@@ -418,7 +418,7 @@ midi.onEvent('noteOn', ({ note, velocity, atSample }) => {
 
 The `cond` parameter type is `Node<'bool'> | boolean` (finalized at Q36-c, `decisions-log.md`). A JS `boolean` value (literal or computed) lifts to `Node<'bool'>` per the method-argument literal lift rule (Q36-a). Literal `true` / `false` at the call site folds at graph capture: `emitIf(false, payload)` is dropped from the graph, and `emitIf(true, payload)` records an unconditional emission node. Build-time JS constants (e.g. `const FORCE = true; emitIf(FORCE, payload)`) fold the same way.
 
-**Static-analysis: constant-truthy `cond` inside `forSample` is an error.** A `forSample` callback that contains `emitIf(true, payload)` (or any cond expression that folds to a build-time-constant truthy value) is rejected at WASM-emission time — unconditional emission at audio rate would fill the 256-slot ringbuffer in milliseconds and produce continuous overflow. The error message points at the three honest alternatives: gate with a state-edge expression, move the emission into a handler context, or use `everyNSamples(N, () => emitIf(...))` for periodic sub-rate emission. Authoritative wording: `decisions-log.md` Q32-c (footgun-elimination from MIDI Q4-b carries over uniformly).
+**Static-analysis: constant-truthy `cond` inside `forSample` is an error.** A `forSample` callback that contains `emitIf(true, payload)` (or any cond expression that folds to a build-time-constant truthy value) is rejected at WASM-emission time — unconditional emission at audio rate would fill the 256-slot ringbuffer in milliseconds and produce continuous overflow. The error message points at the three honest alternatives: gate with a state-edge expression, move the emission into a handler context, or use `everyNSamples(N, () => emitIf(...))` for periodic sub-rate emission (taken from the surrounding `forSample` callback's second argument — see §9 and Q43). Authoritative wording: `decisions-log.md` Q32-c (footgun-elimination from MIDI Q4-b carries over uniformly).
 
 Options:
 
@@ -1136,7 +1136,7 @@ Authoritative rationale and rejected alternatives: see `decisions-log.md` Q5.
 
 ## 9. Sub-rate computation (`everyNSamples`)
 
-Some processor-internal computations (LFO, envelope, FFT, modulation matrix, etc.) only need to update at a coarser rate than the audio rate. unworklet exposes a single primitive — `everyNSamples(N, callback)` — for this. The callback's body is graph-captured and compiled into a sub-block that fires once every `N` audio samples; `state` slots updated inside the callback retain their previous value (zero-order hold) on intermediate samples.
+Some processor-internal computations (LFO, envelope, FFT, modulation matrix, etc.) only need to update at a coarser rate than the audio rate. unworklet exposes a single primitive — `everyNSamples(N, callback)` — for this. It is **delivered as the second argument of the `forSample` callback** (Q43, `decisions-log.md`), not as a free function import: scope is enforced by TypeScript scoping (the same shape as the `i: Node<'i32'>` first argument), so calling it outside a `forSample` is impossible at TypeScript level.
 
 ```typescript
 const synth = defineProcessor((ctx) => {
@@ -1148,7 +1148,7 @@ const synth = defineProcessor((ctx) => {
 
   return {
     process: () => {
-      forSample((i) => {
+      forSample((i, everyNSamples) => {
         // 1 ms (= 48 sample) sub-rate block: LFO update.
         everyNSamples(48, () => {
           lfoVal.store(computeLfo(/* ... */));
@@ -1174,16 +1174,18 @@ const synth = defineProcessor((ctx) => {
 - **Graph-capture-time meta primitive**: `everyNSamples` is *not* a runtime callback. The callback body is evaluated once during graph capture; the resulting graph nodes are recorded as belonging to the `N`-rate sub-block.
 - **Compilation**: the sub-block compiles to a WASM branch keyed off an internal sample counter. On samples where `(counter % N) == 0`, the sub-block body executes; on other samples, it is skipped.
 - **State slots in the callback**: `state.<type>` slots written inside the callback hold their value between updates (zero-order hold). Reading them in the surrounding per-sample body (`slot.load()`) returns the most recent stored value.
-- **Expression scope only, inside `forSample`**: callable from inside `forSample` callbacks (the typical usage), L1 helper bodies invoked from inside `forSample`, and `defineSubgraph` `process` lambdas (with their own internal `forSample`). Calling it from declaration scope or from the per-block phase top level is a graph-capture-time error — `everyNSamples` requires a surrounding sample loop to gate against.
+- **Scope by callback argument, not by separate context check (Q43)**: `everyNSamples` is in scope only inside a `forSample(...)` or `forSample.byN(...)` callback that takes it as the second parameter. Using the name outside such a callback (handler bodies, per-block top level, declaration scope) is a TypeScript reference error — no separate compiler context check is performed. The second argument is optional; the existing `forSample((i) => ...)` shape continues to work and only callbacks that actually need sub-rate take `(i, everyNSamples)`.
+- **Counter is per call, continuous across blocks**: each `everyNSamples(N, cb)` call site has its own counter; counters advance by 1 per `forSample` iteration (by `stride` per `forSample.byN(stride)` iteration), and are not reset at render-quantum boundaries — sub-rate timing is continuous across blocks. Multiple `everyNSamples` calls inside the same `forSample` callback do not share counters.
+- **Subgraph methods**: if a subgraph method needs sub-rate, it opens its own `forSample` inside the method body and takes `everyNSamples` from that callback — there is no caller-context propagation, because the surrounding `forSample` is local to the method.
 - **No new declarations inside the callback**: the callback body is an expression scope (same rules as L1 helpers — see §5.5.5). New `state.*` / `buffer.*` / `param.*` / `defineSubgraph` declarations inside the callback are graph-capture-time errors.
 - **Sample-position primitives inside the callback**: `audioIn.at(c, i)`, `audioOut.set(c, i, v)`, `param.at(i)` are valid (`i` from the surrounding `forSample`); state and buffer access are valid.
 
 ### 9.2 Multiple sub-rate blocks coexist
 
-A `forSample` callback can contain any number of `everyNSamples` blocks at any divisor; they share the audio-rate counter and execute independently:
+A `forSample` callback can contain any number of `everyNSamples` blocks at any divisor; each has its own counter and they execute independently:
 
 ```typescript
-forSample((i) => {
+forSample((i, everyNSamples) => {
   everyNSamples(8, () => {
     smoothing.store(/* ... */);     // 8-sample rate
   });
@@ -1208,7 +1210,7 @@ If a consumer wants to consume an automation value at a coarse rate (e.g. read `
 ```typescript
 const cutoffSampled = state.f32(0, { name: 'cutoffSampled' });
 
-forSample((i) => {
+forSample((i, everyNSamples) => {
   everyNSamples(8, () => {
     cutoffSampled.store(cutoff.at(i));
   });
@@ -1238,13 +1240,19 @@ Authoritative rationale and rejected alternatives: see `decisions-log.md` Q7.
 ### 10.1 Surface
 
 ```typescript
-function forSample(callback: (i: Node<'i32'>) => void): void;
+function forSample(
+  callback: (i: Node<'i32'>, everyNSamples?: EveryNSamples) => void,
+): void;
 
 forSample.byN: (
   stride: number,                           // compile-time positive integer
-  callback: (i: Node<'i32'>) => void,
+  callback: (i: Node<'i32'>, everyNSamples?: EveryNSamples) => void,
 ) => void;
+
+type EveryNSamples = (n: number, body: () => void) => void;
 ```
+
+`everyNSamples` is delivered as the **second callback argument** (Q43, `decisions-log.md`); the parameter is optional and most `forSample` callbacks just take `(i) => ...`. See §9 for sub-rate semantics.
 
 - `forSample(callback)` — the callback body runs once per sample of the current render quantum. `i` is a `Node<'i32'>` bound at WASM-emission time to the loop counter, advancing by 1 each iteration.
 - `forSample.byN(stride, callback)` — same shape, but `i` advances by `stride` each iteration. Typical use is `stride = 4` for SIMD bulk operations paired with `buf.loadVec` / `buf.storeVec` / `audioOut.storeVec` methods. The stride must be a compile-time-constant positive integer **and must divide `SAMPLES_PER_BLOCK` (= 128)** — allowed values are `1`, `2`, `4`, `8`, `16`, `32`, `64`, `128` (Q37-b, `decisions-log.md`). Non-constant strides or strides that do not divide 128 are graph-capture-time errors at the `forSample.byN(...)` call site. Sample-offsets skipped by the stride (e.g. `stride = 4` with `audioOut.set` writes only `i = 0, 4, 8, ..., 124`) are emitted as silence unless another phase writes them — same coverage policy as §1.3.

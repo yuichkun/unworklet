@@ -49,6 +49,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q40 | `node.midi` の main 側 surface 形 (audit P0-5、 Phase 1 #5) | resolved — `node.midi.<name>.send(...)` / `.onEvent(...)` / `.connectFromWebMIDI(...)` / `.diagnostics.overflowCount(...)` の namespaced 形 で 統 一 (= 既 Q4-a で ratify 済 み だ っ た が 11-midi §3 / 05-client §1 / canonical で flat 表 記 が 残 っ て いた、 audit で 反 映 不 足 が 露 出); 他 全 declaration (= node.inputs.<name> / node.events.<name> / node.state.<name> 等) と 一 貫、 multi-port も natural に 表 現 (= dualPort 等); single-port で も namespaced 形 で 書 く | `11-midi.md` §3, §4 + `05-client.md` §1 + Q4-a |
 | Q41 | `createSubgraph` の instance name 渡 し 方 (audit P0-6、 Phase 2 #16) | resolved — signature を `createSubgraph(subgraph, ...lambdaArgs, options?: { name?: string })` に 拡 張 (= Q34 既 form の 末 尾 options 追 加)、 **options 自 体 も optional、 name property も optional** (= snapshot 不 要 な subgraph で boilerplate ナ シ); snapshot を 取 る 場 面 で name ナ シ subgraph instance が あ れ ば build-time エ ラ ー で 弾 く、 snapshot path = `'<instance-name>/<inner-slot-name>'` (= 例 「'lpfL/z1'」) で 統 一 | `01-dsl.md` §5.6.2, §8.1 |
 | Q42 | `state.publish` 対 応 type と state.bool の WASM 表 現 (audit P0-7) | resolved — publish を 渡 せ る type を **f32 / i32 / bool の 3 つ に 限 定 ** (= 全 て 32 bit 1 word で 完 結、 JS `Atomics` で audio thread / main 両 方 が 安 全 に 1 回 で 読 み 書 き 可)、 state.bool は 内 部 で `i32` の 0/1 を 持 ち main 側 で boolean に cast、 main 側 `.value` 型 は state.bool→boolean / state.f32 と state.i32→number; state.f64 / state.i64 で publish オ プション を 渡 す と TypeScript エ ラ ー (= 64 bit が 2 回 に 分 け て 触 る ため torn read の 危 険、 v1.x.0 で mitigation と セ ット で 検 討) | `01-dsl.md` §3.1 + `02-messaging.md` §5.4 + `05-client.md` §1 |
+| Q43 | `everyNSamples` を forSample callback 引 数 経 由 で 取 る (audit P0-8) | resolved — `everyNSamples` を free function import か ら `forSample((i, everyNSamples) => ...)` の callback 第 2 引 数 に refine (= Q7 既 ratify form の callback 引 数 化、 既 `i` と 同 軸); forSample.byN も 同 形; scope は TypeScript scoping で 自 然 に 弾 か れ る (= handler / per-block top で TypeScript reference error、 build-time context tracking 不 要); subgraph method 内 で の 自 前 forSample で 自 然 解 決 (= caller context tracking 不 要); counter は 呼 び 出 し ご と に 独 立、 1 塊 を 越 え て 連 続 で reset ナ シ | `01-dsl.md` §9, §10.1 + Q7 |
 
 ---
 
@@ -381,11 +382,11 @@ Preset save/load and session restore are foundational to the kinds of audio devi
 
 ## Q7 — Sub-rate computation
 
-**Status:** resolved.
+**Status:** resolved (delivery shape は Q43 で `forSample` callback 第 2 引 数 経 由 に refine)。
 
 **Decision:** authoritative wording in `01-dsl.md` §9. Summary:
 
-- **Single primitive `everyNSamples(N, callback)`** callable only from inside a `forSample` callback (the per-sample phase). It requires a surrounding sample loop to gate against an internal sample counter; calling it at the per-block top level, in declaration scope, or in an L1 helper that is itself invoked from per-block context is a graph-capture-time error.
+- **Single primitive `everyNSamples(N, callback)`** delivered as the **second argument of the `forSample` callback** (Q43, refining the earlier free-function shape): `forSample((i, everyNSamples) => { everyNSamples(N, () => ...) })`. The same form applies to `forSample.byN`. Out-of-`forSample` use is impossible because `everyNSamples` is simply not in scope there — TypeScript reference error, no separate context check needed.
 - **Graph-capture-time meta primitive**: the callback body is evaluated once during graph capture; the resulting nodes are recorded as belonging to an `N`-rate sub-block. Compiled into a WASM branch keyed off the processor's internal sample counter.
 - **State slots inside the callback** hold their value between updates (zero-order hold). Reading them in the audio-rate body returns the most recent stored value.
 - **No new declarations inside the callback**: callback body is an expression scope; declarations are graph-capture-time errors. Same rule as L1 / subgraph `process` bodies.
@@ -1500,4 +1501,45 @@ state.f64(0, { name: 'p', publish: { rateFps: 30 } });
 - **全 type で publish OK + f64 / i64 は torn read 警 告 を doc に**: user に 警 告 押 し 付 け = footgun 開 放、 declarative 原 則 と ズ レ
 - **f32 / i32 だ け publish OK (= bool 除 外)**: bool flag を main に 出 す 自 然 な use case を 排 除、 過 度 制 約
 - **bool を bit-packed で 表 現 (= 32 個 を 1 word に 詰 め る)**: メ モ リ 効 率 あ る が atomic 操 作 が 複 雑 化 (= bit mask + compare-and-swap)、 cost が 利 益 を 上 回 る
+
+---
+
+## Q43 — `everyNSamples` を `forSample` callback 引 数 経 由 で 取 る (audit P0-8)
+
+**Status:** resolved.
+
+**Decision:**
+
+`everyNSamples` を free function import (= `import { everyNSamples } from 'unworklet'`) か ら **`forSample` callback の 第 2 引 数** に refine。 既 Q7 が ratify し た 「forSample 内 限 定」 制 約 を、 build-time context tracking で は な く TypeScript の scoping で 自 然 に 表 現:
+
+```typescript
+forSample((i, everyNSamples) => {
+  everyNSamples(48, () => { /* sub-rate body */ });
+});
+
+forSample.byN(4, (i, everyNSamples) => {
+  everyNSamples(256, () => { /* sub-rate body, counter は stride 4 で 進 む */ });
+});
+```
+
+- `everyNSamples` は forSample / forSample.byN callback の 第 2 引 数 で 渡 さ れ る。 callback 内 で の み 在 域、 outside で 使 う と TypeScript reference error (= 既 `i` と 同 軸 で 統 一)
+- 第 2 引 数 は optional (= TS で `(i: Node<'i32'>, everyNSamples?: EveryNSamples) => void` 形)、 必 要 な 時 だ け 取 る、 既 `(i) => ...` な canonical は 影 響 ナ シ
+- handler context (= MIDI / onReceive 等) で 呼 ぶ こ と は そ も そ も scope に な い ため 不 可、 build-time context tracking ロ ジ ッ ク 不 要
+- subgraph method 内 で sub-rate 使 う 場 合 は method 内 で 自 前 の forSample を 書 き 引 数 で 取 る、 caller の context (= forSample 内 か handler 内 か) と は 独 立、 method 側 で 完 結
+- counter は 各 `everyNSamples(N, cb)` 呼 び 出 し ご と に 独 立、 1 塊 を 越 え て 連 続 (= 各 forSample iteration で 1 進 む、 forSample.byN(stride) で stride 進 む)、 1 塊 境 界 や 処 理 開 始 で reset ナ シ
+
+既 free function `everyNSamples` import は 廃 止 (= Q7 から refine、 既 spec § 9.1 の prose を 「callback 引 数 経 由」 に 書 き 換 え)。
+
+**Rationale:**
+
+- **既 `i` と 同 軸 で 統 一**: forSample callback で sample-position `i` を 引 数 で 渡 す pattern (= Q22-b) が 既 確 立、 everyNSamples も 同 軸 で 「forSample 内 で の み 在 域 す る primitive」 と し て 統 一 ⇒ user mental 1 つ
+- **build-time context tracking 不 要**: 「forSample 内 限 定」 を 構 文 (= scoping) で 表 現、 compiler 側 で 特 別 な context check ロ ジ ッ ク を 持 た な く て 良 い
+- **subgraph method 伝 播 が 自 然 解 決**: method 内 で 自 前 forSample を 書 け ば 引 数 で 取 れ る、 caller の context tracking 不 要 (= 元 案 で の 「method 内 で everyNSamples 含 む と method 自 体 が forSample 限 定 に な り caller context を build-time check」 が 消 失)
+
+**Rejected:**
+
+- **free function + build-time check で context 制 限**: compiler 側 で 特 別 な context tracking 必 要、 callback 引 数 で 構 文 的 に scope 切 る 方 が 単 純 で 既 `i` と 一 貫
+- **handler context で も 動 か す**: handler は 1 塊 1 回 で sample 進 ま な い、 「N sample ご と」 と 名 乗 る の に sample rate semantics が 取 れ な い = 名 と 動 作 が ズ レ
+- **options bag 経 由 (= `forSample((i, { everyNSamples }) => ...)`)**: 拡 張 性 あ る が v1.0.0 で everyN だ け な ら 直 接 引 数 で 十 分、 destructuring boilerplate 増
+- **counter を 1 塊 境 界 で reset**: 「N sample ご と」 が 1 塊 境 界 で 切 れ る、 名 と 動 作 が ズ レ
 

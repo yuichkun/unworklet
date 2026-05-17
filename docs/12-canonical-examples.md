@@ -51,7 +51,7 @@ The example set is designed so that the union of all examples touches every conc
 1. **Stereo gain + level meter** — minimum useful plugin. Touches I/O, `param`, `state.publish`, basic `forSample`.
 2. **Three-band biquad EQ (minimum-phase)** — recursive `state` cascade with L1 + L2 helpers, denormal-aware feedback path, parameterized cookbook coefficients.
 3. **Three-band linear-phase EQ (partitioned convolution)** — multi-phase `process` body with sub-rate FFT, `forSample.byN(4)` SIMD bulk, overlap-add buffer accounting.
-4. **Lookahead limiter with overshoot event** — `buffer` delay line, `everyNSamples` envelope, `event<T>` with `atSample` for sample-accurate flagging, GR meter via `state.publish`.
+4. **Lookahead limiter with overshoot event** — `buffer` delay line, per-sample envelope follower (L1 helper), `event<T>` with `atSample` for sample-accurate flagging, GR meter via `state.publish`.
 5. **Granular sampler** — bulk `message<T>` upload of sample buffer, voice-array state, `midiInput` note triggers, `buffer.publish` waveform display.
 6. **MIDI arpeggiator + sequencer** — `midiInput` ingest + `midiOutput` emission, generic `event<T>` for UI step indicator, `message<T>` for pattern reload.
 7. **Convolution reverb with snapshot/restore migration** — large IR buffer, partitioned FFT, snapshot persistence with declarative migration chain.
@@ -262,7 +262,7 @@ node.onError((err) => console.error('[3bandEQ]', err));
 ```typescript
 import {
   defineProcessor, audioInput, audioOutput, param, state, buffer,
-  forSample, everyNSamples,
+  forSample, SAMPLES_PER_BLOCK,
   add, sub, mul, mod, abs, max,
   type Node,
 } from '@unworklet/core';
@@ -273,9 +273,8 @@ import { vec4, splat, mulVec, addVec } from '@unworklet/core/simd';
 // runtime convolution.
 
 const FIR_LEN     = 1024;     // 23 ms @ 44.1kHz — enough for a low-Q linear-phase EQ
-const PART_SIZE   = 128;      // = renderQuantum, partition aligned with block
-const NUM_PARTS   = FIR_LEN / PART_SIZE;       // 8
-const HISTORY_LEN = NUM_PARTS * PART_SIZE;     // 1024
+const NUM_PARTS   = FIR_LEN / SAMPLES_PER_BLOCK;       // 8
+const HISTORY_LEN = NUM_PARTS * SAMPLES_PER_BLOCK;     // 1024
 
 export const linearPhaseEQ = defineProcessor(() => {
   const main = audioInput ({ channels: 1, name: 'main' });
@@ -318,7 +317,7 @@ export const linearPhaseEQ = defineProcessor(() => {
       });
 
       // Per-block: advance the head by one block.
-      histHead.store(mod(add(startHead, 128), HISTORY_LEN));
+      histHead.store(mod(add(startHead, SAMPLES_PER_BLOCK), HISTORY_LEN));
     },
   };
 });
@@ -360,7 +359,7 @@ node.outputs.main.connect(audioContext.destination);
 ```typescript
 import {
   defineProcessor, audioInput, audioOutput, param, state, buffer,
-  forSample, event,
+  forSample, event, SAMPLES_PER_BLOCK,
   add, sub, mul, div, mod, max, min, abs, gt, lt, exp, select, log,
   type Node, type State,
 } from '@unworklet/core';
@@ -452,7 +451,7 @@ export const lookaheadLimiter = defineProcessor((ctx) => {
 
       // Per-block: advance head, decay published GR back toward 0 dB so meter
       // tracks recent rather than historical.
-      dlyHead.store(mod(add(headBlock, 128), LOOKAHEAD_SAMPLES));
+      dlyHead.store(mod(add(headBlock, SAMPLES_PER_BLOCK), LOOKAHEAD_SAMPLES));
       gainReductionDb.store(mul(gainReductionDb.load(), 0.85));
     },
   };
@@ -678,7 +677,7 @@ node.events.grainSpawned.on(({ atSample, voice, pos }) => grainViz.flash(voice, 
 ```typescript
 import {
   defineProcessor, audioInput, audioOutput, state,
-  forSample, everyNSamples,
+  forSample,
   midiInput, midiOutput, message, event,
   add, sub, mul, mod, eq, gt, select,
   type Node,
@@ -800,14 +799,13 @@ node.messages.loadPattern({
 ```typescript
 import {
   defineProcessor, audioInput, audioOutput, param, state, buffer,
-  forSample, everyNSamples, message,
+  forSample, message, SAMPLES_PER_BLOCK,
   add, sub, mul, mod, max, abs, type Node,
 } from '@unworklet/core';
 import { vec4, splat, mulVec, addVec } from '@unworklet/core/simd';
 
 const IR_LEN          = 4096;     // ~85ms @ 48kHz
-const PARTITION_SIZE  = 128;
-const NUM_PARTITIONS  = IR_LEN / PARTITION_SIZE;     // 32
+const NUM_PARTITIONS  = IR_LEN / SAMPLES_PER_BLOCK;     // 32
 
 export const convolutionReverb = defineProcessor((ctx) => {
   const main = audioInput ({ channels: 2, name: 'main' });
@@ -883,7 +881,7 @@ export const convolutionReverb = defineProcessor((ctx) => {
         wetMeter.store(max(wetMeter.load(), max(abs(wetL), abs(wetR))));
       });
 
-      histHead.store(mod(add(headBlock, 128), IR_LEN));
+      histHead.store(mod(add(headBlock, SAMPLES_PER_BLOCK), IR_LEN));
       wetMeter.store(mul(wetMeter.load(), 0.93));
     },
   };
@@ -958,7 +956,7 @@ if (stored) {
 ```typescript
 import {
   defineProcessor, defineSubgraph, createSubgraph, audioInput, audioOutput, param, state, buffer,
-  forSample, midiInput, event,
+  forSample, midiInput, event, SAMPLES_PER_BLOCK,
   add, sub, mul, div, mod, max, abs, sin, exp, gt, lt, eq, select,
   f32, i32,
   type Node, type State,
@@ -1099,7 +1097,7 @@ export const polySynth = defineProcessor((ctx) => {
         waveform.write(wp, sig);
       });
 
-      wavePtr.store(mod(add(wpStart, 128), 1024));
+      wavePtr.store(mod(add(wpStart, SAMPLES_PER_BLOCK), 1024));
 
       // Count active voices for UI.
       let count = i32(0);
