@@ -28,7 +28,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q16 | npm scope | (open) | `09-repo-structure.md` §4 |
 | Q17 | Math precision variants | (open) | `01-dsl.md` §2 |
 | Q18 | Render quantum handling | (open) | `04-worklet-runtime.md` §3 |
-| Q19 | Channel-count specialization | (open) | `04-worklet-runtime.md` §4 |
+| Q19 | Channel-count specialization | resolved — `channels: C` を declare 時 に WASM へ 焼 き 込 む (= mono / stereo 別 code path、 sample ご と の channel 判 定 分 岐 ナ シ、 SIMD lane mapping コ ン パ イ ル 時 確 定); 帰 結 と し て main 側 で `createNode` の AudioWorkletNode option (numberOfInputs / numberOfOutputs / outputChannelCount) を 上 書 き 不 可 (= 仕 様 ホ ー ル #62 同 時 解 決); 同 一 processor で の 動 的 channel 切 替 が 必 要 な ら 別 `defineProcessor` で 出 す | `04-worklet-runtime.md` §4 + `05-client.md` §1 |
 | Q20 | Pre-warm correctness | (open) | `04-worklet-runtime.md` §5 |
 | Q21 | Denormal handling | (open) | `04-worklet-runtime.md` §6 |
 | Q22 | Graph capture model and process body structure | resolved (a / aprime / b fixed; c 3-layer fixed; d open) | `00-foundations.md` §3 + `01-dsl.md` §1, §10 + `03-compiler.md` §2 |

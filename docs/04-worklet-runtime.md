@@ -31,8 +31,13 @@ partial (§7 publish scheduling written; §1–§6 + §8 placeholder)
 
 ## 4. Channel-count handling
 
-<!-- Q19 — compile-time specialization (mono / stereo) vs generic loop; user opt-in for
-     specialization at higher fixed counts. Lands here. -->
+The `channels: C` value declared on `audioInput({ channels: C, name })` / `audioOutput({ channels: C, name })` is **baked into the emitted WASM module** (Q19, `decisions-log.md`). The compiler emits one specialized code path per declared channel count, with channel access (`.at(c, i)` / `.set(c, i, v)`) lowering to direct WASM loads/stores at compile-time-known offsets — no per-sample dispatch on `c`. SIMD lane mapping for stride-based bulk operations is therefore also determined at compile time.
+
+If a consumer needs both a mono and a stereo build of the same algorithm, they author **two separate `defineProcessor` calls** — one with `channels: 1`, one with `channels: 2`. There is no runtime switch.
+
+As a structural consequence (Q19's resolution also closes the long-standing #62 hole), `createNode` does **not** accept main-side overrides for `numberOfInputs` / `numberOfOutputs` / `outputChannelCount`. Those values are derived from the processor's `audioInput` / `audioOutput` declarations and would invalidate the WASM specialization if changed at instantiation. See `05-client.md` §1.
+
+Upstream sources that connect with a different channel count than the worklet declared are normalized by Web Audio's standard up-mix / down-mix rules (`channelCountMode` / `channelInterpretation`) before the worklet sees them; unworklet does not intervene in that layer (= same behavior as `01-dsl.md` §1.2 already specifies).
 
 ## 5. Pre-warm details
 
