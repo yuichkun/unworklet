@@ -26,7 +26,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q14 | v1.0.0 acceptance criteria | (open) | `10-roadmap.md` §1 |
 | Q15 | License | (open) | `09-repo-structure.md` §3 |
 | Q16 | npm scope | (open) | `09-repo-structure.md` §4 |
-| Q17 | Math precision variants | (open) | `01-dsl.md` §2 |
+| Q17 | Math precision variants | resolved — `@unworklet/core` の math primitive (sin / cos / tan / tanh / exp / log / sqrt 等) を v1.0.0 で polynomial approximation 1 variant 強 制 (= 5-7 次 minimax polynomial、 WASM 関 数 と し て 直 接 emit、 全 WASM 内 部 完 結 で FFI / JS-WASM boundary cross 不 使 用、 audio thread realtime safe); 最 大 誤 差 約 1e-4 で audio 24-bit dynamic range で 不 可 聴; v1.x.0 で `/precise` (= WASM 内 bundle libm) / `/table` (= precomputed table lookup) を additive 追 加 検 討; 数 値 解 析 用 途 は unworklet scope 外 と し て doc 明 示 | `01-dsl.md` §2 |
 | Q18 | Render quantum handling | (open) | `04-worklet-runtime.md` §3 |
 | Q19 | Channel-count specialization | resolved — `channels: C` を declare 時 に WASM へ 焼 き 込 む (= mono / stereo 別 code path、 sample ご と の channel 判 定 分 岐 ナ シ、 SIMD lane mapping コ ン パ イ ル 時 確 定); 帰 結 と し て main 側 で `createNode` の AudioWorkletNode option (numberOfInputs / numberOfOutputs / outputChannelCount) を 上 書 き 不 可 (= 仕 様 ホ ー ル #62 同 時 解 決); 同 一 processor で の 動 的 channel 切 替 が 必 要 な ら 別 `defineProcessor` で 出 す | `04-worklet-runtime.md` §4 + `05-client.md` §1 |
 | Q20 | Pre-warm correctness | (open) | `04-worklet-runtime.md` §5 |

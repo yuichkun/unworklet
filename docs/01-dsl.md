@@ -257,7 +257,7 @@ Primitive operators are pure functions over `Node<T>` values. Each primitive's a
 - **Control**: `select(cond: Node<'bool'>, then: Node<T>, else_: Node<T>): Node<T>` (generic over `T`)
 - **Memory**: `load` / `store` on `State<T>`; `.read` / `.write` / `.readInterpolated` / `.copyFrom` / `.loadVec` / `.storeVec` as methods on `Buffer<T>` (see §3.2 and §7)
 
-Math-precision strategy (default vs `/precise` vs `/table` import paths) is settled by Q17 and lands here additively.
+Math-precision strategy (Q17, `decisions-log.md`): the `@unworklet/core` import path ships **polynomial approximations** (5–7th-order minimax) for every math primitive listed above. All approximations are emitted as WASM functions and run entirely inside the WASM module — there is no FFI / JS-WASM boundary crossing per call, so per-sample use stays realtime-safe. Maximum approximation error is on the order of `1e-4`, inaudible within audio's 24-bit dynamic range. Numerical-analysis use cases (where IEEE-754-faithful math matters) are outside unworklet's scope. v1.x.0 may additively introduce `@unworklet/core/precise` (WASM-bundled libm, std-math-equivalent precision) and `@unworklet/core/table` (precomputed lookup, even faster) import paths.
 
 ### 2.2 Scalar constructors
 
