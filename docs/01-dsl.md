@@ -139,9 +139,13 @@ forSample((i) => {
 });
 ```
 
-Per declared output channel, exactly one `set(c, i, v)` write must happen on every code path inside the surrounding `forSample` callback. Missing writes (output channel never written) and duplicate writes (same channel × same `i` written twice in the same phase) are graph-capture-time errors with refactor-hint messages.
+`audioOut.set(c, i, v)` follows the same mental model as the AudioWorklet `process(inputs, outputs)` and JUCE `processBlock` host environments: **write freely, no coverage requirement, no exactly-once constraint** (Q37, `decisions-log.md`):
 
-A processor with multiple `forSample` phases may have different phases write to different outputs, but each declared output channel must end up written in some phase covering every sample-offset of the render quantum.
+- Writing the same `(c, i)` multiple times is legal; source-order semantics apply (the later write wins).
+- Sample-offsets that no phase writes are emitted as silence (= 0) — this matches AudioWorklet's per-callback zero-init of the output buffer.
+- A processor with multiple `forSample` phases may split channels across phases (e.g. left in phase 1, right in phase 2), overwrite previously written values for mix-in patterns, or leave portions of the buffer silent — all are legal.
+
+Static analysis enforces only the real-time-safety invariants listed in `03-compiler.md` §2.4 (no unbounded loops, no dynamic allocation, no out-of-block sample-offset arithmetic, no illegal `forSample.byN` strides). Coverage of the render quantum is the author's responsibility.
 
 ### 1.4 Multiple inputs / outputs
 
@@ -1208,7 +1212,7 @@ forSample.byN: (
 ```
 
 - `forSample(callback)` — the callback body runs once per sample of the current render quantum. `i` is a `Node<'i32'>` bound at WASM-emission time to the loop counter, advancing by 1 each iteration.
-- `forSample.byN(stride, callback)` — same shape, but `i` advances by `stride` each iteration. Typical use is `stride = 4` for SIMD bulk operations paired with `buf.loadVec` / `buf.storeVec` methods. The stride must be a compile-time-constant positive integer; non-constant strides are graph-capture-time errors.
+- `forSample.byN(stride, callback)` — same shape, but `i` advances by `stride` each iteration. Typical use is `stride = 4` for SIMD bulk operations paired with `buf.loadVec` / `buf.storeVec` / `audioOut.storeVec` methods. The stride must be a compile-time-constant positive integer **and must divide `SAMPLES_PER_BLOCK` (= 128)** — allowed values are `1`, `2`, `4`, `8`, `16`, `32`, `64`, `128` (Q37-b, `decisions-log.md`). Non-constant strides or strides that do not divide 128 are graph-capture-time errors at the `forSample.byN(...)` call site. Sample-offsets skipped by the stride (e.g. `stride = 4` with `audioOut.set` writes only `i = 0, 4, 8, ..., 124`) are emitted as silence unless another phase writes them — same coverage policy as §1.3.
 
 ### 10.2 Semantics
 

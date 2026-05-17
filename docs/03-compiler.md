@@ -86,8 +86,10 @@ The compiler runs analysis passes over the captured DAG (see §3); violations de
 - *Loop boundedness*: a build-time loop that captured non-statically-bounded iteration.
 - *Memory budget*: total `state` + `buffer` size exceeds the configured limit.
 - *Out-of-block sample-offset arithmetic*: `add(i, lookahead)` exceeding `[0, renderQuantum - 1]` when statically detectable.
-- *Multi-phase output coverage*: across all per-sample phases of the render quantum, every declared output channel × every sample-offset must be written exactly once. Detected by phase-union analysis after capture.
+- *Illegal `forSample.byN` stride*: a non-constant stride, or a stride that does not divide `SAMPLES_PER_BLOCK` (= 128). Allowed: 1, 2, 4, 8, 16, 32, 64, 128 (Q37-b, `decisions-log.md`).
 - *Type inference inconsistency*: a `Node<T>` whose inferred type conflicts with its expected use.
+
+Output coverage is **not** enforced by static analysis: `audioOut.set(c, i, v)` follows the host (AudioWorklet / JUCE) `process` mental model — write freely, duplicates use source-order semantics, sample-offsets that no phase writes are emitted as silence (Q37, `decisions-log.md`).
 
 ### 2.5 Open: Q22-d (error message format)
 

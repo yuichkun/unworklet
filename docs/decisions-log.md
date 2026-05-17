@@ -43,6 +43,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q34 | Subgraph instantiation scope (audit Phase 1 #2、 Q22-c-Round2 解 決) | resolved — `createSubgraph(subgraph, ...args)` で declaration scope に instance 生 成 (state slot alloc); subgraph body は record return で key 名 著 作 者 free; method は forSample / handler / per-block 全 context で 呼 べる; method 戻 り 値 で の context 制 限 ナシ; nested subgraph は declaration scope で OK | `01-dsl.md` §5.6 |
 | Q35 | Render quantum length の user code 露 出 形 (audit Phase 1 #6) | resolved — `SAMPLES_PER_BLOCK: 128` を `unworklet` package の top-level constant と し て export; `ctx.renderQuantum` ナシ (= run-time 値 と build-time 定 数 を 区 別); ctx が 在 域 し な い build-time JS 文 脈 で も 引 用 可 | `01-dsl.md` §1.7 |
 | Q36 | method 引 数 で の literal lift + typed-array-field proxy semantics + emitIf cond 型 確 定 (audit P0-1) | resolved — Q33 拡 張: method の 引 数 型 が `Node<X>` な ら literal は 自 動 で `Node<X>` に lift (= `param.at(0)` per-block / `emitIf(true, ...)` / `main.at(0, i)` 等 を 型 と 整 合); typed-array-field proxy = `.length: Node<'i32'>` + `.at(idx: Node<'i32'> \| number)` で runtime read / build 時 折 り 畳 み を 引 数 種 類 で 自 然 分 岐; emitIf cond 型 を `Node<'bool'> \| boolean` で 確 定 (= Q32-b の B3 pending を close) | `00-foundations.md` §4 + `01-dsl.md` §2, §3.3, §4.1, §4.3 |
+| Q37 | 出 力 channel の 書 き 込 み ル ー ル を 親 ホ ス ト (AudioWorklet) と 揃 え る (audit P0-2) | resolved — `out.set(c, i, v)` は 自 由 に 何 度 で も 書 け る、 同 sample 位 置 を 複 数 回 書 け ば source 順 で 後 書 き が 勝 つ、 触 ら な い sample 位 置 / channel は silence (= 0); 複 数 forSample 分 担 / 重 ね 書 き 全 部 OK; 静 的 解 析 で 弾 く の は real-time safety 違 反 の み (= 「全 sample カ バ ー」 「exactly once」 系 制 約 を 撤 去); forSample.byN 中 で の `out.set` も legal、 stride は 128 を 割 る 値 (= 1, 2, 4, 8, 16, 32, 64, 128) 限 定 | `01-dsl.md` §1.3, §10.1 + `03-compiler.md` §2.4 |
 
 ---
 
@@ -1231,4 +1232,38 @@ emitIf(cond: Node<'bool'> | boolean, payload: T): void
 - **method を per-block / per-sample で 別 名 化 (= `param.atBlockStart()` / `param.atSample(i)`)**: 各 method surface 2 倍、 canonical 全 行 rewrite、 「動 い て た `.at(0)` が な ぜ 別 名?」 と user 説 明 cost
 - **scalar constructor を 強 制 (= `lowF.at(i32(0))` 必 須)**: Q33 で 廃 止 し た 「全 lit 包 み」 を method 引 数 で 復 活 = 既 ratify と 哲 学 ズ レ、 boilerplate 大
 - **Q22-b 不 変 量 廃 止 (= audio I/O も per-block 完 全 開 放)**: 「sample-position は forSample 内 で の み」 と い う 強 い mental model が 崩 れ る、 別 P0 (output coverage) と 相 互 作 用 複 雑、 「`audioIn.at(c, 0)` per-block で 何 を 読 む の?」 (= 前 quantum 最 終 vs 当 quantum 0) の 新 議 論 が 発 生 (= literal `0` per-block 呼 び の み 限 定 開 放 で 十 分)
+
+---
+
+## Q37 — 出 力 channel の 書 き 込 み ル ー ル を 親 ホ ス ト (AudioWorklet) と 揃 え る (audit P0-2)
+
+**Status:** resolved.
+
+**Decision (Q37-a — 出 力 ル ー ル を 親 ホ ス ト と 同 じ に):**
+
+`audioOut.set(c, i, v)` は 自 由 に 何 度 で も 書 け る。 同 sample 位 置 を 複 数 回 書 け ば source 順 で 後 書 き が 勝 つ。 触 ら な い sample 位 置 / 触 ら な い channel は silence (= 0)。 forSample 1 個 で 完 結 / 複 数 forSample で 分 担 / 重 ね 書 き 全 部 OK。
+
+静 的 解 析 で 弾 く の は real-time safety 違 反 (= 上 限 が 決 ま っ て い な い loop、 動 的 alloc、 sample-offset の out-of-block 算 術、 forSample.byN の 違 法 stride 等) の み。 「ど の sample が 何 回 書 か れ た か」 「全 sample を カ バ ー し た か」 は user 責 任 (= AudioWorklet / JUCE の `process` 関 数 メ ン タ ル と 同 じ)。
+
+既 仕 様 で 「Per declared output channel, exactly one set ... must happen on every code path」 「Missing writes ... duplicate writes ... are graph-capture-time errors」 (= 01-dsl §1.3) と 「every declared output channel × every sample-offset must be written exactly once. Detected by phase-union analysis」 (= 03-compiler §2.4) は 全 撤 去。
+
+**Decision (Q37-b — forSample.byN 中 で の out.set も 同 じ ル ー ル):**
+
+`forSample.byN(stride, callback)` 中 で の `audioOut.set(c, i, v)` は legal。 stride で 飛 ば し た sample 位 置 は (= 別 forSample で 書 か な け れ ば) silence。 `audioOut.storeVec(c, i, vec)` (= vector を 一 度 に 書 く form) も 並 行 で 使 用 可、 SIMD 計 算 で 4 sample 一 度 に 書 き た い 場 合 用。
+
+stride 制 約: 1, 2, 4, 8, 16, 32, 64, 128 (= `SAMPLES_PER_BLOCK` = 128 を 割 る 値) 限 定。 そ れ 以 外 (= `forSample.byN(5, ...)` 等) は `forSample.byN` を 書 い た 行 で 静 的 解 析 エ ラ ー (= 端 数 sample が 中 途 半 端 に 残 る の を 防 ぐ)。
+
+**Rationale:**
+
+- **親 ホ ス ト メ ン タ ル と 整 合**: unworklet が build on し て いる AudioWorklet の `process(inputs, outputs)` で は output buffer を 自 由 に touch、 上 書 き OK、 一 部 sample だ け 書 い て 残 り silence も OK。 user の 多 く が 持 つ 既 経 験 (= JUCE / VST / 他 audio framework) で も 同 様。 「exactly once 強 制」 ル ー ル は 親 ホ ス ト メ ン タ ル と 真 逆 で over-constrain
+- **declarative 原 則 と 整 合**: declarative の 本 質 は 「user が 書 い た 構 造 が そ の ま ま WASM に な る」 で あ っ て、 「user に exactly once 制 約 を 課 す」 で は な い。 source 順 の write 列 = WASM 同 順 の sequential store
+- **典 型 ユース ケ ー ス を サ ポ ー ト**: dry/wet mix-in (= 1 度 dry を 書 い て 後 で wet を 上 書 き)、 channel 分 担 (= forSample 1 で left / forSample 2 で right)、 部 分 sample (= 一 部 sample だ け 書 い て 残 り silence) 等 audio で 普 通 の pattern を 全 て legal に
+- **canonical Ex 7 (= SIMD 畳 み 込 み で stride > 1 で out.set 使 用) も legal**: rewrite 不 要
+
+**Rejected:**
+
+- **「ち ょ う ど 1 回 強 制」 (= 既 仕 様 3 文 の 線 を 採 用)**: 親 ホ ス ト メ ン タ ル と 真 逆、 user が 親 ホ ス ト で 慣 れ た 書 き 方 を 全 部 取 り 上 げ ら れ る、 canonical Ex 7 も rewrite 強 制 = over-constrain
+- **「1 度 も 書 か な か っ た sample は エ ラ ー、 二 重 書 き は OK」 (= 中 間 案)**: silence 暗 黙 fill ケ ー ス (= 一 部 sample だ け 書 い て 残 り 0) を 弾 く、 親 ホ ス ト と ズ レ、 「silence fill 意 図 な ら `out.set(c, i, 0)` で 明 示」 を user に 強 制 = 親 ホ ス ト で 不 要 な 手 数
+- **「forSample.byN 中 で out.set 禁 止 (= storeVec 必 須)」**: scalar set も 親 ホ ス ト で 普 通、 禁 止 は over-constrain
+- **「forSample.byN 中 の `out.set(0, i, v)` を 同 値 stride 個 並 べ る broadcast と 解 釈」**: SIMD 計 算 結 果 は 通 常 各 sample で 違 う 値、 同 値 連 続 ケ ー ス は ほ ぼ な い、 意 味 論 不 自 然
 
