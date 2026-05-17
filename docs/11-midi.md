@@ -78,9 +78,10 @@ defineProcessor((ctx) => {
 
 ### 2.2 Event types (TypeScript surface)
 
-Inbound and outbound MIDI events use the same `MidiEvent` discriminated union on the API surface. Authors never see raw status bytes — the compiler generates serializers and deserializers between this union and the wire format (§4).
+MIDI events appear in two contexts: **main thread** (= `node.midi.<name>.send(...)` argument and `.onEvent(...)` handler argument), and **worklet audio-thread** (= `midiInput().onEvent(...)` handler argument and `midiOutput().emitIf(...)` argument). Each context uses a distinct TypeScript type because the values themselves are different things — main-thread fields are plain JS numbers, worklet fields are audio-graph nodes captured into the WASM emission (Q22). Authors never see raw status bytes — the compiler generates serializers and deserializers between these types and the wire format (§4).
 
 ```typescript
+// Main thread / wire shape — values are plain JS scalars.
 type MidiEvent =
   | { type: 'noteOn';          channel: number; note: number; velocity: number; atSample: number }
   | { type: 'noteOff';         channel: number; note: number; velocity: number; atSample: number }
@@ -91,9 +92,26 @@ type MidiEvent =
   | { type: 'aftertouch';      channel: number; note: number; pressure: number;   atSample: number }
   | { type: 'systemRealtime';  status: number;                                     atSample: number }  // 0xF8 / 0xFA / 0xFB / 0xFC
   | { type: 'sysex';           data: Uint8Array;                                   atSample: number };
+
+// Worklet audio-thread shape — every numeric field is a graph-capture value
+// (`Node<'i32'>`), every typed-array field is exposed as a typed-array-field
+// proxy (Q36-b). Returned by `midiInput().onEvent(...)` handler, and accepted
+// by `midiOutput().emitIf(...)`. See `decisions-log.md` Q46.
+type MidiEventGraph =
+  | { type: 'noteOn';          channel: Node<'i32'>; note: Node<'i32'>; velocity: Node<'i32'>;     atSample: Node<'i32'> }
+  | { type: 'noteOff';         channel: Node<'i32'>; note: Node<'i32'>; velocity: Node<'i32'>;     atSample: Node<'i32'> }
+  | { type: 'cc';              channel: Node<'i32'>; controller: Node<'i32'>; value: Node<'i32'>;  atSample: Node<'i32'> }
+  | { type: 'pitchBend';       channel: Node<'i32'>; value: Node<'i32'>;                           atSample: Node<'i32'> }
+  | { type: 'programChange';   channel: Node<'i32'>; program: Node<'i32'>;                         atSample: Node<'i32'> }
+  | { type: 'channelPressure'; channel: Node<'i32'>; pressure: Node<'i32'>;                        atSample: Node<'i32'> }
+  | { type: 'aftertouch';      channel: Node<'i32'>; note: Node<'i32'>; pressure: Node<'i32'>;     atSample: Node<'i32'> }
+  | { type: 'systemRealtime';  status: Node<'i32'>;                                                atSample: Node<'i32'> }
+  | { type: 'sysex';           data: TypedArrayFieldProxy<'u8'>;                                    atSample: Node<'i32'> };
 ```
 
-The exact set of variants and their fields is closed at v1.0.0. New variants (e.g. MIDI 2.0 high-resolution events) can be added additively in v1.x.0.
+The two types share variant tags and field names — only field types differ. Emit-side accepts number / boolean literals through the Q33 literal-lift rule (e.g. `atSample: 0` lifts to `Node<'i32'>` with value 0), so authors write the same literal numbers they would write in `MidiEvent`. Reading a field in a worklet handler returns a `Node<'i32'>` graph value usable in graph expressions: `noteState.store(note)` works because `note: Node<'i32'>` is what `state.i32.store` expects.
+
+The exact set of variants and their fields is closed at v1.0.0. New variants (e.g. MIDI 2.0 high-resolution events) can be added additively in v1.x.0; the `MidiEvent` / `MidiEventGraph` pair grows together.
 
 ### 2.3 `atSample` is always present
 
@@ -108,7 +126,7 @@ midiIn.onEvent('noteOn', ({ note, atSample }) => {
 
 Concurrent events at the same sample-offset are processed in arrival order on the wire.
 
-`atSample` is a `Node<'i32'>` in the same dimension as the `i` parameter of a `forSample` callback (see `01-dsl.md` §10). The handler body runs at the firing sample (the sample whose offset matches `atSample`); typically the handler stores the event details into `state` slots, and a subsequent `forSample` invocation compares `i` against the stored offset for sample-accurate trigger:
+All numeric fields the handler receives — `atSample`, `note`, `velocity`, `channel`, etc. — are `Node<'i32'>` graph-capture values (= the `MidiEventGraph` shape of §2.2). `atSample` specifically is in the same dimension as the `i` parameter of a `forSample` callback (see `01-dsl.md` §10). The handler body runs at the firing sample (the sample whose offset matches `atSample`); typically the handler stores the event details into `state` slots, and a subsequent `forSample` invocation compares `i` against the stored offset for sample-accurate trigger:
 
 ```typescript
 defineProcessor((ctx) => {
@@ -164,7 +182,7 @@ const drumSequencer = defineProcessor((ctx) => {
 
 `midiOut.emitIf(cond, event)` compiles to a graph node: only on samples where `cond` evaluates true does the event get pushed into the outbound ringbuffer. "Emit only at boundaries / state transitions" is structurally enforced — there is no path to accidentally enqueue events every sample.
 
-The `atSample` field of the emitted event is a `Node<'i32'>` (or a compile-time-constant integer literal) in the same dimension as the surrounding iteration's sample-offset. Common patterns:
+The `event` argument has the `MidiEventGraph` shape (§2.2) — all numeric fields are `Node<'i32'>`, with number literals admitted through Q33 literal-lift. The `atSample` field is in the same dimension as the surrounding iteration's sample-offset. Common patterns:
 
 - *Constant offset*: `atSample: 0` emits at the start of the render quantum (legacy / non-sample-accurate consumers).
 - *Current sample*: in an explicit-form processor, pass the surrounding `forSample` callback's `i` directly: `atSample: i`. The emitted event then carries the exact sample at which the conditional fired.
