@@ -123,7 +123,7 @@ The global scope inside which an `AudioWorkletProcessor` instance executes. Host
 
 unworklet primitives are statically typed `Node<T>` where `T` is one of `'f32'`, `'f64'`, `'i32'`, `'i64'`, `'bool'`.
 
-### Literal lift (context-dependent inside primitive arguments)
+### Literal lift (context-dependent inside primitive and method arguments)
 
 A JavaScript `number` or `boolean` literal appearing as a **primitive argument** lifts to `Node<T>`, where `T` is inferred from the surrounding primitive signature (context-dependent lift):
 
@@ -135,7 +135,18 @@ select(isMe, true, gate.load())    // gate: Node<'bool'> → true lifts to Node<
 
 When all primitive arguments are literals (e.g. `add(0, 0)`), TypeScript falls back to **`'f32'`** as the default — audio-rate DSP overwhelmingly uses `f32` and AudioWorklet I/O (`inputs`, `outputs`, `parameters[name]`) is `Float32Array`-typed end-to-end.
 
+**method arguments follow the same rule** (Q36 拡 張): if a method's declared argument type is `Node<X>`, a JS literal passed in that position lifts to `Node<X>`. This covers `param.at(0)`, `samples.at(s)`, `emitIf(true, ...)`, `audioIn.at(0, i)`, `buf.read(idx)`, etc. — all canonical method-argument literal usages.
+
+```typescript
+lowF.at(0)                         // param.at(i: Node<'i32'> | number) → 0 lifts to Node<'i32'>
+notePlayed.emitIf(true, payload)   // emitIf(cond: Node<'bool'> | boolean, ...) → true lifts to Node<'bool'>
+samples.at(s)                      // s = JS number → build-time folded read
+samples.at(idx)                    // idx = Node<'i32'> → runtime read
+```
+
 Implicit lift covers `'f32'` / `'f64'` / `'i32'` / `'bool'`. **`'i64'` requires explicit construction** (see "Scalar constructors" below) because JavaScript `number` cannot safely represent integers beyond `2^53 - 1`.
+
+Range constraints that the type system cannot express (channel index must be a non-negative integer, `buf.read` index must be non-negative, etc.) are enforced at graph-capture time and produce build-time errors with refactor hints (authoritative: `decisions-log.md` Q36-a).
 
 ### Scalar constructors (explicit lift outside primitive arguments)
 

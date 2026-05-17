@@ -17,7 +17,7 @@ A `process` body has **two execution phases distinguished by lexical position**:
 
 The body is read **top-to-bottom**: each statement (whether direct per-block code or a `forSample` invocation) executes in declared (source) order. Per-block code can interleave freely with `forSample` invocations — per-block setup → per-sample work → more per-block code → another `forSample` → … — all valid.
 
-Sample-position primitives (`audioIn.at(c, i)`, `audioOut.set(c, i, v)`, `param.at(i)`) take an `i: Node<'i32'>` whose only source is a `forSample` callback parameter. Outside any `forSample`, `i` is not in scope, so the IDE rejects misplaced sample-position calls as TypeScript reference errors. There is no sugar form; every per-sample access uses `at` / `set` / `param.at(...)`.
+Sample-position primitives (`audioIn.at(c, i)`, `audioOut.set(c, i, v)`, `param.at(i)`) take an `i: Node<'i32'> | number`. A `Node<'i32'>` `i` originates from a `forSample` callback parameter and is in scope only inside that callback — using it outside is a TypeScript reference error. The JS literal `0` lifts to `Node<'i32'>` per Q36-a and is allowed at per-block top level (e.g. `param.at(0)` reads the block-start value; the equivalent literal positions for `audioIn` / `audioOut` are not opened by Q36 and remain a separate decision). There is no sugar form; every per-sample access uses `at` / `set` / `param.at(...)`.
 
 ```typescript
 // Single-phase per-sample plugin (one forSample, no per-block work):
@@ -222,11 +222,13 @@ Authoritative rationale and rejected alternatives: see `decisions-log.md` Q35.
 
 ## 2. Primitive operators
 
-Primitive operators are pure functions over `Node<T>` values. Each primitive's argument positions accept either a `Node<T>` or a JS `number` / `boolean` literal that lifts to `Node<T>` according to the **context-dependent literal lift rule** (see `00-foundations.md` §4 + `decisions-log.md` Q1 + Q33):
+Primitive operators are pure functions over `Node<T>` values. Each primitive's argument positions accept either a `Node<T>` or a JS `number` / `boolean` literal that lifts to `Node<T>` according to the **context-dependent literal lift rule** (see `00-foundations.md` §4 + `decisions-log.md` Q1 + Q33 + Q36):
 
 - A literal in a primitive-argument position lifts to `Node<T>`, where `T` is inferred from sibling arguments
-- All-literal calls fall back to `T = 'f32'`
+- A literal in a **method argument position** also lifts: if the method's declared argument type is `Node<X>`, a JS literal in that position lifts to `Node<X>` (Q36-a). Covers `param.at(0)`, `samples.at(s)`, `emitIf(true, ...)`, `audioIn.at(0, i)`, `buf.read(idx)`, etc.
+- All-literal primitive calls fall back to `T = 'f32'`
 - Implicit lift covers `'f32'` / `'f64'` / `'i32'` / `'bool'`. `'i64'` requires the explicit `i64(BigInt(...))` constructor
+- Range constraints not expressible in TS (integer-only, non-negative, channel-index upper bound, etc.) are enforced at graph-capture time
 
 ### 2.1 Inventory
 
@@ -303,7 +305,7 @@ const ring = buffer.f32({ size: 44100, name: 'delayLine' });                    
 const wave = buffer.f32({ size: 256,   name: 'wavetable', snapshot: 'persistent' });  // explicit include
 ```
 
-Access goes through methods on the `Buffer<T>` handle (`buf.read(idx)`, `buf.write(idx, v)`, `buf.readInterpolated(pos)`, `buf.copyFrom(src)`); bounds and interpolation behavior are explicit at each call site. The index argument is an explicit `Node<'i32'>` supplied by the user — this can be a ring-buffer write head from a `state.i32` slot (per-block or per-sample), the loop counter `i` of a surrounding `forSample` (per-sample), or any computed `Node<'i32'>` value.
+Access goes through methods on the `Buffer<T>` handle (`buf.read(idx)`, `buf.write(idx, v)`, `buf.readInterpolated(pos)`, `buf.copyFrom(src)`); bounds and interpolation behavior are explicit at each call site. The index argument type is `Node<'i32'> | number` (Q36-a, `decisions-log.md`) — this can be a ring-buffer write head from a `state.i32` slot (per-block or per-sample), the loop counter `i` of a surrounding `forSample` (per-sample), any computed `Node<'i32'>` value, or a JS literal that lifts to `Node<'i32'>`. Range constraints (non-negative, within capacity) are enforced at graph capture.
 
 For bulk transfer from a `message<T>` / `event<T>` payload (e.g. uploading a sample buffer or IR), use `buf.copyFrom(payloadField)`: the framework emits a single WASM `memory.copy` instruction, runtime-clamped to `min(buf.size, src.length)`. This is the canonical replacement for per-sample loops driven by payload length, which would violate the realtime-safety invariant (see `decisions-log.md` Q31).
 
@@ -363,7 +365,7 @@ const blockValue = cutoff.at(0);   // Node<'f32'>, block-start value
                                    // for a-rate params it is the first-sample value.
 ```
 
-`param.at(i)` returns the value at sample-offset `i` within the current render quantum. Used inside `forSample` it returns the per-sample value (a-rate: per-sample interpolated; k-rate: the unique block value). Used at the per-block phase with `i = 0` it returns the block-start value, which is what k-rate consumers want and what most per-block computations involving a-rate params should treat as their representative value.
+`param.at(i: Node<'i32'> | number)` returns the value at sample-offset `i` within the current render quantum. Used inside `forSample` (`i` is the callback's `Node<'i32'>`) it returns the per-sample value (a-rate: per-sample interpolated; k-rate: the unique block value). Used at the per-block phase with the JS literal `0` (which lifts to `Node<'i32'>` per Q36-a, `decisions-log.md`) it returns the block-start value, which is what k-rate consumers want and what most per-block computations involving a-rate params should treat as their representative value.
 
 There is **no callable `param()` form** and **no `param.value` / `param.now()` property**. The single explicit method makes the sample-offset visible at every call.
 
@@ -404,7 +406,7 @@ midi.onEvent('noteOn', ({ note, velocity, atSample }) => {
 });
 ```
 
-The `cond` parameter accepts `Node<'bool'> | boolean`. Literal `true` / `false` at the call site folds at graph capture: `emitIf(false, payload)` is dropped from the graph, and `emitIf(true, payload)` records an unconditional emission node.
+The `cond` parameter type is `Node<'bool'> | boolean` (finalized at Q36-c, `decisions-log.md`). A JS `boolean` value (literal or computed) lifts to `Node<'bool'>` per the method-argument literal lift rule (Q36-a). Literal `true` / `false` at the call site folds at graph capture: `emitIf(false, payload)` is dropped from the graph, and `emitIf(true, payload)` records an unconditional emission node. Build-time JS constants (e.g. `const FORCE = true; emitIf(FORCE, payload)`) fold the same way.
 
 **Static-analysis: constant-truthy `cond` inside `forSample` is an error.** A `forSample` callback that contains `emitIf(true, payload)` (or any cond expression that folds to a build-time-constant truthy value) is rejected at WASM-emission time — unconditional emission at audio rate would fill the 256-slot ringbuffer in milliseconds and produce continuous overflow. The error message points at the three honest alternatives: gate with a state-edge expression, move the emission into a handler context, or use `everyNSamples(N, () => emitIf(...))` for periodic sub-rate emission. Authoritative wording: `decisions-log.md` Q32-c (footgun-elimination from MIDI Q4-b carries over uniformly).
 
@@ -455,7 +457,41 @@ Options:
 
 Both `event<T>` and `message<T>` allow variable-length payload fields (`Float32Array`, `Uint8Array`, etc.) within `T`. The wire format borrows the MIDI sysex pattern (Q4-c): the main slot in the ringbuffer holds the fixed-size header + an index into a separate variable-length content buffer. Authoritative wire format and capacity policy: `02-messaging.md` §5.
 
-Authoritative rationale and rejected alternatives: see `decisions-log.md` Q27.
+Inside a handler body, the variable-length field is **not** a plain JS typed array — it is exposed as a **typed-array-field proxy** with two methods (Q36-b, `decisions-log.md`):
+
+- `.length: Node<'i32'>` — payload length resolved at graph capture; the actual value is determined at receive time.
+- `.at(idx: Node<'i32'> | number): Node<T>` — single-element read. Argument behavior depends on its kind:
+  - **JS `number`** — build-time-folded read. The handler body is unrolled per element at graph capture (use this inside a JS `for` loop where the length is known build-time, or with a literal constant).
+  - **`Node<'i32'>`** — runtime read. The graph captures a runtime-indexed load against the payload's content buffer.
+
+`T` is the element type of the typed array (`Float32Array` → `Node<'f32'>`, `Uint8Array` → `Node<'i32'>` (zero-extended), etc.).
+
+```typescript
+// Argument = Node — runtime-indexed read (e.g. sample player):
+uploadSample.onReceive(({ samples }) => {
+  const len = samples.length;            // Node<'i32'>
+  forSample((i) => {
+    const v = samples.at(mod(i, len));   // runtime read
+    buf.write(i, v);
+  });
+});
+
+// Argument = JS number — build-time-folded read (e.g. step sequencer):
+uploadPattern.onReceive(({ steps }) => {
+  for (let s = 0; s < steps.length; s++) {  // ← here `steps.length` is a JS number; see note below
+    const v = steps.at(s);
+    pattern[s].store(v);
+  }
+});
+```
+
+> Note on `.length` in build-time `for` loops: `samples.length` is normally `Node<'i32'>`. When the message declaration pins the payload length at build time (e.g. fixed-size content), `length` is additionally available as a build-time JS `number` for use in `for` loop bounds. The framework distinguishes these via the declared `capacity` policy in `02-messaging.md` §5.
+
+Bulk transfer of the entire payload into a `buffer.<type>` slot uses `buf.copyFrom(typedArrayField)` (see §3.2), which is the bounded, single-call path. `.at(node)` runtime read is the per-element path; both coexist.
+
+Out-of-range `.at(idx)` reads (idx outside `[0, length)`) are wrapped at graph capture by a `select`-based carrier-clamp so the runtime never traps; documenting the bound at the call site is the author's responsibility.
+
+Authoritative rationale and rejected alternatives: see `decisions-log.md` Q27 (variable-length wire format) and Q36-b (proxy surface).
 
 ## 5. Third-party DSP integration
 

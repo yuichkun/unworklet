@@ -42,6 +42,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q33 | Literal lifting in i32 / bool / context (audit B3) | resolved — Q1 拡 張: primitive 引 数 で の literal は context-dependent lift (周 辺 引 数 から `T` 推 論)、 ambiguous case は default `'f32'`、 対 象 type は f32 / f64 / i32 / bool; declaration / 全 lit 等 暗 黙 lift 対 象 外 は scalar constructor (`f32` / `f64` / `i32` / `i64` / `bool`) で explicit; i64 暗 黙 lift ナシ (BigInt 必 要) | `00-foundations.md` §4 + `01-dsl.md` §2 |
 | Q34 | Subgraph instantiation scope (audit Phase 1 #2、 Q22-c-Round2 解 決) | resolved — `createSubgraph(subgraph, ...args)` で declaration scope に instance 生 成 (state slot alloc); subgraph body は record return で key 名 著 作 者 free; method は forSample / handler / per-block 全 context で 呼 べる; method 戻 り 値 で の context 制 限 ナシ; nested subgraph は declaration scope で OK | `01-dsl.md` §5.6 |
 | Q35 | Render quantum length の user code 露 出 形 (audit Phase 1 #6) | resolved — `SAMPLES_PER_BLOCK: 128` を `unworklet` package の top-level constant と し て export; `ctx.renderQuantum` ナシ (= run-time 値 と build-time 定 数 を 区 別); ctx が 在 域 し な い build-time JS 文 脈 で も 引 用 可 | `01-dsl.md` §1.7 |
+| Q36 | method 引 数 で の literal lift + typed-array-field proxy semantics + emitIf cond 型 確 定 (audit P0-1) | resolved — Q33 拡 張: method の 引 数 型 が `Node<X>` な ら literal は 自 動 で `Node<X>` に lift (= `param.at(0)` per-block / `emitIf(true, ...)` / `main.at(0, i)` 等 を 型 と 整 合); typed-array-field proxy = `.length: Node<'i32'>` + `.at(idx: Node<'i32'> \| number)` で runtime read / build 時 折 り 畳 み を 引 数 種 類 で 自 然 分 岐; emitIf cond 型 を `Node<'bool'> \| boolean` で 確 定 (= Q32-b の B3 pending を close) | `00-foundations.md` §4 + `01-dsl.md` §2, §3.3, §4.1, §4.3 |
 
 ---
 
@@ -484,7 +485,7 @@ The umbrella "cross-processor communication" decomposes into five use cases; fou
 
 ## Q22 — Graph capture model and process body structure
 
-**Status:** resolved (Q22-a / Q22-aprime / Q22-b / Q22-c three-layer structure fixed; Q22-d error message format and refactor-hint structure are open and tracked separately; Q22-c-Round2 = subgraph instantiation scope = 別 件 で Q34 で 解 決 済 み).
+**Status:** resolved (Q22-a / Q22-aprime / Q22-b / Q22-c three-layer structure fixed; Q22-d error message format and refactor-hint structure are open and tracked separately; Q22-c-Round2 = subgraph instantiation scope = 別 件 で Q34 で 解 決 済 み; Q22-b 不 変 量 「sample-position primitive は forSample 内 限 定」 は Q36-a で 「forSample 内 で 計 算 し た `i` を 受 け 取 る」 と 再 定 義、 literal `0` per-block 呼 び は Q36 の method 引 数 literal lift で 型 と 整 合).
 
 **Decision (Q22-a — Mental model):** authoritative wording in `00-foundations.md` §3 + `03-compiler.md` §2. Summary:
 
@@ -870,9 +871,9 @@ midi.onEvent('noteOn', ({ note, velocity, atSample }) => {
 });
 ```
 
-The `boolean` arm of the union is restricted to **literal types** at the call site (`true` / `false` only; arbitrary `boolean` values from JS computation are not part of the build-time graph). This keeps cond a build-time-decidable structural property — `emitIf(false, ...)` folds away at graph capture, and `emitIf(true, ...)` records an unconditional emission node. (The exact type-level shape — literal narrowing via `cond: Node<'bool'> | true | false` vs `boolean`-with-build-time check — is finalized together with B3 below.)
+The `boolean` arm of the union is restricted to **literal types** at the call site (`true` / `false` only; arbitrary `boolean` values from JS computation are not part of the build-time graph). This keeps cond a build-time-decidable structural property — `emitIf(false, ...)` folds away at graph capture, and `emitIf(true, ...)` records an unconditional emission node. (The exact type-level shape は Q36-c で 確 定: `cond: Node<'bool'> | boolean` を 採 用、 build-time JS const も literal lift で 同 様 に folding 経 由 で 扱 う。)
 
-The `boolean → Node<'bool'>` lift mechanism (whether implicit at the cond position only, or via an explicit `bool(literal)` lifter, or as a general literal-lifting rule across the DSL) is **decided in B3 (literal lifting integer / bool context)**. Q32-b commits only that `emitIf(true, payload)` is the canonical handler-context spelling; B3 may refine the type signature.
+The `boolean → Node<'bool'>` lift mechanism は Q36-a で 解 決: method 引 数 で の literal lift ル ー ル と し て 「method の 引 数 型 が `Node<X>` な ら literal は 自 動 で `Node<X>` に lift」 を 採 用、 cond は そ の ル ー ル の 自 然 帰 結。 Q32-b の `emitIf(true, payload)` は そ の ま ま canonical spelling と し て 維 持。
 
 **Decision (Q32-c — Static-analysis: constant-truthy cond inside `forSample` is an error):**
 
@@ -926,7 +927,7 @@ This restores the Q4-b footgun barrier (no unconditional emission inside `forSam
 
 ## Q33 — Literal lifting in i32 / bool / context (audit B3)
 
-**Status:** resolved.
+**Status:** resolved (method 引 数 へ の 拡 張 は Q36 で 解 決)。
 
 **Decision (Q33-a — Q1 拡 張: context-dependent literal lift):**
 
@@ -1143,3 +1144,91 @@ return {
 - **平 易 別 名 を ctx 上 に (= `ctx.blockSize` / `ctx.samplesPerBlock`)**: build-time 定 数 を ctx に 載 せ る 上 記 問 題 を 引 き ず る
 - **ctx surface + module export を 両 方 出 す**: surface 二 重、 user が 「ど ち ら を 使 う か」 判 断 す る 不 要 負 担
 - **`forSample` callback 引 数 で `length` を 受 け る (= `forSample((i, length) => ...)`)**: per-block top level で `buffer.f32({ size: length, ... })` が 書 け な い (= callback scope 外)、 主 要 ユース ケース (= buffer サイズ 決 定) と 真 っ 向 矛 盾
+
+---
+
+## Q36 — method 引 数 で の literal lift + typed-array-field proxy semantics + emitIf cond 型 確 定 (audit P0-1)
+
+**Status:** resolved.
+
+**Decision (Q36-a — method 引 数 で の literal lift):**
+
+Q33 を 1 段 拡 張。 method の 引 数 型 が `Node<X>` な ら、 そ こ に 渡 し た JS literal は 自 動 で `Node<X>` に lift。 自 由 関 数 (Q33-a) と 同 形 ル ー ル を method 引 数 に も 適 用。 各 method の 型 は `| TLiteral` (= `T='i32'` → `number`、 `T='bool'` → `boolean`、 `T='f32'`/`'f64'` → `number`) を declared type に 加 え る 形 で 表 現:
+
+```typescript
+param.at(i: Node<'i32'> | number): Node<T>
+buf.read(idx: Node<'i32'> | number): Node<T>
+buf.write(idx: Node<'i32'> | number, v: Node<T> | number): void
+buf.readInterpolated(pos: Node<'f32'> | Node<'f64'> | number): Node<T>
+audioIn.at(c: ChannelIndex<C> | number, i: Node<'i32'> | number): Node<'f32'>
+audioOut.set(c: ChannelIndex<C> | number, i: Node<'i32'> | number, v: Node<'f32'> | number): void
+emitIf(cond: Node<'bool'> | boolean, payload: T): void
+```
+
+範 囲 制 約 (= 整 数 必 須 / 非 負 必 須 / channel index 上 限 等) は TS 型 で 表 現 し 切 れ な い 部 分 を build 時 reject:
+
+```typescript
+param.at("string")     // TypeScript エ ラ ー: 文 字 列 は 通 ら な い
+audioIn.at(3.5, i)     // build 時 エ ラ ー: channel index は 整 数 必 須
+ir.read(-1)            // build 時 エ ラ ー: 負 値 不 可
+```
+
+`param.at(0)` 等 の literal `0` per-block 呼 び は こ の ル ー ル で 型 と 整 合 す る。 Q22-b 不 変 量 「sample-position primitive は forSample 内 限 定」 は 「forSample 内 で 計 算 し た `i` を 受 け 取 る」 で 維 持 (= 任 意 の `Node<'i32'>` を per-block で 渡 す こ と は 引 き 続 き 不 可)、 literal `0` per-block 呼 び を 例 外 と し て 正 統 化。
+
+**Decision (Q36-b — typed-array-field proxy surface):**
+
+`message<T>` / `event<T>` の payload 可 変 長 typed array field (= 例: `{ samples: Float32Array }` の `samples`) は worklet 内 で **typed-array-field proxy** と し て 露 出。 surface は 以 下 2 method:
+
+- `.length: Node<'i32'>` — graph capture で `Node<'i32'>` に 解 決、 受 信 時 に 確 定 す る payload 長
+- `.at(idx: Node<'i32'> | number): Node<T>` — 1 要 素 read。 引 数 が JS number = build 時 折 り 畳 み (= `for` loop で 各 要 素 を 展 開)、 引 数 が `Node<'i32'>` = runtime read
+
+```typescript
+// 引 数 = Node、 runtime read (= 例: sample player):
+uploadSample.onReceive(({ samples }) => {
+  const len = samples.length;
+  forSample((i) => {
+    const v = samples.at(mod(i, len));
+    buf.write(i, v);
+  });
+});
+
+// 引 数 = JS number、 build 時 折 り 畳 み (= 例: step sequencer):
+uploadPattern.onReceive(({ steps }) => {
+  for (let s = 0; s < steps.length; s++) {
+    const v = steps.at(s);
+    pattern[s].store(v);
+  }
+});
+```
+
+bulk transfer は `buf.copyFrom(src: TypedArrayFieldRef<T>): void` (= 既 §3.2) で 全 要 素 を buffer に 一 括 コ ピ ー。 `samples.at(idx)` runtime read は 個 別 要 素 access。 bulk vs 個 別 で 棲 み 分 け、 名 分 離 ナ シ で 同 一 `.at()` の 引 数 種 類 で 内 部 emission が 分 か れ る。
+
+bounds check は runtime read で 自 動: idx が `[0, length)` 外 な ら graph 上 で clamp / select に よ る carrier-clamp で 安 全 値 を 返 す (= 詳 細 emission は spec body `01-dsl.md` §4.3 で 明 文 化)。
+
+**Decision (Q36-c — emitIf cond 型 確 定):**
+
+Q32-b で 「B3 で finalize」 と pending と し た cond の 型 を 確 定:
+
+```typescript
+emitIf(cond: Node<'bool'> | boolean, payload: T): void
+```
+
+- `boolean` 受 容 (= literal も 計 算 値 も)、 内 部 で Q36-a の literal lift で `Node<'bool'>` に 変 換
+- literal `true` / `false` は build 時 折 り 畳 む (= `emitIf(false, payload)` は graph 削 除、 `emitIf(true, payload)` は 無 条 件 emission node、 既 prose 通 り)
+- forSample 内 で の constant-truthy cond reject (= Q32-c) は build 時 folding 後 に 適 用、 build-time JS const (= `const FORCE = true; emitIf(FORCE, ...)`) も folding 経 由 で 同 様 に reject
+
+**Rationale:**
+
+- canonical 全 例 が 書 き 換 え 0 で 動 く = 既 動 い て いる code を 正 統 化 す る ル ー ル
+- ル ー ル 1 個 追 加 で 3 軸 (= method 引 数 lift / samples.at semantics / emitIf cond 型) 同 時 解 決
+- implementor は 各 method の 引 数 型 に `| number` / `| boolean` を 機 械 的 に 加 え る だ け
+- `samples.at` の 引 数 種 類 で の 内 部 分 岐 = JS number か Node か で 自 然、 名 分 離 ナ シ
+- Q22-b 不 変 量 は 「forSample 内 で 計 算 し た `i` を 受 け 取 る」 で 維 持、 literal `0` per-block 呼 び を ル ー ル と し て 正 統 化
+
+**Rejected:**
+
+- **軸 別 解 (= `samples.atNode(idx)` / `samples.atConst(idx)` 名 分 離 + `param.at(0)` 個 別 例 外 + Q33 拡 大 を 3 つ 別 建 て)**: ル ー ル 3 つ 別 建 て で mental model 重 い、 既 canonical で rename 必 須
+- **method を per-block / per-sample で 別 名 化 (= `param.atBlockStart()` / `param.atSample(i)`)**: 各 method surface 2 倍、 canonical 全 行 rewrite、 「動 い て た `.at(0)` が な ぜ 別 名?」 と user 説 明 cost
+- **scalar constructor を 強 制 (= `lowF.at(i32(0))` 必 須)**: Q33 で 廃 止 し た 「全 lit 包 み」 を method 引 数 で 復 活 = 既 ratify と 哲 学 ズ レ、 boilerplate 大
+- **Q22-b 不 変 量 廃 止 (= audio I/O も per-block 完 全 開 放)**: 「sample-position は forSample 内 で の み」 と い う 強 い mental model が 崩 れ る、 別 P0 (output coverage) と 相 互 作 用 複 雑、 「`audioIn.at(c, 0)` per-block で 何 を 読 む の?」 (= 前 quantum 最 終 vs 当 quantum 0) の 新 議 論 が 発 生 (= literal `0` per-block 呼 び の み 限 定 開 放 で 十 分)
+
