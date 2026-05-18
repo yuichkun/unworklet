@@ -20,7 +20,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q8 | Multi-block lookahead | resolved — out of scope (raw materials `buffer` + `state` + `defineSubgraph` + `createDelay` are sufficient; framework abstraction would violate either AudioContext ownership or declarative core philosophy) | `05-client.md` §7 (recipe) |
 | Q9 | Cross-processor communication | resolved — out of scope ((a)(b)(e) audio routing covered by Q6 `connect()`; (c) message relay covered by upcoming generic messaging Q; (d) audio-thread SAB sharing left to consumer via `processorOptions`) | `decisions-log.md` Q9 |
 | Q10 | Transport / tempo sync | resolved — out of scope (third-party domain) | `11-midi.md` §5 |
-| Q11 | Browser quirk normalization | (open) | `08-deployment.md` §2 |
+| Q11 | Browser quirk normalization scope | resolved — unworklet が normalize す る の は **WASM emission boundary 内 側** の quirk (= render quantum 128 / channel count / `parameters[name]` 1·128·0 length / subnormal flush / SAB-postMessage 自 動 切 替 / MIDI ringbuffer overflow drop-and-report / MIDI clock raw 配 送 の 7 件)、 boundary 外 側 (= Web MIDI device permission/hotplug / AudioContext lifecycle / COOP/COEP HTTP header の 3 件) は consumer 責 任、 boundary 跨 ぎ は unworklet API (= `connectFromWebMIDI` / `createNode` / runtime SAB detect / `node.onError`) で 支 え る; future quirk も 「unworklet WASM module が 触 る か?」 1 軸 で 判 定 可; 既 Q18 / Q19 / Q21 / Q27 / Q4-c / Q4-d 7 件 と 完 全 整 合; 案 α (= minimal、 Q27 と 矛 盾) / 案 β (= full normalize、 Non-goals 違 反 scope balloon) / 案 δ (= config flag、 mental model 崩 壊 portability 喪 失) 棄 却 | `00-foundations.md` §3 (Emission boundary) + `08-deployment.md` §2 |
 | Q12 | Monorepo tool | (open) | `09-repo-structure.md` §1 |
 | Q13 | Initial package layout | (open) | `09-repo-structure.md` §2 |
 | Q14 | v1.0.0 acceptance criteria | (open) | `10-roadmap.md` §1 |
@@ -1898,4 +1898,57 @@ worklet 側 sysex emit を **declared `Buffer<'u8'>` + `length: Node<'i32'>` 経
 - 11-midi.md §4.3: 「v1.0.0 ships full sysex support」 を 「**both directions** (ingestion + emission)」 に 拡 張、 §2.5 と Q49 へ の cross-ref
 - 01-dsl.md §3.2: buffer factory に `buffer.u8` を 追 加、 「sysex emit 専 用、 byte 値 は Node<'i32'> で 扱 う」 旨 を 1 段 落 で 説 明
 - canonical example 修 正 ナ シ (verified — 12-canonical-examples.md L1157 で 既 acknowledged coverage gap、 sysex variant を 使 う example が 存 在 し な い)
+
+## Q11 — Browser quirk normalization scope (#67 A4)
+
+**Status:** resolved.
+
+### Problem
+
+unworklet が 動 く web 環 境 で は Chrome / Firefox / Safari / そ の 他 browser ご と に 微 妙 な 挙 動 差 が あ る (= Web MIDI device permission / SAB 利 用 可 否 / AudioContext sampleRate / `parameters[name]` 配 列 長 / processorOptions delivery timing 等)。 既 ratify Q (= Q18 / Q19 / Q21 / Q27 / Q4-c / Q4-d) は 各 quirk に つ い て 個 別 に decide さ れ て い た が、 **policy と し て 「何 を normalize す る / し な い か」 が 1 行 で declare さ れ て い な か っ た**。 残 3 件 (= Web MIDI device quirk / `parameters[name]` 配 列 長 / COOP/COEP header) も policy ナ シ で 宙 浮 き 状 態 だ っ た。
+
+### Decision
+
+policy rule (1 行):
+
+> **「unworklet が normalize す る の は WASM emission boundary よ り 内 側 の quirk。 boundary よ り 外 側 (= Web MIDI device、 AudioContext 設 定、 COOP/COEP HTTP header) は consumer 責 任。 boundary 跨 ぎ は unworklet API (= `connectFromWebMIDI` / `createNode` / runtime SAB detect / `node.onError`) で 支 え る」**
+
+「boundary 内」 = unworklet が compile / runtime で 決 め 込 ん で emit す る 範 囲 (= WASM binary、 messaging glue)。 「boundary 外」 = web platform 機 能 で unworklet の WASM module は touch し な い 範 囲 (= Web MIDI device handle、 AudioContext lifecycle、 HTTP header)。
+
+具 体 catalog (= 既 ratify を 統 一 view に 整 理 + 残 3 件 を 入 れ る):
+
+**A. boundary 内 (= unworklet 吸 収、 consumer 不 可 視)**:
+
+- A1: render quantum size 128 (Q18 + Q35) — WASM bake-in、 runtime guard で 128 以 外 reject
+- A2: channel count (Q19) — `audioInput({ channels })` 宣 言 時 固 定、 host 側 mix
+- A3: `parameters[name]` 配 列 長 1 / 128 / 0 (Q18) — internal marshalling で 統 一、 user は `param.at(i)` / `param.at(0)` の み
+- A4: subnormal flush-to-zero (Q21) — `state.<f>.store(v)` に compile-time guard
+- A5: SAB / postMessage 自 動 切 替 (Q27) — runtime detect、 同 一 API、 transport 内 部
+- A6: MIDI ringbuffer overflow (Q4-c) — drop-and-report、 main 側 `diagnostics.overflowCount()` で 観 測
+- A7: MIDI clock interpretation (Q4-d) — `systemRealtime` raw event 配 送、 BPM 解 釈 は consumer
+
+**B. boundary 外 (= consumer 責 任、 unworklet API で 跨 ぎ 支 援)**:
+
+- B1: Web MIDI device permission / hotplug / port enumeration — consumer が `navigator.requestMIDIAccess()` で handle 取 得、 `connectFromWebMIDI(port)` で unworklet に 渡 す
+- B2: AudioContext 生 成 / sampleRate / resume — consumer が `new AudioContext(options)` で 生 成、 `createNode(audioCtx, ...)` で unworklet に 渡 す、 worklet 内 で は `ctx.sampleRate` (build-time const) と し て 参 照
+- B3: COOP / COEP HTTP header — consumer が server config で set、 unworklet は runtime detect だ け (A5 経 由 で transport 自 動 切 替)
+
+### Why this and not alternatives
+
+- **案 α (minimal normalization、 WASM 内 側 の み 吸 収) 棄 却**: 既 Q27 (SAB / postMessage 自 動 切 替) と 直 接 矛 盾、 既 決 retract コ ス ト 過 大、 consumer に SAB fallback 実 装 burden 押 し 付 け
+- **案 β (full normalization、 全 quirk 吸 収) 棄 却**: scope balloon = audio DSP framework か ら web platform abstraction layer に 膨 張、 §2 Non-goals (= 「Not a host-format adapter」 「Not a music-making framework」) と 衝 突
+- **案 δ (config flag で normalize 程 度 を opt-in / opt-out) 棄 却**: 同 一 unworklet 利 用 が config ご と に 別 mental model = portability 完 全 崩 壊、 test surface 爆 発、 仕 様 freeze 不 能
+
+採 用 案 = policy γ = WASM emission boundary 1 軸 で line 引 き、 既 ratify 7 件 と 完 全 整 合、 future quirk も 「unworklet WASM module が 触 る か?」 1 問 判 定 可。
+
+### Side effects
+
+- **00-foundations.md §3** (vocabulary): 「Emission boundary」 entry を 1 段 落 追 加 (= 内 側 / 外 側 の 定 義 + boundary 跨 ぎ API + Q11 cross-ref)
+- **08-deployment.md §2**: placeholder を A1-A7 / B1-B3 catalog 形 で 全 部 埋 め、 per-browser validation matrix (= `Chromium × Firefox × Safari` × `{isolated, not-isolated}`) を 1 段 落 追 加
+- canonical example 修 正 ナ シ (verified — 12-canonical-examples.md L105 / L659 / L661 / L776 / L779 / L1124 / L1125 で 既 `new AudioContext()` (= B2) と `navigator.requestMIDIAccess()` → `connectFromWebMIDI(port)` (= B1) path が canonical pattern と し て 使 わ れ て お り、 policy γ と 整 合 済 み)
+
+### Open follow-up
+
+- COOP/COEP detect 失 敗 時 の dev mode warning の 出 し 方 (= console.warn vs onError event vs IDE 段 階 doc 警 告) は #68 (Q23 hot reload) / 07-tooling.md 領 域 で 個 別 grill
+- future quirk が 出 た 時 の adjudication procedure (= 「unworklet WASM module が 触 る か?」 1 問 判 定 を docs 化) は v1.0.0 docs polish 段 階 で 扱 う
 

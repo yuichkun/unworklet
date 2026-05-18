@@ -110,6 +110,12 @@ See `01-dsl.md` §3.
 
 The global scope inside which an `AudioWorkletProcessor` instance executes. Hosts the WASM module, the marshalling glue, and the message / event queue endpoints.
 
+### Emission boundary
+
+The compile-time / runtime boundary that defines what unworklet normalizes and what stays under consumer control. Everything **inside the boundary** is fixed by unworklet at build time and is identical across runtime environments: the emitted WASM binary (render-quantum size, channel count, `parameters[name]` array marshalling, subnormal flush) and the messaging glue (SAB / `postMessage` transport selection, MIDI ringbuffer policy). Everything **outside the boundary** is raw web platform under consumer control: `AudioContext` lifecycle and `sampleRate`, Web MIDI device permission / hotplug / port enumeration, COOP/COEP HTTP header configuration. unworklet exposes typed APIs (`createNode`, `node.midi.<name>.connectFromWebMIDI`, `node.onError`) to support consumer-driven boundary crossings, but it does not own the outside-the-boundary surface.
+
+The full quirk catalog (A1–A7 inside, B1–B3 outside) and rationale live in `decisions-log.md` Q11. The compatibility matrix lives in `08-deployment.md` §2.
+
 ## 4. Type system
 
 unworklet primitives are statically typed `Node<T>` where `T` is one of `'f32'`, `'f64'`, `'i32'`, `'i64'`, `'bool'`.
