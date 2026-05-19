@@ -1,4 +1,4 @@
-# 01 — DSL (`@unworklet/core` + `@unworklet/dsp`)
+# 01 — DSL (`@unworklet/core`)
 
 The surface the user authors against. Defines `defineProcessor`, primitives, declarations (`state`, `buffer`, `param`), the `forSample` per-sample loop primitive, and authoring patterns for reusable DSP blocks.
 

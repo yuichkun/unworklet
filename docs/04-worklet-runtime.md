@@ -1,6 +1,6 @@
-# 04 — Worklet runtime (`@unworklet/worklet`)
+# 04 — Worklet runtime
 
-The audio-thread side: the generated `AudioWorkletProcessor` template that wraps the compiled WASM, marshals I/O, dispatches messages and events, and enforces realtime-safety at the runtime boundary.
+The audio-thread side: the generated `AudioWorkletProcessor` template that wraps the compiled WASM, marshals I/O, dispatches messages and events, and enforces realtime-safety at the runtime boundary. This is an internal module of `@unworklet/core` — the template is emitted by `@unworklet/vite-plugin` at build time and loaded via `audioWorklet.addModule(processorUrl)`; there is no direct `import` surface.
 
 ## Status
 
@@ -76,7 +76,6 @@ unworklet は こ の 経 路 を **コ ン パ イ ル 時 に 自 動 で 塞 
 v1.0.0 で opt-out 機 能 は な い。 subnormal 値 を そ の ま ま 保 ち た い 数 値 計 算 用 途 (= 科 学 計 算 等) は unworklet の scope 外 と し て 扱 う。 必 要 性 が 出 た 時 点 で v1.x.0 で opt-out option を additive に 追 加 検 討。
 
 framework が user 値 を 暗 黙 で 変 え る 形 に な る が、 1e-40 等 の 極 小 値 は audio 出 力 と し て 不 可 聴 = 0 と み な し て 音 の 意 味 は 変 わ ら な い こ と、 既 audio framework (JUCE 等) で の 業 界 標 準 と 整 合 す る こ と、 footgun 撤 廃 の 価 値 で declarative 原 則 か ら の 例 外 を 正 当 化 す る。
-
 
 ## 7. State publish scheduling
 

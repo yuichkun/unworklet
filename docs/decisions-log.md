@@ -22,7 +22,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q10 | Transport / tempo sync | resolved — out of scope (third-party domain) | `11-midi.md` §5 |
 | Q11 | Browser quirk normalization scope | resolved — unworklet が normalize す る の は **WASM emission boundary 内 側** の quirk (= render quantum 128 / channel count / `parameters[name]` 1·128·0 length / subnormal flush / SAB-postMessage 自 動 切 替 / MIDI ringbuffer overflow drop-and-report / MIDI clock raw 配 送 の 7 件)、 boundary 外 側 (= Web MIDI device permission/hotplug / AudioContext lifecycle / COOP/COEP HTTP header の 3 件) は consumer 責 任、 boundary 跨 ぎ は unworklet API (= `connectFromWebMIDI` / `createNode` / runtime SAB detect / `node.onError`) で 支 え る; future quirk も 「unworklet WASM module が 触 る か?」 1 軸 で 判 定 可; 既 Q18 / Q19 / Q21 / Q27 / Q4-c / Q4-d 7 件 と 完 全 整 合; 案 α (= minimal、 Q27 と 矛 盾) / 案 β (= full normalize、 Non-goals 違 反 scope balloon) / 案 δ (= config flag、 mental model 崩 壊 portability 喪 失) 棄 却 | `00-foundations.md` §3 (Emission boundary) + `08-deployment.md` §2 |
 | Q12 | Monorepo tool | (open) | `09-repo-structure.md` §1 |
-| Q13 | Initial package layout | (open) | `09-repo-structure.md` §2 |
+| Q13 | Initial package layout | resolved — Q52 で 自 動 派 生 確 定 (= 公 開 4 package `@unworklet/core` + `@unworklet/vite-plugin` + `@unworklet/offline` + `@unworklet/test` + 内 部 module `compiler` / `worklet runtime`、 `@unworklet/core/simd` opt-in subpath) | `09-repo-structure.md` §2 + Q52 |
 | Q14 | v1.0.0 acceptance criteria | (open) | `10-roadmap.md` §1 |
 | Q15 | License | (open) | `09-repo-structure.md` §3 |
 | Q16 | npm scope | (open) | `09-repo-structure.md` §4 |
@@ -60,6 +60,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q41 | `createSubgraph` の instance name 渡 し 方 (audit P0-6、 Phase 2 #16) | resolved — signature を `createSubgraph(subgraph, ...lambdaArgs, options?: { name?: string })` に 拡 張 (= Q34 既 form の 末 尾 options 追 加)、 **options 自 体 も optional、 name property も optional** (= snapshot 不 要 な subgraph で boilerplate ナ シ); snapshot を 取 る 場 面 で name ナ シ subgraph instance が あ れ ば build-time エ ラ ー で 弾 く、 snapshot path = `'<instance-name>/<inner-slot-name>'` (= 例 「'lpfL/z1'」) で 統 一 | `01-dsl.md` §5.6.2, §8.1 |
 | Q42 | `state.publish` 対 応 type と state.bool の WASM 表 現 (audit P0-7) | resolved — publish を 渡 せ る type を **f32 / i32 / bool の 3 つ に 限 定 ** (= 全 て 32 bit 1 word で 完 結、 JS `Atomics` で audio thread / main 両 方 が 安 全 に 1 回 で 読 み 書 き 可)、 state.bool は 内 部 で `i32` の 0/1 を 持 ち main 側 で boolean に cast、 main 側 `.value` 型 は state.bool→boolean / state.f32 と state.i32→number; state.f64 / state.i64 で publish オ プション を 渡 す と TypeScript エ ラ ー (= 64 bit が 2 回 に 分 け て 触 る ため torn read の 危 険、 v1.x.0 で mitigation と セ ット で 検 討) | `01-dsl.md` §3.1 + `02-messaging.md` §5.4 + `05-client.md` §1 |
 | Q43 | `everyNSamples` を forSample callback 引 数 経 由 で 取 る (audit P0-8) | resolved — `everyNSamples` を free function import か ら `forSample((i, everyNSamples) => ...)` の callback 第 2 引 数 に refine (= Q7 既 ratify form の callback 引 数 化、 既 `i` と 同 軸); forSample.byN も 同 形; scope は TypeScript scoping で 自 然 に 弾 か れ る (= handler / per-block top で TypeScript reference error、 build-time context tracking 不 要); subgraph method 内 で の 自 前 forSample で 自 然 解 決 (= caller context tracking 不 要); counter は 呼 び 出 し ご と に 独 立、 1 塊 を 越 え て 連 続 で reset ナ シ | `01-dsl.md` §9, §10.1 + Q7 |
+| Q52 | Public package layout の docs-side enforcement (Q23 派 生、 L1-d) | resolved — 公 開 npm package 4 個 (= core / vite-plugin / offline / test、 Q23 strict)、 公 開 import path 5 種 (= 上 記 4 + `@unworklet/core/simd` subpath)、 DSL 識 別 子 約 50 個 は `@unworklet/core` root に flat export (= dsp subpath / 独 立 package ナ シ)、 `@unworklet/compiler` / `@unworklet/worklet` / `@unworklet/dsp` は 公 開 package で は な い (= compiler / worklet runtime は `@unworklet/core` internal module、 dsp surface は core root に flat); doc 章 タ イ ト ル の 表 記 規 則 = 公 開 package doc は タ イ ト ル に package 名 + internal module doc は タ イ ト ル か ら package 名 削 除 + 冒 頭 prose で 内 部 明 記; Q13 (initial package layout) が 自 動 派 生 確 定 | `01-dsl.md` L1 + `03-compiler.md` L1 + `04-worklet-runtime.md` L1 + `07-vite-plugin.md` L26 + `08-deployment.md` L13 |
 
 ---
 
@@ -2119,3 +2120,55 @@ audit で 01-dsl.md L34 prose に 「The JS literal `0` lifts to `Node<'i32'>` p
 - per-block で の `audioIn.at(c, k)` (= `k` が 0 以 外 の compile-time-constant literal) の 範 囲 制 約 と 静 的 解 析 (= `[0, SAMPLES_PER_BLOCK - 1]` 範 囲 check) は 03-compiler.md §2.4 の static analysis entry で incrementally
 - per-block 呼 び の canonical use case (= block-start input level 検 査 + adaptive 処 理) を 12-canonical-examples.md か 新 recipe で 1 例 追 加 す る か は v1.0.0 docs polish 段 階 で 判 断
 
+---
+
+## Q52 — Public package layout の docs-side enforcement (Q23 派 生、 L1-d)
+
+**Status:** resolved.
+
+### Problem
+
+Q23 で 公 開 npm package 構 成 を **`@unworklet/core` + `@unworklet/vite-plugin` + `@unworklet/offline` + `@unworklet/test` の 4 個** に 確 定 し た が、 doc 章 タ イ ト ル に 古 い package 名 が 残 存:
+
+- `01-dsl.md` L1: `(@unworklet/core + @unworklet/dsp)` — `@unworklet/dsp` は 不 在 npm package
+- `03-compiler.md` L1: `(@unworklet/compiler)` — 公 開 package で は な い (Q23 で vite-plugin 内 部 pipeline と 確 定)
+- `04-worklet-runtime.md` L1: `(@unworklet/worklet)` — 公 開 package で は な い (Q23 で 言 及 ナ シ、 build 出 力 物)
+- `03-compiler.md` L27 / `07-vite-plugin.md` L26 / `08-deployment.md` L13 prose に `@unworklet/dsp` / `@unworklet/compiler` 言 及 残 存
+
+加 え て、 v1.0.0 で 公 開 さ れ る DSL 識 別 子 約 50 個 (= `defineProcessor` 系、 declaration 系、 math 系、 forSample 系、 const 系) を root flat に 出 す か subpath split す る か が docs で 暗 黙、 design intent の 明 文 化 が 不 在。
+
+### Decision
+
+**A-1 (root flat + simd subpath)** を strict 適 用:
+
+- 公 開 npm package = **4 個** (Q23 ratify 通 り): `@unworklet/core` / `@unworklet/vite-plugin` / `@unworklet/offline` / `@unworklet/test`
+- 公 開 import path = **5 種** (= 上 記 4 + `@unworklet/core/simd` subpath、 SIMD opt-in は `01-dsl.md` §7 通 り)
+- DSL 識 別 子 約 50 個 は `@unworklet/core` root か ら flat に 全 export (= declarative primitive と math primitive を subpath で 分 け な い)
+- `@unworklet/dsp` / `@unworklet/compiler` / `@unworklet/worklet` は **公 開 package で は な い**:
+  - compiler → `@unworklet/core` の internal module、 user は `@unworklet/vite-plugin` 経 由 で 暗 黙 起 動
+  - worklet runtime → `@unworklet/core` の internal module、 build 出 力 物 と し て emit + `audioWorklet.addModule(processorUrl)` で load
+  - dsp surface → `@unworklet/core` root に flat export し て 独 立 package 化 し な い
+
+**doc 章 タ イ ト ル の 表 記 規 則 (B-1)**:
+
+- 公 開 package を 直 接 提 供 す る doc → タ イ ト ル に package 名 を 明 記 (例: `# 05 — Client (\`@unworklet/core\`)`)
+- internal module の doc → タ イ ト ル か ら package 名 削 除 + 冒 頭 prose で 「internal module of `@unworklet/core`」 と 明 言
+
+### Why this and not alternatives
+
+- **A-2 (`@unworklet/core/dsp` subpath を 追 加) 棄 却**: autocomplete 整 理 の メ リ ッ ト < user import 行 増 加 + 「declarative primitive」 vs 「math primitive」 の split 線 が 識 別 子 単 位 で 曖 昧 (`eq`, `lt`, `gt`, `min`, `max`, `abs` 等 は 「数 学」 と も 「条 件 / control flow」 と も 取 れ る) で split 基 準 を 説 明 す る docs 追 加 が 必 要 = mental model コ ス ト 増、 v1.0.0 で 公 開 50 識 別 子 規 模 で は autocomplete 汚 染 と 言 え る 規 模 で は な い
+- **A-3 (`@unworklet/dsp` 独 立 npm package) 棄 却**: Q23 ratify を override 必 要、 core と dsp の version skew リ ス ク 増、 canonical examples 全 書 き 直 し、 Q23 で 同 等 議 論 を 既 に 解 決
+- **A-4 (`@unworklet/core/simd` も やめ root 1 つ で full flat) 棄 却**: 既 spec の SIMD opt-in 設 計 (`01-dsl.md` §7) 全 体 崩 壊、 `f32x4` 型 の opt-in 出 現 制 御 と subpath 一 体 化 が 壊 れ る
+- **B-2 (内 部 module 章 タ イ ト ル に 「internal module of @unworklet/core」 注 釈 を 入 れ る) 棄 却**: heading 長 過 ぎ、 doc 一 覧 で の navigability 悪 化
+- **B-3 (章 タ イ ト ル か ら 全 package 表 記 削 除) 棄 却**: user が doc を 開 い た 時 「ど の package?」 が 章 タ イ ト ル で 即 判 別 で き ず navigability 悪 化
+
+### Side effects
+
+- `01-dsl.md` L1 heading: `# 01 — DSL (@unworklet/core + @unworklet/dsp)` → `# 01 — DSL (@unworklet/core)`
+- `03-compiler.md` L1 heading: `# 03 — Compiler (@unworklet/compiler)` → `# 03 — Compiler` + L3 prose に 「internal module of @unworklet/core」 1 文 追 加
+- `03-compiler.md` L27 prose: `proxy implementations of all primitives in @unworklet/dsp` → `proxy implementations of all primitives exported from @unworklet/core`
+- `04-worklet-runtime.md` L1 heading: `# 04 — Worklet runtime (@unworklet/worklet)` → `# 04 — Worklet runtime` + L3 prose に 「internal module of @unworklet/core」 1 文 追 加
+- `07-vite-plugin.md` L26: `Invokes the @unworklet/compiler pipeline` → `Invokes the compiler pipeline (= internal module of @unworklet/core, see 03-compiler.md)`
+- `08-deployment.md` L13: `The underlying compiler (@unworklet/compiler) is bundler-agnostic` → `The underlying compiler pipeline (= internal module of @unworklet/core, see 03-compiler.md) is bundler-agnostic`
+- Q13 (initial package layout) が 自 動 派 生 確 定 (= 公 開 4 package + 内 部 module 構 造 一 致)、 Q13 を resolved status に update (= summary table cell 既 update 済 み)
+- canonical examples integrity 確 認: `12-canonical-examples.md` の import 行 は 全 て `@unworklet/core` / `@unworklet/core/simd` 統 一 で 既 整 合、 修 正 ナ シ (AGENTS.md HARD CONTRACT 同 commit 整 合 確 認 済 み)

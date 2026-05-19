@@ -23,7 +23,7 @@ The plugin is the only first-party bundler integration in v1.0.0. Other bundlers
 ## 2. WASM build
 
 <!-- - Detects `defineProcessor` declarations in `.ts` files (extensible to `.tsx`).
-     - Invokes the `@unworklet/compiler` pipeline: AST capture → static analysis → multi-target emission.
+     - Invokes the compiler pipeline (= internal module of `@unworklet/core`, see `03-compiler.md`): AST capture → static analysis → multi-target emission.
      - Outputs per processor: `.wasm` binary, worklet JS template, typed `.d.ts`, `dist/schema-hash.json` (snapshot/migration anchor — see `01-dsl.md` §8.3).
      - Runs as a Vite plugin transform; participates in `vite build` and the dev server pipeline. -->
 

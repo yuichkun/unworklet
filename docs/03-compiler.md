@@ -1,6 +1,6 @@
-# 03 — Compiler (`@unworklet/compiler`)
+# 03 — Compiler
 
-The build-time pipeline that turns a `defineProcessor` definition into the artifacts consumed by the worklet runtime, the main-thread client, and the test backend.
+The build-time pipeline that turns a `defineProcessor` definition into the artifacts consumed by the worklet runtime, the main-thread client, and the test backend. This is an internal module of `@unworklet/core` — the user invokes it implicitly through `@unworklet/vite-plugin`; there is no direct `import` surface.
 
 ## Status
 
@@ -24,7 +24,7 @@ The compiler obtains the user's processor as an AST DAG by invoking the `defineP
 The `defineProcessor` body is ordinary JavaScript / TypeScript code, executed once. The framework supplies:
 
 - a `ctx` proxy carrying compile-time constants (`sampleRate`, etc.) and meta primitives (`audioInput`, `audioOutput`, `state`, `buffer`, `param`, `defineSubgraph`, `migrations`, ...);
-- proxy implementations of all primitives in `@unworklet/dsp` (and `@unworklet/core/simd` if imported) that, when called with `Node<T>` arguments, return new `Node<T>` instances representing AST nodes rather than computing values;
+- proxy implementations of all primitives exported from `@unworklet/core` (and `@unworklet/core/simd` if imported) that, when called with `Node<T>` arguments, return new `Node<T>` instances representing AST nodes rather than computing values;
 - a `forSample` proxy that, when called, accepts a callback, executes it once with a fresh `Node<'i32'>` proxy bound as `i`, and records the resulting AST as a per-sample loop body.
 
 Build-time JavaScript continues to behave like ordinary JavaScript: literals, `Math.*`, build-time `if` / `for`, build-time arithmetic on `number` values are all evaluated normally. The proxies only intercept operations on `Node<T>` (and other framework-managed values). This is the boundary that lets users write loop unrolling, debug-flag pruning, and constant precomputation without framework involvement — see `decisions-log.md` Q22 (Q22-a).

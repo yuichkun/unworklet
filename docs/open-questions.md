@@ -39,36 +39,6 @@ unworklet の pillar:
 
 ## Layer 1 — judgment 必 要、 API surface / mental model
 
-### L1-d. Package layout — doc heading vs Q23 ratify の 衝 突
-
-**何 が 未 決** — Q23 ratify (`decisions-log.md` L35, L1957-) は v1.0.0 を **`@unworklet/core` + `@unworklet/vite-plugin` + `@unworklet/offline` + `@unworklet/test`** の **4 package 構 成** で 統 一 し た。 ところ が doc heading は:
-
-- `01-dsl.md`: `# 01 — DSL (\`@unworklet/core\` + \`@unworklet/dsp\`)` — 別 package `@unworklet/dsp` を 名 乗 る
-- `03-compiler.md`: `# 03 — Compiler (\`@unworklet/compiler\`)` — 独 立 package
-- `04-worklet-runtime.md`: `# 04 — Worklet runtime (\`@unworklet/worklet\`)` — 独 立 package
-
-一 方 canonical examples (12-canonical-examples.md) の import 行 は **全 部 `@unworklet/core`** で 統 一。 Q23 ratify と canonical の 実 体 が 一 致 し て て、 doc heading だ け 古 い。 audit B §3 拾 い。
-
-**な ぜ こ の 位 置 (= L1 内 最 上 段)** — 公 開 import path 不 定 = **全 user code に 影 響**。 v1.0.0 ship 後 に 変 更 = 互 換 破 り 最 大。 議 論 自 体 は 軽 い (= Q23 反 映 + 数 件 の 派 生 question)、 先 に 確 定 す る べ き。
-
-**派 生 question:**
-
-- `@unworklet/compiler` を **公 開 package** と す る か (= user が 直 接 import す る surface か、 vite-plugin に hidden な 内 部 dep か)
-- `@unworklet/worklet` runtime を `@unworklet/core` に 含 め る か 別 package に す る か
-- `@unworklet/dsp` を 公 開 import path と し て 残 す か (例 `import { sin, cos } from '@unworklet/dsp'`) or `@unworklet/core` 1 つ に 統 合 す る か
-
-**ど の doc が 触 れ る** — `01-dsl.md` heading、 `03-compiler.md` heading + §2 / §4 等 内 部 参 照、 `04-worklet-runtime.md` heading、 `07-vite-plugin.md` §2、 `09-repo-structure.md` §2 (placeholder の ま ま、 Q13 と セ ッ ト)、 `decisions-log.md` Q13 / Q23 entries。
-
-**選 択 肢:**
-
-- **(A) Q23 を strict に 適 用 し て 4 package で 統 一。** compiler / worklet runtime / dsp は 全 て `@unworklet/core` 内 部 module と み な し、 公 開 surface は `@unworklet/core` 1 つ + simd subpath (`@unworklet/core/simd`)。 doc heading 修 正、 03/04 doc 自 体 は 「`@unworklet/core` 内 の compiler section / worklet runtime section」 と framing。
-- **(B) 5 package: core + compiler + worklet + vite-plugin + offline + test.** compiler と worklet runtime を 独 立 package 化。 こ れ は Q23 を override す る = re-ratify 必 要。
-- **(C) 妥 協: core + vite-plugin + offline + test (= Q23 ratify) + 「compiler / worklet runtime / dsp は core 内 internal module、 doc は 整 理 上 別 file」 と 明 文 化。** doc heading か ら package 表 記 を 外 し、 「internal module of @unworklet/core」 と 注 釈。
-
-**Pillar 関 連** — P5 (minimal) + 公 開 API surface design。
-
----
-
 ### L1-c. 公 開 type 定 義 の 大 量 不 在
 
 **何 が 未 決** — docs 横 断 で 公 開 type と し て 約 束 さ れ て い る 識 別 子 の 正 式 declaration が 不 在。 `defineProcessor` / `createSubgraph` の signature 自 体 が 未 定 義 identifier に 依 存 し て い る。 audit A §4 + B §4 拾 い。
@@ -84,7 +54,7 @@ unworklet の pillar:
 - `ChannelIndex<C>` — comment narrative の み (`type X = ...` declaration ナ シ)。
 - `TypedArrayFieldRef<T>` — Q36-b で proxy 名 確 定 だ が 仕 様 本 体 に shape declaration ナ シ。
 
-**な ぜ こ の 位 置 (= L1 内 2 番 目)** — `.d.ts` emission の 「正 解」 を impl agent が 持 て な い。 公 開 API field 不 定 = 後 で 直 す と 互 換 破 り。 ただ し L1-d (公 開 import path) よ り は user 影 響 限 定 (= type rename な ら user は 1 import 行 + α、 import path 変 化 な ら 全 file)。 議 論 は 軽 い (= 既 spec か ら mechanical extract で 90%、 派 生 数 件)、 mental model judgment よ り 先 に 片 付 け る。
+**な ぜ こ の 位 置 (= L1 内 最 上 段、 旧 L1-d ratify (Q52) で promotion)** — `.d.ts` emission の 「正 解」 を impl agent が 持 て な い。 公 開 API field 不 定 = 後 で 直 す と 互 換 破 り。 議 論 は 軽 い (= 既 spec か ら mechanical extract で 90%、 派 生 数 件)、 mental model judgment よ り 先 に 片 付 け る。
 
 **ど の doc が 触 れ る** — `01-dsl.md` §1.6.1 (集 約 先 候 補)、 §3 / §4 / §5 / §8 各 declaration 仕 様、 `05-client.md` §2 (main 側 export)、 `decisions-log.md` Q32 / Q34 / Q36 / Q41 等。
 
@@ -102,7 +72,7 @@ unworklet の pillar:
 
 **何 が 未 決** — Q51 で `param.at(0)` / `audioIn.at(c, 0)` / `audioOut.set(c, 0, v)` を process body 任 意 位 置 で OK と 決 め た。 一 方 `01-dsl.md` L498-500 (`messageDecl.onReceive` body 規 則) と `11-midi.md` 同 等 箇 所 は 「handler 内 で audio I/O / param 一 切 不 可、 `i` not in scope」 と 書 い た ま ま、 Q51 と 衝 突。 audit B §2 も 「同 commit 内 で 並 存 = 最 大 の 構 造 的 矛 盾」 と 指 摘。
 
-**な ぜ こ の 位 置 (= L1 内 3 番 目)** — pillar P6 + P1 直 撃 (mental model)。 公 開 API arm (`Node<'i32'> | number` を handler context で 切 る か 維 持 か) が 変 わ る = breaking。 ただ し 影 響 範 囲 は handler body の み (= user code の 1 部 分)、 L1-d / L1-c よ り は 局 所。 mental model judgment は 重 い の で attention 集 中 が 必 要。
+**な ぜ こ の 位 置 (= L1 内 2 番 目)** — pillar P6 + P1 直 撃 (mental model)。 公 開 API arm (`Node<'i32'> | number` を handler context で 切 る か 維 持 か) が 変 わ る = breaking。 ただ し 影 響 範 囲 は handler body の み (= user code の 1 部 分)、 L1-c よ り は 局 所。 mental model judgment は 重 い の で attention 集 中 が 必 要。
 
 **派 生 依 存** — L1-c (公 開 type 確 定) が 終 わ っ て な い と 「handler arg の `atSample` を `Node<'i32'>` で 受 け る or `number` plain で 受 け る」 の type 表 現 が 揺 れ る。 L1-c 後 に 議 論。
 
@@ -123,7 +93,7 @@ unworklet の pillar:
 
 **何 が 未 決** — Q51 で 「`forSample` は **loop primitive で あ っ て phase で は な い**、 framework は process body を reorder/constrain し な い」 と ratify し た。 と こ ろ が docs に 「`Per-block phase / per-sample phase` = the two execution phases of a `process` body」 が 構 造 名 詞 と し て 残 存 (`00-foundations.md` L72、 `01-dsl.md` L27 ほ か 10+ 箇 所)。 同 doc 内 で 「phase じ ゃ な い」 と 「two phases」 が 並 存 = pillar P6 (JUCE-MM) の mental model を user が 内 在 化 で き な い。
 
-**な ぜ こ の 位 置 (= L1 内 最 下 段)** — pillar P6 (JUCE-MM) 全 体 を 揺 る が す mental model 矛 盾、 影 響 は **全 chapter の 読 み 方**。 ただ し docs prose の み が 変 化 す る = **公 開 API surface は 変 わ ら な い** = ship 後 で も 修 正 可 能 (= breaking で は な い、 docs 修 正 のみ)。 議 論 は 重 い (mental model judgment + 用 語 体 系 設 計)。 L1-d / L1-c で 軽 い 確 定 を 先 に 終 え て attention 集 中。
+**な ぜ こ の 位 置 (= L1 内 最 下 段)** — pillar P6 (JUCE-MM) 全 体 を 揺 る が す mental model 矛 盾、 影 響 は **全 chapter の 読 み 方**。 ただ し docs prose の み が 変 化 す る = **公 開 API surface は 変 わ ら な い** = ship 後 で も 修 正 可 能 (= breaking で は な い、 docs 修 正 のみ)。 議 論 は 重 い (mental model judgment + 用 語 体 系 設 計)。 L1-c で 軽 い 確 定 を 先 に 終 え て attention 集 中。
 
 **ど の doc が 触 れ る** — `00-foundations.md` §3 vocabulary、 `01-dsl.md` §1 / §3 / §5 / §6 / §10、 `03-compiler.md` §2.2 + §3/§4 見 出 し (= compiler phase 別 意 で 残 す か)、 `12-canonical-examples.md` comment 群。
 
