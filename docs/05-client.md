@@ -18,15 +18,18 @@ createNode<C>(
 type CreateNodeOptions<C> = {
   // Per-param initial values; key is the param `name`, value is the initial number.
   initial?: Partial<Record<string, number>>;
-
-  // Snapshot blob to restore on creation (alternative to `initial`); applied
-  // before the first render quantum. Schema mismatch routed through the
-  // processor's `migrations` chain (see `01-dsl.md` §8.3).
-  restore?: Uint8Array;
 };
 ```
 
 Loads the WASM module (cached across calls), adds the Worklet module to the `AudioWorkletGlobalScope` if not already present, instantiates the underlying `AudioWorkletNode` with `numberOfInputs` / `numberOfOutputs` / `outputChannelCount` derived from the processor's `audioInput` / `audioOutput` declarations (no overrides from main side — declaration count is authoritative), and awaits the worklet's readiness handshake before resolving the returned promise.
+
+To start a node with restored state, call `createNode` and then `await node.restore(blob)` (Q57, `decisions-log.md`). The two-step pattern keeps `createNode`'s return type uniform across call sites and exposes the `RestoreResult` discriminated union (§2.6, Q45) for migration error handling:
+
+```typescript
+const node   = await createNode(audioContext, processor);
+const result = await node.restore(blob);
+if (!result.ok) { /* migration failure — see Q45 */ }
+```
 
 ## 2. `UnworkletNode<C>` surface
 

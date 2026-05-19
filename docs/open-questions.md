@@ -50,24 +50,6 @@ unworklet の pillar:
 
 ## Layer 1 — 真 の ★★★ (impl 矛 盾 リ ス ク 高)
 
-### L2-c. `createNode({ restore })` 経 路 で migration 失 敗 を ど う surface す る か
-
-**何 が 未 決** — `05-client.md` §1 の `CreateNodeOptions<C>.restore?: Uint8Array` は 「Schema mismatch routed through the processor's `migrations` chain」 と 書 く が、 戻 り 値 は `Promise<UnworkletNode<C>>` で `RestoreResult` を 含 ま な い。 `node.restore(blob)` method 経 由 は `RestoreResult` discriminated union を 返 す が、 `createNode({ restore })` で migration が throw し た 場 合 の レ ポ ー ト path が 仕 様 化 さ れ て い な い。 audit A §5 拾 い。
-
-**な ぜ こ の 位 置 (= Layer 1)** — 真 の impl 矛 盾 リ ス ク = 戻 り 値 surface dangling、 異 な る impl agent が (A) 戻 り 値 を `{ node, restore }` に 拡 張 / (B) `onError` で 通 知 / (C) 経 路 自 体 削 除 の どれ か を 別 々 に 採 用 し て 公 開 surface が 衝 突。 ship 後 breaking。 選 択 肢 自 体 は 3 案 で 軽 い ratify。
-
-**選 択 肢:**
-
-- **(A) `createNode({ restore })` の 戻 り 値 を `Promise<{ node: UnworkletNode<C>; restore: RestoreResult }>` に。** breaking ま で 行 か な い が API 形 変 化。
-- **(B) `restore` 失 敗 時 は `onError` event で 通 知、 `createNode` 自 体 は 必 ず resolve。** 簡 潔 だ が consumer の 監 視 forced。
-- **(C) `createNode({ restore })` 経 路 自 体 を 廃 止、 「`createNode → await restore(blob)`」 を canonical pattern と し て docs 化。** v1.0.0 surface 削 減。 既 存 canonical で `restore` 経 路 を 使 う 例 は ナ シ (`initial` の み)。
-
-**ど の doc が 触 れ る** — `05-client.md` §1 / §2.6 / §6.5。
-
-**Pillar 関 連** — P2。
-
----
-
 ### L2-d. L1 helper の nested `forSample` を 明 示 化 (旧 L3-b)
 
 **何 が 未 決** — `01-dsl.md` §5.5.5 で L1 helper 内 `forSample(...)` 呼 び 出 し が 「rare; usually iteration is the caller's job」 と OK 寄 り、 §10.3 forSample body constraints で 「Allowed: ... calls to L1 helpers」 と 書 く。 こ の 2 つ を 組 み 合 わ せ る と **L1 helper が 内 部 で `forSample` を 呼 ぶ + 呼 び 出 し 側 も `forSample` 内** = 暗 黙 に nested `forSample` 成 立。 spec で 明 示 化 ナ シ。 audit B §2 拾 い。

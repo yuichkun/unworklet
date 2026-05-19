@@ -42,7 +42,7 @@ result.state;        // Uint8Array       snapshot blob (Q5 format) at end-of-ren
 <!-- TODO §2.x:
      - Full type signature with generics over processor declarations (output names, event types, message types).
      - Per-sample vs per-block parameter input shape rules (= Q18 length 1 / 128 / 0 normalization at the offline boundary).
-     - Initial-state injection (= optional `initial` snapshot blob to start from, parallel to `createNode({ restore })` in `05-client.md` §1).
+     - Initial-state injection (= optional `initial` snapshot blob to start from; the online counterpart is the two-step pattern `createNode` → `node.restore(blob)` in `05-client.md` §1, see Q57).
      - Determinism guarantee. -->
 
 ## 3. Backend choice
@@ -55,4 +55,4 @@ result.state;        // Uint8Array       snapshot blob (Q5 format) at end-of-ren
 
 - `@unworklet/test` (= `06-testing.md`) builds matchers on top of `renderOffline`.
 - `@unworklet/vite-plugin` (= `07-vite-plugin.md`) emits the compiled processor that `renderOffline` consumes; the `?worklet` import resolves to a shape the offline runner can also load.
-- `@unworklet/core`'s client-side surface (= `05-client.md`) is the **online** counterpart: same processor, different runtime path. The snapshot format (Q5) is shared, so a `renderOffline` result's `state` blob can be passed to `createNode(..., { restore: state })` to continue an offline-prepared session online.
+- `@unworklet/core`'s client-side surface (= `05-client.md`) is the **online** counterpart: same processor, different runtime path. The snapshot format (Q5) is shared, so a `renderOffline` result's `state` blob can be passed to `node.restore(state)` after `createNode` to continue an offline-prepared session online (Q57; the two-step pattern is the v1.0.0 canonical form, see `05-client.md` §1).

@@ -65,6 +65,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q54 | defineSubgraph wrapper の 真 の 役 割 + `SubgraphInstance<S>` 撤 廃 (L1-c 完 全 close) | resolved — `defineSubgraph` / `createSubgraph` wrapper を v1.0.0 で 維 持 (= 関 数 統 一 棄 却)、 wrapper の 真 の 役 割 = (1) framework-level identification (= Q30 memory budget + Q23 DevTools graph instance grouping + snapshot path namespacing の hook) + (2) name scope (= Q41 instance name = snapshot path prefix の framework 担 保); `SubgraphInstance<S>` 名 を 公 開 surface か ら 撤 廃 (= §1.6.1 export list か ら 削 除)、 `createSubgraph(...)` の 戻 り 値 = **subgraph body の return record そ の も の** と invariant 直 接 規 定、 user が 型 引 用 し た い 時 は `ReturnType<typeof subgraphDecl>` (TS 標 準); §5.2 / §5.6.2 prose 強 化 で wrapper の 真 の 役 割 を 明 文 化 (= 関 数 統 一 棄 却 理 由 + canonical Ex 2 / Ex 8 vs Ex 5 対 比 引 用) + L1-c dangling 完 全 close | `01-dsl.md` §1.6.1 + §5.2 + §5.6.2 + Q2 / Q34 / Q41 / Q53 |
 | Q55 | priority filter 軸 = impl 矛 盾 リ ス ク + L1-a 「phase」 wording sweep (Q53 補 強、 Q51 followup) | resolved — v1.0.0 ship 前 docs 読 者 = impl AI agent、 user-facing docs は v1.0.0 完 成 後 別 phase で 関 心 範 囲 外; priority filter の 唯 一 の 軸 = 「impl AI agent が 手 放 し で 実 装 し た 時 に 矛 盾 が 出 る か」 = 異 な る agent が 異 な る judgment に 達 す る prose 内 矛 盾 / dangling だ け が ★★★、 「user 視 点」 「user 誤 解」 「mental model 揺 れ る」 は priority 評 価 軸 外 (= mechanical sweep 領 域); L1-a 構 造 名 詞 「phase」 撤 廃 sweep (= Q51 followup) を 同 commit で 完 了、 adjective 「per-block / per-sample」 維 持、 §6 heading `The process phase` → `The process body`、 §10.4.1 `Single-phase` → `Per-sample-only`、 §10.4.2 `Multi-phase` → `Mixed`、 canonical Ex 3 description rename、 SIMD example `Phase 1/2/3` → `Step 1/2/3`、 oscillator phase counter / minimum-phase / linear-phase / 音 響 phase / compiler phase は 別 意 で retain | `open-questions.md` 冒 頭 「ratify 範 囲 と priority filter」 section + L1-a entry 削 除 + Q53 + Q51 |
 | Q56 | Handler body の expression scope (= L1-b、 Q51 followup) | resolved — `messageDecl.onReceive(...)` / `midiInput().onEvent(...)` handler body の expression scope rule を `forSample` callback と 完 全 一 致 さ せ る (= primitive op / `state.load/store` / buffer access / audio I/O `audioIn.at` / `audioOut.set` / `param.at` / `emitIf` / subgraph methods / L1 helpers が 全 て legal、 新 規 declaration `state.*` / `buffer.*` / `param.*` / `createSubgraph(...)` は 不 可); sample-offset 引 数 は `Node<'i32'> | number` を 一 律 受 け 入 れ (= handler arg の `atSample` / state slot value / buffer read / JS literal の ど れ も OK)、 surrounding `forSample` の `i` だ け が scope 外 (= 既 規 定 通 り、 handler は forSample の 前 に drain); `01-dsl.md` §4.2 L500 「Inside a handler, only state writes, buffer writes, and scalar arithmetic are allowed」 prose を 「same expression-scope rules as a forSample callback」 に 書 き 換 え、 §4.1 / §5.6.4 / §6 / Q32 既 規 定 と 整 合 (= L500 が 唯 一 の 狭 prose だ っ た dangling 解 消); 案 (d) 一 切 禁 止 (= state 書 き 込 み 専 用 segment) 棄 却 (= user に 覚 え る context rule を 1 個 追 加、 forSample / handler の 2 種 別 ル ー ル、 公 開 surface の 概 念 量 増、 no-artificial-constraint 違 反); 案 (a) JS literal だ け / (b) `Node<'i32'>` だ け も 不 自 然 例 外 規 則 で 棄 却 | `01-dsl.md` §4.2 + `02-messaging.md` §1 + `11-midi.md` §2.3 + `00-foundations.md` §3 (Expression scope、 既 整 合) + Q22 / Q32 / Q36 / Q51 |
+| Q57 | `createNode({ restore })` option 廃 止 (= L2-c) | resolved — `CreateNodeOptions<C>.restore?: Uint8Array` を v1.0.0 surface か ら 廃 止、 `createNode` 戻 り 値 形 は 常 に `Promise<UnworkletNode<C>>` で 統 一、 snapshot 復 元 は `createNode` → `await node.restore(blob)` の **2 step pattern** が canonical (= Q45 `RestoreResult` discriminated union で 失 敗 surface 取 得); 案 (A) 戻 り 値 を `{ node, restore }` に 拡 張 棄 却 (= restore option 渡 し た 時 だ け wrap 形 = 戻 り 値 形 が option 有 無 で 2 種、 TS overload 2 種 増、 surface 概 念 量 増)、 案 (B) `onError` event で 通 知 棄 却 (= error event は worklet trap / queue overflow 等 の **起 動 後 非 同 期 event** 用、 migration throw は **node 起 動 時 の 同 期 flow** で 性 質 違 う、 mental model 衝 突); canonical Ex 群 で `createNode({ restore })` 使 用 ナ シ = consumer は 既 に 2 step pattern で 書 い て い る fact、 ergonomic loss は +1 行 軽 微; v1.x.0 で 「1 step」 必 要 性 出 た ら additive 追 加 可 | `05-client.md` §1 + `13-offline-render.md` §2 / §4 + Q45 |
 
 ---
 
@@ -2380,4 +2381,50 @@ handler body (= `messageDecl.onReceive(handler)` / `midiInput().onEvent(type, ha
 - canonical Ex 5 / Ex 6 / Ex 8 の handler 内 は 全 て `state.store` の み 使 用、 案 A / 案 (d) で 同 じ コ ー ド = AGENTS.md HARD CONTRACT 同 commit 整 合 確 認 済 み
 - `open-questions.md` か ら L1-b entry 削 除、 Layer 1 件 数 を 3 → 2 に 更 新 (= 残 = L2-c / L2-d)
 - TaskList #84 (L1-b) completed
+
+---
+
+## Q57 — `createNode({ restore })` option 廃 止 (= L2-c)
+
+**Status:** resolved.
+
+### Problem
+
+`05-client.md` §1 の `CreateNodeOptions<C>.restore?: Uint8Array` は 「Schema mismatch routed through the processor's `migrations` chain (see `01-dsl.md` §8.3)」 と 書 く が、 `createNode` の 戻 り 値 は `Promise<UnworkletNode<C>>` で `RestoreResult` を 含 ま な い。 別 path の `node.restore(blob)` (= Q45 ratify) は `RestoreResult` discriminated union を 戻 り 値 で 返 し て migration が throw し た 場 合 の 失 敗 情 報 を expose し て い る が、 `createNode({ restore })` 経 由 で migration が throw し た 場 合 の 報 告 path が 仕 様 化 さ れ て い な い = **異 な る impl agent が 異 な る surface に 行 く dangling**、 真 の impl 矛 盾 リ ス ク。
+
+### Decision
+
+**`CreateNodeOptions<C>.restore?: Uint8Array` を v1.0.0 surface か ら 廃 止**。 `createNode` の 戻 り 値 形 は 常 に `Promise<UnworkletNode<C>>` で 統 一。 snapshot 復 元 し た い consumer は **2 step pattern** を 書 く:
+
+```typescript
+const node   = await createNode(audioContext, processor);
+const result = await node.restore(blob);
+if (!result.ok) { /* migration failure surface (Q45) */ }
+```
+
+### Why this and not alternatives
+
+**判 断 軸** = 公 開 surface の 概 念 量 + 戻 り 値 形 の 統 一 度 + canonical Ex 群 と consumer 実 装 の 実 態 整 合。
+
+- **案 (A) 戻 り 値 を `Promise<{ node: UnworkletNode<C>; restore: RestoreResult }>` に 拡 張** 棄 却:
+  - restore option を 渡 し た 時 だ け wrap、 渡 さ な い 時 は 従 来 通 り = 戻 り 値 形 が option 有 無 で **2 種** に 分 岐、 TS overload 2 種 増
+  - 同 じ 関 数 で 「destructure し て い い 時 / し な い 時」 が surface に 出 る = mental model の 概 念 量 増
+- **案 (B) `onError` event で 通 知、 `createNode` 自 体 は 必 ず resolve** 棄 却:
+  - `onError` event は worklet trap / queue overflow / SAB-mode 変 化 等 の **起 動 後 の 非 同 期 event** 用 (= 既 §2 surface)
+  - 「migration が throw」 は node 起 動 時 の **同 期 flow** = 結 果 を 同 期 で 待 ち た い flow を 非 同 期 event に forced は mental model 衝 突、 「失 敗 後 に node を 使 う か 否 か」 の 同 期 分 岐 が 書 け な い
+- **案 (C) = 採 用 (= 経 路 廃 止)**:
+  - 公 開 surface が 1 個 減 る (= `restore` option を v1.0.0 か ら 削 る)
+  - `createNode` の 戻 り 値 形 が 常 に `Promise<UnworkletNode<C>>` で 統 一 (= overload 2 種 ナ シ)
+  - mental model = 「node 作 成 と state 復 元 は 別 step」 を 1 step 化 で 曖 昧 に せ ず 明 確 化
+  - canonical Ex 群 (= Ex 1 〜 Ex 8) で `createNode({ restore })` 使 用 例 ナ シ = consumer は **既 に 2 step pattern で 書 い て い る fact**、 ergonomic loss は +1 行 で 軽 微
+  - v1.x.0 で 「1 step ergonomic」 必 要 性 が 出 た ら 案 A 形 を additive 追 加 可 = [[no-preemptive-defer]] 観 点 で OK (= API surface / 型 / mental model に 染 み 出 さ ず、 純 加 算 surface)
+
+### Side effects
+
+- `05-client.md` §1 `CreateNodeOptions<C>` か ら `restore?: Uint8Array` field 削 除 + 関 連 comment 削 除
+- `05-client.md` §1 末 尾 に 1 段 落 + code block 追 加 = 2 step pattern が canonical と 明 文 化 (= Q45 `RestoreResult` 経 由 で migration 失 敗 surface 取 得 を 明 記)
+- `13-offline-render.md` §2 TODO comment (L45) + §4 prose (L58) の `createNode(..., { restore })` 参 照 を `node.restore(blob)` 経 由 表 記 に rename
+- canonical Ex 群 で `createNode({ restore })` 使 用 ナ シ を 確 認 (= L330 Ex 3 で `createNode(audioContext, linearPhaseEQ, { initial: { /* none */ } })` の `initial` 経 由 だ け) = AGENTS.md HARD CONTRACT 同 commit 整 合 確 認 済 み
+- `open-questions.md` か ら L2-c entry 削 除、 Layer 1 件 数 を 2 → 1 に 更 新 (= 残 = L2-d 1 件)
+- TaskList #88 (L2-c) completed
 
