@@ -212,8 +212,9 @@ Handle types for every declaration kind are exported from `@unworklet/core` for 
 - `State<T>` / `Buffer<T>` / `Param` (§3)
 - `EventDecl<T>` / `MessageDecl<T>` (§4)
 - `MidiInputHandle` / `MidiOutputHandle` (`11-midi.md` §2)
-- `SubgraphInstance<S>` (§5.6) for the value returned by `createSubgraph(...)`
 - `Node<T>` (§2)
+
+The value returned by `createSubgraph(...)` is **the subgraph body's return record itself** (= the author-named methods declared by `defineSubgraph`'s body) — no separate `SubgraphInstance<S>` wrapper type is exported. When a helper signature needs to receive a subgraph instance, use `ReturnType<typeof subgraphDecl>` (TypeScript's standard inference). Authoritative rationale: `decisions-log.md` Q54.
 
 L1 helper signatures and main-side type annotations import these directly (see canonical Ex 2 and Ex 4 for examples).
 
@@ -569,20 +570,18 @@ Whether L1 helpers can also write to `state.*` references owned by the caller �
 
 ### 5.2 L2 — `defineSubgraph`
 
-A reusable DSP block that owns its internal state. Declares its own `state.*`, `buffer.*`, and `param.*` slots; instantiated zero or more times inside a parent `defineProcessor`. Each instantiation gets its own state, but every instance is inlined into the parent's WASM module — there is no per-instance function-call boundary at audio rate.
+A reusable, stateful DSP block. The `defineSubgraph` wrapper has two framework-level roles that pure TypeScript function reuse cannot match:
 
-```typescript
-const onepole = defineSubgraph((input: Node<'f32'>, coef: Node<'f32'>) => {
-  const z1 = state.f32(0);
-  const y = add(z1.load(), mul(coef, sub(input, z1.load())));
-  z1.store(y);
-  return y;
-});
-```
+1. **Identification.** The wrapper marks its result as a subgraph definition, not an inlined helper. Memory-budget tallying for state slots (Q30), DevTools graph viewer instance grouping (Q23), and snapshot path namespacing all hook off this marker.
+2. **Name scope for snapshots.** Each `createSubgraph(..., { name: 'lpfL' })` call attaches an instance name (Q41) that becomes the prefix of the snapshot path for every state slot inside that instance (e.g. `'lpfL/z1'`). Without the wrapper, the framework has no canonical place to attach the per-instance name.
 
-Subgraph `process` lambdas have the same per-block / per-sample phase structure as `defineProcessor` `process` lambdas. A subgraph instantiation invoked from the parent's `forSample` callback runs its per-sample work at the surrounding `i`; from the parent's per-block phase, it runs at the per-block phase. (The conventional pattern is for subgraphs that consume per-sample audio to be invoked inside a `forSample`, since their inputs are per-sample values.)
+The body declares `state.*` / `buffer.*` / `param.*` slots in declaration scope and returns a record of author-named methods (see §5.6.1 for the body shape and §5.6.2 for instantiation). Every instance is inlined into the parent's WASM module per `createSubgraph(...)` call — there is no per-instance function-call boundary at audio rate, and instance state is independent across calls.
 
-Instantiation API, parameter declaration rules, and capture-time analysis are settled in §5.6.
+Subgraph method bodies execute top-to-bottom in source order — the same mental model as `defineProcessor` `process` bodies (Q51) — and may contain `forSample` callbacks where per-sample iteration is needed. A method invoked from the parent's `forSample` callback runs at the surrounding `i`; one invoked from per-block top level runs once per block. The conventional pattern is for subgraphs that consume per-sample audio to be invoked from inside a `forSample`, since their method inputs are per-sample values.
+
+Why two layers and not one (= L1 helper + L2 subgraph) — see §5.3. Canonical Ex 2 (3-band biquad EQ, 6 `peakingBand` instances) and Ex 8 (poly synth, 8 `synthVoice` instances) exercise the multi-instance reuse where the wrapper's identification + name scope are essential; compare Ex 5's flat voice-slot pattern (= no wrapper, slot names hand-managed) with Ex 8's voice subgraph (= wrapper handles slot allocation and naming).
+
+Instantiation API, parameter declaration rules, and capture-time analysis are settled in §5.6. Authoritative rationale: `decisions-log.md` Q2 (two-layer split) + Q54 (wrapper role + return shape).
 
 ### 5.3 Why two layers, not one
 
@@ -781,15 +780,13 @@ const oscillator = defineSubgraph((sr: number) => {
 
 #### 5.6.2 Instantiation via `createSubgraph(...)`
 
-Parent processors instantiate subgraphs through the free function `createSubgraph(subgraph, ...lambdaArgs, options?)`. The trailing `options` argument is optional; when present, it carries instance-level configuration:
+Parent processors instantiate subgraphs through the free function `createSubgraph(subgraph, ...lambdaArgs, options?)`:
 
-```typescript
-createSubgraph(
-  subgraph: SubgraphDecl,
-  ...lambdaArgs: LambdaArgs,
-  options?: { name?: string },
-)
-```
+- `subgraph` — the `defineSubgraph(...)` recipe being instantiated.
+- `lambdaArgs` — values bound to the subgraph's outer lambda arguments at instance creation time (e.g. `ctx.sampleRate`).
+- `options?.name?: string` — optional instance name used as the snapshot path prefix for the instance's state slots (Q41).
+
+(The exact TypeScript signature — generic-parameter binding for the return record, rest-args inference, etc. — is impl-level detail that lives in the emitted `.d.ts`; see `decisions-log.md` Q53.)
 
 ```typescript
 const lpf = createSubgraph(onepole, 0.5);          // coef = 0.5 bound at instance creation; no options
@@ -816,7 +813,7 @@ const filterL = createSubgraph(filterCore, ctx.sampleRate, { name: 'filterL' });
 const filterR = createSubgraph(filterCore, ctx.sampleRate, { name: 'filterR' });
 ```
 
-`createSubgraph(...)` performs state slot allocation; the returned value is a record of methods that can be called from any expression context (§5.6.4).
+`createSubgraph(...)` performs state slot allocation. **The returned value is the subgraph body's return record itself** (= the author-named methods declared by `defineSubgraph`'s body), not a wrapper around it (Q54). Callers can invoke those methods from any expression context (§5.6.4) and pass the value to L1 helpers using TypeScript's standard `ReturnType<typeof someSubgraph>` inference where a type annotation is needed.
 
 The `options.name` is **optional**: snapshot-free subgraphs need not provide one (Q41). When the subgraph declares persistent state and the parent processor takes snapshots, missing `name` is a graph-capture-time error — see §8.1.
 

@@ -43,20 +43,6 @@ unworklet の pillar:
 
 ## Layer 1 — judgment 必 要、 API surface / mental model
 
-### L1-c. `SubgraphInstance<S>` invariant の dangling
-
-**何 が 未 決** — `01-dsl.md` §1.6.1 で `SubgraphInstance<S>` が 「`@unworklet/core` か ら export 」 と 約 束 さ れ て い る が、 §5.6 の `createSubgraph` 仕 様 prose で **戻 り 値 と し て 一 度 も 参 照 ナ シ、 instance か ら 何 が 引 け る か の 振 る 舞 い 規 定 も 不 在**。 「subgraph instance か ら ど の method を 呼 べ る か / state slot path は ど う 引 け る か / nested subgraph で の 引 き 渡 し は ど う 動 く か」 が 仕 様 prose に 書 か れ て い な い。
-
-(注: L1-c は 当 初 「公 開 type 定 義 大 量 不 在 sweep」 と し て 19 種 を 階 層 分 類 す る 議 論 だ っ た が、 Q53 で 大 部 分 を impl AI 領 域 に 落 と し、 仕 様 invariant が prose に も 書 か れ て い な い dangling 1 件 = `SubgraphInstance<S>` だ け を こ こ に 残 し た。)
-
-**な ぜ L1 内 最 上 段** — `createSubgraph` 戻 り 値 が ど の surface を 持 つ か は v1.0.0 公 開 mental model 直 結、 後 で 振 る 舞 い を 追 加 / 変 更 = breaking。 議 論 軽 め (= invariant 範 囲 を 1 段 落 で 確 定 で き る 規 模)、 attention 配 分 が 軽 い。
-
-**ど の doc が 触 れ る** — `01-dsl.md` §1.6.1 + §5.6、 `decisions-log.md` Q34 / Q41 (= 既 createSubgraph ratify) + Q53。
-
-**Pillar 関 連** — P1 (declarative)、 P6 (JUCE-MM、 helper composition の mental model)。
-
----
-
 ### L1-b. Handler body で sample-position primitive を 受 け 入 れ る か (Q51 followup)
 
 **何 が 未 決** — Q51 で `param.at(0)` / `audioIn.at(c, 0)` / `audioOut.set(c, 0, v)` を process body 任 意 位 置 で OK と 決 め た。 一 方 `01-dsl.md` L498-500 (`messageDecl.onReceive` body 規 則) と `11-midi.md` 同 等 箇 所 は 「handler 内 で audio I/O / param 一 切 不 可、 `i` not in scope」 と 書 い た ま ま、 Q51 と 衝 突。 audit B §2 も 「同 commit 内 で 並 存 = 最 大 の 構 造 的 矛 盾」 と 指 摘。

@@ -62,6 +62,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q43 | `everyNSamples` を forSample callback 引 数 経 由 で 取 る (audit P0-8) | resolved — `everyNSamples` を free function import か ら `forSample((i, everyNSamples) => ...)` の callback 第 2 引 数 に refine (= Q7 既 ratify form の callback 引 数 化、 既 `i` と 同 軸); forSample.byN も 同 形; scope は TypeScript scoping で 自 然 に 弾 か れ る (= handler / per-block top で TypeScript reference error、 build-time context tracking 不 要); subgraph method 内 で の 自 前 forSample で 自 然 解 決 (= caller context tracking 不 要); counter は 呼 び 出 し ご と に 独 立、 1 塊 を 越 え て 連 続 で reset ナ シ | `01-dsl.md` §9, §10.1 + Q7 |
 | Q52 | Public package layout の docs-side enforcement (Q23 派 生、 L1-d) | resolved — 公 開 npm package 4 個 (= core / vite-plugin / offline / test、 Q23 strict)、 公 開 import path 5 種 (= 上 記 4 + `@unworklet/core/simd` subpath)、 DSL 識 別 子 約 50 個 は `@unworklet/core` root に flat export (= dsp subpath / 独 立 package ナ シ)、 `@unworklet/compiler` / `@unworklet/worklet` / `@unworklet/dsp` は 公 開 package で は な い (= compiler / worklet runtime は `@unworklet/core` internal module、 dsp surface は core root に flat); doc 章 タ イ ト ル の 表 記 規 則 = 公 開 package doc は タ イ ト ル に package 名 + internal module doc は タ イ ト ル か ら package 名 削 除 + 冒 頭 prose で 内 部 明 記; Q13 (initial package layout) が 自 動 派 生 確 定 | `01-dsl.md` L1 + `03-compiler.md` L1 + `04-worklet-runtime.md` L1 + `07-vite-plugin.md` L26 + `08-deployment.md` L13 |
 | Q53 | 仕 様 invariant vs 型 declaration の 形 — ratify 範 囲 確 定 (L1-c re-scope) | resolved — 設 計 ratify 範 囲 を 「仕 様 invariant」 (= 振 る 舞 い / 制 約 / mental model / 公 開 surface に 何 が 出 て く る か / 仕 様 内 矛 盾 / dangling) に 限 定、 「TS signature 細 部 / 識 別 子 名 の 好 み / generic constraint 表 現」 は impl AI agent が TS compiler 経 由 で 機 械 的 に 確 定 す る 領 域 と し て 委 譲 (= 「曖 昧 さ を 残 す」 で は な く 「適 切 な layer に 委 譲」、 既 ai-agent-paradigm スタンス と 整 合); L1-c の 当 初 19 種 type 階 層 分 類 議 論 を 撤 退、 dangling 1 件 (`SubgraphInstance<S>` invariant prose 不 在) を L1-c に 残 し て 別 grill; L2-a (loadVec / everyNSamples 命 名) + L2-b (param.at(0) framing) も impl AI 領 域 / L1-a 自 動 解 消 と し て open-questions か ら 撤 去 | `open-questions.md` 冒 頭 「ratify 範 囲」 セ ク シ ョ ン + Q23 (AI agent paradigm の 既 ratify) + 既 memory `ai-agent-paradigm-implementation-cost` |
+| Q54 | defineSubgraph wrapper の 真 の 役 割 + `SubgraphInstance<S>` 撤 廃 (L1-c 完 全 close) | resolved — `defineSubgraph` / `createSubgraph` wrapper を v1.0.0 で 維 持 (= 関 数 統 一 棄 却)、 wrapper の 真 の 役 割 = (1) framework-level identification (= Q30 memory budget + Q23 DevTools graph instance grouping + snapshot path namespacing の hook) + (2) name scope (= Q41 instance name = snapshot path prefix の framework 担 保); `SubgraphInstance<S>` 名 を 公 開 surface か ら 撤 廃 (= §1.6.1 export list か ら 削 除)、 `createSubgraph(...)` の 戻 り 値 = **subgraph body の return record そ の も の** と invariant 直 接 規 定、 user が 型 引 用 し た い 時 は `ReturnType<typeof subgraphDecl>` (TS 標 準); §5.2 / §5.6.2 prose 強 化 で wrapper の 真 の 役 割 を 明 文 化 (= 関 数 統 一 棄 却 理 由 + canonical Ex 2 / Ex 8 vs Ex 5 対 比 引 用) + L1-c dangling 完 全 close | `01-dsl.md` §1.6.1 + §5.2 + §5.6.2 + Q2 / Q34 / Q41 / Q53 |
 
 ---
 
@@ -2223,4 +2224,51 @@ L1-c の 当 初 整 理 は 「`@unworklet/core` か ら export 約 束 だ け
 - TaskList sync: #86 を SubgraphInstance<S> invariant grill に re-purpose (= subject 更 新)、 #65 (L2-a) を delete、 L2-b は task list に 元 々 task entry ナ シ で sync 不 要
 - canonical examples integrity 確 認: docs 仕 様 自 体 は 改 訂 ナ シ (= ratify 範 囲 の 線 引 き 明 文 化 + 個 別 entry の 撤 去 / re-scope の み)、 `12-canonical-examples.md` 修 正 ナ シ
 - 既 memory `ai-agent-paradigm-implementation-cost` + `no-preemptive-defer` の 厳 密 適 用 と し て docs 化 (= こ の Q53 自 体 が 「invariant vs 形 の 操 作 的 定 義」 の 第 一 文 献 と な る)
+
+---
+
+## Q54 — defineSubgraph wrapper の 真 の 役 割 + `SubgraphInstance<S>` 撤 廃 (L1-c 完 全 close)
+
+**Status:** resolved.
+
+### Problem
+
+L1-c (= `SubgraphInstance<S>` invariant の dangling) を 詰 め て い く 中 で、 余 湖 さ ん の 上 位 軸 質 問 (2026-05-19): 「**そ も そ も `defineSubgraph` wrapper も い ら な い の で は? ただ の TS 関 数 で 同 等 で は?**」
+
+加 え て:
+
+- `01-dsl.md` §1.6.1 で `SubgraphInstance<S>` が export 約 束 さ れ て い る が、 §5.6.2 で 戻 り 値 と し て 引 用 ナ シ + wrapper の +α 役 割 が prose 不 在 = dangling
+- wrapper の 「真 の 役 割」 が 仕 様 docs に 明 文 化 さ れ て お ら ず、 「state 持 ち helper を bundle す る だ け の wrapper か / framework 担 保 が あ る か」 が 余 湖 さ ん 自 身 か ら も 不 明 確
+- §5.2 の onepole 例 が 旧 「process lambda 直 接 return」 形 (= canonical Ex 2 / Ex 8 の method-record return 形 と 不 整 合) で stale
+
+### Decision
+
+**`defineSubgraph` / `createSubgraph` wrapper を v1.0.0 で 維 持** (= 関 数 統 一 棄 却) + **wrapper の 真 の 役 割 を 仕 様 prose で 明 文 化** + **`SubgraphInstance<S>` 名 を 公 開 surface か ら 撤 廃**。
+
+wrapper の 真 の 役 割 = 2 つ:
+
+1. **Identification** — wrapper は framework に 「こ れ は subgraph definition で あ っ て inlined helper で は な い」 と marker を 渡 す。 memory budget の 自 動 sum (Q30)、 DevTools graph viewer の instance 単 位 grouping (Q23)、 snapshot path の namespacing 全 て が こ の marker を hook に 動 く。
+2. **Name scope for snapshots** — `createSubgraph(..., { name: 'lpfL' })` で 渡 す instance name が snapshot path prefix (e.g. `'lpfL/z1'`) と し て framework に 担 保 さ れ る (Q41)。 wrapper ナ シ で 同 等 機 能 を 出 す path は (a) 変 数 名 暗 黙 prefix 抽 出 (= magic、 declarative 違 反 寄 り)、 (b) user 明 示 name 全 state 宣 言 (= ボ イ ラ ー プ レ ー ト 増)、 (c) 別 名 の 同 等 wrapper (= 名 前 違 う だ け) の 3 通 り、 全 部 既 wrapper よ り 不 健 全 or 等 価。
+
+L1-c (= `SubgraphInstance<S>` 名 撤 廃) を 同 1 entry に bundle:
+
+- §1.6.1 export list か ら `SubgraphInstance<S>` 行 を 削 除 + prose 注 釈 (= 「return record そ の も の、 wrapper type は export し な い、 user は `ReturnType<typeof subgraphDecl>` で TS 標 準 inference」) 追 加
+- `createSubgraph(...)` の 戻 り 値 = **subgraph body の return record そ の も の** と §5.6.2 prose で invariant 直 接 規 定 (= wrapper を 挟 ま な い、 alias 名 を 出 さ な い)
+- user が type 引 用 し た い 場 合 は `ReturnType<typeof subgraphDecl>` (TS 標 準 inference) で OK
+
+### Why this and not alternatives
+
+- **`defineSubgraph` wrapper 撤 廃 + 関 数 統 一 棄 却**: name scope を framework が 担 保 す る 自 然 な path が wrapper だ け、 関 数 統 一 で 同 等 機 能 を 出 す 3 候 補 (= 変 数 名 抽 出 magic / user 明 示 ボ イ ラ ー プ レ ー ト / 別 名 同 等 wrapper) は 全 部 不 健 全 or 等 価。 canonical Ex 2 (6 instance) / Ex 8 (8 instance) の multi-instance pattern が wrapper の 価 値 を 実 証 (= Ex 5 の wrapper ナ シ voice state flatten pattern と の 対 比 = 既 docs comment で 「Production-grade allocators may use a single state.i32 head + circular mark buffer; this shape favors clarity here」 と 明 言 さ れ た 「subgraph 化 す れ ば ボ イ ラ ー プ レ ー ト 撤 廃」 path)
+- **`SubgraphInstance<S>` 名 維 持 案 (= alias) 棄 却**: wrapper +α の 役 割 が 仕 様 invariant 上 存 在 し な い (= subgraph instance か ら 引 け る surface = return record method 群 だ け、 name は `createSubgraph` options で 既 受 け 取 り、 restore / inspect は main 側 surface、 内 部 state 隠 蔽 が pure)、 alias 名 だ け を 公 開 surface に 残 す = jargon (= memory `no-jargon-sprinkling` 累 犯)、 forward compat (= 後 で +α 入 れ た く な っ た 時 に additive 復 活) で 名 前 撤 廃 の breaking リ ス ク も ナ シ
+- **wrapper +α 役 割 を 与 え る 案** (= `S & { __unworkletInstanceName?: string }` 等) 棄 却: 「framework が user の return record を 拡 張」 = declarative 違 反 寄 り (= memory `framework-magic-anti-pattern`)、 mental model 1 段 増、 +α が 必 要 な use case が 仕 様 invariant 上 存 在 し な い
+- **processor と subgraph の wrapper 共 通 化** (= `defineNode` 1 wrapper) 棄 却: processor = top-level (= AudioContext + audio I/O / param)、 subgraph = inline-only (= I/O / param 不 持) で 構 造 役 割 が 違 う、 共 通 化 す る と mental model 増 (= 「ど の context で 何 が 使 え る か」 を runtime context で 切 る 必 要)
+
+### Side effects
+
+- `01-dsl.md` §1.6.1: `SubgraphInstance<S>` (§5.6) for the value returned by `createSubgraph(...)` 行 削 除 + 直 後 に prose 注 釈 1 段 落 (= 「return record そ の も の、 wrapper type は export し な い、 user は `ReturnType<typeof subgraphDecl>` で TS 標 準 inference」)
+- `01-dsl.md` §5.2: wrapper の 真 の 役 割 (= identification + name scope) を 2 bullet で 明 文 化、 旧 「process lambda 直 接 return」 形 例 (= L574-580 の onepole) を 削 除 (= §5.6.1 method-record return 形 と 整 合)、 canonical Ex 2 / Ex 8 vs Ex 5 の 対 比 を prose で 引 用、 旧 「per-block / per-sample phase structure」 wording を 「top-to-bottom 実 行 + forSample は loop primitive (Q51)」 に 揃 え る (= L1-a 整 合 先 取 り、 phase 用 語 sweep 時 に 一 致)
+- `01-dsl.md` §5.6.2: signature pseudo (= `subgraph: SubgraphDecl`, `lambdaArgs: LambdaArgs` 表 記) を bullet 説 明 に re-frame (= TS 細 部 は Q53 で impl AI 領 域)、 戻 り 値 を 「subgraph body の return record そ の も の」 と invariant 直 接 規 定
+- canonical examples integrity 確 認: `12-canonical-examples.md` の Ex 2 / Ex 8 で `defineSubgraph` / `createSubgraph` 既 method-record return 形 で 整 合、 修 正 ナ シ。 `SubgraphInstance` / `SubgraphDecl` / `LambdaArgs` 言 及 ナ シ で 整 合 (= grep 確 認 済 み、 AGENTS.md HARD CONTRACT 同 commit check OK)
+- TaskList #86 (L1-c) completed
+- `open-questions.md` か ら L1-c entry 削 除 (= 完 全 close)、 残 grill = L1-a / L1-b / L2-c / L2-d / L3-a の 5 件 + L4 系
 
