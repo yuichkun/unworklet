@@ -42,7 +42,7 @@ Independent and can be picked up at any time:
 
 | Doc | Status |
 |---|---|
-| `00-foundations.md` | partial (§§1–4 written; §5 realtime-safety + §6 cross-cutting still placeholder) |
+| `00-foundations.md` | partial (§§1–5 written; §6 cross-cutting still placeholder) |
 | `01-dsl.md` | written |
 | `02-messaging.md` | written |
 | `03-compiler.md` | partial (§2 graph capture + §2.4 three-layer error written; §1, §3–§8 placeholder) |

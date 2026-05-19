@@ -88,7 +88,7 @@ Each panel is a thin presentation layer over an already-ratified unworklet mecha
 | Panel | Dock entry type | unworklet mechanism | DevTools Kit primitive |
 |---|---|---|---|
 | Build errors / warnings | Structured Diagnostics | 3-layer error model (`error[unworklet/<id>]`, `03-compiler.md` §2.5) with `decisions-log.md` cross-refs | `ctx.diagnostics.defineDiagnostics()` (code prefix `UWK`, `docsBase` → unworklet docs URL) |
-| Graph viewer | iframe | per-block / per-sample phase + declaration scope + subgraph instantiation (`00-foundations.md` §3, `01-dsl.md` §1) | Shared State (reactive on rebuild) |
+| Graph viewer | iframe | per-block code + `forSample` loops + declaration scope + subgraph instantiation (`00-foundations.md` §3, `01-dsl.md` §1) | Shared State (reactive on rebuild) |
 | Memory budget | json-render | per-declaration auto-sum (Q30, `03-compiler.md` §2.4) | Shared State |
 | Live state inspector | iframe | named `state` slot + `state.publish` (Q27, `01-dsl.md` §3) | Shared State (audio thread → main reactive sync) |
 | Live latency monitor | iframe | render-quantum cost measurement on the audio thread | Streaming (P50 / P95 / P99 / Max) |
@@ -113,7 +113,7 @@ The panels above all read their data from a stable set of artifacts that the plu
 
 | Artifact | Source | Consumed by (first-party panels) |
 |---|---|---|
-| `dist/<processor>.graph.json` | AST DAG: phase boundaries, declaration list, subgraph instantiations | Graph viewer |
+| `dist/<processor>.graph.json` | AST DAG: per-block code + `forSample` loops, declaration list, subgraph instantiations | Graph viewer |
 | `dist/<processor>.memory.json` | Per-declaration byte counts (Q30) + total + thresholds | Memory budget |
 | `dist/<processor>.diagnostics.json` | Full 3-layer error / warning list with stable IDs | Build errors / warnings |
 | `dist/<processor>.schema-hash.json` | Migration anchors (`01-dsl.md` §8.3) | Snapshot inspector, Swap history |

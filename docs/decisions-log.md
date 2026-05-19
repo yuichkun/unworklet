@@ -36,6 +36,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q24 | Bundler integration scope | resolved — Q23 に 統 合 | `07-vite-plugin.md` + `08-deployment.md` §1 |
 | Q25 | Source maps | resolved — Q23 に 統 合 (= `@unworklet/vite-plugin` が sidecar `.wasm.map` で 出 す) | `07-vite-plugin.md` §5 |
 | Q50 | 動 的 processor swap primitive (= HMR / live coding / visual programming の 共 通 根) | resolved — `replaceProcessor(oldNode: UnworkletNode<Old>, newProcessor: New): Promise<ReplaceResult<New>>` を `@unworklet/core` か ら free function で expose; 内 部 動 作 = (1) `oldNode.snapshot()` で blob 化、 (2) 新 WASM を unique name で `registerProcessor` (= Web Audio spec の duplicate-name 禁 止 + `removeModule()` 不 存 在 制 約 を 隠 蔽)、 (3) 新 AudioWorkletNode 生 成 + `restore(blob)` (= Q5 + Q45 migration 再 利 用)、 (4) 新 typed wrapper を 戻 り 値 で 返 す; framework は graph 切 断 / 接 続 / 旧 node destroy / crossfade を 触 ら ず consumer 責 任 (= raw primitive、 declarative 純 度 維 持、 magic ナ シ); 戻 り 値 で 新 wrapper を 返 す 形 = declarations 変 化 (rename / 追 加 / 削 除) は typed `.d.ts` 経 由 で TS error と し て consumer code に 即 露 出 (= silent fail せ ず); accumulation warning (= 同 AudioContext 内 で N 回 swap 累 積 で `console.warn`) は framework が 出 す (= Web Audio `removeModule()` 不 存 在 制 約 を consumer 認 知 surface に); HMR は user-land で `import.meta.hot.accept` + `replaceProcessor` の recipe、 live coding / visual programming も 同 primitive を 使 う | `05-client.md` §8 + `07-vite-plugin.md` §4 |
+| Q51 | per-block で の sample-position primitive (audioIn.at / audioOut.set) 開 放 + JUCE / AudioWorklet process メ ン タ ル の docs 明 文 化 (audit followup) | resolved — `audioIn.at(c, 0)` / `audioOut.set(c, 0, v)` を per-block で 呼 び 可 と し て open (= 既 Q36-a の method signature `i: Node<'i32'> \| number` を そ の ま ま 適 用、 `param.at(0)` と 対 称); 旧 prose 「the equivalent literal positions for audioIn / audioOut are not opened by Q36 and remain a separate decision」 を 撤 去; 同 時 に 00-foundations.md §3 「Process body」 entry を 強 化 し て 「JUCE AudioProcessor::processBlock / AudioWorklet `process` と 同 じ mental model = body は top-to-bottom 実 行、 forSample は loop primitive、 user は process 内 で 好 き な 順 序 で sample-position primitive を 呼 ぶ、 loop は 何 回 で も 書 け る、 同 sample 位 置 を 上 書 き 可 (Q37 last-write-wins)」 を 明 文 化; declaration は declaration scope (= body 先 頭) 限 定 と い う 構 造 ル ー ル は 維 持、 そ れ 以 外 の 順 序 / 書 き 込 み ル ー ル は 親 ホ ス ト と 一 致 | `00-foundations.md` §3 (Process body / Sample-offset / Per-block phase) + `01-dsl.md` §1 |
 | Q26 | TypeScript version | (open) | `09-repo-structure.md` §5 |
 | Q27 | Generic typed messaging core surface | resolved — 5-surface uniform (param / state.publish / event / message / midi); SAB+Atomics with postMessage fallback; bulk via state.buffer.publish or event/message variable-length payloads | `02-messaging.md` + `01-dsl.md` §3, §4 |
 | Q29 | variable-rate iteration の v1.0.0 提 供 判 断 | resolved — v1.0.0 で `forSample` + `forSample.byN` の み (= 既 ratify 維 持); `forSampleRange(start, end, callback)` は v1.x.0 で additive 追 加 検 討 (= 表 現 力 は v1.0.0 forSample + build-time if で カ バ ー 済 み、 効 率 化 用 途); `forSamplesUntil(cond, callback)` (= runtime early-exit) と runtime variable stride は 永 久 排 除 (= realtime safety 違 反 / declarative 原 則 違 反) | `01-dsl.md` §10.5 |
@@ -45,7 +46,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q46 | `MidiEvent` / `event<T>` の cross-thread 型 view 分 離 (audit Phase 2 #8、 #47) | resolved — main thread / wire 用 と worklet audio-thread 用 で **TypeScript 型 を 2 つ に 分 け る**; `MidiEvent` (= 全 numeric field `number`、 typed-array field 生 `Uint8Array` 等) は `node.midi.<name>.send(...)` / `.onEvent(...)` の main 側 surface 専 用、 `MidiEventGraph` (= 全 numeric field `Node<'i32'>`、 typed-array field は §4.3 typed-array-field proxy) は `midiInput().onEvent(...)` handler arg + `midiOutput().emitIf(...)` arg 専 用; emit 側 で の number / boolean literal は Q33 literal-lift で 自 動 に Node 化 す る た め user code は main / worklet で 同 じ literal を 書 け る; `event<T>` も 同 様 に main 側 `T & { atSample: number }` / worklet 側 lifted view (= 全 number → Node<'i32'>、 全 boolean → Node<'bool'>、 全 typed-array → §4.3 proxy) で 2 view 派 生; mapped 型 (= 1 型 + `ToGraph<T>` 派 生) は IDE hover で `ToGraph<MidiEvent & ...>` が 出 て user 認 知 負 担 高 い た め 棄 却、 明 示 2 型 で 命 名 直 接 | `11-midi.md` §2.2, §2.3, §2.4 + `01-dsl.md` §4.1 |
 | Q47 | diagnostics surface 統 一 (audit Phase 2 #10、 #49) | resolved — diagnostics counter (= `overflowCount` 等) を **main 側 だ け で 提 供**、 worklet 側 handle (= `midiIn.diagnostics.X()`) を spec か ら 削 除; 全 channel (= event / message / MIDI) で `node.<kind>.<name>.diagnostics.X()` の 統 一 形 (= 既 Q40 namespaced shape と 整 合)、 「diagnostics は 外 部 観 測」 を declarative 原 則 (= 副 作 用 観 測 は main の 役 割、 worklet `process` body は feedback loop を 持 た な い) と し て 確 立; worklet 内 で の self-throttle pattern が 必 要 な ら main 経 由 で feedback (= 1 周 余 計 だ が 構 造 明 確)、 v1.x.0 で worklet handle へ の `.diagnostics` 後 付 け は additive 可 | `11-midi.md` §4 overflow + `decisions-log.md` Q4-c-iv prose |
 | Q48 | `inspect(blob)` を free function に 留 め る か node method に 動 か す か (audit Phase 2 #9、 #48) | resolved — `inspect(blob: Uint8Array): InspectionResult` を **free function 維 持** (= `@unworklet/core` か ら import)、 node method に 動 か さ な い; `snapshot()` / `restore(blob)` は node 依 存 (= 現 state を 読 む / 書 く) で 必 然 的 に node method、 `inspect` は blob を decode す る pure function で node 不 要 (= preset library tool / server-side blob analyzer / debug script で audio context 起 動 ナ シ で 動 く); 「依 存 性 で 形 が 決 ま る = node 依 存 操 作 は method、 blob-only 操 作 は free function」 を 1 行 ル ー ル と し て 明 文 化、 視 覚 的 対 称 (= snapshot/restore/inspect 揃 い) よ り 依 存 性 の 実 体 通 り の form を 優 先; node method 形 (= `node.inspect(blob)`) は 嘘 の 依 存 性 を user に 強 制 し て fakeNode ハ ッ ク 招 く た め 棄 却 | `05-client.md` §2 |
-| Q49 | worklet 側 sysex emit の data 構 築 経 路 (audit Phase 2 #17 / H9、 #54) | resolved — worklet → main sysex emit を **declared `Buffer<'u8'>` + `length: Node<'i32'>` 経 由 で v1.0.0 完 全 spec**、 sunset は ナ シ; `buffer.u8({ size, name })` を 新 規 構 築 用 byte buffer 専 用 factory と し て 導 入 (= 既 `Buffer<T>` handle と 同 形、 read/write は `Node<'i32'>` で 受 け て 下 位 8 bit を 扱 う、 `Node<'u8'>` 型 は 導 入 し な い で ScalarType 拡 張 ナ シ で 整 合); `MidiEventGraph` sysex variant を `{ type: 'sysex'; data: Buffer<'u8'> \| TypedArrayFieldProxy<'u8'>; length: Node<'i32'>; atSample: Node<'i32'> }` に refine、 ingested proxy を そ の ま ま re-emit (= MIDI thru) も 同 path で 表 現; main 側 `MidiEvent` sysex は そ の ま ま `data: Uint8Array` (= framework が buffer の `data[0..length-1]` を copy し て 届 け る)、 main 側 は length 不 要 (= Uint8Array.length で 取 れ る); `new Uint8Array(...)` 経 路 は 永 久 排 除 (= realtime safety / declarative pattern と 整 合) | `11-midi.md` §2.2, §2.5, §4.3 + `01-dsl.md` §3.2 |
+| Q49 | worklet 側 sysex emit の data 構 築 経 路 (audit Phase 2 #17 / H9、 #54) | resolved — worklet → main sysex emit を **declared `Buffer<'u8'>` + `length: Node<'i32'>` 経 由 で v1.0.0 完 全 spec**、 sunset は ナ シ; `buffer.u8({ size, name })` を 新 規 構 築 用 byte buffer 専 用 factory と し て 導 入 (= 既 `Buffer<T>` handle と 同 形、 read/write は `Node<'i32'>` で 受 け て 下 位 8 bit を 扱 う、 `Node<'u8'>` 型 は 導 入 し な い で ScalarType 拡 張 ナ シ で 整 合); `MidiEventGraph` sysex variant を `{ type: 'sysex'; data: Buffer<'u8'> \| TypedArrayFieldRef<'u8'>; length: Node<'i32'>; atSample: Node<'i32'> }` に refine、 ingested proxy を そ の ま ま re-emit (= MIDI thru) も 同 path で 表 現; main 側 `MidiEvent` sysex は そ の ま ま `data: Uint8Array` (= framework が buffer の `data[0..length-1]` を copy し て 届 け る)、 main 側 は length 不 要 (= Uint8Array.length で 取 れ る); `new Uint8Array(...)` 経 路 は 永 久 排 除 (= realtime safety / declarative pattern と 整 合) | `11-midi.md` §2.2, §2.5, §4.3 + `01-dsl.md` §3.2 |
 | Q31 | onReceive execution contract + bulk copy primitive (audit B1) | resolved — handler runs on audio thread (per Q27-c); audio-thread loops require build-time-constant bounds; `buf.copyFrom(typedArrayField)` for bulk transfer; state-slot-array copy via build-time unroll + `select`/`lt` mask | `02-messaging.md` §1 + `01-dsl.md` §3.2 |
 | Q32 | `emitIf` callable in MIDI / message handler context (audit B2) | resolved — `emitIf` is the single emission primitive across all expression contexts (forSample / forSample.byN, everyNSamples, MIDI handler, message handler, per-block top level); cond accepts `Node<'bool'> \| boolean` so handler-context / per-block unconditional emission is `emitIf(true, payload)`; static-analysis rejects constant-truthy cond inside `forSample` to preserve the Q4-b footgun barrier | `01-dsl.md` §4 + `02-messaging.md` §1 + `11-midi.md` §2.4 |
 | Q33 | Literal lifting in i32 / bool / context (audit B3) | resolved — Q1 拡 張: primitive 引 数 で の literal は context-dependent lift (周 辺 引 数 から `T` 推 論)、 ambiguous case は default `'f32'`、 対 象 type は f32 / f64 / i32 / bool; declaration / 全 lit 等 暗 黙 lift 対 象 外 は scalar constructor (`f32` / `f64` / `i32` / `i64` / `bool`) で explicit; i64 暗 黙 lift ナシ (BigInt 必 要) | `00-foundations.md` §4 + `01-dsl.md` §2 |
@@ -161,7 +162,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 
 **Status:** resolved (multi-port main 側 surface = `node.midi.<name>.*` の body 反 映 + canonical 修 正 は Q40 で 完 成)。
 
-**Decision (Q4-a):** authoritative wording in `11-midi.md` §1 and §3. Summary: unworklet supports both MIDI ingestion and emission. Processors declare involvement via `midiInput({ name, capacity? })` / `midiOutput({ name, capacity? })` (either or both, both omittable). `name` is required (uniform with the other declarations: state / buffer / param / event / message); it drives main-side access (`node.midi.<name>`), snapshot schema-hash identity, and diagnostic / error attribution. The main-thread API is source-agnostic: a low-level `unworkletNode.midi.<name>.send(event, atTime?)` plus a Web MIDI convenience bridge `unworkletNode.midi.<name>.connectFromWebMIDI(input)`. unworklet does not know or care where events originated; routing MIDI from any other source (DAW MIDI bridges, network, hardware, application logic) is the consumer's responsibility.
+**Decision (Q4-a):** authoritative wording in `11-midi.md` §1 and §3. Summary: unworklet supports both MIDI ingestion and emission. Processors declare involvement via `midiInput({ name, capacity? })` / `midiOutput({ name, capacity? })` (either or both, both omittable). `name` is required (uniform with the other declarations: state / buffer / param / event / message); it drives main-side access (`node.midi.<name>`), snapshot schema-hash identity, and diagnostic / error attribution. The main-thread API is source-agnostic: a low-level `node.midi.<name>.send(event, atTime?)` plus a Web MIDI convenience bridge `node.midi.<name>.connectFromWebMIDI(input)` (canonical namespaced form per Q40). unworklet does not know or care where events originated; routing MIDI from any other source (DAW MIDI bridges, network, hardware, application logic) is the consumer's responsibility.
 
 **Decision (Q4-b):** authoritative wording in `11-midi.md` §2 and §4. Summary:
 
@@ -173,7 +174,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 **Decision (Q4-c):** authoritative wording in `11-midi.md` §4. Summary:
 
 - **Capacity (Q4-c-i):** ring buffers default to **256 slots** (8 bytes each = 2 KB). Override via `midiInput({ name, capacity })` / `midiOutput({ name, capacity })` (`name` required, `capacity` optional). Sized for typical use; dense MIDI / sequencer / network-driven loads override.
-- **`atSample` semantics (Q4-c-ii):** **block-local** (0 through `renderQuantum - 1`); stored as `u32` for headroom. Global timestamps are derived consumer-side via `audioContext.currentTime + atSample / sampleRate`.
+- **`atSample` semantics (Q4-c-ii):** **block-local** (0 through `SAMPLES_PER_BLOCK - 1`); stored as `u32` for headroom. Global timestamps are derived consumer-side via `audioContext.currentTime + atSample / sampleRate`.
 - **Sysex (Q4-c-iii):** **full support in v1.0.0**. Variable-length sysex bodies live in a separate variable-length content buffer; the main ring-buffer slot for a sysex event holds the status byte plus an index into the content buffer.
 - **Overflow (Q4-c-iv):** **drop-oldest + diagnostics counter**. The oldest event is overwritten on overflow, and a monotonic `overflowCount` counter is exposed on the main thread via `node.midi.<name>.diagnostics.overflowCount()` for consumer monitoring (uniform with event / message diagnostics — see Q47; the original 11-midi prose referenced a worklet-side `midiIn.diagnostics` surface which Q47 removes).
 
@@ -670,7 +671,7 @@ The following candidates for the process body's structure were considered during
 
 `event<T>(options): EventDecl<T>` declares a typed event channel (worklet → main). Authored at declaration scope; emitted via **method form on the declaration: `eventDecl.emitIf(cond, payload)`** — uniform with MIDI Q4-b's `midiOut.emitIf(cond, event)` (authoritative wording in `11-midi.md` §2.4). The set of expression contexts where `emitIf` can be called (forSample callbacks, MIDI / message handler bodies, etc.) is finalized at Q32.
 
-- **Schema**: user-defined record type `T`. The payload always carries `atSample: number` (block-local sample-offset, `0..renderQuantum-1`) — uniform with MIDI Q4-c.
+- **Schema**: user-defined record type `T`. The payload always carries `atSample: number` (block-local sample-offset, `0..SAMPLES_PER_BLOCK-1`) — uniform with MIDI Q4-c.
 - **`emitIf` only, no plain `emit`**: same structural-footgun-elimination as MIDI Q4-b. Plain `eventDecl.emit(...)` is rejected at the type level; only the `.emitIf(cond, payload)` method form exists on the declaration.
 - **Capacity**: ringbuffer default 256 slots, override via `event<T>({ name, capacity })`. Slot size depends on the largest payload variant; variable-length payload fields share the MIDI sysex pattern (separate content buffer + index in the slot) — see Q27-e.
 - **Overflow**: drop-oldest + monotonic `overflowCount` exposed via `node.events.<name>.diagnostics.overflowCount()` — uniform with MIDI Q4-c.
@@ -867,7 +868,7 @@ help: <1-3 sentence で 修 正 方 針>
 note: see `decisions-log.md` <Q-ref> for the underlying rule.
 ```
 
-- **heading**: `error[unworklet/<stable-id>]: <summary>` — `<stable-id>` は error 種 別 を 表 す stable な ID (= `constant-truthy-emitif` / `output-coverage` / `illegal-stride` 等)、 grep / IDE filter / doc 検 索 用
+- **heading**: `error[unworklet/<stable-id>]: <summary>` — `<stable-id>` は error 種 別 を 表 す stable な ID (= `constant-truthy-emitif` / `scope-violation` / `illegal-stride` / `bounded-loop` / `memory-budget` 等)、 grep / IDE filter / doc 検 索 用
 - **source location**: `--> <file>:<line>:<col>` (= Rust 慣 行) + 1〜3 行 の code excerpt + caret で 該 当 範 囲 明 示
 - **help section**: `help:` prefix + 1〜3 sentence で 修 正 方 針 + 修 正 後 code snippet
 - **note section**: `note: see <decisions-log link>` で 仕 様 根 拠 へ cross-ref
@@ -1303,7 +1304,7 @@ emitIf(cond: Node<'bool'> | boolean, payload: T): void
 
 **Decision (Q37-b — forSample.byN 中 で の out.set も 同 じ ル ー ル):**
 
-`forSample.byN(stride, callback)` 中 で の `audioOut.set(c, i, v)` は legal。 stride で 飛 ば し た sample 位 置 は (= 別 forSample で 書 か な け れ ば) silence。 `audioOut.storeVec(c, i, vec)` (= vector を 一 度 に 書 く form) も 並 行 で 使 用 可、 SIMD 計 算 で 4 sample 一 度 に 書 き た い 場 合 用。
+`forSample.byN(stride, callback)` 中 で の `audioOut.set(c, i, v)` は legal。 stride で 飛 ば し た sample 位 置 は (= 別 forSample で 書 か な け れ ば) silence。 (= `audioOut.storeVec` は v1.0.0 SIMD MVP (Q3-b) に 含 ま れ ず、 `forSample.byN` 中 の audio output 書 き 込 み は scalar `audioOut.set` を 反 復 で 行 う。 必 要 性 出 れ ば v1.x.0 で additive 検 討。)
 
 stride 制 約: 1, 2, 4, 8, 16, 32, 64, 128 (= `SAMPLES_PER_BLOCK` = 128 を 割 る 値) 限 定。 そ れ 以 外 (= `forSample.byN(5, ...)` 等) は `forSample.byN` を 書 い た 行 で 静 的 解 析 エ ラ ー (= 端 数 sample が 中 途 半 端 に 残 る の を 防 ぐ)。
 
@@ -1859,7 +1860,7 @@ const inspected = inspect(blob);                // ← free function (= import �
 
 ### Problem
 
-Q46 で `MidiEventGraph` (= worklet 側 emit 型) の sysex variant を `{ type: 'sysex'; data: TypedArrayFieldProxy<'u8'>; atSample: Node<'i32'> }` と し て 整 備 し た が、 worklet 内 で **新 規 に 動 的 な バ イ ト 列 を 構 築** す る path が 未 spec だ っ た:
+Q46 で `MidiEventGraph` (= worklet 側 emit 型) の sysex variant を `{ type: 'sysex'; data: TypedArrayFieldRef<'u8'>; atSample: Node<'i32'> }` と し て 整 備 し た が、 worklet 内 で **新 規 に 動 的 な バ イ ト 列 を 構 築** す る path が 未 spec だ っ た:
 
 - `new Uint8Array(...)` = realtime safety 違 反 (= heap alloc 禁 止) で 即 dead
 - ingest し た sysex を re-emit (= MIDI thru) な ら proxy 参 照 を そ の ま ま 渡 す 経 路 は 既 Q39 で 表 現 可
@@ -1876,7 +1877,7 @@ worklet 側 sysex emit を **declared `Buffer<'u8'>` + `length: Node<'i32'>` 経
 1. **`buffer.u8({ size, name })` を 新 規 factory と し て 導 入**: 既 `Buffer<T>` handle と 同 形 (`read(idx)` / `write(idx, v)` / `copyFrom(src)` / `size` / `name`)、 byte 値 は `Node<'i32'>` で 受 け て 下 位 8 bit を 扱 う、 `Node<'u8'>` 型 は 導 入 ナ シ で ScalarType 拡 張 不 要
 2. **`MidiEventGraph` sysex variant を refine**:
    ```typescript
-   { type: 'sysex'; data: Buffer<'u8'> | TypedArrayFieldProxy<'u8'>; length: Node<'i32'>; atSample: Node<'i32'> }
+   { type: 'sysex'; data: Buffer<'u8'> | TypedArrayFieldRef<'u8'>; length: Node<'i32'>; atSample: Node<'i32'> }
    ```
    - `data` を union 化 し て 「新 規 構 築 = Buffer<'u8'>」 「ingest re-emit = proxy」 両 path を 1 variant で 表 現
    - `length: Node<'i32'>` で 実 送 信 長 を 指 定 (= buffer は build-time 固 定 size box、 動 的 長 は length で 表 現)
@@ -1894,7 +1895,7 @@ worklet 側 sysex emit を **declared `Buffer<'u8'>` + `length: Node<'i32'>` 経
 
 ### Side effects
 
-- 11-midi.md §2.2: `MidiEventGraph` sysex variant に `data: Buffer<'u8'> | TypedArrayFieldProxy<'u8'>` + `length: Node<'i32'>` を 入 れ る、 「Sysex shape asymmetry」 段 落 で main / worklet 非 対 称 を 1 段 落 で 説 明
+- 11-midi.md §2.2: `MidiEventGraph` sysex variant に `data: Buffer<'u8'> | TypedArrayFieldRef<'u8'>` + `length: Node<'i32'>` を 入 れ る、 「Sysex shape asymmetry」 段 落 で main / worklet 非 対 称 を 1 段 落 で 説 明
 - 11-midi.md §2.5 (新 規 section): 「Emitting sysex (worklet → main)」 で **declared buffer 経 由 + 実 長 指 定** / **ingested proxy 経 由 で thru** の 2 path を code example 付 き で spec、 `new Uint8Array(...)` が realtime-safety 違 反 で 永 久 排 除 で あ る こと を 明 文 化
 - 11-midi.md §4.3: 「v1.0.0 ships full sysex support」 を 「**both directions** (ingestion + emission)」 に 拡 張、 §2.5 と Q49 へ の cross-ref
 - 01-dsl.md §3.2: buffer factory に `buffer.u8` を 追 加、 「sysex emit 専 用、 byte 値 は Node<'i32'> で 扱 う」 旨 を 1 段 落 で 説 明
@@ -2040,7 +2041,7 @@ import { replaceProcessor } from '@unworklet/core';
 
 const result = await replaceProcessor(oldNode, NewProcessor);
 
-type ReplaceResult<New extends ProcessorDef> =
+type ReplaceResult<New> =
   | { ok: true;  node: UnworkletNode<New>; restored: number; skipped: string[]; missing: string[] }
   | { ok: false; node: UnworkletNode<New>; error: { step; message; cause }; restored: number; skipped: string[]; missing: string[] };
 ```
@@ -2082,4 +2083,39 @@ accumulation warning: 同 AudioContext 内 で N 回 swap 累 積 で `console.w
 - accumulation warning の threshold (= 何 回 swap で `console.warn` を 出 す か) と message 文 言 は `05-client.md` §8.5 で 詳 細
 - `replaceProcessor` で 旧 node の `process()` を false return さ せ る signaling 経 路 の 詳 細 (= 旧 instance の eventual GC を 促 す) は `04-worklet-runtime.md` §8 で 詳 細
 - live coding / visual programming の canonical recipe を 別 docs (= 12-canonical-examples.md か 新 recipe 集) に 追 加 す る か は v1.0.0 docs polish 段 階 で 判 断
+
+## Q51 — per-block sample-position primitive 開 放 + JUCE / AudioWorklet process メ ン タ ル 明 文 化 (audit followup)
+
+**Status:** resolved。
+
+### Problem
+
+audit で 01-dsl.md L34 prose に 「The JS literal `0` lifts to `Node<'i32'>` per Q36-a and is allowed at per-block top level (e.g. `param.at(0)` reads the block-start value; the equivalent literal positions for `audioIn` / `audioOut` are not opened by Q36 and remain a separate decision)」 と あ り、 audio I/O sample-position primitive の per-block 開 放 が 「separate decision」 と し て 宙 浮 き と 判 明。 加 え て docs 全 体 で 「JUCE AudioProcessor::processBlock / AudioWorklet `process` と 同 じ mental model」 と い う core stance が 1 箇 所 に 明 文 化 さ れ て お ら ず (= decisions-log Q37 prose と 00-foundations / 01-dsl の top-to-bottom 言 及 が 散 在)、 余 湖 さ ん が 「過 去 何 回 か 説 明 し て い る 」 mental model が 仕 様 と し て 引 け な い 状 態 だ っ た。
+
+### Decision
+
+**`audioIn.at(c, 0)` / `audioOut.set(c, 0, v)` を per-block で 呼 び 可 と し て open**。 Q36-a で 既 method signature が `i: Node<'i32'> | number` を 受 け 入 れ て お り、 `param.at(0)` と 対 称 に 開 放。 旧 prose 「the equivalent literal positions for audioIn / audioOut are not opened by Q36 and remain a separate decision」 を 撤 去。
+
+同 時 に **00-foundations.md §3 「Process body」 entry を 強 化** し て、 unworklet の core mental model を 1 段 落 で 明 文 化:
+
+> **Mental model — same as JUCE / AudioWorklet `process`.** The `process` body is read top-to-bottom: code at the top of the body runs first, then any subsequent statement runs in source order, until the end. There is no fixed phase boundary that the author has to put their code on either side of, no global ordering rule beyond source order, and no restriction on how many `forSample` loops the body contains. Authors write zero, one, or many `forSample` invocations; per-block computation freely interleaves with them; the same output sample can be written multiple times (last write wins per Q37); the same input sample can be read in per-block code and again inside a `forSample` callback. This is the **AudioWorkletProcessor.process / JUCE AudioProcessor::processBlock** mental model, preserved as-is — `forSample` is just a loop primitive over the block, not a phase the framework reorders or constrains.
+
+つ ま り 構 造 ル ー ル は 1 つ だ け = **declarations は declaration scope (= body 先 頭) 限 定**。 そ れ 以 外 (= 順 序、 重 ね 書 き、 sample-position primitive の 呼 び 位 置) は 親 ホ ス ト と 完 全 一 致。
+
+### Why this and not alternatives
+
+- **`audioIn` / `audioOut` の per-block 0 literal を permanently not opened 棄 却**: 余 湖 さ ん の core mental model (= 「JUCE / AudioWorklet と 同 じ」) と 真 逆、 `param.at(0)` と の 非 対 称 が user mental に 食 い 込 む、 「block 開 始 input level 検 査 → adaptive 処 理」 等 の natural な use case を artificial に 禁 止 (= memory `feedback_no-artificial-constraint.md`)
+- **v1.x.0 additive で 検 討 棄 却**: 既 Q36-a の method signature で 既 受 け 入 れ ら れ て お り、 v1.0.0 で 明 示 的 に 開 放 す る か 禁 止 す る か decide す る だ け、 後 で 開 放 は 「な ぜ v1.0.0 で 禁 止 し た か」 を 後 付 け で justify 必 要 = no preemptive defer (memory `feedback_no-preemptive-defer.md`)
+- **mental model 明 文 化 を 省 略 棄 却**: 余 湖 さ ん 過 去 数 回 説 明 し て お り 、 仕 様 docs に 引 け る 形 で 明 文 化 し な い と 同 質 の audit finding が 繰 り 返 す (= 「artificial 制 約 を framework が 持 ち 込 む」 misread の 温 床)
+
+### Side effects
+
+- **00-foundations.md §3**: 「Process body」 entry に mental model 1 段 落 追 加 (= JUCE / AudioWorklet 整 合 を 明 言)、 「Sample-offset (i)」 entry を update (= `Node<'i32'>` `i` alias は forSample-scoped、 primitive 自 体 は per-block で literal で 呼 べ る)、 「Per-block phase」 bullet を update (= sample-position primitive を per-block で 呼 べ る、 literal で sample-offset 指 定)
+- **01-dsl.md §1**: L34 prose を rewrite (= 「remain a separate decision」 撤 去、 per-block で sample-position primitive を literal で 呼 び 可、 mental model 言 及 追 加)
+- canonical example 影 響 ナ シ (verified — 既 canonical example は forSample 内 で `i` 使 用、 per-block で の literal 呼 び 出 し は 既 example で は 出 て こ な い、 整 合 違 反 ナ シ)
+
+### Open follow-up
+
+- per-block で の `audioIn.at(c, k)` (= `k` が 0 以 外 の compile-time-constant literal) の 範 囲 制 約 と 静 的 解 析 (= `[0, SAMPLES_PER_BLOCK - 1]` 範 囲 check) は 03-compiler.md §2.4 の static analysis entry で incrementally
+- per-block 呼 び の canonical use case (= block-start input level 検 査 + adaptive 処 理) を 12-canonical-examples.md か 新 recipe で 1 例 追 加 す る か は v1.0.0 docs polish 段 階 で 判 断
 

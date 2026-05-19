@@ -1,4 +1,4 @@
-# 05 — Client (`@unworklet/client`)
+# 05 — Client (`@unworklet/core`)
 
 The main-thread API. Wraps the standard `AudioWorkletNode` with a typed surface for params, messages, and events, and manages module loading, readiness, and disposal.
 
@@ -66,6 +66,7 @@ The `.state.<name>` surface is **read-only on main**. Writing to a worklet-side 
   type RestoreResult =
     | {
         ok: true;
+        applied:  string[];     // migration step labels that successfully ran (in order); empty when schema hash matched and no migration was needed
         restored: number;       // slots successfully written
         skipped:  string[];     // slot names that existed in the blob but mismatched type/size in the current schema
         missing:  string[];     // current schema slots that the blob did not carry — initialized from declaration default
@@ -77,6 +78,7 @@ The `.state.<name>` surface is **read-only on main**. Writing to a worklet-side 
           message: string;      // error message extracted from the thrown value
           cause:   unknown;     // the thrown value itself (typically an Error instance)
         };
+        applied:  string[];     // migration steps that ran successfully before the failing step
         restored: number;
         skipped:  string[];
         missing:  string[];
@@ -313,10 +315,11 @@ import { replaceProcessor } from '@unworklet/core';
 
 const result = await replaceProcessor(oldNode, NewProcessor);
 
-type ReplaceResult<New extends ProcessorDef> =
+type ReplaceResult<New> =
   | {
       ok: true;
       node:     UnworkletNode<New>;   // freshly-typed wrapper for the new processor
+      applied:  string[];
       restored: number;
       skipped:  string[];
       missing:  string[];
@@ -325,6 +328,7 @@ type ReplaceResult<New extends ProcessorDef> =
       ok: false;
       node:     UnworkletNode<New>;   // still returned; runs on declaration defaults
       error:    { step: string; message: string; cause: unknown };
+      applied:  string[];
       restored: number;
       skipped:  string[];
       missing:  string[];

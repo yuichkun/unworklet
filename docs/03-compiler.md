@@ -35,9 +35,9 @@ The body executes top-to-bottom; the framework recognises four phase boundaries:
 
 1. **Declaration scope** — the top of the `defineProcessor` body, before `return { process: ... }`. New `state.*`, `buffer.*`, `param.*`, `audioInput`, `audioOutput`, and `defineSubgraph` instantiations are recorded as graph slots. Each declaration registers a `name` (when supplied) for later snapshot identity (see `01-dsl.md` §8).
 
-2. **Per-block phase (`process` body top level)** — the framework calls the returned `process` lambda. Statements at the top level of the body (= outside any `forSample`) are recorded as the per-block phase: they emit code that runs once at the start of every render quantum. `forSample(...)` invocations within the body each delimit a per-sample phase (recorded as a separate phase boundary). Phases (top-level per-block statements + each `forSample` invocation) execute in declared (source) order within the render quantum.
+2. **Process body (top level)** — the framework calls the returned `process` lambda. Statements at the top level of the body emit code that runs once at the start of every render quantum. `forSample(...)` invocations within the body capture a per-sample sub-loop in the AST. Source order is preserved at the AST and at runtime — top-level statements and `forSample` invocations execute in declared order within the render quantum, with no separate phase-segmentation step (see `00-foundations.md` §3 "Process body" for the JUCE / AudioWorklet mental model).
 
-3. **Per-sample phase (`forSample` callback)** — the callback is invoked once during graph capture with a `Node<'i32'>` proxy bound as `i`. Primitive calls inside the callback construct AST nodes. The resulting AST is the per-sample loop body for that phase. `forSample.byN(stride, callback)` is identical except that the recorded AST is tagged with the stride for emission as a `stride`-step loop.
+3. **`forSample` callback (per-sample sub-loop)** — the callback is invoked once during graph capture with a `Node<'i32'>` proxy bound as `i`. Primitive calls inside the callback construct AST nodes. The resulting AST is the per-sample loop body for that sub-loop. `forSample.byN(stride, callback)` is identical except that the recorded AST is tagged with the stride for emission as a `stride`-step loop.
 
 4. **Sub-rate callback (`everyNSamples`)** — invoked from inside a `forSample` callback. Recorded as a sub-block tagged with the divisor `N` for sub-rate emission (see `01-dsl.md` §9).
 
@@ -48,7 +48,7 @@ For each primitive call:
 - **Arithmetic / math / control / type conversion**: a typed AST node with the operator and operand handles, returning a fresh `Node<T>` of the inferred output type.
 - **`load` / `store`**: a memory-access AST node referencing the corresponding slot.
 - **Buffer access (`buf.read` / `buf.write` / `buf.readInterpolated`)**: an indexed access AST node; the index argument is itself a `Node<'i32'>` (typically a ring-buffer write head).
-- **Audio I/O (`audioIn.at(c, i)` / `audioOut.set(c, i, v)`)**: a sample-position-aware AST node carrying the channel index, the sample-offset `i`, and (for `set`) the value to write. Valid only inside `forSample` callbacks where `i` is in scope.
+- **Audio I/O (`audioIn.at(c, i)` / `audioOut.set(c, i, v)`)**: a sample-position-aware AST node carrying the channel index, the sample-offset `i`, and (for `set`) the value to write. The sample-offset is `Node<'i32'> | number`: the `Node<'i32'>` form binds the surrounding `forSample` callback's loop counter, and JS-literal offsets (Q36-a) accept the primitive at any lexical position — at the per-block top level this uses literal `0` for block-start access (Q51).
 - **Param access (`param.at(i)` / `param.at(0)`)**: an AST node carrying the param slot reference and the sample-offset. `param.at(i)` is used inside `forSample` callbacks; `param.at(0)` at the per-block top level reads the block-start value.
 - **`select(cond, whenTrue, whenFalse)`**: a control-flow AST node; both branches are evaluated as graph nodes (no JS control flow over `Node<'bool'>`).
 - **L1 helper calls**: inlined at the call site; the helper body executes with the same proxies, contributing AST nodes to the parent graph.
@@ -72,8 +72,7 @@ The branded `Node<T>` type rejects JavaScript operators. The IDE surfaces these 
 The framework throws structured errors when proxy evaluation reaches a violation that the type system cannot express:
 
 - *Scope violations*: a declaration call (`state.f32(...)`, `audioInput(...)`, `defineSubgraph(...)`) inside expression scope (a `process` body, a `forSample` callback, or an L1 helper).
-- *Required-call violations*: a declared `audioOutput` whose `set(c, i, v)` is never called on every code path of every render quantum; a snapshot-using processor with a declaration missing a required `name`.
-- *Duplicate writes*: the same channel × same sample-offset written twice within one phase.
+- *Missing `name`*: a snapshot-using processor with a declaration missing a required `name` (output coverage and duplicate-write checks were retired per Q37 — unwritten samples are silence, duplicate writes use source-order semantics, both legal).
 - *Constraint violations*: `forSample.byN` called with a non-constant stride; `vec.lane(i)` called with a non-constant `i`; etc.
 
 Errors carry the source location (TypeScript file + line + column when source maps are in scope — see §7) and a refactor hint pointing at the legal pattern.
@@ -133,7 +132,7 @@ note: see `decisions-log.md` Q32-c for the constant-truthy rule.
 
 Components:
 
-- **heading** — `error[unworklet/<stable-id>]: <summary>`. `<stable-id>` is a kebab-case error identifier (e.g. `constant-truthy-emitif`, `output-coverage`, `illegal-stride`, `bounded-loop`) usable for grep, IDE filtering, and doc lookup.
+- **heading** — `error[unworklet/<stable-id>]: <summary>`. `<stable-id>` is a kebab-case error identifier (e.g. `constant-truthy-emitif`, `scope-violation`, `illegal-stride`, `bounded-loop`, `memory-budget`) usable for grep, IDE filtering, and doc lookup.
 - **source location** — `--> <file>:<line>:<col>` followed by a 1–3 line excerpt with caret/tilde markers indicating the offending span.
 - **help section** — `help:` prefix + a 1–3 sentence direction + a corrected code snippet (1–3 lines).
 - **note section** — `note: see <decisions-log Q-ref>` linking to the underlying ratified rule.

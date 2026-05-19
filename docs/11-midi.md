@@ -13,8 +13,8 @@ written
 A processor declares MIDI involvement explicitly in declaration scope. Two declarations exist — `midiInput()` and `midiOutput()` — and either can be omitted. A processor that calls neither has no MIDI surface at all (the concepts are absent from its API and IDE completion).
 
 ```typescript
-midiInput (options: { name: string; capacity?: number }): MidiInputHandle;
-midiOutput(options: { name: string; capacity?: number }): MidiOutputHandle;
+midiInput (options: { name: string; capacity?: Capacity }): MidiInputHandle;
+midiOutput(options: { name: string; capacity?: Capacity }): MidiOutputHandle;
 ```
 
 ```typescript
@@ -46,7 +46,7 @@ const audioOnly = defineProcessor((ctx) => {
 Options:
 
 - **`name: string`** — required. Used as the identifier in three places: (a) main-side access — `node.midi.<name>` resolves to this declaration's surface (`send` / `connectFromWebMIDI` / `onEvent` / `diagnostics.overflowCount`); (b) snapshot schema-hash identity — declarations participate in the structural hash that drives migration matching, even though the MIDI ringbuffer state itself is transient; (c) error and diagnostic messages — `midiInput 'sync' overflowed: 12 events dropped` is more actionable than `midiInput[0] overflowed`. Required for the same reasons as `name` on `state` / `buffer` / `param` / `event` / `message` declarations: the framework refuses index-based identity to keep declaration order non-load-bearing.
-- **`capacity?: number`** — ringbuffer slot count. Default 256 (per Q4-c-i). Override for dense MIDI / sequencer / network-driven loads.
+- **`capacity?: Capacity`** — ringbuffer slot count. Default `CAPACITY_256` (per Q4-c-i). Override via the top-level `CAPACITY_<N>` constants for dense MIDI / sequencer / network-driven loads. The `Capacity` literal-union type (= `typeof CAPACITY_16 | ... | typeof CAPACITY_16384`) is enforced at TypeScript level so arbitrary integer literals are rejected at IDE time (Q44).
 
 The exact shape of the `midiInput` / `midiOutput` handles (event subscription on the worklet side, emission primitives, etc.) is settled in §2 and §4.
 
@@ -106,12 +106,12 @@ type MidiEventGraph =
   | { type: 'channelPressure'; channel: Node<'i32'>; pressure: Node<'i32'>;                        atSample: Node<'i32'> }
   | { type: 'aftertouch';      channel: Node<'i32'>; note: Node<'i32'>; pressure: Node<'i32'>;     atSample: Node<'i32'> }
   | { type: 'systemRealtime';  status: Node<'i32'>;                                                atSample: Node<'i32'> }
-  | { type: 'sysex';           data: Buffer<'u8'> | TypedArrayFieldProxy<'u8'>; length: Node<'i32'>;     atSample: Node<'i32'> };
+  | { type: 'sysex';           data: Buffer<'u8'> | TypedArrayFieldRef<'u8'>; length: Node<'i32'>;     atSample: Node<'i32'> };
 ```
 
 The two types share variant tags and field names — only field types differ. Emit-side accepts number / boolean literals through the Q33 literal-lift rule (e.g. `atSample: 0` lifts to `Node<'i32'>` with value 0), so authors write the same literal numbers they would write in `MidiEvent`. Reading a field in a worklet handler returns a `Node<'i32'>` graph value usable in graph expressions: `noteState.store(note)` works because `note: Node<'i32'>` is what `state.i32.store` expects.
 
-**Sysex shape asymmetry**: the sysex variant carries an extra `length: Node<'i32'>` field on the worklet emit side that is absent from `MidiEvent`. This is because the worklet has no dynamic allocation — bytes live in a build-time-fixed-size `Buffer<'u8'>` (declared via `buffer.u8(...)`; see `01-dsl.md` §3.2) or in an ingested `TypedArrayFieldProxy<'u8'>` (= MIDI thru), and `length` tells the framework how many bytes of the buffer to ship. The framework copies `data[0 .. length-1]` into a fresh `Uint8Array` for main-side delivery, so main-side handlers receive the natural `data: Uint8Array` shape with no `length` field needed (Q49).
+**Sysex shape asymmetry**: the sysex variant carries an extra `length: Node<'i32'>` field on the worklet emit side that is absent from `MidiEvent`. This is because the worklet has no dynamic allocation — bytes live in a build-time-fixed-size `Buffer<'u8'>` (declared via `buffer.u8(...)`; see `01-dsl.md` §3.2) or in an ingested `TypedArrayFieldRef<'u8'>` (= MIDI thru), and `length` tells the framework how many bytes of the buffer to ship. The framework copies `data[0 .. length-1]` into a fresh `Uint8Array` for main-side delivery, so main-side handlers receive the natural `data: Uint8Array` shape with no `length` field needed (Q49).
 
 The exact set of variants and their fields is closed at v1.0.0. New variants (e.g. MIDI 2.0 high-resolution events) can be added additively in v1.x.0; the `MidiEvent` / `MidiEventGraph` pair grows together.
 
@@ -246,10 +246,10 @@ defineProcessor((ctx) => {
 
 `buffer.u8` exposes the same `Buffer<T>` surface as other element types (`write(idx, v)`, `read(idx)`, `copyFrom(src)`, `size`, `name`); byte values flow through `Node<'i32'>` (the lower 8 bits are stored). The buffer reserves `size` bytes in linear memory at compile time and the `length` parameter on each emit selects how many of those bytes form the actual sysex body — header / trailer bytes (e.g. `0xF0` ... `0xF7`) are the author's responsibility, as they would be on a hardware MIDI line.
 
-**Ingested sysex re-emitted** (= MIDI thru / sysex echo / pass-through filters) uses the `TypedArrayFieldProxy<'u8'>` received by the inbound handler. The proxy is read-only but can be passed through `emitIf` directly; the framework re-encodes from the source buffer:
+**Ingested sysex re-emitted** (= MIDI thru / sysex echo / pass-through filters) uses the `TypedArrayFieldRef<'u8'>` received by the inbound handler. The proxy is read-only but can be passed through `emitIf` directly; the framework re-encodes from the source buffer:
 
 ```typescript
-midiIn.onEvent('sysex', ({ data, atSample }) => {                       // data: TypedArrayFieldProxy<'u8'>
+midiIn.onEvent('sysex', ({ data, atSample }) => {                       // data: TypedArrayFieldRef<'u8'>
   midiOut.emitIf(true, {
     type:     'sysex',
     data:     data,                                                      // proxy passed through
@@ -259,7 +259,7 @@ midiIn.onEvent('sysex', ({ data, atSample }) => {                       // data:
 });
 ```
 
-The `data` argument therefore accepts the union `Buffer<'u8'> | TypedArrayFieldProxy<'u8'>` (§2.2): authored buffers for new construction, proxies for thru. There is no path to construct sysex bytes through any other surface (no `Uint8Array` literals, no `new Uint8Array(...)`) — the build-time-fixed `Buffer<'u8'>` is the single primitive for new content.
+The `data` argument therefore accepts the union `Buffer<'u8'> | TypedArrayFieldRef<'u8'>` (§2.2): authored buffers for new construction, proxies for thru. There is no path to construct sysex bytes through any other surface (no `Uint8Array` literals, no `new Uint8Array(...)`) — the build-time-fixed `Buffer<'u8'>` is the single primitive for new content.
 
 ## 3. Main-thread integration
 
@@ -270,11 +270,11 @@ unworklet exposes a source-agnostic main-thread API. Any code that produces a MI
 ```typescript
 // (1) Standard Web MIDI bridge — convenience sugar.
 //     Internally wires MIDIInput events into (2) .send().
-unworkletNode.midi.<name>.connectFromWebMIDI(input: MIDIInput): void;
+node.midi.<name>.connectFromWebMIDI(input: MIDIInput): void;
 
 // (2) Source-agnostic injection.
 //     Anyone (Web MIDI subscriber, application logic, network bridge, etc.) calls this.
-unworkletNode.midi.<name>.send(event: MidiEvent, atTime?: number): void;
+node.midi.<name>.send(event: MidiEvent, atTime?: number): void;
 ```
 
 `<name>` matches the `name` passed to the worklet-side `midiInput({ name })` declaration. The same namespaced shape applies to every `midiInput` declaration; multi-port processors expose one sub-surface per declared port (Q40, `decisions-log.md`).
@@ -285,29 +285,29 @@ unworkletNode.midi.<name>.send(event: MidiEvent, atTime?: number): void;
 // Web MIDI input device → worklet (single-port, name = 'main')
 const access = await navigator.requestMIDIAccess();
 const input  = access.inputs.values().next().value;
-unworkletNode.midi.main.connectFromWebMIDI(input);
+node.midi.main.connectFromWebMIDI(input);
 
 // Application-generated event
 button.addEventListener('click', () => {
-  unworkletNode.midi.main.send({ type: 'noteOn', channel: 0, note: 60, velocity: 127 });
+  node.midi.main.send({ type: 'noteOn', channel: 0, note: 60, velocity: 127 });
 });
 
 // Network message → MIDI
 ws.onmessage = (msg) => {
-  unworkletNode.midi.main.send(parseFromNetwork(msg.data), audioCtx.currentTime + 0.05);
+  node.midi.main.send(parseFromNetwork(msg.data), audioCtx.currentTime + 0.05);
 };
 
 // Multi-port: keyboard + controller
 const kbdAccess = (await navigator.requestMIDIAccess()).inputs.get('keyboard-id');
-unworkletNode.midi.keyboard.connectFromWebMIDI(kbdAccess);
-unworkletNode.midi.controller.connectFromWebMIDI(controllerInput);
+node.midi.keyboard.connectFromWebMIDI(kbdAccess);
+node.midi.controller.connectFromWebMIDI(controllerInput);
 ```
 
 The worklet itself does not distinguish between sources within a port; the audio thread sees an ordered ringbuffer per port of MIDI events with sample-offsets and dispatches them through the user-defined `midiIn.onEvent(handler)` (§2).
 
 ### 3.3 Outbound direction
 
-For processors that declared `midiOutput({ name })`, the main thread subscribes per port via `unworkletNode.midi.<name>.onEvent(type, handler)`. Typical use is to forward emitted MIDI to a Web MIDI output device or to application logic. Diagnostics are exposed at `unworkletNode.midi.<name>.diagnostics.overflowCount()`.
+For processors that declared `midiOutput({ name })`, the main thread subscribes per port via `node.midi.<name>.onEvent(type, handler)`. Typical use is to forward emitted MIDI to a Web MIDI output device or to application logic. Diagnostics are exposed at `node.midi.<name>.diagnostics.overflowCount()`.
 
 ## 4. Wire format
 
@@ -330,7 +330,7 @@ Pointers into the ring buffer are slot-indexed (`head` and `tail` increment by 1
 
 A handler subscribed via `midiIn.onEvent` fires at the sample identified by `atSample`, not at the block boundary — sample accuracy is preserved end-to-end. A consumer that needs an absolute timestamp can derive it from `audioContext.currentTime + atSample / sampleRate`.
 
-The compiler converts the `atTime` parameter passed to `unworkletNode.midi.<name>.send(event, atTime)` into the corresponding block-local `atSample` value at injection time.
+The compiler converts the `atTime` parameter passed to `node.midi.<name>.send(event, atTime)` into the corresponding block-local `atSample` value at injection time.
 
 ### 4.3 Sysex (variable-length events)
 
@@ -344,7 +344,7 @@ sysex content buffer (separate, variable-length):
 | length (u32) | data (length bytes) | length (u32) | data (length bytes) | ...
 ```
 
-v1.0.0 ships full sysex support in **both directions** — ingestion (main → worklet, structured as a `TypedArrayFieldProxy<'u8'>` in the inbound handler) and emission (worklet → main, sourced from either a declared `Buffer<'u8'>` for newly-constructed content or a proxy for thru / re-emit; see §2.5 and Q49). The sysex content buffer has its own capacity and overflow handling consistent with §4.5.
+v1.0.0 ships full sysex support in **both directions** — ingestion (main → worklet, structured as a `TypedArrayFieldRef<'u8'>` in the inbound handler) and emission (worklet → main, sourced from either a declared `Buffer<'u8'>` for newly-constructed content or a proxy for thru / re-emit; see §2.5 and Q49). The sysex content buffer has its own capacity and overflow handling consistent with §4.5.
 
 ### 4.4 Transport
 

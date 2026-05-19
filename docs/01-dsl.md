@@ -31,7 +31,7 @@ A `process` body has **two execution phases distinguished by lexical position**:
 
 The body is read **top-to-bottom**: each statement (whether direct per-block code or a `forSample` invocation) executes in declared (source) order. Per-block code can interleave freely with `forSample` invocations — per-block setup → per-sample work → more per-block code → another `forSample` → … — all valid.
 
-Sample-position primitives (`audioIn.at(c, i)`, `audioOut.set(c, i, v)`, `param.at(i)`) take an `i: Node<'i32'> | number`. A `Node<'i32'>` `i` originates from a `forSample` callback parameter and is in scope only inside that callback — using it outside is a TypeScript reference error. The JS literal `0` lifts to `Node<'i32'>` per Q36-a and is allowed at per-block top level (e.g. `param.at(0)` reads the block-start value; the equivalent literal positions for `audioIn` / `audioOut` are not opened by Q36 and remain a separate decision). There is no sugar form; every per-sample access uses `at` / `set` / `param.at(...)`.
+Sample-position primitives (`audioIn.at(c, i)`, `audioOut.set(c, i, v)`, `param.at(i)`) take an `i: Node<'i32'> | number`. A `Node<'i32'>` `i` originates from a `forSample` callback parameter and is in scope only inside that callback — using it outside is a TypeScript reference error. JS-literal sample-offsets (the most common being `0`) lift to `Node<'i32'>` per Q36-a and are accepted everywhere the primitives appear: `param.at(0)` reads the block-start param value, `audioIn.at(c, 0)` reads the block-start input sample, `audioOut.set(c, 0, v)` writes the block-start output sample (Q51). This keeps the mental model identical to JUCE's `AudioProcessor::processBlock` and AudioWorklet's `process` — the body runs top-to-bottom, any sample-position primitive can be called at any point, and `forSample` is purely a loop construct over the block (write the same output multiple times, last write wins per Q37; read any input sample at any point). There is no sugar form; every per-sample access uses `at` / `set` / `param.at(...)`.
 
 ```typescript
 // Single-phase per-sample plugin (one forSample, no per-block work):
@@ -92,7 +92,7 @@ Options:
 - **`channels: number`** — fixed channel count, set at compile time. Maps directly to Web Audio's `outputChannelCount[i]` for outputs and is the input-side expectation for `at`.
 - **`name: string`** — required. Used as the key in main-thread `node.inputs.<name>` / `node.outputs.<name>` access (see `05-client.md` §1) and as the slot identity for that I/O port. There is no default; explicit naming is uniform with `state` / `buffer` / `param` `name` and avoids index-based mental models in tooling and main-thread code.
 
-The returned handles expose sample-position primitives (`at` / `set`); both require a `Node<'i32'>` for the sample-offset and are valid only inside `forSample` callbacks.
+The returned handles expose sample-position primitives (`at` / `set`); the sample-offset argument is `Node<'i32'> | number` per the type signatures (§1.2 / §1.3). The `Node<'i32'>` form binds the surrounding `forSample` callback's loop counter `i`; JS-literal offsets (Q36-a) work at any lexical position, including the per-block top level (Q51 — e.g. `audioIn.at(0, 0)` reads the block-start input sample).
 
 ### 1.2 Reading audio inputs
 
@@ -100,7 +100,7 @@ The returned handles expose sample-position primitives (`at` / `set`); both requ
 
 ```typescript
 type AudioInputHandle<C extends number> = {
-  at(c: ChannelIndex<C>, i: Node<'i32'>): Node<'f32'>;
+  at(c: ChannelIndex<C> | number, i: Node<'i32'> | number): Node<'f32'>;
   channels: C;
   name:     string;
 };
@@ -137,7 +137,7 @@ The actual channel count of the connected source is normalized by Web Audio's st
 
 ```typescript
 type AudioOutputHandle<C extends number> = {
-  set(c: ChannelIndex<C>, i: Node<'i32'>, v: Node<'f32'>): void;
+  set(c: ChannelIndex<C> | number, i: Node<'i32'> | number, v: Node<'f32'> | number): void;
   channels: C;
   name:     string;
 };
@@ -269,7 +269,7 @@ Primitive operators are pure functions over `Node<T>` values. Each primitive's a
 - **Comparison** (generic over `T`, returns `Node<'bool'>`): `eq`, `lt`, `gt`, `lte`, `gte`
 - **Math** (`Node<'f32'>` or `Node<'f64'>`): `sin`, `cos`, `tan`, `tanh`, `exp`, `log`, `sqrt`, `abs`, `floor`, `ceil`, `frac`, `min`, `max`, `clamp`
 - **Control**: `select(cond: Node<'bool'>, then: Node<T>, else_: Node<T>): Node<T>` (generic over `T`)
-- **Memory**: `load` / `store` on `State<T>`; `.read` / `.write` / `.readInterpolated` / `.copyFrom` / `.loadVec` / `.storeVec` as methods on `Buffer<T>` (see §3.2 and §7)
+- **Memory**: `load` / `store` on `State<T>`; `.read` / `.write` / `.readInterpolated` / `.copyFrom` / `.loadVec` / `.storeVec` as methods on `Buffer<T>` (see §3.2 and §7). `loadVec` / `storeVec` are SIMD-only and exist on the buffer handle, not on `audioOutput`.
 
 Math-precision strategy (Q17, `decisions-log.md`): the `@unworklet/core` import path ships **polynomial approximations** (5–7th-order minimax) for every math primitive listed above. All approximations are emitted as WASM functions and run entirely inside the WASM module — there is no FFI / JS-WASM boundary crossing per call, so per-sample use stays realtime-safe. Maximum approximation error is on the order of `1e-4`, inaudible within audio's 24-bit dynamic range. Numerical-analysis use cases (where IEEE-754-faithful math matters) are outside unworklet's scope. v1.x.0 may additively introduce `@unworklet/core/precise` (WASM-bundled libm, std-math-equivalent precision) and `@unworklet/core/table` (precomputed lookup, even faster) import paths.
 
@@ -355,9 +355,9 @@ The `Buffer<T>` handle returned by `buffer.<T>(...)` exposes the following metho
 
 ```typescript
 type Buffer<T extends ScalarType> = {
-  read(idx: Node<'i32'>): Node<T>;
-  write(idx: Node<'i32'>, v: Node<T>): void;
-  readInterpolated(pos: Node<'f32'>): Node<T>;
+  read(idx: Node<'i32'> | number): Node<T>;
+  write(idx: Node<'i32'> | number, v: Node<T> | number): void;
+  readInterpolated(pos: Node<'f32'> | number): Node<T>;
   // Bulk copy from a typed-array field of the surrounding message / event payload (see §4).
   // Compiles to a single WASM `memory.copy`; runtime length is clamped to min(buf.size, src.length).
   // See `decisions-log.md` Q31-c.
@@ -457,7 +457,7 @@ The `cond` parameter type is `Node<'bool'> | boolean` (finalized at Q36-c, `deci
 Options:
 
 - **`name: string`** — required. Used as the key for `node.events.<name>` on the main thread.
-- **`capacity?: number`** — ringbuffer slot count. Default 256, uniform with MIDI Q4-c.
+- **`capacity?: Capacity`** — ringbuffer slot count. Default `CAPACITY_256`, uniform with MIDI Q4-c. The `Capacity` literal-union type (= `typeof CAPACITY_16 | ... | typeof CAPACITY_16384`) is enforced at TypeScript level so arbitrary integer literals are rejected at IDE time (Q44).
 
 Overflow: drop-oldest + monotonic `overflowCount` counter, exposed as `node.events.<name>.diagnostics.overflowCount()`. Variable-length payload fields (e.g. `Float32Array`) follow §4.3.
 
@@ -501,7 +501,7 @@ Inside a handler, only state writes, buffer writes, and scalar arithmetic are al
 Options:
 
 - **`name: string`** — required. Used as the key for `node.messages.<name>(payload)` on the main thread.
-- **`capacity?: number`** — default 256. Same overflow semantics as `event<T>`.
+- **`capacity?: Capacity`** — default `CAPACITY_256`. Same overflow semantics and `Capacity` literal-union enforcement as `event<T>` (Q44).
 
 ### 4.3 Variable-length payloads
 
@@ -730,7 +730,7 @@ error: L1 helper 'badHelper' cannot declare state.
   See docs/01-dsl.md §5.2 for the L1 vs L2 boundary.
 ```
 
-Detailed error-UX policy (Q22-d) is open — see `03-compiler.md` §2.
+Detailed error-UX policy (Q22-d) is ratified in `03-compiler.md` §2.5 (Rust-style template with stable kebab-case error IDs + `help:` rationale + `note:` linking to `decisions-log.md` Q-ref).
 
 ### 5.6 L2 surface details
 
@@ -1290,15 +1290,15 @@ type EveryNSamples = (n: number, body: () => void) => void;
 `everyNSamples` is delivered as the **second callback argument** (Q43, `decisions-log.md`); the parameter is optional and most `forSample` callbacks just take `(i) => ...`. See §9 for sub-rate semantics.
 
 - `forSample(callback)` — the callback body runs once per sample of the current render quantum. `i` is a `Node<'i32'>` bound at WASM-emission time to the loop counter, advancing by 1 each iteration.
-- `forSample.byN(stride, callback)` — same shape, but `i` advances by `stride` each iteration. Typical use is `stride = 4` for SIMD bulk operations paired with `buf.loadVec` / `buf.storeVec` / `audioOut.storeVec` methods. The stride must be a compile-time-constant positive integer **and must divide `SAMPLES_PER_BLOCK` (= 128)** — allowed values are `1`, `2`, `4`, `8`, `16`, `32`, `64`, `128` (Q37-b, `decisions-log.md`). Non-constant strides or strides that do not divide 128 are graph-capture-time errors at the `forSample.byN(...)` call site. Sample-offsets skipped by the stride (e.g. `stride = 4` with `audioOut.set` writes only `i = 0, 4, 8, ..., 124`) are emitted as silence unless another phase writes them — same coverage policy as §1.3.
+- `forSample.byN(stride, callback)` — same shape, but `i` advances by `stride` each iteration. Typical use is `stride = 4` for SIMD bulk operations paired with `buf.loadVec` / `buf.storeVec` methods (`audioOut.storeVec` is not part of the v1.0.0 SIMD MVP — Q3-b — so audio output writes in `forSample.byN` use scalar `audioOut.set` per iteration). The stride must be a compile-time-constant positive integer **and must divide `SAMPLES_PER_BLOCK` (= 128)** — allowed values are `1`, `2`, `4`, `8`, `16`, `32`, `64`, `128` (Q37-b, `decisions-log.md`). Non-constant strides or strides that do not divide 128 are graph-capture-time errors at the `forSample.byN(...)` call site. Sample-offsets skipped by the stride (e.g. `stride = 4` with `audioOut.set` writes only `i = 0, 4, 8, ..., 124`) are emitted as silence unless other code writes them — same silence-for-unwritten-samples behavior as §1.3 (no coverage requirement; Q37).
 
 ### 10.2 Semantics
 
 - **Graph-capture-time meta primitive**: the callback is evaluated once during graph capture; the resulting AST nodes are recorded as belonging to a per-sample (or per-`stride`) sub-block of the WASM render-quantum program.
 - **`i` is loop-counter-bound and scoped to the callback**: inside the callback, `i` denotes the current sample-offset within the render quantum. Outside the callback, `i` is not in scope — TypeScript will reject any sample-position primitive that tries to use it (e.g., `audioIn.at(0, i)` written at the per-block top level is a TS reference error).
 - **Arithmetic on `i`**: `add(i, 1)` and similar produce a `Node<'i32'>` that resolves to the offset value at WASM-emission time. Out-of-block access (`add(i, lookaheadSamples)` exceeding the render quantum) is a static-analysis error when statically detectable.
-- **Multiple `forSample` calls in one body**: each call is an independent phase. Phases (per-block top-level statements + each `forSample` invocation) execute in **declared (source) order** within the render quantum.
-- **No implicit `forSample` wrapping**: per-sample primitives (`audioIn.at(c, i)`, `audioOut.set(c, i, v)`, `param.at(i)`) cannot be written outside a `forSample` callback. The IDE catches this through TypeScript scoping (`i` is undefined). Any per-sample work must live inside a `forSample`.
+- **Multiple `forSample` calls in one body**: each call is an independent sub-loop. Per-block top-level statements and `forSample` invocations execute in **declared (source) order** within the render quantum — the body reads top-to-bottom, exactly like JUCE / AudioWorklet `process` (see `00-foundations.md` §3 "Process body" mental model).
+- **No implicit `forSample` wrapping**: the `Node<'i32'> i` alias (= loop counter form of sample-position primitives) is forSample-scoped — `audioIn.at(0, i)` written at the per-block top level is a TS reference error because `i` is undefined there. Single-offset access with a JS-literal offset (`audioIn.at(0, 0)`, `audioOut.set(0, 0, v)`, `param.at(0)`) lifts via Q36-a and is valid at any lexical position (Q51); per-sample work over the full block requires `forSample`.
 
 ### 10.3 Body constraints
 

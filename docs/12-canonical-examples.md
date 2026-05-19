@@ -100,7 +100,7 @@ export const stereoGain = defineProcessor(() => {
 
 ```typescript
 // main thread
-import { createNode } from '@unworklet/client';
+import { createNode } from '@unworklet/core';
 
 const audioContext = new AudioContext();
 const node = await createNode(audioContext, stereoGain);
@@ -293,13 +293,13 @@ export const linearPhaseEQ = defineProcessor(() => {
       // for use by the partitioned overlap-add below.
       const startHead = histHead.load();
 
-      // Per-sample phase 1: shovel input into history ring buffer.
+      // forSample (input shovel): copy input into history ring buffer.
       forSample((i) => {
         const idx = mod(add(startHead, i), HISTORY_LEN);
         history.write(idx, main.at(0, i));
       });
 
-      // Per-sample phase 2: SIMD bulk convolution accumulator. For each output
+      // forSample.byN (SIMD bulk convolution): accumulator over each output
       // sample `i`, accumulate impulse[k] * history[(head - k) % LEN] over k.
       // We process the inner k loop in chunks of 4 via SIMD.
       forSample((i) => {
@@ -325,7 +325,7 @@ export const linearPhaseEQ = defineProcessor(() => {
 
 ```typescript
 // main thread — generate the impulse from a 3-band linear-phase EQ design and upload.
-import { createNode, inspect } from '@unworklet/client';
+import { createNode, inspect } from '@unworklet/core';
 
 const node = await createNode(audioContext, linearPhaseEQ, {
   initial: { /* none */ },
@@ -1155,6 +1155,6 @@ These are intentionally outside the example set today and are tracked as follow-
 - Math primitives `tan`, `tanh`, `sqrt` — listed in `01-dsl.md` §2 but unused across the example set.
 - `buffer.i32` — only `buffer.f32` is exercised.
 - MIDI variants beyond `noteOn` / `noteOff`: `cc`, `pitchBend`, `programChange`, `channelPressure`, `aftertouch`, `systemRealtime`, sysex are part of the Q4 surface but no current example uses them. Q4 covers the wire / handler shape; the canonical example set has a coverage gap here.
-- `midiOutput.diagnostics.overflowCount()` and `node.events.<name>.diagnostics.overflowCount()` are mentioned but not actively monitored in any example beyond Ex 4 (one polling block).
+- `node.midi.<name>.diagnostics.overflowCount()` and `node.events.<name>.diagnostics.overflowCount()` (main-side diagnostics; worklet-side `.diagnostics` was removed by Q47) are mentioned but not actively monitored in any example beyond Ex 4 (one polling block).
 
 When those resolutions land or examples are added, the corresponding rows in the Coverage table above are updated in the same revision.
