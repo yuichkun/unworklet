@@ -7,7 +7,7 @@
 - question が 浮 上 し た 時 点 で こ の file に 追 加 (= grill 途 中 で も)、 揮 発 性 を 持 た せ な い。
 - 各 entry: **何 が 未 決 / どの doc が 触 れ る / 選 択 肢 / こ の 層 に 入 れ た 理 由 / 関 連 pillar** を 揃 え る。
 - 層 順 は ratify ご と に 再 評 価。 audit 由 来 の tier や issue 番 号 を そ の ま ま 流 さ な い (= 余 湖 さ ん の attention は 有 限)。
-- TaskList (claude-code 進 行 管 理 側) は こ の file に 従 う。 GitHub issue 化 は v1.0.0 spec freeze 後 (L4-g) に 一 括。
+- TaskList (claude-code 進 行 管 理 側) は こ の file に 従 う。 GitHub issue 化 は v1.0.0 spec freeze 後 (L4-f) に 一 括。
 
 ## ratify 範 囲 と priority filter
 
@@ -17,7 +17,7 @@
 
 **priority filter** = 「**impl AI agent に 手 放 し で 実 装 さ せ た ら 矛 盾 が 出 る か**」 を 唯 一 の judgement 軸 と す る (Q55)。 「user が 誤 解 す る」 「mental model が 揺 れ る」 「読 解 違 和 感」 等 の user-facing 視 点 で 上 げ る な = mechanical sweep 領 域、 freeze 前 に 1 batch。 真 の ★★★ は **異 な る impl agent が 異 な る judgment に 達 し て し ま う 仕 様 prose 内 の 矛 盾 / dangling** だ け。
 
-## 4 層 filter
+## 5 層 filter
 
 unworklet の pillar:
 
@@ -32,10 +32,13 @@ unworklet の pillar:
 
 層 定 義:
 
-- **Layer 1 — 余 湖 さ ん の judgment 必 要、 mental model / 公 開 API surface 直 撃。** 後 で 直 す = breaking change。
-- **Layer 2 — 余 湖 さ ん の judgment 必 要、 ergonomics 軽 め。** 1 度 ship し た ら 変 え に く い が mental model は 揺 れ な い。
-- **Layer 3 — 余 湖 さ ん の judgment 必 要、 additive surface。** v1.x.0 で 後 か ら 入 れ ら れ る。
-- **Layer 4 — mechanical bookkeeping、 余 湖 さ ん の judgment 不 要 / 軽 度。** 1 commit で 一 括 sweep 可。
+- **Layer 1 — 真 の ★★★ = impl 矛 盾 リ ス ク 高。** 仕 様 prose 内 矛 盾 / dangling、 異 な る impl agent が 異 な る judgment に 達 す る = 矛 盾 し た 実 装 が 出 る。 余 湖 さ ん grill 必 須。
+- **Layer 2 — additive surface。** v1.0.0 公 開 surface に 含 め る か decide、 含 め な い 場 合 は v1.x.0 で 追 加 可、 impl 矛 盾 リ ス ク 低 い。
+- **Layer 3 — freeze 前 process / trivial 設 定 値。** v1.0.0 freeze 直 前 1 batch、 軽 量 judgment (= owner 任 せ 方 針 / acceptance criteria / license / npm scope 等)。
+- **Layer 4 — mechanical sweep。** 余 湖 さ ん judgment 不 要、 freeze 前 1 batch (= decisions-log integrity / line-ref / README / docs prose 揃 え / canonical integrity 等)。
+- **Layer 5 — freeze 後 / v1.x.0。** v1.0.0 ratify 範 囲 外、 freeze 後 に GitHub issue 化 or v1.x.0 docs/recipes/ で 追 加。 い ま は touch し な い。
+
+**ID prefix の 注 釈:** entry ID (= `L1-b` / `L2-c` 等) は 歴 史 的 命 名 で **過 去 ratify / decisions-log 引 用 と の 整 合 維 持** の た め fix。 Layer 配 置 は ratify ご と に 現 priority filter (= impl 矛 盾 リ ス ク 軸) で 動 く = ID prefix と Layer 番 号 が 一 致 し な い ケ ー ス あ り。
 
 **層 内 順 序 の 判 断 軸:**
 
@@ -45,7 +48,7 @@ unworklet の pillar:
 
 ---
 
-## Layer 1 — judgment 必 要、 API surface / mental model
+## Layer 1 — 真 の ★★★ (impl 矛 盾 リ ス ク 高)
 
 ### L1-b. Handler body で sample-position primitive を 受 け 入 れ る か (Q51 followup)
 
@@ -66,13 +69,11 @@ unworklet の pillar:
 
 ---
 
-## Layer 2 — judgment 必 要、 ergonomics
-
 ### L2-c. `createNode({ restore })` 経 路 で migration 失 敗 を ど う surface す る か
 
 **何 が 未 決** — `05-client.md` §1 の `CreateNodeOptions<C>.restore?: Uint8Array` は 「Schema mismatch routed through the processor's `migrations` chain」 と 書 く が、 戻 り 値 は `Promise<UnworkletNode<C>>` で `RestoreResult` を 含 ま な い。 `node.restore(blob)` method 経 由 は `RestoreResult` discriminated union を 返 す が、 `createNode({ restore })` で migration が throw し た 場 合 の レ ポ ー ト path が 仕 様 化 さ れ て い な い。 audit A §5 拾 い。
 
-**な ぜ L2 内 最 上 段** — 公 開 surface invariant (= 失 敗 path が ど の channel で user に 届 く か、 ship 後 に 変 え る と breaking)。 選 択 肢 自 体 は 3 案 で 軽 い ratify。
+**な ぜ こ の 位 置 (= Layer 1)** — 真 の impl 矛 盾 リ ス ク = 戻 り 値 surface dangling、 異 な る impl agent が (A) 戻 り 値 を `{ node, restore }` に 拡 張 / (B) `onError` で 通 知 / (C) 経 路 自 体 削 除 の どれ か を 別 々 に 採 用 し て 公 開 surface が 衝 突。 ship 後 breaking。 選 択 肢 自 体 は 3 案 で 軽 い ratify。
 
 **選 択 肢:**
 
@@ -90,7 +91,7 @@ unworklet の pillar:
 
 **何 が 未 決** — `01-dsl.md` §5.5.5 で L1 helper 内 `forSample(...)` 呼 び 出 し が 「rare; usually iteration is the caller's job」 と OK 寄 り、 §10.3 forSample body constraints で 「Allowed: ... calls to L1 helpers」 と 書 く。 こ の 2 つ を 組 み 合 わ せ る と **L1 helper が 内 部 で `forSample` を 呼 ぶ + 呼 び 出 し 側 も `forSample` 内** = 暗 黙 に nested `forSample` 成 立。 spec で 明 示 化 ナ シ。 audit B §2 拾 い。
 
-**な ぜ L3 か ら L2 に 引 き 上 げ** — mental model 明 示 化 系。 公 開 API surface 追 加 で は な く 既 存 規 則 の 解 釈 を 1 行 docs で 確 定 さ せ る だ け だ が、 RT-safe 静 的 解 析 (= bounded loop check) の 範 囲 に 影 響、 mental model 一 致 性 で も 重 要。 L2 寄 り。
+**な ぜ こ の 位 置 (= Layer 1)** — RT-safe 静 的 解 析 (= bounded loop check) の 範 囲 が dangling = 異 な る impl agent が nested loop の bound check 範 囲 / sample-offset 独 立 性 を 別 々 に 判 断 し て 矛 盾 し た 実 装 が 出 る。 公 開 API surface 追 加 で は な い が、 静 的 解 析 invariant の dangling = 真 の impl 矛 盾 リ ス ク。
 
 **選 択 肢:**
 
@@ -102,11 +103,13 @@ unworklet の pillar:
 
 ---
 
-## Layer 3 — judgment 必 要、 additive surface
+## Layer 2 — additive surface (v1.x.0 OK 寄 り)
 
 ### L3-a. SIMD horizontal reduce (`sumLanes`) を v1.0.0 で 出 す か
 
 **何 が 未 決** — `Node<'f32x4'>` の 4 lane 合 計 を 返 す primitive (`sumLanes(v): Node<'f32'>`) を v1.0.0 SIMD surface に 入 れ る か。 v1.x.0 で additive に 入 れ ら れ る。
+
+**な ぜ こ の 位 置 (= Layer 2)** — 公 開 surface decide だ が、 含 め な い 選 択 で も impl AI は 仕 様 通 り 含 め ず に 動 け る = impl 矛 盾 リ ス ク 低 い。 v1.x.0 で additive に 追 加 可。
 
 **ど の doc が 触 れ る** — `01-dsl.md` §7.2 / §7.3、 `03-compiler.md` §4。
 
@@ -114,9 +117,41 @@ unworklet の pillar:
 
 ---
 
-## Layer 4 — mechanical bookkeeping (judgment 不 要 / 軽 度)
+## Layer 3 — freeze 前 process / trivial 設 定 値
 
-以 下 は 余 湖 さ ん の judgment を 求 め ず、 ratify 内 容 を 変 え ず に docs を 揃 え る sweep。 1 commit で 一 括 が 望 ま し い (= AGENTS.md HARD CONTRACT の canonical integrity rule を 同 時 に 守 る)。
+v1.0.0 freeze 直 前 1 batch で 決 定、 余 湖 さ ん judgment 軽 量。 ratify 内 部 ループ で は な い 「process question」 + 「trivial 設 定」。
+
+### L4-a. Placeholder section 群 — impl 期 owner 任 せ と 明 文 化
+
+各 doc に `<!-- placeholder -->` が 残 っ て い る。 内 部 implementation spec が ほ と ん ど で API surface で は な い。
+
+| doc | placeholder |
+| --- | --- |
+| `00-foundations.md` | §6 cross-cutting |
+| `03-compiler.md` | §1 / §3 / §4 / §5 / §6 / §7 / §8 |
+| `04-worklet-runtime.md` | §1 / §2 / §8 |
+| `05-client.md` | §3 / §4 |
+| `06-testing.md` | §2 / §3 / §4 / §5 |
+| `07-vite-plugin.md` | §2 / §3 / §5 / §6.x TODO |
+| `08-deployment.md` | §3 / §4 |
+| `10-roadmap.md` | §1 / §2 / §3.2 |
+| `13-offline-render.md` | §2.x / §3 |
+
+**選 択 肢** — (i) v1.0.0 spec freeze 前 に 全 部 drain、 (ii) impl 開 始 時 に 各 doc owner が 順 次 書 く (推 奨)、 (iii) freeze 後 impl 期 に 必 要 に な っ た 順 で。
+
+### L4-b. Q14 — v1.0.0 acceptance criteria
+
+「v1.0.0 ship 可 能」 と は 何 か の checklist を `10-roadmap.md` §1 に。 候 補: canonical examples 全 compile + 期 待 output / `@unworklet/offline` で reference processor を bit-exact render / `vp build` 通 る / realtime-safety invariants 5 件 全 layer 検 出 / browser × {isolated, not} matrix smoke pass。 設 計 question で は な く process question、 freeze 直 前 に 一 括 決 定 で 十 分。
+
+### L4-c. Trivial v1.0.0 settings
+
+`09-repo-structure.md` の 設 定 値 — Q12 monorepo tool / Q15 license / Q16 npm scope / Q26 TS 最 低 version。 freeze 前 に 1 batch 決 定 (= Q13 initial package layout は Q52 / L1-d ratify で 既 確 定)。
+
+---
+
+## Layer 4 — mechanical sweep (= 余 湖 さ ん judgment 不 要、 freeze 前 1 batch)
+
+以 下 ratify 内 容 を 変 え ず docs を 揃 え る sweep。 1 commit で 一 括 が 望 ま し い (= AGENTS.md HARD CONTRACT の canonical integrity rule を 同 時 に 守 る)。
 
 **M-sweep 内 順 序** = impl 開 始 前 に 必 要 な 順:
 
@@ -192,53 +227,21 @@ AGENTS.md HARD CONTRACT (canonical examples integrity rule) 観 点 で 拾 っ 
 
 ---
 
-### Layer 4 — 個 別 entry (sweep に 統 合 し な い、 freeze 関 連 順)
+## Layer 5 — freeze 後 / v1.x.0 (= v1.0.0 ratify 範 囲 外)
 
-#### L4-a. Placeholder section 群 — impl 期 owner 任 せ と 明 文 化
+v1.0.0 ship 完 了 後 に 触 れ る entry。 い ま grill 対 象 外、 freeze 後 GitHub issue 化 or v1.x.0 docs/recipes/ で 追 加。
 
-各 doc に `<!-- placeholder -->` が 残 っ て い る。 内 部 implementation spec が ほ と ん ど で API surface で は な い。
-
-| doc | placeholder |
-| --- | --- |
-| `00-foundations.md` | §6 cross-cutting |
-| `03-compiler.md` | §1 / §3 / §4 / §5 / §6 / §7 / §8 |
-| `04-worklet-runtime.md` | §1 / §2 / §8 |
-| `05-client.md` | §3 / §4 |
-| `06-testing.md` | §2 / §3 / §4 / §5 |
-| `07-vite-plugin.md` | §2 / §3 / §5 / §6.x TODO |
-| `08-deployment.md` | §3 / §4 |
-| `10-roadmap.md` | §1 / §2 / §3.2 |
-| `13-offline-render.md` | §2.x / §3 |
-
-**選 択 肢** — (i) v1.0.0 spec freeze 前 に 全 部 drain、 (ii) impl 開 始 時 に 各 doc owner が 順 次 書 く (推 奨)、 (iii) freeze 後 impl 期 に 必 要 に な っ た 順 で。
-
-**な ぜ こ の 位 置** — 方 針 を 1 行 docs で 明 文 化 す る だ け、 freeze の 前 に 必 要 だ が judgment 軽 い。
-
-#### L4-b. Q14 — v1.0.0 acceptance criteria
-
-「v1.0.0 ship 可 能」 と は 何 か の checklist を `10-roadmap.md` §1 に。 候 補: canonical examples 全 compile + 期 待 output / `@unworklet/offline` で reference processor を bit-exact render / `vp build` 通 る / realtime-safety invariants 5 件 全 layer 検 出 / browser × {isolated, not} matrix smoke pass。 設 計 question で は な く process question、 freeze 直 前 に 一 括 決 定 で 十 分。
-
-**な ぜ こ の 位 置** — freeze 判 定 基 準、 freeze 直 前 で OK。
-
-#### L4-c. Trivial v1.0.0 settings (旧 L4-h)
-
-`09-repo-structure.md` の 設 定 値 — Q12 monorepo tool / Q13 initial package layout (**L1-d と 連 動** = L1-d ratify 後 に 自 動 派 生)/ Q15 license / Q16 npm scope / Q26 TS 最 低 version。 freeze 前 に 1 batch 決 定。
-
-**な ぜ こ の 位 置** — L1-d ratify で Q13 が ほ ぼ 決 ま る。 残 り 4 件 は judgment 軽 い 設 定 値。
-
-#### L4-d. `docs/recipes/` voice allocation pattern (旧 L4-c)
+### L4-d. `docs/recipes/` voice allocation pattern
 
 Polyphony / voice stealing を recipe doc 化 す る か。 canonical Ex 8 で 4-voice mono synth カ バ ー、 v1.0.0 ship 必 須 で は な い。 v1.x.0 補 完 docs と し て 後 で 検 討。
 
-#### L4-e. `docs/recipes/` overlap-add pattern (旧 L4-d)
+### L4-e. `docs/recipes/` overlap-add pattern
 
 STFT 由 来 の Overlap-Add の recipe。 L4-d と 同 様 v1.0.0 ship 必 須 で は な い。
 
-#### L4-f. Issue-ize the finalized v1.0.0 spec (旧 L4-g)
+### L4-f. Issue-ize the finalized v1.0.0 spec
 
 こ の `open-questions.md` が freeze 状 態 に な っ た 時 点 で、 ratify 済 み 設 計 + 残 task を GitHub issues に 1-to-1 化、 `v1.0.0` milestone を 付 け て impl agent 群 に 流 す。 そ れ ま で は こ の file が canonical。
-
-**な ぜ 最 後 の 位 置** — freeze の 最 終 step。 他 全 て を 終 え た 後。
 
 ---
 
