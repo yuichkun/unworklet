@@ -50,25 +50,6 @@ unworklet の pillar:
 
 ## Layer 1 — 真 の ★★★ (impl 矛 盾 リ ス ク 高)
 
-### L1-b. Handler body で sample-position primitive を 受 け 入 れ る か (Q51 followup)
-
-**何 が 未 決** — Q51 で `param.at(0)` / `audioIn.at(c, 0)` / `audioOut.set(c, 0, v)` を process body 任 意 位 置 で OK と 決 め た。 一 方 `01-dsl.md` L498-500 (`messageDecl.onReceive` body 規 則) と `11-midi.md` 同 等 箇 所 は 「handler 内 で audio I/O / param 一 切 不 可、 `i` not in scope」 と 書 い た ま ま、 Q51 と 衝 突。 audit B §2 も 「同 commit 内 で 並 存 = 最 大 の 構 造 的 矛 盾」 と 指 摘。
-
-**な ぜ こ の 位 置 (= L1 内 最 上 段)** — invariant (= handler context で 何 が 可 / 不 可 か) が 変 わ る = ship 後 breaking。 加 え て **真 の impl 矛 盾 リ ス ク** = `01-dsl.md` L498 prose が 「handler 内 で audio I/O / param 一 切 不 可」 と 明 言、 Q51 ratify は 「process body 任 意 位 置 で OK」 と 明 言 = 異 な る impl agent が 異 な る judgment に 達 す る 典 型 dangling。 mental model judgment は 重 い の で attention 集 中 が 必 要。
-
-**ど の doc が 触 れ る** — `01-dsl.md` §4.2、 §3.3、 `02-messaging.md` §1、 `11-midi.md` §3、 `00-foundations.md` §3 sample-offset entry、 `03-compiler.md` §2.4。
-
-**選 択 肢:**
-
-- **(a) JS literal だ け 受 け 入 れ。** `param.at(0)` / `audioIn.at(c, 0)` / `audioOut.set(c, 0, v)` を handler 内 で 可 能 に、 handler arg の `atSample: Node<'i32'>` は forSample 限 定 を 維 持。 Q51 と 整 合、 L498 だ け 緩 め る。
-- **(b) `Node<'i32'>` も 受 け 入 れ。** handler arg の `atSample` を `audioOut.set(c, atSample, v)` に 渡 し て sample-accurate per-event 出 力 可 能。 MIDI → audio pulse 1 行 で 書 け る が timing 契 約 と の 整 合 必 要。
-- **(c) Both. (a) + (b) 両 立。**
-- **(d) 一 切 禁 止。** 既 存 制 限 維 持、 Q51 を 「process body top-level に だ け 適 用、 handler body は 別 segment」 と 明 文 化。 mental-model 例 外 を 1 個 残 す。
-
-**Pillar 関 連** — P6、 P1、 P2。
-
----
-
 ### L2-c. `createNode({ restore })` 経 路 で migration 失 敗 を ど う surface す る か
 
 **何 が 未 決** — `05-client.md` §1 の `CreateNodeOptions<C>.restore?: Uint8Array` は 「Schema mismatch routed through the processor's `migrations` chain」 と 書 く が、 戻 り 値 は `Promise<UnworkletNode<C>>` で `RestoreResult` を 含 ま な い。 `node.restore(blob)` method 経 由 は `RestoreResult` discriminated union を 返 す が、 `createNode({ restore })` で migration が throw し た 場 合 の レ ポ ー ト path が 仕 様 化 さ れ て い な い。 audit A §5 拾 い。

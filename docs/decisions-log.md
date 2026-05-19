@@ -64,6 +64,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q53 | 仕 様 invariant vs 型 declaration の 形 — ratify 範 囲 確 定 (L1-c re-scope) | resolved — 設 計 ratify 範 囲 を 「仕 様 invariant」 (= 振 る 舞 い / 制 約 / mental model / 公 開 surface に 何 が 出 て く る か / 仕 様 内 矛 盾 / dangling) に 限 定、 「TS signature 細 部 / 識 別 子 名 の 好 み / generic constraint 表 現」 は impl AI agent が TS compiler 経 由 で 機 械 的 に 確 定 す る 領 域 と し て 委 譲 (= 「曖 昧 さ を 残 す」 で は な く 「適 切 な layer に 委 譲」、 既 ai-agent-paradigm スタンス と 整 合); L1-c の 当 初 19 種 type 階 層 分 類 議 論 を 撤 退、 dangling 1 件 (`SubgraphInstance<S>` invariant prose 不 在) を L1-c に 残 し て 別 grill; L2-a (loadVec / everyNSamples 命 名) + L2-b (param.at(0) framing) も impl AI 領 域 / L1-a 自 動 解 消 と し て open-questions か ら 撤 去 | `open-questions.md` 冒 頭 「ratify 範 囲」 セ ク シ ョ ン + Q23 (AI agent paradigm の 既 ratify) + 既 memory `ai-agent-paradigm-implementation-cost` |
 | Q54 | defineSubgraph wrapper の 真 の 役 割 + `SubgraphInstance<S>` 撤 廃 (L1-c 完 全 close) | resolved — `defineSubgraph` / `createSubgraph` wrapper を v1.0.0 で 維 持 (= 関 数 統 一 棄 却)、 wrapper の 真 の 役 割 = (1) framework-level identification (= Q30 memory budget + Q23 DevTools graph instance grouping + snapshot path namespacing の hook) + (2) name scope (= Q41 instance name = snapshot path prefix の framework 担 保); `SubgraphInstance<S>` 名 を 公 開 surface か ら 撤 廃 (= §1.6.1 export list か ら 削 除)、 `createSubgraph(...)` の 戻 り 値 = **subgraph body の return record そ の も の** と invariant 直 接 規 定、 user が 型 引 用 し た い 時 は `ReturnType<typeof subgraphDecl>` (TS 標 準); §5.2 / §5.6.2 prose 強 化 で wrapper の 真 の 役 割 を 明 文 化 (= 関 数 統 一 棄 却 理 由 + canonical Ex 2 / Ex 8 vs Ex 5 対 比 引 用) + L1-c dangling 完 全 close | `01-dsl.md` §1.6.1 + §5.2 + §5.6.2 + Q2 / Q34 / Q41 / Q53 |
 | Q55 | priority filter 軸 = impl 矛 盾 リ ス ク + L1-a 「phase」 wording sweep (Q53 補 強、 Q51 followup) | resolved — v1.0.0 ship 前 docs 読 者 = impl AI agent、 user-facing docs は v1.0.0 完 成 後 別 phase で 関 心 範 囲 外; priority filter の 唯 一 の 軸 = 「impl AI agent が 手 放 し で 実 装 し た 時 に 矛 盾 が 出 る か」 = 異 な る agent が 異 な る judgment に 達 す る prose 内 矛 盾 / dangling だ け が ★★★、 「user 視 点」 「user 誤 解」 「mental model 揺 れ る」 は priority 評 価 軸 外 (= mechanical sweep 領 域); L1-a 構 造 名 詞 「phase」 撤 廃 sweep (= Q51 followup) を 同 commit で 完 了、 adjective 「per-block / per-sample」 維 持、 §6 heading `The process phase` → `The process body`、 §10.4.1 `Single-phase` → `Per-sample-only`、 §10.4.2 `Multi-phase` → `Mixed`、 canonical Ex 3 description rename、 SIMD example `Phase 1/2/3` → `Step 1/2/3`、 oscillator phase counter / minimum-phase / linear-phase / 音 響 phase / compiler phase は 別 意 で retain | `open-questions.md` 冒 頭 「ratify 範 囲 と priority filter」 section + L1-a entry 削 除 + Q53 + Q51 |
+| Q56 | Handler body の expression scope (= L1-b、 Q51 followup) | resolved — `messageDecl.onReceive(...)` / `midiInput().onEvent(...)` handler body の expression scope rule を `forSample` callback と 完 全 一 致 さ せ る (= primitive op / `state.load/store` / buffer access / audio I/O `audioIn.at` / `audioOut.set` / `param.at` / `emitIf` / subgraph methods / L1 helpers が 全 て legal、 新 規 declaration `state.*` / `buffer.*` / `param.*` / `createSubgraph(...)` は 不 可); sample-offset 引 数 は `Node<'i32'> | number` を 一 律 受 け 入 れ (= handler arg の `atSample` / state slot value / buffer read / JS literal の ど れ も OK)、 surrounding `forSample` の `i` だ け が scope 外 (= 既 規 定 通 り、 handler は forSample の 前 に drain); `01-dsl.md` §4.2 L500 「Inside a handler, only state writes, buffer writes, and scalar arithmetic are allowed」 prose を 「same expression-scope rules as a forSample callback」 に 書 き 換 え、 §4.1 / §5.6.4 / §6 / Q32 既 規 定 と 整 合 (= L500 が 唯 一 の 狭 prose だ っ た dangling 解 消); 案 (d) 一 切 禁 止 (= state 書 き 込 み 専 用 segment) 棄 却 (= user に 覚 え る context rule を 1 個 追 加、 forSample / handler の 2 種 別 ル ー ル、 公 開 surface の 概 念 量 増、 no-artificial-constraint 違 反); 案 (a) JS literal だ け / (b) `Node<'i32'>` だ け も 不 自 然 例 外 規 則 で 棄 却 | `01-dsl.md` §4.2 + `02-messaging.md` §1 + `11-midi.md` §2.3 + `00-foundations.md` §3 (Expression scope、 既 整 合) + Q22 / Q32 / Q36 / Q51 |
 
 ---
 
@@ -2333,4 +2334,50 @@ Q51 で 「`forSample` は loop primitive で あ っ て phase で は な い�
 - canonical examples integrity 確 認: oscillator phase counter / minimum-phase / linear-phase / 音 響 phase 用 語 は DSP 領 域 別 意 = 触 ら ず、 構 造 名 詞 撤 廃 と 整 合 (= AGENTS.md HARD CONTRACT 同 commit 整 合 確 認 済 み)
 - 新 memory `feedback_docs-readership-and-priority.md` 作 成 (= 行 動 規 律 と し て session 跨 ぎ 引 用 可)
 - TaskList #82 (L1-a) completed
+
+---
+
+## Q56 — Handler body の expression scope (= L1-b、 Q51 followup)
+
+**Status:** resolved.
+
+### Problem
+
+Q51 で 「process body 任 意 位 置 で sample-position primitive (`audioIn.at` / `audioOut.set` / `param.at`) OK」 と ratify。 し か し `01-dsl.md` §4.2 L500 prose は 「Inside a handler, only state writes, buffer writes, and scalar arithmetic are allowed — sample-offset `i` is not in scope, so audio I/O primitives produce TypeScript reference errors」 と 残 っ た ま ま、 Q51 と 真 っ 向 衝 突。 同 doc 内 で §4.1 (event `emitIf`) / §5.6.4 (subgraph method context) / §6 (process body summary) / Q32 (= `emitIf` 統 一) は 既 に 「handler body 内 で `emitIf` / subgraph method 呼 び 出 し OK」 と 規 定 し て お り、 §4.2 L500 が 唯 一 の 狭 い prose と し て 残 っ て い た = impl AI agent が 異 な る judgment に 達 す る dangling、 真 の impl 矛 盾 リ ス ク。
+
+### Decision
+
+handler body (= `messageDecl.onReceive(handler)` / `midiInput().onEvent(type, handler)` の callback body) の expression scope は **`forSample` callback と 完 全 一 致 ル ー ル**:
+
+- **legal**: primitive operators / `state.load` / `state.store` / buffer read+write / audio I/O (`audioIn.at(c, i)` / `audioOut.set(c, i, v)`) / `param.at(i)` / `emitIf` / subgraph methods / L1 helper 呼 び 出 し
+- **illegal**: 新 規 declaration (`state.*` / `buffer.*` / `param.*` / `createSubgraph(...)`)
+- **sample-offset 引 数** = `Node<'i32'> | number` 一 律、 source 制 限 ナ シ (= handler arg の `atSample` (MIDI handler) / state slot value / buffer read / JS literal の ど れ も OK)
+- **surrounding `forSample` の `i`** = scope 外 (= 既 規 定 通 り、 handler は forSample の 前 に drain さ れ る た め)
+
+= **「handler body も `forSample` と 同 じ context」** を 1 ル ー ル に 統 一。
+
+### Why this and not alternatives
+
+**判 断 軸** = mental model シ ン プ ル さ (= user が 覚 え る context rule の 数) + 公 開 surface の 概 念 量 (= 例 外 規 則 の 有 無)。
+
+- **案 A (= 採 用)**: context rule 1 個 (= handler と `forSample` 同 一)、 例 外 規 則 ナ シ。 Q51 ratify (= 「process body は top-to-bottom 一 種 類、 `forSample` は loop primitive」) と 整 合。 §4.1 / §5.6.4 / §6 / Q32 既 規 定 と も 完 全 整 合 (= 「`emitIf` は OK だ が audio I/O は NG」 の 半 端 な 例 外 規 則 を 残 さ な い)。
+- **案 (d) = 一 切 禁 止 (= 既 L500 prose 維 持、 「handler は state 書 き 込 み 専 用 segment」)** 棄 却:
+  - user に context rule を 2 種 (= `forSample` 用 + handler 用) 覚 え さ せ る、 mental model の 概 念 量 が 1 個 増 え る
+  - 同 じ 関 数 (`audioOut.set` 等) が 同 じ `process` 内 の 別 lexical 位 置 で 「legal / illegal」 が 変 わ る compile error 罠 を 1 個 追 加
+  - §4.1 / §5.6.4 / §6 / Q32 既 規 定 で 既 に handler body 内 `emitIf` / subgraph method OK = 案 (d) 維 持 で も 半 端 な 例 外 規 則 が 残 る
+  - 案 A 採 用 で も 案 (d) の 書 き 方 (= handler で `state.store` + `forSample` で 比 較) は そ の ま ま 残 る、 表 現 を 1 個 増 や す だ け で 何 も 失 わ な い
+- **案 (a) JS literal だ け 受 け 入 れ** 棄 却: handler arg (= MIDI handler の `atSample`) を sample-offset と し て 渡 せ な い 不 自 然 制 約 を 1 個 追 加、 `forSample` 内 規 則 と 揃 わ な い (= no-artificial-constraint 違 反)
+- **案 (b) `Node<'i32'>` だ け (= literal 不 可)** 棄 却: `forSample` 内 で literal `0` OK な の に handler 内 で だ け 不 可 = 純 然 た る 例 外 規 則、 不 自 然
+- **「使 わ れ な い 機 能 を 開 け な い」 直 感** で 案 (d) に 傾 い た 中 間 評 価 を 棄 却: handler 内 で の sample-accurate 1 sample hit (= 案 A の 主 な advantage と し て 当 初 想 定) は kick / drum で も 実 際 は decay envelope が 必 要 = `forSample` 内 計 算 forced = 1 行 形 は 使 わ れ な い fact は 真。 ただ し 推 奨 の 主 軸 = mental model 統 一 で あ っ て sample-accurate hit 機 能 で は な い、 副 次 利 益 が 弱 い こ と で 主 軸 を 捨 て る の は flip 服 従 = 棄 却。
+
+### Side effects
+
+- `01-dsl.md` §4.2 L500 prose を 書 き 換 え (= 「same expression-scope rules as a `forSample` callback」 形 で 統 一 規 定)
+- `02-messaging.md` §1 L23 末 尾 prose を 拡 張 (= 「Handlers may also call `emitIf`...」 → expression-scope rule 全 体 統 一 規 定)
+- `11-midi.md` §2.3 末 尾 に 1 段 落 追 加 (= MIDI handler 側 で も 同 invariant を 明 言、 state-slot-driven trigger pattern を canonical と し て retain prose 付 与)
+- `00-foundations.md` §3 「Expression scope」 entry L60 = 既 に handler body も 並 列 規 定、 触 ら ず (= 既 整 合)
+- `00-foundations.md` §3 「Sample-offset (i)」 entry L70 = per-block / forSample の 規 則 prose、 handler body は L60 の expression scope 規 定 で 暗 黙 整 合、 触 ら ず
+- canonical Ex 5 / Ex 6 / Ex 8 の handler 内 は 全 て `state.store` の み 使 用、 案 A / 案 (d) で 同 じ コ ー ド = AGENTS.md HARD CONTRACT 同 commit 整 合 確 認 済 み
+- `open-questions.md` か ら L1-b entry 削 除、 Layer 1 件 数 を 3 → 2 に 更 新 (= 残 = L2-c / L2-d)
+- TaskList #84 (L1-b) completed
 

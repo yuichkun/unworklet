@@ -158,6 +158,8 @@ defineProcessor((ctx) => {
 
 The `atSample` is in the surrounding render quantum's coordinate system; consumers needing absolute time derive it as `audioContext.currentTime + atSample / sampleRate` on the main thread.
 
+Inside a handler body, the same expression-scope rules apply as in a `forSample` callback (`01-dsl.md` §4.2, `decisions-log.md` Q56): audio I/O (`audioIn.at` / `audioOut.set` / `param.at`), `emitIf`, subgraph methods, and L1 helper calls are all legal alongside `state` / buffer writes; new declarations are not. Sample-offset arguments accept `Node<'i32'> | number` from any source — the handler's own `atSample`, a state slot, a buffer read, or a literal. The state-slot-driven trigger pattern shown above remains the canonical form for sustained tones (where envelope computation runs in `forSample` regardless).
+
 ### 2.4 Outbound: emitting MIDI events (worklet → main)
 
 `midiOutput()` returns a handle whose only emission primitive is the `emitIf` **method**: `midiOut.emitIf(condition, event)`. There is no plain `emit(event)` — `emitIf` is the single emission primitive across every audio-thread expression context: `forSample` / `forSample.byN` callbacks, `everyNSamples` callbacks, MIDI / message handler bodies, and the per-block top level (statements in the `process` body outside any `forSample`). See `decisions-log.md` Q4-b for the original footgun reasoning, Q32-a for the cross-context unification. `emitIf` is dispatched off the handle (no free-function form); the same `handle.emitIf(cond, payload)` shape is used by generic `event<T>` declarations (see `01-dsl.md` §4).

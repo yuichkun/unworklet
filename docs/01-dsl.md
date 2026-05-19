@@ -497,7 +497,7 @@ A single message may have **multiple `onReceive` registrations**; all of them ru
 
 State observation inside a handler (Q38-d): `state.load()` reads the value at the start of the current quantum (= the value written by the previous quantum's last write). State written by `state.store(v)` inside the handler is observable in the same quantum's per-block computation and `forSample` callbacks (i.e. handlers can stage values for the per-block code that follows).
 
-Inside a handler, only state writes, buffer writes, and scalar arithmetic are allowed — sample-offset `i` is not in scope, so audio I/O primitives (`audioIn.at`, `audioOut.set`, `param.at(i)`) produce TypeScript reference errors at the call site (uniform with MIDI handler bodies, see `11-midi.md` §2).
+Inside a handler, the same expression-scope rules apply as in a `forSample` callback (Q56, `decisions-log.md`): primitive operators, `state.load/store`, buffer access, audio I/O via `audioIn.at(c, i)` / `audioOut.set(c, i, v)` / `param.at(i)`, `emitIf`, subgraph methods, and L1 helper calls are all legal. New declarations (`state.*` / `buffer.*` / `param.*` / `createSubgraph(...)`) are not allowed. The surrounding `forSample`'s `i` is not in scope (handlers drain before any `forSample` runs); sample-offset arguments accept `Node<'i32'> | number` from any source — the handler's own `atSample` arg (in MIDI handlers), a state slot value, a buffer read, or a JS literal.
 
 Options:
 
