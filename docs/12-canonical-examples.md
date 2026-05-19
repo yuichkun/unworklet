@@ -50,7 +50,7 @@ The example set is designed so that the union of all examples touches every conc
 
 1. **Stereo gain + level meter** — minimum useful plugin. Touches I/O, `param`, `state.publish`, basic `forSample`.
 2. **Three-band biquad EQ (minimum-phase)** — recursive `state` cascade with L1 + L2 helpers, denormal-aware feedback path, parameterized cookbook coefficients.
-3. **Three-band linear-phase EQ (partitioned convolution)** — multi-phase `process` body with sub-rate FFT, `forSample.byN(4)` SIMD bulk, overlap-add buffer accounting.
+3. **Three-band linear-phase EQ (partitioned convolution)** — mixed per-block + per-sample `process` body with sub-rate FFT, `forSample.byN(4)` SIMD bulk, overlap-add buffer accounting.
 4. **Lookahead limiter with overshoot event** — `buffer` delay line, per-sample envelope follower (L1 helper), `event<T>` with `atSample` for sample-accurate flagging, GR meter via `state.publish`.
 5. **Granular sampler** — bulk `message<T>` upload of sample buffer, voice-array state, `midiInput` note triggers, `buffer.publish` waveform display.
 6. **MIDI arpeggiator + sequencer** — `midiInput` ingest + `midiOutput` emission, generic `event<T>` for UI step indicator, `message<T>` for pattern reload.

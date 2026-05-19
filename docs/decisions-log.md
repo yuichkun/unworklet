@@ -63,6 +63,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q52 | Public package layout の docs-side enforcement (Q23 派 生、 L1-d) | resolved — 公 開 npm package 4 個 (= core / vite-plugin / offline / test、 Q23 strict)、 公 開 import path 5 種 (= 上 記 4 + `@unworklet/core/simd` subpath)、 DSL 識 別 子 約 50 個 は `@unworklet/core` root に flat export (= dsp subpath / 独 立 package ナ シ)、 `@unworklet/compiler` / `@unworklet/worklet` / `@unworklet/dsp` は 公 開 package で は な い (= compiler / worklet runtime は `@unworklet/core` internal module、 dsp surface は core root に flat); doc 章 タ イ ト ル の 表 記 規 則 = 公 開 package doc は タ イ ト ル に package 名 + internal module doc は タ イ ト ル か ら package 名 削 除 + 冒 頭 prose で 内 部 明 記; Q13 (initial package layout) が 自 動 派 生 確 定 | `01-dsl.md` L1 + `03-compiler.md` L1 + `04-worklet-runtime.md` L1 + `07-vite-plugin.md` L26 + `08-deployment.md` L13 |
 | Q53 | 仕 様 invariant vs 型 declaration の 形 — ratify 範 囲 確 定 (L1-c re-scope) | resolved — 設 計 ratify 範 囲 を 「仕 様 invariant」 (= 振 る 舞 い / 制 約 / mental model / 公 開 surface に 何 が 出 て く る か / 仕 様 内 矛 盾 / dangling) に 限 定、 「TS signature 細 部 / 識 別 子 名 の 好 み / generic constraint 表 現」 は impl AI agent が TS compiler 経 由 で 機 械 的 に 確 定 す る 領 域 と し て 委 譲 (= 「曖 昧 さ を 残 す」 で は な く 「適 切 な layer に 委 譲」、 既 ai-agent-paradigm スタンス と 整 合); L1-c の 当 初 19 種 type 階 層 分 類 議 論 を 撤 退、 dangling 1 件 (`SubgraphInstance<S>` invariant prose 不 在) を L1-c に 残 し て 別 grill; L2-a (loadVec / everyNSamples 命 名) + L2-b (param.at(0) framing) も impl AI 領 域 / L1-a 自 動 解 消 と し て open-questions か ら 撤 去 | `open-questions.md` 冒 頭 「ratify 範 囲」 セ ク シ ョ ン + Q23 (AI agent paradigm の 既 ratify) + 既 memory `ai-agent-paradigm-implementation-cost` |
 | Q54 | defineSubgraph wrapper の 真 の 役 割 + `SubgraphInstance<S>` 撤 廃 (L1-c 完 全 close) | resolved — `defineSubgraph` / `createSubgraph` wrapper を v1.0.0 で 維 持 (= 関 数 統 一 棄 却)、 wrapper の 真 の 役 割 = (1) framework-level identification (= Q30 memory budget + Q23 DevTools graph instance grouping + snapshot path namespacing の hook) + (2) name scope (= Q41 instance name = snapshot path prefix の framework 担 保); `SubgraphInstance<S>` 名 を 公 開 surface か ら 撤 廃 (= §1.6.1 export list か ら 削 除)、 `createSubgraph(...)` の 戻 り 値 = **subgraph body の return record そ の も の** と invariant 直 接 規 定、 user が 型 引 用 し た い 時 は `ReturnType<typeof subgraphDecl>` (TS 標 準); §5.2 / §5.6.2 prose 強 化 で wrapper の 真 の 役 割 を 明 文 化 (= 関 数 統 一 棄 却 理 由 + canonical Ex 2 / Ex 8 vs Ex 5 対 比 引 用) + L1-c dangling 完 全 close | `01-dsl.md` §1.6.1 + §5.2 + §5.6.2 + Q2 / Q34 / Q41 / Q53 |
+| Q55 | priority filter 軸 = impl 矛 盾 リ ス ク + L1-a 「phase」 wording sweep (Q53 補 強、 Q51 followup) | resolved — v1.0.0 ship 前 docs 読 者 = impl AI agent、 user-facing docs は v1.0.0 完 成 後 別 phase で 関 心 範 囲 外; priority filter の 唯 一 の 軸 = 「impl AI agent が 手 放 し で 実 装 し た 時 に 矛 盾 が 出 る か」 = 異 な る agent が 異 な る judgment に 達 す る prose 内 矛 盾 / dangling だ け が ★★★、 「user 視 点」 「user 誤 解」 「mental model 揺 れ る」 は priority 評 価 軸 外 (= mechanical sweep 領 域); L1-a 構 造 名 詞 「phase」 撤 廃 sweep (= Q51 followup) を 同 commit で 完 了、 adjective 「per-block / per-sample」 維 持、 §6 heading `The process phase` → `The process body`、 §10.4.1 `Single-phase` → `Per-sample-only`、 §10.4.2 `Multi-phase` → `Mixed`、 canonical Ex 3 description rename、 SIMD example `Phase 1/2/3` → `Step 1/2/3`、 oscillator phase counter / minimum-phase / linear-phase / 音 響 phase / compiler phase は 別 意 で retain | `open-questions.md` 冒 頭 「ratify 範 囲 と priority filter」 section + L1-a entry 削 除 + Q53 + Q51 |
 
 ---
 
@@ -2271,4 +2272,65 @@ L1-c (= `SubgraphInstance<S>` 名 撤 廃) を 同 1 entry に bundle:
 - canonical examples integrity 確 認: `12-canonical-examples.md` の Ex 2 / Ex 8 で `defineSubgraph` / `createSubgraph` 既 method-record return 形 で 整 合、 修 正 ナ シ。 `SubgraphInstance` / `SubgraphDecl` / `LambdaArgs` 言 及 ナ シ で 整 合 (= grep 確 認 済 み、 AGENTS.md HARD CONTRACT 同 commit check OK)
 - TaskList #86 (L1-c) completed
 - `open-questions.md` か ら L1-c entry 削 除 (= 完 全 close)、 残 grill = L1-a / L1-b / L2-c / L2-d / L3-a の 5 件 + L4 系
+
+---
+
+## Q55 — priority filter 軸 = impl 矛 盾 リ ス ク + L1-a 「phase」 wording sweep (Q53 補 強、 Q51 followup)
+
+**Status:** resolved.
+
+### Problem
+
+Q53 で 「仕 様 invariant vs 形」 の 切 り 分 け を ratify し た 後 も、 棚 卸 し で **「user 視 点」 で priority を 上 げ る 罠** に 落 ち た。 具 体 = L1-a 「phase」 terminology 矛 盾 を L1 内 grill 対 象 と し て 進 め た が、 実 体 = wording sweep = 仕 様 invariant 変 化 ナ シ、 impl AI agent は Q51 ratify mental model (= 「forSample は loop primitive で あ っ て phase で は な い」) で 1 意 に 読 め る = 異 な る agent が 異 な る judgment に 達 す る リ ス ク な し = 真 の ★★★ で は な い。
+
+余 湖 さ ん の 直 接 指 摘 (2026-05-19):
+
+> こ の docs は あ く ま で 実 装 agent が 迷 わ ず 判 断 す る た め の も の。 だ か ら た し か に wording は 絶 対 に 統 一 し た 方 が い い の は 間 違 い な い が、 「ユ ー ザ ー が 誤 解 す る」 と か は 全 然 違 う。 user facing な ド キ ュ メ ン ト は 完 成 後 に 作 る。 [...] 「こ の ま ま AI に 手 放 し で 実 装 さ せ た ら 矛 盾 が 出 て し ま う よ う な 点」 な ど を 優 先 的 に 潰 し た い。
+
+= **棚 卸 し priority 軸 が 明 確 に 提 示**: 「impl 矛 盾 リ ス ク」 を 唯 一 の judgement 軸 と し て docs 化 必 要。
+
+### Decision
+
+**v1.0.0 ship 前 docs の 読 者 = impl AI agent**。 user-facing docs (= getting started / API reference / tutorials) は v1.0.0 完 成 後 別 phase で 作 る = い ま 関 心 範 囲 外。
+
+**priority filter の 唯 一 の 軸**:
+
+| 評 価 | 例 | 行 動 |
+| --- | --- | --- |
+| **Yes** = impl AI agent が 手 放 し で 実 装 し た 時 に 矛 盾 が 出 る | 仕 様 prose 内 で 矛 盾 / dangling、 異 な る agent が 異 な る judgment に 達 し て 矛 盾 し た 実 装 が 出 る | ★★★ priority、 余 湖 さ ん grill 必 要 |
+| **No** = impl AI agent は 1 意 に 読 め る | wording rename / 表 記 揃 え / user 読 解 違 和 感 だ が 仕 様 invariant 不 変 | mechanical sweep 領 域、 freeze 前 に 1 batch、 余 湖 さ ん grill 不 要 |
+
+「user が 誤 解 す る」 「mental model が 揺 れ る」 「読 解 違 和 感」 等 の user-facing 視 点 で priority を 上 げ る な = 累 犯 リ ス ク。 wording rename が impl 矛 盾 を 引 き 起 こ す ケ ー ス は 例 外 的 (= 識 別 子 名 衝 突 等)、 通 常 は 「言 葉 の あ や」 = L4 sweep。
+
+**L1-a 「phase」 wording sweep (= Q51 followup)** を 同 commit で 完 了:
+
+Q51 で 「`forSample` は loop primitive で あ っ て phase で は な い」 と ratify し た 後 も、 docs に 「Per-block phase / per-sample phase = the two execution phases」 と い う 構 造 名 詞 用 法 が 並 存 し て い た。 構 造 名 詞 撤 廃 + adjective 維 持 (= (A) Retire author side、 compiler side は 別 軸 で 維 持) を 実 施:
+
+- 構 造 名 詞 (「two execution phases」 / 「single-phase」 / 「multi-phase」 / 「multiple forSample phases」) を 撤 廃
+- adjective (「per-block」 / 「per-sample」) は 時 間 軸 説 明 と し て 維 持 (= 「per-block code」 「per-sample code」 「per-block top level」)
+- §6 heading `The process phase` → `The process body`、 §10.4.1 `Single-phase` → `Per-sample-only`、 §10.4.2 `Multi-phase` → `Mixed (interleaved per-block and per-sample, with SIMD)`
+- canonical Ex 3 description `multi-phase` → `mixed per-block + per-sample`、 SIMD example の `// Phase 1: ... // Phase 2: ... // Phase 3:` → `// Step 1: ... // Step 2: ... // Step 3:`
+- compiler phase (= `03-compiler.md` 内 「graph capture phase」 / 「Phase walk」) は build pipeline 内 部 用 語 で 別 軸 = 触 ら ず
+- DSP 領 域 用 語 (= minimum-phase / linear-phase) / oscillator の `phase = state.f32(...)` 物 理 phase counter / 「fall out of phase」 音 響 phase / Q51 ratify mental model 段 落 内 の 否 定 文 「no fixed phase boundary」 「not a phase the framework reorders」 は 全 て retain (= 別 意 で 自 然)
+
+### Why this and not alternatives
+
+- **「user 視 点」 を priority 軸 と し て 残 す 案** 棄 却: user-facing docs は v1.0.0 完 成 後 別 phase = 今 関 心 範 囲 外、 user-facing 視 点 で 軸 を 設 定 す る と mechanical sweep が priority 上 位 に 流 れ 込 む = 余 湖 さ ん 負 担 累 犯
+- **「全 doc 矛 盾 解 消 を 一 律 priority」** 棄 却: 「矛 盾」 で も impl AI agent が 1 意 に 読 め る 矛 盾 (= wording 揺 れ、 Q51 ratify mental model 段 落 で disambiguate 可) は mechanical sweep、 真 の 「矛 盾」 = 異 な る agent が 異 な る judgment に 達 す る prose 衝 突 だ け を ★★★ と す る 厳 密 化 が 必 要
+- **構 造 名 詞 「phase」 を docs で 維 持 + redefine 案** 棄 却 (L1-a 内 (B) 案): Q51 ratify と 並 存 状 態 が 続 く、 wording sweep コ ス ト が 後 倒 し に な る だ け
+- **compiler 側 「phase」 も rename 案** 棄 却 (L1-a 内 (D) 案): compiler 側 既 ratify (Q22 / Q34 等) で 「graph capture phase」 が 確 立、 rename す る と 過 去 decisions-log 引 用 と drift、 sweep 量 大 + 価 値 小
+
+### Side effects
+
+- `open-questions.md` 冒 頭 「ratify 範 囲」 section を **「ratify 範 囲 と priority filter」** に 拡 張、 「docs 読 者 = impl AI agent」 + 「priority filter = impl 矛 盾 リ ス ク」 を 明 文 化
+- `open-questions.md` 「層 内 順 序 の 判 断 軸」 を 「impl 矛 盾 リ ス ク」 軸 で update (旧 「公 開 surface 確 定 度」 軸 を 置 換)
+- `open-questions.md` か ら L1-a entry 削 除 (= sweep 完 了)、 L1-b の 「な ぜ こ の 位 置」 prose を 「L1 内 最 上 段」 + 「真 の impl 矛 盾 リ ス ク = L498 prose と Q51 ratify の prose 衝 突」 に update
+- L1-a wording sweep の docs 反 映:
+  - `00-foundations.md` §3 vocabulary: `Per-block phase / per-sample phase` heading → `Per-block code / per-sample code`、 prose `two execution phases` → `two kinds of code`、 関 連 adjective 化
+  - `01-dsl.md` §1.1 / §3.1 / §3.3 / §4.2 / §5 / §6 / §7 / §10.1 等 で 構 造 名 詞 「phase」 撤 廃、 §6 heading `The process phase` → `The process body`、 §10.4.1 / §10.4.2 heading rename
+  - `02-messaging.md` §1 / `11-midi.md` §2.4: adjective 化
+  - `12-canonical-examples.md` Ex 3 description: 「multi-phase」 → 「mixed per-block + per-sample」
+- canonical examples integrity 確 認: oscillator phase counter / minimum-phase / linear-phase / 音 響 phase 用 語 は DSP 領 域 別 意 = 触 ら ず、 構 造 名 詞 撤 廃 と 整 合 (= AGENTS.md HARD CONTRACT 同 commit 整 合 確 認 済 み)
+- 新 memory `feedback_docs-readership-and-priority.md` 作 成 (= 行 動 規 律 と し て session 跨 ぎ 引 用 可)
+- TaskList #82 (L1-a) completed
 

@@ -9,9 +9,13 @@
 - 層 順 は ratify ご と に 再 評 価。 audit 由 来 の tier や issue 番 号 を そ の ま ま 流 さ な い (= 余 湖 さ ん の attention は 有 限)。
 - TaskList (claude-code 進 行 管 理 側) は こ の file に 従 う。 GitHub issue 化 は v1.0.0 spec freeze 後 (L4-g) に 一 括。
 
-## ratify 範 囲 = 仕 様 invariant だ け
+## ratify 範 囲 と priority filter
 
-こ の file が grill 対 象 と す る の は **仕 様 invariant** (= 変 わ っ て は い け な い 振 る 舞 い / 制 約 / mental model / 公 開 surface に 何 が 出 て く る か / 仕 様 内 の 矛 盾 / dangling) だ け。 **TS signature 細 部 / 識 別 子 名 の 好 み / generic constraint 表 現 等** は impl AI agent が TS compiler に 通 す 過 程 で 機 械 的 に 確 定 す る 領 域 = grill 対 象 外。 「曖 昧 さ を 残 す」 で は な く 「適 切 な layer に 委 譲」 (= `decisions-log.md` Q53)。
+**docs 読 者** = impl AI agent (= v1.0.0 ship 前 docs は impl agent が 迷 わ ず 判 断 す る ため の 仕 様、 user-facing docs = getting started / API reference / tutorials は v1.0.0 完 成 後 別 phase で 作 る、 い ま 関 心 範 囲 外)。
+
+**ratify 範 囲** = **仕 様 invariant** (= 振 る 舞 い / 制 約 / mental model / 公 開 surface に 何 が 出 て く る か / 仕 様 内 の 矛 盾 / dangling) だ け。 TS signature 細 部 / 識 別 子 名 の 好 み / generic constraint 表 現 等 は impl AI agent が TS compiler 経 由 で 機 械 的 に 確 定 す る 領 域 (= 「曖 昧 さ を 残 す」 で は な く 「適 切 な layer に 委 譲」、 `decisions-log.md` Q53)。
+
+**priority filter** = 「**impl AI agent に 手 放 し で 実 装 さ せ た ら 矛 盾 が 出 る か**」 を 唯 一 の judgement 軸 と す る (Q55)。 「user が 誤 解 す る」 「mental model が 揺 れ る」 「読 解 違 和 感」 等 の user-facing 視 点 で 上 げ る な = mechanical sweep 領 域、 freeze 前 に 1 batch。 真 の ★★★ は **異 な る impl agent が 異 な る judgment に 達 し て し ま う 仕 様 prose 内 の 矛 盾 / dangling** だ け。
 
 ## 4 層 filter
 
@@ -35,8 +39,8 @@ unworklet の pillar:
 
 **層 内 順 序 の 判 断 軸:**
 
-1. **公 開 surface 確 定 度** — mental model invariant / 振 る 舞 い 矛 盾 を 先 に (後 で 直 す = breaking)
-2. **議 論 の 軽 さ** — 軽 い ratify を 先 に 片 付 け て attention を 重 い mental model judgment に 集 中
+1. **impl 矛 盾 リ ス ク** — 仕 様 prose 内 の 矛 盾 / dangling、 異 な る impl agent が 異 な る judgment に 達 す る も の が 上 位 (= ship 後 breaking)
+2. **議 論 の 軽 さ** — 軽 い ratify を 先 に 片 付 け て attention を 重 い judgment に 集 中
 3. **依 存 関 係** — invariant ratify 間 の 順 序 整 合
 
 ---
@@ -47,7 +51,7 @@ unworklet の pillar:
 
 **何 が 未 決** — Q51 で `param.at(0)` / `audioIn.at(c, 0)` / `audioOut.set(c, 0, v)` を process body 任 意 位 置 で OK と 決 め た。 一 方 `01-dsl.md` L498-500 (`messageDecl.onReceive` body 規 則) と `11-midi.md` 同 等 箇 所 は 「handler 内 で audio I/O / param 一 切 不 可、 `i` not in scope」 と 書 い た ま ま、 Q51 と 衝 突。 audit B §2 も 「同 commit 内 で 並 存 = 最 大 の 構 造 的 矛 盾」 と 指 摘。
 
-**な ぜ こ の 位 置 (= L1 内 2 番 目)** — pillar P6 + P1 直 撃 (mental model)。 invariant (= handler context で 何 が 可 / 不 可 か) が 変 わ る = breaking。 ただ し 影 響 範 囲 は handler body の み (= user code の 1 部 分)、 L1-c (= SubgraphInstance invariant) よ り は 局 所。 mental model judgment は 重 い の で attention 集 中 が 必 要。
+**な ぜ こ の 位 置 (= L1 内 最 上 段)** — invariant (= handler context で 何 が 可 / 不 可 か) が 変 わ る = ship 後 breaking。 加 え て **真 の impl 矛 盾 リ ス ク** = `01-dsl.md` L498 prose が 「handler 内 で audio I/O / param 一 切 不 可」 と 明 言、 Q51 ratify は 「process body 任 意 位 置 で OK」 と 明 言 = 異 な る impl agent が 異 な る judgment に 達 す る 典 型 dangling。 mental model judgment は 重 い の で attention 集 中 が 必 要。
 
 **ど の doc が 触 れ る** — `01-dsl.md` §4.2、 §3.3、 `02-messaging.md` §1、 `11-midi.md` §3、 `00-foundations.md` §3 sample-offset entry、 `03-compiler.md` §2.4。
 
@@ -59,24 +63,6 @@ unworklet の pillar:
 - **(d) 一 切 禁 止。** 既 存 制 限 維 持、 Q51 を 「process body top-level に だ け 適 用、 handler body は 別 segment」 と 明 文 化。 mental-model 例 外 を 1 個 残 す。
 
 **Pillar 関 連** — P6、 P1、 P2。
-
----
-
-### L1-a. 「phase」 terminology の 内 部 矛 盾
-
-**何 が 未 決** — Q51 で 「`forSample` は **loop primitive で あ っ て phase で は な い**、 framework は process body を reorder/constrain し な い」 と ratify し た。 と こ ろ が docs に 「`Per-block phase / per-sample phase` = the two execution phases of a `process` body」 が 構 造 名 詞 と し て 残 存 (`00-foundations.md` L72、 `01-dsl.md` L27 ほ か 10+ 箇 所)。 同 doc 内 で 「phase じ ゃ な い」 と 「two phases」 が 並 存 = pillar P6 (JUCE-MM) の mental model を user が 内 在 化 で き な い。
-
-**な ぜ こ の 位 置 (= L1 内 最 下 段)** — pillar P6 (JUCE-MM) 全 体 を 揺 る が す mental model 矛 盾、 影 響 は **全 chapter の 読 み 方**。 ただ し docs prose の み が 変 化 す る = **公 開 API surface は 変 わ ら な い** = ship 後 で も 修 正 可 能 (= breaking で は な い、 docs 修 正 のみ)。 議 論 は 重 い (mental model judgment + 用 語 体 系 設 計)。 L1-c で 軽 い 確 定 を 先 に 終 え て attention 集 中。
-
-**ど の doc が 触 れ る** — `00-foundations.md` §3 vocabulary、 `01-dsl.md` §1 / §3 / §5 / §6 / §10、 `03-compiler.md` §2.2 + §3/§4 見 出 し (= compiler phase 別 意 で 残 す か)、 `12-canonical-examples.md` comment 群。
-
-**選 択 肢:**
-
-- **(A) Retire 「phase」 を 構 造 名 詞 と し て 撤 廃。** "top-level statements" / "`forSample`-bound statements" に 置 換。 §3 の `Per-block phase / per-sample phase` subsection ご と 削 除。 compiler phase は 別 意 と し て 残 し 注 釈。
-- **(B) Keep but redefine.** §3 vocabulary に 「`phase` は 本 docs 上 の **lexical-position shorthand** で あ っ て framework-enforced segmentation で は な い」 と 一 度 だ け 明 文 化。 既 存 用 法 そ の ま ま。
-- **(C) Author 側 retire、 compiler 側 残 す。** runtime 側 retire + compiler phase 残 し で 2 義 性 disambiguate。
-
-**Pillar 関 連** — P6 主 軸、 P1 (declarative) も。
 
 ---
 

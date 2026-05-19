@@ -61,7 +61,7 @@ The body of `process` lambdas, `forSample` / `forSample.byN` callbacks, L1 helpe
 
 ### Process body
 
-The function returned in the `process` field of `defineProcessor`'s and `defineSubgraph`'s return record. Runs once at build time as a meta-program; constructs an AST DAG that the framework emits as a per-block runtime program (per-block phase + zero or more per-sample phases) in WebAssembly. The audio thread executes the WASM; user TypeScript is not re-entered per sample or per block. See `decisions-log.md` Q22 (Q22-a, Q22-aprime).
+The function returned in the `process` field of `defineProcessor`'s and `defineSubgraph`'s return record. Runs once at build time as a meta-program; constructs an AST DAG that the framework emits as a per-block runtime program (per-block code + zero or more per-sample loops) in WebAssembly. The audio thread executes the WASM; user TypeScript is not re-entered per sample or per block. See `decisions-log.md` Q22 (Q22-a, Q22-aprime).
 
 **Mental model — same as JUCE / AudioWorklet `process`.** The `process` body is read top-to-bottom: code at the top of the body runs first, then any subsequent statement runs in source order, until the end. There is no fixed phase boundary that the author has to put their code on either side of, no global ordering rule beyond source order, and no restriction on how many `forSample` loops the body contains. Authors write zero, one, or many `forSample` invocations; per-block computation freely interleaves with them; the same output sample can be written multiple times (last write wins per Q37); the same input sample can be read in per-block code and again inside a `forSample` callback. This is the **AudioWorkletProcessor.process / JUCE AudioProcessor::processBlock** mental model, preserved as-is — `forSample` is just a loop primitive over the block, not a phase the framework reorders or constrains. The only structural rule is **declarations live in declaration scope** (= the top of the body, before the returned record): per-block / per-sample code shares the body, both run top-to-bottom, and the author orchestrates them as they see fit (Q37, Q22-aprime).
 
@@ -69,12 +69,12 @@ The function returned in the `process` field of `defineProcessor`'s and `defineS
 
 A `Node<'i32'>` that, at WASM-emission time, binds to the loop counter of a `forSample` iteration. `i` is the callback parameter of `forSample(callback)` or `forSample.byN(stride, callback)`. The value spans `[0, SAMPLES_PER_BLOCK - 1]`. Outside any `forSample`, the `Node<'i32'>` `i` variable is not in scope — using it there is a standard TypeScript reference error. Sample-position primitives themselves (`audioIn.at(c, i)`, `param.at(i)`, `audioOut.set(c, i, v)`) accept `Node<'i32'> | number` (Q36-a), so they can still be called per-block with a JS literal sample-offset (e.g. `audioIn.at(0, 0)`, `audioOut.set(0, 0, v)`, `param.at(0)`) — only the loop-counter alias is forSample-scoped.
 
-### Per-block phase / per-sample phase
+### Per-block code / per-sample code
 
-The two execution phases of a `process` body, distinguished by **lexical position**:
+The two kinds of code in a `process` body, distinguished by **lexical position**:
 
-- **Per-block phase** — statements at the top level of the `process` body (= outside any `forSample`). Run once at the start of every render quantum on the audio thread. Sample-position primitives accept JS-literal sample-offsets here (e.g. `param.at(0)` for block-start param value, `audioIn.at(0, 0)` for block-start input sample, `audioOut.set(0, 0, v)` for block-start output write) per Q36-a + Q51; the forSample-callback `Node<'i32'>` `i` alias is not available here, but the literal `0` (or any compile-time-constant offset) is. Otherwise per-block code uses `state.load/store`, buffer access, arithmetic, and SIMD primitives (for block-level bulk init).
-- **Per-sample phase** — statements inside a `forSample(callback)` (or `forSample.byN(stride, callback)`) invocation. The callback body runs once per sample (or once per `stride` samples) of the render quantum, with `i` bound to the loop counter.
+- **Per-block code** — statements at the top level of the `process` body (= outside any `forSample`). Run once at the start of every render quantum on the audio thread. Sample-position primitives accept JS-literal sample-offsets here (e.g. `param.at(0)` for block-start param value, `audioIn.at(0, 0)` for block-start input sample, `audioOut.set(0, 0, v)` for block-start output write) per Q36-a + Q51; the forSample-callback `Node<'i32'>` `i` alias is not available here, but the literal `0` (or any compile-time-constant offset) is. Otherwise per-block code uses `state.load/store`, buffer access, arithmetic, and SIMD primitives (for block-level bulk init).
+- **Per-sample code** — statements inside a `forSample(callback)` (or `forSample.byN(stride, callback)`) invocation. The callback body runs once per sample (or once per `stride` samples) of the render quantum, with `i` bound to the loop counter.
 
 A `process` body is read **top-to-bottom**; each statement (per-block direct code or `forSample` invocation) executes in declared (source) order. Per-block code can interleave freely with `forSample` invocations: per-block setup → per-sample work → more per-block code → another `forSample` → … — all valid.
 
@@ -84,7 +84,7 @@ See `decisions-log.md` Q22 (Q22-aprime, Q22-b).
 
 ### `forSample` / `forSample.byN`
 
-The only sample-loop primitive (see `01-dsl.md` §10). `forSample(callback)` runs `callback` for each sample of the current render quantum (stride 1). `forSample.byN(stride, callback)` runs `callback` once per `stride` samples (typical use: `stride = 4` for SIMD bulk operations paired with `buf.loadVec` / `buf.storeVec`). The presence of a `forSample` invocation in a `process` body marks the per-sample phase; its absence at any given lexical position marks the per-block phase.
+The only sample-loop primitive (see `01-dsl.md` §10). `forSample(callback)` runs `callback` for each sample of the current render quantum (stride 1). `forSample.byN(stride, callback)` runs `callback` once per `stride` samples (typical use: `stride = 4` for SIMD bulk operations paired with `buf.loadVec` / `buf.storeVec`). The presence of a `forSample` invocation in a `process` body marks per-sample code; its absence at any given lexical position marks per-block code.
 
 ### `everyNSamples`
 
@@ -104,7 +104,7 @@ Three declaration kinds for sample-position-independent slots:
 
 - **`state.<type>(initial, options?)`** — scalar slot. `load()` / `store(v)`. Persists across render quanta.
 - **`buffer.<type>({ size, name, ... })`** — fixed-size array. `buf.read(idx)` / `buf.write(idx, v)` / `buf.readInterpolated(pos)` for scalar access; `buf.loadVec(offset)` / `buf.storeVec(offset, value)` for SIMD bulk access (under `@unworklet/core/simd`). Lives in WASM linear memory.
-- **`param({ default, min, max, automationRate, ... })`** — bound to a Web Audio `AudioParam`. Single access form: `param.at(i)` (inside `forSample`, per-sample value at offset `i`) / `param.at(0)` (per-block phase, block-start value). No callable `param()` form, no `param.value` / `param.now()` property.
+- **`param({ default, min, max, automationRate, ... })`** — bound to a Web Audio `AudioParam`. Single access form: `param.at(i)` (inside `forSample`, per-sample value at offset `i`) / `param.at(0)` (per-block, block-start value). No callable `param()` form, no `param.value` / `param.now()` property.
 
 See `01-dsl.md` §3.
 

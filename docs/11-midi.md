@@ -214,7 +214,7 @@ defineProcessor((ctx) => {
 });
 ```
 
-At the per-block phase top level (where `i` is not in scope), the natural sample-accurate equivalent stores the offset in a `state.i32` slot during a `forSample` iteration and uses that slot's value as `atSample` in a subsequent emit.
+At per-block top level (where `i` is not in scope), the natural sample-accurate equivalent stores the offset in a `state.i32` slot during a `forSample` iteration and uses that slot's value as `atSample` in a subsequent emit.
 
 ### 2.5 Emitting sysex (worklet → main)
 

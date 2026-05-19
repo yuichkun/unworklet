@@ -24,17 +24,17 @@ type ProcessorOptions = {
 
 The second argument is the **options bag** — currently the host of `migrations` (§8.3) and `migrationsStrict` (§8.3.2). All fields are optional; processors that do not need schema migration omit the bag entirely. Future processor-level configuration lands on this same bag additively.
 
-A `process` body has **two execution phases distinguished by lexical position**:
+A `process` body has **two kinds of code distinguished by lexical position**:
 
-- **Per-block phase** — statements at the top level of the `process` body. Run once at the start of every render quantum on the audio thread.
-- **Per-sample phase** — statements inside a `forSample(callback)` or `forSample.byN(stride, callback)` invocation. The callback body runs once per sample (or once per `stride` samples) of the render quantum.
+- **Per-block code** — statements at the top level of the `process` body. Run once at the start of every render quantum on the audio thread.
+- **Per-sample code** — statements inside a `forSample(callback)` or `forSample.byN(stride, callback)` invocation. The callback body runs once per sample (or once per `stride` samples) of the render quantum.
 
 The body is read **top-to-bottom**: each statement (whether direct per-block code or a `forSample` invocation) executes in declared (source) order. Per-block code can interleave freely with `forSample` invocations — per-block setup → per-sample work → more per-block code → another `forSample` → … — all valid.
 
 Sample-position primitives (`audioIn.at(c, i)`, `audioOut.set(c, i, v)`, `param.at(i)`) take an `i: Node<'i32'> | number`. A `Node<'i32'>` `i` originates from a `forSample` callback parameter and is in scope only inside that callback — using it outside is a TypeScript reference error. JS-literal sample-offsets (the most common being `0`) lift to `Node<'i32'>` per Q36-a and are accepted everywhere the primitives appear: `param.at(0)` reads the block-start param value, `audioIn.at(c, 0)` reads the block-start input sample, `audioOut.set(c, 0, v)` writes the block-start output sample (Q51). This keeps the mental model identical to JUCE's `AudioProcessor::processBlock` and AudioWorklet's `process` — the body runs top-to-bottom, any sample-position primitive can be called at any point, and `forSample` is purely a loop construct over the block (write the same output multiple times, last write wins per Q37; read any input sample at any point). There is no sugar form; every per-sample access uses `at` / `set` / `param.at(...)`.
 
 ```typescript
-// Single-phase per-sample plugin (one forSample, no per-block work):
+// Per-sample-only plugin (one forSample, no per-block code):
 const gain = defineProcessor((ctx) => {
   const main = audioInput ({ channels: 2, name: 'main' });
   const out  = audioOutput({ channels: 2, name: 'main' });
@@ -50,7 +50,7 @@ const gain = defineProcessor((ctx) => {
   };
 });
 
-// Multi-phase plugin (interleaved per-block and per-sample code):
+// Mixed per-block + per-sample plugin (interleaved per-block and per-sample code):
 const partitionedReverb = defineProcessor((ctx) => {
   const main       = audioInput ({ channels: 1, name: 'main' });
   const out        = audioOutput({ channels: 1, name: 'main' });
@@ -61,12 +61,12 @@ const partitionedReverb = defineProcessor((ctx) => {
 
   return {
     process: () => {
-      // Per-block phase: advance partition pointer, run partitioned FFT setup.
+      // Per-block code: advance partition pointer, run partitioned FFT setup.
       const idx = partIdx.load();
       partIdx.store(mod(add(idx, 1), NUM_PARTITIONS));
       // ... partitioned FFT computation ...
 
-      // Per-sample phase: shovel input into inBuf, drain outBuf to output.
+      // Per-sample code: shovel input into inBuf, drain outBuf to output.
       forSample((i) => {
         inBuf.write(i, main.at(0, i));
         out.set(0, i, outBuf.read(i));
@@ -158,8 +158,8 @@ forSample((i) => {
 `audioOut.set(c, i, v)` follows the same mental model as the AudioWorklet `process(inputs, outputs)` and JUCE `processBlock` host environments: **write freely, no coverage requirement, no exactly-once constraint** (Q37, `decisions-log.md`):
 
 - Writing the same `(c, i)` multiple times is legal; source-order semantics apply (the later write wins).
-- Sample-offsets that no phase writes are emitted as silence (= 0) — this matches AudioWorklet's per-callback zero-init of the output buffer.
-- A processor with multiple `forSample` phases may split channels across phases (e.g. left in phase 1, right in phase 2), overwrite previously written values for mix-in patterns, or leave portions of the buffer silent — all are legal.
+- Sample-offsets that no `forSample` writes are emitted as silence (= 0) — this matches AudioWorklet's per-callback zero-init of the output buffer.
+- A processor with multiple `forSample` loops may split channels across loops (e.g. left in loop 1, right in loop 2), overwrite previously written values for mix-in patterns, or leave portions of the buffer silent — all are legal.
 
 Static analysis enforces only the real-time-safety invariants listed in `03-compiler.md` §2.4 (no unbounded loops, no dynamic allocation, no out-of-block sample-offset arithmetic, no illegal `forSample.byN` strides). Coverage of the render quantum is the author's responsibility.
 
@@ -324,7 +324,7 @@ const idx  = state.i32(0);
 
 `state.<type>(initial, options?)` declares a scalar slot. `load()` reads the current value; `store(node)` writes a `Node<T>` value back. The slot is inlined into the WASM linear memory at compile time.
 
-State is sample-position-independent: the `state` reference itself does not depend on the surrounding phase. `load()` returns the value as updated by the most recent `store()`. State updates inside `forSample` callbacks are observable in subsequent samples in the same render quantum and in subsequent render quanta. State updates at the per-block phase top level are observable for the rest of that render quantum and beyond. State load/store at the per-block phase **after** a `forSample` invocation can observe the state's value at the end of the loop — useful for block-level summaries (peak detect, accumulator readout, etc.).
+State is sample-position-independent: the `state` reference itself does not depend on the surrounding context. `load()` returns the value as updated by the most recent `store()`. State updates inside `forSample` callbacks are observable in subsequent samples in the same render quantum and in subsequent render quanta. State updates at per-block top level are observable for the rest of that render quantum and beyond. State load/store at per-block top level **after** a `forSample` invocation can observe the state's value at the end of the loop — useful for block-level summaries (peak detect, accumulator readout, etc.).
 
 Options:
 
@@ -397,18 +397,18 @@ const route = param({
 `param()` declares a slot bound to the standard Web Audio `AudioParam`. There is **one access method**: `param.at(i)`.
 
 ```typescript
-// Inside a forSample callback (per-sample phase): use the loop counter `i`.
+// Inside a forSample callback (per-sample code): use the loop counter `i`.
 forSample((i) => {
   const v = cutoff.at(i);          // Node<'f32'>, value at sample-offset i
 });
 
-// At the per-block phase top level: use 0 (block-start sample).
+// At per-block top level: use 0 (block-start sample).
 const blockValue = cutoff.at(0);   // Node<'f32'>, block-start value
                                    // For k-rate params this is the unique block value;
                                    // for a-rate params it is the first-sample value.
 ```
 
-`param.at(i: Node<'i32'> | number)` returns the value at sample-offset `i` within the current render quantum. Used inside `forSample` (`i` is the callback's `Node<'i32'>`) it returns the per-sample value (a-rate: per-sample interpolated; k-rate: the unique block value). Used at the per-block phase with the JS literal `0` (which lifts to `Node<'i32'>` per Q36-a, `decisions-log.md`) it returns the block-start value, which is what k-rate consumers want and what most per-block computations involving a-rate params should treat as their representative value.
+`param.at(i: Node<'i32'> | number)` returns the value at sample-offset `i` within the current render quantum. Used inside `forSample` (`i` is the callback's `Node<'i32'>`) it returns the per-sample value (a-rate: per-sample interpolated; k-rate: the unique block value). Used at per-block top level with the JS literal `0` (which lifts to `Node<'i32'>` per Q36-a, `decisions-log.md`) it returns the block-start value, which is what k-rate consumers want and what most per-block computations involving a-rate params should treat as their representative value.
 
 There is **no callable `param()` form** and **no `param.value` / `param.now()` property**. The single explicit method makes the sample-offset visible at every call.
 
@@ -470,7 +470,7 @@ const loadPreset = message<{ slot: number }>({ name: 'loadPreset' });
 const uploadIR   = message<{ samples: Float32Array }>({ name: 'uploadIR', capacity: CAPACITY_16 });
 ```
 
-`message<T>(options): MessageDecl<T>` declares a typed main → worklet message channel. The worklet-side handler is registered inside the `process` body at the per-block phase top level via `messageDecl.onReceive(handler)`:
+`message<T>(options): MessageDecl<T>` declares a typed main → worklet message channel. The worklet-side handler is registered inside the `process` body at per-block top level via `messageDecl.onReceive(handler)`:
 
 ```typescript
 return {
@@ -604,7 +604,7 @@ unworklet code lives in two graph-capture-time scopes:
 - **Declaration scope** — the body of `defineProcessor` and `defineSubgraph` directly. New `state.*`, `buffer.*`, `param.*`, `audioInput`, `audioOutput`, and `defineSubgraph` instantiations are created here. Each declaration registers a slot in the graph (and ultimately a region in WASM linear memory).
 - **Expression scope** — the `process` lambda body, including its per-block top level and any `forSample` callbacks; L1 helper bodies; `defineSubgraph` `process` lambdas; `everyNSamples` callbacks. Per-block and per-sample expressions live here. New declarations are forbidden in expression scope.
 
-L1 helpers exist purely in expression scope, callable from either the per-block phase top level or inside a `forSample` callback (depending on what the helper's body does).
+L1 helpers exist purely in expression scope, callable from either per-block top level or inside a `forSample` callback (depending on what the helper's body does).
 
 (Authoritative scope and graph-capture-model definitions: `00-foundations.md` §3.)
 
@@ -834,7 +834,7 @@ The method call expression's type is inferred from the corresponding return.
 
 `createSubgraph(subgraph, ...args)` can only be called in **declaration scope** — the body of `defineProcessor` or another `defineSubgraph`, before the `return` of the body record. Calling it inside expression scope (a method body, a `forSample` callback, an L1 helper body, a handler body) is a graph-capture-time error. Each instantiation declares an independent state slot region; placing the call in declaration scope keeps state allocation static and the instance count statically determined at build time.
 
-The methods on the returned instance, however, can be called from **any expression context**: `forSample` / `forSample.byN` / `everyNSamples` callbacks, `midiInput().onEvent(...)` handlers, `messageDecl.onReceive(...)` handlers, and the per-block phase top level. Method context is unrestricted regardless of return type — `Node<T>`-returning and `void`-returning methods are both callable everywhere. This matches the existing context rules for `state.load/store` and the primitive operators.
+The methods on the returned instance, however, can be called from **any expression context**: `forSample` / `forSample.byN` / `everyNSamples` callbacks, `midiInput().onEvent(...)` handlers, `messageDecl.onReceive(...)` handlers, and per-block top level. Method context is unrestricted regardless of return type — `Node<T>`-returning and `void`-returning methods are both callable everywhere. This matches the existing context rules for `state.load/store` and the primitive operators.
 
 ```typescript
 const osc = createSubgraph(oscillator, ctx.sampleRate);
@@ -896,11 +896,11 @@ Inside a subgraph body:
 
 Violations are caught at graph-capture / static-analysis time with refactor-hint error messages, mirroring §5.5.6.
 
-## 6. The `process` phase
+## 6. The `process` body
 
 unworklet processors run a single execution body, the `process` lambda, on the audio thread every render quantum. Build-time evaluation of `process` captures an AST DAG; the framework emits the DAG as a per-block runtime program (per-block top-level statements run once per render quantum; `forSample` callbacks run per sample). Hard realtime constraints apply (no allocation, no unbounded loops, no I/O). Authoritative shape and semantics: §1, §10, and `decisions-log.md` Q22.
 
-There is **no separate `publish` lambda**. State that the main thread observes (meter, spectrum, etc.) is declared with the `publish` option on `state` / `buffer` (see §3 and `decisions-log.md` Q27-a); worklet → main event delivery is via `eventDecl.emitIf(cond, payload)` callable from any expression context (`forSample`, MIDI / message handler bodies, `everyNSamples`) — see §4.1 and `decisions-log.md` Q32; main → worklet messages are handled by `onReceive` registered at the per-block phase top of the `process` body (see §4.2). The framework manages all scheduling — there is no user-visible publish-phase lambda.
+There is **no separate `publish` lambda**. State that the main thread observes (meter, spectrum, etc.) is declared with the `publish` option on `state` / `buffer` (see §3 and `decisions-log.md` Q27-a); worklet → main event delivery is via `eventDecl.emitIf(cond, payload)` callable from any expression context (`forSample`, MIDI / message handler bodies, `everyNSamples`) — see §4.1 and `decisions-log.md` Q32; main → worklet messages are handled by `onReceive` registered at per-block top of the `process` body (see §4.2). The framework manages all scheduling — there is no user-visible publish-lambda.
 
 ## 7. Opt-in SIMD
 
@@ -963,7 +963,7 @@ type BufferSimdMethods = {
 };
 ```
 
-- `buf.loadVec(offset)` — load four contiguous f32 lanes from the buffer (offset in element units; alignment-agnostic per WASM v128 semantics). Typically called inside a `forSample.byN(4, ...)` callback, or at the per-block phase top level (with build-time-loop unrolling) for bulk init.
+- `buf.loadVec(offset)` — load four contiguous f32 lanes from the buffer (offset in element units; alignment-agnostic per WASM v128 semantics). Typically called inside a `forSample.byN(4, ...)` callback, or at per-block top level (with build-time-loop unrolling) for bulk init.
 - `buf.storeVec(offset, value)` — store four contiguous f32 lanes into the buffer.
 
 The `Buffer<T>` handle is returned by `buffer.<T>({ size, name, ... })` declarations (see §3.2); the `.read` / `.write` / `.readInterpolated` scalar methods are always present, while `.loadVec` / `.storeVec` only become callable in modules that import `@unworklet/core/simd`.
@@ -1016,18 +1016,18 @@ export const simdGain = defineProcessor((ctx) => {
 
   return {
     process: () => {
-      // Phase 1: accumulate input into scratch (per-sample).
+      // Step 1: accumulate input into scratch (per-sample).
       forSample((i) => {
         scratch.write(i, main.at(0, i));
       });
 
-      // Phase 2: SIMD bulk gain.
+      // Step 2: SIMD bulk gain.
       forSample.byN(4, (i) => {
         const v = scratch.loadVec(i);
         scratch.storeVec(i, mulVec(v, splat(gain.at(i))));
       });
 
-      // Phase 3: drain scratch to output (per-sample).
+      // Step 3: drain scratch to output (per-sample).
       forSample((i) => {
         out.set(0, i, scratch.read(i));
       });
@@ -1267,7 +1267,7 @@ Authoritative rationale and rejected alternatives: see `decisions-log.md` Q7.
 
 ## 10. `forSample` — the per-sample loop primitive
 
-`forSample` is the only sample-loop primitive in unworklet. The presence of a `forSample` invocation in a `process` body marks the per-sample phase; statements at the top level of the `process` body (= outside any `forSample`) are the per-block phase. There is no implicit form, no sugar wrapping, and no `perBlock` sibling primitive — the per-block phase is "the top level", denoted by lexical position.
+`forSample` is the only sample-loop primitive in unworklet. The presence of a `forSample` invocation in a `process` body marks per-sample code; statements at the top level of the `process` body (= outside any `forSample`) are per-block code. There is no implicit form, no sugar wrapping, and no `perBlock` sibling primitive — per-block code lives at "the top level", denoted by lexical position.
 
 ### 10.1 Surface
 
@@ -1292,10 +1292,10 @@ type EveryNSamples = (n: number, body: () => void) => void;
 ### 10.2 Semantics
 
 - **Graph-capture-time meta primitive**: the callback is evaluated once during graph capture; the resulting AST nodes are recorded as belonging to a per-sample (or per-`stride`) sub-block of the WASM render-quantum program.
-- **`i` is loop-counter-bound and scoped to the callback**: inside the callback, `i` denotes the current sample-offset within the render quantum. Outside the callback, `i` is not in scope — TypeScript will reject any sample-position primitive that tries to use it (e.g., `audioIn.at(0, i)` written at the per-block top level is a TS reference error).
+- **`i` is loop-counter-bound and scoped to the callback**: inside the callback, `i` denotes the current sample-offset within the render quantum. Outside the callback, `i` is not in scope — TypeScript will reject any sample-position primitive that tries to use it (e.g., `audioIn.at(0, i)` written at per-block top level is a TS reference error).
 - **Arithmetic on `i`**: `add(i, 1)` and similar produce a `Node<'i32'>` that resolves to the offset value at WASM-emission time. Out-of-block access (`add(i, lookaheadSamples)` exceeding the render quantum) is a static-analysis error when statically detectable.
 - **Multiple `forSample` calls in one body**: each call is an independent sub-loop. Per-block top-level statements and `forSample` invocations execute in **declared (source) order** within the render quantum — the body reads top-to-bottom, exactly like JUCE / AudioWorklet `process` (see `00-foundations.md` §3 "Process body" mental model).
-- **No implicit `forSample` wrapping**: the `Node<'i32'> i` alias (= loop counter form of sample-position primitives) is forSample-scoped — `audioIn.at(0, i)` written at the per-block top level is a TS reference error because `i` is undefined there. Single-offset access with a JS-literal offset (`audioIn.at(0, 0)`, `audioOut.set(0, 0, v)`, `param.at(0)`) lifts via Q36-a and is valid at any lexical position (Q51); per-sample work over the full block requires `forSample`.
+- **No implicit `forSample` wrapping**: the `Node<'i32'> i` alias (= loop counter form of sample-position primitives) is forSample-scoped — `audioIn.at(0, i)` written at per-block top level is a TS reference error because `i` is undefined there. Single-offset access with a JS-literal offset (`audioIn.at(0, 0)`, `audioOut.set(0, 0, v)`, `param.at(0)`) lifts via Q36-a and is valid at any lexical position (Q51); per-sample work over the full block requires `forSample`.
 
 ### 10.3 Body constraints
 
@@ -1306,7 +1306,7 @@ Inside a `forSample` callback, the same rules as L1 helper bodies (§5.5.5) appl
 
 ### 10.4 Examples
 
-#### 10.4.1 Single-phase (one `forSample`, no per-block work)
+#### 10.4.1 Per-sample-only (one `forSample`, no per-block code)
 
 ```typescript
 const gainSat = defineProcessor((ctx) => {
@@ -1335,7 +1335,7 @@ const gainSat = defineProcessor((ctx) => {
 });
 ```
 
-#### 10.4.2 Multi-phase (interleaved per-block and per-sample, with SIMD)
+#### 10.4.2 Mixed (interleaved per-block and per-sample, with SIMD)
 
 ```typescript
 const simdProc = defineProcessor((ctx) => {
