@@ -61,6 +61,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q42 | `state.publish` 対 応 type と state.bool の WASM 表 現 (audit P0-7) | resolved — publish を 渡 せ る type を **f32 / i32 / bool の 3 つ に 限 定 ** (= 全 て 32 bit 1 word で 完 結、 JS `Atomics` で audio thread / main 両 方 が 安 全 に 1 回 で 読 み 書 き 可)、 state.bool は 内 部 で `i32` の 0/1 を 持 ち main 側 で boolean に cast、 main 側 `.value` 型 は state.bool→boolean / state.f32 と state.i32→number; state.f64 / state.i64 で publish オ プション を 渡 す と TypeScript エ ラ ー (= 64 bit が 2 回 に 分 け て 触 る ため torn read の 危 険、 v1.x.0 で mitigation と セ ット で 検 討) | `01-dsl.md` §3.1 + `02-messaging.md` §5.4 + `05-client.md` §1 |
 | Q43 | `everyNSamples` を forSample callback 引 数 経 由 で 取 る (audit P0-8) | resolved — `everyNSamples` を free function import か ら `forSample((i, everyNSamples) => ...)` の callback 第 2 引 数 に refine (= Q7 既 ratify form の callback 引 数 化、 既 `i` と 同 軸); forSample.byN も 同 形; scope は TypeScript scoping で 自 然 に 弾 か れ る (= handler / per-block top で TypeScript reference error、 build-time context tracking 不 要); subgraph method 内 で の 自 前 forSample で 自 然 解 決 (= caller context tracking 不 要); counter は 呼 び 出 し ご と に 独 立、 1 塊 を 越 え て 連 続 で reset ナ シ | `01-dsl.md` §9, §10.1 + Q7 |
 | Q52 | Public package layout の docs-side enforcement (Q23 派 生、 L1-d) | resolved — 公 開 npm package 4 個 (= core / vite-plugin / offline / test、 Q23 strict)、 公 開 import path 5 種 (= 上 記 4 + `@unworklet/core/simd` subpath)、 DSL 識 別 子 約 50 個 は `@unworklet/core` root に flat export (= dsp subpath / 独 立 package ナ シ)、 `@unworklet/compiler` / `@unworklet/worklet` / `@unworklet/dsp` は 公 開 package で は な い (= compiler / worklet runtime は `@unworklet/core` internal module、 dsp surface は core root に flat); doc 章 タ イ ト ル の 表 記 規 則 = 公 開 package doc は タ イ ト ル に package 名 + internal module doc は タ イ ト ル か ら package 名 削 除 + 冒 頭 prose で 内 部 明 記; Q13 (initial package layout) が 自 動 派 生 確 定 | `01-dsl.md` L1 + `03-compiler.md` L1 + `04-worklet-runtime.md` L1 + `07-vite-plugin.md` L26 + `08-deployment.md` L13 |
+| Q53 | 仕 様 invariant vs 型 declaration の 形 — ratify 範 囲 確 定 (L1-c re-scope) | resolved — 設 計 ratify 範 囲 を 「仕 様 invariant」 (= 振 る 舞 い / 制 約 / mental model / 公 開 surface に 何 が 出 て く る か / 仕 様 内 矛 盾 / dangling) に 限 定、 「TS signature 細 部 / 識 別 子 名 の 好 み / generic constraint 表 現」 は impl AI agent が TS compiler 経 由 で 機 械 的 に 確 定 す る 領 域 と し て 委 譲 (= 「曖 昧 さ を 残 す」 で は な く 「適 切 な layer に 委 譲」、 既 ai-agent-paradigm スタンス と 整 合); L1-c の 当 初 19 種 type 階 層 分 類 議 論 を 撤 退、 dangling 1 件 (`SubgraphInstance<S>` invariant prose 不 在) を L1-c に 残 し て 別 grill; L2-a (loadVec / everyNSamples 命 名) + L2-b (param.at(0) framing) も impl AI 領 域 / L1-a 自 動 解 消 と し て open-questions か ら 撤 去 | `open-questions.md` 冒 頭 「ratify 範 囲」 セ ク シ ョ ン + Q23 (AI agent paradigm の 既 ratify) + 既 memory `ai-agent-paradigm-implementation-cost` |
 
 ---
 
@@ -2172,3 +2173,54 @@ Q23 で 公 開 npm package 構 成 を **`@unworklet/core` + `@unworklet/vite-p
 - `08-deployment.md` L13: `The underlying compiler (@unworklet/compiler) is bundler-agnostic` → `The underlying compiler pipeline (= internal module of @unworklet/core, see 03-compiler.md) is bundler-agnostic`
 - Q13 (initial package layout) が 自 動 派 生 確 定 (= 公 開 4 package + 内 部 module 構 造 一 致)、 Q13 を resolved status に update (= summary table cell 既 update 済 み)
 - canonical examples integrity 確 認: `12-canonical-examples.md` の import 行 は 全 て `@unworklet/core` / `@unworklet/core/simd` 統 一 で 既 整 合、 修 正 ナ シ (AGENTS.md HARD CONTRACT 同 commit 整 合 確 認 済 み)
+
+---
+
+## Q53 — 仕 様 invariant vs 型 declaration の 形 — ratify 範 囲 確 定 (L1-c re-scope)
+
+**Status:** resolved.
+
+### Problem
+
+L1-c (公 開 type 定 義 大 量 不 在) を 棚 卸 し し て い く 中 で、 余 湖 さ ん が ratify 範 囲 の 線 引 き を 明 確 化 (2026-05-19)。
+
+L1-c の 当 初 整 理 は 「`@unworklet/core` か ら export 約 束 だ け で body shape declaration 不 在」 = 19 種 の type を 階 層 分 類 し て 各 § に formal `type X = {...}` block を 入 れ る 議 論 だ っ た。 し か し TS compiler を 使 わ ず 脳 内 で signature を 詰 め る 作 業 は **手 放 し 運 転** = 不 正 確、 む し ろ impl AI agent が TS で 通 し な が ら 決 め る ほ う が 整 合 性 確 保 で 強 い。 「我 々 が 今 こ こ で 詰 め る べ き は ミ ニ マ ム で 大 事 な と こ ろ だ け、 イ ン タ ー フ ェ ー ス の 細 部 は 詳 細 で 好 み で 変 わ る 部 分」 と い う 余 湖 さ ん 判 断。
+
+### Decision
+
+**unworklet の 設 計 ratify 範 囲 を 「仕 様 invariant」 に 限 定 す る**:
+
+| 領 域 | 誰 が decide | 含 ま れ る も の |
+| --- | --- | --- |
+| **仕 様 invariant** (= grill 対 象) | 余 湖 さ ん + 共 同 設 計 grill | 振 る 舞 い / 制 約 / mental model / 呼 び 出 し context / RT-safe / 公 開 surface に 何 が 出 て く る か / 仕 様 内 矛 盾 / prose 不 在 dangling |
+| **型 declaration の 形 / impl 細 部** (= grill 対 象 外) | impl AI agent (= TS compiler 経 由 で 機 械 的 に 確 定) | TS signature 細 部 (`Node<T> | number` の 表 記 / generic constraint / brand 形 内 部 / opaque vs structural 表 現) / 識 別 子 名 の autocomplete affordance 細 部 |
+
+**こ れ は 「曖 昧 さ を 残 す」 で は な く 「適 切 な layer に 委 譲」**: invariant は 厳 密 に grill、 形 は TS compiler に 通 す こ と で 機 械 的 に 確 定。 既 設 計 哲 学 (= Q23 「primitive み 提 供、 便 利 ツ ー ル 系 は 第 三 者 に、 つ ら い & み ん な 必 要 な も の だ け 巻 き 取 る」 + AI agent paradigm 「設 計 合 意 で き れ ば 実 装 は 実 質 O(1)、 取 り 返 し つ か な い の は 曖 昧 設 計 と 調 査 不 足」) の 厳 密 適 用。
+
+**L1-c の re-scope**:
+
+- 公 開 surface に 約 束 さ れ た 19 種 type の 「中 身 形」 議 論 は impl 領 域 に 落 と す
+- 各 type の method invariant (= ど の method を 持 つ か / 呼 び 出 し context / 戻 り 値 の 意 味) は 既 docs prose で ratify 済 み = invariant 議 論 既 完 了
+- 例 外 = `SubgraphInstance<S>` (= §1.6.1 で 名 前 だ け export 約 束、 §5.6 で 戻 り 値 型 と し て 引 用 ナ シ、 「subgraph instance か ら 何 が 引 け る か」 が prose に も 書 か れ て い な い) を L1-c に 残 し て 別 grill
+
+**他 残 question へ の 適 用**:
+
+- **L2-a (loadVec / everyNSamples 命 名 見 直 し)** 撤 去 — 「ど の 名 前 が ergonomic か」 = impl AI 領 域 (= autocomplete 上 の 試 行 で 決 ま る 細 部)、 invariant で は な い
+- **L2-b (param.at(0) framing refine)** 撤 去 — prose の cosmetic refine、 L1-a (phase terminology) ratify で 自 動 解 消、 単 独 entry 不 要
+
+### Why this and not alternatives
+
+- **L1-c を 階 層 分 類 で 詰 め 切 る 案 棄 却** — TS compiler を 使 わ ず 脳 内 で 19 種 type の signature を 詰 め る = 不 正 確 + 余 湖 さ ん attention の 浪 費、 impl AI が TS で 通 し な が ら 決 め る ほ う が 整 合 性 確 保 で 強 い
+- **「形 議 論 も 仕 様 と し て 詰 め る」 案 棄 却** — 既 ai-agent-paradigm スタンス (= 設 計 合 意 で き れ ば 実 装 O(1)、 取 り 返 し つ か な い の は 曖 昧 設 計) と 衝 突 し、 設 計 と 実 装 の 適 切 な 分 業 を 崩 す
+- **「全 部 impl 任 せ」 案 棄 却** — 「曖 昧 さ を 残 す」 で は な い こ と が 余 湖 さ ん の 念 押 し、 仕 様 invariant の 矛 盾 / dangling は き っ ち り 詰 め る
+
+### Side effects
+
+- `open-questions.md` 冒 頭 に **「ratify 範 囲 = 仕 様 invariant だ け」** セ ク シ ョ ン 追 加 (= 「TS signature 細 部 は impl AI 領 域」 を 明 文 化)
+- L1-c entry を **「SubgraphInstance<S> invariant の dangling」** に re-scope (= 19 種 階 層 分 類 を 撤 退、 dangling 1 件 だ け 残 す)
+- L2-a entry 削 除 (= 撤 去、 impl AI 領 域)
+- L2-b entry 削 除 (= 撤 去、 L1-a 連 動 で 自 動 解 消)
+- TaskList sync: #86 を SubgraphInstance<S> invariant grill に re-purpose (= subject 更 新)、 #65 (L2-a) を delete、 L2-b は task list に 元 々 task entry ナ シ で sync 不 要
+- canonical examples integrity 確 認: docs 仕 様 自 体 は 改 訂 ナ シ (= ratify 範 囲 の 線 引 き 明 文 化 + 個 別 entry の 撤 去 / re-scope の み)、 `12-canonical-examples.md` 修 正 ナ シ
+- 既 memory `ai-agent-paradigm-implementation-cost` + `no-preemptive-defer` の 厳 密 適 用 と し て docs 化 (= こ の Q53 自 体 が 「invariant vs 形 の 操 作 的 定 義」 の 第 一 文 献 と な る)
+

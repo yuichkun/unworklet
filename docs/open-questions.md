@@ -9,6 +9,10 @@
 - 層 順 は ratify ご と に 再 評 価。 audit 由 来 の tier や issue 番 号 を そ の ま ま 流 さ な い (= 余 湖 さ ん の attention は 有 限)。
 - TaskList (claude-code 進 行 管 理 側) は こ の file に 従 う。 GitHub issue 化 は v1.0.0 spec freeze 後 (L4-g) に 一 括。
 
+## ratify 範 囲 = 仕 様 invariant だ け
+
+こ の file が grill 対 象 と す る の は **仕 様 invariant** (= 変 わ っ て は い け な い 振 る 舞 い / 制 約 / mental model / 公 開 surface に 何 が 出 て く る か / 仕 様 内 の 矛 盾 / dangling) だ け。 **TS signature 細 部 / 識 別 子 名 の 好 み / generic constraint 表 現 等** は impl AI agent が TS compiler に 通 す 過 程 で 機 械 的 に 確 定 す る 領 域 = grill 対 象 外。 「曖 昧 さ を 残 す」 で は な く 「適 切 な layer に 委 譲」 (= `decisions-log.md` Q53)。
+
 ## 4 層 filter
 
 unworklet の pillar:
@@ -31,40 +35,25 @@ unworklet の pillar:
 
 **層 内 順 序 の 判 断 軸:**
 
-1. **公 開 surface 確 定 度** — 公 開 import path / 公 開 type 定 義 不 在 を 先 に 確 定 (後 で 直 す = breaking)
-2. **議 論 の 軽 さ** — 軽 い ratify を 先 に 片 付 け て attention を mental model judgment に 集 中
-3. **依 存 関 係** — L1-c (公 開 type 確 定) が 終 わ ら な い と L1-b (handler arg type 解 釈) の type 表 現 が 不 定
+1. **公 開 surface 確 定 度** — mental model invariant / 振 る 舞 い 矛 盾 を 先 に (後 で 直 す = breaking)
+2. **議 論 の 軽 さ** — 軽 い ratify を 先 に 片 付 け て attention を 重 い mental model judgment に 集 中
+3. **依 存 関 係** — invariant ratify 間 の 順 序 整 合
 
 ---
 
 ## Layer 1 — judgment 必 要、 API surface / mental model
 
-### L1-c. 公 開 type 定 義 の 大 量 不 在
+### L1-c. `SubgraphInstance<S>` invariant の dangling
 
-**何 が 未 決** — docs 横 断 で 公 開 type と し て 約 束 さ れ て い る 識 別 子 の 正 式 declaration が 不 在。 `defineProcessor` / `createSubgraph` の signature 自 体 が 未 定 義 identifier に 依 存 し て い る。 audit A §4 + B §4 拾 い。
+**何 が 未 決** — `01-dsl.md` §1.6.1 で `SubgraphInstance<S>` が 「`@unworklet/core` か ら export 」 と 約 束 さ れ て い る が、 §5.6 の `createSubgraph` 仕 様 prose で **戻 り 値 と し て 一 度 も 参 照 ナ シ、 instance か ら 何 が 引 け る か の 振 る 舞 い 規 定 も 不 在**。 「subgraph instance か ら ど の method を 呼 べ る か / state slot path は ど う 引 け る か / nested subgraph で の 引 き 渡 し は ど う 動 く か」 が 仕 様 prose に 書 か れ て い な い。
 
-具 体 的 に 不 在 な type:
+(注: L1-c は 当 初 「公 開 type 定 義 大 量 不 在 sweep」 と し て 19 種 を 階 層 分 類 す る 議 論 だ っ た が、 Q53 で 大 部 分 を impl AI 領 域 に 落 と し、 仕 様 invariant が prose に も 書 か れ て い な い dangling 1 件 = `SubgraphInstance<S>` だ け を こ こ に 残 し た。)
 
-- `ProcessorContext` — `defineProcessor` body の `ctx` 型。 `ctx.sampleRate` 等 field が prose で 言 及 さ れ る が `type ProcessorContext = {...}` declaration ナ シ。
-- `ProcessorBody` — `defineProcessor` body 返 り 値。 `{ process: () => void; ... }` shape が 暗 黙。
-- `CompiledProcessor<C>` — `defineProcessor` 戻 り 値、 `createNode` 引 数。
-- `State<T>` / `Param` / `EventDecl<T>` / `MessageDecl<T>` / `MidiInputHandle` / `MidiOutputHandle` — `01-dsl.md` §1.6.1 で 「`@unworklet/core` か ら export」 と 約 束 だ け、 body shape declaration ナ シ (`EventDecl<T>` は Q32 detail に 1 箇 所 declare あ り、 仕 様 本 体 に 無 し)。
-- `SubgraphDecl` / `LambdaArgs` — `createSubgraph` signature の 引 数 型 placeholder。
-- **`SubgraphInstance<S>`** — `01-dsl.md` §1.6.1 export 約 束、 §5.6 で 戻 り 値 型 と し て 一 度 も 参 照 ナ シ (= dangling)。 派 生 question: 「helper signature で `inst: SubgraphInstance<typeof onepole>` と 書 け る 必 要 が あ る か?」
-- `ChannelIndex<C>` — comment narrative の み (`type X = ...` declaration ナ シ)。
-- `TypedArrayFieldRef<T>` — Q36-b で proxy 名 確 定 だ が 仕 様 本 体 に shape declaration ナ シ。
+**な ぜ L1 内 最 上 段** — `createSubgraph` 戻 り 値 が ど の surface を 持 つ か は v1.0.0 公 開 mental model 直 結、 後 で 振 る 舞 い を 追 加 / 変 更 = breaking。 議 論 軽 め (= invariant 範 囲 を 1 段 落 で 確 定 で き る 規 模)、 attention 配 分 が 軽 い。
 
-**な ぜ こ の 位 置 (= L1 内 最 上 段、 旧 L1-d ratify (Q52) で promotion)** — `.d.ts` emission の 「正 解」 を impl agent が 持 て な い。 公 開 API field 不 定 = 後 で 直 す と 互 換 破 り。 議 論 は 軽 い (= 既 spec か ら mechanical extract で 90%、 派 生 数 件)、 mental model judgment よ り 先 に 片 付 け る。
+**ど の doc が 触 れ る** — `01-dsl.md` §1.6.1 + §5.6、 `decisions-log.md` Q34 / Q41 (= 既 createSubgraph ratify) + Q53。
 
-**ど の doc が 触 れ る** — `01-dsl.md` §1.6.1 (集 約 先 候 補)、 §3 / §4 / §5 / §8 各 declaration 仕 様、 `05-client.md` §2 (main 側 export)、 `decisions-log.md` Q32 / Q34 / Q36 / Q41 等。
-
-**選 択 肢:**
-
-- **(A) 1 batch で 既 spec か ら 機 械 的 に extract、 `01-dsl.md` §1.6.1 周 辺 に declaration block を 集 約。** ratify 内 容 を 変 え ず prose を 形 式 化。 派 生 判 断 は 「公 開 す る か 内 部 type に 留 め る か」 の 数 件 の み。
-- **(B) impl 期 に 各 owner が `.d.ts` で 書 く、 spec docs に は 形 式 declaration 不 要。** spec は prose の ま ま、 公 開 type は impl 成 果 物 が 正 本。 但 し AGENTS.md HARD CONTRACT (canonical example integrity) と の 整 合 が 弱 ま る。
-- **(C) Hybrid: 主 要 type (`State<T>` / `Param` / `EventDecl<T>` / `MessageDecl<T>` / `MidiInputHandle` / `MidiOutputHandle` / `Buffer<T>` / `Node<T>` / `SubgraphInstance<S>` / `CompiledProcessor<C>`) は spec docs に declaration block、 internal placeholder type (`SubgraphDecl` / `LambdaArgs` / `ProcessorBody`) は impl 任 せ。**
-
-**Pillar 関 連** — P2 (TS-first) 直 撃。
+**Pillar 関 連** — P1 (declarative)、 P6 (JUCE-MM、 helper composition の mental model)。
 
 ---
 
@@ -72,9 +61,7 @@ unworklet の pillar:
 
 **何 が 未 決** — Q51 で `param.at(0)` / `audioIn.at(c, 0)` / `audioOut.set(c, 0, v)` を process body 任 意 位 置 で OK と 決 め た。 一 方 `01-dsl.md` L498-500 (`messageDecl.onReceive` body 規 則) と `11-midi.md` 同 等 箇 所 は 「handler 内 で audio I/O / param 一 切 不 可、 `i` not in scope」 と 書 い た ま ま、 Q51 と 衝 突。 audit B §2 も 「同 commit 内 で 並 存 = 最 大 の 構 造 的 矛 盾」 と 指 摘。
 
-**な ぜ こ の 位 置 (= L1 内 2 番 目)** — pillar P6 + P1 直 撃 (mental model)。 公 開 API arm (`Node<'i32'> | number` を handler context で 切 る か 維 持 か) が 変 わ る = breaking。 ただ し 影 響 範 囲 は handler body の み (= user code の 1 部 分)、 L1-c よ り は 局 所。 mental model judgment は 重 い の で attention 集 中 が 必 要。
-
-**派 生 依 存** — L1-c (公 開 type 確 定) が 終 わ っ て な い と 「handler arg の `atSample` を `Node<'i32'>` で 受 け る or `number` plain で 受 け る」 の type 表 現 が 揺 れ る。 L1-c 後 に 議 論。
+**な ぜ こ の 位 置 (= L1 内 2 番 目)** — pillar P6 + P1 直 撃 (mental model)。 invariant (= handler context で 何 が 可 / 不 可 か) が 変 わ る = breaking。 ただ し 影 響 範 囲 は handler body の み (= user code の 1 部 分)、 L1-c (= SubgraphInstance invariant) よ り は 局 所。 mental model judgment は 重 い の で attention 集 中 が 必 要。
 
 **ど の doc が 触 れ る** — `01-dsl.md` §4.2、 §3.3、 `02-messaging.md` §1、 `11-midi.md` §3、 `00-foundations.md` §3 sample-offset entry、 `03-compiler.md` §2.4。
 
@@ -113,7 +100,7 @@ unworklet の pillar:
 
 **何 が 未 決** — `05-client.md` §1 の `CreateNodeOptions<C>.restore?: Uint8Array` は 「Schema mismatch routed through the processor's `migrations` chain」 と 書 く が、 戻 り 値 は `Promise<UnworkletNode<C>>` で `RestoreResult` を 含 ま な い。 `node.restore(blob)` method 経 由 は `RestoreResult` discriminated union を 返 す が、 `createNode({ restore })` で migration が throw し た 場 合 の レ ポ ー ト path が 仕 様 化 さ れ て い な い。 audit A §5 拾 い。
 
-**な ぜ L2 内 最 上 段** — 公 開 API 戻 り 値 shape (= ship 後 に 変 え る と breaking)。 L2-a (命 名) よ り 重 い。 選 択 肢 自 体 は 3 案 で 軽 い ratify。
+**な ぜ L2 内 最 上 段** — 公 開 surface invariant (= 失 敗 path が ど の channel で user に 届 く か、 ship 後 に 変 え る と breaking)。 選 択 肢 自 体 は 3 案 で 軽 い ratify。
 
 **選 択 肢:**
 
@@ -122,18 +109,6 @@ unworklet の pillar:
 - **(C) `createNode({ restore })` 経 路 自 体 を 廃 止、 「`createNode → await restore(blob)`」 を canonical pattern と し て docs 化。** v1.0.0 surface 削 減。 既 存 canonical で `restore` 経 路 を 使 う 例 は ナ シ (`initial` の み)。
 
 **ど の doc が 触 れ る** — `05-client.md` §1 / §2.6 / §6.5。
-
-**Pillar 関 連** — P2。
-
----
-
-### L2-a. `loadVec` / `everyNSamples` 命 名 見 直 し
-
-**何 が 未 決** — SIMD bulk read primitive `buf.loadVec(offset)` / sub-rate primitive `everyNSamples(N, callback)` は 早 期 draft で 付 け た 名 前 で、 IDE autocomplete / 初 読 体 験 と し て の affordance を 評 価 し 直 し て な い。
-
-**な ぜ L2 内 2 番 目** — 公 開 API 識 別 子 名 (= 一 度 ship し た ら breaking) だ が、 影 響 範 囲 は SIMD subset (= 全 user で は な い) と sub-rate (= 局 所)。 L2-c (戻 り 値 shape) よ り 軽 い。
-
-**ど の doc が 触 れ る** — `01-dsl.md` §3.2 (`Buffer<T>` 型)、 §7.2、 §9 (`everyNSamples`)、 §10 (forSample)、 `12-canonical-examples.md` SIMD 例。
 
 **Pillar 関 連** — P2。
 
@@ -152,18 +127,6 @@ unworklet の pillar:
 - **(C) Tile iteration use case (= forSample 内 で nested forSample で 2D buffer 走 査) を 明 示 use case と し て 採 用、 例 を 1 個 canonical に 追 加。**
 
 **Pillar 関 連** — P6、 P3 (RT-safe — nested は 静 的 解 析 で bounded 確 認 必 要)。
-
----
-
-### L2-b. `param.at(0)` framing refine
-
-**何 が 未 決** — 現 docs は `param.at(0)` を 「block-start value (k-rate semantics)」 と framing。 Q51 + Q36-a を 踏 ま え る と 「`at(i)` は sample-offset `i` の 値、 `0` は block 先 頭 sample」 と uniform 説 明 が mental model 一 致。
-
-**な ぜ L2 内 最 下 段** — prose の み の cosmetic refine、 公 開 API surface 不 変。 L1-a (phase terminology retire) の 後 で 連 動 し て や る ほ う が 自 然 (= 「phase」 用 語 が docs か ら 消 え た 後 に `at(i)` uniform framing を 書 き 直 す)。
-
-**ど の doc が 触 れ る** — `01-dsl.md` §3.3、 `00-foundations.md` §3。
-
-**Pillar 関 連** — P6、 P2。
 
 ---
 
