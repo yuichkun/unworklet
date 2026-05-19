@@ -1116,7 +1116,7 @@ const synth = defineProcessor((ctx) => {
 });
 ```
 
-The migration array lives on the **processor's options bag** (the second argument to `defineProcessor`), not in the declaration body — this keeps the processor body focused on the live runtime graph and isolates schema-evolution concerns from per-block / per-sample logic. Each entry's `from` and `to` are schema hashes emitted by `unworklet build` into `dist/schema-hash.json` (see `07-tooling.md`). The framework constructs a directed graph from the entries and finds the path `blob.schemaHash → currentSchemaHash`; entries are applied in order, with each step's output hash verified against its declared `to`.
+The migration array lives on the **processor's options bag** (the second argument to `defineProcessor`), not in the declaration body — this keeps the processor body focused on the live runtime graph and isolates schema-evolution concerns from per-block / per-sample logic. Each entry's `from` and `to` are schema hashes emitted by `@unworklet/vite-plugin` into `dist/schema-hash.json` (see `07-vite-plugin.md` §2). The framework constructs a directed graph from the entries and finds the path `blob.schemaHash → currentSchemaHash`; entries are applied in order, with each step's output hash verified against its declared `to`.
 
 #### 8.3.1 `helpers` API
 

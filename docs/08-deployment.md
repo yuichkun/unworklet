@@ -8,9 +8,9 @@ skeleton
 
 ## 1. Bundler integration
 
-<!-- Q24 — which bundlers ship a first-party plugin (Vite first?), generic ESM strategy
-     for the rest. .wasm asset resolution, Worklet module URL via
-     `new URL(..., import.meta.url)` or equivalent. Lands here. -->
+unworklet ships **one** first-party bundler integration in v1.0.0: `@unworklet/vite-plugin` (= authoritative spec in `07-vite-plugin.md`). It handles WASM build, asset resolution (= `?worklet` query), HMR, source maps, and the DevTools panel surface in a single package. unworklet has **no CLI of its own**: `vite build` and `vite` are the user-facing entry points.
+
+Other bundlers (Webpack, Rollup, esbuild, etc.) are out of v1.0.0 scope and may be added additively in v1.x.0 when consumer demand materializes. The underlying compiler (`@unworklet/compiler`) is bundler-agnostic, so a consumer can write a custom integration in the meantime if they're not on Vite. Authoritative rationale: `decisions-log.md` Q23+Q24+Q25.
 
 ## 2. Browser compatibility matrix
 

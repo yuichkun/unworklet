@@ -28,7 +28,7 @@ If your work touches an area not covered here, **stop and surface the gap** to t
                   └──────►  11-midi.md  ◄──────┘
                            │
                            ▼
-        06-testing.md   07-tooling.md   08-deployment.md
+        06-testing.md   07-vite-plugin.md   08-deployment.md   13-offline-render.md
 ```
 
 Independent and can be picked up at any time:
@@ -48,13 +48,14 @@ Independent and can be picked up at any time:
 | `03-compiler.md` | partial (§2 graph capture + §2.4 three-layer error written; §1, §3–§8 placeholder) |
 | `04-worklet-runtime.md` | partial (§7 publish scheduling written; §1–§6 + §8 placeholder, Q18 / Q19 / Q20 / Q21 will resolve) |
 | `05-client.md` | partial (§2 surface listing + §2.6 snapshot/restore + §5 event/state subscription + §6 timing + §7 latency-comp written; §1, §3, §4 placeholder) |
-| `06-testing.md` | skeleton |
-| `07-tooling.md` | skeleton |
-| `08-deployment.md` | skeleton (Q11 / Q24 will resolve) |
+| `06-testing.md` | skeleton (Q23 + Q24 + Q25 resolved at scope level; matcher / golden-file detail pending) |
+| `07-vite-plugin.md` | skeleton (Q23 + Q24 + Q25 resolved at scope level; per-section detail pending) |
+| `08-deployment.md` | skeleton (Q11 + Q24 resolved; §3 SAB degradation + §4 WASM distribution detail pending) |
 | `09-repo-structure.md` | skeleton (Q12 / Q13 / Q15 / Q16 / Q26 will resolve) |
 | `10-roadmap.md` | partial (§3.1 mandatory deferred mitigations written; §1 / §2 / §3.2 placeholder, Q14 will resolve) |
 | `11-midi.md` | written |
 | `12-canonical-examples.md` | written (integrity anchor; updated together with any spec change — see `AGENTS.md`) |
+| `13-offline-render.md` | skeleton (Q23 + Q24 + Q25 resolved at scope level; API / backend detail pending) |
 | `decisions-log.md` | populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index) |
 
 Content is filled in incrementally as design questions are resolved through dialogue. Anything not yet present in a doc is not yet decided — see `decisions-log.md` for what *has* been decided.

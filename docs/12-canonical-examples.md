@@ -887,9 +887,9 @@ export const convolutionReverb = defineProcessor((ctx) => {
 }, {
   // Snapshot migration chain — when older blob versions show up, lift them
   // forward declaratively. Each entry's from/to is the schema hash emitted
-  // by `unworklet build` into dist/schema-hash.json. Earlier shapes of this
-  // processor stored a single mono IR named 'ir'; the current shape splits
-  // it into irL/irR, and dryGain was introduced later.
+  // by `@unworklet/vite-plugin` into dist/schema-hash.json. Earlier shapes
+  // of this processor stored a single mono IR named 'ir'; the current shape
+  // splits it into irL/irR, and dryGain was introduced later.
   migrations: [
     {
       from: 'a3f2c1d0...',           // mono-IR schema

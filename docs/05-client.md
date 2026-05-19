@@ -301,3 +301,79 @@ dryDelay.delayTime.value = totalLatencySec;
 ```
 
 Multi-stage layouts where each stage has different lookahead requirements follow the same rule: at each branching / parallel point in the graph, the application inserts a `DelayNode` whose value equals the sum of lookaheads on the alternate path.
+
+## 8. Dynamic processor swap (`replaceProcessor`)
+
+`replaceProcessor` is a free function on `@unworklet/core` that swaps a running processor's WASM implementation while carrying state forward via the existing `snapshot()` + migration-chain machinery (Q5 + Q45). It is the **raw primitive** that user-land tooling (vite-plugin HMR recipes, Faust-style live coding REPLs, Max/MSP-style visual-programming editors) builds on; the framework itself does not orchestrate code-change detection, graph reconnection, or audio-side crossfade. Authoritative rationale: `decisions-log.md` Q50.
+
+### 8.1 Signature
+
+```typescript
+import { replaceProcessor } from '@unworklet/core';
+
+const result = await replaceProcessor(oldNode, NewProcessor);
+
+type ReplaceResult<New extends ProcessorDef> =
+  | {
+      ok: true;
+      node:     UnworkletNode<New>;   // freshly-typed wrapper for the new processor
+      restored: number;
+      skipped:  string[];
+      missing:  string[];
+    }
+  | {
+      ok: false;
+      node:     UnworkletNode<New>;   // still returned; runs on declaration defaults
+      error:    { step: string; message: string; cause: unknown };
+      restored: number;
+      skipped:  string[];
+      missing:  string[];
+    };
+```
+
+The result shape mirrors `RestoreResult` (§2.6) one-for-one — the same migration chain runs underneath. The `node` field is always a fresh `UnworkletNode<New>` typed against the new processor's declarations; the old `oldNode` is left in whatever graph state the caller put it in.
+
+### 8.2 What the call does
+
+1. Calls `oldNode.snapshot()` to capture the current state into a blob.
+2. Registers the new processor's WASM under a fresh unique name (Web Audio's `registerProcessor()` rejects duplicate names, and `removeModule()` does not exist — see `decisions-log.md` Q50).
+3. Instantiates a new `AudioWorkletNode` against the new WASM and runs `restore(blob)` on it (migration chain per Q45).
+4. Returns the new typed wrapper.
+
+### 8.3 What the call does NOT do
+
+- It does **not** disconnect `oldNode` from the audio graph. The caller decides when to detach the old node.
+- It does **not** connect the new node into the audio graph. The caller wires the returned `result.node` into wherever it needs to live.
+- It does **not** crossfade between old and new. A clean swap with audio continuity is built by the caller using parallel routing and a `GainNode` envelope (or whatever pattern fits the use case).
+- It does **not** monitor source files, listen to `import.meta.hot`, or otherwise detect that a swap is needed. The decision to call `replaceProcessor` lives entirely in user-land code (an HMR plugin, a live-coding REPL, a UI button).
+
+### 8.4 Type surface across declarations changes
+
+Because the returned `node` is typed against the **new** processor's declarations, any consumer code that captured a reference to a slot on the old wrapper (`oldNode.state.fb.subscribe(...)`) does not silently migrate. If the new schema renamed `fb` → `feedback`, the caller's `result.node.state.fb` is a TypeScript error at the call site — the rename surfaces in the IDE the moment the new typed `.d.ts` is loaded. Resubscriptions, parameter wiring, and graph connections that the caller wants to carry across the swap are written explicitly in the caller's post-swap code.
+
+This is the deliberate trade-off: `replaceProcessor` is honest about what a processor swap is (a new processor, with new declarations, potentially with a new I/O shape) rather than pretending the wrapper is the same object underneath. The cost is that callers write the post-swap wiring; the benefit is that schema drift between old and new never silently dies.
+
+### 8.5 Memory and registration accumulation
+
+Each `replaceProcessor` call adds one entry to the `AudioWorkletGlobalScope`'s registered-processor table; the Web Audio spec provides no removal path before the `AudioContext` is destroyed. In dev workflows that swap repeatedly (HMR, live coding), this accumulates inside the current `AudioContext`'s lifetime. The framework surfaces this through a `console.warn` after a threshold of swaps in the same `AudioContext`, suggesting the caller recreate the context (or refresh the page) when it becomes a concern. Production code that swaps occasionally (preset reloads, format changes) is unaffected in practice.
+
+### 8.6 Patterns built on top (= user-land, not framework)
+
+Hot module reload, live coding, and visual programming patterns are not first-class features of unworklet; they are *recipes* that the user-land code (or third-party plugins) compose from `createNode`, `replaceProcessor`, and the standard Web Audio graph methods. Sketch of the Vite HMR recipe:
+
+```typescript
+const node = await createNode(audioCtx, MyProcessor);
+let current = node;
+current.connect(audioCtx.destination);
+
+if (import.meta.hot) {
+  import.meta.hot.accept('./my-processor.ts?worklet', async (mod) => {
+    const result = await replaceProcessor(current, mod.default);
+    result.node.connect(audioCtx.destination);   // wire the new node in
+    current.disconnect();                         // unwire the old node
+    current = result.node;                        // refresh the caller's handle
+  });
+}
+```
+
+`07-vite-plugin.md` documents the Vite-specific delivery details (the `?worklet` import shape, the HMR boundary the plugin sets up). The swap orchestration itself stays in user code.

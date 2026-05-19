@@ -1,35 +1,41 @@
 # 06 — Testing (`@unworklet/test`)
 
-Vitest/Jest-friendly offline rendering. Lets every processor be tested without a browser, deterministically.
+Vitest matchers for unworklet processors. Wraps `@unworklet/offline` (= `13-offline-render.md`) with audio-domain assertions so processors can be tested deterministically in Node, without a browser or audio thread.
 
 ## Status
 
-skeleton
+skeleton (Q23 + Q24 + Q25 resolved at the scope level; per-section detail to be filled in incrementally)
 
-## 1. `renderOffline`
+## 1. Relationship to `@unworklet/offline`
 
-<!-- renderOffline<C>(processor, config) → Promise<{
-       output: Float32Array[],
-       events: Array<{ at, name, payload }>,
-       peak: number,
-       rms: number,
-       hasNaN: boolean,
-     }>
-     config: sampleRate, duration, params, paramAutomation, input(sampleOffset), messages[]. -->
+`@unworklet/test` does **not** re-implement rendering. It depends on `@unworklet/offline`'s `renderOffline` (= `13-offline-render.md` §2) and adds matchers that assert on the returned PCM, events, and state. This split keeps offline rendering usable outside testing (= server-side render, batch processing, preset preview UI — see `13-offline-render.md` §1) while testing-specific concerns (matcher ergonomics, golden-file comparison, property-based patterns) stay in this package.
 
-## 2. Backend choice and cross-validation
+## 2. Matchers
 
-<!-- Default: pure-JS interpreter (no WASM dependency at test time).
-     Optional: WASM backend, cross-validated for bit-identity (modulo documented FP differences). -->
+<!-- Vitest `expect.extend(...)` registration. Surface:
 
-## 3. Property-based testing patterns
+     - expectAudioMatches(actual, expected, { tolerance })
+         Bit-identical or within-tolerance comparison of Float32Array channels.
+     - expectNoNaN(result)
+         Asserts result.outputs contains no NaN / ±Infinity.
+     - expectPeakUnder(result, dbfs)
+         Asserts peak amplitude under a dBFS threshold.
+     - expectRmsUnder(result, dbfs)
+     - expectEventsEqual(result, expectedEvents)
+         Compares emitted events (name + payload + atSample).
+     - expectStateMatches(result, expectedSnapshot)
+         Compares end-of-render snapshot blob (Q5 format). -->
 
-<!-- fast-check examples: bounded gain, stable feedback, monotonicity invariants.
+## 3. Golden file / bit-exact reference patterns
+
+<!-- - `renderOffline` determinism guarantee (= 13-offline-render.md §2) makes golden .wav comparison reliable.
+     - Tolerance policy: bit-exact for pure-JS backend; documented FP tolerance bands for WASM backend cross-validation.
+     - Helper: `expectAudioMatchesGolden(result, './fixtures/expected.wav', { tolerance })`. -->
+
+## 4. Property-based testing patterns
+
+<!-- fast-check examples: bounded gain, stable feedback under random input, monotonicity invariants under parameter sweeps.
      The library does not bundle fast-check; the patterns are documented for users to wire up. -->
-
-## 4. Bit-exact reference / golden files
-
-<!-- renderOffline determinism guarantee; golden .wav comparison; tolerance policy. -->
 
 ## 5. Vitest integration notes
 

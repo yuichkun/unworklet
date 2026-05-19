@@ -32,9 +32,10 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q20 | Pre-warm correctness | resolved — v1.0.0 で framework 側 の pre-warm 機 構 を 提 供 し な い (= WASM は ブ ラ ウ ザ で AOT compile な の で JIT spike が 起 きな い、 branch predictor 等 ハ ー ド ウ ェ ア の warmup は runtime 数 quantum 内 に 自 動 で 落 ち 着 き audio 出 力 と し て 不 可 聴); framework が user code に 暗 黙 で silent block を 走 ら せ る の は declarative 原 則 違 反 寄 り; v1.x.0 で 必 要 性 が 出 れ ば opt-in option (= `createNode(..., { preWarm: {...} })`) を additive 追 加 検 討 | `04-worklet-runtime.md` §5 |
 | Q21 | Denormal handling | resolved — `state.f32` / `state.f64` の `.store(v)` で コ ン パ イ ル 時 に subnormal ガ ー ド を 自 動 insertion (= `\|v\| < 1e-30` な ら 0 に 落 と す)、 audio thread の CPU spike 防 止; v1.0.0 で opt-out 機 能 ナ シ (= audio DSP で subnormal 保 持 use case 稀)、 必 要 性 が 出 た 時 v1.x.0 で opt-out option 追 加 検 討; declarative 原 則 と の 微 妙 な 衝 突 は audio DSP 業 界 慣 行 (= JUCE 等 で 標 準 FTZ) + footgun 撤 廃 で 例 外 正 当 化 | `04-worklet-runtime.md` §6 |
 | Q22 | Graph capture model and process body structure | resolved (a / aprime / b fixed; c 3-layer fixed; d open) | `00-foundations.md` §3 + `01-dsl.md` §1, §10 + `03-compiler.md` §2 |
-| Q23 | Hot reload semantics | (open) | `07-tooling.md` §4 |
-| Q24 | Bundler integration scope | (open) | `08-deployment.md` §1 |
-| Q25 | Source maps | (open) | `03-compiler.md` §7 |
+| Q23 | Hot reload semantics + Q24 bundler integration + Q25 source maps を 1 entry に 統 合 (= primitive vs user land の 仕 分 け、 user land = consumer's app と third-party tooling ecosystem の 2 layer で 区 別) | resolved — unworklet 側 CLI ナ シ、 framework は raw primitive と `@unworklet/vite-plugin` で build / asset / source maps + **DevTools 8 panel (build errors + graph viewer + memory budget + live state inspector + live latency monitor + MIDI flow + snapshot inspector + swap history) + analysis JSON / dev-time live channel** を 巻 き 取 り (= devtools panel は consumer の app に 見 え な い 開 発 者 DX surface、 全 author が 同 一 machinery を 見 た い universal な も の、 framework が opinionated に ship す べ き 領 域); HMR orchestration / 動 的 swap の audio 連 続 制 御 / consumer's app の DSP UI (spectrum / oscilloscope 等) は user land (= consumer's app への 踏 み 込 み は declarative 違 反); 動 的 swap primitive `replaceProcessor(oldNode, newProcessor)` を `@unworklet/core` に 新 規 追 加 (= Q50 で 詳 細); vite plugin の HMR 関 与 は 「`?worklet` import を Vite HMR boundary と し て 整 え る」 だ け、 swap 動 作 は user-land code が `replaceProcessor` を 明 示 で 呼 ぶ; offline rendering は `@unworklet/offline` 別 package (= 変 更 ナ シ); test matchers は `@unworklet/test` 別 package (= 変 更 ナ シ); 他 bundler plugin は v1.x.0 additive | `07-vite-plugin.md` + `05-client.md` §8 + `13-offline-render.md` + `06-testing.md` + `08-deployment.md` §1 |
+| Q24 | Bundler integration scope | resolved — Q23 に 統 合 | `07-vite-plugin.md` + `08-deployment.md` §1 |
+| Q25 | Source maps | resolved — Q23 に 統 合 (= `@unworklet/vite-plugin` が sidecar `.wasm.map` で 出 す) | `07-vite-plugin.md` §5 |
+| Q50 | 動 的 processor swap primitive (= HMR / live coding / visual programming の 共 通 根) | resolved — `replaceProcessor(oldNode: UnworkletNode<Old>, newProcessor: New): Promise<ReplaceResult<New>>` を `@unworklet/core` か ら free function で expose; 内 部 動 作 = (1) `oldNode.snapshot()` で blob 化、 (2) 新 WASM を unique name で `registerProcessor` (= Web Audio spec の duplicate-name 禁 止 + `removeModule()` 不 存 在 制 約 を 隠 蔽)、 (3) 新 AudioWorkletNode 生 成 + `restore(blob)` (= Q5 + Q45 migration 再 利 用)、 (4) 新 typed wrapper を 戻 り 値 で 返 す; framework は graph 切 断 / 接 続 / 旧 node destroy / crossfade を 触 ら ず consumer 責 任 (= raw primitive、 declarative 純 度 維 持、 magic ナ シ); 戻 り 値 で 新 wrapper を 返 す 形 = declarations 変 化 (rename / 追 加 / 削 除) は typed `.d.ts` 経 由 で TS error と し て consumer code に 即 露 出 (= silent fail せ ず); accumulation warning (= 同 AudioContext 内 で N 回 swap 累 積 で `console.warn`) は framework が 出 す (= Web Audio `removeModule()` 不 存 在 制 約 を consumer 認 知 surface に); HMR は user-land で `import.meta.hot.accept` + `replaceProcessor` の recipe、 live coding / visual programming も 同 primitive を 使 う | `05-client.md` §8 + `07-vite-plugin.md` §4 |
 | Q26 | TypeScript version | (open) | `09-repo-structure.md` §5 |
 | Q27 | Generic typed messaging core surface | resolved — 5-surface uniform (param / state.publish / event / message / midi); SAB+Atomics with postMessage fallback; bulk via state.buffer.publish or event/message variable-length payloads | `02-messaging.md` + `01-dsl.md` §3, §4 |
 | Q29 | variable-rate iteration の v1.0.0 提 供 判 断 | resolved — v1.0.0 で `forSample` + `forSample.byN` の み (= 既 ratify 維 持); `forSampleRange(start, end, callback)` は v1.x.0 で additive 追 加 検 討 (= 表 現 力 は v1.0.0 forSample + build-time if で カ バ ー 済 み、 効 率 化 用 途); `forSamplesUntil(cond, callback)` (= runtime early-exit) と runtime variable stride は 永 久 排 除 (= realtime safety 違 反 / declarative 原 則 違 反) | `01-dsl.md` §10.5 |
@@ -1949,6 +1950,136 @@ policy rule (1 行):
 
 ### Open follow-up
 
-- COOP/COEP detect 失 敗 時 の dev mode warning の 出 し 方 (= console.warn vs onError event vs IDE 段 階 doc 警 告) は #68 (Q23 hot reload) / 07-tooling.md 領 域 で 個 別 grill
+- COOP/COEP detect 失 敗 時 の dev mode warning の 出 し 方 (= console.warn vs onError event vs DevTools Structured Diagnostics) は `07-vite-plugin.md` §6.1 (Build errors / warnings panel) の 細 部 spec 段 階 で 詰 め る
 - future quirk が 出 た 時 の adjudication procedure (= 「unworklet WASM module が 触 る か?」 1 問 判 定 を docs 化) は v1.0.0 docs polish 段 階 で 扱 う
+
+## Q23+Q24+Q25 — `@unworklet/vite-plugin` の scope (#68 B1 + #69 B2 + #70 B3 統 合)
+
+**Status:** resolved (3 件 統 合 entry、 動 的 swap の primitive 部 分 は Q50 に 切 り 出 し)。
+
+### Problem
+
+unworklet を dev で 使 う 時 に 必 要 な 「edit → save → 動 い て い る audio に 反 映」 + 「処 理 cost / state / error を 観 察」 が 既 spec に な か っ た。 既 docs (= 旧 07-tooling.md placeholder) は `unworklet build / dev / test / bench / analyze` の 自 前 CLI 案 だ っ た が、 こ れ は v1.0.0 で 採 用 し な い と 判 断。 加 え て:
+
+- bundler integration (Q24) の scope = ど の bundler を first-class と す る か、 ど の よ う な asset resolution / module loading を ど う 提 供 す る か 未 spec
+- source maps (Q25) = `.ts` → `.wasm` の source position 繋 ぎ 方 + 配 信 形 態 未 spec
+- hot reload (Q23) = code edit → 動 い て い る audio の 振 る 舞 い + main thread node の lifecycle 未 spec
+
+3 つ は 互 い に 依 存 (= source maps は build pipeline に 乗 る、 HMR は bundler watch event を 拾 う) で 同 1 statement で 同 時 解 決 が 自 然。
+
+### Decision
+
+**unworklet の 巻 き 取 り 基 準 = 「fundamental + universal + non-opinionated」 の 3 条 件 全 部 満 た す も の の み**。 余 湖 さ ん の ス タ ン ス を 引 用 = (1) HMR を framework が 勝 手 に や る の は too much、 user land 寄 り、 (2) Max/MSP 風 visual programming や Faust 風 live coding 環 境 を user が 作 れ る 仕 様 に し た い、 (3) primitive み 提 供、 便 利 ツ ー ル 系 は 第 三 者 に、 つ ら い & み ん な 必 要 な も の だ け 巻 き 取 る。
+
+こ の lens で 機 能 を 仕 分 け:
+
+| 機 能 | 判 定 | 理 由 |
+|---|---|---|
+| WASM build + asset resolution + source maps + `?worklet` HMR boundary | 巻 き 取 り (`@unworklet/vite-plugin`) | fundamental (Vite 統 合 が ど の consumer に も 必 要) + universal + non-opinionated |
+| DevTools panel set (build errors + graph viewer + memory budget + live state inspector + live latency monitor + MIDI flow + snapshot inspector + swap history) | 巻 き 取 り (`@unworklet/vite-plugin`) | DevTools panel は consumer の app に は 見 え な い、 unworklet 開 発 者 の DX surface 限 定; 全 author が 同 一 machinery (= graph 構 造 / memory budget / state slot / MIDI ringbuffer / 3-layer error / `replaceProcessor` 履 歴) を 見 た い = universal、 ship し な い と 各 author / downstream plugin が 同 一 view 再 構 築 = ecosystem 分 裂 + 「つ ら い & み ん な 必 要」 そ の も の; panel は unworklet 自 身 の 構 造 だ け 可 視 化、 consumer の DSP 意 味 内 容 (spectrum / oscilloscope / custom dashboard) に は 触 ら な い |
+| analysis JSON artifacts + dev-time live channels | 巻 き 取 り (`@unworklet/vite-plugin`) | 上 記 panel の data source = 安 定 schema を public extension surface と し て declare、 第 三 者 panel (visual programming editor / 専 用 dashboard / 代 替 inspector) が forward-compatible に composable |
+| 動 的 swap primitive (= 旧 processor → 新 processor、 state 持 ち 越 し) | 巻 き 取 り (`@unworklet/core`) | Web Audio spec 制 約 (= `registerProcessor` 同 name 禁 止、 `removeModule()` 不 存 在) の 隠 蔽 が fundamental + universal (= HMR / live coding / visual programming 共 通 根)、 raw primitive な ら non-opinionated。 詳 細 = Q50 |
+| HMR orchestration (= file watcher trigger + 自 動 swap + graph 自 動 再 接 続 + crossfade) | user land / 第 三 者 | 動 的 swap primitive あ れ ば user land で 書 け る、 「自 動 や る か 手 動 か」 は consumer's audio graph に 踏 み 込 む = opinionated 領 域、 declarative 哲 学 と 衝 突 |
+| consumer の app UI / DSP (spectrum analyzer / oscilloscope / custom dashboard 等) | user land / 第 三 者 | consumer's app に framework が 踏 み 込 む = declarative 違 反、 plugin が 提 供 す る panel は unworklet 自 身 の 構 造 限 定 |
+| offline rendering (= pure JS WASM 実 行、 PCM 返 却) | 巻 き 取 り (`@unworklet/offline` 別 package) | fundamental (pure JS interpreter は framework が 持 つ) + universal (test / server-side / batch / preset preview の 4 use case 共 通) |
+| test matchers (audio 比 較 / NaN 検 知 等) | 巻 き 取 り (`@unworklet/test` 別 package) | audio test の 共 通 課 題 を 巻 き 取 り、 内 部 で `@unworklet/offline` を 使 用 |
+
+採 用 案 = **3 package 構 成**:
+
+- **`@unworklet/core`**: 既 全 primitive + 新 規 `replaceProcessor` (= Q50)
+- **`@unworklet/vite-plugin`**: WASM build + asset resolution + `?worklet` HMR boundary + source maps + build-error panel + analysis JSON 出 力。 HMR orchestration / 残 DevTools panel は scope OUT
+- **`@unworklet/offline`** + **`@unworklet/test`**: 別 package、 既 ratify 通 り
+
+unworklet 自 前 CLI は ship し な い (= `vite build` / `vite` が user-facing entry)。
+
+### Why this and not alternatives
+
+- **`unworklet` 自 前 CLI ship 棄 却**: vite が build / dev / HMR を 担 う、 framework が dev server 自 前 ship は scope 過 大
+- **HMR を framework が 自 動 で orchestrate 棄 却**: Web Audio spec が HMR を supported し て い な い 中 で 「自 動 検 知 + 自 動 swap + 自 動 graph 再 接 続」 を declare す る の は magic で hack を 隠 す = declarative 哲 学 違 反、 silently fail す る case (= declarations rename / channel count 変 化 / closure に 旧 ref 保 持 / dynamic graph 操 作) を 抱 え た ま ま 「dev experience 一 級」 と 名 乗 る の は honest で な い、 余 湖 さ ん 「user land 寄 り す ぎ」 指 摘 と も 整 合
+- **DevTools panel を 「build error 1 個 だ け ship + 残 は analysis JSON」 棄 却**: 「user land」 を 1 bucket 扱 い し た 浅 い 整 理 だ っ た — consumer's app code (= declarative 違 反 で framework が 触 ら な い 領 域) と third-party tooling ecosystem (= DX surface) は 別 layer、 devtools panel は 後 者 で consumer の app に は 見 え な い 開 発 者 DX、 framework が opinionated に ship し て も declarative 哲 学 と 衝 突 し な い; ship し な い と 各 author / downstream plugin が 同 一 view を 再 構 築 = ecosystem 分 裂 +「つ ら い & み ん な 必 要」 を 投 げ 出 す こ と に な る; 8 panel ship + analysis JSON / dev-time live channel を public extension surface と し て 並 列 公 開 が 正 解 (= 第 三 者 panel は 上 で composable)
+- **bench / analyze CLI 維 持 棄 却**: CLI で 数 字 を terminal に 流 す よ り DevTools の live panel (= Live latency monitor + Memory budget + Graph viewer) で 観 測 が 圧 倒 的 に 良 い
+- **`renderOffline` を test 専 用 と し て `@unworklet/test` に bundle 棄 却**: server-side render / batch processing / preset preview UI 等 test 以 外 の use case が 一 級、 別 package に 切 り 出 す こ と で 4 use case で 共 通 利 用 可
+- **他 bundler を v1.0.0 で ship 棄 却**: Vite が 一 番 普 及 + DevTools Kit が Vite 専 用、 v1.0.0 は 1 first-class integration に focus、 v1.x.0 で additive
+
+### Side effects
+
+- **`07-tooling.md` → `07-vite-plugin.md` rename + 全 rewrite** (= CLI 前 提 を vite plugin に re-frame、 §1 scope / §2 build / §3 asset / §4 HMR boundary (= primitive 化、 swap orchestration は user land) / §5 source maps / §6 DevTools surface (= build-error panel 1 つ + analysis JSON 出 力))
+- **新 `13-offline-render.md`** (= `@unworklet/offline` の API + use case 4 つ + backend choice の skeleton)
+- **`05-client.md` §8** (新 規 section): `replaceProcessor` API spec を 追 加 (= Q50 の authoritative section)
+- **`06-testing.md` re-frame** (= `@unworklet/test` matchers focus、 `@unworklet/offline` を 内 部 使 用)
+- **`08-deployment.md` §1** placeholder → resolved 段 落 (= `@unworklet/vite-plugin` 参 照、 他 bundler は v1.x.0 additive)
+- **`01-dsl.md` L1119** + **`12-canonical-examples.md` L890**: `unworklet build` 言 及 → `@unworklet/vite-plugin` 表 現
+- **`README.md`** docs 一 覧 + Read & implementation order 図 update
+- canonical example 修 正: 12-canonical-examples.md L890 comment update (verified — 他 に CLI 名 言 及 ナ シ で 整 合)
+
+### Open follow-up
+
+- analysis JSON artifact (= `dist/<processor>.graph.json` / `.memory.json` / `.diagnostics.json` / `.schema-hash.json`) の 具 体 schema は `07-vite-plugin.md` §6.x で incrementally
+- vite plugin の `?worklet` HMR payload 形 (= 新 module export shape) と Vite 標 準 HMR API と の 相 互 作 用 は `07-vite-plugin.md` §4.x で
+- `@unworklet/offline` の generic 型 (= processor declaration か ら inputs / outputs / messages / events / state を 型 推 論) は `13-offline-render.md` §2.x で
+- `@unworklet/test` matcher 一 覧 + golden file pattern + fast-check 連 携 例 は `06-testing.md` §2-§4 で
+- source maps の WASM custom section vs sidecar 詳 細 + browser DevTools step-through 動 作 検 証 は `07-vite-plugin.md` §5.x で
+- COOP/COEP detect 失 敗 時 の dev mode warning 出 し 方 (= 旧 Q11 open follow-up) は build-error panel の Structured Diagnostics surface で 扱 う
+
+## Q50 — 動 的 processor swap primitive `replaceProcessor`
+
+**Status:** resolved。
+
+### Problem
+
+Q23+Q24+Q25 を 「primitive vs user land」 の lens で 仕 分 け た 結 果、 HMR / live coding / visual programming の 共 通 根 と し て 「動 的 に processor 実 装 を 入 れ 替 え、 state を 持 ち 越 す」 primitive が 必 要 で あ る こ と が 明 確 化。 既 spec の `createNode` / `snapshot` / `restore` / `inspect` / migration chain で は 「同 一 node 内 で の state 操 作」 は 表 現 で きる が、 「異 な る processor 定 義 へ の 移 行」 path が ナ シ。 こ の primitive を ど ん な signature / 動 作 で expose す る か。
+
+加 え て Web Audio spec の 制 約 (= `registerProcessor` 同 name 再 register は `NotSupportedError`、 `removeModule()` 不 存 在、 `AudioWorkletGlobalScope` は AudioContext lifetime ま で 残 る、 `process()` が true 返 す 限 り node 生 存) を framework が ど こ ま で 隠 蔽 す る か も 同 時 解 決 必 要。
+
+### Decision
+
+`@unworklet/core` か ら **`replaceProcessor(oldNode, newProcessor)` を free function で expose**。 signature:
+
+```typescript
+import { replaceProcessor } from '@unworklet/core';
+
+const result = await replaceProcessor(oldNode, NewProcessor);
+
+type ReplaceResult<New extends ProcessorDef> =
+  | { ok: true;  node: UnworkletNode<New>; restored: number; skipped: string[]; missing: string[] }
+  | { ok: false; node: UnworkletNode<New>; error: { step; message; cause }; restored: number; skipped: string[]; missing: string[] };
+```
+
+method の 動 作:
+
+1. `oldNode.snapshot()` で state を blob 化 (= Q5)
+2. 新 WASM を unique name で `registerProcessor` (= Web Audio spec の duplicate-name 制 約 隠 蔽、 framework 内 部 で 採 番)
+3. 新 AudioWorkletNode を 生 成 し て `restore(blob)` + migration chain (= Q5 + Q45 再 利 用)
+4. 新 typed wrapper を 戻 り 値 で 返 す
+
+framework が **やらない** こ と (= consumer 責 任):
+
+- 旧 node の disconnect / destroy (= graph 操 作 ナ シ、 consumer が 判 断)
+- 新 node の graph 接 続 (= consumer が `result.node.connect(dest)` 等 で 明 示)
+- 旧 / 新 間 の audio 連 続 crossfade (= GainNode + envelope で user land で 書 け る、 framework primitive で は な い)
+- ソ ー ス edit 監 視 や `import.meta.hot.accept` 自 動 hook (= HMR orchestration 自 体 が user land)
+
+typed wrapper の signature: 戻 り 値 で **新 typed wrapper を 返 す** (= 旧 wrapper instance を 保 持 し て magic で property reassign す る 形 を 棄 却)。 declarations 変 化 (rename / 追 加 / 削 除) は typed `.d.ts` 経 由 で TS error と し て consumer code に 即 露 出 = silently fail せ ず。
+
+accumulation warning: 同 AudioContext 内 で N 回 swap 累 積 で `console.warn` (= Web Audio `removeModule()` 不 存 在 制 約 で AudioContext 内 registration が 蓄 積 す る fact を consumer 認 知 surface に)。 N の 値 と warning message 詳 細 は `05-client.md` §8.5 で 別 途。
+
+### Why this and not alternatives
+
+- **「wrapper instance 保 持 + 内 部 swap + property reassign で typed API 更 新」 棄 却**: declarations 変 化 時 (rename 等) に 旧 ref が silent fail す る magic、 declarative 哲 学 違 反、 余 湖 さ ん 「magic anti-pattern」 ス タ ン ス と 衝 突
+- **「framework が graph 自 動 再 接 続」 棄 却**: graph history track + auto-reconnect は magic、 dynamic graph 操 作 consumer で 整 合 取 れ な い、 declarative 違 反
+- **「framework が audio 連 続 crossfade を 自 動 で 行 う」 棄 却**: GainNode + envelope schedule で user land で 書 け る、 framework primitive で は な い、 「fundamental + universal + non-opinionated」 巻 き 取 り 基 準 で 非 fundamental
+- **「method 形 `oldNode.replaceProcessor(newProc)` 棄 却 し て free function」**: 戻 り 値 の typed wrapper が 新 declarations 基 準 で typed = method 形 だ と 旧 wrapper instance の type が 旧 declarations の ま ま で 不 整 合、 free function で 戻 り 値 が 新 type な ら clean (= Q48 の 「node-bound = method、 blob-only = free function」 ル ー ル と は 若 干 違 う 軸 (= 「型 整 合 性 が free function を 要 求」) だ が、 同 じ 形 状)
+- **「v1.0.0 で 動 的 swap を ship し な い」 棄 却**: HMR / live coding / visual programming の 共 通 根 = ど の dev experience 構 築 で も 必 要、 v1.0.0 で primitive を declare し な い と user land で hack 量 産
+
+### Side effects
+
+- **`05-client.md` §8** (新 規): `replaceProcessor` の signature + 動 作 + 「framework が や ら な い こ と」 + declarations 変 化 時 の 振 る 舞 い + memory accumulation + user land recipe sketch を 全 spec
+- **`07-vite-plugin.md` §4** (= HMR boundary): `replaceProcessor` を user land で 呼 ぶ 形 を recipe で 提 示
+- **canonical example 影 響 ナ シ** (verified — 既 canonical example は createNode / snapshot / restore / inspect / migration chain ベ ー ス、 `replaceProcessor` を 使 う example は 未 整 備 で 既 整 合)
+
+### Open follow-up
+
+- accumulation warning の threshold (= 何 回 swap で `console.warn` を 出 す か) と message 文 言 は `05-client.md` §8.5 で 詳 細
+- `replaceProcessor` で 旧 node の `process()` を false return さ せ る signaling 経 路 の 詳 細 (= 旧 instance の eventual GC を 促 す) は `04-worklet-runtime.md` §8 で 詳 細
+- live coding / visual programming の canonical recipe を 別 docs (= 12-canonical-examples.md か 新 recipe 集) に 追 加 す る か は v1.0.0 docs polish 段 階 で 判 断
 
