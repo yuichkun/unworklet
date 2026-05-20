@@ -22,10 +22,28 @@ The plugin is the only first-party bundler integration in v1.0.0. Other bundlers
 
 ## 2. WASM build
 
-<!-- - Detects `defineProcessor` declarations in `.ts` files (extensible to `.tsx`).
-     - Invokes the compiler pipeline (= internal module of `@unworklet/core`, see `03-compiler.md`): AST capture → static analysis → multi-target emission.
-     - Outputs per processor: `.wasm` binary, worklet JS template, typed `.d.ts`, `dist/schema-hash.json` (snapshot/migration anchor — see `01-dsl.md` §8.3).
-     - Runs as a Vite plugin transform; participates in `vite build` and the dev server pipeline. -->
+<!-- Pipeline: detect `defineProcessor` in `.ts` / `.tsx` files → invoke the
+     `@unworklet/core` internal compiler module (03-compiler §1) → emit the
+     full artifact set below + the sidecar `.wasm.map` source map (§5).
+
+     Build artifacts (per processor) split into two phases:
+
+     User-runtime artifacts (= shipped to the browser at runtime):
+       - `.wasm` binary
+       - worklet JS template (= `AudioWorkletProcessor` subclass wrapping the
+         WASM; loaded via `audioWorklet.addModule(processorUrl)`)
+       - typed client `.d.ts` (= `UnworkletNode<C>` shape for consumer TS code)
+
+     Build-time metadata artifacts (= dev DX surface + public extension surface,
+     authoritative shape in §6.3):
+       - `dist/<processor>.graph.json`        — AST DAG view
+       - `dist/<processor>.memory.json`       — per-declaration byte counts (Q30)
+       - `dist/<processor>.diagnostics.json`  — 3-layer error / warning list with
+                                                 stable IDs (03-compiler §2.5 / §2.6)
+       - `dist/<processor>.schema-hash.json`  — snapshot migration anchor
+                                                 (01-dsl §8.3 / §6.3 below)
+
+     Per-artifact byte-layout / JSON schema detail is impl-phase fill per Q61. -->
 
 ## 3. Asset resolution
 

@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 92 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 91 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 36 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 55 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 54 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -463,7 +463,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **判 断 軸**: (1) offline で snapshot 復 元 を online と 同 じ 2-step pattern に 寄 せ る (= offline 側 で 1 度 render し snapshot blob を 取 り 出 し て 別 path で restore 注 入) path 推 奨 = online と offline で mental model 統 一 + Q57 ratify と zip。 (2) 02 §1.1 の 「asset upload readiness pattern」 引 用 を 同 commit で Q57 形 (= `createNode` → `await node.restore(blob)` 2-step) に rewrite し て 廃 止 surface 引 用 を 排 除。 「`initial` 識 別 子」 は online 側 (= param 初 期 値) の 既 ratify 形 を 維 持、 offline 側 で 1-step pattern を 立 て る な ら 別 識 別 子 (= 例 え ば `restore: Uint8Array`) を 採 る path も 候 補 だ が Q57 retract 必 要 で v1.0.0 で は 不 採 用 推 奨。
 
 ---
-## P2 — 仕様 invariant + lifecycle (55 件)
+## P2 — 仕様 invariant + lifecycle (54 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -894,18 +894,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が v1.x.0 mitigation 実 装 を 開 始 す る 時、 (a) event/message payload の double-buffer 経 路 を §5.1 / §5.2 fixed-slot 構 造 の 上 に 設 計 す る 必 要 が あ る が、 §5.4 で torn read prose 不 在 の た め 「event/message payload で 実 際 に torn read が 起 こ り う る か」 の 仕 様 判 断 に 迷 う、 (b) `state.f64 / state.i64` publish 解 禁 が v1.x.0 mandatory に 含 ま れ る か で roadmap §3.1 限 定 / messaging §5.4 一 般 化 の どち ら を 信 用 す る か で 結 論 が 分 か れ る。
 
 **判 断 軸**: messaging §5.4 を 拡 張 し て 「event/message payload の torn read リ ス ク + state.f64/i64 publish 拒 否 が 同 axis の deferral」 を 既 ratify と し て 明 文 化 す る path、 ま た は roadmap §3.1 「event/message payloads」 を retract し て v1.x.0 mandatory を 「buffer.publish 限 定」 に 倒 す path、 2 way で decide。 「state.f64/i64 publish v1.x.0 解 禁」 を 含 む か も 同 commit で 明 文 化。
-
----
-
-## vite-plugin §2 placeholder の build output 列 挙 が §6.3 既 ratify artifact set と zip し な い
-
-**場 所**: `docs/07-vite-plugin.md:23-28`、 `docs/07-vite-plugin.md:100-130` (= §6.3 既 written)、 `docs/01-dsl.md:1126` (= schema-hash 参 照 path)
-
-**何 が 起 き て い る か**: §2 placeholder の HTML comment が build output を 「`.wasm` binary / worklet JS template / typed `.d.ts` / `dist/schema-hash.json`」 4 種 と 列 挙。 一 方 §6.3 で artifact 4 種 = `dist/<processor>.graph.json` / `.memory.json` / `.diagnostics.json` / `.schema-hash.json` が 既 ratify。 つ ま り 「§2 が 言 う 4 種 (.wasm / worklet JS / .d.ts / schema-hash)」 と 「§6.3 が 言 う 4 種 (graph / memory / diagnostics / schema-hash)」 が complement (= 同 一 build で 8 種 emit) か overlap (= 重 複 ramming) か prose で 明 文 化 ナ シ。 schema-hash の path 形 drift (= §2 単 一 root file / §6.3 per-processor) は 別 entry L791 で 既 cover、 だ が 「build artifact 全 体 set が §2 + §6.3 の union な の か」 は 別 軸 で 未 解 決。
-
-**impl AI 影 響**: impl AI が §2 を fill す る 時、 (a) §6.3 4 種 を build 時 emit 経 路 に 入 れ る path を §2 に 反 映 す る か (= union = 8 種 + schema-hash 重 複 解 消)、 (b) §2 4 種 と §6.3 4 種 が 同 一 build 時 emit set な の か 別 phase emit な の か、 (c) `01-dsl.md` §8.3 で 既 ratify な schema-hash 参 照 path が §2 と §6.3 の ど ち ら の path 形 に zip す る か で 仕 様 全 体 が drift。
-
-**判 断 軸**: build artifact 全 set を 1 か 所 で 集 約 declare し、 §2 placeholder fill 内 容 と §6.3 既 written を 同 list に 整 理 す る path 推 奨 (= `.wasm` / worklet JS / `.d.ts` を 「user-runtime artifact」、 graph/memory/diagnostics/schema-hash を 「build-time metadata artifact」 と 2 phase で 並 べ る 等)。 path 形 drift は L791 entry と zip し て 同 commit で 解 消。
 
 ---
 
