@@ -86,7 +86,7 @@ Overflow policy is **drop-oldest + monotonic counter** for both `event<T>` and `
 
 - The oldest slot is overwritten on overflow. Producers (worklet for `event<T>`, main for `message<T>`) never block.
 - A monotonic `overflowCount` is exposed via `node.events.<name>.diagnostics.overflowCount()` / `node.messages.<name>.diagnostics.overflowCount()`.
-- Drop-oldest matches MIDI Q4-c-iv. The rationale (preserve recent events; let consumers detect saturation through the counter) carries over unchanged.
+- Drop-oldest matches MIDI Q4-c-iv. The same rationale applies: preserve recent events; let consumers detect saturation through the counter.
 
 `state.publish` does not overflow — slot writes are absolute, and the publisher always wins the latest value.
 

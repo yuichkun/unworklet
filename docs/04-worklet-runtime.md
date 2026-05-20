@@ -49,15 +49,15 @@ The `channels: C` value declared on `audioInput({ channels: C, name })` / `audio
 
 If a consumer needs both a mono and a stereo build of the same algorithm, they author **two separate `defineProcessor` calls** — one with `channels: 1`, one with `channels: 2`. There is no runtime switch.
 
-As a structural consequence (Q19's resolution also closes the long-standing #62 hole), `createNode` does **not** accept main-side overrides for `numberOfInputs` / `numberOfOutputs` / `outputChannelCount`. Those values are derived from the processor's `audioInput` / `audioOutput` declarations and would invalidate the WASM specialization if changed at instantiation. See `05-client.md` §1.
+As a structural consequence (Q19's resolution also closes #62), `createNode` does **not** accept main-side overrides for `numberOfInputs` / `numberOfOutputs` / `outputChannelCount`. Those values are derived from the processor's `audioInput` / `audioOutput` declarations and would invalidate the WASM specialization if changed at instantiation. See `05-client.md` §1.
 
-Upstream sources that connect with a different channel count than the worklet declared are normalized by Web Audio's standard up-mix / down-mix rules (`channelCountMode` / `channelInterpretation`) before the worklet sees them; unworklet does not intervene in that layer (= same behavior as `01-dsl.md` §1.2 already specifies).
+Upstream sources that connect with a different channel count than the worklet declared are normalized by Web Audio's standard up-mix / down-mix rules (`channelCountMode` / `channelInterpretation`) before the worklet sees them; unworklet does not intervene in that layer (= same behavior as `01-dsl.md` §1.2 specifies).
 
 ## 5. Pre-warm
 
 unworklet does **not** provide a framework-side pre-warm step in v1.0.0 (Q20, `decisions-log.md`). The reasoning:
 
-- WASM is AOT-compiled by the browser before the worklet's `process` is first invoked, so the classic JS "first-N-blocks JIT spike" does not apply.
+- WASM is AOT-compiled by the browser before the worklet's `process` is first invoked, so the JS-style "first-N-blocks JIT spike" pattern does not apply.
 - Hardware-level warmup (branch predictor, caches) settles within a few render quanta of real audio — the resulting transient is inaudible within the first few milliseconds of plugin output.
 - Having the framework run silent blocks through user-authored `process` code at start-up would mean injecting synthesized inputs the author did not request, conflicting with the declarative principle that user-authored structure is what runs.
 

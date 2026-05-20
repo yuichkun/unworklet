@@ -188,7 +188,7 @@ populated (Q1–Q62 ratify complete; Q28 is unassigned — a numbering artifact,
 - **Capacity (Q4-c-i):** ring buffers default to **256 slots** (8 bytes each = 2 KB). Override via `midiInput({ name, capacity })` / `midiOutput({ name, capacity })` (`name` required, `capacity` optional). Sized for typical use; dense MIDI / sequencer / network-driven loads override.
 - **`atSample` semantics (Q4-c-ii):** **block-local** (0 through `SAMPLES_PER_BLOCK - 1`); stored as `u32` for headroom. Global timestamps are derived consumer-side via `audioContext.currentTime + atSample / sampleRate`.
 - **Sysex (Q4-c-iii):** **full support in v1.0.0**. Variable-length sysex bodies live in a separate variable-length content buffer; the main ring-buffer slot for a sysex event holds the status byte plus an index into the content buffer.
-- **Overflow (Q4-c-iv):** **drop-oldest + diagnostics counter**. The oldest event is overwritten on overflow, and a monotonic `overflowCount` counter is exposed on the main thread via `node.midi.<name>.diagnostics.overflowCount()` for consumer monitoring (uniform with event / message diagnostics — see Q47; the original 11-midi prose referenced a worklet-side `midiIn.diagnostics` surface which Q47 removes).
+- **Overflow (Q4-c-iv):** **drop-oldest + diagnostics counter**. The oldest event is overwritten on overflow, and a monotonic `overflowCount` counter is exposed on the main thread via `node.midi.<name>.diagnostics.overflowCount()` for consumer monitoring (uniform with event / message diagnostics — see Q47).
 
 **Decision (Q4-d):** authoritative wording in `11-midi.md` §5. Summary: MIDI clock messages (`0xF8` timing clock, `0xFA` start, `0xFB` continue, `0xFC` stop) are ingested as ordinary `systemRealtime` events. unworklet does **not** provide a built-in transport API (BPM / beat position / play state); transport interpretation is **out of scope** and lives in consumer code or third-party packages. This same decision resolves Q10.
 
@@ -508,7 +508,7 @@ The umbrella "cross-processor communication" decomposes into five use cases; fou
 
 **Recipe (out-of-scope but consumer guidance)**: applications that need audio-thread-to-audio-thread SAB sharing pass the same `SharedArrayBuffer` through both processors' `processorOptions` and implement their own atomics protocol. A worked example may land as a recipe in `08-deployment.md` if a downstream case justifies it; otherwise consumers can author this directly as part of their application code.
 
-**Companion item to file**: the generic typed messaging core surface (referenced above as case (c)'s underlying mechanism) is currently not on the question backlog. It is **not** out of scope — it must be grilled and resolved before v1.0.0. The question backlog will be updated to add it explicitly during the upcoming backlog re-organization.
+The generic typed messaging core surface (referenced above as case (c)'s underlying mechanism) is specified in Q27.
 
 ---
 
@@ -559,7 +559,7 @@ return {
 
 **Decision (Q22-b — Sample-position primitives):** authoritative wording in `01-dsl.md` §1.2, §1.3, §3.3, §10. Summary:
 
-There is **one form** for accessing sample-offseted values, and it is the **explicit form**. No sugar surface.
+There is **one form** for accessing sample-offset-keyed values, and it is the **explicit form**. No sugar surface.
 
 - Inside a `forSample` callback (per-sample phase):
   - `audioIn.at(c, i): Node<'f32'>` — channel `c` value at sample-offset `i`.
@@ -573,7 +573,7 @@ There is **one form** for accessing sample-offseted values, and it is the **expl
 - Audio-I/O sample primitives (`at` / `set`) require `i: Node<'i32'>`. The only source of such a node is a `forSample` callback parameter — outside any `forSample`, `i` is not in scope, so writing `audioIn.at(0, i)` at the per-block phase is a TypeScript reference error caught in the IDE. Standard TypeScript scoping enforces the boundary; the framework adds nothing.
 - There is **no `audioIn.read(c)`** (sugar read), **no `audioOut.write([...])`** (sugar tuple write), and **no callable `param()`** (sugar current-sample param). Every per-sample access is via `forSample` + explicit `i`.
 
-The two-form sugar / explicit dichotomy that an earlier draft of Q22-b proposed is **rejected** — see Rejected (Q22-b) below for the full reasoning. The single explicit form makes the position of every sample-offseted operation lexically obvious: if you see `at` / `set` / `param.at(i)`, you are inside a `forSample`; if you don't see them, you are at the per-block phase.
+The two-form sugar / explicit dichotomy is **rejected** — see Rejected (Q22-b) below for the full reasoning. The single explicit form makes the position of every sample-offset-keyed operation lexically obvious: if you see `at` / `set` / `param.at(i)`, you are inside a `forSample`; if you don't see them, you are at the per-block phase.
 
 **Decision (Q22-c — Error layer structure):** authoritative wording in `03-compiler.md` §2. Summary:
 
@@ -977,7 +977,7 @@ This restores the Q4-b footgun barrier (no unconditional emission inside `forSam
 
 **Rationale (Q32-c):**
 
-- *Q4-b footgun stays barred*: the original concern (`if (cond) midiOut.emit(...)` becomes a 44.1 kHz spam) does not return. A user writing `notePlayed.emitIf(true, payload)` inside `forSample` gets a build-time error pointing at the three legal alternatives.
+- *Q4-b footgun stays barred*: the saturating-emit footgun (`if (cond) midiOut.emit(...)` firing every sample) is rejected. A user writing `notePlayed.emitIf(true, payload)` inside `forSample` gets a build-time error pointing at the three legal alternatives.
 - *Detectable structurally*: the `forSample` callback boundary is recognizable to the static analyzer (it is a primitive in the framework — see `01-dsl.md` §10.2). Cond is one AST node away. The check is local and cheap.
 - *Refactor hint matches the use case*: most authors hitting this error are either (a) trying to fire on a state edge — covered by hint (a), (b) writing handler logic that should not be inside `forSample` at all — covered by hint (b), or (c) writing periodic sub-rate emission — covered by hint (c). The error message names the three honest paths; no path is silently allowed.
 
@@ -1312,7 +1312,7 @@ emitIf(cond: Node<'bool'> | boolean, payload: T): void
 
 静 的 解 析 で 弾 く の は real-time safety 違 反 (= 上 限 が 決 ま っ て い な い loop、 動 的 alloc、 sample-offset の out-of-block 算 術、 forSample.byN の 違 法 stride 等) の み。 「ど の sample が 何 回 書 か れ た か」 「全 sample を カ バ ー し た か」 は user 責 任 (= AudioWorklet / JUCE の `process` 関 数 メ ン タ ル と 同 じ)。
 
-既 仕 様 で 「Per declared output channel, exactly one set ... must happen on every code path」 「Missing writes ... duplicate writes ... are graph-capture-time errors」 (= 01-dsl §1.3) と 「every declared output channel × every sample-offset must be written exactly once. Detected by phase-union analysis」 (= 03-compiler §2.4) は 全 撤 去。
+Output-coverage and duplicate-write checks are **not** part of the spec — `audioOutput.set(c, i, v)` is freely callable, untouched samples are silence, and last-write-wins applies to same-position writes.
 
 **Decision (Q37-b — forSample.byN 中 で の out.set も 同 じ ル ー ル):**
 
@@ -1344,7 +1344,7 @@ stride 制 約: 1, 2, 4, 8, 16, 32, 64, 128 (= `SAMPLES_PER_BLOCK` = 128 を 割
 
 handler は **当 1 塊 (= 走 っ て いる render quantum)** の 開 始 時 に audio thread 上 で 走 る。 worklet 著 作 者 視 点 で 「current render quantum」、 main 著 作 者 視 点 で 「次 render quantum (= `node.messages.<name>(...)` を 呼 ん だ 直 後 の 次 quantum)」、 同 じ 瞬 間 を 視 点 違 い で 呼 ん で いる だ け。 docs 表 記 は **worklet 著 作 者 視 点 (= 「current」 / 「当 1 塊」) に 統 一**。
 
-既 仕 様 で `01-dsl.md` §4.2 が 「current」、 `02-messaging.md` §1 と Q31-a が 「next」 と 混 在 し て い た の は worklet/main 視 点 の 混 在 = Q38 で 全 て worklet 視 点 に 統 一 (= main 視 点 の 「次」 説 明 が 必 要 な 箇 所 は cross-ref で 補 う)。
+docs 全 体 で の 表 記 は worklet 視 点 で 統 一 (= 「current render quantum」)、 main 視 点 で の 「next」 描 写 が 必 要 な 箇 所 は cross-ref で 補 う。
 
 **Decision (Q38-b — 実 行 順 序 = 全 handler が 先 行、 そ の あ と per-block + forSample):**
 
@@ -1399,7 +1399,7 @@ main 側 `node.state.<name>.subscribe(handler)` の 振 る 舞 い:
 - framework 側 で 値 比 較 し て handler skip し な い (= scalar / buffer / 全 type 共 通 ル ー ル)
 - user が 同 値 dedupe 欲 し い な ら handler 内 で 1 行 で 比 較 す る (= `if (newVal === lastVal) return`)
 
-既 仕 様 で 「dedupe / coalesce」 描 写 を 含 む prose 全 撤 去:
+「dedupe / coalesce」 prose は 仕 様 に 含 ま れ な い:
 
 - `02-messaging.md` §5.4 の 「incremented on each publish tick where the value changed」 → 「無 条 件 inc」 に 改 訂
 - `05-client.md` §1 の 「Handler fires on each publish tick where the value differs from the last delivered value」 → 「版 advance 時 に 必 ず 呼 ぶ」 に 改 訂
@@ -1589,7 +1589,7 @@ forSample.byN(4, (i, everyNSamples) => {
 - subgraph method 内 で sub-rate 使 う 場 合 は method 内 で 自 前 の forSample を 書 き 引 数 で 取 る、 caller の context (= forSample 内 か handler 内 か) と は 独 立、 method 側 で 完 結
 - counter は 各 `everyNSamples(N, cb)` 呼 び 出 し ご と に 独 立、 1 塊 を 越 え て 連 続 (= 各 forSample iteration で 1 進 む、 forSample.byN(stride) で stride 進 む)、 1 塊 境 界 や 処 理 開 始 で reset ナ シ
 
-既 free function `everyNSamples` import は 廃 止 (= Q7 から refine、 既 spec § 9.1 の prose を 「callback 引 数 経 由」 に 書 き 換 え)。
+`everyNSamples` は free function import で は な く `forSample` callback の 第 2 引 数 と し て 提 供 さ れ る (Q7 を refine し た 形)。
 
 **Rationale:**
 
@@ -2092,7 +2092,7 @@ audit で `01-dsl.md` §1 prose に 「The JS literal `0` lifts to `Node<'i32'>`
 
 ### Decision
 
-**`audioIn.at(c, 0)` / `audioOut.set(c, 0, v)` を per-block で 呼 び 可 と し て open**。 Q36-a で 既 method signature が `i: Node<'i32'> | number` を 受 け 入 れ て お り、 `param.at(0)` と 対 称 に 開 放。 旧 prose 「the equivalent literal positions for audioIn / audioOut are not opened by Q36 and remain a separate decision」 を 撤 去。
+**`audioIn.at(c, 0)` / `audioOut.set(c, 0, v)` を per-block で 呼 び 可 と し て open**。 Q36-a の method signature `i: Node<'i32'> | number` を そ の ま ま 適 用、 `param.at(0)` と 対 称 に 開 放。
 
 同 時 に **00-foundations.md §3 「Process body」 entry を 強 化** し て、 unworklet の core mental model を 1 段 落 で 明 文 化:
 
@@ -2295,7 +2295,7 @@ Q53 で 「仕 様 invariant vs 形」 の 切 り 分 け を ratify し た �
 
 **L1-a 「phase」 wording sweep (= Q51 followup)** を 同 commit で 完 了:
 
-Q51 で 「`forSample` は loop primitive で あ っ て phase で は な い」 と ratify し た 後 も、 docs に 「Per-block phase / per-sample phase = the two execution phases」 と い う 構 造 名 詞 用 法 が 並 存 し て い た。 構 造 名 詞 撤 廃 + adjective 維 持 (= (A) Retire author side、 compiler side は 別 軸 で 維 持) を 実 施:
+「`forSample` は loop primitive で あ っ て phase で は な い」 (Q51) を 反 映 し て、 docs 全 体 で 構 造 名 詞 「Per-block phase / per-sample phase = the two execution phases」 を 撤 廃 し adjective (= per-block / per-sample) の み を 維 持 (= (A) Retire author side、 compiler side は 別 軸 で 維 持) す る:
 
 - 構 造 名 詞 (「two execution phases」 / 「single-phase」 / 「multi-phase」 / 「multiple forSample phases」) を 撤 廃
 - adjective (「per-block」 / 「per-sample」) は 時 間 軸 説 明 と し て 維 持 (= 「per-block code」 「per-sample code」 「per-block top level」)
@@ -2358,7 +2358,7 @@ handler body (= `messageDecl.onReceive(handler)` / `midiInput().onEvent(type, ha
   - 案 A 採 用 で も 案 (d) の 書 き 方 (= handler で `state.store` + `forSample` で 比 較) は そ の ま ま 残 る、 表 現 を 1 個 増 や す だ け で 何 も 失 わ な い
 - **案 (a) JS literal だ け 受 け 入 れ** 棄 却: handler arg (= MIDI handler の `atSample`) を sample-offset と し て 渡 せ な い 不 自 然 制 約 を 1 個 追 加、 `forSample` 内 規 則 と 揃 わ な い (= no-artificial-constraint 違 反)
 - **案 (b) `Node<'i32'>` だ け (= literal 不 可)** 棄 却: `forSample` 内 で literal `0` OK な の に handler 内 で だ け 不 可 = 純 然 た る 例 外 規 則、 不 自 然
-- **「使 わ れ な い 機 能 を 開 け な い」 直 感** で 案 (d) に 傾 い た 中 間 評 価 を 棄 却: handler 内 で の sample-accurate 1 sample hit (= 案 A の 主 な advantage と し て 当 初 想 定) は kick / drum で も 実 際 は decay envelope が 必 要 = `forSample` 内 計 算 forced = 1 行 形 は 使 わ れ な い fact は 真。 ただ し 推 奨 の 主 軸 = mental model 統 一 で あ っ て sample-accurate hit 機 能 で は な い、 副 次 利 益 が 弱 い こ と で 主 軸 を 捨 て る の は flip 服 従 = 棄 却。
+- **「使 わ れ な い 機 能 を 開 け な い」 と い う 直 感 か ら の 案 (d) 寄 り 評 価 は 棄 却**: handler 内 で の sample-accurate 1 sample hit (= 案 A の 副 次 advantage) は kick / drum で も 実 際 は decay envelope が 必 要 = `forSample` 内 計 算 forced = 1 行 形 は 使 わ れ な い fact は 真。 ただ し 案 A の 主 軸 = mental model 統 一 で あ っ て sample-accurate hit 機 能 で は な い、 副 次 利 益 の 弱 さ で 主 軸 を 捨 て る path は 棄 却。
 
 ### Side effects
 

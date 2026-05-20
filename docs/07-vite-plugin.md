@@ -4,7 +4,7 @@ The integration package that compiles processors, resolves their assets, emits s
 
 ## Status
 
-skeleton (Q23 + Q24 + Q25 resolved at the scope level; per-section detail to be filled in incrementally)
+skeleton (scope-level shape fixed per Q23 + Q24 + Q25; per-section detail filled incrementally)
 
 ## 1. Plugin scope
 
@@ -122,7 +122,7 @@ Dev-time live channels (= Shared State + Streaming over the DevTools Kit RPC) ca
 
 ### 6.4 Why this split — not the inverse
 
-A previous draft of this section proposed shipping one panel (Build errors) and emitting JSON for everything else, on the theory that "richer panels are UI decisions and should be third-party." That theory was wrong. DevTools panels are a DX surface, not consumer-visible UI; every unworklet author needs the same set of views into the same machinery; shipping zero panels for that universal set forces each author (or each downstream plugin) to rebuild it. The right line is: ship default panels for everything that visualizes unworklet's own structures, and document the underlying artifacts + channels as a stable extension surface so third parties can compose their own panels (visual programming editors, dashboards, alternate inspectors) on top. Authoritative rationale: `decisions-log.md` Q23+Q24+Q25.
+DevTools panels are a DX surface, not consumer-visible UI; every unworklet author needs the same set of views into the same machinery, so the framework ships default panels for that universal set. An alternative split — shipping one panel (Build errors) and emitting JSON for everything else, on the theory that "richer panels are UI decisions and should be third-party" — is rejected: it forces each author (or each downstream plugin) to rebuild the universal set. The line is: ship default panels for everything that visualizes unworklet's own structures, and document the underlying artifacts + channels as a stable extension surface so third parties can compose their own panels (visual programming editors, dashboards, alternate inspectors) on top. Authoritative rationale: `decisions-log.md` Q23+Q24+Q25.
 
 What stays user-land remains user-land: HMR orchestration (= file-watch + auto-swap + auto-reconnect), live-coding REPLs, visual-programming editors, anything that touches the consumer's audio graph or DSP semantics. The dynamic-swap primitive `replaceProcessor` (`05-client.md` §8, Q50) is what those user-land tools build on; the plugin itself never calls it.
 

@@ -4,7 +4,7 @@ Vitest matchers for unworklet processors. Wraps `@unworklet/offline` (= `13-offl
 
 ## Status
 
-skeleton (Q23 + Q24 + Q25 resolved at the scope level; per-section detail to be filled in incrementally)
+skeleton (scope-level shape fixed per Q23 + Q24 + Q25; per-section detail filled incrementally)
 
 ## 1. Relationship to `@unworklet/offline`
 

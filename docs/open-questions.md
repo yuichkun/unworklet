@@ -38,7 +38,7 @@ unworklet の pillar:
 - **Layer 4 — mechanical sweep。** 余 湖 さ ん judgment 不 要、 freeze 前 1 batch (= decisions-log integrity / line-ref / README / docs prose 揃 え / canonical integrity 等)。
 - **Layer 5 — freeze 後 / v1.x.0。** v1.0.0 ratify 範 囲 外、 freeze 後 に GitHub issue 化 or v1.x.0 docs/recipes/ で 追 加。 い ま は touch し な い。
 
-**ID prefix の 注 釈:** entry ID (= `L1-b` / `L2-c` 等) は 歴 史 的 命 名 で **過 去 ratify / decisions-log 引 用 と の 整 合 維 持** の た め fix。 Layer 配 置 は ratify ご と に 現 priority filter (= impl 矛 盾 リ ス ク 軸) で 動 く = ID prefix と Layer 番 号 が 一 致 し な い ケ ー ス あ り。
+**ID prefix の 注 釈:** entry ID (= `L1-b` / `L2-c` 等) は decisions-log 引 用 と の 整 合 維 持 の た め fix。 Layer 配 置 は ratify ご と に 現 priority filter (= impl 矛 盾 リ ス ク 軸) で 動 く = ID prefix と Layer 番 号 が 一 致 し な い ケ ー ス あ り。
 
 **層 内 順 序 の 判 断 軸:**
 
@@ -83,10 +83,6 @@ unworklet の pillar:
 
 Q49 ratify で worklet 側 sysex emit が `Buffer<'u8'>` + `length` 経 由 で 完 全 spec 化 さ れ た が canonical example で exercise ナ シ = AGENTS.md HARD CONTRACT (canonical examples integrity rule) 観 点 で 重 い gap。 Ex 9 と し て sysex 1 例 を 設 計 + コ ー ド 追 加 + Coverage table 反 映。 余 湖 さ ん の use case 選 定 → 設 計 → 実 装 path で 進 行 (= L4-M5 mechanical sweep か ら 切 り 出 し、 sweep 完 了 後 別 grill 経 由 で 実 施)。 TaskList #101。
 
-### L4-M9. Temporal expression sub-agent sweep
-
-docs prose (= `docs/*.md`、 `12-canonical-examples.md` 含 む 全 docs) に 残 存 す る temporal / chronological 表 現 を sub-agent parallel sweep で 拾 い 上 げ + 現 在 形 prose に 書 き 換 え。 user global CLAUDE.md 「Code Comment Guidelines」 = docs prose に も 同 様 適 用、 v1.0.0 正 本 prose に 「earlier draft / retired / previously / originally / used to / historical / legacy / formerly / deprecated / moved to / has been / was retired / in the past / recently / now (vs then 含 意)」 等 を 書 か な い。 L4-M1〜M8 sweep 完 了 後 の **最 終 関 門** = mechanical sweep 群 が 全 部 着 地 し て か ら docs 全 体 を agent 軸 で grep + rewrite proposal 出 す、 漏 れ ナ シ で 拾 う。 [[docs-live-document-no-temporal]] 累 犯 認 識 反 映 (2026-05-20)。
-
 ---
 
 ## Layer 5 — freeze 後 / v1.x.0 (= v1.0.0 ratify 範 囲 外)
@@ -95,7 +91,7 @@ v1.0.0 ship 完 了 後 に 触 れ る entry。 い ま grill 対 象 外、 fr
 
 ### L4-M6-followups. Post-ratify docs polish followups (= v1.0.0 ship 前 freeze 段 階 で 拾 う docs 細 部)
 
-各 detail entry 末 尾 に 散 在 し て い た Open follow-up bullets を 1 surface に 集 約 (= L4-M6 完 了 状 態、 session resume で 見 え る surface へ)。 設 計 ratify は 既 済 み、 docs polish 段 階 で 該 当 doc section に prose を fill す る 内 容。
+Open follow-up bullets を 1 surface に 集 約 (= session resume で 見 え る surface へ)。 設 計 ratify は 済 み、 docs polish 段 階 で 該 当 doc section に prose を fill す る 内 容。
 
 - analysis JSON artifact schema (= `dist/<processor>.graph.json` / `.memory.json` / `.diagnostics.json` / `.schema-hash.json`) を `07-vite-plugin.md` §6.x で incrementally fill (Q23+Q24+Q25)
 - vite plugin `?worklet` HMR payload 形 (= 新 module export shape) と Vite 標 準 HMR API の 相 互 作 用 を `07-vite-plugin.md` §4.x で (Q23+Q24+Q25)

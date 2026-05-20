@@ -4,7 +4,7 @@ Pure-JS execution of an unworklet processor: no browser, no `AudioContext`, no a
 
 ## Status
 
-skeleton (Q23 + Q24 + Q25 resolved at the scope level; per-section detail to be filled in incrementally)
+skeleton (scope-level shape fixed per Q23 + Q24 + Q25; per-section detail filled incrementally)
 
 ## 1. Use cases
 

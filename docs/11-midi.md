@@ -162,7 +162,7 @@ Inside a handler body, the same expression-scope rules apply as in a `forSample`
 
 ### 2.4 Outbound: emitting MIDI events (worklet → main)
 
-`midiOutput()` returns a handle whose only emission primitive is the `emitIf` **method**: `midiOut.emitIf(condition, event)`. There is no plain `emit(event)` — `emitIf` is the single emission primitive across every audio-thread expression context: `forSample` / `forSample.byN` callbacks, `everyNSamples` callbacks, MIDI / message handler bodies, and the per-block top level (statements in the `process` body outside any `forSample`). See `decisions-log.md` Q4-b for the original footgun reasoning, Q32-a for the cross-context unification. `emitIf` is dispatched off the handle (no free-function form); the same `handle.emitIf(cond, payload)` shape is used by generic `event<T>` declarations (see `01-dsl.md` §4).
+`midiOutput()` returns a handle whose only emission primitive is the `emitIf` **method**: `midiOut.emitIf(condition, event)`. There is no plain `emit(event)` — `emitIf` is the single emission primitive across every audio-thread expression context: `forSample` / `forSample.byN` callbacks, `everyNSamples` callbacks, MIDI / message handler bodies, and the per-block top level (statements in the `process` body outside any `forSample`). See `decisions-log.md` Q4-b for the footgun reasoning, Q32-a for the cross-context unification. `emitIf` is dispatched off the handle (no free-function form); the same `handle.emitIf(cond, payload)` shape is used by generic `event<T>` declarations (see `01-dsl.md` §4).
 
 The `condition` parameter accepts `Node<'bool'> | boolean`. Inside a `forSample` callback, the conditional must be structural (e.g. a state-edge expression) — a constant-truthy cond is a static-analysis error. Inside a MIDI / message handler body, `emitIf(true, event)` is the canonical spelling for unconditional 1:1 projection: e.g. ingesting `noteOn` and re-emitting it on a different channel (MIDI thru / arpeggiator latching), or projecting an incoming MIDI event onto a generic UI event channel.
 
@@ -188,7 +188,7 @@ const drumSequencer = defineProcessor((ctx) => {
 
 The `event` argument has the `MidiEventGraph` shape (§2.2) — all numeric fields are `Node<'i32'>`, with number literals admitted through Q33 literal-lift. The `atSample` field is in the same dimension as the surrounding iteration's sample-offset. Common patterns:
 
-- *Constant offset*: `atSample: 0` emits at the start of the render quantum (legacy / non-sample-accurate consumers).
+- *Constant offset*: `atSample: 0` emits at the start of the render quantum (non-sample-accurate consumers).
 - *Current sample*: in an explicit-form processor, pass the surrounding `forSample` callback's `i` directly: `atSample: i`. The emitted event then carries the exact sample at which the conditional fired.
 - *State-driven offset*: read a previously-stored sample-offset from a `state.i32` slot.
 
@@ -328,7 +328,7 @@ Pointers into the ring buffer are slot-indexed (`head` and `tail` increment by 1
 
 ### 4.2 `atSample` semantics
 
-`atSample` is the sample-offset **within the current render quantum** (block-local) where the event fires. Valid values are 0 through `SAMPLES_PER_BLOCK - 1`; the field is stored as `u32` for headroom against future block-size variation.
+`atSample` is the sample-offset **within the current render quantum** (block-local) where the event fires. Valid values are 0 through `SAMPLES_PER_BLOCK - 1`; the field is stored as `u32` for headroom against block-size variation.
 
 A handler subscribed via `midiIn.onEvent` fires at the sample identified by `atSample`, not at the block boundary — sample accuracy is preserved end-to-end. A consumer that needs an absolute timestamp can derive it from `audioContext.currentTime + atSample / sampleRate`.
 

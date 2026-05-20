@@ -31,7 +31,7 @@ The example set is designed so that the union of all examples touches every conc
 | `emitIf` (conditional emission) | 4, 6, 8 |
 | `onReceive` (per-block message handler) | 5, 6, 7 |
 | `midiInput` / `midiOutput` | 5, 6, 8 |
-| `onEvent` MIDI (`noteOn` / `noteOff` only — others not yet exercised) | 5, 6, 8 |
+| `onEvent` MIDI (`noteOn` / `noteOff` only — others not exercised) | 5, 6, 8 |
 | MIDI emission via `emitIf` | 6 |
 | SIMD `f32x4`, `splat`, `buf.loadVec`, `mulVec`, `addVec`, `vec.lane`, `sumLanes` | 3, 7 |
 | `snapshot` policy (`'persistent'` / `'transient'`) | 3, 5, 7 |
@@ -1143,16 +1143,16 @@ setInterval(() => {
 
 ---
 
-## What this set does not yet exercise
+## What this set does not exercise
 
 These are intentionally outside the example set today and are tracked as follow-up:
 
 - `forSampleRange(start, end, callback)` partial-block iteration (deferred to v1.x.0; nested `forSample` use cases such as 2D-tile iteration are not exercised).
-- `everyNSamples` sub-rate work — the surface is decided (Q7) but no current example uses it. A canonical example will land once a use case (e.g. envelope follower at sub-rate) is selected.
+- `everyNSamples` sub-rate work — the surface is defined in `01-dsl.md` §9 (Q7) but no current example uses it. A canonical example will land once a use case (e.g. envelope follower at sub-rate) is selected.
 - Cross-precision type conversion boundaries (`f64(node)` over an `f32` source, etc.) — the surface is in `01-dsl.md` §2 and `f32(node)` / `i32(node)` are exercised, but no example crosses a precision boundary today.
 - Math primitives `tan`, `tanh`, `sqrt` — listed in `01-dsl.md` §2 but unused across the example set.
 - `buffer.i32` — only `buffer.f32` is exercised.
-- MIDI variants beyond `noteOn` / `noteOff`: `cc`, `pitchBend`, `programChange`, `channelPressure`, `aftertouch`, `systemRealtime`, sysex are part of the Q4 surface but no current example uses them. Q4 covers the wire / handler shape; the canonical example set has a coverage gap here. (sysex Q49 ratify completed — the surface is fully specified but unexercised; tracked as `open-questions.md` L4-M5b for a dedicated Ex 9.)
+- MIDI variants beyond `noteOn` / `noteOff`: `cc`, `pitchBend`, `programChange`, `channelPressure`, `aftertouch`, `systemRealtime`, sysex are part of the Q4 surface but no current example uses them. Q4 covers the wire / handler shape; the canonical example set has a coverage gap here. (sysex is fully specified in Q49 but unexercised by the example set; tracked as `open-questions.md` L4-M5b for a dedicated Ex 9.)
 - `node.midi.<name>.diagnostics.overflowCount()` and `node.events.<name>.diagnostics.overflowCount()` (main-side diagnostics) are present in the spec but only Ex 4 and Ex 8 use them (one polling block each).
 
 When those resolutions land or examples are added, the corresponding rows in the Coverage table above are updated in the same revision.
