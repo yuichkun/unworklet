@@ -506,6 +506,7 @@ import {
   forSample, midiInput, message, event,
   add, sub, mul, div, sin, select, lt, lte, gt, max, exp,
   f32, i32,
+  type State,
 } from '@unworklet/core';
 
 const SAMPLE_BUFFER_LEN = 48000 * 4;        // 4 seconds @ 48kHz
@@ -539,9 +540,9 @@ export const granularSampler = defineProcessor((ctx) => {
   // State arrays are expressed as parallel scalar slots; the build-time loop unrolls
   // over them. (Production-grade allocators may use a single state.i32 head + circular
   // mark buffer; this shape favors clarity here.)
-  const voicePos       : ReturnType<typeof state.f32>[] = [];
-  const voiceRemaining : ReturnType<typeof state.i32>[] = [];
-  const voiceGate      : ReturnType<typeof state.bool>[] = [];
+  const voicePos       : State<'f32'>[]  = [];
+  const voiceRemaining : State<'i32'>[]  = [];
+  const voiceGate      : State<'bool'>[] = [];
   for (let v = 0; v < NUM_VOICES; v++) {
     voicePos      .push(state.f32(0,    { name: `voicePos_${v}` }));
     voiceRemaining.push(state.i32(0,    { name: `voiceRemaining_${v}` }));
@@ -685,7 +686,7 @@ import {
   forSample,
   midiInput, midiOutput, message, event,
   add, sub, mul, mod, eq, gt, lt, select,
-  type Node,
+  type Node, type State,
 } from '@unworklet/core';
 
 const PATTERN_LEN = 16;
@@ -701,7 +702,7 @@ export const arpeggiator = defineProcessor((ctx) => {
 
   // 16-step pattern of semitone offsets from the root note (Float32Array uploaded).
   // Shipped as state slots since each step is a small int — easier to snapshot.
-  const pattern: ReturnType<typeof state.i32>[] = [];
+  const pattern: State<'i32'>[] = [];
   for (let s = 0; s < PATTERN_LEN; s++) {
     pattern.push(state.i32(0, { name: `step_${s}` }));
   }
@@ -1014,9 +1015,9 @@ export const polySynth = defineProcessor((ctx) => {
   const duckAmount= param({ default: 0.5,  min: 0,     max: 1,    automationRate: 'k-rate', name: 'duckAmount'});
 
   // Voice state arrays — flattened.
-  const voiceNote: ReturnType<typeof state.i32>[]  = [];
-  const voiceVel : ReturnType<typeof state.f32>[]  = [];
-  const voiceGate: ReturnType<typeof state.bool>[] = [];
+  const voiceNote: State<'i32'>[]  = [];
+  const voiceVel : State<'f32'>[]  = [];
+  const voiceGate: State<'bool'>[] = [];
   for (let v = 0; v < NUM_VOICES; v++) {
     voiceNote.push(state.i32(60, { name: `vn_${v}` }));
     voiceVel .push(state.f32(0,  { name: `vv_${v}` }));

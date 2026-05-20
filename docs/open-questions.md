@@ -2,11 +2,11 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 104 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 103 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 38 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 60 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
-- **P3 = 6 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
+- **P3 = 5 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
@@ -1209,7 +1209,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P3 — prose 揺れ / mechanical sweep (6 件)
+## P3 — prose 揺れ / mechanical sweep (5 件)
 
 ## a-rate param を per-block top で `param.at(0)` 経 由 で 取 る pattern の canonical 確 認 不 在
 
@@ -1244,18 +1244,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI agent が Coverage table を 「surface 確 認 ガ イ ド と し て 各 Ex の 全 行 が 全 surface を exercise す る」 と 信 用 す る と、 (a) Ex 7 で copyFrom が canonical surface か 別 path か で 揺 れ、 (b) Ex 5 で snapshot lifecycle の sample を 探 し て 見 つ か ら ず docs 内 ジ ャ ン プ を 余 計 に 起 こ し、 (c) Ex 5/6/8 に sysex onEvent / Ex 6 に noteOff onEvent を 「必 須」 と 誤 読 す る possibility。 impl 矛 盾 と し て は 軽 度 だ が、 canonical 仕 様 整 合 性 anchor の integrity が 損 な わ れ る。
 
 **判 断 軸**: Coverage table の 各 行 で 「実 code で 該 当 surface を 1 度 で も 呼 ぶ Ex」 を re-scan し て 列 挙 を 修 正 す る path 推 奨。 ま た 「policy declaration 行 使」 と 「lifecycle 行 使」 を 別 行 に 分 け る か、 variant ご と に 行 を 細 分 化 す る か は 別 軸。
-
----
-
-## 公 開 `State<T>` 型 vs `ReturnType<typeof state.f32>` の 混 在
-
-**場 所**: `docs/12-canonical-examples.md:542-549`、 `docs/12-canonical-examples.md:704-706`、 `docs/12-canonical-examples.md:1017-1024`、 `docs/01-dsl.md:14-22`、 `docs/01-dsl.md:1098-1100`
-
-**何 が 起 き て い る か**: docs §1.6.1 等 で `State<T>` / `Buffer<T>` / `Param` を 「Public TypeScript types」 と し て exported 型 と declare し、 L1 helper signature で も `state: State<'f32'>` の 形 で 規 範 化。 一 方 canonical Ex 5 L542-549、 Ex 6 L704-706、 Ex 8 L1017-1024 で voice-array の element 型 を 「`ReturnType<typeof state.f32>[]`」 と 書 く。 `state.f32` は factory function (= `(initial, options?) => State<'f32'>`) で あ り、 `ReturnType<typeof state.f32>` は factory 関 数 そ の も の の 戻 り 値 型 = `State<'f32'>` を 取 る べ き だ が、 TypeScript の `ReturnType` operator は generic factory に 対 し て signature の declaration shape 次 第 で `State<'f32'>` か 関 数 型 か を 返 す。 公 開 `State<'f32'>` 型 を 直 接 書 け ば 同 じ 表 現 が 短 く て 明 確 だ が、 canonical で は 全 voice-array で `ReturnType<typeof state.*>[]` を 使 い 続 け て いる。
-
-**impl AI 影 響**: impl AI agent が canonical を 写 す と (a) `ReturnType<typeof state.f32>` を そ の ま ま 書 い て factory return-type が 自 動 resolve さ れ る か TS implementation 依 存、 (b) `State<'f32'>` exported 型 を 自 力 で 推 論 し 直 す、 で path が 割 れ る。 ま た 公 開 surface と し て `State<T>` を 推 す 仕 様 と canonical の `ReturnType<...>` 形 が 不 整 合 = user mental で 「公 開 型 を 直 接 使 う か factory return 型 を 取 る か」 で 揺 れ る。
-
-**判 断 軸**: canonical を 公 開 `State<'f32'>` 型 直 接 表 記 (= `const voicePos: State<'f32'>[] = []` 等) に 揃 え る path 推 奨。 公 開 surface 一 本 化 で TypeScript signature の implementation 詳 細 (= factory の generic shape) に 依 存 し な く な る。
 
 ---
 
