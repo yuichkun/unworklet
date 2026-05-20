@@ -36,7 +36,7 @@ populated (Q1–Q62 ratify complete; Q28 = historical number gap, see `open-ques
 | Q24 | Bundler integration scope | resolved — Q23 に 統 合 | `07-vite-plugin.md` + `08-deployment.md` §1 |
 | Q25 | Source maps | resolved — Q23 に 統 合 (= `@unworklet/vite-plugin` が sidecar `.wasm.map` で 出 す) | `07-vite-plugin.md` §5 |
 | Q50 | 動 的 processor swap primitive (= HMR / live coding / visual programming の 共 通 根) | resolved — `replaceProcessor(oldNode: UnworkletNode<Old>, newProcessor: New): Promise<ReplaceResult<New>>` を `@unworklet/core` か ら free function で expose; 内 部 動 作 = (1) `oldNode.snapshot()` で blob 化、 (2) 新 WASM を unique name で `registerProcessor` (= Web Audio spec の duplicate-name 禁 止 + `removeModule()` 不 存 在 制 約 を 隠 蔽)、 (3) 新 AudioWorkletNode 生 成 + `restore(blob)` (= Q5 + Q45 migration 再 利 用)、 (4) 新 typed wrapper を 戻 り 値 で 返 す; framework は graph 切 断 / 接 続 / 旧 node destroy / crossfade を 触 ら ず consumer 責 任 (= raw primitive、 declarative 純 度 維 持、 magic ナ シ); 戻 り 値 で 新 wrapper を 返 す 形 = declarations 変 化 (rename / 追 加 / 削 除) は typed `.d.ts` 経 由 で TS error と し て consumer code に 即 露 出 (= silent fail せ ず); accumulation warning (= 同 AudioContext 内 で N 回 swap 累 積 で `console.warn`) は framework が 出 す (= Web Audio `removeModule()` 不 存 在 制 約 を consumer 認 知 surface に); HMR は user-land で `import.meta.hot.accept` + `replaceProcessor` の recipe、 live coding / visual programming も 同 primitive を 使 う | `05-client.md` §8 + `07-vite-plugin.md` §4 |
-| Q51 | per-block で の sample-position primitive (audioIn.at / audioOut.set) 開 放 + JUCE / AudioWorklet process メ ン タ ル の docs 明 文 化 (audit followup) | resolved — `audioIn.at(c, 0)` / `audioOut.set(c, 0, v)` を per-block で 呼 び 可 と し て open (= 既 Q36-a の method signature `i: Node<'i32'> \| number` を そ の ま ま 適 用、 `param.at(0)` と 対 称); 旧 prose 「the equivalent literal positions for audioIn / audioOut are not opened by Q36 and remain a separate decision」 を 撤 去; 同 時 に 00-foundations.md §3 「Process body」 entry を 強 化 し て 「JUCE AudioProcessor::processBlock / AudioWorklet `process` と 同 じ mental model = body は top-to-bottom 実 行、 forSample は loop primitive、 user は process 内 で 好 き な 順 序 で sample-position primitive を 呼 ぶ、 loop は 何 回 で も 書 け る、 同 sample 位 置 を 上 書 き 可 (Q37 last-write-wins)」 を 明 文 化; declaration は declaration scope (= body 先 頭) 限 定 と い う 構 造 ル ー ル は 維 持、 そ れ 以 外 の 順 序 / 書 き 込 み ル ー ル は 親 ホ ス ト と 一 致 | `00-foundations.md` §3 (Process body / Sample-offset / Per-block phase) + `01-dsl.md` §1 |
+| Q51 | per-block で の sample-offset primitive (audioIn.at / audioOut.set) 開 放 + JUCE / AudioWorklet process メ ン タ ル の docs 明 文 化 (audit followup) | resolved — `audioIn.at(c, 0)` / `audioOut.set(c, 0, v)` を per-block で 呼 び 可 と し て open (= 既 Q36-a の method signature `i: Node<'i32'> \| number` を そ の ま ま 適 用、 `param.at(0)` と 対 称); 旧 prose 「the equivalent literal positions for audioIn / audioOut are not opened by Q36 and remain a separate decision」 を 撤 去; 同 時 に 00-foundations.md §3 「Process body」 entry を 強 化 し て 「JUCE AudioProcessor::processBlock / AudioWorklet `process` と 同 じ mental model = body は top-to-bottom 実 行、 forSample は loop primitive、 user は process 内 で 好 き な 順 序 で sample-offset primitive を 呼 ぶ、 loop は 何 回 で も 書 け る、 同 sample 位 置 を 上 書 き 可 (Q37 last-write-wins)」 を 明 文 化; declaration は declaration scope (= body 先 頭) 限 定 と い う 構 造 ル ー ル は 維 持、 そ れ 以 外 の 順 序 / 書 き 込 み ル ー ル は 親 ホ ス ト と 一 致 | `00-foundations.md` §3 (Process body / Sample-offset / Per-block phase) + `01-dsl.md` §1 |
 | Q26 | TypeScript version | (open) | `09-repo-structure.md` §5 |
 | Q27 | Generic typed messaging core surface | resolved — 5-surface uniform (param / state.publish / event / message / midi); SAB+Atomics with postMessage fallback; bulk via state.buffer.publish or event/message variable-length payloads | `02-messaging.md` + `01-dsl.md` §3, §4 |
 | Q29 | variable-rate iteration の v1.0.0 提 供 判 断 | resolved — v1.0.0 で `forSample` + `forSample.byN` の み (= 既 ratify 維 持); `forSampleRange(start, end, callback)` は v1.x.0 で additive 追 加 検 討 (= 表 現 力 は v1.0.0 forSample + build-time if で カ バ ー 済 み、 効 率 化 用 途); `forSamplesUntil(cond, callback)` (= runtime early-exit) と runtime variable stride は 永 久 排 除 (= realtime safety 違 反 / declarative 原 則 違 反) | `01-dsl.md` §10.5 |
@@ -513,7 +513,7 @@ The umbrella "cross-processor communication" decomposes into five use cases; fou
 
 ## Q22 — Graph capture model and process body structure
 
-**Status:** resolved (Q22-a / Q22-aprime / Q22-b / Q22-c three-layer structure fixed; **Q22-d error message format も resolved** (= 03-compiler §2.5 で Rust-style template 確 定、 後 述); Q22-c-Round2 = subgraph instantiation scope = 別 件 で Q34 で 解 決 済 み; Q22-b 不 変 量 「sample-position primitive は forSample 内 限 定」 は Q36-a で 「forSample 内 で 計 算 し た `i` を 受 け 取 る」 と 再 定 義、 literal `0` per-block 呼 び は Q36 の method 引 数 literal lift で 型 と 整 合).
+**Status:** resolved (Q22-a / Q22-aprime / Q22-b / Q22-c three-layer structure fixed; **Q22-d error message format も resolved** (= 03-compiler §2.5 で Rust-style template 確 定、 後 述); Q22-c-Round2 = subgraph instantiation scope = 別 件 で Q34 で 解 決 済 み; Q22-b 不 変 量 「sample-offset primitive は forSample 内 限 定」 は Q36-a で 「forSample 内 で 計 算 し た `i` を 受 け 取 る」 と 再 定 義、 literal `0` per-block 呼 び は Q36 の method 引 数 literal lift で 型 と 整 合).
 
 **Decision (Q22-a — Mental model):** authoritative wording in `00-foundations.md` §3 + `03-compiler.md` §2. Summary:
 
@@ -558,7 +558,7 @@ return {
 
 **Decision (Q22-b — Sample-position primitives):** authoritative wording in `01-dsl.md` §1.2, §1.3, §3.3, §10. Summary:
 
-There is **one form** for accessing sample-positioned values, and it is the **explicit form**. No sugar surface.
+There is **one form** for accessing sample-offseted values, and it is the **explicit form**. No sugar surface.
 
 - Inside a `forSample` callback (per-sample phase):
   - `audioIn.at(c, i): Node<'f32'>` — channel `c` value at sample-offset `i`.
@@ -572,7 +572,7 @@ There is **one form** for accessing sample-positioned values, and it is the **ex
 - Audio-I/O sample primitives (`at` / `set`) require `i: Node<'i32'>`. The only source of such a node is a `forSample` callback parameter — outside any `forSample`, `i` is not in scope, so writing `audioIn.at(0, i)` at the per-block phase is a TypeScript reference error caught in the IDE. Standard TypeScript scoping enforces the boundary; the framework adds nothing.
 - There is **no `audioIn.read(c)`** (sugar read), **no `audioOut.write([...])`** (sugar tuple write), and **no callable `param()`** (sugar current-sample param). Every per-sample access is via `forSample` + explicit `i`.
 
-The two-form sugar / explicit dichotomy that an earlier draft of Q22-b proposed is **rejected** — see Rejected (Q22-b) below for the full reasoning. The single explicit form makes the position of every sample-positioned operation lexically obvious: if you see `at` / `set` / `param.at(i)`, you are inside a `forSample`; if you don't see them, you are at the per-block phase.
+The two-form sugar / explicit dichotomy that an earlier draft of Q22-b proposed is **rejected** — see Rejected (Q22-b) below for the full reasoning. The single explicit form makes the position of every sample-offseted operation lexically obvious: if you see `at` / `set` / `param.at(i)`, you are inside a `forSample`; if you don't see them, you are at the per-block phase.
 
 **Decision (Q22-c — Error layer structure):** authoritative wording in `03-compiler.md` §2. Summary:
 
@@ -598,8 +598,8 @@ The detailed format of error messages and refactor-hint structure (Q22-d) is res
 
 **Rationale (Q22-b):**
 
-- *Single form (no sugar)*: the value `i` representing the current sample-offset is what makes per-sample primitives different from per-block primitives. Hiding `i` (sugar) requires the framework to bind it implicitly based on context, which means the *same primitive call site* (`audioIn.read(0)`) means different things depending on lexical scope. Users have to track scope to interpret each call. The explicit form (`audioIn.at(0, i)`) makes the sample-position presence visible at every call: if there's an `i`, you're per-sample; if not, you're per-block. Lexical scope and primitive form align, removing one axis of mental tracking.
-- *No syntactic disadvantage worth keeping sugar for*: the price of explicit form is one extra argument per sample-position primitive — `audioIn.at(0, i)` vs `audioIn.read(0)`. For simple plugins, this means 1–2 extra characters per line. For production-grade plugins, the overhead vanishes against the rest of the DSP. The "simple plugin readability" argument is real but small, and is dominated by the value of having a single form across all plugins.
+- *Single form (no sugar)*: the value `i` representing the current sample-offset is what makes per-sample primitives different from per-block primitives. Hiding `i` (sugar) requires the framework to bind it implicitly based on context, which means the *same primitive call site* (`audioIn.read(0)`) means different things depending on lexical scope. Users have to track scope to interpret each call. The explicit form (`audioIn.at(0, i)`) makes the sample-offset presence visible at every call: if there's an `i`, you're per-sample; if not, you're per-block. Lexical scope and primitive form align, removing one axis of mental tracking.
+- *No syntactic disadvantage worth keeping sugar for*: the price of explicit form is one extra argument per sample-offset primitive — `audioIn.at(0, i)` vs `audioIn.read(0)`. For simple plugins, this means 1–2 extra characters per line. For production-grade plugins, the overhead vanishes against the rest of the DSP. The "simple plugin readability" argument is real but small, and is dominated by the value of having a single form across all plugins.
 - *No `param.value` / `param.now()` / callable `param()`*: same reasoning — these are sugar surfaces that hide `i`. The framework offers `param.at(i)` (per-sample) and `param.at(0)` (per-block, k-rate-friendly) as the only forms, both of which are explicit about which sample-offset is being read.
 - *Forbidding sugar inside `forSample`*: even though `forSample` provides an `i` in scope, allowing `audioIn.read(c)` inside the callback would partially restore the sugar surface and re-introduce the "form depends on lexical scope" mental cost. The cleaner rule is **no sugar at all** — every access uses `at` / `set` / `param.at(...)` regardless of where it is.
 
@@ -638,7 +638,7 @@ The following candidates for the process body's structure were considered during
 
 - *Sugar form (callable `param()`, sugar `audioIn.read(c)`, sugar `audioOut.write([...])` at the top level, with implicit `forSample` wrapping)*. The original Q22-b draft (now rejected). **Rejected during grilling on 2026-05-05** with the structural insight that the same primitive call site means different things depending on lexical scope, forcing users to track context to interpret each line. Once the lexical-position model (per-block at top, per-sample inside `forSample`) is adopted for the body's structure, sugar primitives lose their footing — they would require the framework to bind `i` implicitly, which contradicts the "lexical position determines phase" principle that the body structure relies on. Distinct method names (`read` vs `at`, `write` vs `set`, `param()` vs `param.at(i)`) were considered as a way to keep both forms while making the difference visible per call, but adding the second surface only doubles the API while solving nothing the lexical-position model doesn't already solve.
 
-- *Sugar form retained inside `forSample` only (= `i` implicit since it's in scope from the callback parameter, but no sugar at the per-block top level)*. **Rejected**: re-introduces the "form depends on lexical scope" mental cost — the same primitive call (`audioIn.read(c)`) would be invalid at the top level but valid inside `forSample`, which means readers still have to track scope to interpret call sites. The cleaner rule is "no sugar anywhere" — every sample-position access uses `at` / `set` / `param.at(...)`, regardless of where it appears.
+- *Sugar form retained inside `forSample` only (= `i` implicit since it's in scope from the callback parameter, but no sugar at the per-block top level)*. **Rejected**: re-introduces the "form depends on lexical scope" mental cost — the same primitive call (`audioIn.read(c)`) would be invalid at the top level but valid inside `forSample`, which means readers still have to track scope to interpret call sites. The cleaner rule is "no sugar anywhere" — every sample-offset access uses `at` / `set` / `param.at(...)`, regardless of where it appears.
 
 - *Same method name with arity overload (`audioIn.read(c)` and `audioIn.read(c, i)`, etc.)*. **Rejected**: the two forms become visually indistinguishable at call sites; readers count arguments to know which form is active. Distinct names and removing sugar entirely both addressed this; the latter is structurally simpler.
 
@@ -784,7 +784,7 @@ This is a **planned mandatory addition**, not optional. The v1.0.0 surface is fo
 **Rationale (Q27-c):**
 
 - *Handler at per-block top*: messages are inherently coarse-grained (button press, preset load); they do not need per-sample dispatch. Running the handler before any `forSample` lets the user reflect the message into state slots that subsequent `forSample` invocations read, without per-sample dispatch overhead.
-- *No audio I/O in handler body*: handlers run outside any `forSample`, so sample-offset `i` is not in scope. TypeScript scope already rejects `audioIn.at(0, i)` here; the framework adds nothing. State and buffer writes are valid because they are sample-position-independent.
+- *No audio I/O in handler body*: handlers run outside any `forSample`, so sample-offset `i` is not in scope. TypeScript scope already rejects `audioIn.at(0, i)` here; the framework adds nothing. State and buffer writes are valid because they are sample-offset-independent.
 - *Symmetry with `event<T>`*: same capacity / overflow shape; reading either surface tells users what to expect from the other.
 
 **Rationale (Q27-d):**
@@ -1240,7 +1240,7 @@ audioIn.at(3.5, i)     // build 時 エ ラ ー: channel index は 整 数 必 �
 ir.read(-1)            // build 時 エ ラ ー: 負 値 不 可
 ```
 
-`param.at(0)` 等 の literal `0` per-block 呼 び は こ の ル ー ル で 型 と 整 合 す る。 Q22-b 不 変 量 「sample-position primitive は forSample 内 限 定」 は 「forSample 内 で 計 算 し た `i` を 受 け 取 る」 で 維 持 (= 任 意 の `Node<'i32'>` を per-block で 渡 す こ と は 引 き 続 き 不 可)、 literal `0` per-block 呼 び を 例 外 と し て 正 統 化。
+`param.at(0)` 等 の literal `0` per-block 呼 び は こ の ル ー ル で 型 と 整 合 す る。 Q22-b 不 変 量 「sample-offset primitive は forSample 内 限 定」 は 「forSample 内 で 計 算 し た `i` を 受 け 取 る」 で 維 持 (= 任 意 の `Node<'i32'>` を per-block で 渡 す こ と は 引 き 続 き 不 可)、 literal `0` per-block 呼 び を 例 外 と し て 正 統 化。
 
 **Decision (Q36-b — typed-array-field proxy surface):**
 
@@ -1297,7 +1297,7 @@ emitIf(cond: Node<'bool'> | boolean, payload: T): void
 - **軸 別 解 (= `samples.atNode(idx)` / `samples.atConst(idx)` 名 分 離 + `param.at(0)` 個 別 例 外 + Q33 拡 大 を 3 つ 別 建 て)**: ル ー ル 3 つ 別 建 て で mental model 重 い、 既 canonical で rename 必 須
 - **method を per-block / per-sample で 別 名 化 (= `param.atBlockStart()` / `param.atSample(i)`)**: 各 method surface 2 倍、 canonical 全 行 rewrite、 「動 い て た `.at(0)` が な ぜ 別 名?」 と user 説 明 cost
 - **scalar constructor を 強 制 (= `lowF.at(i32(0))` 必 須)**: Q33 で 廃 止 し た 「全 lit 包 み」 を method 引 数 で 復 活 = 既 ratify と 哲 学 ズ レ、 boilerplate 大
-- **Q22-b 不 変 量 廃 止 (= audio I/O も per-block 完 全 開 放)**: 「sample-position は forSample 内 で の み」 と い う 強 い mental model が 崩 れ る、 別 P0 (output coverage) と 相 互 作 用 複 雑、 「`audioIn.at(c, 0)` per-block で 何 を 読 む の?」 (= 前 quantum 最 終 vs 当 quantum 0) の 新 議 論 が 発 生 (= literal `0` per-block 呼 び の み 限 定 開 放 で 十 分)
+- **Q22-b 不 変 量 廃 止 (= audio I/O も per-block 完 全 開 放)**: 「sample-offset は forSample 内 で の み」 と い う 強 い mental model が 崩 れ る、 別 P0 (output coverage) と 相 互 作 用 複 雑、 「`audioIn.at(c, 0)` per-block で 何 を 読 む の?」 (= 前 quantum 最 終 vs 当 quantum 0) の 新 議 論 が 発 生 (= literal `0` per-block 呼 び の み 限 定 開 放 で 十 分)
 
 ---
 
@@ -1592,7 +1592,7 @@ forSample.byN(4, (i, everyNSamples) => {
 
 **Rationale:**
 
-- **既 `i` と 同 軸 で 統 一**: forSample callback で sample-position `i` を 引 数 で 渡 す pattern (= Q22-b) が 既 確 立、 everyNSamples も 同 軸 で 「forSample 内 で の み 在 域 す る primitive」 と し て 統 一 ⇒ user mental 1 つ
+- **既 `i` と 同 軸 で 統 一**: forSample callback で sample-offset `i` を 引 数 で 渡 す pattern (= Q22-b) が 既 確 立、 everyNSamples も 同 軸 で 「forSample 内 で の み 在 域 す る primitive」 と し て 統 一 ⇒ user mental 1 つ
 - **build-time context tracking 不 要**: 「forSample 内 限 定」 を 構 文 (= scoping) で 表 現、 compiler 側 で 特 別 な context check ロ ジ ッ ク を 持 た な く て 良 い
 - **subgraph method 伝 播 が 自 然 解 決**: method 内 で 自 前 forSample を 書 け ば 引 数 で 取 れ る、 caller の context tracking 不 要 (= 元 案 で の 「method 内 で everyNSamples 含 む と method 自 体 が forSample 限 定 に な り caller context を build-time check」 が 消 失)
 
@@ -2095,13 +2095,13 @@ accumulation warning: 同 AudioContext 内 で N 回 swap 累 積 で `console.w
 - `replaceProcessor` で 旧 node の `process()` を false return さ せ る signaling 経 路 の 詳 細 (= 旧 instance の eventual GC を 促 す) は `04-worklet-runtime.md` §8 で 詳 細
 - live coding / visual programming の canonical recipe を 別 docs (= 12-canonical-examples.md か 新 recipe 集) に 追 加 す る か は v1.0.0 docs polish 段 階 で 判 断
 
-## Q51 — per-block sample-position primitive 開 放 + JUCE / AudioWorklet process メ ン タ ル 明 文 化 (audit followup)
+## Q51 — per-block sample-offset primitive 開 放 + JUCE / AudioWorklet process メ ン タ ル 明 文 化 (audit followup)
 
 **Status:** resolved。
 
 ### Problem
 
-audit で `01-dsl.md` §1 prose に 「The JS literal `0` lifts to `Node<'i32'>` per Q36-a and is allowed at per-block top level (e.g. `param.at(0)` reads the block-start value; the equivalent literal positions for `audioIn` / `audioOut` are not opened by Q36 and remain a separate decision)」 と あ り、 audio I/O sample-position primitive の per-block 開 放 が 「separate decision」 と し て 宙 浮 き と 判 明。 加 え て docs 全 体 で 「JUCE AudioProcessor::processBlock / AudioWorklet `process` と 同 じ mental model」 と い う core stance が 1 箇 所 に 明 文 化 さ れ て お ら ず (= decisions-log Q37 prose と `00-foundations.md` / `01-dsl.md` の top-to-bottom 言 及 が 散 在)、 余 湖 さ ん が 「過 去 何 回 か 説 明 し て い る 」 mental model が 仕 様 と し て 引 け な い 状 態 だ っ た。
+audit で `01-dsl.md` §1 prose に 「The JS literal `0` lifts to `Node<'i32'>` per Q36-a and is allowed at per-block top level (e.g. `param.at(0)` reads the block-start value; the equivalent literal positions for `audioIn` / `audioOut` are not opened by Q36 and remain a separate decision)」 と あ り、 audio I/O sample-offset primitive の per-block 開 放 が 「separate decision」 と し て 宙 浮 き と 判 明。 加 え て docs 全 体 で 「JUCE AudioProcessor::processBlock / AudioWorklet `process` と 同 じ mental model」 と い う core stance が 1 箇 所 に 明 文 化 さ れ て お ら ず (= decisions-log Q37 prose と `00-foundations.md` / `01-dsl.md` の top-to-bottom 言 及 が 散 在)、 余 湖 さ ん が 「過 去 何 回 か 説 明 し て い る 」 mental model が 仕 様 と し て 引 け な い 状 態 だ っ た。
 
 ### Decision
 
@@ -2111,7 +2111,7 @@ audit で `01-dsl.md` §1 prose に 「The JS literal `0` lifts to `Node<'i32'>`
 
 > **Mental model — same as JUCE / AudioWorklet `process`.** The `process` body is read top-to-bottom: code at the top of the body runs first, then any subsequent statement runs in source order, until the end. There is no fixed phase boundary that the author has to put their code on either side of, no global ordering rule beyond source order, and no restriction on how many `forSample` loops the body contains. Authors write zero, one, or many `forSample` invocations; per-block computation freely interleaves with them; the same output sample can be written multiple times (last write wins per Q37); the same input sample can be read in per-block code and again inside a `forSample` callback. This is the **AudioWorkletProcessor.process / JUCE AudioProcessor::processBlock** mental model, preserved as-is — `forSample` is just a loop primitive over the block, not a phase the framework reorders or constrains.
 
-つ ま り 構 造 ル ー ル は 1 つ だ け = **declarations は declaration scope (= body 先 頭) 限 定**。 そ れ 以 外 (= 順 序、 重 ね 書 き、 sample-position primitive の 呼 び 位 置) は 親 ホ ス ト と 完 全 一 致。
+つ ま り 構 造 ル ー ル は 1 つ だ け = **declarations は declaration scope (= body 先 頭) 限 定**。 そ れ 以 外 (= 順 序、 重 ね 書 き、 sample-offset primitive の 呼 び 位 置) は 親 ホ ス ト と 完 全 一 致。
 
 ### Why this and not alternatives
 
@@ -2121,8 +2121,8 @@ audit で `01-dsl.md` §1 prose に 「The JS literal `0` lifts to `Node<'i32'>`
 
 ### Side effects
 
-- **00-foundations.md §3**: 「Process body」 entry に mental model 1 段 落 追 加 (= JUCE / AudioWorklet 整 合 を 明 言)、 「Sample-offset (i)」 entry を update (= `Node<'i32'>` `i` alias は forSample-scoped、 primitive 自 体 は per-block で literal で 呼 べ る)、 「Per-block phase」 bullet を update (= sample-position primitive を per-block で 呼 べ る、 literal で sample-offset 指 定)
-- **01-dsl.md §1**: L34 prose を rewrite (= 「remain a separate decision」 撤 去、 per-block で sample-position primitive を literal で 呼 び 可、 mental model 言 及 追 加)
+- **00-foundations.md §3**: 「Process body」 entry に mental model 1 段 落 追 加 (= JUCE / AudioWorklet 整 合 を 明 言)、 「Sample-offset (i)」 entry を update (= `Node<'i32'>` `i` alias は forSample-scoped、 primitive 自 体 は per-block で literal で 呼 べ る)、 「Per-block phase」 bullet を update (= sample-offset primitive を per-block で 呼 べ る、 literal で sample-offset 指 定)
+- **01-dsl.md §1**: L34 prose を rewrite (= 「remain a separate decision」 撤 去、 per-block で sample-offset primitive を literal で 呼 び 可、 mental model 言 及 追 加)
 - canonical example 影 響 ナ シ (verified — 既 canonical example は forSample 内 で `i` 使 用、 per-block で の literal 呼 び 出 し は 既 example で は 出 て こ な い、 整 合 違 反 ナ シ)
 
 ### Open follow-up
@@ -2349,7 +2349,7 @@ Q51 で 「`forSample` は loop primitive で あ っ て phase で は な い�
 
 ### Problem
 
-Q51 で 「process body 任 意 位 置 で sample-position primitive (`audioIn.at` / `audioOut.set` / `param.at`) OK」 と ratify。 し か し `01-dsl.md` §4.2 L500 prose は 「Inside a handler, only state writes, buffer writes, and scalar arithmetic are allowed — sample-offset `i` is not in scope, so audio I/O primitives produce TypeScript reference errors」 と 残 っ た ま ま、 Q51 と 真 っ 向 衝 突。 同 doc 内 で §4.1 (event `emitIf`) / §5.6.4 (subgraph method context) / §6 (process body summary) / Q32 (= `emitIf` 統 一) は 既 に 「handler body 内 で `emitIf` / subgraph method 呼 び 出 し OK」 と 規 定 し て お り、 §4.2 L500 が 唯 一 の 狭 い prose と し て 残 っ て い た = impl AI agent が 異 な る judgment に 達 す る dangling、 真 の impl 矛 盾 リ ス ク。
+Q51 で 「process body 任 意 位 置 で sample-offset primitive (`audioIn.at` / `audioOut.set` / `param.at`) OK」 と ratify。 し か し `01-dsl.md` §4.2 L500 prose は 「Inside a handler, only state writes, buffer writes, and scalar arithmetic are allowed — sample-offset `i` is not in scope, so audio I/O primitives produce TypeScript reference errors」 と 残 っ た ま ま、 Q51 と 真 っ 向 衝 突。 同 doc 内 で §4.1 (event `emitIf`) / §5.6.4 (subgraph method context) / §6 (process body summary) / Q32 (= `emitIf` 統 一) は 既 に 「handler body 内 で `emitIf` / subgraph method 呼 び 出 し OK」 と 規 定 し て お り、 §4.2 L500 が 唯 一 の 狭 い prose と し て 残 っ て い た = impl AI agent が 異 な る judgment に 達 す る dangling、 真 の impl 矛 盾 リ ス ク。
 
 ### Decision
 

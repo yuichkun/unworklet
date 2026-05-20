@@ -100,10 +100,10 @@ Synonym for "render quantum's worth of samples" — the unit of work for one Aud
 
 ### `state` / `buffer` / `param`
 
-Three declaration kinds for sample-position-independent slots:
+Three declaration kinds for sample-offset-independent slots:
 
 - **`state.<type>(initial, options?)`** — scalar slot. `load()` / `store(v)`. Persists across render quanta.
-- **`buffer.<type>({ size, name, ... })`** — fixed-size array. `buf.read(idx)` / `buf.write(idx, v)` / `buf.readInterpolated(pos)` for scalar access; `buf.loadVec(offset)` / `buf.storeVec(offset, value)` for SIMD bulk access (under `@unworklet/core/simd`). Lives in WASM linear memory.
+- **`buffer.<type>({ size, name, ... })`** — fixed-size array. `buf.read(idx)` / `buf.write(idx, v)` / `buf.readInterpolated(pos)` for scalar access; `buf.copyFrom(typedArrayField)` for bulk transfer from a `message<T>` / `event<T>` typed-array payload field (single `memory.copy` instruction; see `01-dsl.md` §3.2); `buf.loadVec(offset)` / `buf.storeVec(offset, value)` for SIMD bulk access (under `@unworklet/core/simd`). Lives in WASM linear memory.
 - **`param({ default, min, max, automationRate, ... })`** — bound to a Web Audio `AudioParam`. Single access form: `param.at(i)` (inside `forSample`, per-sample value at offset `i`) / `param.at(0)` (per-block, block-start value). No callable `param()` form, no `param.value` / `param.now()` property.
 
 See `01-dsl.md` §3.

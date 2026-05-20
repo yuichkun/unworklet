@@ -79,16 +79,6 @@ unworklet の pillar:
 5. **L4-M5 canonical examples integrity** — AGENTS.md HARD CONTRACT。 ratify 内 容 を 揃 え た 後 に。
 6. **L4-M6 / L4-M7 / L4-M8** — 残 hygiene。
 
-### L4-M4. docs prose 揃 え sweep
-
-- **`sample-offset` / `sample-position` 表 記 統 一** — `00-foundations.md` §3 vocabulary が `Sample-offset (i)` を canonical 名 と し て い る の で 全 docs を `sample-offset` に。 audit B §1 拾 い。
-- **`00-foundations.md` L106 buffer access methods listing** に `copyFrom` 追 加 (`01-dsl.md` §3.2 と 同 期)。 audit B §1 拾 い。
-- **`03-compiler.md` §2.2 declaration scope listing** に `event<T>` / `message<T>` / `midiInput` / `midiOutput` / `createSubgraph` 追 加。 `defineSubgraph` 説 明 を 「module-level subgraph constructor」 に 修 正。 audit A §2 拾 い。
-- **`01-dsl.md` §4.1 / §4.2 Options listing** に `payloadCapacity?: number` 追 加 (§4.3 prose と 同 期)。 audit A §2 拾 い。
-- **`01-dsl.md` §6 prose** の emitIf context 列 挙 に 「per-block top level」 追 加 (L435 と 同 期)。 audit B §2 拾 い。
-- **`01-dsl.md` §10.1 forSample.byN prose** の `audioOut.storeVec is not part of v1.0.0 SIMD MVP` wording と §2.1 Memory inventory の 「`audioOutput` に は 乗 ら な い」 wording を 統 一 (= 同 結 論 だ が 将 来 軸 含 み が 違 う、 一 方 に 寄 せ る)。 audit B §2 拾 い。
-- **`04-worklet-runtime.md` L7 Status 行** を doc 実 体 と 同 期 (L4-M3 と セ ッ ト)。
-
 ### L4-M5. canonical examples integrity sweep
 
 AGENTS.md HARD CONTRACT (canonical examples integrity rule) 観 点 で 拾 っ た 違 反。
