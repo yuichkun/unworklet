@@ -79,18 +79,9 @@ unworklet の pillar:
 5. **L4-M5 canonical examples integrity** — AGENTS.md HARD CONTRACT。 ratify 内 容 を 揃 え た 後 に。
 6. **L4-M6 / L4-M7 / L4-M8** — 残 hygiene。
 
-### L4-M5. canonical examples integrity sweep
+### L4-M5b. sysex を exercise す る canonical example 追 加 (= Ex 9 新 設、 設 計 寄 り)
 
-AGENTS.md HARD CONTRACT (canonical examples integrity rule) 観 点 で 拾 っ た 違 反。
-
-- **Ex 5 L587 / Ex 8 L1052, L1088 の Q1 precision 違 反** — `velocity / 127` / `Math.LN2 / 12` 等 が JS native `/` operator を `Node<T>` operand に 適 用 = `div(f32(velocity), 127)` 等 に 修 正。 audit B §7 拾 い (mental model 破 壊 #2 と し て flag)。 = integrity anchor の 中 で core invariant が 壊 れ て い る、 mechanical fix で OK。
-- **Ex 5 import 漏 れ** (`max`, `lt`, `mod`)、 **Ex 6 import 漏 れ** (`lt`) — compile し な い、 self-contained 違 反。 audit B §7 拾 い。
-- **Ex 6 dead import** (`audioInput` 使 用 ナ シ)、 **Ex 7 dead param** (`irChoice` 参 照 ナ シ)、 **Ex 3 / Ex 7 dead import** (`vec4` 使 用 ナ シ)。 audit B §7 拾 い。
-- **`loadPattern` vs `uploadPattern` 名 前 揺 れ** — canonical Ex 6 / 01-dsl §4.3 / decisions-log Q31-d / Q36-b で 別 名、 1 つ に 統 一。 audit B §4 拾 い。
-- **Coverage section 事 実 修 正** (`L1152` `param.at(0)` 「not yet」 → 実 際 Ex 2/4/7/8 で 頻 出、 `L1154` 「scalar constructor not yet」 → Ex 5/8 で 頻 出 ・ cross-precision conversion の み 0、 `L1158` 「polling Ex 4 only」 → Ex 8 に も 存 在、 `L36` Coverage table の `storeVec` → canonical に 使 用 ナ シ で 削 除、 `L15` Coverage table で Ex 5 を `audioInput` user と し て 誤 分 類)。 audit A §6 + B §7 拾 い。
-- **sysex coverage gap (`L1157`)** — Q49 ratify で v1.0.0 sysex emit 完 全 spec 化 し た が canonical example で exercise ナ シ。 1 sysex example 追 加 推 奨 (= AGENTS.md HARD CONTRACT 観 点 で 重 い、 ratify 時 acknowledge 済 み だ が 直 し て な い)。 audit A §6 拾 い。
-- **Ex 3 L274 prose vs code 不 整 合** — comment が 「forSample.byN (SIMD bulk convolution)」 と 書 く が code は `forSample((i) => {...})` 普 通 形。 audit B §7 拾 い。
-- **`13-offline-render.md` L32 `inputs: { in: ... }`** → `inputs: { main: ... }` (canonical の `name: 'main'` 統 一 慣 行 と 同 期)。 audit B §4 拾 い。
+Q49 ratify で worklet 側 sysex emit が `Buffer<'u8'>` + `length` 経 由 で 完 全 spec 化 さ れ た が canonical example で exercise ナ シ = AGENTS.md HARD CONTRACT (canonical examples integrity rule) 観 点 で 重 い gap。 Ex 9 と し て sysex 1 例 を 設 計 + コ ー ド 追 加 + Coverage table 反 映。 余 湖 さ ん の use case 選 定 → 設 計 → 実 装 path で 進 行 (= L4-M5 mechanical sweep か ら 切 り 出 し、 sweep 完 了 後 別 grill 経 由 で 実 施)。 TaskList #101。
 
 ### L4-M6. detail entry の Open follow-up 集 約
 

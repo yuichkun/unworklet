@@ -530,7 +530,7 @@ uploadSample.onReceive(({ samples }) => {
 });
 
 // Argument = JS number — build-time-folded read (e.g. step sequencer):
-uploadPattern.onReceive(({ steps }) => {
+loadPattern.onReceive(({ steps }) => {
   for (let s = 0; s < steps.length; s++) {  // ← here `steps.length` is a JS number; see note below
     const v = steps.at(s);
     pattern[s].store(v);

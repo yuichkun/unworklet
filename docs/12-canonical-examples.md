@@ -12,7 +12,7 @@ The example set is designed so that the union of all examples touches every conc
 
 | Concept | Examples |
 |---|---|
-| `audioInput` (mono / stereo / multi-port) | 1, 2, 3, 4, 5, 7, 8 |
+| `audioInput` (mono / stereo / multi-port) | 1, 2, 3, 4, 7, 8 |
 | `audioOutput` (mono / stereo / multi-port) | all |
 | `param` (k-rate / a-rate, automation curves) | 1, 2, 4, 5, 7, 8 |
 | `state.f32` / `state.i32` / `state.bool` | 2, 3, 4, 5, 6, 7, 8 |
@@ -33,7 +33,7 @@ The example set is designed so that the union of all examples touches every conc
 | `midiInput` / `midiOutput` | 5, 6, 8 |
 | `onEvent` MIDI (`noteOn` / `noteOff` only — others not yet exercised) | 5, 6, 8 |
 | MIDI emission via `emitIf` | 6 |
-| SIMD `f32x4`, `splat`, `buf.loadVec`, `buf.storeVec`, `mulVec`, `addVec`, `vec.lane` | 3, 7 |
+| SIMD `f32x4`, `splat`, `buf.loadVec`, `mulVec`, `addVec`, `vec.lane`, `sumLanes` | 3, 7 |
 | `snapshot` policy (`'persistent'` / `'transient'`) | 3, 5, 7 |
 | `migrations` chain (schema-versioned restore) | 7 |
 | Main side: `createNode` | all |
@@ -266,7 +266,7 @@ import {
   add, sub, mul, mod, abs, max,
   type Node,
 } from '@unworklet/core';
-import { vec4, splat, mulVec, addVec, sumLanes } from '@unworklet/core/simd';
+import { splat, mulVec, addVec, sumLanes } from '@unworklet/core/simd';
 
 // Linear-phase EQ via 3 partitioned FIR taps over a single combined impulse.
 // Impulse buffer is precomputed in main and uploaded; this processor hosts the
@@ -299,9 +299,10 @@ export const linearPhaseEQ = defineProcessor(() => {
         history.write(idx, main.at(0, i));
       });
 
-      // forSample.byN (SIMD bulk convolution): accumulator over each output
-      // sample `i`, accumulate impulse[k] * history[(head - k) % LEN] over k.
-      // We process the inner k loop in chunks of 4 via SIMD.
+      // SIMD bulk convolution: accumulator over each output sample `i`,
+      // accumulate impulse[k] * history[(head - k) % LEN] over k.
+      // We process the inner k loop in chunks of 4 via SIMD (compile-time
+      // unrolled below).
       forSample((i) => {
         const outIdx = mod(add(startHead, i), HISTORY_LEN);
         let acc = splat(0);
@@ -498,7 +499,7 @@ mixer.connect(audioContext.destination);
 import {
   defineProcessor, audioOutput, param, state, buffer,
   forSample, midiInput, message, event,
-  add, sub, mul, div, sin, select, lte, gt, exp,
+  add, sub, mul, div, sin, select, lt, lte, gt, max, exp,
   f32, i32,
 } from '@unworklet/core';
 
@@ -584,7 +585,7 @@ export const granularSampler = defineProcessor((ctx) => {
       // MIDI handlers — store the latest note for grain pitch shifting.
       noteIn.onEvent('noteOn',  ({ note, velocity }) => {
         activeNote.store(note);
-        activeVel .store(velocity / 127);
+        activeVel .store(div(f32(velocity), 127));
       });
       noteIn.onEvent('noteOff', () => {
         activeVel.store(0);
@@ -675,10 +676,10 @@ node.events.grainSpawned.on(({ atSample, voice, pos }) => grainViz.flash(voice, 
 
 ```typescript
 import {
-  defineProcessor, audioInput, audioOutput, state,
+  defineProcessor, audioOutput, state,
   forSample,
   midiInput, midiOutput, message, event,
-  add, sub, mul, mod, eq, gt, select,
+  add, sub, mul, mod, eq, gt, lt, select,
   type Node,
 } from '@unworklet/core';
 
@@ -801,7 +802,7 @@ import {
   forSample, message, SAMPLES_PER_BLOCK,
   add, sub, mul, mod, max, abs, type Node,
 } from '@unworklet/core';
-import { vec4, splat, mulVec, addVec, sumLanes } from '@unworklet/core/simd';
+import { splat, mulVec, addVec, sumLanes } from '@unworklet/core/simd';
 
 const IR_LEN          = 4096;     // ~85ms @ 48kHz
 const NUM_PARTITIONS  = IR_LEN / SAMPLES_PER_BLOCK;     // 32
@@ -812,7 +813,6 @@ export const convolutionReverb = defineProcessor((ctx) => {
 
   const wetGain  = param({ default: 0.5, min: 0, max: 1, automationRate: 'k-rate', name: 'wetGain'  });
   const dryGain  = param({ default: 0.7, min: 0, max: 1, automationRate: 'k-rate', name: 'dryGain'  });
-  const irChoice = param({ default: 0,   min: 0, max: 3, automationRate: 'k-rate', name: 'irChoice' });
 
   // IR — snapshotted because preset = (wet/dry settings + which IR is loaded).
   const irL = buffer.f32({ size: IR_LEN, name: 'irL', snapshot: 'persistent' });
@@ -1049,13 +1049,13 @@ export const polySynth = defineProcessor((ctx) => {
         for (let s = 0; s < NUM_VOICES; s++) {
           const isMe = eq(v, s);
           voiceNote[s].store(select(isMe, note,            voiceNote[s].load()));
-          voiceVel [s].store(select(isMe, velocity / 127,  voiceVel [s].load()));
+          voiceVel [s].store(select(isMe, div(f32(velocity), 127),  voiceVel [s].load()));
           voiceGate[s].store(select(isMe, true,            voiceGate[s].load()));
         }
         allocCursor.store(mod(add(v, 1), NUM_VOICES));
 
         notePlayed.emitIf(true,
-          { atSample, note, voice: v, velocity: velocity / 127 });
+          { atSample, note, voice: v, velocity: div(f32(velocity), 127) });
       });
 
       keys.onEvent('noteOff', ({ note }) => {
@@ -1147,14 +1147,12 @@ setInterval(() => {
 
 These are intentionally outside the example set today and are tracked as follow-up:
 
-- *(closed)* `defineSubgraph` instantiation argument scoping ── resolved at Q34 (= Q22-c-Round2). Examples 2 and 8 use `createSubgraph(subgraph, ...args)` in declaration scope and `.process(...)` per call.
 - `forSampleRange(start, end, callback)` partial-block iteration (deferred to v1.x.0; nested `forSample` use cases such as 2D-tile iteration are not exercised).
-- `param.at(0)` literal-`0` lifting under `Node<'i32'>` context (Q22 / Q1 interaction; resolved at Round 2 type-rule grilling).
 - `everyNSamples` sub-rate work — the surface is decided (Q7) but no current example uses it. A canonical example will land once a use case (e.g. envelope follower at sub-rate) is selected.
-- Type conversion primitives (`f32(node)`, `f64(node)`, `i32(node)`) — the surface is in `01-dsl.md` §2 but no example exercises a cross-precision boundary today.
+- Cross-precision type conversion boundaries (`f64(node)` over an `f32` source, etc.) — the surface is in `01-dsl.md` §2 and `f32(node)` / `i32(node)` are exercised, but no example crosses a precision boundary today.
 - Math primitives `tan`, `tanh`, `sqrt` — listed in `01-dsl.md` §2 but unused across the example set.
 - `buffer.i32` — only `buffer.f32` is exercised.
-- MIDI variants beyond `noteOn` / `noteOff`: `cc`, `pitchBend`, `programChange`, `channelPressure`, `aftertouch`, `systemRealtime`, sysex are part of the Q4 surface but no current example uses them. Q4 covers the wire / handler shape; the canonical example set has a coverage gap here.
-- `node.midi.<name>.diagnostics.overflowCount()` and `node.events.<name>.diagnostics.overflowCount()` (main-side diagnostics; worklet-side `.diagnostics` was removed by Q47) are mentioned but not actively monitored in any example beyond Ex 4 (one polling block).
+- MIDI variants beyond `noteOn` / `noteOff`: `cc`, `pitchBend`, `programChange`, `channelPressure`, `aftertouch`, `systemRealtime`, sysex are part of the Q4 surface but no current example uses them. Q4 covers the wire / handler shape; the canonical example set has a coverage gap here. (sysex Q49 ratify completed — the surface is fully specified but unexercised; tracked as `open-questions.md` L4-M5b for a dedicated Ex 9.)
+- `node.midi.<name>.diagnostics.overflowCount()` and `node.events.<name>.diagnostics.overflowCount()` (main-side diagnostics) are present in the spec but only Ex 4 and Ex 8 use them (one polling block each).
 
 When those resolutions land or examples are added, the corresponding rows in the Coverage table above are updated in the same revision.
