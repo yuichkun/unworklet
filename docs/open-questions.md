@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 66 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 65 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 23 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 42 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 41 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -308,7 +308,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P2 — 仕様 invariant + lifecycle (42 件)
+## P2 — 仕様 invariant + lifecycle (41 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -763,18 +763,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が (a) 「`process` 1 回 呼 ば れ た ら pass」 で 緩 い 検 証、 (b) RMS > 0 で pass、 (c) 既 知 reference 出 力 と 比 較 (= D1 が B1 と zip)、 で 3 way。 入 力 源 を user に 委 ね る path だ と 6 セ ル × 3 Ex × n agent で test code が 別 物。 D1 acceptance が 別 agent で 別 結 論 で ship 判 定 が drift。
 
 **判 断 軸**: D1 を 「6 セ ル で canonical Ex 1〜3 を render し、 destination まで audio packet が 流 れ た こ と + 出 力 RMS が 0 以 上 で あ る こ と」 で 1 意 化 し、 入 力 源 を 「framework が provide す る silent / オ シ レ ー タ 等 標 準 source」 で 仕 様 化 す る 推 奨。 alternative path (= D1 と B1 を zip し て browser 上 offline reference 比 較) を 採 る な ら 6 セ ル × 3 Ex の reference output を 仕 様 同 梱 し、 D1 を 「B1 を 6 セ ル で 走 ら せ る」 と 1 意 化。
-
----
-
-## offline 用 pure-JS interpreter の 帰 属 と 共 通 実 装 path 不 在
-
-**場 所**: `docs/03-compiler.md:196-198`、 `docs/13-offline-render.md:9-20`、 `decisions-log.md` Q23 / Q24 / Q25
-
-**何 が 起 き て い る か**: 03 §8 placeholder が pure-JS backend を 「test backend」 と labeling す る。 一 方 Q23 / Q24 / Q25 で pure-JS interpreter は server-side render / batch / preset preview / test の 4 use case 共 通 と 規 定、 13 で `@unworklet/offline` が 「pure-JS interpreter を ship す る package」 と 位 置 付 け。 03 §8 「test backend」 labeling が 4 use case の 1 つ だ け を 強 調 し て お り 規 範 と zip し な い。 さ ら に pure-JS interpreter の 実 装 が (a) `@unworklet/core` 内 部 module で `@unworklet/offline` が internal API 経 由 で 呼 ぶ、 (b) `@unworklet/offline` が 独 自 pure-JS interpreter を emit し て core と は 別 実 装、 (c) compiler 出 力 (= `dist/<processor>.graph.json`) を 両 package が 共 通 source と し て 解 釈、 で 3 way の architecture が 仕 様 不 在。
-
-**impl AI 影 響**: impl AI が (a) 採 用 で `@unworklet/test` が `@unworklet/offline` 経 由 で interpreter に reach、 (b) 採 用 で test backend と offline backend が 別 実 装 化 し て acceptance B2 (= pure-JS と WASM bit-exact) を 「同 一 pure-JS 実 装 同 士 で 検 証」 す る か 「別 2 pure-JS 実 装 を cross-validate」 す る か で 別 軸 化、 (c) 採 用 で graph.json schema が pure-JS interpreter 起 動 path に 直 接 影 響。 architecture が 別 agent で 別 物 = repo 構 造 と package 公 開 surface が drift。
-
-**判 断 軸**: 「`@unworklet/offline` package が pure-JS interpreter の 唯 一 ship channel、 `@unworklet/core` は WASM backend と 公 開 surface 専 用、 `@unworklet/test` は `@unworklet/offline` の matcher wrapper」 path で architecture を 1 意 化 推 奨。 03 §8 「test backend」 labeling を 「offline backend (= 4 use case 共 通)」 に 寄 せ 直 し、 13 §4 が 真 と し て 03 §8 を そ こ に zip。
 
 ---
 

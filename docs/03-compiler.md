@@ -225,5 +225,15 @@ A separate runtime check (not graph-capture / static-analysis) fires when the wo
 
 ## 8. Pure-JS backend
 
-<!-- Same AST interpreted in JS for the test backend (06-testing.md). Cross-validation rules
-     (bit-identical output modulo documented FP differences). -->
+<!-- The captured AST DAG is reinterpreted in pure JS as the **offline backend**
+     shipped from `@unworklet/offline` (= covers all 4 offline use cases per
+     Q23+Q24+Q25: server-side render, batch processing, preset preview UI,
+     test). `@unworklet/test` wraps this same backend via vitest matchers — it
+     does not re-implement rendering (06-testing §1).
+
+     Architecture invariant (Q23+Q24+Q25): `@unworklet/offline` is the **single
+     ship channel** for the pure-JS interpreter; `@unworklet/core` keeps the
+     WASM backend + public surface; `@unworklet/test` depends on
+     `@unworklet/offline` and adds audio-domain matchers. Cross-validation
+     between pure-JS and WASM backends (= acceptance B2 bit-exact) is impl-
+     phase fill per Q61. -->
