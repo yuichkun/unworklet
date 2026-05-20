@@ -113,8 +113,8 @@ The worklet runtime drives `state.publish` and `buffer.publish` propagation dire
 
 Per render quantum, after the user's `process` body completes:
 
-1. Runtime walks the list of `publish`-flagged slots. Each slot carries a per-slot counter in sample-units (initialized to 0 at instantiation) and a target threshold derived from `rateFps × SAMPLES_PER_BLOCK / sampleRate`.
-2. Each slot's counter is incremented by `SAMPLES_PER_BLOCK`. If the counter has met or exceeded the threshold, the slot is **due**: runtime copies the current scalar value (`Atomics.store` for `state.<type>`) or the buffer region (`memcpy` for `buffer.<type>`) into the shared region, **unconditionally** increments the slot's version counter (see `02-messaging.md` §5.4 and Q39-a in `decisions-log.md` — no value-equality check on the audio thread), and resets the local counter (carrying the remainder).
+1. Runtime walks the list of `publish`-flagged slots. Each slot carries a per-slot counter in sample-units (initialized to 0 at instantiation) and a target threshold = **`sampleRate / rateFps`** (= the number of samples that elapse between consecutive publish ticks at the requested fps — higher `rateFps` means a smaller threshold, more frequent publishes).
+2. Each slot's counter is incremented by `SAMPLES_PER_BLOCK`. If the counter has met or exceeded the threshold, the slot is **due**: runtime copies the current scalar value (`Atomics.store` for `state.<type>`) or the buffer region (`memcpy` for `buffer.<type>`) into the shared region, **unconditionally** increments the slot's version counter (see `02-messaging.md` §5.4 and Q39-a in `decisions-log.md` — no value-equality check on the audio thread), and subtracts the threshold from the local counter (carrying the remainder).
 3. Runtime continues to the next render quantum.
 
 Cost per published slot is bounded: scalar copies are one `Atomics.store`; buffer copies are `memcpy` over a fixed region. Higher `rateFps` schedules more frequent copies but never blocks; lower `rateFps` simply skips the copy in most blocks. The audio thread never allocates and never waits on the main thread.

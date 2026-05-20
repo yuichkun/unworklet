@@ -2,15 +2,15 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 87 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 86 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 35 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 34 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 51 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
-## P1 — ship blocker 系 (35 件)
+## P1 — ship blocker 系 (34 件)
 
 ### cluster (1) 型 system core (3)
 
@@ -137,18 +137,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: sysex 経 路 で `atSample` を どこ か ら 取 る か で impl が 分 岐: (a) content buffer 側 に atSample を 入 れ る 拡 張 (= 11 §4.3 の content buffer schema に atSample が 1 行 も 出 て こ ず、 仕 様 か ら 取 れ な い)、 (b) sysex slot サ イ ズ を 12 byte 等 に 拡 張 (= §4.1 の 「8 bytes per slot, slot-indexed pointers」 uniform 性 が 崩 れ る)、 (c) sysex 経 路 で atSample を 0 固 定 / block 開 始 時 刻 で 注 入 (= sample-accurate 主 張 が 崩 れ る)。 wire 上 で atSample を どこ か に 入 れ る path が 仕 様 か ら 一 意 に 決 ま ら な い。
 
 **判 断 軸**: sysex slot に atSample を 持 た せ る (= slot size を sysex variant だ け 拡 張 し uniform 性 と の zip を prose で 明 示) か、 sysex content buffer entry 内 に atSample field を 追 加 す る か、 「sysex は block 開 始 時 注 入 で atSample 不 在 を 許 容」 path に 倒 し て §2.3 の wording を 改 訂 す る か。 sample-accurate 主 張 を 守 る な ら 前 2 path、 §4.1 uniform 性 を 守 る な ら 中 央 path 推 奨。
-
----
-
-## 「秒 何 回 main 側 へ 送 る か」 の 計 算 式 が 物 理 的 に 逆 方 向
-
-**場 所**: `docs/04-worklet-runtime.md:82-90`、 `docs/02-messaging.md:138-144`
-
-**何 が 起 き て い る か**: 04-worklet-runtime §7 step 1 で publish 用 の per-slot counter threshold を 「`rateFps × SAMPLES_PER_BLOCK / sampleRate`」 と 規 定。 単 位 解 析 す る と (1/s × samples × s/samples) = 無 次 元 で threshold は fps が 大 き い ほ ど 大 き く な る (= publish 間 隔 が 長 く な る) 計 算 に な る。 publish は 「fps 上 げ る ほ ど 短 い 間 隔 で 流 す」 が 直 観 / 仕 様 意 図 で、 こ の 式 を そ の ま ま 採 る と 「30fps よ り 60fps が 半 分 の cadence」 と い う 逆 方 向 の 振 る 舞 い に な る。 02-messaging.md §5.4 側 で は 式 を 一 切 提 示 せ ず 「periodically」 と だ け 書 く た め cross-check が 効 か な い。
-
-**impl AI 影 響**: 04 §7 の 式 を そ の ま ま 受 け 取 っ た impl は publish cadence が 高 fps で 遅 い / 低 fps で 速 い と い う 真 逆 の 振 る 舞 い を 出 す。 別 path の impl は 04 を 誤 記 と 見 な し て `sampleRate / rateFps` 等 の 別 式 を 自 力 で 補 う (= path が 1 個 で な い)。
-
-**判 断 軸**: threshold 式 を 「1 publish 当 た り の sample 数 = `sampleRate / rateFps`、 per-block counter += SAMPLES_PER_BLOCK、 counter >= threshold で publish + subtract」 path に 訂 正 し て 04 §7 に 規 範 と し て 載 せ、 02-messaging.md §5.4 か ら も 同 path を 参 照 さ せ る。
 
 ---
 
