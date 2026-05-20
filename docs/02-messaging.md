@@ -82,6 +82,8 @@ Default capacities:
 
 Override via the `capacity` option on `event<T>` / `message<T>` (see `01-dsl.md` §4).
 
+**`Capacity` literal-union members** (Q44, top-level exports from `@unworklet/core`): `CAPACITY_16` / `CAPACITY_32` / `CAPACITY_64` / `CAPACITY_128` / `CAPACITY_256` / `CAPACITY_512` / `CAPACITY_1024` / `CAPACITY_2048` / `CAPACITY_4096` / `CAPACITY_8192` / `CAPACITY_16384` — all 11 values are powers of 2 from 2⁴ to 2¹⁴. The power-of-2 constraint enables the bitmask `head & (capacity - 1)` (§5.5 producer protocol) to wrap in a single instruction. Arbitrary integer literals (e.g. `capacity: 100`) are rejected at TypeScript level by the literal-union narrow — no build-time / runtime check is needed. The same set applies to `midiInput({ capacity })` / `midiOutput({ capacity })` (`11-midi.md` §1).
+
 Overflow policy is **drop-oldest + monotonic counter** for both `event<T>` and `message<T>`:
 
 - The oldest slot is overwritten on overflow. Producers (worklet for `event<T>`, main for `message<T>`) never block.

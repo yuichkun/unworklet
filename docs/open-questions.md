@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 90 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 89 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 36 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 53 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 52 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -463,7 +463,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **判 断 軸**: (1) offline で snapshot 復 元 を online と 同 じ 2-step pattern に 寄 せ る (= offline 側 で 1 度 render し snapshot blob を 取 り 出 し て 別 path で restore 注 入) path 推 奨 = online と offline で mental model 統 一 + Q57 ratify と zip。 (2) 02 §1.1 の 「asset upload readiness pattern」 引 用 を 同 commit で Q57 形 (= `createNode` → `await node.restore(blob)` 2-step) に rewrite し て 廃 止 surface 引 用 を 排 除。 「`initial` 識 別 子」 は online 側 (= param 初 期 値) の 既 ratify 形 を 維 持、 offline 側 で 1-step pattern を 立 て る な ら 別 識 別 子 (= 例 え ば `restore: Uint8Array`) を 採 る path も 候 補 だ が Q57 retract 必 要 で v1.0.0 で は 不 採 用 推 奨。
 
 ---
-## P2 — 仕様 invariant + lifecycle (53 件)
+## P2 — 仕様 invariant + lifecycle (52 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -702,18 +702,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: 02 だ け を 読 ん だ impl AI が `message<T>.onReceive(({ atSample, ... }) => ...)` の よ う な signature を 期 待 し て TS surface に atSample field を 含 め て し ま う、 あ る い は 逆 に MIDI handler の atSample 引 数 を 落 と し て し ま う、 で impl が drift。 「main → worklet 系 (message<T>) handler は atSample 不 在、 worklet 内 部 で 発 生 す る MIDI handler は atSample 引 数 を 持 つ」 と い う 線 引 き が 1 か 所 で 明 文 化 さ れ て い な い。
 
 **判 断 軸**: 02 §1 L23 の 「the handler arg」 wording を 「the handler's own `atSample` arg (MIDI handlers のみ)」 に 寄 せ 直 し、 01 §4.2 の 限 定 表 現 を canonical と し て 02 / 11 が 参 照 す る path 推 奨。 同 時 に 02 §5.3 「message<T> slot に atSample 不 在」 と 02 §1 handler 引 数 列 挙 を 1 paragraph 内 で zip。
-
----
-
-## `Capacity` 用 数 字 の 具 体 メ ン バ ー と 「2 の 冪 乗 」 前 提 が 列 挙 不 在
-
-**場 所**: `docs/01-dsl.md:461`、 `docs/01-dsl.md:506`、 `docs/11-midi.md:49`、 `docs/02-messaging.md:160-163`
-
-**何 が 起 き て い る か**: `event<T>` / `message<T>` / `midiInput` の capacity option は literal-union `Capacity` で 受 け る と prose declare、 default は `CAPACITY_256`。 02-messaging.md §5.5 producer protocol は 「Read `head`, compute write position `head & (capacity - 1)` (**capacities are powers of 2**)」 と 2 の 冪 乗 前 提 で 書 か れ る。 一 方 `Capacity` literal-union の 具 体 メ ン バ ー (= `CAPACITY_16` / `CAPACITY_32` / `CAPACITY_64` / ... / `CAPACITY_16384` の 全 列 挙) が docs の どこ に も 1 か 所 に 揃 っ て declare さ れ て い な い。 範 囲 (= 16 〜 16384?) も prose で 明 示 ナ シ、 全 部 が 2 の 冪 乗 で あ る 保 証 も declare ナ シ。
-
-**impl AI 影 響**: `Capacity` 公 開 型 の 中 身 を impl AI が 推 測 で 列 挙 (= `16 | 32 | 64 | 128 | 256 | 512 | 1024 | 2048 | 4096 | 8192 | 16384` 等) し て exported 型 を 出 し、 後 で 仕 様 と ず れ る リ ス ク。 「2 の 冪 乗 限 定」 を 守 る か 中 間 値 (= 100, 500 等) も 許 容 す る か で `head & (capacity - 1)` 計 算 が 正 / 不 正 に 切 り 替 わ る。 default 256 が slot 単 位 か byte 単 位 か (= 02 §5.1 「Slot count」 / 11 §4.5 「256 slots × 8 bytes = 2 KB」 は 整 合 す る が prose で 1 か 所 declare ナ シ) も zip。
-
-**判 断 軸**: `Capacity` literal-union の 具 体 メ ン バ ー 全 列 挙 を prose 1 か 所 で declare (= 範 囲 と 2 の 冪 乗 性 を zip し て 表 現) し、 02 §5.5 の 「powers of 2」 前 提 が 全 member で 保 た れ る path 推 奨。
 
 ---
 
