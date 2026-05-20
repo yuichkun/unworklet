@@ -2,15 +2,15 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 77 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 76 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 25 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 24 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 51 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
-## P1 — ship blocker 系 (25 件)
+## P1 — ship blocker 系 (24 件)
 
 ### cluster (1) 型 system core (3)
 
@@ -293,18 +293,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が `(err: ???) => void` の `???` を 決 め ら れ ず、 (a) `Error` で 緩 く、 (b) `{ code: string; message: string }` 形、 (c) `{ code: 'wasm-trap' } | { code: 'sab-unavailable' } | ...` の discriminated union、 (d) event code 列 挙 を 自 力 で 補 完、 で 4 way 以 上 に 分 か れ る。 consumer 側 で `err.code === 'sab-unavailable'` 等 の switch 分 岐 を 書 け る か / 書 け な い か が impl ご と に 別。 さ ら に queue overflow を push で 受 け る か pull で 取 り に 行 く か で diagnostics surface 全 体 の 設 計 が 変 わ る。
 
 **判 断 軸**: handler 引 数 型 を discriminated union (= `{ code: 'wasm-trap' } | { code: 'sab-unavailable' } | { code: 'queue-overflow', source: string, dropped: number } | { code: 'block-length-mismatch' } | ...) で 明 文 化 し、 event code 全 列 挙 を 1 か 所 (= 05-client §2 か foundations §5) で declare す る path 推 奨。 queue overflow を push (= onError) で 集 約 通 知 し 詳 細 counter は pull (= diagnostics) で 取 る 二 段 構 え を prose で 明 文 化 する か、 push / pull の どち ら か 1 path に 倒 す か decide。
-
----
-
-## offline で 入 力 音 声 を 渡 す 形 が 多 channel processor で 表 現 不 能
-
-**場 所**: `docs/13-offline-render.md:31`、 `docs/12-canonical-examples.md` (Ex 1 / Ex 4 / Ex 7 / Ex 8 等 で stereo `audioInput({ channels: 2 })`)
-
-**何 が 起 き て い る か**: offline render で 入 力 音 声 を 渡 す 形 が `inputs: { main: Float32Array }` で 書 か れ、 prose 注 釈 が 「per channel」 と 複 数 channel を 想 定 す る wording。 ただ し code が 単 数 形 `Float32Array` で あ り、 stereo (2 channel) declaration を 持 つ canonical Ex に 対 し て 多 channel 入 力 を 渡 す 形 が 規 定 さ れ て い な い。 `Float32Array` を 1 個 渡 す path、 `Float32Array[]` で channel ご と 配 列 を 渡 す path、 `{ main: Float32Array[] }` 形 で declaration 種 内 部 に channel 軸 を 持 つ path、 で 3 形 が 同 時 に 成 立 す る wording。
-
-**impl AI 影 響**: impl AI が `Float32Array` 単 数 形 を strict に 採 用 す る と、 stereo Ex (= Ex 1 stereo gain / Ex 4 lookahead limiter 等) を offline で 再 現 で き ず、 acceptance B1 が stereo 系 全 例 で 達 成 不 能。 prose 「per channel」 を 信 用 し て `Float32Array[]` 形 を 自 力 で 採 用 す る と、 code 例 の 変 数 名 `inputPcmFloat32Array` (= 単 数 形 を 暗 示) と zip し な い。
-
-**判 断 軸**: 多 channel 入 力 を 「declaration ご と に `Float32Array[]` で channel index 順 に 並 べ る」 path で 明 文 化 し、 mono は length 1 配 列 で 渡 す 形 に 統 一 推 奨。 code 例 と prose を 同 commit で zip 直 し、 stereo Ex の B1 検 証 path を 仕 様 上 担 保。
 
 ---
 

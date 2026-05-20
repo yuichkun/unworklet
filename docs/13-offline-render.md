@@ -28,7 +28,7 @@ import MyProcessor from './my.processor.ts?worklet';
 const result = await renderOffline(MyProcessor, {
   sampleRate: 48000,
   duration:   1.0,                                              // seconds
-  inputs:  { main: inputPcmFloat32Array },                      // audioInput name → Float32Array per channel
+  inputs:  { main: [inputLeftPcm, inputRightPcm] },             // audioInput name → Float32Array[] (one entry per channel; mono = length-1 array)
   params:  { cutoff: [1000, 1000, /* per-sample or per-block */ ] },
   messages: [{ name: 'loadPattern', payload: { /* ... */ } }],   // main → worklet messages, delivered before render
   events:   [{ name: 'noteOn', payload: { /* ... */ }, atSample: 100 }],
