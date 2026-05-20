@@ -2,11 +2,11 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 115 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 114 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 38 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 60 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
-- **P3 = 17 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
+- **P3 = 16 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
@@ -1209,7 +1209,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P3 — prose 揺れ / mechanical sweep (17 件)
+## P3 — prose 揺れ / mechanical sweep (16 件)
 
 ## `subscribe` / `onEvent` / `on` の return 値 が unsubscribe で 揃 え て あ る か
 
@@ -1328,18 +1328,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が `ctx` proxy を 実 装 す る 時、 (a) `sampleRate` だ け を 公 開 し て strict、 (b) `currentTime` / `numChannels` / `blockSize` 等 を 推 測 で 追 加 し て 緩 い 公 開、 (c) 「etc.」 を v1.0.0 で は 1 field の み と 解 釈 し て canonical exercise と zip、 で path が 割 れ る。 user mental で 「ctx に 何 が 載 る か」 が 仕 様 か ら 一 意 に 取 れ ず、 v1.0.0 surface の closed set 規 範 と 衝 突。
 
 **判 断 軸**: `ctx` 公 開 field を v1.0.0 で 1 か 所 で 列 挙 declare し (= `sampleRate` だ け か、 別 field を 含 む か decide)、 「etc.」 wording を 削 除 し て closed set 形 に 倒 す path 推 奨。 「meta primitives」 が ctx の 一 部 か 別 surface か も 同 commit で 整 理。
-
----
-
-## ship 判 定 リ ス ト が 古 い 範 囲 で 止 ま っ て お り 後 か ら 追 加 ratify を 包 摂 し て い な い
-
-**場 所**: `docs/10-roadmap.md:42`
-
-**何 が 起 き て い る か**: roadmap の v1.0.0 ship 可 否 判 定 criterion F1 が 「公 開 surface が `decisions-log.md` Q1〜Q62 全 entry と 整 合」 と 範 囲 declare。 一 方 decisions-log は L75〜80 で Q63〜Q68 を 全 て resolved と し、 う ち 少 な く と も Q63 (console.warn 文 言) と Q68 (audio-sample-offset-out-of-range stable error ID) は 公 開 surface に 反 映 が 必 要 な ratify。 F1 文 言 が 古 い 範 囲 で 止 ま り、 ship 判 定 が 後 半 ratify を 包 摂 し な い。
-
-**impl AI 影 響**: impl AI が F1 を 読 ん で 「Q63 console.warn 文 言 と Q68 stable error ID は ship 判 定 に 入 ら な い」 と 解 釈 し、 該 当 ratify の 公 開 surface 反 映 を check か ら 漏 ら す path。
-
-**判 断 軸**: F1 文 言 を 「Q1〜Q68 全 entry (Q28 を 除 く)」 に 寄 せ 直 す path 推 奨。 同 時 に 「decisions-log.md の resolved 範 囲 全 体」 と 表 現 し 直 し て 今 後 の ratify 追 加 で 同 種 drift を 起 こ さ な い form に 倒 す path も candidate。
 
 ---
 
