@@ -2,11 +2,11 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 100 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 99 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 38 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 60 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
-- **P3 = 2 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
+- **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
@@ -1209,7 +1209,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P3 — prose 揺れ / mechanical sweep (2 件)
+## P3 — prose 揺れ / mechanical sweep (1 件)
 
 ## SAB mode の event drain mechanism が doc ご と に 抽 象 level mismatch
 
@@ -1223,12 +1223,3 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## canonical Coverage table の Ex 列 挙 が 実 code と 3 行 で 不 一 致
-
-**場 所**: `docs/12-canonical-examples.md:23`、 `docs/12-canonical-examples.md:31`、 `docs/12-canonical-examples.md:36`、 `docs/12-canonical-examples.md:39`、 `docs/12-canonical-examples.md:848-849`、 `docs/12-canonical-examples.md:524-528`、 `docs/12-canonical-examples.md:565`、 `docs/12-canonical-examples.md:609-614`
-
-**何 が 起 き て い る か**: Coverage table の Ex 列 挙 が 実 code と 3 行 で 不 一 致。 (a) L23 `buf.copyFrom(typedArrayField)` 行 は 「5, 9」 と 列 挙 す る が、 Ex 7 L848-849 も `irL.copyFrom(il); irR.copyFrom(ir);` を 使 う = Ex 7 漏 れ。 (b) L39 `snapshot` policy (`'persistent'` / `'transient'`) 行 は 「3, 5, 7, 10」 と 列 挙 す る が、 Ex 5 は declaration L524-528 で `snapshot: 'persistent'` flag を 立 て て いる だ け で main 側 `node.snapshot()` / `node.restore(blob)` 呼 び 出 し ナ シ (= lifecycle 不 行 使) = 「policy declaration」 と 「lifecycle exercise」 を 同 一 行 で 混 同。 (c) L36 `onEvent` MIDI 行 は 「`noteOn` / `noteOff` + `sysex`」 を 列 挙 し Ex 5,6,8,9 と zip す る が、 実 際 は Ex 5/8 が `noteOn`+`noteOff`、 Ex 6 は `noteOn` の み (noteOff intentionally omitted)、 Ex 9 は `sysex` の み、 と variant ご と に 行 使 Ex が 異 な る。
-
-**impl AI 影 響**: impl AI agent が Coverage table を 「surface 確 認 ガ イ ド と し て 各 Ex の 全 行 が 全 surface を exercise す る」 と 信 用 す る と、 (a) Ex 7 で copyFrom が canonical surface か 別 path か で 揺 れ、 (b) Ex 5 で snapshot lifecycle の sample を 探 し て 見 つ か ら ず docs 内 ジ ャ ン プ を 余 計 に 起 こ し、 (c) Ex 5/6/8 に sysex onEvent / Ex 6 に noteOff onEvent を 「必 須」 と 誤 読 す る possibility。 impl 矛 盾 と し て は 軽 度 だ が、 canonical 仕 様 整 合 性 anchor の integrity が 損 な わ れ る。
-
-**判 断 軸**: Coverage table の 各 行 で 「実 code で 該 当 surface を 1 度 で も 呼 ぶ Ex」 を re-scan し て 列 挙 を 修 正 す る path 推 奨。 ま た 「policy declaration 行 使」 と 「lifecycle 行 使」 を 別 行 に 分 け る か、 variant ご と に 行 を 細 分 化 す る か は 別 軸。

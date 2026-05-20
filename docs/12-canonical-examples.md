@@ -20,7 +20,7 @@ The example set is designed so that the union of all examples touches every conc
 | `buffer.f32` (per-sample memory) | 3, 4, 5, 7, 8 |
 | `buffer.u8` (byte memory for sysex / arbitrary octet streams) | 9 |
 | `buffer.publish` (waveform / spectrum frame to UI) | 5, 8 |
-| `buf.copyFrom(typedArrayField)` (bulk transfer from payload) | 5, 9 |
+| `buf.copyFrom(typedArrayField)` (bulk transfer from payload) | 5, 7, 9 |
 | `forSample` (per-sample loop) | 1, 2, 3, 4, 5, 6, 7, 8 |
 | `forSample.byN` (SIMD-stride bulk) | 7 |
 | Arithmetic / comparison / `select` | 1, 2, 3, 4, 5, 6, 7, 8 |
@@ -36,7 +36,8 @@ The example set is designed so that the union of all examples touches every conc
 | `onEvent` MIDI (`noteOn` / `noteOff` + `sysex`; `cc` / `pitchBend` / `programChange` / `channelPressure` / `aftertouch` / `systemRealtime` not exercised) | 5, 6, 8, 9 |
 | MIDI emission via `emitIf` (`noteOn` / `noteOff` in Ex 6; `sysex` in Ex 9) | 6, 9 |
 | SIMD `f32x4`, `splat`, `buf.loadVec`, `mulVec`, `addVec`, `vec.lane`, `sumLanes` | 3, 7 |
-| `snapshot` policy (`'persistent'` / `'transient'`) | 3, 5, 7, 10 |
+| `snapshot` policy declaration (`'persistent'` / `'transient'` flag on slots) | 3, 5, 7, 10 |
+| `snapshot` lifecycle exercise (`node.snapshot()` / `node.restore(blob)` main-side calls) | 3, 7, 10 |
 | `migrations` chain (schema-versioned restore) | 7 |
 | Main side: `createNode` | all |
 | Main side: `node.inputs.<name>` / `node.outputs.<name>` | all |
