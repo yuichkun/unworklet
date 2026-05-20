@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 72 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 71 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 23 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 48 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 47 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -308,7 +308,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P2 — 仕様 invariant + lifecycle (48 件)
+## P2 — 仕様 invariant + lifecycle (47 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -451,18 +451,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が typed-array → element type mapping を 自 動 推 論 す る 際、 sign-extend か zero-extend か reject か で 全 typed-array 種 ご と に 振 れ る。 特 に `BigInt64Array` を `Node<'i64'>` に 自 動 lift す る か explicit な carrier 経 由 を 強 制 す る か、 `Float64Array` を `Node<'f64'>` に lift す る か `Node<'f32'>` に narrow す る か で 仕 様 surface が drift。 per-element `.at(idx)` 経 由 と bulk `copyFrom` 経 由 で 別 type check ル ー ル に な る か も 不 明。
 
 **判 断 軸**: typed-array → `Node<T>` の mapping を 1 表 で 全 列 挙 (= 8 種 全 部) し、 reject す る 種 (= `BigInt64Array` 等 は v1.0.0 で 対 応 し な い 等) を 明 文 化 す る か。 per-element と bulk で ル ー ル を 揃 え る か 別 軸 で 切 る か も 同 時 に decide。
-
----
-
-## scope-violation で reject さ れ る declaration 種 の 列 挙 が foundations matrix と 03 inventory で ズ レ
-
-**場 所**: `docs/00-foundations.md:208`、 `docs/00-foundations.md:230`、 `docs/03-compiler.md:150`
-
-**何 が 起 き て い る か**: foundations §5.1 invariant 1 本 文 (L208) で pre-alloc 対 象 を 「state / buffer / param / message-event payload / MIDI ringbuffer」 と 列 挙。 一 方 同 §5.2 matrix 行 「No heap alloc」 (L230) で は L2 reject 対 象 を 「`state.*` / `buffer.*` / `audioInput` / `defineSubgraph` / `createSubgraph`」 と 列 挙 (= `param` / `audioOutput` / `event<T>` / `message<T>` / `midiInput` / `midiOutput` が 抜 け、 代 わ り に `defineSubgraph` が 入 る)。 03-compiler §2.6 `scope-violation` (L150) は 「`state.*` / `buffer.*` / `param.*` / `audioInput` / `audioOutput` / `event<T>` / `message<T>` / `midiInput` / `midiOutput` / `createSubgraph(...)`」 を 列 挙 (= 最 包 括)。 3 か 所 で 列 挙 が 全 部 違 う。
-
-**impl AI 影 響**: impl AI が どち ら の 列 挙 を 真 と す る か で 「`audioOutput()` を forSample 内 で 呼 ん だ 時 の 検 出」 「`event<T>(...)` を handler 内 で 呼 ん だ 時 の 検 出」 が 出 た り 出 な か っ た り す る。 `defineSubgraph` は module 直 下 で 呼 ぶ も の な の で declaration scope と は 別 概 念 だ が、 foundations matrix で reject 対 象 に 列 挙 さ れ て お り 「`defineSubgraph` を process body で 呼 ん だ 時」 の 取 り 扱 い (= scope-violation か 別 ID か 通 す か) も 仕 様 か ら 取 れ な い。
-
-**判 断 軸**: 03-compiler §2.6 の 包 括 列 挙 を 真 と し て foundations §5.1 / §5.2 を そ こ に zip し て 揃 え る path 推 奨。 `defineSubgraph` を scope-violation 対 象 に 含 め る か 別 ID で 扱 う か は 別 軸 で decide。
 
 ---
 
