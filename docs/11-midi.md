@@ -350,7 +350,7 @@ v1.0.0 ships full sysex support in **both directions** — ingestion (main → w
 
 ### 4.4 Transport
 
-- **SAB available** (default): events flow through a `SharedArrayBuffer`-backed ring buffer with `Atomics`-based head / tail pointers. Sample-accurate timing is preserved end-to-end.
+- **SAB available** (default): events flow through a `SharedArrayBuffer`-backed ring buffer with `Atomics`-based head / tail pointers. Sample-accurate timing is preserved end-to-end. The ring buffer **header layout is shared with generic `event<T>` / `message<T>`** (`02-messaging.md` §5.5 — `[head: i32][tail: i32][overflowCount: i32]` followed by the slot array); only the slot encoding differs (§4.1 above). MIDI in / out ports each get their own header + slot array; the sysex content buffer (§4.3) is allocated alongside.
 - **SAB unavailable** (no COOP/COEP headers): falls back to `postMessage` at render-quantum granularity. Sample-accurate timing **within a block** is preserved on the worklet side; main-side delivery picks up block-boundary latency. Full degradation policy lives in Q11.
 
 ### 4.5 Capacity and overflow

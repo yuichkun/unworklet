@@ -2,15 +2,15 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 86 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 85 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 34 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 33 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 51 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
-## P1 — ship blocker 系 (34 件)
+## P1 — ship blocker 系 (33 件)
 
 ### cluster (1) 型 system core (3)
 
@@ -137,18 +137,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: sysex 経 路 で `atSample` を どこ か ら 取 る か で impl が 分 岐: (a) content buffer 側 に atSample を 入 れ る 拡 張 (= 11 §4.3 の content buffer schema に atSample が 1 行 も 出 て こ ず、 仕 様 か ら 取 れ な い)、 (b) sysex slot サ イ ズ を 12 byte 等 に 拡 張 (= §4.1 の 「8 bytes per slot, slot-indexed pointers」 uniform 性 が 崩 れ る)、 (c) sysex 経 路 で atSample を 0 固 定 / block 開 始 時 刻 で 注 入 (= sample-accurate 主 張 が 崩 れ る)。 wire 上 で atSample を どこ か に 入 れ る path が 仕 様 か ら 一 意 に 決 ま ら な い。
 
 **判 断 軸**: sysex slot に atSample を 持 た せ る (= slot size を sysex variant だ け 拡 張 し uniform 性 と の zip を prose で 明 示) か、 sysex content buffer entry 内 に atSample field を 追 加 す る か、 「sysex は block 開 始 時 注 入 で atSample 不 在 を 許 容」 path に 倒 し て §2.3 の wording を 改 訂 す る か。 sample-accurate 主 張 を 守 る な ら 前 2 path、 §4.1 uniform 性 を 守 る な ら 中 央 path 推 奨。
-
----
-
-## MIDI 用 ring buffer の header layout が MIDI 章 自 体 に 書 か れ て な い
-
-**場 所**: `docs/02-messaging.md:148-156`、 `docs/11-midi.md:352-373`
-
-**何 が 起 き て い る か**: 02-messaging.md §5.5 は ring buffer header を 「`[head i32][tail i32][overflowCount i32]`、 one per `event<T>` / `message<T>` declaration」 と declaration 種 を 限 定 し て 規 定。 11-midi.md §4.4 は 「SAB available (default): events flow through a SharedArrayBuffer-backed ring buffer with Atomics-based head / tail pointers」 と 述 べ る だ け で、 header の overflowCount を 持 つ か / どの byte offset か / 02 §5.5 を 流 用 す る か を 1 行 も 書 か な い。 一 方 §4.5 で 「`node.midi.<name>.diagnostics.overflowCount()`」 surface を public に 出 す と 規 定、 つ ま り wire 上 に は overflowCount counter が 必 ず ど こ か に あ る は ず だ が wire 章 か ら declare 不 在。
-
-**impl AI 影 響**: MIDI ring buffer header layout が 仕 様 か ら 一 意 に 決 ま ら ず、 main 側 deserializer と worklet 側 serializer の 一 致 を 担 保 で き な い。 02 §5.5 の `[head][tail][overflowCount]` を 流 用 す る か、 MIDI 専 用 別 header (= overflowCount 抜 き、 別 順 序、 追 加 field) を 立 て る か で wire byte が drift。
-
-**判 断 軸**: 02 §5.5 header を MIDI ring buffer も 共 通 と prose で 明 示 し 「one per `event<T>` / `message<T>` declaration」 を 「+ 各 MIDI ring buffer」 に 拡 張 す る か、 11-midi.md §4 内 に MIDI ring buffer の header layout 行 を 1 ブ ロ ッ ク 立 て る か。
 
 ---
 
