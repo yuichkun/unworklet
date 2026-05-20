@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 94 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 93 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 36 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 57 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 56 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -463,7 +463,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **判 断 軸**: (1) offline で snapshot 復 元 を online と 同 じ 2-step pattern に 寄 せ る (= offline 側 で 1 度 render し snapshot blob を 取 り 出 し て 別 path で restore 注 入) path 推 奨 = online と offline で mental model 統 一 + Q57 ratify と zip。 (2) 02 §1.1 の 「asset upload readiness pattern」 引 用 を 同 commit で Q57 形 (= `createNode` → `await node.restore(blob)` 2-step) に rewrite し て 廃 止 surface 引 用 を 排 除。 「`initial` 識 別 子」 は online 側 (= param 初 期 値) の 既 ratify 形 を 維 持、 offline 側 で 1-step pattern を 立 て る な ら 別 識 別 子 (= 例 え ば `restore: Uint8Array`) を 採 る path も 候 補 だ が Q57 retract 必 要 で v1.0.0 で は 不 採 用 推 奨。
 
 ---
-## P2 — 仕様 invariant + lifecycle (57 件)
+## P2 — 仕様 invariant + lifecycle (56 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -882,18 +882,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が 引 用 ど お り Q14 entry を 引 き に 行 く と 内 容 不 一 致 で 戻 っ て き て し ま い、 SIMD rollout order の 規 定 自 体 が ど の Q-entry に も 存 在 し な い 事 実 に 気 づ か ず、 v1.x.0 で の SIMD 拡 張 path を 適 当 な 順 序 で 進 め て し ま う possibility。
 
 **判 断 軸**: SIMD rollout order の 規 定 が Q-entry 不 在 な ら 別 Q を 立 て て decide す る か、 prose で 「rollout order は v1.x.0 で 別 途 ratify」 と 明 文 化 し て dangling ref を 解 消 す る path 推 奨。
-
----
-
-## error handling placeholder の 「unrecoverable error → destroy node」 path が 他 doc 既 ratify に 存 在 せ ず、 event 種 別 も 不 揃 い
-
-**場 所**: `docs/04-worklet-runtime.md:99-102`、 `docs/00-foundations.md:202-218` (= §5.1 invariant 3)、 `docs/05-client.md:11-22` (= §2 `.onError`)、 `docs/08-deployment.md:60-85` (= §2 A5 `sab-unavailable`)、 `docs/03-compiler.md:140-163` (= §2.6 `block-length-mismatch`)
-
-**何 が 起 き て い る か**: §8 placeholder が error path を 2 種 (= 「WASM trap → silence + error event + continue」 「unrecoverable error → destroy node + fire onError on main thread」) に 分 け る。 一 方 他 doc で 「`node.onError` で 配 信 さ れ る event 種 別」 が 既 ratify で 少 な く と も 4 系 統 = WASM trap / queue overflow / SAB-mode change (`sab-unavailable`) / block-length-mismatch。 「unrecoverable error → destroy node」 = framework が node 自 体 を destroy す る path は 公 開 surface の 既 written 範 囲 で 不 在 (= `.dispose()` は user 起 動、 「framework auto-destroy」 は declare ナ シ)。
-
-**impl AI 影 響**: impl AI が §8 を fill す る 時、 (a) 「unrecoverable error → destroy node」 と い う 既 ratify さ れ て い な い framework 動 作 を 実 装 し て user 期 待 と 衝 突、 (b) 既 ratify な 4 event 種 別 を §8 fill 時 に zip さ せ ず 落 と し、 (c) `block-length-mismatch` で worklet 停 止 path を §8 で 別 設 計 し て 二 重 化、 path が 3 way に 割 れ る。
-
-**判 断 軸**: §8 を 「event 種 別 4 系 統 を 列 挙 + 各 系 統 の audio output 動 作 (silence / 停 止 / 継 続) と main 配 信 path」 形 で 書 き 直 す path 推 奨。 「unrecoverable error → destroy node」 を 削 除 し、 destroy 経 路 は `.dispose()` 1 つ に 統 一 す る か 別 Q-entry を 立 て て decide。
 
 ---
 

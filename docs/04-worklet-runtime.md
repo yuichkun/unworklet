@@ -128,5 +128,37 @@ Authoritative rationale: `decisions-log.md` Q27.
 
 ## 8. Error handling
 
-<!-- WASM trap → emit error event, output silence, continue;
-     unrecoverable error → destroy node, fire onError on main thread. -->
+<!-- Error event surface (= main-side `node.onError(handler)` receives a
+     discriminated union; the v1.0.0 event-code catalog is 4 entries):
+
+     1. `wasm-trap`         — WASM runtime trap during `process(...)`. Audio
+                              output: silence for the current quantum + the
+                              following quanta until the node is disposed.
+                              The audio thread does not propagate the trap as
+                              a thrown exception (realtime-safety invariant 3
+                              in 00-foundations §5.1).
+     2. `queue-overflow`    — `event<T>` / `message<T>` / MIDI ringbuffer
+                              drop-oldest fired (Q27 + Q4-c-iv). Audio output
+                              unaffected. Per-channel counter is observable
+                              via `node.<kind>.<name>.diagnostics.overflowCount()`
+                              (Q47).
+     3. `sab-unavailable`   — runtime detected `SharedArrayBuffer` is not
+                              constructible / `crossOriginIsolated` is false
+                              and selected the postMessage fallback transport
+                              (A5 of 08-deployment §2 / Q11). Audio output
+                              unaffected; only main-side observation latency
+                              picks up the postMessage round-trip.
+     4. `block-length-mismatch` — `outputs[0][0].length !== SAMPLES_PER_BLOCK`
+                              detected at the worklet entry (§3 / Q18 / Q68).
+                              Audio output: stop processing rather than emit
+                              garbled / silent output.
+
+     Node destruction is initiated only by the consumer via `.dispose()`
+     (05-client §2). There is no framework-side "destroy node on error"
+     path in v1.0.0 — `wasm-trap` / `block-length-mismatch` halt audio
+     output but the node object stays addressable so the consumer can
+     observe `.onError` + tear down explicitly.
+
+     Per-error-code message shape, source-location attribution (via §7 source
+     maps), and recovery semantics are impl-phase fill per Q61. -->
+
