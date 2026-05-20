@@ -677,7 +677,7 @@ note: see `decisions-log.md` <Q-ref> for the underlying rule.
 
 Layer 1 (= TypeScript native type error) は unworklet が 触 ら ず、 TypeScript / IDE 標 準 の 表 示 (= `TS<code>: <msg>`) を そ の ま ま 通 す。
 
-authoritative wording は `03-compiler.md` §2.5。 全 stable-id 一 覧 は doc 化 が 必 要 (= L4-M7 で 補 完)。
+authoritative wording は `03-compiler.md` §2.5 (template) + §2.6 (stable ID inventory)。
 
 **Rationale (Q22-d):**
 

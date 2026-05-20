@@ -139,7 +139,27 @@ Components:
 
 Layer 1 (= TypeScript-native type errors) is delegated to the TypeScript compiler / IDE; unworklet does not reformat or wrap those.
 
-The list of stable error IDs is maintained as a separate inventory and grows additively with each new check landed in §2.2–§2.4.
+Stable error IDs are listed in §2.6 (inventory) and grow additively with each new check landed in §2.2–§2.4.
+
+### 2.6 Stable error ID inventory
+
+Each `<stable-id>` is a kebab-case identifier used as the `error[unworklet/<stable-id>]` heading (§2.5). IDs are stable across versions — once shipped, they are not renamed; new checks introduce additional IDs. Consumers may grep / filter on them in CI / IDE / build-log pipelines.
+
+| Stable ID | Layer | Rule | Q-ref |
+|---|---|---|---|
+| `scope-violation` | 2 | a declaration call (`state.*` / `buffer.*` / `param.*` / `audioInput` / `audioOutput` / `event<T>` / `message<T>` / `midiInput` / `midiOutput` / `createSubgraph(...)`) appears inside expression scope (= `process` body, `forSample` callback, handler body, or L1 helper) | Q22-c |
+| `declaration-inside-forsample` | 2 | a declaration appears inside a `forSample` callback body (= scope-violation sub-case; the per-sample loop body cannot allocate new graph slots) | Q22-c |
+| `missing-name` | 2 | a snapshot-using processor declares a `state.*` / `buffer.*` / `param.*` slot without the required `name` field | Q5-b |
+| `illegal-stride` | 2 | `forSample.byN(stride, callback)` is called with a non-build-time-constant `stride`, or a `stride` that does not divide `SAMPLES_PER_BLOCK` (= 128) — allowed values: `1`, `2`, `4`, `8`, `16`, `32`, `64`, `128` | Q37-b |
+| `non-constant-lane` | 2 | `vec.lane(i)` is called with a non-build-time-constant lane index `i` (SIMD lane access must fold at graph capture) | Q3 |
+| `payload-element-type-mismatch` | 2 | `buf.copyFrom(payloadField)` is called with a typed-array payload whose element type does not match the buffer's `<T>` (e.g. `Float32Array` → `buffer.i32`) | Q31-c |
+| `migrations-unreachable` | 2 | a `migrations: [...]` chain does not cover a path from a known `from` `schemaHash` to the current `schemaHash` (reported as warning by default; promoted to error under `migrationsStrict: true`) | Q5-e |
+| `constant-truthy-emitif` | 3 | `emitIf(cond, payload)` inside a `forSample` / `forSample.byN` callback receives a `cond` expression that folds to a build-time-constant truthy value (would emit at audio rate and saturate the event ringbuffer) | Q32-c |
+| `bounded-loop` | 3 | an audio-thread loop (in a `forSample` callback, `onReceive` handler, `midiInput().onEvent` handler, `everyNSamples` callback, or subgraph method) has an upper bound that does not fold to a build-time constant | Q31-b |
+| `allocation-on-audio-thread` | 3 | an AST pattern reachable from a `process` body or any audio-thread handler would imply heap allocation (e.g. `new Uint8Array(...)`, array literals, object spread) | Q22-c, §5.1 |
+| `memory-budget` | 3 | the sum of all declarations in a processor exceeds the WASM linear-memory upper bound (= 4 GB hard error); a lower threshold (= 64 MB) emits a build-time warning under the same family | Q30 |
+
+A separate runtime check (not graph-capture / static-analysis) fires when the worklet observes `outputs[0][0].length !== SAMPLES_PER_BLOCK` at the start of a render quantum (= `block-length-mismatch`); this surfaces as a `node.onError` event on the main side rather than a build-time `error[unworklet/...]` heading. See `04-worklet-runtime.md` §3 and Q18.
 
 ## 3. Static analysis phase
 
