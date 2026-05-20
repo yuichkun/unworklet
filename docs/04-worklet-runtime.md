@@ -79,7 +79,7 @@ framework が user 値 を 暗 黙 で 変 え る 形 に な る が、 1e-40 
 
 ## 7. State publish scheduling
 
-The worklet runtime drives `state.publish` and `buffer.publish` propagation directly from the audio thread. There is no separate publish lambda (see `01-dsl.md` §6 and `decisions-log.md` Q27-a).
+The worklet runtime drives `state.publish` and `buffer.publish` propagation directly from the audio thread. There is no separate publish lambda: continuous worklet → main values are declared with the `publish` option on `state` / `buffer` (see `01-dsl.md` §3 and `decisions-log.md` Q27-a), and moment-in-time worklet → main delivery uses `event<T>.emitIf(...)` (Q27-b) and MIDI emit. The publish path covers continuous values only.
 
 Per render quantum, after the user's `process` body completes:
 

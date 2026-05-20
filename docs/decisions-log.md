@@ -4,7 +4,7 @@ Cross-cutting reference: every resolved design question, recorded with its ratio
 
 ## Status
 
-populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
+populated (Q1–Q62 ratify complete; Q28 = historical number gap, see `open-questions.md` L4-M8; outstanding mechanical sweep tracked in `open-questions.md` Layer 4)
 
 ## Index
 
@@ -31,7 +31,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q19 | Channel-count specialization | resolved — `channels: C` を declare 時 に WASM へ 焼 き 込 む (= mono / stereo 別 code path、 sample ご と の channel 判 定 分 岐 ナ シ、 SIMD lane mapping コ ン パ イ ル 時 確 定); 帰 結 と し て main 側 で `createNode` の AudioWorkletNode option (numberOfInputs / numberOfOutputs / outputChannelCount) を 上 書 き 不 可 (= 仕 様 ホ ー ル #62 同 時 解 決); 同 一 processor で の 動 的 channel 切 替 が 必 要 な ら 別 `defineProcessor` で 出 す | `04-worklet-runtime.md` §4 + `05-client.md` §1 |
 | Q20 | Pre-warm correctness | resolved — v1.0.0 で framework 側 の pre-warm 機 構 を 提 供 し な い (= WASM は ブ ラ ウ ザ で AOT compile な の で JIT spike が 起 きな い、 branch predictor 等 ハ ー ド ウ ェ ア の warmup は runtime 数 quantum 内 に 自 動 で 落 ち 着 き audio 出 力 と し て 不 可 聴); framework が user code に 暗 黙 で silent block を 走 ら せ る の は declarative 原 則 違 反 寄 り; v1.x.0 で 必 要 性 が 出 れ ば opt-in option (= `createNode(..., { preWarm: {...} })`) を additive 追 加 検 討 | `04-worklet-runtime.md` §5 |
 | Q21 | Denormal handling | resolved — `state.f32` / `state.f64` の `.store(v)` で コ ン パ イ ル 時 に subnormal ガ ー ド を 自 動 insertion (= `\|v\| < 1e-30` な ら 0 に 落 と す)、 audio thread の CPU spike 防 止; v1.0.0 で opt-out 機 能 ナ シ (= audio DSP で subnormal 保 持 use case 稀)、 必 要 性 が 出 た 時 v1.x.0 で opt-out option 追 加 検 討; declarative 原 則 と の 微 妙 な 衝 突 は audio DSP 業 界 慣 行 (= JUCE 等 で 標 準 FTZ) + footgun 撤 廃 で 例 外 正 当 化 | `04-worklet-runtime.md` §6 |
-| Q22 | Graph capture model and process body structure | resolved (a / aprime / b fixed; c 3-layer fixed; d open) | `00-foundations.md` §3 + `01-dsl.md` §1, §10 + `03-compiler.md` §2 |
+| Q22 | Graph capture model and process body structure | resolved (a / aprime / b / c / d all fixed; d = Rust-style error template per `03-compiler.md` §2.5) | `00-foundations.md` §3 + `01-dsl.md` §1, §10 + `03-compiler.md` §2 |
 | Q23 | Hot reload semantics + Q24 bundler integration + Q25 source maps を 1 entry に 統 合 (= primitive vs user land の 仕 分 け、 user land = consumer's app と third-party tooling ecosystem の 2 layer で 区 別) | resolved — unworklet 側 CLI ナ シ、 framework は raw primitive と `@unworklet/vite-plugin` で build / asset / source maps + **DevTools 8 panel (build errors + graph viewer + memory budget + live state inspector + live latency monitor + MIDI flow + snapshot inspector + swap history) + analysis JSON / dev-time live channel** を 巻 き 取 り (= devtools panel は consumer の app に 見 え な い 開 発 者 DX surface、 全 author が 同 一 machinery を 見 た い universal な も の、 framework が opinionated に ship す べ き 領 域); HMR orchestration / 動 的 swap の audio 連 続 制 御 / consumer's app の DSP UI (spectrum / oscilloscope 等) は user land (= consumer's app への 踏 み 込 み は declarative 違 反); 動 的 swap primitive `replaceProcessor(oldNode, newProcessor)` を `@unworklet/core` に 新 規 追 加 (= Q50 で 詳 細); vite plugin の HMR 関 与 は 「`?worklet` import を Vite HMR boundary と し て 整 え る」 だ け、 swap 動 作 は user-land code が `replaceProcessor` を 明 示 で 呼 ぶ; offline rendering は `@unworklet/offline` 別 package (= 変 更 ナ シ); test matchers は `@unworklet/test` 別 package (= 変 更 ナ シ); 他 bundler plugin は v1.x.0 additive | `07-vite-plugin.md` + `05-client.md` §8 + `13-offline-render.md` + `06-testing.md` + `08-deployment.md` §1 |
 | Q24 | Bundler integration scope | resolved — Q23 に 統 合 | `07-vite-plugin.md` + `08-deployment.md` §1 |
 | Q25 | Source maps | resolved — Q23 に 統 合 (= `@unworklet/vite-plugin` が sidecar `.wasm.map` で 出 す) | `07-vite-plugin.md` §5 |
@@ -298,7 +298,7 @@ Authoritative wording: `11-midi.md` §5.
 - Restore handles three levels of mismatch:
   - **(a) detection**: blobs from incompatible schemas never silently corrupt — the framework either migrates, partial-restores by name, or rejects with a structured error.
   - **(b) name-match partial restore**: when no migration is registered, slots that share name and compatible type are written back; missing / mismatched slots are reset and reported in `RestoreResult.{ skipped, missing }`.
-  - **(c) declarative migration chain**: developers register `migrations([{ from, to, migrate }, ...])`; the framework walks the resulting directed graph from `blob.schemaHash` to `currentSchemaHash`, applying entries in order with hash verification at each step. Adjacent `from → to` steps chain automatically — N-version-skipping migrations work without rewriting earlier steps (ORM-style).
+  - **(c) declarative migration chain**: developers register `migrations: [{ from, to, migrate }, ...]` as a field on the `defineProcessor` options bag; the framework walks the resulting directed graph from `blob.schemaHash` to `currentSchemaHash`, applying entries in order with hash verification at each step. Adjacent `from → to` steps chain automatically — N-version-skipping migrations work without rewriting earlier steps (ORM-style).
 - Compile-time validation: hash format, no duplicate `from`, no cycles, current-schema reachability. Reachability failure is a build warning by default; `{ migrationsStrict: true }` makes it an error.
 - `migrate` receives `MigrationHelpers` (parse / write for slot / buffer / param, profile-scoped variants, metadata). Slots not explicitly written are auto-carried from the old blob to the new blob when name and type match in both schemas.
 
@@ -577,7 +577,7 @@ The two-form sugar / explicit dichotomy that an earlier draft of Q22-b proposed 
 **Decision (Q22-c — Error layer structure):** authoritative wording in `03-compiler.md` §2. Summary:
 
 1. **TypeScript type error** (IDE level, before any build): the branded `Node<T>` rejects JS operators. `nodeA + nodeB`, `if (nodeBool)`, `for (... ; nodeCmp ; ...)`, `audioIn.at(0, i)` outside `forSample` (where `i` is undefined). The IDE surfaces these immediately; no framework runtime is involved.
-2. **Graph-capture-time error** (build-time, during proxy evaluation of the `process` lambda): scope violations (a declaration call inside expression scope), missing required calls (e.g. `audioOutput.set` not called for a declared output on every code path of every render quantum), duplicate writes (same channel × same sample-offset written twice within one phase), declarations missing required `name` for snapshot-using processors, declarations inside `forSample` callbacks, etc. Detected by the framework as it executes the `process` lambda with proxies.
+2. **Graph-capture-time error** (build-time, during proxy evaluation of the `process` lambda): scope violations (a declaration call inside expression scope), declarations missing required `name` for snapshot-using processors, declarations inside `forSample` callbacks, and similar shape violations the type system cannot express. Detected by the framework as it executes the `process` lambda with proxies. Audio-output coverage and duplicate-write are **not** checked at this layer — `out.set(c, i, v)` is freely callable, untouched positions emit silence, and last-write-wins on same-position writes (Q37).
 3. **Static-analysis error** (post-capture, before WASM emission): allocation check (an AST pattern would imply heap alloc), unbounded loops (build-time loops without a static bound), memory-size violations (sum of declarations exceeds the configured budget), type-inference inconsistencies. Detected by the framework's analysis pass over the captured DAG.
 
 The detailed format of error messages and refactor-hint structure (Q22-d) is resolved at the end of this entry (Rust-style template; `03-compiler.md` §2.5 is authoritative).
@@ -651,6 +651,47 @@ The following candidates for the process body's structure were considered during
 - *Single-layer error model (everything detected at runtime)* — incompatible with realtime safety. Errors on the audio thread cannot be recovered safely; pre-runtime detection is non-negotiable.
 - *Two-layer model (TS errors + runtime errors only)* — collapses graph-capture-time and static-analysis detection into "runtime errors", which lose specificity (the user cannot tell whether the error is about shape, scope, or memory budget). The three-layer structure preserves precise diagnosis.
 
+**Decision (Q22-d — Error message format and refactor-hint structure):**
+
+Layer 2 (graph-capture-time) と Layer 3 (static-analysis) の error message を Rust-style template に 統 一:
+
+```text
+error[unworklet/<stable-id>]: <one-sentence summary>
+  --> <file>:<line>:<col>
+   |
+<line> |       <code excerpt>
+   |       <caret range>
+   |
+
+help: <1-3 sentence で 修 正 方 針>
+
+      <修 正 後 の code snippet, 1-3 行>
+
+note: see `decisions-log.md` <Q-ref> for the underlying rule.
+```
+
+- **heading**: `error[unworklet/<stable-id>]: <summary>` — `<stable-id>` は error 種 別 を 表 す stable な ID (= `constant-truthy-emitif` / `scope-violation` / `illegal-stride` / `bounded-loop` / `memory-budget` 等)、 grep / IDE filter / doc 検 索 用
+- **source location**: `--> <file>:<line>:<col>` (= Rust 慣 行) + 1〜3 行 の code excerpt + caret で 該 当 範 囲 明 示
+- **help section**: `help:` prefix + 1〜3 sentence で 修 正 方 針 + 修 正 後 code snippet
+- **note section**: `note: see <decisions-log link>` で 仕 様 根 拠 へ cross-ref
+
+Layer 1 (= TypeScript native type error) は unworklet が 触 ら ず、 TypeScript / IDE 標 準 の 表 示 (= `TS<code>: <msg>`) を そ の ま ま 通 す。
+
+authoritative wording は `03-compiler.md` §2.5。 全 stable-id 一 覧 は doc 化 が 必 要 (= L4-M7 で 補 完)。
+
+**Rationale (Q22-d):**
+
+- *Rust-style format は IDE / editor 親 和*: 既 言 語 慣 行 (= Rust compiler / TypeScript compiler) と 整 合 し、 editor 側 で source location parsing 既 動 く、 user の 学 習 cost 小
+- *stable-id 経 由 で error 分 類 が grep / filter 可 能*: 「`unworklet/constant-truthy-emitif`」 で 検 索 し て 該 当 docs / FAQ に 到 達 で きる
+- *help section + corrected snippet で footgun 撤 廃*: user に 「何 が ダ メ で 何 を 書 け ば いい か」 を 1 つ の error message 内 で 完 結、 user mental に 「自 力 で 直 し 方 を 探 す」 cost を 押 し 付 け な い
+- *note section で decisions-log link*: 仕 様 根 拠 を 即 参 照 で きる、 「framework が な ぜ こ の error を 出 す か」 を 学 び た い user の 経 路 を 1 つ に 統 一
+
+**Rejected (Q22-d):**
+
+- *TypeScript-style (= `TS<code>: <msg>` + tilde 下 線 ナ シ)*: TypeScript native error と 区 別 つ き に く い、 stable-id 経 由 で の 分 類 が 取 り に く い
+- *plain text 1 line (= `error: ...`)*: 修 正 方 針 + source location + 仕 様 根 拠 link が ナ シ = footgun を user に 押 し 付 け る
+- *JSON structured error の み*: human-readable で な い、 user が console で 直 接 見 る 場 面 で 不 親 切
+
 ---
 
 ## Q27 — Generic typed messaging core surface
@@ -689,7 +730,7 @@ The following candidates for the process body's structure were considered during
 
 **Decision (Q27-c — `message<T>` declaration):**
 
-`message<T>(options): MessageDecl<T>` declares a typed message channel (main → worklet). The worklet-side handler is registered via `messageDecl.onReceive(handler)` at the per-block phase top of the `process` body. Handler runs at the start of the next render quantum, before any `forSample`.
+`message<T>(options): MessageDecl<T>` declares a typed message channel (main → worklet). The worklet-side handler is registered via `messageDecl.onReceive(handler)` at the per-block top of the `process` body. Handler runs at the start of the **current** render quantum from the worklet's viewpoint (= the next render quantum from the main thread's viewpoint after `node.messages.<name>(...)` is called — they refer to the same moment; see Q38-a), before any `forSample`.
 
 - **Schema**: user-defined record type `T`. No `atSample` (main thread has no sample-offset concept; messages are coarse-grained by definition).
 - **Delivery**: in-arrival-order, drained at block boundary. Capacity / overflow same shape as `event<T>` (default 256, drop-oldest + counter).
@@ -819,7 +860,7 @@ Parallel state-slot arrays (e.g. the 16 pattern steps in Example 6, the 8 voice 
 ```typescript
 loadPattern.onReceive(({ steps }) => {
   for (let s = 0; s < PATTERN_LEN; s++) {     // PATTERN_LEN: build-time constant
-    pattern[s].store(select(lt(s, steps.length), steps[s], pattern[s].load()));
+    pattern[s].store(select(lt(s, steps.length), steps.at(s), pattern[s].load()));
   }
 });
 ```
@@ -858,48 +899,7 @@ No new primitive is added — `select`, `lt`, and the existing typed-array-field
 - *A separate `bulkUpload<T>` declaration kind*: a fourth message-shape concept (alongside `state.publish` / `event<T>` / `message<T>`). It does separate "command messages" from "bulk uploads" cleanly at the declaration site, but the same job is achieved by `message<T>` + `buf.copyFrom` with one fewer concept. Concept-count discipline (see Q27 rejected list, "drop both `event` and `message` if state.publish covers it") prefers the latter.
 - *Inferred build-time bound from `typedArrayField.length`*: if the typed array's length were a build-time constant (e.g. `new Float32Array(1024)` declared at build time), the loop *would* unroll. But the audit's actual use case (`samples.length` from a runtime message payload) is precisely where it is not. Inferring per-call would silently grow the WASM module by the length of the longest possible payload, surprise the author when build artifact size balloons, and obscure the realtime-safety property. Static-analysis rejection with a pointer to `copyFrom` is the honest path.
 - *`copyFrom` accepting an unbounded JS array (not a typed array field)*: the typed-array constraint is what makes the memcpy single-instruction and zero-conversion. A plain `number[]` would need element-by-element JavaScript-side conversion to the buffer's element type — that is the per-element loop the user was trying to avoid.
-- *Allow `samples[i]` indexing in onReceive's build-time loop, even when the upper bound is build-time-constant but `samples` is runtime-typed*: this is technically expressible (if the bound is `min(PATTERN_LEN, runtime)` masked with `select`, `samples[s]` for build-time `s` resolves to a typed-array-field-element graph node). It is preserved as the canonical state-slot-array pattern (Q31-d) precisely because `select` + `lt` makes the realtime-safety property structural — the unrolled bound is build-time-fixed, the per-slot mask is the only runtime quantity.
-
-**Decision (Q22-d — Error message format and refactor-hint structure):**
-
-Layer 2 (graph-capture-time) と Layer 3 (static-analysis) の error message を Rust-style template に 統 一:
-
-```text
-error[unworklet/<stable-id>]: <one-sentence summary>
-  --> <file>:<line>:<col>
-   |
-<line> |       <code excerpt>
-   |       <caret range>
-   |
-
-help: <1-3 sentence で 修 正 方 針>
-
-      <修 正 後 の code snippet, 1-3 行>
-
-note: see `decisions-log.md` <Q-ref> for the underlying rule.
-```
-
-- **heading**: `error[unworklet/<stable-id>]: <summary>` — `<stable-id>` は error 種 別 を 表 す stable な ID (= `constant-truthy-emitif` / `scope-violation` / `illegal-stride` / `bounded-loop` / `memory-budget` 等)、 grep / IDE filter / doc 検 索 用
-- **source location**: `--> <file>:<line>:<col>` (= Rust 慣 行) + 1〜3 行 の code excerpt + caret で 該 当 範 囲 明 示
-- **help section**: `help:` prefix + 1〜3 sentence で 修 正 方 針 + 修 正 後 code snippet
-- **note section**: `note: see <decisions-log link>` で 仕 様 根 拠 へ cross-ref
-
-Layer 1 (= TypeScript native type error) は unworklet が 触 ら ず、 TypeScript / IDE 標 準 の 表 示 (= `TS<code>: <msg>`) を そ の ま ま 通 す。
-
-authoritative wording は `03-compiler.md` §2.5。 全 stable-id 一 覧 は doc 化 が 必 要 (= 別 task で 補 完)。
-
-**Rationale (Q22-d):**
-
-- *Rust-style format は IDE / editor 親 和*: 既 言 語 慣 行 (= Rust compiler / TypeScript compiler) と 整 合 し、 ed・itor 側 で source location parsing 既 動 く、 user の 学 習 cost 小
-- *stable-id 経 由 で error 分 類 が grep / filter 可 能*: 「`unworklet/constant-truthy-emitif`」 で 検 索 し て 該 当 docs / FAQ に 到 達 で きる
-- *help section + corrected snippet で footgun 撤 廃*: user に 「何 が ダ メ で 何 を 書 け ば いい か」 を 1 つ の error message 内 で 完 結、 user mental に 「自 力 で 直 し 方 を 探 す」 cost を 押 し 付 け な い
-- *note section で decisions-log link*: 仕 様 根 拠 を 即 参 照 で きる、 「framework が な ぜ こ の error を 出 す か」 を 学 び た い user の 経 路 を 1 つ に 統 一
-
-**Rejected (Q22-d):**
-
-- *TypeScript-style (= `TS<code>: <msg>` + tilde 下 線 ナ シ)*: TypeScript native error と 区 別 つ き に く い、 stable-id 経 由 で の 分 類 が 取 り に く い
-- *plain text 1 line (= `error: ...`)*: 修 正 方 針 + source location + 仕 様 根 拠 link が ナ シ = footgun を user に 押 し 付 け る
-- *JSON structured error の み*: human-readable で な い、 user が console で 直 接 見 る 場 面 で 不 親 切
+- *Allow `samples[i]` JS-bracket indexing in onReceive's build-time loop, even when the upper bound is build-time-constant but `samples` is runtime-typed*: technically expressible, but Q36-b unified typed-array-field reads on the `.at(idx)` method form (= `Node<'i32'> | number`-typed argument that folds at graph capture when `idx` is a JS-literal). The canonical state-slot-array pattern (Q31-d) therefore writes `samples.at(s)` for build-time `s`, with `select` + `lt` masking the per-slot updates against the runtime payload length. The JS-bracket form is rejected at the type level by the typed-array-field proxy surface.
 
 ---
 
@@ -2630,4 +2630,176 @@ trivial 設 定 値 = 余 湖 さ ん の 既 取 得 / 既 嗜 好 で 決 ま 
 - `08-deployment.md` §2 Per-browser validation prose に 1 文 補 強 (= Web MIDI 標 準 自 体 は test 対 象 外、 Safari セ ル smoke 範 囲 の 明 文 化)
 - `09-repo-structure.md` §6 versioning policy = Q14 land 連 動 と prose comment に 残 す (= Q62 ratify で versioning 自 体 は touch せ ず、 §6 fill は freeze 前 別 batch)
 - TaskList #75 (L4-b) completed
+
+---
+
+## Q17 — Math precision variants
+
+**Status:** resolved.
+
+**Decision:** `@unworklet/core` の math primitive (= `sin` / `cos` / `tan` / `tanh` / `exp` / `log` / `sqrt` 等) を v1.0.0 で **polynomial approximation 1 variant** に 統 一 す る。 全 て 5-7 次 minimax polynomial を WASM 関 数 と し て 直 接 emit、 FFI / JS-WASM boundary cross 不 在 で 全 計 算 が WASM 内 部 完 結、 audio thread realtime safe。 最 大 誤 差 約 1e-4 = 24-bit audio dynamic range の noise floor 以 下 で 不 可 聴。
+
+`/precise` (= WASM 内 bundle libm) / `/table` (= precomputed table lookup) variant は v1.x.0 で additive 追 加 検 討、 v1.0.0 surface に は 入 れ な い。 高 精 度 fp が 必 要 な 数 値 解 析 用 途 は unworklet scope 外 と し て doc 明 示。
+
+authoritative wording: `01-dsl.md` §2 + `00-foundations.md` §5.1 (realtime-safety invariants と 整 合)。
+
+**Rationale:**
+
+- *audio dynamic range で 不 可 聴*: polynomial approximation の 最 大 誤 差 = 約 1e-4、 24-bit audio dynamic range = 約 1e-7 = noise floor 以 下 = 不 可 聴。 audio DSP 用 途 で 唯 一 必 要 な 精 度 を 満 た す。
+- *realtime safety*: WASM 関 数 を 直 接 emit = audio thread 上 の 全 計 算 が WASM 内 部 完 結、 FFI / heap alloc / GC / 例 外 な し で realtime-safety invariants と 整 合。
+- *並 列 variant 出 し は scope 膨 張*: v1.0.0 で `/precise` / `/table` を 並 列 で 出 す と user に variant 選 択 mental model 強 制、 同 識 別 子 で 別 backend = mental ノ イ ズ、 v1.x.0 で 必 要 性 が 出 れ ば additive 追 加 が 健 全。
+
+**Rejected:**
+
+- *libm wrapper を v1.0.0 default*: WASM 内 bundle libm = binary size 増 + audio dynamic range で 既 不 可 聴 = 不 要 cost。
+- *user 選 択 variant flag* (= `defineProcessor({..., mathPrecision: 'fast' | 'precise'})`): variant 選 択 を user に 押 し 付 け = 「ど ち ら を 選 ぶ べ き か」 mental cost、 全 audio DSP で polynomial が 適 切 = default 1 variant で 完 結 が clean。
+- *math primitive 全 落 と し で unworklet 範 囲 外*: user が `Math.sin` を JS で 書 い て build error = 仕 様 ホ ー ル、 audio DSP の 基 本 primitive (= `sin` / `cos` / `tan` 等) を unworklet primitive と し て 出 す の が 妥 当。
+
+---
+
+## Q18 — Render quantum handling
+
+**Status:** resolved.
+
+**Decision:** WASM emission で render quantum size 128 を **fully bake** す る (= `forSample` loop bound / audio I/O buffer offset / SIMD lane mapping を 全 て コ ン パ イ ル 時 確 定、 runtime block size 参 照 不 在 で 最 適 化 を 最 大 化)。 worklet `process(inputs, outputs)` の 開 始 時 に `outputs[0][0].length === 128` を runtime check し、 違 反 時 は error + 停 止 (= silent 不 動 作 を 避 け る)。 user code は 128 を 直 接 リ テ ラ ル で 書 か ず、 `@unworklet/core` の top-level constant `SAMPLES_PER_BLOCK` を 経 由 (Q35)。
+
+将 来 ブ ラ ウ ザ 仕 様 変 動 (= render quantum size の 可 変 化 や 別 値 採 用) へ の adaptive emission は v1.x.0 で additive 追 加 検 討、 v1.0.0 で の 投 機 的 対 応 ナ シ。
+
+authoritative wording: `04-worklet-runtime.md` §3 + `01-dsl.md` §1.7 (`SAMPLES_PER_BLOCK` export)。
+
+**Rationale:**
+
+- *コ ン パ イ ル 時 確 定 で 最 適 化 最 大 化*: 128 を 定 数 と し て WASM emission に baked-in す る と loop bound が 静 的 = WASM コ ン パ イ ラ が loop unrolling / SIMD vectorization / dead code elimination を 全 適 用 可。 runtime block size 参 照 = branch + indirection で 最 適 化 阻 害。
+- *runtime check で silent 不 動 作 防 止*: 「128 と 異 な る 値 で 入 力 さ れ た 時 silent に 結 果 が 壊 れ る」 = realtime audio で の 最 悪 footgun、 1 度 だ け の 軽 い check で 防 止。
+- *Q35 `SAMPLES_PER_BLOCK` 経 由 で user 露 出*: コ ー ド 内 で 直 接 「128」 と 書 か ず constant 経 由 = ブ ラ ウザ 仕 様 変 動 時 に は constant 1 箇 所 更 新 + 全 user code が 追 従、 v1.x.0 adaptive emission 移 行 path を 確 保。
+- *adaptive emission の 投 機 deferral*: render quantum 128 は AudioWorklet 仕 様 で 公 式 (= 標 準 化 済 み)、 投 機 的 multi-size support は v1.0.0 scope balloon。
+
+**Rejected:**
+
+- *runtime variable block size (= 各 quantum で `outputs[0][0].length` を 読 ん で loop bound 動 的 決 定)*: per-block branch + 最 適 化 阻 害 + コ ン パ イ ル 時 不 変 vector lane mapping 不 可 = realtime audio で 致 命 的 性 能 劣 化。
+- *runtime check な し で silent fallback (= 128 以 外 で も 部 分 動 作)*: 「silent に 結 果 が 壊 れ る」 が 最 悪 mode、 explicit error で 早 期 検 出 が clean。
+- *adaptive emission を v1.0.0 ship*: 仕 様 で 128 fixed = 投 機 的 多 size support は scope 膨 張、 必 要 性 が 出 れ ば v1.x.0 で additive。
+
+---
+
+## Q19 — Channel-count specialization
+
+**Status:** resolved.
+
+**Decision:** `audioInput({ channels: C, name })` / `audioOutput({ channels: C, name })` の `channels` declare 値 を WASM emission 時 に **焼 き 込 む** (= mono / stereo / N-channel 別 code path、 sample ご と の channel 判 定 分 岐 不 在、 SIMD lane mapping コ ン パ イ ル 時 確 定)。 帰 結 と し て main 側 で `createNode` を 呼 ぶ 時 に AudioWorkletNode option (= `numberOfInputs` / `numberOfOutputs` / `outputChannelCount`) で I/O channel layout を **上 書 き 不 可** (= 仕 様 ホ ー ル #62 同 時 解 決)。
+
+同 一 processor で の 動 的 channel 切 替 が 必 要 な ら 別 `defineProcessor` を 出 し て consumer 側 で 切 り 替 え る (= channel ご と に 別 processor instance + audio graph re-wire)。
+
+authoritative wording: `04-worklet-runtime.md` §4 + `05-client.md` §1。
+
+**Rationale:**
+
+- *コ ン パ イ ル 時 確 定 で 最 適 化 最 大 化*: channel count を WASM emission baked-in = SIMD lane mapping が 静 的 (= stereo で f32x4 を `[L0, R0, L1, R1]` で interleave / mono で linear pack 等)、 per-sample channel branch 不 在 で 最 適 化 最 大 化。
+- *main 側 上 書 き 不 可 で 仕 様 ホ ー ル 撤 廃*: AudioWorkletNode option (= `outputChannelCount`) で channel layout を 上 書 き で き る と WASM 内 ハ ー ド コ ー ド と 矛 盾 = silent corruption、 上 書 き 拒 否 で 仕 様 ホ ー ル を 撤 廃。
+- *動 的 切 替 は 別 processor*: 同 一 processor で channel 数 を runtime で 変 え る use case (= mono ↔ stereo 切 り 替 え) は consumer level の audio graph re-wire で 表 現 = framework 内 dynamic dispatch 不 要 = declarative 原 則 と 整 合。
+
+**Rejected:**
+
+- *runtime channel-count dispatch (= 同 processor で sample ご と に channel 数 判 定)*: per-sample branch + SIMD lane mapping 不 確 定 = 最 適 化 阻 害、 declarative 原 則 違 反 (= user が 書 い た channel 数 と WASM 実 行 内 容 が 一 致 し な い)。
+- *main 側 で `outputChannelCount` 上 書 き 許 可*: WASM 内 ハ ー ド コ ー ド と 矛 盾 = silent corruption リ ス ク、 明 示 拒 否 で 防 止。
+- *channel 数 declare ナ シ で auto-infer*: graph capture 時 に audio I/O 接 続 情 報 が な い (= AudioContext 接 続 は main thread 側 runtime 操 作)、 declare 必 須 で 明 示。
+
+---
+
+## Q20 — Pre-warm correctness
+
+**Status:** resolved.
+
+**Decision:** v1.0.0 で framework 側 の pre-warm 機 構 を 提 供 し な い。 WASM は ブ ラ ウザ で AOT compile な の で JIT spike が 発 生 せ ず、 branch predictor / instruction cache / TLB 等 hardware-level の warmup は runtime 数 quantum 内 に 自 動 で 落 ち 着 き audio 出 力 と し て 不 可 聴。 framework が user code に 暗 黙 で silent block を 走 ら せ る の は declarative 原 則 違 反 寄 り = magic 排 除。
+
+v1.x.0 で 必 要 性 が 出 れ ば opt-in option (= `createNode(..., { preWarm: { ...spec } })`) を additive 追 加 検 討。
+
+authoritative wording: `04-worklet-runtime.md` §5。
+
+**Rationale:**
+
+- *WASM AOT compile で JIT spike 不 在*: ブ ラ ウザ の WASM 実 装 は AOT compile (= module load 時 に native code 生 成)、 JIT warmup 期 待 値 ナ シ。 v8 / SpiderMonkey 等 で 動 的 inline 化 等 二 次 最 適 化 は 存 在 す る が 最 初 の 数 quantum で 落 ち 着 く。
+- *hardware warmup は 不 可 聴*: branch predictor / instruction cache / TLB 等 の 暖 機 = 最 初 の render quantum で μs オ ー ダ の 余 計 な CPU cycle が 発 生 す る が、 audio output level で は 完 全 に 不 可 聴。 explicit pre-warm 機 構 不 要。
+- *declarative 原 則 と silent block 衝 突*: framework が 暗 黙 で silent block を 走 ら せ る = user の declared graph と WASM 実 行 内 容 が 一 致 し な い (= framework magic anti-pattern と 衝 突)。
+
+**Rejected:**
+
+- *v1.0.0 で 自 動 pre-warm を default*: silent block を user に 隠 し て 入 れ る = declarative 原 則 違 反、 不 可 聴 で あ る hardware warmup を framework 側 で 対 処 す る justification 不 在。
+- *opt-in option を v1.0.0 ship*: 必 要 性 が 確 認 さ れ た user case を 待 た ず 投 機 で 入 れ る = scope 膨 張、 v1.x.0 additive で 十 分。
+
+---
+
+## Q21 — Denormal handling
+
+**Status:** resolved.
+
+**Decision:** `state.f32` / `state.f64` の `.store(v)` で コ ン パ イ ル 時 に subnormal ガ ー ド (= `|v| < 1e-30` な ら 0 に 落 と す) を 自 動 insertion、 audio thread の CPU spike を 防 止。 IIR feedback path 等 で fp 値 が subnormal 領 域 に 入 る と CPU が flush-to-zero モ ー ド 外 で 数 十 〜 数 百 倍 の cycle 消 費 = realtime audio で 致 命 的、 こ れ を 撤 廃。
+
+v1.0.0 で opt-out 機 能 ナ シ (= audio DSP で subnormal 保 持 use case が 稀)、 必 要 性 が 出 れ ば v1.x.0 で opt-out option を additive 追 加 検 討。
+
+authoritative wording: `04-worklet-runtime.md` §6。
+
+**Rationale:**
+
+- *IIR feedback path の CPU spike footgun 撤 廃*: BiQuad / SVF / 1-pole etc. の feedback delay z^-1 が 入 力 ゼ ロ ま た は 静 止 で subnormal に 漸 近 = CPU が flush-to-zero モ ー ド 外 で 大 量 cycle 消 費 = audio xrun / glitch リ ス ク。 framework 側 で 自 動 ガ ー ド で 撤 廃 = silent ボ ー ナ ス。
+- *audio dynamic range で 不 可 聴*: 1e-30 等 の 極 小 fp 値 = 24-bit audio dynamic range の noise floor 遥 か 以 下 = 0 と し て 扱 っ て も 音 の 意 味 は 変 わ ら な い。
+- *audio DSP 業 界 慣 行 と 整 合*: JUCE 等 で 標 準 FTZ (= flush-to-zero) を 既 default、 余 計 な mental model 学 習 不 要。
+- *declarative 原 則 と の 微 妙 な 衝 突 を footgun 撤 廃 で 正 当 化*: framework が user 値 を 暗 黙 で 変 え る = declarative 原 則 か ら の 例 外 だ が、 不 可 聴 + 業 界 慣 行 + footgun 防 止 で 正 当 化、 例 外 を docs 明 示。
+
+**Rejected:**
+
+- *opt-out 機 能 を v1.0.0 ship*: subnormal 保 持 を 必 要 と す る audio DSP use case が 確 認 さ れ て お ら ず、 投 機 surface 膨 張、 v1.x.0 で 必 要 性 が 出 れ ば additive。
+- *subnormal ガ ー ド を 入 れ な い (= declarative 純 度 維 持)*: IIR feedback path の CPU spike footgun が 高 頻 度 で audio xrun を 引 き 起 こ す = realtime audio framework と し て 致 命 的、 declarative 純 度 を 守 っ て user に footgun を 押 し 付 け る path は 採 ら な い。
+- *ガ ー ド 閾 値 を user 設 定 可*: 1e-30 は IEEE 754 fp の subnormal 範 囲 (= 2^-126 〜 2^-149) を 含 む 単 純 boundary、 user 調 整 余 地 不 要 で 1 値 fix。
+
+---
+
+## Q29 — Variable-rate iteration
+
+**Status:** resolved.
+
+**Decision:** v1.0.0 で sample-loop primitive は **`forSample(callback)` + `forSample.byN(stride, callback)` の 2 形 だ け**。 他 の 形 (= `forSampleRange(start, end, callback)` 等 の 部 分 範 囲 iteration、 `forSamplesUntil(cond, callback)` 等 の runtime early-exit、 runtime variable stride) は v1.0.0 surface に 入 れ な い。
+
+- *v1.x.0 additive 候 補*: `forSampleRange(start, end, callback)` (= 部 分 範 囲 iteration、 build-time bounded、 表 現 力 は 既 forSample + build-time `if` で カ バ ー 済 み だ が 効 率 化 用 途 で 検 討)
+- *永 久 排 除*: `forSamplesUntil(cond, callback)` (= runtime early-exit) + runtime variable stride (= realtime safety 違 反 / declarative 原 則 違 反)
+
+authoritative wording: `01-dsl.md` §10.5。
+
+**Rationale:**
+
+- *realtime safety invariants と 整 合*: realtime audio thread で bounded loop が hard rule (= `00-foundations.md` §5.1 invariant #2)、 runtime early-exit / variable stride は bounded loop を 破 る = 静 的 解 析 で 拒 否 す べ き、 surface に も 出 さ な い。
+- *forSample + build-time `if` で 表 現 力 カ バ ー*: 部 分 範 囲 iteration は `forSample((i) => { if (lt(i, threshold)) { ... } })` で 表 現 可、 真 の 効 率 化 用 途 (= 不 要 sample で の 計 算 全 skip) が 確 認 さ れ た ら v1.x.0 で `forSampleRange` additive。
+- *v1.0.0 surface 最 小 化*: primitive を 多 数 出 す と user に 「ど れ を 使 う べ き か」 mental cost、 forSample + forSample.byN だ け で 90%+ use case を カ バ ー = 初 期 surface 最 小 化 が clean。
+
+**Rejected:**
+
+- *`forSamplesUntil(cond, callback)` を v1.0.0 ship (= runtime early-exit)*: realtime safety bounded loop invariant 違 反、 worst-case CPU 時 間 が 静 的 に 決 ま ら な い = realtime audio framework と し て 致 命 的。
+- *runtime variable stride (= `forSample.byN(node)`、 stride を `Node<'i32'>` で 渡 す)*: stride が runtime に な る と SIMD lane mapping コ ン パ イ ル 時 確 定 不 可 = 最 適 化 阻 害、 declarative 原 則 (= 「user が 書 い た 構 造 が そ の ま ま WASM」) も 破 れ る。
+- *`forSampleRange` を v1.0.0 ship*: 既 forSample + build-time `if` で 表 現 力 カ バ ー、 真 の 効 率 化 use case が 確 認 さ れ た ら v1.x.0 で additive、 v1.0.0 で の 投 機 surface 膨 張 ナ シ。
+
+---
+
+## Q30 — Memory budget policy
+
+**Status:** resolved.
+
+**Decision:** processor 内 の 全 declaration (= `state` / `buffer` / `message<T>`・`event<T>` payload content / MIDI ringbuffer) を build-time に **自 動 sum** し て WASM linear memory を そ の サ イ ズ で alloc す る。 user 側 で の explicit `memoryLimit` option ナ シ で v1.0.0 出 し、 必 要 性 が 出 れ ば v1.x.0 で additive 追 加 検 討。
+
+- **64 MB 越 え** で build-time **warning** (= ロ ー エ ン ド device で の load 遅 延 配 慮、 ship を 止 め な い)
+- **WASM 上 限 (= 4 GB)** 越 え で build-time **error** (= 物 理 的 に WASM module 化 不 能)
+- **audio thread で の `memory.grow`** を 永 久 排 除 (= realtime safety bounded-time invariant 違 反)
+
+authoritative wording: `03-compiler.md` §2.4 + `03-compiler.md` §4。
+
+**Rationale:**
+
+- *declarative auto-sum で user 認 知 負 担 削 減*: declaration 群 を build-time に 集 計 す る だ け = user が memory size を 別 path で 指 定 す る 必 要 ナ シ、 declaration 自 体 が 唯 一 の memory 確 保 source = 1 surface で 完 結。
+- *audio thread `memory.grow` 永 久 排 除*: `memory.grow` は OS から の 新 page alloc を 含 む = bounded-time invariant 違 反、 realtime audio で 致 命 的、 surface に も 出 さ な い。
+- *build-time warning + error 閾 値 で 健 全 化*: 64 MB は ロ ー エ ン ド mobile device で の 体 感 load 遅 延 閾 値、 4 GB は WASM linear memory 仕 様 上 限。 warning は ship を 止 め ず 認 知 強 化、 error は 物 理 不 能 を 早 期 検 出。
+
+**Rejected:**
+
+- *explicit `memoryLimit` option を v1.0.0 ship*: declaration 自 動 sum で 必 要 性 不 在、 user に 重 複 surface 押 し 付 け = mental ノ イ ズ、 v1.x.0 で 必 要 性 が 出 れ ば additive。
+- *runtime `memory.grow` を audio thread で 許 可*: bounded-time invariant 違 反、 realtime audio で 致 命 的、 永 久 排 除。
+- *budget 違 反 を 全 て build-time error*: 64 MB 越 え を error に す る と 真 の 必 要 use case (= 大 IR convolution / 大 wavetable bank) が ship 不 能、 warning + 上 限 error の 2 段 で 健 全 化。
 

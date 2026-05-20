@@ -26,7 +26,7 @@ The same ringbuffer machinery serves MIDI (`midiInput` / `midiOutput`); MIDI's s
 
 ### 1.1 Asset upload readiness pattern (no separate ack surface)
 
-`node.messages.<name>(payload)` is **fire-and-forget** by design — it returns `void`, not a Promise. Reflection of the payload onto the audio thread happens at the start of the next render quantum (when the audio thread drains the message ringbuffer and runs the registered `onReceive` handler). This is the same delivery latency for every transport mode (SAB / postMessage); main-side `await` would not change *when* the audio thread sees the data, only *whether* main can know it has been seen.
+`node.messages.<name>(payload)` is **fire-and-forget** by design — it returns `void`, not a Promise. Reflection of the payload onto the audio thread happens at the start of the **current** render quantum from the worklet's viewpoint (= the next render quantum from the main thread's viewpoint after `node.messages.<name>(...)` is called — they refer to the same moment; see `decisions-log.md` Q38-a). At that moment the audio thread drains the message ringbuffer and runs the registered `onReceive` handler. This is the same delivery latency for every transport mode (SAB / postMessage); main-side `await` would not change *when* the audio thread sees the data, only *whether* main can know it has been seen.
 
 Consequently, unworklet does not provide an ack-style message variant. When the main thread needs to observe that an upload has been reflected on the audio thread (e.g. clear a "loading" UI state, gate playback start), the canonical pattern is to publish a slot from inside the `onReceive` handler and subscribe on main:
 
