@@ -68,6 +68,8 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q57 | `createNode({ restore })` option 廃 止 (= L2-c) | resolved — `CreateNodeOptions<C>.restore?: Uint8Array` を v1.0.0 surface か ら 廃 止、 `createNode` 戻 り 値 形 は 常 に `Promise<UnworkletNode<C>>` で 統 一、 snapshot 復 元 は `createNode` → `await node.restore(blob)` の **2 step pattern** が canonical (= Q45 `RestoreResult` discriminated union で 失 敗 surface 取 得); 案 (A) 戻 り 値 を `{ node, restore }` に 拡 張 棄 却 (= restore option 渡 し た 時 だ け wrap 形 = 戻 り 値 形 が option 有 無 で 2 種、 TS overload 2 種 増、 surface 概 念 量 増)、 案 (B) `onError` event で 通 知 棄 却 (= error event は worklet trap / queue overflow 等 の **起 動 後 非 同 期 event** 用、 migration throw は **node 起 動 時 の 同 期 flow** で 性 質 違 う、 mental model 衝 突); canonical Ex 群 で `createNode({ restore })` 使 用 ナ シ = consumer は 既 に 2 step pattern で 書 い て い る fact、 ergonomic loss は +1 行 軽 微; v1.x.0 で 「1 step」 必 要 性 出 た ら additive 追 加 可 | `05-client.md` §1 + `13-offline-render.md` §2 / §4 + Q45 |
 | Q58 | L1 helper の nested `forSample` 明 示 化 (= L2-d、 旧 L3-b) | resolved — L1 helper 内 で `forSample(...)` 呼 び + caller が `forSample` 内 か ら helper 呼 ぶ pattern (= 暗 黙 nested forSample) を **v1.0.0 で 認 め る + spec 明 文 化**、 直 接 `forSample` 内 で `forSample` を 呼 ぶ pattern も 同 様 に legal (= §10.3 既 wording の 自 然 帰 結); 内 外 callback は 別 関 数 の 引 数 で `i` は 独 立、 RT-safe 静 的 解 析 は 内 外 両 方 の forSample に `SAMPLES_PER_BLOCK` bounded-loop check を 独 立 適 用 (= 既 invariant Q22 / Q29 の 自 然 拡 張、 新 ル ー ル ナ シ); 案 (B) 禁 止 棄 却 (= helper の 呼 び 位 置 で 動 作 変 化 = 関 数 抽 象 の 漏 れ、 §10.3 既 wording と も 衝 突)、 案 (C) canonical Ex 追 加 棄 却 (= v1.x.0 で 必 要 性 出 た ら L4-d / L4-e voice-allocation / overlap-add と 同 軸 で recipe 追 加、 v1.0.0 ship 必 須 で は な い); 計 算 量 (= 128 × 128 = 16384 sample ops / quantum) は user の 設 計 責 任、 docs prose で 1 行 注 意 喚 起 | `01-dsl.md` §5.5.5 + §10.3 + Q22 / Q29 |
 | Q59 | SIMD `sumLanes` を v1.0.0 で 出 す (= L3-a) | resolved — `@unworklet/core/simd` か ら `sumLanes(v: Node<'f32x4'>): Node<'f32'>` を v1.0.0 export、 §7.2 MVP surface に 「Horizontal reduction」 sub-section と し て Lane access の 後 ろ に 追 加; 4 lane を 1 scalar に collapse す る natural な 終 端 操 作、 4-tap FIR / dot product / per-block accumulator collapse 等 SIMD 主 要 use case で 累 積 ergonomic 利 益 (= 4 行 → 1 行); framework emit は shuffle + add (= WASM SIMD spec に float horizontal reduce 直 接 ナ シ)、 性 能 は 案 (B) 案 と ほ ぼ 同 等 で ergonomic 利 益 が 主; canonical Ex 3 / Ex 7 で 既 に 4 行 pattern を 3 箇 所 で 書 い て い た fact (= 既 知 必 要、 v1.x.0 defer は [[no-preemptive-defer]] 違 反 リ ス ク)、 同 commit で 3 箇 所 を `sumLanes(...)` に rewrite (= AGENTS.md HARD CONTRACT 整 合); 案 (B) v1.x.0 defer 棄 却 (= SIMD primitive family と は 別 軸 で lane access の 終 端 操 作 = 単 独 primitive、 既 知 必 要 を defer す る 根 拠 ナ シ) | `01-dsl.md` §7.1 + §7.2 + `12-canonical-examples.md` Ex 3 / Ex 7 |
+| Q60 | Trivial repo settings batch (= L4-c × 4: monorepo tool + license + npm scope + TypeScript minimum) | resolved — (1) monorepo tool = pnpm workspaces (= VitePlus が user 選 択 で pnpm / npm / yarn / bun を wrap、 unworklet は pnpm 採 用、 root `pnpm-workspace.yaml` + root `package.json` の `packageManager: pnpm@<version>` + cross-package ref は `workspace:*` protocol、 開 発 / CI 起 動 は 全 て `vp` CLI 経 由 で AGENTS.md HARD CONTRACT)、 (2) license = MIT、 (3) npm scope = `@unworklet` (= 余 湖 さ ん npm account で 既 確 保)、 (4) TypeScript minimum = 5.5; trivial 設 定 値 (= 余 湖 さ ん の 既 取 得 / 既 嗜 好 で 決 ま る 値、 impl AI agent は 確 定 値 を 設 定 す れ ば 矛 盾 出 な い) を batch ratify | `09-repo-structure.md` §1 / §3 / §4 / §5 |
+| Q61 | Placeholder section 群 = impl 期 owner 任 せ 明 文 化 (= L4-a) | resolved — 各 doc の `<!-- placeholder -->` section (= 大 半 が internal implementation spec、 公 開 surface で は な い) は impl 開 始 時 に 各 doc owner が 順 次 fill す る 方 針 と し て docs 化、 v1.0.0 spec freeze 前 に 全 部 drain ナ シ; 統 一 注 釈 prose の 各 placeholder へ の 散 布 は L4-M4 sweep の 領 域 で 後 続 batch、 ratify 自 体 は こ の entry で 完 結; `09-repo-structure.md` §6 (= versioning policy) は Q14 acceptance criteria 連 動 で Q61 範 疇 外 | `00-foundations.md` §6 + `03-compiler.md` §1 / §3〜§8 + `04-worklet-runtime.md` §1 / §2 / §8 + `05-client.md` §3 / §4 + `06-testing.md` §2〜§5 + `07-vite-plugin.md` §2 / §3 / §5 / §6.x + `08-deployment.md` §3 / §4 + `10-roadmap.md` §1 / §2 / §3.2 + `13-offline-render.md` §2.x / §3 |
 
 ---
 
@@ -2520,4 +2522,65 @@ L1 helper 内 で `forSample(...)` 呼 び + caller が `forSample` 内 か ら 
 - `12-canonical-examples.md` Ex 3 (L315) と Ex 7 (L869 / L870) の 3 箇 所 で 4 行 pattern を `sumLanes(...)` 形 に rewrite、 Ex 3 / Ex 7 の SIMD import 文 (L269 / L804) に `sumLanes` 追 加 = AGENTS.md HARD CONTRACT 整 合
 - `open-questions.md` か ら L3-a entry 削 除、 **Layer 2 件 数 0 = Layer 2 additive section の 残 entry 全 解 消**、 section heading は retain し て 「該 当 entry ナ シ」 prose を 入 れ る
 - TaskList #66 (L3-a) completed
+
+---
+
+## Q60 — Trivial repo settings batch (= L4-c × 4)
+
+**Status:** resolved.
+
+### Decision
+
+`09-repo-structure.md` §1 / §3 / §4 / §5 を 同 commit で fill。 4 設 定 値 を 1 batch で ratify:
+
+1. **Monorepo tool** = pnpm workspaces。 設 定: root `pnpm-workspace.yaml` + root `package.json` の `packageManager: pnpm@<version>` + cross-package ref は `workspace:*` protocol。 開 発 / CI で の 起 動 は 全 て `vp` CLI 経 由 (= AGENTS.md HARD CONTRACT、 npm / pnpm / yarn / npx 直 接 起 動 永 久 排 除)。 VitePlus は user 選 択 で pnpm / npm / yarn / bun を wrap し、 `vp install` が 内 部 で 選 択 さ れ た package manager を 起 動。
+2. **License** = MIT。
+3. **npm scope** = `@unworklet` (= 余 湖 さ ん の npm account で 既 確 保 済 み)。
+4. **TypeScript minimum** = 5.5。
+
+### Why this and not alternatives
+
+trivial 設 定 値 = 余 湖 さ ん の 既 取 得 / 既 嗜 好 で 決 ま る 値、 impl AI agent は 確 定 値 を 設 定 す れ ば 矛 盾 出 な い = 個 別 grill 不 要 で batch ratify。 各 値 単 独 で の 個 別 棚 卸 し は 余 湖 さ ん attention 浪 費 と し て 一 括 化。
+
+### Side effects
+
+- `09-repo-structure.md` §1 + §3 + §4 + §5 を fill、 Status を `partial (§1–§5 settled at Q60 / Q61; §6 awaits Q14 land)` に 更 新
+- §6 versioning policy = Q14 acceptance criteria 連 動 で 後 続 batch、 触 ら ず
+- TaskList #77 (Q12) / #79 (Q15) / #80 (Q16) / #81 (Q26) completed
+
+---
+
+## Q61 — Placeholder section 群 = impl 期 owner 任 せ 明 文 化 (= L4-a)
+
+**Status:** resolved.
+
+### Decision
+
+各 doc に 残 る `<!-- placeholder -->` section (= compiler 内 部 / worklet runtime 内 部 / testing 内 部 / vite-plugin 内 部 / deployment / roadmap / offline 等 の internal implementation spec が 大 半、 公 開 surface で は な い) は **impl 開 始 時 に 各 doc owner が 順 次 fill** す る 方 針 と し て docs 化。 v1.0.0 spec freeze 前 に 全 部 drain ナ シ。
+
+対 象 placeholder list:
+
+| doc | placeholder |
+| --- | --- |
+| `00-foundations.md` | §6 cross-cutting |
+| `03-compiler.md` | §1 / §3 / §4 / §5 / §6 / §7 / §8 |
+| `04-worklet-runtime.md` | §1 / §2 / §8 |
+| `05-client.md` | §3 / §4 |
+| `06-testing.md` | §2 / §3 / §4 / §5 |
+| `07-vite-plugin.md` | §2 / §3 / §5 / §6.x TODO |
+| `08-deployment.md` | §3 / §4 |
+| `10-roadmap.md` | §1 / §2 / §3.2 |
+| `13-offline-render.md` | §2.x / §3 |
+
+`09-repo-structure.md` §6 (= versioning policy) は Q14 acceptance criteria 連 動 で 別 batch、 こ の Q61 範 疇 外。
+
+### Why this and not alternatives
+
+- 案 (i) freeze 前 全 部 drain 棄 却: placeholder の 大 半 が internal implementation spec = v1.0.0 ship 前 docs (= impl AI agent 仕 様) で 必 須 ナ シ、 余 湖 さ ん attention 投 入 ROI 低 い
+- 案 (iii) freeze 後 必 要 順 棄 却: (ii) と ほ ぼ 同 じ だ が freeze 前 / 後 の 区 切 り が 曖 昧、 (ii) の 方 が clear
+
+### Side effects
+
+- 各 placeholder section へ の 統 一 注 釈 prose (= 「impl 開 始 時 に 当 該 module owner が fill、 v1.0.0 spec freeze は 妨 げ な い」 形 式) の 散 布 は **L4-M4 sweep の 領 域** で 後 続 batch、 ratify 自 体 は こ の entry で 完 結
+- TaskList #99 (L4-a) completed
 

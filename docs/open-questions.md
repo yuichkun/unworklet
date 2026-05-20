@@ -64,31 +64,9 @@ unworklet の pillar:
 
 v1.0.0 freeze 直 前 1 batch で 決 定、 余 湖 さ ん judgment 軽 量。 ratify 内 部 ループ で は な い 「process question」 + 「trivial 設 定」。
 
-### L4-a. Placeholder section 群 — impl 期 owner 任 せ と 明 文 化
-
-各 doc に `<!-- placeholder -->` が 残 っ て い る。 内 部 implementation spec が ほ と ん ど で API surface で は な い。
-
-| doc | placeholder |
-| --- | --- |
-| `00-foundations.md` | §6 cross-cutting |
-| `03-compiler.md` | §1 / §3 / §4 / §5 / §6 / §7 / §8 |
-| `04-worklet-runtime.md` | §1 / §2 / §8 |
-| `05-client.md` | §3 / §4 |
-| `06-testing.md` | §2 / §3 / §4 / §5 |
-| `07-vite-plugin.md` | §2 / §3 / §5 / §6.x TODO |
-| `08-deployment.md` | §3 / §4 |
-| `10-roadmap.md` | §1 / §2 / §3.2 |
-| `13-offline-render.md` | §2.x / §3 |
-
-**選 択 肢** — (i) v1.0.0 spec freeze 前 に 全 部 drain、 (ii) impl 開 始 時 に 各 doc owner が 順 次 書 く (推 奨)、 (iii) freeze 後 impl 期 に 必 要 に な っ た 順 で。
-
 ### L4-b. Q14 — v1.0.0 acceptance criteria
 
 「v1.0.0 ship 可 能」 と は 何 か の checklist を `10-roadmap.md` §1 に。 候 補: canonical examples 全 compile + 期 待 output / `@unworklet/offline` で reference processor を bit-exact render / `vp build` 通 る / realtime-safety invariants 5 件 全 layer 検 出 / browser × {isolated, not} matrix smoke pass。 設 計 question で は な く process question、 freeze 直 前 に 一 括 決 定 で 十 分。
-
-### L4-c. Trivial v1.0.0 settings
-
-`09-repo-structure.md` の 設 定 値 — Q12 monorepo tool / Q15 license / Q16 npm scope / Q26 TS 最 低 version。 freeze 前 に 1 batch 決 定 (= Q13 initial package layout は Q52 / L1-d ratify で 既 確 定)。
 
 ---
 
