@@ -4,7 +4,7 @@ Cross-cutting reference: every resolved design question, recorded with its ratio
 
 ## Status
 
-populated (Q1–Q62 ratify complete; Q28 is unassigned — a numbering artifact, not a withheld decision)
+populated (Q1–Q68 ratify complete; Q28 is unassigned — a numbering artifact, not a withheld decision)
 
 ## Index
 

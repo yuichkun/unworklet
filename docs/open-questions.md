@@ -2,11 +2,11 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 116 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 115 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 38 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 60 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
-- **P3 = 18 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
+- **P3 = 17 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
@@ -1209,7 +1209,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P3 — prose 揺れ / mechanical sweep (18 件)
+## P3 — prose 揺れ / mechanical sweep (17 件)
 
 ## `subscribe` / `onEvent` / `on` の return 値 が unsubscribe で 揃 え て あ る か
 
@@ -1340,18 +1340,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が F1 を 読 ん で 「Q63 console.warn 文 言 と Q68 stable error ID は ship 判 定 に 入 ら な い」 と 解 釈 し、 該 当 ratify の 公 開 surface 反 映 を check か ら 漏 ら す path。
 
 **判 断 軸**: F1 文 言 を 「Q1〜Q68 全 entry (Q28 を 除 く)」 に 寄 せ 直 す path 推 奨。 同 時 に 「decisions-log.md の resolved 範 囲 全 体」 と 表 現 し 直 し て 今 後 の ratify 追 加 で 同 種 drift を 起 こ さ な い form に 倒 す path も candidate。
-
----
-
-## decisions-log と README の Status 文 が 後 半 ratify を 反 映 し て い な い
-
-**場 所**: `docs/decisions-log.md:7`、 `docs/README.md:59`
-
-**何 が 起 き て い る か**: 両 file の Status prose が 「populated (Q1–Q62 ratify complete; Q28 is unassigned — numbering artifact, not a withheld decision)」 で 揃 う が、 同 decisions-log 内 L75〜80 で Q63〜Q68 が 全 て resolved 状 態 で 列 挙 さ れ て お り Status 文 と 内 容 が 矛 盾。
-
-**impl AI 影 響**: impl AI が Status 文 を 引 用 し て 「v1.0.0 spec scope は Q1〜Q62」 と 誤 認 し、 Q63〜Q68 を 実 装 範 囲 外 と 扱 う。 結 果 と し て Ex 10 / Q63 warning 文 言 / Q68 stable error ID 等 の 実 装 を 省 略 す る リ ス ク。
-
-**判 断 軸**: Status 文 を 「Q1〜Q68 ratify complete (Q28 unassigned)」 に 更 新 す る path 推 奨。 「decisions-log.md の resolved 範 囲 と Status 文 が drift し な い rule」 を AGENTS.md 等 に 1 行 追 加 し て 今 後 の 累 犯 を 防 ぐ path も candidate。
 
 ---
 
