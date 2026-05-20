@@ -2,15 +2,15 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 97 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 96 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 38 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 37 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 58 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
-## P1 — ship blocker 系 (38 件)
+## P1 — ship blocker 系 (37 件)
 
 ### cluster (1) 型 system core (3)
 
@@ -295,18 +295,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が §1.2 prose を 読 ん で `AudioInputHandle.at` の `i` 引 数 で JS literal を reject す る 実 装 を 出 す と、 per-block top の `audioIn.at(c, 0)` pattern (= canonical 規 範) が 通 ら な く な る。 signature だ け を 信 用 し た 別 impl AI と 別 物 に な る = 同 source code が impl ご と に build pass/fail で 分 か れ る。
 
 **判 断 軸**: §1.2 prose L113 を 「`i` は `Node<'i32'> | number`、 JS literal も per-block top で OK」 に rewrite し て signature と zip す る path 推 奨。 ratified Q51 / Q36-a を prose 1 か 所 に 集 約 し 「per-block top で の JS literal 受 容」 を 明 文 化。
-
----
-
-## WASM emission phase placeholder の `process` signature が runtime per-block step と 引 数 数 で zip し な い
-
-**場 所**: `docs/03-compiler.md:174-180`、 `docs/04-worklet-runtime.md:17-24`
-
-**何 が 起 き て い る か**: §4 placeholder が exported emit 関 数 を `process(blockPtr, paramPtrs, messagePtr) -> void` の 3 引 数 と 規 定。 一 方 `04-worklet-runtime.md` §2 placeholder per-block 6 step で は 「input channels / output channels / parameter arrays / messages」 4 種 を 個 別 marshal す る path で、 output channel pointer の 出 入 り 経 路 が §4 signature に 不 在 (= 3 引 数 で 4 種 I/O を 表 現 で き な い)。 さ ら に linear memory layout を 「state / buffers / I/O scratch / queue regions」 4 region と prose 列 挙 す る が、 既 ratify な MIDI ringbuffer / event ringbuffer / message ringbuffer / sysex content buffer / snapshot region / publish shared region 等 が ど の bucket に 入 る か 不 明 (= 4 region で 足 り な い)。
-
-**impl AI 影 響**: impl AI が §4 を fill す る 時、 §2 と 引 数 数 が 違 う signature を 実 装 し て runtime ↔ WASM boundary 不 整 合、 ま た は linear memory layout を 「4 region」 で fix し て 既 ratify な 5 種 以 上 の sub-region を 落 と し、 後 か ら ringbuffer 入 ら ず 再 設 計 リ ス ク。 output channel pointer を args で 渡 す か pre-allocated linear memory 経 由 か も path が 割 れ る。
-
-**判 断 軸**: emit 関 数 signature と per-block I/O step を 1 か 所 で 集 約 declare し、 §4 と §2 を そ こ に zip 推 奨 (= input/output channel / param array / message queue の 4 種 I/O 経 路 を signature レ ベ ル で 明 文 化)。 linear memory layout の sub-region は 「state / scratch / queue regions に 加 え て 既 ratify な ringbuffer / snapshot / publish shared region を 全 列 挙」 path で zip。
 
 ---
 

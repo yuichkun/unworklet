@@ -183,11 +183,32 @@ A separate runtime check (not graph-capture / static-analysis) fires when the wo
 
 ## 4. WASM emission phase
 
-<!-- binaryen.js (or custom emitter):
-     - exported function `process(blockPtr, paramPtrs, messagePtr) -> void`
-     - linear memory layout (state | buffers | I/O scratch | queue regions)
-     - no memory.grow
-     - math intrinsics inlined per Q17 (= polynomial approximation, resolution in 01-dsl.md §2). -->
+<!-- Emission target (binaryen.js or custom emitter).
+
+     Exported entry — the signature reflects the 4 per-block I/O paths the
+     runtime marshals (04-worklet-runtime §2):
+       process(inputChannelsPtr, outputChannelsPtr, paramArraysPtr, messageQueuePtr) -> void
+
+     Linear memory layout — sized at build time from auto-summed declarations
+     (Q30); all sub-regions pre-allocated at instantiation. Sub-region set:
+       1. state slots (Q5 — scalar `state.<T>` persisted across quanta)
+       2. buffer slots (Q5 — fixed-size arrays persisted across quanta)
+       3. I/O scratch (per-quantum input / output channel + param array views)
+       4. event<T> / message<T> ringbuffers (Q27-d — SAB when available)
+       5. event<T> / message<T> payload content buffers (Q27-e — variable-length)
+       6. MIDI ringbuffer (Q4-c — uniform with event<T> ringbuffer)
+       7. sysex content buffer (Q4-c-iii — paired with MIDI ringbuffer)
+       8. state.publish / buffer.publish shared regions (Q27-a — SAB per slot)
+       9. per-slot publish counters (§7 — initialized to 0 at instantiation)
+       10. snapshot region (Q5 — block-atomic memcpy target for `node.snapshot()`)
+
+     Realtime-safety contracts:
+       - `memory.grow` opcode never emitted into the worklet's WASM (§2.6 Emission)
+       - math intrinsics inlined per Q17 (polynomial approximation, WASM-only,
+         no FFI / JS-WASM per-sample boundary crossings)
+
+     Per-sub-region byte layout, emit ordering, and emitter IR shape detail is
+     impl-phase fill per Q61. -->
 
 ## 5. Worklet JS codegen
 
