@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 58 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 57 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 23 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 34 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 33 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -308,7 +308,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P2 — 仕様 invariant + lifecycle (34 件)
+## P2 — 仕様 invariant + lifecycle (33 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -451,18 +451,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI agent が canonical を 「surface の 完 結 形 sample」 と 信 じ て 実 code を 読 む と、 (a) event<T> 規 範 emit 形 が Ex 4 / Ex 6 / Ex 8 だ け で Ex 5 ナ シ = Ex 5 を referent と し て emit shape を 取 ろ う と し た agent が source を 見 失 う、 (b) dispose の 規 範 sample が コ メ ン ト ア ウ ト 行 だ け = 「dispose は example で 触 れ な い surface」 と 誤 読 す る possibility。 12 冒 頭 prose ル ー ル を strict に 取 れ ば canonical が ル ー ル 違 反 で 書 き 直 し 必 要、 緩 め に 取 れ ば canonical の 「self-contained」 主 張 が 単 な る 修 辞 と な る。
 
 **判 断 軸**: 12 冒 頭 prose ル ー ル を そ の ま ま 規 律 と し て 採 用 し、 (1) Ex 5 grain spawn 部 を inline 完 結 で 書 く (= build-time for + select chain で 全 voice 展 開)、 (2) Ex 1 で `unsubL(); unsubR(); node.dispose();` を non-comment の 実 行 行 と し て 入 れ る path に 寄 せ る か、 prose ル ー ル を 「illustrative comment / commented-out teardown は 許 容」 に 緩 め て 12 冒 頭 文 言 を 改 訂 す る か。 前 者 推 奨 (= self-contained が canonical の integrity anchor 性 質)。
-
----
-
-## `replaceProcessor` の generic 並 び が `<New>` か `<Old, New>` か 仕 様 か ら 一 意 で な い
-
-**場 所**: `docs/decisions-log.md:38`、 `docs/decisions-log.md:2050`、 `docs/05-client.md:316-319`
-
-**何 が 起 き て い る か**: decisions-log Q50 summary table 行 (L38) は signature を 「`replaceProcessor(oldNode: UnworkletNode<Old>, newProcessor: New): Promise<ReplaceResult<New>>`」 と 書 き、 第 一 引 数 で `UnworkletNode<Old>` を 取 る = generic は `<Old, New>` 2 個 必 要。 一 方 同 Q50 本 文 (L2050) と 05-client.md §8.1 (L316-319) は 「`replaceProcessor(oldNode, NewProcessor)`」 で `Old` generic 明 示 ナ シ。 summary table と prose で 同 一 API の generic 並 び が 別 形 = 「型 declaration 単 一 source」 が 失 わ れ て い る。
-
-**impl AI 影 響**: impl AI が TS signature を 起 こ す 時、 (a) summary table strict で `<Old, New>` 2 個 generic を 持 つ signature を 出 し、 (b) 本 文 strict で `<New>` 1 個 で `oldNode: UnworkletNode<any>` 形 に 寄 せ、 (c) 「`Old` は 推 論」 で `<Old extends ..., New>` 等 中 間 形 を 自 力 で 補 う、 で 3 way に 分 か れ る。 「declarations 変 化 (rename 等) は typed `.d.ts` 経 由 で TS error と し て consumer code に 即 露 出」 (Q50 本 文 prose) を 守 る path は (a) / (c) で 違 い、 出 力 `.d.ts` の TS error 動 作 が 仕 様 で 一 致 し な い。
-
-**判 断 軸**: `Old` generic を signature に 載 せ る か decide し、 summary table と 本 文 を 1 形 に 揃 え る。 「`<Old, New>` で `UnworkletNode<Old>` を 受 け る」 path 採 用 な ら typed declaration 変 化 の TS error 露 出 path が 強 ま る (= old/new で declaration 違 え ば param key 不 一 致 が TS error)。 「`<New>` 1 個 で oldNode は `UnworkletNode<unknown>`」 path な ら error path が runtime 寄 り に な る。
 
 ---
 

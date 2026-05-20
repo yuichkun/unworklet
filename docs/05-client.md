@@ -344,6 +344,8 @@ Multi-stage layouts where each stage has different lookahead requirements follow
 
 ### 8.1 Signature
 
+`replaceProcessor` takes 2 generic params: `Old` (= the running node's declarations) and `New` (= the new processor's declarations). Both are inferred from the call site; declarations drift between old and new (rename / add / delete) surfaces in the typed `.d.ts` as TS errors at `result.node.<member>` access. Conceptually `replaceProcessor<Old, New>(oldNode: UnworkletNode<Old>, newProcessor: CompiledProcessor<New>): Promise<ReplaceResult<New>>` — concrete TS signature detail (= generic constraint shape, `extends` bounds) is impl-phase fill per Q53.
+
 ```typescript
 import { replaceProcessor } from '@unworklet/core';
 
