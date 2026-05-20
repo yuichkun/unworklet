@@ -917,10 +917,10 @@ unworklet exposes WASM SIMD as a separate, opt-in surface via the import path `@
 import { defineProcessor, state, add, mul } from '@unworklet/core';
 
 // SIMD-using author — separate import path
-// vec4 / splat / addVec / mulVec / subVec / divVec are free functions.
+// vec4 / splat / addVec / mulVec / subVec / divVec / sumLanes are free functions.
 // Lane access (`vec.lane(i)`) and SIMD buffer access (`buf.loadVec` / `buf.storeVec`)
 // are methods on the value/handle, not free functions.
-import { vec4, splat, addVec, mulVec } from '@unworklet/core/simd';
+import { vec4, splat, addVec, mulVec, sumLanes } from '@unworklet/core/simd';
 ```
 
 ### 7.2 v1.0.0 surface (Minimal MVP)
@@ -951,6 +951,14 @@ type Vec4Methods = {
 ```
 
 `vec.lane(i)` extracts one lane from a `Node<'f32x4'>`. The index `i` must be a compile-time constant `0 | 1 | 2 | 3`; non-constant indices are a graph-capture-time error.
+
+#### Horizontal reduction
+
+```typescript
+sumLanes(v: Node<'f32x4'>): Node<'f32'>;
+```
+
+`sumLanes(v)` collapses a 4-lane vec to a scalar by summing all four lanes. The framework emits a shuffle + add sequence (WASM SIMD has no direct float horizontal-reduce instruction; the lowering is equivalent to `add(add(v.lane(0), v.lane(1)), add(v.lane(2), v.lane(3)))` but expressed as a single primitive at the call site). Typical use: 4-tap FIR / dot product / per-block accumulator collapse (Q59, `decisions-log.md`).
 
 #### Memory
 

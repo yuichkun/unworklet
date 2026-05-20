@@ -67,6 +67,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q56 | Handler body の expression scope (= L1-b、 Q51 followup) | resolved — `messageDecl.onReceive(...)` / `midiInput().onEvent(...)` handler body の expression scope rule を `forSample` callback と 完 全 一 致 さ せ る (= primitive op / `state.load/store` / buffer access / audio I/O `audioIn.at` / `audioOut.set` / `param.at` / `emitIf` / subgraph methods / L1 helpers が 全 て legal、 新 規 declaration `state.*` / `buffer.*` / `param.*` / `createSubgraph(...)` は 不 可); sample-offset 引 数 は `Node<'i32'> | number` を 一 律 受 け 入 れ (= handler arg の `atSample` / state slot value / buffer read / JS literal の ど れ も OK)、 surrounding `forSample` の `i` だ け が scope 外 (= 既 規 定 通 り、 handler は forSample の 前 に drain); `01-dsl.md` §4.2 L500 「Inside a handler, only state writes, buffer writes, and scalar arithmetic are allowed」 prose を 「same expression-scope rules as a forSample callback」 に 書 き 換 え、 §4.1 / §5.6.4 / §6 / Q32 既 規 定 と 整 合 (= L500 が 唯 一 の 狭 prose だ っ た dangling 解 消); 案 (d) 一 切 禁 止 (= state 書 き 込 み 専 用 segment) 棄 却 (= user に 覚 え る context rule を 1 個 追 加、 forSample / handler の 2 種 別 ル ー ル、 公 開 surface の 概 念 量 増、 no-artificial-constraint 違 反); 案 (a) JS literal だ け / (b) `Node<'i32'>` だ け も 不 自 然 例 外 規 則 で 棄 却 | `01-dsl.md` §4.2 + `02-messaging.md` §1 + `11-midi.md` §2.3 + `00-foundations.md` §3 (Expression scope、 既 整 合) + Q22 / Q32 / Q36 / Q51 |
 | Q57 | `createNode({ restore })` option 廃 止 (= L2-c) | resolved — `CreateNodeOptions<C>.restore?: Uint8Array` を v1.0.0 surface か ら 廃 止、 `createNode` 戻 り 値 形 は 常 に `Promise<UnworkletNode<C>>` で 統 一、 snapshot 復 元 は `createNode` → `await node.restore(blob)` の **2 step pattern** が canonical (= Q45 `RestoreResult` discriminated union で 失 敗 surface 取 得); 案 (A) 戻 り 値 を `{ node, restore }` に 拡 張 棄 却 (= restore option 渡 し た 時 だ け wrap 形 = 戻 り 値 形 が option 有 無 で 2 種、 TS overload 2 種 増、 surface 概 念 量 増)、 案 (B) `onError` event で 通 知 棄 却 (= error event は worklet trap / queue overflow 等 の **起 動 後 非 同 期 event** 用、 migration throw は **node 起 動 時 の 同 期 flow** で 性 質 違 う、 mental model 衝 突); canonical Ex 群 で `createNode({ restore })` 使 用 ナ シ = consumer は 既 に 2 step pattern で 書 い て い る fact、 ergonomic loss は +1 行 軽 微; v1.x.0 で 「1 step」 必 要 性 出 た ら additive 追 加 可 | `05-client.md` §1 + `13-offline-render.md` §2 / §4 + Q45 |
 | Q58 | L1 helper の nested `forSample` 明 示 化 (= L2-d、 旧 L3-b) | resolved — L1 helper 内 で `forSample(...)` 呼 び + caller が `forSample` 内 か ら helper 呼 ぶ pattern (= 暗 黙 nested forSample) を **v1.0.0 で 認 め る + spec 明 文 化**、 直 接 `forSample` 内 で `forSample` を 呼 ぶ pattern も 同 様 に legal (= §10.3 既 wording の 自 然 帰 結); 内 外 callback は 別 関 数 の 引 数 で `i` は 独 立、 RT-safe 静 的 解 析 は 内 外 両 方 の forSample に `SAMPLES_PER_BLOCK` bounded-loop check を 独 立 適 用 (= 既 invariant Q22 / Q29 の 自 然 拡 張、 新 ル ー ル ナ シ); 案 (B) 禁 止 棄 却 (= helper の 呼 び 位 置 で 動 作 変 化 = 関 数 抽 象 の 漏 れ、 §10.3 既 wording と も 衝 突)、 案 (C) canonical Ex 追 加 棄 却 (= v1.x.0 で 必 要 性 出 た ら L4-d / L4-e voice-allocation / overlap-add と 同 軸 で recipe 追 加、 v1.0.0 ship 必 須 で は な い); 計 算 量 (= 128 × 128 = 16384 sample ops / quantum) は user の 設 計 責 任、 docs prose で 1 行 注 意 喚 起 | `01-dsl.md` §5.5.5 + §10.3 + Q22 / Q29 |
+| Q59 | SIMD `sumLanes` を v1.0.0 で 出 す (= L3-a) | resolved — `@unworklet/core/simd` か ら `sumLanes(v: Node<'f32x4'>): Node<'f32'>` を v1.0.0 export、 §7.2 MVP surface に 「Horizontal reduction」 sub-section と し て Lane access の 後 ろ に 追 加; 4 lane を 1 scalar に collapse す る natural な 終 端 操 作、 4-tap FIR / dot product / per-block accumulator collapse 等 SIMD 主 要 use case で 累 積 ergonomic 利 益 (= 4 行 → 1 行); framework emit は shuffle + add (= WASM SIMD spec に float horizontal reduce 直 接 ナ シ)、 性 能 は 案 (B) 案 と ほ ぼ 同 等 で ergonomic 利 益 が 主; canonical Ex 3 / Ex 7 で 既 に 4 行 pattern を 3 箇 所 で 書 い て い た fact (= 既 知 必 要、 v1.x.0 defer は [[no-preemptive-defer]] 違 反 リ ス ク)、 同 commit で 3 箇 所 を `sumLanes(...)` に rewrite (= AGENTS.md HARD CONTRACT 整 合); 案 (B) v1.x.0 defer 棄 却 (= SIMD primitive family と は 別 軸 で lane access の 終 端 操 作 = 単 独 primitive、 既 知 必 要 を defer す る 根 拠 ナ シ) | `01-dsl.md` §7.1 + §7.2 + `12-canonical-examples.md` Ex 3 / Ex 7 |
 
 ---
 
@@ -2477,4 +2478,46 @@ L1 helper 内 で `forSample(...)` 呼 び + caller が `forSample` 内 か ら 
 - canonical Ex 群 で nested forSample 使 用 ナ シ = AGENTS.md HARD CONTRACT 整 合 確 認 済 み (= 触 ら ず)
 - `open-questions.md` か ら L2-d entry 削 除、 **Layer 1 件 数 0 = Layer 1 section の dangling 全 解 消**、 section heading は retain し て 「該 当 entry ナ シ」 prose を 入 れ る (= 後 続 grill で 新 規 dangling 発 見 時 の 受 け 皿)
 - TaskList #90 (L2-d) completed
+
+---
+
+## Q59 — SIMD `sumLanes` を v1.0.0 で 出 す (= L3-a)
+
+**Status:** resolved.
+
+### Problem
+
+`@unworklet/core/simd` の v1.0.0 MVP surface (= `01-dsl.md` §7.2) に は `vec4` / `splat` / `addVec` / `subVec` / `mulVec` / `divVec` / `vec.lane(0..3)` / `buf.loadVec` / `buf.storeVec` が 並 ぶ。 4 lane を 1 scalar に collapse す る 「horizontal reduction」 primitive (= `sumLanes(v: Node<'f32x4'>): Node<'f32'>`) を v1.0.0 surface に 含 め る か、 v1.x.0 へ defer す る か が 未 決。 SIMD 主 要 use case (= 4-tap FIR / dot product / per-block accumulator collapse) で 「vec → scalar」 collapse が 出 る た び、 user は `add(add(v.lane(0), v.lane(1)), add(v.lane(2), v.lane(3)))` の 4 行 を 書 く こ と に な る。
+
+### Decision
+
+`sumLanes(v: Node<'f32x4'>): Node<'f32'>` を **v1.0.0 で export**。 `@unworklet/core/simd` の MVP surface に Lane access の 直 後 「Horizontal reduction」 sub-section と し て 追 加。
+
+仕 様 invariant:
+
+- **戻 り 値**: 4 lane の sum を `Node<'f32'>` で 返 す (= `v.lane(0) + v.lane(1) + v.lane(2) + v.lane(3)` と 数 値 的 等 価)
+- **WASM emit**: framework が shuffle + add に lowering (= WASM SIMD spec に float horizontal reduce 直 接 ナ シ)、 性 能 は 4 行 形 と ほ ぼ 同 等、 利 益 は ergonomic
+- **公 開 surface**: free function、 import path = `@unworklet/core/simd`
+
+### Why this and not alternatives
+
+**判 断 軸** = 既 知 必 要 性 + ergonomic 利 益 の cumulative 累 積 + minimal 哲 学 と の 整 合。
+
+- **案 A (= 採 用)**:
+  - canonical Ex 3 / Ex 7 で 既 に 3 箇 所 で 4 行 pattern を 使 っ て い る fact = 主 要 use case で 既 知 必 要
+  - 既 `vec.lane(0..3)` の natural な 終 端 操 作 (= lane 個 別 ア ク セ ス を SIMD 全 体 で 1 scalar に collapse す る) で、 minimal 哲 学 か ら 外 れ な い (= SIMD 概 念 の 自 然 帰 結、 toolbox 化 で は な い)
+  - v1.x.0 で 追 加 し て も 同 じ surface 1 個 増、 い ま 入 れ る か v1.x.0 か の 差 は 「user が SIMD を 触 り 始 め た 瞬 間 か ら 1 行 で 書 け る か」 だ け
+- **案 (B) v1.x.0 defer** 棄 却:
+  - 既 知 必 要 を defer す る = [[no-preemptive-defer]] 違 反 リ ス ク
+  - SIMD primitive family (= comparison / mask / shuffle / gather / scatter / f64x2 / i32x4) の v1.x.0 拡 張 と は **別 軸** (= lane access の 終 端 操 作 で 単 独 primitive)、 family と し て の v1.x.0 batch に 含 め る 根 拠 が 弱 い
+  - canonical Ex で 既 に 4 行 pattern を 書 い て い る = consumer が v1.x.0 ま で 4 行 pattern を 継 続 = 既 知 不 便 を 課 す
+
+### Side effects
+
+- `01-dsl.md` §7.1 prose + SIMD-using import 例 に `sumLanes` 追 加 (= 「vec4 / splat / addVec / mulVec / subVec / divVec / sumLanes are free functions」)
+- `01-dsl.md` §7.2 Lane access sub-section の 直 後 に 「Horizontal reduction」 sub-section 新 規 追 加 (= signature + lowering note + typical use 例 を 1 段 落)
+- `01-dsl.md` §7.3 「Beyond v1.0.0 (deferred)」 = 既 list に sumLanes 不 在 = 触 ら ず (= v1.0.0 採 用 で 整 合)
+- `12-canonical-examples.md` Ex 3 (L315) と Ex 7 (L869 / L870) の 3 箇 所 で 4 行 pattern を `sumLanes(...)` 形 に rewrite、 Ex 3 / Ex 7 の SIMD import 文 (L269 / L804) に `sumLanes` 追 加 = AGENTS.md HARD CONTRACT 整 合
+- `open-questions.md` か ら L3-a entry 削 除、 **Layer 2 件 数 0 = Layer 2 additive section の 残 entry 全 解 消**、 section heading は retain し て 「該 当 entry ナ シ」 prose を 入 れ る
+- TaskList #66 (L3-a) completed
 

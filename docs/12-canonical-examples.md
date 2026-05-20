@@ -266,7 +266,7 @@ import {
   add, sub, mul, mod, abs, max,
   type Node,
 } from '@unworklet/core';
-import { vec4, splat, mulVec, addVec } from '@unworklet/core/simd';
+import { vec4, splat, mulVec, addVec, sumLanes } from '@unworklet/core/simd';
 
 // Linear-phase EQ via 3 partitioned FIR taps over a single combined impulse.
 // Impulse buffer is precomputed in main and uploaded; this processor hosts the
@@ -312,7 +312,7 @@ export const linearPhaseEQ = defineProcessor(() => {
           const iVec = impulse.loadVec(k);
           acc        = addVec(acc, mulVec(hVec, iVec));
         }
-        const sum = add(add(acc.lane(0), acc.lane(1)), add(acc.lane(2), acc.lane(3)));
+        const sum = sumLanes(acc);
         out.set(0, i, sum);
       });
 
@@ -801,7 +801,7 @@ import {
   forSample, message, SAMPLES_PER_BLOCK,
   add, sub, mul, mod, max, abs, type Node,
 } from '@unworklet/core';
-import { vec4, splat, mulVec, addVec } from '@unworklet/core/simd';
+import { vec4, splat, mulVec, addVec, sumLanes } from '@unworklet/core/simd';
 
 const IR_LEN          = 4096;     // ~85ms @ 48kHz
 const NUM_PARTITIONS  = IR_LEN / SAMPLES_PER_BLOCK;     // 32
@@ -866,8 +866,8 @@ export const convolutionReverb = defineProcessor((ctx) => {
           accL = addVec(accL, mulVec(hL, iL));
           accR = addVec(accR, mulVec(hR, iR));
         }
-        const sumL = add(add(accL.lane(0), accL.lane(1)), add(accL.lane(2), accL.lane(3)));
-        const sumR = add(add(accR.lane(0), accR.lane(1)), add(accR.lane(2), accR.lane(3)));
+        const sumL = sumLanes(accL);
+        const sumR = sumLanes(accR);
 
         const dryL = mul(main.at(0, i), dryGain.at(0));
         const dryR = mul(main.at(1, i), dryGain.at(0));

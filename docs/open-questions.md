@@ -56,15 +56,7 @@ unworklet の pillar:
 
 ## Layer 2 — additive surface (v1.x.0 OK 寄 り)
 
-### L3-a. SIMD horizontal reduce (`sumLanes`) を v1.0.0 で 出 す か
-
-**何 が 未 決** — `Node<'f32x4'>` の 4 lane 合 計 を 返 す primitive (`sumLanes(v): Node<'f32'>`) を v1.0.0 SIMD surface に 入 れ る か。 v1.x.0 で additive に 入 れ ら れ る。
-
-**な ぜ こ の 位 置 (= Layer 2)** — 公 開 surface decide だ が、 含 め な い 選 択 で も impl AI は 仕 様 通 り 含 め ず に 動 け る = impl 矛 盾 リ ス ク 低 い。 v1.x.0 で additive に 追 加 可。
-
-**ど の doc が 触 れ る** — `01-dsl.md` §7.2 / §7.3、 `03-compiler.md` §4。
-
-**Pillar 関 連** — P5 (minimal = 入 れ な い 方 が pure)、 P2。
+(現 在 該 当 entry ナ シ — Q59 (= L3-a sumLanes) で 全 ratify 完 了。 後 続 grill で 新 規 additive surface 候 補 が 出 た 場 合 は こ こ に 追 加 す る)
 
 ---
 
