@@ -2,11 +2,11 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 108 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 107 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 38 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 60 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
-- **P3 = 10 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
+- **P3 = 9 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
@@ -1209,19 +1209,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P3 — prose 揺れ / mechanical sweep (10 件)
-
-## `subscribe` / `onEvent` / `on` の return 値 が unsubscribe で 揃 え て あ る か
-
-**場 所**: `docs/05-client.md:43-50`、 `docs/12-canonical-examples.md:120`、 `docs/12-canonical-examples.md:127`、 `docs/12-canonical-examples.md:788`、 `docs/12-canonical-examples.md:1228`
-
-**何 が 起 き て い る か**: prose で `subscribe(handler) → unsubscribe` だ け が return 形 明 言、 `onEvent(type, handler) → unsubscribe` は 「→ unsubscribe」 と 書 い て あ る が `events.<name>.on(handler)` は 戻 り 値 declare ナ シ。 canonical Ex 1 で subscribe の 戻 り 値 を 受 け て call で unsubscribe す る pattern は あ る が、 onEvent / on は canonical で 戻 り 値 を 受 け 取 ら な い 例 し か な い。
-
-**impl AI 影 響**: impl AI は (a) 3 surface 全 て unsubscribe function 返 す 統 一、 (b) subscribe だ け 返 す、 で 判 断 が 割 れ る。
-
-**判 断 軸**: 全 surface を unsubscribe 返 し で 揃 え る path に 一 本 化 す る か。
-
----
+## P3 — prose 揺れ / mechanical sweep (9 件)
 
 ## `createNode({ initial })` が param 専 用 か state も 受 け る か
 
