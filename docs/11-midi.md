@@ -117,18 +117,19 @@ The exact set of variants and their fields is closed at v1.0.0. New variants (e.
 
 ### 2.3 `atSample` is always present
 
-Every handler argument carries `atSample` — the sample-offset within the current render quantum at which the event arrived. Handlers fire **at that sample-offset, not at block boundary**, so MIDI-driven events maintain sample accuracy through the full ingestion path.
+Every handler argument carries `atSample` — the sample-offset within the current render quantum at which the event arrived. **Handlers themselves drain at the block boundary (Q38-b: all message + MIDI handlers run before any per-block top-level statement or `forSample`)** — the `atSample` field carries sample accuracy as data into the audio-thread graph rather than as a handler-firing time. Sample-accurate behavior is recovered by the canonical state-slot pattern: the handler stores the event details + `atSample` into `state` slots, then a subsequent `forSample` invocation compares `i` against the stored offset to gate sample-accurate work.
 
 ```typescript
 midiIn.onEvent('noteOn', ({ note, atSample }) => {
   // atSample tells us "this noteOn arrived 47 samples into the current block"
-  // → trigger the envelope from this sample onward, not the block boundary
+  // The handler runs at the block boundary (Q38-b); to trigger the envelope
+  // at sample 47, store atSample into a state slot and gate in forSample.
 });
 ```
 
 Concurrent events at the same sample-offset are processed in arrival order on the wire.
 
-All numeric fields the handler receives — `atSample`, `note`, `velocity`, `channel`, etc. — are `Node<'i32'>` graph-capture values (= the `MidiEventGraph` shape of §2.2). `atSample` specifically is in the same dimension as the `i` parameter of a `forSample` callback (see `01-dsl.md` §10). The handler body runs at the firing sample (the sample whose offset matches `atSample`); typically the handler stores the event details into `state` slots, and a subsequent `forSample` invocation compares `i` against the stored offset for sample-accurate trigger:
+All numeric fields the handler receives — `atSample`, `note`, `velocity`, `channel`, etc. — are `Node<'i32'>` graph-capture values (= the `MidiEventGraph` shape of §2.2). `atSample` specifically is in the same dimension as the `i` parameter of a `forSample` callback (see `01-dsl.md` §10). The canonical sample-accurate trigger pattern below stores `atSample` into a state slot at block-boundary drain time, then compares `i` against it inside a `forSample`:
 
 ```typescript
 defineProcessor((ctx) => {
@@ -330,7 +331,7 @@ Pointers into the ring buffer are slot-indexed (`head` and `tail` increment by 1
 
 `atSample` is the sample-offset **within the current render quantum** (block-local) where the event fires. Valid values are 0 through `SAMPLES_PER_BLOCK - 1`; the field is stored as `u32` for headroom against block-size variation.
 
-A handler subscribed via `midiIn.onEvent` fires at the sample identified by `atSample`, not at the block boundary — sample accuracy is preserved end-to-end. A consumer that needs an absolute timestamp can derive it from `audioContext.currentTime + atSample / sampleRate`.
+A handler subscribed via `midiIn.onEvent` drains at the block boundary (Q38-b — all message + MIDI handlers run before any per-block top-level statement or `forSample`); the `atSample` field is carried into the handler arg as a graph-capture `Node<'i32'>`, and sample accuracy is recovered via the state-slot pattern (§2.3) — store `atSample` into a state slot at handler time, gate per-sample work in `forSample` against the stored offset. A consumer that needs an absolute timestamp can derive it from `audioContext.currentTime + atSample / sampleRate`.
 
 The compiler converts the `atTime` parameter passed to `node.midi.<name>.send(event, atTime)` into the corresponding block-local `atSample` value at injection time.
 

@@ -2,15 +2,15 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 81 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 80 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 29 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 28 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 51 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
-## P1 — ship blocker 系 (29 件)
+## P1 — ship blocker 系 (28 件)
 
 ### cluster (1) 型 system core (3)
 
@@ -165,18 +165,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 ---
 
 ### cluster (4) handler / drain / boundary timing (9)
-
-## MIDI handler が 発 火 す る 時 点 が 「該 当 sample」 か 「block 開 始 時 一 括」 か prose が 自 己 矛 盾
-
-**場 所**: `docs/11-midi.md:120`、 `docs/11-midi.md:131`、 `docs/11-midi.md:142-143`、 `docs/11-midi.md:161`、 `docs/11-midi.md:333`、 `docs/02-messaging.md:23`
-
-**何 が 起 き て い る か**: 11-midi.md §2.3 / §4.2 と 02-messaging.md §1 で 「handler fires at that sample-offset, not at block boundary」 「The handler body runs at the firing sample」 「sample-accurate projection of incoming messages」 と sample-accurate 発 火 を 主 張 す る prose が 複 数 並 ぶ。 一 方 で 01-dsl.md §4.2 と 02-messaging.md §1 別 段 落 は 「all registered handlers across all messages and MIDI inputs drain first, before any per-block top-level statement or `forSample` runs」 と 「block 開 始 時 一 括 drain」 を declare。 同 一 §2.3 内 (= L120 / L131 / L142-143 が sample-accurate 発 火、 L161 が 「envelope computation runs in `forSample` regardless」 = forSample 側 で 受 け 直 す canonical) で 自 己 矛 盾。
-
-**impl AI 影 響**: 11-midi.md だ け 読 ん だ impl AI は handler を 各 sample 時 点 で dispatch す る 構 造 を WASM に emit し よ う と し、 01-dsl.md / 02-messaging.md の 「block 開 始 時 一 括 drain」 と 完 全 に 別 実 装 に な る。 audio-thread の dispatch コ ス ト / state 観 測 セ マ ン テ ィ ク ス / sample-accurate 性 達 成 path 全 体 が 揺 ら ぐ。
-
-**判 断 軸**: handler は 「block 開 始 時 一 括 drain、 sample-accurate 性 は handler が `atSample` を state slot に store + forSample 内 で `i == atSample` を gate す る path で 達 成」 が ratify 済 (= 既 entry 「handler body / forSample callback の 『runtime 実 行 形』 が WASM 内 か user TS か」 と zip)。 11-midi.md §2.3 全 体 と §4.2 末 尾 / 02-messaging.md §1 「sample-accurate projection」 prose を 「block 開 始 時 一 括 drain + payload の `atSample` field 経 由 で sample 精 度 を 後 段 に 引 き 継 ぐ」 表 現 に 統 一 す る path に 倒 す 推 奨。
-
----
 
 ## handler 先 行 drain と 「source 順」 ル ー ル の 関 係 が 章 ま た ぎ で 不 一 致
 
