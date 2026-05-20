@@ -79,7 +79,7 @@ The `.state.<name>` surface is **read-only on main**. Writing to a worklet-side 
     | {
         ok: false;
         error: {
-          step:    string;      // 'fromHash → toHash' label of the migration step that threw
+          step:    string;      // '<fromHash> -> <toHash>' label of the migration step that threw (ASCII arrow; hashes truncated to the first 8 chars for log readability)
           message: string;      // error message extracted from the thrown value
           cause:   unknown;     // the thrown value itself (typically an Error instance)
         };

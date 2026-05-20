@@ -2,11 +2,11 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 102 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 101 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 38 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 60 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
-- **P3 = 4 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
+- **P3 = 3 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
@@ -1209,7 +1209,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P3 — prose 揺れ / mechanical sweep (4 件)
+## P3 — prose 揺れ / mechanical sweep (3 件)
 
 ## SAB mode の event drain mechanism が doc ご と に 抽 象 level mismatch
 
@@ -1232,18 +1232,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI agent が Coverage table を 「surface 確 認 ガ イ ド と し て 各 Ex の 全 行 が 全 surface を exercise す る」 と 信 用 す る と、 (a) Ex 7 で copyFrom が canonical surface か 別 path か で 揺 れ、 (b) Ex 5 で snapshot lifecycle の sample を 探 し て 見 つ か ら ず docs 内 ジ ャ ン プ を 余 計 に 起 こ し、 (c) Ex 5/6/8 に sysex onEvent / Ex 6 に noteOff onEvent を 「必 須」 と 誤 読 す る possibility。 impl 矛 盾 と し て は 軽 度 だ が、 canonical 仕 様 整 合 性 anchor の integrity が 損 な わ れ る。
 
 **判 断 軸**: Coverage table の 各 行 で 「実 code で 該 当 surface を 1 度 で も 呼 ぶ Ex」 を re-scan し て 列 挙 を 修 正 す る path 推 奨。 ま た 「policy declaration 行 使」 と 「lifecycle 行 使」 を 別 行 に 分 け る か、 variant ご と に 行 を 細 分 化 す る か は 別 軸。
-
----
-
-## migration 失 敗 時 の `error.step` の 文 字 列 形 式 が doc 間 で 一 致 し て い な い
-
-**場 所**: `docs/05-client.md:78-83`、 `docs/decisions-log.md:1685-1688`、 `docs/01-dsl.md:1175`
-
-**何 が 起 き て い る か**: 05-client.md §2.6 (L80) の `error.step` field comment が 「`'fromHash → toHash' label of the migration step that threw`」 で arrow (U+2192) を 使 う 形 を 1 か 所 だ け declare。 decisions-log Q45 (L1685-1688) の `RestoreResult` 形 は `step: string` 列 挙 で 文 字 列 内 訳 を declare せ ず、 01-dsl.md §8.3.3 (L1175) も field 名 列 挙 だ け で format に 触 れ な い。 hash 表 現 (full / truncated)、 arrow 文 字 (ASCII `->` / unicode `→`)、 prefix の 有 無 が 1 か 所 (= 05-client.md) だ け で 規 定 さ れ docs 横 断 で zip し て い な い。
-
-**impl AI 影 響**: framework 実 装 で migration step throw 時 の `error.step` 文 字 列 を 組 み 立 て る 時、 (a) 05-client.md comment 通 り unicode arrow + full hash、 (b) ASCII arrow + truncated hash、 (c) hash 不 在 で index 表 現、 で path が 割 れ、 unit test 期 待 値 / consumer UI 解 析 が impl ご と に 別 物 に な る。
-
-**判 断 軸**: format を 1 か 所 (= 05-client.md §2.6 / decisions-log Q45 / 01-dsl.md §8.3.3 の どこ か) で 明 確 化 し 残 り を そ こ に zip。 arrow 文 字 は ASCII `->` 推 奨 (= log / unit test で escape 不 要、 platform 横 断 に 安 全)。 hash 表 現 は truncated (= 先 頭 8 文 字 等) で 表 示 性 と 一 意 性 の 均 衡 を 取 る か full で 衝 突 リ ス ク を 完 全 に 排 す か decide。
 
 ---
 
