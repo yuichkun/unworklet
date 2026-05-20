@@ -64,6 +64,8 @@ midiAccess.onstatechange = (e) => {
 };
 ```
 
+**Safari は Web MIDI API 非 サ ポ ー ト** (Apple 公 式 ス タ ン ス、 fingerprinting 懸 念)。 consumer は `navigator.requestMIDIAccess` を feature-detect し、 Safari で は `connectFromWebMIDI` を skip し て `node.midi.<name>.send(event)` source-agnostic injection (`11-midi.md` §3) 経 由 に fallback す る。 unworklet 内 部 の MIDI 処 理 自 体 (= worklet 内 / source-agnostic send / 全 declaration surface) は Safari で 動 く。
+
 #### B2. AudioContext lifecycle / sampleRate
 
 Consumers construct `new AudioContext(options)`. `latencyHint`, sample rate (host-determined: 44.1 / 48 / 96 kHz), and `audioCtx.resume()` calls (browser auto-play policy) live in consumer code. The context is passed into `createNode(audioCtx, MyProcessor)`; inside the worklet, the rate is exposed as `ctx.sampleRate` (compile-time constant per processor instance):
@@ -80,7 +82,7 @@ Cross-origin isolation (`Cross-Origin-Opener-Policy: same-origin` + `Cross-Origi
 
 ### Per-browser validation
 
-`Chromium × Firefox × Safari` × `{cross-origin isolated, not isolated}` is the validation matrix unworklet runs for every release. Quirks that fall **inside the boundary** are absorbed in a patch release if a browser update introduces new variance. Quirks that fall **outside the boundary** are documented in this section; consumer code is expected to handle them via the standard web platform APIs.
+`Chromium × Firefox × Safari` × `{cross-origin isolated, not isolated}` is the validation matrix unworklet runs for every release. Quirks that fall **inside the boundary** are absorbed in a patch release if a browser update introduces new variance. Quirks that fall **outside the boundary** are documented in this section; consumer code is expected to handle them via the standard web platform APIs. Web MIDI 標 準 (= B1) の 存 在 自 体 は unworklet の test 対 象 外 (= emission boundary 外 側、 consumer 責 任) — Safari セ ル で は `connectFromWebMIDI` を 含 ま な い smoke (= unworklet 内 部 機 能 + source-agnostic injection 経 路) で 検 証 す る (Q62, `decisions-log.md`)。
 
 ## 3. SharedArrayBuffer graceful degradation
 

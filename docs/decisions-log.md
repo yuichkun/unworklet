@@ -70,6 +70,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q59 | SIMD `sumLanes` を v1.0.0 で 出 す (= L3-a) | resolved — `@unworklet/core/simd` か ら `sumLanes(v: Node<'f32x4'>): Node<'f32'>` を v1.0.0 export、 §7.2 MVP surface に 「Horizontal reduction」 sub-section と し て Lane access の 後 ろ に 追 加; 4 lane を 1 scalar に collapse す る natural な 終 端 操 作、 4-tap FIR / dot product / per-block accumulator collapse 等 SIMD 主 要 use case で 累 積 ergonomic 利 益 (= 4 行 → 1 行); framework emit は shuffle + add (= WASM SIMD spec に float horizontal reduce 直 接 ナ シ)、 性 能 は 案 (B) 案 と ほ ぼ 同 等 で ergonomic 利 益 が 主; canonical Ex 3 / Ex 7 で 既 に 4 行 pattern を 3 箇 所 で 書 い て い た fact (= 既 知 必 要、 v1.x.0 defer は [[no-preemptive-defer]] 違 反 リ ス ク)、 同 commit で 3 箇 所 を `sumLanes(...)` に rewrite (= AGENTS.md HARD CONTRACT 整 合); 案 (B) v1.x.0 defer 棄 却 (= SIMD primitive family と は 別 軸 で lane access の 終 端 操 作 = 単 独 primitive、 既 知 必 要 を defer す る 根 拠 ナ シ) | `01-dsl.md` §7.1 + §7.2 + `12-canonical-examples.md` Ex 3 / Ex 7 |
 | Q60 | Trivial repo settings batch (= L4-c × 4: monorepo tool + license + npm scope + TypeScript minimum) | resolved — (1) monorepo tool = pnpm workspaces (= VitePlus が user 選 択 で pnpm / npm / yarn / bun を wrap、 unworklet は pnpm 採 用、 root `pnpm-workspace.yaml` + root `package.json` の `packageManager: pnpm@<version>` + cross-package ref は `workspace:*` protocol、 開 発 / CI 起 動 は 全 て `vp` CLI 経 由 で AGENTS.md HARD CONTRACT)、 (2) license = MIT、 (3) npm scope = `@unworklet` (= 余 湖 さ ん npm account で 既 確 保)、 (4) TypeScript minimum = 5.5; trivial 設 定 値 (= 余 湖 さ ん の 既 取 得 / 既 嗜 好 で 決 ま る 値、 impl AI agent は 確 定 値 を 設 定 す れ ば 矛 盾 出 な い) を batch ratify | `09-repo-structure.md` §1 / §3 / §4 / §5 |
 | Q61 | Placeholder section 群 = impl 期 owner 任 せ 明 文 化 (= L4-a) | resolved — 各 doc の `<!-- placeholder -->` section (= 大 半 が internal implementation spec、 公 開 surface で は な い) は impl 開 始 時 に 各 doc owner が 順 次 fill す る 方 針 と し て docs 化、 v1.0.0 spec freeze 前 に 全 部 drain ナ シ; 統 一 注 釈 prose の 各 placeholder へ の 散 布 は L4-M4 sweep の 領 域 で 後 続 batch、 ratify 自 体 は こ の entry で 完 結; `09-repo-structure.md` §6 (= versioning policy) は Q14 acceptance criteria 連 動 で Q61 範 疇 外 | `00-foundations.md` §6 + `03-compiler.md` §1 / §3〜§8 + `04-worklet-runtime.md` §1 / §2 / §8 + `05-client.md` §3 / §4 + `06-testing.md` §2〜§5 + `07-vite-plugin.md` §2 / §3 / §5 / §6.x + `08-deployment.md` §3 / §4 + `10-roadmap.md` §1 / §2 / §3.2 + `13-offline-render.md` §2.x / §3 |
+| Q62 | v1.0.0 acceptance criteria (= L4-b、 Q14) | resolved — `10-roadmap.md` §1 を fill、 9 項 目 checklist (= A1 vp build / A2 canonical 全 WASM emit / A3 vp check / B1 canonical 期 待 output offline 再 現 / B2 pure JS ↔ WASM bit-exact / C1 realtime-safety 5 invariants layered 検 出 / D1 browser × isolated 6 セ ル smoke / E1 L4-M sweep 完 了 / E2 Layer 1〜3 = 0 / F1 .d.ts ↔ Q1-Q62 整 合) で impl AI agent が ship 可 否 を 1 意 判 定 可; browser matrix = (β) Chromium + Firefox + Safari × {COOP/COEP cross-origin isolated, not isolated} = 6 セ ル full required、 D1 smoke test 仕 様 で `connectFromWebMIDI` (= Web MIDI 標 準 wrapper) は test 対 象 外 (= emission boundary 外 側 = consumer 責 任、 Q11 整 合)、 全 browser セ ル で `node.midi.<name>.send(event)` source-agnostic injection 経 由 で MIDI 動 作 を 統 一 検 証; Safari Web MIDI 非 サ ポ ー ト = unworklet 側 実 装 変 更 ナ シ (= consumer が `navigator.requestMIDIAccess` を feature-detect す る path)、 `08-deployment.md` §2 B1 に Safari 制 約 1 段 落 補 強 + Per-browser validation prose に 1 文 補 強; 案 (α) Chrome + Firefox 4 セ ル / 案 (γ) Safari best-effort 棄 却 (= Safari の core 制 約 は Web MIDI に 限 定、 unworklet 自 体 は Safari で 動 く た め full required 達 成 可 能) | `10-roadmap.md` §1 + `08-deployment.md` §2 B1 + Q11 |
 
 ---
 
@@ -2583,4 +2584,50 @@ trivial 設 定 値 = 余 湖 さ ん の 既 取 得 / 既 嗜 好 で 決 ま 
 
 - 各 placeholder section へ の 統 一 注 釈 prose (= 「impl 開 始 時 に 当 該 module owner が fill、 v1.0.0 spec freeze は 妨 げ な い」 形 式) の 散 布 は **L4-M4 sweep の 領 域** で 後 続 batch、 ratify 自 体 は こ の entry で 完 結
 - TaskList #99 (L4-a) completed
+
+---
+
+## Q62 — v1.0.0 acceptance criteria (= L4-b、 Q14)
+
+**Status:** resolved.
+
+### Decision
+
+`10-roadmap.md` §1 を fill。 9 項 目 checklist (= A1〜A3 build/compile + B1〜B2 functional + C1 safety + D1 browser matrix + E1〜E2 integrity + F1 public surface integrity) で impl AI agent が ship 可 否 を 1 意 判 定 で き る 形 に。 1 項 目 で も 落 ち た ら ship 不 可、 全 項 目 OK で ship。
+
+各 項 目 の 内 容 は `10-roadmap.md` §1 を 権 威 と し て 参 照。 こ の Q62 entry は そ の 採 用 / 棄 却 決 定 を 記 録。
+
+### Browser matrix decision
+
+採 用 = **(β) Chromium + Firefox + Safari × {COOP/COEP cross-origin isolated, not isolated} = 6 セ ル full required** (= `08-deployment.md` §2 末 尾 Per-browser validation matrix と 整 合)。
+
+**D1 smoke test 仕 様** の重要 補 足:
+
+- `connectFromWebMIDI` (= Web MIDI 標 準 wrapper) は **smoke test 対 象 外** = unworklet の test 範 囲 で は な い (= Q11 ratify の emission boundary 外 側 = consumer 責 任 と 整 合、 `08-deployment.md` §2 B1)
+- 全 browser セ ル で `node.midi.<name>.send(event)` source-agnostic injection (= `11-midi.md` §3) 経 由 で MIDI 動 作 を 統 一 検 証 = Safari セ ル で も 同 path で 6/6 セ ル smoke pass 達 成 可
+- = Safari の Web MIDI 非 サ ポ ー ト は unworklet 側 実 装 変 更 を 要 さ な い (= consumer が `navigator.requestMIDIAccess` を feature-detect す る path、 unworklet 内 部 機 能 は Safari で 動 く)
+
+### Why this and not alternatives
+
+- **案 (α) Chromium + Firefox 4 セ ル** 棄 却:
+  - Safari は AudioWorklet / SAB (15.2+) / WASM SIMD (16.4+) を 全 て サ ポ ー ト = unworklet の core 機 能 は Safari で 動 く fact
+  - Safari の core 制 約 は **Web MIDI 非 サ ポ ー ト** に 限 定 (= Q11 emission boundary 外 側 = unworklet の 問 題 で は な い)
+  - = Safari を validation matrix か ら 外 す 根 拠 が 弱 い、 (β) 達 成 可 能
+- **案 (γ) Safari best-effort + known limitations 棄 却**:
+  - 「best-effort」 = 曖 昧、 impl AI agent が 1 意 判 定 で き な い (= D1 smoke pass か / fail か 不 明 確)
+  - (β) で full required + Web MIDI 制 約 は 別 surface (= consumer 責 任) と 厳 密 規 定 す る 方 が clean
+- **Safari known issues の 確 認** (= 2026-05 時 点):
+  - Web MIDI = ❌ 永 続 非 サ ポ ー ト (Apple 2020 公 式 ス タ ン ス、 fingerprinting 懸 念) → Q11 / B1 で consumer 責 任 既 規 定
+  - AudioWorklet = ✅ 14.1+
+  - SharedArrayBuffer + COOP/COEP = ✅ 15.2+ (= WebKit bug #237144 「SAB posted to AudioWorkletProcessor not shared」 は postMessage fallback 経 路 = Q11 / A5 既 ratify で 自 動 救 済)
+  - WASM SIMD f32x4 = ✅ 16.4+
+  - WASM Relaxed SIMD = ⚠ flag-gated だ が v1.0.0 SIMD MVP は fixed-width 128bit f32x4 だ け = 影 響 ナ シ
+
+### Side effects
+
+- `10-roadmap.md` §1 を fill (= 9 項 目 checklist 規 定)、 Status を `partial (§1 written at Q62; §3.1 mandatory deferred mitigations written; §2, §3.2 placeholder)` に 更 新
+- `08-deployment.md` §2 B1 末 尾 に Safari Web MIDI 制 約 1 段 落 補 強 (= consumer feature-detect + fallback path の 明 文 化)
+- `08-deployment.md` §2 Per-browser validation prose に 1 文 補 強 (= Web MIDI 標 準 自 体 は test 対 象 外、 Safari セ ル smoke 範 囲 の 明 文 化)
+- `09-repo-structure.md` §6 versioning policy = Q14 land 連 動 と prose comment に 残 す (= Q62 ratify で versioning 自 体 は touch せ ず、 §6 fill は freeze 前 別 batch)
+- TaskList #75 (L4-b) completed
 

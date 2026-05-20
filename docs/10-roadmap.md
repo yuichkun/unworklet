@@ -6,15 +6,41 @@ This doc is independent of the component docs and can be picked up at any time.
 
 ## Status
 
-partial (§3.1 mandatory deferred mitigations written; §1, §2, §3.2 placeholder)
+partial (§1 written at Q62; §3.1 mandatory deferred mitigations written; §2, §3.2 placeholder)
 
 ## 1. v1.0.0 acceptance criteria
 
-<!-- Q14 — concrete deliverables that gate "v1.0.0 ships":
-       - which primitives, declarations, phases must work
-       - which tests must pass (renderOffline parity, browser smoke)
-       - what the demo / acceptance run looks like
-     Lands here. The acceptance list double-acts as the v1.0.0 launch checklist. -->
+「v1.0.0 ship 可 能」 を impl AI agent が 1 意 判 定 で き る checklist。 1 項 目 で も 落 ち た ら ship 不 可、 全 項 目 OK で ship。 Q62 (`decisions-log.md`)。
+
+### A. Build / compile
+
+- **A1** — 公 開 4 package + 内 部 module の `vp build` 通 過 (= exit 0)。
+- **A2** — canonical Ex 1〜8 の WASM emit 通 過 (= 各 Ex の `defineProcessor` body の graph capture + WASM 生 成 成 功)。
+- **A3** — `vp check` (= tsgo typecheck + oxlint + oxfmt) 通 過 (= exit 0)。
+
+### B. Functional
+
+- **B1** — canonical Ex 1〜8 の 期 待 output が `@unworklet/offline` で 再 現 (= reference audio / event sequence と bit-exact、 documented FP diff 除 外)。
+- **B2** — `@unworklet/offline` の pure JS interpreter と WASM backend が 同 一 入 力 で 同 一 出 力 (= bit-exact、 documented FP diff 除 外)。
+
+### C. Safety
+
+- **C1** — realtime-safety invariants 5 件 (= no heap alloc / no unbounded loops / no throw / no blocking I/O / no GC、 `00-foundations.md` §5.1) を `00-foundations.md` §5.2 規 定 通 り の layered enforcement (= L1 / L2 / L3 / Emission / Runtime guard) で 検 出。 各 invariant に 対 す る 違 反 test を 仕 込 ん で 各 enforcement layer が 規 定 通 り に 弾 く こ と を 確 認。
+
+### D. Browser matrix
+
+- **D1** — browser smoke pass、 matrix = `Chromium × Firefox × Safari` × `{COOP/COEP cross-origin isolated, not isolated}` = 6 セ ル 全 て で canonical Ex 1〜3 が 起 動 + 出 音。
+
+  **smoke test 仕 様**: `connectFromWebMIDI` (= Web MIDI 標 準 wrapper) は test 対 象 外 (= emission boundary 外 側、 consumer 責 任、 `08-deployment.md` §2 B1)。 全 browser セ ル で `node.midi.<name>.send(event)` source-agnostic injection (= `11-midi.md` §3) 経 由 で MIDI 動 作 を 統 一 検 証。
+
+### E. Integrity
+
+- **E1** — `open-questions.md` Layer 4 mechanical sweep の 全 8 entry (= L4-M1〜M8) が pending ナ シ で 完 了。
+- **E2** — `open-questions.md` Layer 1〜3 = 0 件 (= Layer 4 完 了 後 は Layer 5 freeze 後 entry だ け 残 る state)。
+
+### F. Public surface integrity
+
+- **F1** — `.d.ts` 公 開 surface が `decisions-log.md` Q1〜Q62 全 entry と 整 合 (= 各 ratify が 公 開 surface に 反 映)。
 
 ## 2. Later milestones (sketch only)
 

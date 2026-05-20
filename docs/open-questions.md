@@ -62,11 +62,7 @@ unworklet の pillar:
 
 ## Layer 3 — freeze 前 process / trivial 設 定 値
 
-v1.0.0 freeze 直 前 1 batch で 決 定、 余 湖 さ ん judgment 軽 量。 ratify 内 部 ループ で は な い 「process question」 + 「trivial 設 定」。
-
-### L4-b. Q14 — v1.0.0 acceptance criteria
-
-「v1.0.0 ship 可 能」 と は 何 か の checklist を `10-roadmap.md` §1 に。 候 補: canonical examples 全 compile + 期 待 output / `@unworklet/offline` で reference processor を bit-exact render / `vp build` 通 る / realtime-safety invariants 5 件 全 layer 検 出 / browser × {isolated, not} matrix smoke pass。 設 計 question で は な く process question、 freeze 直 前 に 一 括 決 定 で 十 分。
+(現 在 該 当 entry ナ シ — Q60 / Q61 / Q62 で 全 ratify 完 了。 後 続 grill で freeze 前 process 候 補 が 出 た 場 合 は こ こ に 追 加)
 
 ---
 
