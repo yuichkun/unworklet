@@ -22,6 +22,42 @@ Day-one か ら 公 開 4 package + 内 部 module を 立 て る:
 
 権 威 規 定 = `decisions-log.md` Q13 + Q52。
 
+### 2.1 `@unworklet/core` named exports (categorized list)
+
+`@unworklet/core` root か ら flat export す る v1.0.0 公 開 識 別 子 を category 別 に 整 理 (Q52 strict — DSL 識 別 子 は root に flat、 subpath split し な い)。 SIMD primitive は `@unworklet/core/simd` subpath か ら、 test matcher は `@unworklet/test` か ら、 offline runner は `@unworklet/offline` か ら 別 export。
+
+| Category | Exports |
+|---|---|
+| Processor / subgraph constructors | `defineProcessor`, `defineSubgraph`, `createSubgraph`, `replaceProcessor` (Q50) |
+| Main-side surface | `createNode`, `inspect` (Q48 — free function over blob) |
+| Declarations | `state.f32` / `state.f64` / `state.i32` / `state.i64` / `state.bool`, `buffer.f32` / `buffer.f64` / `buffer.i32` / `buffer.i64` / `buffer.bool` / `buffer.u8` (Q49), `param`, `audioInput`, `audioOutput`, `event`, `message`, `midiInput`, `midiOutput` |
+| DSL primitive — arithmetic / comparison / math / control | `add`, `sub`, `mul`, `div`, `mod`, `neg`, `eq`, `lt`, `gt`, `lte`, `gte`, `sin`, `cos`, `tan`, `tanh`, `exp`, `log`, `sqrt`, `abs`, `floor`, `ceil`, `frac`, `min`, `max`, `clamp`, `select` |
+| DSL primitive — scalar constructors (Q33) | `f32`, `f64`, `i32`, `i64`, `bool` |
+| Loop primitive | `forSample` (= callable with `.byN` property — Q43 callback delivers `everyNSamples` as second arg) |
+| Build-time constants | `SAMPLES_PER_BLOCK` (Q35), `CAPACITY_16` / `CAPACITY_32` / `CAPACITY_64` / `CAPACITY_128` / `CAPACITY_256` / `CAPACITY_512` / `CAPACITY_1024` / `CAPACITY_2048` / `CAPACITY_4096` / `CAPACITY_8192` / `CAPACITY_16384` (Q44) |
+| Public types | `Node<T>`, `State<T>`, `Buffer<T>`, `Param`, `AudioInputHandle<C>`, `AudioOutputHandle<C>`, `EventDecl<T>`, `MessageDecl<T>`, `MidiInputHandle`, `MidiOutputHandle`, `CompiledProcessor<C>`, `UnworkletNode<C>`, `RestoreResult`, `ReplaceResult<New>`, `InspectionResult`, `Migration`, `MigrationHelpers`, `MidiEvent`, `MidiEventGraph`, `Capacity` |
+
+### 2.2 `@unworklet/core/simd` named exports
+
+Opt-in SIMD surface (Q3-a — scalar-only authors never import this path).
+
+| Category | Exports |
+|---|---|
+| Construction | `vec4`, `splat` |
+| Arithmetic | `addVec`, `subVec`, `mulVec`, `divVec` |
+| Horizontal reduction | `sumLanes` (Q59) |
+| Vector types | `Node<'f32x4'>` (= the `'f32x4'` tag becomes part of the `Node<T>` type union for modules that import this path) |
+
+Lane access (`vec.lane(i)`) is a method on the `Node<'f32x4'>` value; `buf.loadVec(offset)` / `buf.storeVec(offset, value)` are methods on `Buffer<'f32'>` handles. Both are typed via this subpath but accessed via member syntax (= not standalone named exports).
+
+### 2.3 Other public packages
+
+- `@unworklet/vite-plugin` — exports the Vite plugin factory + DevTools panel + analysis JSON artifact contract (`07-vite-plugin.md`).
+- `@unworklet/offline` — exports `renderOffline` (`13-offline-render.md` §2).
+- `@unworklet/test` — exports vitest matchers (`expectAudioMatches`, `expectNoNaN`, `expectPeakUnder`, `expectRmsUnder`, `expectEventsEqual`, `expectStateMatches`, etc. — `06-testing.md` §2; depends on `@unworklet/offline`).
+
+Per-identifier signature detail / generic constraint is impl-phase fill per Q53 + Q61.
+
 ## 3. License
 
 MIT。 Q60 (`decisions-log.md`)。

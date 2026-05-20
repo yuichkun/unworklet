@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 68 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 67 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 23 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 44 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 43 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -308,7 +308,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P2 — 仕様 invariant + lifecycle (44 件)
+## P2 — 仕様 invariant + lifecycle (43 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -679,18 +679,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が `node.messages.<name>` の 型 を 出 す と き、 (a) 関 数 と property の intersection、 (b) callable object signature (`{ (payload): void; diagnostics: ... }`)、 (c) 関 数 部 分 を 別 method (= `.send(payload)`) に 分 け て events / midi と 揃 え る、 で 3 way に 分 か れ る。 同 時 に 「`const send = node.messages.upload; send.diagnostics.overflowCount()` が 動 く か」 が path ご と に 別 (= 構 造 分 解 し た 後 も diagnostics に reach で き る か は callable object か intersection か で 挙 動 が 異 な る)。 form の 領 域 と い う 意 見 も あ る が、 構 造 分 解 後 の 観 測 path 可 否 は user-observable な 挙 動 差。
 
 **判 断 軸**: messages を 「`.send(payload)` + `.diagnostics`」 形 に 倒 し て events / midi と 構 造 を 揃 え る path、 ま た は 「callable + property」 形 を 明 文 化 し て 構 造 分 解 後 も diagnostics に reach で き る こ と を 仕 様 invariant と し て declare す る path、 2 way で decide。 前 者 は user が 覚 え る 構 造 が 1 種 類 で 済 む 利 点、 後 者 は 識 別 子 が 1 行 で 済 む 利 点 (= 既 canonical の 形 を 維 持)。
-
----
-
-## 公 開 package の 外 部 export 全 集 を 1 か 所 で 列 挙 し た prose が ナ シ
-
-**場 所**: `docs/05-client.md:1`、 `docs/05-client.md:9-24` (= createNode)、 `docs/05-client.md:60-95` (= snapshot / restore / inspect)、 `docs/05-client.md:310-393` (= replaceProcessor)、 `docs/12-canonical-examples.md` 全 編 (= 各 example で `import { ... } from '@unworklet/core'`)
-
-**何 が 起 き て い る か**: 05-client doc は 「公 開 package の API 仕 様 書」 と し て タ イ ト ル さ れ て い る が、 そ の package の named export 全 集 を 1 か 所 に 列 挙 し た prose が ど の doc に も 存 在 し な い。 (a) node を 作 る free function、 (b) blob を inspect す る free function、 (c) processor を 入 れ 替 え る free function、 (d) `defineProcessor` / `param` / `state.f32` 等 の declaration helper 系、 (e) `forSample` / `emitIf` / `select` 等 の DSL primitive 系、 が 全 部 同 一 package か ら export さ れ る 想 定 だ が、 各 example の import 行 か ら 拾 い 集 め る 形 で し か 全 集 が 取 れ な い。
-
-**impl AI 影 響**: impl AI が package の `index.ts` を 起 こ す と き、 各 example か ら import 名 を 集 計 し て named export を 出 す が、 漏 れ が 発 生 し う る (例: `replaceProcessor` を 含 め 忘 れ る、 `inspect` を 含 め 忘 れ る、 SIMD primitive `vec4` / `subVec` / `divVec` / `vec.lane` の よ う に canonical で 一 度 も 使 わ れ な い 4 個 を export し 忘 れ る、 等)。 さ ら に 「`@unworklet/core` か ら 直 接 export」 と 「subpath import (例: `@unworklet/core/precise`、 `@unworklet/core/test`)」 の 区 分 も prose で 1 か 所 declare ナ シ。
-
-**判 断 軸**: 05-client か repo-structure か どち ら か で 「`@unworklet/core` の named export 全 集」 を category 別 (= node 操 作 / blob 操 作 / declaration / DSL primitive / SIMD primitive / 型 export) で 1 表 declare す る path 推 奨。 subpath export の 列 挙 も 同 表 内 で 区 分 す る。 「canonical で exercise さ れ な い export を 残 さ な い」 規 律 (= 既 entry の SIMD primitive 4 個 unused 問 題 と zip) を こ の 表 で 担 保。
 
 ---
 
