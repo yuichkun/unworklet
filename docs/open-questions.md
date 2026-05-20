@@ -2,11 +2,11 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 117 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 116 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 38 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 60 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
-- **P3 = 19 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
+- **P3 = 18 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
@@ -1209,7 +1209,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P3 — prose 揺れ / mechanical sweep (19 件)
+## P3 — prose 揺れ / mechanical sweep (18 件)
 
 ## `subscribe` / `onEvent` / `on` の return 値 が unsubscribe で 揃 え て あ る か
 
@@ -1352,18 +1352,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が Status 文 を 引 用 し て 「v1.0.0 spec scope は Q1〜Q62」 と 誤 認 し、 Q63〜Q68 を 実 装 範 囲 外 と 扱 う。 結 果 と し て Ex 10 / Q63 warning 文 言 / Q68 stable error ID 等 の 実 装 を 省 略 す る リ ス ク。
 
 **判 断 軸**: Status 文 を 「Q1〜Q68 ratify complete (Q28 unassigned)」 に 更 新 す る path 推 奨。 「decisions-log.md の resolved 範 囲 と Status 文 が drift し な い rule」 を AGENTS.md 等 に 1 行 追 加 し て 今 後 の 累 犯 を 防 ぐ path も candidate。
-
----
-
-## 決 定 一 覧 表 の status 列 が entry 内 部 の 解 決 状 態 と zip し て い な い
-
-**場 所**: `docs/decisions-log.md:24` (Q12 行)、 `docs/decisions-log.md:26` (Q14 行)、 `docs/decisions-log.md:27` (Q15 行)、 `docs/decisions-log.md:28` (Q16 行)、 `docs/decisions-log.md:40` (Q26 行)、 `docs/decisions-log.md:74` (Q62 entry title)、 `docs/decisions-log.md:2540` (Q60 entry body)
-
-**何 が 起 き て い る か**: decisions-log 冒 頭 summary table の Q12 / Q14 / Q15 / Q16 / Q26 行 が `(open)` を 維 持 し て い る 一 方、 Q60 entry body 内 で 「TaskList #77 (Q12) / #79 (Q15) / #80 (Q16) / #81 (Q26) completed」 と し て 4 件 を 解 決 済 み と 記 録、 Q62 entry title で 「Q62 — v1.0.0 acceptance criteria (= L4-b、 Q14)」 と し て Q14 も 解 決 済 み と 明 示。 計 5 件 で summary table の status 列 と entry body 内 容 が zip し て い な い。
-
-**impl AI 影 響**: 「open question 一 覧 を 先 に 読 む」 path で impl AI が summary table を 信 用 す る と、 「monorepo tool / license / npm scope / TypeScript 最 低 version (Q60) / v1.0.0 acceptance criteria (Q62) の 5 設 定 値 が 未 決」 と 誤 認。 09-repo-structure §1 / §3 / §4 / §5 (= Q60 確 定 値 を 既 記 載) や 10-roadmap F1 (= Q62 ship 判 定 criterion) と 衝 突 し、 ど ち ら を 採 用 す る か で 判 断 を 迷 う。
-
-**判 断 軸**: summary table の Q12 / Q14 / Q15 / Q16 / Q26 行 を `(resolved → Q60)` / `(resolved → Q62)` 等 で 更 新 す る path 推 奨。 同 種 累 犯 を 防 ぐ た め に 「umbrella Q が 別 Q を 解 決 し た 時 summary table を 同 commit で 同 期 す る rule」 を AGENTS.md に 1 行 追 加 す る path も candidate。
 
 ---
 
