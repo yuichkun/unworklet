@@ -2,15 +2,15 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 78 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 77 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 26 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 25 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 51 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
-## P1 — ship blocker 系 (26 件)
+## P1 — ship blocker 系 (25 件)
 
 ### cluster (1) 型 system core (3)
 
@@ -87,18 +87,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **判 断 軸**: v1.0.0 surface の SIMD primitive 全 8 個 を canonical で 1 回 ず つ exercise す る 形 に Ex 3 / Ex 7 を 拡 張 す る か、 新 規 SIMD-only canonical を 1 件 立 て て 残 り 4 個 を 集 約 exercise す る か。 「declare だ け で canonical exercise ナ シ」 の v1.0.0 surface を 残 す path は AGENTS.md HARD CONTRACT 違 反 な の で 不 可、 ど ち ら か の zip path を 取 る 必 要 あ り。 同 commit で Coverage table の `vec.lane` 行 を 実 exercise Ex に zip 直 す。
 
 ---
-
----
-
-## main → worklet 受 信 handler の 引 数 field が plain JS 値 か graph Node か prose で 規 定 ナ シ
-
-**場 所**: `docs/01-dsl.md:474-507`、 `docs/01-dsl.md:438`、 `docs/11-midi.md:13-17`、 `docs/12-canonical-examples.md:1190-1192`、 `docs/decisions-log.md` (Q46)
-
-**何 が 起 き て い る か**: `event<T>` 章 (§4.1) は emit 側 と main 側 receive で 「two TypeScript views」 を 説 明 し worklet 側 emit arg が lifted shape (= `Node<'i32'>` 等) で あ る こ と を 明 示。 MIDI 章 は `MidiEvent` (main) / `MidiEventGraph` (worklet handler arg + emit arg) と 2 view 明 示。 一 方 `message<T>` 章 (§4.2) は worklet 側 receive (= `onReceive` handler の 引 数) に つ い て 「two views」 prose や `MessageGraph` 相 当 型 の 説 明 が ナ シ。 decisions-log Q46 は 「event<T> も 同 様 に 2 view 派 生」 と 一 般 化 し て い る が、 docs prose に 反 映 さ れ て な い。 canonical Ex 9 (sysexBridge) で `setId.onReceive(({ id }) => targetId.store(id))` を 書 き、 `state.i32.store(...)` が `Node<'i32'>` を 要 求 す る 形 を 暗 黙 前 提。
-
-**impl AI 影 響**: impl AI が `message<T>` の handler signature を 起 こ す 時、 引 数 field の type を (a) plain JS (`{ id: number }`)、 (b) lifted (`{ id: Node<'i32'> }`)、 (c) hybrid で declare し canonical Ex 9 を 通 す か reject す る か で path が 割 れ る。 event<T> emit 側 と 揃 う か 揃 わ な い か で 仕 様 全 体 の 2 view rule が 崩 れ る。
-
-**判 断 軸**: handler 引 数 を lifted shape で 揃 え る path を §4.2 prose に 直 接 明 文 化 す る か (= Q46 と zip し て 揃 え る path 推 奨)、 message<T> だ け plain JS path に 倒 す か decide。
 
 ---
 
