@@ -442,15 +442,15 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## canonical 12 冒 頭 ル ー ル 「no `// ...` elisions, no コ メ ン ト ア ウ ト 例 示」 を canonical 自 身 が 違 反
+## canonical Ex 5 grain spawn 部 が elision comment で 残 り、 12 冒 頭 「self-contained」 規 律 違 反
 
-**場 所**: `docs/12-canonical-examples.md:3`、 `docs/12-canonical-examples.md:31`、 `docs/12-canonical-examples.md:43`、 `docs/12-canonical-examples.md:126-127`、 `docs/12-canonical-examples.md:609-614`、 `docs/12-canonical-examples.md:677`
+**場 所**: `docs/12-canonical-examples.md:3`、 `docs/12-canonical-examples.md:31`、 `docs/12-canonical-examples.md:609-614`
 
-**何 が 起 き て い る か**: 12 冒 頭 L3 prose が 「Every example is self-contained: top to bottom, **no `// ...` elisions, no "imagine the rest".**」 と 強 い 規 律 を declare。 し か し canonical 内 で 2 件 自 己 違 反。 (a) Ex 5 L609-614 で grain spawn ロ ジ ッ ク 全 体 が `// (round-robin assignment — illustrative; full unrolling omitted for brevity here would use a build-time for over NUM_VOICES with a select chain — production authors keep it explicit.)` と elision コ メ ン ト 化 さ れ、 `grainSpawned.emitIf(...)` の 呼 び 出 し が 一 度 も 出 て こ ず、 Coverage table L31 「`event<T>` (worklet → main, sample-accurate) | 4, 5, 6, 8」 の 「Ex 5 = event<T> exercise」 claim が 不 成 立 (= Ex 5 main 側 で `node.events.grainSpawned.on(...)` を subscribe し て いる が 飛 ば な い)。 (b) Ex 1 L126-127 で `// teardown later: //   unsubL(); unsubR(); node.dispose();` と コ メ ン ト ア ウ ト 形 式 で example 化 さ れ、 Coverage table L43 「Main side: `dispose`, `onError`, `diagnostics.transport` | 1 (others vary)」 の dispose exercise claim も コ メ ン ト ア ウ ト 行 だ け で 不 成 立。
+**何 が 起 き て い る か**: 12 冒 頭 L3 prose が 「Every example is self-contained: top to bottom, **no `// ...` elisions, no "imagine the rest".**」 と 強 declare し て お り、 Ex 1 dispose コ メ ン ト ア ウ ト は 修 正 済 み (= beforeunload handler 経 由 で 実 code 化)、 残 る は Ex 5 grain spawn ロ ジ ッ ク (L609-614) の `// (round-robin assignment — illustrative; full unrolling omitted for brevity here would use a build-time for over NUM_VOICES with a select chain — production authors keep it explicit.)` elision。 `grainSpawned.emitIf(...)` 呼 び が 一 度 も 出 ず、 Coverage table L31 「`event<T>` Ex 5 exercise」 claim が 不 成 立。
 
-**impl AI 影 響**: impl AI agent が canonical を 「surface の 完 結 形 sample」 と 信 じ て 実 code を 読 む と、 (a) event<T> 規 範 emit 形 が Ex 4 / Ex 6 / Ex 8 だ け で Ex 5 ナ シ = Ex 5 を referent と し て emit shape を 取 ろ う と し た agent が source を 見 失 う、 (b) dispose の 規 範 sample が コ メ ン ト ア ウ ト 行 だ け = 「dispose は example で 触 れ な い surface」 と 誤 読 す る possibility。 12 冒 頭 prose ル ー ル を strict に 取 れ ば canonical が ル ー ル 違 反 で 書 き 直 し 必 要、 緩 め に 取 れ ば canonical の 「self-contained」 主 張 が 単 な る 修 辞 と な る。
+**impl AI 影 響**: impl AI agent が Ex 5 を event<T> 規 範 emit と し て 参 照 す る と source を 見 失 う、 Coverage table と code の zip が 取 れ な い。
 
-**判 断 軸**: 12 冒 頭 prose ル ー ル を そ の ま ま 規 律 と し て 採 用 し、 (1) Ex 5 grain spawn 部 を inline 完 結 で 書 く (= build-time for + select chain で 全 voice 展 開)、 (2) Ex 1 で `unsubL(); unsubR(); node.dispose();` を non-comment の 実 行 行 と し て 入 れ る path に 寄 せ る か、 prose ル ー ル を 「illustrative comment / commented-out teardown は 許 容」 に 緩 め て 12 冒 頭 文 言 を 改 訂 す る か。 前 者 推 奨 (= self-contained が canonical の integrity anchor 性 質)。
+**判 断 軸**: Ex 5 grain spawn 部 を inline 完 結 で 書 き 直 す (= build-time for over NUM_VOICES + select chain で 全 voice 展 開、 `grainSpawned.emitIf(spawn, { ... })` を 加 え る) か、 12 冒 頭 prose を 「illustrative comment 許 容」 に 緩 め る か decide。 production-grade canonical 整 合 性 anchor 性 質 を 守 る な ら 前 者、 ただし voice allocation logic の 全 unroll は 数 十 行 規 模 で 余 湖 さ ん の canonical 設 計 視 認 領 域。
 
 ---
 

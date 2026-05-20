@@ -124,8 +124,11 @@ node.onError((err) => console.error('[stereoGain]', err));
 
 console.log('transport:', node.diagnostics.transport);   // 'sab' or 'postMessage'
 
-// teardown later:
-//   unsubL(); unsubR(); node.dispose();
+window.addEventListener('beforeunload', () => {
+  unsubL();
+  unsubR();
+  node.dispose();
+});
 ```
 
 ## 2. Three-band biquad EQ (minimum-phase)
