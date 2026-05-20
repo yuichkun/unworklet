@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 74 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 73 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 23 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 50 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 49 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -308,7 +308,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P2 — 仕様 invariant + lifecycle (50 件)
+## P2 — 仕様 invariant + lifecycle (49 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -403,18 +403,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: 規 範 例 を 写 し て 動 か な い impl が 出 る。 ま た cond 性 質 を 明 示 し な い こ と で 「forSample 内 で の sysex emit を 何 を 条 件 に 配 置 す べ き か」 の 仕 様 ル ー ル が 暗 黙 化。 cond rule の 適 用 範 囲 (= forSample 直 接 だ け か forSample.byN / everyNSamples も か) も 別 entry 「`emitIf` の constant-truthy reject が ど の context ま で 広 が る か」 と zip し て decide 必 要。
 
 **判 断 軸**: 11-midi.md §2.5 sysex 例 で cond を 具 体 sample-edge expression (= 例 え ば 1 回 だ け 立 つ trigger Node) で 書 き 直 し、 prose comment で 「cond は sample-edge 系 を 想 定、 constant-truthy は graph-capture-time error」 を 明 示 す る path 推 奨。
-
----
-
-## `forSample.byN` の `i` 値 域 が foundations と DSL 章 で 不 一 致
-
-**場 所**: `docs/00-foundations.md:70`、 `docs/01-dsl.md:1300`
-
-**何 が 起 き て い る か**: 00-foundations.md §3 「Sample-offset (`i`)」 で 「The value spans `[0, SAMPLES_PER_BLOCK - 1]`」 と 単 純 全 域 を declare し、 `forSample.byN` の stride 振 る 舞 い を 一 切 言 及 し な い。 01-dsl.md §10.1 (L1300) で は 「`i` advances by `stride` each iteration」 と 明 確 化 さ れ、 値 域 は 実 質 `0, stride, 2*stride, ..., 128 - stride`。
-
-**impl AI 影 響**: 00 を vocabulary 章 と し て 信 用 す る impl AI は 「`forSample.byN` で も `i` は 0〜127 の 全 域 を 取 る」 と 解 釈 し、 stride emission で 毎 sample iterate す る WASM 構 造 を 出 し う る (= SIMD 化 / k-rate 化 path 全 体 が 壊 れ る)。
-
-**判 断 軸**: 00-foundations.md §3 の `i` 定 義 prose に stride 言 及 を 追 加 す る か、 「`i` の 値 域 表 現 は 01 §10 を canonical と し、 00 は 概 念 紹 介 限 定 と marker」 す る か。 前 者 推 奨。
 
 ---
 
