@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 93 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 92 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 36 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 56 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 55 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -463,7 +463,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **判 断 軸**: (1) offline で snapshot 復 元 を online と 同 じ 2-step pattern に 寄 せ る (= offline 側 で 1 度 render し snapshot blob を 取 り 出 し て 別 path で restore 注 入) path 推 奨 = online と offline で mental model 統 一 + Q57 ratify と zip。 (2) 02 §1.1 の 「asset upload readiness pattern」 引 用 を 同 commit で Q57 形 (= `createNode` → `await node.restore(blob)` 2-step) に rewrite し て 廃 止 surface 引 用 を 排 除。 「`initial` 識 別 子」 は online 側 (= param 初 期 値) の 既 ratify 形 を 維 持、 offline 側 で 1-step pattern を 立 て る な ら 別 識 別 子 (= 例 え ば `restore: Uint8Array`) を 採 る path も 候 補 だ が Q57 retract 必 要 で v1.0.0 で は 不 採 用 推 奨。
 
 ---
-## P2 — 仕様 invariant + lifecycle (56 件)
+## P2 — 仕様 invariant + lifecycle (55 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -882,18 +882,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が 引 用 ど お り Q14 entry を 引 き に 行 く と 内 容 不 一 致 で 戻 っ て き て し ま い、 SIMD rollout order の 規 定 自 体 が ど の Q-entry に も 存 在 し な い 事 実 に 気 づ か ず、 v1.x.0 で の SIMD 拡 張 path を 適 当 な 順 序 で 進 め て し ま う possibility。
 
 **判 断 軸**: SIMD rollout order の 規 定 が Q-entry 不 在 な ら 別 Q を 立 て て decide す る か、 prose で 「rollout order は v1.x.0 で 別 途 ratify」 と 明 文 化 し て dangling ref を 解 消 す る path 推 奨。
-
----
-
-## lifecycle states placeholder の 5 state machine が 公 開 surface の 観 測 path と zip し な い
-
-**場 所**: `docs/05-client.md:120-123`、 `docs/05-client.md:11-22` (= §2 既 written)、 `docs/02-messaging.md` 全 般 (= SAB 検 出 経 路)
-
-**何 が 起 き て い る か**: §4 placeholder が node lifecycle を `creating → ready → running → disposed` + `any → errored (terminal)` の 5 state machine と し て 規 定。 一 方 §2 既 written で `.dispose()` と `.onError(handler)` が 公 開 surface と し て ratify 済 だ が、 「現 在 の state を 観 測 す る surface (= `.state` enum / `.on('state-change', ...)` 等)」 は 公 開 surface に 一 切 存 在 し な い。 さ ら に 「errored (terminal)」 が `.onError` で 受 け 取 っ た 後 node が 不 可 逆 故 障 状 態 に な る か、 単 な る 通 知 で node は 動 き 続 け る か、 観 測 上 zip し な い。
-
-**impl AI 影 響**: impl AI が §4 を fill す る 時、 (a) 観 測 で き な い 5 state machine を `.state` enum と し て 公 開 surface に 追 加 (= 既 ratify な v1.0.0 surface に 未 ratify な API 増 加)、 (b) 「errored (terminal)」 を strict に 実 装 し て node が 不 可 逆 故 障 状 態 に な る path を 入 れ、 既 ratify な `.onError(handler)` の 暗 黙 contract と 衝 突、 path が 2 way に 割 れ る。
-
-**判 断 軸**: lifecycle 概 念 を spec prose と し て だ け 残 し (= state 名 と 遷 移 だ け 書 い て 公 開 surface 化 し な い)、 観 測 surface は v1.0.0 で 立 て な い path 推 奨。 観 測 surface を 立 て る な ら `.state` enum / 関 連 event を 別 entry で 詳 細 ratify。 「errored (terminal)」 の 意 味 (= node 不 可 逆 か 単 な る 通 知 か) も 同 commit で 明 文 化。
 
 ---
 

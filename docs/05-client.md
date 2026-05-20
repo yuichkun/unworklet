@@ -127,8 +127,25 @@ A processor that calls `snapshot()` without any `name`-bearing slot is a graph-c
 
 ## 4. Lifecycle states
 
-<!-- creating → ready → running → disposed.
-     Errors transition: any → errored (terminal). -->
+<!-- Internal lifecycle of `UnworkletNode<C>` — spec-level concept only;
+     NOT exposed as a public observation surface (= no `.state` enum,
+     no `.on('state-change', ...)` event) in v1.0.0.
+
+       creating  — `createNode(...)` Promise pending (WASM module load +
+                   worklet glue registration + readiness handshake)
+       ready     — node constructed, audio graph wiring possible
+       running   — actively processing render quanta on the audio thread
+       disposed  — consumer called `.dispose()` (§2); all resources torn down
+
+     Error events are delivered via `.onError(handler)` (= 04-worklet-runtime §8,
+     4 event codes). The node object stays addressable after an `.onError`
+     fires; `wasm-trap` / `block-length-mismatch` halt audio output but do
+     not auto-destroy the node. The consumer decides whether to `.dispose()`
+     after observing an error.
+
+     If a need for a public lifecycle-observation surface surfaces, it lands
+     additively in v1.x.0 with its own Q ratify; v1.0.0 ships without it. -->
+
 
 ## 5. Event and state subscription details
 
