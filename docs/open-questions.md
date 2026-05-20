@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 60 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 59 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 23 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 36 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 35 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -308,7 +308,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P2 — 仕様 invariant + lifecycle (36 件)
+## P2 — 仕様 invariant + lifecycle (35 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -367,18 +367,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI は (a) dead declaration を graph-capture-time error で reject、 (b) warning 出 す が build 通 す、 (c) silent OK、 で 判 断 が 割 れ、 canonical 自 体 が build 通 ら な い 実 装 が 出 る possibility。
 
 **判 断 軸**: dead declaration を silent OK と し て canonical を 規 範 化 す る か、 reject path に 倒 し て canonical 修 正 す る か。 canonical が 「declare だ け で 後 か ら 配 線 す る」 pattern を 想 定 す る な ら silent OK 推 奨。
-
----
-
-## Ex 10 で 「recipe vs invariant」 prose が 混 在
-
-**場 所**: `docs/12-canonical-examples.md:1290-1305`
-
-**何 が 起 き て い る か**: Ex 10 の prose comment 内 で `URL.createObjectURL(blob)` / `import(/* @vite-ignore */ url)` / 「prod で は bundler HMR や file watcher 経 由 で 同 等 path を 組 む」 等 の consumer-side recipe / browser API 説 明 が 仕 様 規 範 prose と 同 一 example に 混 在。 「`/* @vite-ignore */` を unworklet が 提 供 す る comment annotation」 と impl AI が 誤 読 す る possibility。 「recipe か invariant か」 が prose で 区 別 さ れ て な い。
-
-**impl AI 影 響**: impl AI は (a) `replaceProcessor` を 取 る だ け で blob URL / vite-ignore 等 は consumer の recipe と し て 扱 う、 (b) blob URL 取 り 回 し も framework が 提 供 す る surface と 誤 認、 で 判 断 が 割 れ る。 framework surface (= invariant) と consumer recipe (= 例 示 の み) の 線 引 き が prose で 不 明 な ま ま impl さ れ る と framework が 余 計 な surface を 抱 え 込 む リ ス ク。
-
-**判 断 軸**: canonical Ex 10 を 「framework が 提 供 す る surface (= replaceProcessor 単 体) の 規 範 例」 と 「consumer-side hot swap recipe (= blob URL / bundler HMR 連 携) の 例 示」 に prose 上 で 明 確 に 分 け、 後 者 を 「recipe = unworklet 外」 と marker す る。
 
 ---
 

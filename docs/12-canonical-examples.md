@@ -1243,6 +1243,8 @@ node.state.targetId.subscribe((id) => deviceIdUI.set(id));
 
 ## 10. Live coding REPL bridge
 
+> **Framework surface vs consumer recipe**: the unworklet surface exercised in this example is `replaceProcessor` (`@unworklet/core`) + `state.snapshot 'persistent'` + the `RestoreResult.ok = false` failure path + the Q63 accumulation warning. **Everything else** in the main-side code (= `URL.createObjectURL(blob)`, `import(/* @vite-ignore */ url)`, source acquisition, REPL UI wiring, blob URL teardown) is a **consumer-side recipe** — not part of unworklet's surface. `/* @vite-ignore */` is a Vite-specific annotation, not an unworklet annotation. In production code a bundler HMR boundary or file watcher (= `07-vite-plugin.md` §4 recipe sketch) provides the same module-acquisition path; unworklet does not own the source-acquisition mechanism.
+
 ```typescript
 // initial.processor.ts — REPL の 初 期 processor。 user が editor で 書 き
 // 換 え て も 同 じ 公 開 surface (= audioOutput 'main' + param 'freq' +
