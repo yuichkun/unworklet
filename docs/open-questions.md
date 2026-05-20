@@ -2,11 +2,11 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 105 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 104 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 38 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 60 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
-- **P3 = 7 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
+- **P3 = 6 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
@@ -1209,7 +1209,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P3 — prose 揺れ / mechanical sweep (7 件)
+## P3 — prose 揺れ / mechanical sweep (6 件)
 
 ## a-rate param を per-block top で `param.at(0)` 経 由 で 取 る pattern の canonical 確 認 不 在
 
@@ -1268,18 +1268,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: framework 実 装 で migration step throw 時 の `error.step` 文 字 列 を 組 み 立 て る 時、 (a) 05-client.md comment 通 り unicode arrow + full hash、 (b) ASCII arrow + truncated hash、 (c) hash 不 在 で index 表 現、 で path が 割 れ、 unit test 期 待 値 / consumer UI 解 析 が impl ご と に 別 物 に な る。
 
 **判 断 軸**: format を 1 か 所 (= 05-client.md §2.6 / decisions-log Q45 / 01-dsl.md §8.3.3 の どこ か) で 明 確 化 し 残 り を そ こ に zip。 arrow 文 字 は ASCII `->` 推 奨 (= log / unit test で escape 不 要、 platform 横 断 に 安 全)。 hash 表 現 は truncated (= 先 頭 8 文 字 等) で 表 示 性 と 一 意 性 の 均 衡 を 取 る か full で 衝 突 リ ス ク を 完 全 に 排 す か decide。
-
----
-
-## `ctx` proxy の 公 開 field set が 「`sampleRate` 等」 と 開 い た 形 で 閉 じ て な い
-
-**場 所**: `docs/03-compiler.md:26`、 `docs/01-dsl.md` 全 般 (= `ctx.sampleRate` の み 用 例 出 現)
-
-**何 が 起 き て い る か**: 03-compiler §1 L26 は `ctx` proxy を 「compile-time constants (`sampleRate`, etc.) and meta primitives」 と 「etc.」 で 開 い た 列 挙。 一 方 全 doc を 通 じ て `ctx.<field>` の 実 用 例 は `ctx.sampleRate` の み (= 01-dsl §1.7 / §5 / §10 / canonical Ex 5 / Ex 7 / Ex 8 全 て で `ctx.sampleRate` の 1 種 だ け)。 「etc.」 が v1.0.0 で 他 に 何 か field を 含 む か、 将 来 拡 張 placeholder か、 仕 様 か ら 取 れ な い。 「meta primitives」 と い う 別 categorization も prose で 列 挙 ナ シ。
-
-**impl AI 影 響**: impl AI が `ctx` proxy を 実 装 す る 時、 (a) `sampleRate` だ け を 公 開 し て strict、 (b) `currentTime` / `numChannels` / `blockSize` 等 を 推 測 で 追 加 し て 緩 い 公 開、 (c) 「etc.」 を v1.0.0 で は 1 field の み と 解 釈 し て canonical exercise と zip、 で path が 割 れ る。 user mental で 「ctx に 何 が 載 る か」 が 仕 様 か ら 一 意 に 取 れ ず、 v1.0.0 surface の closed set 規 範 と 衝 突。
-
-**判 断 軸**: `ctx` 公 開 field を v1.0.0 で 1 か 所 で 列 挙 declare し (= `sampleRate` だ け か、 別 field を 含 む か decide)、 「etc.」 wording を 削 除 し て closed set 形 に 倒 す path 推 奨。 「meta primitives」 が ctx の 一 部 か 別 surface か も 同 commit で 整 理。
 
 ---
 

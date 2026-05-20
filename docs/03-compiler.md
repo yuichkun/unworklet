@@ -23,7 +23,7 @@ The compiler obtains the user's processor as an AST DAG by invoking the `defineP
 
 The `defineProcessor` body is ordinary JavaScript / TypeScript code, executed once. The framework supplies:
 
-- a `ctx` proxy carrying compile-time constants (`sampleRate`, etc.) and meta primitives (`audioInput`, `audioOutput`, `state`, `buffer`, `param`, `defineSubgraph`, `migrations`, ...);
+- a `ctx` proxy exposing the compile-time `sampleRate` constant (= host AudioContext's sample rate, fixed for the processor's lifetime; canonical examples use `ctx.sampleRate` for build-time coefficient precomputation). Declaration helpers (`audioInput`, `audioOutput`, `state`, `buffer`, `param`, `defineSubgraph`, `createSubgraph`, `migrations`) are imported directly from `@unworklet/core` — they are not `ctx` members.
 - proxy implementations of all primitives exported from `@unworklet/core` (and `@unworklet/core/simd` if imported) that, when called with `Node<T>` arguments, return new `Node<T>` instances representing AST nodes rather than computing values;
 - a `forSample` proxy that, when called, accepts a callback, executes it once with a fresh `Node<'i32'>` proxy bound as `i`, and records the resulting AST as a per-sample loop body.
 
