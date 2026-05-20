@@ -193,7 +193,11 @@ This section spells out the realtime-safety and timing guarantees of `node.snaps
 
 ### 6.1 Block-boundary synchronization
 
-Snapshot acquisition and restore application are both **block-atomic**: state never changes mid-block, and main-thread reads never see a half-updated linear memory.
+Snapshot acquisition and restore application are both **block-atomic**: state never changes mid-block, and main-thread reads never see a half-updated linear memory. The unified boundary rule (applies uniformly to snapshot, restore, and publish — Q5-d + Q27-a):
+
+> A request flag observed at the end of a render quantum applies to linear memory at the **end** of that quantum (after the user's `process` body completes), and the new state is observable starting from the **next** quantum onward.
+
+Phrases like "block-atomic", "applied at the block boundary", "next-block-boundary application", "now using the restored state", and "proceeds with the next render quantum" appearing elsewhere in this doc / `04-worklet-runtime.md` §7 / `02-messaging.md` §5 all refer to this single boundary rule.
 
 #### snapshot
 

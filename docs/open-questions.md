@@ -2,15 +2,15 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 79 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 78 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 27 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 26 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 51 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
-## P1 — ship blocker 系 (27 件)
+## P1 — ship blocker 系 (26 件)
 
 ### cluster (1) 型 system core (3)
 
@@ -165,18 +165,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 ---
 
 ### cluster (4) handler / drain / boundary timing (9)
-
-## snapshot/restore/publish の 「block boundary」 表 現 が 5 種 類 混 在
-
-**場 所**: `docs/05-client.md:93`、 `docs/05-client.md:178`、 `docs/05-client.md:188`、 `docs/04-worklet-runtime.md:82`、 `docs/04-worklet-runtime.md:86`
-
-**何 が 起 き て い る か**: 同 一 「flag 受 信 後 ど の boundary で apply / 観 測 さ れ る か」 を 巡 っ て 「block-atomic」 「next-block-boundary application」 「proceeds with the next render quantum」 「now using the restored state」 「after the user's `process` body completes」 「render-quantum boundary」 が 5 種 類 混 在。 「apply は 当 quantum 末 端 で effective は 次 quantum か ら」 か 「次 quantum で apply」 か が 一 言 表 現 ご と に 揺 れ る。 publish tick (= main 側 観 測 boundary) が 当 quantum 末 端 か 次 quantum 開 始 か も 不 明 確。
-
-**impl AI 影 響**: impl AI は restore / publish の 反 映 タ イ ミ ン グ を 1 quantum 早 い / 遅 い で 解 釈 す る リ ス ク。 main 側 が 観 測 で き る state / publish 値 の タ イ ミ ン グ が impl ご と に 1 quantum 分 ズ レ る。
-
-**判 断 軸**: 「flag 受 信 → 当 quantum 末 端 で linear memory に apply → 次 quantum 開 始 か ら 新 state が 観 測 さ れ る」 を 単 一 prose paragraph で 規 範 化 し、 docs 全 体 の boundary 表 現 (= block-atomic / next-block-boundary / next quantum / after process completes) を そ の 1 paragraph 経 由 で 言 い 換 え る 統 一 path 推 奨。 ratify 済 Q38-a の 「current / next 視 点 統 一 ル ー ル」 が snapshot 章 ま で 及 ぶ か も 同 時 に decide。
-
----
 
 ## render quantum サ イ ズ 不 一 致 時 の 動 作 が silence vs 停 止 vs onError-only で 3 way 不 一 致
 
