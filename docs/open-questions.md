@@ -83,10 +83,6 @@ unworklet の pillar:
 
 Q49 ratify で worklet 側 sysex emit が `Buffer<'u8'>` + `length` 経 由 で 完 全 spec 化 さ れ た が canonical example で exercise ナ シ = AGENTS.md HARD CONTRACT (canonical examples integrity rule) 観 点 で 重 い gap。 Ex 9 と し て sysex 1 例 を 設 計 + コ ー ド 追 加 + Coverage table 反 映。 余 湖 さ ん の use case 選 定 → 設 計 → 実 装 path で 進 行 (= L4-M5 mechanical sweep か ら 切 り 出 し、 sweep 完 了 後 別 grill 経 由 で 実 施)。 TaskList #101。
 
-### L4-M8. Q28 番 号 gap 説 明
-
-`decisions-log.md` index で Q1 → Q2 → ... → Q27 → Q29 と Q28 が 飛 ぶ。 intentional skip か 番 号 ア ー テ ィ フ ァ ク ト か 1 行 注 釈。 audit A §3 + C §4 拾 い。
-
 ### L4-M9. Temporal expression sub-agent sweep
 
 docs prose (= `docs/*.md`、 `12-canonical-examples.md` 含 む 全 docs) に 残 存 す る temporal / chronological 表 現 を sub-agent parallel sweep で 拾 い 上 げ + 現 在 形 prose に 書 き 換 え。 user global CLAUDE.md 「Code Comment Guidelines」 = docs prose に も 同 様 適 用、 v1.0.0 正 本 prose に 「earlier draft / retired / previously / originally / used to / historical / legacy / formerly / deprecated / moved to / has been / was retired / in the past / recently / now (vs then 含 意)」 等 を 書 か な い。 L4-M1〜M8 sweep 完 了 後 の **最 終 関 門** = mechanical sweep 群 が 全 部 着 地 し て か ら docs 全 体 を agent 軸 で grep + rewrite proposal 出 す、 漏 れ ナ シ で 拾 う。 [[docs-live-document-no-temporal]] 累 犯 認 識 反 映 (2026-05-20)。
