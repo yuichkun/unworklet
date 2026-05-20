@@ -2,15 +2,15 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 82 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 81 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 30 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 29 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 51 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
-## P1 — ship blocker 系 (30 件)
+## P1 — ship blocker 系 (29 件)
 
 ### cluster (1) 型 system core (3)
 
@@ -165,18 +165,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 ---
 
 ### cluster (4) handler / drain / boundary timing (9)
-
-## handler body / forSample callback の 「runtime 実 行 形」 が WASM 内 か user TS か
-
-**場 所**: `docs/00-foundations.md:64-66`、 `docs/01-dsl.md:495`
-
-**何 が 起 き て い る か**: prose で 「user TypeScript is not re-entered per sample or per block」 と 言 う 一 方、 別 prose で 「Handler bodies run at the start of the current render quantum」 と 言 う。 後 者 だ け 読 む と 「user TS closure を runtime で 呼 ぶ」 と 誤 読 し う る が、 仕 様 意 図 は 「handler 用 sub-block を WASM に emit し て runtime で WASM 内 実 行」 で zip し て お り、 こ の zip が prose で 1 箇 所 に declare ナ シ。
-
-**impl AI 影 響**: impl AI は (a) handler を WASM sub-block と し て emit、 (b) user TS closure を AudioWorkletGlobalScope に 移 し runtime で 呼 ぶ (= 仕 様 違 反、 GC リ ス ク)、 で 判 断 が 割 れ る。 後 者 が 採 用 さ れ る と realtime safety 系 invariant 全 体 が 崩 れ る た め リ ス ク 重 い。
-
-**判 断 軸**: 「handler body / forSample / everyNSamples の callback は 全 て graph capture time に AST 化 さ れ て WASM 内 emit、 runtime で user TS は 1 度 も 呼 ば な い」 を prose で 1 箇 所 に 集 約 declare す る。
-
----
 
 ## MIDI handler が 発 火 す る 時 点 が 「該 当 sample」 か 「block 開 始 時 一 括」 か prose が 自 己 矛 盾
 
