@@ -15,24 +15,26 @@ The example set is designed so that the union of all examples touches every conc
 | `audioInput` (mono / stereo / multi-port) | 1, 2, 3, 4, 7, 8 |
 | `audioOutput` (mono / stereo / multi-port) | all |
 | `param` (k-rate / a-rate, automation curves) | 1, 2, 4, 5, 7, 8 |
-| `state.f32` / `state.i32` / `state.bool` | 2, 3, 4, 5, 6, 7, 8 |
-| `state.publish` (scalar UI feedback) | 1, 4, 5, 6, 7, 8 |
+| `state.f32` / `state.i32` / `state.bool` | 2, 3, 4, 5, 6, 7, 8, 9 |
+| `state.publish` (scalar UI feedback) | 1, 4, 5, 6, 7, 8, 9 |
 | `buffer.f32` (per-sample memory) | 3, 4, 5, 7, 8 |
+| `buffer.u8` (byte memory for sysex / arbitrary octet streams) | 9 |
 | `buffer.publish` (waveform / spectrum frame to UI) | 5, 8 |
-| `forSample` (per-sample loop) | all |
+| `buf.copyFrom(typedArrayField)` (bulk transfer from payload) | 5, 9 |
+| `forSample` (per-sample loop) | 1, 2, 3, 4, 5, 6, 7, 8 |
 | `forSample.byN` (SIMD-stride bulk) | 7 |
-| Arithmetic / comparison / `select` | all |
+| Arithmetic / comparison / `select` | 1, 2, 3, 4, 5, 6, 7, 8 |
 | Math (`sin`, `cos`, `exp`, `log`) | 2, 4, 5, 8 |
 | L1 helper (pure TS function over `Node<T>`) | 2, 4 |
 | L2 `defineSubgraph` (caller-owned reuse) | 2, 8 |
 | `State<T>` reference parameter | 2, 4 |
 | `event<T>` (worklet → main, sample-accurate) | 4, 5, 6, 8 |
-| `message<T>` (main → worklet) | 5, 6, 7 |
-| `emitIf` (conditional emission) | 4, 6, 8 |
-| `onReceive` (per-block message handler) | 5, 6, 7 |
-| `midiInput` / `midiOutput` | 5, 6, 8 |
-| `onEvent` MIDI (`noteOn` / `noteOff` only — others not exercised) | 5, 6, 8 |
-| MIDI emission via `emitIf` | 6 |
+| `message<T>` (main → worklet) | 5, 6, 7, 9 |
+| `emitIf` (conditional emission, generic event) | 4, 6, 8 |
+| `onReceive` (per-block message handler) | 5, 6, 7, 9 |
+| `midiInput` / `midiOutput` | 5, 6, 8, 9 |
+| `onEvent` MIDI (`noteOn` / `noteOff` + `sysex`; `cc` / `pitchBend` / `programChange` / `channelPressure` / `aftertouch` / `systemRealtime` not exercised) | 5, 6, 8, 9 |
+| MIDI emission via `emitIf` (`noteOn` / `noteOff` in Ex 6; `sysex` in Ex 9) | 6, 9 |
 | SIMD `f32x4`, `splat`, `buf.loadVec`, `mulVec`, `addVec`, `vec.lane`, `sumLanes` | 3, 7 |
 | `snapshot` policy (`'persistent'` / `'transient'`) | 3, 5, 7 |
 | `migrations` chain (schema-versioned restore) | 7 |
@@ -40,10 +42,10 @@ The example set is designed so that the union of all examples touches every conc
 | Main side: `node.inputs.<name>` / `node.outputs.<name>` | all |
 | Main side: `dispose`, `onError`, `diagnostics.transport` | 1 (others vary) |
 | Main side: `node.params.<name>` (AudioParam) | 1, 2, 4, 7, 8 |
-| Main side: `node.state.<name>.subscribe` / `.value` | 1, 4, 5, 6, 7, 8 |
+| Main side: `node.state.<name>.subscribe` / `.value` | 1, 4, 5, 6, 7, 8, 9 |
 | Main side: `node.events.<name>.on` / `.diagnostics.overflowCount` | 4, 5, 6, 8 |
-| Main side: `node.messages.<name>` (incl. variable-length payload) | 5, 6, 7 |
-| Main side: `node.midi.<name>.send` / `.connectFromWebMIDI` / `.onEvent` | 5, 6, 8 |
+| Main side: `node.messages.<name>` (incl. variable-length payload) | 5, 6, 7, 9 |
+| Main side: `node.midi.<name>.send` / `.connectFromWebMIDI` / `.onEvent` | 5, 6, 8, 9 |
 | Main side: `node.snapshot()` / `node.restore(blob)` | 3, 7 |
 
 ## Examples index
@@ -56,6 +58,7 @@ The example set is designed so that the union of all examples touches every conc
 6. **MIDI arpeggiator + sequencer** — `midiInput` ingest + `midiOutput` emission, generic `event<T>` for UI step indicator, `message<T>` for pattern reload.
 7. **Convolution reverb with snapshot/restore migration** — large IR buffer, partitioned FFT, snapshot persistence with declarative migration chain.
 8. **Polyphonic synth with sidechain ducking** — voice allocator subgraph, sidechain `audioInput` driving the duck envelope, `midiInput` voice triggers, waveform `buffer.publish` for UI scope.
+9. **SysEx bridge** — pure MIDI processor that rewrites the device-ID byte of incoming sysex events and re-emits them to a downstream port. Exercises `midiInput().onEvent('sysex', ...)`, `buffer.u8` + `buf.copyFrom` + in-place `buf.write`, sysex `midiOut.emitIf`, and main-side dynamic device-ID control via `message<T>` + published `state.i32`.
 
 ## 1. Stereo gain + level meter
 
@@ -1143,6 +1146,97 @@ setInterval(() => {
 
 ---
 
+## 9. SysEx bridge
+
+```typescript
+import {
+  defineProcessor, audioOutput, state, message,
+  midiInput, midiOutput, buffer,
+  i32,
+} from '@unworklet/core';
+
+const MAX_SYSEX_LEN = 512;
+
+// SysEx bridge: rewrites the device-ID byte of each incoming sysex event and
+// re-emits the result to a downstream port (MFX-style routing). The device ID
+// to apply is held in a published `state.i32` and updated from the main side
+// via a `message<T>`. The wire format is the standard sysex layout
+// `[0xF0, deviceId, ...payload..., 0xF7]` — byte index 1 is the device ID.
+export const sysexBridge = defineProcessor((ctx) => {
+  // No audio processing — the worklet exists purely to mediate MIDI. A silent
+  // mono output is declared so the node can be wired into an audio graph;
+  // unwritten samples emit silence (Q37).
+  const out = audioOutput({ channels: 1, name: 'main' });
+
+  const sysexIn  = midiInput ({ name: 'sysexIn' });
+  const sysexOut = midiOutput({ name: 'sysexOut' });
+
+  // 7-bit MIDI value (0x00–0x7F). Published so the main side can mirror the
+  // current setting in the UI.
+  const targetId = state.i32(0x10, { name: 'targetId', publish: { rateFps: 5 } });
+
+  // Byte buffer that holds the in-flight sysex while we rewrite byte 1.
+  // Sized for the longest payload the bridge is expected to handle.
+  const buf = buffer.u8({ size: MAX_SYSEX_LEN, name: 'buf' });
+
+  // main → worklet message that updates the device ID applied to subsequent
+  // sysex events.
+  const setId = message<{ id: number }>({ name: 'setId' });
+
+  return {
+    process: () => {
+      setId.onReceive(({ id }) => {
+        targetId.store(id);
+      });
+
+      // Copy the incoming sysex bytes into `buf`, overwrite byte 1 with the
+      // current target ID, and re-emit. `length` is forwarded unchanged so the
+      // downstream sees the same payload size as the inbound event.
+      sysexIn.onEvent('sysex', ({ data, length, atSample }) => {
+        buf.copyFrom(data);
+        buf.write(i32(1), targetId.load());
+        sysexOut.emitIf(true, {
+          type: 'sysex',
+          data: buf,
+          length,
+          atSample,
+        });
+      });
+    },
+  };
+});
+
+// --- main side ---
+
+import { createNode } from '@unworklet/core';
+
+const audioCtx = new AudioContext();
+const node     = await createNode(audioCtx, sysexBridge);
+audioCtx.resume();
+
+// Wire the bridge to a Web MIDI input on one side and a Web MIDI output on
+// the other. unworklet only normalizes the wire shape inside the worklet; the
+// permission / device-selection flow is consumer responsibility (= Q11 / B1).
+const midiAccess = await navigator.requestMIDIAccess({ sysex: true });
+const inputDev   = [...midiAccess.inputs.values()][0];
+const outputDev  = [...midiAccess.outputs.values()][0];
+node.midi.sysexIn.connectFromWebMIDI(inputDev);
+
+// Forward each sysex event emitted by the bridge to the downstream device.
+node.midi.sysexOut.onEvent('sysex', (event) => {
+  outputDev.send(event.data);
+});
+
+// Update the device ID applied to every subsequent sysex passing through the
+// bridge.
+node.messages.setId({ id: 0x42 });
+
+// Reflect the current setting in the UI.
+node.state.targetId.subscribe((id) => deviceIdUI.set(id));
+```
+
+---
+
 ## What this set does not exercise
 
 These are intentionally outside the example set today and are tracked as follow-up:
@@ -1152,7 +1246,7 @@ These are intentionally outside the example set today and are tracked as follow-
 - Cross-precision type conversion boundaries (`f64(node)` over an `f32` source, etc.) — the surface is in `01-dsl.md` §2 and `f32(node)` / `i32(node)` are exercised, but no example crosses a precision boundary today.
 - Math primitives `tan`, `tanh`, `sqrt` — listed in `01-dsl.md` §2 but unused across the example set.
 - `buffer.i32` — only `buffer.f32` is exercised.
-- MIDI variants beyond `noteOn` / `noteOff`: `cc`, `pitchBend`, `programChange`, `channelPressure`, `aftertouch`, `systemRealtime`, sysex are part of the Q4 surface but no current example uses them. Q4 covers the wire / handler shape; the canonical example set has a coverage gap here. (sysex is fully specified in Q49 but unexercised by the example set; tracked as `open-questions.md` L4-M5b for a dedicated Ex 9.)
+- MIDI variants beyond `noteOn` / `noteOff` / `sysex`: `cc`, `pitchBend`, `programChange`, `channelPressure`, `aftertouch`, `systemRealtime` are part of the Q4 surface but no current example uses them. Q4 covers the wire / handler shape; the canonical example set has a coverage gap for these variants.
 - `node.midi.<name>.diagnostics.overflowCount()` and `node.events.<name>.diagnostics.overflowCount()` (main-side diagnostics) are present in the spec but only Ex 4 and Ex 8 use them (one polling block each).
 
 When those resolutions land or examples are added, the corresponding rows in the Coverage table above are updated in the same revision.
