@@ -57,7 +57,7 @@ The body of `defineProcessor` and `defineSubgraph`, before the returned `process
 
 ### Expression scope
 
-The body of `process` lambdas, `forSample` / `forSample.byN` callbacks, L1 helper bodies, subgraph method bodies, `messageDecl.onReceive(...)` handler bodies, and `midiInput().onEvent(...)` handler bodies. Per-sample and per-block expressions live here. New declarations are forbidden in expression scope.
+The body of `process` lambdas, `forSample` / `forSample.byN` callbacks, `everyNSamples` callbacks (delivered as the surrounding `forSample` callback's second argument per Q43), L1 helper bodies, subgraph method bodies, `messageDecl.onReceive(...)` handler bodies, and `midiInput().onEvent(...)` handler bodies. Per-sample and per-block expressions live here. New declarations are forbidden in expression scope.
 
 ### Process body
 

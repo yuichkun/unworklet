@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 70 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 69 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 23 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 46 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 45 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -308,7 +308,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P2 — 仕様 invariant + lifecycle (46 件)
+## P2 — 仕様 invariant + lifecycle (45 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -610,18 +610,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## 「expression scope と は どこ か」 の 列 挙 が doc 間 で 揃 っ て な い
-
-**場 所**: `docs/00-foundations.md:60`、 `docs/01-dsl.md:606-607`、 `docs/01-dsl.md:1219-1222`、 `docs/03-compiler.md:74`
-
-**何 が 起 き て い る か**: expression scope (= L1 helper / forSample callback 等 「declaration を 作 れ な い、 graph node を build す る だ け」 の context) の 構 成 員 列 挙 が doc 間 で 違 う。 foundations §3 L60 は 「`process` lambdas, `forSample` / `forSample.byN` callbacks, L1 helper bodies, subgraph method bodies, `messageDecl.onReceive(...)` handler bodies, `midiInput().onEvent(...)` handler bodies」 の 6 種。 01-dsl §5.5.1 L607 は 「`process` lambda body (per-block top + forSample), L1 helper bodies, `defineSubgraph` の `process` lambdas, `everyNSamples` callbacks」 = subgraph 側 を 「`process` lambda」 限 定 で 書 き (= multi-method subgraph と 衝 突)、 handler bodies (onReceive / onEvent) を 列 挙 か ら 落 と す。 一 方 §9.1 L1219-1222 で 「`everyNSamples` callback body is an expression scope」 と あ る が foundations §3 列 挙 か ら 抜 け、 別 paragraph で 「sub-rate computation primitive」 と し て 説 明 さ れ る だ け で canonical list と zip し て な い。 03-compiler §2.4 L74 も expression-scope 列 挙 を 「`process` body, `forSample` callback, L1 helper」 と 3 つ し か 書 か ず、 同 §2.6 L150 inventory の 4 種 (= + handler body) と zip ナ シ。
-
-**impl AI 影 響**: impl AI が subgraph method body (= `setFrequency` 等 `process` 以 外 の method) で `audioIn.at(...)` を call し て よ い か を 01-dsl §5.5.1 base で 判 定 し よ う と す る と 「`process` lambda」 限 定 と 読 め、 multi-method subgraph (Q34) と 矛 盾。 handler body 内 で の audio I/O / state access を expression scope rule で 通 す か reject か 列 挙 ご と に 別 物。 `everyNSamples` callback 内 で graph node を build で き る か、 declaration を 拒 否 す る か も 列 挙 漏 れ で drift。
-
-**判 断 軸**: foundations §3 L60 列 挙 (+ `everyNSamples` callback を 1 行 追 加) を canonical と し て 01-dsl §5.5.1 / 03-compiler §2.4 / §9.1 を そ こ に zip 推 奨。 「subgraph method body」 を `process` 限 定 か 全 method か は 別 軸 で decide (= 既 entry Q34 ratify 済 multi-method subgraph と zip)。
-
----
-
 ## `buffer.<T>` の `publish` option が 全 element type で 受 け 入 れ ら れ る か prose で 規 範 ナ シ
 
 **場 所**: `docs/01-dsl.md:347-379`、 `docs/02-messaging.md:140-146`、 `docs/12-canonical-examples.md` (Ex 5 / Ex 8 で `buffer.f32` publish の み)
@@ -875,4 +863,3 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **判 断 軸**: mechanism を spec level (= SAB mode = Atomics 経 由 wakeup、 fallback = postMessage 順 次) で 1 doc に 集 約 declare す る か、 「mechanism は impl の 自 由 度、 観 測 ル ー ル だ け 規 定」 path に 倒 す か。 後 者 な ら 05 §5.1 の 具 体 mechanism 記 述 を 削 除 / 例 示 と し て marker す る 必 要 あ り。
 
 ---
-

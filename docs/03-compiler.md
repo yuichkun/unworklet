@@ -74,7 +74,7 @@ The branded `Node<T>` type rejects JavaScript operators. The IDE surfaces these 
 
 The framework throws structured errors when proxy evaluation reaches a violation that the type system cannot express:
 
-- *Scope violations*: a declaration call (`state.f32(...)`, `audioInput(...)`, `defineSubgraph(...)`) inside expression scope (a `process` body, a `forSample` callback, or an L1 helper).
+- *Scope violations*: a declaration call (any of the 10 declaration helpers — see §2.6 `scope-violation` for the canonical list) inside expression scope (the `process` body, a `forSample` / `forSample.byN` callback, an `everyNSamples` callback, an L1 helper body, a subgraph method body, a `messageDecl.onReceive(...)` handler body, or a `midiInput().onEvent(...)` handler body — see `00-foundations.md` §3 for the canonical 6 expression-scope contexts).
 - *Missing `name`*: a snapshot-using processor with a declaration missing a required `name`. (Output coverage and duplicate-write are not enforced — unwritten samples are silence, duplicate writes use source-order semantics, both legal; see Q37.)
 - *Constraint violations*: `forSample.byN` called with a non-constant stride; `vec.lane(i)` called with a non-constant `i`; etc.
 
