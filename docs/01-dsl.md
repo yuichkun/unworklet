@@ -678,6 +678,8 @@ forSample((i) => {
 });
 ```
 
+**Literal lift applies to user-defined L1 helper arguments too** (Q36-a generalized): if an L1 helper declares an argument typed `Node<X>`, a JS literal `number` / `boolean` passed at the call site lifts to `Node<X>` per the same rule that applies to framework primitives (Q33 + Q36-a). The helper author does not need to type the argument as `Node<X> | number` — `Node<X>` alone is sufficient. Example: canonical Ex 4's `envelopeFollow(x, attackCoef, releaseCoef, prev)` accepts `attackCoef: 1.0` (= JS `number` literal) directly even though `attackCoef` is declared `Node<'f32'>`.
+
 #### 5.5.3 Return shape
 
 L1 helpers can return:

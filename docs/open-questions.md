@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 67 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 66 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 23 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 43 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 42 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -308,7 +308,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P2 — 仕様 invariant + lifecycle (43 件)
+## P2 — 仕様 invariant + lifecycle (42 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -463,18 +463,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が 「framework auto-rewrite の 完 全 列 挙」 を 仕 様 か ら 抽 出 し て user 向 け doc / DevTools surface に 列 挙 す る 時、 subnormal flush と carrier-clamp の 2 個 だ け か、 param clamp も か、 他 に も あ る か が 仕 様 か ら 取 れ ず。 「declarative」 原 則 (= user の 書 い た 構 造 が そ の ま ま WASM に な る) と 衝 突 す る auto-rewrite が どこ で 何 個 あ る か を impl AI が 1 箇 所 で 把 握 で き ず、 user mental model の 整 合 性 が 取 れ な い。
 
 **判 断 軸**: foundations §5 か 別 章 で 「framework が user 値 を 暗 黙 に 変 え る path の 完 全 列 挙 表」 を 1 か 所 で 集 約 declare す る path 推 奨。 列 挙 範 囲 は 「subnormal flush / carrier-clamp / param clamp / SIMD vec 化 で の round mode 変 化 等」 全 部 zip。 こ の 表 が 「declarative 原 則 の 例 外 リ ス ト」 と し て invariant 化。
-
----
-
-## L1 helper の 引 数 で JS literal lift が 効 く か 仕 様 文 に declare ナ シ
-
-**場 所**: `docs/12-canonical-examples.md:378-386`、 `docs/12-canonical-examples.md:419`、 `docs/12-canonical-examples.md:426`、 `docs/01-dsl.md:553-596`、 `decisions-log.md` (Q33-a / Q36-a)
-
-**何 が 起 き て い る か**: literal lift の 適 用 範 囲 は ratify 済 で 「primitive 引 数」 (Q33-a) と 「method 引 数」 (Q36-a) の 2 つ だ け 明 文 化。 一 方 canonical Ex 4 で は user-defined L1 helper `envelopeFollow(x: Node<'f32'>, attackCoef: Node<'f32'>, ...)` に JS literal `1.0` を 直 接 渡 す pattern (L426) を 規 範 化 し て お り、 「L1 helper の 引 数 で も lift が 効 く」 こ と を 暗 黙 前 提 に し て いる。 prose 文 で L1 helper を lift 対 象 に 加 え る 1 行 が 不 在。
-
-**impl AI 影 響**: impl AI agent は (a) Q33-a / Q36-a の 文 言 を strict に 取 っ て 「L1 helper は user-defined function = lift 対 象 外」 と 解 釈 し canonical Ex 4 を TS error 扱 い、 (b) canonical を 信 じ て lift rule を 全 function に 一 般 化、 (c) 「helper author が `attackCoef: Node<'f32'> | number` と 自 分 で 書 け ば 通 る が rule 上 自 動 で は な い」 で 中 立 に 解 釈、 で path が 割 れ る。 別 entry 「SIMD method / primitive の 引 数 に literal-lift を 効 か せ る か」 と zip し て 「lift 適 用 範 囲 を 全 何 が 対 象 か」 を 1 か 所 に 集 約 す る か decide 必 要。
-
-**判 断 軸**: lift rule の 適 用 範 囲 を 「declared 引 数 型 が `Node<X>` な ら user-defined helper を 含 め て 全 適 用」 に 寄 せ る path 推 奨 (= canonical を そ の ま ま 規 範 化 で き 、 user mental が シ ン プ ル)。 同 時 に SIMD method 側 entry と 同 path で 統 一。
 
 ---
 
