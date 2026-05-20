@@ -4,7 +4,7 @@ Common ground every implementer reads before touching any component. Defines voc
 
 ## Status
 
-partial (§§1–5 written; §6 cross-cutting still placeholder)
+written (§§1–5 vocabulary / type system / realtime-safety; §6 = lookup-only to 09-repo-structure.md)
 
 ## 1. What is being built
 
@@ -241,4 +241,4 @@ This layering is what makes "realtime-safe by construction" (§2 Goals) more tha
 
 ## 6. Cross-cutting conventions
 
-<!-- Module layout, package naming, import paths, file structure conventions referenced from every component doc. Settled in 09-repo-structure.md; cross-referenced here for the lookup. -->
+Module layout, package naming, import paths, and file-structure conventions are settled in `09-repo-structure.md` (= public 4 packages + `@unworklet/core/simd` subpath per Q23 + Q52; monorepo tool / license / npm scope / TypeScript minimum per Q60). Component docs cross-reference `09-repo-structure.md` directly. This section is intentionally lookup-only — conventions are not duplicated here.

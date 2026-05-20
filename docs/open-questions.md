@@ -2,11 +2,11 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 109 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 108 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 38 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 60 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
-- **P3 = 11 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
+- **P3 = 10 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
@@ -1209,7 +1209,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P3 — prose 揺れ / mechanical sweep (11 件)
+## P3 — prose 揺れ / mechanical sweep (10 件)
 
 ## `subscribe` / `onEvent` / `on` の return 値 が unsubscribe で 揃 え て あ る か
 
@@ -1316,18 +1316,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が `ctx` proxy を 実 装 す る 時、 (a) `sampleRate` だ け を 公 開 し て strict、 (b) `currentTime` / `numChannels` / `blockSize` 等 を 推 測 で 追 加 し て 緩 い 公 開、 (c) 「etc.」 を v1.0.0 で は 1 field の み と 解 釈 し て canonical exercise と zip、 で path が 割 れ る。 user mental で 「ctx に 何 が 載 る か」 が 仕 様 か ら 一 意 に 取 れ ず、 v1.0.0 surface の closed set 規 範 と 衝 突。
 
 **判 断 軸**: `ctx` 公 開 field を v1.0.0 で 1 か 所 で 列 挙 declare し (= `sampleRate` だ け か、 別 field を 含 む か decide)、 「etc.」 wording を 削 除 し て closed set 形 に 倒 す path 推 奨。 「meta primitives」 が ctx の 一 部 か 別 surface か も 同 commit で 整 理。
-
----
-
-## cross-cutting conventions placeholder が repo-structure を mirror 役 割 と declare し、 9 doc 既 written と 二 重 化 す る path
-
-**場 所**: `docs/00-foundations.md:242-244`、 `docs/09-repo-structure.md` 全 般 (§1〜§5 既 written)
-
-**何 が 起 き て い る か**: §6 placeholder の HTML comment が 役 割 を 「Module layout, package naming, import paths, file structure conventions referenced from every component doc. Settled in 09-repo-structure.md; cross-referenced here for the lookup」 と declare。 一 方 9 doc 既 written で monorepo tool / package layout / license / npm scope / TS version policy / 公 開 4 package (`@unworklet/core` / `@unworklet/vite-plugin` / `@unworklet/offline` / `@unworklet/test`) + subpath が 既 ratify、 1-dsl / 6-testing 等 の component doc も `09-repo-structure.md` を 直 接 参 照 path で 機 能。 つ ま り 「00 §6 を lookup 経 由 で 09 に つ な ぐ」 mirror 必 要 性 自 体 が 解 消 済。
-
-**impl AI 影 響**: impl AI が §6 を fill す る 時、 (a) 09 §2 package layout / §1 monorepo tool / §5 TS version 等 を 00 §6 に copy し て docs 二 重 化、 (b) 09 と 00 §6 で wording が drift し て impl AI が ど ち ら を 信 じ る か 揺 れ る、 (c) 「mirror で は な く 00 §6 で 別 conventions を 規 定」 と 解 釈 し て 09 と 衝 突 す る package naming 規 約 等 を 自 力 で fill、 path が 3 way に 割 れ る。
-
-**判 断 軸**: §6 placeholder を 削 除 し て 各 component doc が 09 を 直 接 参 照 す る path に 倒 す path 推 奨。 mirror を 残 し た い な ら 「00 §6 で 重 複 す る 全 prose を fill せ ず 09 へ の 単 一 参 照 だ け 残 す」 path で 二 重 化 を 構 造 的 に 防 ぐ。
 
 ---
 
