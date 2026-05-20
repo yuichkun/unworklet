@@ -897,15 +897,15 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## 古 い Q番 号 が 別 内 容 で 引 用 さ れ て お り 該 当 entry に 仕 様 が 存 在 し な い
+## SIMD comprehensive surface の v1.x.0 rollout order を 規 定 す る Q-entry が 不 在
 
-**場 所**: `docs/01-dsl.md:991`、 `docs/03-compiler.md:180`、 `docs/decisions-log.md:160` (Q3-b 内 prose)
+**場 所**: `docs/01-dsl.md:991`、 `docs/decisions-log.md:160` (Q3-b 内 prose)
 
-**何 が 起 き て い る か**: 3 か 所 で Q14 を 別 内 容 の 規 定 と し て 引 用 し て い る が、 Q14 = Q62 で resolve さ れ た 内 容 は 「v1.0.0 acceptance criteria (9 項 目 ship checklist)」 で あ り 該 当 規 定 ナ シ。 (a) 01-dsl.md L991 と decisions-log L160 で 「SIMD comprehensive surface (f64x2 / i32x4 / mask vectors / shuffle / gather / scatter 等) の v1.x.0 rollout order は Q14 で 解 決」 と 引 用、 (b) 03-compiler.md L180 で 「math intrinsics inlined or imported per Q14」 と 引 用 (= math precision の 真 の 規 範 は Q17 で 「polynomial approximation 1 variant 強 制 / 最 大 誤 差 約 1e-4 / `@unworklet/core/precise` `/table` は v1.x.0 additive」)。
+**何 が 起 き て い る か**: 2 か 所 で 「SIMD comprehensive surface (f64x2 / i32x4 / mask vectors / shuffle / gather / scatter 等) の v1.x.0 rollout order は Q14 で 解 決」 と 引 用 し て い る が、 Q14 = Q62 で resolved 内 容 は 「v1.0.0 acceptance criteria (9 項 目 ship checklist)」 で あ り SIMD rollout order に 関 す る 規 定 ナ シ。 (= math intrinsics 引 用 部 分 [03-compiler L180] は Q14 → Q17 修 正 済 み で 別 entry で close。)
 
-**impl AI 影 響**: impl AI が 引 用 ど お り Q14 entry を 引 き に 行 く と 内 容 不 一 致 で 戻 っ て き て し ま い、 仕 様 hole に 当 た る。 math intrinsics の path で 「Q14 が math 規 定」 と 誤 読 し て Q17 ル ー ル (= polynomial approximation 強 制) を 反 映 し 損 ね る リ ス ク。 SIMD rollout order の 規 定 自 体 が ど の Q-entry に も 存 在 し な い 事 実 に 気 づ か ず、 適 当 な 順 序 で 実 装 を 進 め て し ま う possibility。
+**impl AI 影 響**: impl AI が 引 用 ど お り Q14 entry を 引 き に 行 く と 内 容 不 一 致 で 戻 っ て き て し ま い、 SIMD rollout order の 規 定 自 体 が ど の Q-entry に も 存 在 し な い 事 実 に 気 づ か ず、 v1.x.0 で の SIMD 拡 張 path を 適 当 な 順 序 で 進 め て し ま う possibility。
 
-**判 断 軸**: (a) math intrinsics 引 用 を Q14 → Q17 に 修 正 (= 01-dsl §2 / decisions-log Q17 を 真 と し て zip)、 (b) SIMD rollout order の 規 定 が Q-entry 不 在 な ら 別 Q を 立 て て decide す る か、 prose で 「rollout order は v1.x.0 で 別 途 ratify」 と 明 文 化 し て dangling ref を 解 消 す る、 path 推 奨。 ど ち ら も 同 commit で 同 期 し て canonical 引 用 1 か 所 に 集 約。
+**判 断 軸**: SIMD rollout order の 規 定 が Q-entry 不 在 な ら 別 Q を 立 て て decide す る か、 prose で 「rollout order は v1.x.0 で 別 途 ratify」 と 明 文 化 し て dangling ref を 解 消 す る path 推 奨。
 
 ---
 

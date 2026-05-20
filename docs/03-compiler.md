@@ -177,7 +177,7 @@ A separate runtime check (not graph-capture / static-analysis) fires when the wo
      - exported function `process(blockPtr, paramPtrs, messagePtr) -> void`
      - linear memory layout (state | buffers | I/O scratch | queue regions)
      - no memory.grow
-     - math intrinsics inlined or imported per Q14 (resolution lives in 01-dsl.md §2). -->
+     - math intrinsics inlined per Q17 (= polynomial approximation, resolution in 01-dsl.md §2). -->
 
 ## 5. Worklet JS codegen
 
