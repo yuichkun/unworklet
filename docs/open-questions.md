@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 91 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 90 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 36 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 54 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 53 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -463,7 +463,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **判 断 軸**: (1) offline で snapshot 復 元 を online と 同 じ 2-step pattern に 寄 せ る (= offline 側 で 1 度 render し snapshot blob を 取 り 出 し て 別 path で restore 注 入) path 推 奨 = online と offline で mental model 統 一 + Q57 ratify と zip。 (2) 02 §1.1 の 「asset upload readiness pattern」 引 用 を 同 commit で Q57 形 (= `createNode` → `await node.restore(blob)` 2-step) に rewrite し て 廃 止 surface 引 用 を 排 除。 「`initial` 識 別 子」 は online 側 (= param 初 期 値) の 既 ratify 形 を 維 持、 offline 側 で 1-step pattern を 立 て る な ら 別 識 別 子 (= 例 え ば `restore: Uint8Array`) を 採 る path も 候 補 だ が Q57 retract 必 要 で v1.0.0 で は 不 採 用 推 奨。
 
 ---
-## P2 — 仕様 invariant + lifecycle (54 件)
+## P2 — 仕様 invariant + lifecycle (53 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -798,18 +798,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が `MigrationHelpers` を 実 装 す る 時、 (a) `parseSlotInProfile(blob, name, type, profile)` で 旧 blob 内 の 別 profile を free 読 み 可 (= 全 profile slot を walk す る blob 形 式 要 求)、 (b) 旧 blob の `oldProfileName` 専 用 で 引 数 profile が それ と 一 致 し な い と undefined、 (c) 旧 blob は 「1 個 の profile snapshot」 で profile 引 数 は target 側 の profile 名 を 指 す、 で 3 解 釈。 writeSlotInProfile も 同 様 に target profile の 取 り 扱 い が dangling。 blob header の profile metadata 形 (= 1 個 か union か 全 profile か) も 仕 様 で 取 れ ず、 wire 上 の byte layout も drift。
 
 **判 断 軸**: profile-scoped variant の 「source 側 profile 引 数 = 旧 blob 内 の どの profile を 読 む か」 / 「target 側 profile 引 数 = output blob の どの profile に 書 く か」 を prose で 明 文 化 し、 blob header に 載 る profile metadata の 形 (= `snapshot()` no-arg 時 は `null`、 `snapshot({ profile: 'preset' })` 時 は `'preset'` の 単 一 文 字 列、 全 profile snapshot path は v1.0.0 で 不 在) を declare。 canonical Ex 7 か 新 規 example で profile-rename migration を 1 例 exercise し て 仕 様 を 1 意 化 推 奨。
-
----
-
-## vite-plugin の schema-hash artifact が `dist/schema-hash.json` 単 一 か `dist/<processor>.schema-hash.json` per-processor か doc 間 で 別 形
-
-**場 所**: `docs/01-dsl.md:1126`、 `docs/07-vite-plugin.md:27`、 `docs/07-vite-plugin.md:119`
-
-**何 が 起 き て い る か**: 同 一 artifact (= schema hash JSON) の path 形 が 2 形 並 立。 01-dsl.md L1126 と 07-vite-plugin.md §2 L27 は 「`dist/schema-hash.json`」 (= フラット 形、 単 一 file)。 07-vite-plugin.md §6.3 artifact table L119 は 「`dist/<processor>.schema-hash.json`」 (= processor 名 prefix 形、 per-processor)。 01-dsl.md prose は 「emitted by `@unworklet/vite-plugin` into `dist/schema-hash.json`」 と 単 数 形 で multi-processor project の 取 り 扱 い を declare せ ず。
-
-**impl AI 影 響**: vite-plugin の build artifact emission で (a) `dist/schema-hash.json` 単 一 file に 全 processor の hash を JSON object で 詰 め る、 (b) `dist/<processor>.schema-hash.json` per-processor で file を 分 け る、 で 別 path に 分 か れ る。 consumer 側 (= migration entry 検 証、 DevTools 「Snapshot inspector」 / 「Swap history」 panel data source) が 仮 定 す る file path が impl ご と に drift し、 same project が 別 impl で 通 ら な い。
-
-**判 断 軸**: per-processor 形 (= `dist/<processor>.schema-hash.json`) に 倒 す か、 単 一 file (= `dist/schema-hash.json` で 中 に processor 単 位 で keyed object) に 倒 す か。 multi-processor project (= canonical Ex 6 / Ex 7 / Ex 8 等 が 同 一 vite project に 共 存 す る path) を 想 定 す る な ら per-processor 形 推 奨 (= 各 processor file が build artifact 1 個 を 直 接 持 つ、 cache invalidation も 局 所)。 01-dsl.md / 07-vite-plugin.md §2 wording も 同 commit で 揃 え る。
 
 ---
 
