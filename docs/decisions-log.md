@@ -1960,10 +1960,7 @@ policy rule (1 行):
 - **08-deployment.md §2**: placeholder を A1-A7 / B1-B3 catalog 形 で 全 部 埋 め、 per-browser validation matrix (= `Chromium × Firefox × Safari` × `{isolated, not-isolated}`) を 1 段 落 追 加
 - canonical example 修 正 ナ シ (verified — `12-canonical-examples.md` Example 1 / 5 / 6 / 8 で 既 `new AudioContext()` (= B2) と `navigator.requestMIDIAccess()` → `connectFromWebMIDI(port)` (= B1) path が canonical pattern と し て 使 わ れ て お り、 policy γ と 整 合 済 み)
 
-### Open follow-up
-
-- COOP/COEP detect 失 敗 時 の dev mode warning の 出 し 方 (= console.warn vs onError event vs DevTools Structured Diagnostics) は `07-vite-plugin.md` §6.1 (Build errors / warnings panel) の 細 部 spec 段 階 で 詰 め る
-- future quirk が 出 た 時 の adjudication procedure (= 「unworklet WASM module が 触 る か?」 1 問 判 定 を docs 化) は v1.0.0 docs polish 段 階 で 扱 う
+Post-ratify docs polish followups 集 約: `open-questions.md` Layer 5 「L4-M6-followups」 entry を 参 照。
 
 ## Q23+Q24+Q25 — `@unworklet/vite-plugin` の scope (#68 B1 + #69 B2 + #70 B3 統 合)
 
@@ -2024,14 +2021,7 @@ unworklet 自 前 CLI は ship し な い (= `vite build` / `vite` が user-fac
 - **`README.md`** docs 一 覧 + Read & implementation order 図 update
 - canonical example 修 正: `12-canonical-examples.md` Example 7 内 の CLI 言 及 comment update (verified — 他 に CLI 名 言 及 ナ シ で 整 合)
 
-### Open follow-up
-
-- analysis JSON artifact (= `dist/<processor>.graph.json` / `.memory.json` / `.diagnostics.json` / `.schema-hash.json`) の 具 体 schema は `07-vite-plugin.md` §6.x で incrementally
-- vite plugin の `?worklet` HMR payload 形 (= 新 module export shape) と Vite 標 準 HMR API と の 相 互 作 用 は `07-vite-plugin.md` §4.x で
-- `@unworklet/offline` の generic 型 (= processor declaration か ら inputs / outputs / messages / events / state を 型 推 論) は `13-offline-render.md` §2.x で
-- `@unworklet/test` matcher 一 覧 + golden file pattern + fast-check 連 携 例 は `06-testing.md` §2-§4 で
-- source maps の WASM custom section vs sidecar 詳 細 + browser DevTools step-through 動 作 検 証 は `07-vite-plugin.md` §5.x で
-- COOP/COEP detect 失 敗 時 の dev mode warning 出 し 方 (= 旧 Q11 open follow-up) は build-error panel の Structured Diagnostics surface で 扱 う
+Post-ratify docs polish followups 集 約: `open-questions.md` Layer 5 「L4-M6-followups」 entry を 参 照。
 
 ## Q50 — 動 的 processor swap primitive `replaceProcessor`
 
@@ -2089,11 +2079,7 @@ accumulation warning: 同 AudioContext 内 で N 回 swap 累 積 で `console.w
 - **`07-vite-plugin.md` §4** (= HMR boundary): `replaceProcessor` を user land で 呼 ぶ 形 を recipe で 提 示
 - **canonical example 影 響 ナ シ** (verified — 既 canonical example は createNode / snapshot / restore / inspect / migration chain ベ ー ス、 `replaceProcessor` を 使 う example は 未 整 備 で 既 整 合)
 
-### Open follow-up
-
-- accumulation warning の threshold (= 何 回 swap で `console.warn` を 出 す か) と message 文 言 は `05-client.md` §8.5 で 詳 細
-- `replaceProcessor` で 旧 node の `process()` を false return さ せ る signaling 経 路 の 詳 細 (= 旧 instance の eventual GC を 促 す) は `04-worklet-runtime.md` §8 で 詳 細
-- live coding / visual programming の canonical recipe を 別 docs (= 12-canonical-examples.md か 新 recipe 集) に 追 加 す る か は v1.0.0 docs polish 段 階 で 判 断
+Post-ratify docs polish followups 集 約: `open-questions.md` Layer 5 「L4-M6-followups」 entry を 参 照。
 
 ## Q51 — per-block sample-offset primitive 開 放 + JUCE / AudioWorklet process メ ン タ ル 明 文 化 (audit followup)
 
@@ -2125,10 +2111,7 @@ audit で `01-dsl.md` §1 prose に 「The JS literal `0` lifts to `Node<'i32'>`
 - **01-dsl.md §1**: L34 prose を rewrite (= 「remain a separate decision」 撤 去、 per-block で sample-offset primitive を literal で 呼 び 可、 mental model 言 及 追 加)
 - canonical example 影 響 ナ シ (verified — 既 canonical example は forSample 内 で `i` 使 用、 per-block で の literal 呼 び 出 し は 既 example で は 出 て こ な い、 整 合 違 反 ナ シ)
 
-### Open follow-up
-
-- per-block で の `audioIn.at(c, k)` (= `k` が 0 以 外 の compile-time-constant literal) の 範 囲 制 約 と 静 的 解 析 (= `[0, SAMPLES_PER_BLOCK - 1]` 範 囲 check) は 03-compiler.md §2.4 の static analysis entry で incrementally
-- per-block 呼 び の canonical use case (= block-start input level 検 査 + adaptive 処 理) を 12-canonical-examples.md か 新 recipe で 1 例 追 加 す る か は v1.0.0 docs polish 段 階 で 判 断
+Post-ratify docs polish followups 集 約: `open-questions.md` Layer 5 「L4-M6-followups」 entry を 参 照。
 
 ---
 

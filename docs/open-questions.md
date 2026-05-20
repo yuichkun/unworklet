@@ -83,16 +83,6 @@ unworklet の pillar:
 
 Q49 ratify で worklet 側 sysex emit が `Buffer<'u8'>` + `length` 経 由 で 完 全 spec 化 さ れ た が canonical example で exercise ナ シ = AGENTS.md HARD CONTRACT (canonical examples integrity rule) 観 点 で 重 い gap。 Ex 9 と し て sysex 1 例 を 設 計 + コ ー ド 追 加 + Coverage table 反 映。 余 湖 さ ん の use case 選 定 → 設 計 → 実 装 path で 進 行 (= L4-M5 mechanical sweep か ら 切 り 出 し、 sweep 完 了 後 別 grill 経 由 で 実 施)。 TaskList #101。
 
-### L4-M6. detail entry の Open follow-up 集 約
-
-各 detail entry 末 尾 に 散 在 す る Open follow-up bullet を 1 surface に 集 約 (= session resume で 見 え る surface へ)。 audit C §7 拾 い。
-
-- Q22-d L878: stable error ID inventory の doc 化 → L4-M7 と 統 合 (= 1 docs entry 追 加)。
-- Q23+Q24+Q25 L2016: 6 bullets (analysis JSON schema / vite plugin HMR payload / offline generic type / test matcher list / source map detail / COOP-COEP dev warning) → 各 doc の placeholder section 化 (= L4-M3 status table 更 新 ご と)。
-- Q11 L1952: 2 bullets (COOP/COEP detect failure warning shape、 future-quirk adjudication doc) → docs polish 任 せ。
-- Q50 L2081: 3 bullets (accumulation warning threshold、 oldNode `process()` signaling、 live-coding canonical recipe) → docs polish 任 せ。
-- Q51 L2117: 2 bullets (per-block `audioIn.at(c, k)` non-zero literal range check、 per-block call canonical use case) → docs polish 任 せ。
-
 ### L4-M7. Stable error ID inventory を docs に
 
 `03-compiler.md` §2.5 (L142) + Q22-d 末 尾 で 「The list of stable error IDs is maintained as a separate inventory」 と 書 い て あ る が docs 内 に inventory 不 在。 v1.0.0 で stable surface を 約 束 し て い る の で 1 docs section 追 加。 audit A §1 + §5 拾 い。
@@ -110,6 +100,23 @@ docs prose (= `docs/*.md`、 `12-canonical-examples.md` 含 む 全 docs) に �
 ## Layer 5 — freeze 後 / v1.x.0 (= v1.0.0 ratify 範 囲 外)
 
 v1.0.0 ship 完 了 後 に 触 れ る entry。 い ま grill 対 象 外、 freeze 後 GitHub issue 化 or v1.x.0 docs/recipes/ で 追 加。
+
+### L4-M6-followups. Post-ratify docs polish followups (= v1.0.0 ship 前 freeze 段 階 で 拾 う docs 細 部)
+
+各 detail entry 末 尾 に 散 在 し て い た Open follow-up bullets を 1 surface に 集 約 (= L4-M6 完 了 状 態、 session resume で 見 え る surface へ)。 設 計 ratify は 既 済 み、 docs polish 段 階 で 該 当 doc section に prose を fill す る 内 容。
+
+- analysis JSON artifact schema (= `dist/<processor>.graph.json` / `.memory.json` / `.diagnostics.json` / `.schema-hash.json`) を `07-vite-plugin.md` §6.x で incrementally fill (Q23+Q24+Q25)
+- vite plugin `?worklet` HMR payload 形 (= 新 module export shape) と Vite 標 準 HMR API の 相 互 作 用 を `07-vite-plugin.md` §4.x で (Q23+Q24+Q25)
+- `@unworklet/offline` の generic 型 (= processor declaration か ら inputs / outputs / messages / events / state を 型 推 論) を `13-offline-render.md` §2.x で (Q23+Q24+Q25)
+- `@unworklet/test` matcher 一 覧 + golden file pattern + fast-check 連 携 例 を `06-testing.md` §2-§4 で (Q23+Q24+Q25)
+- source maps の WASM custom section vs sidecar 詳 細 + browser DevTools step-through 動 作 検 証 を `07-vite-plugin.md` §5.x で (Q23+Q24+Q25)
+- COOP/COEP detect 失 敗 時 の dev mode warning 出 し 方 (= console.warn vs onError event vs DevTools Structured Diagnostics) を `07-vite-plugin.md` §6.1 build-error panel で (Q11 + Q23+Q24+Q25 共 通)
+- future quirk が 出 た 時 の adjudication procedure (= 「unworklet WASM module が 触 る か?」 1 問 判 定 を docs 化) を v1.0.0 docs polish 段 階 で (Q11)
+- accumulation warning threshold (= 何 回 swap で `console.warn` を 出 す か) + message 文 言 を `05-client.md` §8.5 で (Q50)
+- `replaceProcessor` で 旧 node の `process()` を false return さ せ る signaling 経 路 (= 旧 instance の eventual GC) を `04-worklet-runtime.md` §8 で (Q50)
+- live coding / visual programming の canonical recipe を 別 docs (= 12-canonical-examples.md か 新 recipe 集) に 追 加 す る か を v1.0.0 docs polish 段 階 で 判 断 (Q50)
+- per-block で の `audioIn.at(c, k)` (= `k` が 0 以 外 の compile-time-constant literal) の 範 囲 制 約 と 静 的 解 析 (= `[0, SAMPLES_PER_BLOCK - 1]` 範 囲 check) を `03-compiler.md` §2.4 static analysis で incrementally (Q51)
+- per-block 呼 び の canonical use case (= block-start input level 検 査 + adaptive 処 理) を `12-canonical-examples.md` か 新 recipe で 1 例 追 加 す る か を v1.0.0 docs polish 段 階 で 判 断 (Q51)
 
 ### L4-d. `docs/recipes/` voice allocation pattern
 
