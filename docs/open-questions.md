@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 59 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 58 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 23 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 35 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 34 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -308,7 +308,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P2 — 仕様 invariant + lifecycle (35 件)
+## P2 — 仕様 invariant + lifecycle (34 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -487,18 +487,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が `InspectionResult` 型 を 起 こ す 時、 (a) i64 / f64 を JS number に narrow し て 渡 し precision loss、 (b) `head: (number | bigint)[]` 等 union 化、 (c) variant ご と に `head` 型 を 切 り 替 え る 別 type formation (= `kind: 'buffer.i64', head: bigint[]` 等)、 で 3 way 以 上 に 割 れ る。 consumer 側 「preset preview を 数 字 で 表 示」 UI が impl ご と に 53 bit 超 の i64 値 で 値 が 変 わ る possibility。
 
 **判 断 軸**: `state.f64` / `state.i64` / `buffer.f64` / `buffer.i64` が snapshot 対 象 か decide し (= Q42 で publish reject だ が snapshot は 別)、 snapshot 対 象 な ら `InspectionResult` 型 を bigint 含 む 形 に 広 げ る か、 「inspect は preview 限 定 で lossy OK、 正 確 な 値 が 欲 し い consumer は 別 path」 と 仕 様 で declare す る か。 v1.0.0 で inspect 範 囲 を `state.f32` / `state.i32` / `state.bool` + `buffer.u8` / `buffer.i32` / `buffer.f32` だ け に 限 定 し て i64 / f64 を inspect から 落 と す path も candidate。
-
----
-
-## `renderOffline` の snapshot profile 選 択 と initial-state injection path が dangling
-
-**場 所**: `docs/13-offline-render.md:28-46`、 `docs/05-client.md:64`
-
-**何 が 起 き て い る か**: `renderOffline` の 戻 り 値 `result.state` を 「snapshot blob at end-of-render」 と declare し て い る が、 input config 側 で snapshot profile を 指 定 す る path が API surface に な い。 05-client.md §2.6 の `node.snapshot({ profile? })` は profile-aware だ が、 offline path で 「全 profile union を 出 す」 / 「default profile (= profile ナ シ)」 / 「`renderOffline` config に profile 引 数 を 追 加」 の どれ か が 仕 様 か ら 一 意 に 取 れ な い。 加 え て L45 で 「Initial-state injection (= optional `initial` snapshot blob to start from)」 が TODO 状 態 = offline は 1 step (= `config.initial: Uint8Array` 形) を suggest、 online は Q57 で 2 step pattern 統 一 = online と offline で API 形 が 非 対 称 と な る 予 定。
-
-**impl AI 影 響**: impl AI が `renderOffline` 実 装 で `result.state` の profile 選 択 path で (a) default profile 固 定、 (b) 全 profile union、 (c) config で profile 受 け 取 り、 で drift。 initial-state injection を 1 step か 2 step か で design し た 場 合、 online 2 step pattern と offline 1 step pattern が 一 貫 性 ナ シ で consumer が 同 じ blob を online と offline で 使 う 時 の mental model が 揺 れ る。
-
-**判 断 軸**: `renderOffline` config に `profile?: string` を 追 加 し て `node.snapshot({ profile })` と zip す る path を 1 形 で 規 範 化 す る か、 「offline は default profile 固 定」 で 落 と す か。 initial-state injection は online と 同 じ 2 step pattern (= `renderOffline` で 1 度 流 し て snapshot 戻 し、 戻 し た blob を 別 path で restore) に 寄 せ る か、 offline 限 定 の 1 step `config.initial: Uint8Array` path を 認 め る か decide。 online / offline 対 称 性 を 守 る な ら 2 step 統 一 推 奨。
 
 ---
 

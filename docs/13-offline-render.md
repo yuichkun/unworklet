@@ -49,6 +49,10 @@ result.state;        // Uint8Array       snapshot blob (Q5 format) at end-of-ren
        collide with online `CreateNodeOptions.initial` (= param initial values,
        per Q57) and re-introduce the 1-step pattern Q57 retracted. Concrete
        offline `restore` field shape is impl-phase fill per Q61.
+     - Snapshot profile selection: `config.profile?: string` selects which `'persistent'`
+       profile the returned `result.state` blob covers (zips with online
+       `node.snapshot({ profile })`, 05-client §2.6). Omitted = the union of every
+       `'persistent'` profile (= same default as online `node.snapshot()` no-arg).
      - Determinism guarantee. -->
 
 ## 3. Backend choice
