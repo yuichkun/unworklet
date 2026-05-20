@@ -16,10 +16,14 @@ createNode<C>(
 ): Promise<UnworkletNode<C>>;
 
 type CreateNodeOptions<C> = {
-  // Per-param initial values only; key is the param `name`, value is the initial
-  // number. `state.*` / `buffer.*` initialization goes through `await node.restore(blob)`
-  // (Q57) — declaration-kind-specific overrides are not part of `initial`.
-  initial?: Partial<Record<string, number>>;
+  // Per-param initial values only. Key is narrowed to the declared param-name
+  // literal union (= same narrowing discipline as `node.params.<name>` /
+  // `node.state.<name>` / `node.messages.<name>` / `node.events.<name>` /
+  // `node.midi.<name>` / `node.inputs.<name>` / `node.outputs.<name>` — typo'd
+  // names surface as a TypeScript error at the call site). `state.*` / `buffer.*`
+  // initialization goes through `await node.restore(blob)` (Q57) —
+  // declaration-kind-specific overrides are not part of `initial`.
+  initial?: Partial<Record<ParamName<C>, number>>;
 };
 ```
 

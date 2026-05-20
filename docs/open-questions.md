@@ -2,11 +2,11 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 101 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 100 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 38 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 60 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
-- **P3 = 3 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
+- **P3 = 2 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
@@ -1209,7 +1209,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P3 — prose 揺れ / mechanical sweep (3 件)
+## P3 — prose 揺れ / mechanical sweep (2 件)
 
 ## SAB mode の event drain mechanism が doc ご と に 抽 象 level mismatch
 
@@ -1232,18 +1232,3 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI agent が Coverage table を 「surface 確 認 ガ イ ド と し て 各 Ex の 全 行 が 全 surface を exercise す る」 と 信 用 す る と、 (a) Ex 7 で copyFrom が canonical surface か 別 path か で 揺 れ、 (b) Ex 5 で snapshot lifecycle の sample を 探 し て 見 つ か ら ず docs 内 ジ ャ ン プ を 余 計 に 起 こ し、 (c) Ex 5/6/8 に sysex onEvent / Ex 6 に noteOff onEvent を 「必 須」 と 誤 読 す る possibility。 impl 矛 盾 と し て は 軽 度 だ が、 canonical 仕 様 整 合 性 anchor の integrity が 損 な わ れ る。
 
 **判 断 軸**: Coverage table の 各 行 で 「実 code で 該 当 surface を 1 度 で も 呼 ぶ Ex」 を re-scan し て 列 挙 を 修 正 す る path 推 奨。 ま た 「policy declaration 行 使」 と 「lifecycle 行 使」 を 別 行 に 分 け る か、 variant ご と に 行 を 細 分 化 す る か は 別 軸。
-
----
-
-## node 作 成 時 の 初 期 値 引 数 の key 型 が 識 別 子 narrow と 整 合 し て い な い
-
-**場 所**: `docs/05-client.md:9-22`、 `docs/05-client.md:18-20`、 `docs/05-client.md:42-54`
-
-**何 が 起 き て い る か**: node を 作 る free function の option 型 で 初 期 値 受 け 取 り field の 型 が 「`Partial<Record<string, number>>`」 = key が 単 な る string で declare さ れ て い る。 同 prose comment は 「key は param の name」 と 明 言 す る が、 declaration phase で 集 め た param 名 の literal-union に narrow す る 形 で は な い。 一 方、 同 node の 他 全 surface (= `.params.<name>` / `.state.<name>` / `.messages.<name>` / `.midi.<name>` / `.outputs.<name>` / `.inputs.<name>` / `.events.<name>`) は 全 て declared name の literal-union で narrow さ れ る 形 が canonical 全 編 で 規 範 化 さ れ て い る。
-
-**impl AI 影 響**: impl AI が こ の 1 field だ け を raw string key で 出 す と、 typo (= `node.params.gainz` の よ う な misspelling) が 他 surface で は 検 出 さ れ る が 初 期 値 渡 し path で は 検 出 さ れ ず、 surface 一 貫 性 規 律 が 局 所 で 崩 れ る。 narrowing を 入 れ る か 入 れ な い か で TS surface の UX が impl ご と に 別 物 に な り、 「declared name は 全 surface で type narrow さ れ る」 と い う 横 串 invariant が 守 ら れ た / 守 ら れ な か っ た 両 path が 同 source code か ら 生 じ う る。
-
-**判 断 軸**: 初 期 値 key を 「`Partial<Record<ParamName<C>, number>>`」 形 (= declared param 名 の literal-union) で narrow す る path に 統 一 す る 推 奨。 prose comment 「key は param の name」 を 「declared param name の literal union (= 他 surface と 同 narrow 規 律)」 と rewrite。 narrow を 入 れ な い 例 外 を 残 す な ら そ の 例 外 理 由 を prose 明 文 化 が 必 要。
-
----
-
