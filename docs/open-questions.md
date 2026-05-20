@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 98 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 97 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 38 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 59 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 58 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -487,7 +487,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **判 断 軸**: (1) offline で snapshot 復 元 を online と 同 じ 2-step pattern に 寄 せ る (= offline 側 で 1 度 render し snapshot blob を 取 り 出 し て 別 path で restore 注 入) path 推 奨 = online と offline で mental model 統 一 + Q57 ratify と zip。 (2) 02 §1.1 の 「asset upload readiness pattern」 引 用 を 同 commit で Q57 形 (= `createNode` → `await node.restore(blob)` 2-step) に rewrite し て 廃 止 surface 引 用 を 排 除。 「`initial` 識 別 子」 は online 側 (= param 初 期 値) の 既 ratify 形 を 維 持、 offline 側 で 1-step pattern を 立 て る な ら 別 識 別 子 (= 例 え ば `restore: Uint8Array`) を 採 る path も 候 補 だ が Q57 retract 必 要 で v1.0.0 で は 不 採 用 推 奨。
 
 ---
-## P2 — 仕様 invariant + lifecycle (59 件)
+## P2 — 仕様 invariant + lifecycle (58 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -906,18 +906,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が 引 用 ど お り Q14 entry を 引 き に 行 く と 内 容 不 一 致 で 戻 っ て き て し ま い、 SIMD rollout order の 規 定 自 体 が ど の Q-entry に も 存 在 し な い 事 実 に 気 づ か ず、 v1.x.0 で の SIMD 拡 張 path を 適 当 な 順 序 で 進 め て し ま う possibility。
 
 **判 断 軸**: SIMD rollout order の 規 定 が Q-entry 不 在 な ら 別 Q を 立 て て decide す る か、 prose で 「rollout order は v1.x.0 で 別 途 ratify」 と 明 文 化 し て dangling ref を 解 消 す る path 推 奨。
-
----
-
-## 静 的 解 析 phase placeholder の check 列 挙 が 既 written prose と 二 重 化 し、 未 ratify な check 項 目 も 混 入
-
-**場 所**: `docs/03-compiler.md:165-172`、 `docs/03-compiler.md:53-150` (= §2.4 既 written prose と §2.6 stable error ID inventory)
-
-**何 が 起 き て い る か**: §3 placeholder が 6 種 check を 「未 着 手」 と し て 列 挙: `Allocation check / Loop boundedness / Memory sizing / Type inference and consistency check / Parameter reachability / Cycle / instruction-count estimation`。 同 doc §2.4 で 4 種 (Allocation check / Loop boundedness / Memory budget / Type inference inconsistency) が 既 detailed prose + 既 stable error ID で ratify 済。 さ ら に `Parameter reachability` と `Cycle / instruction-count estimation` の 2 種 は 他 doc / 他 Q-entry の どこ に も 仕 様 が 存 在 し な い 未 ratify 概 念。
-
-**impl AI 影 響**: impl AI が §3 を 「未 着 手 で fill す べ き」 と 誤 認、 (a) §2.4 既 ratify の check 4 種 を 別 形 で 二 重 化 し て docs 内 矛 盾 を 生 む、 (b) 未 ratify な `Cycle / instruction-count estimation` を 実 装 入 れ て v1.0.0 acceptance criteria に 入 っ て い な い 機 能 を 公 開 surface に 出 す、 (c) `Parameter reachability` と い う 未 定 義 check を 自 力 解 釈 で 実 装、 path が 3 way に 割 れ る。
-
-**判 断 軸**: §3 placeholder を 削 除 し て §2.4 / §2.6 を 単 一 canonical と す る か、 §3 で fill す る 範 囲 を 「§2.4 既 ratify 4 check の 個 別 規 則 を 詰 め る」 に 限 定 す る path 推 奨。 未 ratify な 2 概 念 (Parameter reachability / Cycle 推 定) は v1.0.0 scope か ら 削 除 す る path に 倒 す か、 別 Q-entry を 立 て て decide。
 
 ---
 

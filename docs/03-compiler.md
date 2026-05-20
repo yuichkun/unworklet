@@ -167,12 +167,19 @@ A separate runtime check (not graph-capture / static-analysis) fires when the wo
 
 ## 3. Static analysis phase
 
-<!-- - Allocation check (verify by-construction invariant)
-     - Loop boundedness (all loops statically bounded)
-     - Memory sizing (sum of state + buffer declarations)
-     - Type inference and consistency check
-     - Parameter reachability
-     - Cycle / instruction-count estimation -->
+<!-- §2.4 (Layer 3 — Static-analysis error) already canonically lists the 4 checks
+     for v1.0.0:
+       1. allocation-on-audio-thread (Q22-c, §5.1)
+       2. bounded-loop (Q31-b — applies across forSample / forSample.byN /
+          everyNSamples / handler / subgraph method bodies)
+       3. memory-budget (Q30 — auto-sum, 64MB warn / 4GB error)
+       4. type inference inconsistency
+     §2.6 holds the stable error ID inventory for these. Per-check rule detail
+     (= exact AST patterns matched, error-message-level disambiguation) is
+     impl-phase fill per Q61. "Parameter reachability" and "cycle /
+     instruction-count estimation" are NOT v1.0.0 scope (= no ratified rule,
+     no acceptance criterion in Q62); if a need surfaces they land additively
+     in v1.x.0 with their own Q ratify + stable error ID. -->
 
 ## 4. WASM emission phase
 
