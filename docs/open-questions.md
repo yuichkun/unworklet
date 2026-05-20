@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 65 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 64 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 23 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 41 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 40 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -308,7 +308,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P2 — 仕様 invariant + lifecycle (41 件)
+## P2 — 仕様 invariant + lifecycle (40 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -391,18 +391,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: handler 内 で subgraph method 呼 び 出 し → method 内 で forSample を 開 く path で、 「handler 内 forSample 全 体 が block 開 始 時 に inline で 1 回 動 く 形」 と 「forSample が 独 立 の per-sample loop と し て drain 後 に 動 く 形」 で WASM emission が 別 物 に な る。
 
 **判 断 軸**: handler 内 で forSample を 開 く こ と を (a) 禁 止、 (b) handler context 内 で inline 1 回 実 行 (= sample loop に な ら な い)、 (c) drain 後 の per-block context で 別 sample loop と し て 動 か す、 の ど れ に 倒 す か。 method 経 由 で 呼 ば れ る 場 合 も 同 path で 統 一。
-
----
-
-## `forSample` 内 で 各 種 emit 系 を 呼 ぶ 時 の `cond` 必 須 性 が prose と 例 で 不 一 致
-
-**場 所**: `docs/11-midi.md:236-241`、 `docs/11-midi.md:165-167`、 `docs/01-dsl.md:1296-1308`
-
-**何 が 起 き て い る か**: 11-midi.md §2.4 prose は 「forSample callback 内 で の emitIf cond は 構 造 的 (= state-edge expression 等) で あ る 必 要 が あ り、 constant-truthy cond は static-analysis error」 と declare (= Q32-c 整 合)。 一 方 §2.5 sysex 例 (L236-241) は forSample 内 で `midiOut.emitIf(cond, { ... atSample: i })` と 書 き、 cond の 性 質 (= sample-edge 系 で あ る べ き) を コ ー ド comment / prose で 説 明 せ ず、 「`// ... handler / forSample logic populates sysexBuf and txLen ...`」 で 暗 黙 化。 規 範 例 が そ の ま ま 模 倣 さ れ る と cond が build-time-folded true に な り Q32-c 違 反 = static-analysis error を 必 ず 引 き 起 こ す リ ス ク。
-
-**impl AI 影 響**: 規 範 例 を 写 し て 動 か な い impl が 出 る。 ま た cond 性 質 を 明 示 し な い こ と で 「forSample 内 で の sysex emit を 何 を 条 件 に 配 置 す べ き か」 の 仕 様 ル ー ル が 暗 黙 化。 cond rule の 適 用 範 囲 (= forSample 直 接 だ け か forSample.byN / everyNSamples も か) も 別 entry 「`emitIf` の constant-truthy reject が ど の context ま で 広 が る か」 と zip し て decide 必 要。
-
-**判 断 軸**: 11-midi.md §2.5 sysex 例 で cond を 具 体 sample-edge expression (= 例 え ば 1 回 だ け 立 つ trigger Node) で 書 き 直 し、 prose comment で 「cond は sample-edge 系 を 想 定、 constant-truthy は graph-capture-time error」 を 明 示 す る path 推 奨。
 
 ---
 

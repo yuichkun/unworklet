@@ -230,11 +230,13 @@ defineProcessor((ctx) => {
   const midiOut  = midiOutput({ name: 'midiOut' });
   const sysexBuf = buffer.u8({ name: 'sysexBuf', size: 64 });           // build-time-fixed
   const txLen    = state.i32(0, { name: 'txLen' });                     // dynamic send length
+  const sendAt   = state.i32(-1, { name: 'sendAt' });                   // sample-offset where the next send fires (-1 = no send pending)
 
   return {
     process: () => {
-      // ... handler / forSample logic populates sysexBuf and txLen ...
+      // ... handler / forSample logic populates sysexBuf + txLen + sendAt ...
       forSample((i) => {
+        const cond = eq(i, sendAt.load());                              // sample-edge: fires exactly on the offset stored by the handler
         midiOut.emitIf(cond, {
           type:     'sysex',
           data:     sysexBuf,                                            // Buffer<'u8'> reference
@@ -246,6 +248,8 @@ defineProcessor((ctx) => {
   };
 });
 ```
+
+> `cond` inside `forSample` must be a **structural sample-edge expression** (e.g. `eq(i, sendAt.load())`, `gt(level, threshold)`, an explicit state-transition mask). A constant-truthy `cond` (= `emitIf(true, ...)` or any expression that folds to a build-time-constant `true`) is rejected at WASM-emission time by `error[unworklet/constant-truthy-emitif]` (Q32-c, `03-compiler.md` §2.6) — unconditional emission inside `forSample` saturates the ringbuffer at sample rate. For unconditional 1:1 projection of an inbound MIDI event onto an output port, use a handler context (= §2.4 canonical) where `emitIf(true, ...)` is legal.
 
 `buffer.u8` exposes the same `Buffer<T>` surface as other element types (`write(idx, v)`, `read(idx)`, `copyFrom(src)`, `size`, `name`); byte values flow through `Node<'i32'>` (the lower 8 bits are stored). The buffer reserves `size` bytes in linear memory at compile time and the `length` parameter on each emit selects how many of those bytes form the actual sysex body — header / trailer bytes (e.g. `0xF0` ... `0xF7`) are the author's responsibility, as they would be on a hardware MIDI line.
 
