@@ -1271,6 +1271,22 @@ export const initialOsc = defineProcessor((ctx) => {
       });
     },
   };
+}, {
+  // Migration chain that the REPL-supplied new processor can fail on:
+  // when the user-edited source carries a different schema hash and a
+  // hostile `migrate` body throws, `replaceProcessor` surfaces `ok: false`
+  // with `error.step` pointing at this entry — see the main-side handler
+  // below. Migration shape: see Ex 7 + 01-dsl §8.3.
+  migrations: [
+    {
+      from: 'a3f2c1d0...',           // hash of an earlier `phase` shape
+      to:   'b8c14fe2...',           // hash of the current schema
+      migrate: (oldBlob, helpers) => {
+        const old = helpers.parseSlot(oldBlob, 'phase', 'f32');
+        if (old !== undefined) helpers.writeSlot('phase', 'f32', old);
+      },
+    },
+  ],
 });
 ```
 

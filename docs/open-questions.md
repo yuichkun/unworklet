@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 57 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 56 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 23 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 33 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 32 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -308,7 +308,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P2 — 仕様 invariant + lifecycle (33 件)
+## P2 — 仕様 invariant + lifecycle (32 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -451,18 +451,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI agent が canonical を 「surface の 完 結 形 sample」 と 信 じ て 実 code を 読 む と、 (a) event<T> 規 範 emit 形 が Ex 4 / Ex 6 / Ex 8 だ け で Ex 5 ナ シ = Ex 5 を referent と し て emit shape を 取 ろ う と し た agent が source を 見 失 う、 (b) dispose の 規 範 sample が コ メ ン ト ア ウ ト 行 だ け = 「dispose は example で 触 れ な い surface」 と 誤 読 す る possibility。 12 冒 頭 prose ル ー ル を strict に 取 れ ば canonical が ル ー ル 違 反 で 書 き 直 し 必 要、 緩 め に 取 れ ば canonical の 「self-contained」 主 張 が 単 な る 修 辞 と な る。
 
 **判 断 軸**: 12 冒 頭 prose ル ー ル を そ の ま ま 規 律 と し て 採 用 し、 (1) Ex 5 grain spawn 部 を inline 完 結 で 書 く (= build-time for + select chain で 全 voice 展 開)、 (2) Ex 1 で `unsubL(); unsubR(); node.dispose();` を non-comment の 実 行 行 と し て 入 れ る path に 寄 せ る か、 prose ル ー ル を 「illustrative comment / commented-out teardown は 許 容」 に 緩 め て 12 冒 頭 文 言 を 改 訂 す る か。 前 者 推 奨 (= self-contained が canonical の integrity anchor 性 質)。
-
----
-
-## Ex 10 が `result.error.step` を 参 照 す る が 該 当 processor で 失 敗 path が 構 造 的 に 存 在 し な い
-
-**場 所**: `docs/12-canonical-examples.md:1244-1315`、 `docs/01-dsl.md:1168-1175`、 `docs/decisions-log.md:2837`
-
-**何 が 起 き て い る か**: Ex 10 で 開 始 時 の `initialOsc` processor は `migrations` 配 列 を declare し て お ら ず、 main 側 で `await replaceProcessor(node, mod.default)` を 呼 ぶ。 §8.3.3 の restore-time ル ー ル で `ok: false` ・ `error: { step, message, cause }` が 返 る path は 「step 3: `migrate` が throw」 に 限 定。 migrations 配 列 が ナ シ の processor は schema 一 致 で step 1 (直 接 write back)、 schema 不 一 致 で step 4 (name-match partial restore で `ok: true`) に 落 ち、 step 3 を 通 れ な い = `result.error.step` を 表 示 す る Ex 10 の statusUI 行 (L1298) は dead path。 一 方 Q64 decisions-log entry (L2837) は 「Ex 10 が migration 失 敗 時 の `RestoreResult.ok = false` 復 帰 path を exercise」 と 主 張、 canonical と decisions-log の zip が 取 れ て い な い。
-
-**impl AI 影 響**: impl AI が canonical Ex 10 を 「想 定 動 作 の 1 サ ン プ ル」 と 信 用 し て 「migrations 配 列 ナ シ + schema 不 一 致 で も `ok: false` が 返 り 得 る」 と 誤 読 す る possibility。 そ の 場 合 framework 実 装 で 「migrations ナ シ + schema 不 一 致」 path を `ok: true` (= 仕 様 通 り name-match partial restore) と す る か `ok: false` (= canonical Ex 10 を 信 用) と す る か で 動 作 が 別 物 に な る。
-
-**判 断 軸**: Ex 10 の `initialOsc` processor に migrations 配 列 を declare し て step 3 path を 構 造 的 に 通 せ る canonical へ 書 き 直 す か、 Ex 10 の statusUI を `result.error.step` 参 照 ナ シ 形 (= ok: true / partial restore) に 書 き 直 す か、 Q64 decisions-log entry の rationale wording を 修 正 す る か。 canonical が ratify 済 の Q50 / Q45 の error path を exercise す る 意 図 を 守 る な ら 前 者 (migrations を canonical Ex 10 に 入 れ る) 推 奨。
 
 ---
 
