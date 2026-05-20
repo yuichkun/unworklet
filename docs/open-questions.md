@@ -2,11 +2,11 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 106 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 105 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 38 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 60 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
-- **P3 = 8 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
+- **P3 = 7 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
@@ -1209,7 +1209,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P3 — prose 揺れ / mechanical sweep (8 件)
+## P3 — prose 揺れ / mechanical sweep (7 件)
 
 ## a-rate param を per-block top で `param.at(0)` 経 由 で 取 る pattern の canonical 確 認 不 在
 
@@ -1232,18 +1232,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: SAB mode で の main 側 event drain mechanism の 選 択 が impl ご と に drift。 MessageChannel / Atomics.notify / rAF / setTimeout の ど れ で も 仕 様 prose を 満 た せ て し ま う。
 
 **判 断 軸**: mechanism を spec level (= SAB mode = Atomics 経 由 wakeup、 fallback = postMessage 順 次) で 1 doc に 集 約 declare す る か、 「mechanism は impl の 自 由 度、 観 測 ル ー ル だ け 規 定」 path に 倒 す か。 後 者 な ら 05 §5.1 の 具 体 mechanism 記 述 を 削 除 / 例 示 と し て marker す る 必 要 あ り。
-
----
-
-## 「No heap alloc」 matrix 行 が L3 と Emission の 2 layer を 1 リ ス ト に 連 結 し て layer 境 界 が 不 明
-
-**場 所**: `docs/00-foundations.md:230`、 `docs/03-compiler.md:160`
-
-**何 が 起 き て い る か**: foundations §5.2 matrix 行 「No heap alloc」 で 「L3 (allocation check; memory-budget sum; runtime `memory.grow` permanently excluded)」 と 1 リ ス ト 連 結 で 書 く が、 内 訳 を 03-compiler と zip す る と (a) `allocation-on-audio-thread` (Layer 3 = 静 的 解 析)、 (b) `memory-budget` (Layer 3 = 静 的 解 析)、 (c) `memory.grow` opcode を WASM emission に 出 さ な い (= Emission layer = 静 的 解 析 と は 別 layer) の 3 path が 同 一 リ ス ト に 混 在。 foundations §5.2 の enforcement layer 定 義 (L1 = TS / L2 = capture / L3 = static / Emission = boundary / Runtime guard) と zip す る と Emission が L3 と 混 同 さ れ て いる。
-
-**impl AI 影 響**: impl AI が L3 静 的 解 析 pass を 設 計 す る 時、 「`memory.grow` を 監 視 す る runtime check を L3 に 含 め る」 と 誤 読 し て 不 要 な check を 入 れ る possibility。 実 際 は emission pass で `memory.grow` opcode を 単 に 出 さ ず、 静 的 監 視 は 不 要。 「L3 = 静 的 解 析」 「Emission = WASM 出 力 か ら 落 と す」 の 線 引 き が matrix 表 現 で 失 わ れ て いる。
-
-**判 断 軸**: matrix 行 を layer ご と に セ ル を 分 け て 列 挙 す る path (= 「L3 セ ル に 静 的 解 析 ID、 Emission セ ル に 「`memory.grow` 不 在」」) に 寄 せ る か、 matrix 表 現 を そ の ま ま に prose で 「`memory.grow` 不 在 は Emission layer の 話 で L3 で は な い」 と 注 釈 す る か。 前 者 推 奨 (= 4 layer matrix の zip 完 全 性 が 仕 様 invariant の 中 心)。
 
 ---
 
