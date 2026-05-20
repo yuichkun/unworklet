@@ -2,11 +2,11 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 110 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 109 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 38 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 60 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
-- **P3 = 12 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
+- **P3 = 11 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
@@ -1209,7 +1209,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P3 — prose 揺れ / mechanical sweep (12 件)
+## P3 — prose 揺れ / mechanical sweep (11 件)
 
 ## `subscribe` / `onEvent` / `on` の return 値 が unsubscribe で 揃 え て あ る か
 
@@ -1316,18 +1316,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が `ctx` proxy を 実 装 す る 時、 (a) `sampleRate` だ け を 公 開 し て strict、 (b) `currentTime` / `numChannels` / `blockSize` 等 を 推 測 で 追 加 し て 緩 い 公 開、 (c) 「etc.」 を v1.0.0 で は 1 field の み と 解 釈 し て canonical exercise と zip、 で path が 割 れ る。 user mental で 「ctx に 何 が 載 る か」 が 仕 様 か ら 一 意 に 取 れ ず、 v1.0.0 surface の closed set 規 範 と 衝 突。
 
 **判 断 軸**: `ctx` 公 開 field を v1.0.0 で 1 か 所 で 列 挙 declare し (= `sampleRate` だ け か、 別 field を 含 む か decide)、 「etc.」 wording を 削 除 し て closed set 形 に 倒 す path 推 奨。 「meta primitives」 が ctx の 一 部 か 別 surface か も 同 commit で 整 理。
-
----
-
-## SAB graceful degradation placeholder が 同 doc 既 written 内 容 を 短 縮 し て 持 ち、 §2 が §3 を 参 照 す る 循 環 ref に な っ て い る
-
-**場 所**: `docs/08-deployment.md:87-92`、 `docs/08-deployment.md:60-85` (= §2 A5 既 written)
-
-**何 が 起 き て い る か**: §3 placeholder の HTML comment 4 行 が SAB 有 / 無 transport / detection / event code 「`sab-unavailable`」 を 抽 象 wording で 並 べ る が、 §2 A5 で 同 内 容 が 既 detailed prose と し て ratify 済 (= 「runtime detects whether `SharedArrayBuffer` is constructible and `crossOriginIsolated` is true ... messaging surface is byte-identical in both modes; only main-side observation latency differs. Consumers can observe the mode via `node.onError` (event code `sab-unavailable`)」)。 さ ら に §2 A5 prose 末 尾 が 「See §3 for the graceful-degradation details」 と §3 を 参 照 す る 一 方、 §3 placeholder は §2 A5 を そ の ま ま 短 縮 し て お り、 「§2 → §3 → §2」 の 循 環 ref に な っ て い る。
-
-**impl AI 影 響**: impl AI が §3 を fill す る 時、 (a) §2 A5 内 容 を 別 文 言 で 重 複 fill し て docs 内 矛 盾、 (b) 既 ratify な event code `sab-unavailable` を §3 で 「別 名」 で 命 名 し 直 し て surface 衝 突、 (c) §5 既 ratify 「Pre-warm な し (Q20)」 と 衝 突 す る warm-up を SAB-unavailable path に 入 れ る、 path が 3 way に 割 れ る。
-
-**判 断 軸**: §3 placeholder を 削 除 し て §2 A5 を 単 一 canonical と す る path、 ま た は §3 を §2 A5 の sub-detail (= 例 え ば 「buffer transferable の 渡 し 方 の 具 体 wire 形 式」 等 = 既 entry L587 と 重 ね て decide) に 限 定 し て scope を 明 文 化 す る path 推 奨。 同 commit で §2 A5 末 尾 の 「See §3」 ref を 削 除 / 書 き 直 す。
 
 ---
 

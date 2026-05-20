@@ -78,7 +78,7 @@ audioCtx.resume();
 
 #### B3. COOP / COEP HTTP headers
 
-Cross-origin isolation (`Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Embedder-Policy: require-corp`) is a deployment-time concern handled by the consumer's hosting platform. unworklet only detects the runtime result to select the messaging transport (see A5). Missing headers do not break the application — they only force the `postMessage` fallback and add main-side observation latency. See §3 for the graceful-degradation details.
+Cross-origin isolation (`Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Embedder-Policy: require-corp`) is a deployment-time concern handled by the consumer's hosting platform. unworklet only detects the runtime result to select the messaging transport (see A5). Missing headers do not break the application — they only force the `postMessage` fallback and add main-side observation latency.
 
 ### Per-browser validation
 
@@ -86,10 +86,13 @@ Cross-origin isolation (`Cross-Origin-Opener-Policy: same-origin` + `Cross-Origi
 
 ## 3. SharedArrayBuffer graceful degradation
 
-<!-- - With SAB (cross-origin isolated): lock-free ring buffers, typed bulk transfers.
-     - Without SAB: postMessage with structured clone, pre-allocated transfer regions.
-     - Detection at runtime, mode reported via UnworkletNode.onError diagnostic.
-     - SAB is a performance optimization only — never a correctness requirement. -->
+<!-- §2 A5 already declares the degradation contract (= SAB-vs-postMessage transport
+     selection, byte-identical messaging surface across modes, observation-mode
+     accessor via `node.onError` with event code `sab-unavailable`). Wire-level
+     details live in `02-messaging.md` + Q27; SAB-mode change event surface lives
+     in `decisions-log.md` Q11. Sub-detail (= e.g. concrete fallback buffer
+     allocation shape, postMessage transfer protocol specifics) is impl-phase
+     fill per Q61; do not duplicate §2 A5 prose here. -->
 
 ## 4. WASM binary distribution
 
