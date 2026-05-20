@@ -2,15 +2,15 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 84 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 83 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 32 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 31 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 51 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
-## P1 — ship blocker 系 (32 件)
+## P1 — ship blocker 系 (31 件)
 
 ### cluster (1) 型 system core (3)
 
@@ -149,18 +149,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: worklet が 計 算 結 果 を typed-array field 付 き で main へ emit し た い ケ ー ス (= 例 え ば FFT spectrum、 波 形 解 析 結 果) で impl が (a) MIDI sysex と uniform に `data: Buffer<T> | TypedArrayFieldRef<T>` を 受 け る surface を 追 加 す る、 (b) 「event<T> の emit-side variable-length field は inbound proxy か ら の forward の み 」 と 制 限 し て worklet 側 新 規 構 築 を 不 可 と す る、 で 2 path に 分 か れ る。 後 者 を 採 る と canonical で 「worklet → main の FFT 結 果 emit」 が 書 け な く な る (= 一 般 audio 用 例 の 中 心 機 能 が cover で き な い)。
 
 **判 断 軸**: sysex 専 用 path を 一 般 化 し て event<T> emit 側 で も `Buffer<T>` を 受 け 入 れ る surface (= `{ field: Buffer<T> | TypedArrayFieldRef<T>; length: Node<'i32'> }`) を 立 て る path に 倒 す か、 「worklet 側 で 新 規 typed-array 中 身 を emit す る 経 路 は MIDI sysex 専 用、 event<T> は inbound proxy forward の み」 と 制 限 し て canonical で 同 ケ ー ス を 出 さ な い path か。 前 者 推 奨 (= 一 般 audio 用 例 を cover、 surface も sysex と uniform)。
-
----
-
-## publish の cadence を 表 す 語 が 「render quantum ご と」 「due tick ご と」 で 揺 れ、 同 義 か 別 義 か 不 明
-
-**場 所**: `docs/02-messaging.md:138-144`、 `docs/04-worklet-runtime.md:82-90`、 `docs/05-client.md:42-43`
-
-**何 が 起 き て い る か**: state.publish / buffer.publish の main 側 配 信 cadence を 3 doc が 別 語 で 表 現。 02 §5.4 「version counter is incremented **unconditionally** on each publish tick」 + 「handlers fire on every published tick」、 04 §7 step 2 「If the counter has met or exceeded the threshold, the slot is **due**: copies, increments the slot's version counter, resets the local counter」 (= due tick = rateFps threshold を 越 え た block だ け)、 05 §2 「Handler fires on every publish tick where the **version counter has advanced**」。 04 だ け が 「due 」 = rateFps gated と 明 示 し、 02 と 05 は 「publish tick」 / 「every published tick」 だ け で gate を 説 明 し な い。 「publish tick」 と 「due tick」 が 同 義 か は prose で declare ナ シ。
-
-**impl AI 影 響**: 02 / 05 だ け を 読 ん だ impl AI は 「publish tick = every render quantum」 と 解 釈 し て rateFps gate を 効 か せ ず 全 block 配 信 す る path、 04 だ け を 読 ん だ impl AI は 「due tick = rateFps gate あ り」 で 正 し い path、 を 取 り う る。 main 側 subscriber 呼 び 出 し 頻 度 が impl ご と に 30〜344Hz の 範 囲 で drift。
-
-**判 断 軸**: 「publish tick = due tick = rateFps gate で threshold を 越 え た render quantum 」 と 1 か 所 で 用 語 定 義 し、 02 / 05 が そ こ を 参 照 す る path 推 奨。 04 §7 の wording を canonical と し て 02 §5.4 / 05 §2 の 表 現 を そ こ に zip。
 
 ---
 
