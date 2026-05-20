@@ -2,11 +2,11 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 107 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 106 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 38 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 60 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
-- **P3 = 9 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
+- **P3 = 8 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
@@ -1209,19 +1209,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P3 — prose 揺れ / mechanical sweep (9 件)
-
-## `createNode({ initial })` が param 専 用 か state も 受 け る か
-
-**場 所**: `docs/05-client.md:18-22`、 `docs/05-client.md:42`、 `docs/01-dsl.md:336-337`
-
-**何 が 起 き て い る か**: createNode の `initial?: Partial<Record<string, number>>` と prose 「Per-param initial values」 が `number` 単 一 で declare さ れ て お り、 `state.bool` (= main 側 boolean) や 別 declaration kind を main か ら override す る path が prose に な い。 「Per-param」 が strict か 緩 い か prose で 不 明 確。
-
-**impl AI 影 響**: impl AI は (a) param 専 用 strict で state は createNode で 受 け ず、 (b) state init も `number` で 受 け 入 れ て bool は 別 path で キャ ス ト、 (c) `initial` を declaration kind ご と に 別 key で 受 け る、 で 判 断 が 割 れ る。
-
-**判 断 軸**: createNode で state 初 期 値 を 渡 し た い ケ ー ス を 「restore」 path に 集 約 す る か、 `initial` を 拡 張 す る か。 bool / typed-array kind を 同 一 key で 渡 す と TS signature が 重 く な る た め、 「initial は param 専 用 strict」 path 推 奨。
-
----
+## P3 — prose 揺れ / mechanical sweep (8 件)
 
 ## a-rate param を per-block top で `param.at(0)` 経 由 で 取 る pattern の canonical 確 認 不 在
 

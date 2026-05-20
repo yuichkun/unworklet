@@ -16,7 +16,9 @@ createNode<C>(
 ): Promise<UnworkletNode<C>>;
 
 type CreateNodeOptions<C> = {
-  // Per-param initial values; key is the param `name`, value is the initial number.
+  // Per-param initial values only; key is the param `name`, value is the initial
+  // number. `state.*` / `buffer.*` initialization goes through `await node.restore(blob)`
+  // (Q57) — declaration-kind-specific overrides are not part of `initial`.
   initial?: Partial<Record<string, number>>;
 };
 ```
