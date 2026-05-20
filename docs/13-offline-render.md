@@ -42,7 +42,13 @@ result.state;        // Uint8Array       snapshot blob (Q5 format) at end-of-ren
 <!-- TODO §2.x:
      - Full type signature with generics over processor declarations (output names, event types, message types).
      - Per-sample vs per-block parameter input shape rules (= Q18 length 1 / 128 / 0 normalization at the offline boundary).
-     - Initial-state injection (= optional `initial` snapshot blob to start from; the online counterpart is the two-step pattern `createNode` → `node.restore(blob)` in `05-client.md` §1, see Q57).
+     - Initial-state injection: follows the same 2-step pattern as online (= produce
+       the `state` blob first via a prior `renderOffline` call or a saved `node.snapshot()`
+       blob, then inject through a `restore`-style config field). The 1-step
+       `config.initial: Uint8Array` shape is NOT part of v1.0.0 — that would
+       collide with online `CreateNodeOptions.initial` (= param initial values,
+       per Q57) and re-introduce the 1-step pattern Q57 retracted. Concrete
+       offline `restore` field shape is impl-phase fill per Q61.
      - Determinism guarantee. -->
 
 ## 3. Backend choice

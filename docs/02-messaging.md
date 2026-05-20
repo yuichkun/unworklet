@@ -53,7 +53,7 @@ await ready;
 playButton.disabled = false;
 ```
 
-Authors that need "asset must be present before the first render quantum" use the snapshot/restore path instead — see `05-client.md` §2.6 (`createNode(..., { initial })` / `node.restore(blob)`). The audio-thread-side defense against "asset not yet uploaded" (e.g. gating voice triggers on `sampleLen.load() > 0`) lives in the processor's own state machine; the framework does not synthesize a generic readiness flag.
+Authors that need "asset must be present before the first render quantum" use the snapshot/restore path instead — see `05-client.md` §2.6: the canonical 2-step pattern is `const node = await createNode(audioContext, processor); await node.restore(blob);` (Q57). The audio-thread-side defense against "asset not yet uploaded" (e.g. gating voice triggers on `sampleLen.load() > 0`) lives in the processor's own state machine; the framework does not synthesize a generic readiness flag.
 
 Authoritative rationale: `decisions-log.md` Q27-a (publish surface) + Q27-c (`message<T>` fire-and-forget contract).
 

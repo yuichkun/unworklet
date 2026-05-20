@@ -2,15 +2,15 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 76 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 75 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 24 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 23 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 51 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
-## P1 — ship blocker 系 (24 件)
+## P1 — ship blocker 系 (23 件)
 
 ### cluster (1) 型 system core (3)
 
@@ -308,17 +308,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## offline で 主 側 → worklet 側 1 回 送 信 surface の 識 別 子 が online と 同 一 意 味 で 衝 突
-
-**場 所**: `docs/13-offline-render.md:44-46` (= TODO comment `initial` snapshot blob)、 `docs/05-client.md:18-22` (= `CreateNodeOptions.initial: Partial<Record<string, number>>` = param 初 期 値)、 `docs/02-messaging.md:56` (= `createNode(..., { initial })` を snapshot 復 元 path と し て canonical user pattern で 引 用)、 `decisions-log.md` Q57 (= `createNode({ restore })` 廃 止 / snapshot 復 元 は 2-step path)
-
-**何 が 起 き て い る か**: 13 §2 TODO で offline 用 の 「initial-state injection」 を 「optional `initial` snapshot blob to start from」 と 提 案 し、 online の counterpart は 「2-step pattern (= `createNode` → `await node.restore(blob)`)」 と prose 注 釈。 一 方 online surface `CreateNodeOptions.initial` (05 §1) は 「Per-param initial values (= 単 純 な 数 値 record)」 = snapshot blob 不 在 で、 Q57 で 既 に snapshot 復 元 は 2-step pattern (= `createNode` → `await node.restore(blob)`) 統 一 ratify 済 = 1-step snapshot 復 元 path は online 側 で 廃 止。 さ ら に 02 §1.1 L56 で 「asset upload readiness pattern」 と し て canonical user pattern の 中 で `createNode(..., { initial })` を snapshot/restore path と し て 引 用、 これ が 廃 止 surface に 引 き ず ら れ て い る。 同 一 識 別 子 `initial` が offline で 「snapshot blob」 と 提 案、 online で 「param 初 期 値 record」 と 既 ratify = 同 一 識 別 子 別 意 味 衝 突。
-
-**impl AI 影 響**: impl AI が (a) offline で `initial: Uint8Array` 採 用、 online で `initial: Partial<Record<string, number>>` の ま ま 維 持 = 同 一 surface 名 で 異 な る 型 / 意 味 = TS surface 衝 突、 (b) offline 側 で 別 識 別 子 (= `initialState` 等) 採 用 = surface 設 計 改 訂 必 要、 (c) offline で snapshot 復 元 を 2-step pattern に 寄 せ る (= `renderOffline` 後 に node 相 当 surface を 返 し `restore(blob)` で 復 元) = offline 側 surface 大 改 訂、 (d) 02 §1.1 引 用 を そ の ま ま 信 用 し て online `createNode({ initial: blob })` 1-step pattern を 復 活 = Q57 ratify と 衝 突、 で path が 4 way。 acceptance F1 (= 公 開 surface integrity + Q1〜Q62 全 entry 整 合) で 02 §1.1 引 用 が Q57 ratify と zip せ ず ship blocker と し て の 自 己 違 反 発 生。
-
-**判 断 軸**: (1) offline で snapshot 復 元 を online と 同 じ 2-step pattern に 寄 せ る (= offline 側 で 1 度 render し snapshot blob を 取 り 出 し て 別 path で restore 注 入) path 推 奨 = online と offline で mental model 統 一 + Q57 ratify と zip。 (2) 02 §1.1 の 「asset upload readiness pattern」 引 用 を 同 commit で Q57 形 (= `createNode` → `await node.restore(blob)` 2-step) に rewrite し て 廃 止 surface 引 用 を 排 除。 「`initial` 識 別 子」 は online 側 (= param 初 期 値) の 既 ratify 形 を 維 持、 offline 側 で 1-step pattern を 立 て る な ら 別 識 別 子 (= 例 え ば `restore: Uint8Array`) を 採 る path も 候 補 だ が Q57 retract 必 要 で v1.0.0 で は 不 採 用 推 奨。
-
----
 ## P2 — 仕様 invariant + lifecycle (51 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
