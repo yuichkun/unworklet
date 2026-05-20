@@ -4,10 +4,6 @@
 
 ---
 
-## Q-A. swap 累 積 warning の 閾 値 + 文 言
-
-`replaceProcessor` で 同 AudioContext 内 で N 回 swap 累 積 で `console.warn` を 出 す path (Q50 で ratify 済 み)。 N の 値 + message 文 言 を ど う 決 め る か、 ま た は warning ナ シ で 進 め る か。 関 連 doc = `05-client.md` §8.5。
-
 ## Q-B. live coding canonical recipe を 入 れ る か
 
 `replaceProcessor` を 軸 に し た live coding / visual programming の canonical recipe を `12-canonical-examples.md` か 新 recipe 集 に 1 例 追 加 す る か。 (Q50)

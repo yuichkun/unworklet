@@ -362,7 +362,13 @@ This is the deliberate trade-off: `replaceProcessor` is honest about what a proc
 
 ### 8.5 Memory and registration accumulation
 
-Each `replaceProcessor` call adds one entry to the `AudioWorkletGlobalScope`'s registered-processor table; the Web Audio spec provides no removal path before the `AudioContext` is destroyed. In dev workflows that swap repeatedly (HMR, live coding), this accumulates inside the current `AudioContext`'s lifetime. The framework surfaces this through a `console.warn` after a threshold of swaps in the same `AudioContext`, suggesting the caller recreate the context (or refresh the page) when it becomes a concern. Production code that swaps occasionally (preset reloads, format changes) is unaffected in practice.
+Each `replaceProcessor` call adds one entry to the `AudioWorkletGlobalScope`'s registered-processor table; the Web Audio spec provides no removal path before the `AudioContext` is destroyed. In dev workflows that swap repeatedly (HMR, live coding), this accumulates inside the current `AudioContext`'s lifetime. The framework surfaces this through a single `console.warn` once `replaceProcessor` has been called more than **50 times** on the same `AudioContext` (Q63). The exact message:
+
+```
+unworklet: replaceProcessor has been called more than 50 times on this AudioContext. Web Audio cannot unload old WASM modules; create a new AudioContext if memory growth matters.
+```
+
+The warning fires once per `AudioContext` instance and is silent for production code that swaps occasionally (preset reloads, format changes).
 
 ### 8.6 Patterns built on top (= user-land, not framework)
 

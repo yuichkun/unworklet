@@ -72,6 +72,7 @@ populated (Q1–Q62 ratify complete; Q28 is unassigned — a numbering artifact,
 | Q60 | Trivial repo settings batch (= L4-c × 4: monorepo tool + license + npm scope + TypeScript minimum) | resolved — (1) monorepo tool = pnpm workspaces (= VitePlus が user 選 択 で pnpm / npm / yarn / bun を wrap、 unworklet は pnpm 採 用、 root `pnpm-workspace.yaml` + root `package.json` の `packageManager: pnpm@<version>` + cross-package ref は `workspace:*` protocol、 開 発 / CI 起 動 は 全 て `vp` CLI 経 由 で AGENTS.md HARD CONTRACT)、 (2) license = MIT、 (3) npm scope = `@unworklet` (= 余 湖 さ ん npm account で 既 確 保)、 (4) TypeScript minimum = 5.5; trivial 設 定 値 (= 余 湖 さ ん の 既 取 得 / 既 嗜 好 で 決 ま る 値、 impl AI agent は 確 定 値 を 設 定 す れ ば 矛 盾 出 な い) を batch ratify | `09-repo-structure.md` §1 / §3 / §4 / §5 |
 | Q61 | Placeholder section 群 = impl 期 owner 任 せ 明 文 化 (= L4-a) | resolved — 各 doc の `<!-- placeholder -->` section (= 大 半 が internal implementation spec、 公 開 surface で は な い) は impl 開 始 時 に 各 doc owner が 順 次 fill す る 方 針 と し て docs 化、 v1.0.0 spec freeze 前 に 全 部 drain ナ シ; 統 一 注 釈 prose の 各 placeholder へ の 散 布 は L4-M4 sweep の 領 域 で 後 続 batch、 ratify 自 体 は こ の entry で 完 結; `09-repo-structure.md` §6 (= versioning policy) は Q14 acceptance criteria 連 動 で Q61 範 疇 外 | `00-foundations.md` §6 + `03-compiler.md` §1 / §3〜§8 + `04-worklet-runtime.md` §1 / §2 / §8 + `05-client.md` §3 / §4 + `06-testing.md` §2〜§5 + `07-vite-plugin.md` §2 / §3 / §5 / §6.x + `08-deployment.md` §3 / §4 + `10-roadmap.md` §1 / §2 / §3.2 + `13-offline-render.md` §2.x / §3 |
 | Q62 | v1.0.0 acceptance criteria (= L4-b、 Q14) | resolved — `10-roadmap.md` §1 を fill、 9 項 目 checklist (= A1 vp build / A2 canonical 全 WASM emit / A3 vp check / B1 canonical 期 待 output offline 再 現 / B2 pure JS ↔ WASM bit-exact / C1 realtime-safety 5 invariants layered 検 出 / D1 browser × isolated 6 セ ル smoke / E1 L4-M sweep 完 了 / E2 Layer 1〜3 = 0 / F1 .d.ts ↔ Q1-Q62 整 合) で impl AI agent が ship 可 否 を 1 意 判 定 可; browser matrix = (β) Chromium + Firefox + Safari × {COOP/COEP cross-origin isolated, not isolated} = 6 セ ル full required、 D1 smoke test 仕 様 で `connectFromWebMIDI` (= Web MIDI 標 準 wrapper) は test 対 象 外 (= emission boundary 外 側 = consumer 責 任、 Q11 整 合)、 全 browser セ ル で `node.midi.<name>.send(event)` source-agnostic injection 経 由 で MIDI 動 作 を 統 一 検 証; Safari Web MIDI 非 サ ポ ー ト = unworklet 側 実 装 変 更 ナ シ (= consumer が `navigator.requestMIDIAccess` を feature-detect す る path)、 `08-deployment.md` §2 B1 に Safari 制 約 1 段 落 補 強 + Per-browser validation prose に 1 文 補 強; 案 (α) Chrome + Firefox 4 セ ル / 案 (γ) Safari best-effort 棄 却 (= Safari の core 制 約 は Web MIDI に 限 定、 unworklet 自 体 は Safari で 動 く た め full required 達 成 可 能) | `10-roadmap.md` §1 + `08-deployment.md` §2 B1 + Q11 |
+| Q63 | swap 累 積 warning の 閾 値 + 文 言 (Q50 follow-up) | resolved — 同 AudioContext 内 で `replaceProcessor` が **50 回** を 超 え た 時 点 で **1 回 だ け** `console.warn` を 出 す; message = `unworklet: replaceProcessor has been called more than 50 times on this AudioContext. Web Audio cannot unload old WASM modules; create a new AudioContext if memory growth matters.`; 50 = HMR で の 通 常 saturate し な い 上 限 + live coding は 数 百 回 swap 想 定 = 「自 然 な dev session で 死 文 化 し な い」 値; 案 (= N=10 早 期 警 告、 N=100 余 裕 重 視、 warning ナ シ) を 棄 却 (= 10 は HMR で 普 通 に 出 て noise、 100 は live coding 以 外 で 死 文、 warning ナ シ は user の memory leak 認 知 経 路 を 奪 う) | `05-client.md` §8.5 |
 
 ---
 
@@ -2786,4 +2787,33 @@ authoritative wording: `03-compiler.md` §2.4 + `03-compiler.md` §4。
 - *explicit `memoryLimit` option を v1.0.0 ship*: declaration 自 動 sum で 必 要 性 不 在、 user に 重 複 surface 押 し 付 け = mental ノ イ ズ、 v1.x.0 で 必 要 性 が 出 れ ば additive。
 - *runtime `memory.grow` を audio thread で 許 可*: bounded-time invariant 違 反、 realtime audio で 致 命 的、 永 久 排 除。
 - *budget 違 反 を 全 て build-time error*: 64 MB 越 え を error に す る と 真 の 必 要 use case (= 大 IR convolution / 大 wavetable bank) が ship 不 能、 warning + 上 限 error の 2 段 で 健 全 化。
+
+---
+
+## Q63 — swap 累 積 warning の 閾 値 + 文 言
+
+**Status:** resolved.
+
+**Decision:** `replaceProcessor` (Q50) が 同 一 `AudioContext` 内 で **50 回** を 超 え て 呼 ば れ た 時 点 で、 framework が **1 回 だ け** `console.warn` を 出 す。 message は 固 定:
+
+```
+unworklet: replaceProcessor has been called more than 50 times on this AudioContext. Web Audio cannot unload old WASM modules; create a new AudioContext if memory growth matters.
+```
+
+warning は 同 `AudioContext` ご と に 1 度 だ け、 51 回 目 の swap で 発 火 (= 52 回 目 以 降 は silent)。 production の 偶 発 的 swap (= preset reload、 format 変 更 等) で は 当 た ら な い 値。
+
+authoritative wording: `05-client.md` §8.5。
+
+**Rationale:**
+
+- *50 は dev session 上 限 と し て 自 然*: HMR で は dev session 中 で 10〜30 回 swap が 通 常 = 50 で 出 る warning は HMR で saturate し な い。 live coding (= REPL / file watcher 経 由 で の 数 百 回 swap) で は 確 実 に 当 た る = user が AudioContext 再 生 成 を 検 討 す る 認 知 path。
+- *1 回 だ け で sufficient*: warning は 「Web Audio platform の 制 約 を 認 知 さ せ る」 役 割 で 動 作 阻 害 で は な い = 反 復 し て 出 す と log noise、 1 度 出 れ ば 役 目 完 了。
+- *message に "Web Audio platform の 制 約" と "回 避 path (= 新 AudioContext)" を 同 居*: footgun 撤 廃 規 律 と 整 合 (= 「何 が ダ メ で 何 を す れ ば 良 い か」 を 1 message 内 で 完 結)。
+
+**Rejected:**
+
+- *N=10 早 期 警 告*: HMR の 普 通 の session で 当 た る = warning noise 化 し て log 汚 染、 user が warning を 無 視 す る 学 習 が 始 ま る。
+- *N=100 余 裕 重 視*: HMR で は ま ず 当 た ら な い + live coding session で も 数 十 回 swap で memory growth が 体 感 さ れ う る 帯 = 死 文 寄 り。
+- *warning ナ シ*: user が memory growth の platform 制 約 に 気 付 か な い 経 路 を 残 す = silent footgun。 Web Audio 仕 様 帰 結 で も framework と し て の 認 知 surface は 提 供 す べ き。
+- *反 復 warning (= 50, 100, 150 ... 回 ご と に 出 す)*: log noise + 同 fact を 反 復 通 知 す る 意 義 ナ シ。 1 度 出 し て 終 了 が clean。
 
