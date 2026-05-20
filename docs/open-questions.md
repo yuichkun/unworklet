@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 61 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 60 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 23 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 37 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 36 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -308,7 +308,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P2 — 仕様 invariant + lifecycle (37 件)
+## P2 — 仕様 invariant + lifecycle (36 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -463,18 +463,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI agent が canonical を 「surface の 完 結 形 sample」 と 信 じ て 実 code を 読 む と、 (a) event<T> 規 範 emit 形 が Ex 4 / Ex 6 / Ex 8 だ け で Ex 5 ナ シ = Ex 5 を referent と し て emit shape を 取 ろ う と し た agent が source を 見 失 う、 (b) dispose の 規 範 sample が コ メ ン ト ア ウ ト 行 だ け = 「dispose は example で 触 れ な い surface」 と 誤 読 す る possibility。 12 冒 頭 prose ル ー ル を strict に 取 れ ば canonical が ル ー ル 違 反 で 書 き 直 し 必 要、 緩 め に 取 れ ば canonical の 「self-contained」 主 張 が 単 な る 修 辞 と な る。
 
 **判 断 軸**: 12 冒 頭 prose ル ー ル を そ の ま ま 規 律 と し て 採 用 し、 (1) Ex 5 grain spawn 部 を inline 完 結 で 書 く (= build-time for + select chain で 全 voice 展 開)、 (2) Ex 1 で `unsubL(); unsubR(); node.dispose();` を non-comment の 実 行 行 と し て 入 れ る path に 寄 せ る か、 prose ル ー ル を 「illustrative comment / commented-out teardown は 許 容」 に 緩 め て 12 冒 頭 文 言 を 改 訂 す る か。 前 者 推 奨 (= self-contained が canonical の integrity anchor 性 質)。
-
----
-
-## payload に variable-length field が 複 数 並 ぶ 時 の wire 形 式 が 不 定 義
-
-**場 所**: `docs/02-messaging.md:113-118`、 `docs/01-dsl.md:511-518`
-
-**何 が 起 き て い る か**: 02-messaging.md §5.1 で `event<T>` slot を `[ atSample : u32 ] [ T fields : ... ] [ payloadLen : u32 ] [ payloadOffset : u32 ]` と 規 定 し、 末 尾 2 field は 「`0 if T has no variable-length field`」 (= **単 数 形**) と prose 注 釈。 一 方 01-dsl §4.3 は 「variable-length payload **fields** (`Float32Array`, `Uint8Array`, etc.) within `T`」 と **複 数 形** で 書 き、 `T = { samples: Float32Array; label: Uint8Array }` の よ う な 宣 言 を 暗 黙 に 許 容 す る 文 面 に な っ て い る。 slot 側 は payloadLen / payloadOffset を 各 1 個 し か 持 た ず、 複 数 variable-length field の wire 表 現 path が declare ナ シ。
-
-**impl AI 影 響**: T が variable-length field を 複 数 持 つ 宣 言 を し た 時、 impl が (a) graph-capture-time error で reject (= 「T 内 の variable-length field は 1 個 ま で」 制 約 を 静 的 に 課 す)、 (b) slot を `[atSample][T fields][payloadLen_1][payloadOffset_1][payloadLen_2][payloadOffset_2]...` と field 数 分 拡 張、 (c) 暗 黙 の 並 び 順 ル ー ル (= field 宣 言 順 で content buffer に 連 結 し offset/length を 1 組 共 有) を 入 れ る、 で 3 way に 分 か れ、 declared T の TS surface も 仕 様 ご と に 別 物 に な る。
-
-**判 断 軸**: 「T 内 の variable-length field は 1 個 ま で 」 を graph-capture で 強 制 す る path (= prose 注 釈 を 単 数 形 と zip) か、 「複 数 field を 仕 様 で declare し slot 拡 張 を 規 範 化」 path か。 v1.0.0 で 1 個 ま で に 倒 し て お く path 推 奨 (= TS / wire 両 方 シ ン プ ル、 後 か ら 複 数 化 は non-breaking)。
 
 ---
 

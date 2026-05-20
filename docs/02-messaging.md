@@ -119,6 +119,8 @@ Each slot in an `event<T>` ring buffer occupies a fixed-size block determined at
 [ payloadOffset : u32 ]   // index into the variable-length content buffer (when present)
 ```
 
+**Single variable-length field limit (v1.0.0)**: `T` may contain **at most one** variable-length field (= `Float32Array`, `Uint8Array`, etc.). A declared `T` with more than one variable-length field is a graph-capture-time error. The slot carries one `payloadLen` / `payloadOffset` pair sized for that single field; the TS surface mirrors this with the single-field constraint. Forward-compatible: a v1.x.0 surface could extend the slot layout to carry multiple `payloadLen` / `payloadOffset` pairs without changing the v1.0.0 single-field path.
+
 Slot count and byte size are decided at processor instantiation. Pointers (`head`, `tail`) increment by 1 per event, slot-indexed — slot-boundary misreads are structurally impossible. Same approach as MIDI Q4-c.
 
 ### 5.2 Variable-length payload content buffer
