@@ -2,11 +2,11 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 103 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 102 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 38 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 60 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
-- **P3 = 5 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
+- **P3 = 4 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
@@ -1209,19 +1209,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P3 — prose 揺れ / mechanical sweep (5 件)
-
-## a-rate param を per-block top で `param.at(0)` 経 由 で 取 る pattern の canonical 確 認 不 在
-
-**場 所**: `docs/01-dsl.md:406-411`、 `docs/12-canonical-examples.md:520`、 `docs/12-canonical-examples.md:638`
-
-**何 が 起 き て い る か**: prose で 「k-rate param に は `param.at(0)` で block 値、 a-rate param に は first-sample value (= block-start)」 と zip declare。 canonical で k-rate per-block (= `dryGain.at(0)` を `forSample.byN(4, ...)` 内 で 取 る) は 規 範 化 さ れ て いる が、 a-rate param を per-block top で `param.at(0)` 引 い て first-sample value を 取 る pattern が canonical で 1 件 も な い。 Ex 5 で `playbackPos` を a-rate で declare し た が body で 1 度 も 引 い て な い (= dead declaration、 別 entry 参 照)。
-
-**impl AI 影 響**: impl AI は (a) a-rate param の per-block 呼 び を silent first-sample 返 し、 (b) graph-capture-time warning、 (c) k-rate fallback で 別 値 返 し、 で 判 断 が 割 れ る。 priority 軽 め だ が canonical coverage gap で 規 範 確 認 不 在 = impl drift。
-
-**判 断 軸**: a-rate per-block 呼 び を canonical に 1 例 追 加 し て 規 範 化 す る か、 prose だ け で 通 し て canonical 確 認 ナ シ で 行 く か。
-
----
+## P3 — prose 揺れ / mechanical sweep (4 件)
 
 ## SAB mode の event drain mechanism が doc ご と に 抽 象 level mismatch
 
