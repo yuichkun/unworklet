@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 99 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 98 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 38 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 60 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 59 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -487,7 +487,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **判 断 軸**: (1) offline で snapshot 復 元 を online と 同 じ 2-step pattern に 寄 せ る (= offline 側 で 1 度 render し snapshot blob を 取 り 出 し て 別 path で restore 注 入) path 推 奨 = online と offline で mental model 統 一 + Q57 ratify と zip。 (2) 02 §1.1 の 「asset upload readiness pattern」 引 用 を 同 commit で Q57 形 (= `createNode` → `await node.restore(blob)` 2-step) に rewrite し て 廃 止 surface 引 用 を 排 除。 「`initial` 識 別 子」 は online 側 (= param 初 期 値) の 既 ratify 形 を 維 持、 offline 側 で 1-step pattern を 立 て る な ら 別 識 別 子 (= 例 え ば `restore: Uint8Array`) を 採 る path も 候 補 だ が Q57 retract 必 要 で v1.0.0 で は 不 採 用 推 奨。
 
 ---
-## P2 — 仕様 invariant + lifecycle (60 件)
+## P2 — 仕様 invariant + lifecycle (59 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -906,18 +906,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が 引 用 ど お り Q14 entry を 引 き に 行 く と 内 容 不 一 致 で 戻 っ て き て し ま い、 SIMD rollout order の 規 定 自 体 が ど の Q-entry に も 存 在 し な い 事 実 に 気 づ か ず、 v1.x.0 で の SIMD 拡 張 path を 適 当 な 順 序 で 進 め て し ま う possibility。
 
 **判 断 軸**: SIMD rollout order の 規 定 が Q-entry 不 在 な ら 別 Q を 立 て て decide す る か、 prose で 「rollout order は v1.x.0 で 別 途 ratify」 と 明 文 化 し て dangling ref を 解 消 す る path 推 奨。
-
----
-
-## コ ン パ イ ラ pipeline 概 観 placeholder が 他 doc 既 ratify の build artifact / math emission / error layer と zip し な い
-
-**場 所**: `docs/03-compiler.md:11-16`
-
-**何 が 起 き て い る か**: §1 placeholder の HTML comment は コ ン パ イ ラ pipeline の 5 stage を `processor.ts → AST → static analysis → multi-target emission` と 抽 象 形 で 並 べ、 emit target を 「WASM binary / pure-JS interpreter / worklet JS template / typed client TS .d.ts / metadata JSON」 5 種 と 列 挙。 一 方 (a) `07-vite-plugin.md` §6.3 で 既 ratify な build artifact 4 種 (`dist/<processor>.graph.json` / `.memory.json` / `.diagnostics.json` / `.schema-hash.json`) が こ こ で は 「metadata JSON」 と 1 行 に 圧 縮、 (b) `01-dsl.md` §2.1 + Q17 ratify の math 戦 略 (= polynomial 近 似 を WASM 関 数 と し て emit、 FFI 越 え な し) が 触 れ ら れ ず、 (c) `03-compiler.md` §2.6 既 ratify の stable error ID inventory + Layer 1〜3 enforcement も 触 れ ら れ な い。
-
-**impl AI 影 響**: impl AI が §1 placeholder を 「未 着 手 stub」 と 誤 認 し て pipeline 概 観 を fill す る 時、 既 ratify な 4 build artifact / Q17 math emission 経 路 / Layer 1〜3 enforcement を 反 映 せ ず 別 命 名・別 構 造 を 入 れ て §6 / §2.4 / §2.6 と 衝 突 す る path。 multi-target emission が 4 か 5 か (= `.d.ts` を 独 立 target と み る か WASM emit の 副 産 物 と み る か) も 揃 わ な い。
-
-**判 断 軸**: §1 placeholder の fill 内 容 を 「既 ratify な 4 build artifact / Q17 math 戦 略 / Layer 1〜3 enforcement を 直 接 参 照 し て 集 約 declare」 に 倒 す path 推 奨。 抽 象 5 stage 図 だ け で fill さ せ な い (= 他 doc に zip し た 形 で declare)。
 
 ---
 
