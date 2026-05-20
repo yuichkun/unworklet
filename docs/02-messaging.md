@@ -63,7 +63,7 @@ Authoritative rationale: `decisions-log.md` Q27-a (publish surface) + Q27-c (`me
 |---|---|---|---|---|
 | `state.publish` | latest-wins per slot | (no queue) | every publish tick (audio thread copies into shared region) | none — slot is overwritten freely |
 | `event<T>` | preserve all | sample-arrival-order with `atSample` | continuously by main thread reader | drop-oldest + `overflowCount` |
-| `message<T>` | preserve all | main-arrival-order | start of each render quantum, before any per-block top-level statement or `forSample` (handlers drain first per Q38-b) | drop-oldest + `overflowCount` |
+| `message<T>` | preserve all | main-arrival-order | start of each render quantum (worklet author's viewpoint = the **current** quantum; from main this is the quantum **after** the `node.messages.<name>(...)` call — same moment, viewpoint difference only, per Q38-a), before any per-block top-level statement or `forSample` (handlers drain first per Q38-b) | drop-oldest + `overflowCount` |
 
 Common guarantees:
 

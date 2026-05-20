@@ -2,15 +2,15 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 83 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 82 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 31 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 30 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 51 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
-## P1 — ship blocker 系 (31 件)
+## P1 — ship blocker 系 (30 件)
 
 ### cluster (1) 型 system core (3)
 
@@ -149,18 +149,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: worklet が 計 算 結 果 を typed-array field 付 き で main へ emit し た い ケ ー ス (= 例 え ば FFT spectrum、 波 形 解 析 結 果) で impl が (a) MIDI sysex と uniform に `data: Buffer<T> | TypedArrayFieldRef<T>` を 受 け る surface を 追 加 す る、 (b) 「event<T> の emit-side variable-length field は inbound proxy か ら の forward の み 」 と 制 限 し て worklet 側 新 規 構 築 を 不 可 と す る、 で 2 path に 分 か れ る。 後 者 を 採 る と canonical で 「worklet → main の FFT 結 果 emit」 が 書 け な く な る (= 一 般 audio 用 例 の 中 心 機 能 が cover で き な い)。
 
 **判 断 軸**: sysex 専 用 path を 一 般 化 し て event<T> emit 側 で も `Buffer<T>` を 受 け 入 れ る surface (= `{ field: Buffer<T> | TypedArrayFieldRef<T>; length: Node<'i32'> }`) を 立 て る path に 倒 す か、 「worklet 側 で 新 規 typed-array 中 身 を emit す る 経 路 は MIDI sysex 専 用、 event<T> は inbound proxy forward の み」 と 制 限 し て canonical で 同 ケ ー ス を 出 さ な い path か。 前 者 推 奨 (= 一 般 audio 用 例 を cover、 surface も sysex と uniform)。
-
----
-
-## main → worklet handler が drain さ れ る タ イ ミ ン グ が 「ど の 視 点 の 」 quantum か で 揺 れ る
-
-**場 所**: `docs/02-messaging.md:23`、 `docs/02-messaging.md:62-66`、 `docs/02-messaging.md:28-31`
-
-**何 が 起 き て い る か**: 02-messaging.md §1 L23 は messageDecl.onReceive を 「at the start of the **current** render quantum (worklet author's viewpoint; from main, this is the **next quantum** after `node.messages.<name>(...)`)」 と 視 点 切 替 で 説 明、 同 §2 (delivery semantics 表) は 「start of **each** render quantum」 と viewpoint を 明 示 せ ず 全 称 形 で 書 く。 同 §1.1 L29 は 「at the start of the **current** render quantum from the worklet's viewpoint」 と 再 び viewpoint 明 示。 表 だ け 参 照 す る impl AI に は viewpoint 規 約 が 不 在。
-
-**impl AI 影 響**: 表 だ け を 信 用 し た impl AI が 「main の send 直 後 同 一 quantum 中 で 配 信 す る (= 0 latency)」 と 解 釈 し て し ま う possibility。 仕 様 意 図 は 「main の send → 次 quantum 開 始 の drain で worklet 側 が 受 け 取 る (= 1 quantum 遅 延)」 で あ り、 viewpoint 違 い だ け を 表 現。 timing 実 装 が 1 quantum ず れ る と sample-accurate 性 が 全 体 で 壊 れ る。
-
-**判 断 軸**: 02 §2 表 の 「each render quantum」 wording を 「each render quantum (from the worklet's viewpoint; from main this is the quantum after the send call)」 に 揃 え る か、 表 上 部 prose で viewpoint 規 約 を 1 行 で 集 約 declare し て 表 内 部 を そ こ へ 参 照 さ せ る path。
 
 ---
 
