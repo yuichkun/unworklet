@@ -77,6 +77,7 @@ populated (Q1–Q62 ratify complete; Q28 is unassigned — a numbering artifact,
 | Q65 | per-block 呼 び canonical example 追 加 (Q-D、 Q51 follow-up) | resolved — 追 加 ナ シ。 per-block で の `audioIn.at(c, 0)` / `audioOut.set(c, 0, v)` 動 作 は Q51 + §1 prose + Q37 last-write-wins で 仕 様 文 一 意、 impl AI agent が docs prose だ け で 1 意 に 読 め る。 入 れ る case は Ex 4 (lookahead limiter) と 役 割 重 複 で 新 surface ナ シ = 矛 盾 検 出 力 上 が ら な い、 棄 却 | `12-canonical-examples.md` (= 追 加 ナ シ) |
 | Q66 | Voice allocation recipe 追 加 (Q-E) | resolved — 追 加 ナ シ。 Ex 8 で voice allocator subgraph + steal logic が 既 exercise、 unworklet 仕 様 surface (= subgraph / state / onEvent MIDI / build-time loop) は 全 完 結。 stealing policy 違 い (= oldest / quietest / priority 等) は consumer の audio engine 設 計 領 域 で unworklet 仕 様 surface に 矛 盾 を 産 ま な い、 棄 却 | `12-canonical-examples.md` Ex 8 |
 | Q67 | Overlap-add recipe 追 加 (Q-F) | resolved — 追 加 ナ シ。 Ex 3 で partitioned convolution = overlap-add 系 構 造 を 既 exercise、 unworklet 仕 様 surface (= buffer / state / forSample / SIMD bulk) は 全 完 結。 STFT 特 化 (= 窓 + FFT + spectrum 操 作 + IFFT + overlap-add) は FFT primitive を 必 要 と し、 FFT は unworklet primitive 外 (= consumer の L1 helper 領 域) = unworklet 仕 様 surface に 矛 盾 を 産 ま な い、 棄 却 | `12-canonical-examples.md` Ex 3 |
+| Q68 | per-block で の sample-offset 引 数 が 0 以 外 literal の 場 合 の 範 囲 check 仕 様 (Q-C、 Q51 follow-up) | resolved — `audioIn.at(c, k)` / `audioOut.set(c, k, v)` / `param.at(k)` の sample-offset 引 数 が JS literal で 渡 さ れ た 場 合、 `[0, SAMPLES_PER_BLOCK - 1]` (= 0〜127) 範 囲 外 は graph-capture-time error (= `audio-sample-offset-out-of-range`、 Layer 2) で 弾 く。 `audio-sample-offset-out-of-range` を `03-compiler.md` §2.6 stable error ID inventory に 追 加。 audio I/O + param で 統 一; 案 (= 範 囲 check ナ シ + runtime 動 作 規 定 / user 責 任 未 規 定) を 棄 却 (= 「build 時 に 静 的 検 出 可 能 な も の は build 時 に 弾 く」 既 軸 と 衝 突、 pure JS ↔ WASM bit-exact 検 証 と 衝 突 リ ス ク); 128 fix は v1.0.0 で 維 持 (= Q18 + Q35 と 整 合)、 将 来 AudioContext `renderSizeHint` 採 用 で render quantum 可 変 化 path に 進 ん だ 場 合 は v1.x.0 で adaptive emission を additive 追 加 (= build 時 check + runtime check の 2 layer 構 成 へ 拡 張)、 consumer が 128 以 外 の `renderSizeHint` で 作 成 し た AudioContext を v1.0.0 で 渡 し た 時 は worklet 起 動 時 runtime check で 違 反 = エ ラ ー event 発 火 で fail-loud (= Q18 既 path 維 持) | `03-compiler.md` §2.6 + `01-dsl.md` §1 |
 
 ---
 
@@ -384,7 +385,7 @@ Preset save/load and session restore are foundational to the kinds of audio devi
 - **Declaration helpers**: `audioInput({ channels, name })` and `audioOutput({ channels, name })` live in declaration scope only. Same pattern as `state` / `buffer` / `param`. Calling them in expression scope is a graph-capture-time error.
 - **Always explicit**: a processor has no audio I/O unless it declares it. No "default mono in / default mono out" sugar; no implicit return-value-as-output shortcut. Every audio port is a declaration.
 - **Required `name`**: every `audioInput` / `audioOutput` must carry a `name`. Names are slot identities for the port and the keys for main-thread typed access.
-- **Typed channel access**: `audioIn.at(c, i)` narrows `c` to the legal range for the declared channel count (`channels: 2` → `0 | 1`); `audioOut.set(c, i, v)` narrows `c` and types `v` as `Node<'f32'>`. Both are checked at TypeScript / graph-capture time. Sample-position primitives (`at` / `set`) are valid only inside `forSample` callbacks (Q22-b); the `i` argument is the callback parameter, scoped accordingly. There is no sugar form (`read(c)` / `write([...])`) — see `decisions-log.md` Q22 (Q22-b) for the rationale.
+- **Typed channel access**: `audioIn.at(c, i)` narrows `c` to the legal range for the declared channel count (`channels: 2` → `0 | 1`); `audioOut.set(c, i, v)` narrows `c` and types `v` as `Node<'f32'>`. Both are checked at TypeScript / graph-capture time. Sample-offset primitives (`at` / `set`) are valid only inside `forSample` callbacks (Q22-b); the `i` argument is the callback parameter, scoped accordingly. There is no sugar form (`read(c)` / `write([...])`) — see `decisions-log.md` Q22 (Q22-b) for the rationale.
 - **Multi-port support is symmetric**: any number of inputs and outputs can coexist with arbitrary channel counts; the count is the declaration count, mapped directly to Web Audio's `numberOfInputs` / `numberOfOutputs` and `outputChannelCount[]`.
 - **Main-thread typed access**: `node.inputs.<name>` and `node.outputs.<name>` provide typed `connect()` / be-connected-to wrappers over the underlying `AudioWorkletNode`. The raw `AudioWorkletNode` is always reachable as `node.node` for advanced patching.
 
@@ -562,7 +563,7 @@ return {
 };
 ```
 
-**Decision (Q22-b — Sample-position primitives):** authoritative wording in `01-dsl.md` §1.2, §1.3, §3.3, §10. Summary:
+**Decision (Q22-b — Sample-offset primitives):** authoritative wording in `01-dsl.md` §1.2, §1.3, §3.3, §10. Summary:
 
 There is **one form** for accessing sample-offset-keyed values, and it is the **explicit form**. No sugar surface.
 
@@ -2899,4 +2900,44 @@ authoritative wording: `12-canonical-examples.md` Ex 3。
 **Rejected:**
 
 - *入 れ る (= STFT pitch shifter recipe)*: recipe の 主 占 め が FFT 実 装 (= consumer 領 域)、 unworklet 仕 様 surface の 矛 盾 検 出 に は 寄 与 し な い。
+
+---
+
+## Q68 — per-block で の sample-offset 引 数 範 囲 check 仕 様
+
+**Status:** resolved。
+
+**Decision:** `audioIn.at(c, k)` / `audioOut.set(c, k, v)` / `param.at(k)` の sample-offset 引 数 `k` が JS literal で 渡 さ れ た 場 合、 `[0, SAMPLES_PER_BLOCK - 1]` (= 0〜127) 範 囲 外 は **graph-capture-time error** (= Layer 2、 stable ID = `audio-sample-offset-out-of-range`) で 弾 く。 audio I/O + param で 統 一。
+
+`03-compiler.md` §2.6 stable error ID inventory に row 追 加; `01-dsl.md` §1 prose で 範 囲 制 約 明 文 化。
+
+```typescript
+// build OK
+audioIn.at(0, 5);       // block の 6 sample 目
+audioOut.set(0, 127, v); // 末 端
+param.at(0);            // block-start
+
+// build error: audio-sample-offset-out-of-range
+audioIn.at(0, 128);     // 範 囲 外 (= upper bound)
+audioIn.at(0, -1);      // 範 囲 外 (= negative)
+param.at(200);          // 範 囲 外
+```
+
+authoritative wording: `03-compiler.md` §2.6 + `01-dsl.md` §1。
+
+**Rationale:**
+
+- *「build 時 に 静 的 に 検 出 可 能 な も の は build 時 に 弾 く」 既 軸 と 整 合*: Q22-c で 確 立 し た 3 error layer の Layer 2 (= graph-capture-time error) に 自 然 fit。 既 `non-constant-lane` (= Q3) や `illegal-stride` (= Q37-b) と 同 軸。
+- *仕 様 surface に 別 軸 追 加 ナ シ*: build 通 す + 範 囲 外 動 作 を 仕 様 規 定 す る path (= 「範 囲 外 = 0 返 す」 等) を 採 る と WASM emission に 1 layer 増 え る + 範 囲 外 動 作 を 1 つ に 決 め る 別 grill が 発 生 = surface 膨 張。
+- *bit-exact 検 証 と 整 合*: Q62 acceptance B2 で の pure JS ↔ WASM bit-exact 検 証 に 「範 囲 外 動 作 未 規 定」 path は 衝 突 リ ス ク = 静 的 弾 き で 不 確 定 性 排 除。
+- *audio I/O + param 統 一*: 3 種 primitive で 共 通 ル ー ル = mental model 1 軸。
+
+**v1.x.0 で の 拡 張 path:**
+
+128 fix は v1.0.0 で 維 持 (= Q18 + Q35 と 整 合)。 将 来 AudioContext `renderSizeHint` 採 用 で render quantum 可 変 化 path に 進 ん だ 場 合 は v1.x.0 で adaptive emission を additive 追 加 = 静 的 に 範 囲 確 定 す る case で の build 時 check + 動 的 case で の runtime check の 2 layer 構 成 に 拡 張。 v1.0.0 で consumer が 128 以 外 の `renderSizeHint` で 作 成 し た AudioContext を 渡 し た 時 は、 worklet 起 動 時 の runtime check (= Q18 で 既 ratify、 `outputs[0][0].length !== 128`) で 違 反 検 出 = エ ラ ー event 発 火 で fail-loud。
+
+**Rejected:**
+
+- *範 囲 check ナ シ + runtime 動 作 を 仕 様 で 規 定 (= 例: 「範 囲 外 = 0 を 返 す」)*: 静 的 に 検 出 可 能 な も の を runtime に 流 す = Q22-c 軸 と 整 合 し な い + 範 囲 外 動 作 を 1 つ (= 0 返 す / 末 端 値 返 す / trap 等) に 決 め る 別 grill が 発 生 = surface 膨 張。
+- *範 囲 check ナ シ + 範 囲 外 動 作 は user 責 任 (= undefined behavior)*: WASM emission 側 の 範 囲 外 動 作 が 実 装 依 存 = pure JS ↔ WASM bit-exact 検 証 (Q62 B2) と 衝 突 リ ス ク + impl AI agent が 異 な る judgment に 達 す る 余 地 = 仕 様 surface 矛 盾。
 

@@ -152,6 +152,7 @@ Each `<stable-id>` is a kebab-case identifier used as the `error[unworklet/<stab
 | `missing-name` | 2 | a snapshot-using processor declares a `state.*` / `buffer.*` / `param.*` slot without the required `name` field | Q5-b |
 | `illegal-stride` | 2 | `forSample.byN(stride, callback)` is called with a non-build-time-constant `stride`, or a `stride` that does not divide `SAMPLES_PER_BLOCK` (= 128) — allowed values: `1`, `2`, `4`, `8`, `16`, `32`, `64`, `128` | Q37-b |
 | `non-constant-lane` | 2 | `vec.lane(i)` is called with a non-build-time-constant lane index `i` (SIMD lane access must fold at graph capture) | Q3 |
+| `audio-sample-offset-out-of-range` | 2 | `audioIn.at(c, k)` / `audioOut.set(c, k, v)` / `param.at(k)` is called with a JS-literal sample-offset `k` outside `[0, SAMPLES_PER_BLOCK - 1]` (= `0`〜`127`) | Q68 |
 | `payload-element-type-mismatch` | 2 | `buf.copyFrom(payloadField)` is called with a typed-array payload whose element type does not match the buffer's `<T>` (e.g. `Float32Array` → `buffer.i32`) | Q31-c |
 | `migrations-unreachable` | 2 | a `migrations: [...]` chain does not cover a path from a known `from` `schemaHash` to the current `schemaHash` (reported as warning by default; promoted to error under `migrationsStrict: true`) | Q5-e |
 | `constant-truthy-emitif` | 3 | `emitIf(cond, payload)` inside a `forSample` / `forSample.byN` callback receives a `cond` expression that folds to a build-time-constant truthy value (would emit at audio rate and saturate the event ringbuffer) | Q32-c |
