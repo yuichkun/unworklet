@@ -50,19 +50,7 @@ unworklet の pillar:
 
 ## Layer 1 — 真 の ★★★ (impl 矛 盾 リ ス ク 高)
 
-### L2-d. L1 helper の nested `forSample` を 明 示 化 (旧 L3-b)
-
-**何 が 未 決** — `01-dsl.md` §5.5.5 で L1 helper 内 `forSample(...)` 呼 び 出 し が 「rare; usually iteration is the caller's job」 と OK 寄 り、 §10.3 forSample body constraints で 「Allowed: ... calls to L1 helpers」 と 書 く。 こ の 2 つ を 組 み 合 わ せ る と **L1 helper が 内 部 で `forSample` を 呼 ぶ + 呼 び 出 し 側 も `forSample` 内** = 暗 黙 に nested `forSample` 成 立。 spec で 明 示 化 ナ シ。 audit B §2 拾 い。
-
-**な ぜ こ の 位 置 (= Layer 1)** — RT-safe 静 的 解 析 (= bounded loop check) の 範 囲 が dangling = 異 な る impl agent が nested loop の bound check 範 囲 / sample-offset 独 立 性 を 別 々 に 判 断 し て 矛 盾 し た 実 装 が 出 る。 公 開 API surface 追 加 で は な い が、 静 的 解 析 invariant の dangling = 真 の impl 矛 盾 リ ス ク。
-
-**選 択 肢:**
-
-- **(A) 暗 黙 OK を 明 文 化。** §5.5.5 に 「helper の forSample は caller の forSample と nested で 動 く、 sample-offset は caller の `i` と は 独 立 」 と 明 記。
-- **(B) Nested forSample を spec で 禁 止。** 「helper の forSample は caller が forSample 外 か ら 呼 ぶ 場 合 限 定」 と 規 則 化。 §10.3 「nested forSample (rare; typically used for tile iteration in 2D buffers)」 wording を 削 除。
-- **(C) Tile iteration use case (= forSample 内 で nested forSample で 2D buffer 走 査) を 明 示 use case と し て 採 用、 例 を 1 個 canonical に 追 加。**
-
-**Pillar 関 連** — P6、 P3 (RT-safe — nested は 静 的 解 析 で bounded 確 認 必 要)。
+(現 在 該 当 entry ナ シ — Q56 / Q57 / Q58 で 全 ratify 完 了。 後 続 grill で 新 規 dangling 発 見 時 は こ こ に 追 加 す る)
 
 ---
 

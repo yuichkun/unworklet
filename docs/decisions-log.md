@@ -66,6 +66,7 @@ populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index)
 | Q55 | priority filter 軸 = impl 矛 盾 リ ス ク + L1-a 「phase」 wording sweep (Q53 補 強、 Q51 followup) | resolved — v1.0.0 ship 前 docs 読 者 = impl AI agent、 user-facing docs は v1.0.0 完 成 後 別 phase で 関 心 範 囲 外; priority filter の 唯 一 の 軸 = 「impl AI agent が 手 放 し で 実 装 し た 時 に 矛 盾 が 出 る か」 = 異 な る agent が 異 な る judgment に 達 す る prose 内 矛 盾 / dangling だ け が ★★★、 「user 視 点」 「user 誤 解」 「mental model 揺 れ る」 は priority 評 価 軸 外 (= mechanical sweep 領 域); L1-a 構 造 名 詞 「phase」 撤 廃 sweep (= Q51 followup) を 同 commit で 完 了、 adjective 「per-block / per-sample」 維 持、 §6 heading `The process phase` → `The process body`、 §10.4.1 `Single-phase` → `Per-sample-only`、 §10.4.2 `Multi-phase` → `Mixed`、 canonical Ex 3 description rename、 SIMD example `Phase 1/2/3` → `Step 1/2/3`、 oscillator phase counter / minimum-phase / linear-phase / 音 響 phase / compiler phase は 別 意 で retain | `open-questions.md` 冒 頭 「ratify 範 囲 と priority filter」 section + L1-a entry 削 除 + Q53 + Q51 |
 | Q56 | Handler body の expression scope (= L1-b、 Q51 followup) | resolved — `messageDecl.onReceive(...)` / `midiInput().onEvent(...)` handler body の expression scope rule を `forSample` callback と 完 全 一 致 さ せ る (= primitive op / `state.load/store` / buffer access / audio I/O `audioIn.at` / `audioOut.set` / `param.at` / `emitIf` / subgraph methods / L1 helpers が 全 て legal、 新 規 declaration `state.*` / `buffer.*` / `param.*` / `createSubgraph(...)` は 不 可); sample-offset 引 数 は `Node<'i32'> | number` を 一 律 受 け 入 れ (= handler arg の `atSample` / state slot value / buffer read / JS literal の ど れ も OK)、 surrounding `forSample` の `i` だ け が scope 外 (= 既 規 定 通 り、 handler は forSample の 前 に drain); `01-dsl.md` §4.2 L500 「Inside a handler, only state writes, buffer writes, and scalar arithmetic are allowed」 prose を 「same expression-scope rules as a forSample callback」 に 書 き 換 え、 §4.1 / §5.6.4 / §6 / Q32 既 規 定 と 整 合 (= L500 が 唯 一 の 狭 prose だ っ た dangling 解 消); 案 (d) 一 切 禁 止 (= state 書 き 込 み 専 用 segment) 棄 却 (= user に 覚 え る context rule を 1 個 追 加、 forSample / handler の 2 種 別 ル ー ル、 公 開 surface の 概 念 量 増、 no-artificial-constraint 違 反); 案 (a) JS literal だ け / (b) `Node<'i32'>` だ け も 不 自 然 例 外 規 則 で 棄 却 | `01-dsl.md` §4.2 + `02-messaging.md` §1 + `11-midi.md` §2.3 + `00-foundations.md` §3 (Expression scope、 既 整 合) + Q22 / Q32 / Q36 / Q51 |
 | Q57 | `createNode({ restore })` option 廃 止 (= L2-c) | resolved — `CreateNodeOptions<C>.restore?: Uint8Array` を v1.0.0 surface か ら 廃 止、 `createNode` 戻 り 値 形 は 常 に `Promise<UnworkletNode<C>>` で 統 一、 snapshot 復 元 は `createNode` → `await node.restore(blob)` の **2 step pattern** が canonical (= Q45 `RestoreResult` discriminated union で 失 敗 surface 取 得); 案 (A) 戻 り 値 を `{ node, restore }` に 拡 張 棄 却 (= restore option 渡 し た 時 だ け wrap 形 = 戻 り 値 形 が option 有 無 で 2 種、 TS overload 2 種 増、 surface 概 念 量 増)、 案 (B) `onError` event で 通 知 棄 却 (= error event は worklet trap / queue overflow 等 の **起 動 後 非 同 期 event** 用、 migration throw は **node 起 動 時 の 同 期 flow** で 性 質 違 う、 mental model 衝 突); canonical Ex 群 で `createNode({ restore })` 使 用 ナ シ = consumer は 既 に 2 step pattern で 書 い て い る fact、 ergonomic loss は +1 行 軽 微; v1.x.0 で 「1 step」 必 要 性 出 た ら additive 追 加 可 | `05-client.md` §1 + `13-offline-render.md` §2 / §4 + Q45 |
+| Q58 | L1 helper の nested `forSample` 明 示 化 (= L2-d、 旧 L3-b) | resolved — L1 helper 内 で `forSample(...)` 呼 び + caller が `forSample` 内 か ら helper 呼 ぶ pattern (= 暗 黙 nested forSample) を **v1.0.0 で 認 め る + spec 明 文 化**、 直 接 `forSample` 内 で `forSample` を 呼 ぶ pattern も 同 様 に legal (= §10.3 既 wording の 自 然 帰 結); 内 外 callback は 別 関 数 の 引 数 で `i` は 独 立、 RT-safe 静 的 解 析 は 内 外 両 方 の forSample に `SAMPLES_PER_BLOCK` bounded-loop check を 独 立 適 用 (= 既 invariant Q22 / Q29 の 自 然 拡 張、 新 ル ー ル ナ シ); 案 (B) 禁 止 棄 却 (= helper の 呼 び 位 置 で 動 作 変 化 = 関 数 抽 象 の 漏 れ、 §10.3 既 wording と も 衝 突)、 案 (C) canonical Ex 追 加 棄 却 (= v1.x.0 で 必 要 性 出 た ら L4-d / L4-e voice-allocation / overlap-add と 同 軸 で recipe 追 加、 v1.0.0 ship 必 須 で は な い); 計 算 量 (= 128 × 128 = 16384 sample ops / quantum) は user の 設 計 責 任、 docs prose で 1 行 注 意 喚 起 | `01-dsl.md` §5.5.5 + §10.3 + Q22 / Q29 |
 
 ---
 
@@ -2427,4 +2428,53 @@ if (!result.ok) { /* migration failure surface (Q45) */ }
 - canonical Ex 群 で `createNode({ restore })` 使 用 ナ シ を 確 認 (= L330 Ex 3 で `createNode(audioContext, linearPhaseEQ, { initial: { /* none */ } })` の `initial` 経 由 だ け) = AGENTS.md HARD CONTRACT 同 commit 整 合 確 認 済 み
 - `open-questions.md` か ら L2-c entry 削 除、 Layer 1 件 数 を 2 → 1 に 更 新 (= 残 = L2-d 1 件)
 - TaskList #88 (L2-c) completed
+
+---
+
+## Q58 — L1 helper の nested `forSample` 明 示 化 (= L2-d、 旧 L3-b)
+
+**Status:** resolved.
+
+### Problem
+
+`01-dsl.md` §5.5.5 既 prose は L1 helper 内 で `forSample(...)` 呼 び 出 し が 「rare; usually iteration is the caller's job and the helper is invoked from inside the caller's `forSample`」 と OK 寄 り に 書 い て あ る。 §10.3 forSample body constraints も 「Allowed: ... nested `forSample` (rare; typically used for tile iteration in 2D buffers)」 と OK 寄 り。 ただ し:
+
+- caller が `forSample` 内 か ら helper を 呼 び、 helper も 内 部 で `forSample` を 呼 ん だ 時 の 二 重 ル ー プ 動 作 が spec で 明 文 化 さ れ て い な い
+- 内 外 callback の `i` の scoping ル ー ル が 暗 黙 (= TS 関 数 引 数 の 標 準 動 作 だ が spec で 言 及 ナ シ)
+- RT-safe 静 的 解 析 が 内 外 両 方 の forSample に bounded check を 適 用 す る か が 暗 黙
+
+= 異 な る impl agent が (A) 暗 黙 OK / (B) 禁 止 / (C) tile use case 限 定 の どれ か を 別 々 に 採 用 し て 公 開 surface が 衝 突 し う る dangling、 真 の impl 矛 盾 リ ス ク。
+
+### Decision
+
+L1 helper 内 で `forSample(...)` 呼 び + caller が `forSample` 内 か ら helper を 呼 ぶ pattern (= 暗 黙 nested forSample) を **v1.0.0 で 認 め る**。 §10.3 既 wording の 自 然 帰 結 と し て 「直 接 `forSample` 内 で `forSample` を 呼 ぶ」 pattern も 同 様 に legal。
+
+仕 様 invariant:
+
+- **二 重 ル ー プ 構 造**: 内 forSample は 外 forSample の iteration ご と に 1 回 走 る (= 外 128 回 × 内 128 回 = 16384 sample operations / quantum for stride-1 nesting)、 WASM 上 で は 単 純 な ネ ス ト ル ー プ と し て emit。
+- **sample-offset の 独 立 性**: 内 外 callback は 別 々 の TypeScript 関 数 = 各 `i` arg は callback ご と に 別 物 (= 通 常 の TS 関 数 引 数 scope)、 framework 側 で 特 別 な scoping rule 不 要。
+- **RT-safe 静 的 解 析**: bounded loop check (= `SAMPLES_PER_BLOCK` 上 限) を 内 外 両 方 の forSample に 独 立 に 適 用 = 既 invariant (Q22 / Q29) の 自 然 拡 張、 新 ル ー ル ナ シ。
+- **計 算 量 責 任**: ネ ス ト 時 の per-quantum iteration 量 が target latency と 整 合 す る か は user の 設 計 責 任。
+
+### Why this and not alternatives
+
+**判 断 軸** = helper の 関 数 抽 象 維 持 + 既 invariant と の 整 合 + 既 prose と の 衝 突 回 避。
+
+- **案 A (= 採 用)**: helper の 呼 び 位 置 で 動 作 が 変 わ ら な い (= 関 数 抽 象 維 持)、 既 bounded-loop invariant の 自 然 適 用 で 新 ル ー ル ナ シ、 §10.3 既 wording を 拡 張 す る だ け で 明 文 化 完 了。
+- **案 (B) nested forSample 禁 止** 棄 却:
+  - 「helper を 呼 ぶ 位 置 に よ っ て graph-capture-time error に な る / な ら な い」 = 関 数 抽 象 の 漏 れ、 user は 「こ の helper、 forSample の 外 か ら し か 呼 べ な い」 と 余 計 な ル ー ル を 1 個 覚 え る ([[no-artificial-constraint]] 違 反)
+  - §10.3 既 prose 「nested forSample (rare; typically used for tile iteration in 2D buffers)」 と 真 っ 向 衝 突、 wording 撤 回 が 必 要
+- **案 (C) 案 A + canonical Ex 1 例 追 加** 棄 却:
+  - v1.0.0 ship 必 須 で は な い (= rare use case、 主 要 use case は Ex 1〜8 で カ バ ー 済 み)
+  - canonical 追 加 は メ ン テ コ ス ト 増、 L4-d / L4-e (= voice-allocation / overlap-add recipe) と 同 軸 で v1.x.0 / recipes/ で defer 可 = [[no-preemptive-defer]] 観 点 で OK (= API surface / 型 / mental model に 染 み 出 さ ず、 純 加 算 docs)
+
+### Side effects
+
+- `01-dsl.md` §5.5.5 L718 wording を 拡 張 (= 既 「rare; usually iteration is the caller's job」 prose に + 1 文 で 二 重 ル ー プ 動 作 + sample-offset 独 立 性 + RT-safe check 範 囲 + 計 算 量 注 意 喚 起 を 明 文 化)
+- `01-dsl.md` §10.3 L1305 wording を 拡 張 (= 既 「nested `forSample` (rare; ...)」 prose に + 1 文 で sample-offset 独 立 性 + RT-safe check 内 外 独 立 適 用 を 明 記、 「L1 helper 経 由 で 成 立 す る nested」 も 同 wording で カ バ ー)
+- `00-foundations.md` §3 + RT-safe table (L210 / L231) = 既 「Every loop emitted into WASM has a build-time-known upper bound」 invariant の 自 然 適 用 = 触 ら ず (= nested で も bounded で あ る こ と は 当 然 帰 結)
+- `03-compiler.md` §2.4 Layer 3 loop-boundedness check = 既 prose 「across forSample / everyNSamples / ...」 で 暗 黙 整 合 = 触 ら ず
+- canonical Ex 群 で nested forSample 使 用 ナ シ = AGENTS.md HARD CONTRACT 整 合 確 認 済 み (= 触 ら ず)
+- `open-questions.md` か ら L2-d entry 削 除、 **Layer 1 件 数 0 = Layer 1 section の dangling 全 解 消**、 section heading は retain し て 「該 当 entry ナ シ」 prose を 入 れ る (= 後 続 grill で 新 規 dangling 発 見 時 の 受 け 皿)
+- TaskList #90 (L2-d) completed
 

@@ -715,7 +715,7 @@ The following are **allowed**:
 - `audioIn.at(c, i)` / `audioOut.set(c, i, v)` on handles received as parameters (with `i` from a surrounding `forSample`).
 - Buffer access methods (`buf.read` / `buf.write` / `buf.readInterpolated`) on buffer references received as parameters.
 - Calls to other L1 helpers.
-- `forSample(...)` invocations when the helper itself wants to iterate samples (rare; usually iteration is the caller's job and the helper is invoked from inside the caller's `forSample`).
+- `forSample(...)` invocations when the helper itself wants to iterate samples (rare; usually iteration is the caller's job and the helper is invoked from inside the caller's `forSample`). When the caller is itself inside a `forSample` and the helper also calls `forSample`, the loops nest — the inner loop runs once per iteration of the outer (= 128 × 128 = 16384 sample operations per quantum for stride-1 nesting). The inner and outer callbacks are separate functions, so their `i` parameters are independent; realtime-safety check applies the `SAMPLES_PER_BLOCK` bounded-loop rule to both `forSample` invocations. Authors should verify the resulting per-quantum iteration count is realistic for their target latency (Q58, `decisions-log.md`).
 
 #### 5.5.6 Error UX
 
@@ -1302,7 +1302,7 @@ type EveryNSamples = (n: number, body: () => void) => void;
 Inside a `forSample` callback, the same rules as L1 helper bodies (§5.5.5) apply:
 
 - **Forbidden**: new `state.*` / `buffer.*` / `param.*` / `audioInput` / `audioOutput` declarations; new `defineSubgraph` declarations or instantiations.
-- **Allowed**: primitive operators, `state.load()` / `state.store()`, sample-position primitives (`audioIn.at(c, i)`, `audioOut.set(c, i, v)`, `param.at(i)`), buffer access, calls to L1 helpers, `everyNSamples`, nested `forSample` (rare; typically used for tile iteration in 2D buffers).
+- **Allowed**: primitive operators, `state.load()` / `state.store()`, sample-position primitives (`audioIn.at(c, i)`, `audioOut.set(c, i, v)`, `param.at(i)`), buffer access, calls to L1 helpers, `everyNSamples`, and nested `forSample` invocations (rare; typically used for tile iteration in 2D buffers, or when an L1 helper called from inside a `forSample` itself calls `forSample`). The inner and outer `forSample` callbacks are separate functions, so their `i` parameters are independent; realtime-safety check applies the `SAMPLES_PER_BLOCK` bounded-loop rule to both invocations (Q58, `decisions-log.md`).
 
 ### 10.4 Examples
 
