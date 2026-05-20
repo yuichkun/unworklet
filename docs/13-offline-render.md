@@ -34,7 +34,7 @@ const result = await renderOffline(MyProcessor, {
   events:   [{ name: 'noteOn', payload: { /* ... */ }, atSample: 100 }],
 });
 
-result.outputs.out;  // Float32Array[]   per-channel PCM (length = duration × sampleRate)
+result.outputs.main; // Float32Array[]   per-channel PCM (key = `audioOutput` declared `name`; canonical convention is `'main'`. Length = duration × sampleRate.)
 result.events;       // Array<{ name, payload, atSample }>   events the processor emitted
 result.state;        // Uint8Array       snapshot blob (Q5 format) at end-of-render
 ```

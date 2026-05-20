@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 75 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 74 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 23 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 51 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 50 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -308,7 +308,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P2 — 仕様 invariant + lifecycle (51 件)
+## P2 — 仕様 invariant + lifecycle (50 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -763,18 +763,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が package の `index.ts` を 起 こ す と き、 各 example か ら import 名 を 集 計 し て named export を 出 す が、 漏 れ が 発 生 し う る (例: `replaceProcessor` を 含 め 忘 れ る、 `inspect` を 含 め 忘 れ る、 SIMD primitive `vec4` / `subVec` / `divVec` / `vec.lane` の よ う に canonical で 一 度 も 使 わ れ な い 4 個 を export し 忘 れ る、 等)。 さ ら に 「`@unworklet/core` か ら 直 接 export」 と 「subpath import (例: `@unworklet/core/precise`、 `@unworklet/core/test`)」 の 区 分 も prose で 1 か 所 declare ナ シ。
 
 **判 断 軸**: 05-client か repo-structure か どち ら か で 「`@unworklet/core` の named export 全 集」 を category 別 (= node 操 作 / blob 操 作 / declaration / DSL primitive / SIMD primitive / 型 export) で 1 表 declare す る path 推 奨。 subpath export の 列 挙 も 同 表 内 で 区 分 す る。 「canonical で exercise さ れ な い export を 残 さ な い」 規 律 (= 既 entry の SIMD primitive 4 個 unused 問 題 と zip) を こ の 表 で 担 保。
-
----
-
-## offline 戻 り 値 の 音 声 出 力 を 取 り 出 す 時 の key 名 が canonical 規 約 と 違 う
-
-**場 所**: `docs/13-offline-render.md:37`、 `docs/12-canonical-examples.md` 全 編 (= `audioOutput({ name: 'main' })` を 全 Ex で 使 用)
-
-**何 が 起 き て い る か**: offline render の 戻 り 値 か ら 出 音 を 取 り 出 す 例 が `result.outputs.out` (= key `out`) で 書 か れ て い る。 一 方 canonical 全 例 は 出 音 declaration に 名 前 `main` を 使 い、 `out` と い う 名 前 は 1 度 も 出 て こ な い。 同 じ block 内 で 入 力 側 は `inputs: { main: ... }` と `main` を 使 い、 出 力 側 だ け 別 key と い う 表 記 の 揺 れ。 「`result.outputs.<key>` の key が processor declaration の 名 前 そ の ま ま」 か、 「framework が `out` 等 の 固 定 key に rename す る」 か が 1 意 に 読 め な い。
-
-**impl AI 影 響**: impl AI が (a) 「key は declaration name そ の ま ま」 と 解 釈 す る path、 (b) 「framework が `out` 等 に rename す る」 path、 で 二 way。 後 者 を 採 用 す る と canonical Ex 1〜10 全 例 で online 側 `node.outputs.main` と offline 側 `result.outputs.out` の key が 食 い 違 い、 acceptance criteria B1 (= canonical を offline で 再 現) の test code を 書 く 時 に user が key 名 を 推 測 す る 状 態。
-
-**判 断 軸**: 「`result.outputs.<key>` の key は declaration name そ の ま ま」 path に 倒 し、 13 の sample を `result.outputs.main` に 書 き 直 す path 推 奨。 同 commit で 入 出 力 key の 一 貫 性 を prose で 明 文 化。
 
 ---
 
