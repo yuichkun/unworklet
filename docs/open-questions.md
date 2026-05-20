@@ -2,15 +2,15 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 88 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 87 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 36 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 35 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 51 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
-## P1 — ship blocker 系 (36 件)
+## P1 — ship blocker 系 (35 件)
 
 ### cluster (1) 型 system core (3)
 
@@ -283,18 +283,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が process(...) の return false (= node disconnect) を 採 る か、 silence buffer を 流 し 続 け る か、 onError 発 火 の み で audio 動 作 を 維 持 す る か で 4 path に 分 か れ る。 main 側 で onError handler が 受 け 取 れ る 設 計 か も 同 時 に drift。
 
 **判 断 軸**: 「runtime guard fallback の 具 体 動 作 = (a) silence + onError、 (b) process return false で 停 止、 (c) onError 発 火 後 silence 継 続」 の ど れ を 単 一 path と し て 01 / 03 / 04 / 00-foundations 全 て で 揃 え る か。 仕 様 invariant と し て 1 か 所 で declare し 他 章 は そ こ を 参 照。
-
----
-
-## `audioIn.at(c, i)` の `i` が `Node<'i32'>` only か `Node<'i32'> | number` か prose と signature で 別 物
-
-**場 所**: `docs/01-dsl.md:34`、 `docs/01-dsl.md:103`、 `docs/01-dsl.md:113`、 `docs/01-dsl.md:1308`、 `docs/decisions-log.md` (Q51 / Q36-a)
-
-**何 が 起 き て い る か**: 同 一 method `audioIn.at(c, i)` で prose と signature が 別 物。 §1 概 要 L34 と canonical 周 辺 prose は 「JS-literal sample-offset (= `at(c, 0)` 等) を per-block top で も 受 け 入 れ る (Q51 ratified)、 `i` は `Node<'i32'> | number`」 と 規 範。 §1.2 prose L113 は 「`i` must be a `Node<'i32'>` originating from a `forSample` callback parameter」 と JS literal を 排 除 す る 形 で declare。 L103 signature は `at(c: ChannelIndex<C> | number, i: Node<'i32'> | number): Node<'f32'>` で 後 者 (= `| number` を 受 け 入 れ る)。 prose だ け が ratified Q51 / 自 doc signature と 衝 突。
-
-**impl AI 影 響**: impl AI が §1.2 prose を 読 ん で `AudioInputHandle.at` の `i` 引 数 で JS literal を reject す る 実 装 を 出 す と、 per-block top の `audioIn.at(c, 0)` pattern (= canonical 規 範) が 通 ら な く な る。 signature だ け を 信 用 し た 別 impl AI と 別 物 に な る = 同 source code が impl ご と に build pass/fail で 分 か れ る。
-
-**判 断 軸**: §1.2 prose L113 を 「`i` は `Node<'i32'> | number`、 JS literal も per-block top で OK」 に rewrite し て signature と zip す る path 推 奨。 ratified Q51 / Q36-a を prose 1 か 所 に 集 約 し 「per-block top で の JS literal 受 容」 を 明 文 化。
 
 ---
 

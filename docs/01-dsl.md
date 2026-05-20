@@ -110,7 +110,7 @@ type AudioInputHandle<C extends number> = {
 // TS errors at the call site.
 ```
 
-`audioIn.at(c, i)` returns the channel-`c` value at sample-offset `i` within the current render quantum. `i` must be a `Node<'i32'>` originating from a `forSample` callback parameter.
+`audioIn.at(c, i)` returns the channel-`c` value at sample-offset `i` within the current render quantum. The `i` argument accepts `Node<'i32'> | number` (Q36-a): a `Node<'i32'>` originates from a `forSample` callback parameter (= per-sample loop counter), and a JS-literal sample-offset (e.g. `0`) lifts to `Node<'i32'>` and is accepted at any lexical position including per-block top level (Q51 — `audioIn.at(c, 0)` reads the block-start input sample). JS-literal offsets must fall within `[0, SAMPLES_PER_BLOCK - 1]`; out-of-range literals are graph-capture-time errors with stable ID `audio-sample-offset-out-of-range` (Q68).
 
 > Naming note: in prose, `audioIn` / `audioOut` refer to the user's declared `audioInput` / `audioOutput` handles (named by the user via the required `name` option — e.g. `const main = audioInput({ channels: 2, name: 'main' })`). They are not framework-provided globals; the prose name is a placeholder for whatever variable the author bound the declaration to.
 
