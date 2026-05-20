@@ -2,11 +2,11 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 112 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 111 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 38 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 60 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
-- **P3 = 14 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
+- **P3 = 13 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
@@ -1209,7 +1209,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P3 — prose 揺れ / mechanical sweep (14 件)
+## P3 — prose 揺れ / mechanical sweep (13 件)
 
 ## `subscribe` / `onEvent` / `on` の return 値 が unsubscribe で 揃 え て あ る か
 
@@ -1352,18 +1352,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が §6 を fill す る 時、 (a) 09 §2 package layout / §1 monorepo tool / §5 TS version 等 を 00 §6 に copy し て docs 二 重 化、 (b) 09 と 00 §6 で wording が drift し て impl AI が ど ち ら を 信 じ る か 揺 れ る、 (c) 「mirror で は な く 00 §6 で 別 conventions を 規 定」 と 解 釈 し て 09 と 衝 突 す る package naming 規 約 等 を 自 力 で fill、 path が 3 way に 割 れ る。
 
 **判 断 軸**: §6 placeholder を 削 除 し て 各 component doc が 09 を 直 接 参 照 す る path に 倒 す path 推 奨。 mirror を 残 し た い な ら 「00 §6 で 重 複 す る 全 prose を fill せ ず 09 へ の 単 一 参 照 だ け 残 す」 path で 二 重 化 を 構 造 的 に 防 ぐ。
-
----
-
-## README Status 行 で skeleton 表 記 が doc 実 体 (§1〜§2 既 written) と zip し な い
-
-**場 所**: `docs/README.md:51-53`、 `docs/08-deployment.md:1-30` (= Status banner + §1〜§2 既 written)、 `docs/decisions-log.md` Q23 / Q24 / Q25 / Q62
-
-**何 が 起 き て い る か**: README.md Status table で 06-testing / 07-vite-plugin 行 は 「skeleton (Q23 + Q24 + Q25 resolved at the scope level; per-section detail to be filled in incrementally)」 と prose 注 釈 付 き、 一 方 08-deployment 行 だ け 「skeleton」 単 独 表 記。 し か し `08-deployment.md` 自 体 は §1 (= one first-party bundler integration = `@unworklet/vite-plugin`) と §2 (= Browser compatibility matrix A1〜A7 + B1〜B3 + per-browser validation) が 既 detailed prose で ratify 済 で、 Q23 + Q24 + Q25 を §1 prose で 直 接 引 用 し て お り 06 / 07 と 同 じ 「scope-level resolved + 一 部 detail 既 written」 状 態。 同 file 内 の Status banner も `partial` で は な く `skeleton` 単 独 で 同 様 に drift。
-
-**impl AI 影 響**: impl AI が README.md Status を 読 ん で 「08 は skeleton で 全 体 未 着 手」 と 誤 認、 §1〜§2 既 ratify を 上 書 き 修 正 す る path。 特 に Q62 で 既 ratify な D1 browser smoke 仕 様 (= 6 セ ル × Chromium/Firefox/Safari × isolated/not-isolated) が §2 既 written prose と し て 直 接 ratify 済 だ が、 「skeleton」 ラ ベ ル で 「ま だ ratify 範 囲 で な い」 と 解 釈 し て 別 仕 様 を 入 れ る 横 滑 り。
-
-**判 断 軸**: 08-deployment 行 を 06 / 07 と 同 wording (= 「skeleton (Q23 + Q24 + Q25 resolved at the scope level; per-section detail to be filled in incrementally)」 + Q62 D1 spec 参 照) に 揃 え る path 推 奨。 同 commit で `08-deployment.md` Status banner も `partial` 表 記 に zip。 「skeleton 行 の wording が 実 体 と zip し な い」 を 防 ぐ rule (= Status 列 と doc 実 体 を 同 commit で 同 期) を AGENTS.md に 1 行 追 加 す る path も candidate。
 
 ---
 

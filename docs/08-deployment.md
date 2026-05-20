@@ -4,7 +4,7 @@ How users ship unworklet processors in real applications: bundler integration, b
 
 ## Status
 
-skeleton
+partial (§1 + §2 written at Q23 / Q24 / Q25 / Q62; §3 / §4 placeholder per Q61)
 
 ## 1. Bundler integration
 
