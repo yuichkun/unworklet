@@ -28,7 +28,7 @@ If your work touches an area not covered here, **stop and surface the gap** to t
                   └──────►  11-midi.md  ◄──────┘
                            │
                            ▼
-        06-testing.md   07-vite-plugin.md   08-deployment.md   13-offline-render.md
+        06-testing.md ──► 13-offline-render.md   07-vite-plugin.md   08-deployment.md
 ```
 
 Independent and can be picked up at any time:
@@ -46,16 +46,16 @@ Independent and can be picked up at any time:
 | `01-dsl.md` | written |
 | `02-messaging.md` | written |
 | `03-compiler.md` | partial (§2 graph capture + §2.4 three-layer error written; §1, §3–§8 placeholder) |
-| `04-worklet-runtime.md` | partial (§7 publish scheduling written; §1–§6 + §8 placeholder, Q18 / Q19 / Q20 / Q21 will resolve) |
+| `04-worklet-runtime.md` | partial (§7 publish scheduling written; §1–§6 + §8 placeholder) |
 | `05-client.md` | partial (§2 surface listing + §2.6 snapshot/restore + §5 event/state subscription + §6 timing + §7 latency-comp written; §1, §3, §4 placeholder) |
-| `06-testing.md` | skeleton (Q23 + Q24 + Q25 resolved at scope level; matcher / golden-file detail pending) |
-| `07-vite-plugin.md` | skeleton (Q23 + Q24 + Q25 resolved at scope level; per-section detail pending) |
-| `08-deployment.md` | skeleton (Q11 + Q24 resolved; §3 SAB degradation + §4 WASM distribution detail pending) |
-| `09-repo-structure.md` | skeleton (Q12 / Q13 / Q15 / Q16 / Q26 will resolve) |
-| `10-roadmap.md` | partial (§3.1 mandatory deferred mitigations written; §1 / §2 / §3.2 placeholder, Q14 will resolve) |
+| `06-testing.md` | skeleton (Q23 + Q24 + Q25 resolved at the scope level; per-section detail to be filled in incrementally) |
+| `07-vite-plugin.md` | skeleton (Q23 + Q24 + Q25 resolved at the scope level; per-section detail to be filled in incrementally) |
+| `08-deployment.md` | skeleton |
+| `09-repo-structure.md` | partial (§1–§5 settled at Q60 / Q61; §6 awaits Q14 land) |
+| `10-roadmap.md` | partial (§1 written at Q62; §3.1 mandatory deferred mitigations written; §2, §3.2 placeholder) |
 | `11-midi.md` | written |
 | `12-canonical-examples.md` | written (integrity anchor; updated together with any spec change — see `AGENTS.md`) |
-| `13-offline-render.md` | skeleton (Q23 + Q24 + Q25 resolved at scope level; API / backend detail pending) |
-| `decisions-log.md` | populated (Q1–Q10, Q22, Q27 resolved; remaining open Qs tracked in index) |
+| `13-offline-render.md` | skeleton (Q23 + Q24 + Q25 resolved at the scope level; per-section detail to be filled in incrementally) |
+| `decisions-log.md` | populated (Q1–Q62 ratify complete; Q28 番 号 gap、 outstanding mechanical sweep tracked in `open-questions.md` Layer 4) |
 
 Content is filled in incrementally as design questions are resolved through dialogue. Anything not yet present in a doc is not yet decided — see `decisions-log.md` for what *has* been decided.

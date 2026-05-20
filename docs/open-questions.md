@@ -79,13 +79,6 @@ unworklet の pillar:
 5. **L4-M5 canonical examples integrity** — AGENTS.md HARD CONTRACT。 ratify 内 容 を 揃 え た 後 に。
 6. **L4-M6 / L4-M7 / L4-M8** — 残 hygiene。
 
-### L4-M3. README 整 合 性 sweep
-
-- **L49 `04-worklet-runtime.md` Status 行** stale (Q18-21 resolved 反 映 漏 れ、 §3-§6 written と 同 期)。 audit A §1 + B §6 拾 い。
-- **L7 / L59 `decisions-log.md` Status 行** stale。 audit B §6 拾 い。
-- **L51-58 各 doc Status 行** を 実 体 と 同 期 (06-testing、 07-vite-plugin、 08-deployment、 10-roadmap、 13-offline-render)。
-- **L17-32 Dependency graph** に `06-testing.md → 13-offline-render.md` の 依 存 矢 印 を 追 加 (= 06 doc 内 で 「`@unworklet/test` depends on `@unworklet/offline`」 と 明 記 済 み)。 audit B §6 拾 い。 (旧 L4-c)
-
 ### L4-M4. docs prose 揃 え sweep
 
 - **`sample-offset` / `sample-position` 表 記 統 一** — `00-foundations.md` §3 vocabulary が `Sample-offset (i)` を canonical 名 と し て い る の で 全 docs を `sample-offset` に。 audit B §1 拾 い。
