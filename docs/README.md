@@ -51,7 +51,7 @@ Independent and can be picked up at any time:
 | `06-testing.md` | skeleton (Q23 + Q24 + Q25 resolved at the scope level; per-section detail to be filled in incrementally) |
 | `07-vite-plugin.md` | skeleton (Q23 + Q24 + Q25 resolved at the scope level; per-section detail to be filled in incrementally) |
 | `08-deployment.md` | skeleton |
-| `09-repo-structure.md` | partial (§1–§5 settled at Q60 / Q61; §6 awaits Q14 land) |
+| `09-repo-structure.md` | partial (§1–§5 settled at Q60 / Q61; §6 placeholder per Q61) |
 | `10-roadmap.md` | partial (§1 written at Q62; §3.1 mandatory deferred mitigations written; §2, §3.2 placeholder) |
 | `11-midi.md` | written |
 | `12-canonical-examples.md` | written (integrity anchor; updated together with any spec change — see `AGENTS.md`) |

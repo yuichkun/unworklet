@@ -6,7 +6,7 @@ This doc is independent of the component docs and can be picked up at any time.
 
 ## Status
 
-partial (§1–§5 settled at Q60 / Q61; §6 awaits Q14 land)
+partial (§1–§5 settled at Q60 / Q61; §6 placeholder per Q61 = fill deferred to impl-phase)
 
 ## 1. Monorepo tool
 
@@ -37,4 +37,4 @@ TypeScript 5.5 minimum。 Q60 (`decisions-log.md`)。
 ## 6. Versioning policy
 
 <!-- semver shape, breaking-change rules, recompilation requirement on major bumps.
-     (Settled enough to write up after Q14 lands.) -->
+     Fill deferred to impl-phase owner per Q61 (Q14 itself resolved at Q62). -->
