@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 71 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 70 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 23 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 47 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 46 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -308,7 +308,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P2 — 仕様 invariant + lifecycle (47 件)
+## P2 — 仕様 invariant + lifecycle (46 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -607,18 +607,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI は stride check の wiring を proxy evaluation 中 (= graph-capture) と post-capture 静 的 analysis 中 の ど ち ら に 置 く か で 分 岐 す る。 03-compiler §2.6 stable error ID 表 を 機 械 的 source-of-truth と し て 読 む と graph-capture-time、 §2.4 prose list を 正 本 と す る と static-analysis、 と 結 論 が 反 転 す る。 さ ら に non-constant と 非 整 除 が 別 ID に 分 か れ る か 同 ID か も 取 れ ず、 stable error ID inventory の completeness 自 体 が 揺 ら ぐ。
 
 **判 断 軸**: stride check 全 体 を graph-capture-time に 倒 す path (= proxy evaluation 中 に 検 出、 stable error ID 表 に zip) を 推 奨。 03-compiler §2.4 static-analysis list か ら `forSample.byN` stride 項 目 を 削 除 し、 §2.4 graph-capture-time list と §2.6 stable error ID 表 と 01-dsl §10.1 prose を 1 path に zip。 non-constant と 非 整 除 を 同 ID で 扱 う か 別 ID か は 別 軸 で decide。
-
----
-
-## 「declaration scope で 作 れ る も の」 の 列 挙 が 4 doc で 揃 っ て な い
-
-**場 所**: `docs/00-foundations.md:56`、 `docs/03-compiler.md:36`、 `docs/03-compiler.md:74`、 `docs/03-compiler.md:150`、 `docs/01-dsl.md:606`
-
-**何 が 起 き て い る か**: declaration scope (= `defineProcessor` body 直 下 で 呼 べ る declaration helper) の 列 挙 が doc 間 で 違 う。 foundations §3 と 03-compiler §2.2 / §2.6 inventory は 10 種 (state.* / buffer.* / param.* / audioInput / audioOutput / event<T> / message<T> / midiInput / midiOutput / createSubgraph) を 揃 え て 列 挙。 一 方 01-dsl §5.5.1 L606 は 6 種 し か 列 挙 せ ず (= event<T> / message<T> / midiInput / midiOutput が 抜 け)、 さ ら に `createSubgraph(...)` の 代 わ り に `defineSubgraph` を 列 挙 (= 後 者 は module-level constructor で declaration scope と 別 軸)。 03-compiler §2.4 L74 も scope-violation 例 示 で `defineSubgraph(...)` を 列 挙 (= 同 じ 誤 用)、 expression-scope 列 挙 か ら handler body を 落 と し、 §2.6 inventory と zip し て な い。
-
-**impl AI 影 響**: 01-dsl §5.5.1 だ け を 読 ん だ impl AI は `event<T>` / `message<T>` / MIDI declaration を declaration scope に 入 ら な い と 解 釈 し て し ま う possibility。 `defineSubgraph` を declaration scope helper と 誤 認 す る と `defineProcessor` body 内 で `defineSubgraph` を 呼 ぶ 実 装 を 通 し て し ま う (= 既 spec で は module-level only)。 03-compiler L74 を 信 用 し た impl は scope-violation の reject 範 囲 で handler 内 declaration を 落 と し て し ま う (= §2.6 inventory L150 と zip ナ シ)。
-
-**判 断 軸**: foundations §3 と 03-compiler §2.6 inventory の 10 種 列 挙 を canonical と し て 01-dsl §5.5.1 L606 と 03-compiler §2.4 L74 を そ こ に zip し て 書 き 直 す path 推 奨。 `defineSubgraph` を 「declaration scope の 構 成 員 で は な い」 と 明 文 化 し、 「declaration scope helper の 統 一 列 挙」 を 1 か 所 で 集 約 declare す る。
 
 ---
 

@@ -607,8 +607,8 @@ L1 helpers are pure TypeScript functions that compose `Node<T>` values into new 
 
 unworklet code lives in two graph-capture-time scopes:
 
-- **Declaration scope** — the body of `defineProcessor` and `defineSubgraph` directly. New `state.*`, `buffer.*`, `param.*`, `audioInput`, `audioOutput`, and `defineSubgraph` instantiations are created here. Each declaration registers a slot in the graph (and ultimately a region in WASM linear memory).
-- **Expression scope** — the `process` lambda body, including its per-block top level and any `forSample` callbacks; L1 helper bodies; `defineSubgraph` `process` lambdas; `everyNSamples` callbacks. Per-block and per-sample expressions live here. New declarations are forbidden in expression scope.
+- **Declaration scope** — the body of `defineProcessor` and `defineSubgraph` directly. The 10 declaration kinds canonically listed in `03-compiler.md` §2.6 `scope-violation` are created here: `state.*`, `buffer.*`, `param.*`, `audioInput`, `audioOutput`, `event<T>`, `message<T>`, `midiInput`, `midiOutput`, `createSubgraph(...)`. (`defineSubgraph` itself is a module-level subgraph constructor — not a declaration-scope helper; only `createSubgraph(...)` calls inside a processor body create per-processor instances.) Each declaration registers a slot in the graph (and ultimately a region in WASM linear memory).
+- **Expression scope** — the `process` lambda body (per-block top level + `forSample` / `forSample.byN` callbacks); L1 helper bodies; subgraph method bodies; `everyNSamples` callbacks; `messageDecl.onReceive(...)` handler bodies; `midiInput().onEvent(...)` handler bodies (`00-foundations.md` §3 canonical list, 6 contexts). Per-block and per-sample expressions live here. New declarations are forbidden in expression scope.
 
 L1 helpers exist purely in expression scope, callable from either per-block top level or inside a `forSample` callback (depending on what the helper's body does).
 
