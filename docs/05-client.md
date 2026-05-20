@@ -113,9 +113,11 @@ A processor that calls `snapshot()` without any `name`-bearing slot is a graph-c
 
 ## 3. Param connection / automation
 
-<!-- Standard AudioParam capabilities are preserved end-to-end:
-     - setValueAtTime / linearRamp / exponentialRamp
-     - connection from other AudioNodes (LFO modulation) — wire-up via `node.params.<name>` returning a real AudioParam. -->
+<!-- §2 already declares `.params.<name>: AudioParam` (= real Web Audio AudioParam with
+     setValueAtTime / linearRampToValueAtTime / exponentialRampToValueAtTime /
+     connection-from-AudioNode all working). Sub-detail (e.g. acceptable AudioNode
+     types for LFO modulation, edge cases of param.connect()) is impl-phase fill
+     per Q61; do not duplicate §2 prose here. -->
 
 ## 4. Lifecycle states
 

@@ -2,11 +2,11 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 111 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 110 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 38 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 60 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
-- **P3 = 13 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
+- **P3 = 12 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
@@ -1209,7 +1209,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P3 — prose 揺れ / mechanical sweep (13 件)
+## P3 — prose 揺れ / mechanical sweep (12 件)
 
 ## `subscribe` / `onEvent` / `on` の return 値 が unsubscribe で 揃 え て あ る か
 
@@ -1316,18 +1316,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が `ctx` proxy を 実 装 す る 時、 (a) `sampleRate` だ け を 公 開 し て strict、 (b) `currentTime` / `numChannels` / `blockSize` 等 を 推 測 で 追 加 し て 緩 い 公 開、 (c) 「etc.」 を v1.0.0 で は 1 field の み と 解 釈 し て canonical exercise と zip、 で path が 割 れ る。 user mental で 「ctx に 何 が 載 る か」 が 仕 様 か ら 一 意 に 取 れ ず、 v1.0.0 surface の closed set 規 範 と 衝 突。
 
 **判 断 軸**: `ctx` 公 開 field を v1.0.0 で 1 か 所 で 列 挙 declare し (= `sampleRate` だ け か、 別 field を 含 む か decide)、 「etc.」 wording を 削 除 し て closed set 形 に 倒 す path 推 奨。 「meta primitives」 が ctx の 一 部 か 別 surface か も 同 commit で 整 理。
-
----
-
-## param connection placeholder が §2 既 ratify 内 容 を 重 複 し て 抱 え る
-
-**場 所**: `docs/05-client.md:115-118`、 `docs/05-client.md:11-22` (= §2 既 written)
-
-**何 が 起 き て い る か**: §3 placeholder の HTML comment が `setValueAtTime / linearRamp / exponentialRamp / connection from other AudioNodes (LFO modulation)` を 「placeholder と し て fill 予 定」 と し て 列 挙。 同 doc §2 で 既 written prose と し て 「`.params.<name>: AudioParam` 列 で setValueAtTime / linearRampToValueAtTime / exponentialRampToValueAtTime / connection-from-AudioNode all work」 と 「real Web Audio AudioParam」 を 明 言 ratify 済。 つ ま り §3 placeholder の 中 身 は §2 で 既 に detailed prose と し て 存 在。
-
-**impl AI 影 響**: impl AI が §3 を 「未 着 手 で fill す べ き」 と 誤 認、 (a) §2 と 同 じ 内 容 を 重 複 で fill し て docs 内 二 重 化、 (b) §2 と 別 の 設 計 (= ramp 系 method の wrapper を 入 れ る 等) を fill し て §2 detailed prose と 衝 突、 path が 2 way に 割 れ る。
-
-**判 断 軸**: §3 placeholder を 削 除 し て §2 を 単 一 canonical と す る path、 ま た は §3 を §2 の sub-detail (= 例 え ば 「LFO modulation で connect 先 が `node.params.<name>` の 受 け 入 れ 範 囲」 等 の 補 足 規 則) に 限 定 し て scope を 明 文 化 す る path 推 奨。
 
 ---
 
