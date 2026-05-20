@@ -2,15 +2,15 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 96 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 95 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 37 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 36 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 58 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
-## P1 — ship blocker 系 (37 件)
+## P1 — ship blocker 系 (36 件)
 
 ### cluster (1) 型 system core (3)
 
@@ -295,18 +295,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が §1.2 prose を 読 ん で `AudioInputHandle.at` の `i` 引 数 で JS literal を reject す る 実 装 を 出 す と、 per-block top の `audioIn.at(c, 0)` pattern (= canonical 規 範) が 通 ら な く な る。 signature だ け を 信 用 し た 別 impl AI と 別 物 に な る = 同 source code が impl ご と に build pass/fail で 分 か れ る。
 
 **判 断 軸**: §1.2 prose L113 を 「`i` は `Node<'i32'> | number`、 JS literal も per-block top で OK」 に rewrite し て signature と zip す る path 推 奨。 ratified Q51 / Q36-a を prose 1 か 所 に 集 約 し 「per-block top で の JS literal 受 容」 を 明 文 化。
-
----
-
-## per-block placeholder の drain step が MIDI を 含 ま ず、 publish step も 抜 け て い る
-
-**場 所**: `docs/04-worklet-runtime.md:17-24`、 `docs/02-messaging.md:1-30` (= §1 既 written / Q38-b ratify)、 `docs/04-worklet-runtime.md:82-90` (= §7 既 written)
-
-**何 が 起 き て い る か**: §2 placeholder の 6 step が drain step を 「Drain message queue」 と 表 現 し、 MIDI ringbuffer の drain を 含 ま な い。 一 方 `02-messaging.md` §1 で Q38-b 「All handlers across all messages **and MIDI inputs** drain first, before any per-block top-level statement or `forSample` runs」 が 既 ratify。 さ ら に §2 6 step は `process` body 完 了 後 に walk す る publish step (= state.publish / buffer.publish の rateFps gate 評 価、 §7 既 written) を 含 ま な い。
-
-**impl AI 影 響**: impl AI が §2 を fill す る 時、 MIDI handler drain を 「別 path」 と し て 実 装 し て Q38-b の 「全 handler drain → per-block top-level → forSample」 の 順 序 不 変 量 を 壊 す path。 publish step を 落 と し て §7 既 ratify な publish scheduling と 不 整 合 を 起 こ し、 main 側 subscriber 配 信 が 一 切 動 か な い impl も あ り う る。
-
-**判 断 軸**: §2 step 1 を 「message queue + MIDI ringbuffer の 全 handler drain」 と zip 直 す path、 step 5 と step 6 の 間 に publish step (= §7 既 ratify 内 容 を 参 照) を 1 行 で 追 加 す る path 推 奨。
 
 ---
 

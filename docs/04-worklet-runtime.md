@@ -16,12 +16,26 @@ partial (§7 publish scheduling written; §1–§6 + §8 placeholder)
 
 ## 2. Per-block execution
 
-<!-- 1. Drain message queue → invoke registered handlers.
-     2. Marshal input channels into linear memory.
-     3. Marshal parameter arrays (length 1 / 128 / 0 — see Q18).
-     4. Call exported `process`.
+<!-- Per-block runtime step order:
+     1. Drain **all** registered handlers across `message<T>.onReceive` + every
+        `midiInput().onEvent` port (Q38-b — handlers run before any per-block
+        top-level statement or `forSample`, in registration order). Sample-
+        accurate `atSample` is carried into the handler arg (Q38-d).
+     2. Marshal input channels into linear memory (Q19 — channel count baked
+        into WASM, no per-sample dispatch on `c`).
+     3. Marshal parameter arrays (length 1 / 128 / 0 — see Q18 / A3 in
+        08-deployment §2).
+     4. Call the exported `process(...)` with the 4 I/O pointer args (= input
+        channels / output channels / param arrays / message queue per
+        03-compiler §4).
      5. Read output channels from linear memory.
-     6. Return true. -->
+     6. Walk publish-flagged slots (state.publish / buffer.publish) per §7:
+        increment per-slot counter, copy to shared region + bump version on
+        due ticks (Q27-a, Q39-a).
+     7. Return true.
+
+     Per-step impl shape detail is impl-phase fill per Q61. -->
+
 
 ## 3. Render quantum handling
 
