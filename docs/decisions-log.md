@@ -4,7 +4,7 @@ Cross-cutting reference: every resolved design question, recorded with its ratio
 
 ## Status
 
-populated (Q1–Q62 ratify complete; Q28 is unassigned — a numbering artifact, not a withheld decision; outstanding mechanical sweep tracked in `open-questions.md` Layer 4)
+populated (Q1–Q62 ratify complete; Q28 is unassigned — a numbering artifact, not a withheld decision)
 
 ## Index
 
@@ -1196,7 +1196,7 @@ return {
 
 **Decision:** `SAMPLES_PER_BLOCK: 128` を `@unworklet/core` package の top-level constant と し て export する。 user code は `import { SAMPLES_PER_BLOCK } from '@unworklet/core'` で 引 用 する。 `ctx.renderQuantum` 等 の ctx 経 由 surface は 追 加 し な い。 値 は Web Audio 仕 様 で 全 環 境 共 通 の 128。 authoritative wording は `01-dsl.md` §1.7。
 
-既 docs prose で `renderQuantum` 名 を 引 用 し て い る 箇 所 (= `00-foundations.md` / `03-compiler.md` / `11-midi.md` / `02-messaging.md` / `decisions-log.md`) は `SAMPLES_PER_BLOCK` に 寄 せ る、 既 canonical で の 直 値 128 散 布 (= `01-dsl.md` 各 § と `12-canonical-examples.md` Example 3 / 4 / 7 / 8 に 跨 が る) を 名 で 引 く 形 に 置 換 す る mechanical 修 正 は `open-questions.md` Layer 4 sweep (= L4-M4 / L4-M5) に 集 約。
+既 canonical で の 直 値 128 散 布 (= `01-dsl.md` 各 § と `12-canonical-examples.md` Example 3 / 4 / 7 / 8 に 跨 が る) お よ び 旧 `renderQuantum` 名 を 引 用 す る prose (= `00-foundations.md` / `03-compiler.md` / `11-midi.md` / `02-messaging.md` / `decisions-log.md`) は `SAMPLES_PER_BLOCK` 経 由 で 引 く 形 に 揃 え る。
 
 **Rationale:**
 
@@ -1961,7 +1961,7 @@ policy rule (1 行):
 - **08-deployment.md §2**: placeholder を A1-A7 / B1-B3 catalog 形 で 全 部 埋 め、 per-browser validation matrix (= `Chromium × Firefox × Safari` × `{isolated, not-isolated}`) を 1 段 落 追 加
 - canonical example 修 正 ナ シ (verified — `12-canonical-examples.md` Example 1 / 5 / 6 / 8 で 既 `new AudioContext()` (= B2) と `navigator.requestMIDIAccess()` → `connectFromWebMIDI(port)` (= B1) path が canonical pattern と し て 使 わ れ て お り、 policy γ と 整 合 済 み)
 
-Post-ratify docs polish followups 集 約: `open-questions.md` Layer 5 「L4-M6-followups」 entry を 参 照。
+Post-ratify followups: `open-questions.md` の 該 当 質 問 entry を 参 照。
 
 ## Q23+Q24+Q25 — `@unworklet/vite-plugin` の scope (#68 B1 + #69 B2 + #70 B3 統 合)
 
@@ -2022,7 +2022,7 @@ unworklet 自 前 CLI は ship し な い (= `vite build` / `vite` が user-fac
 - **`README.md`** docs 一 覧 + Read & implementation order 図 update
 - canonical example 修 正: `12-canonical-examples.md` Example 7 内 の CLI 言 及 comment update (verified — 他 に CLI 名 言 及 ナ シ で 整 合)
 
-Post-ratify docs polish followups 集 約: `open-questions.md` Layer 5 「L4-M6-followups」 entry を 参 照。
+Post-ratify followups: `open-questions.md` の 該 当 質 問 entry を 参 照。
 
 ## Q50 — 動 的 processor swap primitive `replaceProcessor`
 
@@ -2080,7 +2080,7 @@ accumulation warning: 同 AudioContext 内 で N 回 swap 累 積 で `console.w
 - **`07-vite-plugin.md` §4** (= HMR boundary): `replaceProcessor` を user land で 呼 ぶ 形 を recipe で 提 示
 - **canonical example 影 響 ナ シ** (verified — 既 canonical example は createNode / snapshot / restore / inspect / migration chain ベ ー ス、 `replaceProcessor` を 使 う example は 未 整 備 で 既 整 合)
 
-Post-ratify docs polish followups 集 約: `open-questions.md` Layer 5 「L4-M6-followups」 entry を 参 照。
+Post-ratify followups: `open-questions.md` の 該 当 質 問 entry を 参 照。
 
 ## Q51 — per-block sample-offset primitive 開 放 + JUCE / AudioWorklet process メ ン タ ル 明 文 化 (audit followup)
 
@@ -2112,7 +2112,7 @@ audit で `01-dsl.md` §1 prose に 「The JS literal `0` lifts to `Node<'i32'>`
 - **01-dsl.md §1**: L34 prose を rewrite (= 「remain a separate decision」 撤 去、 per-block で sample-offset primitive を literal で 呼 び 可、 mental model 言 及 追 加)
 - canonical example 影 響 ナ シ (verified — 既 canonical example は forSample 内 で `i` 使 用、 per-block で の literal 呼 び 出 し は 既 example で は 出 て こ な い、 整 合 違 反 ナ シ)
 
-Post-ratify docs polish followups 集 約: `open-questions.md` Layer 5 「L4-M6-followups」 entry を 参 照。
+Post-ratify followups: `open-questions.md` の 該 当 質 問 entry を 参 照。
 
 ---
 

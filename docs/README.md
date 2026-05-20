@@ -56,6 +56,6 @@ Independent and can be picked up at any time:
 | `11-midi.md` | written |
 | `12-canonical-examples.md` | written (integrity anchor; updated together with any spec change — see `AGENTS.md`) |
 | `13-offline-render.md` | skeleton (Q23 + Q24 + Q25 resolved at the scope level; per-section detail to be filled in incrementally) |
-| `decisions-log.md` | populated (Q1–Q62 ratify complete; Q28 is unassigned — numbering artifact, not a withheld decision; outstanding mechanical sweep tracked in `open-questions.md` Layer 4) |
+| `decisions-log.md` | populated (Q1–Q62 ratify complete; Q28 is unassigned — numbering artifact, not a withheld decision) |
 
 Content is filled in incrementally as design questions are resolved through dialogue. Anything not yet present in a doc is not yet decided — see `decisions-log.md` for what *has* been decided.

@@ -35,8 +35,7 @@ partial (§1 written at Q62; §3.1 mandatory deferred mitigations written; §2, 
 
 ### E. Integrity
 
-- **E1** — `open-questions.md` Layer 4 mechanical sweep の 全 8 entry (= L4-M1〜M8) が pending ナ シ で 完 了。
-- **E2** — `open-questions.md` Layer 1〜3 = 0 件 (= Layer 4 完 了 後 は Layer 5 freeze 後 entry だ け 残 る state)。
+- **E1** — `open-questions.md` が 空 (= 全 質 問 が `decisions-log.md` に 移 さ れ て こ の file の 質 問 リ ス ト が 0 件 に な っ た 状 態)。
 
 ### F. Public surface integrity
 
