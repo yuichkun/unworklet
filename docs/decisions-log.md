@@ -1195,13 +1195,13 @@ return {
 
 **Decision:** `SAMPLES_PER_BLOCK: 128` を `@unworklet/core` package の top-level constant と し て export する。 user code は `import { SAMPLES_PER_BLOCK } from '@unworklet/core'` で 引 用 する。 `ctx.renderQuantum` 等 の ctx 経 由 surface は 追 加 し な い。 値 は Web Audio 仕 様 で 全 環 境 共 通 の 128。 authoritative wording は `01-dsl.md` §1.7。
 
-既 docs prose で `renderQuantum` 名 を 引 用 し て いる 箇 所 (= 00-foundations / 03-compiler / 11-midi / 02-messaging / decisions-log) は `SAMPLES_PER_BLOCK` に 寄 せ る、 既 canonical で の 直 値 128 (= 01-dsl.md L43-44 / L881 / L1193、 12-canonical-examples.md L276 / L321 / L455 / L809 / L886 / L1102) を 名 で 引 く 形 に 置 換 する mechanical 修 正 は #41 batch に 集 約。
+既 docs prose で `renderQuantum` 名 を 引 用 し て い る 箇 所 (= `00-foundations.md` / `03-compiler.md` / `11-midi.md` / `02-messaging.md` / `decisions-log.md`) は `SAMPLES_PER_BLOCK` に 寄 せ る、 既 canonical で の 直 値 128 散 布 (= `01-dsl.md` 各 § と `12-canonical-examples.md` Example 3 / 4 / 7 / 8 に 跨 が る) を 名 で 引 く 形 に 置 換 す る mechanical 修 正 は `open-questions.md` Layer 4 sweep (= L4-M4 / L4-M5) に 集 約。
 
 **Rationale:**
 
 - **build-time 定 数 と run-time 値 を 区 別**: `sampleRate` は AudioContext 単 位 で 異 な る run-time 値 = ctx 経 由 が 自 然。 `SAMPLES_PER_BLOCK` は Web Audio 仕 様 で 128 固 定 の build-time 定 数 = 意 味 が 異 な る、 ctx に 並 べる と 区 別 が 消 え る
 - **ctx scope 外 で の 引 用 可 能 性**: build-time JS 文 脈 (= 別 module の helper / 定 数 定 義 / processor 外 の build-time 計 算) で renderQuantum 値 を 引 用 し た い 場 面 が 自 然 に 発 生 (例: `export const RING_CAP = SAMPLES_PER_BLOCK * 8`)。 ctx 経 由 だ と こ れ が 不 可 能
-- **直 値 128 散 布 解 消**: 既 canonical で `const PART_SIZE = 128; // = renderQuantum, partition aligned with block` (= 12-canonical-examples.md L276) の よ う な 「注 釈 で 意 味 を 補 う」 形 が 既 出 = 名 で 引 け る 形 を user が 自 然 に 求 め る signal
+- **直 値 128 散 布 解 消**: 既 canonical で `const PART_SIZE = 128; // = renderQuantum, partition aligned with block` (= `12-canonical-examples.md` Example 3) の よ う な 「注 釈 で 意 味 を 補 う」 形 が 既 出 = 名 で 引 け る 形 を user が 自 然 に 求 め る signal
 - **平 易 名 の 採 用**: 「render quantum」 は Web Audio 仕 様 用 語、 ど ち ら か と 言 え ば 非 直 観。 `SAMPLES_PER_BLOCK` は 「1 塊 あた り の サンプル 数」 が 名 か ら 自 明 で、 仕 様 用 語 を 学 ば な く て も 意 味 が 取 れ る。 docs prose を `SAMPLES_PER_BLOCK` 名 に 寄 せ れ ば 翻 訳 cost も 消 え る
 
 **Rejected:**
@@ -1910,7 +1910,7 @@ worklet 側 sysex emit を **declared `Buffer<'u8'>` + `length: Node<'i32'>` 経
 - 11-midi.md §2.5 (新 規 section): 「Emitting sysex (worklet → main)」 で **declared buffer 経 由 + 実 長 指 定** / **ingested proxy 経 由 で thru** の 2 path を code example 付 き で spec、 `new Uint8Array(...)` が realtime-safety 違 反 で 永 久 排 除 で あ る こと を 明 文 化
 - 11-midi.md §4.3: 「v1.0.0 ships full sysex support」 を 「**both directions** (ingestion + emission)」 に 拡 張、 §2.5 と Q49 へ の cross-ref
 - 01-dsl.md §3.2: buffer factory に `buffer.u8` を 追 加、 「sysex emit 専 用、 byte 値 は Node<'i32'> で 扱 う」 旨 を 1 段 落 で 説 明
-- canonical example 修 正 ナ シ (verified — 12-canonical-examples.md L1157 で 既 acknowledged coverage gap、 sysex variant を 使 う example が 存 在 し な い)
+- canonical example 修 正 ナ シ (verified — `12-canonical-examples.md` "What this set does not yet exercise" section の MIDI variants 行 で 既 acknowledged coverage gap、 sysex variant を 使 う example が 存 在 し な い)
 
 ## Q11 — Browser quirk normalization scope (#67 A4)
 
@@ -1958,7 +1958,7 @@ policy rule (1 行):
 
 - **00-foundations.md §3** (vocabulary): 「Emission boundary」 entry を 1 段 落 追 加 (= 内 側 / 外 側 の 定 義 + boundary 跨 ぎ API + Q11 cross-ref)
 - **08-deployment.md §2**: placeholder を A1-A7 / B1-B3 catalog 形 で 全 部 埋 め、 per-browser validation matrix (= `Chromium × Firefox × Safari` × `{isolated, not-isolated}`) を 1 段 落 追 加
-- canonical example 修 正 ナ シ (verified — 12-canonical-examples.md L105 / L659 / L661 / L776 / L779 / L1124 / L1125 で 既 `new AudioContext()` (= B2) と `navigator.requestMIDIAccess()` → `connectFromWebMIDI(port)` (= B1) path が canonical pattern と し て 使 わ れ て お り、 policy γ と 整 合 済 み)
+- canonical example 修 正 ナ シ (verified — `12-canonical-examples.md` Example 1 / 5 / 6 / 8 で 既 `new AudioContext()` (= B2) と `navigator.requestMIDIAccess()` → `connectFromWebMIDI(port)` (= B1) path が canonical pattern と し て 使 わ れ て お り、 policy γ と 整 合 済 み)
 
 ### Open follow-up
 
@@ -2022,7 +2022,7 @@ unworklet 自 前 CLI は ship し な い (= `vite build` / `vite` が user-fac
 - **`08-deployment.md` §1** placeholder → resolved 段 落 (= `@unworklet/vite-plugin` 参 照、 他 bundler は v1.x.0 additive)
 - **`01-dsl.md` L1119** + **`12-canonical-examples.md` L890**: `unworklet build` 言 及 → `@unworklet/vite-plugin` 表 現
 - **`README.md`** docs 一 覧 + Read & implementation order 図 update
-- canonical example 修 正: 12-canonical-examples.md L890 comment update (verified — 他 に CLI 名 言 及 ナ シ で 整 合)
+- canonical example 修 正: `12-canonical-examples.md` Example 7 内 の CLI 言 及 comment update (verified — 他 に CLI 名 言 及 ナ シ で 整 合)
 
 ### Open follow-up
 
@@ -2101,7 +2101,7 @@ accumulation warning: 同 AudioContext 内 で N 回 swap 累 積 で `console.w
 
 ### Problem
 
-audit で 01-dsl.md L34 prose に 「The JS literal `0` lifts to `Node<'i32'>` per Q36-a and is allowed at per-block top level (e.g. `param.at(0)` reads the block-start value; the equivalent literal positions for `audioIn` / `audioOut` are not opened by Q36 and remain a separate decision)」 と あ り、 audio I/O sample-position primitive の per-block 開 放 が 「separate decision」 と し て 宙 浮 き と 判 明。 加 え て docs 全 体 で 「JUCE AudioProcessor::processBlock / AudioWorklet `process` と 同 じ mental model」 と い う core stance が 1 箇 所 に 明 文 化 さ れ て お ら ず (= decisions-log Q37 prose と 00-foundations / 01-dsl の top-to-bottom 言 及 が 散 在)、 余 湖 さ ん が 「過 去 何 回 か 説 明 し て い る 」 mental model が 仕 様 と し て 引 け な い 状 態 だ っ た。
+audit で `01-dsl.md` §1 prose に 「The JS literal `0` lifts to `Node<'i32'>` per Q36-a and is allowed at per-block top level (e.g. `param.at(0)` reads the block-start value; the equivalent literal positions for `audioIn` / `audioOut` are not opened by Q36 and remain a separate decision)」 と あ り、 audio I/O sample-position primitive の per-block 開 放 が 「separate decision」 と し て 宙 浮 き と 判 明。 加 え て docs 全 体 で 「JUCE AudioProcessor::processBlock / AudioWorklet `process` と 同 じ mental model」 と い う core stance が 1 箇 所 に 明 文 化 さ れ て お ら ず (= decisions-log Q37 prose と `00-foundations.md` / `01-dsl.md` の top-to-bottom 言 及 が 散 在)、 余 湖 さ ん が 「過 去 何 回 か 説 明 し て い る 」 mental model が 仕 様 と し て 引 け な い 状 態 だ っ た。
 
 ### Decision
 

@@ -79,21 +79,6 @@ unworklet の pillar:
 5. **L4-M5 canonical examples integrity** — AGENTS.md HARD CONTRACT。 ratify 内 容 を 揃 え た 後 に。
 6. **L4-M6 / L4-M7 / L4-M8** — 残 hygiene。
 
-### L4-M1. decisions-log integrity sweep
-
-- **Q17 / Q18 / Q19 / Q20 / Q21 / Q29 / Q30 の 7 件 で detail entry 不 在** — summary cell に prose 詰 め 込 み + detail-entry shape (Status / Decision / Rationale / Rejected) ナ シ = 半 ratify 状 態。 summary cell prose を そ の ま ま 規 範 shape に 展 開 (新 規 grilling 不 要)。 audit C §1 + audit A §1 拾 い。
-- **Q22 summary row stale** (`L34: "d open"` → `"d resolved (Rust-style template)"`) + **Q22-d 物 理 位 置 修 正** (`L852-892` は Q31 detail 末 尾 に nested、 独 立 `## Q22-d` heading に 昇 格 or Q22 section 末 尾 移 動)。 audit C §3。
-- **L7 Status paragraph stale** (`"Q1–Q10, Q22, Q27 resolved"` → 実 際 35+ Qs resolved に 更 新)。 audit C §3。
-- **Q22-c detail body** (`L569` 周 辺) で 「output coverage / duplicate-write を Layer 2 error」 と 書 く が Q37 で retire 済 み = body を Q37 反 映 で 書 き 直 す。 audit A §2 + B §5 拾 い。
-- **Q5-e detail body** で `migrations([...])` function call 形 表 記 → options bag の `migrations: [...]` field に。 audit A §3 拾 い。
-- **Q31-d body** (`L811`) の `steps[s]` bracket indexing → `steps.at(s)` (Q36-b 確 定 後 の prose 更 新 漏 れ)。 audit B §4 拾 い。
-- **Q27-c detail** + **`02-messaging.md` §1.1 L29** で 「next render quantum」 表 記 → 「current (worklet 視 点)」 (Q31-a / Q38-a Side effect 完 遂)。 audit A §3 + B §1 拾 い。
-- **Q47 「廃 止 さ れ た publish phase」** trace を `04-worklet-runtime.md:83` / `01-dsl.md:906` で 整 理 (`There is no separate publish lambda` wording は 維 持 OK、 ただし 何 が retire さ れ た か 文 脈 補 強)。 audit B §5 拾 い。
-
-### L4-M2. line-number cross-ref 一 律 sweep (旧 L4-h)
-
-- decisions-log detail entry 内 の `01-dsl.md L460` 等 line-number 参 照 を **section-anchor** (例 `#3-process-body`) 参 照 に sed 置 換 で 統 一。 Q35 L1187、 Q48 L1855、 Q11 L1950、 Q23+Q24+Q25 L2012、 ほ か 体 系 的 に drift 確 認 済 み (audit C §5)。
-
 ### L4-M3. README 整 合 性 sweep
 
 - **L49 `04-worklet-runtime.md` Status 行** stale (Q18-21 resolved 反 映 漏 れ、 §3-§6 written と 同 期)。 audit A §1 + B §6 拾 い。
