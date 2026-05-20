@@ -2050,8 +2050,8 @@ import { replaceProcessor } from '@unworklet/core';
 const result = await replaceProcessor(oldNode, NewProcessor);
 
 type ReplaceResult<New> =
-  | { ok: true;  node: UnworkletNode<New>; restored: number; skipped: string[]; missing: string[] }
-  | { ok: false; node: UnworkletNode<New>; error: { step; message; cause }; restored: number; skipped: string[]; missing: string[] };
+  | { ok: true;  node: UnworkletNode<New>; applied: string[]; restored: number; skipped: string[]; missing: string[] }
+  | { ok: false; node: UnworkletNode<New>; error: { step; message; cause }; applied: string[]; restored: number; skipped: string[]; missing: string[] };
 ```
 
 method の 動 作:

@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 89 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 88 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 36 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 52 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 51 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -463,7 +463,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **判 断 軸**: (1) offline で snapshot 復 元 を online と 同 じ 2-step pattern に 寄 せ る (= offline 側 で 1 度 render し snapshot blob を 取 り 出 し て 別 path で restore 注 入) path 推 奨 = online と offline で mental model 統 一 + Q57 ratify と zip。 (2) 02 §1.1 の 「asset upload readiness pattern」 引 用 を 同 commit で Q57 形 (= `createNode` → `await node.restore(blob)` 2-step) に rewrite し て 廃 止 surface 引 用 を 排 除。 「`initial` 識 別 子」 は online 側 (= param 初 期 値) の 既 ratify 形 を 維 持、 offline 側 で 1-step pattern を 立 て る な ら 別 識 別 子 (= 例 え ば `restore: Uint8Array`) を 採 る path も 候 補 だ が Q57 retract 必 要 で v1.0.0 で は 不 採 用 推 奨。
 
 ---
-## P2 — 仕様 invariant + lifecycle (52 件)
+## P2 — 仕様 invariant + lifecycle (51 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -702,18 +702,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: 02 だ け を 読 ん だ impl AI が `message<T>.onReceive(({ atSample, ... }) => ...)` の よ う な signature を 期 待 し て TS surface に atSample field を 含 め て し ま う、 あ る い は 逆 に MIDI handler の atSample 引 数 を 落 と し て し ま う、 で impl が drift。 「main → worklet 系 (message<T>) handler は atSample 不 在、 worklet 内 部 で 発 生 す る MIDI handler は atSample 引 数 を 持 つ」 と い う 線 引 き が 1 か 所 で 明 文 化 さ れ て い な い。
 
 **判 断 軸**: 02 §1 L23 の 「the handler arg」 wording を 「the handler's own `atSample` arg (MIDI handlers のみ)」 に 寄 せ 直 し、 01 §4.2 の 限 定 表 現 を canonical と し て 02 / 11 が 参 照 す る path 推 奨。 同 時 に 02 §5.3 「message<T> slot に atSample 不 在」 と 02 §1 handler 引 数 列 挙 を 1 paragraph 内 で zip。
-
----
-
-## `replaceProcessor` の 戻 り 値 型 で field が doc 内 で 2 形 並 立 し て い る
-
-**場 所**: `docs/decisions-log.md:2052-2055`、 `docs/05-client.md:321-339`、 `docs/05-client.md:341`
-
-**何 が 起 き て い る か**: `ReplaceResult<New>` の 型 定 義 が docs 内 2 か 所 で 別 形。 decisions-log Q50 entry (L2052-2055) は ok 両 branch で `applied: string[]` field を 持 た な い。 05-client.md §8.1 (L321-339) は ok 両 branch で `applied: string[]` を 持 ち、 直 後 prose (L341) は 「The result shape mirrors `RestoreResult` (§2.6) one-for-one」 と RestoreResult mirror を 明 言。 RestoreResult 側 は Q45 で `applied: string[]` を 持 つ 形 で ratify 済 = decisions-log Q50 と 05-client.md §8.1 で field set が 整 合 し な い。
-
-**impl AI 影 響**: decisions-log Q-entry を canonical と 取 る impl AI は `applied` field を 落 と し て type 定 義、 05-client.md authoritative wording を canonical と 取 る impl AI は `applied` を 含 め る、 で 2 path に 分 か れ る。 後 者 path で 「RestoreResult と ReplaceResult が one-for-one mirror」 prose を 守 れ る が、 前 者 path で 守 れ ず consumer が `result.applied` を 触 る code が 別 物 に な る。
-
-**判 断 軸**: RestoreResult one-for-one mirror prose を canonical 規 範 と し て `ReplaceResult` に `applied: string[]` を 含 め る path に 倒 し、 decisions-log Q50 entry の 型 定 義 を 05-client.md §8.1 に zip し て 揃 え る path 推 奨。 mirror prose を retract す る な ら 別 軸 で decide。
 
 ---
 
