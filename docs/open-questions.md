@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 95 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 94 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 36 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 58 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 57 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -463,7 +463,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **判 断 軸**: (1) offline で snapshot 復 元 を online と 同 じ 2-step pattern に 寄 せ る (= offline 側 で 1 度 render し snapshot blob を 取 り 出 し て 別 path で restore 注 入) path 推 奨 = online と offline で mental model 統 一 + Q57 ratify と zip。 (2) 02 §1.1 の 「asset upload readiness pattern」 引 用 を 同 commit で Q57 形 (= `createNode` → `await node.restore(blob)` 2-step) に rewrite し て 廃 止 surface 引 用 を 排 除。 「`initial` 識 別 子」 は online 側 (= param 初 期 値) の 既 ratify 形 を 維 持、 offline 側 で 1-step pattern を 立 て る な ら 別 識 別 子 (= 例 え ば `restore: Uint8Array`) を 採 る path も 候 補 だ が Q57 retract 必 要 で v1.0.0 で は 不 採 用 推 奨。
 
 ---
-## P2 — 仕様 invariant + lifecycle (58 件)
+## P2 — 仕様 invariant + lifecycle (57 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -882,18 +882,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が 引 用 ど お り Q14 entry を 引 き に 行 く と 内 容 不 一 致 で 戻 っ て き て し ま い、 SIMD rollout order の 規 定 自 体 が ど の Q-entry に も 存 在 し な い 事 実 に 気 づ か ず、 v1.x.0 で の SIMD 拡 張 path を 適 当 な 順 序 で 進 め て し ま う possibility。
 
 **判 断 軸**: SIMD rollout order の 規 定 が Q-entry 不 在 な ら 別 Q を 立 て て decide す る か、 prose で 「rollout order は v1.x.0 で 別 途 ratify」 と 明 文 化 し て dangling ref を 解 消 す る path 推 奨。
-
----
-
-## startup placeholder の allocate 対 象 が 既 ratify な MIDI / publish / snapshot region を 包 含 し な い
-
-**場 所**: `docs/04-worklet-runtime.md:9-15`、 `docs/04-worklet-runtime.md:82-90` (= §7 既 written)
-
-**何 が 起 き て い る か**: §1 startup placeholder の 4 step が allocate 対 象 を 「message/event queues (SAB-backed if available)」 2 種 だ け に 矮 小 化。 一 方 既 ratify で MIDI in/out ringbuffer (Q4-c)、 state.publish shared region (Q27-a)、 buffer.publish shared region (Q27-a / Q27-e)、 snapshot region (Q5、 `05-client.md` §6.1)、 payload content buffer (Q4-c-iii)、 sysex content buffer 等 が startup-time allocate 対 象 と し て 存 在。 加 え て 同 doc §7 既 written prose で 「per-slot publish counter (initialized to 0 at instantiation)」 が ratify 済 だ が、 §1 の 4 step に counter init が 不 在。
-
-**impl AI 影 響**: impl AI が §1 を fill す る 時、 既 ratify な MIDI / publish / snapshot 等 region の startup-time allocation を 落 と し、 後 か ら queue 設 計 全 体 を や り 直 す リ ス ク。 §7 で 既 ratify な per-slot counter init を §1 に reflect し な い path だ と 「§1 で counter ナ シ → §7 で 初 期 化 状 態 不 明」 が impl 内 で 矛 盾。
-
-**判 断 軸**: §1 startup allocate 対 象 を 「message + event + MIDI in + MIDI out + state.publish + buffer.publish + snapshot region + payload/sysex content buffer」 と 既 ratify region 全 列 挙 で 書 き、 per-slot counter init を 1 step と し て 追 加 す る path 推 奨。
 
 ---
 

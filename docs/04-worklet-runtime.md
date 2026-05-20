@@ -8,11 +8,27 @@ partial (§7 publish scheduling written; §1–§6 + §8 placeholder)
 
 ## 1. Startup sequence
 
-<!-- 1. Constructor receives processorOptions (WASM binary, optional SAB handles).
-     2. Instantiate WASM, zero linear memory.
-     3. Allocate message/event queues (SAB-backed if available; postMessage-backed otherwise).
-     4. Signal ready to main thread; createNode promise resolves.
-     Note: there is no framework-side pre-warm step (Q20). -->
+<!-- Startup sequence (audio-thread side; runs once per node instantiation):
+     1. Constructor receives processorOptions (WASM binary, optional SAB
+        handles + pre-allocated transfer buffers for the postMessage
+        fallback per A5 of 08-deployment §2).
+     2. Instantiate WASM. Linear memory is pre-sized at build time from
+        auto-summed declarations (Q30); zero-initialize.
+     3. Allocate / wire up all pre-allocated regions per 03-compiler §4
+        sub-region set:
+          - state slots + buffer slots (Q5; values restored if `restore`
+            blob was provided)
+          - event<T> / message<T> ringbuffers (Q27-d — SAB when available)
+          - event<T> / message<T> payload content buffers (Q27-e)
+          - MIDI in / out ringbuffers (Q4-c)
+          - sysex content buffer (Q4-c-iii)
+          - state.publish / buffer.publish shared regions (Q27-a)
+          - per-slot publish counters (§7 — initialize each to 0)
+          - snapshot region (Q5)
+     4. Signal ready to main thread; `createNode` promise resolves.
+
+     No framework-side pre-warm step (Q20). Per-region byte-layout
+     specifics + WASM instantiate options are impl-phase fill per Q61. -->
 
 ## 2. Per-block execution
 
