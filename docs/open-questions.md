@@ -2,15 +2,15 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 80 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 79 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 28 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 27 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 51 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
-## P1 — ship blocker 系 (28 件)
+## P1 — ship blocker 系 (27 件)
 
 ### cluster (1) 型 system core (3)
 
@@ -165,18 +165,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 ---
 
 ### cluster (4) handler / drain / boundary timing (9)
-
-## handler 先 行 drain と 「source 順」 ル ー ル の 関 係 が 章 ま た ぎ で 不 一 致
-
-**場 所**: `docs/01-dsl.md:29-34`、 `docs/01-dsl.md:495`、 `docs/01-dsl.md:1308`、 `docs/04-worklet-runtime.md:19-24`
-
-**何 が 起 き て い る か**: 01-dsl.md §1 と §10.2 は 「body は top-to-bottom、 per-block top と forSample が source 順 で 動 く」 と strong に 提 示。 §4.2 だ け が 「全 handler が source 順 と は 別 に 先 行 し て drain さ れ る」 例 外 を declare。 §1 / §10.2 は §4.2 の 例 外 に 言 及 ナ シ。 04-worklet-runtime.md §2 placeholder は 「Drain message queue」 と 単 数 形 で 書 き、 MIDI ringbuffer の drain ポ イ ン ト が 同 段 階 か 別 段 階 か 明 示 ナ シ。
-
-**impl AI 影 響**: §1 / §10 を 主 仕 様 と し て 受 け 取 っ た impl AI は handler を source 順 で 配 置 す る path に 進 む リ ス ク。 04 を 信 用 し た impl AI は MIDI ringbuffer drain を 別 段 階 (= per-sample dispatch、 forSample 内 ingest 等) に 置 い て し ま う リ ス ク。 結 果 と し て 「handler が forSample の 前 に 動 く」 invariant が 壊 れ る。
-
-**判 断 軸**: 「全 handler (message + MIDI 両 方) が source 順 と 関 係 な く block 開 始 時 に 一 括 で 先 行 drain」 と い う ル ー ル を 単 一 page (= 01-dsl.md §4.2 か foundations 章) に 集 約 declare し、 §1 / §10 / 04 §2 / 02-messaging.md / 11-midi.md か ら そ こ を 参 照 す る path に 倒 す 推 奨。
-
----
 
 ## snapshot/restore/publish の 「block boundary」 表 現 が 5 種 類 混 在
 
