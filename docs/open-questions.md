@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 69 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 68 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 23 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 45 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 44 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -308,7 +308,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P2 — 仕様 invariant + lifecycle (45 件)
+## P2 — 仕様 invariant + lifecycle (44 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -655,18 +655,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が (a) input 側 counter を 返 す 実 装、 (b) output 側 counter を 返 す 実 装、 (c) 両 方 合 算、 (d) 同 名 を 禁 止 し た 上 で 1 方 向 の counter を 返 す、 で 4 way に 分 か れ る。 user 側 「な ぜ overflow し た か」 の debug path が impl ご と に 別 物 で、 同 source code が 別 impl で 観 測 値 が 一 致 し な い。
 
 **判 断 軸**: 同 名 input/output 衝 突 軸 (= 既 entry) で 「禁 止」 と decide す れ ば 自 然 に 1 方 向 だ け で 解 消。 「許 す」 path を 採 る 場 合 は 「input / output で 別 method」 path 推 奨 (= `.midi.<name>.input.diagnostics.overflowCount()` 等 の 形 で 分 離)。
-
----
-
-## node の 公 開 method 一 覧 に 状 態 保 存 / 復 元 が 抜 け、 「3 method」 表 現 と 実 体 が ズ レ る
-
-**場 所**: `docs/05-client.md:38-54`、 `docs/05-client.md:60-95`、 `docs/05-client.md:62`、 `docs/05-client.md:95`
-
-**何 が 起 き て い る か**: 05-client §2 冒 頭 が 「公 開 node の 全 member 一 覧」 を bullet で 列 挙 し て い る が、 そ の bullet に state 保 存 (`snapshot()`) と state 復 元 (`restore()`) が 入 っ て い な い。 こ の 2 method は §2.6 で 別 sub-section と し て 説 明 さ れ て お り、 canonical Ex 3 / Ex 7 で `await node.snapshot()` / `await node.restore(blob)` の 形 で 規 範 化 さ れ て い る。 さ ら に §2.6 冒 頭 prose が 「公 開 node は 3 つ の method を 持 つ」 と 書 く 一 方 で、 同 §2.6 末 尾 prose が 「inspect は free function、 node の method で は な い」 と 訂 正 (= 「3 method」 と 「2 method + 1 free function」 が 同 sub-section 内 で 同 居)。
-
-**impl AI 影 響**: impl AI が §2 bullet を 「node 公 開 surface の 完 全 列 挙」 と 信 用 す る と snapshot / restore が 抜 け 落 ち て canonical が 動 か な い。 「3 method」 表 現 を 信 用 す る と inspect を node method と し て emit し 後 で 訂 正 prose と 衝 突。 §2 列 挙 自 体 が 不 完 全 だ と 判 明 し た 後、 他 surface (= `.params` / `.outputs` / `.midi` 等) の bullet も 信 用 度 が 下 が り、 impl AI が doc 全 体 を 別 source か ら cross-check し な い と 起 こ せ な く な る。
-
-**判 断 軸**: §2 bullet に `snapshot()` / `restore()` を 追 加 し て 「node の 公 開 member 完 全 列 挙」 と し て 単 一 source に 倒 す path 推 奨。 §2.6 冒 頭 「3 method」 表 現 を 「2 method (snapshot / restore) + free function inspect」 形 に rewrite。 同 commit で §0 Status banner の 「§1 placeholder」 表 記 も 実 体 (= 既 written) と zip 直 す。
 
 ---
 

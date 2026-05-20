@@ -56,6 +56,8 @@ The `UnworkletNode<C>` shape exposes the following members:
 - **`.midi.<name>.onEvent(type, handler) → unsubscribe`** — typed MIDI event subscriber on a declared `midiOutput({ name })`. See `11-midi.md` §2.
 - **`.midi.<name>.diagnostics.overflowCount(): number`** — monotonic counter of dropped MIDI events for the named port.
 - **`.diagnostics.transport: 'sab' | 'postMessage'`** — active transport mode (see `02-messaging.md` §4 and `08-deployment.md` §3).
+- **`.snapshot(options?: { profile?: string }): Promise<Uint8Array>`** — capture current state slots into a binary blob (§2.6).
+- **`.restore(blob: Uint8Array): Promise<RestoreResult>`** — write the blob's slot values back into the running processor (§2.6).
 - **`.dispose()`** — tear down node, queues, worklet runtime, all subscribers.
 - **`.onError(handler)`** — error subscription (worklet traps, queue overflow events, SAB-mode change diagnostics).
 
@@ -65,7 +67,7 @@ The `.state.<name>` surface is **read-only on main**. Writing to a worklet-side 
 
 ### 2.6 Snapshot / restore / inspect
 
-`UnworkletNode<C>` exposes three methods for state persistence — their contract is declared by the processor (see `01-dsl.md` §8):
+`UnworkletNode<C>` exposes **two methods** for state persistence (= `snapshot()` / `restore(blob)`), plus a separate free function `inspect(blob)` imported from `@unworklet/core`. The shape rule (Q48): node-bound operations (= reading / writing the live linear memory) are methods on the node; blob-only operations (= decoding a `Uint8Array` without an audio context) are free functions. Per-method contract is declared by the processor (see `01-dsl.md` §8):
 
 - **`snapshot(options?: { profile?: string }): Promise<Uint8Array>`** — capture the current state slots into a binary blob. Without `profile`, all slots flagged `'persistent'` are included (the union across profiles for declarations using the record form). With `profile`, only slots flagged `'persistent'` for that named profile are included.
 
