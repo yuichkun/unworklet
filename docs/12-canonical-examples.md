@@ -36,7 +36,7 @@ The example set is designed so that the union of all examples touches every conc
 | `onEvent` MIDI (`noteOn` / `noteOff` + `sysex`; `cc` / `pitchBend` / `programChange` / `channelPressure` / `aftertouch` / `systemRealtime` not exercised) | 5, 6, 8, 9 |
 | MIDI emission via `emitIf` (`noteOn` / `noteOff` in Ex 6; `sysex` in Ex 9) | 6, 9 |
 | SIMD `f32x4`, `splat`, `buf.loadVec`, `mulVec`, `addVec`, `vec.lane`, `sumLanes` | 3, 7 |
-| `snapshot` policy (`'persistent'` / `'transient'`) | 3, 5, 7 |
+| `snapshot` policy (`'persistent'` / `'transient'`) | 3, 5, 7, 10 |
 | `migrations` chain (schema-versioned restore) | 7 |
 | Main side: `createNode` | all |
 | Main side: `node.inputs.<name>` / `node.outputs.<name>` | all |
@@ -47,6 +47,7 @@ The example set is designed so that the union of all examples touches every conc
 | Main side: `node.messages.<name>` (incl. variable-length payload) | 5, 6, 7, 9 |
 | Main side: `node.midi.<name>.send` / `.connectFromWebMIDI` / `.onEvent` | 5, 6, 8, 9 |
 | Main side: `node.snapshot()` / `node.restore(blob)` | 3, 7 |
+| Main side: `replaceProcessor` (hot swap + `RestoreResult.ok` failure path) | 10 |
 
 ## Examples index
 
@@ -59,6 +60,7 @@ The example set is designed so that the union of all examples touches every conc
 7. **Convolution reverb with snapshot/restore migration** — large IR buffer, partitioned FFT, snapshot persistence with declarative migration chain.
 8. **Polyphonic synth with sidechain ducking** — voice allocator subgraph, sidechain `audioInput` driving the duck envelope, `midiInput` voice triggers, waveform `buffer.publish` for UI scope.
 9. **SysEx bridge** — pure MIDI processor that rewrites the device-ID byte of incoming sysex events and re-emits them to a downstream port. Exercises `midiInput().onEvent('sysex', ...)`, `buffer.u8` + `buf.copyFrom` + in-place `buf.write`, sysex `midiOut.emitIf`, and main-side dynamic device-ID control via `message<T>` + published `state.i32`.
+10. **Live coding REPL bridge** — REPL UI swaps the running processor with edited source via `replaceProcessor`. Exercises the full live-coding flow: `state.snapshot: 'persistent'` for state carry-forward (oscillator phase), main-side graph re-wire (disconnect / connect on the new wrapper), migration-failure recovery via `RestoreResult.ok = false`, and the Q63 accumulation warning surface.
 
 ## 1. Stereo gain + level meter
 
@@ -1233,6 +1235,83 @@ node.messages.setId({ id: 0x42 });
 
 // Reflect the current setting in the UI.
 node.state.targetId.subscribe((id) => deviceIdUI.set(id));
+```
+
+---
+
+## 10. Live coding REPL bridge
+
+```typescript
+// initial.processor.ts — REPL の 初 期 processor。 user が editor で 書 き
+// 換 え て も 同 じ 公 開 surface (= audioOutput 'main' + param 'freq' +
+// state.f32 'phase' persistent) を 維 持 す る 想 定。
+
+import {
+  defineProcessor, audioOutput, param, state,
+  forSample, sin, mul, add, mod, f32,
+} from '@unworklet/core';
+
+export const initialOsc = defineProcessor((ctx) => {
+  const out   = audioOutput({ channels: 1, name: 'main' });
+  const freq  = param({ default: 440, min: 20, max: 20000, automationRate: 'k-rate', name: 'freq' });
+  // 'persistent' = swap を 跨 い で carry forward さ せ た い state。
+  const phase = state.f32(0, { name: 'phase', snapshot: 'persistent' });
+
+  return {
+    process: () => {
+      forSample((i) => {
+        const p   = phase.load();
+        const inc = mul(freq.at(0), f32(2 * Math.PI / ctx.sampleRate));
+        out.set(0, i, sin(p));
+        phase.store(mod(add(p, inc), f32(2 * Math.PI)));
+      });
+    },
+  };
+});
+```
+
+```typescript
+// main side — REPL UI + Run button で hot swap。 unworklet は primitive だ け
+// 提 供 (= replaceProcessor)、 source 取 得 path / graph re-wire / error UI
+// は user-land。
+
+import { createNode, replaceProcessor } from '@unworklet/core';
+import { initialOsc } from './initial.processor.ts?worklet';
+
+const audioCtx = new AudioContext();
+let node = await createNode(audioCtx, initialOsc);
+node.outputs.main.connect(audioCtx.destination);
+audioCtx.resume();
+
+runButton.addEventListener('click', async () => {
+  // editor の source を blob URL 経 由 で 新 module と し て import。 prod で は
+  // bundler HMR や file watcher 経 由 で 同 等 path を 組 む。
+  const source = editor.getValue();
+  const blob   = new Blob([source], { type: 'application/javascript' });
+  const url    = URL.createObjectURL(blob);
+  const mod    = await import(/* @vite-ignore */ url);
+
+  // 旧 instance を 新 module で 置 き 換 え。 snapshot/restore + migration
+  // chain で state を carry forward、 失 敗 時 は ok: false で 復 帰 path。
+  const result = await replaceProcessor(node, mod.default);
+  if (!result.ok) {
+    statusUI.set(`migration failed at step ${result.error.step}: ${result.error.message}`);
+    return;
+  }
+
+  // graph 接 続 を 新 wrapper に 移 す。 unworklet は graph 操 作 し な い
+  // (Q50)、 user-land で disconnect → connect を 行 う。
+  node.outputs.main.disconnect();
+  node = result.node;
+  node.outputs.main.connect(audioCtx.destination);
+
+  statusUI.set('swapped');
+  URL.revokeObjectURL(url);
+});
+
+// 累 積 swap で Web Audio の registered-processor table が 解 放 さ れ な い
+// platform 制 約 (= Q63)。 51 回 目 の swap で framework が console.warn を
+// 1 度 出 す = user が 必 要 に 応 じ て AudioContext を 作 り 直 す path。
 ```
 
 ---

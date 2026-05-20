@@ -73,6 +73,10 @@ populated (Q1–Q62 ratify complete; Q28 is unassigned — a numbering artifact,
 | Q61 | Placeholder section 群 = impl 期 owner 任 せ 明 文 化 (= L4-a) | resolved — 各 doc の `<!-- placeholder -->` section (= 大 半 が internal implementation spec、 公 開 surface で は な い) は impl 開 始 時 に 各 doc owner が 順 次 fill す る 方 針 と し て docs 化、 v1.0.0 spec freeze 前 に 全 部 drain ナ シ; 統 一 注 釈 prose の 各 placeholder へ の 散 布 は L4-M4 sweep の 領 域 で 後 続 batch、 ratify 自 体 は こ の entry で 完 結; `09-repo-structure.md` §6 (= versioning policy) は Q14 acceptance criteria 連 動 で Q61 範 疇 外 | `00-foundations.md` §6 + `03-compiler.md` §1 / §3〜§8 + `04-worklet-runtime.md` §1 / §2 / §8 + `05-client.md` §3 / §4 + `06-testing.md` §2〜§5 + `07-vite-plugin.md` §2 / §3 / §5 / §6.x + `08-deployment.md` §3 / §4 + `10-roadmap.md` §1 / §2 / §3.2 + `13-offline-render.md` §2.x / §3 |
 | Q62 | v1.0.0 acceptance criteria (= L4-b、 Q14) | resolved — `10-roadmap.md` §1 を fill、 9 項 目 checklist (= A1 vp build / A2 canonical 全 WASM emit / A3 vp check / B1 canonical 期 待 output offline 再 現 / B2 pure JS ↔ WASM bit-exact / C1 realtime-safety 5 invariants layered 検 出 / D1 browser × isolated 6 セ ル smoke / E1 L4-M sweep 完 了 / E2 Layer 1〜3 = 0 / F1 .d.ts ↔ Q1-Q62 整 合) で impl AI agent が ship 可 否 を 1 意 判 定 可; browser matrix = (β) Chromium + Firefox + Safari × {COOP/COEP cross-origin isolated, not isolated} = 6 セ ル full required、 D1 smoke test 仕 様 で `connectFromWebMIDI` (= Web MIDI 標 準 wrapper) は test 対 象 外 (= emission boundary 外 側 = consumer 責 任、 Q11 整 合)、 全 browser セ ル で `node.midi.<name>.send(event)` source-agnostic injection 経 由 で MIDI 動 作 を 統 一 検 証; Safari Web MIDI 非 サ ポ ー ト = unworklet 側 実 装 変 更 ナ シ (= consumer が `navigator.requestMIDIAccess` を feature-detect す る path)、 `08-deployment.md` §2 B1 に Safari 制 約 1 段 落 補 強 + Per-browser validation prose に 1 文 補 強; 案 (α) Chrome + Firefox 4 セ ル / 案 (γ) Safari best-effort 棄 却 (= Safari の core 制 約 は Web MIDI に 限 定、 unworklet 自 体 は Safari で 動 く た め full required 達 成 可 能) | `10-roadmap.md` §1 + `08-deployment.md` §2 B1 + Q11 |
 | Q63 | swap 累 積 warning の 閾 値 + 文 言 (Q50 follow-up) | resolved — 同 AudioContext 内 で `replaceProcessor` が **50 回** を 超 え た 時 点 で **1 回 だ け** `console.warn` を 出 す; message = `unworklet: replaceProcessor has been called more than 50 times on this AudioContext. Web Audio cannot unload old WASM modules; create a new AudioContext if memory growth matters.`; 50 = HMR で の 通 常 saturate し な い 上 限 + live coding は 数 百 回 swap 想 定 = 「自 然 な dev session で 死 文 化 し な い」 値; 案 (= N=10 早 期 警 告、 N=100 余 裕 重 視、 warning ナ シ) を 棄 却 (= 10 は HMR で 普 通 に 出 て noise、 100 は live coding 以 外 で 死 文、 warning ナ シ は user の memory leak 認 知 経 路 を 奪 う) | `05-client.md` §8.5 |
+| Q64 | Live coding canonical example を 入 れ る か (Q-B、 Q50 follow-up) | resolved — Ex 10 「Live coding REPL bridge」 を 新 設、 `replaceProcessor` + `state.snapshot 'persistent'` + 主 側 graph re-wire + `RestoreResult.ok = false` 失 敗 path + Q63 累 積 warning surface を 1 sample で 通 し 確 認 で き る form に。 入 れ な い path 棄 却 (= 仕 様 surface の 完 結 度 を impl AI agent が docs だ け で 検 出 で き な い、 = `replaceProcessor` API の 抜 け / state carry / graph re-wire / error surface の 矛 盾 が 隠 れ る リ ス ク) | `12-canonical-examples.md` Ex 10 |
+| Q65 | per-block 呼 び canonical example 追 加 (Q-D、 Q51 follow-up) | resolved — 追 加 ナ シ。 per-block で の `audioIn.at(c, 0)` / `audioOut.set(c, 0, v)` 動 作 は Q51 + §1 prose + Q37 last-write-wins で 仕 様 文 一 意、 impl AI agent が docs prose だ け で 1 意 に 読 め る。 入 れ る case は Ex 4 (lookahead limiter) と 役 割 重 複 で 新 surface ナ シ = 矛 盾 検 出 力 上 が ら な い、 棄 却 | `12-canonical-examples.md` (= 追 加 ナ シ) |
+| Q66 | Voice allocation recipe 追 加 (Q-E) | resolved — 追 加 ナ シ。 Ex 8 で voice allocator subgraph + steal logic が 既 exercise、 unworklet 仕 様 surface (= subgraph / state / onEvent MIDI / build-time loop) は 全 完 結。 stealing policy 違 い (= oldest / quietest / priority 等) は consumer の audio engine 設 計 領 域 で unworklet 仕 様 surface に 矛 盾 を 産 ま な い、 棄 却 | `12-canonical-examples.md` Ex 8 |
+| Q67 | Overlap-add recipe 追 加 (Q-F) | resolved — 追 加 ナ シ。 Ex 3 で partitioned convolution = overlap-add 系 構 造 を 既 exercise、 unworklet 仕 様 surface (= buffer / state / forSample / SIMD bulk) は 全 完 結。 STFT 特 化 (= 窓 + FFT + spectrum 操 作 + IFFT + overlap-add) は FFT primitive を 必 要 と し、 FFT は unworklet primitive 外 (= consumer の L1 helper 領 域) = unworklet 仕 様 surface に 矛 盾 を 産 ま な い、 棄 却 | `12-canonical-examples.md` Ex 3 |
 
 ---
 
@@ -2816,4 +2820,83 @@ authoritative wording: `05-client.md` §8.5。
 - *N=100 余 裕 重 視*: HMR で は ま ず 当 た ら な い + live coding session で も 数 十 回 swap で memory growth が 体 感 さ れ う る 帯 = 死 文 寄 り。
 - *warning ナ シ*: user が memory growth の platform 制 約 に 気 付 か な い 経 路 を 残 す = silent footgun。 Web Audio 仕 様 帰 結 で も framework と し て の 認 知 surface は 提 供 す べ き。
 - *反 復 warning (= 50, 100, 150 ... 回 ご と に 出 す)*: log noise + 同 fact を 反 復 通 知 す る 意 義 ナ シ。 1 度 出 し て 終 了 が clean。
+
+---
+
+## Q64 — Live coding canonical example を 入 れ る か
+
+**Status:** resolved。
+
+**Decision:** canonical example に Ex 10 「Live coding REPL bridge」 を 追 加。 `replaceProcessor` (Q50) + `state.snapshot 'persistent'` で の state carry-forward + main-side graph re-wire (= disconnect → connect) + migration 失 敗 時 の `RestoreResult.ok = false` 復 帰 path + Q63 累 積 warning surface を、 REPL UI で 編 集 し た source を blob URL 経 由 で hot swap す る 1 つ の sample で 通 し て exercise す る 形。
+
+authoritative wording: `12-canonical-examples.md` Ex 10。
+
+**Rationale:**
+
+- *仕 様 surface 完 結 度 検 出 の 唯 一 source*: `replaceProcessor` 周 り の API surface (= signature、 state carry、 graph re-wire、 error path、 累 積 warning) を 1 つ の 動 く sample で 通 し で 見 せ な い と、 impl AI agent が docs prose だ け で 「ど の 順 で 何 を 呼 ぶ か」 と 「surface に 抜 け が な い か」 を 復 元 し に く い。 example が 仕 様 矛 盾 検 出 の source と し て 機 能。
+- *graph re-wire path を 明 示*: unworklet は graph 接 続 を 触 ら な い (= Q50)。 user-land で disconnect → connect を 行 う path が example で 明 示 さ れ な い と 「graph 接 続 が ど ち ら の 責 任 か」 が 仕 様 か ら 復 元 し に く い。
+- *Q63 warning の surface も 通 し で 確 認*: Q63 で ratify し た 「51 回 目 で console.warn 1 度」 が 実 際 に user の コ ー ド で ど の 位 置 で 発 火 す る か を example の comment で 確 認 し て お く。
+
+**Rejected:**
+
+- *入 れ な い (= `replaceProcessor` 仕 様 prose だ け で 完 結 と み な す)*: signature だ け 出 す と 「呼 び 順」 「state carry の 自 動 性」 「graph re-wire 責 任 境 界」 「error path の 形」 が 仕 様 prose と 既 example か ら 復 元 で き る か 自 信 を 持 て な い = 仕 様 surface 抜 け の 検 出 力 が 弱 い。
+- *recipe doc 領 域 と し て 別 立 て*: recipe は v1.x.0 path で、 v1.0.0 ship 前 の docs 整 合 性 検 出 は canonical で 担 う 設 計 = canonical に 入 れ る の が 軸。
+
+---
+
+## Q65 — per-block 呼 び canonical example 追 加
+
+**Status:** resolved。
+
+**Decision:** canonical example の 追 加 ナ シ。 per-block で の `audioIn.at(c, 0)` / `audioOut.set(c, 0, v)` 動 作 は 既 仕 様 prose で 一 意 に 規 定 (= Q51 で 「per-block 呼 び 可、 block-start sample が 返 る」、 `01-dsl.md` §1 で 「sample-offset primitive は ど の 位 置 で も 呼 べ る」、 Q37 で 「last-write-wins」)、 impl AI agent が prose だ け で 1 意 に 読 め る。
+
+authoritative wording: `12-canonical-examples.md` (= 既 Ex 群 で `param.at(0)` per-block 呼 び を 既 exercise、 audio I/O も 同 形 と し て 派 生)。
+
+**Rationale:**
+
+- *仕 様 prose で 完 結*: Q51 + §1 + Q37 で 動 作 invariant が 一 意。 impl AI agent が docs だ け で per-block 呼 び の 動 作 を 復 元 で き る。
+- *既 example で mental model exercise 済 み*: `param.at(0)` per-block 呼 び は Ex 2 / 4 / 7 / 8 で 多 出、 sample-offset primitive を per-block で 呼 べ る fact 自 体 は 既 example か ら 派 生 可。
+- *Ex 4 と 役 割 重 複*: 入 れ る case (= block-start で 入 力 監 視 + gain ramp) は Ex 4 (= lookahead limiter) と 役 割 重 複、 新 surface も 出 て こ な い。
+
+**Rejected:**
+
+- *入 れ る (= Ex 10 と し て block-start adaptive trim)*: Ex 4 と 役 割 重 複 で 仕 様 surface の 矛 盾 検 出 力 は 上 が ら な い、 入 れ る justification 不 足。
+
+---
+
+## Q66 — Voice allocation recipe 追 加
+
+**Status:** resolved。
+
+**Decision:** recipe 追 加 ナ シ。 unworklet 仕 様 surface で voice allocation に 必 要 な も の (= subgraph + state slot + `onEvent` MIDI + build-time loop で の voice 展 開) は Ex 8 で 全 exercise 済 み。 voice stealing policy の 違 い (= 古 い 音 を 奪 う / 小 さ い 音 を 奪 う / 優 先 度 で 選 ぶ 等) は consumer の audio engine 設 計 領 域 で、 ど の policy で も 同 じ unworklet primitive (= state + select + lt) で 書 け る。
+
+authoritative wording: `12-canonical-examples.md` Ex 8。
+
+**Rationale:**
+
+- *仕 様 surface 完 結*: Ex 8 で voice allocator subgraph + age tracking + steal logic + onEvent MIDI 全 出。 unworklet 仕 様 surface と し て 矛 盾 検 出 source は 既 完 結。
+- *policy 違 い は audio engine 設 計 領 域*: stealing policy の 違 い は unworklet 仕 様 surface に 影 響 し な い (= ど の policy で も 同 primitive で 書 け る) = unworklet docs に 入 れ て も 仕 様 surface の 矛 盾 検 出 力 は 上 が ら な い。
+
+**Rejected:**
+
+- *入 れ る (= 3 policy 比 較 recipe)*: 仕 様 surface の 検 出 力 上 が ら ず、 全 て unworklet primitive で 書 け る 範 囲 = unworklet docs と し て の 役 割 不 在。
+
+---
+
+## Q67 — Overlap-add recipe 追 加
+
+**Status:** resolved。
+
+**Decision:** recipe 追 加 ナ シ。 unworklet 仕 様 surface で overlap-add に 必 要 な も の (= buffer + state + forSample + SIMD bulk + build-time unroll) は Ex 3 で 全 exercise 済 み (= partitioned convolution = overlap-add 系 構 造)。 STFT 特 化 (= 窓 関 数 + FFT + spectrum 操 作 + IFFT + overlap-add) は FFT primitive を 必 要 と す る が、 FFT は unworklet primitive で は な く consumer 側 で L1 helper と し て 組 む 領 域 (= sin / cos / 加 算 / 乗 算 か ら 構 築)。
+
+authoritative wording: `12-canonical-examples.md` Ex 3。
+
+**Rationale:**
+
+- *仕 様 surface 完 結*: Ex 3 で partitioned convolution = overlap-add 系 構 造 を exercise。 unworklet 仕 様 surface と し て の 矛 盾 検 出 source は 既 完 結。
+- *STFT 特 化 は FFT 領 域 = unworklet 外*: STFT recipe を 入 れ て も 中 身 の 主 占 め は FFT 実 装 = unworklet primitive 領 域 で は な い = unworklet docs と し て の 役 割 不 在。
+
+**Rejected:**
+
+- *入 れ る (= STFT pitch shifter recipe)*: recipe の 主 占 め が FFT 実 装 (= consumer 領 域)、 unworklet 仕 様 surface の 矛 盾 検 出 に は 寄 与 し な い。
 
