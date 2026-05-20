@@ -2,11 +2,11 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 113 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 112 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 38 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 60 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
-- **P3 = 15 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
+- **P3 = 14 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
@@ -1209,7 +1209,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P3 — prose 揺れ / mechanical sweep (15 件)
+## P3 — prose 揺れ / mechanical sweep (14 件)
 
 ## `subscribe` / `onEvent` / `on` の return 値 が unsubscribe で 揃 え て あ る か
 
@@ -1244,18 +1244,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI は (a) a-rate param の per-block 呼 び を silent first-sample 返 し、 (b) graph-capture-time warning、 (c) k-rate fallback で 別 値 返 し、 で 判 断 が 割 れ る。 priority 軽 め だ が canonical coverage gap で 規 範 確 認 不 在 = impl drift。
 
 **判 断 軸**: a-rate per-block 呼 び を canonical に 1 例 追 加 し て 規 範 化 す る か、 prose だ け で 通 し て canonical 確 認 ナ シ で 行 く か。
-
----
-
-## 公 開 docs prose で 128 リ テ ラ ル と `SAMPLES_PER_BLOCK` 定 数 が 混 在
-
-**場 所**: `docs/04-worklet-runtime.md:34-44`、 `docs/03-compiler.md:163`、 `docs/01-dsl.md:225`
-
-**何 が 起 き て い る か**: 04 §3 prose と runtime check 例 で 「`outputs[0][0].length === 128`」 と リ テ ラ ル 128 を 直 書 き。 03 §3 で は 「`outputs[0][0].length !== SAMPLES_PER_BLOCK`」 と 定 数 名 形 式。 01-dsl.md §1.7 prose は 「リ テ ラ ル 128 は 推 奨 さ れ な い」 と 明 言 し て お り、 04 自 体 が prose ル ー ル と 衝 突。
-
-**impl AI 影 響**: impl AI が runtime check の WASM emit で リ テ ラ ル ハ ー ド コ ー ド か 定 数 参 照 か で 揺 れ る。 spec 自 身 が docs 内 で ル ー ル 違 反 し て お り、 整 合 性 観 点 で impl AI が 「リ テ ラ ル 直 書 き OK」 と 誤 認 す る リ ス ク。
-
-**判 断 軸**: docs prose 全 体 で `SAMPLES_PER_BLOCK` 定 数 名 で 揃 え る path に 倒 す か、 prose ル ー ル を 「runtime check は リ テ ラ ル OK、 user code は 定 数 推 奨」 と 緩 め る か。 前 者 推 奨。
 
 ---
 

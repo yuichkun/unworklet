@@ -31,7 +31,7 @@ The Web Audio spec fixes the render quantum at 128 samples. unworklet bakes that
 - Audio-I/O buffer offsets and SIMD lane mapping are resolved at compile time from the same constant.
 - The WASM code never reads the block size at runtime — no per-quantum branch on length, no dynamic loop bound.
 
-For safety against a future browser changing the render quantum size, the worklet's `process(inputs, outputs)` entry point performs a single runtime length check (`outputs[0][0].length === 128`) before invoking the WASM `process` function. If the check fails, the worklet logs an error and stops processing rather than producing garbled audio or silent output:
+For safety against a future browser changing the render quantum size, the worklet's `process(inputs, outputs)` entry point performs a single runtime length check (`outputs[0][0].length === SAMPLES_PER_BLOCK`) before invoking the WASM `process` function. If the check fails, the worklet logs an error and stops processing rather than producing garbled audio or silent output:
 
 ```text
 runtime error (worklet):
