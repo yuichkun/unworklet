@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 64 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 63 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 23 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 40 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 39 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -308,7 +308,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P2 — 仕様 invariant + lifecycle (40 件)
+## P2 — 仕様 invariant + lifecycle (39 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -475,18 +475,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: T が variable-length field を 複 数 持 つ 宣 言 を し た 時、 impl が (a) graph-capture-time error で reject (= 「T 内 の variable-length field は 1 個 ま で」 制 約 を 静 的 に 課 す)、 (b) slot を `[atSample][T fields][payloadLen_1][payloadOffset_1][payloadLen_2][payloadOffset_2]...` と field 数 分 拡 張、 (c) 暗 黙 の 並 び 順 ル ー ル (= field 宣 言 順 で content buffer に 連 結 し offset/length を 1 組 共 有) を 入 れ る、 で 3 way に 分 か れ、 declared T の TS surface も 仕 様 ご と に 別 物 に な る。
 
 **判 断 軸**: 「T 内 の variable-length field は 1 個 ま で 」 を graph-capture で 強 制 す る path (= prose 注 釈 を 単 数 形 と zip) か、 「複 数 field を 仕 様 で declare し slot 拡 張 を 規 範 化」 path か。 v1.0.0 で 1 個 ま で に 倒 し て お く path 推 奨 (= TS / wire 両 方 シ ン プ ル、 後 か ら 複 数 化 は non-breaking)。
-
----
-
-## MIDI は atTime → atSample 自 動 変 換 さ れ、 message は atSample 不 在 — 「same machinery」 主 張 と 整 合 し な い
-
-**場 所**: `docs/11-midi.md:331-335`、 `docs/02-messaging.md:65-73`、 `docs/02-messaging.md:130-135`
-
-**何 が 起 き て い る か**: 11-midi.md §4.2 で 「compiler converts the `atTime` parameter passed to `node.midi.<name>.send(event, atTime)` into the corresponding block-local `atSample` value at injection time」 と main → worklet 注 入 path で `atTime` (absolute) → `atSample` (block-local 0..127) の 自 動 変 換 を 規 定。 02-messaging.md §5.3 の `message<T>` slot layout は 「Identical slot layout to `event<T>`, minus `atSample`」 で atSample 自 体 が wire 上 に 不 在、 main → worklet 注 入 path で sample-offset を 引 き 渡 す 仕 組 み 自 体 が ナ シ。 02 §1 「same ringbuffer machinery serves MIDI」 と zip す る と main 側 注 入 path が MIDI と message<T> で 別 物 で あ る こ と が 説 明 ナ シ。
-
-**impl AI 影 響**: impl AI は (a) 「same machinery」 を 信 用 し て message<T> に も atTime → atSample 変 換 を 入 れ よ う と し て 仕 様 surface が 拡 張 さ れ る、 (b) 「same machinery」 を 誤 読 し て MIDI 側 で atTime 変 換 を 落 と し sample-accurate timing が 壊 れ る、 (c) message<T> と MIDI で 別 path を 自 力 で 切 り 分 け る が prose に 明 示 ナ シ で wording 揺 れ、 で path が 割 れ る。 main 側 surface (= `messages.<name>(...)` vs `midi.<name>.send(event, atTime)`) の 違 い も zip 説 明 ナ シ。
-
-**判 断 軸**: 「ring buffer + Atomics protocol」 を 共 通 とし「main → worklet 注 入 で の sample-offset 取 り 扱 い (= atTime 変 換 path の 有 無、 wire 上 の atSample field の 有 無)」 を declaration 種 ご と に 別 と 明 文 化 す る path 推 奨。 02 §1 / §5.3 と 11 §4.2 を zip し て 「same machinery」 の 範 囲 を 限 定 す る prose 1 か 所 を 立 て る。
 
 ---
 
