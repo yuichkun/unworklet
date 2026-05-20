@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 73 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 72 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 23 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 49 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 48 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -308,7 +308,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P2 — 仕様 invariant + lifecycle (49 件)
+## P2 — 仕様 invariant + lifecycle (48 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -643,18 +643,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が subgraph method body (= `setFrequency` 等 `process` 以 外 の method) で `audioIn.at(...)` を call し て よ い か を 01-dsl §5.5.1 base で 判 定 し よ う と す る と 「`process` lambda」 限 定 と 読 め、 multi-method subgraph (Q34) と 矛 盾。 handler body 内 で の audio I/O / state access を expression scope rule で 通 す か reject か 列 挙 ご と に 別 物。 `everyNSamples` callback 内 で graph node を build で き る か、 declaration を 拒 否 す る か も 列 挙 漏 れ で drift。
 
 **判 断 軸**: foundations §3 L60 列 挙 (+ `everyNSamples` callback を 1 行 追 加) を canonical と し て 01-dsl §5.5.1 / 03-compiler §2.4 / §9.1 を そ こ に zip 推 奨。 「subgraph method body」 を `process` 限 定 か 全 method か は 別 軸 で decide (= 既 entry Q34 ratify 済 multi-method subgraph と zip)。
-
----
-
-## `emitIf` を 呼 べ る context 列 挙 が 3 doc で ぶ れ、 `everyNSamples` の forSample-入 れ 子 但 し 書 き が 11-midi で 落 ち る
-
-**場 所**: `docs/01-dsl.md:436`、 `docs/02-messaging.md:22`、 `docs/11-midi.md:165`、 `docs/decisions-log.md` (Q43)
-
-**何 が 起 き て い る か**: `emitIf` を 呼 べ る context の 列 挙 が doc 間 で 微 妙 に 別。 01-dsl §4.1 L436 と 02-messaging §1 L22 は 「forSample / forSample.byN callbacks, everyNSamples callbacks (= surrounding forSample callback's 第 二 argument 経 由 で 受 け 取 る 但 し 書 き あ り), messageDecl.onReceive handlers, midiInput().onEvent handlers, per-block top level」 で 5 種 + 但 し 書 き。 11-midi §2.4 L165 は 「forSample / forSample.byN callbacks, everyNSamples callbacks, MIDI / message handler bodies, per-block top level」 で 4 種 (= MIDI handler と message handler を 統 合) で 同 じ 内 容 だ が、 `everyNSamples` の 「forSample callback 第 二 argument 経 由」 但 し 書 き を 落 と し て い る = Q43 ratified rule が 11-midi 単 独 で は read で き な い。
-
-**impl AI 影 響**: 11-midi だ け を 読 ん だ impl AI が `everyNSamples` を free function と し て import / call で き る と 誤 解 し、 forSample 外 で の `everyNSamples(...)` を 通 す 実 装 を 出 す possibility。 既 Q43 で `everyNSamples` は forSample callback の 第 二 引 数 と し て 受 け 取 る 形 が ratify 済 = 仕 様 と zip し な い。
-
-**判 断 軸**: 11-midi §2.4 L165 の 列 挙 に Q43 但 し 書 き (= 「`everyNSamples` callback は surrounding forSample callback の 第 二 argument 経 由 で 受 け 取 る」) を 1 行 で 補 う か、 11-midi を 「emit context 列 挙 は 01-dsl §4.1 を 参 照」 形 で 集 約 path に 倒 す か。 別 entry 「emitIf の constant-truthy reject が どの context ま で 広 が る か」 と は 別 軸 (= こ ち ら は context 列 挙 自 体 の zip、 既 entry は reject 範 囲 の zip)。
 
 ---
 
