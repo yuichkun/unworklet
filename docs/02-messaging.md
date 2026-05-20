@@ -100,7 +100,7 @@ The framework selects a transport at processor instantiation, transparent to use
 |---|---|---|
 | Cross-origin isolation | required (COOP/COEP) | not required |
 | `state.publish` propagation | atomic store/load on shared `f32` / `i32` regions; buffers via `memcpy` | flag-bearing postMessage at render-quantum boundary |
-| `event<T>` / `message<T>` | `SharedArrayBuffer`-backed ring buffer with `Atomics`-based head / tail pointers | postMessage with structured-clone payloads |
+| `event<T>` / `message<T>` | `SharedArrayBuffer`-backed ring buffer with `Atomics`-based head / tail pointers | pre-allocated transferable buffers (main allocates regions at instantiation; audio thread encodes into them at the render-quantum boundary and `postMessage(...buffer, [buffer])` transfers ownership) |
 | Sample-accurate `atSample` | preserved end-to-end | preserved on the wire; main-side delivery picks up render-quantum batching latency |
 | Audio-thread allocation | none | none (transfer regions pre-allocated by main) |
 

@@ -2,15 +2,15 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 85 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 84 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 33 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 32 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 51 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
-## P1 — ship blocker 系 (33 件)
+## P1 — ship blocker 系 (32 件)
 
 ### cluster (1) 型 system core (3)
 
@@ -137,18 +137,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: sysex 経 路 で `atSample` を どこ か ら 取 る か で impl が 分 岐: (a) content buffer 側 に atSample を 入 れ る 拡 張 (= 11 §4.3 の content buffer schema に atSample が 1 行 も 出 て こ ず、 仕 様 か ら 取 れ な い)、 (b) sysex slot サ イ ズ を 12 byte 等 に 拡 張 (= §4.1 の 「8 bytes per slot, slot-indexed pointers」 uniform 性 が 崩 れ る)、 (c) sysex 経 路 で atSample を 0 固 定 / block 開 始 時 刻 で 注 入 (= sample-accurate 主 張 が 崩 れ る)。 wire 上 で atSample を どこ か に 入 れ る path が 仕 様 か ら 一 意 に 決 ま ら な い。
 
 **判 断 軸**: sysex slot に atSample を 持 た せ る (= slot size を sysex variant だ け 拡 張 し uniform 性 と の zip を prose で 明 示) か、 sysex content buffer entry 内 に atSample field を 追 加 す る か、 「sysex は block 開 始 時 注 入 で atSample 不 在 を 許 容」 path に 倒 し て §2.3 の wording を 改 訂 す る か。 sample-accurate 主 張 を 守 る な ら 前 2 path、 §4.1 uniform 性 を 守 る な ら 中 央 path 推 奨。
-
----
-
-## SAB が 使 え な い 時 の postMessage 形 式 が 「事 前 確 保 buffer の transfer」 と 「structured-clone」 で doc ご と に 別 wording
-
-**場 所**: `docs/02-messaging.md:96-105`、 `docs/08-deployment.md:38-39`、 `docs/11-midi.md:352-354`
-
-**何 が 起 き て い る か**: SAB unavailable 時 の transport を 3 doc が 別 wording で 書 く。 02-messaging.md §4 は 「postMessage with structured-clone payloads」 + 「Audio-thread allocation: none (transfer regions pre-allocated by main)」、 08-deployment.md §2 A5 は 「pre-allocated postMessage buffers at render-quantum granularity」、 11-midi.md §4.4 は 「postMessage at render-quantum granularity」 だ け で 中 身 の 形 式 を 書 か な い。 「structured-clone payload」 と 「pre-allocated buffer transfer」 は 通 常 別 mechanism (前 者 は clone コ ス ト 大、 後 者 は transferable で ownership 移 動)、 02 自 身 の wording だ け で 矛 盾。
-
-**impl AI 影 響**: impl AI は (a) postMessage で JS object を structured-clone し て 流 す path、 (b) 事 前 確 保 し た Uint8Array (= ring buffer の copy) を transferable で 流 す path、 (c) hybrid (= header は object、 payload は transferable buffer)、 で 3 way に 分 か れ る。 「Audio-thread allocation: none」 invariant を 守 る な ら audio thread で structured-clone は 不 可 能 (clone は GC 発 火) で 実 質 path (b) し か な い が、 02 wording は path (a) も 許 容 す る か の よ う に 読 め る。
-
-**判 断 軸**: 「fallback path = 事 前 確 保 buffer を transferable で 流 す。 audio thread 側 は 既 存 ring buffer slot を そ の ま ま buffer に encode、 postMessage の 引 数 は その buffer 1 個 (+ 必 要 な metadata) で 完 結」 と 1 か 所 で 明 文 化 し、 02 §4 / 08 §2 / 11 §4.4 を そ こ に zip 推 奨。 「structured-clone」 wording は audio thread 側 で は 使 わ な い。
 
 ---
 
