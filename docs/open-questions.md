@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 62 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 61 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 23 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 38 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 37 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -308,7 +308,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P2 — 仕様 invariant + lifecycle (38 件)
+## P2 — 仕様 invariant + lifecycle (37 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -547,18 +547,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が `MigrationHelpers` を 実 装 す る 時、 (a) `parseSlotInProfile(blob, name, type, profile)` で 旧 blob 内 の 別 profile を free 読 み 可 (= 全 profile slot を walk す る blob 形 式 要 求)、 (b) 旧 blob の `oldProfileName` 専 用 で 引 数 profile が それ と 一 致 し な い と undefined、 (c) 旧 blob は 「1 個 の profile snapshot」 で profile 引 数 は target 側 の profile 名 を 指 す、 で 3 解 釈。 writeSlotInProfile も 同 様 に target profile の 取 り 扱 い が dangling。 blob header の profile metadata 形 (= 1 個 か union か 全 profile か) も 仕 様 で 取 れ ず、 wire 上 の byte layout も drift。
 
 **判 断 軸**: profile-scoped variant の 「source 側 profile 引 数 = 旧 blob 内 の どの profile を 読 む か」 / 「target 側 profile 引 数 = output blob の どの profile に 書 く か」 を prose で 明 文 化 し、 blob header に 載 る profile metadata の 形 (= `snapshot()` no-arg 時 は `null`、 `snapshot({ profile: 'preset' })` 時 は `'preset'` の 単 一 文 字 列、 全 profile snapshot path は v1.0.0 で 不 在) を declare。 canonical Ex 7 か 新 規 example で profile-rename migration を 1 例 exercise し て 仕 様 を 1 意 化 推 奨。
-
----
-
-## SIMD の 「stride が 仕 様 外」 error を ど の 検 出 段 階 に 置 く か が 同 file 内 で 3 通 り に 書 か れ て い る
-
-**場 所**: `docs/03-compiler.md:74-76`、 `docs/03-compiler.md:88`、 `docs/03-compiler.md:153`、 `docs/01-dsl.md:1300`
-
-**何 が 起 き て い る か**: per-sample loop を stride で 飛 ば す callback で stride が non-constant / 128 を 割 り 切 ら な い 時 の error が docs 内 で 3 通 り に 振 り 分 け ら れ て い る。 03-compiler §2.4 graph-capture-time list は 「non-constant stride の み」 を graph-capture-time error と 書 き、 同 §2.4 static-analysis list は 「non-constant + 非 整 除 両 方」 を static-analysis error と 書 き、 同 §2.6 stable error ID 表 は 「両 方 graph-capture-time」 と 書 く。 01-dsl §10.1 は 「Non-constant strides や 128 を 割 り 切 ら な い stride は graph-capture-time error」 と 書 く。 同 一 `illegal-stride` ID が graph-capture-time と static-analysis の 両 layer に 同 時 に list さ れ、 non-constant と 非 整 除 を 別 layer に 分 け る 読 み 方 も 成 立 す る 形 に な っ て い る。
-
-**impl AI 影 響**: impl AI は stride check の wiring を proxy evaluation 中 (= graph-capture) と post-capture 静 的 analysis 中 の ど ち ら に 置 く か で 分 岐 す る。 03-compiler §2.6 stable error ID 表 を 機 械 的 source-of-truth と し て 読 む と graph-capture-time、 §2.4 prose list を 正 本 と す る と static-analysis、 と 結 論 が 反 転 す る。 さ ら に non-constant と 非 整 除 が 別 ID に 分 か れ る か 同 ID か も 取 れ ず、 stable error ID inventory の completeness 自 体 が 揺 ら ぐ。
-
-**判 断 軸**: stride check 全 体 を graph-capture-time に 倒 す path (= proxy evaluation 中 に 検 出、 stable error ID 表 に zip) を 推 奨。 03-compiler §2.4 static-analysis list か ら `forSample.byN` stride 項 目 を 削 除 し、 §2.4 graph-capture-time list と §2.6 stable error ID 表 と 01-dsl §10.1 prose を 1 path に zip。 non-constant と 非 整 除 を 同 ID で 扱 う か 別 ID か は 別 軸 で decide。
 
 ---
 
