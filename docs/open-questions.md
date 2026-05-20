@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 63 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 62 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 23 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 39 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 38 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -308,7 +308,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P2 — 仕様 invariant + lifecycle (39 件)
+## P2 — 仕様 invariant + lifecycle (38 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -475,18 +475,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: T が variable-length field を 複 数 持 つ 宣 言 を し た 時、 impl が (a) graph-capture-time error で reject (= 「T 内 の variable-length field は 1 個 ま で」 制 約 を 静 的 に 課 す)、 (b) slot を `[atSample][T fields][payloadLen_1][payloadOffset_1][payloadLen_2][payloadOffset_2]...` と field 数 分 拡 張、 (c) 暗 黙 の 並 び 順 ル ー ル (= field 宣 言 順 で content buffer に 連 結 し offset/length を 1 組 共 有) を 入 れ る、 で 3 way に 分 か れ、 declared T の TS surface も 仕 様 ご と に 別 物 に な る。
 
 **判 断 軸**: 「T 内 の variable-length field は 1 個 ま で 」 を graph-capture で 強 制 す る path (= prose 注 釈 を 単 数 形 と zip) か、 「複 数 field を 仕 様 で declare し slot 拡 張 を 規 範 化」 path か。 v1.0.0 で 1 個 ま で に 倒 し て お く path 推 奨 (= TS / wire 両 方 シ ン プ ル、 後 か ら 複 数 化 は non-breaking)。
-
----
-
-## main → worklet 系 handler に sample-offset が あ る か な い か の 列 挙 が doc ご と に 揺 れ る
-
-**場 所**: `docs/02-messaging.md:23`、 `docs/11-midi.md:155-167`、 `docs/01-dsl.md:494-501`
-
-**何 が 起 き て い る か**: handler-body 内 で 「sample-offset 引 数 を どこ か ら 取 れ る か」 の 列 挙 が 3 doc で 微 妙 に ず れ る。 02-messaging.md §1 L23 は 「from any source — **the handler arg**, a state slot, a buffer read, or a JS literal」 で 「the handler arg」 と 一 般 表 現、 message<T> handler に も 同 様 な 引 数 が あ る か の よ う に 読 め る。 11-midi.md §2.3 L161 は 「**the handler's own `atSample`**」 と 表 現、 MIDI 限 定 と 明 示 し な い。 01-dsl.md §4.2 L501 だ け が 「**the handler's own `atSample` arg (in MIDI handlers)**」 と 「MIDI 限 定」 を 括 弧 で 明 示。 一 方 02-messaging.md §5.3 の `message<T>` slot layout は 「Identical slot layout to `event<T>`, minus `atSample`」 で wire 上 に atSample 不 在 = message<T> handler に atSample 引 数 は 存 在 し な い と い う 事 実 と 02 §1 wording が 整 合 し な い。
-
-**impl AI 影 響**: 02 だ け を 読 ん だ impl AI が `message<T>.onReceive(({ atSample, ... }) => ...)` の よ う な signature を 期 待 し て TS surface に atSample field を 含 め て し ま う、 あ る い は 逆 に MIDI handler の atSample 引 数 を 落 と し て し ま う、 で impl が drift。 「main → worklet 系 (message<T>) handler は atSample 不 在、 worklet 内 部 で 発 生 す る MIDI handler は atSample 引 数 を 持 つ」 と い う 線 引 き が 1 か 所 で 明 文 化 さ れ て い な い。
-
-**判 断 軸**: 02 §1 L23 の 「the handler arg」 wording を 「the handler's own `atSample` arg (MIDI handlers のみ)」 に 寄 せ 直 し、 01 §4.2 の 限 定 表 現 を canonical と し て 02 / 11 が 参 照 す る path 推 奨。 同 時 に 02 §5.3 「message<T> slot に atSample 不 在」 と 02 §1 handler 引 数 列 挙 を 1 paragraph 内 で zip。
 
 ---
 
