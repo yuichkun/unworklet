@@ -78,6 +78,7 @@ populated (Q1–Q68 ratify complete; Q28 is unassigned — a numbering artifact,
 | Q66 | Voice allocation recipe 追 加 (Q-E) | resolved — 追 加 ナ シ。 Ex 8 で voice allocator subgraph + steal logic が 既 exercise、 unworklet 仕 様 surface (= subgraph / state / onEvent MIDI / build-time loop) は 全 完 結。 stealing policy 違 い (= oldest / quietest / priority 等) は consumer の audio engine 設 計 領 域 で unworklet 仕 様 surface に 矛 盾 を 産 ま な い、 棄 却 | `12-canonical-examples.md` Ex 8 |
 | Q67 | Overlap-add recipe 追 加 (Q-F) | resolved — 追 加 ナ シ。 Ex 3 で partitioned convolution = overlap-add 系 構 造 を 既 exercise、 unworklet 仕 様 surface (= buffer / state / forSample / SIMD bulk) は 全 完 結。 STFT 特 化 (= 窓 + FFT + spectrum 操 作 + IFFT + overlap-add) は FFT primitive を 必 要 と し、 FFT は unworklet primitive 外 (= consumer の L1 helper 領 域) = unworklet 仕 様 surface に 矛 盾 を 産 ま な い、 棄 却 | `12-canonical-examples.md` Ex 3 |
 | Q68 | per-block で の sample-offset 引 数 が 0 以 外 literal の 場 合 の 範 囲 check 仕 様 (Q-C、 Q51 follow-up) | resolved — `audioIn.at(c, k)` / `audioOut.set(c, k, v)` / `param.at(k)` の sample-offset 引 数 が JS literal で 渡 さ れ た 場 合、 `[0, SAMPLES_PER_BLOCK - 1]` (= 0〜127) 範 囲 外 は graph-capture-time error (= `audio-sample-offset-out-of-range`、 Layer 2) で 弾 く。 `audio-sample-offset-out-of-range` を `03-compiler.md` §2.6 stable error ID inventory に 追 加。 audio I/O + param で 統 一; 案 (= 範 囲 check ナ シ + runtime 動 作 規 定 / user 責 任 未 規 定) を 棄 却 (= 「build 時 に 静 的 検 出 可 能 な も の は build 時 に 弾 く」 既 軸 と 衝 突、 pure JS ↔ WASM bit-exact 検 証 と 衝 突 リ ス ク); 128 fix は v1.0.0 で 維 持 (= Q18 + Q35 と 整 合)、 将 来 AudioContext `renderSizeHint` 採 用 で render quantum 可 変 化 path に 進 ん だ 場 合 は v1.x.0 で adaptive emission を additive 追 加 (= build 時 check + runtime check の 2 layer 構 成 へ 拡 張)、 consumer が 128 以 外 の `renderSizeHint` で 作 成 し た AudioContext を v1.0.0 で 渡 し た 時 は worklet 起 動 時 runtime check で 違 反 = エ ラ ー event 発 火 で fail-loud (= Q18 既 path 維 持) | `03-compiler.md` §2.6 + `01-dsl.md` §1 |
+| Q69 | SAB mode の event drain mechanism (= MessageChannel / Atomics.notify / rAF / setTimeout) | resolved — 実 装 AI 領 域 と し て close。 観 測 ル ー ル (= 「main thread reader が ringbuffer を 継 続 drain す る」 = `02-messaging.md` §4 / §5) と publish counter cadence (= Q39-a 「due tick で 不 等 確 increment」) を 満 た す 限 り、 SAB mode で の wake-up mechanism は impl 自 由 度。 `05-client.md` §5.1 の 「per-MessageChannel ping in SAB mode」 は 例 示 で あ り 仕 様 確 定 で は な い (= 実 装 期 で Atomics.notify / rAF 等 に 変 え て も 観 測 ル ー ル 違 反 を 起 こ さ な い)。 仕 様 invariant (= drain 観 測、 publish cadence) は 動 か ず、 mechanism 細 部 は 実 装 期 の AI agent が performance / browser compat trade-off で 決 め る | `02-messaging.md` §4 + `05-client.md` §5.1 + `.claude/skills/_shared/core-principles.md` §2 |
 
 ---
 
@@ -2941,3 +2942,16 @@ authoritative wording: `03-compiler.md` §2.6 + `01-dsl.md` §1。
 - *範 囲 check ナ シ + runtime 動 作 を 仕 様 で 規 定 (= 例: 「範 囲 外 = 0 を 返 す」)*: 静 的 に 検 出 可 能 な も の を runtime に 流 す = Q22-c 軸 と 整 合 し な い + 範 囲 外 動 作 を 1 つ (= 0 返 す / 末 端 値 返 す / trap 等) に 決 め る 別 grill が 発 生 = surface 膨 張。
 - *範 囲 check ナ シ + 範 囲 外 動 作 は user 責 任 (= undefined behavior)*: WASM emission 側 の 範 囲 外 動 作 が 実 装 依 存 = pure JS ↔ WASM bit-exact 検 証 (Q62 B2) と 衝 突 リ ス ク + impl AI agent が 異 な る judgment に 達 す る 余 地 = 仕 様 surface 矛 盾。
 
+
+## Q69 — SAB mode の event drain mechanism (= 実 装 AI 領 域 と し て close)
+
+**Decision:** SAB mode で main thread が ringbuffer を drain す る 際 の wake-up mechanism (= MessageChannel ping / `Atomics.notify` / `requestAnimationFrame` / `setTimeout` 等) は **実 装 AI 判 断 領 域** と し て open-questions か ら close。 docs prose は 触 ら ず、 `05-client.md` §5.1 の 「per-MessageChannel ping in SAB mode」 wording は 例 示 と し て 残 す。
+
+**Rationale:**
+
+- 仕 様 invariant が 動 か な い: 「main thread reader が ringbuffer を 継 続 drain」 (= `02-messaging.md` §4 / §5) + 「publish counter は due tick で 不 等 確 increment」 (= Q39-a) を 満 た す 限 り、 mechanism 自 体 は user 観 測 surface に 露 出 し な い (= user は drain が 起 こ る 事 実 だ け 観 測、 wake-up 経 路 は 観 測 し な い)。
+- `core-principles.md` §2 「TS form 細 部 / 命 名 / mechanism 自 由 度 = 実 装 期 任 せ」 に 直 接 該 当。 mechanism 細 部 は performance / browser compat trade-off で 実 装 期 の AI agent が 機 械 的 に 決 め る。
+
+**Rejected:**
+
+- *仕 様 prose で 1 mechanism に 固 定 (= 例: 「SAB mode は Atomics.notify ベ ー ス wakeup 必 須」)*: implementation surface に 制 約 を 入 れ る 必 然 性 ナ シ (= 観 測 ル ー ル を 満 た せ ば mechanism は 自 由)、 browser compat (= `Atomics.notify` の Safari 制 約 等) を 仕 様 で 縛 る と impl AI 期 が 別 path を 取 れ な く な る = artificial 制 約 違 反。

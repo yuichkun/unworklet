@@ -2,11 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 31 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 30 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 13 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 17 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
-- **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
@@ -391,16 +390,5 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-## P3 — prose 揺れ / mechanical sweep (1 件)
-
-## SAB mode の event drain mechanism が doc ご と に 抽 象 level mismatch
-
-**場 所**: `docs/05-client.md:129`、 `docs/02-messaging.md:65`
-
-**何 が 起 き て い る か**: 02-messaging.md table は `event<T>` の 観 測 path を 「continuously by main thread reader」 と 抽 象 declare。 05-client.md §5.1 は 「default: per-MessageChannel ping in SAB mode, per-postMessage arrival in fallback mode」 と 具 体 mechanism を 1 行 だ け 書 く。 MessageChannel ping (= postMessage 系 API で SAB の Atomics 通 知 と は 別 mechanism) を SAB mode で 採 用 す る 必 然 性 が prose で 説 明 さ れ ず、 Atomics.notify ベ ー ス wakeup や rAF loop 等 別 path と の 選 択 軸 が 不 明。
-
-**impl AI 影 響**: SAB mode で の main 側 event drain mechanism の 選 択 が impl ご と に drift。 MessageChannel / Atomics.notify / rAF / setTimeout の ど れ で も 仕 様 prose を 満 た せ て し ま う。
-
-**判 断 軸**: mechanism を spec level (= SAB mode = Atomics 経 由 wakeup、 fallback = postMessage 順 次) で 1 doc に 集 約 declare す る か、 「mechanism は impl の 自 由 度、 観 測 ル ー ル だ け 規 定」 path に 倒 す か。 後 者 な ら 05 §5.1 の 具 体 mechanism 記 述 を 削 除 / 例 示 と し て marker す る 必 要 あ り。
 
 ---
