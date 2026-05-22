@@ -603,13 +603,13 @@ export const granularSampler = defineProcessor((ctx) => {
 
       // Per-block: derive grain spawn interval from grainHz.
       const samplesPerSpawn = div(ctx.sampleRate, grainDensity.at(0));
-      const grainSamples    = mul(grainSize.at(0), ctx.sampleRate / 1000);
+      const grainSamples    = mul(grainSize.at(0), div(ctx.sampleRate, 1000));
 
       forSample((i) => {
         // Spawn a grain when the countdown reaches 0.
         const cd = sub(nextSpawnIn.load(), 1);
         const spawn = lte(cd, 0);
-        nextSpawnIn.store(select(spawn, samplesPerSpawn, cd));
+        nextSpawnIn.store(select(spawn, i32(samplesPerSpawn), cd));
 
         // On spawn: pick a voice (round-robin), assign position and length.
         // (We unroll the voice selection inline.)
@@ -626,7 +626,7 @@ export const granularSampler = defineProcessor((ctx) => {
           const rem  = voiceRemaining[v].load();
 
           // Window envelope: simple cos^2 over the grain duration.
-          const phase = sub(1, div(rem, grainSamples));
+          const phase = sub(1, div(f32(rem), grainSamples));
           const winLin = sin(mul(phase, Math.PI));   // 0 -> 1 -> 0 over the grain
           const win    = mul(winLin, winLin);
 
@@ -640,7 +640,7 @@ export const granularSampler = defineProcessor((ctx) => {
           rSum = add(rSum, contrib);
 
           // Advance voice cursor.
-          voicePos[v]      .store(select(gate, add(pos, mul(pitch.at(i), exp(mul(sub(activeNote.load(), 60), Math.LN2 / 12)))), pos));
+          voicePos[v]      .store(select(gate, add(pos, mul(pitch.at(i), exp(mul(f32(sub(activeNote.load(), 60)), Math.LN2 / 12)))), pos));
           voiceRemaining[v].store(select(gate, sub(rem, 1), rem));
           voiceGate[v]     .store(select(gate, gt(rem, 0), gate));
         }
@@ -1095,7 +1095,7 @@ export const polySynth = defineProcessor((ctx) => {
           const note = voiceNote[s].load();
           const vel  = voiceVel [s].load();
           const gate = voiceGate[s].load();
-          const hz   = mul(440, exp(mul(sub(note, 69), Math.LN2 / 12)));
+          const hz   = mul(440, exp(mul(f32(sub(note, 69)), Math.LN2 / 12)));
           mix = add(mix, voices[s].process(hz, vel, gate, attack.at(0), release.at(0)));
         }
 

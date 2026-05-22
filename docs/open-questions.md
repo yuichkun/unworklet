@@ -2,29 +2,17 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 53 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 52 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 20 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 19 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 32 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
-## P1 — ship blocker 系 (20 件)
+## P1 — ship blocker 系 (19 件)
 
-### cluster (2) canonical integrity / Q ratify との衝突 (4)
-
-## canonical Ex 5 / Ex 8 が 「No implicit widening」 ル ー ル を 連 続 違 反
-
-**場 所**: `docs/12-canonical-examples.md:600-607`、 `docs/12-canonical-examples.md:624-625`、 `docs/12-canonical-examples.md:638`、 `docs/12-canonical-examples.md:1093`
-
-**何 が 起 き て い る か**: foundations §4 で 「No implicit widening between Node types — `add(f32node, f64node)` は ❌、 precision mismatch は compile-time type error」 と hard 化 さ れ て いる が、 canonical で 3 種 の 違 反 が 同 居。 (a) Ex 5 L638 / Ex 8 L1093 の MIDI 音 階 → Hz 変 換 で `mul(sub(state.i32.load(), 60), Math.LN2/12)` と 書 い て お り、 第 2 引 数 `Math.LN2/12 ≈ 0.0577` が i32 sibling 推 論 で 0 に truncate さ れ 数 値 的 に 常 に 0、 さ ら に そ の 結 果 を `exp(...)` に 渡 す が exp の declared signature は `Node<'f32'>` / `Node<'f64'>` 限 定 で `Node<'i32'>` 不 可。 (b) Ex 5 L624 で `div(rem, grainSamples)` (= `rem: Node<'i32'>` / `grainSamples: Node<'f32'>`) を 直 接 書 い て いる。 (c) Ex 5 L607 で `select(spawn, samplesPerSpawn /* f32 */, cd /* i32 */)` で 2 arm の T が 不 一 致、 結 果 を `state.i32.store(...)` に 渡 し store 側 と も 不 整 合。
-
-**impl AI 影 響**: impl AI agent が canonical を 「動 く 仕 様 sample」 と 信 用 す る path で 「implicit widening を 黙 認 す る lift rule 拡 張」 「sibling 推 論 を 整 数 chain か ら float 化 に 切 り 替 え る 例 外 規 則」 「`exp` signature を i32 受 容 に 拡 張」 等 を 各 自 解 釈 で 入 れ う る。 一 方 別 agent は foundations prose を sacred と し て canonical bug 扱 い に し て canonical を 書 き 換 え る。 path が 3 way 以 上 に 割 れ、 ど の path で も canonical が 動 く / 動 か な い が drift。
-
-**判 断 軸**: canonical を foundations §4 prose に zip さ せ る path に 倒 し、 (1) i32 → f32 を 必 要 な 各 箇 所 で `f32(...)` 明 示 widen で 書 き 直 す、 (2) `Math.LN2/12` 等 の float 定 数 を 渡 す arg が i32 sibling と 混 ざ る 構 文 を 排 除、 (3) `select` 両 arm を 同 T に 揃 え る (= `samplesPerSpawn` を i32 化、 ま た は `nextSpawnIn` の state declaration を `state.f32` に 変 え る) path 推 奨。
-
----
+### cluster (2) canonical integrity / Q ratify との衝突 (3)
 
 ## event<T> payload の `number` field が float 値 を 取 り う る canonical 3 例 と Q46 prose が 真 っ 向 衝 突
 
