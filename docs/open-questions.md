@@ -2,29 +2,15 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 54 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 53 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 21 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 20 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 32 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
-## P1 — ship blocker 系 (21 件)
-
-### cluster (1) 型 system core (1)
-
-## 公 開 type body の method set が prose で 列 挙 さ れ て な い
-
-**場 所**: `docs/00-foundations.md:46-48`、 `docs/01-dsl.md:14-22`、 `docs/01-dsl.md:211-220`、 `docs/01-dsl.md:1098-1100`、 `docs/01-dsl.md:1131-1151`、 `docs/05-client.md:11-22`、 `docs/05-client.md:316-339`、 `docs/11-midi.md:16-17`
-
-**何 が 起 き て い る か**: `EventDecl<T>` / `MessageDecl<T>` / `MidiInputHandle` / `MidiOutputHandle` / `Param` / `ProcessorContext` / `ProcessorBody` / `CompiledProcessor<C>` / `UnworkletNode<C>` / `Migration` / `MigrationHelpers` 等 を 公 開 type と し て prose / signature 中 で 言 及 し て いる が、 type body そ の も の (= method set / field set) を 1 箇 所 に 列 挙 し た prose が ナ シ。 method は use site (`.emitIf`, `.onReceive`, `.onEvent`, `ctx.sampleRate` 等) で 散 発 的 に prose 言 及 さ れ て いる だ け。 `Migration` 型 (= `migrations: Migration[]` の 要 素) の field shape (= from/to/migrate の 形、 migrate の return が `void` か `Promise<void>` か) も prose 内 declare ナ シ。
-
-**impl AI 影 響**: impl AI は (a) use site か ら 逆 算 し て 最 小 set declare、 (b) 推 測 で field を 足 す、 等 で 判 断 が 割 れ る。 ま た `ProcessorBody` が strict (= `{ process: () => void }` の み) か 拡 張 可 か prose で declare ナ シ で、 impl が `{ process; [k: string]: any }` 形 で 緩 く す る か strict に す る か drift。 migrate の async 可 否 も 同 軸。
-
-**判 断 軸**: 公 開 type ご と に 「method set / field set を 1 箇 所 に 集 約 declare す る」 path で prose 厚 み を 詰 め る か、 「use site 散 発 の ま ま で impl AI 任 せ」 で 行 く か。 method set は 仕 様 invariant 領 域 (= 余 湖 さ ん 既 言 明) な の で 集 約 declare 推 奨。
-
----
+## P1 — ship blocker 系 (20 件)
 
 ### cluster (2) canonical integrity / Q ratify との衝突 (4)
 

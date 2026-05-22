@@ -210,11 +210,20 @@ Authoritative rationale and rejected alternatives: see `decisions-log.md` Q6 (de
 
 Handle types for every declaration kind are exported from `@unworklet/core` for use in helper / subgraph signatures and main-side typing:
 
-- `AudioInputHandle<C>` / `AudioOutputHandle<C>` (§1.2 / §1.3)
-- `State<T>` / `Buffer<T>` / `Param` (§3)
-- `EventDecl<T>` / `MessageDecl<T>` (§4)
-- `MidiInputHandle` / `MidiOutputHandle` (`11-midi.md` §2)
-- `Node<T>` (§2)
+- `AudioInputHandle<C>` / `AudioOutputHandle<C>` (§1.2 / §1.3) — `at(channel, sample)`, `copyFrom(...)` 等
+- `State<T>` / `Buffer<T>` / `Param` (§3) — `.load()` / `.store(v)` / `.read(idx)` / `.write(idx, v)` / `.at(i)` 等
+- `EventDecl<T>` / `MessageDecl<T>` (§4) — worklet 側 `.emitIf(cond, payload)` / main 側 `.on(handler)` / `.send(payload)` (= MessageDecl のみ)
+- `MidiInputHandle` / `MidiOutputHandle` (`11-midi.md` §2) — worklet 側 `.onEvent(handler)` / `.emitIf(cond, event)`、 main 側 `.send(...)` / `.on(handler)`
+- `Node<T>` (§2) — per-sample 値 を 表 す branded handle
+
+Processor-shape types (= `defineProcessor` 周 辺):
+
+- `ProcessorContext` (= argument to `defineProcessor` body) — `{ sampleRate: Node<'f32'>, hz: Node<'f32'>, samples: Node<'i32'> }`
+- `ProcessorBody` (= return value of `defineProcessor` body) — **strict shape** `{ process: () => void }`; 余 計 な field を 載 せ る と graph-capture-time error (declarative 原 則 で、 body は process 1 個 だ け で 構 成)
+- `CompiledProcessor<C>` (= return value of `defineProcessor`) — `{ readonly graph: ProcessorGraph; readonly schemaHash: string }`; `createNode` / `replaceProcessor` に 渡 す opaque 型
+- `UnworkletNode<C>` (= return value of `createNode`) — main-side 公 開 surface。 method/field 集 約 は `05-client.md` §2 で declare
+- `Migration` (= entry of `migrations: Migration[]`) — `{ from: string; to: string; migrate: (blob: Uint8Array, helpers: MigrationHelpers) => void | Promise<void> }`; `migrate` は Promise を 返 し て も OK で、 framework が main thread で await し て か ら worklet 側 へ apply (= No blocking I/O invariant は audio thread 限 定、 main thread で の async OK)
+- `MigrationHelpers` (= second argument to `migrate`) — §8.3.1 で 全 method declare
 
 The value returned by `createSubgraph(...)` is **the subgraph body's return record itself** (= the author-named methods declared by `defineSubgraph`'s body) — no separate `SubgraphInstance<S>` wrapper type is exported. When a helper signature needs to receive a subgraph instance, use `ReturnType<typeof subgraphDecl>` (TypeScript's standard inference). Authoritative rationale: `decisions-log.md` Q54.
 
