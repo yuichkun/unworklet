@@ -81,17 +81,20 @@ defineProcessor((ctx) => {
 MIDI events appear in two contexts: **main thread** (= `node.midi.<name>.send(...)` argument and `.onEvent(...)` handler argument), and **worklet audio-thread** (= `midiInput().onEvent(...)` handler argument and `midiOutput().emitIf(...)` argument). Each context uses a distinct TypeScript type because the values themselves are different things — main-thread fields are plain JS numbers, worklet fields are audio-graph nodes captured into the WASM emission (Q22). Authors never see raw status bytes — the compiler generates serializers and deserializers between these types and the wire format (§4).
 
 ```typescript
-// Main thread / wire shape — values are plain JS scalars.
+// Main thread surface — values are plain JS scalars. The framework computes
+// `atSample` from the `atTime` argument to `send(...)` (= §3.1, §4.2), so the
+// main-side type omits it; the wire layout (= §4.1) carries `atSample` as a
+// `u32` independently.
 type MidiEvent =
-  | { type: 'noteOn';          channel: number; note: number; velocity: number; atSample: number }
-  | { type: 'noteOff';         channel: number; note: number; velocity: number; atSample: number }
-  | { type: 'cc';              channel: number; controller: number; value: number; atSample: number }
-  | { type: 'pitchBend';       channel: number; value: number;                     atSample: number }
-  | { type: 'programChange';   channel: number; program: number;                   atSample: number }
-  | { type: 'channelPressure'; channel: number; pressure: number;                  atSample: number }
-  | { type: 'aftertouch';      channel: number; note: number; pressure: number;   atSample: number }
-  | { type: 'systemRealtime';  status: number;                                     atSample: number }  // 0xF8 / 0xFA / 0xFB / 0xFC
-  | { type: 'sysex';           data: Uint8Array;                                   atSample: number };
+  | { type: 'noteOn';          channel: number; note: number; velocity: number }
+  | { type: 'noteOff';         channel: number; note: number; velocity: number }
+  | { type: 'cc';              channel: number; controller: number; value: number }
+  | { type: 'pitchBend';       channel: number; value: number }
+  | { type: 'programChange';   channel: number; program: number }
+  | { type: 'channelPressure'; channel: number; pressure: number }
+  | { type: 'aftertouch';      channel: number; note: number; pressure: number }
+  | { type: 'systemRealtime';  status: number }  // 0xF8 / 0xFA / 0xFB / 0xFC
+  | { type: 'sysex';           data: Uint8Array };
 
 // Worklet audio-thread shape — every numeric field is a graph-capture value
 // (`Node<'i32'>`), every typed-array field is exposed as a typed-array-field

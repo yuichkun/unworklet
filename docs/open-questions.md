@@ -2,15 +2,15 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 51 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 50 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 18 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 17 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 32 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
-## P1 — ship blocker 系 (18 件)
+## P1 — ship blocker 系 (17 件)
 
 ### cluster (2) canonical integrity / Q ratify との衝突 (3)
 
@@ -90,7 +90,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-### cluster (4) handler / drain / boundary timing (9)
+### cluster (4) handler / drain / boundary timing (1)
 
 ## render quantum サ イ ズ 不 一 致 時 の 動 作 が silence vs 停 止 vs onError-only で 3 way 不 一 致
 
@@ -101,18 +101,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が process(...) の return false (= node disconnect) を 採 る か、 silence buffer を 流 し 続 け る か、 onError 発 火 の み で audio 動 作 を 維 持 す る か で 4 path に 分 か れ る。 main 側 で onError handler が 受 け 取 れ る 設 計 か も 同 時 に drift。
 
 **判 断 軸**: 「runtime guard fallback の 具 体 動 作 = (a) silence + onError、 (b) process return false で 停 止、 (c) onError 発 火 後 silence 継 続」 の ど れ を 単 一 path と し て 01 / 03 / 04 / 00-foundations 全 て で 揃 え る か。 仕 様 invariant と し て 1 か 所 で declare し 他 章 は そ こ を 参 照。
-
----
-
-## main 側 で MIDI を 送 る 時 の 「い つ 鳴 る か」 を 指 定 す る 場 所 が 型 と 例 で 別
-
-**場 所**: `docs/11-midi.md:86-94`、 `docs/11-midi.md:279`、 `docs/11-midi.md:294`、 `docs/11-midi.md:299`、 `docs/11-midi.md:335`、 `docs/12-canonical-examples.md:1234`
-
-**何 が 起 き て い る か**: main 側 で 使 う `MidiEvent` 型 (= §2.2) は 全 variant に 「い つ 鳴 ら す か」 を 表 す sample 番 号 field を **必 須** で 持 つ 形 で 定 義 さ れ て い る。 と こ ろ が 同 doc §3 の 全 example と canonical Ex 9 の 該 当 行 は こ の field を 完 全 に 省 略 し て お り (= `node.midi.main.send({ type: 'noteOn', channel: 0, note: 60, velocity: 127 })` 形 で 通 す)、 さ ら に §4.2 で は 「send の 第 2 引 数 で 渡 す 絶 対 時 刻 を framework が 自 動 で sample 番 号 に 変 換 す る」 と 説 明 さ れ る。 つ ま り 「型 で は 必 須」 「例 で は 省 略」 「説 明 で は 第 2 引 数 か ら 計 算」 の 3 形 が 同 居。
-
-**impl AI 影 響**: 型 を 必 須 の ま ま 出 す と canonical が type error で 動 か な い。 optional に 倒 す と 型 定 義 と zip し な い。 sample 番 号 を `send` の 第 1 引 数 (event) と 第 2 引 数 (時 刻) の どち ら か ら 取 る か / 両 方 受 け る か / 片 方 だ け か で WASM emit 形 が 別 物。
-
-**判 断 軸**: 「main 側 で は sample 番 号 を 直 接 指 定 さ せ ず、 第 2 引 数 の 時 刻 か ら framework が 計 算 す る」 path に 倒 し て `MidiEvent` 型 か ら sample 番 号 field を 抜 く か、 「型 必 須 を 維 持 し て canonical / signature を 直 す」 か。 worklet 側 handler 引 数 で は sample 番 号 が 必 要 な の で main 側 だ け field を 抜 く 場 合 は main / worklet で 型 を 分 け る path に な る。
 
 ---
 
