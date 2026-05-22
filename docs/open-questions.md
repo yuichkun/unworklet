@@ -2,15 +2,15 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 50 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 49 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 17 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 16 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 32 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
-## P1 — ship blocker 系 (17 件)
+## P1 — ship blocker 系 (16 件)
 
 ### cluster (2) canonical integrity / Q ratify との衝突 (3)
 
@@ -104,7 +104,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-### cluster (5) realtime safety invariant (4)
+### cluster (5) realtime safety invariant (3)
 
 ## handler body 内 で build-time for unroll し な が ら runtime Node を ref す る pattern が legal か
 
@@ -127,18 +127,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI は (a) runtime out-of-range write を graph-capture で reject (= 静 的 解 析 不 可 で 実 装 困 難)、 (b) select carrier-clamp で safe wrap、 (c) runtime trap で 音 切 れ、 で 判 断 が 割 れ、 user code が DSP loop 内 で 数 sample 飛 ば す か 0 fill す る か 全 く 別 物 に な る。
 
 **判 断 軸**: `Buffer<T>.read` / `.write` の runtime index 振 る 舞 い を `samples.at` (= proxy) と zip さ せ て clamp path に 揃 え る か、 buffer 系 は trap (= UB) に 倒 す か。
-
----
-
-## subnormal flush の threshold が `1e-30` か IEEE 754 subnormal 範 囲 か
-
-**場 所**: `docs/12-canonical-examples.md:263`、 `docs/12-canonical-examples.md:1266`
-
-**何 が 起 き て い る か**: 既 ratify (Q21) で 「state.f32 / state.f64 の `.store()` site で subnormal flush auto-insert」 が 決 ま っ た が、 prose で threshold を `1e-30` と 例 示 し て いる。 `1e-30` は IEEE 754 subnormal 範 囲 (≈ 1.18e-38) と 別 値 で、 oscillator phase が `mod(..., 2π)` 後 に 1e-30 以 下 に な る と 0 snap で glitch リ ス ク (= 1e-30 は IEEE 754 で は normal 範 囲)。
-
-**impl AI 影 響**: impl AI は (a) prose 例 通 り `1e-30` 採 用、 (b) IEEE 754 subnormal だ け flush、 (c) prose 例 は 説 明 用 で 実 装 は subnormal だ け、 で 判 断 が 割 れ る。 oscillator phase の 連 続 性 が 直 接 影 響 を 受 け る た め audio output が 別 物 に な る。
-
-**判 断 軸**: threshold を IEEE 754 subnormal 範 囲 に 厳 密 化 す る か、 prose 例 の `1e-30` を そ の ま ま 採 る か。 後 者 は DSP 文 脈 で normal 範 囲 の 値 を flush し て し ま い 副 作 用 大、 前 者 推 奨。
 
 ---
 

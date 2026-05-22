@@ -99,7 +99,7 @@ IEEE 754 の **subnormal** 範 囲 (= 約 1e-38 以 下 の 極 小 値) は 多
 
 unworklet は こ の 経 路 を **コ ン パ イ ル 時 に 自 動 で 塞 ぐ** (Q21, `decisions-log.md`):
 
-- `state.f32` / `state.f64` の `.store(v)` を WASM emission 時 に subnormal ガ ー ド で 包 む — 値 が 1e-30 以 下 (絶 対 値) な ら 0 に 落 と す
+- `state.f32` / `state.f64` の `.store(v)` を WASM emission 時 に subnormal ガ ー ド で 包 む — 絶 対 値 が **`1e-30`** 以 下 な ら 0 に 落 と す。 閾 値 1e-30 は IEEE 754 binary32 の subnormal 範 囲 (≈ 2^-126 〜 2^-149、 ≈ 1.18e-38 以 下) を 完 全 に 含 む 単 純 boundary で、 normal 範 囲 の 末 端 (1.18e-38 〜 1e-30) も 同 時 に flush さ れ る が audio 出 力 と し て 不 可 聴 (= Q21 rationale)、 user 調 整 余 地 ナ シ で 1 値 fix
 - ガ ー ド は 1 比 較 + 1 select の 軽 量 inline、 通 常 計 算 path で の cost は 無 視 で きる レ ベ ル
 - user code は 変 更 ナ シ で 自 動 適 用 = audio DSP 業 界 標 準 の flush-to-zero と 同 等 の 挙 動
 
