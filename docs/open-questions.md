@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 44 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 43 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 13 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 30 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 29 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -185,7 +185,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 ---
 
 
-## P2 — 仕様 invariant + lifecycle (30 件)
+## P2 — 仕様 invariant + lifecycle (29 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -280,18 +280,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が typed-array → element type mapping を 自 動 推 論 す る 際、 sign-extend か zero-extend か reject か で 全 typed-array 種 ご と に 振 れ る。 特 に `BigInt64Array` を `Node<'i64'>` に 自 動 lift す る か explicit な carrier 経 由 を 強 制 す る か、 `Float64Array` を `Node<'f64'>` に lift す る か `Node<'f32'>` に narrow す る か で 仕 様 surface が drift。 per-element `.at(idx)` 経 由 と bulk `copyFrom` 経 由 で 別 type check ル ー ル に な る か も 不 明。
 
 **判 断 軸**: typed-array → `Node<T>` の mapping を 1 表 で 全 列 挙 (= 8 種 全 部) し、 reject す る 種 (= `BigInt64Array` 等 は v1.0.0 で 対 応 し な い 等) を 明 文 化 す る か。 per-element と bulk で ル ー ル を 揃 え る か 別 軸 で 切 る か も 同 時 に decide。
-
----
-
-## framework が user 値 を 暗 黙 で 変 え る path の 完 全 列 挙 が 仕 様 surface に 不 在
-
-**場 所**: `docs/00-foundations.md:208`、 `docs/00-foundations.md:117`、 `docs/04-worklet-runtime.md:67-78`、 `docs/01-dsl.md:545`
-
-**何 が 起 き て い る か**: 04-worklet-runtime §6 で 「state.f32 / state.f64 の `.store(v)` で `1e-30` 以 下 を 0 に flush す る auto-rewrite」 を 明 言 し て いる が、 「framework が 暗 黙 で 値 を 変 え る path は subnormal flush が 唯 一」 と 全 doc で 保 証 す る prose は ナ シ。 別 path と し て 01-dsl §4.3 末 尾 で 「out-of-range `.at(idx)` reads は graph capture で `select`-based carrier-clamp で wrap」 と あ り、 こ れ も 「user が 渡 し た idx と 違 う 値 を 実 質 返 す」 = 意 味 を 変 え る auto-rewrite。 さ ら に param clamp (= `min/max` 範 囲 で 実 行 時 値 を clamp す る か declaration default で 終 わ る か) も 仕 様 内 で 明 確 declare ナ シ。
-
-**impl AI 影 響**: impl AI が 「framework auto-rewrite の 完 全 列 挙」 を 仕 様 か ら 抽 出 し て user 向 け doc / DevTools surface に 列 挙 す る 時、 subnormal flush と carrier-clamp の 2 個 だ け か、 param clamp も か、 他 に も あ る か が 仕 様 か ら 取 れ ず。 「declarative」 原 則 (= user の 書 い た 構 造 が そ の ま ま WASM に な る) と 衝 突 す る auto-rewrite が どこ で 何 個 あ る か を impl AI が 1 箇 所 で 把 握 で き ず、 user mental model の 整 合 性 が 取 れ な い。
-
-**判 断 軸**: foundations §5 か 別 章 で 「framework が user 値 を 暗 黙 に 変 え る path の 完 全 列 挙 表」 を 1 か 所 で 集 約 declare す る path 推 奨。 列 挙 範 囲 は 「subnormal flush / carrier-clamp / param clamp / SIMD vec 化 で の round mode 変 化 等」 全 部 zip。 こ の 表 が 「declarative 原 則 の 例 外 リ ス ト」 と し て invariant 化。
 
 ---
 

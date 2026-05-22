@@ -118,6 +118,15 @@ The compile-time / runtime boundary that defines what unworklet normalizes and w
 
 The full quirk catalog (A1–A7 inside, B1–B3 outside) and rationale live in `decisions-log.md` Q11. The compatibility matrix lives in `08-deployment.md` §2.
 
+### Implicit user-value rewrites (= declarative 原 則 の 例 外 リ ス ト)
+
+unworklet は declarative DSL (= user が 書 い た 構 造 が そ の ま ま WASM) を 原 則 と し、 framework が user の 計 算 値 を 暗 黙 で 別 値 に 変 換 す る path は **以 下 2 件 に 限 定**。 こ の 2 path 以 外 で framework は user 値 を 黙 っ て 書 き 換 え な い (= invariant)。
+
+1. **Subnormal flush** — `state.f32.store(v)` / `state.f64.store(v)` で `|v| < 1e-30` を 0 に 落 と す (= Q21、 `04-worklet-runtime.md` §6)。 IIR feedback path の CPU spike footgun 撤 廃 目 的、 1e-30 以 下 は audio dynamic range 不 可 聴。 user opt-out 不 可。
+2. **Carrier-clamp on `samples.at(idx)`** — `message<T>` / `event<T>` の typed-array-field proxy `.at(idx)` で out-of-range index を `select`-based wrap で clamp (= Q36、 `01-dsl.md` §4.3)。 graph capture で 静 的 範 囲 確 認 不 能 な runtime index を 安 全 に 受 け る ため。 user opt-out 不 可。
+
+上 記 以 外 の primitive (= `add` / `mul` / `div` / `sin` / `exp` 等)、 method (= `buf.read` / `buf.write` / `audioIn.at` 等)、 SIMD operation は 全 て user が 書 い た 計 算 を そ の ま ま WASM に 落 と す。 round mode / overflow / div by zero 等 は IEEE 754 / WASM 標 準 semantics に 従 う = framework が 介 入 し な い。
+
 ## 4. Type system
 
 unworklet primitives are statically typed `Node<T>` where `T` is one of `'f32'`, `'f64'`, `'i32'`, `'i64'`, `'bool'`.
