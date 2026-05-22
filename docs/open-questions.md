@@ -2,15 +2,15 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 49 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 48 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 16 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 15 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 32 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
-## P1 — ship blocker 系 (16 件)
+## P1 — ship blocker 系 (15 件)
 
 ### cluster (2) canonical integrity / Q ratify との衝突 (3)
 
@@ -170,7 +170,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-### cluster (8) snapshot / restore lifecycle (2)
+### cluster (8) snapshot / restore lifecycle (1)
 
 ## `snapshot()` の 「graph-capture-time error」 が 何 を trigger に 検 出 さ れ る か
 
@@ -181,18 +181,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: name 強 制 trigger で impl が (a) 全 slot 一 律、 (b) persistent slot で trigger、 (c) migrations 引 数 で trigger に 分 か れ る。 migrate timing で (a) main で run し て post-migration blob を audio に 渡 す、 (b) audio thread で run (= 仕 様 違 反 リ ス ク)、 (c) hybrid に 分 か れ る。 後 者 は audio thread 例 外 path が 起 動 す る か 否 か に 直 結 す る た め 矛 盾 重 い。
 
 **判 断 軸**: trigger は declaration-side flag (= persistent slot or migrations 引 数) と main-side 振 る 舞 い (= snapshot() 呼 び 出 し) ど ち ら で 起 動 す る か。 migrate の thread は 「main 側 で run し 完 了 後 audio 側 で apply」 path に 一 本 化 す る か。
-
----
-
-## `snapshot()` 呼 び 出 し 時 の name 必 須 性 が 「全 slot 必 須」 と 「少 な く と も 1 slot 必 須」 で doc 間 で 別 物
-
-**場 所**: `docs/01-dsl.md:331`、 `docs/05-client.md:112`、 `docs/decisions-log.md:282`、 `docs/12-canonical-examples.md:318`、 `docs/12-canonical-examples.md:529`
-
-**何 が 起 き て い る か**: name 必 須 性 ル ー ル が 2 doc で 別 wording。 01-dsl.md §3.1 (L331) は 「`name?` — slot identity. Required when the parent processor calls `snapshot()` (graph-capture-time error otherwise).」 (= 「snapshot 呼 ぶ processor の 各 slot に name 必 須」)。 05-client.md §2.6 (L112) は 「A processor that calls `snapshot()` without any `name`-bearing slot is a graph-capture-time error.」 (= 「全 slot が name ナ シ の 時 だ け error、 1 つ で も name 持 ち が あ れ ば OK」)。 decisions-log Q5-b (L282) は 01-dsl.md 寄 り の wording。 canonical Ex 3 / Ex 5 等 は 全 slot に name を 振 っ て お り 01-dsl.md 寄 り、 し か し §3.1 L318 example `state.f32(0)` (= name ナ シ) も canonical 内 に 出 現 し て お り 「snapshot 持 ち の processor で 1 個 で も `state.f32(0)` を 持 つ と error か 否 か」 が 仕 様 で 取 れ な い。
-
-**impl AI 影 響**: 既 entry 「`snapshot()` の 『graph-capture-time error』 が 何 を trigger に 検 出 さ れ る か」 で trigger 軸 を 立 て て い る が、 こ の entry は 「error trigger が 検 出 さ れ た 後、 reject 対 象 が 全 slot か 1 slot で も name 持 ち が あ れ ば OK か」 と い う 別 軸。 (a) strict path で 全 slot 必 須 = `state.f32(0)` を 含 む processor で `node.snapshot()` 呼 ぶ と error、 (b) lenient path で 1 slot 必 須 = `state.f32(0)` 含 ん で も `state.i32(0, { name: 'x' })` が 1 つ あ れ ば 通 過、 で WASM build pass/fail が 揺 れ、 同 じ source code で 別 impl が reproducible で な い。
-
-**判 断 軸**: 01-dsl.md §3.1 / decisions-log Q5-b の strict (= 全 slot 必 須) path 採 用 で 05-client.md §2.6 prose を rewrite す る か、 05-client.md lenient (= 1 slot で OK) path 採 用 で 01-dsl.md §3.1 / Q5-b を rewrite す る か。 strict path 採 用 な ら restore 側 で 「name 不 在 slot は そ も そ も blob に 載 ら ず restore も で き ず」 と 自 然 に zip = 推 奨。 既 entry の trigger 軸 と 同 commit で decide す る path。
 
 ---
 

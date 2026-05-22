@@ -117,7 +117,7 @@ The `.state.<name>` surface is **read-only on main**. Writing to a worklet-side 
 
   This is a *read-only* view; `inspect` does not mutate the blob and there is no way to construct a blob from an `InspectionResult`. Build new blobs through the processor's snapshot path or through migrations.
 
-A processor that calls `snapshot()` without any `name`-bearing slot is a graph-capture-time error.
+A processor that calls `snapshot()` requires **every** state / buffer slot to have a `name` (graph-capture-time error otherwise — same strict rule as `01-dsl.md` §3.1 `name?` declare and `decisions-log.md` Q5-b). Slots without a `name` cannot be addressed in the snapshot blob and therefore cannot round-trip through `restore`.
 
 ## 3. Param connection / automation
 
