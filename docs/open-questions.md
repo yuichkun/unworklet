@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 45 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 44 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 13 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 31 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 30 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -185,7 +185,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 ---
 
 
-## P2 — 仕様 invariant + lifecycle (31 件)
+## P2 — 仕様 invariant + lifecycle (30 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -244,18 +244,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: handler 内 で subgraph method 呼 び 出 し → method 内 で forSample を 開 く path で、 「handler 内 forSample 全 体 が block 開 始 時 に inline で 1 回 動 く 形」 と 「forSample が 独 立 の per-sample loop と し て drain 後 に 動 く 形」 で WASM emission が 別 物 に な る。
 
 **判 断 軸**: handler 内 で forSample を 開 く こ と を (a) 禁 止、 (b) handler context 内 で inline 1 回 実 行 (= sample loop に な ら な い)、 (c) drain 後 の per-block context で 別 sample loop と し て 動 か す、 の ど れ に 倒 す か。 method 経 由 で 呼 ば れ る 場 合 も 同 path で 統 一。
-
----
-
-## param marshalling 仕 様 (length 1 / 128 / 0) が doc 間 で 散 在 し て boundary closed で な い
-
-**場 所**: `docs/04-worklet-runtime.md:21`、 `docs/08-deployment.md:2`、 `docs/03-compiler.md:3`
-
-**何 が 起 き て い る か**: 04 §2 placeholder は 「Marshal parameter arrays (length 1 / 128 / 0 — see Q18)」 と 1 行 で 投 げ、 length 0 case の default 適 用 boundary (= per-block top で declared default で fill か、 per-sample loop 内 で fill か、 broadcast か copy か) を declare せ ず。 08 §2 A3 は normalization の 「user 側 view (= user は `param.at(i)` / `param.at(0)` だ け 触 る)」 を 規 定 す る が WASM emit 側 の boundary 動 作 は declare ナ シ。 03 §3 も placeholder の ま ま 「static analysis」 が closed で な い。
-
-**impl AI 影 響**: length 0 の 場 合 declared default を per-block top で 1 度 fill す る か per-sample で fill す る か で WASM emission が 別 物 に な る。 a-rate param の per-block top 呼 び (= 既 entry 「a-rate param を per-block top で `param.at(0)` 経 由 で 取 る pattern の canonical 確 認 不 在」 と zip) の 振 る 舞 い と も 直 接 影 響 し 合 う。
-
-**判 断 軸**: marshalling 仕 様 を 04 §2 か 03 §3 の ど ち ら か 1 か 所 に 集 約 し、 length 1 (broadcast) / length 128 (full a-rate) / length 0 (default fill) の 3 case 全 て で 「ど の boundary で 何 を normalize す る か」 を 明 文 化 す る path 推 奨。
 
 ---
 

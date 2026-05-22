@@ -28,7 +28,7 @@ WASM is built with `SAMPLES_PER_BLOCK = 128` as a compile-time constant. The wor
 
 #### A3. `parameters[name]` array length (0 / 1 / 128)
 
-The worklet's per-block marshalling normalizes the three AudioParam array lengths (length 1 = k-rate or unchanged a-rate, length 128 = changing a-rate, length 0 = unconnected) to a uniform per-sample / per-block API (`param.at(i)` / `param.at(0)`). Length-1 values broadcast to the full block; length-0 values use the param's declared default. User code never observes the length variance.
+The worklet's per-block marshalling normalizes the three AudioParam array lengths (length 1 = k-rate or unchanged a-rate, length 128 = changing a-rate, length 0 = unconnected) to a uniform per-sample / per-block API (`param.at(i)` / `param.at(0)`). Marshalling happens **at the per-block top**, before any handler / `process` body code runs (= `04-worklet-runtime.md` §2 step 3): length-1 values broadcast to the full 128-sample param-array view (= same value at every sample-index); length-0 values fill the same 128-sample view with the param's declared default; length-128 values pass through unchanged. `param.at(i)` always sees a fully-populated 128-sample view, so user code never observes the length variance, never runs a fill loop, and `param.at(0)` is equivalent for k-rate / length-1 / length-0 paths.
 
 #### A4. Subnormal flush-to-zero
 
