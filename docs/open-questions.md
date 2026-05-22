@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 37 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 36 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 13 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 23 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 22 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -185,7 +185,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 ---
 
 
-## P2 — 仕様 invariant + lifecycle (23 件)
+## P2 — 仕様 invariant + lifecycle (22 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -388,18 +388,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が `node.messages.<name>` の 型 を 出 す と き、 (a) 関 数 と property の intersection、 (b) callable object signature (`{ (payload): void; diagnostics: ... }`)、 (c) 関 数 部 分 を 別 method (= `.send(payload)`) に 分 け て events / midi と 揃 え る、 で 3 way に 分 か れ る。 同 時 に 「`const send = node.messages.upload; send.diagnostics.overflowCount()` が 動 く か」 が path ご と に 別 (= 構 造 分 解 し た 後 も diagnostics に reach で き る か は callable object か intersection か で 挙 動 が 異 な る)。 form の 領 域 と い う 意 見 も あ る が、 構 造 分 解 後 の 観 測 path 可 否 は user-observable な 挙 動 差。
 
 **判 断 軸**: messages を 「`.send(payload)` + `.diagnostics`」 形 に 倒 し て events / midi と 構 造 を 揃 え る path、 ま た は 「callable + property」 形 を 明 文 化 し て 構 造 分 解 後 も diagnostics に reach で き る こ と を 仕 様 invariant と し て declare す る path、 2 way で decide。 前 者 は user が 覚 え る 構 造 が 1 種 類 で 済 む 利 点、 後 者 は 識 別 子 が 1 行 で 済 む 利 点 (= 既 canonical の 形 を 維 持)。
-
----
-
-## offline で 取 り 出 す event 列 の 形 が main 側 subscribe 引 数 と 揃 っ て い な い
-
-**場 所**: `docs/13-offline-render.md:34,38`、 `docs/05-client.md:25-32`、 `docs/11-midi.md:13-17`、 `decisions-log.md` Q46
-
-**何 が 起 き て い る か**: offline render の 戻 り 値 に 並 ぶ event 配 列 と、 入 力 と し て 注 入 す る event 配 列 が、 同 一 形 `{ name, payload, atSample }` で 書 か れ て い る。 一 方 (a) main 側 で event を 購 読 す る surface は handler 引 数 が 「直 接 payload」 で `name` field を 持 た な い (= 購 読 者 は 名 前 を 既 に 知 っ て い る)、 (b) MIDI は main 側 で discriminated union (= `{ type: 'noteOn', ... }`) で 受 け る (= field 名 が `name` で は な く `type`、 階 層 も 違 う)。 offline 戻 り 値 だ け 3 surface が 統 一 さ れ な い 別 形。
-
-**impl AI 影 響**: impl AI が offline 用 に `{ name, payload, atSample }` wrap 形 を 採 用 す る と、 test helper で 「online subscriber 経 由 で 集 め た event 列」 と 「offline 戻 り 値 の event 列」 を 同 一 matcher で 比 較 で き ず、 acceptance B1 (= online で 観 測 し た 動 作 を offline で 再 現) を 書 く 時 に user が 形 変 換 を 自 力 で 書 く 状 態。 さ ら に MIDI を offline で 観 測 す る 場 合、 main 側 `{ type: 'noteOn', ... }` 形 と offline `{ name: 'noteIn', payload: { type: 'noteOn', ... } }` (= 多 階 層) の どち ら が canonical か decode path が 別 れ る。
-
-**判 断 軸**: offline 戻 り 値 の event 列 形 を main 側 観 測 surface と 1 対 1 mirror で 揃 え る path 推 奨 (= 各 declaration 種 ご と に 「online subscribe で 渡 さ れ る 値 + atSample + declaration 名」 を そ の ま ま 並 べ る form)。 注 入 形 と 戻 り 値 形 を 別 物 と し て declare し て も 良 い が、 1 か 所 で 「online と 同 一 観 測 形」 を invariant 化。
 
 ---
 

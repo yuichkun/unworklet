@@ -35,7 +35,7 @@ const result = await renderOffline(MyProcessor, {
 });
 
 result.outputs.main; // Float32Array[]   per-channel PCM (key = `audioOutput` declared `name`; canonical convention is `'main'`. Length = ceil(duration × sampleRate / 128) × 128, see §2.1.)
-result.events;       // Array<{ name, payload, atSample }>   events the processor emitted
+result.events;       // Array<{ name, payload, atSample }>   events the processor emitted (= name は declaration の `name`、 payload は online で `.events.<name>.on(handler)` の handler に 渡 さ れ る 値 と 同 形、 atSample は block-local sample offset)
 result.state;        // Uint8Array       snapshot blob (Q5 format) at end-of-render
 ```
 
