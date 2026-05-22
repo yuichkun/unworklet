@@ -2,15 +2,15 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 52 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 51 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 19 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 18 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 32 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
-## P1 — ship blocker 系 (19 件)
+## P1 — ship blocker 系 (18 件)
 
 ### cluster (2) canonical integrity / Q ratify との衝突 (3)
 
@@ -40,7 +40,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-### cluster (3) wire format byte layout (10)
+### cluster (3) wire format byte layout (4)
 
 ## event 用 slot と MIDI 用 slot で 「い つ の sample で 発 生 し た か」 を 表 す 数 字 の 位 置 が 別
 
@@ -87,18 +87,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: worklet が 計 算 結 果 を typed-array field 付 き で main へ emit し た い ケ ー ス (= 例 え ば FFT spectrum、 波 形 解 析 結 果) で impl が (a) MIDI sysex と uniform に `data: Buffer<T> | TypedArrayFieldRef<T>` を 受 け る surface を 追 加 す る、 (b) 「event<T> の emit-side variable-length field は inbound proxy か ら の forward の み 」 と 制 限 し て worklet 側 新 規 構 築 を 不 可 と す る、 で 2 path に 分 か れ る。 後 者 を 採 る と canonical で 「worklet → main の FFT 結 果 emit」 が 書 け な く な る (= 一 般 audio 用 例 の 中 心 機 能 が cover で き な い)。
 
 **判 断 軸**: sysex 専 用 path を 一 般 化 し て event<T> emit 側 で も `Buffer<T>` を 受 け 入 れ る surface (= `{ field: Buffer<T> | TypedArrayFieldRef<T>; length: Node<'i32'> }`) を 立 て る path に 倒 す か、 「worklet 側 で 新 規 typed-array 中 身 を emit す る 経 路 は MIDI sysex 専 用、 event<T> は inbound proxy forward の み」 と 制 限 し て canonical で 同 ケ ー ス を 出 さ な い path か。 前 者 推 奨 (= 一 般 audio 用 例 を cover、 surface も sysex と uniform)。
-
----
-
-## `state.f32` 等 の atomic store path が docs 上 で 「single Atomics op」 と 言 い 切 ら れ る が、 float typed-array は Atomics で 直 接 扱 え な い
-
-**場 所**: `docs/02-messaging.md:140-144`、 `docs/05-client.md:42-43`
-
-**何 が 起 き て い る か**: 02-messaging.md §5.4 L140 で 「Scalar `state.<type>` publish accepts only `state.f32` / `state.i32` / `state.bool` (Q42) — all three are single 32-bit words readable/writable in **one `Atomics` op**」 と 「単 一 Atomics op で 読 み 書 き 可」 と 言 い 切 る。 し か し JavaScript / WebAssembly の `Atomics` API は **integer typed array に 限 定** (= `Int8Array` / `Int16Array` / `Int32Array` / `Uint8Array` / `Uint16Array` / `Uint32Array` / `BigInt64Array` / `BigUint64Array`)、 `Float32Array` を 直 接 `Atomics.store` に 渡 す と TypeError。 つ ま り f32 を 「single Atomics op」 で 書 く に は bit-reinterpret (= Float32Array view と Uint32Array view を 同 一 SAB に 重 ね、 store/load 時 に reinterpret) が 必 須 だ が、 こ の reinterpret path が docs に 1 行 も 書 か れ て な い。
-
-**impl AI 影 響**: impl AI が 02 §5.4 を そ の ま ま 受 け 取 っ て 「`Float32Array` の atomic op が 存 在 す る」 と 仮 定 し て build 失 敗、 あ る い は reinterpret cast を 自 力 で 入 れ る が wire bit-pattern (= endianness、 NaN payload 保 持) が 仕 様 か ら 取 れ ず main / worklet で view 配 置 が ず れ う る。
-
-**判 断 軸**: 02 §5.4 に 1 paragraph 追 加 し て 「f32 / i32 / bool は SAB 上 1 つ の 32-bit word を 共 有、 view は `Int32Array` を canonical と し、 f32 / bool は `Int32Array` view 経 由 で reinterpret (`Math.fround` 経 由 で normalize し て か ら `Atomics.store(view, idx, bits)`) で 1 atomic op を 実 現 す る」 path を 明 文 化 す る か、 「実 装 は Atomics 1 op を 達 成 す る 任 意 path、 wire byte 並 び は little-endian IEEE 754」 path に 倒 す か。 前 者 推 奨 (= main / worklet で view 配 置 を 一 致 さ せ る 仕 様 invariant に な る)。
 
 ---
 
