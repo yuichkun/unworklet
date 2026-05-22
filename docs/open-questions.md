@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 39 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 38 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 13 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 25 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 24 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -185,7 +185,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 ---
 
 
-## P2 — 仕様 invariant + lifecycle (25 件)
+## P2 — 仕様 invariant + lifecycle (24 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -460,18 +460,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が (a) 「`process` 1 回 呼 ば れ た ら pass」 で 緩 い 検 証、 (b) RMS > 0 で pass、 (c) 既 知 reference 出 力 と 比 較 (= D1 が B1 と zip)、 で 3 way。 入 力 源 を user に 委 ね る path だ と 6 セ ル × 3 Ex × n agent で test code が 別 物。 D1 acceptance が 別 agent で 別 結 論 で ship 判 定 が drift。
 
 **判 断 軸**: D1 を 「6 セ ル で canonical Ex 1〜3 を render し、 destination まで audio packet が 流 れ た こ と + 出 力 RMS が 0 以 上 で あ る こ と」 で 1 意 化 し、 入 力 源 を 「framework が provide す る silent / オ シ レ ー タ 等 標 準 source」 で 仕 様 化 す る 推 奨。 alternative path (= D1 と B1 を zip し て browser 上 offline reference 比 較) を 採 る な ら 6 セ ル × 3 Ex の reference output を 仕 様 同 梱 し、 D1 を 「B1 を 6 セ ル で 走 ら せ る」 と 1 意 化。
-
----
-
-## test matcher の 比 較 単 位 と 既 定 が 仕 様 不 在 で audio 比 較 が 別 agent で 結 論 別
-
-**場 所**: `docs/06-testing.md:13-27`、 `docs/10-roadmap.md:22-24` (= B1 bit-exact + documented FP diff 除 外)
-
-**何 が 起 き て い る か**: 06 §2 placeholder で `expectAudioMatches(actual, expected, { tolerance })` を 例 示、 prose 「Bit-identical or within-tolerance comparison of Float32Array channels」。 `tolerance` の 単 位 (= sample 単 位 abs diff threshold か、 RMS dB 差 か、 NaN 受 容 path か) が 仕 様 不 在。 default 値 (= `tolerance` 省 略 時) が bit-exact (= `0`) か polynomial 近 似 誤 差 約 1e-4 か も 不 在。 さ ら に 多 channel 比 較 形 (= `Float32Array[]` を channel ご と に 比 較 か flat ま と め て 比 較 か) も 仕 様 不 在 で、 offline 戻 り 値 形 entry と zip し な い と 別 agent で 別 物。
-
-**impl AI 影 響**: impl AI が (a) `tolerance` 省 略 = bit-exact、 sample abs diff、 channel ご と 比 較 form、 (b) `tolerance` 省 略 = 1e-4 程 度、 RMS 差 form、 (c) hybrid form、 で 3 way 以 上。 acceptance B1 で 各 canonical Ex の 適 切 tolerance 値 を どう 決 め る か も 仕 様 不 在 で 別 agent で 「同 一 reference に 対 し て pass / fail」 別 結 論。
-
-**判 断 軸**: `expectAudioMatches` の `tolerance` 単 位 を 「sample abs diff (= abs(actual[i] - expected[i]) <= tolerance を 全 sample で 満 た す)」 で 1 意 化 + default = `0` (= bit-exact、 documented FP diff 除 外 は 別 entry で 一 意 化) + 多 channel は `Float32Array[]` を channel ご と に 同 一 tolerance で 比 較 path 推 奨。 alternative path (= RMS / dB) を 採 る な ら 単 位 + default を 仕 様 明 文 化 必 須。
 
 ---
 
