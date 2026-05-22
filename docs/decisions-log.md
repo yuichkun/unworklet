@@ -157,7 +157,7 @@ populated (Q1–Q68 ratify complete; Q28 is unassigned — a numbering artifact,
 **Decision:** authoritative wording in `00-foundations.md` §4 (vector types) and `01-dsl.md` §7 (opt-in SIMD surface). Summary:
 
 - **Q3-a (opt-in & namespaced):** SIMD primitives and vector types are exposed exclusively via the import path `@unworklet/core/simd`. Code that does not import this path never references `Node<'f32x4'>` or any vec primitive.
-- **Q3-b (v1.0.0 MVP, phased rollout):** v1.0.0 ships the minimal surface — `Node<'f32x4'>`, `vec4` / `splat` construction, `addVec` / `subVec` / `mulVec` / `divVec`, `vec.lane(i)` access (compile-time-constant index), `buf.loadVec(offset)` / `buf.storeVec(offset, value)`. The comprehensive surface (`f64x2`, `i32x4`, mask vectors, `shuffle`, comparisons, gather / scatter) rolls out additively across v1.x.0; rollout order is settled in Q14.
+- **Q3-b (v1.0.0 MVP, phased rollout):** v1.0.0 ships the minimal surface — `Node<'f32x4'>`, `vec4` / `splat` construction, `addVec` / `subVec` / `mulVec` / `divVec`, `vec.lane(i)` access (compile-time-constant index), `buf.loadVec(offset)` / `buf.storeVec(offset, value)`. The comprehensive surface (`f64x2`, `i32x4`, mask vectors, `shuffle`, comparisons, gather / scatter) rolls out additively across v1.x.0; rollout order は v1.x.0 で 早 期 DSP package か ら の 利 用 報 告 を 集 め て か ら 別 途 ratify (= 本 文 書 内 で 未 declare、 Q14 acceptance criteria と は 別 軸)。
 - **Q3-c (parallel families, not generic):** scalar (`Node<'f32'>` etc.) and vector (`Node<'f32x4'>` etc.) primitives are separate functions over separate types. `add` and `addVec` are distinct primitives; mixed scalar / vec operations are type errors and require explicit `splat` / `vec.lane(i)` conversion.
 
 **Rationale:**

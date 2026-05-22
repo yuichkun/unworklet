@@ -1007,7 +1007,7 @@ Adding any of the following does not change the v1.0.0 surface:
 - Comparison primitives (`ltVec`, `eqVec`, …).
 - Gather / scatter (load from non-contiguous offsets).
 
-Rollout order is settled by Q14 once early DSP packages report which extensions they need first.
+Rollout order は v1.0.0 で は 未 確 定。 v1.x.0 で 早 期 DSP package か ら の 利 用 報 告 を 集 め て か ら 別 途 ratify す る (= 本 文 書 で declare 不 在、 acceptance criteria Q62 と は 別 軸)。
 
 ### 7.4 Use within L1 / L2 / processors
 

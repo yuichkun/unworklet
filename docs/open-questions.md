@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 43 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 42 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 13 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 29 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 28 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -185,7 +185,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 ---
 
 
-## P2 — 仕様 invariant + lifecycle (29 件)
+## P2 — 仕様 invariant + lifecycle (28 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -340,18 +340,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が `buffer.u8({ size, publish: { rateFps: 30 } })` (= sysex buffer や bytes view) を 通 す か reject す る か で 公 開 surface が drift。 (a) state publish 制 限 と zip し て `buffer.<T>` も `T ∈ {f32, i32, bool}` 限 定 で reject、 (b) 全 element type で publish 通 す (= torn-read OK の 設 計)、 (c) f32 だ け 通 し て 他 reject、 で 3 way に 分 か れ る。 main 側 subscriber 型 (= `Float32Array` か `Uint8Array` か `Int32Array` か) も declaration kind ご と に zip し な い と TS surface が 別 物。
 
 **判 断 軸**: `buffer.<T>` publish の T 制 限 を 1 か 所 (= 02-messaging §5.4 末 尾) で 列 挙 declare し、 (a) state publish と 揃 え る か (= `buffer.<T>` も `T ∈ {f32, i32, bool, u8}` 等) / (b) 全 T 通 し て 「torn-read OK」 を invariant と し て 明 文 化 す る か decide。 main 側 subscriber 型 を declaration kind ご と に narrow す る path も 同 commit で 整 理。
-
----
-
-## SIMD comprehensive surface の v1.x.0 rollout order を 規 定 す る Q-entry が 不 在
-
-**場 所**: `docs/01-dsl.md:991`、 `docs/decisions-log.md:160` (Q3-b 内 prose)
-
-**何 が 起 き て い る か**: 2 か 所 で 「SIMD comprehensive surface (f64x2 / i32x4 / mask vectors / shuffle / gather / scatter 等) の v1.x.0 rollout order は Q14 で 解 決」 と 引 用 し て い る が、 Q14 = Q62 で resolved 内 容 は 「v1.0.0 acceptance criteria (9 項 目 ship checklist)」 で あ り SIMD rollout order に 関 す る 規 定 ナ シ。 (= math intrinsics 引 用 部 分 [03-compiler L180] は Q14 → Q17 修 正 済 み で 別 entry で close。)
-
-**impl AI 影 響**: impl AI が 引 用 ど お り Q14 entry を 引 き に 行 く と 内 容 不 一 致 で 戻 っ て き て し ま い、 SIMD rollout order の 規 定 自 体 が ど の Q-entry に も 存 在 し な い 事 実 に 気 づ か ず、 v1.x.0 で の SIMD 拡 張 path を 適 当 な 順 序 で 進 め て し ま う possibility。
-
-**判 断 軸**: SIMD rollout order の 規 定 が Q-entry 不 在 な ら 別 Q を 立 て て decide す る か、 prose で 「rollout order は v1.x.0 で 別 途 ratify」 と 明 文 化 し て dangling ref を 解 消 す る path 推 奨。
 
 ---
 
