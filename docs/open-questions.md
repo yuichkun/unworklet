@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 34 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 33 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 13 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 20 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 19 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -185,7 +185,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 ---
 
 
-## P2 — 仕様 invariant + lifecycle (20 件)
+## P2 — 仕様 invariant + lifecycle (19 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -304,18 +304,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が `InspectionResult` 型 を 起 こ す 時、 (a) i64 / f64 を JS number に narrow し て 渡 し precision loss、 (b) `head: (number | bigint)[]` 等 union 化、 (c) variant ご と に `head` 型 を 切 り 替 え る 別 type formation (= `kind: 'buffer.i64', head: bigint[]` 等)、 で 3 way 以 上 に 割 れ る。 consumer 側 「preset preview を 数 字 で 表 示」 UI が impl ご と に 53 bit 超 の i64 値 で 値 が 変 わ る possibility。
 
 **判 断 軸**: `state.f64` / `state.i64` / `buffer.f64` / `buffer.i64` が snapshot 対 象 か decide し (= Q42 で publish reject だ が snapshot は 別)、 snapshot 対 象 な ら `InspectionResult` 型 を bigint 含 む 形 に 広 げ る か、 「inspect は preview 限 定 で lossy OK、 正 確 な 値 が 欲 し い consumer は 別 path」 と 仕 様 で declare す る か。 v1.0.0 で inspect 範 囲 を `state.f32` / `state.i32` / `state.bool` + `buffer.u8` / `buffer.i32` / `buffer.f32` だ け に 限 定 し て i64 / f64 を inspect から 落 と す path も candidate。
-
----
-
-## profile 指 定 で snapshot し た blob を 別 profile の processor に restore し た 時 の `missing` 計 算 ル ー ル が 仕 様 で 不 定
-
-**場 所**: `docs/05-client.md:64`、 `docs/05-client.md:78-83`、 `docs/05-client.md:101`、 `docs/01-dsl.md` §8.2
-
-**何 が 起 き て い る か**: `node.snapshot({ profile: 'preset' })` で profile-restricted blob を 出 し、 別 declaration (= profile=`'session'` 専 用 slot を 持 つ processor) に restore す る path で、 `RestoreResult.missing` を 「現 schema の 全 slot」 で 計 算 す る か 「blob の profile-restricted slot 集 合」 で 計 算 す る か が 仕 様 prose に declare ナ シ。 `InspectionResult.profile: string | null` field (= 05-client.md L101) は blob に profile を 載 せ る path を 示 唆 す る が、 restore 時 に framework が そ の profile を どう 使 う か は declare 不 在。
-
-**impl AI 影 響**: framework 実 装 で profile 付 き blob を restore す る path で、 (a) 現 schema 全 slot を base に missing を 計 算 (= profile-restricted blob だ と session-only slot が 全 部 missing と し て 出 る)、 (b) blob の profile-restricted 集 合 だ け で 計 算 (= session-only slot は そ も そ も 「探 さ な か っ た」 扱 い で missing に 出 さ ず)、 (c) blob profile と target processor profile を 比 較 し て 整 合 し な い 場 合 reject、 で 3 way 以 上 に 分 か れ る。 consumer 側 「preset partially loaded」 UI が impl ご と に 別 物。
-
-**判 断 軸**: `missing` の base set を 「blob の profile-restricted slot 集 合」 (= 「preset blob は preset slot だ け に 触 れ る、 session-only slot は 影 響 範 囲 外」) に 倒 す path 推 奨 (= consumer mental model 「preset を 読 み 込 む と preset 部 分 だ け 動 く」 と zip)。 別 軸 で 「profile 不 一 致 reject path」 を 立 て る か は 別 entry で decide。
 
 ---
 
