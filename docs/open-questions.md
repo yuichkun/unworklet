@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 40 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 39 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 13 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 26 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 25 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -185,7 +185,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 ---
 
 
-## P2 — 仕様 invariant + lifecycle (26 件)
+## P2 — 仕様 invariant + lifecycle (25 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -460,18 +460,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が (a) 「`process` 1 回 呼 ば れ た ら pass」 で 緩 い 検 証、 (b) RMS > 0 で pass、 (c) 既 知 reference 出 力 と 比 較 (= D1 が B1 と zip)、 で 3 way。 入 力 源 を user に 委 ね る path だ と 6 セ ル × 3 Ex × n agent で test code が 別 物。 D1 acceptance が 別 agent で 別 結 論 で ship 判 定 が drift。
 
 **判 断 軸**: D1 を 「6 セ ル で canonical Ex 1〜3 を render し、 destination まで audio packet が 流 れ た こ と + 出 力 RMS が 0 以 上 で あ る こ と」 で 1 意 化 し、 入 力 源 を 「framework が provide す る silent / オ シ レ ー タ 等 標 準 source」 で 仕 様 化 す る 推 奨。 alternative path (= D1 と B1 を zip し て browser 上 offline reference 比 較) を 採 る な ら 6 セ ル × 3 Ex の reference output を 仕 様 同 梱 し、 D1 を 「B1 を 6 セ ル で 走 ら せ る」 と 1 意 化。
-
----
-
-## offline と online で 同 processor の build artifact 同 一 性 を 担 保 す る path 不 在
-
-**場 所**: `docs/13-offline-render.md:54-58`、 `docs/07-vite-plugin.md:100-130` (= §6.3 artifact set)、 `decisions-log.md` Q5-e (= schema-hash 経 由 担 保)、 `decisions-log.md` Q57 (= offline blob を online で restore す る path 明 言)
-
-**何 が 起 き て い る か**: 13 §4 で 「offline で 走 ら せ た 結 果 の `state` blob を `node.restore(state)` で online 継 続 で き る」 と declare。 schema hash 一 致 が 担 保 さ れ な い と blob は restore 拒 否 さ れ る (Q5-e)。 「offline で 走 ら せ た processor」 と 「online で `createNode` す る processor」 が 同 source か ら 同 schema hash で emit さ れ る path が 仕 様 不 在: (a) `@unworklet/vite-plugin` で 1 度 build し た artifact (= `.graph.json` / `.memory.json` / `.schema-hash.json`) を offline / online 両 方 が 同 一 ファイル set と し て 共 有、 (b) offline 用 / online 用 で 別 build pipeline を 走 ら せ 都 度 schema hash 計 算 一 致 を 信 頼、 (c) vite-plugin の `?worklet` import が offline runner で も 同 一 artifact を load す る path を 仕 様 明 言、 で architecture が dangling。
-
-**impl AI 影 響**: impl AI が (a) を 採 用 し て offline / online で artifact set を 共 通 source と し て 参 照 す る path を 立 て な い と、 canonical Ex 7 (= migration chain で offline で 旧 processor を 走 ら せ snapshot → online で 新 processor に restore + replaceProcessor で 入 れ 替 え) の cross-runtime test が 動 か な い。 (b) 採 用 で schema hash 計 算 が pipeline 違 い で drift し て restore が 常 に reject さ れ る path も 成 立。 acceptance B1 (= offline で canonical を 再 現) と Q57 (= offline と online で 同 blob path) の zip が 仕 様 不 在。
-
-**判 断 軸**: 「`@unworklet/vite-plugin` で 1 度 emit し た artifact set を offline runner が internal API 経 由 で 直 接 load し、 online と 同 一 schema hash を 共 有 す る」 path を 仕 様 明 文 化 推 奨。 13 §4 prose と 07 §6.3 artifact 表 を zip し て 「offline / online 両 経 路 が 同 一 artifact set を 参 照」 を declare、 同 commit で `@unworklet/offline` package の input 形 (= `import processor from './gain?worklet'`) と offline runner の 内 部 artifact resolve path を 明 文 化。
 
 ---
 
