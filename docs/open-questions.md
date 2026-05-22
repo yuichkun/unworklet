@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 33 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 32 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 13 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 19 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 18 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -185,7 +185,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 ---
 
 
-## P2 — 仕様 invariant + lifecycle (19 件)
+## P2 — 仕様 invariant + lifecycle (18 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -304,18 +304,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が `InspectionResult` 型 を 起 こ す 時、 (a) i64 / f64 を JS number に narrow し て 渡 し precision loss、 (b) `head: (number | bigint)[]` 等 union 化、 (c) variant ご と に `head` 型 を 切 り 替 え る 別 type formation (= `kind: 'buffer.i64', head: bigint[]` 等)、 で 3 way 以 上 に 割 れ る。 consumer 側 「preset preview を 数 字 で 表 示」 UI が impl ご と に 53 bit 超 の i64 値 で 値 が 変 わ る possibility。
 
 **判 断 軸**: `state.f64` / `state.i64` / `buffer.f64` / `buffer.i64` が snapshot 対 象 か decide し (= Q42 で publish reject だ が snapshot は 別)、 snapshot 対 象 な ら `InspectionResult` 型 を bigint 含 む 形 に 広 げ る か、 「inspect は preview 限 定 で lossy OK、 正 確 な 値 が 欲 し い consumer は 別 path」 と 仕 様 で declare す る か。 v1.0.0 で inspect 範 囲 を `state.f32` / `state.i32` / `state.bool` + `buffer.u8` / `buffer.i32` / `buffer.f32` だ け に 限 定 し て i64 / f64 を inspect から 落 と す path も candidate。
-
----
-
-## `MigrationHelpers` の profile-scoped 系 helper と `oldProfileName` metadata の semantics が prose で declare 不 在
-
-**場 所**: `docs/01-dsl.md:1138`、 `docs/01-dsl.md:1146`、 `docs/01-dsl.md:1149-1150`、 `docs/12-canonical-examples.md:898-919`、 `docs/05-client.md:101`
-
-**何 が 起 き て い る か**: `MigrationHelpers` 型 で `parseSlotInProfile` / `writeSlotInProfile` (= profile-scoped 系) が listed さ れ、 「Profile-scoped read/write (used when migrating across profile renames)」 と 1 行 comment だ け 付 与。 同 metadata の `oldProfileName: string | null` も declare の み で semantics prose ナ シ。 canonical Ex 7 の migration entry は profile-scoped variant を 一 切 使 用 し て お ら ず、 仕 様 prose と canonical exercise が zip し て い な い (= AGENTS.md HARD CONTRACT 「canonical-examples で 仕 様 を 1 意 に exercise」 違 反)。 profile-scoped variant の `profile: string` 引 数 が old blob 内 の 別 profile を 指 す か target schema の profile 名 を 指 す か も 仕 様 か ら 取 れ ず、 `oldProfileName` が `snapshot({ profile })` で 出 し た blob だ け に 載 る か / `snapshot()` (no arg) で も 載 る か も declare ナ シ。
-
-**impl AI 影 響**: impl AI が `MigrationHelpers` を 実 装 す る 時、 (a) `parseSlotInProfile(blob, name, type, profile)` で 旧 blob 内 の 別 profile を free 読 み 可 (= 全 profile slot を walk す る blob 形 式 要 求)、 (b) 旧 blob の `oldProfileName` 専 用 で 引 数 profile が それ と 一 致 し な い と undefined、 (c) 旧 blob は 「1 個 の profile snapshot」 で profile 引 数 は target 側 の profile 名 を 指 す、 で 3 解 釈。 writeSlotInProfile も 同 様 に target profile の 取 り 扱 い が dangling。 blob header の profile metadata 形 (= 1 個 か union か 全 profile か) も 仕 様 で 取 れ ず、 wire 上 の byte layout も drift。
-
-**判 断 軸**: profile-scoped variant の 「source 側 profile 引 数 = 旧 blob 内 の どの profile を 読 む か」 / 「target 側 profile 引 数 = output blob の どの profile に 書 く か」 を prose で 明 文 化 し、 blob header に 載 る profile metadata の 形 (= `snapshot()` no-arg 時 は `null`、 `snapshot({ profile: 'preset' })` 時 は `'preset'` の 単 一 文 字 列、 全 profile snapshot path は v1.0.0 で 不 在) を declare。 canonical Ex 7 か 新 規 example で profile-rename migration を 1 例 exercise し て 仕 様 を 1 意 化 推 奨。
 
 ---
 

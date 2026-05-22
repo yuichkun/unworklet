@@ -1172,6 +1172,15 @@ type MigrationHelpers = {
 
 Slots not written by `migrate` are auto-carried from the old blob to the new blob whenever a slot of the same name and compatible type exists in the new schema. **Most migration entries are short** — only the slots that actually change need explicit handling.
 
+**Profile-scoped helpers の semantics**: `parseSlotInProfile` / `writeSlotInProfile` の `profile` 引 数 は それぞれ:
+
+- `parseSlotInProfile(blob, name, type, profile)` — **旧 blob 内 で 該 当 profile に 配 置 さ れ て いた slot を 読 む**。 `profile` は 旧 schema 側 の profile 名 (= rename 前 の 名 前)。 `oldProfileName` が `null` で な い 場 合 (= 旧 blob が profile-restricted snapshot) は `profile === oldProfileName` の slot だ け が 見 え、 他 profile slot は `undefined`。 `oldProfileName === null` (= union snapshot) の 場 合 は 全 profile slot を 走 査 可。
+- `writeSlotInProfile(name, type, value, profile)` — **新 blob 内 で 該 当 profile に slot を 書 く**。 `profile` は 新 schema 側 の profile 名 (= rename 後 の 名 前)。
+
+`oldProfileName` は 旧 blob が `snapshot({ profile: 'preset' })` で 出 し た 場 合 = `'preset'`、 `snapshot()` (no arg、 union) で 出 し た 場 合 = `null`。 v1.0.0 で snapshot blob は 「単 一 profile 限 定」 ま た は 「全 profile union」 の 2 形 だ け で、 「複 数 profile の subset」 は 出 力 ナ シ (= profile field は 1 つ の 文 字 列 か `null`)。
+
+典 型 use case = profile rename 「`'preset'` → `'patch'`」 (= canonical Ex 7 拡 張 path 想 定): `if (helpers.oldProfileName === 'preset') { const v = helpers.parseSlotInProfile(blob, 'gain', 'f32', 'preset'); if (v !== undefined) helpers.writeSlotInProfile('gain', 'f32', v, 'patch'); }`。
+
 #### 8.3.2 Compile-time validation
 
 The migration array is validated at build time:
