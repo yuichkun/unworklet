@@ -128,37 +128,22 @@ Authoritative rationale: `decisions-log.md` Q27.
 
 ## 8. Error handling
 
-<!-- Error event surface (= main-side `node.onError(handler)` receives a
-     discriminated union; the v1.0.0 event-code catalog is 4 entries):
+Main-side `node.onError(handler)` receives a discriminated union. v1.0.0 の event-code カ タ ロ グ は 4 種:
 
-     1. `wasm-trap`         — WASM runtime trap during `process(...)`. Audio
-                              output: silence for the current quantum + the
-                              following quanta until the node is disposed.
-                              The audio thread does not propagate the trap as
-                              a thrown exception (realtime-safety invariant 3
-                              in 00-foundations §5.1).
-     2. `queue-overflow`    — `event<T>` / `message<T>` / MIDI ringbuffer
-                              drop-oldest fired (Q27 + Q4-c-iv). Audio output
-                              unaffected. Per-channel counter is observable
-                              via `node.<kind>.<name>.diagnostics.overflowCount()`
-                              (Q47).
-     3. `sab-unavailable`   — runtime detected `SharedArrayBuffer` is not
-                              constructible / `crossOriginIsolated` is false
-                              and selected the postMessage fallback transport
-                              (A5 of 08-deployment §2 / Q11). Audio output
-                              unaffected; only main-side observation latency
-                              picks up the postMessage round-trip.
-     4. `block-length-mismatch` — `outputs[0][0].length !== SAMPLES_PER_BLOCK`
-                              detected at the worklet entry (§3 / Q18 / Q68).
-                              Audio output: stop processing rather than emit
-                              garbled / silent output.
+```typescript
+type NodeErrorEvent =
+  | { code: 'wasm-trap';            message: string }
+  | { code: 'queue-overflow';       source: 'event' | 'message' | 'midi'; name: string; dropped: number }
+  | { code: 'sab-unavailable' }
+  | { code: 'block-length-mismatch'; expected: number; received: number };
+```
 
-     Node destruction is initiated only by the consumer via `.dispose()`
-     (05-client §2). There is no framework-side "destroy node on error"
-     path in v1.0.0 — `wasm-trap` / `block-length-mismatch` halt audio
-     output but the node object stays addressable so the consumer can
-     observe `.onError` + tear down explicitly.
+1. **`wasm-trap`** — WASM runtime trap during `process(...)`. Audio output: silence for the current quantum + the following quanta until the node is disposed. The audio thread does not propagate the trap as a thrown exception (= realtime-safety invariant 3 in `00-foundations.md` §5.1).
+2. **`queue-overflow`** — `event<T>` / `message<T>` / MIDI ringbuffer drop-oldest fired (Q27 + Q4-c-iv)。 Audio output unaffected。 Per-channel 累 計 counter は `node.<kind>.<name>.diagnostics.overflowCount()` で pull 観 測 (Q47)。 つ ま り push (= `.onError`) で 各 drop の 発 生 を 通 知、 pull (= `.diagnostics`) で 累 計 を 取 る 二 段 構 え。
+3. **`sab-unavailable`** — runtime detected `SharedArrayBuffer` is not constructible / `crossOriginIsolated` is false and selected the postMessage fallback transport (= A5 of `08-deployment.md` §2 / Q11)。 Audio output unaffected; only main-side observation latency picks up the postMessage round-trip.
+4. **`block-length-mismatch`** — `outputs[0][0].length !== SAMPLES_PER_BLOCK` detected at the worklet entry (= §3 / Q18 / Q68)。 Audio output: stop processing rather than emit garbled / silent output.
 
-     Per-error-code message shape, source-location attribution (via §7 source
-     maps), and recovery semantics are impl-phase fill per Q61. -->
+Node destruction is initiated only by the consumer via `.dispose()` (= `05-client.md` §2)。 There is no framework-side "destroy node on error" path in v1.0.0 — `wasm-trap` / `block-length-mismatch` halt audio output but the node object stays addressable so the consumer can observe `.onError` + tear down explicitly.
+
+Per-error-code message shape の細部、 source-location attribution (= §7 source maps 経 由)、 recovery semantics は impl-phase fill per Q61。
 

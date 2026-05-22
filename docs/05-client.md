@@ -59,7 +59,7 @@ The `UnworkletNode<C>` shape exposes the following members:
 - **`.snapshot(options?: { profile?: string }): Promise<Uint8Array>`** — capture current state slots into a binary blob (§2.6).
 - **`.restore(blob: Uint8Array): Promise<RestoreResult>`** — write the blob's slot values back into the running processor (§2.6).
 - **`.dispose()`** — tear down node, queues, worklet runtime, all subscribers.
-- **`.onError(handler)`** — error subscription (worklet traps, queue overflow events, SAB-mode change diagnostics).
+- **`.onError(handler: (event: NodeErrorEvent) => void): () => void`** — push 通 知 経 路 (= worklet traps, queue overflow events, SAB-mode change, block-length mismatch を 集 約 通 知)、 unsubscribe を 返 す。 4 event code (= `wasm-trap` / `queue-overflow` / `sab-unavailable` / `block-length-mismatch`) は `NodeErrorEvent` discriminated union (= `04-worklet-runtime.md` §8 で declare)。 queue overflow の 累 計 counter は pull 寄 り の `.events.<name>.diagnostics.overflowCount()` / `.messages.<name>.diagnostics.overflowCount()` / `.midi.<name>.diagnostics.overflowCount()` で 取 得 = push が 各 発 生 を 通 知、 pull が 累 計 を 観 測 す る 二 段 構 え。
 
 The `.params.<name>` shape is a real `AudioParam` — distinct from the worklet-side `param.at(i)` graph-capture form. Main-thread JS uses standard Web Audio APIs; the worklet-side primitive is graph-capture only.
 

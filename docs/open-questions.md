@@ -2,15 +2,15 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 48 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 47 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 15 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 14 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 32 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
-## P1 — ship blocker 系 (15 件)
+## P1 — ship blocker 系 (14 件)
 
 ### cluster (2) canonical integrity / Q ratify との衝突 (3)
 
@@ -184,19 +184,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-### cluster (9) main 側 / offline / acceptance (4)
-
-## node に error が 来 た 時 に 受 け 取 る 値 の 形 が 全 spec で 書 か れ て い な い
-
-**場 所**: `docs/05-client.md:54`、 `docs/08-deployment.md:39`、 `docs/04-worklet-runtime.md:101-102`、 `docs/12-canonical-examples.md:122`、 `docs/12-canonical-examples.md:260`
-
-**何 が 起 き て い る か**: 公 開 surface `.onError(handler)` で handler に 渡 る 値 の 型 が prose / 型 declaration の どこ に も 書 か れ て い な い。 canonical で は `node.onError((err) => console.error(...))` の 形 で `err` を 受 け る だ け で 中 身 を 触 ら ず、 型 を 確 認 で き る 例 が ナ シ。 「event code」 と い う 概 念 は 「`sab-unavailable`」 を 1 か 所 で 例 示 し て い る が (= 08 §2)、 (a) 全 event code 一 覧 (= worklet trap / queue overflow / sab-unavailable / block-length-mismatch 等) が ど の doc に も 無 い、 (b) handler に 渡 る 値 は `Error` 系 か `{ code, message }` 系 か discriminated union か 不 明、 (c) 同 surface が 「queue overflow event」 を push 通 知 す る 一 方 で 別 surface (= `.diagnostics.overflowCount()`) で pull 観 測 も 提 供 さ れ て お り、 ど ち ら が 一 次 channel か prose で declare ナ シ。
-
-**impl AI 影 響**: impl AI が `(err: ???) => void` の `???` を 決 め ら れ ず、 (a) `Error` で 緩 く、 (b) `{ code: string; message: string }` 形、 (c) `{ code: 'wasm-trap' } | { code: 'sab-unavailable' } | ...` の discriminated union、 (d) event code 列 挙 を 自 力 で 補 完、 で 4 way 以 上 に 分 か れ る。 consumer 側 で `err.code === 'sab-unavailable'` 等 の switch 分 岐 を 書 け る か / 書 け な い か が impl ご と に 別。 さ ら に queue overflow を push で 受 け る か pull で 取 り に 行 く か で diagnostics surface 全 体 の 設 計 が 変 わ る。
-
-**判 断 軸**: handler 引 数 型 を discriminated union (= `{ code: 'wasm-trap' } | { code: 'sab-unavailable' } | { code: 'queue-overflow', source: string, dropped: number } | { code: 'block-length-mismatch' } | ...) で 明 文 化 し、 event code 全 列 挙 を 1 か 所 (= 05-client §2 か foundations §5) で declare す る path 推 奨。 queue overflow を push (= onError) で 集 約 通 知 し 詳 細 counter は pull (= diagnostics) で 取 る 二 段 構 え を prose で 明 文 化 する か、 push / pull の どち ら か 1 path に 倒 す か decide。
-
----
+### cluster (9) main 側 / offline / acceptance (1)
 
 ## pure-JS と WASM の bit-exact 約 束 で 例 外 と な る 演 算 一 覧 が 仕 様 不 在
 
