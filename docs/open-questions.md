@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 32 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 31 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 13 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 18 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 17 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -185,7 +185,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 ---
 
 
-## P2 — 仕様 invariant + lifecycle (18 件)
+## P2 — 仕様 invariant + lifecycle (17 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -304,18 +304,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が `InspectionResult` 型 を 起 こ す 時、 (a) i64 / f64 を JS number に narrow し て 渡 し precision loss、 (b) `head: (number | bigint)[]` 等 union 化、 (c) variant ご と に `head` 型 を 切 り 替 え る 別 type formation (= `kind: 'buffer.i64', head: bigint[]` 等)、 で 3 way 以 上 に 割 れ る。 consumer 側 「preset preview を 数 字 で 表 示」 UI が impl ご と に 53 bit 超 の i64 値 で 値 が 変 わ る possibility。
 
 **判 断 軸**: `state.f64` / `state.i64` / `buffer.f64` / `buffer.i64` が snapshot 対 象 か decide し (= Q42 で publish reject だ が snapshot は 別)、 snapshot 対 象 な ら `InspectionResult` 型 を bigint 含 む 形 に 広 げ る か、 「inspect は preview 限 定 で lossy OK、 正 確 な 値 が 欲 し い consumer は 別 path」 と 仕 様 で declare す る か。 v1.0.0 で inspect 範 囲 を `state.f32` / `state.i32` / `state.bool` + `buffer.u8` / `buffer.i32` / `buffer.f32` だ け に 限 定 し て i64 / f64 を inspect から 落 と す path も candidate。
-
----
-
-## `buffer.<T>` の `publish` option が 全 element type で 受 け 入 れ ら れ る か prose で 規 範 ナ シ
-
-**場 所**: `docs/01-dsl.md:347-379`、 `docs/02-messaging.md:140-146`、 `docs/12-canonical-examples.md` (Ex 5 / Ex 8 で `buffer.f32` publish の み)
-
-**何 が 起 き て い る か**: 01-dsl §3.2 で `buffer.f32 / buffer.f64 / buffer.i32 / buffer.i64 / buffer.bool / buffer.u8` の 6 factory variant を 列 挙 し、 共 通 で `publish?` option を 受 け 入 れ る 形 で signature declare。 一 方 02-messaging §5.4 L140 は 「Scalar `state.<type>` publish accepts only `state.f32` / `state.i32` / `state.bool` (Q42)」 と state publish の T 制 限 を 明 文 化 (= f64 / i64 / bool 以 外 reject) し て い る が、 buffer publish の T 制 限 は 1 行 も declare せ ず。 02 §5.4 L146 「buffer region は memory.copy で byte-wise、 torn read 起 こ る」 prose は buffer publish 一 般 を 想 定 す る が、 `buffer.f64` / `buffer.i64` / `buffer.u8` も 全 部 publish 通 す か / 一 部 reject か が 取 れ な い。 canonical で は `buffer.f32` publish の み 規 範 化 (= Ex 5 / Ex 8) で、 他 type の publish 規 範 確 認 が ナ シ。
-
-**impl AI 影 響**: impl AI が `buffer.u8({ size, publish: { rateFps: 30 } })` (= sysex buffer や bytes view) を 通 す か reject す る か で 公 開 surface が drift。 (a) state publish 制 限 と zip し て `buffer.<T>` も `T ∈ {f32, i32, bool}` 限 定 で reject、 (b) 全 element type で publish 通 す (= torn-read OK の 設 計)、 (c) f32 だ け 通 し て 他 reject、 で 3 way に 分 か れ る。 main 側 subscriber 型 (= `Float32Array` か `Uint8Array` か `Int32Array` か) も declaration kind ご と に zip し な い と TS surface が 別 物。
-
-**判 断 軸**: `buffer.<T>` publish の T 制 限 を 1 か 所 (= 02-messaging §5.4 末 尾) で 列 挙 declare し、 (a) state publish と 揃 え る か (= `buffer.<T>` も `T ∈ {f32, i32, bool, u8}` 等) / (b) 全 T 通 し て 「torn-read OK」 を invariant と し て 明 文 化 す る か decide。 main 側 subscriber 型 を declaration kind ご と に narrow す る path も 同 commit で 整 理。
 
 ---
 

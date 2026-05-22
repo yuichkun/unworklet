@@ -151,6 +151,8 @@ A small per-slot notification region (one `i32` "version" counter) is incremente
 
 > **v1.0.0 limitation — torn reads on multi-byte regions**: copying a published `buffer.<type>` into its shared region is **not atomic at the region level** (WebAssembly `memory.copy` is byte-wise). A main-thread reader observing the region during an audio-thread copy can see a partially-updated region. For visual UX (waveform, spectrum) the impact is one inconsistent frame restored within 33 ms — visually undetectable in practice. For main-side numerical analysis or persistence, this manifests as occasional outliers. Double-buffered region transport is a v1.x.0 mandatory upgrade — see `decisions-log.md` Q27-f and `10-roadmap.md` §3. Scalar `state.<type>` writes are unaffected (already atomic via `Atomics.store`).
 
+`buffer.<T>` publish の T 制 限: `state.<type>` publish と 別 ル ー ル で、 **全 element type で 受 容** (= `buffer.f32` / `buffer.f64` / `buffer.i32` / `buffer.i64` / `buffer.bool` / `buffer.u8` 全 部 publish 可)。 region 全 体 が memcpy 経 由 で 1 atomic op 制 約 ナ シ (= 上 記 torn-read OK 設 計)。 main 側 subscriber の handler 引 数 型 は declaration kind ご と に narrow (= `buffer.f32` publish → `Float32Array`、 `buffer.f64` → `Float64Array`、 `buffer.i32` → `Int32Array`、 `buffer.i64` → `BigInt64Array`、 `buffer.bool` → `Uint8Array` (0/1)、 `buffer.u8` → `Uint8Array`)。
+
 ### 5.5 `Atomics` protocol (SAB mode)
 
 Ring buffer header (one per `event<T>` / `message<T>` declaration):
