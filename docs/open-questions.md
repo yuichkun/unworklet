@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 35 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 34 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 13 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 21 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 20 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -185,7 +185,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 ---
 
 
-## P2 — 仕様 invariant + lifecycle (21 件)
+## P2 — 仕様 invariant + lifecycle (20 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -412,18 +412,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が ship 可 否 判 定 を 走 ら せ る 時、 (a) roadmap §1 を 信 用 し て 8 項 目 で 走 ら せ E2 を check し な い、 (b) Q62 を 信 用 し て 9 項 目 で 走 ら せ E2 が 何 か 不 在 で acceptance 不 能、 で 二 way。 「E2 が 何 を 検 証 す る か」 自 体 が 仕 様 hole で あ り、 ship 判 定 pipeline 自 体 が 動 か な い。
 
 **判 断 軸**: Q62 ratify entry に 戻 っ て E2 の 内 容 を 確 定 (= 例 え ば 「runtime invariant 内 部 観 察 path」 等 何 を 想 定 し て い た か decisions-log 起 草 主 旨 を read し て recover) し て 10-roadmap §1 を 9 項 目 化 す る か、 「E2 は ratify wording ミ ス で E1 単 体 が 正」 と decide し て Q62 ratify wording 側 を retract す る か。 同 commit で 数 え 上 げ を 1 か 所 に zip。
-
----
-
-## test matcher の 状 態 比 較 が permanent 領 域 限 定 で 一 時 領 域 の bug を 見 逃 す
-
-**場 所**: `docs/06-testing.md:15-27`、 `docs/13-offline-render.md:35-39`、 `decisions-log.md` Q5 (= snapshot blob は profile 依 存 / persistent slot 限 定)
-
-**何 が 起 き て い る か**: 06 §2 で `expectStateMatches(result, expectedSnapshot)` matcher が listed さ れ、 prose で 「Compares end-of-render snapshot blob (Q5 format)」。 13 §2 で `result.state` を 「Uint8Array snapshot blob (Q5 format)」 と 規 定。 Q5 ratify で snapshot blob は profile 依 存 で、 transient slot (= `persistent: false` 明 示 / 一 時 領 域) は 含 ま な い。 つ ま り `expectStateMatches` で transient slot (= 例 え ば 内 部 filter coefficient / phase accumulator 等 audio 計 算 内 部 状 態) を 検 証 で き ず、 「DSP 計 算 が 1 行 間 違 っ て い て も persistent slot だ け 一 致 す れ ば test pass」 と い う 抜 け 道 が 仕 様 上 存 在。
-
-**impl AI 影 響**: impl AI が `expectStateMatches` を (a) persistent slot 限 定 比 較 (= Q5 snapshot format 通 り) で 実 装 し て transient bug を 見 逃 す path、 (b) 全 slot (= transient 含 む) を 比 較 す る 拡 張 surface を offline 専 用 に 追 加 し て Q5 format と zip し な い path、 で 二 way。 後 者 は offline 専 用 path で 仕 様 surface 増 加。 acceptance B1 (= canonical を offline で 再 現) を 「audio 出 力 と state の 両 軸 で 検 証」 す る path が 仕 様 hole。
-
-**判 断 軸**: 「test matcher の 状 態 比 較 は audio 出 力 (= `expectAudioMatches`) で DSP 計 算 を 担 保 + persistent slot (= `expectStateMatches`) で migration 経 路 を 担 保 と 役 割 分 担」 path 推 奨 (= transient slot は audio 出 力 経 由 で 観 測)。 alternative path (= offline 専 用 で 全 slot 露 出) を 採 る な ら surface 形 + Q5 format と の zip 説 明 を 同 commit で 明 文 化。
 
 ---
 

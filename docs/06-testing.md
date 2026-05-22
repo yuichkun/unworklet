@@ -22,6 +22,15 @@ Vitest `expect.extend(...)` registration。 Surface:
 - **`expectStateMatches(result, expectedSnapshot)`** — end-of-render snapshot blob (= Q5 format) を 比 較。 `'persistent'` slot 限 定 (= transient slot は audio 出 力 経 由 で 観 測)。
 - **`expectBitExactAcrossBackends(processor, config: RenderOfflineConfig, opts?: { tolerance?: number })`** — 内 部 で `renderOffline` を `backend: 'js'` と `backend: 'wasm'` で 2 回 呼 び、 audio output が `tolerance` 以 内 (default 0) で 一 致 す る こ と を assert。 acceptance B2 用。
 
+#### 役 割 分 担: audio 出 力 と state snapshot
+
+`expectAudioMatches` と `expectStateMatches` は **役 割 が 直 交**:
+
+- **`expectAudioMatches`** = render 全 体 の audio 出 力 = DSP 計 算 path 全 体 を sample 単 位 で 担 保。 transient slot (= filter coefficient、 phase accumulator 等 内 部 状 態) の bug も audio output に 現 れ る た め こ ち ら で 検 出。
+- **`expectStateMatches`** = end-of-render snapshot blob (= `'persistent'` slot 限 定、 Q5 format) = migration / restore round-trip 経 路 を 担 保。 transient slot は blob に 載 ら な い 設 計 だ が、 audio 出 力 で 既 担 保 さ れ て いる た め 二 重 化 不 要。
+
+つ ま り 「audio で DSP 全 体、 persistent で migration 経 路」 の 二 軸 構 成 で 全 bug を cover。 acceptance B1 (= canonical Ex の offline 再 現) は audio 比 較 が 主、 state 比 較 は migration test 専 用。
+
 ## 3. Golden file / bit-exact reference patterns
 
 <!-- - `renderOffline` determinism guarantee (= 13-offline-render.md §2) makes golden .wav comparison reliable.
