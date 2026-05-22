@@ -61,9 +61,12 @@ result.state;        // Uint8Array       snapshot blob (Q5 format) at end-of-ren
 
 ## 3. Backend choice
 
-<!-- - Default: pure-JS interpreter of the captured AST DAG (= no WASM dependency at offline-render time).
-     - Optional: WASM backend, cross-validated against the pure-JS interpreter for bit-identity (= Q17 polynomial approximation is shared between the two backends; documented FP diff is "none"、 全 演 算 が bit-exact)。
-     - Backend selection: opt-in flag on `renderOffline` config; default is pure-JS for the test/CI case where WASM toolchain availability is variable. -->
+`renderOffline` config に `backend?: 'js' | 'wasm'` field を 持 つ:
+
+- **`'js'` (default)** — pure-JS interpreter of the captured AST DAG。 WASM toolchain 不 要 で test / CI で 安 定。
+- **`'wasm'`** — WASM backend、 production と 同 一 emission を offline で 走 ら せ る path。
+
+1 回 の `renderOffline` 呼 び 出 し は 1 backend だ け を 走 ら せ る (= config + 戻 り 値 が 1 path で 単 純)。 pure-JS と WASM の cross-validation は `@unworklet/test` 側 の matcher (= `expectBitExactAcrossBackends(processor, config, { tolerance })`) に 別 出 し し、 内 部 で `renderOffline` を 2 回 呼 ん で 比 較 す る 形 (= `06-testing.md` §2)。 Q17 polynomial approximation が 両 backend で 共 通 実 装 の た め、 documented FP diff は 不 在 = `tolerance` default = `0` で acceptance B2 が pass す る。
 
 ## 4. Relationship to other packages
 

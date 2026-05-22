@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 41 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 40 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 13 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 27 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 26 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -185,7 +185,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 ---
 
 
-## P2 — 仕様 invariant + lifecycle (27 件)
+## P2 — 仕様 invariant + lifecycle (26 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -424,18 +424,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が (a) を 採 用 す る と Ex 5 で 「render 開 始 時 に sample upload 済 = 全 block で grain spawn 可」 と な る が、 online 動 作 (= upload 前 は silent、 upload 後 か ら 鳴 る) を 再 現 で き な い (= B1 acceptance で online と offline で 別 出 力)。 (b) は 同 様 (block 0 開 始 時 drain = upload 即 反 映)。 (c) を 自 力 拡 張 す る path は 仕 様 surface 増 加 で 別 agent と drift。 sample-accurate 動 的 upload を 再 現 す る path が 仕 様 不 在。
 
 **判 断 軸**: offline message inject 形 を 「`{ atQuantum: number, payload: T }` (= block 番 号 で 配 達 タ イ ミ ン グ 指 定)」 拡 張 で 1 意 化 す る 推 奨 (= online quantum 単 位 drain と 直 接 zip)。 「block 0 開 始 時 drain 固 定」 path を 採 る な ら 動 的 upload 系 Ex の B1 acceptance を 「全 message を pre-drain し た 状 態 で の 出 力」 に 限 定 す る 注 釈 を 同 commit で 明 文 化。
-
----
-
-## offline で WASM backend を 選 ぶ 形 と cross-validation を 走 ら せ る path が 仕 様 不 在
-
-**場 所**: `docs/13-offline-render.md:51-52`、 `docs/06-testing.md:31-33`、 `docs/10-roadmap.md:23-24`
-
-**何 が 起 き て い る か**: 「Backend selection: opt-in flag on `renderOffline` config; default is pure-JS for the test/CI case」 と 13 で 述 べ ら れ る が、 13 の `renderOffline` config 例 (= `sampleRate` / `duration` / `inputs` / `params` / `messages` / `events` 等) に backend 選 択 用 の field が 存 在 し な い。 opt-in flag の 具 体 key 名 (= `backend: 'wasm'` か `useWasm: true` か `crossValidate: true` か) が 仕 様 不 在。 さ ら に 06 で 期 待 さ れ る cross-validation (= pure-JS と WASM を 同 時 走 行 し て diff 計 算) が `renderOffline` で 1 度 で 走 る path か、 2 回 呼 び で user が 自 力 diff 計 算 す る path か、 matcher 内 部 で auto 化 す る path か、 規 定 ナ シ。
-
-**impl AI 影 響**: impl AI が (a) `renderOffline({ backend: 'wasm' })` で 1 backend ず つ 走 行 し user が 自 力 diff、 (b) `renderOffline({ crossValidate: true })` で 両 backend を 1 呼 び で 走 ら せ diff を 戻 り 値 に 載 せ る、 (c) matcher 側 (= `expectBitExactAcrossBackends(processor, config)`) で 2 回 走 行 を 内 包、 で 3 way。 acceptance B2 (= 両 backend bit-exact) の test を 書 く form が 別 agent で 別 物。
-
-**判 断 軸**: `renderOffline` config に `backend: 'js' | 'wasm'` field を 立 て て 1 回 1 backend と し、 cross-validation 用 matcher を `@unworklet/test` 側 に 別 出 し (= `expectBitExactAcrossBackends(processor, config, { tolerance })`) で 1 path 化 推 奨。 alternative (= 1 呼 び で 両 backend) は config と 戻 り 値 形 が 二 重 化 し て 複 雑、 v1.0.0 で は 単 純 path 推 奨。
 
 ---
 
