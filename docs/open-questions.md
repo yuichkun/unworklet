@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 36 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 35 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 13 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 22 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 21 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -185,7 +185,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 ---
 
 
-## P2 — 仕様 invariant + lifecycle (22 件)
+## P2 — 仕様 invariant + lifecycle (21 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -400,18 +400,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が (a) 3 値 union の per-block 配 列 を block ご と に 注 入 す る form、 (b) render 全 体 curve を 1 本 の Float32Array で 渡 す form、 で 二 way。 後 者 を 採 用 す る と offline 側 で 自 動 化 計 算 を user 自 身 が 書 く 必 要 が あ り、 online で AudioParam.setValueAtTime で 動 い た curve を offline で 同 一 出 力 と し て 検 証 で き な い (= B1 acceptance で online と offline を 比 較 す る pipeline が user 側 自 作)。
 
 **判 断 軸**: offline で AudioParam 自 動 化 を 再 現 す る path を 仕 様 上 立 て る 推 奨 = (1) offline config が AudioParam-like な 命 令 列 (= `[{ atSample: 0, value: 1000 }, { atSample: 4800, rampTo: 500, duration: 0.1 }, ...]`) を 受 け る form か、 (2) online で 動 か し た AudioParam の curve を blob で 取 り 出 し て offline に そ の ま ま 渡 す form か、 (3) 「offline で は user pre-compute の Float32Array (長 さ = 全 sample) を 1 本 で 渡 し、 online AudioParam 再 現 は user 責 任」 path を 仕 様 明 言 し て trade-off を 明 文 化。
-
----
-
-## offline で 主 側 → worklet 側 message が 1 batch か block ご と か で 振 る 舞 い が 揺 れ る
-
-**場 所**: `docs/13-offline-render.md:33`、 `docs/02-messaging.md:1-30` (= Q38-a render quantum 開 始 時 drain)、 `docs/12-canonical-examples.md` (Ex 5 / Ex 6 / Ex 7 で `node.messages.<name>(payload)` を 動 的 に 送 信)
-
-**何 が 起 き て い る か**: offline config の `messages: [...]` 配 列 が atSample 不 在 で 書 か れ、 prose 注 釈 が 「delivered before render」 と 単 純。 online 側 で は Q38-a で 「各 render quantum 開 始 時 に handler が drain」 が ratify 済 (= main 側 send 直 後 で は な く 次 quantum で 受 信)。 offline で の 配 達 形 が (a) render 開 始 前 に 全 message を 1 batch で drain、 (b) block 0 の 開 始 時 に drain、 (c) 各 message に atSample / block 指 定 を 受 け 取 れ る surface 追 加、 で 3 way。 動 的 upload (= canonical Ex 5 / Ex 6 / Ex 7 の sample / pattern / IR 注 入) を 「render の どこ で 入 る か」 1 意 に 読 め な い。
-
-**impl AI 影 響**: impl AI が (a) を 採 用 す る と Ex 5 で 「render 開 始 時 に sample upload 済 = 全 block で grain spawn 可」 と な る が、 online 動 作 (= upload 前 は silent、 upload 後 か ら 鳴 る) を 再 現 で き な い (= B1 acceptance で online と offline で 別 出 力)。 (b) は 同 様 (block 0 開 始 時 drain = upload 即 反 映)。 (c) を 自 力 拡 張 す る path は 仕 様 surface 増 加 で 別 agent と drift。 sample-accurate 動 的 upload を 再 現 す る path が 仕 様 不 在。
-
-**判 断 軸**: offline message inject 形 を 「`{ atQuantum: number, payload: T }` (= block 番 号 で 配 達 タ イ ミ ン グ 指 定)」 拡 張 で 1 意 化 す る 推 奨 (= online quantum 単 位 drain と 直 接 zip)。 「block 0 開 始 時 drain 固 定」 path を 採 る な ら 動 的 upload 系 Ex の B1 acceptance を 「全 message を pre-drain し た 状 態 で の 出 力」 に 限 定 す る 注 釈 を 同 commit で 明 文 化。
 
 ---
 

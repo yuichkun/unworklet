@@ -30,7 +30,7 @@ const result = await renderOffline(MyProcessor, {
   duration:   1.0,                                              // seconds
   inputs:  { main: [inputLeftPcm, inputRightPcm] },             // audioInput name → Float32Array[] (one entry per channel; mono = length-1 array)
   params:  { cutoff: [1000, 1000, /* per-sample or per-block */ ] },
-  messages: [{ name: 'loadPattern', payload: { /* ... */ } }],   // main → worklet messages, delivered before render
+  messages: [{ name: 'loadPattern', payload: { /* ... */ }, atQuantum: 0 }],   // main → worklet messages、 atQuantum で 配 達 タ イ ミ ン グ を block 番 号 で 指 定 (省 略 = 0 = render 開 始 時)。 online で の Q38-a 「各 render quantum 開 始 時 に drain」 と 直 接 zip。
   events:   [{ name: 'noteOn', payload: { /* ... */ }, atSample: 100 }],
 });
 
