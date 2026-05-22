@@ -20,8 +20,8 @@ partial (§1 written at Q62; §3.1 mandatory deferred mitigations written; §2, 
 
 ### B. Functional
 
-- **B1** — canonical Ex 1〜8 の 期 待 output が `@unworklet/offline` で 再 現 (= reference audio / event sequence と bit-exact、 documented FP diff 除 外)。
-- **B2** — `@unworklet/offline` の pure JS interpreter と WASM backend が 同 一 入 力 で 同 一 出 力 (= bit-exact、 documented FP diff 除 外)。
+- **B1** — canonical Ex 1〜8 の 期 待 output が `@unworklet/offline` で 再 現 (= reference audio / event sequence と bit-exact、 documented FP diff は 不 在)。
+- **B2** — `@unworklet/offline` の pure JS interpreter と WASM backend が 同 一 入 力 で 同 一 出 力 (= bit-exact、 Q17 polynomial approximation を 両 backend 共 通 実 装 = documented FP diff は 不 在)。
 
 ### C. Safety
 

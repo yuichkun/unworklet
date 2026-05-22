@@ -2,15 +2,15 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 47 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 46 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 14 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 13 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 32 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
-## P1 — ship blocker 系 (14 件)
+## P1 — ship blocker 系 (13 件)
 
 ### cluster (2) canonical integrity / Q ratify との衝突 (3)
 
@@ -184,19 +184,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 ---
 
-### cluster (9) main 側 / offline / acceptance (1)
-
-## pure-JS と WASM の bit-exact 約 束 で 例 外 と な る 演 算 一 覧 が 仕 様 不 在
-
-**場 所**: `docs/06-testing.md:31-33`、 `docs/13-offline-render.md:51-52`、 `docs/10-roadmap.md:23-24`、 `docs/03-compiler.md:196-198`
-
-**何 が 起 き て い る か**: 「documented FP differences」 / 「documented FP tolerance bands」 と い う 表 現 が 4 doc に 同 居 す る が、 「ど の 演 算 で / ど の 程 度 の 差 が 許 容 さ れ る か」 を 列 挙 し た prose が 1 か 所 も な い。 さ ら に doc 間 で 規 定 が 揺 れ る: 06 §3 「pure-JS は bit-exact、 WASM 側 だ け tolerance あ り」 (= 非 対 称)、 10 §1 B2 「pure-JS と WASM が 同 入 力 で 同 出 力、 documented FP diff 除 外」 (= 両 方 bit-exact + 例 外)、 13 §3 「Optional: WASM backend, cross-validated against the pure-JS interpreter for bit-identity (modulo documented FP differences)」 = 10 寄 り。 Q17 ratify で 「polynomial approximation の 最 大 誤 差 約 1e-4」 は math intrinsics 全 体 の 仕 様 値 だ が、 「pure-JS と WASM が 同 polynomial を 使 え ば bit-exact、 別 libm を 使 え ば 差 が 出 る」 axis を 1 意 化 し て い な い。
-
-**impl AI 影 響**: impl AI が (a) 「pure-JS が `Math.sin` 等 native libm、 WASM が polynomial = sin/cos/exp/log 等 が 全 て tolerance 対 象」、 (b) 「pure-JS も WASM も 同 polynomial 実 装 = 全 演 算 bit-exact」、 (c) 「WASM 側 が libm import で pure-JS と 一 致」、 で 3 way 以 上 に 分 か れ、 acceptance B2 検 証 で 「ど の 演 算 を tolerance 対 象 と し て 除 外 す る か」 が 別 agent で 別 物 = pass/fail 判 定 自 体 が 別 結 論。 canonical Ex 2 (sin/cos/exp 多 用) で の bit-exact 達 成 可 否 が 1 意 で な い。
-
-**判 断 軸**: 「pure-JS と WASM で 同 一 polynomial approximation を 共 通 実 装 と し て emit、 全 演 算 が bit-exact、 documented FP diff は 「存 在 し な い」」 path で 仕 様 を 閉 じ る 推 奨 (= Q17 と 直 接 zip、 acceptance B2 の 「除 外 列 挙」 自 体 が 不 要)。 alternative path (= 演 算 ご と に tolerance 仕 様 値) を 採 る な ら 演 算 単 位 + tolerance 値 の 表 を 1 か 所 で declare 必 須。
-
----
 
 ## P2 — 仕様 invariant + lifecycle (32 件)
 

@@ -203,8 +203,11 @@ A separate runtime check (not graph-capture / static-analysis) fires when the wo
 
      Realtime-safety contracts:
        - `memory.grow` opcode never emitted into the worklet's WASM (§2.6 Emission)
-       - math intrinsics inlined per Q17 (polynomial approximation, WASM-only,
-         no FFI / JS-WASM per-sample boundary crossings)
+       - math intrinsics inlined per Q17 (polynomial approximation; same
+         polynomial is also used by the pure-JS interpreter in
+         `@unworklet/offline` so that pure-JS と WASM が bit-exact、 acceptance
+         B2 で 「documented FP diff は 不 在」、 no FFI / JS-WASM per-sample
+         boundary crossings)
 
      Per-sub-region byte layout, emit ordering, and emitter IR shape detail is
      impl-phase fill per Q61. -->

@@ -29,7 +29,10 @@ skeleton (scope-level shape fixed per Q23 + Q24 + Q25; per-section detail filled
 ## 3. Golden file / bit-exact reference patterns
 
 <!-- - `renderOffline` determinism guarantee (= 13-offline-render.md §2) makes golden .wav comparison reliable.
-     - Tolerance policy: bit-exact for pure-JS backend; documented FP tolerance bands for WASM backend cross-validation.
+     - Tolerance policy: bit-exact across both backends (= pure-JS と WASM 両 方
+       が Q17 の 同 一 polynomial approximation を 共 有、 documented FP diff は
+       不 在)。 `tolerance` は default 0 (= sample abs diff)、 alternative path で
+       小 さ い 帯 を 許 容 す る 用 途 で の み 0 以 外。
      - Helper: `expectAudioMatchesGolden(result, './fixtures/expected.wav', { tolerance })`. -->
 
 ## 4. Property-based testing patterns

@@ -58,7 +58,7 @@ result.state;        // Uint8Array       snapshot blob (Q5 format) at end-of-ren
 ## 3. Backend choice
 
 <!-- - Default: pure-JS interpreter of the captured AST DAG (= no WASM dependency at offline-render time).
-     - Optional: WASM backend, cross-validated against the pure-JS interpreter for bit-identity (modulo documented FP differences).
+     - Optional: WASM backend, cross-validated against the pure-JS interpreter for bit-identity (= Q17 polynomial approximation is shared between the two backends; documented FP diff is "none"、 全 演 算 が bit-exact)。
      - Backend selection: opt-in flag on `renderOffline` config; default is pure-JS for the test/CI case where WASM toolchain availability is variable. -->
 
 ## 4. Relationship to other packages
