@@ -136,7 +136,7 @@ select(isMe, true, gate.load())    // gate: Node<'bool'> → true lifts to Node<
 
 When all primitive arguments are literals (e.g. `add(0, 0)`), TypeScript falls back to **`'f32'`** as the default — audio-rate DSP overwhelmingly uses `f32` and AudioWorklet I/O (`inputs`, `outputs`, `parameters[name]`) is `Float32Array`-typed end-to-end.
 
-**method arguments follow the same rule** (Q36 拡 張): if a method's declared argument type is `Node<X>`, a JS literal passed in that position lifts to `Node<X>`. This covers `param.at(0)`, `samples.at(s)`, `emitIf(true, ...)`, `audioIn.at(0, i)`, `buf.read(idx)`, etc. — all canonical method-argument literal usages.
+**method arguments follow the same rule** (Q36 拡 張): if a method's declared argument type is `Node<X>`, a JS literal passed in that position lifts to `Node<X>`. This covers `param.at(0)`, `samples.at(s)`, `emitIf(true, ...)`, `audioIn.at(0, i)`, `buf.read(idx)`, `buf.loadVec(k)`, `splat(0)`, `addVec(v, splat(1))`, etc. — all canonical primitive- and method-argument literal usages, including scalar primitives, method calls on handle types, and SIMD primitives / methods (`splat`, `addVec`, `mulVec`, `loadVec`, `storeVec`, etc.).
 
 ```typescript
 lowF.at(0)                         // param.at(i: Node<'i32'> | number) → 0 lifts to Node<'i32'>

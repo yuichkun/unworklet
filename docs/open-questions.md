@@ -2,29 +2,17 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 55 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 54 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 22 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 21 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 32 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
-## P1 — ship blocker 系 (22 件)
+## P1 — ship blocker 系 (21 件)
 
-### cluster (1) 型 system core (2)
-
-## SIMD method / primitive の 引 数 に literal-lift を 効 か せ る か
-
-**場 所**: `docs/01-dsl.md:367-368`、 `docs/01-dsl.md:971-972`、 `docs/12-canonical-examples.md:313`、 `docs/12-canonical-examples.md:318`、 `docs/12-canonical-examples.md:863-864`、 `docs/12-canonical-examples.md:869-870`
-
-**何 が 起 き て い る か**: 既 ratify で 「method 引 数 の literal-lift」 / 「primitive 引 数 の literal-lift」 は scalar 系 で 認 め た が、 SIMD method (= `loadVec` / `storeVec` / `splat` / `addVec` 等) の 引 数 に lift が 効 く か prose で 明 文 化 さ れ て な い。 signature は `loadVec(offset: Node<'i32'>): Node<'f32x4'>` / `splat(x: Node<'f32'>): Node<'f32x4'>` で `| number` ナ シ。 canonical 規 範 例 は `impulse.loadVec(k)` (= k は JS for counter = number) / `splat(0)` (= 0 は JS literal) を 直 接 渡 し て お り、 signature だ け 見 る と TS error。
-
-**impl AI 影 響**: impl AI は (a) SIMD signature 全 部 に `| number` を 足 し て lift 拡 大、 (b) canonical を `loadVec(i32(k))` / `splat(f32(0))` に 書 き 換 え、 (c) lift rule を prose で 「全 method / 全 primitive」 一 般 化、 の 3 path で 判 断 が 割 れ る。
-
-**判 断 軸**: lift rule の 適 用 範 囲 を 「scalar 系 だ け」 「全 method / 全 primitive」 の ど ち ら に 倒 す か、 か つ canonical を そ の ま ま 規 範 と す る な ら 後 者 が 自 然。
-
----
+### cluster (1) 型 system core (1)
 
 ## 公 開 type body の method set が prose で 列 挙 さ れ て な い
 
