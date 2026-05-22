@@ -433,6 +433,10 @@ Options:
 
 Authoritative rationale for the snapshot defaults: `decisions-log.md` Q5 (Q5-b). Authoritative rationale for the single form (no sugar): `decisions-log.md` Q22 (Q22-b).
 
+### 3.4 Declared-but-unused slots
+
+Declaring a `state.*` / `buffer.*` / `param.*` / `event<T>` / `message<T>` / `midiInput` / `midiOutput` slot **without referencing it in the `process(...)` body or any handler** is silent OK — not a graph-capture-time error, not a warning. Canonical Ex 5 declares `playbackPos` (a `param`) and `grainSpawned` (an `event<T>`) without exercising them in the worklet body, expecting main-thread subscribers / param automation to wire them up at runtime. The framework keeps unused declarations in the snapshot schema, the shared SAB regions, and the publish counter set — impl AI agent **must not** emit a reject or a static-analysis warning for this pattern (= no `error[unworklet/dead-declaration]` ID in `03-compiler.md` §2.6).
+
 ## 4. Messages and events declarations
 
 The two declaration kinds `event<T>` (worklet → main, sample-accurate) and `message<T>` (main → worklet, coarse-grained) share an authoring shape. Both are declared at declaration scope and consumed inside the `process` body. Wire-level transport, queue policy, and SAB-vs-postMessage handling live in `02-messaging.md`; this section covers only the DSL surface.

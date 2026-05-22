@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 46 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 45 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 13 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 32 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 31 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -185,7 +185,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 ---
 
 
-## P2 — 仕様 invariant + lifecycle (32 件)
+## P2 — 仕様 invariant + lifecycle (31 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -232,18 +232,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI は (a) ok: false 時 に framework が 内 部 dispose し て node field を null に、 (b) `result.node` を returned ま ま に し て caller dispose、 (c) silent leak、 で 判 断 が 割 れ、 long-running session で Web Audio リ ソ ー ス が 累 積 す る か 否 か が drift。
 
 **判 断 軸**: dispose 責 任 を framework に 寄 せ る (= ok: false 時 は new node を internally drop) か、 caller に 寄 せ る (= `result.node` を 取 っ て dispose 強 制) か。 canonical Ex 10 が 戻 り 値 を 触 ら ず return す る 形 を 規 範 化 す る な ら framework 側 寄 せ 推 奨。
-
----
-
-## canonical の declared-but-unused slot を 仕 様 で reject す る か
-
-**場 所**: `docs/12-canonical-examples.md:520`、 `docs/12-canonical-examples.md:565`、 `docs/12-canonical-examples.md:677`
-
-**何 が 起 き て い る か**: canonical Ex 5 で `playbackPos = param({...})` と `grainSpawned = event<...>(...)` を declare し て いる が、 worklet body 内 で `playbackPos.at(...)` / `grainSpawned.emitIf(...)` の 呼 び 出 し が 1 件 も な い。 main 側 で は `node.events.grainSpawned.on(...)` で subscribe し て いる。 「declared だ が body で 1 度 も emit/use し な い」 surface を graph-capture-time error / warning / silent OK の ど れ で 扱 う か prose で declare ナ シ。 canonical が 規 範 と し て 「reject さ れ な い こ と」 を 示 し て いる の か prose で 不 明。
-
-**impl AI 影 響**: impl AI は (a) dead declaration を graph-capture-time error で reject、 (b) warning 出 す が build 通 す、 (c) silent OK、 で 判 断 が 割 れ、 canonical 自 体 が build 通 ら な い 実 装 が 出 る possibility。
-
-**判 断 軸**: dead declaration を silent OK と し て canonical を 規 範 化 す る か、 reject path に 倒 し て canonical 修 正 す る か。 canonical が 「declare だ け で 後 か ら 配 線 す る」 pattern を 想 定 す る な ら silent OK 推 奨。
 
 ---
 
