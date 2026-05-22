@@ -122,6 +122,8 @@ The full quirk catalog (A1–A7 inside, B1–B3 outside) and rationale live in `
 
 unworklet primitives are statically typed `Node<T>` where `T` is one of `'f32'`, `'f64'`, `'i32'`, `'i64'`, `'bool'`.
 
+The `'u8'` tag is **not** part of the scalar `Node<T>` set — it appears only as an element-type marker for `Buffer<'u8'>` (sysex byte storage; see `01-dsl.md` §3.2 and Q49). `Buffer<'u8'>.read(idx)` returns `Node<'i32'>` (lower 8 bits stored), and `Buffer<'u8'>.write` accepts `Node<'i32'> | number`. The buffer element-type set is therefore `ScalarType ∪ {'u8'}`, while the value-handle set `Node<T>` stays restricted to `ScalarType`.
+
 ### Literal lift (context-dependent inside primitive and method arguments)
 
 A JavaScript `number` or `boolean` literal appearing as a **primitive argument** lifts to `Node<T>`, where `T` is inferred from the surrounding primitive signature (context-dependent lift):

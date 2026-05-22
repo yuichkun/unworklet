@@ -357,7 +357,7 @@ For bulk transfer from a `message<T>` / `event<T>` payload (e.g. uploading a sam
 The `Buffer<T>` handle returned by `buffer.<T>(...)` exposes the following methods (these are part of the handle type, not free function imports):
 
 ```typescript
-type Buffer<T extends ScalarType> = {
+type Buffer<T extends ScalarType | 'u8'> = {
   read(idx: Node<'i32'> | number): Node<T>;
   write(idx: Node<'i32'> | number, v: Node<T> | number): void;
   readInterpolated(pos: Node<'f32'> | number): Node<T>;

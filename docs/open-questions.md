@@ -2,29 +2,17 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 56 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 55 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 23 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 22 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 32 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
 
-## P1 — ship blocker 系 (23 件)
+## P1 — ship blocker 系 (22 件)
 
-### cluster (1) 型 system core (3)
-
-## `'u8'` を bytes 用 element 種 と し て 型 system の ど こ に 入 れ る か
-
-**場 所**: `docs/00-foundations.md:48`、 `docs/00-foundations.md:123`、 `docs/01-dsl.md:349`、 `docs/01-dsl.md:358`、 `docs/01-dsl.md:367-368`、 `docs/01-dsl.md:967`、 `docs/11-midi.md:109`、 `docs/11-midi.md:249`
-
-**何 が 起 き て い る か**: foundations は `Node<T>` の T を `'f32' | 'f64' | 'i32' | 'i64' | 'bool'` (+ vector tag) と 定 義 し、 同 時 に 「`Node<'u8'>` は scalar type system に 入 れ な い」 と prose で 明 言。 一 方 で `Buffer<T extends ScalarType>` の `read(idx): Node<T>` / `write(idx, v: Node<T> | number)` 形 で declare し、 prose で は 「`'u8'` variant の byte 値 は `Node<'i32'>` 経 由 で read/write す る」 と 言 い、 さ ら に `loadVec`/`storeVec` を generic T で declare し て `Buffer<'f32'>` 専 用 と prose 限 定 し て いる。 こ の 3 個 (`'u8'` を ScalarType に 入 れ る か / `Buffer<'u8'>.read` の return 型 / SIMD method を T で 絞 る か) が 1 つ の path に 揃 っ て な い。
-
-**impl AI 影 響**: impl AI は (a) ScalarType に `'u8'` 追 加 (= `Node<'u8'>` も 公 開 さ れ て prose 違 反)、 (b) `Buffer` の T を `ScalarType | 'u8'` に 拡 張 し て read/write を T='u8' 時 だ け `Node<'i32'>` に 切 る、 (c) `BufferElementType` 等 別 alias 切 る、 の path で 判 断 が 割 れ る。 SIMD method も `Buffer<'f32'>` に narrow さ れ る か Buffer<T> 全 部 に 出 て T !== 'f32' を graph-capture-time error と し て 弾 く か で 実 装 が drift。
-
-**判 断 軸**: 「`'u8'` 専 用 別 alias で 1 path に 揃 え る」 か 「Buffer 内 部 で T='u8' 時 だ け conditional に signature 切 る」 か。 canonical Ex 9 `buf.write(i32(1), targetId.load())` (= `targetId.load()` が `Node<'i32'>`) が 既 に prose path を 前 提 に し て 書 か れ て いる の で、 prose path を 一 本 化 す る 方 向 推 奨。
-
----
+### cluster (1) 型 system core (2)
 
 ## SIMD method / primitive の 引 数 に literal-lift を 効 か せ る か
 
