@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 38 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 37 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 13 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 24 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 23 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -185,7 +185,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 ---
 
 
-## P2 — 仕様 invariant + lifecycle (24 件)
+## P2 — 仕様 invariant + lifecycle (23 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -460,18 +460,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が (a) 「`process` 1 回 呼 ば れ た ら pass」 で 緩 い 検 証、 (b) RMS > 0 で pass、 (c) 既 知 reference 出 力 と 比 較 (= D1 が B1 と zip)、 で 3 way。 入 力 源 を user に 委 ね る path だ と 6 セ ル × 3 Ex × n agent で test code が 別 物。 D1 acceptance が 別 agent で 別 結 論 で ship 判 定 が drift。
 
 **判 断 軸**: D1 を 「6 セ ル で canonical Ex 1〜3 を render し、 destination まで audio packet が 流 れ た こ と + 出 力 RMS が 0 以 上 で あ る こ と」 で 1 意 化 し、 入 力 源 を 「framework が provide す る silent / オ シ レ ー タ 等 標 準 source」 で 仕 様 化 す る 推 奨。 alternative path (= D1 と B1 を zip し て browser 上 offline reference 比 較) を 採 る な ら 6 セ ル × 3 Ex の reference output を 仕 様 同 梱 し、 D1 を 「B1 を 6 セ ル で 走 ら せ る」 と 1 意 化。
-
----
-
-## v1.0.0 公 開 package 間 の 依 存 関 係 が 仕 様 不 在 で 公 開 surface 完 全 性 検 証 不 能
-
-**場 所**: `docs/06-testing.md:9-11` (= `@unworklet/test` が `@unworklet/offline` に depend)、 `docs/13-offline-render.md:9-20` (= 4 package の 役 割 分 担)、 `docs/09-repo-structure.md` (= Q60 ratify で pnpm workspace 設 定 batch)、 `decisions-log.md` Q23
-
-**何 が 起 き て い る か**: 公 開 4 package (= `@unworklet/core` / `@unworklet/vite-plugin` / `@unworklet/offline` / `@unworklet/test`) は 09 / Q23 で 公 開 surface と し て ratify 済 だ が、 package 間 dependency graph (= 何 が 何 を `dependencies` / `peerDependencies` / `devDependencies` で 受 け る か) が 仕 様 不 在。 06 §1 で 「`@unworklet/test` does not re-implement rendering. It depends on `@unworklet/offline`」 と 言 明 が あ る も の の、 (a) `@unworklet/test` の `package.json` で `@unworklet/offline` を `dependencies` (= auto-resolve)、 (b) `peerDependencies` (= user 別 install 必 須)、 で 公 開 surface が drift。 同 様 に `@unworklet/vite-plugin` と `@unworklet/core` の 関 係、 `@unworklet/offline` と `@unworklet/core` の 関 係 も 仕 様 不 在。
-
-**impl AI 影 響**: impl AI が package.json を 起 こ す 時、 (a) 全 部 `dependencies` で auto-resolve 路 線 = user は `@unworklet/test` 1 個 install で 動 く、 (b) `peerDependencies` で 明 示 install 路 線 = user が 4 package 全 部 install、 で UX が 別 物。 acceptance F1 (= 公 開 surface 完 全 性 検 証) で 「v1.0.0 で 公 開 さ れ た package.json の dependencies field set」 を check す る path が 別 agent で 別 結 論 で ship 判 定 が drift。
-
-**判 断 軸**: 4 package 間 dep graph を 1 か 所 で declare 推 奨 = (1) `@unworklet/core` は dependency 0 (= web platform 純 粋)、 (2) `@unworklet/vite-plugin` は `@unworklet/core` を peer (= user が 必 ず install 済)、 (3) `@unworklet/offline` は `@unworklet/core` を peer + 自 身 で interpreter ship、 (4) `@unworklet/test` は `@unworklet/offline` を dependency (= user install 数 削 減 + 同 一 major version 自 動 一 致) path で 1 意 化、 acceptance F1 に dep graph check を 追 加。
 
 ---
 
