@@ -34,10 +34,14 @@ const result = await renderOffline(MyProcessor, {
   events:   [{ name: 'noteOn', payload: { /* ... */ }, atSample: 100 }],
 });
 
-result.outputs.main; // Float32Array[]   per-channel PCM (key = `audioOutput` declared `name`; canonical convention is `'main'`. Length = duration × sampleRate.)
+result.outputs.main; // Float32Array[]   per-channel PCM (key = `audioOutput` declared `name`; canonical convention is `'main'`. Length = ceil(duration × sampleRate / 128) × 128, see §2.1.)
 result.events;       // Array<{ name, payload, atSample }>   events the processor emitted
 result.state;        // Uint8Array       snapshot blob (Q5 format) at end-of-render
 ```
+
+### 2.1 Duration の 端 数 処 理
+
+`duration × sampleRate` が `SAMPLES_PER_BLOCK` (= 128) で 割 り 切 れ な い 場 合、 `renderOffline` は 内 部 で `ceil(duration × sampleRate / 128) × 128` sample ま で 切 り 上 げ て render し、 余 剰 sample を silence で pad す る。 入 力 PCM (= `inputs.<name>`) も 同 長 さ ま で silence auto-pad (= user 側 で pre-pad 不 要)。 戻 り 値 `result.outputs.<name>` の length は 切 り 上 げ 後 の sample 数 = block boundary を 跨 が ず reference output と bit-exact 比 較 が 可 能。 ち ょう ど `duration × sampleRate` sample だ け 必 要 な consumer は `pcm.subarray(0, Math.floor(duration * sampleRate))` で 自 力 truncate (= framework は user 制 約 ゼ ロ で 一 意 path を 採 る)。
 
 <!-- TODO §2.x:
      - Full type signature with generics over processor declarations (output names, event types, message types).

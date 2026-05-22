@@ -2,10 +2,10 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 42 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 41 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
 - **P1 = 13 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 28 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
+- **P2 = 27 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3 = 1 件**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 ---
@@ -185,7 +185,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 ---
 
 
-## P2 — 仕様 invariant + lifecycle (28 件)
+## P2 — 仕様 invariant + lifecycle (27 件)
 
 ## `forSample.byN` を function + property hybrid で expose す る か
 
@@ -424,18 +424,6 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 **impl AI 影 響**: impl AI が (a) を 採 用 す る と Ex 5 で 「render 開 始 時 に sample upload 済 = 全 block で grain spawn 可」 と な る が、 online 動 作 (= upload 前 は silent、 upload 後 か ら 鳴 る) を 再 現 で き な い (= B1 acceptance で online と offline で 別 出 力)。 (b) は 同 様 (block 0 開 始 時 drain = upload 即 反 映)。 (c) を 自 力 拡 張 す る path は 仕 様 surface 増 加 で 別 agent と drift。 sample-accurate 動 的 upload を 再 現 す る path が 仕 様 不 在。
 
 **判 断 軸**: offline message inject 形 を 「`{ atQuantum: number, payload: T }` (= block 番 号 で 配 達 タ イ ミ ン グ 指 定)」 拡 張 で 1 意 化 す る 推 奨 (= online quantum 単 位 drain と 直 接 zip)。 「block 0 開 始 時 drain 固 定」 path を 採 る な ら 動 的 upload 系 Ex の B1 acceptance を 「全 message を pre-drain し た 状 態 で の 出 力」 に 限 定 す る 注 釈 を 同 commit で 明 文 化。
-
----
-
-## offline render の 長 さ が 1 block 単 位 で 割 り 切 れ な い 時 の 振 る 舞 い 規 定 不 在
-
-**場 所**: `docs/13-offline-render.md:30`、 `docs/decisions-log.md` Q18 (= render quantum 128 fully baked)
-
-**何 が 起 き て い る か**: offline config の `duration` が 秒 単 位 で 受 け る 形 で declare、 prose 例 は `duration: 1.0`。 worklet runtime は 1 block = 128 sample 固 定 で baked (Q18) で、 `outputs[0][0].length !== 128` で error。 offline 側 で `duration × sampleRate` が 128 で 割 り 切 れ な い ケ ー ス の 振 る 舞 い が 仕 様 不 在: (a) `duration` を 切 り 上 げ て 128 倍 数 化 + 余 剰 を silence pad、 (b) 末 尾 partial block を 「128 sample 走 ら せ て 後 半 を truncate」、 (c) 128 倍 数 で な い `duration` を graph-capture-time error、 で 3 way。 入 力 配 列 長 (= `inputs: { main: pcm }` の `pcm.length`) が `duration × sampleRate` 同 値 か `ceil(... / 128) × 128` か も 同 軸 で 不 明。
-
-**impl AI 影 響**: impl AI が (a) を 採 用 す る と reference output の sample 数 が `ceil(... / 128) × 128`、 (b) を 採 用 す る と `floor(duration × sampleRate)`、 (c) を 採 用 す る と `duration` 制 約 が user 側 に 露 出 = 3 path で B1 acceptance 検 証 の sample 数 が drift。 別 agent 間 で reference output の length が 一 致 せ ず、 bit-exact 比 較 自 体 が 不 能。
-
-**判 断 軸**: 「`duration × sampleRate` を 128 倍 数 に 切 り 上 げ + 余 剰 silence pad + 入 力 も 同 様 に pad 受 容」 path 推 奨 (= user 側 制 約 ゼ ロ、 reference output 長 が 一 意 確 定)。 alternative path (= error / truncate) を 採 る な ら 同 commit で `duration` 制 約 + 入 力 配 列 長 制 約 を prose 明 文 化。
 
 ---
 
