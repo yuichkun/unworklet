@@ -1,5 +1,9 @@
 # Priority filter rationale
 
+## 共通 base = unworklet core principles
+
+unworklet が 目指す 姿、 守る べき 性質、 醜い と み なす もの は **`.claude/skills/_shared/core-principles.md` を 参照**。 spec-triage の `references/decision-axes.md` と 同 base file。 ここ で declare し直さ ない (= 二重 管理 NG)、 哲学 update は core-principles.md 1 か所 で 完結。
+
 ## 軸 = 「impl AI agent が手放し実装した時に矛盾 / 揺れが出るか重大度」
 
 唯一の判断軸。 docs 読者 = impl AI agent (= user tutorial では ない、 累犯規律)。
@@ -40,17 +44,22 @@ P2 は file 順そのまま並べる (= cluster header ナシ)。 同 file で�
 
 P3 は user grill 不要、 親が 1 batch で sweep。 commit 別単位で OK。
 
+## scope 外 = sweep 時 entry に 出さ ない
+
+以下 は sweep 時 そもそも entry と して 拾わ ない (= scope 外、 entry に 出 す と triage 側 で e 軸 close 寄り = sweep 段階 で 弾く 方 が 効率 的)。
+
+- **TS form 細部 / 命名 / mechanism 自由 度** (= core-principles §2 「実装 期 任せ」 派生): TypeScript signature 細部 (= type alias 名、 generic constraint の 切り 方、 callable + property hybrid 等)、 同概念 の 別 命名 の どち ら を 別名 に 寄せる か、 internal mechanism の 実装 path 自由 度 (= main 側 event drain が MessageChannel / Atomics.notify / rAF の どれ か 等)。 仕様 invariant (= wire byte、 mental model、 API surface 形、 lifecycle) が 動 い て いる か を sub-agent prompt で 必ず check、 動 い て い ない なら 拾わ ない。
+- **user-facing wording 揺れ** (= 既存 累犯 規律): tutorial / API reference / chooser doc 視点 の wording 揺れ は v1.0.0 ship 後 phase で 別途 処理。 sweep audit 範囲 外。
+
 ## 累犯規律 = 赤信号 wording
 
-priority 判断中に以下の wording が自分の頭で出たら **赤信号** = 軸が user-facing に流れた signal、 即修正:
+priority 判断中に以下の wording が自分の頭で出たら **赤信号** = 軸が user-facing に 流れた / 実装 AI 領域 に 流れた signal、 即修正:
 
-- 「user が誤解する」
-- 「mental model が揺れる」
-- 「読み手が混乱」
-- 「user 学習 path」
-- 「pattern doc 領域」
+- 「user が誤解する」 / 「user 学習 path」 / 「pattern doc 領域」 → user-facing 寄り = scope 外
+- 「mental model が揺れる」 / 「読み手が混乱」 → user-facing 寄り = scope 外 ま た は P3 mechanical
+- 「TS form の 書き方 が」 / 「命名 が 統一 さ れて ない」 / 「mechanism が impl ご と に drift」 → 実装 AI 領域 = scope 外
 
-これら出たら mechanical sweep 領域 (= P3) へ移すか、 そもそも 「impl AI 矛盾リスク軸」 で再評価。
+これら 出 たら mechanical sweep 領域 (= P3) へ 移 す か、 そ も そ も sweep 時 entry に 拾 わ ず scope 外 と して 切 る か、 「impl AI 矛盾リスク 軸」 で 再 評価。
 
 ## docs 読者 = impl AI agent (= 累犯規律)
 

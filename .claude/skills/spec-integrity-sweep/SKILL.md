@@ -216,7 +216,8 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 
 - `references/12-axes-default.md` — 12 軸 default の各軸詳細 (= 対象 / 重点 prose / 典型 issue 形)
 - `references/sub-agent-prompt-template.md` — Phase 1 / Phase 3 / Phase 5 用 sub-agent prompt template
-- `references/priority-filter-rationale.md` — P1/P2/P3 軸の rationale + 累犯規律
+- `references/priority-filter-rationale.md` — P1/P2/P3 軸 の rationale + 累犯 規律 + scope 外 filter (= 実装 AI 領域 / user-facing wording)
 - `references/jsonl-extraction.md` — Phase 2 用 jq 機械抽出 script + path 設計
+- `../_shared/core-principles.md` — 哲学 base = unworklet の 目 指 す 姿 + 守 る べ き 性 質 + 醜 い と み な す も の。 spec-triage と 共 通 ref、 二 重 管 理 排 除。 sub-agent prompt で の bias 排 除 規 律 や filter 判 断 が こ の file の 哲 学 に 依 拠。
 
 全部 SKILL.md に embed すると ~1000 行で読みづらいので references/ に分離。 Phase ごとに必要な reference だけ read する path。

@@ -1,6 +1,6 @@
 ---
 name: spec-triage
-description: docs/open-questions.md の 個別 entry を `references/decision-axes.md` の 軸 a-h に 照らして 「自律 で 直す (a/b/c/d)」 「余湖さん 相談 (e/f/g/h)」 に 振り分ける skill。 自律 hit は 即 commit、 相談 hit は `$TMPDIR` 下 に 1 件 ずつ md で 出す。 「triage 回して」 「open-questions さばいて」 「open-questions 1 周して」 「spec triage」 等 で 起動。 spec-integrity-sweep が open-questions.md を 整理 した 後 の sweep 1 周 path 想定。 軸 で hit し ない entry が 出たら そこ で 即 停止 し 余湖さん に 報告 (= 軸 file メンテナンス trigger)。 1-2 entry の 単発 修正 や、 decision-axes.md 軸 自体 を 直す grill では 起動 し ない。
+description: docs/open-questions.md の 個別 entry を `references/decision-axes.md` の 軸 a-i に 照らして 「自律 で docs 修正 commit (a/b/c/d)」 「自律 で entry close (e)」 「余湖さん 相談 (f/g/h/i)」 に 振り分ける skill。 自律 hit は 即 commit、 相談 hit は `$TMPDIR` 下 に 1 件 ずつ md で 出す。 「triage 回して」 「open-questions さばいて」 「open-questions 1 周して」 「spec triage」 等 で 起動。 spec-integrity-sweep が open-questions.md を 整理 した 後 の sweep 1 周 path 想定。 軸 で hit し ない entry が 出たら そこ で 即 停止 し 余湖さん に 報告 (= 軸 file メンテナンス trigger)。 1-2 entry の 単発 修正 や、 decision-axes.md / core-principles.md 軸 自体 を 直す grill では 起動 し ない。
 ---
 
 # spec-triage
@@ -11,7 +11,7 @@ unworklet `docs/open-questions.md` の 個別 entry を 1 件 ずつ 軸 で 判
 
 **対象**: `docs/open-questions.md` の P1 / P2 / P3 entry 全て。
 
-**入力**: `references/decision-axes.md` (= 余湖さん と 共有 した 軸 file)。 この skill の 全 動作 は この file の §1 目指す 姿 + §2 軸 a-h を ベース に する。
+**入力**: `references/decision-axes.md` (= 軸 a-i + commit / 相談 規律)、 `../_shared/core-principles.md` (= 哲学 base、 両 skill 共通 ref)。 この skill の 全 動作 は この 2 file を ベース に する。
 
 **起動 タイミング**:
 
@@ -32,17 +32,18 @@ unworklet `docs/open-questions.md` の 個別 entry を 1 件 ずつ 軸 で 判
 
 1. `docs/open-questions.md` 全文 read
 2. `references/decision-axes.md` 全文 read
-3. open entry 件数 を 余湖さん に 1 行 報告 (= 「N 件 から sweep 開始」)
+3. `../_shared/core-principles.md` 全文 read (= 哲学 base、 両 skill 共通)
+4. open entry 件数 を 余湖さん に 1 行 報告 (= 「N 件 から sweep 開始」)
 
-### Phase 2: 1 entry ずつ a-h 判別
+### Phase 2: 1 entry ずつ a-i 判別
 
 各 entry に 対し:
 
 1. entry の 「場所」 「何 が 起きて いる か」 「impl AI 影響」 「判断 軸」 を 文脈 込み で read。 grep 拾い 読み NG (= 累犯 規律)。
-2. 軸 a → b → c → d → e → f → g → h の 順 で 適用、 hit した 軸 で 確定。
+2. 軸 a → b → c → d → e → f → g → h → i の 順 で 適用、 hit した 軸 で 確定。
 3. 各 軸 の check 場所 を `decision-axes.md` §2 通り に 1 つ 1 つ 当たる (= 雰囲気 で 軸 を 当て ない)。
 
-### Phase 3a: 自律 commit (= a / b / c / d hit)
+### Phase 3a: 自律 docs 修正 commit (= a / b / c / d hit)
 
 1. 該当 docs ファイル (= `00-foundations.md` 等) を Edit
 2. `docs/open-questions.md` から 該当 entry を 削除、 統計 行 + section 件数 を 更新
@@ -54,11 +55,27 @@ unworklet `docs/open-questions.md` の 個別 entry を 1 件 ずつ 軸 で 判
    docs(<scope>): <変更>
 
    decision-axes: <a | b | c | d>
-   基づく: <引用 / Q番号 / §1.2 項目 名 / 外部 標準 link>
+   基づく: <引用 / Q番号 / core-principles §2 項目 名 / 外部 標準 link>
    理由: <1 行>
    ```
 
-### Phase 3b: 相談 md 出力 (= e / f / g / h hit)
+### Phase 3b: 自律 entry close (= e hit)
+
+docs/*.md は 触らない。 仕様 invariant が 動いて いない こと を 前提 と し、 form 細部 を 実装 期 任せ と して entry を 閉じる。
+
+1. `docs/open-questions.md` から 該当 entry を 削除、 統計 行 + section 件数 を 更新
+2. `docs/decisions-log.md` に 新 Q を 1 行 追記 (= 「実装 AI 領域 と して close、 仕様 invariant 動か ず」)
+3. commit message:
+
+   ```text
+   docs(open-questions): <短 タイトル> を 実装 AI 領域 と して close (Q<新番号>)
+
+   decision-axes: e
+   基づく: core-principles §2 「TS form 細部 / 命名 / mechanism 自由 度 = 実装 期 任せ」
+   理由: <1 行 = 仕様 invariant が 動か ない 根拠>
+   ```
+
+### Phase 3c: 相談 md 出力 (= f / g / h / i hit)
 
 1. `$TMPDIR/spec-triage-<短い 識別子>.md` に 出力
 2. 形 = `decision-axes.md` §4 規範 通り:
@@ -66,28 +83,29 @@ unworklet `docs/open-questions.md` の 個別 entry を 1 件 ずつ 軸 で 判
    - 【選択肢】 案 A / B / (C / D) + code 例 / 図 込み + 「余湖さん が 書く と こう なる」
    - 【僕 の 推奨 と 弱点】 推奨 + 自己 列挙 1-2 個
    - 【判断 待ち】
-   - 末尾 = 軸 (= e / f / g / h) を 1 行
+   - 末尾 = 軸 (= f / g / h / i) を 1 行
 3. open-questions.md から entry を 削除 し ない (= 余湖さん 答え 後 に 削除)
 4. 同 trade-off の 数 entry が あれば 1 相談 md に 束ねる (= 余湖さん が 1 度 に 判断 しやすい)
 
 ### Phase 4: 軸 ずれ 検出 = 即 停止
 
-軸 a-h で hit し ない entry が 出たら そこ で 即 停止:
+軸 a-i で hit し ない entry が 出たら そこ で 即 停止:
 
 - その entry を 「unclassified」 と マーク (= open-questions.md は 触らず そのまま 残す)
 - 余湖さん に 「軸 不足 signal: <entry title>」 を 即 報告
 - `decision-axes.md` §5 メンテナンス trigger と して 余湖さん と 直接 grill (= skill 外)
 - grill で 軸 file 更新 後、 余湖さん が skill を 再 起動
 
-「適当 に a に 寄せる」 「適当 に g で 相談 出す」 = NG (= 累犯 規律 「artificial 制約 を 勝手 に 入れる な」 と 同 根)。
+「適当 に a に 寄せる」 「適当 に e で close」 「適当 に h で 相談 出す」 = NG (= 累犯 規律 「artificial 制約 を 勝手 に 入れる な」 と 同 根)。
 
 ### Phase 5: 完了 報告
 
 1 周 終了 時 に 1 message で 報告:
 
-- 自律 commit n 件 (= 軸 内訳 a/b/c/d)
-- 相談 md m 件 (= 軸 内訳 e/f/g/h、 path 一覧)
-- unclassified k 件 (= 軸 不足 signal、 残置 entry title)
+- 自律 docs 修正 commit n 件 (= 軸 内訳 a/b/c/d)
+- 自律 entry close commit m 件 (= 軸 e)
+- 相談 md k 件 (= 軸 内訳 f/g/h/i、 path 一覧)
+- unclassified j 件 (= 軸 不足 signal、 残置 entry title)
 - 残 open-questions 件数
 
 「相談 md どれ から 開ける?」 で 余湖さん 起動 待ち。
@@ -124,4 +142,5 @@ m が 大きい 場合 でも 1 message で path 一覧 を 出し、 余湖さ�
 
 ## 4. references/
 
-- `references/decision-axes.md` — 軸 file。 §1 目指す 姿 + §2 軸 a-h + §3 自律 commit 規律 + §4 相談 md 規範 form + §5 メンテナンス。 この skill の 全 動作 が この file を 参照、 file が 育てば skill 動作 も 進化。
+- `references/decision-axes.md` — 軸 file。 §1 共通 base ref (= core-principles) + §2 軸 a-i + §3 自律 commit 規律 (= a-d docs 修 正 + e entry close) + §4 相 談 md 規 範 form + §5 メ ン テ ナ ン ス。 この skill の 振 り 分 け 動 作 が こ の file を 参 照。
+- `../_shared/core-principles.md` — 哲学 base = unworklet の 目 指 す 姿 + 守 る べ き 性 質 + 醜 い と み な す も の。 spec-integrity-sweep と 共 通 ref、 二 重 管 理 排 除。 軸 file の §2c (= 哲 学 派 生) と §2e (= 実 装 AI 領 域) が こ の file の 哲 学 に 依 拠。
