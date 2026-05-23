@@ -24,7 +24,7 @@ v1.0.0 ship 前 の 現在 docs の 第一 読者 は **実装 期 の AI agent*
 - **user free が default**: 制約 を 入れる 方 が 例外。 「mental」 「美学」 「対称性」 で 勝手 に 制約 を 入れ ない。 制約 を 入れる に は 仕様 invariant か 哲学 派生 の justify が 必要。
 - **既知 必要 を 後回し に し ない**: PoC で 確認 でき + AI agent で 並列 に 厚く できる もの (= MIDI message variants、 SIMD instruction families 等) のみ defer 可。 API surface / 型 / メンタル モデル に 染み出す 選択 は 今 decide。
 - **mental model unification ≠ feature reduction**: 「simpler mental model」 を 口実 に feature を 削ら ない。 opt-in / namespaced surface で 「必要 ない user に は 見え ない、 必要 な user に は 第一級」 を 探す。
-- **canonical-examples が 仕 様 規 範 anchor**: `docs/12-canonical-examples.md` 全 example が build 可能 で 仕様 と 1 対 1 で zip する こと が AGENTS.md HARD CONTRACT。 仕様 変更 ごと に Coverage table 同 commit 修正 必須。
+- **canonical-examples が 仕 様 規 範 anchor**: `docs/12-canonical-examples.md` は **curated 規 範 例 集 / 整 合 anchor** (= AGENTS.md HARD CONTRACT)。 仕 様 を 変 え る 時 affected example が realistic / 自 然 か 確 か め、 同 commit で zip 修 正 必 須。 ただ し **「全 primitive / 全 declaration を canonical で 1 回 ず つ 個 別 hit」 は rule で は な い** (= AGENTS.md L16 「exercise the full surface」 は curated 規 範 例 集 と し て full surface に 触 れ る 寄 り、 機 械 網 羅 ナ シ)。 個 別 primitive / declaration が canonical 例 で hit ナ シ ≠ 仕 様 違 反。 Coverage table も 「user が 例 か ら 規 範 を 引 け る map」 で あ り、 機 械 網 羅 check list で は な い。
 - **TS form 細部 / 命名 / mechanism 自由 度 = 実装 期 任せ**: TypeScript signature の 細部 (= type alias 名、 generic constraint の 切り 方、 callable + property hybrid 等 の form)、 識別子 命名 (= enforcement layer の 別名 等)、 internal mechanism の 選択 自由 度 (= main 側 event drain が MessageChannel ping か Atomics.notify か 等) は 仕様 invariant が 動か ない 限り 実装 期 の AI agent が 機械 的 に 決める 領域。 spec docs に entry と して 残す 価値 ナシ。 sweep 時 は entry に 拾わ ず scope 外、 万一 拾われ た 場合 は triage e 軸 で 自律 close (= 二重 防御)。
 
 ---
@@ -37,6 +37,7 @@ v1.0.0 ship 前 の 現在 docs の 第一 読者 は **実装 期 の AI agent*
 - 過去 決定 の 撤回 コスト で 設計 を 曲げる
 - temporal 表現 を docs prose に 残す (= 「previously」 「now」 「earlier draft」 「retired」 等)
 - TS form / 命名 / mechanism 自由 度 の 細部 を spec entry と して 余湖さん に 上げる (= 過剰 エスカレーション、 attention 浪費)
+- canonical で 個 別 primitive / declaration が hit ナ シ を 「規 範 確 認 不 在」 「HARD CONTRACT 違 反」 と し て sweep / triage で 拾 い 上 げ る (= AGENTS.md 「exercise the full surface」 を 機 械 網 羅 と 過 剰 解 釈、 curated 規 範 例 集 性 質 を 失 念、 余 湖 さ ん attention 浪 費)
 
 ---
 

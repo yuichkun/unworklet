@@ -194,8 +194,11 @@ a-d = docs 修正 して commit。 e = docs 修正 ナシ で entry close + deci
 **典型 出し 方**: 改変 / 新規 Ex の design draft を 相談 md に 提示、 数 十 行 分 の code 案 を 含めて 余湖さん decide。
 
 **例**:
-- SIMD primitive 4 個 を canonical で exercise (= 数 十 行 規模 新 Ex か 既 Ex 拡張)
-- Ex 5 grain spawn voice allocation 全 unroll (= 数 十 行 追加)
+- Ex 5 grain spawn voice allocation 全 unroll (= 12 冒 頭 「no elisions」 self-rule 直 接 違 反 を 解 消、 数 十 行 追 加)
+- 仕 様 prose 変 更 で 既 Ex が awkward / unrealistic に な る 場 合 の Ex rewrite
+
+**scope 外** (= こ の 軸 で 拾 わ な い):
+- canonical で 個 別 primitive / declaration が hit ナ シ (= 例: 「SIMD primitive vec4 / subVec / divVec / vec.lane が canonical で 動 か な い」) — `12-canonical-examples.md` は curated 規 範 例 集 で あ り 機 械 網 羅 で は な い (= core-principles §2 + AGENTS.md L16 「exercise the full surface」)。 個 別 primitive が hit ナ シ = 規 範 例 不 足 ≠ 仕 様 違 反、 entry に 立 つ こ と 自 体 が 過 剰 解 釈。 万 一 sweep で 拾 わ れ た 場 合 は 即 close (= 「entry 立 て が rule 過 剰 解 釈」 path)、 軸 i で 相 談 md を 出 さ な い。
 
 ---
 

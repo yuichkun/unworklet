@@ -2,30 +2,14 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 29 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 28 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 12 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 11 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 17 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 
 ---
 
-## P1 — ship blocker 系 (12 件)
-
-### cluster (2) canonical integrity / Q ratify との衝突 (2)
-
-## SIMD primitive の 一 部 が declare さ れ て い る だ け で canonical で 一 度 も 動 か な い 状 態 で 残 っ て い る
-
-**場 所**: `docs/01-dsl.md:938-944`、 `docs/01-dsl.md:922-925`、 `docs/12-canonical-examples.md:274`、 `docs/12-canonical-examples.md:810`、 `docs/12-canonical-examples.md:313-321`、 `docs/12-canonical-examples.md:863-875`
-
-**何 が 起 き て い る か**: v1.0.0 で expose す る SIMD primitive 一 式 (= `vec4` / `splat` / `addVec` / `subVec` / `mulVec` / `divVec` / `sumLanes` / `vec.lane`) の う ち、 `vec4` / `subVec` / `divVec` / `vec.lane` の 4 個 が canonical Ex 3 / Ex 7 で 一 度 も 呼 ば れ て い な い。 canonical の import 行 も `splat` / `mulVec` / `addVec` / `sumLanes` の 4 個 だ け を 取 り 込 ん で お り、 残 り 4 個 は spec prose で declare さ れ て い る が canonical で 規 範 確 認 が ナ シ。 12 の Coverage table も `vec.lane` を Ex 3 / Ex 7 で exercise 済 み と claim し て い る が、 実 code に 該 当 行 ゼ ロ。
-
-**impl AI 影 響**: impl AI が canonical を 仕 様 の 規 範 確 認 source と し て 読 む と、 (a) `vec4(a, b, c, d)` の construction で lift rule が ど こ ま で 効 く か (= JS literal を 何 個 渡 し て も 通 る か)、 (b) `subVec` / `divVec` を `sumLanes` 等 と 自 然 に 組 み 合 わ せ る 形、 (c) `vec.lane(i)` の `i` が `0 | 1 | 2 | 3` literal-only か 一 般 `Node<'i32'>` か、 (d) `vec.lane` 違 反 時 の error 形 が canonical で 学 べ な い。 結 果 と し て impl AI が 「surface に declare は あ る が canonical で zip ナ シ = ship 範 囲 不 明」 と 判 断 し て deferral 寄 り に 倒 す リ ス ク、 ま た は 自 力 解 釈 で 実 装 を 進 め て 後 で canonical 反 映 時 に drift。 AGENTS.md HARD CONTRACT (= 全 doc 変 更 を canonical で 規 範 確 認) と も 直 接 衝 突。
-
-**判 断 軸**: v1.0.0 surface の SIMD primitive 全 8 個 を canonical で 1 回 ず つ exercise す る 形 に Ex 3 / Ex 7 を 拡 張 す る か、 新 規 SIMD-only canonical を 1 件 立 て て 残 り 4 個 を 集 約 exercise す る か。 「declare だ け で canonical exercise ナ シ」 の v1.0.0 surface を 残 す path は AGENTS.md HARD CONTRACT 違 反 な の で 不 可、 ど ち ら か の zip path を 取 る 必 要 あ り。 同 commit で Coverage table の `vec.lane` 行 を 実 exercise Ex に zip 直 す。
-
----
-
----
+## P1 — ship blocker 系 (11 件)
 
 ### cluster (3) wire format byte layout (4)
 
