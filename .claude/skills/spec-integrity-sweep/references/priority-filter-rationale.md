@@ -19,7 +19,7 @@ unworklet が 目指す 姿、 守る べき 性質、 醜い と み なす も
 cluster 例 (= P1 内並び順):
 1. 型 system core
 2. canonical integrity / Q ratify との衝突
-3. wire format byte layout
+3. snapshot blob byte 並 び (= ship 後 凍 結 領 域、 内 部 wire は scope 外)
 4. handler / drain / boundary timing
 5. realtime safety invariant
 6. MIDI declaration + sysex inbound
@@ -51,6 +51,7 @@ P3 は user grill 不要、 親が 1 batch で sweep。 commit 別単位で OK�
 - **TS form 細部 / 命名 / mechanism 自由 度** (= core-principles §2 「実装 期 任せ」 派生): TypeScript signature 細部 (= type alias 名、 generic constraint の 切り 方、 callable + property hybrid 等)、 同概念 の 別 命名 の どち ら を 別名 に 寄せる か、 internal mechanism の 実装 path 自由 度 (= main 側 event drain が MessageChannel / Atomics.notify / rAF の どれ か 等)。 仕様 invariant (= wire byte、 mental model、 API surface 形、 lifecycle) が 動 い て いる か を sub-agent prompt で 必ず check、 動 い て い ない なら 拾わ ない。
 - **user-facing wording 揺れ** (= 既存 累犯 規律): tutorial / API reference / chooser doc 視点 の wording 揺れ は v1.0.0 ship 後 phase で 別途 処理。 sweep audit 範囲 外。
 - **canonical で primitive / declaration 個別 hit ナシ = 規範 例 不足** (= core-principles §2 「canonical = curated 規範 例集」 派生): 個 別 primitive / declaration が `12-canonical-examples.md` で 1 回 も 動 か な い こ と を 「HARD CONTRACT 違 反」 「規 範 確 認 不 在」 と し て 拾 い 上 げ る path は **scope 外**。 AGENTS.md L16 「exercise the full surface」 を 機 械 網 羅 と 読 む の は 過 剰 解 釈、 curated 規 範 例 集 と し て full surface に 触 れ る 寄 り が 真。 example で hit ナ シ ≠ 仕 様 違 反。 sub-agent prompt で 「個 別 primitive の canonical hit 有 無」 を 拾 う 指 示 は 出 さ な い。 「仕 様 prose を 変 え た 結 果 affected example が 既 awkward / unrealistic に な る」 は HARD CONTRACT 範 囲 = 拾 う、 区 別 必 須。
+- **main / worklet 間 の 内 部 wire layout** (= core-principles §2 「内 部 wire = 実 装 期 任 せ」 派 生): SAB ringbuffer slot 並 び、 event slot / MIDI slot field 並 び (= atSample 位 置 等)、 sysex content buffer 並 び 等 main / worklet 間 の 内 部 wire layout は **ship 後 凍 結 で は な い** = framework 同 ship 内 で main bundle / worklet bundle ペ ア = ship ご と に 自 由 = user 不 観 測。 「wire byte が drift」 「shared machinery」 「slot 並 び」 で 反 射 的 に 拾 い 上 げ る な、 user 観 測 surface (= handler arg shape / API surface / lifecycle observable) が 動 い て いる か を 必 ず check し、 動 か な い な ら scope 外。 ship 後 凍 結 さ れ る wire = `node.snapshot()` の Uint8Array blob 並 び の み = こ れ だ け が 真 の wire format 軸。
 
 ## 累犯規律 = 赤信号 wording
 
@@ -60,6 +61,7 @@ priority 判断中に以下の wording が自分の頭で出たら **赤信号**
 - 「mental model が揺れる」 / 「読み手が混乱」 → user-facing 寄り = scope 外 ま た は P3 mechanical
 - 「TS form の 書き方 が」 / 「命名 が 統一 さ れて ない」 / 「mechanism が impl ご と に drift」 → 実装 AI 領域 = scope 外
 - 「canonical で 動 か な い」 / 「規 範 確 認 ナ シ」 / 「Coverage table 不 完 全」 / 「全 surface を 1 回 ず つ exercise」 / 「primitive 機 械 網 羅」 → canonical = curated 規 範 例 集 性 質 を 失 念 し た 過 剰 解 釈 = scope 外
+- 「wire byte が drift」 / 「slot 並 び が doc 間 で 別」 / 「shared machinery 主 張 と 衝 突」 / 「same transport」 → 内 部 wire 層 で 止 ま っ て いる pattern。 user 観 測 surface (= handler arg / API surface / lifecycle) が 動 く か を 必 ず check、 動 か な い な ら scope 外 (= 内 部 wire = ship 後 凍 結 ナ シ = 実 装 期 任 せ)
 
 これら 出 たら mechanical sweep 領域 (= P3) へ 移 す か、 そ も そ も sweep 時 entry に 拾 わ ず scope 外 と して 切 る か、 「impl AI 矛盾リスク 軸」 で 再 評価。
 

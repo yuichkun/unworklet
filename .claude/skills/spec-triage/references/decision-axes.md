@@ -106,6 +106,7 @@ a-d = docs 修正 して commit。 e = docs 修正 ナシ で entry close + deci
 - 同概念 の 別 命名 の どち ら を 別名 に 寄せる か (= enforcement layer vs integration layer の L1/L2/L3 命名 等)
 - internal mechanism の 実装 path 自由 度 (= main 側 event drain が MessageChannel ping か Atomics.notify か rAF か)
 - 別 entry の decide で 自動 解消 する もの (= 他 entry の 軸 hit が 解 け ば この entry も 解 け る pattern)
+- **main / worklet 間 内 部 wire layout** (= SAB ringbuffer slot 並 び、 event slot / MIDI slot field 並 び、 sysex content buffer 並 び 等): framework 同 ship 内 で main bundle / worklet bundle ペ ア = ship ご と に 自 由 = user 不 観 測 = 仕 様 invariant 動 か ず = e 軸 で close (= ship 後 凍 結 さ れ る wire は `node.snapshot()` blob だ け、 内 部 wire は 別 軸)
 
 **check する 場所**:
 - entry が 触る surface に 仕様 invariant (= wire byte、 mental model、 API surface 形、 lifecycle) が 動 い て いる か → **動 い て いる なら e で は ない**、 f-i の 相談 軸 を 当 たる
@@ -115,11 +116,12 @@ a-d = docs 修正 して commit。 e = docs 修正 ナシ で entry close + deci
 **典型 fix**: docs 修正 ナシ。 open-questions.md か ら entry 削 除 + decisions-log.md に 1 行 ratify 追記 (= 「実装 AI 領域 と し て close、 仕 様 invariant 動 か ず、 form 細部 は 実装 期 任 せ」)。 commit message に decision-axes: e + 「仕様 invariant 動 か ず」 1 行 理由。
 
 **例**:
-- 「L1/L2/L3」 略称 衝突 = 命名 の どち ら を 別 命名 に 寄 せ る か = 実装 AI 判 断
-- `forSample.byN` function + property hybrid = TS form 細部
-- `node.messages.<name>` callable + property 同居 surface 構造 = TS form 細部
+- 「L1/L2/L3」 略称 衝突 = 命名 の どち ら を 別 命名 に 寄 せ る か = 実装 AI 判 断 (ただ し error message label に 露 出 す る な ら h 軸 寄 り)
+- `forSample.byN` function + property hybrid = TS form 細部、 canonical で `forSample.byN(...)` が 動 く invariant 維 持 で 内 部 form 自 由
+- `node.messages.<name>` callable + property 同居 surface 構造 = TS form 細部 (ただ し 構 造 分 解 後 観 測 path が user 視 点 で 動 く な ら h 軸 寄 り)
 - 同名 input/output の overflowCount counter 由来 = MIDI declaration name 必須性 decide で 自動 解消 (= cascade)
 - SAB mode event drain mechanism = MessageChannel / Atomics.notify / rAF の どれ も 観測 ル ー ル を 満 たす = mechanism 自由 度
+- **main / worklet 間 内 部 wire layout** (= event slot / MIDI slot で atSample 位 置 が 別、 variable-length 中 身 並 び 方 が event と MIDI sysex で 別、 sysex slot に atSample 不 在 等): user 観 測 surface (= handler arg shape / API surface / lifecycle) が 動 か な い 限 り 内 部 wire 並 び は framework ship ご と に 自 由 = 実 装 AI 領 域
 
 ### 余湖さん 相談 必要 (= f / g / h / i)
 
@@ -141,23 +143,23 @@ a-d = docs 修正 して commit。 e = docs 修正 ナシ で entry close + deci
 **例**:
 - `event<T>` payload で float 値 受容 (= Q46 撤回 必要、 撤回 path 3 way 等価)
 
-#### g. ship 後 変え 不可 な byte 並び
+#### g. ship 後 変え 不可 な byte 並び (= `node.snapshot()` blob だけ)
 
-**何 を 表す か**: wire byte layout (= SAB ringbuffer slot 並び、 sysex content buffer 並び、 snapshot blob 並び 等)、 ship 後 互換 性 で 凍結 さ れる もの。
+**何 を 表す か**: **`node.snapshot()` の Uint8Array blob byte 並 び の み**。 user が persist し て 新 ship で restore す る path = ship 後 互 換 性 で 凍 結 + migration mandatory 領 域。
 
-**な ぜ 自律 不可**: ship 後 互換 = 1 度 出した byte 並び は v1.x.0 で 戻せ ず、 v2.0.0 で migration mandatory。 「あと で 直せば 良い」 が 効か ない 領域 で、 余湖さん 視認 必須。
+**main / worklet 間 内 部 wire は g 軸 で は な い**: SAB ringbuffer slot 並 び、 event slot / MIDI slot field 並 び (= atSample 位 置 等)、 sysex content buffer 並 び 等 は framework 同 ship 内 で main bundle / worklet bundle ペ ア = ship ご と に 自 由 = user 不 観 測 = **e 軸** (= 実 装 AI 領 域)。 「wire byte 並 び」 と い う wording で 反 射 的 に g 軸 に 寄 せ な い、 「user が persist す る か」 (= snapshot blob か どう か) を 1 ヶ 所 で check。
+
+**な ぜ 自律 不可** (= snapshot blob 限 定): ship 後 互換 = 1 度 出 し た byte 並 び は v1.x.0 で 戻 せ ず、 v2.0.0 で migration mandatory。 「あ と で 直 せ ば 良 い」 が 効 か な い 領 域 で、 余 湖 さ ん 視 認 必 須。
 
 **check する 場所**:
-- entry が main / worklet 間 wire (= SAB byte 並び、 postMessage payload) を 触る か
-- entry が snapshot blob byte 並び を 触る か
-- 「同 source code で 別 impl が reproducible で ない」 を impl AI 影響 行 で 示唆 して いる か
+- entry が `node.snapshot()` blob byte 並 び を 触 る か (= main 側 で user が persist す る Uint8Array)
+- entry が main / worklet 間 内 部 wire (= SAB ringbuffer / event slot / MIDI slot / sysex content buffer) を 触 る だ け な ら **e 軸 寄 り** (= user 観 測 surface 動 か な い な ら e 軸 close)
 
-**典型 出し 方**: byte 並び 候補 を A / B / C 表 で 相談 md、 各 候補 の wire byte 形 を 図 化、 余湖さん decide。
+**典型 出し 方**: snapshot blob byte 並 び 候 補 を A / B / C 表 で 相 談 md、 各 候 補 の blob 形 + migration path を 図 化、 余 湖 さ ん decide。
 
 **例**:
-- event slot vs MIDI slot で atSample 位置
-- variable-length payload 並び 方
-- sysex slot に atSample 不在
+- snapshot blob の field 並 び (= state slot 値 / buffer 内 容 / metadata 並 び 順、 migration semantics)
+- migration 関 数 が catch す る blob 形 (= 旧 ship blob → 新 ship blob 変 換 入 出 力)
 
 #### h. UX / 美学 で 複数 解 が 等価 (= 仕様 invariant が 動く 寄り)
 

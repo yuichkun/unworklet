@@ -2,52 +2,16 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 28 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 24 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 11 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
-- **P2 = 17 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
-
----
-
-## P1 — ship blocker 系 (11 件)
-
-### cluster (3) wire format byte layout (4)
-
-## event 用 slot と MIDI 用 slot で 「い つ の sample で 発 生 し た か」 を 表 す 数 字 の 位 置 が 別
-
-**場 所**: `docs/02-messaging.md:111-120`、 `docs/11-midi.md:316-327`
-
-**何 が 起 き て い る か**: 02-messaging.md §5.1 は `event<T>` の ringbuffer slot を 「先 頭 4 byte が atSample、 続 い て T fields、 末 尾 に payloadLen / payloadOffset」 と 規 定。 11-midi.md §4.1 の MIDI slot は 「status / data1 / data2 / _pad / atSample (末 尾 4 byte)」 で atSample が 末 尾 配 置。 02 §1 は 「The same ringbuffer machinery serves MIDI」 「underneath it shares the SAB ringbuffer + Atomics protocol described in §4 and §5」 と 明 言 す る が、 slot 内 field 並 び 順 が doc 間 で 別 物。
-
-**impl AI 影 響**: 「shared machinery」 を そ の ま ま 受 け 取 る と impl が (a) MIDI slot に 02 §5.1 形 式 (atSample 先 頭) を 当 て て 11 §4.1 と 矛 盾、 (b) 逆 に MIDI 末 尾 配 置 を `event<T>` 全 般 に 当 て て 02 §5.1 と 矛 盾、 (c) どち ら が 正 本 か 判 ら ず 2 種 serializer を 別 個 emit し て postMessage path と SAB path で wire byte が drift、 の 3 way に 分 か れ る。 「header (= head / tail / overflowCount) は 共 通、 slot 部 分 は variant 別」 が 仕 様 か prose で 明 示 ナ シ。
-
-**判 断 軸**: 「shared = ring buffer header と Atomics protocol だ け、 slot encoding は declaration 種 ご と に 別 layout を OK と す る」 path を 1 か 所 で declare し、 02 §5.1 と 11 §4.1 の atSample 位 置 を そ の ま ま 残 す か、 「slot 内 field 並 び は 全 declaration 種 で 統 一 す る」 path に 倒 し て どち ら か (先 頭 / 末 尾) に 揃 え る か。
+- **P1 = 8 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P2 = 16 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 
 ---
 
-## variable-length 中 身 の 並 べ 方 が event と MIDI sysex で 別 形 式 な の に 「same transport」 主 張 が 残 る
+## P1 — ship blocker 系 (8 件)
 
-**場 所**: `docs/02-messaging.md:122-126`、 `docs/11-midi.md:338-349`
-
-**何 が 起 き て い る か**: 02-messaging.md §5.2 は variable-length payload を 「main slot に `payloadLen` + `payloadOffset` を 持 ち、 content buffer は offset で 指 し て 並 ぶ」 形 で 規 定 し、 「This is the same machinery used for MIDI sysex; one transport implementation covers both」 と 明 言。 一 方 11-midi.md §4.3 の sysex content buffer は 「`| length (u32) | data (length bytes) | length (u32) | data (length bytes) | ...`」 と 各 entry が 内 部 で length prefix を 持 ち sequence で 連 続 す る 形、 main slot 側 は 「status = 0xF0 + 3 byte pad + sysexIndex」 (= `payloadLen` 不 在)。
-
-**impl AI 影 響**: impl AI が 「same transport」 を 信 用 し て (a) event<T> の content buffer を 11 §4.3 の length-prefix sequence 形 で 書 く と 02 §5.1 の `payloadLen` (main slot 側 で 長 さ を 持 つ) と 矛 盾、 (b) 逆 に MIDI sysex の content buffer を 02 §5.2 の offset 指 し flat memory 形 で 書 く と 11 §4.3 と 矛 盾。 deserializer の byte offset 計 算 が 直 接 壊 れ、 main 側 / worklet 側 で wire 一 致 し な く な る。
-
-**判 断 軸**: 「main slot で 長 さ を 持 ち、 content buffer は flat memory + offset 指 し 」 (= 02 §5.2 形 式) に 1 本 化 し 11 §4.3 の content buffer 表 を 書 き 直 す path 推 奨。 main slot 側 の `payloadLen` / `sysexIndex` 命 名 ば ら つ き も 同 時 に zip。
-
----
-
-## sysex の slot 構 造 だ け atSample 不 在 で 「全 handler 引 数 は atSample を 持 つ 」 主 張 と 衝 突
-
-**場 所**: `docs/11-midi.md:316-327`、 `docs/11-midi.md:342-346`、 `docs/11-midi.md:155-167`
-
-**何 が 起 き て い る か**: 11-midi.md §4.1 で MIDI slot を 「`| status (u8) | data1 (u8) | data2 (u8) | _pad (u8) | atSample (u32) |` = 8 bytes」 で uniform に 規 定。 同 §4.3 の sysex variant slot は 「`| status = 0xF0 | _pad | _pad | _pad | sysexIndex (u32) |`」 と 後 半 4 byte が atSample で は な く sysexIndex に 置 換、 atSample field が 完 全 に 消 え る。 一 方 §2.3 prose は 「Every handler argument carries `atSample`」 と sample-accurate dispatch を 強 く 主 張、 sysex inbound handler signature も `({ data, atSample })` 形 を 規 範 化 (= §2.5 L249 / canonical Ex 9)。
-
-**impl AI 影 響**: sysex 経 路 で `atSample` を どこ か ら 取 る か で impl が 分 岐: (a) content buffer 側 に atSample を 入 れ る 拡 張 (= 11 §4.3 の content buffer schema に atSample が 1 行 も 出 て こ ず、 仕 様 か ら 取 れ な い)、 (b) sysex slot サ イ ズ を 12 byte 等 に 拡 張 (= §4.1 の 「8 bytes per slot, slot-indexed pointers」 uniform 性 が 崩 れ る)、 (c) sysex 経 路 で atSample を 0 固 定 / block 開 始 時 刻 で 注 入 (= sample-accurate 主 張 が 崩 れ る)。 wire 上 で atSample を どこ か に 入 れ る path が 仕 様 か ら 一 意 に 決 ま ら な い。
-
-**判 断 軸**: sysex slot に atSample を 持 た せ る (= slot size を sysex variant だ け 拡 張 し uniform 性 と の zip を prose で 明 示) か、 sysex content buffer entry 内 に atSample field を 追 加 す る か、 「sysex は block 開 始 時 注 入 で atSample 不 在 を 許 容」 path に 倒 し て §2.3 の wording を 改 訂 す る か。 sample-accurate 主 張 を 守 る な ら 前 2 path、 §4.1 uniform 性 を 守 る な ら 中 央 path 推 奨。
-
----
+### cluster (3) emit-side surface 拡 張 (1)
 
 ## worklet 側 で 新 規 に 中 身 を 構 築 し て 流 す path が sysex 専 用 で event は declare 不 在
 
@@ -156,19 +120,7 @@ unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装される�
 ---
 
 
-## P2 — 仕様 invariant + lifecycle (17 件)
-
-## `forSample.byN` を function + property hybrid で expose す る か
-
-**場 所**: `docs/01-dsl.md:1287-1294`
-
-**何 が 起 き て い る か**: signature が `forSample(callback): void` を free function で declare し、 同 時 に `forSample.byN(stride, callback): void` を property と し て declare し て いる (= callable function に property が ぶ ら 下 が る hybrid)。 canonical で `forSample.byN(4, ...)` を 直 接 invoke す る 形 だ が、 こ の hybrid 形 を export す る か `forSample` と `forSampleByN` を 別 named export に 分 け る か prose で 確 定 し て な い。
-
-**impl AI 影 響**: impl AI は (a) hybrid 形 で 1 つ の named export に 統 合、 (b) `forSample` と `forSampleByN` を 別 named export に 分 け、 (c) `forSample` を namespace object に 変 え る、 の 3 path で 判 断 が 割 れ、 canonical の 書 き 方 (`forSample.byN(...)`) が 動 く か が 実 装 ご と に 変 わ る。
-
-**判 断 軸**: canonical の 形 を そ の ま ま 通 す と (a)、 ど ち ら か を 単 純 化 す る と (b)。 命 名 自 体 で は な く 「callable に property を 生 や す 形 を 使 う か」 が invariant。
-
----
+## P2 — 仕様 invariant + lifecycle (16 件)
 
 ## payload length が build-time JS number と し て 取 れ る path が prose declare さ れ て な い
 
