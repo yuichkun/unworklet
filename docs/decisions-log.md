@@ -44,7 +44,8 @@ populated (Q1–Q68 ratify complete; Q28 is unassigned — a numbering artifact,
 | Q30 | memory budget policy | resolved — processor 内 の 全 declaration (= state / buffer / message・event payload content / MIDI ringbuffer) を build-time に 自 動 sum し て WASM linear memory を そ の サ イ ズ で alloc; user 側 で の explicit `memoryLimit` option ナ シ で v1.0.0 出 し (= 必 要 性 出 れ ば v1.x.0 で additive); 64 MB 越 え で build-time warning (= ロ ー エ ン ド device で の load 遅 延 配 慮)、 WASM 上 限 (= 4 GB) 越 え で build-time エ ラ ー; audio thread で の `memory.grow` 永 久 排 除 (= realtime safety 違 反) | `03-compiler.md` §2.4 + `03-compiler.md` §4 |
 | Q44 | ringbuffer capacity を power-of-2 制 約 で 受 け 取 る 形 (audit P1 #61 仕 様 ホ ー ル) | resolved — `midiInput` / `midiOutput` / `event<T>` / `message<T>` の `capacity` option 値 を `@unworklet/core` の top-level SCREAMING_SNAKE constant `CAPACITY_16 / CAPACITY_32 / CAPACITY_64 / CAPACITY_128 / CAPACITY_256 / CAPACITY_512 / CAPACITY_1024 / CAPACITY_2048 / CAPACITY_4096 / CAPACITY_8192 / CAPACITY_16384` (= 2^4 〜 2^14) で export (= 既 `SAMPLES_PER_BLOCK` (Q35) 同 軸)、 type は `Capacity = typeof CAPACITY_16 \| ...` literal union; option 名 (= `capacity`) と prefix (= `CAPACITY_`) を 揃 え て user は 「`capacity: CAPACITY_<N>`」 と 1:1 一 致 で 書 く、 任 意 数 字 / 直 接 数 字 リ テ ラ ル は TS narrow で 別 物 扱 い で 弾 か れ る; build-time / runtime check 不 要 で IDE 段 階 で 即 TS エ ラ ー; 内 部 実 装 jargon (= ring / slot) を user 露 出 し な い | `01-dsl.md` §4.1, §4.2 + `11-midi.md` §1 |
 | Q45 | migration 関 数 が throw し た 時 の framework 振 る 舞 い (audit #63 仕 様 ホ ー ル) | resolved — `migrate` 関 数 内 で throw が 出 た 時 framework が catch し て chain 全 体 stop (= 後 続 step の input が 不 完 全 で 危 険 ため、 部 分 restore せ ず); processor は default 値 で 起 動 (= 既 Q5 「default で 動 く」 通 り、 audio 出 力 が pending に な ら な い); main 側 `node.restore(blob)` の 戻 り 値 を discriminated union `{ ok: true, ... } \| { ok: false, error: { step, message, cause }, ... }` に 拡 張 (= 既 `{ restored, skipped, missing }` は 維 持、 `ok` discriminant + `error` で 失 敗 情 報 を narrow); audio thread 上 で の 例 外 propagate ナ シ で realtime safety 維 持 | `01-dsl.md` §8.3.3 + `05-client.md` §2.6 |
-| Q46 | `MidiEvent` / `event<T>` の cross-thread 型 view 分 離 (audit Phase 2 #8、 #47) | resolved — main thread / wire 用 と worklet audio-thread 用 で **TypeScript 型 を 2 つ に 分 け る**; `MidiEvent` (= 全 numeric field `number`、 typed-array field 生 `Uint8Array` 等) は `node.midi.<name>.send(...)` / `.onEvent(...)` の main 側 surface 専 用、 `MidiEventGraph` (= 全 numeric field `Node<'i32'>`、 typed-array field は §4.3 typed-array-field proxy) は `midiInput().onEvent(...)` handler arg + `midiOutput().emitIf(...)` arg 専 用; emit 側 で の number / boolean literal は Q33 literal-lift で 自 動 に Node 化 す る た め user code は main / worklet で 同 じ literal を 書 け る; `event<T>` も 同 様 に main 側 `T & { atSample: number }` / worklet 側 lifted view (= 全 number → Node<'i32'>、 全 boolean → Node<'bool'>、 全 typed-array → §4.3 proxy) で 2 view 派 生; mapped 型 (= 1 型 + `ToGraph<T>` 派 生) は IDE hover で `ToGraph<MidiEvent & ...>` が 出 て user 認 知 負 担 高 い た め 棄 却、 明 示 2 型 で 命 名 直 接 | `11-midi.md` §2.2, §2.3, §2.4 + `01-dsl.md` §4.1 |
+| Q46 | `MidiEvent` / `MidiEventGraph` + `message<T>` の cross-thread 型 view 分 離 (audit Phase 2 #8、 #47) | resolved — main thread / wire 用 と worklet audio-thread 用 で **TypeScript 型 を 2 つ に 分 け る**; `MidiEvent` (= 全 numeric field `number`、 typed-array field 生 `Uint8Array` 等) は `node.midi.<name>.send(...)` / `.onEvent(...)` の main 側 surface 専 用、 `MidiEventGraph` (= 全 numeric field `Node<'i32'>`、 typed-array field は §4.3 typed-array-field proxy) は `midiInput().onEvent(...)` handler arg + `midiOutput().emitIf(...)` arg 専 用; emit 側 で の number / boolean literal は Q33 literal-lift で 自 動 に Node 化 す る た め user code は main / worklet で 同 じ literal を 書 け る; `message<T>` も 同 様 に main 側 `T` (= 全 numeric field native JS) / worklet 側 lifted view (= 全 number → Node<'i32'>、 全 boolean → Node<'bool'>、 全 typed-array → §4.3 proxy) で 2 view 派 生; mapped 型 (= 1 型 + `ToGraph<T>` 派 生) は IDE hover で `ToGraph<MidiEvent & ...>` が 出 て user 認 知 負 担 高 い た め 棄 却、 明 示 2 型 で 命 名 直 接; `event<T>` (= worklet → main 系) は per-field wire 型 を emit-time に `Node<T>` で 確 定 す る path に 分 離 = Q71 で declare | `11-midi.md` §2.2, §2.3, §2.4 + `01-dsl.md` §4.2 |
+| Q71 | `event<T>` の per-field 配 線 = emit-time の `Node<T>` で 確 定 (audit 累 犯 解 消) | resolved — `event<T>` の field 別 wire 型 を **emit 時 の `Node<T>` で 確 定**: declare の `T` は field **名** + 大 体 の 型 family (numeric / boolean / typed-array) を 持 ち、 各 numeric field の 正 確 な wire 型 は emit 時 の `Node<T>` で 決 ま る (= `Node<'f32'>` → 4-byte f32、 `Node<'i32'>` → 4-byte i32、 `Node<'f64'>` → 8-byte f64、 `Node<'i64'>` → 8-byte i64、 `Node<'bool'>` → 1-byte bool); 整 数 literal は 既 Q33 literal-lift で `Node<'i32'>` に lift; main 側 callback 引 数 型 は framework が emit site の `Node<T>` を 逆 引 き し て 自 動 公 開 (= `Node<'f32'>` / `Node<'i32'>` → JS `number`、 `Node<'bool'>` → `boolean`、 `Node<'i64'>` → `bigint`); 同 じ `event<T>` handle へ の 複 数 emit site で per-field `Node<T>` が 不 一 致 な ら graph-capture-time error; canonical Ex 4 / Ex 5 / Ex 8 で 既 規 範 化 さ れ た 「`number` で declare し float emit (= velocity / level / pos)」 形 が そ の ま ま zip; MIDI + `message<T>` は Q46 通 り (= 全 number → `Node<'i32'>` lift) 維 持 — MIDI は wire 仕 様 上 7-bit int 固 定、 `message<T>` は main → worklet で send-time JS 値 → Node<T> 推 論 ル ー ル が 別 question | `01-dsl.md` §4.1 + `02-messaging.md` §5.1 |
 | Q47 | diagnostics surface 統 一 (audit Phase 2 #10、 #49) | resolved — diagnostics counter (= `overflowCount` 等) を **main 側 だ け で 提 供**、 worklet 側 handle (= `midiIn.diagnostics.X()`) を spec か ら 削 除; 全 channel (= event / message / MIDI) で `node.<kind>.<name>.diagnostics.X()` の 統 一 形 (= 既 Q40 namespaced shape と 整 合)、 「diagnostics は 外 部 観 測」 を declarative 原 則 (= 副 作 用 観 測 は main の 役 割、 worklet `process` body は feedback loop を 持 た な い) と し て 確 立; worklet 内 で の self-throttle pattern が 必 要 な ら main 経 由 で feedback (= 1 周 余 計 だ が 構 造 明 確)、 v1.x.0 で worklet handle へ の `.diagnostics` 後 付 け は additive 可 | `11-midi.md` §4 overflow + `decisions-log.md` Q4-c-iv prose |
 | Q48 | `inspect(blob)` を free function に 留 め る か node method に 動 か す か (audit Phase 2 #9、 #48) | resolved — `inspect(blob: Uint8Array): InspectionResult` を **free function 維 持** (= `@unworklet/core` か ら import)、 node method に 動 か さ な い; `snapshot()` / `restore(blob)` は node 依 存 (= 現 state を 読 む / 書 く) で 必 然 的 に node method、 `inspect` は blob を decode す る pure function で node 不 要 (= preset library tool / server-side blob analyzer / debug script で audio context 起 動 ナ シ で 動 く); 「依 存 性 で 形 が 決 ま る = node 依 存 操 作 は method、 blob-only 操 作 は free function」 を 1 行 ル ー ル と し て 明 文 化、 視 覚 的 対 称 (= snapshot/restore/inspect 揃 い) よ り 依 存 性 の 実 体 通 り の form を 優 先; node method 形 (= `node.inspect(blob)`) は 嘘 の 依 存 性 を user に 強 制 し て fakeNode ハ ッ ク 招 く た め 棄 却 | `05-client.md` §2 |
 | Q49 | worklet 側 sysex emit の data 構 築 経 路 (audit Phase 2 #17 / H9、 #54) | resolved — worklet → main sysex emit を **declared `Buffer<'u8'>` + `length: Node<'i32'>` 経 由 で v1.0.0 完 全 spec**、 sunset は ナ シ; `buffer.u8({ size, name })` を 新 規 構 築 用 byte buffer 専 用 factory と し て 導 入 (= 既 `Buffer<T>` handle と 同 形、 read/write は `Node<'i32'>` で 受 け て 下 位 8 bit を 扱 う、 `Node<'u8'>` 型 は 導 入 し な い で ScalarType 拡 張 ナ シ で 整 合); `MidiEventGraph` sysex variant を `{ type: 'sysex'; data: Buffer<'u8'> \| TypedArrayFieldRef<'u8'>; length: Node<'i32'>; atSample: Node<'i32'> }` に refine、 ingested proxy を そ の ま ま re-emit (= MIDI thru) も 同 path で 表 現; main 側 `MidiEvent` sysex は そ の ま ま `data: Uint8Array` (= framework が buffer の `data[0..length-1]` を copy し て 届 け る)、 main 側 は length 不 要 (= Uint8Array.length で 取 れ る); `new Uint8Array(...)` 経 路 は 永 久 排 除 (= realtime safety / declarative pattern と 整 合) | `11-midi.md` §2.2, §2.5, §4.3 + `01-dsl.md` §3.2 |
@@ -1710,7 +1711,7 @@ audio thread 上 で の 例 外 propagate ナ シ (= realtime safety 維 持)�
 
 ---
 
-## Q46 — `MidiEvent` / `event<T>` の cross-thread 型 view 分 離 (audit Phase 2 #8、 #47)
+## Q46 — `MidiEvent` / `MidiEventGraph` + `message<T>` の cross-thread 型 view 分 離 (audit Phase 2 #8、 #47)
 
 **Status:** resolved.
 
@@ -1726,7 +1727,7 @@ type MidiEvent =
 
 し か し §2.3 prose は 「`atSample` is a `Node<'i32'>` in the same dimension as `i`」 と 言 い、 worklet handler 内 で user は `noteState.store(note)` の よ う に Q22 graph-capture 値 と し て note / velocity / atSample を 触 る。 つ ま り **TS の 型 (= `number`) が worklet handler 内 で の 実 体 (= `Node<'i32'>`) と 乖 離 し て user に 嘘 を 言 う 状 態** だ っ た。
 
-同 じ 構 造 上 の 問 題 が `event<T>` (= worklet → main 汎 用 イ ベ ン ト) に も あ り、 user が 書 い た `T = { level: number }` は main 側 で は `number` だ が worklet emit-site で は `Node<'f32'>` (or `Node<'i32'>`) に な る べ き 値 で あ る。
+同 じ 構 造 上 の 問 題 が `message<T>` (= main → worklet) に も あ り、 user が 書 い た `T = { slot: number }` は main 側 で は `number` だ が worklet handler 内 で は `Node<'i32'>` に な る べ き 値 で あ る。
 
 ### Decision
 
@@ -1769,10 +1770,12 @@ midiIn.onEvent('noteOn', ({ note, velocity, atSample }) => {
 });
 ```
 
-`event<T>` も 同 様 に 2 view 派 生:
+`message<T>` も 同 様 に 2 view 派 生:
 
-- main 側 handler: `T & { atSample: number }` (= user 宣 言 `T` + framework 追 加 `atSample`)
-- worklet 側 emit: `T` の 全 number → Node<'i32'>、 全 boolean → Node<'bool'>、 全 Float32Array / Uint8Array → §4.3 typed-array-field proxy
+- main 側 `node.messages.<name>(payload)` 送 信: 自 然 な JS `T` (= 全 number / boolean / typed-array が native)
+- worklet 側 `onReceive` handler: `T` の 全 number → Node<'i32'>、 全 boolean → Node<'bool'>、 全 Float32Array / Uint8Array → §4.3 typed-array-field proxy
+
+`event<T>` (= worklet → main 系) は こ の 統 一 lift rule に 当 て は ま ら な い: audio 用 途 で 「`number` field に float 値 を 入 れ る」 (= velocity 0-1 / level dB / pos sample-position) が canonical で 既 規 範 化 さ れ て お り、 全 number → `Node<'i32'>` 一 律 lift で は wire 表 現 が 不 自 然。 emit-time に `Node<T>` を 見 て per-field 確 定 す る 別 path に 分 離 = Q71 で declare。
 
 typed-array-field の 扱 い は Q36-b に follow (= proxy 経 由 で `.at(idx)` / `.length`)。
 
@@ -1790,8 +1793,9 @@ typed-array-field の 扱 い は Q36-b に follow (= proxy 経 由 で `.at(idx
 - 11-midi.md §2.2 で type 宣 言 が `MidiEvent` + `MidiEventGraph` の 2 つ に な る
 - 11-midi.md §2.3 で 「`atSample` is a Node<'i32'>」 prose を 「全 numeric fields (= note / velocity / channel / atSample) が `MidiEventGraph` で `Node<'i32'>`」 に 拡 張
 - 11-midi.md §2.4 emit-side prose で `MidiEventGraph` shape を 期 待、 literal は Q33 lift で 通 る 旨 を 明 示
-- 01-dsl.md §4.1 で `event<T>` の 2 view 派 生 を 1 段 落 で 追 加 (= main 側 `T & { atSample: number }` / worklet 側 lifted)
+- 01-dsl.md §4.2 で `message<T>` の 2 view 派 生 を 1 段 落 で 追 加 (= main 側 native `T` / worklet 側 lifted)
 - main / worklet で 同 じ MIDI ロ ジ ッ ク を 書 き た い user は 別 型 に 対 応 必 要 = ま ぁ context が 違 う か ら 自 然
+- `event<T>` 系 (= worklet → main の 汎 用 event) は Q71 の per-field emit-time wire 型 確 定 path に 切 り 出 し
 
 ## Q47 — diagnostics surface 統 一 (audit Phase 2 #10、 #49)
 
@@ -2955,3 +2959,63 @@ authoritative wording: `03-compiler.md` §2.6 + `01-dsl.md` §1。
 **Rejected:**
 
 - *仕 様 prose で 1 mechanism に 固 定 (= 例: 「SAB mode は Atomics.notify ベ ー ス wakeup 必 須」)*: implementation surface に 制 約 を 入 れ る 必 然 性 ナ シ (= 観 測 ル ー ル を 満 た せ ば mechanism は 自 由)、 browser compat (= `Atomics.notify` の Safari 制 約 等) を 仕 様 で 縛 る と impl AI 期 が 別 path を 取 れ な く な る = artificial 制 約 違 反。
+
+
+## Q71 — `event<T>` の per-field 配 線 = emit-time の `Node<T>` で 確 定
+
+**Status:** resolved.
+
+### Problem
+
+Q46 は MIDI + `event<T>` + `message<T>` の cross-thread 2 view 分 離 を 「全 number field → `Node<'i32>` 一 律 lift」 で 統 一 し た。 し か し `event<T>` の audio 用 途 で は velocity (0-1 float) / level (dB float) / pos (sample-position float) 等 「`number` field に float 値 を 入 れ た い」 ケ ー ス が canonical Ex 4 (L411 `event<{ level: number; channel: 0 | 1 }>` で `level: abs(main.at(0, i))` を emit) / Ex 5 (L565 `event<{ voice: number; pos: number }>` で pos = sample-position float) / Ex 8 (L1038 `event<{ note: number; voice: number; velocity: number }>` で `velocity: div(f32(velocity), 127)`) で 既 規 範 化 さ れ て お り、 全 number → `Node<'i32'>` strict 適 用 で は canonical 3 例 が type error。 audio 系 plugin で `event<T>` 経 由 で float scalar を 流 す 需 要 は 中 心 機 能 で あ り、 strict path で は 実 用 不 可。
+
+### Decision
+
+`event<T>` の field 別 wire 型 は **emit 時 の `Node<T>` で 確 定**。
+
+- declare の `T` は field **名** + 大 体 の 型 family (numeric / boolean / typed-array) だ け を 持 ち、 各 numeric field の 正 確 な wire 型 は emit 時 の `Node<T>` で 決 ま る
+- `Node<'f32'>` / `Node<'i32'>` / `Node<'f64'>` / `Node<'i64'>` / `Node<'bool'>` 全 て が field 値 と し て 受 け 入 れ ら れ、 wire 上 で T に 応 じ た byte 幅 (4 / 4 / 8 / 8 / 1) を 占 め る
+- 整 数 literal `0` 等 は Q33 literal-lift で `Node<'i32'>` と し て 通 る (= 既 lift rule の 自 然 帰 結)
+- main 側 callback 引 数 型 は framework が emit site の `Node<T>` を 逆 引 き し て 自 動 公 開 (= `Node<'f32'>` / `Node<'i32'>` → JS `number`、 `Node<'bool'>` → `boolean`、 `Node<'i64'>` → `bigint`)
+- 同 じ `event<T>` handle へ の 複 数 emit site で per-field `Node<T>` が 不 一 致 な ら graph-capture-time error
+
+```typescript
+const peak = event<{ level: number; channel: number }>({ name: 'peak' });
+
+forSample((i) => {
+  const level   = abs(audioIn.at(0, i));   // Node<'f32'>
+  const channel = 0;                        // JS literal → Node<'i32'> (Q33 lift)
+  peak.emitIf(gt(level, thresh), { atSample: i, level, channel });
+  // wire slot: atSample u32 (4B) | level f32 (4B) | channel i32 (4B)
+});
+```
+
+main 側:
+
+```typescript
+node.events.peak((e) => {
+  e.atSample;  // number
+  e.level;     // number (f32 wire を JS number で 受 け 取 る)
+  e.channel;   // number (i32 wire を JS number で 受 け 取 る)
+});
+```
+
+### Why this and not alternatives
+
+- **declare 時 に user が float / int を 明 示 (= 案 B 棄 却)**: `event<{ level: f32; channel: i32 }>` 形 で declare 1 か 所 で wire 型 を 強 制 で きる 利 点 は あ る が、 TS 一 般 の `number` 型 が 使 え ず audio user 視 点 で 「number と 書 け ば 自 然 に 通 る」 期 待 が 通 ら な い; canonical 3 例 で 既 に 「`number` で declare し float emit」 が 規 範 化 済 = retract コ ス ト 大
+- **`number` を `Node<'f32'>` 寄 り に、 整 数 literal union を `Node<'i32'>` に 振 り 分 け (= 案 C 棄 却)**: declare 側 で 「`number` = float / literal union = int」 と い う 暗 黙 rule を user が 覚 え る 必 要 = mental model 揺 れ; channel が `0 | 1` 等 limited union で 表 現 で きる 範 囲 を 超 え る (= 可 変 channel 数) と 表 現 不 能
+- **Q46 strict 維 持 で canonical 3 例 を 修 正 (= 案 D 棄 却)**: velocity / level / pos を 全 部 int reinterpret か main 側 変 換 で 解 決 = wire byte 効 率 と user 直 感 両 方 ロ ス、 audio plugin の 中 心 機 能 が 不 自 然 形
+
+採 用 (= 案 A) は emit 時 の `Node<T>` で wire 型 を 確 定 す る path = canonical の 「`number` で declare し float emit」 を そ の ま ま zip + emit site で `Node<T>` を 作 る flow が state / buffer / param と 同 じ pattern = mental model が unworklet 全 体 で 統 一。 弱 点 = declare 1 か 所 で wire shape が 確 定 し な い (= emit site と zip 必 要) は 余 湖 さ ん 明 示 で 受 容、 framework が 同 一 `event<T>` handle へ の emit site 間 の per-field `Node<T>` 整 合 を graph-capture-time check で 担 保。
+
+### Q46 と の 関 係
+
+Q46 で 確 立 し た 「main / worklet で 値 の 種 類 が 違 う → TS 型 を 2 つ に 分 離」 mental model は `event<T>` で も 維 持。 ただ し worklet 側 lifted shape の 各 field 型 = 「全 number → `Node<'i32'>`」 一 律 lift で は な く、 emit site の `Node<T>` で field 別 に 確 定。 `message<T>` (= main → worklet) と MIDI の 2 view 分 離 + 全 lift rule は Q46 通 り 維 持 (= main → worklet 系 で の send-time JS → `Node<T>` 推 論 rule は 別 question)。
+
+### Side effects
+
+- 01-dsl.md §4.1 で `event<T>` 2 view prose を per-field 確 定 path に rewrite (= Q46-aligned wording を Q71 wording に 差 し 替 え)
+- 01-dsl.md §4.2 で `message<T>` handler arg shape prose の 「Same 2-view pattern as `event<T>`」 wording を 「MIDI と 同 pattern + `event<T>` は Q71 で 別 path」 に narrow
+- 02-messaging.md §5.1 で `event<T>` wire layout 表 を per-field byte 幅 emit-time 確 定 path に rewrite (= 「Per-field wire type resolution (Q71)」 段 落 + slot-size constancy 段 落 追 加)
+- canonical Ex 4 / Ex 5 / Ex 8 の declare + emit は 既 に per-field emit-time pattern と zip し て お り 修 正 不 要
+- `message<T>` の send-time JS → `Node<T>` rule + MIDI の Q46 path は 別 question (= 別 entry で 別 grill)

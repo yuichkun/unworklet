@@ -2,28 +2,16 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 30 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 29 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 13 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 12 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 17 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 
 ---
 
-## P1 — ship blocker 系 (13 件)
+## P1 — ship blocker 系 (12 件)
 
-### cluster (2) canonical integrity / Q ratify との衝突 (3)
-
-## event<T> payload の `number` field が float 値 を 取 り う る canonical 3 例 と Q46 prose が 真 っ 向 衝 突
-
-**場 所**: `docs/12-canonical-examples.md:411`、 `docs/12-canonical-examples.md:449-451`、 `docs/12-canonical-examples.md:565`、 `docs/12-canonical-examples.md:1038`、 `docs/12-canonical-examples.md:1063`、 `docs/01-dsl.md:511 (= §4.1)`、 `decisions-log.md` (Q46)
-
-**何 が 起 き て い る か**: Q46 で 「worklet 側 emit-shape は `T` の 全 `number` field を `Node<'i32'>` に lift、 全 `boolean` field を `Node<'bool'>` に lift、 typed-array field は §4.3 proxy に lift」 と 厳 密 ratify 済。 一 方 canonical で は (a) Ex 4 L411 `event<{ level: number; channel: 0 | 1 }>` を declare し L449-451 で `level: abs(main.at(0, i))` (= `Node<'f32'>`) を emit、 (b) Ex 5 L565 `event<{ voice: number; pos: number }>` を declare し pos は semantic-ally sample-position の float 値 (実 emit は `// ...` で 省 略)、 (c) Ex 8 L1038 `event<{ note: number; voice: number; velocity: number }>` を declare し L1063 で `velocity: div(f32(velocity), 127)` (= `Node<'f32'>`) を emit。 全 ケ ー ス で 「`number` field に float 値 を 入 れ た い」 意 図 が canonical に 規 範 化 さ れ て いる が、 Q46 ル ー ル で は こ れ ら は 全 部 type error。
-
-**impl AI 影 響**: impl AI agent は (a) Q46 strict で 実 装 し canonical 3 例 を 全 部 build error 化、 (b) emit-shape の `number` 推 論 を `Node<'i32' | 'f32'>` の どち ら か 自 動 選 択 に 拡 張、 (c) event<T> payload type に float marker (= `Float32` 等 別 type) を 別 surface で 追 加、 で path が 3 way 以 上 に 割 れ る。 audio plugin 系 の event は velocity / pos / level / pan / pitch 等 float 自 然 が 多 数 で、 Q46 を strict に 取 る と event<T> surface が 実 用 に な ら な い。
-
-**判 断 軸**: Q46 prose の 「`number` → `Node<'i32'>`」 lift を 「`number` → `Node<'f32'>`」 に 寄 せ 直 す か、 payload type に float / int 別 marker を 入 れ る か、 「emit site で 任 意 の Node<T> を 受 け 入 れ Node の T を そ の ま ま wire type に 反 映」 path に 倒 す か。 後 者 が canonical の 形 (= Ex 4 / Ex 5 / Ex 8 の declare 自 然) と zip し や す く 推 奨 だ が、 ratify 済 Q46 の retract が 必 要 = decisions-log で rejected 案 と し て 残 し て 再 ratify。
-
----
+### cluster (2) canonical integrity / Q ratify との衝突 (2)
 
 ## SIMD primitive の 一 部 が declare さ れ て い る だ け で canonical で 一 度 も 動 か な い 状 態 で 残 っ て い る
 

@@ -110,14 +110,19 @@ Active mode is exposed via `node.diagnostics.transport` (`'sab'` / `'postMessage
 
 ### 5.1 `event<T>` ringbuffer slot
 
-Each slot in an `event<T>` ring buffer occupies a fixed-size block determined at compile time from `T`:
+Each slot in an `event<T>` ring buffer occupies a fixed-size block determined at compile time from the per-field wire types resolved at the `emitIf` call sites:
 
 ```
 [ atSample      : u32 ]   // block-local sample-offset
-[ T fields      : ... ]   // fixed-size record fields from T
+[ T fields      : ... ]   // fixed-size record fields from T; per-field wire
+                          // type resolved at emit time (Q71)
 [ payloadLen    : u32 ]   // 0 if T has no variable-length field
 [ payloadOffset : u32 ]   // index into the variable-length content buffer (when present)
 ```
+
+**Per-field wire type resolution (Q71)**: each numeric field's wire width is decided by the `Node<T>` value supplied at the `emitIf` call site — `Node<'f32'>` / `Node<'i32'>` → 4 bytes, `Node<'f64'>` / `Node<'i64'>` → 8 bytes, `Node<'bool'>` → 1 byte (with implicit `u32` alignment within the slot). The declared `T` carries field **names** and a coarse type family (numeric / boolean / typed-array); the precise wire type for each numeric field is supplied by the emit site.
+
+**Slot-size constancy**: although wire types are resolved at emit time, slot size for a given `event<T>` declaration is build-time-constant — the framework rejects emit sites whose per-field `Node<T>` types disagree with each other across call sites for the same `event<T>` handle as a graph-capture-time error.
 
 **Single variable-length field limit (v1.0.0)**: `T` may contain **at most one** variable-length field (= `Float32Array`, `Uint8Array`, etc.). A declared `T` with more than one variable-length field is a graph-capture-time error. The slot carries one `payloadLen` / `payloadOffset` pair sized for that single field; the TS surface mirrors this with the single-field constraint. Forward-compatible: a v1.x.0 surface could extend the slot layout to carry multiple `payloadLen` / `payloadOffset` pairs without changing the v1.0.0 single-field path.
 
@@ -131,13 +136,15 @@ Capacity for the content buffer follows the largest expected payload × ring-buf
 
 ### 5.3 `message<T>` ringbuffer slot
 
-Identical slot layout to `event<T>`, minus `atSample` (main has no sample-offset concept):
+Same slot structure as `event<T>` (§5.1), minus `atSample` (main has no sample-offset concept):
 
 ```
 [ T fields      : ... ]
 [ payloadLen    : u32 ]
 [ payloadOffset : u32 ]
 ```
+
+Per-field wire type is decided by the Q46 uniform lift rule (= all `number` fields → 4-byte i32, all `boolean` fields → 1-byte bool, all typed-array fields → §5.2 variable-length content buffer) — distinct from the `event<T>` per-field emit-time resolution rule of Q71. `message<T>` enters from `node.messages.<name>(payload)` on main where the payload is plain JS, so the framework reads each numeric field as a JS `number` and writes an i32 wire word; there is no `Node<T>` site to inspect.
 
 ### 5.4 `state.publish` shared region
 
