@@ -59,14 +59,11 @@ result.state;        // Uint8Array       snapshot blob (Q5 format) at end-of-ren
        `'persistent'` profile (= same default as online `node.snapshot()` no-arg).
      - Determinism guarantee. -->
 
-## 3. Backend choice
+## 3. Execution model
 
-`renderOffline` config に `backend?: 'js' | 'wasm'` field を 持 つ:
+`renderOffline` は host JS の WebAssembly runtime (= Node.js / Bun / Deno 等 の `WebAssembly.instantiate` を 持 つ environment) で processor の WASM binary を そ の ま ま instantiate し、 host JS 上 で render quantum (= 128 sample) 単 位 に WASM `process()` を 呼 び 出 し て output PCM を 集 め る。 `AudioContext` も audio thread も 介 在 し な い (= browser 不 要、 server-side で も そ の ま ま 走 る)。 production の online 経 路 (= `05-client.md`) が `AudioWorkletNode` 越 し に 走 ら せ る の と 同 一 の WASM binary を、 同 一 の per-quantum entry point で driver す る path = byte-identical な emission を offline で 再 現 す る (= Q17 polynomial approximation は WASM 内 で inline emit、 host JS 側 に 計 算 が 漏 れ な い)。
 
-- **`'js'` (default)** — pure-JS interpreter of the captured AST DAG。 WASM toolchain 不 要 で test / CI で 安 定。
-- **`'wasm'`** — WASM backend、 production と 同 一 emission を offline で 走 ら せ る path。
-
-1 回 の `renderOffline` 呼 び 出 し は 1 backend だ け を 走 ら せ る (= config + 戻 り 値 が 1 path で 単 純)。 pure-JS と WASM の cross-validation は `@unworklet/test` 側 の matcher (= `expectBitExactAcrossBackends(processor, config, { tolerance })`) に 別 出 し し、 内 部 で `renderOffline` を 2 回 呼 ん で 比 較 す る 形 (= `06-testing.md` §2)。 Q17 polynomial approximation が 両 backend で 共 通 実 装 の た め、 documented FP diff は 不 在 = `tolerance` default = `0` で acceptance B2 が pass す る。
+backend 選 択 肢 は な い (= `renderOffline` config に backend 切 替 field は 持 た な い)。 config (= `sampleRate`, `duration`, `inputs`, `params`, `messages`, `events`) と processor 入 力 が 同 一 で あ れ ば `renderOffline` の 戻 り 値 は host JS environment を 跨 い で bit-exact = test deterministic。 acceptance B2 (= `06-testing.md` §2) は 単 一 binary の 1 path 走 行 で 自 然 と pass す る (= 比 較 対 象 が な い = tolerance 概 念 不 在)。
 
 ## 4. Relationship to other packages
 

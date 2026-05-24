@@ -4,7 +4,7 @@ Cross-cutting reference: every resolved design question, recorded with its ratio
 
 ## Status
 
-populated (Q1–Q80 ratify complete; Q28 is unassigned — a numbering artifact, not a withheld decision)
+populated (Q1–Q81 ratify complete; Q28 is unassigned — a numbering artifact, not a withheld decision)
 
 ## Index
 
@@ -80,14 +80,15 @@ populated (Q1–Q80 ratify complete; Q28 is unassigned — a numbering artifact,
 | Q59 | SIMD `sumLanes` を v1.0.0 で 出 す (= L3-a) | resolved — `@unworklet/core/simd` か ら `sumLanes(v: Node<'f32x4'>): Node<'f32'>` を v1.0.0 export、 §7.2 MVP surface に 「Horizontal reduction」 sub-section と し て Lane access の 後 ろ に 追 加; 4 lane を 1 scalar に collapse す る natural な 終 端 操 作、 4-tap FIR / dot product / per-block accumulator collapse 等 SIMD 主 要 use case で 累 積 ergonomic 利 益 (= 4 行 → 1 行); framework emit は shuffle + add (= WASM SIMD spec に float horizontal reduce 直 接 ナ シ)、 性 能 は 案 (B) 案 と ほ ぼ 同 等 で ergonomic 利 益 が 主; canonical Ex 3 / Ex 7 で 既 に 4 行 pattern を 3 箇 所 で 書 い て い た fact (= 既 知 必 要、 v1.x.0 defer は [[no-preemptive-defer]] 違 反 リ ス ク)、 同 commit で 3 箇 所 を `sumLanes(...)` に rewrite (= AGENTS.md HARD CONTRACT 整 合); 案 (B) v1.x.0 defer 棄 却 (= SIMD primitive family と は 別 軸 で lane access の 終 端 操 作 = 単 独 primitive、 既 知 必 要 を defer す る 根 拠 ナ シ) | `01-dsl.md` §7.1 + §7.2 + `12-canonical-examples.md` Ex 3 / Ex 7 |
 | Q60 | Trivial repo settings batch (= L4-c × 4: monorepo tool + license + npm scope + TypeScript minimum) | resolved — (1) monorepo tool = pnpm workspaces (= VitePlus が user 選 択 で pnpm / npm / yarn / bun を wrap、 unworklet は pnpm 採 用、 root `pnpm-workspace.yaml` + root `package.json` の `packageManager: pnpm@<version>` + cross-package ref は `workspace:*` protocol、 開 発 / CI 起 動 は 全 て `vp` CLI 経 由 で AGENTS.md HARD CONTRACT)、 (2) license = MIT、 (3) npm scope = `@unworklet` (= 余 湖 さ ん npm account で 既 確 保)、 (4) TypeScript minimum = 5.5; trivial 設 定 値 (= 余 湖 さ ん の 既 取 得 / 既 嗜 好 で 決 ま る 値、 impl AI agent は 確 定 値 を 設 定 す れ ば 矛 盾 出 な い) を batch ratify | `09-repo-structure.md` §1 / §3 / §4 / §5 |
 | Q61 | Placeholder section 群 = impl 期 owner 任 せ 明 文 化 (= L4-a) | resolved — 各 doc の `<!-- placeholder -->` section (= 大 半 が internal implementation spec、 公 開 surface で は な い) は impl 開 始 時 に 各 doc owner が 順 次 fill す る 方 針 と し て docs 化、 v1.0.0 spec freeze 前 に 全 部 drain ナ シ; 統 一 注 釈 prose の 各 placeholder へ の 散 布 は L4-M4 sweep の 領 域 で 後 続 batch、 ratify 自 体 は こ の entry で 完 結; `09-repo-structure.md` §6 (= versioning policy) は Q14 acceptance criteria 連 動 で Q61 範 疇 外 | `00-foundations.md` §6 + `03-compiler.md` §1 / §3〜§8 + `04-worklet-runtime.md` §1 / §2 / §8 + `05-client.md` §3 / §4 + `06-testing.md` §2〜§5 + `07-vite-plugin.md` §2 / §3 / §5 / §6.x + `08-deployment.md` §3 / §4 + `10-roadmap.md` §1 / §2 / §3.2 + `13-offline-render.md` §2.x / §3 |
-| Q62 | v1.0.0 acceptance criteria (= L4-b、 Q14) | resolved — `10-roadmap.md` §1 を fill、 9 項 目 checklist (= A1 vp build / A2 canonical 全 WASM emit / A3 vp check / B1 canonical 期 待 output offline 再 現 / B2 pure JS ↔ WASM bit-exact / C1 realtime-safety 5 invariants layered 検 出 / D1 browser × isolated 6 セ ル smoke / E1 L4-M sweep 完 了 / E2 Layer 1〜3 = 0 / F1 .d.ts ↔ Q1-Q62 整 合) で impl AI agent が ship 可 否 を 1 意 判 定 可; browser matrix = (β) Chromium + Firefox + Safari × {COOP/COEP cross-origin isolated, not isolated} = 6 セ ル full required、 D1 smoke test 仕 様 で `connectFromWebMIDI` (= Web MIDI 標 準 wrapper) は test 対 象 外 (= emission boundary 外 側 = consumer 責 任、 Q11 整 合)、 全 browser セ ル で `node.midi.<name>.send(event)` source-agnostic injection 経 由 で MIDI 動 作 を 統 一 検 証; Safari Web MIDI 非 サ ポ ー ト = unworklet 側 実 装 変 更 ナ シ (= consumer が `navigator.requestMIDIAccess` を feature-detect す る path)、 `08-deployment.md` §2 B1 に Safari 制 約 1 段 落 補 強 + Per-browser validation prose に 1 文 補 強; 案 (α) Chrome + Firefox 4 セ ル / 案 (γ) Safari best-effort 棄 却 (= Safari の core 制 約 は Web MIDI に 限 定、 unworklet 自 体 は Safari で 動 く た め full required 達 成 可 能) | `10-roadmap.md` §1 + `08-deployment.md` §2 B1 + Q11 |
+| Q62 | v1.0.0 acceptance criteria (= L4-b、 Q14) | resolved — `10-roadmap.md` §1 を fill、 8 項 目 checklist (= A1 vp build / A2 canonical 全 WASM emit / A3 vp check / B1 canonical 期 待 output offline 再 現 / C1 realtime-safety 5 invariants layered 検 出 / D1 browser × isolated 6 セ ル smoke / E1 L4-M sweep 完 了 / E2 Layer 1〜3 = 0 / F1 .d.ts ↔ Q1-Q62 整 合) で impl AI agent が ship 可 否 を 1 意 判 定 可; browser matrix = (β) Chromium + Firefox + Safari × {COOP/COEP cross-origin isolated, not isolated} = 6 セ ル full required、 D1 smoke test 仕 様 で `connectFromWebMIDI` (= Web MIDI 標 準 wrapper) は test 対 象 外 (= emission boundary 外 側 = consumer 責 任、 Q11 整 合)、 全 browser セ ル で `node.midi.<name>.send(event)` source-agnostic injection 経 由 で MIDI 動 作 を 統 一 検 証; Safari Web MIDI 非 サ ポ ー ト = unworklet 側 実 装 変 更 ナ シ (= consumer が `navigator.requestMIDIAccess` を feature-detect す る path)、 `08-deployment.md` §2 B1 に Safari 制 約 1 段 落 補 強 + Per-browser validation prose に 1 文 補 強; 案 (α) Chrome + Firefox 4 セ ル / 案 (γ) Safari best-effort 棄 却 (= Safari の core 制 約 は Web MIDI に 限 定、 unworklet 自 体 は Safari で 動 く た め full required 達 成 可 能) | `10-roadmap.md` §1 + `08-deployment.md` §2 B1 + Q11 |
 | Q63 | swap 累 積 warning の 閾 値 + 文 言 (Q50 follow-up) | resolved — 同 AudioContext 内 で `replaceProcessor` が **50 回** を 超 え た 時 点 で **1 回 だ け** `console.warn` を 出 す; message = `unworklet: replaceProcessor has been called more than 50 times on this AudioContext. Web Audio cannot unload old WASM modules; create a new AudioContext if memory growth matters.`; 50 = HMR で の 通 常 saturate し な い 上 限 + live coding は 数 百 回 swap 想 定 = 「自 然 な dev session で 死 文 化 し な い」 値; 案 (= N=10 早 期 警 告、 N=100 余 裕 重 視、 warning ナ シ) を 棄 却 (= 10 は HMR で 普 通 に 出 て noise、 100 は live coding 以 外 で 死 文、 warning ナ シ は user の memory leak 認 知 経 路 を 奪 う) | `05-client.md` §8.5 |
 | Q64 | Live coding canonical example を 入 れ る か (Q-B、 Q50 follow-up) | resolved — Ex 10 「Live coding REPL bridge」 を 新 設、 `replaceProcessor` + `state.snapshot 'persistent'` + 主 側 graph re-wire + `RestoreResult.ok = false` 失 敗 path + Q63 累 積 warning surface を 1 sample で 通 し 確 認 で き る form に。 入 れ な い path 棄 却 (= 仕 様 surface の 完 結 度 を impl AI agent が docs だ け で 検 出 で き な い、 = `replaceProcessor` API の 抜 け / state carry / graph re-wire / error surface の 矛 盾 が 隠 れ る リ ス ク) | `12-canonical-examples.md` Ex 10 |
 | Q65 | per-block 呼 び canonical example 追 加 (Q-D、 Q51 follow-up) | resolved — 追 加 ナ シ。 per-block で の `audioIn.at(c, 0)` / `audioOut.set(c, 0, v)` 動 作 は Q51 + §1 prose + Q37 last-write-wins で 仕 様 文 一 意、 impl AI agent が docs prose だ け で 1 意 に 読 め る。 入 れ る case は Ex 4 (lookahead limiter) と 役 割 重 複 で 新 surface ナ シ = 矛 盾 検 出 力 上 が ら な い、 棄 却 | `12-canonical-examples.md` (= 追 加 ナ シ) |
 | Q66 | Voice allocation recipe 追 加 (Q-E) | resolved — 追 加 ナ シ。 Ex 8 で voice allocator subgraph + steal logic が 既 exercise、 unworklet 仕 様 surface (= subgraph / state / onEvent MIDI / build-time loop) は 全 完 結。 stealing policy 違 い (= oldest / quietest / priority 等) は consumer の audio engine 設 計 領 域 で unworklet 仕 様 surface に 矛 盾 を 産 ま な い、 棄 却 | `12-canonical-examples.md` Ex 8 |
 | Q67 | Overlap-add recipe 追 加 (Q-F) | resolved — 追 加 ナ シ。 Ex 3 で partitioned convolution = overlap-add 系 構 造 を 既 exercise、 unworklet 仕 様 surface (= buffer / state / forSample / SIMD bulk) は 全 完 結。 STFT 特 化 (= 窓 + FFT + spectrum 操 作 + IFFT + overlap-add) は FFT primitive を 必 要 と し、 FFT は unworklet primitive 外 (= consumer の L1 helper 領 域) = unworklet 仕 様 surface に 矛 盾 を 産 ま な い、 棄 却 | `12-canonical-examples.md` Ex 3 |
-| Q68 | per-block で の sample-offset 引 数 が 0 以 外 literal の 場 合 の 範 囲 check 仕 様 (Q-C、 Q51 follow-up) | resolved — `audioIn.at(c, k)` / `audioOut.set(c, k, v)` / `param.at(k)` の sample-offset 引 数 が JS literal で 渡 さ れ た 場 合、 `[0, SAMPLES_PER_BLOCK - 1]` (= 0〜127) 範 囲 外 は graph-capture-time error (= `audio-sample-offset-out-of-range`、 Layer 2) で 弾 く。 `audio-sample-offset-out-of-range` を `03-compiler.md` §2.6 stable error ID inventory に 追 加。 audio I/O + param で 統 一; 案 (= 範 囲 check ナ シ + runtime 動 作 規 定 / user 責 任 未 規 定) を 棄 却 (= 「build 時 に 静 的 検 出 可 能 な も の は build 時 に 弾 く」 既 軸 と 衝 突、 pure JS ↔ WASM bit-exact 検 証 と 衝 突 リ ス ク); 128 fix は v1.0.0 で 維 持 (= Q18 + Q35 と 整 合)、 将 来 AudioContext `renderSizeHint` 採 用 で render quantum 可 変 化 path に 進 ん だ 場 合 は v1.x.0 で adaptive emission を additive 追 加 (= build 時 check + runtime check の 2 layer 構 成 へ 拡 張)、 consumer が 128 以 外 の `renderSizeHint` で 作 成 し た AudioContext を v1.0.0 で 渡 し た 時 は worklet 起 動 時 runtime check で 違 反 = エ ラ ー event 発 火 で fail-loud (= Q18 既 path 維 持) | `03-compiler.md` §2.6 + `01-dsl.md` §1 |
+| Q68 | per-block で の sample-offset 引 数 が 0 以 外 literal の 場 合 の 範 囲 check 仕 様 (Q-C、 Q51 follow-up) | resolved — `audioIn.at(c, k)` / `audioOut.set(c, k, v)` / `param.at(k)` の sample-offset 引 数 が JS literal で 渡 さ れ た 場 合、 `[0, SAMPLES_PER_BLOCK - 1]` (= 0〜127) 範 囲 外 は graph-capture-time error (= `audio-sample-offset-out-of-range`、 Layer 2) で 弾 く。 `audio-sample-offset-out-of-range` を `03-compiler.md` §2.6 stable error ID inventory に 追 加。 audio I/O + param で 統 一; 案 (= 範 囲 check ナ シ + runtime 動 作 規 定 / user 責 任 未 規 定) を 棄 却 (= 「build 時 に 静 的 検 出 可 能 な も の は build 時 に 弾 く」 既 軸 と 衝 突、 範 囲 外 動 作 が WASM emission 依 存 と な り offline / production worklet 間 で 動 作 揺 れ る リ ス ク); 128 fix は v1.0.0 で 維 持 (= Q18 + Q35 と 整 合)、 将 来 AudioContext `renderSizeHint` 採 用 で render quantum 可 変 化 path に 進 ん だ 場 合 は v1.x.0 で adaptive emission を additive 追 加 (= build 時 check + runtime check の 2 layer 構 成 へ 拡 張)、 consumer が 128 以 外 の `renderSizeHint` で 作 成 し た AudioContext を v1.0.0 で 渡 し た 時 は worklet 起 動 時 runtime check で 違 反 = エ ラ ー event 発 火 で fail-loud (= Q18 既 path 維 持) | `03-compiler.md` §2.6 + `01-dsl.md` §1 |
 | Q69 | SAB mode の event drain mechanism (= MessageChannel / Atomics.notify / rAF / setTimeout) | resolved — 実 装 AI 領 域 と し て close。 観 測 ル ー ル (= 「main thread reader が ringbuffer を 継 続 drain す る」 = `02-messaging.md` §4 / §5) と publish counter cadence (= Q39-a 「due tick で 不 等 確 increment」) を 満 た す 限 り、 SAB mode で の wake-up mechanism は impl 自 由 度。 `05-client.md` §5.1 の 「per-MessageChannel ping in SAB mode」 は 例 示 で あ り 仕 様 確 定 で は な い (= 実 装 期 で Atomics.notify / rAF 等 に 変 え て も 観 測 ル ー ル 違 反 を 起 こ さ な い)。 仕 様 invariant (= drain 観 測、 publish cadence) は 動 か ず、 mechanism 細 部 は 実 装 期 の AI agent が performance / browser compat trade-off で 決 め る | `02-messaging.md` §4 + `05-client.md` §5.1 + `.claude/skills/_shared/core-principles.md` §2 |
+| Q81 | `@unworklet/offline` backend simplification = WASM 1 backend に 統 一 | resolved — `renderOffline(processor, config)` を WASM 1 backend に 統 一、 config か ら `backend?: 'js' | 'wasm'` field 削 除、 pure-JS interpreter path を 仕 様 surface か ら 全 廃。 内 部 動 作 = host JS (= Node.js / Bun / Deno 等 の WebAssembly runtime) で `@unworklet/vite-plugin` emit の WASM binary を `WebAssembly.instantiate()` し render quantum 単 位 で WASM `process()` を 呼 ぶ 経 路、 audio thread / AudioContext 不 要; 1 backend で server-side render / batch / preset preview / test の 4 use case 全 部 カ バ ー; pure-JS interpreter = mock 寄 り = 「framework が ship す る も の と 違 う path で 動 く」 構 造 的 矛 盾 で 棄 却 | `13-offline-render.md` §3 + `06-testing.md` §2 + `10-roadmap.md` §1 + `03-compiler.md` §8 + `09-repo-structure.md` §2.4 |
 
 ---
 
@@ -2010,7 +2011,7 @@ unworklet を dev で 使 う 時 に 必 要 な 「edit → save → 動 い �
 | 動 的 swap primitive (= 旧 processor → 新 processor、 state 持 ち 越 し) | 巻 き 取 り (`@unworklet/core`) | Web Audio spec 制 約 (= `registerProcessor` 同 name 禁 止、 `removeModule()` 不 存 在) の 隠 蔽 が fundamental + universal (= HMR / live coding / visual programming 共 通 根)、 raw primitive な ら non-opinionated。 詳 細 = Q50 |
 | HMR orchestration (= file watcher trigger + 自 動 swap + graph 自 動 再 接 続 + crossfade) | user land / 第 三 者 | 動 的 swap primitive あ れ ば user land で 書 け る、 「自 動 や る か 手 動 か」 は consumer's audio graph に 踏 み 込 む = opinionated 領 域、 declarative 哲 学 と 衝 突 |
 | consumer の app UI / DSP (spectrum analyzer / oscilloscope / custom dashboard 等) | user land / 第 三 者 | consumer's app に framework が 踏 み 込 む = declarative 違 反、 plugin が 提 供 す る panel は unworklet 自 身 の 構 造 限 定 |
-| offline rendering (= pure JS WASM 実 行、 PCM 返 却) | 巻 き 取 り (`@unworklet/offline` 別 package) | fundamental (pure JS interpreter は framework が 持 つ) + universal (test / server-side / batch / preset preview の 4 use case 共 通) |
+| offline rendering (= host JS の WebAssembly runtime で WASM を 実 行、 PCM 返 却) | 巻 き 取 り (`@unworklet/offline` 別 package) | fundamental (offline WASM execution は framework が 持 つ) + universal (test / server-side / batch / preset preview の 4 use case 共 通) |
 | test matchers (audio 比 較 / NaN 検 知 等) | 巻 き 取 り (`@unworklet/test` 別 package) | audio test の 共 通 課 題 を 巻 き 取 り、 内 部 で `@unworklet/offline` を 使 用 |
 
 採 用 案 = **3 package 構 成**:
@@ -2033,7 +2034,7 @@ unworklet 自 前 CLI は ship し な い (= `vite build` / `vite` が user-fac
 ### Side effects
 
 - **`07-tooling.md` → `07-vite-plugin.md` rename + 全 rewrite** (= CLI 前 提 を vite plugin に re-frame、 §1 scope / §2 build / §3 asset / §4 HMR boundary (= primitive 化、 swap orchestration は user land) / §5 source maps / §6 DevTools surface (= build-error panel 1 つ + analysis JSON 出 力))
-- **新 `13-offline-render.md`** (= `@unworklet/offline` の API + use case 4 つ + backend choice の skeleton)
+- **新 `13-offline-render.md`** (= `@unworklet/offline` の API + use case 4 つ + offline execution model の skeleton)
 - **`05-client.md` §8** (新 規 section): `replaceProcessor` API spec を 追 加 (= Q50 の authoritative section)
 - **`06-testing.md` re-frame** (= `@unworklet/test` matchers focus、 `@unworklet/offline` を 内 部 使 用)
 - **`08-deployment.md` §1** placeholder → resolved 段 落 (= `@unworklet/vite-plugin` 参 照、 他 bundler は v1.x.0 additive)
@@ -2596,7 +2597,7 @@ trivial 設 定 値 = 余 湖 さ ん の 既 取 得 / 既 嗜 好 で 決 ま 
 
 ### Decision
 
-`10-roadmap.md` §1 を fill。 9 項 目 checklist (= A1〜A3 build/compile + B1〜B2 functional + C1 safety + D1 browser matrix + E1〜E2 integrity + F1 public surface integrity) で impl AI agent が ship 可 否 を 1 意 判 定 で き る 形 に。 1 項 目 で も 落 ち た ら ship 不 可、 全 項 目 OK で ship。
+`10-roadmap.md` §1 を fill。 8 項 目 checklist (= A1〜A3 build/compile + B1 functional + C1 safety + D1 browser matrix + E1〜E2 integrity + F1 public surface integrity) で impl AI agent が ship 可 否 を 1 意 判 定 で き る 形 に。 1 項 目 で も 落 ち た ら ship 不 可、 全 項 目 OK で ship。
 
 各 項 目 の 内 容 は `10-roadmap.md` §1 を 権 威 と し て 参 照。 こ の Q62 entry は そ の 採 用 / 棄 却 決 定 を 記 録。
 
@@ -2628,7 +2629,7 @@ trivial 設 定 値 = 余 湖 さ ん の 既 取 得 / 既 嗜 好 で 決 ま 
 
 ### Side effects
 
-- `10-roadmap.md` §1 を fill (= 9 項 目 checklist 規 定)、 Status を `partial (§1 written at Q62; §3.1 mandatory deferred mitigations written; §2, §3.2 placeholder)` に 更 新
+- `10-roadmap.md` §1 を fill (= 8 項 目 checklist 規 定)、 Status を `partial (§1 written at Q62; §3.1 mandatory deferred mitigations written; §2, §3.2 placeholder)` に 更 新
 - `08-deployment.md` §2 B1 末 尾 に Safari Web MIDI 制 約 1 段 落 補 強 (= consumer feature-detect + fallback path の 明 文 化)
 - `08-deployment.md` §2 Per-browser validation prose に 1 文 補 強 (= Web MIDI 標 準 自 体 は test 対 象 外、 Safari セ ル smoke 範 囲 の 明 文 化)
 - `09-repo-structure.md` §6 versioning policy = Q14 land 連 動 と prose comment に 残 す (= Q62 ratify で versioning 自 体 は touch せ ず、 §6 fill は freeze 前 別 batch)
@@ -2942,7 +2943,7 @@ authoritative wording: `03-compiler.md` §2.6 + `01-dsl.md` §1。
 
 - *「build 時 に 静 的 に 検 出 可 能 な も の は build 時 に 弾 く」 既 軸 と 整 合*: Q22-c で 確 立 し た 3 error layer の Layer 2 (= graph-capture-time error) に 自 然 fit。 既 `non-constant-lane` (= Q3) や `illegal-stride` (= Q37-b) と 同 軸。
 - *仕 様 surface に 別 軸 追 加 ナ シ*: build 通 す + 範 囲 外 動 作 を 仕 様 規 定 す る path (= 「範 囲 外 = 0 返 す」 等) を 採 る と WASM emission に 1 layer 増 え る + 範 囲 外 動 作 を 1 つ に 決 め る 別 grill が 発 生 = surface 膨 張。
-- *bit-exact 検 証 と 整 合*: Q62 acceptance B2 で の pure JS ↔ WASM bit-exact 検 証 に 「範 囲 外 動 作 未 規 定」 path は 衝 突 リ ス ク = 静 的 弾 き で 不 確 定 性 排 除。
+- *offline / production worklet 間 動 作 一 致 と 整 合*: 範 囲 外 動 作 未 規 定 path は `@unworklet/offline` 上 で の WASM 実 行 と production worklet 上 で の WASM 実 行 が WebAssembly runtime 依 存 で 動 作 揺 れ る リ ス ク = 静 的 弾 き で 不 確 定 性 排 除。
 - *audio I/O + param 統 一*: 3 種 primitive で 共 通 ル ー ル = mental model 1 軸。
 
 **v1.x.0 で の 拡 張 path:**
@@ -2952,7 +2953,7 @@ authoritative wording: `03-compiler.md` §2.6 + `01-dsl.md` §1。
 **Rejected:**
 
 - *範 囲 check ナ シ + runtime 動 作 を 仕 様 で 規 定 (= 例: 「範 囲 外 = 0 を 返 す」)*: 静 的 に 検 出 可 能 な も の を runtime に 流 す = Q22-c 軸 と 整 合 し な い + 範 囲 外 動 作 を 1 つ (= 0 返 す / 末 端 値 返 す / trap 等) に 決 め る 別 grill が 発 生 = surface 膨 張。
-- *範 囲 check ナ シ + 範 囲 外 動 作 は user 責 任 (= undefined behavior)*: WASM emission 側 の 範 囲 外 動 作 が 実 装 依 存 = pure JS ↔ WASM bit-exact 検 証 (Q62 B2) と 衝 突 リ ス ク + impl AI agent が 異 な る judgment に 達 す る 余 地 = 仕 様 surface 矛 盾。
+- *範 囲 check ナ シ + 範 囲 外 動 作 は user 責 任 (= undefined behavior)*: WASM emission 側 の 範 囲 外 動 作 が 実 装 依 存 = offline / production worklet 間 で 動 作 揺 れ る + impl AI agent が 異 な る judgment に 達 す る 余 地 = 仕 様 surface 矛 盾。
 
 
 ## Q69 — SAB mode の event drain mechanism (= 実 装 AI 領 域 と し て close)
@@ -3647,4 +3648,44 @@ registerProcessor('my-extended', MyExtended);
 - **外 部 SAB-backed MIDI source の declarative 第 一 級 受 け 入 れ** (= 仮 称 path Z): `createNode(ctx, def, { midi: { <name>: { source: SAB } } })` 形 = sample-accurate な 外 部 MIDI source を extends 書 か ず に declarative path で 受 け 取 る spec 拡 張。 外 部 ラ イ ブ ラ リ 側 SAB layout 仕 様 の 確 定 待 ち (= 別 lib 仕 様 確 定 待 ち + 並 列 AI 厚 化 可 = 例 外 defer 条 件 該 当)、 v1.x.0 additive 候 補
 - **`connectFromWebMIDI` 引 数 の duck-typed 緩 和** (= `MIDIInput | MIDIInputLike`): application 由 来 / 非 sample-accurate source 用 sugar と し て 有 用 だ が、 v1.0.0 で は 既 存 `MIDIInput` 厳 密 型 の ま ま 維 持、 v1.x.0 additive 候 補
 - **MIDI 2.0 風 metadata slot** (= polyphony tracking 用 noteId、 NoteExpression 等): unworklet 仕 様 wire format (= `11-midi.md` §4) を 拡 張 す る 場 合 の 候 補、 外 部 ラ イ ブ ラ リ 仕 様 確 定 後 に decide
+
+---
+
+## Q81 — `@unworklet/offline` backend simplification = WASM 1 backend に 統 一
+
+**Status:** resolved.
+
+### Decision
+
+`@unworklet/offline` の `renderOffline(processor, config)` を **WASM 1 backend** に 統 一。 config か ら `backend?: 'js' | 'wasm'` field を 削 除。 pure-JS interpreter path を 仕 様 surface か ら 全 廃。
+
+`renderOffline` の 内 部 動 作 = host JS 環 境 (= Node.js / Bun / Deno 等 の WebAssembly runtime) で `@unworklet/vite-plugin` emit の WASM binary を `WebAssembly.instantiate()` し、 render quantum 単 位 で WASM `process()` 関 数 を 呼 ぶ 経 路。 audio thread / AudioContext は 不 要。 host JS で 普 通 に WASM module を ロ ー ド + 駆 動 す る path。
+
+### Rationale
+
+- `@unworklet/offline` の `'js'` backend = pure-JS interpreter は 「unworklet が 本 質 的 に 提 供 す る WASM declarative graph」 と 別 実 装 path に な る = mock 寄 り = 「framework が ship す る も の と 違 う path で 動 く」 と い う 構 造 的 矛 盾
+- unworklet の core 価 値 = 「user が 書 い た declarative graph が WASM に 落 ち、 audio thread で WASM だ け が 動 く」。 offline rendering で も WASM を 走 ら せ る の が 本 質
+- 1 backend の み = backend choice option / cross-backend bit-exact verification / pure-JS interpreter ship 等 が 全 部 不 要 = surface 縮 小
+- audio thread 不 要 な の で Node.js 上 で WASM module を 普 通 に 駆 動 す る だ け で server-side render / batch / preset preview / test の 4 use case 全 部 カ バ ー
+
+### Rejected
+
+- *pure-JS interpreter を 維 持* — mock 実 装 path、 「framework が ship す る も の と 違 う path で 動 く」 構 造 的 矛 盾
+- *backend choice option を 維 持* — 1 backend の み で choice 自 体 が 死 語
+
+### Side effects (= 各 file の 修 正)
+
+- `13-offline-render.md` §3 「Backend choice」 → 「Offline execution model」 等 に refine、 backend choice field 削 除
+- `06-testing.md` §2 `expectBitExactAcrossBackends` matcher 削 除
+- `10-roadmap.md` §1 acceptance B2 (= pure-JS と WASM bit-exact) 削 除
+- `03-compiler.md` §8 「Pure-JS backend」 → 「Offline backend」 rename、 pure-JS interpreter 言 及 全 廃
+- `09-repo-structure.md` §2.4 `@unworklet/offline` dependency graph prose refine
+- `00-foundations.md` 該 当 prose refine (= 該 当 ナ シ な ら 修 正 ナ シ)
+- `decisions-log.md` Q17 / Q23+Q24+Q25 / Q62 内 の pure-JS / bit-exact 言 及 refine
+
+### v1.x.0 deferral
+
+- ナ シ (= v1.0.0 surface で WASM 1 backend 完 結)
+
+---
 

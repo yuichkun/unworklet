@@ -19,7 +19,7 @@ The framework is **runtime-agnostic.** unworklet targets the Web Audio API as sp
 - **Realtime-safe by construction.** All compiled `process` paths are statically guaranteed allocation-free, with no GC pressure and no unbounded loops on the audio thread.
 - **TypeScript-native.** The full TS type system applies to user code; IDE tooling, refactoring, and type inference work without compromise.
 - **Runtime-agnostic.** Produces standards-only Audio Worklet artifacts that run in any spec-compliant host. No browser-only APIs, no host-specific code paths in the core.
-- **Testable without a browser.** A pure-JS backend lets every processor render under Vitest in Node.
+- **Testable without a browser.** The emitted WASM binary runs under any host JS WebAssembly runtime (Node.js / Bun / Deno) via `@unworklet/offline`, so every processor renders under Vitest without a browser.
 - **Typed bidirectional messaging,** including sample-accurate MIDI-event ingestion at the processor boundary (see `11-midi.md`).
 - **Deterministic memory footprint.** All state and buffers bounded at compile time.
 

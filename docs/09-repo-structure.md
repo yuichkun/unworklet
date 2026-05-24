@@ -66,7 +66,7 @@ Per-identifier signature detail / generic constraint is impl-phase fill per Q53 
 |---|---|---|---|
 | `@unworklet/core` | (= ナ シ) | (= ナ シ) | web platform 純 粋。 v1.0.0 で external dep を 持 た な い。 |
 | `@unworklet/vite-plugin` | (= ナ シ) | `@unworklet/core` + `vite` | user が install 済 の core / vite に 寄 生、 version drift を 避 け る。 |
-| `@unworklet/offline` | (= 内 部 pure-JS interpreter を 同 梱) | `@unworklet/core` | core と 同 major version で 動 か す 制 約、 interpreter 自 体 は 自 前 ship。 |
+| `@unworklet/offline` | (= 内 部 で host JS の WebAssembly runtime で WASM binary を instantiate し て 実 行 = Node.js / Bun / Deno 等 の `WebAssembly.instantiate` を 使 う) | `@unworklet/core` | core と 同 major version で 動 か す 制 約、 WASM execution layer 自 体 は 内 部 module。 |
 | `@unworklet/test` | `@unworklet/offline` | `@unworklet/core` + `vitest` | matcher が offline を 必 ず 使 う = auto-resolve、 user install 数 削 減 (= 1 install で 動 く)。 |
 
 invariant: `@unworklet/core` の major version が 上 が る と 全 satellite package も 同 major で release (= peer 経 由 で version 強 制)。 acceptance F1 の 公 開 surface check は `package.json` の `dependencies` / `peerDependencies` field set が こ の 表 と 一 致 す る こ と を 検 証。

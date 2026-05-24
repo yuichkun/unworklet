@@ -1,6 +1,6 @@
 # 03 — Compiler
 
-The build-time pipeline that turns a `defineProcessor` definition into the artifacts consumed by the worklet runtime, the main-thread client, and the test backend. This is an internal module of `@unworklet/core` — the user invokes it implicitly through `@unworklet/vite-plugin`; there is no direct `import` surface.
+The build-time pipeline that turns a `defineProcessor` definition into the artifacts consumed by the worklet runtime, the main-thread client, and the offline runtime (`@unworklet/offline`). This is an internal module of `@unworklet/core` — the user invokes it implicitly through `@unworklet/vite-plugin`; there is no direct `import` surface.
 
 ## Status
 
@@ -203,11 +203,8 @@ A separate runtime check (not graph-capture / static-analysis) fires when the wo
 
      Realtime-safety contracts:
        - `memory.grow` opcode never emitted into the worklet's WASM (§2.6 Emission)
-       - math intrinsics inlined per Q17 (polynomial approximation; same
-         polynomial is also used by the pure-JS interpreter in
-         `@unworklet/offline` so that pure-JS と WASM が bit-exact、 acceptance
-         B2 で 「documented FP diff は 不 在」、 no FFI / JS-WASM per-sample
-         boundary crossings)
+       - math intrinsics inlined per Q17 (polynomial approximation; no FFI /
+         JS-WASM per-sample boundary crossings)
 
      Per-sub-region byte layout, emit ordering, and emitter IR shape detail is
      impl-phase fill per Q61. -->
@@ -225,17 +222,18 @@ A separate runtime check (not graph-capture / static-analysis) fires when the wo
 <!-- Q22 — TS source → AST → WASM line/column propagation; sidecar vs embedded;
      consumed by error diagnostics and bench / analyze tooling. Lands here. -->
 
-## 8. Pure-JS backend
+## 8. Offline backend
 
-<!-- The captured AST DAG is reinterpreted in pure JS as the **offline backend**
-     shipped from `@unworklet/offline` (= covers all 4 offline use cases per
+<!-- `@unworklet/offline` ships the offline path: the same WASM binary that
+     `@unworklet/core` emits for the AudioWorklet is loaded into the host JS
+     runtime (Node.js / Bun / Deno など、 each shipping a WebAssembly runtime
+     in its standard library) and driven through render quantum cycles to
+     produce PCM output. This covers all 4 offline use cases per
      Q23+Q24+Q25: server-side render, batch processing, preset preview UI,
-     test). `@unworklet/test` wraps this same backend via vitest matchers — it
+     test. `@unworklet/test` wraps this same backend via vitest matchers — it
      does not re-implement rendering (06-testing §1).
 
      Architecture invariant (Q23+Q24+Q25): `@unworklet/offline` is the **single
-     ship channel** for the pure-JS interpreter; `@unworklet/core` keeps the
-     WASM backend + public surface; `@unworklet/test` depends on
-     `@unworklet/offline` and adds audio-domain matchers. Cross-validation
-     between pure-JS and WASM backends (= acceptance B2 bit-exact) is impl-
-     phase fill per Q61. -->
+     ship channel** for offline WASM execution; `@unworklet/core` keeps the
+     WASM emission + AudioWorklet runtime + public surface; `@unworklet/test`
+     depends on `@unworklet/offline` and adds audio-domain matchers. -->
