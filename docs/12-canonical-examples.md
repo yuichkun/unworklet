@@ -68,7 +68,7 @@ The example set is designed so that the union of all examples touches every conc
 ```typescript
 import {
   defineProcessor, audioInput, audioOutput, param, state,
-  forSample, mul, max, abs,
+  forSample,
 } from '@unworklet/core';
 
 export const stereoGain = defineProcessor(() => {
@@ -87,18 +87,18 @@ export const stereoGain = defineProcessor(() => {
   return {
     process: () => {
       forSample((i) => {
-        const l = mul(main.at(0, i), gain.at(i));
-        const r = mul(main.at(1, i), gain.at(i));
+        const l = main.at(0, i).mul(gain.at(i));
+        const r = main.at(1, i).mul(gain.at(i));
         out.set(0, i, l);
         out.set(1, i, r);
 
-        meterL.store(max(meterL.load(), abs(l)));
-        meterR.store(max(meterR.load(), abs(r)));
+        meterL.store(l.abs().max(meterL.load()));
+        meterR.store(r.abs().max(meterR.load()));
       });
 
       // Per-block decay so the meter does not stick at the most recent peak forever.
-      meterL.store(mul(meterL.load(), 0.95));
-      meterR.store(mul(meterR.load(), 0.95));
+      meterL.store(meterL.load().mul(0.95));
+      meterR.store(meterR.load().mul(0.95));
     },
   };
 });
@@ -136,7 +136,7 @@ window.addEventListener('beforeunload', () => {
 ```typescript
 import {
   defineProcessor, defineSubgraph, createSubgraph, audioInput, audioOutput, param, state,
-  forSample, add, sub, mul, div, sin, cos, exp,
+  forSample, num,
   type Node, type State,
 } from '@unworklet/core';
 
@@ -148,9 +148,9 @@ function biquadDFIIT(
   a1: Node<'f32'>, a2: Node<'f32'>,
   z1: State<'f32'>, z2: State<'f32'>,
 ): Node<'f32'> {
-  const y   = add(mul(b0, x), z1.load());
-  const z1n = sub(add(mul(b1, x), z2.load()), mul(a1, y));
-  const z2n = sub(mul(b2, x),                  mul(a2, y));
+  const y   = b0.mul(x).add(z1.load());
+  const z1n = b1.mul(x).add(z2.load()).sub(a1.mul(y));
+  const z2n = b2.mul(x).sub(a2.mul(y));
   z1.store(z1n);
   z2.store(z2n);
   return y;
@@ -160,27 +160,27 @@ function biquadDFIIT(
 // Returns a record of nodes; called once per block when params changed.
 function peakingCoeffs(
   freq: Node<'f32'>, q: Node<'f32'>, gainDb: Node<'f32'>, sr: number,
-): { b0: Node<'f32'>; b1: Node<'f32'>; b2: Node<'f32'>; a1: Node<'f32'>; a2: Node<'f32'> } {
-  const A     = exp(mul(gainDb, 0.05 * Math.LN10));   // 10^(gainDb/40)
-  const w0    = mul(freq, 2 * Math.PI / sr);
-  const cosw0 = cos(w0);
-  const sinw0 = sin(w0);
-  const alpha = div(sinw0, mul(q, 2));
+): { b0: Node<'f32'>; b1: Node<'f32'>; b2: Node<'f32'>; a1: Node<'f32'>; a2: Node<'f32'>; } {
+  const A     = gainDb.mul(0.05 * Math.LN10).exp();   // 10^(gainDb/40)
+  const w0    = freq.mul(2 * Math.PI / sr);
+  const cosw0 = w0.cos();
+  const sinw0 = w0.sin();
+  const alpha = sinw0.div(q.mul(2));
 
-  const b0Raw = add(1, mul(alpha, A));
-  const b1Raw = mul(-2, cosw0);
-  const b2Raw = sub(1, mul(alpha, A));
-  const a0Raw = add(1, div(alpha, A));
-  const a1Raw = mul(-2, cosw0);
-  const a2Raw = sub(1, div(alpha, A));
+  const b0Raw = num(1).add(alpha.mul(A));
+  const b1Raw = cosw0.mul(-2);
+  const b2Raw = num(1).sub(alpha.mul(A));
+  const a0Raw = num(1).add(alpha.div(A));
+  const a1Raw = cosw0.mul(-2);
+  const a2Raw = num(1).sub(alpha.div(A));
 
-  const inv = div(1, a0Raw);
+  const inv = num(1).div(a0Raw);
   return {
-    b0: mul(b0Raw, inv),
-    b1: mul(b1Raw, inv),
-    b2: mul(b2Raw, inv),
-    a1: mul(a1Raw, inv),
-    a2: mul(a2Raw, inv),
+    b0: b0Raw.mul(inv),
+    b1: b1Raw.mul(inv),
+    b2: b2Raw.mul(inv),
+    a1: a1Raw.mul(inv),
+    a2: a2Raw.mul(inv),
   };
 }
 
@@ -272,10 +272,9 @@ node.onError((err) => console.error('[3bandEQ]', err));
 import {
   defineProcessor, audioInput, audioOutput, param, state, buffer,
   forSample, SAMPLES_PER_BLOCK,
-  add, sub, mul, mod, abs, max,
   type Node,
 } from '@unworklet/core';
-import { splat, mulVec, addVec, sumLanes } from '@unworklet/core/simd';
+import { splat, sumLanes } from '@unworklet/core/simd';
 
 // Linear-phase EQ via 3 partitioned FIR taps over a single combined impulse.
 // Impulse buffer is precomputed in main and uploaded; this processor hosts the
@@ -304,7 +303,7 @@ export const linearPhaseEQ = defineProcessor(() => {
 
       // forSample (input shovel): copy input into history ring buffer.
       forSample((i) => {
-        const idx = mod(add(startHead, i), HISTORY_LEN);
+        const idx = startHead.add(i).mod(HISTORY_LEN);
         history.write(idx, main.at(0, i));
       });
 
@@ -313,21 +312,21 @@ export const linearPhaseEQ = defineProcessor(() => {
       // We process the inner k loop in chunks of 4 via SIMD (compile-time
       // unrolled below).
       forSample((i) => {
-        const outIdx = mod(add(startHead, i), HISTORY_LEN);
+        const outIdx = startHead.add(i).mod(HISTORY_LEN);
         let acc = splat(0);
         // Compile-time unroll of the inner loop, 4 samples per iteration.
         for (let k = 0; k < FIR_LEN; k += 4) {
-          const histIdx = mod(add(sub(sub(outIdx, k), 3), HISTORY_LEN), HISTORY_LEN);
+          const histIdx = outIdx.sub(k).sub(3).add(HISTORY_LEN).mod(HISTORY_LEN);
           const hVec = history.loadVec(histIdx);
           const iVec = impulse.loadVec(k);
-          acc        = addVec(acc, mulVec(hVec, iVec));
+          acc        = acc.add(hVec.mul(iVec));
         }
         const sum = sumLanes(acc);
         out.set(0, i, sum);
       });
 
       // Per-block: advance the head by one block.
-      histHead.store(mod(add(startHead, SAMPLES_PER_BLOCK), HISTORY_LEN));
+      histHead.store(startHead.add(SAMPLES_PER_BLOCK).mod(HISTORY_LEN));
     },
   };
 });
@@ -370,7 +369,7 @@ node.outputs.main.connect(audioContext.destination);
 import {
   defineProcessor, audioInput, audioOutput, param, state, buffer,
   forSample, event, SAMPLES_PER_BLOCK,
-  add, sub, mul, div, mod, max, min, abs, gt, lt, exp, select, log,
+  num, select,
   type Node, type State,
 } from '@unworklet/core';
 
@@ -382,9 +381,9 @@ function envelopeFollow(
   attackCoef: Node<'f32'>, releaseCoef: Node<'f32'>,
   prev: State<'f32'>,
 ): Node<'f32'> {
-  const r     = abs(x);
-  const coef  = select(gt(r, prev.load()), attackCoef, releaseCoef);
-  const y     = add(mul(coef, sub(r, prev.load())), prev.load());
+  const r     = x.abs();
+  const coef  = select(r.gt(prev.load()), attackCoef, releaseCoef);
+  const y     = r.sub(prev.load()).mul(coef).add(prev.load());
   prev.store(y);
   return y;
 }
@@ -418,52 +417,52 @@ export const lookaheadLimiter = defineProcessor((ctx) => {
   return {
     process: () => {
       // Per-block coefficients.
-      const ceilingLin     = exp(mul(ceiling.at(0), Math.LN10 * 0.05));
-      const releaseSamples = mul(releaseMs.at(0), ctx.sampleRate / 1000);
-      const releaseCoef    = sub(1, exp(div(-1, releaseSamples)));
+      const ceilingLin     = ceiling.at(0).mul(Math.LN10 * 0.05).exp();
+      const releaseSamples = releaseMs.at(0).mul(ctx.sampleRate / 1000);
+      const releaseCoef    = num(1).sub(num(-1).div(releaseSamples).exp());
       const attackCoef     = 1.0;   // instantaneous attack — limiter style
 
       const headBlock = dlyHead.load();
 
       forSample((i) => {
         // Sidechain envelope on the live (pre-delay) signal.
-        const peak = max(abs(main.at(0, i)), abs(main.at(1, i)));
+        const peak = main.at(0, i).abs().max(main.at(1, i).abs());
         const e    = envelopeFollow(peak, attackCoef, releaseCoef, env);
 
         // Compute gain reduction so that envelope * gr <= ceiling.
-        const gr     = select(gt(e, ceilingLin), div(ceilingLin, e), 1);
-        const grDb20 = mul(20 / Math.LN10, log(gr));
+        const gr     = select(e.gt(ceilingLin), ceilingLin.div(e), 1);
+        const grDb20 = gr.log().mul(20 / Math.LN10);
 
         // Push into delay line.
-        const wIdx = mod(add(headBlock, i), LOOKAHEAD_SAMPLES);
+        const wIdx = headBlock.add(i).mod(LOOKAHEAD_SAMPLES);
         dlyL.write(wIdx, main.at(0, i));
         dlyR.write(wIdx, main.at(1, i));
 
         // Read from LOOKAHEAD_SAMPLES samples behind the write head (i.e.
         // the oldest sample, which corresponds to t - LOOKAHEAD_SAMPLES).
-        const rIdx = mod(add(wIdx, 1), LOOKAHEAD_SAMPLES);
+        const rIdx = wIdx.add(1).mod(LOOKAHEAD_SAMPLES);
         const xL   = dlyL.read(rIdx);
         const xR   = dlyR.read(rIdx);
 
-        out.set(0, i, mul(xL, gr));
-        out.set(1, i, mul(xR, gr));
+        out.set(0, i, xL.mul(gr));
+        out.set(1, i, xR.mul(gr));
 
         // Fire an overshoot event on either channel that exceeded the ceiling
         // *before* gain reduction was applied (i.e. true peak in the input).
-        overshoot.emitIf(gt(abs(main.at(0, i)), ceilingLin),
-               { atSample: i, channel: 0, level: abs(main.at(0, i)) });
-        overshoot.emitIf(gt(abs(main.at(1, i)), ceilingLin),
-               { atSample: i, channel: 1, level: abs(main.at(1, i)) });
+        overshoot.emitIf(main.at(0, i).abs().gt(ceilingLin),
+               { atSample: i, channel: 0, level: main.at(0, i).abs() });
+        overshoot.emitIf(main.at(1, i).abs().gt(ceilingLin),
+               { atSample: i, channel: 1, level: main.at(1, i).abs() });
 
         // Track the most-negative GR (in dB) reached during this block; published
         // to UI by the rateFps scheduler.
-        gainReductionDb.store(min(gainReductionDb.load(), grDb20));
+        gainReductionDb.store(gainReductionDb.load().min(grDb20));
       });
 
       // Per-block: advance head, decay published GR back toward 0 dB so meter
       // tracks recent rather than historical.
-      dlyHead.store(mod(add(headBlock, SAMPLES_PER_BLOCK), LOOKAHEAD_SAMPLES));
-      gainReductionDb.store(mul(gainReductionDb.load(), 0.85));
+      dlyHead.store(headBlock.add(SAMPLES_PER_BLOCK).mod(LOOKAHEAD_SAMPLES));
+      gainReductionDb.store(gainReductionDb.load().mul(0.85));
     },
   };
 });
@@ -509,7 +508,7 @@ mixer.connect(audioContext.destination);
 import {
   defineProcessor, audioOutput, param, state, buffer,
   forSample, midiInput, message, event,
-  add, sub, mul, div, sin, select, lt, lte, gt, max, exp,
+  num, select,
   f32, i32,
   type State,
 } from '@unworklet/core';
@@ -587,29 +586,29 @@ export const granularSampler = defineProcessor((ctx) => {
         // build-time constant); each slot reads from a payload-driven offset.
         // Indices beyond the payload retain whatever was already in waveformView.
         for (let i = 0; i < WAVEFORM_FRAME; i++) {
-          const stride = max(i32(1), div(samples.length, WAVEFORM_FRAME));
-          const srcIdx = mul(i, stride);
-          waveformView.write(i, select(lt(srcIdx, samples.length), samples.at(srcIdx), 0));
+          const stride = i32(1).max(samples.length.div(WAVEFORM_FRAME));
+          const srcIdx = stride.mul(i);
+          waveformView.write(i, select(srcIdx.lt(samples.length), samples.at(srcIdx), 0));
         }
       });
 
       // MIDI handlers — store the latest note for grain pitch shifting.
-      noteIn.onEvent('noteOn',  ({ note, velocity }) => {
+      noteIn.onEvent('noteOn',  ({ note, velocity, atSample }) => {
         activeNote.store(note);
-        activeVel .store(div(f32(velocity), 127));
+        activeVel .store(f32(velocity).div(127));
       });
       noteIn.onEvent('noteOff', () => {
         activeVel.store(0);
       });
 
       // Per-block: derive grain spawn interval from grainHz.
-      const samplesPerSpawn = div(ctx.sampleRate, grainDensity.at(0));
-      const grainSamples    = mul(grainSize.at(0), div(ctx.sampleRate, 1000));
+      const samplesPerSpawn = num(ctx.sampleRate).div(grainDensity.at(0));
+      const grainSamples    = grainSize.at(0).mul(ctx.sampleRate / 1000);
 
       forSample((i) => {
         // Spawn a grain when the countdown reaches 0.
-        const cd = sub(nextSpawnIn.load(), 1);
-        const spawn = lte(cd, 0);
+        const cd = nextSpawnIn.load().sub(1);
+        const spawn = cd.lte(0);
         nextSpawnIn.store(select(spawn, i32(samplesPerSpawn), cd));
 
         // On spawn: pick a voice (round-robin), assign position and length.
@@ -627,23 +626,23 @@ export const granularSampler = defineProcessor((ctx) => {
           const rem  = voiceRemaining[v].load();
 
           // Window envelope: simple cos^2 over the grain duration.
-          const phase = sub(1, div(f32(rem), grainSamples));
-          const winLin = sin(mul(phase, Math.PI));   // 0 -> 1 -> 0 over the grain
-          const win    = mul(winLin, winLin);
+          const phase = f32(1).sub(f32(rem).div(grainSamples));
+          const winLin = phase.mul(Math.PI).sin();   // 0 -> 1 -> 0 over the grain
+          const win    = winLin.mul(winLin);
 
           // Pitch-shifted read with linear interpolation.
           const sample = sampleBuf.readInterpolated(pos);
-          const sig    = mul(sample, mul(win, activeVel.load()));
+          const sig    = sample.mul(win.mul(activeVel.load()));
 
           // Accumulate (gated by voice activity).
           const contrib = select(gate, sig, 0);
-          lSum = add(lSum, contrib);
-          rSum = add(rSum, contrib);
+          lSum = lSum.add(contrib);
+          rSum = rSum.add(contrib);
 
           // Advance voice cursor.
-          voicePos[v]      .store(select(gate, add(pos, mul(pitch.at(i), exp(mul(f32(sub(activeNote.load(), 60)), Math.LN2 / 12)))), pos));
-          voiceRemaining[v].store(select(gate, sub(rem, 1), rem));
-          voiceGate[v]     .store(select(gate, gt(rem, 0), gate));
+          voicePos[v]      .store(select(gate, pos.add(pitch.at(i).mul(f32(activeNote.load().sub(60)).mul(Math.LN2 / 12).exp())), pos));
+          voiceRemaining[v].store(select(gate, rem.sub(1), rem));
+          voiceGate[v]     .store(select(gate, rem.gt(0), gate));
         }
 
         out.set(0, i, lSum);
@@ -653,7 +652,7 @@ export const granularSampler = defineProcessor((ctx) => {
       // Per-block: count active voices for UI.
       let count = i32(0);
       for (let v = 0; v < NUM_VOICES; v++) {
-        count = add(count, select(voiceGate[v].load(), 1, 0));
+        count = count.add(select(voiceGate[v].load(), 1, 0));
       }
       playingCount.store(count);
     },
@@ -690,7 +689,7 @@ import {
   defineProcessor, audioOutput, state,
   forSample,
   midiInput, midiOutput, message, event,
-  add, sub, mul, mod, eq, gt, lt, select,
+  lt, select,
   type Node, type State,
 } from '@unworklet/core';
 
@@ -737,7 +736,7 @@ export const arpeggiator = defineProcessor((ctx) => {
       });
 
       // MIDI in: track the most recent note as the root.
-      noteIn.onEvent('noteOn', ({ note, velocity }) => {
+      noteIn.onEvent('noteOn', ({ note, velocity, atSample }) => {
         rootNote.store(note);
         lastVel .store(velocity);
       });
@@ -749,19 +748,19 @@ export const arpeggiator = defineProcessor((ctx) => {
         out.set(0, i, 0);
 
         // Increment sample accumulator; on rollover, advance the step.
-        const acc  = add(sampleAccum.load(), 1);
-        const roll = gt(acc, samplesPerStep.load());
+        const acc  = sampleAccum.load().add(1);
+        const roll = acc.gt(samplesPerStep.load());
         sampleAccum.store(select(roll, 0, acc));
 
-        const nextStep = mod(add(stepIdx.load(), 1), PATTERN_LEN);
+        const nextStep = stepIdx.load().add(1).mod(PATTERN_LEN);
 
         // On step rollover: emit a MIDI noteOn at this sample, plus a UI event.
         // Read the offset for the new step. (Build-time unroll via select chain.)
         let offset: Node<'i32'> = pattern[0].load();
         for (let s = 1; s < PATTERN_LEN; s++) {
-          offset = select(eq(nextStep, s), pattern[s].load(), offset);
+          offset = select(nextStep.eq(s), pattern[s].load(), offset);
         }
-        const fireNote = add(rootNote.load(), offset);
+        const fireNote = rootNote.load().add(offset);
 
         arpOut.emitIf(roll,
           { type: 'noteOn',  atSample: i, note: fireNote, velocity: lastVel.load(), channel: 0 });
@@ -811,9 +810,9 @@ node.messages.loadPattern({
 import {
   defineProcessor, audioInput, audioOutput, param, state, buffer,
   forSample, message, SAMPLES_PER_BLOCK,
-  add, sub, mul, mod, max, abs, type Node,
+  type Node,
 } from '@unworklet/core';
-import { splat, mulVec, addVec, sumLanes } from '@unworklet/core/simd';
+import { splat, sumLanes } from '@unworklet/core/simd';
 
 const IR_LEN          = 4096;     // ~85ms @ 48kHz
 const NUM_PARTITIONS  = IR_LEN / SAMPLES_PER_BLOCK;     // 32
@@ -858,41 +857,41 @@ export const convolutionReverb = defineProcessor((ctx) => {
       const headBlock = histHead.load();
 
       forSample((i) => {
-        const idx = mod(add(headBlock, i), IR_LEN);
+        const idx = headBlock.add(i).mod(IR_LEN);
         histL.write(idx, main.at(0, i));
         histR.write(idx, main.at(1, i));
       });
 
       // SIMD bulk convolution — scalar accumulator over 4-wide vectors.
       forSample.byN(4, (i) => {
-        const outIdx = mod(add(headBlock, i), IR_LEN);
+        const outIdx = headBlock.add(i).mod(IR_LEN);
         let accL = splat(0);
         let accR = splat(0);
         for (let k = 0; k < IR_LEN; k += 4) {
-          const histIdx = mod(add(sub(sub(outIdx, k), 3), IR_LEN), IR_LEN);
+          const histIdx = outIdx.sub(k).sub(3).add(IR_LEN).mod(IR_LEN);
           const hL = histL.loadVec(histIdx);
           const hR = histR.loadVec(histIdx);
           const iL = irL.loadVec(k);
           const iR = irR.loadVec(k);
-          accL = addVec(accL, mulVec(hL, iL));
-          accR = addVec(accR, mulVec(hR, iR));
+          accL = accL.add(hL.mul(iL));
+          accR = accR.add(hR.mul(iR));
         }
         const sumL = sumLanes(accL);
         const sumR = sumLanes(accR);
 
-        const dryL = mul(main.at(0, i), dryGain.at(0));
-        const dryR = mul(main.at(1, i), dryGain.at(0));
-        const wetL = mul(sumL, wetGain.at(0));
-        const wetR = mul(sumR, wetGain.at(0));
+        const dryL = main.at(0, i).mul(dryGain.at(0));
+        const dryR = main.at(1, i).mul(dryGain.at(0));
+        const wetL = sumL.mul(wetGain.at(0));
+        const wetR = sumR.mul(wetGain.at(0));
 
-        out.set(0, i, add(dryL, wetL));
-        out.set(1, i, add(dryR, wetR));
+        out.set(0, i, dryL.add(wetL));
+        out.set(1, i, dryR.add(wetR));
 
-        wetMeter.store(max(wetMeter.load(), max(abs(wetL), abs(wetR))));
+        wetMeter.store(wetMeter.load().max(wetL.abs().max(wetR.abs())));
       });
 
-      histHead.store(mod(add(headBlock, SAMPLES_PER_BLOCK), IR_LEN));
-      wetMeter.store(mul(wetMeter.load(), 0.93));
+      histHead.store(headBlock.add(SAMPLES_PER_BLOCK).mod(IR_LEN));
+      wetMeter.store(wetMeter.load().mul(0.93));
     },
   };
 }, {
@@ -969,7 +968,7 @@ if (stored) {
 import {
   defineProcessor, defineSubgraph, createSubgraph, audioInput, audioOutput, param, state, buffer,
   forSample, midiInput, event, SAMPLES_PER_BLOCK,
-  add, sub, mul, div, mod, max, abs, sin, exp, gt, lt, eq, select,
+  num, select,
   f32, i32,
   type Node, type State,
 } from '@unworklet/core';
@@ -990,22 +989,22 @@ const synthVoice = defineSubgraph((sr: number) => {
       releaseS:  Node<'f32'>,
     ) => {
       // Envelope coefficients (k-rate inputs).
-      const aCoef = sub(1, exp(div(-1, mul(attackS,  sr))));
-      const rCoef = sub(1, exp(div(-1, mul(releaseS, sr))));
+      const aCoef = num(1).sub(num(-1).div(attackS.mul(sr)).exp());
+      const rCoef = num(1).sub(num(-1).div(releaseS.mul(sr)).exp());
 
       // Update envelope sample-by-sample.
       const target = select(gate, velocity, 0);
       const coef   = select(gate, aCoef, rCoef);
-      const e      = add(env.load(), mul(coef, sub(target, env.load())));
+      const e      = target.sub(env.load()).mul(coef).add(env.load());
       env.store(e);
 
       // Update phase.
-      const inc = div(noteHz, sr);
-      const p   = add(phase.load(), inc);
-      phase.store(select(gt(p, 1), sub(p, 1), p));
+      const inc = noteHz.div(sr);
+      const p   = phase.load().add(inc);
+      phase.store(select(p.gt(1), p.sub(1), p));
 
       // Sine osc + envelope.
-      return mul(sin(mul(p, 2 * Math.PI)), e);
+      return p.mul(2 * Math.PI).sin().mul(e);
     },
   };
 });
@@ -1058,37 +1057,37 @@ export const polySynth = defineProcessor((ctx) => {
         const v = allocCursor.load();
         // Build-time unrolled selection: pick the slot that matches `v`.
         for (let s = 0; s < NUM_VOICES; s++) {
-          const isMe = eq(v, s);
-          voiceNote[s].store(select(isMe, note,            voiceNote[s].load()));
-          voiceVel [s].store(select(isMe, div(f32(velocity), 127),  voiceVel [s].load()));
-          voiceGate[s].store(select(isMe, true,            voiceGate[s].load()));
+          const isMe = v.eq(s);
+          voiceNote[s].store(select(isMe, note,                       voiceNote[s].load()));
+          voiceVel [s].store(select(isMe, f32(velocity).div(127),     voiceVel [s].load()));
+          voiceGate[s].store(select(isMe, true,                       voiceGate[s].load()));
         }
-        allocCursor.store(mod(add(v, 1), NUM_VOICES));
+        allocCursor.store(v.add(1).mod(NUM_VOICES));
 
         notePlayed.emitIf(true,
-          { atSample, note, voice: v, velocity: div(f32(velocity), 127) });
+          { atSample, note, voice: v, velocity: f32(velocity).div(127) });
       });
 
       keys.onEvent('noteOff', ({ note }) => {
         for (let s = 0; s < NUM_VOICES; s++) {
-          voiceGate[s].store(select(eq(voiceNote[s].load(), note), false, voiceGate[s].load()));
+          voiceGate[s].store(select(voiceNote[s].load().eq(note), false, voiceGate[s].load()));
         }
       });
 
       // Per-block: derive the sidechain envelope's attack/release coefficients.
       const aCoef = 0.05;
-      const rCoef = sub(1, exp(div(-1, mul(0.2, ctx.sampleRate))));
+      const rCoef = num(1).sub(num(-1).div(0.2 * ctx.sampleRate).exp());
 
       const wpStart = wavePtr.load();
 
       forSample((i) => {
         // Sidechain envelope (peak detector with separate attack/release).
-        const scPeak = max(abs(sidechain.at(0, i)), abs(sidechain.at(1, i)));
-        const scC    = select(gt(scPeak, scEnv.load()), aCoef, rCoef);
-        scEnv.store(add(scEnv.load(), mul(scC, sub(scPeak, scEnv.load()))));
+        const scPeak = sidechain.at(0, i).abs().max(sidechain.at(1, i).abs());
+        const scC    = select(scPeak.gt(scEnv.load()), aCoef, rCoef);
+        scEnv.store(scPeak.sub(scEnv.load()).mul(scC).add(scEnv.load()));
 
         // Duck factor: 1.0 - duckAmount * scEnv.
-        const duck = sub(1, mul(duckAmount.at(0), scEnv.load()));
+        const duck = num(1).sub(duckAmount.at(0).mul(scEnv.load()));
 
         // Sum voices.
         let mix = f32(0);
@@ -1096,25 +1095,25 @@ export const polySynth = defineProcessor((ctx) => {
           const note = voiceNote[s].load();
           const vel  = voiceVel [s].load();
           const gate = voiceGate[s].load();
-          const hz   = mul(440, exp(mul(f32(sub(note, 69)), Math.LN2 / 12)));
-          mix = add(mix, voices[s].process(hz, vel, gate, attack.at(0), release.at(0)));
+          const hz   = f32(note.sub(69)).mul(Math.LN2 / 12).exp().mul(440);
+          mix = mix.add(voices[s].process(hz, vel, gate, attack.at(0), release.at(0)));
         }
 
-        const sig = mul(mul(mix, masterVol.at(i)), duck);
+        const sig = mix.mul(masterVol.at(i)).mul(duck);
         out.set(0, i, sig);
         out.set(1, i, sig);
 
         // Push into the waveform thumbnail (downsampled by stride).
-        const wp = mod(add(wpStart, i), 1024);
+        const wp = wpStart.add(i).mod(1024);
         waveform.write(wp, sig);
       });
 
-      wavePtr.store(mod(add(wpStart, SAMPLES_PER_BLOCK), 1024));
+      wavePtr.store(wpStart.add(SAMPLES_PER_BLOCK).mod(1024));
 
       // Count active voices for UI.
       let count = i32(0);
       for (let s = 0; s < NUM_VOICES; s++) {
-        count = add(count, select(voiceGate[s].load(), 1, 0));
+        count = count.add(select(voiceGate[s].load(), 1, 0));
       }
       activeVoices.store(count);
     },
@@ -1256,7 +1255,7 @@ node.state.targetId.subscribe((id) => deviceIdUI.set(id));
 
 import {
   defineProcessor, audioOutput, param, state,
-  forSample, sin, mul, add, mod, f32,
+  forSample, f32,
 } from '@unworklet/core';
 
 export const initialOsc = defineProcessor((ctx) => {
@@ -1269,9 +1268,9 @@ export const initialOsc = defineProcessor((ctx) => {
     process: () => {
       forSample((i) => {
         const p   = phase.load();
-        const inc = mul(freq.at(0), f32(2 * Math.PI / ctx.sampleRate));
-        out.set(0, i, sin(p));
-        phase.store(mod(add(p, inc), f32(2 * Math.PI)));
+        const inc = freq.at(0).mul(f32(2 * Math.PI / ctx.sampleRate));
+        out.set(0, i, p.sin());
+        phase.store(p.add(inc).mod(f32(2 * Math.PI)));
       });
     },
   };

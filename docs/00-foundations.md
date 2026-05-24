@@ -49,7 +49,9 @@ A handle to a value computed during per-sample iteration. `T` is one of `'f32'`,
 
 ### Primitive
 
-A function that takes `Node<T>` arguments (and possibly other compile-time constants) and returns a `Node<T>`. Examples: `add`, `mul`, `tanh`, `select`, `splat`. Primitives execute at *graph capture time* (build time), constructing AST nodes; they do not run per sample. Primitives appear both as free functions (`add(a, b)`) and as methods on handle types (`buf.loadVec(offset)`, `vec.lane(i)`); both shapes obey the same graph-capture-time semantics.
+A pure operation over `Node<T>` values (and possibly other compile-time constants) returning a `Node<T>`. Examples: `add`, `mul`, `tanh`, `select`, `splat`. Primitives execute at *graph capture time* (build time), constructing AST nodes; they do not run per sample.
+
+Primitives appear in **two equivalent forms** (Q77): a **free function form** (`add(a, b)`) and a **method form** on the `Node<T>` value itself (`a.add(b)`). Both shapes compile to the same captured graph node and produce the same numeric output; the choice is purely syntactic. The convention is hybrid — method chain when the input flows through a sequence of operations (= DSP-flow order, e.g. `main.at(0, i).sub(z.load()).mul(k).add(z.load())`), free function for 3-arg control (`select(cond, then, else)`), SIMD constructors (`splat(x)`, `vec4(a, b, c, d)`, `sumLanes(v)`), and complex non-flowing expressions. Method form is available on every Arithmetic / Comparison / Math / SIMD-vec primitive; `select` and the SIMD constructors stay free-function only (= no natural receiver). Handle-bound methods (`buf.read(idx)`, `buf.loadVec(offset)`, `state.load()`, `vec.lane(i)`, `audioIn.at(c, i)`, etc.) are method form by construction. Literal-leading chains use the `num(v)` lift helper from `01-dsl.md` §2.2.
 
 ### Declaration scope
 
@@ -160,14 +162,15 @@ Range constraints that the type system cannot express (channel index must be a n
 
 ### Scalar constructors (explicit lift outside primitive arguments)
 
-Five scalar constructors lift JS values to `Node<T>` explicitly. They are required wherever the implicit lift does not apply — variable declarations, ambiguous-call disambiguation, i64 construction, and cross-precision conversion:
+Six scalar constructors lift JS values to `Node<T>` explicitly. They are required wherever the implicit lift does not apply — variable declarations, ambiguous-call disambiguation, i64 construction, cross-precision conversion, and method-chain starting points (= `num(v)` per Q77):
 
 ```typescript
-f32(v: number): Node<'f32'>;
-f64(v: number): Node<'f64'>;
-i32(v: number): Node<'i32'>;
-i64(v: bigint): Node<'i64'>;
+f32(v: number):  Node<'f32'>;
+f64(v: number):  Node<'f64'>;
+i32(v: number):  Node<'i32'>;
+i64(v: bigint):  Node<'i64'>;
 bool(v: boolean): Node<'bool'>;
+num<T>(v: number | boolean): Node<T>;   // Q77 — context-inferred lift for method chain starts
 ```
 
 ```typescript

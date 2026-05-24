@@ -4,7 +4,7 @@ Cross-cutting reference: every resolved design question, recorded with its ratio
 
 ## Status
 
-populated (Q1–Q68 ratify complete; Q28 is unassigned — a numbering artifact, not a withheld decision)
+populated (Q1–Q77 ratify complete; Q28 is unassigned — a numbering artifact, not a withheld decision)
 
 ## Index
 
@@ -49,6 +49,7 @@ populated (Q1–Q68 ratify complete; Q28 is unassigned — a numbering artifact,
 | Q72 | canonical SIMD primitive 個 別 hit ナ シ entry を scope 外 close (= 過 剰 解 釈) | resolved — `vec4` / `subVec` / `divVec` / `vec.lane` が `12-canonical-examples.md` で 個 別 hit ナ シ を 「HARD CONTRACT 違 反 / 規 範 確 認 不 在」 と し て open-questions に 立 て て い た が、 AGENTS.md L16 「exercise the full surface」 を 機 械 網 羅 と 過 剰 解 釈 し て 拾 い 上 げ た entry = **scope 外 close**; canonical は curated 規 範 例 集 / 整 合 anchor (= 仕 様 を 変 え る 時 affected example が realistic / 自 然 か 確 か め る 道 具、 UX が simple / coherent / production-ready か 答 え ら れ る 状 態 維 持) で あ り 「全 primitive / 全 declaration を 1 回 ず つ 個 別 hit」 rule で は な い (= 個 別 primitive の hit ナ シ ≠ 仕 様 違 反); SIMD-using 規 範 例 (= Ex 3 / Ex 7) が 既 規 範 化 さ れ て お り full surface に 触 れ る curated set の curation 性 を 満 た す; 軸 file (= `core-principles.md` §2 + §3 / `priority-filter-rationale.md` scope 外 + 累 犯 wording / `decision-axes.md` §i scope 外 例) を 同 commit で narrow し て 次 sweep / triage で 同 種 を 拾 わ な い 2 重 防 御 化 | (= 関 連 file ナ シ、 軸 file 自 体 を 動 か し た commit) |
 | Q73 | main / worklet 間 内 部 wire layout を e 軸 (= 実 装 期 任 せ) で 4 entry 集 約 close (audit 累 犯 解 消) | resolved — ship 後 凍 結 wire byte は **`node.snapshot()` の Uint8Array blob 並 び の み** (= user persist + 新 ship restore = migration mandatory)、 main / worklet 間 内 部 wire (= SAB ringbuffer slot 並 び、 event slot / MIDI slot field 並 び、 sysex content buffer 並 び 等) は framework 同 ship 内 で main bundle / worklet bundle ペ ア = ship ご と に 自 由 = user 不 観 測 = **e 軸 (= 実 装 AI 領 域)**; 4 entry 集 約 close: (1) event slot vs MIDI slot で atSample 位 置 が 別 (= wire 上 位 置 は 実 装 期、 invariant = atSample が wire 上 1 位 置 で 取 れ る こ と)、 (2) variable-length 中 身 並 び 方 が event と MIDI sysex で 別 形 式 (= 実 装 期、 invariant = main slot + content buffer で 1 意 に 長 さ + 中 身 が 取 れ る こ と)、 (3) sysex slot に atSample 不 在 で 「全 handler 引 数 は atSample を 持 つ」 主 張 と 衝 突 (= wire 上 atSample 位 置 は 実 装 期、 invariant = handler arg に atSample が 渡 る user 観 測 surface は 維 持)、 (4) `forSample.byN` function + property hybrid (= TS export 形 は 実 装 期、 invariant = canonical で `forSample.byN(stride, callback)` が 動 く こ と); g 軸 を `node.snapshot()` blob だ け に narrow + 軸 file 同 commit update で 次 sweep / triage 同 種 拾 わ ず 2 重 防 御 | (= 関 連 file ナ シ、 軸 file 自 体 を 動 か し た commit) |
 | Q76 | `state` / `buffer` / `param` factory 分 離 (= plain vs named)、 snapshot opt-in を slot 単 位 で 明 示 化 (audit cluster (8) snapshot lifecycle) | resolved — declaration kind を **plain factory** (`state.<type>` / `buffer.<type>` = worklet-private、 `name` 受 け 入 れ ナ シ、 snapshot blob 不 在、 main 側 surface ナ シ) と **named factory** (`state.named.<type>` / `buffer.named.<type>` / `param.named` = TypeScript level で `name` required、 snapshot blob に 入 る (default `'persistent'` for `state.named` / `param.named`、 `'transient'` for `buffer.named`)、 main 側 で `node.state.<name>` / `node.buffer.<name>` / `node.parameters.<name>` で 引 け る) に 2 分 離; `param` は named factory 専 用 (= 全 AudioParam は descriptor 経 由 で main 側 か ら 名 前 で 引 か れ る); `publish` option も named factory 専 用; Q5-b 「state / param default = 'persistent'」 / 「`snapshot()` 呼 ぶ processor の name 必 須 trigger」 部 分 retract、 「positional / AST hash 棄 却」 / per-profile / migrations chain は 維 持; canonical Ex 全 declare 例 を 案 S 適 用 で refactor (= AGENTS.md HARD CONTRACT 同 commit zip) | `01-dsl.md` §3 + §8 + `11-midi.md` §2.3 / §2.4 / §2.5 + `12-canonical-examples.md` 全 declare 例 |
+| Q77 | Method chain DSL surface + `num()` literal helper + hybrid policy (branch ergonomic 寄 せ) | resolved — 全 `Node<T>` (= scalar 5 種 + SIMD `Node<'f32x4'>`) に method surface 追 加、 free function form と method form 両 併 存 で 同 AST 同 output、 chain は input flow line で 規 範 / free function は 多 引 数 ops + literal leading 時 規 範、 literal leading 用 に `num(v)` を 6 個 目 scalar constructor と し て 追 加 (= 既 `f32` / `f64` / `i32` / `i64` / `bool` と zip、 type 推 論 は Q33 自 然 拡 張)、 method 追 加 対 象 = arithmetic / comparison / math / SIMD vec 4 個、 free function only = `select` + SIMD `splat` / `vec4` / `sumLanes` + `flushDenormals` (= Q21 自 動 insertion 維 持 で user-facing surface 不 在)、 canonical Ex 1-10 全 rewrite (= AGENTS.md HARD CONTRACT 同 commit zip) | `01-dsl.md` §2 + §7.2 + `00-foundations.md` §3 + `09-repo-structure.md` §2.1 + `12-canonical-examples.md` |
 | Q75 | runtime guard fallback = silence + onError + node connected (audit cluster (4) handler / drain / boundary timing) | resolved — `block-length-mismatch` + `wasm-trap` の runtime guard 動 作 を **silence + onError + node connected** で 1 path 化: `process()` は `true` return continue で node が audio graph か ら 外 れ ず connected の ま ま、 全 output channel に silence (zero buffer) を 出 し 続 け、 main 側 に `node.onError({ code: 'block-length-mismatch' \| 'wasm-trap', ... })` を 発 火、 framework 側 auto-dispose ナ シ (= consumer 判 断 が `.dispose()` で 起 動); 04 §3 / §8 / 03 §2.6 / 05 §1 の 「stops processing」 「halt audio output」 wording を 「emit silence while the node stays connected」 に 揃 え、 00 §5.2 既 「fallback to silence + main-side error event」 と zip; 04 §8 既 declare の 4 event code が silence path (= wasm-trap + block-length-mismatch) と audio-unaffected path (= queue-overflow + sab-unavailable) で 一 貫 化; `process()` return false = AudioWorkletProcessor permanent disconnect は consumer 判 断 を 奪 う path で 棄 却、 直 前 quantum hold は user が 異 常 判 別 不 能 で 棄 却 | `04-worklet-runtime.md` §3 + §8 + `03-compiler.md` §2.6 + `05-client.md` §1 + `00-foundations.md` §5.2 |
 | Q74 | `event<T>` typed-array field emit-side surface = sysex path 一 般 化 (audit cluster (3) emit-side 拡 張) | resolved — `event<T>` の typed-array field を **worklet 側 で 新 規 構 築 し て main に 流 す** path を MIDI sysex emit (Q49) と 共 通 化: emit shape で `data: Buffer<T> | TypedArrayFieldRef<T>` + framework injection の `length: Node<'i32'>` 必 須、 build-time-fixed `buffer.<T>` が 単 一 構 築 primitive (= runtime typed-array literal / `new Float32Array(...)` 不 可)、 main 側 は `data[0..length-1]` を 切 り 出 し た natural typed array で 受 け 取 り、 wire 形 は `02-messaging.md` §5.1 main slot + §5.2 content buffer を sysex と 1 transport 共 有; FFT spectrum / 波 形 解 析 / envelope 履 歴 等 worklet → main typed-array 系 中 心 機 能 が 自 然 surface で cover; T 内 typed-array field 複 数 path は §5.1 既 declare 通 り v1.x.0 deferral | `01-dsl.md` §4.3 + `02-messaging.md` §5.2 + `11-midi.md` §2.5 cross-ref |
 | Q47 | diagnostics surface 統 一 (audit Phase 2 #10、 #49) | resolved — diagnostics counter (= `overflowCount` 等) を **main 側 だ け で 提 供**、 worklet 側 handle (= `midiIn.diagnostics.X()`) を spec か ら 削 除; 全 channel (= event / message / MIDI) で `node.<kind>.<name>.diagnostics.X()` の 統 一 形 (= 既 Q40 namespaced shape と 整 合)、 「diagnostics は 外 部 観 測」 を declarative 原 則 (= 副 作 用 観 測 は main の 役 割、 worklet `process` body は feedback loop を 持 た な い) と し て 確 立; worklet 内 で の self-throttle pattern が 必 要 な ら main 経 由 で feedback (= 1 周 余 計 だ が 構 造 明 確)、 v1.x.0 で worklet handle へ の `.diagnostics` 後 付 け は additive 可 | `11-midi.md` §4 overflow + `decisions-log.md` Q4-c-iv prose |
@@ -3239,5 +3240,97 @@ runtime guard fallback (= `block-length-mismatch` + `wasm-trap` 共 通) 動 作
 ### v1.x.0 deferral
 
 - ナ シ。
+
+---
+
+## Q77 — Method chain DSL surface + `num()` literal helper + hybrid policy
+
+**Status:** resolved.
+
+### Problem
+
+v1.0.0 主 仕 様 で は primitive operator (= `add` / `mul` / `sin` 等) を **free function 1 形 だ け** で expose し て お り、 DSP の 流 れ (= input → 引 い て → 掛 け て → 足 す) が source 上 で 「外 側 か ら 内 側 」 順 = 逆 順 で 書 か れ る:
+
+```typescript
+out.set(0, i, add(z.load(), mul(k, sub(main.at(0, i), z.load()))));
+```
+
+production-grade audio DSP (= biquad / envelope follower / mix path 等) で `out = ((input - z1) * k) + z1` の よ う な 「直 列 演 算 の 鎖」 が hot path 中 心 機 能 = 逆 順 表 記 は 可 読 性 を 削 る。 各 行 を 読 ん で 演 算 順 を 頭 の 中 で 反 転 す る 認 知 cost が 全 canonical Ex で 累 積。
+
+加 え て、 method chain で 自 然 に 書 け る 形 (= `main.at(0, i).sub(z.load()).mul(k).add(z.load())`) を impl AI agent が 採 用 す る か main spec で 規 範 化 が ナ シ = 異 な る agent が 異 な る surface (= method 不 在 / 一 部 method / 全 method) に 至 る 真 の impl 矛 盾 リ ス ク。
+
+### Decision
+
+全 `Node<T>` (= scalar `Node<'f32'>` / `Node<'f64'>` / `Node<'i32'>` / `Node<'i64'>` / `Node<'bool'>` + SIMD `Node<'f32x4'>`) に **method surface** を 追 加。 free function form と method form は **両 併 存** で 完 全 同 AST + 同 numeric output。 method chain は input flow line で の **規 範**、 free function は 多 引 数 ops + literal leading 時 の **規 範**、 user は 「DSP 流 れ が source 上 で 流 れ る か」 1 軸 で 形 を 選 ぶ。
+
+literal leading chain 用 に `num(v): Node<T>` を **6 個 目 scalar constructor** と し て 追 加 (= 既 5 個 `f32` / `f64` / `i32` / `i64` / `bool` と 並 ぶ)。 JS literal は method を 持 て な い (= `1.sub(m)` は parse error) た め、 `num(v)` で 1 度 graph node に lift し て chain 起 点 に 乗 せ る:
+
+```typescript
+// chain (= DSP 流 れ 順、 input flow line で の 規 範)
+const y = main.left.at(i).sub(z.load()).mul(k).add(z.load());
+
+// free function (= 多 引 数 ops の 規 範)
+const out = select(eq(useA.at(i), 1), lpfA.process(x), lpfB.process(x));
+
+// literal leading chain (= num() で graph node に lift)
+const dry = num(1).sub(mix).mul(drySig);
+```
+
+**method 追 加 対 象 primitive** (= chain 可 能):
+
+| Category | Primitive list |
+|---|---|
+| Arithmetic | `add` / `sub` / `mul` / `div` / `mod` / `neg` |
+| Comparison | `eq` / `lt` / `gt` / `lte` / `gte` |
+| Math | `sin` / `cos` / `tan` / `tanh` / `exp` / `log` / `sqrt` / `abs` / `floor` / `ceil` / `frac` / `min` / `max` / `clamp` |
+| SIMD vec | `addVec` / `subVec` / `mulVec` / `divVec` → `.add` / `.sub` / `.mul` / `.div` on `Node<'f32x4'>` (= 既 `.lane(0..3)` と zip) |
+
+**free function only 維 持** (= method form 不 在):
+
+- `select(cond, then, else)` (= 3-arg、 cond receiver に す る と 主 語 が 副 次 で 不 自 然)
+- SIMD constructors `splat(x)` / `vec4(a, b, c, d)` / `sumLanes(v)` (= chain 起 点 / 終 端 helpers、 receiver 不 在)
+- `flushDenormals` は そ も そ も user-facing surface ナ シ で 維 持 (= Q21 自 動 insertion path 維 持、 user explicit 呼 び 出 し path を 追 加 し な い = footgun 撤 廃 軸 と zip)
+
+**`num(v)` の type 推 論** = Q33 / Q36 の 自 然 拡 張:
+
+- chain 起 点 で 後 続 method の argument type か ら 推 論 (= `num(60).add(noteOffset)` で `noteOffset: Node<'i32'>` な ら `num(60)` は `Node<'i32'>`)
+- ambiguous (= chain 終 端 / 後 続 method の type 推 論 source ナ シ) は Q33 default `'f32'`
+- `num(true)` / `num(false)` は `Node<'bool'>` (= bool literal は 一 意)
+
+**canonical Ex 1-10 全 rewrite** (= AGENTS.md HARD CONTRACT 同 commit zip)。 hybrid policy で:
+
+- filter / envelope / mix line は chain
+- `select` / SIMD construction (= `splat` / `vec4`) は free function
+- literal leading は `num(v).chain()`
+
+### Why this and not alternatives
+
+**判 断 軸** = DSP author 可 読 性 + 公 開 surface 概 念 量 + 既 ratify (= Q33 / Q36 / Q21) と の zip。
+
+- **採 用 案 = hybrid + `num()` 6 個 目**:
+  - DSP 流 れ 順 で 書 け る = canonical Ex の hot path (= biquad / envelope / mix) が 自 然 形
+  - 多 引 数 ops (= `select`) を chain に す る と receiver が cond で 主 語 副 次 = 不 自 然 (= `eq(useA, 1).select(...)` の 主 語 は cond だ が、 user mental は then / else が 主)
+  - `num()` は 6 個 目 だ が 既 5 constructor と form 同 一、 user は 「chain 起 点 = `num()`」 1 rule で 済 む
+  - 既 free function を 残 す = 既 main docs (= Q33 / Q36 / `01-dsl.md` §2) 後 方 互 換、 canonical rewrite は 意 味 invariant 不 変
+- **棄 却 案 B (= free function only 維 持)**: DSP 流 れ 順 で 書 け ず、 逆 順 表 記 認 知 cost が 全 canonical で 累 積、 production-grade plugin author が 「branch で 書 け た 形 が main で 書 け な い」 mental 矛 盾
+- **棄 却 案 C (= method chain only)**: `select` を receiver = cond 形 (= `cond.select(then, else)`) に 強 制 = 主 語 副 次 で 不 自 然、 既 free function 廃 止 で 既 main docs 全 rewrite + 既 spec ratify を 大 量 retract
+- **棄 却 案 X2 (= 既 `f32` 等 を chain 起 点 に 流 用)**: user に literal type を 毎 行 明 示 強 制 = `f32(1).sub(...)` / `i32(60).add(...)` / `bool(true).select(...)` を 場 面 で 切 り 替 え る 認 知 cost、 `num()` の context 推 論 が 平 易 で superior
+- **棄 却 案 X3 (= literal leading chain 不 可)**: dry/wet mix 等 で `num(1).sub(mix).mul(dry)` が 自 然 = 不 可 化 す る と user が 「ど こ で chain ど こ で free function か」 を 場 面 で 切 り 替 え る 認 知 cost、 hybrid policy の clean さ を 削 る
+- **棄 却 案 F-User-Explicit (= `flushDenormals(v)` user-facing free function を expose)**: Q21 既 ratify (= 自 動 insertion / user opt-out ナ シ / 1e-30 fixed) と 衝 突、 user に flush 判 断 を 押 し 付 け る = footgun 撤 廃 軸 と 逆 走
+
+### Side effects
+
+- **`decisions-log.md`**: 本 entry (Q77) 追 加 + index 表 row 追 加
+- **`01-dsl.md` §2.1**: primitive operator inventory に 「全 primitive (= 上 記 method 追 加 対 象 list) が method form で も 呼 べ る、 free function form と 同 AST」 prose 追 加
+- **`01-dsl.md` §2.2**: scalar constructor list に `num(v)` を 6 個 目 と し て 追 加 + type 推 論 ル ー ル (= Q33 自 然 拡 張) prose
+- **`01-dsl.md` §7.2**: SIMD MVP surface の Arithmetic sub-section に 「`Node<'f32x4'>` 上 で `.add` / `.sub` / `.mul` / `.div` method 呼 び 出 し も 可」 + 既 `.lane(0..3)` と zip prose
+- **`00-foundations.md` §3**: 「Primitive」 entry を method form / free function form 両 併 存 で 説 明、 「Primitives appear both as free functions (`add(a, b)`) and as methods on `Node<T>` (`a.add(b)`); both shapes obey the same graph-capture-time semantics」 prose
+- **`09-repo-structure.md` §2.1**: `@unworklet/core` named exports の Scalar constructor row に `num` 追 加 (= 6 個 目)
+- **`12-canonical-examples.md` Ex 1-10**: 全 rewrite (= hybrid policy 適 用、 input flow line を chain、 `select` / SIMD construction を free function、 literal leading を `num()` 経 由)
+- **`02-messaging.md` / `04-worklet-runtime.md` / `05-client.md` / `11-midi.md` / `03-compiler.md` / `06-testing.md` / `07-vite-plugin.md` / `08-deployment.md` / `10-roadmap.md` / `13-offline-render.md`**: prose 内 code snippet で free function form が 出 て く る 箇 所 を hybrid policy で rewrite (= chain で 自 然 な も の は chain、 多 引 数 ops / literal leading は free function 維 持)
+
+### v1.x.0 deferral
+
+- ナ シ (= v1.0.0 surface で method form + free function form 両 完 結)。
 
 

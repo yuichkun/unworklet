@@ -152,7 +152,7 @@ defineProcessor((ctx) => {
 
       // Per-sample iteration triggers the envelope at sample-offset i == trigOffset.
       forSample((i) => {
-        const fire = eq(i, trigOffset.load());
+        const fire = i.eq(trigOffset.load());
         // ... use `fire: Node<'bool'>` to gate the envelope start ...
       });
     },
@@ -205,7 +205,7 @@ defineProcessor((ctx) => {
     process: () => {
       forSample((i) => {
         const c       = stepCounter.load();
-        const crossed = eq(c, /* threshold */);
+        const crossed = c.eq(/* threshold */);
         midiOut.emitIf(crossed, {
           type: 'noteOn',
           channel: 9,
@@ -239,7 +239,7 @@ defineProcessor((ctx) => {
     process: () => {
       // ... handler / forSample logic populates sysexBuf + txLen + sendAt ...
       forSample((i) => {
-        const cond = eq(i, sendAt.load());                              // sample-edge: fires exactly on the offset stored by the handler
+        const cond = i.eq(sendAt.load());                              // sample-edge: fires exactly on the offset stored by the handler
         midiOut.emitIf(cond, {
           type:     'sysex',
           data:     sysexBuf,                                            // Buffer<'u8'> reference
@@ -252,7 +252,7 @@ defineProcessor((ctx) => {
 });
 ```
 
-> `cond` inside `forSample` must be a **structural sample-edge expression** (e.g. `eq(i, sendAt.load())`, `gt(level, threshold)`, an explicit state-transition mask). A constant-truthy `cond` (= `emitIf(true, ...)` or any expression that folds to a build-time-constant `true`) is rejected at WASM-emission time by `error[unworklet/constant-truthy-emitif]` (Q32-c, `03-compiler.md` §2.6) — unconditional emission inside `forSample` saturates the ringbuffer at sample rate. For unconditional 1:1 projection of an inbound MIDI event onto an output port, use a handler context (= §2.4 canonical) where `emitIf(true, ...)` is legal.
+> `cond` inside `forSample` must be a **structural sample-edge expression** (e.g. `i.eq(sendAt.load())`, `level.gt(threshold)`, an explicit state-transition mask). A constant-truthy `cond` (= `emitIf(true, ...)` or any expression that folds to a build-time-constant `true`) is rejected at WASM-emission time by `error[unworklet/constant-truthy-emitif]` (Q32-c, `03-compiler.md` §2.6) — unconditional emission inside `forSample` saturates the ringbuffer at sample rate. For unconditional 1:1 projection of an inbound MIDI event onto an output port, use a handler context (= §2.4 canonical) where `emitIf(true, ...)` is legal.
 
 `buffer.u8` exposes the same `Buffer<T>` surface as other element types (`write(idx, v)`, `read(idx)`, `copyFrom(src)`, `size`, `name`); byte values flow through `Node<'i32'>` (the lower 8 bits are stored). The buffer reserves `size` bytes in linear memory at compile time and the `length` parameter on each emit selects how many of those bytes form the actual sysex body — header / trailer bytes (e.g. `0xF0` ... `0xF7`) are the author's responsibility, as they would be on a hardware MIDI line.
 

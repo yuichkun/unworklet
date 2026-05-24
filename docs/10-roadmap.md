@@ -39,7 +39,7 @@ partial (§1 written at Q62; §3.1 mandatory deferred mitigations written; §2, 
 
 ### F. Public surface integrity
 
-- **F1** — `.d.ts` 公 開 surface が `decisions-log.md` Q1〜Q68 全 entry (Q28 は unassigned numbering artifact で 対 象 外) と 整 合 (= 各 ratify が 公 開 surface に 反 映)。
+- **F1** — `.d.ts` 公 開 surface が `decisions-log.md` Q1〜Q77 全 entry (Q28 は unassigned numbering artifact で 対 象 外) と 整 合 (= 各 ratify が 公 開 surface に 反 映)。
 
 ## 2. Later milestones (sketch only)
 

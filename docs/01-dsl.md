@@ -267,10 +267,33 @@ Authoritative rationale and rejected alternatives: see `decisions-log.md` Q35.
 
 ## 2. Primitive operators
 
-Primitive operators are pure functions over `Node<T>` values. Each primitive's argument positions accept either a `Node<T>` or a JS `number` / `boolean` literal that lifts to `Node<T>` according to the **context-dependent literal lift rule** (see `00-foundations.md` §4 + `decisions-log.md` Q1 + Q33 + Q36):
+Primitive operators are pure operations over `Node<T>` values. Each primitive appears in **two equivalent forms** (Q77): a **free function form** (`add(a, b)`) and a **method form** on the `Node<T>` value (`a.add(b)`). Both shapes compile to the same AST node and produce the same numeric output; authors choose the form that reads best at each call site.
+
+The convention is hybrid:
+
+- **method chain** when the input flows through a sequence of operations (= DSP-flow order — filter / envelope / mix paths read top-to-bottom in the same order the signal moves):
+
+  ```typescript
+  // chain — input flows through .sub → .mul → .add
+  const y = main.left.at(i).sub(z.load()).mul(k).add(z.load());
+  ```
+
+- **free function** when the operation has no natural receiver (= 3-arg `select`, SIMD constructors `splat` / `vec4` / `sumLanes`):
+
+  ```typescript
+  const out = select(eq(useA.at(i), 1), lpfA.process(x), lpfB.process(x));
+  ```
+
+- **literal-leading chain** uses the `num(v)` lift helper (= §2.2; JS literals have no methods, so `1.sub(m)` is a parse error):
+
+  ```typescript
+  const dry = num(1).sub(mix).mul(drySig);
+  ```
+
+Each primitive's argument positions accept either a `Node<T>` or a JS `number` / `boolean` literal that lifts to `Node<T>` according to the **context-dependent literal lift rule** (see `00-foundations.md` §4 + `decisions-log.md` Q1 + Q33 + Q36):
 
 - A literal in a primitive-argument position lifts to `Node<T>`, where `T` is inferred from sibling arguments
-- A literal in a **method argument position** also lifts: if the method's declared argument type is `Node<X>`, a JS literal in that position lifts to `Node<X>` (Q36-a). Covers `param.at(0)`, `samples.at(s)`, `emitIf(true, ...)`, `audioIn.at(0, i)`, `buf.read(idx)`, etc.
+- A literal in a **method argument position** also lifts: if the method's declared argument type is `Node<X>`, a JS literal in that position lifts to `Node<X>` (Q36-a). Covers `param.at(0)`, `samples.at(s)`, `emitIf(true, ...)`, `audioIn.at(0, i)`, `buf.read(idx)`, primitive method arguments like `a.add(1)` / `a.mul(0.5)`, etc.
 - All-literal primitive calls fall back to `T = 'f32'`
 - Implicit lift covers `'f32'` / `'f64'` / `'i32'` / `'bool'`. `'i64'` requires the explicit `i64(BigInt(...))` constructor
 - Range constraints not expressible in TS (integer-only, non-negative, channel-index upper bound, etc.) are enforced at graph-capture time
@@ -283,18 +306,21 @@ Primitive operators are pure functions over `Node<T>` values. Each primitive's a
 - **Control**: `select(cond: Node<'bool'>, then: Node<T>, else_: Node<T>): Node<T>` (generic over `T`)
 - **Memory**: `load` / `store` on `State<T>`; `.read` / `.write` / `.readInterpolated` / `.copyFrom` / `.loadVec` / `.storeVec` as methods on `Buffer<T>` (see §3.2 and §7). `loadVec` / `storeVec` are SIMD-only and exist on the buffer handle, not on `audioOutput`.
 
+**Method form availability (Q77)**: every Arithmetic, Comparison, and Math primitive listed above is also callable as a method on the `Node<T>` value (`a.add(b)` is identical to `add(a, b)`). SIMD vec primitives `addVec` / `subVec` / `mulVec` / `divVec` are likewise callable as `.add` / `.sub` / `.mul` / `.div` on `Node<'f32x4'>` values (see §7.2). The control primitive `select` and the SIMD constructors `splat` / `vec4` / `sumLanes` stay **free-function only** (= 3-arg / no natural receiver). Memory access (`load` / `store` / buffer methods) is already in method form on the handle types. Free function form and method form share the same captured graph node — choice is purely syntactic.
+
 Math-precision strategy (Q17, `decisions-log.md`): the `@unworklet/core` import path ships **polynomial approximations** (5–7th-order minimax) for every math primitive listed above. All approximations are emitted as WASM functions and run entirely inside the WASM module — there is no FFI / JS-WASM boundary crossing per call, so per-sample use stays realtime-safe. Maximum approximation error is on the order of `1e-4`, inaudible within audio's 24-bit dynamic range. Numerical-analysis use cases (where IEEE-754-faithful math matters) are outside unworklet's scope. v1.x.0 may additively introduce `@unworklet/core/precise` (WASM-bundled libm, std-math-equivalent precision) and `@unworklet/core/table` (precomputed lookup, even faster) import paths.
 
 ### 2.2 Scalar constructors
 
-Five scalar constructors lift JS values to `Node<T>` explicitly. Used wherever the implicit lift does not apply — declarations, ambiguous-call disambiguation, i64 construction, and cross-precision conversion between `Node` types:
+Six scalar constructors lift JS values to `Node<T>` explicitly. Used wherever the implicit lift does not apply — declarations, ambiguous-call disambiguation, i64 construction, cross-precision conversion between `Node` types, and method-chain starting points (= `num(v)` per Q77):
 
 ```typescript
-f32(v: number): Node<'f32'>;
-f64(v: number): Node<'f64'>;
-i32(v: number): Node<'i32'>;
-i64(v: bigint): Node<'i64'>;
+f32(v: number):  Node<'f32'>;
+f64(v: number):  Node<'f64'>;
+i32(v: number):  Node<'i32'>;
+i64(v: bigint):  Node<'i64'>;
 bool(v: boolean): Node<'bool'>;
+num<T>(v: number | boolean): Node<T>;   // Q77 — context-inferred lift for method chain starts
 ```
 
 ```typescript
@@ -307,17 +333,22 @@ const def = bool(false);
 add(i32(0), i32(0))     // T = 'i32' fixed
 
 // i64: BigInt-required (no implicit lift):
-add(state.i64.load(), i64(BigInt(123)))
+state.i64.load().add(i64(BigInt(123)))
 
 // Cross-precision conversion between Node types:
 const wide   = f64(f32node);
 const narrow = f32(f64node);
 const idx    = i32(f32node);    // truncate
+
+// Method-chain starting point (= literal-leading chain, JS literals have no methods):
+const dry = num(1).sub(mix).mul(drySig);            // T inferred from .sub(mix) → Node<'f32'>
+const off = num(60).add(noteOffset);                // T inferred from .add(noteOffset) → Node<'i32'>
+const trig = num(true).select(activeBranch, idleBranch);   // T = 'bool' (literal is bool)
 ```
 
-Constructor naming follows GLSL (`vec3(0.0)` / `float(0)`) and WGSL (`f32(0)`) convention.
+Constructor naming follows GLSL (`vec3(0.0)` / `float(0)`) and WGSL (`f32(0)`) convention. `num(v)` is the chain-start helper introduced by Q77; its `T` is inferred from the surrounding context (= the type of the value passed to the next method in the chain) via the same context-dependent lift rule as Q33 / Q36, falling back to `'f32'` when no context constrains it. Boolean literals fix `T = 'bool'` unambiguously.
 
-Authoritative rationale and rejected alternatives: `decisions-log.md` Q33.
+Authoritative rationale and rejected alternatives: `decisions-log.md` Q33 + Q77.
 
 ## 3. State, buffer, param declarations
 
@@ -1014,13 +1045,27 @@ The v1.0.0 SIMD surface is the smallest set of primitives that lets DSP authors 
 
 - `addVec`, `subVec`, `mulVec`, `divVec`: `(Node<'f32x4'>, Node<'f32x4'>) → Node<'f32x4'>`.
 
+Each is also callable as a method on the `Node<'f32x4'>` value (Q77 hybrid policy): `v.add(other)` / `v.sub(other)` / `v.mul(other)` / `v.div(other)` produce the same captured graph node as the corresponding free-function form. Method form is the convention when an SIMD input flows through a sequence of vec operations; free-function form is the convention at chain starts and inside complex expressions.
+
+```typescript
+// chain (= input flow line):
+const out = scratch.loadVec(i).mul(splat(gain.at(0))).add(splat(bias));
+
+// free function (= equivalent, used when chain start is awkward):
+addVec(mulVec(scratch.loadVec(i), splat(gain.at(0))), splat(bias));
+```
+
 #### Lane access
 
-Lane extraction is a method on the vec value, not a free function:
+Lane extraction and the arithmetic methods all live on the vec value:
 
 ```typescript
 type Vec4Methods = {
   lane(i: 0 | 1 | 2 | 3): Node<'f32'>;
+  add(other: Node<'f32x4'>): Node<'f32x4'>;
+  sub(other: Node<'f32x4'>): Node<'f32x4'>;
+  mul(other: Node<'f32x4'>): Node<'f32x4'>;
+  div(other: Node<'f32x4'>): Node<'f32x4'>;
 };
 ```
 
@@ -1135,7 +1180,7 @@ const onepole = defineSubgraph((coef: Node<'f32'>) => {
   const z = state.named.f32(0, { name: 'z' });        // named — contributes to parent's snapshot when reached
   return {
     process: (input: Node<'f32'>) => {
-      const y = add(z.load(), mul(coef, sub(input, z.load())));
+      const y = input.sub(z.load()).mul(coef).add(z.load());
       z.store(y);
       return y;
     },
@@ -1146,7 +1191,7 @@ const trivialOnepole = defineSubgraph((coef: Node<'f32'>) => {
   const z = state.f32(0);                              // plain — worklet-private, never in snapshot
   return {
     process: (input: Node<'f32'>) => {
-      const y = add(z.load(), mul(coef, sub(input, z.load())));
+      const y = input.sub(z.load()).mul(coef).add(z.load());
       z.store(y);
       return y;
     },
@@ -1430,13 +1475,13 @@ const gainSat = defineProcessor((ctx) => {
         const inR = main.at(1, i);
         const g   = gain.at(i);
         const d   = drive.at(i);
-        const cleanL = mul(inL, g);
-        const cleanR = mul(inR, g);
-        const satL   = tanh(mul(inL, mul(g, 3.0)));
-        const satR   = tanh(mul(inR, mul(g, 3.0)));
-        const m = sub(1, d);
-        out.set(0, i, add(mul(cleanL, m), mul(satL, d)));
-        out.set(1, i, add(mul(cleanR, m), mul(satR, d)));
+        const cleanL = inL.mul(g);
+        const cleanR = inR.mul(g);
+        const satL   = inL.mul(g.mul(3.0)).tanh();
+        const satR   = inR.mul(g.mul(3.0)).tanh();
+        const m = num(1).sub(d);
+        out.set(0, i, cleanL.mul(m).add(satL.mul(d)));
+        out.set(1, i, cleanR.mul(m).add(satR.mul(d)));
       });
     },
   };
@@ -1465,7 +1510,7 @@ const simdProc = defineProcessor((ctx) => {
       // Per-sample (SIMD stride): apply blockGain across the buffer.
       forSample.byN(4, (i) => {
         const v = scratch.loadVec(i);
-        scratch.storeVec(i, mulVec(v, splat(blockGain)));
+        scratch.storeVec(i, v.mul(splat(blockGain)));
       });
 
       // Per-sample: output drain
