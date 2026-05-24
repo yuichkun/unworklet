@@ -137,8 +137,8 @@ All numeric fields the handler receives — `atSample`, `note`, `velocity`, `cha
 ```typescript
 defineProcessor((ctx) => {
   const midiIn = midiInput({ name: 'midiIn' });
-  const noteState = state.i32(-1, { name: 'note' });
-  const trigOffset = state.i32(-1, { name: 'trig' });
+  const noteState = state.i32(-1);
+  const trigOffset = state.i32(-1);
   // ...
 
   return {
@@ -199,7 +199,7 @@ The `event` argument has the `MidiEventGraph` shape (§2.2) — all numeric fiel
 ```typescript
 defineProcessor((ctx) => {
   const midiOut = midiOutput({ name: 'midiOut' });
-  const stepCounter = state.i32(0, { name: 'stepCounter' });
+  const stepCounter = state.i32(0);
 
   return {
     process: () => {
@@ -231,9 +231,9 @@ Sysex events have variable-length `data` and cannot use a fixed-size MIDI event 
 ```typescript
 defineProcessor((ctx) => {
   const midiOut  = midiOutput({ name: 'midiOut' });
-  const sysexBuf = buffer.u8({ name: 'sysexBuf', size: 64 });           // build-time-fixed
-  const txLen    = state.i32(0, { name: 'txLen' });                     // dynamic send length
-  const sendAt   = state.i32(-1, { name: 'sendAt' });                   // sample-offset where the next send fires (-1 = no send pending)
+  const sysexBuf = buffer.u8({ size: 64 });                              // build-time-fixed
+  const txLen    = state.i32(0);                                          // dynamic send length
+  const sendAt   = state.i32(-1);                                         // sample-offset where the next send fires (-1 = no send pending)
 
   return {
     process: () => {

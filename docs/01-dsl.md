@@ -40,7 +40,7 @@ Sample-offset primitives (`audioIn.at(c, i)`, `audioOut.set(c, i, v)`, `param.at
 const gain = defineProcessor((ctx) => {
   const main = audioInput ({ channels: 2, name: 'main' });
   const out  = audioOutput({ channels: 2, name: 'main' });
-  const g    = param({ default: 1.0, ..., automationRate: 'a-rate', name: 'gain' });
+  const g    = param.named({ default: 1.0, ..., automationRate: 'a-rate', name: 'gain' });
 
   return {
     process: () => {
@@ -56,9 +56,9 @@ const gain = defineProcessor((ctx) => {
 const partitionedReverb = defineProcessor((ctx) => {
   const main       = audioInput ({ channels: 1, name: 'main' });
   const out        = audioOutput({ channels: 1, name: 'main' });
-  const inBuf      = buffer.f32({ size: SAMPLES_PER_BLOCK, name: 'inBuf'  });
-  const outBuf     = buffer.f32({ size: SAMPLES_PER_BLOCK, name: 'outBuf' });
-  const partIdx    = state.i32(0, { name: 'partIdx' });
+  const inBuf      = buffer.f32({ size: SAMPLES_PER_BLOCK });
+  const outBuf     = buffer.f32({ size: SAMPLES_PER_BLOCK });
+  const partIdx    = state.i32(0);
   const NUM_PARTITIONS = 8;
 
   return {
@@ -187,7 +187,7 @@ This is intentional: a single declaration pattern across all processor sizes (mi
 ```typescript
 const sin440 = defineProcessor((ctx) => {
   const out   = audioOutput({ channels: 1, name: 'main' });
-  const phase = state.f32(0, { name: 'phase' });
+  const phase = state.f32(0);
   const inc   = 2 * Math.PI * 440 / ctx.sampleRate;          // build-time JS constant
   return {
     process: () => {
@@ -239,7 +239,7 @@ The package exports build-time constants at the top level, alongside `defineProc
   import { defineProcessor, buffer, forSample, SAMPLES_PER_BLOCK } from '@unworklet/core';
 
   defineProcessor(() => {
-    const scratch = buffer.f32({ size: SAMPLES_PER_BLOCK, name: 'scratch' });
+    const scratch = buffer.f32({ size: SAMPLES_PER_BLOCK });
 
     return {
       process: () => {
@@ -321,43 +321,59 @@ Authoritative rationale and rejected alternatives: `decisions-log.md` Q33.
 
 ## 3. State, buffer, param declarations
 
-The three primitive declaration kinds — scalar `state`, fixed-size `buffer`, and `AudioParam`-backed `param` — are the only places where new memory slots enter the graph. Each declaration accepts an optional `name` field for snapshot identity (see §8.1) and an optional `snapshot` field controlling persistence behavior (see §8.2).
+The three primitive declaration kinds — scalar `state`, fixed-size `buffer`, and `AudioParam`-backed `param` — are the only places where new memory slots enter the graph. Each kind exposes two factory routes (Q76):
+
+- **Plain factory** (`state.<type>` / `buffer.<type>` / `param`) — worklet-private slot, **no `name`**, never enters a snapshot blob, no main-side identifier. The common case for filter state, oscillator phase, scratch buffers, internal accumulators.
+- **Named factory** (`state.named.<type>` / `buffer.named.<type>` / `param.named`) — `name` is **required at the TypeScript level**, the slot enters the snapshot blob (default `'persistent'`), and the slot is reachable on the main side via `node.state.<name>` / `node.buffer.<name>` / `node.parameters.<name>`. The form authors reach for when the slot is part of preset identity, publishable to the main side, or otherwise an externally addressable surface.
 
 ### 3.1 `state` — scalar slots
 
 ```typescript
-const z1   = state.f32(0);                                    // f32 scalar, snapshot 'persistent' by default
-const acc  = state.f64(0, { name: 'accumulator' });           // explicit identity for snapshot()
-const tmp  = state.f32(0, { snapshot: 'transient' });         // excluded from all snapshot profiles
-const fl   = state.bool(false);
+// Plain factory — worklet-private, no `name`, no snapshot, no main-side surface.
+const z1   = state.f32(0);                                                            // filter z-state
+const z2   = state.f32(0);
+const phase= state.f32(0);
 const idx  = state.i32(0);
+const fl   = state.bool(false);
+
+// Named factory — `name` required at the TypeScript level; enters snapshot by default.
+const meterL = state.named.f32(0, { name: 'meterL', publish: { rateFps: 30 } });      // publishable to main, in snapshot
+const cutoffSampled = state.named.f32(0, { name: 'cutoffSampled' });                  // in snapshot, no publish
+const route  = state.named.i32(0, { name: 'route', snapshot: 'transient' });          // main-side addressable, excluded from snapshot
 ```
 
-`state.<type>(initial, options?)` declares a scalar slot. `load()` reads the current value; `store(node)` writes a `Node<T>` value back. The slot is inlined into the WASM linear memory at compile time.
+`state.<type>(initial)` (plain) declares a worklet-private scalar slot. `state.named.<type>(initial, { name, snapshot?, publish? })` declares an externally addressable slot. Both expose the same `load()` / `store(node)` surface; the slot is inlined into the WASM linear memory at compile time.
 
 State is sample-offset-independent: the `state` reference itself does not depend on the surrounding context. `load()` returns the value as updated by the most recent `store()`. State updates inside `forSample` callbacks are observable in subsequent samples in the same render quantum and in subsequent render quanta. State updates at per-block top level are observable for the rest of that render quantum and beyond. State load/store at per-block top level **after** a `forSample` invocation can observe the state's value at the end of the loop — useful for block-level summaries (peak detect, accumulator readout, etc.).
 
-Options:
+Plain factory takes no options other than the initial value (= no surface for `name` / `snapshot` / `publish`). All cross-thread / preset-bearing concerns live on the named factory.
 
-- **`name?: string`** — slot identity. Required when the parent processor calls `snapshot()` (graph-capture-time error otherwise). Used as the slot key in snapshot blobs.
-- **`snapshot?: 'persistent' | 'transient' | { [profile: string]: 'persistent' | 'transient' }`** — snapshot inclusion. Default is `'persistent'`. See §8.2.
+Named factory options:
+
+- **`name: string`** — slot identity. Required at TypeScript level (the named factory's signature narrows `name` to a required field). Used as the slot key in snapshot blobs and as the path segment for `node.state.<name>` access. Subgraph instances prefix the slot path; see §8.1.
+- **`snapshot?: 'persistent' | 'transient' | { [profile: string]: 'persistent' | 'transient' }`** — snapshot inclusion. Default is `'persistent'` (= named slots are most often part of preset identity). See §8.2.
 - **`publish?: { rateFps: number }`** — when set, the framework periodically copies the current slot value into a shared region readable from the main thread via `node.state.<name>.subscribe(handler)` or `.value`. Default omitted (= not published). The slot remains worklet-private for writes regardless of this option; main observes a snapshot at copy time.
 
-  **Type restriction (Q42, `decisions-log.md`)**: `publish` is accepted only on `state.f32` / `state.i32` / `state.bool` — all three are 32 bit single-word slots that audio thread and main can read/write in a single `Atomics` op (no torn reads). `state.f64` / `state.i64` reject the `publish` option at TypeScript level; their values span two 32-bit words and require a torn-read mitigation that is deferred to v1.x.0 (same axis as Q27-f). Use `f32` as a substitute when possible.
+  **Type restriction (Q42, `decisions-log.md`)**: `publish` is accepted only on `state.named.f32` / `state.named.i32` / `state.named.bool` — all three are 32 bit single-word slots that audio thread and main can read/write in a single `Atomics` op (no torn reads). `state.named.f64` / `state.named.i64` reject the `publish` option at TypeScript level; their values span two 32-bit words and require a torn-read mitigation that is deferred to v1.x.0 (same axis as Q27-f). Use `f32` as a substitute when possible.
 
-  `state.bool` is represented internally as `i32` (0 / 1); the audio thread stores `cond ? 1 : 0` via `Atomics.store`, and the main side casts back to `boolean` when delivering to subscribers (so `node.state.<name>.value` is typed `boolean`).
+  `state.named.bool` is represented internally as `i32` (0 / 1); the audio thread stores `cond ? 1 : 0` via `Atomics.store`, and the main side casts back to `boolean` when delivering to subscribers (so `node.state.<name>.value` is typed `boolean`).
 
-  Authoritative rationale: `decisions-log.md` Q27-a + Q42.
+  Authoritative rationale: `decisions-log.md` Q27-a + Q42 + Q76.
 
 ### 3.2 `buffer` — fixed-size arrays
 
 ```typescript
-const ring     = buffer.f32({ size: 44100, name: 'delayLine' });                          // default 'transient'
-const wave     = buffer.f32({ size: 256,   name: 'wavetable', snapshot: 'persistent' });  // explicit include
-const sysexBuf = buffer.u8 ({ size: 64,    name: 'sysexBuf' });                           // byte buffer (= sysex emit; see 11-midi.md §2.5)
+// Plain factory — worklet-private, no `name`, no snapshot, no main-side surface.
+const ring     = buffer.f32({ size: 44100 });                                          // delay line scratch
+const sysexBuf = buffer.u8 ({ size: 64 });                                             // byte buffer (= sysex emit; see 11-midi.md §2.5)
+
+// Named factory — `name` required; default snapshot = 'transient' for buffer (Q76).
+const wave     = buffer.named.f32({ size: 256, name: 'wavetable', snapshot: 'persistent' });  // wavetable in snapshot
+const ir       = buffer.named.f32({ size: 1024, name: 'impulse', snapshot: 'persistent' });   // IR
+const display  = buffer.named.f32({ size: 512, name: 'spectrum', publish: { rateFps: 30 } }); // publishable, transient
 ```
 
-The element-type factory exposes `buffer.f32` / `buffer.f64` / `buffer.i32` / `buffer.i64` / `buffer.bool` / `buffer.u8`. The `'u8'` variant exists specifically for sysex emission (Q49) — byte values are written and read through `Node<'i32'>` (the lower 8 bits are stored), so no separate `Node<'u8'>` type is introduced into the scalar type system.
+Plain factory: `buffer.<type>({ size })` declares a worklet-private fixed-size buffer with no main-side identifier. Named factory: `buffer.named.<type>({ size, name, snapshot?, publish? })` declares a named buffer reachable as `node.buffer.<name>`. The element-type factory exposes `f32` / `f64` / `i32` / `i64` / `bool` / `u8` on both routes. The `'u8'` variant exists specifically for sysex emission (Q49) — byte values are written and read through `Node<'i32'>` (the lower 8 bits are stored), so no separate `Node<'u8'>` type is introduced into the scalar type system.
 
 Access goes through methods on the `Buffer<T>` handle (`buf.read(idx)`, `buf.write(idx, v)`, `buf.readInterpolated(pos)`, `buf.copyFrom(src)`); bounds and interpolation behavior are explicit at each call site. The index argument type is `Node<'i32'> | number` (Q36-a, `decisions-log.md`) — this can be a ring-buffer write head from a `state.i32` slot (per-block or per-sample), the loop counter `i` of a surrounding `forSample` (per-sample), any computed `Node<'i32'>` value, or a JS literal that lifts to `Node<'i32'>`. Range constraints (non-negative, within capacity) are enforced at graph capture.
 
@@ -384,20 +400,28 @@ type Buffer<T extends ScalarType | 'u8'> = {
 
 Options:
 
+Plain factory options:
+
 - **`size: number`** — element count, fixed at compile time. The buffer occupies `size × sizeof(type)` bytes in linear memory.
-- **`name?: string`** — slot identity (same rules as `state`).
-- **`snapshot?: 'persistent' | 'transient' | { ... }`** — default is `'transient'`. Most buffers are accumulation regions (delay lines, scratch buffers) whose contents lose meaning across preset boundaries; include explicitly when the contents *are* the slot's identity (wavetables, lookup tables).
-- **`publish?: { rateFps: number }`** — same shape as `state.publish`. The framework copies the buffer region into a shared region every publish tick; main thread reads via `node.state.<name>.subscribe(handler)` (handler receives the typed array view) or `.value`. Used for continuous large data (waveform display, spectrum frame). See `decisions-log.md` Q27-a / Q27-e.
+
+Named factory options:
+
+- **`size: number`** — same as plain.
+- **`name: string`** — required at TypeScript level. Slot identity (same rules as `state.named`).
+- **`snapshot?: 'persistent' | 'transient' | { ... }`** — default is `'transient'` (= even named buffers are most often accumulation regions whose contents lose meaning across preset boundaries; include explicitly when the contents *are* the slot's identity, e.g. wavetables, lookup tables).
+- **`publish?: { rateFps: number }`** — same shape as `state.named.publish`. The framework copies the buffer region into a shared region every publish tick; main thread reads via `node.buffer.<name>.subscribe(handler)` (handler receives the typed array view) or `.value`. Used for continuous large data (waveform display, spectrum frame). See `decisions-log.md` Q27-a / Q27-e.
 
 ### 3.3 `param` — AudioParam-backed
 
+`param` is **only available through `param.named`** — every Web Audio `AudioParam` requires a `name` to be addressable from `AudioWorkletNodeOptions` / `node.parameters`, so there is no plain factory route.
+
 ```typescript
-const cutoff = param({
+const cutoff = param.named({
   default: 1000, min: 20, max: 20000,
   automationRate: 'a-rate',
   name: 'cutoff',
 });
-const route = param({
+const route = param.named({
   default: 0, min: 0, max: 7,
   automationRate: 'k-rate',
   name: 'route',
@@ -405,7 +429,7 @@ const route = param({
 });
 ```
 
-`param()` declares a slot bound to the standard Web Audio `AudioParam`. There is **one access method**: `param.at(i)`.
+`param.named()` declares a slot bound to the standard Web Audio `AudioParam`. There is **one access method**: `param.at(i)`.
 
 ```typescript
 // Inside a forSample callback (per-sample code): use the loop counter `i`.
@@ -428,10 +452,10 @@ Options:
 - **`default`, `min`, `max`** — initial value and clamp range.
 - **`automationRate: 'a-rate' | 'k-rate'`** — Web Audio automation rate.
 - **`unit?: string`** — display hint passed through to `AudioParamDescriptor` metadata.
-- **`name?: string`** — slot identity.
+- **`name: string`** — required at TypeScript level. AudioParam descriptor key + slot identity for snapshots.
 - **`snapshot?: 'persistent' | 'transient' | { ... }`** — default is `'persistent'` (param values are typically the user-controlled state of a preset). Snapshots include only the **current value**; AudioParam automation queues (`setValueAtTime`, `linearRampToValueAtTime`, etc.) are not preserved.
 
-Authoritative rationale for the snapshot defaults: `decisions-log.md` Q5 (Q5-b). Authoritative rationale for the single form (no sugar): `decisions-log.md` Q22 (Q22-b).
+Authoritative rationale for the snapshot defaults: `decisions-log.md` Q5 (Q5-b) + Q76. Authoritative rationale for the single form (no sugar): `decisions-log.md` Q22 (Q22-b). Authoritative rationale for the named-only `param`: `decisions-log.md` Q76.
 
 ### 3.4 Declared-but-unused slots
 
@@ -567,8 +591,8 @@ Out-of-range `.at(idx)` reads (idx outside `[0, length)`) are wrapped at graph c
 
 ```typescript
 const fft = defineProcessor((ctx) => {
-  const spectrumBuf = buffer.f32({ name: 'spectrum', size: 512 });
-  const txLen       = state.i32(0, { name: 'txLen' });
+  const spectrumBuf = buffer.f32({ size: 512 });
+  const txLen       = state.i32(0);
   const result      = event<{ spectrum: Float32Array; bin: number }>({
     name:            'result',
     payloadCapacity: 512 * 4,                                            // bytes reserved for the typed-array field
@@ -916,7 +940,7 @@ Conditional output between configurations is expressed by instantiating both and
 const myProcessor = defineProcessor((ctx) => {
   const main = audioInput ({ channels: 1, name: 'main' });
   const out  = audioOutput({ channels: 1, name: 'main' });
-  const useA = param({ default: 1, min: 0, max: 1, automationRate: 'k-rate', name: 'useA' });
+  const useA = param.named({ default: 1, min: 0, max: 1, automationRate: 'k-rate', name: 'useA' });
 
   // Two filter instances, each with independent state.
   const lpfA = createSubgraph(onepole, coefA);
@@ -1069,8 +1093,8 @@ import { mulVec, splat } from '@unworklet/core/simd';
 export const simdGain = defineProcessor((ctx) => {
   const main = audioInput ({ channels: 1, name: 'main' });
   const out  = audioOutput({ channels: 1, name: 'main' });
-  const scratch = buffer.f32({ size: SAMPLES_PER_BLOCK, name: 'scratch' });
-  const gain    = param({ default: 1.0, min: 0.0, max: 4.0, automationRate: 'k-rate', name: 'gain' });
+  const scratch = buffer.f32({ size: SAMPLES_PER_BLOCK });
+  const gain    = param.named({ default: 1.0, min: 0.0, max: 4.0, automationRate: 'k-rate', name: 'gain' });
 
   return {
     process: () => {
@@ -1096,17 +1120,30 @@ export const simdGain = defineProcessor((ctx) => {
 
 ## 8. Snapshot / restore declaration
 
-Processors that need preset save/load, session restore, or AB compare declare snapshot/restore behavior in two places: per-slot `snapshot` flags (§3) and an optional `migrations` array on the processor itself.
+Processors that need preset save/load, session restore, or AB compare declare snapshot/restore behavior in two places: per-slot named-factory `snapshot` flags (§3) and an optional `migrations` array on the processor itself.
 
-### 8.1 Slot identity rules
+### 8.1 Slot identity rules (Q76)
 
-Every slot reachable from a `defineProcessor` body that calls `snapshot()` must carry a unique `name`. Names are used as keys in snapshot blobs.
+The snapshot blob contains exactly the slots declared via **named factories** (`state.named.<type>` / `buffer.named.<type>` / `param.named`). Plain factories (`state.<type>` / `buffer.<type>`) produce worklet-private slots that are never part of any snapshot blob.
 
-**Subgraph instances** carry a `name` only when the parent processor's snapshot path needs to identify which instance owns a slot (Q41). For snapshot-free subgraphs, `name` is omitted entirely:
+The `name` field on a named factory is **required at the TypeScript level** — there is no graph-capture-time check for missing names because the type system already rejects them at the IDE. Names are used as keys in snapshot blobs and as the path segment for `node.state.<name>` / `node.buffer.<name>` / `node.parameters.<name>` access.
+
+**Subgraph instances** are named when the subgraph contains any named-factory slot and the parent processor reaches it. The instance `name` becomes the snapshot path prefix:
 
 ```typescript
 const onepole = defineSubgraph((coef: Node<'f32'>) => {
-  const z = state.f32(0, { name: 'z' });
+  const z = state.named.f32(0, { name: 'z' });        // named — contributes to parent's snapshot when reached
+  return {
+    process: (input: Node<'f32'>) => {
+      const y = add(z.load(), mul(coef, sub(input, z.load())));
+      z.store(y);
+      return y;
+    },
+  };
+});
+
+const trivialOnepole = defineSubgraph((coef: Node<'f32'>) => {
+  const z = state.f32(0);                              // plain — worklet-private, never in snapshot
   return {
     process: (input: Node<'f32'>) => {
       const y = add(z.load(), mul(coef, sub(input, z.load())));
@@ -1117,24 +1154,28 @@ const onepole = defineSubgraph((coef: Node<'f32'>) => {
 });
 
 const synth = defineProcessor((ctx) => {
-  // Snapshot-bearing: each instance's `z` becomes a distinct slot in the blob.
-  const lpfL = createSubgraph(onepole, cutoff, { name: 'lpfL' });   // slot path 'lpfL/z'
-  const lpfR = createSubgraph(onepole, cutoff, { name: 'lpfR' });   // slot path 'lpfR/z'
-  // ...
+  // Subgraph has a named slot → instance `name` required, contributes 'lpfL/z' / 'lpfR/z' to snapshot.
+  const lpfL = createSubgraph(onepole, cutoff, { name: 'lpfL' });
+  const lpfR = createSubgraph(onepole, cutoff, { name: 'lpfR' });
+
+  // Subgraph has only plain slots → instance `name` optional, no snapshot contribution.
+  const pre  = createSubgraph(trivialOnepole, dcBlocker);
 });
 ```
 
-Slot path is the slash-joined chain from the root processor (`'lpfL/z'`, `'fxBus/reverb/tail'`, etc.). Graph capture validates uniqueness; missing `name` on any reachable slot is always an error. Missing `name` on a subgraph instance is an error only when the subgraph declares persistent state and the parent processor takes snapshots — for snapshot-free instances (the common case), no `name` is required.
+Slot path is the slash-joined chain from the root processor (`'lpfL/z'`, `'fxBus/reverb/tail'`, etc.). Graph capture validates uniqueness across all named slots. Missing `name` on a subgraph instance is an error only when the subgraph contains a named-factory slot and the parent processor's reachable graph touches it — for plain-only subgraph instances (the common case), no `name` is required.
 
 ### 8.2 Snapshot profiles
 
-The `snapshot` option on each declaration is one of:
+The `snapshot` option is only accepted on **named factories** (`state.named.<type>` / `buffer.named.<type>` / `param.named`). It takes one of:
 
 - `'persistent'` — included in every profile; included in `snapshot()` (no profile arg).
 - `'transient'` — excluded from every profile; excluded from `snapshot()` (no profile arg).
 - `{ [profile: string]: 'persistent' | 'transient' }` — per-profile flag; included in `snapshot({ profile })` only when that profile maps to `'persistent'`. `snapshot()` (no arg) includes the slot if **any** profile maps to `'persistent'`.
 
-Profile names are user-defined — `'preset'` and `'session'` are conventional examples but the framework reserves no names. The set of profiles a processor supports is the union of profile keys appearing across all declarations, computed at graph-capture time.
+Defaults: `'persistent'` for `state.named` and `param.named`, `'transient'` for `buffer.named` (= even named buffers are most often accumulation regions whose contents lose meaning across preset boundaries; opt in to `'persistent'` for wavetables / IRs / lookup tables).
+
+Profile names are user-defined — `'preset'` and `'session'` are conventional examples but the framework reserves no names. The set of profiles a processor supports is the union of profile keys appearing across all named-factory declarations, computed at graph-capture time.
 
 ### 8.3 `migrations` — declarative schema upgrades
 
@@ -1239,9 +1280,9 @@ Some processor-internal computations (LFO, envelope, FFT, modulation matrix, etc
 
 ```typescript
 const synth = defineProcessor((ctx) => {
-  const lfoVal  = state.f32(0, { name: 'lfo' });
-  const fftMag  = state.f32(0, { name: 'mag' });
-  const inBuf   = buffer.f32({ size: 1024, name: 'fftIn' });
+  const lfoVal  = state.f32(0);
+  const fftMag  = state.f32(0);
+  const inBuf   = buffer.f32({ size: 1024 });
   const audioIn = audioInput({ channels: 1, name: 'main' });
   const out     = audioOutput({ channels: 1, name: 'main' });
 
@@ -1307,7 +1348,7 @@ The counter advance is global to the processor instance; sub-blocks do not inter
 If a consumer wants to consume an automation value at a coarse rate (e.g. read `cutoff` only once per 8 samples), they wrap the read in an `everyNSamples` callback and store into a `state` slot:
 
 ```typescript
-const cutoffSampled = state.f32(0, { name: 'cutoffSampled' });
+const cutoffSampled = state.f32(0);
 
 forSample((i, everyNSamples) => {
   everyNSamples(8, () => {
@@ -1379,8 +1420,8 @@ Inside a `forSample` callback, the same rules as L1 helper bodies (§5.5.5) appl
 const gainSat = defineProcessor((ctx) => {
   const main  = audioInput ({ channels: 2, name: 'main' });
   const out   = audioOutput({ channels: 2, name: 'main' });
-  const gain  = param({ default: 1.0, ..., automationRate: 'a-rate', name: 'gain'  });
-  const drive = param({ default: 0.0, ..., automationRate: 'a-rate', name: 'drive' });
+  const gain  = param.named({ default: 1.0, ..., automationRate: 'a-rate', name: 'gain'  });
+  const drive = param.named({ default: 0.0, ..., automationRate: 'a-rate', name: 'drive' });
 
   return {
     process: () => {
@@ -1408,8 +1449,8 @@ const gainSat = defineProcessor((ctx) => {
 const simdProc = defineProcessor((ctx) => {
   const main    = audioInput ({ channels: 1, name: 'main' });
   const out     = audioOutput({ channels: 1, name: 'main' });
-  const scratch = buffer.f32({ size: SAMPLES_PER_BLOCK, name: 'scratch' });
-  const gain    = param({ default: 1.0, ..., automationRate: 'k-rate', name: 'gain' });
+  const scratch = buffer.f32({ size: SAMPLES_PER_BLOCK });
+  const gain    = param.named({ default: 1.0, ..., automationRate: 'k-rate', name: 'gain' });
 
   return {
     process: () => {

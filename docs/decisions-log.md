@@ -48,6 +48,7 @@ populated (Q1–Q68 ratify complete; Q28 is unassigned — a numbering artifact,
 | Q71 | `event<T>` の per-field 配 線 = emit-time の `Node<T>` で 確 定 (audit 累 犯 解 消) | resolved — `event<T>` の field 別 wire 型 を **emit 時 の `Node<T>` で 確 定**: declare の `T` は field **名** + 大 体 の 型 family (numeric / boolean / typed-array) を 持 ち、 各 numeric field の 正 確 な wire 型 は emit 時 の `Node<T>` で 決 ま る (= `Node<'f32'>` → 4-byte f32、 `Node<'i32'>` → 4-byte i32、 `Node<'f64'>` → 8-byte f64、 `Node<'i64'>` → 8-byte i64、 `Node<'bool'>` → 1-byte bool); 整 数 literal は 既 Q33 literal-lift で `Node<'i32'>` に lift; main 側 callback 引 数 型 は framework が emit site の `Node<T>` を 逆 引 き し て 自 動 公 開 (= `Node<'f32'>` / `Node<'i32'>` → JS `number`、 `Node<'bool'>` → `boolean`、 `Node<'i64'>` → `bigint`); 同 じ `event<T>` handle へ の 複 数 emit site で per-field `Node<T>` が 不 一 致 な ら graph-capture-time error; canonical Ex 4 / Ex 5 / Ex 8 で 既 規 範 化 さ れ た 「`number` で declare し float emit (= velocity / level / pos)」 形 が そ の ま ま zip; MIDI + `message<T>` は Q46 通 り (= 全 number → `Node<'i32'>` lift) 維 持 — MIDI は wire 仕 様 上 7-bit int 固 定、 `message<T>` は main → worklet で send-time JS 値 → Node<T> 推 論 ル ー ル が 別 question | `01-dsl.md` §4.1 + `02-messaging.md` §5.1 |
 | Q72 | canonical SIMD primitive 個 別 hit ナ シ entry を scope 外 close (= 過 剰 解 釈) | resolved — `vec4` / `subVec` / `divVec` / `vec.lane` が `12-canonical-examples.md` で 個 別 hit ナ シ を 「HARD CONTRACT 違 反 / 規 範 確 認 不 在」 と し て open-questions に 立 て て い た が、 AGENTS.md L16 「exercise the full surface」 を 機 械 網 羅 と 過 剰 解 釈 し て 拾 い 上 げ た entry = **scope 外 close**; canonical は curated 規 範 例 集 / 整 合 anchor (= 仕 様 を 変 え る 時 affected example が realistic / 自 然 か 確 か め る 道 具、 UX が simple / coherent / production-ready か 答 え ら れ る 状 態 維 持) で あ り 「全 primitive / 全 declaration を 1 回 ず つ 個 別 hit」 rule で は な い (= 個 別 primitive の hit ナ シ ≠ 仕 様 違 反); SIMD-using 規 範 例 (= Ex 3 / Ex 7) が 既 規 範 化 さ れ て お り full surface に 触 れ る curated set の curation 性 を 満 た す; 軸 file (= `core-principles.md` §2 + §3 / `priority-filter-rationale.md` scope 外 + 累 犯 wording / `decision-axes.md` §i scope 外 例) を 同 commit で narrow し て 次 sweep / triage で 同 種 を 拾 わ な い 2 重 防 御 化 | (= 関 連 file ナ シ、 軸 file 自 体 を 動 か し た commit) |
 | Q73 | main / worklet 間 内 部 wire layout を e 軸 (= 実 装 期 任 せ) で 4 entry 集 約 close (audit 累 犯 解 消) | resolved — ship 後 凍 結 wire byte は **`node.snapshot()` の Uint8Array blob 並 び の み** (= user persist + 新 ship restore = migration mandatory)、 main / worklet 間 内 部 wire (= SAB ringbuffer slot 並 び、 event slot / MIDI slot field 並 び、 sysex content buffer 並 び 等) は framework 同 ship 内 で main bundle / worklet bundle ペ ア = ship ご と に 自 由 = user 不 観 測 = **e 軸 (= 実 装 AI 領 域)**; 4 entry 集 約 close: (1) event slot vs MIDI slot で atSample 位 置 が 別 (= wire 上 位 置 は 実 装 期、 invariant = atSample が wire 上 1 位 置 で 取 れ る こ と)、 (2) variable-length 中 身 並 び 方 が event と MIDI sysex で 別 形 式 (= 実 装 期、 invariant = main slot + content buffer で 1 意 に 長 さ + 中 身 が 取 れ る こ と)、 (3) sysex slot に atSample 不 在 で 「全 handler 引 数 は atSample を 持 つ」 主 張 と 衝 突 (= wire 上 atSample 位 置 は 実 装 期、 invariant = handler arg に atSample が 渡 る user 観 測 surface は 維 持)、 (4) `forSample.byN` function + property hybrid (= TS export 形 は 実 装 期、 invariant = canonical で `forSample.byN(stride, callback)` が 動 く こ と); g 軸 を `node.snapshot()` blob だ け に narrow + 軸 file 同 commit update で 次 sweep / triage 同 種 拾 わ ず 2 重 防 御 | (= 関 連 file ナ シ、 軸 file 自 体 を 動 か し た commit) |
+| Q76 | `state` / `buffer` / `param` factory 分 離 (= plain vs named)、 snapshot opt-in を slot 単 位 で 明 示 化 (audit cluster (8) snapshot lifecycle) | resolved — declaration kind を **plain factory** (`state.<type>` / `buffer.<type>` = worklet-private、 `name` 受 け 入 れ ナ シ、 snapshot blob 不 在、 main 側 surface ナ シ) と **named factory** (`state.named.<type>` / `buffer.named.<type>` / `param.named` = TypeScript level で `name` required、 snapshot blob に 入 る (default `'persistent'` for `state.named` / `param.named`、 `'transient'` for `buffer.named`)、 main 側 で `node.state.<name>` / `node.buffer.<name>` / `node.parameters.<name>` で 引 け る) に 2 分 離; `param` は named factory 専 用 (= 全 AudioParam は descriptor 経 由 で main 側 か ら 名 前 で 引 か れ る); `publish` option も named factory 専 用; Q5-b 「state / param default = 'persistent'」 / 「`snapshot()` 呼 ぶ processor の name 必 須 trigger」 部 分 retract、 「positional / AST hash 棄 却」 / per-profile / migrations chain は 維 持; canonical Ex 全 declare 例 を 案 S 適 用 で refactor (= AGENTS.md HARD CONTRACT 同 commit zip) | `01-dsl.md` §3 + §8 + `11-midi.md` §2.3 / §2.4 / §2.5 + `12-canonical-examples.md` 全 declare 例 |
 | Q75 | runtime guard fallback = silence + onError + node connected (audit cluster (4) handler / drain / boundary timing) | resolved — `block-length-mismatch` + `wasm-trap` の runtime guard 動 作 を **silence + onError + node connected** で 1 path 化: `process()` は `true` return continue で node が audio graph か ら 外 れ ず connected の ま ま、 全 output channel に silence (zero buffer) を 出 し 続 け、 main 側 に `node.onError({ code: 'block-length-mismatch' \| 'wasm-trap', ... })` を 発 火、 framework 側 auto-dispose ナ シ (= consumer 判 断 が `.dispose()` で 起 動); 04 §3 / §8 / 03 §2.6 / 05 §1 の 「stops processing」 「halt audio output」 wording を 「emit silence while the node stays connected」 に 揃 え、 00 §5.2 既 「fallback to silence + main-side error event」 と zip; 04 §8 既 declare の 4 event code が silence path (= wasm-trap + block-length-mismatch) と audio-unaffected path (= queue-overflow + sab-unavailable) で 一 貫 化; `process()` return false = AudioWorkletProcessor permanent disconnect は consumer 判 断 を 奪 う path で 棄 却、 直 前 quantum hold は user が 異 常 判 別 不 能 で 棄 却 | `04-worklet-runtime.md` §3 + §8 + `03-compiler.md` §2.6 + `05-client.md` §1 + `00-foundations.md` §5.2 |
 | Q74 | `event<T>` typed-array field emit-side surface = sysex path 一 般 化 (audit cluster (3) emit-side 拡 張) | resolved — `event<T>` の typed-array field を **worklet 側 で 新 規 構 築 し て main に 流 す** path を MIDI sysex emit (Q49) と 共 通 化: emit shape で `data: Buffer<T> | TypedArrayFieldRef<T>` + framework injection の `length: Node<'i32'>` 必 須、 build-time-fixed `buffer.<T>` が 単 一 構 築 primitive (= runtime typed-array literal / `new Float32Array(...)` 不 可)、 main 側 は `data[0..length-1]` を 切 り 出 し た natural typed array で 受 け 取 り、 wire 形 は `02-messaging.md` §5.1 main slot + §5.2 content buffer を sysex と 1 transport 共 有; FFT spectrum / 波 形 解 析 / envelope 履 歴 等 worklet → main typed-array 系 中 心 機 能 が 自 然 surface で cover; T 内 typed-array field 複 数 path は §5.1 既 declare 通 り v1.x.0 deferral | `01-dsl.md` §4.3 + `02-messaging.md` §5.2 + `11-midi.md` §2.5 cross-ref |
 | Q47 | diagnostics surface 統 一 (audit Phase 2 #10、 #49) | resolved — diagnostics counter (= `overflowCount` 等) を **main 側 だ け で 提 供**、 worklet 側 handle (= `midiIn.diagnostics.X()`) を spec か ら 削 除; 全 channel (= event / message / MIDI) で `node.<kind>.<name>.diagnostics.X()` の 統 一 形 (= 既 Q40 namespaced shape と 整 合)、 「diagnostics は 外 部 観 測」 を declarative 原 則 (= 副 作 用 観 測 は main の 役 割、 worklet `process` body は feedback loop を 持 た な い) と し て 確 立; worklet 内 で の self-throttle pattern が 必 要 な ら main 経 由 で feedback (= 1 周 余 計 だ が 構 造 明 確)、 v1.x.0 で worklet handle へ の `.diagnostics` 後 付 け は additive 可 | `11-midi.md` §4 overflow + `decisions-log.md` Q4-c-iv prose |
@@ -3187,4 +3188,56 @@ runtime guard fallback (= `block-length-mismatch` + `wasm-trap` 共 通) 動 作
 
 - Adaptive emission (= 1 build で 複 数 render quantum size に 対 応) は 04 §3 既 declare 通 り v1.x.0 mandatory
 - framework-side auto-dispose-on-error policy も v1.x.0 で 別 question (= 既 04 §8 で 「No framework-side destroy-on-error」 declare 済)
+
+## Q76 — `state` / `buffer` / `param` factory 分 離 (= plain vs named)、 snapshot opt-in を slot 単 位 で 明 示 化 (audit cluster (8) snapshot lifecycle)
+
+`01-dsl.md` §3 + §8 で 「`snapshot()` を 呼 ぶ processor body は 全 slot に `name` 必 須」 prose が あ っ た が、 build-time に 「`snapshot()` を 呼 ぶ か」 を 確 定 す る signal が declare ナ シ で、 graph-capture-time error claim を 守 れ な か っ た。 加 え て Q5-b ratify 「state / param default snapshot = 'persistent'」 が 効 い て、 filter / oscillator 等 snapshot 機 能 を 使 わ な い processor で も `state.f32(440)` 1 行 で name 必 須 化 = boilerplate 過 剰、 「user free が default」 違 反 状 態。
+
+### Decision
+
+`state` / `buffer` / `param` 各 declaration kind を **2 つ の factory route** に 分 離:
+
+- **plain factory** (`state.<type>` / `buffer.<type>`) = worklet-private slot、 **`name` 受 け 入 れ ナ シ**、 snapshot blob に 入 ら な い、 main 側 surface ナ シ。 filter state / oscillator phase / scratch buffer 等 大 多 数 case 用 default。
+- **named factory** (`state.named.<type>` / `buffer.named.<type>` / `param.named`) = `name` **TypeScript level で required**、 snapshot blob に 入 る (= default `'persistent'` for `state.named` / `param.named`、 default `'transient'` for `buffer.named`)、 main 側 で `node.state.<name>` / `node.buffer.<name>` / `node.parameters.<name>` で 引 け る。
+
+`param` は **named factory のみ** (= 全 AudioParam は AudioParamDescriptor 経 由 で main 側 か ら 名 前 で 引 か れ る = plain factory route 不 在)。
+
+`publish` option (= cross-thread observation) は named factory 専 用 (= main 側 で `.subscribe()` / `.value` 引 け る 識 別 子 = name 必 須)。
+
+### Rationale
+
+- declarative 哲 学 と zip = factory 名 で 「snapshot / main 側 surface 持 つ か」 を user が 明 示、 framework 暗 黙 解 釈 ナ シ
+- slot 単 位 で boilerplate 制 御 = filter で `state.f32(0)` の ま ま、 preset slot だ け `state.named.f32(0, { name: '...' })` = mixed (= 一 部 persistent + 一 部 transient) processor で 自 然
+- TypeScript narrow で `name` required = L1 enforcement (= IDE 段 階 で 即 赤 線)、 graph-capture-time check 不 要
+- Q5-b 「positional / AST hash 棄 却」 path 維 持 = named factory で declare し た slot は user 明 示 name で 識 別、 plain factory は そ も そ も snapshot blob に 入 ら ず positional key 問 題 が 発 生 し な い
+- canonical の declare 例 で 「snapshot / publish / main 側 access を 持 つ slot」 が 自 然 に `.named.` で 区 別 = user が code を 読 ん で 「こ の slot は main 側 で 触 れ る か」 即 判 別 可
+
+### Rejected
+
+- **persistent flag が 1 つ で も あ れ ば 全 slot に name 必 須 (= 元 案 A)**: filter で `state.f32(440)` 1 行 書 い た だ け で 全 slot に name 強 制 = boilerplate 過 剰、 「user free が default」 違 反、 余 湖 さ ん 直 接 棄 却
+- **persistent slot だ け に name 必 須 (= 元 案 E)**: Q5-b default = 'persistent' な の で 実 質 全 state / param 強 制 = 同 罪
+- **`migrations` 引 数 持 つ processor で 全 slot に name 必 須 (= 元 案 J)**: migrations ナ シ で snapshot 取 る case で positional key 必 要 = Q5-b 「positional key brittle」 と 衝 突
+- **defineProcessor options で `snapshot: 'opt-in'` flag (= 元 案 N)**: processor 単 位 rule、 mixed (= 一 部 persistent + 一 部 transient) processor で transient slot に explicit flag 必 要 = 案 S よ り 学 習 path 長 い
+- **name 有 無 で persistent / transient 自 動 切 り 替 え (= 案 M)**: name の 用 途 (= DevTools 識 別、 subgraph instance 名、 snapshot key) を 一 元 化 = 用 途 制 限
+- **main 側 `node.snapshot()` 呼 び 出 し 時 に runtime error (= 案 D)**: graph-capture-time error claim を 守 れ ず audio 動 作 後 で 手 遅 れ
+- **positional / AST hash で slot 識 別 (= 案 K)**: Q5-b で 既 棄 却 = refactor で 壊 れ る brittle path
+
+### Q5-b 部 分 retract
+
+- Q5-b 「state / param default snapshot = 'persistent'」 = retract。 plain factory に default 概 念 ナ シ (= snapshot 不 在)、 named factory で default 'persistent' (= state.named / param.named) / 'transient' (= buffer.named) を 維 持。
+- Q5-b 「name 必 須 trigger = `snapshot()` を 呼 ぶ processor」 prose = retract。 factory route で の TypeScript narrow に 置 換。
+- Q5-b 「positional / AST hash 棄 却」 = 維 持。
+- Q5-b の per-profile flag / migrations chain / blob layout 等 そ の 他 decision = 全 維 持。
+
+### 関 連 file
+
+- `01-dsl.md` §3.1 (state) / §3.2 (buffer) / §3.3 (param) / §8.1 (slot identity rules) / §8.2 (snapshot profiles) = factory 分 離 prose + 規 範 例 inline 更 新
+- `01-dsl.md` 本 文 内 declare 例 全 件 = `param.named` / plain factory に refactor
+- `11-midi.md` §2.3 / §2.4 / §2.5 内 declare 例 = sample-accurate trigger pattern 用 内 部 state を plain factory に refactor
+- `12-canonical-examples.md` 全 declare 例 = 案 S 適 用 (= 全 `param` を `param.named`、 publish 持 つ state を `state.named`、 persistent buffer を `buffer.named`、 そ の 他 内 部 state / buffer を plain factory に refactor)
+
+### v1.x.0 deferral
+
+- ナ シ。
+
 

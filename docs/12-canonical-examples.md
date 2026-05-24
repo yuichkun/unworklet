@@ -75,14 +75,14 @@ export const stereoGain = defineProcessor(() => {
   const main = audioInput ({ channels: 2, name: 'main' });
   const out  = audioOutput({ channels: 2, name: 'main' });
 
-  const gain = param({
+  const gain = param.named({
     default: 1.0, min: 0.0, max: 4.0,
     automationRate: 'a-rate',
     name: 'gain',
   });
 
-  const meterL = state.f32(0, { name: 'meterL', publish: { rateFps: 30 } });
-  const meterR = state.f32(0, { name: 'meterR', publish: { rateFps: 30 } });
+  const meterL = state.named.f32(0, { name: 'meterL', snapshot: 'transient', publish: { rateFps: 30 } });
+  const meterR = state.named.f32(0, { name: 'meterR', snapshot: 'transient', publish: { rateFps: 30 } });
 
   return {
     process: () => {
@@ -202,17 +202,17 @@ export const threeBandEQ = defineProcessor((ctx) => {
   const main = audioInput ({ channels: 2, name: 'main' });
   const out  = audioOutput({ channels: 2, name: 'main' });
 
-  const lowF = param({ default: 120,  min: 20,    max: 1000,  automationRate: 'k-rate', name: 'lowFreq'  });
-  const lowQ = param({ default: 0.7,  min: 0.1,   max: 8,     automationRate: 'k-rate', name: 'lowQ'     });
-  const lowG = param({ default: 0,    min: -24,   max: 24,    automationRate: 'k-rate', name: 'lowGain'  });
+  const lowF = param.named({ default: 120,  min: 20,    max: 1000,  automationRate: 'k-rate', name: 'lowFreq'  });
+  const lowQ = param.named({ default: 0.7,  min: 0.1,   max: 8,     automationRate: 'k-rate', name: 'lowQ'     });
+  const lowG = param.named({ default: 0,    min: -24,   max: 24,    automationRate: 'k-rate', name: 'lowGain'  });
 
-  const midF = param({ default: 1000, min: 200,   max: 8000,  automationRate: 'k-rate', name: 'midFreq'  });
-  const midQ = param({ default: 1.0,  min: 0.1,   max: 8,     automationRate: 'k-rate', name: 'midQ'     });
-  const midG = param({ default: 0,    min: -24,   max: 24,    automationRate: 'k-rate', name: 'midGain'  });
+  const midF = param.named({ default: 1000, min: 200,   max: 8000,  automationRate: 'k-rate', name: 'midFreq'  });
+  const midQ = param.named({ default: 1.0,  min: 0.1,   max: 8,     automationRate: 'k-rate', name: 'midQ'     });
+  const midG = param.named({ default: 0,    min: -24,   max: 24,    automationRate: 'k-rate', name: 'midGain'  });
 
-  const hiF  = param({ default: 6000, min: 1000,  max: 20000, automationRate: 'k-rate', name: 'hiFreq'   });
-  const hiQ  = param({ default: 0.7,  min: 0.1,   max: 8,     automationRate: 'k-rate', name: 'hiQ'      });
-  const hiG  = param({ default: 0,    min: -24,   max: 24,    automationRate: 'k-rate', name: 'hiGain'   });
+  const hiF  = param.named({ default: 6000, min: 1000,  max: 20000, automationRate: 'k-rate', name: 'hiFreq'   });
+  const hiQ  = param.named({ default: 0.7,  min: 0.1,   max: 8,     automationRate: 'k-rate', name: 'hiQ'      });
+  const hiG  = param.named({ default: 0,    min: -24,   max: 24,    automationRate: 'k-rate', name: 'hiGain'   });
 
   // Six independent peakingBand instances (3 bands × 2 channels), allocated in declaration scope.
   const lowL = createSubgraph(peakingBand, ctx.sampleRate);
@@ -290,11 +290,11 @@ export const linearPhaseEQ = defineProcessor(() => {
   const out  = audioOutput({ channels: 1, name: 'main' });
 
   // Precomputed real-valued impulse, length FIR_LEN. Persisted across reloads.
-  const impulse  = buffer.f32({ size: FIR_LEN,    name: 'impulse',  snapshot: 'persistent' });
+  const impulse  = buffer.named.f32({ size: FIR_LEN,    name: 'impulse',  snapshot: 'persistent' });
   // Sliding history of input samples (1024).
-  const history  = buffer.f32({ size: HISTORY_LEN, name: 'history' });
+  const history  = buffer.f32({ size: HISTORY_LEN });
   // Write head into history.
-  const histHead = state.i32(0, { name: 'histHead', snapshot: 'transient' });
+  const histHead = state.i32(0);
 
   return {
     process: () => {
@@ -393,21 +393,22 @@ export const lookaheadLimiter = defineProcessor((ctx) => {
   const main = audioInput ({ channels: 2, name: 'main' });
   const out  = audioOutput({ channels: 2, name: 'main' });
 
-  const ceiling   = param({ default: -1.0, min: -24, max: 0,    automationRate: 'k-rate', name: 'ceiling'   });
-  const releaseMs = param({ default: 50,   min: 1,   max: 500,  automationRate: 'k-rate', name: 'releaseMs' });
+  const ceiling   = param.named({ default: -1.0, min: -24, max: 0,    automationRate: 'k-rate', name: 'ceiling'   });
+  const releaseMs = param.named({ default: 50,   min: 1,   max: 500,  automationRate: 'k-rate', name: 'releaseMs' });
 
   // Lookahead delay line — separate per channel.
-  const dlyL = buffer.f32({ size: LOOKAHEAD_SAMPLES, name: 'dlyL' });
-  const dlyR = buffer.f32({ size: LOOKAHEAD_SAMPLES, name: 'dlyR' });
-  const dlyHead = state.i32(0, { name: 'dlyHead' });
+  const dlyL = buffer.f32({ size: LOOKAHEAD_SAMPLES });
+  const dlyR = buffer.f32({ size: LOOKAHEAD_SAMPLES });
+  const dlyHead = state.i32(0);
 
   // Envelope state for sidechain detection.
-  const env = state.f32(0, { name: 'env' });
+  const env = state.f32(0);
 
   // Gain reduction in dB, published to UI at 30fps.
-  const gainReductionDb = state.f32(0, {
-    name: 'gainReductionDb',
-    publish: { rateFps: 30 },
+  const gainReductionDb = state.named.f32(0, {
+    name:     'gainReductionDb',
+    snapshot: 'transient',
+    publish:  { rateFps: 30 },
   });
 
   // Sample-accurate overshoot event — fires when the linear envelope crosses
@@ -520,23 +521,23 @@ const WAVEFORM_FRAME    = 1024;             // exposed to UI via buffer.publish
 export const granularSampler = defineProcessor((ctx) => {
   const out = audioOutput({ channels: 2, name: 'main' });
 
-  const grainSize     = param({ default: 100,  min: 10,    max: 500,   automationRate: 'k-rate', name: 'grainSizeMs' });
-  const grainDensity  = param({ default: 30,   min: 1,     max: 100,   automationRate: 'k-rate', name: 'grainHz'     });
-  const playbackPos   = param({ default: 0.5,  min: 0,     max: 1,     automationRate: 'a-rate', name: 'playbackPos' });
-  const pitch         = param({ default: 1.0,  min: 0.25,  max: 4.0,   automationRate: 'a-rate', name: 'pitch'       });
+  const grainSize     = param.named({ default: 100,  min: 10,    max: 500,   automationRate: 'k-rate', name: 'grainSizeMs' });
+  const grainDensity  = param.named({ default: 30,   min: 1,     max: 100,   automationRate: 'k-rate', name: 'grainHz'     });
+  const playbackPos   = param.named({ default: 0.5,  min: 0,     max: 1,     automationRate: 'a-rate', name: 'playbackPos' });
+  const pitch         = param.named({ default: 1.0,  min: 0.25,  max: 4.0,   automationRate: 'a-rate', name: 'pitch'       });
 
   // Sample buffer — uploaded via message<T> (variable-length payload).
-  const sampleBuf = buffer.f32({
-    size: SAMPLE_BUFFER_LEN,
-    name: 'sampleBuf',
+  const sampleBuf = buffer.named.f32({
+    size:     SAMPLE_BUFFER_LEN,
+    name:     'sampleBuf',
     snapshot: 'persistent',
   });
-  const sampleLen = state.i32(0, { name: 'sampleLen' });   // populated when uploaded
+  const sampleLen = state.i32(0);   // populated when uploaded (worklet-private)
 
   // UI-visible waveform thumbnail (downsampled view, published at low rate).
-  const waveformView = buffer.f32({
-    size: WAVEFORM_FRAME,
-    name: 'waveformView',
+  const waveformView = buffer.named.f32({
+    size:    WAVEFORM_FRAME,
+    name:    'waveformView',
     publish: { rateFps: 15 },
   });
 
@@ -548,20 +549,20 @@ export const granularSampler = defineProcessor((ctx) => {
   const voiceRemaining : State<'i32'>[]  = [];
   const voiceGate      : State<'bool'>[] = [];
   for (let v = 0; v < NUM_VOICES; v++) {
-    voicePos      .push(state.f32(0,    { name: `voicePos_${v}` }));
-    voiceRemaining.push(state.i32(0,    { name: `voiceRemaining_${v}` }));
-    voiceGate     .push(state.bool(false, { name: `voiceGate_${v}` }));
+    voicePos      .push(state.f32(0));
+    voiceRemaining.push(state.i32(0));
+    voiceGate     .push(state.bool(false));
   }
-  const voiceRR = state.i32(0, { name: 'voiceRR' });    // round-robin allocator pointer.
+  const voiceRR = state.i32(0);    // round-robin allocator pointer (worklet-private).
 
   // Grain trigger countdown — counts samples until the next grain spawn.
-  const nextSpawnIn = state.i32(0, { name: 'nextSpawnIn' });
+  const nextSpawnIn = state.i32(0);
 
   // Active note tracker (last note received).
-  const activeNote = state.i32(60, { name: 'activeNote' });
-  const activeVel  = state.f32(0,  { name: 'activeVel' });
+  const activeNote = state.i32(60);
+  const activeVel  = state.f32(0);
   // Published so the UI can show "currently playing X notes".
-  const playingCount = state.i32(0, { name: 'playingCount', publish: { rateFps: 10 } });
+  const playingCount = state.named.i32(0, { name: 'playingCount', snapshot: 'transient', publish: { rateFps: 10 } });
 
   // Bulk upload from main: replaces sampleBuf contents and sets sampleLen.
   const uploadSample = message<{ samples: Float32Array }>({ name: 'uploadSample' });
@@ -705,20 +706,20 @@ export const arpeggiator = defineProcessor((ctx) => {
   const arpOut = midiOutput({ name: 'arpOut' });
 
   // 16-step pattern of semitone offsets from the root note (Float32Array uploaded).
-  // Shipped as state slots since each step is a small int — easier to snapshot.
+  // Shipped as named state slots since each step is preset-bearing — snapshot key required.
   const pattern: State<'i32'>[] = [];
   for (let s = 0; s < PATTERN_LEN; s++) {
-    pattern.push(state.i32(0, { name: `step_${s}` }));
+    pattern.push(state.named.i32(0, { name: `step_${s}` }));
   }
 
   // Pattern reload from main.
   const loadPattern = message<{ steps: Int32Array }>({ name: 'loadPattern' });
 
-  const rootNote   = state.i32(60, { name: 'rootNote' });
-  const lastVel    = state.i32(96, { name: 'lastVel' });
-  const stepIdx    = state.i32(0,  { name: 'stepIdx', publish: { rateFps: 60 } });
-  const samplesPerStep = state.i32(48000 / 8, { name: 'samplesPerStep' });   // 1/8 note @ 60 BPM, 48kHz
-  const sampleAccum    = state.i32(0, { name: 'sampleAccum' });
+  const rootNote   = state.named.i32(60, { name: 'rootNote' });
+  const lastVel    = state.named.i32(96, { name: 'lastVel' });
+  const stepIdx    = state.named.i32(0,  { name: 'stepIdx', snapshot: 'transient', publish: { rateFps: 60 } });
+  const samplesPerStep = state.named.i32(48000 / 8, { name: 'samplesPerStep' });   // 1/8 note @ 60 BPM, 48kHz
+  const sampleAccum    = state.i32(0);                                              // worklet-private accumulator
 
   // UI step indicator — fires every step boundary.
   const stepFired = event<{ step: number; note: number }>({ name: 'stepFired' });
@@ -821,22 +822,22 @@ export const convolutionReverb = defineProcessor((ctx) => {
   const main = audioInput ({ channels: 2, name: 'main' });
   const out  = audioOutput({ channels: 2, name: 'main' });
 
-  const wetGain  = param({ default: 0.5, min: 0, max: 1, automationRate: 'k-rate', name: 'wetGain'  });
-  const dryGain  = param({ default: 0.7, min: 0, max: 1, automationRate: 'k-rate', name: 'dryGain'  });
+  const wetGain  = param.named({ default: 0.5, min: 0, max: 1, automationRate: 'k-rate', name: 'wetGain'  });
+  const dryGain  = param.named({ default: 0.7, min: 0, max: 1, automationRate: 'k-rate', name: 'dryGain'  });
 
   // IR — snapshotted because preset = (wet/dry settings + which IR is loaded).
-  const irL = buffer.f32({ size: IR_LEN, name: 'irL', snapshot: 'persistent' });
-  const irR = buffer.f32({ size: IR_LEN, name: 'irR', snapshot: 'persistent' });
+  const irL = buffer.named.f32({ size: IR_LEN, name: 'irL', snapshot: 'persistent' });
+  const irR = buffer.named.f32({ size: IR_LEN, name: 'irR', snapshot: 'persistent' });
 
   // History of input samples (1 partition each, FIFO; old discarded).
   // Real partitioned-convolution implementations use FFT-domain partitioning;
   // this scaffold shows the time-domain accumulation pattern with SIMD bulk.
-  const histL = buffer.f32({ size: IR_LEN, name: 'histL', snapshot: 'transient' });
-  const histR = buffer.f32({ size: IR_LEN, name: 'histR', snapshot: 'transient' });
-  const histHead = state.i32(0, { name: 'histHead', snapshot: 'transient' });
+  const histL = buffer.f32({ size: IR_LEN });
+  const histR = buffer.f32({ size: IR_LEN });
+  const histHead = state.i32(0);
 
   // Wet output level, published to UI.
-  const wetMeter = state.f32(0, { name: 'wetMeter', snapshot: 'transient', publish: { rateFps: 30 } });
+  const wetMeter = state.named.f32(0, { name: 'wetMeter', snapshot: 'transient', publish: { rateFps: 30 } });
 
   // Bulk IR upload from main.
   const uploadIR = message<{ irL: Float32Array; irR: Float32Array }>({ name: 'uploadIR' });
@@ -1013,31 +1014,31 @@ export const polySynth = defineProcessor((ctx) => {
   const sidechain = audioInput ({ channels: 2, name: 'sidechain' });
   const out       = audioOutput({ channels: 2, name: 'main' });
 
-  const attack    = param({ default: 0.01, min: 0.001, max: 1,    automationRate: 'k-rate', name: 'attack'    });
-  const release   = param({ default: 0.3,  min: 0.01,  max: 4,    automationRate: 'k-rate', name: 'release'   });
-  const masterVol = param({ default: 0.7,  min: 0,     max: 1,    automationRate: 'a-rate', name: 'masterVol' });
-  const duckAmount= param({ default: 0.5,  min: 0,     max: 1,    automationRate: 'k-rate', name: 'duckAmount'});
+  const attack    = param.named({ default: 0.01, min: 0.001, max: 1,    automationRate: 'k-rate', name: 'attack'    });
+  const release   = param.named({ default: 0.3,  min: 0.01,  max: 4,    automationRate: 'k-rate', name: 'release'   });
+  const masterVol = param.named({ default: 0.7,  min: 0,     max: 1,    automationRate: 'a-rate', name: 'masterVol' });
+  const duckAmount= param.named({ default: 0.5,  min: 0,     max: 1,    automationRate: 'k-rate', name: 'duckAmount'});
 
   // Voice state arrays — flattened.
   const voiceNote: State<'i32'>[]  = [];
   const voiceVel : State<'f32'>[]  = [];
   const voiceGate: State<'bool'>[] = [];
   for (let v = 0; v < NUM_VOICES; v++) {
-    voiceNote.push(state.i32(60, { name: `vn_${v}` }));
-    voiceVel .push(state.f32(0,  { name: `vv_${v}` }));
-    voiceGate.push(state.bool(false, { name: `vg_${v}` }));
+    voiceNote.push(state.i32(60));
+    voiceVel .push(state.f32(0));
+    voiceGate.push(state.bool(false));
   }
-  const allocCursor = state.i32(0, { name: 'allocCursor' });
+  const allocCursor = state.i32(0);
 
   // Sidechain envelope.
-  const scEnv = state.f32(0, { name: 'scEnv' });
+  const scEnv = state.f32(0);
 
   // UI: 1024-sample waveform thumbnail of the synth output.
-  const waveform = buffer.f32({ size: 1024, name: 'waveform', publish: { rateFps: 30 } });
-  const wavePtr  = state.i32(0, { name: 'wavePtr' });
+  const waveform = buffer.named.f32({ size: 1024, name: 'waveform', publish: { rateFps: 30 } });
+  const wavePtr  = state.i32(0);
 
   // UI: number of active voices.
-  const activeVoices = state.i32(0, { name: 'activeVoices', publish: { rateFps: 15 } });
+  const activeVoices = state.named.i32(0, { name: 'activeVoices', snapshot: 'transient', publish: { rateFps: 15 } });
 
   // Sample-accurate event for note triggers (UI key flash).
   const notePlayed = event<{ note: number; voice: number; velocity: number }>({ name: 'notePlayed' });
@@ -1180,11 +1181,11 @@ export const sysexBridge = defineProcessor((ctx) => {
 
   // 7-bit MIDI value (0x00–0x7F). Published so the main side can mirror the
   // current setting in the UI.
-  const targetId = state.i32(0x10, { name: 'targetId', publish: { rateFps: 5 } });
+  const targetId = state.named.i32(0x10, { name: 'targetId', publish: { rateFps: 5 } });
 
   // Byte buffer that holds the in-flight sysex while we rewrite byte 1.
   // Sized for the longest payload the bridge is expected to handle.
-  const buf = buffer.u8({ size: MAX_SYSEX_LEN, name: 'buf' });
+  const buf = buffer.u8({ size: MAX_SYSEX_LEN });
 
   // main → worklet message that updates the device ID applied to subsequent
   // sysex events.
@@ -1260,9 +1261,9 @@ import {
 
 export const initialOsc = defineProcessor((ctx) => {
   const out   = audioOutput({ channels: 1, name: 'main' });
-  const freq  = param({ default: 440, min: 20, max: 20000, automationRate: 'k-rate', name: 'freq' });
+  const freq  = param.named({ default: 440, min: 20, max: 20000, automationRate: 'k-rate', name: 'freq' });
   // 'persistent' = swap を 跨 い で carry forward さ せ た い state。
-  const phase = state.f32(0, { name: 'phase', snapshot: 'persistent' });
+  const phase = state.named.f32(0, { name: 'phase', snapshot: 'persistent' });
 
   return {
     process: () => {
