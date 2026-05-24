@@ -4,7 +4,7 @@ Cross-cutting reference: every resolved design question, recorded with its ratio
 
 ## Status
 
-populated (Q1–Q79 ratify complete; Q28 is unassigned — a numbering artifact, not a withheld decision)
+populated (Q1–Q80 ratify complete; Q28 is unassigned — a numbering artifact, not a withheld decision)
 
 ## Index
 
@@ -3557,4 +3557,94 @@ audioOut.right.at(i).write(r)
 - N > 2 channel の channel-name sugar (= 5.1 で `.frontLeft` / `.center` 等) は consumer 文 化 領 域、 unworklet scope 外
 - Buffer / state の write surface (= `Buffer<T>.write(idx, v)` / `State<T>.store(v)`) は 別 軸、 同 grill で touch せ ず (= 必 要 性 が 出 れ ば 別 question)
 
+---
+
+## Q80 — Worklet-thread escape hatch = `def.worklet` 関 数 namespace expose
+
+**Status:** resolved.
+
+### Problem
+
+v1.0.0 主 仕 様 で `defineProcessor((ctx) => {...})` の 戻 り 値 = `CompiledProcessor<C> = { graph, schemaHash }` で、 vite-plugin が AudioWorkletProcessor subclass を build-time emit + 自 動 registerProcessor。 user は main 側 `createNode` で 接 続 す る だ け = AudioWorkletProcessor 自 体 に user が touch す る path ナ シ。
+
+た だ し AudioWorkletProcessor の **web 標 準 surface** (= `constructor(opts)` の `processorOptions` 受 け 取 り、 `this.port.onmessage` / `postMessage`、 `process()` 戻 り 値 lifecycle、 `static get parameterDescriptors`、 任 意 method 追 加) を user が 直 接 触 り た い 場 面 が あ る:
+
+- 外 部 SAB-backed payload (= 任 意 binary protocol、 同 期 transport 情 報 等) を AudioWorklet thread で 直 接 read = main 経 由 し な い た め sample-accurate 保 持
+- 任 意 custom messagePort protocol (= unworklet declarative event 経 由 じ ゃ な い main ↔ worklet 通 信)
+- `process()` 戻 り 値 lifecycle 制 御 (= `false` で suspend / GC OK signal)
+- 新 WebAudio API hook の 先 行 採 用 (= unworklet 未 対 応 surface)
+
+こ れ ら 全 部 web 標 準 AudioWorkletProcessor の API surface = unworklet 内 declarative DSL で 覆 う よ り、 user が web 標 準 そ の ま ま の `extends AudioWorkletProcessor` form で escape す る path を 用 意 す る 方 が 自 然。
+
+### Decision
+
+`CompiledProcessor<C>` に **`worklet` field** を 追 加 し て escape hatch を expose。 user は web 標 準 `AudioWorkletProcessor` を **直 接 extends** し、 `def.worklet` か ら helper 3 つ を 取 り 出 し て 自 分 の class を 組 み 立 て る:
+
+```typescript
+const def = defineProcessor((ctx) => {...});
+const { initialize, process: runWasm, parameterDescriptors } = def.worklet;
+
+class MyExtended extends AudioWorkletProcessor {
+  static get parameterDescriptors() { return parameterDescriptors; }
+
+  constructor(opts) {
+    super();
+    initialize(this, opts);
+    this.externalSAB = opts.processorOptions.externalSAB;
+  }
+
+  process(inputs, outputs, parameters) {
+    return runWasm(this, inputs, outputs, parameters);
+  }
+}
+
+registerProcessor('my-extended', MyExtended);
+```
+
+**`def.worklet` の expose surface** (= 3 helper):
+
+- `initialize(self, opts): void` = unworklet 内 部 init (= WASM module ready、 ringbuffer ref 注 入、 declarative slot binding 等) を `self` に 対 し て 走 ら せ る
+- `process(self, inputs, outputs, parameters): boolean` = unworklet WASM body を call、 戻 り 値 は AudioWorkletProcessor 標 準 lifecycle (= `false` で suspend OK)
+- `parameterDescriptors: AudioParamDescriptor[]` = unworklet 自 動 生 成 param descriptor 一 覧 (= user は `static get parameterDescriptors()` で そ の ま ま return)
+
+**vite-plugin 自 動 registerProcessor path (= 既 存) は 完 全 維 持** (= path α)。 user が `def.worklet` を 取 り 出 さ な い 通 常 case で は、 vite-plugin が emit す る worklet entry で framework が 自 動 registerProcessor。 user が `def.worklet` で extends す る 場 合 (= path β) は user が **別 名 で 手 動 registerProcessor**。 path α / path β は 別 名 で 共 存 可 (= 同 `def` か ら 両 path を 同 時 expose 可)。
+
+**`super()` 呼 び 出 し**: AudioWorkletProcessor constructor は `processorOptions` を 消 費 し な い (= web 標 準) = `super()` 引 数 ナ シ で 呼 ぶ。 unworklet 内 部 binding は `initialize(this, opts)` で 行 う。
+
+**runtime check**: `runWasm()` の 1 回 目 で `initialize()` 済 か flag check、 未 init な ら runtime error (= `worklet-initialize-not-called`、 Layer 2 stable error ID) を throw。 静 的 TS check で `initialize` 呼 び 忘 れ の 検 出 が 困 難 な た め runtime check で 早 期 fail。
+
+### Why this and not alternatives
+
+**判 断 軸** = web 標 準 親 和 性 + unworklet declarative path と の 共 存 + escape hatch の 汎 用 性。
+
+- **採 用 案 = `def.worklet` 関 数 namespace expose**:
+  - user の base class が web 標 準 `AudioWorkletProcessor` そ の ま ま = unworklet の class hierarchy が user code に 染 み 込 ま な い = unworklet は 「web 標 準 の 顔」 を 保 つ
+  - 既 存 非 unworklet AudioWorkletProcessor code を 段 階 的 に unworklet 化 す る 移 行 が 容 易 (= initialize / runWasm 差 し 替 え だ け で 既 存 class hierarchy 維 持)
+  - user が AudioWorkletProcessor を 直 接 extends = 他 library / mixin と の 混 合 自 由 度 高
+  - declarative path (= vite-plugin 自 動 register) は 完 全 維 持 = MIDI / audio / param 等 の 通 常 use case で escape hatch 経 由 ナ シ
+- **棄 却 案 A (= `def.WorkletClass` field 経 由 class extends)**:
+  - `class MyExtended extends def.WorkletClass {...}` で super(opts) 自 動 init = ergonomic 1 step 少 な い が、 unworklet 由 来 class が user の class hierarchy 上 に 染 み 込 む = 「unworklet は web 標 準 の 顔」 軸 と 衝 突
+  - 既 存 非 unworklet AudioWorkletProcessor code の 段 階 的 unworklet 化 で、 base class を `AudioWorkletProcessor` → `def.WorkletClass` に 書 き 換 え る 必 要 = 移 行 friction
+- **棄 却 案 B (= 別 entry point `defineProcessorClass`)**:
+  - 同 じ graph 宣 言 を `defineProcessor` (= 通 常 path) と `defineProcessorClass` (= extends path) の 2 API で 別 書 き す る redundancy
+- **棄 却 案 D (= `defineProcessor` 戻 り 値 自 体 を class に 変 更)**:
+  - 既 存 `CompiledProcessor` (= plain object) を class に 変 更 = main thread import shape 破 壊、 既 `createNode(ctx, def)` API 全 影 響、 retract コ ス ト 大
+- **棄 却 案 (= process 関 数 だ け expose)**:
+  - `constructor(opts)` の `processorOptions` argument 受 け 取 り surface が ナ シ = 外 部 SAB ref 等 memory 確 保 path を user が 書 け な い、 必 要 十 分 性 不 足
+
+### Side effects
+
+- **`decisions-log.md`**: 本 entry (Q80) 追 加 + Status range Q1-Q80
+- **`01-dsl.md`**: 新 §11 「Worklet-thread escape hatch」 追 加 = `def.worklet` surface + canonical extends 例 + path α / path β 共 存 prose
+- **`03-compiler.md` §1**: Worklet JS codegen stage が `CompiledProcessor.worklet` helper も emit す る 旨 prose 追 加
+- **`04-worklet-runtime.md` §1**: 自 動 register path (= path α) と user 手 動 register path (= path β) の 共 存 仕 様 prose
+- **`09-repo-structure.md` §2.1**: `CompiledProcessor<C>` の `.worklet` field expose mention (= Public types row annotation)
+- **`README.md`**: Status range を Q1-Q80 に 更 新 (= 過 去 漏 れ Q78 / Q79 分 も 同 時 修 正)
+- **`12-canonical-examples.md`**: touch ナ シ (= 規 範 例 = declarative path、 escape hatch は §11 で 1 例 示 す だ け の hatch、 canonical anchor 範 囲 外)
+
+### v1.x.0 deferral
+
+- **外 部 SAB-backed MIDI source の declarative 第 一 級 受 け 入 れ** (= 仮 称 path Z): `createNode(ctx, def, { midi: { <name>: { source: SAB } } })` 形 = sample-accurate な 外 部 MIDI source を extends 書 か ず に declarative path で 受 け 取 る spec 拡 張。 外 部 ラ イ ブ ラ リ 側 SAB layout 仕 様 の 確 定 待 ち (= 別 lib 仕 様 確 定 待 ち + 並 列 AI 厚 化 可 = 例 外 defer 条 件 該 当)、 v1.x.0 additive 候 補
+- **`connectFromWebMIDI` 引 数 の duck-typed 緩 和** (= `MIDIInput | MIDIInputLike`): application 由 来 / 非 sample-accurate source 用 sugar と し て 有 用 だ が、 v1.0.0 で は 既 存 `MIDIInput` 厳 密 型 の ま ま 維 持、 v1.x.0 additive 候 補
+- **MIDI 2.0 風 metadata slot** (= polyphony tracking 用 noteId、 NoteExpression 等): unworklet 仕 様 wire format (= `11-midi.md` §4) を 拡 張 す る 場 合 の 候 補、 外 部 ラ イ ブ ラ リ 仕 様 確 定 後 に decide
 

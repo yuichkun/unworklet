@@ -1600,3 +1600,80 @@ const simdProc = defineProcessor((ctx) => {
   - Runtime-variable stride for `forSample.byN` — the stride must be a compile-time constant; a runtime stride cannot be specialized in WASM emission and breaks the "user-authored structure compiles directly to WASM" principle.
 
 Authoritative rationale and rejected alternatives: see `decisions-log.md` Q22 (Q22-aprime) + Q29.
+
+## 11. Worklet-thread escape hatch
+
+The declarative path (= `defineProcessor` + vite-plugin auto `registerProcessor`) covers the vast majority of authoring needs. For the rare case where an author must touch the **web-standard `AudioWorkletProcessor` API surface directly** — `constructor(opts)` for receiving arbitrary `processorOptions` (e.g. SAB refs from an external sample-accurate source), raw `this.port.onmessage` / `postMessage`, the `process()` return-value lifecycle, `static get parameterDescriptors`, or custom methods added to the class — `defineProcessor` exposes a function namespace on `def.worklet` so authors can build their own `class extends AudioWorkletProcessor` (Q80).
+
+### 11.1 Surface
+
+The returned `CompiledProcessor<C>` carries a `worklet` field:
+
+```typescript
+def.worklet = {
+  initialize(self: AudioWorkletProcessor, opts: AudioWorkletNodeOptions): void;
+  process(self: AudioWorkletProcessor, inputs, outputs, parameters): boolean;
+  parameterDescriptors: AudioParamDescriptor[];
+}
+```
+
+- `initialize(self, opts)` runs all unworklet-internal init (WASM module wiring, ringbuffer refs, declarative slot bindings) against the author's `self`.
+- `process(self, ...)` invokes the WASM body; the return value is the standard `AudioWorkletProcessor` lifecycle boolean.
+- `parameterDescriptors` is the unworklet-generated descriptor list — the author returns it from their `static get parameterDescriptors()`.
+
+### 11.2 Canonical extends shape
+
+```typescript
+import { defineProcessor, audioOutput, forSample, num } from '@unworklet/core';
+
+export const polySynth = defineProcessor((ctx) => {
+  const out = audioOutput({ channels: 2, name: 'main' });
+  return {
+    process: () => {
+      forSample((i) => {
+        out.ch(0).at(i).write(num(0));
+        out.ch(1).at(i).write(num(0));
+      });
+    },
+  };
+});
+
+// — separate worklet entry, registered manually under a distinct name —
+const { initialize, process: runWasm, parameterDescriptors } = polySynth.worklet;
+
+class PolySynthWithSidecar extends AudioWorkletProcessor {
+  static get parameterDescriptors() { return parameterDescriptors; }
+
+  constructor(opts) {
+    super();
+    initialize(this, opts);
+    this.sidecarSAB = opts.processorOptions.sidecarSAB;
+  }
+
+  process(inputs, outputs, parameters) {
+    // — author's audio-thread extension runs here (e.g. Atomics.load on this.sidecarSAB) —
+    return runWasm(this, inputs, outputs, parameters);
+  }
+}
+
+registerProcessor('polySynth-with-sidecar', PolySynthWithSidecar);
+```
+
+`super()` is called with no argument — `AudioWorkletProcessor`'s base constructor does not consume `processorOptions`; unworklet's per-instance binding is performed by `initialize(this, opts)`.
+
+### 11.3 Coexistence with the auto-register path
+
+The default vite-plugin output continues to auto-register the processor under its compile-time name (= path α). Authoring `class extends AudioWorkletProcessor { ... }` with `def.worklet` registers an additional processor under a **different name** chosen by the author (= path β). Both names are simultaneously addressable from the main thread; the same `CompiledProcessor<C>` can back either path through `createNode` (path-α default name) or `new AudioWorkletNode(ctx, 'path-β-name', { processorOptions })` (constructed manually by the author).
+
+### 11.4 Constraints
+
+- The author **must** call `initialize(this, opts)` in their constructor before returning. Failing to do so triggers a runtime error (`worklet-initialize-not-called`, Layer 2 stable error ID) on the first invocation of `process(this, ...)` — see `03-compiler.md` §2.6 for the stable error-ID surface.
+- `process(self, ...)`'s return value follows the AudioWorkletProcessor contract — `true` to continue, `false` to allow shutdown.
+- Declarative MIDI / event / message / audio I/O facilities (= `midiInput().onEvent`, etc.) continue to function inside the extended class without further intervention — they are wired through `initialize(...)`.
+
+### 11.5 v1.0.0 scope
+
+- The escape hatch ships **as is** in v1.0.0 — three helpers (`initialize`, `process`, `parameterDescriptors`) plus the runtime guard.
+- Source-specific declarative integration paths (e.g. `createNode(ctx, def, { midi: { <name>: { source: SAB } } })`) are intentionally **not** in v1.0.0 — they remain candidates for additive v1.x.0 once the relevant external-source spec is settled.
+
+Authoritative rationale and rejected alternatives: see `decisions-log.md` Q80.

@@ -2,6 +2,8 @@
 
 The audio-thread side: the generated `AudioWorkletProcessor` template that wraps the compiled WASM, marshals I/O, dispatches messages and events, and enforces realtime-safety at the runtime boundary. This is an internal module of `@unworklet/core` — the template is emitted by `@unworklet/vite-plugin` at build time and loaded via `audioWorklet.addModule(processorUrl)`; there is no direct `import` surface.
 
+The default `addModule` output also `registerProcessor`s the generated template under its compile-time name, so authors using the declarative path never call `registerProcessor` themselves. Authors who need to touch the web-standard `AudioWorkletProcessor` surface directly (custom `constructor(opts)`, raw `this.port`, `process()` return-value lifecycle, custom methods) build their own `class extends AudioWorkletProcessor` using `def.worklet = { initialize, process, parameterDescriptors }` and `registerProcessor` it under a separate name — both names coexist, both back the same `CompiledProcessor<C>`. See `01-dsl.md` §11 and `decisions-log.md` Q80.
+
 ## Status
 
 partial (§7 publish scheduling written; §1–§6 + §8 placeholder)
