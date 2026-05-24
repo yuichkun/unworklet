@@ -104,9 +104,9 @@ Synonym for "render quantum's worth of samples" — the unit of work for one Aud
 
 Three declaration kinds for sample-offset-independent slots:
 
-- **`state.<type>(initial, options?)`** — scalar slot. `load()` / `store(v)`. Persists across render quanta.
-- **`buffer.<type>({ size, name, ... })`** — fixed-size array. `buf.read(idx)` / `buf.write(idx, v)` / `buf.readInterpolated(pos)` for scalar access; `buf.copyFrom(typedArrayField)` for bulk transfer from a `message<T>` / `event<T>` typed-array payload field (single `memory.copy` instruction; see `01-dsl.md` §3.2); `buf.loadVec(offset)` / `buf.storeVec(offset, value)` for SIMD bulk access (under `@unworklet/core/simd`). Lives in WASM linear memory.
-- **`param({ default, min, max, automationRate, ... })`** — bound to a Web Audio `AudioParam`. Single access form: `param.at(i)` (inside `forSample`, per-sample value at offset `i`) / `param.at(0)` (per-block, block-start value). No callable `param()` form, no `param.value` / `param.now()` property.
+- **`state.<type>(initial)`** — scalar slot, worklet-private by default (= plain). `load()` / `store(v)`. Persists across render quanta. Chain `.named('X')` quick or `.expose({ name: 'X', publish?, snapshot? })` full (Q79) before or after `.<type>(initial)` to open the slot to the snapshot blob / main-side observation. `param` has no plain factory (= name required for AudioParam descriptor identity, Q76).
+- **`buffer.<type>({ size })`** — fixed-size array, worklet-private by default. `buf.read(idx)` / `buf.write(idx, v)` / `buf.readInterpolated(pos)` for scalar access; `buf.copyFrom(typedArrayField)` for bulk transfer from a `message<T>` / `event<T>` typed-array payload field (single `memory.copy` instruction; see `01-dsl.md` §3.2); `buf.loadVec(offset)` / `buf.storeVec(offset, value)` for SIMD bulk access (under `@unworklet/core/simd`). Lives in WASM linear memory. Same `.named('X')` / `.expose({ name, ... })` chain (Q79) opens the slot to snapshot / main-side access.
+- **`param.<type>({ default, min, max, automationRate })`** — bound to a Web Audio `AudioParam`. `.f32` is the only type method (= AudioParam is f32 fixed). Named chain required (Q76): `.named('X')` or `.expose({ name: 'X', snapshot? })` before or after the type method. Single access form: `param.at(i)` (inside `forSample`, per-sample value at offset `i`) / `param.at(0)` (per-block, block-start value). No callable `param()` form, no `param.value` / `param.now()` property.
 
 See `01-dsl.md` §3.
 

@@ -4,7 +4,7 @@ Cross-cutting reference: every resolved design question, recorded with its ratio
 
 ## Status
 
-populated (Q1–Q78 ratify complete; Q28 is unassigned — a numbering artifact, not a withheld decision)
+populated (Q1–Q79 ratify complete; Q28 is unassigned — a numbering artifact, not a withheld decision)
 
 ## Index
 
@@ -51,6 +51,7 @@ populated (Q1–Q78 ratify complete; Q28 is unassigned — a numbering artifact,
 | Q76 | `state` / `buffer` / `param` factory 分 離 (= plain vs named)、 snapshot opt-in を slot 単 位 で 明 示 化 (audit cluster (8) snapshot lifecycle) | resolved — declaration kind を **plain factory** (`state.<type>` / `buffer.<type>` = worklet-private、 `name` 受 け 入 れ ナ シ、 snapshot blob 不 在、 main 側 surface ナ シ) と **named factory** (`state.named.<type>` / `buffer.named.<type>` / `param.named` = TypeScript level で `name` required、 snapshot blob に 入 る (default `'persistent'` for `state.named` / `param.named`、 `'transient'` for `buffer.named`)、 main 側 で `node.state.<name>` / `node.buffer.<name>` / `node.parameters.<name>` で 引 け る) に 2 分 離; `param` は named factory 専 用 (= 全 AudioParam は descriptor 経 由 で main 側 か ら 名 前 で 引 か れ る); `publish` option も named factory 専 用; Q5-b 「state / param default = 'persistent'」 / 「`snapshot()` 呼 ぶ processor の name 必 須 trigger」 部 分 retract、 「positional / AST hash 棄 却」 / per-profile / migrations chain は 維 持; canonical Ex 全 declare 例 を 案 S 適 用 で refactor (= AGENTS.md HARD CONTRACT 同 commit zip) | `01-dsl.md` §3 + §8 + `11-midi.md` §2.3 / §2.4 / §2.5 + `12-canonical-examples.md` 全 declare 例 |
 | Q77 | Method chain DSL surface + `num()` literal helper + hybrid policy (branch ergonomic 寄 せ) | resolved — 全 `Node<T>` (= scalar 5 種 + SIMD `Node<'f32x4'>`) に method surface 追 加、 free function form と method form 両 併 存 で 同 AST 同 output、 chain は input flow line で 規 範 / free function は 多 引 数 ops + literal leading 時 規 範、 literal leading 用 に `num(v)` を 6 個 目 scalar constructor と し て 追 加 (= 既 `f32` / `f64` / `i32` / `i64` / `bool` と zip、 type 推 論 は Q33 自 然 拡 張)、 method 追 加 対 象 = arithmetic / comparison / math / SIMD vec 4 個、 free function only = `select` + SIMD `splat` / `vec4` / `sumLanes` + `flushDenormals` (= Q21 自 動 insertion 維 持 で user-facing surface 不 在)、 canonical Ex 1-10 全 rewrite (= AGENTS.md HARD CONTRACT 同 commit zip) | `01-dsl.md` §2 + §7.2 + `00-foundations.md` §3 + `09-repo-structure.md` §2.1 + `12-canonical-examples.md` |
 | Q78 | Audio I/O channel access form = `.ch(c).at(i)` chain + writer `.write(v)` + stereo sugar `.left` / `.right` (同 型 引 数 区 別 不 能 解 消) | resolved — audio input / output method を 完 全 chain (= 1 method = 1 引 数) に refine、 reader = `audioIn.ch(c).at(i)`、 writer = `audioOut.ch(c).at(i).write(v)` 3 step、 stereo sugar `.left` / `.right` を `channels === 2` 限 定 で `.ch(0)` / `.ch(1)` alias property と し て 露 出 (= type-gated、 N-channel handle に は 不 在)、 中 間 view (`InputChannelView<T>` / `OutputChannelView<T>` / `OutputChannelSample<T>`) を 公 開 type と し て expose、 user が 中 間 view を 変 数 に 入 れ な い 規 範 (= 1 line chain) を canonical で 統 一、 `param.at(i)` は touch せ ず (= 単 引 数 sample-offset 維 持、 form 揃 う)、 canonical Ex 1-10 全 rewrite (= AGENTS.md HARD CONTRACT 同 commit zip) | `01-dsl.md` §1.2 + §1.3 + §1.6.1 + `00-foundations.md` §3 + `12-canonical-examples.md` |
+| Q79 | named factory chain form = `.named('X')` quick + `.expose({ name?, publish?, snapshot? })` full + 前 後 自 由 + field merge 後 勝 ち (= Q76 部 分 retract、 plain → named 後 付 け 移 行 path 確 立) | resolved — named factory を chain method 2 種 で refine、 quick path `.named(name: string)` + full path `.expose({ name?, publish?, snapshot? })`、 chain 前 付 け / 後 付 け 自 由 で 同 AST、 同 chain 内 で `.named` + `.expose` 重 複 OK = field merge 後 勝 ち (= name も 後 勝 ち)、 chain 全 体 で `name` 1 度 必 須 (= 両 method ど ち ら か で)、 plain factory の type method (`.f32` 等) options に `publish` / `snapshot` field 不 在 で TS reject、 既 plain `state.f32(0)` declare 引 数 touch ナ シ で chain 追 加 だ け で named 化 (= 段 階 移 行 path)、 Q76 「property access named.f32(0, { name, ... })」 form 部 分 retract で chain 形 に 統 一、 「plain / named 2 分 離」 / 「param named 必 須」 / 「snapshot default」 / 「publish named + scalar type 限 定」 core invariant は 維 持、 canonical Ex 1-10 全 rewrite (= AGENTS.md HARD CONTRACT 同 commit zip) | `01-dsl.md` §3.1 + §3.2 + §3.3 + `00-foundations.md` §3 + `12-canonical-examples.md` |
 | Q75 | runtime guard fallback = silence + onError + node connected (audit cluster (4) handler / drain / boundary timing) | resolved — `block-length-mismatch` + `wasm-trap` の runtime guard 動 作 を **silence + onError + node connected** で 1 path 化: `process()` は `true` return continue で node が audio graph か ら 外 れ ず connected の ま ま、 全 output channel に silence (zero buffer) を 出 し 続 け、 main 側 に `node.onError({ code: 'block-length-mismatch' \| 'wasm-trap', ... })` を 発 火、 framework 側 auto-dispose ナ シ (= consumer 判 断 が `.dispose()` で 起 動); 04 §3 / §8 / 03 §2.6 / 05 §1 の 「stops processing」 「halt audio output」 wording を 「emit silence while the node stays connected」 に 揃 え、 00 §5.2 既 「fallback to silence + main-side error event」 と zip; 04 §8 既 declare の 4 event code が silence path (= wasm-trap + block-length-mismatch) と audio-unaffected path (= queue-overflow + sab-unavailable) で 一 貫 化; `process()` return false = AudioWorkletProcessor permanent disconnect は consumer 判 断 を 奪 う path で 棄 却、 直 前 quantum hold は user が 異 常 判 別 不 能 で 棄 却 | `04-worklet-runtime.md` §3 + §8 + `03-compiler.md` §2.6 + `05-client.md` §1 + `00-foundations.md` §5.2 |
 | Q74 | `event<T>` typed-array field emit-side surface = sysex path 一 般 化 (audit cluster (3) emit-side 拡 張) | resolved — `event<T>` の typed-array field を **worklet 側 で 新 規 構 築 し て main に 流 す** path を MIDI sysex emit (Q49) と 共 通 化: emit shape で `data: Buffer<T> | TypedArrayFieldRef<T>` + framework injection の `length: Node<'i32'>` 必 須、 build-time-fixed `buffer.<T>` が 単 一 構 築 primitive (= runtime typed-array literal / `new Float32Array(...)` 不 可)、 main 側 は `data[0..length-1]` を 切 り 出 し た natural typed array で 受 け 取 り、 wire 形 は `02-messaging.md` §5.1 main slot + §5.2 content buffer を sysex と 1 transport 共 有; FFT spectrum / 波 形 解 析 / envelope 履 歴 等 worklet → main typed-array 系 中 心 機 能 が 自 然 surface で cover; T 内 typed-array field 複 数 path は §5.1 既 declare 通 り v1.x.0 deferral | `01-dsl.md` §4.3 + `02-messaging.md` §5.2 + `11-midi.md` §2.5 cross-ref |
 | Q47 | diagnostics surface 統 一 (audit Phase 2 #10、 #49) | resolved — diagnostics counter (= `overflowCount` 等) を **main 側 だ け で 提 供**、 worklet 側 handle (= `midiIn.diagnostics.X()`) を spec か ら 削 除; 全 channel (= event / message / MIDI) で `node.<kind>.<name>.diagnostics.X()` の 統 一 形 (= 既 Q40 namespaced shape と 整 合)、 「diagnostics は 外 部 観 測」 を declarative 原 則 (= 副 作 用 観 測 は main の 役 割、 worklet `process` body は feedback loop を 持 た な い) と し て 確 立; worklet 内 で の self-throttle pattern が 必 要 な ら main 経 由 で feedback (= 1 周 余 計 だ が 構 造 明 確)、 v1.x.0 で worklet handle へ の `.diagnostics` 後 付 け は additive 可 | `11-midi.md` §4 overflow + `decisions-log.md` Q4-c-iv prose |
@@ -3190,6 +3191,133 @@ runtime guard fallback (= `block-length-mismatch` + `wasm-trap` 共 通) 動 作
 
 - Adaptive emission (= 1 build で 複 数 render quantum size に 対 応) は 04 §3 既 declare 通 り v1.x.0 mandatory
 - framework-side auto-dispose-on-error policy も v1.x.0 で 別 question (= 既 04 §8 で 「No framework-side destroy-on-error」 declare 済)
+
+---
+
+## Q79 — named factory chain form = `.named('X')` quick + `.expose({ name?, publish?, snapshot? })` full + 前 後 自 由 + field merge 後 勝 ち
+
+**Status:** resolved.
+
+### Problem
+
+Q76 で 確 定 し た named factory form は **property access + options object** で:
+
+```typescript
+state.named.f32(0, { name: 'meterL', publish: { rateFps: 30 } });
+buffer.named.f32({ size: 256, name: 'wavetable', snapshot: 'persistent' });
+param.named({ name: 'gain', default: 1.0, min: 0, max: 4, automationRate: 'a-rate' });
+```
+
+これ は 3 つ の awkward を 抱 え る:
+
+1. **name field が options object 内 に 埋 没**: 1 行 の 核 情 報 (= 「ここ は 何 と い う 名 前 の slot か」) が options 内 で 拾 い に く い。
+2. **後 付 け で named 化 不 可**: 既 plain `state.f32(0)` で 書 い た declare を 後 で named 化 す る に は signature 全 体 を `state.named.f32(0, { name, ... })` に rewrite 必 要 = 既 引 数 (= initial) を 触 ら ず に は 移 行 で き な い。
+3. **同 型 引 数 区 別 不 能 性** (= Q78 と 同 軸): `buffer.named.f32({ size, name, snapshot })` は options 1 object 内 で type-specific (= size) と name-policy (= name / snapshot) が mixed = 「ど の field が 何 か」 を user は IDE hover で 確 認 す る 認 知 cost。
+
+加 え て branch ergonomic 路 線 (= Q77 method chain hybrid + Q78 audio I/O chain) と form 整 合 し な い (= named factory だ け property access form 残 存 = 仕 様 surface の chain 統 一 性 落 ち る)。
+
+### Decision
+
+named factory を **chain method 2 種** で refine。 method 名 は **`.named(name: string)` quick path** + **`.expose({ name?, publish?, snapshot? })` full path**:
+
+```typescript
+// quick path (= name 1 引 数、 policy default)
+const z      = state.named('z').f32(0);
+const ring   = buffer.named('ring').f32({ size: 256 });
+const gain   = param.named('gain').f32({ default: 1.0, min: 0, max: 4, automationRate: 'a-rate' });
+
+// full path (= options object 1 引 数、 policy 明 示)
+const meterL = state.expose({ name: 'meterL', publish: { rateFps: 30 } }).f32(0);
+const impulse = buffer.expose({ name: 'impulse', snapshot: 'persistent' }).f32({ size: 1024 });
+const route  = param.expose({ name: 'route', snapshot: 'transient' }).f32({
+  default: 0, min: 0, max: 7, automationRate: 'k-rate',
+});
+```
+
+**chain 前 付 け / 後 付 け 自 由** (= 同 AST、 同 declare 効 果):
+
+```typescript
+// 前 付 け
+const meterL = state.named('meterL').f32(0);
+const meterL = state.expose({ name: 'meterL', publish: { rateFps: 30 } }).f32(0);
+
+// 後 付 け (= plain declare に chain で 追 加、 既 signature touch ナ シ)
+const meterL = state.f32(0).named('meterL');
+const meterL = state.f32(0).expose({ name: 'meterL', publish: { rateFps: 30 } });
+```
+
+**chain 重 複 OK、 field merge 後 勝 ち**:
+
+```typescript
+// .named で name pin → .expose で policy 追 加 = field merge
+const meterL = state.named('meterL').f32(0).expose({ publish: { rateFps: 30 } });
+
+// 同 field 重 複 = 後 chain 勝 ち
+const renamed = state.named('orig').f32(0).expose({ name: 'final', publish: { rateFps: 30 } });
+// = name 'final' (= 後 勝 ち)、 publish アリ
+```
+
+**chain 全 体 で `name` 1 度 必 須** (= named 化 す る な ら):
+
+- `.named('X')` か `.expose({ name: 'X' })` の どち ら か で name を 1 度 明 示 必 要
+- 両 方 ナ シ で `.expose({ publish: ... })` 単 独 chain = graph-capture-time error (= name 不 在)
+
+**plain factory に publish / snapshot 渡 し path ナ シ**:
+
+- type method (= `.f32` / `.i32` / `.u8` 等) の options に `publish` / `snapshot` field 不 在 = TS で reject
+- policy 渡 し は named chain (= `.named()` 後 付 け で `.expose({ ... })` か 前 付 け で `.expose({ name, ... })`) 経 由
+
+**param は named 必 須** (= Q76 維 持):
+
+- param plain factory ナ シ
+- `.named('X')` か `.expose({ name: 'X' })` chain 必 須
+
+**chain method 2 種 並 存 ratify root**:
+
+- `.named('X')` = name 文 字 列 だ け 渡 す quick path
+- `.expose({ name?, publish?, snapshot? })` = options object 1 つ で name + policy 全 部 渡 す full path
+- 「`.named('X', { ... })` 2 引 数 form」 は 採 用 し な い (= 命 名 重 複 と method 引 数 形 heavy 軸 で case A 棄 却、 case C 採 用)
+
+### Why this and not alternatives
+
+**判 断 軸** = user mental + 後 付 け 移 行 path + signature 視 認 性 + chain hybrid 規 律 (= Q77 / Q78) と の form 統 一。
+
+採 用 案 (= case C `.named` + `.expose` 並 存 + 後 勝 ち):
+
+- **plain → named 後 付 け 移 行**: 既 `state.f32(0)` declare の 引 数 touch ナ シ で `.named('X')` か `.expose({ ... })` chain 追 加 だ け で named 化、 signature 大 変 更 不 要
+- **chain 形 統 一**: Q77 hybrid + Q78 chain + Q79 named chain = factory / sample-offset / primitive 全 chain 路 線 で 統 一
+- **同 型 引 数 区 別 不 能 性 解 消**: type method (= `.f32` 等) options は type-specific 専 用、 named chain options は name-policy 専 用 = 引 数 内 で 役 割 mixed ナ シ
+- **`.named('X')` quick path 純 度**: name 1 引 数 だ け、 policy default で 「`.named` 1 hit で named 化」 1 mental rule
+- **`.expose({ name, ... })` full path**: policy 明 示 必 要 case で 1 object 渡 し、 method 名 が 「main 側 expose」 の 意 図 を 動 詞 で signal
+- **後 勝 ち field merge**: chain 順 序 が user 自 由 + rename / policy 上 書 き path 自 然 + TS narrow 規 律 不 要
+
+棄 却 案:
+
+- **case A (= 現 案 `state.named.f32(0, { name, ... })` property access form)**: 後 付 け 移 行 path ナ シ + name field 埋 没 + 同 型 引 数 mixed + Q77 / Q78 chain hybrid と 形 不 統 一
+- **case A-prime (= `.named(name, options?)` 2 引 数 form)**: 引 数 2 種 混 在 で やや heavy、 method overload 表 現 し に く い (= TS hover で 2 signature 表 示) + chain 形 chain 路 線 と 統 一 不 完 全
+- **case B (= 1 method overload `.named('X')` / `.named({ name, ... })`)**: 命 名 重 複 (= method 名 `.named` + options 内 `name` key 同 一) で redundant、 user mental noise
+- **case C-α (= 重 複 chain で graph-capture-time reject、 mutually exclusive)**: chain 順 序 を 仕 様 で 縛 る 必 要 + rename / policy 上 書 き path ナ シ = user 表 現 力 落 ち る
+- **case C-γ (= TS narrow で 1 method 呼 び 後 は 他 method 不 在)**: state machine narrow 複 雑 = TS 型 surface heavy + 実 装 期 で 維 持 cost 大
+
+採 用 = **case C + `.expose` 命 名 + 後 勝 ち field merge**。 余 湖 さ ん 「後 勝 ち で い い、 型 エ ラ ー で 落 と す 必 要 な し」 (2026-05-24) 明 言。
+
+### Side effects
+
+- **`decisions-log.md`**: 本 entry (Q79) + index 表 row + Status range Q1-Q79
+- **Q76 部 分 retract**: named factory form 「property access + options object」 (= `state.named.f32(0, { name, ... })`) 部 分 を retract、 chain form に refine。 「plain / named 2 分 離」 core invariant + 「param named 必 須」 + 「snapshot default (state/param 'persistent'、 buffer 'transient')」 + 「publish named 限 定 (Q42 zip)」 は 維 持
+- **`01-dsl.md` §3.1**: `state` plain / named chain form prose + 規 範 例 update (= `.named()` / `.expose()` method signature + State<T> handle 拡 張)
+- **`01-dsl.md` §3.2**: `buffer` 同 様 (= Buffer<T> handle に `.named()` / `.expose()` 追 加)
+- **`01-dsl.md` §3.3**: `param` 同 様 (= `param.named` / `param.expose` chain entry 規 範 例、 `.f32` type method 必 須 step)
+- **`01-dsl.md` §1.6.1**: public type list update (= AudioInputHandle 等 と 同 様、 named chain 関 連 type を public で 露 出 す る か は impl AI 領 域)
+- **`00-foundations.md` §3**: declarations vocabulary 内 named factory 言 及 を chain form に refine
+- **`12-canonical-examples.md` Ex 1-10**: 全 named declare hit を chain form に rewrite (= ~30 hit、 AGENTS.md HARD CONTRACT 同 commit zip)
+- **cross-cutting docs** (= 02 / 03 / 04 / 05 / 06 / 07 / 08 / 10 / 11 / 13 / README): prose 内 named declare 言 及 sweep
+
+### v1.x.0 deferral
+
+- ナ シ (= v1.0.0 surface で chain form 完 結)。
+
+
 
 ## Q76 — `state` / `buffer` / `param` factory 分 離 (= plain vs named)、 snapshot opt-in を slot 単 位 で 明 示 化 (audit cluster (8) snapshot lifecycle)
 
