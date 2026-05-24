@@ -4,7 +4,7 @@ Cross-cutting reference: every resolved design question, recorded with its ratio
 
 ## Status
 
-populated (Q1–Q81 ratify complete; Q28 is unassigned — a numbering artifact, not a withheld decision)
+populated (Q1–Q82 ratify complete; Q28 is unassigned — a numbering artifact, not a withheld decision)
 
 ## Index
 
@@ -32,7 +32,7 @@ populated (Q1–Q81 ratify complete; Q28 is unassigned — a numbering artifact,
 | Q20 | Pre-warm correctness | resolved — v1.0.0 で framework 側 の pre-warm 機 構 を 提 供 し な い (= WASM は ブ ラ ウ ザ で AOT compile な の で JIT spike が 起 きな い、 branch predictor 等 ハ ー ド ウ ェ ア の warmup は runtime 数 quantum 内 に 自 動 で 落 ち 着 き audio 出 力 と し て 不 可 聴); framework が user code に 暗 黙 で silent block を 走 ら せ る の は declarative 原 則 違 反 寄 り; v1.x.0 で 必 要 性 が 出 れ ば opt-in option (= `createNode(..., { preWarm: {...} })`) を additive 追 加 検 討 | `04-worklet-runtime.md` §5 |
 | Q21 | Denormal handling | resolved — `state.f32` / `state.f64` の `.store(v)` で コ ン パ イ ル 時 に subnormal ガ ー ド を 自 動 insertion (= `\|v\| < 1e-30` な ら 0 に 落 と す)、 audio thread の CPU spike 防 止; v1.0.0 で opt-out 機 能 ナ シ (= audio DSP で subnormal 保 持 use case 稀)、 必 要 性 が 出 た 時 v1.x.0 で opt-out option 追 加 検 討; declarative 原 則 と の 微 妙 な 衝 突 は audio DSP 業 界 慣 行 (= JUCE 等 で 標 準 FTZ) + footgun 撤 廃 で 例 外 正 当 化 | `04-worklet-runtime.md` §6 |
 | Q22 | Graph capture model and process body structure | resolved (a / aprime / b / c / d all fixed; d = Rust-style error template per `03-compiler.md` §2.5) | `00-foundations.md` §3 + `01-dsl.md` §1, §10 + `03-compiler.md` §2 |
-| Q23 | Hot reload semantics + Q24 bundler integration + Q25 source maps を 1 entry に 統 合 (= primitive vs user land の 仕 分 け、 user land = consumer's app と third-party tooling ecosystem の 2 layer で 区 別) | resolved — unworklet 側 CLI ナ シ、 framework は raw primitive と `@unworklet/vite-plugin` で build / asset / source maps + **DevTools 8 panel (build errors + graph viewer + memory budget + live state inspector + live latency monitor + MIDI flow + snapshot inspector + swap history) + analysis JSON / dev-time live channel** を 巻 き 取 り (= devtools panel は consumer の app に 見 え な い 開 発 者 DX surface、 全 author が 同 一 machinery を 見 た い universal な も の、 framework が opinionated に ship す べ き 領 域); HMR orchestration / 動 的 swap の audio 連 続 制 御 / consumer's app の DSP UI (spectrum / oscilloscope 等) は user land (= consumer's app への 踏 み 込 み は declarative 違 反); 動 的 swap primitive `replaceProcessor(oldNode, newProcessor)` を `@unworklet/core` に 新 規 追 加 (= Q50 で 詳 細); vite plugin の HMR 関 与 は 「`?worklet` import を Vite HMR boundary と し て 整 え る」 だ け、 swap 動 作 は user-land code が `replaceProcessor` を 明 示 で 呼 ぶ; offline rendering は `@unworklet/offline` 別 package (= 変 更 ナ シ); test matchers は `@unworklet/test` 別 package (= 変 更 ナ シ); 他 bundler plugin は v1.x.0 additive | `07-vite-plugin.md` + `05-client.md` §8 + `13-offline-render.md` + `06-testing.md` + `08-deployment.md` §1 |
+| Q23 | Hot reload semantics + Q24 bundler integration + Q25 source maps を 1 entry に 統 合 (= primitive vs user land の 仕 分 け、 user land = consumer's app と third-party tooling ecosystem の 2 layer で 区 別) | resolved — unworklet 側 CLI ナ シ、 framework は raw primitive と `@unworklet/vite-plugin` で build / asset / source maps + **DevTools 8 panel (build errors + graph viewer + memory budget + live state inspector + live latency monitor + MIDI flow + snapshot inspector + swap history) + analysis JSON / dev-time live channel** を 巻 き 取 り (= devtools panel は consumer の app に 見 え な い 開 発 者 DX surface、 全 author が 同 一 machinery を 見 た い universal な も の、 framework が opinionated に ship す べ き 領 域); WASM compile invocation は `@unworklet/core` の 公開 compile API を vite-plugin が build pipeline で call する path (= Q82 で 確 定、 compiler module 自体 は core internal だが invocation API は core 公開 surface); HMR orchestration / 動 的 swap の audio 連 続 制 御 / consumer's app の DSP UI (spectrum / oscilloscope 等) は user land (= consumer's app への 踏 み 込 み は declarative 違 反); 動 的 swap primitive `replaceProcessor(oldNode, newProcessor)` を `@unworklet/core` に 新 規 追 加 (= Q50 で 詳 細); vite plugin の HMR 関 与 は 「`?worklet` import を Vite HMR boundary と し て 整 え る」 だ け、 swap 動 作 は user-land code が `replaceProcessor` を 明 示 で 呼 ぶ; offline rendering は `@unworklet/offline` 別 package (= 変 更 ナ シ); test matchers は `@unworklet/test` 別 package (= 変 更 ナ シ); 他 bundler plugin は v1.x.0 additive | `07-vite-plugin.md` + `05-client.md` §8 + `13-offline-render.md` + `06-testing.md` + `08-deployment.md` §1 |
 | Q24 | Bundler integration scope | resolved — Q23 に 統 合 | `07-vite-plugin.md` + `08-deployment.md` §1 |
 | Q25 | Source maps | resolved — Q23 に 統 合 (= `@unworklet/vite-plugin` が sidecar `.wasm.map` で 出 す) | `07-vite-plugin.md` §5 |
 | Q50 | 動 的 processor swap primitive (= HMR / live coding / visual programming の 共 通 根) | resolved — `replaceProcessor(oldNode: UnworkletNode<Old>, newProcessor: New): Promise<ReplaceResult<New>>` を `@unworklet/core` か ら free function で expose; 内 部 動 作 = (1) `oldNode.snapshot()` で blob 化、 (2) 新 WASM を unique name で `registerProcessor` (= Web Audio spec の duplicate-name 禁 止 + `removeModule()` 不 存 在 制 約 を 隠 蔽)、 (3) 新 AudioWorkletNode 生 成 + `restore(blob)` (= Q5 + Q45 migration 再 利 用)、 (4) 新 typed wrapper を 戻 り 値 で 返 す; framework は graph 切 断 / 接 続 / 旧 node destroy / crossfade を 触 ら ず consumer 責 任 (= raw primitive、 declarative 純 度 維 持、 magic ナ シ); 戻 り 値 で 新 wrapper を 返 す 形 = declarations 変 化 (rename / 追 加 / 削 除) は typed `.d.ts` 経 由 で TS error と し て consumer code に 即 露 出 (= silent fail せ ず); accumulation warning (= 同 AudioContext 内 で N 回 swap 累 積 で `console.warn`) は framework が 出 す (= Web Audio `removeModule()` 不 存 在 制 約 を consumer 認 知 surface に); HMR は user-land で `import.meta.hot.accept` + `replaceProcessor` の recipe、 live coding / visual programming も 同 primitive を 使 う | `05-client.md` §8 + `07-vite-plugin.md` §4 |
@@ -70,7 +70,7 @@ populated (Q1–Q81 ratify complete; Q28 is unassigned — a numbering artifact,
 | Q41 | `createSubgraph` の instance name 渡 し 方 (audit P0-6、 Phase 2 #16) | resolved — signature を `createSubgraph(subgraph, ...lambdaArgs, options?: { name?: string })` に 拡 張 (= Q34 既 form の 末 尾 options 追 加)、 **options 自 体 も optional、 name property も optional** (= snapshot 不 要 な subgraph で boilerplate ナ シ); snapshot を 取 る 場 面 で name ナ シ subgraph instance が あ れ ば build-time エ ラ ー で 弾 く、 snapshot path = `'<instance-name>/<inner-slot-name>'` (= 例 「'lpfL/z1'」) で 統 一 | `01-dsl.md` §5.6.2, §8.1 |
 | Q42 | `state.publish` 対 応 type と state.bool の WASM 表 現 (audit P0-7) | resolved — publish を 渡 せ る type を **f32 / i32 / bool の 3 つ に 限 定 ** (= 全 て 32 bit 1 word で 完 結、 JS `Atomics` で audio thread / main 両 方 が 安 全 に 1 回 で 読 み 書 き 可)、 state.bool は 内 部 で `i32` の 0/1 を 持 ち main 側 で boolean に cast、 main 側 `.value` 型 は state.bool→boolean / state.f32 と state.i32→number; state.f64 / state.i64 で publish オ プション を 渡 す と TypeScript エ ラ ー (= 64 bit が 2 回 に 分 け て 触 る ため torn read の 危 険、 v1.x.0 で mitigation と セ ット で 検 討) | `01-dsl.md` §3.1 + `02-messaging.md` §5.4 + `05-client.md` §1 |
 | Q43 | `everyNSamples` を forSample callback 引 数 経 由 で 取 る (audit P0-8) | resolved — `everyNSamples` を free function import か ら `forSample((i, everyNSamples) => ...)` の callback 第 2 引 数 に refine (= Q7 既 ratify form の callback 引 数 化、 既 `i` と 同 軸); forSample.byN も 同 形; scope は TypeScript scoping で 自 然 に 弾 か れ る (= handler / per-block top で TypeScript reference error、 build-time context tracking 不 要); subgraph method 内 で の 自 前 forSample で 自 然 解 決 (= caller context tracking 不 要); counter は 呼 び 出 し ご と に 独 立、 1 塊 を 越 え て 連 続 で reset ナ シ | `01-dsl.md` §9, §10.1 + Q7 |
-| Q52 | Public package layout の docs-side enforcement (Q23 派 生、 L1-d) | resolved — 公 開 npm package 4 個 (= core / vite-plugin / offline / test、 Q23 strict)、 公 開 import path 5 種 (= 上 記 4 + `@unworklet/core/simd` subpath)、 DSL 識 別 子 約 50 個 は `@unworklet/core` root に flat export (= dsp subpath / 独 立 package ナ シ)、 `@unworklet/compiler` / `@unworklet/worklet` / `@unworklet/dsp` は 公 開 package で は な い (= compiler / worklet runtime は `@unworklet/core` internal module、 dsp surface は core root に flat); doc 章 タ イ ト ル の 表 記 規 則 = 公 開 package doc は タ イ ト ル に package 名 + internal module doc は タ イ ト ル か ら package 名 削 除 + 冒 頭 prose で 内 部 明 記; Q13 (initial package layout) が 自 動 派 生 確 定 | `01-dsl.md` L1 + `03-compiler.md` L1 + `04-worklet-runtime.md` L1 + `07-vite-plugin.md` L26 + `08-deployment.md` L13 |
+| Q52 | Public package layout の docs-side enforcement (Q23 派 生、 L1-d) | resolved — 公 開 npm package 4 個 (= core / vite-plugin / offline / test、 Q23 strict)、 公 開 import path 5 種 (= 上 記 4 + `@unworklet/core/simd` subpath)、 DSL 識 別 子 約 50 個 は `@unworklet/core` root に flat export (= dsp subpath / 独 立 package ナ シ)、 `@unworklet/compiler` / `@unworklet/worklet` / `@unworklet/dsp` は 公 開 package で は な い (= compiler module 自 体 は `@unworklet/core` internal module だ が 公 開 compile API と し て core か ら expose、 vite-plugin / offline / 直接 import 全 consumer が 同 API を call = Q82、 worklet runtime も `@unworklet/core` internal module、 dsp surface は core root に flat); doc 章 タ イ ト ル の 表 記 規 則 = 公 開 package doc は タ イ ト ル に package 名 + internal module doc は タ イ ト ル か ら package 名 削 除 + 冒 頭 prose で 内 部 明 記; Q13 (initial package layout) が 自 動 派 生 確 定 | `01-dsl.md` L1 + `03-compiler.md` L1 + `04-worklet-runtime.md` L1 + `07-vite-plugin.md` L26 + `08-deployment.md` L13 |
 | Q53 | 仕 様 invariant vs 型 declaration の 形 — ratify 範 囲 確 定 (L1-c re-scope) | resolved — 設 計 ratify 範 囲 を 「仕 様 invariant」 (= 振 る 舞 い / 制 約 / mental model / 公 開 surface に 何 が 出 て く る か / 仕 様 内 矛 盾 / dangling) に 限 定、 「TS signature 細 部 / 識 別 子 名 の 好 み / generic constraint 表 現」 は impl AI agent が TS compiler 経 由 で 機 械 的 に 確 定 す る 領 域 と し て 委 譲 (= 「曖 昧 さ を 残 す」 で は な く 「適 切 な layer に 委 譲」、 既 ai-agent-paradigm スタンス と 整 合); L1-c の 当 初 19 種 type 階 層 分 類 議 論 を 撤 退、 dangling 1 件 (`SubgraphInstance<S>` invariant prose 不 在) を L1-c に 残 し て 別 grill; L2-a (loadVec / everyNSamples 命 名) + L2-b (param.at(0) framing) も impl AI 領 域 / L1-a 自 動 解 消 と し て open-questions か ら 撤 去 | `open-questions.md` 冒 頭 「ratify 範 囲」 セ ク シ ョ ン + Q23 (AI agent paradigm の 既 ratify) + 既 memory `ai-agent-paradigm-implementation-cost` |
 | Q54 | defineSubgraph wrapper の 真 の 役 割 + `SubgraphInstance<S>` 撤 廃 (L1-c 完 全 close) | resolved — `defineSubgraph` / `createSubgraph` wrapper を v1.0.0 で 維 持 (= 関 数 統 一 棄 却)、 wrapper の 真 の 役 割 = (1) framework-level identification (= Q30 memory budget + Q23 DevTools graph instance grouping + snapshot path namespacing の hook) + (2) name scope (= Q41 instance name = snapshot path prefix の framework 担 保); `SubgraphInstance<S>` 名 を 公 開 surface か ら 撤 廃 (= §1.6.1 export list か ら 削 除)、 `createSubgraph(...)` の 戻 り 値 = **subgraph body の return record そ の も の** と invariant 直 接 規 定、 user が 型 引 用 し た い 時 は `ReturnType<typeof subgraphDecl>` (TS 標 準); §5.2 / §5.6.2 prose 強 化 で wrapper の 真 の 役 割 を 明 文 化 (= 関 数 統 一 棄 却 理 由 + canonical Ex 2 / Ex 8 vs Ex 5 対 比 引 用) + L1-c dangling 完 全 close | `01-dsl.md` §1.6.1 + §5.2 + §5.6.2 + Q2 / Q34 / Q41 / Q53 |
 | Q55 | priority filter 軸 = impl 矛 盾 リ ス ク + L1-a 「phase」 wording sweep (Q53 補 強、 Q51 followup) | resolved — v1.0.0 ship 前 docs 読 者 = impl AI agent、 user-facing docs は v1.0.0 完 成 後 別 phase で 関 心 範 囲 外; priority filter の 唯 一 の 軸 = 「impl AI agent が 手 放 し で 実 装 し た 時 に 矛 盾 が 出 る か」 = 異 な る agent が 異 な る judgment に 達 す る prose 内 矛 盾 / dangling だ け が ★★★、 「user 視 点」 「user 誤 解」 「mental model 揺 れ る」 は priority 評 価 軸 外 (= mechanical sweep 領 域); L1-a 構 造 名 詞 「phase」 撤 廃 sweep (= Q51 followup) を 同 commit で 完 了、 adjective 「per-block / per-sample」 維 持、 §6 heading `The process phase` → `The process body`、 §10.4.1 `Single-phase` → `Per-sample-only`、 §10.4.2 `Multi-phase` → `Mixed`、 canonical Ex 3 description rename、 SIMD example `Phase 1/2/3` → `Step 1/2/3`、 oscillator phase counter / minimum-phase / linear-phase / 音 響 phase / compiler phase は 別 意 で retain | `open-questions.md` 冒 頭 「ratify 範 囲 と priority filter」 section + L1-a entry 削 除 + Q53 + Q51 |
@@ -88,7 +88,8 @@ populated (Q1–Q81 ratify complete; Q28 is unassigned — a numbering artifact,
 | Q67 | Overlap-add recipe 追 加 (Q-F) | resolved — 追 加 ナ シ。 Ex 3 で partitioned convolution = overlap-add 系 構 造 を 既 exercise、 unworklet 仕 様 surface (= buffer / state / forSample / SIMD bulk) は 全 完 結。 STFT 特 化 (= 窓 + FFT + spectrum 操 作 + IFFT + overlap-add) は FFT primitive を 必 要 と し、 FFT は unworklet primitive 外 (= consumer の L1 helper 領 域) = unworklet 仕 様 surface に 矛 盾 を 産 ま な い、 棄 却 | `12-canonical-examples.md` Ex 3 |
 | Q68 | per-block で の sample-offset 引 数 が 0 以 外 literal の 場 合 の 範 囲 check 仕 様 (Q-C、 Q51 follow-up) | resolved — `audioIn.at(c, k)` / `audioOut.set(c, k, v)` / `param.at(k)` の sample-offset 引 数 が JS literal で 渡 さ れ た 場 合、 `[0, SAMPLES_PER_BLOCK - 1]` (= 0〜127) 範 囲 外 は graph-capture-time error (= `audio-sample-offset-out-of-range`、 Layer 2) で 弾 く。 `audio-sample-offset-out-of-range` を `03-compiler.md` §2.6 stable error ID inventory に 追 加。 audio I/O + param で 統 一; 案 (= 範 囲 check ナ シ + runtime 動 作 規 定 / user 責 任 未 規 定) を 棄 却 (= 「build 時 に 静 的 検 出 可 能 な も の は build 時 に 弾 く」 既 軸 と 衝 突、 範 囲 外 動 作 が WASM emission 依 存 と な り offline / production worklet 間 で 動 作 揺 れ る リ ス ク); 128 fix は v1.0.0 で 維 持 (= Q18 + Q35 と 整 合)、 将 来 AudioContext `renderSizeHint` 採 用 で render quantum 可 変 化 path に 進 ん だ 場 合 は v1.x.0 で adaptive emission を additive 追 加 (= build 時 check + runtime check の 2 layer 構 成 へ 拡 張)、 consumer が 128 以 外 の `renderSizeHint` で 作 成 し た AudioContext を v1.0.0 で 渡 し た 時 は worklet 起 動 時 runtime check で 違 反 = エ ラ ー event 発 火 で fail-loud (= Q18 既 path 維 持) | `03-compiler.md` §2.6 + `01-dsl.md` §1 |
 | Q69 | SAB mode の event drain mechanism (= MessageChannel / Atomics.notify / rAF / setTimeout) | resolved — 実 装 AI 領 域 と し て close。 観 測 ル ー ル (= 「main thread reader が ringbuffer を 継 続 drain す る」 = `02-messaging.md` §4 / §5) と publish counter cadence (= Q39-a 「due tick で 不 等 確 increment」) を 満 た す 限 り、 SAB mode で の wake-up mechanism は impl 自 由 度。 `05-client.md` §5.1 の 「per-MessageChannel ping in SAB mode」 は 例 示 で あ り 仕 様 確 定 で は な い (= 実 装 期 で Atomics.notify / rAF 等 に 変 え て も 観 測 ル ー ル 違 反 を 起 こ さ な い)。 仕 様 invariant (= drain 観 測、 publish cadence) は 動 か ず、 mechanism 細 部 は 実 装 期 の AI agent が performance / browser compat trade-off で 決 め る | `02-messaging.md` §4 + `05-client.md` §5.1 + `.claude/skills/_shared/core-principles.md` §2 |
-| Q81 | `@unworklet/offline` backend simplification = WASM 1 backend に 統 一 | resolved — `renderOffline(processor, config)` を WASM 1 backend に 統 一、 config か ら `backend?: 'js' | 'wasm'` field 削 除、 pure-JS interpreter path を 仕 様 surface か ら 全 廃。 内 部 動 作 = host JS (= Node.js / Bun / Deno 等 の WebAssembly runtime) で `@unworklet/vite-plugin` emit の WASM binary を `WebAssembly.instantiate()` し render quantum 単 位 で WASM `process()` を 呼 ぶ 経 路、 audio thread / AudioContext 不 要; 1 backend で server-side render / batch / preset preview / test の 4 use case 全 部 カ バ ー; pure-JS interpreter = mock 寄 り = 「framework が ship す る も の と 違 う path で 動 く」 構 造 的 矛 盾 で 棄 却 | `13-offline-render.md` §3 + `06-testing.md` §2 + `10-roadmap.md` §1 + `03-compiler.md` §8 + `09-repo-structure.md` §2.4 |
+| Q81 | `@unworklet/offline` backend simplification = WASM 1 backend に 統 一 | resolved — `renderOffline(processor, config)` を WASM 1 backend に 統 一、 config か ら `backend?: 'js' | 'wasm'` field 削 除、 pure-JS interpreter path を 仕 様 surface か ら 全 廃。 内 部 動 作 = `renderOffline` 内 で `@unworklet/core` の 公 開 compile API を call + WASM emit + 駆 動 を 自 己 完 結 (= host JS = Node.js / Bun / Deno 等 の WebAssembly runtime で `WebAssembly.instantiate()` し render quantum 単 位 で WASM `process()` を 呼 ぶ、 audio thread / AudioContext 不 要、 Q82 で 仕 上 げ); 1 backend で server-side render / batch / preset preview / test の 4 use case 全 部 カ バ ー; pure-JS interpreter = mock 寄 り = 「framework が ship す る も の と 違 う path で 動 く」 構 造 的 矛 盾 で 棄 却 | `13-offline-render.md` §3 + `06-testing.md` §2 + `10-roadmap.md` §1 + `03-compiler.md` §8 + `09-repo-structure.md` §2.4 |
+| Q82 | compile invocation を `@unworklet/core` 公 開 API に shift (= vite-plugin scope narrow、 Q23+Q24+Q25 / Q52 部 分 retract) | resolved — WASM compile invocation を `@unworklet/core` の named export と し て expose、 consumer = vite-plugin (= build pipeline で call、 既 path)、 offline (= `renderOffline` 内 で 自 動 call、 新 path)、 純 Node / Bun / Deno / browser host script (= 直 接 import + call、 新 path) 全 て 同 API を call; binaryen (= 内 部 WASM emit toolkit) は `@unworklet/core` dependency に 入 る が dynamic import で load = compile を call し な い production runtime bundle に は 含 ま れ ず; compiler module 自 体 は core 内 部 module の ま ま で API surface だ け 公 開 = 公 開 4 package 維 持; vite-plugin 責 務 は bundler 統 合 (= core 公 開 compile API call + asset resolution + `?worklet` HMR boundary + source maps + build-error panel + analysis JSON) に narrow | `09-repo-structure.md` §2.1 / §2.4 + `07-vite-plugin.md` + `13-offline-render.md` + `03-compiler.md` + `04-worklet-runtime.md` + `08-deployment.md` §1 + `10-roadmap.md` Phase 11 |
 
 ---
 
@@ -2005,7 +2006,8 @@ unworklet を dev で 使 う 時 に 必 要 な 「edit → save → 動 い �
 
 | 機 能 | 判 定 | 理 由 |
 |---|---|---|
-| WASM build + asset resolution + source maps + `?worklet` HMR boundary | 巻 き 取 り (`@unworklet/vite-plugin`) | fundamental (Vite 統 合 が ど の consumer に も 必 要) + universal + non-opinionated |
+| WASM compile invocation (= `defineProcessor` → `.wasm` + worklet JS template + typed `.d.ts`) | 巻 き 取 り (`@unworklet/core` 公 開 compile API) | fundamental (= 全 consumer = vite-plugin / offline / 直接 host script で 共 通) + universal + non-opinionated; Q82 で API surface 確 定 |
+| asset resolution + source maps + `?worklet` HMR boundary + build pipeline 統 合 | 巻 き 取 り (`@unworklet/vite-plugin` が core 公 開 compile API を build pipeline で call) | fundamental (Vite 統 合 が consumer 大 多 数 に 必 要) + universal + non-opinionated |
 | DevTools panel set (build errors + graph viewer + memory budget + live state inspector + live latency monitor + MIDI flow + snapshot inspector + swap history) | 巻 き 取 り (`@unworklet/vite-plugin`) | DevTools panel は consumer の app に は 見 え な い、 unworklet 開 発 者 の DX surface 限 定; 全 author が 同 一 machinery (= graph 構 造 / memory budget / state slot / MIDI ringbuffer / 3-layer error / `replaceProcessor` 履 歴) を 見 た い = universal、 ship し な い と 各 author / downstream plugin が 同 一 view 再 構 築 = ecosystem 分 裂 + 「つ ら い & み ん な 必 要」 そ の も の; panel は unworklet 自 身 の 構 造 だ け 可 視 化、 consumer の DSP 意 味 内 容 (spectrum / oscilloscope / custom dashboard) に は 触 ら な い |
 | analysis JSON artifacts + dev-time live channels | 巻 き 取 り (`@unworklet/vite-plugin`) | 上 記 panel の data source = 安 定 schema を public extension surface と し て declare、 第 三 者 panel (visual programming editor / 専 用 dashboard / 代 替 inspector) が forward-compatible に composable |
 | 動 的 swap primitive (= 旧 processor → 新 processor、 state 持 ち 越 し) | 巻 き 取 り (`@unworklet/core`) | Web Audio spec 制 約 (= `registerProcessor` 同 name 禁 止、 `removeModule()` 不 存 在) の 隠 蔽 が fundamental + universal (= HMR / live coding / visual programming 共 通 根)、 raw primitive な ら non-opinionated。 詳 細 = Q50 |
@@ -2016,8 +2018,8 @@ unworklet を dev で 使 う 時 に 必 要 な 「edit → save → 動 い �
 
 採 用 案 = **3 package 構 成**:
 
-- **`@unworklet/core`**: 既 全 primitive + 新 規 `replaceProcessor` (= Q50)
-- **`@unworklet/vite-plugin`**: WASM build + asset resolution + `?worklet` HMR boundary + source maps + build-error panel + analysis JSON 出 力。 HMR orchestration / 残 DevTools panel は scope OUT
+- **`@unworklet/core`**: 既 全 primitive + 新 規 `replaceProcessor` (= Q50) + 公 開 compile API (= Q82、 vite-plugin / offline / 直 接 import 全 consumer が こ こ を call)
+- **`@unworklet/vite-plugin`**: bundler 統 合 (= core 公 開 compile API を build pipeline で call + asset resolution + `?worklet` HMR boundary + source maps + build-error panel + analysis JSON 出 力)。 HMR orchestration / 残 DevTools panel は scope OUT
 - **`@unworklet/offline`** + **`@unworklet/test`**: 別 package、 既 ratify 通 り
 
 unworklet 自 前 CLI は ship し な い (= `vite build` / `vite` が user-facing entry)。
@@ -2159,7 +2161,7 @@ Q23 で 公 開 npm package 構 成 を **`@unworklet/core` + `@unworklet/vite-p
 - 公 開 import path = **5 種** (= 上 記 4 + `@unworklet/core/simd` subpath、 SIMD opt-in は `01-dsl.md` §7 通 り)
 - DSL 識 別 子 約 50 個 は `@unworklet/core` root か ら flat に 全 export (= declarative primitive と math primitive を subpath で 分 け な い)
 - `@unworklet/dsp` / `@unworklet/compiler` / `@unworklet/worklet` は **公 開 package で は な い**:
-  - compiler → `@unworklet/core` の internal module、 user は `@unworklet/vite-plugin` 経 由 で 暗 黙 起 動
+  - compiler module 自 体 は `@unworklet/core` の internal module、 ただ し invocation は **`@unworklet/core` の 公 開 compile API と し て expose** (= Q82 部 分 retract)。 consumer = vite-plugin / `@unworklet/offline` / 直 接 import す る 純 Node / Bun / Deno / browser host script の 全 path で 同 API を call。 vite-plugin 暗 黙 起 動 は 一 つ の path で あ り 唯 一 の path で は な い
   - worklet runtime → `@unworklet/core` の internal module、 build 出 力 物 と し て emit + `audioWorklet.addModule(processorUrl)` で load
   - dsp surface → `@unworklet/core` root に flat export し て 独 立 package 化 し な い
 
@@ -2182,8 +2184,8 @@ Q23 で 公 開 npm package 構 成 を **`@unworklet/core` + `@unworklet/vite-p
 - `03-compiler.md` L1 heading: `# 03 — Compiler (@unworklet/compiler)` → `# 03 — Compiler` + L3 prose に 「internal module of @unworklet/core」 1 文 追 加
 - `03-compiler.md` L27 prose: `proxy implementations of all primitives in @unworklet/dsp` → `proxy implementations of all primitives exported from @unworklet/core`
 - `04-worklet-runtime.md` L1 heading: `# 04 — Worklet runtime (@unworklet/worklet)` → `# 04 — Worklet runtime` + L3 prose に 「internal module of @unworklet/core」 1 文 追 加
-- `07-vite-plugin.md` L26: `Invokes the @unworklet/compiler pipeline` → `Invokes the compiler pipeline (= internal module of @unworklet/core, see 03-compiler.md)`
-- `08-deployment.md` L13: `The underlying compiler (@unworklet/compiler) is bundler-agnostic` → `The underlying compiler pipeline (= internal module of @unworklet/core, see 03-compiler.md) is bundler-agnostic`
+- `07-vite-plugin.md` L26: `Invokes the @unworklet/compiler pipeline` → `Invokes the public compile API exposed from @unworklet/core (compiler module itself is core-internal, see 03-compiler.md and Q82)`
+- `08-deployment.md` L13: `The underlying compiler (@unworklet/compiler) is bundler-agnostic` → `The underlying compiler pipeline (= core-internal module, invoked via the public compile API exposed from @unworklet/core, see 03-compiler.md and Q82) is bundler-agnostic`
 - Q13 (initial package layout) が 自 動 派 生 確 定 (= 公 開 4 package + 内 部 module 構 造 一 致)、 Q13 を resolved status に update (= summary table cell 既 update 済 み)
 - canonical examples integrity 確 認: `12-canonical-examples.md` の import 行 は 全 て `@unworklet/core` / `@unworklet/core/simd` 統 一 で 既 整 合、 修 正 ナ シ (AGENTS.md HARD CONTRACT 同 commit 整 合 確 認 済 み)
 
@@ -3659,7 +3661,7 @@ registerProcessor('my-extended', MyExtended);
 
 `@unworklet/offline` の `renderOffline(processor, config)` を **WASM 1 backend** に 統 一。 config か ら `backend?: 'js' | 'wasm'` field を 削 除。 pure-JS interpreter path を 仕 様 surface か ら 全 廃。
 
-`renderOffline` の 内 部 動 作 = host JS 環 境 (= Node.js / Bun / Deno 等 の WebAssembly runtime) で `@unworklet/vite-plugin` emit の WASM binary を `WebAssembly.instantiate()` し、 render quantum 単 位 で WASM `process()` 関 数 を 呼 ぶ 経 路。 audio thread / AudioContext は 不 要。 host JS で 普 通 に WASM module を ロ ー ド + 駆 動 す る path。
+`renderOffline` の 内 部 動 作 = **`@unworklet/core` の 公 開 compile API を call し て WASM emit + 駆 動 を 自 己 完 結** (= Q82 で 確 定)。 host JS 環 境 (= Node.js / Bun / Deno 等 の WebAssembly runtime) で 生 成 し た WASM binary を `WebAssembly.instantiate()` し、 render quantum 単 位 で WASM `process()` 関 数 を 呼 ぶ 経 路。 audio thread / AudioContext は 不 要。 vite-plugin / Vite project に 依 存 せ ず 純 Node script で test / server-side render / batch processing / preset preview が 動 く。
 
 ### Rationale
 
@@ -3686,6 +3688,54 @@ registerProcessor('my-extended', MyExtended);
 ### v1.x.0 deferral
 
 - ナ シ (= v1.0.0 surface で WASM 1 backend 完 結)
+
+---
+
+## Q82 — compile invocation を `@unworklet/core` 公開 API に shift (= vite-plugin scope narrow)
+
+**Status:** resolved.
+
+### Decision
+
+WASM compile invocation を `@unworklet/core` の **公開 named export** と して expose する。 既 declare = 「compiler は core internal module、 user は `@unworklet/vite-plugin` 経由 で 暗黙 起動」 (Q23+Q24+Q25 + Q52) を 部分 retract: compiler module 自体 は core 内部 module の ま ま だ が、 **invocation API は core 公開 surface に expose**。
+
+具体:
+- `@unworklet/core` の named exports に compile API を 追加 (= signature 細部 は impl 期 fill per Q53)
+- consumer = `@unworklet/vite-plugin` (= build pipeline で call、 既 path)、 `@unworklet/offline` (= `renderOffline` 内 で 自動 call、 新 path)、 純 Node / Bun / Deno / browser host script (= 直接 import + call、 新 path)。 全 consumer が 同 API を call。
+- binaryen (= 内部 WASM emit に 使う JS toolkit) は `@unworklet/core` dependency に 入る が **dynamic import** で load。 compile API を call し ない consumer (= production runtime で 既 build 済 WASM binary を load + 駆動 する だけ の 経路) で は binaryen が production bundle に 含まれ ない。
+
+### Rationale
+
+- vite-plugin の 責務 が 過大 = WASM build + asset resolution + HMR + source maps + DevTools 5 軸 を 1 package で 担う 構造 で、 「WASM build」 だけ 切り出 し て core 寄り に 集約 する 方 が clean
+- `renderOffline` 内 で graph capture + compile + 駆動 を 自己 完結 = Vite project 不要 で 純 Node script で test / server-side render / batch processing / preset preview が 動く = use case 拡大
+- compile API が 公開 = user mental で 「`@unworklet/core` を import すれば compile 可能」 が 1 step で 把握 可、 vite-plugin の 暗黙 起動 path より intuitive
+- binaryen dynamic import で production runtime bundle 軽量 維持 (= `@unworklet/core` dependencies ゼロ invariant は dynamic import が optional dep の minor refine、 production 哲学 不変)
+- compile path 1 つ に 集約 = vite-plugin / offline / 他 host で 同 binary emit が 構造 的 担保 (= 「offline と online で 同 WASM」 invariant が 1 path で 自動 成立、 Q81 と zip)
+
+### Rejected
+
+- *(β) 新 公開 package `@unworklet/compiler` を 切り出す* — core dep ゼロ invariant 厳密 維持、 ただし 公開 4 → 5 package に 増、 user 学習 cost 増。 dynamic import path (= 案 α) で 同 invariant 実用上 達成 で、 package 数 増やす motivation 不足
+- *(γ) compile を `@unworklet/offline` に 内蔵* — offline が compile + driving 自己 完結、 vite-plugin は offline を invoke。 compile path が 2 重 化 (= vite-plugin と offline で 別 実装) リスク + offline package が 重く なる + cross-runtime で 同 binary 担保 が 弱まる
+- *(δ) compiler を core internal の ま ま、 内部 API を offline / vite-plugin 両方 から 起動 可能 と 明示* — minimal refine だが 「公開 surface か internal か」 line が 曖昧、 user mental で 「core から compile が 見え ない」 状態 が 残る
+
+採用 = **(α) `@unworklet/core` 公開 surface に compile API 追加 + binaryen dynamic import**。 公開 4 package 維持、 production runtime 軽量 維持、 compile path 1 つ に 集約、 user mental intuitive。
+
+### Side effects (= 各 file の 修正)
+
+- `03-compiler.md` L3 prose retract、 公開 compile API path に refine
+- `07-vite-plugin.md` §1 plugin scope で 「WASM build」 を 「WASM compile invocation (= core compile API call)」 に narrow、 §2 / §4 内 vite-plugin が compile を 「担う」 表現 全廃
+- `13-offline-render.md` §2 + §3 + §4 prose で `renderOffline` 内 自己 完結 path を 明示、 vite-plugin 依存 prose 削除
+- `09-repo-structure.md` §2.1 named exports に compile API row 追加、 §2.4 dependency graph で `@unworklet/core` dep を 「(= ナシ) → binaryen (= dynamic import)」 に refine、 production runtime 影響 ナシ invariant 強調
+- `00-foundations.md` 該当 prose refine (= 該当 ナシ なら touch せず)
+- `04-worklet-runtime.md` 冒頭 prose で 「the template is emitted by `@unworklet/vite-plugin`」 を 「emitted by `@unworklet/core` の 公開 compile API」 に refine
+- `08-deployment.md` §1 で vite-plugin compile 言及 refine
+- `10-roadmap.md` Phase 11 vite plugin の 「WASM build pipeline integration」 を 「core compile API を vite-plugin から call」 に refine
+- `decisions-log.md` Q23+Q24+Q25 / Q52 / Q81 entry refine + Q82 新規 entry 追加
+- `README.md` Status range Q1-Q81 → Q1-Q82 update
+
+### v1.x.0 deferral
+
+- ナシ (= v1.0.0 surface で path α 完結)
 
 ---
 

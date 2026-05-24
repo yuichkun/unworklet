@@ -19,13 +19,15 @@ The package is intentionally a single primitive — `renderOffline` — applicab
 
 The package does **not** wrap any I/O concern (no wav writer, no http server, no mp3 encoder, no UI). Output is in-memory `Float32Array`; the consumer composes file I/O / encoders / UI separately. Keeping the surface a pure function maximizes reuse across the four use cases above.
 
+こ れ ら 全 use case で Vite project は 不 要 = 純 Node / Bun / Deno script で `@unworklet/core` (= `defineProcessor(...)` の 戻 り 値 を 提 供) + `@unworklet/offline` (= `renderOffline` を 提 供) を import す る だ け で 動 く。 build pipeline / bundler / browser host を 要 求 し な い (= compile も driver も `renderOffline` 内 で 自 己 完 結、 §3 + §4 参 照)。
+
 ## 2. API
 
 ```typescript
 import { renderOffline } from '@unworklet/offline';
-import MyProcessor from './my.processor.ts?worklet';
+import { myProcessor } from './my-processor';   // `defineProcessor(...)` の 戻 り 値 (= `CompiledProcessor<C>`) を そ の ま ま import。 vite-plugin 経 由 の `?worklet` import path も 並 列 で OK (= `.processor.ts` 内 で `defineProcessor(...)` を 名 前 付 き export し て お け ば either path で 同 一 artifact を 受 け 取 れ る)。
 
-const result = await renderOffline(MyProcessor, {
+const result = await renderOffline(myProcessor, {
   sampleRate: 48000,
   duration:   1.0,                                              // seconds
   inputs:  { main: [inputLeftPcm, inputRightPcm] },             // audioInput name → Float32Array[] (one entry per channel; mono = length-1 array)
@@ -63,10 +65,13 @@ result.state;        // Uint8Array       snapshot blob (Q5 format) at end-of-ren
 
 `renderOffline` は host JS の WebAssembly runtime (= Node.js / Bun / Deno 等 の `WebAssembly.instantiate` を 持 つ environment) で processor の WASM binary を そ の ま ま instantiate し、 host JS 上 で render quantum (= 128 sample) 単 位 に WASM `process()` を 呼 び 出 し て output PCM を 集 め る。 `AudioContext` も audio thread も 介 在 し な い (= browser 不 要、 server-side で も そ の ま ま 走 る)。 production の online 経 路 (= `05-client.md`) が `AudioWorkletNode` 越 し に 走 ら せ る の と 同 一 の WASM binary を、 同 一 の per-quantum entry point で driver す る path = byte-identical な emission を offline で 再 現 す る (= Q17 polynomial approximation は WASM 内 で inline emit、 host JS 側 に 計 算 が 漏 れ な い)。
 
+compile 自 体 も `renderOffline` 内 で 完 結 す る (= `@unworklet/core` の 公 開 compile API を call し て、 引 数 で 受 け 取 っ た processor (= `defineProcessor(...)` の 戻 り 値) の graph capture + WASM emit を 走 ら せ る)。 Vite 経 由 で 事 前 build 済 の WASM binary を 渡 す 必 要 ナ シ = 純 Node / Bun / Deno script が `defineProcessor(...)` の 戻 り 値 を そ の ま ま `renderOffline` に 渡 せ ば、 graph capture → WASM emit → instantiate → driver が 1 call 内 で 順 に 走 る。 同 一 processor 入 力 + 同 一 compile path = 同 一 WASM binary が emit さ れ る た め、 online (= vite-plugin が build 時 に 同 じ compile API を call し て 出 し た binary) と byte-identical な artifact が 得 ら れ る (= §4 参 照)。
+
 backend 選 択 肢 は な い (= `renderOffline` config に backend 切 替 field は 持 た な い)。 config (= `sampleRate`, `duration`, `inputs`, `params`, `messages`, `events`) と processor 入 力 が 同 一 で あ れ ば `renderOffline` の 戻 り 値 は host JS environment を 跨 い で bit-exact = test deterministic。 acceptance B2 (= `06-testing.md` §2) は 単 一 binary の 1 path 走 行 で 自 然 と pass す る (= 比 較 対 象 が な い = tolerance 概 念 不 在)。
 
 ## 4. Relationship to other packages
 
 - `@unworklet/test` (= `06-testing.md`) builds matchers on top of `renderOffline`.
-- `@unworklet/vite-plugin` (= `07-vite-plugin.md`) emits the compiled processor that `renderOffline` consumes; the `?worklet` import resolves to a shape the offline runner can also load. **Online と offline は 同 一 artifact set を 共 有** = vite-plugin が 1 度 build し た `.graph.json` / `.memory.json` / `.schema-hash.json` (= `07-vite-plugin.md` §6.3) を offline runner が internal API 経 由 で 直 接 load、 同 一 `schemaHash` を 提 示 す る (= Q5-e で 担 保)。 これ に よ り offline 側 で 走 ら せ た blob (= `result.state`) を online `node.restore(blob)` に 渡 し て も schema mismatch reject が 起 こ ら な い (= canonical Ex 7 migration chain test の cross-runtime path)。
+- `@unworklet/core` (= `05-client.md` + `defineProcessor` + 公 開 compile API) は offline runner が 依 存 す る 唯 一 の `@unworklet/` package (= `@unworklet/offline` peer dep)。 `renderOffline` は 引 数 で 受 け 取 っ た processor (= `defineProcessor(...)` の 戻 り 値) を 内 部 で `@unworklet/core` の 公 開 compile API 経 由 で WASM 化 + host JS の WebAssembly runtime で instantiate + 駆 動 す る (= §3)。 Vite project に 依 存 し な い 純 Node / Bun / Deno / browser host script で 動 く (= build pipeline / bundler を 要 求 し な い)。
+- `@unworklet/vite-plugin` (= `07-vite-plugin.md`) は `@unworklet/core` の compile API を build pipeline で call す る 1 consumer の 1 つ で あ り、 offline runner は そ れ と は 独 立 に 自 前 で 同 じ compile API を call す る (= offline は vite-plugin に 依 存 し な い)。 online runtime (= browser AudioWorkletGlobalScope) と offline runtime (= host JS WebAssembly runtime) が **同 一 compile path** (= `@unworklet/core` 公 開 compile API) を 通 る た め、 emit さ れ る WASM binary + metadata artifact (= `.graph.json` / `.memory.json` / `.schema-hash.json` 相 当) が byte-identical = `schemaHash` も 一 致 す る (= Q5-e で 担 保)。 こ れ に よ り offline 側 で 走 ら せ た blob (= `result.state`) を online `node.restore(blob)` に 渡 し て も schema mismatch reject が 起 こ ら な い (= canonical Ex 7 migration chain test の cross-runtime path)。
 - `@unworklet/core`'s client-side surface (= `05-client.md`) is the **online** counterpart: same processor, different runtime path. The snapshot format (Q5) is shared, so a `renderOffline` result's `state` blob can be passed to `node.restore(state)` after `createNode` to continue an offline-prepared session online (Q57; the two-step pattern is the v1.0.0 canonical form, see `05-client.md` §1).

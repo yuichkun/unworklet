@@ -1,6 +1,6 @@
 # 07 — Vite plugin (`@unworklet/vite-plugin`)
 
-The integration package that compiles processors, resolves their assets, emits source maps + analysis artifacts, and contributes the one DevTools panel (build errors) that unworklet itself ships. unworklet has no CLI; `vite build` and `vite` are the user-facing entry points. Hot module reload orchestration, live-coding glue, and richer DevTools panels are explicitly **out of scope** — they are user-land recipes built on the `replaceProcessor` primitive (`05-client.md` §8) plus the analysis artifacts this plugin emits.
+The integration package that invokes the `@unworklet/core` public compile API for processors, resolves their assets, emits source maps + analysis artifacts, and contributes the one DevTools panel (build errors) that unworklet itself ships. unworklet has no CLI; `vite build` and `vite` are the user-facing entry points. Hot module reload orchestration, live-coding glue, and richer DevTools panels are explicitly **out of scope** — they are user-land recipes built on the `replaceProcessor` primitive (`05-client.md` §8) plus the analysis artifacts this plugin emits.
 
 ## Status
 
@@ -12,7 +12,7 @@ The plugin owns five responsibilities:
 
 | Responsibility | Section |
 |---|---|
-| WASM build (= compile `defineProcessor` to `.wasm` + worklet JS template + typed `.d.ts`) | §2 |
+| WASM compile invocation (= call `@unworklet/core`'s public compile API to obtain `.wasm` + worklet JS template + typed `.d.ts`) | §2 |
 | Asset resolution (= `?worklet` query for processor URL) | §3 |
 | HMR boundary (= make `?worklet` imports hot-acceptable so user-land code can call `replaceProcessor`) | §4 |
 | Source maps (= `.ts` → AST → `.wasm` position propagation) | §5 |
@@ -20,11 +20,14 @@ The plugin owns five responsibilities:
 
 The plugin is the only first-party bundler integration in v1.0.0. Other bundlers (Webpack, Rollup, esbuild) are out of v1.0.0 scope and may be added additively in v1.x.0 when consumer demand materializes. Authoritative rationale: `decisions-log.md` Q23+Q24+Q25.
 
-## 2. WASM build
+## 2. WASM compile invocation
 
-<!-- Pipeline: detect `defineProcessor` in `.ts` / `.tsx` files → invoke the
-     `@unworklet/core` internal compiler module (03-compiler §1) → emit the
-     full artifact set below + the sidecar `.wasm.map` source map (§5).
+<!-- The compile pipeline itself lives in `@unworklet/core` as a public compile
+     API; this plugin is responsible for invocation + source-change detection +
+     asset pipeline integration. Pipeline: detect `defineProcessor` in `.ts` /
+     `.tsx` files → call `@unworklet/core`'s public compile API (03-compiler
+     §1) → emit the full artifact set below + the sidecar `.wasm.map` source
+     map (§5).
 
      Build artifacts (per processor) split into two phases:
 
@@ -58,7 +61,7 @@ The plugin does **not** orchestrate hot-reload. The Web Audio spec offers no `re
 What the plugin does at §4 level:
 
 - Marks `import processorUrl from './my.processor.ts?worklet'` as an HMR-accepting boundary, so a source edit to `my.processor.ts` triggers a Vite HMR update for any module importing it (rather than a full-page reload).
-- Recompiles WASM on file change and delivers the rebuilt module to subscribed `import.meta.hot.accept` callbacks; what those callbacks do with the new module is user-land.
+- Recompiles WASM on file change by re-invoking `@unworklet/core`'s public compile API, then delivers the rebuilt module to subscribed `import.meta.hot.accept` callbacks; what those callbacks do with the new module is user-land.
 
 What user-land does on top:
 
@@ -105,7 +108,7 @@ Each panel is a thin presentation layer over an already-ratified unworklet mecha
 
 | Panel | Dock entry type | unworklet mechanism | DevTools Kit primitive |
 |---|---|---|---|
-| Build errors / warnings | Structured Diagnostics | 3-layer error model (`error[unworklet/<id>]`, `03-compiler.md` §2.5) with `decisions-log.md` cross-refs | `ctx.diagnostics.defineDiagnostics()` (code prefix `UWK`, `docsBase` → unworklet docs URL) |
+| Build errors / warnings | Structured Diagnostics | 3-layer error model (`error[unworklet/<id>]`, `03-compiler.md` §2.5) surfaced through `@unworklet/core`'s public compile API, with `decisions-log.md` cross-refs | `ctx.diagnostics.defineDiagnostics()` (code prefix `UWK`, `docsBase` → unworklet docs URL) |
 | Graph viewer | iframe | per-block code + `forSample` loops + declaration scope + subgraph instantiation (`00-foundations.md` §3, `01-dsl.md` §1) | Shared State (reactive on rebuild) |
 | Memory budget | json-render | per-declaration auto-sum (Q30, `03-compiler.md` §2.4) | Shared State |
 | Live state inspector | iframe | named `state` slot + `state.publish` (Q27, `01-dsl.md` §3) | Shared State (audio thread → main reactive sync) |
@@ -127,7 +130,7 @@ Each panel is a thin presentation layer over an already-ratified unworklet mecha
 
 ### 6.3 Analysis JSON artifacts
 
-The panels above all read their data from a stable set of artifacts that the plugin emits at build time and mirrors over the DevTools Kit's Shared State / Streaming channels at dev time. The same artifacts are documented as a public extension surface — third-party panels, CI integrations, and alternate tooling read the same files / channels and stay forward-compatible:
+The panels above all read their data from a stable set of artifacts. The four JSON files in the table below are produced by `@unworklet/core`'s public compile API and emitted to disk by this plugin at build time; the same data is mirrored over the DevTools Kit's Shared State / Streaming channels at dev time. The artifacts are documented as a public extension surface — third-party panels, CI integrations, and alternate tooling read the same files / channels and stay forward-compatible:
 
 | Artifact | Source | Consumed by (first-party panels) |
 |---|---|---|
