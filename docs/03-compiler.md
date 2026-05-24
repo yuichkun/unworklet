@@ -51,7 +51,7 @@ For each primitive call:
 - **Arithmetic / math / control / type conversion**: a typed AST node with the operator and operand handles, returning a fresh `Node<T>` of the inferred output type.
 - **`load` / `store`**: a memory-access AST node referencing the corresponding slot.
 - **Buffer access (`buf.read` / `buf.write` / `buf.readInterpolated`)**: an indexed access AST node; the index argument is itself a `Node<'i32'>` (typically a ring-buffer write head).
-- **Audio I/O (`audioIn.at(c, i)` / `audioOut.set(c, i, v)`)**: a sample-offset-aware AST node carrying the channel index, the sample-offset `i`, and (for `set`) the value to write. The sample-offset is `Node<'i32'> | number`: the `Node<'i32'>` form binds the surrounding `forSample` callback's loop counter, and JS-literal offsets (Q36-a) accept the primitive at any lexical position — at the per-block top level this uses literal `0` for block-start access (Q51).
+- **Audio I/O (`audioIn.ch(c).at(i)` reader / `audioOut.ch(c).at(i).write(v)` writer per Q78)**: a sample-offset-aware AST node carrying the channel index, the sample-offset `i`, and (for the writer) the value to write. Each chain step takes exactly one argument so the role is method-named. The sample-offset is `Node<'i32'> | number`: the `Node<'i32'>` form binds the surrounding `forSample` callback's loop counter, and JS-literal offsets (Q36-a) accept the chain at any lexical position — at the per-block top level this uses literal `0` for block-start access (Q51). Stereo handles also accept `.left.at(i)` / `.right.at(i)` as alias for `.ch(0)` / `.ch(1)` (Q78).
 - **Param access (`param.at(i)` / `param.at(0)`)**: an AST node carrying the param slot reference and the sample-offset. `param.at(i)` is used inside `forSample` callbacks; `param.at(0)` at the per-block top level reads the block-start value.
 - **`select(cond, whenTrue, whenFalse)`**: a control-flow AST node; both branches are evaluated as graph nodes (no JS control flow over `Node<'bool'>`).
 - **L1 helper calls**: inlined at the call site; the helper body executes with the same proxies, contributing AST nodes to the parent graph.
@@ -68,7 +68,7 @@ The branded `Node<T>` type rejects JavaScript operators. The IDE surfaces these 
 - `nodeA + nodeB` — TS error: `+` is not applicable to operands of type `Node<'f32'>`.
 - `if (nodeBool) { ... }` — TS error: `Node<'bool'>` is not assignable to `boolean`.
 - `for (... ; nodeCmp ; ...)` — TS error: same as above, on the loop condition.
-- `audioIn.at(0, i)` outside any `forSample` — TS error: `i` is undefined (standard TS scoping).
+- `audioIn.ch(0).at(i)` outside any `forSample` — TS error: `i` is undefined (standard TS scoping).
 
 #### Layer 2 — Graph-capture-time error (build-time, during proxy evaluation)
 
@@ -91,7 +91,7 @@ The compiler runs analysis passes over the captured DAG (see §3); violations de
 - *Constant-truthy `emitIf` cond inside `forSample`*: an `emitIf(cond, payload)` whose `cond` folds to a build-time-constant truthy value (e.g. `emitIf(true, ...)` or `emitIf(FORCE_FLAG, ...)` where `FORCE_FLAG` is a build-time `true`) is rejected when the call site is inside a `forSample` / `forSample.byN` / `everyNSamples` callback. Handler / per-block-top-level contexts are exempt because their natural rate is per-block, not per-sample (Q32-c, `decisions-log.md`).
 - *Type inference inconsistency*: a `Node<T>` whose inferred type conflicts with its expected use.
 
-Output coverage is **not** enforced by static analysis: `audioOut.set(c, i, v)` follows the host (AudioWorklet / JUCE) `process` mental model — write freely, duplicates use source-order semantics, sample-offsets that no phase writes are emitted as silence (Q37, `decisions-log.md`).
+Output coverage is **not** enforced by static analysis: `audioOut.ch(c).at(i).write(v)` follows the host (AudioWorklet / JUCE) `process` mental model — write freely, duplicates use source-order semantics, sample-offsets that no phase writes are emitted as silence (Q37, `decisions-log.md`).
 
 ### 2.5 Error message format
 
@@ -154,7 +154,7 @@ Each `<stable-id>` is a kebab-case identifier used as the `error[unworklet/<stab
 | `missing-name` | 2 | a snapshot-using processor declares a `state.*` / `buffer.*` / `param.*` slot without the required `name` field | Q5-b |
 | `illegal-stride` | 2 | `forSample.byN(stride, callback)` is called with a non-build-time-constant `stride`, or a `stride` that does not divide `SAMPLES_PER_BLOCK` (= 128) — allowed values: `1`, `2`, `4`, `8`, `16`, `32`, `64`, `128` | Q37-b |
 | `non-constant-lane` | 2 | `vec.lane(i)` is called with a non-build-time-constant lane index `i` (SIMD lane access must fold at graph capture) | Q3 |
-| `audio-sample-offset-out-of-range` | 2 | `audioIn.at(c, k)` / `audioOut.set(c, k, v)` / `param.at(k)` is called with a JS-literal sample-offset `k` outside `[0, SAMPLES_PER_BLOCK - 1]` (= `0`〜`127`) | Q68 |
+| `audio-sample-offset-out-of-range` | 2 | `audioIn.ch(c).at(k)` / `audioOut.ch(c).at(k).write(v)` / `param.at(k)` is called with a JS-literal sample-offset `k` outside `[0, SAMPLES_PER_BLOCK - 1]` (= `0`〜`127`) | Q68 |
 | `payload-element-type-mismatch` | 2 | `buf.copyFrom(payloadField)` is called with a typed-array payload whose element type does not match the buffer's `<T>` (e.g. `Float32Array` → `buffer.i32`) | Q31-c |
 | `migrations-unreachable` | 2 | a `migrations: [...]` chain does not cover a path from a known `from` `schemaHash` to the current `schemaHash` (reported as warning by default; promoted to error under `migrationsStrict: true`) | Q5-e |
 | `constant-truthy-emitif` | 3 | `emitIf(cond, payload)` inside a `forSample` / `forSample.byN` callback receives a `cond` expression that folds to a build-time-constant truthy value (would emit at audio rate and saturate the event ringbuffer) | Q32-c |

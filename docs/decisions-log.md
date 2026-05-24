@@ -4,7 +4,7 @@ Cross-cutting reference: every resolved design question, recorded with its ratio
 
 ## Status
 
-populated (Q1–Q77 ratify complete; Q28 is unassigned — a numbering artifact, not a withheld decision)
+populated (Q1–Q78 ratify complete; Q28 is unassigned — a numbering artifact, not a withheld decision)
 
 ## Index
 
@@ -50,6 +50,7 @@ populated (Q1–Q77 ratify complete; Q28 is unassigned — a numbering artifact,
 | Q73 | main / worklet 間 内 部 wire layout を e 軸 (= 実 装 期 任 せ) で 4 entry 集 約 close (audit 累 犯 解 消) | resolved — ship 後 凍 結 wire byte は **`node.snapshot()` の Uint8Array blob 並 び の み** (= user persist + 新 ship restore = migration mandatory)、 main / worklet 間 内 部 wire (= SAB ringbuffer slot 並 び、 event slot / MIDI slot field 並 び、 sysex content buffer 並 び 等) は framework 同 ship 内 で main bundle / worklet bundle ペ ア = ship ご と に 自 由 = user 不 観 測 = **e 軸 (= 実 装 AI 領 域)**; 4 entry 集 約 close: (1) event slot vs MIDI slot で atSample 位 置 が 別 (= wire 上 位 置 は 実 装 期、 invariant = atSample が wire 上 1 位 置 で 取 れ る こ と)、 (2) variable-length 中 身 並 び 方 が event と MIDI sysex で 別 形 式 (= 実 装 期、 invariant = main slot + content buffer で 1 意 に 長 さ + 中 身 が 取 れ る こ と)、 (3) sysex slot に atSample 不 在 で 「全 handler 引 数 は atSample を 持 つ」 主 張 と 衝 突 (= wire 上 atSample 位 置 は 実 装 期、 invariant = handler arg に atSample が 渡 る user 観 測 surface は 維 持)、 (4) `forSample.byN` function + property hybrid (= TS export 形 は 実 装 期、 invariant = canonical で `forSample.byN(stride, callback)` が 動 く こ と); g 軸 を `node.snapshot()` blob だ け に narrow + 軸 file 同 commit update で 次 sweep / triage 同 種 拾 わ ず 2 重 防 御 | (= 関 連 file ナ シ、 軸 file 自 体 を 動 か し た commit) |
 | Q76 | `state` / `buffer` / `param` factory 分 離 (= plain vs named)、 snapshot opt-in を slot 単 位 で 明 示 化 (audit cluster (8) snapshot lifecycle) | resolved — declaration kind を **plain factory** (`state.<type>` / `buffer.<type>` = worklet-private、 `name` 受 け 入 れ ナ シ、 snapshot blob 不 在、 main 側 surface ナ シ) と **named factory** (`state.named.<type>` / `buffer.named.<type>` / `param.named` = TypeScript level で `name` required、 snapshot blob に 入 る (default `'persistent'` for `state.named` / `param.named`、 `'transient'` for `buffer.named`)、 main 側 で `node.state.<name>` / `node.buffer.<name>` / `node.parameters.<name>` で 引 け る) に 2 分 離; `param` は named factory 専 用 (= 全 AudioParam は descriptor 経 由 で main 側 か ら 名 前 で 引 か れ る); `publish` option も named factory 専 用; Q5-b 「state / param default = 'persistent'」 / 「`snapshot()` 呼 ぶ processor の name 必 須 trigger」 部 分 retract、 「positional / AST hash 棄 却」 / per-profile / migrations chain は 維 持; canonical Ex 全 declare 例 を 案 S 適 用 で refactor (= AGENTS.md HARD CONTRACT 同 commit zip) | `01-dsl.md` §3 + §8 + `11-midi.md` §2.3 / §2.4 / §2.5 + `12-canonical-examples.md` 全 declare 例 |
 | Q77 | Method chain DSL surface + `num()` literal helper + hybrid policy (branch ergonomic 寄 せ) | resolved — 全 `Node<T>` (= scalar 5 種 + SIMD `Node<'f32x4'>`) に method surface 追 加、 free function form と method form 両 併 存 で 同 AST 同 output、 chain は input flow line で 規 範 / free function は 多 引 数 ops + literal leading 時 規 範、 literal leading 用 に `num(v)` を 6 個 目 scalar constructor と し て 追 加 (= 既 `f32` / `f64` / `i32` / `i64` / `bool` と zip、 type 推 論 は Q33 自 然 拡 張)、 method 追 加 対 象 = arithmetic / comparison / math / SIMD vec 4 個、 free function only = `select` + SIMD `splat` / `vec4` / `sumLanes` + `flushDenormals` (= Q21 自 動 insertion 維 持 で user-facing surface 不 在)、 canonical Ex 1-10 全 rewrite (= AGENTS.md HARD CONTRACT 同 commit zip) | `01-dsl.md` §2 + §7.2 + `00-foundations.md` §3 + `09-repo-structure.md` §2.1 + `12-canonical-examples.md` |
+| Q78 | Audio I/O channel access form = `.ch(c).at(i)` chain + writer `.write(v)` + stereo sugar `.left` / `.right` (同 型 引 数 区 別 不 能 解 消) | resolved — audio input / output method を 完 全 chain (= 1 method = 1 引 数) に refine、 reader = `audioIn.ch(c).at(i)`、 writer = `audioOut.ch(c).at(i).write(v)` 3 step、 stereo sugar `.left` / `.right` を `channels === 2` 限 定 で `.ch(0)` / `.ch(1)` alias property と し て 露 出 (= type-gated、 N-channel handle に は 不 在)、 中 間 view (`InputChannelView<T>` / `OutputChannelView<T>` / `OutputChannelSample<T>`) を 公 開 type と し て expose、 user が 中 間 view を 変 数 に 入 れ な い 規 範 (= 1 line chain) を canonical で 統 一、 `param.at(i)` は touch せ ず (= 単 引 数 sample-offset 維 持、 form 揃 う)、 canonical Ex 1-10 全 rewrite (= AGENTS.md HARD CONTRACT 同 commit zip) | `01-dsl.md` §1.2 + §1.3 + §1.6.1 + `00-foundations.md` §3 + `12-canonical-examples.md` |
 | Q75 | runtime guard fallback = silence + onError + node connected (audit cluster (4) handler / drain / boundary timing) | resolved — `block-length-mismatch` + `wasm-trap` の runtime guard 動 作 を **silence + onError + node connected** で 1 path 化: `process()` は `true` return continue で node が audio graph か ら 外 れ ず connected の ま ま、 全 output channel に silence (zero buffer) を 出 し 続 け、 main 側 に `node.onError({ code: 'block-length-mismatch' \| 'wasm-trap', ... })` を 発 火、 framework 側 auto-dispose ナ シ (= consumer 判 断 が `.dispose()` で 起 動); 04 §3 / §8 / 03 §2.6 / 05 §1 の 「stops processing」 「halt audio output」 wording を 「emit silence while the node stays connected」 に 揃 え、 00 §5.2 既 「fallback to silence + main-side error event」 と zip; 04 §8 既 declare の 4 event code が silence path (= wasm-trap + block-length-mismatch) と audio-unaffected path (= queue-overflow + sab-unavailable) で 一 貫 化; `process()` return false = AudioWorkletProcessor permanent disconnect は consumer 判 断 を 奪 う path で 棄 却、 直 前 quantum hold は user が 異 常 判 別 不 能 で 棄 却 | `04-worklet-runtime.md` §3 + §8 + `03-compiler.md` §2.6 + `05-client.md` §1 + `00-foundations.md` §5.2 |
 | Q74 | `event<T>` typed-array field emit-side surface = sysex path 一 般 化 (audit cluster (3) emit-side 拡 張) | resolved — `event<T>` の typed-array field を **worklet 側 で 新 規 構 築 し て main に 流 す** path を MIDI sysex emit (Q49) と 共 通 化: emit shape で `data: Buffer<T> | TypedArrayFieldRef<T>` + framework injection の `length: Node<'i32'>` 必 須、 build-time-fixed `buffer.<T>` が 単 一 構 築 primitive (= runtime typed-array literal / `new Float32Array(...)` 不 可)、 main 側 は `data[0..length-1]` を 切 り 出 し た natural typed array で 受 け 取 り、 wire 形 は `02-messaging.md` §5.1 main slot + §5.2 content buffer を sysex と 1 transport 共 有; FFT spectrum / 波 形 解 析 / envelope 履 歴 等 worklet → main typed-array 系 中 心 機 能 が 自 然 surface で cover; T 内 typed-array field 複 数 path は §5.1 既 declare 通 り v1.x.0 deferral | `01-dsl.md` §4.3 + `02-messaging.md` §5.2 + `11-midi.md` §2.5 cross-ref |
 | Q47 | diagnostics surface 統 一 (audit Phase 2 #10、 #49) | resolved — diagnostics counter (= `overflowCount` 等) を **main 側 だ け で 提 供**、 worklet 側 handle (= `midiIn.diagnostics.X()`) を spec か ら 削 除; 全 channel (= event / message / MIDI) で `node.<kind>.<name>.diagnostics.X()` の 統 一 形 (= 既 Q40 namespaced shape と 整 合)、 「diagnostics は 外 部 観 測」 を declarative 原 則 (= 副 作 用 観 測 は main の 役 割、 worklet `process` body は feedback loop を 持 た な い) と し て 確 立; worklet 内 で の self-throttle pattern が 必 要 な ら main 経 由 で feedback (= 1 周 余 計 だ が 構 造 明 確)、 v1.x.0 で worklet handle へ の `.diagnostics` 後 付 け は additive 可 | `11-midi.md` §4 overflow + `decisions-log.md` Q4-c-iv prose |
@@ -3332,5 +3333,100 @@ const dry = num(1).sub(mix).mul(drySig);
 ### v1.x.0 deferral
 
 - ナ シ (= v1.0.0 surface で method form + free function form 両 完 結)。
+
+---
+
+## Q78 — Audio I/O channel access form = `.ch(c).at(i)` chain + writer `.write(v)`
+
+**Status:** resolved.
+
+### Problem
+
+v1.0.0 主 仕 様 で audio input / output method が **同 型 引 数 を signature に 複 数 並 べ る**:
+
+```typescript
+audioIn.at(0, i)         // Node<'i32'> が 2 個 並 ぶ (channel? sample?)
+audioOut.set(0, i, l)    // Node<'i32'> 2 個 + Node<'f32'> 1 個 (ど れ が 何?)
+```
+
+user は signature を hover し な い と 「ど の 数 字 が 何 か」 を 引 数 順 で 区 別 不 能。 setter `(c, i, v)` も reader `(c, i)` も 同 根。 production-grade audio plugin author が 1 hit ご と に 引 数 順 を 暗 記 す る 認 知 cost を 払 う。
+
+加 え て branch (= claude/implement-draft-spec-cO2tQ) で 提 案 さ れ た `.left` / `.right` stereo shorthand (= branch A3) を main spec で ど う 受 け 取 る か が 未 決 = stereo-only sugar を base form の 上 に ど の form で 乗 せ る か。
+
+### Decision
+
+audio I/O の channel + sample-offset access を **完 全 chain (= 1 method = 1 引 数)** に refine。 同 型 引 数 を 1 signature に 並 べ ず、 method 名 で 「ど の 数 字 が 何 か」 を 明 示。
+
+**Reader form** (= AudioInputHandle):
+
+```typescript
+audioIn.ch(0).at(i)                            // Node<'f32'>
+audioIn.ch(0).at(i).mul(gain.at(i)).sub(z.load())   // chain
+```
+
+- `.ch(c: ChannelIndex<C> | number)` = channel 1 個 を 選 択、 `InputChannelView<'f32'>` を 返 す
+- `.at(i: Node<'i32'> | number)` = sample-offset を 指 定、 `Node<'f32'>` を 返 す (= Q77 hybrid policy 通 り の method chain 起 点)
+
+**Writer form** (= AudioOutputHandle):
+
+```typescript
+audioOut.ch(0).at(i).write(l)                  // void、 1 引 数 ず つ 3 step
+audioOut.ch(1).at(i).write(rightSignal)
+```
+
+- `.ch(c)` = channel 選 択、 `OutputChannelView<'f32'>` を 返 す
+- `.at(i)` = sample 位 置 を 指 定、 `OutputChannelSample<'f32'>` を 返 す
+- `.write(v: Node<'f32'> | number)` = 値 書 込、 void を 返 す
+
+**Stereo sugar (= `channels === 2` 限 定)**:
+
+```typescript
+audioIn.left.at(i)        // = audioIn.ch(0).at(i)
+audioIn.right.at(i)       // = audioIn.ch(1).at(i)
+audioOut.left.at(i).write(l)
+audioOut.right.at(i).write(r)
+```
+
+- `.left` / `.right` = `channels === 2` の handle 型 限 定 で 露 出 (= type-gated property)
+- N-channel handle (= channels !== 2) に は `.left` / `.right` 不 在、 TypeScript reject
+- 構 造 = `.ch(0)` / `.ch(1)` の alias property、 mental は 1 つ (= 「`.left` は `.ch(0)`」)
+
+**param は touch せ ず** (= `param.at(i)` 単 引 数 で channel concept ナ シ、 form 不 変)。
+
+### Why this and not alternatives
+
+**判 断 軸** = 同 型 引 数 区 別 不 能 性 の 解 消 + user mental 軸 + canonical 規 範 性。
+
+- **採 用 案 (= 完 全 chain `.ch(c).at(i).write(v)`)**:
+  - 各 method 1 引 数 = signature hover 不 要、 method 名 で 役 割 明 示 (= 「`.ch` は channel」 「`.at` は sample」 「`.write` は 値」)
+  - `param.at(i)` (= 単 引 数 sample-offset) と form 統 一 = mental 1 つ (= audio I/O は channel 軸 を `.ch(c)` で 前 置 す る だ け)
+  - stereo sugar `.left` / `.right` が `.ch(0)` / `.ch(1)` の 自 然 alias property = sugar mental 派 生 ゼ ロ 追 加
+  - writer 3 step (= `.ch(0).at(i).write(l)`) は flow 順 で self-documenting (= 「ch 0 行く → sample i 行く → 値 書 く」)
+  - N-channel processor (= 5.1 / Ambisonic) で channel literal 反 復 が 短 い (= `.ch(c)` 4 char、 object 引 数 案 だ と `{ channel: c, sample: i, value: v }` 33 char)
+- **棄 却 案 (= object 引 数 `{ channel, sample, value }` 形)**:
+  - object key 名 で 「ど の 数 字 が 何 か」 明 示 は OK だ が、 `param.at(i)` (= 単 引 数) と form 違 う = surface 2 種、 「audio I/O だ け object」 mental 1 個 追 加
+  - stereo sugar `.left` / `.right` を object form の 上 に 乗 せ る path が awkward (= `audioIn.left.at({ sample: i })` で channel key が 不 在 化 = sugar と base form で signature 分 岐 = 不 一 致)
+  - setter で 3 key (= `{ channel, sample, value }`) を 1 hit ご と に 書 く = chain 3 step よ り 冗 長 (= chain は method 名 が DSP flow を visualize、 object は key list で 静 的)
+- **棄 却 案 (= 現 form `.at(c, i)` / `.set(c, i, v)` 維 持)**:
+  - 同 型 引 数 区 別 不 能 性 を 解 か ず、 余 湖 さ ん の core 指 摘 持 続 = canonical Ex で hover 必 要 残 存
+- **棄 却 案 (= setter `.set(v)` 動 詞)**:
+  - 余 湖 さ ん 明 示 で 「`.set` よ り `.write` の 方 が 好 き」、 動 詞 と し て writer 動 作 (= 値 を 書 く) と zip = `.write` 採 用
+
+### Side effects
+
+- **`decisions-log.md`**: 本 entry (Q78) 追 加 + index 表 row 追 加 + Status range Q1-Q78
+- **`01-dsl.md` §1.2**: AudioInputHandle<C> 型 を `.ch(c)` chain + `.left` / `.right` sugar (= channels === 2 限 定) に refine、 prose 規 範 例 更 新
+- **`01-dsl.md` §1.3**: AudioOutputHandle<C> 型 を `.ch(c).at(i).write(v)` chain + stereo sugar に refine
+- **`01-dsl.md` §1.6.1**: 公 開 type list に `InputChannelView<T>` / `OutputChannelView<T>` / `OutputChannelSample<T>` の 中 間 view を declare (= ただし user が 直 接 import す る pattern は 規 範 と し て 推 奨 し な い、 chain 起 点 type と し て expose す る だ け)
+- **`00-foundations.md` §3**: Sample-offset (i) entry + Per-block code entry の audio I/O 言 及 prose を chain form に refine
+- **`12-canonical-examples.md` Ex 1-10**: 全 audio I/O hit (= ~50+ ヶ 所) を chain 化、 stereo Ex (= 大 多 数) で `.left` / `.right` sugar 採 用、 N-channel Ex (= 該 当 ナ シ in canonical) は `.ch(c)` 維 持
+- **cross-cutting docs** (= `02-messaging.md` / `03-compiler.md` / `04-worklet-runtime.md` / `05-client.md` / `06-testing.md` / `07-vite-plugin.md` / `08-deployment.md` / `10-roadmap.md` / `11-midi.md` / `13-offline-render.md` / `README.md`): prose 内 code snippet で audio I/O 呼 び 出 し が あ れ ば 同 様 に rewrite
+- **`README.md` / `10-roadmap.md`**: Status / acceptance criteria range を Q1-Q78 に 更 新
+
+### v1.x.0 deferral
+
+- `.mid` / `.side` 等 stereo encoding sugar = v1.x.0 additive 候 補 (= channels === 2 限 定、 同 type-gated path)
+- N > 2 channel の channel-name sugar (= 5.1 で `.frontLeft` / `.center` 等) は consumer 文 化 領 域、 unworklet scope 外
+- Buffer / state の write surface (= `Buffer<T>.write(idx, v)` / `State<T>.store(v)`) は 別 軸、 同 grill で touch せ ず (= 必 要 性 が 出 れ ば 別 question)
 
 

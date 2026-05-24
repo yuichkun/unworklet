@@ -162,7 +162,7 @@ defineProcessor((ctx) => {
 
 The `atSample` is in the surrounding render quantum's coordinate system; consumers needing absolute time derive it as `audioContext.currentTime + atSample / sampleRate` on the main thread.
 
-Inside a handler body, the same expression-scope rules apply as in a `forSample` callback (`01-dsl.md` §4.2, `decisions-log.md` Q56): audio I/O (`audioIn.at` / `audioOut.set` / `param.at`), `emitIf`, subgraph methods, and L1 helper calls are all legal alongside `state` / buffer writes; new declarations are not. Sample-offset arguments accept `Node<'i32'> | number` from any source — the handler's own `atSample`, a state slot, a buffer read, or a literal. The state-slot-driven trigger pattern shown above remains the canonical form for sustained tones (where envelope computation runs in `forSample` regardless).
+Inside a handler body, the same expression-scope rules apply as in a `forSample` callback (`01-dsl.md` §4.2, `decisions-log.md` Q56): audio I/O (`audioIn.ch(c).at(i)` reader / `audioOut.ch(c).at(i).write(v)` writer per Q78 / `param.at(i)`), `emitIf`, subgraph methods, and L1 helper calls are all legal alongside `state` / buffer writes; new declarations are not. Sample-offset arguments accept `Node<'i32'> | number` from any source — the handler's own `atSample`, a state slot, a buffer read, or a literal. The state-slot-driven trigger pattern shown above remains the canonical form for sustained tones (where envelope computation runs in `forSample` regardless).
 
 ### 2.4 Outbound: emitting MIDI events (worklet → main)
 

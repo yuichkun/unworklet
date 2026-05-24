@@ -87,10 +87,10 @@ export const stereoGain = defineProcessor(() => {
   return {
     process: () => {
       forSample((i) => {
-        const l = main.at(0, i).mul(gain.at(i));
-        const r = main.at(1, i).mul(gain.at(i));
-        out.set(0, i, l);
-        out.set(1, i, r);
+        const l = main.left.at(i).mul(gain.at(i));
+        const r = main.right.at(i).mul(gain.at(i));
+        out.left.at(i).write(l);
+        out.right.at(i).write(r);
 
         meterL.store(l.abs().max(meterL.load()));
         meterR.store(r.abs().max(meterR.load()));
@@ -231,8 +231,8 @@ export const threeBandEQ = defineProcessor((ctx) => {
       const hiFv  = hiF.at(0);  const hiQv  = hiQ.at(0);  const hiGv  = hiG.at(0);
 
       forSample((i) => {
-        const xL = main.at(0, i);
-        const xR = main.at(1, i);
+        const xL = main.left.at(i);
+        const xR = main.right.at(i);
 
         // Cascaded peaking bands — each subgraph instance owns its own z1/z2 state pair.
         const yL1 = lowL.process(xL,  lowFv, lowQv, lowGv);
@@ -243,8 +243,8 @@ export const threeBandEQ = defineProcessor((ctx) => {
         const yR2 = midR.process(yR1, midFv, midQv, midGv);
         const yR3 = hiR .process(yR2, hiFv,  hiQv,  hiGv);
 
-        out.set(0, i, yL3);
-        out.set(1, i, yR3);
+        out.left.at(i).write(yL3);
+        out.right.at(i).write(yR3);
       });
     },
   };
@@ -304,7 +304,7 @@ export const linearPhaseEQ = defineProcessor(() => {
       // forSample (input shovel): copy input into history ring buffer.
       forSample((i) => {
         const idx = startHead.add(i).mod(HISTORY_LEN);
-        history.write(idx, main.at(0, i));
+        history.write(idx, main.ch(0).at(i));
       });
 
       // SIMD bulk convolution: accumulator over each output sample `i`,
@@ -322,7 +322,7 @@ export const linearPhaseEQ = defineProcessor(() => {
           acc        = acc.add(hVec.mul(iVec));
         }
         const sum = sumLanes(acc);
-        out.set(0, i, sum);
+        out.ch(0).at(i).write(sum);
       });
 
       // Per-block: advance the head by one block.
@@ -426,7 +426,7 @@ export const lookaheadLimiter = defineProcessor((ctx) => {
 
       forSample((i) => {
         // Sidechain envelope on the live (pre-delay) signal.
-        const peak = main.at(0, i).abs().max(main.at(1, i).abs());
+        const peak = main.left.at(i).abs().max(main.right.at(i).abs());
         const e    = envelopeFollow(peak, attackCoef, releaseCoef, env);
 
         // Compute gain reduction so that envelope * gr <= ceiling.
@@ -435,8 +435,8 @@ export const lookaheadLimiter = defineProcessor((ctx) => {
 
         // Push into delay line.
         const wIdx = headBlock.add(i).mod(LOOKAHEAD_SAMPLES);
-        dlyL.write(wIdx, main.at(0, i));
-        dlyR.write(wIdx, main.at(1, i));
+        dlyL.write(wIdx, main.left.at(i));
+        dlyR.write(wIdx, main.right.at(i));
 
         // Read from LOOKAHEAD_SAMPLES samples behind the write head (i.e.
         // the oldest sample, which corresponds to t - LOOKAHEAD_SAMPLES).
@@ -444,15 +444,15 @@ export const lookaheadLimiter = defineProcessor((ctx) => {
         const xL   = dlyL.read(rIdx);
         const xR   = dlyR.read(rIdx);
 
-        out.set(0, i, xL.mul(gr));
-        out.set(1, i, xR.mul(gr));
+        out.left.at(i).write(xL.mul(gr));
+        out.right.at(i).write(xR.mul(gr));
 
         // Fire an overshoot event on either channel that exceeded the ceiling
         // *before* gain reduction was applied (i.e. true peak in the input).
-        overshoot.emitIf(main.at(0, i).abs().gt(ceilingLin),
-               { atSample: i, channel: 0, level: main.at(0, i).abs() });
-        overshoot.emitIf(main.at(1, i).abs().gt(ceilingLin),
-               { atSample: i, channel: 1, level: main.at(1, i).abs() });
+        overshoot.emitIf(main.left.at(i).abs().gt(ceilingLin),
+               { atSample: i, channel: 0, level: main.left.at(i).abs() });
+        overshoot.emitIf(main.right.at(i).abs().gt(ceilingLin),
+               { atSample: i, channel: 1, level: main.right.at(i).abs() });
 
         // Track the most-negative GR (in dB) reached during this block; published
         // to UI by the rateFps scheduler.
@@ -645,8 +645,8 @@ export const granularSampler = defineProcessor((ctx) => {
           voiceGate[v]     .store(select(gate, rem.gt(0), gate));
         }
 
-        out.set(0, i, lSum);
-        out.set(1, i, rSum);
+        out.left.at(i).write(lSum);
+        out.right.at(i).write(rSum);
       });
 
       // Per-block: count active voices for UI.
@@ -745,7 +745,7 @@ export const arpeggiator = defineProcessor((ctx) => {
 
       forSample((i) => {
         // Output is silent; the arp only manipulates MIDI.
-        out.set(0, i, 0);
+        out.ch(0).at(i).write(0);
 
         // Increment sample accumulator; on rollover, advance the step.
         const acc  = sampleAccum.load().add(1);
@@ -858,8 +858,8 @@ export const convolutionReverb = defineProcessor((ctx) => {
 
       forSample((i) => {
         const idx = headBlock.add(i).mod(IR_LEN);
-        histL.write(idx, main.at(0, i));
-        histR.write(idx, main.at(1, i));
+        histL.write(idx, main.left.at(i));
+        histR.write(idx, main.right.at(i));
       });
 
       // SIMD bulk convolution — scalar accumulator over 4-wide vectors.
@@ -879,13 +879,13 @@ export const convolutionReverb = defineProcessor((ctx) => {
         const sumL = sumLanes(accL);
         const sumR = sumLanes(accR);
 
-        const dryL = main.at(0, i).mul(dryGain.at(0));
-        const dryR = main.at(1, i).mul(dryGain.at(0));
+        const dryL = main.left.at(i).mul(dryGain.at(0));
+        const dryR = main.right.at(i).mul(dryGain.at(0));
         const wetL = sumL.mul(wetGain.at(0));
         const wetR = sumR.mul(wetGain.at(0));
 
-        out.set(0, i, dryL.add(wetL));
-        out.set(1, i, dryR.add(wetR));
+        out.left.at(i).write(dryL.add(wetL));
+        out.right.at(i).write(dryR.add(wetR));
 
         wetMeter.store(wetMeter.load().max(wetL.abs().max(wetR.abs())));
       });
@@ -1082,7 +1082,7 @@ export const polySynth = defineProcessor((ctx) => {
 
       forSample((i) => {
         // Sidechain envelope (peak detector with separate attack/release).
-        const scPeak = sidechain.at(0, i).abs().max(sidechain.at(1, i).abs());
+        const scPeak = sidechain.left.at(i).abs().max(sidechain.right.at(i).abs());
         const scC    = select(scPeak.gt(scEnv.load()), aCoef, rCoef);
         scEnv.store(scPeak.sub(scEnv.load()).mul(scC).add(scEnv.load()));
 
@@ -1100,8 +1100,8 @@ export const polySynth = defineProcessor((ctx) => {
         }
 
         const sig = mix.mul(masterVol.at(i)).mul(duck);
-        out.set(0, i, sig);
-        out.set(1, i, sig);
+        out.left.at(i).write(sig);
+        out.right.at(i).write(sig);
 
         // Push into the waveform thumbnail (downsampled by stride).
         const wp = wpStart.add(i).mod(1024);
@@ -1269,7 +1269,7 @@ export const initialOsc = defineProcessor((ctx) => {
       forSample((i) => {
         const p   = phase.load();
         const inc = freq.at(0).mul(f32(2 * Math.PI / ctx.sampleRate));
-        out.set(0, i, p.sin());
+        out.ch(0).at(i).write(p.sin());
         phase.store(p.add(inc).mod(f32(2 * Math.PI)));
       });
     },

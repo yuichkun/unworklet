@@ -33,20 +33,22 @@ The body is read **top-to-bottom**: each statement (whether direct per-block cod
 
 **Handler registrations are an exception to source order at runtime.** `messageDecl.onReceive(handler)` and `midiInput().onEvent(type, handler)` registrations placed anywhere in the `process` body always run at block-boundary drain, **before** any per-block top-level statement or `forSample` invocation (Q38-b). Source order in the body controls graph-capture-time registration order (= multiple `onReceive` registrations for the same message run in registration order at drain); it does not control where handlers fire relative to per-block / per-sample code. See §4.2 + `02-messaging.md` §1 + `11-midi.md` §2.3 for the unified drain rule.
 
-Sample-offset primitives (`audioIn.at(c, i)`, `audioOut.set(c, i, v)`, `param.at(i)`) take an `i: Node<'i32'> | number`. A `Node<'i32'>` `i` originates from a `forSample` callback parameter and is in scope only inside that callback — using it outside is a TypeScript reference error. JS-literal sample-offsets (the most common being `0`) lift to `Node<'i32'>` per Q36-a and are accepted everywhere the primitives appear: `param.at(0)` reads the block-start param value, `audioIn.at(c, 0)` reads the block-start input sample, `audioOut.set(c, 0, v)` writes the block-start output sample (Q51). JS-literal offsets must fall within `[0, SAMPLES_PER_BLOCK - 1]` (= `0`〜`127`); offsets outside this range fail at graph-capture time with `error[unworklet/audio-sample-offset-out-of-range]` (Q68). This keeps the mental model identical to JUCE's `AudioProcessor::processBlock` and AudioWorklet's `process` — the body runs top-to-bottom, any sample-offset primitive can be called at any point, and `forSample` is purely a loop construct over the block (write the same output multiple times, last write wins per Q37; read any input sample at any point). There is no sugar form; every per-sample access uses `at` / `set` / `param.at(...)`.
+Sample-offset access uses a **chain** for audio I/O (= `audioIn.ch(c).at(i)` reader, `audioOut.ch(c).at(i).write(v)` writer per Q78) and the **single `.at(i)` method** for `param` (= `param.at(i)`, channel concept ナシ). Each chain step takes exactly one argument so the meaning is method-named, not positional: `.ch(c)` selects a channel, `.at(i)` selects a sample offset, `.write(v)` (writer side) writes a value. The `i` argument accepts `Node<'i32'> | number`; a `Node<'i32'>` originates from a `forSample` callback parameter and is in scope only inside that callback (= TS reference error outside). JS-literal sample-offsets (most commonly `0`) lift to `Node<'i32'>` per Q36-a and are accepted everywhere the primitives appear: `param.at(0)` reads the block-start param value, `audioIn.ch(c).at(0)` reads the block-start input sample, `audioOut.ch(c).at(0).write(v)` writes the block-start output sample (Q51). JS-literal offsets must fall within `[0, SAMPLES_PER_BLOCK - 1]` (= `0`〜`127`); offsets outside this range fail at graph-capture time with `error[unworklet/audio-sample-offset-out-of-range]` (Q68). For stereo handles (`channels: 2`), `.left` / `.right` are sugar properties equivalent to `.ch(0)` / `.ch(1)` (Q78).
+
+This keeps the mental model identical to JUCE's `AudioProcessor::processBlock` and AudioWorklet's `process` — the body runs top-to-bottom, any sample-offset access can happen at any point, and `forSample` is purely a loop construct over the block (write the same output multiple times, last write wins per Q37; read any input sample at any point).
 
 ```typescript
 // Per-sample-only plugin (one forSample, no per-block code):
 const gain = defineProcessor((ctx) => {
-  const main = audioInput ({ channels: 2, name: 'main' });
-  const out  = audioOutput({ channels: 2, name: 'main' });
-  const g    = param.named({ default: 1.0, ..., automationRate: 'a-rate', name: 'gain' });
+  const input  = audioInput ({ channels: 2, name: 'main' });
+  const output = audioOutput({ channels: 2, name: 'main' });
+  const g      = param.named({ default: 1.0, ..., automationRate: 'a-rate', name: 'gain' });
 
   return {
     process: () => {
       forSample((i) => {
-        out.set(0, i, mul(main.at(0, i), g.at(i)));
-        out.set(1, i, mul(main.at(1, i), g.at(i)));
+        output.left .at(i).write(input.left .at(i).mul(g.at(i)));
+        output.right.at(i).write(input.right.at(i).mul(g.at(i)));
       });
     },
   };
@@ -54,8 +56,8 @@ const gain = defineProcessor((ctx) => {
 
 // Mixed per-block + per-sample plugin (interleaved per-block and per-sample code):
 const partitionedReverb = defineProcessor((ctx) => {
-  const main       = audioInput ({ channels: 1, name: 'main' });
-  const out        = audioOutput({ channels: 1, name: 'main' });
+  const input      = audioInput ({ channels: 1, name: 'main' });
+  const output     = audioOutput({ channels: 1, name: 'main' });
   const inBuf      = buffer.f32({ size: SAMPLES_PER_BLOCK });
   const outBuf     = buffer.f32({ size: SAMPLES_PER_BLOCK });
   const partIdx    = state.i32(0);
@@ -65,13 +67,13 @@ const partitionedReverb = defineProcessor((ctx) => {
     process: () => {
       // Per-block code: advance partition pointer, run partitioned FFT setup.
       const idx = partIdx.load();
-      partIdx.store(mod(add(idx, 1), NUM_PARTITIONS));
+      partIdx.store(idx.add(1).mod(NUM_PARTITIONS));
       // ... partitioned FFT computation ...
 
       // Per-sample code: shovel input into inBuf, drain outBuf to output.
       forSample((i) => {
-        inBuf.write(i, main.at(0, i));
-        out.set(0, i, outBuf.read(i));
+        inBuf.write(i, input.ch(0).at(i));
+        output.ch(0).at(i).write(outBuf.read(i));
       });
     },
   };
@@ -91,20 +93,29 @@ audioOutput<C extends number>(options: { channels: C, name: string }): AudioOutp
 
 Options:
 
-- **`channels: number`** — fixed channel count, set at compile time. Maps directly to Web Audio's `outputChannelCount[i]` for outputs and is the input-side expectation for `at`.
+- **`channels: number`** — fixed channel count, set at compile time. Maps directly to Web Audio's `outputChannelCount[i]` for outputs and is the input-side expectation for `.ch(c).at(i)`.
 - **`name: string`** — required. Used as the key in main-thread `node.inputs.<name>` / `node.outputs.<name>` access (see `05-client.md` §1) and as the slot identity for that I/O port. There is no default; explicit naming is uniform with `state` / `buffer` / `param` `name` and avoids index-based mental models in tooling and main-thread code.
 
-The returned handles expose sample-offset primitives (`at` / `set`); the sample-offset argument is `Node<'i32'> | number` per the type signatures (§1.2 / §1.3). The `Node<'i32'>` form binds the surrounding `forSample` callback's loop counter `i`; JS-literal offsets (Q36-a) work at any lexical position, including the per-block top level (Q51 — e.g. `audioIn.at(0, 0)` reads the block-start input sample).
+The returned handles expose channel + sample access through the chain forms documented in §1.2 (reader) / §1.3 (writer). Each chain step takes exactly one argument so the meaning is method-named (`.ch` = channel, `.at` = sample offset, `.write` = value). The `.at(i)` argument accepts `Node<'i32'> | number`; the `Node<'i32'>` form binds the surrounding `forSample` callback's loop counter `i`, and JS-literal offsets (Q36-a) work at any lexical position including the per-block top level (Q51 — e.g. `audioIn.ch(0).at(0)` reads the block-start input sample).
 
 ### 1.2 Reading audio inputs
 
-`AudioInputHandle<C>` exposes one method:
+`AudioInputHandle<C>` exposes channel selection (`.ch(c)`) which returns an `InputChannelView<'f32'>`. The view exposes `.at(i)` to read the sample at a given offset (Q78):
 
 ```typescript
 type AudioInputHandle<C extends number> = {
-  at(c: ChannelIndex<C> | number, i: Node<'i32'> | number): Node<'f32'>;
+  ch(c: ChannelIndex<C> | number): InputChannelView<'f32'>;
   channels: C;
   name:     string;
+} & (C extends 2 ? StereoInputSugar : {});
+
+type InputChannelView<T extends ScalarType> = {
+  at(i: Node<'i32'> | number): Node<T>;
+};
+
+type StereoInputSugar = {
+  readonly left:  InputChannelView<'f32'>;   // alias for .ch(0)
+  readonly right: InputChannelView<'f32'>;   // alias for .ch(1)
 };
 
 // `ChannelIndex<C>` is the union `0 | 1 | ... | (C - 1)`, narrowed by TypeScript
@@ -112,9 +123,11 @@ type AudioInputHandle<C extends number> = {
 // TS errors at the call site.
 ```
 
-`audioIn.at(c, i)` returns the channel-`c` value at sample-offset `i` within the current render quantum. The `i` argument accepts `Node<'i32'> | number` (Q36-a): a `Node<'i32'>` originates from a `forSample` callback parameter (= per-sample loop counter), and a JS-literal sample-offset (e.g. `0`) lifts to `Node<'i32'>` and is accepted at any lexical position including per-block top level (Q51 — `audioIn.at(c, 0)` reads the block-start input sample). JS-literal offsets must fall within `[0, SAMPLES_PER_BLOCK - 1]`; out-of-range literals are graph-capture-time errors with stable ID `audio-sample-offset-out-of-range` (Q68).
+`audioIn.ch(c).at(i)` returns the channel-`c` value at sample-offset `i` within the current render quantum. Each method takes exactly one argument so the meaning is method-named, not positional (Q78). The `i` argument accepts `Node<'i32'> | number` (Q36-a): a `Node<'i32'>` originates from a `forSample` callback parameter, and a JS-literal sample-offset (e.g. `0`) lifts to `Node<'i32'>` and is accepted at any lexical position including per-block top level (Q51 — `audioIn.ch(c).at(0)` reads the block-start input sample). JS-literal offsets must fall within `[0, SAMPLES_PER_BLOCK - 1]`; out-of-range literals are graph-capture-time errors with stable ID `audio-sample-offset-out-of-range` (Q68).
 
-> Naming note: in prose, `audioIn` / `audioOut` refer to the user's declared `audioInput` / `audioOutput` handles (named by the user via the required `name` option — e.g. `const main = audioInput({ channels: 2, name: 'main' })`). They are not framework-provided globals; the prose name is a placeholder for whatever variable the author bound the declaration to.
+For stereo handles (`channels: 2`), the `.left` / `.right` sugar properties are equivalent to `.ch(0)` / `.ch(1)` and read identically; N-channel handles do not carry the sugar (TS reject).
+
+> Naming note: in prose, `audioIn` / `audioOut` refer to the user's declared `audioInput` / `audioOutput` handles (named by the user via the required `name` option — e.g. `const input = audioInput({ channels: 2, name: 'main' })`). They are not framework-provided globals; the prose name is a placeholder for whatever variable the author bound the declaration to.
 
 The channel index `c` is narrowed by TypeScript to the legal range for the declared channel count (`channels: 2` → `0 | 1`); out-of-range indices are TypeScript errors at the call site.
 
@@ -122,48 +135,75 @@ The channel index `c` is narrowed by TypeScript to the legal range for the decla
 const stereo = audioInput({ channels: 2, name: 'main' });
 
 forSample((i) => {
-  const l = stereo.at(0, i);     // Node<'f32'>, channel 0 at sample-offset i
-  const r = stereo.at(1, i);     // Node<'f32'>, channel 1 at sample-offset i
-  const x = stereo.at(2, i);     // ❌ Type error: 2 is not assignable to 0 | 1
+  const l = stereo.ch(0).at(i);   // Node<'f32'>, channel 0 at sample-offset i
+  const r = stereo.ch(1).at(i);   // Node<'f32'>, channel 1 at sample-offset i
+  const x = stereo.ch(2).at(i);   // ❌ Type error: 2 is not assignable to 0 | 1
+
+  // stereo sugar — equivalent, channels === 2 only
+  const lAlt = stereo.left.at(i);
+  const rAlt = stereo.right.at(i);
 });
 
 // Outside any forSample, `i` is not in scope:
-const y = stereo.at(0, i);       // ❌ Type error: i is undefined
+const y = stereo.ch(0).at(i);     // ❌ Type error: i is undefined
 ```
 
 The actual channel count of the connected source is normalized by Web Audio's standard up-mix / down-mix rules (`channelInterpretation`, `channelCountMode`) before the worklet sees it; the framework does not intervene in this layer.
 
+The chain returns a regular `Node<'f32'>` from `.at(i)`, so the Q77 method form composes directly: `audioIn.ch(0).at(i).mul(gain.at(i)).sub(z.load())` is a single source-ordered DSP-flow line.
+
 ### 1.3 Writing audio outputs
 
-`AudioOutputHandle<C>` exposes one method:
+`AudioOutputHandle<C>` exposes channel selection (`.ch(c)`) which returns an `OutputChannelView<'f32'>`. The view exposes `.at(i)` to pin a sample position, which returns an `OutputChannelSample<'f32'>` carrying `.write(v)`. The writer is a 3-step chain so each method takes exactly one argument (Q78):
 
 ```typescript
 type AudioOutputHandle<C extends number> = {
-  set(c: ChannelIndex<C> | number, i: Node<'i32'> | number, v: Node<'f32'> | number): void;
+  ch(c: ChannelIndex<C> | number): OutputChannelView<'f32'>;
   channels: C;
   name:     string;
+} & (C extends 2 ? StereoOutputSugar : {});
+
+type OutputChannelView<T extends ScalarType> = {
+  at(i: Node<'i32'> | number): OutputChannelSample<T>;
+};
+
+type OutputChannelSample<T extends ScalarType> = {
+  write(v: Node<T> | number): void;
+};
+
+type StereoOutputSugar = {
+  readonly left:  OutputChannelView<'f32'>;  // alias for .ch(0)
+  readonly right: OutputChannelView<'f32'>;  // alias for .ch(1)
 };
 ```
 
-`audioOut.set(c, i, v)` writes value `v` to channel `c` at sample-offset `i`. Both `c` and `i` follow the same scoping and narrowing rules as `at`.
+`audioOut.ch(c).at(i).write(v)` writes value `v` to channel `c` at sample-offset `i`. Each step takes one argument so the writer reads in DSP flow order (= channel → sample → value), and no same-type arguments collide in any signature. Both `c` and `i` follow the same scoping and narrowing rules as the reader (§1.2). The `v` argument accepts `Node<'f32'> | number` (Q36-a literal lift).
+
+For stereo handles, `.left` / `.right` are the same `.ch(0)` / `.ch(1)` alias path as the reader.
 
 ```typescript
 const stereoOut = audioOutput({ channels: 2, name: 'main' });
 
 forSample((i) => {
-  stereoOut.set(0, i, leftNode);             // ✓
-  stereoOut.set(1, i, rightNode);            // ✓
-  stereoOut.set(2, i, extraNode);            // ❌ Type error: 2 not assignable to 0 | 1
+  stereoOut.ch(0).at(i).write(leftNode);   // ✓
+  stereoOut.ch(1).at(i).write(rightNode);  // ✓
+  stereoOut.ch(2).at(i).write(extra);      // ❌ Type error: 2 not assignable to 0 | 1
+
+  // stereo sugar — equivalent
+  stereoOut.left.at(i).write(leftNode);
+  stereoOut.right.at(i).write(rightNode);
 });
 ```
 
-`audioOut.set(c, i, v)` follows the same mental model as the AudioWorklet `process(inputs, outputs)` and JUCE `processBlock` host environments: **write freely, no coverage requirement, no exactly-once constraint** (Q37, `decisions-log.md`):
+The chain follows the same mental model as the AudioWorklet `process(inputs, outputs)` and JUCE `processBlock` host environments: **write freely, no coverage requirement, no exactly-once constraint** (Q37, `decisions-log.md`):
 
 - Writing the same `(c, i)` multiple times is legal; source-order semantics apply (the later write wins).
 - Sample-offsets that no `forSample` writes are emitted as silence (= 0) — this matches AudioWorklet's per-callback zero-init of the output buffer.
 - A processor with multiple `forSample` loops may split channels across loops (e.g. left in loop 1, right in loop 2), overwrite previously written values for mix-in patterns, or leave portions of the buffer silent — all are legal.
 
 Static analysis enforces only the real-time-safety invariants listed in `03-compiler.md` §2.4 (no unbounded loops, no dynamic allocation, no out-of-block sample-offset arithmetic, no illegal `forSample.byN` strides). Coverage of the render quantum is the author's responsibility.
+
+The intermediate views (`OutputChannelView<T>` / `OutputChannelSample<T>`) are public types so user code can annotate helpers when needed, but the canonical pattern is to chain in a single line without binding the intermediate views to variables.
 
 ### 1.4 Multiple inputs / outputs
 
@@ -192,8 +232,8 @@ const sin440 = defineProcessor((ctx) => {
   return {
     process: () => {
       forSample((i) => {
-        phase.store(add(phase.load(), inc));
-        out.set(0, i, sin(phase.load()));
+        phase.store(phase.load().add(inc));
+        out.ch(0).at(i).write(phase.load().sin());
       });
     },
   };
@@ -210,7 +250,10 @@ Authoritative rationale and rejected alternatives: see `decisions-log.md` Q6 (de
 
 Handle types for every declaration kind are exported from `@unworklet/core` for use in helper / subgraph signatures and main-side typing:
 
-- `AudioInputHandle<C>` / `AudioOutputHandle<C>` (§1.2 / §1.3) — `at(channel, sample)`, `copyFrom(...)` 等
+- `AudioInputHandle<C>` / `AudioOutputHandle<C>` (§1.2 / §1.3) — `.ch(c)` chain entry; stereo handles also expose `.left` / `.right` sugar
+- `InputChannelView<T>` (§1.2) — `audioIn.ch(c)` の 戻 り 値、 `.at(i): Node<T>` を 持 つ
+- `OutputChannelView<T>` (§1.3) — `audioOut.ch(c)` の 戻 り 値、 `.at(i): OutputChannelSample<T>` を 持 つ
+- `OutputChannelSample<T>` (§1.3) — `audioOut.ch(c).at(i)` の 戻 り 値、 `.write(v): void` を 持 つ (= 3-step writer chain の 終 端)
 - `State<T>` / `Buffer<T>` / `Param` (§3) — `.load()` / `.store(v)` / `.read(idx)` / `.write(idx, v)` / `.at(i)` 等
 - `EventDecl<T>` / `MessageDecl<T>` (§4) — worklet 側 `.emitIf(cond, payload)` / main 側 `.on(handler)` / `.send(payload)` (= MessageDecl のみ)
 - `MidiInputHandle` / `MidiOutputHandle` (`11-midi.md` §2) — worklet 側 `.onEvent(handler)` / `.emitIf(cond, event)`、 main 側 `.send(...)` / `.on(handler)`
@@ -293,7 +336,7 @@ The convention is hybrid:
 Each primitive's argument positions accept either a `Node<T>` or a JS `number` / `boolean` literal that lifts to `Node<T>` according to the **context-dependent literal lift rule** (see `00-foundations.md` §4 + `decisions-log.md` Q1 + Q33 + Q36):
 
 - A literal in a primitive-argument position lifts to `Node<T>`, where `T` is inferred from sibling arguments
-- A literal in a **method argument position** also lifts: if the method's declared argument type is `Node<X>`, a JS literal in that position lifts to `Node<X>` (Q36-a). Covers `param.at(0)`, `samples.at(s)`, `emitIf(true, ...)`, `audioIn.at(0, i)`, `buf.read(idx)`, primitive method arguments like `a.add(1)` / `a.mul(0.5)`, etc.
+- A literal in a **method argument position** also lifts: if the method's declared argument type is `Node<X>`, a JS literal in that position lifts to `Node<X>` (Q36-a). Covers `param.at(0)`, `samples.at(s)`, `emitIf(true, ...)`, `audioIn.ch(0).at(i)`, `buf.read(idx)`, primitive method arguments like `a.add(1)` / `a.mul(0.5)`, etc.
 - All-literal primitive calls fall back to `T = 'f32'`
 - Implicit lift covers `'f32'` / `'f64'` / `'i32'` / `'bool'`. `'i64'` requires the explicit `i64(BigInt(...))` constructor
 - Range constraints not expressible in TS (integer-only, non-negative, channel-index upper bound, etc.) are enforced at graph-capture time
@@ -512,8 +555,8 @@ The main-side `T & { atSample: number }` view holds plain JS numbers regardless 
 ```typescript
 // Inside forSample — cond gates per-sample emission.
 forSample((i) => {
-  peakEvt.emitIf(gt(abs(audioIn.at(0, i)), thresh.at(i)),
-                 { atSample: i, level: audioIn.at(0, i) });
+  peakEvt.emitIf(audioIn.ch(0).at(i).abs().gt(thresh.at(i)),
+                 { atSample: i, level: audioIn.ch(0).at(i) });
 });
 
 // Inside a MIDI / message handler — `emitIf(true, payload)` is the canonical
@@ -572,7 +615,7 @@ A single message may have **multiple `onReceive` registrations**; all of them ru
 
 State observation inside a handler (Q38-d): `state.load()` reads the value at the start of the current quantum (= the value written by the previous quantum's last write). State written by `state.store(v)` inside the handler is observable in the same quantum's per-block computation and `forSample` callbacks (i.e. handlers can stage values for the per-block code that follows).
 
-Inside a handler, the same expression-scope rules apply as in a `forSample` callback (Q56, `decisions-log.md`): primitive operators, `state.load/store`, buffer access, audio I/O via `audioIn.at(c, i)` / `audioOut.set(c, i, v)` / `param.at(i)`, `emitIf`, subgraph methods, and L1 helper calls are all legal. New declarations (`state.*` / `buffer.*` / `param.*` / `createSubgraph(...)`) are not allowed. The surrounding `forSample`'s `i` is not in scope (handlers drain before any `forSample` runs); sample-offset arguments accept `Node<'i32'> | number` from any source — the handler's own `atSample` arg (in MIDI handlers), a state slot value, a buffer read, or a JS literal.
+Inside a handler, the same expression-scope rules apply as in a `forSample` callback (Q56, `decisions-log.md`): primitive operators, `state.load/store`, buffer access, audio I/O via `audioIn.ch(c).at(i)` / `audioOut.ch(c).at(i).write(v)` / `param.at(i)`, `emitIf`, subgraph methods, and L1 helper calls are all legal. New declarations (`state.*` / `buffer.*` / `param.*` / `createSubgraph(...)`) are not allowed. The surrounding `forSample`'s `i` is not in scope (handlers drain before any `forSample` runs); sample-offset arguments accept `Node<'i32'> | number` from any source — the handler's own `atSample` arg (in MIDI handlers), a state slot value, a buffer read, or a JS literal.
 
 Options:
 
@@ -745,7 +788,7 @@ function envelopeFollow(
   prev: State<'f32'>,
   alpha: Node<'f32'>,
 ): Node<'f32'> {
-  const peak = max(abs(src.at(0, i)), abs(src.at(1, i)));
+  const peak = src.left.at(i).abs().max(src.right.at(i).abs());
   const y    = add(prev.load(), mul(alpha, sub(peak, prev.load())));
   prev.store(y);
   return y;
@@ -771,7 +814,7 @@ const clipped  = softclip(lastPeak);
 
 // Callable from inside forSample on per-sample values:
 forSample((i) => {
-  audioOut.set(0, i, softclip(audioIn.at(0, i)));
+  audioOut.ch(0).at(i).write(softclip(audioIn.ch(0).at(i)));
 });
 ```
 
@@ -817,7 +860,7 @@ The following are **allowed**:
 - Primitive operators (`add`, `mul`, `tanh`, `select`, …).
 - `load` / `store` on `State<T>` references received as parameters.
 - `param.at(i)` (with `i` from a surrounding `forSample`) or `param.at(0)` (per-block context) on `Param` references received as parameters.
-- `audioIn.at(c, i)` / `audioOut.set(c, i, v)` on handles received as parameters (with `i` from a surrounding `forSample`).
+- `audioIn.ch(c).at(i)` / `audioOut.ch(c).at(i).write(v)` on handles received as parameters (with `i` from a surrounding `forSample`).
 - Buffer access methods (`buf.read` / `buf.write` / `buf.readInterpolated`) on buffer references received as parameters.
 - Calls to other L1 helpers.
 - `forSample(...)` invocations when the helper itself wants to iterate samples (rare; usually iteration is the caller's job and the helper is invoked from inside the caller's `forSample`). When the caller is itself inside a `forSample` and the helper also calls `forSample`, the loops nest — the inner loop runs once per iteration of the outer (= 128 × 128 = 16384 sample operations per quantum for stride-1 nesting). The inner and outer callbacks are separate functions, so their `i` parameters are independent; realtime-safety check applies the `SAMPLES_PER_BLOCK` bounded-loop rule to both `forSample` invocations. Authors should verify the resulting per-quantum iteration count is realistic for their target latency (Q58, `decisions-log.md`).
@@ -897,8 +940,8 @@ Parent processors instantiate subgraphs through the free function `createSubgrap
 const lpf = createSubgraph(onepole, 0.5);          // coef = 0.5 bound at instance creation; no options
 
 forSample((i) => {
-  const y = lpf.process(audioIn.at(0, i));         // input passed per call
-  audioOut.set(0, i, y);
+  const y = lpf.process(audioIn.ch(0).at(i));      // input passed per call
+  audioOut.ch(0).at(i).write(y);
 });
 
 // 8-voice synth — build-time loop over NUM_VOICES allocates 8 independent instances:
@@ -954,7 +997,7 @@ reqReset.onReceive(() => {
 
 forSample((i) => {
   const y = osc.tick();                  // OK (forSample context)
-  audioOut.set(0, i, y);
+  audioOut.ch(0).at(i).write(y);
 });
 
 return {
@@ -980,9 +1023,9 @@ const myProcessor = defineProcessor((ctx) => {
   return {
     process: () => {
       forSample((i) => {
-        const x = main.at(0, i);
+        const x = main.ch(0).at(i);
         // useA is k-rate 0|1; compare to 1 to get a Node<'bool'> for select.
-        out.set(0, i, select(eq(useA.at(i), 1), lpfA.process(x), lpfB.process(x)));
+        out.ch(0).at(i).write(select(useA.at(i).eq(1), lpfA.process(x), lpfB.process(x)));
         // Both instances evaluate every sample; select chooses one.
       });
     },
@@ -1145,18 +1188,18 @@ export const simdGain = defineProcessor((ctx) => {
     process: () => {
       // Step 1: accumulate input into scratch (per-sample).
       forSample((i) => {
-        scratch.write(i, main.at(0, i));
+        scratch.write(i, main.ch(0).at(i));
       });
 
       // Step 2: SIMD bulk gain.
       forSample.byN(4, (i) => {
         const v = scratch.loadVec(i);
-        scratch.storeVec(i, mulVec(v, splat(gain.at(i))));
+        scratch.storeVec(i, v.mul(splat(gain.at(i))));
       });
 
       // Step 3: drain scratch to output (per-sample).
       forSample((i) => {
-        out.set(0, i, scratch.read(i));
+        out.ch(0).at(i).write(scratch.read(i));
       });
     },
   };
@@ -1346,8 +1389,8 @@ const synth = defineProcessor((ctx) => {
         });
 
         // Audio-rate output uses held values from sub-rate slots.
-        const sample = audioIn.at(0, i);
-        out.set(0, i, applyFilter(sample, lfoVal.load(), fftMag.load()));
+        const sample = audioIn.ch(0).at(i);
+        out.ch(0).at(i).write(applyFilter(sample, lfoVal.load(), fftMag.load()));
       });
     },
   };
@@ -1363,7 +1406,7 @@ const synth = defineProcessor((ctx) => {
 - **Counter is per call, continuous across blocks**: each `everyNSamples(N, cb)` call site has its own counter; counters advance by 1 per `forSample` iteration (by `stride` per `forSample.byN(stride)` iteration), and are not reset at render-quantum boundaries — sub-rate timing is continuous across blocks. Multiple `everyNSamples` calls inside the same `forSample` callback do not share counters.
 - **Subgraph methods**: if a subgraph method needs sub-rate, it opens its own `forSample` inside the method body and takes `everyNSamples` from that callback — there is no caller-context propagation, because the surrounding `forSample` is local to the method.
 - **No new declarations inside the callback**: the callback body is an expression scope (same rules as L1 helpers — see §5.5.5). New `state.*` / `buffer.*` / `param.*` / `defineSubgraph` declarations inside the callback are graph-capture-time errors.
-- **Sample-offset primitives inside the callback**: `audioIn.at(c, i)`, `audioOut.set(c, i, v)`, `param.at(i)` are valid (`i` from the surrounding `forSample`); state and buffer access are valid.
+- **Sample-offset primitives inside the callback**: `audioIn.ch(c).at(i)`, `audioOut.ch(c).at(i).write(v)`, `param.at(i)` are valid (`i` from the surrounding `forSample`); state and buffer access are valid.
 
 ### 9.2 Multiple sub-rate blocks coexist
 
@@ -1380,7 +1423,7 @@ forSample((i, everyNSamples) => {
   everyNSamples(256, () => {
     fftMag.store(/* ... */);        // 256-sample rate
   });
-  out.set(0, i, /* audio rate */);  // every sample
+  out.ch(0).at(i).write(/* audio rate */);  // every sample
 });
 ```
 
@@ -1445,17 +1488,17 @@ type EveryNSamples = (n: number, body: () => void) => void;
 ### 10.2 Semantics
 
 - **Graph-capture-time meta primitive**: the callback is evaluated once during graph capture; the resulting AST nodes are recorded as belonging to a per-sample (or per-`stride`) sub-block of the WASM render-quantum program.
-- **`i` is loop-counter-bound and scoped to the callback**: inside the callback, `i` denotes the current sample-offset within the render quantum. Outside the callback, `i` is not in scope — TypeScript will reject any sample-offset primitive that tries to use it (e.g., `audioIn.at(0, i)` written at per-block top level is a TS reference error).
+- **`i` is loop-counter-bound and scoped to the callback**: inside the callback, `i` denotes the current sample-offset within the render quantum. Outside the callback, `i` is not in scope — TypeScript will reject any sample-offset primitive that tries to use it (e.g., `audioIn.ch(0).at(i)` written at per-block top level is a TS reference error).
 - **Arithmetic on `i`**: `add(i, 1)` and similar produce a `Node<'i32'>` that resolves to the offset value at WASM-emission time. Out-of-block access (`add(i, lookaheadSamples)` exceeding the render quantum) is a static-analysis error when statically detectable.
 - **Multiple `forSample` calls in one body**: each call is an independent sub-loop. Per-block top-level statements and `forSample` invocations execute in **declared (source) order** within the render quantum — the body reads top-to-bottom, exactly like JUCE / AudioWorklet `process` (see `00-foundations.md` §3 "Process body" mental model).
-- **No implicit `forSample` wrapping**: the `Node<'i32'> i` alias (= loop counter form of sample-offset primitives) is forSample-scoped — `audioIn.at(0, i)` written at per-block top level is a TS reference error because `i` is undefined there. Single-offset access with a JS-literal offset (`audioIn.at(0, 0)`, `audioOut.set(0, 0, v)`, `param.at(0)`) lifts via Q36-a and is valid at any lexical position (Q51); per-sample work over the full block requires `forSample`.
+- **No implicit `forSample` wrapping**: the `Node<'i32'> i` alias (= loop counter form of sample-offset primitives) is forSample-scoped — `audioIn.ch(0).at(i)` written at per-block top level is a TS reference error because `i` is undefined there. Single-offset access with a JS-literal offset (`audioIn.ch(0).at(0)`, `audioOut.ch(0).at(0).write(v)`, `param.at(0)`) lifts via Q36-a and is valid at any lexical position (Q51); per-sample work over the full block requires `forSample`.
 
 ### 10.3 Body constraints
 
 Inside a `forSample` callback, the same rules as L1 helper bodies (§5.5.5) apply:
 
 - **Forbidden**: new `state.*` / `buffer.*` / `param.*` / `audioInput` / `audioOutput` declarations; new `defineSubgraph` declarations or instantiations.
-- **Allowed**: primitive operators, `state.load()` / `state.store()`, sample-offset primitives (`audioIn.at(c, i)`, `audioOut.set(c, i, v)`, `param.at(i)`), buffer access, calls to L1 helpers, `everyNSamples`, and nested `forSample` invocations (rare; typically used for tile iteration in 2D buffers, or when an L1 helper called from inside a `forSample` itself calls `forSample`). The inner and outer `forSample` callbacks are separate functions, so their `i` parameters are independent; realtime-safety check applies the `SAMPLES_PER_BLOCK` bounded-loop rule to both invocations (Q58, `decisions-log.md`).
+- **Allowed**: primitive operators, `state.load()` / `state.store()`, sample-offset primitives (`audioIn.ch(c).at(i)`, `audioOut.ch(c).at(i).write(v)`, `param.at(i)`), buffer access, calls to L1 helpers, `everyNSamples`, and nested `forSample` invocations (rare; typically used for tile iteration in 2D buffers, or when an L1 helper called from inside a `forSample` itself calls `forSample`). The inner and outer `forSample` callbacks are separate functions, so their `i` parameters are independent; realtime-safety check applies the `SAMPLES_PER_BLOCK` bounded-loop rule to both invocations (Q58, `decisions-log.md`).
 
 ### 10.4 Examples
 
@@ -1471,8 +1514,8 @@ const gainSat = defineProcessor((ctx) => {
   return {
     process: () => {
       forSample((i) => {
-        const inL = main.at(0, i);
-        const inR = main.at(1, i);
+        const inL = main.left.at(i);
+        const inR = main.right.at(i);
         const g   = gain.at(i);
         const d   = drive.at(i);
         const cleanL = inL.mul(g);
@@ -1480,8 +1523,8 @@ const gainSat = defineProcessor((ctx) => {
         const satL   = inL.mul(g.mul(3.0)).tanh();
         const satR   = inR.mul(g.mul(3.0)).tanh();
         const m = num(1).sub(d);
-        out.set(0, i, cleanL.mul(m).add(satL.mul(d)));
-        out.set(1, i, cleanR.mul(m).add(satR.mul(d)));
+        out.left .at(i).write(cleanL.mul(m).add(satL.mul(d)));
+        out.right.at(i).write(cleanR.mul(m).add(satR.mul(d)));
       });
     },
   };
@@ -1504,7 +1547,7 @@ const simdProc = defineProcessor((ctx) => {
 
       // Per-sample: input shaping
       forSample((i) => {
-        scratch.write(i, main.at(0, i));
+        scratch.write(i, main.ch(0).at(i));
       });
 
       // Per-sample (SIMD stride): apply blockGain across the buffer.
@@ -1515,7 +1558,7 @@ const simdProc = defineProcessor((ctx) => {
 
       // Per-sample: output drain
       forSample((i) => {
-        out.set(0, i, scratch.read(i));
+        out.ch(0).at(i).write(scratch.read(i));
       });
     },
   };
