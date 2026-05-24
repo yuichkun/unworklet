@@ -1,1 +1,81 @@
-export {};
+/**
+ * `@unworklet/core` — public surface.
+ *
+ * Stub stage: type surface and build-time constants are declared here;
+ * runtime behavior is filled in incrementally across subsequent commits.
+ */
+
+// Build-time constants.
+export {
+  CAPACITY_16,
+  CAPACITY_32,
+  CAPACITY_64,
+  CAPACITY_128,
+  CAPACITY_256,
+  CAPACITY_512,
+  CAPACITY_1024,
+  CAPACITY_2048,
+  CAPACITY_4096,
+  CAPACITY_8192,
+  CAPACITY_16384,
+  SAMPLES_PER_BLOCK,
+} from "./dsl/constants.ts";
+
+// Public types.
+export type {
+  AudioInputHandle,
+  AudioOutputHandle,
+  Buffer,
+  BufferElementType,
+  BufferValueProxy,
+  Capacity,
+  ChannelIndex,
+  CompiledProcessor,
+  CompileResult,
+  CreateNodeOptions,
+  DiagnosticsJson,
+  EmitPayload,
+  EventDecl,
+  EventSubscriber,
+  ExposeOptions,
+  GraphJson,
+  InputChannelView,
+  InspectionResult,
+  MemoryJson,
+  MessageDecl,
+  MessageSender,
+  MidiEvent,
+  MidiEventGraph,
+  MidiEventGraphOf,
+  MidiEventType,
+  MidiInputHandle,
+  MidiOutputHandle,
+  MidiPortSurface,
+  Migration,
+  MigrationHelpers,
+  Node,
+  NodeErrorEvent,
+  OutputChannelSample,
+  OutputChannelView,
+  Param,
+  ProcessorBody,
+  ProcessorContext,
+  ProcessorGraph,
+  ProcessorOptions,
+  PublishOptions,
+  ReplaceResult,
+  RestoreFailure,
+  RestoreOk,
+  RestoreResult,
+  ScalarOf,
+  ScalarType,
+  SlotInspection,
+  SnapshotPolicy,
+  State,
+  StateValueProxy,
+  TransportMode,
+  TypedArrayFieldRef,
+  TypedArrayOf,
+  UnworkletNode,
+  WorkletNamespace,
+} from "./types.ts";
