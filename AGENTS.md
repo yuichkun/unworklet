@@ -88,6 +88,37 @@ vp test
 
 Both must pass before declaring work complete.
 
+## Testing policy (HARD CONTRACT)
+
+unworklet は **TDD** で 育 て る。 振 る 舞 い ベ ー ス で test ケ ー ス を 網 羅 的 に 書 い て か ら 実 装 を fill = 「先 に 実 装 を 書 い て あ と か ら test を 補 う」 path は 例 外 扱 い (= 違 反 commit を 残 す 場 合 は follow-up task で 解 消 必 須)。
+
+### Coverage gate
+
+- **分 岐 coverage 98% 以 上 を per-package で gate**。 1 package で も 落 ち た ら CI fail。
+- provider = vitest 標 準 (= `@vitest/coverage-v8`)、 各 package の `vite.config.ts` の `test.coverage.thresholds.branches` で 98 を 設 定。
+- line / function / statement coverage は 規 約 ナシ (= 余 湖 さん 明 言 軸 = branches だ け)。
+
+### Test 配 置
+
+- co-located `src/**/*.test.ts` (= 実 装 file の 隣 に test file)。
+- 例: `packages/core/src/compile/capture.ts` の test = `packages/core/src/compile/capture.test.ts`。
+- `vp pack` の build artifact (= `dist/`) は `.test.ts` を 含 ま な い (= vite-plus default 挙 動)。
+
+### Coverage 除 外 範 囲
+
+- **types-only file** (= 関 数 / 分 岐 ゼ ロ、 例: `packages/core/src/types.ts`)
+- **公 開 surface re-export hub** (= `export` 文 だ け の `index.ts`)
+- **`experiments/*`** (= Phase 1 学 習 PoC、 main impl 外)
+- **`examples/*`** (= consumer 視 点 sample、 Step 3.7 等 で 動 作 test は 入 る が coverage gate scope 外)
+
+各 package の `vite.config.ts` の `test.coverage.exclude` に 該 当 path を 列 挙 す る。
+
+### TDD 違 反 commit が 残 る 場 合
+
+- 該 当 commit を 出 す 前 に 余 湖 さん の 明 示 承 認 を 取 る。
+- 直 後 に follow-up task を 立 ち 上 げ、 該 当 範 囲 の test を 振 る 舞 い ベ ー ス で 書 き 起 こ し て coverage 98% を 戻 す。
+- follow-up task が 残 っ た ま ま 次 phase に 進 ま な い。
+
 ## Code style
 
 - **Comments**: prefer none. When required, explain _why_, never _what_ — the code already tells the reader what it does.

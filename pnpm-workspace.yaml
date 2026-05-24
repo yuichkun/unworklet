@@ -11,6 +11,7 @@ catalog:
   vitest: npm:@voidzero-dev/vite-plus-test@latest
   vite-plus: latest
   binaryen: ^129.0.0
+  "@vitest/coverage-v8": ^4.1.7
 overrides:
   vite: "catalog:"
   vitest: "catalog:"

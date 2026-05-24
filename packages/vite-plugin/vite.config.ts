@@ -14,4 +14,16 @@ export default defineConfig({
     },
   },
   fmt: {},
+  test: {
+    include: ["src/**/*.test.ts"],
+    coverage: {
+      provider: "v8",
+      include: ["src/**/*.ts"],
+      exclude: ["src/**/*.test.ts", "src/index.ts"],
+      reporter: ["text", "html", "json-summary"],
+      thresholds: {
+        branches: 98,
+      },
+    },
+  },
 });
