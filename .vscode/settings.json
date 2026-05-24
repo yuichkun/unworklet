@@ -1,3 +1,13 @@
 {
-  "cSpell.words": ["binaryen", "memload", "ringbuffer", "sysex", "unworklet"]
+  "cSpell.words": [
+    "binaryen",
+    "memload",
+    "oxlint",
+    "ringbuffer",
+    "sysex",
+    "unworklet",
+    "vite",
+    "vitest",
+    "voidzero"
+  ]
 }
