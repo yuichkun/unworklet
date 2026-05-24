@@ -20,11 +20,11 @@ binaryen の Module / Function / Type API の 最 小 形 を 把 握。 WASM �
 
 ```typescript
 mod.addFunction(
-  "main",         // internal 名
-  binaryen.none,  // parameter types (= ナ シ)
-  binaryen.i32,   // result type
-  [],             // local 変 数 types (= ナ シ)
-  mod.i32.const(42),  // body expression
+  "main", // internal 名
+  binaryen.none, // parameter types (= ナ シ)
+  binaryen.i32, // result type
+  [], // local 変 数 types (= ナ シ)
+  mod.i32.const(42), // body expression
 );
 mod.addFunctionExport("main", "main");
 ```
@@ -36,7 +36,7 @@ mod.addFunctionExport("main", "main");
 ```typescript
 const { instance } = await WebAssembly.instantiate(wasm);
 const main = instance.exports.main as () => number;
-console.log(main());  // → 42
+console.log(main()); // → 42
 ```
 
 binaryen は run side で 不 要 = 既 emit 済 binary を `WebAssembly.instantiate` で 読 む だ け = production runtime 経 路 と 同 形 (= 後 続 phase の `@unworklet/core` の 公 開 compile API も 同 path で driver さ れ る)。

@@ -10,13 +10,7 @@ const stepDir = dirname(fileURLToPath(import.meta.url));
 //     i32.const 42))
 const mod = new binaryen.Module();
 
-mod.addFunction(
-  "main",
-  binaryen.none,
-  binaryen.i32,
-  [],
-  mod.i32.const(42),
-);
+mod.addFunction("main", binaryen.none, binaryen.i32, [], mod.i32.const(42));
 mod.addFunctionExport("main", "main");
 
 if (!mod.validate()) {
