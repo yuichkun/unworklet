@@ -61,11 +61,13 @@ The Web Audio spec fixes the render quantum at 128 samples. unworklet bakes that
 - Audio-I/O buffer offsets and SIMD lane mapping are resolved at compile time from the same constant.
 - The WASM code never reads the block size at runtime — no per-quantum branch on length, no dynamic loop bound.
 
-For safety against a future browser changing the render quantum size, the worklet's `process(inputs, outputs)` entry point performs a single runtime length check (`outputs[0][0].length === SAMPLES_PER_BLOCK`) before invoking the WASM `process` function. If the check fails, the worklet logs an error and stops processing rather than producing garbled audio or silent output:
+For safety against a future browser changing the render quantum size, the worklet's `process(inputs, outputs)` entry point performs a single runtime length check (`outputs[0][0].length === SAMPLES_PER_BLOCK`) before invoking the WASM `process` function. If the check fails, the worklet **emits silence** (zero buffer) on every output channel, **leaves the node connected** to the audio graph (`process()` returns `true`), and fires a main-side `node.onError({ code: 'block-length-mismatch', expected: 128, received: <actual> })` event (§8). The node stays addressable so the consumer can `.dispose()` and replace it, surface the failure to the user, or both — framework-side auto-dispose-on-error is not part of v1.0.0 (§8). Same fallback path as `wasm-trap` (§8) — uniform "silence + onError + node connected" runtime guard contract (Q75):
 
 ```text
-runtime error (worklet):
+runtime guard (worklet):
   Render quantum size mismatch: expected 128, got 256.
+  Output switched to silence; node stays connected. Consumer can observe
+  node.onError({ code: 'block-length-mismatch', ... }) and dispose / replace.
   This unworklet build is compiled against the Web Audio spec's fixed 128-sample
   render quantum. If a browser update changes that size, this processor build
   must be regenerated against the new specification.
@@ -141,9 +143,9 @@ type NodeErrorEvent =
 1. **`wasm-trap`** — WASM runtime trap during `process(...)`. Audio output: silence for the current quantum + the following quanta until the node is disposed. The audio thread does not propagate the trap as a thrown exception (= realtime-safety invariant 3 in `00-foundations.md` §5.1).
 2. **`queue-overflow`** — `event<T>` / `message<T>` / MIDI ringbuffer drop-oldest fired (Q27 + Q4-c-iv)。 Audio output unaffected。 Per-channel 累 計 counter は `node.<kind>.<name>.diagnostics.overflowCount()` で pull 観 測 (Q47)。 つ ま り push (= `.onError`) で 各 drop の 発 生 を 通 知、 pull (= `.diagnostics`) で 累 計 を 取 る 二 段 構 え。
 3. **`sab-unavailable`** — runtime detected `SharedArrayBuffer` is not constructible / `crossOriginIsolated` is false and selected the postMessage fallback transport (= A5 of `08-deployment.md` §2 / Q11)。 Audio output unaffected; only main-side observation latency picks up the postMessage round-trip.
-4. **`block-length-mismatch`** — `outputs[0][0].length !== SAMPLES_PER_BLOCK` detected at the worklet entry (= §3 / Q18 / Q68)。 Audio output: stop processing rather than emit garbled / silent output.
+4. **`block-length-mismatch`** — `outputs[0][0].length !== SAMPLES_PER_BLOCK` detected at the worklet entry (= §3 / Q18 / Q68 / Q75)。 Audio output: silence (zero buffer) on every quantum after the first detection, until the node is disposed (= same path as `wasm-trap`). Node stays connected; consumer decides whether to `.dispose()` and replace.
 
-Node destruction is initiated only by the consumer via `.dispose()` (= `05-client.md` §2)。 There is no framework-side "destroy node on error" path in v1.0.0 — `wasm-trap` / `block-length-mismatch` halt audio output but the node object stays addressable so the consumer can observe `.onError` + tear down explicitly.
+Node destruction is initiated only by the consumer via `.dispose()` (= `05-client.md` §2)。 There is no framework-side "destroy node on error" path in v1.0.0 — `wasm-trap` / `block-length-mismatch` emit silence on the output channels while keeping the node object addressable and connected, so the consumer can observe `.onError` + tear down explicitly (Q75).
 
 Per-error-code message shape の細部、 source-location attribution (= §7 source maps 経 由)、 recovery semantics は impl-phase fill per Q61。
 

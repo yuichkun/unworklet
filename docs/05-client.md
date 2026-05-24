@@ -143,9 +143,10 @@ A processor that calls `snapshot()` requires **every** state / buffer slot to ha
 
      Error events are delivered via `.onError(handler)` (= 04-worklet-runtime §8,
      4 event codes). The node object stays addressable after an `.onError`
-     fires; `wasm-trap` / `block-length-mismatch` halt audio output but do
-     not auto-destroy the node. The consumer decides whether to `.dispose()`
-     after observing an error.
+     fires; `wasm-trap` / `block-length-mismatch` switch audio output to
+     silence (zero buffer) while the node stays connected, and the framework
+     does not auto-destroy the node (Q75). The consumer decides whether to
+     `.dispose()` after observing an error.
 
      If a need for a public lifecycle-observation surface surfaces, it lands
      additively in v1.x.0 with its own Q ratify; v1.0.0 ships without it. -->

@@ -2,28 +2,14 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 23 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 22 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 7 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 6 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 16 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 
 ---
 
-## P1 — ship blocker 系 (7 件)
-
-### cluster (4) handler / drain / boundary timing (1)
-
-## render quantum サ イ ズ 不 一 致 時 の 動 作 が silence vs 停 止 vs onError-only で 3 way 不 一 致
-
-**場 所**: `docs/04-worklet-runtime.md:34-42`、 `docs/03-compiler.md:163`、 `docs/00-foundations.md:226`、 `docs/00-foundations.md:238`
-
-**何 が 起 き て い る か**: render quantum size が 128 と 違 う 時 の path が 3 doc で 別 物。 04-worklet-runtime §3 は 「stops processing rather than producing garbled audio or silent output」 (= silence 出 さ ず 停 止)。 00-foundations §5.2 「Runtime guard」 定 義 は 「fallback to silence + a main-side error event」 (= silence 出 し な が ら error event) で、 §5.2 末 尾 で 04 §3 を canonical 例 と し て 参 照。 03-compiler §2.6 は 「`node.onError` event」 surface だ け で audio output 動 作 ナ シ。
-
-**impl AI 影 響**: impl AI が process(...) の return false (= node disconnect) を 採 る か、 silence buffer を 流 し 続 け る か、 onError 発 火 の み で audio 動 作 を 維 持 す る か で 4 path に 分 か れ る。 main 側 で onError handler が 受 け 取 れ る 設 計 か も 同 時 に drift。
-
-**判 断 軸**: 「runtime guard fallback の 具 体 動 作 = (a) silence + onError、 (b) process return false で 停 止、 (c) onError 発 火 後 silence 継 続」 の ど れ を 単 一 path と し て 01 / 03 / 04 / 00-foundations 全 て で 揃 え る か。 仕 様 invariant と し て 1 か 所 で declare し 他 章 は そ こ を 参 照。
-
----
+## P1 — ship blocker 系 (6 件)
 
 ### cluster (5) realtime safety invariant (3)
 

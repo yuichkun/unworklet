@@ -162,7 +162,7 @@ Each `<stable-id>` is a kebab-case identifier used as the `error[unworklet/<stab
 | `allocation-on-audio-thread` | 3 | an AST pattern reachable from a `process` body or any audio-thread handler would imply heap allocation (e.g. `new Uint8Array(...)`, array literals, object spread) | Q22-c, §5.1 |
 | `memory-budget` | 3 | the sum of all declarations in a processor exceeds the WASM linear-memory upper bound (= 4 GB hard error); a lower threshold (= 64 MB) emits a build-time warning under the same family | Q30 |
 
-A separate runtime check (not graph-capture / static-analysis) fires when the worklet observes `outputs[0][0].length !== SAMPLES_PER_BLOCK` at the start of a render quantum (= `block-length-mismatch`); this surfaces as a `node.onError` event on the main side rather than a build-time `error[unworklet/...]` heading. See `04-worklet-runtime.md` §3 and Q18.
+A separate runtime check (not graph-capture / static-analysis) fires when the worklet observes `outputs[0][0].length !== SAMPLES_PER_BLOCK` at the start of a render quantum (= `block-length-mismatch`); audio output switches to silence (zero buffer) while the node stays connected, and a `node.onError({ code: 'block-length-mismatch', expected, received })` event surfaces on the main side rather than a build-time `error[unworklet/...]` heading. See `04-worklet-runtime.md` §3 / §8 and Q18 / Q75.
 
 ## 3. Static analysis phase
 

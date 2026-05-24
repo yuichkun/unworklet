@@ -48,6 +48,7 @@ populated (Q1–Q68 ratify complete; Q28 is unassigned — a numbering artifact,
 | Q71 | `event<T>` の per-field 配 線 = emit-time の `Node<T>` で 確 定 (audit 累 犯 解 消) | resolved — `event<T>` の field 別 wire 型 を **emit 時 の `Node<T>` で 確 定**: declare の `T` は field **名** + 大 体 の 型 family (numeric / boolean / typed-array) を 持 ち、 各 numeric field の 正 確 な wire 型 は emit 時 の `Node<T>` で 決 ま る (= `Node<'f32'>` → 4-byte f32、 `Node<'i32'>` → 4-byte i32、 `Node<'f64'>` → 8-byte f64、 `Node<'i64'>` → 8-byte i64、 `Node<'bool'>` → 1-byte bool); 整 数 literal は 既 Q33 literal-lift で `Node<'i32'>` に lift; main 側 callback 引 数 型 は framework が emit site の `Node<T>` を 逆 引 き し て 自 動 公 開 (= `Node<'f32'>` / `Node<'i32'>` → JS `number`、 `Node<'bool'>` → `boolean`、 `Node<'i64'>` → `bigint`); 同 じ `event<T>` handle へ の 複 数 emit site で per-field `Node<T>` が 不 一 致 な ら graph-capture-time error; canonical Ex 4 / Ex 5 / Ex 8 で 既 規 範 化 さ れ た 「`number` で declare し float emit (= velocity / level / pos)」 形 が そ の ま ま zip; MIDI + `message<T>` は Q46 通 り (= 全 number → `Node<'i32'>` lift) 維 持 — MIDI は wire 仕 様 上 7-bit int 固 定、 `message<T>` は main → worklet で send-time JS 値 → Node<T> 推 論 ル ー ル が 別 question | `01-dsl.md` §4.1 + `02-messaging.md` §5.1 |
 | Q72 | canonical SIMD primitive 個 別 hit ナ シ entry を scope 外 close (= 過 剰 解 釈) | resolved — `vec4` / `subVec` / `divVec` / `vec.lane` が `12-canonical-examples.md` で 個 別 hit ナ シ を 「HARD CONTRACT 違 反 / 規 範 確 認 不 在」 と し て open-questions に 立 て て い た が、 AGENTS.md L16 「exercise the full surface」 を 機 械 網 羅 と 過 剰 解 釈 し て 拾 い 上 げ た entry = **scope 外 close**; canonical は curated 規 範 例 集 / 整 合 anchor (= 仕 様 を 変 え る 時 affected example が realistic / 自 然 か 確 か め る 道 具、 UX が simple / coherent / production-ready か 答 え ら れ る 状 態 維 持) で あ り 「全 primitive / 全 declaration を 1 回 ず つ 個 別 hit」 rule で は な い (= 個 別 primitive の hit ナ シ ≠ 仕 様 違 反); SIMD-using 規 範 例 (= Ex 3 / Ex 7) が 既 規 範 化 さ れ て お り full surface に 触 れ る curated set の curation 性 を 満 た す; 軸 file (= `core-principles.md` §2 + §3 / `priority-filter-rationale.md` scope 外 + 累 犯 wording / `decision-axes.md` §i scope 外 例) を 同 commit で narrow し て 次 sweep / triage で 同 種 を 拾 わ な い 2 重 防 御 化 | (= 関 連 file ナ シ、 軸 file 自 体 を 動 か し た commit) |
 | Q73 | main / worklet 間 内 部 wire layout を e 軸 (= 実 装 期 任 せ) で 4 entry 集 約 close (audit 累 犯 解 消) | resolved — ship 後 凍 結 wire byte は **`node.snapshot()` の Uint8Array blob 並 び の み** (= user persist + 新 ship restore = migration mandatory)、 main / worklet 間 内 部 wire (= SAB ringbuffer slot 並 び、 event slot / MIDI slot field 並 び、 sysex content buffer 並 び 等) は framework 同 ship 内 で main bundle / worklet bundle ペ ア = ship ご と に 自 由 = user 不 観 測 = **e 軸 (= 実 装 AI 領 域)**; 4 entry 集 約 close: (1) event slot vs MIDI slot で atSample 位 置 が 別 (= wire 上 位 置 は 実 装 期、 invariant = atSample が wire 上 1 位 置 で 取 れ る こ と)、 (2) variable-length 中 身 並 び 方 が event と MIDI sysex で 別 形 式 (= 実 装 期、 invariant = main slot + content buffer で 1 意 に 長 さ + 中 身 が 取 れ る こ と)、 (3) sysex slot に atSample 不 在 で 「全 handler 引 数 は atSample を 持 つ」 主 張 と 衝 突 (= wire 上 atSample 位 置 は 実 装 期、 invariant = handler arg に atSample が 渡 る user 観 測 surface は 維 持)、 (4) `forSample.byN` function + property hybrid (= TS export 形 は 実 装 期、 invariant = canonical で `forSample.byN(stride, callback)` が 動 く こ と); g 軸 を `node.snapshot()` blob だ け に narrow + 軸 file 同 commit update で 次 sweep / triage 同 種 拾 わ ず 2 重 防 御 | (= 関 連 file ナ シ、 軸 file 自 体 を 動 か し た commit) |
+| Q75 | runtime guard fallback = silence + onError + node connected (audit cluster (4) handler / drain / boundary timing) | resolved — `block-length-mismatch` + `wasm-trap` の runtime guard 動 作 を **silence + onError + node connected** で 1 path 化: `process()` は `true` return continue で node が audio graph か ら 外 れ ず connected の ま ま、 全 output channel に silence (zero buffer) を 出 し 続 け、 main 側 に `node.onError({ code: 'block-length-mismatch' \| 'wasm-trap', ... })` を 発 火、 framework 側 auto-dispose ナ シ (= consumer 判 断 が `.dispose()` で 起 動); 04 §3 / §8 / 03 §2.6 / 05 §1 の 「stops processing」 「halt audio output」 wording を 「emit silence while the node stays connected」 に 揃 え、 00 §5.2 既 「fallback to silence + main-side error event」 と zip; 04 §8 既 declare の 4 event code が silence path (= wasm-trap + block-length-mismatch) と audio-unaffected path (= queue-overflow + sab-unavailable) で 一 貫 化; `process()` return false = AudioWorkletProcessor permanent disconnect は consumer 判 断 を 奪 う path で 棄 却、 直 前 quantum hold は user が 異 常 判 別 不 能 で 棄 却 | `04-worklet-runtime.md` §3 + §8 + `03-compiler.md` §2.6 + `05-client.md` §1 + `00-foundations.md` §5.2 |
 | Q74 | `event<T>` typed-array field emit-side surface = sysex path 一 般 化 (audit cluster (3) emit-side 拡 張) | resolved — `event<T>` の typed-array field を **worklet 側 で 新 規 構 築 し て main に 流 す** path を MIDI sysex emit (Q49) と 共 通 化: emit shape で `data: Buffer<T> | TypedArrayFieldRef<T>` + framework injection の `length: Node<'i32'>` 必 須、 build-time-fixed `buffer.<T>` が 単 一 構 築 primitive (= runtime typed-array literal / `new Float32Array(...)` 不 可)、 main 側 は `data[0..length-1]` を 切 り 出 し た natural typed array で 受 け 取 り、 wire 形 は `02-messaging.md` §5.1 main slot + §5.2 content buffer を sysex と 1 transport 共 有; FFT spectrum / 波 形 解 析 / envelope 履 歴 等 worklet → main typed-array 系 中 心 機 能 が 自 然 surface で cover; T 内 typed-array field 複 数 path は §5.1 既 declare 通 り v1.x.0 deferral | `01-dsl.md` §4.3 + `02-messaging.md` §5.2 + `11-midi.md` §2.5 cross-ref |
 | Q47 | diagnostics surface 統 一 (audit Phase 2 #10、 #49) | resolved — diagnostics counter (= `overflowCount` 等) を **main 側 だ け で 提 供**、 worklet 側 handle (= `midiIn.diagnostics.X()`) を spec か ら 削 除; 全 channel (= event / message / MIDI) で `node.<kind>.<name>.diagnostics.X()` の 統 一 形 (= 既 Q40 namespaced shape と 整 合)、 「diagnostics は 外 部 観 測」 を declarative 原 則 (= 副 作 用 観 測 は main の 役 割、 worklet `process` body は feedback loop を 持 た な い) と し て 確 立; worklet 内 で の self-throttle pattern が 必 要 な ら main 経 由 で feedback (= 1 周 余 計 だ が 構 造 明 確)、 v1.x.0 で worklet handle へ の `.diagnostics` 後 付 け は additive 可 | `11-midi.md` §4 overflow + `decisions-log.md` Q4-c-iv prose |
 | Q48 | `inspect(blob)` を free function に 留 め る か node method に 動 か す か (audit Phase 2 #9、 #48) | resolved — `inspect(blob: Uint8Array): InspectionResult` を **free function 維 持** (= `@unworklet/core` か ら import)、 node method に 動 か さ な い; `snapshot()` / `restore(blob)` は node 依 存 (= 現 state を 読 む / 書 く) で 必 然 的 に node method、 `inspect` は blob を decode す る pure function で node 不 要 (= preset library tool / server-side blob analyzer / debug script で audio context 起 動 ナ シ で 動 く); 「依 存 性 で 形 が 決 ま る = node 依 存 操 作 は method、 blob-only 操 作 は free function」 を 1 行 ル ー ル と し て 明 文 化、 視 覚 的 対 称 (= snapshot/restore/inspect 揃 い) よ り 依 存 性 の 実 体 通 り の form を 優 先; node method 形 (= `node.inspect(blob)`) は 嘘 の 依 存 性 を user に 強 制 し て fakeNode ハ ッ ク 招 く た め 棄 却 | `05-client.md` §2 |
@@ -3140,4 +3141,50 @@ ship 後 凍 結 さ れ る wire byte は **`node.snapshot()` の Uint8Array bl
 ### v1.x.0 deferral
 
 - T 内 typed-array field 複 数 path は §5.1 single-field limit と zip し て v1.x.0 mandatory
+
+## Q75 — runtime guard fallback = silence + onError + node connected (audit cluster (4) handler / drain / boundary timing)
+
+`04-worklet-runtime.md` §3 / §8、 `03-compiler.md` §2.6、 `00-foundations.md` §5.2、 `05-client.md` §1 lifecycle comment で render quantum size 不 一 致 (= browser が `outputs[0][0].length !== SAMPLES_PER_BLOCK` = 128 で processor を 呼 び 出 し た 時) の runtime guard 動 作 が 3 way で 別 wording だ っ た:
+
+- 04 §3 + §8 L144 / L146 / 05 §1 = 「stops processing / halt audio output」 = 停 止 寄 り wording
+- 00 §5.2 = 「fallback to silence + a main-side error event」 = silence + onError
+- 03 §2.6 = 「`node.onError` event surface」 だ け で audio output 動 作 declare ナ シ
+
+加 え て 04 §8 L141 で `wasm-trap` 側 は 既 「silence for the current quantum + the following quanta until the node is disposed」 と silence path で declare 済 = `block-length-mismatch` と path 不 整 合 状 態。
+
+### Decision
+
+runtime guard fallback (= `block-length-mismatch` + `wasm-trap` 共 通) 動 作 を **silence + onError + node connected** に 1 path 化:
+
+- **audio output**: silence (zero buffer) を 全 output channel に 出 し 続 け る (= `wasm-trap` 既 declare path と uniform)
+- **node lifecycle**: `process()` は `true` を return し 続 け = node が audio graph か ら 外 れ ず connected の ま ま、 main 側 object も addressable
+- **error event**: `node.onError({ code: 'block-length-mismatch', expected: 128, received: <actual> })` を 発 火 (= 04 §8 既 declare の discriminated union)
+- **consumer 判 断**: dispose / replace は main 側 が `.dispose()` 経 由 で 明 示 起 動 (= framework 側 auto-dispose ナ シ、 既 Q47 + 05 §2 整 合)
+- **wording**: 4 doc で 「stops processing」 「halt audio output」 wording を 全 廃、 「emit silence (zero buffer) while the node stays connected」 に 揃 え
+
+### Rationale
+
+- `process()` が `false` を return す る path = AudioWorkletProcessor 仕 様 上 permanent disconnect = 同 instance を 戻 す path ナ シ = 取 り 返 し つ か ず、 main 側 が 「graph 再 構 築 + 新 instance 起 こ し」 を 強 制 さ れ る (= consumer 判 断 を framework が 奪 う)
+- silence + onError = 明 確 な 異 常 signal を main に 渡 し な が ら audio graph 構 造 は 保 つ = main 側 で 「再 instantiate」 「別 node 差 し 替 え」 「user 通 知」 を 自 由 に decide
+- `wasm-trap` が 既 silence path で declare 済 = `block-length-mismatch` も 同 path に 揃 え れ ば 04 §8 内 で 4 event code が 一 貫 (= silence path: wasm-trap + block-length-mismatch、 audio-unaffected path: queue-overflow + sab-unavailable)
+- foundations §5.2 で 既 「Runtime guard fallback = silence + main-side error event (never throw)」 を canonical declare 済 = こ の path に 4 doc の wording を 揃 え る
+
+### Rejected
+
+- **`process()` return false で 停 止 (= 案 B)**: AudioWorkletProcessor 仕 様 上 permanent disconnect = 取 り 返 し つ か な い、 main 側 が node 再 instantiate を 強 制 さ れ る = consumer 判 断 を framework が 奪 う
+- **直 前 quantum hold (= 案 C)**: user 視 点 で 「動 い て いる か 異 常 か」 判 別 不 能 = silent gap の 方 が 異 常 認 知 し やす い、 ま た `wasm-trap` silence path と 不 整 合
+
+### 関 連 file
+
+- `04-worklet-runtime.md` §3 (L64-) = 「stops processing / garbled / silent output」 wording → silence + onError + connected wording に 書 き 直 し
+- `04-worklet-runtime.md` §8 L144 = `block-length-mismatch` audio output wording を `wasm-trap` (L141 silence path) に uniform
+- `04-worklet-runtime.md` §8 L146 = 「halt audio output」 → 「emit silence while keeping node connected」
+- `03-compiler.md` §2.6 L165 = audio output 動 作 を 1 行 追 記 (= silence + node connected)
+- `05-client.md` §1 lifecycle comment L146 = 「halt audio output」 → silence wording に zip
+- `00-foundations.md` §5.2 = 既 「silence + main-side error event」 で 整 合 = 触 ら ず
+
+### v1.x.0 deferral
+
+- Adaptive emission (= 1 build で 複 数 render quantum size に 対 応) は 04 §3 既 declare 通 り v1.x.0 mandatory
+- framework-side auto-dispose-on-error policy も v1.x.0 で 別 question (= 既 04 §8 で 「No framework-side destroy-on-error」 declare 済)
 
