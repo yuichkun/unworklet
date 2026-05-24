@@ -3,6 +3,7 @@
     "aftertouch",
     "binaryen",
     "bumpp",
+    "dbfs",
     "memload",
     "oxlint",
     "ringbuffer",

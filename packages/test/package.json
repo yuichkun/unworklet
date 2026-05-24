@@ -1,7 +1,7 @@
 {
-  "name": "@unworklet/offline",
+  "name": "@unworklet/test",
   "version": "0.0.0",
-  "description": "Pure-JS offline renderer for `@unworklet/core` processors (Node / Bun / Deno).",
+  "description": "Vitest matchers for `@unworklet/core` processors (wraps `@unworklet/offline`).",
   "license": "MIT",
   "files": [
     "dist"
@@ -24,15 +24,20 @@
     "check": "vp check",
     "prepublishOnly": "vp run build"
   },
+  "dependencies": {
+    "@unworklet/offline": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "catalog:",
     "@typescript/native-preview": "7.0.0-dev.20260509.2",
     "@unworklet/core": "workspace:*",
     "bumpp": "^11.1.0",
     "typescript": "catalog:",
-    "vite-plus": "catalog:"
+    "vite-plus": "catalog:",
+    "vitest": "catalog:"
   },
   "peerDependencies": {
-    "@unworklet/core": "workspace:*"
+    "@unworklet/core": "workspace:*",
+    "vitest": "catalog:"
   }
 }
