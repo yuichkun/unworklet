@@ -203,8 +203,24 @@ export type TypedArrayFieldRef<T extends BufferElementType> = {
   at(idx: Node<"i32"> | number): Node<T extends "u8" ? "i32" : Extract<T, ScalarType>>;
 };
 
-/** Worklet-side `eventDecl.emitIf` payload as seen at emit call site. */
-export type EmitPayload<T> = T & { atSample: Node<"i32"> | number };
+/**
+ * Worklet-side `eventDecl.emitIf` payload as seen at emit call site.
+ *
+ * Per-field wire-type resolution (Q71): the declared `T` carries field
+ * **names** and a coarse type family; the precise wire type for each
+ * numeric / boolean field is decided at emit time from the `Node<T>` the
+ * author supplies. This mapped type lifts each scalar field to the
+ * `Node<T> | T[K]` union accordingly.
+ */
+export type EmitPayload<T> = {
+  [K in keyof T]: T[K] extends number
+    ? T[K] | Node<"f32"> | Node<"f64"> | Node<"i32"> | Node<"i64">
+    : T[K] extends boolean
+      ? T[K] | Node<"bool">
+      : T[K];
+} & {
+  atSample: Node<"i32"> | number;
+};
 
 export type EventDecl<T> = {
   readonly name: string;

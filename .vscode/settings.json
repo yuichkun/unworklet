@@ -5,6 +5,7 @@
     "bumpp",
     "dbfs",
     "memload",
+    "onepole",
     "oxlint",
     "ringbuffer",
     "sysex",
