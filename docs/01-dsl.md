@@ -563,7 +563,34 @@ Bulk transfer of the entire payload into a `buffer.<type>` slot uses `buf.copyFr
 
 Out-of-range `.at(idx)` reads (idx outside `[0, length)`) are wrapped at graph capture by a `select`-based carrier-clamp so the runtime never traps; documenting the bound at the call site is the author's responsibility.
 
-Authoritative rationale and rejected alternatives: see `decisions-log.md` Q27 (variable-length wire format) and Q36-b (proxy surface).
+**Emit-side for `event<T>` (worklet → main)**: a typed-array field in the payload is supplied through the same `Buffer<T> | TypedArrayFieldRef<T>` surface used for MIDI sysex (`11-midi.md` §2.5). The author writes content into a worklet-declared `buffer.<T>` (= `buffer.f32(...)` / `buffer.u8(...)` / etc., see §3.2) and passes the buffer to `emitIf`; the framework additionally requires an adjacent `length: Node<'i32'>` field at the emit call site (not declared in `T` — framework-injected into the emit shape) and copies `data[0 .. length-1]` into the content buffer at emit time. The main-side handler receives a fresh natural typed array (`Float32Array` / `Uint8Array` / etc.) sized exactly to `length`. Re-emitting an incoming payload reuses the same surface by passing the inbound `TypedArrayFieldRef<T>` directly; `data.length` from the proxy is the natural value to supply for `length`. No other path constructs typed-array content (no `Uint8Array` literals, no `new Float32Array(...)` at runtime) — the build-time-fixed `buffer.<T>` is the single primitive for new content, uniform with sysex emission (Q49). The §5.1 single variable-length field limit applies (= at most one typed-array field per `T` in v1.0.0); the framework rejects emit sites where multiple typed-array fields are populated as a graph-capture-time error.
+
+```typescript
+const fft = defineProcessor((ctx) => {
+  const spectrumBuf = buffer.f32({ name: 'spectrum', size: 512 });
+  const txLen       = state.i32(0, { name: 'txLen' });
+  const result      = event<{ spectrum: Float32Array; bin: number }>({
+    name:            'result',
+    payloadCapacity: 512 * 4,                                            // bytes reserved for the typed-array field
+  });
+
+  return {
+    process: () => {
+      forSample((i) => {
+        // ... compute spectrum bins, write into spectrumBuf, update txLen ...
+        result.emitIf(spectrumReady, {
+          atSample: i,
+          spectrum: spectrumBuf,                                          // Buffer<'f32'>
+          length:   txLen.load(),                                         // Node<'i32'>, framework-injected slot in the emit shape
+          bin:      currentBin,
+        });
+      });
+    },
+  };
+});
+```
+
+Authoritative rationale and rejected alternatives: see `decisions-log.md` Q27 (variable-length wire format), Q36-b (proxy surface), and Q74 (emit-side surface unification with sysex).
 
 ## 5. Third-party DSP integration
 

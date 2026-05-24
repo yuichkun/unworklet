@@ -2,28 +2,14 @@
 
 unworklet v1.0.0 spec が impl AI agent によって矛盾なく実装されるための残 grill 項目。 ratify されたら `decisions-log.md` に移してこの file から削る。
 
-全 24 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
+全 23 entry、 priority 軸 = 「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか」 重大度。
 
-- **P1 = 8 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
+- **P1 = 7 件**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2 = 16 件**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 
 ---
 
-## P1 — ship blocker 系 (8 件)
-
-### cluster (3) emit-side surface 拡 張 (1)
-
-## worklet 側 で 新 規 に 中 身 を 構 築 し て 流 す path が sysex 専 用 で event は declare 不 在
-
-**場 所**: `docs/11-midi.md:100-114`、 `docs/11-midi.md:248-279`、 `docs/01-dsl.md:340-358`、 `docs/01-dsl.md:511-518`
-
-**何 が 起 き て い る か**: 11-midi.md §2.2 の sysex emit (worklet → main) signature が 「`{ type: 'sysex'; data: Buffer<'u8'> | TypedArrayFieldRef<'u8'>; length: Node<'i32'>; atSample: Node<'i32'> }`」 と 「`Buffer<'u8'>` (= worklet 側 で 事 前 確 保 し た 領 域) を 受 け 入 れ る」 専 用 path を 持 つ。 11-midi.md §2.5 は 「sysex 内 容 を 新 規 構 築 す る 経 路 は build-time-fixed `Buffer<'u8'>` の み (= `Uint8Array` literal や `new Uint8Array(...)` 不 可)」 と 明 言。 一 方 一 般 の `event<T>` の emit (= 例 え ば worklet 側 で 計 算 し た spectrum を `event<{ spectrum: Float32Array }>` で 流 す) で `Buffer<'f32'>` を 受 け 入 れ る path は 01-dsl.md §4.3 / 02-messaging.md §1 と も declare ナ シ。 変 数-長 typed-array field は 「typed-array-field proxy で 公 開」 と あ る が、 proxy は **incoming** payload を main → worklet 側 で 読 む 形、 worklet → main で 「新 規 構 築 し た 中 身」 を emit す る path に proxy は 該 当 し な い。
-
-**impl AI 影 響**: worklet が 計 算 結 果 を typed-array field 付 き で main へ emit し た い ケ ー ス (= 例 え ば FFT spectrum、 波 形 解 析 結 果) で impl が (a) MIDI sysex と uniform に `data: Buffer<T> | TypedArrayFieldRef<T>` を 受 け る surface を 追 加 す る、 (b) 「event<T> の emit-side variable-length field は inbound proxy か ら の forward の み 」 と 制 限 し て worklet 側 新 規 構 築 を 不 可 と す る、 で 2 path に 分 か れ る。 後 者 を 採 る と canonical で 「worklet → main の FFT 結 果 emit」 が 書 け な く な る (= 一 般 audio 用 例 の 中 心 機 能 が cover で き な い)。
-
-**判 断 軸**: sysex 専 用 path を 一 般 化 し て event<T> emit 側 で も `Buffer<T>` を 受 け 入 れ る surface (= `{ field: Buffer<T> | TypedArrayFieldRef<T>; length: Node<'i32'> }`) を 立 て る path に 倒 す か、 「worklet 側 で 新 規 typed-array 中 身 を emit す る 経 路 は MIDI sysex 専 用、 event<T> は inbound proxy forward の み」 と 制 限 し て canonical で 同 ケ ー ス を 出 さ な い path か。 前 者 推 奨 (= 一 般 audio 用 例 を cover、 surface も sysex と uniform)。
-
----
+## P1 — ship blocker 系 (7 件)
 
 ### cluster (4) handler / drain / boundary timing (1)
 
