@@ -63,7 +63,7 @@ WASM emit pipeline の foundation phase。 binaryen (= WASM toolkit JS package�
 
 binaryen は v1.0.0 で の 確定 WASM emit path = 採用 是非 の 検討 phase で は ない。 この phase の 目的 = 「必要 opcode が binaryen IR API 経由 で 正しく emit され、 emit 済 WASM が host JS の `WebAssembly.instantiate()` で 走る」 を 段階 的 に 確認 + WASM 動作 (= memory model / function signature / instruction set) を 把握 する こと。
 
-各 step で 「binaryen で 構築 → `.wat` 出力 → Node で `instantiate` + 実行 → output 確認」 の loop。 PoC は repo 内 専用 directory で 単発 完結 (= monorepo 構造 と は 独立、 後続 phase で 直接 import し ない)。 binaryen は `@unworklet/core` の dependency と し て 配置、 compile invocation 公開 API (= `@unworklet/core` が export する compile 関数、 Phase 3 で 露出) の 内部 実装 に 限って 使用、 dynamic import で production runtime bundle から 除外 (= consumer の 出荷 bundle に は 含まれ ない、 09-repo-structure.md §2.4 と zip)。
+各 step で 「binaryen で 構築 → `.wat` 出力 → Node で `instantiate` + 実行 → output 確認」 の loop。 PoC は repo 内 専用 directory で 単発 完結 (= monorepo 構造 と は 独立、 後続 phase で 直接 import し ない)。 binaryen は `@unworklet/core` の dependency と し て 配置、 `@unworklet/core` か ら 公 開 さ れ る `compile` 関 数 (= Phase 3 で 露 出) の 内部 実装 に 限って 使用、 dynamic import で 静 的 path consumer の production runtime bundle から 除外 (= consumer の 出荷 bundle に は 含まれ ない、 09-repo-structure.md §2.4 と zip)。
 
 完了 条件: 最小 WASM (= constant 出力 / passthrough / scalar 乗算 / runtime param 経由 乗算 / forSample loop 相当 の bounded loop) が binaryen 経由 で emit + Node で 動く こと が 順次 確認 済み。 各 step の `.wat` 出力 を 一緒 に 読 ん で WASM の 動作 が 把握 済 み の 状態 で Phase 2 に 進む。
 
@@ -82,8 +82,8 @@ pnpm workspace + `vp` CLI gate + MIT license + TS 5.5+ + vitest 設定 (= 09-rep
 - `defineProcessor` の graph capture (= proxy 経由 で AST DAG 構築)
 - `forSample` + 最小 primitive (= `mul`、 method form `.mul` も)
 - WASM emission の core path (= literal / mul / audio I/O marshalling / param marshalling / forSample loop)
-- compile invocation 公開 API (= `@unworklet/core` が export する compile 関数、 graph capture 済 AST を 受け取って WASM binary + metadata を 返す。 内部 で binaryen を dynamic import で 呼び出す = Phase 1 PoC で 検証 済 の binaryen 経由 path を core compile module 内 に 配置)
-- `renderOffline()` の WASM 駆動 path (= 公開 compile API を 内部 で 自前 invoke + `WebAssembly.instantiate()` + input PCM を render quantum 単位 で WASM に 流す + output PCM 集める = `renderOffline` 単独 で graph capture + compile + 駆動 を 自己 完結、 Vite plugin に 依存 し ない)
+- `compile(processor)` 関 数 を `@unworklet/core` か ら export (= 引 数 = `defineProcessor()` 戻 り 値 = graph capture 済 AST、 戻 り 値 = `{ wasm, graph, memory, diagnostics, schemaHash }` 一 括 async。 内部 で binaryen を dynamic import で 呼び出す = Phase 1 PoC で 検証 済 の binaryen 経由 path を core compile module 内 に 配置)
+- `renderOffline()` の WASM 駆動 path (= `compile` を 内部 で 自前 invoke + `WebAssembly.instantiate()` + input PCM を render quantum 単位 で WASM に 流す + output PCM 集める = `renderOffline` 単独 で graph capture + compile + 駆動 を 自己 完結、 Vite plugin に 依存 し ない)
 
 meter 部分 (= `state.publish`) は Phase 6 (= messaging) で 拡張 する 設計 で、 Phase 3 で は cut。 Phase 1 PoC の binaryen 経験 を 元 に WASM emission module を `@unworklet/core` 内部 に 置く。
 
@@ -101,8 +101,8 @@ meter 部分 (= `state.publish`) は Phase 6 (= messaging) で 拡張 する 設
 
 `@unworklet/vite-plugin` の bundler 統合 機能 を 早期 ship。 後続 phase の vertical slice 検証 が dev server 上 で 即 試せ、 source map で error 行 が source code 紐付き で 読める state を ここ で 立てる。 触る 範囲:
 
-- `?worklet` query resolution (= `import processorUrl from './x.processor.ts?worklet'` を vite が 解決、 plugin が `@unworklet/core` の 公開 compile API を call)
-- source-change 検知 + build pipeline 統合 (= dev server / production build で compile API を invocation)
+- `?worklet` query resolution (= `import processorUrl from './x.processor.ts?worklet'` を vite が 解決、 plugin が `@unworklet/core` の `compile` 関 数 を call)
+- source-change 検知 + build pipeline 統合 (= dev server / production build で `compile` を invocation)
 - source maps (= `.ts` → AST → `.wasm` 位置 propagation、 sidecar `.wasm.map`)
 - metadata artifact emit (= `dist/<processor>.graph.json` / `.memory.json` / `.diagnostics.json` / `.schema-hash.json`、 07-vite-plugin.md §6.3)
 - Vite DevTools Kit 統合 path (= panel host) を 立てる + 初期 3 panel ship: 「Build errors / warnings」 (= 3-layer error model、 stable error ID) + 「Graph viewer」 (= AST DAG dump) + 「Memory budget」 (= declaration auto-sum、 07-vite-plugin.md §6.1)

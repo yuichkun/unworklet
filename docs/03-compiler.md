@@ -1,8 +1,8 @@
 # 03 — Compiler
 
-The build-time pipeline that turns a `defineProcessor` definition into the artifacts consumed by the worklet runtime, the main-thread client, and the offline runtime (`@unworklet/offline`). The pipeline is exposed as a **public API on `@unworklet/core`** (= named export; the exact TS signature is impl-phase fill per Q53). All consumers — `@unworklet/vite-plugin` (= build pipeline integration), `@unworklet/offline` (= `renderOffline` invokes it internally when no precompiled binary is supplied), pure Node scripts, and browser hosts importing it directly — call this same API. The compile entry point itself is the public surface; the internal stage modules (graph capture, static analysis, WASM emission, etc.) remain encapsulated inside `@unworklet/core`.
+The build-time pipeline that turns a `defineProcessor` definition into the artifacts consumed by the worklet runtime, the main-thread client, and the offline runtime (`@unworklet/offline`). The pipeline is exposed as a **single async named export on `@unworklet/core`** — `compile(processor)`, returning `{ wasm, graph, memory, diagnostics, schemaHash }` in one call. All consumers — `@unworklet/vite-plugin` (= build pipeline integration), `@unworklet/offline` (= `renderOffline` invokes it internally), `replaceProcessor` (= live coding / hot swap), pure Node scripts, and browser host scripts that build processors at runtime (= visual programming editors, modular synth web apps, on-the-fly source evaluation) — call this same `compile` function. The compile entry point itself is the public surface; the internal stage modules (graph capture, static analysis, WASM emission, etc.) remain encapsulated inside `@unworklet/core`. Concrete TS generic constraint shape is impl-phase fill.
  
-The `binaryen` toolkit (= the WASM emission backend, §4) is loaded via **dynamic import** from `@unworklet/core`, so consumers that never call the compile API (= production runtimes that load a precompiled WASM binary emitted at build time) do not pay the `binaryen` bundle cost in their production bundle. `@unworklet/core` lists `binaryen` in its dependencies, but the dynamic-import boundary keeps it out of bundles that exercise only the runtime path (see `09-repo-structure.md` §2.4 for the package dependency layout).
+The `binaryen` toolkit (= the WASM emission backend, §4) is loaded via **dynamic import** from inside `compile`, so consumers that never call `compile` (= production runtimes that load a precompiled WASM binary emitted at build time) do not pay the `binaryen` bundle cost in their production bundle. `@unworklet/core` lists `binaryen` in its dependencies, but the dynamic-import boundary keeps it out of bundles that exercise only the runtime path (see `09-repo-structure.md` §2.4 for the package dependency layout).
 
 ## Status
 
@@ -10,7 +10,7 @@ partial (§1 pipeline overview + §2 graph capture + §2.4 three-layer error wri
 
 ## 1. Pipeline overview
 
-Each invocation of the public compile API runs 5 stages end-to-end for one `defineProcessor` definition. `@unworklet/vite-plugin` calls this API per source file during the Vite build, `@unworklet/offline`'s `renderOffline` calls it on demand when no prebuilt binary is supplied, and any other host (= pure Node script, browser host) calls it the same way.
+Each invocation of `compile(processor)` runs 5 stages end-to-end for one `defineProcessor` definition. `@unworklet/vite-plugin` calls it per source file during the Vite build, `@unworklet/offline`'s `renderOffline` calls it on demand when no prebuilt binary is supplied, and any other host (= pure Node script, browser host that builds processors at runtime) calls it the same way.
 
 1. **Graph capture** (§2) — evaluate the body once at build time with proxy primitives, producing an AST DAG of `Node<T>` operations + declarations.
 2. **Static analysis** (§3) — walk the DAG to verify realtime-safety invariants (allocation check, loop boundedness, memory budget per Q30, type consistency); errors flow through the Layer 1-3 enforcement model (§2.4) with the stable error ID inventory (§2.6).
@@ -185,8 +185,8 @@ A separate runtime check (not graph-capture / static-analysis) fires when the wo
 ## 4. WASM emission phase
 
 <!-- Emission target (binaryen.js or custom emitter). The chosen backend is
-     loaded via dynamic import inside the public compile API on
-     `@unworklet/core` (see §1 prose), so consumers that only run precompiled
+     loaded via dynamic import inside `compile` on `@unworklet/core` (see §1
+     prose), so consumers that only run precompiled
      WASM do not pay the bundle cost.
 
      Exported entry — the signature reflects the 4 per-block I/O paths the
@@ -230,11 +230,11 @@ A separate runtime check (not graph-capture / static-analysis) fires when the wo
 ## 8. Offline backend
 
 <!-- `@unworklet/offline` ships the offline path: the same WASM binary that
-     the public compile API on `@unworklet/core` emits for the AudioWorklet is
-     loaded into the host JS runtime (Node.js / Bun / Deno など、 each shipping
-     a WebAssembly runtime in its standard library) and driven through render
-     quantum cycles to produce PCM output. `renderOffline` invokes the
-     `@unworklet/core` compile API directly when handed a `defineProcessor`
+     `@unworklet/core`'s `compile` emits for the AudioWorklet is loaded into
+     the host JS runtime (Node.js / Bun / Deno など、 each shipping a
+     WebAssembly runtime in its standard library) and driven through render
+     quantum cycles to produce PCM output. `renderOffline` invokes
+     `@unworklet/core`'s `compile` directly when handed a `defineProcessor`
      value with no prebuilt binary attached. This covers all 4 offline use
      cases per Q23+Q24+Q25: server-side render, batch processing, preset
      preview UI, test. `@unworklet/test` wraps this same backend via vitest

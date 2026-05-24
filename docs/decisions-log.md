@@ -3700,9 +3700,9 @@ registerProcessor('my-extended', MyExtended);
 WASM compile invocation を `@unworklet/core` の **公開 named export** と して expose する。 既 declare = 「compiler は core internal module、 user は `@unworklet/vite-plugin` 経由 で 暗黙 起動」 (Q23+Q24+Q25 + Q52) を 部分 retract: compiler module 自体 は core 内部 module の ま ま だ が、 **invocation API は core 公開 surface に expose**。
 
 具体:
-- `@unworklet/core` の named exports に compile API を 追加 (= signature 細部 は impl 期 fill per Q53)
-- consumer = `@unworklet/vite-plugin` (= build pipeline で call、 既 path)、 `@unworklet/offline` (= `renderOffline` 内 で 自動 call、 新 path)、 純 Node / Bun / Deno / browser host script (= 直接 import + call、 新 path)。 全 consumer が 同 API を call。
-- binaryen (= 内部 WASM emit に 使う JS toolkit) は `@unworklet/core` dependency に 入る が **dynamic import** で load。 compile API を call し ない consumer (= production runtime で 既 build 済 WASM binary を load + 駆動 する だけ の 経路) で は binaryen が production bundle に 含まれ ない。
+- `@unworklet/core` の named exports に `compile(processor)` async 関 数 を 追 加 (= 戻 り 値 `{ wasm, graph, memory, diagnostics, schemaHash }` 1 fn 一 括; generic constraint shape 等 の TS signature 細 部 は impl-phase fill per Q53)
+- consumer = `@unworklet/vite-plugin` (= build pipeline で call、 既 path)、 `@unworklet/offline` (= `renderOffline` 内 で 自動 call、 新 path)、 `replaceProcessor` (= live coding / hot swap で runtime call、 新 path)、 純 Node / Bun / Deno / browser host script (= 直 接 import + call、 visual programming editor / modular synth web app / on-the-fly source 評 価 等 動 的 path 含 む、 新 path)。 全 consumer が 同 一 関 数 を call。
+- binaryen (= 内部 WASM emit に 使う JS toolkit) は `@unworklet/core` dependency に 入る が **dynamic import** で load。 静 的 path consumer (= `compile` を 呼 ば ず 既 build 済 WASM binary を load + 駆動 する だけ の 経路) で は binaryen が production bundle に 含まれ ない; 動 的 path consumer (= runtime に `compile` を 呼 ぶ live coding / modular synth web app 等) は dynamic import 解 析 経 由 で binaryen chunk が bundle に 載 る = trade-off を user が 引 き 受 け る。
 
 ### Rationale
 

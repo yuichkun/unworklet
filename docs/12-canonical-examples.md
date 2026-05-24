@@ -894,7 +894,7 @@ export const convolutionReverb = defineProcessor((ctx) => {
 }, {
   // Snapshot migration chain — when older blob versions show up, lift them
   // forward declaratively. Each entry's from/to is the schema hash computed
-  // by `@unworklet/core`'s public compile API and emitted to
+  // by `@unworklet/core`'s `compile` function and emitted to
   // `dist/<processor>.schema-hash.json` by `@unworklet/vite-plugin` as part
   // of the bundler-integration metadata artifact set (= 07-vite-plugin §6.3).
   // The mono-IR shape stored a single buffer named 'ir'; the stereo-IR shape
