@@ -14,18 +14,63 @@ import type {
   CompiledProcessor,
   ProcessorBody,
   ProcessorContext,
+  ProcessorGraph,
   ProcessorOptions,
+  WorkletNamespace,
 } from "./types.ts";
+import type { CapturedGraph } from "./compile/ast.ts";
+import { finalize, newCaptureContext, runCapture } from "./compile/capture.ts";
 
 const notImplemented = (): never => {
   throw new Error("not implemented");
 };
 
+/**
+ * Brand the internal `CapturedGraph` as the opaque public
+ * `ProcessorGraph` token. `compile()` (= Step 3.5) recovers the AST
+ * through the same identity; external consumers see only the brand.
+ */
+function brandGraph(graph: CapturedGraph): ProcessorGraph {
+  return graph as unknown as ProcessorGraph;
+}
+
+const workletStub: WorkletNamespace = {
+  initialize: (() => {
+    throw new Error("worklet namespace not implemented");
+  }) as WorkletNamespace["initialize"],
+  process: (() => {
+    throw new Error("worklet namespace not implemented");
+  }) as WorkletNamespace["process"],
+  parameterDescriptors: [],
+};
+
 export function defineProcessor<C = unknown>(
-  _body: (ctx: ProcessorContext) => ProcessorBody,
+  body: (ctx: ProcessorContext) => ProcessorBody,
   _options?: ProcessorOptions,
 ): CompiledProcessor<C> {
-  return notImplemented();
+  const captureCtx = newCaptureContext();
+
+  // Declarations + the process lambda are gathered first. `ctx.sampleRate`
+  // is a Phase 3 placeholder — the host (= `renderOffline`) will supply
+  // the real rate when `compile()` is invoked end-to-end.
+  const compiledBody = runCapture(captureCtx, () => {
+    const procCtx: ProcessorContext = { sampleRate: 0 };
+    return body(procCtx);
+  });
+
+  // Invoke `process` once during capture so its top-level statements
+  // (= per-block code + `forSample` invocations) populate
+  // `captureCtx.statements`.
+  runCapture(captureCtx, () => {
+    compiledBody.process();
+  });
+
+  return {
+    graph: brandGraph(finalize(captureCtx)),
+    schemaHash: "phase-3-stub",
+    worklet: workletStub,
+    __compiledProcessor: undefined as unknown as C,
+  };
 }
 
 /**
