@@ -1,21 +1,14 @@
 {
-  "name": "@unworklet/core",
+  "name": "@unworklet/offline",
   "version": "0.0.0",
-  "description": "Audio Worklet DSP authored in TypeScript, compiled to WebAssembly.",
+  "description": "Pure-JS offline renderer for `@unworklet/core` processors (Node / Bun / Deno).",
   "license": "MIT",
   "files": [
     "dist"
   ],
   "type": "module",
   "exports": {
-    ".": {
-      "types": "./src/index.ts",
-      "import": "./dist/index.mjs"
-    },
-    "./simd": {
-      "types": "./src/simd.ts",
-      "import": "./dist/simd.mjs"
-    },
+    ".": "./dist/index.mjs",
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -28,14 +21,15 @@
     "check": "vp check",
     "prepublishOnly": "vp run build"
   },
-  "dependencies": {
-    "binaryen": "catalog:"
-  },
   "devDependencies": {
     "@types/node": "catalog:",
     "@typescript/native-preview": "7.0.0-dev.20260509.2",
+    "@unworklet/core": "workspace:*",
     "bumpp": "^11.1.0",
     "typescript": "catalog:",
     "vite-plus": "catalog:"
+  },
+  "peerDependencies": {
+    "@unworklet/core": "workspace:*"
   }
 }
