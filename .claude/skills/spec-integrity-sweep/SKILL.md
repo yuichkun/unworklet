@@ -14,11 +14,13 @@ unworklet docs 全体の整合性を多数の sub-agent で徹底 audit し、 �
 **出力**: `docs/open-questions.md` の整理済み entry 群 (= 冒頭 preface + P1 / P2 / P3 section + 各 entry を軸 cluster 別 sort)。
 
 **起動タイミング**:
+
 - open-questions.md が empty / 軽い状態 で 「もう一度 spec 全体を見直して残 question を洗い出したい」 と user が判断した時
 - 大量 ratify が land して spec が変化した後の整合性 sweep
 - v1.x.0 / 別 phase で同 path を回す時
 
 **起動しない場合**:
+
 - 1〜2 file の局所整合性確認 (= 通常の grep / Read で済む)
 - 単発の Q ratify grill (= `$TMPDIR` の grill md path)
 - 既に audit 済みで残 task が priority 別に整理されている時の進行
@@ -49,6 +51,7 @@ unworklet docs 全体の整合性を多数の sub-agent で徹底 audit し、 �
 12 sub-agent を **1 message 内で並列 batch** に Agent tool で起動 (= `subagent_type: general-purpose`)。
 
 各 sub-agent の prompt 構造 (= `references/sub-agent-prompt-template.md` 参照):
+
 - 軸名 + 該当 docs path 列挙
 - 「bias 排除規律」 を冒頭で明示 (= 余湖さん明言の 「重要な欠陥を見つけることがプロダクトにとっての最善」)
 - **出力先**: Write tool で `audit/raw/NN-<axis>.md` に raw report を**直接書く** (= Phase 2 と zip、 parent context に raw を流さない)
@@ -75,6 +78,7 @@ JSONL log + jq 機械抽出。 各 sub-agent の `tool_use_id` を親が記録�
 raw 各 file を **sub-agent serial dispatch** で 1 つずつ処理。 並列だと open-questions.md write 競合発生 (= memory feedback)。
 
 各 sub-agent の責務:
+
 - 担当 raw file 全文 read
 - 既 open-questions.md 全文 read (= 重複判定の base)
 - 1 entry ずつ filter (= 「impl AI 矛盾リスク軸でない」 / 「既 open-questions.md entry と重複」 = skip)
@@ -91,11 +95,13 @@ raw 各 file を **sub-agent serial dispatch** で 1 つずつ処理。 並列�
 軸 = **「impl AI agent がこの docs だけで手放し実装した時に矛盾 / 揺れが出るか重大度」** (= 唯一の判断軸、 累犯規律)。
 
 3 段階:
+
 - **P1**: ship blocker (= wire byte が drift / canonical 自身が build 不能 / 同 source code で別 impl が reproducible でない)
 - **P2**: 仕様 invariant + lifecycle (= public surface completeness / mental model / placeholder zip)
 - **P3**: prose 揺れ / mechanical sweep (= 親 batch sweep 後 diff review 領域)
 
 **赤信号** (= priority 軸が user-facing に流れた signal):
+
 - 「user が誤解する」 「mental model 揺れる」 「読み手が混乱」 wording が頭の中に出たら 即 priority 軸を修正、 mechanical sweep 領域 (= P3) へ移す
 - docs 読者 = impl AI agent (= user-facing tutorial では ない)、 累犯規律
 
@@ -108,6 +114,7 @@ P1 内では軸 cluster で sort (= 例: 型 system core / canonical integrity /
 親が 「entry タイトル先頭文字列 → P1/P2/P3 + cluster」 mapping を 1 sub-agent に渡して file rewrite を機械実行。
 
 sub-agent 制約:
+
 - entry 本文 prose は **1 文字も触らない** (= 並び順 + section header + preface 追加のみ)
 - 全 entry を 1 つも skip しない、 1 つも duplicate しない
 - 完了報告: P1/P2/P3 件数 + cluster 件数 + missing/duplicate 確認

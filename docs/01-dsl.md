@@ -104,18 +104,18 @@ The returned handles expose channel + sample access through the chain forms docu
 
 ```typescript
 type AudioInputHandle<C extends number> = {
-  ch(c: ChannelIndex<C> | number): InputChannelView<'f32'>;
+  ch(c: ChannelIndex<C> | number): InputChannelView<"f32">;
   channels: C;
-  name:     string;
+  name: string;
 } & (C extends 2 ? StereoInputSugar : {});
 
 type InputChannelView<T extends ScalarType> = {
-  at(i: Node<'i32'> | number): Node<T>;
+  at(i: Node<"i32"> | number): Node<T>;
 };
 
 type StereoInputSugar = {
-  readonly left:  InputChannelView<'f32'>;   // alias for .ch(0)
-  readonly right: InputChannelView<'f32'>;   // alias for .ch(1)
+  readonly left: InputChannelView<"f32">; // alias for .ch(0)
+  readonly right: InputChannelView<"f32">; // alias for .ch(1)
 };
 
 // `ChannelIndex<C>` is the union `0 | 1 | ... | (C - 1)`, narrowed by TypeScript
@@ -132,12 +132,12 @@ For stereo handles (`channels: 2`), the `.left` / `.right` sugar properties are 
 The channel index `c` is narrowed by TypeScript to the legal range for the declared channel count (`channels: 2` → `0 | 1`); out-of-range indices are TypeScript errors at the call site.
 
 ```typescript
-const stereo = audioInput({ channels: 2, name: 'main' });
+const stereo = audioInput({ channels: 2, name: "main" });
 
 forSample((i) => {
-  const l = stereo.ch(0).at(i);   // Node<'f32'>, channel 0 at sample-offset i
-  const r = stereo.ch(1).at(i);   // Node<'f32'>, channel 1 at sample-offset i
-  const x = stereo.ch(2).at(i);   // ❌ Type error: 2 is not assignable to 0 | 1
+  const l = stereo.ch(0).at(i); // Node<'f32'>, channel 0 at sample-offset i
+  const r = stereo.ch(1).at(i); // Node<'f32'>, channel 1 at sample-offset i
+  const x = stereo.ch(2).at(i); // ❌ Type error: 2 is not assignable to 0 | 1
 
   // stereo sugar — equivalent, channels === 2 only
   const lAlt = stereo.left.at(i);
@@ -145,7 +145,7 @@ forSample((i) => {
 });
 
 // Outside any forSample, `i` is not in scope:
-const y = stereo.ch(0).at(i);     // ❌ Type error: i is undefined
+const y = stereo.ch(0).at(i); // ❌ Type error: i is undefined
 ```
 
 The actual channel count of the connected source is normalized by Web Audio's standard up-mix / down-mix rules (`channelInterpretation`, `channelCountMode`) before the worklet sees it; the framework does not intervene in this layer.
@@ -158,13 +158,13 @@ The chain returns a regular `Node<'f32'>` from `.at(i)`, so the Q77 method form 
 
 ```typescript
 type AudioOutputHandle<C extends number> = {
-  ch(c: ChannelIndex<C> | number): OutputChannelView<'f32'>;
+  ch(c: ChannelIndex<C> | number): OutputChannelView<"f32">;
   channels: C;
-  name:     string;
+  name: string;
 } & (C extends 2 ? StereoOutputSugar : {});
 
 type OutputChannelView<T extends ScalarType> = {
-  at(i: Node<'i32'> | number): OutputChannelSample<T>;
+  at(i: Node<"i32"> | number): OutputChannelSample<T>;
 };
 
 type OutputChannelSample<T extends ScalarType> = {
@@ -172,8 +172,8 @@ type OutputChannelSample<T extends ScalarType> = {
 };
 
 type StereoOutputSugar = {
-  readonly left:  OutputChannelView<'f32'>;  // alias for .ch(0)
-  readonly right: OutputChannelView<'f32'>;  // alias for .ch(1)
+  readonly left: OutputChannelView<"f32">; // alias for .ch(0)
+  readonly right: OutputChannelView<"f32">; // alias for .ch(1)
 };
 ```
 
@@ -182,12 +182,12 @@ type StereoOutputSugar = {
 For stereo handles, `.left` / `.right` are the same `.ch(0)` / `.ch(1)` alias path as the reader.
 
 ```typescript
-const stereoOut = audioOutput({ channels: 2, name: 'main' });
+const stereoOut = audioOutput({ channels: 2, name: "main" });
 
 forSample((i) => {
-  stereoOut.ch(0).at(i).write(leftNode);   // ✓
-  stereoOut.ch(1).at(i).write(rightNode);  // ✓
-  stereoOut.ch(2).at(i).write(extra);      // ❌ Type error: 2 not assignable to 0 | 1
+  stereoOut.ch(0).at(i).write(leftNode); // ✓
+  stereoOut.ch(1).at(i).write(rightNode); // ✓
+  stereoOut.ch(2).at(i).write(extra); // ❌ Type error: 2 not assignable to 0 | 1
 
   // stereo sugar — equivalent
   stereoOut.left.at(i).write(leftNode);
@@ -211,9 +211,9 @@ There is no implicit cap on the number of `audioInput` / `audioOutput` declarati
 
 ```typescript
 const drumBus = defineProcessor((ctx) => {
-  const dry  = audioInput ({ channels: 2, name: 'dry'  });
-  const send = audioOutput({ channels: 2, name: 'send' });   // pre-fader to reverb
-  const main = audioOutput({ channels: 2, name: 'main' });   // dry mix
+  const dry = audioInput({ channels: 2, name: "dry" });
+  const send = audioOutput({ channels: 2, name: "send" }); // pre-fader to reverb
+  const main = audioOutput({ channels: 2, name: "main" }); // dry mix
   // ...
 });
 ```
@@ -226,9 +226,9 @@ This is intentional: a single declaration pattern across all processor sizes (mi
 
 ```typescript
 const sin440 = defineProcessor((ctx) => {
-  const out   = audioOutput({ channels: 1, name: 'main' });
+  const out = audioOutput({ channels: 1, name: "main" });
   const phase = state.f32(0);
-  const inc   = 2 * Math.PI * 440 / ctx.sampleRate;          // build-time JS constant
+  const inc = (2 * Math.PI * 440) / ctx.sampleRate; // build-time JS constant
   return {
     process: () => {
       forSample((i) => {
@@ -279,7 +279,7 @@ The package exports build-time constants at the top level, alongside `defineProc
 - **`SAMPLES_PER_BLOCK: 128`** — the render quantum length in samples. Web Audio specifies 128 samples per quantum across all environments; this value is fixed at build time. Used wherever processor code needs to refer to the block length by name rather than by the literal `128`.
 
   ```typescript
-  import { defineProcessor, buffer, forSample, SAMPLES_PER_BLOCK } from '@unworklet/core';
+  import { defineProcessor, buffer, forSample, SAMPLES_PER_BLOCK } from "@unworklet/core";
 
   defineProcessor(() => {
     const scratch = buffer.f32({ size: SAMPLES_PER_BLOCK });
@@ -298,10 +298,10 @@ The package exports build-time constants at the top level, alongside `defineProc
 
   ```typescript
   // helpers.ts
-  import { SAMPLES_PER_BLOCK } from '@unworklet/core';
+  import { SAMPLES_PER_BLOCK } from "@unworklet/core";
 
-  export const RING_CAP = SAMPLES_PER_BLOCK * 8;  // 1024
-  export const blockToMs = (sampleRate: number) => SAMPLES_PER_BLOCK * 1000 / sampleRate;
+  export const RING_CAP = SAMPLES_PER_BLOCK * 8; // 1024
+  export const blockToMs = (sampleRate: number) => (SAMPLES_PER_BLOCK * 1000) / sampleRate;
   ```
 
 These constants are not exposed on the `ctx` object. `ctx` carries run-time values supplied by the host (e.g. `ctx.sampleRate`, which varies per `AudioContext`); build-time constants are kept off `ctx` so the two categories stay distinct.
@@ -369,24 +369,24 @@ num<T>(v: number | boolean): Node<T>;   // Q77 — context-inferred lift for met
 ```typescript
 // Declaration (= outside primitive arguments, implicit lift not available):
 let count = i32(0);
-let mix   = f32(0);
+let mix = f32(0);
 const def = bool(false);
 
 // Ambiguous-call disambiguation (all-literal call would default to f32):
-add(i32(0), i32(0))     // T = 'i32' fixed
+add(i32(0), i32(0)); // T = 'i32' fixed
 
 // i64: BigInt-required (no implicit lift):
-state.i64.load().add(i64(BigInt(123)))
+state.i64.load().add(i64(BigInt(123)));
 
 // Cross-precision conversion between Node types:
-const wide   = f64(f32node);
+const wide = f64(f32node);
 const narrow = f32(f64node);
-const idx    = i32(f32node);    // truncate
+const idx = i32(f32node); // truncate
 
 // Method-chain starting point (= literal-leading chain, JS literals have no methods):
-const dry = num(1).sub(mix).mul(drySig);            // T inferred from .sub(mix) → Node<'f32'>
-const off = num(60).add(noteOffset);                // T inferred from .add(noteOffset) → Node<'i32'>
-const trig = num(true).select(activeBranch, idleBranch);   // T = 'bool' (literal is bool)
+const dry = num(1).sub(mix).mul(drySig); // T inferred from .sub(mix) → Node<'f32'>
+const off = num(60).add(noteOffset); // T inferred from .add(noteOffset) → Node<'i32'>
+const trig = num(true).select(activeBranch, idleBranch); // T = 'bool' (literal is bool)
 ```
 
 Constructor naming follows GLSL (`vec3(0.0)` / `float(0)`) and WGSL (`f32(0)`) convention. `num(v)` is the chain-start helper introduced by Q77; its `T` is inferred from the surrounding context (= the type of the value passed to the next method in the chain) via the same context-dependent lift rule as Q33 / Q36, falling back to `'f32'` when no context constrains it. Boolean literals fix `T = 'bool'` unambiguously.
@@ -404,24 +404,27 @@ The three primitive declaration kinds — scalar `state`, fixed-size `buffer`, a
 
 ```typescript
 // Plain — worklet-private
-const z1    = state.f32(0);                                  // filter z-state
-const z2    = state.f32(0);
+const z1 = state.f32(0); // filter z-state
+const z2 = state.f32(0);
 const phase = state.f32(0);
-const idx   = state.i32(0);
-const fl    = state.bool(false);
+const idx = state.i32(0);
+const fl = state.bool(false);
 
 // Named via .named('X') quick chain (= policy default 'persistent')
-const cutoffSampled = state.f32(0).named('cutoffSampled');                       // 後付け
-const cutoffSampled = state.named('cutoffSampled').f32(0);                       // 前付け、 同 AST
+const cutoffSampled = state.f32(0).named("cutoffSampled"); // 後付け
+const cutoffSampled = state.named("cutoffSampled").f32(0); // 前付け、 同 AST
 
 // Named via .expose({ name, ... }) full chain (= policy 明示)
-const meterL = state.f32(0).expose({ name: 'meterL', publish: { rateFps: 30 } });        // 後付け
-const meterL = state.expose({ name: 'meterL', publish: { rateFps: 30 } }).f32(0);        // 前付け
-const route  = state.f32(0).expose({ name: 'route', snapshot: 'transient' });            // 主側 addressable、 snapshot 除外
+const meterL = state.f32(0).expose({ name: "meterL", publish: { rateFps: 30 } }); // 後付け
+const meterL = state.expose({ name: "meterL", publish: { rateFps: 30 } }).f32(0); // 前付け
+const route = state.f32(0).expose({ name: "route", snapshot: "transient" }); // 主側 addressable、 snapshot 除外
 
 // Chain 重複 (= field merge 後勝ち)
-const meterL = state.named('meterL').f32(0).expose({ publish: { rateFps: 30 } });        // name 'meterL' + publish bundled
-const renamed = state.named('orig').f32(0).expose({ name: 'final' });                    // name 'final' (= 後勝ち)
+const meterL = state
+  .named("meterL")
+  .f32(0)
+  .expose({ publish: { rateFps: 30 } }); // name 'meterL' + publish bundled
+const renamed = state.named("orig").f32(0).expose({ name: "final" }); // name 'final' (= 後勝ち)
 ```
 
 `state.<type>(initial)` (= plain) declares a worklet-private scalar slot. Chaining `.named('X')` or `.expose({ name: 'X', ... })` onto a plain declare opens the slot to the snapshot blob and main-side access. Both chain forms are equivalent in graph effect; `.named('X')` is the short form (= name only, policy default), `.expose({ ... })` is the full form (= options object 1 つ で name + policy 全部 渡す). The `State<T>` handle exposes `load()` / `store(node)` regardless of whether the chain is plain or named.
@@ -448,17 +451,17 @@ Authoritative rationale: `decisions-log.md` Q27-a + Q42 + Q76 + Q79.
 
 ```typescript
 // Plain — worklet-private
-const ring     = buffer.f32({ size: 44100 });                                              // delay line scratch
-const sysexBuf = buffer.u8 ({ size: 64 });                                                 // byte buffer (= sysex emit; see 11-midi.md §2.5)
+const ring = buffer.f32({ size: 44100 }); // delay line scratch
+const sysexBuf = buffer.u8({ size: 64 }); // byte buffer (= sysex emit; see 11-midi.md §2.5)
 
 // Named via .named('X') quick chain (= policy default 'transient')
-const ir = buffer.f32({ size: 1024 }).named('ir');                                          // 後付け
-const ir = buffer.named('ir').f32({ size: 1024 });                                          // 前付け、 同 AST
+const ir = buffer.f32({ size: 1024 }).named("ir"); // 後付け
+const ir = buffer.named("ir").f32({ size: 1024 }); // 前付け、 同 AST
 
 // Named via .expose({ name, ... }) full chain
-const wave    = buffer.f32({ size: 256 }).expose({ name: 'wavetable', snapshot: 'persistent' });
-const impulse = buffer.f32({ size: 1024 }).expose({ name: 'impulse', snapshot: 'persistent' });
-const display = buffer.f32({ size: 512 }).expose({ name: 'spectrum', publish: { rateFps: 30 } });
+const wave = buffer.f32({ size: 256 }).expose({ name: "wavetable", snapshot: "persistent" });
+const impulse = buffer.f32({ size: 1024 }).expose({ name: "impulse", snapshot: "persistent" });
+const display = buffer.f32({ size: 512 }).expose({ name: "spectrum", publish: { rateFps: 30 } });
 ```
 
 `buffer.<type>({ size })` (= plain) declares a worklet-private fixed-size buffer with no main-side identifier. Chain `.named('X')` or `.expose({ name: 'X', ... })` onto a plain declare to open the slot to the snapshot blob and main-side access (Q79). The element-type method exposes `f32` / `f64` / `i32` / `i64` / `bool` / `u8`. The `'u8'` variant exists specifically for sysex emission (Q49) — byte values are written and read through `Node<'i32'>` (the lower 8 bits are stored), so no separate `Node<'u8'>` type is introduced into the scalar type system.
@@ -470,17 +473,17 @@ For bulk transfer from a `message<T>` / `event<T>` payload (e.g. uploading a sam
 The `Buffer<T>` handle returned by `buffer.<T>(...)` exposes the following methods (these are part of the handle type, not free function imports):
 
 ```typescript
-type Buffer<T extends ScalarType | 'u8'> = {
-  read(idx: Node<'i32'> | number): Node<T>;
-  write(idx: Node<'i32'> | number, v: Node<T> | number): void;
-  readInterpolated(pos: Node<'f32'> | number): Node<T>;
+type Buffer<T extends ScalarType | "u8"> = {
+  read(idx: Node<"i32"> | number): Node<T>;
+  write(idx: Node<"i32"> | number, v: Node<T> | number): void;
+  readInterpolated(pos: Node<"f32"> | number): Node<T>;
   // Bulk copy from a typed-array field of the surrounding message / event payload (see §4).
   // Compiles to a single WASM `memory.copy`; runtime length is clamped to min(buf.size, src.length).
   // See `decisions-log.md` Q31-c.
   copyFrom(src: TypedArrayFieldRef<T>): void;
   // SIMD methods (only typed when `@unworklet/core/simd` is imported — see §7):
-  loadVec(offset: Node<'i32'>): Node<'f32x4'>;
-  storeVec(offset: Node<'i32'>, value: Node<'f32x4'>): void;
+  loadVec(offset: Node<"i32">): Node<"f32x4">;
+  storeVec(offset: Node<"i32">, value: Node<"f32x4">): void;
   size: number;
   name: string;
 };
@@ -493,7 +496,7 @@ Type method options:
 Named chain options (= `.named('X')` quick / `.expose({ name?, snapshot?, publish? })` full):
 
 - **`name: string`** — slot identity (same rules as state). Required at chain entry.
-- **`snapshot?: 'persistent' | 'transient' | { ... }`** — default `'transient'` for buffer (= even named buffers are most often accumulation regions whose contents lose meaning across preset boundaries; include explicitly when the contents *are* the slot's identity, e.g. wavetables, lookup tables).
+- **`snapshot?: 'persistent' | 'transient' | { ... }`** — default `'transient'` for buffer (= even named buffers are most often accumulation regions whose contents lose meaning across preset boundaries; include explicitly when the contents _are_ the slot's identity, e.g. wavetables, lookup tables).
 - **`publish?: { rateFps: number }`** — same shape as state publish. The framework copies the buffer region into a shared region every publish tick; main thread reads via `node.buffer.<name>.subscribe(handler)` (handler receives the typed array view) or `.value`. Used for continuous large data (waveform display, spectrum frame). All element types are accepted for buffer publish (= unlike state publish, which is Q42-restricted to f32 / i32 / bool). See `decisions-log.md` Q27-a / Q27-e.
 
 Chain order invariant (Q79): same as state — `.named()` / `.expose()` can appear before or after the type method, fields merge with after-wins semantics, name must appear once in the chain.
@@ -504,24 +507,36 @@ Chain order invariant (Q79): same as state — `.named()` / `.expose()` can appe
 
 ```typescript
 // quick chain (= name only, policy default)
-const cutoff = param.named('cutoff').f32({
-  default: 1000, min: 20, max: 20000,
-  automationRate: 'a-rate',
+const cutoff = param.named("cutoff").f32({
+  default: 1000,
+  min: 20,
+  max: 20000,
+  automationRate: "a-rate",
 });
-const cutoff = param.f32({
-  default: 1000, min: 20, max: 20000,
-  automationRate: 'a-rate',
-}).named('cutoff');
+const cutoff = param
+  .f32({
+    default: 1000,
+    min: 20,
+    max: 20000,
+    automationRate: "a-rate",
+  })
+  .named("cutoff");
 
 // full chain (= snapshot policy 渡し)
-const route = param.expose({ name: 'route', snapshot: 'transient' }).f32({
-  default: 0, min: 0, max: 7,
-  automationRate: 'k-rate',
+const route = param.expose({ name: "route", snapshot: "transient" }).f32({
+  default: 0,
+  min: 0,
+  max: 7,
+  automationRate: "k-rate",
 });
-const route = param.f32({
-  default: 0, min: 0, max: 7,
-  automationRate: 'k-rate',
-}).expose({ name: 'route', snapshot: 'transient' });
+const route = param
+  .f32({
+    default: 0,
+    min: 0,
+    max: 7,
+    automationRate: "k-rate",
+  })
+  .expose({ name: "route", snapshot: "transient" });
 ```
 
 `param` is `f32` fixed (= AudioParam is always Float32Array-backed); the only type method is `.f32(...)`. `.i32` / `.bool` / etc. are not exposed on the param chain. `param` does not accept `publish` (= AudioParam is itself the main-side automate path, Q27 zip).
@@ -531,13 +546,13 @@ Once declared, the slot is bound to the standard Web Audio `AudioParam`. There i
 ```typescript
 // Inside a forSample callback (per-sample code): use the loop counter `i`.
 forSample((i) => {
-  const v = cutoff.at(i);          // Node<'f32'>, value at sample-offset i
+  const v = cutoff.at(i); // Node<'f32'>, value at sample-offset i
 });
 
 // At per-block top level: use 0 (block-start sample).
-const blockValue = cutoff.at(0);   // Node<'f32'>, block-start value
-                                   // For k-rate params this is the unique block value;
-                                   // for a-rate params it is the first-sample value.
+const blockValue = cutoff.at(0); // Node<'f32'>, block-start value
+// For k-rate params this is the unique block value;
+// for a-rate params it is the first-sample value.
 ```
 
 `param.at(i: Node<'i32'> | number)` returns the value at sample-offset `i` within the current render quantum. Used inside `forSample` (`i` is the callback's `Node<'i32'>`) it returns the per-sample value (a-rate: per-sample interpolated; k-rate: the unique block value). Used at per-block top level with the JS literal `0` (which lifts to `Node<'i32'>` per Q36-a, `decisions-log.md`) it returns the block-start value, which is what k-rate consumers want and what most per-block computations involving a-rate params should treat as their representative value.
@@ -565,8 +580,11 @@ The two declaration kinds `event<T>` (worklet → main, sample-accurate) and `me
 ### 4.1 `event<T>` — worklet to main
 
 ```typescript
-const peakEvt = event<{ level: number }>({ name: 'peak' });
-const noteFired = event<{ note: number; velocity: number }>({ name: 'noteFired', capacity: CAPACITY_512 });
+const peakEvt = event<{ level: number }>({ name: "peak" });
+const noteFired = event<{ note: number; velocity: number }>({
+  name: "noteFired",
+  capacity: CAPACITY_512,
+});
 ```
 
 `event<T>(options): EventDecl<T>` declares a typed worklet → main event channel. The payload type `T` is user-defined; an `atSample` field is **always carried on the wire** alongside `T` (mirroring MIDI Q4-c). Emission is via the `emitIf` method on the event handle (`eventDecl.emitIf(cond, payload)`) from any expression context where the audio-thread graph is captured — `forSample` / `forSample.byN` callbacks, `everyNSamples` callbacks (taken from the surrounding `forSample` callback's second argument; see §9 and Q43), `messageDecl.onReceive(...)` and `midiInput().onEvent(...)` handler bodies, and the per-block top level (statements in the `process` body outside any `forSample`). `emitIf` is the **single emission primitive**; there is no plain `emit(...)` form.
@@ -578,13 +596,15 @@ The main-side `T & { atSample: number }` view holds plain JS numbers regardless 
 ```typescript
 // Inside forSample — cond gates per-sample emission.
 forSample((i) => {
-  peakEvt.emitIf(audioIn.ch(0).at(i).abs().gt(thresh.at(i)),
-                 { atSample: i, level: audioIn.ch(0).at(i) });
+  peakEvt.emitIf(audioIn.ch(0).at(i).abs().gt(thresh.at(i)), {
+    atSample: i,
+    level: audioIn.ch(0).at(i),
+  });
 });
 
 // Inside a MIDI / message handler — `emitIf(true, payload)` is the canonical
 // form for handler-context unconditional 1:1 projection.
-midi.onEvent('noteOn', ({ note, velocity, atSample }) => {
+midi.onEvent("noteOn", ({ note, velocity, atSample }) => {
   notePlayed.emitIf(true, { atSample, note, velocity: velocity / 127 });
 });
 ```
@@ -604,9 +624,9 @@ Overflow: drop-oldest + monotonic `overflowCount` counter, exposed as `node.even
 ### 4.2 `message<T>` — main to worklet
 
 ```typescript
-const reqReset   = message<void>({ name: 'requestReset' });
-const loadPreset = message<{ slot: number }>({ name: 'loadPreset' });
-const uploadIR   = message<{ samples: Float32Array }>({ name: 'uploadIR', capacity: CAPACITY_16 });
+const reqReset = message<void>({ name: "requestReset" });
+const loadPreset = message<{ slot: number }>({ name: "loadPreset" });
+const uploadIR = message<{ samples: Float32Array }>({ name: "uploadIR", capacity: CAPACITY_16 });
 ```
 
 `message<T>(options): MessageDecl<T>` declares a typed main → worklet message channel. The worklet-side handler is registered inside the `process` body at per-block top level via `messageDecl.onReceive(handler)`:
@@ -662,16 +682,17 @@ Inside a handler body, the variable-length field is **not** a plain JS typed arr
 ```typescript
 // Argument = Node — runtime-indexed read (e.g. sample player):
 uploadSample.onReceive(({ samples }) => {
-  const len = samples.length;            // Node<'i32'>
+  const len = samples.length; // Node<'i32'>
   forSample((i) => {
-    const v = samples.at(mod(i, len));   // runtime read
+    const v = samples.at(mod(i, len)); // runtime read
     buf.write(i, v);
   });
 });
 
 // Argument = JS number — build-time-folded read (e.g. step sequencer):
 loadPattern.onReceive(({ steps }) => {
-  for (let s = 0; s < steps.length; s++) {  // ← here `steps.length` is a JS number; see note below
+  for (let s = 0; s < steps.length; s++) {
+    // ← here `steps.length` is a JS number; see note below
     const v = steps.at(s);
     pattern[s].store(v);
   }
@@ -689,10 +710,10 @@ Out-of-range `.at(idx)` reads (idx outside `[0, length)`) are wrapped at graph c
 ```typescript
 const fft = defineProcessor((ctx) => {
   const spectrumBuf = buffer.f32({ size: 512 });
-  const txLen       = state.i32(0);
-  const result      = event<{ spectrum: Float32Array; bin: number }>({
-    name:            'result',
-    payloadCapacity: 512 * 4,                                            // bytes reserved for the typed-array field
+  const txLen = state.i32(0);
+  const result = event<{ spectrum: Float32Array; bin: number }>({
+    name: "result",
+    payloadCapacity: 512 * 4, // bytes reserved for the typed-array field
   });
 
   return {
@@ -701,9 +722,9 @@ const fft = defineProcessor((ctx) => {
         // ... compute spectrum bins, write into spectrumBuf, update txLen ...
         result.emitIf(spectrumReady, {
           atSample: i,
-          spectrum: spectrumBuf,                                          // Buffer<'f32'>
-          length:   txLen.load(),                                         // Node<'i32'>, framework-injected slot in the emit shape
-          bin:      currentBin,
+          spectrum: spectrumBuf, // Buffer<'f32'>
+          length: txLen.load(), // Node<'i32'>, framework-injected slot in the emit shape
+          bin: currentBin,
         });
       });
     },
@@ -722,11 +743,11 @@ unworklet exposes two integration layers for reusable DSP authored as either use
 A plain TypeScript function over `Node<T>` values. Inlined into the parent processor at compile time, so there is no per-call overhead.
 
 ```typescript
-function softclip(x: Node<'f32'>): Node<'f32'> {
+function softclip(x: Node<"f32">): Node<"f32"> {
   return tanh(mul(x, 1.5));
 }
 
-function lerp(a: Node<'f32'>, b: Node<'f32'>, t: Node<'f32'>): Node<'f32'> {
+function lerp(a: Node<"f32">, b: Node<"f32">, t: Node<"f32">): Node<"f32"> {
   return add(a, mul(sub(b, a), t));
 }
 ```
@@ -791,11 +812,7 @@ L1 helpers can receive:
 The caller-owned `State<T>` form lets a parent processor own state and delegate per-sample logic to a shared helper:
 
 ```typescript
-function smoothFollow(
-  x: Node<'f32'>,
-  prev: State<'f32'>,
-  alpha: Node<'f32'>
-): Node<'f32'> {
+function smoothFollow(x: Node<"f32">, prev: State<"f32">, alpha: Node<"f32">): Node<"f32"> {
   const y = add(prev.load(), mul(alpha, sub(x, prev.load())));
   prev.store(y);
   return y;
@@ -807,12 +824,12 @@ A helper that needs to access an `audioInput` or `param` directly takes the samp
 ```typescript
 function envelopeFollow(
   src: AudioInputHandle<2>,
-  i:   Node<'i32'>,
-  prev: State<'f32'>,
-  alpha: Node<'f32'>,
-): Node<'f32'> {
+  i: Node<"i32">,
+  prev: State<"f32">,
+  alpha: Node<"f32">,
+): Node<"f32"> {
   const peak = src.left.at(i).abs().max(src.right.at(i).abs());
-  const y    = add(prev.load(), mul(alpha, sub(peak, prev.load())));
+  const y = add(prev.load(), mul(alpha, sub(peak, prev.load())));
   prev.store(y);
   return y;
 }
@@ -827,17 +844,20 @@ forSample((i) => {
 A pure-arithmetic helper (no audio I/O / param access) takes no `i` parameter and is callable from any expression scope:
 
 ```typescript
-function softclip(x: Node<'f32'>): Node<'f32'> {
+function softclip(x: Node<"f32">): Node<"f32"> {
   return tanh(mul(x, 1.5));
 }
 
 // Callable from per-block top level (e.g., on a state-load value):
 const lastPeak = peakState.load();
-const clipped  = softclip(lastPeak);
+const clipped = softclip(lastPeak);
 
 // Callable from inside forSample on per-sample values:
 forSample((i) => {
-  audioOut.ch(0).at(i).write(softclip(audioIn.ch(0).at(i)));
+  audioOut
+    .ch(0)
+    .at(i)
+    .write(softclip(audioIn.ch(0).at(i)));
 });
 ```
 
@@ -859,12 +879,12 @@ Each returned `Node` is captured as an independent terminal in the parent graph;
 Helpers may be generic over precision via TypeScript generics:
 
 ```typescript
-function softclip<P extends 'f32' | 'f64'>(x: Node<P>): Node<P> {
+function softclip<P extends "f32" | "f64">(x: Node<P>): Node<P> {
   return tanh(mul(x, 1.5));
 }
 
-const y32 = softclip(f32node);  // P = 'f32', returns Node<'f32'>
-const y64 = softclip(f64node);  // P = 'f64', returns Node<'f64'>
+const y32 = softclip(f32node); // P = 'f32', returns Node<'f32'>
+const y64 = softclip(f64node); // P = 'f64', returns Node<'f64'>
 ```
 
 The Q1 "no implicit widening" rule still applies inside the body: mixed-precision operands within a generic body produce a TypeScript type error at the call site or the definition.
@@ -911,14 +931,14 @@ L2 subgraphs are reusable, stateful DSP blocks defined with `defineSubgraph`. Ea
 A subgraph body has the same two-scope structure as `defineProcessor`: a **declaration scope** at the top of the body and **expression scope** inside each method. The `defineSubgraph` lambda returns a record whose keys are method names (author-free) and whose values are method lambdas:
 
 ```typescript
-const onepole = defineSubgraph((coef: Node<'f32'>) => {
+const onepole = defineSubgraph((coef: Node<"f32">) => {
   // ━━━ Declaration scope ━━━
   // Per-instantiation state slots; lambda arguments (here `coef`) are bound at instance
   // creation time and shared across all methods.
   const z = state.f32(0);
 
   return {
-    process: (input: Node<'f32'>) => {
+    process: (input: Node<"f32">) => {
       // ━━━ Expression scope (per method) ━━━
       // Method arguments (here `input`) are passed per-call.
       const y = add(z.load(), mul(coef, sub(input, z.load())));
@@ -934,15 +954,19 @@ Method record keys are author-free (`process`, `tick`, `render`, `compute`, `set
 ```typescript
 const oscillator = defineSubgraph((sr: number) => {
   const phase = state.f32(0);
-  const freq  = state.f32(440);
+  const freq = state.f32(440);
   return {
-    setFrequency: (hz: Node<'f32'>) => { freq.store(hz); },
+    setFrequency: (hz: Node<"f32">) => {
+      freq.store(hz);
+    },
     tick: () => {
       const inc = div(freq.load(), sr);
       phase.store(add(phase.load(), inc));
       return sin(mul(phase.load(), 2 * Math.PI));
     },
-    reset: () => { phase.store(0); },
+    reset: () => {
+      phase.store(0);
+    },
   };
 });
 ```
@@ -960,10 +984,10 @@ Parent processors instantiate subgraphs through the free function `createSubgrap
 (The exact TypeScript signature — generic-parameter binding for the return record, rest-args inference, etc. — is impl-level detail that lives in the emitted `.d.ts`; see `decisions-log.md` Q53.)
 
 ```typescript
-const lpf = createSubgraph(onepole, 0.5);          // coef = 0.5 bound at instance creation; no options
+const lpf = createSubgraph(onepole, 0.5); // coef = 0.5 bound at instance creation; no options
 
 forSample((i) => {
-  const y = lpf.process(audioIn.ch(0).at(i));      // input passed per call
+  const y = lpf.process(audioIn.ch(0).at(i)); // input passed per call
   audioOut.ch(0).at(i).write(y);
 });
 
@@ -980,8 +1004,8 @@ forSample((i) => {
 });
 
 // With `name` (required when the subgraph carries persistent state and the processor takes snapshots — see §8.1):
-const filterL = createSubgraph(filterCore, ctx.sampleRate, { name: 'filterL' });
-const filterR = createSubgraph(filterCore, ctx.sampleRate, { name: 'filterR' });
+const filterL = createSubgraph(filterCore, ctx.sampleRate, { name: "filterL" });
+const filterR = createSubgraph(filterCore, ctx.sampleRate, { name: "filterR" });
 ```
 
 `createSubgraph(...)` performs state slot allocation. **The returned value is the subgraph body's return record itself** (= the author-named methods declared by `defineSubgraph`'s body), not a wrapper around it (Q54). Callers can invoke those methods from any expression context (§5.6.4) and pass the value to L1 helpers using TypeScript's standard `ReturnType<typeof someSubgraph>` inference where a type annotation is needed.
@@ -1010,22 +1034,22 @@ The methods on the returned instance, however, can be called from **any expressi
 ```typescript
 const osc = createSubgraph(oscillator, ctx.sampleRate);
 
-midi.onEvent('noteOn', ({ note }) => {
-  osc.setFrequency(noteToHz(note));     // OK (handler context)
+midi.onEvent("noteOn", ({ note }) => {
+  osc.setFrequency(noteToHz(note)); // OK (handler context)
 });
 
 reqReset.onReceive(() => {
-  osc.reset();                           // OK (handler context)
+  osc.reset(); // OK (handler context)
 });
 
 forSample((i) => {
-  const y = osc.tick();                  // OK (forSample context)
+  const y = osc.tick(); // OK (forSample context)
   audioOut.ch(0).at(i).write(y);
 });
 
 return {
   process: () => {
-    const blockY = osc.tick();           // OK (per-block top level)
+    const blockY = osc.tick(); // OK (per-block top level)
     // ...
   },
 };
@@ -1035,9 +1059,9 @@ Conditional output between configurations is expressed by instantiating both and
 
 ```typescript
 const myProcessor = defineProcessor((ctx) => {
-  const input = audioInput ({ channels: 1, name: 'main' });
-  const out  = audioOutput({ channels: 1, name: 'main' });
-  const useA = param.f32({ default: 1, min: 0, max: 1, automationRate: 'k-rate' }).named('useA');
+  const input = audioInput({ channels: 1, name: "main" });
+  const out = audioOutput({ channels: 1, name: "main" });
+  const useA = param.f32({ default: 1, min: 0, max: 1, automationRate: "k-rate" }).named("useA");
 
   // Two filter instances, each with independent state.
   const lpfA = createSubgraph(onepole, coefA);
@@ -1048,7 +1072,10 @@ const myProcessor = defineProcessor((ctx) => {
       forSample((i) => {
         const x = input.ch(0).at(i);
         // useA is k-rate 0|1; compare to 1 to get a Node<'bool'> for select.
-        out.ch(0).at(i).write(select(useA.at(i).eq(1), lpfA.process(x), lpfB.process(x)));
+        out
+          .ch(0)
+          .at(i)
+          .write(select(useA.at(i).eq(1), lpfA.process(x), lpfB.process(x)));
         // Both instances evaluate every sample; select chooses one.
       });
     },
@@ -1085,13 +1112,13 @@ unworklet exposes WASM SIMD as a separate, opt-in surface via the import path `@
 
 ```typescript
 // Scalar-only author — never imports SIMD
-import { defineProcessor, state, add, mul } from '@unworklet/core';
+import { defineProcessor, state, add, mul } from "@unworklet/core";
 
 // SIMD-using author — separate import path
 // vec4 / splat / addVec / mulVec / subVec / divVec / sumLanes are free functions.
 // Lane access (`vec.lane(i)`) and SIMD buffer access (`buf.loadVec` / `buf.storeVec`)
 // are methods on the value/handle, not free functions.
-import { vec4, splat, addVec, mulVec, sumLanes } from '@unworklet/core/simd';
+import { vec4, splat, addVec, mulVec, sumLanes } from "@unworklet/core/simd";
 ```
 
 ### 7.2 v1.0.0 surface (Minimal MVP)
@@ -1115,7 +1142,10 @@ Each is also callable as a method on the `Node<'f32x4'>` value (Q77 hybrid polic
 
 ```typescript
 // chain (= input flow line):
-const out = scratch.loadVec(i).mul(splat(gain.at(0))).add(splat(bias));
+const out = scratch
+  .loadVec(i)
+  .mul(splat(gain.at(0)))
+  .add(splat(bias));
 
 // free function (= equivalent, used when chain start is awkward):
 addVec(mulVec(scratch.loadVec(i), splat(gain.at(0))), splat(bias));
@@ -1127,11 +1157,11 @@ Lane extraction and the arithmetic methods all live on the vec value:
 
 ```typescript
 type Vec4Methods = {
-  lane(i: 0 | 1 | 2 | 3): Node<'f32'>;
-  add(other: Node<'f32x4'>): Node<'f32x4'>;
-  sub(other: Node<'f32x4'>): Node<'f32x4'>;
-  mul(other: Node<'f32x4'>): Node<'f32x4'>;
-  div(other: Node<'f32x4'>): Node<'f32x4'>;
+  lane(i: 0 | 1 | 2 | 3): Node<"f32">;
+  add(other: Node<"f32x4">): Node<"f32x4">;
+  sub(other: Node<"f32x4">): Node<"f32x4">;
+  mul(other: Node<"f32x4">): Node<"f32x4">;
+  div(other: Node<"f32x4">): Node<"f32x4">;
 };
 ```
 
@@ -1151,8 +1181,8 @@ SIMD memory access is performed via methods on the `Buffer<'f32'>` handle (see �
 
 ```typescript
 type BufferSimdMethods = {
-  loadVec(offset: Node<'i32'>): Node<'f32x4'>;
-  storeVec(offset: Node<'i32'>, value: Node<'f32x4'>): void;
+  loadVec(offset: Node<"i32">): Node<"f32x4">;
+  storeVec(offset: Node<"i32">, value: Node<"f32x4">): void;
 };
 ```
 
@@ -1181,12 +1211,12 @@ L1 helpers can be precision-generic over scalar precisions (§5.5.4) but **not**
 
 ```typescript
 // Scalar version — visible to @unworklet/core users only
-function softclip(x: Node<'f32'>): Node<'f32'> {
+function softclip(x: Node<"f32">): Node<"f32"> {
   return tanh(mul(x, 1.5));
 }
 
 // Vec version — visible to @unworklet/core/simd users only
-function gainVec(x: Node<'f32x4'>, g: Node<'f32'>): Node<'f32x4'> {
+function gainVec(x: Node<"f32x4">, g: Node<"f32">): Node<"f32x4"> {
   return mulVec(x, splat(g));
 }
 ```
@@ -1198,14 +1228,23 @@ The duplication is intentional: it keeps the scalar API surface untouched and si
 The canonical 4-sample-wide bulk pattern uses `forSample.byN(4, ...)` plus the buffer's `.loadVec` / `.storeVec` methods:
 
 ```typescript
-import { defineProcessor, audioInput, audioOutput, param, buffer, forSample } from '@unworklet/core';
-import { mulVec, splat } from '@unworklet/core/simd';
+import {
+  defineProcessor,
+  audioInput,
+  audioOutput,
+  param,
+  buffer,
+  forSample,
+} from "@unworklet/core";
+import { mulVec, splat } from "@unworklet/core/simd";
 
 export const simdGain = defineProcessor((ctx) => {
-  const input = audioInput ({ channels: 1, name: 'main' });
-  const out  = audioOutput({ channels: 1, name: 'main' });
+  const input = audioInput({ channels: 1, name: "main" });
+  const out = audioOutput({ channels: 1, name: "main" });
   const scratch = buffer.f32({ size: SAMPLES_PER_BLOCK });
-  const gain    = param.f32({ default: 1.0, min: 0.0, max: 4.0, automationRate: 'k-rate' }).named('gain');
+  const gain = param
+    .f32({ default: 1.0, min: 0.0, max: 4.0, automationRate: "k-rate" })
+    .named("gain");
 
   return {
     process: () => {
@@ -1242,10 +1281,10 @@ The `name` field on a named factory is **required at the TypeScript level** — 
 **Subgraph instances** are named when the subgraph contains any named-factory slot and the parent processor reaches it. The instance `name` becomes the snapshot path prefix:
 
 ```typescript
-const onepole = defineSubgraph((coef: Node<'f32'>) => {
-  const z = state.f32(0).named('z');                  // named — contributes to parent's snapshot when reached
+const onepole = defineSubgraph((coef: Node<"f32">) => {
+  const z = state.f32(0).named("z"); // named — contributes to parent's snapshot when reached
   return {
-    process: (input: Node<'f32'>) => {
+    process: (input: Node<"f32">) => {
       const y = input.sub(z.load()).mul(coef).add(z.load());
       z.store(y);
       return y;
@@ -1253,10 +1292,10 @@ const onepole = defineSubgraph((coef: Node<'f32'>) => {
   };
 });
 
-const trivialOnepole = defineSubgraph((coef: Node<'f32'>) => {
-  const z = state.f32(0);                              // plain — worklet-private, never in snapshot
+const trivialOnepole = defineSubgraph((coef: Node<"f32">) => {
+  const z = state.f32(0); // plain — worklet-private, never in snapshot
   return {
-    process: (input: Node<'f32'>) => {
+    process: (input: Node<"f32">) => {
       const y = input.sub(z.load()).mul(coef).add(z.load());
       z.store(y);
       return y;
@@ -1266,11 +1305,11 @@ const trivialOnepole = defineSubgraph((coef: Node<'f32'>) => {
 
 const synth = defineProcessor((ctx) => {
   // Subgraph has a named slot → instance `name` required, contributes 'lpfL/z' / 'lpfR/z' to snapshot.
-  const lpfL = createSubgraph(onepole, cutoff, { name: 'lpfL' });
-  const lpfR = createSubgraph(onepole, cutoff, { name: 'lpfR' });
+  const lpfL = createSubgraph(onepole, cutoff, { name: "lpfL" });
+  const lpfR = createSubgraph(onepole, cutoff, { name: "lpfR" });
 
   // Subgraph has only plain slots → instance `name` optional, no snapshot contribution.
-  const pre  = createSubgraph(trivialOnepole, dcBlocker);
+  const pre = createSubgraph(trivialOnepole, dcBlocker);
 });
 ```
 
@@ -1293,34 +1332,41 @@ Profile names are user-defined — `'preset'` and `'session'` are conventional e
 Schema changes between versions of a published processor (slot rename, type widening, buffer resize, profile rename, etc.) are handled by a chain of `migrations`. The framework walks the chain to bridge the blob's source schema to the current schema; the developer writes adjacent `from → to` steps only.
 
 ```typescript
-const synth = defineProcessor((ctx) => {
-  // ...declarations...
+const synth = defineProcessor(
+  (ctx) => {
+    // ...declarations...
 
-  return { process: () => { /* ... */ } };
-}, {
-  migrations: [
-    {
-      from: 'a3f2c1d0...',         // schema hash before this migration
-      to:   'b8c14fe2...',         // schema hash after this migration
-      migrate: (oldBlob, helpers) => {
-        // rename: 'lpfZ1' → 'lpfPoleZ1'
-        const v = helpers.parseSlot(oldBlob, 'lpfZ1', 'f32');
-        if (v !== undefined) helpers.writeSlot('lpfPoleZ1', 'f32', v);
+    return {
+      process: () => {
+        /* ... */
       },
-    },
-    {
-      from: 'b8c14fe2...',
-      to:   'd7e3a991...',
-      migrate: (oldBlob, helpers) => {
-        // resize delay buffer 44100 → 88200, copy old content into prefix
-        const old = helpers.parseBuffer(oldBlob, 'delayLine', 'f32');
-        const fresh = new Float32Array(88200);
-        if (old) fresh.set(old.subarray(0, Math.min(old.length, fresh.length)));
-        helpers.writeBuffer('delayLine', 'f32', fresh);
+    };
+  },
+  {
+    migrations: [
+      {
+        from: "a3f2c1d0...", // schema hash before this migration
+        to: "b8c14fe2...", // schema hash after this migration
+        migrate: (oldBlob, helpers) => {
+          // rename: 'lpfZ1' → 'lpfPoleZ1'
+          const v = helpers.parseSlot(oldBlob, "lpfZ1", "f32");
+          if (v !== undefined) helpers.writeSlot("lpfPoleZ1", "f32", v);
+        },
       },
-    },
-  ],
-});
+      {
+        from: "b8c14fe2...",
+        to: "d7e3a991...",
+        migrate: (oldBlob, helpers) => {
+          // resize delay buffer 44100 → 88200, copy old content into prefix
+          const old = helpers.parseBuffer(oldBlob, "delayLine", "f32");
+          const fresh = new Float32Array(88200);
+          if (old) fresh.set(old.subarray(0, Math.min(old.length, fresh.length)));
+          helpers.writeBuffer("delayLine", "f32", fresh);
+        },
+      },
+    ],
+  },
+);
 ```
 
 The migration array lives on the **processor's options bag** (the second argument to `defineProcessor`), not in the declaration body — this keeps the processor body focused on the live runtime graph and isolates schema-evolution concerns from per-block / per-sample logic. Each entry's `from` and `to` are schema hashes emitted by `@unworklet/vite-plugin` into `dist/<processor>.schema-hash.json` (per-processor artifact; authoritative shape in `07-vite-plugin.md` §6.3). The framework constructs a directed graph from the entries and finds the path `blob.schemaHash → currentSchemaHash`; entries are applied in order, with each step's output hash verified against its declared `to`.
@@ -1330,23 +1376,41 @@ The migration array lives on the **processor's options bag** (the second argumen
 ```typescript
 type MigrationHelpers = {
   // Read from old blob.
-  parseSlot:   <T extends ScalarType>(blob: Uint8Array, name: string, type: T) => ScalarOf<T> | undefined;
-  parseBuffer: <T extends ScalarType>(blob: Uint8Array, name: string, type: T) => TypedArrayOf<T> | undefined;
-  parseParam:  (blob: Uint8Array, name: string) => number | undefined;
+  parseSlot: <T extends ScalarType>(
+    blob: Uint8Array,
+    name: string,
+    type: T,
+  ) => ScalarOf<T> | undefined;
+  parseBuffer: <T extends ScalarType>(
+    blob: Uint8Array,
+    name: string,
+    type: T,
+  ) => TypedArrayOf<T> | undefined;
+  parseParam: (blob: Uint8Array, name: string) => number | undefined;
 
   // Profile-scoped read (used when migrating across profile renames).
-  parseSlotInProfile: <T extends ScalarType>(blob: Uint8Array, name: string, type: T, profile: string) => ScalarOf<T> | undefined;
+  parseSlotInProfile: <T extends ScalarType>(
+    blob: Uint8Array,
+    name: string,
+    type: T,
+    profile: string,
+  ) => ScalarOf<T> | undefined;
 
   // Write into the migration's output blob (= new schema's slot layout).
-  writeSlot:   <T extends ScalarType>(name: string, type: T, value: ScalarOf<T>) => void;
+  writeSlot: <T extends ScalarType>(name: string, type: T, value: ScalarOf<T>) => void;
   writeBuffer: <T extends ScalarType>(name: string, type: T, data: TypedArrayOf<T>) => void;
-  writeParam:  (name: string, value: number) => void;
+  writeParam: (name: string, value: number) => void;
 
   // Profile-scoped write.
-  writeSlotInProfile: <T extends ScalarType>(name: string, type: T, value: ScalarOf<T>, profile: string) => void;
+  writeSlotInProfile: <T extends ScalarType>(
+    name: string,
+    type: T,
+    value: ScalarOf<T>,
+    profile: string,
+  ) => void;
 
   // Metadata about the input blob.
-  oldSchemaHash:  string;
+  oldSchemaHash: string;
   oldProfileName: string | null;
 };
 ```
@@ -1391,11 +1455,11 @@ Some processor-internal computations (LFO, envelope, FFT, modulation matrix, etc
 
 ```typescript
 const synth = defineProcessor((ctx) => {
-  const lfoVal  = state.f32(0);
-  const fftMag  = state.f32(0);
-  const inBuf   = buffer.f32({ size: 1024 });
-  const audioIn = audioInput({ channels: 1, name: 'main' });
-  const out     = audioOutput({ channels: 1, name: 'main' });
+  const lfoVal = state.f32(0);
+  const fftMag = state.f32(0);
+  const inBuf = buffer.f32({ size: 1024 });
+  const audioIn = audioInput({ channels: 1, name: "main" });
+  const out = audioOutput({ channels: 1, name: "main" });
 
   return {
     process: () => {
@@ -1413,7 +1477,10 @@ const synth = defineProcessor((ctx) => {
 
         // Audio-rate output uses held values from sub-rate slots.
         const sample = audioIn.ch(0).at(i);
-        out.ch(0).at(i).write(applyFilter(sample, lfoVal.load(), fftMag.load()));
+        out
+          .ch(0)
+          .at(i)
+          .write(applyFilter(sample, lfoVal.load(), fftMag.load()));
       });
     },
   };
@@ -1422,7 +1489,7 @@ const synth = defineProcessor((ctx) => {
 
 ### 9.1 Semantics
 
-- **Graph-capture-time meta primitive**: `everyNSamples` is *not* a runtime callback. The callback body is evaluated once during graph capture; the resulting graph nodes are recorded as belonging to the `N`-rate sub-block.
+- **Graph-capture-time meta primitive**: `everyNSamples` is _not_ a runtime callback. The callback body is evaluated once during graph capture; the resulting graph nodes are recorded as belonging to the `N`-rate sub-block.
 - **Compilation**: the sub-block compiles to a WASM branch keyed off an internal sample counter. On samples where `(counter % N) == 0`, the sub-block body executes; on other samples, it is skipped.
 - **State slots in the callback**: `state.<type>` slots written inside the callback hold their value between updates (zero-order hold). Reading them in the surrounding per-sample body (`slot.load()`) returns the most recent stored value.
 - **Scope by callback argument, not by separate context check (Q43)**: `everyNSamples` is in scope only inside a `forSample(...)` or `forSample.byN(...)` callback that takes it as the second parameter. Using the name outside such a callback (handler bodies, per-block top level, declaration scope) is a TypeScript reference error — no separate compiler context check is performed. The second argument is optional; callbacks take `(i) => ...` when sub-rate is not needed and `(i, everyNSamples) => ...` when it is.
@@ -1438,15 +1505,15 @@ A `forSample` callback can contain any number of `everyNSamples` blocks at any d
 ```typescript
 forSample((i, everyNSamples) => {
   everyNSamples(8, () => {
-    smoothing.store(/* ... */);     // 8-sample rate
+    smoothing.store(/* ... */); // 8-sample rate
   });
   everyNSamples(48, () => {
-    lfo.store(/* ... */);           // 48-sample rate (1 ms)
+    lfo.store(/* ... */); // 48-sample rate (1 ms)
   });
   everyNSamples(256, () => {
-    fftMag.store(/* ... */);        // 256-sample rate
+    fftMag.store(/* ... */); // 256-sample rate
   });
-  out.ch(0).at(i).write(/* audio rate */);  // every sample
+  out.ch(0).at(i).write(/* audio rate */); // every sample
 });
 ```
 
@@ -1624,10 +1691,10 @@ def.worklet = {
 ### 11.2 Canonical extends shape
 
 ```typescript
-import { defineProcessor, audioOutput, forSample, num } from '@unworklet/core';
+import { defineProcessor, audioOutput, forSample, num } from "@unworklet/core";
 
 export const polySynth = defineProcessor((ctx) => {
-  const out = audioOutput({ channels: 2, name: 'main' });
+  const out = audioOutput({ channels: 2, name: "main" });
   return {
     process: () => {
       forSample((i) => {
@@ -1642,7 +1709,9 @@ export const polySynth = defineProcessor((ctx) => {
 const { initialize, process: runWasm, parameterDescriptors } = polySynth.worklet;
 
 class PolySynthWithSidecar extends AudioWorkletProcessor {
-  static get parameterDescriptors() { return parameterDescriptors; }
+  static get parameterDescriptors() {
+    return parameterDescriptors;
+  }
 
   constructor(opts) {
     super();
@@ -1656,7 +1725,7 @@ class PolySynthWithSidecar extends AudioWorkletProcessor {
   }
 }
 
-registerProcessor('polySynth-with-sidecar', PolySynthWithSidecar);
+registerProcessor("polySynth-with-sidecar", PolySynthWithSidecar);
 ```
 
 `super()` is called with no argument — `AudioWorkletProcessor`'s base constructor does not consume `processorOptions`; unworklet's per-instance binding is performed by `initialize(this, opts)`.

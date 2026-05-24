@@ -61,7 +61,7 @@ unworklet `docs/open-questions.md` の 個別 entry を 1 件 ずつ 軸 で 判
 
 ### Phase 3b: 自律 entry close (= e hit)
 
-docs/*.md は 触らない。 仕様 invariant が 動いて いない こと を 前提 と し、 form 細部 を 実装 期 任せ と して entry を 閉じる。
+docs/\*.md は 触らない。 仕様 invariant が 動いて いない こと を 前提 と し、 form 細部 を 実装 期 任せ と して entry を 閉じる。
 
 1. `docs/open-questions.md` から 該当 entry を 削除、 統計 行 + section 件数 を 更新
 2. `docs/decisions-log.md` に 新 Q を 1 行 追記 (= 「実装 AI 領域 と して close、 仕様 invariant 動か ず」)

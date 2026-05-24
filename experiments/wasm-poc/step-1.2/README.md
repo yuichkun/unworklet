@@ -46,11 +46,11 @@ Step 1.1 か ら の 変 更:
 
 Step 1.1 と 重 複 す る token (= `module`, `type`, `func`, `result`, `export`, `i32`) は 省 略、 新 出 の み:
 
-| token | 種 別 | 説 明 |
-|---|---|---|
-| `param` | WASM keyword (= 不 変) | function の parameter declare 内 keyword |
-| `local.get` | WASM instruction (= 不 変) | local (= param + local var 共 通 indexing) を 引 い て stack に push す る opcode |
-| `$0` (= function 内 の) | **任 意 (= binaryen 自 動 採 番)** | local id、 param が 0 番 目 か ら 採 番 + そ の 後 local var が 続 く |
+| token                   | 種 別                              | 説 明                                                                             |
+| ----------------------- | ---------------------------------- | --------------------------------------------------------------------------------- |
+| `param`                 | WASM keyword (= 不 変)             | function の parameter declare 内 keyword                                          |
+| `local.get`             | WASM instruction (= 不 変)         | local (= param + local var 共 通 indexing) を 引 い て stack に push す る opcode |
+| `$0` (= function 内 の) | **任 意 (= binaryen 自 動 採 番)** | local id、 param が 0 番 目 か ら 採 番 + そ の 後 local var が 続 く             |
 
 **注 意**: function 内 の `$0` は Step 1.1 の type-id `$0` と は **別 物**:
 
@@ -77,17 +77,17 @@ step 1.2 = param 1 個 + local 0 個 = index 0 だ け 有 効、 `local.get 0` 
 ```typescript
 mod.addFunction(
   "passthrough",
-  binaryen.i32,                    // param types = i32 (= 1 個)
-  binaryen.i32,                    // result type
-  [],                              // local types = ナ シ
-  mod.local.get(0, binaryen.i32),  // body = local.get 0
+  binaryen.i32, // param types = i32 (= 1 個)
+  binaryen.i32, // result type
+  [], // local types = ナ シ
+  mod.local.get(0, binaryen.i32), // body = local.get 0
 );
 ```
 
-| build.ts | .wat 出 力 |
-|---|---|
+| build.ts                                          | .wat 出 力                                                            |
+| ------------------------------------------------- | --------------------------------------------------------------------- |
 | `addFunction(name, binaryen.i32, ...)` 第 2 引 数 | type section + func section の param declare に 反 映 = `(param i32)` |
-| `mod.local.get(0, binaryen.i32)` | func body = `(local.get $0)` |
+| `mod.local.get(0, binaryen.i32)`                  | func body = `(local.get $0)`                                          |
 
 `mod.local.get(index, type)` の 2 引 数:
 

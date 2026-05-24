@@ -81,16 +81,16 @@ f32.mul            →     stack: [ 1.0    ] (= 2.0 × 0.5); 2 個 pop + 乗 算
 
 ```typescript
 mod.f32.mul(
-  mod.local.get(0, binaryen.f32),               // operand 1
-  mod.f32.load(0, 4, mod.i32.const(0)),         // operand 2 (= nested)
+  mod.local.get(0, binaryen.f32), // operand 1
+  mod.f32.load(0, 4, mod.i32.const(0)), // operand 2 (= nested)
 );
 ```
 
-| build.ts | .wat 出 力 |
-|---|---|
-| `mod.f32.mul(opA, opB)` | `(f32.mul <opA-emit> <opB-emit>)` |
-| `mod.local.get(0, binaryen.f32)` | `(local.get $0)` |
-| `mod.f32.load(0, 4, ptr)` | `(f32.load <ptr-emit>)` |
+| build.ts                         | .wat 出 力                        |
+| -------------------------------- | --------------------------------- |
+| `mod.f32.mul(opA, opB)`          | `(f32.mul <opA-emit> <opB-emit>)` |
+| `mod.local.get(0, binaryen.f32)` | `(local.get $0)`                  |
+| `mod.f32.load(0, 4, ptr)`        | `(f32.load <ptr-emit>)`           |
 
 binaryen の expression tree は **JS code 上 で 直 接 nest で 組 み 立 て る** = 後 続 phase で 複 雑 な expression (= 例: `mod.f32.add(mod.f32.mul(a, b), c)`) を 同 pattern で 拡 張 で きる。
 
@@ -100,9 +100,9 @@ binaryen の expression tree は **JS code 上 で 直 接 nest で 組 み 立 
 const { instance } = await WebAssembly.instantiate(wasm);
 const memory = instance.exports.memory as WebAssembly.Memory;
 const view = new Float32Array(memory.buffer);
-view[0] = 0.5;                                  // gain を 書 込
+view[0] = 0.5; // gain を 書 込
 const applyGain = instance.exports.applyGain as (s: number) => number;
-console.log(applyGain(2.0));                    // → 1.0
+console.log(applyGain(2.0)); // → 1.0
 ```
 
 - step 1.4 の memory view 操 作 + step 1.3 の WASM function 呼 び 出 し を 1 hit に combine

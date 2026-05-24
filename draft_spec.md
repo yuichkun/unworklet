@@ -30,14 +30,14 @@ Status: Design Specification
 
 `unworklet` is a TypeScript-first framework for building realtime audio DSP that runs inside the Web Audio API's `AudioWorkletGlobalScope`. Users write a single declarative processor definition in TypeScript; the framework handles everything else:
 
-* Generation of the `AudioWorkletProcessor` subclass and `registerProcessor` call
-* Compilation of the DSP graph to WebAssembly
-* Automatic `parameterDescriptors` derivation
-* Lock-free message passing in both directions
-* SharedArrayBuffer-backed bulk data transfer (when available)
-* Static memory layout with zero runtime allocation
-* Pre-warming and JIT tiering stabilization
-* Typed client-side API for the main thread
+- Generation of the `AudioWorkletProcessor` subclass and `registerProcessor` call
+- Compilation of the DSP graph to WebAssembly
+- Automatic `parameterDescriptors` derivation
+- Lock-free message passing in both directions
+- SharedArrayBuffer-backed bulk data transfer (when available)
+- Static memory layout with zero runtime allocation
+- Pre-warming and JIT tiering stabilization
+- Typed client-side API for the main thread
 
 The library exists because the rules of realtime audio programming (no allocation, no locks, no system calls, no unbounded loops on the audio thread) are difficult to enforce in JavaScript by convention alone. `unworklet` enforces them **by construction**: the user's DSP code is expressed through primitives that can only produce allocation-free WebAssembly.
 
@@ -55,23 +55,23 @@ The library exists because the rules of realtime audio programming (no allocatio
 
 ### Goals
 
-* **Zero Worklet boilerplate**: Users never write `extends AudioWorkletProcessor`, `registerProcessor`, `port.postMessage`, or `parameterDescriptors`.
-* **Realtime-safe by construction**: All compiled DSP paths are statically guaranteed to perform zero heap allocations, no GC-triggering operations, and no unbounded loops.
-* **TypeScript-native**: The full TypeScript type system applies to user code. IDE support, refactoring, and type inference work exactly as in any other TypeScript project.
-* **npm-ecosystem-compatible**: Build-time and test-time code can use any npm package. Runtime DSP code is restricted to unworklet primitives.
-* **Testable without browser**: A pure-JavaScript backend allows every processor to run under Vitest/Jest in Node.js.
-* **Multi-target compilation**: A single processor definition compiles to WebAssembly (production), pure JavaScript (testing), and optionally other targets (C, WAT, GraphViz) from the same source.
-* **Typed bidirectional messaging**: Main↔Worklet communication is statically typed end-to-end.
-* **Deterministic memory footprint**: Memory usage is known and bounded at compile time.
-* **Standards-only runtime**: Executes correctly in any spec-compliant Web Audio implementation.
+- **Zero Worklet boilerplate**: Users never write `extends AudioWorkletProcessor`, `registerProcessor`, `port.postMessage`, or `parameterDescriptors`.
+- **Realtime-safe by construction**: All compiled DSP paths are statically guaranteed to perform zero heap allocations, no GC-triggering operations, and no unbounded loops.
+- **TypeScript-native**: The full TypeScript type system applies to user code. IDE support, refactoring, and type inference work exactly as in any other TypeScript project.
+- **npm-ecosystem-compatible**: Build-time and test-time code can use any npm package. Runtime DSP code is restricted to unworklet primitives.
+- **Testable without browser**: A pure-JavaScript backend allows every processor to run under Vitest/Jest in Node.js.
+- **Multi-target compilation**: A single processor definition compiles to WebAssembly (production), pure JavaScript (testing), and optionally other targets (C, WAT, GraphViz) from the same source.
+- **Typed bidirectional messaging**: Main↔Worklet communication is statically typed end-to-end.
+- **Deterministic memory footprint**: Memory usage is known and bounded at compile time.
+- **Standards-only runtime**: Executes correctly in any spec-compliant Web Audio implementation.
 
 ### Non-Goals
 
-* **Not a full DSP standard library**: unworklet provides primitive operators (`add`, `mul`, `sin`, `load`, `store`, `branch`). High-level constructs (`lowpass`, `reverb`, `adsr`) are distributed as separate, optional packages or user code.
-* **Not a Faust replacement**: unworklet targets JavaScript developers, not DSP language veterans. Faust's mathematical abstraction level is intentionally out of scope.
-* **Not an Elementary replacement**: Elementary is a runtime audio graph engine; unworklet is a compilation framework. The two are complementary, not competitive.
-* **Not a replacement for hand-written WASM**: Users who need cutting-edge optimization should write WASM directly. unworklet targets the 90% case.
-* **Not a music-making framework**: unworklet is the DSP layer. Higher-level concerns (sequencing, MIDI, song structure) are application-level.
+- **Not a full DSP standard library**: unworklet provides primitive operators (`add`, `mul`, `sin`, `load`, `store`, `branch`). High-level constructs (`lowpass`, `reverb`, `adsr`) are distributed as separate, optional packages or user code.
+- **Not a Faust replacement**: unworklet targets JavaScript developers, not DSP language veterans. Faust's mathematical abstraction level is intentionally out of scope.
+- **Not an Elementary replacement**: Elementary is a runtime audio graph engine; unworklet is a compilation framework. The two are complementary, not competitive.
+- **Not a replacement for hand-written WASM**: Users who need cutting-edge optimization should write WASM directly. unworklet targets the 90% case.
+- **Not a music-making framework**: unworklet is the DSP layer. Higher-level concerns (sequencing, MIDI, song structure) are application-level.
 
 ---
 
@@ -197,8 +197,8 @@ The `ctx` object provides runtime constants made available at compile time: `ctx
 
 ### 4.9 Two Execution Phases
 
-* **`process`**: Runs every audio block. Mapped to WASM. Hard realtime constraints apply. No allocation, no unbounded loops, no I/O.
-* **`publish`**: Runs on a separate scheduler (e.g., every 33ms). Reads state, emits events. Not realtime-critical. Compiled to plain JavaScript.
+- **`process`**: Runs every audio block. Mapped to WASM. Hard realtime constraints apply. No allocation, no unbounded loops, no I/O.
+- **`publish`**: Runs on a separate scheduler (e.g., every 33ms). Reads state, emits events. Not realtime-critical. Compiled to plain JavaScript.
 
 ---
 
@@ -244,41 +244,41 @@ function mod<T>(a: Node<T> | number, b: Node<T> | number): Node<T>;
 function neg<T>(a: Node<T>): Node<T>;
 
 // Comparison
-function eq<T>(a: Node<T>, b: Node<T> | number): Node<'bool'>;
-function lt<T>(a: Node<T>, b: Node<T> | number): Node<'bool'>;
-function gt<T>(a: Node<T>, b: Node<T> | number): Node<'bool'>;
-function lte<T>(a: Node<T>, b: Node<T> | number): Node<'bool'>;
-function gte<T>(a: Node<T>, b: Node<T> | number): Node<'bool'>;
+function eq<T>(a: Node<T>, b: Node<T> | number): Node<"bool">;
+function lt<T>(a: Node<T>, b: Node<T> | number): Node<"bool">;
+function gt<T>(a: Node<T>, b: Node<T> | number): Node<"bool">;
+function lte<T>(a: Node<T>, b: Node<T> | number): Node<"bool">;
+function gte<T>(a: Node<T>, b: Node<T> | number): Node<"bool">;
 
 // Math
-function sin(x: Node<'f32'> | number): Node<'f32'>;
-function cos(x: Node<'f32'> | number): Node<'f32'>;
-function tan(x: Node<'f32'> | number): Node<'f32'>;
-function tanh(x: Node<'f32'> | number): Node<'f32'>;
-function exp(x: Node<'f32'> | number): Node<'f32'>;
-function log(x: Node<'f32'> | number): Node<'f32'>;
-function sqrt(x: Node<'f32'> | number): Node<'f32'>;
+function sin(x: Node<"f32"> | number): Node<"f32">;
+function cos(x: Node<"f32"> | number): Node<"f32">;
+function tan(x: Node<"f32"> | number): Node<"f32">;
+function tanh(x: Node<"f32"> | number): Node<"f32">;
+function exp(x: Node<"f32"> | number): Node<"f32">;
+function log(x: Node<"f32"> | number): Node<"f32">;
+function sqrt(x: Node<"f32"> | number): Node<"f32">;
 function abs<T>(x: Node<T>): Node<T>;
-function floor(x: Node<'f32'>): Node<'f32'>;
-function ceil(x: Node<'f32'>): Node<'f32'>;
-function frac(x: Node<'f32'>): Node<'f32'>;
+function floor(x: Node<"f32">): Node<"f32">;
+function ceil(x: Node<"f32">): Node<"f32">;
+function frac(x: Node<"f32">): Node<"f32">;
 function min<T>(a: Node<T>, b: Node<T> | number): Node<T>;
 function max<T>(a: Node<T>, b: Node<T> | number): Node<T>;
 function clamp<T>(x: Node<T>, lo: Node<T> | number, hi: Node<T> | number): Node<T>;
 
 // Control flow
-function select<T>(cond: Node<'bool'>, whenTrue: Node<T>, whenFalse: Node<T>): Node<T>;
+function select<T>(cond: Node<"bool">, whenTrue: Node<T>, whenFalse: Node<T>): Node<T>;
 
 // Memory
 function load<T>(ref: StateRef<T>): Node<T>;
 function store<T>(ref: StateRef<T>, value: Node<T>): void;
-function readBuffer<T>(buf: BufferRef<T>, index: Node<'i32'>): Node<T>;
-function writeBuffer<T>(buf: BufferRef<T>, index: Node<'i32'>, value: Node<T>): void;
-function readBufferInterpolated(buf: BufferRef<'f32'>, pos: Node<'f32'>): Node<'f32'>;
+function readBuffer<T>(buf: BufferRef<T>, index: Node<"i32">): Node<T>;
+function writeBuffer<T>(buf: BufferRef<T>, index: Node<"i32">, value: Node<T>): void;
+function readBufferInterpolated(buf: BufferRef<"f32">, pos: Node<"f32">): Node<"f32">;
 
 // Type conversion
-function f32(x: Node<any> | number): Node<'f32'>;
-function i32(x: Node<any> | number): Node<'i32'>;
+function f32(x: Node<any> | number): Node<"f32">;
+function i32(x: Node<any> | number): Node<"i32">;
 ```
 
 ### 5.3 `@unworklet/client`
@@ -292,11 +292,11 @@ function createNode<C extends ProcessorConfig>(
     numberOfInputs?: number;
     numberOfOutputs?: number;
     outputChannelCount?: number[];
-  }
+  },
 ): Promise<UnworkletNode<C>>;
 
 interface UnworkletNode<C> {
-  node: AudioWorkletNode;  // Raw node for advanced connection
+  node: AudioWorkletNode; // Raw node for advanced connection
   params: TypedParamAccessors<C>;
   messages: TypedMessageSenders<C>;
   events: TypedEventEmitters<C>;
@@ -317,7 +317,7 @@ function renderOffline<C>(
     paramAutomation?: ParamAutomation<C>;
     input?: (sampleIndex: number) => number[];
     messages?: Array<{ at: number; send: MessageName<C>; payload?: any }>;
-  }
+  },
 ): Promise<{
   output: Float32Array[];
   events: Array<{ at: number; name: string; payload: any }>;
@@ -337,37 +337,60 @@ function renderOffline<C>(
 
 ```typescript
 import {
-  defineProcessor, audioInput, audioOutput,
-  param, state, buffer, message, event,
-} from '@unworklet/core';
+  defineProcessor,
+  audioInput,
+  audioOutput,
+  param,
+  state,
+  buffer,
+  message,
+  event,
+} from "@unworklet/core";
 import {
-  add, sub, mul, mod, abs, max,
-  readBufferInterpolated, writeBuffer, select, eq,
-} from '@unworklet/dsp';
+  add,
+  sub,
+  mul,
+  mod,
+  abs,
+  max,
+  readBufferInterpolated,
+  writeBuffer,
+  select,
+  eq,
+} from "@unworklet/dsp";
 
 export default defineProcessor({
-  name: 'StereoDelay',
-  version: '1.0.0',
+  name: "StereoDelay",
+  version: "1.0.0",
 
-  inputs:  { audio: audioInput({ channels: 2 }) },
+  inputs: { audio: audioInput({ channels: 2 }) },
   outputs: { audio: audioOutput({ channels: 2 }) },
 
   params: {
     delayTime: param({
-      default: 0.25, min: 0.001, max: 2.0,
-      unit: 'seconds', automationRate: 'a-rate',
+      default: 0.25,
+      min: 0.001,
+      max: 2.0,
+      unit: "seconds",
+      automationRate: "a-rate",
     }),
     feedback: param({
-      default: 0.4, min: 0, max: 0.95,
-      automationRate: 'a-rate',
+      default: 0.4,
+      min: 0,
+      max: 0.95,
+      automationRate: "a-rate",
     }),
     mix: param({
-      default: 0.3, min: 0, max: 1,
-      automationRate: 'a-rate',
+      default: 0.3,
+      min: 0,
+      max: 1,
+      automationRate: "a-rate",
     }),
     bypass: param({
-      default: 0, min: 0, max: 1,
-      automationRate: 'k-rate',
+      default: 0,
+      min: 0,
+      max: 1,
+      automationRate: "k-rate",
     }),
   },
 
@@ -375,23 +398,23 @@ export default defineProcessor({
 
   messages: {
     clear: message({}),
-    setPreset: message({ preset: 'u8' }),
+    setPreset: message({ preset: "u8" }),
   },
 
   events: {
-    peakLevel: event({ left: 'f32', right: 'f32' }),
+    peakLevel: event({ left: "f32", right: "f32" }),
   },
 
   process: ({ inputs, outputs, params, ctx }) => {
     const size = Math.ceil(ctx.sampleRate * 2.0);
-    const delayL = buffer.f32({ size, name: 'delayL' });
-    const delayR = buffer.f32({ size, name: 'delayR' });
+    const delayL = buffer.f32({ size, name: "delayL" });
+    const delayR = buffer.f32({ size, name: "delayR" });
     const writeIdx = state.i32(0);
     const peakL = state.f32(0);
     const peakR = state.f32(0);
 
     return ({ sample, i }) => {
-      sample.onMessage('clear', () => {
+      sample.onMessage("clear", () => {
         delayL.fill(0);
         delayR.fill(0);
         writeIdx.store(0);
@@ -406,10 +429,8 @@ export default defineProcessor({
       const dlyL = readBufferInterpolated(delayL, readPos);
       const dlyR = readBufferInterpolated(delayR, readPos);
 
-      writeBuffer(delayL, writeIdx.load(),
-        add(inL, mul(dlyL, params.feedback.at(i))));
-      writeBuffer(delayR, writeIdx.load(),
-        add(inR, mul(dlyR, params.feedback.at(i))));
+      writeBuffer(delayL, writeIdx.load(), add(inL, mul(dlyL, params.feedback.at(i))));
+      writeBuffer(delayR, writeIdx.load(), add(inR, mul(dlyR, params.feedback.at(i))));
 
       const m = params.mix.at(i);
       const outL = add(mul(inL, sub(1, m)), mul(dlyL, m));
@@ -428,7 +449,7 @@ export default defineProcessor({
   },
 
   publish: ({ state, emit, every }) => {
-    every(33, 'ms', () => {
+    every(33, "ms", () => {
       emit.peakLevel({
         left: state.peakL.load(),
         right: state.peakR.load(),
@@ -443,8 +464,8 @@ export default defineProcessor({
 `src/app.ts`:
 
 ```typescript
-import { createNode } from '@unworklet/client';
-import StereoDelay from './processor';
+import { createNode } from "@unworklet/client";
+import StereoDelay from "./processor";
 
 const ctx = new AudioContext({ sampleRate: 48000 });
 const delay = await createNode(ctx, StereoDelay, {
@@ -507,12 +528,12 @@ await delay.dispose();
 `tests/processor.test.ts`:
 
 ```typescript
-import { describe, it, expect } from 'vitest';
-import { renderOffline } from '@unworklet/test';
-import StereoDelay from '../src/processor';
+import { describe, it, expect } from "vitest";
+import { renderOffline } from "@unworklet/test";
+import StereoDelay from "../src/processor";
 
-describe('StereoDelay', () => {
-  it('delays impulse by delayTime seconds', async () => {
+describe("StereoDelay", () => {
+  it("delays impulse by delayTime seconds", async () => {
     const { output } = await renderOffline(StereoDelay, {
       sampleRate: 48000,
       duration: 0.5,
@@ -522,7 +543,7 @@ describe('StereoDelay', () => {
     expect(output[0][4800]).toBeCloseTo(1, 2);
   });
 
-  it('remains stable at max feedback', async () => {
+  it("remains stable at max feedback", async () => {
     const { peak, hasNaN } = await renderOffline(StereoDelay, {
       sampleRate: 48000,
       duration: 5.0,
@@ -533,13 +554,13 @@ describe('StereoDelay', () => {
     expect(hasNaN).toBe(false);
   });
 
-  it('responds to clear message', async () => {
+  it("responds to clear message", async () => {
     const { output } = await renderOffline(StereoDelay, {
       sampleRate: 48000,
       duration: 0.5,
       params: { feedback: 0.9, mix: 1.0, delayTime: 0.1 },
       input: (i) => (i < 100 ? [1, 1] : [0, 0]),
-      messages: [{ at: 0.25, send: 'clear' }],
+      messages: [{ at: 0.25, send: "clear" }],
     });
     const afterClear = Math.floor(48000 * 0.3);
     expect(Math.abs(output[0][afterClear])).toBeLessThan(0.01);
@@ -574,25 +595,25 @@ The user's `process` function is invoked once at compile time with proxy objects
 
 ### 7.2 Static Analysis Phase
 
-* **Allocation check**: Verify that the AST contains no expressions capable of heap allocation. This is enforced by construction (no primitives produce allocating code), but the analyzer validates the invariant.
-* **Loop boundedness**: All loops have statically-known iteration counts.
-* **Memory sizing**: Sum all `state` and `buffer` declarations. Emit as WASM linear memory initial size.
-* **Type inference**: Resolve all `Node<T>` types; verify consistency.
-* **Parameter reachability**: Warn on declared but unused parameters.
-* **Cycle estimation**: Estimate instruction count per sample based on operation weights.
+- **Allocation check**: Verify that the AST contains no expressions capable of heap allocation. This is enforced by construction (no primitives produce allocating code), but the analyzer validates the invariant.
+- **Loop boundedness**: All loops have statically-known iteration counts.
+- **Memory sizing**: Sum all `state` and `buffer` declarations. Emit as WASM linear memory initial size.
+- **Type inference**: Resolve all `Node<T>` types; verify consistency.
+- **Parameter reachability**: Warn on declared but unused parameters.
+- **Cycle estimation**: Estimate instruction count per sample based on operation weights.
 
 ### 7.3 WASM Emission Phase
 
 Uses `binaryen.js` (or a custom minimal emitter) to produce the WASM binary. Key properties:
 
-* Single exported function `process(blockPtr, paramPtrs, messagePtr) -> void`
-* Linear memory layout:
-  * `[0, M)`: State variables
-  * `[M, M+B)`: Declared buffers
-  * `[M+B, M+B+I)`: I/O scratch (input/output/param arrays)
-  * `[M+B+I, M+B+I+Q)`: Message/event queue areas
-* No `memory.grow` calls emitted
-* No imports other than math intrinsics (optional; can be inlined)
+- Single exported function `process(blockPtr, paramPtrs, messagePtr) -> void`
+- Linear memory layout:
+  - `[0, M)`: State variables
+  - `[M, M+B)`: Declared buffers
+  - `[M+B, M+B+I)`: I/O scratch (input/output/param arrays)
+  - `[M+B+I, M+B+I+Q)`: Message/event queue areas
+- No `memory.grow` calls emitted
+- No imports other than math intrinsics (optional; can be inlined)
 
 ### 7.4 Worklet JavaScript Emission
 
@@ -600,11 +621,17 @@ Emit a JavaScript file containing:
 
 ```javascript
 class GeneratedProcessor extends AudioWorkletProcessor {
-  constructor(options) { /* queue wiring, WASM instantiation */ }
-  static get parameterDescriptors() { /* from user declaration */ }
-  process(inputs, outputs, parameters) { /* marshal + call WASM */ }
+  constructor(options) {
+    /* queue wiring, WASM instantiation */
+  }
+  static get parameterDescriptors() {
+    /* from user declaration */
+  }
+  process(inputs, outputs, parameters) {
+    /* marshal + call WASM */
+  }
 }
-registerProcessor('StereoDelay', GeneratedProcessor);
+registerProcessor("StereoDelay", GeneratedProcessor);
 ```
 
 ### 7.5 Client Code Emission
@@ -622,11 +649,11 @@ Emit TypeScript declarations and runtime helpers so that `createNode(ctx, Stereo
 3. Client adds Worklet module via `ctx.audioWorklet.addModule(workletUrl)`.
 4. Client constructs `AudioWorkletNode` with `processorOptions` containing the WASM binary and (when cross-origin isolation is available) SAB handles.
 5. Worklet-side constructor:
-   * Instantiates WASM module.
-   * Initializes linear memory to zero.
-   * Allocates message/event queues (SAB-backed or postMessage-backed).
-   * Runs pre-warm loop (~1000 invocations of `process` with zero input).
-   * Sets "ready" state and signals main thread.
+   - Instantiates WASM module.
+   - Initializes linear memory to zero.
+   - Allocates message/event queues (SAB-backed or postMessage-backed).
+   - Runs pre-warm loop (~1000 invocations of `process` with zero input).
+   - Sets "ready" state and signals main thread.
 6. Client awaits readiness before resolving the `createNode` promise.
 
 ### 8.2 Per-Block Execution
@@ -652,21 +679,21 @@ Publishes run on the worklet-local scheduler. They:
 
 ### 8.4 Message Semantics
 
-* Messages are delivered **at block boundaries**, never mid-sample.
-* Multiple messages in one block are processed in arrival order.
-* Message payloads are fixed-size structures. Variable-length data must be delivered via SharedArrayBuffer reference (or via a pre-allocated transfer region when SAB is unavailable).
-* Message queue has fixed capacity; overflow is reported via `onError`.
+- Messages are delivered **at block boundaries**, never mid-sample.
+- Multiple messages in one block are processed in arrival order.
+- Message payloads are fixed-size structures. Variable-length data must be delivered via SharedArrayBuffer reference (or via a pre-allocated transfer region when SAB is unavailable).
+- Message queue has fixed capacity; overflow is reported via `onError`.
 
 ### 8.5 Event Semantics
 
-* Events are non-blocking; the worklet never waits for delivery.
-* Event queue has fixed capacity; overflow drops oldest events and reports via `onError`.
-* Event delivery is best-effort; not suitable for critical state synchronization.
+- Events are non-blocking; the worklet never waits for delivery.
+- Event queue has fixed capacity; overflow drops oldest events and reports via `onError`.
+- Event delivery is best-effort; not suitable for critical state synchronization.
 
 ### 8.6 Error Handling
 
-* WASM traps are caught by the worklet-side wrapper; processor outputs silence, emits error event, continues running.
-* Unrecoverable errors destroy the node; `onError` fires on main thread.
+- WASM traps are caught by the worklet-side wrapper; processor outputs silence, emits error event, continues running.
+- Unrecoverable errors destroy the node; `onError` fires on main thread.
 
 ---
 
@@ -676,10 +703,10 @@ Publishes run on the worklet-local scheduler. They:
 
 The same AST emitted for WASM can be interpreted in pure JavaScript. This enables:
 
-* Zero-build testing in Node.js.
-* Step-through debugging with standard DevTools.
-* Property-based testing with `fast-check` and similar libraries.
-* Cross-validation: the WASM and JS backends must produce bit-identical output for the same input (modulo documented floating-point differences).
+- Zero-build testing in Node.js.
+- Step-through debugging with standard DevTools.
+- Property-based testing with `fast-check` and similar libraries.
+- Cross-validation: the WASM and JS backends must produce bit-identical output for the same input (modulo documented floating-point differences).
 
 ### 9.2 Bit-Exact Reference Testing
 
@@ -688,22 +715,25 @@ The same AST emitted for WASM can be interpreted in pure JavaScript. This enable
 ### 9.3 Property-Based Testing
 
 ```typescript
-import fc from 'fast-check';
-import { renderOffline } from '@unworklet/test';
+import fc from "fast-check";
+import { renderOffline } from "@unworklet/test";
 
-it('gain stays within expected bounds', () => {
-  fc.assert(fc.property(
-    fc.float({ min: -1, max: 1 }),
-    fc.float({ min: 0, max: 2 }),
-    async (signal, gain) => {
-      const { peak } = await renderOffline(MyGain, {
-        sampleRate: 48000, duration: 0.01,
-        params: { gain },
-        input: () => [signal],
-      });
-      expect(peak).toBeLessThanOrEqual(Math.abs(signal * gain) + 1e-6);
-    },
-  ));
+it("gain stays within expected bounds", () => {
+  fc.assert(
+    fc.property(
+      fc.float({ min: -1, max: 1 }),
+      fc.float({ min: 0, max: 2 }),
+      async (signal, gain) => {
+        const { peak } = await renderOffline(MyGain, {
+          sampleRate: 48000,
+          duration: 0.01,
+          params: { gain },
+          input: () => [signal],
+        });
+        expect(peak).toBeLessThanOrEqual(Math.abs(signal * gain) + 1e-6);
+      },
+    ),
+  );
 });
 ```
 
@@ -715,11 +745,11 @@ it('gain stays within expected bounds', () => {
 
 Consumes a processor definition and outputs:
 
-* Estimated instructions per block and per second (from static weights + runtime timing)
-* Wall-clock timing: P50/P95/P99/P99.9/Max latency per block
-* CPU budget usage at configurable sample rates and block sizes
-* NaN/Inf/denormal occurrences
-* Allocation tracking (zero expected post-warmup)
+- Estimated instructions per block and per second (from static weights + runtime timing)
+- Wall-clock timing: P50/P95/P99/P99.9/Max latency per block
+- CPU budget usage at configurable sample rates and block sizes
+- NaN/Inf/denormal occurrences
+- Allocation tracking (zero expected post-warmup)
 
 Measurement is performed via a headless environment (Node.js with a JS audio stub, or a browser automation harness). The bench does not require any non-standard runtime; deeper hardware counters can optionally be integrated where the executing environment exposes them (e.g., Node.js with `perf_hooks` or OS-level `perf` wrappers), but are not a prerequisite.
 
@@ -727,16 +757,16 @@ Measurement is performed via a headless environment (Node.js with a JS audio stu
 
 Static analysis without execution:
 
-* Estimated instructions per sample
-* Memory footprint
-* Cycle count estimates
-* Warnings on unbounded loops, unused parameters, potentially-expensive operations
+- Estimated instructions per sample
+- Memory footprint
+- Cycle count estimates
+- Warnings on unbounded loops, unused parameters, potentially-expensive operations
 
 ### 10.3 Output Formats
 
-* Human-readable terminal output
-* JSON (for tooling)
-* JUnit XML (for CI integration)
+- Human-readable terminal output
+- JSON (for tooling)
+- JUnit XML (for CI integration)
 
 ### 10.4 CI Integration
 
@@ -760,10 +790,10 @@ High-level building blocks (filters, envelopes, oscillators) will be provided as
 
 Pure JS execution is supported for testing and debugging, but production performance demands WASM. V8's TurboFan output is close to WASM for hot numerical loops, but WASM offers:
 
-* Deterministic codegen independent of V8 tiering state
-* No risk of deoptimization
-* Predictable memory layout
-* Path to SIMD, threads, and future WASM features without rewriting user code
+- Deterministic codegen independent of V8 tiering state
+- No risk of deoptimization
+- Predictable memory layout
+- Path to SIMD, threads, and future WASM features without rewriting user code
 
 ### 11.3 Why Separate `process` and `publish`
 
@@ -773,10 +803,10 @@ The audio thread cannot tolerate even microsecond-scale postMessage overhead. De
 
 Dynamic allocation in the audio thread is prohibited. Declaring all memory at compile time enables:
 
-* Static guarantees on memory usage
-* Zero GC pressure
-* Deterministic startup cost
-* Plugin-host compatibility (DAWs want fixed memory)
+- Static guarantees on memory usage
+- Zero GC pressure
+- Deterministic startup cost
+- Plugin-host compatibility (DAWs want fixed memory)
 
 Users needing "variable" sizing declare a maximum and manage usage via active-count patterns.
 
@@ -784,9 +814,9 @@ Users needing "variable" sizing declare a maximum and manage usage via active-co
 
 Using standard `AudioParam` means:
 
-* Full compatibility with Web Audio automation (`setValueAtTime`, ramps)
-* Connection from other `AudioNode`s (LFO modulation) works naturally
-* Existing Web Audio tooling/debugging applies
+- Full compatibility with Web Audio automation (`setValueAtTime`, ramps)
+- Connection from other `AudioNode`s (LFO modulation) works naturally
+- Existing Web Audio tooling/debugging applies
 
 ### 11.6 Why Typed Messaging
 
@@ -804,9 +834,9 @@ Using standard `AudioParam` means:
 
 The `process` function is called at build time with proxy objects. Users may inadvertently write code that doesn't translate (e.g., JavaScript `if` on a `Node<bool>` instead of `select()`). The compiler must produce clear error messages for these cases. Consider:
 
-* Lint rule / ESLint plugin detecting `if (someNode)` patterns
-* Runtime errors during graph capture with helpful stack traces
-* Optional strict mode that rejects any JavaScript control flow involving `Node` values
+- Lint rule / ESLint plugin detecting `if (someNode)` patterns
+- Runtime errors during graph capture with helpful stack traces
+- Optional strict mode that rejects any JavaScript control flow involving `Node` values
 
 ### 12.2 Source Maps
 
@@ -816,9 +846,9 @@ Generated WASM must carry source map information back to TypeScript source lines
 
 For each processor, the emitted WASM includes the core arithmetic ops. Small processors may pay disproportionate overhead. Mitigations:
 
-* Tree-shake unused primitives
-* Provide a shared "runtime" WASM module for processors in the same page
-* Inline math functions vs. importing JS `Math.sin`
+- Tree-shake unused primitives
+- Provide a shared "runtime" WASM module for processors in the same page
+- Inline math functions vs. importing JS `Math.sin`
 
 Decision: start with fully-inlined, self-contained WASM. Optimize later.
 
@@ -826,55 +856,55 @@ Decision: start with fully-inlined, self-contained WASM. Optimize later.
 
 WASM lacks `sin`, `cos`, etc. as native instructions. Options:
 
-* Import from JS (calls `Math.sin`)
-* Inline polynomial approximations
-* Use lookup tables
+- Import from JS (calls `Math.sin`)
+- Inline polynomial approximations
+- Use lookup tables
 
 Users may have precision requirements incompatible with approximations. Provide multiple implementations; let user choose:
 
 ```typescript
-import { sin } from '@unworklet/dsp';               // Default (approximation)
-import { sin } from '@unworklet/dsp/precise';       // High precision, imported
-import { sin } from '@unworklet/dsp/table';         // Table-based
+import { sin } from "@unworklet/dsp"; // Default (approximation)
+import { sin } from "@unworklet/dsp/precise"; // High precision, imported
+import { sin } from "@unworklet/dsp/table"; // Table-based
 ```
 
 ### 12.5 SharedArrayBuffer Availability
 
 SAB requires cross-origin isolation (`COOP`/`COEP` headers). Many deployment environments cannot satisfy this. The library must degrade gracefully:
 
-* With SAB: full performance, lock-free queues, typed bulk transfers
-* Without SAB: fall back to `postMessage` with structured clone, pre-allocated transfer regions to minimize per-call allocation, document the perf impact
-* Detect at runtime; report the active mode via `onError`/diagnostic API
-* **SAB-dependence must never be required for correctness**; it is a performance optimization only.
+- With SAB: full performance, lock-free queues, typed bulk transfers
+- Without SAB: fall back to `postMessage` with structured clone, pre-allocated transfer regions to minimize per-call allocation, document the perf impact
+- Detect at runtime; report the active mode via `onError`/diagnostic API
+- **SAB-dependence must never be required for correctness**; it is a performance optimization only.
 
 ### 12.6 Pre-warm Correctness
 
 Pre-warming by invoking `process` with zero input assumes:
 
-* Code paths are exercised proportionally (not true for conditional branches)
-* JIT tiering reaches TurboFan (requires enough iterations)
+- Code paths are exercised proportionally (not true for conditional branches)
+- JIT tiering reaches TurboFan (requires enough iterations)
 
 Mitigations:
 
-* Emit pre-warm helpers that exercise both branches of every `select`
-* Rely on WASM's own tiering (less V8-tiering-dependent than pure JS)
-* Allow users to supply a "training input" pattern via processor config
+- Emit pre-warm helpers that exercise both branches of every `select`
+- Rely on WASM's own tiering (less V8-tiering-dependent than pure JS)
+- Allow users to supply a "training input" pattern via processor config
 
 ### 12.7 GC Invocation Access
 
 Explicit `gc()` invocation is unavailable in standard browser environments. The library must not depend on it. Instead:
 
-* Rely on the invariant that `process()` performs zero allocations
-* Use WASM for the hot path to minimize JIT-triggered allocations on the JS side of the worklet
-* Document known allocation sources inside spec implementations (e.g., parameter array reallocation on automation rate change) and design around them
+- Rely on the invariant that `process()` performs zero allocations
+- Use WASM for the hot path to minimize JIT-triggered allocations on the JS side of the worklet
+- Document known allocation sources inside spec implementations (e.g., parameter array reallocation on automation rate change) and design around them
 
 ### 12.8 Message Queue Sizing
 
 Fixed-size queues can overflow. Sizing policy:
 
-* Default: 256 messages, 1024 events
-* User-configurable via processor config
-* Overflow emits structured error with queue name and recovery suggestion
+- Default: 256 messages, 1024 events
+- User-configurable via processor config
+- Overflow emits structured error with queue name and recovery suggestion
 
 ### 12.9 Parameter Array Length
 
@@ -884,24 +914,24 @@ The Web Audio spec permits `parameters[name].length` to be 1 or `render quantum 
 
 The AudioWorkletGlobalScope has its own global scope per spec, but implementations vary in whether this corresponds to a separate V8 Isolate or merely a separate Realm within a shared Isolate. The library does not rely on any specific isolation model:
 
-* All claims of "no cross-thread interference" are scoped to what the spec guarantees.
-* Performance characteristics may vary by implementation and are measured, not assumed.
+- All claims of "no cross-thread interference" are scoped to what the spec guarantees.
+- Performance characteristics may vary by implementation and are measured, not assumed.
 
 ### 12.11 AudioContext Sample Rate Handling
 
 `AudioContext` sample rate is fixed per context but can differ across devices. Processors must handle this without recompilation:
 
-* `ctx.sampleRate` is resolved as a runtime constant loaded at processor instantiation
-* Expressions involving `ctx.sampleRate` used in buffer sizing are evaluated at instantiation and used to size linear memory accordingly
-* For buffer sizes that depend on `ctx.sampleRate`, the declared `memory.maxDelaySeconds` (or equivalent) yields the worst-case size; actual memory is allocated to match the runtime sample rate up to that cap
+- `ctx.sampleRate` is resolved as a runtime constant loaded at processor instantiation
+- Expressions involving `ctx.sampleRate` used in buffer sizing are evaluated at instantiation and used to size linear memory accordingly
+- For buffer sizes that depend on `ctx.sampleRate`, the declared `memory.maxDelaySeconds` (or equivalent) yields the worst-case size; actual memory is allocated to match the runtime sample rate up to that cap
 
 ### 12.12 Multi-Channel Generalization
 
 Stereo processing is the common case, but users may need arbitrary channel configurations. Channel count handling:
 
-* Declared in `audioInput`/`audioOutput`
-* Generated code loops over channels when channel count is dynamic
-* Compile-time specialization for common cases (mono, stereo)
+- Declared in `audioInput`/`audioOutput`
+- Generated code loops over channels when channel count is dynamic
+- Compile-time specialization for common cases (mono, stereo)
 
 ### 12.13 Render Quantum Size
 
@@ -911,17 +941,17 @@ The current Web Audio spec fixes the render quantum at 128 samples, but this may
 
 In development, rebuilding the processor should not require full application restart. Approach:
 
-* Run old and new instances in parallel for a crossfade window
-* Transfer state where types match; reset where schemas differ
-* Document state-preservation guarantees
+- Run old and new instances in parallel for a crossfade window
+- Transfer state where types match; reset where schemas differ
+- Document state-preservation guarantees
 
 ### 12.15 Denormal Handling
 
 Denormal floats can cause order-of-magnitude slowdowns on some CPUs. The compiler should:
 
-* Emit flush-to-zero patterns where possible within WASM constraints
-* Add automatic DC bias injection for filters prone to denormals
-* Warn in static analysis when filters without denormal protection are detected
+- Emit flush-to-zero patterns where possible within WASM constraints
+- Add automatic DC bias injection for filters prone to denormals
+- Warn in static analysis when filters without denormal protection are detected
 
 WASM does not currently expose direct FTZ/DAZ control; mitigation is algorithmic rather than architectural.
 
@@ -929,18 +959,18 @@ WASM does not currently expose direct FTZ/DAZ control; mitigation is algorithmic
 
 DSP processors may be distributed via npm and outlive the unworklet version they were built against. Policy:
 
-* Processor bundles include compiled WASM (forward-compatible across browser versions as long as the WASM spec level is supported)
-* Runtime client is pinned to the version that built the WASM
-* Source-level compatibility across major versions is not guaranteed; recompilation required
+- Processor bundles include compiled WASM (forward-compatible across browser versions as long as the WASM spec level is supported)
+- Runtime client is pinned to the version that built the WASM
+- Source-level compatibility across major versions is not guaranteed; recompilation required
 
 ### 12.17 Browser Compatibility Matrix
 
 The library targets:
 
-* Chrome/Edge (Chromium-based) — primary, Audio Worklet mature
-* Firefox — Audio Worklet support present; parameter array edge cases must be validated
-* Safari — Audio Worklet support present; historically lagged on AudioParam behaviors and SAB availability
-* Other Chromium-based browsers — inherit Chrome behavior
+- Chrome/Edge (Chromium-based) — primary, Audio Worklet mature
+- Firefox — Audio Worklet support present; parameter array edge cases must be validated
+- Safari — Audio Worklet support present; historically lagged on AudioParam behaviors and SAB availability
+- Other Chromium-based browsers — inherit Chrome behavior
 
 Each release runs a compatibility test suite across the above in CI.
 
@@ -948,9 +978,9 @@ Each release runs a compatibility test suite across the above in CI.
 
 Users consume `unworklet` through standard JavaScript bundlers (Vite, Webpack, Rollup, esbuild, etc.). The library must:
 
-* Export `.wasm` assets in a way bundlers can resolve and serve
-* Emit Worklet module files referenceable via `new URL(..., import.meta.url)` or equivalent
-* Provide framework-specific integration guides (Vite plugin, Webpack loader) where necessary
+- Export `.wasm` assets in a way bundlers can resolve and serve
+- Emit Worklet module files referenceable via `new URL(..., import.meta.url)` or equivalent
+- Provide framework-specific integration guides (Vite plugin, Webpack loader) where necessary
 
 ### 12.19 TypeScript Version Support
 
@@ -977,7 +1007,9 @@ Some algorithms (lookahead limiters, FFT-based effects) require delays larger th
 Should users be able to define reusable fragments? The simplest answer is "they're just TypeScript functions":
 
 ```typescript
-const biquad = (input, a1, a2, b0, b1, b2) => { /* ... */ };
+const biquad = (input, a1, a2, b0, b1, b2) => {
+  /* ... */
+};
 ```
 
 But this blurs the line between "framework primitives" and "user code." Clarify what's expressible and what's not.
@@ -1004,52 +1036,51 @@ Exact `parameters[name]` array semantics, the timing of `processorOptions` deliv
 
 ### v0.1 — Foundation
 
-* Core primitive set (arithmetic, math, comparison, select)
-* `state`, `buffer`, `param` declarations
-* WASM compiler (binaryen.js based)
-* Pure-JS backend
-* Worklet JS codegen
-* Client wrapper with typed params
-* `renderOffline` for testing
-* Vitest integration
-* Basic CLI (`build`, `test`)
+- Core primitive set (arithmetic, math, comparison, select)
+- `state`, `buffer`, `param` declarations
+- WASM compiler (binaryen.js based)
+- Pure-JS backend
+- Worklet JS codegen
+- Client wrapper with typed params
+- `renderOffline` for testing
+- Vitest integration
+- Basic CLI (`build`, `test`)
 
 ### v0.2 — Messaging and Events
 
-* Typed `messages` and `events`
-* SAB-backed queues with postMessage fallback
-* `publish` phase
-* Error handling and reporting
+- Typed `messages` and `events`
+- SAB-backed queues with postMessage fallback
+- `publish` phase
+- Error handling and reporting
 
 ### v0.3 — Tooling
 
-* `unworklet analyze` static analysis
-* `unworklet bench` (browser-harness and Node.js stub backends)
-* Source maps
-* Dev server with hot reload
+- `unworklet analyze` static analysis
+- `unworklet bench` (browser-harness and Node.js stub backends)
+- Source maps
+- Dev server with hot reload
 
 ### v0.4 — Ecosystem
 
-* `@unworklet/filters`, `@unworklet/oscillators`, `@unworklet/envelopes` reference packages
-* Documentation site
-* Examples gallery
-* Migration guides from hand-written Audio Worklet processors
+- `@unworklet/filters`, `@unworklet/oscillators`, `@unworklet/envelopes` reference packages
+- Documentation site
+- Examples gallery
+- Migration guides from hand-written Audio Worklet processors
 
 ### v0.5 — Polish and Compatibility
 
-* Full browser compatibility matrix
-* Bundler integration packages (Vite, Webpack, Rollup plugins)
-* Property-testing helpers
-* Performance tuning
+- Full browser compatibility matrix
+- Bundler integration packages (Vite, Webpack, Rollup plugins)
+- Property-testing helpers
+- Performance tuning
 
 ### v1.0 — Stabilization
 
-* API freeze
-* Compatibility guarantees
-* Performance baseline across supported browsers
-* Production adoption case studies
+- API freeze
+- Compatibility guarantees
+- Performance baseline across supported browsers
+- Production adoption case studies
 
 ---
 
-*End of specification draft.*
-
+_End of specification draft._

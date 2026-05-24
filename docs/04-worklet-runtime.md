@@ -54,7 +54,6 @@ partial (§7 publish scheduling written; §1–§6 + §8 placeholder)
 
      Per-step impl shape detail is impl-phase fill per Q61. -->
 
-
 ## 3. Render quantum handling
 
 The Web Audio spec fixes the render quantum at 128 samples. unworklet bakes that value (`SAMPLES_PER_BLOCK = 128`, see Q35) **all the way into the emitted WASM** (Q18, `decisions-log.md`):
@@ -136,10 +135,10 @@ Main-side `node.onError(handler)` receives a discriminated union. v1.0.0 の eve
 
 ```typescript
 type NodeErrorEvent =
-  | { code: 'wasm-trap';            message: string }
-  | { code: 'queue-overflow';       source: 'event' | 'message' | 'midi'; name: string; dropped: number }
-  | { code: 'sab-unavailable' }
-  | { code: 'block-length-mismatch'; expected: number; received: number };
+  | { code: "wasm-trap"; message: string }
+  | { code: "queue-overflow"; source: "event" | "message" | "midi"; name: string; dropped: number }
+  | { code: "sab-unavailable" }
+  | { code: "block-length-mismatch"; expected: number; received: number };
 ```
 
 1. **`wasm-trap`** — WASM runtime trap during `process(...)`. Audio output: silence for the current quantum + the following quanta until the node is disposed. The audio thread does not propagate the trap as a thrown exception (= realtime-safety invariant 3 in `00-foundations.md` §5.1).
@@ -150,4 +149,3 @@ type NodeErrorEvent =
 Node destruction is initiated only by the consumer via `.dispose()` (= `05-client.md` §2)。 There is no framework-side "destroy node on error" path in v1.0.0 — `wasm-trap` / `block-length-mismatch` emit silence on the output channels while keeping the node object addressable and connected, so the consumer can observe `.onError` + tear down explicitly (Q75).
 
 Per-error-code message shape の細部、 source-location attribution (= §7 source maps 経 由)、 recovery semantics は impl-phase fill per Q61。
-

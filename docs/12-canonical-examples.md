@@ -10,45 +10,45 @@ written
 
 The example set is designed so that the union of all examples touches every concept declared in the spec. Each row marks the example(s) where the concept lives in production-realistic shape:
 
-| Concept | Examples |
-|---|---|
-| `audioInput` (mono / stereo / multi-port) | 1, 2, 3, 4, 7, 8 |
-| `audioOutput` (mono / stereo / multi-port) | all |
-| `param` (k-rate / a-rate, automation curves) | 1, 2, 4, 5, 7, 8 |
-| `state.f32` / `state.i32` / `state.bool` | 2, 3, 4, 5, 6, 7, 8, 9 |
-| `state.publish` (scalar UI feedback) | 1, 4, 5, 6, 7, 8, 9 |
-| `buffer.f32` (per-sample memory) | 3, 4, 5, 7, 8 |
-| `buffer.u8` (byte memory for sysex / arbitrary octet streams) | 9 |
-| `buffer.publish` (waveform / spectrum frame to UI) | 5, 8 |
-| `buf.copyFrom(typedArrayField)` (bulk transfer from payload) | 5, 7, 9 |
-| `forSample` (per-sample loop) | 1, 2, 3, 4, 5, 6, 7, 8 |
-| `forSample.byN` (SIMD-stride bulk) | 7 |
-| Arithmetic / comparison / `select` | 1, 2, 3, 4, 5, 6, 7, 8 |
-| Math (`sin`, `cos`, `exp`, `log`) | 2, 4, 5, 8 |
-| L1 helper (pure TS function over `Node<T>`) | 2, 4 |
-| L2 `defineSubgraph` (caller-owned reuse) | 2, 8 |
-| `State<T>` reference parameter | 2, 4 |
-| `event<T>` (worklet → main, sample-accurate) | 4, 5, 6, 8 |
-| `message<T>` (main → worklet) | 5, 6, 7, 9 |
-| `emitIf` (conditional emission, generic event) | 4, 6, 8 |
-| `onReceive` (per-block message handler) | 5, 6, 7, 9 |
-| `midiInput` / `midiOutput` | 5, 6, 8, 9 |
-| `onEvent` MIDI (`noteOn` / `noteOff` + `sysex`; `cc` / `pitchBend` / `programChange` / `channelPressure` / `aftertouch` / `systemRealtime` not exercised) | 5, 6, 8, 9 |
-| MIDI emission via `emitIf` (`noteOn` / `noteOff` in Ex 6; `sysex` in Ex 9) | 6, 9 |
-| SIMD `f32x4`, `splat`, `buf.loadVec`, `mulVec`, `addVec`, `vec.lane`, `sumLanes` | 3, 7 |
-| `snapshot` policy declaration (`'persistent'` / `'transient'` flag on slots) | 3, 5, 7, 10 |
-| `snapshot` lifecycle exercise (`node.snapshot()` / `node.restore(blob)` main-side calls) | 3, 7, 10 |
-| `migrations` chain (schema-versioned restore) | 7 |
-| Main side: `createNode` | all |
-| Main side: `node.inputs.<name>` / `node.outputs.<name>` | all |
-| Main side: `dispose`, `onError`, `diagnostics.transport` | 1 (others vary) |
-| Main side: `node.params.<name>` (AudioParam) | 1, 2, 4, 7, 8 |
-| Main side: `node.state.<name>.subscribe` / `.value` | 1, 4, 5, 6, 7, 8, 9 |
-| Main side: `node.events.<name>.on` / `.diagnostics.overflowCount` | 4, 5, 6, 8 |
-| Main side: `node.messages.<name>` (incl. variable-length payload) | 5, 6, 7, 9 |
-| Main side: `node.midi.<name>.send` / `.connectFromWebMIDI` / `.onEvent` | 5, 6, 8, 9 |
-| Main side: `node.snapshot()` / `node.restore(blob)` | 3, 7 |
-| Main side: `replaceProcessor` (hot swap + `RestoreResult.ok` failure path) | 10 |
+| Concept                                                                                                                                                   | Examples               |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| `audioInput` (mono / stereo / multi-port)                                                                                                                 | 1, 2, 3, 4, 7, 8       |
+| `audioOutput` (mono / stereo / multi-port)                                                                                                                | all                    |
+| `param` (k-rate / a-rate, automation curves)                                                                                                              | 1, 2, 4, 5, 7, 8       |
+| `state.f32` / `state.i32` / `state.bool`                                                                                                                  | 2, 3, 4, 5, 6, 7, 8, 9 |
+| `state.publish` (scalar UI feedback)                                                                                                                      | 1, 4, 5, 6, 7, 8, 9    |
+| `buffer.f32` (per-sample memory)                                                                                                                          | 3, 4, 5, 7, 8          |
+| `buffer.u8` (byte memory for sysex / arbitrary octet streams)                                                                                             | 9                      |
+| `buffer.publish` (waveform / spectrum frame to UI)                                                                                                        | 5, 8                   |
+| `buf.copyFrom(typedArrayField)` (bulk transfer from payload)                                                                                              | 5, 7, 9                |
+| `forSample` (per-sample loop)                                                                                                                             | 1, 2, 3, 4, 5, 6, 7, 8 |
+| `forSample.byN` (SIMD-stride bulk)                                                                                                                        | 7                      |
+| Arithmetic / comparison / `select`                                                                                                                        | 1, 2, 3, 4, 5, 6, 7, 8 |
+| Math (`sin`, `cos`, `exp`, `log`)                                                                                                                         | 2, 4, 5, 8             |
+| L1 helper (pure TS function over `Node<T>`)                                                                                                               | 2, 4                   |
+| L2 `defineSubgraph` (caller-owned reuse)                                                                                                                  | 2, 8                   |
+| `State<T>` reference parameter                                                                                                                            | 2, 4                   |
+| `event<T>` (worklet → main, sample-accurate)                                                                                                              | 4, 5, 6, 8             |
+| `message<T>` (main → worklet)                                                                                                                             | 5, 6, 7, 9             |
+| `emitIf` (conditional emission, generic event)                                                                                                            | 4, 6, 8                |
+| `onReceive` (per-block message handler)                                                                                                                   | 5, 6, 7, 9             |
+| `midiInput` / `midiOutput`                                                                                                                                | 5, 6, 8, 9             |
+| `onEvent` MIDI (`noteOn` / `noteOff` + `sysex`; `cc` / `pitchBend` / `programChange` / `channelPressure` / `aftertouch` / `systemRealtime` not exercised) | 5, 6, 8, 9             |
+| MIDI emission via `emitIf` (`noteOn` / `noteOff` in Ex 6; `sysex` in Ex 9)                                                                                | 6, 9                   |
+| SIMD `f32x4`, `splat`, `buf.loadVec`, `mulVec`, `addVec`, `vec.lane`, `sumLanes`                                                                          | 3, 7                   |
+| `snapshot` policy declaration (`'persistent'` / `'transient'` flag on slots)                                                                              | 3, 5, 7, 10            |
+| `snapshot` lifecycle exercise (`node.snapshot()` / `node.restore(blob)` main-side calls)                                                                  | 3, 7, 10               |
+| `migrations` chain (schema-versioned restore)                                                                                                             | 7                      |
+| Main side: `createNode`                                                                                                                                   | all                    |
+| Main side: `node.inputs.<name>` / `node.outputs.<name>`                                                                                                   | all                    |
+| Main side: `dispose`, `onError`, `diagnostics.transport`                                                                                                  | 1 (others vary)        |
+| Main side: `node.params.<name>` (AudioParam)                                                                                                              | 1, 2, 4, 7, 8          |
+| Main side: `node.state.<name>.subscribe` / `.value`                                                                                                       | 1, 4, 5, 6, 7, 8, 9    |
+| Main side: `node.events.<name>.on` / `.diagnostics.overflowCount`                                                                                         | 4, 5, 6, 8             |
+| Main side: `node.messages.<name>` (incl. variable-length payload)                                                                                         | 5, 6, 7, 9             |
+| Main side: `node.midi.<name>.send` / `.connectFromWebMIDI` / `.onEvent`                                                                                   | 5, 6, 8, 9             |
+| Main side: `node.snapshot()` / `node.restore(blob)`                                                                                                       | 3, 7                   |
+| Main side: `replaceProcessor` (hot swap + `RestoreResult.ok` failure path)                                                                                | 10                     |
 
 ## Examples index
 
@@ -66,22 +66,27 @@ The example set is designed so that the union of all examples touches every conc
 ## 1. Stereo gain + level meter
 
 ```typescript
-import {
-  defineProcessor, audioInput, audioOutput, param, state,
-  forSample,
-} from '@unworklet/core';
+import { defineProcessor, audioInput, audioOutput, param, state, forSample } from "@unworklet/core";
 
 export const stereoGain = defineProcessor(() => {
-  const input = audioInput ({ channels: 2, name: 'main' });
-  const out  = audioOutput({ channels: 2, name: 'main' });
+  const input = audioInput({ channels: 2, name: "main" });
+  const out = audioOutput({ channels: 2, name: "main" });
 
-  const gain = param.f32({
-    default: 1.0, min: 0.0, max: 4.0,
-    automationRate: 'a-rate',
-  }).named('gain');
+  const gain = param
+    .f32({
+      default: 1.0,
+      min: 0.0,
+      max: 4.0,
+      automationRate: "a-rate",
+    })
+    .named("gain");
 
-  const meterL = state.f32(0).expose({ name: 'meterL', snapshot: 'transient', publish: { rateFps: 30 } });
-  const meterR = state.f32(0).expose({ name: 'meterR', snapshot: 'transient', publish: { rateFps: 30 } });
+  const meterL = state
+    .f32(0)
+    .expose({ name: "meterL", snapshot: "transient", publish: { rateFps: 30 } });
+  const meterR = state
+    .f32(0)
+    .expose({ name: "meterR", snapshot: "transient", publish: { rateFps: 30 } });
 
   return {
     process: () => {
@@ -105,7 +110,7 @@ export const stereoGain = defineProcessor(() => {
 
 ```typescript
 // main thread
-import { createNode } from '@unworklet/core';
+import { createNode } from "@unworklet/core";
 
 const audioContext = new AudioContext();
 const node = await createNode(audioContext, stereoGain);
@@ -119,11 +124,11 @@ node.params.gain.linearRampToValueAtTime(1.0, audioContext.currentTime + 0.5);
 const unsubL = node.state.meterL.subscribe((v) => meterUI.setL(v));
 const unsubR = node.state.meterR.subscribe((v) => meterUI.setR(v));
 
-node.onError((err) => console.error('[stereoGain]', err));
+node.onError((err) => console.error("[stereoGain]", err));
 
-console.log('transport:', node.diagnostics.transport);   // 'sab' or 'postMessage'
+console.log("transport:", node.diagnostics.transport); // 'sab' or 'postMessage'
 
-window.addEventListener('beforeunload', () => {
+window.addEventListener("beforeunload", () => {
   unsubL();
   unsubR();
   node.dispose();
@@ -134,20 +139,32 @@ window.addEventListener('beforeunload', () => {
 
 ```typescript
 import {
-  defineProcessor, defineSubgraph, createSubgraph, audioInput, audioOutput, param, state,
-  forSample, num,
-  type Node, type State,
-} from '@unworklet/core';
+  defineProcessor,
+  defineSubgraph,
+  createSubgraph,
+  audioInput,
+  audioOutput,
+  param,
+  state,
+  forSample,
+  num,
+  type Node,
+  type State,
+} from "@unworklet/core";
 
 // L1 helper: one biquad sample, Direct Form II Transposed.
 // State<T> references are caller-owned; the helper inlines into the parent.
 function biquadDFIIT(
-  x:  Node<'f32'>,
-  b0: Node<'f32'>, b1: Node<'f32'>, b2: Node<'f32'>,
-  a1: Node<'f32'>, a2: Node<'f32'>,
-  z1: State<'f32'>, z2: State<'f32'>,
-): Node<'f32'> {
-  const y   = b0.mul(x).add(z1.load());
+  x: Node<"f32">,
+  b0: Node<"f32">,
+  b1: Node<"f32">,
+  b2: Node<"f32">,
+  a1: Node<"f32">,
+  a2: Node<"f32">,
+  z1: State<"f32">,
+  z2: State<"f32">,
+): Node<"f32"> {
+  const y = b0.mul(x).add(z1.load());
   const z1n = b1.mul(x).add(z2.load()).sub(a1.mul(y));
   const z2n = b2.mul(x).sub(a2.mul(y));
   z1.store(z1n);
@@ -158,10 +175,13 @@ function biquadDFIIT(
 // L1 helper: peaking-EQ coefficients (Audio EQ Cookbook).
 // Returns a record of nodes; called once per block when params changed.
 function peakingCoeffs(
-  freq: Node<'f32'>, q: Node<'f32'>, gainDb: Node<'f32'>, sr: number,
-): { b0: Node<'f32'>; b1: Node<'f32'>; b2: Node<'f32'>; a1: Node<'f32'>; a2: Node<'f32'>; } {
-  const A     = gainDb.mul(0.05 * Math.LN10).exp();   // 10^(gainDb/40)
-  const w0    = freq.mul(2 * Math.PI / sr);
+  freq: Node<"f32">,
+  q: Node<"f32">,
+  gainDb: Node<"f32">,
+  sr: number,
+): { b0: Node<"f32">; b1: Node<"f32">; b2: Node<"f32">; a1: Node<"f32">; a2: Node<"f32"> } {
+  const A = gainDb.mul(0.05 * Math.LN10).exp(); // 10^(gainDb/40)
+  const w0 = freq.mul((2 * Math.PI) / sr);
   const cosw0 = w0.cos();
   const sinw0 = w0.sin();
   const alpha = sinw0.div(q.mul(2));
@@ -190,7 +210,7 @@ const peakingBand = defineSubgraph((sr: number) => {
   const z1 = state.f32(0);
   const z2 = state.f32(0);
   return {
-    process: (input: Node<'f32'>, freq: Node<'f32'>, q: Node<'f32'>, gainDb: Node<'f32'>) => {
+    process: (input: Node<"f32">, freq: Node<"f32">, q: Node<"f32">, gainDb: Node<"f32">) => {
       const c = peakingCoeffs(freq, q, gainDb, sr);
       return biquadDFIIT(input, c.b0, c.b1, c.b2, c.a1, c.a2, z1, z2);
     },
@@ -198,49 +218,71 @@ const peakingBand = defineSubgraph((sr: number) => {
 });
 
 export const threeBandEQ = defineProcessor((ctx) => {
-  const input = audioInput ({ channels: 2, name: 'main' });
-  const out  = audioOutput({ channels: 2, name: 'main' });
+  const input = audioInput({ channels: 2, name: "main" });
+  const out = audioOutput({ channels: 2, name: "main" });
 
-  const lowF = param.f32({ default: 120,  min: 20,    max: 1000,  automationRate: 'k-rate' }).named('lowFreq');
-  const lowQ = param.f32({ default: 0.7,  min: 0.1,   max: 8,     automationRate: 'k-rate' }).named('lowQ');
-  const lowG = param.f32({ default: 0,    min: -24,   max: 24,    automationRate: 'k-rate' }).named('lowGain');
+  const lowF = param
+    .f32({ default: 120, min: 20, max: 1000, automationRate: "k-rate" })
+    .named("lowFreq");
+  const lowQ = param
+    .f32({ default: 0.7, min: 0.1, max: 8, automationRate: "k-rate" })
+    .named("lowQ");
+  const lowG = param
+    .f32({ default: 0, min: -24, max: 24, automationRate: "k-rate" })
+    .named("lowGain");
 
-  const midF = param.f32({ default: 1000, min: 200,   max: 8000,  automationRate: 'k-rate' }).named('midFreq');
-  const midQ = param.f32({ default: 1.0,  min: 0.1,   max: 8,     automationRate: 'k-rate' }).named('midQ');
-  const midG = param.f32({ default: 0,    min: -24,   max: 24,    automationRate: 'k-rate' }).named('midGain');
+  const midF = param
+    .f32({ default: 1000, min: 200, max: 8000, automationRate: "k-rate" })
+    .named("midFreq");
+  const midQ = param
+    .f32({ default: 1.0, min: 0.1, max: 8, automationRate: "k-rate" })
+    .named("midQ");
+  const midG = param
+    .f32({ default: 0, min: -24, max: 24, automationRate: "k-rate" })
+    .named("midGain");
 
-  const hiF  = param.f32({ default: 6000, min: 1000,  max: 20000, automationRate: 'k-rate' }).named('hiFreq');
-  const hiQ  = param.f32({ default: 0.7,  min: 0.1,   max: 8,     automationRate: 'k-rate' }).named('hiQ');
-  const hiG  = param.f32({ default: 0,    min: -24,   max: 24,    automationRate: 'k-rate' }).named('hiGain');
+  const hiF = param
+    .f32({ default: 6000, min: 1000, max: 20000, automationRate: "k-rate" })
+    .named("hiFreq");
+  const hiQ = param.f32({ default: 0.7, min: 0.1, max: 8, automationRate: "k-rate" }).named("hiQ");
+  const hiG = param
+    .f32({ default: 0, min: -24, max: 24, automationRate: "k-rate" })
+    .named("hiGain");
 
   // Six independent peakingBand instances (3 bands × 2 channels), allocated in declaration scope.
   const lowL = createSubgraph(peakingBand, ctx.sampleRate);
   const midL = createSubgraph(peakingBand, ctx.sampleRate);
-  const hiL  = createSubgraph(peakingBand, ctx.sampleRate);
+  const hiL = createSubgraph(peakingBand, ctx.sampleRate);
   const lowR = createSubgraph(peakingBand, ctx.sampleRate);
   const midR = createSubgraph(peakingBand, ctx.sampleRate);
-  const hiR  = createSubgraph(peakingBand, ctx.sampleRate);
+  const hiR = createSubgraph(peakingBand, ctx.sampleRate);
 
   return {
     process: () => {
       // Read k-rate params at block start. (k-rate consumers fold to the same
       // value across the block; reading at i=0 captures it once.)
-      const lowFv = lowF.at(0); const lowQv = lowQ.at(0); const lowGv = lowG.at(0);
-      const midFv = midF.at(0); const midQv = midQ.at(0); const midGv = midG.at(0);
-      const hiFv  = hiF.at(0);  const hiQv  = hiQ.at(0);  const hiGv  = hiG.at(0);
+      const lowFv = lowF.at(0);
+      const lowQv = lowQ.at(0);
+      const lowGv = lowG.at(0);
+      const midFv = midF.at(0);
+      const midQv = midQ.at(0);
+      const midGv = midG.at(0);
+      const hiFv = hiF.at(0);
+      const hiQv = hiQ.at(0);
+      const hiGv = hiG.at(0);
 
       forSample((i) => {
         const xL = input.left.at(i);
         const xR = input.right.at(i);
 
         // Cascaded peaking bands — each subgraph instance owns its own z1/z2 state pair.
-        const yL1 = lowL.process(xL,  lowFv, lowQv, lowGv);
+        const yL1 = lowL.process(xL, lowFv, lowQv, lowGv);
         const yL2 = midL.process(yL1, midFv, midQv, midGv);
-        const yL3 = hiL .process(yL2, hiFv,  hiQv,  hiGv);
+        const yL3 = hiL.process(yL2, hiFv, hiQv, hiGv);
 
-        const yR1 = lowR.process(xR,  lowFv, lowQv, lowGv);
+        const yR1 = lowR.process(xR, lowFv, lowQv, lowGv);
         const yR2 = midR.process(yR1, midFv, midQv, midGv);
-        const yR3 = hiR .process(yR2, hiFv,  hiQv,  hiGv);
+        const yR3 = hiR.process(yR2, hiFv, hiQv, hiGv);
 
         out.left.at(i).write(yL3);
         out.right.at(i).write(yR3);
@@ -260,7 +302,7 @@ node.params.lowGain.linearRampToValueAtTime(+3, audioContext.currentTime + 1);
 node.params.midFreq.exponentialRampToValueAtTime(2500, audioContext.currentTime + 1);
 node.params.hiQ.value = 1.4;
 
-node.onError((err) => console.error('[3bandEQ]', err));
+node.onError((err) => console.error("[3bandEQ]", err));
 ```
 
 > Denormal note: feedback paths through `z1` / `z2` decay toward zero on long tails of silence and would otherwise enter the IEEE 754 subnormal range (5–100× slower per op on most CPUs). unworklet's compiler auto-inserts a subnormal guard at every `state.f32` / `state.f64` `.store(v)` site, flushing values below `1e-30` to zero — see Q21 in `decisions-log.md` and `04-worklet-runtime.md` §6. No user-side mitigation is required.
@@ -269,28 +311,34 @@ node.onError((err) => console.error('[3bandEQ]', err));
 
 ```typescript
 import {
-  defineProcessor, audioInput, audioOutput, param, state, buffer,
-  forSample, SAMPLES_PER_BLOCK,
+  defineProcessor,
+  audioInput,
+  audioOutput,
+  param,
+  state,
+  buffer,
+  forSample,
+  SAMPLES_PER_BLOCK,
   type Node,
-} from '@unworklet/core';
-import { splat, sumLanes } from '@unworklet/core/simd';
+} from "@unworklet/core";
+import { splat, sumLanes } from "@unworklet/core/simd";
 
 // Linear-phase EQ via 3 partitioned FIR taps over a single combined impulse.
 // Impulse buffer is precomputed in main and uploaded; this processor hosts the
 // runtime convolution.
 
-const FIR_LEN     = 1024;     // 23 ms @ 44.1kHz — enough for a low-Q linear-phase EQ
-const NUM_PARTS   = FIR_LEN / SAMPLES_PER_BLOCK;       // 8
-const HISTORY_LEN = NUM_PARTS * SAMPLES_PER_BLOCK;     // 1024
+const FIR_LEN = 1024; // 23 ms @ 44.1kHz — enough for a low-Q linear-phase EQ
+const NUM_PARTS = FIR_LEN / SAMPLES_PER_BLOCK; // 8
+const HISTORY_LEN = NUM_PARTS * SAMPLES_PER_BLOCK; // 1024
 
 export const linearPhaseEQ = defineProcessor(() => {
-  const input = audioInput ({ channels: 1, name: 'main' });
-  const out  = audioOutput({ channels: 1, name: 'main' });
+  const input = audioInput({ channels: 1, name: "main" });
+  const out = audioOutput({ channels: 1, name: "main" });
 
   // Precomputed real-valued impulse, length FIR_LEN. Persisted across reloads.
-  const impulse  = buffer.f32({ size: FIR_LEN }).expose({ name: 'impulse', snapshot: 'persistent' });
+  const impulse = buffer.f32({ size: FIR_LEN }).expose({ name: "impulse", snapshot: "persistent" });
   // Sliding history of input samples (1024).
-  const history  = buffer.f32({ size: HISTORY_LEN });
+  const history = buffer.f32({ size: HISTORY_LEN });
   // Write head into history.
   const histHead = state.i32(0);
 
@@ -318,7 +366,7 @@ export const linearPhaseEQ = defineProcessor(() => {
           const histIdx = outIdx.sub(k).sub(3).add(HISTORY_LEN).mod(HISTORY_LEN);
           const hVec = history.loadVec(histIdx);
           const iVec = impulse.loadVec(k);
-          acc        = acc.add(hVec.mul(iVec));
+          acc = acc.add(hVec.mul(iVec));
         }
         const sum = sumLanes(acc);
         out.ch(0).at(i).write(sum);
@@ -333,10 +381,12 @@ export const linearPhaseEQ = defineProcessor(() => {
 
 ```typescript
 // main thread — generate the impulse from a 3-band linear-phase EQ design and upload.
-import { createNode, inspect } from '@unworklet/core';
+import { createNode, inspect } from "@unworklet/core";
 
 const node = await createNode(audioContext, linearPhaseEQ, {
-  initial: { /* none */ },
+  initial: {
+    /* none */
+  },
 });
 
 // Build the impulse offline (windowed-sinc design over the EQ target curve).
@@ -344,9 +394,9 @@ const impulse = designLinearPhaseImpulse({
   length: 1024,
   sampleRate: audioContext.sampleRate,
   bands: [
-    { type: 'low-shelf',  freq: 120,  gainDb: +3 },
-    { type: 'peaking',    freq: 1000, gainDb: -2, q: 1.0 },
-    { type: 'high-shelf', freq: 6000, gainDb: +4 },
+    { type: "low-shelf", freq: 120, gainDb: +3 },
+    { type: "peaking", freq: 1000, gainDb: -2, q: 1.0 },
+    { type: "high-shelf", freq: 6000, gainDb: +4 },
   ],
 });
 
@@ -356,7 +406,7 @@ const impulse = designLinearPhaseImpulse({
 // term-persistence path.)
 const blob = await node.snapshot();
 const inspected = inspect(blob);
-console.log('schema:', inspected.schemaHash, 'slots:', Object.keys(inspected.slots));
+console.log("schema:", inspected.schemaHash, "slots:", Object.keys(inspected.slots));
 
 source.connect(node.inputs.main);
 node.outputs.main.connect(audioContext.destination);
@@ -366,33 +416,47 @@ node.outputs.main.connect(audioContext.destination);
 
 ```typescript
 import {
-  defineProcessor, audioInput, audioOutput, param, state, buffer,
-  forSample, event, SAMPLES_PER_BLOCK,
-  num, select,
-  type Node, type State,
-} from '@unworklet/core';
+  defineProcessor,
+  audioInput,
+  audioOutput,
+  param,
+  state,
+  buffer,
+  forSample,
+  event,
+  SAMPLES_PER_BLOCK,
+  num,
+  select,
+  type Node,
+  type State,
+} from "@unworklet/core";
 
-const LOOKAHEAD_SAMPLES = 240;   // 5 ms @ 48kHz
+const LOOKAHEAD_SAMPLES = 240; // 5 ms @ 48kHz
 
 // L1 helper: one-pole envelope follower with separate attack/release coeffs.
 function envelopeFollow(
-  x: Node<'f32'>,
-  attackCoef: Node<'f32'>, releaseCoef: Node<'f32'>,
-  prev: State<'f32'>,
-): Node<'f32'> {
-  const r     = x.abs();
-  const coef  = select(r.gt(prev.load()), attackCoef, releaseCoef);
-  const y     = r.sub(prev.load()).mul(coef).add(prev.load());
+  x: Node<"f32">,
+  attackCoef: Node<"f32">,
+  releaseCoef: Node<"f32">,
+  prev: State<"f32">,
+): Node<"f32"> {
+  const r = x.abs();
+  const coef = select(r.gt(prev.load()), attackCoef, releaseCoef);
+  const y = r.sub(prev.load()).mul(coef).add(prev.load());
   prev.store(y);
   return y;
 }
 
 export const lookaheadLimiter = defineProcessor((ctx) => {
-  const input = audioInput ({ channels: 2, name: 'main' });
-  const out  = audioOutput({ channels: 2, name: 'main' });
+  const input = audioInput({ channels: 2, name: "main" });
+  const out = audioOutput({ channels: 2, name: "main" });
 
-  const ceiling   = param.f32({ default: -1.0, min: -24, max: 0,    automationRate: 'k-rate' }).named('ceiling');
-  const releaseMs = param.f32({ default: 50,   min: 1,   max: 500,  automationRate: 'k-rate' }).named('releaseMs');
+  const ceiling = param
+    .f32({ default: -1.0, min: -24, max: 0, automationRate: "k-rate" })
+    .named("ceiling");
+  const releaseMs = param
+    .f32({ default: 50, min: 1, max: 500, automationRate: "k-rate" })
+    .named("releaseMs");
 
   // Lookahead delay line — separate per channel.
   const dlyL = buffer.f32({ size: LOOKAHEAD_SAMPLES });
@@ -404,32 +468,35 @@ export const lookaheadLimiter = defineProcessor((ctx) => {
 
   // Gain reduction in dB, published to UI at 30fps.
   const gainReductionDb = state.f32(0).expose({
-    name:     'gainReductionDb',
-    snapshot: 'transient',
-    publish:  { rateFps: 30 },
+    name: "gainReductionDb",
+    snapshot: "transient",
+    publish: { rateFps: 30 },
   });
 
   // Sample-accurate overshoot event — fires when the linear envelope crosses
   // the ceiling. Used for diagnostic logging and visual flash on the UI.
-  const overshoot = event<{ level: number; channel: 0 | 1 }>({ name: 'overshoot' });
+  const overshoot = event<{ level: number; channel: 0 | 1 }>({ name: "overshoot" });
 
   return {
     process: () => {
       // Per-block coefficients.
-      const ceilingLin     = ceiling.at(0).mul(Math.LN10 * 0.05).exp();
+      const ceilingLin = ceiling
+        .at(0)
+        .mul(Math.LN10 * 0.05)
+        .exp();
       const releaseSamples = releaseMs.at(0).mul(ctx.sampleRate / 1000);
-      const releaseCoef    = num(1).sub(num(-1).div(releaseSamples).exp());
-      const attackCoef     = 1.0;   // instantaneous attack — limiter style
+      const releaseCoef = num(1).sub(num(-1).div(releaseSamples).exp());
+      const attackCoef = 1.0; // instantaneous attack — limiter style
 
       const headBlock = dlyHead.load();
 
       forSample((i) => {
         // Sidechain envelope on the live (pre-delay) signal.
         const peak = input.left.at(i).abs().max(input.right.at(i).abs());
-        const e    = envelopeFollow(peak, attackCoef, releaseCoef, env);
+        const e = envelopeFollow(peak, attackCoef, releaseCoef, env);
 
         // Compute gain reduction so that envelope * gr <= ceiling.
-        const gr     = select(e.gt(ceilingLin), ceilingLin.div(e), 1);
+        const gr = select(e.gt(ceilingLin), ceilingLin.div(e), 1);
         const grDb20 = gr.log().mul(20 / Math.LN10);
 
         // Push into delay line.
@@ -440,18 +507,24 @@ export const lookaheadLimiter = defineProcessor((ctx) => {
         // Read from LOOKAHEAD_SAMPLES samples behind the write head (i.e.
         // the oldest sample, which corresponds to t - LOOKAHEAD_SAMPLES).
         const rIdx = wIdx.add(1).mod(LOOKAHEAD_SAMPLES);
-        const xL   = dlyL.read(rIdx);
-        const xR   = dlyR.read(rIdx);
+        const xL = dlyL.read(rIdx);
+        const xR = dlyR.read(rIdx);
 
         out.left.at(i).write(xL.mul(gr));
         out.right.at(i).write(xR.mul(gr));
 
         // Fire an overshoot event on either channel that exceeded the ceiling
         // *before* gain reduction was applied (i.e. true peak in the input).
-        overshoot.emitIf(input.left.at(i).abs().gt(ceilingLin),
-               { atSample: i, channel: 0, level: input.left.at(i).abs() });
-        overshoot.emitIf(input.right.at(i).abs().gt(ceilingLin),
-               { atSample: i, channel: 1, level: input.right.at(i).abs() });
+        overshoot.emitIf(input.left.at(i).abs().gt(ceilingLin), {
+          atSample: i,
+          channel: 0,
+          level: input.left.at(i).abs(),
+        });
+        overshoot.emitIf(input.right.at(i).abs().gt(ceilingLin), {
+          atSample: i,
+          channel: 1,
+          level: input.right.at(i).abs(),
+        });
 
         // Track the most-negative GR (in dB) reached during this block; published
         // to UI by the rateFps scheduler.
@@ -465,7 +538,6 @@ export const lookaheadLimiter = defineProcessor((ctx) => {
     },
   };
 });
-
 ```
 
 ```typescript
@@ -505,35 +577,52 @@ mixer.connect(audioContext.destination);
 
 ```typescript
 import {
-  defineProcessor, audioOutput, param, state, buffer,
-  forSample, midiInput, message, event,
-  num, select,
-  f32, i32,
+  defineProcessor,
+  audioOutput,
+  param,
+  state,
+  buffer,
+  forSample,
+  midiInput,
+  message,
+  event,
+  num,
+  select,
+  f32,
+  i32,
   type State,
-} from '@unworklet/core';
+} from "@unworklet/core";
 
-const SAMPLE_BUFFER_LEN = 48000 * 4;        // 4 seconds @ 48kHz
-const NUM_VOICES        = 16;
-const WAVEFORM_FRAME    = 1024;             // exposed to UI via buffer.publish
+const SAMPLE_BUFFER_LEN = 48000 * 4; // 4 seconds @ 48kHz
+const NUM_VOICES = 16;
+const WAVEFORM_FRAME = 1024; // exposed to UI via buffer.publish
 
 export const granularSampler = defineProcessor((ctx) => {
-  const out = audioOutput({ channels: 2, name: 'main' });
+  const out = audioOutput({ channels: 2, name: "main" });
 
-  const grainSize     = param.f32({ default: 100,  min: 10,    max: 500,   automationRate: 'k-rate' }).named('grainSizeMs');
-  const grainDensity  = param.f32({ default: 30,   min: 1,     max: 100,   automationRate: 'k-rate' }).named('grainHz');
-  const playbackPos   = param.f32({ default: 0.5,  min: 0,     max: 1,     automationRate: 'a-rate' }).named('playbackPos');
-  const pitch         = param.f32({ default: 1.0,  min: 0.25,  max: 4.0,   automationRate: 'a-rate' }).named('pitch');
+  const grainSize = param
+    .f32({ default: 100, min: 10, max: 500, automationRate: "k-rate" })
+    .named("grainSizeMs");
+  const grainDensity = param
+    .f32({ default: 30, min: 1, max: 100, automationRate: "k-rate" })
+    .named("grainHz");
+  const playbackPos = param
+    .f32({ default: 0.5, min: 0, max: 1, automationRate: "a-rate" })
+    .named("playbackPos");
+  const pitch = param
+    .f32({ default: 1.0, min: 0.25, max: 4.0, automationRate: "a-rate" })
+    .named("pitch");
 
   // Sample buffer — uploaded via message<T> (variable-length payload).
   const sampleBuf = buffer.f32({ size: SAMPLE_BUFFER_LEN }).expose({
-    name:     'sampleBuf',
-    snapshot: 'persistent',
+    name: "sampleBuf",
+    snapshot: "persistent",
   });
-  const sampleLen = state.i32(0);   // populated when uploaded (worklet-private)
+  const sampleLen = state.i32(0); // populated when uploaded (worklet-private)
 
   // UI-visible waveform thumbnail (downsampled view, published at low rate).
   const waveformView = buffer.f32({ size: WAVEFORM_FRAME }).expose({
-    name:    'waveformView',
+    name: "waveformView",
     publish: { rateFps: 15 },
   });
 
@@ -541,33 +630,35 @@ export const granularSampler = defineProcessor((ctx) => {
   // State arrays are expressed as parallel scalar slots; the build-time loop unrolls
   // over them. (Production-grade allocators may use a single state.i32 head + circular
   // mark buffer; this shape favors clarity here.)
-  const voicePos       : State<'f32'>[]  = [];
-  const voiceRemaining : State<'i32'>[]  = [];
-  const voiceGate      : State<'bool'>[] = [];
+  const voicePos: State<"f32">[] = [];
+  const voiceRemaining: State<"i32">[] = [];
+  const voiceGate: State<"bool">[] = [];
   for (let v = 0; v < NUM_VOICES; v++) {
-    voicePos      .push(state.f32(0));
+    voicePos.push(state.f32(0));
     voiceRemaining.push(state.i32(0));
-    voiceGate     .push(state.bool(false));
+    voiceGate.push(state.bool(false));
   }
-  const voiceRR = state.i32(0);    // round-robin allocator pointer (worklet-private).
+  const voiceRR = state.i32(0); // round-robin allocator pointer (worklet-private).
 
   // Grain trigger countdown — counts samples until the next grain spawn.
   const nextSpawnIn = state.i32(0);
 
   // Active note tracker (last note received).
   const activeNote = state.i32(60);
-  const activeVel  = state.f32(0);
+  const activeVel = state.f32(0);
   // Published so the UI can show "currently playing X notes".
-  const playingCount = state.i32(0).expose({ name: 'playingCount', snapshot: 'transient', publish: { rateFps: 10 } });
+  const playingCount = state
+    .i32(0)
+    .expose({ name: "playingCount", snapshot: "transient", publish: { rateFps: 10 } });
 
   // Bulk upload from main: replaces sampleBuf contents and sets sampleLen.
-  const uploadSample = message<{ samples: Float32Array }>({ name: 'uploadSample' });
+  const uploadSample = message<{ samples: Float32Array }>({ name: "uploadSample" });
 
   // Sample-accurate event: fires whenever a grain is spawned, for UI flash.
-  const grainSpawned = event<{ voice: number; pos: number }>({ name: 'grainSpawned' });
+  const grainSpawned = event<{ voice: number; pos: number }>({ name: "grainSpawned" });
 
   // MIDI in for note triggers.
-  const noteIn = midiInput({ name: 'noteIn' });
+  const noteIn = midiInput({ name: "noteIn" });
 
   return {
     process: () => {
@@ -590,17 +681,17 @@ export const granularSampler = defineProcessor((ctx) => {
       });
 
       // MIDI handlers — store the latest note for grain pitch shifting.
-      noteIn.onEvent('noteOn',  ({ note, velocity, atSample }) => {
+      noteIn.onEvent("noteOn", ({ note, velocity, atSample }) => {
         activeNote.store(note);
-        activeVel .store(f32(velocity).div(127));
+        activeVel.store(f32(velocity).div(127));
       });
-      noteIn.onEvent('noteOff', () => {
+      noteIn.onEvent("noteOff", () => {
         activeVel.store(0);
       });
 
       // Per-block: derive grain spawn interval from grainHz.
       const samplesPerSpawn = num(ctx.sampleRate).div(grainDensity.at(0));
-      const grainSamples    = grainSize.at(0).mul(ctx.sampleRate / 1000);
+      const grainSamples = grainSize.at(0).mul(ctx.sampleRate / 1000);
 
       forSample((i) => {
         // Spawn a grain when the countdown reaches 0.
@@ -619,17 +710,17 @@ export const granularSampler = defineProcessor((ctx) => {
         let rSum = f32(0);
         for (let v = 0; v < NUM_VOICES; v++) {
           const gate = voiceGate[v].load();
-          const pos  = voicePos[v].load();
-          const rem  = voiceRemaining[v].load();
+          const pos = voicePos[v].load();
+          const rem = voiceRemaining[v].load();
 
           // Window envelope: simple cos^2 over the grain duration.
           const phase = f32(1).sub(f32(rem).div(grainSamples));
-          const winLin = phase.mul(Math.PI).sin();   // 0 -> 1 -> 0 over the grain
-          const win    = winLin.mul(winLin);
+          const winLin = phase.mul(Math.PI).sin(); // 0 -> 1 -> 0 over the grain
+          const win = winLin.mul(winLin);
 
           // Pitch-shifted read with linear interpolation.
           const sample = sampleBuf.readInterpolated(pos);
-          const sig    = sample.mul(win.mul(activeVel.load()));
+          const sig = sample.mul(win.mul(activeVel.load()));
 
           // Accumulate (gated by voice activity).
           const contrib = select(gate, sig, 0);
@@ -637,9 +728,21 @@ export const granularSampler = defineProcessor((ctx) => {
           rSum = rSum.add(contrib);
 
           // Advance voice cursor.
-          voicePos[v]      .store(select(gate, pos.add(pitch.at(i).mul(f32(activeNote.load().sub(60)).mul(Math.LN2 / 12).exp())), pos));
+          voicePos[v].store(
+            select(
+              gate,
+              pos.add(
+                pitch.at(i).mul(
+                  f32(activeNote.load().sub(60))
+                    .mul(Math.LN2 / 12)
+                    .exp(),
+                ),
+              ),
+              pos,
+            ),
+          );
           voiceRemaining[v].store(select(gate, rem.sub(1), rem));
-          voiceGate[v]     .store(select(gate, rem.gt(0), gate));
+          voiceGate[v].store(select(gate, rem.gt(0), gate));
         }
 
         out.left.at(i).write(lSum);
@@ -655,7 +758,6 @@ export const granularSampler = defineProcessor((ctx) => {
     },
   };
 });
-
 ```
 
 ```typescript
@@ -669,7 +771,7 @@ const firstInput = Array.from(midiAccess.inputs.values())[0];
 node.midi.noteIn.connectFromWebMIDI(firstInput);
 
 // Upload a sample (loaded from a URL, decoded to Float32Array).
-const fetched = await fetch('/samples/voice-loop.wav');
+const fetched = await fetch("/samples/voice-loop.wav");
 const decoded = await audioContext.decodeAudioData(await fetched.arrayBuffer());
 node.messages.uploadSample({ samples: decoded.getChannelData(0) });
 
@@ -683,12 +785,19 @@ node.events.grainSpawned.on(({ atSample, voice, pos }) => grainViz.flash(voice, 
 
 ```typescript
 import {
-  defineProcessor, audioOutput, state,
+  defineProcessor,
+  audioOutput,
+  state,
   forSample,
-  midiInput, midiOutput, message, event,
-  lt, select,
-  type Node, type State,
-} from '@unworklet/core';
+  midiInput,
+  midiOutput,
+  message,
+  event,
+  lt,
+  select,
+  type Node,
+  type State,
+} from "@unworklet/core";
 
 const PATTERN_LEN = 16;
 
@@ -696,29 +805,31 @@ export const arpeggiator = defineProcessor((ctx) => {
   // No audio I/O — pure MIDI processor (arpeggiator routes MIDI in to MIDI out).
   // We still need an output to be attached to the graph; producers may use a
   // mono passthrough audioOutput so the AudioContext keeps the worklet alive.
-  const out = audioOutput({ channels: 1, name: 'main' });
+  const out = audioOutput({ channels: 1, name: "main" });
 
-  const noteIn = midiInput ({ name: 'noteIn' });
-  const arpOut = midiOutput({ name: 'arpOut' });
+  const noteIn = midiInput({ name: "noteIn" });
+  const arpOut = midiOutput({ name: "arpOut" });
 
   // 16-step pattern of semitone offsets from the root note (Float32Array uploaded).
   // Shipped as named state slots since each step is preset-bearing — snapshot key required.
-  const pattern: State<'i32'>[] = [];
+  const pattern: State<"i32">[] = [];
   for (let s = 0; s < PATTERN_LEN; s++) {
     pattern.push(state.i32(0).named(`step_${s}`));
   }
 
   // Pattern reload from main.
-  const loadPattern = message<{ steps: Int32Array }>({ name: 'loadPattern' });
+  const loadPattern = message<{ steps: Int32Array }>({ name: "loadPattern" });
 
-  const rootNote   = state.i32(60).named('rootNote');
-  const lastVel    = state.i32(96).named('lastVel');
-  const stepIdx    = state.i32(0).expose({ name: 'stepIdx', snapshot: 'transient', publish: { rateFps: 60 } });
-  const samplesPerStep = state.i32(48000 / 8).named('samplesPerStep');   // 1/8 note @ 60 BPM, 48kHz
-  const sampleAccum    = state.i32(0);                                              // worklet-private accumulator
+  const rootNote = state.i32(60).named("rootNote");
+  const lastVel = state.i32(96).named("lastVel");
+  const stepIdx = state
+    .i32(0)
+    .expose({ name: "stepIdx", snapshot: "transient", publish: { rateFps: 60 } });
+  const samplesPerStep = state.i32(48000 / 8).named("samplesPerStep"); // 1/8 note @ 60 BPM, 48kHz
+  const sampleAccum = state.i32(0); // worklet-private accumulator
 
   // UI step indicator — fires every step boundary.
-  const stepFired = event<{ step: number; note: number }>({ name: 'stepFired' });
+  const stepFired = event<{ step: number; note: number }>({ name: "stepFired" });
 
   return {
     process: () => {
@@ -733,9 +844,9 @@ export const arpeggiator = defineProcessor((ctx) => {
       });
 
       // MIDI in: track the most recent note as the root.
-      noteIn.onEvent('noteOn', ({ note, velocity, atSample }) => {
+      noteIn.onEvent("noteOn", ({ note, velocity, atSample }) => {
         rootNote.store(note);
-        lastVel .store(velocity);
+        lastVel.store(velocity);
       });
       // noteOff handling intentionally omitted — arpeggiator runs on the latched
       // root until a new note arrives.
@@ -745,7 +856,7 @@ export const arpeggiator = defineProcessor((ctx) => {
         out.ch(0).at(i).write(0);
 
         // Increment sample accumulator; on rollover, advance the step.
-        const acc  = sampleAccum.load().add(1);
+        const acc = sampleAccum.load().add(1);
         const roll = acc.gt(samplesPerStep.load());
         sampleAccum.store(select(roll, 0, acc));
 
@@ -753,42 +864,48 @@ export const arpeggiator = defineProcessor((ctx) => {
 
         // On step rollover: emit a MIDI noteOn at this sample, plus a UI event.
         // Read the offset for the new step. (Build-time unroll via select chain.)
-        let offset: Node<'i32'> = pattern[0].load();
+        let offset: Node<"i32"> = pattern[0].load();
         for (let s = 1; s < PATTERN_LEN; s++) {
           offset = select(nextStep.eq(s), pattern[s].load(), offset);
         }
         const fireNote = rootNote.load().add(offset);
 
-        arpOut.emitIf(roll,
-          { type: 'noteOn',  atSample: i, note: fireNote, velocity: lastVel.load(), channel: 0 });
+        arpOut.emitIf(roll, {
+          type: "noteOn",
+          atSample: i,
+          note: fireNote,
+          velocity: lastVel.load(),
+          channel: 0,
+        });
         // Schedule a noteOff one step later by emitting at the boundary -1 sample.
         // (For brevity, a real arp tracks held notes and emits noteOff at the right time;
         // this minimal form fires both edges from the rollover.)
 
-        stepFired.emitIf(roll,
-          { atSample: i, step: nextStep, note: fireNote });
+        stepFired.emitIf(roll, { atSample: i, step: nextStep, note: fireNote });
 
         stepIdx.store(select(roll, nextStep, stepIdx.load()));
       });
     },
   };
 });
-
 ```
 
 ```typescript
 // main thread
 const node = await createNode(audioContext, arpeggiator);
-node.outputs.main.connect(audioContext.destination);   // silent passthrough
+node.outputs.main.connect(audioContext.destination); // silent passthrough
 
 const midiAccess = await navigator.requestMIDIAccess();
-const kbd  = Array.from(midiAccess.inputs.values())[0];
+const kbd = Array.from(midiAccess.inputs.values())[0];
 const synthInput = Array.from(midiAccess.outputs.values())[0];
 node.midi.noteIn.connectFromWebMIDI(kbd);
 
 // Route arpeggiator output to a downstream synth (Web MIDI Output).
-node.midi.arpOut.onEvent('noteOn', (evt) => {
-  synthInput.send([0x90 | evt.channel, evt.note, evt.velocity], performance.now() + (evt.atSample / audioContext.sampleRate) * 1000);
+node.midi.arpOut.onEvent("noteOn", (evt) => {
+  synthInput.send(
+    [0x90 | evt.channel, evt.note, evt.velocity],
+    performance.now() + (evt.atSample / audioContext.sampleRate) * 1000,
+  );
 });
 
 // UI: highlight the current step.
@@ -805,124 +922,139 @@ node.messages.loadPattern({
 
 ```typescript
 import {
-  defineProcessor, audioInput, audioOutput, param, state, buffer,
-  forSample, message, SAMPLES_PER_BLOCK,
+  defineProcessor,
+  audioInput,
+  audioOutput,
+  param,
+  state,
+  buffer,
+  forSample,
+  message,
+  SAMPLES_PER_BLOCK,
   type Node,
-} from '@unworklet/core';
-import { splat, sumLanes } from '@unworklet/core/simd';
+} from "@unworklet/core";
+import { splat, sumLanes } from "@unworklet/core/simd";
 
-const IR_LEN          = 4096;     // ~85ms @ 48kHz
-const NUM_PARTITIONS  = IR_LEN / SAMPLES_PER_BLOCK;     // 32
+const IR_LEN = 4096; // ~85ms @ 48kHz
+const NUM_PARTITIONS = IR_LEN / SAMPLES_PER_BLOCK; // 32
 
-export const convolutionReverb = defineProcessor((ctx) => {
-  const input = audioInput ({ channels: 2, name: 'main' });
-  const out  = audioOutput({ channels: 2, name: 'main' });
+export const convolutionReverb = defineProcessor(
+  (ctx) => {
+    const input = audioInput({ channels: 2, name: "main" });
+    const out = audioOutput({ channels: 2, name: "main" });
 
-  const wetGain  = param.f32({ default: 0.5, min: 0, max: 1, automationRate: 'k-rate' }).named('wetGain');
-  const dryGain  = param.f32({ default: 0.7, min: 0, max: 1, automationRate: 'k-rate' }).named('dryGain');
+    const wetGain = param
+      .f32({ default: 0.5, min: 0, max: 1, automationRate: "k-rate" })
+      .named("wetGain");
+    const dryGain = param
+      .f32({ default: 0.7, min: 0, max: 1, automationRate: "k-rate" })
+      .named("dryGain");
 
-  // IR — snapshotted because preset = (wet/dry settings + which IR is loaded).
-  const irL = buffer.f32({ size: IR_LEN }).expose({ name: 'irL', snapshot: 'persistent' });
-  const irR = buffer.f32({ size: IR_LEN }).expose({ name: 'irR', snapshot: 'persistent' });
+    // IR — snapshotted because preset = (wet/dry settings + which IR is loaded).
+    const irL = buffer.f32({ size: IR_LEN }).expose({ name: "irL", snapshot: "persistent" });
+    const irR = buffer.f32({ size: IR_LEN }).expose({ name: "irR", snapshot: "persistent" });
 
-  // History of input samples (1 partition each, FIFO; old discarded).
-  // Real partitioned-convolution implementations use FFT-domain partitioning;
-  // this scaffold shows the time-domain accumulation pattern with SIMD bulk.
-  const histL = buffer.f32({ size: IR_LEN });
-  const histR = buffer.f32({ size: IR_LEN });
-  const histHead = state.i32(0);
+    // History of input samples (1 partition each, FIFO; old discarded).
+    // Real partitioned-convolution implementations use FFT-domain partitioning;
+    // this scaffold shows the time-domain accumulation pattern with SIMD bulk.
+    const histL = buffer.f32({ size: IR_LEN });
+    const histR = buffer.f32({ size: IR_LEN });
+    const histHead = state.i32(0);
 
-  // Wet output level, published to UI.
-  const wetMeter = state.f32(0).expose({ name: 'wetMeter', snapshot: 'transient', publish: { rateFps: 30 } });
+    // Wet output level, published to UI.
+    const wetMeter = state
+      .f32(0)
+      .expose({ name: "wetMeter", snapshot: "transient", publish: { rateFps: 30 } });
 
-  // Bulk IR upload from main.
-  const uploadIR = message<{ irL: Float32Array; irR: Float32Array }>({ name: 'uploadIR' });
+    // Bulk IR upload from main.
+    const uploadIR = message<{ irL: Float32Array; irR: Float32Array }>({ name: "uploadIR" });
 
-  return {
-    process: () => {
-      // IR upload: bulk memcpy the typed-array payload fields into the irL / irR
-      // buffers (decisions-log Q31-c). The framework clamps to min(IR_LEN,
-      // <field>.length) at runtime — no payload-driven for-loop on the audio
-      // thread. (If the payload is shorter than IR_LEN, the tail of the buffer
-      // retains whatever was last written; consumers that need explicit zero-
-      // padding can pre-zero by issuing copyFrom with a zero-typed-array first.)
-      uploadIR.onReceive(({ irL: il, irR: ir }) => {
-        irL.copyFrom(il);
-        irR.copyFrom(ir);
-      });
+    return {
+      process: () => {
+        // IR upload: bulk memcpy the typed-array payload fields into the irL / irR
+        // buffers (decisions-log Q31-c). The framework clamps to min(IR_LEN,
+        // <field>.length) at runtime — no payload-driven for-loop on the audio
+        // thread. (If the payload is shorter than IR_LEN, the tail of the buffer
+        // retains whatever was last written; consumers that need explicit zero-
+        // padding can pre-zero by issuing copyFrom with a zero-typed-array first.)
+        uploadIR.onReceive(({ irL: il, irR: ir }) => {
+          irL.copyFrom(il);
+          irR.copyFrom(ir);
+        });
 
-      const headBlock = histHead.load();
+        const headBlock = histHead.load();
 
-      forSample((i) => {
-        const idx = headBlock.add(i).mod(IR_LEN);
-        histL.write(idx, input.left.at(i));
-        histR.write(idx, input.right.at(i));
-      });
+        forSample((i) => {
+          const idx = headBlock.add(i).mod(IR_LEN);
+          histL.write(idx, input.left.at(i));
+          histR.write(idx, input.right.at(i));
+        });
 
-      // SIMD bulk convolution — scalar accumulator over 4-wide vectors.
-      forSample.byN(4, (i) => {
-        const outIdx = headBlock.add(i).mod(IR_LEN);
-        let accL = splat(0);
-        let accR = splat(0);
-        for (let k = 0; k < IR_LEN; k += 4) {
-          const histIdx = outIdx.sub(k).sub(3).add(IR_LEN).mod(IR_LEN);
-          const hL = histL.loadVec(histIdx);
-          const hR = histR.loadVec(histIdx);
-          const iL = irL.loadVec(k);
-          const iR = irR.loadVec(k);
-          accL = accL.add(hL.mul(iL));
-          accR = accR.add(hR.mul(iR));
-        }
-        const sumL = sumLanes(accL);
-        const sumR = sumLanes(accR);
+        // SIMD bulk convolution — scalar accumulator over 4-wide vectors.
+        forSample.byN(4, (i) => {
+          const outIdx = headBlock.add(i).mod(IR_LEN);
+          let accL = splat(0);
+          let accR = splat(0);
+          for (let k = 0; k < IR_LEN; k += 4) {
+            const histIdx = outIdx.sub(k).sub(3).add(IR_LEN).mod(IR_LEN);
+            const hL = histL.loadVec(histIdx);
+            const hR = histR.loadVec(histIdx);
+            const iL = irL.loadVec(k);
+            const iR = irR.loadVec(k);
+            accL = accL.add(hL.mul(iL));
+            accR = accR.add(hR.mul(iR));
+          }
+          const sumL = sumLanes(accL);
+          const sumR = sumLanes(accR);
 
-        const dryL = input.left.at(i).mul(dryGain.at(0));
-        const dryR = input.right.at(i).mul(dryGain.at(0));
-        const wetL = sumL.mul(wetGain.at(0));
-        const wetR = sumR.mul(wetGain.at(0));
+          const dryL = input.left.at(i).mul(dryGain.at(0));
+          const dryR = input.right.at(i).mul(dryGain.at(0));
+          const wetL = sumL.mul(wetGain.at(0));
+          const wetR = sumR.mul(wetGain.at(0));
 
-        out.left.at(i).write(dryL.add(wetL));
-        out.right.at(i).write(dryR.add(wetR));
+          out.left.at(i).write(dryL.add(wetL));
+          out.right.at(i).write(dryR.add(wetR));
 
-        wetMeter.store(wetMeter.load().max(wetL.abs().max(wetR.abs())));
-      });
+          wetMeter.store(wetMeter.load().max(wetL.abs().max(wetR.abs())));
+        });
 
-      histHead.store(headBlock.add(SAMPLES_PER_BLOCK).mod(IR_LEN));
-      wetMeter.store(wetMeter.load().mul(0.93));
-    },
-  };
-}, {
-  // Snapshot migration chain — when older blob versions show up, lift them
-  // forward declaratively. Each entry's from/to is the schema hash computed
-  // by `@unworklet/core`'s `compile` function and emitted to
-  // `dist/<processor>.schema-hash.json` by `@unworklet/vite-plugin` as part
-  // of the bundler-integration metadata artifact set (= 07-vite-plugin §6.3).
-  // The mono-IR shape stored a single buffer named 'ir'; the stereo-IR shape
-  // splits it into irL/irR; the latest schema adds dryGain.
-  migrations: [
-    {
-      from: 'a3f2c1d0...',           // mono-IR schema
-      to:   'b8c14fe2...',           // stereo-IR schema
-      migrate: (oldBlob, helpers) => {
-        const ir = helpers.parseBuffer(oldBlob, 'ir', 'f32');
-        if (ir) {
-          helpers.writeBuffer('irL', 'f32', ir);
-          helpers.writeBuffer('irR', 'f32', ir);
-        }
+        histHead.store(headBlock.add(SAMPLES_PER_BLOCK).mod(IR_LEN));
+        wetMeter.store(wetMeter.load().mul(0.93));
       },
-    },
-    {
-      from: 'b8c14fe2...',           // stereo-IR schema
-      to:   'd7e3a991...',           // current (dryGain added)
-      migrate: () => {
-        // dryGain is a new param; declaration default carries automatically.
-        // Slots unchanged across this step are auto-carried by name match,
-        // so the migrate body is empty.
+    };
+  },
+  {
+    // Snapshot migration chain — when older blob versions show up, lift them
+    // forward declaratively. Each entry's from/to is the schema hash computed
+    // by `@unworklet/core`'s `compile` function and emitted to
+    // `dist/<processor>.schema-hash.json` by `@unworklet/vite-plugin` as part
+    // of the bundler-integration metadata artifact set (= 07-vite-plugin §6.3).
+    // The mono-IR shape stored a single buffer named 'ir'; the stereo-IR shape
+    // splits it into irL/irR; the latest schema adds dryGain.
+    migrations: [
+      {
+        from: "a3f2c1d0...", // mono-IR schema
+        to: "b8c14fe2...", // stereo-IR schema
+        migrate: (oldBlob, helpers) => {
+          const ir = helpers.parseBuffer(oldBlob, "ir", "f32");
+          if (ir) {
+            helpers.writeBuffer("irL", "f32", ir);
+            helpers.writeBuffer("irR", "f32", ir);
+          }
+        },
       },
-    },
-  ],
-});
-
+      {
+        from: "b8c14fe2...", // stereo-IR schema
+        to: "d7e3a991...", // current (dryGain added)
+        migrate: () => {
+          // dryGain is a new param; declaration default carries automatically.
+          // Slots unchanged across this step are auto-carried by name match,
+          // so the migrate body is empty.
+        },
+      },
+    ],
+  },
+);
 ```
 
 ```typescript
@@ -932,7 +1064,7 @@ source.connect(node.inputs.main);
 node.outputs.main.connect(audioContext.destination);
 
 // Load an IR pair from a stereo file.
-const irFile  = await fetch('/irs/cathedral.wav');
+const irFile = await fetch("/irs/cathedral.wav");
 const decoded = await audioContext.decodeAudioData(await irFile.arrayBuffer());
 node.messages.uploadIR({
   irL: decoded.getChannelData(0),
@@ -945,18 +1077,18 @@ node.state.wetMeter.subscribe((v) => wetMeterUI.set(v));
 
 // Save the current preset.
 const presetBlob = await node.snapshot();
-localStorage.setItem('reverb-preset-1', btoa(String.fromCharCode(...presetBlob)));
+localStorage.setItem("reverb-preset-1", btoa(String.fromCharCode(...presetBlob)));
 
 // Load a preset (potentially saved by an older version — migrations apply
 // transparently).
-const stored = localStorage.getItem('reverb-preset-1');
+const stored = localStorage.getItem("reverb-preset-1");
 if (stored) {
   const blob = Uint8Array.from(atob(stored), (c) => c.charCodeAt(0));
   const result = await node.restore(blob);
   if (!result.ok) {
     console.error(`preset migration threw at step ${result.error.step}:`, result.error.message);
   } else if (result.skipped.length || result.missing.length) {
-    console.warn('preset partially loaded', result);
+    console.warn("preset partially loaded", result);
   }
 }
 ```
@@ -965,12 +1097,25 @@ if (stored) {
 
 ```typescript
 import {
-  defineProcessor, defineSubgraph, createSubgraph, audioInput, audioOutput, param, state, buffer,
-  forSample, midiInput, event, SAMPLES_PER_BLOCK,
-  num, select,
-  f32, i32,
-  type Node, type State,
-} from '@unworklet/core';
+  defineProcessor,
+  defineSubgraph,
+  createSubgraph,
+  audioInput,
+  audioOutput,
+  param,
+  state,
+  buffer,
+  forSample,
+  midiInput,
+  event,
+  SAMPLES_PER_BLOCK,
+  num,
+  select,
+  f32,
+  i32,
+  type Node,
+  type State,
+} from "@unworklet/core";
 
 const NUM_VOICES = 8;
 
@@ -978,14 +1123,14 @@ const NUM_VOICES = 8;
 // Lambda argument `sr` is bound at createSubgraph time; method arguments are per-call.
 const synthVoice = defineSubgraph((sr: number) => {
   const phase = state.f32(0);
-  const env   = state.f32(0);
+  const env = state.f32(0);
   return {
     process: (
-      noteHz:    Node<'f32'>,
-      velocity:  Node<'f32'>,
-      gate:      Node<'bool'>,
-      attackS:   Node<'f32'>,
-      releaseS:  Node<'f32'>,
+      noteHz: Node<"f32">,
+      velocity: Node<"f32">,
+      gate: Node<"bool">,
+      attackS: Node<"f32">,
+      releaseS: Node<"f32">,
     ) => {
       // Envelope coefficients (k-rate inputs).
       const aCoef = num(1).sub(num(-1).div(attackS.mul(sr)).exp());
@@ -993,37 +1138,48 @@ const synthVoice = defineSubgraph((sr: number) => {
 
       // Update envelope sample-by-sample.
       const target = select(gate, velocity, 0);
-      const coef   = select(gate, aCoef, rCoef);
-      const e      = target.sub(env.load()).mul(coef).add(env.load());
+      const coef = select(gate, aCoef, rCoef);
+      const e = target.sub(env.load()).mul(coef).add(env.load());
       env.store(e);
 
       // Update phase.
       const inc = noteHz.div(sr);
-      const p   = phase.load().add(inc);
+      const p = phase.load().add(inc);
       phase.store(select(p.gt(1), p.sub(1), p));
 
       // Sine osc + envelope.
-      return p.mul(2 * Math.PI).sin().mul(e);
+      return p
+        .mul(2 * Math.PI)
+        .sin()
+        .mul(e);
     },
   };
 });
 
 export const polySynth = defineProcessor((ctx) => {
-  const sidechain = audioInput ({ channels: 2, name: 'sidechain' });
-  const out       = audioOutput({ channels: 2, name: 'main' });
+  const sidechain = audioInput({ channels: 2, name: "sidechain" });
+  const out = audioOutput({ channels: 2, name: "main" });
 
-  const attack    = param.f32({ default: 0.01, min: 0.001, max: 1,    automationRate: 'k-rate' }).named('attack');
-  const release   = param.f32({ default: 0.3,  min: 0.01,  max: 4,    automationRate: 'k-rate' }).named('release');
-  const masterVol = param.f32({ default: 0.7,  min: 0,     max: 1,    automationRate: 'a-rate' }).named('masterVol');
-  const duckAmount= param.f32({ default: 0.5,  min: 0,     max: 1,    automationRate: 'k-rate' }).named('duckAmount');
+  const attack = param
+    .f32({ default: 0.01, min: 0.001, max: 1, automationRate: "k-rate" })
+    .named("attack");
+  const release = param
+    .f32({ default: 0.3, min: 0.01, max: 4, automationRate: "k-rate" })
+    .named("release");
+  const masterVol = param
+    .f32({ default: 0.7, min: 0, max: 1, automationRate: "a-rate" })
+    .named("masterVol");
+  const duckAmount = param
+    .f32({ default: 0.5, min: 0, max: 1, automationRate: "k-rate" })
+    .named("duckAmount");
 
   // Voice state arrays — flattened.
-  const voiceNote: State<'i32'>[]  = [];
-  const voiceVel : State<'f32'>[]  = [];
-  const voiceGate: State<'bool'>[] = [];
+  const voiceNote: State<"i32">[] = [];
+  const voiceVel: State<"f32">[] = [];
+  const voiceGate: State<"bool">[] = [];
   for (let v = 0; v < NUM_VOICES; v++) {
     voiceNote.push(state.i32(60));
-    voiceVel .push(state.f32(0));
+    voiceVel.push(state.f32(0));
     voiceGate.push(state.bool(false));
   }
   const allocCursor = state.i32(0);
@@ -1032,16 +1188,22 @@ export const polySynth = defineProcessor((ctx) => {
   const scEnv = state.f32(0);
 
   // UI: 1024-sample waveform thumbnail of the synth output.
-  const waveform = buffer.f32({ size: 1024 }).expose({ name: 'waveform', publish: { rateFps: 30 } });
-  const wavePtr  = state.i32(0);
+  const waveform = buffer
+    .f32({ size: 1024 })
+    .expose({ name: "waveform", publish: { rateFps: 30 } });
+  const wavePtr = state.i32(0);
 
   // UI: number of active voices.
-  const activeVoices = state.i32(0).expose({ name: 'activeVoices', snapshot: 'transient', publish: { rateFps: 15 } });
+  const activeVoices = state
+    .i32(0)
+    .expose({ name: "activeVoices", snapshot: "transient", publish: { rateFps: 15 } });
 
   // Sample-accurate event for note triggers (UI key flash).
-  const notePlayed = event<{ note: number; voice: number; velocity: number }>({ name: 'notePlayed' });
+  const notePlayed = event<{ note: number; voice: number; velocity: number }>({
+    name: "notePlayed",
+  });
 
-  const keys = midiInput({ name: 'keys' });
+  const keys = midiInput({ name: "keys" });
 
   // Eight independent synthVoice instances, allocated in declaration scope.
   const voices = [];
@@ -1051,23 +1213,22 @@ export const polySynth = defineProcessor((ctx) => {
 
   return {
     process: () => {
-      keys.onEvent('noteOn', ({ note, velocity, atSample }) => {
+      keys.onEvent("noteOn", ({ note, velocity, atSample }) => {
         // Round-robin voice allocator.
         const v = allocCursor.load();
         // Build-time unrolled selection: pick the slot that matches `v`.
         for (let s = 0; s < NUM_VOICES; s++) {
           const isMe = v.eq(s);
-          voiceNote[s].store(select(isMe, note,                       voiceNote[s].load()));
-          voiceVel [s].store(select(isMe, f32(velocity).div(127),     voiceVel [s].load()));
-          voiceGate[s].store(select(isMe, true,                       voiceGate[s].load()));
+          voiceNote[s].store(select(isMe, note, voiceNote[s].load()));
+          voiceVel[s].store(select(isMe, f32(velocity).div(127), voiceVel[s].load()));
+          voiceGate[s].store(select(isMe, true, voiceGate[s].load()));
         }
         allocCursor.store(v.add(1).mod(NUM_VOICES));
 
-        notePlayed.emitIf(true,
-          { atSample, note, voice: v, velocity: f32(velocity).div(127) });
+        notePlayed.emitIf(true, { atSample, note, voice: v, velocity: f32(velocity).div(127) });
       });
 
-      keys.onEvent('noteOff', ({ note }) => {
+      keys.onEvent("noteOff", ({ note }) => {
         for (let s = 0; s < NUM_VOICES; s++) {
           voiceGate[s].store(select(voiceNote[s].load().eq(note), false, voiceGate[s].load()));
         }
@@ -1075,14 +1236,18 @@ export const polySynth = defineProcessor((ctx) => {
 
       // Per-block: derive the sidechain envelope's attack/release coefficients.
       const aCoef = 0.05;
-      const rCoef = num(1).sub(num(-1).div(0.2 * ctx.sampleRate).exp());
+      const rCoef = num(1).sub(
+        num(-1)
+          .div(0.2 * ctx.sampleRate)
+          .exp(),
+      );
 
       const wpStart = wavePtr.load();
 
       forSample((i) => {
         // Sidechain envelope (peak detector with separate attack/release).
         const scPeak = sidechain.left.at(i).abs().max(sidechain.right.at(i).abs());
-        const scC    = select(scPeak.gt(scEnv.load()), aCoef, rCoef);
+        const scC = select(scPeak.gt(scEnv.load()), aCoef, rCoef);
         scEnv.store(scPeak.sub(scEnv.load()).mul(scC).add(scEnv.load()));
 
         // Duck factor: 1.0 - duckAmount * scEnv.
@@ -1092,9 +1257,12 @@ export const polySynth = defineProcessor((ctx) => {
         let mix = f32(0);
         for (let s = 0; s < NUM_VOICES; s++) {
           const note = voiceNote[s].load();
-          const vel  = voiceVel [s].load();
+          const vel = voiceVel[s].load();
           const gate = voiceGate[s].load();
-          const hz   = f32(note.sub(69)).mul(Math.LN2 / 12).exp().mul(440);
+          const hz = f32(note.sub(69))
+            .mul(Math.LN2 / 12)
+            .exp()
+            .mul(440);
           mix = mix.add(voices[s].process(hz, vel, gate, attack.at(0), release.at(0)));
         }
 
@@ -1118,7 +1286,6 @@ export const polySynth = defineProcessor((ctx) => {
     },
   };
 });
-
 ```
 
 ```typescript
@@ -1133,8 +1300,8 @@ kickSource.connect(node.inputs.sidechain);
 const midiAccess = await navigator.requestMIDIAccess();
 node.midi.keys.connectFromWebMIDI(Array.from(midiAccess.inputs.values())[0]);
 
-node.params.attack.value     = 0.02;
-node.params.release.value    = 0.4;
+node.params.attack.value = 0.02;
+node.params.release.value = 0.4;
 node.params.masterVol.linearRampToValueAtTime(0.8, audioContext.currentTime + 1);
 node.params.duckAmount.value = 0.6;
 
@@ -1156,10 +1323,15 @@ setInterval(() => {
 
 ```typescript
 import {
-  defineProcessor, audioOutput, state, message,
-  midiInput, midiOutput, buffer,
+  defineProcessor,
+  audioOutput,
+  state,
+  message,
+  midiInput,
+  midiOutput,
+  buffer,
   i32,
-} from '@unworklet/core';
+} from "@unworklet/core";
 
 const MAX_SYSEX_LEN = 512;
 
@@ -1172,14 +1344,14 @@ export const sysexBridge = defineProcessor((ctx) => {
   // No audio processing — the worklet exists purely to mediate MIDI. A silent
   // mono output is declared so the node can be wired into an audio graph;
   // unwritten samples emit silence (Q37).
-  const out = audioOutput({ channels: 1, name: 'main' });
+  const out = audioOutput({ channels: 1, name: "main" });
 
-  const sysexIn  = midiInput ({ name: 'sysexIn' });
-  const sysexOut = midiOutput({ name: 'sysexOut' });
+  const sysexIn = midiInput({ name: "sysexIn" });
+  const sysexOut = midiOutput({ name: "sysexOut" });
 
   // 7-bit MIDI value (0x00–0x7F). Published so the main side can mirror the
   // current setting in the UI.
-  const targetId = state.i32(0x10).expose({ name: 'targetId', publish: { rateFps: 5 } });
+  const targetId = state.i32(0x10).expose({ name: "targetId", publish: { rateFps: 5 } });
 
   // Byte buffer that holds the in-flight sysex while we rewrite byte 1.
   // Sized for the longest payload the bridge is expected to handle.
@@ -1187,7 +1359,7 @@ export const sysexBridge = defineProcessor((ctx) => {
 
   // main → worklet message that updates the device ID applied to subsequent
   // sysex events.
-  const setId = message<{ id: number }>({ name: 'setId' });
+  const setId = message<{ id: number }>({ name: "setId" });
 
   return {
     process: () => {
@@ -1198,11 +1370,11 @@ export const sysexBridge = defineProcessor((ctx) => {
       // Copy the incoming sysex bytes into `buf`, overwrite byte 1 with the
       // current target ID, and re-emit. `length` is forwarded unchanged so the
       // downstream sees the same payload size as the inbound event.
-      sysexIn.onEvent('sysex', ({ data, length, atSample }) => {
+      sysexIn.onEvent("sysex", ({ data, length, atSample }) => {
         buf.copyFrom(data);
         buf.write(i32(1), targetId.load());
         sysexOut.emitIf(true, {
-          type: 'sysex',
+          type: "sysex",
           data: buf,
           length,
           atSample,
@@ -1214,22 +1386,22 @@ export const sysexBridge = defineProcessor((ctx) => {
 
 // --- main side ---
 
-import { createNode } from '@unworklet/core';
+import { createNode } from "@unworklet/core";
 
 const audioCtx = new AudioContext();
-const node     = await createNode(audioCtx, sysexBridge);
+const node = await createNode(audioCtx, sysexBridge);
 audioCtx.resume();
 
 // Wire the bridge to a Web MIDI input on one side and a Web MIDI output on
 // the other. unworklet only normalizes the wire shape inside the worklet; the
 // permission / device-selection flow is consumer responsibility (= Q11 / B1).
 const midiAccess = await navigator.requestMIDIAccess({ sysex: true });
-const inputDev   = [...midiAccess.inputs.values()][0];
-const outputDev  = [...midiAccess.outputs.values()][0];
+const inputDev = [...midiAccess.inputs.values()][0];
+const outputDev = [...midiAccess.outputs.values()][0];
 node.midi.sysexIn.connectFromWebMIDI(inputDev);
 
 // Forward each sysex event emitted by the bridge to the downstream device.
-node.midi.sysexOut.onEvent('sysex', (event) => {
+node.midi.sysexOut.onEvent("sysex", (event) => {
   outputDev.send(event.data);
 });
 
@@ -1252,44 +1424,46 @@ node.state.targetId.subscribe((id) => deviceIdUI.set(id));
 // 換 え て も 同 じ 公 開 surface (= audioOutput 'main' + param 'freq' +
 // state.f32 'phase' persistent) を 維 持 す る 想 定。
 
-import {
-  defineProcessor, audioOutput, param, state,
-  forSample, f32,
-} from '@unworklet/core';
+import { defineProcessor, audioOutput, param, state, forSample, f32 } from "@unworklet/core";
 
-export const initialOsc = defineProcessor((ctx) => {
-  const out   = audioOutput({ channels: 1, name: 'main' });
-  const freq  = param.f32({ default: 440, min: 20, max: 20000, automationRate: 'k-rate' }).named('freq');
-  // 'persistent' = swap を 跨 い で carry forward さ せ た い state。
-  const phase = state.f32(0).expose({ name: 'phase', snapshot: 'persistent' });
+export const initialOsc = defineProcessor(
+  (ctx) => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const freq = param
+      .f32({ default: 440, min: 20, max: 20000, automationRate: "k-rate" })
+      .named("freq");
+    // 'persistent' = swap を 跨 い で carry forward さ せ た い state。
+    const phase = state.f32(0).expose({ name: "phase", snapshot: "persistent" });
 
-  return {
-    process: () => {
-      forSample((i) => {
-        const p   = phase.load();
-        const inc = freq.at(0).mul(f32(2 * Math.PI / ctx.sampleRate));
-        out.ch(0).at(i).write(p.sin());
-        phase.store(p.add(inc).mod(f32(2 * Math.PI)));
-      });
-    },
-  };
-}, {
-  // Migration chain that the REPL-supplied new processor can fail on:
-  // when the user-edited source carries a different schema hash and a
-  // hostile `migrate` body throws, `replaceProcessor` surfaces `ok: false`
-  // with `error.step` pointing at this entry — see the main-side handler
-  // below. Migration shape: see Ex 7 + 01-dsl §8.3.
-  migrations: [
-    {
-      from: 'a3f2c1d0...',           // hash of an earlier `phase` shape
-      to:   'b8c14fe2...',           // hash of the current schema
-      migrate: (oldBlob, helpers) => {
-        const old = helpers.parseSlot(oldBlob, 'phase', 'f32');
-        if (old !== undefined) helpers.writeSlot('phase', 'f32', old);
+    return {
+      process: () => {
+        forSample((i) => {
+          const p = phase.load();
+          const inc = freq.at(0).mul(f32((2 * Math.PI) / ctx.sampleRate));
+          out.ch(0).at(i).write(p.sin());
+          phase.store(p.add(inc).mod(f32(2 * Math.PI)));
+        });
       },
-    },
-  ],
-});
+    };
+  },
+  {
+    // Migration chain that the REPL-supplied new processor can fail on:
+    // when the user-edited source carries a different schema hash and a
+    // hostile `migrate` body throws, `replaceProcessor` surfaces `ok: false`
+    // with `error.step` pointing at this entry — see the main-side handler
+    // below. Migration shape: see Ex 7 + 01-dsl §8.3.
+    migrations: [
+      {
+        from: "a3f2c1d0...", // hash of an earlier `phase` shape
+        to: "b8c14fe2...", // hash of the current schema
+        migrate: (oldBlob, helpers) => {
+          const old = helpers.parseSlot(oldBlob, "phase", "f32");
+          if (old !== undefined) helpers.writeSlot("phase", "f32", old);
+        },
+      },
+    ],
+  },
+);
 ```
 
 ```typescript
@@ -1297,21 +1471,21 @@ export const initialOsc = defineProcessor((ctx) => {
 // 提 供 (= replaceProcessor)、 source 取 得 path / graph re-wire / error UI
 // は user-land。
 
-import { createNode, replaceProcessor } from '@unworklet/core';
-import { initialOsc } from './initial.processor.ts?worklet';
+import { createNode, replaceProcessor } from "@unworklet/core";
+import { initialOsc } from "./initial.processor.ts?worklet";
 
 const audioCtx = new AudioContext();
 let node = await createNode(audioCtx, initialOsc);
 node.outputs.main.connect(audioCtx.destination);
 audioCtx.resume();
 
-runButton.addEventListener('click', async () => {
+runButton.addEventListener("click", async () => {
   // editor の source を blob URL 経 由 で 新 module と し て import。 prod で は
   // bundler HMR や file watcher 経 由 で 同 等 path を 組 む。
   const source = editor.getValue();
-  const blob   = new Blob([source], { type: 'application/javascript' });
-  const url    = URL.createObjectURL(blob);
-  const mod    = await import(/* @vite-ignore */ url);
+  const blob = new Blob([source], { type: "application/javascript" });
+  const url = URL.createObjectURL(blob);
+  const mod = await import(/* @vite-ignore */ url);
 
   // 旧 instance を 新 module で 置 き 換 え。 snapshot/restore + migration
   // chain で state を carry forward、 失 敗 時 は ok: false で 復 帰 path。
@@ -1327,7 +1501,7 @@ runButton.addEventListener('click', async () => {
   node = result.node;
   node.outputs.main.connect(audioCtx.destination);
 
-  statusUI.set('swapped');
+  statusUI.set("swapped");
   URL.revokeObjectURL(url);
 });
 

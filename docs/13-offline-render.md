@@ -10,12 +10,12 @@ skeleton (scope-level shape fixed per Q23 + Q24 + Q25; per-section detail filled
 
 The package is intentionally a single primitive — `renderOffline` — applicable across the following first-class scenarios:
 
-| Use case | Description |
-|---|---|
-| Server-side render | Run a processor in Node.js to generate PCM, then encode to wav / mp3 / opus / etc. with a separate library. |
-| Batch processing | Iterate over many configurations or input files; produce PCM arrays for each. |
-| Preset preview UI | A web app renders a short PCM preview of a preset without spinning up an `AudioContext` (e.g. for a waveform thumbnail). |
-| Test | `@unworklet/test` (= `06-testing.md`) wraps `renderOffline` in vitest matchers (`expectAudioMatches`, `expectNoNaN`, etc.) for deterministic CI runs. |
+| Use case           | Description                                                                                                                                           |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Server-side render | Run a processor in Node.js to generate PCM, then encode to wav / mp3 / opus / etc. with a separate library.                                           |
+| Batch processing   | Iterate over many configurations or input files; produce PCM arrays for each.                                                                         |
+| Preset preview UI  | A web app renders a short PCM preview of a preset without spinning up an `AudioContext` (e.g. for a waveform thumbnail).                              |
+| Test               | `@unworklet/test` (= `06-testing.md`) wraps `renderOffline` in vitest matchers (`expectAudioMatches`, `expectNoNaN`, etc.) for deterministic CI runs. |
 
 The package does **not** wrap any I/O concern (no wav writer, no http server, no mp3 encoder, no UI). Output is in-memory `Float32Array`; the consumer composes file I/O / encoders / UI separately. Keeping the surface a pure function maximizes reuse across the four use cases above.
 
@@ -24,21 +24,37 @@ The package does **not** wrap any I/O concern (no wav writer, no http server, no
 ## 2. API
 
 ```typescript
-import { renderOffline } from '@unworklet/offline';
-import { myProcessor } from './my-processor';   // `defineProcessor(...)` の 戻 り 値 (= `CompiledProcessor<C>`) を そ の ま ま import。 vite-plugin 経 由 の `?worklet` import path も 並 列 で OK (= `.processor.ts` 内 で `defineProcessor(...)` を 名 前 付 き export し て お け ば either path で 同 一 artifact を 受 け 取 れ る)。
+import { renderOffline } from "@unworklet/offline";
+import { myProcessor } from "./my-processor"; // `defineProcessor(...)` の 戻 り 値 (= `CompiledProcessor<C>`) を そ の ま ま import。 vite-plugin 経 由 の `?worklet` import path も 並 列 で OK (= `.processor.ts` 内 で `defineProcessor(...)` を 名 前 付 き export し て お け ば either path で 同 一 artifact を 受 け 取 れ る)。
 
 const result = await renderOffline(myProcessor, {
   sampleRate: 48000,
-  duration:   1.0,                                              // seconds
-  inputs:  { main: [inputLeftPcm, inputRightPcm] },             // audioInput name → Float32Array[] (one entry per channel; mono = length-1 array)
-  params:  { cutoff: [1000, 1000, /* per-sample or per-block */ ] },
-  messages: [{ name: 'loadPattern', payload: { /* ... */ }, atQuantum: 0 }],   // main → worklet messages、 atQuantum で 配 達 タ イ ミ ン グ を block 番 号 で 指 定 (省 略 = 0 = render 開 始 時)。 online で の Q38-a 「各 render quantum 開 始 時 に drain」 と 直 接 zip。
-  events:   [{ name: 'noteOn', payload: { /* ... */ }, atSample: 100 }],
+  duration: 1.0, // seconds
+  inputs: { main: [inputLeftPcm, inputRightPcm] }, // audioInput name → Float32Array[] (one entry per channel; mono = length-1 array)
+  params: { cutoff: [1000, 1000 /* per-sample or per-block */] },
+  messages: [
+    {
+      name: "loadPattern",
+      payload: {
+        /* ... */
+      },
+      atQuantum: 0,
+    },
+  ], // main → worklet messages、 atQuantum で 配 達 タ イ ミ ン グ を block 番 号 で 指 定 (省 略 = 0 = render 開 始 時)。 online で の Q38-a 「各 render quantum 開 始 時 に drain」 と 直 接 zip。
+  events: [
+    {
+      name: "noteOn",
+      payload: {
+        /* ... */
+      },
+      atSample: 100,
+    },
+  ],
 });
 
 result.outputs.main; // Float32Array[]   per-channel PCM (key = `audioOutput` declared `name`; canonical convention is `'main'`. Length = ceil(duration × sampleRate / 128) × 128, see §2.1.)
-result.events;       // Array<{ name, payload, atSample }>   events the processor emitted (= name は declaration の `name`、 payload は online で `.events.<name>.on(handler)` の handler に 渡 さ れ る 値 と 同 形、 atSample は block-local sample offset)
-result.state;        // Uint8Array       snapshot blob (Q5 format) at end-of-render
+result.events; // Array<{ name, payload, atSample }>   events the processor emitted (= name は declaration の `name`、 payload は online で `.events.<name>.on(handler)` の handler に 渡 さ れ る 値 と 同 形、 atSample は block-local sample offset)
+result.state; // Uint8Array       snapshot blob (Q5 format) at end-of-render
 ```
 
 ### 2.1 Duration の 端 数 処 理

@@ -19,22 +19,26 @@ midiOutput(options: { name: string; capacity?: Capacity }): MidiOutputHandle;
 
 ```typescript
 const synth = defineProcessor((ctx) => {
-  const midiIn = midiInput({ name: 'midiIn' });          // declare MIDI ingestion
+  const midiIn = midiInput({ name: "midiIn" }); // declare MIDI ingestion
   // ...
-  return { process: () => { /* ... */ } };
+  return {
+    process: () => {
+      /* ... */
+    },
+  };
 });
 
 const arpeggiator = defineProcessor((ctx) => {
-  const midiIn  = midiInput ({ name: 'midiIn'  });
-  const midiOut = midiOutput({ name: 'midiOut' });       // declare MIDI emission
+  const midiIn = midiInput({ name: "midiIn" });
+  const midiOut = midiOutput({ name: "midiOut" }); // declare MIDI emission
   // ...
 });
 
 const dualPort = defineProcessor((ctx) => {
   // Multiple ports per processor: each gets its own `name` and is reached
   // through `node.midi.<name>` on the main thread.
-  const sync   = midiInput ({ name: 'sync'   });   // external clock / transport
-  const arpOut = midiOutput({ name: 'arpOut' });   // arp-generated notes
+  const sync = midiInput({ name: "sync" }); // external clock / transport
+  const arpOut = midiOutput({ name: "arpOut" }); // arp-generated notes
   // ...
 });
 
@@ -58,17 +62,17 @@ The exact shape of the `midiInput` / `midiOutput` handles (event subscription on
 
 ```typescript
 defineProcessor((ctx) => {
-  const midiIn = midiInput({ name: 'midiIn' });
+  const midiIn = midiInput({ name: "midiIn" });
 
   return {
     process: () => {
-      midiIn.onEvent('noteOn',  ({ channel, note, velocity, atSample }) => {
+      midiIn.onEvent("noteOn", ({ channel, note, velocity, atSample }) => {
         // ...handle noteOn
       });
-      midiIn.onEvent('noteOff', ({ channel, note, atSample }) => {
+      midiIn.onEvent("noteOff", ({ channel, note, atSample }) => {
         // ...handle noteOff
       });
-      midiIn.onEvent('cc',      ({ channel, controller, value, atSample }) => {
+      midiIn.onEvent("cc", ({ channel, controller, value, atSample }) => {
         // ...handle continuous controller
       });
     },
@@ -86,30 +90,59 @@ MIDI events appear in two contexts: **main thread** (= `node.midi.<name>.send(..
 // main-side type omits it; the wire layout (= §4.1) carries `atSample` as a
 // `u32` independently.
 type MidiEvent =
-  | { type: 'noteOn';          channel: number; note: number; velocity: number }
-  | { type: 'noteOff';         channel: number; note: number; velocity: number }
-  | { type: 'cc';              channel: number; controller: number; value: number }
-  | { type: 'pitchBend';       channel: number; value: number }
-  | { type: 'programChange';   channel: number; program: number }
-  | { type: 'channelPressure'; channel: number; pressure: number }
-  | { type: 'aftertouch';      channel: number; note: number; pressure: number }
-  | { type: 'systemRealtime';  status: number }  // 0xF8 / 0xFA / 0xFB / 0xFC
-  | { type: 'sysex';           data: Uint8Array };
+  | { type: "noteOn"; channel: number; note: number; velocity: number }
+  | { type: "noteOff"; channel: number; note: number; velocity: number }
+  | { type: "cc"; channel: number; controller: number; value: number }
+  | { type: "pitchBend"; channel: number; value: number }
+  | { type: "programChange"; channel: number; program: number }
+  | { type: "channelPressure"; channel: number; pressure: number }
+  | { type: "aftertouch"; channel: number; note: number; pressure: number }
+  | { type: "systemRealtime"; status: number } // 0xF8 / 0xFA / 0xFB / 0xFC
+  | { type: "sysex"; data: Uint8Array };
 
 // Worklet audio-thread shape — every numeric field is a graph-capture value
 // (`Node<'i32'>`), every typed-array field is exposed as a typed-array-field
 // proxy (Q36-b). Returned by `midiInput().onEvent(...)` handler, and accepted
 // by `midiOutput().emitIf(...)`. See `decisions-log.md` Q46.
 type MidiEventGraph =
-  | { type: 'noteOn';          channel: Node<'i32'>; note: Node<'i32'>; velocity: Node<'i32'>;     atSample: Node<'i32'> }
-  | { type: 'noteOff';         channel: Node<'i32'>; note: Node<'i32'>; velocity: Node<'i32'>;     atSample: Node<'i32'> }
-  | { type: 'cc';              channel: Node<'i32'>; controller: Node<'i32'>; value: Node<'i32'>;  atSample: Node<'i32'> }
-  | { type: 'pitchBend';       channel: Node<'i32'>; value: Node<'i32'>;                           atSample: Node<'i32'> }
-  | { type: 'programChange';   channel: Node<'i32'>; program: Node<'i32'>;                         atSample: Node<'i32'> }
-  | { type: 'channelPressure'; channel: Node<'i32'>; pressure: Node<'i32'>;                        atSample: Node<'i32'> }
-  | { type: 'aftertouch';      channel: Node<'i32'>; note: Node<'i32'>; pressure: Node<'i32'>;     atSample: Node<'i32'> }
-  | { type: 'systemRealtime';  status: Node<'i32'>;                                                atSample: Node<'i32'> }
-  | { type: 'sysex';           data: Buffer<'u8'> | TypedArrayFieldRef<'u8'>; length: Node<'i32'>;     atSample: Node<'i32'> };
+  | {
+      type: "noteOn";
+      channel: Node<"i32">;
+      note: Node<"i32">;
+      velocity: Node<"i32">;
+      atSample: Node<"i32">;
+    }
+  | {
+      type: "noteOff";
+      channel: Node<"i32">;
+      note: Node<"i32">;
+      velocity: Node<"i32">;
+      atSample: Node<"i32">;
+    }
+  | {
+      type: "cc";
+      channel: Node<"i32">;
+      controller: Node<"i32">;
+      value: Node<"i32">;
+      atSample: Node<"i32">;
+    }
+  | { type: "pitchBend"; channel: Node<"i32">; value: Node<"i32">; atSample: Node<"i32"> }
+  | { type: "programChange"; channel: Node<"i32">; program: Node<"i32">; atSample: Node<"i32"> }
+  | { type: "channelPressure"; channel: Node<"i32">; pressure: Node<"i32">; atSample: Node<"i32"> }
+  | {
+      type: "aftertouch";
+      channel: Node<"i32">;
+      note: Node<"i32">;
+      pressure: Node<"i32">;
+      atSample: Node<"i32">;
+    }
+  | { type: "systemRealtime"; status: Node<"i32">; atSample: Node<"i32"> }
+  | {
+      type: "sysex";
+      data: Buffer<"u8"> | TypedArrayFieldRef<"u8">;
+      length: Node<"i32">;
+      atSample: Node<"i32">;
+    };
 ```
 
 The two types share variant tags and field names — only field types differ. Emit-side accepts number / boolean literals through the Q33 literal-lift rule (e.g. `atSample: 0` lifts to `Node<'i32'>` with value 0), so authors write the same literal numbers they would write in `MidiEvent`. Reading a field in a worklet handler returns a `Node<'i32'>` graph value usable in graph expressions: `noteState.store(note)` works because `note: Node<'i32'>` is what `state.i32.store` expects.
@@ -123,7 +156,7 @@ The exact set of variants and their fields is closed at v1.0.0. New variants (e.
 Every handler argument carries `atSample` — the sample-offset within the current render quantum at which the event arrived. **Handlers themselves drain at the block boundary (Q38-b: all message + MIDI handlers run before any per-block top-level statement or `forSample`)** — the `atSample` field carries sample accuracy as data into the audio-thread graph rather than as a handler-firing time. Sample-accurate behavior is recovered by the canonical state-slot pattern: the handler stores the event details + `atSample` into `state` slots, then a subsequent `forSample` invocation compares `i` against the stored offset to gate sample-accurate work.
 
 ```typescript
-midiIn.onEvent('noteOn', ({ note, atSample }) => {
+midiIn.onEvent("noteOn", ({ note, atSample }) => {
   // atSample tells us "this noteOn arrived 47 samples into the current block"
   // The handler runs at the block boundary (Q38-b); to trigger the envelope
   // at sample 47, store atSample into a state slot and gate in forSample.
@@ -136,7 +169,7 @@ All numeric fields the handler receives — `atSample`, `note`, `velocity`, `cha
 
 ```typescript
 defineProcessor((ctx) => {
-  const midiIn = midiInput({ name: 'midiIn' });
+  const midiIn = midiInput({ name: "midiIn" });
   const noteState = state.i32(-1);
   const trigOffset = state.i32(-1);
   // ...
@@ -145,7 +178,7 @@ defineProcessor((ctx) => {
     process: () => {
       // Handler captures noteOn into state slots. The handler body runs at the firing
       // sample (the sample whose offset matches the event's atSample value).
-      midiIn.onEvent('noteOn', ({ note, atSample }) => {
+      midiIn.onEvent("noteOn", ({ note, atSample }) => {
         noteState.store(note);
         trigOffset.store(atSample);
       });
@@ -172,16 +205,16 @@ The `condition` parameter accepts `Node<'bool'> | boolean`. Inside a `forSample`
 
 ```typescript
 const drumSequencer = defineProcessor((ctx) => {
-  const midiOut = midiOutput({ name: 'midiOut' });
+  const midiOut = midiOutput({ name: "midiOut" });
   // ...
   return {
     process: () => {
       midiOut.emitIf(crossedStep, {
-        type: 'noteOn',
+        type: "noteOn",
         channel: 9,
         note: noteToEmit,
         velocity: 100,
-        atSample: 0,   // sample-offset within the current render quantum
+        atSample: 0, // sample-offset within the current render quantum
       });
     },
   };
@@ -192,26 +225,26 @@ const drumSequencer = defineProcessor((ctx) => {
 
 The `event` argument has the `MidiEventGraph` shape (§2.2) — all numeric fields are `Node<'i32'>`, with number literals admitted through Q33 literal-lift. The `atSample` field is in the same dimension as the surrounding iteration's sample-offset. Common patterns:
 
-- *Constant offset*: `atSample: 0` emits at the start of the render quantum (non-sample-accurate consumers).
-- *Current sample*: in an explicit-form processor, pass the surrounding `forSample` callback's `i` directly: `atSample: i`. The emitted event then carries the exact sample at which the conditional fired.
-- *State-driven offset*: read a previously-stored sample-offset from a `state.i32` slot.
+- _Constant offset_: `atSample: 0` emits at the start of the render quantum (non-sample-accurate consumers).
+- _Current sample_: in an explicit-form processor, pass the surrounding `forSample` callback's `i` directly: `atSample: i`. The emitted event then carries the exact sample at which the conditional fired.
+- _State-driven offset_: read a previously-stored sample-offset from a `state.i32` slot.
 
 ```typescript
 defineProcessor((ctx) => {
-  const midiOut = midiOutput({ name: 'midiOut' });
+  const midiOut = midiOutput({ name: "midiOut" });
   const stepCounter = state.i32(0);
 
   return {
     process: () => {
       forSample((i) => {
-        const c       = stepCounter.load();
+        const c = stepCounter.load();
         const crossed = c.eq(/* threshold */);
         midiOut.emitIf(crossed, {
-          type: 'noteOn',
+          type: "noteOn",
           channel: 9,
           note: 60,
           velocity: 100,
-          atSample: i,                                       // sample-accurate: emit at the firing sample
+          atSample: i, // sample-accurate: emit at the firing sample
         });
         stepCounter.store(/* advance */);
       });
@@ -230,20 +263,20 @@ Sysex events have variable-length `data` and cannot use a fixed-size MIDI event 
 
 ```typescript
 defineProcessor((ctx) => {
-  const midiOut  = midiOutput({ name: 'midiOut' });
-  const sysexBuf = buffer.u8({ size: 64 });                              // build-time-fixed
-  const txLen    = state.i32(0);                                          // dynamic send length
-  const sendAt   = state.i32(-1);                                         // sample-offset where the next send fires (-1 = no send pending)
+  const midiOut = midiOutput({ name: "midiOut" });
+  const sysexBuf = buffer.u8({ size: 64 }); // build-time-fixed
+  const txLen = state.i32(0); // dynamic send length
+  const sendAt = state.i32(-1); // sample-offset where the next send fires (-1 = no send pending)
 
   return {
     process: () => {
       // ... handler / forSample logic populates sysexBuf + txLen + sendAt ...
       forSample((i) => {
-        const cond = i.eq(sendAt.load());                              // sample-edge: fires exactly on the offset stored by the handler
+        const cond = i.eq(sendAt.load()); // sample-edge: fires exactly on the offset stored by the handler
         midiOut.emitIf(cond, {
-          type:     'sysex',
-          data:     sysexBuf,                                            // Buffer<'u8'> reference
-          length:   txLen.load(),                                        // Node<'i32'> — bytes to ship
+          type: "sysex",
+          data: sysexBuf, // Buffer<'u8'> reference
+          length: txLen.load(), // Node<'i32'> — bytes to ship
           atSample: i,
         });
       });
@@ -259,11 +292,12 @@ defineProcessor((ctx) => {
 **Ingested sysex re-emitted** (= MIDI thru / sysex echo / pass-through filters) uses the `TypedArrayFieldRef<'u8'>` received by the inbound handler. The proxy is read-only but can be passed through `emitIf` directly; the framework re-encodes from the source buffer:
 
 ```typescript
-midiIn.onEvent('sysex', ({ data, atSample }) => {                       // data: TypedArrayFieldRef<'u8'>
+midiIn.onEvent("sysex", ({ data, atSample }) => {
+  // data: TypedArrayFieldRef<'u8'>
   midiOut.emitIf(true, {
-    type:     'sysex',
-    data:     data,                                                      // proxy passed through
-    length:   data.length,                                                // Node<'i32'> from proxy
+    type: "sysex",
+    data: data, // proxy passed through
+    length: data.length, // Node<'i32'> from proxy
     atSample,
   });
 });
@@ -294,12 +328,12 @@ node.midi.<name>.send(event: MidiEvent, atTime?: number): void;
 ```typescript
 // Web MIDI input device → worklet (single-port, name = 'main')
 const access = await navigator.requestMIDIAccess();
-const input  = access.inputs.values().next().value;
+const input = access.inputs.values().next().value;
 node.midi.main.connectFromWebMIDI(input);
 
 // Application-generated event
-button.addEventListener('click', () => {
-  node.midi.main.send({ type: 'noteOn', channel: 0, note: 60, velocity: 127 });
+button.addEventListener("click", () => {
+  node.midi.main.send({ type: "noteOn", channel: 0, note: 60, velocity: 127 });
 });
 
 // Network message → MIDI
@@ -308,7 +342,7 @@ ws.onmessage = (msg) => {
 };
 
 // Multi-port: keyboard + controller
-const kbdAccess = (await navigator.requestMIDIAccess()).inputs.get('keyboard-id');
+const kbdAccess = (await navigator.requestMIDIAccess()).inputs.get("keyboard-id");
 node.midi.keyboard.connectFromWebMIDI(kbdAccess);
 node.midi.controller.connectFromWebMIDI(controllerInput);
 ```
@@ -366,8 +400,8 @@ v1.0.0 ships full sysex support in **both directions** — ingestion (main → w
 Inbound and outbound ring buffers have fixed-size capacities chosen at processor instantiation:
 
 ```typescript
-const midiIn = midiInput({ name: 'midiIn' });                                                  // capacity: CAPACITY_256 (default)
-const heavy  = midiInput({ name: 'heavy', capacity: CAPACITY_1024 });                          // override
+const midiIn = midiInput({ name: "midiIn" }); // capacity: CAPACITY_256 (default)
+const heavy = midiInput({ name: "heavy", capacity: CAPACITY_1024 }); // override
 ```
 
 256 slots × 8 bytes = 2 KB; 1024 slots = 8 KB. SAB usage is small either way. The default of 256 covers the vast majority of MIDI workloads; override is available for dense MIDI / sequencer / network-driven loads.
@@ -391,11 +425,11 @@ MIDI clock messages (`0xF8` timing clock, `0xFA` start, `0xFB` continue, `0xFC` 
 
 ```typescript
 defineProcessor((ctx) => {
-  const midiIn = midiInput({ name: 'midiIn' });
+  const midiIn = midiInput({ name: "midiIn" });
 
   return {
     process: () => {
-      midiIn.onEvent('systemRealtime', ({ status, atSample }) => {
+      midiIn.onEvent("systemRealtime", ({ status, atSample }) => {
         // status === 0xF8: timing clock (24 PPQN)
         // status === 0xFA: start
         // status === 0xFB: continue

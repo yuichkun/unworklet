@@ -50,13 +50,13 @@ Step 1.3 か ら の 変 更:
 
 ## 新 出 keyword と 任 意 命 名
 
-| token | 種 別 | 説 明 |
-|---|---|---|
-| `memory` (= section) | WASM keyword (= 不 変) | linear memory section declare 内 keyword |
-| `memory` (= export 名) | **任 意 (= user 命 名)** | `mod.setMemory(..., "memory")` 第 3 引 数 = host JS が `instance.exports.memory` で 引 く 名 |
-| `f32.load` | WASM instruction (= 不 変) | memory か ら f32 を 1 個 (= 4 bytes) 読 ん で stack に push |
-| `i32.const` | WASM instruction (= 不 変 = Step 1.1 出 出) | i32 immediate を stack に push (= こ こ で は memory address と し て 使 う) |
-| `$0` (= memory id) | **任 意 (= binaryen 自 動 採 番)** | memory 内 部 id、 1 module 内 で 多 数 memory 持 て る 場 合 に 採 番 (= v1.0 spec で は 1 memory limit、 multi-memory proposal で 拡 張) |
+| token                  | 種 別                                       | 説 明                                                                                                                                     |
+| ---------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory` (= section)   | WASM keyword (= 不 変)                      | linear memory section declare 内 keyword                                                                                                  |
+| `memory` (= export 名) | **任 意 (= user 命 名)**                    | `mod.setMemory(..., "memory")` 第 3 引 数 = host JS が `instance.exports.memory` で 引 く 名                                              |
+| `f32.load`             | WASM instruction (= 不 変)                  | memory か ら f32 を 1 個 (= 4 bytes) 読 ん で stack に push                                                                               |
+| `i32.const`            | WASM instruction (= 不 変 = Step 1.1 出 出) | i32 immediate を stack に push (= こ こ で は memory address と し て 使 う)                                                              |
+| `$0` (= memory id)     | **任 意 (= binaryen 自 動 採 番)**          | memory 内 部 id、 1 module 内 で 多 数 memory 持 て る 場 合 に 採 番 (= v1.0 spec で は 1 memory limit、 multi-memory proposal で 拡 張) |
 
 `$0` が **3 種 類 出 る** こ と に 注 意:
 
@@ -112,7 +112,7 @@ WASM linear memory       host JS 側
 
 - WASM の memory address = **byte offset** = `i32.const 0` = byte 0、 `i32.const 4` = byte 4 = f32 で は 2 個 目
 - JS の `Float32Array view` = **element offset** = `view[0]` = byte 0..3、 `view[1]` = byte 4..7
-- 「view[i] = WASM の i32.const (i * 4)」 の 関 係
+- 「view[i] = WASM の i32.const (i \* 4)」 の 関 係
 
 ## `f32.load` の signature
 
@@ -139,19 +139,19 @@ mod.addFunction(
   binaryen.f32,
   [],
   mod.f32.load(
-    0,                 // offset
-    4,                 // align
-    mod.i32.const(0),  // ptr expression
+    0, // offset
+    4, // align
+    mod.i32.const(0), // ptr expression
   ),
 );
 mod.addFunctionExport("readGain", "readGain");
 ```
 
-| build.ts | .wat 出 力 |
-|---|---|
-| `mod.setMemory(1, 1, "memory")` | `(memory $0 1 1)` + `(export "memory" (memory $0))` |
+| build.ts                           | .wat 出 力                                                                 |
+| ---------------------------------- | -------------------------------------------------------------------------- |
+| `mod.setMemory(1, 1, "memory")`    | `(memory $0 1 1)` + `(export "memory" (memory $0))`                        |
 | `mod.f32.load(offset, align, ptr)` | `(f32.load <ptr-emit>)` (= offset / align が 0 / default な ら text 省 略) |
-| `mod.i32.const(0)` | `(i32.const 0)` |
+| `mod.i32.const(0)`                 | `(i32.const 0)`                                                            |
 
 注: `mod.f32.load(0, 4, ...)` の offset = 0 + align = 4 (= f32 default) = WAT text 上 で 省 略 さ れ る (= binaryen の emit が compact 形 を 選 ぶ)。 binary 上 で は 必 ず emit さ れ る が text 表 示 で は default 省 略 慣 例。
 
@@ -180,7 +180,7 @@ console.log(readGain()); // → 0.5
 2. **linear memory model**: byte-addressable / 1 page = 64KB / little-endian fixed / host JS と ArrayBuffer 共 有。
 3. **WebAssembly.Memory + ArrayBuffer + typed view**: host JS が `memory.buffer` を `new Float32Array(...)` で view 化 = WASM と 同 一 backing store で 直 接 共 有。
 4. **`f32.load(offset, align, ptr)` の 構 造**: ptr = i32 expression (= stack か ら)、 offset = static immediate、 align = CPU hint。 load address = ptr + offset。
-5. **byte offset vs element offset**: WASM `i32.const N` = byte address N、 JS `view[i]` = byte address i*4 (= f32 case)。 同 location を 引 く 時 の 対 応。
+5. **byte offset vs element offset**: WASM `i32.const N` = byte address N、 JS `view[i]` = byte address i\*4 (= f32 case)。 同 location を 引 く 時 の 対 応。
 6. **memory-id `$0` ↔ type-id `$0` ↔ local-id `$0` の 区 別**: 3 種 類 と も 別 scope の 別 概 念、 同 表 記 偶 然 一 致。
 
 ## 実 行 手 順

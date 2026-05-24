@@ -10,14 +10,17 @@
 2. WASM `process()` 実 行
 3. outputView[0..127] が 全 て 0.5 (= 1.0 × 0.5) で あ る こ と を assert
 
-つ ま り = **Step 1.6 (= bounded loop 単 独) + Step 1.5 (= memory + arithmetic) を 組 合 せ た Phase 1 最 終 形**。 input region と output region を 別 offset で 共 存 + loop 内 で 動 的 address (= base + i*4) を 計 算 + memory load / store。
+つ ま り = **Step 1.6 (= bounded loop 単 独) + Step 1.5 (= memory + arithmetic) を 組 合 せ た Phase 1 最 終 形**。 input region と output region を 別 offset で 共 存 + loop 内 で 動 的 address (= base + i\*4) を 計 算 + memory load / store。
 
 **unworklet forSample 雛 形 完 結**:
 
 ```typescript
 // unworklet DSL 記 述
 forSample((i) => {
-  output.ch(0).at(i).write(input.ch(0).at(i).mul(num(0.5)));
+  output
+    .ch(0)
+    .at(i)
+    .write(input.ch(0).at(i).mul(num(0.5)));
 });
 
 // compile 後 形 (= step 1.7 の WASM と 同 path):
@@ -96,20 +99,20 @@ byte offset  | 内 容
 = input region と output region を **同 一 memory 内 で 連 続 配 置**、 別 typed view で 引 く:
 
 ```typescript
-const inputView  = new Float32Array(memory.buffer, 0,   128);   // byte 0..511
-const outputView = new Float32Array(memory.buffer, 512, 128);   // byte 512..1023
+const inputView = new Float32Array(memory.buffer, 0, 128); // byte 0..511
+const outputView = new Float32Array(memory.buffer, 512, 128); // byte 512..1023
 ```
 
 `Float32Array(buffer, byteOffset, length)` = buffer の 指 定 offset か ら length 個 の f32 view (= byte offset + element length)。
 
-これ が unworklet の linear memory layout (= state slots + buffer + I/O scratch + ringbuffer 等 の sub-region 配 置) の 最 小 形。 各 sub-region を offset で 区 切 り、 base + index*size で access。
+これ が unworklet の linear memory layout (= state slots + buffer + I/O scratch + ringbuffer 等 の sub-region 配 置) の 最 小 形。 各 sub-region を offset で 区 切 り、 base + index\*size で access。
 
 ## 動 的 address 計 算 = `base + i * size`
 
 step 1.4 / 1.5 で は address = `i32.const 0` (= 固 定)、 step 1.7 で は loop counter `i` に 応 じ て address が 変 わ る:
 
-- input address = `i * 4` (= base 0 + i * f32 size 4)
-- output address = `512 + i * 4` (= base 512 + i * f32 size 4)
+- input address = `i * 4` (= base 0 + i \* f32 size 4)
+- output address = `512 + i * 4` (= base 512 + i \* f32 size 4)
 
 WASM で の 計 算 expression:
 
@@ -151,17 +154,17 @@ f32.store      →     stack: [        ]   ; 2 個 pop + memory に write
 
 step 1.6 + step 1.5 と 同 pattern。 新 出:
 
-| build.ts | .wat 出 力 |
-|---|---|
+| build.ts                          | .wat 出 力                  |
+| --------------------------------- | --------------------------- |
 | `mod.f32.store(0, 4, ptr, value)` | `(f32.store <ptr> <value>)` |
-| `mod.i32.mul(a, b)` | `(i32.mul <a> <b>)` |
+| `mod.i32.mul(a, b)`               | `(i32.mul <a> <b>)`         |
 
 ## host JS が WASM を 呼 ぶ 経 路 (= `run.ts`)
 
 ```typescript
-const memory     = instance.exports.memory as WebAssembly.Memory;
-const inputView  = new Float32Array(memory.buffer, 0,   128);   // input region
-const outputView = new Float32Array(memory.buffer, 512, 128);   // output region
+const memory = instance.exports.memory as WebAssembly.Memory;
+const inputView = new Float32Array(memory.buffer, 0, 128); // input region
+const outputView = new Float32Array(memory.buffer, 512, 128); // output region
 
 for (let i = 0; i < 128; i++) inputView[i] = 1.0;
 
@@ -192,7 +195,7 @@ step 1.7 で **Phase 1 全 7 step が 揃 う**:
 
 ## 学 習 axes (= こ の step で 把 握 す る 概 念)
 
-1. **linear memory の sub-region 分 割**: 1 つ の memory 内 に input / output 等 別 region を offset で 区 切 っ て 配 置、 各 region は base + index*size で address。
+1. **linear memory の sub-region 分 割**: 1 つ の memory 内 に input / output 等 別 region を offset で 区 切 っ て 配 置、 各 region は base + index\*size で address。
 2. **動 的 address 計 算**: `i32.mul` + `i32.add` で address expression を build、 `f32.load` / `f32.store` の ptr 引 数 に 渡 す。
 3. **loop body 内 で memory load + arithmetic + memory store**: step 1.5 の 1 sample 計 算 を loop で 128 回 反 復 = unworklet forSample callback の compile 後 形。
 4. **`Float32Array(buffer, byteOffset, length)` の 3 引 数 form**: partial view = ArrayBuffer 全 体 で は な く 指 定 region だ け を 引 く path。

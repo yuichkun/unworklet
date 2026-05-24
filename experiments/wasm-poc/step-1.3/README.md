@@ -49,12 +49,12 @@ Step 1.2 か ら の 変 更:
 
 ## 新 出 keyword (= Step 1.2 と の 差 分)
 
-| token | 種 別 | 説 明 |
-|---|---|---|
-| `f32` | WASM 型 keyword (= 不 変) | 32-bit IEEE 754 floating point 型 |
-| `f32.const` | WASM instruction (= 不 変) | f32 immediate value を operand stack に push |
-| `f32.mul` | WASM instruction (= 不 変) | stack top 2 個 を pop し て 乗 算、 結 果 を push (= **binary op**) |
-| `0.5` | **任 意 (= user 数 値)** | f32 immediate、 `build.ts` の `mod.f32.const(0.5)` 引 数 |
+| token       | 種 別                      | 説 明                                                               |
+| ----------- | -------------------------- | ------------------------------------------------------------------- |
+| `f32`       | WASM 型 keyword (= 不 変)  | 32-bit IEEE 754 floating point 型                                   |
+| `f32.const` | WASM instruction (= 不 変) | f32 immediate value を operand stack に push                        |
+| `f32.mul`   | WASM instruction (= 不 変) | stack top 2 個 を pop し て 乗 算、 結 果 を push (= **binary op**) |
+| `0.5`       | **任 意 (= user 数 値)**   | f32 immediate、 `build.ts` の `mod.f32.const(0.5)` 引 数            |
 
 ## WASM stack machine の binary op model (= 新 出 概 念、 重 要)
 
@@ -85,47 +85,45 @@ mod.addFunction(
   binaryen.f32,
   binaryen.f32,
   [],
-  mod.f32.mul(                      // body root = f32.mul
+  mod.f32.mul(
+    // body root = f32.mul
     mod.local.get(0, binaryen.f32), // operand 1
-    mod.f32.const(0.5),             // operand 2
+    mod.f32.const(0.5), // operand 2
   ),
 );
 ```
 
-| build.ts | .wat 出 力 |
-|---|---|
-| `mod.f32.mul(a, b)` | `(f32.mul <a-emit> <b-emit>)` |
-| `mod.local.get(0, binaryen.f32)` | `(local.get $0)` |
-| `mod.f32.const(0.5)` | `(f32.const 0.5)` |
+| build.ts                         | .wat 出 力                    |
+| -------------------------------- | ----------------------------- |
+| `mod.f32.mul(a, b)`              | `(f32.mul <a-emit> <b-emit>)` |
+| `mod.local.get(0, binaryen.f32)` | `(local.get $0)`              |
+| `mod.f32.const(0.5)`             | `(f32.const 0.5)`             |
 
 binaryen API は **expression tree を nest で 組 み 立 て る** = WASM S-expression と 1:1 対 応。 `mod.f32.mul(opA, opB)` は f32.mul の AST node を return す る、 そ れ を 別 の op に 渡 し て さ ら に nest 可 能。
 
 例 (= 後 続 step で 出 る) = `gain × volume + bias` の 形:
 
 ```typescript
-mod.f32.add(
-  mod.f32.mul(sample, gain),
-  bias,
-);
+mod.f32.add(mod.f32.mul(sample, gain), bias);
 ```
 
 → .wat: `(f32.add (f32.mul ... ...) ...)`
 
 ## JS ↔ WASM f32 marshalling (= step 1.2 i32 と 比 較)
 
-| 方 向 | 動 作 |
-|---|---|
+| 方 向                | 動 作                                                                                                                            |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | JS number → WASM f32 | JS double (= f64) を **f32 に narrow** (= 精 度 落 ち る、 exact f32 で 表 現 で きな い 数 値 (= 例: 0.1) は 近 似 値 に な る) |
-| WASM f32 → JS number | f32 を JS double に **widen** (= exact、 f32 の bit pattern は f64 に 完 全 保 存 可) |
+| WASM f32 → JS number | f32 を JS double に **widen** (= exact、 f32 の bit pattern は f64 に 完 全 保 存 可)                                            |
 
 step 1.3 で の 数 値 `0.5` + `2.0` は 全 て **exact f32 で 表 現 可** (= 2 の べ き 乗 系) = 精 度 落 ち ナ シ で `gain(2.0) = 1.0` が exact 一 致。 一 方 `0.1` 等 は exact f32 ナ シ = JS で `0.1` を 渡 す と f32 に narrow さ れ て 微 小 誤 差 が 入 る。
 
 step 1.2 i32 marshalling と 比 較:
 
-| 型 | JS → WASM | WASM → JS |
-|---|---|---|
+| 型  | JS → WASM                                                   | WASM → JS                                   |
+| --- | ----------------------------------------------------------- | ------------------------------------------- |
 | i32 | 32-bit truncate (= 小 数 切 り 捨 て + overflow wraparound) | signed lift (= -2^31〜2^31-1 範 囲、 exact) |
-| f32 | f64 → f32 narrow (= 精 度 落 ち、 NaN / Inf 保 存) | f32 → f64 widen (= exact 保 存) |
+| f32 | f64 → f32 narrow (= 精 度 落 ち、 NaN / Inf 保 存)          | f32 → f64 widen (= exact 保 存)             |
 
 ## host JS が WASM を 呼 ぶ 経 路 (= `run.ts`)
 

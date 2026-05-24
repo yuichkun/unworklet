@@ -11,12 +11,14 @@ unworklet が 目指す 姿、 守る べき 性質、 醜い と み なす も
 ## P1 — ship blocker (38〜45 件規模)
 
 以下のいずれかに該当:
+
 - **wire byte が drift**: main / worklet boundary で deserializer 不一致を起こす
 - **canonical 自身が build 不能**: `12-canonical-examples.md` が type system rule を違反、 TS compile error
 - **同 source code で別 impl が reproducible でない**: 同じ user code が impl ごとに pass / fail で別結果
 - **realtime safety invariant 直結**: audio thread allocation 起動 / GC trigger / unbounded loop
 
 cluster 例 (= P1 内並び順):
+
 1. 型 system core
 2. canonical integrity / Q ratify との衝突
 3. snapshot blob byte 並 び (= ship 後 凍 結 領 域、 内 部 wire は scope 外)
@@ -30,6 +32,7 @@ cluster 例 (= P1 内並び順):
 ## P2 — 仕様 invariant + lifecycle (50〜70 件規模)
 
 以下のいずれかに該当:
+
 - **public surface completeness**: API surface に method 抜け / type 抜け / 列挙不完全
 - **mental model 整合性**: 同概念を別命名 / lifecycle state が観測 surface と zip しない
 - **placeholder zip**: HTML comment placeholder が既 written prose と二重化 / 未 ratify 概念混入
@@ -39,6 +42,7 @@ P2 は file 順そのまま並べる (= cluster header ナシ)。 同 file で�
 ## P3 — prose 揺れ / mechanical sweep (15〜25 件規模)
 
 以下のいずれかに該当:
+
 - **prose 表現揺れ**: 同概念を別 wording で表現するが impl AI は 1 意で読める
 - **mechanical fix**: Status 文の Q範囲更新 / 「`Qxx` land 待ち」 表現 stale / Coverage table 行不一致
 
@@ -70,6 +74,7 @@ priority 判断中に以下の wording が自分の頭で出たら **赤信号**
 v1.0.0 ship 前の docs は impl AI agent が迷わず判断するための仕様。 user-facing docs (= getting started / API reference / tutorial) は v1.0.0 完成後の別 phase で作る、 audit 範囲外。
 
 priority filter の真の軸:
+
 > 「これを放置したら impl AI agent がどちらの rule を採用すべきか迷うか?」
 
 - Yes (= 仕様 prose 内で矛盾 / dangling、 異なる agent が異なる judgment に達する) → P1 priority
@@ -78,6 +83,7 @@ priority filter の真の軸:
 ## P1 cluster sort の意義
 
 P1 内は cluster 別 sort = ratify 順序の自然さ確保:
+
 - 基礎 (型 system / canonical integrity) → boundary (wire format / handler drain) → 局所 (publish / snapshot / acceptance)
 - 余湖さんが上から順に ratify を進めれば 「最も影響大」 から消化、 attention 経済 最適
 

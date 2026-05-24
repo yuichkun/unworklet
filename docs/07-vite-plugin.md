@@ -10,13 +10,13 @@ skeleton (scope-level shape fixed per Q23 + Q24 + Q25; per-section detail filled
 
 The plugin owns five responsibilities:
 
-| Responsibility | Section |
-|---|---|
-| WASM compile invocation (= call `@unworklet/core`'s `compile` function to obtain `.wasm` + worklet JS template + typed `.d.ts`) | §2 |
-| Asset resolution (= `?worklet` query for processor URL) | §3 |
-| HMR boundary (= make `?worklet` imports hot-acceptable so user-land code can call `replaceProcessor`) | §4 |
-| Source maps (= `.ts` → AST → `.wasm` position propagation) | §5 |
-| DevTools panels + analysis JSON output (= first-party DX surface — opinionated by design, because every unworklet author needs the same view into the same machinery) | §6 |
+| Responsibility                                                                                                                                                        | Section |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| WASM compile invocation (= call `@unworklet/core`'s `compile` function to obtain `.wasm` + worklet JS template + typed `.d.ts`)                                       | §2      |
+| Asset resolution (= `?worklet` query for processor URL)                                                                                                               | §3      |
+| HMR boundary (= make `?worklet` imports hot-acceptable so user-land code can call `replaceProcessor`)                                                                 | §4      |
+| Source maps (= `.ts` → AST → `.wasm` position propagation)                                                                                                            | §5      |
+| DevTools panels + analysis JSON output (= first-party DX surface — opinionated by design, because every unworklet author needs the same view into the same machinery) | §6      |
 
 The plugin is the only first-party bundler integration in v1.0.0. Other bundlers (Webpack, Rollup, esbuild) are out of v1.0.0 scope and may be added additively in v1.x.0 when consumer demand materializes. Authoritative rationale: `decisions-log.md` Q23+Q24+Q25.
 
@@ -66,15 +66,15 @@ What the plugin does at §4 level:
 What user-land does on top:
 
 ```typescript
-import { createNode, replaceProcessor } from '@unworklet/core';
-import MyProcessor from './my.processor.ts?worklet';
+import { createNode, replaceProcessor } from "@unworklet/core";
+import MyProcessor from "./my.processor.ts?worklet";
 
 const audioCtx = new AudioContext();
 let current = await createNode(audioCtx, MyProcessor);
 current.connect(audioCtx.destination);
 
 if (import.meta.hot) {
-  import.meta.hot.accept('./my.processor.ts?worklet', async (mod) => {
+  import.meta.hot.accept("./my.processor.ts?worklet", async (mod) => {
     const result = await replaceProcessor(current, mod.default);
     result.node.connect(audioCtx.destination);
     current.disconnect();
@@ -106,16 +106,16 @@ Where opinionation **does** end: the panels never look at user-authored DSP logi
 
 Each panel is a thin presentation layer over an already-ratified unworklet mechanism. The mapping is 1-to-1:
 
-| Panel | Dock entry type | unworklet mechanism | DevTools Kit primitive |
-|---|---|---|---|
+| Panel                   | Dock entry type        | unworklet mechanism                                                                                                                                              | DevTools Kit primitive                                                                     |
+| ----------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | Build errors / warnings | Structured Diagnostics | 3-layer error model (`error[unworklet/<id>]`, `03-compiler.md` §2.5) surfaced through `@unworklet/core`'s `compile` function, with `decisions-log.md` cross-refs | `ctx.diagnostics.defineDiagnostics()` (code prefix `UWK`, `docsBase` → unworklet docs URL) |
-| Graph viewer | iframe | per-block code + `forSample` loops + declaration scope + subgraph instantiation (`00-foundations.md` §3, `01-dsl.md` §1) | Shared State (reactive on rebuild) |
-| Memory budget | json-render | per-declaration auto-sum (Q30, `03-compiler.md` §2.4) | Shared State |
-| Live state inspector | iframe | named `state` slot + `state.publish` (Q27, `01-dsl.md` §3) | Shared State (audio thread → main reactive sync) |
-| Live latency monitor | iframe | render-quantum cost measurement on the audio thread | Streaming (P50 / P95 / P99 / Max) |
-| MIDI flow / overflow | json-render | `node.midi.<name>.diagnostics` (Q4-c, `11-midi.md` §4) | Shared State |
-| Snapshot inspector | iframe | `snapshot()` + `inspect(blob)` (Q5 + Q48, `05-client.md` §2.6) | RPC (panel → server-side `inspect`) |
-| Swap history | json-render | `replaceProcessor` invocations + their `ReplaceResult` (Q50, `05-client.md` §8) | Shared State |
+| Graph viewer            | iframe                 | per-block code + `forSample` loops + declaration scope + subgraph instantiation (`00-foundations.md` §3, `01-dsl.md` §1)                                         | Shared State (reactive on rebuild)                                                         |
+| Memory budget           | json-render            | per-declaration auto-sum (Q30, `03-compiler.md` §2.4)                                                                                                            | Shared State                                                                               |
+| Live state inspector    | iframe                 | named `state` slot + `state.publish` (Q27, `01-dsl.md` §3)                                                                                                       | Shared State (audio thread → main reactive sync)                                           |
+| Live latency monitor    | iframe                 | render-quantum cost measurement on the audio thread                                                                                                              | Streaming (P50 / P95 / P99 / Max)                                                          |
+| MIDI flow / overflow    | json-render            | `node.midi.<name>.diagnostics` (Q4-c, `11-midi.md` §4)                                                                                                           | Shared State                                                                               |
+| Snapshot inspector      | iframe                 | `snapshot()` + `inspect(blob)` (Q5 + Q48, `05-client.md` §2.6)                                                                                                   | RPC (panel → server-side `inspect`)                                                        |
+| Swap history            | json-render            | `replaceProcessor` invocations + their `ReplaceResult` (Q50, `05-client.md` §8)                                                                                  | Shared State                                                                               |
 
 ### 6.2 Command palette entries (v1.0.0)
 
@@ -132,12 +132,12 @@ Each panel is a thin presentation layer over an already-ratified unworklet mecha
 
 The panels above all read their data from a stable set of artifacts. The four JSON files in the table below are produced by `@unworklet/core`'s `compile` function and emitted to disk by this plugin at build time; the same data is mirrored over the DevTools Kit's Shared State / Streaming channels at dev time. The artifacts are documented as a public extension surface — third-party panels, CI integrations, and alternate tooling read the same files / channels and stay forward-compatible:
 
-| Artifact | Source | Consumed by (first-party panels) |
-|---|---|---|
-| `dist/<processor>.graph.json` | AST DAG: per-block code + `forSample` loops, declaration list, subgraph instantiations | Graph viewer |
-| `dist/<processor>.memory.json` | Per-declaration byte counts (Q30) + total + thresholds | Memory budget |
-| `dist/<processor>.diagnostics.json` | Full 3-layer error / warning list with stable IDs | Build errors / warnings |
-| `dist/<processor>.schema-hash.json` | Migration anchors (`01-dsl.md` §8.3) | Snapshot inspector, Swap history |
+| Artifact                            | Source                                                                                 | Consumed by (first-party panels) |
+| ----------------------------------- | -------------------------------------------------------------------------------------- | -------------------------------- |
+| `dist/<processor>.graph.json`       | AST DAG: per-block code + `forSample` loops, declaration list, subgraph instantiations | Graph viewer                     |
+| `dist/<processor>.memory.json`      | Per-declaration byte counts (Q30) + total + thresholds                                 | Memory budget                    |
+| `dist/<processor>.diagnostics.json` | Full 3-layer error / warning list with stable IDs                                      | Build errors / warnings          |
+| `dist/<processor>.schema-hash.json` | Migration anchors (`01-dsl.md` §8.3)                                                   | Snapshot inspector, Swap history |
 
 Dev-time live channels (= Shared State + Streaming over the DevTools Kit RPC) carry the runtime side: `state.publish` values (Q27), MIDI overflow counters (Q4-c), per-quantum latency samples, and `replaceProcessor` invocation events. The exact channel names and payload shapes are documented as part of the public extension surface.
 

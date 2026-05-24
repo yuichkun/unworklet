@@ -54,13 +54,7 @@ mod.addFunction(
         "continue",
         mod.block(null, [
           // if (i >= 128) br $break
-          mod.br_if(
-            "break",
-            mod.i32.ge_s(
-              mod.local.get(0, binaryen.i32),
-              mod.i32.const(128),
-            ),
-          ),
+          mod.br_if("break", mod.i32.ge_s(mod.local.get(0, binaryen.i32), mod.i32.const(128))),
 
           // output[i] = input[i] * 0.5
           // f32.store(offset, align, ptr, value)
@@ -71,34 +65,18 @@ mod.addFunction(
             4,
             // ptr = 512 + i*4
             mod.i32.add(
-              mod.i32.mul(
-                mod.local.get(0, binaryen.i32),
-                mod.i32.const(4),
-              ),
+              mod.i32.mul(mod.local.get(0, binaryen.i32), mod.i32.const(4)),
               mod.i32.const(512),
             ),
             // value = memory[i*4] * 0.5
             mod.f32.mul(
-              mod.f32.load(
-                0,
-                4,
-                mod.i32.mul(
-                  mod.local.get(0, binaryen.i32),
-                  mod.i32.const(4),
-                ),
-              ),
+              mod.f32.load(0, 4, mod.i32.mul(mod.local.get(0, binaryen.i32), mod.i32.const(4))),
               mod.f32.const(0.5),
             ),
           ),
 
           // i = i + 1
-          mod.local.set(
-            0,
-            mod.i32.add(
-              mod.local.get(0, binaryen.i32),
-              mod.i32.const(1),
-            ),
-          ),
+          mod.local.set(0, mod.i32.add(mod.local.get(0, binaryen.i32), mod.i32.const(1))),
 
           // br $continue
           mod.br("continue"),

@@ -27,7 +27,7 @@ The framework is **runtime-agnostic.** unworklet targets the Web Audio API as sp
 
 - **Not a DSP standard library.** unworklet provides primitives (`add`, `mul`, `sin`, `select`, …); high-level building blocks (filters, oscillators, envelopes, FFT helpers, …) are intentionally left to third-party packages. unworklet's job is to make those packages easy to author and consume.
 - **Not a host-format adapter.** VST/AU/CLAP packaging, plugin-metadata schemas, latency compensation reporting, preset banks, and similar host-format concerns are out of scope. unworklet produces only standards-compliant Audio Worklet artifacts and does not expose host-shaped APIs.
-- **Not a music-making framework.** Sequencers, pattern editors, scale-theory libraries, and song-structure abstractions are application-level. unworklet *receives* MIDI events at the audio thread; it does not provide tools to *generate* or compose them.
+- **Not a music-making framework.** Sequencers, pattern editors, scale-theory libraries, and song-structure abstractions are application-level. unworklet _receives_ MIDI events at the audio thread; it does not provide tools to _generate_ or compose them.
 - **Not a replacement for hand-written WASM.** Users with extreme optimization needs should write WASM directly; unworklet targets the 90% case.
 - **Not a Faust replacement.** Faust's mathematical-DSP abstraction level is intentionally out of scope.
 
@@ -49,7 +49,7 @@ A handle to a value computed during per-sample iteration. `T` is one of `'f32'`,
 
 ### Primitive
 
-A pure operation over `Node<T>` values (and possibly other compile-time constants) returning a `Node<T>`. Examples: `add`, `mul`, `tanh`, `select`, `splat`. Primitives execute at *graph capture time* (build time), constructing AST nodes; they do not run per sample.
+A pure operation over `Node<T>` values (and possibly other compile-time constants) returning a `Node<T>`. Examples: `add`, `mul`, `tanh`, `select`, `splat`. Primitives execute at _graph capture time_ (build time), constructing AST nodes; they do not run per sample.
 
 Primitives appear in **two equivalent forms** (Q77): a **free function form** (`add(a, b)`) and a **method form** on the `Node<T>` value itself (`a.add(b)`). Both shapes compile to the same captured graph node and produce the same numeric output; the choice is purely syntactic. The convention is hybrid — method chain when the input flows through a sequence of operations (= DSP-flow order, e.g. `input.ch(0).at(i).sub(z.load()).mul(k).add(z.load())`), free function for 3-arg control (`select(cond, then, else)`), SIMD constructors (`splat(x)`, `vec4(a, b, c, d)`, `sumLanes(v)`), and complex non-flowing expressions. Method form is available on every Arithmetic / Comparison / Math / SIMD-vec primitive; `select` and the SIMD constructors stay free-function only (= no natural receiver). Handle-bound chains (`buf.read(idx)`, `buf.loadVec(offset)`, `state.load()`, `vec.lane(i)`, `audioIn.ch(c).at(i)`, `audioOut.ch(c).at(i).write(v)` per Q78, etc.) are chain form by construction. Literal-leading chains use the `num(v)` lift helper from `01-dsl.md` §2.2.
 
@@ -140,9 +140,9 @@ The `'u8'` tag is **not** part of the scalar `Node<T>` set — it appears only a
 A JavaScript `number` or `boolean` literal appearing as a **primitive argument** lifts to `Node<T>`, where `T` is inferred from the surrounding primitive signature (context-dependent lift):
 
 ```typescript
-mul(meterL.load(), 0.95)           // meterL: Node<'f32'> → 0.95 lifts to Node<'f32'>
-mod(add(head, i), HISTORY_LEN)     // head: Node<'i32'> → HISTORY_LEN lifts to Node<'i32'>
-select(isMe, true, gate.load())    // gate: Node<'bool'> → true lifts to Node<'bool'>
+mul(meterL.load(), 0.95); // meterL: Node<'f32'> → 0.95 lifts to Node<'f32'>
+mod(add(head, i), HISTORY_LEN); // head: Node<'i32'> → HISTORY_LEN lifts to Node<'i32'>
+select(isMe, true, gate.load()); // gate: Node<'bool'> → true lifts to Node<'bool'>
 ```
 
 When all primitive arguments are literals (e.g. `add(0, 0)`), TypeScript falls back to **`'f32'`** as the default — audio-rate DSP overwhelmingly uses `f32` and AudioWorklet I/O (`inputs`, `outputs`, `parameters[name]`) is `Float32Array`-typed end-to-end.
@@ -150,10 +150,10 @@ When all primitive arguments are literals (e.g. `add(0, 0)`), TypeScript falls b
 **method arguments follow the same rule** (Q36 拡 張): if a method's declared argument type is `Node<X>`, a JS literal passed in that position lifts to `Node<X>`. This covers `param.at(0)`, `samples.at(s)`, `emitIf(true, ...)`, `audioIn.ch(0).at(i)`, `buf.read(idx)`, `buf.loadVec(k)`, `splat(0)`, `addVec(v, splat(1))`, etc. — all canonical primitive- and method-argument literal usages, including scalar primitives, method calls on handle types, and SIMD primitives / methods (`splat`, `addVec`, `mulVec`, `loadVec`, `storeVec`, etc.).
 
 ```typescript
-lowF.at(0)                         // param.at(i: Node<'i32'> | number) → 0 lifts to Node<'i32'>
-notePlayed.emitIf(true, payload)   // emitIf(cond: Node<'bool'> | boolean, ...) → true lifts to Node<'bool'>
-samples.at(s)                      // s = JS number → build-time folded read
-samples.at(idx)                    // idx = Node<'i32'> → runtime read
+lowF.at(0); // param.at(i: Node<'i32'> | number) → 0 lifts to Node<'i32'>
+notePlayed.emitIf(true, payload); // emitIf(cond: Node<'bool'> | boolean, ...) → true lifts to Node<'bool'>
+samples.at(s); // s = JS number → build-time folded read
+samples.at(idx); // idx = Node<'i32'> → runtime read
 ```
 
 Implicit lift covers `'f32'` / `'f64'` / `'i32'` / `'bool'`. **`'i64'` requires explicit construction** (see "Scalar constructors" below) because JavaScript `number` cannot safely represent integers beyond `2^53 - 1`.
@@ -174,15 +174,15 @@ num<T>(v: number | boolean): Node<T>;   // Q77 — context-inferred lift for met
 ```
 
 ```typescript
-let count = i32(0);                          // declaration: explicit constructor required
-let lSum  = f32(0);                          // declaration: explicit constructor required
-add(i32(0), i32(0))                          // all-literal call: i32 constructor pins T = 'i32'
-add(state.i64.load(), i64(BigInt(123)))      // i64: BigInt-required, no implicit lift
+let count = i32(0); // declaration: explicit constructor required
+let lSum = f32(0); // declaration: explicit constructor required
+add(i32(0), i32(0)); // all-literal call: i32 constructor pins T = 'i32'
+add(state.i64.load(), i64(BigInt(123))); // i64: BigInt-required, no implicit lift
 
-const acc    = state.f64(0);                 // explicit f64 state declaration
-const wide   = f64(f32node);                 // explicit widen  f32 → f64
-const narrow = f32(f64node);                 // explicit narrow f64 → f32
-const idx    = i32(f32node);                 // explicit truncate f32 → i32
+const acc = state.f64(0); // explicit f64 state declaration
+const wide = f64(f32node); // explicit widen  f32 → f64
+const narrow = f32(f64node); // explicit narrow f64 → f32
+const idx = i32(f32node); // explicit truncate f32 → i32
 ```
 
 The constructor convention mirrors GLSL (`vec3(0.0)` / `float(0)`) and WGSL (`f32(0)`) — author mental from audio / graphics DSL transfers directly.
@@ -192,9 +192,9 @@ The constructor convention mirrors GLSL (`vec3(0.0)` / `float(0)`) and WGSL (`f3
 Operations whose operands disagree on precision are a compile-time type error:
 
 ```typescript
-add(f32node, f64node);          // ❌ Type error: precision mismatch
-add(f32node, f32(f64node));     // ✓ Explicit narrow at the boundary
-add(f64(f32node), f64node);     // ✓ Explicit widen at the boundary
+add(f32node, f64node); // ❌ Type error: precision mismatch
+add(f32node, f32(f64node)); // ✓ Explicit narrow at the boundary
+add(f64(f32node), f64node); // ✓ Explicit widen at the boundary
 ```
 
 The constraint is enforced both by the TypeScript types of the primitive operators (see `01-dsl.md` §2) and by the static-analysis pass during compilation (see `03-compiler.md` §3).
@@ -239,19 +239,19 @@ The four enforcement layers, ordered earliest-first (per `03-compiler.md` §2.4)
 - **Emission** — the violating pattern is structurally not emittable; the WASM module that ships cannot express it.
 - **Runtime guard** — last-resort runtime check, falling back to silence + a main-side error event (never to a throw on the audio thread).
 
-| Invariant | Enforcement layer(s) | Authoritative section(s) |
-|-----------|---------------------|--------------------------|
-| No heap alloc | L2 (`scope-violation` stable ID = declaration call `state.*` / `buffer.*` / `param.*` / `audioInput` / `audioOutput` / `event<T>` / `message<T>` / `midiInput` / `midiOutput` / `createSubgraph(...)` outside declaration scope rejected — `03-compiler.md` §2.6) · L3 (allocation check; memory-budget sum) · Emission (linear memory pre-sized; `memory.grow` opcode never emitted into the worklet's WASM; no allocation primitive in the audio-thread surface) | `03-compiler.md` §2.2 + §2.4 + §2.6 (Layer 2 scope violations + stable IDs); `01-dsl.md` §3 (`state` / `buffer` / `param` shape); `04-worklet-runtime.md` §1 (startup pre-allocates queues); `decisions-log.md` Q30 |
-| No unbounded loops | L2 (`forSample.byN` non-constant-stride rejected) · L3 (loop-boundedness check across `forSample` / `everyNSamples` / subgraph methods / `onReceive` / `midiInput().onEvent` handler bodies) · Emission (no `forSamplesUntil`, no runtime-stride loop primitive in the surface; bulk transfer uses `copyFrom` → single `memory.copy`) | `03-compiler.md` §2.4 (Layer 3 loop-boundedness, illegal stride); `01-dsl.md` §3 (bulk copy) + §10 (`forSample`); `decisions-log.md` Q29, Q31 |
-| No throw on audio thread | Emission (user TS runs at build time only; `throw` in process / handler / forSample body throws at graph-capture, never at audio time) · Runtime guard (migration catch on construction, MIDI overflow drop-and-report, WASM trap → silence + main-side error event) | `01-dsl.md` §8.3.3 + `decisions-log.md` Q45 (migration catch); `11-midi.md` §4 + `decisions-log.md` Q4-c (overflow drop-and-report); `04-worklet-runtime.md` §8 (trap handling) |
-| No blocking I/O | Emission (no `postMessage` / `fetch` / `console` / sync-RPC primitive in the audio-thread surface) · Runtime contract (publish path: `Atomics.store` into SAB, or pre-allocated `postMessage` buffer enqueue at quantum boundary — both non-blocking, constant-time per slot) | `04-worklet-runtime.md` §7 (publish scheduling); `02-messaging.md` (SAB Atomics vs postMessage fallback); `decisions-log.md` Q27 |
-| No GC | Emission (WASM is GC-free; user TS never re-entered per sample / per block) · Runtime contract (per-block boundary marshalling uses pre-allocated typed-array views) | §3 "Process body" (build-time meta-program); `04-worklet-runtime.md` §2 (per-block execution); `decisions-log.md` Q22 (Q22-a, Q22-aprime) |
+| Invariant                | Enforcement layer(s)                                                                                                                                                                                                                                                                                                                                                                                                                                               | Authoritative section(s)                                                                                                                                                                                            |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No heap alloc            | L2 (`scope-violation` stable ID = declaration call `state.*` / `buffer.*` / `param.*` / `audioInput` / `audioOutput` / `event<T>` / `message<T>` / `midiInput` / `midiOutput` / `createSubgraph(...)` outside declaration scope rejected — `03-compiler.md` §2.6) · L3 (allocation check; memory-budget sum) · Emission (linear memory pre-sized; `memory.grow` opcode never emitted into the worklet's WASM; no allocation primitive in the audio-thread surface) | `03-compiler.md` §2.2 + §2.4 + §2.6 (Layer 2 scope violations + stable IDs); `01-dsl.md` §3 (`state` / `buffer` / `param` shape); `04-worklet-runtime.md` §1 (startup pre-allocates queues); `decisions-log.md` Q30 |
+| No unbounded loops       | L2 (`forSample.byN` non-constant-stride rejected) · L3 (loop-boundedness check across `forSample` / `everyNSamples` / subgraph methods / `onReceive` / `midiInput().onEvent` handler bodies) · Emission (no `forSamplesUntil`, no runtime-stride loop primitive in the surface; bulk transfer uses `copyFrom` → single `memory.copy`)                                                                                                                              | `03-compiler.md` §2.4 (Layer 3 loop-boundedness, illegal stride); `01-dsl.md` §3 (bulk copy) + §10 (`forSample`); `decisions-log.md` Q29, Q31                                                                       |
+| No throw on audio thread | Emission (user TS runs at build time only; `throw` in process / handler / forSample body throws at graph-capture, never at audio time) · Runtime guard (migration catch on construction, MIDI overflow drop-and-report, WASM trap → silence + main-side error event)                                                                                                                                                                                               | `01-dsl.md` §8.3.3 + `decisions-log.md` Q45 (migration catch); `11-midi.md` §4 + `decisions-log.md` Q4-c (overflow drop-and-report); `04-worklet-runtime.md` §8 (trap handling)                                     |
+| No blocking I/O          | Emission (no `postMessage` / `fetch` / `console` / sync-RPC primitive in the audio-thread surface) · Runtime contract (publish path: `Atomics.store` into SAB, or pre-allocated `postMessage` buffer enqueue at quantum boundary — both non-blocking, constant-time per slot)                                                                                                                                                                                      | `04-worklet-runtime.md` §7 (publish scheduling); `02-messaging.md` (SAB Atomics vs postMessage fallback); `decisions-log.md` Q27                                                                                    |
+| No GC                    | Emission (WASM is GC-free; user TS never re-entered per sample / per block) · Runtime contract (per-block boundary marshalling uses pre-allocated typed-array views)                                                                                                                                                                                                                                                                                               | §3 "Process body" (build-time meta-program); `04-worklet-runtime.md` §2 (per-block execution); `decisions-log.md` Q22 (Q22-a, Q22-aprime)                                                                           |
 
 ### 5.3 Earliest detection is cheapest detection
 
 Audio-thread errors cannot be recovered safely — a `throw` or a stall on the audio thread is an audible glitch, not a debugger pause. The layered model exists so that every realtime-safety violation is rejected at the highest layer that can see it: type errors in the IDE, scope and shape violations during graph capture, structural violations during static analysis, and only as a last resort, runtime guards that degrade to silence rather than propagate. Runtime guards exist to defend the invariant when an unmodeled boundary changes underneath the compiled artifact (the render-quantum size assertion in `04-worklet-runtime.md` §3 is the canonical example) — not to catch user mistakes that the build pipeline should have caught.
 
-This layering is what makes "realtime-safe by construction" (§2 Goals) more than a slogan: the WASM module that ships is the *only* code that runs on the audio thread, and every property that matters about it is fixed before instantiation.
+This layering is what makes "realtime-safe by construction" (§2 Goals) more than a slogan: the WASM module that ships is the _only_ code that runs on the audio thread, and every property that matters about it is fixed before instantiation.
 
 ## 6. Cross-cutting conventions
 

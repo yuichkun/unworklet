@@ -70,18 +70,18 @@ unworklet 文 脈 で の 雛 形 = **`forSample((i) => ...)` の `for (i = 0; i
 
 ## 新 出 keyword
 
-| token | 種 別 | 説 明 |
-|---|---|---|
-| `local` (= declare) | WASM keyword (= 不 変) | function 内 で local variable を declare す る 構 文 |
-| `local.set` | WASM instruction (= 不 変) | stack top 1 個 pop し て local index N に 書 き 込 む |
-| `block` | WASM keyword (= 不 変) | structured control flow の block declare、 label 付 き で **forward escape target** に な る |
-| `loop` | WASM keyword (= 不 変) | structured control flow の loop declare、 label 付 き で **backward jump target** に な る |
-| `br` | WASM instruction (= 不 変) | unconditional branch = 指 定 label へ jump |
-| `br_if` | WASM instruction (= 不 変) | conditional branch = stack top の i32 が 非 ゼ ロ な ら 指 定 label へ jump |
-| `i32.ge_s` | WASM instruction (= 不 変) | signed greater-equal = stack top 2 個 pop し て 比 較、 結 果 i32 (= 0 or 1) を push |
-| `i32.add` | WASM instruction (= 不 変) | i32 addition = 2 個 pop + 1 個 push |
-| `i32.store` | WASM instruction (= 不 変) | memory に i32 を store = `(offset, align, ptr, value)` 4 引 数 |
-| `$break` / `$continue` | **任 意 (= user 命 名)** | block / loop の label = `br` / `br_if` で 引 く target、 source-level の 慣 用 命 名 |
+| token                  | 種 別                      | 説 明                                                                                        |
+| ---------------------- | -------------------------- | -------------------------------------------------------------------------------------------- |
+| `local` (= declare)    | WASM keyword (= 不 変)     | function 内 で local variable を declare す る 構 文                                         |
+| `local.set`            | WASM instruction (= 不 変) | stack top 1 個 pop し て local index N に 書 き 込 む                                        |
+| `block`                | WASM keyword (= 不 変)     | structured control flow の block declare、 label 付 き で **forward escape target** に な る |
+| `loop`                 | WASM keyword (= 不 変)     | structured control flow の loop declare、 label 付 き で **backward jump target** に な る   |
+| `br`                   | WASM instruction (= 不 変) | unconditional branch = 指 定 label へ jump                                                   |
+| `br_if`                | WASM instruction (= 不 変) | conditional branch = stack top の i32 が 非 ゼ ロ な ら 指 定 label へ jump                  |
+| `i32.ge_s`             | WASM instruction (= 不 変) | signed greater-equal = stack top 2 個 pop し て 比 較、 結 果 i32 (= 0 or 1) を push         |
+| `i32.add`              | WASM instruction (= 不 変) | i32 addition = 2 個 pop + 1 個 push                                                          |
+| `i32.store`            | WASM instruction (= 不 変) | memory に i32 を store = `(offset, align, ptr, value)` 4 引 数                               |
+| `$break` / `$continue` | **任 意 (= user 命 名)**   | block / loop の label = `br` / `br_if` で 引 く target、 source-level の 慣 用 命 名         |
 
 ## WASM の structured control flow model (= 新 出、 重 要)
 
@@ -178,46 +178,36 @@ mod.addFunction(
   "countTo128",
   binaryen.none,
   binaryen.none,
-  [binaryen.i32],                     // local i32 1 個
+  [binaryen.i32], // local i32 1 個
   mod.block(null, [
     mod.local.set(0, mod.i32.const(0)),
     mod.block("break", [
-      mod.loop("continue", mod.block(null, [
-        mod.br_if("break",
-          mod.i32.ge_s(
-            mod.local.get(0, binaryen.i32),
-            mod.i32.const(128),
-          ),
-        ),
-        mod.local.set(0,
-          mod.i32.add(
-            mod.local.get(0, binaryen.i32),
-            mod.i32.const(1),
-          ),
-        ),
-        mod.br("continue"),
-      ])),
+      mod.loop(
+        "continue",
+        mod.block(null, [
+          mod.br_if("break", mod.i32.ge_s(mod.local.get(0, binaryen.i32), mod.i32.const(128))),
+          mod.local.set(0, mod.i32.add(mod.local.get(0, binaryen.i32), mod.i32.const(1))),
+          mod.br("continue"),
+        ]),
+      ),
     ]),
-    mod.i32.store(0, 4,
-      mod.i32.const(0),
-      mod.local.get(0, binaryen.i32),
-    ),
+    mod.i32.store(0, 4, mod.i32.const(0), mod.local.get(0, binaryen.i32)),
   ]),
 );
 ```
 
-| build.ts | .wat 出 力 |
-|---|---|
-| `[binaryen.i32]` (= 4 引 数) | `(local $0 i32)` |
-| `mod.block(null, [...])` | `(block ...)` (= label ナ シ = nullable label、 沈 黙 で omit さ れ る 可 能 性) |
-| `mod.block("break", [...])` | `(block $break ...)` |
-| `mod.loop("continue", body)` | `(loop $continue body)` |
-| `mod.br_if(label, cond)` | `(br_if $label <cond>)` |
-| `mod.br(label)` | `(br $label)` |
-| `mod.local.set(idx, val)` | `(local.set $<idx> <val>)` |
-| `mod.i32.ge_s(a, b)` | `(i32.ge_s <a> <b>)` |
-| `mod.i32.add(a, b)` | `(i32.add <a> <b>)` |
-| `mod.i32.store(off, align, ptr, val)` | `(i32.store <ptr> <val>)` (= off / align が default で 省 略) |
+| build.ts                              | .wat 出 力                                                                       |
+| ------------------------------------- | -------------------------------------------------------------------------------- |
+| `[binaryen.i32]` (= 4 引 数)          | `(local $0 i32)`                                                                 |
+| `mod.block(null, [...])`              | `(block ...)` (= label ナ シ = nullable label、 沈 黙 で omit さ れ る 可 能 性) |
+| `mod.block("break", [...])`           | `(block $break ...)`                                                             |
+| `mod.loop("continue", body)`          | `(loop $continue body)`                                                          |
+| `mod.br_if(label, cond)`              | `(br_if $label <cond>)`                                                          |
+| `mod.br(label)`                       | `(br $label)`                                                                    |
+| `mod.local.set(idx, val)`             | `(local.set $<idx> <val>)`                                                       |
+| `mod.i32.ge_s(a, b)`                  | `(i32.ge_s <a> <b>)`                                                             |
+| `mod.i32.add(a, b)`                   | `(i32.add <a> <b>)`                                                              |
+| `mod.i32.store(off, align, ptr, val)` | `(i32.store <ptr> <val>)` (= off / align が default で 省 略)                    |
 
 注: `mod.block(null, [...])` = label ナ シ sequence = 複 数 instruction を 順 次 並 べ る 用 途 (= function body root が 1 expression な の で multi-instruction を block で wrap)。
 
@@ -225,10 +215,10 @@ mod.addFunction(
 
 ```typescript
 const memory = instance.exports.memory as WebAssembly.Memory;
-const view = new Int32Array(memory.buffer);        // i32 view
+const view = new Int32Array(memory.buffer); // i32 view
 const countTo128 = instance.exports.countTo128 as () => void;
 countTo128();
-console.log(view[0]);                              // → 128
+console.log(view[0]); // → 128
 ```
 
 step 1.4 / 1.5 で は `Float32Array` view、 step 1.6 で は `Int32Array` view = memory 同 一 だ が typed view が 異 な る = 同 ArrayBuffer を **複 数 view で 別 角 度 か ら 引 く** 慣 用 path (= 後 続 step で f32 + i32 mixed access)。

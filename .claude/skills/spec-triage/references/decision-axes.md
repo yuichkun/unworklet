@@ -29,6 +29,7 @@ a-d = docs 修正 して commit。 e = docs 修正 ナシ で entry close + deci
 **何 を 表す か**: entry が 提起 する 問題 に つ いて、 docs の どこ か 1 ヶ所 で すで に 明文 化 された 答え が あり、 残り の ばらつき は その 既 明文 に 揃える だけ の もの。
 
 **check する 場所**:
+
 - foundations / 該当 章 prose に 該当 問題 への declare 文 が ある か
 - decisions-log Q ratify entry が ある か (= 該当 Q番号 が entry 内 で 引用 されて いれば 高 確率)
 - entry の 「判断 軸」 行 で 「prose path を 一本化」 「既 〜 path に 揃える」 文言 が 出て いる か
@@ -36,6 +37,7 @@ a-d = docs 修正 して commit。 e = docs 修正 ナシ で entry close + deci
 **典型 fix**: 散らばり 箇所 を 既 明文 に rewrite する 1 commit。
 
 **例**:
+
 - `'u8'` を 型 system の どこ に 入れる か (= `00-foundations.md` が 既 「scalar type set に 入れ ない」 と 明言)
 - MIDI 送信 の sample 番号 引数 (= `11-midi.md` §4.2 prose 既 規定)
 
@@ -44,6 +46,7 @@ a-d = docs 修正 して commit。 e = docs 修正 ナシ で entry close + deci
 **何 を 表す か**: docs 散文 で は ばらついて も、 `12-canonical-examples.md` の 既 規範 例 が すで に その 形 を 前提 と して 書か れて おり、 規範 例 を 信用 して prose を 揃える だけ で 答え 出る もの。
 
 **check する 場所**:
+
 - canonical 内 で 該当 機能 を 動かして いる Ex は どれ か
 - その Ex の code が どの path を 前提 と して 書か れて いる か
 - AGENTS.md HARD CONTRACT (= 全 仕様 を canonical で 1 意 exercise) を 既 守って いる か
@@ -51,6 +54,7 @@ a-d = docs 修正 して commit。 e = docs 修正 ナシ で entry close + deci
 **典型 fix**: prose を 規範 例 path に 揃える 1 commit。 canonical が 規範 で あり、 散文 を canonical に 合わせる の が default 方向。
 
 **例**:
+
 - SIMD method の リテラル lift (= 規範 例 が 既 lift 前提 で 書か れて いる)
 - implicit widening 違反 修正 (= `00-foundations.md` §4 既 規定 に 規範 例 を zip し 直す)
 
@@ -59,6 +63,7 @@ a-d = docs 修正 して commit。 e = docs 修正 ナシ で entry close + deci
 **何 を 表す か**: `core-principles.md` §2 で declare した 守る べき 性質 を 個別 entry に 当てて、 path が 1 つ に 絞られる もの。
 
 **派生 root の 典型**:
+
 - 「declarative」 → framework auto-rewrite を 完全 列挙 義務、 暗黙 書き換え 追加 NG
 - 「user free が default」 → 制約 を 入れる 方 が 例外、 「美学」 で 制約 を 自動 追加 し ない
 - 「既知 必要 を 後回し に し ない」 → AI 並列 で 厚 化 できる もの 以外 defer NG
@@ -66,12 +71,14 @@ a-d = docs 修正 して commit。 e = docs 修正 ナシ で entry close + deci
 - 「実装 コスト で scope を 絞ら ない」 → 工数 だけ で 設計 を 曲げ ない
 
 **check する 場所**:
+
 - entry の 「判断 軸」 行 で core-principles §2 の どの 性質 と 一致 する path が 既 推奨 されて いる か
 - core-principles §2 の 性質 を 個別 に 当てて path が 1 つ に 絞られる か (= 複数 哲学 が 衝突 する なら h に 落ちる)
 
 **典型 fix**: 哲学 派生 path に prose を 揃える 1 commit、 適用 した core-principles §2 項目 を commit message に 引用。
 
 **例**:
+
 - worklet 側 から typed-array を 流す path を event<T> でも 一般 化 (= 「既知 必要 を 後回し に し ない」 で MIDI sysex 限定 を 解く)
 - framework 自動 書き換え の 完全 列挙 (= 「declarative」 で 列挙 義務)
 
@@ -80,6 +87,7 @@ a-d = docs 修正 して commit。 e = docs 修正 ナシ で entry close + deci
 **何 を 表す か**: Web 標準 / IEEE 754 / JS Atomics API 仕様 等、 unworklet の 設計 領域 を 外れた 客観 事実 で 答え が 確定 する もの。
 
 **典型 source**:
+
 - JS Atomics API (= integer typed array 限定)
 - IEEE 754 (= subnormal 範囲、 floating-point 表現)
 - AudioWorklet API (= render quantum 128 sample 固定)
@@ -87,12 +95,14 @@ a-d = docs 修正 して commit。 e = docs 修正 ナシ で entry close + deci
 - TypeScript type system (= conditional types、 generic constraint 等)
 
 **check する 場所**:
+
 - entry が 引用 する API / 標準 を 1 次 source で 確認 (= MDN / TC39 / W3C / IETF 等)
 - 標準 が 明確 に 1 答え を 出す か (= 揺れ が ない か、 implementation-defined で ない か)
 
 **典型 fix**: 標準 が 出す 一 答え に prose を 寄せる 1 commit。
 
 **例**:
+
 - `state.f32` atomic store path (= Atomics は integer typed array 限定 = reinterpret view 経由 が 客観 path)
 - subnormal flush 値 (= IEEE 754 subnormal 範囲 ≈ 1.18e-38)
 
@@ -101,6 +111,7 @@ a-d = docs 修正 して commit。 e = docs 修正 ナシ で entry close + deci
 **何 を 表す か**: entry が 提起 し て いる の が **TypeScript form 細部 / 識別子 命名 / internal mechanism 自由 度 だけ** で、 仕様 invariant (= mental model / wire byte / API surface 形 / lifecycle) が 動か ない もの。 spec docs に entry と して 残す 価値 ナシ。
 
 **典型 source** (= 何 が 「実装 AI 判断」 か):
+
 - TS type alias 名、 generic constraint の 切り 方
 - callable + property hybrid form (= `{ (...): void; diagnostics: ... }` vs `{ .send(...): void; .diagnostics: ... }` 等)
 - 同概念 の 別 命名 の どち ら を 別名 に 寄せる か (= enforcement layer vs integration layer の L1/L2/L3 命名 等)
@@ -109,6 +120,7 @@ a-d = docs 修正 して commit。 e = docs 修正 ナシ で entry close + deci
 - **main / worklet 間 内 部 wire layout** (= SAB ringbuffer slot 並 び、 event slot / MIDI slot field 並 び、 sysex content buffer 並 び 等): framework 同 ship 内 で main bundle / worklet bundle ペ ア = ship ご と に 自 由 = user 不 観 測 = 仕 様 invariant 動 か ず = e 軸 で close (= ship 後 凍 結 さ れ る wire は `node.snapshot()` blob だ け、 内 部 wire は 別 軸)
 
 **check する 場所**:
+
 - entry が 触る surface に 仕様 invariant (= wire byte、 mental model、 API surface 形、 lifecycle) が 動 い て いる か → **動 い て いる なら e で は ない**、 f-i の 相談 軸 を 当 たる
 - TS form / 命名 / mechanism の 細部 だけ で、 user 視点 から 観測 さ れる semantics が 動か ない か
 - 別 entry の decide で 自動 解消 する pattern か (= cascade 解消)
@@ -116,6 +128,7 @@ a-d = docs 修正 して commit。 e = docs 修正 ナシ で entry close + deci
 **典型 fix**: docs 修正 ナシ。 open-questions.md か ら entry 削 除 + decisions-log.md に 1 行 ratify 追記 (= 「実装 AI 領域 と し て close、 仕 様 invariant 動 か ず、 form 細部 は 実装 期 任 せ」)。 commit message に decision-axes: e + 「仕様 invariant 動 か ず」 1 行 理由。
 
 **例**:
+
 - 「L1/L2/L3」 略称 衝突 = 命名 の どち ら を 別 命名 に 寄 せ る か = 実装 AI 判 断 (ただ し error message label に 露 出 す る な ら h 軸 寄 り)
 - `forSample.byN` function + property hybrid = TS form 細部、 canonical で `forSample.byN(...)` が 動 く invariant 維 持 で 内 部 form 自 由
 - `node.messages.<name>` callable + property 同居 surface 構造 = TS form 細部 (ただ し 構 造 分 解 後 観 測 path が user 視 点 で 動 く な ら h 軸 寄 り)
@@ -134,6 +147,7 @@ a-d = docs 修正 して commit。 e = docs 修正 ナシ で entry close + deci
 **な ぜ 自律 不可**: 仕様 retract = 既 ratify を rejected として 残す ≒ 過去 自分 の 判断 を 修正 する 操作。 v1.0.0 前 = 仕様 直す コスト ≪ 実装 直す コスト で retract 自体 は OK だ が、 retract path が 複数 等価 で 残る 場合 は 余湖さん が decide する 領域。
 
 **check する 場所**:
+
 - entry が 既 ratify Q番号 と 直接 衝突 する か
 - 撤回 path が core-principles §2 哲学 で 一意 か (= 一意 なら c 寄り、 等価 解 が 残る なら f)
 - 撤回 すると cascade で 他 Q も 動く か (= 動く なら 影響 範囲 を 相談 md に 含める)
@@ -141,6 +155,7 @@ a-d = docs 修正 して commit。 e = docs 修正 ナシ で entry close + deci
 **典型 出し 方**: 撤回 必要 な Q番号 + 撤回 path 候補 を 相談 md に 列挙、 各 path の trade-off を 並べ、 余湖さん 判断 待ち。
 
 **例**:
+
 - `event<T>` payload で float 値 受容 (= Q46 撤回 必要、 撤回 path 3 way 等価)
 
 #### g. ship 後 変え 不可 な byte 並び (= `node.snapshot()` blob だけ)
@@ -152,12 +167,14 @@ a-d = docs 修正 して commit。 e = docs 修正 ナシ で entry close + deci
 **な ぜ 自律 不可** (= snapshot blob 限 定): ship 後 互換 = 1 度 出 し た byte 並 び は v1.x.0 で 戻 せ ず、 v2.0.0 で migration mandatory。 「あ と で 直 せ ば 良 い」 が 効 か な い 領 域 で、 余 湖 さ ん 視 認 必 須。
 
 **check する 場所**:
+
 - entry が `node.snapshot()` blob byte 並 び を 触 る か (= main 側 で user が persist す る Uint8Array)
 - entry が main / worklet 間 内 部 wire (= SAB ringbuffer / event slot / MIDI slot / sysex content buffer) を 触 る だ け な ら **e 軸 寄 り** (= user 観 測 surface 動 か な い な ら e 軸 close)
 
 **典型 出し 方**: snapshot blob byte 並 び 候 補 を A / B / C 表 で 相 談 md、 各 候 補 の blob 形 + migration path を 図 化、 余 湖 さ ん decide。
 
 **例**:
+
 - snapshot blob の field 並 び (= state slot 値 / buffer 内 容 / metadata 並 び 順、 migration semantics)
 - migration 関 数 が catch す る blob 形 (= 旧 ship blob → 新 ship blob 変 換 入 出 力)
 
@@ -170,6 +187,7 @@ a-d = docs 修正 して commit。 e = docs 修正 ナシ で entry close + deci
 **な ぜ 自律 不可**: 「美学」 「対称性」 で 自動 化 する と core-principles §3 醜い と み なす もの (= artificial 制約) 違反。 余湖さん 主観 で 趣味 を 反映 する 領域 で、 勝手 に 一つ 採用 し ない。
 
 **check する 場所**:
+
 - path が core-principles §2 哲学 で 等価 か (= a-d で 出 ない か)
 - user 視点 で 観測 さ れる semantics が 候補 ご と に 別 か (= 別 = h、 form だ け 違 う = e)
 - 「複数 哲学 が 衝突」 で c 不可 に なる ケース が 多 い
@@ -177,6 +195,7 @@ a-d = docs 修正 して commit。 e = docs 修正 ナシ で entry close + deci
 **典型 出し 方**: 等価 path を 並べた 相談 md、 各 path の user 視点 trade-off を 明示、 余湖さん 推奨 待ち。
 
 **例**:
+
 - render quantum 不一致 時 動作 (= silence + onError か process return false か onError 発火 後 silence か、 = user 観測 audio output が 別)
 
 #### i. 規範 例 の 大規模 改変
@@ -186,20 +205,24 @@ a-d = docs 修正 して commit。 e = docs 修正 ナシ で entry close + deci
 **な ぜ 自律 不可**: canonical = 全 仕様 の 規範 確認 anchor、 大 改変 は 余湖さん 設計 視認 領域 (= AGENTS.md 明言 「out of process」)。 小 改変 (= 既 Ex の 1-5 行 code / 数 行 prose) は a / b 寄り だが、 数 十 行 規模 は i。
 
 **閾値**:
+
 - 1 Ex に 数 十 行 追加 / 新 Ex 1 件 立てる → i
 - 既 Ex の 1-5 行 code 修正 / 数 行 prose 揃え → a / b
 
 **check する 場所**:
+
 - entry が canonical の Coverage table の どの 行 を 動かす か
 - code 追加 規模 を 行数 概算
 
 **典型 出し 方**: 改変 / 新規 Ex の design draft を 相談 md に 提示、 数 十 行 分 の code 案 を 含めて 余湖さん decide。
 
 **例**:
+
 - Ex 5 grain spawn voice allocation 全 unroll (= 12 冒 頭 「no elisions」 self-rule 直 接 違 反 を 解 消、 数 十 行 追 加)
 - 仕 様 prose 変 更 で 既 Ex が awkward / unrealistic に な る 場 合 の Ex rewrite
 
 **scope 外** (= こ の 軸 で 拾 わ な い):
+
 - canonical で 個 別 primitive / declaration が hit ナ シ (= 例: 「SIMD primitive vec4 / subVec / divVec / vec.lane が canonical で 動 か な い」) — `12-canonical-examples.md` は curated 規 範 例 集 で あ り 機 械 網 羅 で は な い (= core-principles §2 + AGENTS.md L16 「exercise the full surface」)。 個 別 primitive が hit ナ シ = 規 範 例 不 足 ≠ 仕 様 違 反、 entry に 立 つ こ と 自 体 が 過 剰 解 釈。 万 一 sweep で 拾 わ れ た 場 合 は 即 close (= 「entry 立 て が rule 過 剰 解 釈」 path)、 軸 i で 相 談 md を 出 さ な い。
 
 ---
@@ -220,7 +243,7 @@ decision-axes: <a | b | c | d>
 
 ### e (= entry close commit = docs 修正 ナシ)
 
-entry を open-questions.md から 削除 + decisions-log.md に 1 行 ratify 追記 + commit。 docs/*.md (= 00-foundations.md 等) は 触らない。 commit message:
+entry を open-questions.md から 削除 + decisions-log.md に 1 行 ratify 追記 + commit。 docs/\*.md (= 00-foundations.md 等) は 触らない。 commit message:
 
 ```text
 docs(open-questions): <短 タイトル> を 実装 AI 領域 と して close (Q<新番号>)
@@ -275,6 +298,7 @@ decisions-log.md の Q追記 form:
 このファイル は live document。
 
 更新 trigger:
+
 - f / g / h / i 該当 を 余湖さん が 答えた 時 = 「次 から この タイプ は こう」 を core-principles.md または §2 に 反映
 - 自律 commit が revert された 時 = 軸 が 不足 / 誤 適用、 該当 軸 の check 規律 を 厳密 化
 - 余湖さん が 「この 軸 ずれて る」 を 直接 指摘 した 時 = 該当 §を 上書き 修正

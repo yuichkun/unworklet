@@ -32,9 +32,11 @@ Loads the WASM module (cached across calls), adds the Worklet module to the `Aud
 To start a node with restored state, call `createNode` and then `await node.restore(blob)` (Q57, `decisions-log.md`). The two-step pattern keeps `createNode`'s return type uniform across call sites and exposes the `RestoreResult` discriminated union (§2.6, Q45) for migration error handling:
 
 ```typescript
-const node   = await createNode(audioContext, processor);
+const node = await createNode(audioContext, processor);
 const result = await node.restore(blob);
-if (!result.ok) { /* migration failure — see Q45 */ }
+if (!result.ok) {
+  /* migration failure — see Q45 */
+}
 ```
 
 ## 2. `UnworkletNode<C>` surface
@@ -77,22 +79,22 @@ The `.state.<name>` surface is **read-only on main**. Writing to a worklet-side 
   type RestoreResult =
     | {
         ok: true;
-        applied:  string[];     // migration step labels that successfully ran (in order); empty when schema hash matched and no migration was needed
-        restored: number;       // slots successfully written
-        skipped:  string[];     // slot names that existed in the blob but mismatched type/size in the current schema
-        missing:  string[];     // current schema slots that the blob did not carry — initialized from declaration default
+        applied: string[]; // migration step labels that successfully ran (in order); empty when schema hash matched and no migration was needed
+        restored: number; // slots successfully written
+        skipped: string[]; // slot names that existed in the blob but mismatched type/size in the current schema
+        missing: string[]; // current schema slots that the blob did not carry — initialized from declaration default
       }
     | {
         ok: false;
         error: {
-          step:    string;      // '<fromHash> -> <toHash>' label of the migration step that threw (ASCII arrow; hashes truncated to the first 8 chars for log readability)
-          message: string;      // error message extracted from the thrown value
-          cause:   unknown;     // the thrown value itself (typically an Error instance)
+          step: string; // '<fromHash> -> <toHash>' label of the migration step that threw (ASCII arrow; hashes truncated to the first 8 chars for log readability)
+          message: string; // error message extracted from the thrown value
+          cause: unknown; // the thrown value itself (typically an Error instance)
         };
-        applied:  string[];     // migration steps that ran successfully before the failing step
+        applied: string[]; // migration steps that ran successfully before the failing step
         restored: number;
-        skipped:  string[];
-        missing:  string[];
+        skipped: string[];
+        missing: string[];
       };
   ```
 
@@ -106,18 +108,18 @@ The `.state.<name>` surface is **read-only on main**. Writing to a worklet-side 
 
   ```typescript
   type InspectionResult = {
-    version:    number;          // blob format version (= 1 in v1.0.0)
+    version: number; // blob format version (= 1 in v1.0.0)
     schemaHash: string;
-    profile:    string | null;
-    slots:      Record<string, SlotInspection>;
+    profile: string | null;
+    slots: Record<string, SlotInspection>;
   };
   type SlotInspection =
-    | { kind: 'state';  type: ScalarType; value: number | boolean }
-    | { kind: 'param';  value: number }
-    | { kind: 'buffer'; type: ScalarType; length: number; head: number[] };  // first ~64 elements as preview
+    | { kind: "state"; type: ScalarType; value: number | boolean }
+    | { kind: "param"; value: number }
+    | { kind: "buffer"; type: ScalarType; length: number; head: number[] }; // first ~64 elements as preview
   ```
 
-  This is a *read-only* view; `inspect` does not mutate the blob and there is no way to construct a blob from an `InspectionResult`. Build new blobs through the processor's snapshot path or through migrations.
+  This is a _read-only_ view; `inspect` does not mutate the blob and there is no way to construct a blob from an `InspectionResult`. Build new blobs through the processor's snapshot path or through migrations.
 
 A processor that calls `snapshot()` requires **every** state / buffer slot to have a `name` (graph-capture-time error otherwise — same strict rule as `01-dsl.md` §3.1 `name?` declare and `decisions-log.md` Q5-b). Slots without a `name` cannot be addressed in the snapshot blob and therefore cannot round-trip through `restore`.
 
@@ -150,7 +152,6 @@ A processor that calls `snapshot()` requires **every** state / buffer slot to ha
 
      If a need for a public lifecycle-observation surface surfaces, it lands
      additively in v1.x.0 with its own Q ratify; v1.0.0 ships without it. -->
-
 
 ## 5. Event and state subscription details
 
@@ -228,12 +229,12 @@ Latency upper bound: one render quantum (≈ 2.7 ms at 48 kHz / 128-sample block
 
 API surface is identical; transport differs:
 
-| | SAB available | SAB unavailable |
-|---|---|---|
-| Snapshot region | shared `SharedArrayBuffer` slice | pre-allocated `Uint8Array` transferred to audio thread |
-| Flags | `Atomics.store / load` on shared int32 | flag-bearing postMessage |
-| `snapshot()` round-trip | ~1 block + copy | ~1 block + postMessage round-trip (a few ms extra) |
-| Audio-thread allocation | none | none (transfer buffer is provided by main thread) |
+|                         | SAB available                          | SAB unavailable                                        |
+| ----------------------- | -------------------------------------- | ------------------------------------------------------ |
+| Snapshot region         | shared `SharedArrayBuffer` slice       | pre-allocated `Uint8Array` transferred to audio thread |
+| Flags                   | `Atomics.store / load` on shared int32 | flag-bearing postMessage                               |
+| `snapshot()` round-trip | ~1 block + copy                        | ~1 block + postMessage round-trip (a few ms extra)     |
+| Audio-thread allocation | none                                   | none (transfer buffer is provided by main thread)      |
 
 Both modes preserve the realtime-safety invariants (no allocation, no unbounded loops, no I/O on the audio thread). See `08-deployment.md` §3 for the broader SAB-degradation policy.
 
@@ -279,10 +280,13 @@ async function crossfadeRestore<C>(
   newGain.gain.linearRampToValueAtTime(1, now + fadeSec);
 
   // 4. Dispose the old instance after the fade completes.
-  setTimeout(() => {
-    oldNode.dispose();
-    oldGain.disconnect();
-  }, fadeSec * 1000 + 10);
+  setTimeout(
+    () => {
+      oldNode.dispose();
+      oldGain.disconnect();
+    },
+    fadeSec * 1000 + 10,
+  );
 
   return newNode;
 }
@@ -307,9 +311,9 @@ When an unworklet processor performs lookahead (i.e. its internal computation in
 // Its author advertises this latency in the package's documentation; the
 // application configures the dry path accordingly.
 
-const limiter           = await createNode(audioContext, limiterProcessor);
-const lookaheadSamples  = 240;                                       // documented by the processor's author
-const compensationSec   = lookaheadSamples / audioContext.sampleRate;
+const limiter = await createNode(audioContext, limiterProcessor);
+const lookaheadSamples = 240; // documented by the processor's author
+const compensationSec = lookaheadSamples / audioContext.sampleRate;
 
 // Dry path: delay by the same amount as the limiter's internal lookahead.
 const dryDelay = audioContext.createDelay(compensationSec);
@@ -350,27 +354,27 @@ Multi-stage layouts where each stage has different lookahead requirements follow
 `replaceProcessor` takes 2 generic params: `Old` (= the running node's declarations) and `New` (= the new processor's declarations). Both are inferred from the call site; declarations drift between old and new (rename / add / delete) surfaces in the typed `.d.ts` as TS errors at `result.node.<member>` access. Conceptually `replaceProcessor<Old, New>(oldNode: UnworkletNode<Old>, newProcessor: CompiledProcessor<New>): Promise<ReplaceResult<New>>` — concrete TS signature detail (= generic constraint shape, `extends` bounds) is impl-phase fill per Q53.
 
 ```typescript
-import { replaceProcessor } from '@unworklet/core';
+import { replaceProcessor } from "@unworklet/core";
 
 const result = await replaceProcessor(oldNode, NewProcessor);
 
 type ReplaceResult<New> =
   | {
       ok: true;
-      node:     UnworkletNode<New>;   // freshly-typed wrapper for the new processor
-      applied:  string[];
+      node: UnworkletNode<New>; // freshly-typed wrapper for the new processor
+      applied: string[];
       restored: number;
-      skipped:  string[];
-      missing:  string[];
+      skipped: string[];
+      missing: string[];
     }
   | {
       ok: false;
-      node:     UnworkletNode<New>;   // still returned; runs on declaration defaults
-      error:    { step: string; message: string; cause: unknown };
-      applied:  string[];
+      node: UnworkletNode<New>; // still returned; runs on declaration defaults
+      error: { step: string; message: string; cause: unknown };
+      applied: string[];
       restored: number;
-      skipped:  string[];
-      missing:  string[];
+      skipped: string[];
+      missing: string[];
     };
 ```
 
@@ -408,7 +412,7 @@ The warning fires once per `AudioContext` instance and is silent for production 
 
 ### 8.6 Patterns built on top (= user-land, not framework)
 
-Hot module reload, live coding, and visual programming patterns are not first-class features of unworklet; they are *recipes* that the user-land code (or third-party plugins) compose from `createNode`, `replaceProcessor`, and the standard Web Audio graph methods. Sketch of the Vite HMR recipe:
+Hot module reload, live coding, and visual programming patterns are not first-class features of unworklet; they are _recipes_ that the user-land code (or third-party plugins) compose from `createNode`, `replaceProcessor`, and the standard Web Audio graph methods. Sketch of the Vite HMR recipe:
 
 ```typescript
 const node = await createNode(audioCtx, MyProcessor);
@@ -416,11 +420,11 @@ let current = node;
 current.connect(audioCtx.destination);
 
 if (import.meta.hot) {
-  import.meta.hot.accept('./my-processor.ts?worklet', async (mod) => {
+  import.meta.hot.accept("./my-processor.ts?worklet", async (mod) => {
     const result = await replaceProcessor(current, mod.default);
-    result.node.connect(audioCtx.destination);   // wire the new node in
-    current.disconnect();                         // unwire the old node
-    current = result.node;                        // refresh the caller's handle
+    result.node.connect(audioCtx.destination); // wire the new node in
+    current.disconnect(); // unwire the old node
+    current = result.node; // refresh the caller's handle
   });
 }
 ```

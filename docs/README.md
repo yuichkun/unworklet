@@ -33,29 +33,29 @@ If your work touches an area not covered here, **stop and surface the gap** to t
 
 Independent and can be picked up at any time:
 
-* `09-repo-structure.md` — monorepo tool, package layout, license, npm scope, TS version policy
-* `10-roadmap.md` — v1.0.0 acceptance criteria and beyond
-* `12-canonical-examples.md` — full-stack, self-contained reference plugins; **integrity anchor** that every other doc is checked against (see `AGENTS.md` "Canonical examples integrity rule")
-* `decisions-log.md` — cross-cutting reference
+- `09-repo-structure.md` — monorepo tool, package layout, license, npm scope, TS version policy
+- `10-roadmap.md` — v1.0.0 acceptance criteria and beyond
+- `12-canonical-examples.md` — full-stack, self-contained reference plugins; **integrity anchor** that every other doc is checked against (see `AGENTS.md` "Canonical examples integrity rule")
+- `decisions-log.md` — cross-cutting reference
 
 ## Status
 
-| Doc | Status |
-|---|---|
-| `00-foundations.md` | written (§§1–5 vocabulary / type system / realtime-safety; §6 = lookup-only to 09-repo-structure.md) |
-| `01-dsl.md` | written |
-| `02-messaging.md` | written |
-| `03-compiler.md` | partial (§1 pipeline overview + §2 graph capture + §2.4 three-layer error written; §3–§8 placeholder per Q61) |
-| `04-worklet-runtime.md` | partial (§7 publish scheduling written; §1–§6 + §8 placeholder) |
-| `05-client.md` | partial (§2 surface listing + §2.6 snapshot/restore + §5 event/state subscription + §6 timing + §7 latency-comp written; §1, §3, §4 placeholder) |
-| `06-testing.md` | skeleton (Q23 + Q24 + Q25 resolved at the scope level; per-section detail to be filled in incrementally) |
-| `07-vite-plugin.md` | skeleton (Q23 + Q24 + Q25 resolved at the scope level; per-section detail to be filled in incrementally) |
-| `08-deployment.md` | partial (§1 + §2 written at Q23 / Q24 / Q25 / Q62; §3 / §4 placeholder per Q61) |
-| `09-repo-structure.md` | partial (§1–§5 settled at Q60 / Q61; §6 placeholder per Q61) |
-| `10-roadmap.md` | partial (§1 written at Q62; §3.1 mandatory deferred mitigations written; §2, §3.2 placeholder) |
-| `11-midi.md` | written |
-| `12-canonical-examples.md` | written (integrity anchor; updated together with any spec change — see `AGENTS.md`) |
-| `13-offline-render.md` | skeleton (Q23 + Q24 + Q25 resolved at the scope level; per-section detail to be filled in incrementally) |
-| `decisions-log.md` | populated (Q1–Q82 ratify complete; Q28 is unassigned — numbering artifact, not a withheld decision) |
+| Doc                        | Status                                                                                                                                           |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `00-foundations.md`        | written (§§1–5 vocabulary / type system / realtime-safety; §6 = lookup-only to 09-repo-structure.md)                                             |
+| `01-dsl.md`                | written                                                                                                                                          |
+| `02-messaging.md`          | written                                                                                                                                          |
+| `03-compiler.md`           | partial (§1 pipeline overview + §2 graph capture + §2.4 three-layer error written; §3–§8 placeholder per Q61)                                    |
+| `04-worklet-runtime.md`    | partial (§7 publish scheduling written; §1–§6 + §8 placeholder)                                                                                  |
+| `05-client.md`             | partial (§2 surface listing + §2.6 snapshot/restore + §5 event/state subscription + §6 timing + §7 latency-comp written; §1, §3, §4 placeholder) |
+| `06-testing.md`            | skeleton (Q23 + Q24 + Q25 resolved at the scope level; per-section detail to be filled in incrementally)                                         |
+| `07-vite-plugin.md`        | skeleton (Q23 + Q24 + Q25 resolved at the scope level; per-section detail to be filled in incrementally)                                         |
+| `08-deployment.md`         | partial (§1 + §2 written at Q23 / Q24 / Q25 / Q62; §3 / §4 placeholder per Q61)                                                                  |
+| `09-repo-structure.md`     | partial (§1–§5 settled at Q60 / Q61; §6 placeholder per Q61)                                                                                     |
+| `10-roadmap.md`            | partial (§1 written at Q62; §3.1 mandatory deferred mitigations written; §2, §3.2 placeholder)                                                   |
+| `11-midi.md`               | written                                                                                                                                          |
+| `12-canonical-examples.md` | written (integrity anchor; updated together with any spec change — see `AGENTS.md`)                                                              |
+| `13-offline-render.md`     | skeleton (Q23 + Q24 + Q25 resolved at the scope level; per-section detail to be filled in incrementally)                                         |
+| `decisions-log.md`         | populated (Q1–Q82 ratify complete; Q28 is unassigned — numbering artifact, not a withheld decision)                                              |
 
-Content is filled in incrementally as design questions are resolved through dialogue. Anything not yet present in a doc is not yet decided — see `decisions-log.md` for what *has* been decided.
+Content is filled in incrementally as design questions are resolved through dialogue. Anything not yet present in a doc is not yet decided — see `decisions-log.md` for what _has_ been decided.

@@ -28,7 +28,7 @@ Phase ごとに sub-agent dispatch の prompt template を集約。
 
 # 出力先 (= 重要)
 
-raw report 本体を Write tool で `/Users/yuichkun/workspace/unworklet/audit/raw/<NN>-<axis>.md` (= 例: `01-type-system.md`) に**直接書き出す**。 
+raw report 本体を Write tool で `/Users/yuichkun/workspace/unworklet/audit/raw/<NN>-<axis>.md` (= 例: `01-type-system.md`) に**直接書き出す**。
 
 parent message への返事は以下だけ:
 - file path

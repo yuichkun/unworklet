@@ -45,22 +45,10 @@ mod.addFunction(
         "continue",
         mod.block(null, [
           // if (i >= 128) br $break (= forward escape)
-          mod.br_if(
-            "break",
-            mod.i32.ge_s(
-              mod.local.get(0, binaryen.i32),
-              mod.i32.const(128),
-            ),
-          ),
+          mod.br_if("break", mod.i32.ge_s(mod.local.get(0, binaryen.i32), mod.i32.const(128))),
 
           // i = i + 1
-          mod.local.set(
-            0,
-            mod.i32.add(
-              mod.local.get(0, binaryen.i32),
-              mod.i32.const(1),
-            ),
-          ),
+          mod.local.set(0, mod.i32.add(mod.local.get(0, binaryen.i32), mod.i32.const(1))),
 
           // br $continue (= backward jump = loop 先 頭 に 戻 る)
           mod.br("continue"),

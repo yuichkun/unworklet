@@ -58,7 +58,7 @@ const input = [...midiAccess.inputs.values()][0];
 node.midi.midiIn.connectFromWebMIDI(input);
 
 midiAccess.onstatechange = (e) => {
-  if (e.port.type === 'input' && e.port.state === 'connected') {
+  if (e.port.type === "input" && e.port.state === "connected") {
     node.midi.midiIn.connectFromWebMIDI(e.port);
   }
 };
@@ -71,8 +71,8 @@ midiAccess.onstatechange = (e) => {
 Consumers construct `new AudioContext(options)`. `latencyHint`, sample rate (host-determined: 44.1 / 48 / 96 kHz), and `audioCtx.resume()` calls (browser auto-play policy) live in consumer code. The context is passed into `createNode(audioCtx, MyProcessor)`; inside the worklet, the rate is exposed as `ctx.sampleRate` (compile-time constant per processor instance):
 
 ```typescript
-const audioCtx = new AudioContext({ latencyHint: 'interactive' });
-const node    = await createNode(audioCtx, MyProcessor);
+const audioCtx = new AudioContext({ latencyHint: "interactive" });
+const node = await createNode(audioCtx, MyProcessor);
 audioCtx.resume();
 ```
 

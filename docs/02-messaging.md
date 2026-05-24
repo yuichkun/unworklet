@@ -26,27 +26,30 @@ MIDI (`midiInput` / `midiOutput`) shares **the ring buffer header layout + Atomi
 
 ### 1.1 Asset upload readiness pattern (no separate ack surface)
 
-`node.messages.<name>(payload)` is **fire-and-forget** by design — it returns `void`, not a Promise. Reflection of the payload onto the audio thread happens at the start of the **current** render quantum from the worklet's viewpoint (= the next render quantum from the main thread's viewpoint after `node.messages.<name>(...)` is called — they refer to the same moment; see `decisions-log.md` Q38-a). At that moment the audio thread drains the message ringbuffer and runs the registered `onReceive` handler. This is the same delivery latency for every transport mode (SAB / postMessage); main-side `await` would not change *when* the audio thread sees the data, only *whether* main can know it has been seen.
+`node.messages.<name>(payload)` is **fire-and-forget** by design — it returns `void`, not a Promise. Reflection of the payload onto the audio thread happens at the start of the **current** render quantum from the worklet's viewpoint (= the next render quantum from the main thread's viewpoint after `node.messages.<name>(...)` is called — they refer to the same moment; see `decisions-log.md` Q38-a). At that moment the audio thread drains the message ringbuffer and runs the registered `onReceive` handler. This is the same delivery latency for every transport mode (SAB / postMessage); main-side `await` would not change _when_ the audio thread sees the data, only _whether_ main can know it has been seen.
 
 Consequently, unworklet does not provide an ack-style message variant. When the main thread needs to observe that an upload has been reflected on the audio thread (e.g. clear a "loading" UI state, gate playback start), the canonical pattern is to publish a slot from inside the `onReceive` handler and subscribe on main:
 
 ```typescript
 // worklet
-const sampleBuf = buffer.f32({ size: SAMPLE_BUFFER_LEN, name: 'sampleBuf' });
-const sampleLen = state.i32(0, { name: 'sampleLen', publish: { rateFps: 30 } });
-const upload    = message<{ samples: Float32Array }>({ name: 'upload' });
+const sampleBuf = buffer.f32({ size: SAMPLE_BUFFER_LEN, name: "sampleBuf" });
+const sampleLen = state.i32(0, { name: "sampleLen", publish: { rateFps: 30 } });
+const upload = message<{ samples: Float32Array }>({ name: "upload" });
 
 upload.onReceive(({ samples }) => {
   sampleBuf.copyFrom(samples);
-  sampleLen.store(samples.length);   // becomes visible on main at the next publish tick
+  sampleLen.store(samples.length); // becomes visible on main at the next publish tick
 });
 
 // main
-node.messages.upload({ samples: decoded.getChannelData(0) });   // void
+node.messages.upload({ samples: decoded.getChannelData(0) }); // void
 
 const ready = new Promise<void>((resolve) => {
   const unsub = node.state.sampleLen.subscribe((n) => {
-    if (n > 0) { unsub(); resolve(); }
+    if (n > 0) {
+      unsub();
+      resolve();
+    }
   });
 });
 await ready;
@@ -59,11 +62,11 @@ Authoritative rationale: `decisions-log.md` Q27-a (publish surface) + Q27-c (`me
 
 ## 2. Delivery semantics
 
-| Surface | Coalesce | Ordering | Drained | Backpressure |
-|---|---|---|---|---|
-| `state.publish` | latest-wins per slot | (no queue) | every publish tick (audio thread copies into shared region) | none — slot is overwritten freely |
-| `event<T>` | preserve all | sample-arrival-order with `atSample` | continuously by main thread reader | drop-oldest + `overflowCount` |
-| `message<T>` | preserve all | main-arrival-order | start of each render quantum (worklet author's viewpoint = the **current** quantum; from main this is the quantum **after** the `node.messages.<name>(...)` call — same moment, viewpoint difference only, per Q38-a), before any per-block top-level statement or `forSample` (handlers drain first per Q38-b) | drop-oldest + `overflowCount` |
+| Surface         | Coalesce             | Ordering                             | Drained                                                                                                                                                                                                                                                                                                         | Backpressure                      |
+| --------------- | -------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| `state.publish` | latest-wins per slot | (no queue)                           | every publish tick (audio thread copies into shared region)                                                                                                                                                                                                                                                     | none — slot is overwritten freely |
+| `event<T>`      | preserve all         | sample-arrival-order with `atSample` | continuously by main thread reader                                                                                                                                                                                                                                                                              | drop-oldest + `overflowCount`     |
+| `message<T>`    | preserve all         | main-arrival-order                   | start of each render quantum (worklet author's viewpoint = the **current** quantum; from main this is the quantum **after** the `node.messages.<name>(...)` call — same moment, viewpoint difference only, per Q38-a), before any per-block top-level statement or `forSample` (handlers drain first per Q38-b) | drop-oldest + `overflowCount`     |
 
 Common guarantees:
 
@@ -96,13 +99,13 @@ Overflow policy is **drop-oldest + monotonic counter** for both `event<T>` and `
 
 The framework selects a transport at processor instantiation, transparent to user code. API surface is identical; latency / accuracy differ.
 
-| | SAB available (default) | SAB unavailable |
-|---|---|---|
-| Cross-origin isolation | required (COOP/COEP) | not required |
-| `state.publish` propagation | atomic store/load on shared `f32` / `i32` regions; buffers via `memcpy` | flag-bearing postMessage at render-quantum boundary |
-| `event<T>` / `message<T>` | `SharedArrayBuffer`-backed ring buffer with `Atomics`-based head / tail pointers | pre-allocated transferable buffers (main allocates regions at instantiation; audio thread encodes into them at the render-quantum boundary and `postMessage(...buffer, [buffer])` transfers ownership) |
-| Sample-accurate `atSample` | preserved end-to-end | preserved on the wire; main-side delivery picks up render-quantum batching latency |
-| Audio-thread allocation | none | none (transfer regions pre-allocated by main) |
+|                             | SAB available (default)                                                          | SAB unavailable                                                                                                                                                                                        |
+| --------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Cross-origin isolation      | required (COOP/COEP)                                                             | not required                                                                                                                                                                                           |
+| `state.publish` propagation | atomic store/load on shared `f32` / `i32` regions; buffers via `memcpy`          | flag-bearing postMessage at render-quantum boundary                                                                                                                                                    |
+| `event<T>` / `message<T>`   | `SharedArrayBuffer`-backed ring buffer with `Atomics`-based head / tail pointers | pre-allocated transferable buffers (main allocates regions at instantiation; audio thread encodes into them at the render-quantum boundary and `postMessage(...buffer, [buffer])` transfers ownership) |
+| Sample-accurate `atSample`  | preserved end-to-end                                                             | preserved on the wire; main-side delivery picks up render-quantum batching latency                                                                                                                     |
+| Audio-thread allocation     | none                                                                             | none (transfer regions pre-allocated by main)                                                                                                                                                          |
 
 Active mode is exposed via `node.diagnostics.transport` (`'sab'` / `'postMessage'`). Full degradation policy and consumer guidance: `08-deployment.md` §3.
 

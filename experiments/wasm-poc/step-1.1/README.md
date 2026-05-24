@@ -49,19 +49,19 @@ WAT の 構 文:
 
 ## 組 み 込 み keyword vs 任 意 命 名 (= ど こ ま で が WASM spec、 ど こ か ら が user 自 由 か)
 
-| token | 種 別 | 説 明 |
-|---|---|---|
-| `module` | WASM keyword (= 不 変) | root node 名、 spec 規 定 |
-| `type` | WASM keyword (= 不 変) | type section node 名 |
-| `func` | WASM keyword (= 不 変) | function node 名 |
-| `result` | WASM keyword (= 不 変) | function の result type を 示 す 名 |
-| `export` | WASM keyword (= 不 変) | export section node 名 |
-| `i32` | WASM 型 keyword (= 不 変) | 32-bit signed integer 型 |
-| `i32.const` | WASM instruction (= 不 変) | i32 immediate value を operand stack に push す る opcode |
-| `$0` | **任 意 (= binaryen 自 動 採 番)** | type index name、 `$` prefix で source-level 名 を 示 す symbol。 0 文 字 列 は 単 に 0 番 目 の 採 番 結 果 |
-| `$main` | **任 意 (= user 命 名)** | function internal name。 `build.ts` の `mod.addFunction("main", ...)` 第 1 引 数 = `"main"` を `$` prefix で 表 示 |
-| `"main"` | **任 意 (= user 命 名)** | export name。 `build.ts` の `mod.addFunctionExport("main", "main")` 第 2 引 数 |
-| `42` | **任 意 (= user 数 値)** | immediate value、 `build.ts` の `mod.i32.const(42)` 引 数 |
+| token       | 種 別                              | 説 明                                                                                                              |
+| ----------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `module`    | WASM keyword (= 不 変)             | root node 名、 spec 規 定                                                                                          |
+| `type`      | WASM keyword (= 不 変)             | type section node 名                                                                                               |
+| `func`      | WASM keyword (= 不 変)             | function node 名                                                                                                   |
+| `result`    | WASM keyword (= 不 変)             | function の result type を 示 す 名                                                                                |
+| `export`    | WASM keyword (= 不 変)             | export section node 名                                                                                             |
+| `i32`       | WASM 型 keyword (= 不 変)          | 32-bit signed integer 型                                                                                           |
+| `i32.const` | WASM instruction (= 不 変)         | i32 immediate value を operand stack に push す る opcode                                                          |
+| `$0`        | **任 意 (= binaryen 自 動 採 番)** | type index name、 `$` prefix で source-level 名 を 示 す symbol。 0 文 字 列 は 単 に 0 番 目 の 採 番 結 果       |
+| `$main`     | **任 意 (= user 命 名)**           | function internal name。 `build.ts` の `mod.addFunction("main", ...)` 第 1 引 数 = `"main"` を `$` prefix で 表 示 |
+| `"main"`    | **任 意 (= user 命 名)**           | export name。 `build.ts` の `mod.addFunctionExport("main", "main")` 第 2 引 数                                     |
+| `42`        | **任 意 (= user 数 値)**           | immediate value、 `build.ts` の `mod.i32.const(42)` 引 数                                                          |
 
 **注 意**:
 
@@ -72,13 +72,13 @@ WAT の 構 文:
 
 `build.ts` の binaryen API hit と emit さ れ る `.wat` の 対 応:
 
-| build.ts | .wat 出 力 |
-|---|---|
-| `new binaryen.Module()` | `(module ...)` root node 開 始 |
+| build.ts                                                                      | .wat 出 力                                                                                                                            |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `new binaryen.Module()`                                                       | `(module ...)` root node 開 始                                                                                                        |
 | `mod.addFunction("main", binaryen.none, binaryen.i32, [], mod.i32.const(42))` | type section `(type $0 (func (result i32)))` を **自 動 で** 添 加 + func section `(func $main (result i32) (i32.const 42))` を 添 加 |
-| `mod.addFunctionExport("main", "main")` | export section `(export "main" (func $main))` を 添 加 |
-| `mod.emitText()` | 上 記 6 行 を text と し て return |
-| `mod.emitBinary()` | 同 内 容 を WASM binary bytes と し て return |
+| `mod.addFunctionExport("main", "main")`                                       | export section `(export "main" (func $main))` を 添 加                                                                                |
+| `mod.emitText()`                                                              | 上 記 6 行 を text と し て return                                                                                                    |
+| `mod.emitBinary()`                                                            | 同 内 容 を WASM binary bytes と し て return                                                                                         |
 
 注: type section (= L2) は user が 明 示 declare し て い な い = `addFunction` の signature 引 数 (= `binaryen.none` + `binaryen.i32`) を 元 に **binaryen が 自 動 で** type を 採 番 + 添 加 し て く れ る。 user は signature を addFunction の 引 数 で 1 度 渡 す だ け、 type section と func section 両 方 に binaryen が 自 動 配 信。
 
@@ -98,11 +98,11 @@ main ↔ type 0 の link は ど こ で 結 ば れ る か:
 
 ```typescript
 mod.addFunction(
-  "main",             // internal 名 (= $main)
-  binaryen.none,      // param types
-  binaryen.i32,       // result type
-  [],                 // local types
-  mod.i32.const(42),  // body
+  "main", // internal 名 (= $main)
+  binaryen.none, // param types
+  binaryen.i32, // result type
+  [], // local types
+  mod.i32.const(42), // body
 );
 ```
 
