@@ -30,6 +30,19 @@ The same rule applies in the reverse direction: changes to `12-canonical-example
 
 The purpose of this rule is to keep one question answerable at any time during spec evolution: **"is the user experience still simple, coherent, and production-ready?"** If the canonical examples no longer read that way, the spec change is the wrong shape regardless of how clean it looks in isolation.
 
+## Implementation invariant (HARD CONTRACT)
+
+unworklet v1.0.0 は 14 phase の vertical slice 構造 で 段階 構築 する (= `docs/10-roadmap.md` §2)。 各 phase で の **minimal 実装 / vertical slice 実装 は 設計 上 OK** だ が、 以下 は **絶対 ナシ**:
+
+1. **docs 規定 と 乖離 し た ad hoc 実装** — 公開 API surface (= 公開 type / 引数 形 / 戻り値 形、 09-repo-structure.md §2.1 + §2.2 + 各 component doc 規定) は docs 規定 と zip。 phase 内 で 「とりあえず 違う 形 で 出して 後 で 直す」 は 不可。
+2. **前方 互換性 ナシ 実装** — 後続 phase で 追加 さ れる surface (= 例: declaration kind 追加、 new primitive 追加、 main side method 追加、 messaging surface 拡張) と 衝突 する 設計 は 不可。 phase 内 で 実装 する 範囲 は 必ず 最終 アーキテクチャ 像 の **subset** で あり、 後続 phase で **superset** に 拡張 し て いく shape。
+
+各 phase 着手 時、 触る surface に 関わる docs (= `00-foundations.md` / `01-dsl.md` / 各 component doc / `decisions-log.md` の 該当 Q) を 必ず 参照、 最終 像 の subset として 実装 する。 「minimal = 動く だけ で OK」 と 「ad hoc = 後 で 大幅 rewrite」 は 違う。
+
+skeleton phase (= `docs/10-roadmap.md` §2 Phase 2 等) で も **公開 type は 最終 形 で declare**、 中身 は stub 実装 (= `throw new Error('not implemented')` 等) で OK、 ただし 公開 型 / 引数 形 / 戻り値 形 は docs 規定 と 一致 さ せる。 後続 phase は declared surface の 中身 を 順次 fill する path。
+
+このルール 違反 = phase 完了 条件 を 満たさ ない、 canonical examples integrity rule と 同様 に 同 commit で の retract が 必要。
+
 ## Build, test, and lint — Vite+ only
 
 This project uses [Vite+](https://viteplus.dev). All workflows go through `vp`. **Never invoke `npm`, `pnpm`, `yarn`, or `npx` directly** — not in shell, not in scripts, not in CI config, not in test-plan commands.
