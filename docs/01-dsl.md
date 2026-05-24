@@ -318,7 +318,7 @@ The convention is hybrid:
 
   ```typescript
   // chain — input flows through .sub → .mul → .add
-  const y = main.left.at(i).sub(z.load()).mul(k).add(z.load());
+  const y = input.left.at(i).sub(z.load()).mul(k).add(z.load());
   ```
 
 - **free function** when the operation has no natural receiver (= 3-arg `select`, SIMD constructors `splat` / `vec4` / `sumLanes`):
@@ -1012,7 +1012,7 @@ Conditional output between configurations is expressed by instantiating both and
 
 ```typescript
 const myProcessor = defineProcessor((ctx) => {
-  const main = audioInput ({ channels: 1, name: 'main' });
+  const input = audioInput ({ channels: 1, name: 'main' });
   const out  = audioOutput({ channels: 1, name: 'main' });
   const useA = param.named({ default: 1, min: 0, max: 1, automationRate: 'k-rate', name: 'useA' });
 
@@ -1023,7 +1023,7 @@ const myProcessor = defineProcessor((ctx) => {
   return {
     process: () => {
       forSample((i) => {
-        const x = main.ch(0).at(i);
+        const x = input.ch(0).at(i);
         // useA is k-rate 0|1; compare to 1 to get a Node<'bool'> for select.
         out.ch(0).at(i).write(select(useA.at(i).eq(1), lpfA.process(x), lpfB.process(x)));
         // Both instances evaluate every sample; select chooses one.
@@ -1179,7 +1179,7 @@ import { defineProcessor, audioInput, audioOutput, param, buffer, forSample } fr
 import { mulVec, splat } from '@unworklet/core/simd';
 
 export const simdGain = defineProcessor((ctx) => {
-  const main = audioInput ({ channels: 1, name: 'main' });
+  const input = audioInput ({ channels: 1, name: 'main' });
   const out  = audioOutput({ channels: 1, name: 'main' });
   const scratch = buffer.f32({ size: SAMPLES_PER_BLOCK });
   const gain    = param.named({ default: 1.0, min: 0.0, max: 4.0, automationRate: 'k-rate', name: 'gain' });
@@ -1188,7 +1188,7 @@ export const simdGain = defineProcessor((ctx) => {
     process: () => {
       // Step 1: accumulate input into scratch (per-sample).
       forSample((i) => {
-        scratch.write(i, main.ch(0).at(i));
+        scratch.write(i, input.ch(0).at(i));
       });
 
       // Step 2: SIMD bulk gain.
@@ -1506,7 +1506,7 @@ Inside a `forSample` callback, the same rules as L1 helper bodies (§5.5.5) appl
 
 ```typescript
 const gainSat = defineProcessor((ctx) => {
-  const main  = audioInput ({ channels: 2, name: 'main' });
+  const input = audioInput ({ channels: 2, name: 'main' });
   const out   = audioOutput({ channels: 2, name: 'main' });
   const gain  = param.named({ default: 1.0, ..., automationRate: 'a-rate', name: 'gain'  });
   const drive = param.named({ default: 0.0, ..., automationRate: 'a-rate', name: 'drive' });
@@ -1514,8 +1514,8 @@ const gainSat = defineProcessor((ctx) => {
   return {
     process: () => {
       forSample((i) => {
-        const inL = main.left.at(i);
-        const inR = main.right.at(i);
+        const inL = input.left.at(i);
+        const inR = input.right.at(i);
         const g   = gain.at(i);
         const d   = drive.at(i);
         const cleanL = inL.mul(g);
@@ -1535,7 +1535,7 @@ const gainSat = defineProcessor((ctx) => {
 
 ```typescript
 const simdProc = defineProcessor((ctx) => {
-  const main    = audioInput ({ channels: 1, name: 'main' });
+  const input   = audioInput ({ channels: 1, name: 'main' });
   const out     = audioOutput({ channels: 1, name: 'main' });
   const scratch = buffer.f32({ size: SAMPLES_PER_BLOCK });
   const gain    = param.named({ default: 1.0, ..., automationRate: 'k-rate', name: 'gain' });
@@ -1547,7 +1547,7 @@ const simdProc = defineProcessor((ctx) => {
 
       // Per-sample: input shaping
       forSample((i) => {
-        scratch.write(i, main.ch(0).at(i));
+        scratch.write(i, input.ch(0).at(i));
       });
 
       // Per-sample (SIMD stride): apply blockGain across the buffer.

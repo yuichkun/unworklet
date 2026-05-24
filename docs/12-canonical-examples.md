@@ -72,7 +72,7 @@ import {
 } from '@unworklet/core';
 
 export const stereoGain = defineProcessor(() => {
-  const main = audioInput ({ channels: 2, name: 'main' });
+  const input = audioInput ({ channels: 2, name: 'main' });
   const out  = audioOutput({ channels: 2, name: 'main' });
 
   const gain = param.named({
@@ -87,8 +87,8 @@ export const stereoGain = defineProcessor(() => {
   return {
     process: () => {
       forSample((i) => {
-        const l = main.left.at(i).mul(gain.at(i));
-        const r = main.right.at(i).mul(gain.at(i));
+        const l = input.left.at(i).mul(gain.at(i));
+        const r = input.right.at(i).mul(gain.at(i));
         out.left.at(i).write(l);
         out.right.at(i).write(r);
 
@@ -199,7 +199,7 @@ const peakingBand = defineSubgraph((sr: number) => {
 });
 
 export const threeBandEQ = defineProcessor((ctx) => {
-  const main = audioInput ({ channels: 2, name: 'main' });
+  const input = audioInput ({ channels: 2, name: 'main' });
   const out  = audioOutput({ channels: 2, name: 'main' });
 
   const lowF = param.named({ default: 120,  min: 20,    max: 1000,  automationRate: 'k-rate', name: 'lowFreq'  });
@@ -231,8 +231,8 @@ export const threeBandEQ = defineProcessor((ctx) => {
       const hiFv  = hiF.at(0);  const hiQv  = hiQ.at(0);  const hiGv  = hiG.at(0);
 
       forSample((i) => {
-        const xL = main.left.at(i);
-        const xR = main.right.at(i);
+        const xL = input.left.at(i);
+        const xR = input.right.at(i);
 
         // Cascaded peaking bands — each subgraph instance owns its own z1/z2 state pair.
         const yL1 = lowL.process(xL,  lowFv, lowQv, lowGv);
@@ -285,7 +285,7 @@ const NUM_PARTS   = FIR_LEN / SAMPLES_PER_BLOCK;       // 8
 const HISTORY_LEN = NUM_PARTS * SAMPLES_PER_BLOCK;     // 1024
 
 export const linearPhaseEQ = defineProcessor(() => {
-  const main = audioInput ({ channels: 1, name: 'main' });
+  const input = audioInput ({ channels: 1, name: 'main' });
   const out  = audioOutput({ channels: 1, name: 'main' });
 
   // Precomputed real-valued impulse, length FIR_LEN. Persisted across reloads.
@@ -304,7 +304,7 @@ export const linearPhaseEQ = defineProcessor(() => {
       // forSample (input shovel): copy input into history ring buffer.
       forSample((i) => {
         const idx = startHead.add(i).mod(HISTORY_LEN);
-        history.write(idx, main.ch(0).at(i));
+        history.write(idx, input.ch(0).at(i));
       });
 
       // SIMD bulk convolution: accumulator over each output sample `i`,
@@ -389,7 +389,7 @@ function envelopeFollow(
 }
 
 export const lookaheadLimiter = defineProcessor((ctx) => {
-  const main = audioInput ({ channels: 2, name: 'main' });
+  const input = audioInput ({ channels: 2, name: 'main' });
   const out  = audioOutput({ channels: 2, name: 'main' });
 
   const ceiling   = param.named({ default: -1.0, min: -24, max: 0,    automationRate: 'k-rate', name: 'ceiling'   });
@@ -426,7 +426,7 @@ export const lookaheadLimiter = defineProcessor((ctx) => {
 
       forSample((i) => {
         // Sidechain envelope on the live (pre-delay) signal.
-        const peak = main.left.at(i).abs().max(main.right.at(i).abs());
+        const peak = input.left.at(i).abs().max(input.right.at(i).abs());
         const e    = envelopeFollow(peak, attackCoef, releaseCoef, env);
 
         // Compute gain reduction so that envelope * gr <= ceiling.
@@ -435,8 +435,8 @@ export const lookaheadLimiter = defineProcessor((ctx) => {
 
         // Push into delay line.
         const wIdx = headBlock.add(i).mod(LOOKAHEAD_SAMPLES);
-        dlyL.write(wIdx, main.left.at(i));
-        dlyR.write(wIdx, main.right.at(i));
+        dlyL.write(wIdx, input.left.at(i));
+        dlyR.write(wIdx, input.right.at(i));
 
         // Read from LOOKAHEAD_SAMPLES samples behind the write head (i.e.
         // the oldest sample, which corresponds to t - LOOKAHEAD_SAMPLES).
@@ -449,10 +449,10 @@ export const lookaheadLimiter = defineProcessor((ctx) => {
 
         // Fire an overshoot event on either channel that exceeded the ceiling
         // *before* gain reduction was applied (i.e. true peak in the input).
-        overshoot.emitIf(main.left.at(i).abs().gt(ceilingLin),
-               { atSample: i, channel: 0, level: main.left.at(i).abs() });
-        overshoot.emitIf(main.right.at(i).abs().gt(ceilingLin),
-               { atSample: i, channel: 1, level: main.right.at(i).abs() });
+        overshoot.emitIf(input.left.at(i).abs().gt(ceilingLin),
+               { atSample: i, channel: 0, level: input.left.at(i).abs() });
+        overshoot.emitIf(input.right.at(i).abs().gt(ceilingLin),
+               { atSample: i, channel: 1, level: input.right.at(i).abs() });
 
         // Track the most-negative GR (in dB) reached during this block; published
         // to UI by the rateFps scheduler.
@@ -818,7 +818,7 @@ const IR_LEN          = 4096;     // ~85ms @ 48kHz
 const NUM_PARTITIONS  = IR_LEN / SAMPLES_PER_BLOCK;     // 32
 
 export const convolutionReverb = defineProcessor((ctx) => {
-  const main = audioInput ({ channels: 2, name: 'main' });
+  const input = audioInput ({ channels: 2, name: 'main' });
   const out  = audioOutput({ channels: 2, name: 'main' });
 
   const wetGain  = param.named({ default: 0.5, min: 0, max: 1, automationRate: 'k-rate', name: 'wetGain'  });
@@ -858,8 +858,8 @@ export const convolutionReverb = defineProcessor((ctx) => {
 
       forSample((i) => {
         const idx = headBlock.add(i).mod(IR_LEN);
-        histL.write(idx, main.left.at(i));
-        histR.write(idx, main.right.at(i));
+        histL.write(idx, input.left.at(i));
+        histR.write(idx, input.right.at(i));
       });
 
       // SIMD bulk convolution — scalar accumulator over 4-wide vectors.
@@ -879,8 +879,8 @@ export const convolutionReverb = defineProcessor((ctx) => {
         const sumL = sumLanes(accL);
         const sumR = sumLanes(accR);
 
-        const dryL = main.left.at(i).mul(dryGain.at(0));
-        const dryR = main.right.at(i).mul(dryGain.at(0));
+        const dryL = input.left.at(i).mul(dryGain.at(0));
+        const dryR = input.right.at(i).mul(dryGain.at(0));
         const wetL = sumL.mul(wetGain.at(0));
         const wetR = sumR.mul(wetGain.at(0));
 
