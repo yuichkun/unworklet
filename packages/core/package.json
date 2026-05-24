@@ -9,6 +9,7 @@
   "type": "module",
   "exports": {
     ".": "./dist/index.mjs",
+    "./simd": "./dist/simd.mjs",
     "./package.json": "./package.json"
   },
   "publishConfig": {

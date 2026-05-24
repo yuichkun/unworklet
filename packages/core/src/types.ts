@@ -105,7 +105,7 @@ export type State<T extends ScalarType> = {
 };
 
 /** Fixed-size `buffer.<type>({ size })` handle (`01-dsl.md` §3.2). */
-export type Buffer<T extends BufferElementType> = {
+export interface Buffer<T extends BufferElementType> {
   readonly [bufferBrand]: T;
   readonly size: number;
   readonly name: string;
@@ -118,13 +118,9 @@ export type Buffer<T extends BufferElementType> = {
     pos: Node<"f32"> | number,
   ): Node<T extends "u8" ? "i32" : Extract<T, ScalarType>>;
   copyFrom(src: TypedArrayFieldRef<T>): void;
-  /** Only typed when `@unworklet/core/simd` is in scope. */
-  loadVec(offset: Node<"i32">): Node<"f32x4">;
-  /** Only typed when `@unworklet/core/simd` is in scope. */
-  storeVec(offset: Node<"i32">, value: Node<"f32x4">): void;
   named(name: string): Buffer<T>;
   expose(options: ExposeOptions): Buffer<T>;
-};
+}
 
 /** AudioParam-backed `param.f32(...)` handle (`01-dsl.md` §3.3). */
 export type Param = {
