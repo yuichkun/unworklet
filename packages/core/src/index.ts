@@ -81,6 +81,19 @@ export type {
 export { forSample } from "./dsl/loop.ts";
 export type { EveryNSamples, ForSampleCallback, ForSampleFn } from "./dsl/loop.ts";
 
+// Processor / subgraph constructors.
+export { createSubgraph, defineProcessor, defineSubgraph } from "./processor.ts";
+export type { CreateSubgraphOptions, SubgraphDecl } from "./processor.ts";
+
+// Compile invocation.
+export { compile } from "./compile.ts";
+
+// Main-thread client surface.
+export { createNode, inspect } from "./client.ts";
+
+// Dynamic processor swap primitive.
+export { replaceProcessor } from "./replaceProcessor.ts";
+
 // Public types.
 export type {
   AudioInputHandle,
