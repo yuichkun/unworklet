@@ -61,7 +61,30 @@ Per-identifier signature detail / generic constraint is impl-phase fill per Q53 
 
 ### 2.4 Package dependency graph
 
-公 開 4 package の `package.json` dependency 関 係 を 1 表 で declare (= acceptance F1 で 公 開 surface check 対 象):
+公 開 4 package + 1 subpath + external dep の `package.json` dependency 関 係 を visual graph + table の 2 view で declare (= acceptance F1 で 公 開 surface check 対 象):
+
+```mermaid
+graph LR
+  core["@unworklet/core"]
+  simd["@unworklet/core/simd (subpath)"]
+  vp["@unworklet/vite-plugin"]
+  offline["@unworklet/offline"]
+  test["@unworklet/test"]
+  binaryen["binaryen (dynamic import)"]
+  vite[vite]
+  vitest[vitest]
+
+  simd -.subpath.-> core
+  core -.dynamic.-> binaryen
+  vp -.peer.-> core
+  vp -.peer.-> vite
+  offline -.peer.-> core
+  test --> offline
+  test -.peer.-> core
+  test -.peer.-> vitest
+```
+
+凡 例: 実 線 矢 印 = `dependencies` (= install で 自 動 解 決、 consumer の bundle に 入 る) — 例: `test --> offline`。 破 線 矢 印 + ラベル = relation 種 別 — `peer` (= `peerDependencies`、 consumer 側 で 揃 え る) / `dynamic` (= 内 部 dynamic import、 compile API call 時 の み load、 production runtime bundle に 含 ま れ な い) / `subpath` (= 同 package 内 の sub-export path、 別 install ナ シ)。
 
 | Package | `dependencies` | `peerDependencies` | 意 図 |
 |---|---|---|---|
