@@ -1,0 +1,160 @@
+/**
+ * DSL primitive operators (`01-dsl.md` §2 + Q77 hybrid policy).
+ *
+ * Each primitive is exposed in two equivalent forms:
+ * - free function (e.g. `add(a, b)`)
+ * - method on `Node<T>` (e.g. `a.add(b)`)
+ *
+ * Both shapes compile to the same captured graph node. This file declares
+ * the free function form as named exports and extends the `Node<T>`
+ * interface (from `../types.ts`) with the method form via TypeScript
+ * declaration merging.
+ */
+
+import type { Node, ScalarType } from "../types.ts";
+
+// ─────────────────────────────────────────────────────────────────────────
+// Node<T> method form (= Q77 chain, declaration merging into `../types.ts`)
+// ─────────────────────────────────────────────────────────────────────────
+
+declare module "../types.ts" {
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+  interface Node<T extends ScalarType | "f32x4" = ScalarType> {
+    // Arithmetic
+    add(other: Node<T> | number): Node<T>;
+    sub(other: Node<T> | number): Node<T>;
+    mul(other: Node<T> | number): Node<T>;
+    div(other: Node<T> | number): Node<T>;
+    mod(other: Node<T> | number): Node<T>;
+    neg(): Node<T>;
+    // Comparison
+    eq(other: Node<T> | number): Node<"bool">;
+    lt(other: Node<T> | number): Node<"bool">;
+    gt(other: Node<T> | number): Node<"bool">;
+    lte(other: Node<T> | number): Node<"bool">;
+    gte(other: Node<T> | number): Node<"bool">;
+    // Math
+    sin(): Node<T>;
+    cos(): Node<T>;
+    tan(): Node<T>;
+    tanh(): Node<T>;
+    exp(): Node<T>;
+    log(): Node<T>;
+    sqrt(): Node<T>;
+    abs(): Node<T>;
+    floor(): Node<T>;
+    ceil(): Node<T>;
+    frac(): Node<T>;
+    min(other: Node<T> | number): Node<T>;
+    max(other: Node<T> | number): Node<T>;
+    clamp(lo: Node<T> | number, hi: Node<T> | number): Node<T>;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Free function form
+// ─────────────────────────────────────────────────────────────────────────
+
+const notImplemented = (): never => {
+  throw new Error("not implemented");
+};
+
+// Arithmetic (T extends 'f32' | 'f64' | 'i32' | 'i64' — generic over ScalarType for stub)
+export function add<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<T> {
+  return notImplemented();
+}
+export function sub<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<T> {
+  return notImplemented();
+}
+export function mul<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<T> {
+  return notImplemented();
+}
+export function div<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<T> {
+  return notImplemented();
+}
+export function mod<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<T> {
+  return notImplemented();
+}
+export function neg<T extends ScalarType>(_x: Node<T> | number): Node<T> {
+  return notImplemented();
+}
+
+// Comparison (returns Node<'bool'>)
+export function eq<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<"bool"> {
+  return notImplemented();
+}
+export function lt<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<"bool"> {
+  return notImplemented();
+}
+export function gt<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<"bool"> {
+  return notImplemented();
+}
+export function lte<T extends ScalarType>(
+  _a: Node<T> | number,
+  _b: Node<T> | number,
+): Node<"bool"> {
+  return notImplemented();
+}
+export function gte<T extends ScalarType>(
+  _a: Node<T> | number,
+  _b: Node<T> | number,
+): Node<"bool"> {
+  return notImplemented();
+}
+
+// Math (f32 / f64 — generic over ScalarType for stub)
+export function sin<T extends ScalarType>(_x: Node<T> | number): Node<T> {
+  return notImplemented();
+}
+export function cos<T extends ScalarType>(_x: Node<T> | number): Node<T> {
+  return notImplemented();
+}
+export function tan<T extends ScalarType>(_x: Node<T> | number): Node<T> {
+  return notImplemented();
+}
+export function tanh<T extends ScalarType>(_x: Node<T> | number): Node<T> {
+  return notImplemented();
+}
+export function exp<T extends ScalarType>(_x: Node<T> | number): Node<T> {
+  return notImplemented();
+}
+export function log<T extends ScalarType>(_x: Node<T> | number): Node<T> {
+  return notImplemented();
+}
+export function sqrt<T extends ScalarType>(_x: Node<T> | number): Node<T> {
+  return notImplemented();
+}
+export function abs<T extends ScalarType>(_x: Node<T> | number): Node<T> {
+  return notImplemented();
+}
+export function floor<T extends ScalarType>(_x: Node<T> | number): Node<T> {
+  return notImplemented();
+}
+export function ceil<T extends ScalarType>(_x: Node<T> | number): Node<T> {
+  return notImplemented();
+}
+export function frac<T extends ScalarType>(_x: Node<T> | number): Node<T> {
+  return notImplemented();
+}
+export function min<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<T> {
+  return notImplemented();
+}
+export function max<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<T> {
+  return notImplemented();
+}
+export function clamp<T extends ScalarType>(
+  _x: Node<T> | number,
+  _lo: Node<T> | number,
+  _hi: Node<T> | number,
+): Node<T> {
+  return notImplemented();
+}
+
+// Control
+export function select<T extends ScalarType>(
+  _cond: Node<"bool"> | boolean,
+  _then: Node<T> | number,
+  _else: Node<T> | number,
+): Node<T> {
+  return notImplemented();
+}

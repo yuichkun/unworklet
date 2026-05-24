@@ -21,6 +21,66 @@ export {
   SAMPLES_PER_BLOCK,
 } from "./dsl/constants.ts";
 
+// Scalar constructors.
+export { bool, f32, f64, i32, i64, num } from "./dsl/constructors.ts";
+
+// DSL primitive operators (Node<T> method form extended via declaration merging).
+export {
+  abs,
+  add,
+  ceil,
+  clamp,
+  cos,
+  div,
+  eq,
+  exp,
+  floor,
+  frac,
+  gt,
+  gte,
+  log,
+  lt,
+  lte,
+  max,
+  min,
+  mod,
+  mul,
+  neg,
+  select,
+  sin,
+  sqrt,
+  sub,
+  tan,
+  tanh,
+} from "./dsl/primitives.ts";
+
+// Declaration helpers.
+export {
+  audioInput,
+  audioOutput,
+  buffer,
+  event,
+  message,
+  midiInput,
+  midiOutput,
+  param,
+  state,
+} from "./dsl/declarations.ts";
+
+export type {
+  BufferChain,
+  EventOptions,
+  MessageOptions,
+  MidiPortOptions,
+  ParamChain,
+  ParamOptions,
+  StateChain,
+} from "./dsl/declarations.ts";
+
+// Loop primitive.
+export { forSample } from "./dsl/loop.ts";
+export type { EveryNSamples, ForSampleCallback, ForSampleFn } from "./dsl/loop.ts";
+
 // Public types.
 export type {
   AudioInputHandle,

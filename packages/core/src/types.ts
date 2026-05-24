@@ -84,12 +84,16 @@ declare const paramBrand: unique symbol;
 
 /**
  * `Node<T>` — handle to a value computed during graph capture.
- * Method-form chain (= Q77 hybrid policy) is added by intersection from
- * `./dsl/primitives.ts`; this declaration carries the brand only.
+ *
+ * Declared as an `interface` so that `./dsl/primitives.ts` and
+ * `./simd.ts` can extend it via declaration merging to add the Q77
+ * hybrid chain methods (arithmetic / comparison / math) and the SIMD
+ * vec methods. This declaration carries the brand only.
  */
-export type Node<T extends ScalarType | "f32x4" = ScalarType> = {
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface Node<T extends ScalarType | "f32x4" = ScalarType> {
   readonly [nodeBrand]: T;
-};
+}
 
 /** Scalar `state.<type>(initial)` handle (`01-dsl.md` §3.1). */
 export type State<T extends ScalarType> = {
