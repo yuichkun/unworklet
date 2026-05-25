@@ -1,18 +1,17 @@
 /**
  * Declaration helpers (`01-dsl.md` §1 / §3 / §4 + `11-midi.md` §1).
  *
- * Declaration scope only: each helper registers a slot in the graph
- * and a region in WASM linear memory. Stub stage = chain objects /
- * factory functions return non-functional handles whose method calls
- * throw `not implemented`.
+ * Declaration scope only: each helper registers a slot in the graph and
+ * a region in WASM linear memory. state / buffer / event / message /
+ * MIDI = Phase 3 throw stub (= 後 続 phase fill)。
  *
  * Named-factory chain (= Q79): `.named('X')` quick form / `.expose({ name, ... })`
  * full form are exposed both **before** the type method (`state.named('X').f32(0)`)
  * and **after** (`state.f32(0).named('X')`). Field merge = after-wins.
  */
 
-import type { ParamDecl } from "../compile/ast.ts";
-import { addDeclaration } from "../compile/capture.ts";
+import type { AstNode, ParamDecl } from "../compile/ast.ts";
+import { addDeclaration, addStatement, unwrapAst, wrapAst } from "../compile/capture.ts";
 import type {
   AudioInputHandle,
   AudioOutputHandle,
@@ -20,9 +19,12 @@ import type {
   Capacity,
   EventDecl,
   ExposeOptions,
+  InputChannelView,
   MessageDecl,
   MidiInputHandle,
   MidiOutputHandle,
+  Node,
+  OutputChannelView,
   Param,
   ScalarOf,
   ScalarType,
@@ -32,6 +34,24 @@ import type {
 const notImplemented = (): never => {
   throw new Error("not implemented");
 };
+
+// ─────────────────────────────────────────────────────────────────────────
+// Literal lift helpers (= Q36-a)
+// ─────────────────────────────────────────────────────────────────────────
+
+function liftOffset(i: Node<"i32"> | number): AstNode {
+  if (typeof i === "number") {
+    return { kind: "literal", type: "i32", value: i };
+  }
+  return unwrapAst(i);
+}
+
+function liftF32(v: Node<"f32"> | number): AstNode {
+  if (typeof v === "number") {
+    return { kind: "literal", type: "f32", value: v };
+  }
+  return unwrapAst(v);
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // `state` — scalar slots (`01-dsl.md` §3.1)
@@ -109,8 +129,9 @@ export interface ParamChain {
 
 // `param` chain (= Q76 named-required + Q79 chain-order free)。
 // `.f32(opts)` 時 に declaration を graph に append し、 chain の `.named()` は
-// 後 付 け / 前 付 け 両 方 で 同 declaration を 指 す (= after-wins)。
-// `.expose({...})` は Phase 7 で fill (= Phase 3 = throw stub 維 持)。
+// 後 付 け / 前 付 け 両 方 で 同 declaration を 指 す (= after-wins、 mutate)。
+// `param.at(i)` は decl.name を late-binding で 読 む = `.named` 重 複 後 でも
+// 最 新 name を 反 映。 `.expose({...})` は Phase 7 で fill = throw stub 維 持。
 
 const makeParamChain = (pendingName: string | undefined): ParamChain => ({
   f32: (options) => {
@@ -132,7 +153,12 @@ const makeParamChain = (pendingName: string | undefined): ParamChain => ({
 
 function makeParam(decl: ParamDecl): Param {
   const handle = {
-    at: () => notImplemented(),
+    at: (i: Node<"i32"> | number) =>
+      wrapAst<"f32">({
+        kind: "paramAt",
+        paramName: decl.name,
+        offset: liftOffset(i),
+      }),
     named: (name: string) => {
       decl.name = name;
       return handle;
@@ -148,6 +174,34 @@ export const param: ParamChain = makeParamChain(undefined);
 // Audio I/O declarations (`01-dsl.md` §1.1)
 // ─────────────────────────────────────────────────────────────────────────
 
+function makeInputView(portName: string, channel: number): InputChannelView<"f32"> {
+  return {
+    at: (i) =>
+      wrapAst<"f32">({
+        kind: "audioInRead",
+        portName,
+        channel,
+        offset: liftOffset(i),
+      }),
+  };
+}
+
+function makeOutputView(portName: string, channel: number): OutputChannelView<"f32"> {
+  return {
+    at: (i) => ({
+      write: (v) => {
+        addStatement({
+          kind: "audioOutWrite",
+          portName,
+          channel,
+          offset: liftOffset(i),
+          value: liftF32(v),
+        });
+      },
+    }),
+  };
+}
+
 export function audioInput<C extends number>(options: {
   channels: C;
   name: string;
@@ -157,7 +211,22 @@ export function audioInput<C extends number>(options: {
     name: options.name,
     channels: options.channels,
   });
-  return makeAudioHandle(options) as AudioInputHandle<C>;
+  const handle: Record<string, unknown> = {
+    channels: options.channels,
+    name: options.name,
+    ch: (c: number) => makeInputView(options.name, c),
+  };
+  if (options.channels === 2) {
+    Object.defineProperty(handle, "left", {
+      get: () => makeInputView(options.name, 0),
+      enumerable: true,
+    });
+    Object.defineProperty(handle, "right", {
+      get: () => makeInputView(options.name, 1),
+      enumerable: true,
+    });
+  }
+  return handle as AudioInputHandle<C>;
 }
 
 export function audioOutput<C extends number>(options: {
@@ -169,32 +238,22 @@ export function audioOutput<C extends number>(options: {
     name: options.name,
     channels: options.channels,
   });
-  return makeAudioHandle(options) as AudioOutputHandle<C>;
-}
-
-// Shared audio handle factory. `.ch()` / `.left` / `.right` body は
-// Step 3.4 で fill (= Phase 3 = throw stub)。 channels === 2 の 時 だ け
-// stereo sugar property を defineProperty で 追 加 = mono は ナ シ。
-function makeAudioHandle<C extends number>(options: {
-  channels: C;
-  name: string;
-}): { channels: C; name: string; ch: (c: number) => never } {
-  const handle = {
+  const handle: Record<string, unknown> = {
     channels: options.channels,
     name: options.name,
-    ch: () => notImplemented(),
+    ch: (c: number) => makeOutputView(options.name, c),
   };
   if (options.channels === 2) {
     Object.defineProperty(handle, "left", {
-      get: () => notImplemented(),
+      get: () => makeOutputView(options.name, 0),
       enumerable: true,
     });
     Object.defineProperty(handle, "right", {
-      get: () => notImplemented(),
+      get: () => makeOutputView(options.name, 1),
       enumerable: true,
     });
   }
-  return handle;
+  return handle as AudioOutputHandle<C>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────

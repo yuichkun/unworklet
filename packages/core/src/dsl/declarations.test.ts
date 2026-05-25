@@ -1,13 +1,14 @@
 /**
  * Declaration helper behavior (= `01-dsl.md` §1 / §3 / §4 + `11-midi.md`
  * §1). Step 3.2 = audioInput / audioOutput / param.f32 / param.named の
- * graph register が fill、 残 り (= state / buffer / event / message /
- * midi / param.expose) は throw stub 維 持。
+ * graph register、 Step 3.4 = `.ch(c).at(i)` reader / `.write(v)` writer /
+ * `param.at(i)` の AST 還 元 を fill。 残 り (= state / buffer / event /
+ * message / midi / param.expose) は throw stub 維 持。
  */
 
 import { expect, test } from "vite-plus/test";
 
-import { newCaptureContext, runCapture } from "../compile/capture.ts";
+import { newCaptureContext, runCapture, unwrapAst, wrapAst } from "../compile/capture.ts";
 import {
   audioInput,
   audioOutput,
@@ -19,6 +20,7 @@ import {
   param,
   state,
 } from "./declarations.ts";
+import { forSample } from "./loop.ts";
 
 // ─────────────────────────────────────────────────────────────────────────
 // stub 維 持 = state / buffer / param.expose / event / message / midi
@@ -52,7 +54,7 @@ test.each(stubs)("`%s` stub throws not implemented", (_name, invoke) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// audioInput = Step 3.2 fill
+// audioInput = Step 3.2 register + Step 3.4 `.ch(c).at(i)` reader
 // ─────────────────────────────────────────────────────────────────────────
 
 test("`audioInput` outside `defineProcessor` body throws", () => {
@@ -94,32 +96,55 @@ test("`audioInput` mono handle does NOT carry `.left` / `.right` sugar", () => {
   });
 });
 
-test("`audioInput` handle `.ch(c)` is Step 3.4 待 ち = throws", () => {
+test("`audioInput.ch(c).at(node)` returns an `audioInRead` AST with the loopCounter offset", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const handle = audioInput({ channels: 2, name: "main" });
-    expect(() => handle.ch(0)).toThrow(/not implemented/);
+    const i = wrapAst<"i32">({ kind: "loopCounter" });
+    const read = handle.ch(0).at(i);
+    expect(unwrapAst(read)).toEqual({
+      kind: "audioInRead",
+      portName: "main",
+      channel: 0,
+      offset: { kind: "loopCounter" },
+    });
   });
 });
 
-test("`audioInput` stereo handle `.left` access is Step 3.4 待 ち = throws", () => {
+test("`audioInput.ch(c).at(literal)` lifts the JS number offset to an `i32` literal", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const handle = audioInput({ channels: 2, name: "main" });
-    expect(() => handle.left).toThrow(/not implemented/);
+    const read = handle.ch(1).at(0);
+    expect(unwrapAst(read)).toEqual({
+      kind: "audioInRead",
+      portName: "main",
+      channel: 1,
+      offset: { kind: "literal", type: "i32", value: 0 },
+    });
   });
 });
 
-test("`audioInput` stereo handle `.right` access is Step 3.4 待 ち = throws", () => {
+test("`audioInput.left.at(i)` stereo sugar = `.ch(0).at(i)` 同 AST", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const handle = audioInput({ channels: 2, name: "main" });
-    expect(() => handle.right).toThrow(/not implemented/);
+    const i = wrapAst<"i32">({ kind: "loopCounter" });
+    expect(unwrapAst(handle.left.at(i))).toEqual(unwrapAst(handle.ch(0).at(i)));
+  });
+});
+
+test("`audioInput.right.at(i)` stereo sugar = `.ch(1).at(i)` 同 AST", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const handle = audioInput({ channels: 2, name: "main" });
+    const i = wrapAst<"i32">({ kind: "loopCounter" });
+    expect(unwrapAst(handle.right.at(i))).toEqual(unwrapAst(handle.ch(1).at(i)));
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// audioOutput = Step 3.2 fill
+// audioOutput = Step 3.2 register + Step 3.4 `.ch(c).at(i).write(v)` writer
 // ─────────────────────────────────────────────────────────────────────────
 
 test("`audioOutput` outside `defineProcessor` body throws", () => {
@@ -163,32 +188,99 @@ test("`audioOutput` mono handle does NOT carry `.left` / `.right` sugar", () => 
   });
 });
 
-test("`audioOutput` handle `.ch(c)` is Step 3.4 待 ち = throws", () => {
+test("`audioOutput.ch(c).at(i).write(node)` appends an `audioOutWrite` AST to statements", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const handle = audioOutput({ channels: 2, name: "main" });
-    expect(() => handle.ch(0)).toThrow(/not implemented/);
+    const i = wrapAst<"i32">({ kind: "loopCounter" });
+    const value = wrapAst<"f32">({ kind: "literal", type: "f32", value: 0.5 });
+    handle.ch(0).at(i).write(value);
+  });
+  expect(ctx.statements).toEqual([
+    {
+      kind: "audioOutWrite",
+      portName: "main",
+      channel: 0,
+      offset: { kind: "loopCounter" },
+      value: { kind: "literal", type: "f32", value: 0.5 },
+    },
+  ]);
+});
+
+test("`audioOutput.ch(c).at(literal).write(literal)` lifts both literals (= i32 offset / f32 value)", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const handle = audioOutput({ channels: 1, name: "mono" });
+    handle.ch(0).at(0).write(0.25);
+  });
+  expect(ctx.statements).toEqual([
+    {
+      kind: "audioOutWrite",
+      portName: "mono",
+      channel: 0,
+      offset: { kind: "literal", type: "i32", value: 0 },
+      value: { kind: "literal", type: "f32", value: 0.25 },
+    },
+  ]);
+});
+
+test("`audioOutput.left.at(i).write(v)` stereo sugar = channel 0 と 同 effect", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const handle = audioOutput({ channels: 2, name: "main" });
+    const i = wrapAst<"i32">({ kind: "loopCounter" });
+    const value = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1 });
+    handle.left.at(i).write(value);
+  });
+  expect(ctx.statements[0]).toMatchObject({
+    kind: "audioOutWrite",
+    portName: "main",
+    channel: 0,
   });
 });
 
-test("`audioOutput` stereo handle `.left` access is Step 3.4 待 ち = throws", () => {
+test("`audioOutput.right.at(i).write(v)` stereo sugar = channel 1 と 同 effect", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const handle = audioOutput({ channels: 2, name: "main" });
-    expect(() => handle.left).toThrow(/not implemented/);
+    const i = wrapAst<"i32">({ kind: "loopCounter" });
+    const value = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1 });
+    handle.right.at(i).write(value);
+  });
+  expect(ctx.statements[0]).toMatchObject({
+    kind: "audioOutWrite",
+    portName: "main",
+    channel: 1,
   });
 });
 
-test("`audioOutput` stereo handle `.right` access is Step 3.4 待 ち = throws", () => {
+test("`.write(v)` inside `forSample` 内 = forSample body に append (= top statements に は 出 な い)", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const handle = audioOutput({ channels: 2, name: "main" });
-    expect(() => handle.right).toThrow(/not implemented/);
+    const handle = audioOutput({ channels: 1, name: "mono" });
+    forSample((i) => {
+      handle.ch(0).at(i).write(0);
+    });
   });
+  expect(ctx.statements).toEqual([
+    {
+      kind: "forSample",
+      stride: 1,
+      body: [
+        {
+          kind: "audioOutWrite",
+          portName: "mono",
+          channel: 0,
+          offset: { kind: "loopCounter" },
+          value: { kind: "literal", type: "f32", value: 0 },
+        },
+      ],
+    },
+  ]);
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// param chain = Step 3.2 fill (= `.f32(opts).named('X')` + 順 序 free)
+// param chain = Step 3.2 register + Step 3.4 `.at(i)` reader
 // ─────────────────────────────────────────────────────────────────────────
 
 test("`param.f32` outside `defineProcessor` body throws", () => {
@@ -244,13 +336,46 @@ test("chain で `.named` 重 複 = after-wins (= chain-rightmost name 採 用)",
   expect(ctx.declarations[0]?.name).toBe("final");
 });
 
-test("`param` handle `.at(i)` is Step 3.4 待 ち = throws", () => {
+test("`param.at(node)` returns a `paramAt` AST with the loopCounter offset", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const handle = param
       .f32({ default: 0, min: 0, max: 1, automationRate: "k-rate" })
       .named("gain");
-    expect(() => handle.at(0)).toThrow(/not implemented/);
+    const i = wrapAst<"i32">({ kind: "loopCounter" });
+    expect(unwrapAst(handle.at(i))).toEqual({
+      kind: "paramAt",
+      paramName: "gain",
+      offset: { kind: "loopCounter" },
+    });
+  });
+});
+
+test("`param.at(literal)` lifts the JS number offset to an `i32` literal", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const handle = param
+      .f32({ default: 0, min: 0, max: 1, automationRate: "k-rate" })
+      .named("gain");
+    expect(unwrapAst(handle.at(0))).toEqual({
+      kind: "paramAt",
+      paramName: "gain",
+      offset: { kind: "literal", type: "i32", value: 0 },
+    });
+  });
+});
+
+test("`param.at` の paramName は `.named` chain で update さ れ た name を 反 映 (= late binding)", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const handle = param
+      .named("first")
+      .f32({ default: 0, min: 0, max: 1, automationRate: "k-rate" })
+      .named("final");
+    expect(unwrapAst(handle.at(0))).toMatchObject({
+      kind: "paramAt",
+      paramName: "final",
+    });
   });
 });
 
