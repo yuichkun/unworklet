@@ -12,6 +12,7 @@ catalog:
   vite-plus: latest
   binaryen: ^129.0.0
   "@vitest/coverage-v8": ^4.1.7
+  wavefile: ^11.0.0
 overrides:
   vite: "catalog:"
   vitest: "catalog:"
