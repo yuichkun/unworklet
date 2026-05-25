@@ -7,7 +7,7 @@
 
 import { SAMPLES_PER_BLOCK } from "@unworklet/core";
 import { renderOffline } from "@unworklet/offline";
-import { expectAudioMatchesSnapshot } from "@unworklet/test";
+import { expectAudioMatchesSnapshot, sine } from "@unworklet/test";
 import { expect, test } from "vite-plus/test";
 
 import { stereoGain } from "./processor.ts";
@@ -66,21 +66,24 @@ test("stereo gain default = 1 = passthrough (= params 省 略 時)", async () =>
   expect(result.outputs).toEqual({ main: [inputCh0, inputCh1] });
 });
 
-test("Ex 1 minus meter snapshot (= auto-managed wav reference 回 帰 防 止)", async () => {
-  // 決 定 的 input (= L: 0..127/128 ramp、 R: 1-(0..127/128) inverse ramp) を
-  // gain=0.5 で render、 結 果 wav を `__snapshots__/` に auto-write + commit、
-  // 以 降 bit-exact 比 較 (= renderOffline deterministic 保 証 = `13-offline-render.md` §3)。
-  const inputCh0 = new Float32Array(SAMPLES_PER_BLOCK);
-  const inputCh1 = new Float32Array(SAMPLES_PER_BLOCK);
-  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
-    inputCh0[i] = i / SAMPLES_PER_BLOCK;
-    inputCh1[i] = 1 - i / SAMPLES_PER_BLOCK;
-  }
+test("Ex 1 minus meter snapshot", async () => {
+  // 1 sec @ 48k stereo = 耳 確 認 可 能 な 長 さ。 L = 440 Hz (A4) / R = 880
+  // Hz (A5、 1 octave 上) sine = stereo L/R 違 い も 耳 check 可、 gain 0.5
+  // で attenuation 効 い て い る か 耳 check。 結 果 wav を `__snapshots__/`
+  // に auto-write + commit、 以 降 bit-exact 比 較 (= renderOffline
+  // deterministic 保 証 = `13-offline-render.md` §3)。
+  const sampleRate = 48000;
+  const durationSamples = sampleRate; // 1 sec
   const result = await renderOffline(stereoGain, {
-    sampleRate: 48000,
-    duration: SAMPLES_PER_BLOCK / 48000,
-    inputs: { main: [inputCh0, inputCh1] },
+    sampleRate,
+    duration: durationSamples / sampleRate,
+    inputs: {
+      main: [
+        sine({ freqHz: 440, durationSamples, sampleRate }),
+        sine({ freqHz: 880, durationSamples, sampleRate }),
+      ],
+    },
     params: { gain: [0.5] },
   });
-  await expectAudioMatchesSnapshot(result);
+  await expectAudioMatchesSnapshot(result, { snapshotName: "ex1 stereo gain" });
 });
