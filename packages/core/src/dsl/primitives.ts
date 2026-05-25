@@ -11,6 +11,8 @@
  * declaration merging.
  */
 
+import type { AstNode } from "../compile/ast.ts";
+import { registerNodeMethod, unwrapAst, wrapAst } from "../compile/capture.ts";
 import type { Node, ScalarType } from "../types.ts";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -66,9 +68,32 @@ export function add<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | nu
 export function sub<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<T> {
   return notImplemented();
 }
-export function mul<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<T> {
-  return notImplemented();
+export function mul<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "mul",
+    type: "f32",
+    lhs: liftToAst(a),
+    rhs: liftToAst(b),
+  });
 }
+
+// JS literal → `{ kind: 'literal', type: 'f32', value }` lift (= Q33 context-
+// dependent lift の Phase 3 minimum、 後 続 phase で T-aware fill)。
+function liftToAst<T extends ScalarType>(value: Node<T> | number): AstNode {
+  if (typeof value === "number") {
+    return { kind: "literal", type: "f32", value };
+  }
+  return unwrapAst(value);
+}
+
+// Method form dispatch (= Q77 hybrid)。 module load 時 に prototype に
+// `mul` を 登 録、 wrapped `Node<T>` か ら `.mul(other)` が free function
+// と 同 AST を 構 築。
+registerNodeMethod("mul", function method<
+  T extends ScalarType,
+>(this: Node<T>, other: Node<T> | number): Node<T> {
+  return mul(this, other);
+});
 export function div<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<T> {
   return notImplemented();
 }
