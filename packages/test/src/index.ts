@@ -15,7 +15,7 @@
  * stub、 fill は impl phase incremental。
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
@@ -273,7 +273,10 @@ export function expectAudioMatchesGolden(
 // ━━━━━━━━━━━━━━━━━━━━━━━━ stub: matcher (= 13 件) ━━━━━━━━━━━━━━━━━━━━━━━━
 
 export type SnapshotOptions = {
+  /** full path 上 書 き (= dir + file 名 を consumer が 完 全 制 御)。 省 略 + `snapshotName` 省 略 = auto-infer (= test 名 base)。 */
   snapshotPath?: string;
+  /** file 名 中 の test 名 部 分 だ け 上 書 き (= `<test-file-base>__<safe(snapshotName)>.wav`、 counter ナ シ、 consumer が unique 命 名 責 任)。 test 名 自 体 は test 説 明 free に carry し つ つ file 名 を cleaner に。 `snapshotPath` 明 示 時 は そ ち ら 優 先。 */
+  snapshotName?: string;
   tolerance?: number;
   port?: string;
 };
@@ -282,11 +285,14 @@ const snapshotCounters = new Map<string, number>();
 
 /**
  * Assert that `actual.outputs` matches a vitest-style auto-managed wav
- * snapshot (`docs/06-testing.md` §2.1)。 `opts.snapshotPath` 省 略 = 自 動
- * 推 論 (= `<test-file-dir>/__snapshots__/<test-file-name>__<test-name>__
- * <counter>.wav`)。 初 回 = wav 自 動 書 き 出 し + pass、 2 回 目 以 降 =
- * bit-exact 比 較、 `vitest -u` で 強 制 上 書 き、 CI mode = 不 在 で fail
- * (= vitest 標 準 `toMatchFileSnapshot` に 委 譲)。
+ * snapshot (`docs/06-testing.md` §2.1)。 path 解 決 優 先 順:
+ * 1. `opts.snapshotPath` 明 示 = full path 上 書 き
+ * 2. `opts.snapshotName` 明 示 = `<test-file-dir>/__snapshots__/<safe(snapshotName)>.wav` (= test-file-base prefix も counter も ナ シ、 consumer が unique 命 名 責 任)
+ * 3. 両 省 略 = auto-infer = `<test-file-dir>/__snapshots__/<test-file-base>__<safe(test-name)>__<counter>.wav` (= test 名 自 動 推 論 = 衝 突 防 止 で prefix + counter 必 須)
+ *
+ * 初 回 = wav 自 動 書 き 出 し + pass、 2 回 目 以 降 = bit-exact 比 較、
+ * `vitest -u` で 強 制 上 書 き、 CI mode = 不 在 で fail (= vitest snapshot
+ * state 経 由 で update / CI mode 判 定)。
  *
  * 単 一 port 専 用 (= 1 port な ら 推 論、 `opts.port` で 明 示 上 書 き、 多
  * port + `opts.port` 未 指 定 で throw)。 `actual.sampleRate` を wav header
@@ -317,9 +323,21 @@ export async function expectAudioMatchesSnapshot(
   const channels = actual.outputs[portName]!;
   const wavBytes = encodeWav(channels, actual.sampleRate);
 
+  const state = expect.getState();
   let snapshotPath = opts.snapshotPath;
+  if (snapshotPath === undefined && opts.snapshotName !== undefined) {
+    // 明 示 `snapshotName` path = `__snapshots__/<safe(snapshotName)>.wav` 直 接 計 算
+    // (= test-file-base prefix も counter も ナ シ、 consumer が unique 命 名 責 任、
+    // test 名 と は 独 立 = test 説 明 free path)。
+    if (!state.testPath) {
+      throw new Error(
+        `expectAudioMatchesSnapshot: opts.snapshotName path 計 算 に は expect.getState().testPath が 必 要; pass opts.snapshotPath explicitly to override.`,
+      );
+    }
+    const safeName = opts.snapshotName.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+    snapshotPath = join(dirname(state.testPath), "__snapshots__", `${safeName}.wav`);
+  }
   if (snapshotPath === undefined) {
-    const state = expect.getState();
     if (!state.testPath || !state.currentTestName) {
       throw new Error(
         `expectAudioMatchesSnapshot: snapshot path auto-infer requires expect.getState().testPath + .currentTestName; pass opts.snapshotPath explicitly to override.`,
@@ -334,7 +352,46 @@ export async function expectAudioMatchesSnapshot(
     snapshotPath = join(dir, "__snapshots__", `${base}__${safeName}__${counter}.wav`);
   }
 
-  await expect(wavBytes).toMatchFileSnapshot(snapshotPath);
+  // vitest snapshot state 経 由 で update / CI mode 取 得 (= jest 互 換 path
+  // `_updateSnapshot` = "all" (= `-u`) / "new" (= default、 不 在 で 書 く) /
+  // "none" (= `--ci`、 不 在 で fail))。 vitest 標 準 toMatchFileSnapshot は
+  // Uint8Array を text JSON で serialize し て し ま い 再 生 可 能 な wav
+  // バ イ ナ リ に な ら な い た め、 こ こ は 自 力 fs API path を 取 る。
+  const snapshotState = state.snapshotState as unknown as { _updateSnapshot?: string } | undefined;
+  const updateMode = snapshotState?._updateSnapshot ?? "new";
+  const exists = existsSync(snapshotPath);
+
+  if (!exists) {
+    if (updateMode === "none") {
+      throw new Error(
+        `expectAudioMatchesSnapshot: snapshot file does not exist at ${snapshotPath} (= vitest --ci mode で 新 規 snapshot 作 成 不 可)`,
+      );
+    }
+    mkdirSync(dirname(snapshotPath), { recursive: true });
+    writeFileSync(snapshotPath, wavBytes);
+    return;
+  }
+
+  if (updateMode === "all") {
+    writeFileSync(snapshotPath, wavBytes);
+    return;
+  }
+
+  const existing = readFileSync(snapshotPath);
+  if (existing.length !== wavBytes.length) {
+    throw new Error(
+      `expectAudioMatchesSnapshot: snapshot byte length mismatch at ${snapshotPath} — actual=${wavBytes.length}, snapshot=${existing.length}`,
+    );
+  }
+  for (let i = 0; i < wavBytes.length; i++) {
+    if (existing[i] !== wavBytes[i]) {
+      throw new Error(
+        `expectAudioMatchesSnapshot: snapshot byte ${i} mismatch at ${snapshotPath} — actual=0x${wavBytes[i]!.toString(16).padStart(2, "0")}, snapshot=0x${existing[i]!.toString(16).padStart(2, "0")}`,
+      );
+    }
+  }
+  // Promise<void> 返 し maintain (= API は async、 内 部 同 期 I/O は cosmetic)
+  return Promise.resolve();
 }
 
 /**

@@ -123,9 +123,14 @@ test("`toMatchAudioSnapshot` (chain) round-trip = 初 回 書 き + 2 回 目 bi
   await expect(result).toMatchAudioSnapshot({ snapshotPath: path });
 });
 
-test("`toMatchAudioSnapshot` (chain) opts.snapshotPath 省 略 = 自 動 推 論 path", async () => {
+test("toMatchAudioSnapshot (chain) auto-infer path", async () => {
   const result = monoResult(filled(8, 0));
   await expect(result).toMatchAudioSnapshot();
+});
+
+test("toMatchAudioSnapshot (chain) opts.snapshotName path", async () => {
+  const result = monoResult(filled(8, 0));
+  await expect(result).toMatchAudioSnapshot({ snapshotName: "chain snapshotName demo" });
 });
 
 test("`toBeStable` (chain) happy = clean PCM", () => {

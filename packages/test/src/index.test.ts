@@ -424,11 +424,18 @@ test("`expectAudioMatchesSnapshot`: opts.port が actual.outputs に な い と
   ).rejects.toThrow(/not in actual.outputs/);
 });
 
-test("`expectAudioMatchesSnapshot`: opts.snapshotPath 省 略 = 自 動 推 論 path で 書 き 出 し", async () => {
+test("expectAudioMatchesSnapshot auto-infer path", async () => {
   // 自 動 推 論 = `<test-file-dir>/__snapshots__/<test-file-name>__<test-name>__<counter>.wav`、
   // 初 回 走 行 時 に snapshot wav が repo に commit さ れ、 以 降 bit-exact 回 帰 防 止。
   const result = monoResult(filled(8, 0));
   await expectAudioMatchesSnapshot(result);
+});
+
+test("expectAudioMatchesSnapshot opts.snapshotName path", async () => {
+  // `snapshotName` 明 示 = file 名 中 の test 名 部 分 を 上 書 き、 counter ナ シ、
+  // `<test-file-base>__<safe(snapshotName)>.wav` で 書 き 出 し。
+  const result = monoResult(filled(8, 0));
+  await expectAudioMatchesSnapshot(result, { snapshotName: "snapshotName demo" });
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━ matcher stubs (= 12 件 残) ━━━━━━━━━━━━━━━━━━━━━
