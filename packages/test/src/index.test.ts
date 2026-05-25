@@ -499,12 +499,88 @@ test("`expectMaster`: opts.noNan: false で NaN check skip", () => {
   ).not.toThrow();
 });
 
-test("`expectSilence` stub throws", () => {
-  expect(() => expectSilence(dummyResult)).toThrow(/not implemented/);
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━ expectSilence ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+test("`expectSilence`: 全 0 = pass", () => {
+  expect(() => expectSilence(monoResult(filled(8, 0)))).not.toThrow();
 });
 
-test("`expectPeakAtSample` stub throws", () => {
-  expect(() => expectPeakAtSample(dummyResult, 0)).toThrow(/not implemented/);
+test("`expectSilence`: 非 silence = throw", () => {
+  expect(() => expectSilence(monoResult(filled(8, 0.1)))).toThrow(/silence/i);
+});
+
+test("`expectSilence`: opts.tolerance 内 = pass", () => {
+  expect(() => expectSilence(monoResult(filled(8, 0.0001)), { tolerance: 0.001 })).not.toThrow();
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━ expectPeakAtSample ━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+test("`expectPeakAtSample`: impulse → peak at 0 = pass", () => {
+  expect(() => expectPeakAtSample(monoResult(impulse(8)), 0)).not.toThrow();
+});
+
+test("`expectPeakAtSample`: opts.atSample で 移 動 し た impulse", () => {
+  expect(() => expectPeakAtSample(monoResult(impulse(8, { atSample: 3 })), 3)).not.toThrow();
+});
+
+test("`expectPeakAtSample`: tolerance 越 え で throw", () => {
+  expect(() => expectPeakAtSample(monoResult(impulse(8)), 5)).toThrow(/peak/);
+});
+
+test("`expectPeakAtSample`: tolerance 内 で pass", () => {
+  expect(() => expectPeakAtSample(monoResult(impulse(8)), 2, { tolerance: 3 })).not.toThrow();
+});
+
+test("`expectPeakAtSample`: multi-port + opts.port 未 指 定 = throw", () => {
+  const result: RenderOfflineResult = {
+    outputs: { main: [impulse(8)], send: [impulse(8, { atSample: 5 })] },
+    events: [],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() => expectPeakAtSample(result, 0)).toThrow(/multi-port/);
+});
+
+test("`expectPeakAtSample`: opts.port 明 示 で 多 port 該 当", () => {
+  const result: RenderOfflineResult = {
+    outputs: { main: [impulse(8)], send: [impulse(8, { atSample: 5 })] },
+    events: [],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() => expectPeakAtSample(result, 5, { port: "send" })).not.toThrow();
+});
+
+test("`expectPeakAtSample`: opts.port 不 在 = throw", () => {
+  expect(() => expectPeakAtSample(monoResult(impulse(8)), 0, { port: "nonexistent" })).toThrow(
+    /not in result.outputs/,
+  );
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━ expectDcOffsetUnder ━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+test("`expectDcOffsetUnder`: silence = DC 0 = pass", () => {
+  expect(() => expectDcOffsetUnder(monoResult(filled(8, 0)), 0.001)).not.toThrow();
+});
+
+test("`expectDcOffsetUnder`: DC 0.5 + threshold 0.001 = throw", () => {
+  expect(() => expectDcOffsetUnder(monoResult(filled(8, 0.5)), 0.001)).toThrow(/DC offset/);
+});
+
+test("`expectDcOffsetUnder`: 振 動 信 号 (= 平 均 0) = pass", () => {
+  // sine 1 周 期 → 平 均 ≈ 0
+  const buf = sine({ freqHz: 1, durationSamples: 100, sampleRate: 100 });
+  expect(() => expectDcOffsetUnder(monoResult(buf), 0.01)).not.toThrow();
+});
+
+test("`expectDcOffsetUnder`: empty channel (= length 0) = mean 0 = pass", () => {
+  const result: RenderOfflineResult = {
+    outputs: { main: [new Float32Array(0)] },
+    events: [],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() => expectDcOffsetUnder(result, 0.001)).not.toThrow();
 });
 
 test("`expectGainAtFreq` stub throws", () => {
@@ -513,10 +589,6 @@ test("`expectGainAtFreq` stub throws", () => {
 
 test("`expectLatency` stub throws", () => {
   expect(() => expectLatency(dummyResult, 0)).toThrow(/not implemented/);
-});
-
-test("`expectDcOffsetUnder` stub throws", () => {
-  expect(() => expectDcOffsetUnder(dummyResult, 0.001)).toThrow(/not implemented/);
 });
 
 test("`expectEventCount` stub throws", () => {

@@ -153,12 +153,16 @@ test("`toBeMasterReady` (chain) fail = peak 上 限 超 え", () => {
   expect(() => expect(monoResult(filled(8, 1.0))).toBeMasterReady()).toThrow(/peak/);
 });
 
-test("`toBeSilent` (chain) stub fails with not implemented", () => {
-  expect(() => expect(dummyResult).toBeSilent()).toThrow(/not implemented/);
+test("`toBeSilent` (chain) happy + fail", () => {
+  expect(monoResult(filled(8, 0))).toBeSilent();
+  expect(() => expect(monoResult(filled(8, 0.1))).toBeSilent()).toThrow(/silence/i);
 });
 
-test("`toHavePeakAtSample` (chain) stub fails with not implemented", () => {
-  expect(() => expect(dummyResult).toHavePeakAtSample(0)).toThrow(/not implemented/);
+test("`toHavePeakAtSample` (chain) happy + fail", () => {
+  const impulseBuf = new Float32Array(8);
+  impulseBuf[3] = 1;
+  expect(monoResult(impulseBuf)).toHavePeakAtSample(3);
+  expect(() => expect(monoResult(impulseBuf)).toHavePeakAtSample(0)).toThrow(/peak/);
 });
 
 test("`toHaveGainAtFreq` (chain) stub fails with not implemented", () => {
@@ -169,8 +173,9 @@ test("`toHaveLatency` (chain) stub fails with not implemented", () => {
   expect(() => expect(dummyResult).toHaveLatency(0)).toThrow(/not implemented/);
 });
 
-test("`toHaveDcOffsetUnder` (chain) stub fails with not implemented", () => {
-  expect(() => expect(dummyResult).toHaveDcOffsetUnder(0.001)).toThrow(/not implemented/);
+test("`toHaveDcOffsetUnder` (chain) happy + fail", () => {
+  expect(monoResult(filled(8, 0))).toHaveDcOffsetUnder(0.001);
+  expect(() => expect(monoResult(filled(8, 0.5))).toHaveDcOffsetUnder(0.001)).toThrow(/DC offset/);
 });
 
 test("`toHaveEventCount` (chain) stub fails with not implemented", () => {

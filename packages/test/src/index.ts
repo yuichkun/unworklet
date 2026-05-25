@@ -377,8 +377,25 @@ export function expectMaster(result: RenderOfflineResult, opts: MasterOptions = 
  *
  * chain 形 = `expect(result).toBeSilent(opts?)` (= `@unworklet/test/extend`)。
  */
-export function expectSilence(_result: RenderOfflineResult, _opts?: { tolerance?: number }): void {
-  notImplemented();
+export function expectSilence(
+  result: RenderOfflineResult,
+  opts: { tolerance?: number } = {},
+): void {
+  const tolerance = opts.tolerance ?? 0;
+  for (const port of Object.keys(result.outputs)) {
+    const channels = result.outputs[port]!;
+    for (let c = 0; c < channels.length; c++) {
+      const ch = channels[c]!;
+      for (let s = 0; s < ch.length; s++) {
+        const abs = Math.abs(ch[s]!);
+        if (abs > tolerance) {
+          throw new Error(
+            `expectSilence: port '${port}' channel ${c} sample ${s} = ${ch[s]} (abs ${abs}) > tolerance ${tolerance}`,
+          );
+        }
+      }
+    }
+  }
 }
 
 export type PeakAtSampleOptions = {
@@ -389,15 +406,50 @@ export type PeakAtSampleOptions = {
 /**
  * Time domain = 最 大 abs index が `expectedAtSample` ± `opts.tolerance`
  * (= sample 単 位)。 envelope attack peak / impulse response peak 位 置 等。
+ * port = `opts.port` 明 示 or 単 一 port 推 論 (= 多 port + 未 指 定 で throw)。
  *
  * chain 形 = `expect(result).toHavePeakAtSample(expectedAtSample, opts?)` (= `@unworklet/test/extend`)。
  */
 export function expectPeakAtSample(
-  _result: RenderOfflineResult,
-  _expectedAtSample: number,
-  _opts?: PeakAtSampleOptions,
+  result: RenderOfflineResult,
+  expectedAtSample: number,
+  opts: PeakAtSampleOptions = {},
 ): void {
-  notImplemented();
+  const tolerance = opts.tolerance ?? 0;
+  const ports = Object.keys(result.outputs);
+  let portName: string;
+  if (opts.port !== undefined) {
+    if (!(opts.port in result.outputs)) {
+      throw new Error(
+        `expectPeakAtSample: opts.port '${opts.port}' not in result.outputs (= [${ports.join(", ")}])`,
+      );
+    }
+    portName = opts.port;
+  } else if (ports.length === 1) {
+    portName = ports[0]!;
+  } else {
+    throw new Error(
+      `expectPeakAtSample: multi-port result requires opts.port; got ports=[${ports.join(", ")}]`,
+    );
+  }
+  const channels = result.outputs[portName]!;
+  let maxAbs = -1;
+  let maxIdx = -1;
+  for (let c = 0; c < channels.length; c++) {
+    const ch = channels[c]!;
+    for (let s = 0; s < ch.length; s++) {
+      const abs = Math.abs(ch[s]!);
+      if (abs > maxAbs) {
+        maxAbs = abs;
+        maxIdx = s;
+      }
+    }
+  }
+  if (Math.abs(maxIdx - expectedAtSample) > tolerance) {
+    throw new Error(
+      `expectPeakAtSample: port '${portName}' peak index ${maxIdx} (= max abs ${maxAbs}) not within ±${tolerance} of expected ${expectedAtSample}`,
+    );
+  }
 }
 
 /**
@@ -431,12 +483,27 @@ export function expectLatency(
 
 /**
  * 全 sample 平 均 値 (= DC bias) 絶 対 値 が `threshold` 未 満。 filter /
- * EQ の DC 振 る 舞 い 確 認。
+ * EQ の DC 振 る 舞 い 確 認。 channel ご と に 平 均 を 計 算、 ど の channel
+ * の DC 絶 対 値 が threshold 以 上 で も throw。
  *
  * chain 形 = `expect(result).toHaveDcOffsetUnder(threshold)` (= `@unworklet/test/extend`)。
  */
-export function expectDcOffsetUnder(_result: RenderOfflineResult, _threshold: number): void {
-  notImplemented();
+export function expectDcOffsetUnder(result: RenderOfflineResult, threshold: number): void {
+  for (const port of Object.keys(result.outputs)) {
+    const channels = result.outputs[port]!;
+    for (let c = 0; c < channels.length; c++) {
+      const ch = channels[c]!;
+      let sum = 0;
+      for (let s = 0; s < ch.length; s++) sum += ch[s]!;
+      const mean = ch.length === 0 ? 0 : sum / ch.length;
+      const abs = Math.abs(mean);
+      if (abs >= threshold) {
+        throw new Error(
+          `expectDcOffsetUnder: port '${port}' channel ${c} DC offset ${mean} (abs ${abs}) >= threshold ${threshold}`,
+        );
+      }
+    }
+  }
 }
 
 /**
