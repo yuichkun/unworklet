@@ -154,6 +154,23 @@ test("`expectAudioMatches`: tolerance default = 0 = bit-exact (= 微 diff も �
   expect(() => expectAudioMatches(a, b)).toThrow(/diff/);
 });
 
+test("`expectAudioMatches`: sampleRate mismatch = throw (= 同 PCM / 異 rate で pitch / timing bug を 検 出)", () => {
+  const sameData = new Float32Array([0.1, 0.2, 0.3]);
+  const a: RenderOfflineResult = {
+    outputs: { main: [sameData] },
+    events: [],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  const b: RenderOfflineResult = {
+    outputs: { main: [sameData] },
+    events: [],
+    state: new Uint8Array(0),
+    sampleRate: 44100,
+  };
+  expect(() => expectAudioMatches(a, b)).toThrow(/sampleRate mismatch/);
+});
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ expectNoNaN ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 test("`expectNoNaN`: clean PCM passes", () => {
@@ -362,6 +379,14 @@ test("`expectAudioMatchesGolden`: tolerance band admits small diff", () => {
   expect(() =>
     expectAudioMatchesGolden(monoResult(filled(128, 0.5005)), path, { tolerance: 0.001 }),
   ).not.toThrow();
+});
+
+test("`expectAudioMatchesGolden`: sampleRate mismatch = throw (= 同 PCM / 異 rate で pitch / timing bug を 検 出)", () => {
+  // wav 44.1k で 書 か れ た 同 PCM を actual 48k と 比 較 = mismatch fail
+  // (= 後 で round-trip し て も rate metadata の 違 い で pitch bug)。
+  const ch = filled(128, 0.5);
+  const path = tmpWav([ch], 44100);
+  expect(() => expectAudioMatchesGolden(monoResult(ch), path)).toThrow(/sampleRate mismatch/);
 });
 
 test("`expectAudioMatchesGolden`: multi-port actual throws (= single-port 推 論 で き ず)", () => {

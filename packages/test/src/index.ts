@@ -78,10 +78,13 @@ const compareChannels = (
 /**
  * Assert that `actual.outputs` matches `expected` channel-by-channel within
  * `opts.tolerance` (default `0`)。 `expected` は 2 shape:
- * - `RenderOfflineResult` = 多 port 比 較 (= `actual.outputs` の port set 全 件)。
+ * - `RenderOfflineResult` = 多 port 比 較 (= `actual.outputs` の port set 全 件)
+ *   + `actual.sampleRate` と `expected.sampleRate` 一 致 check (= 同 PCM /
+ *   異 rate = pitch / timing bug、 PCM 一 致 で 偽 pass さ せ な い)。
  * - `Float32Array[]` = single-port 推 論 (= `actual.outputs` が 1 port な ら
  *   そ の port の channels と 比 較、 2 port 以 上 で throw + 多 port 用 form
- *   へ 誘 導)。
+ *   へ 誘 導)。 sampleRate 比 較 は 無 し (= raw buffer は rate metadata を
+ *   持 た な い = consumer が rate sensitive な ら full result form で 渡 す)。
  *
  * chain 形 = `expect(actual).toMatchAudio(expected, opts?)` (= `@unworklet/test/extend`)。
  */
@@ -103,6 +106,11 @@ export function expectAudioMatches(
     }
     compareChannels(ports[0]!, actual.outputs[ports[0]!]!, expected, tolerance);
     return;
+  }
+  if (actual.sampleRate !== expected.sampleRate) {
+    throw new Error(
+      `expectAudioMatches: sampleRate mismatch — actual=${actual.sampleRate}, expected=${expected.sampleRate} (= pitch / timing は サ ン プ ル レ ー ト に 比 例 = PCM が 一 致 し て も 異 rate は bug)`,
+    );
   }
   const actualPorts = Object.keys(actual.outputs).sort();
   const expectedPorts = Object.keys(expected.outputs).sort();
@@ -264,7 +272,9 @@ export function expectStateMatches(
 /**
  * Assert that `actual.outputs` matches the PCM stored in the WAV file at
  * `wavPath` (= `docs/06-testing.md` §2.1 + §7)。 単 一 port 専 用 (= 多 port
- * は `expectAudioMatches(actual, fullResult)` で 明 示)。
+ * は `expectAudioMatches(actual, fullResult)` で 明 示)。 wav header の
+ * `sampleRate` と `actual.sampleRate` を 必 ず 比 較 = mismatch = throw (=
+ * 同 PCM / 異 rate で pitch / timing bug が 通 る path を 塞 ぐ)。
  *
  * chain 形 = `expect(actual).toMatchAudioFile(wavPath, opts?)` (= `@unworklet/test/extend`)。
  */
@@ -275,6 +285,11 @@ export function expectAudioMatchesGolden(
 ): void {
   const bytes = readFileSync(wavPath);
   const decoded = decodeWav(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+  if (decoded.sampleRate !== actual.sampleRate) {
+    throw new Error(
+      `expectAudioMatchesGolden: sampleRate mismatch — actual=${actual.sampleRate}, wav '${wavPath}'=${decoded.sampleRate} (= PCM が 一 致 し て も rate が 違 え ば pitch / timing が ズ レ る)`,
+    );
+  }
   expectAudioMatches(actual, decoded.channels, opts);
 }
 
