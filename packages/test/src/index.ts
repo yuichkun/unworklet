@@ -90,6 +90,9 @@ export function expectAudioMatches(
   expected: RenderOfflineResult | Float32Array[],
   opts?: AudioMatchOptions,
 ): void {
+  // NaN / ±Infinity 入 力 を 先 に 弾 く (= `Math.abs(NaN) > tolerance =
+  // false` で 偽 pass す る 経 路 を 塞 ぐ、 全 numerical matcher で 統 一)。
+  expectNoNaN(actual);
   const tolerance = opts?.tolerance ?? 0;
   if (Array.isArray(expected)) {
     const ports = Object.keys(actual.outputs);
@@ -148,6 +151,9 @@ const linearToDb = (linear: number): number => 20 * Math.log10(linear);
  * chain 形 = `expect(result).toHavePeakUnder(dbfs)` (= `@unworklet/test/extend`)。
  */
 export function expectPeakUnder(result: RenderOfflineResult, dbfs: number): void {
+  // `Math.abs(NaN) > peak = false` で peak が 0 の ま ま 留 ま り、 db =
+  // -Infinity が threshold を 下 回 っ て 偽 pass す る 経 路 を 塞 ぐ。
+  expectNoNaN(result);
   let peak = 0;
   for (const port of Object.keys(result.outputs)) {
     for (const ch of result.outputs[port]!) {
@@ -171,6 +177,8 @@ export function expectPeakUnder(result: RenderOfflineResult, dbfs: number): void
  * chain 形 = `expect(result).toHaveRmsUnder(dbfs)` (= `@unworklet/test/extend`)。
  */
 export function expectRmsUnder(result: RenderOfflineResult, dbfs: number): void {
+  // NaN を sumSq に 混 ぜ る と rms = NaN、 `NaN >= dbfs = false` で 偽 pass。
+  expectNoNaN(result);
   let sumSq = 0;
   let count = 0;
   for (const port of Object.keys(result.outputs)) {
@@ -331,6 +339,11 @@ export async function expectAudioMatchesSnapshot(
     result = actual;
   }
 
+  // NaN / ±Infinity samples を 先 に 弾 く (= 初 回 書 き 出 し で 壊 れ た
+  // wav を snapshot 化 し て し ま う と 以 降 bit-exact pass し 続 け て
+  // catastrophic DSP failure を 見 逃 す 経 路 を 塞 ぐ)。
+  expectNoNaN(result);
+
   const ports = Object.keys(result.outputs);
   let portName: string;
   if (opts.port !== undefined) {
@@ -465,6 +478,9 @@ export function expectSilence(
   result: RenderOfflineResult,
   opts: { tolerance?: number } = {},
 ): void {
+  // `Math.abs(NaN) > tolerance = false` で NaN sample が silence と し て
+  // 偽 pass す る 経 路 を 塞 ぐ。
+  expectNoNaN(result);
   const tolerance = opts.tolerance ?? 0;
   for (const port of Object.keys(result.outputs)) {
     const channels = result.outputs[port]!;
@@ -499,6 +515,9 @@ export function expectPeakAtSample(
   expectedAtSample: number,
   opts: PeakAtSampleOptions = {},
 ): void {
+  // NaN を 含 む と max abs 比 較 が 全 て false に な り maxIdx が 初 期
+  // 値 (= -1 / 0) の ま ま で 偽 pass す る 経 路 を 塞 ぐ。
+  expectNoNaN(result);
   const tolerance = opts.tolerance ?? 0;
   const ports = Object.keys(result.outputs);
   let portName: string;
@@ -607,6 +626,9 @@ export function expectGainAtFreq(
   expectedDb: number,
   tolerance: number,
 ): void {
+  // NaN を FFT に 通 す と magnitude / db = NaN、 `Math.abs(NaN - expectedDb)
+  // > tolerance = false` で 偽 pass す る 経 路 を 塞 ぐ。
+  expectNoNaN(result);
   const ports = Object.keys(result.outputs);
   if (ports.length !== 1) {
     throw new Error(
@@ -661,6 +683,9 @@ export function expectLatency(
   expectedSamples: number,
   opts: { tolerance?: number } = {},
 ): void {
+  // NaN を 含 む と max abs 比 較 が 全 て false に な り maxIdx が 初 期
+  // 値 (= -1) の ま ま で 偽 pass す る 経 路 を 塞 ぐ。
+  expectNoNaN(result);
   const tolerance = opts.tolerance ?? 0;
   const ports = Object.keys(result.outputs);
   if (ports.length !== 1) {
@@ -695,6 +720,8 @@ export function expectLatency(
  * chain 形 = `expect(result).toHaveDcOffsetUnder(threshold)` (= `@unworklet/test/extend`)。
  */
 export function expectDcOffsetUnder(result: RenderOfflineResult, threshold: number): void {
+  // NaN を sum に 混 ぜ る と mean = NaN、 `NaN >= threshold = false` で 偽 pass。
+  expectNoNaN(result);
   for (const port of Object.keys(result.outputs)) {
     const channels = result.outputs[port]!;
     for (let c = 0; c < channels.length; c++) {

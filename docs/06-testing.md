@@ -18,6 +18,8 @@ Standard MIDI File loader (= `loadSmf` / `parseSmf`) は v1.0.0 ship 範 囲 外
 
 result 型 = `RenderOfflineResult` = `{ outputs: Record<string, Float32Array[]>, events: OfflineEmittedEvent[], state: Uint8Array }` (`13-offline-render.md` §2)。
 
+全 numerical matcher (= audio compare / golden / snapshot / peak / rms / silence / peak-at / gain-at-freq / latency / DC offset) は 冒 頭 で `expectNoNaN` 相 当 の guard を 走 ら せ、 NaN / ±Infinity 入 力 を 必 ず fail に 落 と す。 理 由 = `Math.abs(NaN) > x = false` / `NaN >= x = false` の 特 性 で 数 値 比 較 系 matcher が NaN を 暗 黙 に 通 し て catastrophic DSP failure を 偽 pass さ せ る経 路 を 機 械 的 に 塞 ぐ た め (= sanity check と し て `expectStable` を 別 途 呼 ば な く て も matcher 自 体 が 自 衛)。
+
 ### 2.1 Audio matchers
 
 - **`expectAudioMatches(actual, expected, opts?)`** — sample 単 位 比 較。 `expected` 型 = `RenderOfflineResult | Float32Array[]` (= 全 result 形 / 単 一 port 形)。 `opts.tolerance` default `0` = bit-exact (= `renderOffline` deterministic 保 証 で 自 然 成 立)。 多 port + Float32Array[] form は 単 一 port 推 論 不 能 で throw、 consumer は full result form に 寄 せ る。

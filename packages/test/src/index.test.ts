@@ -778,6 +778,61 @@ test("`expectStateValue` stub throws", () => {
   expect(() => expectStateValue(dummyResult, "slot", 0)).toThrow(/not implemented/);
 });
 
+// ━━━━━━━━━━━━━━ NaN guard regression (= 全 numerical matcher) ━━━━━━━━━━━━━━━
+// `Math.abs(NaN) > x = false` / `NaN >= x = false` で NaN 入 力 が 偽 pass す
+// る 経 路 を 各 matcher の 冒 頭 `expectNoNaN(result)` で 塞 ぐ。
+
+const nanResult = (): RenderOfflineResult => {
+  const ch = filled(8, 0.5);
+  ch[3] = NaN;
+  return monoResult(ch);
+};
+
+test("`expectAudioMatches`: NaN actual = throw (= silent compare pass を 防 ぐ)", () => {
+  expect(() => expectAudioMatches(nanResult(), [filled(8, 0.5)])).toThrow(/NaN/);
+});
+
+test("`expectAudioMatchesGolden`: NaN actual = throw (= 内 部 `expectAudioMatches` 経 由)", () => {
+  const path = tmpWav([filled(8, 0.5)]);
+  expect(() => expectAudioMatchesGolden(nanResult(), path)).toThrow(/NaN/);
+});
+
+test("`expectAudioMatchesSnapshot`: NaN actual = throw (= snapshot 初 回 書 き で 壊 れ た wav を 永 続 化 し な い)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-nan-"));
+  const path = join(dir, "ref.wav");
+  await expect(expectAudioMatchesSnapshot(nanResult(), { snapshotPath: path })).rejects.toThrow(
+    /NaN/,
+  );
+});
+
+test("`expectPeakUnder`: NaN = throw (= peak が 0 の ま ま 留 ま っ て -Infinity dB で 偽 pass を 防 ぐ)", () => {
+  expect(() => expectPeakUnder(nanResult(), -3)).toThrow(/NaN/);
+});
+
+test("`expectRmsUnder`: NaN = throw (= rms = NaN ≥ dbfs = false で 偽 pass を 防 ぐ)", () => {
+  expect(() => expectRmsUnder(nanResult(), -3)).toThrow(/NaN/);
+});
+
+test("`expectSilence`: NaN = throw (= abs(NaN) > 0 = false で 偽 pass を 防 ぐ)", () => {
+  expect(() => expectSilence(nanResult())).toThrow(/NaN/);
+});
+
+test("`expectPeakAtSample`: NaN = throw (= maxIdx が 初 期 値 の ま ま で 偽 pass を 防 ぐ)", () => {
+  expect(() => expectPeakAtSample(nanResult(), 3)).toThrow(/NaN/);
+});
+
+test("`expectGainAtFreq`: NaN = throw (= FFT magnitude NaN 伝 播 で 偽 pass を 防 ぐ)", () => {
+  expect(() => expectGainAtFreq(nanResult(), 1000, 0, 1)).toThrow(/NaN/);
+});
+
+test("`expectLatency`: NaN = throw (= maxIdx が 初 期 値 で 偽 pass を 防 ぐ)", () => {
+  expect(() => expectLatency(nanResult(), 0)).toThrow(/NaN/);
+});
+
+test("`expectDcOffsetUnder`: NaN = throw (= mean = NaN ≥ threshold = false で 偽 pass を 防 ぐ)", () => {
+  expect(() => expectDcOffsetUnder(nanResult(), 0.001)).toThrow(/NaN/);
+});
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━ signal utility 7 件 ━━━━━━━━━━━━━━━━━━━━━━━━━
 
 test("`sine`: 440 Hz @ 48k で 第 1 sample = 0 + 4 分 周 期 sample で 1", () => {
