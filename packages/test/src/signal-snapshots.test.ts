@@ -19,7 +19,6 @@
  * 形 で carry)。
  */
 
-import type { RenderOfflineResult } from "@unworklet/offline";
 import { test } from "vite-plus/test";
 
 import {
@@ -36,46 +35,39 @@ import {
 const sampleRate = 48000;
 const durationSamples = sampleRate; // 1 sec
 
-const wrap = (channel: Float32Array): RenderOfflineResult => ({
-  outputs: { main: [channel] },
-  events: [],
-  state: new Uint8Array(0),
-  sampleRate,
-});
-
 test("sine generator output (= A4 純 音 / 1s)", async () => {
-  await expectAudioMatchesSnapshot(wrap(sine({ freqHz: 440, durationSamples, sampleRate })), {
+  await expectAudioMatchesSnapshot(sine({ freqHz: 440, durationSamples, sampleRate }), {
     snapshotName: "sine",
   });
 });
 
 test("silence generator output (= 全 0 / 1s)", async () => {
-  await expectAudioMatchesSnapshot(wrap(silence(durationSamples)), { snapshotName: "silence" });
+  await expectAudioMatchesSnapshot(silence(durationSamples), { snapshotName: "silence" });
 });
 
 test("impulse generator output (= atSample 0 / 1s)", async () => {
-  await expectAudioMatchesSnapshot(wrap(impulse(durationSamples)), { snapshotName: "impulse" });
+  await expectAudioMatchesSnapshot(impulse(durationSamples), { snapshotName: "impulse" });
 });
 
 test("sineSweep generator output (= 20 Hz → 20 kHz log / 1s)", async () => {
   await expectAudioMatchesSnapshot(
-    wrap(sineSweep({ startHz: 20, endHz: 20000, durationSamples, sampleRate })),
+    sineSweep({ startHz: 20, endHz: 20000, durationSamples, sampleRate }),
     { snapshotName: "sineSweep" },
   );
 });
 
 test("whiteNoise generator output (= seed-based deterministic / seed 1 / 1s)", async () => {
-  await expectAudioMatchesSnapshot(wrap(whiteNoise({ durationSamples, seed: 1 })), {
+  await expectAudioMatchesSnapshot(whiteNoise({ durationSamples, seed: 1 }), {
     snapshotName: "whiteNoise",
   });
 });
 
 test("dc generator output (= value 1.0 / 1s)", async () => {
-  await expectAudioMatchesSnapshot(wrap(dc(durationSamples, 1.0)), { snapshotName: "dc" });
+  await expectAudioMatchesSnapshot(dc(durationSamples, 1.0), { snapshotName: "dc" });
 });
 
 test("ramp generator output (= 0 → 1 線 形 / 1s)", async () => {
-  await expectAudioMatchesSnapshot(wrap(ramp({ durationSamples, from: 0, to: 1 })), {
+  await expectAudioMatchesSnapshot(ramp({ durationSamples, from: 0, to: 1 }), {
     snapshotName: "ramp",
   });
 });

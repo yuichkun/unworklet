@@ -277,6 +277,8 @@ export type SnapshotOptions = {
   snapshotPath?: string;
   /** file 名 中 の test 名 部 分 だ け 上 書 き (= `<test-file-base>__<safe(snapshotName)>.wav`、 counter ナ シ、 consumer が unique 命 名 責 任)。 test 名 自 体 は test 説 明 free に carry し つ つ file 名 を cleaner に。 `snapshotPath` 明 示 時 は そ ち ら 優 先。 */
   snapshotName?: string;
+  /** `actual` = `Float32Array` / `Float32Array[]` 渡 し path で wav header に 書 く sample rate (default `48000`)。 `RenderOfflineResult` 渡 し で は ignored (= `result.sampleRate` 優 先)。 */
+  sampleRate?: number;
   tolerance?: number;
   port?: string;
 };
@@ -284,8 +286,14 @@ export type SnapshotOptions = {
 const snapshotCounters = new Map<string, number>();
 
 /**
- * Assert that `actual.outputs` matches a vitest-style auto-managed wav
- * snapshot (`docs/06-testing.md` §2.1)。 path 解 決 優 先 順:
+ * Assert that `actual` matches a vitest-style auto-managed wav snapshot
+ * (`docs/06-testing.md` §2.1)。 `actual` は 3 shape:
+ * - `RenderOfflineResult` = 既 path、 sample rate = `actual.sampleRate` 経 由
+ * - `Float32Array` = mono 1 channel 直 接 = `opts.sampleRate` (default `48000`)
+ *   で wav 化 (= signal generator 出 力 等 を wrap な し で 渡 す path)
+ * - `Float32Array[]` = multi-channel 直 接 = 同 上 で wav 化
+ *
+ * path 解 決 優 先 順:
  * 1. `opts.snapshotPath` 明 示 = full path 上 書 き
  * 2. `opts.snapshotName` 明 示 = `<test-file-dir>/__snapshots__/<safe(snapshotName)>.wav` (= test-file-base prefix も counter も ナ シ、 consumer が unique 命 名 責 任)
  * 3. 両 省 略 = auto-infer = `<test-file-dir>/__snapshots__/<test-file-base>__<safe(test-name)>__<counter>.wav` (= test 名 自 動 推 論 = 衝 突 防 止 で prefix + counter 必 須)
@@ -295,19 +303,38 @@ const snapshotCounters = new Map<string, number>();
  * state 経 由 で update / CI mode 判 定)。
  *
  * 単 一 port 専 用 (= 1 port な ら 推 論、 `opts.port` で 明 示 上 書 き、 多
- * port + `opts.port` 未 指 定 で throw)。 `actual.sampleRate` を wav header
- * に 書 く (= `13-offline-render.md` §2 で carry)。
+ * port + `opts.port` 未 指 定 で throw)。
  *
  * chain 形 = `await expect(actual).toMatchAudioSnapshot(opts?)` (= `@unworklet/test/extend`)。
  */
 export async function expectAudioMatchesSnapshot(
-  actual: RenderOfflineResult,
+  actual: RenderOfflineResult | Float32Array | Float32Array[],
   opts: SnapshotOptions = {},
 ): Promise<void> {
-  const ports = Object.keys(actual.outputs);
+  // actual 正 規 化 = Float32Array / Float32Array[] 渡 し は RenderOfflineResult 形 に wrap。
+  let result: RenderOfflineResult;
+  if (actual instanceof Float32Array) {
+    result = {
+      outputs: { main: [actual] },
+      events: [],
+      state: new Uint8Array(0),
+      sampleRate: opts.sampleRate ?? 48000,
+    };
+  } else if (Array.isArray(actual)) {
+    result = {
+      outputs: { main: actual },
+      events: [],
+      state: new Uint8Array(0),
+      sampleRate: opts.sampleRate ?? 48000,
+    };
+  } else {
+    result = actual;
+  }
+
+  const ports = Object.keys(result.outputs);
   let portName: string;
   if (opts.port !== undefined) {
-    if (!(opts.port in actual.outputs)) {
+    if (!(opts.port in result.outputs)) {
       throw new Error(
         `expectAudioMatchesSnapshot: opts.port '${opts.port}' not in actual.outputs (= [${ports.join(", ")}])`,
       );
@@ -320,8 +347,8 @@ export async function expectAudioMatchesSnapshot(
       `expectAudioMatchesSnapshot: multi-port actual requires opts.port; got ports=[${ports.join(", ")}]`,
     );
   }
-  const channels = actual.outputs[portName]!;
-  const wavBytes = encodeWav(channels, actual.sampleRate);
+  const channels = result.outputs[portName]!;
+  const wavBytes = encodeWav(channels, result.sampleRate);
 
   const state = expect.getState();
   let snapshotPath = opts.snapshotPath;
