@@ -463,6 +463,22 @@ test("expectAudioMatchesSnapshot opts.snapshotName path", async () => {
   await expectAudioMatchesSnapshot(result, { snapshotName: "snapshotName demo" });
 });
 
+test("expectAudioMatchesSnapshot opts.snapshotName Unicode 保 持 (= 「テ ス ト 名 」)", async () => {
+  // sanitize は Unicode を 保 持、 ASCII-only sanitize で 空 に な っ て
+  // hidden `.wav` を 作 る regression を 防 ぐ。
+  const result = monoResult(filled(8, 0));
+  await expectAudioMatchesSnapshot(result, { snapshotName: "テ ス ト 名" });
+});
+
+test("`expectAudioMatchesSnapshot`: snapshotName 全 unsafe で 空 sanitize = throw", async () => {
+  // 「???」 等 = sanitize で 全 て _ → trim で 空 → `.wav` (hidden file) を
+  // 作 ら ず throw で fail-fast。
+  const result = monoResult(filled(8, 0));
+  await expect(expectAudioMatchesSnapshot(result, { snapshotName: "???" })).rejects.toThrow(
+    /sanitizes to empty filename/,
+  );
+});
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━ matcher stubs (= 12 件 残) ━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━ expectStable ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

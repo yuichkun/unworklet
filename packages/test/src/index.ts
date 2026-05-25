@@ -343,6 +343,35 @@ export type SnapshotOptions = {
 };
 
 const snapshotCounters = new Map<string, number>();
+const snapshotTestBoundary: { lastKey: string | undefined } = { lastKey: undefined };
+
+/**
+ * Filename-safe 文 字 列 化。 ASCII alphanumerics は そ の ま ま、 Unicode (=
+ * 日 本 語 等) も そ の ま ま 保 持、 filesystem-unsafe 文 字 (= `/`, `\`,
+ * `:`, `*`, `?`, `"`, `<`, `>`, `|`) と whitespace は `_` に collapse、 先
+ * 頭 / 末 尾 の `_` を trim。 Unicode を ASCII-only に sanitize す る と 「テ
+ * ス ト」 が "" に な っ て `.wav` (= hidden dotfile) を 作 る regression が
+ * あ っ た た め、 Unicode 保 持 path を 取 る。
+ */
+const sanitizeForFilename = (name: string): string => {
+  // 制 御 文 字 (\x00-\x1f) も filesystem で 不 安 全 = 明 示 的 に 弾 く
+  // eslint-disable-next-line no-control-regex
+  return name.replace(/[/\\:*?"<>|\s\x00-\x1f]+/g, "_").replace(/^_+|_+$/g, "");
+};
+
+/**
+ * FNV-1a 32-bit hash (= 8 桁 hex)。 auto-infer filename に 付 与 し て、 sanitize 後 同 一
+ * slug に な る 異 な る test 名 (= 例: "foo bar" / "foo!bar" → 両 方 "foo_bar")
+ * が 別 path に 解 決 さ れ る collision resistance を 与 え る。
+ */
+const shortHash = (s: string): string => {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+};
 
 /**
  * Per-test 状 態 (= vitest `MatcherState` の subset)。 chain form は
@@ -364,13 +393,20 @@ const resolveSnapshotPath = (state: SnapshotResolutionState, opts: SnapshotOptio
   if (opts.snapshotName !== undefined) {
     // 明 示 `snapshotName` path = `__snapshots__/<safe(snapshotName)>.wav` 直 接 計 算
     // (= test-file-base prefix も counter も ナ シ、 consumer が unique 命 名 責 任、
-    // test 名 と は 独 立 = test 説 明 free path)。
+    // test 名 と は 独 立 = test 説 明 free path)。 sanitize で 空 に な る 名 前
+    // (= 全 部 filesystem-unsafe / whitespace = 例: "??") は throw、 hidden
+    // `.wav` を 作 ら な い。
     if (!state.testPath) {
       throw new Error(
         `expectAudioMatchesSnapshot: opts.snapshotName path 計 算 に は testPath が 必 要; pass opts.snapshotPath explicitly to override.`,
       );
     }
-    const safeName = opts.snapshotName.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+    const safeName = sanitizeForFilename(opts.snapshotName);
+    if (safeName.length === 0) {
+      throw new Error(
+        `expectAudioMatchesSnapshot: opts.snapshotName "${opts.snapshotName}" sanitizes to empty filename (= filesystem-safe な 文 字 が ナ シ); pass opts.snapshotPath で 明 示 す る か、 alphanumeric / Unicode を 含 む 名 前 を 使 う。`,
+      );
+    }
     return join(dirname(state.testPath), "__snapshots__", `${safeName}.wav`);
   }
   if (!state.testPath || !state.currentTestName) {
@@ -380,11 +416,25 @@ const resolveSnapshotPath = (state: SnapshotResolutionState, opts: SnapshotOptio
   }
   const dir = dirname(state.testPath);
   const base = basename(state.testPath, extname(state.testPath));
-  const safeName = state.currentTestName.replace(/[^A-Za-z0-9]+/g, "_");
+  const safeName = sanitizeForFilename(state.currentTestName);
   const key = `${state.testPath}::${state.currentTestName}`;
+  // test boundary 検 出 = lastKey と 違 え ば 新 test entry = counter reset
+  // (= 別 test に 移 っ た 時 / watch mode で test 群 を 頭 か ら 再 走 し た
+  // 時 = counter が 再 初 期 化 さ れ る)。 同 一 test 内 の retry (= vitest
+  // retry / 同 test 連 続 再 invoke) は lastKey 変 化 ナ シ で counter drift
+  // = docs で 明 示 snapshotName を 推 奨。
+  if (snapshotTestBoundary.lastKey !== key) {
+    snapshotCounters.delete(key);
+    snapshotTestBoundary.lastKey = key;
+  }
   const counter = (snapshotCounters.get(key) ?? 0) + 1;
   snapshotCounters.set(key, counter);
-  return join(dir, "__snapshots__", `${base}__${safeName}__${counter}.wav`);
+  // sanitize 結 果 が 空 な ら "_" placeholder + hash で 区 別 (= 全 unsafe な
+  // test 名 で hidden file を 作 ら な い safety net)。 通 常 test 名 は
+  // ASCII / Unicode を 含 む の で safeName non-empty。
+  const slug = safeName.length > 0 ? safeName : "_";
+  const hash = shortHash(state.currentTestName);
+  return join(dir, "__snapshots__", `${base}__${slug}_${hash}__${counter}.wav`);
 };
 
 /**
