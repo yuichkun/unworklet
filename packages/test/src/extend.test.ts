@@ -165,12 +165,20 @@ test("`toHavePeakAtSample` (chain) happy + fail", () => {
   expect(() => expect(monoResult(impulseBuf)).toHavePeakAtSample(0)).toThrow(/peak/);
 });
 
-test("`toHaveGainAtFreq` (chain) stub fails with not implemented", () => {
-  expect(() => expect(dummyResult).toHaveGainAtFreq(1000, 0, 0.5)).toThrow(/not implemented/);
+test("`toHaveGainAtFreq` (chain) happy + fail (= tolerance 2 dB で leakage 受 容)", () => {
+  const fullScale = new Float32Array(1024);
+  for (let i = 0; i < 1024; i++) fullScale[i] = Math.sin((2 * Math.PI * 1000 * i) / 48000);
+  expect(monoResult(fullScale)).toHaveGainAtFreq(1000, 0, 2);
+  const half = new Float32Array(1024);
+  for (let i = 0; i < 1024; i++) half[i] = Math.sin((2 * Math.PI * 1000 * i) / 48000) * 0.5;
+  expect(() => expect(monoResult(half)).toHaveGainAtFreq(1000, 0, 2)).toThrow(/gain/);
 });
 
-test("`toHaveLatency` (chain) stub fails with not implemented", () => {
-  expect(() => expect(dummyResult).toHaveLatency(0)).toThrow(/not implemented/);
+test("`toHaveLatency` (chain) happy + fail", () => {
+  const impulseBuf = new Float32Array(8);
+  impulseBuf[3] = 1;
+  expect(monoResult(impulseBuf)).toHaveLatency(3);
+  expect(() => expect(monoResult(impulseBuf)).toHaveLatency(0)).toThrow(/delay/);
 });
 
 test("`toHaveDcOffsetUnder` (chain) happy + fail", () => {

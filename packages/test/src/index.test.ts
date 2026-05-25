@@ -583,12 +583,77 @@ test("`expectDcOffsetUnder`: empty channel (= length 0) = mean 0 = pass", () => 
   expect(() => expectDcOffsetUnder(result, 0.001)).not.toThrow();
 });
 
-test("`expectGainAtFreq` stub throws", () => {
-  expect(() => expectGainAtFreq(dummyResult, 1000, 0, 0.5)).toThrow(/not implemented/);
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━ expectGainAtFreq ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+test("`expectGainAtFreq`: 純 音 amplitude 1 = 0 dB ± 2 dB で pass (= spectral leakage 受 容)", () => {
+  // sine 1000 Hz amplitude 1 / 1024 sample @ 48k、 bin 21 が 1000 Hz 周 辺。
+  // freqHz が bin 中 心 に 完 全 に 乗 ら な い 時 spectral leakage で 隣 接 bin
+  // に 振 幅 が 分 散 = tolerance 2 dB で OK。
+  const buf = sine({ freqHz: 1000, durationSamples: 1024, sampleRate: 48000, amplitude: 1 });
+  expect(() => expectGainAtFreq(monoResult(buf), 1000, 0, 2)).not.toThrow();
 });
 
-test("`expectLatency` stub throws", () => {
-  expect(() => expectLatency(dummyResult, 0)).toThrow(/not implemented/);
+test("`expectGainAtFreq`: amplitude 0.5 = -6 dB ± 2 dB で pass", () => {
+  const buf = sine({ freqHz: 1000, durationSamples: 1024, sampleRate: 48000, amplitude: 0.5 });
+  expect(() => expectGainAtFreq(monoResult(buf), 1000, -6, 2)).not.toThrow();
+});
+
+test("`expectGainAtFreq`: silence (= -Infinity dB) vs 0 dB expected = throw", () => {
+  expect(() => expectGainAtFreq(monoResult(silence(1024)), 1000, 0, 1)).toThrow(/gain/);
+});
+
+test("`expectGainAtFreq`: multi-port で throw", () => {
+  const result: RenderOfflineResult = {
+    outputs: { main: [silence(1024)], send: [silence(1024)] },
+    events: [],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() => expectGainAtFreq(result, 1000, 0, 1)).toThrow(/single-port/);
+});
+
+test("`expectGainAtFreq`: empty channel で throw", () => {
+  const result: RenderOfflineResult = {
+    outputs: { main: [new Float32Array(0)] },
+    events: [],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() => expectGainAtFreq(result, 1000, 0, 1)).toThrow(/empty/);
+});
+
+test("`expectGainAtFreq`: Nyquist 越 え freq で throw", () => {
+  expect(() => expectGainAtFreq(monoResult(silence(1024)), 30000, 0, 1)).toThrow(/out of range/);
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━ expectLatency ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+test("`expectLatency`: impulse at 0 → latency 0 = pass", () => {
+  expect(() => expectLatency(monoResult(impulse(8)), 0)).not.toThrow();
+});
+
+test("`expectLatency`: delay 5 sample impulse → latency 5", () => {
+  expect(() => expectLatency(monoResult(impulse(16, { atSample: 5 })), 5)).not.toThrow();
+});
+
+test("`expectLatency`: 期 待 mismatch で throw", () => {
+  expect(() => expectLatency(monoResult(impulse(16, { atSample: 5 })), 10)).toThrow(/delay/);
+});
+
+test("`expectLatency`: tolerance band で pass", () => {
+  expect(() =>
+    expectLatency(monoResult(impulse(16, { atSample: 5 })), 7, { tolerance: 3 }),
+  ).not.toThrow();
+});
+
+test("`expectLatency`: multi-port で throw", () => {
+  const result: RenderOfflineResult = {
+    outputs: { main: [impulse(8)], send: [impulse(8)] },
+    events: [],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() => expectLatency(result, 0)).toThrow(/single-port/);
 });
 
 test("`expectEventCount` stub throws", () => {

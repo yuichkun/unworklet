@@ -452,33 +452,154 @@ export function expectPeakAtSample(
   }
 }
 
+/** Next power of 2 (= FFT 入 力 サ イ ズ 用)。 */
+const nextPow2 = (n: number): number => {
+  let p = 1;
+  while (p < n) p <<= 1;
+  return p;
+};
+
+/**
+ * In-place radix-2 Cooley-Tukey FFT (= `expectGainAtFreq` 用 内 部 FFT)。
+ * 入 力 = `real` / `imag` (= 同 長 さ + length が 2 ^ k)、 出 力 = 上 書 き。
+ */
+const fftInPlace = (real: Float32Array, imag: Float32Array): void => {
+  const n = real.length;
+  // bit-reverse permutation
+  let j = 0;
+  for (let i = 1; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      const tr = real[i]!;
+      real[i] = real[j]!;
+      real[j] = tr;
+      const ti = imag[i]!;
+      imag[i] = imag[j]!;
+      imag[j] = ti;
+    }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const half = len >> 1;
+    const ang = (-2 * Math.PI) / len;
+    const wRe = Math.cos(ang);
+    const wIm = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let curRe = 1;
+      let curIm = 0;
+      for (let k = 0; k < half; k++) {
+        const evenRe = real[i + k]!;
+        const evenIm = imag[i + k]!;
+        const oddRe = real[i + k + half]! * curRe - imag[i + k + half]! * curIm;
+        const oddIm = real[i + k + half]! * curIm + imag[i + k + half]! * curRe;
+        real[i + k] = evenRe + oddRe;
+        imag[i + k] = evenIm + oddIm;
+        real[i + k + half] = evenRe - oddRe;
+        imag[i + k + half] = evenIm - oddIm;
+        const tmpRe = curRe * wRe - curIm * wIm;
+        const tmpIm = curRe * wIm + curIm * wRe;
+        curRe = tmpRe;
+        curIm = tmpIm;
+      }
+    }
+  }
+};
+
 /**
  * Freq domain = 内 部 FFT 経 由 で `freqHz` 周 辺 の dB ゲ イ ン が
  * `expectedDb` ± `tolerance`。 EQ test の core (`docs/06-testing.md` §2.2)。
+ * 単 一 port 推 論 (= 多 port で throw)、 第 0 channel を 使 う。 FFT サ イ ズ
+ * = 入 力 を 次 の 2 ^ k へ zero-pad、 freqHz → bin = round(freqHz × N /
+ * sampleRate)、 magnitude = 2 × sqrt(re² + im²) / N (= 純 音 amplitude
+ * 直 接、 純 音 1 = 0 dBFS path)、 dB = 20 × log10(magnitude)。
  *
  * chain 形 = `expect(result).toHaveGainAtFreq(freqHz, expectedDb, tolerance)` (= `@unworklet/test/extend`)。
  */
 export function expectGainAtFreq(
-  _result: RenderOfflineResult,
-  _freqHz: number,
-  _expectedDb: number,
-  _tolerance: number,
+  result: RenderOfflineResult,
+  freqHz: number,
+  expectedDb: number,
+  tolerance: number,
 ): void {
-  notImplemented();
+  const ports = Object.keys(result.outputs);
+  if (ports.length !== 1) {
+    throw new Error(
+      `expectGainAtFreq: single-port result expected; got ports=[${ports.join(", ")}]`,
+    );
+  }
+  const portName = ports[0]!;
+  const ch = result.outputs[portName]![0];
+  if (!ch || ch.length === 0) {
+    throw new Error(`expectGainAtFreq: port '${portName}' channel 0 is empty`);
+  }
+  const n = nextPow2(ch.length);
+  const real = new Float32Array(n);
+  const imag = new Float32Array(n);
+  for (let i = 0; i < ch.length; i++) real[i] = ch[i]!;
+  fftInPlace(real, imag);
+  const bin = Math.round((freqHz * n) / result.sampleRate);
+  if (bin < 0 || bin >= n / 2) {
+    throw new Error(
+      `expectGainAtFreq: freqHz ${freqHz} out of range for sampleRate ${result.sampleRate} (= Nyquist ${result.sampleRate / 2})`,
+    );
+  }
+  // spectral leakage 緩 和 = bin ± 1 周 辺 で max magnitude (= freqHz が bin
+  // 中 心 に exact に 乗 ら な い 時 の 振 幅 過 小 評 価 を 隣 接 bin で 救 う)。
+  let mag = 0;
+  const startK = Math.max(0, bin - 1);
+  const endK = Math.min(n / 2 - 1, bin + 1);
+  for (let k = startK; k <= endK; k++) {
+    const reK = real[k]!;
+    const imK = imag[k]!;
+    const m = (2 * Math.sqrt(reK * reK + imK * imK)) / n;
+    if (m > mag) mag = m;
+  }
+  const db = mag > 0 ? 20 * Math.log10(mag) : Number.NEGATIVE_INFINITY;
+  if (Math.abs(db - expectedDb) > tolerance) {
+    throw new Error(
+      `expectGainAtFreq: port '${portName}' bin ${bin} (= ${freqHz} Hz) gain ${db.toFixed(3)} dB not within ±${tolerance} of expected ${expectedDb} dB`,
+    );
+  }
 }
 
 /**
  * 入 力 impulse → 出 力 max abs index の delay sample 数 計 測 + assert。
- * lookahead processor の 設 計 latency 担 保。
+ * lookahead processor の 設 計 latency 担 保。 単 一 port 推 論 + 第 0
+ * channel 使 用。 consumer は impulse 入 力 で renderOffline 走 ら せ た 結 果
+ * を 渡 す。
  *
  * chain 形 = `expect(result).toHaveLatency(expectedSamples, opts?)` (= `@unworklet/test/extend`)。
  */
 export function expectLatency(
-  _result: RenderOfflineResult,
-  _expectedSamples: number,
-  _opts?: { tolerance?: number },
+  result: RenderOfflineResult,
+  expectedSamples: number,
+  opts: { tolerance?: number } = {},
 ): void {
-  notImplemented();
+  const tolerance = opts.tolerance ?? 0;
+  const ports = Object.keys(result.outputs);
+  if (ports.length !== 1) {
+    throw new Error(`expectLatency: single-port result expected; got ports=[${ports.join(", ")}]`);
+  }
+  const portName = ports[0]!;
+  const ch = result.outputs[portName]![0];
+  if (!ch) {
+    throw new Error(`expectLatency: port '${portName}' channel 0 missing`);
+  }
+  let maxAbs = -1;
+  let maxIdx = -1;
+  for (let s = 0; s < ch.length; s++) {
+    const abs = Math.abs(ch[s]!);
+    if (abs > maxAbs) {
+      maxAbs = abs;
+      maxIdx = s;
+    }
+  }
+  if (Math.abs(maxIdx - expectedSamples) > tolerance) {
+    throw new Error(
+      `expectLatency: detected delay ${maxIdx} sample (= max abs ${maxAbs}) not within ±${tolerance} of expected ${expectedSamples}`,
+    );
+  }
 }
 
 /**
