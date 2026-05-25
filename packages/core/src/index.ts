@@ -86,7 +86,7 @@ export { createSubgraph, defineProcessor, defineSubgraph } from "./processor.ts"
 export type { CreateSubgraphOptions, SubgraphDecl } from "./processor.ts";
 
 // Compile invocation.
-export { compile } from "./compile.ts";
+export { compile } from "./compile/index.ts";
 
 // Main-thread client surface.
 export { createNode, inspect } from "./client.ts";
