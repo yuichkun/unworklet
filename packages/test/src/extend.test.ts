@@ -133,6 +133,24 @@ test("toMatchAudioSnapshot (chain) opts.snapshotName path", async () => {
   await expect(result).toMatchAudioSnapshot({ snapshotName: "chain snapshotName demo" });
 });
 
+test("toMatchAudioSnapshot (chain) Float32Array 直 接 = polymorphic actual zip", async () => {
+  // plain `expectAudioMatchesSnapshot` が `Float32Array` 直 接 受 け る path
+  // を chain で も 通 す regression。 chain typing が `WhenResult` (=
+  // `RenderOfflineResult` 限 定) の ま ま だ と TS error で typecheck fail。
+  const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-chain-mono-"));
+  const path = join(dir, "ref.wav");
+  await expect(filled(8, 0)).toMatchAudioSnapshot({ snapshotPath: path });
+  await expect(filled(8, 0)).toMatchAudioSnapshot({ snapshotPath: path });
+});
+
+test("toMatchAudioSnapshot (chain) Float32Array[] 直 接 = multi-ch polymorphic actual zip", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-chain-multi-"));
+  const path = join(dir, "ref.wav");
+  const channels = [filled(8, 0.1), filled(8, 0.2)];
+  await expect(channels).toMatchAudioSnapshot({ snapshotPath: path });
+  await expect(channels).toMatchAudioSnapshot({ snapshotPath: path });
+});
+
 test("`toBeStable` (chain) happy = clean PCM", () => {
   expect(monoResult(filled(8, 1.5))).toBeStable();
 });
@@ -278,10 +296,11 @@ test("`toHaveStateValue` (chain) stub fails with not implemented", () => {
 // ━━━━━━━━━━━━━━━ TS-only chain guard (= 型 で 弾 け る か regression) ━━━━━━━━━━━━━━━
 
 test("chain method TS guard refuses non-RenderOfflineResult types", () => {
-  // 型 guard regression を build 時 に catch (= `WhenResult<T, M>` で chain
-  // method が `never` に 解 け る か)、 runtime は 走 ら せ な い (= `if (false)`
-  // 内 = TS check だ け 走 る)。 `@ts-expect-error` が 効 か な か っ た 場 合
-  // (= guard 退 化) は build エ ラ ー で 検 出 さ れ る。
+  // 型 guard regression を build 時 に catch (= `WhenResult<T, M>` /
+  // `WhenAudioActual<T, M>` で chain method が `never` に 解 け る か)、
+  // runtime は 走 ら せ な い (= `if (false)` 内 = TS check だ け 走 る)。
+  // `@ts-expect-error` が 効 か な か っ た 場 合 (= guard 退 化) は build
+  // エ ラ ー で 検 出 さ れ る。
   if (false as boolean) {
     // @ts-expect-error `expect(1)` の T = number、 chain method は never に 解 け る。
     expect(1).toMatchAudio([new Float32Array(8)]);
@@ -289,5 +308,13 @@ test("chain method TS guard refuses non-RenderOfflineResult types", () => {
     expect("foo").toBeStable();
     // @ts-expect-error `expect(null)` の T = null、 chain method は never。
     expect(null).toHavePeakUnder(-6);
+    // @ts-expect-error `toMatchAudioSnapshot` は `Float32Array` を 通 す が、
+    // 非 audio actual (= number) は `WhenAudioActual` で never に 解 け る。
+    expect(1).toMatchAudioSnapshot();
+    // `toMatchAudioSnapshot` の polymorphic actual = `Float32Array` 直 接 は
+    // typecheck OK (= `WhenAudioActual` 経 由)、 ts-expect-error ナ シ で 通 る。
+    void expect(new Float32Array(8)).toMatchAudioSnapshot();
+    // 同 上、 `Float32Array[]` 直 接 も typecheck OK。
+    void expect([new Float32Array(8)]).toMatchAudioSnapshot();
   }
 });

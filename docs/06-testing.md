@@ -4,7 +4,7 @@ Vitest matchers + audio test utility for unworklet processors。 `@unworklet/off
 
 ## Status
 
-fill 済 み 42 件 (= matcher 19 / signal 7 / MIDI 10 / sample-time 6) + chain form 全 20 件 + TS-only `WhenResult<T, M>` guard。 残 = `expectStateValue` 1 件 が 上 流 `inspect` (= `05-client.md` §2.6) fill 待 ち で Phase 11 同 ship。
+fill 済 み 42 件 (= matcher 19 / signal 7 / MIDI 10 / sample-time 6) + chain form 全 20 件 + TS-only chain typing guard (= `WhenResult<T, M>` / `WhenAudioActual<T, M>`)。 残 = `expectStateValue` 1 件 が 上 流 `inspect` (= `05-client.md` §2.6) fill 待 ち で Phase 11 同 ship。
 
 ## 1. Relationship to `@unworklet/offline`
 
@@ -131,6 +131,8 @@ vitest core (= `toBe` / `toHave` / `toMatch` / `toContain` 等) に zip し て 
 - 動 詞 系 (= MIDI emit 等、 vitest `toThrow` 系) = 動 詞 化。 例: `toEmitMidi(port, events)`。
 
 plain 名 と chain 名 は 1:1 機 械 派 生 で は な い (= chain 側 を 自 然 化 優 先)。 plain ↔ chain mapping は 各 plain 関 数 / chain method の JSDoc で 双 方 向 carry し て IDE hover 経 由 で 解 決。
+
+chain method の receiver 型 は 既 定 で `expect(result).toMatchAudio(...)` の よ う に `RenderOfflineResult` だ け に 露 出 (= `WhenResult<T, M>` guard)。 例 外 = `toMatchAudioSnapshot` は plain `expectAudioMatchesSnapshot` の polymorphic actual (= `RenderOfflineResult | Float32Array | Float32Array[]`、 §2.1) に zip し て `WhenAudioActual<T, M>` で 拡 大、 `expect(sine(...)).toMatchAudioSnapshot()` (= signal generator 出 力 直 接) や `expect([ch0, ch1]).toMatchAudioSnapshot()` (= multi-ch buffer 直 接) も typecheck 通 過。
 
 ### 6.2 全 20 件 mapping
 

@@ -63,6 +63,19 @@ import {
  */
 type WhenResult<T, M> = T extends RenderOfflineResult ? M : never;
 
+/**
+ * `toMatchAudioSnapshot` 専 用 の 拡 大 guard。 plain
+ * `expectAudioMatchesSnapshot` が `actual` を `RenderOfflineResult |
+ * Float32Array | Float32Array[]` の 3 shape で 受 け る の に zip し て、
+ * chain で も `expect(sine(...)).toMatchAudioSnapshot()` (= `Float32Array`
+ * 直 接) / `expect([ch0, ch1]).toMatchAudioSnapshot()` (= `Float32Array[]`
+ * multi-ch) を 通 す。 非 audio actual (= `number` / `string` 等) は 既
+ * `WhenResult` 同 様 `never` に 解 け て build エ ラ ー。
+ */
+type WhenAudioActual<T, M> = T extends RenderOfflineResult | Float32Array | Float32Array[]
+  ? M
+  : never;
+
 declare module "vite-plus/test" {
   // biome-ignore lint/suspicious/noExplicitAny: vitest 標 準 `Assertion<T = any>` (= `node_modules/@vitest/expect/dist/index.d.ts`) と type parameter 揃 え 必 須、 declare merge で T が unused で も 形 を 合 わ せ る。
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -72,7 +85,7 @@ declare module "vite-plus/test" {
       (expected: RenderOfflineResult | Float32Array[], opts?: AudioMatchOptions) => void
     >;
     toMatchAudioFile: WhenResult<T, (wavPath: string, opts?: AudioMatchOptions) => void>;
-    toMatchAudioSnapshot: WhenResult<T, (opts?: SnapshotOptions) => Promise<void>>;
+    toMatchAudioSnapshot: WhenAudioActual<T, (opts?: SnapshotOptions) => Promise<void>>;
     toBeFinite: WhenResult<T, () => void>;
     toHavePeakUnder: WhenResult<T, (dbfs: number) => void>;
     toHaveRmsUnder: WhenResult<T, (dbfs: number) => void>;
