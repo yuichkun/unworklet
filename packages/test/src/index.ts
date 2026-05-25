@@ -80,6 +80,8 @@ const compareChannels = (
  * - `Float32Array[]` = single-port 推 論 (= `actual.outputs` が 1 port な ら
  *   そ の port の channels と 比 較、 2 port 以 上 で throw + 多 port 用 form
  *   へ 誘 導)。
+ *
+ * chain 形 = `expect(actual).toMatchAudio(expected, opts?)` (= `@unworklet/test/extend`)。
  */
 export function expectAudioMatches(
   actual: RenderOfflineResult,
@@ -112,7 +114,11 @@ export function expectAudioMatches(
   }
 }
 
-/** Assert that `result.outputs` contains no NaN / ±Infinity samples。 */
+/**
+ * Assert that `result.outputs` contains no NaN / ±Infinity samples。
+ *
+ * chain 形 = `expect(result).toBeFinite()` (= `@unworklet/test/extend`)。
+ */
 export function expectNoNaN(result: RenderOfflineResult): void {
   for (const port of Object.keys(result.outputs)) {
     const channels = result.outputs[port]!;
@@ -134,7 +140,11 @@ export function expectNoNaN(result: RenderOfflineResult): void {
 
 const linearToDb = (linear: number): number => 20 * Math.log10(linear);
 
-/** Assert peak amplitude below the given dBFS threshold。 */
+/**
+ * Assert peak amplitude below the given dBFS threshold。
+ *
+ * chain 形 = `expect(result).toHavePeakUnder(dbfs)` (= `@unworklet/test/extend`)。
+ */
 export function expectPeakUnder(result: RenderOfflineResult, dbfs: number): void {
   let peak = 0;
   for (const port of Object.keys(result.outputs)) {
@@ -153,7 +163,11 @@ export function expectPeakUnder(result: RenderOfflineResult, dbfs: number): void
   }
 }
 
-/** Assert RMS amplitude below the given dBFS threshold (= 全 channel 平 方 和 平 均 の 平 方 根)。 */
+/**
+ * Assert RMS amplitude below the given dBFS threshold (= 全 channel 平 方 和 平 均 の 平 方 根)。
+ *
+ * chain 形 = `expect(result).toHaveRmsUnder(dbfs)` (= `@unworklet/test/extend`)。
+ */
 export function expectRmsUnder(result: RenderOfflineResult, dbfs: number): void {
   let sumSq = 0;
   let count = 0;
@@ -175,7 +189,11 @@ export function expectRmsUnder(result: RenderOfflineResult, dbfs: number): void 
   }
 }
 
-/** Assert emitted events (= name + payload + atSample) match the expected sequence。 */
+/**
+ * Assert emitted events (= name + payload + atSample) match the expected sequence。
+ *
+ * chain 形 = `expect(result).toMatchEvents(expectedEvents)` (= `@unworklet/test/extend`)。
+ */
 export function expectEventsEqual(
   result: RenderOfflineResult,
   expectedEvents: ExpectedEvent[],
@@ -211,6 +229,8 @@ export function expectEventsEqual(
  * Assert that the end-of-render snapshot blob matches `expectedSnapshot`
  * (= `'persistent'` slot 限 定、 Q5 format)。 transient slot は audio 出 力
  * 経 由 で `expectAudioMatches` で 検 出。
+ *
+ * chain 形 = `expect(result).toMatchState(expectedSnapshot)` (= `@unworklet/test/extend`)。
  */
 export function expectStateMatches(
   result: RenderOfflineResult,
@@ -235,6 +255,8 @@ export function expectStateMatches(
  * Assert that `actual.outputs` matches the PCM stored in the WAV file at
  * `wavPath` (= `docs/06-testing.md` §2.1 + §7)。 単 一 port 専 用 (= 多 port
  * は `expectAudioMatches(actual, fullResult)` で 明 示)。
+ *
+ * chain 形 = `expect(actual).toMatchAudioFile(wavPath, opts?)` (= `@unworklet/test/extend`)。
  */
 export function expectAudioMatchesGolden(
   actual: RenderOfflineResult,
@@ -260,6 +282,8 @@ export type SnapshotOptions = {
  * 推 論 (= `<test-file-dir>/__snapshots__/<test-file-name>__<test-name>__
  * <counter>.wav`)。 初 回 = wav 自 動 書 き 出 し + pass、 2 回 目 以 降 =
  * bit-exact 比 較、 `vitest -u` で 強 制 上 書 き、 CI mode = 不 在 で fail。
+ *
+ * chain 形 = `await expect(actual).toMatchAudioSnapshot(opts?)` (= `@unworklet/test/extend`)。
  */
 export async function expectAudioMatchesSnapshot(
   _actual: RenderOfflineResult,
@@ -272,6 +296,8 @@ export async function expectAudioMatchesSnapshot(
  * NaN ナ シ + 全 sample finite (= 発 散 ナ シ) を 1 行 で wrap。 IIR
  * feedback / 長 時 間 render の 安 定 性 sanity check (`docs/06-testing.md`
  * §2.2)。 audio level は 問 わ ず (= clip し て て も pass)。
+ *
+ * chain 形 = `expect(result).toBeStable()` (= `@unworklet/test/extend`)。
  */
 export function expectStable(_result: RenderOfflineResult): void {
   notImplemented();
@@ -287,6 +313,8 @@ export type MasterOptions = {
  * Master bus デフ ォ check = NaN ナ シ + peak < `opts.peakDbfs` (default
  * `-0.1`) + RMS < `opts.rmsDbfs` (default `-14`) を 1 行 wrap。 `expectStable`
  * ⊂ `expectMaster` (= master は stable 含 む + clip / 過 大 loudness 検 出)。
+ *
+ * chain 形 = `expect(result).toBeMasterReady(opts?)` (= `@unworklet/test/extend`)。
  */
 export function expectMaster(_result: RenderOfflineResult, _opts?: MasterOptions): void {
   notImplemented();
@@ -295,6 +323,8 @@ export function expectMaster(_result: RenderOfflineResult, _opts?: MasterOptions
 /**
  * 全 sample が tolerance 内 で 0 (= default `0` = bit-exact silence)。 pure
  * MIDI processor / mute / 起 動 直 後 等。
+ *
+ * chain 形 = `expect(result).toBeSilent(opts?)` (= `@unworklet/test/extend`)。
  */
 export function expectSilence(_result: RenderOfflineResult, _opts?: { tolerance?: number }): void {
   notImplemented();
@@ -308,6 +338,8 @@ export type PeakAtSampleOptions = {
 /**
  * Time domain = 最 大 abs index が `expectedAtSample` ± `opts.tolerance`
  * (= sample 単 位)。 envelope attack peak / impulse response peak 位 置 等。
+ *
+ * chain 形 = `expect(result).toHavePeakAtSample(expectedAtSample, opts?)` (= `@unworklet/test/extend`)。
  */
 export function expectPeakAtSample(
   _result: RenderOfflineResult,
@@ -320,6 +352,8 @@ export function expectPeakAtSample(
 /**
  * Freq domain = 内 部 FFT 経 由 で `freqHz` 周 辺 の dB ゲ イ ン が
  * `expectedDb` ± `tolerance`。 EQ test の core (`docs/06-testing.md` §2.2)。
+ *
+ * chain 形 = `expect(result).toHaveGainAtFreq(freqHz, expectedDb, tolerance)` (= `@unworklet/test/extend`)。
  */
 export function expectGainAtFreq(
   _result: RenderOfflineResult,
@@ -333,6 +367,8 @@ export function expectGainAtFreq(
 /**
  * 入 力 impulse → 出 力 max abs index の delay sample 数 計 測 + assert。
  * lookahead processor の 設 計 latency 担 保。
+ *
+ * chain 形 = `expect(result).toHaveLatency(expectedSamples, opts?)` (= `@unworklet/test/extend`)。
  */
 export function expectLatency(
   _result: RenderOfflineResult,
@@ -345,6 +381,8 @@ export function expectLatency(
 /**
  * 全 sample 平 均 値 (= DC bias) 絶 対 値 が `threshold` 未 満。 filter /
  * EQ の DC 振 る 舞 い 確 認。
+ *
+ * chain 形 = `expect(result).toHaveDcOffsetUnder(threshold)` (= `@unworklet/test/extend`)。
  */
 export function expectDcOffsetUnder(_result: RenderOfflineResult, _threshold: number): void {
   notImplemented();
@@ -352,6 +390,8 @@ export function expectDcOffsetUnder(_result: RenderOfflineResult, _threshold: nu
 
 /**
  * 特 定 name の event 件 数 一 致 (= 順 序 / payload は 問 わ ず)。
+ *
+ * chain 形 = `expect(result).toHaveEventCount(name, expectedCount)` (= `@unworklet/test/extend`)。
  */
 export function expectEventCount(
   _result: RenderOfflineResult,
@@ -371,6 +411,8 @@ export type PartialExpectedEvent = {
 /**
  * 部 分 一 致 (= `partial[i]` が `result.events` の ど こ か に exists)。 順
  * 不 同 + 余 計 な event 許 容。
+ *
+ * chain 形 = `expect(result).toContainEvents(partial)` (= `@unworklet/test/extend`)。
  */
 export function expectEventsContaining(
   _result: RenderOfflineResult,
@@ -385,6 +427,8 @@ export type ExpectedMidiEvent = MidiEvent & { atSample?: number };
 /**
  * 特 定 `midiOutput({ name })` port 経 由 emit さ れ た MIDI event 列 を
  * `MidiEvent` 形 で 一 致 比 較 (= 内 部 で MIDI byte → `MidiEvent` decode)。
+ *
+ * chain 形 = `expect(result).toEmitMidi(portName, expectedMidiEvents, opts?)` (= `@unworklet/test/extend`)。
  */
 export function expectMidiOut(
   _result: RenderOfflineResult,
@@ -398,6 +442,8 @@ export function expectMidiOut(
 /**
  * noteOn / noteOff pair が balance、 hanging note (= noteOn 後 noteOff
  * な し) が `opts.hangingNotes` (default `0`) 件 ま で 許 容。
+ *
+ * chain 形 = `expect(result).toHaveBalancedMidi(portName, opts?)` (= `@unworklet/test/extend`)。
  */
 export function expectMidiBalance(
   _result: RenderOfflineResult,
@@ -410,6 +456,8 @@ export function expectMidiBalance(
 /**
  * snapshot blob を 内 部 で `inspect` (= `docs/05-client.md` §2.6) し て 1
  * slot 値 取 得 + assert。
+ *
+ * chain 形 = `expect(result).toHaveStateValue(slotName, expectedValue)` (= `@unworklet/test/extend`)。
  */
 export function expectStateValue(
   _result: RenderOfflineResult,

@@ -113,15 +113,49 @@ type Division = "1/1" | "1/2" | "1/4" | "1/8" | "1/16" | "1/32";
 
 ## 6. Matcher chain form (= `expect.extend`)
 
-vitest `expect.extend(...)` 登 録 経 由 で chain form (= `expect(result).toMatchAudio(...)`) も 提 供 path。 plain function form (= §2) と 並 立、 chain 名 規 約 (= 各 plain 名 か ら の 機 械 派 生 ル ー ル) は impl phase で 別 grill 確 定。
-
-side-effect import path で `expect.extend(...)` 自 動 走 行 + chain method の TypeScript declare merge:
+vitest `expect.extend(...)` 登 録 経 由 で chain form (= `expect(result).toMatchAudio(...)`) も 並 立 で 提 供。 plain function form (= §2) と co-exist (= 同 test 内 で 両 形 混 在 OK)。 別 subpath `@unworklet/test/extend` で 分 離、 import 1 行 で test 全 体 に 反 映 + chain form を 使 わ な い consumer の bundle に chain 部 分 が 入 ら な い (= tree shake 整 合):
 
 ```ts
-import "@unworklet/test/extend"; // = side-effect import で chain form 全 件 登 録 + 型 拡 張
+import "@unworklet/test/extend"; // = chain form 全 20 件 登 録 + TypeScript declare merge
 ```
 
-import 1 行 で test 全 体 に 反 映、 plain 形 と co-exist (= 同 test 内 で 両 形 混 在 OK)。 別 subpath `@unworklet/test/extend` で 分 け る = chain form を 使 わ な い consumer の bundle に chain 部 分 が 入 ら な い (= tree shake と 整 合)。
+### 6.1 chain 名 規 約
+
+vitest core (= `toBe` / `toHave` / `toMatch` / `toContain` 等) に zip し て 個 別 自 然 化。 軸:
+
+- **`toBe...`** = state / 形 容 詞 (= 「the result is X」)。 例: `toBeStable` / `toBeSilent` / `toBeFinite` / `toBeMasterReady`。
+- **`toHave...`** = property 値 (= 「the result has X within bound」)。 例: `toHavePeakUnder(dbfs)` / `toHaveLatency(n)` / `toHaveStateValue(slot, v)`。
+- **`toMatch...`** = pattern match (= 「the result matches Y」)。 例: `toMatchAudio(expected)` / `toMatchEvents(events)` / `toMatchState(blob)`。
+- **`toContain...`** = 部 分 一 致 (= 「the result contains Z」)。 例: `toContainEvents(partial)`。
+- snapshot 系 = vitest 標 準 `toMatchSnapshot` / `toMatchFileSnapshot` に zip。 例: `toMatchAudioSnapshot()` / `toMatchAudioFile(path)`。
+- 動 詞 系 (= MIDI emit 等、 vitest `toThrow` 系) = 動 詞 化。 例: `toEmitMidi(port, events)`。
+
+plain 名 と chain 名 は 1:1 機 械 派 生 で は な い (= chain 側 を 自 然 化 優 先)。 plain ↔ chain mapping は 各 plain 関 数 / chain method の JSDoc で 双 方 向 carry し て IDE hover 経 由 で 解 決。
+
+### 6.2 全 20 件 mapping
+
+| plain                        | chain                  |
+| ---------------------------- | ---------------------- |
+| `expectAudioMatches`         | `toMatchAudio`         |
+| `expectAudioMatchesGolden`   | `toMatchAudioFile`     |
+| `expectAudioMatchesSnapshot` | `toMatchAudioSnapshot` |
+| `expectNoNaN`                | `toBeFinite`           |
+| `expectPeakUnder`            | `toHavePeakUnder`      |
+| `expectRmsUnder`             | `toHaveRmsUnder`       |
+| `expectStable`               | `toBeStable`           |
+| `expectMaster`               | `toBeMasterReady`      |
+| `expectSilence`              | `toBeSilent`           |
+| `expectPeakAtSample`         | `toHavePeakAtSample`   |
+| `expectGainAtFreq`           | `toHaveGainAtFreq`     |
+| `expectLatency`              | `toHaveLatency`        |
+| `expectDcOffsetUnder`        | `toHaveDcOffsetUnder`  |
+| `expectEventsEqual`          | `toMatchEvents`        |
+| `expectEventCount`           | `toHaveEventCount`     |
+| `expectEventsContaining`     | `toContainEvents`      |
+| `expectMidiOut`              | `toEmitMidi`           |
+| `expectMidiBalance`          | `toHaveBalancedMidi`   |
+| `expectStateMatches`         | `toMatchState`         |
+| `expectStateValue`           | `toHaveStateValue`     |
 
 ## 7. Property-based test pattern
 
