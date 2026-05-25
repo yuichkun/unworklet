@@ -877,9 +877,7 @@ test("`expectAudioMatchesGolden`: NaN を 含 む golden wav = throw (= 過 去 
   const nanCh = filled(8, 0.5);
   nanCh[3] = NaN;
   const path = tmpWav([nanCh]);
-  expect(() => expectAudioMatchesGolden(monoResult(filled(8, 0.5)), path)).toThrow(
-    /expected.*NaN/,
-  );
+  expect(() => expectAudioMatchesGolden(monoResult(filled(8, 0.5)), path)).toThrow(/expected.*NaN/);
 });
 
 test("`expectAudioMatchesSnapshot`: NaN actual = throw (= snapshot 初 回 書 き で 壊 れ た wav を 永 続 化 し な い)", async () => {
