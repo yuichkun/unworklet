@@ -1,17 +1,10 @@
 /**
  * `@unworklet/test/extend` chain form 経 路 test (= `docs/06-testing.md` §6)。
  * side-effect import で `expect.extend(...)` を 走 ら せ た 後、 chain method
- * 全 20 件 が 認 識 + plain 関 数 と 同 等 動 作 す る こ と を 担 保。
- *
- * Phase 4 skeleton stage:
- * - 既 fill 7 件 chain (= toMatchAudio / toMatchAudioFile / toBeFinite /
- *   toHavePeakUnder / toHaveRmsUnder / toMatchEvents / toMatchState) =
- *   happy path + fail path test 各 1 件。
- * - 残 13 件 chain (= toMatchAudioSnapshot / toBeStable / toBeMasterReady /
- *   toBeSilent / toHavePeakAtSample / toHaveGainAtFreq / toHaveLatency /
- *   toHaveDcOffsetUnder / toHaveEventCount / toContainEvents / toEmitMidi /
- *   toHaveBalancedMidi / toHaveStateValue) = stub-throw 経 路 = chain wrap
- *   が plain throw を vitest fail に 変 換 す る path 担 保。
+ * 全 20 件 が 認 識 + plain 関 数 と 同 等 動 作 す る こ と を 担 保。 末 尾 =
+ * `WhenResult<T, M>` TS guard が `RenderOfflineResult` 以 外 で chain method
+ * を `never` 化 す る regression test。 `toHaveStateValue` chain は 上 流
+ * `inspect` (= `docs/05-client.md` §2.6) fill 待 ち で stub-throw 維 持。
  */
 
 import "./extend.ts";

@@ -1,15 +1,8 @@
 /**
  * `@unworklet/test` matcher + utility behavior (= `docs/06-testing.md` §2-§6)。
- * TDD 規 範 = 振 る 舞 い ベ ー ス test 先 行 + 実 装 fill。
- *
- * Phase 4 skeleton stage:
- * - 既 fill 7 件 (= `expectAudioMatches` / `expectAudioMatchesGolden` /
- *   `expectNoNaN` / `expectPeakUnder` / `expectRmsUnder` / `expectEventsEqual`
- *   / `expectStateMatches`) = happy + fail path test 配 置 済 み。
- * - 残 36 件 (= matcher 13 + signal utility 7 + midi utility 10 + sample/time
- *   utility 6) = 各 stub-throw test 1 件 (= 「not implemented」 throw 確 認)。
- *   impl phase で fill さ れ て き た ら 該 当 stub-throw を behavior test に
- *   置 き 換 え る。
+ * TDD 規 範 = 振 る 舞 い ベ ー ス test 先 行 + 実 装 fill。 各 export ご と
+ * に happy path + fail path test を 並 べ る。 `expectStateValue` は 上 流
+ * `inspect` (= `docs/05-client.md` §2.6) fill 待 ち で stub-throw 維 持。
  */
 
 import { mkdtempSync, writeFileSync } from "node:fs";

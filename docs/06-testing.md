@@ -4,7 +4,7 @@ Vitest matchers + audio test utility for unworklet processors。 `@unworklet/off
 
 ## Status
 
-skeleton (= 公 開 surface 全 43 件 + chain form declared、 中 身 fill は impl phase incremental)
+fill 済 み 42 件 (= matcher 19 / signal 7 / MIDI 10 / sample-time 6) + chain form 全 20 件 + TS-only `WhenResult<T, M>` guard。 残 = `expectStateValue` 1 件 が 上 流 `inspect` (= `05-client.md` §2.6) fill 待 ち で Phase 11 同 ship。
 
 ## 1. Relationship to `@unworklet/offline`
 

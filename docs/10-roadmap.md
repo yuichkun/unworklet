@@ -91,7 +91,15 @@ meter 部分 (= `state.publish`) は Phase 6 (= messaging) で 拡張 する 設
 
 ### Phase 4 — Test infrastructure
 
-`@unworklet/test` の audio matcher 群 (= `expectAudioMatches` / `expectNoNaN` / `expectPeakUnder` / `expectRmsUnder` / `expectEventsEqual` / `expectStateMatches`) を `renderOffline` 上 に 載せる (= 06-testing.md §2 通り)。 golden file pattern を 整備、 canonical Ex 1 (= meter なし 版) の reference PCM を 取って 回帰 防止。
+`@unworklet/test` の declared surface 全 43 件 + chain form (= `06-testing.md` §2-§6) を `renderOffline` 上 に 載 せ る:
+
+- matcher 20 件 (= audio 3 / sample-level 10 / event 3 / MIDI 2 / state 2)
+- signal utility 7 件 (= sine / silence / impulse / sineSweep / whiteNoise / dc / ramp)
+- MIDI utility 10 件 (= `midi` namespace + `sequence`)
+- sample/time utility 6 件 (= samplesToMs / msToSamples / samplesToSec / secToSamples / bpmToSamples / bpmToMs)
+- chain form (= `@unworklet/test/extend` side-effect import で vitest `expect.extend(...)` 全 件 登 録 + TS-only `WhenResult<T, M>` guard で `RenderOfflineResult` 以 外 chain method を `never` 化)
+
+vitest snapshot path 経 由 wav auto-write + bit-exact 比 較 (= `expectAudioMatchesSnapshot` / `expectAudioMatchesGolden`) で canonical Ex 1 (= meter なし 版) の reference PCM を 取 っ て 回 帰 防 止。 `expectStateValue` は 上 流 `inspect` (= 05-client.md §2.6) fill 待 ち で Phase 11 同 ship。
 
 `renderOffline` 内 で compile + 駆動 自己 完結 (= Phase 3 で 確立 した shape) の 帰結 と し て、 test は Vite plugin 不要 で 動く (= Vitest 標準 環境 だけ で test 走る、 build pipeline 統合 は Phase 5 の Vite plugin 責務)。
 
