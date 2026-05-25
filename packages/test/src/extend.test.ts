@@ -135,12 +135,22 @@ test("`toMatchAudioSnapshot` (chain) opts.snapshotPath 省 略 = 自 動 推 論
   await expect(result).toMatchAudioSnapshot();
 });
 
-test("`toBeStable` (chain) stub fails with not implemented", () => {
-  expect(() => expect(dummyResult).toBeStable()).toThrow(/not implemented/);
+test("`toBeStable` (chain) happy = clean PCM", () => {
+  expect(monoResult(filled(8, 1.5))).toBeStable();
 });
 
-test("`toBeMasterReady` (chain) stub fails with not implemented", () => {
-  expect(() => expect(dummyResult).toBeMasterReady()).toThrow(/not implemented/);
+test("`toBeStable` (chain) fail = NaN", () => {
+  const ch = filled(8, 0.5);
+  ch[3] = NaN;
+  expect(() => expect(monoResult(ch)).toBeStable()).toThrow(/NaN/);
+});
+
+test("`toBeMasterReady` (chain) happy = 低 level + clean", () => {
+  expect(monoResult(filled(8, 0.1))).toBeMasterReady();
+});
+
+test("`toBeMasterReady` (chain) fail = peak 上 限 超 え", () => {
+  expect(() => expect(monoResult(filled(8, 1.0))).toBeMasterReady()).toThrow(/peak/);
 });
 
 test("`toBeSilent` (chain) stub fails with not implemented", () => {

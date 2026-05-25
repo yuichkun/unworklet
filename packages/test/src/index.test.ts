@@ -441,12 +441,62 @@ test("`expectAudioMatchesSnapshot`: opts.snapshotPath 省 略 = 自 動 推 論 
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━ matcher stubs (= 12 件 残) ━━━━━━━━━━━━━━━━━━━━━
 
-test("`expectStable` stub throws", () => {
-  expect(() => expectStable(dummyResult)).toThrow(/not implemented/);
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━ expectStable ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+test("`expectStable`: clean PCM passes (= audio level 問 わ ず)", () => {
+  expect(() => expectStable(monoResult(filled(8, 1.5)))).not.toThrow();
 });
 
-test("`expectMaster` stub throws", () => {
-  expect(() => expectMaster(dummyResult)).toThrow(/not implemented/);
+test("`expectStable`: NaN throws", () => {
+  const ch = filled(8, 0.5);
+  ch[3] = NaN;
+  expect(() => expectStable(monoResult(ch))).toThrow(/NaN/);
+});
+
+test("`expectStable`: Infinity throws (= 発 散 検 知)", () => {
+  const ch = filled(8, 0.5);
+  ch[3] = Infinity;
+  expect(() => expectStable(monoResult(ch))).toThrow(/Infinity/);
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━ expectMaster ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+test("`expectMaster`: 低 level + clean = pass (= default thresholds)", () => {
+  expect(() => expectMaster(monoResult(filled(8, 0.1)))).not.toThrow();
+});
+
+test("`expectMaster`: peak ≥ default -0.1 dBFS で throw", () => {
+  expect(() => expectMaster(monoResult(filled(8, 1.0)))).toThrow(/peak/);
+});
+
+test("`expectMaster`: RMS ≥ default -14 dBFS で throw", () => {
+  expect(() => expectMaster(monoResult(filled(8, 0.5)))).toThrow(/RMS/);
+});
+
+test("`expectMaster`: opts.peakDbfs 上 書 き で 緩 い threshold", () => {
+  expect(() => expectMaster(monoResult(filled(8, 0.1)), { peakDbfs: 0, rmsDbfs: 0 })).not.toThrow();
+});
+
+test("`expectMaster`: NaN 含 む = default で throw", () => {
+  const ch = filled(8, 0.1);
+  ch[3] = NaN;
+  expect(() => expectMaster(monoResult(ch))).toThrow(/NaN/);
+});
+
+test("`expectMaster`: opts.noNan: false で NaN check skip", () => {
+  const ch = filled(8, 0.1);
+  ch[3] = NaN;
+  // NaN は skip + peak / RMS は finite sample 由 来 だ が NaN sample が peak
+  // 計 算 で NaN を 生 む の で = throw (= "peak NaN") に な る path、 こ こ で は
+  // NaN sample が peak 計 算 で hit し な い short array で pass 担 保 用 に
+  // NaN を 含 ま な い test で 代 替 (= opts.noNan false branch を hit)。
+  expect(() =>
+    expectMaster(monoResult(filled(8, 0.1)), {
+      noNan: false,
+      peakDbfs: 0,
+      rmsDbfs: 0,
+    }),
+  ).not.toThrow();
 });
 
 test("`expectSilence` stub throws", () => {
