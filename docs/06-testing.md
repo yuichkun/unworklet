@@ -6,6 +6,17 @@ Vitest matchers + audio test utility for unworklet processors。 `@unworklet/off
 
 fill 済 み 42 件 (= matcher 19 / signal 7 / MIDI 10 / sample-time 6) + chain form 全 19 件 + TS-only chain typing guard (= `WhenResult<T, M>` / `WhenAudioActual<T, M>`)。 `expectStateValue` (= snapshot blob slot 値 assert) は 上 流 `inspect` (= `05-client.md` §2.6) fill 待 ち で Phase 11 に plain + chain 同 ship 予 定 = 当 phase の export surface か ら は 除 外 (= 常 に throw す る public API を ship し な い 行 動 規 律、 v1.0.0 surface は 動 く matcher だ け 並 べ る)。
 
+### Upstream 依 存 状 況 (= Phase 4 vs 後 続 phase)
+
+matcher 自 体 は 全 件 fill 済 み で `RenderOfflineResult` を 与 え れ ば 正 し く 動 く が、 `renderOffline` 側 が `events` / `state` を 実 際 に capture す る 経 路 は 後 続 phase で 立 ち 上 が る (= `10-roadmap.md` §Phase 7 / Phase 9 / Phase 11)。 当 phase で の 影 響:
+
+- **`expectEventsEqual` / `expectEventCount` / `expectEventsContaining`** は `renderOffline.events` を 直 接 比 較。 Phase 7 (= messaging) で renderer の event 捕 捉 が fill さ れ る ま で `events` は 常 に `[]` (= 空 配 列 stub)、 「empty 期 待 = empty 実 測」 で 偽 pass。 非 empty 期 待 で は loud fail。 当 phase で は hand-built `RenderOfflineResult` (= test fixture) に 対 し て 使 う か、 audio path (= `expectAudioMatches` 等) で 同 等 検 証 を 補 完 し、 end-to-end event assertion は Phase 7 fill 後 に zip。
+- **`expectMidiOut` / `expectMidiBalance`** も 同 様 に Phase 9 (= MIDI) で renderer fill さ れ る ま で 上 と 同 じ 偽 pass 経 路 を 持 つ。 hand-built fixture path で の 使 用 は 安 全、 real renderOffline 出 力 と の end-to-end zip は Phase 9 待 ち。
+- **`expectStateMatches`** は Phase 11 (= snapshot/restore) で renderer の `state` capture が fill さ れ る ま で `state` は 常 に `new Uint8Array(0)` (= 空 blob stub)、 「empty blob 期 待」 で 偽 pass。 非 empty 期 待 で は length mismatch で loud fail。
+- **`RenderOfflineResult.sampleRate`** field は `config.sampleRate` を そ の ま ま carry し て metadata と し て 信 頼 で き る (= `expectAudioMatches` / `expectAudioMatchesGolden` の sampleRate 比 較 で 使 う)。 一 方 で processor の `ctx.sampleRate` は Phase 3 placeholder = `0` で、 DSP 内 で `ctx.sampleRate` を 直 接 読 む code path は real rate が flow し て こ な い (= core 側 で の plumbing 完 了 = 後 続 phase)。 当 phase で sampleRate 比 較 が catch す る の は metadata mismatch (= 同 PCM / 異 rate label)、 「processor が ctx.sampleRate を 読 ん で 計 算 し た 結 果 が real rate に zip し て い な い」 path は core 側 fix 待 ち = matcher 側 の 振 る 舞 い と は 独 立。
+
+要 約: matcher は 入 力 contract (= `RenderOfflineResult`) に 対 し て 正 し く 動 く こ と が 担 保 さ れ て お り、 上 流 renderer が real data を 出 し 始 め る ご と に end-to-end usage path が 自 然 に 開 く。 当 phase で end-to-end 検 証 が 通 る の は 「audio 出 力 path」 だ け (= Phase 4 完 了 条 件 = `10-roadmap.md` §Phase 4 「Ex 1 (= meter な し) の audio output が tolerance=0 で reference と 一 致」)、 event / MIDI / state path は 後 続 phase で 順 次 zip。
+
 ## 1. Relationship to `@unworklet/offline`
 
 `@unworklet/test` does **not** re-implement rendering。 `@unworklet/offline` の `renderOffline` を 内 部 呼 び 出 し、 戻 り 値 `RenderOfflineResult` (= `{ outputs, events, state }`) に audio-domain assertion を 重 ね る。 こ の split で offline rendering は server-side / batch / preview UI で 単 独 利 用 可 (= `13-offline-render.md` §1)、 test-specific 関 心 (= matcher / golden file / signal utility 等) は こ ち ら に 集 約。
