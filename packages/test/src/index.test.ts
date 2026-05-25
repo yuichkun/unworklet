@@ -1120,6 +1120,21 @@ test("`expectMidiBalance`: stray noteOff は hangingNotes opts で 救 え な �
   expect(() => expectMidiBalance(result, "out", { hangingNotes: 100 })).toThrow(/stray/);
 });
 
+test("`expectMidiBalance`: noteOff → noteOn (= 順 序 逆 転、 最 終 net 0) = throw", () => {
+  // 最 終 合 算 path だ と 0 で pass し て し ま う lifecycle 逆 転 を、
+  // running counter path で stray と し て 即 検 出 す る regression。
+  const result: RenderOfflineResult = {
+    outputs: {},
+    events: [
+      { name: "out", payload: midi.noteOff({ note: 60 }), atSample: 0 },
+      { name: "out", payload: midi.noteOn({ note: 60, velocity: 100 }), atSample: 240 },
+    ],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() => expectMidiBalance(result, "out")).toThrow(/stray/);
+});
+
 // ━━━━━━━━━━━━━━━━━━━━━━━ sample / time utility 6 件 ━━━━━━━━━━━━━━━━━━━━━━
 
 test("`samplesToMs`: 480 sample @ 48k = 10 ms", () => {

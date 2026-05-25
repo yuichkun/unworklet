@@ -822,10 +822,13 @@ export function expectMidiOut(
 /**
  * noteOn / noteOff pair が balance、 hanging note (= noteOn 後 noteOff
  * な し) が `opts.hangingNotes` (default `0`) 件 ま で 許 容。 stray
- * noteOff (= 対 応 noteOn な し の noteOff、 ま た は noteOn 1 に 対 し て
- * noteOff 2 以 上) は always fail (= MIDI lifecycle で stray は 常 に bug
- * = tolerance opt ナ シ)。 同 (channel, note) ご と に on/off counter で
- * track、 最 終 状 態 で 残 ± counter を 合 算。
+ * noteOff (= 出 現 時 点 で 対 応 (channel, note) の noteOn 在 庫 が ゼ
+ * ロ の noteOff = lifecycle 逆 転 / noteOn 1 に 対 し て noteOff 2 以 上)
+ * は always fail (= MIDI lifecycle で stray は 常 に bug = tolerance opt
+ * ナ シ)。 events を 時 系 列 走 査 し て (channel, note) ご と の running
+ * counter を track、 noteOff 到 着 時 cur ≤ 0 = 即 stray 計 上 = 「noteOff
+ * → noteOn (= net 0)」 や 「noteOn 1 → noteOff 2」 を 順 序 sensitive に
+ * 検 出 (= 最 終 合 算 path で は 拾 え な い 偽 pass を 塞 ぐ)。
  *
  * chain 形 = `expect(result).toHaveBalancedMidi(portName, opts?)` (= `@unworklet/test/extend`)。
  */
@@ -836,28 +839,31 @@ export function expectMidiBalance(
 ): void {
   const allowed = opts.hangingNotes ?? 0;
   const actual = result.events.filter((e) => e.name === portName);
-  const noteCount = new Map<string, number>();
+  const running = new Map<string, number>();
+  const strayList: string[] = [];
+  let strayCount = 0;
   for (const e of actual) {
     const m = e.payload as MidiEvent;
     if (m.type === "noteOn") {
       const k = `${m.channel}/${m.note}`;
-      noteCount.set(k, (noteCount.get(k) ?? 0) + 1);
+      running.set(k, (running.get(k) ?? 0) + 1);
     } else if (m.type === "noteOff") {
       const k = `${m.channel}/${m.note}`;
-      noteCount.set(k, (noteCount.get(k) ?? 0) - 1);
+      const cur = running.get(k) ?? 0;
+      if (cur <= 0) {
+        strayCount += 1;
+        strayList.push(`${k} @ atSample ${e.atSample}`);
+      } else {
+        running.set(k, cur - 1);
+      }
     }
   }
   let hangingCount = 0;
-  let strayCount = 0;
   const hangingList: string[] = [];
-  const strayList: string[] = [];
-  for (const [k, c] of noteCount) {
+  for (const [k, c] of running) {
     if (c > 0) {
       hangingCount += c;
       hangingList.push(`${k} × ${c}`);
-    } else if (c < 0) {
-      strayCount += -c;
-      strayList.push(`${k} × ${-c}`);
     }
   }
   const failures: string[] = [];
@@ -867,7 +873,9 @@ export function expectMidiBalance(
     );
   }
   if (strayCount > 0) {
-    failures.push(`${strayCount} stray noteOff (= no preceding noteOn) [${strayList.join(", ")}]`);
+    failures.push(
+      `${strayCount} stray noteOff (= no in-flight noteOn at event time) [${strayList.join(", ")}]`,
+    );
   }
   if (failures.length > 0) {
     throw new Error(`expectMidiBalance: port '${portName}' ${failures.join("; ")}`);
