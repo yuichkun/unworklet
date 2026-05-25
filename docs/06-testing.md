@@ -4,7 +4,7 @@ Vitest matchers + audio test utility for unworklet processors。 `@unworklet/off
 
 ## Status
 
-fill 済 み 42 件 (= matcher 19 / signal 7 / MIDI 10 / sample-time 6) + chain form 全 20 件 + TS-only chain typing guard (= `WhenResult<T, M>` / `WhenAudioActual<T, M>`)。 残 = `expectStateValue` 1 件 が 上 流 `inspect` (= `05-client.md` §2.6) fill 待 ち で Phase 11 同 ship。
+fill 済 み 42 件 (= matcher 19 / signal 7 / MIDI 10 / sample-time 6) + chain form 全 19 件 + TS-only chain typing guard (= `WhenResult<T, M>` / `WhenAudioActual<T, M>`)。 `expectStateValue` (= snapshot blob slot 値 assert) は 上 流 `inspect` (= `05-client.md` §2.6) fill 待 ち で Phase 11 に plain + chain 同 ship 予 定 = 当 phase の export surface か ら は 除 外 (= 常 に throw す る public API を ship し な い 行 動 規 律、 v1.0.0 surface は 動 く matcher だ け 並 べ る)。
 
 ## 1. Relationship to `@unworklet/offline`
 
@@ -12,7 +12,7 @@ fill 済 み 42 件 (= matcher 19 / signal 7 / MIDI 10 / sample-time 6) + chain 
 
 Standard MIDI File loader (= `loadSmf` / `parseSmf`) は v1.0.0 ship 範 囲 外 = `10-roadmap.md` §3.2 additive で 追 加 想 定 (= 既 知 MIDI song を 入 力 と し て synth / arp 出 力 を 検 証 す る ユ ー ス)。
 
-## 2. Matchers (= 20 件)
+## 2. Matchers (= 19 件 + `expectStateValue` Phase 11)
 
 全 matcher は **plain function form** で declare、 失 敗 時 = `Error` を throw、 vitest が catch し て test fail と し て 表 示。 chain form (= `expect.extend(...)`) は §6 で 別 declare、 plain と 並 立。
 
@@ -53,7 +53,7 @@ result 型 = `RenderOfflineResult` = `{ outputs: Record<string, Float32Array[]>,
 ### 2.5 State matchers
 
 - **`expectStateMatches(result, expectedSnapshot)`** — `result.state` (= snapshot blob、 `'persistent'` slot 限 定) と byte-exact 比 較。
-- **`expectStateValue(result, slotName, expectedValue)`** — snapshot blob を 内 部 で `inspect` (= `05-client.md` §2.6) し て 1 slot 値 取 得 + assert。
+- **`expectStateValue(result, slotName, expectedValue)`** — _Phase 11 同 ship 予 定 = 当 phase の export ナ シ_。 snapshot blob を 内 部 で `inspect` (= `05-client.md` §2.6) し て 1 slot 値 取 得 + assert す る 設 計、 上 流 `inspect` fill 後 plain + chain 同 時 に export 復 活。
 
 ### 2.6 役 割 分 担: audio 出 力 / event / state snapshot
 
@@ -126,7 +126,7 @@ import "@unworklet/test/extend"; // = chain form 全 20 件 登 録 + TypeScript
 vitest core (= `toBe` / `toHave` / `toMatch` / `toContain` 等) に zip し て 個 別 自 然 化。 軸:
 
 - **`toBe...`** = state / 形 容 詞 (= 「the result is X」)。 例: `toBeStable` / `toBeSilent` / `toBeFinite` / `toBeMasterReady`。
-- **`toHave...`** = property 値 (= 「the result has X within bound」)。 例: `toHavePeakUnder(dbfs)` / `toHaveLatency(n)` / `toHaveStateValue(slot, v)`。
+- **`toHave...`** = property 値 (= 「the result has X within bound」)。 例: `toHavePeakUnder(dbfs)` / `toHaveLatency(n)` / `toHaveDcOffsetUnder(threshold)`。
 - **`toMatch...`** = pattern match (= 「the result matches Y」)。 例: `toMatchAudio(expected)` / `toMatchEvents(events)` / `toMatchState(blob)`。
 - **`toContain...`** = 部 分 一 致 (= 「the result contains Z」)。 例: `toContainEvents(partial)`。
 - snapshot 系 = vitest 標 準 `toMatchSnapshot` / `toMatchFileSnapshot` に zip。 例: `toMatchAudioSnapshot()` / `toMatchAudioFile(path)`。
@@ -159,7 +159,6 @@ chain method の receiver 型 は 既 定 で `expect(result).toMatchAudio(...)`
 | `expectMidiOut`              | `toEmitMidi`           |
 | `expectMidiBalance`          | `toHaveBalancedMidi`   |
 | `expectStateMatches`         | `toMatchState`         |
-| `expectStateValue`           | `toHaveStateValue`     |
 
 ## 7. Property-based test pattern
 

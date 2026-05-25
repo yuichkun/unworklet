@@ -55,7 +55,6 @@ import {
   expectSilence,
   expectStable,
   expectStateMatches,
-  expectStateValue,
 } from "./index.ts";
 
 /**
@@ -120,7 +119,6 @@ declare module "vite-plus/test" {
     >;
     toHaveBalancedMidi: WhenResult<T, (portName: string, opts?: { hangingNotes?: number }) => void>;
     toMatchState: WhenResult<T, (expectedSnapshot: Uint8Array) => void>;
-    toHaveStateValue: WhenResult<T, (slotName: string, expectedValue: number | boolean) => void>;
   }
 }
 
@@ -162,13 +160,23 @@ async function toMatchAudioSnapshotChain(
   opts?: SnapshotOptions,
 ): Promise<MatcherResult> {
   try {
+    // `this` (= per-test-invocation `MatcherState`) に counter Map を attach し
+    // て carry。 chain form ご と (= test invocation ご と) に fresh Map = retry
+    // / watch rerun で counter drift ナ シ (= R6-1 fix)。 plain form path で
+    // は state に こ の field が 出 ず module-global Map に fallback (= 業 界
+    // 標 準 vitest 同 等 sequential-only limitation)。
+    const thisHost = this as { _unworkletCounters?: Map<string, number> };
+    if (!thisHost._unworkletCounters) {
+      thisHost._unworkletCounters = new Map();
+    }
+    const state: SnapshotResolutionState = {
+      ...(this as SnapshotResolutionState),
+      _unworkletCounters: thisHost._unworkletCounters,
+    };
     await expectAudioMatchesSnapshotWithState(
       received as RenderOfflineResult | Float32Array | Float32Array[],
       opts ?? {},
-      // vitest `RawMatcherFn` `this` 型 は MatcherState (= 内 部 class、 private
-      // field あ り) で SnapshotResolutionState に 直 接 cast 不 可、 unknown
-      // 経 由 で widening。
-      this as SnapshotResolutionState,
+      state,
     );
     return { pass: true, message: () => `expected NOT to satisfy toMatchAudioSnapshot` };
   } catch (err) {
@@ -199,5 +207,4 @@ expect.extend({
   toEmitMidi: wrap("toEmitMidi", expectMidiOut),
   toHaveBalancedMidi: wrap("toHaveBalancedMidi", expectMidiBalance),
   toMatchState: wrap("toMatchState", expectStateMatches),
-  toHaveStateValue: wrap("toHaveStateValue", expectStateValue),
 });

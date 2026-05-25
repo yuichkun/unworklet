@@ -1,8 +1,7 @@
 /**
  * `@unworklet/test` matcher + utility behavior (= `docs/06-testing.md` §2-§6)。
  * TDD 規 範 = 振 る 舞 い ベ ー ス test 先 行 + 実 装 fill。 各 export ご と
- * に happy path + fail path test を 並 べ る。 `expectStateValue` は 上 流
- * `inspect` (= `docs/05-client.md` §2.6) fill 待 ち で stub-throw 維 持。
+ * に happy path + fail path test を 並 べ る。
  */
 
 import { mkdtempSync, writeFileSync } from "node:fs";
@@ -36,7 +35,6 @@ import {
   expectSilence,
   expectStable,
   expectStateMatches,
-  expectStateValue,
   impulse,
   midi,
   msToSamples,
@@ -399,10 +397,6 @@ test("`expectAudioMatchesGolden`: multi-port actual throws (= single-port 推 �
   };
   expect(() => expectAudioMatchesGolden(result, path)).toThrow(/single-port/);
 });
-
-// ━━━━━━━━━━━━━━━ stub-throw tests for new declared surface ━━━━━━━━━━━━━━
-
-const dummyResult = monoResult(filled(8, 0));
 
 // ━━━━━━━━━━━━━━━━━━━━━ expectAudioMatchesSnapshot ━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -857,10 +851,6 @@ test("`expectEventsContaining`: 余 計 な event は 許 容 (= 順 不 同 / �
 
 test("`expectEventsContaining`: empty partial = pass", () => {
   expect(() => expectEventsContaining(monoResult(filled(8, 0)), [])).not.toThrow();
-});
-
-test("`expectStateValue` stub throws", () => {
-  expect(() => expectStateValue(dummyResult, "slot", 0)).toThrow(/not implemented/);
 });
 
 // ━━━━━━━━━━━━━━ NaN guard regression (= 全 numerical matcher) ━━━━━━━━━━━━━━━

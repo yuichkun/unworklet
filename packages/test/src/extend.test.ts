@@ -37,8 +37,6 @@ const tmpWav = (channels: Float32Array[], sampleRate = 48000): string => {
   return path;
 };
 
-const dummyResult = monoResult(filled(8, 0));
-
 // ━━━━━━━━━━━━━━━━━━━━ 既 fill 7 件 chain happy + fail ━━━━━━━━━━━━━━━━━━━━
 
 test("`toMatchAudio` (chain) happy = single-port bit-exact", () => {
@@ -287,10 +285,6 @@ test("`toHaveBalancedMidi` (chain) happy + fail", () => {
     sampleRate: 48000,
   };
   expect(() => expect(stray).toHaveBalancedMidi("out")).toThrow(/stray/);
-});
-
-test("`toHaveStateValue` (chain) stub fails with not implemented", () => {
-  expect(() => expect(dummyResult).toHaveStateValue("slot", 0)).toThrow(/not implemented/);
 });
 
 // ━━━━━━━━━━━━━━━ TS-only chain guard (= 型 で 弾 け る か regression) ━━━━━━━━━━━━━━━

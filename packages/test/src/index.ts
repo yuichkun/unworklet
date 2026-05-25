@@ -24,10 +24,6 @@ import { decodeWav, encodeWav } from "@unworklet/offline";
 import type { OfflineEmittedEvent, OfflineEvent, RenderOfflineResult } from "@unworklet/offline";
 import { expect } from "vite-plus/test";
 
-const notImplemented = (): never => {
-  throw new Error("not implemented");
-};
-
 export type AudioMatchOptions = {
   /**
    * Sample-absolute-difference tolerance。 default `0` = bit-exact
@@ -379,11 +375,18 @@ const shortHash = (s: string): string => {
  * け 取 れ る (= concurrent test で も race ナ シ)、 plain form は global
  * `expect.getState()` 経 由 で 取 得 (= sequential 専 用、 concurrent
  * で は cross-test 干 渉 リ ス ク)。
+ *
+ * `_unworkletCounters` は 自 動 推 論 path で 使 う counter Map の expando
+ * field。 chain form は `this` (= per-test-invocation MatcherState) に
+ * fresh Map を attach し て carry = invocation ご と に 自 然 リ セ ッ ト =
+ * vitest retry / watch rerun で も counter drift ナ シ。 plain form は こ
+ * の field 未 設 定 で module-global Map に fallback (= sequential 用 path)。
  */
 export type SnapshotResolutionState = {
   testPath?: string;
   currentTestName?: string;
   snapshotState?: { _updateSnapshot?: string };
+  _unworkletCounters?: Map<string, number>;
 };
 
 const resolveSnapshotPath = (state: SnapshotResolutionState, opts: SnapshotOptions): string => {
@@ -418,17 +421,18 @@ const resolveSnapshotPath = (state: SnapshotResolutionState, opts: SnapshotOptio
   const base = basename(state.testPath, extname(state.testPath));
   const safeName = sanitizeForFilename(state.currentTestName);
   const key = `${state.testPath}::${state.currentTestName}`;
-  // test boundary 検 出 = lastKey と 違 え ば 新 test entry = counter reset
-  // (= 別 test に 移 っ た 時 / watch mode で test 群 を 頭 か ら 再 走 し た
-  // 時 = counter が 再 初 期 化 さ れ る)。 同 一 test 内 の retry (= vitest
-  // retry / 同 test 連 続 再 invoke) は lastKey 変 化 ナ シ で counter drift
-  // = docs で 明 示 snapshotName を 推 奨。
-  if (snapshotTestBoundary.lastKey !== key) {
+  // counter source: chain form は `state._unworkletCounters` (= per-test-invocation
+  // Map = MatcherState bound) を 持 っ て く る = retry / watch 等 で 自 然 リ
+  // セ ッ ト = drift ナ シ。 plain form は 未 設 定 で module-global Map に
+  // fallback + boundary heuristic (= 別 test 移 行 時 だ け reset)、 同 test 連
+  // 続 invoke は drift = docs §2.1 で 明 示 snapshotName / chain form を 推 奨。
+  const counterMap = state._unworkletCounters ?? snapshotCounters;
+  if (counterMap === snapshotCounters && snapshotTestBoundary.lastKey !== key) {
     snapshotCounters.delete(key);
     snapshotTestBoundary.lastKey = key;
   }
-  const counter = (snapshotCounters.get(key) ?? 0) + 1;
-  snapshotCounters.set(key, counter);
+  const counter = (counterMap.get(key) ?? 0) + 1;
+  counterMap.set(key, counter);
   // sanitize 結 果 が 空 な ら "_" placeholder + hash で 区 別 (= 全 unsafe な
   // test 名 で hidden file を 作 ら な い safety net)。 通 常 test 名 は
   // ASCII / Unicode を 含 む の で safeName non-empty。
@@ -1109,20 +1113,6 @@ export function expectMidiBalance(
   if (failures.length > 0) {
     throw new Error(`expectMidiBalance: port '${portName}' ${failures.join("; ")}`);
   }
-}
-
-/**
- * snapshot blob を 内 部 で `inspect` (= `docs/05-client.md` §2.6) し て 1
- * slot 値 取 得 + assert。
- *
- * chain 形 = `expect(result).toHaveStateValue(slotName, expectedValue)` (= `@unworklet/test/extend`)。
- */
-export function expectStateValue(
-  _result: RenderOfflineResult,
-  _slotName: string,
-  _expectedValue: number | boolean,
-): void {
-  notImplemented();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━ signal utility (= 7 件) ━━━━━━━━━━━━━━━━━━━━━━━
