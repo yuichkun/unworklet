@@ -21,6 +21,9 @@ import { compile, SAMPLES_PER_BLOCK } from "@unworklet/core";
 export { encodeWav } from "./encodeWav.ts";
 export type { EncodeWavBitDepth, EncodeWavOptions } from "./encodeWav.ts";
 
+export { decodeWav } from "./decodeWav.ts";
+export type { DecodeWavResult } from "./decodeWav.ts";
+
 /** Single main → worklet message scheduled for an offline render. */
 export type OfflineMessage = {
   name: string;
