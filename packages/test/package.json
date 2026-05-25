@@ -13,6 +13,11 @@
       "development": "./src/index.ts",
       "import": "./dist/index.mjs"
     },
+    "./extend": {
+      "types": "./src/extend.ts",
+      "development": "./src/extend.ts",
+      "import": "./dist/extend.mjs"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {
