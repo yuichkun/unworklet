@@ -10,10 +10,12 @@
   "exports": {
     ".": {
       "types": "./src/index.ts",
+      "development": "./src/index.ts",
       "import": "./dist/index.mjs"
     },
     "./simd": {
       "types": "./src/simd.ts",
+      "development": "./src/simd.ts",
       "import": "./dist/simd.mjs"
     },
     "./package.json": "./package.json"

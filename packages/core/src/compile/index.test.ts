@@ -16,10 +16,14 @@
 import { expect, test } from "vite-plus/test";
 
 import "../dsl/primitives.ts"; // side-effect = `.mul` method form を Node prototype に 登 録
+import { SAMPLES_PER_BLOCK } from "../dsl/constants.ts";
 import { audioInput, audioOutput, param } from "../dsl/declarations.ts";
 import { forSample } from "../dsl/loop.ts";
 import { defineProcessor } from "../processor.ts";
-import { compile } from "./index.ts";
+import type { CapturedGraph } from "./ast.ts";
+import { emit } from "./emit.ts";
+import { layout } from "./layout.ts";
+import { compile, makeDriver } from "./index.ts";
 
 const stereoGain = defineProcessor(() => {
   const input = audioInput({ channels: 2, name: "main" });
@@ -73,4 +77,109 @@ test("`compile` is deterministic = 同 processor で 同 schemaHash を 返 す"
   const first = await compile(stereoGain);
   const second = await compile(stereoGain);
   expect(first.schemaHash).toBe(second.schemaHash);
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// makeDriver unit tests (= driver handle 単 体 で 各 method 経 路 を 観 測)
+// ─────────────────────────────────────────────────────────────────────────
+
+const stereoGainGraph: CapturedGraph = {
+  declarations: [
+    { kind: "audioInput", name: "main", channels: 2 },
+    { kind: "audioOutput", name: "main", channels: 2 },
+    {
+      kind: "param",
+      name: "gain",
+      type: "f32",
+      default: 1,
+      min: 0,
+      max: 4,
+      automationRate: "a-rate",
+    },
+  ],
+  statements: [],
+};
+
+test("`makeDriver(...).instantiate()` の declarations = graph か ら CompileInstanceDeclaration へ narrow", async () => {
+  const lay = layout(stereoGainGraph);
+  const wasm = await emit(stereoGainGraph, lay);
+  const instance = await makeDriver(stereoGainGraph, lay, wasm).instantiate();
+  expect(instance.declarations).toEqual([
+    { kind: "audioInput", name: "main", channels: 2 },
+    { kind: "audioOutput", name: "main", channels: 2 },
+    { kind: "param", name: "gain", default: 1 },
+  ]);
+});
+
+test("`instance.writeInput(port, channel, block)` writes into `inputs[port] + channel * 512` offset", async () => {
+  const graph: CapturedGraph = {
+    declarations: [{ kind: "audioInput", name: "main", channels: 2 }],
+    statements: [],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const instance = await makeDriver(graph, lay, wasm).instantiate();
+
+  const block = new Float32Array(SAMPLES_PER_BLOCK);
+  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) block[i] = i / SAMPLES_PER_BLOCK;
+  instance.writeInput("main", 1, block);
+
+  // channel 1 base = inputs.main (= 0) + 1 * 512 = 512
+  const view = new Float32Array(instance.memory.buffer, 512, SAMPLES_PER_BLOCK);
+  expect(view).toEqual(block);
+});
+
+test("`instance.writeParam(name, block)` writes into `params[name]` offset", async () => {
+  const lay = layout(stereoGainGraph);
+  const wasm = await emit(stereoGainGraph, lay);
+  const instance = await makeDriver(stereoGainGraph, lay, wasm).instantiate();
+
+  const block = new Float32Array(SAMPLES_PER_BLOCK);
+  block.fill(0.75);
+  instance.writeParam("gain", block);
+
+  // params.gain = 2048 (= stereoGainGraph layout)
+  const view = new Float32Array(instance.memory.buffer, 2048, SAMPLES_PER_BLOCK);
+  expect(view).toEqual(block);
+});
+
+test("`instance.readOutput(port, channel, dest)` reads from `outputs[port] + channel * 512` offset", async () => {
+  const graph: CapturedGraph = {
+    declarations: [{ kind: "audioOutput", name: "main", channels: 2 }],
+    statements: [],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const instance = await makeDriver(graph, lay, wasm).instantiate();
+
+  // memory 直 接 書 込 (= outputs.main = 0、 channel 1 base = 512)
+  const memoryView = new Float32Array(instance.memory.buffer, 512, SAMPLES_PER_BLOCK);
+  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) memoryView[i] = i * 0.01;
+
+  const dest = new Float32Array(SAMPLES_PER_BLOCK);
+  instance.readOutput("main", 1, dest);
+  expect(dest).toEqual(memoryView);
+});
+
+test("`instance.process()` invokes the WASM `process` export (= memory observable side effect)", async () => {
+  // top-level literal write で process() 呼 出 後 memory に 反 映 確 認
+  const graph: CapturedGraph = {
+    declarations: [{ kind: "audioOutput", name: "main", channels: 1 }],
+    statements: [
+      {
+        kind: "audioOutWrite",
+        portName: "main",
+        channel: 0,
+        offset: { kind: "literal", type: "i32", value: 0 },
+        value: { kind: "literal", type: "f32", value: 0.42 },
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const instance = await makeDriver(graph, lay, wasm).instantiate();
+  instance.process();
+  const view = new Float32Array(instance.memory.buffer, 0, 1);
+  // f32 precision round = 0.42 は f32 で exact 表 現 不 能 = Math.fround で 期 待 値 を round
+  expect(view[0]).toBe(Math.fround(0.42));
 });

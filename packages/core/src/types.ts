@@ -400,8 +400,38 @@ export type CompileResult<C> = {
   memory: MemoryJson;
   diagnostics: DiagnosticsJson;
   schemaHash: string;
+  driver: CompileDriver;
   __compiledProcessor: C;
 };
+
+/**
+ * Driver-friendly handle exposed on `CompileResult.driver`。 internal
+ * layout / graph を 隠 蔽 し て、 `renderOffline` / Phase 6 worklet
+ * template が memory I/O + process() を 駆 動 す る ため の 公 開 surface。
+ * lazy = `instantiate()` を 呼 ぶ と 初 め て WebAssembly.compile +
+ * instantiate を 実 行 (= 1 wasm を 複 数 instance で 走 ら せ る 用 途
+ * 担 保)。
+ */
+export type CompileDriver = {
+  instantiate(): Promise<CompileInstance>;
+};
+
+export type CompileInstance = {
+  readonly memory: WebAssembly.Memory;
+  process(): void;
+  readonly declarations: ReadonlyArray<CompileInstanceDeclaration>;
+  /** Caller invariant: `blockData.length === SAMPLES_PER_BLOCK`。 */
+  writeInput(portName: string, channel: number, blockData: Float32Array): void;
+  /** Caller invariant: `blockData.length === SAMPLES_PER_BLOCK`。 */
+  writeParam(paramName: string, blockData: Float32Array): void;
+  /** Caller invariant: `dest.length === SAMPLES_PER_BLOCK`。 */
+  readOutput(portName: string, channel: number, dest: Float32Array): void;
+};
+
+export type CompileInstanceDeclaration =
+  | { readonly kind: "audioInput"; readonly name: string; readonly channels: number }
+  | { readonly kind: "audioOutput"; readonly name: string; readonly channels: number }
+  | { readonly kind: "param"; readonly name: string; readonly default: number };
 
 // ─────────────────────────────────────────────────────────────────────────
 // Main-side surface (`05-client.md` §2 / §2.6 / §8)

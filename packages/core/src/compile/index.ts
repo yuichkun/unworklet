@@ -22,8 +22,12 @@
  * 内 部 type を 復 元 し て JSON artifact emit)。
  */
 
+import { SAMPLES_PER_BLOCK } from "../dsl/constants.ts";
 import type {
   CompiledProcessor,
+  CompileDriver,
+  CompileInstance,
+  CompileInstanceDeclaration,
   CompileResult,
   DiagnosticsJson,
   GraphJson,
@@ -31,10 +35,14 @@ import type {
 } from "../types.ts";
 
 import { analyze } from "./analyze.ts";
-import type { CapturedGraph } from "./ast.ts";
+import type { AudioPortDecl, CapturedGraph, ParamDecl } from "./ast.ts";
 import { emit } from "./emit.ts";
 import { layout } from "./layout.ts";
+import type { Layout } from "./layout.ts";
 import { schemaHash } from "./schemaHash.ts";
+
+const BYTES_PER_F32 = 4;
+const CHANNEL_STRIDE_BYTES = SAMPLES_PER_BLOCK * BYTES_PER_F32;
 
 export async function compile<C>(processor: CompiledProcessor<C>): Promise<CompileResult<C>> {
   const graph = processor.graph as unknown as CapturedGraph;
@@ -48,6 +56,66 @@ export async function compile<C>(processor: CompiledProcessor<C>): Promise<Compi
     memory: memory as unknown as MemoryJson,
     diagnostics: diagnostics as unknown as DiagnosticsJson,
     schemaHash: hash,
+    driver: makeDriver(graph, memory, wasm),
     __compiledProcessor: undefined as unknown as C,
+  };
+}
+
+export function makeDriver(graph: CapturedGraph, lay: Layout, wasm: Uint8Array): CompileDriver {
+  const declarations: CompileInstanceDeclaration[] = graph.declarations.map((d) => {
+    if (d.kind === "audioInput") {
+      return { kind: "audioInput", name: d.name, channels: (d as AudioPortDecl).channels };
+    }
+    if (d.kind === "audioOutput") {
+      return { kind: "audioOutput", name: d.name, channels: (d as AudioPortDecl).channels };
+    }
+    return { kind: "param", name: d.name, default: (d as ParamDecl).default };
+  });
+
+  return {
+    async instantiate(): Promise<CompileInstance> {
+      const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+      const instance = await WebAssembly.instantiate(wasmModule);
+      const memory = instance.exports["memory"] as WebAssembly.Memory;
+      const proc = instance.exports["process"] as () => void;
+
+      const inputBase = (portName: string, channel: number): number =>
+        lay.regions.ioScratch.inputs[portName]! + channel * CHANNEL_STRIDE_BYTES;
+      const outputBase = (portName: string, channel: number): number =>
+        lay.regions.ioScratch.outputs[portName]! + channel * CHANNEL_STRIDE_BYTES;
+      const paramBase = (paramName: string): number => lay.regions.ioScratch.params[paramName]!;
+
+      return {
+        memory,
+        process: proc,
+        declarations,
+        writeInput(portName, channel, blockData) {
+          const view = new Float32Array(
+            memory.buffer,
+            inputBase(portName, channel),
+            SAMPLES_PER_BLOCK,
+          );
+          for (let s = 0; s < SAMPLES_PER_BLOCK; s++) {
+            view[s] = blockData[s]!;
+          }
+        },
+        writeParam(paramName, blockData) {
+          const view = new Float32Array(memory.buffer, paramBase(paramName), SAMPLES_PER_BLOCK);
+          for (let s = 0; s < SAMPLES_PER_BLOCK; s++) {
+            view[s] = blockData[s]!;
+          }
+        },
+        readOutput(portName, channel, dest) {
+          const view = new Float32Array(
+            memory.buffer,
+            outputBase(portName, channel),
+            SAMPLES_PER_BLOCK,
+          );
+          for (let s = 0; s < SAMPLES_PER_BLOCK; s++) {
+            dest[s] = view[s]!;
+          }
+        },
+      };
+    },
   };
 }
