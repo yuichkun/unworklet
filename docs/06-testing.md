@@ -47,7 +47,7 @@ result 型 = `RenderOfflineResult` = `{ outputs: Record<string, Float32Array[]>,
 
 ### 2.4 MIDI matchers
 
-- **`expectMidiOut(result, portName, expectedMidiEvents, opts?)`** — 特 定 `midiOutput({ name })` port 経 由 emit さ れ た MIDI event 列 を `MidiEvent` 形 (= `11-midi.md` §2.2) で 一 致 比 較。 内 部 で MIDI byte → `MidiEvent` decode。
+- **`expectMidiOut(result, portName, expectedMidiEvents, opts?)`** — 特 定 `midiOutput({ name })` port 経 由 emit さ れ た MIDI event 列 を `MidiEvent` 形 (= `11-midi.md` §2.2) で 一 致 比 較。 `result.events[i].payload` は `13-offline-render.md` §2 contract で online handler に 渡 さ れ る 値 と 同 形 = `MidiEvent` 構 造 を そ の ま ま 担 う (= wire byte は `11-midi.md` §4 で 述 べ た 通 り compiler 内 部 = author / 消 費 者 surface で は ナ シ)、 matcher は 構 造 化 payload を 直 接 比 較。
 - **`expectMidiBalance(result, portName, opts?: { hangingNotes? })`** — noteOn / noteOff pair が balance、 hanging note (= noteOn 後 noteOff な し) が `opts.hangingNotes` (default `0`) 件 ま で 許 容。 stray noteOff (= 出 現 時 点 で 対 応 (channel, note) の noteOn 在 庫 が ゼ ロ の noteOff = lifecycle 逆 転 / noteOn 1 に 対 し て noteOff 2 以 上) は always fail (= MIDI lifecycle で stray は 常 に bug = tolerance opt ナ シ)。 events を 時 系 列 走 査 す る running counter path で 「noteOff → noteOn (= 最 終 net 0)」 も 検 出。
 
 ### 2.5 State matchers
