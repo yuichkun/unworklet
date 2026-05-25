@@ -28,6 +28,7 @@ import type {
   AudioMatchOptions,
   ExpectedEvent,
   ExpectedMidiEvent,
+  GainAtFreqOptions,
   MasterOptions,
   PartialExpectedEvent,
   PeakAtSampleOptions,
@@ -98,9 +99,12 @@ declare module "vite-plus/test" {
     >;
     toHaveGainAtFreq: WhenResult<
       T,
-      (freqHz: number, expectedDb: number, tolerance: number) => void
+      (freqHz: number, expectedDb: number, tolerance: number, opts?: GainAtFreqOptions) => void
     >;
-    toHaveLatency: WhenResult<T, (expectedSamples: number, opts?: { tolerance?: number }) => void>;
+    toHaveLatency: WhenResult<
+      T,
+      (expectedSamples: number, opts?: { tolerance?: number; channel?: number }) => void
+    >;
     toHaveDcOffsetUnder: WhenResult<T, (threshold: number) => void>;
     toMatchEvents: WhenResult<T, (expectedEvents: ExpectedEvent[]) => void>;
     toHaveEventCount: WhenResult<T, (name: string, expectedCount: number) => void>;

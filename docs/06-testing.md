@@ -35,8 +35,8 @@ result 型 = `RenderOfflineResult` = `{ outputs: Record<string, Float32Array[]>,
 - **`expectMaster(result, opts?: { peakDbfs?, rmsDbfs?, noNan? })`** — master bus デフ ォ check = NaN ナ シ + peak < `opts.peakDbfs` (default `-0.1`) + RMS < `opts.rmsDbfs` (default `-14`) を 1 行 wrap。 `expectStable` ⊂ `expectMaster` 関 係 = master は stable 含 む + clip / 過 大 loudness も 検 出。
 - **`expectSilence(result, opts?: { tolerance? })`** — 全 sample が tolerance 内 で 0 (= default `0` = bit-exact silence)。 pure MIDI processor / mute / 起 動 直 後 等。
 - **`expectPeakAtSample(result, expectedAtSample, opts?: { tolerance?, port? })`** — time domain = 最 大 abs index が `expectedAtSample` ± `opts.tolerance` (= sample 単 位)。 envelope attack peak 位 置 / impulse response peak 位 置 等。
-- **`expectGainAtFreq(result, freqHz, expectedDb, tolerance)`** — freq domain = 内 部 FFT 経 由 で `freqHz` 周 辺 の dB ゲ イ ン が `expectedDb` ± `tolerance`。 EQ test の core。
-- **`expectLatency(result, expectedSamples, opts?: { tolerance? })`** — 入 力 impulse → 出 力 max abs index の delay sample 数 計 測 + assert。 lookahead processor の 設 計 latency 担 保。
+- **`expectGainAtFreq(result, freqHz, expectedDb, tolerance, opts?: { channel? })`** — freq domain = 内 部 FFT 経 由 で `freqHz` 周 辺 の dB ゲ イ ン が `expectedDb` ± `tolerance`。 EQ test の core。 単 一 ch port = ch 0 自 動、 多 ch port = `opts.channel` 必 須 (= 未 指 定 で throw、 silent blind spot 防 止)。
+- **`expectLatency(result, expectedSamples, opts?: { tolerance?, channel? })`** — 入 力 impulse → 出 力 max abs index の delay sample 数 計 測 + assert。 lookahead processor の 設 計 latency 担 保。 channel 推 論 は `expectGainAtFreq` と 同 形 (= 単 一 自 動 / 多 ch 必 須)。
 - **`expectDcOffsetUnder(result, threshold)`** — 全 sample 平 均 値 (= DC bias) 絶 対 値 が threshold 未 満。 filter / EQ の DC 振 る 舞 い 確 認。
 
 ### 2.3 Event matchers

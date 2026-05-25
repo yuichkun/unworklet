@@ -635,6 +635,28 @@ test("`expectGainAtFreq`: 非 2 ^ k 長 さ (= L = 48000) で 純 音 amplitude 
   expect(() => expectGainAtFreq(monoResult(buf), 1000, 0, 1.5)).not.toThrow();
 });
 
+test("`expectGainAtFreq`: multichannel + opts.channel 未 指 定 = throw (= silent blind spot 防 止)", () => {
+  const buf = sine({ freqHz: 1000, durationSamples: 1024, sampleRate: 48000, amplitude: 1 });
+  const result = stereoResult(buf, silence(1024));
+  expect(() => expectGainAtFreq(result, 1000, 0, 2)).toThrow(/multichannel.*opts\.channel/);
+});
+
+test("`expectGainAtFreq`: multichannel + opts.channel 指 定 = 指 定 ch 解 析 (= 壊 れ た 非 第 0 ch を 検 出)", () => {
+  // ch 0 = 純 音 0 dB、 ch 1 = silence (= -Infinity dB)。 opts.channel: 1
+  // 指 定 で ch 1 silence を 解 析 = expected 0 dB と mismatch で throw。
+  const buf = sine({ freqHz: 1000, durationSamples: 1024, sampleRate: 48000, amplitude: 1 });
+  const result = stereoResult(buf, silence(1024));
+  expect(() => expectGainAtFreq(result, 1000, 0, 2, { channel: 0 })).not.toThrow();
+  expect(() => expectGainAtFreq(result, 1000, 0, 2, { channel: 1 })).toThrow(/gain/);
+});
+
+test("`expectGainAtFreq`: opts.channel 範 囲 外 = throw", () => {
+  const buf = sine({ freqHz: 1000, durationSamples: 1024, sampleRate: 48000, amplitude: 1 });
+  expect(() => expectGainAtFreq(monoResult(buf), 1000, 0, 2, { channel: 5 })).toThrow(
+    /out of range/,
+  );
+});
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━ expectLatency ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 test("`expectLatency`: impulse at 0 → latency 0 = pass", () => {
@@ -663,6 +685,23 @@ test("`expectLatency`: multi-port で throw", () => {
     sampleRate: 48000,
   };
   expect(() => expectLatency(result, 0)).toThrow(/single-port/);
+});
+
+test("`expectLatency`: multichannel + opts.channel 未 指 定 = throw (= silent blind spot 防 止)", () => {
+  const result = stereoResult(impulse(8, { atSample: 0 }), impulse(8, { atSample: 5 }));
+  expect(() => expectLatency(result, 0)).toThrow(/multichannel.*opts\.channel/);
+});
+
+test("`expectLatency`: multichannel + opts.channel 指 定 = 指 定 ch 解 析 (= 壊 れ た 非 第 0 ch を 検 出)", () => {
+  // ch 0 = impulse @ 0、 ch 1 = impulse @ 5。 latency 0 期 待 で channel: 0
+  // pass / channel: 1 fail。
+  const result = stereoResult(impulse(8, { atSample: 0 }), impulse(8, { atSample: 5 }));
+  expect(() => expectLatency(result, 0, { channel: 0 })).not.toThrow();
+  expect(() => expectLatency(result, 0, { channel: 1 })).toThrow(/delay/);
+});
+
+test("`expectLatency`: opts.channel 範 囲 外 = throw", () => {
+  expect(() => expectLatency(monoResult(impulse(8)), 0, { channel: 5 })).toThrow(/out of range/);
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━ expectEventCount ━━━━━━━━━━━━━━━━━━━━━━━━━━━

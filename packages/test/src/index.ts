@@ -609,22 +609,34 @@ const fftInPlace = (real: Float32Array, imag: Float32Array): void => {
   }
 };
 
+export type GainAtFreqOptions = {
+  /**
+   * Multichannel 時 に 解 析 す る channel index (= 単 一 ch port は ignored)。
+   * `result.outputs[port]` が ch 2 以 上 で `channel` 未 指 定 = blind spot
+   * 防 止 で throw (= consumer に explicit 選 択 を 強 制)、 単 一 ch port は
+   * default `0` で 自 動 選 択。 範 囲 外 = throw。
+   */
+  channel?: number;
+};
+
 /**
  * Freq domain = 内 部 FFT 経 由 で `freqHz` 周 辺 の dB ゲ イ ン が
  * `expectedDb` ± `tolerance`。 EQ test の core (`docs/06-testing.md` §2.2)。
- * 単 一 port 推 論 (= 多 port で throw)、 第 0 channel を 使 う。 FFT サ イ ズ
- * = 入 力 を 次 の 2 ^ k へ zero-pad、 freqHz → bin = round(freqHz × N /
- * sampleRate)、 magnitude = 2 × sqrt(re² + im²) / L (= 元 信 号 長
+ * 単 一 port 推 論 (= 多 port で throw)、 channel は 単 一 ch = ch 0、 多
+ * ch = `opts.channel` 必 須 (= 未 指 定 で throw、 silent blind spot 防 止)。
+ * FFT サ イ ズ = 入 力 を 次 の 2 ^ k へ zero-pad、 freqHz → bin = round(freqHz
+ * × N / sampleRate)、 magnitude = 2 × sqrt(re² + im²) / L (= 元 信 号 長
  * `ch.length` で 正 規 化、 zero-pad 部 分 は DFT 和 に 0 寄 与 = 振 幅 は L
  * に だ け 比 例)、 dB = 20 × log10(magnitude)。
  *
- * chain 形 = `expect(result).toHaveGainAtFreq(freqHz, expectedDb, tolerance)` (= `@unworklet/test/extend`)。
+ * chain 形 = `expect(result).toHaveGainAtFreq(freqHz, expectedDb, tolerance, opts?)` (= `@unworklet/test/extend`)。
  */
 export function expectGainAtFreq(
   result: RenderOfflineResult,
   freqHz: number,
   expectedDb: number,
   tolerance: number,
+  opts: GainAtFreqOptions = {},
 ): void {
   // NaN を FFT に 通 す と magnitude / db = NaN、 `Math.abs(NaN - expectedDb)
   // > tolerance = false` で 偽 pass す る 経 路 を 塞 ぐ。
@@ -636,9 +648,25 @@ export function expectGainAtFreq(
     );
   }
   const portName = ports[0]!;
-  const ch = result.outputs[portName]![0];
-  if (!ch || ch.length === 0) {
-    throw new Error(`expectGainAtFreq: port '${portName}' channel 0 is empty`);
+  const channels = result.outputs[portName]!;
+  let channelIdx: number;
+  if (opts.channel !== undefined) {
+    if (opts.channel < 0 || opts.channel >= channels.length) {
+      throw new Error(
+        `expectGainAtFreq: opts.channel ${opts.channel} out of range for port '${portName}' (channels=${channels.length})`,
+      );
+    }
+    channelIdx = opts.channel;
+  } else if (channels.length === 1) {
+    channelIdx = 0;
+  } else {
+    throw new Error(
+      `expectGainAtFreq: multichannel port '${portName}' (channels=${channels.length}) requires opts.channel; explicit choice prevents silent blind spot on non-first channels`,
+    );
+  }
+  const ch = channels[channelIdx]!;
+  if (ch.length === 0) {
+    throw new Error(`expectGainAtFreq: port '${portName}' channel ${channelIdx} is empty`);
   }
   const n = nextPow2(ch.length);
   const real = new Float32Array(n);
@@ -665,15 +693,16 @@ export function expectGainAtFreq(
   const db = mag > 0 ? 20 * Math.log10(mag) : Number.NEGATIVE_INFINITY;
   if (Math.abs(db - expectedDb) > tolerance) {
     throw new Error(
-      `expectGainAtFreq: port '${portName}' bin ${bin} (= ${freqHz} Hz) gain ${db.toFixed(3)} dB not within ±${tolerance} of expected ${expectedDb} dB`,
+      `expectGainAtFreq: port '${portName}' channel ${channelIdx} bin ${bin} (= ${freqHz} Hz) gain ${db.toFixed(3)} dB not within ±${tolerance} of expected ${expectedDb} dB`,
     );
   }
 }
 
 /**
  * 入 力 impulse → 出 力 max abs index の delay sample 数 計 測 + assert。
- * lookahead processor の 設 計 latency 担 保。 単 一 port 推 論 + 第 0
- * channel 使 用。 consumer は impulse 入 力 で renderOffline 走 ら せ た 結 果
+ * lookahead processor の 設 計 latency 担 保。 単 一 port 推 論、 channel
+ * は 単 一 ch = ch 0、 多 ch = `opts.channel` 必 須 (= 未 指 定 で throw、
+ * silent blind spot 防 止)。 consumer は impulse 入 力 で renderOffline 走 ら せ た 結 果
  * を 渡 す。
  *
  * chain 形 = `expect(result).toHaveLatency(expectedSamples, opts?)` (= `@unworklet/test/extend`)。
@@ -681,7 +710,7 @@ export function expectGainAtFreq(
 export function expectLatency(
   result: RenderOfflineResult,
   expectedSamples: number,
-  opts: { tolerance?: number } = {},
+  opts: { tolerance?: number; channel?: number } = {},
 ): void {
   // NaN を 含 む と max abs 比 較 が 全 て false に な り maxIdx が 初 期
   // 値 (= -1) の ま ま で 偽 pass す る 経 路 を 塞 ぐ。
@@ -692,10 +721,23 @@ export function expectLatency(
     throw new Error(`expectLatency: single-port result expected; got ports=[${ports.join(", ")}]`);
   }
   const portName = ports[0]!;
-  const ch = result.outputs[portName]![0];
-  if (!ch) {
-    throw new Error(`expectLatency: port '${portName}' channel 0 missing`);
+  const channels = result.outputs[portName]!;
+  let channelIdx: number;
+  if (opts.channel !== undefined) {
+    if (opts.channel < 0 || opts.channel >= channels.length) {
+      throw new Error(
+        `expectLatency: opts.channel ${opts.channel} out of range for port '${portName}' (channels=${channels.length})`,
+      );
+    }
+    channelIdx = opts.channel;
+  } else if (channels.length === 1) {
+    channelIdx = 0;
+  } else {
+    throw new Error(
+      `expectLatency: multichannel port '${portName}' (channels=${channels.length}) requires opts.channel; explicit choice prevents silent blind spot on non-first channels`,
+    );
   }
+  const ch = channels[channelIdx]!;
   let maxAbs = -1;
   let maxIdx = -1;
   for (let s = 0; s < ch.length; s++) {
@@ -707,7 +749,7 @@ export function expectLatency(
   }
   if (Math.abs(maxIdx - expectedSamples) > tolerance) {
     throw new Error(
-      `expectLatency: detected delay ${maxIdx} sample (= max abs ${maxAbs}) not within ±${tolerance} of expected ${expectedSamples}`,
+      `expectLatency: port '${portName}' channel ${channelIdx} detected delay ${maxIdx} sample (= max abs ${maxAbs}) not within ±${tolerance} of expected ${expectedSamples}`,
     );
   }
 }
