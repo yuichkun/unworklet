@@ -32,7 +32,7 @@ result 型 = `RenderOfflineResult` = `{ outputs: Record<string, Float32Array[]>,
 - **`expectPeakUnder(result, dbfs)`** — peak abs を 20·log10 で dBFS 換 算、 threshold 以 上 で throw。
 - **`expectRmsUnder(result, dbfs)`** — 全 channel 平 方 和 平 均 平 方 根 を dBFS 換 算、 threshold 以 上 で throw。
 - **`expectStable(result)`** — NaN ナ シ + 全 sample finite (= 発 散 ナ シ) を 1 行 で wrap。 IIR feedback / 長 時 間 render の 安 定 性 sanity check。 audio level は 問 わ ず (= clip し て て も pass)。
-- **`expectMaster(result, opts?: { peakDbfs?, rmsDbfs?, noNan? })`** — master bus デフ ォ check = NaN ナ シ + peak < `opts.peakDbfs` (default `-0.1`) + RMS < `opts.rmsDbfs` (default `-14`) を 1 行 wrap。 `expectStable` ⊂ `expectMaster` 関 係 = master は stable 含 む + clip / 過 大 loudness も 検 出。
+- **`expectMaster(result, opts?: { peakDbfs?, rmsDbfs? })`** — master bus デフ ォ check = NaN ナ シ + peak < `opts.peakDbfs` (default `-0.1`) + RMS < `opts.rmsDbfs` (default `-14`) を 1 行 wrap。 `expectStable` ⊂ `expectMaster` 関 係 = master は stable 含 む + clip / 過 大 loudness も 検 出。 NaN check は always on (= 全 numerical matcher で uniform = escape hatch ナ シ)。
 - **`expectSilence(result, opts?: { tolerance? })`** — 全 sample が tolerance 内 で 0 (= default `0` = bit-exact silence)。 pure MIDI processor / mute / 起 動 直 後 等。
 - **`expectPeakAtSample(result, expectedAtSample, opts?: { tolerance?, port? })`** — time domain = 最 大 abs index が `expectedAtSample` ± `opts.tolerance` (= sample 単 位)。 envelope attack peak 位 置 / impulse response peak 位 置 等。
 - **`expectGainAtFreq(result, freqHz, expectedDb, tolerance, opts?: { channel? })`** — freq domain = 内 部 FFT 経 由 で `freqHz` 周 辺 の dB ゲ イ ン が `expectedDb` ± `tolerance`。 EQ test の core。 単 一 ch port = ch 0 自 動、 多 ch port = `opts.channel` 必 須 (= 未 指 定 で throw、 silent blind spot 防 止)。

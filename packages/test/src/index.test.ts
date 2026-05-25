@@ -507,20 +507,13 @@ test("`expectMaster`: NaN 含 む = default で throw", () => {
   expect(() => expectMaster(monoResult(ch))).toThrow(/NaN/);
 });
 
-test("`expectMaster`: opts.noNan: false で NaN check skip", () => {
+test("`expectMaster`: NaN check は always on (= opts で 無 効 化 で き な い)", () => {
+  // underlying expectPeakUnder / expectRmsUnder が unconditional NaN guard
+  // で、 master 側 で 「NaN OK」 escape hatch を 持 つ と dead option に な
+  // る。 noNan opt は 削 除 = 常 に fail に zip。
   const ch = filled(8, 0.1);
   ch[3] = NaN;
-  // NaN は skip + peak / RMS は finite sample 由 来 だ が NaN sample が peak
-  // 計 算 で NaN を 生 む の で = throw (= "peak NaN") に な る path、 こ こ で は
-  // NaN sample が peak 計 算 で hit し な い short array で pass 担 保 用 に
-  // NaN を 含 ま な い test で 代 替 (= opts.noNan false branch を hit)。
-  expect(() =>
-    expectMaster(monoResult(filled(8, 0.1)), {
-      noNan: false,
-      peakDbfs: 0,
-      rmsDbfs: 0,
-    }),
-  ).not.toThrow();
+  expect(() => expectMaster(monoResult(ch), { peakDbfs: 0, rmsDbfs: 0 })).toThrow(/NaN/);
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━ expectSilence ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

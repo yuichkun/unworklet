@@ -543,22 +543,21 @@ export function expectStable(result: RenderOfflineResult): void {
 export type MasterOptions = {
   peakDbfs?: number;
   rmsDbfs?: number;
-  noNan?: boolean;
 };
 
 /**
  * Master bus デフ ォ check = NaN ナ シ + peak < `opts.peakDbfs` (default
  * `-0.1`) + RMS < `opts.rmsDbfs` (default `-14`) を 1 行 wrap。 `expectStable`
  * ⊂ `expectMaster` (= master は stable 含 む + clip / 過 大 loudness 検 出)。
- * `opts.noNan` (default `true`) を `false` で NaN check 無 効 化 可。
+ * NaN check は always on (= 全 numerical matcher で uniform に 自 衛、
+ * underlying `expectPeakUnder` / `expectRmsUnder` も unconditional check)。
  *
  * chain 形 = `expect(result).toBeMasterReady(opts?)` (= `@unworklet/test/extend`)。
  */
 export function expectMaster(result: RenderOfflineResult, opts: MasterOptions = {}): void {
-  const noNan = opts.noNan ?? true;
   const peakDbfs = opts.peakDbfs ?? -0.1;
   const rmsDbfs = opts.rmsDbfs ?? -14;
-  if (noNan) expectNoNaN(result);
+  expectNoNaN(result);
   expectPeakUnder(result, peakDbfs);
   expectRmsUnder(result, rmsDbfs);
 }
