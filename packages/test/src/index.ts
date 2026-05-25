@@ -595,8 +595,9 @@ const fftInPlace = (real: Float32Array, imag: Float32Array): void => {
  * `expectedDb` ± `tolerance`。 EQ test の core (`docs/06-testing.md` §2.2)。
  * 単 一 port 推 論 (= 多 port で throw)、 第 0 channel を 使 う。 FFT サ イ ズ
  * = 入 力 を 次 の 2 ^ k へ zero-pad、 freqHz → bin = round(freqHz × N /
- * sampleRate)、 magnitude = 2 × sqrt(re² + im²) / N (= 純 音 amplitude
- * 直 接、 純 音 1 = 0 dBFS path)、 dB = 20 × log10(magnitude)。
+ * sampleRate)、 magnitude = 2 × sqrt(re² + im²) / L (= 元 信 号 長
+ * `ch.length` で 正 規 化、 zero-pad 部 分 は DFT 和 に 0 寄 与 = 振 幅 は L
+ * に だ け 比 例)、 dB = 20 × log10(magnitude)。
  *
  * chain 形 = `expect(result).toHaveGainAtFreq(freqHz, expectedDb, tolerance)` (= `@unworklet/test/extend`)。
  */
@@ -636,7 +637,7 @@ export function expectGainAtFreq(
   for (let k = startK; k <= endK; k++) {
     const reK = real[k]!;
     const imK = imag[k]!;
-    const m = (2 * Math.sqrt(reK * reK + imK * imK)) / n;
+    const m = (2 * Math.sqrt(reK * reK + imK * imK)) / ch.length;
     if (m > mag) mag = m;
   }
   const db = mag > 0 ? 20 * Math.log10(mag) : Number.NEGATIVE_INFINITY;

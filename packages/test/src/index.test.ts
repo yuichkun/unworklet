@@ -625,6 +625,16 @@ test("`expectGainAtFreq`: Nyquist 越 え freq で throw", () => {
   expect(() => expectGainAtFreq(monoResult(silence(1024)), 30000, 0, 1)).toThrow(/out of range/);
 });
 
+test("`expectGainAtFreq`: 非 2 ^ k 長 さ (= L = 48000) で 純 音 amplitude 1 = 0 dB ± 1.5 dB regression", () => {
+  // L = 48000 sr = 48000 f = 1000 で nextPow2 = 65536 zero-pad、 bin 1365 が
+  // 1000 Hz 周 辺 (= bin freq = 999.756 Hz = -0.244 Hz offset)。 元 信 号 長
+  // `ch.length` で 正 規 化 す る path = leakage 込 み で -0.87 dB (= sinc
+  // factor 0.905)、 zero-pad 後 N で 正 規 化 す る path = 追 加 で L / N =
+  // 0.732 倍 過 小 = -3.57 dB で 1.5 dB tolerance fail。
+  const buf = sine({ freqHz: 1000, durationSamples: 48000, sampleRate: 48000, amplitude: 1 });
+  expect(() => expectGainAtFreq(monoResult(buf), 1000, 0, 1.5)).not.toThrow();
+});
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━ expectLatency ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 test("`expectLatency`: impulse at 0 → latency 0 = pass", () => {
