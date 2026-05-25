@@ -539,37 +539,103 @@ test("`expectStateValue` stub throws", () => {
   expect(() => expectStateValue(dummyResult, "slot", 0)).toThrow(/not implemented/);
 });
 
-// signal utility 7 件
-test("`sine` stub throws", () => {
-  expect(() => sine({ freqHz: 440, durationSamples: 128, sampleRate: 48000 })).toThrow(
-    /not implemented/,
-  );
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━ signal utility 7 件 ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+test("`sine`: 440 Hz @ 48k で 第 1 sample = 0 + 4 分 周 期 sample で 1", () => {
+  // 周 期 sample 数 = 48000 / 440 ≈ 109.09、 4 分 周 期 ≈ 27.27 sample
+  const buf = sine({ freqHz: 440, durationSamples: 128, sampleRate: 48000 });
+  expect(buf.length).toBe(128);
+  expect(buf[0]).toBeCloseTo(0, 6);
+  // sample 27 周 辺 で sin が 1 に 近 く な る
+  expect(buf[27]).toBeCloseTo(1, 1);
 });
 
-test("`silence` stub throws", () => {
-  expect(() => silence(128)).toThrow(/not implemented/);
+test("`sine`: amplitude / phase 反 映", () => {
+  const buf = sine({
+    freqHz: 1,
+    durationSamples: 4,
+    sampleRate: 4,
+    amplitude: 0.5,
+    phase: Math.PI / 2,
+  });
+  // phase = π/2 で sample 0 = sin(π/2) = 1、 amplitude 0.5 で 0.5
+  expect(buf[0]).toBeCloseTo(0.5, 6);
 });
 
-test("`impulse` stub throws", () => {
-  expect(() => impulse(128)).toThrow(/not implemented/);
+test("`silence`: 全 0", () => {
+  const buf = silence(8);
+  expect(buf.length).toBe(8);
+  expect([...buf]).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
 });
 
-test("`sineSweep` stub throws", () => {
-  expect(() =>
-    sineSweep({ startHz: 20, endHz: 20000, durationSamples: 128, sampleRate: 48000 }),
-  ).toThrow(/not implemented/);
+test("`impulse`: default = 第 0 sample = 1、 残 0", () => {
+  const buf = impulse(4);
+  expect([...buf]).toEqual([1, 0, 0, 0]);
 });
 
-test("`whiteNoise` stub throws", () => {
-  expect(() => whiteNoise({ durationSamples: 128 })).toThrow(/not implemented/);
+test("`impulse`: opts.atSample で 位 置 上 書 き", () => {
+  const buf = impulse(4, { atSample: 2 });
+  expect([...buf]).toEqual([0, 0, 1, 0]);
 });
 
-test("`dc` stub throws", () => {
-  expect(() => dc(128)).toThrow(/not implemented/);
+test("`impulse`: opts.atSample 範 囲 外 = 全 0", () => {
+  const buf = impulse(4, { atSample: 100 });
+  expect([...buf]).toEqual([0, 0, 0, 0]);
 });
 
-test("`ramp` stub throws", () => {
-  expect(() => ramp({ durationSamples: 128, from: 0, to: 1 })).toThrow(/not implemented/);
+test("`sineSweep`: log sweep deterministic", () => {
+  const buf = sineSweep({ startHz: 100, endHz: 1000, durationSamples: 64, sampleRate: 48000 });
+  expect(buf.length).toBe(64);
+  // 第 0 sample = 0 (phase = 2π * 100 / 48000)
+  expect(Math.abs(buf[0]!)).toBeCloseTo((2 * Math.PI * 100) / 48000, 4);
+});
+
+test("`sineSweep`: lin type", () => {
+  const buf = sineSweep({
+    startHz: 100,
+    endHz: 200,
+    durationSamples: 16,
+    sampleRate: 48000,
+    type: "lin",
+  });
+  expect(buf.length).toBe(16);
+});
+
+test("`whiteNoise`: deterministic seed = 同 buffer", () => {
+  const a = whiteNoise({ durationSamples: 32, seed: 42 });
+  const b = whiteNoise({ durationSamples: 32, seed: 42 });
+  expect([...a]).toEqual([...b]);
+});
+
+test("`whiteNoise`: 違 う seed = 違 う buffer", () => {
+  const a = whiteNoise({ durationSamples: 32, seed: 1 });
+  const b = whiteNoise({ durationSamples: 32, seed: 2 });
+  expect([...a]).not.toEqual([...b]);
+});
+
+test("`whiteNoise`: amplitude 反 映 = 全 sample |s| <= amplitude", () => {
+  const buf = whiteNoise({ durationSamples: 1024, amplitude: 0.5 });
+  for (const s of buf) expect(Math.abs(s)).toBeLessThanOrEqual(0.5);
+});
+
+test("`dc`: default value = 1", () => {
+  const buf = dc(4);
+  expect([...buf]).toEqual([1, 1, 1, 1]);
+});
+
+test("`dc`: 任 意 value", () => {
+  const buf = dc(3, 0.25);
+  expect([...buf]).toEqual([0.25, 0.25, 0.25]);
+});
+
+test("`ramp`: 0..1 / 5 sample = [0, 0.25, 0.5, 0.75, 1]", () => {
+  const buf = ramp({ durationSamples: 5, from: 0, to: 1 });
+  expect([...buf]).toEqual([0, 0.25, 0.5, 0.75, 1]);
+});
+
+test("`ramp`: 単 一 sample = from", () => {
+  const buf = ramp({ durationSamples: 1, from: 0.5, to: 1 });
+  expect(buf[0]).toBe(0.5);
 });
 
 // midi utility 10 件
@@ -613,29 +679,47 @@ test("`midi.sequence` stub throws", () => {
   expect(() => midi.sequence("midiIn", [])).toThrow(/not implemented/);
 });
 
-// sample/time utility 6 件
-test("`samplesToMs` stub throws", () => {
-  expect(() => samplesToMs(480, 48000)).toThrow(/not implemented/);
+// ━━━━━━━━━━━━━━━━━━━━━━━ sample / time utility 6 件 ━━━━━━━━━━━━━━━━━━━━━━
+
+test("`samplesToMs`: 480 sample @ 48k = 10 ms", () => {
+  expect(samplesToMs(480, 48000)).toBe(10);
 });
 
-test("`msToSamples` stub throws", () => {
-  expect(() => msToSamples(10, 48000)).toThrow(/not implemented/);
+test("`msToSamples`: 10 ms @ 48k = 480 sample", () => {
+  expect(msToSamples(10, 48000)).toBe(480);
 });
 
-test("`samplesToSec` stub throws", () => {
-  expect(() => samplesToSec(48000, 48000)).toThrow(/not implemented/);
+test("`samplesToSec`: 48000 sample @ 48k = 1 sec", () => {
+  expect(samplesToSec(48000, 48000)).toBe(1);
 });
 
-test("`secToSamples` stub throws", () => {
-  expect(() => secToSamples(1, 48000)).toThrow(/not implemented/);
+test("`secToSamples`: 1 sec @ 48k = 48000 sample", () => {
+  expect(secToSamples(1, 48000)).toBe(48000);
 });
 
-test("`bpmToSamples` stub throws", () => {
-  expect(() => bpmToSamples({ bpm: 120, division: "1/16", sampleRate: 48000 })).toThrow(
-    /not implemented/,
-  );
+test("`bpmToSamples`: 120 BPM 1/4 @ 48k = 24000 sample (= half sec)", () => {
+  // 120 BPM = 0.5 sec / beat、 1/4 = 1 beat = 0.5 sec = 24000 sample @ 48k
+  expect(bpmToSamples({ bpm: 120, division: "1/4", sampleRate: 48000 })).toBe(24000);
 });
 
-test("`bpmToMs` stub throws", () => {
-  expect(() => bpmToMs({ bpm: 120, division: "1/16" })).toThrow(/not implemented/);
+test("`bpmToSamples`: 120 BPM 1/16 @ 48k = 6000 sample (= 1/16 beat)", () => {
+  expect(bpmToSamples({ bpm: 120, division: "1/16", sampleRate: 48000 })).toBe(6000);
+});
+
+test("`bpmToMs`: 120 BPM 1/4 = 500 ms", () => {
+  expect(bpmToMs({ bpm: 120, division: "1/4" })).toBe(500);
+});
+
+test("`bpmToMs`: 60 BPM 1/1 = 4000 ms (= 4 beat = 1 whole)", () => {
+  expect(bpmToMs({ bpm: 60, division: "1/1" })).toBe(4000);
+});
+
+test("`bpmToMs`: 各 division factor = (1/1: 4, 1/2: 2, 1/4: 1, 1/8: 0.5, 1/16: 0.25, 1/32: 0.125)", () => {
+  // 60 BPM × 1000 ms / beat = 1000 ms/beat、 各 division で の ms
+  expect(bpmToMs({ bpm: 60, division: "1/1" })).toBe(4000);
+  expect(bpmToMs({ bpm: 60, division: "1/2" })).toBe(2000);
+  expect(bpmToMs({ bpm: 60, division: "1/4" })).toBe(1000);
+  expect(bpmToMs({ bpm: 60, division: "1/8" })).toBe(500);
+  expect(bpmToMs({ bpm: 60, division: "1/16" })).toBe(250);
+  expect(bpmToMs({ bpm: 60, division: "1/32" })).toBe(125);
 });

@@ -518,7 +518,7 @@ export function expectStateValue(
   notImplemented();
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━ stub: signal utility (= 7 件) ━━━━━━━━━━━━━━━━━━━━
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━ signal utility (= 7 件) ━━━━━━━━━━━━━━━━━━━━━━━
 
 export type SineOpts = {
   freqHz: number;
@@ -529,18 +529,28 @@ export type SineOpts = {
 };
 
 /** 純 音 (= `amplitude` default `1`、 `phase` default `0` rad)。 */
-export function sine(_opts: SineOpts): Float32Array {
-  return notImplemented();
+export function sine(opts: SineOpts): Float32Array {
+  const amplitude = opts.amplitude ?? 1;
+  const phase = opts.phase ?? 0;
+  const omega = (2 * Math.PI * opts.freqHz) / opts.sampleRate;
+  const data = new Float32Array(opts.durationSamples);
+  for (let i = 0; i < opts.durationSamples; i++) {
+    data[i] = amplitude * Math.sin(omega * i + phase);
+  }
+  return data;
 }
 
 /** 全 0 の `Float32Array`。 */
-export function silence(_durationSamples: number): Float32Array {
-  return notImplemented();
+export function silence(durationSamples: number): Float32Array {
+  return new Float32Array(durationSamples);
 }
 
 /** 単 一 sample 1.0、 残 り 0 (= impulse response 入 力)。 `atSample` default `0`。 */
-export function impulse(_durationSamples: number, _opts?: { atSample?: number }): Float32Array {
-  return notImplemented();
+export function impulse(durationSamples: number, opts: { atSample?: number } = {}): Float32Array {
+  const data = new Float32Array(durationSamples);
+  const atSample = opts.atSample ?? 0;
+  if (atSample >= 0 && atSample < durationSamples) data[atSample] = 1;
+  return data;
 }
 
 export type SineSweepOpts = {
@@ -553,8 +563,22 @@ export type SineSweepOpts = {
 };
 
 /** 周 波 数 sweep (= EQ test 入 力)。 `type` default `'log'`。 */
-export function sineSweep(_opts: SineSweepOpts): Float32Array {
-  return notImplemented();
+export function sineSweep(opts: SineSweepOpts): Float32Array {
+  const amplitude = opts.amplitude ?? 1;
+  const type = opts.type ?? "log";
+  const dt = 1 / opts.sampleRate;
+  const data = new Float32Array(opts.durationSamples);
+  let phase = 0;
+  for (let i = 0; i < opts.durationSamples; i++) {
+    const t = opts.durationSamples > 1 ? i / (opts.durationSamples - 1) : 0;
+    const freq =
+      type === "lin"
+        ? opts.startHz + (opts.endHz - opts.startHz) * t
+        : opts.startHz * (opts.endHz / opts.startHz) ** t;
+    phase += 2 * Math.PI * freq * dt;
+    data[i] = amplitude * Math.sin(phase);
+  }
+  return data;
 }
 
 export type WhiteNoiseOpts = {
@@ -563,14 +587,26 @@ export type WhiteNoiseOpts = {
   seed?: number;
 };
 
-/** 決 定 的 seed 経 由 white noise = test 再 現 性 担 保。 */
-export function whiteNoise(_opts: WhiteNoiseOpts): Float32Array {
-  return notImplemented();
+/** 決 定 的 seed 経 由 white noise = test 再 現 性 担 保 (= xorshift32)。 */
+export function whiteNoise(opts: WhiteNoiseOpts): Float32Array {
+  const amplitude = opts.amplitude ?? 1;
+  let s = (opts.seed ?? 1) | 0;
+  if (s === 0) s = 1;
+  const data = new Float32Array(opts.durationSamples);
+  for (let i = 0; i < opts.durationSamples; i++) {
+    s ^= s << 13;
+    s ^= s >>> 17;
+    s ^= s << 5;
+    data[i] = amplitude * (((s >>> 0) / 0xffffffff) * 2 - 1);
+  }
+  return data;
 }
 
 /** 定 数 信 号 (= DC gain test 等)。 `value` default `1`。 */
-export function dc(_durationSamples: number, _value?: number): Float32Array {
-  return notImplemented();
+export function dc(durationSamples: number, value = 1): Float32Array {
+  const data = new Float32Array(durationSamples);
+  data.fill(value);
+  return data;
 }
 
 export type RampOpts = {
@@ -580,8 +616,14 @@ export type RampOpts = {
 };
 
 /** 線 形 ramp (= gain ramp / param automation 模 倣)。 */
-export function ramp(_opts: RampOpts): Float32Array {
-  return notImplemented();
+export function ramp(opts: RampOpts): Float32Array {
+  const data = new Float32Array(opts.durationSamples);
+  const denom = Math.max(1, opts.durationSamples - 1);
+  const step = (opts.to - opts.from) / denom;
+  for (let i = 0; i < opts.durationSamples; i++) {
+    data[i] = opts.from + step * i;
+  }
+  return data;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━ stub: midi utility (= 10 件) ━━━━━━━━━━━━━━━━━━━━━━
@@ -634,41 +676,50 @@ export const midi = {
   },
 };
 
-// ━━━━━━━━━━━━━━━━━━ stub: sample / time utility (= 6 件) ━━━━━━━━━━━━━━━━━
+// ━━━━━━━━━━━━━━━━━━━━━━ sample / time utility (= 6 件) ━━━━━━━━━━━━━━━━━━━━
 
 /** `Division` literal union (= v1.0.0 core 6 件)。 */
 export type Division = "1/1" | "1/2" | "1/4" | "1/8" | "1/16" | "1/32";
 
+const DIVISION_FACTOR: Record<Division, number> = {
+  "1/1": 4,
+  "1/2": 2,
+  "1/4": 1,
+  "1/8": 0.5,
+  "1/16": 0.25,
+  "1/32": 0.125,
+};
+
 /** sample 数 → ms。 */
-export function samplesToMs(_samples: number, _sampleRate: number): number {
-  return notImplemented();
+export function samplesToMs(samples: number, sampleRate: number): number {
+  return (samples / sampleRate) * 1000;
 }
 
 /** ms → sample 数。 */
-export function msToSamples(_ms: number, _sampleRate: number): number {
-  return notImplemented();
+export function msToSamples(ms: number, sampleRate: number): number {
+  return (ms * sampleRate) / 1000;
 }
 
 /** sample 数 → sec。 */
-export function samplesToSec(_samples: number, _sampleRate: number): number {
-  return notImplemented();
+export function samplesToSec(samples: number, sampleRate: number): number {
+  return samples / sampleRate;
 }
 
 /** sec → sample 数。 */
-export function secToSamples(_sec: number, _sampleRate: number): number {
-  return notImplemented();
+export function secToSamples(sec: number, sampleRate: number): number {
+  return sec * sampleRate;
 }
 
-/** 拍 → sample 数。 */
-export function bpmToSamples(_opts: {
+/** 拍 → sample 数 (= `(60 / bpm) * factor(division) * sampleRate`、 factor: 1/4 = 1 = 1 beat at given BPM)。 */
+export function bpmToSamples(opts: {
   bpm: number;
   division: Division;
   sampleRate: number;
 }): number {
-  return notImplemented();
+  return (60 / opts.bpm) * DIVISION_FACTOR[opts.division] * opts.sampleRate;
 }
 
-/** 拍 → ms。 */
-export function bpmToMs(_opts: { bpm: number; division: Division }): number {
-  return notImplemented();
+/** 拍 → ms (= `(60 / bpm) * factor(division) * 1000`)。 */
+export function bpmToMs(opts: { bpm: number; division: Division }): number {
+  return (60 / opts.bpm) * DIVISION_FACTOR[opts.division] * 1000;
 }
