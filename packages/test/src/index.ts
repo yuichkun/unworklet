@@ -642,6 +642,14 @@ export function expectPeakAtSample(
       }
     }
   }
+  // 全 0 buffer = maxAbs 0 で maxIdx 0 が 立 つ = `expectedAtSample === 0`
+  // で 偽 pass さ せ な い (= mute / processor が 全 く 反 応 し な か っ
+  // た regression を 拾 う た め、 silent buffer は 明 確 に fail)。
+  if (maxAbs <= 0) {
+    throw new Error(
+      `expectPeakAtSample: port '${portName}' has no detectable response (max abs ${maxAbs}) = silent buffer = peak index 推 論 不 能`,
+    );
+  }
   if (Math.abs(maxIdx - expectedAtSample) > tolerance) {
     throw new Error(
       `expectPeakAtSample: port '${portName}' peak index ${maxIdx} (= max abs ${maxAbs}) not within ±${tolerance} of expected ${expectedAtSample}`,
@@ -840,6 +848,14 @@ export function expectLatency(
       maxAbs = abs;
       maxIdx = s;
     }
+  }
+  // 全 0 buffer = maxAbs 0 で maxIdx 0 が 立 つ = `expectedSamples === 0`
+  // で 偽 pass さ せ な い (= lookahead processor が 反 応 し な か っ た
+  // regression を 拾 う、 silent buffer は 明 確 に fail)。
+  if (maxAbs <= 0) {
+    throw new Error(
+      `expectLatency: port '${portName}' channel ${channelIdx} has no detectable response (max abs ${maxAbs}) = silent buffer = delay 推 論 不 能`,
+    );
   }
   if (Math.abs(maxIdx - expectedSamples) > tolerance) {
     throw new Error(

@@ -574,6 +574,12 @@ test("`expectPeakAtSample`: opts.port 不 在 = throw", () => {
   );
 });
 
+test("`expectPeakAtSample`: silent buffer + expectedAtSample 0 = throw (= mute regression を 偽 pass さ せ な い)", () => {
+  // 全 0 buffer で maxAbs 初 期 = -1 + abs 0 > -1 で maxIdx 0 が 立 ち、
+  // expectedAtSample 0 で 偽 pass す る path を guard で 塞 ぐ。
+  expect(() => expectPeakAtSample(monoResult(filled(8, 0)), 0)).toThrow(/no detectable response/);
+});
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━ expectDcOffsetUnder ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 test("`expectDcOffsetUnder`: silence = DC 0 = pass", () => {
@@ -720,6 +726,12 @@ test("`expectLatency`: multichannel + opts.channel 指 定 = 指 定 ch 解 析 
 
 test("`expectLatency`: opts.channel 範 囲 外 = throw", () => {
   expect(() => expectLatency(monoResult(impulse(8)), 0, { channel: 5 })).toThrow(/out of range/);
+});
+
+test("`expectLatency`: silent buffer + expectedSamples 0 = throw (= mute regression を 偽 pass さ せ な い)", () => {
+  // 全 0 buffer で maxAbs 初 期 = -1 + abs 0 > -1 で maxIdx 0 が 立 ち、
+  // expectedSamples 0 で 偽 pass す る path を guard で 塞 ぐ。
+  expect(() => expectLatency(monoResult(filled(8, 0)), 0)).toThrow(/no detectable response/);
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━ expectEventCount ━━━━━━━━━━━━━━━━━━━━━━━━━━━
