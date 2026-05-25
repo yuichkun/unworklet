@@ -211,7 +211,9 @@ The following items are intentionally postponed past v1.0.0. Each has a forward-
 
 ### 3.2 Additive surface extensions (no v1.0.0 promise; rolled out as demand surfaces)
 
-<!-- Will be filled in as additional resolutions settle in decisions-log.md. Candidates include:
+- **Standard MIDI File loader for `@unworklet/test`** — `loadSmf(path, opts)` / `parseSmf(bytes, opts)` を `@unworklet/test` に 追 加、 `.mid` file を `OfflineEvent[]` に 変 換 し て `renderOffline` に 渡 す path。 既 知 reference song / MIDI seq を 入 力 と し て synth / arp の audio 出 力 を 検 証 す る ユ ー ス 想 定。 第 三 者 SMF parser (= `midi-file` 等) を `@unworklet/test` 内 部 依 存 と し て 持 つ か 自 前 emit か は 採 用 時 別 grill。 v1.0.0 ship 範 囲 か ら 外 し、 demand が 出 た 段 で additive 追 加。
+
+<!-- Other candidates (to be filled in as additional resolutions settle in decisions-log.md):
        - Variable-rate iteration (`forSampleRange(start, end, callback)`)
        - rAF-driven `state.publish` rate variants
        - SIMD f64x2 / i32x4 / shuffle / gather-scatter
