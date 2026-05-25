@@ -856,9 +856,30 @@ test("`expectAudioMatches`: NaN actual = throw (= silent compare pass を 防 �
   expect(() => expectAudioMatches(nanResult(), [filled(8, 0.5)])).toThrow(/NaN/);
 });
 
+test("`expectAudioMatches`: NaN expected (= Float32Array[] 形) = throw (= corrupted reference freeze 防 止)", () => {
+  const nanCh = filled(8, 0.5);
+  nanCh[3] = NaN;
+  expect(() => expectAudioMatches(monoResult(filled(8, 0.5)), [nanCh])).toThrow(/expected.*NaN/);
+});
+
+test("`expectAudioMatches`: NaN expected (= RenderOfflineResult 形) = throw", () => {
+  expect(() => expectAudioMatches(monoResult(filled(8, 0.5)), nanResult())).toThrow(
+    /expected.*NaN/,
+  );
+});
+
 test("`expectAudioMatchesGolden`: NaN actual = throw (= 内 部 `expectAudioMatches` 経 由)", () => {
   const path = tmpWav([filled(8, 0.5)]);
   expect(() => expectAudioMatchesGolden(nanResult(), path)).toThrow(/NaN/);
+});
+
+test("`expectAudioMatchesGolden`: NaN を 含 む golden wav = throw (= 過 去 の broken run が freeze し た reference を 拒 否)", () => {
+  const nanCh = filled(8, 0.5);
+  nanCh[3] = NaN;
+  const path = tmpWav([nanCh]);
+  expect(() => expectAudioMatchesGolden(monoResult(filled(8, 0.5)), path)).toThrow(
+    /expected.*NaN/,
+  );
 });
 
 test("`expectAudioMatchesSnapshot`: NaN actual = throw (= snapshot 初 回 書 き で 壊 れ た wav を 永 続 化 し な い)", async () => {

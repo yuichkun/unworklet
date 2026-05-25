@@ -45,6 +45,53 @@ export type ExpectedEvent = {
   atSample: number;
 };
 
+/**
+ * `Float32Array[]` の 全 sample が finite (= NaN / ±Infinity ナ シ) を
+ * `label` 付 き で assert。 `expectAudioMatches` の `expected` 側 が
+ * `Float32Array[]` 形 で 渡 さ れ る path / `expectAudioMatchesGolden` の
+ * decoded golden で reference 側 を 検 査 し て、 corrupted golden / NaN
+ * fixture が 偽 pass し な い path を 塞 ぐ 共 通 helper。
+ */
+const assertChannelsFinite = (label: string, channels: Float32Array[]): void => {
+  for (let c = 0; c < channels.length; c++) {
+    const ch = channels[c]!;
+    for (let s = 0; s < ch.length; s++) {
+      const v = ch[s]!;
+      if (Number.isNaN(v)) {
+        throw new Error(`${label}: channel ${c} sample ${s} is NaN`);
+      }
+      if (!Number.isFinite(v)) {
+        const sign = v > 0 ? "+Infinity" : "-Infinity";
+        throw new Error(`${label}: channel ${c} sample ${s} is ${sign}`);
+      }
+    }
+  }
+};
+
+/**
+ * `RenderOfflineResult.outputs` 全 channel finite check + `label` 付 き
+ * error。 `expectNoNaN` の 内 部 impl は こ ち ら を 使 い、 `expectAudioMatches`
+ * の expected 側 も RenderOfflineResult 形 で こ の 経 路 を 通 る。
+ */
+const assertResultFinite = (label: string, result: RenderOfflineResult): void => {
+  for (const port of Object.keys(result.outputs)) {
+    const channels = result.outputs[port]!;
+    for (let c = 0; c < channels.length; c++) {
+      const ch = channels[c]!;
+      for (let s = 0; s < ch.length; s++) {
+        const v = ch[s]!;
+        if (Number.isNaN(v)) {
+          throw new Error(`${label}: port '${port}' channel ${c} sample ${s} is NaN`);
+        }
+        if (!Number.isFinite(v)) {
+          const sign = v > 0 ? "+Infinity" : "-Infinity";
+          throw new Error(`${label}: port '${port}' channel ${c} sample ${s} is ${sign}`);
+        }
+      }
+    }
+  }
+};
+
 const compareChannels = (
   port: string,
   actual: Float32Array[],
@@ -94,8 +141,10 @@ export function expectAudioMatches(
   opts?: AudioMatchOptions,
 ): void {
   // NaN / ±Infinity 入 力 を 先 に 弾 く (= `Math.abs(NaN) > tolerance =
-  // false` で 偽 pass す る 経 路 を 塞 ぐ、 全 numerical matcher で 統 一)。
-  expectNoNaN(actual);
+  // false` で 偽 pass す る 経 路 を 塞 ぐ、 actual / expected 両 側)。
+  // expected 側 を 抜 か す と corrupted golden / NaN fixture が freeze さ
+  // れ た state で 後 続 regression が green に 見 え る = 危 険。
+  assertResultFinite("expectAudioMatches: actual", actual);
   const tolerance = opts?.tolerance ?? 0;
   if (Array.isArray(expected)) {
     const ports = Object.keys(actual.outputs);
@@ -104,9 +153,11 @@ export function expectAudioMatches(
         `expectAudioMatches: \`Float32Array[]\` expected requires single-port actual; actual has ${ports.length} ports (${ports.join(", ")}) — use the RenderOfflineResult form to specify per-port expected.`,
       );
     }
+    assertChannelsFinite("expectAudioMatches: expected", expected);
     compareChannels(ports[0]!, actual.outputs[ports[0]!]!, expected, tolerance);
     return;
   }
+  assertResultFinite("expectAudioMatches: expected", expected);
   if (actual.sampleRate !== expected.sampleRate) {
     throw new Error(
       `expectAudioMatches: sampleRate mismatch — actual=${actual.sampleRate}, expected=${expected.sampleRate} (= pitch / timing は サ ン プ ル レ ー ト に 比 例 = PCM が 一 致 し て も 異 rate は bug)`,
@@ -133,22 +184,7 @@ export function expectAudioMatches(
  * chain 形 = `expect(result).toBeFinite()` (= `@unworklet/test/extend`)。
  */
 export function expectNoNaN(result: RenderOfflineResult): void {
-  for (const port of Object.keys(result.outputs)) {
-    const channels = result.outputs[port]!;
-    for (let c = 0; c < channels.length; c++) {
-      const ch = channels[c]!;
-      for (let s = 0; s < ch.length; s++) {
-        const v = ch[s]!;
-        if (Number.isNaN(v)) {
-          throw new Error(`expectNoNaN: port '${port}' channel ${c} sample ${s} is NaN`);
-        }
-        if (!Number.isFinite(v)) {
-          const sign = v > 0 ? "+Infinity" : "-Infinity";
-          throw new Error(`expectNoNaN: port '${port}' channel ${c} sample ${s} is ${sign}`);
-        }
-      }
-    }
-  }
+  assertResultFinite("expectNoNaN", result);
 }
 
 const linearToDb = (linear: number): number => 20 * Math.log10(linear);
