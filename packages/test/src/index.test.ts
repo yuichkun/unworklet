@@ -385,7 +385,6 @@ test("`expectAudioMatchesGolden`: multi-port actual throws (= single-port 推 �
 // ━━━━━━━━━━━━━━━ stub-throw tests for new declared surface ━━━━━━━━━━━━━━
 
 const dummyResult = monoResult(filled(8, 0));
-const dummyBytes = new Uint8Array([1, 2, 3]);
 
 // ━━━━━━━━━━━━━━━━━━━━━ expectAudioMatchesSnapshot ━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -765,14 +764,6 @@ test("`expectEventsContaining`: empty partial = pass", () => {
   expect(() => expectEventsContaining(monoResult(filled(8, 0)), [])).not.toThrow();
 });
 
-test("`expectMidiOut` stub throws", () => {
-  expect(() => expectMidiOut(dummyResult, "midiOut", [])).toThrow(/not implemented/);
-});
-
-test("`expectMidiBalance` stub throws", () => {
-  expect(() => expectMidiBalance(dummyResult, "midiOut")).toThrow(/not implemented/);
-});
-
 test("`expectStateValue` stub throws", () => {
   expect(() => expectStateValue(dummyResult, "slot", 0)).toThrow(/not implemented/);
 });
@@ -876,45 +867,210 @@ test("`ramp`: 単 一 sample = from", () => {
   expect(buf[0]).toBe(0.5);
 });
 
-// midi utility 10 件
-test("`midi.noteOn` stub throws", () => {
-  expect(() => midi.noteOn({ note: 60, velocity: 100 })).toThrow(/not implemented/);
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━ midi namespace 10 件 ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+test("`midi.noteOn`: 構 築 + default channel 0", () => {
+  expect(midi.noteOn({ note: 60, velocity: 100 })).toEqual({
+    type: "noteOn",
+    channel: 0,
+    note: 60,
+    velocity: 100,
+  });
 });
 
-test("`midi.noteOff` stub throws", () => {
-  expect(() => midi.noteOff({ note: 60 })).toThrow(/not implemented/);
+test("`midi.noteOff`: default velocity 0", () => {
+  expect(midi.noteOff({ note: 60 })).toEqual({
+    type: "noteOff",
+    channel: 0,
+    note: 60,
+    velocity: 0,
+  });
 });
 
-test("`midi.cc` stub throws", () => {
-  expect(() => midi.cc({ controller: 1, value: 64 })).toThrow(/not implemented/);
+test("`midi.cc`: 構 築 + channel 上 書 き", () => {
+  expect(midi.cc({ controller: 7, value: 100, channel: 5 })).toEqual({
+    type: "cc",
+    channel: 5,
+    controller: 7,
+    value: 100,
+  });
 });
 
-test("`midi.pitchBend` stub throws", () => {
-  expect(() => midi.pitchBend({ value: 0 })).toThrow(/not implemented/);
+test("`midi.pitchBend`: 構 築", () => {
+  expect(midi.pitchBend({ value: 8192 })).toEqual({
+    type: "pitchBend",
+    channel: 0,
+    value: 8192,
+  });
 });
 
-test("`midi.programChange` stub throws", () => {
-  expect(() => midi.programChange({ program: 0 })).toThrow(/not implemented/);
+test("`midi.programChange`: 構 築", () => {
+  expect(midi.programChange({ program: 42 })).toEqual({
+    type: "programChange",
+    channel: 0,
+    program: 42,
+  });
 });
 
-test("`midi.channelPressure` stub throws", () => {
-  expect(() => midi.channelPressure({ pressure: 0 })).toThrow(/not implemented/);
+test("`midi.channelPressure`: 構 築", () => {
+  expect(midi.channelPressure({ pressure: 80 })).toEqual({
+    type: "channelPressure",
+    channel: 0,
+    pressure: 80,
+  });
 });
 
-test("`midi.aftertouch` stub throws", () => {
-  expect(() => midi.aftertouch({ note: 60, pressure: 0 })).toThrow(/not implemented/);
+test("`midi.aftertouch`: 構 築", () => {
+  expect(midi.aftertouch({ note: 60, pressure: 80 })).toEqual({
+    type: "aftertouch",
+    channel: 0,
+    note: 60,
+    pressure: 80,
+  });
 });
 
-test("`midi.systemRealtime` stub throws", () => {
-  expect(() => midi.systemRealtime(0xf8)).toThrow(/not implemented/);
+test("`midi.systemRealtime`: 構 築 (= 0xF8 = timing clock)", () => {
+  expect(midi.systemRealtime(0xf8)).toEqual({ type: "systemRealtime", status: 0xf8 });
 });
 
-test("`midi.sysex` stub throws", () => {
-  expect(() => midi.sysex(dummyBytes)).toThrow(/not implemented/);
+test("`midi.sysex`: 構 築 (= data carry)", () => {
+  const bytes = new Uint8Array([0xf0, 0x7e, 0x7f, 0x06, 0x01, 0xf7]);
+  expect(midi.sysex(bytes)).toEqual({ type: "sysex", data: bytes });
 });
 
-test("`midi.sequence` stub throws", () => {
-  expect(() => midi.sequence("midiIn", [])).toThrow(/not implemented/);
+test("`midi.sequence`: 配 列 → OfflineEvent[] 変 換", () => {
+  const seq = midi.sequence("midiIn", [
+    { at: 0, event: midi.noteOn({ note: 60, velocity: 100 }) },
+    { at: 480, event: midi.noteOff({ note: 60 }) },
+  ]);
+  expect(seq).toEqual([
+    {
+      name: "midiIn",
+      payload: { type: "noteOn", channel: 0, note: 60, velocity: 100 },
+      atSample: 0,
+    },
+    {
+      name: "midiIn",
+      payload: { type: "noteOff", channel: 0, note: 60, velocity: 0 },
+      atSample: 480,
+    },
+  ]);
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━ expectMidiOut ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+test("`expectMidiOut`: 順 序 + type + payload 一 致 = pass", () => {
+  const result: RenderOfflineResult = {
+    outputs: {},
+    events: [
+      { name: "out", payload: midi.noteOn({ note: 60, velocity: 100 }), atSample: 0 },
+      { name: "out", payload: midi.noteOff({ note: 60 }), atSample: 480 },
+    ],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() =>
+    expectMidiOut(result, "out", [
+      midi.noteOn({ note: 60, velocity: 100 }),
+      midi.noteOff({ note: 60 }),
+    ]),
+  ).not.toThrow();
+});
+
+test("`expectMidiOut`: 件 数 不 一 致 で throw", () => {
+  const result: RenderOfflineResult = {
+    outputs: {},
+    events: [{ name: "out", payload: midi.noteOn({ note: 60, velocity: 100 }), atSample: 0 }],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() => expectMidiOut(result, "out", [])).toThrow(/count/);
+});
+
+test("`expectMidiOut`: type mismatch で throw", () => {
+  const result: RenderOfflineResult = {
+    outputs: {},
+    events: [{ name: "out", payload: midi.noteOn({ note: 60, velocity: 100 }), atSample: 0 }],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() => expectMidiOut(result, "out", [midi.noteOff({ note: 60 })])).toThrow(/type/);
+});
+
+test("`expectMidiOut`: atSample tolerance 越 え で throw", () => {
+  const result: RenderOfflineResult = {
+    outputs: {},
+    events: [{ name: "out", payload: midi.noteOn({ note: 60, velocity: 100 }), atSample: 100 }],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() =>
+    expectMidiOut(result, "out", [{ ...midi.noteOn({ note: 60, velocity: 100 }), atSample: 0 }]),
+  ).toThrow(/atSample/);
+});
+
+test("`expectMidiOut`: payload field mismatch で throw", () => {
+  const result: RenderOfflineResult = {
+    outputs: {},
+    events: [{ name: "out", payload: midi.noteOn({ note: 60, velocity: 100 }), atSample: 0 }],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() => expectMidiOut(result, "out", [midi.noteOn({ note: 60, velocity: 64 })])).toThrow(
+    /payload/,
+  );
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━ expectMidiBalance ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+test("`expectMidiBalance`: 完 全 pair = pass", () => {
+  const result: RenderOfflineResult = {
+    outputs: {},
+    events: [
+      { name: "out", payload: midi.noteOn({ note: 60, velocity: 100 }), atSample: 0 },
+      { name: "out", payload: midi.noteOff({ note: 60 }), atSample: 480 },
+    ],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() => expectMidiBalance(result, "out")).not.toThrow();
+});
+
+test("`expectMidiBalance`: hanging noteOn = throw", () => {
+  const result: RenderOfflineResult = {
+    outputs: {},
+    events: [{ name: "out", payload: midi.noteOn({ note: 60, velocity: 100 }), atSample: 0 }],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() => expectMidiBalance(result, "out")).toThrow(/hanging/);
+});
+
+test("`expectMidiBalance`: opts.hangingNotes で 許 容", () => {
+  const result: RenderOfflineResult = {
+    outputs: {},
+    events: [
+      { name: "out", payload: midi.noteOn({ note: 60, velocity: 100 }), atSample: 0 },
+      { name: "out", payload: midi.noteOn({ note: 62, velocity: 100 }), atSample: 0 },
+    ],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() => expectMidiBalance(result, "out", { hangingNotes: 2 })).not.toThrow();
+});
+
+test("`expectMidiBalance`: 違 う channel は 別 note と し て track", () => {
+  const result: RenderOfflineResult = {
+    outputs: {},
+    events: [
+      { name: "out", payload: midi.noteOn({ note: 60, velocity: 100, channel: 0 }), atSample: 0 },
+      { name: "out", payload: midi.noteOff({ note: 60, channel: 1 }), atSample: 480 },
+    ],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  // ch 0 noteOn が hanging、 ch 1 noteOff が dangling
+  expect(() => expectMidiBalance(result, "out")).toThrow(/hanging/);
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━ sample / time utility 6 件 ━━━━━━━━━━━━━━━━━━━━━━

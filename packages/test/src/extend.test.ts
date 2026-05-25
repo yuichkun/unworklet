@@ -208,12 +208,55 @@ test("`toContainEvents` (chain) happy + fail", () => {
   expect(() => expect(result).toContainEvents([{ name: "missing" }])).toThrow(/not found/);
 });
 
-test("`toEmitMidi` (chain) stub fails with not implemented", () => {
-  expect(() => expect(dummyResult).toEmitMidi("midiOut", [])).toThrow(/not implemented/);
+test("`toEmitMidi` (chain) happy + fail", () => {
+  const result: RenderOfflineResult = {
+    outputs: {},
+    events: [
+      {
+        name: "out",
+        payload: { type: "noteOn", channel: 0, note: 60, velocity: 100 },
+        atSample: 0,
+      },
+    ],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(result).toEmitMidi("out", [{ type: "noteOn", channel: 0, note: 60, velocity: 100 }]);
+  expect(() => expect(result).toEmitMidi("out", [])).toThrow(/count/);
 });
 
-test("`toHaveBalancedMidi` (chain) stub fails with not implemented", () => {
-  expect(() => expect(dummyResult).toHaveBalancedMidi("midiOut")).toThrow(/not implemented/);
+test("`toHaveBalancedMidi` (chain) happy + fail", () => {
+  const balanced: RenderOfflineResult = {
+    outputs: {},
+    events: [
+      {
+        name: "out",
+        payload: { type: "noteOn", channel: 0, note: 60, velocity: 100 },
+        atSample: 0,
+      },
+      {
+        name: "out",
+        payload: { type: "noteOff", channel: 0, note: 60, velocity: 0 },
+        atSample: 480,
+      },
+    ],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(balanced).toHaveBalancedMidi("out");
+  const hanging: RenderOfflineResult = {
+    outputs: {},
+    events: [
+      {
+        name: "out",
+        payload: { type: "noteOn", channel: 0, note: 60, velocity: 100 },
+        atSample: 0,
+      },
+    ],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() => expect(hanging).toHaveBalancedMidi("out")).toThrow(/hanging/);
 });
 
 test("`toHaveStateValue` (chain) stub fails with not implemented", () => {

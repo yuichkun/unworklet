@@ -688,31 +688,91 @@ export type ExpectedMidiEvent = MidiEvent & { atSample?: number };
 
 /**
  * 特 定 `midiOutput({ name })` port 経 由 emit さ れ た MIDI event 列 を
- * `MidiEvent` 形 で 一 致 比 較 (= 内 部 で MIDI byte → `MidiEvent` decode)。
+ * `MidiEvent` 形 で 一 致 比 較。 `result.events` か ら `name === portName`
+ * を filter、 payload を `MidiEvent` と み な し て 順 序 + type + 全 field
+ * deep compare、 atSample は `expected.atSample` 省 略 = actual に zip、 明 示
+ * の 時 は ± `opts.tolerance` (default 0) で 比 較。
  *
  * chain 形 = `expect(result).toEmitMidi(portName, expectedMidiEvents, opts?)` (= `@unworklet/test/extend`)。
  */
 export function expectMidiOut(
-  _result: RenderOfflineResult,
-  _portName: string,
-  _expectedMidiEvents: ExpectedMidiEvent[],
-  _opts?: { tolerance?: number },
+  result: RenderOfflineResult,
+  portName: string,
+  expectedMidiEvents: ExpectedMidiEvent[],
+  opts: { tolerance?: number } = {},
 ): void {
-  notImplemented();
+  const tolerance = opts.tolerance ?? 0;
+  const actual = result.events.filter((e) => e.name === portName);
+  if (actual.length !== expectedMidiEvents.length) {
+    throw new Error(
+      `expectMidiOut: port '${portName}' MIDI event count ${actual.length} != expected ${expectedMidiEvents.length}`,
+    );
+  }
+  for (let i = 0; i < actual.length; i++) {
+    const a = actual[i]!;
+    const e = expectedMidiEvents[i]!;
+    const aPayload = a.payload as MidiEvent;
+    if (aPayload.type !== e.type) {
+      throw new Error(
+        `expectMidiOut: port '${portName}' event ${i} type mismatch — actual='${aPayload.type}', expected='${e.type}'`,
+      );
+    }
+    const expAtSample = e.atSample;
+    if (expAtSample !== undefined && Math.abs(a.atSample - expAtSample) > tolerance) {
+      throw new Error(
+        `expectMidiOut: port '${portName}' event ${i} atSample ${a.atSample} not within ±${tolerance} of expected ${expAtSample}`,
+      );
+    }
+    // payload deep compare (= atSample を 除 い た MidiEvent 全 field)
+    const { atSample: _atSampleStripped, ...expWithoutAt } = e;
+    void _atSampleStripped;
+    if (!isDeepStrictEqual(aPayload, expWithoutAt)) {
+      throw new Error(
+        `expectMidiOut: port '${portName}' event ${i} payload mismatch — actual=${JSON.stringify(aPayload)}, expected=${JSON.stringify(expWithoutAt)}`,
+      );
+    }
+  }
 }
 
 /**
  * noteOn / noteOff pair が balance、 hanging note (= noteOn 後 noteOff
- * な し) が `opts.hangingNotes` (default `0`) 件 ま で 許 容。
+ * な し) が `opts.hangingNotes` (default `0`) 件 ま で 許 容。 同 (channel,
+ * note) ご と に on/off counter で track、 最 終 状 態 で 残 onCount を
+ * 合 算。
  *
  * chain 形 = `expect(result).toHaveBalancedMidi(portName, opts?)` (= `@unworklet/test/extend`)。
  */
 export function expectMidiBalance(
-  _result: RenderOfflineResult,
-  _portName: string,
-  _opts?: { hangingNotes?: number },
+  result: RenderOfflineResult,
+  portName: string,
+  opts: { hangingNotes?: number } = {},
 ): void {
-  notImplemented();
+  const allowed = opts.hangingNotes ?? 0;
+  const actual = result.events.filter((e) => e.name === portName);
+  const noteCount = new Map<string, number>();
+  for (const e of actual) {
+    const m = e.payload as MidiEvent;
+    if (m.type === "noteOn") {
+      const k = `${m.channel}/${m.note}`;
+      noteCount.set(k, (noteCount.get(k) ?? 0) + 1);
+    } else if (m.type === "noteOff") {
+      const k = `${m.channel}/${m.note}`;
+      noteCount.set(k, (noteCount.get(k) ?? 0) - 1);
+    }
+  }
+  let hanging = 0;
+  const dangling: string[] = [];
+  for (const [k, c] of noteCount) {
+    if (c > 0) {
+      hanging += c;
+      dangling.push(`${k} × ${c}`);
+    }
+  }
+  if (hanging > allowed) {
+    throw new Error(
+      `expectMidiBalance: port '${portName}' has ${hanging} hanging noteOn (= no matching noteOff) > allowed ${allowed} [${dangling.join(", ")}]`,
+    );
+  }
 }
 
 /**
@@ -852,38 +912,58 @@ export type MidiSequenceEntry = { at: number; event: MidiEvent };
  * MIDI event 構 築 namespace。 `MidiEvent` (= main-side、 `docs/11-midi.md`
  * §2.2) を 構 築 し て `renderOffline({ events })` の `payload` field に 渡
  * す path。 9 variants + `sequence` (= 配 列 一 括 構 築 で `OfflineEvent[]`
- * 返 し)。
+ * 返 し)。 `channel` default `0`、 `noteOff` の `velocity` default `0`。
  */
 export const midi = {
-  noteOn(_opts: MidiNoteOnOpts): MidiEvent {
-    return notImplemented();
+  noteOn(opts: MidiNoteOnOpts): MidiEvent {
+    return {
+      type: "noteOn",
+      channel: opts.channel ?? 0,
+      note: opts.note,
+      velocity: opts.velocity,
+    };
   },
-  noteOff(_opts: MidiNoteOffOpts): MidiEvent {
-    return notImplemented();
+  noteOff(opts: MidiNoteOffOpts): MidiEvent {
+    return {
+      type: "noteOff",
+      channel: opts.channel ?? 0,
+      note: opts.note,
+      velocity: opts.velocity ?? 0,
+    };
   },
-  cc(_opts: MidiCcOpts): MidiEvent {
-    return notImplemented();
+  cc(opts: MidiCcOpts): MidiEvent {
+    return {
+      type: "cc",
+      channel: opts.channel ?? 0,
+      controller: opts.controller,
+      value: opts.value,
+    };
   },
-  pitchBend(_opts: MidiPitchBendOpts): MidiEvent {
-    return notImplemented();
+  pitchBend(opts: MidiPitchBendOpts): MidiEvent {
+    return { type: "pitchBend", channel: opts.channel ?? 0, value: opts.value };
   },
-  programChange(_opts: MidiProgramChangeOpts): MidiEvent {
-    return notImplemented();
+  programChange(opts: MidiProgramChangeOpts): MidiEvent {
+    return { type: "programChange", channel: opts.channel ?? 0, program: opts.program };
   },
-  channelPressure(_opts: MidiChannelPressureOpts): MidiEvent {
-    return notImplemented();
+  channelPressure(opts: MidiChannelPressureOpts): MidiEvent {
+    return { type: "channelPressure", channel: opts.channel ?? 0, pressure: opts.pressure };
   },
-  aftertouch(_opts: MidiAftertouchOpts): MidiEvent {
-    return notImplemented();
+  aftertouch(opts: MidiAftertouchOpts): MidiEvent {
+    return {
+      type: "aftertouch",
+      channel: opts.channel ?? 0,
+      note: opts.note,
+      pressure: opts.pressure,
+    };
   },
-  systemRealtime(_status: number): MidiEvent {
-    return notImplemented();
+  systemRealtime(status: number): MidiEvent {
+    return { type: "systemRealtime", status };
   },
-  sysex(_bytes: Uint8Array): MidiEvent {
-    return notImplemented();
+  sysex(bytes: Uint8Array): MidiEvent {
+    return { type: "sysex", data: bytes };
   },
-  sequence(_portName: string, _events: MidiSequenceEntry[]): OfflineEvent[] {
-    return notImplemented();
+  sequence(portName: string, events: MidiSequenceEntry[]): OfflineEvent[] {
+    return events.map(({ at, event }) => ({ name: portName, payload: event, atSample: at }));
   },
 };
 
