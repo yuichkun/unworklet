@@ -14,7 +14,9 @@
  * `Uint8Array` で 返 す (= consumer が `fs.writeFile` / `Blob` 等 で 受 け る)。
  */
 
-import { WaveFile } from "wavefile";
+import wavefile from "wavefile";
+
+const { WaveFile } = wavefile;
 
 /**
  * `wavefile` の bitDepth code subset。 8 / 16 / 24 / 32 = integer PCM、

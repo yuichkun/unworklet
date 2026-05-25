@@ -7,7 +7,8 @@
   "type": "module",
   "scripts": {
     "check": "vp check",
-    "test": "vp test"
+    "test": "vp test",
+    "render": "vp exec node --conditions=development --import=tsx scripts/render.ts"
   },
   "dependencies": {
     "@unworklet/core": "workspace:*",
@@ -16,6 +17,7 @@
   "devDependencies": {
     "@types/node": "catalog:",
     "@typescript/native-preview": "7.0.0-dev.20260509.2",
+    "tsx": "catalog:",
     "typescript": "catalog:",
     "vite-plus": "catalog:"
   }

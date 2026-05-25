@@ -13,6 +13,7 @@ catalog:
   binaryen: ^129.0.0
   "@vitest/coverage-v8": ^4.1.7
   wavefile: ^11.0.0
+  tsx: ^4.22.3
 overrides:
   vite: "catalog:"
   vitest: "catalog:"
@@ -23,3 +24,5 @@ peerDependencyRules:
   allowedVersions:
     vite: "*"
     vitest: "*"
+allowBuilds:
+  esbuild: set this to true or false

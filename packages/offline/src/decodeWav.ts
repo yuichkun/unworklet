@@ -12,7 +12,9 @@
  * bit-exact。
  */
 
-import { WaveFile } from "wavefile";
+import wavefile from "wavefile";
+
+const { WaveFile } = wavefile;
 
 export type DecodeWavResult = {
   channels: Float32Array[];
