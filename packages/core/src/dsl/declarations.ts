@@ -11,6 +11,8 @@
  * and **after** (`state.f32(0).named('X')`). Field merge = after-wins.
  */
 
+import type { ParamDecl } from "../compile/ast.ts";
+import { addDeclaration } from "../compile/capture.ts";
 import type {
   AudioInputHandle,
   AudioOutputHandle,
@@ -105,28 +107,94 @@ export interface ParamChain {
   expose(options: ExposeOptions): ParamChain;
 }
 
-export const param: ParamChain = {
-  f32: () => notImplemented(),
-  named: () => notImplemented(),
+// `param` chain (= Q76 named-required + Q79 chain-order free)。
+// `.f32(opts)` 時 に declaration を graph に append し、 chain の `.named()` は
+// 後 付 け / 前 付 け 両 方 で 同 declaration を 指 す (= after-wins)。
+// `.expose({...})` は Phase 7 で fill (= Phase 3 = throw stub 維 持)。
+
+const makeParamChain = (pendingName: string | undefined): ParamChain => ({
+  f32: (options) => {
+    const decl: ParamDecl = {
+      kind: "param",
+      name: pendingName ?? "",
+      type: "f32",
+      default: options.default,
+      min: options.min,
+      max: options.max,
+      automationRate: options.automationRate,
+    };
+    addDeclaration(decl);
+    return makeParam(decl);
+  },
+  named: (name) => makeParamChain(name),
   expose: () => notImplemented(),
-};
+});
+
+function makeParam(decl: ParamDecl): Param {
+  const handle = {
+    at: () => notImplemented(),
+    named: (name: string) => {
+      decl.name = name;
+      return handle;
+    },
+    expose: () => notImplemented(),
+  } as unknown as Param;
+  return handle;
+}
+
+export const param: ParamChain = makeParamChain(undefined);
 
 // ─────────────────────────────────────────────────────────────────────────
 // Audio I/O declarations (`01-dsl.md` §1.1)
 // ─────────────────────────────────────────────────────────────────────────
 
-export function audioInput<C extends number>(_options: {
+export function audioInput<C extends number>(options: {
   channels: C;
   name: string;
 }): AudioInputHandle<C> {
-  return notImplemented();
+  addDeclaration({
+    kind: "audioInput",
+    name: options.name,
+    channels: options.channels,
+  });
+  return makeAudioHandle(options) as AudioInputHandle<C>;
 }
 
-export function audioOutput<C extends number>(_options: {
+export function audioOutput<C extends number>(options: {
   channels: C;
   name: string;
 }): AudioOutputHandle<C> {
-  return notImplemented();
+  addDeclaration({
+    kind: "audioOutput",
+    name: options.name,
+    channels: options.channels,
+  });
+  return makeAudioHandle(options) as AudioOutputHandle<C>;
+}
+
+// Shared audio handle factory. `.ch()` / `.left` / `.right` body は
+// Step 3.4 で fill (= Phase 3 = throw stub)。 channels === 2 の 時 だ け
+// stereo sugar property を defineProperty で 追 加 = mono は ナ シ。
+function makeAudioHandle<C extends number>(options: {
+  channels: C;
+  name: string;
+}): { channels: C; name: string; ch: (c: number) => never } {
+  const handle = {
+    channels: options.channels,
+    name: options.name,
+    ch: () => notImplemented(),
+  };
+  if (options.channels === 2) {
+    Object.defineProperty(handle, "left", {
+      get: () => notImplemented(),
+      enumerable: true,
+    });
+    Object.defineProperty(handle, "right", {
+      get: () => notImplemented(),
+      enumerable: true,
+    });
+  }
+  return handle;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
