@@ -255,6 +255,20 @@ test("`toHaveBalancedMidi` (chain) happy + fail", () => {
     sampleRate: 48000,
   };
   expect(() => expect(hanging).toHaveBalancedMidi("out")).toThrow(/hanging/);
+  // stray noteOff = always fail (chain path 同 様)。
+  const stray: RenderOfflineResult = {
+    outputs: {},
+    events: [
+      {
+        name: "out",
+        payload: { type: "noteOff", channel: 0, note: 60, velocity: 0 },
+        atSample: 0,
+      },
+    ],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() => expect(stray).toHaveBalancedMidi("out")).toThrow(/stray/);
 });
 
 test("`toHaveStateValue` (chain) stub fails with not implemented", () => {

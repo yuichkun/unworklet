@@ -821,9 +821,11 @@ export function expectMidiOut(
 
 /**
  * noteOn / noteOff pair が balance、 hanging note (= noteOn 後 noteOff
- * な し) が `opts.hangingNotes` (default `0`) 件 ま で 許 容。 同 (channel,
- * note) ご と に on/off counter で track、 最 終 状 態 で 残 onCount を
- * 合 算。
+ * な し) が `opts.hangingNotes` (default `0`) 件 ま で 許 容。 stray
+ * noteOff (= 対 応 noteOn な し の noteOff、 ま た は noteOn 1 に 対 し て
+ * noteOff 2 以 上) は always fail (= MIDI lifecycle で stray は 常 に bug
+ * = tolerance opt ナ シ)。 同 (channel, note) ご と に on/off counter で
+ * track、 最 終 状 態 で 残 ± counter を 合 算。
  *
  * chain 形 = `expect(result).toHaveBalancedMidi(portName, opts?)` (= `@unworklet/test/extend`)。
  */
@@ -845,18 +847,30 @@ export function expectMidiBalance(
       noteCount.set(k, (noteCount.get(k) ?? 0) - 1);
     }
   }
-  let hanging = 0;
-  const dangling: string[] = [];
+  let hangingCount = 0;
+  let strayCount = 0;
+  const hangingList: string[] = [];
+  const strayList: string[] = [];
   for (const [k, c] of noteCount) {
     if (c > 0) {
-      hanging += c;
-      dangling.push(`${k} × ${c}`);
+      hangingCount += c;
+      hangingList.push(`${k} × ${c}`);
+    } else if (c < 0) {
+      strayCount += -c;
+      strayList.push(`${k} × ${-c}`);
     }
   }
-  if (hanging > allowed) {
-    throw new Error(
-      `expectMidiBalance: port '${portName}' has ${hanging} hanging noteOn (= no matching noteOff) > allowed ${allowed} [${dangling.join(", ")}]`,
+  const failures: string[] = [];
+  if (hangingCount > allowed) {
+    failures.push(
+      `${hangingCount} hanging noteOn (= no matching noteOff) > allowed ${allowed} [${hangingList.join(", ")}]`,
     );
+  }
+  if (strayCount > 0) {
+    failures.push(`${strayCount} stray noteOff (= no preceding noteOn) [${strayList.join(", ")}]`);
+  }
+  if (failures.length > 0) {
+    throw new Error(`expectMidiBalance: port '${portName}' ${failures.join("; ")}`);
   }
 }
 

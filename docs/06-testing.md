@@ -46,7 +46,7 @@ result 型 = `RenderOfflineResult` = `{ outputs: Record<string, Float32Array[]>,
 ### 2.4 MIDI matchers
 
 - **`expectMidiOut(result, portName, expectedMidiEvents, opts?)`** — 特 定 `midiOutput({ name })` port 経 由 emit さ れ た MIDI event 列 を `MidiEvent` 形 (= `11-midi.md` §2.2) で 一 致 比 較。 内 部 で MIDI byte → `MidiEvent` decode。
-- **`expectMidiBalance(result, portName, opts?: { hangingNotes? })`** — noteOn / noteOff pair が balance、 hanging note (= noteOn 後 noteOff な し) が `opts.hangingNotes` (default `0`) 件 ま で 許 容。
+- **`expectMidiBalance(result, portName, opts?: { hangingNotes? })`** — noteOn / noteOff pair が balance、 hanging note (= noteOn 後 noteOff な し) が `opts.hangingNotes` (default `0`) 件 ま で 許 容。 stray noteOff (= 対 応 noteOn な し の noteOff、 ま た は noteOn 1 に 対 し て noteOff 2 以 上) は always fail (= MIDI lifecycle で stray は 常 に bug = tolerance opt ナ シ)。
 
 ### 2.5 State matchers
 

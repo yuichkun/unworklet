@@ -1079,8 +1079,45 @@ test("`expectMidiBalance`: 違 う channel は 別 note と し て track", () =
     state: new Uint8Array(0),
     sampleRate: 48000,
   };
-  // ch 0 noteOn が hanging、 ch 1 noteOff が dangling
-  expect(() => expectMidiBalance(result, "out")).toThrow(/hanging/);
+  // ch 0 noteOn が hanging、 ch 1 noteOff が stray (= 双 方 fail に カ ウ ン ト)。
+  expect(() => expectMidiBalance(result, "out")).toThrow(/hanging.*stray|stray.*hanging/);
+});
+
+test("`expectMidiBalance`: stray noteOff (= 対 応 noteOn ナ シ) = throw", () => {
+  // single noteOff の み = lifecycle 不 正 = always fail (tolerance opt ナ シ)。
+  const result: RenderOfflineResult = {
+    outputs: {},
+    events: [{ name: "out", payload: midi.noteOff({ note: 60 }), atSample: 0 }],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() => expectMidiBalance(result, "out")).toThrow(/stray/);
+});
+
+test("`expectMidiBalance`: double noteOff (= noteOn 1 → noteOff 2) = throw", () => {
+  // 同 一 note を 2 回 off = noteOff over-count = stray fail。
+  const result: RenderOfflineResult = {
+    outputs: {},
+    events: [
+      { name: "out", payload: midi.noteOn({ note: 60, velocity: 100 }), atSample: 0 },
+      { name: "out", payload: midi.noteOff({ note: 60 }), atSample: 240 },
+      { name: "out", payload: midi.noteOff({ note: 60 }), atSample: 480 },
+    ],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() => expectMidiBalance(result, "out")).toThrow(/stray/);
+});
+
+test("`expectMidiBalance`: stray noteOff は hangingNotes opts で 救 え な い", () => {
+  // hangingNotes opt は hanging noteOn だ け に 効 く、 stray は always fail。
+  const result: RenderOfflineResult = {
+    outputs: {},
+    events: [{ name: "out", payload: midi.noteOff({ note: 60 }), atSample: 0 }],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() => expectMidiBalance(result, "out", { hangingNotes: 100 })).toThrow(/stray/);
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━ sample / time utility 6 件 ━━━━━━━━━━━━━━━━━━━━━━
