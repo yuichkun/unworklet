@@ -34,6 +34,7 @@ const monoResult = (channel: Float32Array, portName = "main"): RenderOfflineResu
   outputs: { [portName]: [channel] },
   events: [],
   state: new Uint8Array(0),
+  sampleRate: 48000,
 });
 
 const tmpWav = (channels: Float32Array[], sampleRate = 48000): string => {
@@ -100,6 +101,7 @@ test("`toMatchEvents` (chain) fail = length mismatch", () => {
     outputs: {},
     events: [{ name: "peak", payload: {}, atSample: 0 }],
     state: new Uint8Array(0),
+    sampleRate: 48000,
   };
   expect(() => expect(result).toMatchEvents([])).toThrow(/length/);
 });
@@ -113,14 +115,24 @@ test("`toMatchState` (chain) fail = byte mismatch", () => {
     outputs: {},
     events: [],
     state: new Uint8Array([1, 2, 3]),
+    sampleRate: 48000,
   };
   expect(() => expect(result).toMatchState(new Uint8Array([1, 2, 4]))).toThrow(/byte/);
 });
 
 // ━━━━━━━━━━━━━━━━━━━━ 残 13 件 chain stub-throw 経 路 ━━━━━━━━━━━━━━━━━━━━━
 
-test("`toMatchAudioSnapshot` (chain) stub fails with not implemented", async () => {
-  await expect(expect(dummyResult).toMatchAudioSnapshot()).rejects.toThrow(/not implemented/);
+test("`toMatchAudioSnapshot` (chain) round-trip = 初 回 書 き + 2 回 目 bit-exact pass", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-chain-"));
+  const path = join(dir, "ref.wav");
+  const result = monoResult(filled(128, 0.5));
+  await expect(result).toMatchAudioSnapshot({ snapshotPath: path });
+  await expect(result).toMatchAudioSnapshot({ snapshotPath: path });
+});
+
+test("`toMatchAudioSnapshot` (chain) opts.snapshotPath 省 略 = 自 動 推 論 path", async () => {
+  const result = monoResult(filled(8, 0));
+  await expect(result).toMatchAudioSnapshot();
 });
 
 test("`toBeStable` (chain) stub fails with not implemented", () => {

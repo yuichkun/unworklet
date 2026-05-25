@@ -69,6 +69,8 @@ export type RenderOfflineResult = {
   events: OfflineEmittedEvent[];
   /** Snapshot blob (Q5 format) captured at end-of-render. */
   state: Uint8Array;
+  /** Sample rate used for the render (= `config.sampleRate` carry、 wav 書 き 出 し / 再 render / consumer 自 動 化 で self-describe)。 */
+  sampleRate: number;
 };
 
 export async function renderOffline<C>(
@@ -144,5 +146,5 @@ export async function renderOffline<C>(
     }
   }
 
-  return { outputs, events: [], state: new Uint8Array(0) };
+  return { outputs, events: [], state: new Uint8Array(0), sampleRate: config.sampleRate };
 }

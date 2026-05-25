@@ -7,6 +7,7 @@
 
 import { SAMPLES_PER_BLOCK } from "@unworklet/core";
 import { renderOffline } from "@unworklet/offline";
+import { expectAudioMatchesSnapshot } from "@unworklet/test";
 import { expect, test } from "vite-plus/test";
 
 import { stereoGain } from "./processor.ts";
@@ -63,4 +64,23 @@ test("stereo gain default = 1 = passthrough (= params 省 略 時)", async () =>
     inputs: { main: [inputCh0, inputCh1] },
   });
   expect(result.outputs).toEqual({ main: [inputCh0, inputCh1] });
+});
+
+test("Ex 1 minus meter snapshot (= auto-managed wav reference 回 帰 防 止)", async () => {
+  // 決 定 的 input (= L: 0..127/128 ramp、 R: 1-(0..127/128) inverse ramp) を
+  // gain=0.5 で render、 結 果 wav を `__snapshots__/` に auto-write + commit、
+  // 以 降 bit-exact 比 較 (= renderOffline deterministic 保 証 = `13-offline-render.md` §3)。
+  const inputCh0 = new Float32Array(SAMPLES_PER_BLOCK);
+  const inputCh1 = new Float32Array(SAMPLES_PER_BLOCK);
+  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
+    inputCh0[i] = i / SAMPLES_PER_BLOCK;
+    inputCh1[i] = 1 - i / SAMPLES_PER_BLOCK;
+  }
+  const result = await renderOffline(stereoGain, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+    inputs: { main: [inputCh0, inputCh1] },
+    params: { gain: [0.5] },
+  });
+  await expectAudioMatchesSnapshot(result);
 });

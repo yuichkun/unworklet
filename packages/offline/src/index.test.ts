@@ -46,6 +46,7 @@ test("`renderOffline` returns the result shape (= outputs / events / state)", as
     outputs: { main: [oneBlockInput(0.5), oneBlockInput(0.125)] },
     events: [],
     state: new Uint8Array(0),
+    sampleRate: 48000,
   });
 });
 
@@ -65,6 +66,7 @@ test("`renderOffline` reproduces input × gain on each sample (= 1 block)", asyn
     outputs: { main: [expectedCh0, oneBlockInput(0)] },
     events: [],
     state: new Uint8Array(0),
+    sampleRate: 48000,
   });
 });
 
@@ -84,6 +86,7 @@ test("`renderOffline` runs multiple blocks (= duration = 2 × SAMPLES_PER_BLOCK 
     outputs: { main: [expectedCh, expectedCh] },
     events: [],
     state: new Uint8Array(0),
+    sampleRate: 48000,
   });
 });
 

@@ -16,11 +16,13 @@
  */
 
 import { readFileSync } from "node:fs";
+import { basename, dirname, extname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import type { MidiEvent } from "@unworklet/core";
-import { decodeWav } from "@unworklet/offline";
+import { decodeWav, encodeWav } from "@unworklet/offline";
 import type { OfflineEmittedEvent, OfflineEvent, RenderOfflineResult } from "@unworklet/offline";
+import { expect } from "vite-plus/test";
 
 const notImplemented = (): never => {
   throw new Error("not implemented");
@@ -276,20 +278,63 @@ export type SnapshotOptions = {
   port?: string;
 };
 
+const snapshotCounters = new Map<string, number>();
+
 /**
  * Assert that `actual.outputs` matches a vitest-style auto-managed wav
  * snapshot (`docs/06-testing.md` §2.1)。 `opts.snapshotPath` 省 略 = 自 動
  * 推 論 (= `<test-file-dir>/__snapshots__/<test-file-name>__<test-name>__
  * <counter>.wav`)。 初 回 = wav 自 動 書 き 出 し + pass、 2 回 目 以 降 =
- * bit-exact 比 較、 `vitest -u` で 強 制 上 書 き、 CI mode = 不 在 で fail。
+ * bit-exact 比 較、 `vitest -u` で 強 制 上 書 き、 CI mode = 不 在 で fail
+ * (= vitest 標 準 `toMatchFileSnapshot` に 委 譲)。
+ *
+ * 単 一 port 専 用 (= 1 port な ら 推 論、 `opts.port` で 明 示 上 書 き、 多
+ * port + `opts.port` 未 指 定 で throw)。 `actual.sampleRate` を wav header
+ * に 書 く (= `13-offline-render.md` §2 で carry)。
  *
  * chain 形 = `await expect(actual).toMatchAudioSnapshot(opts?)` (= `@unworklet/test/extend`)。
  */
 export async function expectAudioMatchesSnapshot(
-  _actual: RenderOfflineResult,
-  _opts?: SnapshotOptions,
+  actual: RenderOfflineResult,
+  opts: SnapshotOptions = {},
 ): Promise<void> {
-  notImplemented();
+  const ports = Object.keys(actual.outputs);
+  let portName: string;
+  if (opts.port !== undefined) {
+    if (!(opts.port in actual.outputs)) {
+      throw new Error(
+        `expectAudioMatchesSnapshot: opts.port '${opts.port}' not in actual.outputs (= [${ports.join(", ")}])`,
+      );
+    }
+    portName = opts.port;
+  } else if (ports.length === 1) {
+    portName = ports[0]!;
+  } else {
+    throw new Error(
+      `expectAudioMatchesSnapshot: multi-port actual requires opts.port; got ports=[${ports.join(", ")}]`,
+    );
+  }
+  const channels = actual.outputs[portName]!;
+  const wavBytes = encodeWav(channels, actual.sampleRate);
+
+  let snapshotPath = opts.snapshotPath;
+  if (snapshotPath === undefined) {
+    const state = expect.getState();
+    if (!state.testPath || !state.currentTestName) {
+      throw new Error(
+        `expectAudioMatchesSnapshot: snapshot path auto-infer requires expect.getState().testPath + .currentTestName; pass opts.snapshotPath explicitly to override.`,
+      );
+    }
+    const dir = dirname(state.testPath);
+    const base = basename(state.testPath, extname(state.testPath));
+    const safeName = state.currentTestName.replace(/[^A-Za-z0-9]+/g, "_");
+    const key = `${state.testPath}::${state.currentTestName}`;
+    const counter = (snapshotCounters.get(key) ?? 0) + 1;
+    snapshotCounters.set(key, counter);
+    snapshotPath = join(dir, "__snapshots__", `${base}__${safeName}__${counter}.wav`);
+  }
+
+  await expect(wavBytes).toMatchFileSnapshot(snapshotPath);
 }
 
 /**

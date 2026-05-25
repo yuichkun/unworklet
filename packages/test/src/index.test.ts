@@ -67,12 +67,14 @@ const monoResult = (channel: Float32Array, portName = "main"): RenderOfflineResu
   outputs: { [portName]: [channel] },
   events: [],
   state: new Uint8Array(0),
+  sampleRate: 48000,
 });
 
 const stereoResult = (left: Float32Array, right: Float32Array): RenderOfflineResult => ({
   outputs: { main: [left, right] },
   events: [],
   state: new Uint8Array(0),
+  sampleRate: 48000,
 });
 
 const tmpWav = (channels: Float32Array[], sampleRate = 48000): string => {
@@ -97,6 +99,7 @@ test("`expectAudioMatches`: multi-port actual + `Float32Array[]` expected throws
     outputs: { main: [filled(8, 0.5)], send: [filled(8, 0.3)] },
     events: [],
     state: new Uint8Array(0),
+    sampleRate: 48000,
   };
   expect(() => expectAudioMatches(result, [filled(8, 0.5)])).toThrow(/single-port/);
 });
@@ -128,6 +131,7 @@ test("`expectAudioMatches`: full result form port count mismatch throws (= actua
     outputs: { main: [filled(8, 0.5)], send: [filled(8, 0.3)] },
     events: [],
     state: new Uint8Array(0),
+    sampleRate: 48000,
   };
   const b = monoResult(filled(8, 0.5), "main");
   expect(() => expectAudioMatches(a, b)).toThrow(/port/);
@@ -189,6 +193,7 @@ test("`expectNoNaN`: 多 port + 多 channel 全 走 査", () => {
     outputs: { main: [ch0], send: [ch0, ch1] },
     events: [],
     state: new Uint8Array(0),
+    sampleRate: 48000,
   };
   expect(() => expectNoNaN(result)).toThrow(/NaN/);
 });
@@ -226,7 +231,12 @@ test("`expectRmsUnder`: silence (RMS = 0 = -Infinity dBFS) passes any threshold"
 });
 
 test("`expectRmsUnder`: empty outputs (= count 0 path) treated as silence", () => {
-  const empty: RenderOfflineResult = { outputs: {}, events: [], state: new Uint8Array(0) };
+  const empty: RenderOfflineResult = {
+    outputs: {},
+    events: [],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
   expect(() => expectRmsUnder(empty, 0)).not.toThrow();
 });
 
@@ -241,6 +251,7 @@ test("`expectEventsEqual`: same name + payload + atSample sequence matches", () 
     outputs: {},
     events: [{ name: "peak", payload: { level: 0.5 }, atSample: 10 }],
     state: new Uint8Array(0),
+    sampleRate: 48000,
   };
   expect(() =>
     expectEventsEqual(result, [{ name: "peak", payload: { level: 0.5 }, atSample: 10 }]),
@@ -252,6 +263,7 @@ test("`expectEventsEqual`: length mismatch throws", () => {
     outputs: {},
     events: [{ name: "peak", payload: {}, atSample: 0 }],
     state: new Uint8Array(0),
+    sampleRate: 48000,
   };
   expect(() => expectEventsEqual(result, [])).toThrow(/length/);
 });
@@ -261,6 +273,7 @@ test("`expectEventsEqual`: name mismatch throws", () => {
     outputs: {},
     events: [{ name: "peak", payload: {}, atSample: 0 }],
     state: new Uint8Array(0),
+    sampleRate: 48000,
   };
   expect(() =>
     expectEventsEqual(result, [{ name: "overshoot", payload: {}, atSample: 0 }]),
@@ -272,6 +285,7 @@ test("`expectEventsEqual`: atSample mismatch throws", () => {
     outputs: {},
     events: [{ name: "peak", payload: {}, atSample: 5 }],
     state: new Uint8Array(0),
+    sampleRate: 48000,
   };
   expect(() => expectEventsEqual(result, [{ name: "peak", payload: {}, atSample: 10 }])).toThrow(
     /atSample/,
@@ -283,6 +297,7 @@ test("`expectEventsEqual`: payload mismatch throws", () => {
     outputs: {},
     events: [{ name: "peak", payload: { level: 0.5 }, atSample: 0 }],
     state: new Uint8Array(0),
+    sampleRate: 48000,
   };
   expect(() =>
     expectEventsEqual(result, [{ name: "peak", payload: { level: 0.7 }, atSample: 0 }]),
@@ -300,6 +315,7 @@ test("`expectStateMatches`: same bytes match", () => {
     outputs: {},
     events: [],
     state: new Uint8Array([1, 2, 3, 4]),
+    sampleRate: 48000,
   };
   expect(() => expectStateMatches(result, new Uint8Array([1, 2, 3, 4]))).not.toThrow();
 });
@@ -309,6 +325,7 @@ test("`expectStateMatches`: length mismatch throws", () => {
     outputs: {},
     events: [],
     state: new Uint8Array([1, 2, 3]),
+    sampleRate: 48000,
   };
   expect(() => expectStateMatches(result, new Uint8Array([1, 2]))).toThrow(/length/);
 });
@@ -318,6 +335,7 @@ test("`expectStateMatches`: byte content mismatch throws", () => {
     outputs: {},
     events: [],
     state: new Uint8Array([1, 2, 3]),
+    sampleRate: 48000,
   };
   expect(() => expectStateMatches(result, new Uint8Array([1, 2, 4]))).toThrow(/byte/);
 });
@@ -359,6 +377,7 @@ test("`expectAudioMatchesGolden`: multi-port actual throws (= single-port 推 �
     outputs: { main: [filled(128, 0.5)], send: [filled(128, 0.3)] },
     events: [],
     state: new Uint8Array(0),
+    sampleRate: 48000,
   };
   expect(() => expectAudioMatchesGolden(result, path)).toThrow(/single-port/);
 });
@@ -368,10 +387,59 @@ test("`expectAudioMatchesGolden`: multi-port actual throws (= single-port 推 �
 const dummyResult = monoResult(filled(8, 0));
 const dummyBytes = new Uint8Array([1, 2, 3]);
 
-// matcher 13 件
-test("`expectAudioMatchesSnapshot` stub throws", async () => {
-  await expect(expectAudioMatchesSnapshot(dummyResult)).rejects.toThrow(/not implemented/);
+// ━━━━━━━━━━━━━━━━━━━━━ expectAudioMatchesSnapshot ━━━━━━━━━━━━━━━━━━━━━━━
+
+test("`expectAudioMatchesSnapshot`: round-trip = 初 回 書 き 出 し + 2 回 目 bit-exact pass", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-"));
+  const path = join(dir, "ref.wav");
+  const result = monoResult(filled(128, 0.5));
+  await expectAudioMatchesSnapshot(result, { snapshotPath: path });
+  await expectAudioMatchesSnapshot(result, { snapshotPath: path });
 });
+
+test("`expectAudioMatchesSnapshot`: multi-port + opts.port 未 指 定 で throw", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-"));
+  const path = join(dir, "ref.wav");
+  const result: RenderOfflineResult = {
+    outputs: { main: [filled(8, 0.5)], send: [filled(8, 0.3)] },
+    events: [],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  await expect(expectAudioMatchesSnapshot(result, { snapshotPath: path })).rejects.toThrow(
+    /multi-port/,
+  );
+});
+
+test("`expectAudioMatchesSnapshot`: opts.port 明 示 で 多 port → 該 当 port を wav 化", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-"));
+  const path = join(dir, "ref.wav");
+  const result: RenderOfflineResult = {
+    outputs: { main: [filled(8, 0.5)], send: [filled(8, 0.3)] },
+    events: [],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  await expectAudioMatchesSnapshot(result, { snapshotPath: path, port: "send" });
+});
+
+test("`expectAudioMatchesSnapshot`: opts.port が actual.outputs に な い と throw", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-"));
+  const path = join(dir, "ref.wav");
+  const result = monoResult(filled(8, 0));
+  await expect(
+    expectAudioMatchesSnapshot(result, { snapshotPath: path, port: "nonexistent" }),
+  ).rejects.toThrow(/not in actual.outputs/);
+});
+
+test("`expectAudioMatchesSnapshot`: opts.snapshotPath 省 略 = 自 動 推 論 path で 書 き 出 し", async () => {
+  // 自 動 推 論 = `<test-file-dir>/__snapshots__/<test-file-name>__<test-name>__<counter>.wav`、
+  // 初 回 走 行 時 に snapshot wav が repo に commit さ れ、 以 降 bit-exact 回 帰 防 止。
+  const result = monoResult(filled(8, 0));
+  await expectAudioMatchesSnapshot(result);
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━ matcher stubs (= 12 件 残) ━━━━━━━━━━━━━━━━━━━━━
 
 test("`expectStable` stub throws", () => {
   expect(() => expectStable(dummyResult)).toThrow(/not implemented/);
