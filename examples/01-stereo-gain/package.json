@@ -1,0 +1,22 @@
+{
+  "name": "@unworklet-examples/01-stereo-gain",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Canonical Ex 1 minus meter (= stereo gain) end-to-end smoke for renderOffline (Phase 3 acceptance).",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "check": "vp check",
+    "test": "vp test"
+  },
+  "dependencies": {
+    "@unworklet/core": "workspace:*",
+    "@unworklet/offline": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@typescript/native-preview": "7.0.0-dev.20260509.2",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
