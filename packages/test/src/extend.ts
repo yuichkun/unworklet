@@ -33,11 +33,12 @@ import type {
   PartialExpectedEvent,
   PeakAtSampleOptions,
   SnapshotOptions,
+  SnapshotResolutionState,
 } from "./index.ts";
 import {
   expectAudioMatches,
   expectAudioMatchesGolden,
-  expectAudioMatchesSnapshot,
+  expectAudioMatchesSnapshotWithState,
   expectDcOffsetUnder,
   expectEventCount,
   expectEventsContaining,
@@ -142,27 +143,46 @@ const wrap =
     }
   };
 
-const wrapAsync =
-  <Args extends unknown[]>(
-    chainName: string,
-    fn: (received: RenderOfflineResult, ...args: Args) => Promise<void>,
-  ) =>
-  async (received: unknown, ...args: Args): Promise<MatcherResult> => {
-    try {
-      await fn(received as RenderOfflineResult, ...args);
-      return { pass: true, message: () => `expected NOT to satisfy ${chainName}` };
-    } catch (err) {
-      return {
-        pass: false,
-        message: () => (err instanceof Error ? err.message : String(err)),
-      };
-    }
-  };
+/**
+ * `toMatchAudioSnapshot` 専 用 chain matcher。 vitest `expect.extend(...)` 内
+ * で `this` は per-test bound な `MatcherState` (= `this.testPath` /
+ * `this.currentTestName` / `this.snapshotState` が 当 該 test の も の) を
+ * carry す る。 plain form の global `expect.getState()` 経 由 path は
+ * `test.concurrent` で 別 test の state を 読 む race を 持 つ が、 chain
+ * form は bound `this` 経 由 で race 回 避 = concurrent safe。
+ *
+ * `function () {}` (= 非 arrow) で 書 い て `this` binding を 受 け 取 る、
+ * `wrapAsync` の generic wrap は global state path で plain func を 呼 ぶ
+ * の で こ こ で は 使 え な い。 vitest `RawMatcherFn` 形 に zip す る た
+ * め `this` は declare 省 略 + 内 部 cast。
+ */
+async function toMatchAudioSnapshotChain(
+  this: unknown,
+  received: unknown,
+  opts?: SnapshotOptions,
+): Promise<MatcherResult> {
+  try {
+    await expectAudioMatchesSnapshotWithState(
+      received as RenderOfflineResult | Float32Array | Float32Array[],
+      opts ?? {},
+      // vitest `RawMatcherFn` `this` 型 は MatcherState (= 内 部 class、 private
+      // field あ り) で SnapshotResolutionState に 直 接 cast 不 可、 unknown
+      // 経 由 で widening。
+      this as SnapshotResolutionState,
+    );
+    return { pass: true, message: () => `expected NOT to satisfy toMatchAudioSnapshot` };
+  } catch (err) {
+    return {
+      pass: false,
+      message: () => (err instanceof Error ? err.message : String(err)),
+    };
+  }
+}
 
 expect.extend({
   toMatchAudio: wrap("toMatchAudio", expectAudioMatches),
   toMatchAudioFile: wrap("toMatchAudioFile", expectAudioMatchesGolden),
-  toMatchAudioSnapshot: wrapAsync("toMatchAudioSnapshot", expectAudioMatchesSnapshot),
+  toMatchAudioSnapshot: toMatchAudioSnapshotChain,
   toBeFinite: wrap("toBeFinite", expectNoNaN),
   toHavePeakUnder: wrap("toHavePeakUnder", expectPeakUnder),
   toHaveRmsUnder: wrap("toHaveRmsUnder", expectRmsUnder),

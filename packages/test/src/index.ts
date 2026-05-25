@@ -294,30 +294,58 @@ export type SnapshotOptions = {
 const snapshotCounters = new Map<string, number>();
 
 /**
- * Assert that `actual` matches a vitest-style auto-managed wav snapshot
- * (`docs/06-testing.md` §2.1)。 `actual` は 3 shape:
- * - `RenderOfflineResult` = 既 path、 sample rate = `actual.sampleRate` 経 由
- * - `Float32Array` = mono 1 channel 直 接 = `opts.sampleRate` (default `48000`)
- *   で wav 化 (= signal generator 出 力 等 を wrap な し で 渡 す path)
- * - `Float32Array[]` = multi-channel 直 接 = 同 上 で wav 化
- *
- * path 解 決 優 先 順:
- * 1. `opts.snapshotPath` 明 示 = full path 上 書 き
- * 2. `opts.snapshotName` 明 示 = `<test-file-dir>/__snapshots__/<safe(snapshotName)>.wav` (= test-file-base prefix も counter も ナ シ、 consumer が unique 命 名 責 任)
- * 3. 両 省 略 = auto-infer = `<test-file-dir>/__snapshots__/<test-file-base>__<safe(test-name)>__<counter>.wav` (= test 名 自 動 推 論 = 衝 突 防 止 で prefix + counter 必 須)
- *
- * 初 回 = wav 自 動 書 き 出 し + pass、 2 回 目 以 降 = bit-exact 比 較、
- * `vitest -u` で 強 制 上 書 き、 CI mode = 不 在 で fail (= vitest snapshot
- * state 経 由 で update / CI mode 判 定)。
- *
- * 単 一 port 専 用 (= 1 port な ら 推 論、 `opts.port` で 明 示 上 書 き、 多
- * port + `opts.port` 未 指 定 で throw)。
- *
- * chain 形 = `await expect(actual).toMatchAudioSnapshot(opts?)` (= `@unworklet/test/extend`)。
+ * Per-test 状 態 (= vitest `MatcherState` の subset)。 chain form は
+ * `expect.extend(...)` 内 で `this` 経 由 で per-test bound state を 受
+ * け 取 れ る (= concurrent test で も race ナ シ)、 plain form は global
+ * `expect.getState()` 経 由 で 取 得 (= sequential 専 用、 concurrent
+ * で は cross-test 干 渉 リ ス ク)。
  */
-export async function expectAudioMatchesSnapshot(
+export type SnapshotResolutionState = {
+  testPath?: string;
+  currentTestName?: string;
+  snapshotState?: { _updateSnapshot?: string };
+};
+
+const resolveSnapshotPath = (state: SnapshotResolutionState, opts: SnapshotOptions): string => {
+  if (opts.snapshotPath !== undefined) {
+    return opts.snapshotPath;
+  }
+  if (opts.snapshotName !== undefined) {
+    // 明 示 `snapshotName` path = `__snapshots__/<safe(snapshotName)>.wav` 直 接 計 算
+    // (= test-file-base prefix も counter も ナ シ、 consumer が unique 命 名 責 任、
+    // test 名 と は 独 立 = test 説 明 free path)。
+    if (!state.testPath) {
+      throw new Error(
+        `expectAudioMatchesSnapshot: opts.snapshotName path 計 算 に は testPath が 必 要; pass opts.snapshotPath explicitly to override.`,
+      );
+    }
+    const safeName = opts.snapshotName.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+    return join(dirname(state.testPath), "__snapshots__", `${safeName}.wav`);
+  }
+  if (!state.testPath || !state.currentTestName) {
+    throw new Error(
+      `expectAudioMatchesSnapshot: snapshot path auto-infer requires testPath + currentTestName; pass opts.snapshotPath explicitly to override.`,
+    );
+  }
+  const dir = dirname(state.testPath);
+  const base = basename(state.testPath, extname(state.testPath));
+  const safeName = state.currentTestName.replace(/[^A-Za-z0-9]+/g, "_");
+  const key = `${state.testPath}::${state.currentTestName}`;
+  const counter = (snapshotCounters.get(key) ?? 0) + 1;
+  snapshotCounters.set(key, counter);
+  return join(dir, "__snapshots__", `${base}__${safeName}__${counter}.wav`);
+};
+
+/**
+ * State explicit な internal worker (= chain form は `this` (= per-test bound
+ * `MatcherState`) を 渡 す、 plain form は `expect.getState()` global を 渡
+ * す)。 全 path / update mode resolve を state 経 由 で 行 う = global state
+ * 依 存 を 排 除 し て concurrent safe path (= chain form 用) を 提 供。
+ */
+export async function expectAudioMatchesSnapshotWithState(
   actual: RenderOfflineResult | Float32Array | Float32Array[],
-  opts: SnapshotOptions = {},
+  opts: SnapshotOptions,
+  state: SnapshotResolutionState,
 ): Promise<void> {
   // actual 正 規 化 = Float32Array / Float32Array[] 渡 し は RenderOfflineResult 形 に wrap。
   let result: RenderOfflineResult;
@@ -363,42 +391,14 @@ export async function expectAudioMatchesSnapshot(
   const channels = result.outputs[portName]!;
   const wavBytes = encodeWav(channels, result.sampleRate);
 
-  const state = expect.getState();
-  let snapshotPath = opts.snapshotPath;
-  if (snapshotPath === undefined && opts.snapshotName !== undefined) {
-    // 明 示 `snapshotName` path = `__snapshots__/<safe(snapshotName)>.wav` 直 接 計 算
-    // (= test-file-base prefix も counter も ナ シ、 consumer が unique 命 名 責 任、
-    // test 名 と は 独 立 = test 説 明 free path)。
-    if (!state.testPath) {
-      throw new Error(
-        `expectAudioMatchesSnapshot: opts.snapshotName path 計 算 に は expect.getState().testPath が 必 要; pass opts.snapshotPath explicitly to override.`,
-      );
-    }
-    const safeName = opts.snapshotName.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-    snapshotPath = join(dirname(state.testPath), "__snapshots__", `${safeName}.wav`);
-  }
-  if (snapshotPath === undefined) {
-    if (!state.testPath || !state.currentTestName) {
-      throw new Error(
-        `expectAudioMatchesSnapshot: snapshot path auto-infer requires expect.getState().testPath + .currentTestName; pass opts.snapshotPath explicitly to override.`,
-      );
-    }
-    const dir = dirname(state.testPath);
-    const base = basename(state.testPath, extname(state.testPath));
-    const safeName = state.currentTestName.replace(/[^A-Za-z0-9]+/g, "_");
-    const key = `${state.testPath}::${state.currentTestName}`;
-    const counter = (snapshotCounters.get(key) ?? 0) + 1;
-    snapshotCounters.set(key, counter);
-    snapshotPath = join(dir, "__snapshots__", `${base}__${safeName}__${counter}.wav`);
-  }
+  const snapshotPath = resolveSnapshotPath(state, opts);
 
   // vitest snapshot state 経 由 で update / CI mode 取 得 (= jest 互 換 path
   // `_updateSnapshot` = "all" (= `-u`) / "new" (= default、 不 在 で 書 く) /
   // "none" (= `--ci`、 不 在 で fail))。 vitest 標 準 toMatchFileSnapshot は
   // Uint8Array を text JSON で serialize し て し ま い 再 生 可 能 な wav
   // バ イ ナ リ に な ら な い た め、 こ こ は 自 力 fs API path を 取 る。
-  const snapshotState = state.snapshotState as unknown as { _updateSnapshot?: string } | undefined;
-  const updateMode = snapshotState?._updateSnapshot ?? "new";
+  const updateMode = state.snapshotState?._updateSnapshot ?? "new";
   const exists = existsSync(snapshotPath);
 
   if (!exists) {
@@ -432,6 +432,50 @@ export async function expectAudioMatchesSnapshot(
   }
   // Promise<void> 返 し maintain (= API は async、 内 部 同 期 I/O は cosmetic)
   return Promise.resolve();
+}
+
+/**
+ * Assert that `actual` matches a vitest-style auto-managed wav snapshot
+ * (`docs/06-testing.md` §2.1)。 `actual` は 3 shape:
+ * - `RenderOfflineResult` = 既 path、 sample rate = `actual.sampleRate` 経 由
+ * - `Float32Array` = mono 1 channel 直 接 = `opts.sampleRate` (default `48000`)
+ *   で wav 化 (= signal generator 出 力 等 を wrap な し で 渡 す path)
+ * - `Float32Array[]` = multi-channel 直 接 = 同 上 で wav 化
+ *
+ * path 解 決 優 先 順:
+ * 1. `opts.snapshotPath` 明 示 = full path 上 書 き
+ * 2. `opts.snapshotName` 明 示 = `<test-file-dir>/__snapshots__/<safe(snapshotName)>.wav` (= test-file-base prefix も counter も ナ シ、 consumer が unique 命 名 責 任)
+ * 3. 両 省 略 = auto-infer = `<test-file-dir>/__snapshots__/<test-file-base>__<safe(test-name)>__<counter>.wav` (= test 名 自 動 推 論 = 衝 突 防 止 で prefix + counter 必 須)
+ *
+ * 初 回 = wav 自 動 書 き 出 し + pass、 2 回 目 以 降 = bit-exact 比 較、
+ * `vitest -u` で 強 制 上 書 き、 CI mode = 不 在 で fail (= vitest snapshot
+ * state 経 由 で update / CI mode 判 定)。
+ *
+ * 単 一 port 専 用 (= 1 port な ら 推 論、 `opts.port` で 明 示 上 書 き、 多
+ * port + `opts.port` 未 指 定 で throw)。
+ *
+ * Concurrent test 注 意: plain function 形 は `expect.getState()` global
+ * を 読 む = `test.concurrent` 配 下 で 別 test の testName / counter を
+ * 拾 う 可 能 性 = sequential 用 path。 concurrent 配 下 で 使 う 時 は
+ * `expect(actual).toMatchAudioSnapshot(opts?)` chain form (= `@unworklet/test/extend`)
+ * を 使 う = `expect.extend` の bound matcher state (= `this.testPath` /
+ * `this.currentTestName` per-test) 経 由 で race を 回 避。 or
+ * `opts.snapshotPath` を 明 示 す れ ば auto-infer path を skip し て
+ * concurrent でも 安 全 (= state 読 み ゼ ロ)。
+ *
+ * chain 形 = `await expect(actual).toMatchAudioSnapshot(opts?)` (= `@unworklet/test/extend`)。
+ */
+export async function expectAudioMatchesSnapshot(
+  actual: RenderOfflineResult | Float32Array | Float32Array[],
+  opts: SnapshotOptions = {},
+): Promise<void> {
+  // plain form = global `expect.getState()` 経 由 = sequential 用 path
+  // (= concurrent では bound state を carry す る chain form を 推 奨)。
+  return expectAudioMatchesSnapshotWithState(
+    actual,
+    opts,
+    expect.getState() as unknown as SnapshotResolutionState,
+  );
 }
 
 /**
