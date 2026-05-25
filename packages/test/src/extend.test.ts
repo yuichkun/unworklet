@@ -186,12 +186,26 @@ test("`toHaveDcOffsetUnder` (chain) happy + fail", () => {
   expect(() => expect(monoResult(filled(8, 0.5))).toHaveDcOffsetUnder(0.001)).toThrow(/DC offset/);
 });
 
-test("`toHaveEventCount` (chain) stub fails with not implemented", () => {
-  expect(() => expect(dummyResult).toHaveEventCount("foo", 0)).toThrow(/not implemented/);
+test("`toHaveEventCount` (chain) happy + fail", () => {
+  const result: RenderOfflineResult = {
+    outputs: {},
+    events: [{ name: "peak", payload: {}, atSample: 0 }],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(result).toHaveEventCount("peak", 1);
+  expect(() => expect(result).toHaveEventCount("peak", 2)).toThrow(/count/);
 });
 
-test("`toContainEvents` (chain) stub fails with not implemented", () => {
-  expect(() => expect(dummyResult).toContainEvents([])).toThrow(/not implemented/);
+test("`toContainEvents` (chain) happy + fail", () => {
+  const result: RenderOfflineResult = {
+    outputs: {},
+    events: [{ name: "peak", payload: {}, atSample: 10 }],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(result).toContainEvents([{ name: "peak" }]);
+  expect(() => expect(result).toContainEvents([{ name: "missing" }])).toThrow(/not found/);
 });
 
 test("`toEmitMidi` (chain) stub fails with not implemented", () => {

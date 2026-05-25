@@ -656,12 +656,113 @@ test("`expectLatency`: multi-port で throw", () => {
   expect(() => expectLatency(result, 0)).toThrow(/single-port/);
 });
 
-test("`expectEventCount` stub throws", () => {
-  expect(() => expectEventCount(dummyResult, "foo", 0)).toThrow(/not implemented/);
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━ expectEventCount ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+test("`expectEventCount`: 同 name 件 数 一 致 = pass", () => {
+  const result: RenderOfflineResult = {
+    outputs: {},
+    events: [
+      { name: "peak", payload: {}, atSample: 0 },
+      { name: "peak", payload: {}, atSample: 10 },
+      { name: "other", payload: {}, atSample: 5 },
+    ],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() => expectEventCount(result, "peak", 2)).not.toThrow();
 });
 
-test("`expectEventsContaining` stub throws", () => {
-  expect(() => expectEventsContaining(dummyResult, [])).toThrow(/not implemented/);
+test("`expectEventCount`: 不 一 致 で throw", () => {
+  const result: RenderOfflineResult = {
+    outputs: {},
+    events: [{ name: "peak", payload: {}, atSample: 0 }],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() => expectEventCount(result, "peak", 2)).toThrow(/count 1 != expected 2/);
+});
+
+test("`expectEventCount`: 不 在 name = 0 = pass", () => {
+  expect(() => expectEventCount(monoResult(filled(8, 0)), "ghost", 0)).not.toThrow();
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━ expectEventsContaining ━━━━━━━━━━━━━━━━━━━━━━━━
+
+test("`expectEventsContaining`: 全 partial 件 が result に exists = pass", () => {
+  const result: RenderOfflineResult = {
+    outputs: {},
+    events: [
+      { name: "peak", payload: { level: 0.5 }, atSample: 10 },
+      { name: "other", payload: {}, atSample: 5 },
+    ],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() => expectEventsContaining(result, [{ name: "peak" }, { name: "other" }])).not.toThrow();
+});
+
+test("`expectEventsContaining`: payload 部 分 一 致", () => {
+  const result: RenderOfflineResult = {
+    outputs: {},
+    events: [{ name: "peak", payload: { level: 0.5 }, atSample: 10 }],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() =>
+    expectEventsContaining(result, [{ name: "peak", payload: { level: 0.5 } }]),
+  ).not.toThrow();
+});
+
+test("`expectEventsContaining`: payload mismatch で throw", () => {
+  const result: RenderOfflineResult = {
+    outputs: {},
+    events: [{ name: "peak", payload: { level: 0.5 }, atSample: 10 }],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() => expectEventsContaining(result, [{ name: "peak", payload: { level: 0.7 } }])).toThrow(
+    /not found/,
+  );
+});
+
+test("`expectEventsContaining`: atSample 一 致 path", () => {
+  const result: RenderOfflineResult = {
+    outputs: {},
+    events: [{ name: "peak", payload: {}, atSample: 10 }],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() => expectEventsContaining(result, [{ name: "peak", atSample: 10 }])).not.toThrow();
+});
+
+test("`expectEventsContaining`: atSample mismatch で throw", () => {
+  const result: RenderOfflineResult = {
+    outputs: {},
+    events: [{ name: "peak", payload: {}, atSample: 10 }],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() => expectEventsContaining(result, [{ name: "peak", atSample: 99 }])).toThrow(
+    /not found/,
+  );
+});
+
+test("`expectEventsContaining`: 余 計 な event は 許 容 (= 順 不 同 / 部 分 一 致)", () => {
+  const result: RenderOfflineResult = {
+    outputs: {},
+    events: [
+      { name: "noise", payload: {}, atSample: 0 },
+      { name: "peak", payload: {}, atSample: 10 },
+      { name: "noise", payload: {}, atSample: 20 },
+    ],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expect(() => expectEventsContaining(result, [{ name: "peak" }])).not.toThrow();
+});
+
+test("`expectEventsContaining`: empty partial = pass", () => {
+  expect(() => expectEventsContaining(monoResult(filled(8, 0)), [])).not.toThrow();
 });
 
 test("`expectMidiOut` stub throws", () => {

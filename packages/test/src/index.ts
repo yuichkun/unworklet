@@ -633,11 +633,17 @@ export function expectDcOffsetUnder(result: RenderOfflineResult, threshold: numb
  * chain 形 = `expect(result).toHaveEventCount(name, expectedCount)` (= `@unworklet/test/extend`)。
  */
 export function expectEventCount(
-  _result: RenderOfflineResult,
-  _name: string,
-  _expectedCount: number,
+  result: RenderOfflineResult,
+  name: string,
+  expectedCount: number,
 ): void {
-  notImplemented();
+  let count = 0;
+  for (const e of result.events) if (e.name === name) count++;
+  if (count !== expectedCount) {
+    throw new Error(
+      `expectEventCount: event '${name}' count ${count} != expected ${expectedCount}`,
+    );
+  }
 }
 
 /** `expectEventsContaining` の partial event shape。 */
@@ -649,15 +655,32 @@ export type PartialExpectedEvent = {
 
 /**
  * 部 分 一 致 (= `partial[i]` が `result.events` の ど こ か に exists)。 順
- * 不 同 + 余 計 な event 許 容。
+ * 不 同 + 余 計 な event 許 容。 `payload` / `atSample` 省 略 = そ の field
+ * を 比 較 し な い (= name だ け hit で OK)。
  *
  * chain 形 = `expect(result).toContainEvents(partial)` (= `@unworklet/test/extend`)。
  */
 export function expectEventsContaining(
-  _result: RenderOfflineResult,
-  _partial: PartialExpectedEvent[],
+  result: RenderOfflineResult,
+  partial: PartialExpectedEvent[],
 ): void {
-  notImplemented();
+  for (let i = 0; i < partial.length; i++) {
+    const p = partial[i]!;
+    const found = result.events.some((e) => {
+      if (e.name !== p.name) return false;
+      if (p.atSample !== undefined && e.atSample !== p.atSample) return false;
+      if (p.payload !== undefined && !isDeepStrictEqual(e.payload, p.payload)) return false;
+      return true;
+    });
+    if (!found) {
+      const details: string[] = [`name='${p.name}'`];
+      if (p.atSample !== undefined) details.push(`atSample=${p.atSample}`);
+      if (p.payload !== undefined) details.push(`payload=${JSON.stringify(p.payload)}`);
+      throw new Error(
+        `expectEventsContaining: partial [${i}] (${details.join(", ")}) not found in result.events`,
+      );
+    }
+  }
 }
 
 /** `expectMidiOut` で 渡 す MIDI event + 任 意 atSample。 */
