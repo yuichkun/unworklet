@@ -17,14 +17,14 @@ pnpm workspaces。 root に `pnpm-workspace.yaml`、 root `package.json` の `pa
 Day-one か ら 公 開 4 package + 内 部 module を 立 て る:
 
 - 公 開: `@unworklet/core` / `@unworklet/vite-plugin` / `@unworklet/offline` / `@unworklet/test`
-- 公 開 subpath: `@unworklet/core/simd`
+- 公 開 subpath: `@unworklet/core/simd` / `@unworklet/test/extend` (= chain form `expect.extend(...)` 登 録 用 side-effect import path、 `06-testing.md` §6)
 - 内 部 module: worklet runtime (= `@unworklet/core` 内、 公 開 package で は な い)。 compiler module 自 体 は `@unworklet/core` 内 部 module だ が、 compile invocation 経 路 は `@unworklet/core` か ら 公 開 さ れ る `compile` 関 数 と し て expose (= vite-plugin / offline / `replaceProcessor` / 直 接 import す る consumer 全 て が 同 一 関 数 を call、 §2.1 + §2.4 参 照)。
 
 権 威 規 定 = `decisions-log.md` Q13 + Q52。
 
 ### 2.1 `@unworklet/core` named exports (categorized list)
 
-`@unworklet/core` root か ら flat export す る v1.0.0 公 開 識 別 子 を category 別 に 整 理 (Q52 strict — DSL 識 別 子 は root に flat、 subpath split し な い)。 SIMD primitive は `@unworklet/core/simd` subpath か ら、 test matcher は `@unworklet/test` か ら、 offline runner は `@unworklet/offline` か ら 別 export。
+`@unworklet/core` root か ら flat export す る v1.0.0 公 開 識 別 子 を category 別 に 整 理 (Q52 strict — DSL 識 別 子 は root に flat、 subpath split し な い)。 SIMD primitive は `@unworklet/core/simd` subpath か ら、 test matcher / signal utility / midi utility / sample-time utility / chain form は `@unworklet/test` (+ side-effect subpath `@unworklet/test/extend`) か ら、 offline runner は `@unworklet/offline` か ら 別 export。
 
 | Category                                                 | Exports                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -55,7 +55,7 @@ Lane access (`vec.lane(i)`) is a method on the `Node<'f32x4'>` value; `buf.loadV
 
 - `@unworklet/vite-plugin` — exports the Vite plugin factory + DevTools panel + analysis JSON artifact contract (`07-vite-plugin.md`)。 build pipeline 内 で `@unworklet/core` の `compile` 関 数 を call し て WASM を emit。
 - `@unworklet/offline` — exports `renderOffline` (`13-offline-render.md` §2)。 内 部 で `@unworklet/core` の `compile` 関 数 を call し て WASM 化、 host JS の `WebAssembly.instantiate` で offline 実 行。
-- `@unworklet/test` — exports vitest matchers (`expectAudioMatches`, `expectNoNaN`, `expectPeakUnder`, `expectRmsUnder`, `expectEventsEqual`, `expectStateMatches`, etc. — `06-testing.md` §2; depends on `@unworklet/offline`).
+- `@unworklet/test` — exports vitest matchers + audio test utility (= 全 43 件 + chain form、 `06-testing.md` §2-§6 全 体)。 内 訳: matcher 20 件 (= audio / sample-level / event / midi / state、 `06-testing.md` §2)、 signal 構 築 utility 7 件 (= `sine` / `silence` / `impulse` / `sineSweep` / `whiteNoise` / `dc` / `ramp`、 §3)、 midi utility 10 件 (= namespace `midi` の 9 variants + `sequence`、 §4)、 sample/time 変 換 utility 6 件 (= `samplesToMs` / `msToSamples` / `samplesToSec` / `secToSamples` / `bpmToSamples` / `bpmToMs`、 §5)、 chain form (= `@unworklet/test/extend` side-effect import、 §6)。 depends on `@unworklet/offline`。
 
 Per-identifier signature detail / generic constraint is impl-phase fill per Q53 + Q61.
 
@@ -70,11 +70,13 @@ graph LR
   vp["@unworklet/vite-plugin"]
   offline["@unworklet/offline"]
   test["@unworklet/test"]
+  testExtend["@unworklet/test/extend (subpath)"]
   binaryen["binaryen (dynamic import)"]
   vite[vite]
   vitest[vitest]
 
   simd -.subpath.-> core
+  testExtend -.subpath.-> test
   core -.dynamic.-> binaryen
   vp -.peer.-> core
   vp -.peer.-> vite
