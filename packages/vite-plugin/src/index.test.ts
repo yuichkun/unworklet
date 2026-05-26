@@ -25,17 +25,18 @@ type ResolveIdFn = (
 
 type LoadFn = (this: unknown, id: string) => unknown;
 
-type EmitFileArgs = {
-  type: "asset";
-  name: string;
-  source: Uint8Array | string;
-};
+type AssetEmit = { type: "asset"; name: string; source: Uint8Array | string };
+type ChunkEmit = { type: "chunk"; id: string; name: string };
+type EmitFileArgs = AssetEmit | ChunkEmit;
 
 type MockEmitContext = {
   calls: EmitFileArgs[];
   refId: string;
   emitFile: (file: EmitFileArgs) => string;
 };
+
+const assetCalls = (ctx: MockEmitContext): AssetEmit[] =>
+  ctx.calls.filter((c): c is AssetEmit => c.type === "asset");
 
 const callResolveId = (source: string, importer: string | undefined): unknown => {
   const hook = unworklet().resolveId;
@@ -159,7 +160,7 @@ test("load returns undefined for non-virtual ids", async () => {
 test("load evaluates the fixture, compiles it, and emits the WASM as a build asset", async () => {
   const { ctx } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`);
 
-  const wasmCall = ctx.calls.find((c) => c.name.endsWith(".wasm"));
+  const wasmCall = assetCalls(ctx).find((c) => c.name.endsWith(".wasm"));
   expect(wasmCall).toMatchObject({
     type: "asset",
     name: "01-stereo-gain.wasm",
@@ -173,7 +174,7 @@ test("emitted WASM bytes match the result of compile() invoked directly", async 
   const fixtureModule = (await import(FIXTURE_GAIN_PATH)) as Record<string, unknown>;
   const direct = await compile(fixtureModule["stereoGain"] as Parameters<typeof compile>[0]);
 
-  const wasmCall = ctx.calls.find((c) => c.name.endsWith(".wasm"));
+  const wasmCall = assetCalls(ctx).find((c) => c.name.endsWith(".wasm"));
   const emitted = wasmCall!.source as Uint8Array;
   expect(emitted.byteLength).toBe(direct.wasm.byteLength);
   expect(Buffer.from(emitted).equals(Buffer.from(direct.wasm))).toBe(true);
@@ -203,14 +204,14 @@ test("emitted asset name omits the `.processor` suffix when present and keeps th
   const { ctx: gainCtx } = await callLoadWithMockContext(
     `${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`,
   );
-  expect(gainCtx.calls.find((c) => c.name.endsWith(".wasm"))).toMatchObject({
+  expect(assetCalls(gainCtx).find((c) => c.name.endsWith(".wasm"))).toMatchObject({
     name: "01-stereo-gain.wasm",
   });
 
   const { ctx: bareCtx } = await callLoadWithMockContext(
     `${VIRTUAL_ID_PREFIX}${FIXTURE_BARE_GAIN_PATH}`,
   );
-  expect(bareCtx.calls.find((c) => c.name.endsWith(".wasm"))).toMatchObject({
+  expect(assetCalls(bareCtx).find((c) => c.name.endsWith(".wasm"))).toMatchObject({
     name: "bare-gain.wasm",
   });
 });
@@ -219,32 +220,90 @@ test("emitted asset name omits the `.processor` suffix when present and keeps th
 // 5-E = 4 metadata artifact JSON emit
 // ─────────────────────────────────────────────────────────────────────────
 
-test("load also emits 4 metadata artifact JSON files by default", async () => {
+test("load also emits 4 metadata artifact JSON files + the worklet entry chunk by default", async () => {
   const { ctx } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`);
 
-  const names = ctx.calls.map((c) => c.name).sort();
+  const names = ctx.calls.map((c) => c.name).sort((a, b) => a.localeCompare(b));
   expect(names).toEqual([
     "01-stereo-gain.diagnostics.json",
     "01-stereo-gain.graph.json",
     "01-stereo-gain.memory.json",
     "01-stereo-gain.schema-hash.json",
     "01-stereo-gain.wasm",
+    "01-stereo-gain.worklet",
   ]);
 });
 
 test("each emitted metadata JSON file parses to a valid JSON value", async () => {
   const { ctx } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`);
 
-  const byName = (n: string) => ctx.calls.find((c) => c.name === n);
-  expect(() => JSON.parse(byName("01-stereo-gain.graph.json")!.source as string)).not.toThrow();
-  expect(() => JSON.parse(byName("01-stereo-gain.memory.json")!.source as string)).not.toThrow();
+  const findAsset = (n: string): AssetEmit => {
+    const hit = assetCalls(ctx).find((c) => c.name === n);
+    if (!hit) throw new Error(`asset not emitted: ${n}`);
+    return hit;
+  };
+  expect(() => JSON.parse(findAsset("01-stereo-gain.graph.json").source as string)).not.toThrow();
+  expect(() => JSON.parse(findAsset("01-stereo-gain.memory.json").source as string)).not.toThrow();
   expect(() =>
-    JSON.parse(byName("01-stereo-gain.diagnostics.json")!.source as string),
+    JSON.parse(findAsset("01-stereo-gain.diagnostics.json").source as string),
   ).not.toThrow();
-  const sh = JSON.parse(byName("01-stereo-gain.schema-hash.json")!.source as string) as {
+  const sh = JSON.parse(findAsset("01-stereo-gain.schema-hash.json").source as string) as {
     schemaHash: unknown;
   };
   expect(typeof sh.schemaHash).toBe("string");
+});
+
+test("load emits a worklet entry chunk pointing at the user source", async () => {
+  const { ctx } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`);
+
+  const chunk = ctx.calls.find((c) => c.type === "chunk");
+  expect(chunk).toMatchObject({
+    type: "chunk",
+    id: `\0unworklet-worklet:${FIXTURE_GAIN_PATH}`,
+    name: "01-stereo-gain.worklet",
+  });
+});
+
+test("load returns JS that augments the processor with moduleUrl / wasmUrl / processorName", async () => {
+  const { result } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`);
+
+  expect(typeof result).toBe("string");
+  const js = result as string;
+  expect(js).toContain("moduleUrl:");
+  expect(js).toContain("wasmUrl:");
+  expect(js).toContain('processorName: "stereoGain"');
+});
+
+test("augmented JS re-imports the original user source by absolute path", async () => {
+  const { result } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`);
+
+  const js = result as string;
+  expect(js).toContain(`from ${JSON.stringify(FIXTURE_GAIN_PATH)}`);
+});
+
+test("augmented JS exports both default + named (= export identifier matches user source)", async () => {
+  const { result } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`);
+
+  const js = result as string;
+  expect(js).toMatch(/export default/);
+  expect(js).toContain("export { __unworkletAugmented as stereoGain }");
+});
+
+test("load on a WORKLET_ENTRY_PREFIX id returns the worklet runtime template", async () => {
+  const result = await callLoadNoContext(`\0unworklet-worklet:${FIXTURE_GAIN_PATH}`);
+
+  expect(typeof result).toBe("string");
+  const js = result as string;
+  expect(js).toContain("extends AudioWorkletProcessor");
+  expect(js).toContain("registerProcessor");
+  expect(js).toContain("worklet.initialize");
+  expect(js).toContain("worklet.process");
+  expect(js).toContain("worklet.parameterDescriptors");
+});
+
+test("resolveId passes through WORKLET_ENTRY_PREFIX ids without modification", () => {
+  const id = `\0unworklet-worklet:/abs/x.processor.ts`;
+  expect(callResolveId(id, undefined)).toBe(id);
 });
 
 test("emitted schema-hash JSON carries the same hash that compile() returned", async () => {
@@ -252,15 +311,16 @@ test("emitted schema-hash JSON carries the same hash that compile() returned", a
   const fixtureModule = (await import(FIXTURE_GAIN_PATH)) as Record<string, unknown>;
   const direct = await compile(fixtureModule["stereoGain"] as Parameters<typeof compile>[0]);
 
-  const shCall = ctx.calls.find((c) => c.name === "01-stereo-gain.schema-hash.json");
+  const shCall = assetCalls(ctx).find((c) => c.name === "01-stereo-gain.schema-hash.json");
   expect(JSON.parse(shCall!.source as string)).toEqual({ schemaHash: direct.schemaHash });
 });
 
-test("`emitAnalysisArtifacts: false` suppresses the 4 metadata JSON emits", async () => {
+test("`emitAnalysisArtifacts: false` suppresses the 4 metadata JSON emits (= wasm + worklet entry only)", async () => {
   const { ctx } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`, {
     emitAnalysisArtifacts: false,
   });
 
-  expect(ctx.calls).toHaveLength(1);
-  expect(ctx.calls[0]).toMatchObject({ name: "01-stereo-gain.wasm" });
+  expect(ctx.calls).toHaveLength(2);
+  const names = ctx.calls.map((c) => c.name).sort((a, b) => a.localeCompare(b));
+  expect(names).toEqual(["01-stereo-gain.wasm", "01-stereo-gain.worklet"]);
 });

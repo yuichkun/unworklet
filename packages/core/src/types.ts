@@ -328,11 +328,23 @@ export type ProcessorGraph = {
 /**
  * Worklet escape-hatch namespace exposed on `CompiledProcessor<C>.worklet`
  * (`01-dsl.md` §11 + Q80).
+ *
+ * `initialize` / `process` / `parameterDescriptors` are always present —
+ * filled by `makeWorkletNamespace(graph)` at `defineProcessor` time.
+ *
+ * `moduleUrl` / `processorName` / `wasmUrl` appear only on processors
+ * imported via `@unworklet/vite-plugin`'s `?worklet` virtual module (or
+ * an equivalent live-coding helper that populates the same fields)。
+ * `createNode` reads them to wire `audioWorklet.addModule(...)` +
+ * `new AudioWorkletNode(...)`.
  */
 export type WorkletNamespace = {
   initialize: (...args: unknown[]) => void;
   process: (...args: unknown[]) => boolean;
   parameterDescriptors: readonly unknown[];
+  moduleUrl?: string;
+  processorName?: string;
+  wasmUrl?: string;
 };
 
 export type CompiledProcessor<C> = {

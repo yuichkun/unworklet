@@ -23,6 +23,8 @@ import { compile } from "@unworklet/core";
 import type { CompiledProcessor } from "@unworklet/core";
 import type { Plugin } from "vite-plus";
 
+import { emitWorkletTemplate } from "./worklet-template.ts";
+
 const PLUGIN_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 /**
@@ -92,6 +94,7 @@ export type SchemaHashArtifact = {
 // `compile(processor)` 経 由 で 生 成 し た WASM URL に 置 換 (= 5-D 以 降)。
 
 const VIRTUAL_ID_PREFIX = "\0unworklet:";
+const WORKLET_ENTRY_PREFIX = "\0unworklet-worklet:";
 const WORKLET_QUERY_PARAM = "worklet";
 
 const detectWorkletQuery = (source: string): { basePath: string } | null => {
@@ -131,16 +134,21 @@ const isCompiledProcessor = (v: unknown): v is CompiledProcessor<unknown> => {
   );
 };
 
+type PickedProcessor = {
+  exportName: string;
+  processor: CompiledProcessor<unknown>;
+};
+
 const pickCompiledProcessor = (
   sourceModule: Record<string, unknown>,
   sourcePath: string,
-): CompiledProcessor<unknown> => {
+): PickedProcessor => {
   const matches: string[] = [];
-  let found: CompiledProcessor<unknown> | undefined;
+  let found: { exportName: string; processor: CompiledProcessor<unknown> } | undefined;
   for (const key of Object.keys(sourceModule)) {
     if (isCompiledProcessor(sourceModule[key])) {
       matches.push(key);
-      found = sourceModule[key] as CompiledProcessor<unknown>;
+      found = { exportName: key, processor: sourceModule[key] as CompiledProcessor<unknown> };
     }
   }
   if (matches.length === 0) {
@@ -269,6 +277,7 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
   return {
     name: "@unworklet/vite-plugin",
     resolveId(source, importer) {
+      if (source.startsWith(WORKLET_ENTRY_PREFIX)) return source;
       const detect = detectWorkletQuery(source);
       if (!detect) return undefined;
       const resolved = resolveAgainstImporter(detect.basePath, importer);
@@ -276,10 +285,21 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
       return `${VIRTUAL_ID_PREFIX}${resolved}`;
     },
     async load(id) {
+      if (id.startsWith(WORKLET_ENTRY_PREFIX)) {
+        const sourcePath = id.slice(WORKLET_ENTRY_PREFIX.length);
+        const sourceModule = (await import(sourcePath)) as Record<string, unknown>;
+        const { exportName } = pickCompiledProcessor(sourceModule, sourcePath);
+        return emitWorkletTemplate({
+          userSourcePath: sourcePath,
+          processorExportName: exportName,
+          processorName: exportName,
+        });
+      }
+
       if (!id.startsWith(VIRTUAL_ID_PREFIX)) return undefined;
       const sourcePath = id.slice(VIRTUAL_ID_PREFIX.length);
       const sourceModule = (await import(sourcePath)) as Record<string, unknown>;
-      const processor = pickCompiledProcessor(sourceModule, sourcePath);
+      const { exportName, processor } = pickCompiledProcessor(sourceModule, sourcePath);
       const result = await compile(processor);
 
       const baseName = assetBaseName(sourcePath);
@@ -287,6 +307,11 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
         type: "asset",
         name: `${baseName}.wasm`,
         source: result.wasm,
+      });
+      const workletRefId = this.emitFile({
+        type: "chunk",
+        id: `${WORKLET_ENTRY_PREFIX}${sourcePath}`,
+        name: `${baseName}.worklet`,
       });
 
       if (emitAnalysisArtifacts) {
@@ -312,7 +337,27 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
         });
       }
 
-      return `export default import.meta.ROLLUP_FILE_URL_${wasmRefId};\n`;
+      // virtual module = user source を re-import し て CompiledProcessor を
+      // 取り出し、 worklet namespace に bundler URLs (moduleUrl / wasmUrl /
+      // processorName) を 載せ た 形 を export。 関数 entry (initialize /
+      // process / parameterDescriptors) は 元 namespace を spread で 引き継ぐ。
+      return [
+        `import { ${exportName} as __unworkletRaw } from ${JSON.stringify(sourcePath)};`,
+        ``,
+        `const __unworkletAugmented = {`,
+        `  ...__unworkletRaw,`,
+        `  worklet: {`,
+        `    ...__unworkletRaw.worklet,`,
+        `    moduleUrl: import.meta.ROLLUP_FILE_URL_${workletRefId},`,
+        `    wasmUrl: import.meta.ROLLUP_FILE_URL_${wasmRefId},`,
+        `    processorName: ${JSON.stringify(exportName)},`,
+        `  },`,
+        `};`,
+        ``,
+        `export default __unworkletAugmented;`,
+        `export { __unworkletAugmented as ${exportName} };`,
+        ``,
+      ].join("\n");
     },
     devtools: {
       setup: (ctx) => setupDevtools(ctx, uiRoot),
