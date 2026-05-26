@@ -19,7 +19,8 @@
     "access": "public"
   },
   "scripts": {
-    "build": "vp pack",
+    "build": "node scripts/build.mjs",
+    "build:ui": "node scripts/build-ui.mjs",
     "dev": "vp pack --watch",
     "test": "vp test",
     "check": "vp check",
