@@ -1,17 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 
-import { useMockGraph, type BuildIssue } from "../composables/useMockGraph";
-
-type Tab = "ast" | "errors" | "state" | "snapshot";
-
-const TAB_LABELS: Record<Tab, string> = {
-  ast: "AST",
-  errors: "Build errors",
-  state: "State",
-  snapshot: "Snapshot",
-};
-const TAB_ORDER: Tab[] = ["ast", "errors", "state", "snapshot"];
+import { type BuildIssue, useMockGraph } from "../composables/useMockGraph";
+import { useMockSignals } from "../composables/useMockSignals";
 
 const COL_W = 200;
 const COL_X0 = 50;
@@ -20,7 +11,7 @@ const NODE_W = 140;
 const NODE_H = 60;
 
 const graph = useMockGraph();
-const activeTab = ref<Tab>("ast");
+const signals = useMockSignals();
 
 const nodeLayout = computed(() =>
   graph.nodes.map((n) => ({
@@ -54,19 +45,36 @@ const edgePaths = computed(() =>
 
 const selectedId = computed(() => graph.selectedId.value);
 const selectedNode = computed(() => graph.selectedNode.value);
-const selectedAst = computed(() => (selectedId.value ? graph.astDecls(selectedId.value) : []));
 const selectedIssues = computed(() =>
   selectedId.value ? graph.buildIssuesByNode(selectedId.value) : [],
 );
-const selectedState = computed(() => (selectedId.value ? graph.stateSlots(selectedId.value) : []));
 const selectedSnapshot = computed(() =>
   selectedId.value ? graph.snapshotSlots(selectedId.value) : [],
 );
+const selectedPublish = computed(() =>
+  selectedId.value ? graph.publishSlots(selectedId.value) : [],
+);
+const selectedIO = computed(() => (selectedId.value ? graph.nodeIO(selectedId.value) : null));
+const selectedAst = computed(() => (selectedId.value ? graph.astDecls(selectedId.value) : []));
 
-const totalAstBytes = computed(() => selectedAst.value.reduce((acc, d) => acc + d.bytes, 0));
+const selectedMemoryBytes = computed(() => selectedAst.value.reduce((acc, d) => acc + d.bytes, 0));
+
+const LATENCY_NODE_SET = new Set<string>(signals.latencyNodeIds as readonly string[]);
+const selectedLatency = computed(() => {
+  const sel = selectedId.value;
+  if (!sel || !LATENCY_NODE_SET.has(sel)) return null;
+  return signals.getLatencyStats(sel);
+});
+
 const totalSnapshotBytes = computed(() =>
   selectedSnapshot.value.reduce((acc, d) => acc + d.bytes, 0),
 );
+
+const publishBreakdown = computed(() => {
+  const scalars = selectedPublish.value.filter((s) => s.kind === "state");
+  const buffers = selectedPublish.value.filter((s) => s.kind === "buffer");
+  return { scalars, buffers };
+});
 
 const formatBytes = (b: number): string => {
   if (b < 1024) return `${b} B`;
@@ -74,13 +82,16 @@ const formatBytes = (b: number): string => {
   return `${(b / (1024 * 1024)).toFixed(2)} MB`;
 };
 
-// Trim the `src/processors/` prefix that all mock issues share, so the row
-// stays scannable. `:line` is preserved (column dropped — surfaced inside the
-// modal where it has room).
 const shortSrc = (src: string): string => {
   const tail = src.split("/").pop() ?? src;
   const m = tail.match(/^(.+\.ts):(\d+)(?::\d+)?$/);
   return m ? `${m[1]}:${m[2]}` : tail;
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  ok: "Healthy",
+  warning: "Warnings",
+  errors: "Errors",
 };
 
 const issueModalRef = ref<HTMLDialogElement | null>(null);
@@ -95,8 +106,19 @@ const closeIssue = (): void => {
   issueModalRef.value?.close();
 };
 
-const onModalBackdropClick = (event: MouseEvent): void => {
+const onIssueBackdropClick = (event: MouseEvent): void => {
   if (event.target === issueModalRef.value) closeIssue();
+};
+
+const snapshotModalRef = ref<HTMLDialogElement | null>(null);
+const openSnapshot = (): void => {
+  snapshotModalRef.value?.showModal();
+};
+const closeSnapshot = (): void => {
+  snapshotModalRef.value?.close();
+};
+const onSnapshotBackdropClick = (event: MouseEvent): void => {
+  if (event.target === snapshotModalRef.value) closeSnapshot();
 };
 </script>
 
@@ -115,7 +137,7 @@ const onModalBackdropClick = (event: MouseEvent): void => {
       <section class="graph-pane">
         <svg
           class="graph-svg"
-          viewBox="0 0 1140 220"
+          viewBox="0 0 1340 220"
           preserveAspectRatio="xMidYMid meet"
           role="img"
           aria-label="Audio graph diagram"
@@ -223,136 +245,166 @@ const onModalBackdropClick = (event: MouseEvent): void => {
       </section>
 
       <aside class="detail-pane">
-        <div class="detail-head">
-          <div class="detail-title">{{ selectedNode?.label ?? "—" }}</div>
-          <div class="detail-sub">
-            <span class="u-pill">{{ selectedNode?.audioNodeType ?? "" }}</span>
-            <span v-if="selectedNode?.kind === 'unworklet'" class="u-pill u-pill--accent">
-              unworklet
-            </span>
-          </div>
-        </div>
-
-        <nav class="tab-nav">
-          <button
-            v-for="t in TAB_ORDER"
-            :key="t"
-            class="tab"
-            :class="{ active: activeTab === t }"
-            @click="activeTab = t"
-          >
-            <span>{{ TAB_LABELS[t] }}</span>
-            <span v-if="t === 'errors' && selectedIssues.length > 0" class="tab-count">
-              {{ selectedIssues.length }}
-            </span>
-          </button>
-        </nav>
-
-        <div class="tab-body">
-          <div v-if="activeTab === 'ast'" class="ast-table">
-            <div v-if="selectedAst.length === 0" class="empty">No declarations for this node.</div>
-            <template v-else>
-              <div class="row row-head">
-                <div class="cell c-kind">kind</div>
-                <div class="cell c-type">type</div>
-                <div class="cell c-name">name</div>
-                <div class="cell c-bytes">bytes</div>
-              </div>
-              <div v-for="d in selectedAst" :key="d.name" class="row">
-                <div class="cell c-kind">
-                  <span class="u-pill" :class="`kind-pill-${d.kind}`">{{ d.kind }}</span>
-                </div>
-                <div class="cell c-type mono">{{ d.type }}</div>
-                <div class="cell c-name mono">
-                  {{ d.name }}
-                  <span v-if="d.note" class="note">({{ d.note }})</span>
-                </div>
-                <div class="cell c-bytes mono">{{ formatBytes(d.bytes) }}</div>
-              </div>
-              <div class="row row-foot">
-                <div class="cell c-kind"></div>
-                <div class="cell c-type"></div>
-                <div class="cell c-name">total</div>
-                <div class="cell c-bytes mono">{{ formatBytes(totalAstBytes) }}</div>
-              </div>
-            </template>
-          </div>
-
-          <div v-else-if="activeTab === 'errors'" class="errors-list">
-            <div v-if="selectedIssues.length === 0" class="empty">
-              No build issues for this node.
-            </div>
-            <button
-              v-for="iss in selectedIssues"
-              :key="iss.code"
-              type="button"
-              class="issue-row"
-              :class="`level-${iss.level}`"
-              @click="openIssue(iss)"
-            >
-              <span class="issue-row-code mono">{{ iss.code }}</span>
-              <span class="issue-row-message">{{ iss.message }}</span>
-              <span class="issue-row-src mono">{{ shortSrc(iss.src) }}</span>
-              <span class="issue-row-chev" aria-hidden="true">›</span>
-            </button>
-          </div>
-
-          <div v-else-if="activeTab === 'state'" class="state-table">
-            <div v-if="selectedState.length === 0" class="empty">No state slots for this node.</div>
-            <template v-else>
-              <div class="row row-head">
-                <div class="cell c-name">name</div>
-                <div class="cell c-type">type</div>
-                <div class="cell c-preview">live value</div>
-              </div>
-              <div v-for="s in selectedState" :key="s.name" class="row">
-                <div class="cell c-name mono">
-                  {{ s.name }}
-                  <span class="u-pill" :class="`kind-pill-${s.kind}`">{{ s.kind }}</span>
-                </div>
-                <div class="cell c-type mono">{{ s.type }}</div>
-                <div class="cell c-preview mono">{{ s.preview }}</div>
-              </div>
-            </template>
-            <p class="hint">
-              Real-time animation lives in the <strong>Live state</strong> view; this tab shows the
-              most recent published value.
-            </p>
-          </div>
-
-          <div v-else class="snapshot-table">
-            <header class="snapshot-head">
-              <button class="u-btn u-btn--primary" disabled>Capture</button>
-              <span class="snapshot-meta mono">
-                {{ selectedSnapshot.length }} slots ·
-                {{ formatBytes(totalSnapshotBytes) }}
+        <template v-if="selectedNode">
+          <header class="detail-head">
+            <div class="detail-title">{{ selectedNode.label }}</div>
+            <div class="detail-sub">
+              <span class="u-pill">{{ selectedNode.audioNodeType }}</span>
+              <span v-if="selectedNode.kind === 'unworklet'" class="u-pill u-pill--accent">
+                unworklet
               </span>
-            </header>
-            <div v-if="selectedSnapshot.length === 0" class="empty">
-              No snapshot slots for this node.
             </div>
-            <template v-else>
-              <div class="row row-head">
-                <div class="cell c-name">name</div>
-                <div class="cell c-bytes">bytes</div>
-                <div class="cell c-preview">preview</div>
+          </header>
+
+          <div class="summary-body">
+            <section class="summary-section">
+              <header class="summary-section-head">Stats</header>
+              <dl class="summary-list">
+                <div class="summary-row">
+                  <dt>status</dt>
+                  <dd>
+                    <span class="status-pip" :class="`status-${selectedNode.status}`"></span>
+                    {{ STATUS_LABEL[selectedNode.status] }}
+                    <span v-if="selectedNode.errorCount > 0" class="row-muted">
+                      ({{ selectedNode.errorCount }} issue{{
+                        selectedNode.errorCount === 1 ? "" : "s"
+                      }})
+                    </span>
+                  </dd>
+                </div>
+                <div class="summary-row">
+                  <dt>memory</dt>
+                  <dd class="mono">{{ formatBytes(selectedMemoryBytes) }}</dd>
+                </div>
+                <div class="summary-row">
+                  <dt>latency P95</dt>
+                  <dd class="mono">
+                    <template v-if="selectedLatency">
+                      {{ selectedLatency.p95.toFixed(2) }} ms
+                    </template>
+                    <span v-else class="row-muted">—</span>
+                  </dd>
+                </div>
+              </dl>
+            </section>
+
+            <section v-if="selectedIO" class="summary-section">
+              <header class="summary-section-head">I/O</header>
+              <dl class="summary-list">
+                <div v-if="selectedIO.audioIn" class="summary-row">
+                  <dt>audio in</dt>
+                  <dd class="mono">
+                    {{ selectedIO.audioIn.name }}
+                    <span class="row-muted">({{ selectedIO.audioIn.channels }} ch)</span>
+                  </dd>
+                </div>
+                <div v-if="selectedIO.audioOut" class="summary-row">
+                  <dt>audio out</dt>
+                  <dd class="mono">
+                    {{ selectedIO.audioOut.name }}
+                    <span class="row-muted">({{ selectedIO.audioOut.channels }} ch)</span>
+                  </dd>
+                </div>
+                <div v-if="selectedIO.midiIn.length > 0" class="summary-row">
+                  <dt>MIDI in</dt>
+                  <dd class="mono">{{ selectedIO.midiIn.join(", ") }}</dd>
+                </div>
+                <div v-if="selectedIO.midiOut.length > 0" class="summary-row">
+                  <dt>MIDI out</dt>
+                  <dd class="mono">{{ selectedIO.midiOut.join(", ") }}</dd>
+                </div>
+                <div
+                  v-if="
+                    !selectedIO.audioIn &&
+                    !selectedIO.audioOut &&
+                    selectedIO.midiIn.length === 0 &&
+                    selectedIO.midiOut.length === 0
+                  "
+                  class="summary-row"
+                >
+                  <dt>—</dt>
+                  <dd class="row-muted">No declared I/O</dd>
+                </div>
+              </dl>
+            </section>
+
+            <section v-if="selectedPublish.length > 0" class="summary-section">
+              <header class="summary-section-head">
+                Publish slots
+                <span class="head-count">({{ selectedPublish.length }})</span>
+              </header>
+              <dl class="summary-list">
+                <div v-if="publishBreakdown.scalars.length > 0" class="summary-row">
+                  <dt>state</dt>
+                  <dd class="mono">
+                    {{ publishBreakdown.scalars.map((s) => s.name).join(", ") }}
+                  </dd>
+                </div>
+                <div v-if="publishBreakdown.buffers.length > 0" class="summary-row">
+                  <dt>buffer</dt>
+                  <dd class="mono">
+                    {{ publishBreakdown.buffers.map((s) => s.name).join(", ") }}
+                  </dd>
+                </div>
+              </dl>
+              <p class="section-link">See <strong>Live state</strong> view for real-time values.</p>
+            </section>
+
+            <section class="summary-section">
+              <header class="summary-section-head">
+                Build issues
+                <span class="head-count">({{ selectedIssues.length }})</span>
+              </header>
+              <div v-if="selectedIssues.length === 0" class="empty">No build issues.</div>
+              <ul v-else class="issue-list">
+                <li v-for="iss in selectedIssues" :key="iss.code">
+                  <button
+                    type="button"
+                    class="issue-row"
+                    :class="`level-${iss.level}`"
+                    @click="openIssue(iss)"
+                  >
+                    <span class="issue-row-code mono">{{ iss.code }}</span>
+                    <span class="issue-row-message">{{ iss.message }}</span>
+                    <span class="issue-row-chev" aria-hidden="true">›</span>
+                  </button>
+                </li>
+              </ul>
+            </section>
+
+            <section class="summary-section">
+              <header class="summary-section-head">Snapshot</header>
+              <div class="snapshot-row">
+                <button
+                  class="u-btn u-btn--primary"
+                  :disabled="selectedSnapshot.length === 0"
+                  :title="
+                    selectedSnapshot.length === 0
+                      ? 'No persistent slots'
+                      : 'Inspect persistent slots (Phase 11 in core)'
+                  "
+                  @click="openSnapshot"
+                >
+                  Inspect
+                </button>
+                <span class="snapshot-meta mono">
+                  {{ selectedSnapshot.length }} persistent slot{{
+                    selectedSnapshot.length === 1 ? "" : "s"
+                  }}
+                  <template v-if="selectedSnapshot.length > 0">
+                    · {{ formatBytes(totalSnapshotBytes) }}
+                  </template>
+                </span>
               </div>
-              <div v-for="s in selectedSnapshot" :key="s.name" class="row">
-                <div class="cell c-name mono">{{ s.name }}</div>
-                <div class="cell c-bytes mono">{{ formatBytes(s.bytes) }}</div>
-                <div class="cell c-preview mono">{{ s.preview }}</div>
-              </div>
-            </template>
-            <p class="hint">
-              Capture surfaces <code>node.snapshot()</code> in Phase 11 — restoration replays the
-              slot binary on a fresh node instance.
-            </p>
+            </section>
           </div>
-        </div>
+        </template>
+
+        <div v-else class="empty empty-detail">Pick a node from the graph.</div>
       </aside>
     </div>
 
-    <dialog ref="issueModalRef" class="issue-modal" @click="onModalBackdropClick">
+    <dialog ref="issueModalRef" class="issue-modal" @click="onIssueBackdropClick">
       <div class="issue-modal-card">
         <header class="issue-modal-head">
           <span class="issue-code mono">{{ activeIssue?.code }}</span>
@@ -374,6 +426,8 @@ const onModalBackdropClick = (event: MouseEvent): void => {
               :class="{
                 highlight:
                   activeIssue.snippet.startLine + idx === activeIssue.snippet.highlightLine,
+                [`highlight-${activeIssue.level}`]:
+                  activeIssue.snippet.startLine + idx === activeIssue.snippet.highlightLine,
               }"
             >
               <span class="snippet-lineno mono">{{ activeIssue.snippet.startLine + idx }}</span>
@@ -390,6 +444,39 @@ const onModalBackdropClick = (event: MouseEvent): void => {
 
         <footer class="issue-modal-foot">
           <button type="button" class="u-btn u-btn--primary" @click="closeIssue">Close</button>
+        </footer>
+      </div>
+    </dialog>
+
+    <dialog ref="snapshotModalRef" class="issue-modal" @click="onSnapshotBackdropClick">
+      <div class="issue-modal-card">
+        <header class="issue-modal-head">
+          <span class="issue-code mono">Snapshot</span>
+          <span class="issue-modal-src mono">{{ selectedNode?.label ?? "" }}</span>
+          <button type="button" class="issue-modal-close" aria-label="Close" @click="closeSnapshot">
+            ×
+          </button>
+        </header>
+
+        <section class="issue-modal-body">
+          <p class="snapshot-hint">
+            <code>node.snapshot()</code> + <code>inspect(blob)</code> become live in Phase 11. Slot
+            list below reflects the current declared shape.
+          </p>
+          <div v-if="selectedSnapshot.length === 0" class="empty">
+            No persistent slots for this node.
+          </div>
+          <ul v-else class="snapshot-list">
+            <li v-for="s in selectedSnapshot" :key="s.name" class="snapshot-slot">
+              <span class="snapshot-slot-name mono" :title="s.name">{{ s.name }}</span>
+              <span class="snapshot-slot-bytes mono">{{ formatBytes(s.bytes) }}</span>
+              <span class="snapshot-slot-preview mono" :title="s.preview">{{ s.preview }}</span>
+            </li>
+          </ul>
+        </section>
+
+        <footer class="issue-modal-foot">
+          <button type="button" class="u-btn u-btn--primary" @click="closeSnapshot">Close</button>
         </footer>
       </div>
     </dialog>
@@ -593,6 +680,7 @@ const onModalBackdropClick = (event: MouseEvent): void => {
   background: var(--u-bg-elev-1);
   border-left: 1px solid var(--u-border);
   min-height: 0;
+  overflow-y: auto;
 }
 
 .detail-head {
@@ -612,161 +700,130 @@ const onModalBackdropClick = (event: MouseEvent): void => {
   gap: 6px;
 }
 
-.tab-nav {
+.summary-body {
   display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 0 16px;
+}
+
+.summary-section {
+  padding: 10px 18px;
   border-bottom: 1px solid var(--u-border);
-  background: var(--u-bg-elev-1);
 }
 
-.tab {
-  flex: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 10px 4px;
-  background: transparent;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  color: var(--u-text-dim);
-  font-size: 11.5px;
-  cursor: pointer;
-}
-
-.tab:hover {
-  color: var(--u-text);
-}
-
-.tab.active {
-  color: var(--u-accent);
-  border-bottom-color: var(--u-accent);
-  font-weight: 600;
-}
-
-.tab-count {
-  background: var(--u-danger);
-  color: var(--u-bg);
-  font-size: 10px;
-  font-weight: 700;
-  padding: 1px 5px;
-  border-radius: 8px;
-}
-
-.tab-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 14px 16px;
-}
-
-.row {
-  display: grid;
-  grid-template-columns: 70px 56px 1fr 80px;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 4px;
-  border-bottom: 1px solid var(--u-border);
-  font-size: 12px;
-}
-
-.row-head {
-  color: var(--u-text-dim);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  border-bottom: 1px solid var(--u-border);
-  font-weight: 600;
-}
-
-.row-foot {
-  color: var(--u-text-muted);
-  font-weight: 600;
+.summary-section:last-child {
   border-bottom: 0;
 }
 
-.state-table .row {
-  grid-template-columns: 1.5fr 50px 1fr;
-}
-
-.snapshot-table .row {
-  grid-template-columns: 1.5fr 70px 1.5fr;
-}
-
-.cell {
+.summary-section-head {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--u-text-dim);
+  margin-bottom: 8px;
   display: flex;
-  align-items: center;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.head-count {
+  font-size: 10px;
+  color: var(--u-text-muted);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.summary-list {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 14px;
+  row-gap: 4px;
+}
+
+.summary-row {
+  display: contents;
+}
+
+.summary-row dt {
+  font-size: 11px;
+  color: var(--u-text-dim);
+  text-align: right;
+}
+
+.summary-row dd {
+  margin: 0;
+  font-size: 12px;
+  color: var(--u-text);
+  display: inline-flex;
+  align-items: baseline;
   gap: 6px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.c-bytes {
-  justify-content: flex-end;
-}
-
-.c-name .u-pill {
-  font-size: 9px;
-  padding: 0 5px;
-}
-
-.note {
+.row-muted {
   color: var(--u-text-dim);
-  margin-left: 4px;
+  font-size: 10.5px;
+}
+
+.status-pip {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  align-self: center;
+}
+
+.status-pip.status-ok {
+  background: var(--u-success);
+}
+
+.status-pip.status-warning {
+  background: var(--u-warn);
+}
+
+.status-pip.status-errors {
+  background: var(--u-danger);
+}
+
+.section-link {
+  margin: 8px 0 0;
   font-size: 11px;
-}
-
-.kind-pill-state {
-  background: rgba(130, 191, 255, 0.16);
-  color: var(--u-accent);
-}
-
-.kind-pill-buffer {
-  background: rgba(98, 209, 138, 0.16);
-  color: var(--u-success);
-}
-
-.kind-pill-lookup {
-  background: rgba(255, 139, 61, 0.16);
-  color: var(--u-orange);
-}
-
-.kind-pill-midi {
-  background: rgba(255, 99, 166, 0.16);
-  color: var(--u-midi);
-}
-
-.kind-pill-message {
-  background: rgba(200, 156, 255, 0.16);
-  color: var(--u-unworklet);
-}
-
-.empty {
-  padding: 20px 12px;
-  text-align: center;
   color: var(--u-text-dim);
-  font-size: 12px;
 }
 
-.errors-list {
+.section-link strong {
+  color: var(--u-text);
+  font-weight: 600;
+}
+
+.issue-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .issue-row {
   display: grid;
-  grid-template-columns: 64px 1fr auto 14px;
+  grid-template-columns: 64px 1fr 14px;
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 8px 10px;
+  padding: 6px 8px;
   text-align: left;
   background: var(--u-bg-elev-2);
   border: 1px solid var(--u-border);
   border-left-width: 3px;
-  border-radius: var(--u-radius);
+  border-radius: var(--u-radius-sm);
   color: var(--u-text);
-  font-size: 12px;
+  font-size: 11.5px;
   cursor: pointer;
   transition:
     background 80ms,
@@ -787,39 +844,58 @@ const onModalBackdropClick = (event: MouseEvent): void => {
 }
 
 .issue-row-code {
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 700;
-  color: var(--u-text);
-  background: var(--u-bg-elev-3);
-  padding: 2px 6px;
-  border-radius: 3px;
   text-align: center;
-}
-
-.issue-row.level-warning .issue-row-code {
-  color: var(--u-warn);
+  background: var(--u-bg-elev-3);
+  padding: 1px 5px;
+  border-radius: 3px;
 }
 
 .issue-row.level-error .issue-row-code {
   color: var(--u-danger);
 }
 
+.issue-row.level-warning .issue-row-code {
+  color: var(--u-warn);
+}
+
 .issue-row-message {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--u-text);
-}
-
-.issue-row-src {
-  color: var(--u-text-dim);
-  font-size: 10.5px;
 }
 
 .issue-row-chev {
   color: var(--u-text-dim);
-  font-size: 18px;
+  font-size: 16px;
   line-height: 1;
+}
+
+.snapshot-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.snapshot-meta {
+  font-size: 10.5px;
+  color: var(--u-text-dim);
+}
+
+.empty {
+  padding: 10px 6px;
+  text-align: center;
+  color: var(--u-text-dim);
+  font-size: 11.5px;
+}
+
+.empty-detail {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
 }
 
 .issue-code {
@@ -844,41 +920,6 @@ const onModalBackdropClick = (event: MouseEvent): void => {
 
 .issue-level.level-warning {
   color: var(--u-warn);
-}
-
-.snapshot-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.snapshot-head .u-btn[disabled] {
-  opacity: 0.65;
-  cursor: not-allowed;
-}
-
-.snapshot-meta {
-  color: var(--u-text-dim);
-  font-size: 11px;
-}
-
-.hint {
-  margin-top: 14px;
-  padding: 10px 12px;
-  background: var(--u-bg-elev-2);
-  border-radius: var(--u-radius-sm);
-  color: var(--u-text-muted);
-  font-size: 11.5px;
-  line-height: 1.5;
-}
-
-.hint code {
-  background: var(--u-bg-elev-3);
-  padding: 1px 5px;
-  border-radius: 3px;
-  font-size: 11px;
 }
 
 .issue-modal {
@@ -961,9 +1002,14 @@ const onModalBackdropClick = (event: MouseEvent): void => {
   padding: 0 12px 0 0;
 }
 
-.snippet-line.highlight {
+.snippet-line.highlight-error {
   background: rgba(255, 99, 99, 0.12);
   box-shadow: inset 3px 0 0 var(--u-danger);
+}
+
+.snippet-line.highlight-warning {
+  background: rgba(241, 197, 96, 0.14);
+  box-shadow: inset 3px 0 0 var(--u-warn);
 }
 
 .snippet-lineno {
@@ -979,8 +1025,12 @@ const onModalBackdropClick = (event: MouseEvent): void => {
   white-space: pre;
 }
 
-.snippet-line.highlight .snippet-text {
+.snippet-line.highlight-error .snippet-text {
   color: #ffe6e6;
+}
+
+.snippet-line.highlight-warning .snippet-text {
+  color: #fff4d6;
 }
 
 .issue-section-title {
@@ -1006,5 +1056,59 @@ const onModalBackdropClick = (event: MouseEvent): void => {
   padding: 12px 16px;
   border-top: 1px solid var(--u-border);
   background: var(--u-bg-elev-2);
+}
+
+.snapshot-hint {
+  margin: 0 0 12px;
+  font-size: 11.5px;
+  color: var(--u-text-muted);
+  line-height: 1.5;
+}
+
+.snapshot-hint code {
+  background: var(--u-bg-elev-3);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.snapshot-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.snapshot-slot {
+  display: grid;
+  grid-template-columns: 1.4fr 70px 1.6fr;
+  gap: 10px;
+  padding: 6px 4px;
+  font-size: 11.5px;
+  border-bottom: 1px solid var(--u-border);
+}
+
+.snapshot-slot:last-child {
+  border-bottom: 0;
+}
+
+.snapshot-slot-name {
+  color: var(--u-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snapshot-slot-bytes {
+  text-align: right;
+  color: var(--u-text-muted);
+}
+
+.snapshot-slot-preview {
+  color: var(--u-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

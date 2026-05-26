@@ -22,7 +22,7 @@ export type AudioGraphEdge = {
 };
 
 export type AstDecl = {
-  kind: "state" | "buffer" | "lookup" | "midi" | "message";
+  kind: "state" | "buffer" | "lookup" | "midi" | "message" | "param" | "event";
   type: string;
   name: string;
   bytes: number;
@@ -30,10 +30,8 @@ export type AstDecl = {
 };
 
 export type SourceSnippet = {
-  /** 1-based file line number of the first entry in `lines`. */
   startLine: number;
   lines: string[];
-  /** 1-based file line number to highlight (= the offending line). */
   highlightLine: number;
 };
 
@@ -42,19 +40,10 @@ export type BuildIssue = {
   level: "error" | "warning";
   nodeId: string;
   src: string;
-  /** Short single-line headline shown in the list row. */
   message: string;
-  /** Full explanation shown in the detail modal. */
   why: string;
   fix: string;
   snippet: SourceSnippet;
-};
-
-export type StateSlot = {
-  name: string;
-  kind: "state" | "buffer";
-  type: string;
-  preview: string;
 };
 
 export type SnapshotSlot = {
@@ -62,6 +51,24 @@ export type SnapshotSlot = {
   bytes: number;
   preview: string;
 };
+
+export type PublishScalarType = "f32" | "f64" | "i32" | "i64" | "bool";
+export type PublishBufferType = PublishScalarType | "u8";
+
+export type PublishSlotMeta =
+  | {
+      kind: "state";
+      name: string;
+      type: PublishScalarType;
+      rateFps: number;
+    }
+  | {
+      kind: "buffer";
+      name: string;
+      type: PublishBufferType;
+      rateFps: number;
+      size: number;
+    };
 
 const NODES: AudioGraphNode[] = [
   {
@@ -85,13 +92,23 @@ const NODES: AudioGraphNode[] = [
     row: 0,
   },
   {
+    id: "limiter",
+    label: "limiter",
+    kind: "unworklet",
+    audioNodeType: "AudioWorkletNode",
+    status: "ok",
+    errorCount: 0,
+    col: 2,
+    row: 0,
+  },
+  {
     id: "reverb",
     label: "reverb",
     kind: "unworklet",
     audioNodeType: "AudioWorkletNode",
     status: "errors",
     errorCount: 1,
-    col: 2,
+    col: 3,
     row: 0,
   },
   {
@@ -101,7 +118,7 @@ const NODES: AudioGraphNode[] = [
     audioNodeType: "GainNode",
     status: "ok",
     errorCount: 0,
-    col: 3,
+    col: 4,
     row: 0,
   },
   {
@@ -111,14 +128,15 @@ const NODES: AudioGraphNode[] = [
     audioNodeType: "AudioDestinationNode",
     status: "ok",
     errorCount: 0,
-    col: 4,
+    col: 5,
     row: 0,
   },
 ];
 
 const EDGES: AudioGraphEdge[] = [
   { id: "arp-poly", from: "arpeggiator", to: "polysynth", channel: "midi" },
-  { id: "poly-rev", from: "polysynth", to: "reverb", channel: "audio" },
+  { id: "poly-lim", from: "polysynth", to: "limiter", channel: "audio" },
+  { id: "lim-rev", from: "limiter", to: "reverb", channel: "audio" },
   { id: "rev-mas", from: "reverb", to: "master", channel: "audio" },
   { id: "mas-dst", from: "master", to: "destination", channel: "audio" },
 ];
@@ -131,22 +149,49 @@ const AST_BY_NODE: Record<string, AstDecl[]> = {
     { kind: "state", type: "u8", name: "voices[8].env.stage", bytes: 8 },
     { kind: "state", type: "u8", name: "voices[8].note", bytes: 8 },
     { kind: "state", type: "u8", name: "voices[8].gate", bytes: 8 },
-    { kind: "buffer", type: "f32", name: "meterPeak", bytes: 4, note: "publish" },
+    { kind: "state", type: "f32", name: "meterL", bytes: 4, note: "publish 30 fps" },
+    { kind: "state", type: "f32", name: "meterR", bytes: 4, note: "publish 30 fps" },
+    { kind: "state", type: "i32", name: "activeVoices", bytes: 4, note: "publish 15 fps" },
+    { kind: "buffer", type: "f32", name: "waveform[1024]", bytes: 4096, note: "publish 30 fps" },
+    { kind: "buffer", type: "bool", name: "voiceGates[8]", bytes: 8, note: "publish 60 fps" },
     { kind: "lookup", type: "f32", name: "sinTable[2048]", bytes: 8192, note: "const" },
-    { kind: "midi", type: "u32", name: "midiIn", bytes: 64, note: "ringbuffer 16" },
+    { kind: "midi", type: "u32", name: "keys", bytes: 64, note: "ringbuffer 16" },
+  ],
+  limiter: [
+    { kind: "buffer", type: "f32", name: "dlyL[240]", bytes: 960, note: "lookahead 5 ms" },
+    { kind: "buffer", type: "f32", name: "dlyR[240]", bytes: 960, note: "lookahead 5 ms" },
+    { kind: "state", type: "i32", name: "dlyHead", bytes: 4 },
+    { kind: "state", type: "f32", name: "env", bytes: 4 },
+    { kind: "state", type: "f32", name: "gainReductionDb", bytes: 4, note: "publish 30 fps" },
+    { kind: "state", type: "bool", name: "isLimiting", bytes: 4, note: "publish 10 fps" },
+    { kind: "param", type: "f32", name: "ceiling", bytes: 4 },
+    { kind: "param", type: "f32", name: "releaseMs", bytes: 4 },
+    { kind: "event", type: "u32", name: "overshoot", bytes: 2048, note: "ringbuffer 256" },
   ],
   reverb: [
-    { kind: "state", type: "f32", name: "delayLineA[4800]", bytes: 19200 },
-    { kind: "state", type: "f32", name: "delayLineB[2700]", bytes: 10800 },
-    { kind: "state", type: "u32", name: "writeIdx", bytes: 4 },
-    { kind: "buffer", type: "f32", name: "meterRms", bytes: 4, note: "publish" },
+    { kind: "buffer", type: "f32", name: "irL[4096]", bytes: 16384, note: "snapshot persistent" },
+    { kind: "buffer", type: "f32", name: "irR[4096]", bytes: 16384, note: "snapshot persistent" },
+    { kind: "buffer", type: "f32", name: "histL[4096]", bytes: 16384 },
+    { kind: "buffer", type: "f32", name: "histR[4096]", bytes: 16384 },
+    { kind: "state", type: "i32", name: "histHead", bytes: 4 },
+    { kind: "state", type: "f32", name: "wetMeter", bytes: 4, note: "publish 30 fps" },
+    { kind: "buffer", type: "f32", name: "spectrum[512]", bytes: 2048, note: "publish 15 fps" },
+    { kind: "param", type: "f32", name: "wetGain", bytes: 4 },
+    { kind: "param", type: "f32", name: "dryGain", bytes: 4 },
+    { kind: "message", type: "u32", name: "uploadIR", bytes: 64, note: "ringbuffer 16" },
   ],
   arpeggiator: [
-    { kind: "state", type: "i32", name: "stepIndex", bytes: 4 },
-    { kind: "state", type: "i32", name: "patternLen", bytes: 4 },
-    { kind: "state", type: "u32", name: "framesSinceStep", bytes: 4 },
+    { kind: "state", type: "i32", name: "stepIdx", bytes: 4, note: "publish 60 fps" },
+    { kind: "state", type: "i32", name: "rootNote", bytes: 4, note: "snapshot persistent" },
+    { kind: "state", type: "i32", name: "samplesPerStep", bytes: 4, note: "snapshot persistent" },
+    { kind: "state", type: "i32", name: "sampleAccum", bytes: 4 },
+    { kind: "state", type: "i32", name: "lastVel", bytes: 4 },
+    { kind: "state", type: "bool", name: "activePattern", bytes: 4, note: "publish 5 fps" },
     { kind: "state", type: "i32", name: "legacyTickCounter", bytes: 4, note: "unused" },
-    { kind: "midi", type: "u32", name: "midiOut", bytes: 64, note: "ringbuffer 16" },
+    { kind: "buffer", type: "i32", name: "pattern[16]", bytes: 64, note: "publish 30 fps" },
+    { kind: "buffer", type: "u8", name: "lastSysex[16]", bytes: 16, note: "publish 10 fps" },
+    { kind: "midi", type: "u32", name: "keys", bytes: 64, note: "ringbuffer 16" },
+    { kind: "midi", type: "u32", name: "arpOut", bytes: 64, note: "ringbuffer 16" },
   ],
   master: [],
   destination: [],
@@ -271,24 +316,61 @@ const BUILD_ISSUES: BuildIssue[] = [
   },
 ];
 
-const STATE_BY_NODE: Record<string, StateSlot[]> = {
+export type NodeIO = {
+  audioIn?: { name: string; channels: number };
+  audioOut?: { name: string; channels: number };
+  midiIn: string[];
+  midiOut: string[];
+};
+
+const IO_BY_NODE: Record<string, NodeIO> = {
+  arpeggiator: {
+    audioOut: { name: "main", channels: 1 },
+    midiIn: ["keys"],
+    midiOut: ["arpOut"],
+  },
+  polysynth: {
+    audioOut: { name: "main", channels: 2 },
+    midiIn: ["keys"],
+    midiOut: [],
+  },
+  limiter: {
+    audioIn: { name: "main", channels: 2 },
+    audioOut: { name: "main", channels: 2 },
+    midiIn: [],
+    midiOut: [],
+  },
+  reverb: {
+    audioIn: { name: "main", channels: 2 },
+    audioOut: { name: "main", channels: 2 },
+    midiIn: [],
+    midiOut: [],
+  },
+  master: { midiIn: [], midiOut: [] },
+  destination: { midiIn: [], midiOut: [] },
+};
+
+const PUBLISH_BY_NODE: Record<string, PublishSlotMeta[]> = {
+  arpeggiator: [
+    { kind: "state", name: "stepIdx", type: "i32", rateFps: 60 },
+    { kind: "buffer", name: "pattern", type: "i32", rateFps: 30, size: 16 },
+    { kind: "state", name: "activePattern", type: "bool", rateFps: 5 },
+    { kind: "buffer", name: "lastSysex", type: "u8", rateFps: 10, size: 16 },
+  ],
   polysynth: [
-    { name: "voices[0].osc.phase", kind: "state", type: "f32", preview: "0.512" },
-    { name: "voices[0].amp", kind: "state", type: "f32", preview: "0.842" },
-    { name: "voices[0].env.value", kind: "state", type: "f32", preview: "0.713" },
-    { name: "voices[0].env.stage", kind: "state", type: "u8", preview: "1 (release)" },
-    { name: "voices[0].note", kind: "state", type: "u8", preview: "62 (D4)" },
-    { name: "voices[0].gate", kind: "state", type: "u8", preview: "1" },
-    { name: "meterPeak", kind: "buffer", type: "f32", preview: "0.81" },
+    { kind: "state", name: "activeVoices", type: "i32", rateFps: 15 },
+    { kind: "state", name: "meterL", type: "f32", rateFps: 30 },
+    { kind: "state", name: "meterR", type: "f32", rateFps: 30 },
+    { kind: "buffer", name: "waveform", type: "f32", rateFps: 30, size: 1024 },
+    { kind: "buffer", name: "voiceGates", type: "bool", rateFps: 60, size: 8 },
+  ],
+  limiter: [
+    { kind: "state", name: "gainReductionDb", type: "f32", rateFps: 30 },
+    { kind: "state", name: "isLimiting", type: "bool", rateFps: 10 },
   ],
   reverb: [
-    { name: "writeIdx", kind: "state", type: "u32", preview: "13452" },
-    { name: "meterRms", kind: "buffer", type: "f32", preview: "0.42" },
-  ],
-  arpeggiator: [
-    { name: "stepIndex", kind: "state", type: "i32", preview: "3" },
-    { name: "patternLen", kind: "state", type: "i32", preview: "8" },
-    { name: "framesSinceStep", kind: "state", type: "u32", preview: "2304" },
+    { kind: "state", name: "wetMeter", type: "f32", rateFps: 30 },
+    { kind: "buffer", name: "spectrum", type: "f32", rateFps: 15, size: 512 },
   ],
   master: [],
   destination: [],
@@ -302,20 +384,22 @@ const SNAPSHOT_BY_NODE: Record<string, SnapshotSlot[]> = {
     { name: "voices[0..7].env.stage", bytes: 8, preview: "[1, 0, 0, 0, …]" },
     { name: "voices[0..7].note", bytes: 8, preview: "[62, 0, 0, 0, …]" },
     { name: "voices[0..7].gate", bytes: 8, preview: "[1, 0, 0, 0, …]" },
-    { name: "meterPeak", bytes: 4, preview: "0.81" },
     { name: "midiIn[16]", bytes: 64, preview: "<ringbuffer head=4>" },
   ],
+  limiter: [
+    { name: "ceiling", bytes: 4, preview: "-0.30 dB" },
+    { name: "releaseMs", bytes: 4, preview: "80 ms" },
+  ],
   reverb: [
-    { name: "delayLineA[4800]", bytes: 19200, preview: "<19.2 KB float32>" },
-    { name: "delayLineB[2700]", bytes: 10800, preview: "<10.8 KB float32>" },
-    { name: "writeIdx", bytes: 4, preview: "13452" },
-    { name: "meterRms", bytes: 4, preview: "0.42" },
+    { name: "irL[4096]", bytes: 16384, preview: "<16 KB IR float32>" },
+    { name: "irR[4096]", bytes: 16384, preview: "<16 KB IR float32>" },
+    { name: "wetGain", bytes: 4, preview: "0.40" },
+    { name: "dryGain", bytes: 4, preview: "0.70" },
   ],
   arpeggiator: [
-    { name: "stepIndex", bytes: 4, preview: "3" },
-    { name: "patternLen", bytes: 4, preview: "8" },
-    { name: "framesSinceStep", bytes: 4, preview: "2304" },
-    { name: "legacyTickCounter", bytes: 4, preview: "0" },
+    { name: "rootNote", bytes: 4, preview: "60 (C4)" },
+    { name: "samplesPerStep", bytes: 4, preview: "6000" },
+    { name: "pattern[16]", bytes: 64, preview: "[0, 4, 7, 12, 16, 19, 24, …]" },
     { name: "midiOut[16]", bytes: 64, preview: "<ringbuffer head=2>" },
   ],
   master: [],
@@ -345,7 +429,8 @@ export const useMockGraph = () => ({
   selectNode,
   astDecls: (id: string): AstDecl[] => AST_BY_NODE[id] ?? [],
   buildIssuesByNode: issuesByNode,
-  stateSlots: (id: string): StateSlot[] => STATE_BY_NODE[id] ?? [],
+  publishSlots: (id: string): PublishSlotMeta[] => PUBLISH_BY_NODE[id] ?? [],
+  nodeIO: (id: string): NodeIO => IO_BY_NODE[id] ?? { midiIn: [], midiOut: [] },
   snapshotSlots: (id: string): SnapshotSlot[] => SNAPSHOT_BY_NODE[id] ?? [],
   totalIssueCount,
   errorIssueCount,
