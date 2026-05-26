@@ -58,16 +58,6 @@ test("`defineProcessor` propagates throws from the `process` lambda", () => {
   ).toThrow("process fail");
 });
 
-test("`worklet.initialize` is a stub that throws `not implemented`", () => {
-  const cp = defineProcessor(() => ({ process: () => {} }));
-  expect(() => cp.worklet.initialize()).toThrow(/not implemented/);
-});
-
-test("`worklet.process` is a stub that throws `not implemented`", () => {
-  const cp = defineProcessor(() => ({ process: () => {} }));
-  expect(() => cp.worklet.process()).toThrow(/not implemented/);
-});
-
 test("`defineSubgraph` is a stub that throws `not implemented`", () => {
   expect(() => defineSubgraph(() => ({}))).toThrow(/not implemented/);
 });

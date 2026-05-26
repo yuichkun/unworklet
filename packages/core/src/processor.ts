@@ -16,10 +16,10 @@ import type {
   ProcessorContext,
   ProcessorGraph,
   ProcessorOptions,
-  WorkletNamespace,
 } from "./types.ts";
 import type { CapturedGraph } from "./compile/ast.ts";
 import { finalize, newCaptureContext, runCapture } from "./compile/capture.ts";
+import { makeWorkletNamespace } from "./worklet.ts";
 
 const notImplemented = (): never => {
   throw new Error("not implemented");
@@ -33,16 +33,6 @@ const notImplemented = (): never => {
 function brandGraph(graph: CapturedGraph): ProcessorGraph {
   return graph as unknown as ProcessorGraph;
 }
-
-const workletStub: WorkletNamespace = {
-  initialize: (() => {
-    throw new Error("worklet namespace not implemented");
-  }) as WorkletNamespace["initialize"],
-  process: (() => {
-    throw new Error("worklet namespace not implemented");
-  }) as WorkletNamespace["process"],
-  parameterDescriptors: [],
-};
 
 export function defineProcessor<C = unknown>(
   body: (ctx: ProcessorContext) => ProcessorBody,
@@ -65,10 +55,12 @@ export function defineProcessor<C = unknown>(
     compiledBody.process();
   });
 
+  const captured = finalize(captureCtx);
+
   return {
-    graph: brandGraph(finalize(captureCtx)),
+    graph: brandGraph(captured),
     schemaHash: "phase-3-stub",
-    worklet: workletStub,
+    worklet: makeWorkletNamespace(captured),
     __compiledProcessor: undefined as unknown as C,
   };
 }
