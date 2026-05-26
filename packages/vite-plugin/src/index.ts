@@ -66,9 +66,14 @@ export type SchemaHashArtifact = {
 /**
  * Construct the Vite plugin instance. Default export per Vite convention;
  * also re-exported as a named export `unworklet` for explicit import.
+ *
+ * Phase 5-B = real `Plugin` shell (= `name` only)。 `resolveId` / `load` /
+ * `transform` / `generateBundle` hook 中 身 は 5-C 以 降 で 順 次 fill。
  */
 export default function unworklet(_options?: UnworkletPluginOptions): Plugin {
-  throw new Error("not implemented");
+  return {
+    name: "@unworklet/vite-plugin",
+  };
 }
 
 export { unworklet as unworkletPlugin };
