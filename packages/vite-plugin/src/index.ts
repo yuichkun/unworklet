@@ -5,13 +5,16 @@
  * Responsibilities (= `07-vite-plugin.md` §1):
  * 1. WASM compile invocation (= calls `@unworklet/core`'s `compile`)
  * 2. Asset resolution (= `?worklet` query)
- * 3. HMR boundary (= mark `?worklet` imports as Vite HMR boundaries)
- * 4. Source maps (= `.ts` → AST → `.wasm` propagation as `.wasm.map`)
+ * 3. HMR boundary (= mark `?worklet` imports as Vite HMR boundaries; Phase 12)
+ * 4. Source maps (= `.ts` → AST → `.wasm` propagation as `.wasm.map`; Phase 12)
  * 5. DevTools panels + analysis JSON artifact contract
  *
- * Stub stage: plugin factory + public type surface declared here;
- * runtime behavior is impl-phase fill.
+ * Phase 5 ship surface (per `10-roadmap.md` §Phase 5): real `Plugin` shell
+ * + `?worklet` resolve / load + `compile()` invocation + 4 metadata
+ * artifact JSON emit + initial 3 DevTools panels.
  */
+
+import path from "node:path";
 
 import type { Plugin } from "vite-plus";
 
@@ -60,6 +63,34 @@ export type SchemaHashArtifact = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────
+// Virtual id convention for `?worklet` imports
+// ─────────────────────────────────────────────────────────────────────────
+//
+// Vite plugin の慣用 = null byte (`\0`) prefix で virtual module を 示す。
+// `\0unworklet:<absolute-source-path>` を load hook で 認 識 し、 中 身 を
+// `compile(processor)` 経 由 で 生 成 し た WASM URL に 置 換 (= 5-D 以 降)。
+
+const VIRTUAL_ID_PREFIX = "\0unworklet:";
+const WORKLET_QUERY_PARAM = "worklet";
+
+const detectWorkletQuery = (source: string): { basePath: string } | null => {
+  const queryIdx = source.indexOf("?");
+  if (queryIdx < 0) return null;
+  const params = new URLSearchParams(source.slice(queryIdx + 1));
+  if (!params.has(WORKLET_QUERY_PARAM)) return null;
+  return { basePath: source.slice(0, queryIdx) };
+};
+
+const resolveAgainstImporter = (
+  basePath: string,
+  importer: string | undefined,
+): string | undefined => {
+  if (path.isAbsolute(basePath)) return basePath;
+  if (!importer) return undefined;
+  return path.resolve(path.dirname(importer), basePath);
+};
+
+// ─────────────────────────────────────────────────────────────────────────
 // Plugin factory
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -67,12 +98,27 @@ export type SchemaHashArtifact = {
  * Construct the Vite plugin instance. Default export per Vite convention;
  * also re-exported as a named export `unworklet` for explicit import.
  *
- * Phase 5-B = real `Plugin` shell (= `name` only)。 `resolveId` / `load` /
- * `transform` / `generateBundle` hook 中 身 は 5-C 以 降 で 順 次 fill。
+ * Phase 5-C status:
+ * - `name` declared
+ * - `resolveId` translates `?worklet` imports into `\0unworklet:<abs>` virtual ids
+ * - `load` returns a placeholder JS module for those virtual ids
+ *   (= `compile()` invocation + WASM emit + actual URL are filled in 5-D).
  */
 export default function unworklet(_options?: UnworkletPluginOptions): Plugin {
   return {
     name: "@unworklet/vite-plugin",
+    resolveId(source, importer) {
+      const detect = detectWorkletQuery(source);
+      if (!detect) return undefined;
+      const resolved = resolveAgainstImporter(detect.basePath, importer);
+      if (!resolved) return undefined;
+      return `${VIRTUAL_ID_PREFIX}${resolved}`;
+    },
+    load(id) {
+      if (!id.startsWith(VIRTUAL_ID_PREFIX)) return undefined;
+      // 5-C placeholder; 5-D replaces with the emitted WASM asset URL.
+      return "export default null;\n";
+    },
   };
 }
 
