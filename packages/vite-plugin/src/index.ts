@@ -16,6 +16,8 @@
 
 import path from "node:path";
 
+import { compile } from "@unworklet/core";
+import type { CompiledProcessor } from "@unworklet/core";
 import type { Plugin } from "vite-plus";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -91,6 +93,60 @@ const resolveAgainstImporter = (
 };
 
 // ─────────────────────────────────────────────────────────────────────────
+// Source module → CompiledProcessor extraction
+// ─────────────────────────────────────────────────────────────────────────
+//
+// v1.0.0 convention = 1 source file 1 processor。 `defineProcessor(...)`
+// 戻 り 値 を named export し て い れ ば、 plugin が それ を 1 つ pick
+// し て `compile()` に 渡 す。 多 重 export / export ナ シ は error を
+// throw し て user に refactor を 促 す (= surface 改 訂 ナ シ、 impl-
+// detail で の reasonable default)。
+
+const isCompiledProcessor = (v: unknown): v is CompiledProcessor<unknown> => {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    "graph" in v &&
+    "schemaHash" in v &&
+    typeof (v as { schemaHash: unknown }).schemaHash === "string"
+  );
+};
+
+const pickCompiledProcessor = (
+  sourceModule: Record<string, unknown>,
+  sourcePath: string,
+): CompiledProcessor<unknown> => {
+  const matches: string[] = [];
+  let found: CompiledProcessor<unknown> | undefined;
+  for (const key of Object.keys(sourceModule)) {
+    if (isCompiledProcessor(sourceModule[key])) {
+      matches.push(key);
+      found = sourceModule[key] as CompiledProcessor<unknown>;
+    }
+  }
+  if (matches.length === 0) {
+    throw new Error(
+      `@unworklet/vite-plugin: ${sourcePath} has no defineProcessor exports (a named export of \`defineProcessor(...)\` return value is required).`,
+    );
+  }
+  if (matches.length > 1) {
+    throw new Error(
+      `@unworklet/vite-plugin: ${sourcePath} has multiple defineProcessor exports (${matches.join(", ")}); v1.0.0 supports one processor per file.`,
+    );
+  }
+  return found!;
+};
+
+const assetNameFromSourcePath = (sourcePath: string): string => {
+  const base = path.basename(sourcePath, path.extname(sourcePath));
+  // Strip an optional `.processor` suffix (= canonical fixture convention
+  // is `foo.processor.ts`) so emitted assets land at `dist/<processor>.wasm`,
+  // zipping with the analysis-JSON convention in `07-vite-plugin.md` §6.3.
+  const trimmed = base.endsWith(".processor") ? base.slice(0, -".processor".length) : base;
+  return `${trimmed}.wasm`;
+};
+
+// ─────────────────────────────────────────────────────────────────────────
 // Plugin factory
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -98,11 +154,15 @@ const resolveAgainstImporter = (
  * Construct the Vite plugin instance. Default export per Vite convention;
  * also re-exported as a named export `unworklet` for explicit import.
  *
- * Phase 5-C status:
+ * Phase 5-D status (build mode):
  * - `name` declared
  * - `resolveId` translates `?worklet` imports into `\0unworklet:<abs>` virtual ids
- * - `load` returns a placeholder JS module for those virtual ids
- *   (= `compile()` invocation + WASM emit + actual URL are filled in 5-D).
+ * - `load` evaluates the source module via Node native TS import, picks the
+ *   `defineProcessor(...)` export, runs `compile()` on it, emits the WASM as
+ *   a build asset via `this.emitFile`, and returns a JS module exporting
+ *   the asset URL through Rolldown's `import.meta.ROLLUP_FILE_URL_<id>`.
+ * - Dev-mode middleware path (= ad-hoc WASM serve for `?worklet` requests in
+ *   `vp dev`) is filled in a follow-up sub-step.
  */
 export default function unworklet(_options?: UnworkletPluginOptions): Plugin {
   return {
@@ -114,10 +174,18 @@ export default function unworklet(_options?: UnworkletPluginOptions): Plugin {
       if (!resolved) return undefined;
       return `${VIRTUAL_ID_PREFIX}${resolved}`;
     },
-    load(id) {
+    async load(id) {
       if (!id.startsWith(VIRTUAL_ID_PREFIX)) return undefined;
-      // 5-C placeholder; 5-D replaces with the emitted WASM asset URL.
-      return "export default null;\n";
+      const sourcePath = id.slice(VIRTUAL_ID_PREFIX.length);
+      const sourceModule = (await import(sourcePath)) as Record<string, unknown>;
+      const processor = pickCompiledProcessor(sourceModule, sourcePath);
+      const result = await compile(processor);
+      const referenceId = this.emitFile({
+        type: "asset",
+        name: assetNameFromSourcePath(sourcePath),
+        source: result.wasm,
+      });
+      return `export default import.meta.ROLLUP_FILE_URL_${referenceId};\n`;
     },
   };
 }

@@ -2,11 +2,16 @@
  * `unworklet` Vite plugin factory shape + `?worklet` resolve / load hooks
  * (= `07-vite-plugin.md` + `10-roadmap.md` Phase 5)。 5-B = factory が real
  * Vite `Plugin` object を 返 す こ と + 5-C = `?worklet` query を 持 つ
- * source を virtual id に 解 決、 virtual id を 受 け た load が JS module を
- * 返 す こ と を 担 保。 hook の 中 で 走 る `compile()` invocation + WASM
- * emit は 5-D で fill = 5-C の load は placeholder JS module を 返 す。
+ * source を virtual id に 解 決 + virtual id を 受 け た load が JS module
+ * を 返 す こ と + 5-D = load 内 で source module を 動 的 import → fixture
+ * processor を 取 り 出 し → `compile()` → `this.emitFile` で WASM asset
+ * を emit、 戻 り 値 は `import.meta.ROLLUP_FILE_URL_<refId>` 形 で URL
+ * substitution を 受 け る JS module。
  */
 
+import { fileURLToPath } from "node:url";
+
+import { compile } from "@unworklet/core";
 import { expect, test } from "vite-plus/test";
 
 import unworklet, { unworkletPlugin } from "./index.ts";
@@ -20,6 +25,18 @@ type ResolveIdFn = (
 
 type LoadFn = (this: unknown, id: string) => unknown;
 
+type EmitFileArgs = {
+  type: "asset";
+  name: string;
+  source: Uint8Array | string;
+};
+
+type MockEmitContext = {
+  calls: EmitFileArgs[];
+  refId: string;
+  emitFile: (file: EmitFileArgs) => string;
+};
+
 const callResolveId = (source: string, importer: string | undefined): unknown => {
   const hook = unworklet().resolveId;
   if (typeof hook !== "function") {
@@ -28,16 +45,51 @@ const callResolveId = (source: string, importer: string | undefined): unknown =>
   return (hook as unknown as ResolveIdFn).call(null, source, importer, { isEntry: false });
 };
 
-const callLoad = (id: string): unknown => {
+const callLoadWithMockContext = async (
+  id: string,
+): Promise<{ result: unknown; ctx: MockEmitContext }> => {
   const hook = unworklet().load;
   if (typeof hook !== "function") {
     throw new Error("load hook is not a function — expected plain function form");
   }
-  return (hook as unknown as LoadFn).call(null, id);
+  const ctx: MockEmitContext = {
+    calls: [],
+    refId: "mock-ref-id",
+    emitFile(file) {
+      ctx.calls.push(file);
+      return ctx.refId;
+    },
+  };
+  const result = await (hook as unknown as LoadFn).call(ctx, id);
+  return { result, ctx };
+};
+
+const callLoadNoContext = async (id: string): Promise<unknown> => {
+  const hook = unworklet().load;
+  if (typeof hook !== "function") {
+    throw new Error("load hook is not a function — expected plain function form");
+  }
+  return await (hook as unknown as LoadFn).call(null, id);
 };
 
 const NUL = String.fromCharCode(0);
 const VIRTUAL_ID_PREFIX = `${NUL}unworklet:`;
+
+const FIXTURE_GAIN_PATH = fileURLToPath(
+  new URL("../__fixtures__/01-stereo-gain.processor.ts", import.meta.url),
+);
+
+const FIXTURE_NO_PROCESSOR_PATH = fileURLToPath(
+  new URL("../__fixtures__/no-processor.processor.ts", import.meta.url),
+);
+
+const FIXTURE_MULTI_PROCESSOR_PATH = fileURLToPath(
+  new URL("../__fixtures__/multi-processor.processor.ts", import.meta.url),
+);
+
+const FIXTURE_BARE_GAIN_PATH = fileURLToPath(
+  new URL("../__fixtures__/bare-gain.ts", import.meta.url),
+);
 
 // ─────────────────────────────────────────────────────────────────────────
 // 5-B = factory shape
@@ -94,17 +146,65 @@ test("resolveId leaves a relative source unresolved when no importer is given", 
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// 5-C = ?worklet load
+// 5-D = load = dynamic import + compile + emitFile + URL substitution
 // ─────────────────────────────────────────────────────────────────────────
 
-test("load returns a placeholder JS module for virtual `\\0unworklet:` ids", () => {
-  const code = callLoad(`${VIRTUAL_ID_PREFIX}/abs/foo.processor.ts`);
-  expect(typeof code).toBe("string");
-  expect(code as string).toMatch(/export default/);
+test("load returns undefined for non-virtual ids", async () => {
+  expect(await callLoadNoContext("/abs/foo.processor.ts")).toBeUndefined();
+  expect(await callLoadNoContext(`${NUL}vite:client`)).toBeUndefined();
+  expect(await callLoadNoContext(`${NUL}other-prefix:/abs/x.ts`)).toBeUndefined();
 });
 
-test("load returns undefined for non-virtual ids", () => {
-  expect(callLoad("/abs/foo.processor.ts")).toBeUndefined();
-  expect(callLoad(`${NUL}vite:client`)).toBeUndefined();
-  expect(callLoad(`${NUL}other-prefix:/abs/x.ts`)).toBeUndefined();
+test("load evaluates the fixture, compiles it, and emits the WASM as a build asset", async () => {
+  const { ctx } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`);
+
+  expect(ctx.calls).toHaveLength(1);
+  expect(ctx.calls[0]).toMatchObject({
+    type: "asset",
+    name: "01-stereo-gain.wasm",
+  });
+  expect(ctx.calls[0]!.source).toBeInstanceOf(Uint8Array);
+});
+
+test("emitted WASM bytes match the result of compile() invoked directly", async () => {
+  const { ctx } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`);
+
+  const fixtureModule = (await import(FIXTURE_GAIN_PATH)) as Record<string, unknown>;
+  const direct = await compile(fixtureModule["stereoGain"] as Parameters<typeof compile>[0]);
+
+  const emitted = ctx.calls[0]!.source as Uint8Array;
+  expect(emitted.byteLength).toBe(direct.wasm.byteLength);
+  expect(Buffer.from(emitted).equals(Buffer.from(direct.wasm))).toBe(true);
+});
+
+test("load returns a JS module that defers the URL through ROLLUP_FILE_URL_<refId>", async () => {
+  const { result, ctx } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`);
+
+  expect(typeof result).toBe("string");
+  expect(result as string).toContain(`import.meta.ROLLUP_FILE_URL_${ctx.refId}`);
+  expect(result as string).toMatch(/export default/);
+});
+
+test("load throws when the source has no defineProcessor exports", async () => {
+  await expect(
+    callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_NO_PROCESSOR_PATH}`),
+  ).rejects.toThrow(/no defineProcessor exports/);
+});
+
+test("load throws when the source has multiple defineProcessor exports", async () => {
+  await expect(
+    callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_MULTI_PROCESSOR_PATH}`),
+  ).rejects.toThrow(/multiple defineProcessor exports/);
+});
+
+test("emitted asset name omits the `.processor` suffix when present and keeps the base otherwise", async () => {
+  const { ctx: gainCtx } = await callLoadWithMockContext(
+    `${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`,
+  );
+  expect(gainCtx.calls[0]).toMatchObject({ name: "01-stereo-gain.wasm" });
+
+  const { ctx: bareCtx } = await callLoadWithMockContext(
+    `${VIRTUAL_ID_PREFIX}${FIXTURE_BARE_GAIN_PATH}`,
+  );
+  expect(bareCtx.calls[0]).toMatchObject({ name: "bare-gain.wasm" });
 });
