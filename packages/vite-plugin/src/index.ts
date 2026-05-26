@@ -137,13 +137,12 @@ const pickCompiledProcessor = (
   return found!;
 };
 
-const assetNameFromSourcePath = (sourcePath: string): string => {
+const assetBaseName = (sourcePath: string): string => {
   const base = path.basename(sourcePath, path.extname(sourcePath));
   // Strip an optional `.processor` suffix (= canonical fixture convention
-  // is `foo.processor.ts`) so emitted assets land at `dist/<processor>.wasm`,
+  // is `foo.processor.ts`) so emitted assets land at `dist/<processor>.<artifact>`,
   // zipping with the analysis-JSON convention in `07-vite-plugin.md` §6.3.
-  const trimmed = base.endsWith(".processor") ? base.slice(0, -".processor".length) : base;
-  return `${trimmed}.wasm`;
+  return base.endsWith(".processor") ? base.slice(0, -".processor".length) : base;
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -154,17 +153,22 @@ const assetNameFromSourcePath = (sourcePath: string): string => {
  * Construct the Vite plugin instance. Default export per Vite convention;
  * also re-exported as a named export `unworklet` for explicit import.
  *
- * Phase 5-D status (build mode):
+ * Phase 5-E status (build mode):
  * - `name` declared
  * - `resolveId` translates `?worklet` imports into `\0unworklet:<abs>` virtual ids
  * - `load` evaluates the source module via Node native TS import, picks the
  *   `defineProcessor(...)` export, runs `compile()` on it, emits the WASM as
- *   a build asset via `this.emitFile`, and returns a JS module exporting
- *   the asset URL through Rolldown's `import.meta.ROLLUP_FILE_URL_<id>`.
+ *   a build asset via `this.emitFile`, and (when `emitAnalysisArtifacts` is
+ *   enabled = default) also emits 4 sibling metadata JSON files
+ *   (`<processor>.graph.json` / `.memory.json` / `.diagnostics.json` /
+ *   `.schema-hash.json`) per `07-vite-plugin.md` §6.3. The hook's return
+ *   value is a JS module that defers the WASM URL through Rolldown's
+ *   `import.meta.ROLLUP_FILE_URL_<refId>`.
  * - Dev-mode middleware path (= ad-hoc WASM serve for `?worklet` requests in
  *   `vp dev`) is filled in a follow-up sub-step.
  */
-export default function unworklet(_options?: UnworkletPluginOptions): Plugin {
+export default function unworklet(options?: UnworkletPluginOptions): Plugin {
+  const emitAnalysisArtifacts = options?.emitAnalysisArtifacts ?? true;
   return {
     name: "@unworklet/vite-plugin",
     resolveId(source, importer) {
@@ -180,12 +184,38 @@ export default function unworklet(_options?: UnworkletPluginOptions): Plugin {
       const sourceModule = (await import(sourcePath)) as Record<string, unknown>;
       const processor = pickCompiledProcessor(sourceModule, sourcePath);
       const result = await compile(processor);
-      const referenceId = this.emitFile({
+
+      const baseName = assetBaseName(sourcePath);
+      const wasmRefId = this.emitFile({
         type: "asset",
-        name: assetNameFromSourcePath(sourcePath),
+        name: `${baseName}.wasm`,
         source: result.wasm,
       });
-      return `export default import.meta.ROLLUP_FILE_URL_${referenceId};\n`;
+
+      if (emitAnalysisArtifacts) {
+        this.emitFile({
+          type: "asset",
+          name: `${baseName}.graph.json`,
+          source: `${JSON.stringify(result.graph, null, 2)}\n`,
+        });
+        this.emitFile({
+          type: "asset",
+          name: `${baseName}.memory.json`,
+          source: `${JSON.stringify(result.memory, null, 2)}\n`,
+        });
+        this.emitFile({
+          type: "asset",
+          name: `${baseName}.diagnostics.json`,
+          source: `${JSON.stringify(result.diagnostics, null, 2)}\n`,
+        });
+        this.emitFile({
+          type: "asset",
+          name: `${baseName}.schema-hash.json`,
+          source: `${JSON.stringify({ schemaHash: result.schemaHash }, null, 2)}\n`,
+        });
+      }
+
+      return `export default import.meta.ROLLUP_FILE_URL_${wasmRefId};\n`;
     },
   };
 }

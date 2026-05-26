@@ -47,8 +47,9 @@ const callResolveId = (source: string, importer: string | undefined): unknown =>
 
 const callLoadWithMockContext = async (
   id: string,
+  options?: Parameters<typeof unworklet>[0],
 ): Promise<{ result: unknown; ctx: MockEmitContext }> => {
-  const hook = unworklet().load;
+  const hook = unworklet(options).load;
   if (typeof hook !== "function") {
     throw new Error("load hook is not a function — expected plain function form");
   }
@@ -158,12 +159,12 @@ test("load returns undefined for non-virtual ids", async () => {
 test("load evaluates the fixture, compiles it, and emits the WASM as a build asset", async () => {
   const { ctx } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`);
 
-  expect(ctx.calls).toHaveLength(1);
-  expect(ctx.calls[0]).toMatchObject({
+  const wasmCall = ctx.calls.find((c) => c.name.endsWith(".wasm"));
+  expect(wasmCall).toMatchObject({
     type: "asset",
     name: "01-stereo-gain.wasm",
   });
-  expect(ctx.calls[0]!.source).toBeInstanceOf(Uint8Array);
+  expect(wasmCall!.source).toBeInstanceOf(Uint8Array);
 });
 
 test("emitted WASM bytes match the result of compile() invoked directly", async () => {
@@ -172,7 +173,8 @@ test("emitted WASM bytes match the result of compile() invoked directly", async 
   const fixtureModule = (await import(FIXTURE_GAIN_PATH)) as Record<string, unknown>;
   const direct = await compile(fixtureModule["stereoGain"] as Parameters<typeof compile>[0]);
 
-  const emitted = ctx.calls[0]!.source as Uint8Array;
+  const wasmCall = ctx.calls.find((c) => c.name.endsWith(".wasm"));
+  const emitted = wasmCall!.source as Uint8Array;
   expect(emitted.byteLength).toBe(direct.wasm.byteLength);
   expect(Buffer.from(emitted).equals(Buffer.from(direct.wasm))).toBe(true);
 });
@@ -201,10 +203,64 @@ test("emitted asset name omits the `.processor` suffix when present and keeps th
   const { ctx: gainCtx } = await callLoadWithMockContext(
     `${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`,
   );
-  expect(gainCtx.calls[0]).toMatchObject({ name: "01-stereo-gain.wasm" });
+  expect(gainCtx.calls.find((c) => c.name.endsWith(".wasm"))).toMatchObject({
+    name: "01-stereo-gain.wasm",
+  });
 
   const { ctx: bareCtx } = await callLoadWithMockContext(
     `${VIRTUAL_ID_PREFIX}${FIXTURE_BARE_GAIN_PATH}`,
   );
-  expect(bareCtx.calls[0]).toMatchObject({ name: "bare-gain.wasm" });
+  expect(bareCtx.calls.find((c) => c.name.endsWith(".wasm"))).toMatchObject({
+    name: "bare-gain.wasm",
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// 5-E = 4 metadata artifact JSON emit
+// ─────────────────────────────────────────────────────────────────────────
+
+test("load also emits 4 metadata artifact JSON files by default", async () => {
+  const { ctx } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`);
+
+  const names = ctx.calls.map((c) => c.name).sort();
+  expect(names).toEqual([
+    "01-stereo-gain.diagnostics.json",
+    "01-stereo-gain.graph.json",
+    "01-stereo-gain.memory.json",
+    "01-stereo-gain.schema-hash.json",
+    "01-stereo-gain.wasm",
+  ]);
+});
+
+test("each emitted metadata JSON file parses to a valid JSON value", async () => {
+  const { ctx } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`);
+
+  const byName = (n: string) => ctx.calls.find((c) => c.name === n);
+  expect(() => JSON.parse(byName("01-stereo-gain.graph.json")!.source as string)).not.toThrow();
+  expect(() => JSON.parse(byName("01-stereo-gain.memory.json")!.source as string)).not.toThrow();
+  expect(() =>
+    JSON.parse(byName("01-stereo-gain.diagnostics.json")!.source as string),
+  ).not.toThrow();
+  const sh = JSON.parse(byName("01-stereo-gain.schema-hash.json")!.source as string) as {
+    schemaHash: unknown;
+  };
+  expect(typeof sh.schemaHash).toBe("string");
+});
+
+test("emitted schema-hash JSON carries the same hash that compile() returned", async () => {
+  const { ctx } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`);
+  const fixtureModule = (await import(FIXTURE_GAIN_PATH)) as Record<string, unknown>;
+  const direct = await compile(fixtureModule["stereoGain"] as Parameters<typeof compile>[0]);
+
+  const shCall = ctx.calls.find((c) => c.name === "01-stereo-gain.schema-hash.json");
+  expect(JSON.parse(shCall!.source as string)).toEqual({ schemaHash: direct.schemaHash });
+});
+
+test("`emitAnalysisArtifacts: false` suppresses the 4 metadata JSON emits", async () => {
+  const { ctx } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`, {
+    emitAnalysisArtifacts: false,
+  });
+
+  expect(ctx.calls).toHaveLength(1);
+  expect(ctx.calls[0]).toMatchObject({ name: "01-stereo-gain.wasm" });
 });
