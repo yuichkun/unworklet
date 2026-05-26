@@ -8,7 +8,12 @@
       :root {
         color-scheme: dark light;
         font-family:
-          ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
         line-height: 1.5;
       }
       body {
@@ -51,25 +56,28 @@
   <body>
     <h1>unworklet DevTools prototype</h1>
     <p class="lead">
-      This is a throwaway sandbox. The app itself is intentionally
-      minimal — the real surface to inspect is the <strong>Vite DevTools
-      floating icon</strong> that should appear at the bottom of the
-      viewport (or the bottom-right corner) once <code>vp dev</code>
+      This is a throwaway sandbox. The app itself is intentionally minimal — the real surface to
+      inspect is the <strong>Vite DevTools floating icon</strong> that should appear at the bottom
+      of the viewport (or the bottom-right corner) once <code>vp dev</code>
       is running.
     </p>
 
     <div class="note">
       <strong>What to look for</strong>
       <ul>
-        <li>An <em>indicator badge</em> on the floating Vite icon (driven
-        by <code>ctx.messages.add({ ..., notify: true })</code>).</li>
+        <li>
+          An <em>indicator badge</em> on the floating Vite icon (driven by
+          <code>ctx.messages.add({ ..., notify: true })</code>).
+        </li>
         <li>A <em>toast</em> popping up briefly when the page loads.</li>
-        <li>Click the floating icon → a single <strong>unworklet</strong>
-        dock entry. Opening it loads a Vue SPA iframe with a sidebar
-        switching between 4 views: Audio graph / Live state / Signals /
-        MIDI.</li>
-        <li>Open the Command Palette inside DevTools and look for
-        <code>unworklet:*</code> entries.</li>
+        <li>
+          Click the floating icon → a single <strong>unworklet</strong> dock entry. Opening it loads
+          a Vue SPA iframe with a sidebar switching between 4 views: Audio graph / Live state /
+          Signals / MIDI.
+        </li>
+        <li>
+          Open the Command Palette inside DevTools and look for <code>unworklet:*</code> entries.
+        </li>
       </ul>
     </div>
 

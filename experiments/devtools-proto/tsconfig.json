@@ -11,7 +11,7 @@
     "verbatimModuleSyntax": true,
     "noEmit": true,
     "isolatedModules": true,
-    "types": ["@vitejs/devtools-kit"]
+    "types": ["@vitejs/devtools-kit", "node"]
   },
   "include": ["src/**/*", "vite.config.ts"]
 }
