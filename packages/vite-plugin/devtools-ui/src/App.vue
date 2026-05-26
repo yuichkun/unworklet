@@ -2,8 +2,12 @@
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
+import { useMockGraph } from "./composables/useMockGraph";
+
 const router = useRouter();
 const route = useRoute();
+
+const graph = useMockGraph();
 
 const navItems = computed(() =>
   router.options.routes
@@ -16,14 +20,12 @@ const navItems = computed(() =>
     })),
 );
 
-// Mock: nodes auto-discovered from the app. Phase 6 末尾 で `AudioNode.prototype.connect`
-// monkey patch + UnworkletNode WeakSet が 流 す real list に 1 swap。
-const discoveredNodes = [
-  { id: "polysynth", label: "polysynth", kind: "unworklet", status: "errors", errorCount: 3 },
-  { id: "reverb", label: "reverb", kind: "unworklet", status: "errors", errorCount: 1 },
-  { id: "arpeggiator", label: "arpeggiator", kind: "unworklet", status: "warning", errorCount: 1 },
-  { id: "master", label: "master gain", kind: "standard", status: "ok", errorCount: 0 },
-];
+const handleNodeClick = (id: string): void => {
+  graph.selectNode(id);
+  if (!route.path.startsWith("/audio-graph")) {
+    void router.push("/audio-graph");
+  }
+};
 </script>
 
 <template>
@@ -68,10 +70,11 @@ const discoveredNodes = [
       <div class="section-title">processors</div>
       <ul class="node-list">
         <li
-          v-for="node in discoveredNodes"
+          v-for="node in graph.nodes"
           :key="node.id"
           class="node-item"
-          :class="`kind-${node.kind}`"
+          :class="[`kind-${node.kind}`, { active: graph.selectedId.value === node.id }]"
+          @click="handleNodeClick(node.id)"
         >
           <span class="node-dot" :class="`status-${node.status}`"></span>
           <span class="node-label">{{ node.label }}</span>
@@ -224,6 +227,14 @@ const discoveredNodes = [
 .node-item:hover {
   background: var(--u-bg-elev-2);
   color: var(--u-text);
+}
+
+.node-item.active {
+  background: var(--u-bg-elev-3);
+}
+
+.node-item.active .node-label {
+  font-weight: 700;
 }
 
 .node-item.kind-unworklet .node-label {
