@@ -4,6 +4,9 @@ export default defineConfig({
   pack: {
     dts: true,
     exports: false,
+    deps: {
+      skipNodeModulesBundle: true,
+    },
   },
   lint: {
     options: {
