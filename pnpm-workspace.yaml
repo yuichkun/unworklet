@@ -1,6 +1,8 @@
 packages:
-  - packages/*
-  - examples/*
+  - "packages/**"
+  - "examples/*"
+  - "experiments/devtools-proto"
+  - "!**/node_modules/**"
 
 catalogMode: prefer
 
@@ -14,6 +16,7 @@ catalog:
   "@vitest/coverage-v8": ^4.1.7
   wavefile: ^11.0.0
   tsx: ^4.22.3
+  "@vitejs/devtools-kit": ^0.2.0
 overrides:
   vite: "catalog:"
   vitest: "catalog:"
