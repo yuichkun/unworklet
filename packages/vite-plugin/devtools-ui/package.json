@@ -10,6 +10,7 @@
     "check": "vp check"
   },
   "dependencies": {
+    "jszip": "catalog:",
     "vue": "^3.5.0",
     "vue-router": "^4.4.0"
   },

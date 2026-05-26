@@ -17,6 +17,7 @@ catalog:
   wavefile: ^11.0.0
   tsx: ^4.22.3
   "@vitejs/devtools-kit": ^0.2.0
+  jszip: ^3.10.1
 overrides:
   vite: "catalog:"
   vitest: "catalog:"
