@@ -107,17 +107,16 @@ vitest snapshot path 経 由 wav auto-write + bit-exact 比 較 (= `expectAudioM
 
 ### Phase 5 — Vite plugin (= 基本 機能 + 初期 DevTools panel)
 
-`@unworklet/vite-plugin` の bundler 統合 機能 を 早期 ship。 後続 phase の vertical slice 検証 が dev server 上 で 即 試せ、 source map で error 行 が source code 紐付き で 読める state を ここ で 立てる。 触る 範囲:
+`@unworklet/vite-plugin` の bundler 統合 機能 を 早期 ship。 後続 phase の vertical slice 検証 が dev server 上 で 即 試せ る state を ここ で 立てる。 触る 範囲:
 
 - `?worklet` query resolution (= `import processorUrl from './x.processor.ts?worklet'` を vite が 解決、 plugin が `@unworklet/core` の `compile` 関 数 を call)
 - source-change 検知 + build pipeline 統合 (= dev server / production build で `compile` を invocation)
-- source maps (= `.ts` → AST → `.wasm` 位置 propagation、 sidecar `.wasm.map`)
 - metadata artifact emit (= `dist/<processor>.graph.json` / `.memory.json` / `.diagnostics.json` / `.schema-hash.json`、 07-vite-plugin.md §6.3)
 - Vite DevTools Kit 統合 path (= panel host) を 立てる + 初期 3 panel ship: 「Build errors / warnings」 (= 3-layer error model、 stable error ID) + 「Graph viewer」 (= AST DAG dump) + 「Memory budget」 (= declaration auto-sum、 07-vite-plugin.md §6.1)
 
-HMR boundary (= `replaceProcessor` 依存) は Phase 12 で 切り出し。 本 phase は 「dev server で `?worklet` 動く + source map 紐付き + 初期 3 panel」 まで。
+HMR boundary (= `replaceProcessor` 依存) と source maps (= `.ts` → AST → `.wasm` 位置 propagation、 sidecar `.wasm.map`) は Phase 12 で 切り出し。 本 phase は 「dev server で `?worklet` 動く + metadata artifact emit + 初期 3 panel」 まで。
 
-完了 条件: real Vite project で `?worklet` import が 動く + 4 metadata artifact JSON が emit + source map が browser DevTools で source code 紐付き で 読める + 初期 3 panel (= build errors / graph viewer / memory budget) が Vite DevTools 上 で 動く。
+完了 条件: real Vite project で `?worklet` import が 動く + 4 metadata artifact JSON が emit + 初期 3 panel (= build errors / graph viewer / memory budget) が Vite DevTools 上 で 動く。
 
 ### Phase 6 — AudioWorklet 統合 (real audio thread)
 
@@ -187,15 +186,16 @@ snapshot/restore + migration chain + `replaceProcessor` を 後 寄り に 配�
 
 完了 条件: canonical Ex 7 (= convolution reverb with snapshot/restore migration) と Ex 10 (= live coding REPL bridge、 ただし HMR boundary は Phase 12 で fill) の snapshot/restore + migration path が 動く + Q63 swap 累積 warning surface 自体 (= `console.warn` を 51 回目 で 1 度 出す path) が 用意 さ れる + DevTools panel 「Snapshot inspector」 (= `snapshot()` + `inspect(blob)` の panel UI 形) + 「Swap history」 (= `replaceProcessor` invocations + `ReplaceResult` log、 07-vite-plugin.md §6.1) が 動く。
 
-### Phase 12 — HMR boundary + 残り Vite plugin 機能
+### Phase 12 — HMR boundary + source maps + 残り Vite plugin 機能
 
-Phase 5 で 基本 機能 (= `?worklet` resolution + source maps + metadata artifact + 初期 3 panel) は ship 済。 Phase 11 で `replaceProcessor` raw primitive が 揃った 後、 Phase 12 で HMR 依存 部分 を fill:
+Phase 5 で 基本 機能 (= `?worklet` resolution + metadata artifact + 初期 3 panel) は ship 済。 Phase 11 で `replaceProcessor` raw primitive が 揃った 後、 Phase 12 で HMR 依存 部分 + source map propagation を fill:
 
 - HMR boundary (= `replaceProcessor` を user-land で 呼べる shape、 `?worklet` import を hot-acceptable に mark、 07-vite-plugin.md §4)
 - HMR recipe sketch (= user-land で の `import.meta.hot.accept` 経由 orchestrate path、 07-vite-plugin.md §4)
 - 累積 swap warning surface (= Q63、 51 回目 で `console.warn` を 1 度 だけ)
+- source maps (= `.ts` → AST → `.wasm` 位置 propagation、 sidecar `.wasm.map`、 07-vite-plugin.md §5)
 
-完了 条件: real Vite project で source edit → `import.meta.hot.accept` 経由 で `replaceProcessor` が user-land で 呼べる + canonical Ex 10 (= live coding REPL bridge) の HMR path が 動く + 51 回目 の swap で console warning が 出る。
+完了 条件: real Vite project で source edit → `import.meta.hot.accept` 経由 で `replaceProcessor` が user-land で 呼べる + canonical Ex 10 (= live coding REPL bridge) の HMR path が 動く + 51 回目 の swap で console warning が 出る + source map が browser DevTools で source code 紐付き で 読める。
 
 ### Phase 13 — 残り canonical examples の 整合 確認
 
