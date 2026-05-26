@@ -105,24 +105,35 @@ vitest snapshot path 経 由 wav auto-write + bit-exact 比 較 (= `expectAudioM
 
 完了 条件: Vitest で Ex 1 (= meter なし) の audio output が tolerance=0 で reference と 一致、 CI で 安定 pass。
 
-### Phase 5 — Vite plugin (= 基本 機能 + 初期 DevTools panel)
+### Phase 5 — Vite plugin (= 基本 機能 + DevTools panel visual)
 
-`@unworklet/vite-plugin` の bundler 統合 機能 を 早期 ship。 後続 phase の vertical slice 検証 が dev server 上 で 即 試せ る state を ここ で 立てる。 触る 範囲:
+`@unworklet/vite-plugin` の bundler 統合 機能 + DevTools panel surface の visual を ship。 後続 phase の vertical slice 検証 が dev server 上 で 即 試せ る state を ここ で 立てる。 触る 範囲:
 
 - `?worklet` query resolution (= `import processorUrl from './x.processor.ts?worklet'` を vite が 解決、 plugin が `@unworklet/core` の `compile` 関 数 を call)
 - source-change 検知 + build pipeline 統合 (= dev server / production build で `compile` を invocation)
 - metadata artifact emit (= `dist/<processor>.graph.json` / `.memory.json` / `.diagnostics.json` / `.schema-hash.json`、 07-vite-plugin.md §6.3)
-- Vite DevTools Kit 統合 path (= panel host) を 立てる + 初期 3 panel ship: 「Build errors / warnings」 (= 3-layer error model、 stable error ID) + 「Graph viewer」 (= AST DAG dump) + 「Memory budget」 (= declaration auto-sum、 07-vite-plugin.md §6.1)
+- DevTools Kit 統合 path (= 1 dock entry を register + Vue 3 SPA sub-project `packages/vite-plugin/devtools-ui/` を `<vite-plugin>/dist/ui/` に bundle) + 4 panel + 1 secondary を mock data 駆動 で ship: Audio graph / Live state / Signals & performance / MIDI + Audio graph 内 Snapshot tab (= 07-vite-plugin.md §6.1)
+- mock data 軸 = リアル ワールド + 多様 + integrated (= AGENTS.md "Mock data rule")。 audio chain mock = arpeggiator → polysynth → limiter → reverb → master → destination (= 4 unworklet + 2 standard)、 各 unworklet node の publish slot は canonical examples Ex 1-10 から 借用 し て 全 type carry (= scalar f32/i32/bool + buffer f32/i32/bool/u8)、 値 の 動き は real chain 因果 (= polysynth meter 上昇 → limiter GR か か り → reverb tail 出る) を 模倣
 
-HMR boundary (= `replaceProcessor` 依存) と source maps (= `.ts` → AST → `.wasm` 位置 propagation、 sidecar `.wasm.map`) は Phase 12 で 切り出し。 本 phase は 「dev server で `?worklet` 動く + metadata artifact emit + 初期 3 panel」 まで。
+HMR boundary (= `replaceProcessor` 依存) と source maps (= `.ts` → AST → `.wasm` 位置 propagation、 sidecar `.wasm.map`) は Phase 12 で 切り出し。 panel の **real 連携** (= AudioNode.prototype hook / UnworkletNode WeakSet / signal probe opt-in method / latency 計測 / MIDI inject RPC / diagnostics push) は Phase 6 末尾 で fill (= mock composable を real に 1 swap で UI 改訂 ナシ で 動く 設計)。
 
-完了 条件: real Vite project で `?worklet` import が 動く + 4 metadata artifact JSON が emit + 初期 3 panel (= build errors / graph viewer / memory budget) が Vite DevTools 上 で 動く。
+完了 条件: real Vite project で `?worklet` import が 動く + 4 metadata artifact JSON が emit + 1 dock entry が Vite DevTools 上 で 立ち上がる + 4 panel + 1 secondary が mock data 駆動 で 視覚 確認 可 (= waveform / spectrogram / latency rolling chart / memory budget / virtual keyboard inject が anim する)。
 
-### Phase 6 — AudioWorklet 統合 (real audio thread)
+### Phase 6 — AudioWorklet 統合 (= real audio thread) + DevTools real 連携 (= 5-F close)
 
 worklet runtime template (= `AudioWorkletProcessor` 派生 class、 WASM module を audio thread で instantiate、 `process()` で WASM 呼ぶ) + main thread `UnworkletNode<C>` 最小 surface (= `createNode` / `node.node` raw / `dispose` / `node.params.<name>` / `node.inputs.<name>` / `node.outputs.<name>`)。
 
-完了 条件: Ex 1 (= meter なし) が browser で 鳴る + Vitest browser mode で smoke test 通る + DevTools panel 「Live latency monitor」 (= render-quantum cost P50/P95/P99/Max、 07-vite-plugin.md §6.1) が AudioWorklet 上 で 動く。
+phase 末尾 で DevTools panel の real 連携 を fill し て 5-F を close する:
+
+- **B-1** `AudioNode.prototype.connect/disconnect` monkey patch (= dev 限定、 opt-out `unworklet({ devtools: { observeAudioGraph: false } })`、 5 connect overload + 5 disconnect overload を 全 wrap、 戻り値 保持 = `.apply(this, arguments)` 透過、 edge を Shared State channel に push)
+- **B-2** `UnworkletNode` auto-registry (= `createNode` 内 で WeakSet add、 `dispose()` で remove、 panel が server RPC 経由 で 全 unworklet node を discover)
+- **B-3** signal probe opt-in method (= 公開 method 名 は phase 着手 時 に grill ratify。 候補 = `attachSignalProbe()` / `enableProbes()` / `tapForDev()`。 全 output port に AnalyserNode を 中間 挿入 し pass-through、 production no-op)
+- **B-4** Latency 計測 (= worklet runtime template で `currentFrame` を render quantum entry / exit で 取得 + 差 を SAB ring に carry、 main で P-quantile 集計 + streaming push)
+- **B-5** Memory budget streaming (= `compile()` `result.memory` を そのまま Shared State push、 panel は per-declaration table を 描画)
+- **B-6** Diagnostics → panel mapping (= `ctx.diagnostics.logger.UWK<N>` の 各 entry を nodeId-attached で carry し、 RPC で panel から filter 取得)
+- **B-7** MIDI inject RPC (= `defineRpcFunction({ name: 'unworklet:midi:send', type: 'action', handler })` で server side、 panel から `client.call('unworklet:midi:send', { nodeId, portName, event })`、 server で WeakSet registry 経由 で `node.midi.<portName>.send(event)` を 実行)
+
+完了 条件: Ex 1 (= meter なし) が browser で 鳴る + Vitest browser mode で smoke test 通る + 4 panel + 1 secondary が **real data** で 動く (= mock composable swap 後 も UI 改訂 ナシ、 AnalyserNode 経由 で 全 unworklet output が waveform / spectrogram / record に 流れ、 monkey patch 経由 で 全 AudioNode graph が 描画、 latency rolling chart が 実測 値 で 描画、 virtual keyboard inject が 該当 node の `midi.<port>.send(...)` を 実際 に call する)。
 
 ### Phase 7 — Messaging
 
@@ -188,14 +199,14 @@ snapshot/restore + migration chain + `replaceProcessor` を 後 寄り に 配�
 
 ### Phase 12 — HMR boundary + source maps + 残り Vite plugin 機能
 
-Phase 5 で 基本 機能 (= `?worklet` resolution + metadata artifact + 初期 3 panel) は ship 済。 Phase 11 で `replaceProcessor` raw primitive が 揃った 後、 Phase 12 で HMR 依存 部分 + source map propagation を fill:
+Phase 5 で 基本 機能 (= `?worklet` resolution + metadata artifact + DevTools panel visual) を ship、 Phase 6 末尾 で panel real 連携 を fill。 Phase 11 で `replaceProcessor` raw primitive が 揃った 後、 Phase 12 で HMR 依存 部分 + source map propagation を fill:
 
 - HMR boundary (= `replaceProcessor` を user-land で 呼べる shape、 `?worklet` import を hot-acceptable に mark、 07-vite-plugin.md §4)
 - HMR recipe sketch (= user-land で の `import.meta.hot.accept` 経由 orchestrate path、 07-vite-plugin.md §4)
 - 累積 swap warning surface (= Q63、 51 回目 で `console.warn` を 1 度 だけ)
 - source maps (= `.ts` → AST → `.wasm` 位置 propagation、 sidecar `.wasm.map`、 07-vite-plugin.md §5)
 
-完了 条件: real Vite project で source edit → `import.meta.hot.accept` 経由 で `replaceProcessor` が user-land で 呼べる + canonical Ex 10 (= live coding REPL bridge) の HMR path が 動く + 51 回目 の swap で console warning が 出る + source map が browser DevTools で source code 紐付き で 読める。
+完了 条件: real Vite project で source edit → `import.meta.hot.accept` 経由 で `replaceProcessor` が user-land で 呼べる + canonical Ex 10 (= live coding REPL bridge) の HMR path が 動く + 51 回目 の swap で console warning が 出る + source map が browser DevTools で source code 紐付き で 読める。 Record sub-tab の wav encoder は 既 Phase 5 で 自前 16-bit PCM encoder (= ring buffer + RIFF / WAVE 自前) として ship 済 — MediaRecorder path は 全 phase で 採用 ナシ (= AGENTS.md "DevTools panel — recurring violations to avoid")。
 
 ### Phase 13 — 残り canonical examples の 整合 確認
 

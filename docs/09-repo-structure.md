@@ -66,12 +66,16 @@ Per-identifier signature detail / generic constraint is impl-phase fill per Q53 
 ```mermaid
 graph LR
   core["@unworklet/core"]
-  simd["@unworklet/core/simd (subpath)"]
+  simd["@unworklet/core/simd （subpath）"]
   vp["@unworklet/vite-plugin"]
+  vpUi["devtools-ui （internal SPA sub-project under vite-plugin）"]
   offline["@unworklet/offline"]
   test["@unworklet/test"]
-  testExtend["@unworklet/test/extend (subpath)"]
-  binaryen["binaryen (dynamic import)"]
+  testExtend["@unworklet/test/extend （subpath）"]
+  binaryen["binaryen （dynamic import）"]
+  devtoolsKit["@vitejs/devtools-kit"]
+  vue["vue / vue-router / @vitejs/plugin-vue"]
+  jszip["jszip"]
   vite[vite]
   vitest[vitest]
 
@@ -80,13 +84,19 @@ graph LR
   core -.dynamic.-> binaryen
   vp -.peer.-> core
   vp -.peer.-> vite
+  vp -.dev.-> devtoolsKit
+  vpUi -.sub-project.-> vp
+  vpUi -.dev.-> vue
+  vpUi -.dev.-> jszip
   offline -.peer.-> core
   test --> offline
   test -.peer.-> core
   test -.peer.-> vitest
 ```
 
-凡 例: 実 線 矢 印 = `dependencies` (= install で 自 動 解 決、 consumer の bundle に 入 る) — 例: `test --> offline`。 破 線 矢 印 + ラベル = relation 種 別 — `peer` (= `peerDependencies`、 consumer 側 で 揃 え る) / `dynamic` (= 内 部 dynamic import、 `compile` call 時 の み load、 production runtime bundle に 含 ま れ な い) / `subpath` (= 同 package 内 の sub-export path、 別 install ナ シ)。
+凡 例: 実 線 矢 印 = `dependencies` (= install で 自 動 解 決、 consumer の bundle に 入 る) — 例: `test --> offline`。 破 線 矢 印 + ラベル = relation 種 別 — `peer` (= `peerDependencies`、 consumer 側 で 揃 え る) / `dynamic` (= 内 部 dynamic import、 `compile` call 時 の み load、 production runtime bundle に 含 ま れ な い) / `subpath` (= 同 package 内 の sub-export path、 別 install ナ シ) / `dev` (= `devDependencies`、 dev 中 だ け 使 う、 consumer の production bundle に 含 ま れ な い) / `sub-project` (= 該 package 内 部 の nested sub-project、 別 install ナ シ、 親 package の build で `dist/` に bundle さ れ る)。
+
+`@unworklet/vite-plugin` の devtools panel UI は `packages/vite-plugin/devtools-ui/` の Vue 3 SPA sub-project で 構 成 さ れ、 親 package の `vp run build` (= 同 phase で `vp build` + `vp pack` を 連 結 す る orchestration script) が SPA を `<vite-plugin>/dist/ui/` に コ ピ ー し て 1 bundle で ship。 SPA 自 体 は consumer の production runtime に は 触 れ ず、 dev mode (= `vp dev`) で だ け iframe panel と し て load さ れ る。
 
 | Package                  | `dependencies`                                                                                                                                        | `peerDependencies`           | 意 図                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

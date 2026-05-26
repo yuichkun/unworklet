@@ -132,3 +132,25 @@ unworklet は **TDD** で 育 て る。 振 る 舞 い ベ ー ス で test �
 - Do not modify `docs/` to match the code. `docs/` is the contract; if reality has diverged, surface the mismatch to the human reviewer to fix the spec, not the spec to fit the code.
 - Do not push to remote, open / close PRs, or perform shared-system actions without explicit approval.
 - The realtime-safety invariants in `docs/00-foundations.md` §5 are non-negotiable: no allocation, no unbounded loops, no I/O on the audio thread, no GC-triggering operations. If a design appears to require violating one, stop and surface it.
+
+## DevTools panel — recurring violations to avoid (HARD CONTRACT)
+
+These 5 design directions surfaced during the 5-F panel grill and were **explicitly rejected** by the reviewer. Treat them as permanently blocked — do not re-introduce them under refactor, plan revisions, or "wouldn't it be nice if..." arguments. Each entry carries the reason so the rule survives future re-evaluation.
+
+1. **MediaRecorder for audio capture.** Reject. WebM is browser-internal; bug reports need to be openable in any DAW or audio tool. The only sanctioned recording path is `AnalyserNode` → main-thread ring buffer (10 s rolling) → in-house 16-bit signed PCM WAV encoder. See `docs/07-vite-plugin.md` §6 Audio sub-tab.
+2. **Domain-specific layout baked into the framework UI** (e.g. polysynth "voice 8 grid", envelope chips, amp meter bars). Reject. unworklet does not interpret user domain; the panel surfaces declared `state.publish` / `buffer.publish` slots through type-driven representations + a switchable dropdown. Anything beyond that is user-land UI.
+3. **Jump-to-source button in the Build errors modal.** Reject. The modal already shows the source snippet + line + Why + Fix. Opening an IDE adds a side step the audio engineer didn't ask for.
+4. **Swap history panel for `replaceProcessor`.** Reject. `replaceProcessor` returns `ReplaceResult` synchronously, and the Q63 accumulation warning fires once. There is no need to model a history surface — framework does not orchestrate the swap (`docs/decisions-log.md` Q50).
+5. **Time-travel debugging (= scrubbing to past sample state).** Reject. Cannot satisfy realtime invariants + IIR state cannot be deterministically rewound. Use the Record sub-tab to capture short windows for offline analysis instead.
+
+If any of these proposals re-appear in a new panel grill, the conversation stops until the proposer either argues why the rejection reason no longer applies, or the proposal is dropped.
+
+## Mock data rule (HARD CONTRACT)
+
+DevTools UI mocks are not decoration. They are the design contract that real composables get swapped into at Phase 6 末 尾. Therefore every mock obeys three properties:
+
+1. **Real-world**: drawn from `docs/12-canonical-examples.md` Ex 1-10, not invented for visual polish. Slot names, port names, capacities, sysex byte patterns reflect what an actual unworklet processor would declare.
+2. **Diverse**: covers every published type the framework exposes (= `state.f32` / `state.i32` / `state.bool` + `buffer.f32` / `buffer.i32` / `buffer.bool` / `buffer.u8`) through natural use cases rather than padding one type across many slots.
+3. **Integrated**: values move in causally-linked ways across nodes (= polysynth meter rises → limiter gain reduction increases → reverb wet meter trails behind). A mock that puts each slot on an independent random walk fails this rule.
+
+When adding a new mock or replacing one, verify all three before treating it as ready. A "make it pretty for the screenshot" mock is rejected on the same grounds as a domain-specific layout — both let the framework pretend to understand the user's domain.
