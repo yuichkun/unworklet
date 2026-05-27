@@ -942,7 +942,6 @@ test("fetchAndCompileWasm uses WebAssembly.compileStreaming when the response is
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     // Override the mock fetch to advertise application/wasm。
-    h.context;
     globalThis.fetch = ((url: string) => {
       h.fetchCalls.push(url);
       return Promise.resolve({
