@@ -110,7 +110,22 @@ type SelfWithState = {
 };
 
 type ProcessorOptionsBag = {
-  processorOptions?: { wasm?: Uint8Array };
+  processorOptions?: {
+    /**
+     * Pre-compiled `WebAssembly.Module` minted on the main thread。 Audio
+     * thread only does `new WebAssembly.Instance(module)` (= fast、
+     * deterministic、 spec-recommended path)。 This is the primary handoff
+     * shape produced by `createNode`。
+     */
+    module?: WebAssembly.Module;
+    /**
+     * Legacy `Uint8Array` bytes path = sync `new WebAssembly.Module(bytes)`
+     * inside `initialize`。 Kept for path β escape hatches (= author自前
+     * `class extends AudioWorkletProcessor` that hands raw bytes through
+     * `processorOptions`)、 but the declarative path α prefers `.module`。
+     */
+    wasm?: Uint8Array;
+  };
 };
 
 const fillOutputsSilent = (outputs: Float32Array[][]): void => {
@@ -152,14 +167,22 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
     // and surface the latter via `worklet-initialize-not-called`。
     self[INIT_CALLED_KEY] = true;
     try {
-      const wasm = opts.processorOptions?.wasm;
-      if (!wasm) {
+      // Prefer the pre-compiled `WebAssembly.Module` (= main-thread async
+      // compile)、 fall back to sync `new WebAssembly.Module(bytes)` if a
+      // path-β escape hatch still hands raw bytes through。 Either way,
+      // `new WebAssembly.Instance(module)` happens here in the audio
+      // realm — that step is cheap + spec-recommended。
+      const wasmModule =
+        opts.processorOptions?.module ??
+        (opts.processorOptions?.wasm
+          ? new WebAssembly.Module(opts.processorOptions.wasm.buffer as ArrayBuffer)
+          : null);
+      if (!wasmModule) {
         throw new Error(
-          "unworklet: `initialize(self, opts)` requires `opts.processorOptions.wasm` " +
-            "(= the compiled WASM bytes handed off from main thread via AudioWorkletNodeOptions)",
+          "unworklet: `initialize(self, opts)` requires `opts.processorOptions.module` " +
+            "(= pre-compiled WebAssembly.Module from main thread) or `opts.processorOptions.wasm` (= legacy bytes)",
         );
       }
-      const wasmModule = new WebAssembly.Module(wasm.buffer as ArrayBuffer);
       const instance = new WebAssembly.Instance(wasmModule);
       const memory = instance.exports["memory"] as WebAssembly.Memory;
       const procFn = instance.exports["process"] as () => void;

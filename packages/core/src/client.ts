@@ -56,14 +56,34 @@ const addModuleOnce = (
   return promise;
 };
 
-const fetchWasm = async (url: string): Promise<Uint8Array> => {
+/**
+ * Fetch WASM bytes + asynchronously compile to a `WebAssembly.Module` on
+ * the main thread。 The compiled `Module` is structured-clone-safe (= W3C
+ * wasm-web-api spec) and is what we hand off via
+ * `AudioWorkletNodeOptions.processorOptions.module`, so the audio thread
+ * only has to `new WebAssembly.Instance(module)` (= fast、 deterministic
+ * cost) instead of a sync `new WebAssembly.Module(bytes)` (= MDN
+ * explicitly recommends the async path for production)。 First-quantum
+ * glitch potential disappears + Chrome's 4KB sync-compile reject path is
+ * sidestepped entirely。
+ */
+const fetchAndCompileWasm = async (url: string): Promise<WebAssembly.Module> => {
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(
       `unworklet: fetch(${JSON.stringify(url)}) for WASM bytes failed: ${response.status} ${response.statusText}`,
     );
   }
-  return new Uint8Array(await response.arrayBuffer());
+  // Use `WebAssembly.compileStreaming` when the response is the
+  // `application/wasm` MIME — it skips the intermediate ArrayBuffer
+  // copy in conformant browsers。 Fall back to `WebAssembly.compile`
+  // with the buffer for other content types / older engines。
+  const ct = response.headers?.get?.("Content-Type") ?? "";
+  if (typeof WebAssembly.compileStreaming === "function" && /application\/wasm\b/.test(ct)) {
+    return await WebAssembly.compileStreaming(response);
+  }
+  const bytes = await response.arrayBuffer();
+  return await WebAssembly.compile(bytes);
 };
 
 /**
@@ -232,7 +252,7 @@ export async function createNode<C>(
     context as unknown as { audioWorklet: { addModule: (url: string) => Promise<void> } },
     moduleUrl,
   );
-  const wasmBytes = await fetchWasm(wasmUrl);
+  const wasmModule = await fetchAndCompileWasm(wasmUrl);
 
   const inputs = ns.inputs;
   const outputs = ns.outputs;
@@ -257,7 +277,11 @@ export async function createNode<C>(
     numberOfInputs: inputs.length,
     numberOfOutputs: outputs.length,
     parameterData,
-    processorOptions: { wasm: wasmBytes },
+    // Hand the audio thread a pre-compiled `WebAssembly.Module` (= structured
+    // cloneable per W3C wasm-web-api spec) so the worklet only needs to
+    // `new WebAssembly.Instance(module)` (= no sync compile on the audio
+    // thread = no first-quantum glitch potential)。
+    processorOptions: { module: wasmModule },
   };
   if (outputs.length > 0) {
     nodeOptions.outputChannelCount = outputs.map((o) => o.channels);

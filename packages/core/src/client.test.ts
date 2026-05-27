@@ -126,6 +126,7 @@ const installMockGlobals = (wasmBytes: Uint8Array, opts: MockHarnessOptions = {}
       ok: fetchOk,
       status: fetchStatus,
       statusText: fetchStatusText,
+      headers: { get: (_name: string) => "application/octet-stream" },
       arrayBuffer: (): Promise<ArrayBuffer> =>
         Promise.resolve(
           wasmBytes.buffer.slice(
@@ -135,6 +136,18 @@ const installMockGlobals = (wasmBytes: Uint8Array, opts: MockHarnessOptions = {}
         ),
     });
   }) as typeof globalThis.fetch;
+
+  // Stub `WebAssembly.compile` so tests run without real WASM bytes。
+  // The returned object only needs an identity the production path can
+  // forward through `processorOptions.module`; createNode tests assert
+  // it round-trips, no Module method is invoked。
+  const originalWasmCompile = WebAssembly.compile;
+  const compiledModuleSentinels: unknown[] = [];
+  WebAssembly.compile = ((_bytes: BufferSource) => {
+    const sentinel = { __mockModuleId: compiledModuleSentinels.length };
+    compiledModuleSentinels.push(sentinel);
+    return Promise.resolve(sentinel as unknown as WebAssembly.Module);
+  }) as typeof WebAssembly.compile;
 
   class MockWorkletNodeImpl {
     port: MockAudioWorkletNode["port"];
@@ -223,6 +236,7 @@ const installMockGlobals = (wasmBytes: Uint8Array, opts: MockHarnessOptions = {}
     },
     cleanup() {
       globalThis.fetch = originalFetch;
+      WebAssembly.compile = originalWasmCompile;
       delete (globalThis as Record<string, unknown>).AudioWorkletNode;
     },
   };
@@ -345,17 +359,21 @@ test("createNode constructs AudioWorkletNode with correct port counts + channel 
   }
 });
 
-test("createNode passes WASM bytes through processorOptions", async () => {
+test("createNode passes a pre-compiled WebAssembly.Module through processorOptions (= no audio-thread sync compile)", async () => {
   const wasm = new Uint8Array([1, 2, 3, 4]);
   const h = installMockGlobals(wasm);
   try {
     await startCreate(() => createNode(h.context as never, makeMockProcessor()), h.fireReady);
     const opts = h.constructed[0]!.options;
-    const sent = (opts.processorOptions as { wasm: Uint8Array }).wasm;
-    expect(sent).toBeInstanceOf(Uint8Array);
-    expect(sent.byteLength).toBe(4);
-    expect(sent[0]).toBe(1);
-    expect(sent[3]).toBe(4);
+    const sent = (opts.processorOptions as { module: WebAssembly.Module }).module;
+    // The mock `WebAssembly.compile` stubs each call with a sentinel object;
+    // the production path forwards that exact reference into processorOptions
+    // so the audio thread can `new WebAssembly.Instance(module)` directly。
+    expect(sent).toBeDefined();
+    expect((sent as unknown as { __mockModuleId?: number }).__mockModuleId).toBe(0);
+    // Old bytes-bag path must NOT be sent on the declarative path α (= avoids
+    // sync `new WebAssembly.Module(bytes)` on the audio thread)。
+    expect((opts.processorOptions as { wasm?: Uint8Array }).wasm).toBeUndefined();
   } finally {
     h.cleanup();
   }
