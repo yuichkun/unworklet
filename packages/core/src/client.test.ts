@@ -52,6 +52,11 @@ type MockHarnessOptions = {
   fetchOk?: boolean;
   fetchStatus?: number;
   fetchStatusText?: string;
+  /**
+   * When true, every constructed mock port's `start()` throws — exercises
+   * the cleanup-on-throw branch inside `awaitReady`。
+   */
+  portStartThrows?: boolean;
 };
 
 type MockGainNode = {
@@ -79,10 +84,14 @@ type MockHarness = {
   cleanup: () => void;
 };
 
-const installMockGlobals = (wasmBytes: Uint8Array, opts: MockHarnessOptions = {}): MockHarness => {
-  const fetchOk = opts.fetchOk ?? true;
-  const fetchStatus = opts.fetchStatus ?? 200;
-  const fetchStatusText = opts.fetchStatusText ?? "OK";
+const installMockGlobals = (
+  wasmBytes: Uint8Array,
+  harnessOpts: MockHarnessOptions = {},
+): MockHarness => {
+  const fetchOk = harnessOpts.fetchOk ?? true;
+  const fetchStatus = harnessOpts.fetchStatus ?? 200;
+  const fetchStatusText = harnessOpts.fetchStatusText ?? "OK";
+  const portStartThrows = harnessOpts.portStartThrows ?? false;
 
   const addModuleCalls: string[] = [];
   const fetchCalls: string[] = [];
@@ -169,7 +178,11 @@ const installMockGlobals = (wasmBytes: Uint8Array, opts: MockHarnessOptions = {}
           const idx = portListeners.indexOf(fn);
           if (idx >= 0) portListeners.splice(idx, 1);
         },
-        start: () => {},
+        start: () => {
+          if (portStartThrows) {
+            throw new Error("InvalidStateError: port already started");
+          }
+        },
         close: () => {},
         __listeners: portListeners,
       };
@@ -804,6 +817,174 @@ test("createNode rejects with a timeout error when no ready / init-error / proce
     await assertion;
   } finally {
     vi.useRealTimers();
+    h.cleanup();
+  }
+});
+
+test("createNode rejects with cleanup if `port.start()` throws", async () => {
+  // Spec-conformant engines no-op on `port.start()` after `addEventListener
+  // ('message', ...)`; polyfilled / older engines can throw
+  // InvalidStateError。 Cover the cleanup-on-throw branch so the Promise
+  // rejects cleanly + listeners / timer are not left pinned。
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { portStartThrows: true });
+  try {
+    const promise = createNode(h.context as never, makeMockProcessor(), undefined);
+    await expect(promise).rejects.toThrow(/port already started/);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("onError subscriber that throws does not break dispatch to other subscribers", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    const received: unknown[] = [];
+    const originalConsoleError = console.error;
+    const consoleErrorCalls: unknown[][] = [];
+    console.error = (...args: unknown[]) => {
+      consoleErrorCalls.push(args);
+    };
+    try {
+      node.onError(() => {
+        throw new Error("first subscriber blew up");
+      });
+      node.onError((event) => {
+        received.push(event);
+      });
+      for (const listener of h.lastNode!.port.__listeners) {
+        listener({
+          data: { kind: "error", code: "block-length-mismatch", expected: 128, received: 64 },
+        });
+      }
+      // Second subscriber must still have received the event despite the
+      // first subscriber throwing。 The throw is surfaced via console.error。
+      expect(received).toEqual([{ code: "block-length-mismatch", expected: 128, received: 64 }]);
+      expect(consoleErrorCalls.length).toBeGreaterThan(0);
+    } finally {
+      console.error = originalConsoleError;
+    }
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("UnworkletNode.onError after dispose() is a no-op (= returns no-op unsubscribe, does not add handler)", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    node.dispose();
+    const received: unknown[] = [];
+    const unsub = node.onError((event) => {
+      received.push(event);
+    });
+    // Calling the returned unsubscribe must not throw, even though it is
+    // a no-op (= we never added the handler in the first place)。
+    expect(() => unsub()).not.toThrow();
+    // Dispatching after dispose cannot reach the late subscriber because
+    // the listener has been removed from the underlying port + the
+    // subscriber Set is cleared。 Verify the late subscriber stays empty。
+    for (const listener of h.lastNode!.port.__listeners) {
+      listener({
+        data: { kind: "error", code: "block-length-mismatch", expected: 1, received: 2 },
+      });
+    }
+    expect(received).toEqual([]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("addModule cache drops rejected entries so a subsequent call can retry", async () => {
+  // Transient network failures must not permanently poison
+  // (context, moduleUrl)。 First call rejects → cache entry removed →
+  // second call enters addModule fresh。
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    let callIdx = 0;
+    h.context.audioWorklet.addModule = (url: string): Promise<void> => {
+      h.addModuleCalls.push(url);
+      callIdx++;
+      if (callIdx === 1) {
+        return Promise.reject(new Error("net::ERR_CONNECTION_REFUSED"));
+      }
+      return Promise.resolve();
+    };
+    const first = createNode(h.context as never, makeMockProcessor(), undefined);
+    await expect(first).rejects.toThrow(/CONNECTION_REFUSED/);
+    // Second attempt enters addModule again (= cache evicted)。
+    const second = createNode(h.context as never, makeMockProcessor(), undefined);
+    await new Promise((r) => setTimeout(r, 0));
+    h.fireReady();
+    await second;
+    expect(h.addModuleCalls).toEqual(["/_assets/x.worklet.js", "/_assets/x.worklet.js"]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("fetchAndCompileWasm uses WebAssembly.compileStreaming when the response is application/wasm", async () => {
+  // Override fetch + compileStreaming to confirm the streaming branch
+  // fires for application/wasm + the bytes path is skipped。
+  const originalCompileStreaming = WebAssembly.compileStreaming;
+  let streamingCalls = 0;
+  const fakeModule = { __via: "streaming" };
+  WebAssembly.compileStreaming = ((_response: Response | Promise<Response>) => {
+    streamingCalls++;
+    return Promise.resolve(fakeModule as unknown as WebAssembly.Module);
+  }) as typeof WebAssembly.compileStreaming;
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    // Override the mock fetch to advertise application/wasm。
+    h.context;
+    globalThis.fetch = ((url: string) => {
+      h.fetchCalls.push(url);
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: { get: (_n: string) => "application/wasm" },
+        arrayBuffer: (): Promise<ArrayBuffer> => Promise.resolve(new ArrayBuffer(0)),
+      });
+    }) as typeof globalThis.fetch;
+    await startCreate(() => createNode(h.context as never, makeMockProcessor()), h.fireReady);
+    expect(streamingCalls).toBe(1);
+  } finally {
+    WebAssembly.compileStreaming = originalCompileStreaming;
+    h.cleanup();
+  }
+});
+
+test("outputs.<name>.disconnect calls node.disconnect with the right port index", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({
+            outputs: [
+              { name: "main", channels: 2 },
+              { name: "send", channels: 1 },
+            ],
+          }),
+        ),
+      h.fireReady,
+    );
+    const calls: number[] = [];
+    h.lastNode!.disconnect = ((arg: unknown) => {
+      if (typeof arg === "number") calls.push(arg);
+    }) as MockAudioWorkletNode["disconnect"];
+    node.outputs.main!.disconnect();
+    node.outputs.send!.disconnect();
+    expect(calls).toEqual([0, 1]);
+  } finally {
     h.cleanup();
   }
 });

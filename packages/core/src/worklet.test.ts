@@ -370,3 +370,46 @@ test("`process` on block-length mismatch emits silence + posts `block-length-mis
   const errorMessagesAfter = self.messages.slice(initialMessageCount);
   expect(errorMessagesAfter).toHaveLength(1);
 });
+
+test("`initialize` without `processorOptions.module` or `.wasm` posts a structured init-error", async () => {
+  // Cover the `if (!wasmModule) throw new Error(...)` branch inside the
+  // initialize try/catch = path β author hands an empty processorOptions
+  // or the path α emit is somehow corrupted。 The audio thread must not
+  // throw; init-error is posted instead。
+  const self = makeMockSelf();
+  monoGain.worklet.initialize(self, { processorOptions: {} });
+  const errorMessages = self.messages.filter(
+    (m): m is { kind: string; message: string } =>
+      typeof m === "object" && m !== null && (m as { kind?: unknown }).kind === "init-error",
+  );
+  expect(errorMessages).toHaveLength(1);
+  expect(errorMessages[0]!.message).toMatch(/processorOptions\.module/);
+});
+
+test("`initialize` catches arbitrary throws inside the WASM boot path and posts init-error", async () => {
+  // Cover the outer catch in `initialize` for non-trivial throws (= e.g.
+  // a corrupt module that surfaces during instance construction)。
+  const self = makeMockSelf();
+  // A `WebAssembly.Module`-shaped fake whose `instance` construction
+  // throws — exercises the catch path post-`!wasmModule` check。
+  const corruptModule = {} as unknown as WebAssembly.Module;
+  // Stub WebAssembly.Instance to throw when this corrupt module flows
+  // through。
+  const originalInstance = WebAssembly.Instance;
+  (WebAssembly as { Instance: unknown }).Instance = function FakeInstance(
+    _mod: WebAssembly.Module,
+  ): never {
+    throw new Error("link error: missing import 'env.process'");
+  } as unknown as typeof WebAssembly.Instance;
+  try {
+    monoGain.worklet.initialize(self, { processorOptions: { module: corruptModule } });
+  } finally {
+    (WebAssembly as { Instance: unknown }).Instance = originalInstance;
+  }
+  const initErrors = self.messages.filter(
+    (m): m is { kind: string; message: string } =>
+      typeof m === "object" && m !== null && (m as { kind?: unknown }).kind === "init-error",
+  );
+  expect(initErrors).toHaveLength(1);
+  expect(initErrors[0]!.message).toMatch(/link error/);
+});
