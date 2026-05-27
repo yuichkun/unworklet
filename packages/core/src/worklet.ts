@@ -51,6 +51,13 @@ type WorkletState = {
   readonly outputViews: readonly Float32Array[][];
   /** Index-aligned with `params`。 */
   readonly paramViews: readonly Float32Array[];
+  /**
+   * Latched once a WASM trap escapes `state.process()`。 Subsequent quanta
+   * emit silence and skip the WASM call so a single trap does not get
+   * re-posted every render quantum (= main receives one `wasm-trap` event
+   * and the node keeps outputting silence, per docs/05-client.md §4)。
+   */
+  failed: boolean;
 };
 
 type SelfWithState = {
@@ -148,6 +155,7 @@ export function makeWorkletNamespace(graph: CapturedGraph): WorkletNamespace {
         inputViews,
         outputViews,
         paramViews,
+        failed: false,
       };
 
       self.port.postMessage({ kind: "ready" });
@@ -177,6 +185,14 @@ export function makeWorkletNamespace(graph: CapturedGraph): WorkletNamespace {
       // Emit silence on every block to honor `00-foundations.md` §5.1
       // invariant 3 (= no throw on audio thread)、 main side already
       // received the failure signal during the createNode handshake。
+      fillOutputsSilent(outputs);
+      return true;
+    }
+    if (state.failed) {
+      // A previous quantum trapped inside `state.process()`. Per
+      // docs/05-client.md §4 the node stays connected + outputs silence
+      // for the rest of its lifetime — the wasm-trap message was already
+      // posted once, do not flood the port。
       fillOutputsSilent(outputs);
       return true;
     }
@@ -231,7 +247,25 @@ export function makeWorkletNamespace(graph: CapturedGraph): WorkletNamespace {
       }
     }
 
-    state.process();
+    try {
+      state.process();
+    } catch (err) {
+      // WASM trap during process() (= div-by-zero, OOB memory access,
+      // unreachable instruction, etc。 V8 surfaces these as JS exceptions
+      // of `WebAssembly.RuntimeError` per the WebAssembly spec)。 Latch
+      // failed state so subsequent quanta short-circuit, emit silence for
+      // this quantum, and surface the trap to main via `onError` channel。
+      // Keep returning true so the AudioWorkletProcessor stays alive (=
+      // node stays connected per docs/05-client.md §4)。
+      state.failed = true;
+      fillOutputsSilent(outputs);
+      self.port.postMessage({
+        kind: "error",
+        code: "wasm-trap",
+        message: errorMessage(err),
+      });
+      return true;
+    }
 
     // Marshal outputs from linear memory ioScratch.outputs[port][channel]。
     const outputViews = state.outputViews;

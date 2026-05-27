@@ -239,6 +239,55 @@ test("`process` handles a disconnected input port (= empty channel array) as sil
   }
 });
 
+test("`process` catches WASM trap inside state.process() and posts `wasm-trap` + emits silence", async () => {
+  const { wasm } = await compile(monoGain);
+  const self = makeMockSelf();
+  monoGain.worklet.initialize(self, { processorOptions: { wasm } });
+  const initialMessageCount = self.messages.length;
+
+  // Inject a trap by replacing the WASM `process` function on the state
+  // with one that throws — emulates how WebAssembly.RuntimeError would
+  // surface from an out-of-bounds memory access or unreachable instruction。
+  type SelfWithState = { [k: symbol]: { process: () => void; failed: boolean } };
+  const stateBag = self as unknown as SelfWithState;
+  const stateKey = Object.getOwnPropertySymbols(stateBag).find(
+    (s) => s.description === "unworklet.workletState",
+  )!;
+  const state = stateBag[stateKey]!;
+  state.process = () => {
+    throw new Error("RuntimeError: out of bounds memory access");
+  };
+
+  const inputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(0.5)]];
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(99)]];
+  const parameters = { gain: new Float32Array([1]) };
+
+  const ret = monoGain.worklet.process(self, inputs, outputs, parameters);
+
+  expect(ret).toBe(true);
+  // Silenced (= 00-foundations.md §5.1 invariant 3 + 05-client.md §4)。
+  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
+    expect(outputs[0][0]![i]).toBe(0);
+  }
+  const errorMessages = self.messages.slice(initialMessageCount);
+  expect(errorMessages).toHaveLength(1);
+  expect(errorMessages[0]).toMatchObject({
+    kind: "error",
+    code: "wasm-trap",
+    message: expect.stringContaining("out of bounds"),
+  });
+
+  // Subsequent quanta keep emitting silence WITHOUT re-posting wasm-trap
+  // (= node stays connected with silence output, single failure event)。
+  outputs[0][0]!.fill(99);
+  monoGain.worklet.process(self, inputs, outputs, parameters);
+  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
+    expect(outputs[0][0]![i]).toBe(0);
+  }
+  const errorMessagesAfter = self.messages.slice(initialMessageCount);
+  expect(errorMessagesAfter).toHaveLength(1);
+});
+
 test("`process` on block-length mismatch emits silence + posts `block-length-mismatch` error", async () => {
   const { wasm } = await compile(monoGain);
   const self = makeMockSelf();
