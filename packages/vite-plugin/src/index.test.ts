@@ -381,7 +381,7 @@ test("resolveId passes through WORKLET_ENTRY_PREFIX ids without modification", (
 // Dev mode (= command === "serve") = middleware URL emission
 // ─────────────────────────────────────────────────────────────────────────
 
-test("dev mode: load returns JS that points moduleUrl + wasmUrl at dev middleware URLs", async () => {
+test("dev mode: load returns JS that points moduleUrl through Vite's `/@id/` virtual + wasmUrl at the hash-pinned middleware URL", async () => {
   const result = await callLoadInServeMode(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`, {
     root: "/Users/yuichkun/workspace/unworklet/examples/01-stereo-gain",
   });
@@ -389,9 +389,25 @@ test("dev mode: load returns JS that points moduleUrl + wasmUrl at dev middlewar
   // Dev mode must NOT use the rollup placeholder (= it doesn't get rewritten
   // when rolldown isn't bundling)。
   expect(js).not.toContain("ROLLUP_FILE_URL_");
-  // Both URLs hit the plugin's dev middleware prefix (= `__unworklet/`)。
-  expect(js).toMatch(/moduleUrl: "[^"]*\/__unworklet\/[^"]*\/worklet\.js"/);
-  expect(js).toMatch(/wasmUrl: "[^"]*\/__unworklet\/[^"]*\/wasm"/);
+  // The worklet entry routes through Vite's `/@id/__x00__` virtual-module
+  // URL so Vite's transform pipeline resolves the bare
+  // `@unworklet/core/worklet` import inside the emitted template。
+  expect(js).toMatch(/moduleUrl: "[^"]*\/@id\/__x00__unworklet-worklet:[^"]*\?v=[0-9a-f]{8}"/);
+  // WASM URL keeps the dev middleware path, but with a revision hash so
+  // a save between addModule + fetch cannot pair stale meta with new WASM。
+  expect(js).toMatch(/wasmUrl: "[^"]*\/__unworklet\/[^"]*\/[0-9a-f]{8}\/wasm"/);
+});
+
+test("dev mode: moduleUrl + wasmUrl carry the SAME revision hash inside a single load call", async () => {
+  const result = await callLoadInServeMode(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`, {
+    root: "/Users/yuichkun/workspace/unworklet/examples/01-stereo-gain",
+  });
+  const js = result as string;
+  const moduleMatch = js.match(/moduleUrl: "[^"]*\?v=([0-9a-f]{8})"/);
+  const wasmMatch = js.match(/wasmUrl: "[^"]*\/([0-9a-f]{8})\/wasm"/);
+  expect(moduleMatch).not.toBeNull();
+  expect(wasmMatch).not.toBeNull();
+  expect(moduleMatch![1]).toBe(wasmMatch![1]);
 });
 
 test("dev mode: emits no rolldown chunk / asset (= no emitFile calls)", async () => {
@@ -411,7 +427,7 @@ test("dev mode: encoded source path round-trips through base64url", async () => 
     root: "/Users/yuichkun/workspace/unworklet/examples/01-stereo-gain",
   });
   const js = result as string;
-  const match = js.match(/\/__unworklet\/([A-Za-z0-9_-]+)\/worklet\.js/);
+  const match = js.match(/\/__unworklet\/([A-Za-z0-9_-]+)\/[0-9a-f]{8}\/wasm/);
   expect(match).not.toBeNull();
   const encoded = match![1]!;
   const decoded = Buffer.from(encoded, "base64url").toString("utf8");
@@ -564,15 +580,27 @@ test("dev middleware passes to next() when the URL part is neither 'wasm' nor 'w
   expect(res.__endCalls).toHaveLength(0);
 });
 
-test("dev middleware serves WASM bytes for an allowlisted source + the `wasm` part", async () => {
+test("dev middleware serves WASM bytes for an allowlisted source at the hash-pinned URL", async () => {
   const { plugin, middleware } = setupServeMiddleware({
     root: "/Users/yuichkun/workspace/unworklet/examples/01-stereo-gain",
   });
   await primeAllowlist(plugin, FIXTURE_GAIN_PATH);
-  const encoded = Buffer.from(FIXTURE_GAIN_PATH, "utf8").toString("base64url");
+  // Drive the load hook in dev mode so the plugin compiles + records a
+  // snapshot for `FIXTURE_GAIN_PATH` and mints the matching revision hash。
+  const loadHook = plugin.load as unknown as LoadFn | undefined;
+  if (!loadHook) throw new Error("load missing");
+  const loadCtx = makeMockEmitContext();
+  const loadResult = (await loadHook.call(
+    loadCtx,
+    `${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`,
+  )) as string;
+  const wasmUrlMatch = loadResult.match(/wasmUrl: "([^"]+)"/);
+  expect(wasmUrlMatch).not.toBeNull();
+  const wasmUrlPath = wasmUrlMatch![1]!;
+  // Strip the basePath leading slash for the middleware request shape。
   const res = makeResponseStub();
   let nextCalled = 0;
-  middleware({ url: `/__unworklet/${encoded}/wasm` }, res, () => {
+  middleware({ url: wasmUrlPath }, res, () => {
     nextCalled++;
   });
   // Wait for the async compile + send path inside the middleware to settle。

@@ -238,6 +238,18 @@ const encodeSourceForDevUrl = (absPath: string): string =>
 const decodeSourceFromDevUrl = (encoded: string): string =>
   Buffer.from(encoded, "base64url").toString("utf8");
 
+/**
+ * 8-hex-char content hash over the compiled WASM bytes。 Used in dev to
+ * pin `moduleUrl` and `wasmUrl` to the same compile revision: both URLs
+ * carry this token, so even if the author edits and saves between
+ * `audioWorklet.addModule(...)` and `fetch(wasmUrl)` the original URLs
+ * still resolve to the snapshot they were minted from (= no inline-meta
+ * vs WASM bytes skew, `07-vite-plugin.md` §3 dev/build symmetry)。
+ */
+const REVISION_HASH_LEN = 8;
+const computeRevisionHash = (wasm: Uint8Array): string =>
+  createHash("sha256").update(wasm).digest("hex").slice(0, REVISION_HASH_LEN);
+
 const detectWorkletQuery = (source: string): { basePath: string } | null => {
   const queryIdx = source.indexOf("?");
   if (queryIdx < 0) return null;
@@ -423,12 +435,38 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
   // encodes into the URL = arbitrary local file import via a crafted dev-
   // server request。
   const allowedSources = new Set<string>();
-  const validParts = new Set(["wasm", "worklet.js"]);
   // Vite dev server reference for `ssrLoadModule` + transitive watch fan-out。
   // Captured during `configureServer` and consulted by the dev paths inside
   // `load` and the middleware = transitive helper-module edits now flow
   // through Vite's module graph instead of Node's static ESM cache。
   let viteDevServer: ViteDevServerLike | null = null;
+  // Dev cache of (sourcePath, revisionHash) → compile snapshot。 The load
+  // hook fills `latestRevision` on every re-run so the dev moduleUrl /
+  // wasmUrl carry the current revision token; the wasm-serving middleware
+  // pulls the snapshot back out by hash so a save between
+  // `addModule(moduleUrl)` and `fetch(wasmUrl)` cannot pair stale meta
+  // with new WASM (= round-5 finding 2)。 Snapshots stay in a small
+  // LRU-ish ring (= keep last 2 revisions) so an in-flight createNode
+  // races complete even after a reload triggers a new revision。
+  type CompileSnapshot = { hash: string; wasm: Uint8Array };
+  const snapshotsBySource = new Map<string, CompileSnapshot[]>();
+  const latestRevisionBySource = new Map<string, string>();
+  const SNAPSHOT_RING_SIZE = 2;
+  const recordSnapshot = (sourcePath: string, snap: CompileSnapshot): void => {
+    let ring = snapshotsBySource.get(sourcePath);
+    if (!ring) {
+      ring = [];
+      snapshotsBySource.set(sourcePath, ring);
+    }
+    // De-dupe by hash, push newest to the end, evict oldest beyond ring size。
+    const existing = ring.findIndex((s) => s.hash === snap.hash);
+    if (existing >= 0) ring.splice(existing, 1);
+    ring.push(snap);
+    while (ring.length > SNAPSHOT_RING_SIZE) ring.shift();
+    latestRevisionBySource.set(sourcePath, snap.hash);
+  };
+  const findSnapshot = (sourcePath: string, hash: string): CompileSnapshot | undefined =>
+    snapshotsBySource.get(sourcePath)?.find((s) => s.hash === hash);
   return {
     name: "@unworklet/vite-plugin",
     enforce: "pre",
@@ -438,14 +476,18 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
     },
     configureServer(server) {
       viteDevServer = server as unknown as ViteDevServerLike;
-      // Dev-mode middleware = serve the worklet runtime entry (= `worklet.js`)
-      // and the compiled WASM bytes at predictable URLs derived from the
-      // source path. Same URL shape across consumers — main bundle stores
-      // the URL string emitted by `load`、 createNode hands it to
-      // `audioWorklet.addModule(...)` + `fetch(...)`、 vite's dev server
-      // routes the request here。 Build mode emits the same two assets via
-      // `emitFile` so the consumer-side createNode wiring is identical
-      // (= `07-vite-plugin.md` §3 dev/build 対称)。
+      // Dev-mode middleware = serve compiled WASM bytes at a hash-pinned URL。
+      // The worklet entry JS is **not** served here — it goes through
+      // Vite's module pipeline (= `\0unworklet-worklet:` virtual id under
+      // `/@id/`) so Vite's resolver + transform can rewrite the bare
+      // `@unworklet/core/worklet` import to a browser-safe URL。 Serving
+      // a raw template from custom middleware skips Vite's transform step
+      // entirely and the worklet realm would crash on the bare specifier。
+      //
+      // The URL carries a revision hash so a save between
+      // `audioWorklet.addModule(moduleUrl)` and `fetch(wasmUrl)` cannot
+      // pair stale inline meta with new WASM bytes — both URLs minted
+      // inside a single `createNode` call share the same revision token。
       const devUrlBase = `${basePath}${DEV_URL_PREFIX}/`;
       server.middlewares.use((req, res, next) => {
         if (!req.url) return next();
@@ -453,11 +495,12 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
         const pathOnly = queryIdx < 0 ? req.url : req.url.slice(0, queryIdx);
         if (!pathOnly.startsWith(devUrlBase)) return next();
         const rest = pathOnly.slice(devUrlBase.length);
-        const slashIdx = rest.indexOf("/");
-        if (slashIdx < 0) return next();
-        const encoded = rest.slice(0, slashIdx);
-        const part = rest.slice(slashIdx + 1);
-        if (!validParts.has(part)) return next();
+        // Expect `<encoded>/<hash>/wasm`。 Any other shape is not ours。
+        const segments = rest.split("/");
+        if (segments.length !== 3) return next();
+        const [encoded, hash, part] = segments as [string, string, string];
+        if (part !== "wasm") return next();
+        if (!/^[0-9a-f]{8}$/.test(hash)) return next();
         const sourcePath = (() => {
           try {
             return decodeSourceFromDevUrl(encoded);
@@ -467,39 +510,36 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
         })();
         if (!sourcePath) return next();
         // Allowlist gate = only paths the plugin itself accepted via
-        // `?worklet` resolveId may be `importFresh`ed by the middleware。
+        // `?worklet` resolveId may be served by the middleware。
         if (!allowedSources.has(sourcePath)) return next();
 
         (async (): Promise<void> => {
-          const sourceModule = viteDevServer
-            ? await ssrLoadSource(viteDevServer, sourcePath)
-            : await importFresh(sourcePath);
-          const { exportName, processor } = pickCompiledProcessor(sourceModule, sourcePath);
-
-          if (part === "wasm") {
+          // Prefer the in-memory snapshot for the requested revision so a
+          // race between save + outstanding fetch resolves to the matching
+          // WASM bytes (= no skew with the moduleUrl's inlined meta)。 If
+          // the requested revision rolled out of the ring, fall through to
+          // a fresh compile (last-resort = strict newer-than-cache request)。
+          let bytes: Uint8Array | undefined = findSnapshot(sourcePath, hash)?.wasm;
+          if (!bytes) {
+            const sourceModule = viteDevServer
+              ? await ssrLoadSource(viteDevServer, sourcePath)
+              : await importFresh(sourcePath);
+            const { processor } = pickCompiledProcessor(sourceModule, sourcePath);
             const result = await compile(processor);
-            res.setHeader("Content-Type", "application/wasm");
-            res.setHeader("Cache-Control", "no-cache");
-            res.end(Buffer.from(result.wasm));
-            return;
+            const freshHash = computeRevisionHash(result.wasm);
+            recordSnapshot(sourcePath, { hash: freshHash, wasm: result.wasm });
+            if (freshHash !== hash) {
+              // Revision the client asked for is gone; signal a hard
+              // failure instead of silently serving a different binary。
+              res.statusCode = 410;
+              res.end(`unworklet: revision ${hash} no longer available (now ${freshHash})`);
+              return;
+            }
+            bytes = result.wasm;
           }
-
-          // part === "worklet.js" — the only other allowed value (= validParts)。
-          // Build the runtime-only worklet artifact: the template embeds
-          // inline metadata + boots through `@unworklet/core/worklet`, so
-          // it never re-imports the authoring source in the worklet realm
-          // (= no `defineProcessor` re-evaluation, no author top-level side
-          // effects on the audio thread)。
-          const meta = extractWorkletMeta(
-            processor.graph as unknown as Parameters<typeof extractWorkletMeta>[0],
-          );
-          const template = emitWorkletTemplate({
-            processorName: computeProcessorName(exportName, sourcePath),
-            meta,
-          });
-          res.setHeader("Content-Type", "application/javascript");
+          res.setHeader("Content-Type", "application/wasm");
           res.setHeader("Cache-Control", "no-cache");
-          res.end(template);
+          res.end(Buffer.from(bytes));
         })().catch((err: unknown) => {
           console.error("[@unworklet/vite-plugin] middleware error:", err);
           res.statusCode = 500;
@@ -518,11 +558,22 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
     },
     async load(id) {
       if (id.startsWith(WORKLET_ENTRY_PREFIX)) {
-        const sourcePath = id.slice(WORKLET_ENTRY_PREFIX.length);
+        // The id can arrive with a `?v=<hash>` revision query in dev (=
+        // Vite passes the full request id including query into `load`)。
+        // Strip it so we can stat / import the file off disk, then keep
+        // routing identical between dev and build for the emit path。
+        const idAfterPrefix = id.slice(WORKLET_ENTRY_PREFIX.length);
+        const queryIdx = idAfterPrefix.indexOf("?");
+        const sourcePath = queryIdx < 0 ? idAfterPrefix : idAfterPrefix.slice(0, queryIdx);
         this.addWatchFile(sourcePath);
-        // Build mode only — WORKLET_ENTRY_PREFIX is emitted by rolldown's
-        // `emitFile({ type: "chunk", id })` path so we never see it in dev。
-        const sourceModule = await importFresh(sourcePath);
+        // Dev path: the resolveId for the main `?worklet` virtual already
+        // added the sourcePath to `allowedSources` and compiled / cached a
+        // snapshot, so this load is just emitting the template against the
+        // current revision。 Build path: same template emitter, no query。
+        const sourceModule =
+          isServe && viteDevServer
+            ? await ssrLoadSource(viteDevServer, sourcePath)
+            : await importFresh(sourcePath);
         const { exportName, processor } = pickCompiledProcessor(sourceModule, sourcePath);
         const meta = extractWorkletMeta(
           processor.graph as unknown as Parameters<typeof extractWorkletMeta>[0],
@@ -560,13 +611,30 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
       let wasmUrlExpr: string;
 
       if (isServe) {
-        // Dev: middleware serves both assets at predictable URLs derived
-        // from the source path. No emitFile / ROLLUP_FILE_URL placeholder
-        // (= those are rolldown-build-time only)。 Compile runs lazily inside
-        // the middleware on first request, so dev startup stays fast。
+        // Dev: compile up front so we can mint a revision token + cache the
+        // snapshot。 Both URLs carry the hash = `addModule(moduleUrl)` and
+        // `fetch(wasmUrl)` inside a single `createNode()` always resolve to
+        // the same compile snapshot, even if the author saves between the
+        // two requests (= no inline-meta vs WASM byte skew)。
+        //
+        // The worklet entry URL goes through Vite's `/@id/` virtual-module
+        // route (= `__x00__` is vite's URL-safe encoding of the `\0` prefix
+        // that marks virtual ids), so Vite's transform pipeline can resolve
+        // the bare `@unworklet/core/worklet` import inside the emitted
+        // template。 Raw middleware output would skip that step and the
+        // worklet realm would choke on the bare specifier。
+        const result = await compile(processor);
+        const hash = computeRevisionHash(result.wasm);
+        recordSnapshot(sourcePath, { hash, wasm: result.wasm });
+
         const encoded = encodeSourceForDevUrl(sourcePath);
-        moduleUrlExpr = JSON.stringify(`${basePath}${DEV_URL_PREFIX}/${encoded}/worklet.js`);
-        wasmUrlExpr = JSON.stringify(`${basePath}${DEV_URL_PREFIX}/${encoded}/wasm`);
+        const virtualWorkletId = `${WORKLET_ENTRY_PREFIX}${sourcePath}`;
+        // `\0` → `__x00__` is Vite's standard URL encoding for virtual ids
+        // (the dev server decodes it back into the null-byte prefix that
+        // resolveId / load hooks see)。
+        const virtualWorkletUrlPath = `${basePath}@id/__x00__${virtualWorkletId.slice(1)}`;
+        moduleUrlExpr = JSON.stringify(`${virtualWorkletUrlPath}?v=${hash}`);
+        wasmUrlExpr = JSON.stringify(`${basePath}${DEV_URL_PREFIX}/${encoded}/${hash}/wasm`);
       } else {
         // Build mode: emit chunk + asset via rolldown's `emitFile`. URLs are
         // resolved through `import.meta.ROLLUP_FILE_URL_<refId>` placeholders
