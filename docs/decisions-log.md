@@ -3800,3 +3800,70 @@ WASM compile invocation を `@unworklet/core` の **公開 named export** と �
 - ナシ (= v1.0.0 surface で path α 完結)
 
 ---
+
+## Q83 — Phase 6 実 装 中 に 確 定 し た 仕 様 改 訂 5 件 (= impl-phase ratify)
+
+**Status:** resolved.
+
+### Decision
+
+Phase 6 (= AudioWorklet 統合) 実装 中 に、 plan 着手 時 想定 を 越 え る 仕 様 改 訂 が 5 件 必 然 と し て 帰 結 し た。 retroactive ratify entry と し て 1 か 所 に 整 理 + 各 docs 更 新 path を 確 定 す る (= 個 別 5 entry に 散 ら す よ り 「impl-phase の 設 計 自 律 範 囲」 を 1 entry で 線 引 き す る path)。 該 当 5 件:
+
+**(1) `schemaHash` を sync → async に refactor**
+
+- 既 Q5 / Q5-b で `schemaHash` の 計 算 path は internal、 戻 り 値 は `string` (= sync) を 暗 黙 前 提
+- impl で `node:crypto.createHash` 経 由 で 計 算 し て い た が、 browser / worklet realm 等 で `node:crypto` が 解 決 で き ず bundle が 落 ち る = runtime-agnostic 不 変 と 衝 突
+- 修 正: Web Crypto API (`crypto.subtle.digest('SHA-256', data)`) 経 由 に 切 替 (= Node 22+ / browser / Bun / Deno で 全 動 作)、 戻 り 値 は `Promise<string>`。 caller (`compile` 等) を 全 て `await` に
+- 影 響: 内 部 only (= `schemaHash` は 公 開 API 経 由 で は そ の ま ま `string` で expose、 Promise は internal 実 装 詳 細)。 docs prose で 「sync を 仮 定 す る」 記 述 は ナ シ = 追 加 修 正 不 要
+
+**(2) `NodeErrorEvent` を 4 code → 5 code に 拡 張 (`worklet-initialize-not-called` 追 加)**
+
+- Q80 path β escape hatch で 「`initialize(this, opts)` 呼 び 忘 れ は runtime error (`worklet-initialize-not-called`)」 を declare し た が、 Layer 2 stable error ID と は 別 surface = `node.onError(handler)` 経 由 で 観 測 し か 出 来 な い (= audio thread は throw で き な い = `00-foundations.md` §5.1 invariant 3)
+- 修 正: `NodeErrorEvent` discriminated union に 5 番 目 code を 追 加。 worklet 側 で 1 度 だ け post + 以 降 silence。
+- 影 響: 公 開 surface 変 更 = `04-worklet-runtime.md` §8、 `05-client.md` §2 + §4 内 部 lifecycle note、 `01-dsl.md` §11.4 path β 制 約、 本 entry の Q80 同 期 改 訂 (= 上 述 entry に retroactive 修 正 済) — 既 commit (`978eaa6`) で 4 file 同 期。
+
+**(3) `@unworklet/core/worklet` 公 開 subpath 追 加**
+
+- Q13 / Q52 / Q80 + Phase 6 plan は worklet template が user source を 再 import + `def.worklet` namespace 経 由 で boot す る path を 想 定。 こ れ は worklet realm で user source の `defineProcessor` を 再 評 価 し、 author の top-level side effect (= `window` / DOM 等) が worklet realm に 流 入 す る 構 造 = 「source = WASM 1:1」 哲 学 違 反
+- 修 正: vite-plugin が emit す る worklet entry を **runtime-only artifact** に 切 替 = inline meta JSON + `@unworklet/core/worklet` sub-entry の `makeWorkletNamespaceFromMeta(meta)` だ け を import + WASM bytes を processorOptions 経 由 で 受 け 取 る。 user source は worklet realm に 流 入 し な い (= path α 限 定、 path β = user 自 前 class は author own = explicit opt-in)
+- 影 響: 公 開 surface = `@unworklet/core/worklet` semi-public subpath 追 加 + `09-repo-structure.md` §2 公 開 subpath list + §2.3 named exports + §2.5 dependency graph (= 既 commit `f2f01ae` で 同 期)。 user は 直 接 import す る 形 で は な く vite-plugin emit template 経 由 で 触 れ る = semi-public
+
+**(4) `processorName` を `<exportName>__<srcHash>__<revHash>` に 拡 張**
+
+- 既 design は `processorName = exportName` で 充 分 と 想 定 (= Phase 6 plan)。 し か し AudioWorklet の `registerProcessor(name, klass)` は 同 名 重 複 で `NotSupportedError`、 de-register API ナ シ = HMR / `replaceProcessor` (= 後 phase の forward-compat 要 求) で 「同 source の 新 旧 revision を 同 context に 一 瞬 共 存 さ せ て swap」 が 不 可 能 に な る 設 計 だ っ た
+- 修 正: `<exportName>` に 加 え て `__<sha8(absSourcePath)>` (= 別 file で 同 export 名 衝 突 回 避) + `__<sha8(wasmBytes)>` (= 同 source 別 revision で 別 名 = 共 存 可 能) を 追 加。 dev / build で 同 計 算 path
+- 影 響: 公 開 surface = ナ シ (= processorName は framework internal、 user は `node.inputs.<name>` / `node.outputs.<name>` 経 由 で 触 る = visible で ない)。 docs 追 加 不 要 (= impl 詳 細)
+
+**(5) `WorkletNamespace.inputs` / `.outputs` audio port metadata 追 加**
+
+- 既 docs (`01-dsl.md` §11) は `def.worklet = { initialize, process, parameterDescriptors }` の 3 entry を declare。 plan §A-3 は 「declaration 数 / channels 数 は `processor.declarations` か ら derive」 と 想 定
+- impl で worklet 側 / main 側 で port 数 + channels を 個 別 に 取 り 出 す path が 重 複 = `WorkletNamespace` に inputs / outputs port descriptor array を 持 た せ る path で 統 一
+- 修 正: `WorkletNamespace.inputs: readonly AudioPortDescriptor[]` + `.outputs: readonly AudioPortDescriptor[]` を 追 加 (= 内 部 metadata path、 user は `node.inputs.<name>` 経 由 で 触 れ る namespaced surface 側 を 使 う)
+- 影 響: 公 開 surface = `WorkletNamespace` 型 が 拡 張 (= path β escape hatch の author が 触 る 型)、 ただ し runtime 関 数 entry の shape 変 更 ナ シ。 `01-dsl.md` §11 + Q80 で 「3 entry」 表 記 を 「3 関 数 entry + inputs / outputs port descriptor」 に 改 訂 が 必 要
+
+### Rationale
+
+5 件 全 て plan §scope の 想 定 範 囲 内 で 解 決 で き る 軸 で は な く、 「browser bundle で 動 か な い」 「Web Audio spec で reject さ れ る」 「worklet realm で user code が 評 価 さ れ る = 哲 学 違 反」 等 の **構 造 的 必 然** に よ る 改 訂。 retract 不 能 (= 各 fix が ship blocker)、 ratify ナ シ で 進 め る path も 不 適 切 (= 後 phase の forward-compat / docs consistency が 損 な う)。
+
+「impl-phase で 自 律 判 断 し 必 要 だ っ た 改 訂」 と し て 1 entry に 整 理 + 各 docs surface へ の 修 正 を 同 commit で zip = 後 phase 着 手 時 に impl AI agent が 仕 様 を 一 望 で きる 状 態 を 作 る。
+
+### Rejected
+
+- _(β) 5 件 個 別 に Q83 / Q84 / Q85 / Q86 / Q87 で entry 化_ — 1 batch の impl-phase 自 律 範 囲 で あ る こ と が 視 認 し に く い、 entry 数 が 不 必 要 に 増 え る
+- _(γ) retract し て plan §scope に 戻 す_ — 各 fix が 構 造 的 必 然 = 不 可 能
+
+採 用 = **(α) 1 entry retroactive ratify**。
+
+### Side effects (= 各 file の 修 正)
+
+- `09-repo-structure.md` §2 + §2.3 + §2.5 (= 既 commit `f2f01ae`)
+- `04-worklet-runtime.md` §8 + `05-client.md` §2 + §4 + `01-dsl.md` §11.4 + Q80 (= 既 commit `978eaa6`)
+- `10-roadmap.md` §Phase 6 文 面 改 訂 (= 既 commit + 本 commit で B 軸 scope 後 phase 持 ち 出 し + 完 了 条 件 整 理)
+- `01-dsl.md` §11 で `def.worklet` の 「3 entry」 表 記 → 「3 関 数 entry + inputs / outputs port descriptor」 改 訂 (= 本 commit で 同 期)
+- `README.md` Status range Q1-Q82 → Q1-Q83 update (= 本 commit で 同 期)
+
+### v1.x.0 deferral
+
+- ナ シ (= v1.0.0 surface で 5 件 全 て 完 結)
+
+---

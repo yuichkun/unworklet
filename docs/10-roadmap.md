@@ -115,25 +115,22 @@ vitest snapshot path 経 由 wav auto-write + bit-exact 比 較 (= `expectAudioM
 - DevTools Kit 統合 path (= 1 dock entry を register + Vue 3 SPA sub-project `packages/vite-plugin/devtools-ui/` を `<vite-plugin>/dist/ui/` に bundle) + 4 panel + 1 secondary を mock data 駆動 で ship: Audio graph / Live state / Signals & performance / MIDI + Audio graph 内 Snapshot tab (= 07-vite-plugin.md §6.1)
 - mock data 軸 = リアル ワールド + 多様 + integrated (= AGENTS.md "Mock data rule")。 audio chain mock = arpeggiator → polysynth → limiter → reverb → master → destination (= 4 unworklet + 2 standard)、 各 unworklet node の publish slot は canonical examples Ex 1-10 から 借用 し て 全 type carry (= scalar f32/i32/bool + buffer f32/i32/bool/u8)、 値 の 動き は real chain 因果 (= polysynth meter 上昇 → limiter GR か か り → reverb tail 出る) を 模倣
 
-HMR boundary (= `replaceProcessor` 依存) と source maps (= `.ts` → AST → `.wasm` 位置 propagation、 sidecar `.wasm.map`) は Phase 12 で 切り出し。 panel の **real 連携** (= AudioNode.prototype hook / UnworkletNode WeakSet / signal probe opt-in method / latency 計測 / MIDI inject RPC / diagnostics push) は Phase 6 末尾 で fill (= mock composable を real に 1 swap で UI 改訂 ナシ で 動く 設計)。
+HMR boundary (= `replaceProcessor` 依存) と source maps (= `.ts` → AST → `.wasm` 位置 propagation、 sidecar `.wasm.map`) は Phase 12 で 切り出し。 panel の **real 連携** (= AudioNode.prototype hook / UnworkletNode WeakSet / signal probe opt-in method / latency 計測 / MIDI inject RPC / diagnostics push) は dependency が 揃 う 各 surface phase (= Phase 7 messaging / Phase 9 MIDI / Phase 12 HMR + source map) で 1 swap で fill (= mock composable を real に 入 れ 替 え る 設 計、 UI 改 訂 ナ シ)。
 
 完了 条件: real Vite project で `?worklet` import が 動く + 4 metadata artifact JSON が emit + 1 dock entry が Vite DevTools 上 で 立ち上がる + 4 panel + 1 secondary が mock data 駆動 で 視覚 確認 可 (= waveform / spectrogram / latency rolling chart / memory budget / virtual keyboard inject が anim する)。
 
-### Phase 6 — AudioWorklet 統合 (= real audio thread) + DevTools real 連携 (= 5-F close)
+### Phase 6 — AudioWorklet 統合 (= real audio thread)
 
-worklet runtime template (= `AudioWorkletProcessor` 派生 class、 WASM module を audio thread で instantiate、 `process()` で WASM 呼ぶ) + main thread `UnworkletNode<C>` 最小 surface (= `createNode` / `node.node` raw / `dispose` / `node.params.<name>` / `node.inputs.<name>` / `node.outputs.<name>`)。
+worklet runtime template (= `AudioWorkletProcessor` 派生 class、 WASM module を audio thread で instantiate、 `process()` で WASM 呼ぶ) + main thread `UnworkletNode<C>` 最小 surface (= `createNode` / `node.node` raw / `dispose` / `node.params.<name>` / `node.inputs.<name>` / `node.outputs.<name>`)。 加 え て init failure / WASM trap / block-length-mismatch / queue-overflow / sab-unavailable / worklet-initialize-not-called を 観 測 す る `node.onError(handler)` の wiring skeleton (= queue-overflow / sab-unavailable は 該 当 transport が 後 phase で 立 ち 上 が っ た 時 に 配 線、 残 り 3 code は Phase 6 で fill)。
 
-phase 末尾 で DevTools panel の real 連携 を fill し て 5-F を close する:
+DevTools panel の **real 連携** (= B 軸: AudioNode.prototype hook / UnworkletNode WeakSet / signal probe opt-in method / latency 計 測 / memory streaming / diagnostics push / MIDI inject RPC) は messaging / MIDI surface が 立 ち 上 が っ た 後 phase に 持 ち 越 し。 該 当 sub-step は 各 surface phase (= Phase 7 messaging / Phase 9 MIDI / Phase 12 HMR + source map) に zip し て 配 信 す る (= dependency が 揃 う 段 階 で 1 swap で UI 改 訂 ナ シ で real data 化、 plan で 確 定)。
 
-- **B-1** `AudioNode.prototype.connect/disconnect` monkey patch (= dev 限定、 opt-out `unworklet({ devtools: { observeAudioGraph: false } })`、 5 connect overload + 5 disconnect overload を 全 wrap、 戻り値 保持 = `.apply(this, arguments)` 透過、 edge を Shared State channel に push)
-- **B-2** `UnworkletNode` auto-registry (= `createNode` 内 で WeakSet add、 `dispose()` で remove、 panel が server RPC 経由 で 全 unworklet node を discover)
-- **B-3** signal probe opt-in method (= 公開 method 名 は phase 着手 時 に grill ratify。 候補 = `attachSignalProbe()` / `enableProbes()` / `tapForDev()`。 全 output port に AnalyserNode を 中間 挿入 し pass-through、 production no-op)
-- **B-4** Latency 計測 (= worklet runtime template で `currentFrame` を render quantum entry / exit で 取得 + 差 を SAB ring に carry、 main で P-quantile 集計 + streaming push)
-- **B-5** Memory budget streaming (= `compile()` `result.memory` を そのまま Shared State push、 panel は per-declaration table を 描画)
-- **B-6** Diagnostics → panel mapping (= `ctx.diagnostics.logger.UWK<N>` の 各 entry を nodeId-attached で carry し、 RPC で panel から filter 取得)
-- **B-7** MIDI inject RPC (= `defineRpcFunction({ name: 'unworklet:midi:send', type: 'action', handler })` で server side、 panel から `client.call('unworklet:midi:send', { nodeId, portName, event })`、 server で WeakSet registry 経由 で `node.midi.<portName>.send(event)` を 実行)
+完了 条件:
 
-完了 条件: Ex 1 (= meter なし) が browser で 鳴る + Vitest browser mode で smoke test 通る + 4 panel + 1 secondary が **real data** で 動く (= mock composable swap 後 も UI 改訂 ナシ、 AnalyserNode 経由 で 全 unworklet output が waveform / spectrogram / record に 流れ、 monkey patch 経由 で 全 AudioNode graph が 描画、 latency rolling chart が 実測 値 で 描画、 virtual keyboard inject が 該当 node の `midi.<port>.send(...)` を 実際 に call する)。
+- canonical Ex 1 (= meter なし) が browser で 鳴る
+- Vitest browser mode で smoke test 通る
+- `vp check` + `vp test` 全 package 通過
+- coverage 98% gate 維持
 
 ### Phase 7 — Messaging
 

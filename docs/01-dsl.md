@@ -1681,12 +1681,15 @@ def.worklet = {
   initialize(self: AudioWorkletProcessor, opts: AudioWorkletNodeOptions): void;
   process(self: AudioWorkletProcessor, inputs, outputs, parameters): boolean;
   parameterDescriptors: AudioParamDescriptor[];
+  inputs: readonly AudioPortDescriptor[];
+  outputs: readonly AudioPortDescriptor[];
 }
 ```
 
 - `initialize(self, opts)` runs all unworklet-internal init (WASM module wiring, ringbuffer refs, declarative slot bindings) against the author's `self`.
 - `process(self, ...)` invokes the WASM body; the return value is the standard `AudioWorkletProcessor` lifecycle boolean.
 - `parameterDescriptors` is the unworklet-generated descriptor list — the author returns it from their `static get parameterDescriptors()`.
+- `inputs` / `outputs` carry per-port metadata (= `{ name, channels }`) the framework needs to pre-wire `AudioWorkletNodeOptions.numberOfInputs` / `numberOfOutputs` / `outputChannelCount` from the path-α (auto-register) side。 path β authors can read them too if their custom class wants to mirror the declarative port count。
 
 ### 11.2 Canonical extends shape
 
