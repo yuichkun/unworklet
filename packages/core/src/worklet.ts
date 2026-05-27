@@ -254,9 +254,15 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       return true;
     }
 
-    // 04-worklet-runtime.md §3 / Q75 — block-length runtime guard.
+    // 04-worklet-runtime.md §3 / §8 / Q75 — block-length runtime guard。
+    // First mismatch latches `state.failed` (= same uniform fallback path
+    // as wasm-trap) so every subsequent quantum stays silent for the rest
+    // of the node's lifetime, even if the host transiently returns to the
+    // expected length。 The single mismatch event is posted once; later
+    // quanta short-circuit on `state.failed` above before reaching here。
     const firstOut = outputs[0]?.[0];
     if (firstOut && firstOut.length !== SAMPLES_PER_BLOCK) {
+      state.failed = true;
       fillOutputsSilent(outputs);
       self.port.postMessage({
         kind: "error",

@@ -354,4 +354,19 @@ test("`process` on block-length mismatch emits silence + posts `block-length-mis
     expected: SAMPLES_PER_BLOCK,
     received: wrongLen,
   });
+
+  // docs/04-worklet-runtime.md §3 + §8 + Q75 = uniform "silence on every
+  // quantum after first detection, until disposed"。 A subsequent quantum
+  // where the host returns to SAMPLES_PER_BLOCK must STILL emit silence
+  // (= node is permanently silenced + connected, not transiently)。
+  const goodInputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(1)]];
+  const goodOutputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(99)]];
+  monoGain.worklet.process(self, goodInputs, goodOutputs, parameters);
+  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
+    expect(goodOutputs[0][0]![i]).toBe(0);
+  }
+  // And no second `block-length-mismatch` event is posted (= single
+  // event for the lifetime of the node, exact same shape as wasm-trap)。
+  const errorMessagesAfter = self.messages.slice(initialMessageCount);
+  expect(errorMessagesAfter).toHaveLength(1);
 });

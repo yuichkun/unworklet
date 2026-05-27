@@ -595,15 +595,16 @@ test("UnworkletNode.onError receives block-length-mismatch messages posted by th
         data: { kind: "error", code: "block-length-mismatch", expected: 128, received: 256 },
       });
     }
-    expect(received).toEqual([
-      { kind: "error", code: "block-length-mismatch", expected: 128, received: 256 },
-    ]);
+    // Subscriber receives a clean `NodeErrorEvent` shape = the worklet's
+    // internal `kind: "error"` framing field is stripped by the
+    // dispatcher。
+    expect(received).toEqual([{ code: "block-length-mismatch", expected: 128, received: 256 }]);
   } finally {
     h.cleanup();
   }
 });
 
-test("UnworkletNode.onError translates a post-ready `processorerror` into wasm-trap", async () => {
+test("UnworkletNode.onError translates a post-ready `processorerror` into a fixed-fallback wasm-trap event", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     const node = await startCreate(
@@ -614,10 +615,15 @@ test("UnworkletNode.onError translates a post-ready `processorerror` into wasm-t
     node.onError((event) => {
       received.push(event);
     });
+    // MDN: `processorerror` is a plain `Event` with no portable payload。
+    // Real structured trap info comes through the port message。 Verify
+    // the fallback marker does NOT read non-existent `.message`。
     for (const listener of h.lastNode!.__processorErrorListeners) {
-      listener({ message: "Uncaught Error: trap" } as unknown as Event);
+      listener({} as Event);
     }
-    expect(received).toEqual([{ code: "wasm-trap", message: "Uncaught Error: trap" }]);
+    expect(received).toEqual([
+      { code: "wasm-trap", message: "AudioWorkletProcessor reported a failure (processorerror)" },
+    ]);
   } finally {
     h.cleanup();
   }
