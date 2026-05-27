@@ -316,10 +316,11 @@ test("load returns JS that augments the processor with moduleUrl / wasmUrl / pro
   const js = result as string;
   expect(js).toContain("moduleUrl:");
   expect(js).toContain("wasmUrl:");
-  // Processor name = `<exportName>__<sha8(absSourcePath)>` to dodge
-  // `registerProcessor` collisions across unrelated files that share an
-  // export identifier。 Suffix is deterministic per source path。
-  expect(js).toMatch(/processorName:\s*"stereoGain__[0-9a-f]{8}"/);
+  // Processor name = `<exportName>__<sha8(absSourcePath)>__<sha8(wasm)>` so
+  // unrelated files that share an export identifier do not collide AND a
+  // new revision of the same source registers under a new name (= forward-
+  // compat with HMR / replaceProcessor)。
+  expect(js).toMatch(/processorName:\s*"stereoGain__[0-9a-f]{8}__[0-9a-f]{8}"/);
 });
 
 test("two source files exporting the same identifier get distinct processorName suffixes", async () => {
@@ -336,8 +337,8 @@ test("two source files exporting the same identifier get distinct processorName 
   };
   const aName = extract(aResult as string);
   const bName = extract(bResult as string);
-  expect(aName).toMatch(/^stereoGain__[0-9a-f]{8}$/);
-  expect(bName).toMatch(/^stereoGain__[0-9a-f]{8}$/);
+  expect(aName).toMatch(/^stereoGain__[0-9a-f]{8}__[0-9a-f]{8}$/);
+  expect(bName).toMatch(/^stereoGain__[0-9a-f]{8}__[0-9a-f]{8}$/);
   expect(aName).not.toBe(bName);
 });
 

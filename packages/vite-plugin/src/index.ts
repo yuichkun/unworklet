@@ -28,27 +28,44 @@ import type { Plugin } from "vite-plus";
 import { emitWorkletTemplate } from "./worklet-template.ts";
 
 /**
- * Per-source-path suffix appended to the processor export name to derive the
+ * Suffix appended to the processor export name to derive the
  * `AudioWorkletProcessor` registration name。 AudioWorklet's
- * `registerProcessor(name, klass)` throws `NotSupportedError` on a duplicate
- * name within the same `BaseAudioContext.audioWorklet`, so two unrelated
- * processors that happen to share an export identifier (= e.g. both export
- * `stereoGain`) would collide if registered by export name alone。 Hashing
- * the absolute source path picks a stable, content-independent suffix。
+ * `registerProcessor(name, klass)` throws `NotSupportedError` on a
+ * duplicate name within the same `BaseAudioContext.audioWorklet` AND has
+ * no de-register API — once a name is taken inside a context, it is
+ * taken forever for the lifetime of that context。
  *
- * 8 hex chars = 32 bit of SHA-256 prefix。 Collision probability across all
- * processor files in any realistic project is negligible (= birthday bound
- * ~65k for ~1% collision)、 and the suffix is fully deterministic per file
- * path so dev / build / re-runs agree。
+ * Composition: `<exportName>__<srcHash8>__<revHash8>` where
+ * - `srcHash8` = sha-8 of the absolute source path, separates two unrelated
+ *   files that happen to share an export identifier (= e.g. both export
+ *   `stereoGain` from different paths)。
+ * - `revHash8` = sha-8 of the compiled WASM bytes (= revision identity)、
+ *   so a new revision of the same source registers under a NEW name and
+ *   can coexist with in-flight nodes from the previous revision until
+ *   the consumer disposes them。 This is the only browser-API-compliant
+ *   path for forward-compatible `?worklet` HMR / `replaceProcessor`
+ *   wiring (= `07-vite-plugin.md` §4, Q50)。
+ *
+ * 8 hex chars per component = 32 bit。 Collision probability across the
+ * cartesian product of (source path × revision) is negligible for any
+ * realistic project / dev session (birthday bound ~65k pairs for 1%)。
  */
 const PROCESSOR_NAME_HASH_LEN = 8;
 
-const computeProcessorName = (exportName: string, absSourcePath: string): string => {
-  const suffix = createHash("sha256")
+const computeProcessorName = (
+  exportName: string,
+  absSourcePath: string,
+  wasmBytes: Uint8Array,
+): string => {
+  const srcSuffix = createHash("sha256")
     .update(absSourcePath)
     .digest("hex")
     .slice(0, PROCESSOR_NAME_HASH_LEN);
-  return `${exportName}__${suffix}`;
+  const revSuffix = createHash("sha256")
+    .update(wasmBytes)
+    .digest("hex")
+    .slice(0, PROCESSOR_NAME_HASH_LEN);
+  return `${exportName}__${srcSuffix}__${revSuffix}`;
 };
 
 /**
@@ -539,7 +556,7 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
               hash: freshHash,
               wasm: result.wasm,
               meta: freshMeta,
-              processorName: computeProcessorName(exportName, sourcePath),
+              processorName: computeProcessorName(exportName, sourcePath, result.wasm),
             });
             if (freshHash !== hash) {
               // Revision the client asked for is gone; signal a hard
@@ -611,15 +628,17 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
         }
 
         // Build path: rolldown emits the chunk via `this.emitFile`, snapshot
-        // ring not involved。 Same template emitter, sourced off the
-        // build-time `compile(processor)` result。
+        // ring not involved。 Recompile + recompute the processorName from
+        // the WASM bytes so dev and build produce the same registration name
+        // for a given source / revision pair。
         const sourceModule = await importFresh(sourcePath);
         const { exportName, processor } = pickCompiledProcessor(sourceModule, sourcePath);
+        const buildResult = await compile(processor);
         const meta = extractWorkletMeta(
           processor.graph as unknown as Parameters<typeof extractWorkletMeta>[0],
         );
         return emitWorkletTemplate({
-          processorName: computeProcessorName(exportName, sourcePath),
+          processorName: computeProcessorName(exportName, sourcePath, buildResult.wasm),
           meta,
         });
       }
@@ -649,6 +668,7 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
 
       let moduleUrlExpr: string;
       let wasmUrlExpr: string;
+      let processorName: string;
 
       if (isServe) {
         // Dev: compile up front so we can mint a revision token + cache the
@@ -668,7 +688,7 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
         const devMeta = extractWorkletMeta(
           processor.graph as unknown as Parameters<typeof extractWorkletMeta>[0],
         );
-        const devProcessorName = computeProcessorName(exportName, sourcePath);
+        const devProcessorName = computeProcessorName(exportName, sourcePath, result.wasm);
         // Snapshot the full per-revision bundle = wasm + meta + processorName。
         // The worklet-entry virtual load and the wasm middleware both look
         // their per-request hash up here; both find the same artifacts or
@@ -689,6 +709,7 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
         const virtualWorkletUrlPath = `${basePath}@id/__x00__${virtualWorkletId.slice(1)}`;
         moduleUrlExpr = JSON.stringify(`${virtualWorkletUrlPath}?v=${hash}`);
         wasmUrlExpr = JSON.stringify(`${basePath}${DEV_URL_PREFIX}/${encoded}/${hash}/wasm`);
+        processorName = devProcessorName;
       } else {
         // Build mode: emit chunk + asset via rolldown's `emitFile`. URLs are
         // resolved through `import.meta.ROLLUP_FILE_URL_<refId>` placeholders
@@ -706,6 +727,7 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
         });
         moduleUrlExpr = `import.meta.ROLLUP_FILE_URL_${workletRefId}`;
         wasmUrlExpr = `import.meta.ROLLUP_FILE_URL_${wasmRefId}`;
+        processorName = computeProcessorName(exportName, sourcePath, result.wasm);
 
         if (emitAnalysisArtifacts) {
           this.emitFile({
@@ -735,7 +757,8 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
       // 取り出し、 worklet namespace に bundler URLs (moduleUrl / wasmUrl /
       // processorName) を 載せ た 形 を export。 関数 entry (initialize /
       // process / parameterDescriptors) は 元 namespace を spread で 引き継ぐ。
-      const processorName = computeProcessorName(exportName, sourcePath);
+      // `processorName` は dev / build の 各 branch で WASM revision hash 込 み
+      // に 計算 済 (= 同 source の 別 revision で `registerProcessor` 衝突 し な い)。
       return [
         `import { ${exportName} as __unworkletRaw } from ${JSON.stringify(sourcePath)};`,
         ``,
