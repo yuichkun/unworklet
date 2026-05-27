@@ -3675,7 +3675,7 @@ registerProcessor('my-extended', MyExtended);
 
 **`super()` 呼 び 出 し**: AudioWorkletProcessor constructor は `processorOptions` を 消 費 し な い (= web 標 準) = `super()` 引 数 ナ シ で 呼 ぶ。 unworklet 内 部 binding は `initialize(this, opts)` で 行 う。
 
-**runtime check**: `runWasm()` の 1 回 目 で `initialize()` 済 か flag check、 未 init な ら runtime error (= `worklet-initialize-not-called`、 Layer 2 stable error ID) を throw。 静 的 TS check で `initialize` 呼 び 忘 れ の 検 出 が 困 難 な た め runtime check で 早 期 fail。
+**runtime check**: `process(self, ...)` の 1 回 目 で `initialize()` 済 か flag check、 未 init な ら structured `node.onError({ code: "worklet-initialize-not-called" })` を 1 度 だ け postMessage 経 由 で 通 知 + 以 降 quantum は silence。 audio thread は throw し な い (= `00-foundations.md` §5.1 invariant 3) の で、 NodeErrorEvent の 5 番 目 code (= `04-worklet-runtime.md` §8) と し て main 側 で 観 測 さ せ る。 静 的 TS check で `initialize` 呼 び 忘 れ の 検 出 が 困 難 な た め runtime event で 早 期 fail signal。
 
 ### Why this and not alternatives
 

@@ -61,7 +61,7 @@ The `UnworkletNode<C>` shape exposes the following members:
 - **`.snapshot(options?: { profile?: string }): Promise<Uint8Array>`** — capture current state slots into a binary blob (§2.6).
 - **`.restore(blob: Uint8Array): Promise<RestoreResult>`** — write the blob's slot values back into the running processor (§2.6).
 - **`.dispose()`** — tear down node, queues, worklet runtime, all subscribers.
-- **`.onError(handler: (event: NodeErrorEvent) => void): () => void`** — push 通 知 経 路 (= worklet traps, queue overflow events, SAB-mode change, block-length mismatch を 集 約 通 知)、 unsubscribe を 返 す。 4 event code (= `wasm-trap` / `queue-overflow` / `sab-unavailable` / `block-length-mismatch`) は `NodeErrorEvent` discriminated union (= `04-worklet-runtime.md` §8 で declare)。 queue overflow の 累 計 counter は pull 寄 り の `.events.<name>.diagnostics.overflowCount()` / `.messages.<name>.diagnostics.overflowCount()` / `.midi.<name>.diagnostics.overflowCount()` で 取 得 = push が 各 発 生 を 通 知、 pull が 累 計 を 観 測 す る 二 段 構 え。
+- **`.onError(handler: (event: NodeErrorEvent) => void): () => void`** — push 通 知 経 路 (= worklet traps, queue overflow events, SAB-mode change, block-length mismatch, escape-hatch init 漏 れ を 集 約 通 知)、 unsubscribe を 返 す。 5 event code (= `wasm-trap` / `queue-overflow` / `sab-unavailable` / `block-length-mismatch` / `worklet-initialize-not-called`) は `NodeErrorEvent` discriminated union (= `04-worklet-runtime.md` §8 で declare)。 queue overflow の 累 計 counter は pull 寄 り の `.events.<name>.diagnostics.overflowCount()` / `.messages.<name>.diagnostics.overflowCount()` / `.midi.<name>.diagnostics.overflowCount()` で 取 得 = push が 各 発 生 を 通 知、 pull が 累 計 を 観 測 す る 二 段 構 え。
 - **signal probe opt-in method** (= 名 称 は Phase 6 末 尾 で ratify、 候 補 `attachSignalProbe()` / `enableProbes()` / `tapForDev()`) — dev 限 定 で 全 declared output port に pass-through `AnalyserNode` を 中 間 挿 入 し、 `@unworklet/vite-plugin` の DevTools panel `Signals & performance / Audio sub-tab` (= `07-vite-plugin.md` §6.1) に waveform / spectrogram / record path を 開 く。 production build で は method は no-op に compile (= consumer bundle へ の 影 響 ゼ ロ)。 idempotent (= 2 度 呼 ん で も attach は 1 度 だ け)。 Phase 6 末 尾 で fill (= `10-roadmap.md` Phase 6 B-3)。
 
 `.outputs.<name>.connect(target)` の 内 部 で 行 う `AudioWorkletNode.connect(...)` 呼 び 出 し は、 dev mode で `@unworklet/vite-plugin` が opt-in で 適 用 す る `AudioNode.prototype.connect/disconnect` monkey patch (= `07-vite-plugin.md` §6.4) に よ っ て **観 測 さ れ る** (= 全 5 connect overload + 全 5 disconnect overload を wrap、 戻 り 値 保 持、 edge 変 更 を DevTools の Audio graph panel に push)。 opt-out は `unworklet({ devtools: { observeAudioGraph: false } })` plugin option (= production build で は patch 自 体 が emit さ れ な い)。 `node.node.connect(...)` (= raw `AudioWorkletNode` 経 由) も 同 patch で 観 測 さ れ る。
@@ -149,11 +149,11 @@ A processor that calls `snapshot()` requires **every** state / buffer slot to ha
        disposed  — consumer called `.dispose()` (§2); all resources torn down
 
      Error events are delivered via `.onError(handler)` (= 04-worklet-runtime §8,
-     4 event codes). The node object stays addressable after an `.onError`
-     fires; `wasm-trap` / `block-length-mismatch` switch audio output to
-     silence (zero buffer) while the node stays connected, and the framework
-     does not auto-destroy the node (Q75). The consumer decides whether to
-     `.dispose()` after observing an error.
+     5 event codes). The node object stays addressable after an `.onError`
+     fires; `wasm-trap` / `block-length-mismatch` / `worklet-initialize-not-called`
+     switch audio output to silence (zero buffer) while the node stays
+     connected, and the framework does not auto-destroy the node (Q75). The
+     consumer decides whether to `.dispose()` after observing an error.
 
      If a need for a public lifecycle-observation surface surfaces, it lands
      additively in v1.x.0 with its own Q ratify; v1.0.0 ships without it. -->

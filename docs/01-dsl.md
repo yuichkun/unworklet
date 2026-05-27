@@ -1736,7 +1736,7 @@ The default vite-plugin output continues to auto-register the processor under it
 
 ### 11.4 Constraints
 
-- The author **must** call `initialize(this, opts)` in their constructor before returning. Failing to do so triggers a runtime error (`worklet-initialize-not-called`, Layer 2 stable error ID) on the first invocation of `process(this, ...)` — see `03-compiler.md` §2.6 for the stable error-ID surface.
+- The author **must** call `initialize(this, opts)` in their constructor before returning. Failing to do so surfaces a runtime event on the first invocation of `process(this, ...)`: a structured `node.onError({ code: "worklet-initialize-not-called" })` is posted once from the audio thread (= `04-worklet-runtime.md` §8 の 5 番 目 code) + every subsequent quantum emits silence, with the node staying connected。 The audio thread does **not** throw (= `00-foundations.md` §5.1 invariant 3), so main-side observation goes through `.onError` rather than a `processorerror` exception。
 - `process(self, ...)`'s return value follows the AudioWorkletProcessor contract — `true` to continue, `false` to allow shutdown.
 - Declarative MIDI / event / message / audio I/O facilities (= `midiInput().onEvent`, etc.) continue to function inside the extended class without further intervention — they are wired through `initialize(...)`.
 

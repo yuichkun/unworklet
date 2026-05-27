@@ -131,21 +131,23 @@ Authoritative rationale: `decisions-log.md` Q27.
 
 ## 8. Error handling
 
-Main-side `node.onError(handler)` receives a discriminated union. v1.0.0 の event-code カ タ ロ グ は 4 種:
+Main-side `node.onError(handler)` receives a discriminated union. v1.0.0 の event-code カ タ ロ グ は 5 種:
 
 ```typescript
 type NodeErrorEvent =
   | { code: "wasm-trap"; message: string }
   | { code: "queue-overflow"; source: "event" | "message" | "midi"; name: string; dropped: number }
   | { code: "sab-unavailable" }
-  | { code: "block-length-mismatch"; expected: number; received: number };
+  | { code: "block-length-mismatch"; expected: number; received: number }
+  | { code: "worklet-initialize-not-called" };
 ```
 
 1. **`wasm-trap`** — WASM runtime trap during `process(...)`. Audio output: silence for the current quantum + the following quanta until the node is disposed. The audio thread does not propagate the trap as a thrown exception (= realtime-safety invariant 3 in `00-foundations.md` §5.1).
 2. **`queue-overflow`** — `event<T>` / `message<T>` / MIDI ringbuffer drop-oldest fired (Q27 + Q4-c-iv)。 Audio output unaffected。 Per-channel 累 計 counter は `node.<kind>.<name>.diagnostics.overflowCount()` で pull 観 測 (Q47)。 つ ま り push (= `.onError`) で 各 drop の 発 生 を 通 知、 pull (= `.diagnostics`) で 累 計 を 取 る 二 段 構 え。
 3. **`sab-unavailable`** — runtime detected `SharedArrayBuffer` is not constructible / `crossOriginIsolated` is false and selected the postMessage fallback transport (= A5 of `08-deployment.md` §2 / Q11)。 Audio output unaffected; only main-side observation latency picks up the postMessage round-trip.
 4. **`block-length-mismatch`** — `outputs[0][0].length !== SAMPLES_PER_BLOCK` detected at the worklet entry (= §3 / Q18 / Q68 / Q75)。 Audio output: silence (zero buffer) on every quantum after the first detection, until the node is disposed (= same path as `wasm-trap`). Node stays connected; consumer decides whether to `.dispose()` and replace.
+5. **`worklet-initialize-not-called`** — path-β escape hatch (= `01-dsl.md` §11) で author 自 前 の `class extends AudioWorkletProcessor` が `def.worklet.initialize(this, opts)` を constructor で 呼 び 忘 れ た 状 態 で `def.worklet.process(this, ...)` が 呼 ば れ た こ と を 検 知。 audio thread は throw で き な い (= invariant 3) の で structured postMessage 経 由 で 1 度 だ け 通 知 + 以 降 silence。 Q80。
 
-Node destruction is initiated only by the consumer via `.dispose()` (= `05-client.md` §2)。 There is no framework-side "destroy node on error" path in v1.0.0 — `wasm-trap` / `block-length-mismatch` emit silence on the output channels while keeping the node object addressable and connected, so the consumer can observe `.onError` + tear down explicitly (Q75).
+Node destruction is initiated only by the consumer via `.dispose()` (= `05-client.md` §2)。 There is no framework-side "destroy node on error" path in v1.0.0 — `wasm-trap` / `block-length-mismatch` / `worklet-initialize-not-called` emit silence on the output channels while keeping the node object addressable and connected, so the consumer can observe `.onError` + tear down explicitly (Q75).
 
 Per-error-code message shape の細部、 source-location attribution (= §7 source maps 経 由)、 recovery semantics は impl-phase fill per Q61。
