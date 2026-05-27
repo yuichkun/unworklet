@@ -134,6 +134,10 @@ const FIXTURE_BARE_GAIN_PATH = fileURLToPath(
   new URL("../__fixtures__/bare-gain.ts", import.meta.url),
 );
 
+const FIXTURE_DUPLICATE_NAME_GAIN_PATH = fileURLToPath(
+  new URL("../__fixtures__/01-stereo-gain-duplicate-name.processor.ts", import.meta.url),
+);
+
 // ─────────────────────────────────────────────────────────────────────────
 // 5-B = factory shape
 // ─────────────────────────────────────────────────────────────────────────
@@ -312,7 +316,29 @@ test("load returns JS that augments the processor with moduleUrl / wasmUrl / pro
   const js = result as string;
   expect(js).toContain("moduleUrl:");
   expect(js).toContain("wasmUrl:");
-  expect(js).toContain('processorName: "stereoGain"');
+  // Processor name = `<exportName>__<sha8(absSourcePath)>` to dodge
+  // `registerProcessor` collisions across unrelated files that share an
+  // export identifier。 Suffix is deterministic per source path。
+  expect(js).toMatch(/processorName:\s*"stereoGain__[0-9a-f]{8}"/);
+});
+
+test("two source files exporting the same identifier get distinct processorName suffixes", async () => {
+  const { result: aResult } = await callLoadWithMockContext(
+    `${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`,
+  );
+  const { result: bResult } = await callLoadWithMockContext(
+    `${VIRTUAL_ID_PREFIX}${FIXTURE_DUPLICATE_NAME_GAIN_PATH}`,
+  );
+  const extract = (js: string): string => {
+    const m = js.match(/processorName:\s*"([^"]+)"/);
+    if (!m) throw new Error("processorName not found in augmented JS");
+    return m[1]!;
+  };
+  const aName = extract(aResult as string);
+  const bName = extract(bResult as string);
+  expect(aName).toMatch(/^stereoGain__[0-9a-f]{8}$/);
+  expect(bName).toMatch(/^stereoGain__[0-9a-f]{8}$/);
+  expect(aName).not.toBe(bName);
 });
 
 test("augmented JS re-imports the original user source by absolute path", async () => {

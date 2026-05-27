@@ -15,6 +15,7 @@
  */
 
 /// <reference types="@vitejs/devtools-kit" />
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
@@ -25,6 +26,30 @@ import type { CompiledProcessor } from "@unworklet/core";
 import type { Plugin } from "vite-plus";
 
 import { emitWorkletTemplate } from "./worklet-template.ts";
+
+/**
+ * Per-source-path suffix appended to the processor export name to derive the
+ * `AudioWorkletProcessor` registration name。 AudioWorklet's
+ * `registerProcessor(name, klass)` throws `NotSupportedError` on a duplicate
+ * name within the same `BaseAudioContext.audioWorklet`, so two unrelated
+ * processors that happen to share an export identifier (= e.g. both export
+ * `stereoGain`) would collide if registered by export name alone。 Hashing
+ * the absolute source path picks a stable, content-independent suffix。
+ *
+ * 8 hex chars = 32 bit of SHA-256 prefix。 Collision probability across all
+ * processor files in any realistic project is negligible (= birthday bound
+ * ~65k for ~1% collision)、 and the suffix is fully deterministic per file
+ * path so dev / build / re-runs agree。
+ */
+const PROCESSOR_NAME_HASH_LEN = 8;
+
+const computeProcessorName = (exportName: string, absSourcePath: string): string => {
+  const suffix = createHash("sha256")
+    .update(absSourcePath)
+    .digest("hex")
+    .slice(0, PROCESSOR_NAME_HASH_LEN);
+  return `${exportName}__${suffix}`;
+};
 
 /**
  * Re-import `sourcePath` with a mtime-based cache-buster query so Node's
@@ -390,7 +415,7 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
             const template = emitWorkletTemplate({
               userSourcePath: userServedUrl,
               processorExportName: exportName,
-              processorName: exportName,
+              processorName: computeProcessorName(exportName, sourcePath),
             });
             res.setHeader("Content-Type", "application/javascript");
             res.setHeader("Cache-Control", "no-cache");
@@ -423,7 +448,7 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
         return emitWorkletTemplate({
           userSourcePath: sourcePath,
           processorExportName: exportName,
-          processorName: exportName,
+          processorName: computeProcessorName(exportName, sourcePath),
         });
       }
 
@@ -495,6 +520,7 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
       // 取り出し、 worklet namespace に bundler URLs (moduleUrl / wasmUrl /
       // processorName) を 載せ た 形 を export。 関数 entry (initialize /
       // process / parameterDescriptors) は 元 namespace を spread で 引き継ぐ。
+      const processorName = computeProcessorName(exportName, sourcePath);
       return [
         `import { ${exportName} as __unworkletRaw } from ${JSON.stringify(sourcePath)};`,
         ``,
@@ -504,7 +530,7 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
         `    ...__unworkletRaw.worklet,`,
         `    moduleUrl: ${moduleUrlExpr},`,
         `    wasmUrl: ${wasmUrlExpr},`,
-        `    processorName: ${JSON.stringify(exportName)},`,
+        `    processorName: ${JSON.stringify(processorName)},`,
         `  },`,
         `};`,
         ``,
