@@ -437,3 +437,132 @@ test("`emitAnalysisArtifacts: false` suppresses the 4 metadata JSON emits (= was
   const names = ctx.calls.map((c) => c.name).sort((a, b) => a.localeCompare(b));
   expect(names).toEqual(["01-stereo-gain.wasm", "01-stereo-gain.worklet"]);
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// Dev mode middleware = allowlist + part validation
+// ─────────────────────────────────────────────────────────────────────────
+//
+// The middleware decodes the source path out of the URL and `importFresh`-es
+// it. Without an allowlist that path is attacker-controlled = a crafted
+// request could evaluate any local TS file in the dev server's process。
+// Gate = only paths the plugin has already accepted via `?worklet`
+// `resolveId` are eligible。
+
+type ConfigureServerFn = (this: unknown, server: ServerStub) => void;
+
+type MiddlewareFn = (req: { url?: string }, res: ResponseStub, next: () => void) => void;
+
+type ResponseStub = {
+  statusCode?: number;
+  setHeader: (k: string, v: string) => void;
+  end: (body?: Buffer | string) => void;
+  __endCalls: Array<Buffer | string | undefined>;
+};
+
+type ServerStub = {
+  middlewares: { use: (fn: MiddlewareFn) => void };
+  __registered: MiddlewareFn[];
+};
+
+const makeServerStub = (): ServerStub => {
+  const registered: MiddlewareFn[] = [];
+  return {
+    middlewares: {
+      use: (fn) => {
+        registered.push(fn);
+      },
+    },
+    __registered: registered,
+  };
+};
+
+const makeResponseStub = (): ResponseStub => {
+  const endCalls: Array<Buffer | string | undefined> = [];
+  return {
+    setHeader: () => {},
+    end: (body) => {
+      endCalls.push(body);
+    },
+    __endCalls: endCalls,
+  };
+};
+
+const setupServeMiddleware = (
+  serveConfig: { root: string; base?: string } = { root: "/" },
+): { plugin: ReturnType<typeof unworklet>; middleware: MiddlewareFn } => {
+  const plugin = unworklet();
+  const configHook = plugin.configResolved as unknown as ConfigResolvedFn | undefined;
+  if (!configHook) throw new Error("configResolved missing");
+  configHook.call(null, {
+    command: "serve",
+    root: serveConfig.root,
+    base: serveConfig.base ?? "/",
+  });
+  const configureServerHook = plugin.configureServer as unknown as ConfigureServerFn | undefined;
+  if (!configureServerHook) throw new Error("configureServer missing");
+  const server = makeServerStub();
+  configureServerHook.call(null, server);
+  expect(server.__registered).toHaveLength(1);
+  return { plugin, middleware: server.__registered[0]! };
+};
+
+const primeAllowlist = async (
+  plugin: ReturnType<typeof unworklet>,
+  sourcePath: string,
+): Promise<void> => {
+  const resolveHook = plugin.resolveId as unknown as ResolveIdFn | undefined;
+  if (!resolveHook) throw new Error("resolveId missing");
+  resolveHook.call(null, `${sourcePath}?worklet`, undefined, { isEntry: false });
+};
+
+test("dev middleware passes to next() for any path that did NOT come through resolveId", async () => {
+  const { middleware } = setupServeMiddleware();
+  // Encode an arbitrary local path the plugin has never seen via resolveId。
+  const evilEncoded = Buffer.from("/etc/passwd", "utf8").toString("base64url");
+  let nextCalled = 0;
+  const res = makeResponseStub();
+  middleware({ url: `/__unworklet/${evilEncoded}/wasm` }, res, () => {
+    nextCalled++;
+  });
+  // The middleware must not have responded (= must yield to next())。
+  await new Promise((r) => setTimeout(r, 0));
+  expect(nextCalled).toBe(1);
+  expect(res.__endCalls).toHaveLength(0);
+});
+
+test("dev middleware passes to next() when the URL part is neither 'wasm' nor 'worklet.js'", async () => {
+  const { plugin, middleware } = setupServeMiddleware();
+  // Even with an allowlisted path, a bogus part must not be served。
+  await primeAllowlist(plugin, FIXTURE_GAIN_PATH);
+  const encoded = Buffer.from(FIXTURE_GAIN_PATH, "utf8").toString("base64url");
+  let nextCalled = 0;
+  const res = makeResponseStub();
+  middleware({ url: `/__unworklet/${encoded}/secret-config` }, res, () => {
+    nextCalled++;
+  });
+  await new Promise((r) => setTimeout(r, 0));
+  expect(nextCalled).toBe(1);
+  expect(res.__endCalls).toHaveLength(0);
+});
+
+test("dev middleware serves WASM bytes for an allowlisted source + the `wasm` part", async () => {
+  const { plugin, middleware } = setupServeMiddleware({
+    root: "/Users/yuichkun/workspace/unworklet/examples/01-stereo-gain",
+  });
+  await primeAllowlist(plugin, FIXTURE_GAIN_PATH);
+  const encoded = Buffer.from(FIXTURE_GAIN_PATH, "utf8").toString("base64url");
+  const res = makeResponseStub();
+  let nextCalled = 0;
+  middleware({ url: `/__unworklet/${encoded}/wasm` }, res, () => {
+    nextCalled++;
+  });
+  // Wait for the async compile + send path inside the middleware to settle。
+  await new Promise((r) => setTimeout(r, 200));
+  expect(nextCalled).toBe(0);
+  expect(res.__endCalls).toHaveLength(1);
+  const body = res.__endCalls[0];
+  expect(body).toBeInstanceOf(Buffer);
+  // WASM binaries always start with the magic header `\0asm` (= 0x6d736100)。
+  const buf = body as Buffer;
+  expect(buf.subarray(0, 4).toString("hex")).toBe("0061736d");
+});

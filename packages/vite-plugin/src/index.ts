@@ -361,6 +361,13 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
   let isServe = false;
   let projectRoot = "";
   let basePath = "/";
+  // Source paths the plugin has accepted via `?worklet` resolveId. Only these
+  // are eligible for dev-mode `importFresh(...)` + `compile(...)`. Without
+  // this gate, the middleware would happily evaluate any absolute path that
+  // base64url-encodes into the URL = arbitrary local file import via a
+  // crafted dev-server request。
+  const allowedSources = new Set<string>();
+  const validParts = new Set(["wasm", "worklet.js"]);
   return {
     name: "@unworklet/vite-plugin",
     enforce: "pre",
@@ -389,6 +396,7 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
         if (slashIdx < 0) return next();
         const encoded = rest.slice(0, slashIdx);
         const part = rest.slice(slashIdx + 1);
+        if (!validParts.has(part)) return next();
         const sourcePath = (() => {
           try {
             return decodeSourceFromDevUrl(encoded);
@@ -397,6 +405,9 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
           }
         })();
         if (!sourcePath) return next();
+        // Allowlist gate = only paths the plugin itself accepted via
+        // `?worklet` resolveId may be `importFresh`ed by the middleware。
+        if (!allowedSources.has(sourcePath)) return next();
 
         (async (): Promise<void> => {
           const sourceModule = await importFresh(sourcePath);
@@ -410,20 +421,16 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
             return;
           }
 
-          if (part === "worklet.js") {
-            const userServedUrl = computeServedUrl(sourcePath, projectRoot, basePath);
-            const template = emitWorkletTemplate({
-              userSourcePath: userServedUrl,
-              processorExportName: exportName,
-              processorName: computeProcessorName(exportName, sourcePath),
-            });
-            res.setHeader("Content-Type", "application/javascript");
-            res.setHeader("Cache-Control", "no-cache");
-            res.end(template);
-            return;
-          }
-
-          next();
+          // part === "worklet.js" — the only other allowed value (= validParts)。
+          const userServedUrl = computeServedUrl(sourcePath, projectRoot, basePath);
+          const template = emitWorkletTemplate({
+            userSourcePath: userServedUrl,
+            processorExportName: exportName,
+            processorName: computeProcessorName(exportName, sourcePath),
+          });
+          res.setHeader("Content-Type", "application/javascript");
+          res.setHeader("Cache-Control", "no-cache");
+          res.end(template);
         })().catch((err: unknown) => {
           console.error("[@unworklet/vite-plugin] middleware error:", err);
           res.statusCode = 500;
@@ -437,6 +444,7 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
       if (!detect) return undefined;
       const resolved = resolveAgainstImporter(detect.basePath, importer);
       if (!resolved) return undefined;
+      allowedSources.add(resolved);
       return `${VIRTUAL_ID_PREFIX}${resolved}`;
     },
     async load(id) {
