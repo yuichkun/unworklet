@@ -1,72 +1,48 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <title>Suara POC 段 2 verify — 440Hz oscillator</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>unworklet — stereo gain (Phase 6 A-5 smoke)</title>
     <style>
       body {
         font-family: system-ui, sans-serif;
-        padding: 2em;
+        max-width: 480px;
+        margin: 2rem auto;
+        padding: 0 1rem;
       }
       button {
-        font-size: 1.2em;
-        padding: 0.5em 1.5em;
-        margin-right: 0.5em;
+        font-size: 1rem;
+        padding: 0.5rem 1rem;
+        margin-right: 0.5rem;
       }
-      #status {
-        margin-top: 1em;
-        padding: 0.5em;
-        background: #f0f0f0;
-        font-family: monospace;
+      .gain {
+        margin-top: 1rem;
+      }
+      .gain input {
+        width: 100%;
+      }
+      .status {
+        margin-top: 1rem;
+        font-family: ui-monospace, monospace;
+        font-size: 0.85rem;
+        color: #555;
       }
     </style>
   </head>
   <body>
-    <h1>Suara POC 段 2 verify</h1>
-    <p>440Hz oscillator を AudioContext.destination に繋ぐ最小ページ。</p>
-    <button id="start">start (resume)</button>
+    <h1>unworklet stereo gain</h1>
+    <p>
+      Phase 6 A-5 smoke: 440 Hz / 880 Hz sine pair routed through the WASM-compiled stereo gain
+      processor.
+    </p>
+    <button id="start">start</button>
     <button id="stop" disabled>stop</button>
-    <div id="status">ready — click "start" to create AudioContext + oscillator</div>
-    <script>
-      let ctx = null;
-      let osc = null;
-      const status = document.getElementById("status");
-      const startBtn = document.getElementById("start");
-      const stopBtn = document.getElementById("stop");
-
-      startBtn.onclick = async () => {
-        ctx = new AudioContext();
-        await ctx.resume();
-        osc = ctx.createOscillator();
-        osc.frequency.value = 440;
-        osc.connect(ctx.destination);
-        osc.start();
-        status.textContent =
-          "playing  sampleRate=" +
-          ctx.sampleRate +
-          "  state=" +
-          ctx.state +
-          "  baseLatency=" +
-          ctx.baseLatency;
-        startBtn.disabled = true;
-        stopBtn.disabled = false;
-        console.log("[osc.html] AudioContext + oscillator started", ctx);
-      };
-
-      stopBtn.onclick = async () => {
-        if (osc) {
-          osc.stop();
-          osc = null;
-        }
-        if (ctx) {
-          await ctx.close();
-          ctx = null;
-        }
-        status.textContent = "stopped";
-        startBtn.disabled = false;
-        stopBtn.disabled = true;
-        console.log("[osc.html] stopped");
-      };
-    </script>
+    <div class="gain">
+      <label for="gain">gain <span id="gainval">1.00</span></label>
+      <input id="gain" type="range" min="0" max="2" step="0.01" value="1" />
+    </div>
+    <div class="status" id="status">idle.</div>
+    <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
