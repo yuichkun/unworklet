@@ -117,6 +117,35 @@ test("`initialize(self, opts)` instantiates WASM and posts a `ready` ack on the 
   expect(self.messages).toContainEqual({ kind: "ready" });
 });
 
+test("`process(self, ...)` reuses pre-bound memory views across consecutive calls", async () => {
+  // Audio-thread invariant (00-foundations.md §5.1) = no Float32Array
+  // allocation inside the per-quantum hot path。 `initialize` pre-binds one
+  // view per (port, channel) and per param、 reused on every render。 If a
+  // future change rebinds a view inside `process()` (e.g. via a typo that
+  // re-creates one against `memory.buffer`)、 the second call's output will
+  // diverge because the underlying ArrayBuffer view would re-read scratch
+  // memory that already holds the previous block's residue。 This test
+  // pins the deterministic "two identical inputs → two identical outputs"
+  // contract that view reuse guarantees。
+  const { wasm } = await compile(monoGain);
+  const self = makeMockSelf();
+  monoGain.worklet.initialize(self, { processorOptions: { wasm } });
+
+  const input = new Float32Array(SAMPLES_PER_BLOCK).fill(0.5);
+  const inputs = [[input]];
+  const outputsA = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const outputsB = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const parameters = { gain: new Float32Array([2]) };
+
+  monoGain.worklet.process(self, inputs, outputsA, parameters);
+  monoGain.worklet.process(self, inputs, outputsB, parameters);
+
+  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
+    expect(outputsB[0][0]![i]).toBeCloseTo(outputsA[0][0]![i]!);
+    expect(outputsB[0][0]![i]).toBeCloseTo(1.0);
+  }
+});
+
 test("`process(self, ...)` returns true to keep the node alive", async () => {
   const { wasm } = await compile(monoGain);
   const self = makeMockSelf();

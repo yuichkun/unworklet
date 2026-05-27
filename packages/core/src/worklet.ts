@@ -21,7 +21,7 @@
  */
 
 import type { AudioPortDecl, CapturedGraph, ParamDecl } from "./compile/ast.ts";
-import { layout, type Layout } from "./compile/layout.ts";
+import { layout } from "./compile/layout.ts";
 import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
 import type { WorkletNamespace } from "./types.ts";
 
@@ -30,13 +30,27 @@ const CHANNEL_STRIDE_BYTES = SAMPLES_PER_BLOCK * BYTES_PER_F32;
 
 const STATE_KEY = Symbol("unworklet.workletState");
 
+/**
+ * Per-instance worklet state cached on the AudioWorkletProcessor `self`。
+ * All `Float32Array` views over WASM linear memory are pre-bound during
+ * `initialize(...)` and reused on every render quantum, because
+ * `00-foundations.md` §5.1 forbids allocations / GC pressure on the audio
+ * thread。 unworklet's WASM module never calls `memory.grow` (= the layout
+ * sizing is computed at compile time)、 so these views stay valid for the
+ * processor's lifetime — they would otherwise need to be re-bound on every
+ * growth event, since growth detaches the backing ArrayBuffer。
+ */
 type WorkletState = {
-  readonly memory: WebAssembly.Memory;
   readonly process: () => void;
-  readonly layout: Layout;
   readonly audioInputs: readonly AudioPortDecl[];
   readonly audioOutputs: readonly AudioPortDecl[];
   readonly params: readonly ParamDecl[];
+  /** Index-aligned with `audioInputs`; inner array is per-channel views。 */
+  readonly inputViews: readonly Float32Array[][];
+  /** Index-aligned with `audioOutputs`。 */
+  readonly outputViews: readonly Float32Array[][];
+  /** Index-aligned with `params`。 */
+  readonly paramViews: readonly Float32Array[];
 };
 
 type SelfWithState = {
@@ -94,13 +108,46 @@ export function makeWorkletNamespace(graph: CapturedGraph): WorkletNamespace {
       const memory = instance.exports["memory"] as WebAssembly.Memory;
       const procFn = instance.exports["process"] as () => void;
 
+      // Pre-bind one Float32Array view per (port, channel) and per param。
+      // Reused on every `process()` call to keep the audio thread alloc-free
+      // (= `00-foundations.md` §5.1)。 Memory.grow is never invoked by
+      // generated WASM = the views stay valid for the processor's lifetime。
+      const inputViews: Float32Array[][] = [];
+      for (const decl of audioInputs) {
+        const portBase = lay.regions.ioScratch.inputs[decl.name]!;
+        const channels: Float32Array[] = [];
+        for (let c = 0; c < decl.channels; c++) {
+          const channelBase = portBase + c * CHANNEL_STRIDE_BYTES;
+          channels.push(new Float32Array(memory.buffer, channelBase, SAMPLES_PER_BLOCK));
+        }
+        inputViews.push(channels);
+      }
+
+      const outputViews: Float32Array[][] = [];
+      for (const decl of audioOutputs) {
+        const portBase = lay.regions.ioScratch.outputs[decl.name]!;
+        const channels: Float32Array[] = [];
+        for (let c = 0; c < decl.channels; c++) {
+          const channelBase = portBase + c * CHANNEL_STRIDE_BYTES;
+          channels.push(new Float32Array(memory.buffer, channelBase, SAMPLES_PER_BLOCK));
+        }
+        outputViews.push(channels);
+      }
+
+      const paramViews: Float32Array[] = [];
+      for (const decl of params) {
+        const paramBase = lay.regions.ioScratch.params[decl.name]!;
+        paramViews.push(new Float32Array(memory.buffer, paramBase, SAMPLES_PER_BLOCK));
+      }
+
       (self as SelfWithState)[STATE_KEY] = {
-        memory,
         process: procFn,
-        layout: lay,
         audioInputs,
         audioOutputs,
         params,
+        inputViews,
+        outputViews,
+        paramViews,
       };
 
       self.port.postMessage({ kind: "ready" });
@@ -133,8 +180,6 @@ export function makeWorkletNamespace(graph: CapturedGraph): WorkletNamespace {
       fillOutputsSilent(outputs);
       return true;
     }
-    const memory = state.memory;
-    const lay = state.layout;
 
     // 04-worklet-runtime.md §3 / Q75 — block-length runtime guard.
     const firstOut = outputs[0]?.[0];
@@ -149,14 +194,16 @@ export function makeWorkletNamespace(graph: CapturedGraph): WorkletNamespace {
       return true;
     }
 
-    // Marshal inputs into linear memory ioScratch.inputs[port][channel].
+    // Marshal inputs into linear memory ioScratch.inputs[port][channel]。
+    // All views were pre-bound in `initialize` = no Float32Array allocation
+    // on the audio thread。
+    const inputViews = state.inputViews;
     for (let portIdx = 0; portIdx < state.audioInputs.length; portIdx++) {
       const decl = state.audioInputs[portIdx]!;
       const portInput = inputs[portIdx] ?? [];
-      const portBase = lay.regions.ioScratch.inputs[decl.name]!;
+      const portViews = inputViews[portIdx]!;
       for (let c = 0; c < decl.channels; c++) {
-        const channelBase = portBase + c * CHANNEL_STRIDE_BYTES;
-        const view = new Float32Array(memory.buffer, channelBase, SAMPLES_PER_BLOCK);
+        const view = portViews[c]!;
         const src = portInput[c];
         if (src && src.length === SAMPLES_PER_BLOCK) {
           view.set(src);
@@ -166,13 +213,14 @@ export function makeWorkletNamespace(graph: CapturedGraph): WorkletNamespace {
       }
     }
 
-    // Marshal parameters into linear memory ioScratch.params[name].
+    // Marshal parameters into linear memory ioScratch.params[name]。
     // AudioWorklet hands us length 0 (= no automation, use declared default),
     // 1 (= k-rate or unchanged a-rate, broadcast), or SAMPLES_PER_BLOCK
     // (= per-sample a-rate). 08-deployment.md §2 A3 unifies them at this seam.
-    for (const decl of state.params) {
-      const paramBase = lay.regions.ioScratch.params[decl.name]!;
-      const view = new Float32Array(memory.buffer, paramBase, SAMPLES_PER_BLOCK);
+    const paramViews = state.paramViews;
+    for (let i = 0; i < state.params.length; i++) {
+      const decl = state.params[i]!;
+      const view = paramViews[i]!;
       const data = parameters[decl.name];
       if (!data || data.length === 0) {
         view.fill(decl.default);
@@ -185,14 +233,14 @@ export function makeWorkletNamespace(graph: CapturedGraph): WorkletNamespace {
 
     state.process();
 
-    // Marshal outputs from linear memory ioScratch.outputs[port][channel].
+    // Marshal outputs from linear memory ioScratch.outputs[port][channel]。
+    const outputViews = state.outputViews;
     for (let portIdx = 0; portIdx < state.audioOutputs.length; portIdx++) {
       const decl = state.audioOutputs[portIdx]!;
       const portOutput = outputs[portIdx] ?? [];
-      const portBase = lay.regions.ioScratch.outputs[decl.name]!;
+      const portViews = outputViews[portIdx]!;
       for (let c = 0; c < decl.channels; c++) {
-        const channelBase = portBase + c * CHANNEL_STRIDE_BYTES;
-        const view = new Float32Array(memory.buffer, channelBase, SAMPLES_PER_BLOCK);
+        const view = portViews[c]!;
         const dest = portOutput[c];
         if (dest) {
           dest.set(view);
