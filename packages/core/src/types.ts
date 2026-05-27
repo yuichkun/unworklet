@@ -471,7 +471,18 @@ export type NodeErrorEvent =
   | { code: "wasm-trap"; message: string }
   | { code: "queue-overflow"; source: "event" | "message" | "midi"; name: string; dropped: number }
   | { code: "sab-unavailable" }
-  | { code: "block-length-mismatch"; expected: number; received: number };
+  | { code: "block-length-mismatch"; expected: number; received: number }
+  /**
+   * Path β escape hatch (= `01-dsl.md` §11): an author writing a custom
+   * `class extends AudioWorkletProcessor` forgot to call
+   * `def.worklet.initialize(this, opts)` in their constructor, so
+   * `def.worklet.process(this, ...)` runs without any WASM state attached
+   * to `self`。 The audio thread cannot throw (= `00-foundations.md` §5.1
+   * invariant 3), so the runtime posts this once and then continues
+   * emitting silence。 Compile-time check is impossible (= the custom
+   * class lives in user code), so this is the runtime fail-fast signal。
+   */
+  | { code: "worklet-initialize-not-called" };
 
 export type TransportMode = "sab" | "postMessage";
 

@@ -29,6 +29,23 @@ const BYTES_PER_F32 = 4;
 const CHANNEL_STRIDE_BYTES = SAMPLES_PER_BLOCK * BYTES_PER_F32;
 
 const STATE_KEY = Symbol("unworklet.workletState");
+/**
+ * `initialize(self, opts)` was entered at least once。 Used by `process` to
+ * distinguish two failure modes when no state is attached to `self`:
+ *
+ *   - `INIT_CALLED_KEY === true` AND no state → initialize ran but threw
+ *     before storing state (= init-error already posted at handshake time)
+ *   - `INIT_CALLED_KEY === undefined` AND no state → init was never called
+ *     (= path β escape hatch and the author forgot
+ *     `def.worklet.initialize(this, opts)` in their constructor — Q80)
+ *
+ * The second case has no compile-time check (custom class lives in user
+ * code), so the runtime posts `worklet-initialize-not-called` once and
+ * keeps emitting silence — fail-fast signal to main without throwing on
+ * the audio thread (= `00-foundations.md` §5.1 invariant 3)。
+ */
+const INIT_CALLED_KEY = Symbol("unworklet.initCalled");
+const INIT_NOT_CALLED_POSTED_KEY = Symbol("unworklet.initNotCalledPosted");
 
 /**
  * Per-instance worklet state cached on the AudioWorkletProcessor `self`。
@@ -63,6 +80,8 @@ type WorkletState = {
 type SelfWithState = {
   port: { postMessage: (m: unknown) => void };
   [STATE_KEY]?: WorkletState;
+  [INIT_CALLED_KEY]?: boolean;
+  [INIT_NOT_CALLED_POSTED_KEY]?: boolean;
 };
 
 type ProcessorOptionsBag = {
@@ -102,6 +121,10 @@ export function makeWorkletNamespace(graph: CapturedGraph): WorkletNamespace {
   const initialize: WorkletNamespace["initialize"] = (...args) => {
     const self = args[0] as SelfWithState;
     const opts = (args[1] ?? {}) as ProcessorOptionsBag;
+    // Mark `initialize` as entered so `process()` can tell init-failed
+    // (= flag set but no state) from init-never-called (= flag unset),
+    // and surface the latter via `worklet-initialize-not-called`。
+    self[INIT_CALLED_KEY] = true;
     try {
       const wasm = opts.processorOptions?.wasm;
       if (!wasm) {
@@ -181,10 +204,18 @@ export function makeWorkletNamespace(graph: CapturedGraph): WorkletNamespace {
 
     const state = (self as SelfWithState)[STATE_KEY];
     if (!state) {
-      // Initialization failed (= init-error was posted) or never ran.
-      // Emit silence on every block to honor `00-foundations.md` §5.1
-      // invariant 3 (= no throw on audio thread)、 main side already
-      // received the failure signal during the createNode handshake。
+      // No state attached = two distinct paths. Post the path-β-specific
+      // signal once if `initialize` was never called (= author forgot
+      // `def.worklet.initialize(this, opts)`); otherwise stay silent
+      // (= initialize ran but threw, in which case `init-error` was
+      // already posted during the createNode handshake)。 Either way:
+      // emit silence、 `return true` to keep the AudioWorkletProcessor
+      // alive、 no throw on the audio thread。
+      const initCalled = self[INIT_CALLED_KEY] === true;
+      if (!initCalled && !self[INIT_NOT_CALLED_POSTED_KEY]) {
+        self.port.postMessage({ kind: "error", code: "worklet-initialize-not-called" });
+        self[INIT_NOT_CALLED_POSTED_KEY] = true;
+      }
       fillOutputsSilent(outputs);
       return true;
     }

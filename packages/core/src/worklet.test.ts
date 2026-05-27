@@ -239,6 +239,42 @@ test("`process` handles a disconnected input port (= empty channel array) as sil
   }
 });
 
+test("`process` on path-β escape hatch with missing `initialize(self, opts)` posts `worklet-initialize-not-called` exactly once", async () => {
+  // Path β = user-authored `class extends AudioWorkletProcessor` whose
+  // constructor forgot to invoke `def.worklet.initialize(this, opts)`
+  // (= Q80 documents this as the worklet-initialize-not-called runtime
+  // error path)。 The audio thread cannot throw, so the runtime posts a
+  // structured event once and then continues emitting silence。
+  const self = makeMockSelf();
+  // Note: NO `initialize(...)` call — emulates the path-β bug。
+  const inputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(1)]];
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(99)]];
+  const parameters = { gain: new Float32Array([0.5]) };
+
+  const ret = monoGain.worklet.process(self, inputs, outputs, parameters);
+
+  expect(ret).toBe(true);
+  // Silenced (= no throw on the audio thread)。
+  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
+    expect(outputs[0][0]![i]).toBe(0);
+  }
+  expect(self.messages).toContainEqual({
+    kind: "error",
+    code: "worklet-initialize-not-called",
+  });
+
+  // Subsequent quanta keep emitting silence without re-posting the event。
+  outputs[0][0]!.fill(99);
+  monoGain.worklet.process(self, inputs, outputs, parameters);
+  const initEvents = self.messages.filter(
+    (m): m is { kind: string; code: string } =>
+      typeof m === "object" &&
+      m !== null &&
+      (m as { code?: unknown }).code === "worklet-initialize-not-called",
+  );
+  expect(initEvents).toHaveLength(1);
+});
+
 test("`process` catches WASM trap inside state.process() and posts `wasm-trap` + emits silence", async () => {
   const { wasm } = await compile(monoGain);
   const self = makeMockSelf();
