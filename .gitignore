@@ -28,3 +28,4 @@ coverage
 
 # AI agent worktrees
 .claude/worktrees/
+.claude/scheduled_tasks.lock
