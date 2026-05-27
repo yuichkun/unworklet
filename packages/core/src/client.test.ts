@@ -59,8 +59,10 @@ type MockHarness = {
   addModuleCalls: string[];
   fetchCalls: string[];
   constructed: ConstructorRecord[];
+  nodes: MockAudioWorkletNode[];
   lastNode: MockAudioWorkletNode | null;
   fireReady: () => void;
+  fireReadyAll: () => void;
   fireInitError: (message: string) => void;
   fireProcessorError: (message?: string) => void;
   cleanup: () => void;
@@ -74,6 +76,7 @@ const installMockGlobals = (wasmBytes: Uint8Array, opts: MockHarnessOptions = {}
   const addModuleCalls: string[] = [];
   const fetchCalls: string[] = [];
   const constructed: ConstructorRecord[] = [];
+  const nodes: MockAudioWorkletNode[] = [];
   let lastNode: MockAudioWorkletNode | null = null;
 
   const context = {
@@ -133,6 +136,7 @@ const installMockGlobals = (wasmBytes: Uint8Array, opts: MockHarnessOptions = {}
         },
       };
       lastNode = this as unknown as MockAudioWorkletNode;
+      nodes.push(lastNode);
     }
     addEventListener(kind: string, fn: NodeListener): void {
       if (kind === "processorerror") this.__processorErrorListeners.push(fn);
@@ -154,6 +158,7 @@ const installMockGlobals = (wasmBytes: Uint8Array, opts: MockHarnessOptions = {}
     addModuleCalls,
     fetchCalls,
     constructed,
+    nodes,
     get lastNode() {
       return lastNode;
     },
@@ -161,6 +166,14 @@ const installMockGlobals = (wasmBytes: Uint8Array, opts: MockHarnessOptions = {}
       if (!lastNode) throw new Error("no AudioWorkletNode constructed yet");
       for (const listener of lastNode.port.__listeners) {
         listener({ data: { kind: "ready" } });
+      }
+    },
+    fireReadyAll() {
+      if (nodes.length === 0) throw new Error("no AudioWorkletNode constructed yet");
+      for (const n of nodes) {
+        for (const listener of n.port.__listeners) {
+          listener({ data: { kind: "ready" } });
+        }
       }
     },
     fireInitError(message: string) {
@@ -349,6 +362,46 @@ test("createNode caches addModule per (context, moduleUrl) — same context + sa
     await startCreate(() => createNode(h.context as never, makeMockProcessor()), h.fireReady);
     await startCreate(() => createNode(h.context as never, makeMockProcessor()), h.fireReady);
     expect(h.addModuleCalls).toEqual(["/_assets/x.worklet.js"]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode dedupes addModule for concurrent calls with the same (context, moduleUrl)", async () => {
+  // Regression for codex round-2 finding (high): two concurrent
+  // `createNode()` calls for the same processor URL would each miss the
+  // settled cache during `addModule`'s round-trip and both invoke
+  // `audioWorklet.addModule(...)`. Browsers reject duplicate
+  // `registerProcessor()` names with NotSupportedError, so the second of two
+  // parallel loads would crash on real engines。
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  // Replace the synchronous mock addModule with an async one that resolves
+  // only when the test releases it, so both `createNode` invocations are
+  // genuinely in-flight when the cache lookup happens。
+  let releaseAddModule!: () => void;
+  const addModuleGate = new Promise<void>((resolve) => {
+    releaseAddModule = resolve;
+  });
+  h.context.audioWorklet.addModule = (url: string): Promise<void> => {
+    h.addModuleCalls.push(url);
+    return addModuleGate;
+  };
+  try {
+    const promiseA = createNode(h.context as never, makeMockProcessor());
+    const promiseB = createNode(h.context as never, makeMockProcessor());
+    // Let microtasks resolve so both calls enter `addModuleOnce` and the
+    // cache decision is made before addModule settles。
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.addModuleCalls).toEqual(["/_assets/x.worklet.js"]);
+    releaseAddModule();
+    // Allow `addModule` to resolve and both flows to construct their nodes
+    // before we fire the ready ack for both。
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    h.fireReadyAll();
+    await Promise.all([promiseA, promiseB]);
+    expect(h.addModuleCalls).toEqual(["/_assets/x.worklet.js"]);
+    expect(h.nodes).toHaveLength(2);
   } finally {
     h.cleanup();
   }

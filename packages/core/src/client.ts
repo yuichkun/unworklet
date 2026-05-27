@@ -25,20 +25,34 @@ const notImplemented = (): never => {
   throw new Error("not implemented");
 };
 
-const moduleCache = new WeakMap<object, Set<string>>();
+// Per-context `addModule` deduplication。 The cache stores the in-flight (or
+// settled) Promise itself, NOT just a "registered" flag — concurrent
+// `createNode()` calls for the same `(context, moduleUrl)` would otherwise
+// both miss the cache during the addModule round-trip and both call
+// `audioWorklet.addModule(...)`, which then hits `registerProcessor()` twice
+// with the same name (= MDN: duplicate name throws `NotSupportedError`)。
+const moduleCache = new WeakMap<object, Map<string, Promise<void>>>();
 
-const addModuleOnce = async (
+const addModuleOnce = (
   context: { audioWorklet: { addModule: (url: string) => Promise<void> } },
   url: string,
 ): Promise<void> => {
-  let registered = moduleCache.get(context as unknown as object);
-  if (!registered) {
-    registered = new Set();
-    moduleCache.set(context as unknown as object, registered);
+  const key = context as unknown as object;
+  let perContext = moduleCache.get(key);
+  if (!perContext) {
+    perContext = new Map();
+    moduleCache.set(key, perContext);
   }
-  if (registered.has(url)) return;
-  await context.audioWorklet.addModule(url);
-  registered.add(url);
+  const existing = perContext.get(url);
+  if (existing) return existing;
+  // Drop a rejected entry so a subsequent call can retry (= a transient
+  // network blip should not permanently poison this (context, url))。
+  const promise = context.audioWorklet.addModule(url).catch((err: unknown) => {
+    perContext!.delete(url);
+    throw err;
+  });
+  perContext.set(url, promise);
+  return promise;
 };
 
 const fetchWasm = async (url: string): Promise<Uint8Array> => {
