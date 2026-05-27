@@ -1124,3 +1124,170 @@ test("awaitReady: stray events after settle are early-returned (= no double sett
 test("`inspect(blob)` stub throws", () => {
   expect(() => inspect(new Uint8Array(0))).toThrow(/not implemented/);
 });
+
+test("fetchAndCompileWasm falls back to '' when the response exposes no headers / get accessor", async () => {
+  // Cover the `?? ""` fallback in `response.headers?.get?.("Content-Type") ?? ""`。
+  // Some fetch polyfills / non-standard responses can omit `headers` entirely
+  // or omit the `get` method on the headers bag — optional chaining must
+  // resolve to "" so the regex test runs against an empty string rather than
+  // throwing。
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    globalThis.fetch = ((url: string) => {
+      h.fetchCalls.push(url);
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        // No `headers` property at all = optional chain resolves to undefined。
+        arrayBuffer: (): Promise<ArrayBuffer> => Promise.resolve(new ArrayBuffer(0)),
+      });
+    }) as typeof globalThis.fetch;
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    expect(node).toBeDefined();
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("buildParams skips params whose `node.parameters.get(name)` returns undefined", async () => {
+  // Cover the `if (got)` else branch in buildParams — exercised when the
+  // host engine returns `undefined` for a declared param name (= conservative
+  // engines may return undefined if parameterData is partially populated)。
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    // Override the parameters.get to return undefined for `cutoff`、 a valid
+    // AudioParam shape for `gain`。
+    const originalAWN = (globalThis as Record<string, unknown>).AudioWorkletNode as new (
+      ctx: unknown,
+      name: string,
+      opts: AudioWorkletNodeOptions,
+    ) => MockAudioWorkletNode;
+    (globalThis as Record<string, unknown>).AudioWorkletNode = class extends originalAWN {
+      constructor(ctx: unknown, name: string, opts: AudioWorkletNodeOptions) {
+        super(ctx, name, opts);
+        this.parameters = {
+          get: (paramName: string): MockAudioParam | undefined =>
+            paramName === "gain" ? { value: 1 } : undefined,
+        };
+      }
+    };
+    const node = await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({ params: [{ name: "gain" }, { name: "cutoff" }] }),
+        ),
+      h.fireReady,
+    );
+    // Only the param the host engine returned a non-undefined handle for
+    // should appear on the node。
+    expect(node.params.gain).toBeDefined();
+    expect(node.params.cutoff).toBeUndefined();
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("awaitReady drops non-object / null data without rejecting (= early return + later ready settles)", async () => {
+  // Cover the `if (typeof data !== 'object' || data === null) return` branch
+  // inside `awaitReady`'s onMessage handler — exercised when an upstream
+  // process posts arbitrary primitives through the port before the proper
+  // `{ kind: "ready" }` ack arrives。
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const promise = createNode(h.context as never, makeMockProcessor(), undefined);
+    await new Promise((r) => setTimeout(r, 0));
+    for (const listener of h.lastNode!.port.__listeners) {
+      // Each of these must be ignored by awaitReady (= no resolve, no reject)。
+      listener({ data: null });
+      listener({ data: 42 });
+      listener({ data: "string event" });
+    }
+    // Now send the real ready — promise should still resolve cleanly。
+    h.fireReady();
+    const node = await promise;
+    expect(node).toBeDefined();
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("awaitReady ignores object data whose kind is neither 'ready' nor 'init-error'", async () => {
+  // Cover the `if (data.kind === 'init-error')` else branch inside awaitReady。
+  // An out-of-band message during handshake (= the long-lived runtime path
+  // may post `{ kind: "error", ... }` before ready in some test orderings)
+  // must be ignored by the handshake handler so the real `ready` still settles。
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const promise = createNode(h.context as never, makeMockProcessor(), undefined);
+    await new Promise((r) => setTimeout(r, 0));
+    for (const listener of h.lastNode!.port.__listeners) {
+      // Object with a kind that is neither "ready" nor "init-error" = no-op。
+      listener({ data: { kind: "error", code: "wasm-trap", message: "stray" } });
+      listener({ data: { kind: "future-handshake-frame" } });
+      // Object without a `kind` field at all。
+      listener({ data: { unrelated: true } });
+    }
+    h.fireReady();
+    const node = await promise;
+    expect(node).toBeDefined();
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("awaitReady falls back to a fixed message when processorerror fires with no payload", async () => {
+  // Cover the `errEvent.message || ...` fallback branch in awaitReady's
+  // `onProcessorError` handler — MDN documents `processorerror` as a plain
+  // `Event` with no portable `.message`, so the fallback string is what
+  // surfaces in conformant engines。
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const promise = createNode(h.context as never, makeMockProcessor(), undefined);
+    await new Promise((r) => setTimeout(r, 0));
+    // Fire with NO message field = `errEvent.message` is undefined =
+    // falsy → fallback string is used。
+    for (const listener of h.lastNode!.__processorErrorListeners) {
+      listener({} as Event);
+    }
+    await expect(promise).rejects.toThrow(
+      /processorerror during init — AudioWorkletProcessor constructor threw/,
+    );
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("awaitReady wraps non-Error throws from port.start() into a fresh Error", async () => {
+  // Cover the `err instanceof Error ? err : new Error(String(err))` non-Error
+  // branch — `port.start()` could conceivably throw a string / number /
+  // plain object (= non-Error) in obscure polyfilled engines。 The Promise
+  // must still reject with an Error so downstream `.catch()` consumers see
+  // a uniform shape。
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    // Re-install the mock node so port.start throws a non-Error string。
+    const originalAWN = (globalThis as Record<string, unknown>).AudioWorkletNode as new (
+      ctx: unknown,
+      name: string,
+      opts: AudioWorkletNodeOptions,
+    ) => MockAudioWorkletNode;
+    (globalThis as Record<string, unknown>).AudioWorkletNode = class extends originalAWN {
+      constructor(ctx: unknown, name: string, opts: AudioWorkletNodeOptions) {
+        super(ctx, name, opts);
+        this.port.start = (): never => {
+          // eslint-disable-next-line @typescript-eslint/only-throw-error
+          throw "raw-string-thrown-as-error";
+        };
+      }
+    };
+    const promise = createNode(h.context as never, makeMockProcessor(), undefined);
+    await expect(promise).rejects.toThrow(/raw-string-thrown-as-error/);
+  } finally {
+    h.cleanup();
+  }
+});

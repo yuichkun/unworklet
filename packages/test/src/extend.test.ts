@@ -287,6 +287,139 @@ test("`toHaveBalancedMidi` (chain) happy + fail", () => {
   expect(() => expect(stray).toHaveBalancedMidi("out")).toThrow(/stray/);
 });
 
+// ━━━━━━━━ chain `.not.toXyz()` (= 成 功 case で の pass=true message thunk) ━━━━━━━━
+
+test("`.not.toBeStable()` (chain) = pass=true message thunk が `expected NOT to satisfy ${chainName}` を 返 す", () => {
+  // chain matcher が pass=true を 返 す 経 路 で `.not` を 当 て る と vitest
+  // が `pass: true` 側 の message thunk を 評 価 す る = `wrap()` の
+  // `expected NOT to satisfy ${chainName}` 分 岐 を hit。
+  expect(() => expect(monoResult(filled(8, 0.5))).not.toBeStable()).toThrow(
+    /expected NOT to satisfy toBeStable/,
+  );
+});
+
+test("`.not.toMatchAudioSnapshot()` (chain) = pass=true message thunk hit (= snapshot 一 致 で .not fail)", async () => {
+  // chain snapshot matcher が pass=true を 返 す 経 路 で `.not` を 当 て る
+  // path = `toMatchAudioSnapshotChain` 内 の `expected NOT to satisfy
+  // toMatchAudioSnapshot` 分 岐 を hit。 初 回 書 き 込 み + 2 回 目 一 致 の
+  // 第 二 invocation で `.not` を 評 価。
+  const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-chain-not-"));
+  const path = join(dir, "ref.wav");
+  const result = monoResult(filled(8, 0.5));
+  await expect(result).toMatchAudioSnapshot({ snapshotPath: path });
+  await expect(expect(result).not.toMatchAudioSnapshot({ snapshotPath: path })).rejects.toThrow(
+    /expected NOT to satisfy toMatchAudioSnapshot/,
+  );
+});
+
+// ━━━━━━━━━━━ chain snapshot catch path (= 一 致 fail で pass=false 経 路) ━━━━━━━━━━━
+
+test("`toMatchAudioSnapshot` (chain) 同 test 内 2 連 続 invoke で `_unworkletCounters` 再 利 用 (= else 分 岐 hit)", async () => {
+  // `this` (= per-test-invocation MatcherState) は vitest 内 で test 間 で
+  // shared = 同 test 内 で 連 続 invoke す る と 2 回 目 は `_unworkletCounters`
+  // 既 attach 済 み の 経 路 を 通 る (= `toMatchAudioSnapshotChain` L169-171
+  // の if 不 取 り = else 分 岐)。 auto-infer path で 走 ら せ て counter Map
+  // 再 利 用 経 路 を hit。
+  const result = monoResult(filled(8, 0));
+  await expect(result).toMatchAudioSnapshot();
+  await expect(result).toMatchAudioSnapshot();
+});
+
+test("`toMatchAudioSnapshot` (chain) byte content mismatch = vitest fail に zip", async () => {
+  // 一 致 fail (= snapshot 既 存 + bytes 異 な る) で chain matcher が catch
+  // 経 由 で `pass: false` を 返 す path を hit = `toMatchAudioSnapshotChain`
+  // 末 尾 catch block 全 体 を 覆 う。 `String(err)` 分 岐 は plain function
+  // が `new Error(...)` の み を throw す る 仕 様 で defensive dead branch。
+  const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-chain-mismatch-"));
+  const path = join(dir, "ref.wav");
+  await expect(monoResult(filled(8, 0.5))).toMatchAudioSnapshot({ snapshotPath: path });
+  await expect(
+    expect(monoResult(filled(8, 0.6))).toMatchAudioSnapshot({ snapshotPath: path }),
+  ).rejects.toThrow(/snapshot byte/);
+});
+
+test("`toMatchAudioSnapshot` (chain) byte length mismatch = vitest fail に zip", async () => {
+  // 一 致 fail (= snapshot 既 存 + 長 さ 異 な る) で chain matcher が catch
+  // 経 由 で `pass: false` を 返 す path を hit + `expectAudioMatchesSnapshotWithState`
+  // L526-529 (= byte length mismatch throw) を 覆 う。
+  const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-chain-length-"));
+  const path = join(dir, "ref.wav");
+  await expect(monoResult(filled(8, 0.5))).toMatchAudioSnapshot({ snapshotPath: path });
+  await expect(
+    expect(monoResult(filled(16, 0.5))).toMatchAudioSnapshot({ snapshotPath: path }),
+  ).rejects.toThrow(/snapshot byte length mismatch/);
+});
+
+// ━━━━━━━ `expectAudioMatchesSnapshot` updateMode 分 岐 (= chain + plain 共 用 path) ━━━━━━━
+
+test("`toMatchAudioSnapshot` (chain) updateMode='all' = 不 一 致 で も 上 書 き + pass", async () => {
+  // chain matcher は `this.snapshotState._updateSnapshot` (= per-test bound
+  // MatcherState) 経 由 で update mode を 読 む。 `vitest -u` 相 当 path
+  // (= `updateMode === "all"`) で snapshot を 強 制 上 書 き す る 分 岐
+  // (= `expectAudioMatchesSnapshotWithState` L520-523) を hit。 chain form
+  // で は `this` mock を 直 に 注 入 す る path が な い の で、 ま ず chain
+  // で snapshot を 一 つ 書 き 出 し、 plain form (= `expectAudioMatchesSnapshot`)
+  // 経 由 で update mode を 切 替 え て path を 覆 う 形 で zip。
+  const { expectAudioMatchesSnapshot } = await import("./index.ts");
+  const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-update-all-"));
+  const path = join(dir, "ref.wav");
+  await expect(monoResult(filled(8, 0.5))).toMatchAudioSnapshot({ snapshotPath: path });
+  const prev = expect.getState().snapshotState as unknown as
+    | { _updateSnapshot?: string }
+    | undefined;
+  const prevMode = prev?._updateSnapshot;
+  if (prev) prev._updateSnapshot = "all";
+  try {
+    // 不 一 致 actual で も updateMode='all' で 上 書 き + pass。
+    await expectAudioMatchesSnapshot(monoResult(filled(8, 0.6)), { snapshotPath: path });
+  } finally {
+    if (prev) prev._updateSnapshot = prevMode;
+  }
+});
+
+test("`expectAudioMatchesSnapshot` (plain) updateMode='none' + 新 規 path = throw (= --ci mode 相 当)", async () => {
+  // `updateMode === "none"` + snapshot 不 在 = vitest `--ci` 相 当 path で
+  // 新 規 snapshot 作 成 不 可 = throw (= `expectAudioMatchesSnapshotWithState`
+  // L510-514)。
+  const { expectAudioMatchesSnapshot } = await import("./index.ts");
+  const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-update-none-"));
+  const path = join(dir, "missing.wav");
+  const prev = expect.getState().snapshotState as unknown as
+    | { _updateSnapshot?: string }
+    | undefined;
+  const prevMode = prev?._updateSnapshot;
+  if (prev) prev._updateSnapshot = "none";
+  try {
+    await expect(
+      expectAudioMatchesSnapshot(monoResult(filled(8, 0.5)), { snapshotPath: path }),
+    ).rejects.toThrow(/--ci mode/);
+  } finally {
+    if (prev) prev._updateSnapshot = prevMode;
+  }
+});
+
+test("`expectAudioMatchesSnapshot` (plain) byte content mismatch = throw", async () => {
+  // plain path の byte content mismatch throw (= L531-536) を 覆 う。
+  const { expectAudioMatchesSnapshot } = await import("./index.ts");
+  const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-plain-mismatch-"));
+  const path = join(dir, "ref.wav");
+  await expectAudioMatchesSnapshot(monoResult(filled(8, 0.5)), { snapshotPath: path });
+  await expect(
+    expectAudioMatchesSnapshot(monoResult(filled(8, 0.6)), { snapshotPath: path }),
+  ).rejects.toThrow(/snapshot byte/);
+});
+
+test("`expectAudioMatchesSnapshot` (plain) byte length mismatch = throw", async () => {
+  // plain path の byte length mismatch throw (= L526-529) を 覆 う。
+  const { expectAudioMatchesSnapshot } = await import("./index.ts");
+  const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-plain-length-"));
+  const path = join(dir, "ref.wav");
+  await expectAudioMatchesSnapshot(monoResult(filled(8, 0.5)), { snapshotPath: path });
+  await expect(
+    expectAudioMatchesSnapshot(monoResult(filled(16, 0.5)), { snapshotPath: path }),
+  ).rejects.toThrow(/snapshot byte length mismatch/);
+});
+
 // ━━━━━━━━━━━━━━━ TS-only chain guard (= 型 で 弾 け る か regression) ━━━━━━━━━━━━━━━
 
 test("chain method TS guard refuses non-RenderOfflineResult types", () => {

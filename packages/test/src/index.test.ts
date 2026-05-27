@@ -19,6 +19,7 @@ import {
   expectAudioMatches,
   expectAudioMatchesGolden,
   expectAudioMatchesSnapshot,
+  expectAudioMatchesSnapshotWithState,
   expectDcOffsetUnder,
   expectEventCount,
   expectEventsContaining,
@@ -1327,4 +1328,125 @@ test("`bpmToMs`: 各 division factor = (1/1: 4, 1/2: 2, 1/4: 1, 1/8: 0.5, 1/16: 
   expect(bpmToMs({ bpm: 60, division: "1/8" })).toBe(500);
   expect(bpmToMs({ bpm: 60, division: "1/16" })).toBe(250);
   expect(bpmToMs({ bpm: 60, division: "1/32" })).toBe(125);
+});
+
+// ━━━━━━━━━━━━━━━━━ 残 分 岐 coverage (= -Infinity / snapshot state) ━━━━━━━━━━━━━━━━
+
+test("`expectAudioMatches`: +Infinity expected (= Float32Array[] 形) = throw (= sign 分 岐 +Infinity 経 路)", () => {
+  // `assertChannelsFinite` 内 `v > 0 ? "+Infinity" : "-Infinity"` の true 分 岐
+  // (= 正 無 限 大) を hit。
+  const posInfCh = filled(8, 0.5);
+  posInfCh[3] = Infinity;
+  expect(() => expectAudioMatches(monoResult(filled(8, 0.5)), [posInfCh])).toThrow(
+    /expected.*\+Infinity/,
+  );
+});
+
+test("`expectAudioMatches`: -Infinity expected (= Float32Array[] 形) = throw (= sign 分 岐 -Infinity 経 路)", () => {
+  // `assertChannelsFinite` 内 `v > 0 ? "+Infinity" : "-Infinity"` の false 分 岐
+  // (= 負 無 限 大) を hit。 既 +Infinity test と 対 で 両 分 岐 を 揃 え る。
+  const negInfCh = filled(8, 0.5);
+  negInfCh[3] = -Infinity;
+  expect(() => expectAudioMatches(monoResult(filled(8, 0.5)), [negInfCh])).toThrow(
+    /expected.*-Infinity/,
+  );
+});
+
+test("`expectAudioMatchesSnapshotWithState`: snapshotName 渡 し + state.testPath ナ シ = throw", () => {
+  // `resolveSnapshotPath` 内 `if (!state.testPath)` 分 岐 (= snapshotName 経 路)
+  // を hit。 state を 空 object で 渡 し て 明 示 的 に testPath ナ シ を 作 る。
+  return expect(
+    expectAudioMatchesSnapshotWithState(monoResult(filled(8, 0.5)), { snapshotName: "demo" }, {}),
+  ).rejects.toThrow(/testPath が 必 要/);
+});
+
+test("`expectAudioMatchesSnapshotWithState`: auto-infer + state.testPath ナ シ = throw", () => {
+  // `resolveSnapshotPath` 末 尾 `if (!state.testPath || !state.currentTestName)`
+  // 分 岐 (= auto-infer 経 路) を hit。 testPath も currentTestName も ナ シ
+  // の state で 渡 し て fail-fast。
+  return expect(
+    expectAudioMatchesSnapshotWithState(monoResult(filled(8, 0.5)), {}, {}),
+  ).rejects.toThrow(/auto-infer requires testPath/);
+});
+
+test("`expectAudioMatchesSnapshotWithState`: auto-infer + currentTestName ナ シ = throw", () => {
+  // 上 と 同 分 岐 (= 短 絡 評 価 の 右 辺 `!state.currentTestName` 単 独 を
+  // 通 す path、 testPath だ け 渡 す 形 で 右 辺 trigger)。
+  return expect(
+    expectAudioMatchesSnapshotWithState(
+      monoResult(filled(8, 0.5)),
+      {},
+      {
+        testPath: "/tmp/dummy.test.ts",
+      },
+    ),
+  ).rejects.toThrow(/auto-infer requires testPath/);
+});
+
+test("`expectAudioMatchesSnapshotWithState`: 全 unsafe な currentTestName で auto-infer = `_` placeholder slug", async () => {
+  // `resolveSnapshotPath` 末 尾 `safeName.length > 0 ? safeName : "_"` の false
+  // 分 岐 (= sanitize で 全 char が 削 ら れ た 結 果 空 string) を hit。
+  // 「???」 は sanitize で 全 部 unsafe → 空 → "_" placeholder 経 路。
+  // testPath / currentTestName 両 方 set + snapshotState ナ シ で `?? "new"`
+  // fallback (= L506) も 同 時 に hit。
+  const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-unsafe-"));
+  const result = monoResult(filled(8, 0));
+  await expectAudioMatchesSnapshotWithState(
+    result,
+    {},
+    {
+      testPath: join(dir, "dummy.test.ts"),
+      currentTestName: "???",
+    },
+  );
+});
+
+test("`expectMidiBalance`: noteOn / noteOff 以 外 の MIDI message (= cc / pitchBend 等) は balance に 影 響 ナ シ", () => {
+  // `expectMidiBalance` の 内 部 if-else `m.type === "noteOn"` →
+  // `else if (m.type === "noteOff")` の 「ど ち ら で も な い」 path
+  // (= cc / pitchBend / programChange / sysex / etc) を hit。 cc 等 は
+  // running count に 影 響 し な い = balanced と し て pass。
+  const result: RenderOfflineResult = {
+    outputs: {},
+    events: [
+      {
+        name: "out",
+        payload: { type: "cc", channel: 0, controller: 7, value: 100 },
+        atSample: 0,
+      },
+    ],
+    state: new Uint8Array(0),
+    sampleRate: 48000,
+  };
+  expectMidiBalance(result, "out");
+});
+
+test("`sineSweep`: durationSamples=1 = 単 一 sample (= t 計 算 の 0 fallback 経 路)", () => {
+  // `sineSweep` 内 `opts.durationSamples > 1 ? ... : 0` の false 分 岐
+  // (= durationSamples = 1 で div by zero 回 避 fallback) を hit。
+  const out = sineSweep({
+    durationSamples: 1,
+    sampleRate: 48000,
+    startHz: 100,
+    endHz: 1000,
+  });
+  expect(out.length).toBe(1);
+});
+
+test("`whiteNoise`: seed = 0 (= xorshift32 シ ー ド 0 → 1 救 済) hit", () => {
+  // `whiteNoise` 内 `if (s === 0) s = 1` の true 分 岐 = seed 0 渡 し で
+  // hit (= xorshift32 は s=0 で 固 着 す る た め 1 に 強 制)。
+  const out = whiteNoise({ durationSamples: 8, seed: 0 });
+  expect(out.length).toBe(8);
+});
+
+test("`midi.cc`: channel default (= channel 省 略 で 0) 経 路", () => {
+  // `midi.cc` 内 `opts.channel ?? 0` の null fallback 分 岐 (= channel 省 略)
+  // を hit。 既 channel 上 書 き test (= 5) と 対 で 両 分 岐 を 揃 え る。
+  expect(midi.cc({ controller: 7, value: 100 })).toEqual({
+    type: "cc",
+    channel: 0,
+    controller: 7,
+    value: 100,
+  });
 });

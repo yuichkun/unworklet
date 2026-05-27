@@ -445,3 +445,64 @@ test("`initialize` catches arbitrary throws inside the WASM boot path and posts 
   expect(initErrors).toHaveLength(1);
   expect(initErrors[0]!.message).toMatch(/link error/);
 });
+
+test("`initialize` catches non-Error throws (e.g. a string) and stringifies them into init-error", async () => {
+  // Cover the `err instanceof Error ? err.message : String(err)` non-Error
+  // branch in `errorMessage`。 Throwing a primitive from inside the boot path
+  // (= unusual but legal in JS) must still surface a structured init-error
+  // with a string `message` field。
+  const self = makeMockSelf();
+  const corruptModule = {} as unknown as WebAssembly.Module;
+  const originalInstance = WebAssembly.Instance;
+  (WebAssembly as { Instance: unknown }).Instance = function FakeInstance(
+    _mod: WebAssembly.Module,
+  ): never {
+    // eslint-disable-next-line @typescript-eslint/only-throw-error
+    throw "raw-string-from-instance";
+  } as unknown as typeof WebAssembly.Instance;
+  try {
+    monoGain.worklet.initialize(self, { processorOptions: { module: corruptModule } });
+  } finally {
+    (WebAssembly as { Instance: unknown }).Instance = originalInstance;
+  }
+  const initErrors = self.messages.filter(
+    (m): m is { kind: string; message: string } =>
+      typeof m === "object" && m !== null && (m as { kind?: unknown }).kind === "init-error",
+  );
+  expect(initErrors).toHaveLength(1);
+  expect(initErrors[0]!.message).toBe("raw-string-from-instance");
+});
+
+test("`initialize(self)` without an opts argument defaults to {} and posts init-error", async () => {
+  // Cover the `args[1] ?? {}` fallback in initialize。 Path β escape hatches
+  // could omit the second argument entirely (e.g. a class constructor that
+  // forwards `super()` without re-passing options)。 The runtime must treat
+  // missing opts as an empty bag and surface the standard init-error rather
+  // than throwing on the audio thread。
+  const self = makeMockSelf();
+  (monoGain.worklet.initialize as (s: unknown) => void)(self);
+  const initErrors = self.messages.filter(
+    (m): m is { kind: string; message: string } =>
+      typeof m === "object" && m !== null && (m as { kind?: unknown }).kind === "init-error",
+  );
+  expect(initErrors).toHaveLength(1);
+  expect(initErrors[0]!.message).toMatch(/processorOptions\.module/);
+});
+
+test("`process` handles a missing output port (= outputs outer array shorter than declared) without throwing", async () => {
+  // Cover the `outputs[portIdx] ?? []` fallback in the output marshal loop。
+  // A misbehaving host (= test harness, or a non-conformant engine) may hand
+  // us an outputs array shorter than the declared number of output ports。
+  // The audio-thread invariant forbids throwing, so the marshal loop must
+  // silently no-op over the missing port (= `portOutput` defaults to `[]`、
+  // `dest` is undefined, `if (dest)` is skipped)。
+  const { wasm } = await compile(monoGain);
+  const self = makeMockSelf();
+  monoGain.worklet.initialize(self, { processorOptions: { wasm } });
+  const inputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(0.5)]];
+  // Host hands us an empty outputs outer array even though monoGain declares
+  // 1 output port = `outputs[0]` is undefined → `?? []` kicks in。
+  const outputs: Float32Array[][] = [];
+  const parameters = { gain: new Float32Array([1]) };
+  expect(() => monoGain.worklet.process(self, inputs, outputs, parameters)).not.toThrow();
+});

@@ -1,51 +1,72 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
-<head>
-<meta charset="utf-8">
-<title>Suara POC 段 2 verify — 440Hz oscillator</title>
-<style>
-  body { font-family: system-ui, sans-serif; padding: 2em; }
-  button { font-size: 1.2em; padding: 0.5em 1.5em; margin-right: 0.5em; }
-  #status { margin-top: 1em; padding: 0.5em; background: #f0f0f0; font-family: monospace; }
-</style>
-</head>
-<body>
-<h1>Suara POC 段 2 verify</h1>
-<p>440Hz oscillator を AudioContext.destination に繋ぐ最小ページ。</p>
-<button id="start">start (resume)</button>
-<button id="stop" disabled>stop</button>
-<div id="status">ready — click "start" to create AudioContext + oscillator</div>
-<script>
-let ctx = null;
-let osc = null;
-const status = document.getElementById('status');
-const startBtn = document.getElementById('start');
-const stopBtn = document.getElementById('stop');
+  <head>
+    <meta charset="utf-8" />
+    <title>Suara POC 段 2 verify — 440Hz oscillator</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        padding: 2em;
+      }
+      button {
+        font-size: 1.2em;
+        padding: 0.5em 1.5em;
+        margin-right: 0.5em;
+      }
+      #status {
+        margin-top: 1em;
+        padding: 0.5em;
+        background: #f0f0f0;
+        font-family: monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Suara POC 段 2 verify</h1>
+    <p>440Hz oscillator を AudioContext.destination に繋ぐ最小ページ。</p>
+    <button id="start">start (resume)</button>
+    <button id="stop" disabled>stop</button>
+    <div id="status">ready — click "start" to create AudioContext + oscillator</div>
+    <script>
+      let ctx = null;
+      let osc = null;
+      const status = document.getElementById("status");
+      const startBtn = document.getElementById("start");
+      const stopBtn = document.getElementById("stop");
 
-startBtn.onclick = async () => {
-  ctx = new AudioContext();
-  await ctx.resume();
-  osc = ctx.createOscillator();
-  osc.frequency.value = 440;
-  osc.connect(ctx.destination);
-  osc.start();
-  status.textContent =
-    'playing  sampleRate=' + ctx.sampleRate +
-    '  state=' + ctx.state +
-    '  baseLatency=' + ctx.baseLatency;
-  startBtn.disabled = true;
-  stopBtn.disabled = false;
-  console.log('[osc.html] AudioContext + oscillator started', ctx);
-};
+      startBtn.onclick = async () => {
+        ctx = new AudioContext();
+        await ctx.resume();
+        osc = ctx.createOscillator();
+        osc.frequency.value = 440;
+        osc.connect(ctx.destination);
+        osc.start();
+        status.textContent =
+          "playing  sampleRate=" +
+          ctx.sampleRate +
+          "  state=" +
+          ctx.state +
+          "  baseLatency=" +
+          ctx.baseLatency;
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        console.log("[osc.html] AudioContext + oscillator started", ctx);
+      };
 
-stopBtn.onclick = async () => {
-  if (osc) { osc.stop(); osc = null; }
-  if (ctx) { await ctx.close(); ctx = null; }
-  status.textContent = 'stopped';
-  startBtn.disabled = false;
-  stopBtn.disabled = true;
-  console.log('[osc.html] stopped');
-};
-</script>
-</body>
+      stopBtn.onclick = async () => {
+        if (osc) {
+          osc.stop();
+          osc = null;
+        }
+        if (ctx) {
+          await ctx.close();
+          ctx = null;
+        }
+        status.textContent = "stopped";
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+        console.log("[osc.html] stopped");
+      };
+    </script>
+  </body>
 </html>

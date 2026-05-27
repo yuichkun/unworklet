@@ -12,7 +12,7 @@
 import { fileURLToPath } from "node:url";
 
 import { compile } from "@unworklet/core";
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 
 import unworklet, { unworkletPlugin } from "./index.ts";
 
@@ -828,4 +828,729 @@ test("dev mode transitive watch keys off `getModulesByFile`, not `getModuleById`
   expect(ctx.watched).toContain(helperA);
   expect(getModulesByFileCallCount).toBeGreaterThan(0);
   expect(getModuleByIdCallCount).toBe(0);
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// collectTransitiveDeps = BFS continue paths
+// ─────────────────────────────────────────────────────────────────────────
+//
+// `collectTransitiveDeps` walks the module graph BFS from `sourcePath`. The
+// three continue branches inside the loop guard against (a) virtual nodes
+// without a backing file, (b) the entry itself reached transitively, and
+// (c) revisiting an already-seen file — each must skip without losing the
+// rest of the fan-out。 The recursion-depth branch (L161) requires a
+// dependency that itself has children, exercising the BFS queue beyond a
+// single hop。
+
+const callLoadInServeModeWithCustomGraph = async (
+  id: string,
+  build: (rootSourcePath: string) => {
+    rootNode: { file: string; importedModules: Set<unknown> };
+  },
+): Promise<{ ctx: MockEmitContext }> => {
+  const plugin = unworklet();
+  const configHook = plugin.configResolved as unknown as ConfigResolvedFn | undefined;
+  if (!configHook) throw new Error("configResolved missing");
+  configHook.call(null, { command: "serve", root: "/", base: "/" });
+  const configureServerHook = plugin.configureServer as unknown as ConfigureServerFn | undefined;
+  if (!configureServerHook) throw new Error("configureServer missing");
+  const { rootNode } = build(FIXTURE_GAIN_PATH);
+  const server: ServerStub = {
+    middlewares: { use: () => {} },
+    ssrLoadModule: async (url) => (await import(url)) as Record<string, unknown>,
+    moduleGraph: {
+      getModulesByFile: ((file: string) =>
+        file === FIXTURE_GAIN_PATH ? (new Set([rootNode]) as unknown) : undefined) as unknown as (
+        file: string,
+      ) => undefined,
+    },
+    __registered: [],
+  };
+  configureServerHook.call(null, server);
+  const loadHook = plugin.load as unknown as LoadFn | undefined;
+  if (!loadHook) throw new Error("load missing");
+  const ctx = makeMockEmitContext();
+  await loadHook.call(ctx, id);
+  return { ctx };
+};
+
+test("collectTransitiveDeps skips a dependency without a `file` (virtual node)", async () => {
+  // L157: virtual modules (= `\0...`) appear in the graph as nodes with
+  // `file: null` since they have no backing file。 Must continue past them
+  // without throwing on the missing path。
+  const virtualNoFileDep = {
+    file: null,
+    importedModules: new Set<unknown>(),
+  };
+  const realDep = {
+    file: "/abs/project/src/real-helper.ts",
+    importedModules: new Set<unknown>(),
+  };
+  const { ctx } = await callLoadInServeModeWithCustomGraph(
+    `${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`,
+    () => ({
+      rootNode: {
+        file: FIXTURE_GAIN_PATH,
+        importedModules: new Set<unknown>([virtualNoFileDep, realDep]),
+      },
+    }),
+  );
+  // The real helper still gets watched even though the virtual node is in
+  // the same dependency set。
+  expect(ctx.watched).toContain("/abs/project/src/real-helper.ts");
+  expect(ctx.watched).not.toContain(null as unknown as string);
+});
+
+test("collectTransitiveDeps skips a dependency whose file === sourcePath (self-reference)", async () => {
+  // L158: a transitive import that points back at the entry must NOT
+  // appear as a watch dep — the entry is the plugin's own canonical
+  // watcher target via the load hook, double-watching would be a bug。
+  const selfRef = {
+    file: FIXTURE_GAIN_PATH,
+    importedModules: new Set<unknown>(),
+  };
+  const otherDep = {
+    file: "/abs/project/src/other.ts",
+    importedModules: new Set<unknown>(),
+  };
+  const { ctx } = await callLoadInServeModeWithCustomGraph(
+    `${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`,
+    () => ({
+      rootNode: {
+        file: FIXTURE_GAIN_PATH,
+        importedModules: new Set<unknown>([selfRef, otherDep]),
+      },
+    }),
+  );
+  // Entry comes through addWatchFile(sourcePath) in load itself = 1 occurrence。
+  const entryCount = ctx.watched.filter((p) => p === FIXTURE_GAIN_PATH).length;
+  expect(entryCount).toBe(1);
+  expect(ctx.watched).toContain("/abs/project/src/other.ts");
+});
+
+test("collectTransitiveDeps skips an already-seen file (diamond dependency)", async () => {
+  // L159: same helper reached via two paths in the graph must only get
+  // watched once — duplicate addWatchFile() calls are harmless but the
+  // BFS seen-set is what guards against an exponential walk on diamond
+  // graphs。
+  const sharedHelper = {
+    file: "/abs/project/src/shared.ts",
+    importedModules: new Set<unknown>(),
+  };
+  const branchA = {
+    file: "/abs/project/src/branch-a.ts",
+    importedModules: new Set<unknown>([sharedHelper]),
+  };
+  const branchB = {
+    file: "/abs/project/src/branch-b.ts",
+    importedModules: new Set<unknown>([sharedHelper]),
+  };
+  const { ctx } = await callLoadInServeModeWithCustomGraph(
+    `${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`,
+    () => ({
+      rootNode: {
+        file: FIXTURE_GAIN_PATH,
+        importedModules: new Set<unknown>([branchA, branchB]),
+      },
+    }),
+  );
+  expect(ctx.watched).toContain("/abs/project/src/branch-a.ts");
+  expect(ctx.watched).toContain("/abs/project/src/branch-b.ts");
+  // The shared helper is watched exactly once even though two parents
+  // import it。
+  const sharedCount = ctx.watched.filter((p) => p === "/abs/project/src/shared.ts").length;
+  expect(sharedCount).toBe(1);
+});
+
+test("collectTransitiveDeps recurses through nested helper imports (BFS depth >= 2)", async () => {
+  // L161: the BFS queue must continue past depth 1 so a helper imported
+  // by another helper still triggers invalidation. Without the inner
+  // `for (const child of node.importedModules)` queue push, only the
+  // root's direct imports would get watched。
+  const deepHelper = {
+    file: "/abs/project/src/deep.ts",
+    importedModules: new Set<unknown>(),
+  };
+  const midHelper = {
+    file: "/abs/project/src/mid.ts",
+    importedModules: new Set<unknown>([deepHelper]),
+  };
+  const { ctx } = await callLoadInServeModeWithCustomGraph(
+    `${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`,
+    () => ({
+      rootNode: {
+        file: FIXTURE_GAIN_PATH,
+        importedModules: new Set<unknown>([midHelper]),
+      },
+    }),
+  );
+  expect(ctx.watched).toContain("/abs/project/src/mid.ts");
+  expect(ctx.watched).toContain("/abs/project/src/deep.ts");
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// configResolved = base path normalization
+// ─────────────────────────────────────────────────────────────────────────
+
+test("configResolved appends `/` when `base` is an absolute path without trailing slash", async () => {
+  // L505 cond-expr false branch: `config.base = "/sub"` (= absolute,
+  // no trailing slash) must be normalized so the dev URL prefix becomes
+  // `/sub/__unworklet/...` rather than `/sub__unworklet/...`。
+  const plugin = unworklet();
+  const configHook = plugin.configResolved as unknown as ConfigResolvedFn | undefined;
+  if (!configHook) throw new Error("configResolved missing");
+  configHook.call(null, { command: "serve", root: "/", base: "/sub" });
+  const resolveHook = plugin.resolveId as unknown as ResolveIdFn | undefined;
+  if (!resolveHook) throw new Error("resolveId missing");
+  resolveHook.call(null, `${FIXTURE_GAIN_PATH}?worklet`, undefined, { isEntry: false });
+  const loadHook = plugin.load as unknown as LoadFn | undefined;
+  if (!loadHook) throw new Error("load missing");
+  const ctx = makeMockEmitContext();
+  const result = (await loadHook.call(ctx, `${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`)) as string;
+  // The trailing slash is appended so URLs land under `/sub/...`。
+  expect(result).toMatch(/moduleUrl: "\/sub\/@id\/__x00__/);
+  expect(result).toMatch(/wasmUrl: "\/sub\/__unworklet\//);
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Middleware = early-return paths
+// ─────────────────────────────────────────────────────────────────────────
+
+test("dev middleware passes to next() when `req.url` is undefined", async () => {
+  // L526: an upstream connect handler can leave req.url unset (= raw
+  // socket handshake) — the middleware must defer rather than crash。
+  const { middleware } = setupServeMiddleware();
+  let nextCalled = 0;
+  const res = makeResponseStub();
+  middleware({ url: undefined }, res, () => {
+    nextCalled++;
+  });
+  await new Promise((r) => setTimeout(r, 0));
+  expect(nextCalled).toBe(1);
+  expect(res.__endCalls).toHaveLength(0);
+});
+
+test("dev middleware ignores the query string when matching against the dev URL prefix", async () => {
+  // L528 cond-expr false branch: a real browser request commonly carries
+  // a `?import` / `?t=<ts>` query suffix。 The middleware must strip the
+  // query before the `startsWith(devUrlBase)` check so a query-suffixed
+  // path under a non-`__unworklet` route correctly falls through to
+  // next() rather than spuriously matching。
+  const { middleware } = setupServeMiddleware();
+  let nextCalled = 0;
+  const res = makeResponseStub();
+  middleware({ url: "/some-other-route?t=123" }, res, () => {
+    nextCalled++;
+  });
+  await new Promise((r) => setTimeout(r, 0));
+  expect(nextCalled).toBe(1);
+  expect(res.__endCalls).toHaveLength(0);
+});
+
+test("dev middleware passes to next() for a URL that does not start with the dev prefix", async () => {
+  // L529: any request outside the `/__unworklet/` namespace must be left
+  // alone (= other vite plugins / app routes handle it)。
+  const { middleware } = setupServeMiddleware();
+  let nextCalled = 0;
+  const res = makeResponseStub();
+  middleware({ url: "/totally/unrelated.js" }, res, () => {
+    nextCalled++;
+  });
+  await new Promise((r) => setTimeout(r, 0));
+  expect(nextCalled).toBe(1);
+  expect(res.__endCalls).toHaveLength(0);
+});
+
+test("dev middleware passes to next() when the URL has the wrong number of segments", async () => {
+  // L533 (segments.length !== 3): existing test exercises the
+  // `<encoded>/<part>` two-segment form via `secret-config`。 Add a
+  // single-segment form to cover the lower bound just as defensively。
+  const { middleware } = setupServeMiddleware();
+  let nextCalled = 0;
+  const res = makeResponseStub();
+  middleware({ url: "/__unworklet/onlyonesegment" }, res, () => {
+    nextCalled++;
+  });
+  await new Promise((r) => setTimeout(r, 0));
+  expect(nextCalled).toBe(1);
+  expect(res.__endCalls).toHaveLength(0);
+});
+
+test("dev middleware passes to next() when the final segment is not `wasm`", async () => {
+  // L535: `<encoded>/<hash>/<not-wasm>` shape — even with a valid hash
+  // and an allowlisted source, anything but `wasm` is not this
+  // middleware's concern (= future asset kinds may share the prefix)。
+  const { plugin, middleware } = setupServeMiddleware();
+  await primeAllowlist(plugin, FIXTURE_GAIN_PATH);
+  const encoded = Buffer.from(FIXTURE_GAIN_PATH, "utf8").toString("base64url");
+  let nextCalled = 0;
+  const res = makeResponseStub();
+  middleware({ url: `/__unworklet/${encoded}/deadbeef/not-wasm` }, res, () => {
+    nextCalled++;
+  });
+  await new Promise((r) => setTimeout(r, 0));
+  expect(nextCalled).toBe(1);
+  expect(res.__endCalls).toHaveLength(0);
+});
+
+test("dev middleware passes to next() when the hash segment is not 8 hex chars", async () => {
+  // L536: a stale URL pointing at a non-hex hash (= e.g. truncated
+  // copy-paste) must defer rather than serve `404`-equivalent middleware
+  // body, so other middlewares get a chance。
+  const { plugin, middleware } = setupServeMiddleware();
+  await primeAllowlist(plugin, FIXTURE_GAIN_PATH);
+  const encoded = Buffer.from(FIXTURE_GAIN_PATH, "utf8").toString("base64url");
+  let nextCalled = 0;
+  const res = makeResponseStub();
+  middleware({ url: `/__unworklet/${encoded}/NOTHEX!/wasm` }, res, () => {
+    nextCalled++;
+  });
+  await new Promise((r) => setTimeout(r, 0));
+  expect(nextCalled).toBe(1);
+  expect(res.__endCalls).toHaveLength(0);
+});
+
+test("dev middleware passes to next() when the encoded sourcePath decodes to an empty string", async () => {
+  // L544: `decodeSourceFromDevUrl` returns "" for an empty encoded
+  // segment (= `Buffer.from("", "base64url").toString("utf8") === ""`)
+  // and `!""` is truthy, so the middleware must defer rather than
+  // accidentally evaluate the empty string as a source path。
+  const { middleware } = setupServeMiddleware();
+  let nextCalled = 0;
+  const res = makeResponseStub();
+  // Empty encoded segment + valid 8-hex hash + `wasm` part = 3 segments
+  // that pass the structural checks but yield an empty sourcePath。
+  middleware({ url: `/__unworklet//deadbeef/wasm` }, res, () => {
+    nextCalled++;
+  });
+  await new Promise((r) => setTimeout(r, 0));
+  expect(nextCalled).toBe(1);
+  expect(res.__endCalls).toHaveLength(0);
+});
+
+test("dev middleware passes to next() when the URL shape is valid but the sourcePath is not allowlisted", async () => {
+  // L547: a crafted request with a syntactically valid shape but a
+  // sourcePath the plugin never accepted via `?worklet` must fall
+  // through (= the security gate)。 Unlike the existing `evilEncoded`
+  // case (which exits earlier on segment count), this URL passes every
+  // shape check up to the allowlist test。
+  const { middleware } = setupServeMiddleware();
+  // `/etc/passwd` base64url-encoded — the plugin has not seen it via
+  // resolveId, so `allowedSources.has(...)` returns false。
+  const evilEncoded = Buffer.from("/etc/passwd", "utf8").toString("base64url");
+  let nextCalled = 0;
+  const res = makeResponseStub();
+  middleware({ url: `/__unworklet/${evilEncoded}/deadbeef/wasm` }, res, () => {
+    nextCalled++;
+  });
+  await new Promise((r) => setTimeout(r, 0));
+  expect(nextCalled).toBe(1);
+  expect(res.__endCalls).toHaveLength(0);
+});
+
+test("dev middleware fresh-compiles on snapshot miss and replies 410 when the requested hash no longer matches HEAD", async () => {
+  // L556 + L572: client holds an outdated `?v=<old-hash>` URL minted
+  // from an earlier compile that has since rolled out of the ring。 The
+  // middleware recompiles from current disk content, but rather than
+  // silently serving the new bytes (= would skew with the still-stale
+  // moduleUrl meta on the client), it emits a 410 Gone。
+  const { plugin, middleware } = setupServeMiddleware({
+    root: "/Users/yuichkun/workspace/unworklet/examples/01-stereo-gain",
+  });
+  await primeAllowlist(plugin, FIXTURE_GAIN_PATH);
+  // Request a hash the snapshot ring has never seen — the middleware
+  // falls through to a fresh compile and finds a different hash。
+  const encoded = Buffer.from(FIXTURE_GAIN_PATH, "utf8").toString("base64url");
+  const res = makeResponseStub();
+  let nextCalled = 0;
+  middleware({ url: `/__unworklet/${encoded}/deadbeef/wasm` }, res, () => {
+    nextCalled++;
+  });
+  // Wait for the async compile path to settle。
+  await new Promise((r) => setTimeout(r, 300));
+  expect(nextCalled).toBe(0);
+  expect(res.statusCode).toBe(410);
+  expect(res.__endCalls).toHaveLength(1);
+  expect(String(res.__endCalls[0])).toMatch(/no longer available/);
+});
+
+test("dev middleware fresh-compiles on snapshot miss and serves the bytes when the hash happens to match", async () => {
+  // L556 (snapshot miss → fresh compile) without the L572 mismatch
+  // branch: a client requests the current revision but the snapshot
+  // ring was cleared (= reproduced here by skipping the `?worklet`
+  // load path so no snapshot is recorded up front)。 The middleware
+  // must recompile, record the fresh snapshot, and serve the bytes。
+  const { plugin, middleware } = setupServeMiddleware({
+    root: "/Users/yuichkun/workspace/unworklet/examples/01-stereo-gain",
+  });
+  await primeAllowlist(plugin, FIXTURE_GAIN_PATH);
+  // Compute the current revision hash by invoking compile() directly so
+  // we know which URL the middleware should accept。
+  const fixtureModule = (await import(FIXTURE_GAIN_PATH)) as Record<string, unknown>;
+  const direct = await compile(fixtureModule["stereoGain"] as Parameters<typeof compile>[0]);
+  const { createHash } = await import("node:crypto");
+  const hash = createHash("sha256").update(direct.wasm).digest("hex").slice(0, 8);
+  const encoded = Buffer.from(FIXTURE_GAIN_PATH, "utf8").toString("base64url");
+  const res = makeResponseStub();
+  let nextCalled = 0;
+  middleware({ url: `/__unworklet/${encoded}/${hash}/wasm` }, res, () => {
+    nextCalled++;
+  });
+  await new Promise((r) => setTimeout(r, 300));
+  expect(nextCalled).toBe(0);
+  expect(res.__endCalls).toHaveLength(1);
+  const body = res.__endCalls[0] as Buffer;
+  expect(body).toBeInstanceOf(Buffer);
+  // WASM magic header guarantees we served real bytes, not an error blob。
+  expect(body.subarray(0, 4).toString("hex")).toBe("0061736d");
+});
+
+test("dev middleware responds 500 when the source module fails to evaluate", async () => {
+  // L584 async catch: the middleware's compile path can throw at any
+  // step (ssrLoadModule / pickCompiledProcessor / compile)。 On error
+  // it must surface a 500 instead of silently leaking the rejection。
+  // Trigger via a fixture that has no defineProcessor exports —
+  // pickCompiledProcessor throws synchronously inside the async IIFE。
+  const { plugin, middleware } = setupServeMiddleware({
+    root: "/Users/yuichkun/workspace/unworklet/examples/01-stereo-gain",
+  });
+  await primeAllowlist(plugin, FIXTURE_NO_PROCESSOR_PATH);
+  const encoded = Buffer.from(FIXTURE_NO_PROCESSOR_PATH, "utf8").toString("base64url");
+  const res = makeResponseStub();
+  let nextCalled = 0;
+  // Silence the console.error inside the catch so test output stays
+  // readable — the contract is still that the response is 500 + body。
+  const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  middleware({ url: `/__unworklet/${encoded}/deadbeef/wasm` }, res, () => {
+    nextCalled++;
+  });
+  await new Promise((r) => setTimeout(r, 300));
+  errSpy.mockRestore();
+  expect(nextCalled).toBe(0);
+  expect(res.statusCode).toBe(500);
+  expect(res.__endCalls).toHaveLength(1);
+  expect(String(res.__endCalls[0])).toMatch(/no defineProcessor exports/);
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// WORKLET_ENTRY load = hash-format rejection
+// ─────────────────────────────────────────────────────────────────────────
+
+test("dev mode WORKLET_ENTRY load returns null when the `?v=` query is missing entirely", async () => {
+  // L622 binary-expr fallback (`params.get("v") ?? ""`) + L623 8-hex
+  // mismatch: a request without `?v=` falls through to the empty string
+  // sentinel, which then fails the hex regex test = null。 Prevents the
+  // middleware from being tricked into serving a template against an
+  // unknown revision when the client forgot to round-trip the hash。
+  const plugin = unworklet();
+  const configHook = plugin.configResolved as unknown as ConfigResolvedFn | undefined;
+  if (!configHook) throw new Error("configResolved missing");
+  configHook.call(null, { command: "serve", root: "/", base: "/" });
+  const resolveHook = plugin.resolveId as unknown as ResolveIdFn | undefined;
+  if (!resolveHook) throw new Error("resolveId missing");
+  // Allowlist the fixture so the security gate does NOT short-circuit。
+  resolveHook.call(null, `${FIXTURE_GAIN_PATH}?worklet`, undefined, { isEntry: false });
+  const loadHook = plugin.load as unknown as LoadFn | undefined;
+  if (!loadHook) throw new Error("load missing");
+  const ctx = makeMockEmitContext();
+  // No `?v=` on the entry id — the only path that drives L622's
+  // fallback branch + L623's regex rejection。
+  const result = await loadHook.call(ctx, `\0unworklet-worklet:${FIXTURE_GAIN_PATH}`);
+  expect(result).toBeNull();
+});
+
+test("dev mode WORKLET_ENTRY load returns null when the `?v=` value is malformed", async () => {
+  // L623 regex rejection on a non-8-hex value (= e.g. a truncated copy
+  // or a wrong-shape token someone hard-coded)。
+  const plugin = unworklet();
+  const configHook = plugin.configResolved as unknown as ConfigResolvedFn | undefined;
+  if (!configHook) throw new Error("configResolved missing");
+  configHook.call(null, { command: "serve", root: "/", base: "/" });
+  const resolveHook = plugin.resolveId as unknown as ResolveIdFn | undefined;
+  if (!resolveHook) throw new Error("resolveId missing");
+  resolveHook.call(null, `${FIXTURE_GAIN_PATH}?worklet`, undefined, { isEntry: false });
+  const loadHook = plugin.load as unknown as LoadFn | undefined;
+  if (!loadHook) throw new Error("load missing");
+  const ctx = makeMockEmitContext();
+  const result = await loadHook.call(ctx, `\0unworklet-worklet:${FIXTURE_GAIN_PATH}?v=NOTHEX!!`);
+  expect(result).toBeNull();
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// recordSnapshot = ring re-use + dedupe
+// ─────────────────────────────────────────────────────────────────────────
+
+test("dev mode reuses the same snapshot ring across two loads of the same source (dedupe + ring re-use)", async () => {
+  // L479 (ring already exists) + L485 (existing >= 0 = de-dupe by hash):
+  // two consecutive dev-mode loads of the same fixture compute the
+  // same revision hash, so the second `recordSnapshot` must find the
+  // existing entry, splice it out, and re-push — preserving ring
+  // semantics without growing past SNAPSHOT_RING_SIZE。 Asserted
+  // indirectly by checking that both loads yield byte-identical JS
+  // (= same hash baked in)。
+  const plugin = unworklet();
+  const configHook = plugin.configResolved as unknown as ConfigResolvedFn | undefined;
+  if (!configHook) throw new Error("configResolved missing");
+  configHook.call(null, { command: "serve", root: "/", base: "/" });
+  const resolveHook = plugin.resolveId as unknown as ResolveIdFn | undefined;
+  if (!resolveHook) throw new Error("resolveId missing");
+  resolveHook.call(null, `${FIXTURE_GAIN_PATH}?worklet`, undefined, { isEntry: false });
+  const configureServerHook = plugin.configureServer as unknown as ConfigureServerFn | undefined;
+  if (!configureServerHook) throw new Error("configureServer missing");
+  const server = makeServerStub();
+  configureServerHook.call(null, server);
+  const loadHook = plugin.load as unknown as LoadFn | undefined;
+  if (!loadHook) throw new Error("load missing");
+  const firstCtx = makeMockEmitContext();
+  const first = (await loadHook.call(
+    firstCtx,
+    `${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`,
+  )) as string;
+  const secondCtx = makeMockEmitContext();
+  const second = (await loadHook.call(
+    secondCtx,
+    `${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`,
+  )) as string;
+  // Same source + same compile result → same hash → byte-identical JS。
+  expect(second).toBe(first);
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// devtools setup = full UI panel registration
+// ─────────────────────────────────────────────────────────────────────────
+//
+// `setupDevtools` is the plugin's `devtools.setup` callback。 It registers
+// 5 diagnostic codes, logs one of each, posts a top-level message, and
+// installs a single dock entry routed at a static SPA root。 We mock the
+// devtools-kit context surface with a minimum-shape stub and assert the
+// observable side effects。
+
+type DiagnosticsLoggerStub = {
+  UWK0001: (params: { src: string; sym: string }) => void;
+  UWK0002: (params: Record<string, never>) => void;
+  UWK0004: (params: Record<string, never>) => void;
+  UWK0011: (params: { src: string }) => void;
+  UWK0015: (params: { src: string; slot: string }) => void;
+};
+
+type DevToolsCtxStub = {
+  diagnostics: {
+    defineDiagnostics: (def: unknown) => unknown;
+    register: (d: unknown) => void;
+    logger: DiagnosticsLoggerStub;
+    __defineCalls: unknown[];
+    __registerCalls: unknown[];
+    __loggerCalls: Array<{ code: string; params: unknown }>;
+  };
+  messages: {
+    add: (m: unknown) => Promise<void>;
+    __addCalls: unknown[];
+  };
+  docks: {
+    register: (entry: unknown) => void;
+    __registerCalls: unknown[];
+  };
+  views: {
+    hostStatic: (urlBase: string, root: string) => void;
+    __hostStaticCalls: Array<{ urlBase: string; root: string }>;
+  };
+};
+
+const makeDevToolsCtxStub = (): DevToolsCtxStub => {
+  const loggerCalls: Array<{ code: string; params: unknown }> = [];
+  const defineCalls: unknown[] = [];
+  const registerCalls: unknown[] = [];
+  const messageAddCalls: unknown[] = [];
+  const dockRegisterCalls: unknown[] = [];
+  const hostStaticCalls: Array<{ urlBase: string; root: string }> = [];
+  const logger: DiagnosticsLoggerStub = {
+    UWK0001: (params) => loggerCalls.push({ code: "UWK0001", params }),
+    UWK0002: (params) => loggerCalls.push({ code: "UWK0002", params }),
+    UWK0004: (params) => loggerCalls.push({ code: "UWK0004", params }),
+    UWK0011: (params) => loggerCalls.push({ code: "UWK0011", params }),
+    UWK0015: (params) => loggerCalls.push({ code: "UWK0015", params }),
+  };
+  return {
+    diagnostics: {
+      defineDiagnostics: (def) => {
+        defineCalls.push(def);
+        return def;
+      },
+      register: (d) => {
+        registerCalls.push(d);
+      },
+      logger,
+      __defineCalls: defineCalls,
+      __registerCalls: registerCalls,
+      __loggerCalls: loggerCalls,
+    },
+    messages: {
+      add: async (m) => {
+        messageAddCalls.push(m);
+      },
+      __addCalls: messageAddCalls,
+    },
+    docks: {
+      register: (entry) => {
+        dockRegisterCalls.push(entry);
+      },
+      __registerCalls: dockRegisterCalls,
+    },
+    views: {
+      hostStatic: (urlBase, root) => {
+        hostStaticCalls.push({ urlBase, root });
+      },
+      __hostStaticCalls: hostStaticCalls,
+    },
+  };
+};
+
+test("devtools.setup defines the 5 diagnostic codes (UWK0001/UWK0002/UWK0004/UWK0011/UWK0015)", () => {
+  const plugin = unworklet();
+  // PluginWithDevTools augments Plugin with an optional `devtools` slot
+  // that the kit reads。 We dig through that union since `Plugin` from
+  // vite-plus does not surface it natively in test types。
+  const setup = (plugin as unknown as { devtools?: { setup: (ctx: unknown) => void } }).devtools
+    ?.setup;
+  expect(typeof setup).toBe("function");
+  const ctx = makeDevToolsCtxStub();
+  setup!(ctx);
+  expect(ctx.diagnostics.__defineCalls).toHaveLength(1);
+  const def = ctx.diagnostics.__defineCalls[0] as { codes: Record<string, unknown> };
+  expect(Object.keys(def.codes).sort()).toEqual([
+    "UWK0001",
+    "UWK0002",
+    "UWK0004",
+    "UWK0011",
+    "UWK0015",
+  ]);
+});
+
+test("devtools.setup registers the diagnostics definition with the kit", () => {
+  const plugin = unworklet();
+  const setup = (plugin as unknown as { devtools?: { setup: (ctx: unknown) => void } }).devtools
+    ?.setup;
+  const ctx = makeDevToolsCtxStub();
+  setup!(ctx);
+  expect(ctx.diagnostics.__registerCalls).toHaveLength(1);
+});
+
+test("devtools.setup emits one log entry per diagnostic code (=  5 entries, code coverage)", () => {
+  const plugin = unworklet();
+  const setup = (plugin as unknown as { devtools?: { setup: (ctx: unknown) => void } }).devtools
+    ?.setup;
+  const ctx = makeDevToolsCtxStub();
+  setup!(ctx);
+  const codes = ctx.diagnostics.__loggerCalls.map((c) => c.code).sort();
+  expect(codes).toEqual(["UWK0001", "UWK0002", "UWK0004", "UWK0011", "UWK0015"]);
+});
+
+test("devtools.setup exercises each diagnostic message's `why` function with concrete params", () => {
+  // The `why` slots are functions or literals; invoking them at setup
+  // time also covers the lambda bodies (= L364-385 of index.ts)。
+  const plugin = unworklet();
+  const setup = (plugin as unknown as { devtools?: { setup: (ctx: unknown) => void } }).devtools
+    ?.setup;
+  const ctx = makeDevToolsCtxStub();
+  setup!(ctx);
+  const def = ctx.diagnostics.__defineCalls[0] as {
+    codes: Record<
+      string,
+      { why: string | ((params: Record<string, unknown>) => string); fix: string }
+    >;
+  };
+  // Exercise each `why` (= lambda or string) so the body is actually
+  // executed under coverage。
+  const uwk1 = def.codes["UWK0001"]!.why;
+  const w1 = typeof uwk1 === "function" ? uwk1({ src: "X", sym: "Y" }) : uwk1;
+  expect(w1).toMatch(/scope-violation/);
+  const uwk2 = def.codes["UWK0002"]!.why;
+  const w2 = typeof uwk2 === "function" ? uwk2({}) : uwk2;
+  expect(w2).toMatch(/illegal-stride/);
+  const uwk4 = def.codes["UWK0004"]!.why;
+  const w4 = typeof uwk4 === "function" ? uwk4({}) : uwk4;
+  expect(w4).toMatch(/memory-budget/);
+  const uwk11 = def.codes["UWK0011"]!.why;
+  const w11 = typeof uwk11 === "function" ? uwk11({ src: "Z" }) : uwk11;
+  expect(w11).toMatch(/constant-truthy-emitif/);
+  const uwk15 = def.codes["UWK0015"]!.why;
+  const w15 = typeof uwk15 === "function" ? uwk15({ src: "P", slot: "Q" }) : uwk15;
+  expect(w15).toMatch(/unused-named-slot/);
+});
+
+test("devtools.setup posts the build-issues summary message", () => {
+  const plugin = unworklet();
+  const setup = (plugin as unknown as { devtools?: { setup: (ctx: unknown) => void } }).devtools
+    ?.setup;
+  const ctx = makeDevToolsCtxStub();
+  setup!(ctx);
+  expect(ctx.messages.__addCalls).toHaveLength(1);
+  const msg = ctx.messages.__addCalls[0] as {
+    level: string;
+    message: string;
+    notify?: boolean;
+  };
+  expect(msg.level).toBe("error");
+  expect(msg.message).toMatch(/unworklet/);
+  expect(msg.notify).toBe(true);
+});
+
+test("resolveDevtoolsUiRoot falls back to the first candidate path when nothing exists on disk", async () => {
+  // L179: `candidates.find(existsSync) ?? candidates[0]` — when neither
+  // the packed `dist/ui` nor the source `devtools-ui/dist` exists (= a
+  // bare checkout before the UI sub-project has been built), the
+  // resolver must still surface a deterministic path so downstream
+  // `hostStatic(...)` doesn't crash on undefined. ESM module namespaces
+  // are not spyable, so we doMock `node:fs` and re-import the plugin
+  // inside the doMock scope so its `existsSync` reference is the mock。
+  // Reset before doMock so the next import of `./index.ts` re-evaluates
+  // the module against the patched `node:fs` namespace。
+  vi.resetModules();
+  vi.doMock("node:fs", async () => {
+    const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+    return {
+      ...actual,
+      existsSync: () => false,
+    };
+  });
+  try {
+    const { default: unworkletMocked } = (await import("./index.ts")) as {
+      default: typeof unworklet;
+    };
+    const plugin = unworkletMocked();
+    const setup = (plugin as unknown as { devtools?: { setup: (ctx: unknown) => void } }).devtools
+      ?.setup;
+    const ctx = makeDevToolsCtxStub();
+    setup!(ctx);
+    expect(ctx.views.__hostStaticCalls).toHaveLength(1);
+    const root = ctx.views.__hostStaticCalls[0]!.root;
+    // The fallback path is the first candidate (= `<plugin-dir>/ui`)。
+    expect(root.endsWith("/ui")).toBe(true);
+  } finally {
+    vi.doUnmock("node:fs");
+    vi.resetModules();
+  }
+});
+
+test("devtools.setup registers a single dock entry at the `/__unworklet/` static SPA root", () => {
+  const plugin = unworklet();
+  const setup = (plugin as unknown as { devtools?: { setup: (ctx: unknown) => void } }).devtools
+    ?.setup;
+  const ctx = makeDevToolsCtxStub();
+  setup!(ctx);
+  expect(ctx.docks.__registerCalls).toHaveLength(1);
+  const dock = ctx.docks.__registerCalls[0] as {
+    id: string;
+    title: string;
+    type: string;
+    url: string;
+  };
+  expect(dock).toMatchObject({
+    id: "unworklet",
+    title: "unworklet",
+    type: "iframe",
+    url: "/__unworklet/",
+  });
+  expect(ctx.views.__hostStaticCalls).toHaveLength(1);
+  expect(ctx.views.__hostStaticCalls[0]!.urlBase).toBe("/__unworklet/");
 });

@@ -554,9 +554,12 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
           // a fresh compile (last-resort = strict newer-than-cache request)。
           let bytes: Uint8Array | undefined = findSnapshot(sourcePath, hash)?.wasm;
           if (!bytes) {
-            const sourceModule = viteDevServer
-              ? await ssrLoadSource(viteDevServer, sourcePath)
-              : await importFresh(sourcePath);
+            // The middleware was registered via `configureServer`, which
+            // captured `viteDevServer` in the same call。 By the time a
+            // request reaches here it is guaranteed non-null = assert
+            // rather than carry a dead `importFresh` fallback branch
+            // that the dev path can never reach。
+            const sourceModule = await ssrLoadSource(viteDevServer!, sourcePath);
             const { exportName, processor } = pickCompiledProcessor(sourceModule, sourcePath);
             const result = await compile(processor);
             const freshHash = computeRevisionHash(result.wasm);
