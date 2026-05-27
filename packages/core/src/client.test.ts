@@ -13,7 +13,7 @@
  *   配 送 す る path を 持 つ
  */
 
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 
 import { createNode, inspect } from "./client.ts";
 import type { CompiledProcessor } from "./types.ts";
@@ -26,20 +26,32 @@ type ConstructorRecord = {
   options: AudioWorkletNodeOptions;
 };
 
+type PortListener = (e: { data: unknown }) => void;
+type NodeListener = (e: Event) => void;
+
 type MockAudioWorkletNode = {
   port: {
     postMessage: (msg: unknown) => void;
-    onmessage: ((e: { data: unknown }) => void) | null;
-    addEventListener: (kind: string, fn: (e: { data: unknown }) => void) => void;
-    removeEventListener: (kind: string, fn: (e: { data: unknown }) => void) => void;
+    onmessage: PortListener | null;
+    addEventListener: (kind: string, fn: PortListener) => void;
+    removeEventListener: (kind: string, fn: PortListener) => void;
     start: () => void;
     close: () => void;
-    __listeners: Array<(e: { data: unknown }) => void>;
+    __listeners: PortListener[];
   };
+  addEventListener: (kind: string, fn: NodeListener) => void;
+  removeEventListener: (kind: string, fn: NodeListener) => void;
   parameters: { get: (name: string) => MockAudioParam | undefined };
   connect: (target: unknown, output?: number, input?: number) => unknown;
   disconnect: (...args: unknown[]) => void;
   __constructorRecord: ConstructorRecord;
+  __processorErrorListeners: NodeListener[];
+};
+
+type MockHarnessOptions = {
+  fetchOk?: boolean;
+  fetchStatus?: number;
+  fetchStatusText?: string;
 };
 
 type MockHarness = {
@@ -49,10 +61,16 @@ type MockHarness = {
   constructed: ConstructorRecord[];
   lastNode: MockAudioWorkletNode | null;
   fireReady: () => void;
+  fireInitError: (message: string) => void;
+  fireProcessorError: (message?: string) => void;
   cleanup: () => void;
 };
 
-const installMockGlobals = (wasmBytes: Uint8Array): MockHarness => {
+const installMockGlobals = (wasmBytes: Uint8Array, opts: MockHarnessOptions = {}): MockHarness => {
+  const fetchOk = opts.fetchOk ?? true;
+  const fetchStatus = opts.fetchStatus ?? 200;
+  const fetchStatusText = opts.fetchStatusText ?? "OK";
+
   const addModuleCalls: string[] = [];
   const fetchCalls: string[] = [];
   const constructed: ConstructorRecord[] = [];
@@ -71,6 +89,9 @@ const installMockGlobals = (wasmBytes: Uint8Array): MockHarness => {
   globalThis.fetch = ((url: string) => {
     fetchCalls.push(url);
     return Promise.resolve({
+      ok: fetchOk,
+      status: fetchStatus,
+      statusText: fetchStatusText,
       arrayBuffer: (): Promise<ArrayBuffer> =>
         Promise.resolve(
           wasmBytes.buffer.slice(
@@ -85,23 +106,25 @@ const installMockGlobals = (wasmBytes: Uint8Array): MockHarness => {
     port: MockAudioWorkletNode["port"];
     parameters: MockAudioWorkletNode["parameters"];
     __constructorRecord: ConstructorRecord;
+    __processorErrorListeners: NodeListener[];
     constructor(ctx: unknown, name: string, opts: AudioWorkletNodeOptions) {
       this.__constructorRecord = { context: ctx, name, options: opts };
       constructed.push(this.__constructorRecord);
-      const listeners: Array<(e: { data: unknown }) => void> = [];
+      const portListeners: PortListener[] = [];
+      this.__processorErrorListeners = [];
       this.port = {
         postMessage: (_msg: unknown) => {},
         onmessage: null,
         addEventListener: (_kind: string, fn) => {
-          listeners.push(fn);
+          portListeners.push(fn);
         },
         removeEventListener: (_kind: string, fn) => {
-          const idx = listeners.indexOf(fn);
-          if (idx >= 0) listeners.splice(idx, 1);
+          const idx = portListeners.indexOf(fn);
+          if (idx >= 0) portListeners.splice(idx, 1);
         },
         start: () => {},
         close: () => {},
-        __listeners: listeners,
+        __listeners: portListeners,
       };
       this.parameters = {
         get: (paramName: string): MockAudioParam | undefined => {
@@ -110,6 +133,14 @@ const installMockGlobals = (wasmBytes: Uint8Array): MockHarness => {
         },
       };
       lastNode = this as unknown as MockAudioWorkletNode;
+    }
+    addEventListener(kind: string, fn: NodeListener): void {
+      if (kind === "processorerror") this.__processorErrorListeners.push(fn);
+    }
+    removeEventListener(kind: string, fn: NodeListener): void {
+      if (kind !== "processorerror") return;
+      const idx = this.__processorErrorListeners.indexOf(fn);
+      if (idx >= 0) this.__processorErrorListeners.splice(idx, 1);
     }
     connect(_target: unknown, _output?: number, _input?: number): unknown {
       return _target;
@@ -130,6 +161,19 @@ const installMockGlobals = (wasmBytes: Uint8Array): MockHarness => {
       if (!lastNode) throw new Error("no AudioWorkletNode constructed yet");
       for (const listener of lastNode.port.__listeners) {
         listener({ data: { kind: "ready" } });
+      }
+    },
+    fireInitError(message: string) {
+      if (!lastNode) throw new Error("no AudioWorkletNode constructed yet");
+      for (const listener of lastNode.port.__listeners) {
+        listener({ data: { kind: "init-error", message } });
+      }
+    },
+    fireProcessorError(message?: string) {
+      if (!lastNode) throw new Error("no AudioWorkletNode constructed yet");
+      const event = { message } as unknown as Event;
+      for (const listener of lastNode.__processorErrorListeners) {
+        listener(event);
       }
     },
     cleanup() {
@@ -419,6 +463,63 @@ test("UnworkletNode.dispose() disconnects the underlying node + closes the port"
     expect(disconnectCalls).toBe(1);
     expect(closeCalls).toBe(1);
   } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode rejects when fetch(wasmUrl) returns a non-ok response", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), {
+    fetchOk: false,
+    fetchStatus: 404,
+    fetchStatusText: "Not Found",
+  });
+  try {
+    await expect(createNode(h.context as never, makeMockProcessor(), undefined)).rejects.toThrow(
+      /404 Not Found/,
+    );
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode rejects with the worklet message when it posts { kind: 'init-error' }", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const promise = createNode(h.context as never, makeMockProcessor(), undefined);
+    await new Promise((r) => setTimeout(r, 0));
+    h.fireInitError("WASM compile failed: invalid magic");
+    await expect(promise).rejects.toThrow(/initialize\(\) failed.*invalid magic/);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode rejects on the `processorerror` event with whatever payload is available", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const promise = createNode(h.context as never, makeMockProcessor(), undefined);
+    await new Promise((r) => setTimeout(r, 0));
+    h.fireProcessorError("constructor blew up");
+    await expect(promise).rejects.toThrow(/processorerror.*constructor blew up/);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode rejects with a timeout error when no ready / init-error / processorerror ever fires", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  vi.useFakeTimers();
+  try {
+    const promise = createNode(h.context as never, makeMockProcessor(), undefined);
+    // Attach the rejection assertion synchronously (= before any timer
+    // advance) to avoid `PromiseRejectionHandledWarning` from the timeout
+    // firing before the .rejects handler observes it。
+    const assertion = expect(promise).rejects.toThrow(/timed out after 10000ms/);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await assertion;
+  } finally {
+    vi.useRealTimers();
     h.cleanup();
   }
 });

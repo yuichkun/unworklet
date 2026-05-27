@@ -48,16 +48,15 @@ type ProcessorOptionsBag = {
   processorOptions?: { wasm?: Uint8Array };
 };
 
-const readState = (self: unknown): WorkletState => {
-  const s = (self as SelfWithState)[STATE_KEY];
-  if (!s) {
-    throw new Error(
-      "unworklet: `process(self, ...)` called before `initialize(self, opts)` — " +
-        "AudioWorkletProcessor subclasses must call `def.worklet.initialize(this, opts)` in their constructor",
-    );
+const fillOutputsSilent = (outputs: Float32Array[][]): void => {
+  for (const port of outputs) {
+    for (const channel of port) {
+      channel.fill(0);
+    }
   }
-  return s;
 };
+
+const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 export function makeWorkletNamespace(graph: CapturedGraph): WorkletNamespace {
   const lay = layout(graph);
@@ -82,28 +81,41 @@ export function makeWorkletNamespace(graph: CapturedGraph): WorkletNamespace {
   const initialize: WorkletNamespace["initialize"] = (...args) => {
     const self = args[0] as SelfWithState;
     const opts = (args[1] ?? {}) as ProcessorOptionsBag;
-    const wasm = opts.processorOptions?.wasm;
-    if (!wasm) {
-      throw new Error(
-        "unworklet: `initialize(self, opts)` requires `opts.processorOptions.wasm` " +
-          "(= the compiled WASM bytes handed off from main thread via AudioWorkletNodeOptions)",
-      );
+    try {
+      const wasm = opts.processorOptions?.wasm;
+      if (!wasm) {
+        throw new Error(
+          "unworklet: `initialize(self, opts)` requires `opts.processorOptions.wasm` " +
+            "(= the compiled WASM bytes handed off from main thread via AudioWorkletNodeOptions)",
+        );
+      }
+      const wasmModule = new WebAssembly.Module(wasm.buffer as ArrayBuffer);
+      const instance = new WebAssembly.Instance(wasmModule);
+      const memory = instance.exports["memory"] as WebAssembly.Memory;
+      const procFn = instance.exports["process"] as () => void;
+
+      (self as SelfWithState)[STATE_KEY] = {
+        memory,
+        process: procFn,
+        layout: lay,
+        audioInputs,
+        audioOutputs,
+        params,
+      };
+
+      self.port.postMessage({ kind: "ready" });
+    } catch (err) {
+      // Surface the failure via a structured handshake message so
+      // `createNode()` on main can reject with context (= debug clarity
+      // beyond `processorerror`, which carries no payload per MDN)。
+      // Do NOT rethrow: the audio thread must not propagate exceptions
+      // (= `00-foundations.md` §5.1 invariant 3)、 subsequent `process()`
+      // calls will see no state and emit silence。
+      self.port.postMessage({
+        kind: "init-error",
+        message: errorMessage(err),
+      });
     }
-    const wasmModule = new WebAssembly.Module(wasm.buffer as ArrayBuffer);
-    const instance = new WebAssembly.Instance(wasmModule);
-    const memory = instance.exports["memory"] as WebAssembly.Memory;
-    const procFn = instance.exports["process"] as () => void;
-
-    (self as SelfWithState)[STATE_KEY] = {
-      memory,
-      process: procFn,
-      layout: lay,
-      audioInputs,
-      audioOutputs,
-      params,
-    };
-
-    self.port.postMessage({ kind: "ready" });
   };
 
   const process: WorkletNamespace["process"] = (...args): boolean => {
@@ -112,18 +124,22 @@ export function makeWorkletNamespace(graph: CapturedGraph): WorkletNamespace {
     const outputs = args[2] as Float32Array[][];
     const parameters = args[3] as Record<string, Float32Array>;
 
-    const state = readState(self);
+    const state = (self as SelfWithState)[STATE_KEY];
+    if (!state) {
+      // Initialization failed (= init-error was posted) or never ran.
+      // Emit silence on every block to honor `00-foundations.md` §5.1
+      // invariant 3 (= no throw on audio thread)、 main side already
+      // received the failure signal during the createNode handshake。
+      fillOutputsSilent(outputs);
+      return true;
+    }
     const memory = state.memory;
     const lay = state.layout;
 
     // 04-worklet-runtime.md §3 / Q75 — block-length runtime guard.
     const firstOut = outputs[0]?.[0];
     if (firstOut && firstOut.length !== SAMPLES_PER_BLOCK) {
-      for (const port of outputs) {
-        for (const channel of port) {
-          channel.fill(0);
-        }
-      }
+      fillOutputsSilent(outputs);
       self.port.postMessage({
         kind: "error",
         code: "block-length-mismatch",

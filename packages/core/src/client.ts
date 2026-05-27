@@ -43,6 +43,11 @@ const addModuleOnce = async (
 
 const fetchWasm = async (url: string): Promise<Uint8Array> => {
   const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(
+      `unworklet: fetch(${JSON.stringify(url)}) for WASM bytes failed: ${response.status} ${response.statusText}`,
+    );
+  }
   return new Uint8Array(await response.arrayBuffer());
 };
 
@@ -107,16 +112,57 @@ const buildParams = (
   return result;
 };
 
+/**
+ * Default timeout (ms) for the `createNode` ready handshake。 Triggers a
+ * reject if the worklet never posts `{ kind: "ready" }` or `{ kind:
+ * "init-error" }` — last-resort safety net for cases the structured paths
+ * miss (= bug in the worklet template, message dropped, etc.)。
+ */
+const READY_TIMEOUT_MS = 10_000;
+
 const awaitReady = (node: AudioWorkletNode): Promise<void> =>
-  new Promise<void>((resolve) => {
+  new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const cleanup = (): void => {
+      settled = true;
+      node.port.removeEventListener("message", onMessage);
+      node.removeEventListener("processorerror", onProcessorError);
+      clearTimeout(timer);
+    };
     const onMessage = (event: MessageEvent): void => {
-      const data = event.data as { kind?: unknown } | null | undefined;
-      if (typeof data === "object" && data !== null && data.kind === "ready") {
-        node.port.removeEventListener("message", onMessage);
+      if (settled) return;
+      const data = event.data as { kind?: unknown; message?: unknown } | null | undefined;
+      if (typeof data !== "object" || data === null) return;
+      if (data.kind === "ready") {
+        cleanup();
         resolve();
+        return;
+      }
+      if (data.kind === "init-error") {
+        cleanup();
+        const message = typeof data.message === "string" ? data.message : "(no message)";
+        reject(new Error(`unworklet: AudioWorkletProcessor initialize() failed: ${message}`));
       }
     };
+    const onProcessorError = (event: Event): void => {
+      if (settled) return;
+      cleanup();
+      // `processorerror` carries no payload per MDN — surface what we can。
+      const errEvent = event as ErrorEvent;
+      const message = errEvent.message || "AudioWorkletProcessor constructor threw";
+      reject(new Error(`unworklet: processorerror during init — ${message}`));
+    };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      cleanup();
+      reject(
+        new Error(
+          `unworklet: createNode() timed out after ${READY_TIMEOUT_MS}ms waiting for the worklet ready ack`,
+        ),
+      );
+    }, READY_TIMEOUT_MS);
     node.port.addEventListener("message", onMessage);
+    node.addEventListener("processorerror", onProcessorError);
     node.port.start();
   });
 
