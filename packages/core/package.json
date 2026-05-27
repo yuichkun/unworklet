@@ -18,6 +18,11 @@
       "development": "./src/simd.ts",
       "import": "./dist/simd.mjs"
     },
+    "./worklet": {
+      "types": "./src/worklet-entry.ts",
+      "development": "./src/worklet-entry.ts",
+      "import": "./dist/worklet-entry.mjs"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {

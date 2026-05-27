@@ -363,9 +363,13 @@ test("load on a WORKLET_ENTRY_PREFIX id returns the worklet runtime template", a
   const js = result as string;
   expect(js).toContain("extends AudioWorkletProcessor");
   expect(js).toContain("registerProcessor");
-  expect(js).toContain("worklet.initialize");
-  expect(js).toContain("worklet.process");
-  expect(js).toContain("worklet.parameterDescriptors");
+  expect(js).toContain("__unworkletNs.initialize");
+  expect(js).toContain("__unworkletNs.process");
+  expect(js).toContain("__unworkletNs.parameterDescriptors");
+  // Critical contract: the worklet entry must not re-import the authoring
+  // source — `makeWorkletNamespaceFromMeta` is the only bootstrap path。
+  expect(js).toContain('from "@unworklet/core/worklet"');
+  expect(js).not.toContain(FIXTURE_GAIN_PATH);
 });
 
 test("resolveId passes through WORKLET_ENTRY_PREFIX ids without modification", () => {

@@ -88,6 +88,12 @@ export type { CreateSubgraphOptions, SubgraphDecl } from "./processor.ts";
 // Compile invocation.
 export { compile } from "./compile/index.ts";
 
+// Worklet meta extraction (= used by vite-plugin to inline runtime-only
+// metadata into the AudioWorkletGlobalScope entry, avoiding any
+// re-evaluation of the authoring source in the worklet realm)。
+export { extractWorkletMeta } from "./worklet.ts";
+export type { WorkletMeta } from "./worklet.ts";
+
 // Main-thread client surface.
 export { createNode, inspect } from "./client.ts";
 

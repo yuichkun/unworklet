@@ -3,41 +3,59 @@
  * `<processor>.worklet.js` and is loaded via `audioWorklet.addModule(url)`
  * in the AudioWorkletGlobalScope realm)。
  *
- * `01-dsl.md` §11 + Q80 + `04-worklet-runtime.md` §2 で 規 定 さ れ た 通 り、
- * template は user source を 再 import (= worklet realm 内 で 新 規 closure を
- * 生 成) し、 `class extends AudioWorkletProcessor` の 中 で `def.worklet` の 3
- * entry (= `initialize` / `process` / `parameterDescriptors`) を 共 通 基 盤 と
- * し て 呼 び 出 す。 関 数 本 体 自 体 は 一 切 stringify せ ず、 import 経 由
- * で 取 り 出 す。
+ * Authoritative shape (= `01-dsl.md` §11 + Q80 + `04-worklet-runtime.md` §2):
+ * the worklet entry exposes a `class extends AudioWorkletProcessor` that
+ * wires its 3 entry points (= `initialize` / `process` /
+ * `parameterDescriptors`) onto an instance built from compile-time
+ * **metadata only**。 The template MUST NOT re-import the authoring source
+ * inside `AudioWorkletGlobalScope` — that would re-evaluate
+ * `defineProcessor(...)` and any author top-level side effects in the
+ * worklet realm, breaking the spec's audio-thread safety guarantees
+ * (`00-foundations.md` §5.1) and forcing every `?worklet` consumer to
+ * keep their processor source worklet-safe by hand。
  *
- * Live coding path (= bundler 不 在) で も 同 一 shape の 文 字 列 を runtime
- * 側 で 組 み 立 て て Blob URL に 変 換 す る = template 自 体 は bundler /
- * runtime の 両 path で 共 通 化 で きる helper。
+ * Instead the template inlines a JSON metadata blob (= layout + decl list)
+ * computed once at build / dev time from `compile(processor).graph`, and
+ * boots the runtime via `@unworklet/core/worklet`'s
+ * `makeWorkletNamespaceFromMeta(meta)` — a thin entry that pulls in only
+ * the runtime helpers (no `binaryen`, no `defineProcessor`, no graph
+ * capture machinery)。
  */
 
+import type { WorkletMeta } from "@unworklet/core";
+
 export type EmitWorkletTemplateOptions = {
-  /** Absolute path to the user's processor source file (= ES module import target). */
-  userSourcePath: string;
-  /** Name of the `defineProcessor(...)` value exported from the user source. */
-  processorExportName: string;
   /** Identifier passed to `registerProcessor(...)` (= main-side `processorName`). */
   processorName: string;
+  /**
+   * Serializable metadata extracted from the processor's captured graph at
+   * build / dev time。 Inlined into the emitted worklet entry as JSON so
+   * the worklet chunk depends only on compile outputs。
+   */
+  meta: WorkletMeta;
 };
 
 export function emitWorkletTemplate(options: EmitWorkletTemplateOptions): string {
-  const { userSourcePath, processorExportName, processorName } = options;
-  return `import { ${processorExportName} as __unworkletProcessor } from ${JSON.stringify(userSourcePath)};
+  const { processorName, meta } = options;
+  // JSON.stringify on `WorkletMeta` is safe — every field is a plain
+  // serializable structure (= `Layout` is a record of offsets, decl arrays
+  // hold primitive props per `ast.ts`)。 No functions, no symbols。
+  const metaLiteral = JSON.stringify(meta);
+  return `import { makeWorkletNamespaceFromMeta } from "@unworklet/core/worklet";
+
+const __unworkletMeta = ${metaLiteral};
+const __unworkletNs = makeWorkletNamespaceFromMeta(__unworkletMeta);
 
 class UnworkletProcessor extends AudioWorkletProcessor {
   static get parameterDescriptors() {
-    return __unworkletProcessor.worklet.parameterDescriptors;
+    return __unworkletNs.parameterDescriptors;
   }
   constructor(opts) {
     super();
-    __unworkletProcessor.worklet.initialize(this, opts);
+    __unworkletNs.initialize(this, opts);
   }
   process(inputs, outputs, parameters) {
-    return __unworkletProcessor.worklet.process(this, inputs, outputs, parameters);
+    return __unworkletNs.process(this, inputs, outputs, parameters);
   }
 }
 

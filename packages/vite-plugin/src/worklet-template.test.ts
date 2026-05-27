@@ -1,89 +1,103 @@
 /**
- * Behavioral tests for `emitWorkletTemplate(...)` — the JS source emitter that
- * vite-plugin uses to construct the worklet runtime entry (= the file loaded
- * via `audioWorklet.addModule(url)` in the worklet realm)。
+ * Behavioral tests for `emitWorkletTemplate(...)` — the JS source emitter
+ * that vite-plugin uses to construct the worklet runtime entry (= the file
+ * loaded via `audioWorklet.addModule(url)` in the worklet realm)。
  *
- * `01-dsl.md` §11 + Q80 で `def.worklet` namespace を 共通 基盤 と し て
- * 経由 する 規約。 template の 中身 = user source の 再 import + class extends
- * AudioWorkletProcessor + registerProcessor の 小さな wrapper。 関数 本体 は
- * import を 経由 し て worklet realm 内 で 新規 生成 さ れる (= main realm の
- * closure を 移送 する 経路 は ナ シ)。
+ * Contract: the template embeds inline metadata + boots through
+ * `@unworklet/core/worklet`'s `makeWorkletNamespaceFromMeta(...)`。 It MUST
+ * NOT re-import the authoring processor source from the worklet realm
+ * (= no `defineProcessor` re-evaluation on the audio thread,
+ * `00-foundations.md` §5.1 + 04-worklet-runtime §2)。
  */
 
 import { expect, test } from "vite-plus/test";
 
 import { emitWorkletTemplate } from "./worklet-template.ts";
 
-test("emits a JS module that imports the user source by absolute path", () => {
+const META_FIXTURE = {
+  layout: {
+    regions: {
+      ioScratch: {
+        inputs: { main: 0 },
+        outputs: { main: 1024 },
+        params: { gain: 2048 },
+      },
+    },
+  },
+  audioInputs: [{ kind: "audioInput", name: "main", channels: 2 }],
+  audioOutputs: [{ kind: "audioOutput", name: "main", channels: 2 }],
+  params: [
+    {
+      kind: "param",
+      name: "gain",
+      default: 1,
+      min: 0,
+      max: 4,
+      automationRate: "a-rate",
+    },
+  ],
+} as unknown as Parameters<typeof emitWorkletTemplate>[0]["meta"];
+
+test("emits a JS module that imports only from `@unworklet/core/worklet` (no authoring source)", () => {
   const out = emitWorkletTemplate({
-    userSourcePath: "/abs/path/to/x.processor.ts",
-    processorExportName: "stereoGain",
-    processorName: "stereoGain",
+    processorName: "stereoGain__abcd1234",
+    meta: META_FIXTURE,
   });
-  expect(out).toContain('"/abs/path/to/x.processor.ts"');
-  expect(out).toContain("import");
+  expect(out).toContain('from "@unworklet/core/worklet"');
+  expect(out).toContain("makeWorkletNamespaceFromMeta");
+  // The processor source must NOT be re-imported in the worklet realm。
+  expect(out).not.toContain("/abs/");
+  expect(out).not.toContain(".processor.ts");
+  expect(out).not.toContain("defineProcessor");
 });
 
-test("imports the user's processor under the declared export name", () => {
+test("inlines the WorkletMeta as a JSON literal next to the namespace bootstrap", () => {
   const out = emitWorkletTemplate({
-    userSourcePath: "/abs/foo.ts",
-    processorExportName: "myProcessor",
-    processorName: "myProcessor",
+    processorName: "stereoGain__abcd1234",
+    meta: META_FIXTURE,
   });
-  expect(out).toContain("myProcessor");
+  // The metadata appears in JSON form, not as a function call。
+  const inlined = JSON.stringify(META_FIXTURE);
+  expect(out).toContain(inlined);
+  expect(out).toContain("makeWorkletNamespaceFromMeta(__unworkletMeta)");
 });
 
-test("emits a class extending AudioWorkletProcessor + registerProcessor call", () => {
+test("emits a class extending AudioWorkletProcessor + registerProcessor call under the requested name", () => {
   const out = emitWorkletTemplate({
-    userSourcePath: "/abs/foo.ts",
-    processorExportName: "stereoGain",
-    processorName: "stereoGain",
+    processorName: "stereoGain__abcd1234",
+    meta: META_FIXTURE,
   });
   expect(out).toContain("extends AudioWorkletProcessor");
   expect(out).toContain("registerProcessor");
-  expect(out).toContain('"stereoGain"');
+  expect(out).toContain('"stereoGain__abcd1234"');
 });
 
-test("wires class methods to the worklet namespace 3 entries", () => {
+test("wires class methods to the namespace's 3 entries", () => {
   const out = emitWorkletTemplate({
-    userSourcePath: "/abs/foo.ts",
-    processorExportName: "stereoGain",
-    processorName: "stereoGain",
+    processorName: "stereoGain__abcd1234",
+    meta: META_FIXTURE,
   });
-  expect(out).toContain("worklet.parameterDescriptors");
-  expect(out).toContain("worklet.initialize");
-  expect(out).toContain("worklet.process");
+  expect(out).toContain("__unworkletNs.parameterDescriptors");
+  expect(out).toContain("__unworkletNs.initialize");
+  expect(out).toContain("__unworkletNs.process");
 });
 
-test("the registered processor name can differ from the export identifier", () => {
+test("JSON-escapes special characters in the processor name", () => {
   const out = emitWorkletTemplate({
-    userSourcePath: "/abs/foo.ts",
-    processorExportName: "stereoGain",
-    processorName: "unworklet:stereoGain__abc",
-  });
-  expect(out).toContain('"unworklet:stereoGain__abc"');
-});
-
-test("JSON-escapes special characters in the source path and processor name", () => {
-  const out = emitWorkletTemplate({
-    userSourcePath: '/abs/with "quote".ts',
-    processorExportName: "x",
     processorName: 'name "with quote"',
+    meta: META_FIXTURE,
   });
-  expect(out).toContain('"/abs/with \\"quote\\".ts"');
   expect(out).toContain('"name \\"with quote\\""');
 });
 
 test("returns deterministic output for the same input", () => {
   const a = emitWorkletTemplate({
-    userSourcePath: "/abs/foo.ts",
-    processorExportName: "x",
     processorName: "x",
+    meta: META_FIXTURE,
   });
   const b = emitWorkletTemplate({
-    userSourcePath: "/abs/foo.ts",
-    processorExportName: "x",
     processorName: "x",
+    meta: META_FIXTURE,
   });
   expect(a).toBe(b);
 });

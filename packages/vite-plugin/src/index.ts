@@ -21,7 +21,7 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { compile } from "@unworklet/core";
+import { compile, extractWorkletMeta } from "@unworklet/core";
 import type { CompiledProcessor } from "@unworklet/core";
 import type { Plugin } from "vite-plus";
 
@@ -313,24 +313,6 @@ const assetBaseName = (sourcePath: string): string => {
   return base.endsWith(".processor") ? base.slice(0, -".processor".length) : base;
 };
 
-/**
- * Convert an absolute source file path to the URL that vite's dev server
- * serves it at:
- * - Inside project root → `${base}<relative-from-root>` (= e.g. `/src/x.ts`).
- * - Outside project root → `/@fs<abs-path>` (= vite's filesystem-access route).
- *
- * Used by the dev-mode worklet entry template so that
- * `AudioWorkletGlobalScope` can fetch the user processor source via the same
- * dev server that's serving the main page.
- */
-const computeServedUrl = (absPath: string, projectRoot: string, base: string): string => {
-  const rel = path.relative(projectRoot, absPath);
-  if (rel.startsWith("..") || path.isAbsolute(rel)) {
-    return `/@fs${absPath}`;
-  }
-  return `${base}${rel}`.replace(/\\/g, "/");
-};
-
 // ─────────────────────────────────────────────────────────────────────────
 // Phase 6 末尾 5-F DevTools — 1 dock entry に 集 約 し て Vue SPA を host
 // ─────────────────────────────────────────────────────────────────────────
@@ -434,7 +416,6 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
   const emitAnalysisArtifacts = options?.emitAnalysisArtifacts ?? true;
   const uiRoot = resolveDevtoolsUiRoot();
   let isServe = false;
-  let projectRoot = "";
   let basePath = "/";
   // Source paths the plugin has accepted via `?worklet` resolveId. Only these
   // are eligible for dev-mode evaluation + `compile(...)`. Without this gate,
@@ -453,7 +434,6 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
     enforce: "pre",
     configResolved(config) {
       isServe = config.command === "serve";
-      projectRoot = config.root;
       basePath = config.base.endsWith("/") ? config.base : `${config.base}/`;
     },
     configureServer(server) {
@@ -505,11 +485,17 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
           }
 
           // part === "worklet.js" — the only other allowed value (= validParts)。
-          const userServedUrl = computeServedUrl(sourcePath, projectRoot, basePath);
+          // Build the runtime-only worklet artifact: the template embeds
+          // inline metadata + boots through `@unworklet/core/worklet`, so
+          // it never re-imports the authoring source in the worklet realm
+          // (= no `defineProcessor` re-evaluation, no author top-level side
+          // effects on the audio thread)。
+          const meta = extractWorkletMeta(
+            processor.graph as unknown as Parameters<typeof extractWorkletMeta>[0],
+          );
           const template = emitWorkletTemplate({
-            userSourcePath: userServedUrl,
-            processorExportName: exportName,
             processorName: computeProcessorName(exportName, sourcePath),
+            meta,
           });
           res.setHeader("Content-Type", "application/javascript");
           res.setHeader("Cache-Control", "no-cache");
@@ -537,11 +523,13 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
         // Build mode only — WORKLET_ENTRY_PREFIX is emitted by rolldown's
         // `emitFile({ type: "chunk", id })` path so we never see it in dev。
         const sourceModule = await importFresh(sourcePath);
-        const { exportName } = pickCompiledProcessor(sourceModule, sourcePath);
+        const { exportName, processor } = pickCompiledProcessor(sourceModule, sourcePath);
+        const meta = extractWorkletMeta(
+          processor.graph as unknown as Parameters<typeof extractWorkletMeta>[0],
+        );
         return emitWorkletTemplate({
-          userSourcePath: sourcePath,
-          processorExportName: exportName,
           processorName: computeProcessorName(exportName, sourcePath),
+          meta,
         });
       }
 

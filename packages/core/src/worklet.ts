@@ -21,9 +21,34 @@
  */
 
 import type { AudioPortDecl, CapturedGraph, ParamDecl } from "./compile/ast.ts";
-import { layout } from "./compile/layout.ts";
+import { layout, type Layout } from "./compile/layout.ts";
 import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
 import type { WorkletNamespace } from "./types.ts";
+
+/**
+ * Metadata bundle that fully describes a processor's worklet-side runtime
+ * shape — everything needed to build a `WorkletNamespace` without
+ * re-evaluating the authoring source。 The vite-plugin computes this at
+ * build / dev time from `compile(processor)` and inlines it (as JSON) into
+ * the emitted worklet entry, so `audioWorklet.addModule()` only ever loads
+ * a runtime-only artifact (= no `?worklet` virtual ever re-runs `defineProcessor`
+ * inside `AudioWorkletGlobalScope`)。
+ */
+export type WorkletMeta = {
+  readonly layout: Layout;
+  readonly audioInputs: readonly AudioPortDecl[];
+  readonly audioOutputs: readonly AudioPortDecl[];
+  readonly params: readonly ParamDecl[];
+};
+
+export function extractWorkletMeta(graph: CapturedGraph): WorkletMeta {
+  return {
+    layout: layout(graph),
+    audioInputs: graph.declarations.filter((d): d is AudioPortDecl => d.kind === "audioInput"),
+    audioOutputs: graph.declarations.filter((d): d is AudioPortDecl => d.kind === "audioOutput"),
+    params: graph.declarations.filter((d): d is ParamDecl => d.kind === "param"),
+  };
+}
 
 const BYTES_PER_F32 = 4;
 const CHANNEL_STRIDE_BYTES = SAMPLES_PER_BLOCK * BYTES_PER_F32;
@@ -99,13 +124,14 @@ const fillOutputsSilent = (outputs: Float32Array[][]): void => {
 const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 export function makeWorkletNamespace(graph: CapturedGraph): WorkletNamespace {
-  const lay = layout(graph);
+  return makeWorkletNamespaceFromMeta(extractWorkletMeta(graph));
+}
 
-  const audioInputs = graph.declarations.filter((d): d is AudioPortDecl => d.kind === "audioInput");
-  const audioOutputs = graph.declarations.filter(
-    (d): d is AudioPortDecl => d.kind === "audioOutput",
-  );
-  const params = graph.declarations.filter((d): d is ParamDecl => d.kind === "param");
+export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespace {
+  const lay = meta.layout;
+  const audioInputs = meta.audioInputs;
+  const audioOutputs = meta.audioOutputs;
+  const params = meta.params;
 
   const parameterDescriptors = params.map((p) => ({
     name: p.name,
