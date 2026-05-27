@@ -494,7 +494,18 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
     enforce: "pre",
     configResolved(config) {
       isServe = config.command === "serve";
-      basePath = config.base.endsWith("/") ? config.base : `${config.base}/`;
+      // Dev internal URLs (= `/@id/...`, `/__unworklet/...`) must be
+      // request-path absolute so the middleware's `startsWith(...)` match
+      // works。 Vite documents `base` may be `'./'` / `''` (= relative,
+      // for embedded deployment); in that case the dev server still serves
+      // from the absolute origin root, so we fall back to `'/'` for
+      // building internal URLs。 Absolute bases (= `'/'` / `'/sub/'`) are
+      // preserved so sub-path deployments under a dev server also work。
+      if (config.base.startsWith("/")) {
+        basePath = config.base.endsWith("/") ? config.base : `${config.base}/`;
+      } else {
+        basePath = "/";
+      }
     },
     configureServer(server) {
       viteDevServer = server as unknown as ViteDevServerLike;

@@ -399,6 +399,25 @@ test("dev mode: load returns JS that points moduleUrl through Vite's `/@id/` vir
   expect(js).toMatch(/wasmUrl: "[^"]*\/__unworklet\/[^"]*\/[0-9a-f]{8}\/wasm"/);
 });
 
+test("dev mode: relative `base: './'` falls back to absolute `/` for internal dev URLs", async () => {
+  // Codex round-7 finding 3: Vite documents `base` may be `'./'` / `''`
+  // for embedded deployment。 Plugin previously stored config.base verbatim
+  // and the middleware's `startsWith('./__unworklet/')` could never match a
+  // browser's resolved `/__unworklet/...` request。 Normalize to absolute
+  // path for dev internal URLs。
+  const result = await callLoadInServeMode(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`, {
+    root: "/Users/yuichkun/workspace/unworklet/examples/01-stereo-gain",
+    base: "./",
+  });
+  const js = result as string;
+  expect(js).toMatch(/moduleUrl: "\/@id\/__x00__/);
+  expect(js).toMatch(/wasmUrl: "\/__unworklet\//);
+  // Critically the URLs must NOT start with `./` — that would never match
+  // the middleware on a real browser request。
+  expect(js).not.toMatch(/moduleUrl: "\.\/@id\//);
+  expect(js).not.toMatch(/wasmUrl: "\.\/__unworklet\//);
+});
+
 test("dev mode: moduleUrl + wasmUrl carry the SAME revision hash inside a single load call", async () => {
   const result = await callLoadInServeMode(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`, {
     root: "/Users/yuichkun/workspace/unworklet/examples/01-stereo-gain",
