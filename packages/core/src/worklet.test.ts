@@ -386,6 +386,38 @@ test("`initialize` without `processorOptions.module` or `.wasm` posts a structur
   expect(errorMessages[0]!.message).toMatch(/processorOptions\.module/);
 });
 
+test("`process` with no input port connected (= empty inputs[port]) emits silence cleanly", async () => {
+  // Cover the `inputs[portIdx] ?? []` fallback branch in process()。
+  const { wasm } = await compile(monoGain);
+  const self = makeMockSelf();
+  monoGain.worklet.initialize(self, { processorOptions: { wasm } });
+  // Host hands us a length-0 outer array → portInput defaults to []。
+  const inputs: Float32Array[][] = [];
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(7)]];
+  const parameters = { gain: new Float32Array([2]) };
+  monoGain.worklet.process(self, inputs, outputs, parameters);
+  // Silent input × gain = silence (verified independently in another test);
+  // here we just confirm the path executes without throwing。
+  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
+    expect(outputs[0][0]![i]).toBeCloseTo(0);
+  }
+});
+
+test("`process` skips output channels the host did not provide", async () => {
+  // Cover the `if (dest)` false branch in the output marshal loop。
+  const { wasm } = await compile(stereoGain);
+  const self = makeMockSelf();
+  stereoGain.worklet.initialize(self, { processorOptions: { wasm } });
+  const inputs = [
+    [new Float32Array(SAMPLES_PER_BLOCK).fill(1), new Float32Array(SAMPLES_PER_BLOCK).fill(1)],
+  ];
+  // Provide only 1 channel of output where the processor declares 2 — the
+  // missing channel slot is `undefined` and must be skipped without throwing。
+  const outputs: Float32Array[][] = [[new Float32Array(SAMPLES_PER_BLOCK).fill(0)]];
+  const parameters = { gain: new Float32Array([1]) };
+  expect(() => stereoGain.worklet.process(self, inputs, outputs, parameters)).not.toThrow();
+});
+
 test("`initialize` catches arbitrary throws inside the WASM boot path and posts init-error", async () => {
   // Cover the outer catch in `initialize` for non-trivial throws (= e.g.
   // a corrupt module that surfaces during instance construction)。

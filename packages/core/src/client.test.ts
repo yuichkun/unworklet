@@ -989,6 +989,138 @@ test("outputs.<name>.disconnect calls node.disconnect with the right port index"
   }
 });
 
+test("awaitReady: init-error message without a string payload falls back to '(no message)' in the rejection", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const promise = createNode(h.context as never, makeMockProcessor(), undefined);
+    await new Promise((r) => setTimeout(r, 0));
+    // Send init-error with no message field — covers the `typeof data.message
+    // === "string"` false branch in awaitReady's onMessage handler。
+    for (const listener of h.lastNode!.port.__listeners) {
+      listener({ data: { kind: "init-error" } });
+    }
+    await expect(promise).rejects.toThrow(/\(no message\)/);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("onErrorMessage drops non-object / null event.data without dispatching", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    const received: unknown[] = [];
+    node.onError((event) => {
+      received.push(event);
+    });
+    // Cover each early-return branch of onErrorMessage:
+    for (const listener of h.lastNode!.port.__listeners) {
+      listener({ data: null });
+      listener({ data: 42 });
+      listener({ data: "string event" });
+    }
+    expect(received).toEqual([]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("onErrorMessage drops messages whose kind is not 'error'", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    const received: unknown[] = [];
+    node.onError((event) => {
+      received.push(event);
+    });
+    for (const listener of h.lastNode!.port.__listeners) {
+      listener({ data: { kind: "ready" } });
+      listener({ data: { kind: "other-kind", code: "wasm-trap" } });
+    }
+    expect(received).toEqual([]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("onErrorMessage drops error messages with non-string or unknown code", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    const received: unknown[] = [];
+    node.onError((event) => {
+      received.push(event);
+    });
+    for (const listener of h.lastNode!.port.__listeners) {
+      // Non-string code → early return。
+      listener({ data: { kind: "error", code: 42 } });
+      // Unknown code (= future / typo) → early return = guard against the
+      // structured-union contract widening silently。
+      listener({ data: { kind: "error", code: "some-future-code" } });
+    }
+    expect(received).toEqual([]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("UnworkletNode.dispose() is idempotent (= second call is a no-op)", async () => {
+  // Cover the `if (disposed) return` guard。
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    let disconnectCalls = 0;
+    h.lastNode!.disconnect = () => {
+      disconnectCalls++;
+    };
+    node.dispose();
+    node.dispose();
+    // Second dispose() must short-circuit before re-running cleanup。
+    expect(disconnectCalls).toBe(1);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("awaitReady: stray events after settle are early-returned (= no double settle)", async () => {
+  // Cover the `if (settled) return` guards in onMessage / onProcessorError /
+  // timer。 Drive a ready ack first (= settles)、 then fire init-error /
+  // processorerror / advance the timer past timeout = no rejection should
+  // occur because the promise already resolved。
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  vi.useFakeTimers();
+  try {
+    const promise = createNode(h.context as never, makeMockProcessor(), undefined);
+    await vi.advanceTimersByTimeAsync(0);
+    h.fireReady();
+    const node = await promise;
+    expect(node).toBeDefined();
+    // The original awaitReady listeners are already removed by cleanup()
+    // inside awaitReady — driving extra events should hit `settled === true`
+    // returns inside the (already-detached) handlers if they are still
+    // reachable through any closure。 In practice cleanup removes them, so
+    // these calls just verify no throws & no spurious rejection。
+    expect(() => h.fireInitError("late")).not.toThrow();
+    expect(() => h.fireProcessorError("late")).not.toThrow();
+    await vi.advanceTimersByTimeAsync(15_000);
+  } finally {
+    vi.useRealTimers();
+    h.cleanup();
+  }
+});
+
 test("`inspect(blob)` stub throws", () => {
   expect(() => inspect(new Uint8Array(0))).toThrow(/not implemented/);
 });
