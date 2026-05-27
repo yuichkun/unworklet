@@ -512,8 +512,18 @@ export type MidiPortSurface = {
 
 export type UnworkletNode<C> = {
   readonly node: AudioWorkletNode;
-  readonly inputs: Record<string, { connect(target: unknown): void; disconnect(): void }>;
-  readonly outputs: Record<string, { connect(target: unknown): void; disconnect(): void }>;
+  /**
+   * Per-`audioInput` AudioNode destinations。 Users write
+   * `source.connect(node.inputs.main)` and the framework internally routes
+   * to the correct input port index of the underlying `AudioWorkletNode`
+   * (= Q6 + canonical Ex 1 / 2)。 Each handle is an `AudioNode`、 so all of
+   * `AudioNode.connect(...)` / `disconnect(...)` overloads work natively。
+   */
+  readonly inputs: Record<string, AudioNode>;
+  readonly outputs: Record<
+    string,
+    { connect(target: AudioNode | AudioParam): void; disconnect(): void }
+  >;
   readonly params: Record<string, AudioParam>;
   readonly state: Record<string, StateValueProxy<unknown> | BufferValueProxy<unknown>>;
   readonly events: Record<string, EventSubscriber<unknown>>;

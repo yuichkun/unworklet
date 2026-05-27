@@ -43,7 +43,10 @@ const start = async (): Promise<void> => {
   oscL.connect(merger, 0, 0);
   oscR.connect(merger, 0, 1);
 
-  node.inputs.main!.connect(merger);
+  // Spec form (= docs/05-client.md §2 canonical example): the source
+  // connects INTO `node.inputs.<name>` — `.inputs.<name>` is an AudioNode
+  // destination that internally routes to the right worklet input port。
+  merger.connect(node.inputs.main!);
   node.outputs.main!.connect(context.destination);
 
   node.params.gain!.value = parseFloat(gainSlider.value);

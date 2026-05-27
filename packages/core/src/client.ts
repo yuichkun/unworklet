@@ -66,46 +66,58 @@ const fetchWasm = async (url: string): Promise<Uint8Array> => {
   return new Uint8Array(await response.arrayBuffer());
 };
 
-const buildInputs = (
+/**
+ * Build per-`audioInput` AudioNode destinations。 Each port gets a
+ * pass-through `GainNode(gain=1)` pre-wired to the underlying
+ * `AudioWorkletNode` at the correct input port index。 Users write
+ * `source.connect(node.inputs.main)` and Web Audio routes the signal through
+ * the gain proxy onto the right worklet input port — no wrapper / monkey
+ * patching is in the path, just standard `AudioNode.connect(...)`。
+ *
+ * Returned array is index-aligned with `inputs` so `dispose()` can tear
+ * down each gain proxy with one pass。
+ */
+const buildInputProxies = (
+  context: BaseAudioContext,
   node: AudioWorkletNode,
   inputs: readonly AudioPortDescriptor[],
-): Record<string, { connect(source: AudioNode): void; disconnect(): void }> => {
-  const result: Record<string, { connect(source: AudioNode): void; disconnect(): void }> = {};
+): { handles: Record<string, AudioNode>; proxies: GainNode[] } => {
+  const handles: Record<string, AudioNode> = {};
+  const proxies: GainNode[] = [];
   for (let portIdx = 0; portIdx < inputs.length; portIdx++) {
     const desc = inputs[portIdx]!;
-    const idx = portIdx;
-    const tracked = new Set<AudioNode>();
-    result[desc.name] = {
-      connect(source: AudioNode): void {
-        source.connect(node, 0, idx);
-        tracked.add(source);
-      },
-      disconnect(): void {
-        for (const source of tracked) {
-          try {
-            source.disconnect(node, 0, idx);
-          } catch {
-            // Source may have been disposed externally; ignore.
-          }
-        }
-        tracked.clear();
-      },
-    };
+    const gain = context.createGain();
+    gain.gain.value = 1;
+    gain.connect(node, 0, portIdx);
+    handles[desc.name] = gain;
+    proxies.push(gain);
   }
-  return result;
+  return { handles, proxies };
 };
 
 const buildOutputs = (
   node: AudioWorkletNode,
   outputs: readonly AudioPortDescriptor[],
-): Record<string, { connect(target: AudioNode): void; disconnect(): void }> => {
-  const result: Record<string, { connect(target: AudioNode): void; disconnect(): void }> = {};
+): Record<string, { connect(target: AudioNode | AudioParam): void; disconnect(): void }> => {
+  const result: Record<
+    string,
+    { connect(target: AudioNode | AudioParam): void; disconnect(): void }
+  > = {};
   for (let portIdx = 0; portIdx < outputs.length; portIdx++) {
     const desc = outputs[portIdx]!;
     const idx = portIdx;
     result[desc.name] = {
-      connect(target: AudioNode): void {
-        node.connect(target, idx, 0);
+      connect(target: AudioNode | AudioParam): void {
+        // AudioWorkletNode.connect has overloads for AudioNode (= 3-arg)
+        // and AudioParam (= 2-arg) destinations。 AudioNode exposes a
+        // `connect` method, AudioParam does not = duck-type discriminate
+        // rather than `instanceof AudioNode` (avoids relying on globals
+        // for offline / test environments)。
+        if (typeof (target as { connect?: unknown }).connect === "function") {
+          node.connect(target as AudioNode, idx, 0);
+        } else {
+          node.connect(target as AudioParam, idx);
+        }
       },
       disconnect(): void {
         node.disconnect(idx);
@@ -269,9 +281,11 @@ export async function createNode<C>(
   node.port.addEventListener("message", onErrorMessage);
   node.addEventListener("processorerror", onErrorProcessor);
 
+  const { handles: inputHandles, proxies: inputProxies } = buildInputProxies(context, node, inputs);
+
   const unworkletNode: UnworkletNode<C> = {
     node,
-    inputs: buildInputs(node, inputs) as UnworkletNode<C>["inputs"],
+    inputs: inputHandles,
     outputs: buildOutputs(node, outputs) as UnworkletNode<C>["outputs"],
     params,
     state: {},
@@ -285,6 +299,18 @@ export async function createNode<C>(
       node.port.removeEventListener("message", onErrorMessage);
       node.removeEventListener("processorerror", onErrorProcessor);
       errorSubscribers.clear();
+      // Cut each input proxy's outgoing edge to `node` so audio stops flowing
+      // through the disposed processor。 Upstream sources connected by the
+      // user to `node.inputs.<name>` are their own to disconnect — unworklet
+      // does not own the user's graph (= Q4-a / Q6: typed wrappers compose
+      // with Web Audio, framework does not mutate user-constructed edges)。
+      for (const gain of inputProxies) {
+        try {
+          gain.disconnect();
+        } catch {
+          // Already disconnected; ignore.
+        }
+      }
       try {
         node.disconnect();
       } catch {

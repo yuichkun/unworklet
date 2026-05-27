@@ -54,12 +54,23 @@ type MockHarnessOptions = {
   fetchStatusText?: string;
 };
 
+type MockGainNode = {
+  gain: { value: number };
+  connect: (target: unknown, output?: number, input?: number) => unknown;
+  disconnect: () => void;
+  __outgoing: Array<{ target: unknown; output: number; input?: number }>;
+};
+
 type MockHarness = {
-  context: { audioWorklet: { addModule: (url: string) => Promise<void> } };
+  context: {
+    audioWorklet: { addModule: (url: string) => Promise<void> };
+    createGain: () => MockGainNode;
+  };
   addModuleCalls: string[];
   fetchCalls: string[];
   constructed: ConstructorRecord[];
   nodes: MockAudioWorkletNode[];
+  createdGains: MockGainNode[];
   lastNode: MockAudioWorkletNode | null;
   fireReady: () => void;
   fireReadyAll: () => void;
@@ -79,12 +90,32 @@ const installMockGlobals = (wasmBytes: Uint8Array, opts: MockHarnessOptions = {}
   const nodes: MockAudioWorkletNode[] = [];
   let lastNode: MockAudioWorkletNode | null = null;
 
+  // Track every `GainNode` created via `context.createGain()` and its
+  // outgoing edges so input-proxy tests can observe routing without a real
+  // Web Audio engine。
+  const createdGains: MockGainNode[] = [];
   const context = {
     audioWorklet: {
       addModule(url: string): Promise<void> {
         addModuleCalls.push(url);
         return Promise.resolve();
       },
+    },
+    createGain(): MockGainNode {
+      const outgoing: Array<{ target: unknown; output: number; input?: number }> = [];
+      const gain: MockGainNode = {
+        gain: { value: 0 },
+        connect(target: unknown, output?: number, input?: number): unknown {
+          outgoing.push({ target, output: output ?? 0, input });
+          return target;
+        },
+        disconnect(): void {
+          outgoing.length = 0;
+        },
+        __outgoing: outgoing,
+      };
+      createdGains.push(gain);
+      return gain;
     },
   };
 
@@ -159,6 +190,7 @@ const installMockGlobals = (wasmBytes: Uint8Array, opts: MockHarnessOptions = {}
     fetchCalls,
     constructed,
     nodes,
+    createdGains,
     get lastNode() {
       return lastNode;
     },
@@ -428,7 +460,7 @@ test("UnworkletNode.params.<name> wraps node.parameters.get(name)", async () => 
   }
 });
 
-test("UnworkletNode.outputs.<name>.connect routes through the node's output port index", async () => {
+test("UnworkletNode.outputs.<name>.connect routes through the node's output port index (AudioNode form)", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     const node = await startCreate(
@@ -450,20 +482,44 @@ test("UnworkletNode.outputs.<name>.connect routes through the node's output port
       return target;
     }) as MockAudioWorkletNode["connect"];
 
-    const dummyTarget = { kind: "destination" };
-    node.outputs.main!.connect(dummyTarget as never);
-    node.outputs.send!.connect(dummyTarget as never);
+    // AudioNode-shape destination (= has `.connect` method)。
+    const destinationNode = { connect: () => undefined };
+    node.outputs.main!.connect(destinationNode as never);
+    node.outputs.send!.connect(destinationNode as never);
 
     expect(calls).toEqual([
-      [dummyTarget, 0, 0],
-      [dummyTarget, 1, 0],
+      [destinationNode, 0, 0],
+      [destinationNode, 1, 0],
     ]);
   } finally {
     h.cleanup();
   }
 });
 
-test("UnworkletNode.inputs.<name>.connect wires source → input port via source.connect", async () => {
+test("UnworkletNode.outputs.<name>.connect uses the 2-arg overload for AudioParam destinations", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    const calls: Array<[unknown, number?, number?]> = [];
+    h.lastNode!.connect = ((target, output, input) => {
+      calls.push([target, output, input]);
+      return target;
+    }) as MockAudioWorkletNode["connect"];
+
+    // AudioParam shape = no `.connect` method。
+    const paramTarget = { value: 0 };
+    node.outputs.main!.connect(paramTarget as never);
+
+    expect(calls).toEqual([[paramTarget, 0, undefined]]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("UnworkletNode.inputs.<name> is an AudioNode destination already wired to the worklet port", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     const node = await startCreate(
@@ -479,19 +535,45 @@ test("UnworkletNode.inputs.<name>.connect wires source → input port via source
         ),
       h.fireReady,
     );
-    const calls: Array<[unknown, number?, number?]> = [];
-    const source = {
-      connect(target: unknown, output?: number, input?: number): unknown {
-        calls.push([target, output, input]);
-        return target;
-      },
-    };
-    node.inputs.main!.connect(source as never);
-    node.inputs.sidechain!.connect(source as never);
-    expect(calls).toEqual([
-      [h.lastNode, 0, 0],
-      [h.lastNode, 0, 1],
-    ]);
+    // Spec: `source.connect(node.inputs.main)` — `.inputs.<name>` must be
+    // an AudioNode the framework has already wired into the worklet's
+    // input port at `portIdx`。 The plugin uses a passthrough GainNode
+    // proxy per port (= GainNode is an AudioNode and stays out of the
+    // user's way)。
+    expect(h.createdGains).toHaveLength(2);
+    expect(node.inputs.main).toBe(h.createdGains[0]);
+    expect(node.inputs.sidechain).toBe(h.createdGains[1]);
+    expect(h.createdGains[0]!.__outgoing).toEqual([{ target: h.lastNode, output: 0, input: 0 }]);
+    expect(h.createdGains[1]!.__outgoing).toEqual([{ target: h.lastNode, output: 0, input: 1 }]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("UnworkletNode.dispose() disconnects every input proxy from the worklet node", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({
+            inputs: [
+              { name: "main", channels: 2 },
+              { name: "sidechain", channels: 2 },
+            ],
+          }),
+        ),
+      h.fireReady,
+    );
+    expect(h.createdGains[0]!.__outgoing).toHaveLength(1);
+    expect(h.createdGains[1]!.__outgoing).toHaveLength(1);
+    node.dispose();
+    // Internal `proxy → worklet` edges are gone = audio path through the
+    // disposed node is dead, even if user sources are still wired into
+    // the input proxies (= user owns the upstream graph)。
+    expect(h.createdGains[0]!.__outgoing).toHaveLength(0);
+    expect(h.createdGains[1]!.__outgoing).toHaveLength(0);
   } finally {
     h.cleanup();
   }
