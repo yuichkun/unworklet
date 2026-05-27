@@ -16,6 +16,7 @@
 
 /// <reference types="@vitejs/devtools-kit" />
 import { existsSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -24,6 +25,26 @@ import type { CompiledProcessor } from "@unworklet/core";
 import type { Plugin } from "vite-plus";
 
 import { emitWorkletTemplate } from "./worklet-template.ts";
+
+/**
+ * Re-import `sourcePath` with a mtime-based cache-buster query so Node's
+ * ESM module cache returns the **current** disk content instead of the
+ * cached evaluation from the first `import()`。
+ *
+ * Without this, editing `processor.ts` + full-page reload still serves the
+ * stale processor: vite invalidates the `?worklet` virtual module and re-
+ * runs `load`, but Node's `import()` keeps returning the cached module from
+ * the first hook invocation。
+ *
+ * The buster appears as a URL query (= `?t=<mtimeMs>`). Node treats the
+ * resulting specifier as a fresh module identity = forces re-evaluation。
+ * Transitive imports inside the source (= e.g. `@unworklet/core`) are NOT
+ * cache-busted = they reuse the existing Node cache。
+ */
+const importFresh = async (sourcePath: string): Promise<Record<string, unknown>> => {
+  const s = await stat(sourcePath);
+  return (await import(`${sourcePath}?t=${s.mtimeMs}`)) as Record<string, unknown>;
+};
 
 const PLUGIN_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -96,6 +117,26 @@ export type SchemaHashArtifact = {
 const VIRTUAL_ID_PREFIX = "\0unworklet:";
 const WORKLET_ENTRY_PREFIX = "\0unworklet-worklet:";
 const WORKLET_QUERY_PARAM = "worklet";
+
+/**
+ * URL prefix that the dev-server middleware (= `configureServer`) listens on.
+ * `${base}__unworklet/<encoded-abs-source-path>/(worklet.js|wasm)`:
+ * - `worklet.js` = the `AudioWorkletProcessor` wrapper served as JS, loaded
+ *   via `audioWorklet.addModule(...)` on the main thread。
+ * - `wasm` = the compiled WASM bytes, fetched on the main thread and handed
+ *   to the worklet via `AudioWorkletNodeOptions.processorOptions.wasm`。
+ *
+ * Build mode emits the same two artifacts via `this.emitFile` so the
+ * consumer-side import shape is identical (= dev / build symmetry per
+ * `07-vite-plugin.md` §3 「Vite asset pipeline integration」)。
+ */
+const DEV_URL_PREFIX = "__unworklet";
+
+const encodeSourceForDevUrl = (absPath: string): string =>
+  Buffer.from(absPath, "utf8").toString("base64url");
+
+const decodeSourceFromDevUrl = (encoded: string): string =>
+  Buffer.from(encoded, "base64url").toString("utf8");
 
 const detectWorkletQuery = (source: string): { basePath: string } | null => {
   const queryIdx = source.indexOf("?");
@@ -170,6 +211,24 @@ const assetBaseName = (sourcePath: string): string => {
   // is `foo.processor.ts`) so emitted assets land at `dist/<processor>.<artifact>`,
   // zipping with the analysis-JSON convention in `07-vite-plugin.md` §6.3.
   return base.endsWith(".processor") ? base.slice(0, -".processor".length) : base;
+};
+
+/**
+ * Convert an absolute source file path to the URL that vite's dev server
+ * serves it at:
+ * - Inside project root → `${base}<relative-from-root>` (= e.g. `/src/x.ts`).
+ * - Outside project root → `/@fs<abs-path>` (= vite's filesystem-access route).
+ *
+ * Used by the dev-mode worklet entry template so that
+ * `AudioWorkletGlobalScope` can fetch the user processor source via the same
+ * dev server that's serving the main page.
+ */
+const computeServedUrl = (absPath: string, projectRoot: string, base: string): string => {
+  const rel = path.relative(projectRoot, absPath);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    return `/@fs${absPath}`;
+  }
+  return `${base}${rel}`.replace(/\\/g, "/");
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -274,8 +333,79 @@ const setupDevtools = (
 export default function unworklet(options?: UnworkletPluginOptions): Plugin {
   const emitAnalysisArtifacts = options?.emitAnalysisArtifacts ?? true;
   const uiRoot = resolveDevtoolsUiRoot();
+  let isServe = false;
+  let projectRoot = "";
+  let basePath = "/";
   return {
     name: "@unworklet/vite-plugin",
+    enforce: "pre",
+    configResolved(config) {
+      isServe = config.command === "serve";
+      projectRoot = config.root;
+      basePath = config.base.endsWith("/") ? config.base : `${config.base}/`;
+    },
+    configureServer(server) {
+      // Dev-mode middleware = serve the worklet runtime entry (= `worklet.js`)
+      // and the compiled WASM bytes at predictable URLs derived from the
+      // source path. Same URL shape across consumers — main bundle stores
+      // the URL string emitted by `load`、 createNode hands it to
+      // `audioWorklet.addModule(...)` + `fetch(...)`、 vite's dev server
+      // routes the request here。 Build mode emits the same two assets via
+      // `emitFile` so the consumer-side createNode wiring is identical
+      // (= `07-vite-plugin.md` §3 dev/build 対称)。
+      const devUrlBase = `${basePath}${DEV_URL_PREFIX}/`;
+      server.middlewares.use((req, res, next) => {
+        if (!req.url) return next();
+        const queryIdx = req.url.indexOf("?");
+        const pathOnly = queryIdx < 0 ? req.url : req.url.slice(0, queryIdx);
+        if (!pathOnly.startsWith(devUrlBase)) return next();
+        const rest = pathOnly.slice(devUrlBase.length);
+        const slashIdx = rest.indexOf("/");
+        if (slashIdx < 0) return next();
+        const encoded = rest.slice(0, slashIdx);
+        const part = rest.slice(slashIdx + 1);
+        const sourcePath = (() => {
+          try {
+            return decodeSourceFromDevUrl(encoded);
+          } catch {
+            return null;
+          }
+        })();
+        if (!sourcePath) return next();
+
+        (async (): Promise<void> => {
+          const sourceModule = await importFresh(sourcePath);
+          const { exportName, processor } = pickCompiledProcessor(sourceModule, sourcePath);
+
+          if (part === "wasm") {
+            const result = await compile(processor);
+            res.setHeader("Content-Type", "application/wasm");
+            res.setHeader("Cache-Control", "no-cache");
+            res.end(Buffer.from(result.wasm));
+            return;
+          }
+
+          if (part === "worklet.js") {
+            const userServedUrl = computeServedUrl(sourcePath, projectRoot, basePath);
+            const template = emitWorkletTemplate({
+              userSourcePath: userServedUrl,
+              processorExportName: exportName,
+              processorName: exportName,
+            });
+            res.setHeader("Content-Type", "application/javascript");
+            res.setHeader("Cache-Control", "no-cache");
+            res.end(template);
+            return;
+          }
+
+          next();
+        })().catch((err: unknown) => {
+          console.error("[@unworklet/vite-plugin] middleware error:", err);
+          res.statusCode = 500;
+          res.end(String(err));
+        });
+      });
+    },
     resolveId(source, importer) {
       if (source.startsWith(WORKLET_ENTRY_PREFIX)) return source;
       const detect = detectWorkletQuery(source);
@@ -287,7 +417,8 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
     async load(id) {
       if (id.startsWith(WORKLET_ENTRY_PREFIX)) {
         const sourcePath = id.slice(WORKLET_ENTRY_PREFIX.length);
-        const sourceModule = (await import(sourcePath)) as Record<string, unknown>;
+        this.addWatchFile(sourcePath);
+        const sourceModule = await importFresh(sourcePath);
         const { exportName } = pickCompiledProcessor(sourceModule, sourcePath);
         return emitWorkletTemplate({
           userSourcePath: sourcePath,
@@ -298,43 +429,66 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
 
       if (!id.startsWith(VIRTUAL_ID_PREFIX)) return undefined;
       const sourcePath = id.slice(VIRTUAL_ID_PREFIX.length);
-      const sourceModule = (await import(sourcePath)) as Record<string, unknown>;
+      // Declare the virtual module's dependency on the source so vite invalidates
+      // it when the file changes (= full-page reload picks up edits without
+      // restarting the dev server).
+      this.addWatchFile(sourcePath);
+      const sourceModule = await importFresh(sourcePath);
       const { exportName, processor } = pickCompiledProcessor(sourceModule, sourcePath);
-      const result = await compile(processor);
 
       const baseName = assetBaseName(sourcePath);
-      const wasmRefId = this.emitFile({
-        type: "asset",
-        name: `${baseName}.wasm`,
-        source: result.wasm,
-      });
-      const workletRefId = this.emitFile({
-        type: "chunk",
-        id: `${WORKLET_ENTRY_PREFIX}${sourcePath}`,
-        name: `${baseName}.worklet`,
-      });
 
-      if (emitAnalysisArtifacts) {
-        this.emitFile({
+      let moduleUrlExpr: string;
+      let wasmUrlExpr: string;
+
+      if (isServe) {
+        // Dev: middleware serves both assets at predictable URLs derived
+        // from the source path. No emitFile / ROLLUP_FILE_URL placeholder
+        // (= those are rolldown-build-time only)。 Compile runs lazily inside
+        // the middleware on first request, so dev startup stays fast。
+        const encoded = encodeSourceForDevUrl(sourcePath);
+        moduleUrlExpr = JSON.stringify(`${basePath}${DEV_URL_PREFIX}/${encoded}/worklet.js`);
+        wasmUrlExpr = JSON.stringify(`${basePath}${DEV_URL_PREFIX}/${encoded}/wasm`);
+      } else {
+        // Build mode: emit chunk + asset via rolldown's `emitFile`. URLs are
+        // resolved through `import.meta.ROLLUP_FILE_URL_<refId>` placeholders
+        // which rolldown rewrites to `new URL(...)` at output time.
+        const result = await compile(processor);
+        const wasmRefId = this.emitFile({
           type: "asset",
-          name: `${baseName}.graph.json`,
-          source: `${JSON.stringify(result.graph, null, 2)}\n`,
+          name: `${baseName}.wasm`,
+          source: result.wasm,
         });
-        this.emitFile({
-          type: "asset",
-          name: `${baseName}.memory.json`,
-          source: `${JSON.stringify(result.memory, null, 2)}\n`,
+        const workletRefId = this.emitFile({
+          type: "chunk",
+          id: `${WORKLET_ENTRY_PREFIX}${sourcePath}`,
+          name: `${baseName}.worklet`,
         });
-        this.emitFile({
-          type: "asset",
-          name: `${baseName}.diagnostics.json`,
-          source: `${JSON.stringify(result.diagnostics, null, 2)}\n`,
-        });
-        this.emitFile({
-          type: "asset",
-          name: `${baseName}.schema-hash.json`,
-          source: `${JSON.stringify({ schemaHash: result.schemaHash }, null, 2)}\n`,
-        });
+        moduleUrlExpr = `import.meta.ROLLUP_FILE_URL_${workletRefId}`;
+        wasmUrlExpr = `import.meta.ROLLUP_FILE_URL_${wasmRefId}`;
+
+        if (emitAnalysisArtifacts) {
+          this.emitFile({
+            type: "asset",
+            name: `${baseName}.graph.json`,
+            source: `${JSON.stringify(result.graph, null, 2)}\n`,
+          });
+          this.emitFile({
+            type: "asset",
+            name: `${baseName}.memory.json`,
+            source: `${JSON.stringify(result.memory, null, 2)}\n`,
+          });
+          this.emitFile({
+            type: "asset",
+            name: `${baseName}.diagnostics.json`,
+            source: `${JSON.stringify(result.diagnostics, null, 2)}\n`,
+          });
+          this.emitFile({
+            type: "asset",
+            name: `${baseName}.schema-hash.json`,
+            source: `${JSON.stringify({ schemaHash: result.schemaHash }, null, 2)}\n`,
+          });
+        }
       }
 
       // virtual module = user source を re-import し て CompiledProcessor を
@@ -348,8 +502,8 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
         `  ...__unworkletRaw,`,
         `  worklet: {`,
         `    ...__unworkletRaw.worklet,`,
-        `    moduleUrl: import.meta.ROLLUP_FILE_URL_${workletRefId},`,
-        `    wasmUrl: import.meta.ROLLUP_FILE_URL_${wasmRefId},`,
+        `    moduleUrl: ${moduleUrlExpr},`,
+        `    wasmUrl: ${wasmUrlExpr},`,
         `    processorName: ${JSON.stringify(exportName)},`,
         `  },`,
         `};`,

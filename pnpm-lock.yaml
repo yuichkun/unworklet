@@ -67,6 +67,9 @@ importers:
       '@unworklet/test':
         specifier: workspace:*
         version: link:../../packages/test
+      '@unworklet/vite-plugin':
+        specifier: workspace:*
+        version: link:../../packages/vite-plugin
       tsx:
         specifier: 'catalog:'
         version: 4.22.3

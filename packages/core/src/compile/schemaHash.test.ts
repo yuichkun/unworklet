@@ -45,44 +45,44 @@ const alteredBody: CapturedGraph = {
 
 const emptyGraph: CapturedGraph = { declarations: [], statements: [] };
 
-test("`schemaHash(stereoGain)` = fixed hex (= inline snapshot)", () => {
-  expect(schemaHash(stereoGain)).toMatchInlineSnapshot(
+test("`schemaHash(stereoGain)` = fixed hex (= inline snapshot)", async () => {
+  expect(await schemaHash(stereoGain)).toMatchInlineSnapshot(
     `"4cf8091eb794660f1944dd8c12a78ed870952ac3c37aa22452274ab6e53deac2"`,
   );
 });
 
-test("`schemaHash(swappedOrder)` = fixed hex 別 値 (= structural over declaration order)", () => {
-  expect(schemaHash(swappedOrder)).toMatchInlineSnapshot(
+test("`schemaHash(swappedOrder)` = fixed hex 別 値 (= structural over declaration order)", async () => {
+  expect(await schemaHash(swappedOrder)).toMatchInlineSnapshot(
     `"781e7fbacce3bd25c5cfeb4ce72728cb4d94f7e65e349bee03d3d011ebafcf61"`,
   );
 });
 
-test("`schemaHash(alteredBody)` = fixed hex 別 値 (= structural over statement body)", () => {
-  expect(schemaHash(alteredBody)).toMatchInlineSnapshot(
+test("`schemaHash(alteredBody)` = fixed hex 別 値 (= structural over statement body)", async () => {
+  expect(await schemaHash(alteredBody)).toMatchInlineSnapshot(
     `"ffca41e37c6229e27349250533043f362e813a782d811676eeddcb77e8e9ce02"`,
   );
 });
 
-test("`schemaHash(emptyGraph)` = fixed hex (= 空 graph で も 有 効 hex)", () => {
-  expect(schemaHash(emptyGraph)).toMatchInlineSnapshot(
+test("`schemaHash(emptyGraph)` = fixed hex (= 空 graph で も 有 効 hex)", async () => {
+  expect(await schemaHash(emptyGraph)).toMatchInlineSnapshot(
     `"da91ea218a71ca99e5de67f0d461af6da40b4f3c937d27a32689f2fa232ee05b"`,
   );
 });
 
-test("`schemaHash` is deterministic = 同 graph で 二 度 呼 ぶ と 同 hex", () => {
-  expect(schemaHash(stereoGain)).toBe(schemaHash(stereoGain));
+test("`schemaHash` is deterministic = 同 graph で 二 度 呼 ぶ と 同 hex", async () => {
+  expect(await schemaHash(stereoGain)).toBe(await schemaHash(stereoGain));
 });
 
-test("各 fixture が 全 て 異 な る hex を 生 む (= structural 担 保)", () => {
-  const hashes = [
+test("各 fixture が 全 て 異 な る hex を 生 む (= structural 担 保)", async () => {
+  const hashes = await Promise.all([
     schemaHash(stereoGain),
     schemaHash(swappedOrder),
     schemaHash(alteredBody),
     schemaHash(emptyGraph),
-  ];
+  ]);
   expect(new Set(hashes).size).toBe(hashes.length);
 });
 
-test("hex shape = 64-char lowercase (= SHA-256 hex 形 担 保)", () => {
-  expect(schemaHash(stereoGain)).toMatch(/^[0-9a-f]{64}$/);
+test("hex shape = 64-char lowercase (= SHA-256 hex 形 担 保)", async () => {
+  expect(await schemaHash(stereoGain)).toMatch(/^[0-9a-f]{64}$/);
 });

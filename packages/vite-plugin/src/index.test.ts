@@ -32,11 +32,29 @@ type EmitFileArgs = AssetEmit | ChunkEmit;
 type MockEmitContext = {
   calls: EmitFileArgs[];
   refId: string;
+  watched: string[];
   emitFile: (file: EmitFileArgs) => string;
+  addWatchFile: (file: string) => void;
 };
 
 const assetCalls = (ctx: MockEmitContext): AssetEmit[] =>
   ctx.calls.filter((c): c is AssetEmit => c.type === "asset");
+
+const makeMockEmitContext = (): MockEmitContext => {
+  const ctx: MockEmitContext = {
+    calls: [],
+    refId: "mock-ref-id",
+    watched: [],
+    emitFile(file) {
+      ctx.calls.push(file);
+      return ctx.refId;
+    },
+    addWatchFile(file) {
+      ctx.watched.push(file);
+    },
+  };
+  return ctx;
+};
 
 const callResolveId = (source: string, importer: string | undefined): unknown => {
   const hook = unworklet().resolveId;
@@ -54,16 +72,36 @@ const callLoadWithMockContext = async (
   if (typeof hook !== "function") {
     throw new Error("load hook is not a function — expected plain function form");
   }
-  const ctx: MockEmitContext = {
-    calls: [],
-    refId: "mock-ref-id",
-    emitFile(file) {
-      ctx.calls.push(file);
-      return ctx.refId;
-    },
-  };
+  const ctx = makeMockEmitContext();
   const result = await (hook as unknown as LoadFn).call(ctx, id);
   return { result, ctx };
+};
+
+type ConfigResolvedFn = (
+  this: unknown,
+  config: { command: string; root: string; base: string },
+) => void;
+
+const callLoadInServeMode = async (
+  id: string,
+  serveConfig: { root: string; base?: string } = { root: "/" },
+): Promise<unknown> => {
+  const plugin = unworklet();
+  const configHook = plugin.configResolved;
+  if (typeof configHook !== "function") {
+    throw new Error("configResolved hook is not a function");
+  }
+  (configHook as unknown as ConfigResolvedFn).call(null, {
+    command: "serve",
+    root: serveConfig.root,
+    base: serveConfig.base ?? "/",
+  });
+  const loadHook = plugin.load;
+  if (typeof loadHook !== "function") {
+    throw new Error("load hook is not a function");
+  }
+  const ctx = makeMockEmitContext();
+  return await (loadHook as unknown as LoadFn).call(ctx, id);
 };
 
 const callLoadNoContext = async (id: string): Promise<unknown> => {
@@ -71,7 +109,10 @@ const callLoadNoContext = async (id: string): Promise<unknown> => {
   if (typeof hook !== "function") {
     throw new Error("load hook is not a function — expected plain function form");
   }
-  return await (hook as unknown as LoadFn).call(null, id);
+  // Even when the test does not care about emitFile, the plugin's load hook
+  // may call `this.addWatchFile(...)` (= vite invalidation dependency)。
+  // Provide a minimal mock context so those calls are no-ops。
+  return await (hook as unknown as LoadFn).call(makeMockEmitContext(), id);
 };
 
 const NUL = String.fromCharCode(0);
@@ -304,6 +345,52 @@ test("load on a WORKLET_ENTRY_PREFIX id returns the worklet runtime template", a
 test("resolveId passes through WORKLET_ENTRY_PREFIX ids without modification", () => {
   const id = `\0unworklet-worklet:/abs/x.processor.ts`;
   expect(callResolveId(id, undefined)).toBe(id);
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Dev mode (= command === "serve") = middleware URL emission
+// ─────────────────────────────────────────────────────────────────────────
+
+test("dev mode: load returns JS that points moduleUrl + wasmUrl at dev middleware URLs", async () => {
+  const result = await callLoadInServeMode(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`, {
+    root: "/Users/yuichkun/workspace/unworklet/examples/01-stereo-gain",
+  });
+  const js = result as string;
+  // Dev mode must NOT use the rollup placeholder (= it doesn't get rewritten
+  // when rolldown isn't bundling)。
+  expect(js).not.toContain("ROLLUP_FILE_URL_");
+  // Both URLs hit the plugin's dev middleware prefix (= `__unworklet/`)。
+  expect(js).toMatch(/moduleUrl: "[^"]*\/__unworklet\/[^"]*\/worklet\.js"/);
+  expect(js).toMatch(/wasmUrl: "[^"]*\/__unworklet\/[^"]*\/wasm"/);
+});
+
+test("dev mode: emits no rolldown chunk / asset (= no emitFile calls)", async () => {
+  const plugin = unworklet();
+  const configHook = plugin.configResolved as unknown as ConfigResolvedFn | undefined;
+  if (!configHook) throw new Error("configResolved missing");
+  configHook.call(null, { command: "serve", root: "/abs", base: "/" });
+  const loadHook = plugin.load as unknown as LoadFn | undefined;
+  if (!loadHook) throw new Error("load missing");
+  const ctx = makeMockEmitContext();
+  await loadHook.call(ctx, `${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`);
+  expect(ctx.calls).toHaveLength(0);
+});
+
+test("dev mode: encoded source path round-trips through base64url", async () => {
+  const result = await callLoadInServeMode(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`, {
+    root: "/Users/yuichkun/workspace/unworklet/examples/01-stereo-gain",
+  });
+  const js = result as string;
+  const match = js.match(/\/__unworklet\/([A-Za-z0-9_-]+)\/worklet\.js/);
+  expect(match).not.toBeNull();
+  const encoded = match![1]!;
+  const decoded = Buffer.from(encoded, "base64url").toString("utf8");
+  expect(decoded).toBe(FIXTURE_GAIN_PATH);
+});
+
+test("load declares the source file as a watch dependency (= full-page reload picks up edits)", async () => {
+  const { ctx } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`);
+  expect(ctx.watched).toContain(FIXTURE_GAIN_PATH);
 });
 
 test("emitted schema-hash JSON carries the same hash that compile() returned", async () => {

@@ -49,7 +49,7 @@ export async function compile<C>(processor: CompiledProcessor<C>): Promise<Compi
   const diagnostics = analyze(graph);
   const memory = layout(graph);
   const wasm = await emit(graph, memory);
-  const hash = schemaHash(graph);
+  const hash = await schemaHash(graph);
   return {
     wasm,
     graph: graph as unknown as GraphJson,
