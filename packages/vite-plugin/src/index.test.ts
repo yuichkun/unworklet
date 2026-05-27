@@ -461,6 +461,10 @@ type ResponseStub = {
 
 type ServerStub = {
   middlewares: { use: (fn: MiddlewareFn) => void };
+  ssrLoadModule: (url: string) => Promise<Record<string, unknown>>;
+  moduleGraph: {
+    getModuleById: (id: string) => undefined;
+  };
   __registered: MiddlewareFn[];
 };
 
@@ -471,6 +475,17 @@ const makeServerStub = (): ServerStub => {
       use: (fn) => {
         registered.push(fn);
       },
+    },
+    // Minimal ssrLoadModule stub — defer to Node's native ESM `import(...)`。
+    // The real Vite implementation routes through the dev module graph so
+    // transitive imports invalidate; for plugin-shape tests we only need a
+    // path that returns the processor's exports。
+    ssrLoadModule: async (url) => {
+      const mod = (await import(url)) as Record<string, unknown>;
+      return mod;
+    },
+    moduleGraph: {
+      getModuleById: (_id: string) => undefined,
     },
     __registered: registered,
   };
@@ -565,4 +580,72 @@ test("dev middleware serves WASM bytes for an allowlisted source + the `wasm` pa
   // WASM binaries always start with the magic header `\0asm` (= 0x6d736100)。
   const buf = body as Buffer;
   expect(buf.subarray(0, 4).toString("hex")).toBe("0061736d");
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Dev/build symmetry = transitive imports get fanned out to addWatchFile
+// ─────────────────────────────────────────────────────────────────────────
+//
+// Editing a helper file imported by a `?worklet` processor must invalidate
+// the virtual module just like editing the processor itself does, otherwise
+// dev serves stale DSP while build sees the new graph。 The plugin's dev path
+// walks the dev server's module graph from the processor entry and adds each
+// reachable file via `this.addWatchFile(...)`。
+
+const callLoadInServeModeWithMockGraph = async (
+  id: string,
+  graph: { rootSourcePath: string; transitiveDeps: string[] },
+): Promise<{ ctx: MockEmitContext }> => {
+  const plugin = unworklet();
+  const configHook = plugin.configResolved as unknown as ConfigResolvedFn | undefined;
+  if (!configHook) throw new Error("configResolved missing");
+  configHook.call(null, { command: "serve", root: "/", base: "/" });
+  const configureServerHook = plugin.configureServer as unknown as ConfigureServerFn | undefined;
+  if (!configureServerHook) throw new Error("configureServer missing");
+  // Tiny module-graph stub: the root processor imports each transitive dep
+  // directly. The real Vite module graph is recursive but a 1-deep fan-out
+  // is enough to exercise `collectTransitiveDeps`'s BFS traversal。
+  type Node = { file: string; importedModules: Set<Node> };
+  const depNodes: Node[] = graph.transitiveDeps.map((file) => ({
+    file,
+    importedModules: new Set<Node>(),
+  }));
+  const rootNode: Node = {
+    file: graph.rootSourcePath,
+    importedModules: new Set<Node>(depNodes),
+  };
+  const server: ServerStub = {
+    middlewares: { use: () => {} },
+    ssrLoadModule: async (url) => (await import(url)) as Record<string, unknown>,
+    moduleGraph: {
+      getModuleById: ((moduleId: string) =>
+        moduleId === graph.rootSourcePath ? (rootNode as unknown) : undefined) as unknown as (
+        id: string,
+      ) => undefined,
+    },
+    __registered: [],
+  };
+  configureServerHook.call(null, server);
+  const loadHook = plugin.load as unknown as LoadFn | undefined;
+  if (!loadHook) throw new Error("load missing");
+  const ctx = makeMockEmitContext();
+  await loadHook.call(ctx, id);
+  return { ctx };
+};
+
+test("dev mode load fans transitive helper imports out to addWatchFile", async () => {
+  const helperA = "/abs/project/src/helpers/dsp-utils.ts";
+  const helperB = "/abs/project/src/helpers/wavetable.ts";
+  const { ctx } = await callLoadInServeModeWithMockGraph(
+    `${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`,
+    {
+      rootSourcePath: FIXTURE_GAIN_PATH,
+      transitiveDeps: [helperA, helperB],
+    },
+  );
+  // Entry source itself is always watched (= the existing test already
+  // covers this); the new contract is that helper files appear too。
+  expect(ctx.watched).toContain(FIXTURE_GAIN_PATH);
+  expect(ctx.watched).toContain(helperA);
+  expect(ctx.watched).toContain(helperB);
 });

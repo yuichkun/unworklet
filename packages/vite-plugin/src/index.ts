@@ -56,19 +56,77 @@ const computeProcessorName = (exportName: string, absSourcePath: string): string
  * ESM module cache returns the **current** disk content instead of the
  * cached evaluation from the first `import()`。
  *
- * Without this, editing `processor.ts` + full-page reload still serves the
- * stale processor: vite invalidates the `?worklet` virtual module and re-
- * runs `load`, but Node's `import()` keeps returning the cached module from
- * the first hook invocation。
+ * Build-mode fallback only — dev mode goes through `ssrLoadModule` so the
+ * full transitive import graph rides on Vite's module graph (= helper file
+ * edits invalidate automatically = `07-vite-plugin.md` §3 dev/build 対称)。
  *
  * The buster appears as a URL query (= `?t=<mtimeMs>`). Node treats the
  * resulting specifier as a fresh module identity = forces re-evaluation。
  * Transitive imports inside the source (= e.g. `@unworklet/core`) are NOT
- * cache-busted = they reuse the existing Node cache。
+ * cache-busted = build mode never sees this because rolldown re-bundles
+ * on each build run, but the comment is kept for the (rare) build code path
+ * that still routes through here。
  */
 const importFresh = async (sourcePath: string): Promise<Record<string, unknown>> => {
   const s = await stat(sourcePath);
   return (await import(`${sourcePath}?t=${s.mtimeMs}`)) as Record<string, unknown>;
+};
+
+/**
+ * `ssrLoadModule(...)` runs the source through Vite's dev-server module
+ * loader = transitive imports show up in `server.moduleGraph` and the
+ * watcher invalidates the virtual `?worklet` module when **any** of them
+ * change。 Without this path, editing a helper file imported by the
+ * processor source leaves the dev server serving stale DSP = a clear
+ * dev/build symmetry break。
+ *
+ * The vite ViteDevServer interface here is intentionally minimal — we only
+ * need `ssrLoadModule` for evaluation and `moduleGraph.getModuleById` /
+ * `importedModules` for the transitive watch fanout。 Typing this against
+ * the full `vite` server interface would force a vite dependency at
+ * type-resolution time; the shape is well-known and stable。
+ */
+type ViteDevServerLike = {
+  ssrLoadModule: (url: string) => Promise<Record<string, unknown>>;
+  moduleGraph: {
+    getModuleById: (id: string) => ViteModuleNodeLike | undefined;
+  };
+};
+
+type ViteModuleNodeLike = {
+  file?: string | null;
+  importedModules: Set<ViteModuleNodeLike> | ReadonlyArray<ViteModuleNodeLike>;
+};
+
+const ssrLoadSource = async (
+  server: ViteDevServerLike,
+  sourcePath: string,
+): Promise<Record<string, unknown>> => {
+  return await server.ssrLoadModule(sourcePath);
+};
+
+/**
+ * Recursively collect every file backing a module reachable from
+ * `sourcePath` in the dev server's module graph。 The returned `Set`
+ * excludes `sourcePath` itself — the plugin's load hook is the canonical
+ * watcher for the entry。 Callers pass each transitive file through
+ * `this.addWatchFile(...)` so vite re-runs `load` when any of them change。
+ */
+const collectTransitiveDeps = (server: ViteDevServerLike, sourcePath: string): Set<string> => {
+  const seen = new Set<string>();
+  const queue: ViteModuleNodeLike[] = [];
+  const root = server.moduleGraph.getModuleById(sourcePath);
+  if (!root) return seen;
+  for (const imp of root.importedModules) queue.push(imp);
+  while (queue.length > 0) {
+    const node = queue.shift()!;
+    if (!node.file) continue;
+    if (node.file === sourcePath) continue;
+    if (seen.has(node.file)) continue;
+    seen.add(node.file);
+    for (const child of node.importedModules) queue.push(child);
+  }
+  return seen;
 };
 
 const PLUGIN_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -362,12 +420,17 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
   let projectRoot = "";
   let basePath = "/";
   // Source paths the plugin has accepted via `?worklet` resolveId. Only these
-  // are eligible for dev-mode `importFresh(...)` + `compile(...)`. Without
-  // this gate, the middleware would happily evaluate any absolute path that
-  // base64url-encodes into the URL = arbitrary local file import via a
-  // crafted dev-server request。
+  // are eligible for dev-mode evaluation + `compile(...)`. Without this gate,
+  // the middleware would happily evaluate any absolute path that base64url-
+  // encodes into the URL = arbitrary local file import via a crafted dev-
+  // server request。
   const allowedSources = new Set<string>();
   const validParts = new Set(["wasm", "worklet.js"]);
+  // Vite dev server reference for `ssrLoadModule` + transitive watch fan-out。
+  // Captured during `configureServer` and consulted by the dev paths inside
+  // `load` and the middleware = transitive helper-module edits now flow
+  // through Vite's module graph instead of Node's static ESM cache。
+  let viteDevServer: ViteDevServerLike | null = null;
   return {
     name: "@unworklet/vite-plugin",
     enforce: "pre",
@@ -377,6 +440,7 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
       basePath = config.base.endsWith("/") ? config.base : `${config.base}/`;
     },
     configureServer(server) {
+      viteDevServer = server as unknown as ViteDevServerLike;
       // Dev-mode middleware = serve the worklet runtime entry (= `worklet.js`)
       // and the compiled WASM bytes at predictable URLs derived from the
       // source path. Same URL shape across consumers — main bundle stores
@@ -410,7 +474,9 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
         if (!allowedSources.has(sourcePath)) return next();
 
         (async (): Promise<void> => {
-          const sourceModule = await importFresh(sourcePath);
+          const sourceModule = viteDevServer
+            ? await ssrLoadSource(viteDevServer, sourcePath)
+            : await importFresh(sourcePath);
           const { exportName, processor } = pickCompiledProcessor(sourceModule, sourcePath);
 
           if (part === "wasm") {
@@ -451,6 +517,8 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
       if (id.startsWith(WORKLET_ENTRY_PREFIX)) {
         const sourcePath = id.slice(WORKLET_ENTRY_PREFIX.length);
         this.addWatchFile(sourcePath);
+        // Build mode only — WORKLET_ENTRY_PREFIX is emitted by rolldown's
+        // `emitFile({ type: "chunk", id })` path so we never see it in dev。
         const sourceModule = await importFresh(sourcePath);
         const { exportName } = pickCompiledProcessor(sourceModule, sourcePath);
         return emitWorkletTemplate({
@@ -466,7 +534,19 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
       // it when the file changes (= full-page reload picks up edits without
       // restarting the dev server).
       this.addWatchFile(sourcePath);
-      const sourceModule = await importFresh(sourcePath);
+      const sourceModule =
+        isServe && viteDevServer
+          ? await ssrLoadSource(viteDevServer, sourcePath)
+          : await importFresh(sourcePath);
+      // Dev mode: fan watch dependencies out across every transitive file
+      // reachable from the processor source = a helper edit invalidates this
+      // virtual module just like editing the entry would (= 07-vite-plugin.md
+      // §3 dev/build symmetry)。
+      if (isServe && viteDevServer) {
+        for (const dep of collectTransitiveDeps(viteDevServer, sourcePath)) {
+          this.addWatchFile(dep);
+        }
+      }
       const { exportName, processor } = pickCompiledProcessor(sourceModule, sourcePath);
 
       const baseName = assetBaseName(sourcePath);
