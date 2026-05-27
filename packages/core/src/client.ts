@@ -18,6 +18,7 @@ import type {
   CompiledProcessor,
   CreateNodeOptions,
   InspectionResult,
+  NodeErrorEvent,
   UnworkletNode,
 } from "./types.ts";
 
@@ -230,6 +231,44 @@ export async function createNode<C>(
   const paramDescriptors = ns.parameterDescriptors as readonly { name: string }[];
   const params = buildParams(node, paramDescriptors);
 
+  // Long-lived error forwarder = installed AFTER awaitReady's init-time
+  // listeners are removed so the runtime error path (= worklet `{ kind:
+  // "error", ... }` messages + `processorerror` event) keeps flowing to
+  // `onError(handler)` subscribers for the node's lifetime。 docs/05-client.md
+  // §2 declares `onError` as the discriminated-union surface for 4 codes
+  // (`wasm-trap` / `queue-overflow` / `sab-unavailable` / `block-length-mismatch`)。
+  // Phase 6 wires the forwarder skeleton — only `block-length-mismatch` (= from
+  // `worklet.ts` runtime guard) and `wasm-trap` (= from `processorerror`) are
+  // posted today。 `queue-overflow` / `sab-unavailable` plumbing lands when
+  // the matching transports ship (= 02-messaging.md / 04-worklet-runtime.md §8)。
+  const errorSubscribers = new Set<(event: NodeErrorEvent) => void>();
+  const dispatchError = (event: NodeErrorEvent): void => {
+    for (const fn of errorSubscribers) {
+      try {
+        fn(event);
+      } catch (subscriberErr) {
+        console.error("unworklet: onError subscriber threw", subscriberErr);
+      }
+    }
+  };
+  const onErrorMessage = (event: MessageEvent): void => {
+    const data = event.data as { kind?: unknown } | null | undefined;
+    if (typeof data !== "object" || data === null) return;
+    if ((data as { kind?: unknown }).kind !== "error") return;
+    // Trust the worklet's payload shape — `worklet.ts` constructs
+    // `NodeErrorEvent`-compatible objects directly (= same union)。
+    dispatchError(data as unknown as NodeErrorEvent);
+  };
+  const onErrorProcessor = (event: Event): void => {
+    const errEvent = event as ErrorEvent;
+    dispatchError({
+      code: "wasm-trap",
+      message: errEvent.message || "AudioWorkletProcessor reported a process()/constructor failure",
+    });
+  };
+  node.port.addEventListener("message", onErrorMessage);
+  node.addEventListener("processorerror", onErrorProcessor);
+
   const unworkletNode: UnworkletNode<C> = {
     node,
     inputs: buildInputs(node, inputs) as UnworkletNode<C>["inputs"],
@@ -243,6 +282,9 @@ export async function createNode<C>(
     snapshot: notImplemented as unknown as UnworkletNode<C>["snapshot"],
     restore: notImplemented as unknown as UnworkletNode<C>["restore"],
     dispose(): void {
+      node.port.removeEventListener("message", onErrorMessage);
+      node.removeEventListener("processorerror", onErrorProcessor);
+      errorSubscribers.clear();
       try {
         node.disconnect();
       } catch {
@@ -254,7 +296,12 @@ export async function createNode<C>(
         // Port may already be closed; ignore.
       }
     },
-    onError: () => () => {},
+    onError(handler: (event: NodeErrorEvent) => void): () => void {
+      errorSubscribers.add(handler);
+      return () => {
+        errorSubscribers.delete(handler);
+      };
+    },
     __processor: undefined as unknown as C,
   };
 

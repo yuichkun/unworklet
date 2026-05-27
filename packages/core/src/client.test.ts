@@ -497,6 +497,102 @@ test("UnworkletNode.inputs.<name>.connect wires source → input port via source
   }
 });
 
+test("UnworkletNode.onError receives block-length-mismatch messages posted by the worklet after ready", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    const received: unknown[] = [];
+    node.onError((event) => {
+      received.push(event);
+    });
+    for (const listener of h.lastNode!.port.__listeners) {
+      listener({
+        data: { kind: "error", code: "block-length-mismatch", expected: 128, received: 256 },
+      });
+    }
+    expect(received).toEqual([
+      { kind: "error", code: "block-length-mismatch", expected: 128, received: 256 },
+    ]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("UnworkletNode.onError translates a post-ready `processorerror` into wasm-trap", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    const received: unknown[] = [];
+    node.onError((event) => {
+      received.push(event);
+    });
+    for (const listener of h.lastNode!.__processorErrorListeners) {
+      listener({ message: "Uncaught Error: trap" } as unknown as Event);
+    }
+    expect(received).toEqual([{ code: "wasm-trap", message: "Uncaught Error: trap" }]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("UnworkletNode.onError unsubscribe stops further dispatch", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    const received: unknown[] = [];
+    const unsub = node.onError((event) => {
+      received.push(event);
+    });
+    unsub();
+    for (const listener of h.lastNode!.port.__listeners) {
+      listener({
+        data: { kind: "error", code: "block-length-mismatch", expected: 128, received: 64 },
+      });
+    }
+    expect(received).toEqual([]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("UnworkletNode.dispose() clears onError subscribers + removes long-lived listeners", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    const received: unknown[] = [];
+    node.onError((event) => {
+      received.push(event);
+    });
+    node.dispose();
+    // After dispose, the long-lived message + processorerror listeners are
+    // gone, so even if a stray event slips through nothing should reach the
+    // subscriber。
+    for (const listener of h.lastNode!.port.__listeners) {
+      listener({
+        data: { kind: "error", code: "block-length-mismatch", expected: 1, received: 2 },
+      });
+    }
+    for (const listener of h.lastNode!.__processorErrorListeners) {
+      listener({ message: "stray" } as unknown as Event);
+    }
+    expect(received).toEqual([]);
+  } finally {
+    h.cleanup();
+  }
+});
+
 test("UnworkletNode.dispose() disconnects the underlying node + closes the port", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
