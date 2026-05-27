@@ -169,15 +169,16 @@ const READY_TIMEOUT_MS = 10_000;
 
 const awaitReady = (node: AudioWorkletNode): Promise<void> =>
   new Promise<void>((resolve, reject) => {
-    let settled = false;
+    // `cleanup()` runs exactly once per settle path — it synchronously
+    // removes both event listeners and clears the timer, so once it runs
+    // the corresponding handler can no longer fire。 No defensive
+    // `if (settled) return` guard is needed in the handlers themselves。
     const cleanup = (): void => {
-      settled = true;
       node.port.removeEventListener("message", onMessage);
       node.removeEventListener("processorerror", onProcessorError);
       clearTimeout(timer);
     };
     const onMessage = (event: MessageEvent): void => {
-      if (settled) return;
       const data = event.data as { kind?: unknown; message?: unknown } | null | undefined;
       if (typeof data !== "object" || data === null) return;
       if (data.kind === "ready") {
@@ -192,7 +193,6 @@ const awaitReady = (node: AudioWorkletNode): Promise<void> =>
       }
     };
     const onProcessorError = (event: Event): void => {
-      if (settled) return;
       cleanup();
       // `processorerror` carries no payload per MDN — surface what we can。
       const errEvent = event as ErrorEvent;
@@ -200,7 +200,6 @@ const awaitReady = (node: AudioWorkletNode): Promise<void> =>
       reject(new Error(`unworklet: processorerror during init — ${message}`));
     };
     const timer = setTimeout(() => {
-      if (settled) return;
       cleanup();
       reject(
         new Error(
