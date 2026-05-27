@@ -98,6 +98,7 @@ export { replaceProcessor } from "./replaceProcessor.ts";
 export type {
   AudioInputHandle,
   AudioOutputHandle,
+  AudioPortDescriptor,
   Buffer,
   BufferElementType,
   BufferValueProxy,

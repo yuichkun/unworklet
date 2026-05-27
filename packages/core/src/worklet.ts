@@ -76,6 +76,9 @@ export function makeWorkletNamespace(graph: CapturedGraph): WorkletNamespace {
     automationRate: p.automationRate,
   }));
 
+  const inputDescriptors = audioInputs.map((p) => ({ name: p.name, channels: p.channels }));
+  const outputDescriptors = audioOutputs.map((p) => ({ name: p.name, channels: p.channels }));
+
   const initialize: WorkletNamespace["initialize"] = (...args) => {
     const self = args[0] as SelfWithState;
     const opts = (args[1] ?? {}) as ProcessorOptionsBag;
@@ -188,5 +191,7 @@ export function makeWorkletNamespace(graph: CapturedGraph): WorkletNamespace {
     initialize,
     process,
     parameterDescriptors,
+    inputs: inputDescriptors,
+    outputs: outputDescriptors,
   };
 }

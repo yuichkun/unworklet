@@ -101,6 +101,13 @@ test("`parameterDescriptors` is empty when no `param` declarations exist", () =>
   expect(ioOnly.worklet.parameterDescriptors).toEqual([]);
 });
 
+test("`inputs` / `outputs` reflect declared audioInput / audioOutput ports in declaration order", () => {
+  expect(stereoGain.worklet.inputs).toEqual([{ name: "main", channels: 2 }]);
+  expect(stereoGain.worklet.outputs).toEqual([{ name: "main", channels: 2 }]);
+  expect(monoGain.worklet.inputs).toEqual([{ name: "main", channels: 1 }]);
+  expect(monoGain.worklet.outputs).toEqual([{ name: "main", channels: 1 }]);
+});
+
 test("`initialize(self, opts)` instantiates WASM and posts a `ready` ack on the port", async () => {
   const { wasm } = await compile(stereoGain);
   const self = makeMockSelf();

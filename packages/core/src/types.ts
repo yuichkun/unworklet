@@ -326,11 +326,22 @@ export type ProcessorGraph = {
 };
 
 /**
+ * Audio I/O port metadata exposed on `WorkletNamespace.inputs` /
+ * `WorkletNamespace.outputs` (= declaration order に 対応、 port index は
+ * 配列 index と 同じ)。
+ */
+export type AudioPortDescriptor = {
+  readonly name: string;
+  readonly channels: number;
+};
+
+/**
  * Worklet escape-hatch namespace exposed on `CompiledProcessor<C>.worklet`
  * (`01-dsl.md` §11 + Q80).
  *
- * `initialize` / `process` / `parameterDescriptors` are always present —
- * filled by `makeWorkletNamespace(graph)` at `defineProcessor` time.
+ * `initialize` / `process` / `parameterDescriptors` + `inputs` / `outputs`
+ * are always present — filled by `makeWorkletNamespace(graph)` at
+ * `defineProcessor` time.
  *
  * `moduleUrl` / `processorName` / `wasmUrl` appear only on processors
  * imported via `@unworklet/vite-plugin`'s `?worklet` virtual module (or
@@ -342,6 +353,8 @@ export type WorkletNamespace = {
   initialize: (...args: unknown[]) => void;
   process: (...args: unknown[]) => boolean;
   parameterDescriptors: readonly unknown[];
+  inputs: readonly AudioPortDescriptor[];
+  outputs: readonly AudioPortDescriptor[];
   moduleUrl?: string;
   processorName?: string;
   wasmUrl?: string;
@@ -451,7 +464,6 @@ export type CompileInstanceDeclaration =
 
 export type CreateNodeOptions<C> = {
   initial?: Partial<Record<string, number>>;
-  wasm: Uint8Array;
   __processor?: C;
 };
 

@@ -163,8 +163,9 @@ const _typeCheckSmoke = (): void => {
   // ── compile + createNode + replaceProcessor.
   void (async () => {
     const ctx = new AudioContext();
-    const { wasm } = await compile(processor);
-    const node: UnworkletNode<unknown> = await createNode(ctx, processor, { wasm });
+    // `compile()` is the bundler-side WASM emit entry; touched here for type surface check.
+    void compile;
+    const node: UnworkletNode<unknown> = await createNode(ctx, processor);
 
     node.params.gain.value = 0.8;
     node.state.meterL.subscribe((_v) => {
