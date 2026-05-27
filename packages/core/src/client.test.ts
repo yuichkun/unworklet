@@ -713,6 +713,35 @@ test("createNode rejects when fetch(wasmUrl) returns a non-ok response", async (
   }
 });
 
+test("createNode tears down the half-built worklet node when the handshake fails (init-error path)", async () => {
+  // Codex round-7 finding 2: if the worklet posts init-error / fires
+  // processorerror / never acks within the timeout, the caller never
+  // receives an UnworkletNode and therefore cannot dispose() the
+  // constructed AudioWorkletNode themselves。 createNode() must clean up
+  // the half-built node before rejecting, otherwise silent processors
+  // accumulate inside the AudioContext。
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    let disconnectCalls = 0;
+    let closeCalls = 0;
+    const promise = createNode(h.context as never, makeMockProcessor(), undefined);
+    await new Promise((r) => setTimeout(r, 0));
+    // Hook the constructed node's cleanup paths before firing init-error。
+    h.lastNode!.disconnect = () => {
+      disconnectCalls++;
+    };
+    h.lastNode!.port.close = () => {
+      closeCalls++;
+    };
+    h.fireInitError("WASM compile failed: bogus magic");
+    await expect(promise).rejects.toThrow(/initialize\(\) failed/);
+    expect(disconnectCalls).toBe(1);
+    expect(closeCalls).toBe(1);
+  } finally {
+    h.cleanup();
+  }
+});
+
 test("createNode rejects with the worklet message when it posts { kind: 'init-error' }", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {

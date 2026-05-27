@@ -238,7 +238,30 @@ export async function createNode<C>(
     processorOptions: { wasm: wasmBytes },
   });
 
-  await awaitReady(node);
+  try {
+    await awaitReady(node);
+  } catch (err) {
+    // The constructor succeeded but the handshake failed (= init-error
+    // posted by the worklet, `processorerror` fired, or the 10s timeout
+    // tripped)。 Caller never sees an `UnworkletNode`, so they cannot call
+    // `dispose()` themselves — tear down the half-built node here。 MDN
+    // documents that a `processorerror`-d node outputs silence for the
+    // rest of its lifetime, so without this cleanup repeated retries
+    // accumulate silent processor instances + open ports inside the
+    // AudioContext。 Best-effort: swallow secondary errors so the original
+    // failure is what surfaces to the caller。
+    try {
+      node.disconnect();
+    } catch {
+      // Already disconnected; ignore.
+    }
+    try {
+      node.port.close();
+    } catch {
+      // Port may already be closed; ignore.
+    }
+    throw err;
+  }
 
   const paramDescriptors = ns.parameterDescriptors as readonly { name: string }[];
   const params = buildParams(node, paramDescriptors);
