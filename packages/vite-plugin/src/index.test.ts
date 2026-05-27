@@ -463,7 +463,7 @@ type ServerStub = {
   middlewares: { use: (fn: MiddlewareFn) => void };
   ssrLoadModule: (url: string) => Promise<Record<string, unknown>>;
   moduleGraph: {
-    getModuleById: (id: string) => undefined;
+    getModulesByFile: (file: string) => undefined;
   };
   __registered: MiddlewareFn[];
 };
@@ -485,7 +485,7 @@ const makeServerStub = (): ServerStub => {
       return mod;
     },
     moduleGraph: {
-      getModuleById: (_id: string) => undefined,
+      getModulesByFile: (_file: string) => undefined,
     },
     __registered: registered,
   };
@@ -618,10 +618,12 @@ const callLoadInServeModeWithMockGraph = async (
     middlewares: { use: () => {} },
     ssrLoadModule: async (url) => (await import(url)) as Record<string, unknown>,
     moduleGraph: {
-      getModuleById: ((moduleId: string) =>
-        moduleId === graph.rootSourcePath ? (rootNode as unknown) : undefined) as unknown as (
-        id: string,
-      ) => undefined,
+      // Real vite returns a Set (= same file can attach to multiple ids,
+      // e.g. `foo.ts` vs `foo.ts?worklet`)。 Mock matches the contract。
+      getModulesByFile: ((file: string) =>
+        file === graph.rootSourcePath
+          ? (new Set([rootNode]) as unknown)
+          : undefined) as unknown as (file: string) => undefined,
     },
     __registered: [],
   };
@@ -648,4 +650,54 @@ test("dev mode load fans transitive helper imports out to addWatchFile", async (
   expect(ctx.watched).toContain(FIXTURE_GAIN_PATH);
   expect(ctx.watched).toContain(helperA);
   expect(ctx.watched).toContain(helperB);
+});
+
+test("dev mode transitive watch keys off `getModulesByFile`, not `getModuleById`", async () => {
+  // Regression for codex round-3 finding (high)。 Vite stores modules under
+  // possibly multiple resolved ids per file (= query suffixes, plugin-
+  // resolved virtuals)、 so id-based lookup misses dependency fanout when
+  // the resolved id differs from the source file path。 The plugin's
+  // collectTransitiveDeps must root from `getModulesByFile`。
+  const helperA = "/abs/project/src/helpers/dsp-utils.ts";
+  type GraphNode = { file: string; importedModules: Set<GraphNode> };
+  const helperNode: GraphNode = { file: helperA, importedModules: new Set() };
+  const rootNode: GraphNode = {
+    file: FIXTURE_GAIN_PATH,
+    importedModules: new Set([helperNode]),
+  };
+  let getModuleByIdCallCount = 0;
+  let getModulesByFileCallCount = 0;
+
+  const plugin = unworklet();
+  const configHook = plugin.configResolved as unknown as ConfigResolvedFn | undefined;
+  if (!configHook) throw new Error("configResolved missing");
+  configHook.call(null, { command: "serve", root: "/", base: "/" });
+  const configureServerHook = plugin.configureServer as unknown as ConfigureServerFn | undefined;
+  if (!configureServerHook) throw new Error("configureServer missing");
+  const server = {
+    middlewares: { use: () => {} },
+    ssrLoadModule: async (url: string) => (await import(url)) as Record<string, unknown>,
+    moduleGraph: {
+      // Intentionally null so a regression on id-based lookup would lose
+      // the helper fanout entirely。
+      getModuleById: ((_id: string) => {
+        getModuleByIdCallCount++;
+        return undefined;
+      }) as unknown,
+      getModulesByFile: ((file: string) => {
+        getModulesByFileCallCount++;
+        return file === FIXTURE_GAIN_PATH ? new Set([rootNode]) : undefined;
+      }) as unknown,
+    },
+    __registered: [] as MiddlewareFn[],
+  } as unknown as ServerStub;
+  configureServerHook.call(null, server);
+  const loadHook = plugin.load as unknown as LoadFn | undefined;
+  if (!loadHook) throw new Error("load missing");
+  const ctx = makeMockEmitContext();
+  await loadHook.call(ctx, `${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`);
+
+  expect(ctx.watched).toContain(helperA);
+  expect(getModulesByFileCallCount).toBeGreaterThan(0);
+  expect(getModuleByIdCallCount).toBe(0);
 });

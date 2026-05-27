@@ -89,7 +89,16 @@ const importFresh = async (sourcePath: string): Promise<Record<string, unknown>>
 type ViteDevServerLike = {
   ssrLoadModule: (url: string) => Promise<Record<string, unknown>>;
   moduleGraph: {
-    getModuleById: (id: string) => ViteModuleNodeLike | undefined;
+    /**
+     * Vite indexes the module graph by file path separately from by
+     * resolved id — query suffixes, plugin-resolved virtuals, and
+     * normalized URLs make `id` and `file` diverge in real code。 The
+     * file-based lookup returns **every** module node attached to a given
+     * file path (since the same file can appear under multiple ids =
+     * different `?...` queries)。 See vite.dev /guide /api-environment-
+     * instances。
+     */
+    getModulesByFile: (file: string) => Set<ViteModuleNodeLike> | undefined;
   };
 };
 
@@ -111,13 +120,21 @@ const ssrLoadSource = async (
  * excludes `sourcePath` itself — the plugin's load hook is the canonical
  * watcher for the entry。 Callers pass each transitive file through
  * `this.addWatchFile(...)` so vite re-runs `load` when any of them change。
+ *
+ * The traversal starts from `getModulesByFile(sourcePath)` (file-based
+ * index) rather than `getModuleById(...)`: Vite stores the module under
+ * possibly multiple ids for the same file (= query-suffixed variants,
+ * plugin-resolved virtuals)、 so id-based lookup misses the dependency
+ * fanout whenever `id !== sourcePath` exactly。
  */
 const collectTransitiveDeps = (server: ViteDevServerLike, sourcePath: string): Set<string> => {
   const seen = new Set<string>();
   const queue: ViteModuleNodeLike[] = [];
-  const root = server.moduleGraph.getModuleById(sourcePath);
-  if (!root) return seen;
-  for (const imp of root.importedModules) queue.push(imp);
+  const roots = server.moduleGraph.getModulesByFile(sourcePath);
+  if (!roots) return seen;
+  for (const root of roots) {
+    for (const imp of root.importedModules) queue.push(imp);
+  }
   while (queue.length > 0) {
     const node = queue.shift()!;
     if (!node.file) continue;
