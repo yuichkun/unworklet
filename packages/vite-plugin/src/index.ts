@@ -440,15 +440,20 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
   // `load` and the middleware = transitive helper-module edits now flow
   // through Vite's module graph instead of Node's static ESM cache。
   let viteDevServer: ViteDevServerLike | null = null;
-  // Dev cache of (sourcePath, revisionHash) → compile snapshot。 The load
-  // hook fills `latestRevision` on every re-run so the dev moduleUrl /
-  // wasmUrl carry the current revision token; the wasm-serving middleware
-  // pulls the snapshot back out by hash so a save between
-  // `addModule(moduleUrl)` and `fetch(wasmUrl)` cannot pair stale meta
-  // with new WASM (= round-5 finding 2)。 Snapshots stay in a small
-  // LRU-ish ring (= keep last 2 revisions) so an in-flight createNode
-  // races complete even after a reload triggers a new revision。
-  type CompileSnapshot = { hash: string; wasm: Uint8Array };
+  // Dev cache of (sourcePath, revisionHash) → compile snapshot。 Every
+  // snapshot holds **all** the per-revision artifacts a single createNode
+  // sequence needs (= wasm bytes + extracted meta + processorName) so the
+  // moduleUrl's worklet entry load and the wasmUrl's middleware response
+  // resolve to the **same** revision even if the author saves between the
+  // two requests (= round-5 finding 2 + round-6 finding 2)。 Snapshots stay
+  // in a small LRU-ish ring (= keep last 2 revisions) so an in-flight
+  // createNode race completes even after a reload triggers a new revision。
+  type CompileSnapshot = {
+    hash: string;
+    wasm: Uint8Array;
+    meta: ReturnType<typeof extractWorkletMeta>;
+    processorName: string;
+  };
   const snapshotsBySource = new Map<string, CompileSnapshot[]>();
   const latestRevisionBySource = new Map<string, string>();
   const SNAPSHOT_RING_SIZE = 2;
@@ -524,10 +529,18 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
             const sourceModule = viteDevServer
               ? await ssrLoadSource(viteDevServer, sourcePath)
               : await importFresh(sourcePath);
-            const { processor } = pickCompiledProcessor(sourceModule, sourcePath);
+            const { exportName, processor } = pickCompiledProcessor(sourceModule, sourcePath);
             const result = await compile(processor);
             const freshHash = computeRevisionHash(result.wasm);
-            recordSnapshot(sourcePath, { hash: freshHash, wasm: result.wasm });
+            const freshMeta = extractWorkletMeta(
+              processor.graph as unknown as Parameters<typeof extractWorkletMeta>[0],
+            );
+            recordSnapshot(sourcePath, {
+              hash: freshHash,
+              wasm: result.wasm,
+              meta: freshMeta,
+              processorName: computeProcessorName(exportName, sourcePath),
+            });
             if (freshHash !== hash) {
               // Revision the client asked for is gone; signal a hard
               // failure instead of silently serving a different binary。
@@ -560,20 +573,47 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
       if (id.startsWith(WORKLET_ENTRY_PREFIX)) {
         // The id can arrive with a `?v=<hash>` revision query in dev (=
         // Vite passes the full request id including query into `load`)。
-        // Strip it so we can stat / import the file off disk, then keep
-        // routing identical between dev and build for the emit path。
+        // The query is the only way to look the right per-revision snapshot
+        // up — drop the prefix, split off the query, keep going。
         const idAfterPrefix = id.slice(WORKLET_ENTRY_PREFIX.length);
         const queryIdx = idAfterPrefix.indexOf("?");
         const sourcePath = queryIdx < 0 ? idAfterPrefix : idAfterPrefix.slice(0, queryIdx);
+        const query = queryIdx < 0 ? "" : idAfterPrefix.slice(queryIdx + 1);
         this.addWatchFile(sourcePath);
-        // Dev path: the resolveId for the main `?worklet` virtual already
-        // added the sourcePath to `allowedSources` and compiled / cached a
-        // snapshot, so this load is just emitting the template against the
-        // current revision。 Build path: same template emitter, no query。
-        const sourceModule =
-          isServe && viteDevServer
-            ? await ssrLoadSource(viteDevServer, sourcePath)
-            : await importFresh(sourcePath);
+
+        if (isServe) {
+          // Dev path = strictly snapshot-driven。 Trust boundary: only
+          // sourcePaths the plugin itself accepted via `?worklet`
+          // `resolveId` may be evaluated。 Vite exposes virtual ids as
+          // `/@id/__x00__<rest>` so an unaudited client could otherwise
+          // craft a request for any local file (= round-6 finding 1)。
+          if (!allowedSources.has(sourcePath)) {
+            return null;
+          }
+          const params = new URLSearchParams(query);
+          const requestedHash = params.get("v") ?? "";
+          if (!/^[0-9a-f]{8}$/.test(requestedHash)) {
+            return null;
+          }
+          const snap = findSnapshot(sourcePath, requestedHash);
+          if (!snap) {
+            // Revision rolled out of the ring。 Refuse to silently emit a
+            // template against a different revision (= would pair stale
+            // meta with new WASM the same way round-5 was meant to close)。
+            // Returning `null` makes Vite respond 404, surfacing the skew
+            // as a clean addModule() rejection on the consumer side。
+            return null;
+          }
+          return emitWorkletTemplate({
+            processorName: snap.processorName,
+            meta: snap.meta,
+          });
+        }
+
+        // Build path: rolldown emits the chunk via `this.emitFile`, snapshot
+        // ring not involved。 Same template emitter, sourced off the
+        // build-time `compile(processor)` result。
+        const sourceModule = await importFresh(sourcePath);
         const { exportName, processor } = pickCompiledProcessor(sourceModule, sourcePath);
         const meta = extractWorkletMeta(
           processor.graph as unknown as Parameters<typeof extractWorkletMeta>[0],
@@ -625,7 +665,21 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
         // worklet realm would choke on the bare specifier。
         const result = await compile(processor);
         const hash = computeRevisionHash(result.wasm);
-        recordSnapshot(sourcePath, { hash, wasm: result.wasm });
+        const devMeta = extractWorkletMeta(
+          processor.graph as unknown as Parameters<typeof extractWorkletMeta>[0],
+        );
+        const devProcessorName = computeProcessorName(exportName, sourcePath);
+        // Snapshot the full per-revision bundle = wasm + meta + processorName。
+        // The worklet-entry virtual load and the wasm middleware both look
+        // their per-request hash up here; both find the same artifacts or
+        // both 410, so no path through createNode can pair a stale meta
+        // with new bytes (= round-6 finding 2)。
+        recordSnapshot(sourcePath, {
+          hash,
+          wasm: result.wasm,
+          meta: devMeta,
+          processorName: devProcessorName,
+        });
 
         const encoded = encodeSourceForDevUrl(sourcePath);
         const virtualWorkletId = `${WORKLET_ENTRY_PREFIX}${sourcePath}`;

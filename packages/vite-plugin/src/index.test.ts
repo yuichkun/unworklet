@@ -684,6 +684,82 @@ test("dev mode load fans transitive helper imports out to addWatchFile", async (
   expect(ctx.watched).toContain(helperB);
 });
 
+test("dev mode WORKLET_ENTRY load rejects sourcePaths the plugin never accepted via `?worklet`", async () => {
+  // Round-6 finding 1: Vite exposes virtual ids as `/@id/__x00__<rest>` in
+  // dev, so a crafted request could otherwise force the worklet-entry load
+  // hook to evaluate any local file。 Only sourcePaths the plugin itself
+  // resolved via `?worklet` are eligible。
+  const plugin = unworklet();
+  const configHook = plugin.configResolved as unknown as ConfigResolvedFn | undefined;
+  if (!configHook) throw new Error("configResolved missing");
+  configHook.call(null, { command: "serve", root: "/abs", base: "/" });
+  const loadHook = plugin.load as unknown as LoadFn | undefined;
+  if (!loadHook) throw new Error("load missing");
+  // Skip `?worklet` resolveId — the path is NOT allowlisted。
+  const ctx = makeMockEmitContext();
+  const result = await loadHook.call(ctx, `\0unworklet-worklet:/etc/passwd?v=deadbeef`);
+  expect(result).toBeNull();
+});
+
+test("dev mode WORKLET_ENTRY load returns null for an allowlisted sourcePath with an unknown revision hash", async () => {
+  // Round-6 finding 2: a stale `?v=<hash>` after the snapshot ring rolled
+  // over must not silently emit a template against HEAD (= would pair stale
+  // meta with new WASM)。 Plugin returns `null` so Vite responds 404 and
+  // the consumer's `addModule()` rejects cleanly。
+  const plugin = unworklet();
+  const configHook = plugin.configResolved as unknown as ConfigResolvedFn | undefined;
+  if (!configHook) throw new Error("configResolved missing");
+  configHook.call(null, { command: "serve", root: "/", base: "/" });
+  const resolveHook = plugin.resolveId as unknown as ResolveIdFn | undefined;
+  if (!resolveHook) throw new Error("resolveId missing");
+  // Allowlist the fixture path through resolveId。
+  resolveHook.call(null, `${FIXTURE_GAIN_PATH}?worklet`, undefined, { isEntry: false });
+  const loadHook = plugin.load as unknown as LoadFn | undefined;
+  if (!loadHook) throw new Error("load missing");
+  const ctx = makeMockEmitContext();
+  // Request a hash the snapshot ring has never seen for this source。
+  const result = await loadHook.call(ctx, `\0unworklet-worklet:${FIXTURE_GAIN_PATH}?v=deadbeef`);
+  expect(result).toBeNull();
+});
+
+test("dev mode WORKLET_ENTRY load with a fresh snapshot emits the matching template (= same meta + processorName)", async () => {
+  // Round-6 finding 2: the worklet-entry must look the template up out of
+  // the per-revision snapshot ring filled by the main `?worklet` load。
+  // Same hash twice → byte-identical template = no skew window。
+  const plugin = unworklet();
+  const configHook = plugin.configResolved as unknown as ConfigResolvedFn | undefined;
+  if (!configHook) throw new Error("configResolved missing");
+  configHook.call(null, { command: "serve", root: "/", base: "/" });
+  const resolveHook = plugin.resolveId as unknown as ResolveIdFn | undefined;
+  if (!resolveHook) throw new Error("resolveId missing");
+  resolveHook.call(null, `${FIXTURE_GAIN_PATH}?worklet`, undefined, { isEntry: false });
+  const loadHook = plugin.load as unknown as LoadFn | undefined;
+  if (!loadHook) throw new Error("load missing");
+  // Trigger the primary load = fills the snapshot ring + bakes the hash
+  // into both URLs。 Extract the hash from the emitted JS。
+  const augmentedJs = (await loadHook.call(
+    makeMockEmitContext(),
+    `${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`,
+  )) as string;
+  const hashMatch = augmentedJs.match(/\?v=([0-9a-f]{8})/);
+  expect(hashMatch).not.toBeNull();
+  const hash = hashMatch![1]!;
+  const templateA = (await loadHook.call(
+    makeMockEmitContext(),
+    `\0unworklet-worklet:${FIXTURE_GAIN_PATH}?v=${hash}`,
+  )) as string;
+  expect(typeof templateA).toBe("string");
+  expect(templateA).toContain("registerProcessor");
+  expect(templateA).toContain('from "@unworklet/core/worklet"');
+  // Idempotency: second request with the same hash yields the same bytes
+  // (= no recompile, no skew window even if disk content drifted)。
+  const templateB = (await loadHook.call(
+    makeMockEmitContext(),
+    `\0unworklet-worklet:${FIXTURE_GAIN_PATH}?v=${hash}`,
+  )) as string;
+  expect(templateB).toBe(templateA);
+});
+
 test("dev mode transitive watch keys off `getModulesByFile`, not `getModuleById`", async () => {
   // Regression for codex round-3 finding (high)。 Vite stores modules under
   // possibly multiple resolved ids per file (= query suffixes, plugin-
