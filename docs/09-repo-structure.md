@@ -17,8 +17,11 @@ pnpm workspaces。 root に `pnpm-workspace.yaml`、 root `package.json` の `pa
 Day-one か ら 公 開 4 package + 内 部 module を 立 て る:
 
 - 公 開: `@unworklet/core` / `@unworklet/vite-plugin` / `@unworklet/offline` / `@unworklet/test`
-- 公 開 subpath: `@unworklet/core/simd` / `@unworklet/test/extend` (= chain form `expect.extend(...)` 登 録 用 side-effect import path、 `06-testing.md` §6)
-- 内 部 module: worklet runtime (= `@unworklet/core` 内、 公 開 package で は な い)。 compiler module 自 体 は `@unworklet/core` 内 部 module だ が、 compile invocation 経 路 は `@unworklet/core` か ら 公 開 さ れ る `compile` 関 数 と し て expose (= vite-plugin / offline / `replaceProcessor` / 直 接 import す る consumer 全 て が 同 一 関 数 を call、 §2.1 + §2.4 参 照)。
+- 公 開 subpath: `@unworklet/core/simd` / `@unworklet/core/worklet` / `@unworklet/test/extend`。
+  - `@unworklet/core/simd` = opt-in SIMD primitive 群 (§2.2)。
+  - `@unworklet/core/worklet` = vite-plugin が emit す る worklet entry template が `AudioWorkletGlobalScope` 内 で boot す る た め の runtime helper (= `makeWorkletNamespaceFromMeta(meta)`、 §2.3)。 user が 直 接 import す る 形 で は な く、 vite-plugin の `?worklet` 経 路 が emit し た template が 同 subpath を 参 照 す る = consumer の bundler が resolve す る semi-public surface = `exports` で 明 文 expose す る。
+  - `@unworklet/test/extend` = chain form `expect.extend(...)` 登 録 用 side-effect import path (`06-testing.md` §6)。
+- 内 部 module: compiler module は `@unworklet/core` 内 部 module だ が、 compile invocation 経 路 は `@unworklet/core` か ら 公 開 さ れ る `compile` 関 数 と し て expose (= vite-plugin / offline / `replaceProcessor` / 直 接 import す る consumer 全 て が 同 一 関 数 を call、 §2.1 + §2.4 参 照)。
 
 権 威 規 定 = `decisions-log.md` Q13 + Q52。
 
@@ -51,7 +54,16 @@ Opt-in SIMD surface (Q3-a — scalar-only authors never import this path).
 
 Lane access (`vec.lane(i)`) is a method on the `Node<'f32x4'>` value; `buf.loadVec(offset)` / `buf.storeVec(offset, value)` are methods on `Buffer<'f32'>` handles. Both are typed via this subpath but accessed via member syntax (= not standalone named exports).
 
-### 2.3 Other public packages
+### 2.3 `@unworklet/core/worklet` named exports
+
+vite-plugin が emit す る worklet entry template が `AudioWorkletGlobalScope` 内 で 走 ら せ る runtime helper。 user が 直 接 import す る 形 で は な く (= main bundle 側 で は `@unworklet/core` root か ら 入 る)、 template 内 の `import { makeWorkletNamespaceFromMeta } from "@unworklet/core/worklet"` を bundler が resolve す る semi-public surface。 worklet realm で safe に load 可 能 な surface だ け を 抜 き 出 し て お き、 `binaryen` / `defineProcessor` / graph capture machinery 等 は 一 切 含 め な い (= worklet realm に 不 要 / 不 安 全 な dep を 流 入 さ せ な い)。
+
+| Category     | Exports                                                 |
+| ------------ | ------------------------------------------------------- |
+| Bootstrap    | `makeWorkletNamespaceFromMeta(meta) → WorkletNamespace` |
+| Public types | `WorkletMeta`, `WorkletNamespace`                       |
+
+### 2.4 Other public packages
 
 - `@unworklet/vite-plugin` — exports the Vite plugin factory + DevTools panel + analysis JSON artifact contract (`07-vite-plugin.md`)。 build pipeline 内 で `@unworklet/core` の `compile` 関 数 を call し て WASM を emit。
 - `@unworklet/offline` — exports `renderOffline` (`13-offline-render.md` §2)。 内 部 で `@unworklet/core` の `compile` 関 数 を call し て WASM 化、 host JS の `WebAssembly.instantiate` で offline 実 行。
@@ -59,14 +71,15 @@ Lane access (`vec.lane(i)`) is a method on the `Node<'f32x4'>` value; `buf.loadV
 
 Per-identifier signature detail / generic constraint is impl-phase fill per Q53 + Q61.
 
-### 2.4 Package dependency graph
+### 2.5 Package dependency graph
 
-公 開 4 package + 1 subpath + external dep の `package.json` dependency 関 係 を visual graph + table の 2 view で declare (= acceptance F1 で 公 開 surface check 対 象):
+公 開 4 package + 2 subpath + external dep の `package.json` dependency 関 係 を visual graph + table の 2 view で declare (= acceptance F1 で 公 開 surface check 対 象):
 
 ```mermaid
 graph LR
   core["@unworklet/core"]
   simd["@unworklet/core/simd （subpath）"]
+  workletSubpath["@unworklet/core/worklet （subpath）"]
   vp["@unworklet/vite-plugin"]
   vpUi["devtools-ui （internal SPA sub-project under vite-plugin）"]
   offline["@unworklet/offline"]
@@ -80,6 +93,7 @@ graph LR
   vitest[vitest]
 
   simd -.subpath.-> core
+  workletSubpath -.subpath.-> core
   testExtend -.subpath.-> test
   core -.dynamic.-> binaryen
   vp -.peer.-> core
