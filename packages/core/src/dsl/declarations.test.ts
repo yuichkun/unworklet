@@ -27,12 +27,6 @@ import { forSample } from "./loop.ts";
 // ─────────────────────────────────────────────────────────────────────────
 
 const stubs: ReadonlyArray<readonly [string, () => unknown]> = [
-  ["state.f32", () => state.f32(0)],
-  ["state.f64", () => state.f64(0)],
-  ["state.i32", () => state.i32(0)],
-  ["state.i64", () => state.i64(0n)],
-  ["state.bool", () => state.bool(false)],
-  ["state.named", () => state.named("x")],
   ["state.expose", () => state.expose({ name: "x" })],
   ["buffer.f32", () => buffer.f32({ size: 16 })],
   ["buffer.f64", () => buffer.f64({ size: 16 })],
@@ -387,4 +381,234 @@ test("`param` handle `.expose({...})` は throw stub 維 持", () => {
       .named("gain");
     expect(() => handle.expose({ name: "x" })).toThrow(/not implemented/);
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// state plain factory = Phase 7 sub-phase 7.1 (= state.<type>(initial)
+// scalar slot を declare、 .load() / .store(v) で AST 還 元)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`state.f32(0)` outside `defineProcessor` body throws", () => {
+  expect(() => state.f32(0)).toThrow(/outside `defineProcessor` body/);
+});
+
+test("`state.f32(initial)` registers a `state` declaration with synthetic name", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    state.f32(0.5);
+  });
+  expect(ctx.declarations).toEqual([
+    { kind: "state", name: "__state_0", type: "f32", initial: 0.5 },
+  ]);
+});
+
+test("multiple plain `state` calls = synthetic name が unique (= __state_0 / __state_1 / ...)", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    state.f32(0);
+    state.i32(0);
+    state.bool(false);
+  });
+  expect(ctx.declarations.map((d) => (d.kind === "state" ? d.name : "?"))).toEqual([
+    "__state_0",
+    "__state_1",
+    "__state_2",
+  ]);
+});
+
+test("`state.<type>(initial)` 5 type 全 declare (= f32 / f64 / i32 / i64 / bool)", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    state.f32(1.5);
+    state.f64(2.5);
+    state.i32(7);
+    state.i64(8n);
+    state.bool(true);
+  });
+  expect(ctx.declarations).toEqual([
+    { kind: "state", name: "__state_0", type: "f32", initial: 1.5 },
+    { kind: "state", name: "__state_1", type: "f64", initial: 2.5 },
+    { kind: "state", name: "__state_2", type: "i32", initial: 7 },
+    { kind: "state", name: "__state_3", type: "i64", initial: 8n },
+    { kind: "state", name: "__state_4", type: "bool", initial: true },
+  ]);
+});
+
+test("`state.f32(0).load()` returns a `stateLoad` AST tied to decl.name", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const z = state.f32(0);
+    expect(unwrapAst(z.load())).toEqual({
+      kind: "stateLoad",
+      type: "f32",
+      name: "__state_0",
+    });
+  });
+});
+
+test("`state.f32(0).store(Node)` appends a `stateStore` AST to statements", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const z = state.f32(0);
+    const v = wrapAst<"f32">({ kind: "literal", type: "f32", value: 0.5 });
+    z.store(v);
+  });
+  expect(ctx.statements).toEqual([
+    {
+      kind: "stateStore",
+      type: "f32",
+      name: "__state_0",
+      value: { kind: "literal", type: "f32", value: 0.5 },
+    },
+  ]);
+});
+
+test("`state.f32(0).store(literal)` lifts JS number to `f32` literal AST", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const z = state.f32(0);
+    z.store(0.25);
+  });
+  expect(ctx.statements).toEqual([
+    {
+      kind: "stateStore",
+      type: "f32",
+      name: "__state_0",
+      value: { kind: "literal", type: "f32", value: 0.25 },
+    },
+  ]);
+});
+
+test("`state.i32(0).store(literal)` lifts JS number to `i32` literal AST", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const z = state.i32(0);
+    z.store(42);
+  });
+  expect(ctx.statements).toEqual([
+    {
+      kind: "stateStore",
+      type: "i32",
+      name: "__state_0",
+      value: { kind: "literal", type: "i32", value: 42 },
+    },
+  ]);
+});
+
+test("`state.bool(false).store(true)` lifts boolean to internal i32 (= 0/1) literal", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const flag = state.bool(false);
+    flag.store(true);
+  });
+  expect(ctx.statements).toEqual([
+    {
+      kind: "stateStore",
+      type: "bool",
+      name: "__state_0",
+      value: { kind: "literal", type: "i32", value: 1 },
+    },
+  ]);
+});
+
+test("`state.bool(false).store(false)` lifts boolean to internal i32 0 literal", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const flag = state.bool(true);
+    flag.store(false);
+  });
+  expect(ctx.statements[0]).toEqual({
+    kind: "stateStore",
+    type: "bool",
+    name: "__state_0",
+    value: { kind: "literal", type: "i32", value: 0 },
+  });
+});
+
+test("`state.i64(0n).store(bigint literal)` throws (= 後 続 sub-phase で fill)", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const z = state.i64(0n);
+    expect(() => z.store(42n)).toThrow(/i64 literal store not implemented/);
+  });
+});
+
+test("`state.named('X').f32(0)` 前 付 け chain registers with name `X`", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    state.named("meterL").f32(0);
+  });
+  expect(ctx.declarations).toEqual([{ kind: "state", name: "meterL", type: "f32", initial: 0 }]);
+});
+
+test("`state.f32(0).named('X')` 後 付 け chain は decl.name を mutate (= 同 declare shape)", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    state.f32(0).named("meterL");
+  });
+  expect(ctx.declarations).toEqual([{ kind: "state", name: "meterL", type: "f32", initial: 0 }]);
+});
+
+test("chain で `.named` 重 複 = after-wins (= chain-rightmost name 採 用)", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    state.named("first").f32(0).named("final");
+  });
+  expect(ctx.declarations[0]?.name).toBe("final");
+});
+
+test("`state.<type>.load()` の name は `.named` 後 fix を 反 映 (= late binding)", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const handle = state.named("orig").f32(0).named("final");
+    expect(unwrapAst(handle.load())).toEqual({
+      kind: "stateLoad",
+      type: "f32",
+      name: "final",
+    });
+  });
+});
+
+test("`state.<type>.store(v)` の name も `.named` 後 fix を 反 映 (= late binding)", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const handle = state.f32(0).named("final");
+    handle.store(0);
+  });
+  expect(ctx.statements[0]).toMatchObject({
+    kind: "stateStore",
+    name: "final",
+  });
+});
+
+test("`state` handle `.expose({...})` は throw stub 維 持 (= sub-phase 7.2 で fill)", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const handle = state.f32(0);
+    expect(() => handle.expose({ name: "x" })).toThrow(/not implemented/);
+  });
+});
+
+test("`state.store(v)` inside `forSample` 内 = forSample body に append", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const z = state.f32(0);
+    forSample(() => {
+      z.store(0.5);
+    });
+  });
+  expect(ctx.statements).toEqual([
+    {
+      kind: "forSample",
+      stride: 1,
+      body: [
+        {
+          kind: "stateStore",
+          type: "f32",
+          name: "__state_0",
+          value: { kind: "literal", type: "f32", value: 0.5 },
+        },
+      ],
+    },
+  ]);
 });

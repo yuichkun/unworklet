@@ -10,8 +10,14 @@
  * and **after** (`state.f32(0).named('X')`). Field merge = after-wins.
  */
 
-import type { AstNode, ParamDecl } from "../compile/ast.ts";
-import { addDeclaration, addStatement, unwrapAst, wrapAst } from "../compile/capture.ts";
+import type { AstNode, ParamDecl, StateDecl } from "../compile/ast.ts";
+import {
+  addDeclaration,
+  addStatement,
+  getCurrentCapture,
+  unwrapAst,
+  wrapAst,
+} from "../compile/capture.ts";
 import type {
   AudioInputHandle,
   AudioOutputHandle,
@@ -53,6 +59,30 @@ function liftF32(v: Node<"f32"> | number): AstNode {
   return unwrapAst(v);
 }
 
+/**
+ * `state.<type>.store(v)` の value 引 数 を AST に lift (= Q33 literal lift
+ * + Node<T> unwrap)。 i64 は bigint 必 須、 bool は boolean → i32 0/1 に
+ * 内 部 表 現 変 換 (= Q42 + emit.ts bool case と zip)。 既 ast.ts の
+ * literal kind は `value: number` 制 約 = i64 literal の bigint store は
+ * 後 続 sub-phase で literal 型 拡 張 と zip し て fill。
+ */
+function liftStoreValue<T extends ScalarType>(type: T, v: Node<T> | ScalarOf<T>): AstNode {
+  if (typeof v === "number") {
+    return { kind: "literal", type, value: v };
+  }
+  if (typeof v === "boolean") {
+    // bool は 内 部 i32 表 現 (= store 経 路 で i32.store)。
+    return { kind: "literal", type: "i32", value: v ? 1 : 0 };
+  }
+  if (typeof v === "bigint") {
+    // i64 literal store の bigint path は ast.ts の literal `value: number`
+    // 制 約 下 で 表 現 不 完 全 = 後 続 sub-phase で literal 型 拡 張 と
+    // zip し て fill。 Node<'i64'> 経 由 (= stateLoad 等) は そ の ま ま 通 る。
+    throw new Error("i64 literal store not implemented (= 後 続 sub-phase で fill)");
+  }
+  return unwrapAst(v as Node<ScalarType>);
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // `state` — scalar slots (`01-dsl.md` §3.1)
 // ─────────────────────────────────────────────────────────────────────────
@@ -69,15 +99,71 @@ export interface StateChain {
   expose(options: ExposeOptions): StateChain;
 }
 
-export const state: StateChain = {
-  f32: () => notImplemented(),
-  f64: () => notImplemented(),
-  i32: () => notImplemented(),
-  i64: () => notImplemented(),
-  bool: () => notImplemented(),
-  named: () => notImplemented(),
+// `state` chain (= Q79 chain-order free + Q76 plain factory)。
+// plain factory (= `state.f32(0)` 等) は synthetic name (= `__state_<idx>`)
+// で declare、 chain `.named('X')` で 後付け / 前付け 両 path で decl.name
+// mutate (= param と 同 path)。 `.expose({...})` は sub-phase 7.2 で fill =
+// throw stub 維 持。
+//
+// AST shape の name field は `decl.name` を `.load()` / `.store()` 呼 び 時 点
+// で closure capture (= late binding)、 .named() で chain 後 fix が反 映 さ れ る
+// 順 序 と zip (= 既 param と 同 規 律: chain は store/load 呼 び 出 し の
+// 前 に 完 結 さ せ る = user 責 任)。
+
+const makeStateChain = (pendingName: string | undefined): StateChain => ({
+  f32: (initial) => makeStateDecl("f32", initial, pendingName),
+  f64: (initial) => makeStateDecl("f64", initial, pendingName),
+  i32: (initial) => makeStateDecl("i32", initial, pendingName),
+  i64: (initial) => makeStateDecl("i64", initial, pendingName),
+  bool: (initial) => makeStateDecl("bool", initial, pendingName),
+  named: (name) => makeStateChain(name),
   expose: () => notImplemented(),
-};
+});
+
+function makeStateDecl<T extends ScalarType>(
+  type: T,
+  initial: ScalarOf<T>,
+  pendingName: string | undefined,
+): State<T> {
+  const ctx = getCurrentCapture();
+  const synthIdx = ctx.declarations.filter((d) => d.kind === "state").length;
+  const name = pendingName ?? `__state_${synthIdx}`;
+  const decl: StateDecl = {
+    kind: "state",
+    name,
+    type,
+    initial: initial as number | bigint | boolean,
+  };
+  addDeclaration(decl);
+  return makeStateHandle<T>(decl);
+}
+
+function makeStateHandle<T extends ScalarType>(decl: StateDecl): State<T> {
+  const handle = {
+    load: () =>
+      wrapAst<T>({
+        kind: "stateLoad",
+        type: decl.type,
+        name: decl.name,
+      }),
+    store: (v: Node<T> | ScalarOf<T>) => {
+      addStatement({
+        kind: "stateStore",
+        type: decl.type,
+        name: decl.name,
+        value: liftStoreValue<T>(decl.type as T, v),
+      });
+    },
+    named: (name: string) => {
+      decl.name = name;
+      return handle;
+    },
+    expose: () => notImplemented(),
+  } as unknown as State<T>;
+  return handle;
+}
+
+export const state: StateChain = makeStateChain(undefined);
 
 // ─────────────────────────────────────────────────────────────────────────
 // `buffer` — fixed-size arrays (`01-dsl.md` §3.2)
