@@ -295,10 +295,12 @@ watch(reprByKey, () => redraw(), { deep: true });
     <div class="view-body">
       <section v-for="node in unworkletNodes" :key="node.id" class="node-section">
         <header class="section-head">
-          <span class="section-dot" :class="`status-${node.status}`"></span>
-          <span class="section-name">{{ node.label }}</span>
-          <span class="u-pill">{{ node.audioNodeType }}</span>
-          <span class="u-pill u-pill--accent">
+          <div class="section-name-cell">
+            <span class="section-dot" :class="`status-${node.status}`"></span>
+            <span class="section-name">{{ node.label }}</span>
+          </div>
+          <span class="u-pill section-pill">{{ node.audioNodeType }}</span>
+          <span class="u-pill u-pill--accent section-count">
             {{ graph.publishSlots(node.id).length }} slots
           </span>
         </header>
@@ -332,64 +334,81 @@ watch(reprByKey, () => redraw(), { deep: true });
             </div>
 
             <div class="slot-value">
-              <template v-if="slot.kind === 'state'">
-                <template v-if="reprFor(node.id, slot) === 'history-line'">
-                  <span class="value-text mono">
-                    {{ formatScalar(live.getSlotScalar(slotKey(node.id, slot)) ?? 0, slot.type) }}
-                  </span>
-                  <canvas :ref="setSparklineRef(slotKey(node.id, slot))" class="sparkline"></canvas>
+              <!-- Numeric prefix (fixed-width column 1) — only rendered for
+                   state+history-line and state+numeric. Empty placeholder for
+                   every other row, so column 2 (the visual) always starts at
+                   the same x position. -->
+              <span class="slot-value-prefix mono">
+                <template
+                  v-if="
+                    slot.kind === 'state' &&
+                    (reprFor(node.id, slot) === 'history-line' ||
+                      reprFor(node.id, slot) === 'numeric')
+                  "
+                >
+                  {{ formatScalar(live.getSlotScalar(slotKey(node.id, slot)) ?? 0, slot.type) }}
                 </template>
-                <template v-else-if="reprFor(node.id, slot) === 'on-off'">
-                  <span
-                    class="onoff-indicator"
-                    :class="{ on: live.getSlotScalar(slotKey(node.id, slot)) === true }"
-                  >
-                    <span class="onoff-dot"></span>
-                    <span class="onoff-label">
-                      {{ live.getSlotScalar(slotKey(node.id, slot)) === true ? "on" : "off" }}
-                    </span>
-                  </span>
-                </template>
-                <template v-else>
-                  <span class="value-text mono">
-                    {{ formatScalar(live.getSlotScalar(slotKey(node.id, slot)) ?? 0, slot.type) }}
-                  </span>
-                </template>
-              </template>
+              </span>
 
-              <template v-else>
-                <template v-if="reprFor(node.id, slot) === 'waveform'">
-                  <canvas :ref="setWaveformRef(slotKey(node.id, slot))" class="waveform"></canvas>
-                </template>
-                <template v-else-if="reprFor(node.id, slot) === 'bar'">
-                  <canvas :ref="setBarRef(slotKey(node.id, slot))" class="bar-chart"></canvas>
-                </template>
-                <template v-else-if="reprFor(node.id, slot) === 'grid'">
-                  <div class="bool-grid">
+              <!-- Visual (column 2): sparkline / on-off / waveform / bar / grid / hex / list. -->
+              <div class="slot-value-visual">
+                <template v-if="slot.kind === 'state'">
+                  <template v-if="reprFor(node.id, slot) === 'history-line'">
+                    <canvas
+                      :ref="setSparklineRef(slotKey(node.id, slot))"
+                      class="sparkline"
+                    ></canvas>
+                  </template>
+                  <template v-else-if="reprFor(node.id, slot) === 'on-off'">
                     <span
-                      v-for="(v, i) in (live.getSlotBuffer(slotKey(node.id, slot)) ??
-                        []) as boolean[]"
-                      :key="i"
-                      class="bool-cell"
-                      :class="{ on: v }"
-                    ></span>
-                  </div>
+                      class="onoff-indicator"
+                      :class="{ on: live.getSlotScalar(slotKey(node.id, slot)) === true }"
+                    >
+                      <span class="onoff-dot"></span>
+                      <span class="onoff-label">
+                        {{ live.getSlotScalar(slotKey(node.id, slot)) === true ? "on" : "off" }}
+                      </span>
+                    </span>
+                  </template>
                 </template>
-                <template v-else-if="reprFor(node.id, slot) === 'hex'">
-                  <span class="hex-dump mono">
-                    {{
-                      formatHex(
-                        (live.getSlotBuffer(slotKey(node.id, slot)) ?? EMPTY_U8) as Uint8Array,
-                      )
-                    }}
-                  </span>
-                </template>
+
                 <template v-else>
-                  <span class="list-dump mono">
-                    {{ formatList(live.getSlotBuffer(slotKey(node.id, slot)) ?? EMPTY_U8) }}
-                  </span>
+                  <template v-if="reprFor(node.id, slot) === 'waveform'">
+                    <canvas
+                      :ref="setWaveformRef(slotKey(node.id, slot))"
+                      class="waveform"
+                    ></canvas>
+                  </template>
+                  <template v-else-if="reprFor(node.id, slot) === 'bar'">
+                    <canvas :ref="setBarRef(slotKey(node.id, slot))" class="bar-chart"></canvas>
+                  </template>
+                  <template v-else-if="reprFor(node.id, slot) === 'grid'">
+                    <div class="bool-grid">
+                      <span
+                        v-for="(v, i) in (live.getSlotBuffer(slotKey(node.id, slot)) ??
+                          []) as boolean[]"
+                        :key="i"
+                        class="bool-cell"
+                        :class="{ on: v }"
+                      ></span>
+                    </div>
+                  </template>
+                  <template v-else-if="reprFor(node.id, slot) === 'hex'">
+                    <span class="hex-dump mono">
+                      {{
+                        formatHex(
+                          (live.getSlotBuffer(slotKey(node.id, slot)) ?? EMPTY_U8) as Uint8Array,
+                        )
+                      }}
+                    </span>
+                  </template>
+                  <template v-else>
+                    <span class="list-dump mono">
+                      {{ formatList(live.getSlotBuffer(slotKey(node.id, slot)) ?? EMPTY_U8) }}
+                    </span>
+                  </template>
                 </template>
-              </template>
+              </div>
             </div>
           </li>
         </ul>
@@ -445,18 +464,39 @@ watch(reprByKey, () => redraw(), { deep: true });
 }
 
 .section-head {
+  display: grid;
+  /* First two columns match .slot-meta's first two columns so the
+     "AudioWorkletNode" pill in the section header lines up vertically with
+     the per-row "state"/"buffer" pills below it. The trailing `auto` holds
+     the count pill ("N slots"). */
+  grid-template-columns: 130px 130px auto;
+  align-items: center;
+  column-gap: 10px;
+  padding: 0 4px 10px;
+  border-bottom: 1px solid var(--u-border);
+  margin-bottom: 10px;
+}
+
+.section-name-cell {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--u-border);
-  margin-bottom: 10px;
+  min-width: 0;
+}
+
+.section-pill {
+  justify-self: start;
+}
+
+.section-count {
+  justify-self: start;
 }
 
 .section-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .section-dot.status-ok {
@@ -503,7 +543,9 @@ watch(reprByKey, () => redraw(), { deep: true });
 
 .slot-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 140px minmax(160px, 2fr);
+  /* slot-meta sizes to its grid content (= 130 + 130 + 36 + 56 + 56 + gaps),
+     so the kind pill / type / size / rate columns are never clipped. */
+  grid-template-columns: auto 140px minmax(160px, 1fr);
   align-items: center;
   gap: 12px;
   padding: 6px 4px;
@@ -516,7 +558,12 @@ watch(reprByKey, () => redraw(), { deep: true });
 
 .slot-meta {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 60px 36px 56px 56px;
+  /* slot-name fixed at 130px so the kind pill ("state"/"buffer") sits at a
+     stable x position across rows AND matches `.section-head`'s pill column.
+     pill column is 130px to fit the longest audio-node type string
+     ("AudioDestinationNode") in the section header above — the short
+     "state"/"buffer" pills in slot rows just left-align inside it. */
+  grid-template-columns: 130px 130px 36px 56px 56px;
   align-items: center;
   column-gap: 10px;
   overflow: hidden;
@@ -568,17 +615,25 @@ watch(reprByKey, () => redraw(), { deep: true });
 }
 
 .slot-value {
+  display: grid;
+  grid-template-columns: 60px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  min-width: 0;
+}
+
+.slot-value-prefix {
+  font-size: 12px;
+  color: var(--u-text);
+  text-align: right;
+  min-width: 0;
+}
+
+.slot-value-visual {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
-}
-
-.value-text {
-  font-size: 12px;
-  color: var(--u-text);
-  min-width: 56px;
-  text-align: right;
 }
 
 .sparkline {

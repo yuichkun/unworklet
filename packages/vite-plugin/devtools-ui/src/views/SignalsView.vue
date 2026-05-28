@@ -63,6 +63,14 @@ const downloadPortWav = (port: OutputPort): void => {
   a.click();
 };
 
+const discardPort = (port: OutputPort): void => {
+  const key = portKey(port);
+  const snap = confirmed.value[key];
+  if (!snap) return;
+  URL.revokeObjectURL(snap.blobUrl);
+  delete confirmed.value[key];
+};
+
 const recordAll = (): void => {
   for (const port of signals.ports.value) {
     if (!isChecked(port)) continue;
@@ -332,9 +340,6 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
             >
               Download zip
             </button>
-            <span v-if="confirmedCount > 0" class="confirmed-meta mono">
-              {{ confirmedCount }} captured
-            </span>
           </div>
         </header>
 
@@ -350,39 +355,13 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
             :class="{ captured: !!confirmed[portKey(port)] }"
           >
             <header class="port-head">
-              <label class="port-head-toggle">
-                <input type="checkbox" :checked="isChecked(port)" @change="toggleCheck(port)" />
-                <span class="port-head-name mono">{{ portKey(port) }}</span>
-              </label>
-              <span v-if="confirmed[portKey(port)]" class="capture-chip mono">
-                ✓ Captured
-                {{ formatDuration(confirmed[portKey(port)]!.durationS) }} ·
-                {{ confirmed[portKey(port)]!.ts }}
-              </span>
-              <span v-else class="port-head-meta mono">
+              <span class="port-head-name mono">{{ portKey(port) }}</span>
+              <span class="port-head-meta mono">
                 {{ port.channels }} ch · {{ signals.sampleRate }} Hz
               </span>
-              <div class="port-head-actions">
-                <button class="u-btn u-btn--primary" @click="recordPort(port)">
-                  {{ confirmed[portKey(port)] ? "Re-capture" : "Capture" }}
-                </button>
-                <template v-if="confirmed[portKey(port)]">
-                  <audio
-                    :src="confirmed[portKey(port)]!.blobUrl"
-                    controls
-                    preload="metadata"
-                    class="captured-audio"
-                  ></audio>
-                  <button
-                    class="icon-btn"
-                    @click="downloadPortWav(port)"
-                    title="Download as 16-bit PCM WAV"
-                    aria-label="Download WAV"
-                  >
-                    ↓
-                  </button>
-                </template>
-              </div>
+              <button class="u-btn u-btn--primary port-head-cta" @click="recordPort(port)">
+                {{ confirmed[portKey(port)] ? "Re-capture" : "Capture" }}
+              </button>
             </header>
 
             <div class="port-body">
@@ -403,6 +382,40 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
                 <canvas :ref="setSpectrogramRef(portKey(port))" class="spectrogram-canvas"></canvas>
               </div>
             </div>
+
+            <footer v-if="confirmed[portKey(port)]" class="port-captured">
+              <div class="port-captured-row">
+                <div class="port-captured-meta">
+                  <span class="port-captured-tag mono">✓ Captured</span>
+                  <span class="port-captured-time mono">
+                    {{ formatDuration(confirmed[portKey(port)]!.durationS) }} ·
+                    {{ confirmed[portKey(port)]!.ts }}
+                  </span>
+                </div>
+                <button
+                  class="icon-btn"
+                  @click="downloadPortWav(port)"
+                  title="Download as 16-bit PCM WAV"
+                  aria-label="Download WAV"
+                >
+                  ↓
+                </button>
+                <button
+                  class="icon-btn"
+                  @click="discardPort(port)"
+                  title="Discard capture"
+                  aria-label="Discard capture"
+                >
+                  ×
+                </button>
+              </div>
+              <audio
+                :src="confirmed[portKey(port)]!.blobUrl"
+                controls
+                preload="metadata"
+                class="captured-audio"
+              ></audio>
+            </footer>
           </article>
         </div>
       </section>
@@ -613,15 +626,15 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
   margin-left: auto;
 }
 
-.confirmed-meta {
-  font-size: 11px;
-  color: var(--u-text-dim);
-}
 
 .audio-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
   gap: 14px;
+  /* Don't stretch siblings to match the tallest. Each port-section keeps its
+     own natural height, so capturing one port only grows that one — the
+     others stay compact instead of inheriting an empty bottom area. */
+  align-items: start;
 }
 
 .port-section {
@@ -652,13 +665,6 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
   border-radius: var(--u-radius);
 }
 
-.port-head-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-}
-
 .port-head-name {
   font-size: 12.5px;
   font-weight: 600;
@@ -670,43 +676,50 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
   color: var(--u-text-dim);
 }
 
-.port-head-actions {
+.port-head-cta {
+  margin-left: auto;
+}
+
+.port-captured {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--u-bg-elev-1);
+  border: 1px solid var(--u-border);
+  border-radius: var(--u-radius);
+}
+
+.port-captured-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-left: auto;
-  flex-wrap: wrap;
+  gap: 10px;
 }
 
-.confirmed-info {
-  font-size: 10.5px;
-  color: var(--u-text-dim);
-  flex-basis: 100%;
-  margin-top: 4px;
-  padding-top: 4px;
-  border-top: 1px dashed var(--u-border);
+.port-captured-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
 }
 
-.capture-chip {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 8px;
-  background: var(--u-bg-elev-4);
-  color: var(--u-text);
-  border-radius: var(--u-radius);
-  font-family: var(--u-mono);
+.port-captured-tag {
   font-size: 10.5px;
-  font-weight: 500;
+  font-weight: 600;
+  color: var(--u-success);
   letter-spacing: 0.04em;
 }
 
-.port-section.captured {
-  border-left: 3px solid var(--u-success);
+.port-captured-time {
+  font-size: 10.5px;
+  color: var(--u-text-muted);
+  letter-spacing: 0.02em;
 }
 
 .captured-audio {
-  flex: 1;
-  min-width: 240px;
+  width: 100%;
   height: 32px;
 }
 
@@ -718,7 +731,9 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   width: 28px;
+  min-width: 28px;
   height: 28px;
   padding: 0;
   border: 1px solid var(--u-border);
