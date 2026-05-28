@@ -13,6 +13,8 @@ const stopBtn = document.getElementById("stop") as HTMLButtonElement;
 const gainSlider = document.getElementById("gain") as HTMLInputElement;
 const gainVal = document.getElementById("gainval") as HTMLSpanElement;
 const status = document.getElementById("status") as HTMLDivElement;
+const meterLBar = document.getElementById("meterL") as HTMLDivElement | null;
+const meterRBar = document.getElementById("meterR") as HTMLDivElement | null;
 
 const setStatus = (msg: string): void => {
   status.textContent = msg;
@@ -23,6 +25,8 @@ type Session = {
   oscL: OscillatorNode;
   oscR: OscillatorNode;
   merger: ChannelMergerNode;
+  unsubMeterL: () => void;
+  unsubMeterR: () => void;
   dispose(): void;
 };
 
@@ -54,12 +58,28 @@ const start = async (): Promise<void> => {
   oscL.start();
   oscR.start();
 
+  const setMeterBar = (bar: HTMLDivElement | null, v: number): void => {
+    if (!bar) return;
+    const pct = Math.min(100, Math.max(0, v * 100));
+    bar.style.width = `${pct.toFixed(1)}%`;
+  };
+  const unsubMeterL = node.state["meterL"]!.subscribe((v) => {
+    setMeterBar(meterLBar, typeof v === "number" ? v : 0);
+  });
+  const unsubMeterR = node.state["meterR"]!.subscribe((v) => {
+    setMeterBar(meterRBar, typeof v === "number" ? v : 0);
+  });
+
   session = {
     context,
     oscL,
     oscR,
     merger,
+    unsubMeterL,
+    unsubMeterR,
     dispose(): void {
+      unsubMeterL();
+      unsubMeterR();
       oscL.stop();
       oscR.stop();
       oscL.disconnect();
