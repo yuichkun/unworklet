@@ -336,6 +336,25 @@ export type AudioPortDescriptor = {
 };
 
 /**
+ * publish slot metadata exposed on `WorkletNamespace.publishSlots` (= sub-phase 7.4)。
+ *
+ * createNode が transport mode 検 出 + SAB allocate + processorOptions に hand
+ * す る 時 + worklet template が per-quantum 末 尾 で WASM memory か ら SAB に
+ * copy す る 時 に 参 照。 declaration 順 = SAB 配 列 index と zip。
+ *
+ * - `name`: state slot name
+ * - `type`: scalar type (= f32 / i32 / bool、 Q42 で 制 限 + 全 4 byte 単 一 word)
+ * - `sharedOffset`: WASM memory 内 の publishShared region 内 offset (= 値 copy 元)
+ * - `counterOffset`: WASM memory 内 の publishCounters region 内 offset (= 8 byte = sample counter + version counter)
+ */
+export type PublishSlotDescriptor = {
+  readonly name: string;
+  readonly type: ScalarType;
+  readonly sharedOffset: number;
+  readonly counterOffset: number;
+};
+
+/**
  * Worklet escape-hatch namespace exposed on `CompiledProcessor<C>.worklet`
  * (`01-dsl.md` §11 + Q80).
  *
@@ -355,6 +374,7 @@ export type WorkletNamespace = {
   parameterDescriptors: readonly unknown[];
   inputs: readonly AudioPortDescriptor[];
   outputs: readonly AudioPortDescriptor[];
+  publishSlots: readonly PublishSlotDescriptor[];
   moduleUrl?: string;
   processorName?: string;
   wasmUrl?: string;

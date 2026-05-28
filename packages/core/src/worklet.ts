@@ -157,6 +157,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
   const audioInputs = meta.audioInputs;
   const audioOutputs = meta.audioOutputs;
   const params = meta.params;
+  const publishStates = meta.publishStates;
 
   const parameterDescriptors = params.map((p) => ({
     name: p.name,
@@ -168,6 +169,16 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
 
   const inputDescriptors = audioInputs.map((p) => ({ name: p.name, channels: p.channels }));
   const outputDescriptors = audioOutputs.map((p) => ({ name: p.name, channels: p.channels }));
+
+  // publishSlots = declaration 順 で {name, type, sharedOffset, counterOffset} を 構 築。
+  // createNode が transport mode 検 出 + SAB allocate + worklet template が per-quantum 末 尾
+  // で WASM memory 経 由 で SAB に copy す る 時 に 参 照 (= sub-phase 7.4 / 7.5)。
+  const publishSlots = publishStates.map((s) => ({
+    name: s.name,
+    type: s.type,
+    sharedOffset: lay.regions.publishShared.slots[s.name]!,
+    counterOffset: lay.regions.publishCounters.slots[s.name]!,
+  }));
 
   const initialize: WorkletNamespace["initialize"] = (...args) => {
     const self = args[0] as SelfWithState;
@@ -387,5 +398,6 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
     parameterDescriptors,
     inputs: inputDescriptors,
     outputs: outputDescriptors,
+    publishSlots,
   };
 }

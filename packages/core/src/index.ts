@@ -147,6 +147,7 @@ export type {
   ProcessorGraph,
   ProcessorOptions,
   PublishOptions,
+  PublishSlotDescriptor,
   ReplaceResult,
   RestoreFailure,
   RestoreOk,

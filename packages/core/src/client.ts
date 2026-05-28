@@ -255,6 +255,27 @@ export async function createNode<C>(
 
   const inputs = ns.inputs;
   const outputs = ns.outputs;
+  const publishSlots = ns.publishSlots;
+
+  // transport mode 検 出 (= sub-phase 7.4)。 publishSlots ゼ ロ で も transport は
+  // 計 算 す る (= 後 続 で event<T> / message<T> / midi の SAB ringbuffer path で も
+  // 同 transport mode を 使 う = 既 declared diagnostics surface と zip)。
+  const sabAvailable =
+    typeof SharedArrayBuffer === "function" &&
+    typeof globalThis !== "undefined" &&
+    (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated === true;
+  const transportMode: "sab" | "postMessage" = sabAvailable ? "sab" : "postMessage";
+
+  // publish slot 1 つ あ た り 12 byte (= 4 byte publishShared + 8 byte publishCounters)、
+  // SAB allocate or fallback Uint8Array allocate (= postMessage transfer 用)。
+  // publishSlots ゼ ロ なら ナ シ で OK = processorOptions に も hand し な い。
+  const publishBufferByteLength = publishSlots.length * 12;
+  let publishBuffer: SharedArrayBuffer | ArrayBuffer | null = null;
+  if (publishBufferByteLength > 0) {
+    publishBuffer = sabAvailable
+      ? new SharedArrayBuffer(publishBufferByteLength)
+      : new ArrayBuffer(publishBufferByteLength);
+  }
 
   // Drop `undefined` entries from initial param data — Web Audio's
   // `parameterData` is a `Record<string, double>`, and Firefox throws
@@ -280,7 +301,13 @@ export async function createNode<C>(
     // cloneable per W3C wasm-web-api spec) so the worklet only needs to
     // `new WebAssembly.Instance(module)` (= no sync compile on the audio
     // thread = no first-quantum glitch potential)。
-    processorOptions: { module: wasmModule },
+    processorOptions: {
+      module: wasmModule,
+      // publish slot あ り の 時 だ け buffer / publishSlots を hand (= worklet
+      // template の initialize で receive + per-quantum 末 尾 で copy logic 経 由、
+      // sub-phase 7.4 後 続 commit で fill)。 publish ゼ ロ なら 既 path 維 持。
+      ...(publishBuffer !== null ? { publishBuffer, publishSlots, transport: transportMode } : {}),
+    },
   };
   if (outputs.length > 0) {
     nodeOptions.outputChannelCount = outputs.map((o) => o.channels);
@@ -397,7 +424,7 @@ export async function createNode<C>(
     events: {},
     messages: {},
     midi: {},
-    diagnostics: { transport: "postMessage" },
+    diagnostics: { transport: transportMode },
     snapshot: notImplemented as unknown as UnworkletNode<C>["snapshot"],
     restore: notImplemented as unknown as UnworkletNode<C>["restore"],
     dispose(): void {

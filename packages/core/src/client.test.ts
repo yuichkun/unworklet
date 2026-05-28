@@ -262,6 +262,12 @@ const makeMockProcessor = (overrides?: {
   inputs?: Array<{ name: string; channels: number }>;
   outputs?: Array<{ name: string; channels: number }>;
   params?: Array<{ name: string }>;
+  publishSlots?: Array<{
+    name: string;
+    type: "f32" | "i32" | "bool";
+    sharedOffset: number;
+    counterOffset: number;
+  }>;
 }): CompiledProcessor<unknown> =>
   ({
     graph: {} as never,
@@ -274,6 +280,7 @@ const makeMockProcessor = (overrides?: {
       })),
       inputs: overrides?.inputs ?? [{ name: "main", channels: 2 }],
       outputs: overrides?.outputs ?? [{ name: "main", channels: 2 }],
+      publishSlots: overrides?.publishSlots ?? [],
       moduleUrl:
         overrides && "moduleUrl" in overrides ? overrides.moduleUrl : "/_assets/x.worklet.js",
       wasmUrl: overrides && "wasmUrl" in overrides ? overrides.wasmUrl : "/_assets/x.wasm",
@@ -282,6 +289,27 @@ const makeMockProcessor = (overrides?: {
     },
     __compiledProcessor: undefined,
   }) as unknown as CompiledProcessor<unknown>;
+
+/**
+ * `globalThis.crossOriginIsolated` を test ご と に set / restore す る helper。
+ * SAB available path / fallback path を 切 り 替 え て 確 認 す る。
+ */
+const withCrossOriginIsolated = (value: boolean | undefined): (() => void) => {
+  const target = globalThis as unknown as { crossOriginIsolated?: boolean };
+  const prev = target.crossOriginIsolated;
+  if (value === undefined) {
+    delete target.crossOriginIsolated;
+  } else {
+    target.crossOriginIsolated = value;
+  }
+  return () => {
+    if (prev === undefined) {
+      delete target.crossOriginIsolated;
+    } else {
+      target.crossOriginIsolated = prev;
+    }
+  };
+};
 
 const startCreate = async <T>(fn: () => Promise<T>, fire: () => void): Promise<T> => {
   const promise = fn();
@@ -1288,5 +1316,105 @@ test("awaitReady wraps non-Error throws from port.start() into a fresh Error", a
     await expect(promise).rejects.toThrow(/raw-string-thrown-as-error/);
   } finally {
     h.cleanup();
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// transport mode 検 出 + SAB / fallback buffer allocate (= sub-phase 7.4)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("createNode without publishSlots = buffer ナ シ + processorOptions に publishBuffer 含 ま な い", async () => {
+  const restore = withCrossOriginIsolated(true);
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ publishSlots: [] })),
+      h.fireReady,
+    );
+    const opts = h.lastNode!.__constructorRecord.options.processorOptions as Record<
+      string,
+      unknown
+    >;
+    expect(opts).not.toHaveProperty("publishBuffer");
+    expect(opts).not.toHaveProperty("publishSlots");
+  } finally {
+    h.cleanup();
+    restore();
+  }
+});
+
+test("createNode with publishSlots + crossOriginIsolated = SAB allocate + transport 'sab'", async () => {
+  const restore = withCrossOriginIsolated(true);
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({
+            publishSlots: [{ name: "meter", type: "f32", sharedOffset: 0, counterOffset: 4 }],
+          }),
+        ),
+      h.fireReady,
+    );
+    const opts = h.lastNode!.__constructorRecord.options.processorOptions as {
+      publishBuffer: unknown;
+      publishSlots: unknown;
+      transport: string;
+    };
+    expect(opts.publishBuffer).toBeInstanceOf(SharedArrayBuffer);
+    expect((opts.publishBuffer as SharedArrayBuffer).byteLength).toBe(12);
+    expect(opts.transport).toBe("sab");
+    expect(node.diagnostics.transport).toBe("sab");
+  } finally {
+    h.cleanup();
+    restore();
+  }
+});
+
+test("createNode with publishSlots + !crossOriginIsolated = fallback ArrayBuffer + transport 'postMessage'", async () => {
+  const restore = withCrossOriginIsolated(undefined);
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({
+            publishSlots: [
+              { name: "a", type: "f32", sharedOffset: 0, counterOffset: 4 },
+              { name: "b", type: "i32", sharedOffset: 12, counterOffset: 16 },
+            ],
+          }),
+        ),
+      h.fireReady,
+    );
+    const opts = h.lastNode!.__constructorRecord.options.processorOptions as {
+      publishBuffer: unknown;
+      transport: string;
+    };
+    expect(opts.publishBuffer).toBeInstanceOf(ArrayBuffer);
+    expect(opts.publishBuffer).not.toBeInstanceOf(SharedArrayBuffer);
+    expect((opts.publishBuffer as ArrayBuffer).byteLength).toBe(24); // 2 slots × 12 byte
+    expect(opts.transport).toBe("postMessage");
+    expect(node.diagnostics.transport).toBe("postMessage");
+  } finally {
+    h.cleanup();
+    restore();
+  }
+});
+
+test("createNode without publishSlots inherits transport from environment (= sab when crossOriginIsolated)", async () => {
+  const restore = withCrossOriginIsolated(true);
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ publishSlots: [] })),
+      h.fireReady,
+    );
+    expect(node.diagnostics.transport).toBe("sab");
+  } finally {
+    h.cleanup();
+    restore();
   }
 });
