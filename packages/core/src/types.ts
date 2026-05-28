@@ -430,6 +430,18 @@ export type CompileResult<C> = {
 };
 
 /**
+ * `compile(processor, options)` 第 2 引 数 (= sub-phase 7.3 で 追 加)。
+ *
+ * - `sampleRate`: build-time 既 知 と し て emit に hand (= publish scheduler の
+ *   threshold = `Math.round(sampleRate / rateFps)` を const fold)。 default
+ *   = 48000 (= 既 test fixture / host 既 定 と zip)。 1 wasm = 1 sampleRate =
+ *   別 sampleRate な ら 別 wasm を emit。
+ */
+export type CompileOptions = {
+  sampleRate?: number;
+};
+
+/**
  * Driver-friendly handle exposed on `CompileResult.driver`。 internal
  * layout / graph を 隠 蔽 し て、 `renderOffline` / Phase 6 worklet
  * template が memory I/O + process() を 駆 動 す る ため の 公 開 surface。

@@ -114,6 +114,7 @@ export type {
   CompileDriver,
   CompileInstance,
   CompileInstanceDeclaration,
+  CompileOptions,
   CompileResult,
   CreateNodeOptions,
   DiagnosticsJson,

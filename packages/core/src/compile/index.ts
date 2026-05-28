@@ -28,6 +28,7 @@ import type {
   CompileDriver,
   CompileInstance,
   CompileInstanceDeclaration,
+  CompileOptions,
   CompileResult,
   DiagnosticsJson,
   GraphJson,
@@ -44,11 +45,23 @@ import { schemaHash } from "./schemaHash.ts";
 const BYTES_PER_F32 = 4;
 const CHANNEL_STRIDE_BYTES = SAMPLES_PER_BLOCK * BYTES_PER_F32;
 
-export async function compile<C>(processor: CompiledProcessor<C>): Promise<CompileResult<C>> {
+/**
+ * default sampleRate = 48000 (= 既 host 既 定 + 既 test fixture と zip)。
+ * `compile(processor)` で sampleRate 省 略 す る と 48000 で emit、 別 sampleRate
+ * 必 要 な consumer (= `renderOffline` で config.sampleRate を 渡 す path) は
+ * 明 示 引 数 で 上 書 き。
+ */
+const DEFAULT_SAMPLE_RATE = 48000;
+
+export async function compile<C>(
+  processor: CompiledProcessor<C>,
+  options: CompileOptions = {},
+): Promise<CompileResult<C>> {
   const graph = processor.graph as unknown as CapturedGraph;
   const diagnostics = analyze(graph);
   const memory = layout(graph);
-  const wasm = await emit(graph, memory);
+  const sampleRate = options.sampleRate ?? DEFAULT_SAMPLE_RATE;
+  const wasm = await emit(graph, memory, { sampleRate });
   const hash = await schemaHash(graph);
   return {
     wasm,

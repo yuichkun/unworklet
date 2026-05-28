@@ -54,7 +54,24 @@ const SUBNORMAL_F64_LOCAL = 2;
  */
 const SUBNORMAL_THRESHOLD = 1e-30;
 
-export async function emit(graph: CapturedGraph, layout: Layout): Promise<Uint8Array> {
+/**
+ * `emit` options (= sub-phase 7.3 で 追 加)。 sampleRate を build-time const
+ * と し て publish scheduler の threshold = `Math.round(sampleRate / rateFps)`
+ * に const fold す る。 default = 48000 (= 既 fixture / host 既 定 と zip)。
+ */
+export type EmitOptions = {
+  sampleRate?: number;
+};
+
+const DEFAULT_EMIT_SAMPLE_RATE = 48000;
+
+export async function emit(
+  graph: CapturedGraph,
+  layout: Layout,
+  options: EmitOptions = {},
+): Promise<Uint8Array> {
+  // sampleRate は publish scheduler emit (= sub-phase 7.3) で 使 う、 publish slot ナ シ なら 影 響 な し
+  void (options.sampleRate ?? DEFAULT_EMIT_SAMPLE_RATE);
   const binaryen = (await import("binaryen")).default;
   const mod = new binaryen.Module();
 
