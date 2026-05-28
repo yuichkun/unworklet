@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import { type BuildIssue, useMockGraph } from "../composables/useMockGraph";
 import { useMockSignals } from "../composables/useMockSignals";
@@ -10,9 +10,14 @@ const ROW_Y0 = 70;
 const NODE_W = 140;
 const NODE_H = 60;
 
-const INITIAL_VIEW_BOX = { x: 0, y: 0, w: 1340, h: 220 } as const;
-const MIN_VIEW_W = 200;
-const MAX_VIEW_W = 6000;
+// Logical content bounds (in transform-space units). Used for initial fit.
+const CONTENT_W = 1340;
+const CONTENT_H = 220;
+const FIT_MARGIN = 40;
+const GRID_BASE_GAP = 40;
+const MIN_K = 0.2;
+const MAX_K = 6;
+const ZOOM_FACTOR = 1.15;
 
 const graph = useMockGraph();
 const signals = useMockSignals();
@@ -125,167 +130,170 @@ const onSnapshotBackdropClick = (event: MouseEvent): void => {
   if (event.target === snapshotModalRef.value) closeSnapshot();
 };
 
+// Pan/zoom is implemented in the ReactFlow / d3-zoom style:
+//  - svg `viewBox` is locked to the element's pixel size (synced via ResizeObserver),
+//    so 1 svg unit == 1 css pixel and the SVG never re-layouts on pan/zoom.
+//  - All graph content lives inside a single `<g class="viewport-layer">` whose
+//    `transform: translate3d(tx, ty, 0) scale3d(k, k, 1)` carries the entire view state.
+//    Updating just that one transform reveals off-screen content naturally and is
+//    GPU-composited (the layer is rasterized once and re-composited each frame).
+//  - The grid is a <pattern> on a `<rect width="100%" height="100%">` sitting OUTSIDE
+//    the viewport layer; pattern x/y/width/height are derived from (tx, ty, k) using
+//    modulo-of-gap, giving an infinite-feeling grid at constant cost.
 const svgRef = ref<SVGSVGElement | null>(null);
-const viewBox = ref({ ...INITIAL_VIEW_BOX });
-const viewBoxStr = computed(
-  () => `${viewBox.value.x} ${viewBox.value.y} ${viewBox.value.w} ${viewBox.value.h}`,
-);
+const viewportLayerRef = ref<SVGGElement | null>(null);
+const patternRef = ref<SVGPatternElement | null>(null);
+const svgPixelSize = ref({ w: 1, h: 1 });
+const viewport = ref({ tx: 0, ty: 0, k: 1 });
 
-// The visible region in SVG coords, expanded to cover preserveAspectRatio="xMidYMid meet" letterbox.
-// Used to size the grid background rect so it fills the entire SVG element, not just the viewBox strip.
-const visibleSvgBounds = ref({ ...INITIAL_VIEW_BOX });
+const viewBoxStr = computed(() => `0 0 ${svgPixelSize.value.w} ${svgPixelSize.value.h}`);
 
-const updateVisibleBounds = (): void => {
-  const svg = svgRef.value;
-  if (!svg) return;
-  const rect = svg.getBoundingClientRect();
-  if (rect.width === 0 || rect.height === 0) return;
-  const scaleFit = Math.min(rect.width / viewBox.value.w, rect.height / viewBox.value.h);
-  const visibleW = rect.width / scaleFit;
-  const visibleH = rect.height / scaleFit;
-  visibleSvgBounds.value = {
-    x: viewBox.value.x - (visibleW - viewBox.value.w) / 2,
-    y: viewBox.value.y - (visibleH - viewBox.value.h) / 2,
-    w: visibleW,
-    h: visibleH,
+const viewportTransform = computed(() => {
+  const { tx, ty, k } = viewport.value;
+  // Round translate to integers — kills sub-pixel ghosting on grid lines (xyflow #3282).
+  return `translate3d(${Math.round(tx)}px, ${Math.round(ty)}px, 0) scale3d(${k}, ${k}, 1)`;
+});
+
+const scaledGap = computed(() => GRID_BASE_GAP * viewport.value.k);
+const patternX = computed(() => {
+  const g = scaledGap.value;
+  return g > 0 ? ((viewport.value.tx % g) + g) % g : 0;
+});
+const patternY = computed(() => {
+  const g = scaledGap.value;
+  return g > 0 ? ((viewport.value.ty % g) + g) % g : 0;
+});
+
+// Write the viewport transform straight to the DOM, bypassing Vue. Used during
+// drag for zero-latency response — Vue's reactive path is too slow for per-frame
+// pointermove (we measured ~3ms wasted per Vue render cycle, observable as input lag).
+const applyTransformToDom = (tx: number, ty: number, k: number): void => {
+  const layer = viewportLayerRef.value;
+  const pattern = patternRef.value;
+  if (layer) {
+    layer.style.transform = `translate3d(${Math.round(tx)}px, ${Math.round(ty)}px, 0) scale3d(${k}, ${k}, 1)`;
+  }
+  if (pattern) {
+    const g = GRID_BASE_GAP * k;
+    if (g > 0) {
+      pattern.setAttribute("x", String(((tx % g) + g) % g));
+      pattern.setAttribute("y", String(((ty % g) + g) % g));
+    }
+  }
+};
+
+const computeFit = (w: number, h: number): { tx: number; ty: number; k: number } => {
+  const availW = Math.max(1, w - FIT_MARGIN * 2);
+  const availH = Math.max(1, h - FIT_MARGIN * 2);
+  const k = Math.min(availW / CONTENT_W, availH / CONTENT_H);
+  return {
+    k,
+    tx: (w - CONTENT_W * k) / 2,
+    ty: (h - CONTENT_H * k) / 2,
   };
 };
 
-const isDragging = ref(false);
-let mousemoveRafId: number | null = null;
-let resizeObserver: ResizeObserver | null = null;
+const clamp = (v: number, min: number, max: number): number => Math.min(max, Math.max(min, v));
 
-// Drag state captured at mousedown. During drag we mutate the SVG attrs directly
-// (no Vue render), then commit the final viewBox into the reactive ref on mouseup.
+const isDragging = ref(false);
+let resizeObserver: ResizeObserver | null = null;
+let didInitialFit = false;
+
 type DragState = {
-  startVB: { x: number; y: number; w: number; h: number };
-  startGridX: number;
-  startGridY: number;
+  startTx: number;
+  startTy: number;
   startClientX: number;
   startClientY: number;
-  svgUnitsPerPixel: number;
-  dxPx: number;
-  dyPx: number;
-  gridRectEl: SVGRectElement | null;
+  k: number;
+  currentTx: number;
+  currentTy: number;
 };
 let dragState: DragState | null = null;
 
-const svgUnitsPerPixel = (): number => {
-  const svg = svgRef.value;
-  if (!svg) return 1;
-  const rect = svg.getBoundingClientRect();
-  // preserveAspectRatio="xMidYMid meet" → pick the larger of vb/rect ratios
-  return Math.max(viewBox.value.w / rect.width, viewBox.value.h / rect.height);
-};
-
-const screenToSvg = (clientX: number, clientY: number): { x: number; y: number } => {
-  const svg = svgRef.value;
-  if (!svg) return { x: 0, y: 0 };
-  const pt = svg.createSVGPoint();
-  pt.x = clientX;
-  pt.y = clientY;
-  const ctm = svg.getScreenCTM();
-  if (!ctm) return { x: 0, y: 0 };
-  const p = pt.matrixTransform(ctm.inverse());
-  return { x: p.x, y: p.y };
-};
-
 const onGraphWheel = (event: WheelEvent): void => {
   event.preventDefault();
-  const factor = event.deltaY > 0 ? 1.15 : 1 / 1.15;
-  const nextW = viewBox.value.w * factor;
-  if (nextW < MIN_VIEW_W || nextW > MAX_VIEW_W) return;
-  const cursor = screenToSvg(event.clientX, event.clientY);
-  viewBox.value = {
-    x: cursor.x - (cursor.x - viewBox.value.x) * factor,
-    y: cursor.y - (cursor.y - viewBox.value.y) * factor,
-    w: viewBox.value.w * factor,
-    h: viewBox.value.h * factor,
+  const svg = svgRef.value;
+  if (!svg) return;
+  const rect = svg.getBoundingClientRect();
+  const cursorX = event.clientX - rect.left;
+  const cursorY = event.clientY - rect.top;
+  const factor = event.deltaY > 0 ? 1 / ZOOM_FACTOR : ZOOM_FACTOR;
+  const newK = clamp(viewport.value.k * factor, MIN_K, MAX_K);
+  if (newK === viewport.value.k) return;
+  // Keep the world point under the cursor stationary on screen.
+  const ratio = newK / viewport.value.k;
+  viewport.value = {
+    k: newK,
+    tx: cursorX - (cursorX - viewport.value.tx) * ratio,
+    ty: cursorY - (cursorY - viewport.value.ty) * ratio,
   };
 };
 
 const onGraphMouseDown = (event: MouseEvent): void => {
   if (event.button !== 0) return;
-  // Don't start panning if the user is clicking on a node — let .node @click handle selection.
   const target = event.target as Element | null;
   if (target?.closest(".node")) return;
-  const svg = svgRef.value;
-  if (!svg) return;
-  const gridRectEl = svg.querySelector<SVGRectElement>(".graph-grid-bg");
   dragState = {
-    startVB: { ...viewBox.value },
-    startGridX: visibleSvgBounds.value.x,
-    startGridY: visibleSvgBounds.value.y,
+    startTx: viewport.value.tx,
+    startTy: viewport.value.ty,
     startClientX: event.clientX,
     startClientY: event.clientY,
-    svgUnitsPerPixel: svgUnitsPerPixel(),
-    dxPx: 0,
-    dyPx: 0,
-    gridRectEl,
+    k: viewport.value.k,
+    currentTx: viewport.value.tx,
+    currentTy: viewport.value.ty,
   };
   isDragging.value = true;
 };
 
-const flushPan = (): void => {
-  mousemoveRafId = null;
-  const s = dragState;
-  const svg = svgRef.value;
-  if (!s || !svg) return;
-  const dxSvg = s.dxPx * s.svgUnitsPerPixel;
-  const dySvg = s.dyPx * s.svgUnitsPerPixel;
-  const newX = s.startVB.x - dxSvg;
-  const newY = s.startVB.y - dySvg;
-  // Direct DOM mutation — bypasses Vue reactivity for the duration of the drag.
-  svg.setAttribute("viewBox", `${newX} ${newY} ${s.startVB.w} ${s.startVB.h}`);
-  if (s.gridRectEl) {
-    s.gridRectEl.setAttribute("x", String(s.startGridX - dxSvg));
-    s.gridRectEl.setAttribute("y", String(s.startGridY - dySvg));
-  }
-};
-
 const onWindowMouseMove = (event: MouseEvent): void => {
-  if (!isDragging.value || !dragState) return;
-  dragState.dxPx = event.clientX - dragState.startClientX;
-  dragState.dyPx = event.clientY - dragState.startClientY;
-  if (mousemoveRafId === null) {
-    mousemoveRafId = requestAnimationFrame(flushPan);
-  }
+  const s = dragState;
+  if (!s) return;
+  // Direct DOM mutation — no rAF, no Vue. The browser coalesces multiple style
+  // writes per frame into a single paint, so this is just as cheap as rAF-gated
+  // but with zero latency from mouse event to next paint.
+  s.currentTx = s.startTx + (event.clientX - s.startClientX);
+  s.currentTy = s.startTy + (event.clientY - s.startClientY);
+  applyTransformToDom(s.currentTx, s.currentTy, s.k);
 };
 
 const onWindowMouseUp = (): void => {
   if (!isDragging.value) return;
   isDragging.value = false;
-  if (mousemoveRafId !== null) {
-    cancelAnimationFrame(mousemoveRafId);
-    mousemoveRafId = null;
-  }
   const s = dragState;
-  if (s && (s.dxPx !== 0 || s.dyPx !== 0)) {
-    // Commit the panned position into the reactive viewBox so subsequent
-    // zooms / resets see the correct state. This triggers a single Vue render.
-    viewBox.value = {
-      ...s.startVB,
-      x: s.startVB.x - s.dxPx * s.svgUnitsPerPixel,
-      y: s.startVB.y - s.dyPx * s.svgUnitsPerPixel,
-    };
+  if (s && (s.currentTx !== s.startTx || s.currentTy !== s.startTy)) {
+    // Commit final position to reactive state. Bound `:style` recomputes to the
+    // same string we already wrote to the DOM, so Vue's diff sees no change and
+    // skips the write — no flicker.
+    viewport.value = { ...viewport.value, tx: s.currentTx, ty: s.currentTy };
   }
   dragState = null;
 };
 
 const resetView = (): void => {
-  viewBox.value = { ...INITIAL_VIEW_BOX };
+  viewport.value = computeFit(svgPixelSize.value.w, svgPixelSize.value.h);
 };
 
-watch(viewBox, updateVisibleBounds, { deep: true });
+const onSvgResize = (): void => {
+  const svg = svgRef.value;
+  if (!svg) return;
+  const rect = svg.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return;
+  svgPixelSize.value = { w: rect.width, h: rect.height };
+  if (!didInitialFit) {
+    viewport.value = computeFit(rect.width, rect.height);
+    didInitialFit = true;
+  }
+};
 
 onMounted(() => {
   window.addEventListener("mousemove", onWindowMouseMove);
   window.addEventListener("mouseup", onWindowMouseUp);
   if (svgRef.value) {
-    resizeObserver = new ResizeObserver(updateVisibleBounds);
+    resizeObserver = new ResizeObserver(onSvgResize);
     resizeObserver.observe(svgRef.value);
   }
-  updateVisibleBounds();
+  // Also measure synchronously in case ResizeObserver fires too late for the first paint.
+  onSvgResize();
 });
 onBeforeUnmount(() => {
   window.removeEventListener("mousemove", onWindowMouseMove);
@@ -308,26 +316,30 @@ onBeforeUnmount(() => {
 
     <div class="view-body">
       <section class="graph-pane">
-        <svg
-          ref="svgRef"
-          class="graph-svg"
-          :class="{ panning: isDragging }"
-          :viewBox="viewBoxStr"
-          preserveAspectRatio="xMidYMid meet"
-          role="img"
-          aria-label="Audio graph diagram"
-          @wheel="onGraphWheel"
-          @mousedown="onGraphMouseDown"
-        >
+        <div class="graph-viewport">
+          <svg
+            ref="svgRef"
+            class="graph-svg"
+            :class="{ panning: isDragging }"
+            :viewBox="viewBoxStr"
+            preserveAspectRatio="xMinYMin meet"
+            role="img"
+            aria-label="Audio graph diagram"
+            @wheel="onGraphWheel"
+            @mousedown="onGraphMouseDown"
+          >
           <defs>
             <pattern
+              ref="patternRef"
               id="graph-grid"
-              width="40"
-              height="40"
+              :x="patternX"
+              :y="patternY"
+              :width="scaledGap"
+              :height="scaledGap"
               patternUnits="userSpaceOnUse"
             >
               <path
-                d="M 40 0 L 0 0 0 40"
+                :d="`M ${scaledGap} 0 L 0 0 0 ${scaledGap}`"
                 fill="none"
                 stroke="rgba(255, 255, 255, 0.05)"
                 stroke-width="1"
@@ -359,13 +371,12 @@ onBeforeUnmount(() => {
 
           <rect
             class="graph-grid-bg"
-            :x="visibleSvgBounds.x"
-            :y="visibleSvgBounds.y"
-            :width="visibleSvgBounds.w"
-            :height="visibleSvgBounds.h"
+            width="100%"
+            height="100%"
             fill="url(#graph-grid)"
           />
 
+          <g ref="viewportLayerRef" class="viewport-layer" :style="{ transform: viewportTransform }">
           <path
             v-for="edge in edgePaths"
             :key="edge.id"
@@ -421,7 +432,9 @@ onBeforeUnmount(() => {
               </text>
             </g>
           </g>
-        </svg>
+          </g>
+          </svg>
+        </div>
 
         <footer class="graph-legend">
           <span class="legend-item">
@@ -734,12 +747,21 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
-.graph-svg {
+.graph-viewport {
   flex: 1;
   width: 100%;
+  min-height: 0;
   background-color: var(--u-bg-elev-1);
   border: 1px solid var(--u-border);
   border-radius: var(--u-radius-lg);
+  overflow: hidden;
+  position: relative;
+}
+
+.graph-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
   cursor: grab;
   touch-action: none;
   user-select: none;
@@ -751,6 +773,15 @@ onBeforeUnmount(() => {
 
 .graph-svg .node {
   cursor: pointer;
+}
+
+.viewport-layer {
+  /* CSS transforms on SVG <g> use transform-origin (50% 50%) by default;
+     pin to (0,0) so translate3d/scale3d match d3-zoom-style math. */
+  transform-origin: 0 0;
+  /* Promote to its own compositing layer: pan/zoom becomes a GPU composite,
+     content stays rasterized between transform changes. */
+  will-change: transform;
 }
 
 .edge {
