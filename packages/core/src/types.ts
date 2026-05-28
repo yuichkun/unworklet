@@ -360,6 +360,30 @@ export type PublishSlotDescriptor = {
 };
 
 /**
+ * `event<T>` ringbuffer の per-event descriptor (= `02-messaging.md` §4 + §5.1)。
+ *
+ * `createNode` + worklet template が SAB allocate + copy 経 路 を 構 築 する 時 の
+ * shared shape。 layout の `EventRingSlot` (= compile/layout.ts) を public surface
+ * に lift し て main / worklet で 共 通 で 取 る path。
+ *
+ * memory map: `wasmRingBase` ~ + 12 = header `[head, tail, overflowCount]`、
+ * + 12 + i × slotSize = i 番 目 slot 先 頭。 各 field の offsetInSlot / byteSize で
+ * slot 内 の read / write 位 置 を 取 る。
+ */
+export type EventRingSlotDescriptor = {
+  readonly name: string;
+  readonly wasmRingBase: number;
+  readonly capacity: number;
+  readonly slotSize: number;
+  readonly fields: ReadonlyArray<{
+    readonly name: string;
+    readonly wireType: ScalarType;
+    readonly offsetInSlot: number;
+    readonly byteSize: number;
+  }>;
+};
+
+/**
  * Worklet escape-hatch namespace exposed on `CompiledProcessor<C>.worklet`
  * (`01-dsl.md` §11 + Q80).
  *
@@ -380,6 +404,7 @@ export type WorkletNamespace = {
   inputs: readonly AudioPortDescriptor[];
   outputs: readonly AudioPortDescriptor[];
   publishSlots: readonly PublishSlotDescriptor[];
+  eventRings: readonly EventRingSlotDescriptor[];
   moduleUrl?: string;
   processorName?: string;
   wasmUrl?: string;

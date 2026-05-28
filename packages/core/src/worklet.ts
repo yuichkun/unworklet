@@ -20,10 +20,21 @@
  * Q80) の 両 方 が こ の 関 数 namespace を 共 通 基 盤 と し て 使 う。
  */
 
-import type { AudioPortDecl, CapturedGraph, ParamDecl, StateDecl } from "./compile/ast.ts";
+import type {
+  AudioPortDecl,
+  CapturedGraph,
+  EventDeclAst,
+  ParamDecl,
+  StateDecl,
+} from "./compile/ast.ts";
 import { layout, type Layout } from "./compile/layout.ts";
 import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
-import type { PublishSlotDescriptor, TransportMode, WorkletNamespace } from "./types.ts";
+import type {
+  EventRingSlotDescriptor,
+  PublishSlotDescriptor,
+  TransportMode,
+  WorkletNamespace,
+} from "./types.ts";
 
 /**
  * Metadata bundle that fully describes a processor's worklet-side runtime
@@ -46,6 +57,12 @@ export type WorkletMeta = {
    * 異 な る、 Q42 で 全 4 byte word) を 取 得 す る path。
    */
   readonly publishStates: readonly StateDecl[];
+  /**
+   * `event<T>` declaration 一 覧 (= sub-phase 7.6)。 declaration 順 で layout
+   * の eventRings slot と zip。 worklet template が per-quantum 末 尾 で WASM
+   * ring → SAB ring に copy する path で 参 照。
+   */
+  readonly events: readonly EventDeclAst[];
 };
 
 export function extractWorkletMeta(graph: CapturedGraph): WorkletMeta {
@@ -57,6 +74,7 @@ export function extractWorkletMeta(graph: CapturedGraph): WorkletMeta {
     publishStates: graph.declarations.filter(
       (d): d is StateDecl => d.kind === "state" && d.publish !== undefined,
     ),
+    events: graph.declarations.filter((d): d is EventDeclAst => d.kind === "event"),
   };
 }
 
@@ -214,6 +232,25 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
     sharedOffset: lay.regions.publishShared.slots[s.name]!,
     counterOffset: lay.regions.publishCounters.slots[s.name]!,
   }));
+
+  // eventRings = declaration 順 で {name, wasmRingBase, capacity, slotSize, fields} を 構 築。
+  // createNode が SAB ringbuffer allocate + worklet template が per-quantum 末 尾 で WASM
+  // ring → SAB ring に copy す る 時 に 参 照 (= sub-phase 7.6 commit 5b/5c)。
+  const eventRings: EventRingSlotDescriptor[] = meta.events.map((evt) => {
+    const slot = lay.regions.eventRings.slots[evt.name];
+    /* v8 ignore next 3 — event declaration が 既 capture 段 階 で layout に push
+       済 = 構 造 上 unreachable defensive guard */
+    if (slot === undefined) {
+      throw new Error(`unworklet: missing layout slot for event "${evt.name}"`);
+    }
+    return {
+      name: evt.name,
+      wasmRingBase: slot.base,
+      capacity: slot.capacity,
+      slotSize: slot.slotSize,
+      fields: slot.fields,
+    };
+  });
 
   const initialize: WorkletNamespace["initialize"] = (...args) => {
     const self = args[0] as SelfWithState;
@@ -493,5 +530,6 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
     inputs: inputDescriptors,
     outputs: outputDescriptors,
     publishSlots,
+    eventRings,
   };
 }

@@ -18,7 +18,7 @@ import { expect, test } from "vite-plus/test";
 
 import { compile } from "./compile/index.ts";
 import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
-import { audioInput, audioOutput, param } from "./dsl/declarations.ts";
+import { audioInput, audioOutput, event, param } from "./dsl/declarations.ts";
 import { forSample } from "./dsl/loop.ts";
 import { defineProcessor } from "./processor.ts";
 
@@ -106,6 +106,37 @@ test("`inputs` / `outputs` reflect declared audioInput / audioOutput ports in de
   expect(stereoGain.worklet.outputs).toEqual([{ name: "main", channels: 2 }]);
   expect(monoGain.worklet.inputs).toEqual([{ name: "main", channels: 1 }]);
   expect(monoGain.worklet.outputs).toEqual([{ name: "main", channels: 1 }]);
+});
+
+test("`eventRings` is empty when no `event<T>` declarations exist", () => {
+  expect(stereoGain.worklet.eventRings).toEqual([]);
+});
+
+test("`eventRings` reflects declared `event<T>` per-event ringbuffer descriptor", () => {
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "out" });
+    const peakEvt = event<{ level: number }>({ name: "peak", capacity: 16 });
+    return {
+      process: () => {
+        forSample((i) => {
+          peakEvt.emitIf(true, { atSample: i, level: 0.5 });
+          out.ch(0).at(i).write(0);
+        });
+      },
+    };
+  });
+  expect(proc.worklet.eventRings).toEqual([
+    {
+      name: "peak",
+      wasmRingBase: 512, // ioScratch 末 尾 (= 1 ch × 128 sample × 4 byte = 512)
+      capacity: 16,
+      slotSize: 8,
+      fields: [
+        { name: "atSample", wireType: "i32", offsetInSlot: 0, byteSize: 4 },
+        { name: "level", wireType: "f32", offsetInSlot: 4, byteSize: 4 },
+      ],
+    },
+  ]);
 });
 
 test("`initialize(self, opts)` instantiates WASM and posts a `ready` ack on the port", async () => {
