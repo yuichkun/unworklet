@@ -23,7 +23,7 @@
 import type { AudioPortDecl, CapturedGraph, ParamDecl, StateDecl } from "./compile/ast.ts";
 import { layout, type Layout } from "./compile/layout.ts";
 import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
-import type { WorkletNamespace } from "./types.ts";
+import type { PublishSlotDescriptor, TransportMode, WorkletNamespace } from "./types.ts";
 
 /**
  * Metadata bundle that fully describes a processor's worklet-side runtime
@@ -104,6 +104,17 @@ type WorkletState = {
   /** Index-aligned with `params`。 */
   readonly paramViews: readonly Float32Array[];
   /**
+   * publish slot meta + buffer + per-slot lastVersion (= sub-phase 7.4)。
+   * publishBuffer = main か ら hand さ れ た SAB or ArrayBuffer (= main 観 測 用)、
+   * publishSlots = WASM memory 内 offset map、 lastVersions[i] = i 番 slot で
+   * 最 後 に main へ copy し た version (= 同 値 ナ ラ skip)。
+   * publishSlots.length === 0 で publishBuffer が null = publish ナ シ processor。
+   */
+  readonly publishSharedView: Int32Array | null;
+  readonly publishSlots: readonly PublishSlotDescriptor[];
+  readonly lastVersions: number[];
+  readonly transport: TransportMode;
+  /**
    * Latched once a WASM trap escapes `state.process()`。 Subsequent quanta
    * emit silence and skip the WASM call so a single trap does not get
    * re-posted every render quantum (= main receives one `wasm-trap` event
@@ -135,6 +146,25 @@ type ProcessorOptionsBag = {
      * `processorOptions`)、 but the declarative path α prefers `.module`。
      */
     wasm?: Uint8Array;
+    /**
+     * publish slot 用 共 有 buffer (= sub-phase 7.4)。 SAB available 環 境 で は
+     * SharedArrayBuffer、 fallback 環 境 で は ArrayBuffer。 worklet template が
+     * per-quantum 末 尾 で WASM publishShared / Counters 値 を こ の buffer に copy
+     * (= main thread 側 が 同 buffer へ の reference を 既 持 つ、 main / worklet
+     * 両 方 か ら 観 測)。 publish ナ シ processor で は hand さ れ な い。
+     */
+    publishBuffer?: SharedArrayBuffer | ArrayBuffer;
+    /**
+     * publish slot descriptor 配 列 (= declaration 順、 publishBuffer の slot 配
+     * 置 と zip)。 worklet template が WASM memory の どこ か ら read す る か を
+     * 各 slot で 取 得 (= sharedOffset / counterOffset)。
+     */
+    publishSlots?: readonly PublishSlotDescriptor[];
+    /**
+     * transport mode (= 'sab' or 'postMessage')。 worklet template が copy 経 路
+     * を 切 り 替 え る path で 参 照。 default = 'postMessage' (= safer fallback)。
+     */
+    transport?: TransportMode;
   };
 };
 
@@ -240,6 +270,16 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         paramViews.push(new Float32Array(memory.buffer, paramBase, SAMPLES_PER_BLOCK));
       }
 
+      // publish 関 連 meta + buffer を opts か ら 取 り 出 し (= sub-phase 7.4)。
+      // publish ナ シ processor は publishBuffer ナ シ で hand さ れ る = view = null、
+      // publishSlots = []、 lastVersions = [] で start = process 末 尾 copy logic は
+      // 空 walk = no-op。
+      const publishBuffer = opts.processorOptions?.publishBuffer ?? null;
+      const publishSlots = opts.processorOptions?.publishSlots ?? [];
+      const transport = opts.processorOptions?.transport ?? "postMessage";
+      const publishSharedView = publishBuffer ? new Int32Array(publishBuffer) : null;
+      const lastVersions = publishSlots.map(() => 0);
+
       (self as SelfWithState)[STATE_KEY] = {
         process: procFn,
         audioInputs,
@@ -248,6 +288,10 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         inputViews,
         outputViews,
         paramViews,
+        publishSharedView,
+        publishSlots,
+        lastVersions,
+        transport,
         failed: false,
       };
 
