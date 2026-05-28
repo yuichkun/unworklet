@@ -16,7 +16,7 @@
  */
 
 import type { CompiledProcessor } from "@unworklet/core";
-import { compile, SAMPLES_PER_BLOCK } from "@unworklet/core";
+import { compile, extractWorkletMeta, SAMPLES_PER_BLOCK } from "@unworklet/core";
 
 export { encodeWav } from "./encodeWav.ts";
 export type { EncodeWavBitDepth, EncodeWavOptions } from "./encodeWav.ts";
@@ -82,6 +82,22 @@ export async function renderOffline<C>(
   const result = await compile(processor, { sampleRate: config.sampleRate });
   const instance = await result.driver.instantiate();
 
+  // event ring meta を WorkletMeta 経 由 で 取 得 (= renderOffline 内 で WASM
+  // memory か ら 直 接 ring を walk = SAB 不 在 で も per-quantum 末 尾 で drain
+  // し て OfflineEmittedEvent 配 列 に 蓄 積)。
+  const meta = extractWorkletMeta(processor.graph as never);
+  const eventRingMeta = meta.events.map((evt) => {
+    const slot = meta.layout.regions.eventRings.slots[evt.name]!;
+    return {
+      name: evt.name,
+      base: slot.base,
+      capacity: slot.capacity,
+      slotSize: slot.slotSize,
+      fields: slot.fields,
+    };
+  });
+  const emittedEvents: OfflineEmittedEvent[] = [];
+
   const totalSamples =
     Math.ceil((config.duration * config.sampleRate) / SAMPLES_PER_BLOCK) * SAMPLES_PER_BLOCK;
   const blocks = totalSamples / SAMPLES_PER_BLOCK;
@@ -136,6 +152,60 @@ export async function renderOffline<C>(
 
     instance.process();
 
+    // event ring drain (= 各 quantum 末 尾 で WASM ring の head が 進 ん だ 分 を
+    // OfflineEmittedEvent に 蓄 積)。 WASM 内 ring は per-quantum 完 結 = ring tail
+    // を 進 め な い と drop-oldest が 連 発 す る path = drain 後 tail = head に
+    // commit (= WASM memory 経 由 で 直 接 store)。
+    for (const ring of eventRingMeta) {
+      const memory = instance.memory.buffer;
+      const headerView = new Int32Array(memory, ring.base, 3);
+      let head = headerView[0]!;
+      let tail = headerView[1]!;
+      while (tail !== head) {
+        const slotIdx = tail % ring.capacity;
+        const slotByteOffset = ring.base + 12 + slotIdx * ring.slotSize;
+        const dataView = new DataView(memory);
+        const payload: Record<string, unknown> = {};
+        let atSample = 0;
+        for (const field of ring.fields) {
+          const byteOffset = slotByteOffset + field.offsetInSlot;
+          let value: number | boolean | bigint;
+          switch (field.wireType) {
+            case "i32":
+            case "bool":
+              value =
+                field.wireType === "bool"
+                  ? dataView.getInt32(byteOffset, true) !== 0
+                  : dataView.getInt32(byteOffset, true);
+              break;
+            case "f32":
+              value = dataView.getFloat32(byteOffset, true);
+              break;
+            /* v8 ignore start — f64 / i64 event field は sub-phase 7.6 段 階 で
+               typed-array path と zip で 別 commit fill = unreachable defensive */
+            case "f64":
+              value = dataView.getFloat64(byteOffset, true);
+              break;
+            case "i64":
+              value = dataView.getBigInt64(byteOffset, true);
+              break;
+            /* v8 ignore stop */
+          }
+          if (field.name === "atSample" && typeof value === "number") {
+            atSample = blockStart + value;
+          } else {
+            payload[field.name] = value;
+          }
+        }
+        emittedEvents.push({ name: ring.name, payload, atSample });
+        tail += 1;
+      }
+      // drain 後 tail = head に commit (= 次 quantum で WASM ring が 空 状 態 で
+      // start、 drop-oldest 連 発 を 防 ぐ)。 ま た overflowCount も リ セ ッ ト ナ シ
+      // (= monotonic 維 持)。
+      headerView[1] = head;
+    }
+
     for (const decl of instance.declarations) {
       if (decl.kind !== "audioOutput") continue;
       for (let c = 0; c < decl.channels; c++) {
@@ -148,5 +218,10 @@ export async function renderOffline<C>(
     }
   }
 
-  return { outputs, events: [], state: new Uint8Array(0), sampleRate: config.sampleRate };
+  return {
+    outputs,
+    events: emittedEvents,
+    state: new Uint8Array(0),
+    sampleRate: config.sampleRate,
+  };
 }

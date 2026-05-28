@@ -10,7 +10,7 @@
 
 import "@unworklet/core"; // side-effect load for `.mul` method registration via primitives.ts
 import { defineProcessor, SAMPLES_PER_BLOCK } from "@unworklet/core";
-import { audioInput, audioOutput, forSample, param, state } from "@unworklet/core";
+import { audioInput, audioOutput, event, forSample, param, state } from "@unworklet/core";
 import { expect, test } from "vite-plus/test";
 
 import { renderOffline } from "./index.ts";
@@ -438,4 +438,71 @@ test("`renderOffline` subnormal flush integration (= state.f32 store 1e-40 → 0
   for (let i = 0; i < 2 * SAMPLES_PER_BLOCK; i++) {
     expect(ch[i]).toBe(0);
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// events real capture (= sub-phase 7.8c)。 worklet → main の event ring を
+// renderOffline が WASM memory から walk + OfflineEmittedEvent 配 列 で 返 す。
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`renderOffline` captures emitted events from event ring (= sub-phase 7.8c)", async () => {
+  const eventProc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "out" });
+    const peakEvt = event<{ level: number }>({ name: "peak", capacity: 16 });
+    // gate state を true 固 定 + stateLoad cond で Q32-c constant-truthy 回 避
+    const gate = state.named("gate").bool(true);
+    return {
+      process: () => {
+        gate.store(true);
+        forSample((i) => {
+          peakEvt.emitIf(gate.load(), { atSample: i, level: 0.5 });
+          out.ch(0).at(i).write(0);
+        });
+      },
+    };
+  });
+  const result = await renderOffline(eventProc, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000, // 1 block = 128 emit、 capacity 16 で 112 drop
+  });
+  expect(result.events.length).toBeGreaterThan(0);
+  // 全 event の name = "peak"、 atSample は 0..127 範 囲、 level = 0.5
+  for (const evt of result.events) {
+    expect(evt.name).toBe("peak");
+    expect(evt.atSample).toBeGreaterThanOrEqual(0);
+    expect(evt.atSample).toBeLessThan(SAMPLES_PER_BLOCK);
+    expect((evt.payload as { level: number }).level).toBe(0.5);
+  }
+});
+
+test("`renderOffline` captures bool wireType event field as JS boolean", async () => {
+  const boolEvtProc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "out" });
+    const flagEvt = event<{ flag: boolean }>({ name: "flag", capacity: 16 });
+    const gate = state.named("gate").bool(true);
+    return {
+      process: () => {
+        gate.store(true);
+        forSample((i) => {
+          flagEvt.emitIf(gate.load(), { atSample: i, flag: true });
+          out.ch(0).at(i).write(0);
+        });
+      },
+    };
+  });
+  const result = await renderOffline(boolEvtProc, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+  });
+  expect(result.events.length).toBeGreaterThan(0);
+  expect((result.events[0]!.payload as { flag: boolean }).flag).toBe(true);
+});
+
+test("`renderOffline` returns empty events when no event declarations exist", async () => {
+  const result = await renderOffline(stereoGain, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+    inputs: { main: [new Float32Array(SAMPLES_PER_BLOCK), new Float32Array(SAMPLES_PER_BLOCK)] },
+  });
+  expect(result.events).toEqual([]);
 });
