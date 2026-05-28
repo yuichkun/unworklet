@@ -14,6 +14,15 @@ export default defineConfig({
   fmt: {},
   test: {
     include: ["src/**/*.test.ts"],
+    // Browser-mode e2e は 別 config (= `vite.browser.config.ts`) で 起 動。
+    // default `vp test` は node-side unit / integration の み = browser fixture
+    // path を 全 exclude (= real `AudioContext` / `SharedArrayBuffer` / `Atomics`
+    // 必 須 で node 環 境 で fail する path)。
+    exclude: [
+      "src/**/*.browser.test.ts",
+      "src/__tests__/browser/**",
+      "**/node_modules/**",
+    ],
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],
