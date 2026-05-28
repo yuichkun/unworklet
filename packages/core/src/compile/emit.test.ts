@@ -985,3 +985,420 @@ test("`emitExpression(literal bool)` throws 後 続 phase stub marker", async ()
   ).toThrow(/bool literal emission not implemented/);
   mod.dispose();
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// subnormal guard 振 る 舞 い 仕 様 (= spec-state-store-behavior.md)
+// 値 source の バ リ エ ー シ ョ ン × forSample 内/外 × 境 界 値 × 特 殊 値 で
+// guard が 一 律 適 用 さ れ る 振 る 舞 い を 全 case 担 保。
+// ─────────────────────────────────────────────────────────────────────────
+
+// 値 source 別 = store value AST を build 直 接 + state.f32 round-trip + memory dump で 結 果 確 認
+function makeStoreValueGraph(
+  storeValue: AstNode,
+  extraDeclarations: CapturedGraph["declarations"] = [],
+): CapturedGraph {
+  return {
+    declarations: [{ kind: "state", name: "z", type: "f32", initial: 0 }, ...extraDeclarations],
+    statements: [{ kind: "stateStore", type: "f32", name: "z", value: storeValue }],
+  };
+}
+
+async function runStoreAndRead(graph: CapturedGraph): Promise<number> {
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  proc();
+  const view = new Float32Array(memory.buffer, lay.regions.states.slots["z"]!, 1);
+  return view[0]!;
+}
+
+test("subnormal guard: literal store (= normal range で 保 持)", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({ kind: "literal", type: "f32", value: 0.5 }),
+  );
+  expect(stored).toBe(0.5);
+});
+
+test("subnormal guard: literal store (= subnormal range で 0 flush)", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({ kind: "literal", type: "f32", value: 1e-40 }),
+  );
+  expect(stored).toBe(0);
+});
+
+test("subnormal guard: 境 界 1e-30 ぴ っ た り は 保 持 (= strict `<` flush rule)", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({ kind: "literal", type: "f32", value: 1e-30 }),
+  );
+  // 1e-30 は f32 で fround = 約 1.000000035e-30、 guard は abs < 1e-30 で 判 定 =
+  // 境 界 値 は flush し な い (= 保 持)
+  expect(stored).toBeCloseTo(Math.fround(1e-30), 35);
+  expect(stored).not.toBe(0);
+});
+
+test("subnormal guard: 境 界 直 下 1e-31 は flush", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({ kind: "literal", type: "f32", value: 1e-31 }),
+  );
+  expect(stored).toBe(0);
+});
+
+test("subnormal guard: 負 値 -1e-40 は abs で 判 定 し て flush", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({ kind: "literal", type: "f32", value: -1e-40 }),
+  );
+  expect(stored).toBe(0);
+});
+
+test("subnormal guard: 負 normal -0.5 は 保 持", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({ kind: "literal", type: "f32", value: -0.5 }),
+  );
+  expect(stored).toBe(-0.5);
+});
+
+test("subnormal guard: mul(literal, literal) 結 果 normal は 保 持", async () => {
+  // 2 × 0.5 = 1.0
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "mul",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 2 },
+      rhs: { kind: "literal", type: "f32", value: 0.5 },
+    }),
+  );
+  expect(stored).toBe(1);
+});
+
+test("subnormal guard: mul(literal, literal) 結 果 subnormal は flush", async () => {
+  // 1e-20 × 1e-15 = 1e-35 = subnormal range
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "mul",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 1e-20 },
+      rhs: { kind: "literal", type: "f32", value: 1e-15 },
+    }),
+  );
+  expect(stored).toBe(0);
+});
+
+test("subnormal guard: stateLoad source (= 別 state slot か ら load し た値 を そ の ま ま store)", async () => {
+  // src に 0.7 を store → dst に src.load() を store (= guard 通 過、 0.7 保 持)
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "state", name: "src", type: "f32", initial: 0 },
+      { kind: "state", name: "dst", type: "f32", initial: 0 },
+    ],
+    statements: [
+      {
+        kind: "stateStore",
+        type: "f32",
+        name: "src",
+        value: { kind: "literal", type: "f32", value: 0.7 },
+      },
+      {
+        kind: "stateStore",
+        type: "f32",
+        name: "dst",
+        value: { kind: "stateLoad", type: "f32", name: "src" },
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  proc();
+  const dstView = new Float32Array(memory.buffer, lay.regions.states.slots["dst"]!, 1);
+  expect(dstView[0]).toBe(Math.fround(0.7));
+});
+
+test("subnormal guard: self load × literal chain (= counter × 0.5 decay path)", async () => {
+  // counter に 0.8 を store → counter × 0.5 を store → memory に 0.4 期 待
+  const graph: CapturedGraph = {
+    declarations: [{ kind: "state", name: "counter", type: "f32", initial: 0 }],
+    statements: [
+      {
+        kind: "stateStore",
+        type: "f32",
+        name: "counter",
+        value: { kind: "literal", type: "f32", value: 0.8 },
+      },
+      {
+        kind: "stateStore",
+        type: "f32",
+        name: "counter",
+        value: {
+          kind: "mul",
+          type: "f32",
+          lhs: { kind: "stateLoad", type: "f32", name: "counter" },
+          rhs: { kind: "literal", type: "f32", value: 0.5 },
+        },
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  proc();
+  const view = new Float32Array(memory.buffer, lay.regions.states.slots["counter"]!, 1);
+  expect(view[0]).toBeCloseTo(0.4, 6);
+});
+
+test("subnormal guard: audioInRead × literal、 forSample 外 (= per-block top-level、 known NaN bug)", async () => {
+  // input[0] = 0.3、 store value = audioInRead × 2 = 0.6 期 待 (= guard 通 過)
+  // 現 状: subnormal guard helper の 重 複 emit + binaryen 内 部 share で NaN
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "state", name: "z", type: "f32", initial: 0 },
+      { kind: "audioInput", name: "main", channels: 1 },
+    ],
+    statements: [
+      {
+        kind: "stateStore",
+        type: "f32",
+        name: "z",
+        value: {
+          kind: "mul",
+          type: "f32",
+          lhs: {
+            kind: "audioInRead",
+            portName: "main",
+            channel: 0,
+            offset: { kind: "literal", type: "i32", value: 0 },
+          },
+          rhs: { kind: "literal", type: "f32", value: 2 },
+        },
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  const inputView = new Float32Array(memory.buffer, lay.regions.ioScratch.inputs["main"]!, 128);
+  inputView.fill(0.3);
+  proc();
+  const view = new Float32Array(memory.buffer, lay.regions.states.slots["z"]!, 1);
+  expect(view[0]).toBeCloseTo(0.6, 6);
+});
+
+test("subnormal guard: audioInRead × literal、 forSample 内", async () => {
+  // forSample 内 で input[i] × 2 を store = 各 sample で 上 書 き、 最 後 (= i=127) の
+  // 値 が memory に残 る = input[127] × 2 = 0.3 × 2 = 0.6 期 待
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "state", name: "z", type: "f32", initial: 0 },
+      { kind: "audioInput", name: "main", channels: 1 },
+    ],
+    statements: [
+      {
+        kind: "forSample",
+        stride: 1,
+        body: [
+          {
+            kind: "stateStore",
+            type: "f32",
+            name: "z",
+            value: {
+              kind: "mul",
+              type: "f32",
+              lhs: {
+                kind: "audioInRead",
+                portName: "main",
+                channel: 0,
+                offset: { kind: "loopCounter" },
+              },
+              rhs: { kind: "literal", type: "f32", value: 2 },
+            },
+          },
+        ],
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  const inputView = new Float32Array(memory.buffer, lay.regions.ioScratch.inputs["main"]!, 128);
+  inputView.fill(0.3);
+  proc();
+  const view = new Float32Array(memory.buffer, lay.regions.states.slots["z"]!, 1);
+  expect(view[0]).toBeCloseTo(0.6, 6);
+});
+
+test("subnormal guard: paramAt × literal、 forSample 内", async () => {
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "state", name: "z", type: "f32", initial: 0 },
+      {
+        kind: "param",
+        name: "gain",
+        type: "f32",
+        default: 0,
+        min: 0,
+        max: 4,
+        automationRate: "a-rate",
+      },
+    ],
+    statements: [
+      {
+        kind: "forSample",
+        stride: 1,
+        body: [
+          {
+            kind: "stateStore",
+            type: "f32",
+            name: "z",
+            value: {
+              kind: "mul",
+              type: "f32",
+              lhs: { kind: "paramAt", paramName: "gain", offset: { kind: "loopCounter" } },
+              rhs: { kind: "literal", type: "f32", value: 3 },
+            },
+          },
+        ],
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  const paramView = new Float32Array(memory.buffer, lay.regions.ioScratch.params["gain"]!, 128);
+  paramView.fill(0.2);
+  proc();
+  const view = new Float32Array(memory.buffer, lay.regions.states.slots["z"]!, 1);
+  expect(view[0]).toBeCloseTo(0.6, 6);
+});
+
+test("subnormal guard: deeply nested mul chain (= 3 段)", async () => {
+  // (((0.4 × 0.5) × 0.5) × 0.5) = 0.05
+  const storeValue: AstNode = {
+    kind: "mul",
+    type: "f32",
+    lhs: {
+      kind: "mul",
+      type: "f32",
+      lhs: {
+        kind: "mul",
+        type: "f32",
+        lhs: { kind: "literal", type: "f32", value: 0.4 },
+        rhs: { kind: "literal", type: "f32", value: 0.5 },
+      },
+      rhs: { kind: "literal", type: "f32", value: 0.5 },
+    },
+    rhs: { kind: "literal", type: "f32", value: 0.5 },
+  };
+  const stored = await runStoreAndRead(makeStoreValueGraph(storeValue));
+  expect(stored).toBeCloseTo(0.05, 6);
+});
+
+test("subnormal guard: NaN store は guard 不発 で 保持 (= NaN < 1e-30 = false in IEEE 754)", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({ kind: "literal", type: "f32", value: Number.NaN }),
+  );
+  expect(Number.isNaN(stored)).toBe(true);
+});
+
+test("subnormal guard: +Infinity store は 保 持", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({ kind: "literal", type: "f32", value: Number.POSITIVE_INFINITY }),
+  );
+  expect(stored).toBe(Number.POSITIVE_INFINITY);
+});
+
+test("subnormal guard: -Infinity store は 保 持", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({ kind: "literal", type: "f32", value: Number.NEGATIVE_INFINITY }),
+  );
+  expect(stored).toBe(Number.NEGATIVE_INFINITY);
+});
+
+test("subnormal guard: -0 store は abs(-0) = 0 < 1e-30 で flush → +0", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({ kind: "literal", type: "f32", value: -0 }),
+  );
+  // -0 を store → guard で 0 に flush → memory の bit pattern = +0
+  // Object.is で +0 / -0 区 別 可、 ただ 「flush 後 +0」 を 担 保 す る path
+  expect(Object.is(stored, 0)).toBe(true);
+});
+
+test("subnormal guard: 同 block 内 で 同 state 2 度 store = 最 後 (= 0.7) が残 る", async () => {
+  const graph: CapturedGraph = {
+    declarations: [{ kind: "state", name: "z", type: "f32", initial: 0 }],
+    statements: [
+      {
+        kind: "stateStore",
+        type: "f32",
+        name: "z",
+        value: { kind: "literal", type: "f32", value: 0.3 },
+      },
+      {
+        kind: "stateStore",
+        type: "f32",
+        name: "z",
+        value: { kind: "literal", type: "f32", value: 0.7 },
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  proc();
+  const view = new Float32Array(memory.buffer, lay.regions.states.slots["z"]!, 1);
+  // 0.7 を f32 に fround = 0.699999988079071 = memory に そ の bit pattern で store
+  expect(view[0]).toBe(Math.fround(0.7));
+});
+
+test("subnormal guard f64: stateLoad source (= cross-precision な し path)", async () => {
+  // f64 state ↔ state copy (= literal f64 を 経 由 し な い path、 既 NaN bug
+  // と は 別 経 路 で 動 作 確 認)
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "state", name: "src", type: "f64", initial: 0 },
+      { kind: "state", name: "dst", type: "f64", initial: 0 },
+    ],
+    statements: [
+      {
+        kind: "stateStore",
+        type: "f64",
+        name: "src",
+        value: { kind: "literal", type: "f64", value: 0.7 },
+      },
+      {
+        kind: "stateStore",
+        type: "f64",
+        name: "dst",
+        value: { kind: "stateLoad", type: "f64", name: "src" },
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  proc();
+  const dstView = new Float64Array(memory.buffer, lay.regions.states.slots["dst"]!, 1);
+  expect(dstView[0]).toBe(0.7);
+});

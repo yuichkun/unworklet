@@ -30,6 +30,19 @@ const BYTES_PER_I64 = 8;
 const CHANNEL_STRIDE_BYTES = 128 * BYTES_PER_F32;
 const PAGE_BYTES = 65536;
 const LOOP_COUNTER_LOCAL = 0;
+/**
+ * f32 / f64 用 subnormal guard temp local (= function locals array index 1 / 2)。
+ *
+ * subnormal guard で `|v| < 1e-30 ? 0 : v` を 構 築 す る 時、 v を `abs / lt` の
+ * condition と `select` の else 側 で 2 度 参 照 す る 必要。 ナイーブ に
+ * `emitExpression(valueNode, ...)` を 2 度 呼 ぶ と、 v が 「audioInRead 経 由 +
+ * forSample 後 の 文 脈」 で binaryen 内 部 で 共 有 / 不 正 expression 生 成 path
+ * に 入 り NaN を 生 む (= 実 測 確 認)。 `local.tee` で 1 度 だ け 評 価 + local に
+ * 保 存 + 値 を 渡 し、 もう 1 度 必 要 な ら `local.get` で 再 取 得 す る 形 が
+ * 標 準 path = 重 複 evaluation ナ シ + binaryen 内 部 共 有 path も 経 由 し な い。
+ */
+const SUBNORMAL_F32_LOCAL = 1;
+const SUBNORMAL_F64_LOCAL = 2;
 
 /**
  * Subnormal flush threshold (= Q21、 `04-worklet-runtime.md` §6)。
@@ -51,7 +64,13 @@ export async function emit(graph: CapturedGraph, layout: Layout): Promise<Uint8A
   const statements = graph.statements.map((s) => emitStatement(s, layout, mod, binaryen));
   const body = mod.block(null, statements);
 
-  mod.addFunction("process", binaryen.none, binaryen.none, [binaryen.i32], body);
+  mod.addFunction(
+    "process",
+    binaryen.none,
+    binaryen.none,
+    [binaryen.i32, binaryen.f32, binaryen.f64],
+    body,
+  );
   mod.addFunctionExport("process", "process");
 
   const wasm = mod.emitBinary();
@@ -254,9 +273,14 @@ export function emitStatement(
 
 /**
  * Subnormal guard emit (= `|v| < 1e-30 ? 0 : v` の WASM IR、 Q21)。
- * f32 / f64 の `state.store(v)` で 自 動 inline。 重 複 evaluation で
- * sub-expression を 2 回 emit (= side-effect ナ シ expression 限 定 = 安 全、
- * binaryen optimizer が CSE で 1 回 に collapse す る path)。
+ * f32 / f64 の `state.store(v)` で 自 動 inline。
+ *
+ * `block(name, [local.set(v), expression_using_local.get], type)` 形 で v を
+ * 1 度 だ け 評 価 + local に 保 存 し、 後 続 expression で `local.get` を 2 度
+ * 参 照 (= 1 度 = abs / lt の condition、 もう 1 度 = select else)。 ナ イー ブ
+ * な 「v を 2 度 emit す る」 path は binaryen 内 部 で 「audioInRead 経 由 +
+ * forSample 後 の 文 脈」 で NaN を 生 む trigger に な っ た (= 実 測 確 認)、
+ * local 経 由 で 1 度 評 価 path に refactor し て 解 消。
  */
 function emitSubnormalGuardF32(
   valueNode: AstNode,
@@ -264,12 +288,17 @@ function emitSubnormalGuardF32(
   mod: BinaryenModule,
   binaryen: BinaryenAPI,
 ): number {
-  const v1 = emitExpression(valueNode, layout, mod, binaryen);
-  const v2 = emitExpression(valueNode, layout, mod, binaryen);
-  return mod.select(
-    mod.f32.lt(mod.f32.abs(v1), mod.f32.const(SUBNORMAL_THRESHOLD)),
+  // WASM `select` は eager evaluation = 全 3 引 数 を 先 に 評 価 し て か ら 選 ぶ。
+  // ifFalse 内 の `local.get` が 「`local.tee` よ り 前 に 評 価」 さ れ て local 初 期 値
+  // 0 を 取 っ て し ま う 罠 が 発 生 (= 実 測 確 認)。 `if-else` は lazy evaluation =
+  // condition 評 価 で `local.tee` が 走 っ て か ら、 then / else の どち ら だ け が
+  // 評 価 さ れ る = local が確 実 に v に な っ て か ら else 側 の `local.get` が 走 る。
+  const v = emitExpression(valueNode, layout, mod, binaryen);
+  const teed = mod.local.tee(SUBNORMAL_F32_LOCAL, v, binaryen.f32);
+  return mod.if(
+    mod.f32.lt(mod.f32.abs(teed), mod.f32.const(SUBNORMAL_THRESHOLD)),
     mod.f32.const(0),
-    v2,
+    mod.local.get(SUBNORMAL_F32_LOCAL, binaryen.f32),
   );
 }
 
@@ -279,11 +308,11 @@ function emitSubnormalGuardF64(
   mod: BinaryenModule,
   binaryen: BinaryenAPI,
 ): number {
-  const v1 = emitExpression(valueNode, layout, mod, binaryen);
-  const v2 = emitExpression(valueNode, layout, mod, binaryen);
-  return mod.select(
-    mod.f64.lt(mod.f64.abs(v1), mod.f64.const(SUBNORMAL_THRESHOLD)),
+  const v = emitExpression(valueNode, layout, mod, binaryen);
+  const teed = mod.local.tee(SUBNORMAL_F64_LOCAL, v, binaryen.f64);
+  return mod.if(
+    mod.f64.lt(mod.f64.abs(teed), mod.f64.const(SUBNORMAL_THRESHOLD)),
     mod.f64.const(0),
-    v2,
+    mod.local.get(SUBNORMAL_F64_LOCAL, binaryen.f64),
   );
 }
