@@ -398,7 +398,7 @@ test("`state.f32(initial)` registers a `state` declaration with synthetic name",
     state.f32(0.5);
   });
   expect(ctx.declarations).toEqual([
-    { kind: "state", name: "__state_0", type: "f32", initial: 0.5 },
+    { kind: "state", name: "__state_0", type: "f32", initial: 0.5, userNamed: false },
   ]);
 });
 
@@ -426,11 +426,11 @@ test("`state.<type>(initial)` 5 type 全 declare (= f32 / f64 / i32 / i64 / bool
     state.bool(true);
   });
   expect(ctx.declarations).toEqual([
-    { kind: "state", name: "__state_0", type: "f32", initial: 1.5 },
-    { kind: "state", name: "__state_1", type: "f64", initial: 2.5 },
-    { kind: "state", name: "__state_2", type: "i32", initial: 7 },
-    { kind: "state", name: "__state_3", type: "i64", initial: 8n },
-    { kind: "state", name: "__state_4", type: "bool", initial: true },
+    { kind: "state", name: "__state_0", type: "f32", initial: 1.5, userNamed: false },
+    { kind: "state", name: "__state_1", type: "f64", initial: 2.5, userNamed: false },
+    { kind: "state", name: "__state_2", type: "i32", initial: 7, userNamed: false },
+    { kind: "state", name: "__state_3", type: "i64", initial: 8n, userNamed: false },
+    { kind: "state", name: "__state_4", type: "bool", initial: true, userNamed: false },
   ]);
 });
 
@@ -538,7 +538,9 @@ test("`state.named('X').f32(0)` 前 付 け chain registers with name `X`", () =
   runCapture(ctx, () => {
     state.named("meterL").f32(0);
   });
-  expect(ctx.declarations).toEqual([{ kind: "state", name: "meterL", type: "f32", initial: 0 }]);
+  expect(ctx.declarations).toEqual([
+    { kind: "state", name: "meterL", type: "f32", initial: 0, userNamed: true },
+  ]);
 });
 
 test("`state.f32(0).named('X')` 後 付 け chain は decl.name を mutate (= 同 declare shape)", () => {
@@ -546,7 +548,9 @@ test("`state.f32(0).named('X')` 後 付 け chain は decl.name を mutate (= �
   runCapture(ctx, () => {
     state.f32(0).named("meterL");
   });
-  expect(ctx.declarations).toEqual([{ kind: "state", name: "meterL", type: "f32", initial: 0 }]);
+  expect(ctx.declarations).toEqual([
+    { kind: "state", name: "meterL", type: "f32", initial: 0, userNamed: true },
+  ]);
 });
 
 test("chain で `.named` 重 複 = after-wins (= chain-rightmost name 採 用)", () => {

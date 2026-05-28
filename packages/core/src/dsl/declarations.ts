@@ -153,6 +153,7 @@ function makeStateDecl<T extends ScalarType>(
     name,
     type,
     initial: initial as number | bigint | boolean,
+    userNamed: pendingName !== undefined,
   };
   addDeclaration(decl);
   return makeStateHandle<T>(decl);
@@ -177,6 +178,7 @@ function makeStateHandle<T extends ScalarType>(decl: StateDecl): State<T> {
     named: (name: string) => {
       checkStateName(name, decl);
       decl.name = name;
+      decl.userNamed = true;
       return handle;
     },
     expose: () => notImplemented(),

@@ -66,6 +66,15 @@ export type StateDecl = {
   initial: number | bigint | boolean;
   snapshot?: SnapshotPolicy;
   publish?: PublishOptions;
+  /**
+   * `.named('X')` or `.expose({ name: 'X' })` 経 由 で user が 明 示 指 定 し た
+   * name か。 plain factory (= `state.f32(0)`) は synthetic name (= `__state_<idx>`)
+   * で declare = `userNamed` 未 設 定 / false、 chain で 明 示 set さ れ た 段 階
+   * で `true`。 finalize check で 「publish or snapshot 'persistent' は
+   * user-defined name 必 須」 を 担 保 (= synthetic name path を invalid と し て
+   * 落 と す)。 optional = test fixture で literal declare path を 維 持。
+   */
+  userNamed?: boolean;
 };
 
 export type Declaration = AudioPortDecl | ParamDecl | StateDecl;
