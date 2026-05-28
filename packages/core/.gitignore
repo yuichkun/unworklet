@@ -3,5 +3,5 @@ dist
 *.log
 .DS_Store
 .vitest-attachments/
-src/__tests__/browser/__screenshots__/
+src/__tests__/browser/**/__screenshots__/
 coverage/
