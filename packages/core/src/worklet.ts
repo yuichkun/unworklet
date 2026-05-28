@@ -20,7 +20,7 @@
  * Q80) の 両 方 が こ の 関 数 namespace を 共 通 基 盤 と し て 使 う。
  */
 
-import type { AudioPortDecl, CapturedGraph, ParamDecl } from "./compile/ast.ts";
+import type { AudioPortDecl, CapturedGraph, ParamDecl, StateDecl } from "./compile/ast.ts";
 import { layout, type Layout } from "./compile/layout.ts";
 import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
 import type { WorkletNamespace } from "./types.ts";
@@ -39,6 +39,13 @@ export type WorkletMeta = {
   readonly audioInputs: readonly AudioPortDecl[];
   readonly audioOutputs: readonly AudioPortDecl[];
   readonly params: readonly ParamDecl[];
+  /**
+   * publish flag を 持 つ state declaration 一 覧 (= sub-phase 7.4 で SAB copy
+   * logic が 参 照)。 layout.regions.publishShared / publishCounters と zip で
+   * 各 slot の WASM memory offset + 型 (= f32 / i32 / bool で SAB copy 方 法 が
+   * 異 な る、 Q42 で 全 4 byte word) を 取 得 す る path。
+   */
+  readonly publishStates: readonly StateDecl[];
 };
 
 export function extractWorkletMeta(graph: CapturedGraph): WorkletMeta {
@@ -47,6 +54,9 @@ export function extractWorkletMeta(graph: CapturedGraph): WorkletMeta {
     audioInputs: graph.declarations.filter((d): d is AudioPortDecl => d.kind === "audioInput"),
     audioOutputs: graph.declarations.filter((d): d is AudioPortDecl => d.kind === "audioOutput"),
     params: graph.declarations.filter((d): d is ParamDecl => d.kind === "param"),
+    publishStates: graph.declarations.filter(
+      (d): d is StateDecl => d.kind === "state" && d.publish !== undefined,
+    ),
   };
 }
 
