@@ -62,15 +62,33 @@ export async function compile<C>(processor: CompiledProcessor<C>): Promise<Compi
 }
 
 export function makeDriver(graph: CapturedGraph, lay: Layout, wasm: Uint8Array): CompileDriver {
-  const declarations: CompileInstanceDeclaration[] = graph.declarations.map((d) => {
+  // driver の declarations 配 列 = renderOffline 等 の driver consumer が walk し て
+  // writeInput / writeParam / readOutput を 呼 ぶ 対 象。 audioInput / audioOutput /
+  // param の 3 kind だ け を 含 め、 state / buffer / event / message / midi
+  // declaration は driver から 除 外 (= driver consumer は state slot に 書 き 込 まない
+  // = state は WASM 内 で 完 結 + main thread surface は 別 経 路 で 取 得、 sub-phase
+  // 7.x で fill)。 既 「else で param 扱 い」 path = state を param と 誤 認 し て
+  // state slot に NaN (= `paramScratch.fill(undefined)` で 上 書 き) を 書 き 込 む root
+  // cause bug が 発 生 し た た め、 明 示 white list path に refactor。
+  const declarations: CompileInstanceDeclaration[] = [];
+  for (const d of graph.declarations) {
     if (d.kind === "audioInput") {
-      return { kind: "audioInput", name: d.name, channels: (d as AudioPortDecl).channels };
+      declarations.push({
+        kind: "audioInput",
+        name: d.name,
+        channels: (d as AudioPortDecl).channels,
+      });
+    } else if (d.kind === "audioOutput") {
+      declarations.push({
+        kind: "audioOutput",
+        name: d.name,
+        channels: (d as AudioPortDecl).channels,
+      });
+    } else if (d.kind === "param") {
+      declarations.push({ kind: "param", name: d.name, default: (d as ParamDecl).default });
     }
-    if (d.kind === "audioOutput") {
-      return { kind: "audioOutput", name: d.name, channels: (d as AudioPortDecl).channels };
-    }
-    return { kind: "param", name: d.name, default: (d as ParamDecl).default };
-  });
+    // state / buffer / event / message / midi = driver か ら 除 外 (= 上 記 white list 以 外)
+  }
 
   return {
     async instantiate(): Promise<CompileInstance> {

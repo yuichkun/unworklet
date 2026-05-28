@@ -797,7 +797,7 @@ test("`emit` state.f32 subnormal threshold = 1e-29 store → load で そ の �
 
 test("`emit` state.f64 round-trip + subnormal flush via memory dump", async () => {
   // f64 は audio output (= f32) に 流 せ な い = state ↔ state round-trip + memory
-  // 直 接 read。 src に 1e-40 store → guard で 0 flush → dst に copy → dst slot を read。
+  // 直 接 read で 確 認。 src に 1e-40 store → guard で 0 flush → dst に copy → dst slot を read。
   const graph = makeStateRoundtripGraph("f64", { kind: "literal", type: "f64", value: 1e-40 }, 0);
   const lay = layout(graph);
   const wasm = await emit(graph, lay);
@@ -1154,9 +1154,9 @@ test("subnormal guard: self load × literal chain (= counter × 0.5 decay path)"
   expect(view[0]).toBeCloseTo(0.4, 6);
 });
 
-test("subnormal guard: audioInRead × literal、 forSample 外 (= per-block top-level、 known NaN bug)", async () => {
-  // input[0] = 0.3、 store value = audioInRead × 2 = 0.6 期 待 (= guard 通 過)
-  // 現 状: subnormal guard helper の 重 複 emit + binaryen 内 部 share で NaN
+test("subnormal guard: audioInRead × literal、 forSample 外 (= per-block top-level)", async () => {
+  // input[0] = 0.3、 store value = audioInRead × 2 = 0.6 期 待 (= guard 通 過)。
+  // audio I/O 経 由 で memory load を 含 む value source の guard 通 過 path 担 保。
   const graph: CapturedGraph = {
     declarations: [
       { kind: "state", name: "z", type: "f32", initial: 0 },
@@ -1367,6 +1367,237 @@ test("subnormal guard: 同 block 内 で 同 state 2 度 store = 最 後 (= 0.7)
   const view = new Float32Array(memory.buffer, lay.regions.states.slots["z"]!, 1);
   // 0.7 を f32 に fround = 0.699999988079071 = memory に そ の bit pattern で store
   expect(view[0]).toBe(Math.fround(0.7));
+});
+
+test("subnormal guard: defineProcessor 経 由 path repro (= offline test と 同 graph 構 築 経 路)", async () => {
+  // import side-effect = `.mul` method form を Node prototype に 登 録
+  await import("../dsl/primitives.ts");
+  const { defineProcessor } = await import("../processor.ts");
+  const { audioInput, audioOutput, state } = await import("../dsl/declarations.ts");
+  const { forSample } = await import("../dsl/loop.ts");
+
+  const accumulator = defineProcessor(() => {
+    const input = audioInput({ channels: 1, name: "main" });
+    const out = audioOutput({ channels: 1, name: "main" });
+    const stored = state.f32(0);
+    return {
+      process: () => {
+        forSample((i) => {
+          out.ch(0).at(i).write(stored.load());
+        });
+        stored.store(input.ch(0).at(0).mul(2));
+      },
+    };
+  });
+
+  // captured graph を 取 り 出 し 直 接 emit + 走 ら せ る
+  const capturedGraph = accumulator.graph as unknown as CapturedGraph;
+  const lay = layout(capturedGraph);
+  const wasm = await emit(capturedGraph, lay);
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+
+  const inputBase = lay.regions.ioScratch.inputs["main"]!;
+  const outputBase = lay.regions.ioScratch.outputs["main"]!;
+
+  // block 0: input fill 0.3 → proc
+  const input0 = new Float32Array(memory.buffer, inputBase, 128);
+  for (let s = 0; s < 128; s++) input0[s] = 0.3;
+  proc();
+  const output0 = new Float32Array(memory.buffer, outputBase, 128);
+  for (let s = 0; s < 128; s++) expect(output0[s]).toBe(0);
+
+  // block 1: input fill 0.7 → proc
+  const input1 = new Float32Array(memory.buffer, inputBase, 128);
+  for (let s = 0; s < 128; s++) input1[s] = 0.7;
+  proc();
+  const output1 = new Float32Array(memory.buffer, outputBase, 128);
+  for (let s = 0; s < 128; s++) expect(output1[s]).toBeCloseTo(0.6, 6);
+});
+
+test("subnormal guard: renderOffline と 同 形 ループ 再現 (= input fill → proc → output read を 2 度)", async () => {
+  // renderOffline で NaN 出 る path を 詳細 再 現:
+  // - forSample 内 で out[i] = z.load() を write
+  // - forSample 外 で z = input[0] × 2 を store
+  // - input fill 0.3 → proc → output check (block 0)
+  // - input fill 0.7 → proc → output check (block 1) ← NaN trigger
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "audioInput", name: "main", channels: 1 },
+      { kind: "audioOutput", name: "main", channels: 1 },
+      { kind: "state", name: "z", type: "f32", initial: 0 },
+    ],
+    statements: [
+      {
+        kind: "forSample",
+        stride: 1,
+        body: [
+          {
+            kind: "audioOutWrite",
+            portName: "main",
+            channel: 0,
+            offset: { kind: "loopCounter" },
+            value: { kind: "stateLoad", type: "f32", name: "z" },
+          },
+        ],
+      },
+      {
+        kind: "stateStore",
+        type: "f32",
+        name: "z",
+        value: {
+          kind: "mul",
+          type: "f32",
+          lhs: {
+            kind: "audioInRead",
+            portName: "main",
+            channel: 0,
+            offset: { kind: "literal", type: "i32", value: 0 },
+          },
+          rhs: { kind: "literal", type: "f32", value: 2 },
+        },
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  const inputBase = lay.regions.ioScratch.inputs["main"]!;
+  const outputBase = lay.regions.ioScratch.outputs["main"]!;
+
+  // block 0: input fill 0.3 → proc → output 確認
+  const input0 = new Float32Array(memory.buffer, inputBase, 128);
+  for (let s = 0; s < 128; s++) input0[s] = 0.3;
+  proc();
+  const output0 = new Float32Array(memory.buffer, outputBase, 128);
+  // block 0: z 初期値 = 0 = output 全 0
+  for (let s = 0; s < 128; s++) expect(output0[s]).toBe(0);
+
+  // block 1: input fill 0.7 → proc → output 確認
+  const input1 = new Float32Array(memory.buffer, inputBase, 128);
+  for (let s = 0; s < 128; s++) input1[s] = 0.7;
+  proc();
+  const output1 = new Float32Array(memory.buffer, outputBase, 128);
+  // block 1: z = block 0 末尾 で store した 0.6 = output 全 0.6
+  for (let s = 0; s < 128; s++) expect(output1[s]).toBeCloseTo(0.6, 6);
+});
+
+test("subnormal guard: forSample 後 audioInRead × literal store、 2 度 process (= multi-block 駆 動 path)", async () => {
+  // proc() を 2 度 呼 ぶ = multi-block 駆 動 = state slot が render quantum 跨 い で 持 続。
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "audioInput", name: "main", channels: 1 },
+      { kind: "audioOutput", name: "main", channels: 1 },
+      { kind: "state", name: "z", type: "f32", initial: 0 },
+    ],
+    statements: [
+      {
+        kind: "forSample",
+        stride: 1,
+        body: [
+          {
+            kind: "audioOutWrite",
+            portName: "main",
+            channel: 0,
+            offset: { kind: "loopCounter" },
+            value: { kind: "stateLoad", type: "f32", name: "z" },
+          },
+        ],
+      },
+      {
+        kind: "stateStore",
+        type: "f32",
+        name: "z",
+        value: {
+          kind: "mul",
+          type: "f32",
+          lhs: {
+            kind: "audioInRead",
+            portName: "main",
+            channel: 0,
+            offset: { kind: "literal", type: "i32", value: 0 },
+          },
+          rhs: { kind: "literal", type: "f32", value: 2 },
+        },
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  const inputView = new Float32Array(memory.buffer, lay.regions.ioScratch.inputs["main"]!, 128);
+  inputView.fill(0.3);
+  proc();
+  // 1 度 目: z = 0.6 期 待
+  const view1 = new Float32Array(memory.buffer, lay.regions.states.slots["z"]!, 1);
+  expect(view1[0]).toBeCloseTo(0.6, 6);
+  // 2 度 目: input = 0.3 のまま、 z = 0.6 期待 (= NaN な し)
+  proc();
+  const view2 = new Float32Array(memory.buffer, lay.regions.states.slots["z"]!, 1);
+  expect(view2[0]).toBeCloseTo(0.6, 6);
+});
+
+test("subnormal guard: forSample 後 audioInRead × literal store (= offline integration 再 現)", async () => {
+  // offline/index.test.ts で NaN 出 た fixture を emit unit test に 再 現:
+  // forSample で audioOutput に stateLoad を write → forSample 外 で stateStore に
+  // audioInRead × 2 を store。 input = 0.3 → z = 0.6 期 待。
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "audioInput", name: "main", channels: 1 },
+      { kind: "audioOutput", name: "main", channels: 1 },
+      { kind: "state", name: "z", type: "f32", initial: 0 },
+    ],
+    statements: [
+      {
+        kind: "forSample",
+        stride: 1,
+        body: [
+          {
+            kind: "audioOutWrite",
+            portName: "main",
+            channel: 0,
+            offset: { kind: "loopCounter" },
+            value: { kind: "stateLoad", type: "f32", name: "z" },
+          },
+        ],
+      },
+      {
+        kind: "stateStore",
+        type: "f32",
+        name: "z",
+        value: {
+          kind: "mul",
+          type: "f32",
+          lhs: {
+            kind: "audioInRead",
+            portName: "main",
+            channel: 0,
+            offset: { kind: "literal", type: "i32", value: 0 },
+          },
+          rhs: { kind: "literal", type: "f32", value: 2 },
+        },
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  const inputView = new Float32Array(memory.buffer, lay.regions.ioScratch.inputs["main"]!, 128);
+  inputView.fill(0.3);
+  proc();
+  const view = new Float32Array(memory.buffer, lay.regions.states.slots["z"]!, 1);
+  expect(view[0]).toBeCloseTo(0.6, 6);
 });
 
 test("subnormal guard f64: stateLoad source (= cross-precision な し path)", async () => {
