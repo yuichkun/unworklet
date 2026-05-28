@@ -138,6 +138,21 @@ type WorkletState = {
   readonly publishWasmSharedViews: readonly Int32Array[];
   readonly publishWasmCounterViews: readonly Int32Array[];
   /**
+   * event ring SAB copy meta (= sub-phase 7.6 commit 5c)。 main か ら hand さ れ た
+   * eventRingsBuffer (= SAB or ArrayBuffer) + per-ring descriptor + per-ring SAB
+   * 内 offset。 eventRingsWasmViews / SabViews = pre-bind し た Uint8Array view
+   * (= per-quantum bulk copy で 毎 quantum alloc 回 避、 realtime safety)。
+   * event ナ シ processor で は null + 空 配 列。
+   */
+  readonly eventRingsBuffer: SharedArrayBuffer | ArrayBuffer | null;
+  readonly eventRings: readonly EventRingSlotDescriptor[];
+  readonly eventRingSabOffsets: readonly number[];
+  readonly eventRingsWasmViews: readonly Uint8Array[];
+  readonly eventRingsSabViews: readonly Uint8Array[];
+  /** Per-ring header (= head / tail / overflow) Int32Array view = SAB Atomics.store 用 */
+  readonly eventRingsWasmHeaderViews: readonly Int32Array[];
+  readonly eventRingsSabHeaderViews: readonly Int32Array[];
+  /**
    * Latched once a WASM trap escapes `state.process()`。 Subsequent quanta
    * emit silence and skip the WASM call so a single trap does not get
    * re-posted every render quantum (= main receives one `wasm-trap` event
@@ -349,6 +364,33 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         publishWasmCounterViews.push(new Int32Array(memory.buffer, slot.counterOffset, 2));
       }
 
+      // event ring meta + buffer を opts か ら 取 り 出 し (= sub-phase 7.6 commit 5c)。
+      // 各 ring で WASM memory 上 と SAB 上 の Uint8Array view を pre-bind し て
+      // per-quantum 末 尾 で bulk copy + Atomics.store(head / overflow) で main 公 開。
+      const eventRingsBuffer = opts.processorOptions?.eventRingsBuffer ?? null;
+      const eventRings = opts.processorOptions?.eventRings ?? [];
+      const eventRingSabOffsets = opts.processorOptions?.eventRingSabOffsets ?? [];
+      const eventRingsWasmViews: Uint8Array[] = [];
+      const eventRingsSabViews: Uint8Array[] = [];
+      const eventRingsWasmHeaderViews: Int32Array[] = [];
+      const eventRingsSabHeaderViews: Int32Array[] = [];
+      if (eventRingsBuffer !== null) {
+        for (let i = 0; i < eventRings.length; i++) {
+          const ring = eventRings[i]!;
+          const ringTotalBytes = 12 + ring.capacity * ring.slotSize;
+          eventRingsWasmViews.push(
+            new Uint8Array(memory.buffer, ring.wasmRingBase, ringTotalBytes),
+          );
+          eventRingsSabViews.push(
+            new Uint8Array(eventRingsBuffer, eventRingSabOffsets[i]!, ringTotalBytes),
+          );
+          eventRingsWasmHeaderViews.push(new Int32Array(memory.buffer, ring.wasmRingBase, 3));
+          eventRingsSabHeaderViews.push(
+            new Int32Array(eventRingsBuffer, eventRingSabOffsets[i]!, 3),
+          );
+        }
+      }
+
       (self as SelfWithState)[STATE_KEY] = {
         process: procFn,
         audioInputs,
@@ -363,6 +405,13 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         transport,
         publishWasmSharedViews,
         publishWasmCounterViews,
+        eventRingsBuffer,
+        eventRings,
+        eventRingSabOffsets,
+        eventRingsWasmViews,
+        eventRingsSabViews,
+        eventRingsWasmHeaderViews,
+        eventRingsSabHeaderViews,
         failed: false,
       };
 
@@ -534,6 +583,34 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             sharedView[slotIdx + 2] = currentVersion;
           }
           lastVersions[i] = currentVersion;
+        }
+      }
+    }
+
+    // event ring copy (= sub-phase 7.6 commit 5c)。 WASM ring (= header 12 +
+    // slots) を SAB ring に bulk copy (= per-quantum、 main が tail を 進 め て も
+    // WASM 側 は 影 響 ナ シ = ring は audio thread 専 用、 SAB は 公 開 mirror)。
+    // tail も copy (= main 側 が SAB の tail を 上 書 き す る が、 audio thread は
+    // SAB を 読 ま な い = 衝 突 ナ シ)。 SAB mode の Atomics fence は per-quantum 末 尾
+    // に WASM head の Atomics.store だ け で 担 保 (= main 側 polling は Atomics.load
+    // で head の release fence を 取 っ て か ら slot を 読 む)。
+    if (state.eventRingsBuffer !== null) {
+      const wasmViews = state.eventRingsWasmViews;
+      const sabViews = state.eventRingsSabViews;
+      const wasmHeaders = state.eventRingsWasmHeaderViews;
+      const sabHeaders = state.eventRingsSabHeaderViews;
+      const isSab = state.transport === "sab";
+      for (let i = 0; i < wasmViews.length; i++) {
+        // bulk copy ring 全 体 (= header + 全 slot) を SAB に mirror。
+        sabViews[i]!.set(wasmViews[i]!);
+        if (isSab) {
+          // head / tail / overflowCount を Atomics.store で 上 書 き = main 側 が
+          // Atomics.load(head) で release fence を 取 っ て slot 列 visibility 担 保。
+          const wasmH = wasmHeaders[i]!;
+          const sabH = sabHeaders[i]!;
+          Atomics.store(sabH, 0, wasmH[0]!); // head
+          Atomics.store(sabH, 1, wasmH[1]!); // tail
+          Atomics.store(sabH, 2, wasmH[2]!); // overflowCount
         }
       }
     }

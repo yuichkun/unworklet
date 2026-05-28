@@ -647,3 +647,94 @@ test("publish copy: publishBuffer ナ シ processor は publish path skip (= reg
   const parameters = { gain: new Float32Array([2]) };
   expect(() => monoGain.worklet.process(self, inputs, outputs, parameters)).not.toThrow();
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// event ring SAB copy (= sub-phase 7.6 commit 5c)。 audio thread が emit
+// (= WASM 内 ring に slot fill + head++) → worklet template が per-quantum
+// 末 尾 で SAB ring に bulk copy + Atomics.store(head / tail / overflow)。 main
+// 側 が SAB から read で 期 待 値 取 れ る path を 担 保。
+// ─────────────────────────────────────────────────────────────────────────
+
+const eventEmitProc = defineProcessor(() => {
+  const input = audioInput({ channels: 1, name: "main" });
+  const out = audioOutput({ channels: 1, name: "main" });
+  const peakEvt = event<{ level: number }>({ name: "peak", capacity: 16 });
+  return {
+    process: () => {
+      forSample((i) => {
+        peakEvt.emitIf(true, { atSample: i, level: 0.5 });
+        out.ch(0).at(i).write(input.ch(0).at(i));
+      });
+    },
+  };
+});
+
+test("event ring copy (sab mode): WASM emit → SAB に header + slot を Atomics 反映", async () => {
+  const { wasm } = await compile(eventEmitProc);
+  const self = makeMockSelf();
+  const ring = eventEmitProc.worklet.eventRings[0]!;
+  const ringTotalBytes = 12 + ring.capacity * ring.slotSize;
+  const eventRingsBuffer = new SharedArrayBuffer(ringTotalBytes);
+  eventEmitProc.worklet.initialize(self, {
+    processorOptions: {
+      wasm,
+      eventRingsBuffer,
+      eventRings: eventEmitProc.worklet.eventRings,
+      eventRingSabOffsets: [0],
+      transport: "sab",
+    },
+  });
+  const input = new Float32Array(SAMPLES_PER_BLOCK).fill(0.25);
+  const inputs = [[input]];
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  eventEmitProc.worklet.process(self, inputs, outputs, {});
+
+  const headView = new Int32Array(eventRingsBuffer, 0, 3);
+  // capacity 16 + 128 emit → drop-oldest 連 発、 head = 128、 tail = 128 - 16 = 112、
+  // overflowCount = 128 - 16 = 112
+  expect(Atomics.load(headView, 0)).toBe(128); // head
+  expect(Atomics.load(headView, 1)).toBe(112); // tail
+  expect(Atomics.load(headView, 2)).toBe(112); // overflowCount
+
+  // slot 0 = 最 後 に 書 か れ た emit の slot (= 128 % 16 = 0)、 ま た は 117 % 16 = 5...
+  // 最 後 128 個 目 emit (= atSample = 127) は slot 127 % 16 = 15 に 書 か れ る。
+  // slot 15 を 読 む = atSample 127 / level 0.5
+  const slotsView = new DataView(eventRingsBuffer, 12);
+  expect(slotsView.getInt32(15 * 8, true)).toBe(127); // atSample
+  expect(slotsView.getFloat32(15 * 8 + 4, true)).toBe(0.5); // level
+});
+
+test("event ring copy (postMessage fallback): ArrayBuffer view に bulk copy", async () => {
+  const { wasm } = await compile(eventEmitProc);
+  const self = makeMockSelf();
+  const ring = eventEmitProc.worklet.eventRings[0]!;
+  const ringTotalBytes = 12 + ring.capacity * ring.slotSize;
+  const eventRingsBuffer = new ArrayBuffer(ringTotalBytes);
+  eventEmitProc.worklet.initialize(self, {
+    processorOptions: {
+      wasm,
+      eventRingsBuffer,
+      eventRings: eventEmitProc.worklet.eventRings,
+      eventRingSabOffsets: [0],
+      transport: "postMessage",
+    },
+  });
+  const inputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(0.25)]];
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  eventEmitProc.worklet.process(self, inputs, outputs, {});
+
+  const headView = new Int32Array(eventRingsBuffer, 0, 3);
+  expect(headView[0]).toBe(128); // head
+  // postMessage path = bulk set だ け、 Atomics.store path は skip = ま た は 同 値
+  expect(headView[2]).toBe(112); // overflowCount
+});
+
+test("event ring copy: eventRingsBuffer ナ シ processor は event path skip (= regression)", async () => {
+  const { wasm } = await compile(monoGain);
+  const self = makeMockSelf();
+  monoGain.worklet.initialize(self, { processorOptions: { wasm } });
+  const inputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(0.5)]];
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const parameters = { gain: new Float32Array([2]) };
+  expect(() => monoGain.worklet.process(self, inputs, outputs, parameters)).not.toThrow();
+});
