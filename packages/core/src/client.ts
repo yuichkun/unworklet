@@ -415,6 +415,12 @@ export async function createNode<C>(
   // never fire (= silent closure leak) — gate the add path with this flag。
   let disposed = false;
 
+  // sab-unavailable event を 1 度 だ け fire す る pending flag (= 04-worklet-
+  // runtime.md §8、 sub-phase 7.4)。 SAB available なら 不 要、 fallback 環 境 で
+  // 1 番 目 の onError subscriber に 1 度 だ け 通 知 (= subscriber が createNode
+  // 直 後 に subscribe で きる path を 想 定、 後 subscribe は drop)。
+  let pendingSabUnavailable = !sabAvailable;
+
   const unworkletNode: UnworkletNode<C> = {
     node,
     inputs: inputHandles,
@@ -464,6 +470,18 @@ export async function createNode<C>(
         return () => {};
       }
       errorSubscribers.add(handler);
+      // pending sab-unavailable event を 1 度 だ け fire (= sub-phase 7.4)。
+      // SAB available 環 境 で は pendingSabUnavailable = false で 何 も し ない。
+      // fallback 環 境 で 1 番 目 の subscriber に だ け notify、 後 subscribe は
+      // pending flag を clear 済 で drop。
+      if (pendingSabUnavailable) {
+        pendingSabUnavailable = false;
+        try {
+          handler({ code: "sab-unavailable" });
+        } catch (subscriberErr) {
+          console.error("unworklet: onError subscriber threw", subscriberErr);
+        }
+      }
       return () => {
         errorSubscribers.delete(handler);
       };

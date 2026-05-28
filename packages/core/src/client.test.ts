@@ -57,6 +57,13 @@ type MockHarnessOptions = {
    * the cleanup-on-throw branch inside `awaitReady`。
    */
   portStartThrows?: boolean;
+  /**
+   * crossOriginIsolated を mock global に 設 定 す る か。 default true (= 既 test
+   * の 多 数 が SAB available 想 定 で 書 か れ て いる)、 sab-unavailable path を 試
+   * す test で `false` or `undefined` を 渡 す path。 `false` = explicit deny、
+   * `undefined` = delete property (= 既 environment と 同 形)。
+   */
+  crossOriginIsolated?: boolean | "deleted";
 };
 
 type MockGainNode = {
@@ -92,6 +99,19 @@ const installMockGlobals = (
   const fetchStatus = harnessOpts.fetchStatus ?? 200;
   const fetchStatusText = harnessOpts.fetchStatusText ?? "OK";
   const portStartThrows = harnessOpts.portStartThrows ?? false;
+  // 既 test の 多 数 が 「SAB available」 path 想 定 で 書 か れ て いる (= sub-phase
+  // 7.4 で sab-unavailable が 1 度 fire さ れ る 経 路 が 増 え た た め、 default
+  // で SAB available 環 境 を mock = 既 test の onError 経 路 で 余 計 な
+  // sab-unavailable 通 知 を 生 ま な い)。 sab-unavailable path を 試 す test は
+  // option で `crossOriginIsolated: 'deleted'` を 渡 し て delete 環 境 を mock。
+  const coiOption = harnessOpts.crossOriginIsolated ?? true;
+  const coiTarget = globalThis as unknown as { crossOriginIsolated?: boolean };
+  const prevCoi = coiTarget.crossOriginIsolated;
+  if (coiOption === "deleted") {
+    delete coiTarget.crossOriginIsolated;
+  } else {
+    coiTarget.crossOriginIsolated = coiOption;
+  }
 
   const addModuleCalls: string[] = [];
   const fetchCalls: string[] = [];
@@ -251,6 +271,11 @@ const installMockGlobals = (
       globalThis.fetch = originalFetch;
       WebAssembly.compile = originalWasmCompile;
       delete (globalThis as Record<string, unknown>).AudioWorkletNode;
+      if (prevCoi === undefined) {
+        delete coiTarget.crossOriginIsolated;
+      } else {
+        coiTarget.crossOriginIsolated = prevCoi;
+      }
     },
   };
 };
@@ -289,27 +314,6 @@ const makeMockProcessor = (overrides?: {
     },
     __compiledProcessor: undefined,
   }) as unknown as CompiledProcessor<unknown>;
-
-/**
- * `globalThis.crossOriginIsolated` を test ご と に set / restore す る helper。
- * SAB available path / fallback path を 切 り 替 え て 確 認 す る。
- */
-const withCrossOriginIsolated = (value: boolean | undefined): (() => void) => {
-  const target = globalThis as unknown as { crossOriginIsolated?: boolean };
-  const prev = target.crossOriginIsolated;
-  if (value === undefined) {
-    delete target.crossOriginIsolated;
-  } else {
-    target.crossOriginIsolated = value;
-  }
-  return () => {
-    if (prev === undefined) {
-      delete target.crossOriginIsolated;
-    } else {
-      target.crossOriginIsolated = prev;
-    }
-  };
-};
 
 const startCreate = async <T>(fn: () => Promise<T>, fire: () => void): Promise<T> => {
   const promise = fn();
@@ -1324,7 +1328,6 @@ test("awaitReady wraps non-Error throws from port.start() into a fresh Error", a
 // ─────────────────────────────────────────────────────────────────────────
 
 test("createNode without publishSlots = buffer ナ シ + processorOptions に publishBuffer 含 ま な い", async () => {
-  const restore = withCrossOriginIsolated(true);
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     await startCreate(
@@ -1339,12 +1342,10 @@ test("createNode without publishSlots = buffer ナ シ + processorOptions に pu
     expect(opts).not.toHaveProperty("publishSlots");
   } finally {
     h.cleanup();
-    restore();
   }
 });
 
 test("createNode with publishSlots + crossOriginIsolated = SAB allocate + transport 'sab'", async () => {
-  const restore = withCrossOriginIsolated(true);
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     const node = await startCreate(
@@ -1368,13 +1369,11 @@ test("createNode with publishSlots + crossOriginIsolated = SAB allocate + transp
     expect(node.diagnostics.transport).toBe("sab");
   } finally {
     h.cleanup();
-    restore();
   }
 });
 
 test("createNode with publishSlots + !crossOriginIsolated = fallback ArrayBuffer + transport 'postMessage'", async () => {
-  const restore = withCrossOriginIsolated(undefined);
-  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   try {
     const node = await startCreate(
       () =>
@@ -1400,12 +1399,10 @@ test("createNode with publishSlots + !crossOriginIsolated = fallback ArrayBuffer
     expect(node.diagnostics.transport).toBe("postMessage");
   } finally {
     h.cleanup();
-    restore();
   }
 });
 
 test("createNode without publishSlots inherits transport from environment (= sab when crossOriginIsolated)", async () => {
-  const restore = withCrossOriginIsolated(true);
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     const node = await startCreate(
@@ -1415,6 +1412,64 @@ test("createNode without publishSlots inherits transport from environment (= sab
     expect(node.diagnostics.transport).toBe("sab");
   } finally {
     h.cleanup();
-    restore();
+  }
+});
+
+test("onError 1 番 目 subscriber は sab-unavailable env で `{ code: 'sab-unavailable' }` を 1 度 受 信", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ publishSlots: [] })),
+      h.fireReady,
+    );
+    const events: unknown[] = [];
+    node.onError((e) => events.push(e));
+    expect(events).toEqual([{ code: "sab-unavailable" }]);
+    // 2 番 目 subscriber は pending 既 clear で 受 信 し な い
+    const events2: unknown[] = [];
+    node.onError((e) => events2.push(e));
+    expect(events2).toEqual([]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("onError は SAB available env で sab-unavailable を fire し ない (= regression)", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ publishSlots: [] })),
+      h.fireReady,
+    );
+    const events: unknown[] = [];
+    node.onError((e) => events.push(e));
+    expect(events).toEqual([]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("onError 1 番 目 subscriber が throw し て も pending sab-unavailable は clear (= 2 番 目 fire ナ シ)", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  const originalConsoleError = console.error;
+  const errs: unknown[] = [];
+  console.error = ((...a: unknown[]) => {
+    errs.push(a);
+  }) as typeof console.error;
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ publishSlots: [] })),
+      h.fireReady,
+    );
+    node.onError(() => {
+      throw new Error("first sub blew up");
+    });
+    expect(errs.length).toBeGreaterThan(0);
+    const events: unknown[] = [];
+    node.onError((e) => events.push(e));
+    expect(events).toEqual([]);
+  } finally {
+    console.error = originalConsoleError;
+    h.cleanup();
   }
 });
