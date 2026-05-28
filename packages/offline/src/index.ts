@@ -77,7 +77,9 @@ export async function renderOffline<C>(
   processor: CompiledProcessor<C>,
   config: RenderOfflineConfig,
 ): Promise<RenderOfflineResult> {
-  const result = await compile(processor);
+  // compile に config.sampleRate を hand (= sub-phase 7.3) = publish scheduler の
+  // threshold = `Math.round(sampleRate / rateFps)` が build-time const fold さ れ る。
+  const result = await compile(processor, { sampleRate: config.sampleRate });
   const instance = await result.driver.instantiate();
 
   const totalSamples =

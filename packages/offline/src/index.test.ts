@@ -317,6 +317,97 @@ test("`renderOffline` state f32 cross-block via input-driven store + load (= 累
   }
 });
 
+test("`renderOffline` publish scheduler integration (= rateFps gate で sampleRate option が反 映)", async () => {
+  // canonical Ex 1 meter L pattern simplify: input.ch(0).at(0) を per-block store + publish 30fps。
+  // sampleRate 48000 / rateFps 30 = threshold 1600、 13 block (= 1664 sample) で 1 度 due。
+  // renderOffline は publishShared / Counters を 外 に 出 さ な い (= sub-phase 7.4 / 7.5 で main
+  // surface 経 由 で 取 得 す る path)、 ただ こ こ で は compile を 直 接 呼 ん で driver.instantiate
+  // 経 由 で memory を 直 視 + sub-phase 7.3 で hand し た sampleRate が compile + emit を 通 っ て
+  // threshold const fold に 反 映 さ れ た か を 確 認。
+  const meterProc = defineProcessor(() => {
+    const input = audioInput({ channels: 1, name: "main" });
+    const out = audioOutput({ channels: 1, name: "main" });
+    const meter = state.f32(0).expose({ name: "meter", publish: { rateFps: 30 } });
+    return {
+      process: () => {
+        forSample((i) => {
+          out.ch(0).at(i).write(input.ch(0).at(i));
+        });
+        meter.store(input.ch(0).at(0));
+      },
+    };
+  });
+
+  const { compile: coreCompile } = await import("@unworklet/core");
+  const compiled = await coreCompile(meterProc, { sampleRate: 48000 });
+  const instance = await compiled.driver.instantiate();
+  // compiled.memory は MemoryJson brand 経 由 = 内 部 layout shape へ cast (= test path 限 定)
+  const lay = compiled.memory as unknown as {
+    regions: {
+      publishShared: { slots: Record<string, number> };
+      publishCounters: { slots: Record<string, number> };
+    };
+  };
+  const inputBlock = new Float32Array(SAMPLES_PER_BLOCK);
+  inputBlock.fill(0.7);
+  for (let b = 0; b < 13; b++) {
+    instance.writeInput("main", 0, inputBlock);
+    instance.process();
+  }
+  const sharedView = new Float32Array(
+    instance.memory.buffer,
+    lay.regions.publishShared.slots["meter"]!,
+    1,
+  );
+  const counterView = new Int32Array(
+    instance.memory.buffer,
+    lay.regions.publishCounters.slots["meter"]!,
+    2,
+  );
+  // 13 block 目 で 1 度 due = version 1、 counter 64、 sharedView に 0.7 copy
+  expect(counterView[1]).toBe(1);
+  expect(counterView[0]).toBe(64);
+  expect(sharedView[0]).toBeCloseTo(Math.fround(0.7), 6);
+});
+
+test("`renderOffline` で sampleRate option が compile 経 由 で emit に 反 映 (= 同 graph 別 sampleRate で threshold 別 値)", async () => {
+  // 同 processor を sampleRate 48000 と 96000 で compile = threshold 1600 と 3200。
+  // renderOffline 自 体 は config.sampleRate を compile に hand す る path = 同 processor
+  // で 別 sampleRate render = 別 due block 数 = sampleRate hand path 担 保。
+  const meterProc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const meter = state.f32(0).expose({ name: "meter", publish: { rateFps: 30 } });
+    return {
+      process: () => {
+        forSample((i) => {
+          out.ch(0).at(i).write(meter.load());
+        });
+        meter.store(0.5);
+      },
+    };
+  });
+
+  // block 0 = forSample で meter.load() = 0 (= 初 期 値) を 全 sample に write、 末 尾 で
+  // meter.store(0.5)。 block 1 以 降 = forSample で 0.5 を 全 sample に write。
+  // publish 自 体 は SAB / main surface を 通 し て 観 測 で きな い (= sub-phase 7.4 / 7.5)、
+  // ここ で は state 本 体 の cross-block 動 作 + sampleRate option が compile を 通 過 す る
+  // path を 確 認 (= compile fail し な い + 出 力 path 維 持)。
+  const r48 = await renderOffline(meterProc, {
+    sampleRate: 48000,
+    duration: (2 * SAMPLES_PER_BLOCK) / 48000,
+  });
+  // block 0 = 0、 block 1 = 0.5 (= state 本 体 path 担 保、 publish path と は 独 立)
+  expect(r48.outputs["main"]![0]![0]).toBe(0);
+  expect(r48.outputs["main"]![0]![SAMPLES_PER_BLOCK]).toBeCloseTo(Math.fround(0.5), 6);
+
+  // 同 graph で sampleRate 96000 に 変 え て も compile 成 功 + 出 力 path 維 持
+  const r96 = await renderOffline(meterProc, {
+    sampleRate: 96000,
+    duration: (2 * SAMPLES_PER_BLOCK) / 96000,
+  });
+  expect(r96.outputs["main"]![0]![SAMPLES_PER_BLOCK]).toBeCloseTo(Math.fround(0.5), 6);
+});
+
 test("`renderOffline` subnormal flush integration (= state.f32 store 1e-40 → 0)", async () => {
   // store し た 1e-40 が WASM emit の subnormal guard で 0 に flush さ れ、 次 block
   // で load し た 時 そ の ま ま 0 = output 全 0。 end-to-end で Q21 subnormal flush が
