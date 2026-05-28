@@ -10,7 +10,7 @@
  * and **after** (`state.f32(0).named('X')`). Field merge = after-wins.
  */
 
-import type { AstNode, ParamDecl, StateDecl } from "../compile/ast.ts";
+import type { AstNode, EventDeclAst, ParamDecl, StateDecl } from "../compile/ast.ts";
 import {
   addDeclaration,
   addStatement,
@@ -451,8 +451,42 @@ export type MessageOptions = {
   payloadCapacity?: number;
 };
 
-export function event<T>(_options: EventOptions): EventDecl<T> {
-  return notImplemented();
+const EVENT_DEFAULT_CAPACITY = 256;
+
+/**
+ * `event<T>` declaration の name uniqueness check (= `01-dsl.md` §4.1)。
+ *
+ * 同 kind 内 で name unique = state と zip pattern (= cross-kind は 物 理 layout
+ * region 別 で 衝 突 ナ シ、 同 kind 内 だ け check)。 `node.events.<name>` の
+ * key collision を 防 ぐ 第 一 目 的。
+ */
+function checkEventName(name: string): void {
+  const ctx = getCurrentCapture();
+  if (ctx.declarations.some((d) => d.kind === "event" && d.name === name)) {
+    throw new Error(
+      `unworklet: duplicate event declaration name "${name}" — event names must be unique within a processor`,
+    );
+  }
+}
+
+export function event<T>(options: EventOptions): EventDecl<T> {
+  checkEventName(options.name);
+  const decl: EventDeclAst = {
+    kind: "event",
+    name: options.name,
+    capacity: options.capacity ?? EVENT_DEFAULT_CAPACITY,
+    payloadCapacity: options.payloadCapacity,
+  };
+  addDeclaration(decl);
+  const handle = {
+    name: decl.name,
+    emitIf: (_cond: Node<"bool"> | boolean, _payload: unknown) => {
+      // commit 2 (= sub-phase 7.6) で AST `eventEmitIf` capture + Q71 per-field
+      // wire-type resolution + multi-site 型 整 合 check を fill。
+      throw new Error("unworklet: event.emitIf is not implemented yet");
+    },
+  } as unknown as EventDecl<T>;
+  return handle;
 }
 
 export function message<T>(_options: MessageOptions): MessageDecl<T> {

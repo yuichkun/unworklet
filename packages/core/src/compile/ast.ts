@@ -6,8 +6,6 @@
  * TypeScript level, and the same shape serializes directly to
  * `dist/<processor>.graph.json` (= `07-vite-plugin.md` §6.3).
  *
- * Phase 7 sub-phase 7.1 で `stateLoad` / `stateStore` AstNode +
- * `StateDecl` declaration を 追 加 (= `01-dsl.md` §3.1 plain factory)。
  * 各 stage は 追 加 discriminant の switch case を 順 次 fill (= subset →
  * superset)。
  */
@@ -77,7 +75,30 @@ export type StateDecl = {
   userNamed?: boolean;
 };
 
-export type Declaration = AudioPortDecl | ParamDecl | StateDecl;
+/**
+ * `event<T>(options)` declaration (`01-dsl.md` §4.1)。
+ *
+ * Worklet → main moment-in-time delivery 用 の ringbuffer-backed channel。
+ * `T` の field 名 と 大 体 の 型 family (numeric / boolean / typed-array) は
+ * declaration 段 階 で 確 定 し、 各 numeric field の wire 型 は emit-time に
+ * `Node<T>` の lookup で 確 定 (= Q71)。 1 つ の `event<T>` handle へ の 複 数 emit
+ * site で per-field 型 が 不 一 致 = graph-capture-time error (= stable ID
+ * `event-field-type-mismatch`)。
+ *
+ * `capacity` = ringbuffer slot count (= `Capacity` literal-union で TS-level
+ * enforce、 Q44)、 default = 256 (= `02-messaging.md` §4.1 + MIDI Q4-c-i)。
+ * `payloadCapacity` = variable-length payload (= `Float32Array` / `Uint8Array`
+ * field) 用 content buffer bytes、 declare 時 optional、 omit 時 framework が
+ * 「最 大 期 待 payload × slot count」 で derive。
+ */
+export type EventDeclAst = {
+  kind: "event";
+  name: string;
+  capacity: number;
+  payloadCapacity?: number;
+};
+
+export type Declaration = AudioPortDecl | ParamDecl | StateDecl | EventDeclAst;
 
 export type CapturedGraph = {
   declarations: Declaration[];

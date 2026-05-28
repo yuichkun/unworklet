@@ -23,7 +23,7 @@ import {
 import { forSample } from "./loop.ts";
 
 // ─────────────────────────────────────────────────────────────────────────
-// stub 維 持 = state / buffer / param.expose / event / message / midi
+// stub 維 持 = buffer / param.expose / message / midi
 // ─────────────────────────────────────────────────────────────────────────
 
 const stubs: ReadonlyArray<readonly [string, () => unknown]> = [
@@ -36,7 +36,6 @@ const stubs: ReadonlyArray<readonly [string, () => unknown]> = [
   ["buffer.named", () => buffer.named("x")],
   ["buffer.expose", () => buffer.expose({ name: "x" })],
   ["param.expose", () => param.expose({ name: "x" })],
-  ["event", () => event({ name: "evt" })],
   ["message", () => message({ name: "msg" })],
   ["midiInput", () => midiInput({ name: "mIn" })],
   ["midiOutput", () => midiOutput({ name: "mOut" })],
@@ -935,4 +934,80 @@ test("既 declared 別 state の name に `.named()` で 移 動 で collide", (
       state.f32(0).named("first");
     }),
   ).toThrow(/duplicate state declaration name "first"/);
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// `event<T>` factory + handle (= `01-dsl.md` §4.1)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`event` outside `defineProcessor` body throws", () => {
+  expect(() => event({ name: "evt" })).toThrow(/outside `defineProcessor` body/);
+});
+
+test("`event({ name })` registers an `event` declaration with default capacity 256", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    event({ name: "peak" });
+  });
+  expect(ctx.declarations).toEqual([
+    { kind: "event", name: "peak", capacity: 256, payloadCapacity: undefined },
+  ]);
+});
+
+test("`event({ name, capacity })` accepts capacity override", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    event({ name: "peak", capacity: 32 });
+  });
+  expect(ctx.declarations).toEqual([
+    { kind: "event", name: "peak", capacity: 32, payloadCapacity: undefined },
+  ]);
+});
+
+test("`event({ name, payloadCapacity })` accepts payloadCapacity option", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    event({ name: "spectrum", payloadCapacity: 4096 });
+  });
+  expect(ctx.declarations).toEqual([
+    { kind: "event", name: "spectrum", capacity: 256, payloadCapacity: 4096 },
+  ]);
+});
+
+test("`event` returns a handle carrying `name`", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const handle = event({ name: "peak" });
+    expect(handle.name).toBe("peak");
+  });
+});
+
+test("重 複 `event` name = graph-capture-time error", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      event({ name: "shared" });
+      event({ name: "shared" });
+    }),
+  ).toThrow(/duplicate event declaration name "shared"/);
+});
+
+test("`event.emitIf` は throw stub 維 持 (= sub-phase 7.6 commit 2 で fill)", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      const handle = event<{ level: number }>({ name: "peak" });
+      handle.emitIf(true, { atSample: 0, level: 0.5 });
+    }),
+  ).toThrow(/event.emitIf is not implemented yet/);
+});
+
+test("`event` を declare し て emit ナ シ で も silent OK (= unused declaration)", () => {
+  // `01-dsl.md` §3.4 + canonical Ex 5 grainSpawned (emit ナ シ path) 規 範。
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    event<{ voice: number; pos: number }>({ name: "grainSpawned" });
+  });
+  expect(ctx.declarations).toHaveLength(1);
+  expect(ctx.declarations[0]).toMatchObject({ kind: "event", name: "grainSpawned" });
 });
