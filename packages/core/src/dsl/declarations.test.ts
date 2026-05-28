@@ -950,7 +950,7 @@ test("`event({ name })` registers an `event` declaration with default capacity 2
     event({ name: "peak" });
   });
   expect(ctx.declarations).toEqual([
-    { kind: "event", name: "peak", capacity: 256, payloadCapacity: undefined },
+    { kind: "event", name: "peak", capacity: 256, payloadCapacity: undefined, fields: [] },
   ]);
 });
 
@@ -960,7 +960,7 @@ test("`event({ name, capacity })` accepts capacity override", () => {
     event({ name: "peak", capacity: 32 });
   });
   expect(ctx.declarations).toEqual([
-    { kind: "event", name: "peak", capacity: 32, payloadCapacity: undefined },
+    { kind: "event", name: "peak", capacity: 32, payloadCapacity: undefined, fields: [] },
   ]);
 });
 
@@ -970,7 +970,7 @@ test("`event({ name, payloadCapacity })` accepts payloadCapacity option", () => 
     event({ name: "spectrum", payloadCapacity: 4096 });
   });
   expect(ctx.declarations).toEqual([
-    { kind: "event", name: "spectrum", capacity: 256, payloadCapacity: 4096 },
+    { kind: "event", name: "spectrum", capacity: 256, payloadCapacity: 4096, fields: [] },
   ]);
 });
 
@@ -992,16 +992,6 @@ test("重 複 `event` name = graph-capture-time error", () => {
   ).toThrow(/duplicate event declaration name "shared"/);
 });
 
-test("`event.emitIf` は throw stub 維 持 (= sub-phase 7.6 commit 2 で fill)", () => {
-  const ctx = newCaptureContext();
-  expect(() =>
-    runCapture(ctx, () => {
-      const handle = event<{ level: number }>({ name: "peak" });
-      handle.emitIf(true, { atSample: 0, level: 0.5 });
-    }),
-  ).toThrow(/event.emitIf is not implemented yet/);
-});
-
 test("`event` を declare し て emit ナ シ で も silent OK (= unused declaration)", () => {
   // `01-dsl.md` §3.4 + canonical Ex 5 grainSpawned (emit ナ シ path) 規 範。
   const ctx = newCaptureContext();
@@ -1009,5 +999,409 @@ test("`event` を declare し て emit ナ シ で も silent OK (= unused decla
     event<{ voice: number; pos: number }>({ name: "grainSpawned" });
   });
   expect(ctx.declarations).toHaveLength(1);
-  expect(ctx.declarations[0]).toMatchObject({ kind: "event", name: "grainSpawned" });
+  expect(ctx.declarations[0]).toMatchObject({ kind: "event", name: "grainSpawned", fields: [] });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// `eventDecl.emitIf` graph capture + Q71 per-field wire-type resolution
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`emitIf(true, payload)` per-block top-level で eventEmitIf statement を append", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const evt = event<{ level: number }>({ name: "peak" });
+    evt.emitIf(true, { atSample: 0, level: 0.5 });
+  });
+  expect(ctx.statements).toHaveLength(1);
+  expect(ctx.statements[0]).toEqual({
+    kind: "eventEmitIf",
+    name: "peak",
+    cond: { kind: "literal", type: "i32", value: 1 },
+    atSample: { kind: "literal", type: "i32", value: 0 },
+    fields: [
+      {
+        name: "level",
+        wireType: "f32",
+        value: { kind: "literal", type: "f32", value: 0.5 },
+      },
+    ],
+  });
+});
+
+test("`emitIf(false, payload)` も AST に capture (= fold は 後 続 analyze で)", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const evt = event<{ level: number }>({ name: "peak" });
+    evt.emitIf(false, { atSample: 0, level: 0.5 });
+  });
+  expect(ctx.statements[0]).toMatchObject({
+    kind: "eventEmitIf",
+    cond: { kind: "literal", type: "i32", value: 0 },
+  });
+});
+
+test("`emitIf` `forSample` 内 = loop body に append (= top statements に は 出 な い)", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const evt = event<{ level: number }>({ name: "peak" });
+    forSample(() => {
+      evt.emitIf(true, { atSample: 0, level: 0.25 });
+    });
+  });
+  // top statements = forSample 1 件 だ け
+  expect(ctx.statements).toHaveLength(1);
+  expect(ctx.statements[0]?.kind).toBe("forSample");
+  // forSample body に eventEmitIf が 含 ま れ る
+  const fs = ctx.statements[0];
+  if (fs?.kind !== "forSample") throw new Error("expected forSample");
+  expect(fs.body).toHaveLength(1);
+  expect(fs.body[0]?.kind).toBe("eventEmitIf");
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// atSample default lift (= forSample 内 = i / per-block top = 0) + override
+// ─────────────────────────────────────────────────────────────────────────
+
+test("atSample 省 略 = `forSample` 内 で loopCounter (= i) を default lift", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const evt = event<{ level: number }>({ name: "peak" });
+    forSample(() => {
+      evt.emitIf(true, { level: 0.5 });
+    });
+  });
+  const fs = ctx.statements[0];
+  if (fs?.kind !== "forSample") throw new Error("expected forSample");
+  expect(fs.body[0]).toMatchObject({
+    kind: "eventEmitIf",
+    atSample: { kind: "loopCounter" },
+  });
+});
+
+test("atSample 省 略 = per-block top で literal 0 を default lift", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const evt = event<{ level: number }>({ name: "peak" });
+    evt.emitIf(true, { level: 0.5 });
+  });
+  expect(ctx.statements[0]).toMatchObject({
+    kind: "eventEmitIf",
+    atSample: { kind: "literal", type: "i32", value: 0 },
+  });
+});
+
+test("atSample 明 示 = `forSample` 内 で も user override 通 過 (= number literal)", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const evt = event<{ level: number }>({ name: "peak" });
+    forSample(() => {
+      evt.emitIf(true, { atSample: 42, level: 0.5 });
+    });
+  });
+  const fs = ctx.statements[0];
+  if (fs?.kind !== "forSample") throw new Error("expected forSample");
+  expect(fs.body[0]).toMatchObject({
+    kind: "eventEmitIf",
+    atSample: { kind: "literal", type: "i32", value: 42 },
+  });
+});
+
+test("atSample 明 示 = `forSample` 内 で Node<'i32'> override 通 過", () => {
+  // user が i 以 外 の sample-offset 計 算 を 明 示 で 渡 す path = override 維 持。
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const evt = event<{ level: number }>({ name: "peak" });
+    forSample(() => {
+      // loopCounter を 明 示 で 渡 す = override path (= default と 結 果 同 値 だ が
+      // 経 路 が 違 う = user 明 示 path も regression を 拾 う)
+      const customI = wrapAst<"i32">({ kind: "loopCounter" });
+      evt.emitIf(true, { atSample: customI, level: 0.5 });
+    });
+  });
+  const fs = ctx.statements[0];
+  if (fs?.kind !== "forSample") throw new Error("expected forSample");
+  expect(fs.body[0]).toMatchObject({
+    kind: "eventEmitIf",
+    atSample: { kind: "loopCounter" },
+  });
+});
+
+test("atSample 明 示 = per-block top で user override 通 過 (= 任 意 i32 literal)", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const evt = event<{ level: number }>({ name: "peak" });
+    evt.emitIf(true, { atSample: 64, level: 0.5 });
+  });
+  expect(ctx.statements[0]).toMatchObject({
+    kind: "eventEmitIf",
+    atSample: { kind: "literal", type: "i32", value: 64 },
+  });
+});
+
+test("atSample 不 正 型 (= string) = throw (= override path で 不 正 値 reject)", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      const evt = event<{ level: number }>({ name: "peak" });
+      // @ts-expect-error — atSample に string = 不 正 型
+      evt.emitIf(true, { atSample: "0", level: 0.5 });
+    }),
+  ).toThrow(/atSample" must be Node<'i32'> or number/);
+});
+
+test("Q71: 1 番 目 emit site で field wire 型 を seal (= number → f32 default)", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const evt = event<{ level: number }>({ name: "peak" });
+    evt.emitIf(true, { atSample: 0, level: 0.5 });
+    const decl = ctx.declarations.find((d) => d.kind === "event");
+    if (decl?.kind !== "event") throw new Error("expected event decl");
+    expect(decl.fields).toEqual([{ name: "level", wireType: "f32" }]);
+  });
+});
+
+test("Q71: 同 wire 型 で 後 続 emit site = 受 容", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const evt = event<{ level: number }>({ name: "peak" });
+    evt.emitIf(true, { atSample: 0, level: 0.5 });
+    evt.emitIf(true, { atSample: 0, level: 0.25 });
+  });
+  expect(ctx.statements).toHaveLength(2);
+});
+
+test("Q71: wire 型 不 一 致 = graph-capture-time error (= event-field-type-mismatch)", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      const evt = event<{ level: number }>({ name: "peak" });
+      evt.emitIf(true, { atSample: 0, level: 0.5 });
+      // 2 番 目 emit site で boolean field 値 → wireType = bool で seal 不 一 致
+      evt.emitIf(true, { atSample: 0, level: true as unknown as number });
+    }),
+  ).toThrow(/event "peak" field "level" wire-type mismatch/);
+});
+
+test("Q71: field set 縮 小 = graph-capture-time error (= missing field)", () => {
+  // 1 番 目 emit で level + channel seal、 2 番 目 emit で channel 省 略 = TS は
+  // EmitPayload<T> で field missing を error と 出 す path だ が runtime check
+  // が 規 範 = `as` cast で TS を 通 し て runtime path だ け 試 す。
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      const evt = event<{ level: number; channel: number }>({ name: "peak" });
+      evt.emitIf(true, { atSample: 0, level: 0.5, channel: 0 });
+      (evt as unknown as { emitIf: (c: boolean, p: Record<string, unknown>) => void }).emitIf(
+        true,
+        { atSample: 0, level: 0.25 },
+      );
+    }),
+  ).toThrow(/missing field\(s\) "channel"/);
+});
+
+test("Q71: 新 field を 後 続 emit site で 導 入 = error", () => {
+  // 1 番 目 emit が level だ け seal、 2 番 目 emit で channel を 新 規 持 ち 込 み。
+  // TS は EmitPayload<T> で channel も T 由 来 = 受 容 す る path = `@ts-expect-error`
+  // 不 要 = runtime check で reject。
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      const evt = event<{ level: number; channel: number }>({ name: "peak" });
+      (evt as unknown as { emitIf: (c: boolean, p: Record<string, unknown>) => void }).emitIf(
+        true,
+        { atSample: 0, level: 0.5 },
+      );
+      evt.emitIf(true, { atSample: 0, level: 0.25, channel: 0 });
+    }),
+  ).toThrow(/introduces new field "channel"/);
+});
+
+test("`emitIf` Node<'bool'> cond = unwrapAst で AST 化", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const evt = event<{ level: number }>({ name: "peak" });
+    const condNode = wrapAst<"bool">({ kind: "literal", type: "i32", value: 1 });
+    evt.emitIf(condNode, { atSample: 0, level: 0.5 });
+  });
+  expect(ctx.statements[0]).toMatchObject({
+    kind: "eventEmitIf",
+    cond: { kind: "literal", type: "i32", value: 1 },
+  });
+});
+
+test("`emitIf` Node<'i32'> atSample = unwrapAst で AST 化", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const evt = event<{ level: number }>({ name: "peak" });
+    const atSampleNode = wrapAst<"i32">({ kind: "loopCounter" });
+    evt.emitIf(true, { atSample: atSampleNode, level: 0.5 });
+  });
+  expect(ctx.statements[0]).toMatchObject({
+    kind: "eventEmitIf",
+    atSample: { kind: "loopCounter" },
+  });
+});
+
+test("`emitIf` field 値 が 不 正 型 = throw", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      const evt = event<{ level: number }>({ name: "peak" });
+      // @ts-expect-error — 不 正 field 型 (= string)
+      evt.emitIf(true, { atSample: 0, level: "hi" });
+    }),
+  ).toThrow(/value must be Node<T>, number, or boolean/);
+});
+
+test("Q71: Node<'i32'> field 値 = wireType i32 で seal", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const evt = event<{ tick: number }>({ name: "ticker" });
+    const tickNode = wrapAst<"i32">({ kind: "loopCounter" });
+    evt.emitIf(true, { atSample: 0, tick: tickNode });
+    const decl = ctx.declarations.find((d) => d.kind === "event");
+    if (decl?.kind !== "event") throw new Error("expected event decl");
+    expect(decl.fields).toEqual([{ name: "tick", wireType: "i32" }]);
+  });
+});
+
+test("Q71: bool field 値 = wireType bool で seal", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const evt = event<{ flag: boolean }>({ name: "flagger" });
+    evt.emitIf(true, { atSample: 0, flag: true });
+    const decl = ctx.declarations.find((d) => d.kind === "event");
+    if (decl?.kind !== "event") throw new Error("expected event decl");
+    expect(decl.fields).toEqual([{ name: "flag", wireType: "bool" }]);
+  });
+});
+
+test("Q71: number literal は seal 済 wire 型 (= i32) に lift", () => {
+  // 1 番 目 emit で Node<'i32'> で i32 を seal、 2 番 目 emit の number literal は
+  // seal 済 wire 型 (= i32) に lift し て AST 化 さ れ る (= default f32 lift と
+  // 異 な る path)。
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const evt = event<{ tick: number }>({ name: "ticker" });
+    const tickNode = wrapAst<"i32">({ kind: "loopCounter" });
+    evt.emitIf(true, { atSample: 0, tick: tickNode });
+    evt.emitIf(true, { atSample: 0, tick: 42 });
+  });
+  expect(ctx.statements[1]).toMatchObject({
+    fields: [{ name: "tick", wireType: "i32", value: { kind: "literal", type: "i32", value: 42 } }],
+  });
+});
+
+test("inferAstType: literal Node field 値 = literal.type 由 来 で seal", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const evt = event<{ value: number }>({ name: "lit" });
+    const litF64 = wrapAst<"f64">({ kind: "literal", type: "f64", value: 1.5 });
+    evt.emitIf(true, { atSample: 0, value: litF64 });
+    const decl = ctx.declarations.find((d) => d.kind === "event");
+    if (decl?.kind !== "event") throw new Error("expected event decl");
+    expect(decl.fields).toEqual([{ name: "value", wireType: "f64" }]);
+  });
+});
+
+test("inferAstType: mul Node field 値 = mul.type 由 来 で seal", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const evt = event<{ value: number }>({ name: "muller" });
+    const lhs = wrapAst<"f32">({ kind: "literal", type: "f32", value: 0.5 });
+    const rhs = wrapAst<"f32">({ kind: "literal", type: "f32", value: 0.25 });
+    const mulNode = wrapAst<"f32">({
+      kind: "mul",
+      type: "f32",
+      lhs: unwrapAst(lhs),
+      rhs: unwrapAst(rhs),
+    });
+    evt.emitIf(true, { atSample: 0, value: mulNode });
+    const decl = ctx.declarations.find((d) => d.kind === "event");
+    if (decl?.kind !== "event") throw new Error("expected event decl");
+    expect(decl.fields).toEqual([{ name: "value", wireType: "f32" }]);
+  });
+});
+
+test("inferAstType: audioInRead Node field 値 = f32 で seal", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const input = audioInput({ channels: 1, name: "main" });
+    const evt = event<{ value: number }>({ name: "echo" });
+    evt.emitIf(true, { atSample: 0, value: input.ch(0).at(0) });
+    const decl = ctx.declarations.find((d) => d.kind === "event");
+    if (decl?.kind !== "event") throw new Error("expected event decl");
+    expect(decl.fields).toEqual([{ name: "value", wireType: "f32" }]);
+  });
+});
+
+test("inferAstType: paramAt Node field 値 = f32 で seal", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const gain = param.named("gain").f32({
+      default: 0.5,
+      min: 0,
+      max: 1,
+      automationRate: "a-rate",
+    });
+    const evt = event<{ value: number }>({ name: "echo" });
+    evt.emitIf(true, { atSample: 0, value: gain.at(0) });
+    const decl = ctx.declarations.find((d) => d.kind === "event");
+    if (decl?.kind !== "event") throw new Error("expected event decl");
+    expect(decl.fields).toEqual([{ name: "value", wireType: "f32" }]);
+  });
+});
+
+test("inferAstType: stateLoad Node field 値 = state.type 由 来 で seal", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const z = state.named("z").f64(0);
+    const evt = event<{ value: number }>({ name: "echo" });
+    evt.emitIf(true, { atSample: 0, value: z.load() });
+    const decl = ctx.declarations.find((d) => d.kind === "event");
+    if (decl?.kind !== "event") throw new Error("expected event decl");
+    expect(decl.fields).toEqual([{ name: "value", wireType: "f64" }]);
+  });
+});
+
+test("inferAstType: statement kind が AST で 来 る = throw (= defensive guard)", () => {
+  // 構 造 上 user code か ら は 到 達 し な い path (= statement AstNode は wrapAst
+  // で 包 ま な い)、 defensive guard を 直 接 hit さ せ る た め stateStore kind を
+  // 強 制 wrap し て field 値 で 渡 す。
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      const evt = event<{ value: number }>({ name: "echo" });
+      const stmtAst = {
+        kind: "stateStore",
+        type: "i32",
+        name: "bogus",
+        value: { kind: "literal", type: "i32", value: 0 },
+      };
+      const bogusNode = wrapAst<"i32">(stmtAst as unknown as Parameters<typeof wrapAst>[0]);
+      evt.emitIf(true, { atSample: 0, value: bogusNode });
+    }),
+  ).toThrow(/statement node 'stateStore' cannot appear in expression position/);
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// state.expose 後 付 け 同 name 再 set = userNamed promote (= sub-phase 7.2 残 path)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`state.expose({ name })` 同 name 再 set = userNamed promote", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    // synthetic name (= __state_0) で declare 後、 .expose で 同 name (= __state_0)
+    // 再 set = userNamed flag を true へ promote (= snapshot 'persistent' 等 で
+    // userNamed 必 須 path を 通 す)。
+    state.f32(0).expose({ name: "__state_0", snapshot: "persistent" });
+  });
+  expect(ctx.declarations).toHaveLength(1);
+  const decl = ctx.declarations[0];
+  expect(decl).toMatchObject({
+    kind: "state",
+    name: "__state_0",
+    userNamed: true,
+    snapshot: "persistent",
+  });
 });

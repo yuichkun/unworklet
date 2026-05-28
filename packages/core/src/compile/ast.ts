@@ -27,7 +27,27 @@ export type AstNode =
   | { kind: "loopCounter" }
   | { kind: "forSample"; stride: number; body: AstNode[] }
   | { kind: "stateLoad"; type: ScalarType; name: string }
-  | { kind: "stateStore"; type: ScalarType; name: string; value: AstNode };
+  | { kind: "stateStore"; type: ScalarType; name: string; value: AstNode }
+  | {
+      kind: "eventEmitIf";
+      name: string;
+      cond: AstNode;
+      atSample: AstNode;
+      fields: EventEmitField[];
+    };
+
+/**
+ * `eventDecl.emitIf` 1 emit site の 1 field 分 (= `01-dsl.md` §4.1 + Q71)。
+ *
+ * `wireType` = emit-time に 確 定 し た per-field wire 型 (= `Node<T>` の T を
+ * lookup、 literal は lift 経 由 で 確 定)。 同 `event<T>` handle の 別 emit site
+ * で 同 field 名 の `wireType` が 不 一 致 = graph-capture-time error。
+ */
+export type EventEmitField = {
+  name: string;
+  wireType: ScalarType;
+  value: AstNode;
+};
 
 export type AudioPortDecl = {
   kind: "audioInput" | "audioOutput";
@@ -96,6 +116,19 @@ export type EventDeclAst = {
   name: string;
   capacity: number;
   payloadCapacity?: number;
+  /**
+   * emit site で 確 定 し た per-field wire 型 を accumulate (= Q71)。 declare
+   * 直 後 は 空、 1 番 目 の emit site で 各 field の wire 型 を seal + 後 続
+   * emit site は 同 field 名 / 同 wire 型 を 強 制。 multi-emit-site で
+   * 不 一 致 (= 同 field 名 で wire 型 違 い、 field 名 が 違 う) = graph-capture-time
+   * error (= stable ID `event-field-type-mismatch`)。
+   */
+  fields: EventDeclField[];
+};
+
+export type EventDeclField = {
+  name: string;
+  wireType: ScalarType;
 };
 
 export type Declaration = AudioPortDecl | ParamDecl | StateDecl | EventDeclAst;

@@ -211,6 +211,11 @@ export type TypedArrayFieldRef<T extends BufferElementType> = {
  * numeric / boolean field is decided at emit time from the `Node<T>` the
  * author supplies. This mapped type lifts each scalar field to the
  * `Node<T> | T[K]` union accordingly.
+ *
+ * `atSample` is **optional**: when omitted, the framework supplies a
+ * context-dependent default — `Node<'i32'>` loop counter inside a
+ * `forSample` callback (= the per-sample `i`), `0` at per-block top
+ * level. Authors override by passing `atSample` explicitly.
  */
 export type EmitPayload<T> = {
   [K in keyof T]: T[K] extends number
@@ -219,7 +224,7 @@ export type EmitPayload<T> = {
       ? T[K] | Node<"bool">
       : T[K];
 } & {
-  atSample: Node<"i32"> | number;
+  atSample?: Node<"i32"> | number;
 };
 
 export type EventDecl<T> = {

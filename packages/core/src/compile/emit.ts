@@ -285,6 +285,7 @@ export function emitExpression(
     case "audioOutWrite":
     case "forSample":
     case "stateStore":
+    case "eventEmitIf":
       throw new Error(`statement node '${node.kind}' cannot appear in expression position`);
   }
 }

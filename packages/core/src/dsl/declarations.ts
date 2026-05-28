@@ -10,11 +10,18 @@
  * and **after** (`state.f32(0).named('X')`). Field merge = after-wins.
  */
 
-import type { AstNode, EventDeclAst, ParamDecl, StateDecl } from "../compile/ast.ts";
+import type {
+  AstNode,
+  EventDeclAst,
+  EventEmitField,
+  ParamDecl,
+  StateDecl,
+} from "../compile/ast.ts";
 import {
   addDeclaration,
   addStatement,
   getCurrentCapture,
+  isWrappedNode,
   unwrapAst,
   wrapAst,
 } from "../compile/capture.ts";
@@ -469,6 +476,90 @@ function checkEventName(name: string): void {
   }
 }
 
+/**
+ * AST expression node の 結 果 ScalarType を 推 論 (= `eventDecl.emitIf` の
+ * Q71 per-field wire-type resolution 用)。
+ *
+ * expression position に 立 つ kind だ け 受 け 取 る (= statement kind は
+ * `unwrapAst` 段 階 で 排 除 さ れ る 想 定、 仮 に 来 て も 明 示 throw)。
+ */
+function inferAstType(ast: AstNode): ScalarType {
+  switch (ast.kind) {
+    case "literal":
+      return ast.type;
+    case "mul":
+      return ast.type;
+    case "audioInRead":
+      return "f32";
+    case "paramAt":
+      return "f32";
+    case "loopCounter":
+      return "i32";
+    case "stateLoad":
+      return ast.type;
+    case "audioOutWrite":
+    case "forSample":
+    case "stateStore":
+    case "eventEmitIf":
+      throw new Error(`statement node '${ast.kind}' cannot appear in expression position`);
+  }
+}
+
+/**
+ * `event<T>` 2 番 目 以 降 の emit site で 既 seal 済 field と name + wire 型
+ * 整 合 を check (= `01-dsl.md` §4.1)。 不 一 致 = graph-capture-time error
+ * (= stable ID `event-field-type-mismatch`)。 1 番 目 emit site で の seal は
+ * emitIf 内 で 直 接 `decl.fields.push` で 行 う。
+ */
+function checkSealedEventField(decl: EventDeclAst, fieldName: string, wireType: ScalarType): void {
+  const existing = decl.fields.find((f) => f.name === fieldName);
+  if (existing === undefined) {
+    throw new Error(
+      `unworklet: event "${decl.name}" emit site introduces new field "${fieldName}" — all emit sites for the same event<T> must agree on field set (Q71 / event-field-type-mismatch)`,
+    );
+  }
+  if (existing.wireType !== wireType) {
+    throw new Error(
+      `unworklet: event "${decl.name}" field "${fieldName}" wire-type mismatch — previously sealed as ${existing.wireType}, this emit site supplies ${wireType} (Q71 / event-field-type-mismatch)`,
+    );
+  }
+}
+
+/**
+ * `eventDecl.emitIf` 1 emit site で 1 field の 値 を AST 化 + wire 型 推 論。
+ *
+ * - `Node<T>` → unwrapAst + inferAstType で wireType 取 得
+ * - `boolean` → literal { type: 'bool', value: 0/1 path = 内 部 i32 表 現、 wireType = 'bool' }
+ * - `number` → 既 sealed wire 型 が あ れ ば そ れ に lift (= 後 続 emit site の literal は 1 番 目 の wire 型 に zip)、 未 sealed = default f32 lift (= Q33 規 範)
+ *
+ * Q71 docs 規 範: 1 番 目 emit site で wire 型 確 定。 literal だ け の 1 番 目
+ * emit = default f32 (= Q33 numeric literal → Node<'f32'>)。
+ */
+function liftEmitFieldValue(
+  decl: EventDeclAst,
+  fieldName: string,
+  raw: unknown,
+): { ast: AstNode; wireType: ScalarType } {
+  if (isWrappedNode(raw)) {
+    const ast = unwrapAst(raw);
+    return { ast, wireType: inferAstType(ast) };
+  }
+  if (typeof raw === "boolean") {
+    return {
+      ast: { kind: "literal", type: "i32", value: raw ? 1 : 0 },
+      wireType: "bool",
+    };
+  }
+  if (typeof raw === "number") {
+    const existing = decl.fields.find((f) => f.name === fieldName);
+    const wireType = existing?.wireType ?? "f32";
+    return { ast: { kind: "literal", type: wireType, value: raw }, wireType };
+  }
+  throw new Error(
+    `unworklet: event "${decl.name}" field "${fieldName}" value must be Node<T>, number, or boolean (got ${typeof raw})`,
+  );
+}
+
 export function event<T>(options: EventOptions): EventDecl<T> {
   checkEventName(options.name);
   const decl: EventDeclAst = {
@@ -476,14 +567,69 @@ export function event<T>(options: EventOptions): EventDecl<T> {
     name: options.name,
     capacity: options.capacity ?? EVENT_DEFAULT_CAPACITY,
     payloadCapacity: options.payloadCapacity,
+    fields: [],
   };
   addDeclaration(decl);
   const handle = {
     name: decl.name,
-    emitIf: (_cond: Node<"bool"> | boolean, _payload: unknown) => {
-      // commit 2 (= sub-phase 7.6) で AST `eventEmitIf` capture + Q71 per-field
-      // wire-type resolution + multi-site 型 整 合 check を fill。
-      throw new Error("unworklet: event.emitIf is not implemented yet");
+    emitIf: (cond: Node<"bool"> | boolean, payload: Record<string, unknown>) => {
+      const condAst: AstNode = isWrappedNode(cond)
+        ? unwrapAst(cond)
+        : { kind: "literal", type: "i32", value: cond ? 1 : 0 };
+      // atSample default lift (= B 案):
+      // - forSample callback 内 (= currentLoopBody !== null) → loopCounter Node
+      // - per-block top level (= currentLoopBody === null) → literal 0
+      // user override は そ の ま ま 通 過 (= Node<'i32'> | number)。 不 正 型 (= string 等)
+      // = throw。 sub-phase 7.7 / 9 で handler context default を 追 加 path。
+      const atSampleRaw = payload.atSample;
+      const atSampleAst: AstNode = isWrappedNode(atSampleRaw)
+        ? unwrapAst(atSampleRaw)
+        : typeof atSampleRaw === "number"
+          ? { kind: "literal", type: "i32", value: atSampleRaw }
+          : atSampleRaw === undefined
+            ? getCurrentCapture().currentLoopBody !== null
+              ? { kind: "loopCounter" }
+              : { kind: "literal", type: "i32", value: 0 }
+            : (() => {
+                throw new Error(
+                  `unworklet: event "${decl.name}" emit "atSample" must be Node<'i32'> or number`,
+                );
+              })();
+
+      const fieldNames = Object.keys(payload).filter((k) => k !== "atSample");
+      const emitFields: EventEmitField[] = [];
+      const isFirstEmit = decl.fields.length === 0;
+      for (const fieldName of fieldNames) {
+        const { ast, wireType } = liftEmitFieldValue(decl, fieldName, payload[fieldName]);
+        if (isFirstEmit) {
+          // 1 番 目 emit = full field set を seal (= 同 emit 内 で 重 複 field を
+          // 受 け 取 ら な い path、 Object.keys は unique = OK)。
+          decl.fields.push({ name: fieldName, wireType });
+        } else {
+          checkSealedEventField(decl, fieldName, wireType);
+        }
+        emitFields.push({ name: fieldName, wireType, value: ast });
+      }
+      if (!isFirstEmit && emitFields.length !== decl.fields.length) {
+        const missing = decl.fields.filter((f) => !emitFields.some((e) => e.name === f.name));
+        if (missing.length > 0) {
+          throw new Error(
+            `unworklet: event "${decl.name}" emit site missing field(s) "${missing
+              .map((m) => m.name)
+              .join(
+                ", ",
+              )}" — all emit sites for the same event<T> must agree on field set (Q71 / event-field-type-mismatch)`,
+          );
+        }
+      }
+
+      addStatement({
+        kind: "eventEmitIf",
+        name: decl.name,
+        cond: condAst,
+        atSample: atSampleAst,
+        fields: emitFields,
+      });
     },
   } as unknown as EventDecl<T>;
   return handle;
