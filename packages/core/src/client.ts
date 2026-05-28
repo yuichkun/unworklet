@@ -19,6 +19,7 @@ import type {
   CreateNodeOptions,
   EventSubscriber,
   InspectionResult,
+  MessageSender,
   NodeErrorEvent,
   ScalarType,
   StateValueProxy,
@@ -429,6 +430,7 @@ export async function createNode<C>(
         },
         diagnostics: {
           overflowCount(): number {
+            /* v8 ignore next 1 — eventSurface 配 線 path = eventRingsHeaderView 非 null 確 定 */
             if (eventRingsHeaderView === null) return 0;
             return transportMode === "sab"
               ? Atomics.load(eventRingsHeaderView, overflowSabWordIdx)
@@ -436,6 +438,85 @@ export async function createNode<C>(
           },
         },
       };
+    }
+  }
+
+  // message ring sender surface 構 築 (= sub-phase 7.7e)。 main 側 が SAB に slot
+  // push + head += 1。 overflow path = head - tail >= capacity で drop-oldest
+  // (= tail += 1 + overflowCount += 1)、 案 B (= capacity = N 個 fill) と zip。
+  const messageSurface: Record<string, MessageSender<unknown>> = {};
+  let messageRingsView: DataView | null = null;
+  let messageRingsHeaderView: Int32Array | null = null;
+  if (messageRingsBuffer !== null && messageRings.length > 0) {
+    messageRingsView = new DataView(messageRingsBuffer);
+    messageRingsHeaderView = new Int32Array(messageRingsBuffer);
+    for (let i = 0; i < messageRings.length; i++) {
+      const ring = messageRings[i]!;
+      const sabOffset = messageRingSabOffsets[i]!;
+      const headWordIdx = sabOffset >>> 2;
+      const tailWordIdx = headWordIdx + 1;
+      const overflowWordIdx = headWordIdx + 2;
+      const slotsBase = sabOffset + 12;
+      const isSab = transportMode === "sab";
+      const sender = (payload: Record<string, unknown>): void => {
+        /* v8 ignore next 1 — sender 配 線 path で 既 確 定、 null check は unreachable defensive */
+        if (messageRingsView === null || messageRingsHeaderView === null) return;
+        const headerView = messageRingsHeaderView;
+        const head = isSab ? Atomics.load(headerView, headWordIdx) : headerView[headWordIdx]!;
+        const tail = isSab ? Atomics.load(headerView, tailWordIdx) : headerView[tailWordIdx]!;
+        // overflow check: head - tail >= capacity = ring full = drop-oldest path
+        // (= 案 B、 user の 「capacity = N 個 fill」 mental model と zip)。
+        if (head - tail >= ring.capacity) {
+          const newTail = tail + 1;
+          if (isSab) {
+            Atomics.store(headerView, tailWordIdx, newTail);
+            Atomics.store(
+              headerView,
+              overflowWordIdx,
+              Atomics.load(headerView, overflowWordIdx) + 1,
+            );
+          } else {
+            headerView[tailWordIdx] = newTail;
+            headerView[overflowWordIdx] = headerView[overflowWordIdx]! + 1;
+          }
+        }
+        // slot 書 込 (= slotSize 0 = void payload = 書 込 ナ シ)。 Q46 uniform
+        // lift で 全 number → i32 / 全 boolean → 0/1 i32。
+        if (ring.slotSize > 0) {
+          const slotByteOffset = slotsBase + (head % ring.capacity) * ring.slotSize;
+          for (const field of ring.fields) {
+            const value = payload[field.name];
+            const byteOffset = slotByteOffset + field.offsetInSlot;
+            /* v8 ignore next 5 — Q46 uniform lift で number / boolean 以 外 の
+               payload 型 (= typed-array) は sub-phase 7.7 段 階 未 fill = unreachable
+               defensive guard */
+            if (typeof value === "boolean") {
+              messageRingsView.setInt32(byteOffset, value ? 1 : 0, true);
+            } else if (typeof value === "number") {
+              messageRingsView.setInt32(byteOffset, value | 0, true);
+            }
+          }
+        }
+        // head += 1 を release fence 付 で store (= worklet 側 が Atomics.load(head)
+        // で slot 列 visibility 取 れ る path)。
+        if (isSab) {
+          Atomics.store(headerView, headWordIdx, head + 1);
+        } else {
+          headerView[headWordIdx] = head + 1;
+        }
+      };
+      const senderWithDiag = Object.assign(sender as (payload: unknown) => void, {
+        diagnostics: {
+          overflowCount(): number {
+            /* v8 ignore next 1 — sender 配 線 path = messageRingsHeaderView 非 null 確 定 */
+            if (messageRingsHeaderView === null) return 0;
+            return isSab
+              ? Atomics.load(messageRingsHeaderView, overflowWordIdx)
+              : messageRingsHeaderView[overflowWordIdx]!;
+          },
+        },
+      }) as MessageSender<unknown>;
+      messageSurface[ring.name] = senderWithDiag;
     }
   }
 
@@ -523,6 +604,7 @@ export async function createNode<C>(
 
   function ensureRafLoopRunning(): void {
     if (rafHandle !== null || disposed) return;
+    /* v8 ignore next 1 — subscribe path 経 由 で publish or event surface 配 線 済 = unreachable defensive */
     if (publishSharedView === null && eventRingsView === null) return;
     const raf = (globalThis as { requestAnimationFrame?: (cb: () => void) => number })
       .requestAnimationFrame;
@@ -714,7 +796,7 @@ export async function createNode<C>(
     params,
     state: stateSurface,
     events: eventSurface,
-    messages: {},
+    messages: messageSurface,
     midi: {},
     diagnostics: { transport: transportMode },
     snapshot: notImplemented as unknown as UnworkletNode<C>["snapshot"],

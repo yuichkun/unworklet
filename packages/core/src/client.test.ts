@@ -2412,3 +2412,224 @@ test("node.events.<name>.on: handler が throw して も catch + console.error 
     raf.restore();
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// node.messages.<name>(payload) sender + diagnostics (= sub-phase 7.7e)
+// ─────────────────────────────────────────────────────────────────────────
+
+const presetMessageRing = {
+  name: "preset",
+  wasmRingBase: 0,
+  capacity: 16,
+  slotSize: 4,
+  fields: [{ name: "slot", wireType: "i32" as const, offsetInSlot: 0, byteSize: 4 }],
+};
+
+test("node.messages.<name>(payload): SAB slot に field 値 push + head += 1", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(h.context as never, makeMockProcessor({ messageRings: [presetMessageRing] })),
+      h.fireReady,
+    );
+    const msgBuf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .messageRingsBuffer as SharedArrayBuffer;
+    (node.messages["preset"] as (p: { slot: number }) => void)({ slot: 42 });
+    const header = new Int32Array(msgBuf, 0, 3);
+    expect(Atomics.load(header, 0)).toBe(1);
+    const slotsView = new Int32Array(msgBuf, 12);
+    expect(slotsView[0]).toBe(42);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.messages.<name>(payload): 連 続 send で slot 列 順 fill", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(h.context as never, makeMockProcessor({ messageRings: [presetMessageRing] })),
+      h.fireReady,
+    );
+    const msgBuf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .messageRingsBuffer as SharedArrayBuffer;
+    const send = node.messages["preset"] as (p: { slot: number }) => void;
+    send({ slot: 1 });
+    send({ slot: 2 });
+    send({ slot: 3 });
+    const header = new Int32Array(msgBuf, 0, 3);
+    expect(Atomics.load(header, 0)).toBe(3);
+    const slotsView = new Int32Array(msgBuf, 12);
+    expect([slotsView[0], slotsView[1], slotsView[2]]).toEqual([1, 2, 3]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.messages.<name>(payload): overflow path = capacity 4 で 5 send で overflowCount = 1", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const smallRing = { ...presetMessageRing, capacity: 4 };
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ messageRings: [smallRing] })),
+      h.fireReady,
+    );
+    const msgBuf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .messageRingsBuffer as SharedArrayBuffer;
+    const send = node.messages["preset"] as (p: { slot: number }) => void;
+    send({ slot: 1 });
+    send({ slot: 2 });
+    send({ slot: 3 });
+    send({ slot: 4 });
+    send({ slot: 5 });
+    const header = new Int32Array(msgBuf, 0, 3);
+    expect(Atomics.load(header, 0)).toBe(5);
+    expect(Atomics.load(header, 1)).toBe(1);
+    expect(Atomics.load(header, 2)).toBe(1);
+    expect(
+      (
+        node.messages["preset"] as { diagnostics: { overflowCount: () => number } }
+      ).diagnostics.overflowCount(),
+    ).toBe(1);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.messages.<name>.diagnostics.overflowCount: SAB か ら Atomics.load", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(h.context as never, makeMockProcessor({ messageRings: [presetMessageRing] })),
+      h.fireReady,
+    );
+    const msgBuf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .messageRingsBuffer as SharedArrayBuffer;
+    const header = new Int32Array(msgBuf, 0, 3);
+    const diag = (node.messages["preset"] as { diagnostics: { overflowCount: () => number } })
+      .diagnostics;
+    expect(diag.overflowCount()).toBe(0);
+    Atomics.store(header, 2, 77);
+    expect(diag.overflowCount()).toBe(77);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.messages.<name>(): void payload (= fields ナ シ) で fire = head += 1 + slot 書 込 ナ シ", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const voidRing = {
+      name: "ping",
+      wasmRingBase: 0,
+      capacity: 8,
+      slotSize: 0,
+      fields: [],
+    };
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ messageRings: [voidRing] })),
+      h.fireReady,
+    );
+    const msgBuf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .messageRingsBuffer as SharedArrayBuffer;
+    const ping = node.messages["ping"] as unknown as () => void;
+    ping();
+    ping();
+    const header = new Int32Array(msgBuf, 0, 3);
+    expect(Atomics.load(header, 0)).toBe(2);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.messages: message ナ シ processor で 空 object", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    expect(node.messages).toEqual({});
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.messages.<name>(payload): boolean field を 0/1 i32 で push (= Q46 lift)", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const flagRing = {
+      name: "toggle",
+      wasmRingBase: 0,
+      capacity: 8,
+      slotSize: 4,
+      fields: [{ name: "active", wireType: "bool" as const, offsetInSlot: 0, byteSize: 4 }],
+    };
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ messageRings: [flagRing] })),
+      h.fireReady,
+    );
+    const msgBuf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .messageRingsBuffer as SharedArrayBuffer;
+    (node.messages["toggle"] as (p: { active: boolean }) => void)({ active: true });
+    (node.messages["toggle"] as (p: { active: boolean }) => void)({ active: false });
+    const slotsView = new Int32Array(msgBuf, 12);
+    expect(slotsView[0]).toBe(1);
+    expect(slotsView[1]).toBe(0);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.messages.<name>(payload): postMessage transport で overflow path も 動 く", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    const smallRing = { ...presetMessageRing, capacity: 4 };
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ messageRings: [smallRing] })),
+      h.fireReady,
+    );
+    const msgBuf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .messageRingsBuffer as ArrayBuffer;
+    const send = node.messages["preset"] as (p: { slot: number }) => void;
+    send({ slot: 1 });
+    send({ slot: 2 });
+    send({ slot: 3 });
+    send({ slot: 4 });
+    send({ slot: 5 });
+    const header = new Int32Array(msgBuf, 0, 3);
+    expect(header[0]).toBe(5);
+    expect(header[1]).toBe(1);
+    expect(header[2]).toBe(1);
+    expect(
+      (
+        node.messages["preset"] as { diagnostics: { overflowCount: () => number } }
+      ).diagnostics.overflowCount(),
+    ).toBe(1);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.messages.<name>(payload): postMessage transport で 動 く (= Atomics ナ シ)", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(h.context as never, makeMockProcessor({ messageRings: [presetMessageRing] })),
+      h.fireReady,
+    );
+    const msgBuf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .messageRingsBuffer as ArrayBuffer;
+    (node.messages["preset"] as (p: { slot: number }) => void)({ slot: 99 });
+    const header = new Int32Array(msgBuf, 0, 3);
+    expect(header[0]).toBe(1);
+    const slotsView = new Int32Array(msgBuf, 12);
+    expect(slotsView[0]).toBe(99);
+  } finally {
+    h.cleanup();
+  }
+});
