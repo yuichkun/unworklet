@@ -1449,6 +1449,104 @@ test("onError は SAB available env で sab-unavailable を fire し ない (= r
   }
 });
 
+test("node.state.<name>.value = SAB mode で publish 済 値 を 同 期 read (= f32 / i32 / bool 各 型)", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({
+            publishSlots: [
+              { name: "vF32", type: "f32", sharedOffset: 0, counterOffset: 4 },
+              { name: "vI32", type: "i32", sharedOffset: 12, counterOffset: 16 },
+              { name: "vBool", type: "bool", sharedOffset: 24, counterOffset: 28 },
+            ],
+          }),
+        ),
+      h.fireReady,
+    );
+    // SAB に 値 を 直 接 write (= worklet が copy す る 経 路 を mock)
+    const buf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .publishBuffer as SharedArrayBuffer;
+    const view = new Int32Array(buf);
+    // f32 0.5 を bit pattern で write
+    const f32Buf = new Float32Array([0.5]);
+    const f32Bits = new Int32Array(f32Buf.buffer)[0]!;
+    Atomics.store(view, 0, f32Bits);
+    Atomics.store(view, 3, 42); // i32
+    Atomics.store(view, 6, 1); // bool true
+    expect(node.state["vF32"]!.value).toBe(0.5);
+    expect(node.state["vI32"]!.value).toBe(42);
+    expect(node.state["vBool"]!.value).toBe(true);
+    // bool 0 case
+    Atomics.store(view, 6, 0);
+    expect(node.state["vBool"]!.value).toBe(false);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.state.<name>.value = postMessage mode で 直接 view read (= Atomics.load skip)", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({
+            publishSlots: [{ name: "vI32", type: "i32", sharedOffset: 0, counterOffset: 4 }],
+          }),
+        ),
+      h.fireReady,
+    );
+    const buf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .publishBuffer as ArrayBuffer;
+    const view = new Int32Array(buf);
+    view[0] = 99;
+    expect(node.state["vI32"]!.value).toBe(99);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.state.<name>.subscribe(handler) は subscriber を 保 持 + unsubscribe 返 却", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({
+            publishSlots: [{ name: "v", type: "f32", sharedOffset: 0, counterOffset: 4 }],
+          }),
+        ),
+      h.fireReady,
+    );
+    const calls: unknown[] = [];
+    const unsub = node.state["v"]!.subscribe((v) => calls.push(v));
+    expect(typeof unsub).toBe("function");
+    unsub();
+    // unsub 後 の handler は polling driver fill 後 で fire ナ シ = 当 commit で は subscriber set 削 除 だ け 確 認
+    expect(calls).toEqual([]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("publish ナ シ processor は node.state = 空 object (= regression)", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ publishSlots: [] })),
+      h.fireReady,
+    );
+    expect(Object.keys(node.state)).toEqual([]);
+  } finally {
+    h.cleanup();
+  }
+});
+
 test("onError 1 番 目 subscriber が throw し て も pending sab-unavailable は clear (= 2 番 目 fire ナ シ)", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   const originalConsoleError = console.error;

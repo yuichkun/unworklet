@@ -19,12 +19,38 @@ import type {
   CreateNodeOptions,
   InspectionResult,
   NodeErrorEvent,
+  ScalarType,
+  StateValueProxy,
   UnworkletNode,
 } from "./types.ts";
 
 const notImplemented = (): never => {
   throw new Error("not implemented");
 };
+
+/**
+ * publishShared region 内 の i32 bit pattern を user surface 型 に 変 換
+ * (= sub-phase 7.5)。 f32 は bit pattern を Float32Array 経 由 で reinterpret、
+ * bool は 0/1 → boolean、 i32 は そ の ま ま。 publish 対 応 type は Q42 で
+ * f32 / i32 / bool 限 定 = 当 関 数 で 全 path cover。 module-level Float32Array
+ * temp を 持 ち 回 す と main thread side で alloc が 発 生 する path = function-
+ * level temp で 1 回 alloc + reuse (= main 側 = audio thread invariant の 対 象
+ * 外、 ただ し 大 量 polling で の alloc 削 減 で 持 ち 回 し)。
+ */
+const F32_REINTERPRET_BUF = new ArrayBuffer(4);
+const F32_REINTERPRET_FLOAT = new Float32Array(F32_REINTERPRET_BUF);
+const F32_REINTERPRET_INT = new Int32Array(F32_REINTERPRET_BUF);
+
+function convertStateValue(bits: number, type: ScalarType): number | boolean {
+  if (type === "f32") {
+    F32_REINTERPRET_INT[0] = bits;
+    return F32_REINTERPRET_FLOAT[0]!;
+  }
+  if (type === "bool") {
+    return bits !== 0;
+  }
+  return bits; // i32 / その 他 = そ の ま ま (= Q42 で publish 対 応 は f32 / i32 / bool 限 定)
+}
 
 // Per-context `addModule` deduplication。 The cache stores the in-flight (or
 // settled) Promise itself, NOT just a "registered" flag — concurrent
@@ -277,6 +303,36 @@ export async function createNode<C>(
       : new ArrayBuffer(publishBufferByteLength);
   }
 
+  // main 側 state surface 構 築 = publishBuffer を Int32Array view + 各 slot で
+  // `.value` getter (= 型 別 reinterpret) + `.subscribe(handler)` (= rAF polling は
+  // 後 続 commit で fill、 当 commit は subscriber set 管 理 + unsubscribe 返 却 だ け)。
+  const stateSurface: Record<string, StateValueProxy<unknown>> = {};
+  const stateSubscribers: Map<string, Set<(value: unknown) => void>> = new Map();
+  if (publishBuffer !== null && publishSlots.length > 0) {
+    const sharedView = new Int32Array(publishBuffer);
+    for (let i = 0; i < publishSlots.length; i++) {
+      const slot = publishSlots[i]!;
+      const valueSlotIdx = i * 3;
+      const subscribers = new Set<(value: unknown) => void>();
+      stateSubscribers.set(slot.name, subscribers);
+      stateSurface[slot.name] = {
+        get value() {
+          const bits =
+            transportMode === "sab"
+              ? Atomics.load(sharedView, valueSlotIdx)
+              : sharedView[valueSlotIdx]!;
+          return convertStateValue(bits, slot.type);
+        },
+        subscribe(handler) {
+          subscribers.add(handler);
+          return () => {
+            subscribers.delete(handler);
+          };
+        },
+      };
+    }
+  }
+
   // Drop `undefined` entries from initial param data — Web Audio's
   // `parameterData` is a `Record<string, double>`, and Firefox throws
   // `TypeError` when a key carries an undefined value (Chrome treats it
@@ -426,7 +482,7 @@ export async function createNode<C>(
     inputs: inputHandles,
     outputs: buildOutputs(node, outputs) as UnworkletNode<C>["outputs"],
     params,
-    state: {},
+    state: stateSurface,
     events: {},
     messages: {},
     midi: {},
