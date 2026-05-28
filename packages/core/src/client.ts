@@ -304,12 +304,16 @@ export async function createNode<C>(
   }
 
   // main 側 state surface 構 築 = publishBuffer を Int32Array view + 各 slot で
-  // `.value` getter (= 型 別 reinterpret) + `.subscribe(handler)` (= rAF polling は
-  // 後 続 commit で fill、 当 commit は subscriber set 管 理 + unsubscribe 返 却 だ け)。
+  // `.value` getter (= 型 別 reinterpret) + `.subscribe(handler)` (= rAF polling
+  // driver で version 増 加 を 検 出 + handler fire)。
   const stateSurface: Record<string, StateValueProxy<unknown>> = {};
   const stateSubscribers: Map<string, Set<(value: unknown) => void>> = new Map();
+  const lastSeenVersions: number[] = publishSlots.map(() => 0);
+  let rafHandle: number | null = null;
+  let disposed = false;
+  let publishSharedView: Int32Array | null = null;
   if (publishBuffer !== null && publishSlots.length > 0) {
-    const sharedView = new Int32Array(publishBuffer);
+    publishSharedView = new Int32Array(publishBuffer);
     for (let i = 0; i < publishSlots.length; i++) {
       const slot = publishSlots[i]!;
       const valueSlotIdx = i * 3;
@@ -319,18 +323,76 @@ export async function createNode<C>(
         get value() {
           const bits =
             transportMode === "sab"
-              ? Atomics.load(sharedView, valueSlotIdx)
-              : sharedView[valueSlotIdx]!;
+              ? Atomics.load(publishSharedView!, valueSlotIdx)
+              : publishSharedView![valueSlotIdx]!;
           return convertStateValue(bits, slot.type);
         },
         subscribe(handler) {
           subscribers.add(handler);
+          ensureRafLoopRunning();
           return () => {
             subscribers.delete(handler);
           };
         },
       };
     }
+  }
+
+  // rAF polling driver = 全 publish slot を walk + version 増 加 検 出 で
+  // subscriber 全 員 fire。 subscribe 1 番 目 で 開 始、 全 subscriber unsubscribe
+  // or dispose で 停 止。 main thread の rAF (= 通 常 60 fps) が polling 上 限 =
+  // rateFps が 60 越 え て も UI tick に zip。
+  function pollPublishSlots(): void {
+    if (publishSharedView === null) return;
+    for (let i = 0; i < publishSlots.length; i++) {
+      const slot = publishSlots[i]!;
+      const versionSlotIdx = i * 3 + 2;
+      const currentVersion =
+        transportMode === "sab"
+          ? Atomics.load(publishSharedView, versionSlotIdx)
+          : publishSharedView[versionSlotIdx]!;
+      if (currentVersion === lastSeenVersions[i]) continue;
+      lastSeenVersions[i] = currentVersion;
+      const subscribers = stateSubscribers.get(slot.name);
+      if (!subscribers || subscribers.size === 0) continue;
+      const valueSlotIdx = i * 3;
+      const bits =
+        transportMode === "sab"
+          ? Atomics.load(publishSharedView, valueSlotIdx)
+          : publishSharedView[valueSlotIdx]!;
+      const value = convertStateValue(bits, slot.type);
+      for (const handler of subscribers) {
+        try {
+          handler(value);
+        } catch (err) {
+          console.error("unworklet: state subscribe handler threw", err);
+        }
+      }
+    }
+  }
+
+  function ensureRafLoopRunning(): void {
+    if (rafHandle !== null || disposed) return;
+    if (publishSharedView === null) return;
+    const raf = (globalThis as { requestAnimationFrame?: (cb: () => void) => number })
+      .requestAnimationFrame;
+    if (!raf) return;
+    // tick 内 で disposed branch ナ シ = `dispose()` で stopRafLoop が
+    // cancelAnimationFrame を 呼 び rafHandle を null に す る = 既 pending tick も
+    // cancel + 再 schedule path ナ シ = defensive disposed check 不 要。
+    const tick = (): void => {
+      pollPublishSlots();
+      rafHandle = raf(tick);
+    };
+    rafHandle = raf(tick);
+  }
+
+  function stopRafLoop(): void {
+    if (rafHandle === null) return;
+    const cancel = (globalThis as { cancelAnimationFrame?: (handle: number) => void })
+      .cancelAnimationFrame;
+    if (cancel) cancel(rafHandle);
+    rafHandle = null;
   }
 
   // Drop `undefined` entries from initial param data — Web Audio's
@@ -465,16 +527,11 @@ export async function createNode<C>(
 
   const { handles: inputHandles, proxies: inputProxies } = buildInputProxies(context, node, inputs);
 
-  // `disposed` latch = once `.dispose()` runs, the node is logically dead
-  // (= docs/05-client.md §4 「all resources torn down」)。 Late subscribers
-  // would otherwise pile into `errorSubscribers` after `clear()` ran +
-  // never fire (= silent closure leak) — gate the add path with this flag。
-  let disposed = false;
-
   // sab-unavailable event を 1 度 だ け fire す る pending flag (= 04-worklet-
   // runtime.md §8、 sub-phase 7.4)。 SAB available なら 不 要、 fallback 環 境 で
   // 1 番 目 の onError subscriber に 1 度 だ け 通 知 (= subscriber が createNode
   // 直 後 に subscribe で きる path を 想 定、 後 subscribe は drop)。
+  // (= `disposed` latch は state surface 構 築 path で 既 上 で declare 済 = 重 複 declare せ ず)
   let pendingSabUnavailable = !sabAvailable;
 
   const unworkletNode: UnworkletNode<C> = {
@@ -492,6 +549,7 @@ export async function createNode<C>(
     dispose(): void {
       if (disposed) return;
       disposed = true;
+      stopRafLoop();
       node.port.removeEventListener("message", onErrorMessage);
       node.removeEventListener("processorerror", onErrorProcessor);
       errorSubscribers.clear();

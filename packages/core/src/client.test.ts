@@ -1547,6 +1547,304 @@ test("publish ナ シ processor は node.state = 空 object (= regression)", asy
   }
 });
 
+/**
+ * rAF mock = requestAnimationFrame を 手 動 step 経 由 で 走 ら せ る path。
+ * raf(tick) で tick を 集 め、 `flushRaf` で 1 度 だ け 同 期 invoke (= test
+ * 経 路 で polling driver の 動 作 を 観 測 可)。 cancelAnimationFrame で handle
+ * を 削 除 = dispose 時 の 停 止 check が 可 能。
+ */
+type RafHook = {
+  flush: () => void;
+  cancelledHandles: number[];
+  pending: number;
+  restore: () => void;
+};
+
+const installRafMock = (): RafHook => {
+  const callbacks = new Map<number, () => void>();
+  let nextHandle = 1;
+  const cancelledHandles: number[] = [];
+  const target = globalThis as unknown as {
+    requestAnimationFrame?: (cb: () => void) => number;
+    cancelAnimationFrame?: (handle: number) => void;
+  };
+  const prevRaf = target.requestAnimationFrame;
+  const prevCancel = target.cancelAnimationFrame;
+  target.requestAnimationFrame = (cb: () => void): number => {
+    const handle = nextHandle++;
+    callbacks.set(handle, cb);
+    return handle;
+  };
+  target.cancelAnimationFrame = (handle: number): void => {
+    cancelledHandles.push(handle);
+    callbacks.delete(handle);
+  };
+  return {
+    flush(): void {
+      // 現 在 pending な callback を 全 invoke (= snapshot 経 由 で flush 中 の
+      // re-schedule を 次 flush に 回 す)。
+      const snapshot = [...callbacks.entries()];
+      callbacks.clear();
+      for (const [, cb] of snapshot) {
+        cb();
+      }
+    },
+    cancelledHandles,
+    get pending(): number {
+      return callbacks.size;
+    },
+    restore(): void {
+      if (prevRaf === undefined) {
+        delete target.requestAnimationFrame;
+      } else {
+        target.requestAnimationFrame = prevRaf;
+      }
+      if (prevCancel === undefined) {
+        delete target.cancelAnimationFrame;
+      } else {
+        target.cancelAnimationFrame = prevCancel;
+      }
+    },
+  };
+};
+
+test("polling driver = subscribe 後 raf tick で version 増 加 検 出 → handler fire", async () => {
+  const raf = installRafMock();
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({
+            publishSlots: [{ name: "v", type: "i32", sharedOffset: 0, counterOffset: 4 }],
+          }),
+        ),
+      h.fireReady,
+    );
+    const buf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .publishBuffer as SharedArrayBuffer;
+    const view = new Int32Array(buf);
+    const calls: unknown[] = [];
+    node.state["v"]!.subscribe((value) => calls.push(value));
+
+    // 1 度 目 flush: version 0 = 変 化 ナ シ = fire ナ シ
+    raf.flush();
+    expect(calls).toEqual([]);
+
+    // worklet が publish した path を mock = value 42、 version 1 を SAB に 直 接 write
+    Atomics.store(view, 0, 42);
+    Atomics.store(view, 2, 1);
+    raf.flush();
+    expect(calls).toEqual([42]);
+
+    // 2 度 目 publish: value 99、 version 2
+    Atomics.store(view, 0, 99);
+    Atomics.store(view, 2, 2);
+    raf.flush();
+    expect(calls).toEqual([42, 99]);
+  } finally {
+    h.cleanup();
+    raf.restore();
+  }
+});
+
+test("polling driver = 同 値 publish でも version 増 加 で fire (= no-dedupe、 Q39-b)", async () => {
+  const raf = installRafMock();
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({
+            publishSlots: [{ name: "v", type: "i32", sharedOffset: 0, counterOffset: 4 }],
+          }),
+        ),
+      h.fireReady,
+    );
+    const buf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .publishBuffer as SharedArrayBuffer;
+    const view = new Int32Array(buf);
+    const calls: unknown[] = [];
+    node.state["v"]!.subscribe((value) => calls.push(value));
+    Atomics.store(view, 0, 50);
+    Atomics.store(view, 2, 1);
+    raf.flush();
+    Atomics.store(view, 0, 50); // 同 値
+    Atomics.store(view, 2, 2); // version は 増 加
+    raf.flush();
+    expect(calls).toEqual([50, 50]);
+  } finally {
+    h.cleanup();
+    raf.restore();
+  }
+});
+
+test("polling driver = multiple subscribers で 同 値 fire + 1 番 目 throw で 2 番 目 fire 継 続", async () => {
+  const raf = installRafMock();
+  const originalConsoleError = console.error;
+  const errLogs: unknown[] = [];
+  console.error = ((...a: unknown[]) => {
+    errLogs.push(a);
+  }) as typeof console.error;
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({
+            publishSlots: [{ name: "v", type: "i32", sharedOffset: 0, counterOffset: 4 }],
+          }),
+        ),
+      h.fireReady,
+    );
+    const buf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .publishBuffer as SharedArrayBuffer;
+    const view = new Int32Array(buf);
+    const calls: unknown[] = [];
+    node.state["v"]!.subscribe(() => {
+      throw new Error("first sub blew up");
+    });
+    node.state["v"]!.subscribe((value) => calls.push(value));
+    Atomics.store(view, 0, 7);
+    Atomics.store(view, 2, 1);
+    raf.flush();
+    expect(calls).toEqual([7]);
+    expect(errLogs.length).toBeGreaterThan(0);
+  } finally {
+    console.error = originalConsoleError;
+    h.cleanup();
+    raf.restore();
+  }
+});
+
+test("polling driver = unsubscribe で 該 当 handler skip + dispose で raf 停 止", async () => {
+  const raf = installRafMock();
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({
+            publishSlots: [{ name: "v", type: "i32", sharedOffset: 0, counterOffset: 4 }],
+          }),
+        ),
+      h.fireReady,
+    );
+    const buf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .publishBuffer as SharedArrayBuffer;
+    const view = new Int32Array(buf);
+    const calls: unknown[] = [];
+    const unsub = node.state["v"]!.subscribe((value) => calls.push(value));
+    Atomics.store(view, 0, 1);
+    Atomics.store(view, 2, 1);
+    raf.flush();
+    expect(calls).toEqual([1]);
+    unsub();
+    Atomics.store(view, 0, 2);
+    Atomics.store(view, 2, 2);
+    raf.flush();
+    expect(calls).toEqual([1]); // 増 加 ナ シ
+    // dispose で raf 停 止 = pending 0 + 直 前 handle が cancel
+    node.dispose();
+    expect(raf.cancelledHandles.length).toBeGreaterThan(0);
+  } finally {
+    h.cleanup();
+    raf.restore();
+  }
+});
+
+test("polling driver = postMessage mode で 直 接 view read で 動 作 (= no Atomics)", async () => {
+  const raf = installRafMock();
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({
+            publishSlots: [{ name: "v", type: "i32", sharedOffset: 0, counterOffset: 4 }],
+          }),
+        ),
+      h.fireReady,
+    );
+    const buf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .publishBuffer as ArrayBuffer;
+    const view = new Int32Array(buf);
+    const calls: unknown[] = [];
+    node.state["v"]!.subscribe((value) => calls.push(value));
+    view[0] = 88;
+    view[2] = 1;
+    raf.flush();
+    expect(calls).toEqual([88]);
+  } finally {
+    h.cleanup();
+    raf.restore();
+  }
+});
+
+test("polling driver = cancelAnimationFrame 不 在 環 境 で dispose は ハ ン ド ル null 化 だ け で skip", async () => {
+  const target = globalThis as unknown as {
+    requestAnimationFrame?: (cb: () => void) => number;
+    cancelAnimationFrame?: (handle: number) => void;
+  };
+  const prevRaf = target.requestAnimationFrame;
+  const prevCancel = target.cancelAnimationFrame;
+  target.requestAnimationFrame = (_cb: () => void): number => 999;
+  delete target.cancelAnimationFrame;
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({
+            publishSlots: [{ name: "v", type: "i32", sharedOffset: 0, counterOffset: 4 }],
+          }),
+        ),
+      h.fireReady,
+    );
+    node.state["v"]!.subscribe(() => {});
+    // dispose で cancelAnimationFrame 不 在 = guard で skip + rafHandle null 化
+    expect(() => node.dispose()).not.toThrow();
+  } finally {
+    h.cleanup();
+    if (prevRaf !== undefined) target.requestAnimationFrame = prevRaf;
+    else delete target.requestAnimationFrame;
+    if (prevCancel !== undefined) target.cancelAnimationFrame = prevCancel;
+  }
+});
+
+test("polling driver = requestAnimationFrame 不 在 環 境 で subscribe は subscriber set add だ け (= raf skip)", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  // rAF を 削 除 (= polyfill ナ シ environment mock)
+  const target = globalThis as unknown as {
+    requestAnimationFrame?: (cb: () => void) => number;
+  };
+  const prevRaf = target.requestAnimationFrame;
+  delete target.requestAnimationFrame;
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({
+            publishSlots: [{ name: "v", type: "i32", sharedOffset: 0, counterOffset: 4 }],
+          }),
+        ),
+      h.fireReady,
+    );
+    const unsub = node.state["v"]!.subscribe(() => {});
+    expect(typeof unsub).toBe("function");
+  } finally {
+    h.cleanup();
+    if (prevRaf !== undefined) target.requestAnimationFrame = prevRaf;
+  }
+});
+
 test("onError 1 番 目 subscriber が throw し て も pending sab-unavailable は clear (= 2 番 目 fire ナ シ)", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   const originalConsoleError = console.error;
