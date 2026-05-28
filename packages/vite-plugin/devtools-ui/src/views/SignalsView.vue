@@ -130,10 +130,12 @@ const drawWaveform = (canvas: HTMLCanvasElement, port: OutputPort): void => {
   ctx.lineTo(w, h / 2);
   ctx.stroke();
 
-  const colors = ["#ffffff", "#a0a0a0"];
+  // L = cool (blue), R = warm (orange) — warm/cool opposition for stereo so the
+  // overlap stays visually distinguishable (matches Adobe Audition / Pro Tools).
+  const colors = ["#5fa8ff", "#ff8b66"];
   for (let c = 0; c < port.channels; c++) {
     const frame = signals.getTimeDomainFrame(port, c);
-    ctx.strokeStyle = colors[c] ?? "#ffffff";
+    ctx.strokeStyle = colors[c] ?? "#5fa8ff";
     ctx.lineWidth = 1.4;
     ctx.beginPath();
     for (let i = 0; i < frame.length; i++) {
@@ -146,13 +148,58 @@ const drawWaveform = (canvas: HTMLCanvasElement, port: OutputPort): void => {
   }
 };
 
+// Viridis colormap — perceptually uniform, colorblind-safe, monotonic luminance
+// (= darker means lower amplitude even in grayscale). Pre-baked as a 256-step
+// RGB lookup so per-frame cost is one array access per bin.
+const VIRIDIS_STOPS: ReadonlyArray<readonly [number, number, number, number]> = [
+  [0.0, 68, 1, 84],
+  [0.13, 72, 40, 120],
+  [0.25, 62, 73, 137],
+  [0.38, 49, 104, 142],
+  [0.5, 38, 130, 142],
+  [0.63, 31, 158, 137],
+  [0.75, 53, 183, 121],
+  [0.88, 110, 206, 88],
+  [1.0, 253, 231, 37],
+];
+
+const buildViridisLut = (size: number): string[] => {
+  const lut: string[] = [];
+  for (let i = 0; i < size; i++) {
+    const t = i / (size - 1);
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    for (let j = 0; j < VIRIDIS_STOPS.length - 1; j++) {
+      const [t0, r0, g0, b0] = VIRIDIS_STOPS[j]!;
+      const [t1, r1, g1, b1] = VIRIDIS_STOPS[j + 1]!;
+      if (t >= t0 && t <= t1) {
+        const f = t1 === t0 ? 0 : (t - t0) / (t1 - t0);
+        r = Math.round(r0 + (r1 - r0) * f);
+        g = Math.round(g0 + (g1 - g0) * f);
+        b = Math.round(b0 + (b1 - b0) * f);
+        break;
+      }
+    }
+    lut.push(`rgb(${r},${g},${b})`);
+  }
+  return lut;
+};
+
+const VIRIDIS_LUT = buildViridisLut(256);
+
 const drawSpectrogram = (canvas: HTMLCanvasElement, port: OutputPort): void => {
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth;
   const h = canvas.clientHeight || 120;
-  if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
-    canvas.width = w * dpr;
-    canvas.height = h * dpr;
+  // Round target dimensions to integers — non-integer dpr (e.g. 1.25 from OS
+  // zoom) made `canvas.width !== w * dpr` fire every frame, which re-allocates
+  // and clears the canvas, killing the rolling spectrogram history.
+  const targetW = Math.round(w * dpr);
+  const targetH = Math.round(h * dpr);
+  if (canvas.width !== targetW || canvas.height !== targetH) {
+    canvas.width = targetW;
+    canvas.height = targetH;
   }
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -163,12 +210,12 @@ const drawSpectrogram = (canvas: HTMLCanvasElement, port: OutputPort): void => {
 
   const frame = signals.getFreqDomainFrame(port, 0);
   const bins = frame.length;
+  const lutMax = VIRIDIS_LUT.length - 1;
   for (let i = 0; i < bins; i++) {
     const v = Math.max(0, Math.min(1, frame[bins - 1 - i]!));
     const y = (i / bins) * canvas.height;
     const cellH = canvas.height / bins + 1;
-    const light = 8 + v * 70;
-    ctx.fillStyle = `hsl(0, 0%, ${light}%)`;
+    ctx.fillStyle = VIRIDIS_LUT[Math.round(v * lutMax)]!;
     ctx.fillRect(canvas.width - stripPx, y, stripPx, cellH);
   }
 };
@@ -176,10 +223,10 @@ const drawSpectrogram = (canvas: HTMLCanvasElement, port: OutputPort): void => {
 const latencyCanvasRef = ref<HTMLCanvasElement | null>(null);
 
 const LATENCY_COLORS: Record<string, string> = {
-  polysynth: "#ffffff",
-  limiter: "#c0c0c0",
-  reverb: "#909090",
-  total: "#606060",
+  polysynth: "#82bfff",
+  limiter: "#62d18a",
+  reverb: "#c89cff",
+  total: "#f1c560",
 };
 
 const drawLatencyChart = (): void => {
@@ -225,8 +272,8 @@ const drawLatencyChart = (): void => {
   }
 
   const budgetY = bottom - (signals.realtimeBudgetMs / yMax) * plotH;
-  ctx.strokeStyle = "#ffb4ab";
-  ctx.fillStyle = "#ffb4ab";
+  ctx.strokeStyle = "#ff6363";
+  ctx.fillStyle = "#ff6363";
   ctx.setLineDash([6, 4]);
   ctx.beginPath();
   ctx.moveTo(left, budgetY);
