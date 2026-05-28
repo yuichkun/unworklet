@@ -3,6 +3,7 @@ import { defineConfig } from "vite-plus";
 export default defineConfig({
   pack: {
     dts: true,
+    entry: ["src/index.ts", "src/worklet-entry.ts", "src/simd.ts"],
     exports: false,
   },
   lint: {
