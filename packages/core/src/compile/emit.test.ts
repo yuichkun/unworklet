@@ -1959,3 +1959,353 @@ test("subnormal guard f64: stateLoad source (= cross-precision な し path)", a
   const dstView = new Float64Array(memory.buffer, lay.regions.states.slots["dst"]!, 1);
   expect(dstView[0]).toBe(0.7);
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// `event.emitIf` WASM emit (= sub-phase 7.6 commit 4)
+//
+// AST `eventEmitIf` を:
+// - cond branch (= cond truthy で fire、 falsy で skip)
+// - overflow check (= head + 1 - tail >= capacity で drop-oldest + overflowCount += 1)
+// - slot fill (= base + 12 + (head % capacity) × slotSize に atSample + fields store)
+// - head += 1
+// の WASM IR に lower。 SAB Atomics は worklet template (= commit 5) で reflect、
+// WASM 内 は 通 常 i32.load/store。
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`emit(event emit 128 回)` = forSample 内 全 sample fire で slot 0..127 fill", async () => {
+  // forSample 内 で emitIf(true, { atSample: i, level: 0.5 }) を 128 回 fire =
+  // ringbuffer slot 0..127 を atSample = i / level = 0.5 で fill、 head = 128。
+  const graph: CapturedGraph = {
+    declarations: [
+      {
+        kind: "event",
+        name: "peak",
+        capacity: 256,
+        payloadCapacity: undefined,
+        fields: [{ name: "level", wireType: "f32" }],
+      },
+    ],
+    statements: [
+      {
+        kind: "forSample",
+        stride: 1,
+        body: [
+          {
+            kind: "eventEmitIf",
+            name: "peak",
+            cond: { kind: "literal", type: "i32", value: 1 },
+            atSample: { kind: "loopCounter" },
+            fields: [
+              {
+                name: "level",
+                wireType: "f32",
+                value: { kind: "literal", type: "f32", value: 0.5 },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  const { memory, process } = await instantiate(graph);
+  const lay = layout(graph);
+  process();
+  const ringBase = lay.regions.eventRings.slots["peak"]!.base;
+  const headView = new Int32Array(memory.buffer, ringBase, 3);
+  expect(headView[0]).toBe(128); // head
+  expect(headView[1]).toBe(0); // tail
+  expect(headView[2]).toBe(0); // overflowCount
+  // slot 0..127 = atSample + level = 8 byte × 128 = 1024 byte
+  const slotsBase = ringBase + 12;
+  const slotsAsI32 = new Int32Array(memory.buffer, slotsBase, 128 * 2);
+  const slotsAsF32 = new Float32Array(memory.buffer, slotsBase, 128 * 2);
+  for (let i = 0; i < 128; i++) {
+    expect(slotsAsI32[i * 2]).toBe(i); // atSample
+    expect(slotsAsF32[i * 2 + 1]).toBe(0.5); // level
+  }
+});
+
+test("`emit(event emit cond=false)` = 全 sample skip で slot 不 変、 head = 0", async () => {
+  const graph: CapturedGraph = {
+    declarations: [
+      {
+        kind: "event",
+        name: "peak",
+        capacity: 256,
+        payloadCapacity: undefined,
+        fields: [{ name: "level", wireType: "f32" }],
+      },
+    ],
+    statements: [
+      {
+        kind: "forSample",
+        stride: 1,
+        body: [
+          {
+            kind: "eventEmitIf",
+            name: "peak",
+            cond: { kind: "literal", type: "i32", value: 0 }, // false
+            atSample: { kind: "loopCounter" },
+            fields: [
+              {
+                name: "level",
+                wireType: "f32",
+                value: { kind: "literal", type: "f32", value: 0.5 },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  const { memory, process } = await instantiate(graph);
+  const lay = layout(graph);
+  process();
+  const ringBase = lay.regions.eventRings.slots["peak"]!.base;
+  const headView = new Int32Array(memory.buffer, ringBase, 3);
+  expect(headView[0]).toBe(0); // head 不 変
+  expect(headView[1]).toBe(0);
+  expect(headView[2]).toBe(0);
+});
+
+test("`emit(event overflow)` = capacity 4 に 5 回 emit = head 5 / tail 1 / overflowCount 1", async () => {
+  // capacity 4 の ring に 5 回 fire = 4 slot 埋 ま っ た 後 の 5 回 目 で drop-oldest 1 回 発 動。
+  // forSample.stride を 256 / 128 = 2 に 設 定 し て iter 数 を 制 御 = ナ シ、 ま ず 「forSample
+  // ナ シ で per-block top level 5 個 statement」 path で 5 回 fire 表 現。
+  const makeEmit = (atSample: number, level: number): AstNode => ({
+    kind: "eventEmitIf",
+    name: "peak",
+    cond: { kind: "literal", type: "i32", value: 1 },
+    atSample: { kind: "literal", type: "i32", value: atSample },
+    fields: [
+      { name: "level", wireType: "f32", value: { kind: "literal", type: "f32", value: level } },
+    ],
+  });
+  const graph: CapturedGraph = {
+    declarations: [
+      {
+        kind: "event",
+        name: "peak",
+        capacity: 4,
+        payloadCapacity: undefined,
+        fields: [{ name: "level", wireType: "f32" }],
+      },
+    ],
+    statements: [
+      makeEmit(0, 0.1),
+      makeEmit(1, 0.2),
+      makeEmit(2, 0.3),
+      makeEmit(3, 0.4),
+      makeEmit(4, 0.5),
+    ],
+  };
+  const { memory, process } = await instantiate(graph);
+  const lay = layout(graph);
+  process();
+  const ringBase = lay.regions.eventRings.slots["peak"]!.base;
+  const headView = new Int32Array(memory.buffer, ringBase, 3);
+  expect(headView[0]).toBe(5); // head
+  expect(headView[1]).toBe(1); // tail (= drop-oldest で 1 回 進 ん だ)
+  expect(headView[2]).toBe(1); // overflowCount
+  // slot 0 = 5 回 目 emit (= atSample = 4, level = 0.5) で 上 書 き
+  const slot0AsI32 = new Int32Array(memory.buffer, ringBase + 12, 2);
+  const slot0AsF32 = new Float32Array(memory.buffer, ringBase + 12, 2);
+  expect(slot0AsI32[0]).toBe(4);
+  expect(slot0AsF32[1]).toBe(0.5);
+});
+
+test("`emit(event 複 数 field 型)` = atSample (i32) + level (f32) + tick (i32) + flag (bool)", async () => {
+  const graph: CapturedGraph = {
+    declarations: [
+      {
+        kind: "event",
+        name: "evt",
+        capacity: 256,
+        payloadCapacity: undefined,
+        fields: [
+          { name: "level", wireType: "f32" },
+          { name: "tick", wireType: "i32" },
+          { name: "flag", wireType: "bool" },
+        ],
+      },
+    ],
+    statements: [
+      {
+        kind: "eventEmitIf",
+        name: "evt",
+        cond: { kind: "literal", type: "i32", value: 1 },
+        atSample: { kind: "literal", type: "i32", value: 7 },
+        fields: [
+          {
+            name: "level",
+            wireType: "f32",
+            value: { kind: "literal", type: "f32", value: 0.75 },
+          },
+          { name: "tick", wireType: "i32", value: { kind: "literal", type: "i32", value: 42 } },
+          { name: "flag", wireType: "bool", value: { kind: "literal", type: "i32", value: 1 } },
+        ],
+      },
+    ],
+  };
+  const { memory, process } = await instantiate(graph);
+  const lay = layout(graph);
+  process();
+  const ringBase =
+    lay.regions.eventRings.slots["peak"]?.base ?? lay.regions.eventRings.slots["evt"]!.base;
+  const slot0 = new Int32Array(memory.buffer, ringBase + 12, 4);
+  const slot0Floats = new Float32Array(memory.buffer, ringBase + 12, 4);
+  expect(slot0[0]).toBe(7); // atSample
+  expect(slot0Floats[1]).toBe(0.75); // level
+  expect(slot0[2]).toBe(42); // tick
+  expect(slot0[3]).toBe(1); // flag (= u32 word 占 有)
+});
+
+test("`emit(event 複 数 declare)` = base 別 で 独 立 fire", async () => {
+  const graph: CapturedGraph = {
+    declarations: [
+      {
+        kind: "event",
+        name: "evt1",
+        capacity: 16,
+        payloadCapacity: undefined,
+        fields: [{ name: "level", wireType: "f32" }],
+      },
+      {
+        kind: "event",
+        name: "evt2",
+        capacity: 16,
+        payloadCapacity: undefined,
+        fields: [],
+      },
+    ],
+    statements: [
+      {
+        kind: "eventEmitIf",
+        name: "evt1",
+        cond: { kind: "literal", type: "i32", value: 1 },
+        atSample: { kind: "literal", type: "i32", value: 0 },
+        fields: [
+          {
+            name: "level",
+            wireType: "f32",
+            value: { kind: "literal", type: "f32", value: 0.9 },
+          },
+        ],
+      },
+      {
+        kind: "eventEmitIf",
+        name: "evt2",
+        cond: { kind: "literal", type: "i32", value: 1 },
+        atSample: { kind: "literal", type: "i32", value: 0 },
+        fields: [],
+      },
+    ],
+  };
+  const { memory, process } = await instantiate(graph);
+  const lay = layout(graph);
+  process();
+  const evt1Base = lay.regions.eventRings.slots["evt1"]!.base;
+  const evt2Base = lay.regions.eventRings.slots["evt2"]!.base;
+  expect(new Int32Array(memory.buffer, evt1Base, 1)[0]).toBe(1); // evt1 head
+  expect(new Int32Array(memory.buffer, evt2Base, 1)[0]).toBe(1); // evt2 head
+});
+
+test("`emit(event f64 field)` = atSample (i32) + value (f64) で 8 byte store", async () => {
+  const graph: CapturedGraph = {
+    declarations: [
+      {
+        kind: "event",
+        name: "wide",
+        capacity: 256,
+        payloadCapacity: undefined,
+        fields: [{ name: "value", wireType: "f64" }],
+      },
+    ],
+    statements: [
+      {
+        kind: "eventEmitIf",
+        name: "wide",
+        cond: { kind: "literal", type: "i32", value: 1 },
+        atSample: { kind: "literal", type: "i32", value: 3 },
+        fields: [
+          {
+            name: "value",
+            wireType: "f64",
+            value: { kind: "literal", type: "f64", value: 1.5 },
+          },
+        ],
+      },
+    ],
+  };
+  const { memory, process } = await instantiate(graph);
+  const lay = layout(graph);
+  process();
+  const ringBase = lay.regions.eventRings.slots["wide"]!.base;
+  // slot offset = ringBase + 12 (= header) + 0 (= atSample) / + 4 (= value f64)
+  // f64 wire field は 4-byte align で 書 か れ る (= WASM mem.store align 制 約 ナ シ)、
+  // JS 側 Float64Array は 8-byte align 必 須 ＝ DataView 経 由 で read。
+  const view = new DataView(memory.buffer);
+  expect(view.getInt32(ringBase + 12, true)).toBe(3); // atSample
+  expect(view.getFloat64(ringBase + 12 + 4, true)).toBe(1.5); // value
+});
+
+test("`emit(event i64 field)` = atSample (i32) + stamp (i64) で 8 byte store", async () => {
+  // i64 literal emit 未 サ ポ ー ト (= ast.ts literal `value: number` 制 約)、
+  // stateLoad i64 経 由 で field 値 を 取 得 path で test。
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "state", name: "tick", type: "i64", initial: 0n, userNamed: true },
+      {
+        kind: "event",
+        name: "tickEvt",
+        capacity: 256,
+        payloadCapacity: undefined,
+        fields: [{ name: "stamp", wireType: "i64" }],
+      },
+    ],
+    statements: [
+      {
+        kind: "eventEmitIf",
+        name: "tickEvt",
+        cond: { kind: "literal", type: "i32", value: 1 },
+        atSample: { kind: "literal", type: "i32", value: 5 },
+        fields: [
+          {
+            name: "stamp",
+            wireType: "i64",
+            value: { kind: "stateLoad", type: "i64", name: "tick" },
+          },
+        ],
+      },
+    ],
+  };
+  const { memory, process } = await instantiate(graph);
+  const lay = layout(graph);
+  // tick state slot に 42n を 直 接 書 い て stateLoad が それ を 拾 う path
+  const tickOffset = lay.regions.states.slots["tick"]!;
+  new BigInt64Array(memory.buffer, tickOffset, 1)[0] = 42n;
+  process();
+  const ringBase = lay.regions.eventRings.slots["tickEvt"]!.base;
+  // slot offset = ringBase + 12 (= header) + 0 (= atSample i32) / + 4 (= stamp i64)
+  // i64 wire field は 4-byte align、 JS 側 BigInt64Array は 8-byte align 必 須 ＝
+  // DataView 経 由 で read。
+  const view = new DataView(memory.buffer);
+  expect(view.getInt32(ringBase + 12, true)).toBe(5); // atSample
+  expect(view.getBigInt64(ringBase + 12 + 4, true)).toBe(42n); // stamp
+});
+
+test("`emit` throws on unknown event slot in eventEmitIf", async () => {
+  const graph: CapturedGraph = {
+    declarations: [],
+    statements: [
+      {
+        kind: "eventEmitIf",
+        name: "ghost",
+        cond: { kind: "literal", type: "i32", value: 1 },
+        atSample: { kind: "literal", type: "i32", value: 0 },
+        fields: [],
+      },
+    ],
+  };
+  await expect(emit(graph, layout(graph))).rejects.toThrow(/unknown event slot.*ghost/);
+});

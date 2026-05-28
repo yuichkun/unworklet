@@ -52,6 +52,18 @@ const SUBNORMAL_F64_LOCAL = 2;
 const PUBLISH_COUNTER_LOCAL = 3;
 
 /**
+ * `event.emitIf` 用 i32 temp local (= sub-phase 7.6 commit 4)。
+ *
+ * - `EVENT_HEAD_LOCAL` = ring head を 1 度 load し て overflow check + slot offset
+ *   計 算 + head += 1 store で 再 取 得 (= 重 複 evaluation ナ シ)。
+ * - `EVENT_SLOT_PTR_LOCAL` = slot pointer (= base + 12 + (head % capacity) ×
+ *   slotSize) を 1 度 計 算 し て 各 field store で 再 取 得 (= 重 複 計 算 + binaryen
+ *   path の 罠 回 避)。
+ */
+const EVENT_HEAD_LOCAL = 4;
+const EVENT_SLOT_PTR_LOCAL = 5;
+
+/**
  * Subnormal flush threshold (= Q21、 `04-worklet-runtime.md` §6)。
  * `state.f32` / `state.f64` の `.store(v)` で `|v| < 1e-30` を 0 に 落 と し て
  * IIR feedback path で の CPU spike を 撤 廃。 threshold 1e-30 は
@@ -89,13 +101,14 @@ export async function emit(
   const body = mod.block(null, [...statements, ...schedulerBlocks]);
 
   // function locals = [i32 loop counter, f32 subnormal guard temp, f64 subnormal guard temp,
-  //                    i32 publish counter temp]。 publish scheduler が i32 temp local 経 由 で
-  // counter +=128 を 1 度 だ け 評 価 + due path で 再 取 得 (= 重 複 evaluation 回 避)。
+  //                    i32 publish counter temp, i32 event head temp, i32 event slot ptr temp]。
+  // event emit が head / slot ptr を 1 度 だ け 評 価 + 各 field store で 再 取 得 path
+  // (= 重 複 evaluation 回 避、 subnormal guard / publish scheduler と 同 軸)。
   mod.addFunction(
     "process",
     binaryen.none,
     binaryen.none,
-    [binaryen.i32, binaryen.f32, binaryen.f64, binaryen.i32],
+    [binaryen.i32, binaryen.f32, binaryen.f64, binaryen.i32, binaryen.i32, binaryen.i32],
     body,
   );
   mod.addFunctionExport("process", "process");
@@ -388,6 +401,8 @@ export function emitStatement(
         ]),
       ]);
     }
+    case "eventEmitIf":
+      return emitEventEmitIf(node, layout, mod, binaryen);
     default:
       throw new Error(`expression node '${node.kind}' cannot appear in statement position`);
   }
@@ -437,4 +452,149 @@ function emitSubnormalGuardF64(
     mod.f64.const(0),
     mod.local.get(SUBNORMAL_F64_LOCAL, binaryen.f64),
   );
+}
+
+const EVENT_HEADER_BYTES = 12;
+const EVENT_HEAD_OFFSET = 0;
+const EVENT_TAIL_OFFSET = 4;
+const EVENT_OVERFLOW_OFFSET = 8;
+
+/**
+ * `event.emitIf` WASM emit (= sub-phase 7.6 commit 4、 `02-messaging.md` §4 + §5.1)。
+ *
+ * cond truthy で fire path:
+ * 1. head を 1 度 load + `EVENT_HEAD_LOCAL` に hold
+ * 2. overflow check (= head + 1 - tail >= capacity) で drop-oldest:
+ *    overflowCount += 1 + tail += 1
+ * 3. slot ptr = base + 12 + (head % capacity) × slotSize を 1 度 計 算 +
+ *    `EVENT_SLOT_PTR_LOCAL` に hold
+ * 4. slot に atSample + 各 field を store (= layout.regions.eventRings.slots[name].fields
+ *    の per-field offset / wireType に zip)
+ * 5. head += 1 を store
+ *
+ * SAB Atomics は worklet template (= commit 5) で reflect、 こ こ で は 通 常
+ * memory.load / store だ け。
+ */
+function emitEventEmitIf(
+  node: AstNode & { kind: "eventEmitIf" },
+  layout: Layout,
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): number {
+  const slot = layout.regions.eventRings.slots[node.name];
+  if (slot === undefined) {
+    throw new Error(`unknown event slot: ${node.name}`);
+  }
+  const ringBase = slot.base;
+  const capacity = slot.capacity;
+  const slotSize = slot.slotSize;
+  const slotsBase = ringBase + EVENT_HEADER_BYTES;
+
+  // value lookup helper (= AST field value AST → WASM expr)、 layout の field
+  // に zip し て emit (= atSample 先 頭 + payload 順)
+  const fieldValueByName = new Map<string, AstNode>([
+    ["atSample", node.atSample],
+    ...node.fields.map((f) => [f.name, f.value] as const),
+  ]);
+
+  // overflow check + drop-oldest (= ring full ＝ distance head − tail ≥ capacity
+  // で 既 fill 済 ＝ 次 emit が 古 い slot を 上 書 き = drop-oldest)。
+  // 案 B 規 範 (= `02-messaging.md` §5.1): user 視 点 で 「capacity ＝ 何 個 fill 可 能 か」
+  // を そ の ま ま reflect、 head ・ tail を 単 調 増 加 i32 で 持 つ 形 だ か ら ring
+  // buffer 教 科 書 規 範 の 「1 slot 余 計 に 空 け る」 は 不 要。
+  const overflowBlock = mod.if(
+    mod.i32.ge_s(
+      mod.i32.sub(
+        mod.local.get(EVENT_HEAD_LOCAL, binaryen.i32),
+        mod.i32.load(0, BYTES_PER_I32, mod.i32.const(ringBase + EVENT_TAIL_OFFSET)),
+      ),
+      mod.i32.const(capacity),
+    ),
+    mod.block(null, [
+      mod.i32.store(
+        0,
+        BYTES_PER_I32,
+        mod.i32.const(ringBase + EVENT_OVERFLOW_OFFSET),
+        mod.i32.add(
+          mod.i32.load(0, BYTES_PER_I32, mod.i32.const(ringBase + EVENT_OVERFLOW_OFFSET)),
+          mod.i32.const(1),
+        ),
+      ),
+      mod.i32.store(
+        0,
+        BYTES_PER_I32,
+        mod.i32.const(ringBase + EVENT_TAIL_OFFSET),
+        mod.i32.add(
+          mod.i32.load(0, BYTES_PER_I32, mod.i32.const(ringBase + EVENT_TAIL_OFFSET)),
+          mod.i32.const(1),
+        ),
+      ),
+    ]),
+  );
+
+  // slot ptr = slotsBase + (head % capacity) × slotSize、 1 度 計 算 + local hold
+  const slotPtrTee = mod.local.tee(
+    EVENT_SLOT_PTR_LOCAL,
+    mod.i32.add(
+      mod.i32.const(slotsBase),
+      mod.i32.mul(
+        mod.i32.rem_u(mod.local.get(EVENT_HEAD_LOCAL, binaryen.i32), mod.i32.const(capacity)),
+        mod.i32.const(slotSize),
+      ),
+    ),
+    binaryen.i32,
+  );
+
+  // 各 field の store statement (= layout.fields 順)
+  const fieldStores: number[] = [];
+  for (let idx = 0; idx < slot.fields.length; idx++) {
+    const field = slot.fields[idx]!;
+    const valueAst = fieldValueByName.get(field.name);
+    /* v8 ignore next 3 — capture 段 階 で 1 番 目 emit の seal + 後 続 emit の
+       field set 整 合 check で 排 除 済 = 構 造 上 unreachable defensive guard */
+    if (valueAst === undefined) {
+      throw new Error(`event "${node.name}" missing AST for field "${field.name}"`);
+    }
+    const ptr =
+      idx === 0
+        ? slotPtrTee // 1 番 目 store で local hold
+        : mod.i32.add(
+            mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32),
+            mod.i32.const(field.offsetInSlot),
+          );
+    const valueExpr = emitExpression(valueAst, layout, mod, binaryen);
+    switch (field.wireType) {
+      case "f32":
+        fieldStores.push(mod.f32.store(0, BYTES_PER_F32, ptr, valueExpr));
+        break;
+      case "f64":
+        fieldStores.push(mod.f64.store(0, BYTES_PER_F64, ptr, valueExpr));
+        break;
+      case "i32":
+      case "bool":
+        fieldStores.push(mod.i32.store(0, BYTES_PER_I32, ptr, valueExpr));
+        break;
+      case "i64":
+        fieldStores.push(mod.i64.store(0, BYTES_PER_I64, ptr, valueExpr));
+        break;
+    }
+  }
+
+  // fire body: head load + overflow check + slot fill + head += 1
+  const fireBlock = mod.block(null, [
+    mod.local.set(
+      EVENT_HEAD_LOCAL,
+      mod.i32.load(0, BYTES_PER_I32, mod.i32.const(ringBase + EVENT_HEAD_OFFSET)),
+    ),
+    overflowBlock,
+    ...fieldStores,
+    mod.i32.store(
+      0,
+      BYTES_PER_I32,
+      mod.i32.const(ringBase + EVENT_HEAD_OFFSET),
+      mod.i32.add(mod.local.get(EVENT_HEAD_LOCAL, binaryen.i32), mod.i32.const(1)),
+    ),
+  ]);
+
+  return mod.if(emitExpression(node.cond, layout, mod, binaryen), fireBlock);
 }

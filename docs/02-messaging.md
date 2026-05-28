@@ -176,7 +176,7 @@ Ring buffer header (one per `event<T>` / `message<T>` declaration):
 Producer protocol (worklet for `event<T>`, main for `message<T>`):
 
 1. Read `head`, compute write position `head & (capacity - 1)` (capacities are powers of 2).
-2. Read `tail`. If `head + 1 - tail >= capacity`, the next slot would overwrite an unread entry — increment `overflowCount` and proceed (drop-oldest).
+2. Read `tail`. If `head - tail >= capacity`, the ring is full and the next write would overwrite an unread entry — increment `overflowCount` and advance `tail` by 1 (drop-oldest). `head` and `tail` are monotonically increasing `i32`; the distance `head - tail` is the live slot count, so the framework declares "capacity = N" as "N slots are live-fill before drop-oldest engages" without the textbook ring-buffer `+1` reservation.
 3. Write the slot fields.
 4. `Atomics.store(head, head + 1)` — release fence; visible to consumer.
 
