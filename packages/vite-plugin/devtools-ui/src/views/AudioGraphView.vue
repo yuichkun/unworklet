@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import { type BuildIssue, useMockGraph } from "../composables/useMockGraph";
 import { useMockSignals } from "../composables/useMockSignals";
@@ -9,6 +9,10 @@ const COL_X0 = 50;
 const ROW_Y0 = 70;
 const NODE_W = 140;
 const NODE_H = 60;
+
+const INITIAL_VIEW_BOX = { x: 0, y: 0, w: 1340, h: 220 } as const;
+const MIN_VIEW_W = 200;
+const MAX_VIEW_W = 6000;
 
 const graph = useMockGraph();
 const signals = useMockSignals();
@@ -120,6 +124,175 @@ const closeSnapshot = (): void => {
 const onSnapshotBackdropClick = (event: MouseEvent): void => {
   if (event.target === snapshotModalRef.value) closeSnapshot();
 };
+
+const svgRef = ref<SVGSVGElement | null>(null);
+const viewBox = ref({ ...INITIAL_VIEW_BOX });
+const viewBoxStr = computed(
+  () => `${viewBox.value.x} ${viewBox.value.y} ${viewBox.value.w} ${viewBox.value.h}`,
+);
+
+// The visible region in SVG coords, expanded to cover preserveAspectRatio="xMidYMid meet" letterbox.
+// Used to size the grid background rect so it fills the entire SVG element, not just the viewBox strip.
+const visibleSvgBounds = ref({ ...INITIAL_VIEW_BOX });
+
+const updateVisibleBounds = (): void => {
+  const svg = svgRef.value;
+  if (!svg) return;
+  const rect = svg.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return;
+  const scaleFit = Math.min(rect.width / viewBox.value.w, rect.height / viewBox.value.h);
+  const visibleW = rect.width / scaleFit;
+  const visibleH = rect.height / scaleFit;
+  visibleSvgBounds.value = {
+    x: viewBox.value.x - (visibleW - viewBox.value.w) / 2,
+    y: viewBox.value.y - (visibleH - viewBox.value.h) / 2,
+    w: visibleW,
+    h: visibleH,
+  };
+};
+
+const isDragging = ref(false);
+let mousemoveRafId: number | null = null;
+let resizeObserver: ResizeObserver | null = null;
+
+// Drag state captured at mousedown. During drag we mutate the SVG attrs directly
+// (no Vue render), then commit the final viewBox into the reactive ref on mouseup.
+type DragState = {
+  startVB: { x: number; y: number; w: number; h: number };
+  startGridX: number;
+  startGridY: number;
+  startClientX: number;
+  startClientY: number;
+  svgUnitsPerPixel: number;
+  dxPx: number;
+  dyPx: number;
+  gridRectEl: SVGRectElement | null;
+};
+let dragState: DragState | null = null;
+
+const svgUnitsPerPixel = (): number => {
+  const svg = svgRef.value;
+  if (!svg) return 1;
+  const rect = svg.getBoundingClientRect();
+  // preserveAspectRatio="xMidYMid meet" → pick the larger of vb/rect ratios
+  return Math.max(viewBox.value.w / rect.width, viewBox.value.h / rect.height);
+};
+
+const screenToSvg = (clientX: number, clientY: number): { x: number; y: number } => {
+  const svg = svgRef.value;
+  if (!svg) return { x: 0, y: 0 };
+  const pt = svg.createSVGPoint();
+  pt.x = clientX;
+  pt.y = clientY;
+  const ctm = svg.getScreenCTM();
+  if (!ctm) return { x: 0, y: 0 };
+  const p = pt.matrixTransform(ctm.inverse());
+  return { x: p.x, y: p.y };
+};
+
+const onGraphWheel = (event: WheelEvent): void => {
+  event.preventDefault();
+  const factor = event.deltaY > 0 ? 1.15 : 1 / 1.15;
+  const nextW = viewBox.value.w * factor;
+  if (nextW < MIN_VIEW_W || nextW > MAX_VIEW_W) return;
+  const cursor = screenToSvg(event.clientX, event.clientY);
+  viewBox.value = {
+    x: cursor.x - (cursor.x - viewBox.value.x) * factor,
+    y: cursor.y - (cursor.y - viewBox.value.y) * factor,
+    w: viewBox.value.w * factor,
+    h: viewBox.value.h * factor,
+  };
+};
+
+const onGraphMouseDown = (event: MouseEvent): void => {
+  if (event.button !== 0) return;
+  // Don't start panning if the user is clicking on a node — let .node @click handle selection.
+  const target = event.target as Element | null;
+  if (target?.closest(".node")) return;
+  const svg = svgRef.value;
+  if (!svg) return;
+  const gridRectEl = svg.querySelector<SVGRectElement>(".graph-grid-bg");
+  dragState = {
+    startVB: { ...viewBox.value },
+    startGridX: visibleSvgBounds.value.x,
+    startGridY: visibleSvgBounds.value.y,
+    startClientX: event.clientX,
+    startClientY: event.clientY,
+    svgUnitsPerPixel: svgUnitsPerPixel(),
+    dxPx: 0,
+    dyPx: 0,
+    gridRectEl,
+  };
+  isDragging.value = true;
+};
+
+const flushPan = (): void => {
+  mousemoveRafId = null;
+  const s = dragState;
+  const svg = svgRef.value;
+  if (!s || !svg) return;
+  const dxSvg = s.dxPx * s.svgUnitsPerPixel;
+  const dySvg = s.dyPx * s.svgUnitsPerPixel;
+  const newX = s.startVB.x - dxSvg;
+  const newY = s.startVB.y - dySvg;
+  // Direct DOM mutation — bypasses Vue reactivity for the duration of the drag.
+  svg.setAttribute("viewBox", `${newX} ${newY} ${s.startVB.w} ${s.startVB.h}`);
+  if (s.gridRectEl) {
+    s.gridRectEl.setAttribute("x", String(s.startGridX - dxSvg));
+    s.gridRectEl.setAttribute("y", String(s.startGridY - dySvg));
+  }
+};
+
+const onWindowMouseMove = (event: MouseEvent): void => {
+  if (!isDragging.value || !dragState) return;
+  dragState.dxPx = event.clientX - dragState.startClientX;
+  dragState.dyPx = event.clientY - dragState.startClientY;
+  if (mousemoveRafId === null) {
+    mousemoveRafId = requestAnimationFrame(flushPan);
+  }
+};
+
+const onWindowMouseUp = (): void => {
+  if (!isDragging.value) return;
+  isDragging.value = false;
+  if (mousemoveRafId !== null) {
+    cancelAnimationFrame(mousemoveRafId);
+    mousemoveRafId = null;
+  }
+  const s = dragState;
+  if (s && (s.dxPx !== 0 || s.dyPx !== 0)) {
+    // Commit the panned position into the reactive viewBox so subsequent
+    // zooms / resets see the correct state. This triggers a single Vue render.
+    viewBox.value = {
+      ...s.startVB,
+      x: s.startVB.x - s.dxPx * s.svgUnitsPerPixel,
+      y: s.startVB.y - s.dyPx * s.svgUnitsPerPixel,
+    };
+  }
+  dragState = null;
+};
+
+const resetView = (): void => {
+  viewBox.value = { ...INITIAL_VIEW_BOX };
+};
+
+watch(viewBox, updateVisibleBounds, { deep: true });
+
+onMounted(() => {
+  window.addEventListener("mousemove", onWindowMouseMove);
+  window.addEventListener("mouseup", onWindowMouseUp);
+  if (svgRef.value) {
+    resizeObserver = new ResizeObserver(updateVisibleBounds);
+    resizeObserver.observe(svgRef.value);
+  }
+  updateVisibleBounds();
+});
+onBeforeUnmount(() => {
+  window.removeEventListener("mousemove", onWindowMouseMove);
+  window.removeEventListener("mouseup", onWindowMouseUp);
+  resizeObserver?.disconnect();
+  resizeObserver = null;
+});
 </script>
 
 <template>
@@ -136,13 +309,30 @@ const onSnapshotBackdropClick = (event: MouseEvent): void => {
     <div class="view-body">
       <section class="graph-pane">
         <svg
+          ref="svgRef"
           class="graph-svg"
-          viewBox="0 0 1340 220"
+          :class="{ panning: isDragging }"
+          :viewBox="viewBoxStr"
           preserveAspectRatio="xMidYMid meet"
           role="img"
           aria-label="Audio graph diagram"
+          @wheel="onGraphWheel"
+          @mousedown="onGraphMouseDown"
         >
           <defs>
+            <pattern
+              id="graph-grid"
+              width="40"
+              height="40"
+              patternUnits="userSpaceOnUse"
+            >
+              <path
+                d="M 40 0 L 0 0 0 40"
+                fill="none"
+                stroke="rgba(255, 255, 255, 0.05)"
+                stroke-width="1"
+              />
+            </pattern>
             <marker
               id="arrow-audio"
               viewBox="0 0 10 10"
@@ -166,6 +356,15 @@ const onSnapshotBackdropClick = (event: MouseEvent): void => {
               <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--u-midi)" />
             </marker>
           </defs>
+
+          <rect
+            class="graph-grid-bg"
+            :x="visibleSvgBounds.x"
+            :y="visibleSvgBounds.y"
+            :width="visibleSvgBounds.w"
+            :height="visibleSvgBounds.h"
+            fill="url(#graph-grid)"
+          />
 
           <path
             v-for="edge in edgePaths"
@@ -241,6 +440,14 @@ const onSnapshotBackdropClick = (event: MouseEvent): void => {
             <span class="legend-swatch standard"></span>
             standard AudioNode
           </span>
+          <button
+            type="button"
+            class="reset-view-btn"
+            title="Reset zoom &amp; pan"
+            @click="resetView"
+          >
+            ⤢ reset view
+          </button>
         </footer>
       </section>
 
@@ -531,12 +738,19 @@ const onSnapshotBackdropClick = (event: MouseEvent): void => {
   flex: 1;
   width: 100%;
   background-color: var(--u-bg-elev-1);
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
-  background-size: 40px 40px;
   border: 1px solid var(--u-border);
   border-radius: var(--u-radius-lg);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.graph-svg.panning {
+  cursor: grabbing;
+}
+
+.graph-svg .node {
+  cursor: pointer;
 }
 
 .edge {
@@ -638,10 +852,32 @@ const onSnapshotBackdropClick = (event: MouseEvent): void => {
 
 .graph-legend {
   display: flex;
+  align-items: center;
   gap: 18px;
   padding: 10px 4px 0;
   font-size: 11px;
   color: var(--u-text-dim);
+}
+
+.reset-view-btn {
+  margin-left: auto;
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid var(--u-border);
+  border-radius: var(--u-radius);
+  color: var(--u-text-muted);
+  font-family: var(--u-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition:
+    border-color 100ms,
+    color 100ms;
+}
+
+.reset-view-btn:hover {
+  border-color: var(--u-text);
+  color: var(--u-text);
 }
 
 .legend-item {
