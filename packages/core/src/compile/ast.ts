@@ -12,7 +12,7 @@
  * superset)。
  */
 
-import type { ScalarType } from "../types.ts";
+import type { PublishOptions, ScalarType, SnapshotPolicy } from "../types.ts";
 
 export type AstNode =
   | { kind: "literal"; type: ScalarType; value: number }
@@ -50,20 +50,22 @@ export type ParamDecl = {
 /**
  * Scalar `state.<type>(initial)` slot declaration (`01-dsl.md` §3.1)。
  *
- * Phase 7 sub-phase 7.1 は plain factory (= `state.f32(0)` 等) のみ fill。
- * 7.2 で `.named('X')` / `.expose({ name, snapshot, publish })` chain
- * を 追 加 す る 時 に metadata field (= `snapshot` / `publish`) を
- * additive に 拡 張 (= 7.2 の commit で 追 加)。
- *
  * `initial` は scalar value (= f32/f64 → number、 i32 → number、 i64 →
  * bigint、 bool → boolean)。 SAB publish path (= 7.4) で の 型 変 換 と
  * 同 set。
+ *
+ * `snapshot` / `publish` は `.expose({...})` / `.named()` chain で 設 定
+ * (= sub-phase 7.2、 `01-dsl.md` §3.1 + Q42 + Q79):
+ * - `snapshot`: default ナ シ = worklet-private、 set あ り で snapshot blob 経 由 で 取 得 (= sub-phase 11 で fill)。 default は state / param で `'persistent'`、 buffer で `'transient'`。
+ * - `publish`: set あ り で main thread 公 開 (= sub-phase 7.3-7.5 で SAB / postMessage 経 由)。 type 制 限 = f32 / i32 / bool で だ け 受 容 (= Q42)。
  */
 export type StateDecl = {
   kind: "state";
   name: string;
   type: ScalarType;
   initial: number | bigint | boolean;
+  snapshot?: SnapshotPolicy;
+  publish?: PublishOptions;
 };
 
 export type Declaration = AudioPortDecl | ParamDecl | StateDecl;
