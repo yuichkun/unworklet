@@ -506,3 +506,113 @@ test("`process` handles a missing output port (= outputs outer array shorter tha
   const parameters = { gain: new Float32Array([1]) };
   expect(() => monoGain.worklet.process(self, inputs, outputs, parameters)).not.toThrow();
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// publish copy logic (= sub-phase 7.4 = worklet template が WASM publish slot
+// を 共 有 buffer に copy)。 SAB mode (= Atomics.store) と postMessage fallback
+// (= 直接 view write) 両 path + 「version 同 値 で skip」 path を 担 保。
+// ─────────────────────────────────────────────────────────────────────────
+
+import { state as stateDecl } from "./dsl/declarations.ts";
+
+const publishProc = defineProcessor(() => {
+  const input = audioInput({ channels: 1, name: "main" });
+  const out = audioOutput({ channels: 1, name: "main" });
+  const meter = stateDecl.f32(0).expose({ name: "meter", publish: { rateFps: 30 } });
+  return {
+    process: () => {
+      forSample((i) => {
+        out.ch(0).at(i).write(input.ch(0).at(i));
+      });
+      meter.store(input.ch(0).at(0));
+    },
+  };
+});
+
+test("publish copy (sab mode): WASM 末 尾 で due tick が SAB に Atomics.store 経 由 で copy", async () => {
+  const { wasm } = await compile(publishProc, { sampleRate: 48000 });
+  const self = makeMockSelf();
+  const publishBuffer = new SharedArrayBuffer(12); // 1 slot × 12 byte
+  publishProc.worklet.initialize(self, {
+    processorOptions: {
+      wasm,
+      publishBuffer,
+      publishSlots: publishProc.worklet.publishSlots,
+      transport: "sab",
+    },
+  });
+
+  // threshold = round(48000 / 30) = 1600、 13 block で 1664 ≥ 1600 = due
+  const input = new Float32Array(SAMPLES_PER_BLOCK).fill(0.5);
+  const inputs = [[input]];
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  for (let b = 0; b < 13; b++) {
+    publishProc.worklet.process(self, inputs, outputs, {});
+  }
+  const view = new Int32Array(publishBuffer);
+  // valueBits: f32 0.5 を i32 bit pattern として 読 ん だ 値
+  const valueBits = new Int32Array(new Float32Array([0.5]).buffer)[0]!;
+  expect(view[0]).toBe(valueBits);
+  expect(view[1]).toBe(64); // sample counter 残 り = 1664 - 1600
+  expect(view[2]).toBe(1); // version
+});
+
+test("publish copy (postMessage fallback): ArrayBuffer view に直接 write", async () => {
+  const { wasm } = await compile(publishProc, { sampleRate: 48000 });
+  const self = makeMockSelf();
+  const publishBuffer = new ArrayBuffer(12);
+  publishProc.worklet.initialize(self, {
+    processorOptions: {
+      wasm,
+      publishBuffer,
+      publishSlots: publishProc.worklet.publishSlots,
+      transport: "postMessage",
+    },
+  });
+
+  const input = new Float32Array(SAMPLES_PER_BLOCK).fill(0.5);
+  const inputs = [[input]];
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  for (let b = 0; b < 13; b++) {
+    publishProc.worklet.process(self, inputs, outputs, {});
+  }
+  const view = new Int32Array(publishBuffer);
+  const valueBits = new Int32Array(new Float32Array([0.5]).buffer)[0]!;
+  expect(view[0]).toBe(valueBits);
+  expect(view[2]).toBe(1);
+});
+
+test("publish copy: not due block で view 不 変 (= skip path)", async () => {
+  const { wasm } = await compile(publishProc, { sampleRate: 48000 });
+  const self = makeMockSelf();
+  const publishBuffer = new SharedArrayBuffer(12);
+  publishProc.worklet.initialize(self, {
+    processorOptions: {
+      wasm,
+      publishBuffer,
+      publishSlots: publishProc.worklet.publishSlots,
+      transport: "sab",
+    },
+  });
+
+  // 12 block = counter 1536 < 1600 = not due
+  const input = new Float32Array(SAMPLES_PER_BLOCK).fill(0.5);
+  const inputs = [[input]];
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  for (let b = 0; b < 12; b++) {
+    publishProc.worklet.process(self, inputs, outputs, {});
+  }
+  const view = new Int32Array(publishBuffer);
+  expect(view[2]).toBe(0); // version 未 更 新
+  expect(view[0]).toBe(0); // value 未 copy
+});
+
+test("publish copy: publishBuffer ナ シ processor は publish path skip (= regression)", async () => {
+  const { wasm } = await compile(monoGain);
+  const self = makeMockSelf();
+  monoGain.worklet.initialize(self, { processorOptions: { wasm } });
+  const inputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(0.5)]];
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const parameters = { gain: new Float32Array([2]) };
+  expect(() => monoGain.worklet.process(self, inputs, outputs, parameters)).not.toThrow();
+});

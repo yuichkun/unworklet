@@ -109,11 +109,16 @@ type WorkletState = {
    * publishSlots = WASM memory 内 offset map、 lastVersions[i] = i 番 slot で
    * 最 後 に main へ copy し た version (= 同 値 ナ ラ skip)。
    * publishSlots.length === 0 で publishBuffer が null = publish ナ シ processor。
+   * publishWasmSharedViews / CounterViews = WASM memory 内 publishShared /
+   * publishCounters region の Int32Array view (= initialize で pre-bind、
+   * audio thread alloc 回 避)。
    */
   readonly publishSharedView: Int32Array | null;
   readonly publishSlots: readonly PublishSlotDescriptor[];
   readonly lastVersions: number[];
   readonly transport: TransportMode;
+  readonly publishWasmSharedViews: readonly Int32Array[];
+  readonly publishWasmCounterViews: readonly Int32Array[];
   /**
    * Latched once a WASM trap escapes `state.process()`。 Subsequent quanta
    * emit silence and skip the WASM call so a single trap does not get
@@ -279,6 +284,15 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       const transport = opts.processorOptions?.transport ?? "postMessage";
       const publishSharedView = publishBuffer ? new Int32Array(publishBuffer) : null;
       const lastVersions = publishSlots.map(() => 0);
+      // WASM memory 内 publishShared / publishCounters region の view を per-slot
+      // で pre-bind = process 末 尾 copy で 毎 quantum alloc を 避 け る
+      // (= `00-foundations.md` §5.1 realtime safety)。
+      const publishWasmSharedViews: Int32Array[] = [];
+      const publishWasmCounterViews: Int32Array[] = [];
+      for (const slot of publishSlots) {
+        publishWasmSharedViews.push(new Int32Array(memory.buffer, slot.sharedOffset, 1));
+        publishWasmCounterViews.push(new Int32Array(memory.buffer, slot.counterOffset, 2));
+      }
 
       (self as SelfWithState)[STATE_KEY] = {
         process: procFn,
@@ -292,6 +306,8 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         publishSlots,
         lastVersions,
         transport,
+        publishWasmSharedViews,
+        publishWasmCounterViews,
         failed: false,
       };
 
@@ -429,6 +445,40 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         const dest = portOutput[c];
         if (dest) {
           dest.set(view);
+        }
+      }
+    }
+
+    // publish copy (= sub-phase 7.4)。 WASM publish scheduler が publishCounters
+    // 内 version を 更 新 し た slot だ け 共 有 buffer に copy + lastVersion を update。
+    // SAB mode は Atomics.store (= main 側 が Atomics.load で torn read 回 避)、
+    // postMessage fallback は 直 接 view に write (= 後 続 commit で main 側 へ の
+    // notify path を fill)。 version は 必 ず 最 後 に store = main 側 が 「version
+    // 増 加 を 検 出 + value を read」 経 路 で consistent read 担 保。
+    const sharedView = state.publishSharedView;
+    if (sharedView !== null) {
+      const slots = state.publishSlots;
+      const lastVersions = state.lastVersions;
+      const sharedViews = state.publishWasmSharedViews;
+      const counterViews = state.publishWasmCounterViews;
+      const isSab = state.transport === "sab";
+      for (let i = 0; i < slots.length; i++) {
+        const counterView = counterViews[i]!;
+        const currentVersion = counterView[1]!;
+        if (currentVersion !== lastVersions[i]) {
+          const valueBits = sharedViews[i]![0]!;
+          const sampleCounter = counterView[0]!;
+          const slotIdx = i * 3;
+          if (isSab) {
+            Atomics.store(sharedView, slotIdx, valueBits);
+            Atomics.store(sharedView, slotIdx + 1, sampleCounter);
+            Atomics.store(sharedView, slotIdx + 2, currentVersion);
+          } else {
+            sharedView[slotIdx] = valueBits;
+            sharedView[slotIdx + 1] = sampleCounter;
+            sharedView[slotIdx + 2] = currentVersion;
+          }
+          lastVersions[i] = currentVersion;
         }
       }
     }
