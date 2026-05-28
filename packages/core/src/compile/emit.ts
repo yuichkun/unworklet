@@ -43,6 +43,13 @@ const LOOP_COUNTER_LOCAL = 0;
  */
 const SUBNORMAL_F32_LOCAL = 1;
 const SUBNORMAL_F64_LOCAL = 2;
+/**
+ * publish scheduler 用 i32 temp local (= sub-phase 7.3)。 各 publish slot 用
+ * の sample counter += 128 後 の 値 を 1 度 だ け 評 価 + threshold check + due path
+ * で counter -= threshold で 再 取 得 する path (= 重 複 evaluation 回 避、
+ * binaryen 内 部 path の 罠 回 避 = subnormal guard と 同 軸)。
+ */
+const PUBLISH_COUNTER_LOCAL = 3;
 
 /**
  * Subnormal flush threshold (= Q21、 `04-worklet-runtime.md` §6)。
@@ -70,8 +77,7 @@ export async function emit(
   layout: Layout,
   options: EmitOptions = {},
 ): Promise<Uint8Array> {
-  // sampleRate は publish scheduler emit (= sub-phase 7.3) で 使 う、 publish slot ナ シ なら 影 響 な し
-  void (options.sampleRate ?? DEFAULT_EMIT_SAMPLE_RATE);
+  const sampleRate = options.sampleRate ?? DEFAULT_EMIT_SAMPLE_RATE;
   const binaryen = (await import("binaryen")).default;
   const mod = new binaryen.Module();
 
@@ -79,13 +85,17 @@ export async function emit(
   mod.setMemory(pages, pages, "memory");
 
   const statements = graph.statements.map((s) => emitStatement(s, layout, mod, binaryen));
-  const body = mod.block(null, statements);
+  const schedulerBlocks = emitPublishScheduler(graph, layout, sampleRate, mod, binaryen);
+  const body = mod.block(null, [...statements, ...schedulerBlocks]);
 
+  // function locals = [i32 loop counter, f32 subnormal guard temp, f64 subnormal guard temp,
+  //                    i32 publish counter temp]。 publish scheduler が i32 temp local 経 由 で
+  // counter +=128 を 1 度 だ け 評 価 + due path で 再 取 得 (= 重 複 evaluation 回 避)。
   mod.addFunction(
     "process",
     binaryen.none,
     binaryen.none,
-    [binaryen.i32, binaryen.f32, binaryen.f64],
+    [binaryen.i32, binaryen.f32, binaryen.f64, binaryen.i32],
     body,
   );
   mod.addFunctionExport("process", "process");
@@ -93,6 +103,100 @@ export async function emit(
   const wasm = mod.emitBinary();
   mod.dispose();
   return wasm;
+}
+
+/**
+ * publish scheduler emit (= sub-phase 7.3、 `04-worklet-runtime.md` §7)。
+ *
+ * 各 publish flag 持 つ state slot ご と に process function 末 尾 に inline:
+ * 1. local PUBLISH_COUNTER_LOCAL = `i32.load(counterOffset) + SAMPLES_PER_BLOCK`
+ * 2. if local >= threshold:
+ *    - publishShared に state 値 を copy (= type 別 load + store)
+ *    - i32.store(versionOffset, i32.load(versionOffset) + 1)
+ *    - i32.store(counterOffset, local - threshold)  (= 残 り を carry)
+ *    else:
+ *    - i32.store(counterOffset, local)
+ *
+ * threshold = `Math.round(sampleRate / rateFps)` = build-time const fold。
+ */
+function emitPublishScheduler(
+  graph: CapturedGraph,
+  layout: Layout,
+  sampleRate: number,
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): number[] {
+  const blocks: number[] = [];
+  for (const decl of graph.declarations) {
+    if (decl.kind !== "state" || decl.publish === undefined) continue;
+    const stateOffset = layout.regions.states.slots[decl.name];
+    const sharedOffset = layout.regions.publishShared.slots[decl.name];
+    const counterOffset = layout.regions.publishCounters.slots[decl.name];
+    if (stateOffset === undefined || sharedOffset === undefined || counterOffset === undefined) {
+      throw new Error(`unknown publish slot: ${decl.name}`);
+    }
+    const versionOffset = counterOffset + 4;
+    const threshold = Math.round(sampleRate / decl.publish.rateFps);
+
+    // type 別 load / store (= publish flag 持 つ type は Q42 で f32 / i32 / bool 制 限)
+    const loadValue =
+      decl.type === "f32"
+        ? mod.f32.load(0, BYTES_PER_F32, mod.i32.const(stateOffset))
+        : mod.i32.load(0, BYTES_PER_I32, mod.i32.const(stateOffset));
+    const storeValueFn =
+      decl.type === "f32"
+        ? (value: number) => mod.f32.store(0, BYTES_PER_F32, mod.i32.const(sharedOffset), value)
+        : (value: number) => mod.i32.store(0, BYTES_PER_I32, mod.i32.const(sharedOffset), value);
+
+    blocks.push(
+      mod.block(null, [
+        // local PUBLISH_COUNTER_LOCAL = i32.load(counterOffset) + SAMPLES_PER_BLOCK
+        mod.local.set(
+          PUBLISH_COUNTER_LOCAL,
+          mod.i32.add(
+            mod.i32.load(0, BYTES_PER_I32, mod.i32.const(counterOffset)),
+            mod.i32.const(128),
+          ),
+        ),
+        mod.if(
+          mod.i32.ge_s(
+            mod.local.get(PUBLISH_COUNTER_LOCAL, binaryen.i32),
+            mod.i32.const(threshold),
+          ),
+          // due path: copy + version increment + counter -= threshold
+          mod.block(null, [
+            storeValueFn(loadValue),
+            mod.i32.store(
+              0,
+              BYTES_PER_I32,
+              mod.i32.const(versionOffset),
+              mod.i32.add(
+                mod.i32.load(0, BYTES_PER_I32, mod.i32.const(versionOffset)),
+                mod.i32.const(1),
+              ),
+            ),
+            mod.i32.store(
+              0,
+              BYTES_PER_I32,
+              mod.i32.const(counterOffset),
+              mod.i32.sub(
+                mod.local.get(PUBLISH_COUNTER_LOCAL, binaryen.i32),
+                mod.i32.const(threshold),
+              ),
+            ),
+          ]),
+          // not due path: just save the new counter
+          mod.i32.store(
+            0,
+            BYTES_PER_I32,
+            mod.i32.const(counterOffset),
+            mod.local.get(PUBLISH_COUNTER_LOCAL, binaryen.i32),
+          ),
+        ),
+      ]),
+    );
+  }
+  return blocks;
 }
 
 export function emitExpression(

@@ -1600,6 +1600,332 @@ test("subnormal guard: forSample 後 audioInRead × literal store (= offline int
   expect(view[0]).toBeCloseTo(0.6, 6);
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// per-block publish scheduler = Phase 7 sub-phase 7.3
+// (= publish flag 持 つ state slot を process 末 尾 で counter += 128 + threshold
+// 越 え で copy + version increment + counter -= threshold で carry)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("publish scheduler: publish ナ シ processor は emit に 影 響 ナ シ (= regression)", async () => {
+  const graph: CapturedGraph = {
+    declarations: [{ kind: "state", name: "z", type: "f32", initial: 0 }],
+    statements: [
+      {
+        kind: "stateStore",
+        type: "f32",
+        name: "z",
+        value: { kind: "literal", type: "f32", value: 0.5 },
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  // publishShared / Counters region は empty = total bytes は state region 末 尾
+  expect(wasm).toBeInstanceOf(Uint8Array);
+  // basic regression: emit が 成 功 + state slot に 0.5 store さ れ る
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  proc();
+  const view = new Float32Array(memory.buffer, lay.regions.states.slots["z"]!, 1);
+  expect(view[0]).toBe(0.5);
+});
+
+test("publish scheduler: f32 1 slot で counter += 128 + threshold 越 え で due", async () => {
+  // sampleRate 48000、 rateFps 30 → threshold = round(1600) = 1600
+  // block 0..12 = not due (= counter = 128..1664)
+  // block 13 で 1664 >= 1600 = due → copy + version 1 + counter = 64
+  const graph: CapturedGraph = {
+    declarations: [
+      {
+        kind: "state",
+        name: "meterL",
+        type: "f32",
+        initial: 0,
+        userNamed: true,
+        publish: { rateFps: 30 },
+      },
+    ],
+    statements: [
+      {
+        kind: "stateStore",
+        type: "f32",
+        name: "meterL",
+        value: { kind: "literal", type: "f32", value: 0.7 },
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay, { sampleRate: 48000 });
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  const stateView = new Float32Array(memory.buffer, lay.regions.states.slots["meterL"]!, 1);
+  const sharedView = new Float32Array(memory.buffer, lay.regions.publishShared.slots["meterL"]!, 1);
+  const counterView = new Int32Array(
+    memory.buffer,
+    lay.regions.publishCounters.slots["meterL"]!,
+    2,
+  );
+
+  // block 0..12 = not due
+  for (let b = 0; b < 13; b++) {
+    proc();
+  }
+  // sample counter = 13 × 128 = 1664、 ただ し block 13 で due 後 = 64
+  expect(counterView[0]).toBe(64);
+  expect(counterView[1]).toBe(1); // version = 1
+  expect(sharedView[0]).toBe(Math.fround(0.7)); // copied
+  // state side も 0.7 (= store)
+  expect(stateView[0]).toBe(Math.fround(0.7));
+});
+
+test("publish scheduler: 2 block 連 続 で 2 度 due (= version 増 加)", async () => {
+  // sampleRate 48000、 rateFps 30 → threshold 1600
+  // 13 block 目 で 1 度 目 due (= counter 64)、 25 block 目 で 2 度 目 due
+  const graph: CapturedGraph = {
+    declarations: [
+      {
+        kind: "state",
+        name: "x",
+        type: "i32",
+        initial: 0,
+        userNamed: true,
+        publish: { rateFps: 30 },
+      },
+    ],
+    statements: [
+      {
+        kind: "stateStore",
+        type: "i32",
+        name: "x",
+        value: { kind: "literal", type: "i32", value: 42 },
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay, { sampleRate: 48000 });
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  const counterView = new Int32Array(memory.buffer, lay.regions.publishCounters.slots["x"]!, 2);
+
+  // 25 block 走 ら せ る (= 1664 + 12 × 128 = 3200 = 2 × 1600)
+  for (let b = 0; b < 25; b++) {
+    proc();
+  }
+  // 13 block 目 = due 1 (= 64)
+  // 14..24 block = counter 64 + 11 × 128 = 1472
+  // 25 block 目 = counter 1472 + 128 = 1600 ≥ 1600 = due 2 → counter 0
+  expect(counterView[0]).toBe(0);
+  expect(counterView[1]).toBe(2); // version = 2
+});
+
+test("publish scheduler: i32 type で 値 copy", async () => {
+  const graph: CapturedGraph = {
+    declarations: [
+      {
+        kind: "state",
+        name: "x",
+        type: "i32",
+        initial: 0,
+        userNamed: true,
+        publish: { rateFps: 100 },
+      },
+    ],
+    statements: [
+      {
+        kind: "stateStore",
+        type: "i32",
+        name: "x",
+        value: { kind: "literal", type: "i32", value: 99 },
+      },
+    ],
+  };
+  const lay = layout(graph);
+  // sampleRate 48000 / rateFps 100 = threshold 480
+  const wasm = await emit(graph, lay, { sampleRate: 48000 });
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  const sharedView = new Int32Array(memory.buffer, lay.regions.publishShared.slots["x"]!, 1);
+
+  // 4 block 走 ら せ る = counter 512 ≥ 480 = due
+  for (let b = 0; b < 4; b++) {
+    proc();
+  }
+  expect(sharedView[0]).toBe(99);
+});
+
+test("publish scheduler: bool type で 値 copy (= 内 部 i32 表 現)", async () => {
+  const graph: CapturedGraph = {
+    declarations: [
+      {
+        kind: "state",
+        name: "gate",
+        type: "bool",
+        initial: false,
+        userNamed: true,
+        publish: { rateFps: 100 },
+      },
+    ],
+    statements: [
+      {
+        kind: "stateStore",
+        type: "bool",
+        name: "gate",
+        value: { kind: "literal", type: "i32", value: 1 },
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay, { sampleRate: 48000 });
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  const sharedView = new Int32Array(memory.buffer, lay.regions.publishShared.slots["gate"]!, 1);
+
+  // 4 block = counter 512 ≥ 480 = due
+  for (let b = 0; b < 4; b++) {
+    proc();
+  }
+  expect(sharedView[0]).toBe(1);
+});
+
+test("publish scheduler: 2 publish slot は 独 立 counter / version", async () => {
+  // 1 つ目 = rateFps 30 (threshold 1600)、 2 つ目 = rateFps 60 (threshold 800)
+  // 13 block 走 ら せ る と:
+  // - slot1 = 1664 → due 1、 counter 64、 version 1
+  // - slot2 = 7 due (= 800 / 128 = 6.25、 7 block 目 で 896 ≥ 800、 13 block 目 で 1664 → 800 = 864 → 64)
+  //   詳 細: block 7 で counter 896 ≥ 800 → due 1、 counter 96
+  //         block 14 までは = 13 block 目 = counter 96 + 6 × 128 = 864 ≥ 800 → due 2、 counter 64
+  const graph: CapturedGraph = {
+    declarations: [
+      {
+        kind: "state",
+        name: "slow",
+        type: "f32",
+        initial: 0,
+        userNamed: true,
+        publish: { rateFps: 30 },
+      },
+      {
+        kind: "state",
+        name: "fast",
+        type: "f32",
+        initial: 0,
+        userNamed: true,
+        publish: { rateFps: 60 },
+      },
+    ],
+    statements: [],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay, { sampleRate: 48000 });
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  const slowCounter = new Int32Array(memory.buffer, lay.regions.publishCounters.slots["slow"]!, 2);
+  const fastCounter = new Int32Array(memory.buffer, lay.regions.publishCounters.slots["fast"]!, 2);
+
+  for (let b = 0; b < 13; b++) {
+    proc();
+  }
+  // slow (rateFps 30、 threshold 1600): version 1、 counter 64
+  expect(slowCounter[1]).toBe(1);
+  expect(slowCounter[0]).toBe(64);
+  // fast (rateFps 60、 threshold 800): block 7 で due 1、 block 13 で due 2 (= counter 96 + 6×128 = 864 → 64)
+  expect(fastCounter[1]).toBe(2);
+  expect(fastCounter[0]).toBe(64);
+});
+
+test("publish scheduler: threshold round 0 で 毎 block due", async () => {
+  // sampleRate 100、 rateFps 1000 → threshold = round(0.1) = 0
+  // counter 加 算 後 = 128 ≥ 0 = 毎 block due、 counter -= 0 = 128 残 す = 次 block も 毎 度 due
+  const graph: CapturedGraph = {
+    declarations: [
+      {
+        kind: "state",
+        name: "x",
+        type: "f32",
+        initial: 0,
+        userNamed: true,
+        publish: { rateFps: 1000 },
+      },
+    ],
+    statements: [],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay, { sampleRate: 100 });
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  const counterView = new Int32Array(memory.buffer, lay.regions.publishCounters.slots["x"]!, 2);
+
+  // 5 block 走 ら せ る = 毎 度 due
+  for (let b = 0; b < 5; b++) {
+    proc();
+  }
+  // counter: 各 block で 128 ≥ 0 = due → counter -= 0 = 128 → 次 block も同 = 5 度 due、 counter 128
+  // version = 5
+  expect(counterView[1]).toBe(5);
+});
+
+test("publish scheduler: sampleRate option 反 映 (= threshold が sampleRate に 応 じ て 変 化)", async () => {
+  // 同 processor で sampleRate 48000 vs 96000 = threshold 1600 vs 3200
+  const graph: CapturedGraph = {
+    declarations: [
+      {
+        kind: "state",
+        name: "x",
+        type: "f32",
+        initial: 0,
+        userNamed: true,
+        publish: { rateFps: 30 },
+      },
+    ],
+    statements: [],
+  };
+  const lay = layout(graph);
+
+  // sampleRate 48000 → threshold 1600 → 13 block で due
+  const wasm48 = await emit(graph, lay, { sampleRate: 48000 });
+  const mod48 = await WebAssembly.compile(wasm48.buffer as ArrayBuffer);
+  const inst48 = await WebAssembly.instantiate(mod48);
+  const proc48 = inst48.exports["process"] as () => void;
+  const counter48 = new Int32Array(
+    (inst48.exports["memory"] as WebAssembly.Memory).buffer,
+    lay.regions.publishCounters.slots["x"]!,
+    2,
+  );
+  for (let b = 0; b < 13; b++) proc48();
+  expect(counter48[1]).toBe(1); // version = 1
+
+  // sampleRate 96000 → threshold 3200 → 25 block で due
+  const wasm96 = await emit(graph, lay, { sampleRate: 96000 });
+  const mod96 = await WebAssembly.compile(wasm96.buffer as ArrayBuffer);
+  const inst96 = await WebAssembly.instantiate(mod96);
+  const proc96 = inst96.exports["process"] as () => void;
+  const counter96 = new Int32Array(
+    (inst96.exports["memory"] as WebAssembly.Memory).buffer,
+    lay.regions.publishCounters.slots["x"]!,
+    2,
+  );
+  // 13 block では due ナ シ (= counter 1664 < 3200)
+  for (let b = 0; b < 13; b++) proc96();
+  expect(counter96[1]).toBe(0);
+  // 25 block で due
+  for (let b = 0; b < 12; b++) proc96();
+  expect(counter96[1]).toBe(1);
+});
+
 test("subnormal guard f64: stateLoad source (= cross-precision な し path)", async () => {
   // f64 state ↔ state copy (= literal f64 を 経 由 し な い path、 既 NaN bug
   // と は 別 経 路 で 動 作 確 認)
