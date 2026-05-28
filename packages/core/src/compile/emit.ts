@@ -91,8 +91,13 @@ export function emitExpression(
       );
       return mod.f32.load(0, BYTES_PER_F32, ptr);
     }
+    case "stateLoad":
+      // Phase 7 sub-phase 7.3 で fill (= state region 経 由 で load emit)。
+      // ast.ts に kind 追 加 した sub-phase 7.1 段 階 で は emit 未 fill = throw stub。
+      throw new Error("stateLoad emission not implemented (= sub-phase 7.3)");
     case "audioOutWrite":
     case "forSample":
+    case "stateStore":
       throw new Error(`statement node '${node.kind}' cannot appear in expression position`);
   }
 }
@@ -104,6 +109,11 @@ export function emitStatement(
   binaryen: BinaryenAPI,
 ): number {
   switch (node.kind) {
+    case "stateStore":
+      // Phase 7 sub-phase 7.3 で fill (= state region 経 由 で store emit
+      // + subnormal guard for f32/f64)。 ast.ts に kind 追 加 した sub-
+      // phase 7.1 段 階 で は emit 未 fill = throw stub。
+      throw new Error("stateStore emission not implemented (= sub-phase 7.3)");
     case "audioOutWrite": {
       const portBase = layout.regions.ioScratch.outputs[node.portName];
       if (portBase === undefined) {

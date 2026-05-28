@@ -628,3 +628,65 @@ test("`emit` rejects expression-kind nodes in statement position (= structural g
     /expression node 'literal' cannot appear in statement position/,
   );
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// stateLoad / stateStore = Phase 7 sub-phase 7.1 stub (= ast.ts に kind 追 加、
+// emit は sub-phase 7.3 で fill)。 stub throw + statement / expression
+// position guard が 走 る こ と を 確 認。
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`emitExpression(stateLoad)` throws sub-phase 7.3 stub marker", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  expect(() =>
+    emitExpression({ kind: "stateLoad", type: "f32", name: "x" }, emptyLayout, mod, binaryen),
+  ).toThrow(/sub-phase 7\.3/);
+  mod.dispose();
+});
+
+test("`emitStatement(stateStore)` throws sub-phase 7.3 stub marker", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  expect(() =>
+    emitStatement(
+      {
+        kind: "stateStore",
+        type: "f32",
+        name: "x",
+        value: { kind: "literal", type: "f32", value: 0 },
+      },
+      emptyLayout,
+      mod,
+      binaryen,
+    ),
+  ).toThrow(/sub-phase 7\.3/);
+  mod.dispose();
+});
+
+test("`emitExpression(stateStore)` rejects statement node in expression position", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  expect(() =>
+    emitExpression(
+      {
+        kind: "stateStore",
+        type: "f32",
+        name: "x",
+        value: { kind: "literal", type: "f32", value: 0 },
+      },
+      emptyLayout,
+      mod,
+      binaryen,
+    ),
+  ).toThrow(/statement node 'stateStore' cannot appear in expression position/);
+  mod.dispose();
+});
+
+test("`emitStatement(stateLoad)` rejects expression node in statement position", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  expect(() =>
+    emitStatement({ kind: "stateLoad", type: "f32", name: "x" }, emptyLayout, mod, binaryen),
+  ).toThrow(/expression node 'stateLoad' cannot appear in statement position/);
+  mod.dispose();
+});
