@@ -17,6 +17,7 @@ import type {
   AudioPortDescriptor,
   CompiledProcessor,
   CreateNodeOptions,
+  EventSubscriber,
   InspectionResult,
   NodeErrorEvent,
   ScalarType,
@@ -40,6 +41,31 @@ const notImplemented = (): never => {
 const F32_REINTERPRET_BUF = new ArrayBuffer(4);
 const F32_REINTERPRET_FLOAT = new Float32Array(F32_REINTERPRET_BUF);
 const F32_REINTERPRET_INT = new Int32Array(F32_REINTERPRET_BUF);
+
+/**
+ * event ring slot か ら per-field 値 を reinterpret し て plain JS 値 で 取 る
+ * (= sub-phase 7.6 commit 6)。 wireType は 1 番 目 emit で seal さ れ た 型
+ * (= Q71)、 main 側 で は plain JS 値 (= number / boolean / bigint) と し て 公 開
+ * (= EmitPayload で の Node<T> path は worklet 側 だ け、 main は 自 然 JS)。
+ */
+function readEventFieldValue(
+  view: DataView,
+  byteOffset: number,
+  wireType: ScalarType,
+): number | boolean | bigint {
+  switch (wireType) {
+    case "i32":
+      return view.getInt32(byteOffset, true);
+    case "f32":
+      return view.getFloat32(byteOffset, true);
+    case "f64":
+      return view.getFloat64(byteOffset, true);
+    case "i64":
+      return view.getBigInt64(byteOffset, true);
+    case "bool":
+      return view.getInt32(byteOffset, true) !== 0;
+  }
+}
 
 function convertStateValue(bits: number, type: ScalarType): number | boolean {
   if (type === "f32") {
@@ -356,10 +382,49 @@ export async function createNode<C>(
     }
   }
 
-  // rAF polling driver = 全 publish slot を walk + version 増 加 検 出 で
-  // subscriber 全 員 fire。 subscribe 1 番 目 で 開 始、 全 subscriber unsubscribe
-  // or dispose で 停 止。 main thread の rAF (= 通 常 60 fps) が polling 上 限 =
-  // rateFps が 60 越 え て も UI tick に zip。
+  // event ring surface 構 築 (= sub-phase 7.6 commit 6)。 worklet 側 が SAB に
+  // mirror し た event ring を main 側 rAF polling で drain + 各 slot を per-field
+  // reinterpret し て handler に hand。 head / tail / overflowCount は SAB 内 で
+  // Atomics 経 由 で 観 測、 main 側 の tail は drain ご と に 進 め る (= worklet
+  // 側 は SAB tail を 読 ま な い path = 衝 突 ナ シ)。
+  const eventSurface: Record<string, EventSubscriber<unknown>> = {};
+  const eventSubscribers: Map<string, Set<(payload: Record<string, unknown>) => void>> = new Map();
+  const eventLocalTails: number[] = eventRings.map(() => 0);
+  let eventRingsView: DataView | null = null;
+  let eventRingsHeaderView: Int32Array | null = null;
+  if (eventRingsBuffer !== null && eventRings.length > 0) {
+    eventRingsView = new DataView(eventRingsBuffer);
+    eventRingsHeaderView = new Int32Array(eventRingsBuffer);
+    for (let i = 0; i < eventRings.length; i++) {
+      const ring = eventRings[i]!;
+      const subscribers = new Set<(payload: Record<string, unknown>) => void>();
+      eventSubscribers.set(ring.name, subscribers);
+      const sabOffset = eventRingSabOffsets[i]!;
+      const overflowSabWordIdx = (sabOffset + 8) >>> 2;
+      eventSurface[ring.name] = {
+        on(handler) {
+          subscribers.add(handler as (payload: Record<string, unknown>) => void);
+          ensureRafLoopRunning();
+          return () => {
+            subscribers.delete(handler as (payload: Record<string, unknown>) => void);
+          };
+        },
+        diagnostics: {
+          overflowCount(): number {
+            if (eventRingsHeaderView === null) return 0;
+            return transportMode === "sab"
+              ? Atomics.load(eventRingsHeaderView, overflowSabWordIdx)
+              : eventRingsHeaderView[overflowSabWordIdx]!;
+          },
+        },
+      };
+    }
+  }
+
+  // rAF polling driver = 全 publish slot + 全 event ring を walk。 publish は
+  // version 増 加 検 出 で subscriber fire、 event は head が main local tail を
+  // 越 え た 分 を drain + per-slot handler fire。 subscribe 1 番 目 で 開 始、
+  // 全 subscriber unsubscribe or dispose で 停 止 (= 既 rAF lifecycle と zip)。
   function pollPublishSlots(): void {
     if (publishSharedView === null) return;
     for (let i = 0; i < publishSlots.length; i++) {
@@ -389,9 +454,58 @@ export async function createNode<C>(
     }
   }
 
+  function pollEventRings(): void {
+    if (eventRingsView === null || eventRingsHeaderView === null) return;
+    for (let i = 0; i < eventRings.length; i++) {
+      const ring = eventRings[i]!;
+      const sabOffset = eventRingSabOffsets[i]!;
+      const headSabWordIdx = sabOffset >>> 2;
+      const currentHead =
+        transportMode === "sab"
+          ? Atomics.load(eventRingsHeaderView, headSabWordIdx)
+          : eventRingsHeaderView[headSabWordIdx]!;
+      // worklet 側 で drop-oldest 発 動 → SAB tail 進 ん で main local tail を 越 え
+      // て いる 可 能 性 = max(localTail, sabTail) で 巻 き 直 し し て drain。
+      const tailSabWordIdx = headSabWordIdx + 1;
+      const sabTail =
+        transportMode === "sab"
+          ? Atomics.load(eventRingsHeaderView, tailSabWordIdx)
+          : eventRingsHeaderView[tailSabWordIdx]!;
+      const localTail = eventLocalTails[i]!;
+      let tail = localTail < sabTail ? sabTail : localTail;
+      if (tail === currentHead) continue;
+      const subscribers = eventSubscribers.get(ring.name);
+      const slotsBase = sabOffset + 12;
+      while (tail !== currentHead) {
+        const slotIdx = tail % ring.capacity;
+        const slotByteOffset = slotsBase + slotIdx * ring.slotSize;
+        if (subscribers !== undefined && subscribers.size > 0) {
+          const payload: Record<string, unknown> = {};
+          for (const field of ring.fields) {
+            const fieldByteOffset = slotByteOffset + field.offsetInSlot;
+            payload[field.name] = readEventFieldValue(
+              eventRingsView,
+              fieldByteOffset,
+              field.wireType,
+            );
+          }
+          for (const handler of subscribers) {
+            try {
+              handler(payload);
+            } catch (err) {
+              console.error("unworklet: event handler threw", err);
+            }
+          }
+        }
+        tail += 1;
+      }
+      eventLocalTails[i] = tail;
+    }
+  }
+
   function ensureRafLoopRunning(): void {
     if (rafHandle !== null || disposed) return;
-    if (publishSharedView === null) return;
+    if (publishSharedView === null && eventRingsView === null) return;
     const raf = (globalThis as { requestAnimationFrame?: (cb: () => void) => number })
       .requestAnimationFrame;
     if (!raf) return;
@@ -400,6 +514,7 @@ export async function createNode<C>(
     // cancel + 再 schedule path ナ シ = defensive disposed check 不 要。
     const tick = (): void => {
       pollPublishSlots();
+      pollEventRings();
       rafHandle = raf(tick);
     };
     rafHandle = raf(tick);
@@ -569,7 +684,7 @@ export async function createNode<C>(
     outputs: buildOutputs(node, outputs) as UnworkletNode<C>["outputs"],
     params,
     state: stateSurface,
-    events: {},
+    events: eventSurface,
     messages: {},
     midi: {},
     diagnostics: { transport: transportMode },
@@ -582,6 +697,8 @@ export async function createNode<C>(
       node.port.removeEventListener("message", onErrorMessage);
       node.removeEventListener("processorerror", onErrorProcessor);
       errorSubscribers.clear();
+      for (const subs of stateSubscribers.values()) subs.clear();
+      for (const subs of eventSubscribers.values()) subs.clear();
       // Cut each input proxy's outgoing edge to `node` so audio stops flowing
       // through the disposed processor。 Upstream sources connected by the
       // user to `node.inputs.<name>` are their own to disconnect — unworklet

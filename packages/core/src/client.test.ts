@@ -2004,3 +2004,319 @@ test("onError 1 番 目 subscriber が throw し て も pending sab-unavailable
     h.cleanup();
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// node.events.<name>.on / diagnostics (= sub-phase 7.6 commit 6)
+//
+// worklet → main moment-in-time delivery 経 路 の main 側 surface。 既 state
+// subscribe path (= rAF polling) と zip path で SAB から drain、 各 slot を
+// per-field reinterpret し て plain JS 値 で handler に hand。
+// ─────────────────────────────────────────────────────────────────────────
+
+const peakEventRing = {
+  name: "peak",
+  wasmRingBase: 0,
+  capacity: 16,
+  slotSize: 8,
+  fields: [
+    { name: "atSample", wireType: "i32" as const, offsetInSlot: 0, byteSize: 4 },
+    { name: "level", wireType: "f32" as const, offsetInSlot: 4, byteSize: 4 },
+  ],
+};
+
+test("node.events.<name>.on: subscribe + emit simulation で rAF tick で handler fire", async () => {
+  const raf = installRafMock();
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ eventRings: [peakEventRing] })),
+      h.fireReady,
+    );
+    const eventBuf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .eventRingsBuffer as SharedArrayBuffer;
+    const calls: Array<{ atSample: number; level: number }> = [];
+    node.events["peak"]!.on((p) => calls.push(p as { atSample: number; level: number }));
+
+    // head = 0 = drain ナ シ
+    raf.flush();
+    expect(calls).toEqual([]);
+
+    // worklet emit を simulate: head = 1, slot 0 = atSample 5 / level 0.75
+    const header = new Int32Array(eventBuf, 0, 3);
+    const slot0 = new DataView(eventBuf, 12);
+    slot0.setInt32(0, 5, true);
+    slot0.setFloat32(4, 0.75, true);
+    Atomics.store(header, 0, 1);
+    raf.flush();
+    expect(calls).toEqual([{ atSample: 5, level: 0.75 }]);
+
+    // 2 emit 目: head = 2, slot 1 = atSample 7 / level 0.5
+    slot0.setInt32(8, 7, true);
+    slot0.setFloat32(12, 0.5, true);
+    Atomics.store(header, 0, 2);
+    raf.flush();
+    expect(calls).toEqual([
+      { atSample: 5, level: 0.75 },
+      { atSample: 7, level: 0.5 },
+    ]);
+  } finally {
+    h.cleanup();
+    raf.restore();
+  }
+});
+
+test("node.events.<name>.on: 多 重 subscribe = registration order で fire", async () => {
+  const raf = installRafMock();
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ eventRings: [peakEventRing] })),
+      h.fireReady,
+    );
+    const eventBuf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .eventRingsBuffer as SharedArrayBuffer;
+    const order: string[] = [];
+    node.events["peak"]!.on(() => order.push("a"));
+    node.events["peak"]!.on(() => order.push("b"));
+
+    const header = new Int32Array(eventBuf, 0, 3);
+    const slot0 = new DataView(eventBuf, 12);
+    slot0.setInt32(0, 0, true);
+    slot0.setFloat32(4, 1, true);
+    Atomics.store(header, 0, 1);
+    raf.flush();
+    expect(order).toEqual(["a", "b"]);
+  } finally {
+    h.cleanup();
+    raf.restore();
+  }
+});
+
+test("node.events.<name>.on: unsubscribe 後 fire ナ シ", async () => {
+  const raf = installRafMock();
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ eventRings: [peakEventRing] })),
+      h.fireReady,
+    );
+    const eventBuf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .eventRingsBuffer as SharedArrayBuffer;
+    const calls: unknown[] = [];
+    const unsub = node.events["peak"]!.on((p) => calls.push(p));
+
+    const header = new Int32Array(eventBuf, 0, 3);
+    const slot0 = new DataView(eventBuf, 12);
+    slot0.setInt32(0, 0, true);
+    slot0.setFloat32(4, 0.1, true);
+    Atomics.store(header, 0, 1);
+    raf.flush();
+    expect(calls.length).toBe(1);
+
+    unsub();
+    slot0.setInt32(8, 1, true);
+    slot0.setFloat32(12, 0.2, true);
+    Atomics.store(header, 0, 2);
+    raf.flush();
+    expect(calls.length).toBe(1); // unsubscribe 後 = fire ナ シ
+  } finally {
+    h.cleanup();
+    raf.restore();
+  }
+});
+
+test("node.events.<name>.diagnostics.overflowCount: SAB から Atomics.load", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ eventRings: [peakEventRing] })),
+      h.fireReady,
+    );
+    const eventBuf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .eventRingsBuffer as SharedArrayBuffer;
+    const header = new Int32Array(eventBuf, 0, 3);
+    expect(node.events["peak"]!.diagnostics.overflowCount()).toBe(0);
+    Atomics.store(header, 2, 42); // overflowCount = 42
+    expect(node.events["peak"]!.diagnostics.overflowCount()).toBe(42);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.events.<name>.on: dispose で 全 subscriber clear + 後 続 fire ナ シ", async () => {
+  const raf = installRafMock();
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ eventRings: [peakEventRing] })),
+      h.fireReady,
+    );
+    const eventBuf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .eventRingsBuffer as SharedArrayBuffer;
+    const calls: unknown[] = [];
+    node.events["peak"]!.on((p) => calls.push(p));
+    node.dispose();
+
+    const header = new Int32Array(eventBuf, 0, 3);
+    const slot0 = new DataView(eventBuf, 12);
+    slot0.setInt32(0, 0, true);
+    slot0.setFloat32(4, 0.1, true);
+    Atomics.store(header, 0, 1);
+    raf.flush();
+    expect(calls).toEqual([]);
+  } finally {
+    h.cleanup();
+    raf.restore();
+  }
+});
+
+test("node.events: event ナ シ processor で 空 object", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    expect(node.events).toEqual({});
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.events.<name>.on: f64 / i64 / bool field を plain JS 値 で 受 領", async () => {
+  const raf = installRafMock();
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const wideRing = {
+      name: "wide",
+      wasmRingBase: 0,
+      capacity: 4,
+      slotSize: 24, // atSample(4) + f64(8) + i64(8) + bool(4) = 24
+      fields: [
+        { name: "atSample", wireType: "i32" as const, offsetInSlot: 0, byteSize: 4 },
+        { name: "amp", wireType: "f64" as const, offsetInSlot: 4, byteSize: 8 },
+        { name: "tick", wireType: "i64" as const, offsetInSlot: 12, byteSize: 8 },
+        { name: "flag", wireType: "bool" as const, offsetInSlot: 20, byteSize: 4 },
+      ],
+    };
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ eventRings: [wideRing] })),
+      h.fireReady,
+    );
+    const eventBuf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .eventRingsBuffer as SharedArrayBuffer;
+    const calls: Array<Record<string, unknown>> = [];
+    node.events["wide"]!.on((p) => calls.push(p as Record<string, unknown>));
+
+    const header = new Int32Array(eventBuf, 0, 3);
+    const slot0 = new DataView(eventBuf, 12);
+    slot0.setInt32(0, 9, true); // atSample
+    slot0.setFloat64(4, 1.5, true); // amp
+    slot0.setBigInt64(12, 42n, true); // tick
+    slot0.setInt32(20, 1, true); // flag = true
+    Atomics.store(header, 0, 1);
+    raf.flush();
+    expect(calls).toEqual([{ atSample: 9, amp: 1.5, tick: 42n, flag: true }]);
+  } finally {
+    h.cleanup();
+    raf.restore();
+  }
+});
+
+test("node.events.<name>.on: postMessage transport で drain + Atomics ナ シ で 動 く", async () => {
+  const raf = installRafMock();
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ eventRings: [peakEventRing] })),
+      h.fireReady,
+    );
+    const eventBuf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .eventRingsBuffer as ArrayBuffer;
+    const calls: unknown[] = [];
+    node.events["peak"]!.on((p) => calls.push(p));
+    const header = new Int32Array(eventBuf, 0, 3);
+    const slot0 = new DataView(eventBuf, 12);
+    slot0.setInt32(0, 3, true);
+    slot0.setFloat32(4, 0.5, true);
+    header[0] = 1; // postMessage path = 直 接 write
+    header[2] = 7; // overflowCount = 7
+    raf.flush();
+    expect(calls).toEqual([{ atSample: 3, level: 0.5 }]);
+    expect(node.events["peak"]!.diagnostics.overflowCount()).toBe(7);
+  } finally {
+    h.cleanup();
+    raf.restore();
+  }
+});
+
+test("node.events.<name>.on: drop-oldest 経 由 で sabTail 進 ん だ ら main local tail を 巻 き 直 す", async () => {
+  // worklet 側 で drop-oldest 発 動 → SAB tail が main local tail を 越 え る path =
+  // main 側 で max(localTail, sabTail) で drain 開 始 を 巻 き 直 す。
+  const raf = installRafMock();
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ eventRings: [peakEventRing] })),
+      h.fireReady,
+    );
+    const eventBuf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .eventRingsBuffer as SharedArrayBuffer;
+    const calls: Array<Record<string, unknown>> = [];
+    node.events["peak"]!.on((p) => calls.push(p as Record<string, unknown>));
+    const header = new Int32Array(eventBuf, 0, 3);
+    const slotsView = new DataView(eventBuf, 12);
+    // worklet で 多 数 emit 後 drop-oldest 連 発 = head 20, tail 4 (= 16 個 ring 内 で
+    // 16 個 fill 済 + 4 個 drop)。 main local tail = 0、 sabTail = 4 = 巻 き 直 し で
+    // tail = 4 か ら drain。
+    for (let i = 0; i < 16; i++) {
+      const slotIdx = (4 + i) % 16;
+      slotsView.setInt32(slotIdx * 8, 4 + i, true); // atSample
+      slotsView.setFloat32(slotIdx * 8 + 4, (4 + i) * 0.01, true); // level
+    }
+    Atomics.store(header, 1, 4); // tail = 4
+    Atomics.store(header, 0, 20); // head = 20
+    raf.flush();
+    // 巻 き 直 し で tail = 4 か ら 16 個 drain、 atSample 4..19 の 順
+    expect(calls.length).toBe(16);
+    expect(calls[0]).toEqual({ atSample: 4, level: Math.fround(0.04) });
+    expect(calls[15]).toEqual({ atSample: 19, level: Math.fround(0.19) });
+  } finally {
+    h.cleanup();
+    raf.restore();
+  }
+});
+
+test("node.events.<name>.on: handler が throw して も catch + console.error + 後続 fire 続 行", async () => {
+  const raf = installRafMock();
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  const originalConsoleError = console.error;
+  const errs: unknown[] = [];
+  console.error = (...args: unknown[]) => errs.push(args);
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ eventRings: [peakEventRing] })),
+      h.fireReady,
+    );
+    const eventBuf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .eventRingsBuffer as SharedArrayBuffer;
+    const goodCalls: unknown[] = [];
+    node.events["peak"]!.on(() => {
+      throw new Error("handler blew up");
+    });
+    node.events["peak"]!.on((p) => goodCalls.push(p));
+
+    const header = new Int32Array(eventBuf, 0, 3);
+    const slot0 = new DataView(eventBuf, 12);
+    slot0.setInt32(0, 0, true);
+    slot0.setFloat32(4, 0.1, true);
+    Atomics.store(header, 0, 1);
+    raf.flush();
+    expect(errs.length).toBeGreaterThan(0); // throw が console.error に 流 れ た
+    expect(goodCalls.length).toBe(1); // 後 続 handler は fire 続 行
+  } finally {
+    console.error = originalConsoleError;
+    h.cleanup();
+    raf.restore();
+  }
+});
