@@ -35,6 +35,33 @@ const STATE_SLOT_BYTES: Record<ScalarType, number> = {
 };
 
 /**
+ * `event<T>` ringbuffer slot の per-field wire size (= `02-messaging.md` §5.1)。
+ *
+ * u32 align within the slot (= bool は 1 byte だ が u32 word 占 有 = 4 byte)。
+ * f64 / i64 = 8 byte natural size。 slot 全 体 = atSample + Σ field、 各 field
+ * は declaration 順 に offset packing。
+ */
+const EVENT_FIELD_BYTES: Record<ScalarType, number> = {
+  f32: 4,
+  f64: 8,
+  i32: 4,
+  i64: 8,
+  bool: 4,
+};
+
+/**
+ * `event<T>` ringbuffer の header byte size (= `02-messaging.md` §4 + §5.1)。
+ * `[head:i32, tail:i32, overflowCount:i32]` = 3 × 4 byte = 12 byte。
+ */
+const EVENT_HEADER_BYTES = 12;
+
+/**
+ * `event<T>` ringbuffer の atSample field byte size (= `02-messaging.md` §5.1)。
+ * sample-accurate end-to-end の wire-injected field、 i32 (= 0..127) 固 定。
+ */
+const EVENT_ATSAMPLE_BYTES = 4;
+
+/**
  * publishShared slot の byte size (= Q42 + `02-messaging.md` §5.4)。
  * publish 対 応 type (= f32 / i32 / bool) は 全 て 4 byte 単 一 word で SAB に
  * Atomics.store 可 能。 f64 / i64 は publish 不 可 (= TS / runtime で reject 済)、
@@ -50,6 +77,31 @@ const PUBLISH_SHARED_BYTES = 4;
  */
 const PUBLISH_COUNTERS_BYTES = 8;
 
+/**
+ * Per-event ringbuffer metadata (= `02-messaging.md` §4 header + §5.1 slot)。
+ *
+ * - `base`: ring 全 体 (= header + slot 列) の memory offset
+ * - `capacity`: slot 数 (= `event<T>({ capacity })` の override or default 256)
+ * - `slotSize`: 1 slot の byte 数 (= atSample + Σ field)
+ * - `fields`: slot 内 per-field 内 訳 (= atSample を 含 む、 emit / drain で
+ *   offset 引 き 用)。 field 並 び = atSample 先 頭、 残 り は 1 番 目 emit site
+ *   で seal さ れ た `EventDeclAst.fields` 順
+ *
+ * memory map: `base` ~ `base + 12` = header `[head, tail, overflowCount]`、
+ * `base + 12 + i × slotSize` = i 番 目 slot 先 頭。
+ */
+export type EventRingSlot = {
+  base: number;
+  capacity: number;
+  slotSize: number;
+  fields: Array<{
+    name: string;
+    wireType: ScalarType;
+    offsetInSlot: number;
+    byteSize: number;
+  }>;
+};
+
 export type Layout = {
   regions: {
     states: { base: number; slots: Record<string, number> };
@@ -60,7 +112,7 @@ export type Layout = {
       outputs: Record<string, number>;
       params: Record<string, number>;
     };
-    eventRings: { base: number; slots: Record<string, number> };
+    eventRings: { base: number; slots: Record<string, EventRingSlot> };
     messageRings: { base: number; slots: Record<string, number> };
     payloadContent: { base: number; slots: Record<string, number> };
     midiRings: { base: number; slots: Record<string, number> };
@@ -130,19 +182,53 @@ export function layout(graph: CapturedGraph): Layout {
     }
   }
 
+  // eventRings packing = publishCounters 末 尾 を base に declaration 順 で
+  // per-event ring (= header 12 + capacity × slotSize) を 配 置 (= `02-messaging.md`
+  // §5.1)。 slot 内 = atSample 先 頭 + 1 番 目 emit で seal さ れ た fields 順 で
+  // 並 べ る = u32 align (= bool は 1 byte だ が u32 word 占 有 = 4 byte)。
+  const eventRingsBase = cursor;
+  const eventRingsSlots: Record<string, EventRingSlot> = {};
+  for (const decl of graph.declarations) {
+    if (decl.kind === "event") {
+      const ringBase = cursor;
+      const slotFields: EventRingSlot["fields"] = [
+        { name: "atSample", wireType: "i32", offsetInSlot: 0, byteSize: EVENT_ATSAMPLE_BYTES },
+      ];
+      let fieldCursor = EVENT_ATSAMPLE_BYTES;
+      for (const field of decl.fields) {
+        const byteSize = EVENT_FIELD_BYTES[field.wireType];
+        slotFields.push({
+          name: field.name,
+          wireType: field.wireType,
+          offsetInSlot: fieldCursor,
+          byteSize,
+        });
+        fieldCursor += byteSize;
+      }
+      const slotSize = fieldCursor;
+      eventRingsSlots[decl.name] = {
+        base: ringBase,
+        capacity: decl.capacity,
+        slotSize,
+        fields: slotFields,
+      };
+      cursor += EVENT_HEADER_BYTES + decl.capacity * slotSize;
+    }
+  }
+
   const totalBytes = cursor;
 
-  // sub-phase 7.2 で fill 対 象 外 の 6 region = base 全 て totalBytes (= 連 続)、
+  // sub-phase 7.6 で fill 対 象 外 の 5 region = base 全 て totalBytes (= 連 続)、
   // slots / size 0。 後 続 sub-phase で 該 当 region に slot が 追 加 さ れ た 時
   // 順 次 base を 再 計 算 す る path = layout 関 数 を 拡 張 す る だ け で
-  // 既 ioScratch / states / publishShared / publishCounters 配 置 に は 影 響
-  // ナ シ (= subset → superset 規 約)。
+  // 既 ioScratch / states / publishShared / publishCounters / eventRings 配 置
+  // に は 影 響 ナ シ (= subset → superset 規 約)。
   return {
     regions: {
       states: { base: statesBase, slots: stateSlots },
       buffers: { base: totalBytes, slots: {} },
       ioScratch: { base: ioBase, inputs, outputs, params },
-      eventRings: { base: totalBytes, slots: {} },
+      eventRings: { base: eventRingsBase, slots: eventRingsSlots },
       messageRings: { base: totalBytes, slots: {} },
       payloadContent: { base: totalBytes, slots: {} },
       midiRings: { base: totalBytes, slots: {} },
