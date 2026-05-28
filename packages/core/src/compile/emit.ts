@@ -62,6 +62,15 @@ const PUBLISH_COUNTER_LOCAL = 3;
  */
 const EVENT_HEAD_LOCAL = 4;
 const EVENT_SLOT_PTR_LOCAL = 5;
+/**
+ * `message.onReceive` drain 用 i32 temp local (= sub-phase 7.7c)。
+ * - `MESSAGE_TAIL_LOCAL` = ring tail を 1 度 load + drain loop 内 で += 1
+ *   進 め + drain 末 尾 で SAB に commit。
+ * EVENT_HEAD_LOCAL / EVENT_SLOT_PTR_LOCAL は message ring drain で 共 用
+ * (= forSample / event emit と message drain は 同 process 内 で 排 他 実 行 =
+ *   local lifetime 衝 突 ナ シ)。
+ */
+const MESSAGE_TAIL_LOCAL = 6;
 
 /**
  * Subnormal flush threshold (= Q21、 `04-worklet-runtime.md` §6)。
@@ -96,19 +105,47 @@ export async function emit(
   const pages = Math.max(1, Math.ceil(layout.totalBytes / PAGE_BYTES));
   mod.setMemory(pages, pages, "memory");
 
-  const statements = graph.statements.map((s) => emitStatement(s, layout, mod, binaryen));
+  // Q38-b 規 範: 全 onReceive handler は per-block top / forSample よ り 先 に drain。
+  // source order と zip し な い = framework が 「messageOnReceive 集 め て 先 emit
+  // + 他 statements 後 emit」 で 並 び 替 え (= docs `01-dsl.md` §4.2 + §1 規 定)。
+  // 同 message の 複 数 onReceive registration は 1 つ の drain loop に 集 約 +
+  // 各 slot で 全 registration body を registration order で 連 続 fire (= Q38-c)。
+  const onReceiveByMessage = new Map<string, AstNode[]>();
+  const otherStmts: AstNode[] = [];
+  for (const s of graph.statements) {
+    if (s.kind === "messageOnReceive") {
+      const merged = onReceiveByMessage.get(s.name) ?? [];
+      merged.push(...s.body);
+      onReceiveByMessage.set(s.name, merged);
+    } else {
+      otherStmts.push(s);
+    }
+  }
+  const onReceiveEmits = [...onReceiveByMessage.entries()].map(([name, body]) =>
+    emitMessageOnReceive({ kind: "messageOnReceive", name, body }, layout, mod, binaryen),
+  );
+  const otherEmits = otherStmts.map((s) => emitStatement(s, layout, mod, binaryen));
   const schedulerBlocks = emitPublishScheduler(graph, layout, sampleRate, mod, binaryen);
-  const body = mod.block(null, [...statements, ...schedulerBlocks]);
+  const body = mod.block(null, [...onReceiveEmits, ...otherEmits, ...schedulerBlocks]);
 
   // function locals = [i32 loop counter, f32 subnormal guard temp, f64 subnormal guard temp,
-  //                    i32 publish counter temp, i32 event head temp, i32 event slot ptr temp]。
-  // event emit が head / slot ptr を 1 度 だ け 評 価 + 各 field store で 再 取 得 path
-  // (= 重 複 evaluation 回 避、 subnormal guard / publish scheduler と 同 軸)。
+  //                    i32 publish counter temp, i32 event head temp, i32 event/message slot ptr temp,
+  //                    i32 message tail temp]。
+  // event emit が head / slot ptr を 1 度 だ け 評 価 + 各 field store で 再 取 得、
+  // message drain が tail を 1 度 load + drain loop で 進 め + commit。
   mod.addFunction(
     "process",
     binaryen.none,
     binaryen.none,
-    [binaryen.i32, binaryen.f32, binaryen.f64, binaryen.i32, binaryen.i32, binaryen.i32],
+    [
+      binaryen.i32,
+      binaryen.f32,
+      binaryen.f64,
+      binaryen.i32,
+      binaryen.i32,
+      binaryen.i32,
+      binaryen.i32,
+    ],
     body,
   );
   mod.addFunctionExport("process", "process");
@@ -145,6 +182,8 @@ function emitPublishScheduler(
     const stateOffset = layout.regions.states.slots[decl.name];
     const sharedOffset = layout.regions.publishShared.slots[decl.name];
     const counterOffset = layout.regions.publishCounters.slots[decl.name];
+    /* v8 ignore next 3 — publish 持 つ state slot は layout で 既 push 済 path =
+       unreachable defensive guard */
     if (stateOffset === undefined || sharedOffset === undefined || counterOffset === undefined) {
       throw new Error(`unknown publish slot: ${decl.name}`);
     }
@@ -296,12 +335,33 @@ export function emitExpression(
       }
     }
     case "messageFieldRead": {
-      // handler body 内 で の payload field access = quantum 開 始 で drained slot
-      // か ら の per-field read。 ringbuffer slot offset / wire 型 解 決 は
-      // sub-phase 7.7c (= drain emit) で fill = ま ず stub throw、 実 装 着 手 前
-      // に message ring drain logic 配 線 が 必 要。
+      // drain loop 内 で MESSAGE_SLOT_PTR (= EVENT_SLOT_PTR_LOCAL 共 用) が
+      // 既 set 済 = local.get 経 由 で 取 + field offset 加 算 で memory.load。
+      const slot = layout.regions.messageRings.slots[node.name];
+      /* v8 ignore next 3 — slot は emitMessageOnReceive で 既 check 済 path =
+         unreachable defensive guard */
+      if (slot === undefined) {
+        throw new Error(`unknown message slot: ${node.name}`);
+      }
+      const field = slot.fields.find((f) => f.name === node.field);
+      /* v8 ignore next 3 — field 名 は capture proxy 経 由 で decl.fields に push 済
+         = unreachable defensive guard */
+      if (field === undefined) {
+        throw new Error(`unknown message field: ${node.name}.${node.field}`);
+      }
+      const ptr = mod.i32.add(
+        mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32),
+        mod.i32.const(field.offsetInSlot),
+      );
+      // Q46 uniform lift で sub-phase 7.7 段 階 は wireType = i32 / bool の み seal、
+      // f32 / f64 / i64 は typed-array path と zip し て 後 続 sub-phase で fill。
+      if (field.wireType === "i32" || field.wireType === "bool") {
+        return mod.i32.load(0, BYTES_PER_I32, ptr);
+      }
+      /* v8 ignore next 3 — Q46 uniform lift path で wireType = i32 / bool だ け
+         seal = unreachable defensive guard */
       throw new Error(
-        `unworklet: messageFieldRead emit not implemented yet (= sub-phase 7.7c で fill)`,
+        `unworklet: unsupported message field wireType "${field.wireType}" (= sub-phase 7.7 段 階 で i32 / bool の み 対 応)`,
       );
     }
     case "audioOutWrite":
@@ -413,6 +473,10 @@ export function emitStatement(
     }
     case "eventEmitIf":
       return emitEventEmitIf(node, layout, mod, binaryen);
+    /* v8 ignore next 2 — messageOnReceive は emit top-level で 並 び 替 え 経 由 で
+       emitMessageOnReceive を 直 接 呼 ぶ path = emitStatement 経 由 hit ナ シ */
+    case "messageOnReceive":
+      return emitMessageOnReceive(node, layout, mod, binaryen);
     default:
       throw new Error(`expression node '${node.kind}' cannot appear in statement position`);
   }
@@ -607,4 +671,97 @@ function emitEventEmitIf(
   ]);
 
   return mod.if(emitExpression(node.cond, layout, mod, binaryen), fireBlock);
+}
+
+/**
+ * `message.onReceive` drain emit (= sub-phase 7.7c、 `02-messaging.md` §5.3)。
+ *
+ * per-quantum 開 始 で 該 当 ring を drain (= tail → head walk + 各 slot で
+ * handler body を 走 ら す)。 drain 末 尾 で tail を head に commit (= main 側 が
+ * Atomics.store(head) で push し た 全 slot を 1 quantum 内 で 完 全 消 化)。
+ *
+ * loop 形:
+ *   $tail = load(base + 4)
+ *   $head = load(base + 0)
+ *   block break
+ *     loop continue
+ *       if ($tail == $head) br break
+ *       $slot_ptr = base + 12 + ($tail % capacity) × slotSize
+ *       <handler body>  (messageFieldRead は $slot_ptr + field.offsetInSlot)
+ *       $tail += 1
+ *       br continue
+ *   store(base + 4, $tail)
+ */
+function emitMessageOnReceive(
+  node: AstNode & { kind: "messageOnReceive" },
+  layout: Layout,
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): number {
+  const slot = layout.regions.messageRings.slots[node.name];
+  if (slot === undefined) {
+    throw new Error(`unknown message slot: ${node.name}`);
+  }
+  const ringBase = slot.base;
+  const capacity = slot.capacity;
+  const slotSize = slot.slotSize;
+  const slotsBase = ringBase + EVENT_HEADER_BYTES;
+  const HEAD_OFFSET = 0;
+  const TAIL_OFFSET = 4;
+
+  // handler body emit (= messageFieldRead は $slot_ptr 経 由 で hit、 既 emit
+  // 経 路 で 解 決 さ れ る)。
+  const bodyEmits = node.body.map((s) => emitStatement(s, layout, mod, binaryen));
+
+  return mod.block(null, [
+    mod.local.set(
+      MESSAGE_TAIL_LOCAL,
+      mod.i32.load(0, BYTES_PER_I32, mod.i32.const(ringBase + TAIL_OFFSET)),
+    ),
+    mod.local.set(
+      EVENT_HEAD_LOCAL,
+      mod.i32.load(0, BYTES_PER_I32, mod.i32.const(ringBase + HEAD_OFFSET)),
+    ),
+    mod.block("break", [
+      mod.loop(
+        "continue",
+        mod.block(null, [
+          mod.br_if(
+            "break",
+            mod.i32.eq(
+              mod.local.get(MESSAGE_TAIL_LOCAL, binaryen.i32),
+              mod.local.get(EVENT_HEAD_LOCAL, binaryen.i32),
+            ),
+          ),
+          mod.local.set(
+            EVENT_SLOT_PTR_LOCAL,
+            mod.i32.add(
+              mod.i32.const(slotsBase),
+              slotSize === 0
+                ? mod.i32.const(0)
+                : mod.i32.mul(
+                    mod.i32.rem_u(
+                      mod.local.get(MESSAGE_TAIL_LOCAL, binaryen.i32),
+                      mod.i32.const(capacity),
+                    ),
+                    mod.i32.const(slotSize),
+                  ),
+            ),
+          ),
+          ...bodyEmits,
+          mod.local.set(
+            MESSAGE_TAIL_LOCAL,
+            mod.i32.add(mod.local.get(MESSAGE_TAIL_LOCAL, binaryen.i32), mod.i32.const(1)),
+          ),
+          mod.br("continue"),
+        ]),
+      ),
+    ]),
+    mod.i32.store(
+      0,
+      BYTES_PER_I32,
+      mod.i32.const(ringBase + TAIL_OFFSET),
+      mod.local.get(MESSAGE_TAIL_LOCAL, binaryen.i32),
+    ),
+  ]);
 }

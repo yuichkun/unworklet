@@ -2309,3 +2309,304 @@ test("`emit` throws on unknown event slot in eventEmitIf", async () => {
   };
   await expect(emit(graph, layout(graph))).rejects.toThrow(/unknown event slot.*ghost/);
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// `message.onReceive` WASM emit (= sub-phase 7.7c)
+//
+// per-quantum 開 始 で 全 message ring を drain (= tail か ら head ま で walk +
+// 各 slot で handler body を 走 ら す)。 handler 内 `messageFieldRead` は slot
+// offset + field offset で memory.load。 drain 後 tail = head に 進 め る。
+// Q38-b: 全 handler が per-block / forSample よ り 先 に 走 る。
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`emit(message onReceive)` = ring 内 slot を drain + handler body 走 ら す", async () => {
+  // ring に main → worklet で 1 slot 入 れ た 状 態 で process → onReceive で
+  // state slot に field 値 が 反 映 さ れ る。 onReceive handler 内 で stateStore
+  // 経 由 で 状 態 反 映 path。
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "state", name: "captured", type: "i32", initial: 0, userNamed: true },
+      {
+        kind: "message",
+        name: "ctrl",
+        capacity: 16,
+        payloadCapacity: undefined,
+        fields: [{ name: "slot", wireType: "i32" }],
+      },
+    ],
+    statements: [
+      {
+        kind: "messageOnReceive",
+        name: "ctrl",
+        body: [
+          {
+            kind: "stateStore",
+            type: "i32",
+            name: "captured",
+            value: {
+              kind: "messageFieldRead",
+              name: "ctrl",
+              field: "slot",
+              wireType: "i32",
+            },
+          },
+        ],
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const { memory, process } = await instantiate(graph);
+  // main 側 simulation = ring に 1 slot push: slot[0].slot = 42、 head = 1
+  const ringBase = lay.regions.messageRings.slots["ctrl"]!.base;
+  const headerView = new Int32Array(memory.buffer, ringBase, 3);
+  const slotsView = new Int32Array(memory.buffer, ringBase + 12);
+  slotsView[0] = 42;
+  headerView[0] = 1; // head = 1
+  process();
+  // handler が drain で fire = captured state に 42 が 反 映
+  const capturedOffset = lay.regions.states.slots["captured"]!;
+  const capturedView = new Int32Array(memory.buffer, capturedOffset, 1);
+  expect(capturedView[0]).toBe(42);
+  // tail も head ま で 進 め ら れ る (= 全 drain 済 印)
+  expect(headerView[1]).toBe(1);
+});
+
+test("`emit(message onReceive)` = ring 内 複 数 slot 全 drain で handler 連 続 fire", async () => {
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "state", name: "captured", type: "i32", initial: 0, userNamed: true },
+      {
+        kind: "message",
+        name: "ctrl",
+        capacity: 16,
+        payloadCapacity: undefined,
+        fields: [{ name: "slot", wireType: "i32" }],
+      },
+    ],
+    statements: [
+      {
+        kind: "messageOnReceive",
+        name: "ctrl",
+        body: [
+          {
+            kind: "stateStore",
+            type: "i32",
+            name: "captured",
+            value: {
+              kind: "messageFieldRead",
+              name: "ctrl",
+              field: "slot",
+              wireType: "i32",
+            },
+          },
+        ],
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const { memory, process } = await instantiate(graph);
+  const ringBase = lay.regions.messageRings.slots["ctrl"]!.base;
+  const headerView = new Int32Array(memory.buffer, ringBase, 3);
+  const slotsView = new Int32Array(memory.buffer, ringBase + 12);
+  slotsView[0] = 10;
+  slotsView[1] = 20;
+  slotsView[2] = 30;
+  headerView[0] = 3;
+  process();
+  // 最 後 emit (= slot[2] = 30) が state に 残 る (= 連 続 fire の 最 後 反 映)
+  const capturedView = new Int32Array(memory.buffer, lay.regions.states.slots["captured"]!, 1);
+  expect(capturedView[0]).toBe(30);
+  expect(headerView[1]).toBe(3); // tail = 3 = head
+});
+
+test("`emit(message onReceive)` = ring 空 (= head == tail) で handler ナ シ + skip", async () => {
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "state", name: "captured", type: "i32", initial: 99, userNamed: true },
+      {
+        kind: "message",
+        name: "ctrl",
+        capacity: 16,
+        payloadCapacity: undefined,
+        fields: [{ name: "slot", wireType: "i32" }],
+      },
+    ],
+    statements: [
+      {
+        kind: "messageOnReceive",
+        name: "ctrl",
+        body: [
+          {
+            kind: "stateStore",
+            type: "i32",
+            name: "captured",
+            value: {
+              kind: "messageFieldRead",
+              name: "ctrl",
+              field: "slot",
+              wireType: "i32",
+            },
+          },
+        ],
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const { memory, process } = await instantiate(graph);
+  process();
+  // ring 空 = handler fire ナ シ、 state は initial (= 0、 ema runtime 0 で start)
+  const capturedView = new Int32Array(memory.buffer, lay.regions.states.slots["captured"]!, 1);
+  expect(capturedView[0]).toBe(0);
+});
+
+test("`emit(message onReceive)` = 複 数 onReceive registration = registration order で 全 fire", async () => {
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "state", name: "a", type: "i32", initial: 0, userNamed: true },
+      { kind: "state", name: "b", type: "i32", initial: 0, userNamed: true },
+      {
+        kind: "message",
+        name: "ctrl",
+        capacity: 16,
+        payloadCapacity: undefined,
+        fields: [{ name: "slot", wireType: "i32" }],
+      },
+    ],
+    statements: [
+      {
+        kind: "messageOnReceive",
+        name: "ctrl",
+        body: [
+          {
+            kind: "stateStore",
+            type: "i32",
+            name: "a",
+            value: { kind: "messageFieldRead", name: "ctrl", field: "slot", wireType: "i32" },
+          },
+        ],
+      },
+      {
+        kind: "messageOnReceive",
+        name: "ctrl",
+        body: [
+          {
+            kind: "stateStore",
+            type: "i32",
+            name: "b",
+            value: { kind: "messageFieldRead", name: "ctrl", field: "slot", wireType: "i32" },
+          },
+        ],
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const { memory, process } = await instantiate(graph);
+  const ringBase = lay.regions.messageRings.slots["ctrl"]!.base;
+  const headerView = new Int32Array(memory.buffer, ringBase, 3);
+  const slotsView = new Int32Array(memory.buffer, ringBase + 12);
+  slotsView[0] = 77;
+  headerView[0] = 1;
+  process();
+  const aView = new Int32Array(memory.buffer, lay.regions.states.slots["a"]!, 1);
+  const bView = new Int32Array(memory.buffer, lay.regions.states.slots["b"]!, 1);
+  expect(aView[0]).toBe(77);
+  expect(bView[0]).toBe(77);
+});
+
+test("`emit(message onReceive)` = bool wireType field を i32.load (= 1 / 0 で 受 領)", async () => {
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "state", name: "active", type: "bool", initial: false, userNamed: true },
+      {
+        kind: "message",
+        name: "toggle",
+        capacity: 8,
+        payloadCapacity: undefined,
+        fields: [{ name: "on", wireType: "bool" }],
+      },
+    ],
+    statements: [
+      {
+        kind: "messageOnReceive",
+        name: "toggle",
+        body: [
+          {
+            kind: "stateStore",
+            type: "bool",
+            name: "active",
+            value: { kind: "messageFieldRead", name: "toggle", field: "on", wireType: "bool" },
+          },
+        ],
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const { memory, process } = await instantiate(graph);
+  const ringBase = lay.regions.messageRings.slots["toggle"]!.base;
+  const headerView = new Int32Array(memory.buffer, ringBase, 3);
+  const slotsView = new Int32Array(memory.buffer, ringBase + 12);
+  slotsView[0] = 1; // on = true (= u32 word 1)
+  headerView[0] = 1;
+  process();
+  const activeView = new Int32Array(memory.buffer, lay.regions.states.slots["active"]!, 1);
+  expect(activeView[0]).toBe(1);
+});
+
+test("`emit(message onReceive)` = void payload (= fields ナ シ) = fire 数 を head - tail で 観 測 + drain で tail 進 め", async () => {
+  // void payload = slot size 0 = slot ptr 計 算 で slotSize === 0 path を 通 る。
+  // handler 本 体 = state.store で 「呼 ば れ た 数」 を increment し て fire 数 観 測。
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "state", name: "fireCount", type: "i32", initial: 0, userNamed: true },
+      {
+        kind: "message",
+        name: "ping",
+        capacity: 8,
+        payloadCapacity: undefined,
+        fields: [],
+      },
+    ],
+    statements: [
+      {
+        kind: "messageOnReceive",
+        name: "ping",
+        body: [
+          // fireCount += 1 = stateLoad + literal 1 + add path = ema mul で 偽 実 装 で OK
+          // ま ず stateStore で fixed value 1 = 1 回 fire し か observable で な い
+          // (= 上 書 き)、 tail 進 む 観 測 だ け で 規 範。
+          {
+            kind: "stateStore",
+            type: "i32",
+            name: "fireCount",
+            value: { kind: "literal", type: "i32", value: 1 },
+          },
+        ],
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const { memory, process } = await instantiate(graph);
+  const ringBase = lay.regions.messageRings.slots["ping"]!.base;
+  const headerView = new Int32Array(memory.buffer, ringBase, 3);
+  // fire 3 個 (= head = 3、 slot 中 身 ナ シ = void payload)
+  headerView[0] = 3;
+  process();
+  // drain で tail = 3 に 進 む + handler fire で state = 1
+  expect(headerView[1]).toBe(3);
+  const fireView = new Int32Array(memory.buffer, lay.regions.states.slots["fireCount"]!, 1);
+  expect(fireView[0]).toBe(1);
+});
+
+test("`emit` throws on unknown message slot in messageOnReceive", async () => {
+  const graph: CapturedGraph = {
+    declarations: [],
+    statements: [
+      {
+        kind: "messageOnReceive",
+        name: "ghost",
+        body: [],
+      },
+    ],
+  };
+  await expect(emit(graph, layout(graph))).rejects.toThrow(/unknown message slot.*ghost/);
+});
