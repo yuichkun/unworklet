@@ -721,7 +721,7 @@ const onPaneClick = (): void => {
 }
 
 .summary-row dd {
-  margin: 0;
+  margin: 0 2rem;
   font-size: 12px;
   line-height: 1.4;
   color: var(--u-text);
@@ -760,13 +760,14 @@ const onPaneClick = (): void => {
 
 .section-link {
   margin: 8px 0 0;
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--u-text-dim);
+  opacity: 0.7;
 }
 
 .section-link strong {
-  color: var(--u-text);
-  font-weight: 600;
+  color: var(--u-text-muted);
+  font-weight: 500;
 }
 
 .issue-list {
