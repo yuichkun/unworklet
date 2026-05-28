@@ -747,9 +747,10 @@ const onSnapshotBackdropClick = (event: MouseEvent): void => {
 .summary-list {
   margin: 0;
   display: grid;
-  grid-template-columns: max-content 1fr;
+  grid-template-columns: 80px 1fr;
   column-gap: 14px;
-  row-gap: 4px;
+  row-gap: 6px;
+  align-items: baseline;
 }
 
 .summary-row {
@@ -757,14 +758,16 @@ const onSnapshotBackdropClick = (event: MouseEvent): void => {
 }
 
 .summary-row dt {
-  font-size: 11px;
-  color: var(--u-text-dim);
-  text-align: right;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--u-text-muted);
+  /* text-align: right; */
 }
 
 .summary-row dd {
   margin: 0;
   font-size: 12px;
+  line-height: 1.4;
   color: var(--u-text);
   display: inline-flex;
   align-items: baseline;
@@ -776,7 +779,7 @@ const onSnapshotBackdropClick = (event: MouseEvent): void => {
 
 .row-muted {
   color: var(--u-text-dim);
-  font-size: 10.5px;
+  font-size: 11px;
 }
 
 .status-pip {
