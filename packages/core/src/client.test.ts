@@ -305,6 +305,18 @@ const makeMockProcessor = (overrides?: {
       byteSize: number;
     }>;
   }>;
+  messageRings?: Array<{
+    name: string;
+    wasmRingBase: number;
+    capacity: number;
+    slotSize: number;
+    fields: Array<{
+      name: string;
+      wireType: "f32" | "f64" | "i32" | "i64" | "bool";
+      offsetInSlot: number;
+      byteSize: number;
+    }>;
+  }>;
 }): CompiledProcessor<unknown> =>
   ({
     graph: {} as never,
@@ -319,6 +331,7 @@ const makeMockProcessor = (overrides?: {
       outputs: overrides?.outputs ?? [{ name: "main", channels: 2 }],
       publishSlots: overrides?.publishSlots ?? [],
       eventRings: overrides?.eventRings ?? [],
+      messageRings: overrides?.messageRings ?? [],
       moduleUrl:
         overrides && "moduleUrl" in overrides ? overrides.moduleUrl : "/_assets/x.worklet.js",
       wasmUrl: overrides && "wasmUrl" in overrides ? overrides.wasmUrl : "/_assets/x.wasm",
@@ -1380,6 +1393,85 @@ test("createNode with publishSlots + crossOriginIsolated = SAB allocate + transp
     expect((opts.publishBuffer as SharedArrayBuffer).byteLength).toBe(12);
     expect(opts.transport).toBe("sab");
     expect(node.diagnostics.transport).toBe("sab");
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode with messageRings + crossOriginIsolated = SAB allocate + messageRings hand", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const messageRingsFixture = [
+      {
+        name: "preset",
+        wasmRingBase: 0,
+        capacity: 16,
+        slotSize: 4,
+        fields: [{ name: "slot", wireType: "i32" as const, offsetInSlot: 0, byteSize: 4 }],
+      },
+    ];
+    await startCreate(
+      () =>
+        createNode(h.context as never, makeMockProcessor({ messageRings: messageRingsFixture })),
+      h.fireReady,
+    );
+    const opts = h.lastNode!.__constructorRecord.options.processorOptions as {
+      messageRingsBuffer: unknown;
+      messageRings: unknown;
+      messageRingSabOffsets: number[];
+      transport: string;
+    };
+    expect(opts.messageRingsBuffer).toBeInstanceOf(SharedArrayBuffer);
+    // ring 1 個 = header 12 + 16 × 4 = 76
+    expect((opts.messageRingsBuffer as SharedArrayBuffer).byteLength).toBe(76);
+    expect(opts.messageRingSabOffsets).toEqual([0]);
+    expect(opts.transport).toBe("sab");
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode without messageRings = processorOptions に messageRingsBuffer hand な し", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    await startCreate(() => createNode(h.context as never, makeMockProcessor()), h.fireReady);
+    const opts = h.lastNode!.__constructorRecord.options.processorOptions as Record<
+      string,
+      unknown
+    >;
+    expect("messageRingsBuffer" in opts).toBe(false);
+    expect("messageRings" in opts).toBe(false);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode with messageRings + !crossOriginIsolated = fallback ArrayBuffer", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({
+            messageRings: [
+              {
+                name: "preset",
+                wasmRingBase: 0,
+                capacity: 16,
+                slotSize: 4,
+                fields: [{ name: "slot", wireType: "i32" as const, offsetInSlot: 0, byteSize: 4 }],
+              },
+            ],
+          }),
+        ),
+      h.fireReady,
+    );
+    const opts = h.lastNode!.__constructorRecord.options.processorOptions as {
+      messageRingsBuffer: unknown;
+    };
+    expect(opts.messageRingsBuffer).toBeInstanceOf(ArrayBuffer);
+    expect(opts.messageRingsBuffer).not.toBeInstanceOf(SharedArrayBuffer);
   } finally {
     h.cleanup();
   }

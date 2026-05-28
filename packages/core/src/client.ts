@@ -309,6 +309,7 @@ export async function createNode<C>(
   const outputs = ns.outputs;
   const publishSlots = ns.publishSlots;
   const eventRings = ns.eventRings;
+  const messageRings = ns.messageRings;
 
   // transport mode 検 出 (= sub-phase 7.4)。 publishSlots ゼ ロ で も transport は
   // 計 算 す る (= 後 続 で event<T> / message<T> / midi の SAB ringbuffer path で も
@@ -345,6 +346,23 @@ export async function createNode<C>(
     eventRingsBuffer = sabAvailable
       ? new SharedArrayBuffer(eventRingsByteLength)
       : new ArrayBuffer(eventRingsByteLength);
+  }
+
+  // message ring buffer SAB allocate (= sub-phase 7.7d)。 event ring と zip pattern。
+  // event = worklet → main、 message = main → worklet で push 方 向 が 逆 = main 側
+  // が SAB に push + worklet 側 が SAB → WASM mirror で drain (= sub-phase 7.7e
+  // で main sender、 sub-phase 7.7d で worklet side mirror logic を fill)。
+  let messageRingsByteLength = 0;
+  const messageRingSabOffsets: number[] = [];
+  for (const ring of messageRings) {
+    messageRingSabOffsets.push(messageRingsByteLength);
+    messageRingsByteLength += 12 + ring.capacity * ring.slotSize;
+  }
+  let messageRingsBuffer: SharedArrayBuffer | ArrayBuffer | null = null;
+  if (messageRingsByteLength > 0) {
+    messageRingsBuffer = sabAvailable
+      ? new SharedArrayBuffer(messageRingsByteLength)
+      : new ArrayBuffer(messageRingsByteLength);
   }
 
   // main 側 state surface 構 築 = publishBuffer を Int32Array view + 各 slot で
@@ -566,6 +584,17 @@ export async function createNode<C>(
             eventRingsBuffer,
             eventRings,
             eventRingSabOffsets,
+            transport: transportMode,
+          }
+        : {}),
+      // message ring あ り の 時 だ け messageRingsBuffer + descriptor + sabOffsets を
+      // hand (= sub-phase 7.7d)。 worklet template の initialize で receive +
+      // per-quantum 開 始 で SAB → WASM mirror logic (= sub-phase 7.7d で fill)。
+      ...(messageRingsBuffer !== null
+        ? {
+            messageRingsBuffer,
+            messageRings,
+            messageRingSabOffsets,
             transport: transportMode,
           }
         : {}),

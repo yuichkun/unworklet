@@ -24,6 +24,7 @@ import type {
   AudioPortDecl,
   CapturedGraph,
   EventDeclAst,
+  MessageDeclAst,
   ParamDecl,
   StateDecl,
 } from "./compile/ast.ts";
@@ -31,6 +32,7 @@ import { layout, type Layout } from "./compile/layout.ts";
 import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
 import type {
   EventRingSlotDescriptor,
+  MessageRingSlotDescriptor,
   PublishSlotDescriptor,
   TransportMode,
   WorkletNamespace,
@@ -63,6 +65,12 @@ export type WorkletMeta = {
    * ring → SAB ring に copy する path で 参 照。
    */
   readonly events: readonly EventDeclAst[];
+  /**
+   * `message<T>` declaration 一 覧 (= sub-phase 7.7)。 declaration 順 で layout
+   * の messageRings slot と zip。 worklet template が per-quantum 開 始 で SAB
+   * ring → WASM ring に mirror する path で 参 照。
+   */
+  readonly messages: readonly MessageDeclAst[];
 };
 
 export function extractWorkletMeta(graph: CapturedGraph): WorkletMeta {
@@ -75,6 +83,7 @@ export function extractWorkletMeta(graph: CapturedGraph): WorkletMeta {
       (d): d is StateDecl => d.kind === "state" && d.publish !== undefined,
     ),
     events: graph.declarations.filter((d): d is EventDeclAst => d.kind === "event"),
+    messages: graph.declarations.filter((d): d is MessageDeclAst => d.kind === "message"),
   };
 }
 
@@ -153,6 +162,20 @@ type WorkletState = {
   readonly eventRingsWasmHeaderViews: readonly Int32Array[];
   readonly eventRingsSabHeaderViews: readonly Int32Array[];
   /**
+   * message ring SAB ↔ WASM mirror meta (= sub-phase 7.7d)。 event ring と zip
+   * pattern、 ま た push 方 向 が 逆 (= main → worklet) = process 開 始 で
+   * SAB → WASM mirror (= main が push し た slot を WASM ring に bulk copy +
+   * head を WASM ring に commit)、 drain 末 尾 で WASM tail を SAB tail に commit
+   * (= main 側 で 「drain 済」 を 観 測)。
+   */
+  readonly messageRingsBuffer: SharedArrayBuffer | ArrayBuffer | null;
+  readonly messageRings: readonly MessageRingSlotDescriptor[];
+  readonly messageRingSabOffsets: readonly number[];
+  readonly messageRingsWasmViews: readonly Uint8Array[];
+  readonly messageRingsSabViews: readonly Uint8Array[];
+  readonly messageRingsWasmHeaderViews: readonly Int32Array[];
+  readonly messageRingsSabHeaderViews: readonly Int32Array[];
+  /**
    * Latched once a WASM trap escapes `state.process()`。 Subsequent quanta
    * emit silence and skip the WASM call so a single trap does not get
    * re-posted every render quantum (= main receives one `wasm-trap` event
@@ -221,6 +244,22 @@ type ProcessorOptionsBag = {
      * worklet template が per-ring の SAB 書 き 込 み base を 取 る path。
      */
     eventRingSabOffsets?: readonly number[];
+    /**
+     * message ring buffer 用 共 有 buffer (= sub-phase 7.7d)。 全 message ring を
+     * 連 続 で 配 置 し た 1 SAB (= main で alloc)、 main 側 が SAB に slot push +
+     * worklet template が per-quantum 開 始 で SAB → WASM ring に mirror (= drain
+     * は WASM 内 で 走 ら す path)。 message ナ シ processor は hand さ れ ない。
+     */
+    messageRingsBuffer?: SharedArrayBuffer | ArrayBuffer;
+    /**
+     * message ring descriptor 配 列 (= declaration 順、 layout の messageRings
+     * slot と zip)。
+     */
+    messageRings?: readonly MessageRingSlotDescriptor[];
+    /**
+     * 各 message ring の SAB 内 offset (= declaration 順、 messageRings と zip)。
+     */
+    messageRingSabOffsets?: readonly number[];
   };
 };
 
@@ -278,6 +317,25 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
     }
     return {
       name: evt.name,
+      wasmRingBase: slot.base,
+      capacity: slot.capacity,
+      slotSize: slot.slotSize,
+      fields: slot.fields,
+    };
+  });
+
+  // messageRings = declaration 順 で per-message descriptor を 構 築 (= sub-phase 7.7d)。
+  // createNode が messageRingsBuffer SAB allocate + worklet template が per-quantum
+  // 開 始 で SAB → WASM mirror で 参 照。
+  const messageRings: MessageRingSlotDescriptor[] = meta.messages.map((msg) => {
+    const slot = lay.regions.messageRings.slots[msg.name];
+    /* v8 ignore next 3 — message declaration が 既 capture 段 階 で layout に push
+       済 = 構 造 上 unreachable defensive guard */
+    if (slot === undefined) {
+      throw new Error(`unworklet: missing layout slot for message "${msg.name}"`);
+    }
+    return {
+      name: msg.name,
       wasmRingBase: slot.base,
       capacity: slot.capacity,
       slotSize: slot.slotSize,
@@ -391,6 +449,34 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         }
       }
 
+      // message ring meta + buffer pre-bind (= sub-phase 7.7d)。 event ring と zip
+      // pattern、 ま た mirror 方 向 が 逆 (= main → worklet で main 側 が SAB に push +
+      // worklet 側 が process 開 始 で SAB → WASM ring に bulk copy + drain 末 尾 で
+      // WASM tail を SAB tail に commit)。
+      const messageRingsBuffer = opts.processorOptions?.messageRingsBuffer ?? null;
+      const messageRings = opts.processorOptions?.messageRings ?? [];
+      const messageRingSabOffsets = opts.processorOptions?.messageRingSabOffsets ?? [];
+      const messageRingsWasmViews: Uint8Array[] = [];
+      const messageRingsSabViews: Uint8Array[] = [];
+      const messageRingsWasmHeaderViews: Int32Array[] = [];
+      const messageRingsSabHeaderViews: Int32Array[] = [];
+      if (messageRingsBuffer !== null) {
+        for (let i = 0; i < messageRings.length; i++) {
+          const ring = messageRings[i]!;
+          const ringTotalBytes = 12 + ring.capacity * ring.slotSize;
+          messageRingsWasmViews.push(
+            new Uint8Array(memory.buffer, ring.wasmRingBase, ringTotalBytes),
+          );
+          messageRingsSabViews.push(
+            new Uint8Array(messageRingsBuffer, messageRingSabOffsets[i]!, ringTotalBytes),
+          );
+          messageRingsWasmHeaderViews.push(new Int32Array(memory.buffer, ring.wasmRingBase, 3));
+          messageRingsSabHeaderViews.push(
+            new Int32Array(messageRingsBuffer, messageRingSabOffsets[i]!, 3),
+          );
+        }
+      }
+
       (self as SelfWithState)[STATE_KEY] = {
         process: procFn,
         audioInputs,
@@ -412,6 +498,13 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         eventRingsSabViews,
         eventRingsWasmHeaderViews,
         eventRingsSabHeaderViews,
+        messageRingsBuffer,
+        messageRings,
+        messageRingSabOffsets,
+        messageRingsWasmViews,
+        messageRingsSabViews,
+        messageRingsWasmHeaderViews,
+        messageRingsSabHeaderViews,
         failed: false,
       };
 
@@ -518,6 +611,31 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       }
     }
 
+    // message ring mirror: main 側 が SAB に push し た slot を WASM ring に
+    // bulk copy + head 反 映 (= sub-phase 7.7d)。 process() 内 の WASM drain
+    // logic が こ の mirror さ れ た slot を 読 ん で handler を fire する path。
+    if (state.messageRingsBuffer !== null) {
+      const wasmViews = state.messageRingsWasmViews;
+      const sabViews = state.messageRingsSabViews;
+      const wasmHeaders = state.messageRingsWasmHeaderViews;
+      const sabHeaders = state.messageRingsSabHeaderViews;
+      const isSab = state.transport === "sab";
+      for (let i = 0; i < wasmViews.length; i++) {
+        wasmViews[i]!.set(sabViews[i]!);
+        if (isSab) {
+          // SAB head を Atomics.load で acquire fence + WASM head に 反 映 (= WASM
+          // drain logic が こ の head を 見 て drain 経 路 走 ら す)。 tail / overflow
+          // も WASM ring に mirror (= WASM 内 の drain は WASM ring を 読 む = SAB
+          // と 完 全 同 期 さ せ る)。
+          const sabH = sabHeaders[i]!;
+          const wasmH = wasmHeaders[i]!;
+          wasmH[0] = Atomics.load(sabH, 0); // head
+          wasmH[1] = Atomics.load(sabH, 1); // tail
+          wasmH[2] = Atomics.load(sabH, 2); // overflowCount
+        }
+      }
+    }
+
     try {
       state.process();
     } catch (err) {
@@ -615,6 +733,25 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       }
     }
 
+    // message ring tail commit (= sub-phase 7.7d): WASM drain で 進 ん だ tail を
+    // SAB に commit (= main 側 が SAB tail を Atomics.load で 「drain 済 ま で」
+    // 観 測 可)。 slot 自 体 は main → worklet 一 方 向 = SAB → WASM mirror で
+    // 既 同 期 済 = WASM → SAB は header だ け commit で OK。
+    if (state.messageRingsBuffer !== null) {
+      const wasmHeaders = state.messageRingsWasmHeaderViews;
+      const sabHeaders = state.messageRingsSabHeaderViews;
+      const isSab = state.transport === "sab";
+      for (let i = 0; i < wasmHeaders.length; i++) {
+        const wasmH = wasmHeaders[i]!;
+        const sabH = sabHeaders[i]!;
+        if (isSab) {
+          Atomics.store(sabH, 1, wasmH[1]!); // tail = drain で 進 ん だ
+        } else {
+          sabH[1] = wasmH[1]!;
+        }
+      }
+    }
+
     return true;
   };
 
@@ -626,5 +763,6 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
     outputs: outputDescriptors,
     publishSlots,
     eventRings,
+    messageRings,
   };
 }

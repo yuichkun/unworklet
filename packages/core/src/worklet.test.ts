@@ -18,7 +18,7 @@ import { expect, test } from "vite-plus/test";
 
 import { compile } from "./compile/index.ts";
 import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
-import { audioInput, audioOutput, event, param } from "./dsl/declarations.ts";
+import { audioInput, audioOutput, event, message, param } from "./dsl/declarations.ts";
 import { forSample } from "./dsl/loop.ts";
 import { defineProcessor } from "./processor.ts";
 
@@ -110,6 +110,35 @@ test("`inputs` / `outputs` reflect declared audioInput / audioOutput ports in de
 
 test("`eventRings` is empty when no `event<T>` declarations exist", () => {
   expect(stereoGain.worklet.eventRings).toEqual([]);
+});
+
+test("`messageRings` is empty when no `message<T>` declarations exist", () => {
+  expect(stereoGain.worklet.messageRings).toEqual([]);
+});
+
+test("`messageRings` reflects declared `message<T>` per-message ringbuffer descriptor", () => {
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "out" });
+    message<{ slot: number }>({ name: "preset", capacity: 16 });
+    return {
+      process: () => {
+        forSample((i) => {
+          out.ch(0).at(i).write(0);
+        });
+      },
+    };
+  });
+  expect(proc.worklet.messageRings).toEqual([
+    {
+      name: "preset",
+      wasmRingBase: 512,
+      capacity: 16,
+      // fields = [] (= onReceive ナ シ で 未 seal、 slot size = 0)、 1 番 目 onReceive
+      // 走 っ た 時 に capture proxy で fields 確 定。
+      slotSize: 0,
+      fields: [],
+    },
+  ]);
 });
 
 test("`eventRings` reflects declared `event<T>` per-event ringbuffer descriptor", () => {
@@ -734,6 +763,66 @@ test("event ring copy (postMessage fallback): ArrayBuffer view に bulk copy", a
 });
 
 test("event ring copy: eventRingsBuffer ナ シ processor は event path skip (= regression)", async () => {
+  const { wasm } = await compile(monoGain);
+  const self = makeMockSelf();
+  monoGain.worklet.initialize(self, { processorOptions: { wasm } });
+  const inputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(0.5)]];
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const parameters = { gain: new Float32Array([2]) };
+  expect(() => monoGain.worklet.process(self, inputs, outputs, parameters)).not.toThrow();
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// message ring mirror (= sub-phase 7.7d)。 main が SAB に push し た slot を
+// worklet template が per-quantum 開 始 で WASM memory ring に mirror + WASM
+// 内 で drain logic が 走 る (= sub-phase 7.7c)、 drain 末 尾 で worklet が
+// WASM tail を SAB tail に commit (= main 側 で drain 観 測 可)。
+// ─────────────────────────────────────────────────────────────────────────
+
+const messageRecvProc = defineProcessor(() => {
+  const out = audioOutput({ channels: 1, name: "out" });
+  const captured = stateDecl.named("captured").i32(0);
+  const ctrl = message<{ slot: number }>({ name: "ctrl", capacity: 16 });
+  return {
+    process: () => {
+      ctrl.onReceive(({ slot }) => {
+        captured.store(slot);
+      });
+      forSample((i) => {
+        out.ch(0).at(i).write(0);
+      });
+    },
+  };
+});
+
+test("message ring mirror (sab mode): main が SAB push → process で WASM ring に mirror + drain で state 反 映", async () => {
+  const { wasm } = await compile(messageRecvProc);
+  const self = makeMockSelf();
+  const ring = messageRecvProc.worklet.messageRings[0]!;
+  const ringTotalBytes = 12 + ring.capacity * ring.slotSize;
+  const messageRingsBuffer = new SharedArrayBuffer(ringTotalBytes);
+  messageRecvProc.worklet.initialize(self, {
+    processorOptions: {
+      wasm,
+      messageRingsBuffer,
+      messageRings: messageRecvProc.worklet.messageRings,
+      messageRingSabOffsets: [0],
+      transport: "sab",
+    },
+  });
+  // main 側 push を simulate: SAB に slot 0 = 42 push + head = 1 Atomics.store
+  const headerView = new Int32Array(messageRingsBuffer, 0, 3);
+  const slotsView = new Int32Array(messageRingsBuffer, 12);
+  slotsView[0] = 42;
+  Atomics.store(headerView, 0, 1); // head = 1
+  const inputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  messageRecvProc.worklet.process(self, inputs, outputs, {});
+  // drain 後 SAB tail も head に commit
+  expect(Atomics.load(headerView, 1)).toBe(1);
+});
+
+test("message ring mirror: messageRingsBuffer ナ シ processor は message path skip (= regression)", async () => {
   const { wasm } = await compile(monoGain);
   const self = makeMockSelf();
   monoGain.worklet.initialize(self, { processorOptions: { wasm } });
