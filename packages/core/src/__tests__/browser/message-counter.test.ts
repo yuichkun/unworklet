@@ -4,7 +4,7 @@
  * + diagnostics 担 保。
  */
 
-import { expect, test } from "vitest";
+import { expect, test } from "vite-plus/test";
 
 import { createNode } from "../../index.ts";
 import messageCounter from "./fixtures/message-counter.processor.ts?worklet";

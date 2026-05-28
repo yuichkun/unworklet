@@ -4,7 +4,7 @@
  * 受 領 + atSample / 多 重 / unsubscribe / overflow / diagnostics 担 保。
  */
 
-import { expect, test } from "vitest";
+import { expect, test } from "vite-plus/test";
 
 import { createNode } from "../../index.ts";
 import eventEmitter from "./fixtures/event-emitter.processor.ts?worklet";

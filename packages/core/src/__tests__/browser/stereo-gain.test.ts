@@ -7,7 +7,7 @@
  * (= dispose / 2 度 dispose / onError) / transport diagnostics。
  */
 
-import { expect, test } from "vitest";
+import { expect, test } from "vite-plus/test";
 
 import { createNode } from "../../index.ts";
 import stereoGain from "./fixtures/stereo-gain.processor.ts?worklet";

@@ -3,7 +3,7 @@
  * AudioContext / WASM / SAB が hit せ ず chromium page そ の も の の 動 作 担 保。
  */
 
-import { expect, test } from "vitest";
+import { expect, test } from "vite-plus/test";
 
 test("browser page = basic JS expression が 動 く (= no AudioContext yet)", () => {
   expect(1 + 1).toBe(2);
