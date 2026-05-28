@@ -271,6 +271,91 @@ test("`emitExpression(mul)` lowers to the fixed WAT", async () => {
   mod.dispose();
 });
 
+test("`emitExpression(abs)` lowers to `f32.abs`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(
+    {
+      kind: "abs",
+      type: "f32",
+      value: { kind: "literal", type: "f32", value: -1.5 },
+    },
+    emptyLayout,
+    mod,
+    binaryen,
+  );
+  const wat = watOfExpression(mod, binaryen, ref, binaryen.f32);
+  expect(wat).toContain("(f32.abs");
+  expect(wat).toContain("(f32.const -1.5)");
+  mod.dispose();
+});
+
+test("`emitExpression(max)` lowers to `f32.max`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(
+    {
+      kind: "max",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 0.3 },
+      rhs: { kind: "literal", type: "f32", value: 0.8 },
+    },
+    emptyLayout,
+    mod,
+    binaryen,
+  );
+  expect(watOfExpression(mod, binaryen, ref, binaryen.f32)).toContain("(f32.max");
+  mod.dispose();
+});
+
+test("`emit(abs + max)` e2e: peak detector で 期 待 値 = max(abs(in), state)", async () => {
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "audioInput", name: "main", channels: 1 },
+      { kind: "state", name: "peak", type: "f32", initial: 0, userNamed: true },
+    ],
+    statements: [
+      {
+        kind: "forSample",
+        stride: 1,
+        body: [
+          {
+            kind: "stateStore",
+            type: "f32",
+            name: "peak",
+            value: {
+              kind: "max",
+              type: "f32",
+              lhs: {
+                kind: "abs",
+                type: "f32",
+                value: {
+                  kind: "audioInRead",
+                  portName: "main",
+                  channel: 0,
+                  offset: { kind: "loopCounter" },
+                },
+              },
+              rhs: { kind: "stateLoad", type: "f32", name: "peak" },
+            },
+          },
+        ],
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const { memory, process } = await instantiate(graph);
+  // input に [-0.3, 0.5, -0.7, 0.2, ...] = abs で max = 0.7
+  const inputView = new Float32Array(memory.buffer, lay.regions.ioScratch.inputs["main"]!, 128);
+  inputView[0] = -0.3;
+  inputView[1] = 0.5;
+  inputView[2] = -0.7;
+  inputView[3] = 0.2;
+  process();
+  const peakView = new Float32Array(memory.buffer, lay.regions.states.slots["peak"]!, 1);
+  expect(peakView[0]).toBeCloseTo(0.7, 5);
+});
+
 test("`emitExpression(audioInRead)` lowers to the fixed WAT", async () => {
   const binaryen = await loadBinaryen();
   const mod = makeMod(binaryen);

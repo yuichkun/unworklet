@@ -490,6 +490,10 @@ function inferAstType(ast: AstNode): ScalarType {
       return ast.type;
     case "mul":
       return ast.type;
+    case "abs":
+      return ast.type;
+    case "max":
+      return ast.type;
     case "audioInRead":
       return "f32";
     case "paramAt":

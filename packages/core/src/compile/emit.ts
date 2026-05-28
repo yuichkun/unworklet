@@ -284,6 +284,13 @@ export function emitExpression(
         emitExpression(node.lhs, layout, mod, binaryen),
         emitExpression(node.rhs, layout, mod, binaryen),
       );
+    case "abs":
+      return mod.f32.abs(emitExpression(node.value, layout, mod, binaryen));
+    case "max":
+      return mod.f32.max(
+        emitExpression(node.lhs, layout, mod, binaryen),
+        emitExpression(node.rhs, layout, mod, binaryen),
+      );
     case "audioInRead": {
       const portBase = layout.regions.ioScratch.inputs[node.portName];
       if (portBase === undefined) {
