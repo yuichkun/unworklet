@@ -21,6 +21,7 @@ catalog:
   playwright: ^1.60.0
   '@vitest/browser': ^4.1.7
   '@vitest/browser-playwright': ^4.1.7
+  '@playwright/test': ^1.60.0
 overrides:
   vite: "catalog:"
   vitest: "catalog:"

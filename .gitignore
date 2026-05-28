@@ -29,3 +29,7 @@ coverage
 # AI agent worktrees
 .claude/worktrees/
 .claude/scheduled_tasks.lock
+
+# Playwright
+test-results/
+playwright-report/
