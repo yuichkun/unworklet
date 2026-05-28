@@ -36,7 +36,6 @@ const stubs: ReadonlyArray<readonly [string, () => unknown]> = [
   ["buffer.named", () => buffer.named("x")],
   ["buffer.expose", () => buffer.expose({ name: "x" })],
   ["param.expose", () => param.expose({ name: "x" })],
-  ["message", () => message({ name: "msg" })],
   ["midiInput", () => midiInput({ name: "mIn" })],
   ["midiOutput", () => midiOutput({ name: "mOut" })],
 ];
@@ -1403,5 +1402,148 @@ test("`state.expose({ name })` 同 name 再 set = userNamed promote", () => {
     name: "__state_0",
     userNamed: true,
     snapshot: "persistent",
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// `message<T>` factory + handle + onReceive (= `01-dsl.md` §4.2)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`message` outside `defineProcessor` body throws", () => {
+  expect(() => message({ name: "msg" })).toThrow(/outside `defineProcessor` body/);
+});
+
+test("`message({ name })` registers a `message` declaration with default capacity 256", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    message({ name: "reset" });
+  });
+  expect(ctx.declarations).toEqual([
+    { kind: "message", name: "reset", capacity: 256, payloadCapacity: undefined, fields: [] },
+  ]);
+});
+
+test("`message({ name, capacity })` accepts capacity override", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    message({ name: "preset", capacity: 16 });
+  });
+  expect(ctx.declarations[0]).toMatchObject({
+    kind: "message",
+    name: "preset",
+    capacity: 16,
+  });
+});
+
+test("`message` returns a handle carrying `name`", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const handle = message({ name: "preset" });
+    expect(handle.name).toBe("preset");
+  });
+});
+
+test("重 複 `message` name = graph-capture-time error", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      message({ name: "shared" });
+      message({ name: "shared" });
+    }),
+  ).toThrow(/duplicate message declaration name "shared"/);
+});
+
+test("`messageDecl.onReceive(handler)` で 統 計 ナ シ handler を build-time eval し て AST `messageOnReceive` を statements に push", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const reset = message<{ slot: number }>({ name: "reset" });
+    reset.onReceive(() => {
+      // body 内 で AST 構 築 ナ シ = 空 handler
+    });
+  });
+  expect(ctx.statements).toHaveLength(1);
+  expect(ctx.statements[0]).toMatchObject({
+    kind: "messageOnReceive",
+    name: "reset",
+    body: [],
+  });
+});
+
+test("`messageDecl.onReceive` 複 数 registration = source order で statements に 並 ぶ (= Q38-c)", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const reset = message<{ slot: number }>({ name: "reset" });
+    reset.onReceive(() => {});
+    reset.onReceive(() => {});
+  });
+  expect(ctx.statements).toHaveLength(2);
+  expect(ctx.statements[0]?.kind).toBe("messageOnReceive");
+  expect(ctx.statements[1]?.kind).toBe("messageOnReceive");
+});
+
+test("`messageDecl.onReceive` handler 引 数 = Q46 lift proxy で field access = Node<'i32'>", () => {
+  // handler が `({ slot }) => ...` で destructure す る = framework が proxy hand
+  // し て field "slot" access を Node<'i32'> proxy で 返 す path (= Q46 uniform lift)。
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const z = state.named("counter").i32(0);
+    const reset = message<{ slot: number }>({ name: "reset" });
+    reset.onReceive(({ slot }) => {
+      z.store(slot);
+    });
+  });
+  const onRecv = ctx.statements[0];
+  if (onRecv?.kind !== "messageOnReceive") throw new Error("expected messageOnReceive");
+  expect(onRecv.body).toHaveLength(1);
+  expect(onRecv.body[0]).toMatchObject({
+    kind: "stateStore",
+    type: "i32",
+    name: "counter",
+  });
+  // store value = field proxy 経 由 で AST 化 さ れ た Node<'i32'> = messageFieldRead AST
+  const storeValue = (onRecv.body[0] as { value: { kind: string; name?: string; field?: string } })
+    .value;
+  expect(storeValue.kind).toBe("messageFieldRead");
+  expect(storeValue.field).toBe("slot");
+});
+
+test("`message` を declare し て onReceive ナ シ で も silent OK (= unused declaration)", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    message<{ slot: number }>({ name: "preset" });
+  });
+  expect(ctx.declarations).toHaveLength(1);
+  expect(ctx.declarations[0]).toMatchObject({ kind: "message", name: "preset" });
+});
+
+test("`messageDecl.onReceive` 同 field を 複 数 回 access し て も decl.fields に 1 回 だ け push", () => {
+  // user が destructure 経 由 で `({ slot, slot: alias })` の よ う に 同 field を
+  // 複 数 回 access し て も、 decl.fields は 1 件 で seal (= proxy が 既 hit を check)。
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const reset = message<{ slot: number }>({ name: "reset" });
+    reset.onReceive((payload) => {
+      void (payload as Record<string, unknown>)["slot"];
+      void (payload as Record<string, unknown>)["slot"];
+    });
+    const decl = ctx.declarations.find((d) => d.kind === "message");
+    if (decl?.kind !== "message") throw new Error("expected message decl");
+    expect(decl.fields).toEqual([{ name: "slot", wireType: "i32" }]);
+  });
+});
+
+test("inferAstType: messageFieldRead Node を event emit field に 渡 す = wireType i32 で seal", () => {
+  // handler 内 で event emit を 走 ら し て、 payload field 値 に messageFieldRead
+  // Node<'i32'> を 渡 す path = event decl.fields に i32 で seal さ れ る。
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const msg = message<{ slot: number }>({ name: "preset" });
+    const evt = event<{ value: number }>({ name: "ack" });
+    msg.onReceive(({ slot }) => {
+      evt.emitIf(true, { atSample: 0, value: slot });
+    });
+    const evtDecl = ctx.declarations.find((d) => d.kind === "event");
+    if (evtDecl?.kind !== "event") throw new Error("expected event decl");
+    expect(evtDecl.fields).toEqual([{ name: "value", wireType: "i32" }]);
   });
 });

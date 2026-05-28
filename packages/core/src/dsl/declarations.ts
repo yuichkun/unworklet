@@ -14,6 +14,7 @@ import type {
   AstNode,
   EventDeclAst,
   EventEmitField,
+  MessageDeclAst,
   ParamDecl,
   StateDecl,
 } from "../compile/ast.ts";
@@ -497,10 +498,13 @@ function inferAstType(ast: AstNode): ScalarType {
       return "i32";
     case "stateLoad":
       return ast.type;
+    case "messageFieldRead":
+      return ast.wireType;
     case "audioOutWrite":
     case "forSample":
     case "stateStore":
     case "eventEmitIf":
+    case "messageOnReceive":
       throw new Error(`statement node '${ast.kind}' cannot appear in expression position`);
   }
 }
@@ -612,6 +616,9 @@ export function event<T>(options: EventOptions): EventDecl<T> {
       }
       if (!isFirstEmit && emitFields.length !== decl.fields.length) {
         const missing = decl.fields.filter((f) => !emitFields.some((e) => e.name === f.name));
+        /* v8 ignore next 8 — extra field path は checkSealedEventField で 既 throw、
+           こ こ の missing.length > 0 path だ け が field-count 不 一 致 か つ extra ナ シ
+           = 「subset emit」 path で hit、 既 「Q71: field set 縮 小」 test で hit 済 */
         if (missing.length > 0) {
           throw new Error(
             `unworklet: event "${decl.name}" emit site missing field(s) "${missing
@@ -635,8 +642,82 @@ export function event<T>(options: EventOptions): EventDecl<T> {
   return handle;
 }
 
-export function message<T>(_options: MessageOptions): MessageDecl<T> {
-  return notImplemented();
+const MESSAGE_DEFAULT_CAPACITY = 256;
+
+/**
+ * `message<T>` declaration の name uniqueness check (= `01-dsl.md` §4.2)。
+ * 同 kind 内 で name unique = state / event と zip pattern。
+ */
+function checkMessageName(name: string): void {
+  const ctx = getCurrentCapture();
+  if (ctx.declarations.some((d) => d.kind === "message" && d.name === name)) {
+    throw new Error(
+      `unworklet: duplicate message declaration name "${name}" — message names must be unique within a processor`,
+    );
+  }
+}
+
+/**
+ * `onReceive` handler の payload proxy (= Q46 uniform lift)。
+ *
+ * user が `({ slot, gain }) => ...` で destructure す る = proxy.get(prop) で
+ * 各 field name を 拾 い + `Node<'i32'>` (= field type erasure path = 全 number
+ * field 統 一 lift、 boolean / typed-array は 後 続 sub-phase で fill) を 返 す。
+ * 同 時 に decl.fields に push (= 1 番 目 onReceive で seal、 後 続 onReceive で
+ * 同 field 名 を 何 度 access し て も 同 wire 型 で 通 す)。
+ */
+function makeMessagePayloadProxy(decl: MessageDeclAst): Record<string, unknown> {
+  return new Proxy(
+    {},
+    {
+      get(_target, prop): unknown {
+        /* v8 ignore next 2 — defensive symbol access guard (= destructure path
+           は string key の み hit) */
+        if (typeof prop !== "string") return undefined;
+        const fieldName = prop;
+        // 既 seal 済 と 整 合 = 何 度 access し て も 同 wire 型、 未 seal = i32 で push
+        if (!decl.fields.some((f) => f.name === fieldName)) {
+          decl.fields.push({ name: fieldName, wireType: "i32" });
+        }
+        return wrapAst<"i32">({
+          kind: "messageFieldRead",
+          name: decl.name,
+          field: fieldName,
+          wireType: "i32",
+        });
+      },
+    },
+  );
+}
+
+export function message<T>(options: MessageOptions): MessageDecl<T> {
+  checkMessageName(options.name);
+  const decl: MessageDeclAst = {
+    kind: "message",
+    name: options.name,
+    capacity: options.capacity ?? MESSAGE_DEFAULT_CAPACITY,
+    payloadCapacity: options.payloadCapacity,
+    fields: [],
+  };
+  addDeclaration(decl);
+  const handle = {
+    name: decl.name,
+    onReceive(handler: (payload: Record<string, unknown>) => void) {
+      // handler body を build-time eval し て AST 化、 既 forSample path と zip
+      // (= currentLoopBody を sub-list に 切 替 え て collect、 戻 し て push)。
+      const ctx = getCurrentCapture();
+      const handlerBody: AstNode[] = [];
+      const prev = ctx.currentLoopBody;
+      ctx.currentLoopBody = handlerBody;
+      try {
+        handler(makeMessagePayloadProxy(decl));
+      } finally {
+        ctx.currentLoopBody = prev;
+      }
+      addStatement({ kind: "messageOnReceive", name: decl.name, body: handlerBody });
+    },
+  } as unknown as MessageDecl<T>;
+  return handle;
 }
 
 // ─────────────────────────────────────────────────────────────────────────

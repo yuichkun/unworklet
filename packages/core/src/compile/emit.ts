@@ -295,10 +295,20 @@ export function emitExpression(
           return mod.i32.load(0, BYTES_PER_I32, ptr);
       }
     }
+    case "messageFieldRead": {
+      // handler body 内 で の payload field access = quantum 開 始 で drained slot
+      // か ら の per-field read。 ringbuffer slot offset / wire 型 解 決 は
+      // sub-phase 7.7c (= drain emit) で fill = ま ず stub throw、 実 装 着 手 前
+      // に message ring drain logic 配 線 が 必 要。
+      throw new Error(
+        `unworklet: messageFieldRead emit not implemented yet (= sub-phase 7.7c で fill)`,
+      );
+    }
     case "audioOutWrite":
     case "forSample":
     case "stateStore":
     case "eventEmitIf":
+    case "messageOnReceive":
       throw new Error(`statement node '${node.kind}' cannot appear in expression position`);
   }
 }

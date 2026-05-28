@@ -34,7 +34,9 @@ export type AstNode =
       cond: AstNode;
       atSample: AstNode;
       fields: EventEmitField[];
-    };
+    }
+  | { kind: "messageOnReceive"; name: string; body: AstNode[] }
+  | { kind: "messageFieldRead"; name: string; field: string; wireType: ScalarType };
 
 /**
  * `eventDecl.emitIf` 1 emit site の 1 field 分 (= `01-dsl.md` §4.1 + Q71)。
@@ -131,7 +133,37 @@ export type EventDeclField = {
   wireType: ScalarType;
 };
 
-export type Declaration = AudioPortDecl | ParamDecl | StateDecl | EventDeclAst;
+/**
+ * `message<T>(options)` declaration (`01-dsl.md` §4.2)。
+ *
+ * Main → worklet coarse-grained delivery 用 ringbuffer-backed channel。 handler
+ * は `onReceive(handler)` 経 由 で per-block top に 登 録、 quantum 開 始 で drain
+ * (= Q38-b: 全 handler が per-block / forSample よ り 先 に 走 る)。
+ *
+ * `T` の field 別 wire 型 は Q46 uniform lift rule: 全 number → i32 (= 4 byte)、
+ * 全 boolean → bool (= 4 byte u32 align)、 typed-array → §5.2 variable-length
+ * content buffer (= 後 続 sub-phase で fill)。 main 側 `node.messages.<name>(p)`
+ * か ら 来 る payload は plain JS = framework が wire 化 し て worklet 内 で handler
+ * を 起 動 = field 別 推 論 ナ シ で 全 uniform path。
+ *
+ * `fields` = onReceive handler が destructure し た field 名 + wire 型 (= number
+ * は i32 / boolean は bool / typed-array は 後 続 fill)。 1 番 目 onReceive で seal、
+ * 後 続 onReceive で 同 field 名 set / 同 wire 型 (= 既 sealed 集 合 と 整 合 check)。
+ */
+export type MessageDeclAst = {
+  kind: "message";
+  name: string;
+  capacity: number;
+  payloadCapacity?: number;
+  fields: MessageDeclField[];
+};
+
+export type MessageDeclField = {
+  name: string;
+  wireType: ScalarType;
+};
+
+export type Declaration = AudioPortDecl | ParamDecl | StateDecl | EventDeclAst | MessageDeclAst;
 
 export type CapturedGraph = {
   declarations: Declaration[];
