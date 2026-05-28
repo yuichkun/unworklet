@@ -102,6 +102,27 @@ export type EventRingSlot = {
   }>;
 };
 
+/**
+ * Per-message ringbuffer metadata (= `02-messaging.md` §5.3)。
+ *
+ * event ring と zip pattern、 ただ し slot 内 に atSample ナ シ (= main → worklet
+ * で sample-offset 概 念 ナ シ)。 fields = 1 番 目 onReceive で seal さ れ た
+ * Q46 uniform-lift wire 型 順 (= 全 number → i32 4 byte / 全 boolean → bool 4 byte
+ * u32 align)。 void payload (= fields = []) は slot size 0 = ring = header 12
+ * の み で fire 回 数 を head - tail で 観 測。
+ */
+export type MessageRingSlot = {
+  base: number;
+  capacity: number;
+  slotSize: number;
+  fields: Array<{
+    name: string;
+    wireType: ScalarType;
+    offsetInSlot: number;
+    byteSize: number;
+  }>;
+};
+
 export type Layout = {
   regions: {
     states: { base: number; slots: Record<string, number> };
@@ -113,7 +134,7 @@ export type Layout = {
       params: Record<string, number>;
     };
     eventRings: { base: number; slots: Record<string, EventRingSlot> };
-    messageRings: { base: number; slots: Record<string, number> };
+    messageRings: { base: number; slots: Record<string, MessageRingSlot> };
     payloadContent: { base: number; slots: Record<string, number> };
     midiRings: { base: number; slots: Record<string, number> };
     sysexContent: { base: number; size: number };
@@ -216,9 +237,41 @@ export function layout(graph: CapturedGraph): Layout {
     }
   }
 
+  // messageRings packing = eventRings 末 尾 を base に declaration 順 で
+  // per-message ring (= header 12 + capacity × slotSize) を 配 置 (= `02-messaging.md`
+  // §5.3)。 event ring と zip pattern だ が slot 内 atSample ナ シ + fields 順 で
+  // 並 び (= Q46 uniform lift = 全 i32 / bool が 4 byte で 並 ぶ)。
+  const messageRingsBase = cursor;
+  const messageRingsSlots: Record<string, MessageRingSlot> = {};
+  for (const decl of graph.declarations) {
+    if (decl.kind === "message") {
+      const ringBase = cursor;
+      const slotFields: MessageRingSlot["fields"] = [];
+      let fieldCursor = 0;
+      for (const field of decl.fields) {
+        const byteSize = EVENT_FIELD_BYTES[field.wireType];
+        slotFields.push({
+          name: field.name,
+          wireType: field.wireType,
+          offsetInSlot: fieldCursor,
+          byteSize,
+        });
+        fieldCursor += byteSize;
+      }
+      const slotSize = fieldCursor;
+      messageRingsSlots[decl.name] = {
+        base: ringBase,
+        capacity: decl.capacity,
+        slotSize,
+        fields: slotFields,
+      };
+      cursor += EVENT_HEADER_BYTES + decl.capacity * slotSize;
+    }
+  }
+
   const totalBytes = cursor;
 
-  // sub-phase 7.6 で fill 対 象 外 の 5 region = base 全 て totalBytes (= 連 続)、
+  // sub-phase 7.7b で fill 対 象 外 の 4 region = base 全 て totalBytes (= 連 続)、
   // slots / size 0。 後 続 sub-phase で 該 当 region に slot が 追 加 さ れ た 時
   // 順 次 base を 再 計 算 す る path = layout 関 数 を 拡 張 す る だ け で
   // 既 ioScratch / states / publishShared / publishCounters / eventRings 配 置
@@ -229,7 +282,7 @@ export function layout(graph: CapturedGraph): Layout {
       buffers: { base: totalBytes, slots: {} },
       ioScratch: { base: ioBase, inputs, outputs, params },
       eventRings: { base: eventRingsBase, slots: eventRingsSlots },
-      messageRings: { base: totalBytes, slots: {} },
+      messageRings: { base: messageRingsBase, slots: messageRingsSlots },
       payloadContent: { base: totalBytes, slots: {} },
       midiRings: { base: totalBytes, slots: {} },
       sysexContent: { base: totalBytes, size: 0 },

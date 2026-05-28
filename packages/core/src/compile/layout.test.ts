@@ -874,3 +874,243 @@ test("`layout(state + event 混 在)` = states / publish 後 に eventRings", ()
     totalBytes: 156,
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// `message<T>` ringbuffer region (= `02-messaging.md` §5.3)
+//
+// 1 message = header (12 byte = [head, tail, overflowCount] × i32) + capacity
+// 個 slot。 slot = atSample ナ シ (= main → worklet で sample-offset 概念 ナ シ)
+// + Q46 uniform lift (= 全 number field = i32 4 byte / 全 boolean = bool 4 byte
+// u32 align)。 1 番目 onReceive で seal さ れた fields の 順 で 並ぶ。
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`layout(message 1 個 fields ナ シ = void payload)` = header の み の 12 byte ring", () => {
+  const graph: CapturedGraph = {
+    declarations: [
+      {
+        kind: "message",
+        name: "reset",
+        capacity: 16,
+        payloadCapacity: undefined,
+        fields: [],
+      },
+    ],
+    statements: [],
+  };
+  // slot size = 0 byte (= void payload、 head - tail で fire 数 観 測)、
+  // ring 全 体 = header 12 + 16 × 0 = 12 byte
+  expect(layout(graph)).toEqual({
+    regions: {
+      ioScratch: { base: 0, inputs: {}, outputs: {}, params: {} },
+      ...emptyTail(12),
+      states: { base: 0, slots: {} },
+      publishShared: { base: 0, slots: {} },
+      publishCounters: { base: 0, slots: {} },
+      eventRings: { base: 0, slots: {} },
+      messageRings: {
+        base: 0,
+        slots: {
+          reset: {
+            base: 0,
+            capacity: 16,
+            slotSize: 0,
+            fields: [],
+          },
+        },
+      },
+    },
+    totalBytes: 12,
+  });
+});
+
+test("`layout(message 1 field i32)` = slot 4 byte × 256 + header 12 = 1036", () => {
+  const graph: CapturedGraph = {
+    declarations: [
+      {
+        kind: "message",
+        name: "preset",
+        capacity: 256,
+        payloadCapacity: undefined,
+        fields: [{ name: "slot", wireType: "i32" }],
+      },
+    ],
+    statements: [],
+  };
+  expect(layout(graph)).toEqual({
+    regions: {
+      ioScratch: { base: 0, inputs: {}, outputs: {}, params: {} },
+      ...emptyTail(1036),
+      states: { base: 0, slots: {} },
+      publishShared: { base: 0, slots: {} },
+      publishCounters: { base: 0, slots: {} },
+      eventRings: { base: 0, slots: {} },
+      messageRings: {
+        base: 0,
+        slots: {
+          preset: {
+            base: 0,
+            capacity: 256,
+            slotSize: 4,
+            fields: [{ name: "slot", wireType: "i32", offsetInSlot: 0, byteSize: 4 }],
+          },
+        },
+      },
+    },
+    totalBytes: 1036,
+  });
+});
+
+test("`layout(message 複 数 field)` = i32 + bool = 8 byte / slot", () => {
+  const graph: CapturedGraph = {
+    declarations: [
+      {
+        kind: "message",
+        name: "ctrl",
+        capacity: 256,
+        payloadCapacity: undefined,
+        fields: [
+          { name: "slot", wireType: "i32" },
+          { name: "muted", wireType: "bool" },
+        ],
+      },
+    ],
+    statements: [],
+  };
+  // slot = slot (4) + muted (4) = 8、 ring = 12 + 256 × 8 = 2060
+  expect(layout(graph)).toEqual({
+    regions: {
+      ioScratch: { base: 0, inputs: {}, outputs: {}, params: {} },
+      ...emptyTail(2060),
+      states: { base: 0, slots: {} },
+      publishShared: { base: 0, slots: {} },
+      publishCounters: { base: 0, slots: {} },
+      eventRings: { base: 0, slots: {} },
+      messageRings: {
+        base: 0,
+        slots: {
+          ctrl: {
+            base: 0,
+            capacity: 256,
+            slotSize: 8,
+            fields: [
+              { name: "slot", wireType: "i32", offsetInSlot: 0, byteSize: 4 },
+              { name: "muted", wireType: "bool", offsetInSlot: 4, byteSize: 4 },
+            ],
+          },
+        },
+      },
+    },
+    totalBytes: 2060,
+  });
+});
+
+test("`layout(message + event 混 在)` = eventRings 末 尾 か ら messageRings", () => {
+  const graph: CapturedGraph = {
+    declarations: [
+      {
+        kind: "event",
+        name: "evt",
+        capacity: 16,
+        payloadCapacity: undefined,
+        fields: [{ name: "level", wireType: "f32" }],
+      },
+      {
+        kind: "message",
+        name: "msg",
+        capacity: 16,
+        payloadCapacity: undefined,
+        fields: [{ name: "slot", wireType: "i32" }],
+      },
+    ],
+    statements: [],
+  };
+  // event ring = header 12 + 16 × 8 = 140
+  // message ring = header 12 + 16 × 4 = 76
+  // total = 140 + 76 = 216
+  expect(layout(graph)).toEqual({
+    regions: {
+      ioScratch: { base: 0, inputs: {}, outputs: {}, params: {} },
+      ...emptyTail(216),
+      states: { base: 0, slots: {} },
+      publishShared: { base: 0, slots: {} },
+      publishCounters: { base: 0, slots: {} },
+      eventRings: {
+        base: 0,
+        slots: {
+          evt: {
+            base: 0,
+            capacity: 16,
+            slotSize: 8,
+            fields: [
+              { name: "atSample", wireType: "i32", offsetInSlot: 0, byteSize: 4 },
+              { name: "level", wireType: "f32", offsetInSlot: 4, byteSize: 4 },
+            ],
+          },
+        },
+      },
+      messageRings: {
+        base: 140,
+        slots: {
+          msg: {
+            base: 140,
+            capacity: 16,
+            slotSize: 4,
+            fields: [{ name: "slot", wireType: "i32", offsetInSlot: 0, byteSize: 4 }],
+          },
+        },
+      },
+    },
+    totalBytes: 216,
+  });
+});
+
+test("`layout(message 2 個)` = declaration 順 で 連 続 並 び", () => {
+  const graph: CapturedGraph = {
+    declarations: [
+      {
+        kind: "message",
+        name: "m1",
+        capacity: 16,
+        payloadCapacity: undefined,
+        fields: [{ name: "slot", wireType: "i32" }],
+      },
+      {
+        kind: "message",
+        name: "m2",
+        capacity: 8,
+        payloadCapacity: undefined,
+        fields: [],
+      },
+    ],
+    statements: [],
+  };
+  // m1 = 12 + 16 × 4 = 76、 m2 = 12 + 8 × 0 = 12、 total = 88
+  expect(layout(graph)).toEqual({
+    regions: {
+      ioScratch: { base: 0, inputs: {}, outputs: {}, params: {} },
+      ...emptyTail(88),
+      states: { base: 0, slots: {} },
+      publishShared: { base: 0, slots: {} },
+      publishCounters: { base: 0, slots: {} },
+      eventRings: { base: 0, slots: {} },
+      messageRings: {
+        base: 0,
+        slots: {
+          m1: {
+            base: 0,
+            capacity: 16,
+            slotSize: 4,
+            fields: [{ name: "slot", wireType: "i32", offsetInSlot: 0, byteSize: 4 }],
+          },
+          m2: {
+            base: 76,
+            capacity: 8,
+            slotSize: 0,
+            fields: [],
+          },
+        },
+      },
+    },
+    totalBytes: 88,
+  });
+});
