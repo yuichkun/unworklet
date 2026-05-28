@@ -311,9 +311,11 @@ watch(reprByKey, () => redraw(), { deep: true });
           <li v-for="slot in graph.publishSlots(node.id)" :key="slot.name" class="slot-row">
             <div class="slot-meta">
               <span class="slot-name mono">{{ slot.name }}</span>
-              <span class="u-pill" :class="`kind-pill-${slot.kind}`">{{ slot.kind }}</span>
+              <span class="u-pill slot-pill" :class="`kind-pill-${slot.kind}`">{{ slot.kind }}</span>
               <span class="slot-type mono">{{ slot.type }}</span>
-              <span v-if="slot.kind === 'buffer'" class="slot-size mono">× {{ slot.size }}</span>
+              <span class="slot-size mono">
+                <template v-if="slot.kind === 'buffer'">× {{ slot.size }}</template>
+              </span>
               <span class="slot-rate mono">{{ slot.rateFps }} fps</span>
             </div>
 
@@ -513,9 +515,10 @@ watch(reprByKey, () => redraw(), { deep: true });
 }
 
 .slot-meta {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 60px 36px 56px 56px;
   align-items: center;
-  gap: 6px;
+  column-gap: 10px;
   overflow: hidden;
 }
 
@@ -526,6 +529,10 @@ watch(reprByKey, () => redraw(), { deep: true });
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.slot-pill {
+  justify-self: start;
 }
 
 .slot-type {
@@ -539,9 +546,9 @@ watch(reprByKey, () => redraw(), { deep: true });
 }
 
 .slot-rate {
-  margin-left: auto;
   font-size: 10.5px;
   color: var(--u-text-dim);
+  text-align: right;
 }
 
 .repr-select {
