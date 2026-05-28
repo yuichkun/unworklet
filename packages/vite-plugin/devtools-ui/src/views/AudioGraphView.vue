@@ -1,23 +1,21 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { Background, BackgroundVariant } from "@vue-flow/background";
+import { Controls } from "@vue-flow/controls";
+import { type Edge, MarkerType, type Node, VueFlow } from "@vue-flow/core";
+import { computed, markRaw, ref } from "vue";
 
+import UnworkletNode from "../components/UnworkletNode.vue";
 import { type BuildIssue, useMockGraph } from "../composables/useMockGraph";
 import { useMockSignals } from "../composables/useMockSignals";
+
+import "@vue-flow/core/dist/style.css";
+import "@vue-flow/core/dist/theme-default.css";
+import "@vue-flow/controls/dist/style.css";
 
 const COL_W = 200;
 const COL_X0 = 50;
 const ROW_Y0 = 70;
-const NODE_W = 140;
 const NODE_H = 60;
-
-// Logical content bounds (in transform-space units). Used for initial fit.
-const CONTENT_W = 1340;
-const CONTENT_H = 220;
-const FIT_MARGIN = 40;
-const GRID_BASE_GAP = 40;
-const MIN_K = 0.2;
-const MAX_K = 6;
-const ZOOM_FACTOR = 1.15;
 
 const graph = useMockGraph();
 const signals = useMockSignals();
@@ -28,28 +26,6 @@ const nodeLayout = computed(() =>
     x: COL_X0 + n.col * COL_W,
     y: ROW_Y0 + n.row * (NODE_H + 30),
   })),
-);
-
-const nodeById = computed(() => Object.fromEntries(nodeLayout.value.map((n) => [n.id, n])));
-
-const edgePaths = computed(() =>
-  graph.edges
-    .map((e) => {
-      const a = nodeById.value[e.from];
-      const b = nodeById.value[e.to];
-      if (!a || !b) return null;
-      const x1 = a.x + NODE_W;
-      const y1 = a.y + NODE_H / 2;
-      const x2 = b.x;
-      const y2 = b.y + NODE_H / 2;
-      const dx = (x2 - x1) * 0.5;
-      return {
-        id: e.id,
-        channel: e.channel,
-        d: `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`,
-      };
-    })
-    .filter((e): e is NonNullable<typeof e> => e !== null),
 );
 
 const selectedId = computed(() => graph.selectedId.value);
@@ -130,177 +106,45 @@ const onSnapshotBackdropClick = (event: MouseEvent): void => {
   if (event.target === snapshotModalRef.value) closeSnapshot();
 };
 
-// Pan/zoom is implemented in the ReactFlow / d3-zoom style:
-//  - svg `viewBox` is locked to the element's pixel size (synced via ResizeObserver),
-//    so 1 svg unit == 1 css pixel and the SVG never re-layouts on pan/zoom.
-//  - All graph content lives inside a single `<g class="viewport-layer">` whose
-//    `transform: translate3d(tx, ty, 0) scale3d(k, k, 1)` carries the entire view state.
-//    Updating just that one transform reveals off-screen content naturally and is
-//    GPU-composited (the layer is rasterized once and re-composited each frame).
-//  - The grid is a <pattern> on a `<rect width="100%" height="100%">` sitting OUTSIDE
-//    the viewport layer; pattern x/y/width/height are derived from (tx, ty, k) using
-//    modulo-of-gap, giving an infinite-feeling grid at constant cost.
-const svgRef = ref<SVGSVGElement | null>(null);
-const viewportLayerRef = ref<SVGGElement | null>(null);
-const patternRef = ref<SVGPatternElement | null>(null);
-const svgPixelSize = ref({ w: 1, h: 1 });
-const viewport = ref({ tx: 0, ty: 0, k: 1 });
-
-const viewBoxStr = computed(() => `0 0 ${svgPixelSize.value.w} ${svgPixelSize.value.h}`);
-
-const viewportTransform = computed(() => {
-  const { tx, ty, k } = viewport.value;
-  // Round translate to integers — kills sub-pixel ghosting on grid lines (xyflow #3282).
-  return `translate3d(${Math.round(tx)}px, ${Math.round(ty)}px, 0) scale3d(${k}, ${k}, 1)`;
-});
-
-const scaledGap = computed(() => GRID_BASE_GAP * viewport.value.k);
-const patternX = computed(() => {
-  const g = scaledGap.value;
-  return g > 0 ? ((viewport.value.tx % g) + g) % g : 0;
-});
-const patternY = computed(() => {
-  const g = scaledGap.value;
-  return g > 0 ? ((viewport.value.ty % g) + g) % g : 0;
-});
-
-// Write the viewport transform straight to the DOM, bypassing Vue. Used during
-// drag for zero-latency response — Vue's reactive path is too slow for per-frame
-// pointermove (we measured ~3ms wasted per Vue render cycle, observable as input lag).
-const applyTransformToDom = (tx: number, ty: number, k: number): void => {
-  const layer = viewportLayerRef.value;
-  const pattern = patternRef.value;
-  if (layer) {
-    layer.style.transform = `translate3d(${Math.round(tx)}px, ${Math.round(ty)}px, 0) scale3d(${k}, ${k}, 1)`;
-  }
-  if (pattern) {
-    const g = GRID_BASE_GAP * k;
-    if (g > 0) {
-      pattern.setAttribute("x", String(((tx % g) + g) % g));
-      pattern.setAttribute("y", String(((ty % g) + g) % g));
-    }
-  }
+// Vue Flow node-type mapping. `markRaw` avoids Vue reactively wrapping the
+// component definition (perf + warning suppression).
+const nodeTypes = {
+  unworklet: markRaw(UnworkletNode),
+  standard: markRaw(UnworkletNode),
 };
 
-const computeFit = (w: number, h: number): { tx: number; ty: number; k: number } => {
-  const availW = Math.max(1, w - FIT_MARGIN * 2);
-  const availH = Math.max(1, h - FIT_MARGIN * 2);
-  const k = Math.min(availW / CONTENT_W, availH / CONTENT_H);
-  return {
-    k,
-    tx: (w - CONTENT_W * k) / 2,
-    ty: (h - CONTENT_H * k) / 2,
-  };
+const flowNodes = computed<Node[]>(() =>
+  nodeLayout.value.map((n) => ({
+    id: n.id,
+    type: n.kind === "unworklet" ? "unworklet" : "standard",
+    position: { x: n.x, y: n.y },
+    data: n,
+    selected: graph.selectedId.value === n.id,
+    selectable: true,
+    draggable: false,
+    connectable: false,
+  })),
+);
+
+const flowEdges = computed<Edge[]>(() =>
+  graph.edges.map((e) => ({
+    id: e.id,
+    source: e.from,
+    target: e.to,
+    type: "default",
+    animated: false,
+    markerEnd: MarkerType.ArrowClosed,
+    class: `edge-${e.channel}`,
+  })),
+);
+
+const onNodeClick = (event: { node: Node }): void => {
+  graph.selectNode(event.node.id);
 };
 
-const clamp = (v: number, min: number, max: number): number => Math.min(max, Math.max(min, v));
-
-const isDragging = ref(false);
-let resizeObserver: ResizeObserver | null = null;
-let didInitialFit = false;
-
-type DragState = {
-  startTx: number;
-  startTy: number;
-  startClientX: number;
-  startClientY: number;
-  k: number;
-  currentTx: number;
-  currentTy: number;
+const onPaneClick = (): void => {
+  // Click on empty pane area: clearing selection is optional — keep current selection.
 };
-let dragState: DragState | null = null;
-
-const onGraphWheel = (event: WheelEvent): void => {
-  event.preventDefault();
-  const svg = svgRef.value;
-  if (!svg) return;
-  const rect = svg.getBoundingClientRect();
-  const cursorX = event.clientX - rect.left;
-  const cursorY = event.clientY - rect.top;
-  const factor = event.deltaY > 0 ? 1 / ZOOM_FACTOR : ZOOM_FACTOR;
-  const newK = clamp(viewport.value.k * factor, MIN_K, MAX_K);
-  if (newK === viewport.value.k) return;
-  // Keep the world point under the cursor stationary on screen.
-  const ratio = newK / viewport.value.k;
-  viewport.value = {
-    k: newK,
-    tx: cursorX - (cursorX - viewport.value.tx) * ratio,
-    ty: cursorY - (cursorY - viewport.value.ty) * ratio,
-  };
-};
-
-const onGraphMouseDown = (event: MouseEvent): void => {
-  if (event.button !== 0) return;
-  const target = event.target as Element | null;
-  if (target?.closest(".node")) return;
-  dragState = {
-    startTx: viewport.value.tx,
-    startTy: viewport.value.ty,
-    startClientX: event.clientX,
-    startClientY: event.clientY,
-    k: viewport.value.k,
-    currentTx: viewport.value.tx,
-    currentTy: viewport.value.ty,
-  };
-  isDragging.value = true;
-};
-
-const onWindowMouseMove = (event: MouseEvent): void => {
-  const s = dragState;
-  if (!s) return;
-  // Direct DOM mutation — no rAF, no Vue. The browser coalesces multiple style
-  // writes per frame into a single paint, so this is just as cheap as rAF-gated
-  // but with zero latency from mouse event to next paint.
-  s.currentTx = s.startTx + (event.clientX - s.startClientX);
-  s.currentTy = s.startTy + (event.clientY - s.startClientY);
-  applyTransformToDom(s.currentTx, s.currentTy, s.k);
-};
-
-const onWindowMouseUp = (): void => {
-  if (!isDragging.value) return;
-  isDragging.value = false;
-  const s = dragState;
-  if (s && (s.currentTx !== s.startTx || s.currentTy !== s.startTy)) {
-    // Commit final position to reactive state. Bound `:style` recomputes to the
-    // same string we already wrote to the DOM, so Vue's diff sees no change and
-    // skips the write — no flicker.
-    viewport.value = { ...viewport.value, tx: s.currentTx, ty: s.currentTy };
-  }
-  dragState = null;
-};
-
-const resetView = (): void => {
-  viewport.value = computeFit(svgPixelSize.value.w, svgPixelSize.value.h);
-};
-
-const onSvgResize = (): void => {
-  const svg = svgRef.value;
-  if (!svg) return;
-  const rect = svg.getBoundingClientRect();
-  if (rect.width === 0 || rect.height === 0) return;
-  svgPixelSize.value = { w: rect.width, h: rect.height };
-  if (!didInitialFit) {
-    viewport.value = computeFit(rect.width, rect.height);
-    didInitialFit = true;
-  }
-};
-
-onMounted(() => {
-  window.addEventListener("mousemove", onWindowMouseMove);
-  window.addEventListener("mouseup", onWindowMouseUp);
-  if (svgRef.value) {
-    resizeObserver = new ResizeObserver(onSvgResize);
-    resizeObserver.observe(svgRef.value);
-  }
-  // Also measure synchronously in case ResizeObserver fires too late for the first paint.
-  onSvgResize();
-});
-onBeforeUnmount(() => {
-  window.removeEventListener("mousemove", onWindowMouseMove);
-  window.removeEventListener("mouseup", onWindowMouseUp);
-  resizeObserver?.disconnect();
-  resizeObserver = null;
-});
 </script>
 
 <template>
@@ -317,123 +161,26 @@ onBeforeUnmount(() => {
     <div class="view-body">
       <section class="graph-pane">
         <div class="graph-viewport">
-          <svg
-            ref="svgRef"
-            class="graph-svg"
-            :class="{ panning: isDragging }"
-            :viewBox="viewBoxStr"
-            preserveAspectRatio="xMinYMin meet"
-            role="img"
-            aria-label="Audio graph diagram"
-            @wheel="onGraphWheel"
-            @mousedown="onGraphMouseDown"
+          <VueFlow
+            :nodes="flowNodes"
+            :edges="flowEdges"
+            :node-types="nodeTypes"
+            :nodes-draggable="false"
+            :nodes-connectable="false"
+            :elements-selectable="true"
+            :pan-on-drag="true"
+            :zoom-on-scroll="true"
+            :prevent-scrolling="true"
+            :min-zoom="0.2"
+            :max-zoom="6"
+            fit-view-on-init
+            :default-edge-options="{ type: 'default' }"
+            @node-click="onNodeClick"
+            @pane-click="onPaneClick"
           >
-          <defs>
-            <pattern
-              ref="patternRef"
-              id="graph-grid"
-              :x="patternX"
-              :y="patternY"
-              :width="scaledGap"
-              :height="scaledGap"
-              patternUnits="userSpaceOnUse"
-            >
-              <path
-                :d="`M ${scaledGap} 0 L 0 0 0 ${scaledGap}`"
-                fill="none"
-                stroke="rgba(255, 255, 255, 0.05)"
-                stroke-width="1"
-              />
-            </pattern>
-            <marker
-              id="arrow-audio"
-              viewBox="0 0 10 10"
-              refX="9"
-              refY="5"
-              markerWidth="6"
-              markerHeight="6"
-              orient="auto-start-reverse"
-            >
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--u-accent)" />
-            </marker>
-            <marker
-              id="arrow-midi"
-              viewBox="0 0 10 10"
-              refX="9"
-              refY="5"
-              markerWidth="6"
-              markerHeight="6"
-              orient="auto-start-reverse"
-            >
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--u-midi)" />
-            </marker>
-          </defs>
-
-          <rect
-            class="graph-grid-bg"
-            width="100%"
-            height="100%"
-            fill="url(#graph-grid)"
-          />
-
-          <g ref="viewportLayerRef" class="viewport-layer" :style="{ transform: viewportTransform }">
-          <path
-            v-for="edge in edgePaths"
-            :key="edge.id"
-            :d="edge.d"
-            class="edge"
-            :class="`edge-${edge.channel}`"
-            fill="none"
-            :marker-end="`url(#arrow-${edge.channel})`"
-          />
-
-          <g
-            v-for="node in nodeLayout"
-            :key="node.id"
-            class="node"
-            :class="[`kind-${node.kind}`, { selected: selectedId === node.id }]"
-            @click="graph.selectNode(node.id)"
-          >
-            <rect
-              :x="node.x"
-              :y="node.y"
-              :width="NODE_W"
-              :height="NODE_H"
-              rx="8"
-              class="node-box"
-            />
-            <circle
-              :cx="node.x + 12"
-              :cy="node.y + 12"
-              r="3.5"
-              class="status-dot"
-              :class="`status-${node.status}`"
-            />
-            <foreignObject
-              :x="node.x + 8"
-              :y="node.y + 16"
-              :width="NODE_W - 16"
-              :height="NODE_H - 22"
-            >
-              <div xmlns="http://www.w3.org/1999/xhtml" class="node-text">
-                <div class="node-name" :title="node.label">{{ node.label }}</div>
-                <div class="node-type" :title="node.audioNodeType">{{ node.audioNodeType }}</div>
-              </div>
-            </foreignObject>
-            <g v-if="node.errorCount > 0" class="node-badge-g">
-              <circle :cx="node.x + NODE_W - 12" :cy="node.y + 12" r="8" class="node-badge-bg" />
-              <text
-                :x="node.x + NODE_W - 12"
-                :y="node.y + 15"
-                text-anchor="middle"
-                class="node-badge-txt"
-              >
-                {{ node.errorCount }}
-              </text>
-            </g>
-          </g>
-          </g>
-          </svg>
+            <Background :variant="BackgroundVariant.Dots" :gap="20" :size="1" pattern-color="rgba(255, 255, 255, 0.12)" />
+            <Controls :show-interactive="false" position="bottom-right" />
+          </VueFlow>
         </div>
 
         <footer class="graph-legend">
@@ -453,14 +200,6 @@ onBeforeUnmount(() => {
             <span class="legend-swatch standard"></span>
             standard AudioNode
           </span>
-          <button
-            type="button"
-            class="reset-view-btn"
-            title="Reset zoom &amp; pan"
-            @click="resetView"
-          >
-            ⤢ reset view
-          </button>
         </footer>
       </section>
 
@@ -758,127 +497,98 @@ onBeforeUnmount(() => {
   position: relative;
 }
 
-.graph-svg {
+/* ──────────────────────────────────────────────────────────────────────
+   Vue Flow theme overrides (the default theme is light-ish; force monotone).
+   Selectors target Vue Flow's internal classes; we use :deep() to reach
+   them from this scoped style block.
+   ────────────────────────────────────────────────────────────────────── */
+
+.graph-viewport :deep(.vue-flow) {
   width: 100%;
   height: 100%;
-  display: block;
-  cursor: grab;
-  touch-action: none;
-  user-select: none;
+  background: transparent;
+  color: var(--u-text);
 }
 
-.graph-svg.panning {
-  cursor: grabbing;
+/* Hide the connection handles (we don't allow user-drawn connections;
+   they exist only as edge endpoints) */
+.graph-viewport :deep(.vue-flow__handle) {
+  width: 1px;
+  height: 1px;
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  opacity: 0;
+  pointer-events: none;
 }
 
-.graph-svg .node {
-  cursor: pointer;
+/* Edges */
+.graph-viewport :deep(.vue-flow__edge-path) {
+  stroke: var(--u-text-muted);
+  stroke-width: 1.5;
+  fill: none;
 }
 
-.viewport-layer {
-  /* CSS transforms on SVG <g> use transform-origin (50% 50%) by default;
-     pin to (0,0) so translate3d/scale3d match d3-zoom-style math. */
-  transform-origin: 0 0;
-  /* Promote to its own compositing layer: pan/zoom becomes a GPU composite,
-     content stays rasterized between transform changes. */
-  will-change: transform;
+.graph-viewport :deep(.vue-flow__edge.edge-audio .vue-flow__edge-path) {
+  stroke: var(--u-text);
 }
 
-.edge {
-  stroke-width: 1.7;
-  transition: stroke-width 120ms;
-}
-
-.edge-audio {
-  stroke: var(--u-accent);
-}
-
-.edge-midi {
-  stroke: var(--u-midi);
+.graph-viewport :deep(.vue-flow__edge.edge-midi .vue-flow__edge-path) {
+  stroke: var(--u-text-muted);
   stroke-dasharray: 5 4;
 }
 
-.node {
-  cursor: pointer;
+.graph-viewport :deep(.vue-flow__edge.selected .vue-flow__edge-path) {
+  stroke: var(--u-text);
+  stroke-width: 2;
 }
 
-.node-box {
-  fill: var(--u-bg-elev-2);
-  stroke: var(--u-border-strong);
-  stroke-width: 1.2;
-  transition:
-    stroke 120ms,
-    stroke-width 120ms,
-    fill 120ms;
-}
-
-.node.kind-unworklet .node-box {
+.graph-viewport :deep(.vue-flow__arrowhead path) {
+  fill: var(--u-text);
   stroke: var(--u-text);
 }
 
-.node.selected .node-box {
-  stroke: var(--u-text);
-  stroke-width: 2.5;
-  fill: var(--u-bg-elev-3);
-}
-
-.status-dot.status-ok {
-  fill: var(--u-success);
-}
-
-.status-dot.status-warning {
-  fill: var(--u-warn);
-}
-
-.status-dot.status-errors {
-  fill: var(--u-danger);
-}
-
-.node-text {
+/* Controls (zoom in/out, fit-view buttons) */
+.graph-viewport :deep(.vue-flow__controls) {
+  background: var(--u-bg-elev-2);
+  border: 1px solid var(--u-border);
+  border-radius: var(--u-radius);
+  box-shadow: none;
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
+  flex-direction: row;
+  padding: 2px;
   gap: 2px;
-  pointer-events: none;
-  text-align: center;
 }
 
-.node-name {
-  font-family: var(--u-sans);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--u-text);
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.graph-viewport :deep(.vue-flow__controls-button) {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--u-text-muted);
+  width: 28px;
+  height: 28px;
+  fill: currentColor;
 }
 
-.node.kind-unworklet .node-name {
+.graph-viewport :deep(.vue-flow__controls-button:hover) {
+  background: var(--u-bg-elev-3);
   color: var(--u-text);
 }
 
-.node-type {
-  font-family: var(--u-mono);
-  font-size: 9px;
-  color: var(--u-text-dim);
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.graph-viewport :deep(.vue-flow__controls-button svg) {
+  max-width: 14px;
+  max-height: 14px;
 }
 
-.node-badge-bg {
-  fill: var(--u-danger);
+/* Selection / hover indicator on nodes — keep the node component's own
+   visual; just kill VueFlow's default focus outline. */
+.graph-viewport :deep(.vue-flow__node) {
+  outline: none;
 }
 
-.node-badge-txt {
-  font-family: var(--u-sans);
-  font-size: 10px;
-  font-weight: 700;
-  fill: var(--u-bg);
+.graph-viewport :deep(.vue-flow__node.selected) {
+  outline: none;
 }
 
 .graph-legend {
@@ -888,27 +598,6 @@ onBeforeUnmount(() => {
   padding: 10px 4px 0;
   font-size: 11px;
   color: var(--u-text-dim);
-}
-
-.reset-view-btn {
-  margin-left: auto;
-  padding: 4px 10px;
-  background: transparent;
-  border: 1px solid var(--u-border);
-  border-radius: var(--u-radius);
-  color: var(--u-text-muted);
-  font-family: var(--u-mono);
-  font-size: 10.5px;
-  letter-spacing: 0.04em;
-  cursor: pointer;
-  transition:
-    border-color 100ms,
-    color 100ms;
-}
-
-.reset-view-btn:hover {
-  border-color: var(--u-text);
-  color: var(--u-text);
 }
 
 .legend-item {

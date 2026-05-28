@@ -22,6 +22,9 @@ catalog:
   "@vitest/browser": ^4.1.7
   "@vitest/browser-playwright": ^4.1.7
   "@playwright/test": ^1.60.0
+  "@vue-flow/core": ^1.48.2
+  "@vue-flow/background": ^1.3.2
+  "@vue-flow/controls": ^1.1.3
 overrides:
   vite: "catalog:"
   vitest: "catalog:"
@@ -34,3 +37,4 @@ peerDependencyRules:
     vitest: "*"
 allowBuilds:
   esbuild: true
+  vue-demi: true
