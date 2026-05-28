@@ -34,6 +34,22 @@ const STATE_SLOT_BYTES: Record<ScalarType, number> = {
   bool: 4,
 };
 
+/**
+ * publishShared slot の byte size (= Q42 + `02-messaging.md` §5.4)。
+ * publish 対 応 type (= f32 / i32 / bool) は 全 て 4 byte 単 一 word で SAB に
+ * Atomics.store 可 能。 f64 / i64 は publish 不 可 (= TS / runtime で reject 済)、
+ * region size 計 算 で hit し な い。
+ */
+const PUBLISH_SHARED_BYTES = 4;
+
+/**
+ * publishCounters slot の byte size (= `04-worklet-runtime.md` §7)。
+ * sample counter (= 4 byte i32) + version counter (= 4 byte i32) = 8 byte per slot。
+ * sub-phase 7.3 で per-block scheduler が sample counter を SAMPLES_PER_BLOCK
+ * 加 算 + threshold 越 え で copy + version increment。
+ */
+const PUBLISH_COUNTERS_BYTES = 8;
+
 export type Layout = {
   regions: {
     states: { base: number; slots: Record<string, number> };
@@ -90,12 +106,37 @@ export function layout(graph: CapturedGraph): Layout {
     }
   }
 
+  // publishShared packing = states 末 尾 を base に publish flag を 持 つ
+  // state slot だ け を declaration 順 で allocate (= sub-phase 7.2、 全 type で
+  // 4 byte 単 一 word = Q42)。 publish flag な い state slot は ここ に hit せ ず。
+  const publishSharedBase = cursor;
+  const publishSharedSlots: Record<string, number> = {};
+  for (const decl of graph.declarations) {
+    if (decl.kind === "state" && decl.publish !== undefined) {
+      publishSharedSlots[decl.name] = cursor;
+      cursor += PUBLISH_SHARED_BYTES;
+    }
+  }
+
+  // publishCounters packing = publishShared 末 尾 を base に 同 順 で 8 byte
+  // per slot (= sample counter + version counter)。 publishShared と publish
+  // flag set が 一 致 = 同 declaration 順 で packing 一 致。
+  const publishCountersBase = cursor;
+  const publishCountersSlots: Record<string, number> = {};
+  for (const decl of graph.declarations) {
+    if (decl.kind === "state" && decl.publish !== undefined) {
+      publishCountersSlots[decl.name] = cursor;
+      cursor += PUBLISH_COUNTERS_BYTES;
+    }
+  }
+
   const totalBytes = cursor;
 
-  // sub-phase 7.1 で fill 対 象 外 の 8 region = base 全 て totalBytes (= 連 続)、
+  // sub-phase 7.2 で fill 対 象 外 の 6 region = base 全 て totalBytes (= 連 続)、
   // slots / size 0。 後 続 sub-phase で 該 当 region に slot が 追 加 さ れ た 時
   // 順 次 base を 再 計 算 す る path = layout 関 数 を 拡 張 す る だ け で
-  // 既 ioScratch / states 配 置 に は 影 響 ナ シ (= subset → superset 規 約)。
+  // 既 ioScratch / states / publishShared / publishCounters 配 置 に は 影 響
+  // ナ シ (= subset → superset 規 約)。
   return {
     regions: {
       states: { base: statesBase, slots: stateSlots },
@@ -106,8 +147,8 @@ export function layout(graph: CapturedGraph): Layout {
       payloadContent: { base: totalBytes, slots: {} },
       midiRings: { base: totalBytes, slots: {} },
       sysexContent: { base: totalBytes, size: 0 },
-      publishShared: { base: totalBytes, slots: {} },
-      publishCounters: { base: totalBytes, slots: {} },
+      publishShared: { base: publishSharedBase, slots: publishSharedSlots },
+      publishCounters: { base: publishCountersBase, slots: publishCountersSlots },
       snapshotRegion: { base: totalBytes, size: 0 },
     },
     totalBytes,

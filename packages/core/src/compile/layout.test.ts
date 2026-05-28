@@ -360,3 +360,189 @@ test("`layout(stateBeforeAudio)` = declaration 順 ナ シ で ioScratch packing
     totalBytes: 516,
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// publishShared / publishCounters region = Phase 7 sub-phase 7.2 (= publish
+// flag を 持 つ state slot だ け が region に hit、 publishShared = 4 byte
+// 単 一 word、 publishCounters = 8 byte = sample counter + version counter)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`layout(publishF32Only)` = publish flag f32 で publishShared/Counters slot 配 置", () => {
+  const graph: CapturedGraph = {
+    declarations: [
+      {
+        kind: "state",
+        name: "meterL",
+        type: "f32",
+        initial: 0,
+        userNamed: true,
+        publish: { rateFps: 30 },
+      },
+    ],
+    statements: [],
+  };
+  expect(layout(graph)).toEqual({
+    regions: {
+      ioScratch: { base: 0, inputs: {}, outputs: {}, params: {} },
+      ...emptyTail(16),
+      states: { base: 0, slots: { meterL: 0 } },
+      publishShared: { base: 4, slots: { meterL: 4 } },
+      publishCounters: { base: 8, slots: { meterL: 8 } },
+    },
+    totalBytes: 16,
+  });
+});
+
+test("`layout(publishI32 + bool)` = 全 type で 4 byte 単 一 word slot (= Q42)", () => {
+  const graph: CapturedGraph = {
+    declarations: [
+      {
+        kind: "state",
+        name: "stepIdx",
+        type: "i32",
+        initial: 0,
+        userNamed: true,
+        publish: { rateFps: 60 },
+      },
+      {
+        kind: "state",
+        name: "gate",
+        type: "bool",
+        initial: false,
+        userNamed: true,
+        publish: { rateFps: 30 },
+      },
+    ],
+    statements: [],
+  };
+  // state region = 4 + 4 = 8 byte (= stepIdx 0, gate 4)
+  // publishShared = 4 + 4 = 8 byte (= stepIdx 8, gate 12)
+  // publishCounters = 8 + 8 = 16 byte (= stepIdx 16, gate 24)
+  // total = 32 byte
+  expect(layout(graph)).toEqual({
+    regions: {
+      ioScratch: { base: 0, inputs: {}, outputs: {}, params: {} },
+      ...emptyTail(32),
+      states: { base: 0, slots: { stepIdx: 0, gate: 4 } },
+      publishShared: { base: 8, slots: { stepIdx: 8, gate: 12 } },
+      publishCounters: { base: 16, slots: { stepIdx: 16, gate: 24 } },
+    },
+    totalBytes: 32,
+  });
+});
+
+test("`layout(mixedPublishAndPlain)` = publish flag ナ シ slot は publish region に hit せ ず", () => {
+  const graph: CapturedGraph = {
+    declarations: [
+      // private z (= publish ナ シ、 synthetic name)
+      { kind: "state", name: "__state_0", type: "f32", initial: 0 },
+      // public meter (= publish 設 定)
+      {
+        kind: "state",
+        name: "meterL",
+        type: "f32",
+        initial: 0,
+        userNamed: true,
+        publish: { rateFps: 30 },
+      },
+    ],
+    statements: [],
+  };
+  // state region = 4 + 4 = 8 byte (= __state_0 0, meterL 4)
+  // publishShared = 4 byte (= meterL の み = 4 = meterL 8)
+  // publishCounters = 8 byte (= meterL 12)
+  // total = 20 byte
+  expect(layout(graph)).toEqual({
+    regions: {
+      ioScratch: { base: 0, inputs: {}, outputs: {}, params: {} },
+      ...emptyTail(20),
+      states: { base: 0, slots: { __state_0: 0, meterL: 4 } },
+      publishShared: { base: 8, slots: { meterL: 8 } },
+      publishCounters: { base: 12, slots: { meterL: 12 } },
+    },
+    totalBytes: 20,
+  });
+});
+
+test("`layout(snapshotOnlyNoPublish)` = snapshot 設 定 だ け で publish region は empty", () => {
+  // snapshot 'persistent' を 持 つ が publish ナ シ → publishShared / Counters
+  // 共 に empty (= sub-phase 11 で snapshot blob 経 由 で 取 得)
+  const graph: CapturedGraph = {
+    declarations: [
+      {
+        kind: "state",
+        name: "preset",
+        type: "f32",
+        initial: 0,
+        userNamed: true,
+        snapshot: "persistent",
+      },
+    ],
+    statements: [],
+  };
+  expect(layout(graph)).toEqual({
+    regions: {
+      ioScratch: { base: 0, inputs: {}, outputs: {}, params: {} },
+      ...emptyTail(4),
+      states: { base: 0, slots: { preset: 0 } },
+    },
+    totalBytes: 4,
+  });
+});
+
+test("`layout(canonicalEx1FullWithPublish)` = stereoIn + stereoOut + gain + meterL/R publish", () => {
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "audioInput", name: "main", channels: 2 },
+      { kind: "audioOutput", name: "main", channels: 2 },
+      {
+        kind: "param",
+        name: "gain",
+        type: "f32",
+        default: 1,
+        min: 0,
+        max: 4,
+        automationRate: "a-rate",
+      },
+      {
+        kind: "state",
+        name: "meterL",
+        type: "f32",
+        initial: 0,
+        userNamed: true,
+        snapshot: "transient",
+        publish: { rateFps: 30 },
+      },
+      {
+        kind: "state",
+        name: "meterR",
+        type: "f32",
+        initial: 0,
+        userNamed: true,
+        snapshot: "transient",
+        publish: { rateFps: 30 },
+      },
+    ],
+    statements: [],
+  };
+  // ioScratch = 1024 (= inputs) + 1024 (= outputs) + 512 (= param) = 2560
+  // states = 4 + 4 = 8 (= meterL 2560, meterR 2564)
+  // publishShared = 4 + 4 = 8 (= meterL 2568, meterR 2572)
+  // publishCounters = 8 + 8 = 16 (= meterL 2576, meterR 2584)
+  // total = 2592
+  expect(layout(graph)).toEqual({
+    regions: {
+      ioScratch: {
+        base: 0,
+        inputs: { main: 0 },
+        outputs: { main: 1024 },
+        params: { gain: 2048 },
+      },
+      ...emptyTail(2592),
+      states: { base: 2560, slots: { meterL: 2560, meterR: 2564 } },
+      publishShared: { base: 2568, slots: { meterL: 2568, meterR: 2572 } },
+      publishCounters: { base: 2576, slots: { meterL: 2576, meterR: 2584 } },
+    },
+    totalBytes: 2592,
+  });
+});
