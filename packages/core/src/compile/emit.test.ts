@@ -630,38 +630,10 @@ test("`emit` rejects expression-kind nodes in statement position (= structural g
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// stateLoad / stateStore = Phase 7 sub-phase 7.1 stub (= ast.ts に kind 追 加、
-// emit は sub-phase 7.3 で fill)。 stub throw + statement / expression
-// position guard が 走 る こ と を 確 認。
+// stateLoad / stateStore = Phase 7 sub-phase 7.1 (= state.<type> plain
+// factory の load / store WASM emit + subnormal flush guard for f32/f64)。
+// 5 scalar type 全 round-trip + subnormal guard 境 界 + unknown slot reject。
 // ─────────────────────────────────────────────────────────────────────────
-
-test("`emitExpression(stateLoad)` throws sub-phase 7.3 stub marker", async () => {
-  const binaryen = await loadBinaryen();
-  const mod = makeMod(binaryen);
-  expect(() =>
-    emitExpression({ kind: "stateLoad", type: "f32", name: "x" }, emptyLayout, mod, binaryen),
-  ).toThrow(/sub-phase 7\.3/);
-  mod.dispose();
-});
-
-test("`emitStatement(stateStore)` throws sub-phase 7.3 stub marker", async () => {
-  const binaryen = await loadBinaryen();
-  const mod = makeMod(binaryen);
-  expect(() =>
-    emitStatement(
-      {
-        kind: "stateStore",
-        type: "f32",
-        name: "x",
-        value: { kind: "literal", type: "f32", value: 0 },
-      },
-      emptyLayout,
-      mod,
-      binaryen,
-    ),
-  ).toThrow(/sub-phase 7\.3/);
-  mod.dispose();
-});
 
 test("`emitExpression(stateStore)` rejects statement node in expression position", async () => {
   const binaryen = await loadBinaryen();
@@ -688,5 +660,328 @@ test("`emitStatement(stateLoad)` rejects expression node in statement position",
   expect(() =>
     emitStatement({ kind: "stateLoad", type: "f32", name: "x" }, emptyLayout, mod, binaryen),
   ).toThrow(/expression node 'stateLoad' cannot appear in statement position/);
+  mod.dispose();
+});
+
+test("`emit` throws on unknown state slot in stateLoad", async () => {
+  const graph: CapturedGraph = {
+    declarations: [{ kind: "audioOutput", name: "main", channels: 1 }],
+    statements: [
+      {
+        kind: "audioOutWrite",
+        portName: "main",
+        channel: 0,
+        offset: { kind: "literal", type: "i32", value: 0 },
+        value: { kind: "stateLoad", type: "f32", name: "ghost" },
+      },
+    ],
+  };
+  await expect(emit(graph, layout(graph))).rejects.toThrow(/unknown state slot: ghost/);
+});
+
+test("`emit` throws on unknown state slot in stateStore", async () => {
+  const graph: CapturedGraph = {
+    declarations: [],
+    statements: [
+      {
+        kind: "stateStore",
+        type: "f32",
+        name: "ghost",
+        value: { kind: "literal", type: "f32", value: 0 },
+      },
+    ],
+  };
+  await expect(emit(graph, layout(graph))).rejects.toThrow(/unknown state slot: ghost/);
+});
+
+// state round-trip 用 fixture builder = store literal → forSample で 全 sample
+// に load 結 果 を write、 process() 後 output[0] が 期 待 値 で あ る こ と を 確 認。
+function makeStateRoundtripGraph(
+  type: "f32" | "f64" | "i32" | "i64" | "bool",
+  storeValue: AstNode,
+  initial: number | bigint | boolean,
+): CapturedGraph {
+  // f64 / i64 を audio output に そ の ま ま 流 せ な い (= audio output は f32) =
+  // state ↔ state round-trip で 確 認 (= store した値 を 別 state に load → store)。
+  // f32 / i32 / bool は audio output (= f32) に 流 し て 直 接 観 測。
+  if (type === "f64" || type === "i64") {
+    return {
+      declarations: [
+        { kind: "state", name: "src", type, initial },
+        { kind: "state", name: "dst", type, initial },
+      ],
+      statements: [
+        { kind: "stateStore", type, name: "src", value: storeValue },
+        {
+          kind: "stateStore",
+          type,
+          name: "dst",
+          value: { kind: "stateLoad", type, name: "src" },
+        },
+      ],
+    };
+  }
+  return {
+    declarations: [
+      { kind: "state", name: "x", type, initial },
+      { kind: "audioOutput", name: "main", channels: 1 },
+    ],
+    statements: [
+      { kind: "stateStore", type, name: "x", value: storeValue },
+      {
+        kind: "forSample",
+        stride: 1,
+        body: [
+          {
+            kind: "audioOutWrite",
+            portName: "main",
+            channel: 0,
+            offset: { kind: "loopCounter" },
+            value:
+              type === "f32"
+                ? { kind: "stateLoad", type: "f32", name: "x" }
+                : // i32 / bool は内 部 i32 = audio output (= f32) に そ の ま ま 流 す と
+                  // type mismatch、 ただ unit test の memory I/O で 直 接 観 測 す る
+                  // path は audio output 経 由 ナ シ。 i32 / bool 用 fixture は 別 path
+                  // で 組 む (= makeStateMemoryRoundtripGraph で 直 接 memory dump)。
+                  { kind: "literal", type: "f32", value: 0 },
+          },
+        ],
+      },
+    ],
+  };
+}
+
+test("`emit` state.f32 round-trip = store value が load で 取 れ る", async () => {
+  const graph = makeStateRoundtripGraph("f32", { kind: "literal", type: "f32", value: 7.5 }, 0);
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  proc();
+  const out = new Float32Array(memory.buffer, lay.regions.ioScratch.outputs["main"]!, 128);
+  for (let i = 0; i < 128; i++) {
+    expect(out[i]).toBe(7.5);
+  }
+});
+
+test("`emit` state.f32 subnormal flush = 1e-40 store → load で 0", async () => {
+  const graph = makeStateRoundtripGraph("f32", { kind: "literal", type: "f32", value: 1e-40 }, 0);
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  proc();
+  const out = new Float32Array(memory.buffer, lay.regions.ioScratch.outputs["main"]!, 128);
+  expect(out[0]).toBe(0);
+});
+
+test("`emit` state.f32 subnormal threshold = 1e-29 store → load で そ の ま ま (= 境 界 超 え 保 持)", async () => {
+  const graph = makeStateRoundtripGraph("f32", { kind: "literal", type: "f32", value: 1e-29 }, 0);
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  proc();
+  const out = new Float32Array(memory.buffer, lay.regions.ioScratch.outputs["main"]!, 128);
+  // 1e-29 は f32 で 表 現 可 能 = Math.fround で 同 値 近 似 (= subnormal range の 外)
+  expect(out[0]).toBeCloseTo(Math.fround(1e-29), 35);
+  expect(out[0]).not.toBe(0);
+});
+
+test("`emit` state.f64 round-trip + subnormal flush via memory dump", async () => {
+  // f64 は audio output (= f32) に 流 せ な い = state ↔ state round-trip + memory
+  // 直 接 read。 src に 1e-40 store → guard で 0 flush → dst に copy → dst slot を read。
+  const graph = makeStateRoundtripGraph("f64", { kind: "literal", type: "f64", value: 1e-40 }, 0);
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  proc();
+  const srcOffset = lay.regions.states.slots["src"]!;
+  const dstOffset = lay.regions.states.slots["dst"]!;
+  const srcView = new Float64Array(memory.buffer, srcOffset, 1);
+  const dstView = new Float64Array(memory.buffer, dstOffset, 1);
+  // 1e-40 store → subnormal guard で 0 に flush
+  expect(srcView[0]).toBe(0);
+  expect(dstView[0]).toBe(0);
+});
+
+test("`emit` state.f64 subnormal threshold = 1e-29 store で そ の ま ま", async () => {
+  const graph = makeStateRoundtripGraph("f64", { kind: "literal", type: "f64", value: 1e-29 }, 0);
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  proc();
+  const srcView = new Float64Array(memory.buffer, lay.regions.states.slots["src"]!, 1);
+  expect(srcView[0]).toBeCloseTo(1e-29, 35);
+  expect(srcView[0]).not.toBe(0);
+});
+
+test("`emit` state.i32 round-trip via memory dump (= subnormal guard 不 適 用)", async () => {
+  const graph: CapturedGraph = {
+    declarations: [{ kind: "state", name: "x", type: "i32", initial: 0 }],
+    statements: [
+      {
+        kind: "stateStore",
+        type: "i32",
+        name: "x",
+        value: { kind: "literal", type: "i32", value: 42 },
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  proc();
+  const view = new Int32Array(memory.buffer, lay.regions.states.slots["x"]!, 1);
+  expect(view[0]).toBe(42);
+});
+
+test("`emit` state.i64 round-trip via memory dump", async () => {
+  // i64 は audio output に 流 せ な い = state ↔ state round-trip + memory 直 接 read。
+  // ただ i64 literal は AstNode kind=literal で value が number 型 = i64 を 表 現 困 難 =
+  // 0 store の 単 純 round-trip だ け で kind=i64 case 経 路 を hit 確 認 (= layout は 8 byte
+  // slot allocate、 emit は i64.store 経 由)。
+  const graph: CapturedGraph = {
+    declarations: [{ kind: "state", name: "x", type: "i64", initial: 0n }],
+    statements: [
+      {
+        kind: "stateStore",
+        type: "i64",
+        name: "x",
+        // literal i64 の 直 接 表 現 path は ast.ts の literal 制 約 (= value: number) で
+        // 限 定 的 = stateLoad の round-trip で 「初 期 値 0 を そ の ま ま 戻 す」 path。
+        value: { kind: "stateLoad", type: "i64", name: "x" },
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  proc();
+  const view = new BigInt64Array(memory.buffer, lay.regions.states.slots["x"]!, 1);
+  expect(view[0]).toBe(0n); // 初 期 memory zero、 load → store で そ の ま ま
+});
+
+test("`emit` state.bool round-trip via memory dump (= 内 部 i32 表 現)", async () => {
+  const graph: CapturedGraph = {
+    declarations: [{ kind: "state", name: "x", type: "bool", initial: false }],
+    statements: [
+      {
+        kind: "stateStore",
+        type: "bool",
+        name: "x",
+        value: { kind: "literal", type: "i32", value: 1 },
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  proc();
+  const view = new Int32Array(memory.buffer, lay.regions.states.slots["x"]!, 1);
+  expect(view[0]).toBe(1);
+});
+
+test("`emit` state.i32 stateLoad hit via state ↔ state copy", async () => {
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "state", name: "src", type: "i32", initial: 0 },
+      { kind: "state", name: "dst", type: "i32", initial: 0 },
+    ],
+    statements: [
+      {
+        kind: "stateStore",
+        type: "i32",
+        name: "src",
+        value: { kind: "literal", type: "i32", value: 99 },
+      },
+      {
+        kind: "stateStore",
+        type: "i32",
+        name: "dst",
+        value: { kind: "stateLoad", type: "i32", name: "src" },
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  proc();
+  const view = new Int32Array(memory.buffer, lay.regions.states.slots["dst"]!, 1);
+  expect(view[0]).toBe(99);
+});
+
+test("`emit` state.bool stateLoad hit via state ↔ state copy", async () => {
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "state", name: "src", type: "bool", initial: false },
+      { kind: "state", name: "dst", type: "bool", initial: false },
+    ],
+    statements: [
+      {
+        kind: "stateStore",
+        type: "bool",
+        name: "src",
+        value: { kind: "literal", type: "i32", value: 1 },
+      },
+      {
+        kind: "stateStore",
+        type: "bool",
+        name: "dst",
+        value: { kind: "stateLoad", type: "bool", name: "src" },
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  proc();
+  const view = new Int32Array(memory.buffer, lay.regions.states.slots["dst"]!, 1);
+  expect(view[0]).toBe(1);
+});
+
+test("`emitExpression(literal i64)` throws 後 続 phase stub marker", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  expect(() =>
+    emitExpression({ kind: "literal", type: "i64", value: 0 }, emptyLayout, mod, binaryen),
+  ).toThrow(/i64 literal emission not implemented/);
+  mod.dispose();
+});
+
+test("`emitExpression(literal bool)` throws 後 続 phase stub marker", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  expect(() =>
+    emitExpression({ kind: "literal", type: "bool", value: 0 }, emptyLayout, mod, binaryen),
+  ).toThrow(/bool literal emission not implemented/);
   mod.dispose();
 });
