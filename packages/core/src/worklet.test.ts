@@ -658,11 +658,15 @@ test("publish copy: publishBuffer ナ シ processor は publish path skip (= reg
 const eventEmitProc = defineProcessor(() => {
   const input = audioInput({ channels: 1, name: "main" });
   const out = audioOutput({ channels: 1, name: "main" });
+  // gate state を 毎 quantum 開 始 で true に set + stateLoad を cond で 使 う =
+  // Q32-c (= constant-truthy) を 構 文 上 回 避 + 動 的 fire path (= analyze pass)。
+  const gate = stateDecl.named("gate").bool(true);
   const peakEvt = event<{ level: number }>({ name: "peak", capacity: 16 });
   return {
     process: () => {
+      gate.store(true);
       forSample((i) => {
-        peakEvt.emitIf(true, { atSample: i, level: 0.5 });
+        peakEvt.emitIf(gate.load(), { atSample: i, level: 0.5 });
         out.ch(0).at(i).write(input.ch(0).at(i));
       });
     },

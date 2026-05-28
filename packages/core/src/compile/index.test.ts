@@ -183,3 +183,52 @@ test("`instance.process()` invokes the WASM `process` export (= memory observabl
   // f32 precision round = 0.42 は f32 で exact 表 現 不 能 = Math.fround で 期 待 値 を round
   expect(view[0]).toBe(Math.fround(0.42));
 });
+
+test("`compile` rejects analyze error diagnostics + error message に stable ID を 含 む", async () => {
+  // forSample 内 で constant-truthy emitIf = analyze で error diagnostic →
+  // compile が emit に 入 る 前 に throw、 message に stable ID 含 む。
+  const badProc: CapturedGraph = {
+    declarations: [
+      {
+        kind: "audioOutput",
+        name: "out",
+        channels: 1,
+      },
+      {
+        kind: "event",
+        name: "peak",
+        capacity: 256,
+        payloadCapacity: undefined,
+        fields: [{ name: "level", wireType: "f32" }],
+      },
+    ],
+    statements: [
+      {
+        kind: "forSample",
+        stride: 1,
+        body: [
+          {
+            kind: "eventEmitIf",
+            name: "peak",
+            cond: { kind: "literal", type: "i32", value: 1 },
+            atSample: { kind: "loopCounter" },
+            fields: [
+              {
+                name: "level",
+                wireType: "f32",
+                value: { kind: "literal", type: "f32", value: 0.5 },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  const fakeProcessor = {
+    graph: badProc as unknown,
+    schemaHash: "test",
+    worklet: {} as never,
+    __compiledProcessor: undefined as never,
+  } as unknown as Parameters<typeof compile>[0];
+  await expect(compile(fakeProcessor)).rejects.toThrow(/constant-truthy-emitif/);
+});
