@@ -293,6 +293,18 @@ const makeMockProcessor = (overrides?: {
     sharedOffset: number;
     counterOffset: number;
   }>;
+  eventRings?: Array<{
+    name: string;
+    wasmRingBase: number;
+    capacity: number;
+    slotSize: number;
+    fields: Array<{
+      name: string;
+      wireType: "f32" | "f64" | "i32" | "i64" | "bool";
+      offsetInSlot: number;
+      byteSize: number;
+    }>;
+  }>;
 }): CompiledProcessor<unknown> =>
   ({
     graph: {} as never,
@@ -306,6 +318,7 @@ const makeMockProcessor = (overrides?: {
       inputs: overrides?.inputs ?? [{ name: "main", channels: 2 }],
       outputs: overrides?.outputs ?? [{ name: "main", channels: 2 }],
       publishSlots: overrides?.publishSlots ?? [],
+      eventRings: overrides?.eventRings ?? [],
       moduleUrl:
         overrides && "moduleUrl" in overrides ? overrides.moduleUrl : "/_assets/x.worklet.js",
       wasmUrl: overrides && "wasmUrl" in overrides ? overrides.wasmUrl : "/_assets/x.wasm",
@@ -1367,6 +1380,128 @@ test("createNode with publishSlots + crossOriginIsolated = SAB allocate + transp
     expect((opts.publishBuffer as SharedArrayBuffer).byteLength).toBe(12);
     expect(opts.transport).toBe("sab");
     expect(node.diagnostics.transport).toBe("sab");
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode with eventRings + crossOriginIsolated = SAB allocate + eventRings hand", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const eventRingsFixture = [
+      {
+        name: "peak",
+        wasmRingBase: 0,
+        capacity: 16,
+        slotSize: 8, // atSample (4) + level (4)
+        fields: [
+          { name: "atSample", wireType: "i32" as const, offsetInSlot: 0, byteSize: 4 },
+          { name: "level", wireType: "f32" as const, offsetInSlot: 4, byteSize: 4 },
+        ],
+      },
+    ];
+    await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ eventRings: eventRingsFixture })),
+      h.fireReady,
+    );
+    const opts = h.lastNode!.__constructorRecord.options.processorOptions as {
+      eventRingsBuffer: unknown;
+      eventRings: unknown;
+      eventRingSabOffsets: number[];
+      transport: string;
+    };
+    expect(opts.eventRingsBuffer).toBeInstanceOf(SharedArrayBuffer);
+    // ring 1 個 = header 12 + 16 × 8 = 140
+    expect((opts.eventRingsBuffer as SharedArrayBuffer).byteLength).toBe(140);
+    expect(opts.eventRingSabOffsets).toEqual([0]);
+    expect(opts.transport).toBe("sab");
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode with 2 eventRings = SAB に 連 続 配 置 + sabOffsets で 累 計", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const eventRingsFixture = [
+      {
+        name: "evt1",
+        wasmRingBase: 0,
+        capacity: 16,
+        slotSize: 8,
+        fields: [
+          { name: "atSample", wireType: "i32" as const, offsetInSlot: 0, byteSize: 4 },
+          { name: "level", wireType: "f32" as const, offsetInSlot: 4, byteSize: 4 },
+        ],
+      },
+      {
+        name: "evt2",
+        wasmRingBase: 140,
+        capacity: 4,
+        slotSize: 4,
+        fields: [{ name: "atSample", wireType: "i32" as const, offsetInSlot: 0, byteSize: 4 }],
+      },
+    ];
+    await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ eventRings: eventRingsFixture })),
+      h.fireReady,
+    );
+    const opts = h.lastNode!.__constructorRecord.options.processorOptions as {
+      eventRingsBuffer: SharedArrayBuffer;
+      eventRingSabOffsets: number[];
+    };
+    // evt1 = 140 byte、 evt2 = 12 + 4 × 4 = 28 byte、 合 計 168
+    expect(opts.eventRingsBuffer.byteLength).toBe(168);
+    expect(opts.eventRingSabOffsets).toEqual([0, 140]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode without eventRings = processorOptions に eventRingsBuffer hand な し", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    await startCreate(() => createNode(h.context as never, makeMockProcessor()), h.fireReady);
+    const opts = h.lastNode!.__constructorRecord.options.processorOptions as Record<
+      string,
+      unknown
+    >;
+    expect("eventRingsBuffer" in opts).toBe(false);
+    expect("eventRings" in opts).toBe(false);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode with eventRings + !crossOriginIsolated = fallback ArrayBuffer", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({
+            eventRings: [
+              {
+                name: "peak",
+                wasmRingBase: 0,
+                capacity: 16,
+                slotSize: 8,
+                fields: [
+                  { name: "atSample", wireType: "i32" as const, offsetInSlot: 0, byteSize: 4 },
+                  { name: "level", wireType: "f32" as const, offsetInSlot: 4, byteSize: 4 },
+                ],
+              },
+            ],
+          }),
+        ),
+      h.fireReady,
+    );
+    const opts = h.lastNode!.__constructorRecord.options.processorOptions as {
+      eventRingsBuffer: unknown;
+    };
+    expect(opts.eventRingsBuffer).toBeInstanceOf(ArrayBuffer);
+    expect(opts.eventRingsBuffer).not.toBeInstanceOf(SharedArrayBuffer);
   } finally {
     h.cleanup();
   }

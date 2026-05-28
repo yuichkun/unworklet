@@ -188,6 +188,24 @@ type ProcessorOptionsBag = {
      * を 切 り 替 え る path で 参 照。 default = 'postMessage' (= safer fallback)。
      */
     transport?: TransportMode;
+    /**
+     * event ring buffer 用 共 有 buffer (= sub-phase 7.6 commit 5b)。 全 event ring
+     * を 連 続 で 配 置 し た 1 SAB (= main で alloc)、 worklet template が
+     * per-quantum 末 尾 で WASM ring → SAB ring に copy (= commit 5c で fill)。
+     * event ナ シ processor で は hand さ れ な い。
+     */
+    eventRingsBuffer?: SharedArrayBuffer | ArrayBuffer;
+    /**
+     * event ring descriptor 配 列 (= declaration 順、 layout の eventRings slot と
+     * zip)。 worklet template が WASM memory の どこ か ら read す る か を 各 ring
+     * で 取 得 (= wasmRingBase / capacity / slotSize / fields)。
+     */
+    eventRings?: readonly EventRingSlotDescriptor[];
+    /**
+     * 各 event ring の SAB 内 offset (= declaration 順、 eventRings と zip)。
+     * worklet template が per-ring の SAB 書 き 込 み base を 取 る path。
+     */
+    eventRingSabOffsets?: readonly number[];
   };
 };
 

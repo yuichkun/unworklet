@@ -282,6 +282,7 @@ export async function createNode<C>(
   const inputs = ns.inputs;
   const outputs = ns.outputs;
   const publishSlots = ns.publishSlots;
+  const eventRings = ns.eventRings;
 
   // transport mode 検 出 (= sub-phase 7.4)。 publishSlots ゼ ロ で も transport は
   // 計 算 す る (= 後 続 で event<T> / message<T> / midi の SAB ringbuffer path で も
@@ -301,6 +302,23 @@ export async function createNode<C>(
     publishBuffer = sabAvailable
       ? new SharedArrayBuffer(publishBufferByteLength)
       : new ArrayBuffer(publishBufferByteLength);
+  }
+
+  // event ring buffer SAB allocate (= sub-phase 7.6 commit 5b)。 1 SAB に 全 event
+  // ring を 連 続 で 配 置 = per-ring SAB 内 offset = declaration 順 累 計 (= main /
+  // worklet で 同 path で 計 算)。 ring 1 個 あ た り = header 12 + capacity × slotSize。
+  // event ナ シ なら ゼ ロ = processorOptions に hand し な い。
+  let eventRingsByteLength = 0;
+  const eventRingSabOffsets: number[] = [];
+  for (const ring of eventRings) {
+    eventRingSabOffsets.push(eventRingsByteLength);
+    eventRingsByteLength += 12 + ring.capacity * ring.slotSize;
+  }
+  let eventRingsBuffer: SharedArrayBuffer | ArrayBuffer | null = null;
+  if (eventRingsByteLength > 0) {
+    eventRingsBuffer = sabAvailable
+      ? new SharedArrayBuffer(eventRingsByteLength)
+      : new ArrayBuffer(eventRingsByteLength);
   }
 
   // main 側 state surface 構 築 = publishBuffer を Int32Array view + 各 slot で
@@ -425,6 +443,17 @@ export async function createNode<C>(
       // template の initialize で receive + per-quantum 末 尾 で copy logic 経 由、
       // sub-phase 7.4 後 続 commit で fill)。 publish ゼ ロ なら 既 path 維 持。
       ...(publishBuffer !== null ? { publishBuffer, publishSlots, transport: transportMode } : {}),
+      // event ring あ り の 時 だ け eventRingsBuffer + descriptor + sabOffsets を hand
+      // (= sub-phase 7.6 commit 5b)。 worklet template の initialize で receive +
+      // per-quantum 末 尾 で WASM → SAB copy logic (= commit 5c で fill)。
+      ...(eventRingsBuffer !== null
+        ? {
+            eventRingsBuffer,
+            eventRings,
+            eventRingSabOffsets,
+            transport: transportMode,
+          }
+        : {}),
     },
   };
   if (outputs.length > 0) {
