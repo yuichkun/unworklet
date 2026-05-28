@@ -120,6 +120,25 @@ const makeStateChain = (pendingName: string | undefined): StateChain => ({
   expose: () => notImplemented(),
 });
 
+/**
+ * state slot の name uniqueness check (= `01-dsl.md` §3.1 + Q5-b)。
+ *
+ * declare 時 (= `state.f32(0)` / `state.named('X').f32(0)`) と .named()
+ * 後 付 け mutate 時 の 両 path で 走 る。 `excludeDecl` を 渡 す と 自 decl
+ * を 除 外 し て check (= .named() で 自 分 を 上 書 き す る path で 自 collide
+ * を 誤 検 出 し な い)。 同 kind 内 で name は unique = type が違 っ て も collide
+ * (= `state.named('x').f32(0)` + `state.named('x').i32(0)` も graph-capture-time
+ * error)。
+ */
+function checkStateName(name: string, excludeDecl: StateDecl | null = null): void {
+  const ctx = getCurrentCapture();
+  if (ctx.declarations.some((d) => d.kind === "state" && d.name === name && d !== excludeDecl)) {
+    throw new Error(
+      `unworklet: duplicate state declaration name "${name}" — state names must be unique within a processor`,
+    );
+  }
+}
+
 function makeStateDecl<T extends ScalarType>(
   type: T,
   initial: ScalarOf<T>,
@@ -128,6 +147,7 @@ function makeStateDecl<T extends ScalarType>(
   const ctx = getCurrentCapture();
   const synthIdx = ctx.declarations.filter((d) => d.kind === "state").length;
   const name = pendingName ?? `__state_${synthIdx}`;
+  checkStateName(name);
   const decl: StateDecl = {
     kind: "state",
     name,
@@ -155,6 +175,7 @@ function makeStateHandle<T extends ScalarType>(decl: StateDecl): State<T> {
       });
     },
     named: (name: string) => {
+      checkStateName(name, decl);
       decl.name = name;
       return handle;
     },

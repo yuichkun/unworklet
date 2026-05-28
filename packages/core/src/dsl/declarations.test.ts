@@ -612,3 +612,69 @@ test("`state.store(v)` inside `forSample` 内 = forSample body に append", () =
     },
   ]);
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// state name uniqueness = 同 name の state declaration を 2 度 declare
+// する path は graph-capture-time error で reject (= `01-dsl.md` §3.1 + Q5-b)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`state.named('x').f32(0)` を 2 度 declare で graph-capture-time error", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      state.named("dup").f32(0);
+      state.named("dup").f32(0);
+    }),
+  ).toThrow(/duplicate state declaration name "dup"/);
+});
+
+test("`state.named('x').f32(0)` + `state.named('x').i32(0)` 型 違 い で も collide", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      state.named("dup").f32(0);
+      state.named("dup").i32(0);
+    }),
+  ).toThrow(/duplicate state declaration name "dup"/);
+});
+
+test("`state.f32(0).named('x'); state.f32(0).named('x')` 後 付 け で も collide", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      state.f32(0).named("dup");
+      state.f32(0).named("dup");
+    }),
+  ).toThrow(/duplicate state declaration name "dup"/);
+});
+
+test("plain factory 2 件 は synthetic name 自 動 unique で collide し な い (= regression check)", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      state.f32(0);
+      state.f32(0);
+    }),
+  ).not.toThrow();
+  expect(ctx.declarations).toHaveLength(2);
+});
+
+test("`state.f32(0).named('orig').named('final')` 自 decl 上 書 き path は collide し な い", () => {
+  // 同 decl を 2 度 .named() で 上 書 き する path は collide check で 自 decl
+  // を 除 外 = 正 し く mutate 通 過 (= checkStateName の excludeDecl 引 数 path)。
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    state.f32(0).named("orig").named("final");
+  });
+  expect(ctx.declarations[0]?.name).toBe("final");
+});
+
+test("既 declared 別 state の name に `.named()` で 移 動 で collide", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      state.named("first").f32(0);
+      state.f32(0).named("first");
+    }),
+  ).toThrow(/duplicate state declaration name "first"/);
+});
