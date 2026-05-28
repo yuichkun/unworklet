@@ -690,6 +690,11 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
   border: 1px solid var(--u-border);
   border-radius: var(--u-radius);
   padding: 10px 12px;
+  /* Stop the article from claiming more width than its grid cell allows.
+     Without this, the captured <audio> element's intrinsic min-width (~300px
+     for its controls) pushed the article wide enough that `auto-fit` in
+     `.audio-grid` dropped from 3 columns to 2 the moment any port captured. */
+  min-width: 0;
 }
 
 .port-head {
@@ -767,6 +772,7 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
 
 .captured-audio {
   width: 100%;
+  min-width: 0;
   height: 32px;
 }
 
@@ -863,6 +869,7 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
   border: 1px solid var(--u-border);
   border-radius: var(--u-radius);
 }
+
 
 .latency-tab {
   display: flex;
