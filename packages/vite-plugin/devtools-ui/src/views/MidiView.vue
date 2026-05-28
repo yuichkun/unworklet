@@ -355,8 +355,10 @@ const keyboardWidth = computed(() => whiteKeyCount.value * WHITE_W);
 }
 
 .view-title {
-  font-size: 14px;
+  font-family: var(--u-headline);
+  font-size: 20px;
   font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--u-text);
 }
 
@@ -382,8 +384,10 @@ const keyboardWidth = computed(() => whiteKeyCount.value * WHITE_W);
 }
 
 .section-title {
-  font-size: 13px;
+  font-family: var(--u-headline);
+  font-size: 16px;
   font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--u-text);
 }
 
@@ -453,8 +457,8 @@ const keyboardWidth = computed(() => whiteKeyCount.value * WHITE_W);
 }
 
 .kind-pill-midi {
-  background: rgba(255, 99, 166, 0.18);
-  color: var(--u-midi);
+  background: var(--u-bg-elev-4);
+  color: var(--u-text-muted);
 }
 
 /* ── Inject panel ── */
@@ -545,8 +549,8 @@ input[type="range"] {
 .key-white {
   position: absolute;
   top: 0;
-  background: #f5f5f5;
-  border: 1px solid #ccc;
+  background: var(--u-bg-elev-4);
+  border: 1px solid var(--u-border-strong);
   border-radius: 0 0 3px 3px;
   cursor: pointer;
   padding: 0;
@@ -557,25 +561,27 @@ input[type="range"] {
 }
 
 .key-white.pressed {
-  background: var(--u-accent);
+  background: var(--u-text);
+  border-color: var(--u-text);
 }
 
 .key-label {
   font-size: 8.5px;
-  color: #888;
+  color: var(--u-text-muted);
   font-family: var(--u-mono);
+  letter-spacing: 0.04em;
 }
 
 .key-white.pressed .key-label {
-  color: #0f1115;
+  color: #000;
   font-weight: 700;
 }
 
 .key-black {
   position: absolute;
   top: 0;
-  background: #1a1a1a;
-  border: 1px solid #000;
+  background: var(--u-bg);
+  border: 1px solid var(--u-border-strong);
   border-radius: 0 0 3px 3px;
   cursor: pointer;
   pointer-events: auto;
@@ -583,7 +589,8 @@ input[type="range"] {
 }
 
 .key-black.pressed {
-  background: var(--u-unworklet);
+  background: var(--u-text);
+  border-color: var(--u-text);
 }
 
 /* ── Log ── */

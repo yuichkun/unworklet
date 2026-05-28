@@ -145,7 +145,7 @@ const drawWaveform = (canvas: HTMLCanvasElement, samples: Float32Array | Int32Ar
   }
   const span = Math.max(Math.abs(min), Math.abs(max), 1);
 
-  ctx.strokeStyle = "#82bfff";
+  ctx.strokeStyle = "#ffffff";
   ctx.lineWidth = 1.4;
   ctx.beginPath();
   for (let i = 0; i < samples.length; i++) {
@@ -193,7 +193,7 @@ const drawBars = (
     const barH = norm * (h - 4);
     const x = i * cellW + 1;
     const y = h - 2 - barH;
-    ctx.fillStyle = v >= baseline ? "#82bfff" : "#ff6363";
+    ctx.fillStyle = v >= baseline ? "#ffffff" : "#ffb4ab";
     ctx.fillRect(x, y, barW, Math.max(1, barH));
   }
 };
@@ -241,8 +241,7 @@ const redraw = (): void => {
           const c = sparklineRefs.value[key];
           if (c) {
             const hist = live.getSlotHistory(key);
-            const color = slot.type === "bool" ? "#62d18a" : "#82bfff";
-            drawSparkline(c, hist, color);
+            drawSparkline(c, hist, "#ffffff");
           }
         }
       } else {
@@ -415,8 +414,10 @@ watch(reprByKey, () => redraw(), { deep: true });
 }
 
 .view-title {
-  font-size: 14px;
+  font-family: var(--u-headline);
+  font-size: 20px;
   font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--u-text);
 }
 
@@ -469,9 +470,11 @@ watch(reprByKey, () => redraw(), { deep: true });
 }
 
 .section-name {
-  font-size: 13px;
+  font-family: var(--u-headline);
+  font-size: 16px;
   font-weight: 600;
-  color: var(--u-unworklet);
+  letter-spacing: -0.01em;
+  color: var(--u-text);
 }
 
 .empty {
@@ -582,18 +585,26 @@ watch(reprByKey, () => redraw(), { deep: true });
   flex: 1;
   width: 100%;
   height: 80px;
-  background: var(--u-bg);
+  background-color: var(--u-bg);
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 40px 40px;
   border: 1px solid var(--u-border);
-  border-radius: var(--u-radius-sm);
+  border-radius: var(--u-radius);
 }
 
 .bar-chart {
   flex: 1;
   width: 100%;
   height: 60px;
-  background: var(--u-bg);
+  background-color: var(--u-bg);
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 40px 40px;
   border: 1px solid var(--u-border);
-  border-radius: var(--u-radius-sm);
+  border-radius: var(--u-radius);
 }
 
 .onoff-indicator {
@@ -608,8 +619,8 @@ watch(reprByKey, () => redraw(), { deep: true });
 }
 
 .onoff-indicator.on {
-  background: rgba(98, 209, 138, 0.18);
-  color: var(--u-success);
+  background: var(--u-bg-elev-4);
+  color: var(--u-text);
 }
 
 .onoff-dot {
@@ -672,13 +683,9 @@ watch(reprByKey, () => redraw(), { deep: true });
   flex: 1;
 }
 
-.kind-pill-state {
-  background: rgba(130, 191, 255, 0.16);
-  color: var(--u-accent);
-}
-
+.kind-pill-state,
 .kind-pill-buffer {
-  background: rgba(98, 209, 138, 0.16);
-  color: var(--u-success);
+  background: var(--u-bg-elev-4);
+  color: var(--u-text);
 }
 </style>

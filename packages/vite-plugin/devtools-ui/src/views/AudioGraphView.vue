@@ -501,8 +501,10 @@ const onSnapshotBackdropClick = (event: MouseEvent): void => {
 }
 
 .view-title {
-  font-size: 14px;
+  font-family: var(--u-headline);
+  font-size: 20px;
   font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--u-text);
 }
 
@@ -528,9 +530,13 @@ const onSnapshotBackdropClick = (event: MouseEvent): void => {
 .graph-svg {
   flex: 1;
   width: 100%;
-  background: radial-gradient(circle at 30% 30%, rgba(130, 191, 255, 0.04), transparent 60%);
+  background-color: var(--u-bg-elev-1);
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 40px 40px;
   border: 1px solid var(--u-border);
-  border-radius: var(--u-radius);
+  border-radius: var(--u-radius-lg);
 }
 
 .edge {
@@ -562,11 +568,12 @@ const onSnapshotBackdropClick = (event: MouseEvent): void => {
 }
 
 .node.kind-unworklet .node-box {
-  stroke: var(--u-unworklet);
+  stroke: var(--u-text);
 }
 
 .node.selected .node-box {
-  stroke-width: 2.2;
+  stroke: var(--u-text);
+  stroke-width: 2.5;
   fill: var(--u-bg-elev-3);
 }
 
@@ -605,7 +612,7 @@ const onSnapshotBackdropClick = (event: MouseEvent): void => {
 }
 
 .node.kind-unworklet .node-name {
-  color: var(--u-unworklet);
+  color: var(--u-text);
 }
 
 .node-type {
@@ -689,8 +696,10 @@ const onSnapshotBackdropClick = (event: MouseEvent): void => {
 }
 
 .detail-title {
-  font-size: 14px;
-  font-weight: 700;
+  font-family: var(--u-headline);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--u-text);
   margin-bottom: 6px;
 }
@@ -1003,13 +1012,13 @@ const onSnapshotBackdropClick = (event: MouseEvent): void => {
 }
 
 .snippet-line.highlight-error {
-  background: rgba(255, 99, 99, 0.12);
+  background: rgba(255, 180, 171, 0.08);
   box-shadow: inset 3px 0 0 var(--u-danger);
 }
 
 .snippet-line.highlight-warning {
-  background: rgba(241, 197, 96, 0.14);
-  box-shadow: inset 3px 0 0 var(--u-warn);
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: inset 3px 0 0 var(--u-text-muted);
 }
 
 .snippet-lineno {
@@ -1026,11 +1035,11 @@ const onSnapshotBackdropClick = (event: MouseEvent): void => {
 }
 
 .snippet-line.highlight-error .snippet-text {
-  color: #ffe6e6;
+  color: var(--u-danger);
 }
 
 .snippet-line.highlight-warning .snippet-text {
-  color: #fff4d6;
+  color: var(--u-text);
 }
 
 .issue-section-title {

@@ -122,10 +122,10 @@ const drawWaveform = (canvas: HTMLCanvasElement, port: OutputPort): void => {
   ctx.lineTo(w, h / 2);
   ctx.stroke();
 
-  const colors = ["#82bfff", "#62d18a"];
+  const colors = ["#ffffff", "#a0a0a0"];
   for (let c = 0; c < port.channels; c++) {
     const frame = signals.getTimeDomainFrame(port, c);
-    ctx.strokeStyle = colors[c] ?? "#82bfff";
+    ctx.strokeStyle = colors[c] ?? "#ffffff";
     ctx.lineWidth = 1.4;
     ctx.beginPath();
     for (let i = 0; i < frame.length; i++) {
@@ -159,9 +159,8 @@ const drawSpectrogram = (canvas: HTMLCanvasElement, port: OutputPort): void => {
     const v = Math.max(0, Math.min(1, frame[bins - 1 - i]!));
     const y = (i / bins) * canvas.height;
     const cellH = canvas.height / bins + 1;
-    const hue = 230 - v * 200;
-    const light = 10 + v * 40;
-    ctx.fillStyle = `hsl(${hue}, 70%, ${light}%)`;
+    const light = 8 + v * 70;
+    ctx.fillStyle = `hsl(0, 0%, ${light}%)`;
     ctx.fillRect(canvas.width - stripPx, y, stripPx, cellH);
   }
 };
@@ -169,10 +168,10 @@ const drawSpectrogram = (canvas: HTMLCanvasElement, port: OutputPort): void => {
 const latencyCanvasRef = ref<HTMLCanvasElement | null>(null);
 
 const LATENCY_COLORS: Record<string, string> = {
-  polysynth: "#82bfff",
-  limiter: "#62d18a",
-  reverb: "#c89cff",
-  total: "#f1c560",
+  polysynth: "#ffffff",
+  limiter: "#c0c0c0",
+  reverb: "#909090",
+  total: "#606060",
 };
 
 const drawLatencyChart = (): void => {
@@ -218,8 +217,8 @@ const drawLatencyChart = (): void => {
   }
 
   const budgetY = bottom - (signals.realtimeBudgetMs / yMax) * plotH;
-  ctx.strokeStyle = "#ff6363";
-  ctx.fillStyle = "#ff6363";
+  ctx.strokeStyle = "#ffb4ab";
+  ctx.fillStyle = "#ffb4ab";
   ctx.setLineDash([6, 4]);
   ctx.beginPath();
   ctx.moveTo(left, budgetY);
@@ -523,8 +522,10 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
 }
 
 .view-title {
-  font-size: 14px;
+  font-family: var(--u-headline);
+  font-size: 20px;
   font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--u-text);
 }
 
@@ -541,12 +542,15 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
 }
 
 .sub-tab {
-  padding: 9px 14px;
+  padding: 10px 16px;
   background: transparent;
   border: 0;
   border-bottom: 2px solid transparent;
-  color: var(--u-text-dim);
-  font-size: 12px;
+  color: var(--u-text-muted);
+  font-family: var(--u-sans);
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
   cursor: pointer;
 }
 
@@ -555,8 +559,8 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
 }
 
 .sub-tab.active {
-  color: var(--u-accent);
-  border-bottom-color: var(--u-accent);
+  color: var(--u-text);
+  border-bottom-color: var(--u-text);
   font-weight: 600;
 }
 
@@ -687,11 +691,13 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
   display: inline-flex;
   align-items: center;
   padding: 2px 8px;
-  background: rgba(98, 209, 138, 0.16);
-  color: var(--u-success);
-  border-radius: 999px;
+  background: var(--u-bg-elev-4);
+  color: var(--u-text);
+  border-radius: var(--u-radius);
+  font-family: var(--u-mono);
   font-size: 10.5px;
-  font-weight: 600;
+  font-weight: 500;
+  letter-spacing: 0.04em;
 }
 
 .port-section.captured {
@@ -775,17 +781,25 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
 .waveform-canvas {
   width: 100%;
   height: 110px;
-  background: var(--u-bg);
+  background-color: var(--u-bg);
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 40px 40px;
   border: 1px solid var(--u-border);
-  border-radius: var(--u-radius-sm);
+  border-radius: var(--u-radius);
 }
 
 .spectrogram-canvas {
   width: 100%;
   height: 110px;
-  background: var(--u-bg);
+  background-color: var(--u-bg);
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 40px 40px;
   border: 1px solid var(--u-border);
-  border-radius: var(--u-radius-sm);
+  border-radius: var(--u-radius);
 }
 
 .latency-tab {
@@ -855,9 +869,13 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
 .latency-canvas {
   width: 100%;
   height: 260px;
-  background: var(--u-bg);
+  background-color: var(--u-bg);
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 40px 40px;
   border: 1px solid var(--u-border);
-  border-radius: var(--u-radius-sm);
+  border-radius: var(--u-radius);
 }
 
 .memory-tab {
@@ -947,9 +965,11 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
 }
 
 .memory-node-name {
-  font-size: 13px;
+  font-family: var(--u-headline);
+  font-size: 15px;
   font-weight: 600;
-  color: var(--u-unworklet);
+  letter-spacing: -0.01em;
+  color: var(--u-text);
 }
 
 .memory-node-bytes {
@@ -991,38 +1011,14 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
   color: var(--u-text-muted);
 }
 
-.kind-pill-state {
-  background: rgba(130, 191, 255, 0.16);
-  color: var(--u-accent);
-}
-
-.kind-pill-buffer {
-  background: rgba(98, 209, 138, 0.16);
-  color: var(--u-success);
-}
-
-.kind-pill-lookup {
-  background: rgba(255, 139, 61, 0.16);
-  color: var(--u-orange);
-}
-
-.kind-pill-midi {
-  background: rgba(255, 99, 166, 0.16);
-  color: var(--u-midi);
-}
-
-.kind-pill-message {
-  background: rgba(200, 156, 255, 0.16);
-  color: var(--u-unworklet);
-}
-
-.kind-pill-param {
-  background: rgba(255, 99, 166, 0.16);
-  color: var(--u-midi);
-}
-
+.kind-pill-state,
+.kind-pill-buffer,
+.kind-pill-lookup,
+.kind-pill-midi,
+.kind-pill-message,
+.kind-pill-param,
 .kind-pill-event {
-  background: rgba(98, 209, 138, 0.16);
-  color: var(--u-success);
+  background: var(--u-bg-elev-4);
+  color: var(--u-text);
 }
 </style>
