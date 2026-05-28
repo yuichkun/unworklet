@@ -8,18 +8,31 @@
  * snapshot region) を 持 ち、 各 region は `totalBytes` 連 続 で base 動 的
  * 計 算 + region 内 declaration 順 packing。
  *
- * Phase 3 = `ioScratch` 1 region だ け fill (= audioInput / audioOutput
- * 各 channel × SAMPLES_PER_BLOCK × 4 byte + param 1 個 × SAMPLES_PER_BLOCK
- * × 4 byte)、 他 9 region は 空 (= slots / size 0、 base = totalBytes
- * 連 続)。 後 続 phase で 該 当 region を 順 次 fill = subset → superset
- * (= plan Q-C 答 え)。
+ * Phase 7 sub-phase 7.1 で `states` region を fill (= `state.<type>(initial)`
+ * plain factory の scalar slot、 type 別 byte size で declaration 順
+ * packing)。 ioScratch packing の 直 後 に states region を 配 置 し、
+ * 残 り 8 region は `totalBytes` 連 続 (= 後 続 sub-phase で 順 次 fill)。
  */
 
 import { SAMPLES_PER_BLOCK } from "../dsl/constants.ts";
+import type { ScalarType } from "../types.ts";
 import type { CapturedGraph } from "./ast.ts";
 
 const BYTES_PER_F32 = 4;
 const PARAM_SLOT_BYTES = SAMPLES_PER_BLOCK * BYTES_PER_F32;
+
+/**
+ * scalar state slot の byte size (= `01-dsl.md` §3.1 + Q42)。
+ * f32 / i32 / bool = 4 byte (= bool は 内 部 i32 表 現)、 f64 / i64 = 8 byte。
+ * sub-phase 7.4 で SAB publish へ copy す る path と zip。
+ */
+const STATE_SLOT_BYTES: Record<ScalarType, number> = {
+  f32: 4,
+  f64: 8,
+  i32: 4,
+  i64: 8,
+  bool: 4,
+};
 
 export type Layout = {
   regions: {
@@ -51,6 +64,8 @@ export function layout(graph: CapturedGraph): Layout {
   const ioBase = 0;
   let cursor = ioBase;
 
+  // ioScratch packing = audioInput / audioOutput / param を declaration
+  // 順 に 並 べ る。 state は こ こ で skip し て 後 段 で states region に packing。
   for (const decl of graph.declarations) {
     if (decl.kind === "audioInput") {
       inputs[decl.name] = cursor;
@@ -58,22 +73,32 @@ export function layout(graph: CapturedGraph): Layout {
     } else if (decl.kind === "audioOutput") {
       outputs[decl.name] = cursor;
       cursor += decl.channels * SAMPLES_PER_BLOCK * BYTES_PER_F32;
-    } else {
-      // decl.kind === "param"
+    } else if (decl.kind === "param") {
       params[decl.name] = cursor;
       cursor += PARAM_SLOT_BYTES;
     }
   }
 
+  // states packing = ioScratch 末 尾 を base に declaration 順 で type 別
+  // byte size を allocate (= Q42 + sub-phase 7.4 SAB publish path と zip)。
+  const statesBase = cursor;
+  const stateSlots: Record<string, number> = {};
+  for (const decl of graph.declarations) {
+    if (decl.kind === "state") {
+      stateSlots[decl.name] = cursor;
+      cursor += STATE_SLOT_BYTES[decl.type];
+    }
+  }
+
   const totalBytes = cursor;
 
-  // Phase 3 で fill 対 象 外 の 9 region = base 全 て totalBytes (= 連 続)、
-  // slots / size 0。 後 続 phase で 該 当 region に slot が 追 加 さ れ た 時
+  // sub-phase 7.1 で fill 対 象 外 の 8 region = base 全 て totalBytes (= 連 続)、
+  // slots / size 0。 後 続 sub-phase で 該 当 region に slot が 追 加 さ れ た 時
   // 順 次 base を 再 計 算 す る path = layout 関 数 を 拡 張 す る だ け で
-  // 既 ioScratch 配 置 に は 影 響 ナ シ (= subset → superset 規 約)。
+  // 既 ioScratch / states 配 置 に は 影 響 ナ シ (= subset → superset 規 約)。
   return {
     regions: {
-      states: { base: totalBytes, slots: {} },
+      states: { base: statesBase, slots: stateSlots },
       buffers: { base: totalBytes, slots: {} },
       ioScratch: { base: ioBase, inputs, outputs, params },
       eventRings: { base: totalBytes, slots: {} },
