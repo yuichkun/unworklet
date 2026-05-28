@@ -27,7 +27,6 @@ import { forSample } from "./loop.ts";
 // ─────────────────────────────────────────────────────────────────────────
 
 const stubs: ReadonlyArray<readonly [string, () => unknown]> = [
-  ["state.expose", () => state.expose({ name: "x" })],
   ["buffer.f32", () => buffer.f32({ size: 16 })],
   ["buffer.f64", () => buffer.f64({ size: 16 })],
   ["buffer.i32", () => buffer.i32({ size: 16 })],
@@ -585,12 +584,267 @@ test("`state.<type>.store(v)` の name も `.named` 後 fix を 反 映 (= late 
   });
 });
 
-test("`state` handle `.expose({...})` は throw stub 維 持 (= sub-phase 7.2 で fill)", () => {
+// ─────────────────────────────────────────────────────────────────────────
+// state.expose chain = sub-phase 7.2 (= `.named` / `.expose({...})` chain で
+// name / snapshot / publish metadata を decl に 反 映、 graph-capture-time
+// check で publish + 不 正 type / publish + name ナ シ / snapshot 'persistent' +
+// name ナ シ / publish rateFps <= 0 を reject)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`state.expose({ name }).f32(0)` 前 付 け chain で declaration に name + userNamed true", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const handle = state.f32(0);
-    expect(() => handle.expose({ name: "x" })).toThrow(/not implemented/);
+    state.expose({ name: "meterL" }).f32(0);
   });
+  expect(ctx.declarations).toEqual([
+    { kind: "state", name: "meterL", type: "f32", initial: 0, userNamed: true },
+  ]);
+});
+
+test("`state.f32(0).expose({ name })` 後 付 け chain で decl name + userNamed mutate", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    state.f32(0).expose({ name: "meterL" });
+  });
+  expect(ctx.declarations).toEqual([
+    { kind: "state", name: "meterL", type: "f32", initial: 0, userNamed: true },
+  ]);
+});
+
+test("`state.named('A').expose({ name: 'B' }).f32(0)` = after-wins (= 'B')", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    state.named("A").expose({ name: "B" }).f32(0);
+  });
+  expect(ctx.declarations[0]?.name).toBe("B");
+});
+
+test("`state.expose({ name: 'A' }).named('B').f32(0)` = after-wins (= 'B')", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    state.expose({ name: "A" }).named("B").f32(0);
+  });
+  expect(ctx.declarations[0]?.name).toBe("B");
+});
+
+test("`state.expose({ name, snapshot, publish }).f32(0)` 全 field を 1 度 で 設 定", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    state.expose({ name: "meterL", snapshot: "transient", publish: { rateFps: 30 } }).f32(0);
+  });
+  expect(ctx.declarations).toEqual([
+    {
+      kind: "state",
+      name: "meterL",
+      type: "f32",
+      initial: 0,
+      userNamed: true,
+      snapshot: "transient",
+      publish: { rateFps: 30 },
+    },
+  ]);
+});
+
+test("`state.f32(0).expose({...})` 後 付 け で snapshot + publish 反 映", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    state.f32(0).expose({ name: "meterL", snapshot: "transient", publish: { rateFps: 30 } });
+  });
+  expect(ctx.declarations[0]).toMatchObject({
+    name: "meterL",
+    userNamed: true,
+    snapshot: "transient",
+    publish: { rateFps: 30 },
+  });
+});
+
+test("chain 多 重 .expose で field merge (= after-wins)", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    state
+      .expose({ name: "x" })
+      .expose({ publish: { rateFps: 30 } })
+      .f32(0);
+  });
+  expect(ctx.declarations[0]).toMatchObject({
+    name: "x",
+    userNamed: true,
+    publish: { rateFps: 30 },
+  });
+});
+
+test("chain で `.expose({ publish: { rateFps: 30 } })` 上 書 き 後 `.expose({ publish: { rateFps: 60 } })` = 60 wins", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    state
+      .expose({ name: "x", publish: { rateFps: 30 } })
+      .expose({ publish: { rateFps: 60 } })
+      .f32(0);
+  });
+  expect(ctx.declarations[0]).toMatchObject({
+    publish: { rateFps: 60 },
+  });
+});
+
+test("`state.expose({}).f32(0)` 空 options = plain factory と 等 価 (= synthetic name + userNamed false)", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    state.expose({}).f32(0);
+  });
+  expect(ctx.declarations).toEqual([
+    { kind: "state", name: "__state_0", type: "f32", initial: 0, userNamed: false },
+  ]);
+});
+
+test("publish + 不 正 type (f64) は graph-capture-time error で reject", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      state.expose({ name: "x", publish: { rateFps: 30 } }).f64(0);
+    }),
+  ).toThrow(/publish is only supported on state\.f32 \/ state\.i32 \/ state\.bool/);
+});
+
+test("publish + 不 正 type (i64) は graph-capture-time error で reject", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      state.expose({ name: "x", publish: { rateFps: 30 } }).i64(0n);
+    }),
+  ).toThrow(/publish is only supported on state\.f32 \/ state\.i32 \/ state\.bool/);
+});
+
+test("publish + f32 + userNamed = OK", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      state.expose({ name: "x", publish: { rateFps: 30 } }).f32(0);
+    }),
+  ).not.toThrow();
+});
+
+test("publish + i32 + userNamed = OK", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      state.expose({ name: "x", publish: { rateFps: 30 } }).i32(0);
+    }),
+  ).not.toThrow();
+});
+
+test("publish + bool + userNamed = OK", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      state.expose({ name: "x", publish: { rateFps: 30 } }).bool(false);
+    }),
+  ).not.toThrow();
+});
+
+test("publish + name ナ シ = graph-capture-time error で reject", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      state.expose({ publish: { rateFps: 30 } }).f32(0);
+    }),
+  ).toThrow(/state slot with publish requires user-defined name/);
+});
+
+test("publish rateFps 0 = reject", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      state.expose({ name: "x", publish: { rateFps: 0 } }).f32(0);
+    }),
+  ).toThrow(/publish rateFps must be a positive finite number/);
+});
+
+test("publish rateFps 負 値 = reject", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      state.expose({ name: "x", publish: { rateFps: -1 } }).f32(0);
+    }),
+  ).toThrow(/publish rateFps must be a positive finite number/);
+});
+
+test("publish rateFps NaN = reject", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      state.expose({ name: "x", publish: { rateFps: Number.NaN } }).f32(0);
+    }),
+  ).toThrow(/publish rateFps must be a positive finite number/);
+});
+
+test("snapshot 'persistent' + userNamed = OK", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      state.expose({ name: "x", snapshot: "persistent" }).f32(0);
+    }),
+  ).not.toThrow();
+});
+
+test("snapshot 'persistent' + name ナ シ = graph-capture-time error で reject", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      state.expose({ snapshot: "persistent" }).f32(0);
+    }),
+  ).toThrow(/state slot with snapshot 'persistent' requires user-defined name/);
+});
+
+test("snapshot 'transient' + name ナ シ = OK (= plain と 等 価)", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      state.expose({ snapshot: "transient" }).f32(0);
+    }),
+  ).not.toThrow();
+});
+
+test("handle.expose 後 付 け で publish 反 映 + validation 走 る", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const h = state.f32(0).named("meterL");
+    h.expose({ publish: { rateFps: 30 } });
+  });
+  expect(ctx.declarations[0]).toMatchObject({
+    name: "meterL",
+    userNamed: true,
+    publish: { rateFps: 30 },
+  });
+});
+
+test("handle.expose 後 付 け で publish + synthetic name は reject", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      const h = state.f32(0);
+      h.expose({ publish: { rateFps: 30 } });
+    }),
+  ).toThrow(/state slot with publish requires user-defined name/);
+});
+
+test("handle.expose 後 付 け で name 上 書 き = decl mutate + 重 複 collide check", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const h = state.f32(0);
+    h.expose({ name: "x" });
+  });
+  expect(ctx.declarations[0]).toMatchObject({ name: "x", userNamed: true });
+});
+
+test("handle.expose 後 付 け で 別 state と 同 name 移 動 で collide reject", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      state.named("first").f32(0);
+      const h = state.f32(0);
+      h.expose({ name: "first" });
+    }),
+  ).toThrow(/duplicate state declaration name "first"/);
 });
 
 test("`state.store(v)` inside `forSample` 内 = forSample body に append", () => {

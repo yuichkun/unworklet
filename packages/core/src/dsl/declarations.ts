@@ -99,36 +99,48 @@ export interface StateChain {
   expose(options: ExposeOptions): StateChain;
 }
 
-// `state` chain (= Q79 chain-order free + Q76 plain factory)。
-// plain factory (= `state.f32(0)` 等) は synthetic name (= `__state_<idx>`)
-// で declare、 chain `.named('X')` で 後付け / 前付け 両 path で decl.name
-// mutate (= param と 同 path)。 `.expose({...})` は sub-phase 7.2 で fill =
-// throw stub 維 持。
+// `state` chain (= Q79 chain-order free + Q76 plain factory + Q42 publish
+// type 制 限)。 chain `.named('X')` / `.expose({ name, snapshot, publish })`
+// を pendingExpose に accumulate (= field after-wins merge)、 type method
+// (= `.f32(0)` 等) で makeStateDecl が 走 り decl を 作 成。 handle 後 付 け
+// `.named` / `.expose` も 同 merge logic で decl mutate。
 //
 // AST shape の name field は `decl.name` を `.load()` / `.store()` 呼 び 時 点
-// で closure capture (= late binding)、 .named() で chain 後 fix が反 映 さ れ る
-// 順 序 と zip (= 既 param と 同 規 律: chain は store/load 呼 び 出 し の
-// 前 に 完 結 さ せ る = user 責 任)。
+// で closure capture (= late binding)、 chain 後 fix が反 映 さ れ る 順 序 と zip
+// (= 既 param と 同 規 律: chain は store/load 呼 び 出 し の 前 に 完 結 さ せ る
+// = user 責 任)。
+//
+// validate timing は eager (= chain ご と) で 走 る = 早 期 error で chain
+// 途 中 で 即 reject。
 
-const makeStateChain = (pendingName: string | undefined): StateChain => ({
-  f32: (initial) => makeStateDecl("f32", initial, pendingName),
-  f64: (initial) => makeStateDecl("f64", initial, pendingName),
-  i32: (initial) => makeStateDecl("i32", initial, pendingName),
-  i64: (initial) => makeStateDecl("i64", initial, pendingName),
-  bool: (initial) => makeStateDecl("bool", initial, pendingName),
-  named: (name) => makeStateChain(name),
-  expose: () => notImplemented(),
+const EMPTY_EXPOSE: ExposeOptions = {};
+
+function mergeExpose(prev: ExposeOptions, next: ExposeOptions): ExposeOptions {
+  return {
+    name: next.name ?? prev.name,
+    snapshot: next.snapshot ?? prev.snapshot,
+    publish: next.publish ?? prev.publish,
+  };
+}
+
+const makeStateChain = (pendingExpose: ExposeOptions): StateChain => ({
+  f32: (initial) => makeStateDecl("f32", initial, pendingExpose),
+  f64: (initial) => makeStateDecl("f64", initial, pendingExpose),
+  i32: (initial) => makeStateDecl("i32", initial, pendingExpose),
+  i64: (initial) => makeStateDecl("i64", initial, pendingExpose),
+  bool: (initial) => makeStateDecl("bool", initial, pendingExpose),
+  named: (name) => makeStateChain(mergeExpose(pendingExpose, { name })),
+  expose: (options) => makeStateChain(mergeExpose(pendingExpose, options)),
 });
 
 /**
  * state slot の name uniqueness check (= `01-dsl.md` §3.1 + Q5-b)。
  *
- * declare 時 (= `state.f32(0)` / `state.named('X').f32(0)`) と .named()
- * 後 付 け mutate 時 の 両 path で 走 る。 `excludeDecl` を 渡 す と 自 decl
- * を 除 外 し て check (= .named() で 自 分 を 上 書 き す る path で 自 collide
- * を 誤 検 出 し な い)。 同 kind 内 で name は unique = type が違 っ て も collide
- * (= `state.named('x').f32(0)` + `state.named('x').i32(0)` も graph-capture-time
- * error)。
+ * declare 時 (= `state.f32(0)` / `state.named('X').f32(0)`) と .named() /
+ * .expose() 後 付 け mutate 時 の 両 path で 走 る。 `excludeDecl` を 渡 す と
+ * 自 decl を 除 外 し て check (= .named() で 自 分 を 上 書 き す る path で
+ * 自 collide を 誤 検 出 し な い)。 同 kind 内 で name は unique = type が違 っ
+ * て も collide。
  */
 function checkStateName(name: string, excludeDecl: StateDecl | null = null): void {
   const ctx = getCurrentCapture();
@@ -139,22 +151,61 @@ function checkStateName(name: string, excludeDecl: StateDecl | null = null): voi
   }
 }
 
+const PUBLISH_ALLOWED_TYPES: ReadonlySet<ScalarType> = new Set(["f32", "i32", "bool"]);
+
+/**
+ * state slot の publish / snapshot 整 合 性 check (= Q42 + `01-dsl.md` §3.1)。
+ * - publish + 不 正 type (f64 / i64) → throw
+ * - publish + rateFps <= 0 (NaN 含 む) → throw
+ * - publish + userNamed = false (= synthetic name) → throw
+ * - snapshot 'persistent' + userNamed = false → throw
+ *
+ * eager (= chain method ご と) で 走 る = 不 正 chain を 早 期 reject。
+ */
+function validateStateDecl(decl: StateDecl): void {
+  if (decl.publish !== undefined) {
+    if (!PUBLISH_ALLOWED_TYPES.has(decl.type)) {
+      throw new Error(
+        `unworklet: publish is only supported on state.f32 / state.i32 / state.bool (= Q42), got state.${decl.type}`,
+      );
+    }
+    if (!Number.isFinite(decl.publish.rateFps) || decl.publish.rateFps <= 0) {
+      throw new Error(
+        `unworklet: publish rateFps must be a positive finite number, got ${decl.publish.rateFps}`,
+      );
+    }
+    if (!decl.userNamed) {
+      throw new Error(
+        `unworklet: state slot with publish requires user-defined name (= via .named('X') or .expose({ name: 'X' }))`,
+      );
+    }
+  }
+  if (decl.snapshot === "persistent" && !decl.userNamed) {
+    throw new Error(
+      `unworklet: state slot with snapshot 'persistent' requires user-defined name (= via .named('X') or .expose({ name: 'X' }))`,
+    );
+  }
+}
+
 function makeStateDecl<T extends ScalarType>(
   type: T,
   initial: ScalarOf<T>,
-  pendingName: string | undefined,
+  pendingExpose: ExposeOptions,
 ): State<T> {
   const ctx = getCurrentCapture();
   const synthIdx = ctx.declarations.filter((d) => d.kind === "state").length;
-  const name = pendingName ?? `__state_${synthIdx}`;
+  const name = pendingExpose.name ?? `__state_${synthIdx}`;
   checkStateName(name);
   const decl: StateDecl = {
     kind: "state",
     name,
     type,
     initial: initial as number | bigint | boolean,
-    userNamed: pendingName !== undefined,
+    userNamed: pendingExpose.name !== undefined,
+    snapshot: pendingExpose.snapshot,
+    publish: pendingExpose.publish,
   };
+  validateStateDecl(decl);
   addDeclaration(decl);
   return makeStateHandle<T>(decl);
 }
@@ -179,14 +230,33 @@ function makeStateHandle<T extends ScalarType>(decl: StateDecl): State<T> {
       checkStateName(name, decl);
       decl.name = name;
       decl.userNamed = true;
+      validateStateDecl(decl);
       return handle;
     },
-    expose: () => notImplemented(),
+    expose: (options: ExposeOptions) => {
+      if (options.name !== undefined && options.name !== decl.name) {
+        checkStateName(options.name, decl);
+        decl.name = options.name;
+        decl.userNamed = true;
+      } else if (options.name !== undefined) {
+        // 同 name 再 set = userNamed flag を true へ promote (= 後 付 け .expose
+        // で 自 decl と 同 name 渡 す path = user 明 示 と み な す)
+        decl.userNamed = true;
+      }
+      if (options.snapshot !== undefined) {
+        decl.snapshot = options.snapshot;
+      }
+      if (options.publish !== undefined) {
+        decl.publish = options.publish;
+      }
+      validateStateDecl(decl);
+      return handle;
+    },
   } as unknown as State<T>;
   return handle;
 }
 
-export const state: StateChain = makeStateChain(undefined);
+export const state: StateChain = makeStateChain(EMPTY_EXPOSE);
 
 // ─────────────────────────────────────────────────────────────────────────
 // `buffer` — fixed-size arrays (`01-dsl.md` §3.2)
