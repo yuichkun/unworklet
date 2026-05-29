@@ -347,21 +347,20 @@ export async function createNode<C>(
     eventRingsBuffer = new SharedArrayBuffer(eventRingsByteLength);
   }
 
-  // message ring buffer SAB allocate (= sub-phase 7.7d)。 event ring と zip pattern。
-  // event = worklet → main、 message = main → worklet で push 方 向 が 逆 = main 側
-  // が SAB に push + worklet 側 が SAB → WASM mirror で drain (= sub-phase 7.7e
-  // で main sender、 sub-phase 7.7d で worklet side mirror logic を fill)。
+  // message ring buffer。 SAB 時 の み allocate (= postMessage path は main 側 が
+  // `port.postMessage({ kind: 'message', ringIndex, payload })` で 直 送、 worklet
+  // 側 が self.port.onmessage で receive + messageQueueMirrors に push + process
+  // 開 始 で WASM ring に inject = main 側 buffer 自 体 不 要)。 SAB 時 = event ring
+  // と zip pattern (= 1 SAB に 連 続 配 置、 main 側 sender が SAB に push)。
   let messageRingsByteLength = 0;
   const messageRingSabOffsets: number[] = [];
   for (const ring of messageRings) {
     messageRingSabOffsets.push(messageRingsByteLength);
     messageRingsByteLength += 12 + ring.capacity * ring.slotSize;
   }
-  let messageRingsBuffer: SharedArrayBuffer | ArrayBuffer | null = null;
-  if (messageRingsByteLength > 0) {
-    messageRingsBuffer = sabAvailable
-      ? new SharedArrayBuffer(messageRingsByteLength)
-      : new ArrayBuffer(messageRingsByteLength);
+  let messageRingsBuffer: SharedArrayBuffer | null = null;
+  if (messageRingsByteLength > 0 && sabAvailable) {
+    messageRingsBuffer = new SharedArrayBuffer(messageRingsByteLength);
   }
 
   // main 側 state surface 構 築 = transport mode で 経 路 が 分 岐:
@@ -474,15 +473,25 @@ export async function createNode<C>(
     }
   }
 
-  // message ring sender surface 構 築 (= sub-phase 7.7e)。 main 側 が SAB に slot
-  // push + head += 1。 overflow path = head - tail >= capacity で drop-oldest
-  // (= tail += 1 + overflowCount += 1)、 案 B (= capacity = N 個 fill) と zip。
+  // message ring sender surface 構 築 = transport mode で 経 路 が 分 岐:
+  //
+  // - SAB available: main 側 が SAB に slot push + head += 1。 overflow path =
+  //   head - tail >= capacity で drop-oldest (= tail += 1 + overflowCount += 1)。
+  //   diagnostics.overflowCount() = SAB から Atomics.load。
+  // - SAB unavailable: 共 有 buffer 不 在 = `node.port.postMessage({ kind:
+  //   'message', ringIndex, payload })` で 直 送 = worklet 側 が self.port.onmessage
+  //   で receive + WASM ring に inject + overflow は WASM 内 で drop-oldest 発 動
+  //   時 に port.postMessage で main に 通 知 (= messageOverflowMirror 更 新)。
+  //   diagnostics.overflowCount() = mirror か ら read。
   const messageSurface: Record<string, MessageSender<unknown>> = {};
+  const messageOverflowMirror: number[] = messageRings.map(() => 0);
   let messageRingsView: DataView | null = null;
   let messageRingsHeaderView: Int32Array | null = null;
   if (messageRingsBuffer !== null && messageRings.length > 0) {
     messageRingsView = new DataView(messageRingsBuffer);
     messageRingsHeaderView = new Int32Array(messageRingsBuffer);
+  }
+  if (messageRings.length > 0) {
     for (let i = 0; i < messageRings.length; i++) {
       const ring = messageRings[i]!;
       const sabOffset = messageRingSabOffsets[i]!;
@@ -491,61 +500,49 @@ export async function createNode<C>(
       const overflowWordIdx = headWordIdx + 2;
       const slotsBase = sabOffset + 12;
       const isSab = transportMode === "sab";
+      const ringIndex = i;
       const sender = (payload: Record<string, unknown>): void => {
-        /* v8 ignore next 1 — sender 配 線 path で 既 確 定、 null check は unreachable defensive */
-        if (messageRingsView === null || messageRingsHeaderView === null) return;
-        const headerView = messageRingsHeaderView;
-        const head = isSab ? Atomics.load(headerView, headWordIdx) : headerView[headWordIdx]!;
-        const tail = isSab ? Atomics.load(headerView, tailWordIdx) : headerView[tailWordIdx]!;
-        // overflow check: head - tail >= capacity = ring full = drop-oldest path
-        // (= 案 B、 user の 「capacity = N 個 fill」 mental model と zip)。
-        if (head - tail >= ring.capacity) {
-          const newTail = tail + 1;
-          if (isSab) {
-            Atomics.store(headerView, tailWordIdx, newTail);
+        if (isSab && messageRingsView !== null && messageRingsHeaderView !== null) {
+          // SAB path = 既 SAB write + head/tail 管 理
+          const headerView = messageRingsHeaderView;
+          const head = Atomics.load(headerView, headWordIdx);
+          const tail = Atomics.load(headerView, tailWordIdx);
+          if (head - tail >= ring.capacity) {
+            Atomics.store(headerView, tailWordIdx, tail + 1);
             Atomics.store(
               headerView,
               overflowWordIdx,
               Atomics.load(headerView, overflowWordIdx) + 1,
             );
-          } else {
-            headerView[tailWordIdx] = newTail;
-            headerView[overflowWordIdx] = headerView[overflowWordIdx]! + 1;
           }
-        }
-        // slot 書 込 (= slotSize 0 = void payload = 書 込 ナ シ)。 Q46 uniform
-        // lift で 全 number → i32 / 全 boolean → 0/1 i32。
-        if (ring.slotSize > 0) {
-          const slotByteOffset = slotsBase + (head % ring.capacity) * ring.slotSize;
-          for (const field of ring.fields) {
-            const value = payload[field.name];
-            const byteOffset = slotByteOffset + field.offsetInSlot;
-            /* v8 ignore next 5 — Q46 uniform lift で number / boolean 以 外 の
-               payload 型 (= typed-array) は sub-phase 7.7 段 階 未 fill = unreachable
-               defensive guard */
-            if (typeof value === "boolean") {
-              messageRingsView.setInt32(byteOffset, value ? 1 : 0, true);
-            } else if (typeof value === "number") {
-              messageRingsView.setInt32(byteOffset, value | 0, true);
+          if (ring.slotSize > 0) {
+            const slotByteOffset = slotsBase + (head % ring.capacity) * ring.slotSize;
+            for (const field of ring.fields) {
+              const value = payload[field.name];
+              const byteOffset = slotByteOffset + field.offsetInSlot;
+              if (typeof value === "boolean") {
+                messageRingsView.setInt32(byteOffset, value ? 1 : 0, true);
+              } else if (typeof value === "number") {
+                messageRingsView.setInt32(byteOffset, value | 0, true);
+              }
             }
           }
-        }
-        // head += 1 を release fence 付 で store (= worklet 側 が Atomics.load(head)
-        // で slot 列 visibility 取 れ る path)。
-        if (isSab) {
           Atomics.store(headerView, headWordIdx, head + 1);
         } else {
-          headerView[headWordIdx] = head + 1;
+          // postMessage path = port.postMessage で 直 送。 worklet 側 で field 別
+          // に WASM ring に inject す る た め、 payload を そ の ま ま 載 せ る。
+          node.port.postMessage({ kind: "message", ringIndex, payload });
         }
       };
       const senderWithDiag = Object.assign(sender as (payload: unknown) => void, {
         diagnostics: {
           overflowCount(): number {
-            /* v8 ignore next 1 — sender 配 線 path = messageRingsHeaderView 非 null 確 定 */
-            if (messageRingsHeaderView === null) return 0;
-            return isSab
-              ? Atomics.load(messageRingsHeaderView, overflowWordIdx)
-              : messageRingsHeaderView[overflowWordIdx]!;
+            if (isSab && messageRingsHeaderView !== null) {
+              return Atomics.load(messageRingsHeaderView, overflowWordIdx);
+            }
+            // postMessage path = mirror か ら read (= worklet が message-overflow
+            // 通 知 で 更 新 し て いる)
+            return messageOverflowMirror[ringIndex]!;
           },
         },
       }) as MessageSender<unknown>;
@@ -711,15 +708,16 @@ export async function createNode<C>(
             ...(eventRingsBuffer !== null ? { eventRingsBuffer } : {}),
           }
         : {}),
-      // message ring あ り の 時 だ け messageRingsBuffer + descriptor + sabOffsets を
-      // hand (= sub-phase 7.7d)。 worklet template の initialize で receive +
-      // per-quantum 開 始 で SAB → WASM mirror logic (= sub-phase 7.7d で fill)。
-      ...(messageRingsBuffer !== null
+      // message ring あ り の 時 = transport mode 共 通 で descriptor + transport を
+      // hand。 messageRingsBuffer は SAB 時 の み hand (= postMessage path は main 側
+      // が port.postMessage で 直 送、 worklet 側 が self.port.onmessage で receive
+      // = buffer 自 体 不 要)。
+      ...(messageRings.length > 0
         ? {
-            messageRingsBuffer,
             messageRings,
             messageRingSabOffsets,
             transport: transportMode,
+            ...(messageRingsBuffer !== null ? { messageRingsBuffer } : {}),
           }
         : {}),
     },
@@ -915,6 +913,28 @@ export async function createNode<C>(
     node.port.addEventListener("message", onEventMessage);
   }
 
+  // postMessage path 用 message overflow listener (= SAB unavailable 時 に worklet
+  // 側 WASM ring で drop-oldest 発 動 し て overflowCount が 増 え た 場 合 に
+  // `port.postMessage({ kind: 'message-overflow', ringIndex, overflowCount })` で
+  // 通 知 さ れ る = main 側 messageOverflowMirror を 更 新 し て diagnostics.overflowCount()
+  // で read 可 能 に す る)。 SAB 時 は main 側 で 直 接 SAB header を 観 測 = drop。
+  const onMessageOverflowMessage = (event: MessageEvent): void => {
+    const data = event.data as
+      | { kind?: unknown; ringIndex?: unknown; overflowCount?: unknown }
+      | null
+      | undefined;
+    if (typeof data !== "object" || data === null) return;
+    if (data.kind !== "message-overflow") return;
+    if (typeof data.ringIndex !== "number") return;
+    if (typeof data.overflowCount !== "number") return;
+    const ringIndex = data.ringIndex;
+    if (ringIndex < 0 || ringIndex >= messageRings.length) return;
+    messageOverflowMirror[ringIndex] = data.overflowCount;
+  };
+  if (transportMode === "postMessage" && messageRings.length > 0) {
+    node.port.addEventListener("message", onMessageOverflowMessage);
+  }
+
   const { handles: inputHandles, proxies: inputProxies } = buildInputProxies(context, node, inputs);
 
   // sab-unavailable event を 1 度 だ け fire す る pending flag (= 04-worklet-
@@ -943,6 +963,7 @@ export async function createNode<C>(
       node.port.removeEventListener("message", onErrorMessage);
       node.port.removeEventListener("message", onPublishMessage);
       node.port.removeEventListener("message", onEventMessage);
+      node.port.removeEventListener("message", onMessageOverflowMessage);
       node.removeEventListener("processorerror", onErrorProcessor);
       errorSubscribers.clear();
       for (const subs of stateSubscribers.values()) subs.clear();

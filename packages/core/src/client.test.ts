@@ -1446,7 +1446,10 @@ test("createNode without messageRings = processorOptions に messageRingsBuffer 
   }
 });
 
-test("createNode with messageRings + !crossOriginIsolated = fallback ArrayBuffer", async () => {
+test("createNode with messageRings + !crossOriginIsolated = messageRingsBuffer な し + descriptor hand", async () => {
+  // postMessage path = messageRingsBuffer を hand し な い (= main 側 が
+  // `port.postMessage({ kind: 'message', ... })` で 直 送、 worklet 側 が
+  // self.port.onmessage で receive + WASM ring に inject = buffer 自 体 不 要)。
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   try {
     await startCreate(
@@ -1468,10 +1471,13 @@ test("createNode with messageRings + !crossOriginIsolated = fallback ArrayBuffer
       h.fireReady,
     );
     const opts = h.lastNode!.__constructorRecord.options.processorOptions as {
-      messageRingsBuffer: unknown;
+      messageRingsBuffer?: unknown;
+      messageRings?: unknown;
+      transport?: string;
     };
-    expect(opts.messageRingsBuffer).toBeInstanceOf(ArrayBuffer);
-    expect(opts.messageRingsBuffer).not.toBeInstanceOf(SharedArrayBuffer);
+    expect(opts.messageRingsBuffer).toBeUndefined();
+    expect(opts.messageRings).toBeDefined();
+    expect(opts.transport).toBe("postMessage");
   } finally {
     h.cleanup();
   }
@@ -2622,7 +2628,13 @@ test("node.messages.<name>(payload): boolean field を 0/1 i32 で push (= Q46 l
   }
 });
 
-test("node.messages.<name>(payload): postMessage transport で overflow path も 動 く", async () => {
+test("node.messages.<name>(payload): postMessage transport = port.postMessage 直 送 + overflow は worklet 側 通 知 経 由 で mirror 更 新", async () => {
+  // 新 仕 様: main 側 sender は SAB write じ ゃ な く `port.postMessage({ kind:
+  // 'message', ringIndex, payload })` で 直 送。 overflow は worklet 側 で WASM ring
+  // が 容 量 超 え 時 に drop-oldest 発 動 + port.postMessage({ kind: 'message-overflow',
+  // ringIndex, overflowCount }) で main へ 通 知 = main 側 mirror 更 新 = diagnostics
+  // で read。 ここ で は spy で port.postMessage を hook し て 5 件 全 送 信 担 保 +
+  // worklet 通 知 を simulate し て mirror 更 新 + diagnostics 観 測。
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   try {
     const smallRing = { ...presetMessageRing, capacity: 4 };
@@ -2630,29 +2642,37 @@ test("node.messages.<name>(payload): postMessage transport で overflow path も
       () => createNode(h.context as never, makeMockProcessor({ messageRings: [smallRing] })),
       h.fireReady,
     );
-    const msgBuf = h.lastNode!.__constructorRecord.options.processorOptions!
-      .messageRingsBuffer as ArrayBuffer;
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (m: unknown) => {
+      posted.push(m);
+    };
     const send = node.messages["preset"] as (p: { slot: number }) => void;
     send({ slot: 1 });
     send({ slot: 2 });
     send({ slot: 3 });
     send({ slot: 4 });
     send({ slot: 5 });
-    const header = new Int32Array(msgBuf, 0, 3);
-    expect(header[0]).toBe(5);
-    expect(header[1]).toBe(1);
-    expect(header[2]).toBe(1);
-    expect(
-      (
-        node.messages["preset"] as { diagnostics: { overflowCount: () => number } }
-      ).diagnostics.overflowCount(),
-    ).toBe(1);
+    // 5 件 全 port.postMessage で 直 送
+    expect(posted).toHaveLength(5);
+    expect(posted[0]).toEqual({ kind: "message", ringIndex: 0, payload: { slot: 1 } });
+    expect(posted[4]).toEqual({ kind: "message", ringIndex: 0, payload: { slot: 5 } });
+    // 初 期 overflow = 0 (= worklet 通 知 未 受 領)
+    const diag = (node.messages["preset"] as { diagnostics: { overflowCount: () => number } })
+      .diagnostics;
+    expect(diag.overflowCount()).toBe(0);
+    // worklet が drop-oldest 発 動 を 通 知 する path を simulate
+    for (const listener of h.lastNode!.port.__listeners) {
+      listener({
+        data: { kind: "message-overflow", ringIndex: 0, overflowCount: 1 },
+      } as MessageEvent);
+    }
+    expect(diag.overflowCount()).toBe(1);
   } finally {
     h.cleanup();
   }
 });
 
-test("node.messages.<name>(payload): postMessage transport で 動 く (= Atomics ナ シ)", async () => {
+test("node.messages.<name>(payload): postMessage transport = port.postMessage 直 送 (= payload そ の ま ま carry)", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   try {
     const node = await startCreate(
@@ -2660,13 +2680,12 @@ test("node.messages.<name>(payload): postMessage transport で 動 く (= Atomic
         createNode(h.context as never, makeMockProcessor({ messageRings: [presetMessageRing] })),
       h.fireReady,
     );
-    const msgBuf = h.lastNode!.__constructorRecord.options.processorOptions!
-      .messageRingsBuffer as ArrayBuffer;
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (m: unknown) => {
+      posted.push(m);
+    };
     (node.messages["preset"] as (p: { slot: number }) => void)({ slot: 99 });
-    const header = new Int32Array(msgBuf, 0, 3);
-    expect(header[0]).toBe(1);
-    const slotsView = new Int32Array(msgBuf, 12);
-    expect(slotsView[0]).toBe(99);
+    expect(posted).toEqual([{ kind: "message", ringIndex: 0, payload: { slot: 99 } }]);
   } finally {
     h.cleanup();
   }

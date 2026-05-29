@@ -185,6 +185,21 @@ type WorkletState = {
   readonly messageRingsWasmHeaderViews: readonly Int32Array[];
   readonly messageRingsSabHeaderViews: readonly Int32Array[];
   /**
+   * postMessage path 用 = main 側 が `port.postMessage({ kind: 'message',
+   * ringIndex, payload })` で 送 信 し た payload を audio thread の port.onmessage
+   * で 受 領 し て push す る 一 時 queue。 process 開 始 で WASM ring に inject +
+   * drain (= SAB path で main → SAB → WASM mirror で 走 る path の 代 替)。
+   * SAB path で は 使 用 し な い (= 空 配 列 の ま ま)。
+   */
+  readonly messageQueueMirrors: Array<Array<Record<string, unknown>>>;
+  /**
+   * postMessage path 用 = 各 message ring で 「前 quantum 末 で main へ 送 信 済 み の
+   * overflow 値」。 WASM 内 で drop-oldest 発 動 し て overflowCount が 増 え た 場 合、
+   * 次 quantum 末 で diff 検 出 + port.postMessage で main に 通 知 (= main 側
+   * diagnostics.overflowCount() の mirror 元)。
+   */
+  readonly lastSentMessageOverflows: number[];
+  /**
    * Latched once a WASM trap escapes `state.process()`。 Subsequent quanta
    * emit silence and skip the WASM call so a single trap does not get
    * re-posted every render quantum (= main receives one `wasm-trap` event
@@ -464,10 +479,19 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         }
       }
 
-      // message ring meta + buffer pre-bind (= sub-phase 7.7d)。 event ring と zip
-      // pattern、 ま た mirror 方 向 が 逆 (= main → worklet で main 側 が SAB に push +
-      // worklet 側 が process 開 始 で SAB → WASM ring に bulk copy + drain 末 尾 で
-      // WASM tail を SAB tail に commit)。
+      // message ring meta + buffer pre-bind。 event ring と zip pattern、 mirror
+      // 方 向 が 逆 (= main → worklet)。 transport mode で 経 路 が 分 岐:
+      //
+      // - SAB available: main 側 が SAB に push + worklet 側 process 開 始 で SAB →
+      //   WASM bulk copy + drain 末 尾 で WASM tail を SAB tail に commit
+      // - SAB unavailable: 共 有 buffer 不 在、 main 側 が `port.postMessage({
+      //   kind:'message', ringIndex, payload })` で 直 送 = worklet 側 が
+      //   self.port.onmessage で 受 領 + messageQueueMirrors に push + process 開 始 で
+      //   WASM ring に field 別 inject + WASM 内 overflowCount を 末 尾 で main に
+      //   port.postMessage で 通 知 (= main mirror 更 新)。
+      //
+      // WASM views = 両 transport で 必 要 (= worklet が WASM 内 ring を 書 く)。
+      // SAB views = SAB 時 の み bind。
       const messageRingsBuffer = opts.processorOptions?.messageRingsBuffer ?? null;
       const messageRings = opts.processorOptions?.messageRings ?? [];
       const messageRingSabOffsets = opts.processorOptions?.messageRingSabOffsets ?? [];
@@ -475,17 +499,19 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       const messageRingsSabViews: Uint8Array[] = [];
       const messageRingsWasmHeaderViews: Int32Array[] = [];
       const messageRingsSabHeaderViews: Int32Array[] = [];
-      if (messageRingsBuffer !== null) {
-        for (let i = 0; i < messageRings.length; i++) {
-          const ring = messageRings[i]!;
-          const ringTotalBytes = 12 + ring.capacity * ring.slotSize;
-          messageRingsWasmViews.push(
-            new Uint8Array(memory.buffer, ring.wasmRingBase, ringTotalBytes),
-          );
+      const messageQueueMirrors: Array<Array<Record<string, unknown>>> = messageRings.map(() => []);
+      const lastSentMessageOverflows = messageRings.map(() => 0);
+      for (let i = 0; i < messageRings.length; i++) {
+        const ring = messageRings[i]!;
+        const ringTotalBytes = 12 + ring.capacity * ring.slotSize;
+        messageRingsWasmViews.push(
+          new Uint8Array(memory.buffer, ring.wasmRingBase, ringTotalBytes),
+        );
+        messageRingsWasmHeaderViews.push(new Int32Array(memory.buffer, ring.wasmRingBase, 3));
+        if (messageRingsBuffer !== null) {
           messageRingsSabViews.push(
             new Uint8Array(messageRingsBuffer, messageRingSabOffsets[i]!, ringTotalBytes),
           );
-          messageRingsWasmHeaderViews.push(new Int32Array(memory.buffer, ring.wasmRingBase, 3));
           messageRingsSabHeaderViews.push(
             new Int32Array(messageRingsBuffer, messageRingSabOffsets[i]!, 3),
           );
@@ -522,8 +548,41 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         messageRingsSabViews,
         messageRingsWasmHeaderViews,
         messageRingsSabHeaderViews,
+        messageQueueMirrors,
+        lastSentMessageOverflows,
         failed: false,
       };
+
+      // postMessage path 用 incoming message listener (= main 側 sender が
+      // `port.postMessage({ kind: 'message', ringIndex, payload })` で 送 信 す る を
+      // audio thread 側 で receive、 messageQueueMirrors[i] に push し て 次 process
+      // 開 始 で WASM ring に inject)。 SAB 時 は main 側 sender が SAB に 直 接 write
+      // = listener は drop。
+      const port = self.port as {
+        addEventListener?: (kind: string, handler: (event: MessageEvent) => void) => void;
+        start?: () => void;
+      };
+      if (typeof port.addEventListener === "function" && messageRings.length > 0) {
+        port.addEventListener("message", (event: MessageEvent) => {
+          const data = event.data as
+            | { kind?: unknown; ringIndex?: unknown; payload?: unknown }
+            | null
+            | undefined;
+          if (typeof data !== "object" || data === null) return;
+          if (data.kind !== "message") return;
+          if (typeof data.ringIndex !== "number") return;
+          const ringIndex = data.ringIndex;
+          if (ringIndex < 0 || ringIndex >= messageRings.length) return;
+          if (typeof data.payload !== "object" || data.payload === null) return;
+          messageQueueMirrors[ringIndex]!.push(data.payload as Record<string, unknown>);
+        });
+        // MessagePort spec = addEventListener 経 路 は implicit start し な い =
+        // start() 明 示 で 受 信 を 有 効 化 (= onmessage = ... path は auto-start
+        // だ が、 addEventListener path は 別 必 要)。
+        if (typeof port.start === "function") {
+          port.start();
+        }
+      }
 
       self.port.postMessage({ kind: "ready" });
     } catch (err) {
@@ -628,27 +687,68 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       }
     }
 
-    // message ring mirror: main 側 が SAB に push し た slot を WASM ring に
-    // bulk copy + head 反 映 (= sub-phase 7.7d)。 process() 内 の WASM drain
-    // logic が こ の mirror さ れ た slot を 読 ん で handler を fire する path。
-    if (state.messageRingsBuffer !== null) {
-      const wasmViews = state.messageRingsWasmViews;
-      const sabViews = state.messageRingsSabViews;
-      const wasmHeaders = state.messageRingsWasmHeaderViews;
-      const sabHeaders = state.messageRingsSabHeaderViews;
+    // message ring mirror = transport mode で 経 路 が 分 岐 (process 開 始 で WASM
+    // ring に main 側 push 分 を inject + drain logic が WASM 内 で 走 る):
+    //
+    // - SAB available: main 側 が SAB に push 済 = SAB → WASM bulk copy + header
+    //   Atomics.load で acquire fence + WASM ring に 反 映。
+    // - SAB unavailable: 共 有 buffer 不 在 = main 側 が port.postMessage で 直 送
+    //   = messageQueueMirrors[i] に 蓄 積 済 = process 開 始 で 各 payload を WASM
+    //   ring slot に field 別 inject + 容 量 超 え で drop-oldest 発 動 + 内 部
+    //   overflowCount += 1 (= 末 尾 で main に 通 知)。
+    if (state.messageRings.length > 0) {
       const isSab = state.transport === "sab";
-      for (let i = 0; i < wasmViews.length; i++) {
-        wasmViews[i]!.set(sabViews[i]!);
-        if (isSab) {
-          // SAB head を Atomics.load で acquire fence + WASM head に 反 映 (= WASM
-          // drain logic が こ の head を 見 て drain 経 路 走 ら す)。 tail / overflow
-          // も WASM ring に mirror (= WASM 内 の drain は WASM ring を 読 む = SAB
-          // と 完 全 同 期 さ せ る)。
+      if (isSab && state.messageRingsBuffer !== null) {
+        // SAB path = 既 SAB → WASM bulk copy + header mirror
+        const wasmViews = state.messageRingsWasmViews;
+        const sabViews = state.messageRingsSabViews;
+        const wasmHeaders = state.messageRingsWasmHeaderViews;
+        const sabHeaders = state.messageRingsSabHeaderViews;
+        for (let i = 0; i < wasmViews.length; i++) {
+          wasmViews[i]!.set(sabViews[i]!);
           const sabH = sabHeaders[i]!;
           const wasmH = wasmHeaders[i]!;
-          wasmH[0] = Atomics.load(sabH, 0); // head
-          wasmH[1] = Atomics.load(sabH, 1); // tail
-          wasmH[2] = Atomics.load(sabH, 2); // overflowCount
+          wasmH[0] = Atomics.load(sabH, 0);
+          wasmH[1] = Atomics.load(sabH, 1);
+          wasmH[2] = Atomics.load(sabH, 2);
+        }
+      } else {
+        // postMessage path = messageQueueMirrors を WASM ring に inject
+        for (let i = 0; i < state.messageRings.length; i++) {
+          const queue = state.messageQueueMirrors[i]!;
+          if (queue.length === 0) continue;
+          const ring = state.messageRings[i]!;
+          const wasmView = state.messageRingsWasmViews[i]!;
+          const wasmH = state.messageRingsWasmHeaderViews[i]!;
+          const wasmDataView = new DataView(
+            wasmView.buffer,
+            wasmView.byteOffset,
+            wasmView.byteLength,
+          );
+          const capacity = ring.capacity;
+          const slotSize = ring.slotSize;
+          for (const payload of queue) {
+            const head = wasmH[0]!;
+            const tail = wasmH[1]!;
+            // overflow check = head - tail >= capacity = drop-oldest
+            if (head - tail >= capacity) {
+              wasmH[1] = tail + 1;
+              wasmH[2] = wasmH[2]! + 1;
+            }
+            // slot 書 き 込 み (= Q46 uniform lift で 全 number → i32 / boolean → 0/1 i32)
+            const slotByteOffset = 12 + (head % capacity) * slotSize;
+            for (const field of ring.fields) {
+              const value = payload[field.name];
+              const byteOffset = slotByteOffset + field.offsetInSlot;
+              if (typeof value === "boolean") {
+                wasmDataView.setInt32(byteOffset, value ? 1 : 0, true);
+              } else if (typeof value === "number") {
+                wasmDataView.setInt32(byteOffset, value | 0, true);
+              }
+            }
+            wasmH[0] = head + 1;
+          }
+          queue.length = 0;
         }
       }
     }
@@ -800,21 +900,36 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       }
     }
 
-    // message ring tail commit (= sub-phase 7.7d): WASM drain で 進 ん だ tail を
-    // SAB に commit (= main 側 が SAB tail を Atomics.load で 「drain 済 ま で」
-    // 観 測 可)。 slot 自 体 は main → worklet 一 方 向 = SAB → WASM mirror で
-    // 既 同 期 済 = WASM → SAB は header だ け commit で OK。
-    if (state.messageRingsBuffer !== null) {
-      const wasmHeaders = state.messageRingsWasmHeaderViews;
-      const sabHeaders = state.messageRingsSabHeaderViews;
+    // message ring tail commit / overflow notify = transport mode で 経 路 が 分 岐:
+    //
+    // - SAB available: WASM drain で 進 ん だ tail を SAB に commit (= main 側 が
+    //   SAB tail を Atomics.load で 「drain 済 ま で」 観 測 可)。
+    // - SAB unavailable: WASM 内 で drop-oldest 発 動 し た 場 合 = overflowCount が
+    //   変 化 し て いる = main に port.postMessage で 通 知 (= main 側 messageOverflowMirror
+    //   が 更 新 + diagnostics.overflowCount() で read 可)。 tail commit は 不 要
+    //   (= main 側 mirror 無 い path = SAB tail 観 測 ナ シ)。
+    if (state.messageRings.length > 0) {
       const isSab = state.transport === "sab";
-      for (let i = 0; i < wasmHeaders.length; i++) {
-        const wasmH = wasmHeaders[i]!;
-        const sabH = sabHeaders[i]!;
-        if (isSab) {
-          Atomics.store(sabH, 1, wasmH[1]!); // tail = drain で 進 ん だ
-        } else {
-          sabH[1] = wasmH[1]!;
+      const wasmHeaders = state.messageRingsWasmHeaderViews;
+      if (isSab && state.messageRingsBuffer !== null) {
+        const sabHeaders = state.messageRingsSabHeaderViews;
+        for (let i = 0; i < wasmHeaders.length; i++) {
+          const wasmH = wasmHeaders[i]!;
+          const sabH = sabHeaders[i]!;
+          Atomics.store(sabH, 1, wasmH[1]!);
+        }
+      } else {
+        for (let i = 0; i < wasmHeaders.length; i++) {
+          const wasmH = wasmHeaders[i]!;
+          const currentOverflow = wasmH[2]!;
+          if (currentOverflow !== state.lastSentMessageOverflows[i]) {
+            self.port.postMessage({
+              kind: "message-overflow",
+              ringIndex: i,
+              overflowCount: currentOverflow,
+            });
+            state.lastSentMessageOverflows[i] = currentOverflow;
+          }
         }
       }
     }
