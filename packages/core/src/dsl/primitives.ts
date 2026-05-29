@@ -219,9 +219,16 @@ registerNodeMethod("gte", function method<
 });
 
 // Math (f32 / f64 — generic over ScalarType for stub)
-export function sin<T extends ScalarType>(_x: Node<T> | number): Node<T> {
-  return notImplemented();
+export function sin<T extends ScalarType>(x: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "sin",
+    type: "f32",
+    value: liftToAst(x),
+  });
 }
+registerNodeMethod("sin", function method<T extends ScalarType>(this: Node<T>): Node<T> {
+  return sin(this);
+});
 export function cos<T extends ScalarType>(_x: Node<T> | number): Node<T> {
   return notImplemented();
 }

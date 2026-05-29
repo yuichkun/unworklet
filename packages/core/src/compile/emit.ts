@@ -90,6 +90,15 @@ const MOD_A_F32_LOCAL = 8;
 const MOD_B_F32_LOCAL = 9;
 
 /**
+ * 多 項 式 近 似 の math primitive (= sin / cos / tan / tanh / exp / log、 Q17) は
+ * 共 有 プ ラ イ ベ ー ト WASM 関 数 (= `(f32) -> f32`、 export し な い) と し て emit し、
+ * 呼 び 出 し 側 は `call` で 参 照。 各 関 数 は 自 前 の local を 持 つ の で `process`
+ * 側 の 固 定 temp local と 干 渉 し な い。 graph で 実 際 に 使 わ れ て い る kind だ け
+ * 追 加 す る (= `collectUsedMathKinds`)。
+ */
+const MATH_FN_PREFIX = "$unworklet_";
+
+/**
  * Subnormal flush threshold (= Q21、 `04-worklet-runtime.md` §6)。
  * `state.f32` / `state.f64` の `.store(v)` で `|v| < 1e-30` を 0 に 落 と し て
  * IIR feedback path で の CPU spike を 撤 廃。 threshold 1e-30 は
@@ -121,6 +130,10 @@ export async function emit(
 
   const pages = Math.max(1, Math.ceil(layout.totalBytes / PAGE_BYTES));
   mod.setMemory(pages, pages, "memory");
+
+  // 多 項 式 近 似 の math primitive (= sin 等、 Q17) を 共 有 プ ラ イ ベ ー ト 関 数 と し て
+  // 追 加。 graph で 使 わ れ て い る kind だ け emit。
+  addMathFunctions(collectUsedMathKinds(graph), mod, binaryen);
 
   // Q38-b 規 範: 全 onReceive handler は per-block top / forSample よ り 先 に drain。
   // source order と zip し な い = framework が 「messageOnReceive 集 め て 先 emit
@@ -363,6 +376,13 @@ export function emitExpression(
       );
       return mod.f32.sub(teed, mod.f32.floor(mod.local.get(FRAC_F32_LOCAL, binaryen.f32)));
     }
+    // 多 項 式 近 似 の math primitive は 共 有 関 数 を call (= 関 数 本 体 は emit() で 追 加)。
+    case "sin":
+      return mod.call(
+        `${MATH_FN_PREFIX}sin`,
+        [emitExpression(node.value, layout, mod, binaryen)],
+        binaryen.f32,
+      );
     case "max":
       return mod.f32.max(
         emitExpression(node.lhs, layout, mod, binaryen),
@@ -900,4 +920,158 @@ function emitMessageOnReceive(
       mod.local.get(MESSAGE_TAIL_LOCAL, binaryen.i32),
     ),
   ]);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 多 項 式 近 似 math primitive の 共 有 関 数 emit (= Q17、 sin / cos / tan / tanh /
+// exp / log)。 5〜7 次 minimax / Taylor、 最 大 誤 差 ~1e-4 = 24bit audio で 不 可 聴。
+// no-trap invariant: 整 数 化 は trunc_s_sat (= 飽 和・非 ト ラ ッ プ)、 reinterpret /
+// nearest / convert は 元 々 非 ト ラ ッ プ。
+// ─────────────────────────────────────────────────────────────────────────
+
+const TRANSCENDENTAL_KINDS: ReadonlySet<string> = new Set([
+  "sin",
+  "cos",
+  "tan",
+  "tanh",
+  "exp",
+  "log",
+]);
+
+/** graph の AST を walk し て 実 際 に 使 わ れ て い る transcendental kind を 収 集。 */
+function collectUsedMathKinds(graph: CapturedGraph): Set<string> {
+  const used = new Set<string>();
+  const visit = (node: AstNode): void => {
+    if (TRANSCENDENTAL_KINDS.has(node.kind)) used.add(node.kind);
+    switch (node.kind) {
+      case "mul":
+      case "add":
+      case "sub":
+      case "div":
+      case "mod":
+      case "max":
+      case "min":
+      case "eq":
+      case "lt":
+      case "gt":
+      case "lte":
+      case "gte":
+        visit(node.lhs);
+        visit(node.rhs);
+        break;
+      case "abs":
+      case "neg":
+      case "sqrt":
+      case "floor":
+      case "ceil":
+      case "frac":
+      case "sin":
+        visit(node.value);
+        break;
+      case "clamp":
+        visit(node.x);
+        visit(node.lo);
+        visit(node.hi);
+        break;
+      case "select":
+        visit(node.cond);
+        visit(node.then);
+        visit(node.else);
+        break;
+      case "audioInRead":
+      case "paramAt":
+        visit(node.offset);
+        break;
+      case "audioOutWrite":
+        visit(node.offset);
+        visit(node.value);
+        break;
+      case "stateStore":
+        visit(node.value);
+        break;
+      case "forSample":
+      case "messageOnReceive":
+        node.body.forEach(visit);
+        break;
+      case "eventEmitIf":
+        visit(node.cond);
+        visit(node.atSample);
+        node.fields.forEach((field) => visit(field.value));
+        break;
+      case "literal":
+      case "loopCounter":
+      case "stateLoad":
+      case "messageFieldRead":
+        break;
+    }
+  };
+  graph.statements.forEach(visit);
+  return used;
+}
+
+/**
+ * 依 存 展 開: cos / tan は sin を、 tan は cos も call す る (= 派 生 実 装)。 必 要 な
+ * base 関 数 も used set に 含 め る。
+ */
+function expandMathDeps(used: Set<string>): Set<string> {
+  const out = new Set(used);
+  if (out.has("cos") || out.has("tan")) out.add("sin");
+  if (out.has("tan")) out.add("cos");
+  return out;
+}
+
+/** used kind に 応 じ て 共 有 math 関 数 を module に 追 加 (= 依 存 順)。 */
+function addMathFunctions(used: Set<string>, mod: BinaryenModule, binaryen: BinaryenAPI): void {
+  const expanded = expandMathDeps(used);
+  if (expanded.has("sin")) buildSinFn(mod, binaryen);
+}
+
+const MATH_PI = Math.PI;
+
+/**
+ * `$unworklet_sin`: range reduce r = x - round(x/π)·π ∈ [-π/2, π/2] し、 odd
+ * Taylor 9 次 で sin(r) を 評 価、 sign = (-1)^round(x/π) を 掛 け る。 [-π/2,π/2]
+ * で の Taylor 9 次 誤 差 は ~3e-5 (= 1e-4 以 下)。 locals: 0=x(param) / 1=k_f /
+ * 2=r / 3=z(=r²) / 4=k_i。
+ */
+function buildSinFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
+  const f = binaryen.f32;
+  const i = binaryen.i32;
+  const X = 0;
+  const KF = 1;
+  const R = 2;
+  const Z = 3;
+  const KI = 4;
+  const z = (): number => mod.local.get(Z, f);
+  // sin(r) ≈ r·(1 + z·(-1/6 + z·(1/120 + z·(-1/5040 + z·(1/362880)))))
+  let poly = mod.f32.add(mod.f32.const(-1 / 5040), mod.f32.mul(z(), mod.f32.const(1 / 362880)));
+  poly = mod.f32.add(mod.f32.const(1 / 120), mod.f32.mul(z(), poly));
+  poly = mod.f32.add(mod.f32.const(-1 / 6), mod.f32.mul(z(), poly));
+  poly = mod.f32.add(mod.f32.const(1), mod.f32.mul(z(), poly));
+  poly = mod.f32.mul(mod.local.get(R, f), poly);
+  // sign = 1 - 2·(k_i & 1) ∈ {1, -1}
+  const sign = mod.f32.convert_s.i32(
+    mod.i32.sub(
+      mod.i32.const(1),
+      mod.i32.shl(mod.i32.and(mod.local.get(KI, i), mod.i32.const(1)), mod.i32.const(1)),
+    ),
+  );
+  const body = mod.block(
+    null,
+    [
+      mod.local.set(
+        KF,
+        mod.f32.nearest(mod.f32.mul(mod.local.get(X, f), mod.f32.const(1 / MATH_PI))),
+      ),
+      mod.local.set(KI, mod.i32.trunc_s_sat.f32(mod.local.get(KF, f))),
+      mod.local.set(
+        R,
+        mod.f32.sub(mod.local.get(X, f), mod.f32.mul(mod.local.get(KF, f), mod.f32.const(MATH_PI))),
+      ),
+      mod.local.set(Z, mod.f32.mul(mod.local.get(R, f), mod.local.get(R, f))),
+      mod.f32.mul(sign, poly),
+    ],
+    f,
+  );
+  mod.addFunction(`${MATH_FN_PREFIX}sin`, binaryen.f32, binaryen.f32, [f, f, f, i], body);
 }
