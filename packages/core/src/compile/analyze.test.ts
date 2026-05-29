@@ -241,3 +241,163 @@ test("`analyze`: nested forSample 内 で 全 emit を 走 査 + 複 数 違 反
   expect(diags).toHaveLength(2);
   expect(diags.every((d) => d.id === "constant-truthy-emitif")).toBe(true);
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// non-f32-arithmetic: 算術 / 比較 / math primitive は f32 path のみ emit する
+// ので、非 f32 オペランド (= state.i32 等) を渡すと invalid WASM になる。emit
+// 前に明確な診断エラーで弾く (= 多型 lowering は後続フェーズ)。
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`analyze` flags i32 arithmetic (= state.i32.load().add(1)) as non-f32-arithmetic", () => {
+  const graph: CapturedGraph = {
+    declarations: [{ kind: "state", name: "c", type: "i32", initial: 0 }],
+    statements: [
+      {
+        kind: "stateStore",
+        type: "i32",
+        name: "c",
+        value: {
+          kind: "add",
+          type: "f32",
+          lhs: { kind: "stateLoad", type: "i32", name: "c" },
+          rhs: { kind: "literal", type: "f32", value: 1 },
+        },
+      },
+    ],
+  };
+  const diags = analyze(graph);
+  expect(diags.some((d) => d.id === "non-f32-arithmetic")).toBe(true);
+});
+
+test("`analyze` flags i32 comparison operands as non-f32-arithmetic", () => {
+  const graph: CapturedGraph = {
+    declarations: [{ kind: "state", name: "c", type: "i32", initial: 0 }],
+    statements: [
+      {
+        kind: "stateStore",
+        type: "i32",
+        name: "c",
+        value: {
+          kind: "lt",
+          type: "f32",
+          lhs: { kind: "stateLoad", type: "i32", name: "c" },
+          rhs: { kind: "literal", type: "f32", value: 4 },
+        },
+      },
+    ],
+  };
+  expect(analyze(graph).some((d) => d.id === "non-f32-arithmetic")).toBe(true);
+});
+
+test("`analyze` flags nested i32 arithmetic at the inner node (= add(add(i32,1),2))", () => {
+  const inner = {
+    kind: "add" as const,
+    type: "f32" as const,
+    lhs: { kind: "stateLoad" as const, type: "i32" as const, name: "c" },
+    rhs: { kind: "literal" as const, type: "f32" as const, value: 1 },
+  };
+  const graph: CapturedGraph = {
+    declarations: [{ kind: "state", name: "c", type: "i32", initial: 0 }],
+    statements: [
+      {
+        kind: "stateStore",
+        type: "i32",
+        name: "c",
+        value: {
+          kind: "add",
+          type: "f32",
+          lhs: inner,
+          rhs: { kind: "literal", type: "f32", value: 2 },
+        },
+      },
+    ],
+  };
+  expect(analyze(graph).some((d) => d.id === "non-f32-arithmetic")).toBe(true);
+});
+
+test("`analyze` does NOT flag pure f32 arithmetic (= mul(audioIn, param))", () => {
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "audioInput", name: "main", channels: 1 },
+      { kind: "audioOutput", name: "main", channels: 1 },
+      {
+        kind: "param",
+        name: "gain",
+        type: "f32",
+        default: 1,
+        min: 0,
+        max: 4,
+        automationRate: "a-rate",
+      },
+    ],
+    statements: [
+      {
+        kind: "forSample",
+        stride: 1,
+        body: [
+          {
+            kind: "audioOutWrite",
+            portName: "main",
+            channel: 0,
+            offset: { kind: "loopCounter" },
+            value: {
+              kind: "mul",
+              type: "f32",
+              lhs: {
+                kind: "audioInRead",
+                portName: "main",
+                channel: 0,
+                offset: { kind: "loopCounter" },
+              },
+              rhs: { kind: "paramAt", paramName: "gain", offset: { kind: "loopCounter" } },
+            },
+          },
+        ],
+      },
+    ],
+  };
+  expect(analyze(graph).some((d) => d.id === "non-f32-arithmetic")).toBe(false);
+});
+
+test("`analyze` flags select with mismatched branch types as select-branch-type-mismatch", () => {
+  const graph: CapturedGraph = {
+    declarations: [{ kind: "state", name: "x", type: "i32", initial: 0 }],
+    statements: [
+      {
+        kind: "stateStore",
+        type: "i32",
+        name: "x",
+        value: {
+          kind: "select",
+          type: "i32",
+          cond: { kind: "literal", type: "i32", value: 1 },
+          ifTrue: { kind: "stateLoad", type: "i32", name: "x" },
+          ifFalse: { kind: "literal", type: "f32", value: 5 },
+        },
+      },
+    ],
+  };
+  expect(analyze(graph).some((d) => d.id === "select-branch-type-mismatch")).toBe(true);
+});
+
+test("`analyze` does NOT flag select with matching f32 branches", () => {
+  const graph: CapturedGraph = {
+    declarations: [{ kind: "audioOutput", name: "main", channels: 1 }],
+    statements: [
+      {
+        kind: "audioOutWrite",
+        portName: "main",
+        channel: 0,
+        offset: { kind: "literal", type: "i32", value: 0 },
+        value: {
+          kind: "select",
+          type: "f32",
+          cond: { kind: "literal", type: "i32", value: 1 },
+          ifTrue: { kind: "literal", type: "f32", value: 1 },
+          ifFalse: { kind: "literal", type: "f32", value: 0 },
+        },
+      },
+    ],
+  };
+  expect(analyze(graph).some((d) => d.id === "select-branch-type-mismatch")).toBe(false);
+});

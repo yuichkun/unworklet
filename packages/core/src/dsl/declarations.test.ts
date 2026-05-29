@@ -21,6 +21,7 @@ import {
   state,
 } from "./declarations.ts";
 import { forSample } from "./loop.ts";
+import { add, gt } from "./primitives.ts";
 
 // ─────────────────────────────────────────────────────────────────────────
 // stub 維 持 = buffer / param.expose / message / midi
@@ -1545,5 +1546,38 @@ test("inferAstType: messageFieldRead Node を event emit field に 渡 す = wir
     const evtDecl = ctx.declarations.find((d) => d.kind === "event");
     if (evtDecl?.kind !== "event") throw new Error("expected event decl");
     expect(evtDecl.fields).toEqual([{ name: "value", wireType: "i32" }]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// inferAstType: DSL primitive operator を event field 値 に 流 し た 時 の
+// wire-type resolution (= Q71)。 算 術 / math は 結 果 型 (f32)、 比 較 は bool。
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`emitIf` field 値 が 算 術 node → wireType f32 (= inferAstType 網 羅)", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const input = audioInput({ channels: 1, name: "main" });
+    const evt = event<{ level: number }>({ name: "peak" });
+    forSample((i) => {
+      evt.emitIf(true, { atSample: i, level: add(input.ch(0).at(i), 1) });
+    });
+    const evtDecl = ctx.declarations.find((d) => d.kind === "event");
+    if (evtDecl?.kind !== "event") throw new Error("expected event decl");
+    expect(evtDecl.fields).toEqual([{ name: "level", wireType: "f32" }]);
+  });
+});
+
+test("`emitIf` field 値 が 比 較 node → wireType bool (= inferAstType 網 羅)", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const input = audioInput({ channels: 1, name: "main" });
+    const evt = event<{ hot: boolean }>({ name: "gate" });
+    forSample((i) => {
+      evt.emitIf(true, { atSample: i, hot: gt(input.ch(0).at(i), 0.5) });
+    });
+    const evtDecl = ctx.declarations.find((d) => d.kind === "event");
+    if (evtDecl?.kind !== "event") throw new Error("expected event decl");
+    expect(evtDecl.fields).toEqual([{ name: "hot", wireType: "bool" }]);
   });
 });

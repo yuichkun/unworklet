@@ -18,6 +18,7 @@ import type {
   ParamDecl,
   StateDecl,
 } from "../compile/ast.ts";
+import { inferAstType } from "../compile/ast.ts";
 import {
   addDeclaration,
   addStatement,
@@ -474,42 +475,6 @@ function checkEventName(name: string): void {
     throw new Error(
       `unworklet: duplicate event declaration name "${name}" — event names must be unique within a processor`,
     );
-  }
-}
-
-/**
- * AST expression node の 結 果 ScalarType を 推 論 (= `eventDecl.emitIf` の
- * Q71 per-field wire-type resolution 用)。
- *
- * expression position に 立 つ kind だ け 受 け 取 る (= statement kind は
- * `unwrapAst` 段 階 で 排 除 さ れ る 想 定、 仮 に 来 て も 明 示 throw)。
- */
-function inferAstType(ast: AstNode): ScalarType {
-  switch (ast.kind) {
-    case "literal":
-      return ast.type;
-    case "mul":
-      return ast.type;
-    case "abs":
-      return ast.type;
-    case "max":
-      return ast.type;
-    case "audioInRead":
-      return "f32";
-    case "paramAt":
-      return "f32";
-    case "loopCounter":
-      return "i32";
-    case "stateLoad":
-      return ast.type;
-    case "messageFieldRead":
-      return ast.wireType;
-    case "audioOutWrite":
-    case "forSample":
-    case "stateStore":
-    case "eventEmitIf":
-    case "messageOnReceive":
-      throw new Error(`statement node '${ast.kind}' cannot appear in expression position`);
   }
 }
 

@@ -12,6 +12,7 @@
  */
 
 import type { AstNode } from "../compile/ast.ts";
+import { inferAstType } from "../compile/ast.ts";
 import { registerNodeMethod, unwrapAst, wrapAst } from "../compile/capture.ts";
 import type { Node, ScalarType } from "../types.ts";
 
@@ -57,17 +58,33 @@ declare module "../types.ts" {
 // Free function form
 // ─────────────────────────────────────────────────────────────────────────
 
-const notImplemented = (): never => {
-  throw new Error("not implemented");
-};
-
-// Arithmetic (T extends 'f32' | 'f64' | 'i32' | 'i64' — generic over ScalarType for stub)
-export function add<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<T> {
-  return notImplemented();
+// Arithmetic (T extends 'f32' | 'f64' | 'i32' | 'i64')
+export function add<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "add",
+    type: "f32",
+    lhs: liftToAst(a),
+    rhs: liftToAst(b),
+  });
 }
-export function sub<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<T> {
-  return notImplemented();
+registerNodeMethod("add", function method<
+  T extends ScalarType,
+>(this: Node<T>, other: Node<T> | number): Node<T> {
+  return add(this, other);
+});
+export function sub<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "sub",
+    type: "f32",
+    lhs: liftToAst(a),
+    rhs: liftToAst(b),
+  });
 }
+registerNodeMethod("sub", function method<
+  T extends ScalarType,
+>(this: Node<T>, other: Node<T> | number): Node<T> {
+  return sub(this, other);
+});
 export function mul<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<T> {
   return wrapAst<T>({
     kind: "mul",
@@ -79,9 +96,15 @@ export function mul<T extends ScalarType>(a: Node<T> | number, b: Node<T> | numb
 
 // JS literal → `{ kind: 'literal', type: 'f32', value }` lift (= Q33 context-
 // dependent lift の Phase 3 minimum、 後 続 phase で T-aware fill)。
-function liftToAst<T extends ScalarType>(value: Node<T> | number): AstNode {
+function liftToAst<T extends ScalarType>(value: Node<T> | number | boolean): AstNode {
   if (typeof value === "number") {
     return { kind: "literal", type: "f32", value };
+  }
+  if (typeof value === "boolean") {
+    // bool は 内 部 i32 表 現 (= 0/1)。 select の boolean branch literal
+    // (= `select(cond, true, gate.load())`、 canonical bool-state パ タ ー ン) を
+    // bool node に lift し、 branch 型 一 致 + emit (i32.const) に 載 せ る。
+    return { kind: "literal", type: "bool", value: value ? 1 : 0 };
   }
   return unwrapAst(value);
 }
@@ -94,61 +117,181 @@ registerNodeMethod("mul", function method<
 >(this: Node<T>, other: Node<T> | number): Node<T> {
   return mul(this, other);
 });
-export function div<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<T> {
-  return notImplemented();
+export function div<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "div",
+    type: "f32",
+    lhs: liftToAst(a),
+    rhs: liftToAst(b),
+  });
 }
-export function mod<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<T> {
-  return notImplemented();
+registerNodeMethod("div", function method<
+  T extends ScalarType,
+>(this: Node<T>, other: Node<T> | number): Node<T> {
+  return div(this, other);
+});
+export function mod<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "mod",
+    type: "f32",
+    lhs: liftToAst(a),
+    rhs: liftToAst(b),
+  });
 }
-export function neg<T extends ScalarType>(_x: Node<T> | number): Node<T> {
-  return notImplemented();
+registerNodeMethod("mod", function method<
+  T extends ScalarType,
+>(this: Node<T>, other: Node<T> | number): Node<T> {
+  return mod(this, other);
+});
+export function neg<T extends ScalarType>(x: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "neg",
+    type: "f32",
+    value: liftToAst(x),
+  });
 }
+registerNodeMethod("neg", function method<T extends ScalarType>(this: Node<T>): Node<T> {
+  return neg(this);
+});
 
 // Comparison (returns Node<'bool'>)
-export function eq<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<"bool"> {
-  return notImplemented();
+export function eq<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<"bool"> {
+  return wrapAst<"bool">({
+    kind: "eq",
+    type: "f32",
+    lhs: liftToAst(a),
+    rhs: liftToAst(b),
+  });
 }
-export function lt<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<"bool"> {
-  return notImplemented();
+registerNodeMethod("eq", function method<
+  T extends ScalarType,
+>(this: Node<T>, other: Node<T> | number): Node<"bool"> {
+  return eq(this, other);
+});
+export function lt<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<"bool"> {
+  return wrapAst<"bool">({
+    kind: "lt",
+    type: "f32",
+    lhs: liftToAst(a),
+    rhs: liftToAst(b),
+  });
 }
-export function gt<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<"bool"> {
-  return notImplemented();
+registerNodeMethod("lt", function method<
+  T extends ScalarType,
+>(this: Node<T>, other: Node<T> | number): Node<"bool"> {
+  return lt(this, other);
+});
+export function gt<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<"bool"> {
+  return wrapAst<"bool">({
+    kind: "gt",
+    type: "f32",
+    lhs: liftToAst(a),
+    rhs: liftToAst(b),
+  });
 }
-export function lte<T extends ScalarType>(
-  _a: Node<T> | number,
-  _b: Node<T> | number,
-): Node<"bool"> {
-  return notImplemented();
+registerNodeMethod("gt", function method<
+  T extends ScalarType,
+>(this: Node<T>, other: Node<T> | number): Node<"bool"> {
+  return gt(this, other);
+});
+export function lte<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<"bool"> {
+  return wrapAst<"bool">({
+    kind: "lte",
+    type: "f32",
+    lhs: liftToAst(a),
+    rhs: liftToAst(b),
+  });
 }
-export function gte<T extends ScalarType>(
-  _a: Node<T> | number,
-  _b: Node<T> | number,
-): Node<"bool"> {
-  return notImplemented();
+registerNodeMethod("lte", function method<
+  T extends ScalarType,
+>(this: Node<T>, other: Node<T> | number): Node<"bool"> {
+  return lte(this, other);
+});
+export function gte<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<"bool"> {
+  return wrapAst<"bool">({
+    kind: "gte",
+    type: "f32",
+    lhs: liftToAst(a),
+    rhs: liftToAst(b),
+  });
 }
+registerNodeMethod("gte", function method<
+  T extends ScalarType,
+>(this: Node<T>, other: Node<T> | number): Node<"bool"> {
+  return gte(this, other);
+});
 
 // Math (f32 / f64 — generic over ScalarType for stub)
-export function sin<T extends ScalarType>(_x: Node<T> | number): Node<T> {
-  return notImplemented();
+export function sin<T extends ScalarType>(x: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "sin",
+    type: "f32",
+    value: liftToAst(x),
+  });
 }
-export function cos<T extends ScalarType>(_x: Node<T> | number): Node<T> {
-  return notImplemented();
+registerNodeMethod("sin", function method<T extends ScalarType>(this: Node<T>): Node<T> {
+  return sin(this);
+});
+export function cos<T extends ScalarType>(x: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "cos",
+    type: "f32",
+    value: liftToAst(x),
+  });
 }
-export function tan<T extends ScalarType>(_x: Node<T> | number): Node<T> {
-  return notImplemented();
+registerNodeMethod("cos", function method<T extends ScalarType>(this: Node<T>): Node<T> {
+  return cos(this);
+});
+export function tan<T extends ScalarType>(x: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "tan",
+    type: "f32",
+    value: liftToAst(x),
+  });
 }
-export function tanh<T extends ScalarType>(_x: Node<T> | number): Node<T> {
-  return notImplemented();
+registerNodeMethod("tan", function method<T extends ScalarType>(this: Node<T>): Node<T> {
+  return tan(this);
+});
+export function tanh<T extends ScalarType>(x: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "tanh",
+    type: "f32",
+    value: liftToAst(x),
+  });
 }
-export function exp<T extends ScalarType>(_x: Node<T> | number): Node<T> {
-  return notImplemented();
+registerNodeMethod("tanh", function method<T extends ScalarType>(this: Node<T>): Node<T> {
+  return tanh(this);
+});
+export function exp<T extends ScalarType>(x: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "exp",
+    type: "f32",
+    value: liftToAst(x),
+  });
 }
-export function log<T extends ScalarType>(_x: Node<T> | number): Node<T> {
-  return notImplemented();
+registerNodeMethod("exp", function method<T extends ScalarType>(this: Node<T>): Node<T> {
+  return exp(this);
+});
+export function log<T extends ScalarType>(x: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "log",
+    type: "f32",
+    value: liftToAst(x),
+  });
 }
-export function sqrt<T extends ScalarType>(_x: Node<T> | number): Node<T> {
-  return notImplemented();
+registerNodeMethod("log", function method<T extends ScalarType>(this: Node<T>): Node<T> {
+  return log(this);
+});
+export function sqrt<T extends ScalarType>(x: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "sqrt",
+    type: "f32",
+    value: liftToAst(x),
+  });
 }
+registerNodeMethod("sqrt", function method<T extends ScalarType>(this: Node<T>): Node<T> {
+  return sqrt(this);
+});
 export function abs<T extends ScalarType>(x: Node<T> | number): Node<T> {
   return wrapAst<T>({
     kind: "abs",
@@ -159,18 +302,49 @@ export function abs<T extends ScalarType>(x: Node<T> | number): Node<T> {
 registerNodeMethod("abs", function method<T extends ScalarType>(this: Node<T>): Node<T> {
   return abs(this);
 });
-export function floor<T extends ScalarType>(_x: Node<T> | number): Node<T> {
-  return notImplemented();
+export function floor<T extends ScalarType>(x: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "floor",
+    type: "f32",
+    value: liftToAst(x),
+  });
 }
-export function ceil<T extends ScalarType>(_x: Node<T> | number): Node<T> {
-  return notImplemented();
+registerNodeMethod("floor", function method<T extends ScalarType>(this: Node<T>): Node<T> {
+  return floor(this);
+});
+export function ceil<T extends ScalarType>(x: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "ceil",
+    type: "f32",
+    value: liftToAst(x),
+  });
 }
-export function frac<T extends ScalarType>(_x: Node<T> | number): Node<T> {
-  return notImplemented();
+registerNodeMethod("ceil", function method<T extends ScalarType>(this: Node<T>): Node<T> {
+  return ceil(this);
+});
+export function frac<T extends ScalarType>(x: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "frac",
+    type: "f32",
+    value: liftToAst(x),
+  });
 }
-export function min<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<T> {
-  return notImplemented();
+registerNodeMethod("frac", function method<T extends ScalarType>(this: Node<T>): Node<T> {
+  return frac(this);
+});
+export function min<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "min",
+    type: "f32",
+    lhs: liftToAst(a),
+    rhs: liftToAst(b),
+  });
 }
+registerNodeMethod("min", function method<
+  T extends ScalarType,
+>(this: Node<T>, other: Node<T> | number): Node<T> {
+  return min(this, other);
+});
 export function max<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<T> {
   return wrapAst<T>({
     kind: "max",
@@ -185,18 +359,49 @@ registerNodeMethod("max", function method<
   return max(this, other);
 });
 export function clamp<T extends ScalarType>(
-  _x: Node<T> | number,
-  _lo: Node<T> | number,
-  _hi: Node<T> | number,
+  x: Node<T> | number,
+  lo: Node<T> | number,
+  hi: Node<T> | number,
 ): Node<T> {
-  return notImplemented();
+  return wrapAst<T>({
+    kind: "clamp",
+    type: "f32",
+    x: liftToAst(x),
+    lo: liftToAst(lo),
+    hi: liftToAst(hi),
+  });
 }
+registerNodeMethod("clamp", function method<
+  T extends ScalarType,
+>(this: Node<T>, lo: Node<T> | number, hi: Node<T> | number): Node<T> {
+  return clamp(this, lo, hi);
+});
 
 // Control
 export function select<T extends ScalarType>(
-  _cond: Node<"bool"> | boolean,
-  _then: Node<T> | number,
-  _else: Node<T> | number,
+  cond: Node<"bool"> | boolean,
+  then: Node<T> | number | boolean,
+  else_: Node<T> | number | boolean,
 ): Node<T> {
-  return notImplemented();
+  const ifTrue = liftToAst(then);
+  const ifFalse = liftToAst(else_);
+  // WASM `select` は branch 型 を そ の ま ま 返 す。 AST の type に branch 型 を 載 せ て
+  // 下 流 の inference / 非 f32 算 術 guard / event wire-type に 正 し く 伝 播 さ せ る
+  // (= ど ち ら か の branch が 非 f32 な ら そ の 型)。 f32 固 定 だ と i32 branch の
+  // select が f32 と 誤 推 論 さ れ guard を す り 抜 け て 下 流 で invalid WASM に なる。
+  const ifTrueType = inferAstType(ifTrue);
+  const branchType: ScalarType = ifTrueType === "f32" ? inferAstType(ifFalse) : ifTrueType;
+  return wrapAst<T>({
+    kind: "select",
+    type: branchType,
+    cond:
+      typeof cond === "boolean"
+        ? // bool は 内 部 i32 表 現 (= 0/1) = WASM select cond も i32。 bool literal
+          // emit は 後 続 phase 送 り な の で、 こ こ で i32 literal に lift し て
+          // `select(true/false, ...)` が emit で throw し な い よ う に す る。
+          { kind: "literal", type: "i32", value: cond ? 1 : 0 }
+        : unwrapAst(cond),
+    ifTrue,
+    ifFalse,
+  });
 }

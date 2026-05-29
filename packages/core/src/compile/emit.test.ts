@@ -14,6 +14,9 @@
 
 import { expect, test } from "vite-plus/test";
 
+import { unwrapAst } from "./capture.ts";
+import { select } from "../dsl/primitives.ts";
+
 import type { AstNode, CapturedGraph } from "./ast.ts";
 import type { BinaryenAPI, BinaryenModule } from "./emit.ts";
 import { emit, emitExpression, emitStatement } from "./emit.ts";
@@ -1062,12 +1065,18 @@ test("`emitExpression(literal i64)` throws 後 続 phase stub marker", async () 
   mod.dispose();
 });
 
-test("`emitExpression(literal bool)` throws 後 続 phase stub marker", async () => {
+test("`emitExpression(literal bool)` emits i32.const (= bool は内部 i32 表現 0/1)", async () => {
+  // select の boolean branch (= `select(cond, true, boolNode)`、canonical bool-state パターン)
+  // が bool literal に lift される → emit で i32.const に落ちること (= 以前は throw stub)。
   const binaryen = await loadBinaryen();
   const mod = makeMod(binaryen);
-  expect(() =>
-    emitExpression({ kind: "literal", type: "bool", value: 0 }, emptyLayout, mod, binaryen),
-  ).toThrow(/bool literal emission not implemented/);
+  const ref = emitExpression(
+    { kind: "literal", type: "bool", value: 1 },
+    emptyLayout,
+    mod,
+    binaryen,
+  );
+  expect(watOfExpression(mod, binaryen, ref, binaryen.i32)).toContain("(i32.const 1)");
   mod.dispose();
 });
 
@@ -2694,4 +2703,794 @@ test("`emit` throws on unknown message slot in messageOnReceive", async () => {
     ],
   };
   await expect(emit(graph, layout(graph))).rejects.toThrow(/unknown message slot.*ghost/);
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// DSL primitive operators (`01-dsl.md` §2.1) — emit lowering + e2e。
+// 各 operator は AST node → binaryen IR の lower を WAT で確認 + memory I/O で数値検証。
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`emitExpression(add)` lowers to `f32.add`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(
+    {
+      kind: "add",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 2 },
+      rhs: { kind: "literal", type: "f32", value: 3 },
+    },
+    emptyLayout,
+    mod,
+    binaryen,
+  );
+  expect(watOfExpression(mod, binaryen, ref, binaryen.f32)).toContain("(f32.add");
+  mod.dispose();
+});
+
+test("`emit(add)` e2e: 2 + 3 = 5", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "add",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 2 },
+      rhs: { kind: "literal", type: "f32", value: 3 },
+    }),
+  );
+  expect(stored).toBe(5);
+});
+
+test("`emit(add)` e2e: 2 + (-5) = -3 (負値)", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "add",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 2 },
+      rhs: { kind: "literal", type: "f32", value: -5 },
+    }),
+  );
+  expect(stored).toBe(-3);
+});
+
+test("`emitExpression(sub)` lowers to `f32.sub`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(
+    {
+      kind: "sub",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 5 },
+      rhs: { kind: "literal", type: "f32", value: 3 },
+    },
+    emptyLayout,
+    mod,
+    binaryen,
+  );
+  expect(watOfExpression(mod, binaryen, ref, binaryen.f32)).toContain("(f32.sub");
+  mod.dispose();
+});
+
+test("`emit(sub)` e2e: 5 - 3 = 2", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "sub",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 5 },
+      rhs: { kind: "literal", type: "f32", value: 3 },
+    }),
+  );
+  expect(stored).toBe(2);
+});
+
+test("`emit(sub)` e2e: 3 - 5 = -2 (負値)", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "sub",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 3 },
+      rhs: { kind: "literal", type: "f32", value: 5 },
+    }),
+  );
+  expect(stored).toBe(-2);
+});
+
+test("`emitExpression(div)` lowers to `f32.div`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(
+    {
+      kind: "div",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 10 },
+      rhs: { kind: "literal", type: "f32", value: 2 },
+    },
+    emptyLayout,
+    mod,
+    binaryen,
+  );
+  expect(watOfExpression(mod, binaryen, ref, binaryen.f32)).toContain("(f32.div");
+  mod.dispose();
+});
+
+test("`emit(div)` e2e: 10 / 2 = 5", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "div",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 10 },
+      rhs: { kind: "literal", type: "f32", value: 2 },
+    }),
+  );
+  expect(stored).toBe(5);
+});
+
+test("`emit(div)` e2e: 1 / 0 = +Infinity (= 非トラップ)", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "div",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 1 },
+      rhs: { kind: "literal", type: "f32", value: 0 },
+    }),
+  );
+  expect(stored).toBe(Number.POSITIVE_INFINITY);
+});
+
+test("`emit(div)` e2e: -1 / 0 = -Infinity", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "div",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: -1 },
+      rhs: { kind: "literal", type: "f32", value: 0 },
+    }),
+  );
+  expect(stored).toBe(Number.NEGATIVE_INFINITY);
+});
+
+test("`emitExpression(min)` lowers to `f32.min`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(
+    {
+      kind: "min",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 3 },
+      rhs: { kind: "literal", type: "f32", value: 5 },
+    },
+    emptyLayout,
+    mod,
+    binaryen,
+  );
+  expect(watOfExpression(mod, binaryen, ref, binaryen.f32)).toContain("(f32.min");
+  mod.dispose();
+});
+
+test("`emit(min)` e2e: min(3, 5) = 3 / min(5, 3) = 3", async () => {
+  const lo = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "min",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 3 },
+      rhs: { kind: "literal", type: "f32", value: 5 },
+    }),
+  );
+  expect(lo).toBe(3);
+  const hi = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "min",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 5 },
+      rhs: { kind: "literal", type: "f32", value: 3 },
+    }),
+  );
+  expect(hi).toBe(3);
+});
+
+test("`emit(min)` e2e: min(-1, 2) = -1 (負値混在)", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "min",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: -1 },
+      rhs: { kind: "literal", type: "f32", value: 2 },
+    }),
+  );
+  expect(stored).toBe(-1);
+});
+
+test("`emitExpression(neg)` lowers to `f32.neg`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(
+    { kind: "neg", type: "f32", value: { kind: "literal", type: "f32", value: 5 } },
+    emptyLayout,
+    mod,
+    binaryen,
+  );
+  expect(watOfExpression(mod, binaryen, ref, binaryen.f32)).toContain("(f32.neg");
+  mod.dispose();
+});
+
+test("`emit(neg)` e2e: neg(0.5) = -0.5 / neg(-0.5) = 0.5", async () => {
+  const pos = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "neg",
+      type: "f32",
+      value: { kind: "literal", type: "f32", value: 0.5 },
+    }),
+  );
+  expect(pos).toBe(-0.5);
+  const negv = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "neg",
+      type: "f32",
+      value: { kind: "literal", type: "f32", value: -0.5 },
+    }),
+  );
+  expect(negv).toBe(0.5);
+});
+
+test("`emitExpression(sqrt)` lowers to `f32.sqrt`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(
+    { kind: "sqrt", type: "f32", value: { kind: "literal", type: "f32", value: 4 } },
+    emptyLayout,
+    mod,
+    binaryen,
+  );
+  expect(watOfExpression(mod, binaryen, ref, binaryen.f32)).toContain("(f32.sqrt");
+  mod.dispose();
+});
+
+test("`emit(sqrt)` e2e: sqrt(4) = 2 / sqrt(2) ≈ 1.4142", async () => {
+  const four = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "sqrt",
+      type: "f32",
+      value: { kind: "literal", type: "f32", value: 4 },
+    }),
+  );
+  expect(four).toBe(2);
+  const two = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "sqrt",
+      type: "f32",
+      value: { kind: "literal", type: "f32", value: 2 },
+    }),
+  );
+  expect(two).toBeCloseTo(Math.SQRT2, 6);
+});
+
+test("`emit(sqrt)` e2e: sqrt(-1) = NaN (= 非トラップ)", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "sqrt",
+      type: "f32",
+      value: { kind: "literal", type: "f32", value: -1 },
+    }),
+  );
+  expect(Number.isNaN(stored)).toBe(true);
+});
+
+test("`emitExpression(floor)` lowers to `f32.floor`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(
+    { kind: "floor", type: "f32", value: { kind: "literal", type: "f32", value: 1.7 } },
+    emptyLayout,
+    mod,
+    binaryen,
+  );
+  expect(watOfExpression(mod, binaryen, ref, binaryen.f32)).toContain("(f32.floor");
+  mod.dispose();
+});
+
+test("`emit(floor)` e2e: floor(1.7)=1 / floor(-1.2)=-2 / floor(3)=3", async () => {
+  const a = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "floor",
+      type: "f32",
+      value: { kind: "literal", type: "f32", value: 1.7 },
+    }),
+  );
+  expect(a).toBe(1);
+  const b = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "floor",
+      type: "f32",
+      value: { kind: "literal", type: "f32", value: -1.2 },
+    }),
+  );
+  expect(b).toBe(-2);
+  const c = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "floor",
+      type: "f32",
+      value: { kind: "literal", type: "f32", value: 3 },
+    }),
+  );
+  expect(c).toBe(3);
+});
+
+test("`emitExpression(ceil)` lowers to `f32.ceil`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(
+    { kind: "ceil", type: "f32", value: { kind: "literal", type: "f32", value: 1.2 } },
+    emptyLayout,
+    mod,
+    binaryen,
+  );
+  expect(watOfExpression(mod, binaryen, ref, binaryen.f32)).toContain("(f32.ceil");
+  mod.dispose();
+});
+
+test("`emit(ceil)` e2e: ceil(1.2)=2 / ceil(-1.7)=-1 / ceil(3)=3", async () => {
+  const a = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "ceil",
+      type: "f32",
+      value: { kind: "literal", type: "f32", value: 1.2 },
+    }),
+  );
+  expect(a).toBe(2);
+  const b = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "ceil",
+      type: "f32",
+      value: { kind: "literal", type: "f32", value: -1.7 },
+    }),
+  );
+  expect(b).toBe(-1);
+  const c = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "ceil",
+      type: "f32",
+      value: { kind: "literal", type: "f32", value: 3 },
+    }),
+  );
+  expect(c).toBe(3);
+});
+
+// 比 較 operator の e2e: 結 果 は i32 (= bool 0/1) なので state.i32 slot に store し て read。
+async function runCompareAndRead(value: AstNode): Promise<number> {
+  const graph: CapturedGraph = {
+    declarations: [{ kind: "state", name: "c", type: "i32", initial: 0 }],
+    statements: [{ kind: "stateStore", type: "i32", name: "c", value }],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  (instance.exports["process"] as () => void)();
+  return new Int32Array(memory.buffer, lay.regions.states.slots["c"]!, 1)[0]!;
+}
+
+function cmp(
+  kind: Extract<AstNode, { lhs: AstNode; rhs: AstNode }>["kind"],
+  a: number,
+  b: number,
+): AstNode {
+  return {
+    kind,
+    type: "f32",
+    lhs: { kind: "literal", type: "f32", value: a },
+    rhs: { kind: "literal", type: "f32", value: b },
+  };
+}
+
+test("`emitExpression(eq)` lowers to `f32.eq`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(cmp("eq", 3, 3), emptyLayout, mod, binaryen);
+  expect(watOfExpression(mod, binaryen, ref, binaryen.i32)).toContain("(f32.eq");
+  mod.dispose();
+});
+
+test("`emit(eq)` e2e: 3==3 → 1 / 3==5 → 0 / NaN==NaN → 0", async () => {
+  expect(await runCompareAndRead(cmp("eq", 3, 3))).toBe(1);
+  expect(await runCompareAndRead(cmp("eq", 3, 5))).toBe(0);
+  expect(await runCompareAndRead(cmp("eq", Number.NaN, Number.NaN))).toBe(0);
+});
+
+test("`emitExpression(lt)` lowers to `f32.lt`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(cmp("lt", 3, 5), emptyLayout, mod, binaryen);
+  expect(watOfExpression(mod, binaryen, ref, binaryen.i32)).toContain("(f32.lt");
+  mod.dispose();
+});
+
+test("`emit(lt)` e2e: 3<5 → 1 / 5<3 → 0 / 3<3 → 0 (等値境界)", async () => {
+  expect(await runCompareAndRead(cmp("lt", 3, 5))).toBe(1);
+  expect(await runCompareAndRead(cmp("lt", 5, 3))).toBe(0);
+  expect(await runCompareAndRead(cmp("lt", 3, 3))).toBe(0);
+});
+
+test("`emitExpression(gt)` lowers to `f32.gt`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(cmp("gt", 5, 3), emptyLayout, mod, binaryen);
+  expect(watOfExpression(mod, binaryen, ref, binaryen.i32)).toContain("(f32.gt");
+  mod.dispose();
+});
+
+test("`emit(gt)` e2e: 5>3 → 1 / 3>5 → 0 / 3>3 → 0 (等値境界)", async () => {
+  expect(await runCompareAndRead(cmp("gt", 5, 3))).toBe(1);
+  expect(await runCompareAndRead(cmp("gt", 3, 5))).toBe(0);
+  expect(await runCompareAndRead(cmp("gt", 3, 3))).toBe(0);
+});
+
+test("`emitExpression(lte)` lowers to `f32.le`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(cmp("lte", 3, 5), emptyLayout, mod, binaryen);
+  expect(watOfExpression(mod, binaryen, ref, binaryen.i32)).toContain("(f32.le");
+  mod.dispose();
+});
+
+test("`emit(lte)` e2e: 3<=3 → 1 / 3<=5 → 1 / 5<=3 → 0 (等値境界)", async () => {
+  expect(await runCompareAndRead(cmp("lte", 3, 3))).toBe(1);
+  expect(await runCompareAndRead(cmp("lte", 3, 5))).toBe(1);
+  expect(await runCompareAndRead(cmp("lte", 5, 3))).toBe(0);
+});
+
+test("`emitExpression(gte)` lowers to `f32.ge`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(cmp("gte", 5, 3), emptyLayout, mod, binaryen);
+  expect(watOfExpression(mod, binaryen, ref, binaryen.i32)).toContain("(f32.ge");
+  mod.dispose();
+});
+
+test("`emit(gte)` e2e: 3>=3 → 1 / 5>=3 → 1 / 3>=5 → 0 (等値境界)", async () => {
+  expect(await runCompareAndRead(cmp("gte", 3, 3))).toBe(1);
+  expect(await runCompareAndRead(cmp("gte", 5, 3))).toBe(1);
+  expect(await runCompareAndRead(cmp("gte", 3, 5))).toBe(0);
+});
+
+function clampAst(x: number, lo: number, hi: number): AstNode {
+  return {
+    kind: "clamp",
+    type: "f32",
+    x: { kind: "literal", type: "f32", value: x },
+    lo: { kind: "literal", type: "f32", value: lo },
+    hi: { kind: "literal", type: "f32", value: hi },
+  };
+}
+
+test("`emitExpression(clamp)` lowers to nested `f32.min`/`f32.max`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(clampAst(5, 0, 1), emptyLayout, mod, binaryen);
+  const wat = watOfExpression(mod, binaryen, ref, binaryen.f32);
+  expect(wat).toContain("(f32.min");
+  expect(wat).toContain("(f32.max");
+  mod.dispose();
+});
+
+test("`emit(clamp)` e2e: 範囲内/lo未満/hi超過", async () => {
+  expect(await runStoreAndRead(makeStoreValueGraph(clampAst(0.5, 0, 1)))).toBe(0.5);
+  expect(await runStoreAndRead(makeStoreValueGraph(clampAst(-1, 0, 1)))).toBe(0);
+  expect(await runStoreAndRead(makeStoreValueGraph(clampAst(5, 0, 1)))).toBe(1);
+});
+
+test("`emit(clamp)` e2e: lo > hi 退化ケースは hi を返す", async () => {
+  expect(await runStoreAndRead(makeStoreValueGraph(clampAst(0.5, 1, 0)))).toBe(0);
+});
+
+function selectAst(cond: AstNode, then: number, else_: number): AstNode {
+  return {
+    kind: "select",
+    type: "f32",
+    cond,
+    ifTrue: { kind: "literal", type: "f32", value: then },
+    ifFalse: { kind: "literal", type: "f32", value: else_ },
+  };
+}
+
+test("`emitExpression(select)` lowers to WASM `select`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(selectAst(cmp("gt", 5, 3), 10, 20), emptyLayout, mod, binaryen);
+  expect(watOfExpression(mod, binaryen, ref, binaryen.f32)).toContain("(select");
+  mod.dispose();
+});
+
+test("`emit(select)` e2e: cond true → then(10) / cond false → else(20)", async () => {
+  const t = await runStoreAndRead(makeStoreValueGraph(selectAst(cmp("gt", 5, 3), 10, 20)));
+  expect(t).toBe(10);
+  const f = await runStoreAndRead(makeStoreValueGraph(selectAst(cmp("gt", 3, 5), 10, 20)));
+  expect(f).toBe(20);
+});
+
+test("`emit(select)` e2e: bool literal branch を state.bool に store (= canonical select(cond, true, gate.load()))", async () => {
+  // cond true → bool literal `true`(=1) を選ぶ。 bool branch literal が emit で i32.const に
+  // 落ち、 select 全体が i32 で評価され state.bool に書ける (= 以前は bool literal emit が throw)。
+  const graph: CapturedGraph = {
+    declarations: [{ kind: "state", name: "gate", type: "bool", initial: false }],
+    statements: [
+      {
+        kind: "stateStore",
+        type: "bool",
+        name: "gate",
+        value: {
+          kind: "select",
+          type: "bool",
+          cond: { kind: "literal", type: "i32", value: 1 },
+          ifTrue: { kind: "literal", type: "bool", value: 1 },
+          ifFalse: { kind: "stateLoad", type: "bool", name: "gate" },
+        },
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  proc();
+  const view = new Int32Array(memory.buffer, lay.regions.states.slots["gate"]!, 1);
+  expect(view[0]).toBe(1);
+});
+
+function fracAst(value: AstNode): AstNode {
+  return { kind: "frac", type: "f32", value };
+}
+
+test("`emitExpression(frac)` lowers to `f32.sub` + `f32.floor` (temp local 経由)", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(
+    fracAst({ kind: "literal", type: "f32", value: 1.25 }),
+    emptyLayout,
+    mod,
+    binaryen,
+  );
+  const wat = watOfExpression(mod, binaryen, ref, binaryen.f32);
+  expect(wat).toContain("(f32.sub");
+  expect(wat).toContain("(f32.floor");
+  mod.dispose();
+});
+
+test("`emit(frac)` e2e: frac(1.25)=0.25 / frac(3)=0", async () => {
+  expect(
+    await runStoreAndRead(
+      makeStoreValueGraph(fracAst({ kind: "literal", type: "f32", value: 1.25 })),
+    ),
+  ).toBe(0.25);
+  expect(
+    await runStoreAndRead(makeStoreValueGraph(fracAst({ kind: "literal", type: "f32", value: 3 }))),
+  ).toBe(0);
+});
+
+test("`emit(frac)` e2e: frac(-0.3) ≈ 0.7 (= GLSL fract、結果 [0,1))", async () => {
+  const v = await runStoreAndRead(
+    makeStoreValueGraph(fracAst({ kind: "literal", type: "f32", value: -0.3 })),
+  );
+  expect(v).toBeCloseTo(0.7, 5);
+});
+
+test("`emit(frac)` e2e: ネスト frac(frac(1.75)) = 0.75 (= 共有 local がネストで壊れない)", async () => {
+  const v = await runStoreAndRead(
+    makeStoreValueGraph(fracAst(fracAst({ kind: "literal", type: "f32", value: 1.75 }))),
+  );
+  expect(v).toBeCloseTo(0.75, 5);
+});
+
+test("`emitExpression(mod)` lowers to sub/trunc/div (= JS % 相当)", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(cmp("mod", 7, 3), emptyLayout, mod, binaryen);
+  const wat = watOfExpression(mod, binaryen, ref, binaryen.f32);
+  expect(wat).toContain("(f32.sub");
+  expect(wat).toContain("(f32.trunc");
+  expect(wat).toContain("(f32.div");
+  mod.dispose();
+});
+
+test("`emit(mod)` e2e: 7%3=1 / 7.5%2=1.5", async () => {
+  expect(await runStoreAndRead(makeStoreValueGraph(cmp("mod", 7, 3)))).toBe(1);
+  expect(await runStoreAndRead(makeStoreValueGraph(cmp("mod", 7.5, 2)))).toBe(1.5);
+});
+
+test("`emit(mod)` e2e: 負の被除数 -7%3=-1 / 7%-3=1 (= JS % は符号が被除数)", async () => {
+  expect(await runStoreAndRead(makeStoreValueGraph(cmp("mod", -7, 3)))).toBe(-1);
+  expect(await runStoreAndRead(makeStoreValueGraph(cmp("mod", 7, -3)))).toBe(1);
+});
+
+test("`emit(mod)` e2e: 5%0 = NaN (= JS x%0)", async () => {
+  const v = await runStoreAndRead(makeStoreValueGraph(cmp("mod", 5, 0)));
+  expect(Number.isNaN(v)).toBe(true);
+});
+
+test("`emit(mod)` e2e: ネスト mod(mod(10,7),2)=1 (= 共有 local 安全性)", async () => {
+  const nested: AstNode = {
+    kind: "mod",
+    type: "f32",
+    lhs: cmp("mod", 10, 7),
+    rhs: { kind: "literal", type: "f32", value: 2 },
+  };
+  expect(await runStoreAndRead(makeStoreValueGraph(nested))).toBe(1);
+});
+
+test("`emit(mod)` e2e: 無限大除数は有限被除数を返す (= JS 5%Infinity===5、0*Inf の NaN 化なし)", async () => {
+  // div by zero 等で生じた Inf が divisor に流れても有限な被除数を壊さないこと。
+  expect(await runStoreAndRead(makeStoreValueGraph(cmp("mod", 5, Number.POSITIVE_INFINITY)))).toBe(
+    5,
+  );
+  expect(await runStoreAndRead(makeStoreValueGraph(cmp("mod", -5, Number.POSITIVE_INFINITY)))).toBe(
+    -5,
+  );
+  expect(await runStoreAndRead(makeStoreValueGraph(cmp("mod", 5, Number.NEGATIVE_INFINITY)))).toBe(
+    5,
+  );
+});
+
+test("`emit(mod)` e2e: 無限大被除数は NaN を維持 (= JS Inf%5 / Inf%Inf)", async () => {
+  const infMod5 = await runStoreAndRead(
+    makeStoreValueGraph(cmp("mod", Number.POSITIVE_INFINITY, 5)),
+  );
+  expect(Number.isNaN(infMod5)).toBe(true);
+  const infModInf = await runStoreAndRead(
+    makeStoreValueGraph(cmp("mod", Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY)),
+  );
+  expect(Number.isNaN(infModInf)).toBe(true);
+});
+
+function mathAst(kind: "sin" | "cos" | "tan" | "exp" | "log" | "tanh", x: number): AstNode {
+  return { kind, type: "f32", value: { kind: "literal", type: "f32", value: x } };
+}
+
+test("`emit(sin)` e2e: Math.sin と |誤差| < 1e-4 で一致 (grid)", async () => {
+  const xs = [
+    0,
+    Math.PI / 6,
+    Math.PI / 4,
+    Math.PI / 3,
+    Math.PI / 2,
+    Math.PI,
+    -Math.PI / 2,
+    -Math.PI / 4,
+    1,
+    2,
+    -3,
+    5,
+    10,
+  ];
+  for (const x of xs) {
+    const got = await runStoreAndRead(makeStoreValueGraph(mathAst("sin", x)));
+    expect(Math.abs(got - Math.sin(x))).toBeLessThan(1e-4);
+  }
+});
+
+test("`emit(sin)` e2e: 大引数 sin(100) も range reduction で近似 (f32 精度内)", async () => {
+  const got = await runStoreAndRead(makeStoreValueGraph(mathAst("sin", 100)));
+  expect(Math.abs(got - Math.sin(100))).toBeLessThan(1e-3);
+});
+
+test("`emit(cos)` e2e: Math.cos と |誤差| < 1e-4 で一致 (grid)", async () => {
+  const xs = [
+    0,
+    Math.PI / 6,
+    Math.PI / 4,
+    Math.PI / 3,
+    Math.PI / 2,
+    Math.PI,
+    -Math.PI / 2,
+    1,
+    2,
+    -3,
+    5,
+  ];
+  for (const x of xs) {
+    const got = await runStoreAndRead(makeStoreValueGraph(mathAst("cos", x)));
+    expect(Math.abs(got - Math.cos(x))).toBeLessThan(1e-4);
+  }
+});
+
+test("`emit(tan)` e2e: 非特異点で Math.tan と一致", async () => {
+  for (const x of [0, Math.PI / 6, Math.PI / 4, Math.PI / 3, -Math.PI / 4, -Math.PI / 6]) {
+    const got = await runStoreAndRead(makeStoreValueGraph(mathAst("tan", x)));
+    expect(Math.abs(got - Math.tan(x))).toBeLessThan(1e-3);
+  }
+});
+
+test("`emit(tan)` e2e: π/2 近傍は大きな有限値 (= 非トラップ、NaN ナシ)", async () => {
+  const got = await runStoreAndRead(makeStoreValueGraph(mathAst("tan", 1.5)));
+  expect(Number.isNaN(got)).toBe(false);
+  expect(Math.abs(got)).toBeGreaterThan(10);
+});
+
+test("`emit(exp)` e2e: Math.exp と相対誤差 < 1e-4 (grid)", async () => {
+  for (const x of [-20, -5, -1, -0.5, 0, 0.5, 1, 2, 5, 10, 20, 30]) {
+    const got = await runStoreAndRead(makeStoreValueGraph(mathAst("exp", x)));
+    expect(Math.abs(got - Math.exp(x)) / Math.exp(x)).toBeLessThan(1e-4);
+  }
+});
+
+test("`emit(log)` e2e: Math.log と |誤差| < 1e-4 (grid)", async () => {
+  for (const x of [0.001, 0.1, 0.5, 1, Math.E, 2, 10, 100, 1000, 1e6]) {
+    const got = await runStoreAndRead(makeStoreValueGraph(mathAst("log", x)));
+    expect(Math.abs(got - Math.log(x))).toBeLessThan(1e-4);
+  }
+});
+
+test("`emit(log)` e2e: 定義域外は Math.log 準拠 (= log(0)→-Inf / log(-1)→NaN、非トラップ)", async () => {
+  const zero = await runStoreAndRead(makeStoreValueGraph(mathAst("log", 0)));
+  expect(zero).toBe(Number.NEGATIVE_INFINITY);
+  const neg = await runStoreAndRead(makeStoreValueGraph(mathAst("log", -1)));
+  expect(Number.isNaN(neg)).toBe(true);
+});
+
+test("`emit(log)` e2e: 特殊値も Math.log 準拠 (= log(NaN)→NaN / log(+Inf)→+Inf)", async () => {
+  // NaN は x>0 / x<0 が共に false で内側 select に落ちる → -Inf に化けないこと。
+  const nan = await runStoreAndRead(makeStoreValueGraph(mathAst("log", Number.NaN)));
+  expect(Number.isNaN(nan)).toBe(true);
+  // +Inf は x>0 が true なので bit 分解の近似 (= 128·ln2 付近の有限値) に化けないこと。
+  const posInf = await runStoreAndRead(
+    makeStoreValueGraph(mathAst("log", Number.POSITIVE_INFINITY)),
+  );
+  expect(posInf).toBe(Number.POSITIVE_INFINITY);
+});
+
+test("`emit(log)` e2e: subnormal 入力も Math.log 準拠 (= 分解前に normal 域へ正規化)", async () => {
+  // 0 < x < FLT_MIN(≈1.1755e-38) は exponent field=0 で素朴な bit 分解が破綻し、
+  // log(1e-45) が ~-88 (正しくは ~-103) に化ける。const は f32 に丸められるので
+  // 照合は fround 後の値の Math.log と取る。
+  for (const x of [1e-45, 1e-40, 5e-39, 1e-38]) {
+    const ref = Math.log(Math.fround(x));
+    const got = await runStoreAndRead(makeStoreValueGraph(mathAst("log", x)));
+    expect(Math.abs(got - ref)).toBeLessThan(1e-2);
+  }
+});
+
+test("`emit(tanh)` e2e: Math.tanh と |誤差| < 1e-4 (grid)", async () => {
+  for (const x of [0, 0.5, 1, -1, 2, -2, 3, -3, 6]) {
+    const got = await runStoreAndRead(makeStoreValueGraph(mathAst("tanh", x)));
+    expect(Math.abs(got - Math.tanh(x))).toBeLessThan(1e-4);
+  }
+});
+
+test("`emit(tanh)` e2e: 大入力は ±1 に飽和 (= Inf/Inf にならない)", async () => {
+  expect(await runStoreAndRead(makeStoreValueGraph(mathAst("tanh", 10)))).toBeCloseTo(1, 4);
+  expect(await runStoreAndRead(makeStoreValueGraph(mathAst("tanh", -10)))).toBeCloseTo(-1, 4);
+});
+
+test("`emit(tanh)` e2e: ネスト tanh(sin(0.5)) (= walker が内側 sin を収集)", async () => {
+  const nested: AstNode = {
+    kind: "tanh",
+    type: "f32",
+    value: { kind: "sin", type: "f32", value: { kind: "literal", type: "f32", value: 0.5 } },
+  };
+  const got = await runStoreAndRead(makeStoreValueGraph(nested));
+  expect(Math.abs(got - Math.tanh(Math.sin(0.5)))).toBeLessThan(1e-3);
+});
+
+// 定 数 bool cond の select (= `select(true/false, a, b)`) が emit で throw せ ず 分 岐
+// す る こ と (= P2 fix、 Reported by @codex on #6)。 bool は 内 部 i32 表 現 な の で
+// cond は i32 literal 0/1 に lift さ れ る。
+test("`emit(select)` e2e: select(true, 10, 20) → 10 / select(false, 10, 20) → 20", async () => {
+  const t = await runStoreAndRead(makeStoreValueGraph(unwrapAst(select(true, 10, 20))));
+  expect(t).toBe(10);
+  const f = await runStoreAndRead(makeStoreValueGraph(unwrapAst(select(false, 10, 20))));
+  expect(f).toBe(20);
+});
+
+// exp の 2^k bit-pack を 指 数 範 囲 外 で clamp (= overflow→+Inf / underflow→0)。
+// Reported by @codex on #6。
+test("`emit(exp)` e2e: 大入力 overflow → +Inf / 大負入力 underflow → 0", async () => {
+  expect(await runStoreAndRead(makeStoreValueGraph(mathAst("exp", 90)))).toBe(
+    Number.POSITIVE_INFINITY,
+  );
+  expect(await runStoreAndRead(makeStoreValueGraph(mathAst("exp", -100)))).toBe(0);
+});
+
+test("`emit(tanh)` e2e: 大負入力 tanh(-50) ≈ -1 (= exp underflow 経由)", async () => {
+  const got = await runStoreAndRead(makeStoreValueGraph(mathAst("tanh", -50)));
+  expect(got).toBeCloseTo(-1, 4);
 });

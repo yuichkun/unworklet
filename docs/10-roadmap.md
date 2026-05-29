@@ -148,6 +148,7 @@ DevTools panel の **real 連携** (= B 軸: AudioNode.prototype hook / Unworkle
 各 後続 phase が 必要 と する primitive / declaration を 揃える phase。 candidate:
 
 - 残り primitive (= 算術 / 比較 / math / `select`、 全 inventory は 01-dsl.md §2.1)
+- **多型 (i32 / i64 / f64) arithmetic lowering** (= `Node<T>` generic 算術 surface を f32 以外 へ 拡張): 算術 / 比較 ノード が operand の scalar 型 を AST に 担ぐ (= 現 f32 固定 を 廃)、 emit が i32 / i64 / f64 ノード に 対応 命令 (= `i32.add` / `i32.rem_s` / 比較 `i32.lt_s` 等) を 出す、 analyze の f32-only guard (= 診断 `non-f32-arithmetic`) を 多型 許可 に 緩める、 number literal が operand 型 へ lift (= context-dependent literal lift、 Q33 / Q36) し `head.add(i).mod(LEN)` 等 の **整数 index 演算 が compile** する。 整数 index 演算 (= ring buffer / delay / 畳み込み の `head.add(i).mod(LEN)` 形) は canonical Ex 3 / Ex 5 / Ex 6 / Ex 7 / Ex 8 で 多用 = この lowering 無しでは 該当 canonical の declarative path が type check / compile を 通ら ない (Reported by @codex on #6)。
 - `state.i32` / `state.bool` / `state.f64` / `state.i64`
 - `buffer.f32` 等 + `buf.read` / `buf.write` / `buf.readInterpolated` / `buf.copyFrom`
 - `forSample.byN`
@@ -177,6 +178,7 @@ DevTools panel の **real 連携** (= B 軸: AudioNode.prototype hook / Unworkle
 - vec primitive (= `vec4` / `splat` / `addVec` / `mulVec` / `subVec` / `divVec` / `sumLanes` / `lane`、 01-dsl.md §7.2)
 - `buffer.loadVec` / `storeVec` method (= 01-dsl.md §3.2 SIMD 部分)
 - `forSample.byN(4, ...)` SIMD pattern
+- `Node<'f32x4'>` の method surface 制約 (= `primitives.ts` の scalar primitive method merge): `add` / `sub` / `mul` / `div` 以外 の scalar method (= `sin` / `cos` / `tan` / `tanh` / `exp` / `log` / `sqrt` / `abs` / `floor` / `ceil` / `frac` / `mod` / `neg` / 比較 / `min` / `max` / `clamp`) を conditional method 型 (`T extends ScalarType ? … : never`) ま た は overload 分割 で `f32x4` か ら 除外 し、 vector tag に は documented な vector op (= `.add` / `.sub` / `.mul` / `.div` → `addVec` 系、 01-dsl.md §7.2) だ け 露出 す る。 こ れ が 無 い と `splat(g).sin()` / `.clamp(...)` が 型 を 通 り scalar f32 AST / lowering に mis-route す る (= scalar method merge が `T extends ScalarType | 'f32x4'` で 全 method を f32x4 に も 載 せ る た め)。
 
 完了 条件: canonical Ex 3 (= linear-phase EQ partitioned convolution) の SIMD path が 動く + scalar-only author の import が 影響 受け ない (= 旧 SIMD なし processor が 既 動作 維持)。
 

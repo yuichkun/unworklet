@@ -73,6 +73,35 @@ const EVENT_SLOT_PTR_LOCAL = 5;
 const MESSAGE_TAIL_LOCAL = 6;
 
 /**
+ * `frac` 用 f32 temp local。 frac(x) = x - floor(x) で x を 2 度 参 照 する =
+ * `tee` で 1 度 だ け 評 価 + local hold し、 floor 側 で `get` で 再 取 得。 WASM は
+ * 厳 密 な 左→右 評 価 + emit は optimizer を 回 さ な い の で、 `tee(L,…)` 直 後 に
+ * `get(L)` で 消 費 し 間 に L を 書 く 操 作 が な い 限 り、 ネ ス ト (= frac(frac(x)))
+ * で も 取 り 違 え が 起 き な い (= 内 側 が 完 全 評 価 さ れ た 後 に 外 側 tee が L 上 書 き)。
+ */
+const FRAC_F32_LOCAL = 7;
+
+/**
+ * `mod` 用 f32 temp local 3 つ。 mod(a,b) = a - trunc(a/b)·b で a / b / quotient を
+ * 複 数 回 参 照 = local hold で 1 度 ず つ 評 価。 quotient (= MOD_Q) は 無 限 大 除 数
+ * guard で 2 度 参 照 す る (= `0·Inf=NaN` 回 避、 後 述)。 ネ ス ト 安 全 性: a は 最 外
+ * `sub` 左 operand で stack へ push し て 持 ち 回 り、 b / quotient は rhs 評 価・quotient
+ * 算 出 後 に だ け read す る の で、 内 側 mod が 同 local を 上 書 き し て も 取 り 違 え ナ シ。
+ */
+const MOD_A_F32_LOCAL = 8;
+const MOD_B_F32_LOCAL = 9;
+const MOD_Q_F32_LOCAL = 10;
+
+/**
+ * 多 項 式 近 似 の math primitive (= sin / cos / tan / tanh / exp / log、 Q17) は
+ * 共 有 プ ラ イ ベ ー ト WASM 関 数 (= `(f32) -> f32`、 export し な い) と し て emit し、
+ * 呼 び 出 し 側 は `call` で 参 照。 各 関 数 は 自 前 の local を 持 つ の で `process`
+ * 側 の 固 定 temp local と 干 渉 し な い。 graph で 実 際 に 使 わ れ て い る kind だ け
+ * 追 加 す る (= `collectUsedMathKinds`)。
+ */
+const MATH_FN_PREFIX = "$unworklet_";
+
+/**
  * Subnormal flush threshold (= Q21、 `04-worklet-runtime.md` §6)。
  * `state.f32` / `state.f64` の `.store(v)` で `|v| < 1e-30` を 0 に 落 と し て
  * IIR feedback path で の CPU spike を 撤 廃。 threshold 1e-30 は
@@ -104,6 +133,10 @@ export async function emit(
 
   const pages = Math.max(1, Math.ceil(layout.totalBytes / PAGE_BYTES));
   mod.setMemory(pages, pages, "memory");
+
+  // 多 項 式 近 似 の math primitive (= sin 等、 Q17) を 共 有 プ ラ イ ベ ー ト 関 数 と し て
+  // 追 加。 graph で 使 わ れ て い る kind だ け emit。
+  addMathFunctions(collectUsedMathKinds(graph), mod, binaryen);
 
   // Q38-b 規 範: 全 onReceive handler は per-block top / forSample よ り 先 に drain。
   // source order と zip し な い = framework が 「messageOnReceive 集 め て 先 emit
@@ -145,6 +178,10 @@ export async function emit(
       binaryen.i32,
       binaryen.i32,
       binaryen.i32,
+      binaryen.f32, // FRAC_F32_LOCAL (= frac 用 temp)
+      binaryen.f32, // MOD_A_F32_LOCAL (= mod 被 除 数 temp)
+      binaryen.f32, // MOD_B_F32_LOCAL (= mod 除 数 temp)
+      binaryen.f32, // MOD_Q_F32_LOCAL (= mod quotient temp)
     ],
     body,
   );
@@ -259,23 +296,19 @@ export function emitExpression(
 ): number {
   switch (node.kind) {
     case "literal":
-      // sub-phase 7.1 で f64 literal 対 応 を 追 加 (= state.f64 subnormal guard
-      // test で 1e-40 等 の 値 を 直 接 渡 す path)。 i64 / bool literal は
-      // ast.ts の literal `value: number` 制 約 下 で 表 現 不 完 全 (= i64 は
-      // BigInt 必 要 + bool は boolean が 自 然) = 後 続 sub-phase で literal
-      // 型 拡 張 と zip し て fill。 当 phase で は state.i64 / state.bool は
-      // 別 path (= stateLoad / 既 memory 値) で 駆 動 す る。
+      // bool は 内 部 i32 表 現 (= 0/1) な の で i32.const に 落 と す (= select の
+      // boolean branch literal 等)。 i64 literal は `value: number` 制 約 下 で
+      // BigInt 表 現 不 完 全 = 後 続 sub-phase で literal 型 拡 張 と zip し て fill。
       switch (node.type) {
         case "f32":
           return mod.f32.const(node.value);
         case "f64":
           return mod.f64.const(node.value);
         case "i32":
+        case "bool":
           return mod.i32.const(node.value);
         case "i64":
           throw new Error("i64 literal emission not implemented (= 後 続 sub-phase で fill)");
-        case "bool":
-          throw new Error("bool literal emission not implemented (= 後 続 sub-phase で fill)");
       }
     case "loopCounter":
       return mod.local.get(LOOP_COUNTER_LOCAL, binaryen.i32);
@@ -284,12 +317,176 @@ export function emitExpression(
         emitExpression(node.lhs, layout, mod, binaryen),
         emitExpression(node.rhs, layout, mod, binaryen),
       );
+    case "add":
+      return mod.f32.add(
+        emitExpression(node.lhs, layout, mod, binaryen),
+        emitExpression(node.rhs, layout, mod, binaryen),
+      );
+    case "sub":
+      return mod.f32.sub(
+        emitExpression(node.lhs, layout, mod, binaryen),
+        emitExpression(node.rhs, layout, mod, binaryen),
+      );
+    case "div":
+      return mod.f32.div(
+        emitExpression(node.lhs, layout, mod, binaryen),
+        emitExpression(node.rhs, layout, mod, binaryen),
+      );
+    // mod(a, b) = a - trunc(a/b)·b (= JS `%` 準 拠、 切 り 捨 て・符 号 は 被 除 数)。
+    // a を MOD_A、 b を MOD_B、 quotient=trunc(a/b) を MOD_Q に hold。
+    //   - b=0 → a/0=Inf → trunc=Inf → Inf·0=NaN → a-NaN=NaN (= JS x%0=NaN)。
+    //   - 無 限 大 除 数 (|b|=Inf、 a 有 限) は quotient=trunc(a/Inf)=0 で 素 朴 な
+    //     product=0·Inf=NaN に 化 け る が、 JS は 5%Infinity===5 = 被 除 数 を 返 す。
+    //     quotient==0 (⟺ |a|<|b| = 余 り が a 自 身) な ら product を 0 に 固 定 し て
+    //     修 正 (= div by zero 等 で 生 じ た Inf が divisor に 流 れ て も 有 限 被 除 数 を
+    //     壊 さ な い、 Reported by @codex on #6)。 Inf%5 / Inf%Inf は quotient≠0 の ま ま
+    //     NaN を 維 持。
+    // ネ ス ト 安 全 性: a は 最 外 `sub` 左 operand で stack へ push し て 持 ち 回 り、
+    // b / quotient は rhs 評 価・quotient 算 出 後 に だ け read = 内 側 mod の local
+    // 上 書 き と 取 り 違 え ナ シ。 select は 直 前 の set で MOD_Q / MOD_B が 確 定 済 み。
+    case "mod": {
+      const aTeed = mod.local.tee(
+        MOD_A_F32_LOCAL,
+        emitExpression(node.lhs, layout, mod, binaryen),
+        binaryen.f32,
+      );
+      // get(MOD_A) は rhs 評 価 前 に read = a (内 側 mod の 上 書 き 前)。 同 時 に b を tee。
+      const setQuotient = mod.local.set(
+        MOD_Q_F32_LOCAL,
+        mod.f32.trunc(
+          mod.f32.div(
+            mod.local.get(MOD_A_F32_LOCAL, binaryen.f32),
+            mod.local.tee(
+              MOD_B_F32_LOCAL,
+              emitExpression(node.rhs, layout, mod, binaryen),
+              binaryen.f32,
+            ),
+          ),
+        ),
+      );
+      const product = mod.select(
+        mod.f32.eq(mod.local.get(MOD_Q_F32_LOCAL, binaryen.f32), mod.f32.const(0)),
+        mod.f32.const(0),
+        mod.f32.mul(
+          mod.local.get(MOD_Q_F32_LOCAL, binaryen.f32),
+          mod.local.get(MOD_B_F32_LOCAL, binaryen.f32),
+        ),
+      );
+      return mod.f32.sub(aTeed, mod.block(null, [setQuotient, product], binaryen.f32));
+    }
     case "abs":
       return mod.f32.abs(emitExpression(node.value, layout, mod, binaryen));
+    case "neg":
+      return mod.f32.neg(emitExpression(node.value, layout, mod, binaryen));
+    case "sqrt":
+      return mod.f32.sqrt(emitExpression(node.value, layout, mod, binaryen));
+    case "floor":
+      return mod.f32.floor(emitExpression(node.value, layout, mod, binaryen));
+    case "ceil":
+      return mod.f32.ceil(emitExpression(node.value, layout, mod, binaryen));
+    // frac(x) = x - floor(x) (= GLSL fract、 結 果 は [0,1))。 x を FRAC_F32_LOCAL に
+    // tee し て 1 度 だ け 評 価、 floor 側 で get で 再 取 得 (= 二 重 評 価 回 避)。
+    case "frac": {
+      const teed = mod.local.tee(
+        FRAC_F32_LOCAL,
+        emitExpression(node.value, layout, mod, binaryen),
+        binaryen.f32,
+      );
+      return mod.f32.sub(teed, mod.f32.floor(mod.local.get(FRAC_F32_LOCAL, binaryen.f32)));
+    }
+    // 多 項 式 近 似 の math primitive は 共 有 関 数 を call (= 関 数 本 体 は emit() で 追 加)。
+    case "sin":
+      return mod.call(
+        `${MATH_FN_PREFIX}sin`,
+        [emitExpression(node.value, layout, mod, binaryen)],
+        binaryen.f32,
+      );
+    case "cos":
+      return mod.call(
+        `${MATH_FN_PREFIX}cos`,
+        [emitExpression(node.value, layout, mod, binaryen)],
+        binaryen.f32,
+      );
+    case "tan":
+      return mod.call(
+        `${MATH_FN_PREFIX}tan`,
+        [emitExpression(node.value, layout, mod, binaryen)],
+        binaryen.f32,
+      );
+    case "exp":
+      return mod.call(
+        `${MATH_FN_PREFIX}exp`,
+        [emitExpression(node.value, layout, mod, binaryen)],
+        binaryen.f32,
+      );
+    case "log":
+      return mod.call(
+        `${MATH_FN_PREFIX}log`,
+        [emitExpression(node.value, layout, mod, binaryen)],
+        binaryen.f32,
+      );
+    case "tanh":
+      return mod.call(
+        `${MATH_FN_PREFIX}tanh`,
+        [emitExpression(node.value, layout, mod, binaryen)],
+        binaryen.f32,
+      );
     case "max":
       return mod.f32.max(
         emitExpression(node.lhs, layout, mod, binaryen),
         emitExpression(node.rhs, layout, mod, binaryen),
+      );
+    case "min":
+      return mod.f32.min(
+        emitExpression(node.lhs, layout, mod, binaryen),
+        emitExpression(node.rhs, layout, mod, binaryen),
+      );
+    // 比 較 (= 結 果 は i32 0/1 = bool 内 部 表 現、 state.bool / select cond /
+    // emitIf cond で 利 用 さ れ る 既 存 bool=i32 表 現 と zip)
+    case "eq":
+      return mod.f32.eq(
+        emitExpression(node.lhs, layout, mod, binaryen),
+        emitExpression(node.rhs, layout, mod, binaryen),
+      );
+    case "lt":
+      return mod.f32.lt(
+        emitExpression(node.lhs, layout, mod, binaryen),
+        emitExpression(node.rhs, layout, mod, binaryen),
+      );
+    case "gt":
+      return mod.f32.gt(
+        emitExpression(node.lhs, layout, mod, binaryen),
+        emitExpression(node.rhs, layout, mod, binaryen),
+      );
+    case "lte":
+      return mod.f32.le(
+        emitExpression(node.lhs, layout, mod, binaryen),
+        emitExpression(node.rhs, layout, mod, binaryen),
+      );
+    case "gte":
+      return mod.f32.ge(
+        emitExpression(node.lhs, layout, mod, binaryen),
+        emitExpression(node.rhs, layout, mod, binaryen),
+      );
+    // clamp(x, lo, hi) = min(max(x, lo), hi)。 各 オ ペ ラ ン ド を 1 度 ず つ emit =
+    // 二 重 評 価 ナ シ = temp local 不 要。 lo > hi の 退 化 ケ ー ス は hi を 返 す
+    // (= max(x,lo) >= lo > hi な の で min(..., hi) = hi)、 決 定 的 挙 動。
+    case "clamp":
+      return mod.f32.min(
+        mod.f32.max(
+          emitExpression(node.x, layout, mod, binaryen),
+          emitExpression(node.lo, layout, mod, binaryen),
+        ),
+        emitExpression(node.hi, layout, mod, binaryen),
+      );
+    // select(cond, then, else) = WASM `select` 命 令 (= eager: 全 3 引 数 を 評 価
+    // し て か ら 選 ぶ)。 then / else は 副 作 用 ナ シ の pure expression な の で
+    // eager で 意 味 不 変。 cond は i32 (= bool 0/1)。
+    case "select":
+      return mod.select(
+        emitExpression(node.cond, layout, mod, binaryen),
+        emitExpression(node.ifTrue, layout, mod, binaryen),
+        emitExpression(node.ifFalse, layout, mod, binaryen),
       );
     case "audioInRead": {
       const portBase = layout.regions.ioScratch.inputs[node.portName];
@@ -771,4 +968,367 @@ function emitMessageOnReceive(
       mod.local.get(MESSAGE_TAIL_LOCAL, binaryen.i32),
     ),
   ]);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 多 項 式 近 似 math primitive の 共 有 関 数 emit (= Q17、 sin / cos / tan / tanh /
+// exp / log)。 5〜7 次 minimax / Taylor、 最 大 誤 差 ~1e-4 = 24bit audio で 不 可 聴。
+// no-trap invariant: 整 数 化 は trunc_s_sat (= 飽 和・非 ト ラ ッ プ)、 reinterpret /
+// nearest / convert は 元 々 非 ト ラ ッ プ。
+// ─────────────────────────────────────────────────────────────────────────
+
+const TRANSCENDENTAL_KINDS: ReadonlySet<string> = new Set([
+  "sin",
+  "cos",
+  "tan",
+  "tanh",
+  "exp",
+  "log",
+]);
+
+/** graph の AST を walk し て 実 際 に 使 わ れ て い る transcendental kind を 収 集。 */
+function collectUsedMathKinds(graph: CapturedGraph): Set<string> {
+  const used = new Set<string>();
+  const visit = (node: AstNode): void => {
+    if (TRANSCENDENTAL_KINDS.has(node.kind)) used.add(node.kind);
+    switch (node.kind) {
+      case "mul":
+      case "add":
+      case "sub":
+      case "div":
+      case "mod":
+      case "max":
+      case "min":
+      case "eq":
+      case "lt":
+      case "gt":
+      case "lte":
+      case "gte":
+        visit(node.lhs);
+        visit(node.rhs);
+        break;
+      case "abs":
+      case "neg":
+      case "sqrt":
+      case "floor":
+      case "ceil":
+      case "frac":
+      case "sin":
+      case "cos":
+      case "tan":
+      case "tanh":
+      case "exp":
+      case "log":
+        visit(node.value);
+        break;
+      case "clamp":
+        visit(node.x);
+        visit(node.lo);
+        visit(node.hi);
+        break;
+      case "select":
+        visit(node.cond);
+        visit(node.ifTrue);
+        visit(node.ifFalse);
+        break;
+      case "audioInRead":
+      case "paramAt":
+        visit(node.offset);
+        break;
+      case "audioOutWrite":
+        visit(node.offset);
+        visit(node.value);
+        break;
+      case "stateStore":
+        visit(node.value);
+        break;
+      case "forSample":
+      case "messageOnReceive":
+        node.body.forEach(visit);
+        break;
+      case "eventEmitIf":
+        visit(node.cond);
+        visit(node.atSample);
+        node.fields.forEach((field) => visit(field.value));
+        break;
+      case "literal":
+      case "loopCounter":
+      case "stateLoad":
+      case "messageFieldRead":
+        break;
+    }
+  };
+  graph.statements.forEach(visit);
+  return used;
+}
+
+/**
+ * 依 存 展 開: cos / tan は sin を、 tan は cos も call す る (= 派 生 実 装)。 必 要 な
+ * base 関 数 も used set に 含 め る。
+ */
+function expandMathDeps(used: Set<string>): Set<string> {
+  const out = new Set(used);
+  if (out.has("cos") || out.has("tan")) out.add("sin");
+  if (out.has("tan")) out.add("cos");
+  if (out.has("tanh")) out.add("exp");
+  return out;
+}
+
+/** used kind に 応 じ て 共 有 math 関 数 を module に 追 加 (= 依 存 順)。 */
+function addMathFunctions(used: Set<string>, mod: BinaryenModule, binaryen: BinaryenAPI): void {
+  const expanded = expandMathDeps(used);
+  if (expanded.has("sin")) buildSinFn(mod, binaryen);
+  if (expanded.has("cos")) buildCosFn(mod, binaryen);
+  if (expanded.has("tan")) buildTanFn(mod, binaryen);
+  if (expanded.has("exp")) buildExpFn(mod, binaryen);
+  if (expanded.has("log")) buildLogFn(mod, binaryen);
+  if (expanded.has("tanh")) buildTanhFn(mod, binaryen);
+}
+
+const MATH_PI = Math.PI;
+
+/**
+ * `$unworklet_sin`: range reduce r = x - round(x/π)·π ∈ [-π/2, π/2] し、 odd
+ * Taylor 9 次 で sin(r) を 評 価、 sign = (-1)^round(x/π) を 掛 け る。 [-π/2,π/2]
+ * で の Taylor 9 次 誤 差 は ~3e-5 (= 1e-4 以 下)。 locals: 0=x(param) / 1=k_f /
+ * 2=r / 3=z(=r²) / 4=k_i。
+ */
+function buildSinFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
+  const f = binaryen.f32;
+  const i = binaryen.i32;
+  const X = 0;
+  const KF = 1;
+  const R = 2;
+  const Z = 3;
+  const KI = 4;
+  const z = (): number => mod.local.get(Z, f);
+  // sin(r) ≈ r·(1 + z·(-1/6 + z·(1/120 + z·(-1/5040 + z·(1/362880)))))
+  let poly = mod.f32.add(mod.f32.const(-1 / 5040), mod.f32.mul(z(), mod.f32.const(1 / 362880)));
+  poly = mod.f32.add(mod.f32.const(1 / 120), mod.f32.mul(z(), poly));
+  poly = mod.f32.add(mod.f32.const(-1 / 6), mod.f32.mul(z(), poly));
+  poly = mod.f32.add(mod.f32.const(1), mod.f32.mul(z(), poly));
+  poly = mod.f32.mul(mod.local.get(R, f), poly);
+  // sign = 1 - 2·(k_i & 1) ∈ {1, -1}
+  const sign = mod.f32.convert_s.i32(
+    mod.i32.sub(
+      mod.i32.const(1),
+      mod.i32.shl(mod.i32.and(mod.local.get(KI, i), mod.i32.const(1)), mod.i32.const(1)),
+    ),
+  );
+  const body = mod.block(
+    null,
+    [
+      mod.local.set(
+        KF,
+        mod.f32.nearest(mod.f32.mul(mod.local.get(X, f), mod.f32.const(1 / MATH_PI))),
+      ),
+      mod.local.set(KI, mod.i32.trunc_s_sat.f32(mod.local.get(KF, f))),
+      mod.local.set(
+        R,
+        mod.f32.sub(mod.local.get(X, f), mod.f32.mul(mod.local.get(KF, f), mod.f32.const(MATH_PI))),
+      ),
+      mod.local.set(Z, mod.f32.mul(mod.local.get(R, f), mod.local.get(R, f))),
+      mod.f32.mul(sign, poly),
+    ],
+    f,
+  );
+  mod.addFunction(`${MATH_FN_PREFIX}sin`, binaryen.f32, binaryen.f32, [f, f, f, i], body);
+}
+
+/** `$unworklet_cos`: cos(x) = sin(x + π/2) で sin 関 数 に 委 譲。 locals ナ シ。 */
+function buildCosFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
+  const f = binaryen.f32;
+  const body = mod.call(
+    `${MATH_FN_PREFIX}sin`,
+    [mod.f32.add(mod.local.get(0, f), mod.f32.const(MATH_PI / 2))],
+    binaryen.f32,
+  );
+  mod.addFunction(`${MATH_FN_PREFIX}cos`, binaryen.f32, binaryen.f32, [], body);
+}
+
+/** `$unworklet_tan`: tan(x) = sin(x)/cos(x)。 x は param local = 自 由 に 再 取 得。 */
+function buildTanFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
+  const f = binaryen.f32;
+  const body = mod.f32.div(
+    mod.call(`${MATH_FN_PREFIX}sin`, [mod.local.get(0, f)], binaryen.f32),
+    mod.call(`${MATH_FN_PREFIX}cos`, [mod.local.get(0, f)], binaryen.f32),
+  );
+  mod.addFunction(`${MATH_FN_PREFIX}tan`, binaryen.f32, binaryen.f32, [], body);
+}
+
+const MATH_LN2 = Math.LN2;
+
+/**
+ * `$unworklet_exp`: x = k·ln2 + r (= k=round(x/ln2)、r∈[-ln2/2,ln2/2]) と 分 解 し、
+ * exp(x) = 2^k · exp(r)。 exp(r) は degree-5 Taylor (= 誤 差 ~2.4e-6)、 2^k は
+ * `(k+127)<<23` を f32 に reinterpret。 locals: 0=x(param) / 1=k_f / 2=r / 3=k_i。
+ * k が f32 指 数 範 囲 外 (= k>127 / k<-126) で は bit-pack が wrap し て garbage に
+ * な る の で、 select で overflow→+Inf / underflow→0 に clamp し て `Math.exp`
+ * 準 拠 (= 非 ト ラ ッ プ)。 tanh も exp(2x) 経 由 で 大 負 入 力 が ±1 飽 和 す る。
+ */
+function buildExpFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
+  const f = binaryen.f32;
+  const i = binaryen.i32;
+  const X = 0;
+  const KF = 1;
+  const R = 2;
+  const KI = 3;
+  const r = (): number => mod.local.get(R, f);
+  // exp(r) ≈ 1 + r·(1 + r·(1/2 + r·(1/6 + r·(1/24 + r·(1/120)))))
+  let poly = mod.f32.const(1 / 120);
+  poly = mod.f32.add(mod.f32.const(1 / 24), mod.f32.mul(r(), poly));
+  poly = mod.f32.add(mod.f32.const(1 / 6), mod.f32.mul(r(), poly));
+  poly = mod.f32.add(mod.f32.const(1 / 2), mod.f32.mul(r(), poly));
+  poly = mod.f32.add(mod.f32.const(1), mod.f32.mul(r(), poly));
+  poly = mod.f32.add(mod.f32.const(1), mod.f32.mul(r(), poly));
+  // 2^k = reinterpret_f32((k_i + 127) << 23)
+  const twoK = mod.f32.reinterpret(
+    mod.i32.shl(mod.i32.add(mod.local.get(KI, i), mod.i32.const(127)), mod.i32.const(23)),
+  );
+  const body = mod.block(
+    null,
+    [
+      mod.local.set(
+        KF,
+        mod.f32.nearest(mod.f32.mul(mod.local.get(X, f), mod.f32.const(1 / MATH_LN2))),
+      ),
+      mod.local.set(KI, mod.i32.trunc_s_sat.f32(mod.local.get(KF, f))),
+      mod.local.set(
+        R,
+        mod.f32.sub(
+          mod.local.get(X, f),
+          mod.f32.mul(mod.local.get(KF, f), mod.f32.const(MATH_LN2)),
+        ),
+      ),
+      // k が f32 指 数 範 囲 外 = overflow → +Inf / underflow → 0 に clamp。
+      // select は eager だ が twoK·poly の garbage は 範 囲 外 で 捨 て ら れ る だ け。
+      mod.select(
+        mod.i32.gt_s(mod.local.get(KI, i), mod.i32.const(127)),
+        mod.f32.const(Number.POSITIVE_INFINITY),
+        mod.select(
+          mod.i32.lt_s(mod.local.get(KI, i), mod.i32.const(-126)),
+          mod.f32.const(0),
+          mod.f32.mul(twoK, poly),
+        ),
+      ),
+    ],
+    f,
+  );
+  mod.addFunction(`${MATH_FN_PREFIX}exp`, binaryen.f32, binaryen.f32, [f, f, i], body);
+}
+
+/**
+ * `$unworklet_log`: x = m·2^e (= e は f32 指 数 bit、 m∈[1,2) は 仮 数 bit を 指 数 127
+ * に 固 定 し て reinterpret)。 log(x) = e·ln2 + log(m)、 log(m) は t=(m-1)/(m+1) の
+ * atanh 級 数 2·(t + t³/3 + t⁵/5 + t⁷/7) (= t∈[0,1/3]、 誤 差 ~3e-6)。 定 義 域 外 /
+ * 特 殊 値 は select で `Math.log` 準 拠 (= x<0 → NaN、 x==0 → -Inf、 NaN → NaN、
+ * +Inf → +Inf)、 非 ト ラ ッ プ。 subnormal 入 力 は bit 分 解 前 に 2^24 倍 で normal
+ * 域 へ 正 規 化 し 結 果 を 24·ln2 補 正 (= exponent field=0 の 破 綻 回 避)。
+ * locals: 0=x(param) / 1=bits(i32) / 2=m / 3=t / 4=s(=t²) / 5=xn(正 規 化 後 入 力)。
+ */
+function buildLogFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
+  const f = binaryen.f32;
+  const i = binaryen.i32;
+  const X = 0;
+  const BITS = 1;
+  const M = 2;
+  const T = 3;
+  const S = 4;
+  const XN = 5;
+  // 最 小 normal f32 = 2^-126。 こ れ 未 満 (= subnormal、 exponent field=0) は
+  // 素 朴 な bit 分 解 が 破 綻 す る の で、 2^24 倍 し て normal 域 に 押 し 上 げ て か ら
+  // 分 解 し、 log 結 果 か ら 24·ln2 を 引 い て 補 正 す る (全 subnormal は 2^24 で
+  // normal 域 に 収 ま る: 最 小 値 2^-149·2^24 = 2^-125)。
+  const FLT_MIN_NORMAL = 2 ** -126;
+  const SUBNORMAL_SCALE = 2 ** 24;
+  const SUBNORMAL_LOG_OFFSET = 24 * MATH_LN2;
+  const isSubnormal = (): number => mod.f32.lt(mod.local.get(X, f), mod.f32.const(FLT_MIN_NORMAL));
+  const s = (): number => mod.local.get(S, f);
+  // log(m) 多 項 式: poly_t = 1 + s·(1/3 + s·(1/5 + s·(1/7)))、 log(m) = 2·t·poly_t
+  let polyT = mod.f32.add(mod.f32.const(1 / 5), mod.f32.mul(s(), mod.f32.const(1 / 7)));
+  polyT = mod.f32.add(mod.f32.const(1 / 3), mod.f32.mul(s(), polyT));
+  polyT = mod.f32.add(mod.f32.const(1), mod.f32.mul(s(), polyT));
+  const logM = mod.f32.mul(mod.f32.mul(mod.f32.const(2), mod.local.get(T, f)), polyT);
+  // e = ((bits >> 23) & 0xFF) - 127
+  const eF = mod.f32.convert_s.i32(
+    mod.i32.sub(
+      mod.i32.and(mod.i32.shr_u(mod.local.get(BITS, i), mod.i32.const(23)), mod.i32.const(0xff)),
+      mod.i32.const(127),
+    ),
+  );
+  // subnormal を 2^24 倍 し た 分 だ け eF が 24 大 き く 出 る の で 24·ln2 を 引 い て 戻 す。
+  const computed = mod.f32.sub(
+    mod.f32.add(mod.f32.mul(eF, mod.f32.const(MATH_LN2)), logM),
+    mod.select(isSubnormal(), mod.f32.const(SUBNORMAL_LOG_OFFSET), mod.f32.const(0)),
+  );
+  const body = mod.block(
+    null,
+    [
+      // xn = x · (subnormal ? 2^24 : 1)。 以 降 の bit 分 解 は xn に 対 し て 行 う。
+      mod.local.set(
+        XN,
+        mod.f32.mul(
+          mod.local.get(X, f),
+          mod.select(isSubnormal(), mod.f32.const(SUBNORMAL_SCALE), mod.f32.const(1)),
+        ),
+      ),
+      mod.local.set(BITS, mod.i32.reinterpret(mod.local.get(XN, f))),
+      // m = reinterpret((bits & 0x007FFFFF) | 0x3F800000) ∈ [1, 2)
+      mod.local.set(
+        M,
+        mod.f32.reinterpret(
+          mod.i32.or(
+            mod.i32.and(mod.local.get(BITS, i), mod.i32.const(0x7fffff)),
+            mod.i32.const(0x3f800000),
+          ),
+        ),
+      ),
+      mod.local.set(
+        T,
+        mod.f32.div(
+          mod.f32.sub(mod.local.get(M, f), mod.f32.const(1)),
+          mod.f32.add(mod.local.get(M, f), mod.f32.const(1)),
+        ),
+      ),
+      mod.local.set(S, mod.f32.mul(mod.local.get(T, f), mod.local.get(T, f))),
+      mod.select(
+        mod.f32.gt(mod.local.get(X, f), mod.f32.const(0)),
+        // x>0 の 枝: +Inf は bit 分 解 す る と m=1·2^128 で 128·ln2 付 近 の 有 限 値 に
+        // 化 け る の で 先 に 捕 ま え て +Inf を 保 つ。 有 限 正 値 だ け 近 似 を 通 す。
+        mod.select(
+          mod.f32.eq(mod.local.get(X, f), mod.f32.const(Number.POSITIVE_INFINITY)),
+          mod.f32.const(Number.POSITIVE_INFINITY),
+          computed,
+        ),
+        // x<=0 / NaN の 枝: x==0 だ け -Inf、 そ れ 以 外 (= 負 値 / NaN) は NaN。
+        // NaN は gt も eq(0) も false に な る の で 自 然 に NaN 側 に 落 ち る。
+        mod.select(
+          mod.f32.eq(mod.local.get(X, f), mod.f32.const(0)),
+          mod.f32.const(Number.NEGATIVE_INFINITY),
+          mod.f32.const(Number.NaN),
+        ),
+      ),
+    ],
+    f,
+  );
+  mod.addFunction(`${MATH_FN_PREFIX}log`, binaryen.f32, binaryen.f32, [i, f, f, f, f], body);
+}
+
+/**
+ * `$unworklet_tanh`: tanh(x) = 1 - 2/(exp(2x)+1) で exp 関 数 に 委 譲。 分 子 が 有 限
+ * (= 2) な の で 大 入 力 で も Inf/Inf に な ら ず ±1 に 飽 和。 exp の rel 誤 差 が
+ * tanh で は 1.2e-6 以 下 に 縮 む。 locals ナ シ (= x は param)。
+ */
+function buildTanhFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
+  const f = binaryen.f32;
+  const e2x = mod.call(
+    `${MATH_FN_PREFIX}exp`,
+    [mod.f32.mul(mod.f32.const(2), mod.local.get(0, f))],
+    binaryen.f32,
+  );
+  const body = mod.f32.sub(
+    mod.f32.const(1),
+    mod.f32.div(mod.f32.const(2), mod.f32.add(e2x, mod.f32.const(1))),
+  );
+  mod.addFunction(`${MATH_FN_PREFIX}tanh`, binaryen.f32, binaryen.f32, [], body);
 }
