@@ -702,8 +702,8 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
     // message ring mirror = transport mode で 経 路 が 分 岐 (process 開 始 で WASM
     // ring に main 側 push 分 を inject + drain logic が WASM 内 で 走 る):
     //
-    // - SAB available: main 側 が SAB に push 済 = SAB → WASM bulk copy + header
-    //   Atomics.load で acquire fence + WASM ring に 反 映。
+    // - SAB available: main 側 が SAB に push 済 = header を Atomics.load で acquire
+    //   し て か ら SAB → WASM bulk copy (= §5.5 acquire-before-read) + WASM ring 反 映。
     // - SAB unavailable: 共 有 buffer 不 在 = main 側 が port.postMessage で 直 送
     //   = messageQueueMirrors[i] に 蓄 積 済 = process 開 始 で 各 payload を WASM
     //   ring slot に field 別 inject + 容 量 超 え で drop-oldest 発 動 + 内 部
@@ -717,12 +717,17 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         const wasmHeaders = state.messageRingsWasmHeaderViews;
         const sabHeaders = state.messageRingsSabHeaderViews;
         for (let i = 0; i < wasmViews.length; i++) {
-          wasmViews[i]!.set(sabViews[i]!);
           const sabH = sabHeaders[i]!;
           const wasmH = wasmHeaders[i]!;
+          // §5.5 consumer protocol: head を acquire-load し て か ら slot data を
+          // copy す る。 producer (= main) は slot 書 き 込 み → release-store(head)
+          // の 順 な の で、 acquire-load(head) が slot copy よ り 前 で あ れ ば
+          // 「head が 観 測 し た 分 の slot bytes」 は happens-before で 可 視。
+          // copy を acquire の 前 に 置 く と 並 行 producer write を torn read す る。
           wasmH[0] = Atomics.load(sabH, 0);
           wasmH[1] = Atomics.load(sabH, 1);
           wasmH[2] = Atomics.load(sabH, 2);
+          wasmViews[i]!.set(sabViews[i]!);
         }
       } else {
         // postMessage path = messageQueueMirrors を WASM ring に inject
