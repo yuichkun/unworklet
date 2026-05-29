@@ -203,9 +203,16 @@ export function abs<T extends ScalarType>(x: Node<T> | number): Node<T> {
 registerNodeMethod("abs", function method<T extends ScalarType>(this: Node<T>): Node<T> {
   return abs(this);
 });
-export function floor<T extends ScalarType>(_x: Node<T> | number): Node<T> {
-  return notImplemented();
+export function floor<T extends ScalarType>(x: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "floor",
+    type: "f32",
+    value: liftToAst(x),
+  });
 }
+registerNodeMethod("floor", function method<T extends ScalarType>(this: Node<T>): Node<T> {
+  return floor(this);
+});
 export function ceil<T extends ScalarType>(_x: Node<T> | number): Node<T> {
   return notImplemented();
 }

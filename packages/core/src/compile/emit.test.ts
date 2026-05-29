@@ -2964,3 +2964,43 @@ test("`emit(sqrt)` e2e: sqrt(-1) = NaN (= 非トラップ)", async () => {
   );
   expect(Number.isNaN(stored)).toBe(true);
 });
+
+test("`emitExpression(floor)` lowers to `f32.floor`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(
+    { kind: "floor", type: "f32", value: { kind: "literal", type: "f32", value: 1.7 } },
+    emptyLayout,
+    mod,
+    binaryen,
+  );
+  expect(watOfExpression(mod, binaryen, ref, binaryen.f32)).toContain("(f32.floor");
+  mod.dispose();
+});
+
+test("`emit(floor)` e2e: floor(1.7)=1 / floor(-1.2)=-2 / floor(3)=3", async () => {
+  const a = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "floor",
+      type: "f32",
+      value: { kind: "literal", type: "f32", value: 1.7 },
+    }),
+  );
+  expect(a).toBe(1);
+  const b = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "floor",
+      type: "f32",
+      value: { kind: "literal", type: "f32", value: -1.2 },
+    }),
+  );
+  expect(b).toBe(-2);
+  const c = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "floor",
+      type: "f32",
+      value: { kind: "literal", type: "f32", value: 3 },
+    }),
+  );
+  expect(c).toBe(3);
+});

@@ -11,7 +11,7 @@ import { unwrapAst, wrapAst } from "../compile/capture.ts";
 import * as P from "./primitives.ts";
 import { abs, max, mul } from "./primitives.ts";
 
-const unary = ["sin", "cos", "tan", "tanh", "exp", "log", "floor", "ceil", "frac"] as const;
+const unary = ["sin", "cos", "tan", "tanh", "exp", "log", "ceil", "frac"] as const;
 
 // `mul` / `abs` / `max` は Step 3.3 / sub-phase 7.8a で fill = stub list か ら 除 外。
 const binary = ["mod", "eq", "lt", "gt", "lte", "gte"] as const;
@@ -319,4 +319,30 @@ test("`sqrt(number)` lifts the literal", () => {
 test("`Node<T>.sqrt()` method form = free function 同 AST", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 4 });
   expect(unwrapAst(a.sqrt())).toEqual(unwrapAst(P.sqrt(a)));
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// floor (native f32.floor)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`floor(node)` returns a `Node` carrying a `floor` AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1.7 });
+  expect(unwrapAst(P.floor(a))).toEqual({
+    kind: "floor",
+    type: "f32",
+    value: { kind: "literal", type: "f32", value: 1.7 },
+  });
+});
+
+test("`floor(number)` lifts the literal", () => {
+  expect(unwrapAst(P.floor(1.7))).toEqual({
+    kind: "floor",
+    type: "f32",
+    value: { kind: "literal", type: "f32", value: 1.7 },
+  });
+});
+
+test("`Node<T>.floor()` method form = free function 同 AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1.7 });
+  expect(unwrapAst(a.floor())).toEqual(unwrapAst(P.floor(a)));
 });
