@@ -11,7 +11,7 @@ import { unwrapAst, wrapAst } from "../compile/capture.ts";
 import * as P from "./primitives.ts";
 import { abs, max, mul } from "./primitives.ts";
 
-const unary = ["sin", "cos", "tan", "tanh", "exp", "log", "sqrt", "floor", "ceil", "frac"] as const;
+const unary = ["sin", "cos", "tan", "tanh", "exp", "log", "floor", "ceil", "frac"] as const;
 
 // `mul` / `abs` / `max` は Step 3.3 / sub-phase 7.8a で fill = stub list か ら 除 外。
 const binary = ["mod", "eq", "lt", "gt", "lte", "gte"] as const;
@@ -293,4 +293,30 @@ test("`neg(number)` lifts the literal", () => {
 test("`Node<T>.neg()` method form = free function 同 AST", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 5 });
   expect(unwrapAst(a.neg())).toEqual(unwrapAst(P.neg(a)));
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// sqrt (native f32.sqrt)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`sqrt(node)` returns a `Node` carrying a `sqrt` AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 4 });
+  expect(unwrapAst(P.sqrt(a))).toEqual({
+    kind: "sqrt",
+    type: "f32",
+    value: { kind: "literal", type: "f32", value: 4 },
+  });
+});
+
+test("`sqrt(number)` lifts the literal", () => {
+  expect(unwrapAst(P.sqrt(2))).toEqual({
+    kind: "sqrt",
+    type: "f32",
+    value: { kind: "literal", type: "f32", value: 2 },
+  });
+});
+
+test("`Node<T>.sqrt()` method form = free function 同 AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 4 });
+  expect(unwrapAst(a.sqrt())).toEqual(unwrapAst(P.sqrt(a)));
 });

@@ -2921,3 +2921,46 @@ test("`emit(neg)` e2e: neg(0.5) = -0.5 / neg(-0.5) = 0.5", async () => {
   );
   expect(negv).toBe(0.5);
 });
+
+test("`emitExpression(sqrt)` lowers to `f32.sqrt`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(
+    { kind: "sqrt", type: "f32", value: { kind: "literal", type: "f32", value: 4 } },
+    emptyLayout,
+    mod,
+    binaryen,
+  );
+  expect(watOfExpression(mod, binaryen, ref, binaryen.f32)).toContain("(f32.sqrt");
+  mod.dispose();
+});
+
+test("`emit(sqrt)` e2e: sqrt(4) = 2 / sqrt(2) ≈ 1.4142", async () => {
+  const four = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "sqrt",
+      type: "f32",
+      value: { kind: "literal", type: "f32", value: 4 },
+    }),
+  );
+  expect(four).toBe(2);
+  const two = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "sqrt",
+      type: "f32",
+      value: { kind: "literal", type: "f32", value: 2 },
+    }),
+  );
+  expect(two).toBeCloseTo(Math.SQRT2, 6);
+});
+
+test("`emit(sqrt)` e2e: sqrt(-1) = NaN (= 非トラップ)", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "sqrt",
+      type: "f32",
+      value: { kind: "literal", type: "f32", value: -1 },
+    }),
+  );
+  expect(Number.isNaN(stored)).toBe(true);
+});

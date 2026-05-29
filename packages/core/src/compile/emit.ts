@@ -303,6 +303,8 @@ export function emitExpression(
       return mod.f32.abs(emitExpression(node.value, layout, mod, binaryen));
     case "neg":
       return mod.f32.neg(emitExpression(node.value, layout, mod, binaryen));
+    case "sqrt":
+      return mod.f32.sqrt(emitExpression(node.value, layout, mod, binaryen));
     case "max":
       return mod.f32.max(
         emitExpression(node.lhs, layout, mod, binaryen),
