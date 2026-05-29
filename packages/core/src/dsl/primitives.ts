@@ -130,9 +130,16 @@ registerNodeMethod("div", function method<
 export function mod<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<T> {
   return notImplemented();
 }
-export function neg<T extends ScalarType>(_x: Node<T> | number): Node<T> {
-  return notImplemented();
+export function neg<T extends ScalarType>(x: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "neg",
+    type: "f32",
+    value: liftToAst(x),
+  });
 }
+registerNodeMethod("neg", function method<T extends ScalarType>(this: Node<T>): Node<T> {
+  return neg(this);
+});
 
 // Comparison (returns Node<'bool'>)
 export function eq<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<"bool"> {

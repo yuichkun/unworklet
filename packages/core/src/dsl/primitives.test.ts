@@ -11,19 +11,7 @@ import { unwrapAst, wrapAst } from "../compile/capture.ts";
 import * as P from "./primitives.ts";
 import { abs, max, mul } from "./primitives.ts";
 
-const unary = [
-  "neg",
-  "sin",
-  "cos",
-  "tan",
-  "tanh",
-  "exp",
-  "log",
-  "sqrt",
-  "floor",
-  "ceil",
-  "frac",
-] as const;
+const unary = ["sin", "cos", "tan", "tanh", "exp", "log", "sqrt", "floor", "ceil", "frac"] as const;
 
 // `mul` / `abs` / `max` は Step 3.3 / sub-phase 7.8a で fill = stub list か ら 除 外。
 const binary = ["mod", "eq", "lt", "gt", "lte", "gte"] as const;
@@ -279,4 +267,30 @@ test("`Node<T>.min(other)` method form = free function 同 AST", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
   const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 5 });
   expect(unwrapAst(a.min(b))).toEqual(unwrapAst(P.min(a, b)));
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// neg (native f32.neg)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`neg(node)` returns a `Node` carrying a `neg` AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 5 });
+  expect(unwrapAst(P.neg(a))).toEqual({
+    kind: "neg",
+    type: "f32",
+    value: { kind: "literal", type: "f32", value: 5 },
+  });
+});
+
+test("`neg(number)` lifts the literal", () => {
+  expect(unwrapAst(P.neg(0.5))).toEqual({
+    kind: "neg",
+    type: "f32",
+    value: { kind: "literal", type: "f32", value: 0.5 },
+  });
+});
+
+test("`Node<T>.neg()` method form = free function 同 AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 5 });
+  expect(unwrapAst(a.neg())).toEqual(unwrapAst(P.neg(a)));
 });

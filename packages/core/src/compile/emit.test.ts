@@ -2889,3 +2889,35 @@ test("`emit(min)` e2e: min(-1, 2) = -1 (負値混在)", async () => {
   );
   expect(stored).toBe(-1);
 });
+
+test("`emitExpression(neg)` lowers to `f32.neg`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(
+    { kind: "neg", type: "f32", value: { kind: "literal", type: "f32", value: 5 } },
+    emptyLayout,
+    mod,
+    binaryen,
+  );
+  expect(watOfExpression(mod, binaryen, ref, binaryen.f32)).toContain("(f32.neg");
+  mod.dispose();
+});
+
+test("`emit(neg)` e2e: neg(0.5) = -0.5 / neg(-0.5) = 0.5", async () => {
+  const pos = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "neg",
+      type: "f32",
+      value: { kind: "literal", type: "f32", value: 0.5 },
+    }),
+  );
+  expect(pos).toBe(-0.5);
+  const negv = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "neg",
+      type: "f32",
+      value: { kind: "literal", type: "f32", value: -0.5 },
+    }),
+  );
+  expect(negv).toBe(0.5);
+});
