@@ -178,7 +178,7 @@ const onPaneClick = (): void => {
             @node-click="onNodeClick"
             @pane-click="onPaneClick"
           >
-            <Background :variant="BackgroundVariant.Dots" :gap="20" :size="1" pattern-color="rgba(255, 255, 255, 0.12)" />
+            <Background :variant="BackgroundVariant.Dots" :gap="20" :size="1" pattern-color="rgba(255, 250, 240, 0.12)" />
             <Controls :show-interactive="false" position="bottom-right" />
           </VueFlow>
         </div>
@@ -977,7 +977,7 @@ const onPaneClick = (): void => {
 }
 
 .snippet-line.highlight-warning {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 250, 240, 0.04);
   box-shadow: inset 3px 0 0 var(--u-text-muted);
 }
 

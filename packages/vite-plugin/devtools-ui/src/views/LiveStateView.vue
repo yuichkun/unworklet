@@ -145,7 +145,7 @@ const drawWaveform = (canvas: HTMLCanvasElement, samples: Float32Array | Int32Ar
   }
   const span = Math.max(Math.abs(min), Math.abs(max), 1);
 
-  ctx.strokeStyle = "#ffffff";
+  ctx.strokeStyle = "#fffaf0";
   ctx.lineWidth = 1.4;
   ctx.beginPath();
   for (let i = 0; i < samples.length; i++) {
@@ -193,7 +193,7 @@ const drawBars = (
     const barH = norm * (h - 4);
     const x = i * cellW + 1;
     const y = h - 2 - barH;
-    ctx.fillStyle = v >= baseline ? "#ffffff" : "#ffb4ab";
+    ctx.fillStyle = v >= baseline ? "#fffaf0" : "#ffb4ab";
     ctx.fillRect(x, y, barW, Math.max(1, barH));
   }
 };
@@ -241,7 +241,7 @@ const redraw = (): void => {
           const c = sparklineRefs.value[key];
           if (c) {
             const hist = live.getSlotHistory(key);
-            drawSparkline(c, hist, "#ffffff");
+            drawSparkline(c, hist, "#fffaf0");
           }
         }
       } else {
@@ -649,8 +649,8 @@ watch(reprByKey, () => redraw(), { deep: true });
   height: 80px;
   background-color: var(--u-bg);
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+    linear-gradient(rgba(255, 250, 240, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 250, 240, 0.04) 1px, transparent 1px);
   background-size: 40px 40px;
   border: 1px solid var(--u-border);
   border-radius: var(--u-radius);
@@ -662,8 +662,8 @@ watch(reprByKey, () => redraw(), { deep: true });
   height: 60px;
   background-color: var(--u-bg);
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+    linear-gradient(rgba(255, 250, 240, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 250, 240, 0.04) 1px, transparent 1px);
   background-size: 40px 40px;
   border: 1px solid var(--u-border);
   border-radius: var(--u-radius);

@@ -851,8 +851,8 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
   height: 110px;
   background-color: var(--u-bg);
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+    linear-gradient(rgba(255, 250, 240, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 250, 240, 0.04) 1px, transparent 1px);
   background-size: 40px 40px;
   border: 1px solid var(--u-border);
   border-radius: var(--u-radius);
@@ -863,8 +863,8 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
   height: 110px;
   background-color: var(--u-bg);
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+    linear-gradient(rgba(255, 250, 240, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 250, 240, 0.04) 1px, transparent 1px);
   background-size: 40px 40px;
   border: 1px solid var(--u-border);
   border-radius: var(--u-radius);
@@ -940,8 +940,8 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
   height: 260px;
   background-color: var(--u-bg);
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+    linear-gradient(rgba(255, 250, 240, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 250, 240, 0.04) 1px, transparent 1px);
   background-size: 40px 40px;
   border: 1px solid var(--u-border);
   border-radius: var(--u-radius);

@@ -10,16 +10,16 @@
   --u-bg-elev-4: #2a2a2a;
   --u-border: #333333;
   --u-border-strong: #404040;
-  --u-text: #ffffff;
+  --u-text: #fffaf0; /* floralwhite — warmer than pure white, easier on eyes for long sessions */
   --u-text-muted: #a0a0a0;
   --u-text-dim: #6b6b6b;
 
-  --u-accent: #ffffff;
-  --u-accent-strong: #ffffff;
-  --u-success: #ffffff;
+  --u-accent: #fffaf0; /* floralwhite — warmer "white" across the whole design system */
+  --u-accent-strong: #fffaf0;
+  --u-success: #fffaf0;
   --u-warn: #a0a0a0;
   --u-danger: #ffb4ab;
-  --u-unworklet: #ffffff;
+  --u-unworklet: #fffaf0;
   --u-midi: #a0a0a0;
   --u-orange: #a0a0a0;
 
@@ -32,7 +32,7 @@
   --u-radius-lg: 8px;
 
   --u-shadow-soft: 0 0 0 1px var(--u-border);
-  --u-glow-white: 0 0 8px rgba(255, 255, 255, 0.4);
+  --u-glow-white: 0 0 8px rgba(255, 250, 240, 0.4);
 }
 
 * {
@@ -220,6 +220,6 @@ kbd,
   height: 8px;
   border-radius: 9999px;
   background: var(--u-text);
-  box-shadow: 0 0 8px rgba(255, 255, 255, 0.6);
+  box-shadow: 0 0 8px rgba(255, 250, 240, 0.6);
   animation: u-pulse-soft 2s ease-in-out infinite;
 }
