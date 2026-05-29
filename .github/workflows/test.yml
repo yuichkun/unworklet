@@ -1,0 +1,37 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: Lint + Format + Typecheck (= vp check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: voidzero-dev/setup-vp@v1
+      - run: vp check
+
+  vitest:
+    name: Vitest (= node-side + browser SAB + browser postMessage)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: voidzero-dev/setup-vp@v1
+      - name: Install playwright chromium (for browser e2e projects)
+        run: vp exec playwright install --with-deps chromium
+      - name: Run vitest aggregation
+        run: vp test
+
+  e2e:
+    name: Playwright e2e (= dev server 経由)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: voidzero-dev/setup-vp@v1
+      - name: Install playwright chromium
+        run: vp exec playwright install --with-deps chromium
+      - name: Run playwright e2e
+        run: vp run --filter ./examples/01-stereo-gain test:e2e
