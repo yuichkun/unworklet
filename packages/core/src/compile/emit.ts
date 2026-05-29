@@ -1144,8 +1144,9 @@ const MATH_LN2 = Math.LN2;
  * `$unworklet_exp`: x = k·ln2 + r (= k=round(x/ln2)、r∈[-ln2/2,ln2/2]) と 分 解 し、
  * exp(x) = 2^k · exp(r)。 exp(r) は degree-5 Taylor (= 誤 差 ~2.4e-6)、 2^k は
  * `(k+127)<<23` を f32 に reinterpret。 locals: 0=x(param) / 1=k_f / 2=r / 3=k_i。
- * |x| が f32 overflow 域 (≈ ±88 超) で は 2^k 構 築 が 破 綻 す る が 非 ト ラ ッ プ
- * (= reinterpret は bit-cast)、 audio の 現 実 域 で は 十 分。
+ * k が f32 指 数 範 囲 外 (= k>127 / k<-126) で は bit-pack が wrap し て garbage に
+ * な る の で、 select で overflow→+Inf / underflow→0 に clamp し て `Math.exp`
+ * 準 拠 (= 非 ト ラ ッ プ)。 tanh も exp(2x) 経 由 で 大 負 入 力 が ±1 飽 和 す る。
  */
 function buildExpFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
   const f = binaryen.f32;
@@ -1181,7 +1182,17 @@ function buildExpFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
           mod.f32.mul(mod.local.get(KF, f), mod.f32.const(MATH_LN2)),
         ),
       ),
-      mod.f32.mul(twoK, poly),
+      // k が f32 指 数 範 囲 外 = overflow → +Inf / underflow → 0 に clamp。
+      // select は eager だ が twoK·poly の garbage は 範 囲 外 で 捨 て ら れ る だ け。
+      mod.select(
+        mod.i32.gt_s(mod.local.get(KI, i), mod.i32.const(127)),
+        mod.f32.const(Number.POSITIVE_INFINITY),
+        mod.select(
+          mod.i32.lt_s(mod.local.get(KI, i), mod.i32.const(-126)),
+          mod.f32.const(0),
+          mod.f32.mul(twoK, poly),
+        ),
+      ),
     ],
     f,
   );

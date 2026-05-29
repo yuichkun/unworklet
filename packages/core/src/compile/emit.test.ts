@@ -3397,3 +3397,17 @@ test("`emit(select)` e2e: select(true, 10, 20) → 10 / select(false, 10, 20) �
   const f = await runStoreAndRead(makeStoreValueGraph(unwrapAst(select(false, 10, 20))));
   expect(f).toBe(20);
 });
+
+// exp の 2^k bit-pack を 指 数 範 囲 外 で clamp (= overflow→+Inf / underflow→0)。
+// Reported by @codex on #6。
+test("`emit(exp)` e2e: 大入力 overflow → +Inf / 大負入力 underflow → 0", async () => {
+  expect(await runStoreAndRead(makeStoreValueGraph(mathAst("exp", 90)))).toBe(
+    Number.POSITIVE_INFINITY,
+  );
+  expect(await runStoreAndRead(makeStoreValueGraph(mathAst("exp", -100)))).toBe(0);
+});
+
+test("`emit(tanh)` e2e: 大負入力 tanh(-50) ≈ -1 (= exp underflow 経由)", async () => {
+  const got = await runStoreAndRead(makeStoreValueGraph(mathAst("tanh", -50)));
+  expect(got).toBeCloseTo(-1, 4);
+});
