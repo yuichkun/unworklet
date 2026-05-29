@@ -219,3 +219,54 @@ test("f64 lte drives select: 3 <= 3 ? 1 : 0 = 1", async () => {
 test("f64 gte drives select: 3 >= 4 ? 1 : 0 = 0", async () => {
   allEqual(await gen(() => select(f64(3).gte(f64(4)), f32(1), f32(0))), 0);
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// f64 transcendental (Stage 1b-B) — f32-bridge: the f64 builder demotes to f32,
+// calls the shared (f32)->f32 polynomial, then promotes back. Accuracy is
+// f32-limited (~1e-4, Q17 uniform approximate-math), so assertions use a
+// 3-digit tolerance. Observed via f32(...) at the output.
+// ─────────────────────────────────────────────────────────────────────────
+
+test("f64 sin: sin(π/2) ≈ 1", async () => {
+  approx(await gen(() => f32(f64(Math.PI / 2).sin())), 1, 3);
+});
+
+test("f64 sin: sin(0) ≈ 0", async () => {
+  approx(await gen(() => f32(f64(0).sin())), 0, 3);
+});
+
+test("f64 cos: cos(0) ≈ 1", async () => {
+  approx(await gen(() => f32(f64(0).cos())), 1, 3);
+});
+
+test("f64 cos: cos(π) ≈ -1", async () => {
+  approx(await gen(() => f32(f64(Math.PI).cos())), -1, 3);
+});
+
+test("f64 tan: tan(π/4) ≈ 1", async () => {
+  approx(await gen(() => f32(f64(Math.PI / 4).tan())), 1, 3);
+});
+
+test("f64 exp: exp(1) ≈ e", async () => {
+  approx(await gen(() => f32(f64(1).exp())), Math.E, 3);
+});
+
+test("f64 exp: exp(0) ≈ 1", async () => {
+  approx(await gen(() => f32(f64(0).exp())), 1, 3);
+});
+
+test("f64 log: log(e) ≈ 1", async () => {
+  approx(await gen(() => f32(f64(Math.E).log())), 1, 3);
+});
+
+test("f64 log: log(1) ≈ 0", async () => {
+  approx(await gen(() => f32(f64(1).log())), 0, 3);
+});
+
+test("f64 tanh: tanh(0) ≈ 0", async () => {
+  approx(await gen(() => f32(f64(0).tanh())), 0, 3);
+});
+
+test("f64 tanh: tanh(10) ≈ 1 (saturates)", async () => {
+  approx(await gen(() => f32(f64(10).tanh())), 1, 3);
+});

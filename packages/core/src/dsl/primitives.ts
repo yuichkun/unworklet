@@ -10,13 +10,14 @@
  * interface (from `../types.ts`) with the method form via TypeScript
  * declaration merging.
  *
- * Arithmetic and comparison primitives are **polymorphic** over the scalar
- * type (`'f32' | 'f64' | 'i32' | 'i64'`, plus `'bool'` for comparison): the
- * operand type is inferred from the first `Node<T>` argument (literals lift to
- * that type via the context-dependent rule, Q33), and is carried on the AST
+ * Arithmetic, comparison, and math primitives are **polymorphic** over the
+ * scalar type (`'f32' | 'f64' | 'i32' | 'i64'`, plus `'bool'` for comparison):
+ * the operand type is inferred from the first `Node<T>` argument (literals lift
+ * to that type via the context-dependent rule, Q33), and is carried on the AST
  * node so emission picks the matching WASM instruction. All-literal calls fall
- * back to `'f32'`. Math primitives (`sin`, `min`, `clamp`, …) stay `f32` here;
- * `f64` math lands with the f64 path.
+ * back to `'f32'`. Transcendentals (`sin` / `cos` / `tan` / `tanh` / `exp` /
+ * `log`) share one `(f32) -> f32` polynomial; the `f64` form bridges through it
+ * (demote → call → promote) so accuracy is f32-limited (~1e-4, Q17).
  */
 
 import type { AstNode } from "../compile/ast.ts";
@@ -225,37 +226,43 @@ registerNodeMethod("gte", function method<
 // ─────────────────────────────────────────────────────────────────────────
 
 export function sin<T extends ScalarType>(x: Node<T> | number): Node<T> {
-  return wrapAst<T>({ kind: "sin", type: "f32", value: lift(x, "f32") });
+  const t = operandType(x);
+  return wrapAst<T>({ kind: "sin", type: t, value: lift(x, t) });
 }
 registerNodeMethod("sin", function method<T extends ScalarType>(this: Node<T>): Node<T> {
   return sin(this);
 });
 export function cos<T extends ScalarType>(x: Node<T> | number): Node<T> {
-  return wrapAst<T>({ kind: "cos", type: "f32", value: lift(x, "f32") });
+  const t = operandType(x);
+  return wrapAst<T>({ kind: "cos", type: t, value: lift(x, t) });
 }
 registerNodeMethod("cos", function method<T extends ScalarType>(this: Node<T>): Node<T> {
   return cos(this);
 });
 export function tan<T extends ScalarType>(x: Node<T> | number): Node<T> {
-  return wrapAst<T>({ kind: "tan", type: "f32", value: lift(x, "f32") });
+  const t = operandType(x);
+  return wrapAst<T>({ kind: "tan", type: t, value: lift(x, t) });
 }
 registerNodeMethod("tan", function method<T extends ScalarType>(this: Node<T>): Node<T> {
   return tan(this);
 });
 export function tanh<T extends ScalarType>(x: Node<T> | number): Node<T> {
-  return wrapAst<T>({ kind: "tanh", type: "f32", value: lift(x, "f32") });
+  const t = operandType(x);
+  return wrapAst<T>({ kind: "tanh", type: t, value: lift(x, t) });
 }
 registerNodeMethod("tanh", function method<T extends ScalarType>(this: Node<T>): Node<T> {
   return tanh(this);
 });
 export function exp<T extends ScalarType>(x: Node<T> | number): Node<T> {
-  return wrapAst<T>({ kind: "exp", type: "f32", value: lift(x, "f32") });
+  const t = operandType(x);
+  return wrapAst<T>({ kind: "exp", type: t, value: lift(x, t) });
 }
 registerNodeMethod("exp", function method<T extends ScalarType>(this: Node<T>): Node<T> {
   return exp(this);
 });
 export function log<T extends ScalarType>(x: Node<T> | number): Node<T> {
-  return wrapAst<T>({ kind: "log", type: "f32", value: lift(x, "f32") });
+  const t = operandType(x);
+  return wrapAst<T>({ kind: "log", type: t, value: lift(x, t) });
 }
 registerNodeMethod("log", function method<T extends ScalarType>(this: Node<T>): Node<T> {
   return log(this);

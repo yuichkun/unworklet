@@ -373,6 +373,28 @@ function emitNeg(mod: BinaryenModule, type: ScalarType, x: number): number {
 }
 
 /**
+ * Transcendental call (= sin / cos / tan / tanh / exp / log)。 共 有 関 数 は
+ * `(f32) -> f32` (= Q17 多 項 式 近 似、 関 数 本 体 は `addMathFunctions` で 追 加)。
+ * f64 operand は f32-bridge で 通 す: `promote(call(demote(value)))`。 共 有 関 数 を
+ * 型 ご と に 複 製 せ ず、 精 度 を f32 相 当 (~1e-4) に 揃 え る (= 型 不 問 の
+ * approximate-math 契 約)。 `value` は emit 済 の expression (= node.type に 一 致)。
+ */
+function emitTranscendental(
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+  kind: "sin" | "cos" | "tan" | "tanh" | "exp" | "log",
+  type: ScalarType,
+  value: number,
+): number {
+  if (type === "f64") {
+    return mod.f64.promote(
+      mod.call(`${MATH_FN_PREFIX}${kind}`, [mod.f32.demote(value)], binaryen.f32),
+    );
+  }
+  return mod.call(`${MATH_FN_PREFIX}${kind}`, [value], binaryen.f32);
+}
+
+/**
  * Cross-precision convert lowering (= scalar constructor `f32(node)` 等、 no-trap:
  * integer truncation は saturating)。 i32 ↔ f32 / i32 ↔ f64 / f32 ↔ f64 を 実 装、
  * i64 / bool pair は 各 stage で 追 加。
@@ -531,42 +553,21 @@ export function emitExpression(
       );
       return mod.f32.sub(teed, mod.f32.floor(mod.local.get(FRAC_F32_LOCAL, binaryen.f32)));
     }
-    // 多 項 式 近 似 の math primitive は 共 有 関 数 を call (= 関 数 本 体 は emit() で 追 加)。
+    // 多 項 式 近 似 の math primitive は 共 有 関 数 (= `(f32) -> f32`) を call。
+    // f64 form は f32-bridge: demote → call → promote (= Q17 = 型 不 問 の
+    // approximate-math 契 約、 精 度 は f32 相 当 ~1e-4)。
     case "sin":
-      return mod.call(
-        `${MATH_FN_PREFIX}sin`,
-        [emitExpression(node.value, layout, mod, binaryen)],
-        binaryen.f32,
-      );
     case "cos":
-      return mod.call(
-        `${MATH_FN_PREFIX}cos`,
-        [emitExpression(node.value, layout, mod, binaryen)],
-        binaryen.f32,
-      );
     case "tan":
-      return mod.call(
-        `${MATH_FN_PREFIX}tan`,
-        [emitExpression(node.value, layout, mod, binaryen)],
-        binaryen.f32,
-      );
     case "exp":
-      return mod.call(
-        `${MATH_FN_PREFIX}exp`,
-        [emitExpression(node.value, layout, mod, binaryen)],
-        binaryen.f32,
-      );
     case "log":
-      return mod.call(
-        `${MATH_FN_PREFIX}log`,
-        [emitExpression(node.value, layout, mod, binaryen)],
-        binaryen.f32,
-      );
     case "tanh":
-      return mod.call(
-        `${MATH_FN_PREFIX}tanh`,
-        [emitExpression(node.value, layout, mod, binaryen)],
-        binaryen.f32,
+      return emitTranscendental(
+        mod,
+        binaryen,
+        node.kind,
+        node.type,
+        emitExpression(node.value, layout, mod, binaryen),
       );
     case "max":
       return floatNs(mod, node.type).max(
