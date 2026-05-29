@@ -2838,3 +2838,54 @@ test("`emit(div)` e2e: -1 / 0 = -Infinity", async () => {
   );
   expect(stored).toBe(Number.NEGATIVE_INFINITY);
 });
+
+test("`emitExpression(min)` lowers to `f32.min`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(
+    {
+      kind: "min",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 3 },
+      rhs: { kind: "literal", type: "f32", value: 5 },
+    },
+    emptyLayout,
+    mod,
+    binaryen,
+  );
+  expect(watOfExpression(mod, binaryen, ref, binaryen.f32)).toContain("(f32.min");
+  mod.dispose();
+});
+
+test("`emit(min)` e2e: min(3, 5) = 3 / min(5, 3) = 3", async () => {
+  const lo = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "min",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 3 },
+      rhs: { kind: "literal", type: "f32", value: 5 },
+    }),
+  );
+  expect(lo).toBe(3);
+  const hi = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "min",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 5 },
+      rhs: { kind: "literal", type: "f32", value: 3 },
+    }),
+  );
+  expect(hi).toBe(3);
+});
+
+test("`emit(min)` e2e: min(-1, 2) = -1 (負値混在)", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "min",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: -1 },
+      rhs: { kind: "literal", type: "f32", value: 2 },
+    }),
+  );
+  expect(stored).toBe(-1);
+});

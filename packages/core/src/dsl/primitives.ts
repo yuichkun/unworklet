@@ -198,9 +198,19 @@ export function ceil<T extends ScalarType>(_x: Node<T> | number): Node<T> {
 export function frac<T extends ScalarType>(_x: Node<T> | number): Node<T> {
   return notImplemented();
 }
-export function min<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<T> {
-  return notImplemented();
+export function min<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "min",
+    type: "f32",
+    lhs: liftToAst(a),
+    rhs: liftToAst(b),
+  });
 }
+registerNodeMethod("min", function method<
+  T extends ScalarType,
+>(this: Node<T>, other: Node<T> | number): Node<T> {
+  return min(this, other);
+});
 export function max<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<T> {
   return wrapAst<T>({
     kind: "max",

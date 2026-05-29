@@ -26,7 +26,7 @@ const unary = [
 ] as const;
 
 // `mul` / `abs` / `max` は Step 3.3 / sub-phase 7.8a で fill = stub list か ら 除 外。
-const binary = ["mod", "eq", "lt", "gt", "lte", "gte", "min"] as const;
+const binary = ["mod", "eq", "lt", "gt", "lte", "gte"] as const;
 
 const ternary = ["clamp", "select"] as const;
 
@@ -249,4 +249,34 @@ test("`Node<T>.div(other)` method form = free function 同 AST", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 10 });
   const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 2 });
   expect(unwrapAst(a.div(b))).toEqual(unwrapAst(P.div(a, b)));
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// min (native f32.min)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`min(node, node)` returns a `Node` carrying a `min` AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
+  const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 5 });
+  expect(unwrapAst(P.min(a, b))).toEqual({
+    kind: "min",
+    type: "f32",
+    lhs: { kind: "literal", type: "f32", value: 3 },
+    rhs: { kind: "literal", type: "f32", value: 5 },
+  });
+});
+
+test("`min(number, number)` lifts both operands", () => {
+  expect(unwrapAst(P.min(0.3, 0.8))).toEqual({
+    kind: "min",
+    type: "f32",
+    lhs: { kind: "literal", type: "f32", value: 0.3 },
+    rhs: { kind: "literal", type: "f32", value: 0.8 },
+  });
+});
+
+test("`Node<T>.min(other)` method form = free function 同 AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
+  const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 5 });
+  expect(unwrapAst(a.min(b))).toEqual(unwrapAst(P.min(a, b)));
 });
