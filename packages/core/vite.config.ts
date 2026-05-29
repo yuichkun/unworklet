@@ -19,11 +19,7 @@ export default defineConfig({
     // default `vp test` は node-side unit / integration の み = browser fixture
     // path を 全 exclude (= real `AudioContext` / `SharedArrayBuffer` / `Atomics`
     // 必 須 で node 環 境 で fail する path)。
-    exclude: [
-      "src/**/*.browser.test.ts",
-      "src/__tests__/browser/**",
-      "**/node_modules/**",
-    ],
+    exclude: ["src/**/*.browser.test.ts", "src/__tests__/browser/**", "**/node_modules/**"],
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],
