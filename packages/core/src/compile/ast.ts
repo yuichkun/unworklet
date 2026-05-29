@@ -30,6 +30,7 @@ export type AstNode =
   | { kind: "tan"; type: ScalarType; value: AstNode }
   | { kind: "exp"; type: ScalarType; value: AstNode }
   | { kind: "log"; type: ScalarType; value: AstNode }
+  | { kind: "tanh"; type: ScalarType; value: AstNode }
   | { kind: "max"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "min"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "eq"; type: ScalarType; lhs: AstNode; rhs: AstNode }

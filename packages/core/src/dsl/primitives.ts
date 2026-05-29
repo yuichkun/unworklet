@@ -57,11 +57,7 @@ declare module "../types.ts" {
 // Free function form
 // ─────────────────────────────────────────────────────────────────────────
 
-const notImplemented = (): never => {
-  throw new Error("not implemented");
-};
-
-// Arithmetic (T extends 'f32' | 'f64' | 'i32' | 'i64' — generic over ScalarType for stub)
+// Arithmetic (T extends 'f32' | 'f64' | 'i32' | 'i64')
 export function add<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<T> {
   return wrapAst<T>({
     kind: "add",
@@ -249,9 +245,16 @@ export function tan<T extends ScalarType>(x: Node<T> | number): Node<T> {
 registerNodeMethod("tan", function method<T extends ScalarType>(this: Node<T>): Node<T> {
   return tan(this);
 });
-export function tanh<T extends ScalarType>(_x: Node<T> | number): Node<T> {
-  return notImplemented();
+export function tanh<T extends ScalarType>(x: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "tanh",
+    type: "f32",
+    value: liftToAst(x),
+  });
 }
+registerNodeMethod("tanh", function method<T extends ScalarType>(this: Node<T>): Node<T> {
+  return tanh(this);
+});
 export function exp<T extends ScalarType>(x: Node<T> | number): Node<T> {
   return wrapAst<T>({
     kind: "exp",

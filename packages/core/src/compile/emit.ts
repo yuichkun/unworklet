@@ -407,6 +407,12 @@ export function emitExpression(
         [emitExpression(node.value, layout, mod, binaryen)],
         binaryen.f32,
       );
+    case "tanh":
+      return mod.call(
+        `${MATH_FN_PREFIX}tanh`,
+        [emitExpression(node.value, layout, mod, binaryen)],
+        binaryen.f32,
+      );
     case "max":
       return mod.f32.max(
         emitExpression(node.lhs, layout, mod, binaryen),
@@ -990,6 +996,11 @@ function collectUsedMathKinds(graph: CapturedGraph): Set<string> {
       case "ceil":
       case "frac":
       case "sin":
+      case "cos":
+      case "tan":
+      case "tanh":
+      case "exp":
+      case "log":
         visit(node.value);
         break;
       case "clamp":
@@ -1041,6 +1052,7 @@ function expandMathDeps(used: Set<string>): Set<string> {
   const out = new Set(used);
   if (out.has("cos") || out.has("tan")) out.add("sin");
   if (out.has("tan")) out.add("cos");
+  if (out.has("tanh")) out.add("exp");
   return out;
 }
 
@@ -1052,6 +1064,7 @@ function addMathFunctions(used: Set<string>, mod: BinaryenModule, binaryen: Bina
   if (expanded.has("tan")) buildTanFn(mod, binaryen);
   if (expanded.has("exp")) buildExpFn(mod, binaryen);
   if (expanded.has("log")) buildLogFn(mod, binaryen);
+  if (expanded.has("tanh")) buildTanhFn(mod, binaryen);
 }
 
 const MATH_PI = Math.PI;
@@ -1239,4 +1252,23 @@ function buildLogFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
     f,
   );
   mod.addFunction(`${MATH_FN_PREFIX}log`, binaryen.f32, binaryen.f32, [i, f, f, f], body);
+}
+
+/**
+ * `$unworklet_tanh`: tanh(x) = 1 - 2/(exp(2x)+1) で exp 関 数 に 委 譲。 分 子 が 有 限
+ * (= 2) な の で 大 入 力 で も Inf/Inf に な ら ず ±1 に 飽 和。 exp の rel 誤 差 が
+ * tanh で は 1.2e-6 以 下 に 縮 む。 locals ナ シ (= x は param)。
+ */
+function buildTanhFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
+  const f = binaryen.f32;
+  const e2x = mod.call(
+    `${MATH_FN_PREFIX}exp`,
+    [mod.f32.mul(mod.f32.const(2), mod.local.get(0, f))],
+    binaryen.f32,
+  );
+  const body = mod.f32.sub(
+    mod.f32.const(1),
+    mod.f32.div(mod.f32.const(2), mod.f32.add(e2x, mod.f32.const(1))),
+  );
+  mod.addFunction(`${MATH_FN_PREFIX}tanh`, binaryen.f32, binaryen.f32, [], body);
 }

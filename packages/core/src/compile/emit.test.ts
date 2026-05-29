@@ -3278,7 +3278,7 @@ test("`emit(mod)` e2e: ネスト mod(mod(10,7),2)=1 (= 共有 local 安全性)",
   expect(await runStoreAndRead(makeStoreValueGraph(nested))).toBe(1);
 });
 
-function mathAst(kind: "sin" | "cos" | "tan" | "exp" | "log", x: number): AstNode {
+function mathAst(kind: "sin" | "cos" | "tan" | "exp" | "log" | "tanh", x: number): AstNode {
   return { kind, type: "f32", value: { kind: "literal", type: "f32", value: x } };
 }
 
@@ -3361,4 +3361,26 @@ test("`emit(log)` e2e: 定義域外は Math.log 準拠 (= log(0)→-Inf / log(-1
   expect(zero).toBe(Number.NEGATIVE_INFINITY);
   const neg = await runStoreAndRead(makeStoreValueGraph(mathAst("log", -1)));
   expect(Number.isNaN(neg)).toBe(true);
+});
+
+test("`emit(tanh)` e2e: Math.tanh と |誤差| < 1e-4 (grid)", async () => {
+  for (const x of [0, 0.5, 1, -1, 2, -2, 3, -3, 6]) {
+    const got = await runStoreAndRead(makeStoreValueGraph(mathAst("tanh", x)));
+    expect(Math.abs(got - Math.tanh(x))).toBeLessThan(1e-4);
+  }
+});
+
+test("`emit(tanh)` e2e: 大入力は ±1 に飽和 (= Inf/Inf にならない)", async () => {
+  expect(await runStoreAndRead(makeStoreValueGraph(mathAst("tanh", 10)))).toBeCloseTo(1, 4);
+  expect(await runStoreAndRead(makeStoreValueGraph(mathAst("tanh", -10)))).toBeCloseTo(-1, 4);
+});
+
+test("`emit(tanh)` e2e: ネスト tanh(sin(0.5)) (= walker が内側 sin を収集)", async () => {
+  const nested: AstNode = {
+    kind: "tanh",
+    type: "f32",
+    value: { kind: "sin", type: "f32", value: { kind: "literal", type: "f32", value: 0.5 } },
+  };
+  const got = await runStoreAndRead(makeStoreValueGraph(nested));
+  expect(Math.abs(got - Math.tanh(Math.sin(0.5)))).toBeLessThan(1e-3);
 });

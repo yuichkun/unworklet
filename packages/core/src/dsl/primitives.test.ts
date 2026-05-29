@@ -11,14 +11,6 @@ import { unwrapAst, wrapAst } from "../compile/capture.ts";
 import * as P from "./primitives.ts";
 import { abs, max, mul } from "./primitives.ts";
 
-// 未 実 装 (= 多 項 式 近 似 設 計 待 ち、 Q17) の math primitive だ け が stub list に 残 る。
-const unary = ["tanh"] as const;
-
-test.each(unary)("`%s(x)` stub throws", (name) => {
-  const fn = (P as unknown as Record<string, (x: number) => unknown>)[name];
-  expect(() => fn(0)).toThrow(/not implemented/);
-});
-
 // ─────────────────────────────────────────────────────────────────────────
 // mul = Step 3.3 fill
 // ─────────────────────────────────────────────────────────────────────────
@@ -764,4 +756,30 @@ test("`log(number)` lifts the literal", () => {
 test("`Node<T>.log()` method form = free function 同 AST", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 2 });
   expect(unwrapAst(a.log())).toEqual(unwrapAst(P.log(a)));
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// tanh (= 1 - 2/(exp(2x)+1)、共有 WASM 関数)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`tanh(node)` returns a `Node` carrying a `tanh` AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1 });
+  expect(unwrapAst(P.tanh(a))).toEqual({
+    kind: "tanh",
+    type: "f32",
+    value: { kind: "literal", type: "f32", value: 1 },
+  });
+});
+
+test("`tanh(number)` lifts the literal", () => {
+  expect(unwrapAst(P.tanh(1))).toEqual({
+    kind: "tanh",
+    type: "f32",
+    value: { kind: "literal", type: "f32", value: 1 },
+  });
+});
+
+test("`Node<T>.tanh()` method form = free function 同 AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1 });
+  expect(unwrapAst(a.tanh())).toEqual(unwrapAst(P.tanh(a)));
 });
