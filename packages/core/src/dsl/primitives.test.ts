@@ -14,7 +14,7 @@ import { abs, max, mul } from "./primitives.ts";
 const unary = ["sin", "cos", "tan", "tanh", "exp", "log", "frac"] as const;
 
 // `mul` / `abs` / `max` は Step 3.3 / sub-phase 7.8a で fill = stub list か ら 除 外。
-const binary = ["mod", "gte"] as const;
+const binary = ["mod"] as const;
 
 const ternary = ["clamp", "select"] as const;
 
@@ -495,4 +495,35 @@ test("`Node<T>.lte(other)` method form = free function 同 AST", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
   const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 5 });
   expect(unwrapAst(a.lte(b))).toEqual(unwrapAst(P.lte(a, b)));
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// gte (= f32.ge、結果 Node<'bool'>)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`gte(node, node)` returns a `Node` carrying a `gte` AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 5 });
+  const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
+  expect(unwrapAst(P.gte(a, b))).toEqual({
+    kind: "gte",
+    type: "f32",
+    lhs: { kind: "literal", type: "f32", value: 5 },
+    rhs: { kind: "literal", type: "f32", value: 3 },
+  });
+});
+
+test("`gte(node, number)` lifts the number literal", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 5 });
+  expect(unwrapAst(P.gte(a, 3))).toEqual({
+    kind: "gte",
+    type: "f32",
+    lhs: { kind: "literal", type: "f32", value: 5 },
+    rhs: { kind: "literal", type: "f32", value: 3 },
+  });
+});
+
+test("`Node<T>.gte(other)` method form = free function 同 AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 5 });
+  const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
+  expect(unwrapAst(a.gte(b))).toEqual(unwrapAst(P.gte(a, b)));
 });

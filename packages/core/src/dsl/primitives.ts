@@ -194,12 +194,19 @@ registerNodeMethod("lte", function method<
 >(this: Node<T>, other: Node<T> | number): Node<"bool"> {
   return lte(this, other);
 });
-export function gte<T extends ScalarType>(
-  _a: Node<T> | number,
-  _b: Node<T> | number,
-): Node<"bool"> {
-  return notImplemented();
+export function gte<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<"bool"> {
+  return wrapAst<"bool">({
+    kind: "gte",
+    type: "f32",
+    lhs: liftToAst(a),
+    rhs: liftToAst(b),
+  });
 }
+registerNodeMethod("gte", function method<
+  T extends ScalarType,
+>(this: Node<T>, other: Node<T> | number): Node<"bool"> {
+  return gte(this, other);
+});
 
 // Math (f32 / f64 — generic over ScalarType for stub)
 export function sin<T extends ScalarType>(_x: Node<T> | number): Node<T> {
