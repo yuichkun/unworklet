@@ -11,7 +11,7 @@ import { unwrapAst, wrapAst } from "../compile/capture.ts";
 import * as P from "./primitives.ts";
 import { abs, max, mul } from "./primitives.ts";
 
-const unary = ["sin", "cos", "tan", "tanh", "exp", "log", "frac"] as const;
+const unary = ["sin", "cos", "tan", "tanh", "exp", "log"] as const;
 
 // `mul` / `abs` / `max` は Step 3.3 / sub-phase 7.8a で fill = stub list か ら 除 外。
 const binary = ["mod"] as const;
@@ -584,4 +584,30 @@ test("`select(true, then, else)` lifts the boolean literal cond to a `bool` lite
     then: { kind: "literal", type: "f32", value: 1 },
     else: { kind: "literal", type: "f32", value: 0 },
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// frac (= x - floor(x))
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`frac(node)` returns a `Node` carrying a `frac` AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1.25 });
+  expect(unwrapAst(P.frac(a))).toEqual({
+    kind: "frac",
+    type: "f32",
+    value: { kind: "literal", type: "f32", value: 1.25 },
+  });
+});
+
+test("`frac(number)` lifts the literal", () => {
+  expect(unwrapAst(P.frac(1.25))).toEqual({
+    kind: "frac",
+    type: "f32",
+    value: { kind: "literal", type: "f32", value: 1.25 },
+  });
+});
+
+test("`Node<T>.frac()` method form = free function 同 AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1.25 });
+  expect(unwrapAst(a.frac())).toEqual(unwrapAst(P.frac(a)));
 });

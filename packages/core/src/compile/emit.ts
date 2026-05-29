@@ -73,6 +73,15 @@ const EVENT_SLOT_PTR_LOCAL = 5;
 const MESSAGE_TAIL_LOCAL = 6;
 
 /**
+ * `frac` 用 f32 temp local。 frac(x) = x - floor(x) で x を 2 度 参 照 する =
+ * `tee` で 1 度 だ け 評 価 + local hold し、 floor 側 で `get` で 再 取 得。 WASM は
+ * 厳 密 な 左→右 評 価 + emit は optimizer を 回 さ な い の で、 `tee(L,…)` 直 後 に
+ * `get(L)` で 消 費 し 間 に L を 書 く 操 作 が な い 限 り、 ネ ス ト (= frac(frac(x)))
+ * で も 取 り 違 え が 起 き な い (= 内 側 が 完 全 評 価 さ れ た 後 に 外 側 tee が L 上 書 き)。
+ */
+const FRAC_F32_LOCAL = 7;
+
+/**
  * Subnormal flush threshold (= Q21、 `04-worklet-runtime.md` §6)。
  * `state.f32` / `state.f64` の `.store(v)` で `|v| < 1e-30` を 0 に 落 と し て
  * IIR feedback path で の CPU spike を 撤 廃。 threshold 1e-30 は
@@ -145,6 +154,7 @@ export async function emit(
       binaryen.i32,
       binaryen.i32,
       binaryen.i32,
+      binaryen.f32, // FRAC_F32_LOCAL (= frac 用 temp)
     ],
     body,
   );
@@ -309,6 +319,16 @@ export function emitExpression(
       return mod.f32.floor(emitExpression(node.value, layout, mod, binaryen));
     case "ceil":
       return mod.f32.ceil(emitExpression(node.value, layout, mod, binaryen));
+    // frac(x) = x - floor(x) (= GLSL fract、 結 果 は [0,1))。 x を FRAC_F32_LOCAL に
+    // tee し て 1 度 だ け 評 価、 floor 側 で get で 再 取 得 (= 二 重 評 価 回 避)。
+    case "frac": {
+      const teed = mod.local.tee(
+        FRAC_F32_LOCAL,
+        emitExpression(node.value, layout, mod, binaryen),
+        binaryen.f32,
+      );
+      return mod.f32.sub(teed, mod.f32.floor(mod.local.get(FRAC_F32_LOCAL, binaryen.f32)));
+    }
     case "max":
       return mod.f32.max(
         emitExpression(node.lhs, layout, mod, binaryen),

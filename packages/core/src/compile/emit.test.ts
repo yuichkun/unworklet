@@ -3197,3 +3197,47 @@ test("`emit(select)` e2e: cond true → then(10) / cond false → else(20)", asy
   const f = await runStoreAndRead(makeStoreValueGraph(selectAst(cmp("gt", 3, 5), 10, 20)));
   expect(f).toBe(20);
 });
+
+function fracAst(value: AstNode): AstNode {
+  return { kind: "frac", type: "f32", value };
+}
+
+test("`emitExpression(frac)` lowers to `f32.sub` + `f32.floor` (temp local 経由)", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(
+    fracAst({ kind: "literal", type: "f32", value: 1.25 }),
+    emptyLayout,
+    mod,
+    binaryen,
+  );
+  const wat = watOfExpression(mod, binaryen, ref, binaryen.f32);
+  expect(wat).toContain("(f32.sub");
+  expect(wat).toContain("(f32.floor");
+  mod.dispose();
+});
+
+test("`emit(frac)` e2e: frac(1.25)=0.25 / frac(3)=0", async () => {
+  expect(
+    await runStoreAndRead(
+      makeStoreValueGraph(fracAst({ kind: "literal", type: "f32", value: 1.25 })),
+    ),
+  ).toBe(0.25);
+  expect(
+    await runStoreAndRead(makeStoreValueGraph(fracAst({ kind: "literal", type: "f32", value: 3 }))),
+  ).toBe(0);
+});
+
+test("`emit(frac)` e2e: frac(-0.3) ≈ 0.7 (= GLSL fract、結果 [0,1))", async () => {
+  const v = await runStoreAndRead(
+    makeStoreValueGraph(fracAst({ kind: "literal", type: "f32", value: -0.3 })),
+  );
+  expect(v).toBeCloseTo(0.7, 5);
+});
+
+test("`emit(frac)` e2e: ネスト frac(frac(1.75)) = 0.75 (= 共有 local がネストで壊れない)", async () => {
+  const v = await runStoreAndRead(
+    makeStoreValueGraph(fracAst(fracAst({ kind: "literal", type: "f32", value: 1.75 }))),
+  );
+  expect(v).toBeCloseTo(0.75, 5);
+});
