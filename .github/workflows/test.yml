@@ -28,6 +28,9 @@ jobs:
           node-version: "24"
           cache: true
       - run: vp install
+      - name: Build all packages (= dist が必要、 各 package の exports map で
+          import condition が dist を指している)
+        run: vp run -r build
       - name: Install playwright chromium (for browser e2e projects)
         working-directory: examples/01-stereo-gain
         run: vp exec playwright install --with-deps chromium
@@ -44,6 +47,9 @@ jobs:
           node-version: "24"
           cache: true
       - run: vp install
+      - name: Build all packages (= dist が必要、 各 package の exports map で
+          import condition が dist を指している)
+        run: vp run -r build
       - name: Install playwright chromium
         working-directory: examples/01-stereo-gain
         run: vp exec playwright install --with-deps chromium
