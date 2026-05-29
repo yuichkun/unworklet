@@ -84,10 +84,9 @@ function liftStoreValue<T extends ScalarType>(type: T, v: Node<T> | ScalarOf<T>)
     return { kind: "literal", type: "i32", value: v ? 1 : 0 };
   }
   if (typeof v === "bigint") {
-    // i64 literal store の bigint path は ast.ts の literal `value: number`
-    // 制 約 下 で 表 現 不 完 全 = 後 続 sub-phase で literal 型 拡 張 と
-    // zip し て fill。 Node<'i64'> 経 由 (= stateLoad 等) は そ の ま ま 通 る。
-    throw new Error("i64 literal store not implemented (= 後 続 sub-phase で fill)");
+    // i64 literal store: bigint を そ の ま ま literal node に 担 ぐ (= emit が
+    // `i64.const` へ 32bit word 分 割)。 Node<'i64'> 経 由 (= stateLoad 等) も 同 path。
+    return { kind: "literal", type: "i64", value: v };
   }
   return unwrapAst(v as Node<ScalarType>);
 }

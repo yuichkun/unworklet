@@ -13,8 +13,8 @@
 
 import { expect, test } from "vite-plus/test";
 
-import { audioOutput } from "../../dsl/declarations.ts";
-import { f32, f64, i32 } from "../../dsl/constructors.ts";
+import { audioOutput, state } from "../../dsl/declarations.ts";
+import { f32, f64, i32, i64 } from "../../dsl/constructors.ts";
 import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
 import { forSample } from "../../dsl/loop.ts";
 import { select } from "../../dsl/primitives.ts";
@@ -269,4 +269,106 @@ test("f64 tanh: tanh(0) ≈ 0", async () => {
 
 test("f64 tanh: tanh(10) ≈ 1 (saturates)", async () => {
   approx(await gen(() => f32(f64(10).tanh())), 1, 3);
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// i64 path (Stage 1c) — BigInt-only construction (Q33-c: no implicit number
+// lift). Observed by narrowing i64 → i32 (wrap, low 32 bits) → f32, or by
+// converting i64 → f32 directly when the full 64-bit magnitude must survive.
+// ─────────────────────────────────────────────────────────────────────────
+
+test("i64 literal: f32(i32(i64(42n))) is the constant 42", async () => {
+  allEqual(await gen(() => f32(i32(i64(42n)))), 42);
+});
+
+test("i64 add: 7 + 10 = 17", async () => {
+  allEqual(await gen(() => f32(i32(i64(7n).add(i64(10n))))), 17);
+});
+
+test("i64 sub: 10 - 3 = 7", async () => {
+  allEqual(await gen(() => f32(i32(i64(10n).sub(i64(3n))))), 7);
+});
+
+test("i64 mul: 6 * 7 = 42", async () => {
+  allEqual(await gen(() => f32(i32(i64(6n).mul(i64(7n))))), 42);
+});
+
+test("i64 div: 17 / 5 = 3 (truncating signed division)", async () => {
+  allEqual(await gen(() => f32(i32(i64(17n).div(i64(5n))))), 3);
+});
+
+test("i64 div: -17 / 5 = -3 (truncation toward zero)", async () => {
+  allEqual(await gen(() => f32(i32(i64(-17n).div(i64(5n))))), -3);
+});
+
+test("i64 mod: 17 % 5 = 2 (signed remainder)", async () => {
+  allEqual(await gen(() => f32(i32(i64(17n).mod(i64(5n))))), 2);
+});
+
+test("i64 mod: -17 % 5 = -2 (sign follows the dividend)", async () => {
+  allEqual(await gen(() => f32(i32(i64(-17n).mod(i64(5n))))), -2);
+});
+
+test("i64 neg: -(5) = -5", async () => {
+  allEqual(await gen(() => f32(i32(i64(5n).neg()))), -5);
+});
+
+// 64-bit width proof: 100000 * 100000 = 1e10 survives in i64 (exactly
+// representable in f32: 1e10 = 9765625 · 2^10), whereas the same product in
+// i32 would wrap to 1410065408. Observed via i64 → f32 (full magnitude).
+test("i64 mul exceeds i32 range: 100000 * 100000 = 1e10", async () => {
+  allEqual(await gen(() => f32(i64(100000n).mul(i64(100000n)))), 1e10);
+});
+
+// 64-bit division proof: 1e10 / 1e9 = 10 needs the full operands; truncated to
+// i32 the operands collapse (1e10 → 1410065408, 1e9 → 1e9) and give 1.
+test("i64 div exceeds i32 range: 1e10 / 1e9 = 10", async () => {
+  allEqual(await gen(() => f32(i32(i64(10000000000n).div(i64(1000000000n))))), 10);
+});
+
+test("i64 lt drives select: 3 < 5 ? 1 : 0 = 1", async () => {
+  allEqual(await gen(() => select(i64(3n).lt(i64(5n)), f32(1), f32(0))), 1);
+});
+
+test("i64 gt drives select: 3 > 5 ? 1 : 0 = 0", async () => {
+  allEqual(await gen(() => select(i64(3n).gt(i64(5n)), f32(1), f32(0))), 0);
+});
+
+test("i64 eq drives select: 5 == 5 ? 1 : 0 = 1", async () => {
+  allEqual(await gen(() => select(i64(5n).eq(i64(5n)), f32(1), f32(0))), 1);
+});
+
+test("i64 lte drives select: 5 <= 5 ? 1 : 0 = 1", async () => {
+  allEqual(await gen(() => select(i64(5n).lte(i64(5n)), f32(1), f32(0))), 1);
+});
+
+test("i64 gte drives select: 3 >= 5 ? 1 : 0 = 0", async () => {
+  allEqual(await gen(() => select(i64(3n).gte(i64(5n)), f32(1), f32(0))), 0);
+});
+
+test("convert i64 → f64 → f32: f64(i64(2n**33n)) survives past 2^32", async () => {
+  allEqual(await gen(() => f32(f64(i64(2n ** 33n)))), 2 ** 33);
+});
+
+// i64 literal survives the store → memory → load round-trip at full 64-bit
+// width: 2^40 + 7 stored, loaded, wrapped to i32 = 7 (low 32 bits; 2^40 mod
+// 2^32 = 0). An i32 slot could never have held the 2^40 component.
+test("i64 state round-trip: store 2^40 + 7, load → wrap to i32 = 7", async () => {
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const acc = state.i64(0n);
+    return {
+      process: () => {
+        acc.store(i64(2n ** 40n + 7n));
+        forSample((i) => {
+          out
+            .ch(0)
+            .at(i)
+            .write(f32(i32(acc.load())));
+        });
+      },
+    };
+  });
+  const { outputs } = await render(proc);
+  allEqual(outputs.main![0]!, 7);
 });

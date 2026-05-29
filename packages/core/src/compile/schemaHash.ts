@@ -21,7 +21,12 @@
 import type { CapturedGraph } from "./ast.ts";
 
 export async function schemaHash(graph: CapturedGraph): Promise<string> {
-  const serialized = JSON.stringify(graph);
+  // i64 literal value / state initial は bigint = JSON が serialize で きない。
+  // `<value>n` 文 字 列 に 落 と し て deterministic + 値 別 に hash 反 映 (= number
+  // 由 来 の graph は bigint を 含 ま な い の で 既 存 hash は 不 変)。
+  const serialized = JSON.stringify(graph, (_key, value: unknown) =>
+    typeof value === "bigint" ? `${value}n` : value,
+  );
   const data = new TextEncoder().encode(serialized);
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   return Array.from(new Uint8Array(hashBuffer))

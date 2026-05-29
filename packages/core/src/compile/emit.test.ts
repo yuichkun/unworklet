@@ -1056,15 +1056,6 @@ test("`emit` state.bool stateLoad hit via state ↔ state copy", async () => {
   expect(view[0]).toBe(1);
 });
 
-test("`emitExpression(literal i64)` throws 後 続 phase stub marker", async () => {
-  const binaryen = await loadBinaryen();
-  const mod = makeMod(binaryen);
-  expect(() =>
-    emitExpression({ kind: "literal", type: "i64", value: 0 }, emptyLayout, mod, binaryen),
-  ).toThrow(/i64 literal emission not implemented/);
-  mod.dispose();
-});
-
 test("`emitExpression(literal bool)` emits i32.const (= bool は内部 i32 表現 0/1)", async () => {
   // select の boolean branch (= `select(cond, true, boolNode)`、canonical bool-state パターン)
   // が bool literal に lift される → emit で i32.const に落ちること (= 以前は throw stub)。

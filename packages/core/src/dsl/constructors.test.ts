@@ -1,18 +1,14 @@
 /**
  * Scalar constructor behavior (= `01-dsl.md` §2.2, `decisions-log.md`
- * Q33 + Q77). `f32` / `i32` / `f64` are implemented (literal lift +
+ * Q33 + Q77). `f32` / `f64` / `i32` / `i64` are implemented (literal lift +
  * cross-precision convert); their black-box behavior lives in
- * `../__tests__/behavior/multitype.test.ts`. `i64` / `bool` / `num` still
- * throw until their stages land.
+ * `../__tests__/behavior/multitype.test.ts`. `bool` / `num` still throw until
+ * their stage lands.
  */
 
 import { expect, test } from "vite-plus/test";
 
-import { bool, i64, num } from "./constructors.ts";
-
-test("`i64(bigint)` stub throws", () => {
-  expect(() => i64(0n)).toThrow(/not implemented/);
-});
+import { bool, num } from "./constructors.ts";
 
 test("`bool(v)` stub throws", () => {
   expect(() => bool(false)).toThrow(/not implemented/);

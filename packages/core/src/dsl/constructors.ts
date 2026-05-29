@@ -41,8 +41,10 @@ export function i32(v: number | Node<ScalarType>): Node<"i32"> {
   return convertTo("i32", v);
 }
 
-export function i64(_v: bigint): Node<"i64"> {
-  return notImplemented();
+export function i64(v: bigint): Node<"i64"> {
+  // No implicit number lift (Q33-c): BigInt is the only accepted input, so an
+  // i64 literal always carries a `bigint` value.
+  return wrapAst<"i64">({ kind: "literal", type: "i64", value: v });
 }
 
 export function bool(_v: boolean | Node<"bool">): Node<"bool"> {

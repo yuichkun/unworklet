@@ -523,12 +523,20 @@ test("`state.bool(false).store(false)` lifts boolean to internal i32 0 literal",
   });
 });
 
-test("`state.i64(0n).store(bigint literal)` throws (= 後 続 sub-phase で fill)", () => {
+test("`state.i64(0n).store(bigint literal)` captures an `i64` literal AST", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const z = state.i64(0n);
-    expect(() => z.store(42n)).toThrow(/i64 literal store not implemented/);
+    z.store(42n);
   });
+  expect(ctx.statements).toEqual([
+    {
+      kind: "stateStore",
+      type: "i64",
+      name: "__state_0",
+      value: { kind: "literal", type: "i64", value: 42n },
+    },
+  ]);
 });
 
 test("`state.named('X').f32(0)` 前 付 け chain registers with name `X`", () => {

@@ -342,7 +342,30 @@ function emitNumericBinary(
         return mod.i32.ge_s(lhs, rhs);
     }
   }
-  // f32 / f64 (i64 dispatch lands with the i64 stage).
+  // i64 = 符 号 付 き (= div_s / lt_s 等)。 comparison は i32 (= bool 0/1) を 返 す。
+  if (type === "i64") {
+    switch (op) {
+      case "add":
+        return mod.i64.add(lhs, rhs);
+      case "sub":
+        return mod.i64.sub(lhs, rhs);
+      case "mul":
+        return mod.i64.mul(lhs, rhs);
+      case "div":
+        return mod.i64.div_s(lhs, rhs);
+      case "eq":
+        return mod.i64.eq(lhs, rhs);
+      case "lt":
+        return mod.i64.lt_s(lhs, rhs);
+      case "gt":
+        return mod.i64.gt_s(lhs, rhs);
+      case "le":
+        return mod.i64.le_s(lhs, rhs);
+      case "ge":
+        return mod.i64.ge_s(lhs, rhs);
+    }
+  }
+  // f32 / f64.
   const fl = floatNs(mod, type);
   switch (op) {
     case "add":
@@ -366,9 +389,19 @@ function emitNumericBinary(
   }
 }
 
-/** Type-dispatched negation. WASM has no `i32.neg` = `0 - x`. */
+/**
+ * `i64.const` from a bigint. binaryen 129 の `i64.const` は 単 一 bigint 引 数 を
+ * 取 る が bundled d.ts は 旧 `(low, high)` signature の ま ま (= 実 装 と 不 一 致)。
+ * member 式 を inline call し て cast = `this` 束 縛 を 保 っ た ま ま 型 を 通 す。
+ */
+function i64Const(mod: BinaryenModule, value: bigint): number {
+  return (mod.i64.const as unknown as (value: bigint) => number)(value);
+}
+
+/** Type-dispatched negation. WASM has no integer `neg` = `0 - x`. */
 function emitNeg(mod: BinaryenModule, type: ScalarType, x: number): number {
   if (type === "i32") return mod.i32.sub(mod.i32.const(0), x);
+  if (type === "i64") return mod.i64.sub(i64Const(mod, 0n), x);
   return floatNs(mod, type).neg(x);
 }
 
@@ -406,7 +439,12 @@ function emitConvert(mod: BinaryenModule, from: ScalarType, to: ScalarType, valu
   if (from === "f64" && to === "i32") return mod.i32.trunc_s_sat.f64(value);
   if (from === "f32" && to === "f64") return mod.f64.promote(value);
   if (from === "f64" && to === "f32") return mod.f32.demote(value);
-  /* v8 ignore next 2 — 残 り convert pair (= i64 / bool) は 各 type の stage で fill、 該 当 type の node は ま だ 構 築 不 可 */
+  // i64 は bigint-only construction (= 昇 格 convert ナ シ)、 narrowing だ け: i32 へ
+  // は wrap (= 下 位 32bit)、 f32 / f64 へ は signed convert。
+  if (from === "i64" && to === "i32") return mod.i32.wrap(value);
+  if (from === "i64" && to === "f32") return mod.f32.convert_s.i64(value);
+  if (from === "i64" && to === "f64") return mod.f64.convert_s.i64(value);
+  /* v8 ignore next 2 — 残 り convert pair (= bool) は bool stage で fill、 該 当 type の node は ま だ 構 築 不 可 */
   throw new Error(`unworklet: convert ${from} → ${to} not implemented yet`);
 }
 
@@ -417,21 +455,24 @@ export function emitExpression(
   binaryen: BinaryenAPI,
 ): number {
   switch (node.kind) {
-    case "literal":
+    case "literal": {
+      // i64 literal は bigint (= Q33-c)。
+      if (node.type === "i64") {
+        return i64Const(mod, BigInt(node.value));
+      }
       // bool は 内 部 i32 表 現 (= 0/1) な の で i32.const に 落 と す (= select の
-      // boolean branch literal 等)。 i64 literal は `value: number` 制 約 下 で
-      // BigInt 表 現 不 完 全 = 後 続 sub-phase で literal 型 拡 張 と zip し て fill。
+      // boolean branch literal 等)。 残 り は 全 て JS number。
+      const value = Number(node.value);
       switch (node.type) {
         case "f32":
-          return mod.f32.const(node.value);
+          return mod.f32.const(value);
         case "f64":
-          return mod.f64.const(node.value);
+          return mod.f64.const(value);
         case "i32":
         case "bool":
-          return mod.i32.const(node.value);
-        case "i64":
-          throw new Error("i64 literal emission not implemented (= 後 続 sub-phase で fill)");
+          return mod.i32.const(value);
       }
+    }
     case "loopCounter":
       return mod.local.get(LOOP_COUNTER_LOCAL, binaryen.i32);
     case "mul":
@@ -459,9 +500,15 @@ export function emitExpression(
     // 上 書 き と 取 り 違 え ナ シ。 select は 直 前 の set で MOD_Q / MOD_B が 確 定 済 み。
     case "mod": {
       // Integer remainder = signed `rem_s` (= WASM 標 準、 符 号 は 被 除 数)。
-      // float (f32) は 下 の JS `%` 準 拠 special impl。
+      // float (f32 / f64) は 下 の JS `%` 準 拠 special impl。
       if (node.type === "i32") {
         return mod.i32.rem_s(
+          emitExpression(node.lhs, layout, mod, binaryen),
+          emitExpression(node.rhs, layout, mod, binaryen),
+        );
+      }
+      if (node.type === "i64") {
+        return mod.i64.rem_s(
           emitExpression(node.lhs, layout, mod, binaryen),
           emitExpression(node.rhs, layout, mod, binaryen),
         );

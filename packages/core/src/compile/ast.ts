@@ -13,7 +13,10 @@
 import type { PublishOptions, ScalarType, SnapshotPolicy } from "../types.ts";
 
 export type AstNode =
-  | { kind: "literal"; type: ScalarType; value: number }
+  // `value` is a JS `number` for every scalar type except `'i64'`, whose
+  // literal carries a `bigint` (no implicit number lift, Q33-c) and lowers to
+  // `i64.const` via a 32-bit word split.
+  | { kind: "literal"; type: ScalarType; value: number | bigint }
   | { kind: "mul"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "add"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "sub"; type: ScalarType; lhs: AstNode; rhs: AstNode }
