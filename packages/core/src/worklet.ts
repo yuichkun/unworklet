@@ -181,6 +181,13 @@ type WorkletState = {
   readonly messageRings: readonly MessageRingSlotDescriptor[];
   readonly messageRingSabOffsets: readonly number[];
   readonly messageRingsWasmViews: readonly Uint8Array[];
+  /**
+   * postMessage inject path 用 = 各 message ring の WASM 内 region を 1 度 だ け
+   * pre-bind し た DataView (= field 別 setInt32 用)。 process() で 毎 quantum
+   * `new DataView(...)` す る と audio thread alloc に な る た め init で 確 保
+   * (= `messageRingsWasmViews` と 同 region、 `00-foundations.md` §5.1)。
+   */
+  readonly messageRingsWasmDataViews: readonly DataView[];
   readonly messageRingsSabViews: readonly Uint8Array[];
   readonly messageRingsWasmHeaderViews: readonly Int32Array[];
   readonly messageRingsSabHeaderViews: readonly Int32Array[];
@@ -496,6 +503,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       const messageRings = opts.processorOptions?.messageRings ?? [];
       const messageRingSabOffsets = opts.processorOptions?.messageRingSabOffsets ?? [];
       const messageRingsWasmViews: Uint8Array[] = [];
+      const messageRingsWasmDataViews: DataView[] = [];
       const messageRingsSabViews: Uint8Array[] = [];
       const messageRingsWasmHeaderViews: Int32Array[] = [];
       const messageRingsSabHeaderViews: Int32Array[] = [];
@@ -506,6 +514,9 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         const ringTotalBytes = 12 + ring.capacity * ring.slotSize;
         messageRingsWasmViews.push(
           new Uint8Array(memory.buffer, ring.wasmRingBase, ringTotalBytes),
+        );
+        messageRingsWasmDataViews.push(
+          new DataView(memory.buffer, ring.wasmRingBase, ringTotalBytes),
         );
         messageRingsWasmHeaderViews.push(new Int32Array(memory.buffer, ring.wasmRingBase, 3));
         if (messageRingsBuffer !== null) {
@@ -545,6 +556,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         messageRings,
         messageRingSabOffsets,
         messageRingsWasmViews,
+        messageRingsWasmDataViews,
         messageRingsSabViews,
         messageRingsWasmHeaderViews,
         messageRingsSabHeaderViews,
@@ -718,13 +730,10 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
           const queue = state.messageQueueMirrors[i]!;
           if (queue.length === 0) continue;
           const ring = state.messageRings[i]!;
-          const wasmView = state.messageRingsWasmViews[i]!;
           const wasmH = state.messageRingsWasmHeaderViews[i]!;
-          const wasmDataView = new DataView(
-            wasmView.buffer,
-            wasmView.byteOffset,
-            wasmView.byteLength,
-          );
+          // ring view は init で pre-bind 済 み を 使 い 回 す (= audio thread で の
+          // per-quantum DataView alloc を 避 け る、 `00-foundations.md` §5.1)。
+          const wasmDataView = state.messageRingsWasmDataViews[i]!;
           const capacity = ring.capacity;
           const slotSize = ring.slotSize;
           for (const payload of queue) {
