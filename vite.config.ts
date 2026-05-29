@@ -2,6 +2,14 @@ import { defineConfig } from "vite-plus";
 
 export default defineConfig({
   fmt: {},
+  staged: {
+    // pre-commit hook で staged file に vp check --fix を 自動 (= fmt + lint
+    // auto-fix)。 test は 走 ら さ ない (= commit 単位 で 落 ち て いる の は OK、
+    // format は 常 に 自 動)。 hooks の install は `vp config` で 1 度 だ け、
+    // `.vite-hooks/` を repo に commit し て 他 dev clone で も 同 hook を 効
+    // か せ る。
+    "*.{js,jsx,ts,tsx,json,yaml,yml}": "vp check --fix",
+  },
   lint: {
     jsPlugins: [{ name: "vite-plus", specifier: "vite-plus/oxlint-plugin" }],
     rules: { "vite-plus/prefer-vite-plus-imports": "error" },

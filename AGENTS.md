@@ -50,6 +50,7 @@ This project uses [Vite+](https://viteplus.dev). All workflows go through `vp`. 
 | Action                                | Command                                                        |
 | ------------------------------------- | -------------------------------------------------------------- |
 | Install deps                          | `vp install` (alias `vp i`)                                    |
+| Setup git hooks (= 1 度のみ、 pre-commit で staged file に vp check --fix 自動) | `vp config`                                  |
 | Add a dep                             | `vp add <pkg>` (dev: `vp add -D <pkg>`)                        |
 | Remove a dep                          | `vp remove <pkg>` (aliases `vp rm`, `vp un`, `vp uninstall`)   |
 | Update / outdated / list / why / info | `vp update` / `vp outdated` / `vp list` / `vp why` / `vp info` |

@@ -33,3 +33,6 @@ coverage
 # Playwright
 test-results/
 playwright-report/
+
+# Vite+ git hooks (= clone 後 `vp config` で local 生成)
+.vite-hooks/
