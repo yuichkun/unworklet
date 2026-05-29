@@ -47,21 +47,21 @@ skeleton phase (= `docs/10-roadmap.md` §2 Phase 2 等) で も **公開 type �
 
 This project uses [Vite+](https://viteplus.dev). All workflows go through `vp`. **Never invoke `npm`, `pnpm`, `yarn`, or `npx` directly** — not in shell, not in scripts, not in CI config, not in test-plan commands.
 
-| Action                                | Command                                                        |
-| ------------------------------------- | -------------------------------------------------------------- |
-| Install deps                          | `vp install` (alias `vp i`)                                    |
-| Setup git hooks (= 1 度のみ、 pre-commit で staged file に vp check --fix 自動) | `vp config`                                  |
-| Add a dep                             | `vp add <pkg>` (dev: `vp add -D <pkg>`)                        |
-| Remove a dep                          | `vp remove <pkg>` (aliases `vp rm`, `vp un`, `vp uninstall`)   |
-| Update / outdated / list / why / info | `vp update` / `vp outdated` / `vp list` / `vp why` / `vp info` |
-| Dev server                            | `vp dev`                                                       |
-| Build                                 | `vp build`                                                     |
-| Library pack                          | `vp pack`                                                      |
-| Tests                                 | `vp test`                                                      |
-| Combined typecheck + lint + format    | `vp check` (auto-fix: `vp check --fix`)                        |
-| Run a `package.json` script           | `vp run <script>`                                              |
-| One-off tool                          | `vp dlx <pkg>` (replaces `npx`)                                |
-| One-off local binary                  | `vp exec <binary>`                                             |
+| Action                                                                          | Command                                                        |
+| ------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Install deps                                                                    | `vp install` (alias `vp i`)                                    |
+| Setup git hooks (= 1 度のみ、 pre-commit で staged file に vp check --fix 自動) | `vp config`                                                    |
+| Add a dep                                                                       | `vp add <pkg>` (dev: `vp add -D <pkg>`)                        |
+| Remove a dep                                                                    | `vp remove <pkg>` (aliases `vp rm`, `vp un`, `vp uninstall`)   |
+| Update / outdated / list / why / info                                           | `vp update` / `vp outdated` / `vp list` / `vp why` / `vp info` |
+| Dev server                                                                      | `vp dev`                                                       |
+| Build                                                                           | `vp build`                                                     |
+| Library pack                                                                    | `vp pack`                                                      |
+| Tests                                                                           | `vp test`                                                      |
+| Combined typecheck + lint + format                                              | `vp check` (auto-fix: `vp check --fix`)                        |
+| Run a `package.json` script                                                     | `vp run <script>`                                              |
+| One-off tool                                                                    | `vp dlx <pkg>` (replaces `npx`)                                |
+| One-off local binary                                                            | `vp exec <binary>`                                             |
 
 There is no `vp typecheck`, `vp tsc`, `vp vitest`, or `vp oxlint`. `vp check` covers all gates and `vp test` runs Vitest under the hood.
 
