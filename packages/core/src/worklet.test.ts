@@ -1123,6 +1123,40 @@ test("message inject (postMessage): process 内 で DataView を 毎 quantum all
   expect(ctorCount).toBe(0);
 });
 
+test("message inject (postMessage): ingress queue を ring capacity で bound す る (= drop-oldest、 audio thread unbounded loop 回避、 §5.1)", async () => {
+  const { wasm } = await compile(messagePostProc);
+  const self = makeMockSelf();
+  messagePostProc.worklet.initialize(self, {
+    processorOptions: {
+      wasm,
+      messageRings: messagePostProc.worklet.messageRings,
+      messageRingSabOffsets: [0],
+      transport: "postMessage",
+    },
+  });
+  const capacity = messagePostProc.worklet.messageRings[0]!.capacity;
+
+  // process() を 挟 ま ず に capacity 超 の burst を ingress (= main が 1 quantum 間 に
+  // ring capacity を 超 え る 数 を post し た 状 況)。 bound ナ シ だ と queue が burst
+  // サ イ ズ ま で 膨 ら み、 process() の `for (const payload of queue)` が audio thread
+  // で burst 比 例 = unbounded loop (= 00-foundations §5.1 invariant 2 違 反)。
+  const burst = capacity + 8;
+  for (let i = 0; i < burst; i++) {
+    firePortMessage(self, { kind: "message", ringIndex: 0, payload: { slot: i } });
+  }
+
+  // 内 部 state (= module-private Symbol) を 白 箱 read し て ingress queue 長 を 確 認。
+  const stateKey = Object.getOwnPropertySymbols(self).find(
+    (s) => s.description === "unworklet.workletState",
+  );
+  expect(stateKey).toBeDefined();
+  const state = (self as unknown as Record<symbol, { messageQueueMirrors: unknown[][] }>)[
+    stateKey!
+  ]!;
+  // ingress queue は ring capacity を 超 え な い (= drop-oldest で bound)
+  expect(state.messageQueueMirrors[0]!.length).toBe(capacity);
+});
+
 test("message ring (no decl): port.addEventListener は呼 ば れ な い + start も 呼 ば れ ない (= regression)", async () => {
   const { wasm } = await compile(monoGain);
   const self = makeMockSelf();
