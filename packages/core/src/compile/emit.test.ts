@@ -2742,3 +2742,45 @@ test("`emit(add)` e2e: 2 + (-5) = -3 (負値)", async () => {
   );
   expect(stored).toBe(-3);
 });
+
+test("`emitExpression(sub)` lowers to `f32.sub`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(
+    {
+      kind: "sub",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 5 },
+      rhs: { kind: "literal", type: "f32", value: 3 },
+    },
+    emptyLayout,
+    mod,
+    binaryen,
+  );
+  expect(watOfExpression(mod, binaryen, ref, binaryen.f32)).toContain("(f32.sub");
+  mod.dispose();
+});
+
+test("`emit(sub)` e2e: 5 - 3 = 2", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "sub",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 5 },
+      rhs: { kind: "literal", type: "f32", value: 3 },
+    }),
+  );
+  expect(stored).toBe(2);
+});
+
+test("`emit(sub)` e2e: 3 - 5 = -2 (負値)", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "sub",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 3 },
+      rhs: { kind: "literal", type: "f32", value: 5 },
+    }),
+  );
+  expect(stored).toBe(-2);
+});

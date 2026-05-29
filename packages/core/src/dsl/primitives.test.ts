@@ -26,7 +26,7 @@ const unary = [
 ] as const;
 
 // `mul` / `abs` / `max` は Step 3.3 / sub-phase 7.8a で fill = stub list か ら 除 外。
-const binary = ["sub", "div", "mod", "eq", "lt", "gt", "lte", "gte", "min"] as const;
+const binary = ["div", "mod", "eq", "lt", "gt", "lte", "gte", "min"] as const;
 
 const ternary = ["clamp", "select"] as const;
 
@@ -187,4 +187,35 @@ test("`Node<T>.add(other)` method form = free function 同 AST", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 2 });
   const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
   expect(unwrapAst(a.add(b))).toEqual(unwrapAst(P.add(a, b)));
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// sub (native f32.sub)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`sub(node, node)` returns a `Node` carrying a `sub` AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 5 });
+  const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
+  expect(unwrapAst(P.sub(a, b))).toEqual({
+    kind: "sub",
+    type: "f32",
+    lhs: { kind: "literal", type: "f32", value: 5 },
+    rhs: { kind: "literal", type: "f32", value: 3 },
+  });
+});
+
+test("`sub(node, number)` lifts the number literal", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 5 });
+  expect(unwrapAst(P.sub(a, 0.5))).toEqual({
+    kind: "sub",
+    type: "f32",
+    lhs: { kind: "literal", type: "f32", value: 5 },
+    rhs: { kind: "literal", type: "f32", value: 0.5 },
+  });
+});
+
+test("`Node<T>.sub(other)` method form = free function 同 AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 5 });
+  const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
+  expect(unwrapAst(a.sub(b))).toEqual(unwrapAst(P.sub(a, b)));
 });
