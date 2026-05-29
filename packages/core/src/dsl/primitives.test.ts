@@ -556,8 +556,8 @@ test("`select(condNode, then, else)` returns a `Node` carrying a `select` AST", 
       lhs: { kind: "literal", type: "f32", value: 5 },
       rhs: { kind: "literal", type: "f32", value: 3 },
     },
-    then: { kind: "literal", type: "f32", value: 10 },
-    else: { kind: "literal", type: "f32", value: 20 },
+    ifTrue: { kind: "literal", type: "f32", value: 10 },
+    ifFalse: { kind: "literal", type: "f32", value: 20 },
   });
 });
 
@@ -566,8 +566,8 @@ test("`select(true, then, else)` lifts the boolean literal cond to a `bool` lite
     kind: "select",
     type: "f32",
     cond: { kind: "literal", type: "bool", value: 1 },
-    then: { kind: "literal", type: "f32", value: 1 },
-    else: { kind: "literal", type: "f32", value: 0 },
+    ifTrue: { kind: "literal", type: "f32", value: 1 },
+    ifFalse: { kind: "literal", type: "f32", value: 0 },
   });
 });
 

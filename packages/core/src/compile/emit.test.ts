@@ -3178,8 +3178,8 @@ function selectAst(cond: AstNode, then: number, else_: number): AstNode {
     kind: "select",
     type: "f32",
     cond,
-    then: { kind: "literal", type: "f32", value: then },
-    else: { kind: "literal", type: "f32", value: else_ },
+    ifTrue: { kind: "literal", type: "f32", value: then },
+    ifFalse: { kind: "literal", type: "f32", value: else_ },
   };
 }
 

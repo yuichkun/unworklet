@@ -467,8 +467,8 @@ export function emitExpression(
     case "select":
       return mod.select(
         emitExpression(node.cond, layout, mod, binaryen),
-        emitExpression(node.then, layout, mod, binaryen),
-        emitExpression(node.else, layout, mod, binaryen),
+        emitExpression(node.ifTrue, layout, mod, binaryen),
+        emitExpression(node.ifFalse, layout, mod, binaryen),
       );
     case "audioInRead": {
       const portBase = layout.regions.ioScratch.inputs[node.portName];
@@ -1010,8 +1010,8 @@ function collectUsedMathKinds(graph: CapturedGraph): Set<string> {
         break;
       case "select":
         visit(node.cond);
-        visit(node.then);
-        visit(node.else);
+        visit(node.ifTrue);
+        visit(node.ifFalse);
         break;
       case "audioInRead":
       case "paramAt":

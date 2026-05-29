@@ -383,7 +383,7 @@ export function select<T extends ScalarType>(
       typeof cond === "boolean"
         ? { kind: "literal", type: "bool", value: cond ? 1 : 0 }
         : unwrapAst(cond),
-    then: liftToAst(then),
-    else: liftToAst(else_),
+    ifTrue: liftToAst(then),
+    ifFalse: liftToAst(else_),
   });
 }
