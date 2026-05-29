@@ -114,9 +114,19 @@ registerNodeMethod("mul", function method<
 >(this: Node<T>, other: Node<T> | number): Node<T> {
   return mul(this, other);
 });
-export function div<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<T> {
-  return notImplemented();
+export function div<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "div",
+    type: "f32",
+    lhs: liftToAst(a),
+    rhs: liftToAst(b),
+  });
 }
+registerNodeMethod("div", function method<
+  T extends ScalarType,
+>(this: Node<T>, other: Node<T> | number): Node<T> {
+  return div(this, other);
+});
 export function mod<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<T> {
   return notImplemented();
 }

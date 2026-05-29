@@ -2784,3 +2784,57 @@ test("`emit(sub)` e2e: 3 - 5 = -2 (負値)", async () => {
   );
   expect(stored).toBe(-2);
 });
+
+test("`emitExpression(div)` lowers to `f32.div`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(
+    {
+      kind: "div",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 10 },
+      rhs: { kind: "literal", type: "f32", value: 2 },
+    },
+    emptyLayout,
+    mod,
+    binaryen,
+  );
+  expect(watOfExpression(mod, binaryen, ref, binaryen.f32)).toContain("(f32.div");
+  mod.dispose();
+});
+
+test("`emit(div)` e2e: 10 / 2 = 5", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "div",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 10 },
+      rhs: { kind: "literal", type: "f32", value: 2 },
+    }),
+  );
+  expect(stored).toBe(5);
+});
+
+test("`emit(div)` e2e: 1 / 0 = +Infinity (= 非トラップ)", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "div",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 1 },
+      rhs: { kind: "literal", type: "f32", value: 0 },
+    }),
+  );
+  expect(stored).toBe(Number.POSITIVE_INFINITY);
+});
+
+test("`emit(div)` e2e: -1 / 0 = -Infinity", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "div",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: -1 },
+      rhs: { kind: "literal", type: "f32", value: 0 },
+    }),
+  );
+  expect(stored).toBe(Number.NEGATIVE_INFINITY);
+});
