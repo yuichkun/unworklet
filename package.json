@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "ready": "vp check && vp run -r test && vp run -r build"
+    "test": "vp test && vp run --filter ./examples/01-stereo-gain test:e2e",
+    "ready": "vp check && vp run test && vp run -r build"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "catalog:",

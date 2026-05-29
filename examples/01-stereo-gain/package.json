@@ -8,6 +8,7 @@
   "scripts": {
     "check": "vp check",
     "test": "vp test",
+    "test:e2e": "vp exec playwright test",
     "dev": "vp dev",
     "build": "vp build",
     "preview": "vp preview",
