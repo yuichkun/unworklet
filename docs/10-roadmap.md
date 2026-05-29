@@ -177,6 +177,7 @@ DevTools panel の **real 連携** (= B 軸: AudioNode.prototype hook / Unworkle
 - vec primitive (= `vec4` / `splat` / `addVec` / `mulVec` / `subVec` / `divVec` / `sumLanes` / `lane`、 01-dsl.md §7.2)
 - `buffer.loadVec` / `storeVec` method (= 01-dsl.md §3.2 SIMD 部分)
 - `forSample.byN(4, ...)` SIMD pattern
+- `Node<'f32x4'>` の method surface 制約 (= `primitives.ts` の scalar primitive method merge): `add` / `sub` / `mul` / `div` 以外 の scalar method (= `sin` / `cos` / `tan` / `tanh` / `exp` / `log` / `sqrt` / `abs` / `floor` / `ceil` / `frac` / `mod` / `neg` / 比較 / `min` / `max` / `clamp`) を conditional method 型 (`T extends ScalarType ? … : never`) ま た は overload 分割 で `f32x4` か ら 除外 し、 vector tag に は documented な vector op (= `.add` / `.sub` / `.mul` / `.div` → `addVec` 系、 01-dsl.md §7.2) だ け 露出 す る。 こ れ が 無 い と `splat(g).sin()` / `.clamp(...)` が 型 を 通 り scalar f32 AST / lowering に mis-route す る (= scalar method merge が `T extends ScalarType | 'f32x4'` で 全 method を f32x4 に も 載 せ る た め)。
 
 完了 条件: canonical Ex 3 (= linear-phase EQ partitioned convolution) の SIMD path が 動く + scalar-only author の import が 影響 受け ない (= 旧 SIMD なし processor が 既 動作 維持)。
 
