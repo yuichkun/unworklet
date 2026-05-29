@@ -155,9 +155,19 @@ registerNodeMethod("eq", function method<
 >(this: Node<T>, other: Node<T> | number): Node<"bool"> {
   return eq(this, other);
 });
-export function lt<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<"bool"> {
-  return notImplemented();
+export function lt<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<"bool"> {
+  return wrapAst<"bool">({
+    kind: "lt",
+    type: "f32",
+    lhs: liftToAst(a),
+    rhs: liftToAst(b),
+  });
 }
+registerNodeMethod("lt", function method<
+  T extends ScalarType,
+>(this: Node<T>, other: Node<T> | number): Node<"bool"> {
+  return lt(this, other);
+});
 export function gt<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<"bool"> {
   return notImplemented();
 }

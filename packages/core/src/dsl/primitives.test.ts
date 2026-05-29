@@ -14,7 +14,7 @@ import { abs, max, mul } from "./primitives.ts";
 const unary = ["sin", "cos", "tan", "tanh", "exp", "log", "frac"] as const;
 
 // `mul` / `abs` / `max` は Step 3.3 / sub-phase 7.8a で fill = stub list か ら 除 外。
-const binary = ["mod", "lt", "gt", "lte", "gte"] as const;
+const binary = ["mod", "gt", "lte", "gte"] as const;
 
 const ternary = ["clamp", "select"] as const;
 
@@ -402,4 +402,35 @@ test("`Node<T>.eq(other)` method form = free function 同 AST", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
   const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
   expect(unwrapAst(a.eq(b))).toEqual(unwrapAst(P.eq(a, b)));
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// lt (= f32.lt、結果 Node<'bool'>)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`lt(node, node)` returns a `Node` carrying an `lt` AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
+  const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 5 });
+  expect(unwrapAst(P.lt(a, b))).toEqual({
+    kind: "lt",
+    type: "f32",
+    lhs: { kind: "literal", type: "f32", value: 3 },
+    rhs: { kind: "literal", type: "f32", value: 5 },
+  });
+});
+
+test("`lt(node, number)` lifts the number literal", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
+  expect(unwrapAst(P.lt(a, 5))).toEqual({
+    kind: "lt",
+    type: "f32",
+    lhs: { kind: "literal", type: "f32", value: 3 },
+    rhs: { kind: "literal", type: "f32", value: 5 },
+  });
+});
+
+test("`Node<T>.lt(other)` method form = free function 同 AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
+  const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 5 });
+  expect(unwrapAst(a.lt(b))).toEqual(unwrapAst(P.lt(a, b)));
 });

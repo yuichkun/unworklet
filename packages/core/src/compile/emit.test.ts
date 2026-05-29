@@ -3086,3 +3086,17 @@ test("`emit(eq)` e2e: 3==3 → 1 / 3==5 → 0 / NaN==NaN → 0", async () => {
   expect(await runCompareAndRead(cmp("eq", 3, 5))).toBe(0);
   expect(await runCompareAndRead(cmp("eq", Number.NaN, Number.NaN))).toBe(0);
 });
+
+test("`emitExpression(lt)` lowers to `f32.lt`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(cmp("lt", 3, 5), emptyLayout, mod, binaryen);
+  expect(watOfExpression(mod, binaryen, ref, binaryen.i32)).toContain("(f32.lt");
+  mod.dispose();
+});
+
+test("`emit(lt)` e2e: 3<5 → 1 / 5<3 → 0 / 3<3 → 0 (等値境界)", async () => {
+  expect(await runCompareAndRead(cmp("lt", 3, 5))).toBe(1);
+  expect(await runCompareAndRead(cmp("lt", 5, 3))).toBe(0);
+  expect(await runCompareAndRead(cmp("lt", 3, 3))).toBe(0);
+});

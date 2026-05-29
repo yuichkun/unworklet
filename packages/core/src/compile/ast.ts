@@ -26,6 +26,7 @@ export type AstNode =
   | { kind: "max"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "min"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "eq"; type: ScalarType; lhs: AstNode; rhs: AstNode }
+  | { kind: "lt"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "audioInRead"; portName: string; channel: number; offset: AstNode }
   | {
       kind: "audioOutWrite";
