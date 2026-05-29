@@ -153,50 +153,30 @@ const keyboardWidth = computed(() => whiteKeyCount.value * WHITE_W);
     </header>
 
     <div class="view-body">
-      <!-- ─── Ports table ─── -->
-      <section class="ports-section">
+      <!-- ─── Event log ─── -->
+      <section class="log-section">
         <header class="section-head">
-          <span class="section-title">Ports</span>
-          <span class="section-meta mono">{{ midi.ports.length }} declared</span>
+          <span class="section-title">Event log</span>
+          <span class="section-meta mono">
+            most recent first · last {{ midi.log.value.length }}
+          </span>
         </header>
 
-        <div class="ports-table">
-          <div class="port-row port-row-head">
-            <div class="cell c-port">port</div>
-            <div class="cell c-kind">kind</div>
-            <div class="cell c-capacity">capacity</div>
-            <div class="cell c-overflow">overflow</div>
-            <div class="cell c-last">last event</div>
-          </div>
-          <div v-for="port in midi.ports" :key="portKey(port)" class="port-row">
-            <div class="cell c-port mono">{{ portKey(port) }}</div>
-            <div class="cell c-kind">
-              <span
-                class="u-pill"
-                :class="port.kind === 'input' ? 'u-pill--accent' : 'kind-pill-midi'"
-              >
-                {{ port.kind }}
-              </span>
-            </div>
-            <div class="cell c-capacity mono">{{ port.capacity }}</div>
-            <div class="cell c-overflow mono">
-              {{ midi.overflowMock.value[portKey(port)] ?? 0 }}
-            </div>
-            <div class="cell c-last mono">
-              <template v-if="midi.lastEventByPort.value[portKey(port)]">
-                <span class="last-event-type">
-                  {{ midi.lastEventByPort.value[portKey(port)]!.event.type }}
-                </span>
-                <span class="last-event-body">
-                  {{ formatEventBody(midi.lastEventByPort.value[portKey(port)]!.event) }}
-                </span>
-              </template>
-              <template v-else>
-                <span class="last-event-idle">—</span>
-              </template>
-            </div>
-          </div>
-        </div>
+        <ul class="log-list">
+          <li v-if="midi.log.value.length === 0" class="empty">No traffic yet.</li>
+          <li
+            v-for="entry in midi.log.value"
+            :key="entry.id"
+            class="log-row"
+            :class="`direction-${entry.direction}`"
+          >
+            <span class="log-ts mono">{{ formatTs(entry.ts) }}</span>
+            <span class="log-dir mono">{{ directionLabel[entry.direction] }}</span>
+            <span class="log-port mono">{{ entry.portKey }}</span>
+            <span class="log-type">{{ entry.event.type }}</span>
+            <span class="log-body mono">{{ formatEventBody(entry.event) }}</span>
+          </li>
+        </ul>
       </section>
 
       <!-- ─── Inject panel ─── -->
@@ -307,32 +287,6 @@ const keyboardWidth = computed(() => whiteKeyCount.value * WHITE_W);
           <button class="u-btn" @click="sendChannelPressure">Channel pressure</button>
         </div>
       </section>
-
-      <!-- ─── Log ─── -->
-      <section class="log-section">
-        <header class="section-head">
-          <span class="section-title">Event log</span>
-          <span class="section-meta mono"
-            >most recent first · last {{ midi.log.value.length }}</span
-          >
-        </header>
-
-        <ul class="log-list">
-          <li v-if="midi.log.value.length === 0" class="empty">No traffic yet.</li>
-          <li
-            v-for="entry in midi.log.value"
-            :key="entry.id"
-            class="log-row"
-            :class="`direction-${entry.direction}`"
-          >
-            <span class="log-ts mono">{{ formatTs(entry.ts) }}</span>
-            <span class="log-dir mono">{{ directionLabel[entry.direction] }}</span>
-            <span class="log-port mono">{{ entry.portKey }}</span>
-            <span class="log-type">{{ entry.event.type }}</span>
-            <span class="log-body mono">{{ formatEventBody(entry.event) }}</span>
-          </li>
-        </ul>
-      </section>
     </div>
   </div>
 </template>
@@ -394,71 +348,6 @@ const keyboardWidth = computed(() => whiteKeyCount.value * WHITE_W);
 .section-meta {
   font-size: 11px;
   color: var(--u-text-dim);
-}
-
-/* ── Ports table ── */
-
-.ports-section {
-  background: var(--u-bg-elev-1);
-  border: 1px solid var(--u-border);
-  border-radius: var(--u-radius);
-  padding: 10px 14px 12px;
-}
-
-.ports-table {
-  display: flex;
-  flex-direction: column;
-}
-
-.port-row {
-  display: grid;
-  grid-template-columns: 1.6fr 0.6fr 0.6fr 0.6fr 2.4fr;
-  gap: 10px;
-  padding: 6px 4px;
-  align-items: center;
-  border-bottom: 1px solid var(--u-border);
-  font-size: 12px;
-}
-
-.port-row:last-child {
-  border-bottom: 0;
-}
-
-.port-row-head {
-  color: var(--u-text-dim);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-weight: 600;
-}
-
-.cell {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.c-overflow {
-  text-align: right;
-}
-
-.last-event-type {
-  color: var(--u-accent);
-  font-weight: 600;
-  margin-right: 6px;
-}
-
-.last-event-body {
-  color: var(--u-text-muted);
-}
-
-.last-event-idle {
-  color: var(--u-text-dim);
-}
-
-.kind-pill-midi {
-  background: var(--u-bg-elev-4);
-  color: var(--u-text-muted);
 }
 
 /* ── Inject panel ── */
