@@ -3114,3 +3114,17 @@ test("`emit(gt)` e2e: 5>3 → 1 / 3>5 → 0 / 3>3 → 0 (等値境界)", async (
   expect(await runCompareAndRead(cmp("gt", 3, 5))).toBe(0);
   expect(await runCompareAndRead(cmp("gt", 3, 3))).toBe(0);
 });
+
+test("`emitExpression(lte)` lowers to `f32.le`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(cmp("lte", 3, 5), emptyLayout, mod, binaryen);
+  expect(watOfExpression(mod, binaryen, ref, binaryen.i32)).toContain("(f32.le");
+  mod.dispose();
+});
+
+test("`emit(lte)` e2e: 3<=3 → 1 / 3<=5 → 1 / 5<=3 → 0 (等値境界)", async () => {
+  expect(await runCompareAndRead(cmp("lte", 3, 3))).toBe(1);
+  expect(await runCompareAndRead(cmp("lte", 3, 5))).toBe(1);
+  expect(await runCompareAndRead(cmp("lte", 5, 3))).toBe(0);
+});
