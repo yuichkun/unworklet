@@ -586,7 +586,19 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
           const ringIndex = data.ringIndex;
           if (ringIndex < 0 || ringIndex >= messageRings.length) return;
           if (typeof data.payload !== "object" || data.payload === null) return;
-          messageQueueMirrors[ringIndex]!.push(data.payload as Record<string, unknown>);
+          // ingress を ring capacity で bound (= drop-oldest)。 main が 1 quantum 間 に
+          // capacity 超 の burst を post し て も queue が 膨 ら ま ず、 process() の
+          // `for (const payload of queue)` drain loop が audio thread で burst 比 例 =
+          // unbounded loop に な ら な い (= `00-foundations.md` §5.1 invariant 2)。 drop
+          // し た 分 は WASM ring overflow counter に 計 上 (= SAB path の ring drop-oldest
+          // と 同 じ overflowCount semantics、 process 末 尾 で main に notify)。
+          const queue = messageQueueMirrors[ringIndex]!;
+          if (queue.length >= messageRings[ringIndex]!.capacity) {
+            queue.shift();
+            const wasmH = messageRingsWasmHeaderViews[ringIndex]!;
+            wasmH[2] = wasmH[2]! + 1;
+          }
+          queue.push(data.payload as Record<string, unknown>);
         });
         // MessagePort spec = addEventListener 経 路 は implicit start し な い =
         // start() 明 示 で 受 信 を 有 効 化 (= onmessage = ... path は auto-start
