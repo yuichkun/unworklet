@@ -401,6 +401,12 @@ export function emitExpression(
         [emitExpression(node.value, layout, mod, binaryen)],
         binaryen.f32,
       );
+    case "log":
+      return mod.call(
+        `${MATH_FN_PREFIX}log`,
+        [emitExpression(node.value, layout, mod, binaryen)],
+        binaryen.f32,
+      );
     case "max":
       return mod.f32.max(
         emitExpression(node.lhs, layout, mod, binaryen),
@@ -1045,6 +1051,7 @@ function addMathFunctions(used: Set<string>, mod: BinaryenModule, binaryen: Bina
   if (expanded.has("cos")) buildCosFn(mod, binaryen);
   if (expanded.has("tan")) buildTanFn(mod, binaryen);
   if (expanded.has("exp")) buildExpFn(mod, binaryen);
+  if (expanded.has("log")) buildLogFn(mod, binaryen);
 }
 
 const MATH_PI = Math.PI;
@@ -1166,4 +1173,70 @@ function buildExpFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
     f,
   );
   mod.addFunction(`${MATH_FN_PREFIX}exp`, binaryen.f32, binaryen.f32, [f, f, i], body);
+}
+
+/**
+ * `$unworklet_log`: x = m·2^e (= e は f32 指 数 bit、 m∈[1,2) は 仮 数 bit を 指 数 127
+ * に 固 定 し て reinterpret)。 log(x) = e·ln2 + log(m)、 log(m) は t=(m-1)/(m+1) の
+ * atanh 級 数 2·(t + t³/3 + t⁵/5 + t⁷/7) (= t∈[0,1/3]、 誤 差 ~3e-6)。 定 義 域 外 は
+ * select で `Math.log` 準 拠 (= x<0 → NaN、 x==0 → -Inf)、 非 ト ラ ッ プ。
+ * locals: 0=x(param) / 1=bits(i32) / 2=m / 3=t / 4=s(=t²)。
+ */
+function buildLogFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
+  const f = binaryen.f32;
+  const i = binaryen.i32;
+  const X = 0;
+  const BITS = 1;
+  const M = 2;
+  const T = 3;
+  const S = 4;
+  const s = (): number => mod.local.get(S, f);
+  // log(m) 多 項 式: poly_t = 1 + s·(1/3 + s·(1/5 + s·(1/7)))、 log(m) = 2·t·poly_t
+  let polyT = mod.f32.add(mod.f32.const(1 / 5), mod.f32.mul(s(), mod.f32.const(1 / 7)));
+  polyT = mod.f32.add(mod.f32.const(1 / 3), mod.f32.mul(s(), polyT));
+  polyT = mod.f32.add(mod.f32.const(1), mod.f32.mul(s(), polyT));
+  const logM = mod.f32.mul(mod.f32.mul(mod.f32.const(2), mod.local.get(T, f)), polyT);
+  // e = ((bits >> 23) & 0xFF) - 127
+  const eF = mod.f32.convert_s.i32(
+    mod.i32.sub(
+      mod.i32.and(mod.i32.shr_u(mod.local.get(BITS, i), mod.i32.const(23)), mod.i32.const(0xff)),
+      mod.i32.const(127),
+    ),
+  );
+  const computed = mod.f32.add(mod.f32.mul(eF, mod.f32.const(MATH_LN2)), logM);
+  const body = mod.block(
+    null,
+    [
+      mod.local.set(BITS, mod.i32.reinterpret(mod.local.get(X, f))),
+      // m = reinterpret((bits & 0x007FFFFF) | 0x3F800000) ∈ [1, 2)
+      mod.local.set(
+        M,
+        mod.f32.reinterpret(
+          mod.i32.or(
+            mod.i32.and(mod.local.get(BITS, i), mod.i32.const(0x7fffff)),
+            mod.i32.const(0x3f800000),
+          ),
+        ),
+      ),
+      mod.local.set(
+        T,
+        mod.f32.div(
+          mod.f32.sub(mod.local.get(M, f), mod.f32.const(1)),
+          mod.f32.add(mod.local.get(M, f), mod.f32.const(1)),
+        ),
+      ),
+      mod.local.set(S, mod.f32.mul(mod.local.get(T, f), mod.local.get(T, f))),
+      mod.select(
+        mod.f32.gt(mod.local.get(X, f), mod.f32.const(0)),
+        computed,
+        mod.select(
+          mod.f32.lt(mod.local.get(X, f), mod.f32.const(0)),
+          mod.f32.const(Number.NaN),
+          mod.f32.const(Number.NEGATIVE_INFINITY),
+        ),
+      ),
+    ],
+    f,
+  );
+  mod.addFunction(`${MATH_FN_PREFIX}log`, binaryen.f32, binaryen.f32, [i, f, f, f], body);
 }

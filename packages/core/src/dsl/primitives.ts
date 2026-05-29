@@ -262,9 +262,16 @@ export function exp<T extends ScalarType>(x: Node<T> | number): Node<T> {
 registerNodeMethod("exp", function method<T extends ScalarType>(this: Node<T>): Node<T> {
   return exp(this);
 });
-export function log<T extends ScalarType>(_x: Node<T> | number): Node<T> {
-  return notImplemented();
+export function log<T extends ScalarType>(x: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "log",
+    type: "f32",
+    value: liftToAst(x),
+  });
 }
+registerNodeMethod("log", function method<T extends ScalarType>(this: Node<T>): Node<T> {
+  return log(this);
+});
 export function sqrt<T extends ScalarType>(x: Node<T> | number): Node<T> {
   return wrapAst<T>({
     kind: "sqrt",

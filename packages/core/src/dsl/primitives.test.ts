@@ -12,7 +12,7 @@ import * as P from "./primitives.ts";
 import { abs, max, mul } from "./primitives.ts";
 
 // 未 実 装 (= 多 項 式 近 似 設 計 待 ち、 Q17) の math primitive だ け が stub list に 残 る。
-const unary = ["tanh", "log"] as const;
+const unary = ["tanh"] as const;
 
 test.each(unary)("`%s(x)` stub throws", (name) => {
   const fn = (P as unknown as Record<string, (x: number) => unknown>)[name];
@@ -738,4 +738,30 @@ test("`exp(number)` lifts the literal", () => {
 test("`Node<T>.exp()` method form = free function 同 AST", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1 });
   expect(unwrapAst(a.exp())).toEqual(unwrapAst(P.exp(a)));
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// log (= 自然対数、共有 WASM 関数)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`log(node)` returns a `Node` carrying a `log` AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 2 });
+  expect(unwrapAst(P.log(a))).toEqual({
+    kind: "log",
+    type: "f32",
+    value: { kind: "literal", type: "f32", value: 2 },
+  });
+});
+
+test("`log(number)` lifts the literal", () => {
+  expect(unwrapAst(P.log(2))).toEqual({
+    kind: "log",
+    type: "f32",
+    value: { kind: "literal", type: "f32", value: 2 },
+  });
+});
+
+test("`Node<T>.log()` method form = free function 同 AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 2 });
+  expect(unwrapAst(a.log())).toEqual(unwrapAst(P.log(a)));
 });

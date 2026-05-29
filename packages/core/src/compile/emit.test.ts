@@ -3278,7 +3278,7 @@ test("`emit(mod)` e2e: ネスト mod(mod(10,7),2)=1 (= 共有 local 安全性)",
   expect(await runStoreAndRead(makeStoreValueGraph(nested))).toBe(1);
 });
 
-function mathAst(kind: "sin" | "cos" | "tan" | "exp", x: number): AstNode {
+function mathAst(kind: "sin" | "cos" | "tan" | "exp" | "log", x: number): AstNode {
   return { kind, type: "f32", value: { kind: "literal", type: "f32", value: x } };
 }
 
@@ -3347,4 +3347,18 @@ test("`emit(exp)` e2e: Math.exp と相対誤差 < 1e-4 (grid)", async () => {
     const got = await runStoreAndRead(makeStoreValueGraph(mathAst("exp", x)));
     expect(Math.abs(got - Math.exp(x)) / Math.exp(x)).toBeLessThan(1e-4);
   }
+});
+
+test("`emit(log)` e2e: Math.log と |誤差| < 1e-4 (grid)", async () => {
+  for (const x of [0.001, 0.1, 0.5, 1, Math.E, 2, 10, 100, 1000, 1e6]) {
+    const got = await runStoreAndRead(makeStoreValueGraph(mathAst("log", x)));
+    expect(Math.abs(got - Math.log(x))).toBeLessThan(1e-4);
+  }
+});
+
+test("`emit(log)` e2e: 定義域外は Math.log 準拠 (= log(0)→-Inf / log(-1)→NaN、非トラップ)", async () => {
+  const zero = await runStoreAndRead(makeStoreValueGraph(mathAst("log", 0)));
+  expect(zero).toBe(Number.NEGATIVE_INFINITY);
+  const neg = await runStoreAndRead(makeStoreValueGraph(mathAst("log", -1)));
+  expect(Number.isNaN(neg)).toBe(true);
 });
