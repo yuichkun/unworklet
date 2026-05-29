@@ -486,22 +486,43 @@ function checkEventName(name: string): void {
  */
 function inferAstType(ast: AstNode): ScalarType {
   switch (ast.kind) {
+    // 算 術 / math / 制 御 = 結 果 型 は node の `type` (= f32 path)。
     case "literal":
-      return ast.type;
     case "mul":
-      return ast.type;
+    case "add":
+    case "sub":
+    case "div":
+    case "mod":
+    case "neg":
     case "abs":
-      return ast.type;
+    case "sqrt":
+    case "floor":
+    case "ceil":
+    case "frac":
+    case "sin":
+    case "cos":
+    case "tan":
+    case "tanh":
+    case "exp":
+    case "log":
     case "max":
+    case "min":
+    case "clamp":
+    case "select":
+    case "stateLoad":
       return ast.type;
+    // 比 較 = 結 果 は 常 に bool (= node の `type` は オ ペ ラ ン ド 型 f32)。
+    case "eq":
+    case "lt":
+    case "gt":
+    case "lte":
+    case "gte":
+      return "bool";
     case "audioInRead":
-      return "f32";
     case "paramAt":
       return "f32";
     case "loopCounter":
       return "i32";
-    case "stateLoad":
-      return ast.type;
     case "messageFieldRead":
       return ast.wireType;
     case "audioOutWrite":
