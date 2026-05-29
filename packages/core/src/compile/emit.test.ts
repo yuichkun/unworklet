@@ -3278,7 +3278,7 @@ test("`emit(mod)` e2e: ネスト mod(mod(10,7),2)=1 (= 共有 local 安全性)",
   expect(await runStoreAndRead(makeStoreValueGraph(nested))).toBe(1);
 });
 
-function mathAst(kind: "sin", x: number): AstNode {
+function mathAst(kind: "sin" | "cos", x: number): AstNode {
   return { kind, type: "f32", value: { kind: "literal", type: "f32", value: x } };
 }
 
@@ -3307,4 +3307,24 @@ test("`emit(sin)` e2e: Math.sin と |誤差| < 1e-4 で一致 (grid)", async () 
 test("`emit(sin)` e2e: 大引数 sin(100) も range reduction で近似 (f32 精度内)", async () => {
   const got = await runStoreAndRead(makeStoreValueGraph(mathAst("sin", 100)));
   expect(Math.abs(got - Math.sin(100))).toBeLessThan(1e-3);
+});
+
+test("`emit(cos)` e2e: Math.cos と |誤差| < 1e-4 で一致 (grid)", async () => {
+  const xs = [
+    0,
+    Math.PI / 6,
+    Math.PI / 4,
+    Math.PI / 3,
+    Math.PI / 2,
+    Math.PI,
+    -Math.PI / 2,
+    1,
+    2,
+    -3,
+    5,
+  ];
+  for (const x of xs) {
+    const got = await runStoreAndRead(makeStoreValueGraph(mathAst("cos", x)));
+    expect(Math.abs(got - Math.cos(x))).toBeLessThan(1e-4);
+  }
 });

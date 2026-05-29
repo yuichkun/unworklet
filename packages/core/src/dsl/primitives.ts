@@ -229,9 +229,16 @@ export function sin<T extends ScalarType>(x: Node<T> | number): Node<T> {
 registerNodeMethod("sin", function method<T extends ScalarType>(this: Node<T>): Node<T> {
   return sin(this);
 });
-export function cos<T extends ScalarType>(_x: Node<T> | number): Node<T> {
-  return notImplemented();
+export function cos<T extends ScalarType>(x: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "cos",
+    type: "f32",
+    value: liftToAst(x),
+  });
 }
+registerNodeMethod("cos", function method<T extends ScalarType>(this: Node<T>): Node<T> {
+  return cos(this);
+});
 export function tan<T extends ScalarType>(_x: Node<T> | number): Node<T> {
   return notImplemented();
 }

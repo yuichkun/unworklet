@@ -383,6 +383,12 @@ export function emitExpression(
         [emitExpression(node.value, layout, mod, binaryen)],
         binaryen.f32,
       );
+    case "cos":
+      return mod.call(
+        `${MATH_FN_PREFIX}cos`,
+        [emitExpression(node.value, layout, mod, binaryen)],
+        binaryen.f32,
+      );
     case "max":
       return mod.f32.max(
         emitExpression(node.lhs, layout, mod, binaryen),
@@ -1024,6 +1030,7 @@ function expandMathDeps(used: Set<string>): Set<string> {
 function addMathFunctions(used: Set<string>, mod: BinaryenModule, binaryen: BinaryenAPI): void {
   const expanded = expandMathDeps(used);
   if (expanded.has("sin")) buildSinFn(mod, binaryen);
+  if (expanded.has("cos")) buildCosFn(mod, binaryen);
 }
 
 const MATH_PI = Math.PI;
@@ -1074,4 +1081,15 @@ function buildSinFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
     f,
   );
   mod.addFunction(`${MATH_FN_PREFIX}sin`, binaryen.f32, binaryen.f32, [f, f, f, i], body);
+}
+
+/** `$unworklet_cos`: cos(x) = sin(x + π/2) で sin 関 数 に 委 譲。 locals ナ シ。 */
+function buildCosFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
+  const f = binaryen.f32;
+  const body = mod.call(
+    `${MATH_FN_PREFIX}sin`,
+    [mod.f32.add(mod.local.get(0, f), mod.f32.const(MATH_PI / 2))],
+    binaryen.f32,
+  );
+  mod.addFunction(`${MATH_FN_PREFIX}cos`, binaryen.f32, binaryen.f32, [], body);
 }

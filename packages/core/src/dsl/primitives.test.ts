@@ -12,7 +12,7 @@ import * as P from "./primitives.ts";
 import { abs, max, mul } from "./primitives.ts";
 
 // 未 実 装 (= 多 項 式 近 似 設 計 待 ち、 Q17) の math primitive だ け が stub list に 残 る。
-const unary = ["cos", "tan", "tanh", "exp", "log"] as const;
+const unary = ["tan", "tanh", "exp", "log"] as const;
 
 test.each(unary)("`%s(x)` stub throws", (name) => {
   const fn = (P as unknown as Record<string, (x: number) => unknown>)[name];
@@ -660,4 +660,30 @@ test("`sin(number)` lifts the literal", () => {
 test("`Node<T>.sin()` method form = free function 同 AST", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1 });
   expect(unwrapAst(a.sin())).toEqual(unwrapAst(P.sin(a)));
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// cos (= sin(x + π/2)、共有 WASM 関数)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`cos(node)` returns a `Node` carrying a `cos` AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1 });
+  expect(unwrapAst(P.cos(a))).toEqual({
+    kind: "cos",
+    type: "f32",
+    value: { kind: "literal", type: "f32", value: 1 },
+  });
+});
+
+test("`cos(number)` lifts the literal", () => {
+  expect(unwrapAst(P.cos(1))).toEqual({
+    kind: "cos",
+    type: "f32",
+    value: { kind: "literal", type: "f32", value: 1 },
+  });
+});
+
+test("`Node<T>.cos()` method form = free function 同 AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1 });
+  expect(unwrapAst(a.cos())).toEqual(unwrapAst(P.cos(a)));
 });
