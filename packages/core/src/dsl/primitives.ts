@@ -96,9 +96,15 @@ export function mul<T extends ScalarType>(a: Node<T> | number, b: Node<T> | numb
 
 // JS literal → `{ kind: 'literal', type: 'f32', value }` lift (= Q33 context-
 // dependent lift の Phase 3 minimum、 後 続 phase で T-aware fill)。
-function liftToAst<T extends ScalarType>(value: Node<T> | number): AstNode {
+function liftToAst<T extends ScalarType>(value: Node<T> | number | boolean): AstNode {
   if (typeof value === "number") {
     return { kind: "literal", type: "f32", value };
+  }
+  if (typeof value === "boolean") {
+    // bool は 内 部 i32 表 現 (= 0/1)。 select の boolean branch literal
+    // (= `select(cond, true, gate.load())`、 canonical bool-state パ タ ー ン) を
+    // bool node に lift し、 branch 型 一 致 + emit (i32.const) に 載 せ る。
+    return { kind: "literal", type: "bool", value: value ? 1 : 0 };
   }
   return unwrapAst(value);
 }
@@ -374,8 +380,8 @@ registerNodeMethod("clamp", function method<
 // Control
 export function select<T extends ScalarType>(
   cond: Node<"bool"> | boolean,
-  then: Node<T> | number,
-  else_: Node<T> | number,
+  then: Node<T> | number | boolean,
+  else_: Node<T> | number | boolean,
 ): Node<T> {
   const ifTrue = liftToAst(then);
   const ifFalse = liftToAst(else_);

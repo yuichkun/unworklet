@@ -1065,12 +1065,18 @@ test("`emitExpression(literal i64)` throws 後 続 phase stub marker", async () 
   mod.dispose();
 });
 
-test("`emitExpression(literal bool)` throws 後 続 phase stub marker", async () => {
+test("`emitExpression(literal bool)` emits i32.const (= bool は内部 i32 表現 0/1)", async () => {
+  // select の boolean branch (= `select(cond, true, boolNode)`、canonical bool-state パターン)
+  // が bool literal に lift される → emit で i32.const に落ちること (= 以前は throw stub)。
   const binaryen = await loadBinaryen();
   const mod = makeMod(binaryen);
-  expect(() =>
-    emitExpression({ kind: "literal", type: "bool", value: 0 }, emptyLayout, mod, binaryen),
-  ).toThrow(/bool literal emission not implemented/);
+  const ref = emitExpression(
+    { kind: "literal", type: "bool", value: 1 },
+    emptyLayout,
+    mod,
+    binaryen,
+  );
+  expect(watOfExpression(mod, binaryen, ref, binaryen.i32)).toContain("(i32.const 1)");
   mod.dispose();
 });
 
@@ -3199,6 +3205,37 @@ test("`emit(select)` e2e: cond true → then(10) / cond false → else(20)", asy
   expect(t).toBe(10);
   const f = await runStoreAndRead(makeStoreValueGraph(selectAst(cmp("gt", 3, 5), 10, 20)));
   expect(f).toBe(20);
+});
+
+test("`emit(select)` e2e: bool literal branch を state.bool に store (= canonical select(cond, true, gate.load()))", async () => {
+  // cond true → bool literal `true`(=1) を選ぶ。 bool branch literal が emit で i32.const に
+  // 落ち、 select 全体が i32 で評価され state.bool に書ける (= 以前は bool literal emit が throw)。
+  const graph: CapturedGraph = {
+    declarations: [{ kind: "state", name: "gate", type: "bool", initial: false }],
+    statements: [
+      {
+        kind: "stateStore",
+        type: "bool",
+        name: "gate",
+        value: {
+          kind: "select",
+          type: "bool",
+          cond: { kind: "literal", type: "i32", value: 1 },
+          ifTrue: { kind: "literal", type: "bool", value: 1 },
+          ifFalse: { kind: "stateLoad", type: "bool", name: "gate" },
+        },
+      },
+    ],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  const proc = instance.exports["process"] as () => void;
+  proc();
+  const view = new Int32Array(memory.buffer, lay.regions.states.slots["gate"]!, 1);
+  expect(view[0]).toBe(1);
 });
 
 function fracAst(value: AstNode): AstNode {

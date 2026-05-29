@@ -296,23 +296,19 @@ export function emitExpression(
 ): number {
   switch (node.kind) {
     case "literal":
-      // sub-phase 7.1 で f64 literal 対 応 を 追 加 (= state.f64 subnormal guard
-      // test で 1e-40 等 の 値 を 直 接 渡 す path)。 i64 / bool literal は
-      // ast.ts の literal `value: number` 制 約 下 で 表 現 不 完 全 (= i64 は
-      // BigInt 必 要 + bool は boolean が 自 然) = 後 続 sub-phase で literal
-      // 型 拡 張 と zip し て fill。 当 phase で は state.i64 / state.bool は
-      // 別 path (= stateLoad / 既 memory 値) で 駆 動 す る。
+      // bool は 内 部 i32 表 現 (= 0/1) な の で i32.const に 落 と す (= select の
+      // boolean branch literal 等)。 i64 literal は `value: number` 制 約 下 で
+      // BigInt 表 現 不 完 全 = 後 続 sub-phase で literal 型 拡 張 と zip し て fill。
       switch (node.type) {
         case "f32":
           return mod.f32.const(node.value);
         case "f64":
           return mod.f64.const(node.value);
         case "i32":
+        case "bool":
           return mod.i32.const(node.value);
         case "i64":
           throw new Error("i64 literal emission not implemented (= 後 続 sub-phase で fill)");
-        case "bool":
-          throw new Error("bool literal emission not implemented (= 後 続 sub-phase で fill)");
       }
     case "loopCounter":
       return mod.local.get(LOOP_COUNTER_LOCAL, binaryen.i32);

@@ -605,6 +605,32 @@ test("`select` の f32 branch は type 'f32' の ま ま", () => {
   expect(unwrapAst(P.select(cond, a, a))).toMatchObject({ kind: "select", type: "f32" });
 });
 
+test("`select(cond, true, boolNode)` lifts a boolean branch to a `bool` literal (= canonical bool-state pattern)", () => {
+  // docs/canonical (00-foundations §145、12-canonical-examples Ex8) の
+  // `select(isMe, true, gate.load())` 形。 boolean branch literal が bool node に lift される。
+  const cond = wrapAst<"bool">({ kind: "stateLoad", type: "bool", name: "isMe" });
+  const gate = wrapAst<"bool">({ kind: "stateLoad", type: "bool", name: "gate" });
+  expect(unwrapAst(P.select(cond, true, gate))).toEqual({
+    kind: "select",
+    type: "bool",
+    cond: { kind: "stateLoad", type: "bool", name: "isMe" },
+    ifTrue: { kind: "literal", type: "bool", value: 1 },
+    ifFalse: { kind: "stateLoad", type: "bool", name: "gate" },
+  });
+});
+
+test("`select(cond, boolNode, false)` lifts a `false` branch to bool literal value 0", () => {
+  const cond = wrapAst<"bool">({ kind: "stateLoad", type: "bool", name: "isMe" });
+  const gate = wrapAst<"bool">({ kind: "stateLoad", type: "bool", name: "gate" });
+  expect(unwrapAst(P.select(cond, gate, false))).toEqual({
+    kind: "select",
+    type: "bool",
+    cond: { kind: "stateLoad", type: "bool", name: "isMe" },
+    ifTrue: { kind: "stateLoad", type: "bool", name: "gate" },
+    ifFalse: { kind: "literal", type: "bool", value: 0 },
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────
 // frac (= x - floor(x))
 // ─────────────────────────────────────────────────────────────────────────
