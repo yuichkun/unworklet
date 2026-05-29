@@ -2695,3 +2695,50 @@ test("`emit` throws on unknown message slot in messageOnReceive", async () => {
   };
   await expect(emit(graph, layout(graph))).rejects.toThrow(/unknown message slot.*ghost/);
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// DSL primitive operators (`01-dsl.md` §2.1) — emit lowering + e2e。
+// 各 operator は AST node → binaryen IR の lower を WAT で確認 + memory I/O で数値検証。
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`emitExpression(add)` lowers to `f32.add`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(
+    {
+      kind: "add",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 2 },
+      rhs: { kind: "literal", type: "f32", value: 3 },
+    },
+    emptyLayout,
+    mod,
+    binaryen,
+  );
+  expect(watOfExpression(mod, binaryen, ref, binaryen.f32)).toContain("(f32.add");
+  mod.dispose();
+});
+
+test("`emit(add)` e2e: 2 + 3 = 5", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "add",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 2 },
+      rhs: { kind: "literal", type: "f32", value: 3 },
+    }),
+  );
+  expect(stored).toBe(5);
+});
+
+test("`emit(add)` e2e: 2 + (-5) = -3 (負値)", async () => {
+  const stored = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "add",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 2 },
+      rhs: { kind: "literal", type: "f32", value: -5 },
+    }),
+  );
+  expect(stored).toBe(-3);
+});

@@ -284,6 +284,11 @@ export function emitExpression(
         emitExpression(node.lhs, layout, mod, binaryen),
         emitExpression(node.rhs, layout, mod, binaryen),
       );
+    case "add":
+      return mod.f32.add(
+        emitExpression(node.lhs, layout, mod, binaryen),
+        emitExpression(node.rhs, layout, mod, binaryen),
+      );
     case "abs":
       return mod.f32.abs(emitExpression(node.value, layout, mod, binaryen));
     case "max":

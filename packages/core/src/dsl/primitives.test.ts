@@ -26,7 +26,7 @@ const unary = [
 ] as const;
 
 // `mul` / `abs` / `max` は Step 3.3 / sub-phase 7.8a で fill = stub list か ら 除 外。
-const binary = ["add", "sub", "div", "mod", "eq", "lt", "gt", "lte", "gte", "min"] as const;
+const binary = ["sub", "div", "mod", "eq", "lt", "gt", "lte", "gte", "min"] as const;
 
 const ternary = ["clamp", "select"] as const;
 
@@ -147,4 +147,44 @@ test("`max(number, number)` lifts both literals", () => {
     lhs: { kind: "literal", type: "f32", value: 0.3 },
     rhs: { kind: "literal", type: "f32", value: 0.8 },
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// add (native f32.add)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`add(node, node)` returns a `Node` carrying an `add` AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 2 });
+  const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
+  expect(unwrapAst(P.add(a, b))).toEqual({
+    kind: "add",
+    type: "f32",
+    lhs: { kind: "literal", type: "f32", value: 2 },
+    rhs: { kind: "literal", type: "f32", value: 3 },
+  });
+});
+
+test("`add(node, number)` lifts the number literal (= f32 default)", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 2 });
+  expect(unwrapAst(P.add(a, 0.5))).toEqual({
+    kind: "add",
+    type: "f32",
+    lhs: { kind: "literal", type: "f32", value: 2 },
+    rhs: { kind: "literal", type: "f32", value: 0.5 },
+  });
+});
+
+test("`add(number, number)` lifts both operands", () => {
+  expect(unwrapAst(P.add(2, 3))).toEqual({
+    kind: "add",
+    type: "f32",
+    lhs: { kind: "literal", type: "f32", value: 2 },
+    rhs: { kind: "literal", type: "f32", value: 3 },
+  });
+});
+
+test("`Node<T>.add(other)` method form = free function 同 AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 2 });
+  const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
+  expect(unwrapAst(a.add(b))).toEqual(unwrapAst(P.add(a, b)));
 });

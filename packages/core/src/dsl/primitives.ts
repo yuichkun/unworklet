@@ -62,9 +62,19 @@ const notImplemented = (): never => {
 };
 
 // Arithmetic (T extends 'f32' | 'f64' | 'i32' | 'i64' — generic over ScalarType for stub)
-export function add<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<T> {
-  return notImplemented();
+export function add<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "add",
+    type: "f32",
+    lhs: liftToAst(a),
+    rhs: liftToAst(b),
+  });
 }
+registerNodeMethod("add", function method<
+  T extends ScalarType,
+>(this: Node<T>, other: Node<T> | number): Node<T> {
+  return add(this, other);
+});
 export function sub<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<T> {
   return notImplemented();
 }
