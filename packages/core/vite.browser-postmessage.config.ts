@@ -15,6 +15,7 @@ import { defineConfig } from "vite-plus";
 export default defineConfig({
   plugins: [unworklet()],
   test: {
+    name: "core-browser-postmessage",
     include: ["src/__tests__/browser/postmessage/**/*.test.ts"],
     browser: {
       enabled: true,

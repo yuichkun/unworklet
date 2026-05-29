@@ -24,7 +24,8 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["src/__tests__/browser/**/*.test.ts"],
+    name: "core-browser-sab",
+    include: ["src/__tests__/browser/*.test.ts"],
     browser: {
       enabled: true,
       provider: playwright(),

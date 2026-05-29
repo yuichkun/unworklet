@@ -25,6 +25,10 @@ export default defineConfig({
     // headless chromium で real `AudioContext` / `AudioWorkletNode` /
     // `WebAssembly` が 揃 う = Ex 1 を 実 環 境 で 走 ら せ る smoke。
     include: ["src/**/*.test.ts"],
-    exclude: ["src/**/*.browser.test.ts", "**/node_modules/**"],
+    exclude: [
+      "src/**/*.browser.test.ts",
+      "tests/**/*.spec.ts",
+      "**/node_modules/**",
+    ],
   },
 });
