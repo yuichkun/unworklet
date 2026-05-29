@@ -748,29 +748,43 @@ test("event ring copy (sab mode): WASM emit → SAB に header + slot を Atomic
   expect(slotsView.getFloat32(15 * 8 + 4, true)).toBe(0.5); // level
 });
 
-test("event ring copy (postMessage fallback): ArrayBuffer view に bulk copy", async () => {
+test("event ring copy (postMessage fallback): port.postMessage で 新 emit 分 配 送 (= eventRingsBuffer な し)", async () => {
+  // postMessage path = eventRingsBuffer な し (= structured clone で main / worklet
+  // が 別 instance に な る た め mirror 不 能、 worklet 側 が port.postMessage で
+  // 個 別 配 送)。 self.messages に { kind: 'event', ringIndex, newSlotsBytes,
+  // newSlotCount, overflowCount } が 入 る こ と を 確 認。
   const { wasm } = await compile(eventEmitProc);
   const self = makeMockSelf();
-  const ring = eventEmitProc.worklet.eventRings[0]!;
-  const ringTotalBytes = 12 + ring.capacity * ring.slotSize;
-  const eventRingsBuffer = new ArrayBuffer(ringTotalBytes);
   eventEmitProc.worklet.initialize(self, {
     processorOptions: {
       wasm,
-      eventRingsBuffer,
       eventRings: eventEmitProc.worklet.eventRings,
       eventRingSabOffsets: [0],
       transport: "postMessage",
     },
   });
+  self.messages.length = 0;
+
   const inputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(0.25)]];
   const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
   eventEmitProc.worklet.process(self, inputs, outputs, {});
 
-  const headView = new Int32Array(eventRingsBuffer, 0, 3);
-  expect(headView[0]).toBe(128); // head
-  // postMessage path = bulk set だ け、 Atomics.store path は skip = ま た は 同 値
-  expect(headView[2]).toBe(112); // overflowCount
+  const eventMessages = self.messages.filter(
+    (
+      m,
+    ): m is {
+      kind: string;
+      ringIndex: number;
+      newSlotCount: number;
+      overflowCount: number;
+    } => typeof m === "object" && m !== null && (m as { kind?: unknown }).kind === "event",
+  );
+  expect(eventMessages.length).toBe(1);
+  expect(eventMessages[0]!.ringIndex).toBe(0);
+  // 128 emit / capacity 16 = drop-oldest 連 発、 最 後 16 slot 分 が ring に 残 る、
+  // 配 送 さ れ る の は currentTail .. currentHead の 16 slot 分 (= overflow 分 は skip)
+  expect(eventMessages[0]!.newSlotCount).toBe(16);
+  expect(eventMessages[0]!.overflowCount).toBe(112); // 128 - 16
 });
 
 test("event ring copy: eventRingsBuffer ナ シ processor は event path skip (= regression)", async () => {

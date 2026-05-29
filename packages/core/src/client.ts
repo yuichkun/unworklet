@@ -331,21 +331,20 @@ export async function createNode<C>(
     publishBuffer = new SharedArrayBuffer(publishBufferByteLength);
   }
 
-  // event ring buffer SAB allocate (= sub-phase 7.6 commit 5b)。 1 SAB に 全 event
-  // ring を 連 続 で 配 置 = per-ring SAB 内 offset = declaration 順 累 計 (= main /
-  // worklet で 同 path で 計 算)。 ring 1 個 あ た り = header 12 + capacity × slotSize。
-  // event ナ シ なら ゼ ロ = processorOptions に hand し な い。
+  // event ring buffer。 SAB 時 の み allocate (= postMessage path は structured
+  // clone で main / worklet が 別 ring instance に な る = mirror 不 能、 worklet
+  // 側 が port.postMessage で 新 emit 分 を 個 別 配 送 す る 経 路 = main 側 buffer
+  // 自 体 不 要)。 SAB 時 = 1 SAB に 全 event ring を 連 続 配 置 = per-ring 内
+  // offset = declaration 順 累 計 (= main / worklet で 同 path で 計 算)。
   let eventRingsByteLength = 0;
   const eventRingSabOffsets: number[] = [];
   for (const ring of eventRings) {
     eventRingSabOffsets.push(eventRingsByteLength);
     eventRingsByteLength += 12 + ring.capacity * ring.slotSize;
   }
-  let eventRingsBuffer: SharedArrayBuffer | ArrayBuffer | null = null;
-  if (eventRingsByteLength > 0) {
-    eventRingsBuffer = sabAvailable
-      ? new SharedArrayBuffer(eventRingsByteLength)
-      : new ArrayBuffer(eventRingsByteLength);
+  let eventRingsBuffer: SharedArrayBuffer | null = null;
+  if (eventRingsByteLength > 0 && sabAvailable) {
+    eventRingsBuffer = new SharedArrayBuffer(eventRingsByteLength);
   }
 
   // message ring buffer SAB allocate (= sub-phase 7.7d)。 event ring と zip pattern。
@@ -420,40 +419,55 @@ export async function createNode<C>(
     }
   }
 
-  // event ring surface 構 築 (= sub-phase 7.6 commit 6)。 worklet 側 が SAB に
-  // mirror し た event ring を main 側 rAF polling で drain + 各 slot を per-field
-  // reinterpret し て handler に hand。 head / tail / overflowCount は SAB 内 で
-  // Atomics 経 由 で 観 測、 main 側 の tail は drain ご と に 進 め る (= worklet
-  // 側 は SAB tail を 読 ま な い path = 衝 突 ナ シ)。
+  // event ring surface 構 築 = transport mode で 経 路 が 分 岐:
+  //
+  // - SAB available: worklet が SAB に mirror し た event ring を main 側 rAF
+  //   polling で drain + 各 slot を per-field reinterpret し て handler に hand。
+  //   head / tail / overflowCount は SAB 内 で Atomics 経 由 で 観 測。
+  // - SAB unavailable: 共 有 buffer 不 在、 worklet が 新 emit 分 を per-quantum 末
+  //   尾 に `port.postMessage({ kind: 'event', ringIndex, newSlotsBytes,
+  //   newSlotCount, overflowCount })` で 配 送 = main 側 で port.onmessage で
+  //   receive 即 時 に subscriber dispatch (= rAF 不 要)。 overflowCount は
+  //   eventOverflowMirror に carry し て diagnostics.overflowCount() で read。
   const eventSurface: Record<string, EventSubscriber<unknown>> = {};
   const eventSubscribers: Map<string, Set<(payload: Record<string, unknown>) => void>> = new Map();
   const eventLocalTails: number[] = eventRings.map(() => 0);
+  // postMessage path 用 = ring ご と の overflowCount mirror (= diagnostics 読 み 用)。
+  const eventOverflowMirror: number[] = eventRings.map(() => 0);
   let eventRingsView: DataView | null = null;
   let eventRingsHeaderView: Int32Array | null = null;
   if (eventRingsBuffer !== null && eventRings.length > 0) {
     eventRingsView = new DataView(eventRingsBuffer);
     eventRingsHeaderView = new Int32Array(eventRingsBuffer);
+  }
+  if (eventRings.length > 0) {
     for (let i = 0; i < eventRings.length; i++) {
       const ring = eventRings[i]!;
       const subscribers = new Set<(payload: Record<string, unknown>) => void>();
       eventSubscribers.set(ring.name, subscribers);
       const sabOffset = eventRingSabOffsets[i]!;
       const overflowSabWordIdx = (sabOffset + 8) >>> 2;
+      const ringIndex = i;
       eventSurface[ring.name] = {
         on(handler) {
           subscribers.add(handler as (payload: Record<string, unknown>) => void);
-          ensureRafLoopRunning();
+          // SAB path = rAF polling で drain + dispatch。
+          // postMessage path = port.onmessage driven (= polling 不 要)。
+          if (transportMode === "sab") {
+            ensureRafLoopRunning();
+          }
           return () => {
             subscribers.delete(handler as (payload: Record<string, unknown>) => void);
           };
         },
         diagnostics: {
           overflowCount(): number {
-            /* v8 ignore next 1 — eventSurface 配 線 path = eventRingsHeaderView 非 null 確 定 */
-            if (eventRingsHeaderView === null) return 0;
-            return transportMode === "sab"
-              ? Atomics.load(eventRingsHeaderView, overflowSabWordIdx)
-              : eventRingsHeaderView[overflowSabWordIdx]!;
+            if (transportMode === "sab" && eventRingsHeaderView !== null) {
+              return Atomics.load(eventRingsHeaderView, overflowSabWordIdx);
+            }
+            // postMessage path = mirror か ら read (= worklet 側 が 最 新 値 を 配 送
+            // 済 で eventOverflowMirror に carry さ れ て いる)。
+            return eventOverflowMirror[ringIndex]!;
           },
         },
       };
@@ -685,15 +699,16 @@ export async function createNode<C>(
             ...(publishBuffer !== null ? { publishBuffer } : {}),
           }
         : {}),
-      // event ring あ り の 時 だ け eventRingsBuffer + descriptor + sabOffsets を hand
-      // (= sub-phase 7.6 commit 5b)。 worklet template の initialize で receive +
-      // per-quantum 末 尾 で WASM → SAB copy logic (= commit 5c で fill)。
-      ...(eventRingsBuffer !== null
+      // event ring あ り の 時 = transport mode 共 通 で descriptor + transport を
+      // hand。 eventRingsBuffer は SAB 時 の み hand (= postMessage path で は
+      // structured clone で 別 instance に な る = mirror 不 能、 worklet 側 が
+      // port.postMessage で 新 emit 分 を 個 別 配 送)。
+      ...(eventRings.length > 0
         ? {
-            eventRingsBuffer,
             eventRings,
             eventRingSabOffsets,
             transport: transportMode,
+            ...(eventRingsBuffer !== null ? { eventRingsBuffer } : {}),
           }
         : {}),
       // message ring あ り の 時 だ け messageRingsBuffer + descriptor + sabOffsets を
@@ -842,6 +857,64 @@ export async function createNode<C>(
     node.port.addEventListener("message", onPublishMessage);
   }
 
+  // postMessage path 用 event listener (= SAB unavailable 時 に worklet 側 が 新
+  // emit 分 を `port.postMessage({ kind: 'event', ringIndex, newSlotsBytes,
+  // newSlotCount, overflowCount })` で 配 送 す る = main 側 で payload object 化 +
+  // subscriber dispatch + overflowCount mirror 更 新)。 SAB 時 は drop。
+  const onEventMessage = (event: MessageEvent): void => {
+    const data = event.data as
+      | {
+          kind?: unknown;
+          ringIndex?: unknown;
+          newSlotsBytes?: unknown;
+          newSlotCount?: unknown;
+          overflowCount?: unknown;
+        }
+      | null
+      | undefined;
+    if (typeof data !== "object" || data === null) return;
+    if (data.kind !== "event") return;
+    if (typeof data.ringIndex !== "number") return;
+    const ringIndex = data.ringIndex;
+    if (ringIndex < 0 || ringIndex >= eventRings.length) return;
+    const ring = eventRings[ringIndex]!;
+    // overflowCount mirror 更 新 (= diagnostics.overflowCount() の read 元)
+    if (typeof data.overflowCount === "number") {
+      eventOverflowMirror[ringIndex] = data.overflowCount;
+    }
+    // slots を payload object 化 + subscriber dispatch
+    if (
+      data.newSlotsBytes instanceof ArrayBuffer &&
+      typeof data.newSlotCount === "number" &&
+      data.newSlotCount > 0
+    ) {
+      const subscribers = eventSubscribers.get(ring.name);
+      if (!subscribers || subscribers.size === 0) return;
+      const view = new DataView(data.newSlotsBytes);
+      for (let k = 0; k < data.newSlotCount; k++) {
+        const slotByteOffset = k * ring.slotSize;
+        const payload: Record<string, unknown> = {};
+        for (const field of ring.fields) {
+          payload[field.name] = readEventFieldValue(
+            view,
+            slotByteOffset + field.offsetInSlot,
+            field.wireType,
+          );
+        }
+        for (const handler of subscribers) {
+          try {
+            handler(payload);
+          } catch (err) {
+            console.error("unworklet: event handler threw", err);
+          }
+        }
+      }
+    }
+  };
+  if (transportMode === "postMessage" && eventRings.length > 0) {
+    node.port.addEventListener("message", onEventMessage);
+  }
+
   const { handles: inputHandles, proxies: inputProxies } = buildInputProxies(context, node, inputs);
 
   // sab-unavailable event を 1 度 だ け fire す る pending flag (= 04-worklet-
@@ -869,6 +942,7 @@ export async function createNode<C>(
       stopRafLoop();
       node.port.removeEventListener("message", onErrorMessage);
       node.port.removeEventListener("message", onPublishMessage);
+      node.port.removeEventListener("message", onEventMessage);
       node.removeEventListener("processorerror", onErrorProcessor);
       errorSubscribers.clear();
       for (const subs of stateSubscribers.values()) subs.clear();

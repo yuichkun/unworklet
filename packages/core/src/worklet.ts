@@ -162,6 +162,15 @@ type WorkletState = {
   readonly eventRingsWasmHeaderViews: readonly Int32Array[];
   readonly eventRingsSabHeaderViews: readonly Int32Array[];
   /**
+   * postMessage path 用 = 各 event ring で 「前 quantum 末 で main へ 送 信 済 み の
+   * head 値」 / 「同 overflow 値」。 次 quantum で 「currentHead != lastSent」 ま
+   * た は 「currentOverflow != lastSent」 が 検 出 し た 時 だ け diff を port.postMessage
+   * で 配 送 (= 変 化 ナ シ quantum は skip)。 SAB path で は 参 照 し な い (= SAB
+   * mirror copy だ け で main 側 が rAF polling で 直 接 観 測)。
+   */
+  readonly lastSentEventHeads: number[];
+  readonly lastSentEventOverflows: number[];
+  /**
    * message ring SAB ↔ WASM mirror meta (= sub-phase 7.7d)。 event ring と zip
    * pattern、 ま た push 方 向 が 逆 (= main → worklet) = process 開 始 で
    * SAB → WASM mirror (= main が push し た slot を WASM ring に bulk copy +
@@ -432,17 +441,23 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       const eventRingsSabViews: Uint8Array[] = [];
       const eventRingsWasmHeaderViews: Int32Array[] = [];
       const eventRingsSabHeaderViews: Int32Array[] = [];
-      if (eventRingsBuffer !== null) {
-        for (let i = 0; i < eventRings.length; i++) {
-          const ring = eventRings[i]!;
-          const ringTotalBytes = 12 + ring.capacity * ring.slotSize;
-          eventRingsWasmViews.push(
-            new Uint8Array(memory.buffer, ring.wasmRingBase, ringTotalBytes),
-          );
+      // postMessage path 用 = 各 ring の 「前 quantum で 送 信 済 み head / overflow」
+      // を track (= 次 quantum で diff だ け 送 る path)。 SAB path は 参 照 ナ シ で
+      // 初 期 値 0 の ま ま。
+      const lastSentEventHeads = eventRings.map(() => 0);
+      const lastSentEventOverflows = eventRings.map(() => 0);
+      // WASM views = 両 transport で 必 要 (= worklet が WASM 内 ring を 読 む path
+      // は SAB / postMessage 共 通)。 SAB views = SAB 時 の み bind (= postMessage
+      // path は eventRingsBuffer 不 在)。
+      for (let i = 0; i < eventRings.length; i++) {
+        const ring = eventRings[i]!;
+        const ringTotalBytes = 12 + ring.capacity * ring.slotSize;
+        eventRingsWasmViews.push(new Uint8Array(memory.buffer, ring.wasmRingBase, ringTotalBytes));
+        eventRingsWasmHeaderViews.push(new Int32Array(memory.buffer, ring.wasmRingBase, 3));
+        if (eventRingsBuffer !== null) {
           eventRingsSabViews.push(
             new Uint8Array(eventRingsBuffer, eventRingSabOffsets[i]!, ringTotalBytes),
           );
-          eventRingsWasmHeaderViews.push(new Int32Array(memory.buffer, ring.wasmRingBase, 3));
           eventRingsSabHeaderViews.push(
             new Int32Array(eventRingsBuffer, eventRingSabOffsets[i]!, 3),
           );
@@ -498,6 +513,8 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         eventRingsSabViews,
         eventRingsWasmHeaderViews,
         eventRingsSabHeaderViews,
+        lastSentEventHeads,
+        lastSentEventOverflows,
         messageRingsBuffer,
         messageRings,
         messageRingSabOffsets,
@@ -718,30 +735,67 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       }
     }
 
-    // event ring copy (= sub-phase 7.6 commit 5c)。 WASM ring (= header 12 +
-    // slots) を SAB ring に bulk copy (= per-quantum、 main が tail を 進 め て も
-    // WASM 側 は 影 響 ナ シ = ring は audio thread 専 用、 SAB は 公 開 mirror)。
-    // tail も copy (= main 側 が SAB の tail を 上 書 き す る が、 audio thread は
-    // SAB を 読 ま な い = 衝 突 ナ シ)。 SAB mode の Atomics fence は per-quantum 末 尾
-    // に WASM head の Atomics.store だ け で 担 保 (= main 側 polling は Atomics.load
-    // で head の release fence を 取 っ て か ら slot を 読 む)。
-    if (state.eventRingsBuffer !== null) {
+    // event ring copy = transport mode で 経 路 が 分 岐:
+    //
+    // - SAB available: 既 SAB bulk copy (= ring 全 体 を SAB に mirror) + header
+    //   Atomics.store (= main 側 が rAF polling + Atomics.load で head release
+    //   fence を 取 っ て slot 列 visibility 担 保)。
+    // - SAB unavailable: 共 有 buffer 不 在 (= structured clone で main / worklet が
+    //   別 ring instance) = 新 emit 分 (= lastSentHead .. currentHead) を Uint8Array
+    //   slice で 抽 出 + port.postMessage で 配 送 (= main 側 onEventMessage で payload
+    //   object 化 + subscriber dispatch、 overflowCount は payload に carry し て
+    //   main mirror を 更 新)。 変 化 ナ シ quantum は skip。
+    //
+    // 注: postMessage path で per-quantum `new Uint8Array(...)` alloc は 02-messaging
+    // §4 の 「pre-allocated transferable buffers + ownership transfer」 ping-pong
+    // path に v1.0.0 ship 前 に refactor 予 定 (= 当 wave は「動 く」 まで)。
+    if (state.eventRings.length > 0) {
       const wasmViews = state.eventRingsWasmViews;
       const sabViews = state.eventRingsSabViews;
       const wasmHeaders = state.eventRingsWasmHeaderViews;
       const sabHeaders = state.eventRingsSabHeaderViews;
       const isSab = state.transport === "sab";
-      for (let i = 0; i < wasmViews.length; i++) {
-        // bulk copy ring 全 体 (= header + 全 slot) を SAB に mirror。
-        sabViews[i]!.set(wasmViews[i]!);
-        if (isSab) {
-          // head / tail / overflowCount を Atomics.store で 上 書 き = main 側 が
-          // Atomics.load(head) で release fence を 取 っ て slot 列 visibility 担 保。
-          const wasmH = wasmHeaders[i]!;
+      for (let i = 0; i < state.eventRings.length; i++) {
+        const ring = state.eventRings[i]!;
+        const wasmH = wasmHeaders[i]!;
+        const currentHead = wasmH[0]!;
+        const currentTail = wasmH[1]!;
+        const currentOverflow = wasmH[2]!;
+        if (isSab && state.eventRingsBuffer !== null) {
+          // SAB path = 既 bulk copy + header Atomics.store
+          sabViews[i]!.set(wasmViews[i]!);
           const sabH = sabHeaders[i]!;
-          Atomics.store(sabH, 0, wasmH[0]!); // head
-          Atomics.store(sabH, 1, wasmH[1]!); // tail
-          Atomics.store(sabH, 2, wasmH[2]!); // overflowCount
+          Atomics.store(sabH, 0, currentHead);
+          Atomics.store(sabH, 1, currentTail);
+          Atomics.store(sabH, 2, currentOverflow);
+        } else {
+          // postMessage path = 新 emit 分 を 抽 出 + port.postMessage 配 送
+          const lastSentHead = state.lastSentEventHeads[i]!;
+          const lastSentOverflow = state.lastSentEventOverflows[i]!;
+          if (currentHead === lastSentHead && currentOverflow === lastSentOverflow) continue;
+          // drop-oldest 発 動 で tail が lastSentHead を 越 え て いる 可 能 性 = max
+          // で 巻 き 直 し (= 古 い slot は overflow 済 で 飛 ば す)。
+          const from = lastSentHead < currentTail ? currentTail : lastSentHead;
+          const newSlotCount = currentHead - from;
+          const slotSize = ring.slotSize;
+          const capacity = ring.capacity;
+          const wasmRawView = wasmViews[i]!;
+          // 新 slot 群 を Uint8Array に bulk copy (= main 側 で field 解 読)
+          const slotsBytes = new Uint8Array(newSlotCount * slotSize);
+          for (let k = 0; k < newSlotCount; k++) {
+            const slotIdx = (from + k) % capacity;
+            const srcOffset = 12 + slotIdx * slotSize;
+            slotsBytes.set(wasmRawView.subarray(srcOffset, srcOffset + slotSize), k * slotSize);
+          }
+          self.port.postMessage({
+            kind: "event",
+            ringIndex: i,
+            newSlotsBytes: slotsBytes.buffer,
+            newSlotCount,
+            overflowCount: currentOverflow,
+          });
+          state.lastSentEventHeads[i] = currentHead;
+          state.lastSentEventOverflows[i] = currentOverflow;
         }
       }
     }

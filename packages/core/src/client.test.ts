@@ -1565,7 +1565,11 @@ test("createNode without eventRings = processorOptions に eventRingsBuffer hand
   }
 });
 
-test("createNode with eventRings + !crossOriginIsolated = fallback ArrayBuffer", async () => {
+test("createNode with eventRings + !crossOriginIsolated = eventRingsBuffer な し + descriptor hand", async () => {
+  // postMessage path = eventRingsBuffer を hand し な い (= structured clone で
+  // main / worklet が 別 ring instance に な る = mirror 不 能、 worklet 側 が
+  // port.postMessage で 新 emit 分 を 個 別 配 送 す る path)。 eventRings
+  // descriptor + transport だ け hand。
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   try {
     await startCreate(
@@ -1590,10 +1594,13 @@ test("createNode with eventRings + !crossOriginIsolated = fallback ArrayBuffer",
       h.fireReady,
     );
     const opts = h.lastNode!.__constructorRecord.options.processorOptions as {
-      eventRingsBuffer: unknown;
+      eventRingsBuffer?: unknown;
+      eventRings?: unknown;
+      transport?: string;
     };
-    expect(opts.eventRingsBuffer).toBeInstanceOf(ArrayBuffer);
-    expect(opts.eventRingsBuffer).not.toBeInstanceOf(SharedArrayBuffer);
+    expect(opts.eventRingsBuffer).toBeUndefined();
+    expect(opts.eventRings).toBeDefined();
+    expect(opts.transport).toBe("postMessage");
   } finally {
     h.cleanup();
   }
@@ -2331,7 +2338,11 @@ test("node.events.<name>.on: f64 / i64 / bool field を plain JS 値 で 受 領
   }
 });
 
-test("node.events.<name>.on: postMessage transport で drain + Atomics ナ シ で 動 く", async () => {
+test("node.events.<name>.on: postMessage transport で port.onmessage 経 由 で subscriber + diagnostics 即 時 更 新", async () => {
+  // postMessage path = worklet 側 が `port.postMessage({ kind: 'event', ringIndex,
+  // newSlotsBytes, newSlotCount, overflowCount })` を 投 げ る = main 側 onEventMessage
+  // 経 由 で payload 解 読 + subscriber 即 時 fire + overflowCount mirror 更 新。
+  // rAF flush 不 要。
   const raf = installRafMock();
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   try {
@@ -2339,19 +2350,30 @@ test("node.events.<name>.on: postMessage transport で drain + Atomics ナ シ �
       () => createNode(h.context as never, makeMockProcessor({ eventRings: [peakEventRing] })),
       h.fireReady,
     );
-    const eventBuf = h.lastNode!.__constructorRecord.options.processorOptions!
-      .eventRingsBuffer as ArrayBuffer;
     const calls: unknown[] = [];
     node.events["peak"]!.on((p) => calls.push(p));
-    const header = new Int32Array(eventBuf, 0, 3);
-    const slot0 = new DataView(eventBuf, 12);
-    slot0.setInt32(0, 3, true);
-    slot0.setFloat32(4, 0.5, true);
-    header[0] = 1; // postMessage path = 直 接 write
-    header[2] = 7; // overflowCount = 7
-    raf.flush();
+    // 1 slot 分 (= atSample i32 + level f32 = 8 byte) の newSlotsBytes を 構 築。
+    const slotBuf = new ArrayBuffer(8);
+    const view = new DataView(slotBuf);
+    view.setInt32(0, 3, true);
+    view.setFloat32(4, 0.5, true);
+    // port listener 経 由 で event message dispatch を simulate
+    for (const listener of h.lastNode!.port.__listeners) {
+      listener({
+        data: {
+          kind: "event",
+          ringIndex: 0,
+          newSlotsBytes: slotBuf,
+          newSlotCount: 1,
+          overflowCount: 7,
+        },
+      } as MessageEvent);
+    }
     expect(calls).toEqual([{ atSample: 3, level: 0.5 }]);
     expect(node.events["peak"]!.diagnostics.overflowCount()).toBe(7);
+    // rAF flush し て も 追 加 fire ナ シ (= polling 不 要 = port driven)
+    raf.flush();
+    expect(calls).toEqual([{ atSample: 3, level: 0.5 }]);
   } finally {
     h.cleanup();
     raf.restore();
