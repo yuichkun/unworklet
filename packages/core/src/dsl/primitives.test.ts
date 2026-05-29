@@ -565,7 +565,7 @@ test("`select(true, then, else)` lifts the boolean literal cond to a `bool` lite
   expect(unwrapAst(P.select(true, 1, 0))).toEqual({
     kind: "select",
     type: "f32",
-    cond: { kind: "literal", type: "bool", value: 1 },
+    cond: { kind: "literal", type: "i32", value: 1 },
     ifTrue: { kind: "literal", type: "f32", value: 1 },
     ifFalse: { kind: "literal", type: "f32", value: 0 },
   });
@@ -575,7 +575,7 @@ test("`select(false, then, else)` は bool literal cond を value 0 に lift", (
   expect(unwrapAst(P.select(false, 1, 0))).toEqual({
     kind: "select",
     type: "f32",
-    cond: { kind: "literal", type: "bool", value: 0 },
+    cond: { kind: "literal", type: "i32", value: 0 },
     ifTrue: { kind: "literal", type: "f32", value: 1 },
     ifFalse: { kind: "literal", type: "f32", value: 0 },
   });

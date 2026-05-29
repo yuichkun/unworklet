@@ -381,7 +381,10 @@ export function select<T extends ScalarType>(
     type: "f32",
     cond:
       typeof cond === "boolean"
-        ? { kind: "literal", type: "bool", value: cond ? 1 : 0 }
+        ? // bool は 内 部 i32 表 現 (= 0/1) = WASM select cond も i32。 bool literal
+          // emit は 後 続 phase 送 り な の で、 こ こ で i32 literal に lift し て
+          // `select(true/false, ...)` が emit で throw し な い よ う に す る。
+          { kind: "literal", type: "i32", value: cond ? 1 : 0 }
         : unwrapAst(cond),
     ifTrue: liftToAst(then),
     ifFalse: liftToAst(else_),

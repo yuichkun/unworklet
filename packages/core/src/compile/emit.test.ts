@@ -14,6 +14,9 @@
 
 import { expect, test } from "vite-plus/test";
 
+import { unwrapAst } from "./capture.ts";
+import { select } from "../dsl/primitives.ts";
+
 import type { AstNode, CapturedGraph } from "./ast.ts";
 import type { BinaryenAPI, BinaryenModule } from "./emit.ts";
 import { emit, emitExpression, emitStatement } from "./emit.ts";
@@ -3383,4 +3386,14 @@ test("`emit(tanh)` e2e: ネスト tanh(sin(0.5)) (= walker が内側 sin を収�
   };
   const got = await runStoreAndRead(makeStoreValueGraph(nested));
   expect(Math.abs(got - Math.tanh(Math.sin(0.5)))).toBeLessThan(1e-3);
+});
+
+// 定 数 bool cond の select (= `select(true/false, a, b)`) が emit で throw せ ず 分 岐
+// す る こ と (= P2 fix、 Reported by @codex on #6)。 bool は 内 部 i32 表 現 な の で
+// cond は i32 literal 0/1 に lift さ れ る。
+test("`emit(select)` e2e: select(true, 10, 20) → 10 / select(false, 10, 20) → 20", async () => {
+  const t = await runStoreAndRead(makeStoreValueGraph(unwrapAst(select(true, 10, 20))));
+  expect(t).toBe(10);
+  const f = await runStoreAndRead(makeStoreValueGraph(unwrapAst(select(false, 10, 20))));
+  expect(f).toBe(20);
 });
