@@ -1040,6 +1040,46 @@ test("message overflow notify (postMessage): overflow 変 化 ナ シ quantum �
   expect(overflowMessages.length).toBe(0);
 });
 
+test("message inject (postMessage): process 内 で DataView を 毎 quantum alloc し な い (= ring view は init で pre-bind、 §5.1 realtime safety)", async () => {
+  const { wasm } = await compile(messagePostProc);
+  const self = makeMockSelf();
+  messagePostProc.worklet.initialize(self, {
+    processorOptions: {
+      wasm,
+      messageRings: messagePostProc.worklet.messageRings,
+      messageRingSabOffsets: [0],
+      transport: "postMessage",
+    },
+  });
+
+  // init で の pre-bind は許 容。 計 測 す る の は audio thread hot path (= process())
+  // 内 で の per-quantum alloc だ け な の で、 init 後 に DataView constructor を hook。
+  const RealDataView = globalThis.DataView;
+  let ctorCount = 0;
+  globalThis.DataView = new Proxy(RealDataView, {
+    construct(target, args, newTarget) {
+      ctorCount++;
+      return Reflect.construct(target, args, newTarget);
+    },
+  }) as typeof DataView;
+
+  const inputs: Float32Array[][] = [];
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  try {
+    // 毎 quantum message を inject = inject path (= ring view 経 由 の field 書 込) を
+    // 確 実 に 通 す。 queue は process ご と に drain さ れ る た め 各 quantum 前 に 再 push。
+    for (let b = 0; b < 5; b++) {
+      firePortMessage(self, { kind: "message", ringIndex: 0, payload: { slot: b } });
+      messagePostProc.worklet.process(self, inputs, outputs, {});
+    }
+  } finally {
+    globalThis.DataView = RealDataView;
+  }
+
+  // process 内 で の DataView 構 築 = 0 (= message ring view は init で 1 度 だ け pre-bind)
+  expect(ctorCount).toBe(0);
+});
+
 test("message ring (no decl): port.addEventListener は呼 ば れ な い + start も 呼 ば れ ない (= regression)", async () => {
   const { wasm } = await compile(monoGain);
   const self = makeMockSelf();
