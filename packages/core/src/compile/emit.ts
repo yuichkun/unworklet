@@ -331,6 +331,11 @@ export function emitExpression(
         emitExpression(node.lhs, layout, mod, binaryen),
         emitExpression(node.rhs, layout, mod, binaryen),
       );
+    case "gt":
+      return mod.f32.gt(
+        emitExpression(node.lhs, layout, mod, binaryen),
+        emitExpression(node.rhs, layout, mod, binaryen),
+      );
     case "audioInRead": {
       const portBase = layout.regions.ioScratch.inputs[node.portName];
       if (portBase === undefined) {
