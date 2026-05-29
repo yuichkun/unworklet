@@ -16,7 +16,7 @@ const unary = ["sin", "cos", "tan", "tanh", "exp", "log", "frac"] as const;
 // `mul` / `abs` / `max` は Step 3.3 / sub-phase 7.8a で fill = stub list か ら 除 外。
 const binary = ["mod"] as const;
 
-const ternary = ["clamp", "select"] as const;
+const ternary = ["select"] as const;
 
 test.each(unary)("`%s(x)` stub throws", (name) => {
   const fn = (P as unknown as Record<string, (x: number) => unknown>)[name];
@@ -526,4 +526,34 @@ test("`Node<T>.gte(other)` method form = free function 同 AST", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 5 });
   const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
   expect(unwrapAst(a.gte(b))).toEqual(unwrapAst(P.gte(a, b)));
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// clamp (= min(max(x, lo), hi))
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`clamp(node, lo, hi)` returns a `Node` carrying a `clamp` AST", () => {
+  const x = wrapAst<"f32">({ kind: "literal", type: "f32", value: 5 });
+  expect(unwrapAst(P.clamp(x, 0, 1))).toEqual({
+    kind: "clamp",
+    type: "f32",
+    x: { kind: "literal", type: "f32", value: 5 },
+    lo: { kind: "literal", type: "f32", value: 0 },
+    hi: { kind: "literal", type: "f32", value: 1 },
+  });
+});
+
+test("`clamp(number, number, number)` lifts all operands", () => {
+  expect(unwrapAst(P.clamp(0.5, 0, 1))).toEqual({
+    kind: "clamp",
+    type: "f32",
+    x: { kind: "literal", type: "f32", value: 0.5 },
+    lo: { kind: "literal", type: "f32", value: 0 },
+    hi: { kind: "literal", type: "f32", value: 1 },
+  });
+});
+
+test("`Node<T>.clamp(lo, hi)` method form = free function 同 AST", () => {
+  const x = wrapAst<"f32">({ kind: "literal", type: "f32", value: 5 });
+  expect(unwrapAst(x.clamp(0, 1))).toEqual(unwrapAst(P.clamp(x, 0, 1)));
 });

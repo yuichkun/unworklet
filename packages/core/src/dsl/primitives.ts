@@ -297,12 +297,23 @@ registerNodeMethod("max", function method<
   return max(this, other);
 });
 export function clamp<T extends ScalarType>(
-  _x: Node<T> | number,
-  _lo: Node<T> | number,
-  _hi: Node<T> | number,
+  x: Node<T> | number,
+  lo: Node<T> | number,
+  hi: Node<T> | number,
 ): Node<T> {
-  return notImplemented();
+  return wrapAst<T>({
+    kind: "clamp",
+    type: "f32",
+    x: liftToAst(x),
+    lo: liftToAst(lo),
+    hi: liftToAst(hi),
+  });
 }
+registerNodeMethod("clamp", function method<
+  T extends ScalarType,
+>(this: Node<T>, lo: Node<T> | number, hi: Node<T> | number): Node<T> {
+  return clamp(this, lo, hi);
+});
 
 // Control
 export function select<T extends ScalarType>(

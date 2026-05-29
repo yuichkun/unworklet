@@ -346,6 +346,17 @@ export function emitExpression(
         emitExpression(node.lhs, layout, mod, binaryen),
         emitExpression(node.rhs, layout, mod, binaryen),
       );
+    // clamp(x, lo, hi) = min(max(x, lo), hi)。 各 オ ペ ラ ン ド を 1 度 ず つ emit =
+    // 二 重 評 価 ナ シ = temp local 不 要。 lo > hi の 退 化 ケ ー ス は hi を 返 す
+    // (= max(x,lo) >= lo > hi な の で min(..., hi) = hi)、 決 定 的 挙 動。
+    case "clamp":
+      return mod.f32.min(
+        mod.f32.max(
+          emitExpression(node.x, layout, mod, binaryen),
+          emitExpression(node.lo, layout, mod, binaryen),
+        ),
+        emitExpression(node.hi, layout, mod, binaryen),
+      );
     case "audioInRead": {
       const portBase = layout.regions.ioScratch.inputs[node.portName];
       if (portBase === undefined) {

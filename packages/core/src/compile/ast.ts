@@ -30,6 +30,7 @@ export type AstNode =
   | { kind: "gt"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "lte"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "gte"; type: ScalarType; lhs: AstNode; rhs: AstNode }
+  | { kind: "clamp"; type: ScalarType; x: AstNode; lo: AstNode; hi: AstNode }
   | { kind: "audioInRead"; portName: string; channel: number; offset: AstNode }
   | {
       kind: "audioOutWrite";

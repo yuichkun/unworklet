@@ -3142,3 +3142,33 @@ test("`emit(gte)` e2e: 3>=3 → 1 / 5>=3 → 1 / 3>=5 → 0 (等値境界)", asy
   expect(await runCompareAndRead(cmp("gte", 5, 3))).toBe(1);
   expect(await runCompareAndRead(cmp("gte", 3, 5))).toBe(0);
 });
+
+function clampAst(x: number, lo: number, hi: number): AstNode {
+  return {
+    kind: "clamp",
+    type: "f32",
+    x: { kind: "literal", type: "f32", value: x },
+    lo: { kind: "literal", type: "f32", value: lo },
+    hi: { kind: "literal", type: "f32", value: hi },
+  };
+}
+
+test("`emitExpression(clamp)` lowers to nested `f32.min`/`f32.max`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(clampAst(5, 0, 1), emptyLayout, mod, binaryen);
+  const wat = watOfExpression(mod, binaryen, ref, binaryen.f32);
+  expect(wat).toContain("(f32.min");
+  expect(wat).toContain("(f32.max");
+  mod.dispose();
+});
+
+test("`emit(clamp)` e2e: 範囲内/lo未満/hi超過", async () => {
+  expect(await runStoreAndRead(makeStoreValueGraph(clampAst(0.5, 0, 1)))).toBe(0.5);
+  expect(await runStoreAndRead(makeStoreValueGraph(clampAst(-1, 0, 1)))).toBe(0);
+  expect(await runStoreAndRead(makeStoreValueGraph(clampAst(5, 0, 1)))).toBe(1);
+});
+
+test("`emit(clamp)` e2e: lo > hi 退化ケースは hi を返す", async () => {
+  expect(await runStoreAndRead(makeStoreValueGraph(clampAst(0.5, 1, 0)))).toBe(0);
+});
