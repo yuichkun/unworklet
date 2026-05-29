@@ -32,6 +32,10 @@ export default defineConfig({
         "src/compile/ast.ts",
         // public re-export hub (= `export` 文 だ け)
         "src/index.ts",
+        // browser e2e fixtures = real `AudioContext` 必 須 で node-side test に 含
+        // ま れ ない、 vite.browser*.config.ts 経 由 で real chromium で 駆 動 す る
+        // 物 = node coverage 対 象 外。
+        "src/__tests__/browser/fixtures/**",
       ],
       reporter: ["text", "html", "json-summary"],
       thresholds: {

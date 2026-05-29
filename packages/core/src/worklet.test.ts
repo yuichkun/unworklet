@@ -17,30 +17,54 @@ import "./dsl/primitives.ts"; // method form (= `.mul`) registration side-effect
 import { expect, test } from "vite-plus/test";
 
 import { compile } from "./compile/index.ts";
-import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
+import { CAPACITY_16, SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
 import { audioInput, audioOutput, event, message, param } from "./dsl/declarations.ts";
 import { forSample } from "./dsl/loop.ts";
 import { defineProcessor } from "./processor.ts";
 
 type CollectedMessage = unknown;
 
+type PortListener = (event: MessageEvent) => void;
+
 type MockSelf = {
   port: {
     postMessage: (m: CollectedMessage) => void;
+    addEventListener: (kind: string, fn: PortListener) => void;
+    start: () => void;
+    __listeners: PortListener[];
+    __startCalled: boolean;
   };
   messages: CollectedMessage[];
 };
 
 const makeMockSelf = (): MockSelf => {
   const messages: CollectedMessage[] = [];
-  return {
+  const listeners: PortListener[] = [];
+  const self: MockSelf = {
     port: {
       postMessage: (m: CollectedMessage) => {
         messages.push(m);
       },
+      addEventListener: (kind: string, fn: PortListener) => {
+        if (kind === "message") listeners.push(fn);
+      },
+      start: () => {
+        self.port.__startCalled = true;
+      },
+      __listeners: listeners,
+      __startCalled: false,
     },
     messages,
   };
+  return self;
+};
+
+// Helper to fire a port.message event into all registered listeners (= simulates
+// `port.postMessage(...)` from main into the worklet's listener path).
+const firePortMessage = (self: MockSelf, data: unknown): void => {
+  for (const listener of self.port.__listeners) {
+    listener({ data } as MessageEvent);
+  }
 };
 
 const stereoGain = defineProcessor(() => {
@@ -855,4 +879,171 @@ test("message ring mirror: messageRingsBuffer ナ シ processor は message path
   const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
   const parameters = { gain: new Float32Array([2]) };
   expect(() => monoGain.worklet.process(self, inputs, outputs, parameters)).not.toThrow();
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// message ring postMessage path (= postMessage fallback、 messageRingsBuffer
+// な し で main 側 が port.postMessage 直 送 + worklet 側 が self.port.onmessage
+// で receive + queue に push + process 開 始 で WASM ring に inject)
+// ─────────────────────────────────────────────────────────────────────────
+
+const messagePostProc = defineProcessor(() => {
+  const out = audioOutput({ channels: 1, name: "out" });
+  const captured = stateDecl.i32(0).expose({ name: "captured", publish: { rateFps: 30 } });
+  const ctrl = message<{ slot: number }>({ name: "ctrl", capacity: CAPACITY_16 });
+  return {
+    process: () => {
+      ctrl.onReceive(({ slot }) => {
+        captured.store(slot);
+      });
+      forSample((i) => {
+        out.ch(0).at(i).write(0);
+      });
+    },
+  };
+});
+
+test("message inject (postMessage): initialize で port.addEventListener + port.start 呼 ば れ る", async () => {
+  const { wasm } = await compile(messagePostProc);
+  const self = makeMockSelf();
+  messagePostProc.worklet.initialize(self, {
+    processorOptions: {
+      wasm,
+      messageRings: messagePostProc.worklet.messageRings,
+      messageRingSabOffsets: [0],
+      transport: "postMessage",
+    },
+  });
+  expect(self.port.__listeners.length).toBeGreaterThan(0);
+  expect(self.port.__startCalled).toBe(true);
+});
+
+test("message inject (postMessage): firePortMessage で payload を queue に push + process で WASM ring drain", async () => {
+  const { wasm } = await compile(messagePostProc);
+  const self = makeMockSelf();
+  messagePostProc.worklet.initialize(self, {
+    processorOptions: {
+      wasm,
+      messageRings: messagePostProc.worklet.messageRings,
+      messageRingSabOffsets: [0],
+      transport: "postMessage",
+      // publish も hand (= captured の publish 経 由 で 動 作 chain 担 保)
+      publishSlots: messagePostProc.worklet.publishSlots,
+    },
+  });
+  self.messages.length = 0;
+  // main → worklet を simulate
+  firePortMessage(self, { kind: "message", ringIndex: 0, payload: { slot: 42 } });
+  // process 開始 で WASM ring に inject + onReceive で captured.store(42) + 末尾
+  // publish 経 由 で main へ port.postMessage 通 知 (= "publish" message)
+  const inputs: Float32Array[][] = [];
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  // publish が 30fps で 1600 sample 周期 = 13 block で due tick
+  for (let b = 0; b < 13; b++) {
+    messagePostProc.worklet.process(self, inputs, outputs, {});
+  }
+  const publishMessages = self.messages.filter(
+    (m): m is { kind: string; valueBits: number } =>
+      typeof m === "object" && m !== null && (m as { kind?: unknown }).kind === "publish",
+  );
+  expect(publishMessages.length).toBeGreaterThan(0);
+  expect(publishMessages[0]!.valueBits).toBe(42);
+});
+
+test("message inject (postMessage): 不 正 kind は drop = queue に push さ れ な い", async () => {
+  const { wasm } = await compile(messagePostProc);
+  const self = makeMockSelf();
+  messagePostProc.worklet.initialize(self, {
+    processorOptions: {
+      wasm,
+      messageRings: messagePostProc.worklet.messageRings,
+      messageRingSabOffsets: [0],
+      transport: "postMessage",
+      publishSlots: messagePostProc.worklet.publishSlots,
+    },
+  });
+  self.messages.length = 0;
+  // 不 正 kind + ringIndex 範 囲 外 + null payload + non-object payload + null data 全 drop
+  firePortMessage(self, { kind: "other-kind", ringIndex: 0, payload: { slot: 1 } });
+  firePortMessage(self, { kind: "message", ringIndex: 99, payload: { slot: 2 } });
+  firePortMessage(self, { kind: "message", ringIndex: 0, payload: null });
+  firePortMessage(self, { kind: "message", ringIndex: 0, payload: "non-object" });
+  firePortMessage(self, null);
+  firePortMessage(self, { kind: "message", ringIndex: "not-a-number", payload: { slot: 3 } });
+  // process 走 ら せ て publish が 出 な い こ と (= queue 空 = inject ナ シ = captured 0)
+  const inputs: Float32Array[][] = [];
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  for (let b = 0; b < 13; b++) {
+    messagePostProc.worklet.process(self, inputs, outputs, {});
+  }
+  const publishMessages = self.messages.filter(
+    (m): m is { kind: string; valueBits: number } =>
+      typeof m === "object" && m !== null && (m as { kind?: unknown }).kind === "publish",
+  );
+  // captured 初 期 値 0 が publish さ れ る = valueBits 全 0
+  for (const m of publishMessages) expect(m.valueBits).toBe(0);
+});
+
+test("message inject (postMessage): 容 量 超 え で WASM 内 drop-oldest + overflow notify", async () => {
+  const { wasm } = await compile(messagePostProc);
+  const self = makeMockSelf();
+  messagePostProc.worklet.initialize(self, {
+    processorOptions: {
+      wasm,
+      messageRings: messagePostProc.worklet.messageRings,
+      messageRingSabOffsets: [0],
+      transport: "postMessage",
+    },
+  });
+  self.messages.length = 0;
+  // capacity 16 = 17 件 送 れ ば 1 件 drop-oldest 発 動
+  for (let i = 0; i < 17; i++) {
+    firePortMessage(self, { kind: "message", ringIndex: 0, payload: { slot: i } });
+  }
+  const inputs: Float32Array[][] = [];
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  messagePostProc.worklet.process(self, inputs, outputs, {});
+  // 末 尾 で overflow notify が 1 件 出 て いる
+  const overflowMessages = self.messages.filter(
+    (m): m is { kind: string; ringIndex: number; overflowCount: number } =>
+      typeof m === "object" && m !== null && (m as { kind?: unknown }).kind === "message-overflow",
+  );
+  expect(overflowMessages.length).toBe(1);
+  expect(overflowMessages[0]!.ringIndex).toBe(0);
+  expect(overflowMessages[0]!.overflowCount).toBe(1);
+});
+
+test("message overflow notify (postMessage): overflow 変 化 ナ シ quantum は skip", async () => {
+  const { wasm } = await compile(messagePostProc);
+  const self = makeMockSelf();
+  messagePostProc.worklet.initialize(self, {
+    processorOptions: {
+      wasm,
+      messageRings: messagePostProc.worklet.messageRings,
+      messageRingSabOffsets: [0],
+      transport: "postMessage",
+    },
+  });
+  self.messages.length = 0;
+  // 1 件 だ け push = overflow 起 き な い = 1 quantum 後 self.messages に
+  // "message-overflow" 出 て な い
+  firePortMessage(self, { kind: "message", ringIndex: 0, payload: { slot: 1 } });
+  const inputs: Float32Array[][] = [];
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  messagePostProc.worklet.process(self, inputs, outputs, {});
+  // 次 quantum で も push 続 け な い = overflow 変 化 ナ シ
+  messagePostProc.worklet.process(self, inputs, outputs, {});
+  const overflowMessages = self.messages.filter(
+    (m): m is { kind: string } =>
+      typeof m === "object" && m !== null && (m as { kind?: unknown }).kind === "message-overflow",
+  );
+  expect(overflowMessages.length).toBe(0);
+});
+
+test("message ring (no decl): port.addEventListener は呼 ば れ な い + start も 呼 ば れ ない (= regression)", async () => {
+  const { wasm } = await compile(monoGain);
+  const self = makeMockSelf();
+  monoGain.worklet.initialize(self, { processorOptions: { wasm } });
+  expect(self.port.__listeners.length).toBe(0);
+  expect(self.port.__startCalled).toBe(false);
 });
