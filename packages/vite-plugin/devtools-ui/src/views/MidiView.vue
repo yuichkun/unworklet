@@ -549,7 +549,7 @@ input[type="range"] {
 .key-white {
   position: absolute;
   top: 0;
-  background: var(--u-bg-elev-4);
+  background: floralwhite;
   border: 1px solid var(--u-border-strong);
   border-radius: 0 0 3px 3px;
   cursor: pointer;
@@ -561,8 +561,11 @@ input[type="range"] {
 }
 
 .key-white.pressed {
-  background: var(--u-text);
-  border-color: var(--u-text);
+  /* Darker shade of the floralwhite idle color (same warm hue, lower lightness)
+     so the pressed state reads as "key depressed, catching shadow" rather than
+     "becomes brighter". */
+  background: wheat;
+  border-color: burlywood;
 }
 
 .key-label {
