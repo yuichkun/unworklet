@@ -211,6 +211,11 @@ export type TypedArrayFieldRef<T extends BufferElementType> = {
  * numeric / boolean field is decided at emit time from the `Node<T>` the
  * author supplies. This mapped type lifts each scalar field to the
  * `Node<T> | T[K]` union accordingly.
+ *
+ * `atSample` is **optional**: when omitted, the framework supplies a
+ * context-dependent default — `Node<'i32'>` loop counter inside a
+ * `forSample` callback (= the per-sample `i`), `0` at per-block top
+ * level. Authors override by passing `atSample` explicitly.
  */
 export type EmitPayload<T> = {
   [K in keyof T]: T[K] extends number
@@ -219,7 +224,7 @@ export type EmitPayload<T> = {
       ? T[K] | Node<"bool">
       : T[K];
 } & {
-  atSample: Node<"i32"> | number;
+  atSample?: Node<"i32"> | number;
 };
 
 export type EventDecl<T> = {
@@ -336,6 +341,72 @@ export type AudioPortDescriptor = {
 };
 
 /**
+ * publish slot metadata exposed on `WorkletNamespace.publishSlots` (= sub-phase 7.4)。
+ *
+ * createNode が transport mode 検 出 + SAB allocate + processorOptions に hand
+ * す る 時 + worklet template が per-quantum 末 尾 で WASM memory か ら SAB に
+ * copy す る 時 に 参 照。 declaration 順 = SAB 配 列 index と zip。
+ *
+ * - `name`: state slot name
+ * - `type`: scalar type (= f32 / i32 / bool、 Q42 で 制 限 + 全 4 byte 単 一 word)
+ * - `sharedOffset`: WASM memory 内 の publishShared region 内 offset (= 値 copy 元)
+ * - `counterOffset`: WASM memory 内 の publishCounters region 内 offset (= 8 byte = sample counter + version counter)
+ */
+export type PublishSlotDescriptor = {
+  readonly name: string;
+  readonly type: ScalarType;
+  readonly sharedOffset: number;
+  readonly counterOffset: number;
+};
+
+/**
+ * `event<T>` ringbuffer の per-event descriptor (= `02-messaging.md` §4 + §5.1)。
+ *
+ * `createNode` + worklet template が SAB allocate + copy 経 路 を 構 築 する 時 の
+ * shared shape。 layout の `EventRingSlot` (= compile/layout.ts) を public surface
+ * に lift し て main / worklet で 共 通 で 取 る path。
+ *
+ * memory map: `wasmRingBase` ~ + 12 = header `[head, tail, overflowCount]`、
+ * + 12 + i × slotSize = i 番 目 slot 先 頭。 各 field の offsetInSlot / byteSize で
+ * slot 内 の read / write 位 置 を 取 る。
+ */
+export type EventRingSlotDescriptor = {
+  readonly name: string;
+  readonly wasmRingBase: number;
+  readonly capacity: number;
+  readonly slotSize: number;
+  readonly fields: ReadonlyArray<{
+    readonly name: string;
+    readonly wireType: ScalarType;
+    readonly offsetInSlot: number;
+    readonly byteSize: number;
+  }>;
+};
+
+/**
+ * `message<T>` ringbuffer の per-message descriptor (= `02-messaging.md` §5.3)。
+ *
+ * event descriptor と zip pattern、 ただ し slot 内 atSample ナ シ。 main 側 が
+ * SAB に push し た slot を worklet 側 で WASM memory ring に mirror し て drain
+ * する path。
+ *
+ * memory map: `wasmRingBase` ~ + 12 = header `[head, tail, overflowCount]`、
+ * + 12 + i × slotSize = i 番 目 slot 先 頭。
+ */
+export type MessageRingSlotDescriptor = {
+  readonly name: string;
+  readonly wasmRingBase: number;
+  readonly capacity: number;
+  readonly slotSize: number;
+  readonly fields: ReadonlyArray<{
+    readonly name: string;
+    readonly wireType: ScalarType;
+    readonly offsetInSlot: number;
+    readonly byteSize: number;
+  }>;
+};
+
+/**
  * Worklet escape-hatch namespace exposed on `CompiledProcessor<C>.worklet`
  * (`01-dsl.md` §11 + Q80).
  *
@@ -355,6 +426,9 @@ export type WorkletNamespace = {
   parameterDescriptors: readonly unknown[];
   inputs: readonly AudioPortDescriptor[];
   outputs: readonly AudioPortDescriptor[];
+  publishSlots: readonly PublishSlotDescriptor[];
+  eventRings: readonly EventRingSlotDescriptor[];
+  messageRings: readonly MessageRingSlotDescriptor[];
   moduleUrl?: string;
   processorName?: string;
   wasmUrl?: string;
@@ -427,6 +501,18 @@ export type CompileResult<C> = {
   schemaHash: string;
   driver: CompileDriver;
   __compiledProcessor: C;
+};
+
+/**
+ * `compile(processor, options)` 第 2 引 数 (= sub-phase 7.3 で 追 加)。
+ *
+ * - `sampleRate`: build-time 既 知 と し て emit に hand (= publish scheduler の
+ *   threshold = `Math.round(sampleRate / rateFps)` を const fold)。 default
+ *   = 48000 (= 既 test fixture / host 既 定 と zip)。 1 wasm = 1 sampleRate =
+ *   別 sampleRate な ら 別 wasm を emit。
+ */
+export type CompileOptions = {
+  sampleRate?: number;
 };
 
 /**

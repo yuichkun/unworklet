@@ -104,6 +104,20 @@ export function unwrapAst(node: Node<ScalarType | "f32x4">): AstNode {
   return ast;
 }
 
+/**
+ * 値 が `Node<T>` (= `wrapAst` で 包 ま れ た AST proxy) か を 型 安 全 に 判 定。
+ *
+ * 主 用 途 = `eventDecl.emitIf` の payload field で 「Node<T> か JS literal か」
+ * を 安 全 に 分 岐 (= unwrapAst を try-catch で 包 ま な い path)。 unwrapAst は
+ * 失 敗 時 throw = ホ ッ ト path で catch 経 由 は cost が 不 必 要 に 高 い。
+ */
+export function isWrappedNode(value: unknown): value is Node<ScalarType | "f32x4"> {
+  if (value === null || typeof value !== "object") {
+    return false;
+  }
+  return astPayload in (value as object);
+}
+
 export function registerNodeMethod(name: string, fn: (...args: never[]) => unknown): void {
   nodePrototype[name] = fn;
 }

@@ -1,0 +1,65 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: Lint + Format + Typecheck (= vp check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: "24"
+          cache: true
+      - run: vp install
+      - run: vp check
+
+  vitest:
+    name: Vitest (= node-side + browser SAB + browser postMessage)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: "24"
+          cache: true
+      - run: vp install
+      - name: Build packages in dependency order (= cycle 回避、 vite-plugin
+          先 → core → offline → test の順、 vp run -r は cycle 検出 で fail)
+        run: |
+          vp run --filter @unworklet/vite-plugin build
+          vp run --filter @unworklet/core build
+          vp run --filter @unworklet/offline build
+          vp run --filter @unworklet/test build
+      - name: Install playwright chromium (for browser e2e projects)
+        working-directory: examples/01-stereo-gain
+        run: vp exec playwright install --with-deps chromium
+      - name: Run vitest aggregation
+        run: vp test
+
+  e2e:
+    name: Playwright e2e (= dev server 経由)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: "24"
+          cache: true
+      - run: vp install
+      - name: Build packages in dependency order (= cycle 回避、 vite-plugin
+          先 → core → offline → test の順、 vp run -r は cycle 検出 で fail)
+        run: |
+          vp run --filter @unworklet/vite-plugin build
+          vp run --filter @unworklet/core build
+          vp run --filter @unworklet/offline build
+          vp run --filter @unworklet/test build
+      - name: Install playwright chromium
+        working-directory: examples/01-stereo-gain
+        run: vp exec playwright install --with-deps chromium
+      - name: Run playwright e2e
+        run: vp run --filter ./examples/01-stereo-gain test:e2e

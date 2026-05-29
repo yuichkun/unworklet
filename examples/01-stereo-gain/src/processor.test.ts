@@ -66,6 +66,33 @@ test("stereo gain default = 1 = passthrough (= params 省 略 時)", async () =>
   expect(result.outputs).toEqual({ main: [inputCh0, inputCh1] });
 });
 
+test("canonical Ex 1 full: meterL / meterR publish slot が WorkletNamespace に reflect", () => {
+  // canonical Ex 1 full (= meter L/R expose) で WorkletNamespace.publishSlots に
+  // meterL / meterR が rateFps 30 で 列 挙、 main 側 で `node.state.meterL.subscribe`
+  // が 経 路 化 さ れ る path を 担 保。
+  expect(stereoGain.worklet.publishSlots).toEqual([
+    expect.objectContaining({ name: "meterL", type: "f32" }),
+    expect.objectContaining({ name: "meterR", type: "f32" }),
+  ]);
+});
+
+test("canonical Ex 1 full: meter publish ON で も output は bit-exact passthrough × gain", async () => {
+  // meter 計 算 (= per-sample state.store + per-block decay) は WASM 内 state slot
+  // 内 部 path = output 演 算 に 影 響 ナ シ。 既 「stereo gain renders input × gain
+  // bit-exact」 と zip path = canonical Ex 1 full で も regression な し。
+  const inputCh = new Float32Array(SAMPLES_PER_BLOCK);
+  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) inputCh[i] = i * 0.001;
+  const result = await renderOffline(stereoGain, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+    inputs: { main: [inputCh, inputCh] },
+    params: { gain: [0.5] },
+  });
+  const expected = new Float32Array(SAMPLES_PER_BLOCK);
+  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) expected[i] = i * 0.0005;
+  expect(result.outputs).toEqual({ main: [expected, expected] });
+});
+
 test("Ex 1 minus meter snapshot", async () => {
   // 1 sec @ 48k stereo = 耳 確 認 可 能 な 長 さ。 L = 440 Hz (A4) / R = 880
   // Hz (A5、 1 octave 上) sine = stereo L/R 違 い も 耳 check 可、 gain 0.5

@@ -8,6 +8,7 @@
   "scripts": {
     "check": "vp check",
     "test": "vp test",
+    "test:e2e": "vp exec playwright test",
     "dev": "vp dev",
     "build": "vp build",
     "preview": "vp preview",
@@ -18,10 +19,12 @@
     "@unworklet/offline": "workspace:*"
   },
   "devDependencies": {
+    "@playwright/test": "catalog:",
     "@types/node": "catalog:",
     "@typescript/native-preview": "7.0.0-dev.20260509.2",
     "@unworklet/test": "workspace:*",
     "@unworklet/vite-plugin": "workspace:*",
+    "playwright": "catalog:",
     "tsx": "catalog:",
     "typescript": "catalog:",
     "vite-plus": "catalog:"

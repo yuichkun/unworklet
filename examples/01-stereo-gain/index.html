@@ -3,46 +3,334 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>unworklet — stereo gain (Phase 6 A-5 smoke)</title>
+    <title>unworklet — stereo gain (canonical Ex 1 full)</title>
     <style>
+      :root {
+        --bg: #0f1115;
+        --panel: #1a1d24;
+        --panel-border: #2a2f3a;
+        --text: #e6e8ec;
+        --text-dim: #8b8f99;
+        --accent: #5eead4;
+        --accent-warm: #fbbf24;
+        --accent-danger: #f87171;
+        --meter-bg: #14171d;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
       body {
-        font-family: system-ui, sans-serif;
-        max-width: 480px;
-        margin: 2rem auto;
-        padding: 0 1rem;
+        margin: 0;
+        padding: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif;
+        line-height: 1.5;
+        min-height: 100vh;
       }
+
+      main {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 3rem 1.5rem;
+      }
+
+      h1 {
+        font-size: 1.5rem;
+        font-weight: 600;
+        margin: 0 0 0.25rem;
+        letter-spacing: -0.02em;
+      }
+
+      .subtitle {
+        color: var(--text-dim);
+        font-size: 0.9rem;
+        margin: 0 0 2rem;
+      }
+
+      .subtitle code {
+        font-family: ui-monospace, "SF Mono", monospace;
+        font-size: 0.85em;
+        background: var(--panel);
+        padding: 0.1em 0.4em;
+        border-radius: 3px;
+        color: var(--accent);
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
+        border-radius: 8px;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
+      }
+
+      .controls {
+        display: flex;
+        gap: 0.75rem;
+        align-items: center;
+      }
+
       button {
-        font-size: 1rem;
-        padding: 0.5rem 1rem;
-        margin-right: 0.5rem;
+        font: inherit;
+        font-weight: 500;
+        padding: 0.55rem 1.2rem;
+        border: 1px solid var(--panel-border);
+        background: var(--panel);
+        color: var(--text);
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.15s ease;
       }
-      .gain {
-        margin-top: 1rem;
+
+      button:hover:not(:disabled) {
+        border-color: var(--accent);
+        color: var(--accent);
       }
-      .gain input {
-        width: 100%;
+
+      button:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
       }
-      .status {
-        margin-top: 1rem;
-        font-family: ui-monospace, monospace;
+
+      button.primary {
+        background: var(--accent);
+        color: var(--bg);
+        border-color: var(--accent);
+      }
+
+      button.primary:hover:not(:disabled) {
+        background: var(--accent);
+        color: var(--bg);
+        filter: brightness(1.1);
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: 4rem 1fr 4rem;
+        gap: 1rem;
+        align-items: center;
+        margin: 0.75rem 0;
+      }
+
+      .row-label {
         font-size: 0.85rem;
-        color: #555;
+        color: var(--text-dim);
+      }
+
+      .row-value {
+        font-family: ui-monospace, "SF Mono", monospace;
+        font-size: 0.85rem;
+        color: var(--accent);
+        text-align: right;
+      }
+
+      input[type="range"] {
+        -webkit-appearance: none;
+        appearance: none;
+        background: transparent;
+        cursor: pointer;
+      }
+
+      input[type="range"]::-webkit-slider-runnable-track {
+        background: var(--meter-bg);
+        border: 1px solid var(--panel-border);
+        height: 6px;
+        border-radius: 3px;
+      }
+
+      input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        height: 18px;
+        width: 18px;
+        border-radius: 50%;
+        background: var(--accent);
+        margin-top: -7px;
+        border: 2px solid var(--bg);
+      }
+
+      input[type="range"]::-moz-range-track {
+        background: var(--meter-bg);
+        border: 1px solid var(--panel-border);
+        height: 6px;
+        border-radius: 3px;
+      }
+
+      input[type="range"]::-moz-range-thumb {
+        height: 18px;
+        width: 18px;
+        border-radius: 50%;
+        background: var(--accent);
+        border: 2px solid var(--bg);
+      }
+
+      .meter-bar {
+        position: relative;
+        background: var(--meter-bg);
+        border: 1px solid var(--panel-border);
+        border-radius: 3px;
+        height: 16px;
+        overflow: hidden;
+      }
+
+      .meter-fill {
+        position: absolute;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        width: 0%;
+        background: linear-gradient(
+          90deg,
+          var(--accent) 0%,
+          var(--accent) 60%,
+          var(--accent-warm) 75%,
+          var(--accent-warm) 88%,
+          var(--accent-danger) 100%
+        );
+        transition: width 50ms linear;
+      }
+
+      .meter-grid {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-image: linear-gradient(
+          90deg,
+          transparent 0%,
+          transparent 24%,
+          rgba(255, 255, 255, 0.08) 24%,
+          rgba(255, 255, 255, 0.08) 25%,
+          transparent 25%,
+          transparent 49%,
+          rgba(255, 255, 255, 0.08) 49%,
+          rgba(255, 255, 255, 0.08) 50%,
+          transparent 50%,
+          transparent 74%,
+          rgba(255, 255, 255, 0.08) 74%,
+          rgba(255, 255, 255, 0.08) 75%,
+          transparent 75%
+        );
+        pointer-events: none;
+      }
+
+      .diagnostics {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: 0.5rem 1rem;
+        font-family: ui-monospace, "SF Mono", monospace;
+        font-size: 0.85rem;
+      }
+
+      .diagnostics dt {
+        color: var(--text-dim);
+      }
+
+      .diagnostics dd {
+        margin: 0;
+        color: var(--text);
+      }
+
+      .diagnostics dd.transport-sab {
+        color: var(--accent);
+      }
+
+      .diagnostics dd.transport-postmessage {
+        color: var(--accent-warm);
+      }
+
+      .section-title {
+        font-size: 0.75rem;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-dim);
+        margin: 0 0 1rem;
+      }
+
+      .status {
+        font-family: ui-monospace, "SF Mono", monospace;
+        font-size: 0.8rem;
+        color: var(--text-dim);
+        padding: 0.75rem 1rem;
+        background: var(--meter-bg);
+        border-radius: 4px;
+        border: 1px solid var(--panel-border);
+      }
+
+      .status.error {
+        color: var(--accent-danger);
+        border-color: var(--accent-danger);
       }
     </style>
   </head>
   <body>
-    <h1>unworklet stereo gain</h1>
-    <p>
-      Phase 6 A-5 smoke: 440 Hz / 880 Hz sine pair routed through the WASM-compiled stereo gain
-      processor.
-    </p>
-    <button id="start">start</button>
-    <button id="stop" disabled>stop</button>
-    <div class="gain">
-      <label for="gain">gain <span id="gainval">1.00</span></label>
-      <input id="gain" type="range" min="0" max="2" step="0.01" value="1" />
-    </div>
-    <div class="status" id="status">idle.</div>
+    <main>
+      <h1>unworklet stereo gain</h1>
+      <p class="subtitle">
+        canonical Ex 1 full = <code>state.expose({ publish })</code> 経 由 で per-sample peak meter
+        を <code>30 fps</code> で main thread に 公 開 + main 側 で <code>subscribe</code>。
+      </p>
+
+      <div class="panel">
+        <h2 class="section-title">transport</h2>
+        <div class="controls">
+          <button id="start" class="primary">start</button>
+          <button id="stop" disabled>stop</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2 class="section-title">gain (a-rate AudioParam)</h2>
+        <div class="row">
+          <span class="row-label">0.0</span>
+          <input id="gain" type="range" min="0" max="2" step="0.01" value="1" />
+          <span class="row-value" id="gainval">1.00</span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2 class="section-title">level meter (peak hold + 0.95 decay)</h2>
+        <div class="row">
+          <span class="row-label">L</span>
+          <div class="meter-bar">
+            <div class="meter-fill" id="meterL"></div>
+            <div class="meter-grid"></div>
+          </div>
+          <span class="row-value" id="meterLval">0.00</span>
+        </div>
+        <div class="row">
+          <span class="row-label">R</span>
+          <div class="meter-bar">
+            <div class="meter-fill" id="meterR"></div>
+            <div class="meter-grid"></div>
+          </div>
+          <span class="row-value" id="meterRval">0.00</span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2 class="section-title">diagnostics</h2>
+        <dl class="diagnostics">
+          <dt>transport</dt>
+          <dd id="diag-transport">—</dd>
+          <dt>sample rate</dt>
+          <dd id="diag-rate">—</dd>
+          <dt>base latency</dt>
+          <dd id="diag-latency">—</dd>
+          <dt>cross-origin isolated</dt>
+          <dd id="diag-coi">—</dd>
+        </dl>
+      </div>
+
+      <div class="status" id="status">idle.</div>
+    </main>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

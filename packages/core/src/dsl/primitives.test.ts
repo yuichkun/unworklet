@@ -9,7 +9,7 @@ import { expect, test } from "vite-plus/test";
 import { unwrapAst, wrapAst } from "../compile/capture.ts";
 
 import * as P from "./primitives.ts";
-import { mul } from "./primitives.ts";
+import { abs, max, mul } from "./primitives.ts";
 
 const unary = [
   "neg",
@@ -20,14 +20,13 @@ const unary = [
   "exp",
   "log",
   "sqrt",
-  "abs",
   "floor",
   "ceil",
   "frac",
 ] as const;
 
-// `mul` は Step 3.3 で fill = binary stub list か ら 除 外。
-const binary = ["add", "sub", "div", "mod", "eq", "lt", "gt", "lte", "gte", "min", "max"] as const;
+// `mul` / `abs` / `max` は Step 3.3 / sub-phase 7.8a で fill = stub list か ら 除 外。
+const binary = ["add", "sub", "div", "mod", "eq", "lt", "gt", "lte", "gte", "min"] as const;
 
 const ternary = ["clamp", "select"] as const;
 
@@ -95,5 +94,57 @@ test("`Node<T>.mul(number)` method form accepts JS literals (= Q33 literal lift)
     type: "f32",
     lhs: { kind: "literal", type: "f32", value: 2 },
     rhs: { kind: "literal", type: "f32", value: 0.5 },
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// abs / max = sub-phase 7.8a fill (canonical Ex 1 meter で 必 須)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`abs(node)` returns a `Node` carrying an `abs` AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: -1.5 });
+  expect(unwrapAst(abs(a))).toEqual({
+    kind: "abs",
+    type: "f32",
+    value: { kind: "literal", type: "f32", value: -1.5 },
+  });
+});
+
+test("`abs(number)` lifts the literal to `f32`", () => {
+  expect(unwrapAst(abs(-0.5))).toEqual({
+    kind: "abs",
+    type: "f32",
+    value: { kind: "literal", type: "f32", value: -0.5 },
+  });
+});
+
+test("`Node<T>.abs()` method form = free function 同 AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: -2 });
+  expect(unwrapAst(a.abs())).toEqual(unwrapAst(abs(a)));
+});
+
+test("`max(node, node)` returns a `Node` carrying a `max` AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 0.5 });
+  const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 0.7 });
+  expect(unwrapAst(max(a, b))).toEqual({
+    kind: "max",
+    type: "f32",
+    lhs: { kind: "literal", type: "f32", value: 0.5 },
+    rhs: { kind: "literal", type: "f32", value: 0.7 },
+  });
+});
+
+test("`Node<T>.max(other)` method form = free function 同 AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 0.5 });
+  const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 0.7 });
+  expect(unwrapAst(a.max(b))).toEqual(unwrapAst(max(a, b)));
+});
+
+test("`max(number, number)` lifts both literals", () => {
+  expect(unwrapAst(max(0.3, 0.8))).toEqual({
+    kind: "max",
+    type: "f32",
+    lhs: { kind: "literal", type: "f32", value: 0.3 },
+    rhs: { kind: "literal", type: "f32", value: 0.8 },
   });
 });

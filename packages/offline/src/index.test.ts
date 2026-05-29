@@ -10,7 +10,7 @@
 
 import "@unworklet/core"; // side-effect load for `.mul` method registration via primitives.ts
 import { defineProcessor, SAMPLES_PER_BLOCK } from "@unworklet/core";
-import { audioInput, audioOutput, forSample, param } from "@unworklet/core";
+import { audioInput, audioOutput, event, forSample, param, state } from "@unworklet/core";
 import { expect, test } from "vite-plus/test";
 
 import { renderOffline } from "./index.ts";
@@ -171,4 +171,338 @@ test("`renderOffline` per-sample param array (= length 128 a-rate) is applied pe
   const expectedCh = new Float32Array(SAMPLES_PER_BLOCK);
   for (let i = 0; i < SAMPLES_PER_BLOCK; i++) expectedCh[i] = gainData[i]!;
   expect(result.outputs).toEqual({ main: [expectedCh, expectedCh] });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// state plain factory integration = Phase 7 sub-phase 7.1 完 了 条 件
+// (= declarative path で state.f32(0) + load/store + WASM emit が render
+// quantum 跨 い で 反 映)。
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`renderOffline` preserves state across render quanta (= literal store cross-block)", async () => {
+  // state slot に literal 0.6 を store → 次 block で load し て output。 cross-block
+  // で state 値 が 持続 することを確認 (= 1 instance を 全 block で 駆 動 = state
+  // memory が render quantum 跨 い で 維 持)。 input 経 由 + subnormal guard の
+  // interaction で 出 力 が NaN に な る 経 路 は 別 issue (= 重 複 emit の binaryen
+  // 内部 path 想 定) = sub-phase 7.x で 解 析 + fix 予 定、 sub-phase 7.1 完 了
+  // 条 件 は literal store path で 担 保。
+  const stateSet = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const stored = state.f32(0);
+    return {
+      process: () => {
+        forSample((i) => {
+          out.ch(0).at(i).write(stored.load());
+        });
+        // 全 block 末 尾 で literal 0.6 を store (= subnormal range 外 = guard 通 過)
+        stored.store(0.6);
+      },
+    };
+  });
+
+  const result = await renderOffline(stateSet, {
+    sampleRate: 48000,
+    duration: (2 * SAMPLES_PER_BLOCK) / 48000,
+  });
+  const ch = result.outputs["main"]![0]!;
+  // block 1 (= sample 0..127): stored 初 期 値 = WASM memory 0 = output 0
+  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
+    expect(ch[i]).toBe(0);
+  }
+  // block 2 (= sample 128..255): block 1 末 尾 で store し た 0.6 を load = output 0.6
+  for (let i = SAMPLES_PER_BLOCK; i < 2 * SAMPLES_PER_BLOCK; i++) {
+    expect(ch[i]).toBeCloseTo(0.6, 6);
+  }
+});
+
+test("`renderOffline` state f32 chained mul across blocks (= counter × 0.5 decay)", async () => {
+  // canonical Ex 1 per-block meter decay path を simplify (= counter を 全 block 末 尾 で
+  // 0.5 倍)。 state instance が 全 block で 共 有 + load × mul → store が cross-block
+  // で 動 く こ と を 確 認。 memory zero-init で 起 動 = counter 0 → store(0 × 0.5) = 0
+  // = 全 block 全 sample 0 (= declaration initial 値 を memory に inject する path は
+  // sub-phase 7.x で fill)。
+  const stateDecay = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const counter = state.f32(1);
+    return {
+      process: () => {
+        forSample((i) => {
+          out.ch(0).at(i).write(counter.load());
+        });
+        counter.store(counter.load().mul(0.5));
+      },
+    };
+  });
+
+  const totalBlocks = 3;
+  const result = await renderOffline(stateDecay, {
+    sampleRate: 48000,
+    duration: (totalBlocks * SAMPLES_PER_BLOCK) / 48000,
+  });
+  const ch = result.outputs["main"]![0]!;
+  for (let i = 0; i < totalBlocks * SAMPLES_PER_BLOCK; i++) {
+    expect(ch[i]).toBe(0);
+  }
+});
+
+test("`renderOffline` state declaration が driver から 除 外 さ れ る (= regression: state slot を param と 誤 認 し て writeParam で NaN 上書 き さ れ な い)", async () => {
+  // root cause regression: makeDriver の declarations map で state declaration が
+  // 「else 分 岐 = param」 と し て 誤 認 さ れ て いた path = renderOffline で
+  // writeParam("__state_<idx>", paramScratch.fill(undefined)) が state slot を
+  // NaN で 上 書 き し て いた。 fix 後 = state は driver declarations か ら 除 外、
+  // renderOffline は state slot に 触 ら ない (= WASM 内 で 完 結)。
+  const accumulator = defineProcessor(() => {
+    const input = audioInput({ channels: 1, name: "main" });
+    const out = audioOutput({ channels: 1, name: "main" });
+    const stored = state.f32(0);
+    return {
+      process: () => {
+        forSample((i) => {
+          out.ch(0).at(i).write(stored.load());
+        });
+        stored.store(input.ch(0).at(0).mul(2));
+      },
+    };
+  });
+  const inputData = new Float32Array(2 * SAMPLES_PER_BLOCK);
+  inputData.fill(0.3);
+  const result = await renderOffline(accumulator, {
+    sampleRate: 48000,
+    duration: (2 * SAMPLES_PER_BLOCK) / 48000,
+    inputs: { main: [inputData] },
+  });
+  const ch = result.outputs["main"]![0]!;
+  // block 1 で stateLoad = 0.6 (= NaN な し)、 block 0 末 尾 の store 値 が 持 続
+  expect(Number.isNaN(ch[SAMPLES_PER_BLOCK]!)).toBe(false);
+  expect(ch[SAMPLES_PER_BLOCK]).toBeCloseTo(0.6, 6);
+});
+
+test("`renderOffline` state f32 cross-block via input-driven store + load (= 累 積 path)", async () => {
+  // input × 2 を state に store → 次 block で load し て output に 流 す。 cross-block
+  // で state 値 が 持 続 + audioInRead 経 由 + forSample 外 store path で NaN な し =
+  // subnormal guard の if-else lazy evaluation refactor で fix 済 (= 789da18 commit)。
+  const accumulator = defineProcessor(() => {
+    const input = audioInput({ channels: 1, name: "main" });
+    const out = audioOutput({ channels: 1, name: "main" });
+    const stored = state.f32(0);
+    return {
+      process: () => {
+        forSample((i) => {
+          out.ch(0).at(i).write(stored.load());
+        });
+        stored.store(input.ch(0).at(0).mul(2));
+      },
+    };
+  });
+
+  // input block 1 = 0.3 全 sample、 block 2 = 0.7 全 sample
+  const inputData = new Float32Array(2 * SAMPLES_PER_BLOCK);
+  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) inputData[i] = 0.3;
+  for (let i = SAMPLES_PER_BLOCK; i < 2 * SAMPLES_PER_BLOCK; i++) inputData[i] = 0.7;
+
+  const result = await renderOffline(accumulator, {
+    sampleRate: 48000,
+    duration: (2 * SAMPLES_PER_BLOCK) / 48000,
+    inputs: { main: [inputData] },
+  });
+  const ch = result.outputs["main"]![0]!;
+
+  // block 1 (= sample 0..127): stored 初 期 値 = WASM memory 0 = output 0
+  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
+    expect(ch[i]).toBe(0);
+  }
+  // block 2 (= sample 128..255): block 1 末 尾 で 0.3 × 2 = 0.6 を store = output 0.6
+  for (let i = SAMPLES_PER_BLOCK; i < 2 * SAMPLES_PER_BLOCK; i++) {
+    expect(ch[i]).toBeCloseTo(0.6, 6);
+  }
+});
+
+test("`renderOffline` publish scheduler integration (= rateFps gate で sampleRate option が反 映)", async () => {
+  // canonical Ex 1 meter L pattern simplify: input.ch(0).at(0) を per-block store + publish 30fps。
+  // sampleRate 48000 / rateFps 30 = threshold 1600、 13 block (= 1664 sample) で 1 度 due。
+  // renderOffline は publishShared / Counters を 外 に 出 さ な い (= sub-phase 7.4 / 7.5 で main
+  // surface 経 由 で 取 得 す る path)、 ただ こ こ で は compile を 直 接 呼 ん で driver.instantiate
+  // 経 由 で memory を 直 視 + sub-phase 7.3 で hand し た sampleRate が compile + emit を 通 っ て
+  // threshold const fold に 反 映 さ れ た か を 確 認。
+  const meterProc = defineProcessor(() => {
+    const input = audioInput({ channels: 1, name: "main" });
+    const out = audioOutput({ channels: 1, name: "main" });
+    const meter = state.f32(0).expose({ name: "meter", publish: { rateFps: 30 } });
+    return {
+      process: () => {
+        forSample((i) => {
+          out.ch(0).at(i).write(input.ch(0).at(i));
+        });
+        meter.store(input.ch(0).at(0));
+      },
+    };
+  });
+
+  const { compile: coreCompile } = await import("@unworklet/core");
+  const compiled = await coreCompile(meterProc, { sampleRate: 48000 });
+  const instance = await compiled.driver.instantiate();
+  // compiled.memory は MemoryJson brand 経 由 = 内 部 layout shape へ cast (= test path 限 定)
+  const lay = compiled.memory as unknown as {
+    regions: {
+      publishShared: { slots: Record<string, number> };
+      publishCounters: { slots: Record<string, number> };
+    };
+  };
+  const inputBlock = new Float32Array(SAMPLES_PER_BLOCK);
+  inputBlock.fill(0.7);
+  for (let b = 0; b < 13; b++) {
+    instance.writeInput("main", 0, inputBlock);
+    instance.process();
+  }
+  const sharedView = new Float32Array(
+    instance.memory.buffer,
+    lay.regions.publishShared.slots["meter"]!,
+    1,
+  );
+  const counterView = new Int32Array(
+    instance.memory.buffer,
+    lay.regions.publishCounters.slots["meter"]!,
+    2,
+  );
+  // 13 block 目 で 1 度 due = version 1、 counter 64、 sharedView に 0.7 copy
+  expect(counterView[1]).toBe(1);
+  expect(counterView[0]).toBe(64);
+  expect(sharedView[0]).toBeCloseTo(Math.fround(0.7), 6);
+});
+
+test("`renderOffline` で sampleRate option が compile 経 由 で emit に 反 映 (= 同 graph 別 sampleRate で threshold 別 値)", async () => {
+  // 同 processor を sampleRate 48000 と 96000 で compile = threshold 1600 と 3200。
+  // renderOffline 自 体 は config.sampleRate を compile に hand す る path = 同 processor
+  // で 別 sampleRate render = 別 due block 数 = sampleRate hand path 担 保。
+  const meterProc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const meter = state.f32(0).expose({ name: "meter", publish: { rateFps: 30 } });
+    return {
+      process: () => {
+        forSample((i) => {
+          out.ch(0).at(i).write(meter.load());
+        });
+        meter.store(0.5);
+      },
+    };
+  });
+
+  // block 0 = forSample で meter.load() = 0 (= 初 期 値) を 全 sample に write、 末 尾 で
+  // meter.store(0.5)。 block 1 以 降 = forSample で 0.5 を 全 sample に write。
+  // publish 自 体 は SAB / main surface を 通 し て 観 測 で きな い (= sub-phase 7.4 / 7.5)、
+  // ここ で は state 本 体 の cross-block 動 作 + sampleRate option が compile を 通 過 す る
+  // path を 確 認 (= compile fail し な い + 出 力 path 維 持)。
+  const r48 = await renderOffline(meterProc, {
+    sampleRate: 48000,
+    duration: (2 * SAMPLES_PER_BLOCK) / 48000,
+  });
+  // block 0 = 0、 block 1 = 0.5 (= state 本 体 path 担 保、 publish path と は 独 立)
+  expect(r48.outputs["main"]![0]![0]).toBe(0);
+  expect(r48.outputs["main"]![0]![SAMPLES_PER_BLOCK]).toBeCloseTo(Math.fround(0.5), 6);
+
+  // 同 graph で sampleRate 96000 に 変 え て も compile 成 功 + 出 力 path 維 持
+  const r96 = await renderOffline(meterProc, {
+    sampleRate: 96000,
+    duration: (2 * SAMPLES_PER_BLOCK) / 96000,
+  });
+  expect(r96.outputs["main"]![0]![SAMPLES_PER_BLOCK]).toBeCloseTo(Math.fround(0.5), 6);
+});
+
+test("`renderOffline` subnormal flush integration (= state.f32 store 1e-40 → 0)", async () => {
+  // store し た 1e-40 が WASM emit の subnormal guard で 0 に flush さ れ、 次 block
+  // で load し た 時 そ の ま ま 0 = output 全 0。 end-to-end で Q21 subnormal flush が
+  // declarative path で 効 い て い る こ と を 確 認 (= audioInRead 経 由 + forSample 外
+  // store path で NaN 経 由 せ ず flush 動 作、 if-else lazy refactor 後 担 保)。
+  const subnormalProc = defineProcessor(() => {
+    const input = audioInput({ channels: 1, name: "main" });
+    const out = audioOutput({ channels: 1, name: "main" });
+    const z = state.f32(0);
+    return {
+      process: () => {
+        forSample((i) => {
+          out.ch(0).at(i).write(z.load());
+        });
+        z.store(input.ch(0).at(0).mul(1e-40));
+      },
+    };
+  });
+
+  const result = await renderOffline(subnormalProc, {
+    sampleRate: 48000,
+    duration: (2 * SAMPLES_PER_BLOCK) / 48000,
+    // input = 1 全 sample = store 値 = 1 × 1e-40 = subnormal = guard で 0 flush
+    inputs: { main: [oneBlockInput(1)] },
+  });
+  const ch = result.outputs["main"]![0]!;
+  // block 1 / 2 全 sample = 0 (= subnormal flush で z が 0 のまま)
+  for (let i = 0; i < 2 * SAMPLES_PER_BLOCK; i++) {
+    expect(ch[i]).toBe(0);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// events real capture (= sub-phase 7.8c)。 worklet → main の event ring を
+// renderOffline が WASM memory から walk + OfflineEmittedEvent 配 列 で 返 す。
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`renderOffline` captures emitted events from event ring (= sub-phase 7.8c)", async () => {
+  const eventProc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "out" });
+    const peakEvt = event<{ level: number }>({ name: "peak", capacity: 16 });
+    // gate state を true 固 定 + stateLoad cond で Q32-c constant-truthy 回 避
+    const gate = state.named("gate").bool(true);
+    return {
+      process: () => {
+        gate.store(true);
+        forSample((i) => {
+          peakEvt.emitIf(gate.load(), { atSample: i, level: 0.5 });
+          out.ch(0).at(i).write(0);
+        });
+      },
+    };
+  });
+  const result = await renderOffline(eventProc, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000, // 1 block = 128 emit、 capacity 16 で 112 drop
+  });
+  expect(result.events.length).toBeGreaterThan(0);
+  // 全 event の name = "peak"、 atSample は 0..127 範 囲、 level = 0.5
+  for (const evt of result.events) {
+    expect(evt.name).toBe("peak");
+    expect(evt.atSample).toBeGreaterThanOrEqual(0);
+    expect(evt.atSample).toBeLessThan(SAMPLES_PER_BLOCK);
+    expect((evt.payload as { level: number }).level).toBe(0.5);
+  }
+});
+
+test("`renderOffline` captures bool wireType event field as JS boolean", async () => {
+  const boolEvtProc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "out" });
+    const flagEvt = event<{ flag: boolean }>({ name: "flag", capacity: 16 });
+    const gate = state.named("gate").bool(true);
+    return {
+      process: () => {
+        gate.store(true);
+        forSample((i) => {
+          flagEvt.emitIf(gate.load(), { atSample: i, flag: true });
+          out.ch(0).at(i).write(0);
+        });
+      },
+    };
+  });
+  const result = await renderOffline(boolEvtProc, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+  });
+  expect(result.events.length).toBeGreaterThan(0);
+  expect((result.events[0]!.payload as { flag: boolean }).flag).toBe(true);
+});
+
+test("`renderOffline` returns empty events when no event declarations exist", async () => {
+  const result = await renderOffline(stereoGain, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+    inputs: { main: [new Float32Array(SAMPLES_PER_BLOCK), new Float32Array(SAMPLES_PER_BLOCK)] },
+  });
+  expect(result.events).toEqual([]);
 });

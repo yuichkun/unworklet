@@ -402,11 +402,9 @@ test("`expectAudioMatchesGolden`: multi-port actual throws (= single-port 推 �
 // ━━━━━━━━━━━━━━━━━━━━━ expectAudioMatchesSnapshot ━━━━━━━━━━━━━━━━━━━━━━━
 
 test("`expectAudioMatchesSnapshot`: round-trip = 初 回 書 き 出 し + 2 回 目 bit-exact pass", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-"));
-  const path = join(dir, "ref.wav");
   const result = monoResult(filled(128, 0.5));
-  await expectAudioMatchesSnapshot(result, { snapshotPath: path });
-  await expectAudioMatchesSnapshot(result, { snapshotPath: path });
+  await expectAudioMatchesSnapshot(result, { snapshotName: "index-round-trip-128-0.5" });
+  await expectAudioMatchesSnapshot(result, { snapshotName: "index-round-trip-128-0.5" });
 });
 
 test("`expectAudioMatchesSnapshot`: multi-port + opts.port 未 指 定 で throw", async () => {
@@ -424,15 +422,16 @@ test("`expectAudioMatchesSnapshot`: multi-port + opts.port 未 指 定 で throw
 });
 
 test("`expectAudioMatchesSnapshot`: opts.port 明 示 で 多 port → 該 当 port を wav 化", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-"));
-  const path = join(dir, "ref.wav");
   const result: RenderOfflineResult = {
     outputs: { main: [filled(8, 0.5)], send: [filled(8, 0.3)] },
     events: [],
     state: new Uint8Array(0),
     sampleRate: 48000,
   };
-  await expectAudioMatchesSnapshot(result, { snapshotPath: path, port: "send" });
+  await expectAudioMatchesSnapshot(result, {
+    snapshotName: "index-multi-port-send",
+    port: "send",
+  });
 });
 
 test("`expectAudioMatchesSnapshot`: opts.port が actual.outputs に な い と throw", async () => {

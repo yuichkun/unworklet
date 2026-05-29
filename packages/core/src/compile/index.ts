@@ -28,6 +28,7 @@ import type {
   CompileDriver,
   CompileInstance,
   CompileInstanceDeclaration,
+  CompileOptions,
   CompileResult,
   DiagnosticsJson,
   GraphJson,
@@ -44,11 +45,31 @@ import { schemaHash } from "./schemaHash.ts";
 const BYTES_PER_F32 = 4;
 const CHANNEL_STRIDE_BYTES = SAMPLES_PER_BLOCK * BYTES_PER_F32;
 
-export async function compile<C>(processor: CompiledProcessor<C>): Promise<CompileResult<C>> {
+/**
+ * default sampleRate = 48000 (= 既 host 既 定 + 既 test fixture と zip)。
+ * `compile(processor)` で sampleRate 省 略 す る と 48000 で emit、 別 sampleRate
+ * 必 要 な consumer (= `renderOffline` で config.sampleRate を 渡 す path) は
+ * 明 示 引 数 で 上 書 き。
+ */
+const DEFAULT_SAMPLE_RATE = 48000;
+
+export async function compile<C>(
+  processor: CompiledProcessor<C>,
+  options: CompileOptions = {},
+): Promise<CompileResult<C>> {
   const graph = processor.graph as unknown as CapturedGraph;
   const diagnostics = analyze(graph);
+  // error severity diagnostic が 1 件 で も あ れ ば WASM emit 前 に reject
+  // (= `03-compiler.md` §3 Layer 3 check の rejection 経 路、 stable ID を
+  // error message に 含 め て consumer 側 で grep / FAQ 引 き 可)。
+  const errors = diagnostics.filter((d) => d.severity === "error");
+  if (errors.length > 0) {
+    const summary = errors.map((d) => `[${d.id}] ${d.message}`).join("\n");
+    throw new Error(`unworklet: compile failed with ${errors.length} error(s):\n${summary}`);
+  }
   const memory = layout(graph);
-  const wasm = await emit(graph, memory);
+  const sampleRate = options.sampleRate ?? DEFAULT_SAMPLE_RATE;
+  const wasm = await emit(graph, memory, { sampleRate });
   const hash = await schemaHash(graph);
   return {
     wasm,
@@ -62,15 +83,33 @@ export async function compile<C>(processor: CompiledProcessor<C>): Promise<Compi
 }
 
 export function makeDriver(graph: CapturedGraph, lay: Layout, wasm: Uint8Array): CompileDriver {
-  const declarations: CompileInstanceDeclaration[] = graph.declarations.map((d) => {
+  // driver の declarations 配 列 = renderOffline 等 の driver consumer が walk し て
+  // writeInput / writeParam / readOutput を 呼 ぶ 対 象。 audioInput / audioOutput /
+  // param の 3 kind だ け を 含 め、 state / buffer / event / message / midi
+  // declaration は driver から 除 外 (= driver consumer は state slot に 書 き 込 まない
+  // = state は WASM 内 で 完 結 + main thread surface は 別 経 路 で 取 得、 sub-phase
+  // 7.x で fill)。 既 「else で param 扱 い」 path = state を param と 誤 認 し て
+  // state slot に NaN (= `paramScratch.fill(undefined)` で 上 書 き) を 書 き 込 む root
+  // cause bug が 発 生 し た た め、 明 示 white list path に refactor。
+  const declarations: CompileInstanceDeclaration[] = [];
+  for (const d of graph.declarations) {
     if (d.kind === "audioInput") {
-      return { kind: "audioInput", name: d.name, channels: (d as AudioPortDecl).channels };
+      declarations.push({
+        kind: "audioInput",
+        name: d.name,
+        channels: (d as AudioPortDecl).channels,
+      });
+    } else if (d.kind === "audioOutput") {
+      declarations.push({
+        kind: "audioOutput",
+        name: d.name,
+        channels: (d as AudioPortDecl).channels,
+      });
+    } else if (d.kind === "param") {
+      declarations.push({ kind: "param", name: d.name, default: (d as ParamDecl).default });
     }
-    if (d.kind === "audioOutput") {
-      return { kind: "audioOutput", name: d.name, channels: (d as AudioPortDecl).channels };
-    }
-    return { kind: "param", name: d.name, default: (d as ParamDecl).default };
-  });
+    // state / buffer / event / message / midi = driver か ら 除 外 (= 上 記 white list 以 外)
+  }
 
   return {
     async instantiate(): Promise<CompileInstance> {

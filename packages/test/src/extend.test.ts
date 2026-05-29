@@ -114,11 +114,9 @@ test("`toMatchState` (chain) fail = byte mismatch", () => {
 // ━━━━━━━━━━━━━━━━━━━━ 残 13 件 chain stub-throw 経 路 ━━━━━━━━━━━━━━━━━━━━━
 
 test("`toMatchAudioSnapshot` (chain) round-trip = 初 回 書 き + 2 回 目 bit-exact pass", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-chain-"));
-  const path = join(dir, "ref.wav");
   const result = monoResult(filled(128, 0.5));
-  await expect(result).toMatchAudioSnapshot({ snapshotPath: path });
-  await expect(result).toMatchAudioSnapshot({ snapshotPath: path });
+  await expect(result).toMatchAudioSnapshot({ snapshotName: "round-trip-128-0.5" });
+  await expect(result).toMatchAudioSnapshot({ snapshotName: "round-trip-128-0.5" });
 });
 
 test("toMatchAudioSnapshot (chain) auto-infer path", async () => {
@@ -135,18 +133,14 @@ test("toMatchAudioSnapshot (chain) Float32Array 直 接 = polymorphic actual zip
   // plain `expectAudioMatchesSnapshot` が `Float32Array` 直 接 受 け る path
   // を chain で も 通 す regression。 chain typing が `WhenResult` (=
   // `RenderOfflineResult` 限 定) の ま ま だ と TS error で typecheck fail。
-  const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-chain-mono-"));
-  const path = join(dir, "ref.wav");
-  await expect(filled(8, 0)).toMatchAudioSnapshot({ snapshotPath: path });
-  await expect(filled(8, 0)).toMatchAudioSnapshot({ snapshotPath: path });
+  await expect(filled(8, 0)).toMatchAudioSnapshot({ snapshotName: "polymorphic-mono-8-0" });
+  await expect(filled(8, 0)).toMatchAudioSnapshot({ snapshotName: "polymorphic-mono-8-0" });
 });
 
 test("toMatchAudioSnapshot (chain) Float32Array[] 直 接 = multi-ch polymorphic actual zip", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-chain-multi-"));
-  const path = join(dir, "ref.wav");
   const channels = [filled(8, 0.1), filled(8, 0.2)];
-  await expect(channels).toMatchAudioSnapshot({ snapshotPath: path });
-  await expect(channels).toMatchAudioSnapshot({ snapshotPath: path });
+  await expect(channels).toMatchAudioSnapshot({ snapshotName: "polymorphic-multi-8-0.1-0.2" });
+  await expect(channels).toMatchAudioSnapshot({ snapshotName: "polymorphic-multi-8-0.1-0.2" });
 });
 
 test("`toBeStable` (chain) happy = clean PCM", () => {
@@ -301,15 +295,12 @@ test("`.not.toBeStable()` (chain) = pass=true message thunk が `expected NOT to
 test("`.not.toMatchAudioSnapshot()` (chain) = pass=true message thunk hit (= snapshot 一 致 で .not fail)", async () => {
   // chain snapshot matcher が pass=true を 返 す 経 路 で `.not` を 当 て る
   // path = `toMatchAudioSnapshotChain` 内 の `expected NOT to satisfy
-  // toMatchAudioSnapshot` 分 岐 を hit。 初 回 書 き 込 み + 2 回 目 一 致 の
-  // 第 二 invocation で `.not` を 評 価。
-  const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-chain-not-"));
-  const path = join(dir, "ref.wav");
+  // toMatchAudioSnapshot` 分 岐 を hit。
   const result = monoResult(filled(8, 0.5));
-  await expect(result).toMatchAudioSnapshot({ snapshotPath: path });
-  await expect(expect(result).not.toMatchAudioSnapshot({ snapshotPath: path })).rejects.toThrow(
-    /expected NOT to satisfy toMatchAudioSnapshot/,
-  );
+  await expect(result).toMatchAudioSnapshot({ snapshotName: "not-fail-base-8-0.5" });
+  await expect(
+    expect(result).not.toMatchAudioSnapshot({ snapshotName: "not-fail-base-8-0.5" }),
+  ).rejects.toThrow(/expected NOT to satisfy toMatchAudioSnapshot/);
 });
 
 // ━━━━━━━━━━━ chain snapshot catch path (= 一 致 fail で pass=false 経 路) ━━━━━━━━━━━
@@ -328,25 +319,30 @@ test("`toMatchAudioSnapshot` (chain) 同 test 内 2 連 続 invoke で `_unworkl
 test("`toMatchAudioSnapshot` (chain) byte content mismatch = vitest fail に zip", async () => {
   // 一 致 fail (= snapshot 既 存 + bytes 異 な る) で chain matcher が catch
   // 経 由 で `pass: false` を 返 す path を hit = `toMatchAudioSnapshotChain`
-  // 末 尾 catch block 全 体 を 覆 う。 `String(err)` 分 岐 は plain function
-  // が `new Error(...)` の み を throw す る 仕 様 で defensive dead branch。
-  const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-chain-mismatch-"));
-  const path = join(dir, "ref.wav");
-  await expect(monoResult(filled(8, 0.5))).toMatchAudioSnapshot({ snapshotPath: path });
+  // 末 尾 catch block 全 体 を 覆 う。 base snapshot = filled(8, 0.5)、 actual
+  // = filled(8, 0.6) で 不 一 致 を 期 待。
+  await expect(monoResult(filled(8, 0.5))).toMatchAudioSnapshot({
+    snapshotName: "mismatch-content-base-8-0.5",
+  });
   await expect(
-    expect(monoResult(filled(8, 0.6))).toMatchAudioSnapshot({ snapshotPath: path }),
+    expect(monoResult(filled(8, 0.6))).toMatchAudioSnapshot({
+      snapshotName: "mismatch-content-base-8-0.5",
+    }),
   ).rejects.toThrow(/snapshot byte/);
 });
 
 test("`toMatchAudioSnapshot` (chain) byte length mismatch = vitest fail に zip", async () => {
   // 一 致 fail (= snapshot 既 存 + 長 さ 異 な る) で chain matcher が catch
   // 経 由 で `pass: false` を 返 す path を hit + `expectAudioMatchesSnapshotWithState`
-  // L526-529 (= byte length mismatch throw) を 覆 う。
-  const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-chain-length-"));
-  const path = join(dir, "ref.wav");
-  await expect(monoResult(filled(8, 0.5))).toMatchAudioSnapshot({ snapshotPath: path });
+  // L526-529 (= byte length mismatch throw) を 覆 う。 base = filled(8, 0.5)、
+  // actual = filled(16, 0.5) で 長 さ 不 一 致 を 期 待。
+  await expect(monoResult(filled(8, 0.5))).toMatchAudioSnapshot({
+    snapshotName: "mismatch-length-base-8-0.5",
+  });
   await expect(
-    expect(monoResult(filled(16, 0.5))).toMatchAudioSnapshot({ snapshotPath: path }),
+    expect(monoResult(filled(16, 0.5))).toMatchAudioSnapshot({
+      snapshotName: "mismatch-length-base-8-0.5",
+    }),
   ).rejects.toThrow(/snapshot byte length mismatch/);
 });
 
@@ -356,14 +352,13 @@ test("`toMatchAudioSnapshot` (chain) updateMode='all' = 不 一 致 で も 上 
   // chain matcher は `this.snapshotState._updateSnapshot` (= per-test bound
   // MatcherState) 経 由 で update mode を 読 む。 `vitest -u` 相 当 path
   // (= `updateMode === "all"`) で snapshot を 強 制 上 書 き す る 分 岐
-  // (= `expectAudioMatchesSnapshotWithState` L520-523) を hit。 chain form
-  // で は `this` mock を 直 に 注 入 す る path が な い の で、 ま ず chain
-  // で snapshot を 一 つ 書 き 出 し、 plain form (= `expectAudioMatchesSnapshot`)
-  // 経 由 で update mode を 切 替 え て path を 覆 う 形 で zip。
+  // (= `expectAudioMatchesSnapshotWithState` L520-523) を hit。 base
+  // snapshot を 直 接 fs 経 由 で 用 意 (= matcher の "new" mode が --ci で
+  // fail す る path を 回 避)、 plain form の matcher で 上 書 き verify。
   const { expectAudioMatchesSnapshot } = await import("./index.ts");
   const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-update-all-"));
   const path = join(dir, "ref.wav");
-  await expect(monoResult(filled(8, 0.5))).toMatchAudioSnapshot({ snapshotPath: path });
+  writeFileSync(path, encodeWav([filled(8, 0.5)], 48000));
   const prev = expect.getState().snapshotState as unknown as
     | { _updateSnapshot?: string }
     | undefined;
@@ -399,11 +394,12 @@ test("`expectAudioMatchesSnapshot` (plain) updateMode='none' + 新 規 path = th
 });
 
 test("`expectAudioMatchesSnapshot` (plain) byte content mismatch = throw", async () => {
-  // plain path の byte content mismatch throw (= L531-536) を 覆 う。
+  // plain path の byte content mismatch throw (= L531-536) を 覆 う。 base
+  // snapshot を 直 接 fs 経 由 で 用 意 (= --ci でも 動 く path)。
   const { expectAudioMatchesSnapshot } = await import("./index.ts");
   const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-plain-mismatch-"));
   const path = join(dir, "ref.wav");
-  await expectAudioMatchesSnapshot(monoResult(filled(8, 0.5)), { snapshotPath: path });
+  writeFileSync(path, encodeWav([filled(8, 0.5)], 48000));
   await expect(
     expectAudioMatchesSnapshot(monoResult(filled(8, 0.6)), { snapshotPath: path }),
   ).rejects.toThrow(/snapshot byte/);
@@ -414,7 +410,7 @@ test("`expectAudioMatchesSnapshot` (plain) byte length mismatch = throw", async 
   const { expectAudioMatchesSnapshot } = await import("./index.ts");
   const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-plain-length-"));
   const path = join(dir, "ref.wav");
-  await expectAudioMatchesSnapshot(monoResult(filled(8, 0.5)), { snapshotPath: path });
+  writeFileSync(path, encodeWav([filled(8, 0.5)], 48000));
   await expect(
     expectAudioMatchesSnapshot(monoResult(filled(16, 0.5)), { snapshotPath: path }),
   ).rejects.toThrow(/snapshot byte length mismatch/);

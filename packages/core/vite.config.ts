@@ -3,6 +3,7 @@ import { defineConfig } from "vite-plus";
 export default defineConfig({
   pack: {
     dts: true,
+    entry: ["src/index.ts", "src/worklet-entry.ts", "src/simd.ts"],
     exports: false,
   },
   lint: {
@@ -14,6 +15,11 @@ export default defineConfig({
   fmt: {},
   test: {
     include: ["src/**/*.test.ts"],
+    // Browser-mode e2e は 別 config (= `vite.browser.config.ts`) で 起 動。
+    // default `vp test` は node-side unit / integration の み = browser fixture
+    // path を 全 exclude (= real `AudioContext` / `SharedArrayBuffer` / `Atomics`
+    // 必 須 で node 環 境 で fail する path)。
+    exclude: ["src/**/*.browser.test.ts", "src/__tests__/browser/**", "**/node_modules/**"],
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],
@@ -26,6 +32,10 @@ export default defineConfig({
         "src/compile/ast.ts",
         // public re-export hub (= `export` 文 だ け)
         "src/index.ts",
+        // browser e2e fixtures = real `AudioContext` 必 須 で node-side test に 含
+        // ま れ ない、 vite.browser*.config.ts 経 由 で real chromium で 駆 動 す る
+        // 物 = node coverage 対 象 外。
+        "src/__tests__/browser/fixtures/**",
       ],
       reporter: ["text", "html", "json-summary"],
       thresholds: {

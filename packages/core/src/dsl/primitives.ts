@@ -149,9 +149,16 @@ export function log<T extends ScalarType>(_x: Node<T> | number): Node<T> {
 export function sqrt<T extends ScalarType>(_x: Node<T> | number): Node<T> {
   return notImplemented();
 }
-export function abs<T extends ScalarType>(_x: Node<T> | number): Node<T> {
-  return notImplemented();
+export function abs<T extends ScalarType>(x: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "abs",
+    type: "f32",
+    value: liftToAst(x),
+  });
 }
+registerNodeMethod("abs", function method<T extends ScalarType>(this: Node<T>): Node<T> {
+  return abs(this);
+});
 export function floor<T extends ScalarType>(_x: Node<T> | number): Node<T> {
   return notImplemented();
 }
@@ -164,9 +171,19 @@ export function frac<T extends ScalarType>(_x: Node<T> | number): Node<T> {
 export function min<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<T> {
   return notImplemented();
 }
-export function max<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<T> {
-  return notImplemented();
+export function max<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "max",
+    type: "f32",
+    lhs: liftToAst(a),
+    rhs: liftToAst(b),
+  });
 }
+registerNodeMethod("max", function method<
+  T extends ScalarType,
+>(this: Node<T>, other: Node<T> | number): Node<T> {
+  return max(this, other);
+});
 export function clamp<T extends ScalarType>(
   _x: Node<T> | number,
   _lo: Node<T> | number,
