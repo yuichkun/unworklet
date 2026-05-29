@@ -319,6 +319,13 @@ export function emitExpression(
         emitExpression(node.lhs, layout, mod, binaryen),
         emitExpression(node.rhs, layout, mod, binaryen),
       );
+    // 比 較 (= 結 果 は i32 0/1 = bool 内 部 表 現、 state.bool / select cond /
+    // emitIf cond で 利 用 さ れ る 既 存 bool=i32 表 現 と zip)
+    case "eq":
+      return mod.f32.eq(
+        emitExpression(node.lhs, layout, mod, binaryen),
+        emitExpression(node.rhs, layout, mod, binaryen),
+      );
     case "audioInRead": {
       const portBase = layout.regions.ioScratch.inputs[node.portName];
       if (portBase === undefined) {

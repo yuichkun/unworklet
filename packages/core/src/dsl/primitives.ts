@@ -142,9 +142,19 @@ registerNodeMethod("neg", function method<T extends ScalarType>(this: Node<T>): 
 });
 
 // Comparison (returns Node<'bool'>)
-export function eq<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<"bool"> {
-  return notImplemented();
+export function eq<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<"bool"> {
+  return wrapAst<"bool">({
+    kind: "eq",
+    type: "f32",
+    lhs: liftToAst(a),
+    rhs: liftToAst(b),
+  });
 }
+registerNodeMethod("eq", function method<
+  T extends ScalarType,
+>(this: Node<T>, other: Node<T> | number): Node<"bool"> {
+  return eq(this, other);
+});
 export function lt<T extends ScalarType>(_a: Node<T> | number, _b: Node<T> | number): Node<"bool"> {
   return notImplemented();
 }

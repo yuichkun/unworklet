@@ -3044,3 +3044,45 @@ test("`emit(ceil)` e2e: ceil(1.2)=2 / ceil(-1.7)=-1 / ceil(3)=3", async () => {
   );
   expect(c).toBe(3);
 });
+
+// 比 較 operator の e2e: 結 果 は i32 (= bool 0/1) なので state.i32 slot に store し て read。
+async function runCompareAndRead(value: AstNode): Promise<number> {
+  const graph: CapturedGraph = {
+    declarations: [{ kind: "state", name: "c", type: "i32", initial: 0 }],
+    statements: [{ kind: "stateStore", type: "i32", name: "c", value }],
+  };
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay);
+  const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+  const instance = await WebAssembly.instantiate(wasmModule);
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  (instance.exports["process"] as () => void)();
+  return new Int32Array(memory.buffer, lay.regions.states.slots["c"]!, 1)[0]!;
+}
+
+function cmp(
+  kind: Extract<AstNode, { lhs: AstNode; rhs: AstNode }>["kind"],
+  a: number,
+  b: number,
+): AstNode {
+  return {
+    kind,
+    type: "f32",
+    lhs: { kind: "literal", type: "f32", value: a },
+    rhs: { kind: "literal", type: "f32", value: b },
+  };
+}
+
+test("`emitExpression(eq)` lowers to `f32.eq`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(cmp("eq", 3, 3), emptyLayout, mod, binaryen);
+  expect(watOfExpression(mod, binaryen, ref, binaryen.i32)).toContain("(f32.eq");
+  mod.dispose();
+});
+
+test("`emit(eq)` e2e: 3==3 → 1 / 3==5 → 0 / NaN==NaN → 0", async () => {
+  expect(await runCompareAndRead(cmp("eq", 3, 3))).toBe(1);
+  expect(await runCompareAndRead(cmp("eq", 3, 5))).toBe(0);
+  expect(await runCompareAndRead(cmp("eq", Number.NaN, Number.NaN))).toBe(0);
+});

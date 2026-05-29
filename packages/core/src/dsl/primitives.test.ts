@@ -14,7 +14,7 @@ import { abs, max, mul } from "./primitives.ts";
 const unary = ["sin", "cos", "tan", "tanh", "exp", "log", "frac"] as const;
 
 // `mul` / `abs` / `max` は Step 3.3 / sub-phase 7.8a で fill = stub list か ら 除 外。
-const binary = ["mod", "eq", "lt", "gt", "lte", "gte"] as const;
+const binary = ["mod", "lt", "gt", "lte", "gte"] as const;
 
 const ternary = ["clamp", "select"] as const;
 
@@ -371,4 +371,35 @@ test("`ceil(number)` lifts the literal", () => {
 test("`Node<T>.ceil()` method form = free function 同 AST", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1.2 });
   expect(unwrapAst(a.ceil())).toEqual(unwrapAst(P.ceil(a)));
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// eq (= f32.eq、結果 Node<'bool'>)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`eq(node, node)` returns a `Node` carrying an `eq` AST (operand type f32)", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
+  const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
+  expect(unwrapAst(P.eq(a, b))).toEqual({
+    kind: "eq",
+    type: "f32",
+    lhs: { kind: "literal", type: "f32", value: 3 },
+    rhs: { kind: "literal", type: "f32", value: 3 },
+  });
+});
+
+test("`eq(node, number)` lifts the number literal", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
+  expect(unwrapAst(P.eq(a, 3))).toEqual({
+    kind: "eq",
+    type: "f32",
+    lhs: { kind: "literal", type: "f32", value: 3 },
+    rhs: { kind: "literal", type: "f32", value: 3 },
+  });
+});
+
+test("`Node<T>.eq(other)` method form = free function 同 AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
+  const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
+  expect(unwrapAst(a.eq(b))).toEqual(unwrapAst(P.eq(a, b)));
 });
