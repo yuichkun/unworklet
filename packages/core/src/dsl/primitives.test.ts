@@ -581,6 +581,30 @@ test("`select(false, then, else)` は bool literal cond を value 0 に lift", (
   });
 });
 
+test("`select` の AST type は branch の scalar 型 を 担 ぐ (= i32 branch → 'i32')", () => {
+  const cond = wrapAst<"bool">({
+    kind: "gt",
+    type: "f32",
+    lhs: { kind: "literal", type: "f32", value: 1 },
+    rhs: { kind: "literal", type: "f32", value: 0 },
+  });
+  const a = wrapAst<"i32">({ kind: "stateLoad", type: "i32", name: "x" });
+  const b = wrapAst<"i32">({ kind: "stateLoad", type: "i32", name: "y" });
+  // f32 固 定 だ と i32 select が f32 と 誤 推 論 さ れ guard を す り 抜 け る (= codex P1)。
+  expect(unwrapAst(P.select(cond, a, b))).toMatchObject({ kind: "select", type: "i32" });
+});
+
+test("`select` の f32 branch は type 'f32' の ま ま", () => {
+  const cond = wrapAst<"bool">({
+    kind: "gt",
+    type: "f32",
+    lhs: { kind: "literal", type: "f32", value: 1 },
+    rhs: { kind: "literal", type: "f32", value: 0 },
+  });
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 0.5 });
+  expect(unwrapAst(P.select(cond, a, a))).toMatchObject({ kind: "select", type: "f32" });
+});
+
 // ─────────────────────────────────────────────────────────────────────────
 // frac (= x - floor(x))
 // ─────────────────────────────────────────────────────────────────────────

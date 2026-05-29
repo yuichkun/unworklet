@@ -12,6 +12,7 @@
  */
 
 import type { AstNode } from "../compile/ast.ts";
+import { inferAstType } from "../compile/ast.ts";
 import { registerNodeMethod, unwrapAst, wrapAst } from "../compile/capture.ts";
 import type { Node, ScalarType } from "../types.ts";
 
@@ -376,9 +377,17 @@ export function select<T extends ScalarType>(
   then: Node<T> | number,
   else_: Node<T> | number,
 ): Node<T> {
+  const ifTrue = liftToAst(then);
+  const ifFalse = liftToAst(else_);
+  // WASM `select` は branch 型 を そ の ま ま 返 す。 AST の type に branch 型 を 載 せ て
+  // 下 流 の inference / 非 f32 算 術 guard / event wire-type に 正 し く 伝 播 さ せ る
+  // (= ど ち ら か の branch が 非 f32 な ら そ の 型)。 f32 固 定 だ と i32 branch の
+  // select が f32 と 誤 推 論 さ れ guard を す り 抜 け て 下 流 で invalid WASM に なる。
+  const ifTrueType = inferAstType(ifTrue);
+  const branchType: ScalarType = ifTrueType === "f32" ? inferAstType(ifFalse) : ifTrueType;
   return wrapAst<T>({
     kind: "select",
-    type: "f32",
+    type: branchType,
     cond:
       typeof cond === "boolean"
         ? // bool は 内 部 i32 表 現 (= 0/1) = WASM select cond も i32。 bool literal
@@ -386,7 +395,7 @@ export function select<T extends ScalarType>(
           // `select(true/false, ...)` が emit で throw し な い よ う に す る。
           { kind: "literal", type: "i32", value: cond ? 1 : 0 }
         : unwrapAst(cond),
-    ifTrue: liftToAst(then),
-    ifFalse: liftToAst(else_),
+    ifTrue,
+    ifFalse,
   });
 }

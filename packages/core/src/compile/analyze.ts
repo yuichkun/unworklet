@@ -113,12 +113,25 @@ function walkForNonF32Arithmetic(node: AstNode, diagnostics: DiagnosticEntry[]):
       walkForNonF32Arithmetic(node.lo, diagnostics);
       walkForNonF32Arithmetic(node.hi, diagnostics);
       break;
-    // select は binaryen `select` が型非依存 = operand 型 hardcode な し = チェック不要。
-    case "select":
+    // select は binaryen `select` が型非依存 (= branch 型 を そ の ま ま 返 す)。
+    // operand 型 hardcode は な い が、 両 branch は 同 型 必 須 = 不 一 致 は fail-loud。
+    // numeric literal を branch 型 に lift す る (= context-dependent lift) の は
+    // 後 続 phase = そ れ ま で `select(cond, 1, i32node)` 等 は こ こ で 明 確 に 弾 く。
+    case "select": {
+      const thenType = inferAstType(node.ifTrue);
+      const elseType = inferAstType(node.ifFalse);
+      if (thenType !== elseType) {
+        diagnostics.push({
+          id: "select-branch-type-mismatch",
+          severity: "error",
+          message: `unworklet: select branches have mismatched scalar types ('${thenType}' vs '${elseType}') — WASM select requires both branches to be the same type. (numeric-literal lifting to the branch type is a later phase; stable ID 'select-branch-type-mismatch')`,
+        });
+      }
       walkForNonF32Arithmetic(node.cond, diagnostics);
       walkForNonF32Arithmetic(node.ifTrue, diagnostics);
       walkForNonF32Arithmetic(node.ifFalse, diagnostics);
       break;
+    }
     case "audioInRead":
     case "paramAt":
       walkForNonF32Arithmetic(node.offset, diagnostics);

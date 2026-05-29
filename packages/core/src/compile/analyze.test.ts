@@ -358,3 +358,46 @@ test("`analyze` does NOT flag pure f32 arithmetic (= mul(audioIn, param))", () =
   };
   expect(analyze(graph).some((d) => d.id === "non-f32-arithmetic")).toBe(false);
 });
+
+test("`analyze` flags select with mismatched branch types as select-branch-type-mismatch", () => {
+  const graph: CapturedGraph = {
+    declarations: [{ kind: "state", name: "x", type: "i32", initial: 0 }],
+    statements: [
+      {
+        kind: "stateStore",
+        type: "i32",
+        name: "x",
+        value: {
+          kind: "select",
+          type: "i32",
+          cond: { kind: "literal", type: "i32", value: 1 },
+          ifTrue: { kind: "stateLoad", type: "i32", name: "x" },
+          ifFalse: { kind: "literal", type: "f32", value: 5 },
+        },
+      },
+    ],
+  };
+  expect(analyze(graph).some((d) => d.id === "select-branch-type-mismatch")).toBe(true);
+});
+
+test("`analyze` does NOT flag select with matching f32 branches", () => {
+  const graph: CapturedGraph = {
+    declarations: [{ kind: "audioOutput", name: "main", channels: 1 }],
+    statements: [
+      {
+        kind: "audioOutWrite",
+        portName: "main",
+        channel: 0,
+        offset: { kind: "literal", type: "i32", value: 0 },
+        value: {
+          kind: "select",
+          type: "f32",
+          cond: { kind: "literal", type: "i32", value: 1 },
+          ifTrue: { kind: "literal", type: "f32", value: 1 },
+          ifFalse: { kind: "literal", type: "f32", value: 0 },
+        },
+      },
+    ],
+  };
+  expect(analyze(graph).some((d) => d.id === "select-branch-type-mismatch")).toBe(false);
+});
