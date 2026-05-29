@@ -12,6 +12,7 @@
 
 import type {
   AstNode,
+  BufferDecl,
   EventDeclAst,
   EventEmitField,
   MessageDeclAst,
@@ -31,6 +32,7 @@ import type {
   AudioInputHandle,
   AudioOutputHandle,
   Buffer,
+  BufferElementType,
   Capacity,
   EventDecl,
   ExposeOptions,
@@ -270,7 +272,7 @@ export const state: StateChain = makeStateChain(EMPTY_EXPOSE);
 // `buffer` — fixed-size arrays (`01-dsl.md` §3.2)
 // ─────────────────────────────────────────────────────────────────────────
 
-type BufferFactory<T extends ScalarType | "u8"> = (options: { size: number }) => Buffer<T>;
+type BufferFactory<T extends BufferElementType> = (options: { size: number }) => Buffer<T>;
 
 export interface BufferChain {
   readonly f32: BufferFactory<"f32">;
@@ -283,16 +285,157 @@ export interface BufferChain {
   expose(options: ExposeOptions): BufferChain;
 }
 
-export const buffer: BufferChain = {
-  f32: () => notImplemented(),
-  f64: () => notImplemented(),
-  i32: () => notImplemented(),
-  i64: () => notImplemented(),
-  bool: () => notImplemented(),
-  u8: () => notImplemented(),
-  named: () => notImplemented(),
-  expose: () => notImplemented(),
-};
+/** The scalar type a buffer element surfaces as (= `u8` is accessed via i32). */
+function bufferScalarType(t: BufferElementType): ScalarType {
+  return t === "u8" ? "i32" : t;
+}
+
+/** Lift a buffer write value (= Q33 literal lift, element-type aware). */
+function liftBufferValue(elementType: BufferElementType, v: Node<ScalarType> | number): AstNode {
+  const st = bufferScalarType(elementType);
+  if (typeof v === "number") {
+    return { kind: "literal", type: st, value: st === "i32" ? v | 0 : v };
+  }
+  return unwrapAst(v);
+}
+
+/**
+ * buffer slot の name uniqueness check (= `01-dsl.md` §3.2、 state と 同 規 約)。
+ * 同 kind 内 で unique (= type が違っても collide)。 `excludeDecl` で 後 付 け
+ * `.named` 時 の 自 collide 誤 検 出 を 回 避。
+ */
+function checkBufferName(name: string, excludeDecl: BufferDecl | null = null): void {
+  const ctx = getCurrentCapture();
+  if (ctx.declarations.some((d) => d.kind === "buffer" && d.name === name && d !== excludeDecl)) {
+    throw new Error(
+      `unworklet: duplicate buffer declaration name "${name}" — buffer names must be unique within a processor`,
+    );
+  }
+}
+
+/**
+ * buffer slot の publish / snapshot 整 合 性 check (= `01-dsl.md` §3.2)。 state と
+ * 同 軸 だ が publish の type 制 限 は ナ シ (= 全 element 型 で publish 可、 Q27-a/e)。
+ * persistent snapshot / publish は main-side identity 必 須 = userNamed 必 須。
+ */
+function validateBufferDecl(decl: BufferDecl): void {
+  if (decl.publish !== undefined) {
+    if (!Number.isFinite(decl.publish.rateFps) || decl.publish.rateFps <= 0) {
+      throw new Error(
+        `unworklet: publish rateFps must be a positive finite number, got ${decl.publish.rateFps}`,
+      );
+    }
+    if (!decl.userNamed) {
+      throw new Error(
+        `unworklet: buffer with publish requires user-defined name (= via .named('X') or .expose({ name: 'X' }))`,
+      );
+    }
+  }
+  if (decl.snapshot === "persistent" && !decl.userNamed) {
+    throw new Error(
+      `unworklet: buffer with snapshot 'persistent' requires user-defined name (= via .named('X') or .expose({ name: 'X' }))`,
+    );
+  }
+}
+
+function makeBufferDecl<T extends BufferElementType>(
+  type: T,
+  size: number,
+  pendingExpose: ExposeOptions,
+): Buffer<T> {
+  const ctx = getCurrentCapture();
+  const synthIdx = ctx.declarations.filter((d) => d.kind === "buffer").length;
+  const name = pendingExpose.name ?? `__buffer_${synthIdx}`;
+  checkBufferName(name);
+  const decl: BufferDecl = {
+    kind: "buffer",
+    name,
+    type,
+    size,
+    userNamed: pendingExpose.name !== undefined,
+    snapshot: pendingExpose.snapshot,
+    publish: pendingExpose.publish,
+  };
+  validateBufferDecl(decl);
+  addDeclaration(decl);
+  return makeBufferHandle<T>(decl);
+}
+
+function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer<T> {
+  // name は `.named` で 後 付 け 変 更 可 = read / write は decl.name を late-bind。
+  const handle = {
+    get size() {
+      return decl.size;
+    },
+    get name() {
+      return decl.name;
+    },
+    read: (idx: Node<"i32"> | number) =>
+      wrapAst({
+        kind: "bufferRead",
+        elementType: decl.type,
+        name: decl.name,
+        index: liftOffset(idx),
+      }),
+    write: (idx: Node<"i32"> | number, v: Node<ScalarType> | number) => {
+      addStatement({
+        kind: "bufferWrite",
+        elementType: decl.type,
+        name: decl.name,
+        index: liftOffset(idx),
+        value: liftBufferValue(decl.type, v),
+      });
+    },
+    readInterpolated: (pos: Node<"f32"> | number) =>
+      wrapAst({
+        kind: "bufferReadInterpolated",
+        elementType: decl.type,
+        name: decl.name,
+        pos: liftF32(pos),
+      }),
+    copyFrom: () => notImplemented(),
+    loadVec: () => notImplemented(),
+    storeVec: () => notImplemented(),
+    named: (name: string) => {
+      checkBufferName(name, decl);
+      decl.name = name;
+      decl.userNamed = true;
+      validateBufferDecl(decl);
+      return handle;
+    },
+    expose: (options: ExposeOptions) => {
+      if (options.name !== undefined && options.name !== decl.name) {
+        checkBufferName(options.name, decl);
+        decl.name = options.name;
+        decl.userNamed = true;
+      } else if (options.name !== undefined) {
+        decl.userNamed = true;
+      }
+      if (options.snapshot !== undefined) {
+        decl.snapshot = options.snapshot;
+      }
+      if (options.publish !== undefined) {
+        decl.publish = options.publish;
+      }
+      validateBufferDecl(decl);
+      return handle;
+    },
+  } as unknown as Buffer<T>;
+  return handle;
+}
+
+const makeBufferChain = (pendingExpose: ExposeOptions): BufferChain => ({
+  f32: ({ size }) => makeBufferDecl("f32", size, pendingExpose),
+  f64: ({ size }) => makeBufferDecl("f64", size, pendingExpose),
+  i32: ({ size }) => makeBufferDecl("i32", size, pendingExpose),
+  i64: ({ size }) => makeBufferDecl("i64", size, pendingExpose),
+  bool: ({ size }) => makeBufferDecl("bool", size, pendingExpose),
+  u8: ({ size }) => makeBufferDecl("u8", size, pendingExpose),
+  named: (name) => makeBufferChain(mergeExpose(pendingExpose, { name })),
+  expose: (options) => makeBufferChain(mergeExpose(pendingExpose, options)),
+});
+
+export const buffer: BufferChain = makeBufferChain(EMPTY_EXPOSE);
 
 // ─────────────────────────────────────────────────────────────────────────
 // `param` — AudioParam-backed (`01-dsl.md` §3.3 + Q76 named-only)

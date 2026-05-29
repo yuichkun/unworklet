@@ -10,7 +10,7 @@
  * superset)。
  */
 
-import type { PublishOptions, ScalarType, SnapshotPolicy } from "../types.ts";
+import type { BufferElementType, PublishOptions, ScalarType, SnapshotPolicy } from "../types.ts";
 
 export type AstNode =
   // `value` is a JS `number` for every scalar type except `'i64'`, whose
@@ -72,7 +72,19 @@ export type AstNode =
       fields: EventEmitField[];
     }
   | { kind: "messageOnReceive"; name: string; body: AstNode[] }
-  | { kind: "messageFieldRead"; name: string; field: string; wireType: ScalarType };
+  | { kind: "messageFieldRead"; name: string; field: string; wireType: ScalarType }
+  // `buffer.<type>` scalar access (`01-dsl.md` §3.2). `elementType` is the
+  // buffer's declared element type; the produced scalar type is the element
+  // type itself, except `'u8'` reads/writes through `Node<'i32'>` (low 8 bits).
+  | { kind: "bufferRead"; elementType: BufferElementType; name: string; index: AstNode }
+  | {
+      kind: "bufferWrite";
+      elementType: BufferElementType;
+      name: string;
+      index: AstNode;
+      value: AstNode;
+    }
+  | { kind: "bufferReadInterpolated"; elementType: BufferElementType; name: string; pos: AstNode };
 
 /**
  * `eventDecl.emitIf` 1 emit site の 1 field 分 (= `01-dsl.md` §4.1 + Q71)。
@@ -199,7 +211,31 @@ export type MessageDeclField = {
   wireType: ScalarType;
 };
 
-export type Declaration = AudioPortDecl | ParamDecl | StateDecl | EventDeclAst | MessageDeclAst;
+/**
+ * `buffer.<type>({ size })` fixed-size array declaration (`01-dsl.md` §3.2).
+ *
+ * `type` は element type (= `ScalarType ∪ {'u8'}`)、 `size` は element count
+ * (= byte size は `size × sizeof(type)`、 `u8` = 1 byte)。 `snapshot` / `publish`
+ * / `userNamed` は state と 同 chain semantics (= `.named` / `.expose`、 default
+ * snapshot は buffer で `'transient'`)。
+ */
+export type BufferDecl = {
+  kind: "buffer";
+  name: string;
+  type: BufferElementType;
+  size: number;
+  snapshot?: SnapshotPolicy;
+  publish?: PublishOptions;
+  userNamed?: boolean;
+};
+
+export type Declaration =
+  | AudioPortDecl
+  | ParamDecl
+  | StateDecl
+  | BufferDecl
+  | EventDeclAst
+  | MessageDeclAst;
 
 export type CapturedGraph = {
   declarations: Declaration[];
@@ -256,11 +292,17 @@ export function inferAstType(ast: AstNode): ScalarType {
       return "i32";
     case "messageFieldRead":
       return ast.wireType;
+    // buffer read result = element type, except `'u8'` surfaces as `'i32'`
+    // (= low 8 bits, no separate `Node<'u8'>` in the scalar type system).
+    case "bufferRead":
+    case "bufferReadInterpolated":
+      return ast.elementType === "u8" ? "i32" : ast.elementType;
     case "audioOutWrite":
     case "forSample":
     case "stateStore":
     case "eventEmitIf":
     case "messageOnReceive":
+    case "bufferWrite":
       throw new Error(`statement node '${ast.kind}' cannot appear in expression position`);
   }
 }

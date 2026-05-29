@@ -19,7 +19,7 @@
 
 import type { AstNode, CapturedGraph } from "./ast.ts";
 import type { Layout } from "./layout.ts";
-import type { ScalarType } from "../types.ts";
+import type { BufferElementType, ScalarType } from "../types.ts";
 
 export type BinaryenAPI = (typeof import("binaryen"))["default"];
 export type BinaryenModule = InstanceType<BinaryenAPI["Module"]>;
@@ -101,6 +101,14 @@ const FRAC_F64_LOCAL = 11;
 const MOD_A_F64_LOCAL = 12;
 const MOD_B_F64_LOCAL = 13;
 const MOD_Q_F64_LOCAL = 14;
+
+/**
+ * `buffer.readInterpolated` 用 temp local。 pos を 1 度 評 価 し て f32 local に
+ * hold (= floor index と frac で 2 度 参 照)、 切 り 出 し た integer index を i32
+ * local に hold (= i / i+1 の 2 tap address で 2 度 参 照)。 二 重 評 価 回 避。
+ */
+const BUFINTERP_POS_LOCAL = 15;
+const BUFINTERP_I0_LOCAL = 16;
 
 /**
  * 多 項 式 近 似 の math primitive (= sin / cos / tan / tanh / exp / log、 Q17) は
@@ -196,6 +204,8 @@ export async function emit(
       binaryen.f64, // MOD_A_F64_LOCAL
       binaryen.f64, // MOD_B_F64_LOCAL
       binaryen.f64, // MOD_Q_F64_LOCAL
+      binaryen.f32, // BUFINTERP_POS_LOCAL
+      binaryen.i32, // BUFINTERP_I0_LOCAL
     ],
     body,
   );
@@ -448,6 +458,170 @@ function emitConvert(mod: BinaryenModule, from: ScalarType, to: ScalarType, valu
   throw new Error(`unworklet: convert ${from} → ${to} not implemented yet`);
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// buffer scalar access (= `01-dsl.md` §3.2)。 element ptr = base + index ×
+// sizeof。 u8 は 1 byte load8_u / store8 (= 下 位 8 bit)、 bool は i32 word。
+// ─────────────────────────────────────────────────────────────────────────
+
+const BUFFER_ELEMENT_BYTES_EMIT: Record<BufferElementType, number> = {
+  f32: 4,
+  f64: 8,
+  i32: 4,
+  i64: 8,
+  bool: 4,
+  u8: 1,
+};
+
+/** element pointer = bufferBase + index × sizeof(elementType)。 */
+function bufferElementPtr(
+  mod: BinaryenModule,
+  base: number,
+  elementType: BufferElementType,
+  indexExpr: number,
+): number {
+  return mod.i32.add(
+    mod.i32.const(base),
+    mod.i32.mul(indexExpr, mod.i32.const(BUFFER_ELEMENT_BYTES_EMIT[elementType])),
+  );
+}
+
+function emitBufferLoad(mod: BinaryenModule, elementType: BufferElementType, ptr: number): number {
+  switch (elementType) {
+    case "f32":
+      return mod.f32.load(0, BYTES_PER_F32, ptr);
+    case "f64":
+      return mod.f64.load(0, BYTES_PER_F64, ptr);
+    case "i32":
+    case "bool":
+      return mod.i32.load(0, BYTES_PER_I32, ptr);
+    case "i64":
+      return mod.i64.load(0, BYTES_PER_I64, ptr);
+    case "u8":
+      // u8 = zero-extended 下 位 8 bit → Node<'i32'>。
+      return mod.i32.load8_u(0, 1, ptr);
+  }
+}
+
+function emitBufferStore(
+  mod: BinaryenModule,
+  elementType: BufferElementType,
+  ptr: number,
+  value: number,
+): number {
+  switch (elementType) {
+    case "f32":
+      return mod.f32.store(0, BYTES_PER_F32, ptr, value);
+    case "f64":
+      return mod.f64.store(0, BYTES_PER_F64, ptr, value);
+    case "i32":
+    case "bool":
+      return mod.i32.store(0, BYTES_PER_I32, ptr, value);
+    case "i64":
+      return mod.i64.store(0, BYTES_PER_I64, ptr, value);
+    case "u8":
+      // 下 位 8 bit だ け store (= i32.store8)。
+      return mod.i32.store8(0, 1, ptr, value);
+  }
+}
+
+/** Convert a loaded buffer element to f32 (= f32-domain interpolation 用)。 */
+function bufferElementToF32(
+  mod: BinaryenModule,
+  elementType: BufferElementType,
+  loaded: number,
+): number {
+  switch (elementType) {
+    case "f32":
+      return loaded;
+    case "f64":
+      return mod.f32.demote(loaded);
+    case "i32":
+    case "bool":
+    case "u8":
+      return mod.f32.convert_s.i32(loaded);
+    case "i64":
+      return mod.f32.convert_s.i64(loaded);
+  }
+}
+
+/** Convert an interpolated f32 back to the element's surfaced scalar type。 */
+function f32ToBufferElement(
+  mod: BinaryenModule,
+  elementType: BufferElementType,
+  value: number,
+): number {
+  switch (elementType) {
+    case "f32":
+      return value;
+    case "f64":
+      return mod.f64.promote(value);
+    case "i32":
+    case "bool":
+    case "u8":
+      return mod.i32.trunc_s_sat.f32(value);
+    case "i64":
+      return mod.i64.trunc_s_sat.f32(value);
+  }
+}
+
+/**
+ * `buffer.readInterpolated(pos)` = 線 形 補 間 (= 2-tap)。 pos を f32 local に
+ * hold、 i0 = trunc(pos) を i32 local に hold (= 二 重 評 価 回 避)。 frac =
+ * pos - i0、 a = buf[i0]、 b = buf[i0+1]、 result = a + (b - a)·frac。 補 間 は
+ * f32 domain (= element を f32 に 変 換 し て 計 算 後、 element の scalar 型 へ 戻 す)。
+ * f64 buffer も f32 domain で 行 う (= wavetable 用 途 で 可 聴 差 ナ シ、 Q17 と 同 軸)。
+ */
+function emitBufferReadInterpolated(
+  node: AstNode & { kind: "bufferReadInterpolated" },
+  layout: Layout,
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): number {
+  const base = layout.regions.buffers.slots[node.name];
+  if (base === undefined) {
+    throw new Error(`unknown buffer: ${node.name}`);
+  }
+  const et = node.elementType;
+  const f = binaryen.f32;
+  const i = binaryen.i32;
+  const i0 = (): number => mod.local.get(BUFINTERP_I0_LOCAL, i);
+  const aF32 = bufferElementToF32(
+    mod,
+    et,
+    emitBufferLoad(mod, et, bufferElementPtr(mod, base, et, i0())),
+  );
+  const bF32 = bufferElementToF32(
+    mod,
+    et,
+    emitBufferLoad(mod, et, bufferElementPtr(mod, base, et, mod.i32.add(i0(), mod.i32.const(1)))),
+  );
+  // frac = pos - f32(i0)
+  const frac = mod.f32.sub(mod.local.get(BUFINTERP_POS_LOCAL, f), mod.f32.convert_s.i32(i0()));
+  // result = a + (b - a)·frac  (f32 domain)
+  const interp = mod.f32.add(aF32, mod.f32.mul(mod.f32.sub(bF32, aF32), frac));
+  const resultScalar = et === "u8" ? "i32" : et;
+  const resultTy =
+    resultScalar === "f64"
+      ? binaryen.f64
+      : resultScalar === "f32"
+        ? binaryen.f32
+        : resultScalar === "i64"
+          ? binaryen.i64
+          : binaryen.i32;
+  return mod.block(
+    null,
+    [
+      mod.local.set(BUFINTERP_POS_LOCAL, emitExpression(node.pos, layout, mod, binaryen)),
+      mod.local.set(
+        BUFINTERP_I0_LOCAL,
+        mod.i32.trunc_s_sat.f32(mod.local.get(BUFINTERP_POS_LOCAL, f)),
+      ),
+      f32ToBufferElement(mod, et, interp),
+    ],
+    resultTy,
+  );
+}
+
 export function emitExpression(
   node: AstNode,
   layout: Layout,
@@ -697,6 +871,21 @@ export function emitExpression(
         node.type,
         emitExpression(node.value, layout, mod, binaryen),
       );
+    case "bufferRead": {
+      const base = layout.regions.buffers.slots[node.name];
+      if (base === undefined) {
+        throw new Error(`unknown buffer: ${node.name}`);
+      }
+      const ptr = bufferElementPtr(
+        mod,
+        base,
+        node.elementType,
+        emitExpression(node.index, layout, mod, binaryen),
+      );
+      return emitBufferLoad(mod, node.elementType, ptr);
+    }
+    case "bufferReadInterpolated":
+      return emitBufferReadInterpolated(node, layout, mod, binaryen);
     case "audioInRead": {
       const portBase = layout.regions.ioScratch.inputs[node.portName];
       if (portBase === undefined) {
@@ -782,6 +971,7 @@ export function emitExpression(
     case "stateStore":
     case "eventEmitIf":
     case "messageOnReceive":
+    case "bufferWrite":
       throw new Error(`statement node '${node.kind}' cannot appear in expression position`);
   }
 }
@@ -883,6 +1073,24 @@ export function emitStatement(
           ),
         ]),
       ]);
+    }
+    case "bufferWrite": {
+      const base = layout.regions.buffers.slots[node.name];
+      if (base === undefined) {
+        throw new Error(`unknown buffer: ${node.name}`);
+      }
+      const ptr = bufferElementPtr(
+        mod,
+        base,
+        node.elementType,
+        emitExpression(node.index, layout, mod, binaryen),
+      );
+      return emitBufferStore(
+        mod,
+        node.elementType,
+        ptr,
+        emitExpression(node.value, layout, mod, binaryen),
+      );
     }
     case "eventEmitIf":
       return emitEventEmitIf(node, layout, mod, binaryen);
@@ -1250,6 +1458,14 @@ function collectUsedMathKinds(graph: CapturedGraph): Set<string> {
         visit(node.value);
         break;
       case "stateStore":
+        visit(node.value);
+        break;
+      case "bufferRead":
+      case "bufferReadInterpolated":
+        visit(node.kind === "bufferRead" ? node.index : node.pos);
+        break;
+      case "bufferWrite":
+        visit(node.index);
         visit(node.value);
         break;
       case "forSample":

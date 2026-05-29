@@ -24,18 +24,10 @@ import { forSample } from "./loop.ts";
 import { add, gt } from "./primitives.ts";
 
 // ─────────────────────────────────────────────────────────────────────────
-// stub 維 持 = buffer / param.expose / message / midi
+// stub 維 持 = param.expose / midi (= buffer / message は 別 path で 実 装 済 み)
 // ─────────────────────────────────────────────────────────────────────────
 
 const stubs: ReadonlyArray<readonly [string, () => unknown]> = [
-  ["buffer.f32", () => buffer.f32({ size: 16 })],
-  ["buffer.f64", () => buffer.f64({ size: 16 })],
-  ["buffer.i32", () => buffer.i32({ size: 16 })],
-  ["buffer.i64", () => buffer.i64({ size: 16 })],
-  ["buffer.bool", () => buffer.bool({ size: 16 })],
-  ["buffer.u8", () => buffer.u8({ size: 16 })],
-  ["buffer.named", () => buffer.named("x")],
-  ["buffer.expose", () => buffer.expose({ name: "x" })],
   ["param.expose", () => param.expose({ name: "x" })],
   ["midiInput", () => midiInput({ name: "mIn" })],
   ["midiOutput", () => midiOutput({ name: "mOut" })],
@@ -876,6 +868,122 @@ test("`state.store(v)` inside `forSample` 内 = forSample body に append", () =
       ],
     },
   ]);
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// buffer declaration = `buffer.<type>({ size })` + .named / .expose chain
+// (= `01-dsl.md` §3.2)。 read / write / readInterpolated の 振 る 舞 い は 黒 箱
+// (`../__tests__/behavior/buffer.test.ts`)、 ここ は 宣 言 / chain / validate。
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`buffer.f32({ size })` registers a `buffer` declaration with synthetic name", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    buffer.f32({ size: 64 });
+  });
+  expect(ctx.declarations).toEqual([
+    {
+      kind: "buffer",
+      name: "__buffer_0",
+      type: "f32",
+      size: 64,
+      userNamed: false,
+      snapshot: undefined,
+      publish: undefined,
+    },
+  ]);
+});
+
+test("`buffer.<type>({ size })` 6 element 型 全 declare (= f32 / f64 / i32 / i64 / bool / u8)", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    buffer.f32({ size: 1 });
+    buffer.f64({ size: 2 });
+    buffer.i32({ size: 3 });
+    buffer.i64({ size: 4 });
+    buffer.bool({ size: 5 });
+    buffer.u8({ size: 6 });
+  });
+  expect(ctx.declarations.map((d) => (d.kind === "buffer" ? `${d.type}:${d.size}` : "?"))).toEqual([
+    "f32:1",
+    "f64:2",
+    "i32:3",
+    "i64:4",
+    "bool:5",
+    "u8:6",
+  ]);
+});
+
+test("`buffer.named('X').f32({ size })` 前 付 け chain は name を 反 映", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    buffer.named("ring").f32({ size: 16 });
+  });
+  expect(ctx.declarations).toEqual([
+    {
+      kind: "buffer",
+      name: "ring",
+      type: "f32",
+      size: 16,
+      userNamed: true,
+      snapshot: undefined,
+      publish: undefined,
+    },
+  ]);
+});
+
+test("`buffer.f32({ size }).named('X')` 後 付 け chain も 同 declaration", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    buffer.f32({ size: 16 }).named("ring");
+  });
+  expect(ctx.declarations.map((d) => (d.kind === "buffer" ? d.name : "?"))).toEqual(["ring"]);
+});
+
+test("buffer name uniqueness = 同 name を 2 度 declare で graph-capture-time error", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      buffer.named("dup").f32({ size: 4 });
+      buffer.named("dup").i32({ size: 4 });
+    }),
+  ).toThrow(/duplicate buffer declaration name "dup"/);
+});
+
+test("buffer publish は 全 element 型 で 許 容 (= state の Q42 制 限 ナ シ)", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      buffer.f64({ size: 8 }).expose({ name: "spectrum", publish: { rateFps: 30 } });
+    }),
+  ).not.toThrow();
+});
+
+test("buffer publish + name ナ シ = reject", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      buffer.f32({ size: 8 }).expose({ publish: { rateFps: 30 } });
+    }),
+  ).toThrow(/buffer with publish requires user-defined name/);
+});
+
+test("buffer publish rateFps <= 0 = reject", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      buffer.f32({ size: 8 }).expose({ name: "x", publish: { rateFps: 0 } });
+    }),
+  ).toThrow(/publish rateFps must be a positive finite number/);
+});
+
+test("buffer snapshot 'persistent' + name ナ シ = reject", () => {
+  const ctx = newCaptureContext();
+  expect(() =>
+    runCapture(ctx, () => {
+      buffer.f32({ size: 8 }).expose({ snapshot: "persistent" });
+    }),
+  ).toThrow(/buffer with snapshot 'persistent' requires user-defined name/);
 });
 
 // ─────────────────────────────────────────────────────────────────────────

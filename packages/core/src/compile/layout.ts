@@ -15,7 +15,7 @@
  */
 
 import { SAMPLES_PER_BLOCK } from "../dsl/constants.ts";
-import type { ScalarType } from "../types.ts";
+import type { BufferElementType, ScalarType } from "../types.ts";
 import type { CapturedGraph } from "./ast.ts";
 
 const BYTES_PER_F32 = 4;
@@ -32,6 +32,20 @@ const STATE_SLOT_BYTES: Record<ScalarType, number> = {
   i32: 4,
   i64: 8,
   bool: 4,
+};
+
+/**
+ * `buffer.<type>` の element byte size (= `01-dsl.md` §3.2)。 scalar 型 は state
+ * と 同 size、 `u8` は 1 byte (= sysex byte buffer)。 buffer は `size × この値`
+ * を 占 有。
+ */
+const BUFFER_ELEMENT_BYTES: Record<BufferElementType, number> = {
+  f32: 4,
+  f64: 8,
+  i32: 4,
+  i64: 8,
+  bool: 4,
+  u8: 1,
 };
 
 /**
@@ -269,6 +283,19 @@ export function layout(graph: CapturedGraph): Layout {
     }
   }
 
+  // buffers packing = messageRings 末 尾 を base に declaration 順 で `size ×
+  // sizeof` を allocate (= `01-dsl.md` §3.2、 u8 = 1 byte)。 worklet-private
+  // scratch / delay line / wavetable region。 末 尾 配 置 = buffer ナ シ graph
+  // で 既 region base 不 変 (= subset → superset 規 約)。
+  const buffersBase = cursor;
+  const bufferSlots: Record<string, number> = {};
+  for (const decl of graph.declarations) {
+    if (decl.kind === "buffer") {
+      bufferSlots[decl.name] = cursor;
+      cursor += decl.size * BUFFER_ELEMENT_BYTES[decl.type];
+    }
+  }
+
   const totalBytes = cursor;
 
   // sub-phase 7.7b で fill 対 象 外 の 4 region = base 全 て totalBytes (= 連 続)、
@@ -279,7 +306,7 @@ export function layout(graph: CapturedGraph): Layout {
   return {
     regions: {
       states: { base: statesBase, slots: stateSlots },
-      buffers: { base: totalBytes, slots: {} },
+      buffers: { base: buffersBase, slots: bufferSlots },
       ioScratch: { base: ioBase, inputs, outputs, params },
       eventRings: { base: eventRingsBase, slots: eventRingsSlots },
       messageRings: { base: messageRingsBase, slots: messageRingsSlots },

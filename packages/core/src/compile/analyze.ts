@@ -117,6 +117,16 @@ function walkForTypeErrors(node: AstNode, diagnostics: DiagnosticEntry[]): void 
     case "stateStore":
       walkForTypeErrors(node.value, diagnostics);
       break;
+    case "bufferRead":
+      walkForTypeErrors(node.index, diagnostics);
+      break;
+    case "bufferReadInterpolated":
+      walkForTypeErrors(node.pos, diagnostics);
+      break;
+    case "bufferWrite":
+      walkForTypeErrors(node.index, diagnostics);
+      walkForTypeErrors(node.value, diagnostics);
+      break;
     case "forSample":
     case "messageOnReceive":
       for (const child of node.body) walkForTypeErrors(child, diagnostics);

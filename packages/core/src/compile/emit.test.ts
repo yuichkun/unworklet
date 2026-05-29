@@ -665,6 +665,64 @@ test("`emit` throws on unknown param", async () => {
   await expect(emit(graph, layout(graph))).rejects.toThrow(/unknown param/);
 });
 
+test("`emit` throws on unknown buffer (bufferRead)", async () => {
+  const graph: CapturedGraph = {
+    declarations: [{ kind: "audioOutput", name: "out", channels: 1 }],
+    statements: [
+      {
+        kind: "audioOutWrite",
+        portName: "out",
+        channel: 0,
+        offset: { kind: "literal", type: "i32", value: 0 },
+        value: {
+          kind: "bufferRead",
+          elementType: "f32",
+          name: "ghost",
+          index: { kind: "literal", type: "i32", value: 0 },
+        },
+      },
+    ],
+  };
+  await expect(emit(graph, layout(graph))).rejects.toThrow(/unknown buffer/);
+});
+
+test("`emit` throws on unknown buffer (bufferReadInterpolated)", async () => {
+  const graph: CapturedGraph = {
+    declarations: [{ kind: "audioOutput", name: "out", channels: 1 }],
+    statements: [
+      {
+        kind: "audioOutWrite",
+        portName: "out",
+        channel: 0,
+        offset: { kind: "literal", type: "i32", value: 0 },
+        value: {
+          kind: "bufferReadInterpolated",
+          elementType: "f32",
+          name: "ghost",
+          pos: { kind: "literal", type: "f32", value: 0 },
+        },
+      },
+    ],
+  };
+  await expect(emit(graph, layout(graph))).rejects.toThrow(/unknown buffer/);
+});
+
+test("`emit` throws on unknown buffer (bufferWrite)", async () => {
+  const graph: CapturedGraph = {
+    declarations: [],
+    statements: [
+      {
+        kind: "bufferWrite",
+        elementType: "f32",
+        name: "ghost",
+        index: { kind: "literal", type: "i32", value: 0 },
+        value: { kind: "literal", type: "f32", value: 1 },
+      },
+    ],
+  };
+  await expect(emit(graph, layout(graph))).rejects.toThrow(/unknown buffer/);
+});
+
 test("`emit` rejects `forSample` in expression position (= structural guard)", async () => {
   const graph: CapturedGraph = {
     declarations: [{ kind: "audioOutput", name: "main", channels: 1 }],
