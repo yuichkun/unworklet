@@ -571,6 +571,16 @@ test("`select(true, then, else)` lifts the boolean literal cond to a `bool` lite
   });
 });
 
+test("`select(false, then, else)` は bool literal cond を value 0 に lift", () => {
+  expect(unwrapAst(P.select(false, 1, 0))).toEqual({
+    kind: "select",
+    type: "f32",
+    cond: { kind: "literal", type: "bool", value: 0 },
+    ifTrue: { kind: "literal", type: "f32", value: 1 },
+    ifFalse: { kind: "literal", type: "f32", value: 0 },
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────
 // frac (= x - floor(x))
 // ─────────────────────────────────────────────────────────────────────────
