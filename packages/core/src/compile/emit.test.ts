@@ -3366,6 +3366,17 @@ test("`emit(log)` e2e: 定義域外は Math.log 準拠 (= log(0)→-Inf / log(-1
   expect(Number.isNaN(neg)).toBe(true);
 });
 
+test("`emit(log)` e2e: 特殊値も Math.log 準拠 (= log(NaN)→NaN / log(+Inf)→+Inf)", async () => {
+  // NaN は x>0 / x<0 が共に false で内側 select に落ちる → -Inf に化けないこと。
+  const nan = await runStoreAndRead(makeStoreValueGraph(mathAst("log", Number.NaN)));
+  expect(Number.isNaN(nan)).toBe(true);
+  // +Inf は x>0 が true なので bit 分解の近似 (= 128·ln2 付近の有限値) に化けないこと。
+  const posInf = await runStoreAndRead(
+    makeStoreValueGraph(mathAst("log", Number.POSITIVE_INFINITY)),
+  );
+  expect(posInf).toBe(Number.POSITIVE_INFINITY);
+});
+
 test("`emit(tanh)` e2e: Math.tanh と |誤差| < 1e-4 (grid)", async () => {
   for (const x of [0, 0.5, 1, -1, 2, -2, 3, -3, 6]) {
     const got = await runStoreAndRead(makeStoreValueGraph(mathAst("tanh", x)));

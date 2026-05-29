@@ -1202,8 +1202,9 @@ function buildExpFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
 /**
  * `$unworklet_log`: x = m·2^e (= e は f32 指 数 bit、 m∈[1,2) は 仮 数 bit を 指 数 127
  * に 固 定 し て reinterpret)。 log(x) = e·ln2 + log(m)、 log(m) は t=(m-1)/(m+1) の
- * atanh 級 数 2·(t + t³/3 + t⁵/5 + t⁷/7) (= t∈[0,1/3]、 誤 差 ~3e-6)。 定 義 域 外 は
- * select で `Math.log` 準 拠 (= x<0 → NaN、 x==0 → -Inf)、 非 ト ラ ッ プ。
+ * atanh 級 数 2·(t + t³/3 + t⁵/5 + t⁷/7) (= t∈[0,1/3]、 誤 差 ~3e-6)。 定 義 域 外 /
+ * 特 殊 値 は select で `Math.log` 準 拠 (= x<0 → NaN、 x==0 → -Inf、 NaN → NaN、
+ * +Inf → +Inf)、 非 ト ラ ッ プ。
  * locals: 0=x(param) / 1=bits(i32) / 2=m / 3=t / 4=s(=t²)。
  */
 function buildLogFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
@@ -1252,11 +1253,19 @@ function buildLogFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
       mod.local.set(S, mod.f32.mul(mod.local.get(T, f), mod.local.get(T, f))),
       mod.select(
         mod.f32.gt(mod.local.get(X, f), mod.f32.const(0)),
-        computed,
+        // x>0 の 枝: +Inf は bit 分 解 す る と m=1·2^128 で 128·ln2 付 近 の 有 限 値 に
+        // 化 け る の で 先 に 捕 ま え て +Inf を 保 つ。 有 限 正 値 だ け 近 似 を 通 す。
         mod.select(
-          mod.f32.lt(mod.local.get(X, f), mod.f32.const(0)),
-          mod.f32.const(Number.NaN),
+          mod.f32.eq(mod.local.get(X, f), mod.f32.const(Number.POSITIVE_INFINITY)),
+          mod.f32.const(Number.POSITIVE_INFINITY),
+          computed,
+        ),
+        // x<=0 / NaN の 枝: x==0 だ け -Inf、 そ れ 以 外 (= 負 値 / NaN) は NaN。
+        // NaN は gt も eq(0) も false に な る の で 自 然 に NaN 側 に 落 ち る。
+        mod.select(
+          mod.f32.eq(mod.local.get(X, f), mod.f32.const(0)),
           mod.f32.const(Number.NEGATIVE_INFINITY),
+          mod.f32.const(Number.NaN),
         ),
       ),
     ],
