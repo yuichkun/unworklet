@@ -16,8 +16,6 @@ const unary = ["sin", "cos", "tan", "tanh", "exp", "log", "frac"] as const;
 // `mul` / `abs` / `max` は Step 3.3 / sub-phase 7.8a で fill = stub list か ら 除 外。
 const binary = ["mod"] as const;
 
-const ternary = ["select"] as const;
-
 test.each(unary)("`%s(x)` stub throws", (name) => {
   const fn = (P as unknown as Record<string, (x: number) => unknown>)[name];
   expect(() => fn(0)).toThrow(/not implemented/);
@@ -26,11 +24,6 @@ test.each(unary)("`%s(x)` stub throws", (name) => {
 test.each(binary)("`%s(a, b)` stub throws", (name) => {
   const fn = (P as unknown as Record<string, (a: number, b: number) => unknown>)[name];
   expect(() => fn(0, 0)).toThrow(/not implemented/);
-});
-
-test.each(ternary)("`%s(a, b, c)` stub throws", (name) => {
-  const fn = (P as unknown as Record<string, (a: number, b: number, c: number) => unknown>)[name];
-  expect(() => fn(0, 0, 0)).toThrow(/not implemented/);
 });
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -556,4 +549,39 @@ test("`clamp(number, number, number)` lifts all operands", () => {
 test("`Node<T>.clamp(lo, hi)` method form = free function 同 AST", () => {
   const x = wrapAst<"f32">({ kind: "literal", type: "f32", value: 5 });
   expect(unwrapAst(x.clamp(0, 1))).toEqual(unwrapAst(P.clamp(x, 0, 1)));
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// select (= WASM select 命令、free function のみ)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`select(condNode, then, else)` returns a `Node` carrying a `select` AST", () => {
+  const cond = wrapAst<"bool">({
+    kind: "gt",
+    type: "f32",
+    lhs: { kind: "literal", type: "f32", value: 5 },
+    rhs: { kind: "literal", type: "f32", value: 3 },
+  });
+  expect(unwrapAst(P.select(cond, 10, 20))).toEqual({
+    kind: "select",
+    type: "f32",
+    cond: {
+      kind: "gt",
+      type: "f32",
+      lhs: { kind: "literal", type: "f32", value: 5 },
+      rhs: { kind: "literal", type: "f32", value: 3 },
+    },
+    then: { kind: "literal", type: "f32", value: 10 },
+    else: { kind: "literal", type: "f32", value: 20 },
+  });
+});
+
+test("`select(true, then, else)` lifts the boolean literal cond to a `bool` literal node", () => {
+  expect(unwrapAst(P.select(true, 1, 0))).toEqual({
+    kind: "select",
+    type: "f32",
+    cond: { kind: "literal", type: "bool", value: 1 },
+    then: { kind: "literal", type: "f32", value: 1 },
+    else: { kind: "literal", type: "f32", value: 0 },
+  });
 });

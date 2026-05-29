@@ -3172,3 +3172,28 @@ test("`emit(clamp)` e2e: 範囲内/lo未満/hi超過", async () => {
 test("`emit(clamp)` e2e: lo > hi 退化ケースは hi を返す", async () => {
   expect(await runStoreAndRead(makeStoreValueGraph(clampAst(0.5, 1, 0)))).toBe(0);
 });
+
+function selectAst(cond: AstNode, then: number, else_: number): AstNode {
+  return {
+    kind: "select",
+    type: "f32",
+    cond,
+    then: { kind: "literal", type: "f32", value: then },
+    else: { kind: "literal", type: "f32", value: else_ },
+  };
+}
+
+test("`emitExpression(select)` lowers to WASM `select`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(selectAst(cmp("gt", 5, 3), 10, 20), emptyLayout, mod, binaryen);
+  expect(watOfExpression(mod, binaryen, ref, binaryen.f32)).toContain("(select");
+  mod.dispose();
+});
+
+test("`emit(select)` e2e: cond true → then(10) / cond false → else(20)", async () => {
+  const t = await runStoreAndRead(makeStoreValueGraph(selectAst(cmp("gt", 5, 3), 10, 20)));
+  expect(t).toBe(10);
+  const f = await runStoreAndRead(makeStoreValueGraph(selectAst(cmp("gt", 3, 5), 10, 20)));
+  expect(f).toBe(20);
+});

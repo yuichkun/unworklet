@@ -317,9 +317,18 @@ registerNodeMethod("clamp", function method<
 
 // Control
 export function select<T extends ScalarType>(
-  _cond: Node<"bool"> | boolean,
-  _then: Node<T> | number,
-  _else: Node<T> | number,
+  cond: Node<"bool"> | boolean,
+  then: Node<T> | number,
+  else_: Node<T> | number,
 ): Node<T> {
-  return notImplemented();
+  return wrapAst<T>({
+    kind: "select",
+    type: "f32",
+    cond:
+      typeof cond === "boolean"
+        ? { kind: "literal", type: "bool", value: cond ? 1 : 0 }
+        : unwrapAst(cond),
+    then: liftToAst(then),
+    else: liftToAst(else_),
+  });
 }

@@ -357,6 +357,15 @@ export function emitExpression(
         ),
         emitExpression(node.hi, layout, mod, binaryen),
       );
+    // select(cond, then, else) = WASM `select` 命 令 (= eager: 全 3 引 数 を 評 価
+    // し て か ら 選 ぶ)。 then / else は 副 作 用 ナ シ の pure expression な の で
+    // eager で 意 味 不 変。 cond は i32 (= bool 0/1)。
+    case "select":
+      return mod.select(
+        emitExpression(node.cond, layout, mod, binaryen),
+        emitExpression(node.then, layout, mod, binaryen),
+        emitExpression(node.else, layout, mod, binaryen),
+      );
     case "audioInRead": {
       const portBase = layout.regions.ioScratch.inputs[node.portName];
       if (portBase === undefined) {
