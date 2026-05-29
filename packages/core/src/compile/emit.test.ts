@@ -3377,6 +3377,17 @@ test("`emit(log)` e2e: 特殊値も Math.log 準拠 (= log(NaN)→NaN / log(+Inf
   expect(posInf).toBe(Number.POSITIVE_INFINITY);
 });
 
+test("`emit(log)` e2e: subnormal 入力も Math.log 準拠 (= 分解前に normal 域へ正規化)", async () => {
+  // 0 < x < FLT_MIN(≈1.1755e-38) は exponent field=0 で素朴な bit 分解が破綻し、
+  // log(1e-45) が ~-88 (正しくは ~-103) に化ける。const は f32 に丸められるので
+  // 照合は fround 後の値の Math.log と取る。
+  for (const x of [1e-45, 1e-40, 5e-39, 1e-38]) {
+    const ref = Math.log(Math.fround(x));
+    const got = await runStoreAndRead(makeStoreValueGraph(mathAst("log", x)));
+    expect(Math.abs(got - ref)).toBeLessThan(1e-2);
+  }
+});
+
 test("`emit(tanh)` e2e: Math.tanh と |誤差| < 1e-4 (grid)", async () => {
   for (const x of [0, 0.5, 1, -1, 2, -2, 3, -3, 6]) {
     const got = await runStoreAndRead(makeStoreValueGraph(mathAst("tanh", x)));

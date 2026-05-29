@@ -1204,8 +1204,9 @@ function buildExpFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
  * に 固 定 し て reinterpret)。 log(x) = e·ln2 + log(m)、 log(m) は t=(m-1)/(m+1) の
  * atanh 級 数 2·(t + t³/3 + t⁵/5 + t⁷/7) (= t∈[0,1/3]、 誤 差 ~3e-6)。 定 義 域 外 /
  * 特 殊 値 は select で `Math.log` 準 拠 (= x<0 → NaN、 x==0 → -Inf、 NaN → NaN、
- * +Inf → +Inf)、 非 ト ラ ッ プ。
- * locals: 0=x(param) / 1=bits(i32) / 2=m / 3=t / 4=s(=t²)。
+ * +Inf → +Inf)、 非 ト ラ ッ プ。 subnormal 入 力 は bit 分 解 前 に 2^24 倍 で normal
+ * 域 へ 正 規 化 し 結 果 を 24·ln2 補 正 (= exponent field=0 の 破 綻 回 避)。
+ * locals: 0=x(param) / 1=bits(i32) / 2=m / 3=t / 4=s(=t²) / 5=xn(正 規 化 後 入 力)。
  */
 function buildLogFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
   const f = binaryen.f32;
@@ -1215,6 +1216,15 @@ function buildLogFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
   const M = 2;
   const T = 3;
   const S = 4;
+  const XN = 5;
+  // 最 小 normal f32 = 2^-126。 こ れ 未 満 (= subnormal、 exponent field=0) は
+  // 素 朴 な bit 分 解 が 破 綻 す る の で、 2^24 倍 し て normal 域 に 押 し 上 げ て か ら
+  // 分 解 し、 log 結 果 か ら 24·ln2 を 引 い て 補 正 す る (全 subnormal は 2^24 で
+  // normal 域 に 収 ま る: 最 小 値 2^-149·2^24 = 2^-125)。
+  const FLT_MIN_NORMAL = 2 ** -126;
+  const SUBNORMAL_SCALE = 2 ** 24;
+  const SUBNORMAL_LOG_OFFSET = 24 * MATH_LN2;
+  const isSubnormal = (): number => mod.f32.lt(mod.local.get(X, f), mod.f32.const(FLT_MIN_NORMAL));
   const s = (): number => mod.local.get(S, f);
   // log(m) 多 項 式: poly_t = 1 + s·(1/3 + s·(1/5 + s·(1/7)))、 log(m) = 2·t·poly_t
   let polyT = mod.f32.add(mod.f32.const(1 / 5), mod.f32.mul(s(), mod.f32.const(1 / 7)));
@@ -1228,11 +1238,23 @@ function buildLogFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
       mod.i32.const(127),
     ),
   );
-  const computed = mod.f32.add(mod.f32.mul(eF, mod.f32.const(MATH_LN2)), logM);
+  // subnormal を 2^24 倍 し た 分 だ け eF が 24 大 き く 出 る の で 24·ln2 を 引 い て 戻 す。
+  const computed = mod.f32.sub(
+    mod.f32.add(mod.f32.mul(eF, mod.f32.const(MATH_LN2)), logM),
+    mod.select(isSubnormal(), mod.f32.const(SUBNORMAL_LOG_OFFSET), mod.f32.const(0)),
+  );
   const body = mod.block(
     null,
     [
-      mod.local.set(BITS, mod.i32.reinterpret(mod.local.get(X, f))),
+      // xn = x · (subnormal ? 2^24 : 1)。 以 降 の bit 分 解 は xn に 対 し て 行 う。
+      mod.local.set(
+        XN,
+        mod.f32.mul(
+          mod.local.get(X, f),
+          mod.select(isSubnormal(), mod.f32.const(SUBNORMAL_SCALE), mod.f32.const(1)),
+        ),
+      ),
+      mod.local.set(BITS, mod.i32.reinterpret(mod.local.get(XN, f))),
       // m = reinterpret((bits & 0x007FFFFF) | 0x3F800000) ∈ [1, 2)
       mod.local.set(
         M,
@@ -1271,7 +1293,7 @@ function buildLogFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
     ],
     f,
   );
-  mod.addFunction(`${MATH_FN_PREFIX}log`, binaryen.f32, binaryen.f32, [i, f, f, f], body);
+  mod.addFunction(`${MATH_FN_PREFIX}log`, binaryen.f32, binaryen.f32, [i, f, f, f, f], body);
 }
 
 /**
