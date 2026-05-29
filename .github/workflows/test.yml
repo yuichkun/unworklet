@@ -29,6 +29,7 @@ jobs:
           cache: true
       - run: vp install
       - name: Install playwright chromium (for browser e2e projects)
+        working-directory: examples/01-stereo-gain
         run: vp exec playwright install --with-deps chromium
       - name: Run vitest aggregation
         run: vp test
@@ -44,6 +45,7 @@ jobs:
           cache: true
       - run: vp install
       - name: Install playwright chromium
+        working-directory: examples/01-stereo-gain
         run: vp exec playwright install --with-deps chromium
       - name: Run playwright e2e
         run: vp run --filter ./examples/01-stereo-gain test:e2e
