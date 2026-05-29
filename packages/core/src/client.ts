@@ -321,15 +321,14 @@ export async function createNode<C>(
     (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated === true;
   const transportMode: "sab" | "postMessage" = sabAvailable ? "sab" : "postMessage";
 
-  // publish slot 1 つ あ た り 12 byte (= 4 byte publishShared + 8 byte publishCounters)、
-  // SAB allocate or fallback Uint8Array allocate (= postMessage transfer 用)。
-  // publishSlots ゼ ロ なら ナ シ で OK = processorOptions に も hand し な い。
+  // publish slot 1 つ あ た り 12 byte (= 4 byte publishShared + 8 byte publishCounters)。
+  // SAB 時 の み allocate (= postMessage path で は structured clone で main /
+  // worklet が 別 ArrayBuffer instance を 持 つ = mirror 不 能、 worklet 側 が
+  // port.postMessage 経 路 で 通 知 す る path = main 側 buffer 自 体 不 要)。
   const publishBufferByteLength = publishSlots.length * 12;
-  let publishBuffer: SharedArrayBuffer | ArrayBuffer | null = null;
-  if (publishBufferByteLength > 0) {
-    publishBuffer = sabAvailable
-      ? new SharedArrayBuffer(publishBufferByteLength)
-      : new ArrayBuffer(publishBufferByteLength);
+  let publishBuffer: SharedArrayBuffer | null = null;
+  if (publishBufferByteLength > 0 && sabAvailable) {
+    publishBuffer = new SharedArrayBuffer(publishBufferByteLength);
   }
 
   // event ring buffer SAB allocate (= sub-phase 7.6 commit 5b)。 1 SAB に 全 event
@@ -366,33 +365,53 @@ export async function createNode<C>(
       : new ArrayBuffer(messageRingsByteLength);
   }
 
-  // main 側 state surface 構 築 = publishBuffer を Int32Array view + 各 slot で
-  // `.value` getter (= 型 別 reinterpret) + `.subscribe(handler)` (= rAF polling
-  // driver で version 増 加 を 検 出 + handler fire)。
+  // main 側 state surface 構 築 = transport mode で 経 路 が 分 岐:
+  //
+  // - SAB available: publishBuffer の Int32Array view を 各 slot ご と に `.value`
+  //   getter 経 由 で Atomics.load + 型 別 reinterpret。 `.subscribe(handler)` は
+  //   rAF polling driver を 起 動 し て version counter advance を 検 出 + handler fire。
+  // - SAB unavailable: 共 有 buffer 不 在、 worklet 側 が version advance 時 に
+  //   `port.postMessage({ kind: 'publish', slotIndex, valueBits, ... })` を 投 げ る
+  //   = main 側 で port.onmessage で receive 即 時 に internal mirror state を 更 新
+  //   + subscriber dispatch (= rAF 不 要、 polling latency ゼ ロ)。 `.value` getter
+  //   は mirror か ら bits read。 `.subscribe` は 単 に subscriber set に 追 加。
   const stateSurface: Record<string, StateValueProxy<unknown>> = {};
   const stateSubscribers: Map<string, Set<(value: unknown) => void>> = new Map();
   const lastSeenVersions: number[] = publishSlots.map(() => 0);
   let rafHandle: number | null = null;
   let disposed = false;
   let publishSharedView: Int32Array | null = null;
+  // postMessage path 用 internal mirror (= slotIndex 順 で valueBits / version を
+  // 保 持、 port.onmessage で 更 新 + `.value` getter / dedupe diagnostic で 参 照)。
+  const postMessageMirrorBits: number[] = publishSlots.map(() => 0);
+  const postMessageMirrorVersions: number[] = publishSlots.map(() => 0);
   if (publishBuffer !== null && publishSlots.length > 0) {
     publishSharedView = new Int32Array(publishBuffer);
+  }
+  if (publishSlots.length > 0) {
     for (let i = 0; i < publishSlots.length; i++) {
       const slot = publishSlots[i]!;
       const valueSlotIdx = i * 3;
       const subscribers = new Set<(value: unknown) => void>();
       stateSubscribers.set(slot.name, subscribers);
+      const slotIndex = i;
       stateSurface[slot.name] = {
         get value() {
-          const bits =
-            transportMode === "sab"
-              ? Atomics.load(publishSharedView!, valueSlotIdx)
-              : publishSharedView![valueSlotIdx]!;
-          return convertStateValue(bits, slot.type);
+          if (transportMode === "sab" && publishSharedView !== null) {
+            const bits = Atomics.load(publishSharedView, valueSlotIdx);
+            return convertStateValue(bits, slot.type);
+          }
+          // postMessage path = internal mirror か ら read (= worklet 側 が 最 新 値 を
+          // port.postMessage で 投 げ た 結 果 が onPublishMessage で mirror に 反 映 済)。
+          return convertStateValue(postMessageMirrorBits[slotIndex]!, slot.type);
         },
         subscribe(handler) {
           subscribers.add(handler);
-          ensureRafLoopRunning();
+          // SAB path = rAF polling で version counter advance を 検 出 + dispatch。
+          // postMessage path = port.onmessage driven で immediate dispatch = polling 不 要。
+          if (transportMode === "sab") {
+            ensureRafLoopRunning();
+          }
           return () => {
             subscribers.delete(handler);
           };
@@ -654,10 +673,18 @@ export async function createNode<C>(
     // thread = no first-quantum glitch potential)。
     processorOptions: {
       module: wasmModule,
-      // publish slot あ り の 時 だ け buffer / publishSlots を hand (= worklet
-      // template の initialize で receive + per-quantum 末 尾 で copy logic 経 由、
-      // sub-phase 7.4 後 続 commit で fill)。 publish ゼ ロ なら 既 path 維 持。
-      ...(publishBuffer !== null ? { publishBuffer, publishSlots, transport: transportMode } : {}),
+      // publish slot あ り の 時 = transport mode 共 通 で descriptor + transport を
+      // hand (= worklet template の initialize で receive + per-quantum 末 尾 で
+      // publish copy logic 走 ら す)。 publishBuffer は SAB 時 の み hand (= postMessage
+      // path で は structured clone で 別 instance に な る = mirror 不 能、 worklet
+      // 側 が port.postMessage で 個 別 通 知 す る path = buffer 不 要)。
+      ...(publishSlots.length > 0
+        ? {
+            publishSlots,
+            transport: transportMode,
+            ...(publishBuffer !== null ? { publishBuffer } : {}),
+          }
+        : {}),
       // event ring あ り の 時 だ け eventRingsBuffer + descriptor + sabOffsets を hand
       // (= sub-phase 7.6 commit 5b)。 worklet template の initialize で receive +
       // per-quantum 末 尾 で WASM → SAB copy logic (= commit 5c で fill)。
@@ -780,6 +807,41 @@ export async function createNode<C>(
   node.port.addEventListener("message", onErrorMessage);
   node.addEventListener("processorerror", onErrorProcessor);
 
+  // postMessage path 用 publish listener (= SAB unavailable 時 に worklet 側 が
+  // version advance 時 に `port.postMessage({ kind: 'publish', slotIndex, valueBits,
+  // sampleCounter, version })` を 投 げ る = main 側 で 即 時 mirror 更 新 + subscriber
+  // dispatch。 SAB 時 は worklet が 直 接 SAB に Atomics.store す る path = listener
+  // は 何 も せ ず drop)。
+  const onPublishMessage = (event: MessageEvent): void => {
+    const data = event.data as
+      | { kind?: unknown; slotIndex?: unknown; valueBits?: unknown; version?: unknown }
+      | null
+      | undefined;
+    if (typeof data !== "object" || data === null) return;
+    if (data.kind !== "publish") return;
+    if (typeof data.slotIndex !== "number") return;
+    if (typeof data.valueBits !== "number") return;
+    if (typeof data.version !== "number") return;
+    const slotIndex = data.slotIndex;
+    if (slotIndex < 0 || slotIndex >= publishSlots.length) return;
+    const slot = publishSlots[slotIndex]!;
+    postMessageMirrorBits[slotIndex] = data.valueBits;
+    postMessageMirrorVersions[slotIndex] = data.version;
+    const subscribers = stateSubscribers.get(slot.name);
+    if (!subscribers || subscribers.size === 0) return;
+    const value = convertStateValue(data.valueBits, slot.type);
+    for (const handler of subscribers) {
+      try {
+        handler(value);
+      } catch (err) {
+        console.error("unworklet: state subscribe handler threw", err);
+      }
+    }
+  };
+  if (transportMode === "postMessage" && publishSlots.length > 0) {
+    node.port.addEventListener("message", onPublishMessage);
+  }
+
   const { handles: inputHandles, proxies: inputProxies } = buildInputProxies(context, node, inputs);
 
   // sab-unavailable event を 1 度 だ け fire す る pending flag (= 04-worklet-
@@ -806,6 +868,7 @@ export async function createNode<C>(
       disposed = true;
       stopRafLoop();
       node.port.removeEventListener("message", onErrorMessage);
+      node.port.removeEventListener("message", onPublishMessage);
       node.removeEventListener("processorerror", onErrorProcessor);
       errorSubscribers.clear();
       for (const subs of stateSubscribers.values()) subs.clear();

@@ -671,37 +671,50 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       }
     }
 
-    // publish copy (= sub-phase 7.4)。 WASM publish scheduler が publishCounters
-    // 内 version を 更 新 し た slot だ け 共 有 buffer に copy + lastVersion を update。
-    // SAB mode は Atomics.store (= main 側 が Atomics.load で torn read 回 避)、
-    // postMessage fallback は 直 接 view に write (= 後 続 commit で main 側 へ の
-    // notify path を fill)。 version は 必 ず 最 後 に store = main 側 が 「version
-    // 増 加 を 検 出 + value を read」 経 路 で consistent read 担 保。
+    // publish copy (= sub-phase 7.4 + postMessage path fix)。 WASM publish
+    // scheduler が publishCounters 内 version を 更 新 し た slot だ け 走 査 し て
+    // 版 advance 時 に main 側 に 値 を 配 達 す る。 transport mode で 経 路 が 分 岐:
+    //
+    // - SAB available: 共 有 SAB を Atomics.store で 更 新 (= main 側 が rAF polling
+    //   + Atomics.load で torn read 回 避 + version advance を 検 出 し て dispatch)。
+    // - SAB unavailable: 共 有 buffer は 不 在 (= structured clone で main / worklet
+    //   が 別 instance を 持 つ た め mirror 不 能) = port.postMessage で main へ
+    //   個 別 通 知。 main 側 は port.onmessage で 即 時 mirror state 更 新 + subscriber
+    //   dispatch (= rAF polling 不 要 = `02-messaging.md` §4 / `04-worklet-runtime.md`
+    //   §7 通 り)。
+    //
+    // 版 advance チェック を 共 通 化 し た 上 で、 配 達 経 路 だ け 分 岐。
+    const slots = state.publishSlots;
+    const lastVersions = state.lastVersions;
+    const sharedViews = state.publishWasmSharedViews;
+    const counterViews = state.publishWasmCounterViews;
+    const isSab = state.transport === "sab";
     const sharedView = state.publishSharedView;
-    if (sharedView !== null) {
-      const slots = state.publishSlots;
-      const lastVersions = state.lastVersions;
-      const sharedViews = state.publishWasmSharedViews;
-      const counterViews = state.publishWasmCounterViews;
-      const isSab = state.transport === "sab";
-      for (let i = 0; i < slots.length; i++) {
-        const counterView = counterViews[i]!;
-        const currentVersion = counterView[1]!;
-        if (currentVersion !== lastVersions[i]) {
-          const valueBits = sharedViews[i]![0]!;
-          const sampleCounter = counterView[0]!;
+    for (let i = 0; i < slots.length; i++) {
+      const counterView = counterViews[i]!;
+      const currentVersion = counterView[1]!;
+      if (currentVersion !== lastVersions[i]) {
+        const valueBits = sharedViews[i]![0]!;
+        const sampleCounter = counterView[0]!;
+        if (isSab && sharedView !== null) {
           const slotIdx = i * 3;
-          if (isSab) {
-            Atomics.store(sharedView, slotIdx, valueBits);
-            Atomics.store(sharedView, slotIdx + 1, sampleCounter);
-            Atomics.store(sharedView, slotIdx + 2, currentVersion);
-          } else {
-            sharedView[slotIdx] = valueBits;
-            sharedView[slotIdx + 1] = sampleCounter;
-            sharedView[slotIdx + 2] = currentVersion;
-          }
-          lastVersions[i] = currentVersion;
+          Atomics.store(sharedView, slotIdx, valueBits);
+          Atomics.store(sharedView, slotIdx + 1, sampleCounter);
+          Atomics.store(sharedView, slotIdx + 2, currentVersion);
+        } else {
+          // postMessage path = main 側 へ flag-bearing 通 知。 slotIndex で 識 別、
+          // valueBits は publish 値 を i32 bit pattern と し て carry (= main 側 で
+          // 型 別 reinterpret)、 sampleCounter は diagnostics 用、 version は
+          // main local lastSeenVersion 比 較 の anchor。
+          self.port.postMessage({
+            kind: "publish",
+            slotIndex: i,
+            valueBits,
+            sampleCounter,
+            version: currentVersion,
+          });
         }
+        lastVersions[i] = currentVersion;
       }
     }
 

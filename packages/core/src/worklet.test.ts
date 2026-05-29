@@ -617,18 +617,23 @@ test("publish copy (sab mode): WASM 末 尾 で due tick が SAB に Atomics.sto
   expect(view[2]).toBe(1); // version
 });
 
-test("publish copy (postMessage fallback): ArrayBuffer view に直接 write", async () => {
+test("publish copy (postMessage fallback): port.postMessage で 個 別 配 送 (= publishBuffer な し)", async () => {
+  // postMessage path = publishBuffer な し (= structured clone で main / worklet
+  // が 別 instance に な る た め mirror 不 能、 worklet 側 が port.postMessage で
+  // 通 知 す る 経 路)。 self.messages に { kind: 'publish', ... } が 1 件 入 る
+  // こ と を 確 認。
   const { wasm } = await compile(publishProc, { sampleRate: 48000 });
   const self = makeMockSelf();
-  const publishBuffer = new ArrayBuffer(12);
   publishProc.worklet.initialize(self, {
     processorOptions: {
       wasm,
-      publishBuffer,
       publishSlots: publishProc.worklet.publishSlots,
       transport: "postMessage",
     },
   });
+  // initialize 末 尾 の `ready` ack を consume = publish message だ け を assert す
+  // る path。
+  self.messages.length = 0;
 
   const input = new Float32Array(SAMPLES_PER_BLOCK).fill(0.5);
   const inputs = [[input]];
@@ -636,10 +641,16 @@ test("publish copy (postMessage fallback): ArrayBuffer view に直接 write", as
   for (let b = 0; b < 13; b++) {
     publishProc.worklet.process(self, inputs, outputs, {});
   }
-  const view = new Int32Array(publishBuffer);
+  // 13 block で counter 1664 ≥ threshold 1600 = 1 度 due tick で publish 配 送
+  const publishMessages = self.messages.filter(
+    (m): m is { kind: string; slotIndex: number; valueBits: number; version: number } =>
+      typeof m === "object" && m !== null && (m as { kind?: unknown }).kind === "publish",
+  );
+  expect(publishMessages.length).toBe(1);
+  expect(publishMessages[0]!.slotIndex).toBe(0);
   const valueBits = new Int32Array(new Float32Array([0.5]).buffer)[0]!;
-  expect(view[0]).toBe(valueBits);
-  expect(view[2]).toBe(1);
+  expect(publishMessages[0]!.valueBits).toBe(valueBits);
+  expect(publishMessages[0]!.version).toBe(1);
 });
 
 test("publish copy: not due block で view 不 変 (= skip path)", async () => {

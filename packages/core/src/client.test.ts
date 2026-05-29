@@ -1599,7 +1599,11 @@ test("createNode with eventRings + !crossOriginIsolated = fallback ArrayBuffer",
   }
 });
 
-test("createNode with publishSlots + !crossOriginIsolated = fallback ArrayBuffer + transport 'postMessage'", async () => {
+test("createNode with publishSlots + !crossOriginIsolated = publishBuffer な し + transport 'postMessage' + descriptor hand", async () => {
+  // postMessage path = publishBuffer を hand し な い (= structured clone で 別
+  // ArrayBuffer instance に な る = mirror 不 能、 worklet 側 が port.postMessage
+  // 経 路 で 通 知 す る = main 側 buffer 自 体 不 要)。 publishSlots descriptor +
+  // transport だ け hand し て worklet template が postMessage 経 路 を 走 ら す。
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   try {
     const node = await startCreate(
@@ -1616,12 +1620,12 @@ test("createNode with publishSlots + !crossOriginIsolated = fallback ArrayBuffer
       h.fireReady,
     );
     const opts = h.lastNode!.__constructorRecord.options.processorOptions as {
-      publishBuffer: unknown;
-      transport: string;
+      publishBuffer?: unknown;
+      publishSlots?: unknown;
+      transport?: string;
     };
-    expect(opts.publishBuffer).toBeInstanceOf(ArrayBuffer);
-    expect(opts.publishBuffer).not.toBeInstanceOf(SharedArrayBuffer);
-    expect((opts.publishBuffer as ArrayBuffer).byteLength).toBe(24); // 2 slots × 12 byte
+    expect(opts.publishBuffer).toBeUndefined();
+    expect(opts.publishSlots).toBeDefined();
     expect(opts.transport).toBe("postMessage");
     expect(node.diagnostics.transport).toBe("postMessage");
   } finally {
@@ -1714,7 +1718,7 @@ test("node.state.<name>.value = SAB mode で publish 済 値 を 同 期 read (=
   }
 });
 
-test("node.state.<name>.value = postMessage mode で 直接 view read (= Atomics.load skip)", async () => {
+test("node.state.<name>.value = postMessage mode で onPublishMessage 経 由 で mirror 更 新 + read 可", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   try {
     const node = await startCreate(
@@ -1727,10 +1731,15 @@ test("node.state.<name>.value = postMessage mode で 直接 view read (= Atomics
         ),
       h.fireReady,
     );
-    const buf = h.lastNode!.__constructorRecord.options.processorOptions!
-      .publishBuffer as ArrayBuffer;
-    const view = new Int32Array(buf);
-    view[0] = 99;
+    // 初 期 値 = mirror 0 で .value も 0
+    expect(node.state["vI32"]!.value).toBe(0);
+    // worklet が version advance 時 に 投 げ る publish message を simulate
+    // (= port listener 経 由 で onPublishMessage が mirror 更 新)
+    for (const listener of h.lastNode!.port.__listeners) {
+      listener({
+        data: { kind: "publish", slotIndex: 0, valueBits: 99, sampleCounter: 0, version: 1 },
+      } as MessageEvent);
+    }
     expect(node.state["vI32"]!.value).toBe(99);
   } finally {
     h.cleanup();
@@ -1984,7 +1993,10 @@ test("polling driver = unsubscribe で 該 当 handler skip + dispose で raf �
   }
 });
 
-test("polling driver = postMessage mode で 直 接 view read で 動 作 (= no Atomics)", async () => {
+test("publish dispatch = postMessage mode で port.onmessage 経 由 で subscriber 即 時 fire (= no rAF polling)", async () => {
+  // postMessage path で は rAF polling 不 要 = port.onmessage が dispatched す る と
+  // 即 時 subscriber fire。 rAF mock を 入 れ て も flush 前 に fire し て いる こ と
+  // を 担 保 (= polling driver 起 動 さ れ て い な い)。
   const raf = installRafMock();
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   try {
@@ -1998,13 +2010,17 @@ test("polling driver = postMessage mode で 直 接 view read で 動 作 (= no 
         ),
       h.fireReady,
     );
-    const buf = h.lastNode!.__constructorRecord.options.processorOptions!
-      .publishBuffer as ArrayBuffer;
-    const view = new Int32Array(buf);
     const calls: unknown[] = [];
     node.state["v"]!.subscribe((value) => calls.push(value));
-    view[0] = 88;
-    view[2] = 1;
+    // worklet publish を simulate (= rAF flush せ ず に subscriber fire を 担 保)
+    for (const listener of h.lastNode!.port.__listeners) {
+      listener({
+        data: { kind: "publish", slotIndex: 0, valueBits: 88, sampleCounter: 0, version: 1 },
+      } as MessageEvent);
+    }
+    expect(calls).toEqual([88]);
+    // rAF flush し て も 追 加 fire ナ シ (= polling driver は postMessage path で 起
+    // 動 し て い な い、 既 fire は port driven な の で raf tick で 増 え な い)
     raf.flush();
     expect(calls).toEqual([88]);
   } finally {
