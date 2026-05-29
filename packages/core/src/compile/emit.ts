@@ -82,6 +82,14 @@ const MESSAGE_TAIL_LOCAL = 6;
 const FRAC_F32_LOCAL = 7;
 
 /**
+ * `mod` 用 f32 temp local 2 つ。 mod(a,b) = a - trunc(a/b)*b で a / b を 各 2 度
+ * 参 照 = `tee` で 1 度 ず つ 評 価 + local hold。 frac と 同 じ ネ ス ト 安 全 性 根 拠
+ * (= 厳 密 左→右 評 価 + optimizer ナ シ で、 tee 直 後 に get 消 費・間 に L 書 き ナ シ)。
+ */
+const MOD_A_F32_LOCAL = 8;
+const MOD_B_F32_LOCAL = 9;
+
+/**
  * Subnormal flush threshold (= Q21、 `04-worklet-runtime.md` §6)。
  * `state.f32` / `state.f64` の `.store(v)` で `|v| < 1e-30` を 0 に 落 と し て
  * IIR feedback path で の CPU spike を 撤 廃。 threshold 1e-30 は
@@ -155,6 +163,8 @@ export async function emit(
       binaryen.i32,
       binaryen.i32,
       binaryen.f32, // FRAC_F32_LOCAL (= frac 用 temp)
+      binaryen.f32, // MOD_A_F32_LOCAL (= mod 被 除 数 temp)
+      binaryen.f32, // MOD_B_F32_LOCAL (= mod 除 数 temp)
     ],
     body,
   );
@@ -309,6 +319,30 @@ export function emitExpression(
         emitExpression(node.lhs, layout, mod, binaryen),
         emitExpression(node.rhs, layout, mod, binaryen),
       );
+    // mod(a, b) = a - trunc(a/b)*b (= JS `%` 準 拠、 切 り 捨 て・符 号 は 被 除 数)。
+    // a / b を MOD_A / MOD_B に tee し て 各 1 度 ず つ 評 価。 b=0 → a/0=inf →
+    // trunc(inf)=inf → inf*0=NaN → a-NaN=NaN (= JS の x%0=NaN と 一 致)。
+    case "mod": {
+      const aTeed = mod.local.tee(
+        MOD_A_F32_LOCAL,
+        emitExpression(node.lhs, layout, mod, binaryen),
+        binaryen.f32,
+      );
+      const quotient = mod.f32.trunc(
+        mod.f32.div(
+          mod.local.get(MOD_A_F32_LOCAL, binaryen.f32),
+          mod.local.tee(
+            MOD_B_F32_LOCAL,
+            emitExpression(node.rhs, layout, mod, binaryen),
+            binaryen.f32,
+          ),
+        ),
+      );
+      return mod.f32.sub(
+        aTeed,
+        mod.f32.mul(quotient, mod.local.get(MOD_B_F32_LOCAL, binaryen.f32)),
+      );
+    }
     case "abs":
       return mod.f32.abs(emitExpression(node.value, layout, mod, binaryen));
     case "neg":

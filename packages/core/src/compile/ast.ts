@@ -18,6 +18,7 @@ export type AstNode =
   | { kind: "add"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "sub"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "div"; type: ScalarType; lhs: AstNode; rhs: AstNode }
+  | { kind: "mod"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "abs"; type: ScalarType; value: AstNode }
   | { kind: "neg"; type: ScalarType; value: AstNode }
   | { kind: "sqrt"; type: ScalarType; value: AstNode }

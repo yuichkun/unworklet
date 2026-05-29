@@ -11,19 +11,12 @@ import { unwrapAst, wrapAst } from "../compile/capture.ts";
 import * as P from "./primitives.ts";
 import { abs, max, mul } from "./primitives.ts";
 
+// 未 実 装 (= 多 項 式 近 似 設 計 待 ち、 Q17) の math primitive だ け が stub list に 残 る。
 const unary = ["sin", "cos", "tan", "tanh", "exp", "log"] as const;
-
-// `mul` / `abs` / `max` は Step 3.3 / sub-phase 7.8a で fill = stub list か ら 除 外。
-const binary = ["mod"] as const;
 
 test.each(unary)("`%s(x)` stub throws", (name) => {
   const fn = (P as unknown as Record<string, (x: number) => unknown>)[name];
   expect(() => fn(0)).toThrow(/not implemented/);
-});
-
-test.each(binary)("`%s(a, b)` stub throws", (name) => {
-  const fn = (P as unknown as Record<string, (a: number, b: number) => unknown>)[name];
-  expect(() => fn(0, 0)).toThrow(/not implemented/);
 });
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -610,4 +603,35 @@ test("`frac(number)` lifts the literal", () => {
 test("`Node<T>.frac()` method form = free function 同 AST", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1.25 });
   expect(unwrapAst(a.frac())).toEqual(unwrapAst(P.frac(a)));
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// mod (= a - trunc(a/b)*b、JS `%` 準拠)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`mod(node, node)` returns a `Node` carrying a `mod` AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 7 });
+  const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
+  expect(unwrapAst(P.mod(a, b))).toEqual({
+    kind: "mod",
+    type: "f32",
+    lhs: { kind: "literal", type: "f32", value: 7 },
+    rhs: { kind: "literal", type: "f32", value: 3 },
+  });
+});
+
+test("`mod(node, number)` lifts the number literal", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 7 });
+  expect(unwrapAst(P.mod(a, 3))).toEqual({
+    kind: "mod",
+    type: "f32",
+    lhs: { kind: "literal", type: "f32", value: 7 },
+    rhs: { kind: "literal", type: "f32", value: 3 },
+  });
+});
+
+test("`Node<T>.mod(other)` method form = free function 同 AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 7 });
+  const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
+  expect(unwrapAst(a.mod(b))).toEqual(unwrapAst(P.mod(a, b)));
 });

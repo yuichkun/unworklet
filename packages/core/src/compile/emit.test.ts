@@ -3241,3 +3241,39 @@ test("`emit(frac)` e2e: ネスト frac(frac(1.75)) = 0.75 (= 共有 local がネ
   );
   expect(v).toBeCloseTo(0.75, 5);
 });
+
+test("`emitExpression(mod)` lowers to sub/trunc/div (= JS % 相当)", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(cmp("mod", 7, 3), emptyLayout, mod, binaryen);
+  const wat = watOfExpression(mod, binaryen, ref, binaryen.f32);
+  expect(wat).toContain("(f32.sub");
+  expect(wat).toContain("(f32.trunc");
+  expect(wat).toContain("(f32.div");
+  mod.dispose();
+});
+
+test("`emit(mod)` e2e: 7%3=1 / 7.5%2=1.5", async () => {
+  expect(await runStoreAndRead(makeStoreValueGraph(cmp("mod", 7, 3)))).toBe(1);
+  expect(await runStoreAndRead(makeStoreValueGraph(cmp("mod", 7.5, 2)))).toBe(1.5);
+});
+
+test("`emit(mod)` e2e: 負の被除数 -7%3=-1 / 7%-3=1 (= JS % は符号が被除数)", async () => {
+  expect(await runStoreAndRead(makeStoreValueGraph(cmp("mod", -7, 3)))).toBe(-1);
+  expect(await runStoreAndRead(makeStoreValueGraph(cmp("mod", 7, -3)))).toBe(1);
+});
+
+test("`emit(mod)` e2e: 5%0 = NaN (= JS x%0)", async () => {
+  const v = await runStoreAndRead(makeStoreValueGraph(cmp("mod", 5, 0)));
+  expect(Number.isNaN(v)).toBe(true);
+});
+
+test("`emit(mod)` e2e: ネスト mod(mod(10,7),2)=1 (= 共有 local 安全性)", async () => {
+  const nested: AstNode = {
+    kind: "mod",
+    type: "f32",
+    lhs: cmp("mod", 10, 7),
+    rhs: { kind: "literal", type: "f32", value: 2 },
+  };
+  expect(await runStoreAndRead(makeStoreValueGraph(nested))).toBe(1);
+});
