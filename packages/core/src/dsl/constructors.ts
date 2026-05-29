@@ -30,8 +30,9 @@ export function f32(v: number | Node<ScalarType>): Node<"f32"> {
   return convertTo("f32", v);
 }
 
-export function f64(_v: number | Node<ScalarType>): Node<"f64"> {
-  return notImplemented();
+export function f64(v: number | Node<ScalarType>): Node<"f64"> {
+  if (typeof v === "number") return wrapAst<"f64">({ kind: "literal", type: "f64", value: v });
+  return convertTo("f64", v);
 }
 
 export function i32(v: number | Node<ScalarType>): Node<"i32"> {

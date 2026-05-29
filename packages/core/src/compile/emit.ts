@@ -94,6 +94,15 @@ const MOD_B_F32_LOCAL = 9;
 const MOD_Q_F32_LOCAL = 10;
 
 /**
+ * f64 temp locals (= f32 版 と 同 役 割、 f64 path 用)。 frac の 二 重 評 価 回 避 と
+ * mod の JS `%` 準 拠 special impl で 使 う。
+ */
+const FRAC_F64_LOCAL = 11;
+const MOD_A_F64_LOCAL = 12;
+const MOD_B_F64_LOCAL = 13;
+const MOD_Q_F64_LOCAL = 14;
+
+/**
  * 多 項 式 近 似 の math primitive (= sin / cos / tan / tanh / exp / log、 Q17) は
  * 共 有 プ ラ イ ベ ー ト WASM 関 数 (= `(f32) -> f32`、 export し な い) と し て emit し、
  * 呼 び 出 し 側 は `call` で 参 照。 各 関 数 は 自 前 の local を 持 つ の で `process`
@@ -183,6 +192,10 @@ export async function emit(
       binaryen.f32, // MOD_A_F32_LOCAL (= mod 被 除 数 temp)
       binaryen.f32, // MOD_B_F32_LOCAL (= mod 除 数 temp)
       binaryen.f32, // MOD_Q_F32_LOCAL (= mod quotient temp)
+      binaryen.f64, // FRAC_F64_LOCAL
+      binaryen.f64, // MOD_A_F64_LOCAL
+      binaryen.f64, // MOD_B_F64_LOCAL
+      binaryen.f64, // MOD_Q_F64_LOCAL
     ],
     body,
   );
@@ -289,11 +302,16 @@ function emitPublishScheduler(
   return blocks;
 }
 
+/** The binaryen float namespace for a scalar type (`f64` or `f32`). */
+function floatNs(mod: BinaryenModule, type: ScalarType) {
+  return type === "f64" ? mod.f64 : mod.f32;
+}
+
 /**
  * Type-dispatched numeric binary op (= 多 型 arithmetic / comparison lowering)。
  * `op` は binaryen 命 令 名 (= comparison は `le` / `ge`、 AST kind の `lte` /
  * `gte` を 呼 び 出 し 側 で map)。 整 数 は 符 号 付 き (= `div_s` / `lt_s` 等)。
- * f64 / i64 dispatch は 各 stage で 追 加。
+ * i64 dispatch は i64 stage で 追 加。
  */
 function emitNumericBinary(
   mod: BinaryenModule,
@@ -302,44 +320,71 @@ function emitNumericBinary(
   lhs: number,
   rhs: number,
 ): number {
-  const i = type === "i32";
+  if (type === "i32") {
+    switch (op) {
+      case "add":
+        return mod.i32.add(lhs, rhs);
+      case "sub":
+        return mod.i32.sub(lhs, rhs);
+      case "mul":
+        return mod.i32.mul(lhs, rhs);
+      case "div":
+        return mod.i32.div_s(lhs, rhs);
+      case "eq":
+        return mod.i32.eq(lhs, rhs);
+      case "lt":
+        return mod.i32.lt_s(lhs, rhs);
+      case "gt":
+        return mod.i32.gt_s(lhs, rhs);
+      case "le":
+        return mod.i32.le_s(lhs, rhs);
+      case "ge":
+        return mod.i32.ge_s(lhs, rhs);
+    }
+  }
+  // f32 / f64 (i64 dispatch lands with the i64 stage).
+  const fl = floatNs(mod, type);
   switch (op) {
     case "add":
-      return i ? mod.i32.add(lhs, rhs) : mod.f32.add(lhs, rhs);
+      return fl.add(lhs, rhs);
     case "sub":
-      return i ? mod.i32.sub(lhs, rhs) : mod.f32.sub(lhs, rhs);
+      return fl.sub(lhs, rhs);
     case "mul":
-      return i ? mod.i32.mul(lhs, rhs) : mod.f32.mul(lhs, rhs);
+      return fl.mul(lhs, rhs);
     case "div":
-      return i ? mod.i32.div_s(lhs, rhs) : mod.f32.div(lhs, rhs);
+      return fl.div(lhs, rhs);
     case "eq":
-      return i ? mod.i32.eq(lhs, rhs) : mod.f32.eq(lhs, rhs);
+      return fl.eq(lhs, rhs);
     case "lt":
-      return i ? mod.i32.lt_s(lhs, rhs) : mod.f32.lt(lhs, rhs);
+      return fl.lt(lhs, rhs);
     case "gt":
-      return i ? mod.i32.gt_s(lhs, rhs) : mod.f32.gt(lhs, rhs);
+      return fl.gt(lhs, rhs);
     case "le":
-      return i ? mod.i32.le_s(lhs, rhs) : mod.f32.le(lhs, rhs);
+      return fl.le(lhs, rhs);
     case "ge":
-      return i ? mod.i32.ge_s(lhs, rhs) : mod.f32.ge(lhs, rhs);
+      return fl.ge(lhs, rhs);
   }
 }
 
 /** Type-dispatched negation. WASM has no `i32.neg` = `0 - x`. */
 function emitNeg(mod: BinaryenModule, type: ScalarType, x: number): number {
   if (type === "i32") return mod.i32.sub(mod.i32.const(0), x);
-  return mod.f32.neg(x);
+  return floatNs(mod, type).neg(x);
 }
 
 /**
  * Cross-precision convert lowering (= scalar constructor `f32(node)` 等、 no-trap:
- * integer truncation は saturating)。 i32 ↔ f32 を 実 装、 f64 / i64 / bool pair は
- * 各 stage で 追 加。
+ * integer truncation は saturating)。 i32 ↔ f32 / i32 ↔ f64 / f32 ↔ f64 を 実 装、
+ * i64 / bool pair は 各 stage で 追 加。
  */
 function emitConvert(mod: BinaryenModule, from: ScalarType, to: ScalarType, value: number): number {
   if (from === "i32" && to === "f32") return mod.f32.convert_s.i32(value);
   if (from === "f32" && to === "i32") return mod.i32.trunc_s_sat.f32(value);
-  /* v8 ignore next 2 — 残 り convert pair (= f64 / i64 / bool) は 各 type の stage で fill、 該 当 type の node は ま だ 構 築 不 可 */
+  if (from === "i32" && to === "f64") return mod.f64.convert_s.i32(value);
+  if (from === "f64" && to === "i32") return mod.i32.trunc_s_sat.f64(value);
+  if (from === "f32" && to === "f64") return mod.f64.promote(value);
+  if (from === "f64" && to === "f32") return mod.f32.demote(value);
+  /* v8 ignore next 2 — 残 り convert pair (= i64 / bool) は 各 type の stage で fill、 該 当 type の node は ま だ 構 築 不 可 */
   throw new Error(`unworklet: convert ${from} → ${to} not implemented yet`);
 }
 
@@ -399,6 +444,36 @@ export function emitExpression(
           emitExpression(node.rhs, layout, mod, binaryen),
         );
       }
+      // f64: f32 版 と 同 じ JS `%` 準 拠 special impl を f64 local で。
+      if (node.type === "f64") {
+        const aTeedF64 = mod.local.tee(
+          MOD_A_F64_LOCAL,
+          emitExpression(node.lhs, layout, mod, binaryen),
+          binaryen.f64,
+        );
+        const setQuotientF64 = mod.local.set(
+          MOD_Q_F64_LOCAL,
+          mod.f64.trunc(
+            mod.f64.div(
+              mod.local.get(MOD_A_F64_LOCAL, binaryen.f64),
+              mod.local.tee(
+                MOD_B_F64_LOCAL,
+                emitExpression(node.rhs, layout, mod, binaryen),
+                binaryen.f64,
+              ),
+            ),
+          ),
+        );
+        const productF64 = mod.select(
+          mod.f64.eq(mod.local.get(MOD_Q_F64_LOCAL, binaryen.f64), mod.f64.const(0)),
+          mod.f64.const(0),
+          mod.f64.mul(
+            mod.local.get(MOD_Q_F64_LOCAL, binaryen.f64),
+            mod.local.get(MOD_B_F64_LOCAL, binaryen.f64),
+          ),
+        );
+        return mod.f64.sub(aTeedF64, mod.block(null, [setQuotientF64, productF64], binaryen.f64));
+      }
       const aTeed = mod.local.tee(
         MOD_A_F32_LOCAL,
         emitExpression(node.lhs, layout, mod, binaryen),
@@ -429,18 +504,26 @@ export function emitExpression(
       return mod.f32.sub(aTeed, mod.block(null, [setQuotient, product], binaryen.f32));
     }
     case "abs":
-      return mod.f32.abs(emitExpression(node.value, layout, mod, binaryen));
+      return floatNs(mod, node.type).abs(emitExpression(node.value, layout, mod, binaryen));
     case "neg":
       return emitNeg(mod, node.type, emitExpression(node.value, layout, mod, binaryen));
     case "sqrt":
-      return mod.f32.sqrt(emitExpression(node.value, layout, mod, binaryen));
+      return floatNs(mod, node.type).sqrt(emitExpression(node.value, layout, mod, binaryen));
     case "floor":
-      return mod.f32.floor(emitExpression(node.value, layout, mod, binaryen));
+      return floatNs(mod, node.type).floor(emitExpression(node.value, layout, mod, binaryen));
     case "ceil":
-      return mod.f32.ceil(emitExpression(node.value, layout, mod, binaryen));
+      return floatNs(mod, node.type).ceil(emitExpression(node.value, layout, mod, binaryen));
     // frac(x) = x - floor(x) (= GLSL fract、 結 果 は [0,1))。 x を FRAC_F32_LOCAL に
     // tee し て 1 度 だ け 評 価、 floor 側 で get で 再 取 得 (= 二 重 評 価 回 避)。
     case "frac": {
+      if (node.type === "f64") {
+        const teedF64 = mod.local.tee(
+          FRAC_F64_LOCAL,
+          emitExpression(node.value, layout, mod, binaryen),
+          binaryen.f64,
+        );
+        return mod.f64.sub(teedF64, mod.f64.floor(mod.local.get(FRAC_F64_LOCAL, binaryen.f64)));
+      }
       const teed = mod.local.tee(
         FRAC_F32_LOCAL,
         emitExpression(node.value, layout, mod, binaryen),
@@ -486,12 +569,12 @@ export function emitExpression(
         binaryen.f32,
       );
     case "max":
-      return mod.f32.max(
+      return floatNs(mod, node.type).max(
         emitExpression(node.lhs, layout, mod, binaryen),
         emitExpression(node.rhs, layout, mod, binaryen),
       );
     case "min":
-      return mod.f32.min(
+      return floatNs(mod, node.type).min(
         emitExpression(node.lhs, layout, mod, binaryen),
         emitExpression(node.rhs, layout, mod, binaryen),
       );
@@ -540,14 +623,16 @@ export function emitExpression(
     // clamp(x, lo, hi) = min(max(x, lo), hi)。 各 オ ペ ラ ン ド を 1 度 ず つ emit =
     // 二 重 評 価 ナ シ = temp local 不 要。 lo > hi の 退 化 ケ ー ス は hi を 返 す
     // (= max(x,lo) >= lo > hi な の で min(..., hi) = hi)、 決 定 的 挙 動。
-    case "clamp":
-      return mod.f32.min(
-        mod.f32.max(
+    case "clamp": {
+      const fl = floatNs(mod, node.type);
+      return fl.min(
+        fl.max(
           emitExpression(node.x, layout, mod, binaryen),
           emitExpression(node.lo, layout, mod, binaryen),
         ),
         emitExpression(node.hi, layout, mod, binaryen),
       );
+    }
     // select(cond, then, else) = WASM `select` 命 令 (= eager: 全 3 引 数 を 評 価
     // し て か ら 選 ぶ)。 then / else は 副 作 用 ナ シ の pure expression な の で
     // eager で 意 味 不 変。 cond は i32 (= bool 0/1)。

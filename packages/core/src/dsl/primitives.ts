@@ -261,37 +261,43 @@ registerNodeMethod("log", function method<T extends ScalarType>(this: Node<T>): 
   return log(this);
 });
 export function sqrt<T extends ScalarType>(x: Node<T> | number): Node<T> {
-  return wrapAst<T>({ kind: "sqrt", type: "f32", value: lift(x, "f32") });
+  const t = operandType(x);
+  return wrapAst<T>({ kind: "sqrt", type: t, value: lift(x, t) });
 }
 registerNodeMethod("sqrt", function method<T extends ScalarType>(this: Node<T>): Node<T> {
   return sqrt(this);
 });
 export function abs<T extends ScalarType>(x: Node<T> | number): Node<T> {
-  return wrapAst<T>({ kind: "abs", type: "f32", value: lift(x, "f32") });
+  const t = operandType(x);
+  return wrapAst<T>({ kind: "abs", type: t, value: lift(x, t) });
 }
 registerNodeMethod("abs", function method<T extends ScalarType>(this: Node<T>): Node<T> {
   return abs(this);
 });
 export function floor<T extends ScalarType>(x: Node<T> | number): Node<T> {
-  return wrapAst<T>({ kind: "floor", type: "f32", value: lift(x, "f32") });
+  const t = operandType(x);
+  return wrapAst<T>({ kind: "floor", type: t, value: lift(x, t) });
 }
 registerNodeMethod("floor", function method<T extends ScalarType>(this: Node<T>): Node<T> {
   return floor(this);
 });
 export function ceil<T extends ScalarType>(x: Node<T> | number): Node<T> {
-  return wrapAst<T>({ kind: "ceil", type: "f32", value: lift(x, "f32") });
+  const t = operandType(x);
+  return wrapAst<T>({ kind: "ceil", type: t, value: lift(x, t) });
 }
 registerNodeMethod("ceil", function method<T extends ScalarType>(this: Node<T>): Node<T> {
   return ceil(this);
 });
 export function frac<T extends ScalarType>(x: Node<T> | number): Node<T> {
-  return wrapAst<T>({ kind: "frac", type: "f32", value: lift(x, "f32") });
+  const t = operandType(x);
+  return wrapAst<T>({ kind: "frac", type: t, value: lift(x, t) });
 }
 registerNodeMethod("frac", function method<T extends ScalarType>(this: Node<T>): Node<T> {
   return frac(this);
 });
 export function min<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<T> {
-  return wrapAst<T>({ kind: "min", type: "f32", lhs: lift(a, "f32"), rhs: lift(b, "f32") });
+  const t = operandType(a, b);
+  return wrapAst<T>({ kind: "min", type: t, lhs: lift(a, t), rhs: lift(b, t) });
 }
 registerNodeMethod("min", function method<
   T extends ScalarType,
@@ -299,7 +305,8 @@ registerNodeMethod("min", function method<
   return min(this, other);
 });
 export function max<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<T> {
-  return wrapAst<T>({ kind: "max", type: "f32", lhs: lift(a, "f32"), rhs: lift(b, "f32") });
+  const t = operandType(a, b);
+  return wrapAst<T>({ kind: "max", type: t, lhs: lift(a, t), rhs: lift(b, t) });
 }
 registerNodeMethod("max", function method<
   T extends ScalarType,
@@ -311,12 +318,13 @@ export function clamp<T extends ScalarType>(
   lo: Node<T> | number,
   hi: Node<T> | number,
 ): Node<T> {
+  const t = operandType(x, lo, hi);
   return wrapAst<T>({
     kind: "clamp",
-    type: "f32",
-    x: lift(x, "f32"),
-    lo: lift(lo, "f32"),
-    hi: lift(hi, "f32"),
+    type: t,
+    x: lift(x, t),
+    lo: lift(lo, t),
+    hi: lift(hi, t),
   });
 }
 registerNodeMethod("clamp", function method<
