@@ -239,9 +239,16 @@ export function cos<T extends ScalarType>(x: Node<T> | number): Node<T> {
 registerNodeMethod("cos", function method<T extends ScalarType>(this: Node<T>): Node<T> {
   return cos(this);
 });
-export function tan<T extends ScalarType>(_x: Node<T> | number): Node<T> {
-  return notImplemented();
+export function tan<T extends ScalarType>(x: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "tan",
+    type: "f32",
+    value: liftToAst(x),
+  });
 }
+registerNodeMethod("tan", function method<T extends ScalarType>(this: Node<T>): Node<T> {
+  return tan(this);
+});
 export function tanh<T extends ScalarType>(_x: Node<T> | number): Node<T> {
   return notImplemented();
 }

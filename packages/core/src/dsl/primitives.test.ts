@@ -12,7 +12,7 @@ import * as P from "./primitives.ts";
 import { abs, max, mul } from "./primitives.ts";
 
 // 未 実 装 (= 多 項 式 近 似 設 計 待 ち、 Q17) の math primitive だ け が stub list に 残 る。
-const unary = ["tan", "tanh", "exp", "log"] as const;
+const unary = ["tanh", "exp", "log"] as const;
 
 test.each(unary)("`%s(x)` stub throws", (name) => {
   const fn = (P as unknown as Record<string, (x: number) => unknown>)[name];
@@ -686,4 +686,30 @@ test("`cos(number)` lifts the literal", () => {
 test("`Node<T>.cos()` method form = free function 同 AST", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1 });
   expect(unwrapAst(a.cos())).toEqual(unwrapAst(P.cos(a)));
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// tan (= sin(x)/cos(x)、共有 WASM 関数)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`tan(node)` returns a `Node` carrying a `tan` AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1 });
+  expect(unwrapAst(P.tan(a))).toEqual({
+    kind: "tan",
+    type: "f32",
+    value: { kind: "literal", type: "f32", value: 1 },
+  });
+});
+
+test("`tan(number)` lifts the literal", () => {
+  expect(unwrapAst(P.tan(1))).toEqual({
+    kind: "tan",
+    type: "f32",
+    value: { kind: "literal", type: "f32", value: 1 },
+  });
+});
+
+test("`Node<T>.tan()` method form = free function 同 AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1 });
+  expect(unwrapAst(a.tan())).toEqual(unwrapAst(P.tan(a)));
 });

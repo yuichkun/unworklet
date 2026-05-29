@@ -389,6 +389,12 @@ export function emitExpression(
         [emitExpression(node.value, layout, mod, binaryen)],
         binaryen.f32,
       );
+    case "tan":
+      return mod.call(
+        `${MATH_FN_PREFIX}tan`,
+        [emitExpression(node.value, layout, mod, binaryen)],
+        binaryen.f32,
+      );
     case "max":
       return mod.f32.max(
         emitExpression(node.lhs, layout, mod, binaryen),
@@ -1031,6 +1037,7 @@ function addMathFunctions(used: Set<string>, mod: BinaryenModule, binaryen: Bina
   const expanded = expandMathDeps(used);
   if (expanded.has("sin")) buildSinFn(mod, binaryen);
   if (expanded.has("cos")) buildCosFn(mod, binaryen);
+  if (expanded.has("tan")) buildTanFn(mod, binaryen);
 }
 
 const MATH_PI = Math.PI;
@@ -1092,4 +1099,14 @@ function buildCosFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
     binaryen.f32,
   );
   mod.addFunction(`${MATH_FN_PREFIX}cos`, binaryen.f32, binaryen.f32, [], body);
+}
+
+/** `$unworklet_tan`: tan(x) = sin(x)/cos(x)。 x は param local = 自 由 に 再 取 得。 */
+function buildTanFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
+  const f = binaryen.f32;
+  const body = mod.f32.div(
+    mod.call(`${MATH_FN_PREFIX}sin`, [mod.local.get(0, f)], binaryen.f32),
+    mod.call(`${MATH_FN_PREFIX}cos`, [mod.local.get(0, f)], binaryen.f32),
+  );
+  mod.addFunction(`${MATH_FN_PREFIX}tan`, binaryen.f32, binaryen.f32, [], body);
 }
