@@ -1,23 +1,17 @@
 /**
- * Scalar constructor stub behavior (= `01-dsl.md` §2.2, `decisions-log.md`
- * Q33 + Q77). Phase 3 = stubs throw `not implemented`; runtime AST capture
- * lands later (= Phase 8 Q-A in the plan).
+ * Scalar constructor behavior (= `01-dsl.md` §2.2, `decisions-log.md`
+ * Q33 + Q77). `f32` / `i32` are implemented (literal lift + cross-precision
+ * convert); their black-box behavior lives in
+ * `../__tests__/behavior/multitype.test.ts`. `f64` / `i64` / `bool` / `num`
+ * still throw until their stages land.
  */
 
 import { expect, test } from "vite-plus/test";
 
-import { bool, f32, f64, i32, i64, num } from "./constructors.ts";
-
-test("`f32(v)` stub throws", () => {
-  expect(() => f32(0)).toThrow(/not implemented/);
-});
+import { bool, f64, i64, num } from "./constructors.ts";
 
 test("`f64(v)` stub throws", () => {
   expect(() => f64(0)).toThrow(/not implemented/);
-});
-
-test("`i32(v)` stub throws", () => {
-  expect(() => i32(0)).toThrow(/not implemented/);
 });
 
 test("`i64(bigint)` stub throws", () => {

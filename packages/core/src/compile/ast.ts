@@ -40,6 +40,13 @@ export type AstNode =
   | { kind: "gte"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "clamp"; type: ScalarType; x: AstNode; lo: AstNode; hi: AstNode }
   | { kind: "select"; type: ScalarType; cond: AstNode; ifTrue: AstNode; ifFalse: AstNode }
+  // Cross-precision conversion between `Node` types (= scalar constructors
+  // `f32(node)` / `i32(node)` / etc., `01-dsl.md` §2.2). `type` = target,
+  // `from` = source. Lowers to a single WASM convert / trunc_sat / extend /
+  // wrap / promote / demote instruction (no-trap: integer truncation uses the
+  // saturating form). `from === type` is folded away at the constructor (no
+  // convert node emitted), so emit always sees a genuine type change.
+  | { kind: "convert"; type: ScalarType; from: ScalarType; value: AstNode }
   | { kind: "audioInRead"; portName: string; channel: number; offset: AstNode }
   | {
       kind: "audioOutWrite";
@@ -228,6 +235,7 @@ export function inferAstType(ast: AstNode): ScalarType {
     case "min":
     case "clamp":
     case "select":
+    case "convert":
     case "stateLoad":
       return ast.type;
     // 比 較 = 結 果 は 常 に bool (= node の `type` は オ ペ ラ ン ド 型 f32)。

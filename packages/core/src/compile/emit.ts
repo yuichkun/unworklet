@@ -19,6 +19,7 @@
 
 import type { AstNode, CapturedGraph } from "./ast.ts";
 import type { Layout } from "./layout.ts";
+import type { ScalarType } from "../types.ts";
 
 export type BinaryenAPI = (typeof import("binaryen"))["default"];
 export type BinaryenModule = InstanceType<BinaryenAPI["Module"]>;
@@ -288,6 +289,60 @@ function emitPublishScheduler(
   return blocks;
 }
 
+/**
+ * Type-dispatched numeric binary op (= 多 型 arithmetic / comparison lowering)。
+ * `op` は binaryen 命 令 名 (= comparison は `le` / `ge`、 AST kind の `lte` /
+ * `gte` を 呼 び 出 し 側 で map)。 整 数 は 符 号 付 き (= `div_s` / `lt_s` 等)。
+ * f64 / i64 dispatch は 各 stage で 追 加。
+ */
+function emitNumericBinary(
+  mod: BinaryenModule,
+  type: ScalarType,
+  op: "add" | "sub" | "mul" | "div" | "eq" | "lt" | "gt" | "le" | "ge",
+  lhs: number,
+  rhs: number,
+): number {
+  const i = type === "i32";
+  switch (op) {
+    case "add":
+      return i ? mod.i32.add(lhs, rhs) : mod.f32.add(lhs, rhs);
+    case "sub":
+      return i ? mod.i32.sub(lhs, rhs) : mod.f32.sub(lhs, rhs);
+    case "mul":
+      return i ? mod.i32.mul(lhs, rhs) : mod.f32.mul(lhs, rhs);
+    case "div":
+      return i ? mod.i32.div_s(lhs, rhs) : mod.f32.div(lhs, rhs);
+    case "eq":
+      return i ? mod.i32.eq(lhs, rhs) : mod.f32.eq(lhs, rhs);
+    case "lt":
+      return i ? mod.i32.lt_s(lhs, rhs) : mod.f32.lt(lhs, rhs);
+    case "gt":
+      return i ? mod.i32.gt_s(lhs, rhs) : mod.f32.gt(lhs, rhs);
+    case "le":
+      return i ? mod.i32.le_s(lhs, rhs) : mod.f32.le(lhs, rhs);
+    case "ge":
+      return i ? mod.i32.ge_s(lhs, rhs) : mod.f32.ge(lhs, rhs);
+  }
+}
+
+/** Type-dispatched negation. WASM has no `i32.neg` = `0 - x`. */
+function emitNeg(mod: BinaryenModule, type: ScalarType, x: number): number {
+  if (type === "i32") return mod.i32.sub(mod.i32.const(0), x);
+  return mod.f32.neg(x);
+}
+
+/**
+ * Cross-precision convert lowering (= scalar constructor `f32(node)` 等、 no-trap:
+ * integer truncation は saturating)。 i32 ↔ f32 を 実 装、 f64 / i64 / bool pair は
+ * 各 stage で 追 加。
+ */
+function emitConvert(mod: BinaryenModule, from: ScalarType, to: ScalarType, value: number): number {
+  if (from === "i32" && to === "f32") return mod.f32.convert_s.i32(value);
+  if (from === "f32" && to === "i32") return mod.i32.trunc_s_sat.f32(value);
+  /* v8 ignore next 2 — 残 り convert pair (= f64 / i64 / bool) は 各 type の stage で fill、 該 当 type の node は ま だ 構 築 不 可 */
+  throw new Error(`unworklet: convert ${from} → ${to} not implemented yet`);
+}
+
 export function emitExpression(
   node: AstNode,
   layout: Layout,
@@ -313,22 +368,13 @@ export function emitExpression(
     case "loopCounter":
       return mod.local.get(LOOP_COUNTER_LOCAL, binaryen.i32);
     case "mul":
-      return mod.f32.mul(
-        emitExpression(node.lhs, layout, mod, binaryen),
-        emitExpression(node.rhs, layout, mod, binaryen),
-      );
     case "add":
-      return mod.f32.add(
-        emitExpression(node.lhs, layout, mod, binaryen),
-        emitExpression(node.rhs, layout, mod, binaryen),
-      );
     case "sub":
-      return mod.f32.sub(
-        emitExpression(node.lhs, layout, mod, binaryen),
-        emitExpression(node.rhs, layout, mod, binaryen),
-      );
     case "div":
-      return mod.f32.div(
+      return emitNumericBinary(
+        mod,
+        node.type,
+        node.kind,
         emitExpression(node.lhs, layout, mod, binaryen),
         emitExpression(node.rhs, layout, mod, binaryen),
       );
@@ -345,6 +391,14 @@ export function emitExpression(
     // b / quotient は rhs 評 価・quotient 算 出 後 に だ け read = 内 側 mod の local
     // 上 書 き と 取 り 違 え ナ シ。 select は 直 前 の set で MOD_Q / MOD_B が 確 定 済 み。
     case "mod": {
+      // Integer remainder = signed `rem_s` (= WASM 標 準、 符 号 は 被 除 数)。
+      // float (f32) は 下 の JS `%` 準 拠 special impl。
+      if (node.type === "i32") {
+        return mod.i32.rem_s(
+          emitExpression(node.lhs, layout, mod, binaryen),
+          emitExpression(node.rhs, layout, mod, binaryen),
+        );
+      }
       const aTeed = mod.local.tee(
         MOD_A_F32_LOCAL,
         emitExpression(node.lhs, layout, mod, binaryen),
@@ -377,7 +431,7 @@ export function emitExpression(
     case "abs":
       return mod.f32.abs(emitExpression(node.value, layout, mod, binaryen));
     case "neg":
-      return mod.f32.neg(emitExpression(node.value, layout, mod, binaryen));
+      return emitNeg(mod, node.type, emitExpression(node.value, layout, mod, binaryen));
     case "sqrt":
       return mod.f32.sqrt(emitExpression(node.value, layout, mod, binaryen));
     case "floor":
@@ -444,27 +498,42 @@ export function emitExpression(
     // 比 較 (= 結 果 は i32 0/1 = bool 内 部 表 現、 state.bool / select cond /
     // emitIf cond で 利 用 さ れ る 既 存 bool=i32 表 現 と zip)
     case "eq":
-      return mod.f32.eq(
+      return emitNumericBinary(
+        mod,
+        node.type,
+        "eq",
         emitExpression(node.lhs, layout, mod, binaryen),
         emitExpression(node.rhs, layout, mod, binaryen),
       );
     case "lt":
-      return mod.f32.lt(
+      return emitNumericBinary(
+        mod,
+        node.type,
+        "lt",
         emitExpression(node.lhs, layout, mod, binaryen),
         emitExpression(node.rhs, layout, mod, binaryen),
       );
     case "gt":
-      return mod.f32.gt(
+      return emitNumericBinary(
+        mod,
+        node.type,
+        "gt",
         emitExpression(node.lhs, layout, mod, binaryen),
         emitExpression(node.rhs, layout, mod, binaryen),
       );
     case "lte":
-      return mod.f32.le(
+      return emitNumericBinary(
+        mod,
+        node.type,
+        "le",
         emitExpression(node.lhs, layout, mod, binaryen),
         emitExpression(node.rhs, layout, mod, binaryen),
       );
     case "gte":
-      return mod.f32.ge(
+      return emitNumericBinary(
+        mod,
+        node.type,
+        "ge",
         emitExpression(node.lhs, layout, mod, binaryen),
         emitExpression(node.rhs, layout, mod, binaryen),
       );
@@ -487,6 +556,13 @@ export function emitExpression(
         emitExpression(node.cond, layout, mod, binaryen),
         emitExpression(node.ifTrue, layout, mod, binaryen),
         emitExpression(node.ifFalse, layout, mod, binaryen),
+      );
+    case "convert":
+      return emitConvert(
+        mod,
+        node.from,
+        node.type,
+        emitExpression(node.value, layout, mod, binaryen),
       );
     case "audioInRead": {
       const portBase = layout.regions.ioScratch.inputs[node.portName];
@@ -1019,6 +1095,7 @@ function collectUsedMathKinds(graph: CapturedGraph): Set<string> {
       case "tanh":
       case "exp":
       case "log":
+      case "convert":
         visit(node.value);
         break;
       case "clamp":
