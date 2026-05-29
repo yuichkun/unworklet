@@ -395,6 +395,12 @@ export function emitExpression(
         [emitExpression(node.value, layout, mod, binaryen)],
         binaryen.f32,
       );
+    case "exp":
+      return mod.call(
+        `${MATH_FN_PREFIX}exp`,
+        [emitExpression(node.value, layout, mod, binaryen)],
+        binaryen.f32,
+      );
     case "max":
       return mod.f32.max(
         emitExpression(node.lhs, layout, mod, binaryen),
@@ -1038,6 +1044,7 @@ function addMathFunctions(used: Set<string>, mod: BinaryenModule, binaryen: Bina
   if (expanded.has("sin")) buildSinFn(mod, binaryen);
   if (expanded.has("cos")) buildCosFn(mod, binaryen);
   if (expanded.has("tan")) buildTanFn(mod, binaryen);
+  if (expanded.has("exp")) buildExpFn(mod, binaryen);
 }
 
 const MATH_PI = Math.PI;
@@ -1109,4 +1116,54 @@ function buildTanFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
     mod.call(`${MATH_FN_PREFIX}cos`, [mod.local.get(0, f)], binaryen.f32),
   );
   mod.addFunction(`${MATH_FN_PREFIX}tan`, binaryen.f32, binaryen.f32, [], body);
+}
+
+const MATH_LN2 = Math.LN2;
+
+/**
+ * `$unworklet_exp`: x = k·ln2 + r (= k=round(x/ln2)、r∈[-ln2/2,ln2/2]) と 分 解 し、
+ * exp(x) = 2^k · exp(r)。 exp(r) は degree-5 Taylor (= 誤 差 ~2.4e-6)、 2^k は
+ * `(k+127)<<23` を f32 に reinterpret。 locals: 0=x(param) / 1=k_f / 2=r / 3=k_i。
+ * |x| が f32 overflow 域 (≈ ±88 超) で は 2^k 構 築 が 破 綻 す る が 非 ト ラ ッ プ
+ * (= reinterpret は bit-cast)、 audio の 現 実 域 で は 十 分。
+ */
+function buildExpFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
+  const f = binaryen.f32;
+  const i = binaryen.i32;
+  const X = 0;
+  const KF = 1;
+  const R = 2;
+  const KI = 3;
+  const r = (): number => mod.local.get(R, f);
+  // exp(r) ≈ 1 + r·(1 + r·(1/2 + r·(1/6 + r·(1/24 + r·(1/120)))))
+  let poly = mod.f32.const(1 / 120);
+  poly = mod.f32.add(mod.f32.const(1 / 24), mod.f32.mul(r(), poly));
+  poly = mod.f32.add(mod.f32.const(1 / 6), mod.f32.mul(r(), poly));
+  poly = mod.f32.add(mod.f32.const(1 / 2), mod.f32.mul(r(), poly));
+  poly = mod.f32.add(mod.f32.const(1), mod.f32.mul(r(), poly));
+  poly = mod.f32.add(mod.f32.const(1), mod.f32.mul(r(), poly));
+  // 2^k = reinterpret_f32((k_i + 127) << 23)
+  const twoK = mod.f32.reinterpret(
+    mod.i32.shl(mod.i32.add(mod.local.get(KI, i), mod.i32.const(127)), mod.i32.const(23)),
+  );
+  const body = mod.block(
+    null,
+    [
+      mod.local.set(
+        KF,
+        mod.f32.nearest(mod.f32.mul(mod.local.get(X, f), mod.f32.const(1 / MATH_LN2))),
+      ),
+      mod.local.set(KI, mod.i32.trunc_s_sat.f32(mod.local.get(KF, f))),
+      mod.local.set(
+        R,
+        mod.f32.sub(
+          mod.local.get(X, f),
+          mod.f32.mul(mod.local.get(KF, f), mod.f32.const(MATH_LN2)),
+        ),
+      ),
+      mod.f32.mul(twoK, poly),
+    ],
+    f,
+  );
+  mod.addFunction(`${MATH_FN_PREFIX}exp`, binaryen.f32, binaryen.f32, [f, f, i], body);
 }

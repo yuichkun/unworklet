@@ -252,9 +252,16 @@ registerNodeMethod("tan", function method<T extends ScalarType>(this: Node<T>): 
 export function tanh<T extends ScalarType>(_x: Node<T> | number): Node<T> {
   return notImplemented();
 }
-export function exp<T extends ScalarType>(_x: Node<T> | number): Node<T> {
-  return notImplemented();
+export function exp<T extends ScalarType>(x: Node<T> | number): Node<T> {
+  return wrapAst<T>({
+    kind: "exp",
+    type: "f32",
+    value: liftToAst(x),
+  });
 }
+registerNodeMethod("exp", function method<T extends ScalarType>(this: Node<T>): Node<T> {
+  return exp(this);
+});
 export function log<T extends ScalarType>(_x: Node<T> | number): Node<T> {
   return notImplemented();
 }

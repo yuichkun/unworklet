@@ -3278,7 +3278,7 @@ test("`emit(mod)` e2e: ネスト mod(mod(10,7),2)=1 (= 共有 local 安全性)",
   expect(await runStoreAndRead(makeStoreValueGraph(nested))).toBe(1);
 });
 
-function mathAst(kind: "sin" | "cos" | "tan", x: number): AstNode {
+function mathAst(kind: "sin" | "cos" | "tan" | "exp", x: number): AstNode {
   return { kind, type: "f32", value: { kind: "literal", type: "f32", value: x } };
 }
 
@@ -3340,4 +3340,11 @@ test("`emit(tan)` e2e: π/2 近傍は大きな有限値 (= 非トラップ、NaN
   const got = await runStoreAndRead(makeStoreValueGraph(mathAst("tan", 1.5)));
   expect(Number.isNaN(got)).toBe(false);
   expect(Math.abs(got)).toBeGreaterThan(10);
+});
+
+test("`emit(exp)` e2e: Math.exp と相対誤差 < 1e-4 (grid)", async () => {
+  for (const x of [-20, -5, -1, -0.5, 0, 0.5, 1, 2, 5, 10, 20, 30]) {
+    const got = await runStoreAndRead(makeStoreValueGraph(mathAst("exp", x)));
+    expect(Math.abs(got - Math.exp(x)) / Math.exp(x)).toBeLessThan(1e-4);
+  }
 });
