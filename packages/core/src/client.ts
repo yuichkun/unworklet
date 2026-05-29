@@ -412,6 +412,10 @@ export async function createNode<C>(
           }
           return () => {
             subscribers.delete(handler);
+            // 全 surface の subscriber が 0 に な っ た ら rAF polling を 停 止
+            // (= node 生 存 中 の temporary subscribe / unsubscribe で dispose ま で
+            // 毎 frame polling し 続 け る main-thread 浪 費 を 回 避)。
+            if (!hasAnySubscribers()) stopRafLoop();
           };
         },
       };
@@ -457,6 +461,7 @@ export async function createNode<C>(
           }
           return () => {
             subscribers.delete(handler as (payload: Record<string, unknown>) => void);
+            if (!hasAnySubscribers()) stopRafLoop();
           };
         },
         diagnostics: {
@@ -656,6 +661,18 @@ export async function createNode<C>(
       .cancelAnimationFrame;
     if (cancel) cancel(rafHandle);
     rafHandle = null;
+  }
+
+  // 全 publish slot + 全 event ring の subscriber が 0 か。 unsubscribe で 全 て 0 に
+  // な っ た 時 に rAF polling を 止 め る 判 定 に 使 う。
+  function hasAnySubscribers(): boolean {
+    for (const subs of stateSubscribers.values()) {
+      if (subs.size > 0) return true;
+    }
+    for (const subs of eventSubscribers.values()) {
+      if (subs.size > 0) return true;
+    }
+    return false;
   }
 
   // Drop `undefined` entries from initial param data — Web Audio's
