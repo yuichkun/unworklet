@@ -42,12 +42,9 @@
     "@types/node": "catalog:",
     "@typescript/native-preview": "7.0.0-dev.20260509.2",
     "@unworklet/vite-plugin": "workspace:*",
-    "@vitest/browser": "catalog:",
-    "@vitest/browser-playwright": "catalog:",
     "bumpp": "^11.1.0",
     "playwright": "catalog:",
     "typescript": "catalog:",
-    "vite-plus": "catalog:",
-    "vitest": "catalog:"
+    "vite-plus": "catalog:"
   }
 }
