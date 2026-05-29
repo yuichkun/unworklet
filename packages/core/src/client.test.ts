@@ -1898,6 +1898,36 @@ test("polling driver = subscribe 後 raf tick で version 増 加 検 出 → ha
   }
 });
 
+test("polling driver = 全 subscriber unsubscribe で rAF loop 停 止 (= zero-subscriber で polling 浪 費 し ない)", async () => {
+  const raf = installRafMock();
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({
+            publishSlots: [{ name: "v", type: "i32", sharedOffset: 0, counterOffset: 4 }],
+          }),
+        ),
+      h.fireReady,
+    );
+    const unsub = node.state["v"]!.subscribe(() => {});
+    // SAB mode = subscribe で rAF polling 開 始 (= 1 tick scheduled)
+    expect(raf.pending).toBe(1);
+
+    unsub();
+    // 全 surface の subscriber が 0 に な っ た = rAF loop 停 止 (= node 生 存 中 に
+    // temporary subscribe → unsubscribe し た 後、 dispose ま で 毎 frame polling
+    // し 続 け る main-thread 浪 費 を 回 避)。
+    expect(raf.pending).toBe(0);
+    expect(raf.cancelledHandles.length).toBeGreaterThan(0);
+  } finally {
+    h.cleanup();
+    raf.restore();
+  }
+});
+
 test("polling driver = 同 値 publish でも version 増 加 で fire (= no-dedupe、 Q39-b)", async () => {
   const raf = installRafMock();
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
