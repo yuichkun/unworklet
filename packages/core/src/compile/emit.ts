@@ -82,12 +82,15 @@ const MESSAGE_TAIL_LOCAL = 6;
 const FRAC_F32_LOCAL = 7;
 
 /**
- * `mod` 用 f32 temp local 2 つ。 mod(a,b) = a - trunc(a/b)*b で a / b を 各 2 度
- * 参 照 = `tee` で 1 度 ず つ 評 価 + local hold。 frac と 同 じ ネ ス ト 安 全 性 根 拠
- * (= 厳 密 左→右 評 価 + optimizer ナ シ で、 tee 直 後 に get 消 費・間 に L 書 き ナ シ)。
+ * `mod` 用 f32 temp local 3 つ。 mod(a,b) = a - trunc(a/b)·b で a / b / quotient を
+ * 複 数 回 参 照 = local hold で 1 度 ず つ 評 価。 quotient (= MOD_Q) は 無 限 大 除 数
+ * guard で 2 度 参 照 す る (= `0·Inf=NaN` 回 避、 後 述)。 ネ ス ト 安 全 性: a は 最 外
+ * `sub` 左 operand で stack へ push し て 持 ち 回 り、 b / quotient は rhs 評 価・quotient
+ * 算 出 後 に だ け read す る の で、 内 側 mod が 同 local を 上 書 き し て も 取 り 違 え ナ シ。
  */
 const MOD_A_F32_LOCAL = 8;
 const MOD_B_F32_LOCAL = 9;
+const MOD_Q_F32_LOCAL = 10;
 
 /**
  * 多 項 式 近 似 の math primitive (= sin / cos / tan / tanh / exp / log、 Q17) は
@@ -178,6 +181,7 @@ export async function emit(
       binaryen.f32, // FRAC_F32_LOCAL (= frac 用 temp)
       binaryen.f32, // MOD_A_F32_LOCAL (= mod 被 除 数 temp)
       binaryen.f32, // MOD_B_F32_LOCAL (= mod 除 数 temp)
+      binaryen.f32, // MOD_Q_F32_LOCAL (= mod quotient temp)
     ],
     body,
   );
@@ -332,29 +336,47 @@ export function emitExpression(
         emitExpression(node.lhs, layout, mod, binaryen),
         emitExpression(node.rhs, layout, mod, binaryen),
       );
-    // mod(a, b) = a - trunc(a/b)*b (= JS `%` 準 拠、 切 り 捨 て・符 号 は 被 除 数)。
-    // a / b を MOD_A / MOD_B に tee し て 各 1 度 ず つ 評 価。 b=0 → a/0=inf →
-    // trunc(inf)=inf → inf*0=NaN → a-NaN=NaN (= JS の x%0=NaN と 一 致)。
+    // mod(a, b) = a - trunc(a/b)·b (= JS `%` 準 拠、 切 り 捨 て・符 号 は 被 除 数)。
+    // a を MOD_A、 b を MOD_B、 quotient=trunc(a/b) を MOD_Q に hold。
+    //   - b=0 → a/0=Inf → trunc=Inf → Inf·0=NaN → a-NaN=NaN (= JS x%0=NaN)。
+    //   - 無 限 大 除 数 (|b|=Inf、 a 有 限) は quotient=trunc(a/Inf)=0 で 素 朴 な
+    //     product=0·Inf=NaN に 化 け る が、 JS は 5%Infinity===5 = 被 除 数 を 返 す。
+    //     quotient==0 (⟺ |a|<|b| = 余 り が a 自 身) な ら product を 0 に 固 定 し て
+    //     修 正 (= div by zero 等 で 生 じ た Inf が divisor に 流 れ て も 有 限 被 除 数 を
+    //     壊 さ な い、 Reported by @codex on #6)。 Inf%5 / Inf%Inf は quotient≠0 の ま ま
+    //     NaN を 維 持。
+    // ネ ス ト 安 全 性: a は 最 外 `sub` 左 operand で stack へ push し て 持 ち 回 り、
+    // b / quotient は rhs 評 価・quotient 算 出 後 に だ け read = 内 側 mod の local
+    // 上 書 き と 取 り 違 え ナ シ。 select は 直 前 の set で MOD_Q / MOD_B が 確 定 済 み。
     case "mod": {
       const aTeed = mod.local.tee(
         MOD_A_F32_LOCAL,
         emitExpression(node.lhs, layout, mod, binaryen),
         binaryen.f32,
       );
-      const quotient = mod.f32.trunc(
-        mod.f32.div(
-          mod.local.get(MOD_A_F32_LOCAL, binaryen.f32),
-          mod.local.tee(
-            MOD_B_F32_LOCAL,
-            emitExpression(node.rhs, layout, mod, binaryen),
-            binaryen.f32,
+      // get(MOD_A) は rhs 評 価 前 に read = a (内 側 mod の 上 書 き 前)。 同 時 に b を tee。
+      const setQuotient = mod.local.set(
+        MOD_Q_F32_LOCAL,
+        mod.f32.trunc(
+          mod.f32.div(
+            mod.local.get(MOD_A_F32_LOCAL, binaryen.f32),
+            mod.local.tee(
+              MOD_B_F32_LOCAL,
+              emitExpression(node.rhs, layout, mod, binaryen),
+              binaryen.f32,
+            ),
           ),
         ),
       );
-      return mod.f32.sub(
-        aTeed,
-        mod.f32.mul(quotient, mod.local.get(MOD_B_F32_LOCAL, binaryen.f32)),
+      const product = mod.select(
+        mod.f32.eq(mod.local.get(MOD_Q_F32_LOCAL, binaryen.f32), mod.f32.const(0)),
+        mod.f32.const(0),
+        mod.f32.mul(
+          mod.local.get(MOD_Q_F32_LOCAL, binaryen.f32),
+          mod.local.get(MOD_B_F32_LOCAL, binaryen.f32),
+        ),
       );
+      return mod.f32.sub(aTeed, mod.block(null, [setQuotient, product], binaryen.f32));
     }
     case "abs":
       return mod.f32.abs(emitExpression(node.value, layout, mod, binaryen));

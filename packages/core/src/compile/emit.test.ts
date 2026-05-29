@@ -3281,6 +3281,30 @@ test("`emit(mod)` e2e: ネスト mod(mod(10,7),2)=1 (= 共有 local 安全性)",
   expect(await runStoreAndRead(makeStoreValueGraph(nested))).toBe(1);
 });
 
+test("`emit(mod)` e2e: 無限大除数は有限被除数を返す (= JS 5%Infinity===5、0*Inf の NaN 化なし)", async () => {
+  // div by zero 等で生じた Inf が divisor に流れても有限な被除数を壊さないこと。
+  expect(await runStoreAndRead(makeStoreValueGraph(cmp("mod", 5, Number.POSITIVE_INFINITY)))).toBe(
+    5,
+  );
+  expect(await runStoreAndRead(makeStoreValueGraph(cmp("mod", -5, Number.POSITIVE_INFINITY)))).toBe(
+    -5,
+  );
+  expect(await runStoreAndRead(makeStoreValueGraph(cmp("mod", 5, Number.NEGATIVE_INFINITY)))).toBe(
+    5,
+  );
+});
+
+test("`emit(mod)` e2e: 無限大被除数は NaN を維持 (= JS Inf%5 / Inf%Inf)", async () => {
+  const infMod5 = await runStoreAndRead(
+    makeStoreValueGraph(cmp("mod", Number.POSITIVE_INFINITY, 5)),
+  );
+  expect(Number.isNaN(infMod5)).toBe(true);
+  const infModInf = await runStoreAndRead(
+    makeStoreValueGraph(cmp("mod", Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY)),
+  );
+  expect(Number.isNaN(infModInf)).toBe(true);
+});
+
 function mathAst(kind: "sin" | "cos" | "tan" | "exp" | "log" | "tanh", x: number): AstNode {
   return { kind, type: "f32", value: { kind: "literal", type: "f32", value: x } };
 }
