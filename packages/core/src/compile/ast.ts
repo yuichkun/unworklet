@@ -194,3 +194,61 @@ export type CapturedGraph = {
   declarations: Declaration[];
   statements: AstNode[];
 };
+
+/**
+ * expression node の 結 果 ScalarType を 推 論。 `eventDecl.emitIf` の Q71
+ * per-field wire-type resolution (= `01-dsl.md` §4.1) と、 analyze の
+ * 非 f32 算 術 検 出 (= `03-compiler.md` §3) で 共 用。
+ *
+ * expression position に 立 つ kind だ け 受 け 取 る (= statement kind は
+ * `unwrapAst` 段 階 で 排 除 さ れ る 想 定、 仮 に 来 て も 明 示 throw)。
+ */
+export function inferAstType(ast: AstNode): ScalarType {
+  switch (ast.kind) {
+    // 算 術 / math / 制 御 = 結 果 型 は node の `type` (= f32 path)。
+    case "literal":
+    case "mul":
+    case "add":
+    case "sub":
+    case "div":
+    case "mod":
+    case "neg":
+    case "abs":
+    case "sqrt":
+    case "floor":
+    case "ceil":
+    case "frac":
+    case "sin":
+    case "cos":
+    case "tan":
+    case "tanh":
+    case "exp":
+    case "log":
+    case "max":
+    case "min":
+    case "clamp":
+    case "select":
+    case "stateLoad":
+      return ast.type;
+    // 比 較 = 結 果 は 常 に bool (= node の `type` は オ ペ ラ ン ド 型 f32)。
+    case "eq":
+    case "lt":
+    case "gt":
+    case "lte":
+    case "gte":
+      return "bool";
+    case "audioInRead":
+    case "paramAt":
+      return "f32";
+    case "loopCounter":
+      return "i32";
+    case "messageFieldRead":
+      return ast.wireType;
+    case "audioOutWrite":
+    case "forSample":
+    case "stateStore":
+    case "eventEmitIf":
+    case "messageOnReceive":
+      throw new Error(`statement node '${ast.kind}' cannot appear in expression position`);
+  }
+}

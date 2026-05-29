@@ -18,6 +18,7 @@ import type {
   ParamDecl,
   StateDecl,
 } from "../compile/ast.ts";
+import { inferAstType } from "../compile/ast.ts";
 import {
   addDeclaration,
   addStatement,
@@ -474,63 +475,6 @@ function checkEventName(name: string): void {
     throw new Error(
       `unworklet: duplicate event declaration name "${name}" — event names must be unique within a processor`,
     );
-  }
-}
-
-/**
- * AST expression node の 結 果 ScalarType を 推 論 (= `eventDecl.emitIf` の
- * Q71 per-field wire-type resolution 用)。
- *
- * expression position に 立 つ kind だ け 受 け 取 る (= statement kind は
- * `unwrapAst` 段 階 で 排 除 さ れ る 想 定、 仮 に 来 て も 明 示 throw)。
- */
-function inferAstType(ast: AstNode): ScalarType {
-  switch (ast.kind) {
-    // 算 術 / math / 制 御 = 結 果 型 は node の `type` (= f32 path)。
-    case "literal":
-    case "mul":
-    case "add":
-    case "sub":
-    case "div":
-    case "mod":
-    case "neg":
-    case "abs":
-    case "sqrt":
-    case "floor":
-    case "ceil":
-    case "frac":
-    case "sin":
-    case "cos":
-    case "tan":
-    case "tanh":
-    case "exp":
-    case "log":
-    case "max":
-    case "min":
-    case "clamp":
-    case "select":
-    case "stateLoad":
-      return ast.type;
-    // 比 較 = 結 果 は 常 に bool (= node の `type` は オ ペ ラ ン ド 型 f32)。
-    case "eq":
-    case "lt":
-    case "gt":
-    case "lte":
-    case "gte":
-      return "bool";
-    case "audioInRead":
-    case "paramAt":
-      return "f32";
-    case "loopCounter":
-      return "i32";
-    case "messageFieldRead":
-      return ast.wireType;
-    case "audioOutWrite":
-    case "forSample":
-    case "stateStore":
-    case "eventEmitIf":
-    case "messageOnReceive":
-      throw new Error(`statement node '${ast.kind}' cannot appear in expression position`);
   }
 }
 

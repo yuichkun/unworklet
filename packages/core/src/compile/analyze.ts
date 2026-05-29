@@ -11,6 +11,7 @@
  */
 
 import type { AstNode, CapturedGraph } from "./ast.ts";
+import { inferAstType } from "./ast.ts";
 
 export type DiagnosticEntry = {
   readonly id: string;
@@ -48,12 +49,111 @@ function walkForConstantTruthyEmitIf(
   }
 }
 
+/**
+ * 算 術 / 比 較 / math primitive (= add / sub / mul / div / mod / neg / min /
+ * max / abs / sqrt / floor / ceil / frac / sin / cos / tan / tanh / exp / log /
+ * clamp / 比 較) は **f32 path の み** emit す る (= 各 op が `f32.*` 命 令 を
+ * hardcode、 `01-dsl.md` §2.1 の generic-T surface は 多 型 lowering = 後 続
+ * フ ェ ー ズ)。 非 f32 オ ペ ラ ン ド (= state.i32 / loopCounter 等) を 渡 す と
+ * `f32.add` 等 に i32 値 が 流 れ 込 ん で invalid WASM module に な る の で、 emit
+ * 前 に 明 確 な 診 断 エ ラ ー で 弾 く (= silent mis-compile を fail-loud 化)。
+ * 多 型 lowering 実 装 時 に こ の ガ ー ド は 撤 去 す る。
+ */
+function requireF32Operand(operand: AstNode, opKind: string, diagnostics: DiagnosticEntry[]): void {
+  const t = inferAstType(operand);
+  if (t !== "f32") {
+    diagnostics.push({
+      id: "non-f32-arithmetic",
+      severity: "error",
+      message: `unworklet: '${opKind}' received a '${t}' operand, but arithmetic / comparison / math primitives currently lower as f32 only — i32 / i64 / f64 multi-type lowering is a later phase. (stable ID 'non-f32-arithmetic')`,
+    });
+  }
+}
+
+/** 全 node を walk し、 算 術 系 node の オ ペ ラ ン ド が 非 f32 な ら 診 断。 */
+function walkForNonF32Arithmetic(node: AstNode, diagnostics: DiagnosticEntry[]): void {
+  switch (node.kind) {
+    case "add":
+    case "sub":
+    case "mul":
+    case "div":
+    case "mod":
+    case "max":
+    case "min":
+    case "eq":
+    case "lt":
+    case "gt":
+    case "lte":
+    case "gte":
+      requireF32Operand(node.lhs, node.kind, diagnostics);
+      requireF32Operand(node.rhs, node.kind, diagnostics);
+      walkForNonF32Arithmetic(node.lhs, diagnostics);
+      walkForNonF32Arithmetic(node.rhs, diagnostics);
+      break;
+    case "neg":
+    case "abs":
+    case "sqrt":
+    case "floor":
+    case "ceil":
+    case "frac":
+    case "sin":
+    case "cos":
+    case "tan":
+    case "tanh":
+    case "exp":
+    case "log":
+      requireF32Operand(node.value, node.kind, diagnostics);
+      walkForNonF32Arithmetic(node.value, diagnostics);
+      break;
+    case "clamp":
+      requireF32Operand(node.x, node.kind, diagnostics);
+      requireF32Operand(node.lo, node.kind, diagnostics);
+      requireF32Operand(node.hi, node.kind, diagnostics);
+      walkForNonF32Arithmetic(node.x, diagnostics);
+      walkForNonF32Arithmetic(node.lo, diagnostics);
+      walkForNonF32Arithmetic(node.hi, diagnostics);
+      break;
+    // select は binaryen `select` が型非依存 = operand 型 hardcode な し = チェック不要。
+    case "select":
+      walkForNonF32Arithmetic(node.cond, diagnostics);
+      walkForNonF32Arithmetic(node.ifTrue, diagnostics);
+      walkForNonF32Arithmetic(node.ifFalse, diagnostics);
+      break;
+    case "audioInRead":
+    case "paramAt":
+      walkForNonF32Arithmetic(node.offset, diagnostics);
+      break;
+    case "audioOutWrite":
+      walkForNonF32Arithmetic(node.offset, diagnostics);
+      walkForNonF32Arithmetic(node.value, diagnostics);
+      break;
+    case "stateStore":
+      walkForNonF32Arithmetic(node.value, diagnostics);
+      break;
+    case "forSample":
+    case "messageOnReceive":
+      for (const child of node.body) walkForNonF32Arithmetic(child, diagnostics);
+      break;
+    case "eventEmitIf":
+      walkForNonF32Arithmetic(node.cond, diagnostics);
+      walkForNonF32Arithmetic(node.atSample, diagnostics);
+      for (const field of node.fields) walkForNonF32Arithmetic(field.value, diagnostics);
+      break;
+    case "literal":
+    case "loopCounter":
+    case "stateLoad":
+    case "messageFieldRead":
+      break;
+  }
+}
+
 export function analyze(graph: CapturedGraph): DiagnosticEntry[] {
   const diagnostics: DiagnosticEntry[] = [];
   for (const stmt of graph.statements) {
     if (stmt.kind === "forSample") {
       walkForConstantTruthyEmitIf(stmt.body, diagnostics);
     }
+    walkForNonF32Arithmetic(stmt, diagnostics);
   }
   return diagnostics;
 }
