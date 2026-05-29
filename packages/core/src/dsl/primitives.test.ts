@@ -11,7 +11,7 @@ import { unwrapAst, wrapAst } from "../compile/capture.ts";
 import * as P from "./primitives.ts";
 import { abs, max, mul } from "./primitives.ts";
 
-const unary = ["sin", "cos", "tan", "tanh", "exp", "log", "ceil", "frac"] as const;
+const unary = ["sin", "cos", "tan", "tanh", "exp", "log", "frac"] as const;
 
 // `mul` / `abs` / `max` は Step 3.3 / sub-phase 7.8a で fill = stub list か ら 除 外。
 const binary = ["mod", "eq", "lt", "gt", "lte", "gte"] as const;
@@ -345,4 +345,30 @@ test("`floor(number)` lifts the literal", () => {
 test("`Node<T>.floor()` method form = free function 同 AST", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1.7 });
   expect(unwrapAst(a.floor())).toEqual(unwrapAst(P.floor(a)));
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// ceil (native f32.ceil)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`ceil(node)` returns a `Node` carrying a `ceil` AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1.2 });
+  expect(unwrapAst(P.ceil(a))).toEqual({
+    kind: "ceil",
+    type: "f32",
+    value: { kind: "literal", type: "f32", value: 1.2 },
+  });
+});
+
+test("`ceil(number)` lifts the literal", () => {
+  expect(unwrapAst(P.ceil(1.2))).toEqual({
+    kind: "ceil",
+    type: "f32",
+    value: { kind: "literal", type: "f32", value: 1.2 },
+  });
+});
+
+test("`Node<T>.ceil()` method form = free function 同 AST", () => {
+  const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1.2 });
+  expect(unwrapAst(a.ceil())).toEqual(unwrapAst(P.ceil(a)));
 });

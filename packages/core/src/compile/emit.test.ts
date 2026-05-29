@@ -3004,3 +3004,43 @@ test("`emit(floor)` e2e: floor(1.7)=1 / floor(-1.2)=-2 / floor(3)=3", async () =
   );
   expect(c).toBe(3);
 });
+
+test("`emitExpression(ceil)` lowers to `f32.ceil`", async () => {
+  const binaryen = await loadBinaryen();
+  const mod = makeMod(binaryen);
+  const ref = emitExpression(
+    { kind: "ceil", type: "f32", value: { kind: "literal", type: "f32", value: 1.2 } },
+    emptyLayout,
+    mod,
+    binaryen,
+  );
+  expect(watOfExpression(mod, binaryen, ref, binaryen.f32)).toContain("(f32.ceil");
+  mod.dispose();
+});
+
+test("`emit(ceil)` e2e: ceil(1.2)=2 / ceil(-1.7)=-1 / ceil(3)=3", async () => {
+  const a = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "ceil",
+      type: "f32",
+      value: { kind: "literal", type: "f32", value: 1.2 },
+    }),
+  );
+  expect(a).toBe(2);
+  const b = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "ceil",
+      type: "f32",
+      value: { kind: "literal", type: "f32", value: -1.7 },
+    }),
+  );
+  expect(b).toBe(-1);
+  const c = await runStoreAndRead(
+    makeStoreValueGraph({
+      kind: "ceil",
+      type: "f32",
+      value: { kind: "literal", type: "f32", value: 3 },
+    }),
+  );
+  expect(c).toBe(3);
+});

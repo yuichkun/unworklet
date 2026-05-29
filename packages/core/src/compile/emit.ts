@@ -307,6 +307,8 @@ export function emitExpression(
       return mod.f32.sqrt(emitExpression(node.value, layout, mod, binaryen));
     case "floor":
       return mod.f32.floor(emitExpression(node.value, layout, mod, binaryen));
+    case "ceil":
+      return mod.f32.ceil(emitExpression(node.value, layout, mod, binaryen));
     case "max":
       return mod.f32.max(
         emitExpression(node.lhs, layout, mod, binaryen),

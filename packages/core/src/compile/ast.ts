@@ -22,6 +22,7 @@ export type AstNode =
   | { kind: "neg"; type: ScalarType; value: AstNode }
   | { kind: "sqrt"; type: ScalarType; value: AstNode }
   | { kind: "floor"; type: ScalarType; value: AstNode }
+  | { kind: "ceil"; type: ScalarType; value: AstNode }
   | { kind: "max"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "min"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "audioInRead"; portName: string; channel: number; offset: AstNode }
