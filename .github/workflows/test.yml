@@ -12,6 +12,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: '24'
+          cache: true
+      - run: vp install
       - run: vp check
 
   vitest:
@@ -20,6 +24,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: '24'
+          cache: true
+      - run: vp install
       - name: Install playwright chromium (for browser e2e projects)
         run: vp exec playwright install --with-deps chromium
       - name: Run vitest aggregation
@@ -31,6 +39,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: '24'
+          cache: true
+      - run: vp install
       - name: Install playwright chromium
         run: vp exec playwright install --with-deps chromium
       - name: Run playwright e2e
