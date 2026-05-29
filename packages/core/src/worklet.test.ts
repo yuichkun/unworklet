@@ -14,7 +14,7 @@
 
 import "./dsl/primitives.ts"; // method form (= `.mul`) registration side-effect
 
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 
 import { compile } from "./compile/index.ts";
 import { CAPACITY_16, SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
@@ -869,6 +869,49 @@ test("message ring mirror (sab mode): main が SAB push → process で WASM rin
   messageRecvProc.worklet.process(self, inputs, outputs, {});
   // drain 後 SAB tail も head に commit
   expect(Atomics.load(headerView, 1)).toBe(1);
+});
+
+test("message ring mirror (sab mode): head の acquire-load を slot コピー より 前 に 行 う (= 02-messaging §5.5 acquire-before-read)", async () => {
+  const { wasm } = await compile(messageRecvProc);
+  const self = makeMockSelf();
+  const ring = messageRecvProc.worklet.messageRings[0]!;
+  const ringTotalBytes = 12 + ring.capacity * ring.slotSize;
+  const messageRingsBuffer = new SharedArrayBuffer(ringTotalBytes);
+  messageRecvProc.worklet.initialize(self, {
+    processorOptions: {
+      wasm,
+      messageRingsBuffer,
+      messageRings: messageRecvProc.worklet.messageRings,
+      messageRingSabOffsets: [0],
+      transport: "sab",
+    },
+  });
+  const headerView = new Int32Array(messageRingsBuffer, 0, 3);
+  const slotsView = new Int32Array(messageRingsBuffer, 12);
+  slotsView[0] = 42;
+  Atomics.store(headerView, 0, 1); // head = 1 (= pending message)
+
+  // §5.5 consumer protocol は「head を acquire-load し て か ら slot data を 読 む」
+  // を 要 求。 SAB mirror で は Atomics.load(head) が slot bytes の copy (= sabView →
+  // wasmView の Uint8Array.set) よ り 前 に 起 き な け れ ば、 並 行 producer write を
+  // torn read す る。 vitest spy の invocationCallOrder で 両 者 の 呼 び 出 し 順 を 比 較。
+  // Uint8Array.prototype.set spy は message ring copy だ け を 捕 捉 す る (= audio I/O
+  // marshalling は Float32Array 経 由 = 別 prototype の set)。
+  const loadSpy = vi.spyOn(Atomics, "load");
+  const setSpy = vi.spyOn(Uint8Array.prototype, "set");
+  try {
+    const inputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+    const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+    messageRecvProc.worklet.process(self, inputs, outputs, {});
+  } finally {
+    vi.restoreAllMocks();
+  }
+
+  // head が acquire-load さ れ + slot bytes が copy さ れ た こ と
+  expect(loadSpy.mock.invocationCallOrder.length).toBeGreaterThan(0);
+  expect(setSpy.mock.invocationCallOrder.length).toBeGreaterThan(0);
+  // §5.5: 最 初 の head acquire-load は 最 初 の slot copy よ り 前
+  expect(loadSpy.mock.invocationCallOrder[0]!).toBeLessThan(setSpy.mock.invocationCallOrder[0]!);
 });
 
 test("message ring mirror: messageRingsBuffer ナ シ processor は message path skip (= regression)", async () => {
