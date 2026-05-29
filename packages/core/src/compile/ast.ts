@@ -15,8 +15,9 @@ import type { PublishOptions, ScalarType, SnapshotPolicy } from "../types.ts";
 export type AstNode =
   // `value` is a JS `number` for every scalar type except `'i64'`, whose
   // literal carries a `bigint` (no implicit number lift, Q33-c) and lowers to
-  // `i64.const` via a 32-bit word split.
-  | { kind: "literal"; type: ScalarType; value: number | bigint }
+  // `i64.const`. `loose` marks a `num(v)` chain-start literal (Q77) whose type
+  // is resolved from the chain's typed sibling (else stays the fallback `type`).
+  | { kind: "literal"; type: ScalarType; value: number | bigint; loose?: boolean }
   | { kind: "mul"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "add"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "sub"; type: ScalarType; lhs: AstNode; rhs: AstNode }

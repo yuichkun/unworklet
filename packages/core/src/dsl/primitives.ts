@@ -69,19 +69,42 @@ declare module "../types.ts" {
 
 type Operand = Node<ScalarType> | number | boolean;
 
+/** A `num(v)` chain-start literal whose type defers to a typed sibling (Q77). */
+function isLooseLiteral(ast: AstNode): ast is Extract<AstNode, { kind: "literal" }> {
+  return ast.kind === "literal" && ast.loose === true;
+}
+
 /**
  * The scalar type of a polymorphic primitive call: the type of the first
- * `Node<T>` operand, else `'bool'` when only boolean literals are present,
- * else `'f32'` (the all-literal numeric default).
+ * concretely-typed `Node<T>` operand (a loose `num` literal defers), else
+ * `'bool'` when only boolean literals are present, else `'f32'` (the all-loose
+ * / all-literal numeric default).
  */
 function operandType(...operands: Operand[]): ScalarType {
   for (const op of operands) {
-    if (isWrappedNode(op)) return inferAstType(unwrapAst(op));
+    if (isWrappedNode(op)) {
+      const ast = unwrapAst(op);
+      if (isLooseLiteral(ast)) continue;
+      return inferAstType(ast);
+    }
   }
   for (const op of operands) {
     if (typeof op === "boolean") return "bool";
   }
   return "f32";
+}
+
+/** Lift a JS number to an AST literal of type `t` (Q33 literal lift). */
+function numberLiteral(value: number, t: ScalarType): AstNode {
+  if (t === "i64") {
+    // i64 has no implicit number lift (Q33-c): JS number cannot safely
+    // represent integers beyond 2^53. Use i64(BigInt(...)) explicitly.
+    throw new Error(
+      "unworklet: a JS number literal cannot lift to i64 (precision unsafe beyond 2^53 - 1). Use i64(BigInt(...)) explicitly.",
+    );
+  }
+  // i32 stores ToInt32; f32 / f64 store the value as-is.
+  return { kind: "literal", type: t, value: t === "i32" ? value | 0 : value };
 }
 
 /** Lift an operand to an AST node of type `t` (Q33 literal lift). */
@@ -91,17 +114,14 @@ function lift(value: Operand, t: ScalarType): AstNode {
     return { kind: "literal", type: "bool", value: value ? 1 : 0 };
   }
   if (typeof value === "number") {
-    if (t === "i64") {
-      // i64 has no implicit number lift (Q33-c): JS number cannot safely
-      // represent integers beyond 2^53. Use i64(BigInt(...)) explicitly.
-      throw new Error(
-        "unworklet: a JS number literal cannot lift to i64 (precision unsafe beyond 2^53 - 1). Use i64(BigInt(...)) explicitly.",
-      );
-    }
-    // i32 stores ToInt32; f32 / f64 store the value as-is.
-    return { kind: "literal", type: t, value: t === "i32" ? value | 0 : value };
+    return numberLiteral(value, t);
   }
-  return unwrapAst(value);
+  const ast = unwrapAst(value);
+  // 型 未 確 定 の loose num literal は、 sibling で 解 決 し た t へ 再 lift。
+  if (isLooseLiteral(ast)) {
+    return numberLiteral(Number(ast.value), t);
+  }
+  return ast;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
