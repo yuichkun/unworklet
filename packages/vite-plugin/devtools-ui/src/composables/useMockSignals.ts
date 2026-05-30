@@ -56,27 +56,50 @@ const stopLoop = (): void => {
 // Time / frequency domain mocks per output port × channel
 // ─────────────────────────────────────────────────────────────────────
 
+/**
+ * Continuous-phase per-sample mock synthesis. Each sample is a pure function
+ * of an absolute audio-time second, so when consecutive samples are appended
+ * to the ring buffer, the carrier is phase-continuous across rAF tick
+ * boundaries (= no per-tick step artifact when reading from the ring).
+ *
+ * Carrier sits in the sub-audio band (~5-15 Hz) on purpose:
+ * - At real audio rates (440 Hz+) the wave shifts ~7 cycles per 16 ms visual
+ *   frame, which the eye reads as flicker. Proper fix would be zero-crossing
+ *   trigger sync; for a mock that's overkill.
+ * - Sub-audio rate means 1 visual frame shifts the wave a small fraction of
+ *   a cycle = smooth, trackable motion.
+ *
+ * Phase 6 will swap this for real worklet output, at which point the trigger
+ * question can be revisited.
+ */
+const synthSampleAt = (port: OutputPort, ch: number, audioTimeS: number): number => {
+  // 5–15 Hz carrier with a slow 0.4 Hz LFO over its frequency (= sub-audio
+  // chirp). Period ≈ 70–200 ms, so a typical 50 ms window shows ~½ cycle.
+  const baseHz = 10 + Math.sin(audioTimeS * 0.4 * Math.PI * 2) * 5;
+  // ~12 ms inter-channel offset = mild L/R decorrelation.
+  const t = audioTimeS + ch * 0.012;
+  const carrier = Math.sin(t * Math.PI * 2 * baseHz);
+
+  if (port.nodeId === "polysynth") return carrier * 0.6;
+  if (port.nodeId === "limiter") return Math.tanh(carrier * 1.2) * 0.5;
+  // reverb = layered harmonics, summed and scaled
+  let s = 0;
+  for (let k = 1; k <= 5; k++) {
+    s += Math.sin(t * Math.PI * 2 * (baseHz / 2) * k + k * 0.5) * (0.5 / k);
+  }
+  return s * 0.6;
+};
+
 const getTimeDomainFrame = (port: OutputPort, ch: number): Float32Array => {
   const out = new Float32Array(ANALYSER_FRAME_LEN);
-  const t = phase.value;
-  const base = 220 + Math.sin(t * 0.4) * 80;
+  // Snapshot the most recent ANALYSER_FRAME_LEN samples (= aligns with the
+  // ring contents so this fn and readRecentSamplesInto agree).
+  const key = `${portKey(port)}.${ch}`;
+  const baseTime = ringAudioTimeS[key] ?? 0;
+  const sampleStep = 1 / SAMPLE_RATE;
+  const startTime = baseTime - ANALYSER_FRAME_LEN * sampleStep;
   for (let i = 0; i < ANALYSER_FRAME_LEN; i++) {
-    const x = i / ANALYSER_FRAME_LEN;
-    if (port.nodeId === "polysynth") {
-      out[i] = Math.sin((x + t * 0.5 + ch * 0.1) * Math.PI * 2 * 8 * (base / 220)) * 0.6;
-    } else if (port.nodeId === "limiter") {
-      out[i] =
-        Math.tanh(Math.sin((x + t * 0.5 + ch * 0.1) * Math.PI * 2 * 8 * (base / 220)) * 1.2) * 0.5;
-    } else {
-      // reverb = layered diffuse
-      let s = 0;
-      for (let k = 1; k <= 5; k++) {
-        s +=
-          Math.sin((x + t * 0.3 + k * 0.05 + ch * 0.1) * Math.PI * 2 * 4 * (base / 220) * k) *
-          (0.5 / k);
-      }
-      out[i] = s * 0.6;
-    }
+    out[i] = synthSampleAt(port, ch, startTime + i * sampleStep);
   }
   return out;
 };
@@ -115,10 +138,15 @@ type RingChannel = {
 type RingState = RingChannel[];
 
 const ringStates = new Map<string, RingState>();
+// Monotonic audio-time clock per (port, channel) — drives continuous-phase
+// synthesis so each sample picks up exactly where the previous one left off,
+// regardless of how rAF tick timing chunks the writes.
+const ringAudioTimeS: Record<string, number> = {};
 for (const port of OUTPUT_PORTS) {
   const channels: RingChannel[] = [];
   for (let c = 0; c < port.channels; c++) {
     channels.push({ buffer: new Float32Array(RING_TOTAL_SAMPLES), head: 0 });
+    ringAudioTimeS[`${portKey(port)}.${c}`] = 0;
   }
   ringStates.set(portKey(port), channels);
 }
@@ -131,16 +159,20 @@ const updateRings = (t: number): void => {
   const dt = lastRingTick < 0 ? RING_PUSH_INTERVAL_S : t - lastRingTick;
   lastRingTick = t;
   const samplesPerTick = Math.max(1, Math.round(dt * SAMPLE_RATE));
+  const sampleStep = 1 / SAMPLE_RATE;
   for (const port of OUTPUT_PORTS) {
     const rings = ringStates.get(portKey(port));
     if (!rings) continue;
     for (let c = 0; c < port.channels; c++) {
       const ring = rings[c]!;
-      const frame = getTimeDomainFrame(port, c);
+      const key = `${portKey(port)}.${c}`;
+      let audioTime = ringAudioTimeS[key]!;
       for (let i = 0; i < samplesPerTick; i++) {
-        ring.buffer[ring.head] = frame[i % frame.length]!;
+        ring.buffer[ring.head] = synthSampleAt(port, c, audioTime);
         ring.head = (ring.head + 1) % RING_TOTAL_SAMPLES;
+        audioTime += sampleStep;
       }
+      ringAudioTimeS[key] = audioTime;
     }
   }
 };
@@ -156,6 +188,30 @@ export const captureRing = (port: OutputPort): Float32Array[] => {
     }
     return out;
   });
+};
+
+/**
+ * Writes the most recent `count` samples for one (port, channel) into the
+ * caller-supplied `out` buffer. Returns the number of samples actually
+ * written. Lets the caller reuse a pre-allocated buffer instead of forcing
+ * a fresh Float32Array per draw frame (= no GC pressure when the waveform
+ * is rAF-driven at long windows).
+ */
+export const readRecentSamplesInto = (
+  port: OutputPort,
+  ch: number,
+  count: number,
+  out: Float32Array,
+): number => {
+  const rings = ringStates.get(portKey(port));
+  if (!rings || !rings[ch]) return 0;
+  const ring = rings[ch]!;
+  const n = Math.max(0, Math.min(count, out.length, RING_TOTAL_SAMPLES));
+  const start = (ring.head - n + RING_TOTAL_SAMPLES) % RING_TOTAL_SAMPLES;
+  for (let i = 0; i < n; i++) {
+    out[i] = ring.buffer[(start + i) % RING_TOTAL_SAMPLES]!;
+  }
+  return n;
 };
 
 // ─────────────────────────────────────────────────────────────────────
@@ -270,6 +326,7 @@ export const useMockSignals = () => {
     getTimeDomainFrame,
     getFreqDomainFrame,
     captureRing,
+    readRecentSamplesInto,
     getLatencyHistory,
     getLatencyStats,
     realtimeBudgetMs: REALTIME_BUDGET_MS,

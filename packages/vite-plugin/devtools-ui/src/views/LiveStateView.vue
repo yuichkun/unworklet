@@ -313,7 +313,9 @@ watch(reprByKey, () => redraw(), { deep: true });
           <li v-for="slot in graph.publishSlots(node.id)" :key="slot.name" class="slot-row">
             <div class="slot-meta">
               <span class="slot-name mono">{{ slot.name }}</span>
-              <span class="u-pill slot-pill" :class="`kind-pill-${slot.kind}`">{{ slot.kind }}</span>
+              <span class="u-pill slot-pill" :class="`kind-pill-${slot.kind}`">{{
+                slot.kind
+              }}</span>
               <span class="slot-type mono">{{ slot.type }}</span>
               <span class="slot-size mono">
                 <template v-if="slot.kind === 'buffer'">× {{ slot.size }}</template>
@@ -374,10 +376,7 @@ watch(reprByKey, () => redraw(), { deep: true });
 
                 <template v-else>
                   <template v-if="reprFor(node.id, slot) === 'waveform'">
-                    <canvas
-                      :ref="setWaveformRef(slotKey(node.id, slot))"
-                      class="waveform"
-                    ></canvas>
+                    <canvas :ref="setWaveformRef(slotKey(node.id, slot))" class="waveform"></canvas>
                   </template>
                   <template v-else-if="reprFor(node.id, slot) === 'bar'">
                     <canvas :ref="setBarRef(slotKey(node.id, slot))" class="bar-chart"></canvas>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
-import MidiSlider from "../components/MidiSlider.vue";
+import RangeSlider from "../components/RangeSlider.vue";
 import {
   type MidiEvent,
   type MidiEventInput,
@@ -331,9 +331,7 @@ const toggleDirection = (d: "in" | "out" | "inject"): void => {
 // Overflow alert (= dropped events on the currently-targeted input port)
 // ──────────────────────────────────────────────────────────────────
 
-const overflowForTarget = computed(
-  () => midi.overflowMock.value[targetPortKey.value] ?? 0,
-);
+const overflowForTarget = computed(() => midi.overflowMock.value[targetPortKey.value] ?? 0);
 
 const resetOverflowForTarget = (): void => midi.resetOverflow(targetPortKey.value);
 
@@ -368,7 +366,7 @@ const octaveLabel = computed(() => `C${Math.floor(octaveBase.value / 12) - 1}`);
           <span class="section-title">Event log</span>
           <div class="log-filter">
             <button
-              v-for="d in (['in', 'out', 'inject'] as const)"
+              v-for="d in ['in', 'out', 'inject'] as const"
               :key="d"
               type="button"
               class="log-filter-chip"
@@ -378,7 +376,9 @@ const octaveLabel = computed(() => `C${Math.floor(octaveBase.value / 12) - 1}`);
             >
               {{ directionLabel[d] }}
             </button>
-            <span class="section-meta mono">{{ filteredLog.length }} / {{ midi.log.value.length }}</span>
+            <span class="section-meta mono"
+              >{{ filteredLog.length }} / {{ midi.log.value.length }}</span
+            >
           </div>
         </header>
 
@@ -408,164 +408,163 @@ const octaveLabel = computed(() => `C${Math.floor(octaveBase.value / 12) - 1}`);
 
         <div class="inject-split">
           <div class="inject-left">
+            <!-- Routing (target port + channel — applies to everything below) -->
+            <div class="inject-routing">
+              <label class="control">
+                <span class="control-label">target port</span>
+                <select v-model="targetPortKey" class="repr-select">
+                  <option v-for="port in inputPorts" :key="portKey(port)" :value="portKey(port)">
+                    {{ portKey(port) }}
+                  </option>
+                </select>
+              </label>
+              <span
+                v-if="overflowForTarget > 0"
+                class="overflow-badge"
+                :title="`${overflowForTarget} event(s) dropped on ${targetPortKey} — your injection rate is exceeding port capacity`"
+              >
+                ⚠ {{ overflowForTarget }} dropped
+                <button
+                  type="button"
+                  class="overflow-reset"
+                  title="Reset counter"
+                  @click="resetOverflowForTarget"
+                >
+                  ×
+                </button>
+              </span>
+              <label class="control">
+                <span class="control-label">channel</span>
+                <input v-model.number="channel" type="number" min="0" max="15" class="num-input" />
+              </label>
+              <button
+                type="button"
+                class="u-btn panic-btn"
+                title="Send All Notes Off (CC 123 = 0) on every channel + clear stuck notes"
+                @click="panic"
+              >
+                ⏻ Panic
+              </button>
+            </div>
 
-        <!-- Routing (target port + channel — applies to everything below) -->
-        <div class="inject-routing">
-          <label class="control">
-            <span class="control-label">target port</span>
-            <select v-model="targetPortKey" class="repr-select">
-              <option v-for="port in inputPorts" :key="portKey(port)" :value="portKey(port)">
-                {{ portKey(port) }}
-              </option>
-            </select>
-          </label>
-          <span
-            v-if="overflowForTarget > 0"
-            class="overflow-badge"
-            :title="`${overflowForTarget} event(s) dropped on ${targetPortKey} — your injection rate is exceeding port capacity`"
-          >
-            ⚠ {{ overflowForTarget }} dropped
-            <button
-              type="button"
-              class="overflow-reset"
-              title="Reset counter"
-              @click="resetOverflowForTarget"
-            >
-              ×
-            </button>
-          </span>
-          <label class="control">
-            <span class="control-label">channel</span>
-            <input v-model.number="channel" type="number" min="0" max="15" class="num-input" />
-          </label>
-          <button
-            type="button"
-            class="u-btn panic-btn"
-            title="Send All Notes Off (CC 123 = 0) on every channel + clear stuck notes"
-            @click="panic"
-          >
-            ⏻ Panic
-          </button>
-        </div>
-
-        <!-- Keyboard + velocity (velocity drives the next noteOn).
+            <!-- Keyboard + velocity (velocity drives the next noteOn).
              PC key labels are overlaid on each playable piano key (A/S/D… etc).
              Z / X shift the octave; Shift held = soft velocity (40). -->
-        <div class="inject-keyboard">
-          <div class="keyboard-wrap" :style="{ width: `${keyboardWidth}px` }">
-            <div class="keyboard-whites">
-              <button
-                v-for="key in keyboardKeys.filter((k) => k.white)"
-                :key="key.midi"
-                type="button"
-                class="key-white"
-                :class="{ pressed: pressedKeys.has(key.midi) }"
-                :style="{
-                  left: `${key.x * WHITE_W}px`,
-                  width: `${WHITE_W}px`,
-                  height: `${WHITE_H}px`,
-                }"
-                @mousedown="onKeyDown(key.midi)"
-                @mouseup="onKeyUp(key.midi)"
-                @mouseleave="onKeyLeave(key.midi)"
-              >
-                <span v-if="midiToPhysicalKey[key.midi]" class="key-pc-label">
-                  {{ midiToPhysicalKey[key.midi] }}
-                </span>
-                <span class="key-label">{{ key.label }}</span>
-              </button>
-            </div>
-            <div class="keyboard-blacks">
-              <button
-                v-for="key in keyboardKeys.filter((k) => !k.white)"
-                :key="key.midi"
-                type="button"
-                class="key-black"
-                :class="{ pressed: pressedKeys.has(key.midi) }"
-                :style="{
-                  left: `${key.x * WHITE_W + WHITE_W - BLACK_W / 2}px`,
-                  width: `${BLACK_W}px`,
-                  height: `${BLACK_H}px`,
-                }"
-                @mousedown="onKeyDown(key.midi)"
-                @mouseup="onKeyUp(key.midi)"
-                @mouseleave="onKeyLeave(key.midi)"
-              >
-                <span v-if="midiToPhysicalKey[key.midi]" class="key-pc-label key-pc-label--black">
-                  {{ midiToPhysicalKey[key.midi] }}
-                </span>
-              </button>
-            </div>
-          </div>
+            <div class="inject-keyboard">
+              <div class="keyboard-wrap" :style="{ width: `${keyboardWidth}px` }">
+                <div class="keyboard-whites">
+                  <button
+                    v-for="key in keyboardKeys.filter((k) => k.white)"
+                    :key="key.midi"
+                    type="button"
+                    class="key-white"
+                    :class="{ pressed: pressedKeys.has(key.midi) }"
+                    :style="{
+                      left: `${key.x * WHITE_W}px`,
+                      width: `${WHITE_W}px`,
+                      height: `${WHITE_H}px`,
+                    }"
+                    @mousedown="onKeyDown(key.midi)"
+                    @mouseup="onKeyUp(key.midi)"
+                    @mouseleave="onKeyLeave(key.midi)"
+                  >
+                    <span v-if="midiToPhysicalKey[key.midi]" class="key-pc-label">
+                      {{ midiToPhysicalKey[key.midi] }}
+                    </span>
+                    <span class="key-label">{{ key.label }}</span>
+                  </button>
+                </div>
+                <div class="keyboard-blacks">
+                  <button
+                    v-for="key in keyboardKeys.filter((k) => !k.white)"
+                    :key="key.midi"
+                    type="button"
+                    class="key-black"
+                    :class="{ pressed: pressedKeys.has(key.midi) }"
+                    :style="{
+                      left: `${key.x * WHITE_W + WHITE_W - BLACK_W / 2}px`,
+                      width: `${BLACK_W}px`,
+                      height: `${BLACK_H}px`,
+                    }"
+                    @mousedown="onKeyDown(key.midi)"
+                    @mouseup="onKeyUp(key.midi)"
+                    @mouseleave="onKeyLeave(key.midi)"
+                  >
+                    <span
+                      v-if="midiToPhysicalKey[key.midi]"
+                      class="key-pc-label key-pc-label--black"
+                    >
+                      {{ midiToPhysicalKey[key.midi] }}
+                    </span>
+                  </button>
+                </div>
+              </div>
 
-          <div class="keyboard-hint mono">
-            <span>octave: {{ octaveLabel }}</span>
-            <span>Z / X = shift</span>
-            <span>Shift = soft vel</span>
-          </div>
-        </div>
-
+              <div class="keyboard-hint mono">
+                <span>octave: {{ octaveLabel }}</span>
+                <span>Z / X = shift</span>
+                <span>Shift = soft vel</span>
+              </div>
+            </div>
           </div>
 
           <div class="inject-right">
-
-        <!-- Controllers grid: label | aux # | slider | value | action.
+            <!-- Controllers grid: label | aux # | slider | value | action.
              Continuous controls (CC / Pitch bend / Pressure) auto-send on
              slider input so the dev can modulate while playing notes. Pitch
              bend additionally springs back to 0 on pointer release.
              Program change is discrete → keeps its Send button. -->
-        <div class="inject-controllers">
-          <span class="ctrl-row-label">Velocity</span>
-          <div class="ctrl-row-aux"></div>
-          <MidiSlider v-model="velocity" :min="0" :max="127" />
-          <span class="ctrl-row-value mono">{{ velocity }}</span>
+            <div class="inject-controllers">
+              <span class="ctrl-row-label">Velocity</span>
+              <div class="ctrl-row-aux"></div>
+              <RangeSlider v-model="velocity" :min="0" :max="127" />
+              <span class="ctrl-row-value mono">{{ velocity }}</span>
 
-          <span class="ctrl-row-label">CC</span>
-          <div class="ctrl-row-aux">
-            <span class="ctrl-row-aux-label">#</span>
-            <input
-              v-model.number="ccController"
-              type="number"
-              min="0"
-              max="127"
-              list="cc-standards"
-              class="num-input"
-            />
-            <span v-if="ccCurrentName" class="ctrl-row-aux-hint">{{ ccCurrentName }}</span>
-          </div>
-          <MidiSlider v-model="ccValue" :min="0" :max="127" />
-          <span class="ctrl-row-value mono">{{ ccValue }}</span>
+              <span class="ctrl-row-label">CC</span>
+              <div class="ctrl-row-aux">
+                <span class="ctrl-row-aux-label">#</span>
+                <input
+                  v-model.number="ccController"
+                  type="number"
+                  min="0"
+                  max="127"
+                  list="cc-standards"
+                  class="num-input"
+                />
+                <span v-if="ccCurrentName" class="ctrl-row-aux-hint">{{ ccCurrentName }}</span>
+              </div>
+              <RangeSlider v-model="ccValue" :min="0" :max="127" />
+              <span class="ctrl-row-value mono">{{ ccValue }}</span>
 
-          <span class="ctrl-row-label">Pitch bend</span>
-          <div class="ctrl-row-aux"></div>
-          <MidiSlider
-            v-model="pitchBend"
-            :min="-8192"
-            :max="8191"
-            center-origin
-            @release="onPitchBendRelease"
-          />
-          <span class="ctrl-row-value mono">{{ pitchBend }}</span>
+              <span class="ctrl-row-label">Pitch bend</span>
+              <div class="ctrl-row-aux"></div>
+              <RangeSlider
+                v-model="pitchBend"
+                :min="-8192"
+                :max="8191"
+                center-origin
+                @release="onPitchBendRelease"
+              />
+              <span class="ctrl-row-value mono">{{ pitchBend }}</span>
 
-          <span class="ctrl-row-label">Pressure</span>
-          <div class="ctrl-row-aux"></div>
-          <MidiSlider v-model="pressure" :min="0" :max="127" />
-          <span class="ctrl-row-value mono">{{ pressure }}</span>
+              <span class="ctrl-row-label">Pressure</span>
+              <div class="ctrl-row-aux"></div>
+              <RangeSlider v-model="pressure" :min="0" :max="127" />
+              <span class="ctrl-row-value mono">{{ pressure }}</span>
 
-          <span class="ctrl-row-label">Program</span>
-          <div class="ctrl-row-aux">
-            <span class="ctrl-row-aux-label">#</span>
-            <input v-model.number="program" type="number" min="0" max="127" class="num-input" />
-          </div>
-          <button class="u-btn ctrl-row-send" @click="sendProgramChange">Send</button>
-          <span></span>
-        </div>
+              <span class="ctrl-row-label">Program</span>
+              <div class="ctrl-row-aux">
+                <span class="ctrl-row-aux-label">#</span>
+                <input v-model.number="program" type="number" min="0" max="127" class="num-input" />
+              </div>
+              <button class="u-btn ctrl-row-send" @click="sendProgramChange">Send</button>
+              <span></span>
+            </div>
 
-        <!-- Datalist powers autocomplete on the CC # input above. -->
-        <datalist id="cc-standards">
-          <option v-for="cc in CC_STANDARDS" :key="cc.id" :value="cc.id">{{ cc.name }}</option>
-        </datalist>
-
+            <!-- Datalist powers autocomplete on the CC # input above. -->
+            <datalist id="cc-standards">
+              <option v-for="cc in CC_STANDARDS" :key="cc.id" :value="cc.id">{{ cc.name }}</option>
+            </datalist>
           </div>
         </div>
       </section>

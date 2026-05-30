@@ -178,7 +178,12 @@ const onPaneClick = (): void => {
             @node-click="onNodeClick"
             @pane-click="onPaneClick"
           >
-            <Background :variant="BackgroundVariant.Dots" :gap="20" :size="1" pattern-color="rgba(255, 250, 240, 0.12)" />
+            <Background
+              :variant="BackgroundVariant.Dots"
+              :gap="20"
+              :size="1"
+              pattern-color="rgba(255, 250, 240, 0.12)"
+            />
             <Controls :show-interactive="false" position="bottom-right" />
           </VueFlow>
         </div>

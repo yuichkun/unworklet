@@ -2,6 +2,7 @@
 import JSZip from "jszip";
 import { computed, onMounted, onUnmounted, ref } from "vue";
 
+import PortChannelView from "../components/PortChannelView.vue";
 import { type OutputPort, portKey, useMockSignals } from "../composables/useMockSignals";
 import { encodeWav, timestampLabel } from "../lib/wav";
 
@@ -101,125 +102,6 @@ const canDownloadZip = computed(() => confirmedCount.value > 0);
 
 const totalLatencyMs = computed(() => signals.getLatencyStats(signals.latencyTotalKey).mean);
 
-const waveformRefs = ref<Record<string, HTMLCanvasElement | null>>({});
-const spectrogramRefs = ref<Record<string, HTMLCanvasElement | null>>({});
-
-const setWaveformRef = (key: string) => (el: Element | null) => {
-  waveformRefs.value[key] = el as HTMLCanvasElement | null;
-};
-const setSpectrogramRef = (key: string) => (el: Element | null) => {
-  spectrogramRefs.value[key] = el as HTMLCanvasElement | null;
-};
-
-const drawWaveform = (canvas: HTMLCanvasElement, port: OutputPort): void => {
-  const dpr = window.devicePixelRatio || 1;
-  const w = canvas.clientWidth;
-  const h = canvas.clientHeight || 120;
-  if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
-    canvas.width = w * dpr;
-    canvas.height = h * dpr;
-  }
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, w, h);
-
-  ctx.strokeStyle = "rgba(168, 172, 184, 0.18)";
-  ctx.beginPath();
-  ctx.moveTo(0, h / 2);
-  ctx.lineTo(w, h / 2);
-  ctx.stroke();
-
-  // L = cool (blue), R = warm (orange) — warm/cool opposition for stereo so the
-  // overlap stays visually distinguishable (matches Adobe Audition / Pro Tools).
-  const colors = ["#5fa8ff", "#ff8b66"];
-  for (let c = 0; c < port.channels; c++) {
-    const frame = signals.getTimeDomainFrame(port, c);
-    ctx.strokeStyle = colors[c] ?? "#5fa8ff";
-    ctx.lineWidth = 1.4;
-    ctx.beginPath();
-    for (let i = 0; i < frame.length; i++) {
-      const x = (i / (frame.length - 1)) * w;
-      const y = h / 2 - frame[i]! * (h / 2 - 4);
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-  }
-};
-
-// Viridis colormap — perceptually uniform, colorblind-safe, monotonic luminance
-// (= darker means lower amplitude even in grayscale). Pre-baked as a 256-step
-// RGB lookup so per-frame cost is one array access per bin.
-const VIRIDIS_STOPS: ReadonlyArray<readonly [number, number, number, number]> = [
-  [0.0, 68, 1, 84],
-  [0.13, 72, 40, 120],
-  [0.25, 62, 73, 137],
-  [0.38, 49, 104, 142],
-  [0.5, 38, 130, 142],
-  [0.63, 31, 158, 137],
-  [0.75, 53, 183, 121],
-  [0.88, 110, 206, 88],
-  [1.0, 253, 231, 37],
-];
-
-const buildViridisLut = (size: number): string[] => {
-  const lut: string[] = [];
-  for (let i = 0; i < size; i++) {
-    const t = i / (size - 1);
-    let r = 0;
-    let g = 0;
-    let b = 0;
-    for (let j = 0; j < VIRIDIS_STOPS.length - 1; j++) {
-      const [t0, r0, g0, b0] = VIRIDIS_STOPS[j]!;
-      const [t1, r1, g1, b1] = VIRIDIS_STOPS[j + 1]!;
-      if (t >= t0 && t <= t1) {
-        const f = t1 === t0 ? 0 : (t - t0) / (t1 - t0);
-        r = Math.round(r0 + (r1 - r0) * f);
-        g = Math.round(g0 + (g1 - g0) * f);
-        b = Math.round(b0 + (b1 - b0) * f);
-        break;
-      }
-    }
-    lut.push(`rgb(${r},${g},${b})`);
-  }
-  return lut;
-};
-
-const VIRIDIS_LUT = buildViridisLut(256);
-
-const drawSpectrogram = (canvas: HTMLCanvasElement, port: OutputPort): void => {
-  const dpr = window.devicePixelRatio || 1;
-  const w = canvas.clientWidth;
-  const h = canvas.clientHeight || 120;
-  // Round target dimensions to integers — non-integer dpr (e.g. 1.25 from OS
-  // zoom) made `canvas.width !== w * dpr` fire every frame, which re-allocates
-  // and clears the canvas, killing the rolling spectrogram history.
-  const targetW = Math.round(w * dpr);
-  const targetH = Math.round(h * dpr);
-  if (canvas.width !== targetW || canvas.height !== targetH) {
-    canvas.width = targetW;
-    canvas.height = targetH;
-  }
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  const stripPx = Math.max(2, Math.round(2 * dpr));
-  const existing = ctx.getImageData(stripPx, 0, canvas.width - stripPx, canvas.height);
-  ctx.putImageData(existing, 0, 0);
-  ctx.clearRect(canvas.width - stripPx, 0, stripPx, canvas.height);
-
-  const frame = signals.getFreqDomainFrame(port, 0);
-  const bins = frame.length;
-  const lutMax = VIRIDIS_LUT.length - 1;
-  for (let i = 0; i < bins; i++) {
-    const v = Math.max(0, Math.min(1, frame[bins - 1 - i]!));
-    const y = (i / bins) * canvas.height;
-    const cellH = canvas.height / bins + 1;
-    ctx.fillStyle = VIRIDIS_LUT[Math.round(v * lutMax)]!;
-    ctx.fillRect(canvas.width - stripPx, y, stripPx, cellH);
-  }
-};
-
 const latencyCanvasRef = ref<HTMLCanvasElement | null>(null);
 
 const LATENCY_COLORS: Record<string, string> = {
@@ -299,18 +181,12 @@ const drawLatencyChart = (): void => {
   }
 };
 
+// Audio-tab canvases (waveform + spectrogram) are now driven by PortChannelView
+// instances themselves — each owns its rAF loop. This parent loop only services
+// the latency chart, which still lives inline in this view.
 let rafId: number | null = null;
 const loop = (): void => {
-  if (activeTab.value === "audio") {
-    for (const port of signals.ports.value) {
-      if (!isChecked(port)) continue;
-      const key = portKey(port);
-      const wc = waveformRefs.value[key];
-      if (wc) drawWaveform(wc, port);
-      const sc = spectrogramRefs.value[key];
-      if (sc) drawSpectrogram(sc, port);
-    }
-  } else if (activeTab.value === "latency") {
+  if (activeTab.value === "latency") {
     drawLatencyChart();
   }
   rafId = requestAnimationFrame(loop);
@@ -412,22 +288,15 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
             </header>
 
             <div class="port-body">
-              <div class="port-canvas-block">
-                <header class="canvas-head">
-                  <span class="canvas-title">Waveform</span>
-                  <span class="canvas-meta mono">
-                    time domain · {{ port.channels }} ch overlay
-                  </span>
-                </header>
-                <canvas :ref="setWaveformRef(portKey(port))" class="waveform-canvas"></canvas>
-              </div>
-              <div class="port-canvas-block">
-                <header class="canvas-head">
-                  <span class="canvas-title">Spectrogram</span>
-                  <span class="canvas-meta mono">frequency domain · ch 0 · rolling</span>
-                </header>
-                <canvas :ref="setSpectrogramRef(portKey(port))" class="spectrogram-canvas"></canvas>
-              </div>
+              <!-- One PortChannelView per channel; today we render only ch 0,
+                   but the loop trivially generalizes to all channels (= remove
+                   the slice(0, 1)) once we expose a per-port channel picker. -->
+              <PortChannelView
+                v-for="ch in [0]"
+                :key="`${portKey(port)}-${ch}`"
+                :port="port"
+                :channel-index="ch"
+              />
             </div>
 
             <footer v-if="confirmed[portKey(port)]" class="port-captured">
@@ -673,10 +542,11 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
   margin-left: auto;
 }
 
-
 .audio-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  /* 280px min keeps all 3 ports on one row at typical devtool iframe widths
+     (~900px+). Wraps to 2 rows only past 4 ports / at very narrow viewports. */
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 14px;
   /* Don't stretch siblings to match the tallest. Each port-section keeps its
      own natural height, so capturing one port only grows that one — the
@@ -807,29 +677,16 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
   color: var(--u-text);
 }
 
+/* Stacks multiple PortChannelView instances vertically (= one per channel).
+   The waveform / spectrogram side-by-side responsive layout lives inside
+   PortChannelView itself via its own container query. */
 .port-body {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
 }
 
-@container (min-width: 800px) {
-  .port-body {
-    flex-direction: row;
-  }
-
-  .port-canvas-block {
-    flex: 1;
-    min-width: 0;
-  }
-}
-
-.port-canvas-block {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
+/* Used by the latency chart header (PortChannelView has its own scoped copy). */
 .canvas-head {
   display: flex;
   align-items: baseline;
@@ -845,31 +702,6 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
   font-size: 10.5px;
   color: var(--u-text-dim);
 }
-
-.waveform-canvas {
-  width: 100%;
-  height: 110px;
-  background-color: var(--u-bg);
-  background-image:
-    linear-gradient(rgba(255, 250, 240, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 250, 240, 0.04) 1px, transparent 1px);
-  background-size: 40px 40px;
-  border: 1px solid var(--u-border);
-  border-radius: var(--u-radius);
-}
-
-.spectrogram-canvas {
-  width: 100%;
-  height: 110px;
-  background-color: var(--u-bg);
-  background-image:
-    linear-gradient(rgba(255, 250, 240, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 250, 240, 0.04) 1px, transparent 1px);
-  background-size: 40px 40px;
-  border: 1px solid var(--u-border);
-  border-radius: var(--u-radius);
-}
-
 
 .latency-tab {
   display: flex;

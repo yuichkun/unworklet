@@ -2,15 +2,16 @@
 import { computed, useTemplateRef } from "vue";
 
 /**
- * Custom pointer-driven slider for the MIDI inject panel. Replaces native
- * `<input type="range">` because the native control's drag tracking gets
- * disrupted when Vue re-renders the surrounding tree mid-drag (= happens
- * whenever auto-send pushes a log entry on every emitted value).
+ * Custom pointer-driven range slider. Replaces native `<input type="range">`
+ * because the native control's drag tracking gets disrupted when Vue
+ * re-renders the surrounding tree mid-drag — happens whenever a sibling
+ * mutates state on every emitted value (= the MIDI inject log growing, the
+ * waveform canvas redrawing).
  *
- * Uses `setPointerCapture` (= the trick from vue-bits ElasticSlider) so the
- * pointer stays bound to this element until release, regardless of what the
- * DOM around it does. Emits `update:modelValue` continuously during drag,
- * and `release` once on pointer-up (= used by pitch bend for spring-return).
+ * Uses `setPointerCapture` so the pointer stays bound to this element until
+ * release, regardless of what the DOM around it does. Emits `update:modelValue`
+ * continuously during drag, and `release` once on pointer-up (= used by pitch
+ * bend for spring-return).
  */
 
 interface Props {
@@ -57,7 +58,8 @@ const computeValueFromX = (clientX: number): number => {
   if (width === 0) return props.modelValue;
   const t = Math.max(0, Math.min(1, (clientX - left) / width));
   const raw = props.min + t * (props.max - props.min);
-  // Snap to integers — MIDI values are all integers in their respective ranges.
+  // Snap to integers — every current caller (MIDI values, log-scaled zoom
+  // positions) treats this as an integer track.
   return Math.round(raw);
 };
 
@@ -92,22 +94,22 @@ const onPointerUp = (event: PointerEvent): void => {
 <template>
   <div
     ref="trackRef"
-    class="midi-slider"
-    :class="{ 'midi-slider--center': centerOrigin }"
+    class="range-slider"
+    :class="{ 'range-slider--center': centerOrigin }"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
     @pointercancel="onPointerUp"
   >
-    <div class="midi-slider-track"></div>
-    <div v-if="centerOrigin" class="midi-slider-center-tick"></div>
-    <div class="midi-slider-fill" :style="fillStyle"></div>
-    <div class="midi-slider-thumb" :style="thumbStyle"></div>
+    <div class="range-slider-track"></div>
+    <div v-if="centerOrigin" class="range-slider-center-tick"></div>
+    <div class="range-slider-fill" :style="fillStyle"></div>
+    <div class="range-slider-thumb" :style="thumbStyle"></div>
   </div>
 </template>
 
 <style scoped>
-.midi-slider {
+.range-slider {
   position: relative;
   width: 100%;
   height: 22px;
@@ -116,11 +118,11 @@ const onPointerUp = (event: PointerEvent): void => {
   user-select: none;
 }
 
-.midi-slider:active {
+.range-slider:active {
   cursor: grabbing;
 }
 
-.midi-slider-track {
+.range-slider-track {
   position: absolute;
   inset: 9px 0;
   height: 4px;
@@ -130,7 +132,7 @@ const onPointerUp = (event: PointerEvent): void => {
   pointer-events: none;
 }
 
-.midi-slider-fill {
+.range-slider-fill {
   position: absolute;
   top: 9px;
   height: 4px;
@@ -139,12 +141,12 @@ const onPointerUp = (event: PointerEvent): void => {
   pointer-events: none;
 }
 
-.midi-slider--center .midi-slider-fill {
+.range-slider--center .range-slider-fill {
   background: var(--u-text);
   opacity: 0.7;
 }
 
-.midi-slider-center-tick {
+.range-slider-center-tick {
   position: absolute;
   top: 6px;
   left: 50%;
@@ -155,7 +157,7 @@ const onPointerUp = (event: PointerEvent): void => {
   pointer-events: none;
 }
 
-.midi-slider-thumb {
+.range-slider-thumb {
   position: absolute;
   top: 50%;
   width: 12px;
@@ -168,8 +170,8 @@ const onPointerUp = (event: PointerEvent): void => {
   transition: transform 80ms ease-out;
 }
 
-.midi-slider:hover .midi-slider-thumb,
-.midi-slider:active .midi-slider-thumb {
+.range-slider:hover .range-slider-thumb,
+.range-slider:active .range-slider-thumb {
   transform: translate(-50%, -50%) scale(1.15);
 }
 </style>
