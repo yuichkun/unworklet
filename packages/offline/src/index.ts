@@ -97,6 +97,8 @@ export async function renderOffline<C>(
       capacity: slot.capacity,
       slotSize: slot.slotSize,
       fields: slot.fields,
+      // typed-array field (§4.3 worklet→main) の中身を読む content region。
+      payloadContent: meta.layout.regions.payloadContent.slots[evt.name],
     };
   });
   const emittedEvents: OfflineEmittedEvent[] = [];
@@ -228,6 +230,25 @@ export async function renderOffline<C>(
         let atSample = 0;
         for (const field of ring.fields) {
           const byteOffset = slotByteOffset + field.offsetInSlot;
+          // typed-array field (§4.3) = slot の [payloadLen, payloadOffset] を読んで
+          // content region から fresh Float32Array を切り出す (= main 側は natural array)。
+          if (field.payloadElementType !== undefined) {
+            const payloadLen = dataView.getInt32(byteOffset, true); // bytes
+            const payloadOffset = dataView.getInt32(byteOffset + 4, true);
+            const srcBase = ring.payloadContent!.base + payloadOffset;
+            const bytes = memory.slice(srcBase, srcBase + payloadLen); // fresh copy
+            payload[field.name] =
+              field.payloadElementType === "f64"
+                ? new Float64Array(bytes)
+                : field.payloadElementType === "u8"
+                  ? new Uint8Array(bytes)
+                  : field.payloadElementType === "i32" || field.payloadElementType === "bool"
+                    ? new Int32Array(bytes)
+                    : field.payloadElementType === "i64"
+                      ? new BigInt64Array(bytes)
+                      : new Float32Array(bytes);
+            continue;
+          }
           let value: number | boolean | bigint;
           switch (field.wireType) {
             case "i32":

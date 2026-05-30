@@ -10,7 +10,8 @@
 import { expect, test } from "vite-plus/test";
 
 import "../../dsl/primitives.ts"; // side-effect: register `Node<T>` method forms
-import { audioOutput, buffer, message, state } from "../../dsl/declarations.ts";
+import { audioOutput, buffer, event, message, state } from "../../dsl/declarations.ts";
+import { f32, i32 } from "../../dsl/constructors.ts";
 import { forSample } from "../../dsl/loop.ts";
 import { compile } from "../../compile/index.ts";
 import { defineProcessor } from "../../processor.ts";
@@ -74,6 +75,50 @@ test("typed-array message compiles: buf.copyFrom(payload) bulk-copy emit path", 
     regions: { payloadContent: { slots: Record<string, { base: number; capacity: number }> } };
   };
   expect(memory.regions.payloadContent.slots["upload"]).toBeDefined();
+});
+
+test("typed-array event compiles: emitIf(buffer + length) emit path + payloadContent", async () => {
+  // end-to-end の振る舞い (= 受信した配列の値一致) は `@unworklet/offline` の黒箱で担保。
+  // ここは core 内で emitIf の buffer 検出 + event payloadContent layout + emitEventEmitIf
+  // (= memory.copy) が compile を通り、event に content region が割り当たることを検証する。
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const buf = buffer.f32({ size: 4 });
+    const result = event<{ data: Float32Array }>({ name: "result", payloadCapacity: 64 });
+    return {
+      process: () => {
+        buf.write(0, f32(1));
+        result.emitIf(true, { atSample: 0, data: buf, length: i32(4) });
+        forSample((i) => {
+          out.ch(0).at(i).write(f32(0));
+        });
+      },
+    };
+  });
+  const result = await compile(proc);
+  expect(result.wasm.byteLength).toBeGreaterThan(0);
+  const memory = result.memory as unknown as {
+    regions: { payloadContent: { slots: Record<string, { base: number; capacity: number }> } };
+  };
+  expect(memory.regions.payloadContent.slots["result"]).toBeDefined();
+});
+
+test("typed-array event emitIf requires a length field (= guard)", () => {
+  expect(() =>
+    defineProcessor(() => {
+      const buf = buffer.f32({ size: 4 });
+      const result = event<{ data: Float32Array }>({ name: "result", payloadCapacity: 64 });
+      return {
+        process: () => {
+          // length ナシ = throw。
+          (result as unknown as { emitIf(c: boolean, p: unknown): void }).emitIf(true, {
+            atSample: 0,
+            data: buf,
+          });
+        },
+      };
+    }),
+  ).toThrow(/requires a "length" field/);
 });
 
 test("buf.copyFrom rejects a non-payload source (= 型外れ guard)", () => {

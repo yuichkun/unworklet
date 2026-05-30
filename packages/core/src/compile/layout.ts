@@ -126,6 +126,12 @@ export type EventRingSlot = {
     wireType: ScalarType;
     offsetInSlot: number;
     byteSize: number;
+    /**
+     * Present when the field is a variable-length typed array (§4.3). The slot
+     * carries `[payloadLen, payloadOffset]` (8 bytes); content lives in the
+     * event's `payloadContent` region.
+     */
+    payloadElementType?: BufferElementType;
   }>;
 };
 
@@ -250,14 +256,27 @@ export function layout(graph: CapturedGraph): Layout {
       ];
       let fieldCursor = EVENT_ATSAMPLE_BYTES;
       for (const field of decl.fields) {
-        const byteSize = EVENT_FIELD_BYTES[field.wireType];
-        slotFields.push({
-          name: field.name,
-          wireType: field.wireType,
-          offsetInSlot: fieldCursor,
-          byteSize,
-        });
-        fieldCursor += byteSize;
+        if (field.payloadElementType !== undefined) {
+          // typed-array field = slot に [payloadLen(4), payloadOffset(4)] = 8 byte
+          // (= §4.3/§5.2)。 中 身 は payloadContent region。
+          slotFields.push({
+            name: field.name,
+            wireType: field.wireType,
+            offsetInSlot: fieldCursor,
+            byteSize: PAYLOAD_SLOT_BYTES,
+            payloadElementType: field.payloadElementType,
+          });
+          fieldCursor += PAYLOAD_SLOT_BYTES;
+        } else {
+          const byteSize = EVENT_FIELD_BYTES[field.wireType];
+          slotFields.push({
+            name: field.name,
+            wireType: field.wireType,
+            offsetInSlot: fieldCursor,
+            byteSize,
+          });
+          fieldCursor += byteSize;
+        }
       }
       const slotSize = fieldCursor;
       eventRingsSlots[decl.name] = {
@@ -328,14 +347,17 @@ export function layout(graph: CapturedGraph): Layout {
     }
   }
 
-  // payloadContent packing = message<T> の typed-array field の 可 変 長 中 身 を
-  // 置 く region (= §5.2)。 typed-array field を 持 つ message ご と に
-  // payloadCapacity bytes (= 省 略 時 default) を allocate。 末 尾 配 置 = typed-array
-  // ナ シ graph で base 不 変。
+  // payloadContent packing = message<T> (main→worklet) / event<T> (worklet→main)
+  // の typed-array field の 可 変 長 中 身 を 置 く region (= §5.2)。 typed-array field
+  // を 持 つ declaration ご と に payloadCapacity bytes (= 省 略 時 default) を allocate。
+  // 末 尾 配 置 = typed-array ナ シ graph で base 不 変。
   const payloadContentBase = cursor;
   const payloadContentSlots: Record<string, { base: number; capacity: number }> = {};
   for (const decl of graph.declarations) {
-    if (decl.kind === "message" && decl.fields.some((f) => f.payloadElementType !== undefined)) {
+    if (
+      (decl.kind === "message" || decl.kind === "event") &&
+      decl.fields.some((f) => f.payloadElementType !== undefined)
+    ) {
       const capacity = decl.payloadCapacity ?? DEFAULT_PAYLOAD_CAPACITY;
       payloadContentSlots[decl.name] = { base: cursor, capacity };
       cursor += capacity;

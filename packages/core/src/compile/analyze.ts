@@ -142,7 +142,10 @@ function walkForTypeErrors(node: AstNode, diagnostics: DiagnosticEntry[]): void 
     case "eventEmitIf":
       walkForTypeErrors(node.cond, diagnostics);
       walkForTypeErrors(node.atSample, diagnostics);
-      for (const field of node.fields) walkForTypeErrors(field.value, diagnostics);
+      for (const field of node.fields) {
+        walkForTypeErrors(field.value, diagnostics);
+        if (field.length !== undefined) walkForTypeErrors(field.length, diagnostics);
+      }
       break;
     case "literal":
     case "loopCounter":

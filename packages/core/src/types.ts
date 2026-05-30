@@ -217,15 +217,31 @@ export type TypedArrayFieldRef<T extends BufferElementType> = {
  * `forSample` callback (= the per-sample `i`), `0` at per-block top
  * level. Authors override by passing `atSample` explicitly.
  */
+/** `T` が typed-array field (= Float32Array / Uint8Array) を含むか。 */
+type HasTypedArrayField<T> = true extends {
+  [K in keyof T]: T[K] extends Float32Array | Uint8Array ? true : false;
+}[keyof T]
+  ? true
+  : false;
+
 export type EmitPayload<T> = {
   [K in keyof T]: T[K] extends number
     ? T[K] | Node<"f32"> | Node<"f64"> | Node<"i32"> | Node<"i64">
     : T[K] extends boolean
       ? T[K] | Node<"bool">
-      : T[K];
+      : // typed-array field (§4.3 worklet→main): worklet-declared buffer or an
+        // inbound payload proxy supplies the content (Q49); never a raw JS array.
+        T[K] extends Float32Array
+        ? Buffer<"f32"> | TypedArrayFieldRef<"f32">
+        : T[K] extends Uint8Array
+          ? Buffer<"u8"> | TypedArrayFieldRef<"u8">
+          : T[K];
 } & {
   atSample?: Node<"i32"> | number;
-};
+} & (HasTypedArrayField<T> extends true
+    ? // framework-injected: number of elements to copy into the content buffer.
+      { length: Node<"i32"> | number }
+    : Record<never, never>);
 
 export type EventDecl<T> = {
   readonly name: string;

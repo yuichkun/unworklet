@@ -9,7 +9,7 @@
  */
 
 import "@unworklet/core"; // side-effect load for `.mul` method registration via primitives.ts
-import { defineProcessor, f32, message, SAMPLES_PER_BLOCK, select } from "@unworklet/core";
+import { defineProcessor, f32, i32, message, SAMPLES_PER_BLOCK, select } from "@unworklet/core";
 import { audioInput, audioOutput, buffer, event, forSample, param, state } from "@unworklet/core";
 import { expect, test } from "vite-plus/test";
 
@@ -693,6 +693,34 @@ test("`renderOffline` captures emitted events from event ring (= sub-phase 7.8c)
     expect(evt.atSample).toBeLessThan(SAMPLES_PER_BLOCK);
     expect((evt.payload as { level: number }).level).toBe(0.5);
   }
+});
+
+// worklet → main の typed-array event payload (§4.3 L708)。worklet 内 buffer に書いて
+// emitIf に buffer + framework-injected length を渡すと、main 側は length 長の fresh
+// Float32Array を受け取る。
+test("`renderOffline` captures a typed-array event payload as a Float32Array", async () => {
+  const arrayEmitter = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const buf = buffer.f32({ size: 4 });
+    const result = event<{ data: Float32Array }>({ name: "result", payloadCapacity: 64 });
+    return {
+      process: () => {
+        for (let k = 0; k < 4; k++) buf.write(k, f32((k + 1) * 11));
+        result.emitIf(true, { atSample: 0, data: buf, length: i32(4) });
+        forSample((i) => {
+          out.ch(0).at(i).write(f32(0));
+        });
+      },
+    };
+  });
+  const result = await renderOffline(arrayEmitter, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+  });
+  expect(result.events.length).toBe(1);
+  const ev = result.events[0]!;
+  expect(ev.name).toBe("result");
+  expect(Array.from((ev.payload as { data: Float32Array }).data)).toEqual([11, 22, 33, 44]);
 });
 
 test("`renderOffline` captures bool wireType event field as JS boolean", async () => {

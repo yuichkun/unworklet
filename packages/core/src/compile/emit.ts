@@ -1359,6 +1359,8 @@ function emitEventEmitIf(
     ["atSample", node.atSample],
     ...node.fields.map((f) => [f.name, f.value] as const),
   ]);
+  // typed-array field (§4.3) の emit メタ (= bufferName + length + elementType)。
+  const emitFieldByName = new Map(node.fields.map((f) => [f.name, f] as const));
 
   // overflow check + drop-oldest (= ring full ＝ distance head − tail ≥ capacity
   // で 既 fill 済 ＝ 次 emit が 古 い slot を 上 書 き = drop-oldest)。
@@ -1417,6 +1419,56 @@ function emitEventEmitIf(
        field set 整 合 check で 排 除 済 = 構 造 上 unreachable defensive guard */
     if (valueAst === undefined) {
       throw new Error(`event "${node.name}" missing AST for field "${field.name}"`);
+    }
+    // typed-array field (§4.3 worklet→main) = buffer の中身を event content region に
+    // memory.copy + slot に [payloadLen, payloadOffset]。 payloadOffset = 0 固 定 (=
+    // 単 一 payload 前 提、 content ring 管 理 は message offline 注 入 と 同 じ く 後 続)。
+    // copyBytes = min(length × sizeof, content.capacity) で region 越 え を truncate。
+    // atSample が 常 に idx 0 = typed-array field は idx ≥ 1 = slotPtrTee 後 =
+    // EVENT_SLOT_PTR_LOCAL 確 定 済。
+    if (field.payloadElementType !== undefined) {
+      const emitField = emitFieldByName.get(field.name);
+      const content = layout.regions.payloadContent.slots[node.name];
+      const bufferBase =
+        emitField?.bufferName !== undefined
+          ? layout.regions.buffers.slots[emitField.bufferName]
+          : undefined;
+      /* v8 ignore next 6 — typed-array emit field は declarations で bufferName +
+         length + payloadContent を 揃 え て push 済 = 構 造 上 unreachable guard */
+      if (emitField?.length === undefined || content === undefined || bufferBase === undefined) {
+        throw new Error(`event "${node.name}" typed-array field "${field.name}" missing emit meta`);
+      }
+      const elemBytes = BUFFER_ELEMENT_BYTES_EMIT[field.payloadElementType];
+      const slotFieldPtr = (): number =>
+        mod.i32.add(
+          mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32),
+          mod.i32.const(field.offsetInSlot),
+        );
+      const lengthBytes = (): number =>
+        mod.i32.mul(
+          emitExpression(emitField.length!, layout, mod, binaryen),
+          mod.i32.const(elemBytes),
+        );
+      // copyBytes = min(length × sizeof, content.capacity)。
+      const copyBytes = (): number =>
+        mod.select(
+          mod.i32.lt_u(lengthBytes(), mod.i32.const(content.capacity)),
+          lengthBytes(),
+          mod.i32.const(content.capacity),
+        );
+      fieldStores.push(
+        mod.block(null, [
+          mod.i32.store(0, BYTES_PER_I32, slotFieldPtr(), copyBytes()), // payloadLen
+          mod.i32.store(
+            0,
+            BYTES_PER_I32,
+            mod.i32.add(slotFieldPtr(), mod.i32.const(4)),
+            mod.i32.const(0),
+          ), // payloadOffset = 0
+          mod.memory.copy(mod.i32.const(content.base), mod.i32.const(bufferBase), copyBytes()),
+        ]),
+      );
+      continue;
     }
     const ptr =
       idx === 0
@@ -1653,7 +1705,10 @@ function collectUsedMathKinds(graph: CapturedGraph): Set<string> {
       case "eventEmitIf":
         visit(node.cond);
         visit(node.atSample);
-        node.fields.forEach((field) => visit(field.value));
+        node.fields.forEach((field) => {
+          visit(field.value);
+          if (field.length !== undefined) visit(field.length);
+        });
         break;
       case "literal":
       case "loopCounter":

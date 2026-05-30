@@ -62,6 +62,20 @@ const PAYLOAD_FIELD_META = Symbol("unworklet.payloadFieldMeta");
 
 type PayloadFieldMeta = { decl: MessageDeclAst; field: string };
 
+/**
+ * buffer handle に隠し持たせる identity (= name + element type)。`event.emitIf` が
+ * typed-array field の値として渡された buffer を検出 (= §4.3 worklet→main の emit
+ * 側) するための marker。公開型 `Buffer<T>` には現れない内部 symbol。
+ */
+const BUFFER_HANDLE_META = Symbol("unworklet.bufferHandleMeta");
+
+type BufferHandleMeta = { decl: BufferDecl };
+
+const bufferHandleMeta = (v: unknown): BufferHandleMeta | undefined =>
+  typeof v === "object" && v !== null
+    ? (v as Record<symbol, BufferHandleMeta | undefined>)[BUFFER_HANDLE_META]
+    : undefined;
+
 // ─────────────────────────────────────────────────────────────────────────
 // Literal lift helpers (= Q36-a)
 // ─────────────────────────────────────────────────────────────────────────
@@ -452,6 +466,12 @@ function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer
       return handle;
     },
   } as unknown as Buffer<T>;
+  // event.emitIf が typed-array field の値として渡された buffer を識別する marker
+  // (= §4.3 worklet→main、 decl 参 照 で late-bind name も追従)。
+  Object.defineProperty(handle, BUFFER_HANDLE_META, {
+    value: { decl } satisfies BufferHandleMeta,
+    enumerable: false,
+  });
   return handle;
 }
 
@@ -742,10 +762,17 @@ export function event<T>(options: EventOptions): EventDecl<T> {
                 );
               })();
 
-      const fieldNames = Object.keys(payload).filter((k) => k !== "atSample");
+      const allKeys = Object.keys(payload).filter((k) => k !== "atSample");
+      // typed-array field (§4.3 worklet→main) = 値が buffer handle のもの (§5.1: 高々 1 個)。
+      // 隣 接 の `length` field は framework-injected = その typed-array field の copy 長 =
+      // wire field 扱 い し ない (= consume)。
+      const taFieldName = allKeys.find((k) => bufferHandleMeta(payload[k]) !== undefined);
+      const scalarKeys = allKeys.filter(
+        (k) => k !== taFieldName && !(taFieldName !== undefined && k === "length"),
+      );
       const emitFields: EventEmitField[] = [];
       const isFirstEmit = decl.fields.length === 0;
-      for (const fieldName of fieldNames) {
+      for (const fieldName of scalarKeys) {
         const { ast, wireType } = liftEmitFieldValue(decl, fieldName, payload[fieldName]);
         if (isFirstEmit) {
           // 1 番 目 emit = full field set を seal (= 同 emit 内 で 重 複 field を
@@ -755,6 +782,31 @@ export function event<T>(options: EventOptions): EventDecl<T> {
           checkSealedEventField(decl, fieldName, wireType);
         }
         emitFields.push({ name: fieldName, wireType, value: ast });
+      }
+      if (taFieldName !== undefined) {
+        const bufMeta = bufferHandleMeta(payload[taFieldName])!;
+        const elementType = bufMeta.decl.type;
+        const lengthRaw = payload.length;
+        const lengthAst: AstNode = isWrappedNode(lengthRaw)
+          ? unwrapAst(lengthRaw)
+          : typeof lengthRaw === "number"
+            ? { kind: "literal", type: "i32", value: lengthRaw }
+            : (() => {
+                throw new Error(
+                  `unworklet: event "${decl.name}" typed-array field "${taFieldName}" requires a "length" field (Node<'i32'> | number)`,
+                );
+              })();
+        if (isFirstEmit) {
+          decl.fields.push({ name: taFieldName, wireType: "i32", payloadElementType: elementType });
+        }
+        emitFields.push({
+          name: taFieldName,
+          wireType: "i32", // dummy (= slot は [payloadLen, payloadOffset]、 payloadElementType で 分 岐)
+          value: { kind: "literal", type: "i32", value: 0 }, // placeholder (= 未 使 用)
+          payloadElementType: elementType,
+          bufferName: bufMeta.decl.name,
+          length: lengthAst,
+        });
       }
       if (!isFirstEmit && emitFields.length !== decl.fields.length) {
         const missing = decl.fields.filter((f) => !emitFields.some((e) => e.name === f.name));

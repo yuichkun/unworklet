@@ -126,6 +126,15 @@ export type EventEmitField = {
   name: string;
   wireType: ScalarType;
   value: AstNode;
+  /**
+   * Present when the field is a variable-length typed array (§4.3 worklet → main).
+   * `value` is then an unused placeholder; the bytes come from the worklet buffer
+   * `bufferName`, `length` elements copied into the event content region at emit
+   * time, and the slot carries `[payloadLen, payloadOffset]`.
+   */
+  payloadElementType?: BufferElementType;
+  bufferName?: string;
+  length?: AstNode;
 };
 
 export type AudioPortDecl = {
@@ -208,6 +217,12 @@ export type EventDeclAst = {
 export type EventDeclField = {
   name: string;
   wireType: ScalarType;
+  /**
+   * Present when the field is a variable-length typed array (§4.3 / §5.2). The
+   * slot carries `[payloadLen, payloadOffset]` (8 bytes); content lives in the
+   * event's `payloadContent` region.
+   */
+  payloadElementType?: BufferElementType;
 };
 
 /**
