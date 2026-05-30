@@ -32,6 +32,8 @@
     "build": "vp pack",
     "dev": "vp pack --watch",
     "test": "vp test",
+    "test:browser": "vp pack && vp test --config vite.browser.config.ts",
+    "test:browser:postmessage": "vp pack && vp test --config vite.browser-postmessage.config.ts",
     "check": "vp check",
     "prepublishOnly": "vp run build"
   },
