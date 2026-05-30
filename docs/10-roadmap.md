@@ -143,24 +143,6 @@ DevTools panel の **real 連携** (= B 軸: AudioNode.prototype hook / Unworkle
 
 完了 条件: canonical Ex 1 が full (= meter 含む) で 動く + browser で meter が 30fps で UI に 流れる + DevTools panel 「Live state inspector」 (= named state slot + `state.publish` の live 値、 07-vite-plugin.md §6.1) が 動く。
 
-### Phase 8 — DSL surface 拡張
-
-各 後続 phase が 必要 と する primitive / declaration を 揃える phase。 candidate:
-
-- 残り primitive (= 算術 / 比較 / math / `select`、 全 inventory は 01-dsl.md §2.1)
-- **多型 (i32 / i64 / f64) arithmetic lowering** (= `Node<T>` generic 算術 surface を f32 以外 へ 拡張): 算術 / 比較 ノード が operand の scalar 型 を AST に 担ぐ (= 現 f32 固定 を 廃)、 emit が i32 / i64 / f64 ノード に 対応 命令 (= `i32.add` / `i32.rem_s` / 比較 `i32.lt_s` 等) を 出す、 analyze の f32-only guard (= 診断 `non-f32-arithmetic`) を 多型 許可 に 緩める、 number literal が operand 型 へ lift (= context-dependent literal lift、 Q33 / Q36) し `head.add(i).mod(LEN)` 等 の **整数 index 演算 が compile** する。 整数 index 演算 (= ring buffer / delay / 畳み込み の `head.add(i).mod(LEN)` 形) は canonical Ex 3 / Ex 5 / Ex 6 / Ex 7 / Ex 8 で 多用 = この lowering 無しでは 該当 canonical の declarative path が type check / compile を 通ら ない (Reported by @codex on #6)。
-- `state.i32` / `state.bool` / `state.f64` / `state.i64`
-- `buffer.f32` 等 + `buf.read` / `buf.write` / `buf.readInterpolated` / `buf.copyFrom`
-- `forSample.byN`
-- `everyNSamples` (= forSample callback 第 2 引数 経由、 Q43)
-- L1 helper (= 純粋 TS 関数、 inline 展開)
-- L2 subgraph (= `defineSubgraph` + `createSubgraph`、 state slot 持ち inline 展開)
-- `num()` literal helper (= chain 起点 用)
-
-単独 phase で 一括 fill する path も、 後続 phase (= MIDI / snapshot / SIMD) で 必要 に なる ごと に 順次 足す path も 取れる。 plan mode で 確定。
-
-完了 条件: 01-dsl.md §2-§10 の DSL surface が 公開 type と 整合、 canonical Ex 2 / Ex 4 / Ex 5 / Ex 6 / Ex 8 の declarative path が type check 通る。
-
 ### Phase 9 — MIDI
 
 - `midiInput` / `midiOutput` declaration (= 11-midi.md §1)
@@ -174,13 +156,11 @@ DevTools panel の **real 連携** (= B 軸: AudioNode.prototype hook / Unworkle
 
 ### Phase 10 — SIMD subpath
 
-- `@unworklet/core/simd` package export
-- vec primitive (= `vec4` / `splat` / `addVec` / `mulVec` / `subVec` / `divVec` / `sumLanes` / `lane`、 01-dsl.md §7.2)
-- `buffer.loadVec` / `storeVec` method (= 01-dsl.md §3.2 SIMD 部分)
-- `forSample.byN(4, ...)` SIMD pattern
-- `Node<'f32x4'>` の method surface 制約 (= `primitives.ts` の scalar primitive method merge): `add` / `sub` / `mul` / `div` 以外 の scalar method (= `sin` / `cos` / `tan` / `tanh` / `exp` / `log` / `sqrt` / `abs` / `floor` / `ceil` / `frac` / `mod` / `neg` / 比較 / `min` / `max` / `clamp`) を conditional method 型 (`T extends ScalarType ? … : never`) ま た は overload 分割 で `f32x4` か ら 除外 し、 vector tag に は documented な vector op (= `.add` / `.sub` / `.mul` / `.div` → `addVec` 系、 01-dsl.md §7.2) だ け 露出 す る。 こ れ が 無 い と `splat(g).sin()` / `.clamp(...)` が 型 を 通 り scalar f32 AST / lowering に mis-route す る (= scalar method merge が `T extends ScalarType | 'f32x4'` で 全 method を f32x4 に も 載 せ る た め)。
+opt-in `@unworklet/core/simd` (= `vec4` / `splat` / `addVec`〜`divVec` / `sumLanes` / `lane` / `buffer.loadVec` / `storeVec` + method 形 `a.mul(b)` の f32x4 対応 + `forSample.byN(4, ...)`) は 実 装 済 み。 scalar-only import が 影響 受け ない opt-in も 維 持。 残:
 
-完了 条件: canonical Ex 3 (= linear-phase EQ partitioned convolution) の SIMD path が 動く + scalar-only author の import が 影響 受け ない (= 旧 SIMD なし processor が 既 動作 維持)。
+- `Node<'f32x4'>` の method surface 制約: `add` / `sub` / `mul` / `div` 以外 の scalar method (= `sin` / `cos` / `tan` / `tanh` / `exp` / `log` / `sqrt` / `abs` / `floor` / `ceil` / `frac` / `mod` / `neg` / 比較 / `min` / `max` / `clamp`) を conditional method 型 (`T extends ScalarType ? … : never`) ま た は overload 分割 で `f32x4` か ら 除外 す る。 現 状 は scalar method merge が `T extends ScalarType | 'f32x4'` で 全 method を f32x4 に も 載 せ る た め、 `splat(g).sin()` / `.clamp(...)` が **型 は 通 る が capture 時 に throw** す る (= 「型 通 る が 動 か ない」)。 vector tag に は documented な vector op (= `.add` / `.sub` / `.mul` / `.div`、 01-dsl.md §7.2) だ け 露出 す べ き。
+
+完了 条件: canonical Ex 3 (= linear-phase EQ partitioned convolution) の SIMD path が 動く。
 
 ### Phase 11 — Snapshot / restore + migration
 
