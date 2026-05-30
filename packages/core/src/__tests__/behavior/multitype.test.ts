@@ -110,6 +110,28 @@ test("i64 max/min: max(3n, 7n) = 7, min = 3 (integer compare+select)", async () 
   allEqual(await gen(() => f32(i64(3n).min(i64(7n)))), 3);
 });
 
+// abs は整数で意味があるので i32/i64 で動く (= select(x < 0, -x, x)、f32.abs ではない)。
+test("i32/i64 abs: |-7| = 7 (integer select-based, not f32.abs)", async () => {
+  allEqual(await gen(() => f32(i32(-7).abs())), 7);
+  allEqual(await gen(() => f32(i32(7).abs())), 7);
+  allEqual(await gen(() => f32(i64(-7n).abs())), 7);
+});
+
+// float-only math (sqrt/floor/ceil/frac + transcendentals) は f32/f64 限定 = 整数 node
+// では method が never で呼べない (= i32(1).sin() は compile error)。abs は整数で可。
+type IsNever<X> = [X] extends [never] ? true : false;
+function expectTrue<_T extends true>(): void {}
+function expectFalse<_T extends false>(): void {}
+test("float-only math は整数 node で型エラー、abs は整数で可 (型契約)", () => {
+  expectTrue<IsNever<Node<"i32">["sin"]>>();
+  expectTrue<IsNever<Node<"i32">["sqrt"]>>();
+  expectTrue<IsNever<Node<"i32">["floor"]>>();
+  expectTrue<IsNever<Node<"i64">["exp"]>>();
+  expectFalse<IsNever<Node<"f32">["sin"]>>(); // f32 は使える
+  expectFalse<IsNever<Node<"i32">["abs"]>>(); // 整数 abs は使える
+  expect(true).toBe(true);
+});
+
 test("i32 neg: -(5) = -5", async () => {
   allEqual(await gen(() => f32(i32(5).neg())), -5);
 });

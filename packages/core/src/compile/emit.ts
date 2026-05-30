@@ -363,6 +363,29 @@ function emitMaxMin(
 }
 
 /**
+ * Type-dispatched `abs`. WASM has `f{32,64}.abs` but no integer abs, so `i32` /
+ * `i64` lower to `select(x < 0, -x, x)` (= signed compare + negate). The operand
+ * thunk is evaluated multiple times (pure side-effect-free expression → identical).
+ */
+function emitAbs(mod: BinaryenModule, type: ScalarType, emitX: () => number): number {
+  if (type === "i32") {
+    return mod.select(
+      mod.i32.lt_s(emitX(), mod.i32.const(0)),
+      emitNeg(mod, type, emitX()),
+      emitX(),
+    );
+  }
+  if (type === "i64") {
+    return mod.select(
+      mod.i64.lt_s(emitX(), i64Const(mod, 0n)),
+      emitNeg(mod, type, emitX()),
+      emitX(),
+    );
+  }
+  return floatNs(mod, type).abs(emitX());
+}
+
+/**
  * Type-dispatched numeric binary op (= 多 型 arithmetic / comparison lowering)。
  * `op` は binaryen 命 令 名 (= comparison は `le` / `ge`、 AST kind の `lte` /
  * `gte` を 呼 び 出 し 側 で map)。 整 数 は 符 号 付 き (= `div_s` / `lt_s` 等)。
@@ -990,7 +1013,7 @@ export function emitExpression(
       return mod.f32.sub(aTeed, mod.block(null, [setQuotient, product], binaryen.f32));
     }
     case "abs":
-      return floatNs(mod, node.type).abs(emitExpression(node.value, layout, mod, binaryen));
+      return emitAbs(mod, node.type, () => emitExpression(node.value, layout, mod, binaryen));
     case "neg":
       return emitNeg(mod, node.type, emitExpression(node.value, layout, mod, binaryen));
     case "sqrt":
