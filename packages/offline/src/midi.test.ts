@@ -6,11 +6,15 @@
  */
 
 import "@unworklet/core";
+import type { MidiEvent } from "@unworklet/core";
 import {
   audioOutput,
+  buffer,
   defineProcessor,
+  event,
   f32,
   forSample,
+  i32,
   midiInput,
   midiOutput,
   state,
@@ -153,4 +157,74 @@ test("outbound emit is sample-accurate via atSample: i", async () => {
   expect(midi).toHaveLength(1);
   expect(midi[0]!.atSample).toBe(40);
   expect(midi[0]!.payload).toEqual({ type: "noteOff", channel: 0, note: 60, velocity: 0 });
+});
+
+test("event<T> emit inside a MIDI handler does not corrupt the drain (Ex8-style)", async () => {
+  // A noteOn handler emits a generic event<T> AND the drain keeps walking — the
+  // emit reuses the drain's head/slot locals, so the loop must re-read head.
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const keys = midiInput({ name: "keys" });
+    const notePlayed = event<{ note: number }>({ name: "notePlayed" });
+    const last = state.i32(0);
+    return {
+      process: () => {
+        keys.onEvent("noteOn", ({ note, atSample }) => {
+          last.store(note);
+          notePlayed.emitIf(true, { atSample, note });
+        });
+        forSample((i) => {
+          out.ch(0).at(i).write(f32(last.load()));
+        });
+      },
+    };
+  });
+  // Two noteOn in one block → both handlers must run (drain not broken by emit).
+  const result = await renderOffline(proc, {
+    sampleRate: 48000,
+    duration: 128 / 48000,
+    events: [
+      { name: "keys", payload: { type: "noteOn", channel: 0, note: 60, velocity: 1 }, atSample: 0 },
+      {
+        name: "keys",
+        payload: { type: "noteOn", channel: 0, note: 64, velocity: 1 },
+        atSample: 10,
+      },
+    ],
+  });
+  const played = result.events.filter((e) => e.name === "notePlayed");
+  expect(played).toHaveLength(2);
+  expect(played.map((e) => (e.payload as { note: number }).note)).toEqual([60, 64]);
+  expect(result.outputs.main![0]![0]).toBe(64); // last note wins
+});
+
+test("sysex bridge: ingest, rewrite device-id byte, re-emit (Ex9-style)", async () => {
+  const MAX_SYSEX_LEN = 64;
+  const bridge = defineProcessor(() => {
+    const sysexIn = midiInput({ name: "sysexIn" });
+    const sysexOut = midiOutput({ name: "sysexOut" });
+    const buf = buffer.u8({ size: MAX_SYSEX_LEN });
+    const targetId = state.i32(0x42);
+    return {
+      process: () => {
+        sysexIn.onEvent("sysex", ({ data, length, atSample }) => {
+          buf.copyFrom(data);
+          buf.write(i32(1), targetId.load()); // rewrite byte 1 = device ID
+          sysexOut.emitIf(true, { type: "sysex", data: buf, length, atSample });
+        });
+      },
+    };
+  });
+  const inputSysex = new Uint8Array([0xf0, 0x10, 0x01, 0x02, 0x03, 0xf7]);
+  const result = await renderOffline(bridge, {
+    sampleRate: 48000,
+    duration: 128 / 48000,
+    events: [{ name: "sysexIn", payload: { type: "sysex", data: inputSysex }, atSample: 0 }],
+  });
+  const out = result.events.filter((e) => e.name === "sysexOut");
+  expect(out).toHaveLength(1);
+  const ev = out[0]!.payload as Extract<MidiEvent, { type: "sysex" }>;
+  expect(ev.type).toBe("sysex");
+  // byte 1 rewritten to 0x42, length preserved, rest unchanged.
+  expect(Array.from(ev.data)).toEqual([0xf0, 0x42, 0x01, 0x02, 0x03, 0xf7]);
 });

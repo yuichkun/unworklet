@@ -134,10 +134,12 @@ export async function renderOffline<C>(
   const midiInPorts = meta.midiInputs.map((d) => ({
     name: d.name,
     ...meta.layout.regions.midiRings.slots[d.name]!,
+    sysex: meta.layout.regions.sysexContent.slots[d.name],
   }));
   const midiOutPorts = meta.midiOutputs.map((d) => ({
     name: d.name,
     ...meta.layout.regions.midiRings.slots[d.name]!,
+    sysex: meta.layout.regions.sysexContent.slots[d.name],
   }));
 
   const totalSamples =
@@ -250,12 +252,27 @@ export async function renderOffline<C>(
       const slotByteOffset =
         port.base + MESSAGE_HEADER_BYTES + (head % port.capacity) * MIDI_SLOT_BYTES;
       const dv = new DataView(memory);
-      const { status, data1, data2 } = midiEventToWire(ev.payload as MidiEvent);
-      dv.setUint8(slotByteOffset, status);
-      dv.setUint8(slotByteOffset + 1, data1);
-      dv.setUint8(slotByteOffset + 2, data2);
-      dv.setUint8(slotByteOffset + 3, 0);
-      dv.setUint32(slotByteOffset + 4, ev.atSample % SAMPLES_PER_BLOCK, true);
+      const payload = ev.payload as MidiEvent;
+      if (payload.type === "sysex") {
+        // Sysex: bytes → content chunk `[length, data]`, slot carries
+        // `[0xF0, chunkIdx, _pad, _pad, atSample]` (`11-midi.md` §4.3)。
+        const region = port.sysex!;
+        const chunkIdx = head % region.chunks;
+        const chunkBase = region.base + chunkIdx * region.perChunk;
+        const len = Math.min(payload.data.length, region.perChunk - 4);
+        dv.setUint32(chunkBase, len, true);
+        new Uint8Array(memory, chunkBase + 4, len).set(payload.data.subarray(0, len));
+        dv.setUint8(slotByteOffset, 0xf0);
+        dv.setUint8(slotByteOffset + 1, chunkIdx);
+        dv.setUint32(slotByteOffset + 4, ev.atSample % SAMPLES_PER_BLOCK, true);
+      } else {
+        const { status, data1, data2 } = midiEventToWire(payload);
+        dv.setUint8(slotByteOffset, status);
+        dv.setUint8(slotByteOffset + 1, data1);
+        dv.setUint8(slotByteOffset + 2, data2);
+        dv.setUint8(slotByteOffset + 3, 0);
+        dv.setUint32(slotByteOffset + 4, ev.atSample % SAMPLES_PER_BLOCK, true);
+      }
       headerView[0] = head + 1;
     }
 
@@ -350,11 +367,20 @@ export async function renderOffline<C>(
         const data1 = dv.getUint8(slotByteOffset + 1);
         const data2 = dv.getUint8(slotByteOffset + 2);
         const slotAtSample = dv.getUint32(slotByteOffset + 4, true);
-        emittedEvents.push({
-          name: port.name,
-          payload: wireToMidiEvent(status, data1, data2),
-          atSample: blockStart + slotAtSample,
-        });
+        let payload: MidiEvent;
+        if (status === 0xf0 && port.sysex !== undefined) {
+          // Sysex: chunkIdx = data1, content chunk = [length, bytes...]。
+          const region = port.sysex;
+          const chunkBase = region.base + (data1 % region.chunks) * region.perChunk;
+          const len = dv.getUint32(chunkBase, true);
+          payload = {
+            type: "sysex",
+            data: new Uint8Array(memory.slice(chunkBase + 4, chunkBase + 4 + len)),
+          };
+        } else {
+          payload = wireToMidiEvent(status, data1, data2);
+        }
+        emittedEvents.push({ name: port.name, payload, atSample: blockStart + slotAtSample });
         tail += 1;
       }
       headerView[1] = head;

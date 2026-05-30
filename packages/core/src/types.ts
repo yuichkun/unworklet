@@ -347,8 +347,11 @@ export type MidiEventGraph =
     }
   | { type: "systemRealtime"; status: Node<"i32">; atSample: Node<"i32"> }
   | {
+      // Inbound handler `data` is a read-only proxy over the port's sysex content
+      // (bulk-copy into a `buffer.u8` via `copyFrom`). The emit side widens this
+      // to also accept a `Buffer<'u8'>` for new content (see `MidiEventEmit`).
       type: "sysex";
-      data: Buffer<"u8"> | TypedArrayFieldRef<"u8">;
+      data: TypedArrayFieldRef<"u8">;
       length: Node<"i32">;
       atSample: Node<"i32">;
     };
@@ -366,7 +369,15 @@ export type MidiEventGraphOf<K extends MidiEventType> = Extract<MidiEventGraph, 
  */
 export type MidiEventEmit = MidiEventGraph extends infer E
   ? E extends MidiEventGraph
-    ? { [K in keyof E]: E[K] extends Node<"i32"> ? Node<"i32"> | number : E[K] }
+    ? {
+        [K in keyof E]: E[K] extends Node<"i32">
+          ? Node<"i32"> | number
+          : // sysex emit accepts new content from a worklet `buffer.u8` as well as
+            // an inbound proxy for thru (`11-midi.md` §2.5).
+            E[K] extends TypedArrayFieldRef<"u8">
+            ? Buffer<"u8"> | TypedArrayFieldRef<"u8">
+            : E[K];
+      }
     : never
   : never;
 

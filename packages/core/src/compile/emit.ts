@@ -1437,6 +1437,8 @@ export function emitExpression(
       return mod.local.get(TEMP_LOCAL_BASE + node.tempId, binaryenTypeOf(node.type, binaryen));
     case "midiFieldRead":
       return emitMidiFieldRead(node, mod, binaryen);
+    case "midiSysexLength":
+      return emitMidiSysexLength(node, layout, mod, binaryen);
     case "audioOutWrite":
     case "forSample":
     case "stateStore":
@@ -1449,6 +1451,7 @@ export function emitExpression(
     case "tempAssign":
     case "midiOnEvent":
     case "midiEmitIf":
+    case "midiSysexCopy":
       throw new Error(`statement node '${node.kind}' cannot appear in expression position`);
   }
 }
@@ -1625,6 +1628,8 @@ export function emitStatement(
       );
     case "midiEmitIf":
       return emitMidiEmitIf(node, layout, mod, binaryen);
+    case "midiSysexCopy":
+      return emitMidiSysexCopy(node, layout, mod, binaryen);
     /* v8 ignore next 3 — midiOnEvent は emit top-level で port ご と に 並 び 替 え 経 由 で
        emitMidiInputDrain を 直 接 呼 ぶ path = emitStatement 経 由 hit ナ シ */
     case "midiOnEvent":
@@ -2047,6 +2052,73 @@ function emitMidiFieldRead(
 }
 
 /**
+ * Address of the current inbound drain slot's sysex content chunk (`11-midi.md`
+ * §4.3): `contentBase + chunkIdx × perChunk`, where `chunkIdx` = the slot's
+ * data1 byte (= EVENT_SLOT_PTR_LOCAL + 1). The chunk is `[length:u32, bytes...]`.
+ */
+function sysexContentChunkPtr(
+  port: string,
+  layout: Layout,
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): number {
+  const region = layout.regions.sysexContent.slots[port];
+  /* v8 ignore next 2 — sysex を 使 う port は layout で content region を 確 保 済 */
+  if (region === undefined)
+    throw new Error(`unworklet: midiInput "${port}" has no sysex content region`);
+  return mod.i32.add(
+    mod.i32.const(region.base),
+    mod.i32.mul(
+      mod.i32.load8_u(1, 1, mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32)),
+      mod.i32.const(region.perChunk),
+    ),
+  );
+}
+
+/** `midiSysexLength` = inbound sysex content-chunk length (= `[length:u32]` head). */
+function emitMidiSysexLength(
+  node: AstNode & { kind: "midiSysexLength" },
+  layout: Layout,
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): number {
+  return mod.i32.load(0, BYTES_PER_I32, sysexContentChunkPtr(node.port, layout, mod, binaryen));
+}
+
+/** `midiSysexCopy` = bulk copy inbound sysex content chunk → a buffer.u8 (= §2.5). */
+function emitMidiSysexCopy(
+  node: AstNode & { kind: "midiSysexCopy" },
+  layout: Layout,
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): number {
+  const bufferBase = layout.regions.buffers.slots[node.bufferName];
+  /* v8 ignore next 2 — buffer は layout で 確 保 済 */
+  if (bufferBase === undefined) throw new Error(`unknown buffer: ${node.bufferName}`);
+  const chunkPtr = sysexContentChunkPtr(node.port, layout, mod, binaryen);
+  // copy min(contentLength, bufferSize) bytes from chunk+4 (= after the length
+  // header) into the buffer. Use BUFINTERP_I0_LOCAL as the chunk-ptr scratch so
+  // the length re-read and the copy address agree.
+  return mod.block(null, [
+    mod.local.set(BUFINTERP_I0_LOCAL, chunkPtr),
+    mod.memory.copy(
+      mod.i32.const(bufferBase),
+      mod.i32.add(mod.local.get(BUFINTERP_I0_LOCAL, binaryen.i32), mod.i32.const(4)),
+      minI32(
+        mod,
+        mod.i32.load(0, BYTES_PER_I32, mod.local.get(BUFINTERP_I0_LOCAL, binaryen.i32)),
+        mod.i32.const(node.bufferSize),
+      ),
+    ),
+  ]);
+}
+
+/** `min` of two i32 expressions (each evaluated once). */
+function minI32(mod: BinaryenModule, a: number, b: number): number {
+  return mod.select(mod.i32.lt_s(a, b), a, b);
+}
+
+/**
  * Drain one `midiInput` port at the block boundary (Q38-b): walk tail→head,
  * and for each registered handler emit `if (status matches eventType) { body }`
  * (registration order, Q38-c). Handler `midiFieldRead` nodes resolve against
@@ -2071,6 +2143,9 @@ function emitMidiInputDrain(
   // status byte → event-type predicate。 channel-voice = 高 nibble 一 致、
   // systemRealtime = 0xF8..0xFF (= status & 0xF8 == 0xF8)。
   const predicate = (eventType: string): number => {
+    if (eventType === "sysex") {
+      return mod.i32.eq(status(), mod.i32.const(0xf0));
+    }
     if (eventType === "systemRealtime") {
       return mod.i32.eq(mod.i32.and(status(), mod.i32.const(0xf8)), mod.i32.const(0xf8));
     }
@@ -2086,12 +2161,16 @@ function emitMidiInputDrain(
     );
   }
 
+  // The loop condition re-reads `head` from memory each iteration (not a cached
+  // local): a handler may `emitIf` to another port, and that emit reuses
+  // EVENT_HEAD_LOCAL / EVENT_SLOT_PTR_LOCAL — so the drain must not depend on
+  // those surviving the handler body. `head` is stable during the drain (the
+  // producer is main / injection, never the handler).
   return mod.block(null, [
     mod.local.set(
       MESSAGE_TAIL_LOCAL,
       mod.i32.load(0, BYTES_PER_I32, mod.i32.const(ringBase + MIDI_TAIL_OFFSET)),
     ),
-    mod.local.set(EVENT_HEAD_LOCAL, mod.i32.load(0, BYTES_PER_I32, mod.i32.const(ringBase))),
     mod.block("break", [
       mod.loop(
         "continue",
@@ -2100,7 +2179,7 @@ function emitMidiInputDrain(
             "break",
             mod.i32.eq(
               mod.local.get(MESSAGE_TAIL_LOCAL, binaryen.i32),
-              mod.local.get(EVENT_HEAD_LOCAL, binaryen.i32),
+              mod.i32.load(0, BYTES_PER_I32, mod.i32.const(ringBase)),
             ),
           ),
           mod.local.set(
@@ -2129,7 +2208,7 @@ function emitMidiInputDrain(
       0,
       BYTES_PER_I32,
       mod.i32.const(ringBase + MIDI_TAIL_OFFSET),
-      mod.local.get(EVENT_HEAD_LOCAL, binaryen.i32),
+      mod.local.get(MESSAGE_TAIL_LOCAL, binaryen.i32),
     ),
   ]);
 }
@@ -2181,16 +2260,17 @@ function emitMidiEmitIf(
   const capacity = slot.capacity;
   const slotsBase = ringBase + MIDI_HEADER_BYTES_EMIT;
 
-  const { status, data1, data2 } = emitMidiWireBytes(node, layout, mod, binaryen);
+  const slotPtr = (): number => mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32);
+  const head = (): number => mod.local.get(EVENT_HEAD_LOCAL, binaryen.i32);
   const atSample = emitExpression(node.atSample, layout, mod, binaryen);
 
-  const emitBody = mod.block(null, [
+  // Common prologue: load head, drop-oldest on overflow, compute the dest slot ptr.
+  const prologue: number[] = [
     mod.local.set(EVENT_HEAD_LOCAL, mod.i32.load(0, BYTES_PER_I32, mod.i32.const(ringBase))),
-    // overflow drop-oldest (= ring full なら overflowCount++ + tail++)。
     mod.if(
       mod.i32.ge_s(
         mod.i32.sub(
-          mod.local.get(EVENT_HEAD_LOCAL, binaryen.i32),
+          head(),
           mod.i32.load(0, BYTES_PER_I32, mod.i32.const(ringBase + MIDI_TAIL_OFFSET)),
         ),
         mod.i32.const(capacity),
@@ -2216,29 +2296,110 @@ function emitMidiEmitIf(
         ),
       ]),
     ),
-    mod.local.set(
-      EVENT_SLOT_PTR_LOCAL,
-      mod.i32.add(
-        mod.i32.const(slotsBase),
-        mod.i32.mul(
-          mod.i32.rem_u(mod.local.get(EVENT_HEAD_LOCAL, binaryen.i32), mod.i32.const(capacity)),
-          mod.i32.const(MIDI_SLOT_BYTES_EMIT),
+  ];
+
+  const advanceHead = mod.i32.store(
+    0,
+    BYTES_PER_I32,
+    mod.i32.const(ringBase),
+    mod.i32.add(head(), mod.i32.const(1)),
+  );
+
+  let body: number[];
+  if (node.eventType === "sysex") {
+    // Sysex: status=0xF0 + chunkIdx (= head % chunks) in data1; content chunk
+    // `[length, bytes]` filled from the source (worklet buffer.u8 or an inbound
+    // sysex content chunk for thru). Capture source ptr + copyLen BEFORE the
+    // dest slot ptr overwrites EVENT_SLOT_PTR_LOCAL (thru reads the source slot).
+    const region = layout.regions.sysexContent.slots[node.port];
+    /* v8 ignore next 2 — sysex emit する port は layout で content region 確 保 済 */
+    if (region === undefined)
+      throw new Error(`unworklet: midiOutput "${node.port}" has no sysex content region`);
+    const maxBody = region.perChunk - 4;
+    const lengthExpr = node.sysexLength
+      ? emitExpression(node.sysexLength, layout, mod, binaryen)
+      : mod.i32.const(0);
+    // SRC scratch = BUFINTERP_I0_LOCAL (= source byte address), LEN = PAYLOAD_CLAMP_LOCAL.
+    let srcSet: number;
+    if (node.sysexBufferName !== undefined) {
+      const bufferBase = layout.regions.buffers.slots[node.sysexBufferName]!;
+      srcSet = mod.local.set(BUFINTERP_I0_LOCAL, mod.i32.const(bufferBase));
+    } else {
+      // thru: source = source port's current drain chunk + 4 (after length header).
+      const srcRegion = layout.regions.sysexContent.slots[node.sysexSourcePort!]!;
+      srcSet = mod.local.set(
+        BUFINTERP_I0_LOCAL,
+        mod.i32.add(
+          mod.i32.add(
+            mod.i32.const(srcRegion.base),
+            mod.i32.mul(mod.i32.load8_u(1, 1, slotPtr()), mod.i32.const(srcRegion.perChunk)),
+          ),
+          mod.i32.const(4),
+        ),
+      );
+    }
+    const chunkOffset = (): number =>
+      mod.i32.mul(
+        mod.i32.rem_u(head(), mod.i32.const(region.chunks)),
+        mod.i32.const(region.perChunk),
+      );
+    const contentChunk = (): number => mod.i32.add(mod.i32.const(region.base), chunkOffset());
+    body = [
+      srcSet,
+      mod.local.set(PAYLOAD_CLAMP_LOCAL, minI32(mod, lengthExpr, mod.i32.const(maxBody))),
+      mod.local.set(
+        EVENT_SLOT_PTR_LOCAL,
+        mod.i32.add(
+          mod.i32.const(slotsBase),
+          mod.i32.mul(
+            mod.i32.rem_u(head(), mod.i32.const(capacity)),
+            mod.i32.const(MIDI_SLOT_BYTES_EMIT),
+          ),
         ),
       ),
-    ),
-    mod.i32.store8(0, 1, mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32), status),
-    mod.i32.store8(1, 1, mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32), data1),
-    mod.i32.store8(2, 1, mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32), data2),
-    mod.i32.store(4, BYTES_PER_I32, mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32), atSample),
-    mod.i32.store(
-      0,
-      BYTES_PER_I32,
-      mod.i32.const(ringBase),
-      mod.i32.add(mod.local.get(EVENT_HEAD_LOCAL, binaryen.i32), mod.i32.const(1)),
-    ),
-  ]);
+      // content chunk = [length:u32, bytes...]
+      mod.i32.store(
+        0,
+        BYTES_PER_I32,
+        contentChunk(),
+        mod.local.get(PAYLOAD_CLAMP_LOCAL, binaryen.i32),
+      ),
+      mod.memory.copy(
+        mod.i32.add(contentChunk(), mod.i32.const(4)),
+        mod.local.get(BUFINTERP_I0_LOCAL, binaryen.i32),
+        mod.local.get(PAYLOAD_CLAMP_LOCAL, binaryen.i32),
+      ),
+      // slot = [0xF0, chunkIdx, _pad, _pad, atSample]
+      mod.i32.store8(0, 1, slotPtr(), mod.i32.const(0xf0)),
+      mod.i32.store8(1, 1, slotPtr(), mod.i32.rem_u(head(), mod.i32.const(region.chunks))),
+      mod.i32.store(4, BYTES_PER_I32, slotPtr(), atSample),
+      advanceHead,
+    ];
+  } else {
+    const { status, data1, data2 } = emitMidiWireBytes(node, layout, mod, binaryen);
+    body = [
+      mod.local.set(
+        EVENT_SLOT_PTR_LOCAL,
+        mod.i32.add(
+          mod.i32.const(slotsBase),
+          mod.i32.mul(
+            mod.i32.rem_u(head(), mod.i32.const(capacity)),
+            mod.i32.const(MIDI_SLOT_BYTES_EMIT),
+          ),
+        ),
+      ),
+      mod.i32.store8(0, 1, slotPtr(), status),
+      mod.i32.store8(1, 1, slotPtr(), data1),
+      mod.i32.store8(2, 1, slotPtr(), data2),
+      mod.i32.store(4, BYTES_PER_I32, slotPtr(), atSample),
+      advanceHead,
+    ];
+  }
 
-  return mod.if(emitExpression(node.cond, layout, mod, binaryen), emitBody);
+  return mod.if(
+    emitExpression(node.cond, layout, mod, binaryen),
+    mod.block(null, [...prologue, ...body]),
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -2386,6 +2547,8 @@ function collectUsedMathKinds(graph: CapturedGraph): Set<string> {
       case "stateLoad":
       case "tempRef":
       case "midiFieldRead":
+      case "midiSysexLength":
+      case "midiSysexCopy":
       case "messageFieldRead":
         break;
     }

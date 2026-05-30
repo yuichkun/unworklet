@@ -39,7 +39,7 @@ const emptyTail = (
   payloadContent: { base: totalBytes, eventSlots: {}, messageSlots: {} },
   everyNSamplesCounters: { base: totalBytes, slots: {} },
   midiRings: { base: totalBytes, slots: {} },
-  sysexContent: { base: totalBytes, size: 0 },
+  sysexContent: { base: totalBytes, slots: {} },
   publishShared: { base: totalBytes, slots: {} },
   publishCounters: { base: totalBytes, slots: {} },
   snapshotRegion: { base: totalBytes, size: 0 },

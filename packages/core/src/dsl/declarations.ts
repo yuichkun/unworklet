@@ -70,6 +70,20 @@ const PAYLOAD_FIELD_META = Symbol("unworklet.payloadFieldMeta");
 type PayloadFieldMeta = { decl: MessageDeclAst; field: string };
 
 /**
+ * Inbound sysex `data` proxy (= `TypedArrayFieldRef<'u8'>`) hidden marker: the
+ * source MIDI port whose current drain-slot content chunk holds the bytes.
+ * `buf.copyFrom(data)` reads this to emit a `midiSysexCopy` (`11-midi.md` §2.5).
+ */
+const MIDI_SYSEX_META = Symbol("unworklet.midiSysexMeta");
+
+type MidiSysexMeta = { port: string };
+
+const midiSysexMeta = (v: unknown): MidiSysexMeta | undefined =>
+  typeof v === "object" && v !== null
+    ? (v as Record<symbol, MidiSysexMeta | undefined>)[MIDI_SYSEX_META]
+    : undefined;
+
+/**
  * buffer handle に隠し持たせる identity (= name + element type)。`event.emitIf` が
  * typed-array field の値として渡された buffer を検出 (= §4.3 worklet→main の emit
  * 側) するための marker。公開型 `Buffer<T>` には現れない内部 symbol。
@@ -486,6 +500,23 @@ function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer
       );
     },
     copyFrom: (src: TypedArrayFieldRef<T>) => {
+      // Inbound sysex `data` proxy → bulk copy the port's content chunk into this
+      // buffer (= `11-midi.md` §2.5 ingest path). u8 buffer only.
+      const sysexSrc = midiSysexMeta(src);
+      if (sysexSrc !== undefined) {
+        if (decl.type !== "u8") {
+          throw new Error(
+            `unworklet: buffer "${decl.name}".copyFrom(sysex data) requires a buffer.u8 (got '${decl.type}'). (stable ID 'payload-element-type-mismatch')`,
+          );
+        }
+        addStatement({
+          kind: "midiSysexCopy",
+          port: sysexSrc.port,
+          bufferName: decl.name,
+          bufferSize: decl.size,
+        });
+        return;
+      }
       const meta = (src as unknown as Record<symbol, PayloadFieldMeta | undefined>)[
         PAYLOAD_FIELD_META
       ];
@@ -1097,17 +1128,24 @@ function liftI32(v: Node<"i32"> | number): AstNode {
 
 const I32_ZERO: AstNode = { kind: "literal", type: "i32", value: 0 };
 
-/** A decoded MIDI drain-slot field as a graph `Node<'i32'>` (= `midiFieldRead`). */
+/**
+ * A decoded MIDI drain-slot field as a graph `Node<'i32'>`. Eager-captured into
+ * a temp local at the handler's start (= `captureTemp`, same path as issue #8):
+ * the slot pointer (EVENT_SLOT_PTR_LOCAL) is reused by any `emitIf` later in the
+ * handler, so freezing the field value up front keeps reads correct across an
+ * intervening emit.
+ */
 function midiField(field: MidiByteField): Node<"i32"> {
-  return wrapAst<"i32">({ kind: "midiFieldRead", field });
+  return captureTemp<"i32">({ kind: "midiFieldRead", field }, "i32");
 }
 
 /**
  * Build the `MidiEventGraph` an inbound `onEvent(type, handler)` receives: each
  * semantic field maps to the decoded drain-slot byte for that event type
- * (`11-midi.md` §2.2 / §4.1). Sysex is filled in a later step (C.4).
+ * (`11-midi.md` §2.2 / §4.1). The `sysex` variant's `data` proxy reads the
+ * port's content region (`port` identifies it).
  */
-function makeMidiEventProxy(eventType: MidiEventType): MidiEventGraph {
+function makeMidiEventProxy(eventType: MidiEventType, port: string): MidiEventGraph {
   const channel = midiField("channel");
   const atSample = midiField("atSample");
   switch (eventType) {
@@ -1144,10 +1182,36 @@ function makeMidiEventProxy(eventType: MidiEventType): MidiEventGraph {
       };
     case "systemRealtime":
       return { type: "systemRealtime", status: midiField("status"), atSample };
-    /* v8 ignore next 2 — sysex inbound handler は C.4 で fill */
     case "sysex":
-      throw new Error("unworklet: midiInput sysex handler is filled in a later step (C.4)");
+      return {
+        type: "sysex",
+        data: makeSysexDataProxy(port),
+        length: captureTemp<"i32">({ kind: "midiSysexLength", port }, "i32"),
+        atSample,
+      };
   }
+}
+
+/**
+ * Inbound sysex `data` proxy: a read-only `TypedArrayFieldRef<'u8'>` whose
+ * `.length` is the current drain slot's content-chunk length and which carries
+ * a hidden port marker so `buf.copyFrom(data)` knows the source content region.
+ * `.at(idx)` reads one byte (rare; the canonical path is `copyFrom` bulk).
+ */
+function makeSysexDataProxy(port: string): TypedArrayFieldRef<"u8"> {
+  const proxy = {
+    length: wrapAst<"i32">({ kind: "midiSysexLength", port }),
+    at: (_idx: Node<"i32"> | number): Node<"i32"> => {
+      throw new Error(
+        "unworklet: per-byte .at() on inbound sysex data is not in v1.0.0 — bulk-copy into a buffer.u8 via copyFrom and read through the buffer",
+      );
+    },
+  };
+  Object.defineProperty(proxy, MIDI_SYSEX_META, {
+    value: { port } satisfies MidiSysexMeta,
+    enumerable: false,
+  });
+  return proxy as unknown as TypedArrayFieldRef<"u8">;
 }
 
 export function midiInput(options: MidiPortOptions): MidiInputHandle {
@@ -1167,7 +1231,7 @@ export function midiInput(options: MidiPortOptions): MidiInputHandle {
       const prev = ctx.currentLoopBody;
       ctx.currentLoopBody = handlerBody;
       try {
-        handler(makeMidiEventProxy(type) as never);
+        handler(makeMidiEventProxy(type, decl.name) as never);
       } finally {
         ctx.currentLoopBody = prev;
       }
@@ -1264,9 +1328,36 @@ export function midiOutput(options: MidiPortOptions): MidiOutputHandle {
             arg2: I32_ZERO,
           });
           return;
-        /* v8 ignore next 2 — sysex emit は C.4 で fill */
-        case "sysex":
-          throw new Error("unworklet: midiOutput sysex emit is filled in a later step (C.4)");
+        case "sysex": {
+          const dataRef = event.data;
+          const length = liftI32((event.length ?? 0) as Node<"i32"> | number);
+          const bufMeta = bufferHandleMeta(dataRef);
+          const sysexMeta = midiSysexMeta(dataRef);
+          if (bufMeta !== undefined) {
+            // New content from a worklet buffer.u8 → copy buf[0..length-1] into
+            // the port's content region.
+            addStatement({
+              ...base,
+              eventType: "sysex",
+              sysexBufferName: bufMeta.decl.name,
+              sysexBufferSize: bufMeta.decl.size,
+              sysexLength: length,
+            });
+          } else if (sysexMeta !== undefined) {
+            // Thru: copy the inbound port's content chunk into this port's region.
+            addStatement({
+              ...base,
+              eventType: "sysex",
+              sysexSourcePort: sysexMeta.port,
+              sysexLength: length,
+            });
+          } else {
+            throw new Error(
+              "unworklet: midiOutput sysex `data` must be a buffer.u8 (new content) or an inbound sysex `data` proxy (thru)",
+            );
+          }
+          return;
+        }
       }
     },
   };

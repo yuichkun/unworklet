@@ -120,6 +120,11 @@ export type AstNode =
   // the output ringbuffer (wire bytes computed in emit from the semantic args).
   | { kind: "midiOnEvent"; port: string; eventType: MidiEventType; body: AstNode[] }
   | { kind: "midiFieldRead"; field: MidiByteField }
+  // Inbound sysex (`11-midi.md` §4.3): the current drain slot's content chunk
+  // length, and a bulk copy of its bytes into a `buffer.u8` (the realtime-safe
+  // ingest path — `buf.copyFrom(data)` inside a `sysex` handler).
+  | { kind: "midiSysexLength"; port: string }
+  | { kind: "midiSysexCopy"; port: string; bufferName: string; bufferSize: number }
   | {
       kind: "midiEmitIf";
       port: string;
@@ -133,12 +138,12 @@ export type AstNode =
       arg1?: AstNode;
       arg2?: AstNode;
       // Sysex (variable length): bytes come from a worklet-declared `buffer.u8`
-      // (new content) or an inbound `TypedArrayFieldRef<'u8'>` (thru); `length`
-      // selects how many bytes ship into the port's sysex content region.
+      // (new content, `sysexBufferName`) or an inbound `TypedArrayFieldRef<'u8'>`
+      // thru (`sysexSourcePort` = the source midiInput's content region);
+      // `sysexLength` selects how many bytes ship into the port's content region.
       sysexBufferName?: string;
       sysexBufferSize?: number;
-      sysexSourceMessage?: string;
-      sysexSourceField?: string;
+      sysexSourcePort?: string;
       sysexLength?: AstNode;
     }
   // `buffer.<type>` scalar access (`01-dsl.md` §3.2). `elementType` is the
@@ -440,6 +445,7 @@ export function inferAstType(ast: AstNode): ScalarType {
     case "messageFieldRead":
       return ast.wireType;
     case "midiFieldRead":
+    case "midiSysexLength":
       // Every decoded MIDI field surfaces as a graph i32 (= `MidiEventGraph`).
       return "i32";
     // buffer read result = element type, except `'u8'` surfaces as `'i32'`
@@ -476,6 +482,7 @@ export function inferAstType(ast: AstNode): ScalarType {
     case "tempAssign":
     case "midiOnEvent":
     case "midiEmitIf":
+    case "midiSysexCopy":
       throw new Error(`statement node '${ast.kind}' cannot appear in expression position`);
   }
 }

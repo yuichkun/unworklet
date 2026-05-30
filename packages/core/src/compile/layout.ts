@@ -78,6 +78,14 @@ const MIDI_SLOT_BYTES = 8;
 const MIDI_HEADER_BYTES = 12;
 
 /**
+ * Per-sysex-port content region sizing (`11-midi.md` §4.3). `chunks` chunks of
+ * `SYSEX_PER_CHUNK_BYTES` each (= `[length:u32, data...]`), drop-oldest cycled
+ * by the slot's `chunkIdx`. 1 KiB/chunk × 16 chunks = 16 KiB per sysex port.
+ */
+const SYSEX_PER_CHUNK_BYTES = 1024;
+const SYSEX_CHUNKS = 16;
+
+/**
  * typed-array field が slot 内 で 占 め る byte (= `[payloadLen:u32,
  * payloadOffset:u32]`、 §5.1/§5.2)。
  */
@@ -217,7 +225,13 @@ export type Layout = {
     /** everyNSamples の per-call-site counter slot (= counterId → byte offset、§9.1)。 */
     everyNSamplesCounters: { base: number; slots: Record<number, number> };
     midiRings: { base: number; slots: Record<string, MidiRingSlot> };
-    sysexContent: { base: number; size: number };
+    // Per-sysex-port content region (`11-midi.md` §4.3): `chunks` chunks of
+    // `perChunk` bytes, each `[length:u32, data bytes]`. The 8-byte ring slot
+    // carries `[0xF0, chunkIdx, _pad, _pad, atSample]`; `chunkIdx` indexes here.
+    sysexContent: {
+      base: number;
+      slots: Record<string, { base: number; perChunk: number; chunks: number }>;
+    };
     publishShared: { base: number; slots: Record<string, number> };
     publishCounters: { base: number; slots: Record<string, number> };
     snapshotRegion: { base: number; size: number };
@@ -462,6 +476,42 @@ export function layout(graph: CapturedGraph): Layout {
     }
   }
 
+  // sysexContent packing = midiRings 末 尾 を base に、 sysex を 使 う port ご と に
+  // content region (= chunks × perChunk) を 配 置 (= `11-midi.md` §4.3)。 sysex 使 用 =
+  // graph statements に 該 当 port の sysex midiOnEvent / midiEmitIf が あ る か で 判 定。
+  const sysexContentBase = cursor;
+  const sysexContentSlots: Record<string, { base: number; perChunk: number; chunks: number }> = {};
+  const sysexPorts = new Set<string>();
+  const scanSysex = (nodes: readonly AstNode[]): void => {
+    for (const node of nodes) {
+      if (
+        (node.kind === "midiOnEvent" || node.kind === "midiEmitIf") &&
+        node.eventType === "sysex"
+      ) {
+        sysexPorts.add(node.port);
+      }
+      if (
+        node.kind === "forSample" ||
+        node.kind === "everyNSamples" ||
+        node.kind === "messageOnReceive" ||
+        node.kind === "midiOnEvent"
+      ) {
+        scanSysex(node.body);
+      }
+    }
+  };
+  scanSysex(graph.statements);
+  for (const decl of graph.declarations) {
+    if ((decl.kind === "midiInput" || decl.kind === "midiOutput") && sysexPorts.has(decl.name)) {
+      sysexContentSlots[decl.name] = {
+        base: cursor,
+        perChunk: SYSEX_PER_CHUNK_BYTES,
+        chunks: SYSEX_CHUNKS,
+      };
+      cursor += SYSEX_PER_CHUNK_BYTES * SYSEX_CHUNKS;
+    }
+  }
+
   const totalBytes = cursor;
 
   // sub-phase 7.7b で fill 対 象 外 の 4 region = base 全 て totalBytes (= 連 続)、
@@ -486,7 +536,7 @@ export function layout(graph: CapturedGraph): Layout {
         slots: everyNSamplesCounterSlots,
       },
       midiRings: { base: midiRingsBase, slots: midiRingSlots },
-      sysexContent: { base: totalBytes, size: 0 },
+      sysexContent: { base: sysexContentBase, slots: sysexContentSlots },
       publishShared: { base: publishSharedBase, slots: publishSharedSlots },
       publishCounters: { base: publishCountersBase, slots: publishCountersSlots },
       snapshotRegion: { base: totalBytes, size: 0 },
