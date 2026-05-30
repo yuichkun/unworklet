@@ -70,6 +70,19 @@ const EVENT_FIELD_BYTES: Record<ScalarType, number> = {
 const EVENT_HEADER_BYTES = 12;
 
 /**
+ * typed-array field が slot 内 で 占 め る byte (= `[payloadLen:u32,
+ * payloadOffset:u32]`、 §5.1/§5.2)。
+ */
+const PAYLOAD_SLOT_BYTES = 8;
+
+/**
+ * payloadCapacity 省 略 時 の payloadContent region default (= bytes)。 docs §5.2
+ * は 「largest payload × slot count」 で derive す る が、 impl では 安 全 側 の
+ * 固 定 default を 置 き、 明 示 `payloadCapacity` で 上 書 き す る。
+ */
+const DEFAULT_PAYLOAD_CAPACITY = 65536;
+
+/**
  * `event<T>` ringbuffer の atSample field byte size (= `02-messaging.md` §5.1)。
  * sample-accurate end-to-end の wire-injected field、 i32 (= 0..127) 固 定。
  */
@@ -134,6 +147,12 @@ export type MessageRingSlot = {
     wireType: ScalarType;
     offsetInSlot: number;
     byteSize: number;
+    /**
+     * Present when the field is a variable-length typed array (§5.2). The slot
+     * then carries `[payloadLen, payloadOffset]` at `offsetInSlot` (8 bytes);
+     * the content lives in the `payloadContent` region for this message.
+     */
+    payloadElementType?: BufferElementType;
   }>;
 };
 
@@ -149,7 +168,7 @@ export type Layout = {
     };
     eventRings: { base: number; slots: Record<string, EventRingSlot> };
     messageRings: { base: number; slots: Record<string, MessageRingSlot> };
-    payloadContent: { base: number; slots: Record<string, number> };
+    payloadContent: { base: number; slots: Record<string, { base: number; capacity: number }> };
     midiRings: { base: number; slots: Record<string, number> };
     sysexContent: { base: number; size: number };
     publishShared: { base: number; slots: Record<string, number> };
@@ -263,14 +282,27 @@ export function layout(graph: CapturedGraph): Layout {
       const slotFields: MessageRingSlot["fields"] = [];
       let fieldCursor = 0;
       for (const field of decl.fields) {
-        const byteSize = EVENT_FIELD_BYTES[field.wireType];
-        slotFields.push({
-          name: field.name,
-          wireType: field.wireType,
-          offsetInSlot: fieldCursor,
-          byteSize,
-        });
-        fieldCursor += byteSize;
+        if (field.payloadElementType !== undefined) {
+          // typed-array field = slot に [payloadLen(4), payloadOffset(4)] = 8 byte
+          // (= §5.2/§5.3)。 中 身 は payloadContent region。
+          slotFields.push({
+            name: field.name,
+            wireType: field.wireType,
+            offsetInSlot: fieldCursor,
+            byteSize: PAYLOAD_SLOT_BYTES,
+            payloadElementType: field.payloadElementType,
+          });
+          fieldCursor += PAYLOAD_SLOT_BYTES;
+        } else {
+          const byteSize = EVENT_FIELD_BYTES[field.wireType];
+          slotFields.push({
+            name: field.name,
+            wireType: field.wireType,
+            offsetInSlot: fieldCursor,
+            byteSize,
+          });
+          fieldCursor += byteSize;
+        }
       }
       const slotSize = fieldCursor;
       messageRingsSlots[decl.name] = {
@@ -296,6 +328,20 @@ export function layout(graph: CapturedGraph): Layout {
     }
   }
 
+  // payloadContent packing = message<T> の typed-array field の 可 変 長 中 身 を
+  // 置 く region (= §5.2)。 typed-array field を 持 つ message ご と に
+  // payloadCapacity bytes (= 省 略 時 default) を allocate。 末 尾 配 置 = typed-array
+  // ナ シ graph で base 不 変。
+  const payloadContentBase = cursor;
+  const payloadContentSlots: Record<string, { base: number; capacity: number }> = {};
+  for (const decl of graph.declarations) {
+    if (decl.kind === "message" && decl.fields.some((f) => f.payloadElementType !== undefined)) {
+      const capacity = decl.payloadCapacity ?? DEFAULT_PAYLOAD_CAPACITY;
+      payloadContentSlots[decl.name] = { base: cursor, capacity };
+      cursor += capacity;
+    }
+  }
+
   const totalBytes = cursor;
 
   // sub-phase 7.7b で fill 対 象 外 の 4 region = base 全 て totalBytes (= 連 続)、
@@ -310,7 +356,7 @@ export function layout(graph: CapturedGraph): Layout {
       ioScratch: { base: ioBase, inputs, outputs, params },
       eventRings: { base: eventRingsBase, slots: eventRingsSlots },
       messageRings: { base: messageRingsBase, slots: messageRingsSlots },
-      payloadContent: { base: totalBytes, slots: {} },
+      payloadContent: { base: payloadContentBase, slots: payloadContentSlots },
       midiRings: { base: totalBytes, slots: {} },
       sysexContent: { base: totalBytes, size: 0 },
       publishShared: { base: publishSharedBase, slots: publishSharedSlots },

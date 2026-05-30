@@ -123,6 +123,11 @@ function walkForTypeErrors(node: AstNode, diagnostics: DiagnosticEntry[]): void 
     case "bufferReadInterpolated":
       walkForTypeErrors(node.pos, diagnostics);
       break;
+    case "payloadFieldRead":
+      walkForTypeErrors(node.index, diagnostics);
+      break;
+    case "payloadFieldLength":
+      break;
     case "bufferWrite":
       walkForTypeErrors(node.index, diagnostics);
       walkForTypeErrors(node.value, diagnostics);

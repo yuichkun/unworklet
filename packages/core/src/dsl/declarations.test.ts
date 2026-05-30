@@ -1649,6 +1649,28 @@ test("`messageDecl.onReceive` 同 field を 複 数 回 access し て も decl.
   });
 });
 
+test("`messageDecl.onReceive` typed-array field = `.at` / `.length` で payload node 化 + field seal", () => {
+  // `samples.length` → payloadFieldLength、 `samples.at(idx)` → payloadFieldRead。
+  // field は typed-array seal (= payloadElementType = 'f32') さ れ る (= §4.3)。
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const buf = buffer.f32({ size: 4 });
+    const lenState = state.named("len").i32(0);
+    const upload = message<{ samples: Float32Array }>({ name: "upload" });
+    upload.onReceive(({ samples }) => {
+      lenState.store(samples.length);
+      buf.write(0, samples.at(0));
+    });
+    const decl = ctx.declarations.find((d) => d.kind === "message");
+    if (decl?.kind !== "message") throw new Error("expected message decl");
+    expect(decl.fields).toEqual([{ name: "samples", wireType: "i32", payloadElementType: "f32" }]);
+  });
+  const onRecv = ctx.statements[0];
+  if (onRecv?.kind !== "messageOnReceive") throw new Error("expected messageOnReceive");
+  expect((onRecv.body[0] as { value: { kind: string } }).value.kind).toBe("payloadFieldLength");
+  expect((onRecv.body[1] as { value: { kind: string } }).value.kind).toBe("payloadFieldRead");
+});
+
 test("inferAstType: messageFieldRead Node を event emit field に 渡 す = wireType i32 で seal", () => {
   // handler 内 で event emit を 走 ら し て、 payload field 値 に messageFieldRead
   // Node<'i32'> を 渡 す path = event decl.fields に i32 で seal さ れ る。

@@ -111,6 +111,8 @@ export async function renderOffline<C>(
       base: slot.base,
       capacity: slot.capacity,
       slotSize: slot.slotSize,
+      // typed-array field の 中 身 を 置 く content region (= ナ シ な ら undefined)。
+      payloadContent: meta.layout.regions.payloadContent.slots[msg.name],
       fields: slot.fields,
     };
   });
@@ -187,10 +189,22 @@ export async function renderOffline<C>(
       const payload = m.payload as Record<string, unknown>;
       for (const field of ring.fields) {
         const byteOffset = slotByteOffset + field.offsetInSlot;
-        // message field は Q46 で 現 状 全 て i32 wire (= number / boolean と も
-        // i32 word、 `makeMessagePayloadProxy`)。 typed-array は content buffer
-        // 経 路、 bool / f32 / f64 / i64 wire は 後 続 sub-stage で fill。
-        dataView.setInt32(byteOffset, Number(payload[field.name]) | 0, true);
+        if (field.payloadElementType !== undefined) {
+          // typed-array field = 中 身 を payloadContent に 書 き、 slot に
+          // [payloadLen(bytes), payloadOffset] を set (= §5.2)。 a1 は 1 payload
+          // 想 定 で content offset 0 固 定 (= content ring 管 理 は 後 続)。
+          const src = payload[field.name] as Float32Array;
+          const content = ring.payloadContent!;
+          const byteLen = src.length * src.BYTES_PER_ELEMENT;
+          new Uint8Array(memory, content.base, byteLen).set(
+            new Uint8Array(src.buffer, src.byteOffset, byteLen),
+          );
+          dataView.setInt32(byteOffset, byteLen, true); // payloadLen (= bytes)
+          dataView.setInt32(byteOffset + 4, 0, true); // payloadOffset (= content 先 頭)
+        } else {
+          // scalar field = Q46 で 現 状 全 て i32 wire (= number / boolean → i32 word)。
+          dataView.setInt32(byteOffset, Number(payload[field.name]) | 0, true);
+        }
       }
       headerView[0] = head + 1; // head を 1 slot 進 め る (= push)
     }

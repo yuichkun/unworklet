@@ -622,6 +622,75 @@ function emitBufferReadInterpolated(
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// typed-array payload reads (= `01-dsl.md` §4.3、 message onReceive handler)。
+// slot の [payloadLen, payloadOffset] (= EVENT_SLOT_PTR_LOCAL 経 由) + message
+// 別 payloadContent region base で 可 変 長 中 身 を index read / 要 素 数 取 得。
+// ─────────────────────────────────────────────────────────────────────────
+
+function payloadSlotMeta(
+  node: AstNode & { kind: "payloadFieldRead" | "payloadFieldLength" },
+  layout: Layout,
+): { offsetInSlot: number; contentBase: number; elemBytes: number } {
+  const slot = layout.regions.messageRings.slots[node.messageName];
+  /* v8 ignore next 3 — payloadFieldRead/Length は proxy 経 由 で 宣 言 済 message を 参 照 = unreachable guard */
+  if (slot === undefined) {
+    throw new Error(`unknown message: ${node.messageName}`);
+  }
+  const field = slot.fields.find((f) => f.name === node.field);
+  /* v8 ignore next 3 — field は proxy 経 由 で decl.fields に push 済 = unreachable guard */
+  if (field === undefined) {
+    throw new Error(`unknown message payload field: ${node.messageName}.${node.field}`);
+  }
+  const content = layout.regions.payloadContent.slots[node.messageName];
+  /* v8 ignore next 3 — typed-array field を 持 つ message は payloadContent に slot 既 push */
+  if (content === undefined) {
+    throw new Error(`unknown payloadContent for message: ${node.messageName}`);
+  }
+  return {
+    offsetInSlot: field.offsetInSlot,
+    contentBase: content.base,
+    elemBytes: BUFFER_ELEMENT_BYTES_EMIT[node.elementType],
+  };
+}
+
+function emitPayloadFieldLength(
+  node: AstNode & { kind: "payloadFieldLength" },
+  layout: Layout,
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): number {
+  const { offsetInSlot, elemBytes } = payloadSlotMeta(node, layout);
+  // payloadLen (= bytes) を slot か ら load し、 element 数 = payloadLen / sizeof。
+  const payloadLen = mod.i32.load(
+    0,
+    BYTES_PER_I32,
+    mod.i32.add(mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32), mod.i32.const(offsetInSlot)),
+  );
+  return mod.i32.div_s(payloadLen, mod.i32.const(elemBytes));
+}
+
+function emitPayloadFieldRead(
+  node: AstNode & { kind: "payloadFieldRead" },
+  layout: Layout,
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): number {
+  const { offsetInSlot, contentBase, elemBytes } = payloadSlotMeta(node, layout);
+  // payloadOffset (= contentBase 内 byte offset) を slot の offsetInSlot+4 か ら load。
+  const payloadOffset = mod.i32.load(
+    0,
+    BYTES_PER_I32,
+    mod.i32.add(mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32), mod.i32.const(offsetInSlot + 4)),
+  );
+  // addr = contentBase + payloadOffset + index × sizeof。
+  const addr = mod.i32.add(
+    mod.i32.add(mod.i32.const(contentBase), payloadOffset),
+    mod.i32.mul(emitExpression(node.index, layout, mod, binaryen), mod.i32.const(elemBytes)),
+  );
+  return emitBufferLoad(mod, node.elementType, addr);
+}
+
 export function emitExpression(
   node: AstNode,
   layout: Layout,
@@ -886,6 +955,10 @@ export function emitExpression(
     }
     case "bufferReadInterpolated":
       return emitBufferReadInterpolated(node, layout, mod, binaryen);
+    case "payloadFieldRead":
+      return emitPayloadFieldRead(node, layout, mod, binaryen);
+    case "payloadFieldLength":
+      return emitPayloadFieldLength(node, layout, mod, binaryen);
     case "audioInRead": {
       const portBase = layout.regions.ioScratch.inputs[node.portName];
       if (portBase === undefined) {
@@ -1461,8 +1534,15 @@ function collectUsedMathKinds(graph: CapturedGraph): Set<string> {
         visit(node.value);
         break;
       case "bufferRead":
+        visit(node.index);
+        break;
       case "bufferReadInterpolated":
-        visit(node.kind === "bufferRead" ? node.index : node.pos);
+        visit(node.pos);
+        break;
+      case "payloadFieldRead":
+        visit(node.index);
+        break;
+      case "payloadFieldLength":
         break;
       case "bufferWrite":
         visit(node.index);

@@ -232,9 +232,24 @@ export type EventDecl<T> = {
   emitIf(cond: Node<"bool"> | boolean, payload: EmitPayload<T>): void;
 };
 
+/**
+ * Worklet-side handler view of a `message<T>` payload (Q46 / Q36-b): variable-
+ * length typed-array fields surface as the `TypedArrayFieldRef` proxy (`.length`
+ * + `.at(idx)`); scalar fields stay as their raw JS type (`number` / `boolean`)
+ * since `state.store` / primitive arguments already accept those alongside
+ * `Node<T>` via the literal-lift rule.
+ */
+export type MessageGraphPayload<T> = {
+  [K in keyof T]: T[K] extends Float32Array
+    ? TypedArrayFieldRef<"f32">
+    : T[K] extends Uint8Array
+      ? TypedArrayFieldRef<"u8">
+      : T[K];
+};
+
 export type MessageDecl<T> = {
   readonly name: string;
-  onReceive(handler: (payload: T) => void): void;
+  onReceive(handler: (payload: MessageGraphPayload<T>) => void): void;
 };
 
 // ─────────────────────────────────────────────────────────────────────────

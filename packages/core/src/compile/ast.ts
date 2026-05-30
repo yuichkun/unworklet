@@ -84,7 +84,24 @@ export type AstNode =
       index: AstNode;
       value: AstNode;
     }
-  | { kind: "bufferReadInterpolated"; elementType: BufferElementType; name: string; pos: AstNode };
+  | { kind: "bufferReadInterpolated"; elementType: BufferElementType; name: string; pos: AstNode }
+  // Variable-length typed-array payload reads inside a `message<T>` onReceive
+  // handler (`01-dsl.md` §4.3). The field's content lives in the payloadContent
+  // region; the slot carries `[payloadLen, payloadOffset]`. `length` = element
+  // count (= payloadLen bytes / sizeof element); `at` = single indexed element.
+  | {
+      kind: "payloadFieldLength";
+      messageName: string;
+      field: string;
+      elementType: BufferElementType;
+    }
+  | {
+      kind: "payloadFieldRead";
+      messageName: string;
+      field: string;
+      elementType: BufferElementType;
+      index: AstNode;
+    };
 
 /**
  * `eventDecl.emitIf` 1 emit site の 1 field 分 (= `01-dsl.md` §4.1 + Q71)。
@@ -209,6 +226,13 @@ export type MessageDeclAst = {
 export type MessageDeclField = {
   name: string;
   wireType: ScalarType;
+  /**
+   * Present when the field is a variable-length typed array (`Float32Array` /
+   * `Uint8Array`, §4.3 / §5.2). The field then occupies a `[payloadLen,
+   * payloadOffset]` pair in the slot (not a scalar word) and indexes into the
+   * payloadContent region; `wireType` is unused for such a field.
+   */
+  payloadElementType?: BufferElementType;
 };
 
 /**
@@ -296,7 +320,10 @@ export function inferAstType(ast: AstNode): ScalarType {
     // (= low 8 bits, no separate `Node<'u8'>` in the scalar type system).
     case "bufferRead":
     case "bufferReadInterpolated":
+    case "payloadFieldRead":
       return ast.elementType === "u8" ? "i32" : ast.elementType;
+    case "payloadFieldLength":
+      return "i32";
     case "audioOutWrite":
     case "forSample":
     case "stateStore":

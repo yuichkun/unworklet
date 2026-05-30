@@ -777,6 +777,15 @@ function checkMessageName(name: string): void {
  * 同 時 に decl.fields に push (= 1 番 目 onReceive で seal、 後 続 onReceive で
  * 同 field 名 を 何 度 access し て も 同 wire 型 で 通 す)。
  */
+/**
+ * `onReceive` handler が destructure で 触 る field を hybrid handle と し て 返 す。
+ * scalar 利 用 (= `state.store(field)` 等) は Node<'i32'> と し て 振 る 舞 い、
+ * typed-array 利 用 (= `field.at(i)` / `field.length`) は `01-dsl.md` §4.3 の
+ * proxy を 露 出。 field の wire 種 別 は 「ど ち ら の interface を 使 っ た か」 で
+ * seal す る (= TS の 2-view で user code は 一 貫 し て 片 方 だ け を 使 う)。
+ * typed-array element 型 は v1.0.0-a で f32 固 定 (= Float32Array audio payload、
+ * Uint8Array/u8 = sysex は MIDI scope)。
+ */
 function makeMessagePayloadProxy(decl: MessageDeclAst): Record<string, unknown> {
   return new Proxy(
     {},
@@ -786,16 +795,44 @@ function makeMessagePayloadProxy(decl: MessageDeclAst): Record<string, unknown> 
            は string key の み hit) */
         if (typeof prop !== "string") return undefined;
         const fieldName = prop;
-        // 既 seal 済 と 整 合 = 何 度 access し て も 同 wire 型、 未 seal = i32 で push
+        // 既 seal 済 と 整 合 = 何 度 access し て も 同 field、 未 seal = i32 で push
         if (!decl.fields.some((f) => f.name === fieldName)) {
           decl.fields.push({ name: fieldName, wireType: "i32" });
         }
-        return wrapAst<"i32">({
+        const sealTypedArray = (): void => {
+          const field = decl.fields.find((f) => f.name === fieldName);
+          if (field !== undefined) field.payloadElementType = "f32";
+        };
+        // scalar view = messageFieldRead i32 を astPayload に 持 つ Node。
+        const node = wrapAst<"i32">({
           kind: "messageFieldRead",
           name: decl.name,
           field: fieldName,
           wireType: "i32",
+        }) as unknown as Record<string, unknown>;
+        // typed-array view (= §4.3 proxy)。 access し た 時 点 で field を typed-array seal。
+        Object.defineProperty(node, "length", {
+          get() {
+            sealTypedArray();
+            return wrapAst<"i32">({
+              kind: "payloadFieldLength",
+              messageName: decl.name,
+              field: fieldName,
+              elementType: "f32",
+            });
+          },
         });
+        node["at"] = (idx: Node<"i32"> | number): Node<"f32"> => {
+          sealTypedArray();
+          return wrapAst<"f32">({
+            kind: "payloadFieldRead",
+            messageName: decl.name,
+            field: fieldName,
+            elementType: "f32",
+            index: liftOffset(idx),
+          });
+        };
+        return node;
       },
     },
   );

@@ -10,10 +10,73 @@
 
 import "@unworklet/core"; // side-effect load for `.mul` method registration via primitives.ts
 import { defineProcessor, f32, message, SAMPLES_PER_BLOCK, select } from "@unworklet/core";
-import { audioInput, audioOutput, event, forSample, param, state } from "@unworklet/core";
+import { audioInput, audioOutput, buffer, event, forSample, param, state } from "@unworklet/core";
 import { expect, test } from "vite-plus/test";
 
 import { renderOffline } from "./index.ts";
+
+// ─────────────────────────────────────────────────────────────────────────
+// typed-array message payload (Stage 2.5a) — message<{ samples: Float32Array }>
+// を main から送り、worklet で samples.at(i) / samples.length で読む。
+// ─────────────────────────────────────────────────────────────────────────
+
+// 受信した配列を per-element に buffer へ書き写し、それを再生する (= .at(Node) runtime read)。
+const samplePlayer = defineProcessor(() => {
+  const out = audioOutput({ channels: 1, name: "main" });
+  const upload = message<{ samples: Float32Array }>({ name: "upload" });
+  const buf = buffer.f32({ size: SAMPLES_PER_BLOCK });
+  return {
+    process: () => {
+      upload.onReceive(({ samples }) => {
+        forSample((i) => {
+          buf.write(i, samples.at(i)); // i は Node<i32> = runtime indexed read
+        });
+      });
+      forSample((i) => {
+        out.ch(0).at(i).write(buf.read(i));
+      });
+    },
+  };
+});
+
+test("`renderOffline` delivers a typed-array payload; samples.at(Node) reads each element", async () => {
+  const samples = new Float32Array(SAMPLES_PER_BLOCK);
+  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) samples[k] = k * 2;
+  const result = await renderOffline(samplePlayer, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+    messages: [{ name: "upload", payload: { samples } }],
+  });
+  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) {
+    expect(result.outputs.main![0]![k]).toBe(k * 2);
+  }
+});
+
+// samples.length = 受信した配列長 (= Node<i32>)。出力にそのまま流して観測。
+const sampleLen = defineProcessor(() => {
+  const out = audioOutput({ channels: 1, name: "main" });
+  const upload = message<{ samples: Float32Array }>({ name: "upload" });
+  const lenState = state.i32(0);
+  return {
+    process: () => {
+      upload.onReceive(({ samples }) => {
+        lenState.store(samples.length);
+      });
+      forSample((i) => {
+        out.ch(0).at(i).write(f32(lenState.load()));
+      });
+    },
+  };
+});
+
+test("`renderOffline` resolves samples.length to the delivered payload length", async () => {
+  const result = await renderOffline(sampleLen, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+    messages: [{ name: "upload", payload: { samples: new Float32Array(10) } }],
+  });
+  expect(result.outputs.main![0]![0]).toBe(10);
+});
 
 // message<T> 経由で state を更新する processor (= scalar message 注入の検証用)。
 // 出力はそのまま mul state の値 (= 注入が届けば block ごとに値が変わる)。
