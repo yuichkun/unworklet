@@ -133,9 +133,9 @@ Slot count and byte size are decided at processor instantiation. Pointers (`head
 
 ### 5.2 Variable-length payload content buffer
 
-When `T` contains a variable-length field (`Float32Array`, `Uint8Array`, etc.), an additional content buffer is allocated alongside the main ring buffer. The slot's `payloadOffset` indexes into the content buffer; `payloadLen` records the field length in bytes.
+When `T` contains a variable-length field (`Float32Array`, `Uint8Array`, etc.), an additional content buffer is allocated alongside the main ring buffer. The slot's `payloadOffset` indexes into the content buffer; `payloadLen` records the field length in bytes. Each live payload occupies a distinct content chunk, so multiple payloads queued before the consumer drains do not overwrite one another.
 
-Capacity for the content buffer follows the largest expected payload × ring-buffer slot count, with an override on `event<T>({ ..., payloadCapacity: <bytes> })`. This is the same machinery used for MIDI sysex (Q4-c-iii); one transport implementation covers both.
+Capacity for the content buffer is `perPayload × min(ringCapacity, 16)`, where `perPayload` is the per-payload byte size (`payloadCapacity` option, default 64 KiB) and the chunk count is capped at **16** to keep the default allocation bounded (= Q85; a big payload × the full 256-slot default ring would otherwise reserve 16 MB). The producer cycles through the 16 chunks: if more than 16 typed-array payloads are queued before the consumer drains, the oldest content is overwritten (drop-oldest) — never a trap. For main → worklet this means up to 16 typed-array messages sent within one render quantum (≈ 2.7 ms) are all preserved. This is the same machinery used for MIDI sysex (Q4-c-iii); one transport implementation covers both.
 
 ### 5.3 `message<T>` ringbuffer slot
 
