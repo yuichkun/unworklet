@@ -124,7 +124,12 @@ export function createSubgraph<Args extends unknown[], Methods>(
   let args = rest;
   let instanceName: string | undefined;
   const last = rest[rest.length - 1];
-  if (rest.length > 0 && isCreateSubgraphOptions(last)) {
+  // 末尾を options 扱いするのは「options 形 ({name} only) かつ rest 数が lambda の arity を
+  // 超える」時だけ。さもないと outer lambda が {name} 形 config を取る subgraph で
+  // createSubgraph(sg, {name:"osc"}) の object が options と誤認され、型上 lambda 引数に
+  // bind されるのに runtime が slice して body が undefined を掴む (= 型⟺動く 違反)。
+  // arity を超えた末尾だけ options = TS の `[...Args, options?]` tuple 解釈と一致する。
+  if (rest.length > 0 && isCreateSubgraphOptions(last) && rest.length > body.length) {
     instanceName = last.name;
     args = rest.slice(0, -1);
   }

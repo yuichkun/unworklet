@@ -220,3 +220,25 @@ test("anonymous slot だけの subgraph は instance 名ナシでも OK (= plain
   const { outputs } = await render(proc);
   expect(outputs.main![0]![0]).toBe(5); // +5/tick の 1 sample 目
 });
+
+// createSubgraph(subgraph, ...lambdaArgs, options?) で、outer lambda が {name} 形の config
+// object を取る場合、createSubgraph(sg, {name:"osc"}) は型上その object を lambda 引数に
+// bind する (= options 不在)。runtime も同じく扱うべき (型⟺動く)。options 形 ({name} only)
+// との区別は arity で行う (= rest.length > lambda arity の時だけ末尾を options 扱い)。
+test("createSubgraph: {name} config を取る lambda は instance options と誤認されない (型⟺動く)", async () => {
+  const labeled = defineSubgraph((cfg: { name: string }) => {
+    const len = cfg.name.length; // build-time number、config が届けば出力で観測できる
+    return { value: () => f32(len) };
+  });
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const sg = createSubgraph(labeled, { name: "osc" }); // "osc".length=3、options ではなく lambda 引数
+    return {
+      process: () => {
+        forSample((i) => out.ch(0).at(i).write(sg.value()));
+      },
+    };
+  });
+  const { outputs } = await render(proc);
+  expect(outputs.main![0]![0]).toBe(3); // cfg.name="osc" が届いた証拠
+});
