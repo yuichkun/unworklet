@@ -527,6 +527,36 @@ export type MessageRingSlotDescriptor = {
 };
 
 /**
+ * MIDI ring descriptor exposed on `WorkletNamespace.midiRings` (`11-midi.md` §4).
+ * Built from the layout's `midiRings` + `sysexContent` regions. One entry per
+ * `midiInput` / `midiOutput` declaration; `createNode` reads them to size the
+ * SAB ring + sysex content buffers and to wire `node.midi.<name>`, and the
+ * worklet template reads them to drain (in) / emit (out) the WASM ring.
+ *
+ * `direction` mirrors the message/event split: `"in"` = main produces, worklet
+ * drains (= message-ring transport); `"out"` = worklet emits, main drains
+ * (= event-ring transport). Each slot is the fixed 8-byte MIDI wire layout
+ * (§4.1); sysex (§4.3) travels through the optional `sysex` content region.
+ */
+export type MidiRingSlotDescriptor = {
+  readonly name: string;
+  readonly direction: "in" | "out";
+  readonly wasmRingBase: number;
+  readonly capacity: number;
+  /**
+   * Present when this port carries sysex (`0xF0`) events. `wasmBase` = byte
+   * offset of the content region in WASM linear memory; `perChunk` = bytes per
+   * `[length:u32, data]` chunk; `chunks` = chunk count. The 8-byte ring slot
+   * carries `[0xF0, chunkIdx, _pad, _pad, atSample]` and `chunkIdx` indexes here.
+   */
+  readonly sysex?: {
+    readonly wasmBase: number;
+    readonly perChunk: number;
+    readonly chunks: number;
+  };
+};
+
+/**
  * Worklet escape-hatch namespace exposed on `CompiledProcessor<C>.worklet`
  * (`01-dsl.md` §11 + Q80).
  *
@@ -549,6 +579,7 @@ export type WorkletNamespace = {
   publishSlots: readonly PublishSlotDescriptor[];
   eventRings: readonly EventRingSlotDescriptor[];
   messageRings: readonly MessageRingSlotDescriptor[];
+  midiRings: readonly MidiRingSlotDescriptor[];
   moduleUrl?: string;
   processorName?: string;
   wasmUrl?: string;

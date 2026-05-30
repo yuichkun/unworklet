@@ -36,6 +36,7 @@ import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
 import type {
   EventRingSlotDescriptor,
   MessageRingSlotDescriptor,
+  MidiRingSlotDescriptor,
   PublishSlotDescriptor,
   TransportMode,
   WorkletNamespace,
@@ -111,6 +112,8 @@ export function extractWorkletMeta(graph: CapturedGraph): WorkletMeta {
 
 const BYTES_PER_F32 = 4;
 const CHANNEL_STRIDE_BYTES = SAMPLES_PER_BLOCK * BYTES_PER_F32;
+/** Fixed MIDI wire slot = `[status, data1, data2, _pad, atSample:u32]` (`11-midi.md` §4.1). */
+const MIDI_SLOT_BYTES = 8;
 
 const STATE_KEY = Symbol("unworklet.workletState");
 /**
@@ -141,6 +144,19 @@ const INIT_NOT_CALLED_POSTED_KEY = Symbol("unworklet.initNotCalledPosted");
  * processor's lifetime — they would otherwise need to be re-bound on every
  * growth event, since growth detaches the backing ArrayBuffer。
  */
+/**
+ * One queued inbound MIDI event on the postMessage path (`11-midi.md` §4.4).
+ * Fixed events carry `status` / `data1` / `data2`; sysex carries `sysex` bytes
+ * with `status = 0xF0`. `atSample` is the block-local sample-offset (§4.2).
+ */
+type MidiQueueItem = {
+  status: number;
+  data1: number;
+  data2: number;
+  atSample: number;
+  sysex?: Uint8Array;
+};
+
 type WorkletState = {
   readonly process: () => void;
   readonly audioInputs: readonly AudioPortDecl[];
@@ -249,6 +265,34 @@ type WorkletState = {
    */
   readonly lastSentMessageOverflows: number[];
   /**
+   * MIDI ring SAB ↔ WASM mirror meta (`11-midi.md` §4)。 in port = message ring と
+   * 同 transport (= main → SAB / postMessage → WASM ring)、 out port = event ring
+   * と 同 transport (= WASM ring → SAB / postMessage → main)。 8-byte 固 定 slot な の で
+   * field 別 DataView は 不 要 = byte-level Uint8Array copy で 完 結。
+   */
+  readonly midiRingsBuffer: SharedArrayBuffer | ArrayBuffer | null;
+  readonly midiRings: readonly MidiRingSlotDescriptor[];
+  readonly midiRingsWasmViews: readonly Uint8Array[];
+  /** pre-bind し た WASM memory 全 域 DataView (= wire byte / atSample u32 書 き 込 み 用)。 */
+  readonly midiWasmDataView: DataView | null;
+  readonly midiRingsWasmHeaderViews: readonly Int32Array[];
+  readonly midiRingsSabViews: readonly Uint8Array[];
+  readonly midiRingsSabHeaderViews: readonly Int32Array[];
+  /** sysex content region view (= sysex port の み non-null、 §4.3)。 ring index と zip。 */
+  readonly sysexContentWasmViews: ReadonlyArray<Uint8Array | null>;
+  readonly sysexContentSabViews: ReadonlyArray<Uint8Array | null>;
+  /** out port (= event-like) postMessage path 用 = 前 quantum で 送 信 済 み の head / overflow。 */
+  readonly lastSentMidiHeads: number[];
+  readonly lastSentMidiOverflows: number[];
+  /**
+   * in port (= message-like) postMessage path 用 = main が `port.postMessage({
+   * kind:'midi', ... })` で 送 信 し た event を audio thread で 蓄 積、 process 開 始 で
+   * WASM ring に inject。 ring index と zip (= out port は 常 に 空)。
+   */
+  readonly midiInQueues: Array<Array<MidiQueueItem>>;
+  /** in port postMessage path 用 = WASM ring 内 で drop-oldest 発 動 し た 回 数 mirror。 */
+  readonly lastSentMidiInOverflows: number[];
+  /**
    * Latched once a WASM trap escapes `state.process()`。 Subsequent quanta
    * emit silence and skip the WASM call so a single trap does not get
    * re-posted every render quantum (= main receives one `wasm-trap` event
@@ -351,6 +395,29 @@ type ProcessorOptionsBag = {
      * ring も 0 を hold = 使 用 側 は descriptor.payloadContent 有 無 で 判 断)。
      */
     messageContentSabOffsets?: readonly number[];
+    /**
+     * MIDI ring descriptor 配 列 (= `11-midi.md` §4、 declaration 順 で midiInput →
+     * midiOutput)。 direction で in (= message と 同 transport) / out (= event と 同
+     * transport) を 区 別。 in port = main が wire slot を push + worklet が WASM ring
+     * に inject、 out port = WASM が emit + worklet が drain し て main へ。
+     */
+    midiRings?: readonly MidiRingSlotDescriptor[];
+    /**
+     * 全 MIDI ring を 連 続 配 置 し た 1 SAB (= main で alloc、 SAB transport 限 定)。
+     * in port = main が SAB ring に push → worklet が 先 頭 で SAB → WASM mirror、
+     * out port = worklet が 末 尾 で WASM → SAB mirror → main が rAF drain。
+     */
+    midiRingsBuffer?: SharedArrayBuffer | ArrayBuffer;
+    /** 各 MIDI ring の SAB 内 offset (= midiRings と zip)。 */
+    midiRingSabOffsets?: readonly number[];
+    /**
+     * §4.3 sysex content 用 SAB (= sysex port が 1 つ で も あ る 時 の み hand、 SAB
+     * transport 限 定)。 全 sysex port の content region を 連 続 配 置、 per-port base
+     * は sysexContentSabOffsets で 引 く。
+     */
+    sysexContentBuffer?: SharedArrayBuffer | ArrayBuffer;
+    /** 各 MIDI ring の sysex content SAB 内 offset (= midiRings と zip、 sysex ナ シ は 0)。 */
+    sysexContentSabOffsets?: readonly number[];
   };
 };
 
@@ -443,6 +510,34 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       fields: slot.fields,
       ...(content !== undefined
         ? { payloadContent: { wasmBase: content.base, capacity: content.capacity } }
+        : {}),
+    };
+  });
+
+  // midiRings = declaration 順 で midiInput / midiOutput を 1 配 列 に 並 べ た
+  // descriptor (= `11-midi.md` §4)。 direction で main → worklet (in、 message と
+  // 同 transport) / worklet → main (out、 event と 同 transport) を 区 別。 sysex
+  // port は content region の wasmBase / perChunk / chunks を 同 梱 (= §4.3)。
+  // createNode が SAB ring + sysex buffer を size + worklet template が drain / emit。
+  const midiDecls = [
+    ...meta.midiInputs.map((d) => ({ decl: d, direction: "in" as const })),
+    ...meta.midiOutputs.map((d) => ({ decl: d, direction: "out" as const })),
+  ];
+  const midiRings: MidiRingSlotDescriptor[] = midiDecls.map(({ decl, direction }) => {
+    const slot = lay.regions.midiRings.slots[decl.name];
+    /* v8 ignore next 3 — midi declaration が 既 capture 段 階 で layout に push
+       済 = 構 造 上 unreachable defensive guard */
+    if (slot === undefined) {
+      throw new Error(`unworklet: missing layout slot for midi port "${decl.name}"`);
+    }
+    const sysex = lay.regions.sysexContent.slots[decl.name];
+    return {
+      name: decl.name,
+      direction,
+      wasmRingBase: slot.base,
+      capacity: slot.capacity,
+      ...(sysex !== undefined
+        ? { sysex: { wasmBase: sysex.base, perChunk: sysex.perChunk, chunks: sysex.chunks } }
         : {}),
     };
   });
@@ -647,6 +742,54 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         }
       }
 
+      // MIDI ring meta + buffer pre-bind (`11-midi.md` §4)。 8-byte 固 定 slot な の で
+      // event / message の field 別 DataView は 不 要 = byte-level Uint8Array copy。
+      // in port = message と 同 (= main → WASM)、 out port = event と 同 (= WASM → main)。
+      const midiRingsBuffer = opts.processorOptions?.midiRingsBuffer ?? null;
+      const midiRingsMeta = opts.processorOptions?.midiRings ?? [];
+      const midiRingSabOffsets = opts.processorOptions?.midiRingSabOffsets ?? [];
+      const sysexContentBuffer = opts.processorOptions?.sysexContentBuffer ?? null;
+      const sysexContentSabOffsets = opts.processorOptions?.sysexContentSabOffsets ?? [];
+      const midiRingsWasmViews: Uint8Array[] = [];
+      // wire byte / atSample u32 書 き 込 み 用 の WASM memory 全 域 DataView を 1 度 だ け
+      // bind (= per-quantum alloc 回 避、 `00-foundations.md` §5.1)。 MIDI ナ シ は null。
+      const midiWasmDataView = midiRingsMeta.length > 0 ? new DataView(memory.buffer) : null;
+      const midiRingsWasmHeaderViews: Int32Array[] = [];
+      const midiRingsSabViews: Uint8Array[] = [];
+      const midiRingsSabHeaderViews: Int32Array[] = [];
+      const sysexContentWasmViews: Array<Uint8Array | null> = [];
+      const sysexContentSabViews: Array<Uint8Array | null> = [];
+      const lastSentMidiHeads = midiRingsMeta.map(() => 0);
+      const lastSentMidiOverflows = midiRingsMeta.map(() => 0);
+      const midiInQueues: Array<Array<MidiQueueItem>> = midiRingsMeta.map(() => []);
+      const lastSentMidiInOverflows = midiRingsMeta.map(() => 0);
+      for (let i = 0; i < midiRingsMeta.length; i++) {
+        const ring = midiRingsMeta[i]!;
+        const ringTotalBytes = 12 + ring.capacity * MIDI_SLOT_BYTES;
+        midiRingsWasmViews.push(new Uint8Array(memory.buffer, ring.wasmRingBase, ringTotalBytes));
+        midiRingsWasmHeaderViews.push(new Int32Array(memory.buffer, ring.wasmRingBase, 3));
+        if (midiRingsBuffer !== null) {
+          midiRingsSabViews.push(
+            new Uint8Array(midiRingsBuffer, midiRingSabOffsets[i]!, ringTotalBytes),
+          );
+          midiRingsSabHeaderViews.push(new Int32Array(midiRingsBuffer, midiRingSabOffsets[i]!, 3));
+        }
+        const sysex = ring.sysex;
+        if (sysex !== undefined) {
+          const sysexBytes = sysex.perChunk * sysex.chunks;
+          sysexContentWasmViews.push(new Uint8Array(memory.buffer, sysex.wasmBase, sysexBytes));
+          const sabOffset = sysexContentSabOffsets[i];
+          sysexContentSabViews.push(
+            sysexContentBuffer !== null && sabOffset !== undefined
+              ? new Uint8Array(sysexContentBuffer, sabOffset, sysexBytes)
+              : null,
+          );
+        } else {
+          sysexContentWasmViews.push(null);
+          sysexContentSabViews.push(null);
+        }
+      }
+
       (self as SelfWithState)[STATE_KEY] = {
         process: procFn,
         audioInputs,
@@ -685,6 +828,19 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         messageContentCursors,
         messageQueueMirrors,
         lastSentMessageOverflows,
+        midiRingsBuffer,
+        midiRings: midiRingsMeta,
+        midiRingsWasmViews,
+        midiWasmDataView,
+        midiRingsWasmHeaderViews,
+        midiRingsSabViews,
+        midiRingsSabHeaderViews,
+        sysexContentWasmViews,
+        sysexContentSabViews,
+        lastSentMidiHeads,
+        lastSentMidiOverflows,
+        midiInQueues,
+        lastSentMidiInOverflows,
         failed: false,
       };
 
@@ -697,31 +853,55 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         addEventListener?: (kind: string, handler: (event: MessageEvent) => void) => void;
         start?: () => void;
       };
-      if (typeof port.addEventListener === "function" && messageRings.length > 0) {
+      const hasMidiInPort = midiRingsMeta.some((r) => r.direction === "in");
+      if (
+        typeof port.addEventListener === "function" &&
+        (messageRings.length > 0 || hasMidiInPort)
+      ) {
         port.addEventListener("message", (event: MessageEvent) => {
           const data = event.data as
-            | { kind?: unknown; ringIndex?: unknown; payload?: unknown }
+            | { kind?: unknown; ringIndex?: unknown; payload?: unknown; item?: unknown }
             | null
             | undefined;
           if (typeof data !== "object" || data === null) return;
-          if (data.kind !== "message") return;
-          if (typeof data.ringIndex !== "number") return;
-          const ringIndex = data.ringIndex;
-          if (ringIndex < 0 || ringIndex >= messageRings.length) return;
-          if (typeof data.payload !== "object" || data.payload === null) return;
-          // ingress を ring capacity で bound (= drop-oldest)。 main が 1 quantum 間 に
-          // capacity 超 の burst を post し て も queue が 膨 ら ま ず、 process() の
-          // `for (const payload of queue)` drain loop が audio thread で burst 比 例 =
-          // unbounded loop に な ら な い (= `00-foundations.md` §5.1 invariant 2)。 drop
-          // し た 分 は WASM ring overflow counter に 計 上 (= SAB path の ring drop-oldest
-          // と 同 じ overflowCount semantics、 process 末 尾 で main に notify)。
-          const queue = messageQueueMirrors[ringIndex]!;
-          if (queue.length >= messageRings[ringIndex]!.capacity) {
-            queue.shift();
-            const wasmH = messageRingsWasmHeaderViews[ringIndex]!;
-            wasmH[2] = wasmH[2]! + 1;
+          if (data.kind === "message") {
+            if (typeof data.ringIndex !== "number") return;
+            const ringIndex = data.ringIndex;
+            if (ringIndex < 0 || ringIndex >= messageRings.length) return;
+            if (typeof data.payload !== "object" || data.payload === null) return;
+            // ingress を ring capacity で bound (= drop-oldest)。 main が 1 quantum 間 に
+            // capacity 超 の burst を post し て も queue が 膨 ら ま ず、 process() の
+            // `for (const payload of queue)` drain loop が audio thread で burst 比 例 =
+            // unbounded loop に な ら な い (= `00-foundations.md` §5.1 invariant 2)。 drop
+            // し た 分 は WASM ring overflow counter に 計 上 (= SAB path の ring drop-oldest
+            // と 同 じ overflowCount semantics、 process 末 尾 で main に notify)。
+            const queue = messageQueueMirrors[ringIndex]!;
+            if (queue.length >= messageRings[ringIndex]!.capacity) {
+              queue.shift();
+              const wasmH = messageRingsWasmHeaderViews[ringIndex]!;
+              wasmH[2] = wasmH[2]! + 1;
+            }
+            queue.push(data.payload as Record<string, unknown>);
+            return;
           }
-          queue.push(data.payload as Record<string, unknown>);
+          if (data.kind === "midi") {
+            // inbound MIDI (= main の `node.midi.<name>.send(...)`)。 message と 同 じ く
+            // queue に 蓄 積 + capacity で bound (drop-oldest)、 process 開 始 で WASM
+            // in-ring に inject (= §4.4 postMessage path)。
+            if (typeof data.ringIndex !== "number") return;
+            const ringIndex = data.ringIndex;
+            if (ringIndex < 0 || ringIndex >= midiRingsMeta.length) return;
+            if (midiRingsMeta[ringIndex]!.direction !== "in") return;
+            const item = data.item as MidiQueueItem | null | undefined;
+            if (typeof item !== "object" || item === null) return;
+            const queue = midiInQueues[ringIndex]!;
+            if (queue.length >= midiRingsMeta[ringIndex]!.capacity) {
+              queue.shift();
+              const wasmH = midiRingsWasmHeaderViews[ringIndex]!;
+              wasmH[2] = wasmH[2]! + 1;
+            }
+            queue.push(item);
+          }
         });
         // MessagePort spec = addEventListener 経 路 は implicit start し な い =
         // start() 明 示 で 受 信 を 有 効 化 (= onmessage = ... path は auto-start
@@ -920,6 +1100,72 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
               } else if (typeof value === "number") {
                 wasmDataView.setInt32(byteOffset, value | 0, true);
               }
+            }
+            wasmH[0] = head + 1;
+          }
+          queue.length = 0;
+        }
+      }
+    }
+
+    // MIDI in-ring inject = message と 同 transport (main → WASM)。 Q38-b: handler は
+    // per-block / forSample よ り 先 に drain す る た め、 inject は WASM process 前。
+    //
+    // - SAB available: main が SAB ring に push 済 = header を acquire-load し て か ら
+    //   SAB → WASM bulk copy (= §5.5 acquire-before-read) + sysex content も head 前 進 時 mirror。
+    // - SAB unavailable: midiInQueues に 蓄 積 済 = 各 item を WASM ring slot に wire byte
+    //   で 書 き 込 み + 容 量 超 え で drop-oldest + 内 部 overflowCount += 1。
+    if (state.midiRings.length > 0) {
+      const isSab = state.transport === "sab";
+      const dv = state.midiWasmDataView!;
+      for (let i = 0; i < state.midiRings.length; i++) {
+        const ring = state.midiRings[i]!;
+        if (ring.direction !== "in") continue;
+        const wasmH = state.midiRingsWasmHeaderViews[i]!;
+        if (isSab && state.midiRingsBuffer !== null) {
+          // SAB path = SAB → WASM bulk copy (= header acquire-load 後 に slot copy)
+          const sabH = state.midiRingsSabHeaderViews[i]!;
+          const prevHead = wasmH[0]!;
+          wasmH[0] = Atomics.load(sabH, 0);
+          wasmH[1] = Atomics.load(sabH, 1);
+          wasmH[2] = Atomics.load(sabH, 2);
+          state.midiRingsWasmViews[i]!.set(state.midiRingsSabViews[i]!);
+          const sysexWasm = state.sysexContentWasmViews[i];
+          const sysexSab = state.sysexContentSabViews[i];
+          if (sysexWasm !== null && sysexSab !== null && wasmH[0]! !== prevHead) {
+            sysexWasm.set(sysexSab);
+          }
+        } else {
+          // postMessage path = midiInQueues を WASM ring に wire byte で inject
+          const queue = state.midiInQueues[i]!;
+          if (queue.length === 0) continue;
+          const capacity = ring.capacity;
+          const sysexWasm = state.sysexContentWasmViews[i];
+          for (const item of queue) {
+            const head = wasmH[0]!;
+            const tail = wasmH[1]!;
+            if (head - tail >= capacity) {
+              wasmH[1] = tail + 1;
+              wasmH[2] = wasmH[2]! + 1;
+            }
+            const slotByteOffset = 12 + (head % capacity) * MIDI_SLOT_BYTES;
+            if (item.sysex !== undefined && ring.sysex !== undefined && sysexWasm !== null) {
+              // sysex = content chunk に [length, data]、 slot に [0xF0, chunkIdx, _, _, atSample]
+              const region = ring.sysex;
+              const chunkIdx = head % region.chunks;
+              const chunkBase = chunkIdx * region.perChunk;
+              const len = Math.min(item.sysex.length, region.perChunk - 4);
+              dv.setUint32(ring.sysex.wasmBase + chunkBase, len, true);
+              sysexWasm.set(item.sysex.subarray(0, len), chunkBase + 4);
+              dv.setUint8(ring.wasmRingBase + slotByteOffset, 0xf0);
+              dv.setUint8(ring.wasmRingBase + slotByteOffset + 1, chunkIdx);
+              dv.setUint32(ring.wasmRingBase + slotByteOffset + 4, item.atSample, true);
+            } else {
+              dv.setUint8(ring.wasmRingBase + slotByteOffset, item.status);
+              dv.setUint8(ring.wasmRingBase + slotByteOffset + 1, item.data1);
+              dv.setUint8(ring.wasmRingBase + slotByteOffset + 2, item.data2);
+              dv.setUint8(ring.wasmRingBase + slotByteOffset + 3, 0);
+              dv.setUint32(ring.wasmRingBase + slotByteOffset + 4, item.atSample, true);
             }
             wasmH[0] = head + 1;
           }
@@ -1130,6 +1376,92 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       }
     }
 
+    // MIDI ring copy / commit = direction で 経 路 が 分 岐 (`11-midi.md` §4.4):
+    //
+    // - out port (= event と 同): SAB = WASM ring → SAB bulk copy + sysex content mirror
+    //   + header Atomics.store。 postMessage = 新 slot 群 を 抽 出 + `{ kind:'midiOut' }` 配 送。
+    // - in port (= message と 同): SAB = WASM drain tail を SAB tail に commit (= main の
+    //   drop-oldest 判 定 の 観 測 元)。 postMessage = overflow 変 化 を `{ kind:'midi-overflow' }` 通 知。
+    if (state.midiRings.length > 0) {
+      const isSab = state.transport === "sab";
+      for (let i = 0; i < state.midiRings.length; i++) {
+        const ring = state.midiRings[i]!;
+        const wasmH = state.midiRingsWasmHeaderViews[i]!;
+        if (ring.direction === "out") {
+          const currentHead = wasmH[0]!;
+          const currentTail = wasmH[1]!;
+          const currentOverflow = wasmH[2]!;
+          if (isSab && state.midiRingsBuffer !== null) {
+            state.midiRingsSabViews[i]!.set(state.midiRingsWasmViews[i]!);
+            const sysexWasm = state.sysexContentWasmViews[i];
+            const sysexSab = state.sysexContentSabViews[i];
+            if (sysexWasm !== null && sysexSab !== null) {
+              sysexSab.set(sysexWasm);
+            }
+            const sabH = state.midiRingsSabHeaderViews[i]!;
+            Atomics.store(sabH, 0, currentHead);
+            Atomics.store(sabH, 1, currentTail);
+            Atomics.store(sabH, 2, currentOverflow);
+          } else {
+            const lastSentHead = state.lastSentMidiHeads[i]!;
+            const lastSentOverflow = state.lastSentMidiOverflows[i]!;
+            if (currentHead === lastSentHead && currentOverflow === lastSentOverflow) continue;
+            const from = lastSentHead < currentTail ? currentTail : lastSentHead;
+            const newSlotCount = currentHead - from;
+            const capacity = ring.capacity;
+            const wasmRawView = state.midiRingsWasmViews[i]!;
+            const slotsBytes = new Uint8Array(newSlotCount * MIDI_SLOT_BYTES);
+            for (let k = 0; k < newSlotCount; k++) {
+              const slotIdx = (from + k) % capacity;
+              const srcOffset = 12 + slotIdx * MIDI_SLOT_BYTES;
+              slotsBytes.set(
+                wasmRawView.subarray(srcOffset, srcOffset + MIDI_SLOT_BYTES),
+                k * MIDI_SLOT_BYTES,
+              );
+            }
+            const midiOutMsg: {
+              kind: "midiOut";
+              ringIndex: number;
+              newSlotsBytes: ArrayBuffer;
+              newSlotCount: number;
+              overflowCount: number;
+              sysexBytes?: ArrayBuffer;
+            } = {
+              kind: "midiOut",
+              ringIndex: i,
+              newSlotsBytes: slotsBytes.buffer,
+              newSlotCount,
+              overflowCount: currentOverflow,
+            };
+            // sysex port = content region snapshot を 同 梱 (= main は WASM に 触 れ ず
+            // slot の chunkIdx で ここ か ら length-prefixed bytes を 読 む)。
+            const sysexWasm = state.sysexContentWasmViews[i];
+            if (sysexWasm !== null) {
+              midiOutMsg.sysexBytes = sysexWasm.slice().buffer;
+            }
+            self.port.postMessage(midiOutMsg);
+            state.lastSentMidiHeads[i] = currentHead;
+            state.lastSentMidiOverflows[i] = currentOverflow;
+          }
+        } else {
+          // in port = WASM drain tail を main に 公 開 / overflow 通 知
+          if (isSab && state.midiRingsBuffer !== null) {
+            Atomics.store(state.midiRingsSabHeaderViews[i]!, 1, wasmH[1]!);
+          } else {
+            const currentOverflow = wasmH[2]!;
+            if (currentOverflow !== state.lastSentMidiInOverflows[i]) {
+              self.port.postMessage({
+                kind: "midi-overflow",
+                ringIndex: i,
+                overflowCount: currentOverflow,
+              });
+              state.lastSentMidiInOverflows[i] = currentOverflow;
+            }
+          }
+        }
+      }
+    }
+
     return true;
   };
 
@@ -1142,5 +1474,6 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
     publishSlots,
     eventRings,
     messageRings,
+    midiRings,
   };
 }
