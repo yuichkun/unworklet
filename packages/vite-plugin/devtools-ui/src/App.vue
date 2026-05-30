@@ -2,6 +2,8 @@
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
+import logoUrl from "./assets/unworklet-logo.svg";
+
 const router = useRouter();
 const route = useRoute();
 
@@ -20,26 +22,7 @@ const navItems = computed(() =>
   <div class="app-shell">
     <aside class="sidebar">
       <div class="brand">
-        <div class="brand-row">
-          <svg
-            class="brand-mark"
-            viewBox="0 0 24 24"
-            width="20"
-            height="20"
-            fill="none"
-            aria-hidden="true"
-          >
-            <path
-              d="M2 12 L6 12 L8 4 L12 20 L14 8 L16 14 L18 12 L22 12"
-              stroke="currentColor"
-              stroke-width="1.8"
-              stroke-linejoin="round"
-              stroke-linecap="round"
-            />
-          </svg>
-          <span class="brand-name">Unworklet</span>
-        </div>
-        <span class="brand-sub">Engine Active</span>
+        <img class="brand-logo" :src="logoUrl" alt="Unworklet" />
       </div>
 
       <nav class="nav">
@@ -83,40 +66,15 @@ const navItems = computed(() =>
 }
 
 .brand {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
   padding: 0 18px 24px;
 }
 
-.brand-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.brand-mark {
-  color: var(--u-text);
-}
-
-.brand-name {
-  font-family: var(--u-headline);
-  font-weight: 700;
-  font-size: 22px;
-  letter-spacing: -0.01em;
-  color: var(--u-text);
-  line-height: 1;
-}
-
-.brand-sub {
-  font-family: var(--u-mono);
-  font-size: 9.5px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.16em;
-  color: var(--u-text-muted);
-  opacity: 0.5;
-  padding-left: 28px;
+/* SVG logo (icon + wordmark baked in, ~537×533 square-ish viewBox). Size
+   width-first; height auto preserves the embedded aspect. */
+.brand-logo {
+  display: block;
+  width: 90px;
+  height: auto;
 }
 
 .nav {
