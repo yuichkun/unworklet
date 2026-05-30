@@ -211,9 +211,31 @@ function walkForLoopErrors(body: readonly AstNode[], diagnostics: DiagnosticEntr
   }
 }
 
+// §5.1: message<T> / event<T> の payload は variable-length (typed-array) field を
+// 1 つまで。slot は単一の [payloadLen, payloadOffset] pair しか持てないので、複数あると
+// transport が破綻する → graph-capture-time error。field は access (.at() / copyFrom /
+// emitIf) 時に payloadElementType が seal されるので、seal 済を数えて 2 つ以上で reject。
+function checkPayloadFieldLimit(graph: CapturedGraph, diagnostics: DiagnosticEntry[]): void {
+  for (const decl of graph.declarations) {
+    if (decl.kind !== "message" && decl.kind !== "event") continue;
+    const taFields = decl.fields.filter((f) => f.payloadElementType !== undefined);
+    if (taFields.length > 1) {
+      diagnostics.push({
+        id: "multiple-typed-array-fields",
+        severity: "error",
+        message:
+          `unworklet: ${decl.kind} "${decl.name}" payload has ${taFields.length} variable-length ` +
+          `(typed-array) fields (${taFields.map((f) => f.name).join(", ")}). v1.0.0 allows at most ` +
+          `one variable-length field per payload (§5.1). (stable ID 'multiple-typed-array-fields')`,
+      });
+    }
+  }
+}
+
 export function analyze(graph: CapturedGraph): DiagnosticEntry[] {
   const diagnostics: DiagnosticEntry[] = [];
   walkForLoopErrors(graph.statements, diagnostics);
+  checkPayloadFieldLimit(graph, diagnostics);
   for (const stmt of graph.statements) {
     if (stmt.kind === "forSample") {
       walkForConstantTruthyEmitIf(stmt.body, diagnostics);

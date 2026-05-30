@@ -190,3 +190,24 @@ test("同名の message と event は別の content region を持つ (= 名前�
   // 同名でも event と message は別 region = 片方の content がもう片方を壊さない。
   expect(ev!.base).not.toBe(ms!.base);
 });
+
+// §5.1: payload (T) は variable-length (typed-array) field を 1 つまで。複数あると
+// slot は単一の [payloadLen, payloadOffset] しか持てず transport が破綻するので
+// graph-capture-time error。message 受信側 (a.at()/b.at() の両 seal) で検証。
+test("payload に複数 typed-array field があると compile で reject する (§5.1 single-field limit)", async () => {
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const msg = message<{ a: Float32Array; b: Float32Array }>({ name: "two" });
+    const buf = buffer.f32({ size: 4 });
+    return {
+      process: () => {
+        msg.onReceive(({ a, b }) => {
+          buf.write(0, a.at(0)); // a を typed-array field として seal
+          buf.write(1, b.at(0)); // b も seal = 2 個目 = NG
+        });
+        forSample((i) => out.ch(0).at(i).write(buf.read(0)));
+      },
+    };
+  });
+  await expect(compile(proc)).rejects.toThrow(/multiple-typed-array-fields/);
+});
