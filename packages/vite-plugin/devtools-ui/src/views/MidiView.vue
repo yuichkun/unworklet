@@ -634,6 +634,10 @@ const octaveLabel = computed(() => `C${Math.floor(octaveBase.value / 12) - 1}`);
 /* ── Inject panel ── */
 
 .inject-section {
+  /* container-type lets the queries below target this section's actual width
+     (= devtool iframe minus sidebar) instead of viewport width. Matters
+     because the devtool can be docked at various widths. */
+  container-type: inline-size;
   background: var(--u-bg-elev-1);
   border: 1px solid var(--u-border);
   border-radius: var(--u-radius);
@@ -650,6 +654,15 @@ const octaveLabel = computed(() => `C${Math.floor(octaveBase.value / 12) - 1}`);
   grid-template-columns: auto minmax(360px, 1fr);
   gap: 40px;
   align-items: start;
+}
+
+/* Below ~880px the left (keyboard, ~448px) + 40px gap + right (360px min)
+   = 848px doesn't fit comfortably. Stack to one column with a safety margin. */
+@container (max-width: 880px) {
+  .inject-split {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
 }
 
 .inject-left,
@@ -756,6 +769,11 @@ const octaveLabel = computed(() => `C${Math.floor(octaveBase.value / 12) - 1}`);
   flex-direction: column;
   gap: 10px;
   align-items: flex-start;
+  /* Keyboard wrap is sized in px (= 14 white keys × 32px = 448px). At very
+     narrow containers, let it scroll horizontally rather than punch out of
+     the parent. */
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .keyboard-hint {
@@ -782,9 +800,19 @@ const octaveLabel = computed(() => `C${Math.floor(octaveBase.value / 12) - 1}`);
    fits next to the # input without overlapping the slider. */
 .inject-controllers {
   display: grid;
-  grid-template-columns: 90px 200px minmax(180px, 1fr) 50px;
+  grid-template-columns: 90px 200px minmax(120px, 1fr) 50px;
   gap: 10px 12px;
   align-items: center;
+}
+
+/* Shrink the aux column (CC name hint) as the controllers section narrows
+   so the slider still has room. Below 360px aux column drops to 100px;
+   the standard CC-name hint truncates with ellipsis (already configured). */
+@container (max-width: 520px) {
+  .inject-controllers {
+    grid-template-columns: 70px minmax(100px, 140px) minmax(80px, 1fr) 40px;
+    gap: 8px 8px;
+  }
 }
 
 .ctrl-row-send {
@@ -948,6 +976,8 @@ input[type="range"] {
 /* ── Log ── */
 
 .log-section {
+  /* Container queries below scope to this section's own width. */
+  container-type: inline-size;
   background: var(--u-bg-elev-1);
   border: 1px solid var(--u-border);
   border-radius: var(--u-radius);
@@ -1024,6 +1054,19 @@ input[type="range"] {
 
 .log-row:last-child {
   border-bottom: 0;
+}
+
+/* Drop the port column at narrow widths — direction filter already conveys
+   most of the routing info, and the port name takes lots of horizontal
+   room (= "arpeggiator.arpOut"). */
+@container (max-width: 560px) {
+  .log-row {
+    grid-template-columns: 80px 50px minmax(60px, 0.8fr) minmax(0, 1.6fr);
+    gap: 8px;
+  }
+  .log-port {
+    display: none;
+  }
 }
 
 .log-ts {

@@ -483,6 +483,15 @@ const onPaneClick = (): void => {
   min-height: 0;
 }
 
+/* Stack the canvas + detail panes vertically once the viewport can't fit
+   sidebar (200) + a usable canvas (~320) + detail pane (380). Detail goes
+   below the canvas with a capped height instead of competing for width. */
+@media (max-width: 900px) {
+  .view-body {
+    flex-direction: column;
+  }
+}
+
 .graph-pane {
   flex: 1;
   display: flex;
@@ -649,6 +658,18 @@ const onPaneClick = (): void => {
   border-left: 1px solid var(--u-border);
   min-height: 0;
   overflow-y: auto;
+}
+
+/* When the layout stacks (narrow viewports), the detail pane sits below the
+   canvas — cap its height so it doesn't claim the whole screen, and swap
+   the side border to a top border. */
+@media (max-width: 900px) {
+  .detail-pane {
+    flex: 0 0 auto;
+    max-height: 320px;
+    border-left: 0;
+    border-top: 1px solid var(--u-border);
+  }
 }
 
 .detail-head {

@@ -456,6 +456,9 @@ watch(reprByKey, () => redraw(), { deep: true });
 }
 
 .node-section {
+  /* container queries below target the node-section's actual width so we
+     can collapse the slot grid before it overflows the panel. */
+  container-type: inline-size;
   background: var(--u-bg-elev-1);
   border: 1px solid var(--u-border);
   border-radius: var(--u-radius);
@@ -566,6 +569,30 @@ watch(reprByKey, () => redraw(), { deep: true });
   align-items: center;
   column-gap: 10px;
   overflow: hidden;
+}
+
+/* Slot-row at full width needs ~794px (slot-meta 428 + 140 select + 160 vis
+   + gaps). Below ~760px the visualization column gets crushed — at ~580px
+   we stack to vertical instead. Mid-range (~580-760px) we drop the size +
+   rate columns so the visualization keeps breathing room. */
+@container (max-width: 760px) {
+  .slot-meta {
+    grid-template-columns: minmax(0, 1fr) 130px 36px;
+  }
+  .slot-size,
+  .slot-rate {
+    display: none;
+  }
+}
+
+@container (max-width: 580px) {
+  .slot-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+  .slot-meta {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
 }
 
 .slot-name {
