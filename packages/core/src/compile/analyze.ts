@@ -148,6 +148,28 @@ function walkForTypeErrors(node: AstNode, diagnostics: DiagnosticEntry[]): void 
         if (field.length !== undefined) walkForTypeErrors(field.length, diagnostics);
       }
       break;
+    case "vecConst":
+      for (const l of node.lanes) walkForTypeErrors(l, diagnostics);
+      break;
+    case "vecSplat":
+    case "vecLane":
+    case "vecSumLanes":
+      walkForTypeErrors(node.value, diagnostics);
+      break;
+    case "vecAdd":
+    case "vecSub":
+    case "vecMul":
+    case "vecDiv":
+      walkForTypeErrors(node.lhs, diagnostics);
+      walkForTypeErrors(node.rhs, diagnostics);
+      break;
+    case "bufferLoadVec":
+      walkForTypeErrors(node.offset, diagnostics);
+      break;
+    case "bufferStoreVec":
+      walkForTypeErrors(node.offset, diagnostics);
+      walkForTypeErrors(node.value, diagnostics);
+      break;
     case "literal":
     case "loopCounter":
     case "stateLoad":

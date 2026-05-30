@@ -118,6 +118,12 @@ const BUFINTERP_I0_LOCAL = 16;
 const PAYLOAD_CLAMP_LOCAL = 17;
 
 /**
+ * SIMD `sumLanes` 用 v128 temp local (= §7)。 vec を 1 度 評 価 し て hold し、
+ * 4 lane を `extract_lane` で 取 り 出 す (= vec expression の 4 重 評 価 回 避)。
+ */
+const VEC_TEMP_LOCAL = 18;
+
+/**
  * 多 項 式 近 似 の math primitive (= sin / cos / tan / tanh / exp / log、 Q17) は
  * 共 有 プ ラ イ ベ ー ト WASM 関 数 (= `(f32) -> f32`、 export し な い) と し て emit し、
  * 呼 び 出 し 側 は `call` で 参 照。 各 関 数 は 自 前 の local を 持 つ の で `process`
@@ -155,9 +161,9 @@ export async function emit(
   const sampleRate = options.sampleRate ?? DEFAULT_EMIT_SAMPLE_RATE;
   const binaryen = (await import("binaryen")).default;
   const mod = new binaryen.Module();
-  // buffer.copyFrom が `memory.copy` (= bulk-memory) を emit する (= Q31-c)。
-  // 既定 features (MVP) に BulkMemory を足して emitBinary が opcode を出せるように。
-  mod.setFeatures(mod.getFeatures() | binaryen.Features.BulkMemory);
+  // buffer.copyFrom = memory.copy (= bulk-memory、Q31-c)、SIMD = f32x4 (= §7)。
+  // 既定 features (MVP) に足して emitBinary が opcode を出せるように。
+  mod.setFeatures(mod.getFeatures() | binaryen.Features.BulkMemory | binaryen.Features.SIMD128);
 
   const pages = Math.max(1, Math.ceil(layout.totalBytes / PAGE_BYTES));
   mod.setMemory(pages, pages, "memory");
@@ -217,6 +223,7 @@ export async function emit(
       binaryen.f32, // BUFINTERP_POS_LOCAL
       binaryen.i32, // BUFINTERP_I0_LOCAL
       binaryen.i32, // PAYLOAD_CLAMP_LOCAL (= at OOB clamp idx)
+      binaryen.v128, // VEC_TEMP_LOCAL (= SIMD sumLanes 用)
     ],
     body,
   );
@@ -783,6 +790,54 @@ function emitBufferCopyFrom(
   return mod.memory.copy(destAddr, srcAddr, copyBytes);
 }
 
+// SIMD f32x4 vec-producing node → v128 expr (= §7)。 vec4 = splat lane0 + replace_lane
+// 1/2/3、 splat = broadcast、 binary = f32x4.add/sub/mul/div。 lane scalar 引 数 は
+// emitExpression (= f32 path)、 vec オ ペ ラ ン ド は emitVec で 再 帰。
+function emitVec(
+  node: AstNode,
+  layout: Layout,
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): number {
+  const scalar = (n: AstNode): number => emitExpression(n, layout, mod, binaryen);
+  const vec = (n: AstNode): number => emitVec(n, layout, mod, binaryen);
+  switch (node.kind) {
+    case "vecSplat":
+      return mod.f32x4.splat(scalar(node.value));
+    case "vecConst": {
+      let v = mod.f32x4.splat(scalar(node.lanes[0]));
+      v = mod.f32x4.replace_lane(v, 1, scalar(node.lanes[1]));
+      v = mod.f32x4.replace_lane(v, 2, scalar(node.lanes[2]));
+      v = mod.f32x4.replace_lane(v, 3, scalar(node.lanes[3]));
+      return v;
+    }
+    case "vecAdd":
+      return mod.f32x4.add(vec(node.lhs), vec(node.rhs));
+    case "vecSub":
+      return mod.f32x4.sub(vec(node.lhs), vec(node.rhs));
+    case "vecMul":
+      return mod.f32x4.mul(vec(node.lhs), vec(node.rhs));
+    case "vecDiv":
+      return mod.f32x4.div(vec(node.lhs), vec(node.rhs));
+    case "bufferLoadVec": {
+      const base = layout.regions.buffers.slots[node.name];
+      /* v8 ignore next 3 — buffer は宣言済 = layout に slot 既 push = unreachable */
+      if (base === undefined) {
+        throw new Error(`unknown buffer: ${node.name}`);
+      }
+      // addr = bufferBase + offset × 4 (f32 element)。 v128.load = 4 lane (16 byte)。
+      const addr = mod.i32.add(
+        mod.i32.const(base),
+        mod.i32.mul(scalar(node.offset), mod.i32.const(BYTES_PER_F32)),
+      );
+      return mod.v128.load(0, BYTES_PER_F32, addr);
+    }
+    /* v8 ignore next 2 — scalar node が vec position に来るのは型で排除済 = unreachable */
+    default:
+      throw new Error(`unworklet: expected f32x4 node in vec position, got '${node.kind}'`);
+  }
+}
+
 export function emitExpression(
   node: AstNode,
   layout: Layout,
@@ -1051,6 +1106,31 @@ export function emitExpression(
       return emitPayloadFieldRead(node, layout, mod, binaryen);
     case "payloadFieldLength":
       return emitPayloadFieldLength(node, layout, mod, binaryen);
+    // SIMD lane 抽 出 = f32x4.extract_lane (= 定 数 lane index)。
+    case "vecLane":
+      return mod.f32x4.extract_lane(emitVec(node.value, layout, mod, binaryen), node.index);
+    // sumLanes = vec を v128 local に hold し て 4 lane を extract + add (= §7)。
+    case "vecSumLanes": {
+      const lane = (idx: number): number =>
+        mod.f32x4.extract_lane(mod.local.get(VEC_TEMP_LOCAL, binaryen.v128), idx);
+      return mod.block(
+        null,
+        [
+          mod.local.set(VEC_TEMP_LOCAL, emitVec(node.value, layout, mod, binaryen)),
+          mod.f32.add(mod.f32.add(lane(0), lane(1)), mod.f32.add(lane(2), lane(3))),
+        ],
+        binaryen.f32,
+      );
+    }
+    // vec-producing node は scalar position に来ない (= emitVec 経由で消費)。
+    case "vecConst":
+    case "vecSplat":
+    case "vecAdd":
+    case "vecSub":
+    case "vecMul":
+    case "vecDiv":
+    case "bufferLoadVec":
+      throw new Error(`f32x4 node '${node.kind}' cannot appear in scalar position`);
     case "audioInRead": {
       const portBase = layout.regions.ioScratch.inputs[node.portName];
       if (portBase === undefined) {
@@ -1138,6 +1218,7 @@ export function emitExpression(
     case "messageOnReceive":
     case "bufferWrite":
     case "bufferCopyFrom":
+    case "bufferStoreVec":
     case "everyNSamples":
       throw new Error(`statement node '${node.kind}' cannot appear in expression position`);
   }
@@ -1261,6 +1342,21 @@ export function emitStatement(
     }
     case "bufferCopyFrom":
       return emitBufferCopyFrom(node, layout, mod, binaryen);
+    case "bufferStoreVec": {
+      const base = layout.regions.buffers.slots[node.name];
+      /* v8 ignore next 3 — buffer は宣言済 = layout に slot 既 push = unreachable */
+      if (base === undefined) {
+        throw new Error(`unknown buffer: ${node.name}`);
+      }
+      const addr = mod.i32.add(
+        mod.i32.const(base),
+        mod.i32.mul(
+          emitExpression(node.offset, layout, mod, binaryen),
+          mod.i32.const(BYTES_PER_F32),
+        ),
+      );
+      return mod.v128.store(0, BYTES_PER_F32, addr, emitVec(node.value, layout, mod, binaryen));
+    }
     case "everyNSamples": {
       // §9.1: (counter % divisor) == 0 で body を実行 + counter += stride。 counter は
       // call-site ごとの memory slot で block 跨ぎ継続 (= zero-order hold は body 内の
@@ -1730,6 +1826,28 @@ function collectUsedMathKinds(graph: CapturedGraph): Set<string> {
         break;
       case "bufferCopyFrom":
         // math 関 数 を 含 む 子 expression ナ シ。
+        break;
+      case "vecConst":
+        node.lanes.forEach(visit);
+        break;
+      case "vecSplat":
+      case "vecLane":
+      case "vecSumLanes":
+        visit(node.value);
+        break;
+      case "vecAdd":
+      case "vecSub":
+      case "vecMul":
+      case "vecDiv":
+        visit(node.lhs);
+        visit(node.rhs);
+        break;
+      case "bufferLoadVec":
+        visit(node.offset);
+        break;
+      case "bufferStoreVec":
+        visit(node.offset);
+        visit(node.value);
         break;
       case "bufferWrite":
         visit(node.index);

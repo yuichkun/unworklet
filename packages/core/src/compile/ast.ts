@@ -44,6 +44,19 @@ export type AstNode =
   | { kind: "gte"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "clamp"; type: ScalarType; x: AstNode; lo: AstNode; hi: AstNode }
   | { kind: "select"; type: ScalarType; cond: AstNode; ifTrue: AstNode; ifFalse: AstNode }
+  // SIMD f32x4 (`01-dsl.md` §7、Q59). vec-producing nodes (vecConst/vecSplat/vecAdd…)
+  // are `Node<'f32x4'>`; vecLane / vecSumLanes reduce back to `Node<'f32'>`.
+  | { kind: "vecConst"; lanes: [AstNode, AstNode, AstNode, AstNode] }
+  | { kind: "vecSplat"; value: AstNode }
+  | { kind: "vecAdd"; lhs: AstNode; rhs: AstNode }
+  | { kind: "vecSub"; lhs: AstNode; rhs: AstNode }
+  | { kind: "vecMul"; lhs: AstNode; rhs: AstNode }
+  | { kind: "vecDiv"; lhs: AstNode; rhs: AstNode }
+  | { kind: "vecLane"; index: number; value: AstNode }
+  | { kind: "vecSumLanes"; value: AstNode }
+  // SIMD buffer I/O (§7): load/store 4 contiguous f32 lanes at element offset.
+  | { kind: "bufferLoadVec"; name: string; offset: AstNode }
+  | { kind: "bufferStoreVec"; name: string; offset: AstNode; value: AstNode }
   // Cross-precision conversion between `Node` types (= scalar constructors
   // `f32(node)` / `i32(node)` / etc., `01-dsl.md` §2.2). `type` = target,
   // `from` = source. Lowers to a single WASM convert / trunc_sat / extend /
@@ -361,6 +374,21 @@ export function inferAstType(ast: AstNode): ScalarType {
       return ast.elementType === "u8" ? "i32" : ast.elementType;
     case "payloadFieldLength":
       return "i32";
+    // SIMD reduction = scalar f32 (= lane 抽出 / horizontal sum)。
+    case "vecLane":
+    case "vecSumLanes":
+      return "f32";
+    // SIMD vec-producing = f32x4 = scalar 型 system 外 = scalar position は不正。
+    case "vecConst":
+    case "vecSplat":
+    case "vecAdd":
+    case "vecSub":
+    case "vecMul":
+    case "vecDiv":
+    case "bufferLoadVec":
+      throw new Error(`f32x4 node '${ast.kind}' cannot appear in scalar position`);
+    case "bufferStoreVec":
+      throw new Error(`statement node '${ast.kind}' cannot appear in expression position`);
     case "audioOutWrite":
     case "forSample":
     case "stateStore":

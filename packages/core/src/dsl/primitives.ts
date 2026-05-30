@@ -125,10 +125,30 @@ function lift(value: Operand, t: ScalarType): AstNode {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Arithmetic (polymorphic over 'f32' | 'f64' | 'i32' | 'i64')
+// Arithmetic (polymorphic over 'f32' | 'f64' | 'i32' | 'i64' + SIMD 'f32x4')
 // ─────────────────────────────────────────────────────────────────────────
 
+// SIMD f32x4 (= §7): add/sub/mul/div の method 形 は f32x4 でも型宣言されている
+// (= primitives.ts の Node augment が T に "f32x4" を含む)。 オペランドが vec-producing
+// node なら scalar 経路ではなく vec node を生成する (= 型通るが動かない を防止)。 number
+// は splat で 4 lane に broadcast。
+const VEC_KINDS = new Set(["vecConst", "vecSplat", "vecAdd", "vecSub", "vecMul", "vecDiv"]);
+const isF32x4Operand = (op: Operand): boolean =>
+  isWrappedNode(op) && VEC_KINDS.has(unwrapAst(op).kind);
+const liftVec = (op: Operand): AstNode =>
+  isWrappedNode(op)
+    ? unwrapAst(op)
+    : { kind: "vecSplat", value: { kind: "literal", type: "f32", value: Number(op) } };
+const vecBinaryOrNull = (
+  kind: "vecAdd" | "vecSub" | "vecMul" | "vecDiv",
+  a: Operand,
+  b: Operand,
+): AstNode | null =>
+  isF32x4Operand(a) || isF32x4Operand(b) ? { kind, lhs: liftVec(a), rhs: liftVec(b) } : null;
+
 export function add<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<T> {
+  const vec = vecBinaryOrNull("vecAdd", a, b);
+  if (vec !== null) return wrapAst(vec) as Node<T>;
   const t = operandType(a, b);
   return wrapAst<T>({ kind: "add", type: t, lhs: lift(a, t), rhs: lift(b, t) });
 }
@@ -139,6 +159,8 @@ registerNodeMethod("add", function method<
 });
 
 export function sub<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<T> {
+  const vec = vecBinaryOrNull("vecSub", a, b);
+  if (vec !== null) return wrapAst(vec) as Node<T>;
   const t = operandType(a, b);
   return wrapAst<T>({ kind: "sub", type: t, lhs: lift(a, t), rhs: lift(b, t) });
 }
@@ -149,6 +171,8 @@ registerNodeMethod("sub", function method<
 });
 
 export function mul<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<T> {
+  const vec = vecBinaryOrNull("vecMul", a, b);
+  if (vec !== null) return wrapAst(vec) as Node<T>;
   const t = operandType(a, b);
   return wrapAst<T>({ kind: "mul", type: t, lhs: lift(a, t), rhs: lift(b, t) });
 }
@@ -159,6 +183,8 @@ registerNodeMethod("mul", function method<
 });
 
 export function div<T extends ScalarType>(a: Node<T> | number, b: Node<T> | number): Node<T> {
+  const vec = vecBinaryOrNull("vecDiv", a, b);
+  if (vec !== null) return wrapAst(vec) as Node<T>;
   const t = operandType(a, b);
   return wrapAst<T>({ kind: "div", type: t, lhs: lift(a, t), rhs: lift(b, t) });
 }

@@ -439,8 +439,18 @@ function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer
         field: meta.field,
       });
     },
-    loadVec: () => notImplemented(),
-    storeVec: () => notImplemented(),
+    // SIMD buffer I/O (= §7、型は @unworklet/core/simd の declaration merge で f32 限定)。
+    // offset は element 単位 = emit 側で × 4 byte。 4 lane を v128 で load/store。
+    loadVec: (offset: Node<"i32"> | number) =>
+      wrapAst<"f32x4">({ kind: "bufferLoadVec", name: decl.name, offset: liftOffset(offset) }),
+    storeVec: (offset: Node<"i32"> | number, value: Node<"f32x4">) => {
+      addStatement({
+        kind: "bufferStoreVec",
+        name: decl.name,
+        offset: liftOffset(offset),
+        value: unwrapAst(value),
+      });
+    },
     named: (name: string) => {
       checkBufferName(name, decl);
       decl.name = name;
