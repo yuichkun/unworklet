@@ -418,7 +418,25 @@ export type MessageRingSlotDescriptor = {
     readonly wireType: ScalarType;
     readonly offsetInSlot: number;
     readonly byteSize: number;
+    /**
+     * Present when the field is a variable-length typed array (§5.2). The slot
+     * carries `[payloadLen, payloadOffset]` at `offsetInSlot` (8 bytes); the
+     * bytes live in the message's `payloadContent` region — the transport copies
+     * them via the content buffer rather than inlining a scalar wire word.
+     */
+    readonly payloadElementType?: BufferElementType;
   }>;
+  /**
+   * Variable-length payload content buffer for this message (§5.2), present only
+   * when `T` has a typed-array field. `wasmBase` = byte offset of the content
+   * region in WASM linear memory; `capacity` = its byte size. The SAB transport
+   * mirrors a same-sized shared content region onto `wasmBase`; the postMessage
+   * transport writes the array bytes here directly on the audio thread.
+   */
+  readonly payloadContent?: {
+    readonly wasmBase: number;
+    readonly capacity: number;
+  };
 };
 
 /**

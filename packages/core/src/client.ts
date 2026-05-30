@@ -363,6 +363,24 @@ export async function createNode<C>(
     messageRingsBuffer = new SharedArrayBuffer(messageRingsByteLength);
   }
 
+  // §5.2 variable-length content buffer = typed-array field を 持 つ message ご と に
+  // `payloadContent.capacity` bytes を 連 続 配 置 (= ring index と zip、 content ナ シ
+  // の ring も offset を hold = 使 用 側 は descriptor.payloadContent 有 無 で 判 断)。
+  // SAB 時 = main が ここ に array を push → worklet が WASM content region に mirror。
+  let messageContentByteLength = 0;
+  const messageContentSabOffsets: number[] = [];
+  for (const ring of messageRings) {
+    messageContentSabOffsets.push(messageContentByteLength);
+    if (ring.payloadContent !== undefined) {
+      messageContentByteLength += ring.payloadContent.capacity;
+    }
+  }
+  let messageContentBuffer: SharedArrayBuffer | null = null;
+  if (messageContentByteLength > 0 && sabAvailable) {
+    messageContentBuffer = new SharedArrayBuffer(messageContentByteLength);
+  }
+  const messageContentCursors: number[] = messageRings.map(() => 0);
+
   // main 側 state surface 構 築 = transport mode で 経 路 が 分 岐:
   //
   // - SAB available: publishBuffer の Int32Array view を 各 slot ご と に `.value`
@@ -496,6 +514,10 @@ export async function createNode<C>(
     messageRingsView = new DataView(messageRingsBuffer);
     messageRingsHeaderView = new Int32Array(messageRingsBuffer);
   }
+  // §5.2 content buffer の byte view (= SAB 時 の み)。 typed-array field 送 信 で
+  // ここ に array bytes を push、 slot に [payloadLen, payloadOffset] を 書 く。
+  const messageContentView: Uint8Array | null =
+    messageContentBuffer !== null ? new Uint8Array(messageContentBuffer) : null;
   if (messageRings.length > 0) {
     for (let i = 0; i < messageRings.length; i++) {
       const ring = messageRings[i]!;
@@ -525,7 +547,22 @@ export async function createNode<C>(
             for (const field of ring.fields) {
               const value = payload[field.name];
               const byteOffset = slotByteOffset + field.offsetInSlot;
-              if (typeof value === "boolean") {
+              if (field.payloadElementType !== undefined) {
+                // typed-array field = content SAB に bytes を 書 い て slot に
+                // [payloadLen(bytes), payloadOffset(region 相 対)]。 worklet が content
+                // region を 1:1 mirror す る の で offset は region base 相 対 で 一 致。
+                if (messageContentView !== null && ArrayBuffer.isView(value)) {
+                  const src = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+                  const capacity = ring.payloadContent?.capacity ?? 0;
+                  const contentBase = messageContentSabOffsets[i]!;
+                  let cursor = messageContentCursors[i]!;
+                  if (cursor + src.byteLength > capacity) cursor = 0;
+                  messageContentView.set(src, contentBase + cursor);
+                  messageRingsView.setUint32(byteOffset, src.byteLength, true);
+                  messageRingsView.setUint32(byteOffset + 4, cursor, true);
+                  messageContentCursors[i] = cursor + src.byteLength;
+                }
+              } else if (typeof value === "boolean") {
                 messageRingsView.setInt32(byteOffset, value ? 1 : 0, true);
               } else if (typeof value === "number") {
                 messageRingsView.setInt32(byteOffset, value | 0, true);
@@ -735,6 +772,8 @@ export async function createNode<C>(
             messageRingSabOffsets,
             transport: transportMode,
             ...(messageRingsBuffer !== null ? { messageRingsBuffer } : {}),
+            messageContentSabOffsets,
+            ...(messageContentBuffer !== null ? { messageContentBuffer } : {}),
           }
         : {}),
     },
