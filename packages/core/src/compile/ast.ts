@@ -226,6 +226,13 @@ export type ParamDecl = {
   min: number;
   max: number;
   automationRate: "a-rate" | "k-rate";
+  /**
+   * Snapshot inclusion (`01-dsl.md` §3.3 + §8.2). Default `'persistent'` —
+   * param values are typically the user-controlled preset state. `.expose({
+   * snapshot })` overrides. Only the current value is snapshotted (automation
+   * queues are not preserved).
+   */
+  snapshot?: SnapshotPolicy;
 };
 
 /**

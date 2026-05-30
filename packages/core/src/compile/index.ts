@@ -74,7 +74,7 @@ export async function compile<C>(
   }
   const sampleRate = options.sampleRate ?? DEFAULT_SAMPLE_RATE;
   const wasm = await emit(graph, memory, { sampleRate });
-  const hash = await schemaHash(graph);
+  const hash = schemaHash(graph);
   return {
     wasm,
     graph: graph as unknown as GraphJson,

@@ -56,10 +56,6 @@ import type {
   TypedArrayFieldRef,
 } from "../types.ts";
 
-const notImplemented = (): never => {
-  throw new Error("not implemented");
-};
-
 /**
  * typed-array payload proxy node に隠し持たせる「どの message のどの field か」
  * の meta。`buf.copyFrom(payloadField)` が src からこれを読んで bufferCopyFrom AST
@@ -638,27 +634,29 @@ export interface ParamChain {
 }
 
 // `param` chain (= Q76 named-required + Q79 chain-order free)。
-// `.f32(opts)` 時 に declaration を graph に append し、 chain の `.named()` は
-// 後 付 け / 前 付 け 両 方 で 同 declaration を 指 す (= after-wins、 mutate)。
-// `param.at(i)` は decl.name を late-binding で 読 む = `.named` 重 複 後 でも
-// 最 新 name を 反 映。 `.expose({...})` は Phase 7 で fill = throw stub 維 持。
+// `.f32(opts)` 時 に declaration を graph に append し、 chain の `.named()` /
+// `.expose({...})` は 後 付 け / 前 付 け 両 方 で 同 declaration を 指 す
+// (= after-wins、 mutate)。 `param.at(i)` は decl.name を late-binding で 読 む =
+// `.named` / `.expose` 重 複 後 でも 最 新 name を 反 映。 snapshot policy は
+// `.expose({ snapshot })` で 設 定 (default 'persistent')。
 
-const makeParamChain = (pendingName: string | undefined): ParamChain => ({
+const makeParamChain = (pending: ExposeOptions): ParamChain => ({
   f32: (options) => {
     const decl: ParamDecl = {
       kind: "param",
-      name: pendingName ?? "",
+      name: pending.name ?? "",
       type: "f32",
       default: options.default,
       min: options.min,
       max: options.max,
       automationRate: options.automationRate,
+      snapshot: pending.snapshot,
     };
     addDeclaration(decl);
     return makeParam(decl);
   },
-  named: (name) => makeParamChain(name),
-  expose: () => notImplemented(),
+  named: (name) => makeParamChain(mergeExpose(pending, { name })),
+  expose: (options) => makeParamChain(mergeExpose(pending, options)),
 });
 
 function makeParam(decl: ParamDecl): Param {
@@ -673,12 +671,16 @@ function makeParam(decl: ParamDecl): Param {
       decl.name = name;
       return handle;
     },
-    expose: () => notImplemented(),
+    expose: (options: ExposeOptions) => {
+      if (options.name !== undefined) decl.name = options.name;
+      if (options.snapshot !== undefined) decl.snapshot = options.snapshot;
+      return handle;
+    },
   } as unknown as Param;
   return handle;
 }
 
-export const param: ParamChain = makeParamChain(undefined);
+export const param: ParamChain = makeParamChain(EMPTY_EXPOSE);
 
 // ─────────────────────────────────────────────────────────────────────────
 // Audio I/O declarations (`01-dsl.md` §1.1)

@@ -26,6 +26,7 @@ import type {
   StateValueProxy,
   UnworkletNode,
 } from "./types.ts";
+import { inspectSnapshot } from "./snapshot.ts";
 
 const notImplemented = (): never => {
   throw new Error("not implemented");
@@ -1148,6 +1149,7 @@ export async function createNode<C>(
   return unworkletNode;
 }
 
-export function inspect(_blob: Uint8Array): InspectionResult {
-  return notImplemented();
+export function inspect(blob: Uint8Array): InspectionResult {
+  // Pure blob decode (= no AudioContext / live processor needed, Q48).
+  return inspectSnapshot(blob);
 }

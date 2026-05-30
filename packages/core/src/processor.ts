@@ -26,6 +26,7 @@ import {
   runCapture,
 } from "./compile/capture.ts";
 import { makeWorkletNamespace } from "./worklet.ts";
+import { schemaHash } from "./compile/schemaHash.ts";
 
 /**
  * Brand the internal `CapturedGraph` as the opaque public
@@ -61,7 +62,9 @@ export function defineProcessor<C = unknown>(
 
   return {
     graph: brandGraph(captured),
-    schemaHash: "phase-3-stub",
+    // Same sync hash `compile()` produces — the migration anchor (`01-dsl.md`
+    // §8.3); both must agree so a snapshot blob's stored hash can be matched.
+    schemaHash: schemaHash(captured),
     worklet: makeWorkletNamespace(captured),
     __compiledProcessor: undefined as unknown as C,
   };

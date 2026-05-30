@@ -1178,8 +1178,20 @@ test("awaitReady: stray events after settle are early-returned (= no double sett
   }
 });
 
-test("`inspect(blob)` stub throws", () => {
-  expect(() => inspect(new Uint8Array(0))).toThrow(/not implemented/);
+test("`inspect(blob)` decodes a snapshot blob into a structured view", async () => {
+  const { encodeScalar, encodeSnapshot } = await import("./snapshot.ts");
+  const blob = encodeSnapshot("schemaX", null, [
+    { name: "gain", kind: "param", type: "f32", data: encodeScalar("f32", 0.5) },
+    { name: "count", kind: "state", type: "i32", data: encodeScalar("i32", 9) },
+  ]);
+  const r = inspect(blob);
+  expect(r.schemaHash).toBe("schemaX");
+  expect(r.slots.gain).toEqual({ kind: "param", value: 0.5 });
+  expect(r.slots.count).toEqual({ kind: "state", type: "i32", value: 9 });
+});
+
+test("`inspect(blob)` rejects a non-snapshot blob", () => {
+  expect(() => inspect(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]))).toThrow(/bad magic/);
 });
 
 test("fetchAndCompileWasm falls back to '' when the response exposes no headers / get accessor", async () => {

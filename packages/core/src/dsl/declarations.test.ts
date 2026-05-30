@@ -24,15 +24,28 @@ import { forSample } from "./loop.ts";
 import { add, gt } from "./primitives.ts";
 
 // ─────────────────────────────────────────────────────────────────────────
-// stub 維 持 = param.expose (= Phase 11 snapshot で fill)
+// param.expose = name + snapshot policy (`01-dsl.md` §3.3 + §8.2)
 // ─────────────────────────────────────────────────────────────────────────
 
-const stubs: ReadonlyArray<readonly [string, () => unknown]> = [
-  ["param.expose", () => param.expose({ name: "x" })],
-];
-
-test.each(stubs)("`%s` stub throws not implemented", (_name, invoke) => {
-  expect(invoke).toThrow(/not implemented/);
+test("`param.expose({ name, snapshot })` sets the param name + snapshot policy", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    param
+      .expose({ name: "route", snapshot: "transient" })
+      .f32({ default: 0, min: 0, max: 7, automationRate: "k-rate" });
+  });
+  expect(ctx.declarations).toEqual([
+    {
+      kind: "param",
+      name: "route",
+      type: "f32",
+      default: 0,
+      min: 0,
+      max: 7,
+      automationRate: "k-rate",
+      snapshot: "transient",
+    },
+  ]);
 });
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -394,14 +407,16 @@ test("`param.at` の paramName は `.named` chain で update さ れ た name �
   });
 });
 
-test("`param` handle `.expose({...})` は throw stub 維 持", () => {
+test("`param` handle `.expose({...})` (= 後 付 け) updates name + snapshot policy", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const handle = param
+    param
       .f32({ default: 0, min: 0, max: 1, automationRate: "k-rate" })
-      .named("gain");
-    expect(() => handle.expose({ name: "x" })).toThrow(/not implemented/);
+      .named("gain")
+      .expose({ snapshot: "transient" });
   });
+  const decl = ctx.declarations[0];
+  expect(decl).toMatchObject({ kind: "param", name: "gain", snapshot: "transient" });
 });
 
 // ─────────────────────────────────────────────────────────────────────────

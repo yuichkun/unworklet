@@ -43,7 +43,7 @@ test("`compile(processor)` returns a `CompileResult` with all 5 stage outputs", 
   const result = await compile(stereoGain);
   expect(result.wasm).toBeInstanceOf(Uint8Array);
   expect(result.wasm.byteLength).toBeGreaterThan(0);
-  expect(result.schemaHash).toMatch(/^[0-9a-f]{64}$/);
+  expect(result.schemaHash).toMatch(/^[0-9a-f]{32}$/);
   expect(result.diagnostics).toBeDefined();
   expect(result.memory).toBeDefined();
   expect(result.graph).toBeDefined();
