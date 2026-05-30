@@ -1547,7 +1547,7 @@ unworklet does not auto-distribute the spike. CPU smoothing is the consumer's re
 
 ### 9.5 v1.0.0 scope
 
-v1.0.0 ships `everyNSamples(N, callback)` only, where `N` is a compile-time positive integer (sample count). Future additive primitives (`everyTimeMs(ms, callback)`, `atSampleRate(rate, callback)`, etc.) can be introduced in v1.x.0 without breaking the v1.0.0 surface.
+v1.0.0 ships `everyNSamples(N, callback)` only, where `N` is a compile-time positive integer (sample count). A non-positive or non-integer `N` (e.g. `0`, `-2`, `3.5`) is rejected at graph-capture time with stable ID `illegal-everyn-divisor` (`03-compiler.md` §2.6) — `N = 0` would otherwise lower to `i32.rem_u(counter, 0)` and trap on the audio thread. `N` does **not** need to divide `SAMPLES_PER_BLOCK`: the counter is free-running across blocks (§9.1), so the `forSample.byN` stride constraint (`illegal-stride`) does not apply here. Future additive primitives (`everyTimeMs(ms, callback)`, `atSampleRate(rate, callback)`, etc.) can be introduced in v1.x.0 without breaking the v1.0.0 surface.
 
 Authoritative rationale and rejected alternatives: see `decisions-log.md` Q7.
 
