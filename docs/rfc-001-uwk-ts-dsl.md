@@ -144,11 +144,11 @@ A `'use unworklet/strict'` directive **inside `.uwk.ts` files** is reserved as a
 
 A `.uwk.ts` file resolves to a `CompiledProcessor<C>` value identical in shape to a `defineProcessor(...)` return value. Three tiers describe **how much sugar** the author opts into; all three coexist and interoperate at the module boundary.
 
-| Tier | Format | Wrap | Imports | Sugar | Default I/O |
-| ---- | ------ | ---- | ------- | ----- | ----------- |
-| **A** | `.ts` | explicit `defineProcessor((ctx) => {...})` | explicit | chain DSL (`a.mul(b)`, `select(c,x,y)`) | explicit |
-| **B** | `.uwk.ts` | `process(() => {...})` macro | ambient | infix operators + index access + ternary + `$prev` + auto-name + `if`-sugar + `.pipe()` | explicit `audioInput` / `audioOutput` declarations |
-| **C** | `.uwk.ts` | same as B | same as B | same as B | ambient `input` / `out` available; user can override |
+| Tier  | Format    | Wrap                                       | Imports   | Sugar                                                                                   | Default I/O                                          |
+| ----- | --------- | ------------------------------------------ | --------- | --------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| **A** | `.ts`     | explicit `defineProcessor((ctx) => {...})` | explicit  | chain DSL (`a.mul(b)`, `select(c,x,y)`)                                                 | explicit                                             |
+| **B** | `.uwk.ts` | `process(() => {...})` macro               | ambient   | infix operators + index access + ternary + `$prev` + auto-name + `if`-sugar + `.pipe()` | explicit `audioInput` / `audioOutput` declarations   |
+| **C** | `.uwk.ts` | same as B                                  | same as B | same as B                                                                               | ambient `input` / `out` available; user can override |
 
 Tier C is not a separate file format — it's "Tier B without an `audioInput` / `audioOutput` declaration". The compiler detects the absence and injects ambient defaults at the lowered virtual module's top.
 
@@ -278,13 +278,16 @@ if (cond) buf[idx] = v;
 **Shape 2 — symmetric if-else writing the same target:**
 
 ```typescript
-if (cond) state.store(a); else state.store(b);
+if (cond) state.store(a);
+else state.store(b);
 // ⇒  state.store(select(cond, a, b))
 
-if (cond) buf[idx] = a; else buf[idx] = b;
+if (cond) buf[idx] = a;
+else buf[idx] = b;
 // ⇒  buf.write(idx, select(cond, a, b))
 
-if (cond) out.left[i] = a; else out.left[i] = b;
+if (cond) out.left[i] = a;
+else out.left[i] = b;
 // ⇒  out.left.at(i).write(select(cond, a, b))
 ```
 
@@ -295,7 +298,7 @@ if (cond) port.emit({ atSample: i, level: v });
 // ⇒  port.emitIf(cond, { atSample: i, level: v })
 
 if (cond) {
-  arpOut.emit ({ type: 'noteOn', atSample: i, note, velocity, channel: 0 });
+  arpOut.emit({ type: "noteOn", atSample: i, note, velocity, channel: 0 });
   stepFired.emit({ atSample: i, step: nextStep, note });
 }
 // ⇒  arpOut.emitIf  (cond, { ... });
@@ -331,19 +334,19 @@ The `$`-prefix follows the **Svelte 5 runes pattern** (= `$state(0)`, `$derived(
 **Multi-method subgraphs** — each method gets its own `$prev` slot, slots are independent:
 
 ```typescript
-const stereoOnepole = defineSubgraph((coef: Node<'f32'>) => ({
-  processL: (input: Node<'f32'>) => coef * input + (1 - coef) * $prev,   // slot A
-  processR: (input: Node<'f32'>) => coef * input + (1 - coef) * $prev,   // slot B (distinct)
+const stereoOnepole = defineSubgraph((coef: Node<"f32">) => ({
+  processL: (input: Node<"f32">) => coef * input + (1 - coef) * $prev, // slot A
+  processR: (input: Node<"f32">) => coef * input + (1 - coef) * $prev, // slot B (distinct)
 }));
 ```
 
 **Custom initial value, named slot for snapshot** — `$prev` defaults to `0` initial and worklet-private (no snapshot entry). For custom init or snapshot inclusion, fall back to explicit form:
 
 ```typescript
-const onepole = defineSubgraph((coef: Node<'f32'>) => {
-  const y = state.f32(0.5).named();   // auto-named 'y', snapshot-included
+const onepole = defineSubgraph((coef: Node<"f32">) => {
+  const y = state.f32(0.5).named(); // auto-named 'y', snapshot-included
   return {
-    process: (input: Node<'f32'>) => coef * input + (1 - coef) * y,
+    process: (input: Node<"f32">) => coef * input + (1 - coef) * y,
   };
 });
 ```
@@ -356,29 +359,29 @@ A module-top-level `const X = ...` declaration whose RHS is a unworklet declarat
 
 **Name-required helpers — auto-derive triggers when no `name` is provided.** No explicit marker needed; absence of name in the source IS the trigger. Per `01-dsl.md` + Q76, these helpers reject anonymous declarations at the TS level today; auto-derive fills in the binding name to satisfy the spec.
 
-| Declaration | Injection |
-| ----------- | --------- |
-| `const X = audioInput({...})` (no `name` field) | inject `name: 'X'` into options |
-| `const X = audioOutput({...})` (no `name` field) | inject `name: 'X'` into options |
+| Declaration                                                            | Injection                          |
+| ---------------------------------------------------------------------- | ---------------------------------- |
+| `const X = audioInput({...})` (no `name` field)                        | inject `name: 'X'` into options    |
+| `const X = audioOutput({...})` (no `name` field)                       | inject `name: 'X'` into options    |
 | `const X = param.<T>({...})` (no `.named()` / `.expose({name})` chain) | inject `.named('X')` at chain tail |
-| `const X = event<T>({...})` (no `name` field) | inject `name: 'X'` into options |
-| `const X = event<T>()` (no options) | emit `event<T>({ name: 'X' })` |
-| `const X = message<T>({...})` (no `name` field) | inject `name: 'X'` into options |
-| `const X = midiInput({...?})` (no `name` field) | inject `name: 'X'` into options |
-| `const X = midiOutput({...?})` (no `name` field) | inject `name: 'X'` into options |
+| `const X = event<T>({...})` (no `name` field)                          | inject `name: 'X'` into options    |
+| `const X = event<T>()` (no options)                                    | emit `event<T>({ name: 'X' })`     |
+| `const X = message<T>({...})` (no `name` field)                        | inject `name: 'X'` into options    |
+| `const X = midiInput({...?})` (no `name` field)                        | inject `name: 'X'` into options    |
+| `const X = midiOutput({...?})` (no `name` field)                       | inject `name: 'X'` into options    |
 
 **Name-optional helpers — auto-derive triggers when an explicit "name me" marker is present but unfilled.** The marker preserves the plain-vs-named distinction: plain stays worklet-private, `.named()` no-arg or `.expose({...without name})` switches to named with auto-derived identity.
 
-| Declaration | Effect |
-| ----------- | ------ |
-| `const X = state.<T>(init)` (no chain) | **plain** — worklet-private, no snapshot, no main-side identity (unchanged from v1.0.0) |
-| `const X = state.<T>(init).named()` (no-arg) | named — inject `'X'` as argument |
-| `const X = state.<T>(init).expose({...without name...})` | named — inject `name: 'X'` into expose options |
-| `const X = buffer.<T>({...})` (no chain) | **plain** — worklet-private (unchanged) |
-| `const X = buffer.<T>({...}).named()` | named — inject `'X'` |
-| `const X = buffer.<T>({...}).expose({...without name...})` | named — inject `name: 'X'` |
-| `const X = createSubgraph(decl, ...args)` (no options arg) | inject `, { name: 'X' }` |
-| `const X = createSubgraph(decl, ...args, {...without name...})` | inject `name: 'X'` into options |
+| Declaration                                                     | Effect                                                                                  |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `const X = state.<T>(init)` (no chain)                          | **plain** — worklet-private, no snapshot, no main-side identity (unchanged from v1.0.0) |
+| `const X = state.<T>(init).named()` (no-arg)                    | named — inject `'X'` as argument                                                        |
+| `const X = state.<T>(init).expose({...without name...})`        | named — inject `name: 'X'` into expose options                                          |
+| `const X = buffer.<T>({...})` (no chain)                        | **plain** — worklet-private (unchanged)                                                 |
+| `const X = buffer.<T>({...}).named()`                           | named — inject `'X'`                                                                    |
+| `const X = buffer.<T>({...}).expose({...without name...})`      | named — inject `name: 'X'`                                                              |
+| `const X = createSubgraph(decl, ...args)` (no options arg)      | inject `, { name: 'X' }`                                                                |
+| `const X = createSubgraph(decl, ...args, {...without name...})` | inject `name: 'X'` into options                                                         |
 
 **API addition needed for name-optional helpers:** `.named()` no-arg overload added to `01-dsl.md` §3 State / Buffer chain — see §"Open Questions" O2.
 
@@ -427,9 +430,9 @@ function pipe<T0, T1, T2, T3, T4, T5> (...): T5;
 // method chain — extends naturally from chain DSL
 const out = audioIn.left[i]
   .abs()
-  .pipe(softclip)      // L1 helper
+  .pipe(softclip) // L1 helper
   .mul(postGain)
-  .pipe(dcBlocker);    // L1 helper
+  .pipe(dcBlocker); // L1 helper
 
 // free function — reads as left-to-right composition
 const env = pipe(audioIn.left[i], abs, tanh, softclip);
@@ -499,7 +502,7 @@ export default defineProcessor((ctx) => {
 When a `.uwk.ts` file's top-level declarations contain no `audioInput(...)` call, the compiler injects:
 
 ```typescript
-const input = audioInput({ channels: 2, name: 'main' });
+const input = audioInput({ channels: 2, name: "main" });
 ```
 
 Same for `audioOutput`. (Note: `'main'` matches the canonical Ex 1 convention; see §"Open Questions" O4 for grilling on whether `'input'` / `'out'` derived names would be more consistent with S9 auto-derive.)
@@ -507,12 +510,12 @@ Same for `audioOutput`. (Note: `'main'` matches the canonical Ex 1 convention; s
 **Override path** — declaring `const input = audioInput({...})` explicitly suppresses the ambient injection. TypeScript's standard shadowing handles the rest:
 
 ```typescript
-const input = audioInput({ channels: 1 });   // mono — auto-derived name 'input'
+const input = audioInput({ channels: 1 }); // mono — auto-derived name 'input'
 // ambient stereo `input` not injected
 
 process(() => {
   forSample((i) => {
-    out.ch(0)[i] = input.ch(0)[i] * 0.5;     // typed as mono, .left would be TS error
+    out.ch(0)[i] = input.ch(0)[i] * 0.5; // typed as mono, .left would be TS error
   });
 });
 ```
@@ -609,21 +612,28 @@ Full canonical Ex 1 (`12-canonical-examples.md` §1) in three tiers.
 **Tier A (`.ts`, chain DSL, unchanged):**
 
 ```typescript
-import {
-  defineProcessor, audioInput, audioOutput, param, state, forSample,
-} from '@unworklet/core';
+import { defineProcessor, audioInput, audioOutput, param, state, forSample } from "@unworklet/core";
 
 export const stereoGain = defineProcessor(() => {
-  const input = audioInput({ channels: 2, name: 'main' });
-  const out   = audioOutput({ channels: 2, name: 'main' });
-  const gain  = param.f32({
-    default: 1.0, min: 0.0, max: 4.0, automationRate: 'a-rate',
-  }).named('gain');
+  const input = audioInput({ channels: 2, name: "main" });
+  const out = audioOutput({ channels: 2, name: "main" });
+  const gain = param
+    .f32({
+      default: 1.0,
+      min: 0.0,
+      max: 4.0,
+      automationRate: "a-rate",
+    })
+    .named("gain");
   const meterL = state.f32(0).expose({
-    name: 'meterL', snapshot: 'transient', publish: { rateFps: 30 },
+    name: "meterL",
+    snapshot: "transient",
+    publish: { rateFps: 30 },
   });
   const meterR = state.f32(0).expose({
-    name: 'meterR', snapshot: 'transient', publish: { rateFps: 30 },
+    name: "meterR",
+    snapshot: "transient",
+    publish: { rateFps: 30 },
   });
   return {
     process: () => {
@@ -647,23 +657,28 @@ export const stereoGain = defineProcessor(() => {
 ```typescript
 // stereoGain.uwk.ts
 
-const input  = audioInput ({ channels: 2 });     // auto-name 'input'
-const out    = audioOutput({ channels: 2 });     // auto-name 'out'
-const gain   = param.f32({
-  default: 1.0, min: 0, max: 4, automationRate: 'a-rate',
-});                                               // auto-name 'gain' (= name 必須 helper)
+const input = audioInput({ channels: 2 }); // auto-name 'input'
+const out = audioOutput({ channels: 2 }); // auto-name 'out'
+const gain = param.f32({
+  default: 1.0,
+  min: 0,
+  max: 4,
+  automationRate: "a-rate",
+}); // auto-name 'gain' (= name 必須 helper)
 const meterL = state.f32(0).expose({
-  snapshot: 'transient', publish: { rateFps: 30 },
-});                                               // auto-name 'meterL' (= expose 経由)
+  snapshot: "transient",
+  publish: { rateFps: 30 },
+}); // auto-name 'meterL' (= expose 経由)
 const meterR = state.f32(0).expose({
-  snapshot: 'transient', publish: { rateFps: 30 },
-});                                               // auto-name 'meterR'
+  snapshot: "transient",
+  publish: { rateFps: 30 },
+}); // auto-name 'meterR'
 
 process(() => {
   forSample((i) => {
     const l = input.left[i] * gain[i];
     const r = input.right[i] * gain[i];
-    out.left[i]  = l;
+    out.left[i] = l;
     out.right[i] = r;
     meterL.store(max(abs(l), meterL));
     meterR.store(max(abs(r), meterR));
@@ -678,7 +693,7 @@ process(() => {
 ```typescript
 // stereoGain.uwk.ts (Tier C)
 
-const gain   = param.f32({ default: 1, min: 0, max: 4 });
+const gain = param.f32({ default: 1, min: 0, max: 4 });
 const meterL = state.f32(0).expose({ publish: { rateFps: 30 } });
 const meterR = state.f32(0).expose({ publish: { rateFps: 30 } });
 
@@ -686,7 +701,7 @@ process(() => {
   forSample((i) => {
     const l = input.left[i] * gain[i];
     const r = input.right[i] * gain[i];
-    out.left[i]  = l;
+    out.left[i] = l;
     out.right[i] = r;
     meterL.store(max(abs(l), meterL));
     meterR.store(max(abs(r), meterR));
@@ -705,9 +720,7 @@ Excerpt — `peakingCoeffs` L1 helper + `peakingBand` subgraph.
 **Tier A (chain):**
 
 ```typescript
-function peakingCoeffs(
-  freq: Node<'f32'>, q: Node<'f32'>, gainDb: Node<'f32'>, sr: number,
-) {
+function peakingCoeffs(freq: Node<"f32">, q: Node<"f32">, gainDb: Node<"f32">, sr: number) {
   const A = gainDb.mul(0.05 * Math.LN10).exp();
   const w0 = freq.mul((2 * Math.PI) / sr);
   const cosw0 = w0.cos();
@@ -722,16 +735,23 @@ function peakingCoeffs(
   const a2Raw = num(1).sub(alpha.div(A));
   const inv = num(1).div(a0Raw);
   return {
-    b0: b0Raw.mul(inv), b1: b1Raw.mul(inv), b2: b2Raw.mul(inv),
-    a1: a1Raw.mul(inv), a2: a2Raw.mul(inv),
+    b0: b0Raw.mul(inv),
+    b1: b1Raw.mul(inv),
+    b2: b2Raw.mul(inv),
+    a1: a1Raw.mul(inv),
+    a2: a2Raw.mul(inv),
   };
 }
 
 function biquadDFIIT(
-  x: Node<'f32'>,
-  b0: Node<'f32'>, b1: Node<'f32'>, b2: Node<'f32'>,
-  a1: Node<'f32'>, a2: Node<'f32'>,
-  z1: State<'f32'>, z2: State<'f32'>,
+  x: Node<"f32">,
+  b0: Node<"f32">,
+  b1: Node<"f32">,
+  b2: Node<"f32">,
+  a1: Node<"f32">,
+  a2: Node<"f32">,
+  z1: State<"f32">,
+  z2: State<"f32">,
 ) {
   const y = b0.mul(x).add(z1.load());
   const z1n = b1.mul(x).add(z2.load()).sub(a1.mul(y));
@@ -756,9 +776,7 @@ const peakingBand = defineSubgraph((sr: number) => {
 **Tier B (`.uwk.ts`):**
 
 ```typescript
-function peakingCoeffs(
-  freq: Node<'f32'>, q: Node<'f32'>, gainDb: Node<'f32'>, sr: number,
-) {
+function peakingCoeffs(freq: Node<"f32">, q: Node<"f32">, gainDb: Node<"f32">, sr: number) {
   const A = exp(gainDb * (0.05 * Math.LN10));
   const w0 = freq * ((2 * Math.PI) / sr);
   const cosw0 = cos(w0);
@@ -774,10 +792,14 @@ function peakingCoeffs(
 }
 
 function biquadDFIIT(
-  x: Node<'f32'>,
-  b0: Node<'f32'>, b1: Node<'f32'>, b2: Node<'f32'>,
-  a1: Node<'f32'>, a2: Node<'f32'>,
-  z1: State<'f32'>, z2: State<'f32'>,
+  x: Node<"f32">,
+  b0: Node<"f32">,
+  b1: Node<"f32">,
+  b2: Node<"f32">,
+  a1: Node<"f32">,
+  a2: Node<"f32">,
+  z1: State<"f32">,
+  z2: State<"f32">,
 ) {
   const y = b0 * x + z1;
   z1.store(b1 * x + z2 - a1 * y);
@@ -802,8 +824,8 @@ const peakingBand = defineSubgraph((sr: number) => {
 **Trivial one-pole with `$prev`:**
 
 ```typescript
-const onepole = defineSubgraph((coef: Node<'f32'>) => ({
-  process: (input: Node<'f32'>) => coef * input + (1 - coef) * $prev,
+const onepole = defineSubgraph((coef: Node<"f32">) => ({
+  process: (input: Node<"f32">) => coef * input + (1 - coef) * $prev,
 }));
 ```
 
@@ -817,8 +839,11 @@ Inner forSample loop and the `envelopeFollow` helper.
 
 ```typescript
 function envelopeFollow(
-  x: Node<'f32'>, attackCoef: Node<'f32'>, releaseCoef: Node<'f32'>, prev: State<'f32'>,
-): Node<'f32'> {
+  x: Node<"f32">,
+  attackCoef: Node<"f32">,
+  releaseCoef: Node<"f32">,
+  prev: State<"f32">,
+): Node<"f32"> {
   const r = x.abs();
   const coef = select(r.gt(prev.load()), attackCoef, releaseCoef);
   const y = r.sub(prev.load()).mul(coef).add(prev.load());
@@ -830,7 +855,10 @@ function envelopeFollow(
 
 return {
   process: () => {
-    const ceilingLin = ceiling.at(0).mul(Math.LN10 * 0.05).exp();
+    const ceilingLin = ceiling
+      .at(0)
+      .mul(Math.LN10 * 0.05)
+      .exp();
     const releaseSamples = releaseMs.at(0).mul(ctx.sampleRate / 1000);
     const releaseCoef = num(1).sub(num(-1).div(releaseSamples).exp());
     const attackCoef = 1.0;
@@ -851,10 +879,14 @@ return {
       out.right.at(i).write(dlyR.read(rIdx).mul(gr));
 
       overshoot.emitIf(input.left.at(i).abs().gt(ceilingLin), {
-        atSample: i, channel: 0, level: input.left.at(i).abs(),
+        atSample: i,
+        channel: 0,
+        level: input.left.at(i).abs(),
       });
       overshoot.emitIf(input.right.at(i).abs().gt(ceilingLin), {
-        atSample: i, channel: 1, level: input.right.at(i).abs(),
+        atSample: i,
+        channel: 1,
+        level: input.right.at(i).abs(),
       });
 
       gainReductionDb.store(gainReductionDb.load().min(grDb20));
@@ -870,8 +902,11 @@ return {
 
 ```typescript
 function envelopeFollow(
-  x: Node<'f32'>, attackCoef: Node<'f32'>, releaseCoef: Node<'f32'>, prev: State<'f32'>,
-): Node<'f32'> {
+  x: Node<"f32">,
+  attackCoef: Node<"f32">,
+  releaseCoef: Node<"f32">,
+  prev: State<"f32">,
+): Node<"f32"> {
   const r = abs(x);
   const coef = r > prev ? attackCoef : releaseCoef;
   const y = (r - prev) * coef + prev;
@@ -899,11 +934,13 @@ process(() => {
     dlyR[wIdx] = input.right[i];
 
     const rIdx = (wIdx + 1) % LOOKAHEAD_SAMPLES;
-    out.left[i]  = dlyL[rIdx] * gr;
+    out.left[i] = dlyL[rIdx] * gr;
     out.right[i] = dlyR[rIdx] * gr;
 
-    if (abs(input.left[i])  > ceilingLin) overshoot.emit({ atSample: i, channel: 0, level: abs(input.left[i])  });
-    if (abs(input.right[i]) > ceilingLin) overshoot.emit({ atSample: i, channel: 1, level: abs(input.right[i]) });
+    if (abs(input.left[i]) > ceilingLin)
+      overshoot.emit({ atSample: i, channel: 0, level: abs(input.left[i]) });
+    if (abs(input.right[i]) > ceilingLin)
+      overshoot.emit({ atSample: i, channel: 1, level: abs(input.right[i]) });
 
     gainReductionDb.store(min(gainReductionDb, grDb20));
   });
@@ -918,9 +955,9 @@ Every line reads as the limiter's textbook design. The two `overshoot.emit` line
 **Pipe variant** — if `envelopeFollow` had a single-input shape, the inner loop opening could read as a pipeline:
 
 ```typescript
-const env = pipe(audioIn.left[i], abs, x => envelopeFollow(x, attackCoef, releaseCoef, env));
+const env = pipe(audioIn.left[i], abs, (x) => envelopeFollow(x, attackCoef, releaseCoef, env));
 // or
-const env = audioIn.left[i].abs().pipe(x => envelopeFollow(x, attackCoef, releaseCoef, env));
+const env = audioIn.left[i].abs().pipe((x) => envelopeFollow(x, attackCoef, releaseCoef, env));
 ```
 
 ### Ex 5 — Granular sampler voice pitch advance
@@ -961,8 +998,11 @@ voicePos[v].store(gate ? pos + pitch[i] * exp(f32(activeNote - 60) * (Math.LN2 /
 
 ```typescript
 arpOut.emitIf(roll, {
-  type: 'noteOn', atSample: i, note: fireNote,
-  velocity: lastVel.load(), channel: 0,
+  type: "noteOn",
+  atSample: i,
+  note: fireNote,
+  velocity: lastVel.load(),
+  channel: 0,
 });
 stepFired.emitIf(roll, { atSample: i, step: nextStep, note: fireNote });
 ```
@@ -971,7 +1011,7 @@ stepFired.emitIf(roll, { atSample: i, step: nextStep, note: fireNote });
 
 ```typescript
 if (roll) {
-  arpOut.emit   ({ type: 'noteOn', atSample: i, note: fireNote, velocity: lastVel, channel: 0 });
+  arpOut.emit({ type: "noteOn", atSample: i, note: fireNote, velocity: lastVel, channel: 0 });
   stepFired.emit({ atSample: i, step: nextStep, note: fireNote });
 }
 ```
@@ -993,9 +1033,9 @@ const cosw0 = w0.cos();
 ```typescript
 const sat = audioIn.left[i]
   .mul(preGain)
-  .pipe(softclip)        // L1 helper
+  .pipe(softclip) // L1 helper
   .mul(postGain)
-  .pipe(dcBlocker);      // L1 helper
+  .pipe(dcBlocker); // L1 helper
 ```
 
 vs the same in chain form:
@@ -1263,7 +1303,7 @@ Using TS Compiler API plugins to rewrite operator usage inside plain `.ts` files
 
 ### A9 — Tagged template literal DSL (`dsp\`...\``, rejected)
 
-Embed a DSL inside template literals (= `dsp\`out = input * gain\``).
+Embed a DSL inside template literals (= `dsp\`out = input \* gain\``).
 
 **Rejected because:**
 
@@ -1279,26 +1319,26 @@ Embed a DSL inside template literals (= `dsp\`out = input * gain\``).
 
 Best estimate for production quality (= 98% branch coverage gate per `AGENTS.md`, source maps, IDE integration, canonical-example bit-exact regression).
 
-| Subsystem | Effort (human-days, no AI) | With AI assist (2-3x) |
-| --------- | -------------------------- | --------------------- |
-| `.uwk.ts` file detection + Vite plugin glob | 1 | 0.5 |
-| Pass 1: operator sugar (S1, S2, S3, S4) | 3 | 1.5 |
-| Pass 2: index access sugar (S5) | 1 | 0.5 |
-| Pass 3: bare state read (S6) | 1 | 0.5 |
-| Pass 4: if-sugar (S7, 3 shapes + reject paths) | 2 | 1 |
-| Pass 5: `$prev` keyword (S8) | 4 | 2 |
-| Pass 6: auto-derive name (S9) | 2 | 1 |
-| Pass 7: ambient injection (S12) | 1 | 0.5 |
-| Pass 8: wrap + `process()` macro recognition (S11) | 1 | 0.5 |
-| `not(b)` primitive + WASM emit | 1 | 0.5 |
-| `.pipe()` method + `pipe()` free function (S10) | 1 | 0.5 |
-| Ambient `.d.ts` for `.uwk.ts` | 1 | 0.5 |
-| `@unworklet/lang` TS LSP plugin (Volar.js base) | 4 | 2 |
-| Source-map chain | 1 | 0.5 |
-| Canonical example port + bit-exact regression | 3 | 1.5 |
-| `@unworklet/lang` package skeleton | 1 | 0.5 |
-| Decision-log Q83-family ratify writeup + new component doc draft | 2 | 1 |
-| **Total** | **29** | **13** |
+| Subsystem                                                        | Effort (human-days, no AI) | With AI assist (2-3x) |
+| ---------------------------------------------------------------- | -------------------------- | --------------------- |
+| `.uwk.ts` file detection + Vite plugin glob                      | 1                          | 0.5                   |
+| Pass 1: operator sugar (S1, S2, S3, S4)                          | 3                          | 1.5                   |
+| Pass 2: index access sugar (S5)                                  | 1                          | 0.5                   |
+| Pass 3: bare state read (S6)                                     | 1                          | 0.5                   |
+| Pass 4: if-sugar (S7, 3 shapes + reject paths)                   | 2                          | 1                     |
+| Pass 5: `$prev` keyword (S8)                                     | 4                          | 2                     |
+| Pass 6: auto-derive name (S9)                                    | 2                          | 1                     |
+| Pass 7: ambient injection (S12)                                  | 1                          | 0.5                   |
+| Pass 8: wrap + `process()` macro recognition (S11)               | 1                          | 0.5                   |
+| `not(b)` primitive + WASM emit                                   | 1                          | 0.5                   |
+| `.pipe()` method + `pipe()` free function (S10)                  | 1                          | 0.5                   |
+| Ambient `.d.ts` for `.uwk.ts`                                    | 1                          | 0.5                   |
+| `@unworklet/lang` TS LSP plugin (Volar.js base)                  | 4                          | 2                     |
+| Source-map chain                                                 | 1                          | 0.5                   |
+| Canonical example port + bit-exact regression                    | 3                          | 1.5                   |
+| `@unworklet/lang` package skeleton                               | 1                          | 0.5                   |
+| Decision-log Q83-family ratify writeup + new component doc draft | 2                          | 1                     |
+| **Total**                                                        | **29**                     | **13**                |
 
 Ship vehicle: dedicated phase **post-v1.0.0**, between Phase 14 ship and v1.1.0 cut. The 14-phase v1.0.0 roadmap (`10-roadmap.md` §2) is unaffected.
 
@@ -1359,7 +1399,7 @@ For implementation reference. Given the Tier C `.uwk.ts` file in §"Examples":
 
 ```typescript
 // stereoGain.uwk.ts
-const gain   = param.f32({ default: 1, min: 0, max: 4 });
+const gain = param.f32({ default: 1, min: 0, max: 4 });
 const meterL = state.f32(0).expose({ publish: { rateFps: 30 } });
 const meterR = state.f32(0).expose({ publish: { rateFps: 30 } });
 
@@ -1367,7 +1407,7 @@ process(() => {
   forSample((i) => {
     const l = input.left[i] * gain[i];
     const r = input.right[i] * gain[i];
-    out.left[i]  = l;
+    out.left[i] = l;
     out.right[i] = r;
     meterL.store(max(abs(l), meterL));
     meterR.store(max(abs(r), meterR));
@@ -1386,20 +1426,24 @@ Lowered virtual module (= what `compile()` sees):
 
 import {
   defineProcessor,
-  audioInput, audioOutput,
-  param, state, forSample,
-  abs, max,
-} from '@unworklet/core';
+  audioInput,
+  audioOutput,
+  param,
+  state,
+  forSample,
+  abs,
+  max,
+} from "@unworklet/core";
 
 export default defineProcessor((ctx) => {
   // Ambient I/O injected by Pass 7 (S12) — no audioInput / audioOutput in source.
-  const input = audioInput ({ channels: 2, name: 'main' });
-  const out   = audioOutput({ channels: 2, name: 'main' });
+  const input = audioInput({ channels: 2, name: "main" });
+  const out = audioOutput({ channels: 2, name: "main" });
 
   // Auto-derived names by Pass 6 (S9).
-  const gain   = param.f32({ default: 1, min: 0, max: 4 }).named('gain');
-  const meterL = state.f32(0).expose({ name: 'meterL', publish: { rateFps: 30 } });
-  const meterR = state.f32(0).expose({ name: 'meterR', publish: { rateFps: 30 } });
+  const gain = param.f32({ default: 1, min: 0, max: 4 }).named("gain");
+  const meterL = state.f32(0).expose({ name: "meterL", publish: { rateFps: 30 } });
+  const meterR = state.f32(0).expose({ name: "meterR", publish: { rateFps: 30 } });
 
   return {
     process: () => {
