@@ -25,6 +25,8 @@ import type {
   CapturedGraph,
   EventDeclAst,
   MessageDeclAst,
+  MidiInputDecl,
+  MidiOutputDecl,
   ParamDecl,
   StateDecl,
 } from "./compile/ast.ts";
@@ -71,6 +73,14 @@ export type WorkletMeta = {
    * ring → WASM ring に mirror する path で 参 照。
    */
   readonly messages: readonly MessageDeclAst[];
+  /**
+   * `midiInput` / `midiOutput` declaration 一 覧 (= `11-midi.md` §1)。 declaration
+   * 順 で layout の midiRings slot と zip。 worklet template / offline renderer /
+   * main client が port ご と の ring (= header + 8-byte slot 列) を walk する path
+   * で 参 照。
+   */
+  readonly midiInputs: readonly MidiInputDecl[];
+  readonly midiOutputs: readonly MidiOutputDecl[];
 };
 
 export function extractWorkletMeta(graph: CapturedGraph): WorkletMeta {
@@ -84,6 +94,8 @@ export function extractWorkletMeta(graph: CapturedGraph): WorkletMeta {
     ),
     events: graph.declarations.filter((d): d is EventDeclAst => d.kind === "event"),
     messages: graph.declarations.filter((d): d is MessageDeclAst => d.kind === "message"),
+    midiInputs: graph.declarations.filter((d): d is MidiInputDecl => d.kind === "midiInput"),
+    midiOutputs: graph.declarations.filter((d): d is MidiOutputDecl => d.kind === "midiOutput"),
   };
 }
 

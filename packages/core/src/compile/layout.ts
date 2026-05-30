@@ -70,6 +70,14 @@ const EVENT_FIELD_BYTES: Record<ScalarType, number> = {
 const EVENT_HEADER_BYTES = 12;
 
 /**
+ * MIDI ringbuffer slot (`11-midi.md` §4.1): `[status:u8, data1:u8, data2:u8,
+ * _pad:u8, atSample:u32]` = 8 byte。 sysex は status=0xF0 + sysex content region
+ * の chunk index を data1 に 載 せ る (= §4.3、 C.4 で fill)。
+ */
+const MIDI_SLOT_BYTES = 8;
+const MIDI_HEADER_BYTES = 12;
+
+/**
  * typed-array field が slot 内 で 占 め る byte (= `[payloadLen:u32,
  * payloadOffset:u32]`、 §5.1/§5.2)。
  */
@@ -173,6 +181,18 @@ export type MessageRingSlot = {
   }>;
 };
 
+/**
+ * Per-port MIDI ringbuffer metadata (`11-midi.md` §4). Header layout is shared
+ * with `event<T>` / `message<T>` (`[head, tail, overflowCount]`); the slot
+ * encoding is the fixed 8-byte MIDI slot. `direction` records producer/consumer
+ * roles (in: main produces, worklet drains; out: worklet emits, main drains).
+ */
+export type MidiRingSlot = {
+  base: number;
+  capacity: number;
+  direction: "in" | "out";
+};
+
 export type Layout = {
   regions: {
     states: { base: number; slots: Record<string, number> };
@@ -196,7 +216,7 @@ export type Layout = {
     };
     /** everyNSamples の per-call-site counter slot (= counterId → byte offset、§9.1)。 */
     everyNSamplesCounters: { base: number; slots: Record<number, number> };
-    midiRings: { base: number; slots: Record<string, number> };
+    midiRings: { base: number; slots: Record<string, MidiRingSlot> };
     sysexContent: { base: number; size: number };
     publishShared: { base: number; slots: Record<string, number> };
     publishCounters: { base: number; slots: Record<string, number> };
@@ -416,13 +436,31 @@ export function layout(graph: CapturedGraph): Layout {
       if (
         node.kind === "forSample" ||
         node.kind === "everyNSamples" ||
-        node.kind === "messageOnReceive"
+        node.kind === "messageOnReceive" ||
+        node.kind === "midiOnEvent"
       ) {
         collectEveryNCounters(node.body);
       }
     }
   };
   collectEveryNCounters(graph.statements);
+
+  // midiRings packing = everyNSamplesCounters 末 尾 を base に declaration 順 で
+  // per-port ring (= header 12 + capacity × 8) を 配 置 (= `11-midi.md` §4)。
+  // in / out port それぞれ 独 立 header + slot 列。 末 尾 配 置 = MIDI ナ シ graph で
+  // base 不 変 (= subset → superset 規 約)。
+  const midiRingsBase = cursor;
+  const midiRingSlots: Record<string, MidiRingSlot> = {};
+  for (const decl of graph.declarations) {
+    if (decl.kind === "midiInput" || decl.kind === "midiOutput") {
+      midiRingSlots[decl.name] = {
+        base: cursor,
+        capacity: decl.capacity,
+        direction: decl.kind === "midiInput" ? "in" : "out",
+      };
+      cursor += MIDI_HEADER_BYTES + decl.capacity * MIDI_SLOT_BYTES;
+    }
+  }
 
   const totalBytes = cursor;
 
@@ -447,7 +485,7 @@ export function layout(graph: CapturedGraph): Layout {
         base: everyNSamplesCountersBase,
         slots: everyNSamplesCounterSlots,
       },
-      midiRings: { base: totalBytes, slots: {} },
+      midiRings: { base: midiRingsBase, slots: midiRingSlots },
       sysexContent: { base: totalBytes, size: 0 },
       publishShared: { base: publishSharedBase, slots: publishSharedSlots },
       publishCounters: { base: publishCountersBase, slots: publishCountersSlots },

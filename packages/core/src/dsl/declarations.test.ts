@@ -24,17 +24,48 @@ import { forSample } from "./loop.ts";
 import { add, gt } from "./primitives.ts";
 
 // ─────────────────────────────────────────────────────────────────────────
-// stub 維 持 = param.expose / midi (= buffer / message は 別 path で 実 装 済 み)
+// stub 維 持 = param.expose (= Phase 11 snapshot で fill)
 // ─────────────────────────────────────────────────────────────────────────
 
 const stubs: ReadonlyArray<readonly [string, () => unknown]> = [
   ["param.expose", () => param.expose({ name: "x" })],
-  ["midiInput", () => midiInput({ name: "mIn" })],
-  ["midiOutput", () => midiOutput({ name: "mOut" })],
 ];
 
 test.each(stubs)("`%s` stub throws not implemented", (_name, invoke) => {
   expect(invoke).toThrow(/not implemented/);
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// midiInput / midiOutput = declaration register (`11-midi.md` §1)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`midiInput` / `midiOutput` outside `defineProcessor` body throw", () => {
+  expect(() => midiInput({ name: "mIn" })).toThrow(/outside `defineProcessor` body/);
+  expect(() => midiOutput({ name: "mOut" })).toThrow(/outside `defineProcessor` body/);
+});
+
+test("`midiInput` / `midiOutput` register declarations with default capacity 256", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const inHandle = midiInput({ name: "mIn" });
+    const outHandle = midiOutput({ name: "mOut", capacity: 1024 });
+    expect(inHandle.name).toBe("mIn");
+    expect(outHandle.name).toBe("mOut");
+  });
+  expect(ctx.declarations).toEqual([
+    { kind: "midiInput", name: "mIn", capacity: 256 },
+    { kind: "midiOutput", name: "mOut", capacity: 1024 },
+  ]);
+});
+
+test("`midiInput().onEvent(type, handler)` captures a midiOnEvent statement", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const midi = midiInput({ name: "mIn" });
+    midi.onEvent("noteOn", () => {});
+  });
+  const stmt = ctx.statements.at(-1)!;
+  expect(stmt).toMatchObject({ kind: "midiOnEvent", port: "mIn", eventType: "noteOn" });
 });
 
 // ─────────────────────────────────────────────────────────────────────────

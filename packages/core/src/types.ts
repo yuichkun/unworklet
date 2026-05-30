@@ -357,6 +357,21 @@ export type MidiEventType = MidiEvent["type"];
 
 export type MidiEventGraphOf<K extends MidiEventType> = Extract<MidiEventGraph, { type: K }>;
 
+/**
+ * Emit-side `midiOutput().emitIf` event shape: every `Node<'i32'>` field of
+ * `MidiEventGraph` is lifted to `Node<'i32'> | number` so authors write plain
+ * literals (`channel: 0`, `atSample: 0`) per the Q33 literal-lift rule
+ * (`11-midi.md` §2.2). The inbound `onEvent` handler keeps the strict
+ * `MidiEventGraph` (every field is a graph node). Mirrors `EmitPayload<T>`.
+ */
+export type MidiEventEmit = MidiEventGraph extends infer E
+  ? E extends MidiEventGraph
+    ? { [K in keyof E]: E[K] extends Node<"i32"> ? Node<"i32"> | number : E[K] }
+    : never
+  : never;
+
+export type MidiEventEmitOf<K extends MidiEventType> = Extract<MidiEventEmit, { type: K }>;
+
 export type MidiInputHandle = {
   readonly name: string;
   onEvent<K extends MidiEventType>(type: K, handler: (event: MidiEventGraphOf<K>) => void): void;
@@ -364,7 +379,7 @@ export type MidiInputHandle = {
 
 export type MidiOutputHandle = {
   readonly name: string;
-  emitIf(cond: Node<"bool"> | boolean, event: MidiEventGraph): void;
+  emitIf(cond: Node<"bool"> | boolean, event: MidiEventEmit): void;
 };
 
 // ─────────────────────────────────────────────────────────────────────────

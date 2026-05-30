@@ -16,6 +16,9 @@ import type {
   EventDeclAst,
   EventEmitField,
   MessageDeclAst,
+  MidiByteField,
+  MidiInputDecl,
+  MidiOutputDecl,
   ParamDecl,
   StateDecl,
 } from "../compile/ast.ts";
@@ -40,6 +43,8 @@ import type {
   ExposeOptions,
   InputChannelView,
   MessageDecl,
+  MidiEventGraph,
+  MidiEventType,
   MidiInputHandle,
   MidiOutputHandle,
   Node,
@@ -1083,10 +1088,186 @@ export type MidiPortOptions = {
   capacity?: Capacity;
 };
 
-export function midiInput(_options: MidiPortOptions): MidiInputHandle {
-  return notImplemented();
+const MIDI_DEFAULT_CAPACITY = 256;
+
+/** Lift a `Node<'i32'> | number` to an AST node (i32 literal for numbers). */
+function liftI32(v: Node<"i32"> | number): AstNode {
+  return typeof v === "number" ? { kind: "literal", type: "i32", value: v | 0 } : unwrapAst(v);
 }
 
-export function midiOutput(_options: MidiPortOptions): MidiOutputHandle {
-  return notImplemented();
+const I32_ZERO: AstNode = { kind: "literal", type: "i32", value: 0 };
+
+/** A decoded MIDI drain-slot field as a graph `Node<'i32'>` (= `midiFieldRead`). */
+function midiField(field: MidiByteField): Node<"i32"> {
+  return wrapAst<"i32">({ kind: "midiFieldRead", field });
+}
+
+/**
+ * Build the `MidiEventGraph` an inbound `onEvent(type, handler)` receives: each
+ * semantic field maps to the decoded drain-slot byte for that event type
+ * (`11-midi.md` §2.2 / §4.1). Sysex is filled in a later step (C.4).
+ */
+function makeMidiEventProxy(eventType: MidiEventType): MidiEventGraph {
+  const channel = midiField("channel");
+  const atSample = midiField("atSample");
+  switch (eventType) {
+    case "noteOn":
+    case "noteOff":
+      return {
+        type: eventType,
+        channel,
+        note: midiField("data1"),
+        velocity: midiField("data2"),
+        atSample,
+      };
+    case "cc":
+      return {
+        type: "cc",
+        channel,
+        controller: midiField("data1"),
+        value: midiField("data2"),
+        atSample,
+      };
+    case "pitchBend":
+      return { type: "pitchBend", channel, value: midiField("pitchBend14"), atSample };
+    case "programChange":
+      return { type: "programChange", channel, program: midiField("data1"), atSample };
+    case "channelPressure":
+      return { type: "channelPressure", channel, pressure: midiField("data1"), atSample };
+    case "aftertouch":
+      return {
+        type: "aftertouch",
+        channel,
+        note: midiField("data1"),
+        pressure: midiField("data2"),
+        atSample,
+      };
+    case "systemRealtime":
+      return { type: "systemRealtime", status: midiField("status"), atSample };
+    /* v8 ignore next 2 — sysex inbound handler は C.4 で fill */
+    case "sysex":
+      throw new Error("unworklet: midiInput sysex handler is filled in a later step (C.4)");
+  }
+}
+
+export function midiInput(options: MidiPortOptions): MidiInputHandle {
+  const decl: MidiInputDecl = {
+    kind: "midiInput",
+    name: options.name,
+    capacity: options.capacity ?? MIDI_DEFAULT_CAPACITY,
+  };
+  addDeclaration(decl);
+  return {
+    name: decl.name,
+    onEvent(type, handler) {
+      // Handler body is graph-captured (= same path as message onReceive): drains
+      // at the block boundary (Q38-b), fields bound to the current slot's bytes.
+      const ctx = getCurrentCapture();
+      const handlerBody: AstNode[] = [];
+      const prev = ctx.currentLoopBody;
+      ctx.currentLoopBody = handlerBody;
+      try {
+        handler(makeMidiEventProxy(type) as never);
+      } finally {
+        ctx.currentLoopBody = prev;
+      }
+      addStatement({ kind: "midiOnEvent", port: decl.name, eventType: type, body: handlerBody });
+    },
+  };
+}
+
+export function midiOutput(options: MidiPortOptions): MidiOutputHandle {
+  const decl: MidiOutputDecl = {
+    kind: "midiOutput",
+    name: options.name,
+    capacity: options.capacity ?? MIDI_DEFAULT_CAPACITY,
+  };
+  addDeclaration(decl);
+  return {
+    name: decl.name,
+    emitIf(cond, event) {
+      const condAst: AstNode = isWrappedNode(cond)
+        ? unwrapAst(cond)
+        : { kind: "literal", type: "i32", value: cond ? 1 : 0 };
+      // `atSample` is a common field across every MidiEventEmit variant; default
+      // it like event<T> emit (loop counter inside forSample, else block-start 0).
+      const atSample: AstNode =
+        event.atSample === undefined
+          ? getCurrentCapture().currentLoopBody !== null
+            ? { kind: "loopCounter" }
+            : I32_ZERO
+          : liftI32(event.atSample);
+      // Map MidiEventGraph → semantic args; emit computes the 8-byte wire slot
+      // [status, data1, data2, _pad, atSample] from these per `eventType`.
+      const base = { kind: "midiEmitIf" as const, port: decl.name, cond: condAst, atSample };
+      switch (event.type) {
+        case "noteOn":
+        case "noteOff":
+          addStatement({
+            ...base,
+            eventType: event.type,
+            channel: liftI32(event.channel),
+            arg1: liftI32(event.note),
+            arg2: liftI32(event.velocity),
+          });
+          return;
+        case "cc":
+          addStatement({
+            ...base,
+            eventType: "cc",
+            channel: liftI32(event.channel),
+            arg1: liftI32(event.controller),
+            arg2: liftI32(event.value),
+          });
+          return;
+        case "pitchBend":
+          addStatement({
+            ...base,
+            eventType: "pitchBend",
+            channel: liftI32(event.channel),
+            arg1: liftI32(event.value),
+            arg2: I32_ZERO,
+          });
+          return;
+        case "programChange":
+          addStatement({
+            ...base,
+            eventType: "programChange",
+            channel: liftI32(event.channel),
+            arg1: liftI32(event.program),
+            arg2: I32_ZERO,
+          });
+          return;
+        case "channelPressure":
+          addStatement({
+            ...base,
+            eventType: "channelPressure",
+            channel: liftI32(event.channel),
+            arg1: liftI32(event.pressure),
+            arg2: I32_ZERO,
+          });
+          return;
+        case "aftertouch":
+          addStatement({
+            ...base,
+            eventType: "aftertouch",
+            channel: liftI32(event.channel),
+            arg1: liftI32(event.note),
+            arg2: liftI32(event.pressure),
+          });
+          return;
+        case "systemRealtime":
+          addStatement({
+            ...base,
+            eventType: "systemRealtime",
+            arg1: liftI32(event.status),
+            arg2: I32_ZERO,
+          });
+          return;
+        /* v8 ignore next 2 — sysex emit は C.4 で fill */
+        case "sysex":
+          throw new Error("unworklet: midiOutput sysex emit is filled in a later step (C.4)");
+      }
+    },
+  };
 }

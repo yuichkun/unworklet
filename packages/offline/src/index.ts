@@ -10,13 +10,21 @@
  * driver-friendly handle (= `result.driver.instantiate()`)、 そ の handle 越 し
  * に memory I/O + process() を render quantum 単 位 で 反 復。
  *
- * Phase 3 = audio I/O + param 反 映 path だ け fill (= events / state は
- * Phase 7 / 11 で fill)。 duration × sampleRate を `SAMPLES_PER_BLOCK` で
- * 切 り 上 げ た sample 数 ま で render (= `13-offline-render.md` §2.1)。
+ * Fill 済: audio I/O + param + main→worklet `message<T>` 注 入 + worklet→main
+ * `event<T>` 捕 捉 + MIDI 双 方 向 (= inbound `config.events` 注 入 / outbound
+ * `result.events` 捕 捉)。 snapshot blob (= `result.state`) は Phase 11 / D で fill。
+ * duration × sampleRate を `SAMPLES_PER_BLOCK` で 切 り 上 げ た sample 数 ま で
+ * render (= `13-offline-render.md` §2.1)。
  */
 
-import type { CompiledProcessor } from "@unworklet/core";
-import { compile, extractWorkletMeta, SAMPLES_PER_BLOCK } from "@unworklet/core";
+import type { CompiledProcessor, MidiEvent } from "@unworklet/core";
+import {
+  compile,
+  extractWorkletMeta,
+  midiEventToWire,
+  SAMPLES_PER_BLOCK,
+  wireToMidiEvent,
+} from "@unworklet/core";
 
 export { encodeWav } from "./encodeWav.ts";
 export type { EncodeWavBitDepth, EncodeWavOptions } from "./encodeWav.ts";
@@ -119,6 +127,19 @@ export async function renderOffline<C>(
     };
   });
 
+  // MIDI port rings (`11-midi.md` §4): 8-byte slots [status, data1, data2, _pad,
+  // atSample:u32], header [head, tail, overflowCount]. Inbound ports take injected
+  // events; outbound ports are drained into result.events as MidiEvent payloads.
+  const MIDI_SLOT_BYTES = 8;
+  const midiInPorts = meta.midiInputs.map((d) => ({
+    name: d.name,
+    ...meta.layout.regions.midiRings.slots[d.name]!,
+  }));
+  const midiOutPorts = meta.midiOutputs.map((d) => ({
+    name: d.name,
+    ...meta.layout.regions.midiRings.slots[d.name]!,
+  }));
+
   const totalSamples =
     Math.ceil((config.duration * config.sampleRate) / SAMPLES_PER_BLOCK) * SAMPLES_PER_BLOCK;
   const blocks = totalSamples / SAMPLES_PER_BLOCK;
@@ -215,6 +236,29 @@ export async function renderOffline<C>(
       headerView[0] = head + 1; // head を 1 slot 進 め る (= push)
     }
 
+    // MIDI inbound 注 入 (= こ の quantum 宛 て の event を 該 当 port ring に push)。
+    // config.events.atSample は絶対 sample = quantum = floor(atSample / 128)、
+    // wire の atSample は block-local (= atSample % 128)。 worklet drain (= process
+    // 冒 頭、 Q38-b) が tail→head を 消 化 す る。
+    for (const ev of config.events ?? []) {
+      const port = midiInPorts.find((p) => p.name === ev.name);
+      if (port === undefined) continue;
+      if (Math.floor(ev.atSample / SAMPLES_PER_BLOCK) !== b) continue;
+      const memory = instance.memory.buffer;
+      const headerView = new Int32Array(memory, port.base, 3);
+      const head = headerView[0]!;
+      const slotByteOffset =
+        port.base + MESSAGE_HEADER_BYTES + (head % port.capacity) * MIDI_SLOT_BYTES;
+      const dv = new DataView(memory);
+      const { status, data1, data2 } = midiEventToWire(ev.payload as MidiEvent);
+      dv.setUint8(slotByteOffset, status);
+      dv.setUint8(slotByteOffset + 1, data1);
+      dv.setUint8(slotByteOffset + 2, data2);
+      dv.setUint8(slotByteOffset + 3, 0);
+      dv.setUint32(slotByteOffset + 4, ev.atSample % SAMPLES_PER_BLOCK, true);
+      headerView[0] = head + 1;
+    }
+
     instance.process();
 
     // event ring drain (= 各 quantum 末 尾 で WASM ring の head が 進 ん だ 分 を
@@ -287,6 +331,32 @@ export async function renderOffline<C>(
       // drain 後 tail = head に commit (= 次 quantum で WASM ring が 空 状 態 で
       // start、 drop-oldest 連 発 を 防 ぐ)。 ま た overflowCount も リ セ ッ ト ナ シ
       // (= monotonic 維 持)。
+      headerView[1] = head;
+    }
+
+    // MIDI outbound drain (= midiOutput port の ring を deserialize し て
+    // OfflineEmittedEvent に 蓄 積、 payload = MidiEvent 構 造、 §2.4 expectMidiOut
+    // が 直 接 比 較)。 event ring と 同 様 per-quantum 完 結 = 末 尾 で tail = head。
+    for (const port of midiOutPorts) {
+      const memory = instance.memory.buffer;
+      const headerView = new Int32Array(memory, port.base, 3);
+      const head = headerView[0]!;
+      let tail = headerView[1]!;
+      const dv = new DataView(memory);
+      while (tail !== head) {
+        const slotByteOffset =
+          port.base + MESSAGE_HEADER_BYTES + (tail % port.capacity) * MIDI_SLOT_BYTES;
+        const status = dv.getUint8(slotByteOffset);
+        const data1 = dv.getUint8(slotByteOffset + 1);
+        const data2 = dv.getUint8(slotByteOffset + 2);
+        const slotAtSample = dv.getUint32(slotByteOffset + 4, true);
+        emittedEvents.push({
+          name: port.name,
+          payload: wireToMidiEvent(status, data1, data2),
+          atSample: blockStart + slotAtSample,
+        });
+        tail += 1;
+      }
       headerView[1] = head;
     }
 
