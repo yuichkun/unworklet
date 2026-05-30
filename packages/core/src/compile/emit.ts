@@ -621,8 +621,9 @@ function emitTranscendental(
 
 /**
  * Cross-precision convert lowering (= scalar constructor `f32(node)` 等、 no-trap:
- * integer truncation は saturating)。 i32 ↔ f32 / i32 ↔ f64 / f32 ↔ f64 を 実 装、
- * i64 / bool pair は 各 stage で 追 加。
+ * integer truncation は saturating)。 i32 ↔ f32 / i32 ↔ f64 / f32 ↔ f64、 i64 の
+ * narrowing、 bool ↔ numeric を 実 装。 i64 へ の 昇 格 (= i32/f32/.. → i64) は
+ * bigint-only construction の 規 約 で convert ナ シ (= `i64(BigInt(...))` を 使 う)。
  */
 function emitConvert(mod: BinaryenModule, from: ScalarType, to: ScalarType, value: number): number {
   if (from === "i32" && to === "f32") return mod.f32.convert_s.i32(value);
@@ -636,7 +637,20 @@ function emitConvert(mod: BinaryenModule, from: ScalarType, to: ScalarType, valu
   if (from === "i64" && to === "i32") return mod.i32.wrap(value);
   if (from === "i64" && to === "f32") return mod.f32.convert_s.i64(value);
   if (from === "i64" && to === "f64") return mod.f64.convert_s.i64(value);
-  /* v8 ignore next 2 — 残 り convert pair (= bool) は bool stage で fill、 該 当 type の node は ま だ 構 築 不 可 */
+  // bool は 内 部 i32 (= 0/1)。 to bool = `x != 0`、 from bool = i32 (identity) /
+  // float (= 0.0/1.0 へ signed convert、 0/1 は signed/unsigned 同 値)。
+  if (to === "bool") {
+    if (from === "i32") return mod.i32.ne(value, mod.i32.const(0));
+    if (from === "i64") return mod.i64.ne(value, i64Const(mod, 0n));
+    if (from === "f32") return mod.f32.ne(value, mod.f32.const(0));
+    if (from === "f64") return mod.f64.ne(value, mod.f64.const(0));
+  }
+  if (from === "bool") {
+    if (to === "i32") return value; // already i32 0/1
+    if (to === "f32") return mod.f32.convert_s.i32(value);
+    if (to === "f64") return mod.f64.convert_s.i32(value);
+  }
+  /* v8 ignore next 2 — 残 る pair は i64 への 昇 格 (= 規 約 で convert ナ シ) だ け = unreachable */
   throw new Error(`unworklet: convert ${from} → ${to} not implemented yet`);
 }
 
