@@ -776,8 +776,26 @@ function emitPayloadFieldRead(
         : node.elementType === "i64"
           ? binaryen.i64
           : binaryen.i32; // i32 / bool / u8
+  // length = payloadLen / sizeof (= 要 素 数)。 空 payload (length 0) の 判 定 用。
+  const lengthExpr = (): number =>
+    mod.i32.div_s(
+      mod.i32.load(0, BYTES_PER_I32, mod.i32.add(slotPtr(), mod.i32.const(offsetInSlot))),
+      mod.i32.const(elemBytes),
+    );
+  // length === 0 で 返 す 0 (= elementType 別 の zero)。
+  const zeroConst =
+    node.elementType === "f32"
+      ? mod.f32.const(0)
+      : node.elementType === "f64"
+        ? mod.f64.const(0)
+        : node.elementType === "i64"
+          ? i64Const(mod, 0n)
+          : mod.i32.const(0); // i32 / bool / u8
   // §4.3 select carrier-clamp: idx を 1 度 評 価 → [0, length-1] に 2 段 select で 丸 め →
   // content load。 OOB (idx ≥ length or < 0) で も addr が payload 内 に 留 ま り trap し な い。
+  // ただ し length === 0 (= 空 payload) は upper = -1 で clamp が idx 0 に 潰 れ、 ゼ ロ byte
+  // し か 書 か れ て い な い chunk か ら 古 い content byte を leak す る (= 直 前 に そ の chunk を
+  // 使 っ た payload の 残 骸)。 length === 0 を select で 弾 い て 0 を 返 す。
   return mod.block(
     null,
     [
@@ -792,7 +810,8 @@ function emitPayloadFieldRead(
         PAYLOAD_CLAMP_LOCAL,
         mod.select(mod.i32.lt_s(clamp(), mod.i32.const(0)), mod.i32.const(0), clamp()),
       ),
-      emitBufferLoad(mod, node.elementType, addr),
+      // length === 0 → 0、それ以外は clamp 済 content load (= 空 payload の stale leak 防止)。
+      mod.select(mod.i32.eqz(lengthExpr()), zeroConst, emitBufferLoad(mod, node.elementType, addr)),
     ],
     blockType,
   );

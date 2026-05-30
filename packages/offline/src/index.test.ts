@@ -198,6 +198,47 @@ test("`renderOffline` resolves samples.length to the delivered payload length", 
   expect(result.outputs.main![0]![0]).toBe(10);
 });
 
+// 空 payload (length 0) の .at(idx) は stale memory でなく 0 を返す (= §4.3、no-trap +
+// OOB/empty は 0)。content chunk を再利用させて leak を観測する: block 0 で 16 個の
+// 非空 message [42] を流して全 16 chunk を [42] で埋め、block 1 で空 message を head=16
+// = chunk 0 に wrap landing させる (= cross-block なので drop-oldest overflow も踏まない)。
+// stale read だと length-1=-1 で clamp が idx 0 に潰れ、chunk 0 の [42] を読んでしまう。
+const emptyPayloadReader = defineProcessor(() => {
+  const out = audioOutput({ channels: 1, name: "main" });
+  const upload = message<{ x: Float32Array }>({ name: "upload" });
+  const last = state.f32(-1);
+  return {
+    process: () => {
+      upload.onReceive(({ x }) => {
+        last.store(x.at(0));
+      });
+      forSample((i) => {
+        out.ch(0).at(i).write(last.load());
+      });
+    },
+  };
+});
+
+test("`renderOffline` 空 payload の .at(0) は stale memory でなく 0 を返す (§4.3)", async () => {
+  const fill42 = Array.from({ length: 16 }, () => ({
+    name: "upload",
+    atQuantum: 0,
+    payload: { x: new Float32Array([42]) },
+  }));
+  const result = await renderOffline(emptyPayloadReader, {
+    sampleRate: 48000,
+    duration: (2 * SAMPLES_PER_BLOCK) / 48000,
+    messages: [
+      ...fill42,
+      { name: "upload", atQuantum: 1, payload: { x: new Float32Array([]) } }, // 空 = chunk 0 に wrap
+    ],
+  });
+  // block 0 = 非空 [42] の処理結果 (= 経路 sanity)。
+  expect(result.outputs.main![0]![0]).toBe(42);
+  // block 1 = 空 payload。stale read なら chunk 0 の [42] が leak、fix 後は 0。
+  expect(result.outputs.main![0]![SAMPLES_PER_BLOCK]).toBe(0);
+});
+
 // message<T> 経由で state を更新する processor (= scalar message 注入の検証用)。
 // 出力はそのまま mul state の値 (= 注入が届けば block ごとに値が変わる)。
 const messageMul = defineProcessor(() => {
