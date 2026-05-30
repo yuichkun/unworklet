@@ -793,6 +793,7 @@ import {
   midiOutput,
   message,
   event,
+  i32,
   lt,
   select,
   type Node,
@@ -817,8 +818,10 @@ export const arpeggiator = defineProcessor((ctx) => {
     pattern.push(state.i32(0).named(`step_${s}`));
   }
 
-  // Pattern reload from main.
-  const loadPattern = message<{ steps: Int32Array }>({ name: "loadPattern" });
+  // Pattern reload from main. Values are small signed integers (note offsets);
+  // they travel as a Float32Array so the handler can read them per-element with
+  // `.at()` (= direct per-element read is f32-only, Q84) and convert via `i32(...)`.
+  const loadPattern = message<{ steps: Float32Array }>({ name: "loadPattern" });
 
   const rootNote = state.i32(60).named("rootNote");
   const lastVel = state.i32(96).named("lastVel");
@@ -839,7 +842,7 @@ export const arpeggiator = defineProcessor((ctx) => {
       // (decisions-log Q31-d).
       loadPattern.onReceive(({ steps }) => {
         for (let s = 0; s < PATTERN_LEN; s++) {
-          pattern[s].store(select(lt(s, steps.length), steps.at(s), pattern[s].load()));
+          pattern[s].store(select(lt(s, steps.length), i32(steps.at(s)), pattern[s].load()));
         }
       });
 
@@ -914,7 +917,7 @@ node.state.stepIdx.subscribe((s) => stepUI.cursorAt(s));
 
 // Load a pattern (ascending then descending arpeggio).
 node.messages.loadPattern({
-  steps: new Int32Array([0, 4, 7, 12, 16, 19, 24, 19, 16, 12, 7, 4, 0, -5, -8, -12]),
+  steps: new Float32Array([0, 4, 7, 12, 16, 19, 24, 19, 16, 12, 7, 4, 0, -5, -8, -12]),
 });
 ```
 
