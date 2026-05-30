@@ -16,7 +16,7 @@
 import { expect, test, vi } from "vite-plus/test";
 
 import { createNode, inspect } from "./client.ts";
-import type { CompiledProcessor } from "./types.ts";
+import type { CompiledProcessor, MidiEvent } from "./types.ts";
 
 type MockAudioParam = { value: number };
 
@@ -317,6 +317,13 @@ const makeMockProcessor = (overrides?: {
       byteSize: number;
     }>;
   }>;
+  midiRings?: Array<{
+    name: string;
+    direction: "in" | "out";
+    wasmRingBase: number;
+    capacity: number;
+    sysex?: { wasmBase: number; perChunk: number; chunks: number };
+  }>;
 }): CompiledProcessor<unknown> =>
   ({
     graph: {} as never,
@@ -332,6 +339,7 @@ const makeMockProcessor = (overrides?: {
       publishSlots: overrides?.publishSlots ?? [],
       eventRings: overrides?.eventRings ?? [],
       messageRings: overrides?.messageRings ?? [],
+      midiRings: overrides?.midiRings ?? [],
       moduleUrl:
         overrides && "moduleUrl" in overrides ? overrides.moduleUrl : "/_assets/x.worklet.js",
       wasmUrl: overrides && "wasmUrl" in overrides ? overrides.wasmUrl : "/_assets/x.wasm",
@@ -2728,6 +2736,195 @@ test("node.messages.<name>(payload): postMessage transport = port.postMessage �
     };
     (node.messages["preset"] as (p: { slot: number }) => void)({ slot: 99 });
     expect(posted).toEqual([{ kind: "message", ringIndex: 0, payload: { slot: 99 } }]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// node.midi.<name> surface (`11-midi.md` §3) — main-thread MIDI transport.
+// send (inbound) encodes through the production `midiEventToWire` codec; onEvent
+// (outbound) decodes incoming slots. postMessage paths are fully synchronous via
+// the mock port; SAB paths read/write the shared ring buffer directly.
+// ───────────────────────────────────────────────────────────────────────────
+
+const midiInFixture = { name: "in", direction: "in" as const, wasmRingBase: 1024, capacity: 256 };
+const midiOutFixture = {
+  name: "out",
+  direction: "out" as const,
+  wasmRingBase: 4096,
+  capacity: 256,
+};
+
+test("node.midi.<in>.send: postMessage transport = wire byte に encode し て port.postMessage 直 送", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ midiRings: [midiInFixture] })),
+      h.fireReady,
+    );
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (m: unknown) => posted.push(m);
+    node.midi["in"]!.send({ type: "noteOn", channel: 3, note: 60, velocity: 100 });
+    expect(posted).toEqual([
+      { kind: "midi", ringIndex: 0, item: { status: 0x93, data1: 60, data2: 100, atSample: 0 } },
+    ]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.midi.<out>.onEvent: postMessage transport = midiOut slot を decode し て type 一 致 handler に dispatch", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ midiRings: [midiOutFixture] })),
+      h.fireReady,
+    );
+    const got: MidiEvent[] = [];
+    node.midi["out"]!.onEvent("noteOn", (e) => got.push(e));
+    const slot = new ArrayBuffer(8);
+    const dv = new DataView(slot);
+    dv.setUint8(0, 0x95); // noteOn channel 5
+    dv.setUint8(1, 64);
+    dv.setUint8(2, 120);
+    dv.setUint32(4, 7, true);
+    for (const l of h.lastNode!.port.__listeners) {
+      l({
+        data: { kind: "midiOut", ringIndex: 0, newSlotsBytes: slot, newSlotCount: 1 },
+      } as MessageEvent);
+    }
+    expect(got).toEqual([{ type: "noteOn", channel: 5, note: 64, velocity: 120 }]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.midi.<out>.onEvent: type 不 一 致 の event で は handler を fire し な い", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ midiRings: [midiOutFixture] })),
+      h.fireReady,
+    );
+    const notes: MidiEvent[] = [];
+    const ccs: MidiEvent[] = [];
+    node.midi["out"]!.onEvent("noteOn", (e) => notes.push(e));
+    node.midi["out"]!.onEvent("cc", (e) => ccs.push(e));
+    // a cc slot — only the cc handler should fire
+    const slot = new ArrayBuffer(8);
+    const dv = new DataView(slot);
+    dv.setUint8(0, 0xb2); // cc channel 2
+    dv.setUint8(1, 74);
+    dv.setUint8(2, 33);
+    for (const l of h.lastNode!.port.__listeners) {
+      l({
+        data: { kind: "midiOut", ringIndex: 0, newSlotsBytes: slot, newSlotCount: 1 },
+      } as MessageEvent);
+    }
+    expect(notes).toEqual([]);
+    expect(ccs).toEqual([{ type: "cc", channel: 2, controller: 74, value: 33 }]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.midi.<name>.diagnostics.overflowCount: postMessage transport = midi-overflow 通 知 で mirror 更 新", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ midiRings: [midiInFixture] })),
+      h.fireReady,
+    );
+    expect(node.midi["in"]!.diagnostics.overflowCount()).toBe(0);
+    for (const l of h.lastNode!.port.__listeners) {
+      l({ data: { kind: "midi-overflow", ringIndex: 0, overflowCount: 3 } } as MessageEvent);
+    }
+    expect(node.midi["in"]!.diagnostics.overflowCount()).toBe(3);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.midi.<in>.connectFromWebMIDI: MIDIInput.onmidimessage の raw bytes を send 経 由 で 注 入", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ midiRings: [midiInFixture] })),
+      h.fireReady,
+    );
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (m: unknown) => posted.push(m);
+    const fakeInput: { onmidimessage: ((e: { data: Uint8Array }) => void) | null } = {
+      onmidimessage: null,
+    };
+    node.midi["in"]!.connectFromWebMIDI(fakeInput);
+    fakeInput.onmidimessage!({ data: new Uint8Array([0x90, 60, 100]) });
+    expect(posted).toEqual([
+      { kind: "midi", ringIndex: 0, item: { status: 0x90, data1: 60, data2: 100, atSample: 0 } },
+    ]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.midi.<in>.send: SAB transport = 共 有 ring に wire slot write + head++", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ midiRings: [midiInFixture] })),
+      h.fireReady,
+    );
+    const opts = h.lastNode!.__constructorRecord.options.processorOptions as {
+      midiRingsBuffer: SharedArrayBuffer;
+    };
+    node.midi["in"]!.send({ type: "cc", channel: 0, controller: 7, value: 127 });
+    const header = new Int32Array(opts.midiRingsBuffer);
+    expect(header[0]).toBe(1); // head advanced 0 → 1
+    const dv = new DataView(opts.midiRingsBuffer);
+    expect(dv.getUint8(12)).toBe(0xb0); // cc status at slot 0 (after 12-byte header)
+    expect(dv.getUint8(13)).toBe(7);
+    expect(dv.getUint8(14)).toBe(127);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.midi.<out>.onEvent: SAB transport = rAF poll で 共 有 out-ring を drain + dispatch", async () => {
+  const raf = installRafMock();
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ midiRings: [midiOutFixture] })),
+      h.fireReady,
+    );
+    const opts = h.lastNode!.__constructorRecord.options.processorOptions as {
+      midiRingsBuffer: SharedArrayBuffer;
+    };
+    const got: MidiEvent[] = [];
+    node.midi["out"]!.onEvent("noteOn", (e) => got.push(e));
+    // worklet writes one out-ring slot (out is the only ring → SAB offset 0).
+    const dv = new DataView(opts.midiRingsBuffer);
+    dv.setUint8(12, 0x90);
+    dv.setUint8(13, 50);
+    dv.setUint8(14, 64);
+    Atomics.store(new Int32Array(opts.midiRingsBuffer), 0, 1); // head = 1
+    raf.flush();
+    expect(got).toEqual([{ type: "noteOn", channel: 0, note: 50, velocity: 64 }]);
+  } finally {
+    h.cleanup();
+    raf.restore();
+  }
+});
+
+test("node.midi: midi-less processor = 空 object", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    expect(node.midi).toEqual({});
   } finally {
     h.cleanup();
   }

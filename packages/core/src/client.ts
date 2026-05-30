@@ -21,11 +21,16 @@ import type {
   EventSubscriber,
   InspectionResult,
   MessageSender,
+  MidiEvent,
+  MidiEventType,
+  MidiPortSurface,
   NodeErrorEvent,
   ScalarType,
   StateValueProxy,
   UnworkletNode,
 } from "./types.ts";
+import { midiEventToWire, wireToMidiEvent } from "./midiWire.ts";
+import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
 import { inspectSnapshot } from "./snapshot.ts";
 
 const notImplemented = (): never => {
@@ -335,6 +340,7 @@ export async function createNode<C>(
   const publishSlots = ns.publishSlots;
   const eventRings = ns.eventRings;
   const messageRings = ns.messageRings;
+  const midiRings = ns.midiRings;
 
   // transport mode 検 出 (= sub-phase 7.4)。 publishSlots ゼ ロ で も transport は
   // 計 算 す る (= 後 続 で event<T> / message<T> / midi の SAB ringbuffer path で も
@@ -420,6 +426,37 @@ export async function createNode<C>(
     messageContentBuffer = new SharedArrayBuffer(messageContentByteLength);
   }
   const messageContentCursors: number[] = messageRings.map(() => 0);
+
+  // MIDI ring buffer (`11-midi.md` §4.4)。 in port = message と 同 transport (main →
+  // SAB / postMessage → worklet)、 out port = event と 同 (worklet → SAB / postMessage
+  // → main)。 8-byte 固 定 slot = 12 + capacity × 8 byte。 SAB 時 の み allocate。
+  let midiRingsByteLength = 0;
+  const midiRingSabOffsets: number[] = [];
+  for (const ring of midiRings) {
+    midiRingSabOffsets.push(midiRingsByteLength);
+    midiRingsByteLength += 12 + ring.capacity * 8;
+  }
+  let midiRingsBuffer: SharedArrayBuffer | null = null;
+  if (midiRingsByteLength > 0 && sabAvailable) {
+    midiRingsBuffer = new SharedArrayBuffer(midiRingsByteLength);
+  }
+  // §4.3 sysex content buffer = sysex port ご と に perChunk × chunks bytes を 連 続 配 置
+  // (= ring index と zip、 sysex ナ シ port も offset を hold)。 SAB 時 の み allocate。
+  let sysexContentByteLength = 0;
+  const sysexContentSabOffsets: number[] = [];
+  for (const ring of midiRings) {
+    sysexContentSabOffsets.push(sysexContentByteLength);
+    if (ring.sysex !== undefined) {
+      sysexContentByteLength += ring.sysex.perChunk * ring.sysex.chunks;
+    }
+  }
+  let sysexContentBuffer: SharedArrayBuffer | null = null;
+  if (sysexContentByteLength > 0 && sabAvailable) {
+    sysexContentBuffer = new SharedArrayBuffer(sysexContentByteLength);
+  }
+  // in port = main が SAB ring に push す る 時 の per-port head cursor は SAB header
+  // (= drop-oldest 判 定 で head/tail を Atomics 操 作)。 sysex content の per-port
+  // 書 き 込 み cursor は send ご と に head%chunks で 決 ま る = 別 cursor 不 要。
 
   // main 側 state surface 構 築 = transport mode で 経 路 が 分 岐:
   //
@@ -639,6 +676,229 @@ export async function createNode<C>(
     }
   }
 
+  // MIDI surface 構 築 (`11-midi.md` §3)。 in port = message と 同 transport で
+  // `send` / `connectFromWebMIDI`、 out port = event と 同 で `onEvent`。 両 方 に
+  // `diagnostics.overflowCount`。 8-byte 固 定 wire slot = midiWire codec で encode/decode。
+  const midiSurface: Record<string, MidiPortSurface> = {};
+  // out port (= event-like) per-port subscriber: type 別 handler set。 in port は 空。
+  const midiOutSubscribers: Map<
+    string,
+    Map<MidiEventType, Set<(e: MidiEvent) => void>>
+  > = new Map();
+  const midiOutLocalTails: number[] = midiRings.map(() => 0);
+  // postMessage path 用 overflow mirror (= in/out 共 用、 ring index は in/out 排 他 = 曖 昧 ナ シ)。
+  const midiOverflowMirror: number[] = midiRings.map(() => 0);
+  let midiRingsView: DataView | null = null;
+  let midiRingsHeaderView: Int32Array | null = null;
+  if (midiRingsBuffer !== null && midiRings.length > 0) {
+    midiRingsView = new DataView(midiRingsBuffer);
+    midiRingsHeaderView = new Int32Array(midiRingsBuffer);
+  }
+  const sysexContentBytes: Uint8Array | null =
+    sysexContentBuffer !== null ? new Uint8Array(sysexContentBuffer) : null;
+
+  // atTime → block-local atSample (§4.2)。 atTime 省 略 = 0 (= 次 block boundary)。
+  // atTime 指 定 = now から の sample offset を 1 block 内 に clamp (= near-future の
+  // sub-block accuracy、 far-future は block 先 頭 に saturate = postMessage 既 定 と zip)。
+  const ctxTimeOf = (): number => {
+    const t = (context as unknown as { currentTime?: number }).currentTime;
+    return typeof t === "number" ? t : 0;
+  };
+  const sampleRateOf = (): number => {
+    const r = (context as unknown as { sampleRate?: number }).sampleRate;
+    return typeof r === "number" && r > 0 ? r : 48000;
+  };
+  const atSampleFromTime = (atTime: number | undefined): number => {
+    if (atTime === undefined) return 0;
+    const offset = Math.round((atTime - ctxTimeOf()) * sampleRateOf());
+    if (offset <= 0) return 0;
+    return offset >= SAMPLES_PER_BLOCK ? SAMPLES_PER_BLOCK - 1 : offset;
+  };
+
+  // 1 つ の 8-byte wire slot を decode (= status/data1/data2 + atSample)。 sysex は
+  // status 0xF0 = content から length-prefixed bytes を 読 む。 SAB poll / postMessage
+  // 両 path で 共 用 (= contentBytes は SAB region or postMessage 同 梱 snapshot)。
+  const decodeMidiSlot = (
+    view: DataView,
+    slotByteOffset: number,
+    ringIndex: number,
+    contentBytes: Uint8Array | null,
+  ): { event: MidiEvent; atSample: number } => {
+    const status = view.getUint8(slotByteOffset);
+    const data1 = view.getUint8(slotByteOffset + 1);
+    const data2 = view.getUint8(slotByteOffset + 2);
+    const atSample = view.getUint32(slotByteOffset + 4, true);
+    const sysex = midiRings[ringIndex]!.sysex;
+    if (status === 0xf0 && sysex !== undefined && contentBytes !== null) {
+      const base = (data1 % sysex.chunks) * sysex.perChunk;
+      const len = new DataView(contentBytes.buffer, contentBytes.byteOffset).getUint32(base, true);
+      const data = contentBytes.slice(base + 4, base + 4 + len);
+      return { event: { type: "sysex", data }, atSample };
+    }
+    return { event: wireToMidiEvent(status, data1, data2), atSample };
+  };
+
+  // out port subscriber に decode 済 event を dispatch (= type 一 致 handler だ け fire)。
+  // main-side `MidiEvent` は atSample を 持 た ない (§2.1、 sample-offset は worklet 内 部
+  // の sample-accurate gating 用 = block 完 了 後 の main に は 既 過 去) = plain event を 渡 す。
+  const dispatchMidiEvent = (ringName: string, event: MidiEvent): void => {
+    const byType = midiOutSubscribers.get(ringName);
+    if (byType === undefined) return;
+    const handlers = byType.get(event.type);
+    if (handlers === undefined || handlers.size === 0) return;
+    for (const handler of handlers) {
+      try {
+        handler(event);
+      } catch (err) {
+        console.error("unworklet: midi onEvent handler threw", err);
+      }
+    }
+  };
+
+  if (midiRings.length > 0) {
+    for (let i = 0; i < midiRings.length; i++) {
+      const ring = midiRings[i]!;
+      const ringIndex = i;
+      const sabOffset = midiRingSabOffsets[i]!;
+      const headWordIdx = sabOffset >>> 2;
+      const tailWordIdx = headWordIdx + 1;
+      const overflowWordIdx = headWordIdx + 2;
+      const slotsBase = sabOffset + 12;
+      const isSab = transportMode === "sab";
+
+      // inbound (= main → worklet)。 SAB = ring に slot write + head++ (drop-oldest)、
+      // postMessage = `{ kind:'midi', ringIndex, item }` 直 送。
+      const send = (event: MidiEvent, atTime?: number): void => {
+        if (ring.direction !== "in") return;
+        const atSample = atSampleFromTime(atTime);
+        if (isSab && midiRingsView !== null && midiRingsHeaderView !== null) {
+          const headerView = midiRingsHeaderView;
+          const head = Atomics.load(headerView, headWordIdx);
+          const tail = Atomics.load(headerView, tailWordIdx);
+          if (head - tail >= ring.capacity) {
+            Atomics.store(headerView, tailWordIdx, tail + 1);
+            Atomics.store(
+              headerView,
+              overflowWordIdx,
+              Atomics.load(headerView, overflowWordIdx) + 1,
+            );
+          }
+          const slotByteOffset = slotsBase + (head % ring.capacity) * 8;
+          if (event.type === "sysex" && ring.sysex !== undefined && sysexContentBytes !== null) {
+            const sysex = ring.sysex;
+            const chunkIdx = head % sysex.chunks;
+            const contentBase = sysexContentSabOffsets[i]! + chunkIdx * sysex.perChunk;
+            const len = Math.min(event.data.length, sysex.perChunk - 4);
+            new DataView(sysexContentBytes.buffer).setUint32(contentBase, len, true);
+            sysexContentBytes.set(event.data.subarray(0, len), contentBase + 4);
+            midiRingsView.setUint8(slotByteOffset, 0xf0);
+            midiRingsView.setUint8(slotByteOffset + 1, chunkIdx);
+            midiRingsView.setUint32(slotByteOffset + 4, atSample, true);
+          } else if (event.type !== "sysex") {
+            const { status, data1, data2 } = midiEventToWire(event);
+            midiRingsView.setUint8(slotByteOffset, status);
+            midiRingsView.setUint8(slotByteOffset + 1, data1);
+            midiRingsView.setUint8(slotByteOffset + 2, data2);
+            midiRingsView.setUint8(slotByteOffset + 3, 0);
+            midiRingsView.setUint32(slotByteOffset + 4, atSample, true);
+          }
+          Atomics.store(headerView, headWordIdx, head + 1);
+        } else {
+          const item =
+            event.type === "sysex"
+              ? { status: 0xf0, data1: 0, data2: 0, atSample, sysex: event.data }
+              : { ...midiEventToWire(event), atSample };
+          node.port.postMessage({ kind: "midi", ringIndex, item });
+        }
+      };
+
+      const connectFromWebMIDI = (input: unknown): void => {
+        const midiInput = input as { onmidimessage?: ((e: { data: Uint8Array }) => void) | null };
+        // Web MIDI の MIDIMessageEvent.data (= raw bytes) を MidiEvent に 復 元 し て send。
+        // sysex (0xF0) は 末 尾 0xF7 を 含 む raw bytes を そ の ま ま data に。
+        midiInput.onmidimessage = (e: { data: Uint8Array }): void => {
+          const bytes = e.data;
+          if (bytes.length === 0) return;
+          if (bytes[0]! === 0xf0) {
+            send({ type: "sysex", data: bytes });
+            return;
+          }
+          send(wireToMidiEvent(bytes[0]!, bytes[1] ?? 0, bytes[2] ?? 0));
+        };
+      };
+
+      // outbound (= worklet → main)。 type 別 handler を 登 録、 SAB = rAF poll で drain、
+      // postMessage = onMidiOutMessage で dispatch。 unsubscribe を 返 す。
+      const onEvent = <K extends MidiEventType>(
+        type: K,
+        handler: (event: Extract<MidiEvent, { type: K }>) => void,
+      ): (() => void) => {
+        let byType = midiOutSubscribers.get(ring.name);
+        if (byType === undefined) {
+          byType = new Map();
+          midiOutSubscribers.set(ring.name, byType);
+        }
+        let handlers = byType.get(type);
+        if (handlers === undefined) {
+          handlers = new Set();
+          byType.set(type, handlers);
+        }
+        handlers.add(handler as (e: MidiEvent) => void);
+        if (transportMode === "sab") ensureRafLoopRunning();
+        return () => {
+          handlers.delete(handler as (e: MidiEvent) => void);
+          if (!hasAnySubscribers()) stopRafLoop();
+        };
+      };
+
+      midiSurface[ring.name] = {
+        send,
+        connectFromWebMIDI,
+        onEvent,
+        diagnostics: {
+          overflowCount(): number {
+            if (isSab && midiRingsHeaderView !== null) {
+              return Atomics.load(midiRingsHeaderView, overflowWordIdx);
+            }
+            return midiOverflowMirror[ringIndex]!;
+          },
+        },
+      };
+    }
+  }
+
+  // SAB out-ring drain = rAF poll で WASM-mirror さ れ た SAB ring を tail→head で 消 化
+  // + decode + dispatch (= event ring poll と 同 lifecycle)。 in port は skip。
+  function pollMidiOutRings(): void {
+    if (midiRingsView === null || midiRingsHeaderView === null) return;
+    for (let i = 0; i < midiRings.length; i++) {
+      const ring = midiRings[i]!;
+      if (ring.direction !== "out") continue;
+      const sabOffset = midiRingSabOffsets[i]!;
+      const headSabWordIdx = sabOffset >>> 2;
+      const currentHead = Atomics.load(midiRingsHeaderView, headSabWordIdx);
+      const sabTail = Atomics.load(midiRingsHeaderView, headSabWordIdx + 1);
+      const localTail = midiOutLocalTails[i]!;
+      let tail = localTail < sabTail ? sabTail : localTail;
+      if (tail === currentHead) continue;
+      const slotsBase = sabOffset + 12;
+      const contentBytes =
+        ring.sysex !== undefined && sysexContentBytes !== null
+          ? sysexContentBytes.subarray(
+              sysexContentSabOffsets[i]!,
+              sysexContentSabOffsets[i]! + ring.sysex.perChunk * ring.sysex.chunks,
+            )
+          : null;
+      while (tail !== currentHead) {
+        const slotByteOffset = slotsBase + (tail % ring.capacity) * 8;
+        const { event } = decodeMidiSlot(midiRingsView, slotByteOffset, i, contentBytes);
+        dispatchMidiEvent(ring.name, event);
+        tail += 1;
+      }
+      midiOutLocalTails[i] = tail;
+    }
+  }
+
   // rAF polling driver = 全 publish slot + 全 event ring を walk。 publish は
   // version 増 加 検 出 で subscriber fire、 event は head が main local tail を
   // 越 え た 分 を drain + per-slot handler fire。 subscribe 1 番 目 で 開 始、
@@ -735,8 +995,8 @@ export async function createNode<C>(
 
   function ensureRafLoopRunning(): void {
     if (rafHandle !== null || disposed) return;
-    /* v8 ignore next 1 — subscribe path 経 由 で publish or event surface 配 線 済 = unreachable defensive */
-    if (publishSharedView === null && eventRingsView === null) return;
+    /* v8 ignore next 1 — subscribe path 経 由 で publish / event / midi-out surface 配 線 済 = unreachable defensive */
+    if (publishSharedView === null && eventRingsView === null && midiRingsView === null) return;
     const raf = (globalThis as { requestAnimationFrame?: (cb: () => void) => number })
       .requestAnimationFrame;
     if (!raf) return;
@@ -746,6 +1006,7 @@ export async function createNode<C>(
     const tick = (): void => {
       pollPublishSlots();
       pollEventRings();
+      pollMidiOutRings();
       rafHandle = raf(tick);
     };
     rafHandle = raf(tick);
@@ -759,14 +1020,19 @@ export async function createNode<C>(
     rafHandle = null;
   }
 
-  // 全 publish slot + 全 event ring の subscriber が 0 か。 unsubscribe で 全 て 0 に
-  // な っ た 時 に rAF polling を 止 め る 判 定 に 使 う。
+  // 全 publish slot + 全 event ring + 全 midi-out port の subscriber が 0 か。
+  // unsubscribe で 全 て 0 に な っ た 時 に rAF polling を 止 め る 判 定 に 使 う。
   function hasAnySubscribers(): boolean {
     for (const subs of stateSubscribers.values()) {
       if (subs.size > 0) return true;
     }
     for (const subs of eventSubscribers.values()) {
       if (subs.size > 0) return true;
+    }
+    for (const byType of midiOutSubscribers.values()) {
+      for (const handlers of byType.values()) {
+        if (handlers.size > 0) return true;
+      }
     }
     return false;
   }
@@ -835,6 +1101,19 @@ export async function createNode<C>(
             ...(messageRingsBuffer !== null ? { messageRingsBuffer } : {}),
             messageContentSabOffsets,
             ...(messageContentBuffer !== null ? { messageContentBuffer } : {}),
+          }
+        : {}),
+      // MIDI ring あ り の 時 = descriptor + offset + transport を hand。 buffer は SAB
+      // 時 の み (= postMessage path は main が `{ kind:'midi' }` 直 送 / worklet が
+      // `{ kind:'midiOut' }` 配 送 = main 側 buffer 不 要)。
+      ...(midiRings.length > 0
+        ? {
+            midiRings,
+            midiRingSabOffsets,
+            sysexContentSabOffsets,
+            transport: transportMode,
+            ...(midiRingsBuffer !== null ? { midiRingsBuffer } : {}),
+            ...(sysexContentBuffer !== null ? { sysexContentBuffer } : {}),
           }
         : {}),
     },
@@ -1063,6 +1342,68 @@ export async function createNode<C>(
     node.port.addEventListener("message", onMessageOverflowMessage);
   }
 
+  // postMessage path 用 MIDI outbound listener (= worklet 側 out-ring drain が
+  // `{ kind:'midiOut', ringIndex, newSlotsBytes, newSlotCount, overflowCount, sysexBytes? }`
+  // で 配 送 = main 側 で 各 slot を decode + type 一 致 handler に dispatch + overflow mirror 更 新)。
+  const onMidiOutMessage = (event: MessageEvent): void => {
+    const data = event.data as
+      | {
+          kind?: unknown;
+          ringIndex?: unknown;
+          newSlotsBytes?: unknown;
+          newSlotCount?: unknown;
+          overflowCount?: unknown;
+          sysexBytes?: unknown;
+        }
+      | null
+      | undefined;
+    if (typeof data !== "object" || data === null) return;
+    if (data.kind !== "midiOut") return;
+    if (typeof data.ringIndex !== "number") return;
+    const ringIndex = data.ringIndex;
+    if (ringIndex < 0 || ringIndex >= midiRings.length) return;
+    const ring = midiRings[ringIndex]!;
+    if (typeof data.overflowCount === "number") {
+      midiOverflowMirror[ringIndex] = data.overflowCount;
+    }
+    if (
+      data.newSlotsBytes instanceof ArrayBuffer &&
+      typeof data.newSlotCount === "number" &&
+      data.newSlotCount > 0
+    ) {
+      const view = new DataView(data.newSlotsBytes);
+      const contentBytes =
+        data.sysexBytes instanceof ArrayBuffer ? new Uint8Array(data.sysexBytes) : null;
+      for (let k = 0; k < data.newSlotCount; k++) {
+        const { event: decoded } = decodeMidiSlot(view, k * 8, ringIndex, contentBytes);
+        dispatchMidiEvent(ring.name, decoded);
+      }
+    }
+  };
+  if (transportMode === "postMessage" && midiRings.length > 0) {
+    node.port.addEventListener("message", onMidiOutMessage);
+  }
+
+  // postMessage path 用 MIDI inbound overflow listener (= worklet 側 in-ring で
+  // drop-oldest 発 動 時 に `{ kind:'midi-overflow', ringIndex, overflowCount }` で
+  // 通 知 = main 側 mirror 更 新 + diagnostics.overflowCount() で read 可)。
+  const onMidiOverflowMessage = (event: MessageEvent): void => {
+    const data = event.data as
+      | { kind?: unknown; ringIndex?: unknown; overflowCount?: unknown }
+      | null
+      | undefined;
+    if (typeof data !== "object" || data === null) return;
+    if (data.kind !== "midi-overflow") return;
+    if (typeof data.ringIndex !== "number") return;
+    if (typeof data.overflowCount !== "number") return;
+    const ringIndex = data.ringIndex;
+    if (ringIndex < 0 || ringIndex >= midiRings.length) return;
+    midiOverflowMirror[ringIndex] = data.overflowCount;
+  };
+  if (transportMode === "postMessage" && midiRings.length > 0) {
+    node.port.addEventListener("message", onMidiOverflowMessage);
+  }
+
   const { handles: inputHandles, proxies: inputProxies } = buildInputProxies(context, node, inputs);
 
   // sab-unavailable event を 1 度 だ け fire す る pending flag (= 04-worklet-
@@ -1080,7 +1421,7 @@ export async function createNode<C>(
     state: stateSurface,
     events: eventSurface,
     messages: messageSurface,
-    midi: {},
+    midi: midiSurface,
     diagnostics: { transport: transportMode },
     snapshot: notImplemented as unknown as UnworkletNode<C>["snapshot"],
     restore: notImplemented as unknown as UnworkletNode<C>["restore"],
@@ -1092,10 +1433,15 @@ export async function createNode<C>(
       node.port.removeEventListener("message", onPublishMessage);
       node.port.removeEventListener("message", onEventMessage);
       node.port.removeEventListener("message", onMessageOverflowMessage);
+      node.port.removeEventListener("message", onMidiOutMessage);
+      node.port.removeEventListener("message", onMidiOverflowMessage);
       node.removeEventListener("processorerror", onErrorProcessor);
       errorSubscribers.clear();
       for (const subs of stateSubscribers.values()) subs.clear();
       for (const subs of eventSubscribers.values()) subs.clear();
+      for (const byType of midiOutSubscribers.values()) {
+        for (const handlers of byType.values()) handlers.clear();
+      }
       // Cut each input proxy's outgoing edge to `node` so audio stops flowing
       // through the disposed processor。 Upstream sources connected by the
       // user to `node.inputs.<name>` are their own to disconnect — unworklet
