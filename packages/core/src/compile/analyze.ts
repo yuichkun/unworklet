@@ -182,7 +182,12 @@ function walkForTypeErrors(node: AstNode, diagnostics: DiagnosticEntry[]): void 
 // SIMD bulk (stride 4 で 4 sample load) 等で 128 / stride が整数になる必要がある。
 const ALLOWED_STRIDES = new Set([1, 2, 4, 8, 16, 32, 64, 128]);
 
-function walkForIllegalStride(body: readonly AstNode[], diagnostics: DiagnosticEntry[]): void {
+// loop primitive (forSample.byN / everyNSamples) の compile-time 静的検証。
+// forSample.byN stride は 128 を割り切る 2 の冪 (= ALLOWED_STRIDES)、everyNSamples
+// の divisor N は §9.5 で「compile-time な正の整数」(= block 跨ぎ free-running counter
+// なので 128 を割り切る必要はない、§9.1)。どちらも違反は audio thread に届く前に reject:
+// N=0 は emit が i32.rem_u(counter, 0) を吐いて audio thread で 0 除算 trap する。
+function walkForLoopErrors(body: readonly AstNode[], diagnostics: DiagnosticEntry[]): void {
   for (const node of body) {
     if (node.kind === "forSample") {
       if (!ALLOWED_STRIDES.has(node.stride)) {
@@ -192,14 +197,23 @@ function walkForIllegalStride(body: readonly AstNode[], diagnostics: DiagnosticE
           message: `unworklet: forSample.byN stride ${node.stride} は render quantum (128) を割り切る 2 の冪ではない。許可: 1, 2, 4, 8, 16, 32, 64, 128 (stable ID 'illegal-stride')`,
         });
       }
-      walkForIllegalStride(node.body, diagnostics);
+      walkForLoopErrors(node.body, diagnostics);
+    } else if (node.kind === "everyNSamples") {
+      if (!Number.isInteger(node.divisor) || node.divisor < 1) {
+        diagnostics.push({
+          id: "illegal-everyn-divisor",
+          severity: "error",
+          message: `unworklet: everyNSamples(N) の N は compile-time な正の整数でなければならない (got ${node.divisor})。N=0 は audio thread で 0 除算 trap、負/非整数は無効 (stable ID 'illegal-everyn-divisor')`,
+        });
+      }
+      walkForLoopErrors(node.body, diagnostics);
     }
   }
 }
 
 export function analyze(graph: CapturedGraph): DiagnosticEntry[] {
   const diagnostics: DiagnosticEntry[] = [];
-  walkForIllegalStride(graph.statements, diagnostics);
+  walkForLoopErrors(graph.statements, diagnostics);
   for (const stmt of graph.statements) {
     if (stmt.kind === "forSample") {
       walkForConstantTruthyEmitIf(stmt.body, diagnostics);

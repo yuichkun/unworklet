@@ -146,3 +146,36 @@ test("forSample.byN は 128 を割り切らない stride を compile で reject 
   });
   await expect(compile(proc)).rejects.toThrow(/illegal-stride/);
 });
+
+// everyNSamples(N) の N は §9.5 で「compile-time な正の整数」。N=0 は emit が
+// i32.rem_u(counter, 0) を吐いて audio thread で除算 trap、負/非整数は無効。
+// → analyze が compile-time に reject する (= audio thread に届かせない)。
+const everyN = (n: number) =>
+  defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const acc = state.f32(0);
+    return {
+      process: () => {
+        forSample((i, everyNSamples) => {
+          everyNSamples(n, () => {
+            acc.store(acc.load().add(f32(1)));
+          });
+          out.ch(0).at(i).write(acc.load());
+        });
+      },
+    };
+  });
+
+test("everyNSamples(0) は compile で reject する (= audio thread の 0 除算 trap を防ぐ)", async () => {
+  await expect(compile(everyN(0))).rejects.toThrow(/illegal-everyn-divisor/);
+});
+
+test("everyNSamples は負/非整数の N を compile で reject する (= §9.5 正の整数)", async () => {
+  await expect(compile(everyN(-2))).rejects.toThrow(/illegal-everyn-divisor/);
+  await expect(compile(everyN(3.5))).rejects.toThrow(/illegal-everyn-divisor/);
+});
+
+test("everyNSamples(1) は正当 (= 毎サンプル実行) で compile を通る", async () => {
+  // N=1 は下限の正当値 (= 128 を割り切る必要はない、§9.5)。reject されない。
+  await expect(compile(everyN(1))).resolves.toBeDefined();
+});
