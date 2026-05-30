@@ -8,11 +8,8 @@
  * で 別 登 録 (= §6、 plain と 並 立)。
  *
  * v1.0.0 ship surface = matcher 20 件 + signal utility 7 件 + midi utility 10
- * 件 + sample/time utility 6 件 + chain form。 Phase 4 skeleton stage = 既
- * fill 済 み 7 件 (= `expectAudioMatches` / `expectAudioMatchesGolden` /
- * `expectNoNaN` / `expectPeakUnder` / `expectRmsUnder` / `expectEventsEqual` /
- * `expectStateMatches`) 維 持、 残 36 件 + chain form は `not implemented`
- * stub、 fill は impl phase incremental。
+ * 件 + sample/time utility 6 件 + chain form。 plain function form は こ の
+ * module、 chain form は subpath `@unworklet/test/extend` の side-effect import。
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -325,7 +322,7 @@ export function expectAudioMatchesGolden(
   expectAudioMatches(actual, decoded.channels, opts);
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━ stub: matcher (= 13 件) ━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━━━━━━━━━━━━━━━━━━━━━━━ matcher: golden / snapshot / peak / EQ ━━━━━━━━━━━━━━━━━━━━━━━━
 
 export type SnapshotOptions = {
   /** full path 上 書 き (= dir + file 名 を consumer が 完 全 制 御)。 省 略 + `snapshotName` 省 略 = auto-infer (= test 名 base)。 */
@@ -1223,7 +1220,7 @@ export function ramp(opts: RampOpts): Float32Array {
   return data;
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━ stub: midi utility (= 10 件) ━━━━━━━━━━━━━━━━━━━━━━
+// ━━━━━━━━━━━━━━━━━━━━━ midi utility: event constructors + sequence ━━━━━━━━━━━━━━━━━━━━━━
 
 export type MidiNoteOnOpts = { note: number; velocity: number; channel?: number };
 export type MidiNoteOffOpts = { note: number; velocity?: number; channel?: number };

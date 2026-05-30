@@ -1,16 +1,15 @@
 /**
- * Main-thread client surface (`05-client.md` §1 + §2)。 Phase 6 A-3 fill:
+ * Main-thread client surface (`05-client.md` §1 + §2)。
  *
  * - `createNode(context, processor, options?)` — `?worklet` 経 由 で
  *   augment さ れ た CompiledProcessor を 受 け 取 り、 `addModule` +
  *   `fetch(wasmUrl)` + `new AudioWorkletNode(...)` + readiness handshake
  *   を 経 て typed `UnworkletNode<C>` を 返 す。 audioWorklet.addModule
  *   は (context, moduleUrl) ご と に cache し て 二 重 register を 防 ぐ。
- * - `UnworkletNode<C>` 最 小 surface = `node` / `inputs.<name>` /
- *   `outputs.<name>` / `params.<name>` / `dispose()` (= Phase 6 範 囲)。
- *   `state` / `events` / `messages` / `midi` / `snapshot` / `restore` /
- *   `onError` / `diagnostics` は 後 続 phase で fill す る stub。
- * - `inspect(blob)` — non-realtime free function (Q48)、 Phase 11 fill。
+ * - `UnworkletNode<C>` full surface = `node` / `inputs.<name>` /
+ *   `outputs.<name>` / `params.<name>` / `state` / `events` / `messages` /
+ *   `midi` / `snapshot` / `restore` / `onError` / `diagnostics` / `dispose()`。
+ * - `inspect(blob)` — non-realtime free function (Q48)、 `AudioContext` 不 要。
  */
 
 import type {

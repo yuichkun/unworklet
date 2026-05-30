@@ -11,8 +11,9 @@
  * - `docs/09-repo-structure.md` §2.1 public exports
  *
  * Concrete TS generic constraint shape and method-form expansion on
- * `Node<T>` are impl-phase fill — this file declares the type surface
- * that all stub modules and external consumers compile against.
+ * `Node<T>` live in the impl modules (`dsl/primitives.ts` 等) — this file
+ * declares the type surface that all modules and external consumers
+ * compile against.
  */
 
 import type {

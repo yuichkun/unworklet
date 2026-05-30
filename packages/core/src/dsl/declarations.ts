@@ -2,8 +2,8 @@
  * Declaration helpers (`01-dsl.md` §1 / §3 / §4 + `11-midi.md` §1).
  *
  * Declaration scope only: each helper registers a slot in the graph and
- * a region in WASM linear memory. state / buffer / event / message /
- * MIDI = Phase 3 throw stub (= 後 続 phase fill)。
+ * a region in WASM linear memory (state / buffer / param / event / message /
+ * MIDI input / MIDI output)。
  *
  * Named-factory chain (= Q79): `.named('X')` quick form / `.expose({ name, ... })`
  * full form are exposed both **before** the type method (`state.named('X').f32(0)`)
