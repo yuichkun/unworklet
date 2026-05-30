@@ -1633,13 +1633,23 @@ function emitEventEmitIf(
           : undefined;
       /* v8 ignore next 6 — typed-array emit field は declarations で bufferName +
          length + payloadContent を 揃 え て push 済 = 構 造 上 unreachable guard */
-      if (emitField?.length === undefined || content === undefined || bufferBase === undefined) {
+      if (
+        emitField?.length === undefined ||
+        emitField.bufferSize === undefined ||
+        content === undefined ||
+        bufferBase === undefined
+      ) {
         throw new Error(`event "${node.name}" typed-array field "${field.name}" missing emit meta`);
       }
       const elemBytes = BUFFER_ELEMENT_BYTES_EMIT[field.payloadElementType];
       // chunk は content.chunks 枠 (= min(capacity, MAX_CONTENT_SLOTS)、Q85) で 循 環。
       // ring capacity が chunks を 超 え て も content は chunks 枠 を drop-oldest 再 利 用。
       const chunkBytes = Math.floor(content.capacity / content.chunks);
+      // copy 上 限 = chunk と source buffer の 小 さ い 方。 これ が ナ イ と length が buffer
+      // サ イ ズ を 超 え た 時 (= author の 誤 指 定) に memory.copy が buffer.<T> 領 域 を 超 え て
+      // 隣 接 linear memory を 読 み、 そ の バ イ ト を main に publish す る (= memory disclosure)。
+      const bufferBytes = emitField.bufferSize * elemBytes;
+      const copyCap = Math.min(chunkBytes, bufferBytes);
       const slotFieldPtr = (): number =>
         mod.i32.add(
           mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32),
@@ -1658,12 +1668,13 @@ function emitEventEmitIf(
           emitExpression(emitField.length!, layout, mod, binaryen),
           mod.i32.const(elemBytes),
         );
-      // copyBytes = min(length × sizeof, chunkBytes)。
+      // copyBytes = min(length × sizeof, copyCap)。 unsigned 比 較 = 負 の length も
+      // 巨 大 unsigned 化 し て copyCap に 丸 ま る (= [0, copyCap] に 収 ま り OOB read ナ シ)。
       const copyBytes = (): number =>
         mod.select(
-          mod.i32.lt_u(lengthBytes(), mod.i32.const(chunkBytes)),
+          mod.i32.lt_u(lengthBytes(), mod.i32.const(copyCap)),
           lengthBytes(),
-          mod.i32.const(chunkBytes),
+          mod.i32.const(copyCap),
         );
       fieldStores.push(
         mod.block(null, [

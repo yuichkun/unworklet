@@ -852,6 +852,7 @@ export function event<T>(options: EventOptions): EventDecl<T> {
           value: { kind: "literal", type: "i32", value: 0 }, // placeholder (= 未 使 用)
           payloadElementType: elementType,
           bufferName: bufMeta.decl.name,
+          bufferSize: bufMeta.decl.size, // emit が copy byte 数を buffer 境界に clamp する
           length: lengthAst,
         });
       }

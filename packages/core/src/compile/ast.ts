@@ -157,6 +157,8 @@ export type EventEmitField = {
    */
   payloadElementType?: BufferElementType;
   bufferName?: string;
+  /** Source buffer の element 数 (= `buffer.<T>({ size })`)。emit が copy byte 数を buffer 境界に clamp する。 */
+  bufferSize?: number;
   length?: AstNode;
 };
 

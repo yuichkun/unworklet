@@ -813,6 +813,36 @@ test("`renderOffline` captures a typed-array event payload as a Float32Array", a
   expect(Array.from((ev.payload as { data: Float32Array }).data)).toEqual([11, 22, 33, 44]);
 });
 
+// emitIf の length が buffer サイズを超えても、copy byte 数は buffer 境界に clamp される
+// (= さもないと memory.copy が buffer.<T> 領域を超えて隣接 linear memory を読み、その
+// バイトを main に publish する = memory disclosure)。length 1024 を size 4 buffer で emit
+// → drained payload は buffer の 4 要素に clamp される。
+test("`renderOffline` typed-array event は length が buffer 超でも buffer 境界に clamp (= leak 防止)", async () => {
+  const overEmitter = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const buf = buffer.f32({ size: 4 });
+    const result = event<{ data: Float32Array }>({ name: "result", payloadCapacity: 64 });
+    return {
+      process: () => {
+        for (let k = 0; k < 4; k++) buf.write(k, f32((k + 1) * 11));
+        result.emitIf(true, { atSample: 0, data: buf, length: i32(1024) }); // buffer(4) 超の length
+        forSample((i) => {
+          out.ch(0).at(i).write(f32(0));
+        });
+      },
+    };
+  });
+  const result = await renderOffline(overEmitter, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+  });
+  expect(result.events.length).toBe(1);
+  const data = (result.events[0]!.payload as { data: Float32Array }).data;
+  // length は buffer の 4 要素に clamp = 隣接 memory を leak しない。
+  expect(data.length).toBe(4);
+  expect(Array.from(data)).toEqual([11, 22, 33, 44]);
+});
+
 test("`renderOffline` captures bool wireType event field as JS boolean", async () => {
   const boolEvtProc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "out" });
