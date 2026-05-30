@@ -192,17 +192,21 @@ export async function renderOffline<C>(
       for (const field of ring.fields) {
         const byteOffset = slotByteOffset + field.offsetInSlot;
         if (field.payloadElementType !== undefined) {
-          // typed-array field = 中 身 を payloadContent に 書 き、 slot に
-          // [payloadLen(bytes), payloadOffset] を set (= §5.2)。 a1 は 1 payload
-          // 想 定 で content offset 0 固 定 (= content ring 管 理 は 後 続)。
+          // typed-array field = 中 身 を payloadContent の per-slot chunk に 書 き、
+          // slot に [payloadLen(bytes), payloadOffset] を set (= §5.2 / Q85)。 1 quantum に
+          // 複 数 message を queue し て も content が 上 書 き さ れ な い よ う、 chunk =
+          // (head % chunks) × perChunk で slot ご と に 分 け る (= emit / SAB と 対 称)。
+          // chunks 枠 を 超 え た 連 射 は 循 環 再 利 用 = drop-oldest (= trap し な い)。
           const src = payload[field.name] as Float32Array;
           const content = ring.payloadContent!;
-          const byteLen = src.length * src.BYTES_PER_ELEMENT;
-          new Uint8Array(memory, content.base, byteLen).set(
+          const perChunk = Math.floor(content.capacity / content.chunks);
+          const payloadOffset = (head % content.chunks) * perChunk;
+          const byteLen = Math.min(src.length * src.BYTES_PER_ELEMENT, perChunk);
+          new Uint8Array(memory, content.base + payloadOffset, byteLen).set(
             new Uint8Array(src.buffer, src.byteOffset, byteLen),
           );
           dataView.setInt32(byteOffset, byteLen, true); // payloadLen (= bytes)
-          dataView.setInt32(byteOffset + 4, 0, true); // payloadOffset (= content 先 頭)
+          dataView.setInt32(byteOffset + 4, payloadOffset, true); // payloadOffset (= per-slot chunk)
         } else {
           // scalar field = Q46 で 現 状 全 て i32 wire (= number / boolean → i32 word)。
           dataView.setInt32(byteOffset, Number(payload[field.name]) | 0, true);

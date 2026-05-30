@@ -1595,7 +1595,9 @@ function emitEventEmitIf(
         throw new Error(`event "${node.name}" typed-array field "${field.name}" missing emit meta`);
       }
       const elemBytes = BUFFER_ELEMENT_BYTES_EMIT[field.payloadElementType];
-      const chunkBytes = Math.floor(content.capacity / capacity);
+      // chunk は content.chunks 枠 (= min(capacity, MAX_CONTENT_SLOTS)、Q85) で 循 環。
+      // ring capacity が chunks を 超 え て も content は chunks 枠 を drop-oldest 再 利 用。
+      const chunkBytes = Math.floor(content.capacity / content.chunks);
       const slotFieldPtr = (): number =>
         mod.i32.add(
           mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32),
@@ -1603,7 +1605,10 @@ function emitEventEmitIf(
         );
       const payloadOffset = (): number =>
         mod.i32.mul(
-          mod.i32.rem_u(mod.local.get(EVENT_HEAD_LOCAL, binaryen.i32), mod.i32.const(capacity)),
+          mod.i32.rem_u(
+            mod.local.get(EVENT_HEAD_LOCAL, binaryen.i32),
+            mod.i32.const(content.chunks),
+          ),
           mod.i32.const(chunkBytes),
         );
       const lengthBytes = (): number =>

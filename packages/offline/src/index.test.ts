@@ -123,6 +123,55 @@ test("`renderOffline` samples.at の範囲外読みは trap せず [0,length-1] 
   expect(result.outputs.main![0]![0]).toBe(40);
 });
 
+// 同一 quantum に複数の typed-array message を queue しても content が上書きされず
+// 各 payload が保持される (§5.2 / Q85: content = perPayload × min(capacity, 16) 枠)。
+// handler は drain loop で per-slot 走る → 各 slot の samples.at(0) を state に加算。
+const twoUploads = defineProcessor(() => {
+  const out = audioOutput({ channels: 1, name: "main" });
+  const upload = message<{ samples: Float32Array }>({ name: "upload" });
+  const acc = state.f32(0);
+  return {
+    process: () => {
+      upload.onReceive(({ samples }) => {
+        acc.store(acc.load().add(samples.at(0)));
+      });
+      forSample((i) => {
+        out.ch(0).at(i).write(acc.load());
+      });
+    },
+  };
+});
+
+test("`renderOffline` 同一 quantum の 2 message が content 上書きされず両方保持される", async () => {
+  const result = await renderOffline(twoUploads, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+    messages: [
+      { name: "upload", atQuantum: 0, payload: { samples: new Float32Array([10, 0, 0, 0]) } },
+      { name: "upload", atQuantum: 0, payload: { samples: new Float32Array([20, 0, 0, 0]) } },
+    ],
+  });
+  // 両 payload 保持 = 10 + 20 = 30。単一 chunk 上書き bug なら 20 + 20 = 40。
+  expect(result.outputs.main![0]![0]).toBeCloseTo(30, 4);
+});
+
+test("`renderOffline` content 枠 (16) を超える連射でも trap せず render 完走する (Q85: drop-oldest)", () => {
+  // 1 quantum に 17 message を queue = 17 個目が最古の chunk を循環再利用で上書き。
+  // クラッシュ (trap / OOB) しないこと + 結果が有限値であることだけ担保。
+  const messages = Array.from({ length: 17 }, (_, k) => ({
+    name: "upload",
+    atQuantum: 0,
+    payload: { samples: new Float32Array([k + 1, 0, 0, 0]) },
+  }));
+  return renderOffline(twoUploads, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+    messages,
+  }).then((result) => {
+    expect(Number.isFinite(result.outputs.main![0]![0])).toBe(true);
+  });
+});
+
 // samples.length = 受信した配列長 (= Node<i32>)。出力にそのまま流して観測。
 const sampleLen = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });

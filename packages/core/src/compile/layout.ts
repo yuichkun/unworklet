@@ -76,11 +76,22 @@ const EVENT_HEADER_BYTES = 12;
 const PAYLOAD_SLOT_BYTES = 8;
 
 /**
- * payloadCapacity 省 略 時 の payloadContent region default (= bytes)。 docs §5.2
- * は 「largest payload × slot count」 で derive す る が、 impl では 安 全 側 の
- * 固 定 default を 置 き、 明 示 `payloadCapacity` で 上 書 き す る。
+ * payloadCapacity 省 略 時 の 1 payload あ た り content default (= bytes)。 明 示
+ * `payloadCapacity` で 上 書 き す る。
  */
 const DEFAULT_PAYLOAD_CAPACITY = 65536;
+
+/**
+ * typed-array payload content の 同 時 保 持 枠 数 の 上 限 (= Q85)。 content region は
+ * `perPayload × min(capacity, MAX_CONTENT_SLOTS)` bytes。 ring が `capacity` slot
+ * (= default 256) を 持 て て も、 大 き い payload を そ の 枠 数 ぶ ん 確 保 す る と
+ * 過 大 (= 64KB × 256 = 16MB) に な る た め、 同 時 に 中 身 を 保 持 す る payload を
+ * 16 枠 に cap す る。 producer は 枠 を 循 環 再 利 用 = 16 枠 を 超 え て drain 前 に
+ * 積 ま れ た 場 合 だ け 古 い 中 身 が 上 書 き さ れ る (= drop-oldest、trap し な い)。
+ * main → worklet は 1 quantum (≈ 2.7ms) 以 内 に 17 個 以 上 の typed-array message を
+ * 連 射 し な い 限 り 全 保 持。
+ */
+const MAX_CONTENT_SLOTS = 16;
 
 /**
  * `event<T>` ringbuffer の atSample field byte size (= `02-messaging.md` §5.1)。
@@ -174,7 +185,10 @@ export type Layout = {
     };
     eventRings: { base: number; slots: Record<string, EventRingSlot> };
     messageRings: { base: number; slots: Record<string, MessageRingSlot> };
-    payloadContent: { base: number; slots: Record<string, { base: number; capacity: number }> };
+    payloadContent: {
+      base: number;
+      slots: Record<string, { base: number; capacity: number; chunks: number }>;
+    };
     /** everyNSamples の per-call-site counter slot (= counterId → byte offset、§9.1)。 */
     everyNSamplesCounters: { base: number; slots: Record<number, number> };
     midiRings: { base: number; slots: Record<string, number> };
@@ -354,18 +368,23 @@ export function layout(graph: CapturedGraph): Layout {
   // を 持 つ declaration ご と に payloadCapacity bytes (= 省 略 時 default) を allocate。
   // 末 尾 配 置 = typed-array ナ シ graph で base 不 変。
   const payloadContentBase = cursor;
-  const payloadContentSlots: Record<string, { base: number; capacity: number }> = {};
+  const payloadContentSlots: Record<string, { base: number; capacity: number; chunks: number }> =
+    {};
   for (const decl of graph.declarations) {
     if (
       (decl.kind === "message" || decl.kind === "event") &&
       decl.fields.some((f) => f.payloadElementType !== undefined)
     ) {
       const perPayload = decl.payloadCapacity ?? DEFAULT_PAYLOAD_CAPACITY;
-      // message (main→worklet) は worklet が 毎 quantum drain = 単 一 content region で
-      // 足 り る。 event (worklet→main) は main が rAF で render 後 に ま と め て drain =
-      // slot ご と に content chunk を 持 た せ て 保 持 (= perPayload × ring slot 数)。
-      const capacity = decl.kind === "event" ? perPayload * decl.capacity : perPayload;
-      payloadContentSlots[decl.name] = { base: cursor, capacity };
+      // content は payload を slot ご と に 別 chunk で 保 持 (= 次 の drain ま で に
+      // 複 数 payload が ring に 積 ま れ て も 上 書 き さ れ な い、§5.2)。 ただ し 枠 数 は
+      // MAX_CONTENT_SLOTS で cap (= 大 payload × ring capacity が 過 大 に な る の を 防 ぐ、
+      // Q85)。 message も event も 同 形。 slot-indexed writer (= event emit / offline
+      // inject) は `chunks` で modulo、cursor 系 (= client / worklet postMessage) は
+      // region size で wrap = 同 じ 循 環 を 共 有。
+      const chunks = Math.min(decl.capacity, MAX_CONTENT_SLOTS);
+      const capacity = perPayload * chunks;
+      payloadContentSlots[decl.name] = { base: cursor, capacity, chunks };
       cursor += capacity;
     }
   }
