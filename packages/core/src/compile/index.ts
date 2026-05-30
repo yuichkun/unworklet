@@ -8,13 +8,13 @@
  *
  * Orchestrates the 4 stage-別 internal modules (= plan Q-D):
  *
- *   capturedGraph = processor.graph (= defineProcessor で 構 築 済 の
- *                                       brand-only CapturedGraph)
- *   diagnostics   = analyze(graph)        ← Phase 3 = noop = []
+ *   capturedGraph = processor.__capture(sampleRate)  ← host rate で 再 capture
+ *                   (= ctx.sampleRate coefficient precomputation を real rate で)
+ *   diagnostics   = analyze(graph)        ← Layer 3 check (memory-budget 等)
  *   memory        = layout(graph)         ← sub-region 区 切 り + ioScratch
  *   wasm          = await emit(graph,     ← binaryen lower (dynamic import)
  *                              memory)
- *   schemaHash    = schemaHash(graph)     ← JSON.stringify + SHA-256 hex
+ *   schemaHash    = schemaHash(graph)     ← declarations-only FNV-1a hex
  *
  * Returns `{ wasm, graph, memory, diagnostics, schemaHash,
  * __compiledProcessor }`。 graph / memory / diagnostics は opaque brand
@@ -57,7 +57,13 @@ export async function compile<C>(
   processor: CompiledProcessor<C>,
   options: CompileOptions = {},
 ): Promise<CompileResult<C>> {
-  const graph = processor.graph as unknown as CapturedGraph;
+  const sampleRate = options.sampleRate ?? DEFAULT_SAMPLE_RATE;
+  // Re-capture with the host rate so `ctx.sampleRate` coefficient precomputation
+  // (`440 / ctx.sampleRate`, etc.) uses the real rate — the eager `graph` is the
+  // rate-independent metadata view. Falls back to `graph` for hand-built fixtures.
+  const graph = (processor.__capture
+    ? processor.__capture(sampleRate)
+    : processor.graph) as unknown as CapturedGraph;
   const diagnostics = analyze(graph);
   // layout はメモリ sub-region を pack して totalBytes を確定する pure な sizing。
   // memory-budget (Q30) は totalBytes が決まって初めて判定できるので、error gate の
@@ -72,7 +78,6 @@ export async function compile<C>(
     const summary = errors.map((d) => `[${d.id}] ${d.message}`).join("\n");
     throw new Error(`unworklet: compile failed with ${errors.length} error(s):\n${summary}`);
   }
-  const sampleRate = options.sampleRate ?? DEFAULT_SAMPLE_RATE;
   const wasm = await emit(graph, memory, { sampleRate });
   const hash = schemaHash(graph);
   return {

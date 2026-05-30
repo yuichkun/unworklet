@@ -18,7 +18,8 @@ test("`defineProcessor` invokes the body lambda with a `ProcessorContext`", () =
     observedSampleRate = ctx.sampleRate;
     return { process: () => {} };
   });
-  expect(observedSampleRate).toBe(0);
+  // Eager capture uses the default rate; `compile` re-captures at the host rate.
+  expect(observedSampleRate).toBe(48000);
 });
 
 test("`defineProcessor` runs the returned `process` lambda exactly once during capture", () => {

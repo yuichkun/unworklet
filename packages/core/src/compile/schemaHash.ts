@@ -10,10 +10,13 @@
  * match for migration matching to work. Browser / Node / AudioWorkletGlobalScope
  * all run it identically.
  *
- * It hashes the whole graph (declarations + statements): any change that could
- * alter the compiled artifact yields a new hash, so a stale snapshot blob is
- * always detected. Changing this serialization is an intentional, snapshot-
- * breaking act — the inline snapshots in `schemaHash.test.ts` guard it.
+ * It hashes the **declarations** only — the slot schema a snapshot blob depends
+ * on (names, kinds, types, sizes, snapshot policy). Process-body edits and
+ * host-rate-specific coefficients do NOT change the hash, so a preset blob keeps
+ * matching across logic tweaks and sample rates; only a genuine schema change
+ * (slot rename / type widening / buffer resize, `01-dsl.md` §8.3) needs a
+ * migration. Changing this serialization is an intentional, snapshot-breaking
+ * act — the inline snapshots in `schemaHash.test.ts` guard it.
  */
 
 import type { CapturedGraph } from "./ast.ts";
@@ -32,9 +35,10 @@ function fnv1a(bytes: Uint8Array, offset: bigint): string {
 }
 
 export function schemaHash(graph: CapturedGraph): string {
-  // i64 literal value / state initial は bigint = JSON が serialize で きない。
-  // `<value>n` 文 字 列 に 落 と し て deterministic + 値 別 に hash 反 映。
-  const serialized = JSON.stringify(graph, (_key, value: unknown) =>
+  // Declarations only (= the slot schema). i64 literal value / state initial は
+  // bigint = JSON が serialize で きない → `<value>n` 文 字 列 に 落 と し て
+  // deterministic + 値 別 に hash 反 映。
+  const serialized = JSON.stringify(graph.declarations, (_key, value: unknown) =>
     typeof value === "bigint" ? `${value}n` : value,
   );
   const data = new TextEncoder().encode(serialized);

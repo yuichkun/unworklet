@@ -565,6 +565,12 @@ export type CompiledProcessor<C> = {
    * when the processor declares no migrations.
    */
   readonly migrations?: readonly Migration[];
+  /**
+   * Internal re-capture thunk: re-runs the `defineProcessor` body with the host
+   * `ctx.sampleRate` so `compile` emits rate-specific coefficients. The public
+   * `graph` is the rate-independent eager capture (declarations / layout / meta).
+   */
+  readonly __capture?: (sampleRate: number) => ProcessorGraph;
   readonly __compiledProcessor: C;
 };
 
