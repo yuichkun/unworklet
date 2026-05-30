@@ -111,6 +111,13 @@ const BUFINTERP_POS_LOCAL = 15;
 const BUFINTERP_I0_LOCAL = 16;
 
 /**
+ * `payloadField.at(idx)` の OOB clamp 用 i32 temp local (= §4.3)。 idx を 1 度 評 価 +
+ * local hold し、 `min(idx, length-1)` → `max(_, 0)` の 2 段 select で [0, length-1]
+ * に 丸 め て か ら content load する (= runtime trap 排 除、 idx を 複 数 回 参 照)。
+ */
+const PAYLOAD_CLAMP_LOCAL = 17;
+
+/**
  * 多 項 式 近 似 の math primitive (= sin / cos / tan / tanh / exp / log、 Q17) は
  * 共 有 プ ラ イ ベ ー ト WASM 関 数 (= `(f32) -> f32`、 export し な い) と し て emit し、
  * 呼 び 出 し 側 は `call` で 参 照。 各 関 数 は 自 前 の local を 持 つ の で `process`
@@ -209,6 +216,7 @@ export async function emit(
       binaryen.f64, // MOD_Q_F64_LOCAL
       binaryen.f32, // BUFINTERP_POS_LOCAL
       binaryen.i32, // BUFINTERP_I0_LOCAL
+      binaryen.i32, // PAYLOAD_CLAMP_LOCAL (= at OOB clamp idx)
     ],
     body,
   );
@@ -680,18 +688,57 @@ function emitPayloadFieldRead(
   binaryen: BinaryenAPI,
 ): number {
   const { offsetInSlot, contentBase, elemBytes } = payloadSlotMeta(node, layout);
+  const slotPtr = (): number => mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32);
+  // length = payloadLen (bytes) / sizeof。 OOB clamp の upper bound = length - 1。
+  const upper = (): number =>
+    mod.i32.sub(
+      mod.i32.div_s(
+        mod.i32.load(0, BYTES_PER_I32, mod.i32.add(slotPtr(), mod.i32.const(offsetInSlot))),
+        mod.i32.const(elemBytes),
+      ),
+      mod.i32.const(1),
+    );
+  const clamp = (): number => mod.local.get(PAYLOAD_CLAMP_LOCAL, binaryen.i32);
   // payloadOffset (= contentBase 内 byte offset) を slot の offsetInSlot+4 か ら load。
   const payloadOffset = mod.i32.load(
     0,
     BYTES_PER_I32,
-    mod.i32.add(mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32), mod.i32.const(offsetInSlot + 4)),
+    mod.i32.add(slotPtr(), mod.i32.const(offsetInSlot + 4)),
   );
-  // addr = contentBase + payloadOffset + index × sizeof。
+  // addr = contentBase + payloadOffset + clampedIdx × sizeof (= clampedIdx は block 内
+  // で [0, length-1] に 丸 め 済 を local.get)。
   const addr = mod.i32.add(
     mod.i32.add(mod.i32.const(contentBase), payloadOffset),
-    mod.i32.mul(emitExpression(node.index, layout, mod, binaryen), mod.i32.const(elemBytes)),
+    mod.i32.mul(clamp(), mod.i32.const(elemBytes)),
   );
-  return emitBufferLoad(mod, node.elementType, addr);
+  const blockType =
+    node.elementType === "f32"
+      ? binaryen.f32
+      : node.elementType === "f64"
+        ? binaryen.f64
+        : node.elementType === "i64"
+          ? binaryen.i64
+          : binaryen.i32; // i32 / bool / u8
+  // §4.3 select carrier-clamp: idx を 1 度 評 価 → [0, length-1] に 2 段 select で 丸 め →
+  // content load。 OOB (idx ≥ length or < 0) で も addr が payload 内 に 留 ま り trap し な い。
+  return mod.block(
+    null,
+    [
+      mod.local.set(PAYLOAD_CLAMP_LOCAL, emitExpression(node.index, layout, mod, binaryen)),
+      // clamp = min(clamp, length - 1)
+      mod.local.set(
+        PAYLOAD_CLAMP_LOCAL,
+        mod.select(mod.i32.gt_s(clamp(), upper()), upper(), clamp()),
+      ),
+      // clamp = max(clamp, 0)
+      mod.local.set(
+        PAYLOAD_CLAMP_LOCAL,
+        mod.select(mod.i32.lt_s(clamp(), mod.i32.const(0)), mod.i32.const(0), clamp()),
+      ),
+      emitBufferLoad(mod, node.elementType, addr),
+    ],
+    blockType,
+  );
 }
 
 // buf.copyFrom(payloadField) = content region → buffer の bulk `memory.copy` (= Q31-c)。

@@ -95,6 +95,34 @@ test("`renderOffline` buf.copyFrom は min(buf.size, payload length) で clamp �
   expect(result.outputs.main![0]![4]).toBe(0); // payload 長を超えた領域は未変更
 });
 
+// samples.at の範囲外読み (= idx outside [0, length)) は §4.3 の select carrier-clamp で
+// runtime trap せず [0, length-1] に丸められる。far OOB を読んで last element が返ることを確認。
+const oobReader = defineProcessor(() => {
+  const out = audioOutput({ channels: 1, name: "main" });
+  const upload = message<{ samples: Float32Array }>({ name: "upload" });
+  const oobState = state.f32(0);
+  return {
+    process: () => {
+      upload.onReceive(({ samples }) => {
+        oobState.store(samples.at(100000)); // far OOB read
+      });
+      forSample((i) => {
+        out.ch(0).at(i).write(oobState.load());
+      });
+    },
+  };
+});
+
+test("`renderOffline` samples.at の範囲外読みは trap せず [0,length-1] に clamp する", async () => {
+  const result = await renderOffline(oobReader, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+    messages: [{ name: "upload", payload: { samples: new Float32Array([10, 20, 30, 40]) } }],
+  });
+  // idx 100000 は length 4 を超える → clamp で last element 40、trap なし。
+  expect(result.outputs.main![0]![0]).toBe(40);
+});
+
 // samples.length = 受信した配列長 (= Node<i32>)。出力にそのまま流して観測。
 const sampleLen = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
