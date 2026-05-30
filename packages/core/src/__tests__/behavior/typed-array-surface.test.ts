@@ -21,6 +21,7 @@ import type {
   Buffer as BufferHandle,
   EmitPayload,
   MessageGraphPayload,
+  Node,
   TypedArrayFieldRef,
 } from "../../types.ts";
 
@@ -34,6 +35,9 @@ function expectFalse<_T extends false>(): void {}
 type F32Field = MessageGraphPayload<{ samples: Float32Array }>["samples"];
 type U8Field = MessageGraphPayload<{ bytes: Uint8Array }>["bytes"];
 type EmitData = EmitPayload<{ data: Float32Array }>["data"];
+type ScalarPayload = MessageGraphPayload<{ slot: number; armed: boolean }>;
+type SlotField = ScalarPayload["slot"];
+type ArmedField = ScalarPayload["armed"];
 
 test("typed-array surface: element 型契約は vp check の typecheck で検証される", () => {
   // f32 typed-array field は直接読み (.at / .length) を持つ。
@@ -49,6 +53,12 @@ test("typed-array surface: element 型契約は vp check の typecheck で検証
   // 直接渡せない (= re-emit は copyFrom→buffer 経由)。
   expectTrue<AssignableTo<BufferHandle<"f32">, EmitData>>();
   expectFalse<AssignableTo<TypedArrayFieldRef<"f32">, EmitData>>();
+  // scalar message field は handler 側で Node に lift される (= Q46)。raw JS 値の
+  // まま漏らすと slot + 1 / if(armed) が capture 時 proxy に対して走って壊れる。
+  expectTrue<AssignableTo<SlotField, Node<"i32">>>();
+  expectFalse<AssignableTo<SlotField, number>>();
+  expectTrue<AssignableTo<ArmedField, Node<"bool">>>();
+  expectFalse<AssignableTo<ArmedField, boolean>>();
   expect(true).toBe(true);
 });
 

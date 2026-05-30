@@ -269,18 +269,26 @@ export type EventDecl<T> = {
 };
 
 /**
- * Worklet-side handler view of a `message<T>` payload (Q46 / Q36-b): variable-
- * length typed-array fields surface as the `TypedArrayFieldRef` proxy (`.length`
- * + `.at(idx)`); scalar fields stay as their raw JS type (`number` / `boolean`)
- * since `state.store` / primitive arguments already accept those alongside
- * `Node<T>` via the literal-lift rule.
+ * Worklet-side handler view of a `message<T>` payload (Q46 / Q36-b): the runtime
+ * proxy delivers every field as a graph node, so the handler-side type lifts each
+ * scalar field to its `Node<T>` form — `number` → `Node<'i32'>`, `boolean` →
+ * `Node<'bool'>` (Q46 uniform lift) — and each variable-length typed-array field
+ * to the `TypedArrayFieldRef` proxy. Lifting scalars to `Node` keeps build-time
+ * JS control flow (`slot + 1`, `if (armed)`) a type error, since those would run
+ * at graph capture against the proxy rather than emit DSP nodes; the DSL
+ * primitives (`slot.add(1)` / `select(armed, ...)`) are the supported path. The
+ * main-side send view (`node.messages.<name>(payload)`) keeps the plain JS `T`.
  */
 export type MessageGraphPayload<T> = {
   [K in keyof T]: T[K] extends Float32Array
     ? TypedArrayFieldRef<"f32">
     : T[K] extends Uint8Array
       ? TypedArrayFieldRef<"u8">
-      : T[K];
+      : T[K] extends boolean
+        ? Node<"bool">
+        : T[K] extends number
+          ? Node<"i32">
+          : T[K];
 };
 
 export type MessageDecl<T> = {
