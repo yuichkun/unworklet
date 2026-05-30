@@ -89,6 +89,27 @@ test("i32 mod: -7 % 3 = -1 (sign follows the dividend, WASM rem_s)", async () =>
   allEqual(await gen(() => f32(i32(-7).mod(i32(3)))), -1);
 });
 
+// max / min / clamp on integer operands must lower to integer compare+select,
+// NOT f32.max / f32.min (which would be invalid WASM with i32/i64 operands).
+test("i32 max: max(3, 7) = 7 (integer compare+select, not f32.max)", async () => {
+  allEqual(await gen(() => f32(i32(3).max(i32(7)))), 7);
+});
+
+test("i32 min: min(3, 7) = 3 (integer compare+select)", async () => {
+  allEqual(await gen(() => f32(i32(3).min(i32(7)))), 3);
+});
+
+test("i32 clamp: clamp(x, 0, 5) saturates (9→5, -2→0, 3→3)", async () => {
+  allEqual(await gen(() => f32(i32(9).clamp(i32(0), i32(5)))), 5);
+  allEqual(await gen(() => f32(i32(-2).clamp(i32(0), i32(5)))), 0);
+  allEqual(await gen(() => f32(i32(3).clamp(i32(0), i32(5)))), 3);
+});
+
+test("i64 max/min: max(3n, 7n) = 7, min = 3 (integer compare+select)", async () => {
+  allEqual(await gen(() => f32(i64(3n).max(i64(7n)))), 7);
+  allEqual(await gen(() => f32(i64(3n).min(i64(7n)))), 3);
+});
+
 test("i32 neg: -(5) = -5", async () => {
   allEqual(await gen(() => f32(i32(5).neg())), -5);
 });

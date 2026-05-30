@@ -336,6 +336,33 @@ function floatNs(mod: BinaryenModule, type: ScalarType) {
 }
 
 /**
+ * Type-dispatched `max` / `min`. WASM has native `f{32,64}.{max,min}` but **no**
+ * integer max/min instruction, so `i32` / `i64` lower to `select(a {>|<} b, a, b)`
+ * via a signed compare. The operand thunks are evaluated twice (once in the
+ * compare, once in the selected branch); operands are pure side-effect-free
+ * expressions with no intervening store, so both evaluations are identical.
+ */
+function emitMaxMin(
+  mod: BinaryenModule,
+  type: ScalarType,
+  op: "max" | "min",
+  emitA: () => number,
+  emitB: () => number,
+): number {
+  if (type === "i32") {
+    const cond = op === "max" ? mod.i32.gt_s(emitA(), emitB()) : mod.i32.lt_s(emitA(), emitB());
+    return mod.select(cond, emitA(), emitB());
+  }
+  if (type === "i64") {
+    const cond = op === "max" ? mod.i64.gt_s(emitA(), emitB()) : mod.i64.lt_s(emitA(), emitB());
+    return mod.select(cond, emitA(), emitB());
+  }
+  return op === "max"
+    ? floatNs(mod, type).max(emitA(), emitB())
+    : floatNs(mod, type).min(emitA(), emitB());
+}
+
+/**
  * Type-dispatched numeric binary op (= 多 型 arithmetic / comparison lowering)。
  * `op` は binaryen 命 令 名 (= comparison は `le` / `ge`、 AST kind の `lte` /
  * `gte` を 呼 び 出 し 側 で map)。 整 数 は 符 号 付 き (= `div_s` / `lt_s` 等)。
@@ -1007,14 +1034,13 @@ export function emitExpression(
         emitExpression(node.value, layout, mod, binaryen),
       );
     case "max":
-      return floatNs(mod, node.type).max(
-        emitExpression(node.lhs, layout, mod, binaryen),
-        emitExpression(node.rhs, layout, mod, binaryen),
-      );
     case "min":
-      return floatNs(mod, node.type).min(
-        emitExpression(node.lhs, layout, mod, binaryen),
-        emitExpression(node.rhs, layout, mod, binaryen),
+      return emitMaxMin(
+        mod,
+        node.type,
+        node.kind,
+        () => emitExpression(node.lhs, layout, mod, binaryen),
+        () => emitExpression(node.rhs, layout, mod, binaryen),
       );
     // 比 較 (= 結 果 は i32 0/1 = bool 内 部 表 現、 state.bool / select cond /
     // emitIf cond で 利 用 さ れ る 既 存 bool=i32 表 現 と zip)
@@ -1061,16 +1087,23 @@ export function emitExpression(
     // clamp(x, lo, hi) = min(max(x, lo), hi)。 各 オ ペ ラ ン ド を 1 度 ず つ emit =
     // 二 重 評 価 ナ シ = temp local 不 要。 lo > hi の 退 化 ケ ー ス は hi を 返 す
     // (= max(x,lo) >= lo > hi な の で min(..., hi) = hi)、 決 定 的 挙 動。
-    case "clamp": {
-      const fl = floatNs(mod, node.type);
-      return fl.min(
-        fl.max(
-          emitExpression(node.x, layout, mod, binaryen),
-          emitExpression(node.lo, layout, mod, binaryen),
-        ),
-        emitExpression(node.hi, layout, mod, binaryen),
+    case "clamp":
+      // clamp(x, lo, hi) = min(max(x, lo), hi)。 整数は emitMaxMin の compare+select
+      // 経由 (= f32.min/max の整数 operand 不正 WASM を回避)。 float は native f{32,64}。
+      return emitMaxMin(
+        mod,
+        node.type,
+        "min",
+        () =>
+          emitMaxMin(
+            mod,
+            node.type,
+            "max",
+            () => emitExpression(node.x, layout, mod, binaryen),
+            () => emitExpression(node.lo, layout, mod, binaryen),
+          ),
+        () => emitExpression(node.hi, layout, mod, binaryen),
       );
-    }
     // select(cond, then, else) = WASM `select` 命 令 (= eager: 全 3 引 数 を 評 価
     // し て か ら 選 ぶ)。 then / else は 副 作 用 ナ シ の pure expression な の で
     // eager で 意 味 不 変。 cond は i32 (= bool 0/1)。
