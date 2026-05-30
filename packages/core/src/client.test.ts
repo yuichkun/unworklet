@@ -16,6 +16,7 @@
 import { expect, test, vi } from "vite-plus/test";
 
 import { createNode, inspect } from "./client.ts";
+import { replaceProcessor } from "./replaceProcessor.ts";
 import { decodeSnapshot, encodeScalar, encodeSnapshot } from "./snapshot.ts";
 import type { CompiledProcessor, MidiEvent } from "./types.ts";
 
@@ -182,9 +183,11 @@ const installMockGlobals = (
   class MockWorkletNodeImpl {
     port: MockAudioWorkletNode["port"];
     parameters: MockAudioWorkletNode["parameters"];
+    context: unknown;
     __constructorRecord: ConstructorRecord;
     __processorErrorListeners: NodeListener[];
     constructor(ctx: unknown, name: string, opts: AudioWorkletNodeOptions) {
+      this.context = ctx; // AudioNode.context — read by replaceProcessor
       this.__constructorRecord = { context: ctx, name, options: opts };
       constructed.push(this.__constructorRecord);
       const portListeners: PortListener[] = [];
@@ -3089,6 +3092,168 @@ test("node.restore(blob): a throwing migration step fails the restore (RestoreFa
       expect(result.restored).toBe(0);
     }
   } finally {
+    h.cleanup();
+  }
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// replaceProcessor (`05-client.md` §8) — snapshot old → createNode new →
+// restore → ReplaceResult. Orchestration of already-tested pieces; the test
+// auto-responds to the snapshot / restore port round-trips + fires the new
+// node's ready handshake so the full async chain resolves.
+// ───────────────────────────────────────────────────────────────────────────
+
+const macrotask = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
+// Patch a mock node so its port auto-answers snapshot-request → snapshot-response
+// and restore → restore-done (with the given report), letting snapshot()/restore()
+// resolve without manual message firing.
+const autoAnswer = (
+  mockNode: MockAudioWorkletNode,
+  report: { applied: string[]; skipped: string[]; missing: string[] },
+): void => {
+  mockNode.port.postMessage = (m: unknown) => {
+    const msg = m as { kind?: string; requestId?: number };
+    if (msg?.kind === "snapshot-request") {
+      for (const l of mockNode.port.__listeners) {
+        l({
+          data: { kind: "snapshot-response", requestId: msg.requestId, slots: [] },
+        } as MessageEvent);
+      }
+    } else if (msg?.kind === "restore") {
+      for (const l of mockNode.port.__listeners) {
+        l({ data: { kind: "restore-done", requestId: msg.requestId, ...report } } as MessageEvent);
+      }
+    }
+  };
+};
+
+test("replaceProcessor: snapshots old, stands up new node, restores, returns ReplaceResult", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const oldNode = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    const oldMock = h.lastNode!;
+    autoAnswer(oldMock, { applied: [], skipped: [], missing: [] });
+
+    const newProc = makeMockProcessor({
+      processorName: "new-proc",
+      moduleUrl: "/new.worklet.js",
+      wasmUrl: "/new.wasm",
+      params: [{ name: "gain" }],
+    });
+    const p = replaceProcessor(oldNode, newProc as never);
+
+    // Wait for createNode(newProc) to construct the new node, then wire it up.
+    for (let i = 0; i < 20 && h.lastNode === oldMock; i++) await macrotask();
+    const newMock = h.lastNode!;
+    expect(newMock).not.toBe(oldMock);
+    autoAnswer(newMock, { applied: ["gain"], skipped: [], missing: [] });
+    for (const l of newMock.port.__listeners) l({ data: { kind: "ready" } } as MessageEvent);
+
+    const result = await p;
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.applied).toEqual(["gain"]);
+      expect(result.restored).toBe(1);
+    }
+    // The returned node is the freshly-created wrapper, not the old one.
+    expect(result.node).toBeDefined();
+    expect(result.node.node).toBe(newMock as unknown);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("replaceProcessor: a failed migration still returns a running node (ok:false + node)", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    // The new processor has a migration that throws; the old node's snapshot blob
+    // is minted under "test", so the migrate path runs + fails inside restore.
+    const oldNode = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    const oldMock = h.lastNode!;
+    // snapshot returns a blob under hash "test"; the new proc's current hash is
+    // "v2" with a throwing migration test → v2, so restore fails before the port.
+    oldMock.port.postMessage = (m: unknown) => {
+      const msg = m as { kind?: string; requestId?: number };
+      if (msg?.kind === "snapshot-request") {
+        for (const l of oldMock.port.__listeners) {
+          l({
+            data: { kind: "snapshot-response", requestId: msg.requestId, slots: [] },
+          } as MessageEvent);
+        }
+      }
+    };
+    const newProc = {
+      ...makeMockProcessor({ processorName: "v2-proc", moduleUrl: "/v2.js", wasmUrl: "/v2.wasm" }),
+      schemaHash: "v2",
+      migrations: [
+        {
+          from: "test",
+          to: "v2",
+          migrate: () => {
+            throw new Error("swap migration boom");
+          },
+        },
+      ],
+    };
+    const p = replaceProcessor(oldNode, newProc as never);
+    for (let i = 0; i < 20 && h.lastNode === oldMock; i++) await macrotask();
+    const newMock = h.lastNode!;
+    for (const l of newMock.port.__listeners) l({ data: { kind: "ready" } } as MessageEvent);
+
+    const result = await p;
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain("swap migration boom");
+    }
+    // Even on failure the new node is returned (runs on declaration defaults).
+    expect(result.node).toBeDefined();
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("replaceProcessor: warns once it exceeds 50 swaps on one AudioContext (Q63)", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    let current = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    autoAnswer(h.lastNode!, { applied: [], skipped: [], missing: [] });
+
+    const swap = async (): Promise<void> => {
+      const prevMock = h.lastNode!;
+      const newProc = makeMockProcessor({
+        processorName: "swap-proc",
+        moduleUrl: "/swap.worklet.js",
+        wasmUrl: "/swap.wasm",
+      });
+      const p = replaceProcessor(current, newProc as never);
+      for (let i = 0; i < 20 && h.lastNode === prevMock; i++) await macrotask();
+      const mock = h.lastNode!;
+      autoAnswer(mock, { applied: [], skipped: [], missing: [] });
+      for (const l of mock.port.__listeners) l({ data: { kind: "ready" } } as MessageEvent);
+      const result = await p;
+      current = result.node as never;
+    };
+
+    // 50 swaps: still under the threshold, no warning.
+    for (let i = 0; i < 50; i++) await swap();
+    expect(warnSpy).not.toHaveBeenCalled();
+    // 51st swap crosses the threshold (count > 50) and warns.
+    await swap();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(String(warnSpy.mock.calls[0]![0])).toContain("more than 50 times");
+  } finally {
+    warnSpy.mockRestore();
     h.cleanup();
   }
 });
