@@ -129,6 +129,18 @@ export function createSubgraph<Args extends unknown[], Methods>(
     args = rest.slice(0, -1);
   }
   const ctx = getCurrentCapture();
+  // createSubgraph は declaration scope 専用 (§5.6.4 / Q34)。expression scope
+  // (= forSample / everyNSamples / handler body = currentLoopBody が立つ間) での
+  // instantiation は graph-capture-time error。内部 state を持たない plain subgraph も
+  // ここで弾く (= 内部宣言ありの場合は body 内の addDeclaration が同じ error を出す)。
+  if (ctx.currentLoopBody !== null) {
+    throw new Error(
+      "unworklet: createSubgraph(...) inside expression scope " +
+        "(forSample / everyNSamples / handler body). Subgraph instantiation is only valid " +
+        "in declaration scope — the top of a defineProcessor / defineSubgraph body, before " +
+        "the returned process / method record. (stable ID 'scope-violation')",
+    );
+  }
   const name = instanceName ?? `__sg_${ctx.subgraphCount++}`;
   const prevPrefix = ctx.namePrefix;
   ctx.namePrefix = prevPrefix + name + "/";

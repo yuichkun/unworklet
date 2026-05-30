@@ -90,6 +90,20 @@ export function addStatement(node: AstNode): void {
 
 export function addDeclaration(decl: Declaration): void {
   const ctx = getCurrentCapture();
+  // declaration は declaration scope (= defineProcessor / defineSubgraph body の top、
+  // return 前) でのみ合法。expression scope (= forSample / forSample.byN / everyNSamples /
+  // onReceive / onEvent handler の body = currentLoopBody が立つ間) で state.* / buffer.* /
+  // param.* / event / message / createSubgraph を宣言するのは §5.6.4 / Q34 で
+  // graph-capture-time error (= state 領域の静的確保と instance 数の build-time 決定が崩れる)。
+  if (ctx.currentLoopBody !== null) {
+    const name = "name" in decl && typeof decl.name === "string" ? ` '${decl.name}'` : "";
+    throw new Error(
+      `unworklet: declaration '${decl.kind}'${name} inside expression scope ` +
+        `(forSample / everyNSamples / handler body). Declarations are only valid in ` +
+        `declaration scope — the top of a defineProcessor / defineSubgraph body, before ` +
+        `the returned process / method record. (stable ID 'scope-violation')`,
+    );
+  }
   ctx.declarations.push(decl);
 }
 

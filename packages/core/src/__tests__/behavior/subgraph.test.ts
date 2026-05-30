@@ -139,3 +139,39 @@ test("L1 helper: pure TS function over Node が forSample 内でインライン�
   const { outputs } = await render(proc);
   for (let k = 0; k < SAMPLES_PER_BLOCK; k++) expect(outputs.main![0]![k]).toBe(5);
 });
+
+// §5.6.4 / Q34: createSubgraph(...) と宣言 (state.* / buffer.* / ...) は declaration scope
+// (= defineProcessor / defineSubgraph body の top、return 前) 専用。expression scope
+// (= forSample / everyNSamples / handler body) で呼ぶと graph-capture-time error。
+// defineProcessor は capture 中に process() を走らせる = throw は defineProcessor 時。
+test("createSubgraph を forSample 内 (expression scope) で呼ぶと graph-capture-time error (§5.6.4/Q34)", () => {
+  expect(() =>
+    defineProcessor(() => {
+      const out = audioOutput({ channels: 1, name: "main" });
+      return {
+        process: () => {
+          forSample((i) => {
+            createSubgraph(accum, 1); // expression scope = NG
+            out.ch(0).at(i).write(f32(0));
+          });
+        },
+      };
+    }),
+  ).toThrow(/scope/i);
+});
+
+test("state 宣言を forSample 内 (expression scope) で呼ぶと graph-capture-time error", () => {
+  expect(() =>
+    defineProcessor(() => {
+      const out = audioOutput({ channels: 1, name: "main" });
+      return {
+        process: () => {
+          forSample((i) => {
+            state.f32(0); // expression scope = NG
+            out.ch(0).at(i).write(f32(0));
+          });
+        },
+      };
+    }),
+  ).toThrow(/scope/i);
+});
