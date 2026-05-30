@@ -1138,6 +1138,7 @@ export function emitExpression(
     case "messageOnReceive":
     case "bufferWrite":
     case "bufferCopyFrom":
+    case "everyNSamples":
       throw new Error(`statement node '${node.kind}' cannot appear in expression position`);
   }
 }
@@ -1260,6 +1261,31 @@ export function emitStatement(
     }
     case "bufferCopyFrom":
       return emitBufferCopyFrom(node, layout, mod, binaryen);
+    case "everyNSamples": {
+      // §9.1: (counter % divisor) == 0 で body を実行 + counter += stride。 counter は
+      // call-site ごとの memory slot で block 跨ぎ継続 (= zero-order hold は body 内の
+      // state.store が値を保持することで自然に成立)。
+      const counterOffset = layout.regions.everyNSamplesCounters.slots[node.counterId];
+      /* v8 ignore next 3 — counterId は capture で採番 + layout で slot 確保済 = unreachable */
+      if (counterOffset === undefined) {
+        throw new Error(`unworklet: missing everyNSamples counter slot ${node.counterId}`);
+      }
+      const loadCounter = (): number =>
+        mod.i32.load(0, BYTES_PER_I32, mod.i32.const(counterOffset));
+      const bodyEmits = node.body.map((s) => emitStatement(s, layout, mod, binaryen));
+      return mod.block(null, [
+        mod.if(
+          mod.i32.eq(mod.i32.rem_u(loadCounter(), mod.i32.const(node.divisor)), mod.i32.const(0)),
+          mod.block(null, bodyEmits.length > 0 ? bodyEmits : [mod.nop()]),
+        ),
+        mod.i32.store(
+          0,
+          BYTES_PER_I32,
+          mod.i32.const(counterOffset),
+          mod.i32.add(loadCounter(), mod.i32.const(node.stride)),
+        ),
+      ]);
+    }
     case "eventEmitIf":
       return emitEventEmitIf(node, layout, mod, binaryen);
     /* v8 ignore next 2 — messageOnReceive は emit top-level で 並 び 替 え 経 由 で
@@ -1711,6 +1737,7 @@ function collectUsedMathKinds(graph: CapturedGraph): Set<string> {
         break;
       case "forSample":
       case "messageOnReceive":
+      case "everyNSamples":
         node.body.forEach(visit);
         break;
       case "eventEmitIf":

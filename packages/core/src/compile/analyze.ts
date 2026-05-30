@@ -137,6 +137,7 @@ function walkForTypeErrors(node: AstNode, diagnostics: DiagnosticEntry[]): void 
       break;
     case "forSample":
     case "messageOnReceive":
+    case "everyNSamples":
       for (const child of node.body) walkForTypeErrors(child, diagnostics);
       break;
     case "eventEmitIf":
@@ -155,8 +156,28 @@ function walkForTypeErrors(node: AstNode, diagnostics: DiagnosticEntry[]): void 
   }
 }
 
+// forSample.byN(stride) で許可する stride = 1 ブロック (128) を割り切る 2 の冪。
+// SIMD bulk (stride 4 で 4 sample load) 等で 128 / stride が整数になる必要がある。
+const ALLOWED_STRIDES = new Set([1, 2, 4, 8, 16, 32, 64, 128]);
+
+function walkForIllegalStride(body: readonly AstNode[], diagnostics: DiagnosticEntry[]): void {
+  for (const node of body) {
+    if (node.kind === "forSample") {
+      if (!ALLOWED_STRIDES.has(node.stride)) {
+        diagnostics.push({
+          id: "illegal-stride",
+          severity: "error",
+          message: `unworklet: forSample.byN stride ${node.stride} は render quantum (128) を割り切る 2 の冪ではない。許可: 1, 2, 4, 8, 16, 32, 64, 128 (stable ID 'illegal-stride')`,
+        });
+      }
+      walkForIllegalStride(node.body, diagnostics);
+    }
+  }
+}
+
 export function analyze(graph: CapturedGraph): DiagnosticEntry[] {
   const diagnostics: DiagnosticEntry[] = [];
+  walkForIllegalStride(graph.statements, diagnostics);
   for (const stmt of graph.statements) {
     if (stmt.kind === "forSample") {
       walkForConstantTruthyEmitIf(stmt.body, diagnostics);

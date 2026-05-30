@@ -89,18 +89,3 @@ test("`forSample` callback throw = currentLoopBody is restored + no statement ap
   expect(ctx.statements).toEqual([]);
   expect(ctx.currentLoopBody).toBeNull();
 });
-
-test("`forSample` cb's `everyNSamples` arg is Phase 8 待 ち = call で throws", () => {
-  const ctx = newCaptureContext();
-  expect(() =>
-    runCapture(ctx, () => {
-      forSample((_i, everyNSamples) => {
-        everyNSamples(4, () => {});
-      });
-    }),
-  ).toThrow(/not implemented/);
-});
-
-test("`forSample.byN(stride, cb)` stub throws (= Phase 10 SIMD で fill)", () => {
-  expect(() => forSample.byN(4, () => {})).toThrow(/not implemented/);
-});

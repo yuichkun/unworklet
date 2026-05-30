@@ -64,6 +64,16 @@ export type AstNode =
   | { kind: "forSample"; stride: number; body: AstNode[] }
   | { kind: "stateLoad"; type: ScalarType; name: string }
   | { kind: "stateStore"; type: ScalarType; name: string; value: AstNode }
+  // sub-rate sub-block inside a `forSample` callback (`01-dsl.md` §9, Q43). Runs
+  // `body` on samples where `(counter % divisor) == 0`; the per-call-site counter
+  // advances by `stride` each iteration and is continuous across render quanta.
+  | {
+      kind: "everyNSamples";
+      divisor: number;
+      stride: number;
+      counterId: number;
+      body: AstNode[];
+    }
   | {
       kind: "eventEmitIf";
       name: string;
@@ -358,6 +368,7 @@ export function inferAstType(ast: AstNode): ScalarType {
     case "messageOnReceive":
     case "bufferWrite":
     case "bufferCopyFrom":
+    case "everyNSamples":
       throw new Error(`statement node '${ast.kind}' cannot appear in expression position`);
   }
 }

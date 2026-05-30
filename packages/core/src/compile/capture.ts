@@ -24,12 +24,24 @@ export type CaptureContext = {
    * for the duration of its callback.
    */
   currentLoopBody: AstNode[] | null;
+  /**
+   * `everyNSamples` の call-site ごとに振る counter id (= §9.1)。 各 sub-rate
+   * call site は block 跨ぎで継続する独立 counter を持つ = layout が id ごとに
+   * i32 slot を確保する。 capture 順に 0 から採番。
+   */
+  everyNSamplesCount: number;
 };
 
 let currentCapture: CaptureContext | null = null;
 
 export function newCaptureContext(): CaptureContext {
-  return { declarations: [], statements: [], currentLoopBody: null };
+  return { declarations: [], statements: [], currentLoopBody: null, everyNSamplesCount: 0 };
+}
+
+/** `everyNSamples` call-site に block 跨ぎ counter slot 用の一意 id を払い出す。 */
+export function nextEveryNSamplesCounterId(): number {
+  const ctx = getCurrentCapture();
+  return ctx.everyNSamplesCount++;
 }
 
 export function getCurrentCapture(): CaptureContext {

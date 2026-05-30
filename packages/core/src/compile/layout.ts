@@ -16,7 +16,7 @@
 
 import { SAMPLES_PER_BLOCK } from "../dsl/constants.ts";
 import type { BufferElementType, ScalarType } from "../types.ts";
-import type { CapturedGraph } from "./ast.ts";
+import type { AstNode, CapturedGraph } from "./ast.ts";
 
 const BYTES_PER_F32 = 4;
 const PARAM_SLOT_BYTES = SAMPLES_PER_BLOCK * BYTES_PER_F32;
@@ -175,6 +175,8 @@ export type Layout = {
     eventRings: { base: number; slots: Record<string, EventRingSlot> };
     messageRings: { base: number; slots: Record<string, MessageRingSlot> };
     payloadContent: { base: number; slots: Record<string, { base: number; capacity: number }> };
+    /** everyNSamples の per-call-site counter slot (= counterId → byte offset、§9.1)。 */
+    everyNSamplesCounters: { base: number; slots: Record<number, number> };
     midiRings: { base: number; slots: Record<string, number> };
     sysexContent: { base: number; size: number };
     publishShared: { base: number; slots: Record<string, number> };
@@ -368,6 +370,28 @@ export function layout(graph: CapturedGraph): Layout {
     }
   }
 
+  // everyNSamples の per-call-site counter slot (= §9.1)。 各 counterId に i32 4 byte。
+  // forSample / everyNSamples / messageOnReceive body を 再 帰 walk し て collect。 末 尾
+  // 配 置 = everyNSamples ナ シ graph で totalBytes 不 変。 memory zero-init = counter 初 期 0。
+  const everyNSamplesCountersBase = cursor;
+  const everyNSamplesCounterSlots: Record<number, number> = {};
+  const collectEveryNCounters = (nodes: readonly AstNode[]): void => {
+    for (const node of nodes) {
+      if (node.kind === "everyNSamples") {
+        everyNSamplesCounterSlots[node.counterId] = cursor;
+        cursor += 4;
+      }
+      if (
+        node.kind === "forSample" ||
+        node.kind === "everyNSamples" ||
+        node.kind === "messageOnReceive"
+      ) {
+        collectEveryNCounters(node.body);
+      }
+    }
+  };
+  collectEveryNCounters(graph.statements);
+
   const totalBytes = cursor;
 
   // sub-phase 7.7b で fill 対 象 外 の 4 region = base 全 て totalBytes (= 連 続)、
@@ -383,6 +407,10 @@ export function layout(graph: CapturedGraph): Layout {
       eventRings: { base: eventRingsBase, slots: eventRingsSlots },
       messageRings: { base: messageRingsBase, slots: messageRingsSlots },
       payloadContent: { base: payloadContentBase, slots: payloadContentSlots },
+      everyNSamplesCounters: {
+        base: everyNSamplesCountersBase,
+        slots: everyNSamplesCounterSlots,
+      },
       midiRings: { base: totalBytes, slots: {} },
       sysexContent: { base: totalBytes, size: 0 },
       publishShared: { base: publishSharedBase, slots: publishSharedSlots },
