@@ -10,22 +10,27 @@ import "@unworklet/core";
 import {
   audioInput,
   audioOutput,
+  buffer,
   createSubgraph,
   defineSubgraph,
   defineProcessor,
+  encodeSnapshot,
   event,
   forSample,
   i32,
+  inspectSnapshot,
   lt,
   message,
   midiInput,
   midiOutput,
   num,
+  param,
   select,
   state,
   type Node,
   type State,
 } from "@unworklet/core";
+import { mulVec, splat, sumLanes } from "@unworklet/core/simd";
 import { expect, test } from "vite-plus/test";
 
 import { renderOffline } from "./index.ts";
@@ -285,4 +290,174 @@ test("Ex8 polysynth voice: noteOn drives a non-silent, stable signal", async () 
     peak = Math.max(peak, Math.abs(v));
   }
   expect(peak).toBeGreaterThan(0.01); // the envelope opened, voice is sounding
+});
+
+// ── Ex 4 (core): lookahead limiter with overshoot event (§12 Ex 4) ───────────
+
+test("Ex4 limiter: delay line + envelope + overshoot event fire on ceiling cross", async () => {
+  const LOOKAHEAD = 32; // small for the test
+  const limiter = defineProcessor((ctx) => {
+    const input = audioInput({ channels: 1, name: "main" });
+    const out = audioOutput({ channels: 1, name: "main" });
+    const ceiling = param
+      .f32({ default: 0.5, min: 0, max: 1, automationRate: "k-rate" })
+      .named("ceiling");
+    const dly = buffer.f32({ size: LOOKAHEAD });
+    const dlyHead = state.i32(0);
+    const env = state.f32(0);
+    const overshoot = event<{ level: number }>({ name: "overshoot" });
+    return {
+      process: () => {
+        // release coefficient uses ctx.sampleRate (= the rate-fix path).
+        const relCoef = num(1).sub(
+          num(-1)
+            .div(num(0.05 * ctx.sampleRate))
+            .exp(),
+        );
+        const headBlock = dlyHead.load();
+        forSample((i) => {
+          const x = input.ch(0).at(i);
+          const peak = x.abs();
+          // one-pole envelope follower (state feedback).
+          env.store(peak.sub(env.load()).mul(relCoef).add(env.load()));
+          const wIdx = headBlock.add(i).mod(LOOKAHEAD);
+          dly.write(wIdx, x);
+          out
+            .ch(0)
+            .at(i)
+            .write(dly.read(wIdx.add(1).mod(LOOKAHEAD)));
+          // fire when the true peak exceeds the ceiling.
+          overshoot.emitIf(peak.gt(ceiling.at(0)), { atSample: i, level: peak });
+        });
+        dlyHead.store(headBlock.add(128).mod(LOOKAHEAD));
+      },
+    };
+  });
+  // Input below ceiling → no overshoot; a loud sample → overshoot fires.
+  const quiet = new Float32Array(128).fill(0.2);
+  const noOvershoot = await renderOffline(limiter, {
+    sampleRate: 48000,
+    duration: 128 / 48000,
+    inputs: { main: [quiet] },
+    params: { ceiling: [0.5] },
+  });
+  expect(noOvershoot.events.filter((e) => e.name === "overshoot")).toHaveLength(0);
+
+  const loud = new Float32Array(128).fill(0.2);
+  loud[10] = 0.9; // exceeds ceiling 0.5
+  loud[20] = 0.8;
+  const withOvershoot = await renderOffline(limiter, {
+    sampleRate: 48000,
+    duration: 128 / 48000,
+    inputs: { main: [loud] },
+    params: { ceiling: [0.5] },
+  });
+  const events = withOvershoot.events.filter((e) => e.name === "overshoot");
+  expect(events).toHaveLength(2);
+  expect(events.map((e) => e.atSample)).toEqual([10, 20]);
+  expect((events[0]!.payload as { level: number }).level).toBeCloseTo(0.9, 5);
+  // output stable (no NaN).
+  for (const v of withOvershoot.outputs.main![0]!) expect(Number.isFinite(v)).toBe(true);
+});
+
+// ── Ex 7 (core): SIMD convolution + persistent IR snapshot + migration (§12 Ex 7) ─
+
+const IR_LEN = 16; // small for the test (FIR_LEN/4 = 4 SIMD iterations)
+
+function makeReverb(withMigrationTo?: string) {
+  return defineProcessor(
+    () => {
+      const input = audioInput({ channels: 1, name: "main" });
+      const out = audioOutput({ channels: 1, name: "main" });
+      const ir = buffer.f32({ size: IR_LEN }).expose({ name: "ir", snapshot: "persistent" });
+      const hist = buffer.f32({ size: IR_LEN });
+      const histHead = state.i32(0);
+      const uploadIR = message<{ ir: Float32Array }>({ name: "uploadIR" });
+      return {
+        process: () => {
+          uploadIR.onReceive(({ ir: incoming }) => {
+            ir.copyFrom(incoming);
+          });
+          const headBlock = histHead.load();
+          forSample((i) => {
+            hist.write(headBlock.add(i).mod(IR_LEN), input.ch(0).at(i));
+          });
+          forSample.byN(4, (i) => {
+            const outIdx = headBlock.add(i).mod(IR_LEN);
+            let acc = splat(num(0));
+            for (let k = 0; k < IR_LEN; k += 4) {
+              const histIdx = outIdx.sub(k).sub(3).add(IR_LEN).mod(IR_LEN);
+              acc = acc.add(mulVec(hist.loadVec(histIdx), ir.loadVec(k)));
+            }
+            out.ch(0).at(i).write(sumLanes(acc));
+          });
+          histHead.store(headBlock.add(128).mod(IR_LEN));
+        },
+      };
+    },
+    withMigrationTo === undefined
+      ? undefined
+      : {
+          migrations: [
+            {
+              from: "MONOIRHASH00000",
+              to: withMigrationTo,
+              migrate: (blob, h) => {
+                // mono-IR schema stored a single `irMono` buffer → copy into `ir`.
+                const mono = h.parseBuffer(blob, "irMono", "f32");
+                if (mono) h.writeBuffer("ir", "f32", mono);
+              },
+            },
+          ],
+        },
+  );
+}
+
+test("Ex7 convolution reverb: SIMD path runs + IR persists through snapshot", async () => {
+  const reverb = makeReverb();
+  const ir = new Float32Array(IR_LEN);
+  ir[0] = 1; // identity impulse → convolution ≈ delayed passthrough
+  const x = new Float32Array(128);
+  for (let k = 0; k < 128; k++) x[k] = Math.sin((2 * Math.PI * 200 * k) / 48000);
+  const r = await renderOffline(reverb, {
+    sampleRate: 48000,
+    duration: 128 / 48000,
+    inputs: { main: [x] },
+    messages: [{ name: "uploadIR", payload: { ir }, atQuantum: 0 }],
+  });
+  for (const v of r.outputs.main![0]!) expect(Number.isFinite(v)).toBe(true);
+  // The IR buffer is captured persistently.
+  expect(inspectSnapshot(r.state).slots.ir!.kind).toBe("buffer");
+  expect((inspectSnapshot(r.state).slots.ir as { length: number }).length).toBe(IR_LEN);
+});
+
+test("Ex7 reverb: restoring a mono-IR blob migrates it into the stereo `ir` buffer", async () => {
+  const currentHash = makeReverb().schemaHash;
+  const reverb = makeReverb(currentHash);
+  // An old mono-IR blob: a single `irMono` buffer the migration renames to `ir`.
+  const monoIr = new Float32Array(IR_LEN);
+  monoIr[0] = 0.5;
+  const oldBlob = encodeSnapshot("MONOIRHASH00000", null, [
+    { name: "irMono", kind: "buffer", type: "f32", data: new Uint8Array(monoIr.buffer) },
+  ]);
+  const x = new Float32Array(128).fill(0.3); // steady input → convolution non-zero
+  const restored = await renderOffline(reverb, {
+    sampleRate: 48000,
+    duration: 128 / 48000,
+    inputs: { main: [x] },
+    restore: oldBlob,
+  });
+  // Without restore the `ir` buffer is all-zero → silent; the migration loaded
+  // the mono IR into `ir`, so the convolution now produces signal.
+  const baseline = await renderOffline(reverb, {
+    sampleRate: 48000,
+    duration: 128 / 48000,
+    inputs: { main: [x] },
+  });
+  let basePeak = 0;
+  let restoredPeak = 0;
+  for (const v of baseline.outputs.main![0]!) basePeak = Math.max(basePeak, Math.abs(v));
+  for (const v of restored.outputs.main![0]!) restoredPeak = Math.max(restoredPeak, Math.abs(v));
+  expect(basePeak).toBe(0); // no IR uploaded / restored → silent
+  expect(restoredPeak).toBeGreaterThan(0); // migration loaded the IR → convolving
 });
