@@ -144,9 +144,31 @@ export function createSubgraph<Args extends unknown[], Methods>(
   const name = instanceName ?? `__sg_${ctx.subgraphCount++}`;
   const prevPrefix = ctx.namePrefix;
   ctx.namePrefix = prevPrefix + name + "/";
+  const declStart = ctx.declarations.length;
+  let methods: Methods;
   try {
-    return body(...(args as Args));
+    methods = body(...(args as Args));
   } finally {
     ctx.namePrefix = prevPrefix;
   }
+  // §8.1 / Q41: instance 名ナシ + named-factory slot (= user-named / persistent / publish =
+  // userNamed true) は snapshot / main-side path が auto prefix '__sg_N/...' = instantiation
+  // 順依存になり positional drift を招く → graph-capture-time error。plain-only (= 内部が全
+  // anonymous slot) は安定 path が要らないので名前不要 (= 共通ケース、§8.1)。
+  if (instanceName === undefined) {
+    const named = ctx.declarations
+      .slice(declStart)
+      .find((d) => "userNamed" in d && (d as { userNamed?: boolean }).userNamed === true);
+    if (named !== undefined) {
+      const slotName = (named as { name?: string }).name ?? "?";
+      throw new Error(
+        `unworklet: subgraph instance with a named/persistent/publish slot '${slotName}' ` +
+          `must be given an explicit instance name ` +
+          `(createSubgraph(subgraph, ...args, { name: '...' })). Without it the snapshot path ` +
+          `'__sg_N/...' depends on instantiation order (§8.1 / Q41). ` +
+          `(stable ID 'subgraph-missing-name')`,
+      );
+    }
+  }
+  return methods;
 }

@@ -175,3 +175,48 @@ test("state 宣言を forSample 内 (expression scope) で呼ぶと graph-captur
     }),
   ).toThrow(/scope/i);
 });
+
+// §8.1 / Q41: named-factory slot (= user-named / persistent / publish) を持つ subgraph を
+// instance 名ナシで createSubgraph すると、slot の snapshot path が auto prefix '__sg_N/...'
+// = instantiation 順依存 (= positional drift) になる → graph-capture-time error。
+test("named slot 持ちの subgraph を instance 名ナシで createSubgraph すると error (§8.1/Q41)", () => {
+  const namedSlot = defineSubgraph((step: number) => {
+    const acc = state.named("acc").f32(0); // user-named slot = 安定 snapshot path が要る
+    return {
+      tick: () => acc.store(acc.load().add(step)),
+      value: () => acc.load(),
+    };
+  });
+  expect(() =>
+    defineProcessor(() => {
+      const out = audioOutput({ channels: 1, name: "main" });
+      const a = createSubgraph(namedSlot, 1); // instance 名ナシ + named slot = NG
+      return {
+        process: () => {
+          forSample((i) => {
+            a.tick();
+            out.ch(0).at(i).write(a.value());
+          });
+        },
+      };
+    }),
+  ).toThrow(/name/i);
+});
+
+test("anonymous slot だけの subgraph は instance 名ナシでも OK (= plain-only、§8.1)", async () => {
+  // accum は state.f32(0) = anonymous slot = snapshot path drift が無い = 名前不要。
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const a = createSubgraph(accum, 5); // 名前ナシ + anonymous slot = OK
+    return {
+      process: () => {
+        forSample((i) => {
+          a.tick();
+          out.ch(0).at(i).write(a.value());
+        });
+      },
+    };
+  });
+  const { outputs } = await render(proc);
+  expect(outputs.main![0]![0]).toBe(5); // +5/tick の 1 sample 目
+});
