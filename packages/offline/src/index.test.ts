@@ -52,6 +52,49 @@ test("`renderOffline` delivers a typed-array payload; samples.at(Node) reads eac
   }
 });
 
+// 受信した配列を buf.copyFrom で一括コピー (= memory.copy、per-sample loop の代替)。
+const sampleCopier = defineProcessor(() => {
+  const out = audioOutput({ channels: 1, name: "main" });
+  const upload = message<{ samples: Float32Array }>({ name: "upload" });
+  const buf = buffer.f32({ size: SAMPLES_PER_BLOCK });
+  return {
+    process: () => {
+      upload.onReceive(({ samples }) => {
+        buf.copyFrom(samples); // 一括 bulk copy
+      });
+      forSample((i) => {
+        out.ch(0).at(i).write(buf.read(i));
+      });
+    },
+  };
+});
+
+test("`renderOffline` buf.copyFrom(payload) が配列を buffer に一括コピーする", async () => {
+  const samples = new Float32Array(SAMPLES_PER_BLOCK);
+  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) samples[k] = k * 3;
+  const result = await renderOffline(sampleCopier, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+    messages: [{ name: "upload", payload: { samples } }],
+  });
+  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) {
+    expect(result.outputs.main![0]![k]).toBe(k * 3);
+  }
+});
+
+test("`renderOffline` buf.copyFrom は min(buf.size, payload length) で clamp する", async () => {
+  // buf.size = 128、payload = 4 要素 → 先頭 4 要素だけ copy、残りは buffer 初期値 0。
+  const samples = new Float32Array([1.5, 2.5, 3.5, 4.5]);
+  const result = await renderOffline(sampleCopier, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+    messages: [{ name: "upload", payload: { samples } }],
+  });
+  expect(result.outputs.main![0]![0]).toBe(1.5);
+  expect(result.outputs.main![0]![3]).toBe(4.5);
+  expect(result.outputs.main![0]![4]).toBe(0); // payload 長を超えた領域は未変更
+});
+
 // samples.length = 受信した配列長 (= Node<i32>)。出力にそのまま流して観測。
 const sampleLen = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });

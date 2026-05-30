@@ -85,6 +85,18 @@ export type AstNode =
       value: AstNode;
     }
   | { kind: "bufferReadInterpolated"; elementType: BufferElementType; name: string; pos: AstNode }
+  // Bulk copy a typed-array message payload field into a buffer via `memory.copy`
+  // (`decisions-log.md` Q31-c). Realtime-safe alternative to a per-sample write
+  // loop; copies `min(bufferSize, payloadLen / sizeof element)` elements. Used
+  // inside a `message<T>` onReceive handler (= EVENT_SLOT_PTR drain context).
+  | {
+      kind: "bufferCopyFrom";
+      elementType: BufferElementType;
+      bufferName: string;
+      bufferSize: number;
+      messageName: string;
+      field: string;
+    }
   // Variable-length typed-array payload reads inside a `message<T>` onReceive
   // handler (`01-dsl.md` §4.3). The field's content lives in the payloadContent
   // region; the slot carries `[payloadLen, payloadOffset]`. `length` = element
@@ -330,6 +342,7 @@ export function inferAstType(ast: AstNode): ScalarType {
     case "eventEmitIf":
     case "messageOnReceive":
     case "bufferWrite":
+    case "bufferCopyFrom":
       throw new Error(`statement node '${ast.kind}' cannot appear in expression position`);
   }
 }

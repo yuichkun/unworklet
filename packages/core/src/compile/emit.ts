@@ -148,6 +148,9 @@ export async function emit(
   const sampleRate = options.sampleRate ?? DEFAULT_EMIT_SAMPLE_RATE;
   const binaryen = (await import("binaryen")).default;
   const mod = new binaryen.Module();
+  // buffer.copyFrom が `memory.copy` (= bulk-memory) を emit する (= Q31-c)。
+  // 既定 features (MVP) に BulkMemory を足して emitBinary が opcode を出せるように。
+  mod.setFeatures(mod.getFeatures() | binaryen.Features.BulkMemory);
 
   const pages = Math.max(1, Math.ceil(layout.totalBytes / PAGE_BYTES));
   mod.setMemory(pages, pages, "memory");
@@ -691,6 +694,48 @@ function emitPayloadFieldRead(
   return emitBufferLoad(mod, node.elementType, addr);
 }
 
+// buf.copyFrom(payloadField) = content region → buffer の bulk `memory.copy` (= Q31-c)。
+// copyBytes = min(payloadLen, bufferSize × sizeof) (= min(buf.size, src.length) を byte 換 算)。
+function emitBufferCopyFrom(
+  node: AstNode & { kind: "bufferCopyFrom" },
+  layout: Layout,
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): number {
+  const base = layout.regions.buffers.slots[node.bufferName];
+  /* v8 ignore next 3 — buffer は宣言済 = layout に slot 既 push の unreachable guard */
+  if (base === undefined) {
+    throw new Error(`unknown buffer: ${node.bufferName}`);
+  }
+  const slot = layout.regions.messageRings.slots[node.messageName];
+  const field = slot?.fields.find((f) => f.name === node.field);
+  const content = layout.regions.payloadContent.slots[node.messageName];
+  /* v8 ignore next 3 — typed-array field 持 ち の message は slot + payloadContent 既 push */
+  if (slot === undefined || field === undefined || content === undefined) {
+    throw new Error(`unknown message payload field: ${node.messageName}.${node.field}`);
+  }
+  const elemBytes = BUFFER_ELEMENT_BYTES_EMIT[node.elementType];
+  // payloadLen (= bytes) / payloadOffset を slot か ら load (= 評 価 ご と に fresh node)。
+  const slotPtr = (): number => mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32);
+  const payloadLen = (): number =>
+    mod.i32.load(0, BYTES_PER_I32, mod.i32.add(slotPtr(), mod.i32.const(field.offsetInSlot)));
+  const payloadOffset = mod.i32.load(
+    0,
+    BYTES_PER_I32,
+    mod.i32.add(slotPtr(), mod.i32.const(field.offsetInSlot + 4)),
+  );
+  const destCapBytes = (): number => mod.i32.const(node.bufferSize * elemBytes);
+  // copyBytes = min(payloadLen, destCapBytes) = select(len < cap, len, cap)。
+  const copyBytes = mod.select(
+    mod.i32.lt_u(payloadLen(), destCapBytes()),
+    payloadLen(),
+    destCapBytes(),
+  );
+  const destAddr = mod.i32.const(base);
+  const srcAddr = mod.i32.add(mod.i32.const(content.base), payloadOffset);
+  return mod.memory.copy(destAddr, srcAddr, copyBytes);
+}
+
 export function emitExpression(
   node: AstNode,
   layout: Layout,
@@ -1045,6 +1090,7 @@ export function emitExpression(
     case "eventEmitIf":
     case "messageOnReceive":
     case "bufferWrite":
+    case "bufferCopyFrom":
       throw new Error(`statement node '${node.kind}' cannot appear in expression position`);
   }
 }
@@ -1165,6 +1211,8 @@ export function emitStatement(
         emitExpression(node.value, layout, mod, binaryen),
       );
     }
+    case "bufferCopyFrom":
+      return emitBufferCopyFrom(node, layout, mod, binaryen);
     case "eventEmitIf":
       return emitEventEmitIf(node, layout, mod, binaryen);
     /* v8 ignore next 2 — messageOnReceive は emit top-level で 並 び 替 え 経 由 で
@@ -1543,6 +1591,9 @@ function collectUsedMathKinds(graph: CapturedGraph): Set<string> {
         visit(node.index);
         break;
       case "payloadFieldLength":
+        break;
+      case "bufferCopyFrom":
+        // math 関 数 を 含 む 子 expression ナ シ。
         break;
       case "bufferWrite":
         visit(node.index);

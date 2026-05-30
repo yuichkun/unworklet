@@ -46,11 +46,21 @@ import type {
   ScalarOf,
   ScalarType,
   State,
+  TypedArrayFieldRef,
 } from "../types.ts";
 
 const notImplemented = (): never => {
   throw new Error("not implemented");
 };
+
+/**
+ * typed-array payload proxy node に隠し持たせる「どの message のどの field か」
+ * の meta。`buf.copyFrom(payloadField)` が src からこれを読んで bufferCopyFrom AST
+ * を組む (= 公開型 `TypedArrayFieldRef` は length/at だけ、内部は symbol で carry)。
+ */
+const PAYLOAD_FIELD_META = Symbol("unworklet.payloadFieldMeta");
+
+type PayloadFieldMeta = { decl: MessageDeclAst; field: string };
 
 // ─────────────────────────────────────────────────────────────────────────
 // Literal lift helpers (= Q36-a)
@@ -393,7 +403,28 @@ function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer
         name: decl.name,
         pos: liftF32(pos),
       }),
-    copyFrom: () => notImplemented(),
+    copyFrom: (src: TypedArrayFieldRef<T>) => {
+      const meta = (src as unknown as Record<symbol, PayloadFieldMeta | undefined>)[
+        PAYLOAD_FIELD_META
+      ];
+      if (meta === undefined) {
+        throw new Error(
+          "unworklet: buffer.copyFrom(src) requires a typed-array message payload field",
+        );
+      }
+      // field を dest buffer の element type で typed-array seal (= TypedArrayFieldRef<T>
+      // の T が buffer 型と一致する型制約があるので payloadContent + 8-byte slot 確保)。
+      const field = meta.decl.fields.find((f) => f.name === meta.field);
+      if (field !== undefined) field.payloadElementType = decl.type;
+      addStatement({
+        kind: "bufferCopyFrom",
+        elementType: decl.type,
+        bufferName: decl.name,
+        bufferSize: decl.size,
+        messageName: meta.decl.name,
+        field: meta.field,
+      });
+    },
     loadVec: () => notImplemented(),
     storeVec: () => notImplemented(),
     named: (name: string) => {
@@ -832,6 +863,12 @@ function makeMessagePayloadProxy(decl: MessageDeclAst): Record<string, unknown> 
             index: liftOffset(idx),
           });
         };
+        // `buf.copyFrom(field)` 用 = field の所属 message + field 名を隠し carry
+        // (= buffer handle がここから bufferCopyFrom AST を組む、seal も向こうで行う)。
+        Object.defineProperty(node, PAYLOAD_FIELD_META, {
+          value: { decl, field: fieldName } satisfies PayloadFieldMeta,
+          enumerable: false,
+        });
         return node;
       },
     },

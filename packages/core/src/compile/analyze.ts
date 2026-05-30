@@ -128,6 +128,9 @@ function walkForTypeErrors(node: AstNode, diagnostics: DiagnosticEntry[]): void 
       break;
     case "payloadFieldLength":
       break;
+    case "bufferCopyFrom":
+      // 子 expression ナ シ (= bufferName / messageName / field は string)。
+      break;
     case "bufferWrite":
       walkForTypeErrors(node.index, diagnostics);
       walkForTypeErrors(node.value, diagnostics);
