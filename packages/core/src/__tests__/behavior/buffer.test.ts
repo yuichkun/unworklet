@@ -261,3 +261,22 @@ test("buffer ring delay: an impulse is delayed by 100 samples", async () => {
     expect(outputs.main![0]![k]).toBeCloseTo(k === DELAY ? 1 : 0, 6);
   }
 });
+
+// literal な index / offset / pos は graph-capture 時に range-check されて隣接 memory
+// access を防ぐ (= §3.2、dynamic Node<'i32'> は caller 責任)。
+test("buffer literal index は範囲外を graph-capture で reject する", () => {
+  const build = (body: (buf: ReturnType<typeof buffer.f32>) => void): (() => void) => {
+    return () =>
+      defineProcessor(() => {
+        const buf = buffer.f32({ size: 8 });
+        return { process: () => body(buf) };
+      });
+  };
+  expect(build((buf) => buf.read(-1))).toThrow(/out of range/);
+  expect(build((buf) => buf.read(8))).toThrow(/out of range/); // size = 8 = 上限外
+  expect(build((buf) => buf.write(8, f32(1)))).toThrow(/out of range/);
+  expect(build((buf) => buf.read(1.5))).toThrow(/out of range/); // 非整数
+  // in-range は throw しない (= 0 と size-1)。
+  expect(build((buf) => buf.read(0))).not.toThrow();
+  expect(build((buf) => buf.read(7))).not.toThrow();
+});

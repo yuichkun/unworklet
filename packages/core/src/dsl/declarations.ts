@@ -272,11 +272,14 @@ function makeStateHandle<T extends ScalarType>(decl: StateDecl): State<T> {
       return handle;
     },
     expose: (options: ExposeOptions) => {
-      if (options.name !== undefined && options.name !== decl.name) {
-        checkStateName(options.name, decl);
-        decl.name = options.name;
+      // user name は subgraph instance prefix を前置 (= §5.6、buffer / .named と同軸)。
+      const exposeName =
+        options.name !== undefined ? getCurrentCapture().namePrefix + options.name : undefined;
+      if (exposeName !== undefined && exposeName !== decl.name) {
+        checkStateName(exposeName, decl);
+        decl.name = exposeName;
         decl.userNamed = true;
-      } else if (options.name !== undefined) {
+      } else if (exposeName !== undefined) {
         // 同 name 再 set = userNamed flag を true へ promote (= 後 付 け .expose
         // で 自 decl と 同 name 渡 す path = user 明 示 と み な す)
         decl.userNamed = true;
@@ -373,7 +376,10 @@ function makeBufferDecl<T extends BufferElementType>(
 ): Buffer<T> {
   const ctx = getCurrentCapture();
   const synthIdx = ctx.declarations.filter((d) => d.kind === "buffer").length;
-  const name = pendingExpose.name ?? `__buffer_${synthIdx}`;
+  // user name は subgraph instance prefix を前置 (= §5.6、state と同軸)。 auto name は
+  // global synthIdx で既に一意 = prefix 不要。 複数 instance で named buffer が衝突しない。
+  const name =
+    pendingExpose.name !== undefined ? ctx.namePrefix + pendingExpose.name : `__buffer_${synthIdx}`;
   checkBufferName(name);
   const decl: BufferDecl = {
     kind: "buffer",
@@ -390,7 +396,20 @@ function makeBufferDecl<T extends BufferElementType>(
 }
 
 function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer<T> {
-  // name は `.named` で 後 付 け 変 更 可 = read / write は decl.name を late-bind。
+  // literal index / offset を graph-capture 時に range check (= §3.2: literal range
+  // constraints は capture で reject)。 dynamic Node<'i32'> は caller 責任 (= no check)。
+  // lanes は SIMD load/store が触る連続要素数 (= read/write は 1、loadVec/storeVec は 4)。
+  const liftIndex = (idx: Node<"i32"> | number, op: string, lanes = 1): AstNode => {
+    if (typeof idx === "number") {
+      if (!Number.isInteger(idx) || idx < 0 || idx + lanes > decl.size) {
+        throw new Error(
+          `unworklet: buffer "${decl.name}" ${op}(${idx}) index is out of range [0, ${decl.size - lanes + 1}) (literal buffer indexes are range-checked at graph capture; use a Node<'i32'> for runtime indexing)`,
+        );
+      }
+      return { kind: "literal", type: "i32", value: idx };
+    }
+    return unwrapAst(idx);
+  };
   const handle = {
     get size() {
       return decl.size;
@@ -403,24 +422,31 @@ function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer
         kind: "bufferRead",
         elementType: decl.type,
         name: decl.name,
-        index: liftOffset(idx),
+        index: liftIndex(idx, "read"),
       }),
     write: (idx: Node<"i32"> | number, v: Node<ScalarType> | number) => {
       addStatement({
         kind: "bufferWrite",
         elementType: decl.type,
         name: decl.name,
-        index: liftOffset(idx),
+        index: liftIndex(idx, "write"),
         value: liftBufferValue(decl.type, v),
       });
     },
-    readInterpolated: (pos: Node<"f32"> | number) =>
-      wrapAst({
+    readInterpolated: (pos: Node<"f32"> | number) => {
+      // 補間は floor(pos) と floor(pos)+1 の 2-tap を読むので literal pos は [0, size-1)。
+      if (typeof pos === "number" && (!(pos >= 0) || pos >= decl.size - 1)) {
+        throw new Error(
+          `unworklet: buffer "${decl.name}" readInterpolated(${pos}) pos is out of range [0, ${decl.size - 1}) (= 2-tap 補間は floor(pos)+1 まで読む; literal pos は capture で range-check)`,
+        );
+      }
+      return wrapAst({
         kind: "bufferReadInterpolated",
         elementType: decl.type,
         name: decl.name,
         pos: liftF32(pos),
-      }),
+      });
+    },
     copyFrom: (src: TypedArrayFieldRef<T>) => {
       const meta = (src as unknown as Record<symbol, PayloadFieldMeta | undefined>)[
         PAYLOAD_FIELD_META
@@ -446,28 +472,35 @@ function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer
     // SIMD buffer I/O (= §7、型は @unworklet/core/simd の declaration merge で f32 限定)。
     // offset は element 単位 = emit 側で × 4 byte。 4 lane を v128 で load/store。
     loadVec: (offset: Node<"i32"> | number) =>
-      wrapAst<"f32x4">({ kind: "bufferLoadVec", name: decl.name, offset: liftOffset(offset) }),
+      wrapAst<"f32x4">({
+        kind: "bufferLoadVec",
+        name: decl.name,
+        offset: liftIndex(offset, "loadVec", 4),
+      }),
     storeVec: (offset: Node<"i32"> | number, value: Node<"f32x4">) => {
       addStatement({
         kind: "bufferStoreVec",
         name: decl.name,
-        offset: liftOffset(offset),
+        offset: liftIndex(offset, "storeVec", 4),
         value: unwrapAst(value),
       });
     },
     named: (name: string) => {
-      checkBufferName(name, decl);
-      decl.name = name;
+      const fullName = getCurrentCapture().namePrefix + name;
+      checkBufferName(fullName, decl);
+      decl.name = fullName;
       decl.userNamed = true;
       validateBufferDecl(decl);
       return handle;
     },
     expose: (options: ExposeOptions) => {
-      if (options.name !== undefined && options.name !== decl.name) {
-        checkBufferName(options.name, decl);
-        decl.name = options.name;
+      const exposeName =
+        options.name !== undefined ? getCurrentCapture().namePrefix + options.name : undefined;
+      if (exposeName !== undefined && exposeName !== decl.name) {
+        checkBufferName(exposeName, decl);
+        decl.name = exposeName;
         decl.userNamed = true;
-      } else if (options.name !== undefined) {
+      } else if (exposeName !== undefined) {
         decl.userNamed = true;
       }
       if (options.snapshot !== undefined) {

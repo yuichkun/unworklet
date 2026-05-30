@@ -8,7 +8,7 @@
 import { expect, test } from "vite-plus/test";
 
 import "../../dsl/primitives.ts"; // side-effect: register `Node<T>` method forms
-import { audioOutput, state } from "../../dsl/declarations.ts";
+import { audioOutput, buffer, state } from "../../dsl/declarations.ts";
 import { f32 } from "../../dsl/constructors.ts";
 import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
 import { forSample } from "../../dsl/loop.ts";
@@ -88,6 +88,36 @@ test("subgraph: user-named 内部 state は instance prefix で衝突しない",
   expect(outputs.main![1]![0]).toBe(10);
   expect(outputs.main![0]![127]).toBe(128);
   expect(outputs.main![1]![127]).toBe(1280);
+});
+
+test("subgraph: user-named 内部 buffer は instance prefix で衝突しない (Q53/Q54)", async () => {
+  // 両 instance が同じ 'buf' を named するが、prefix ('a/buf' 'b/buf') で衝突ナシ
+  // (= prefix ナシなら checkBufferName で重複 throw する形)。
+  const cell = defineSubgraph((val: number) => {
+    const buf = buffer.named("buf").f32({ size: 4 });
+    return {
+      tick: () => buf.write(0, f32(val)),
+      value: () => buf.read(0),
+    };
+  });
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 2, name: "main" });
+    const a = createSubgraph(cell, 3, { name: "a" });
+    const b = createSubgraph(cell, 7, { name: "b" });
+    return {
+      process: () => {
+        forSample((i) => {
+          a.tick();
+          b.tick();
+          out.ch(0).at(i).write(a.value()); // 3
+          out.ch(1).at(i).write(b.value()); // 7
+        });
+      },
+    };
+  });
+  const { outputs } = await render(proc);
+  expect(outputs.main![0]![0]).toBe(3);
+  expect(outputs.main![1]![0]).toBe(7);
 });
 
 // L1 helper = pure TS function over Node<T> (= §5.5)。 capture 時に呼ばれて内部
