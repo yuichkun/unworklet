@@ -16,6 +16,7 @@
 import { expect, test, vi } from "vite-plus/test";
 
 import { createNode, inspect } from "./client.ts";
+import { decodeSnapshot, encodeScalar, encodeSnapshot } from "./snapshot.ts";
 import type { CompiledProcessor, MidiEvent } from "./types.ts";
 
 type MockAudioParam = { value: number };
@@ -324,10 +325,12 @@ const makeMockProcessor = (overrides?: {
     capacity: number;
     sysex?: { wasmBase: number; perChunk: number; chunks: number };
   }>;
+  migrations?: CompiledProcessor<unknown>["migrations"];
 }): CompiledProcessor<unknown> =>
   ({
     graph: {} as never,
     schemaHash: "test",
+    migrations: overrides?.migrations,
     worklet: {
       initialize: () => {},
       process: () => true,
@@ -2925,6 +2928,166 @@ test("node.midi: midi-less processor = 空 object", async () => {
       h.fireReady,
     );
     expect(node.midi).toEqual({});
+  } finally {
+    h.cleanup();
+  }
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// node.snapshot() / node.restore() (`05-client.md` §2.6, `01-dsl.md` §8).
+// Request-response over the port: snapshot() awaits the worklet's captured
+// slots and wraps them in a blob; restore() migrates + decodes the blob, hands
+// slots to the worklet, applies param values to AudioParams, and returns the
+// worklet's authoritative applied/skipped/missing report.
+// ───────────────────────────────────────────────────────────────────────────
+
+const findPosted = (posted: unknown[], kind: string): Record<string, unknown> | undefined =>
+  posted.find((m) => (m as Record<string, unknown>)?.["kind"] === kind) as
+    | Record<string, unknown>
+    | undefined;
+
+test("node.snapshot(): request → worklet response slots → encodeSnapshot blob", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (m: unknown) => posted.push(m);
+    const p = node.snapshot({ profile: "preset" });
+    const req = findPosted(posted, "snapshot-request")!;
+    expect(req).toBeDefined();
+    expect(req["profile"]).toBe("preset");
+    for (const l of h.lastNode!.port.__listeners) {
+      l({
+        data: {
+          kind: "snapshot-response",
+          requestId: req["requestId"],
+          slots: [{ name: "gain", kind: "state", type: "f32", data: encodeScalar("f32", 0.5) }],
+        },
+      } as MessageEvent);
+    }
+    const blob = await p;
+    const decoded = decodeSnapshot(blob);
+    expect(decoded.schemaHash).toBe("test");
+    expect(decoded.profile).toBe("preset");
+    expect(decoded.slots).toHaveLength(1);
+    expect(decoded.slots[0]!.name).toBe("gain");
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.restore(blob): ok path → worklet applies + param set on AudioParam + RestoreOk", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ params: [{ name: "freq" }] })),
+      h.fireReady,
+    );
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (m: unknown) => posted.push(m);
+    const blob = encodeSnapshot("test", null, [
+      { name: "gain", kind: "state", type: "f32", data: encodeScalar("f32", 0.5) },
+      { name: "freq", kind: "param", type: "f32", data: encodeScalar("f32", 440) },
+    ]);
+    const p = node.restore(blob);
+    const req = findPosted(posted, "restore")!;
+    expect((req["slots"] as unknown[]).length).toBe(2);
+    for (const l of h.lastNode!.port.__listeners) {
+      l({
+        data: {
+          kind: "restore-done",
+          requestId: req["requestId"],
+          applied: ["gain", "freq"],
+          skipped: [],
+          missing: [],
+        },
+      } as MessageEvent);
+    }
+    const result = await p;
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.applied).toEqual(["gain", "freq"]);
+      expect(result.restored).toBe(2);
+    }
+    // the param slot was applied to the live AudioParam
+    expect(node.params["freq"]!.value).toBeCloseTo(440);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.restore(blob): worklet skipped / missing report is forwarded verbatim", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (m: unknown) => posted.push(m);
+    const blob = encodeSnapshot("test", null, [
+      { name: "ghost", kind: "state", type: "f32", data: encodeScalar("f32", 1) },
+    ]);
+    const p = node.restore(blob);
+    const req = findPosted(posted, "restore")!;
+    for (const l of h.lastNode!.port.__listeners) {
+      l({
+        data: {
+          kind: "restore-done",
+          requestId: req["requestId"],
+          applied: [],
+          skipped: ["ghost"],
+          missing: ["gain"],
+        },
+      } as MessageEvent);
+    }
+    const result = await p;
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.applied).toEqual([]);
+      expect(result.skipped).toEqual(["ghost"]);
+      expect(result.missing).toEqual(["gain"]);
+      expect(result.restored).toBe(0);
+    }
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.restore(blob): a throwing migration step fails the restore (RestoreFailure)", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({
+            migrations: [
+              {
+                from: "old",
+                to: "test",
+                migrate: () => {
+                  throw new Error("migration boom");
+                },
+              },
+            ],
+          }),
+        ),
+      h.fireReady,
+    );
+    // Blob minted under the OLD hash → migration path old → test runs → throws.
+    const blob = encodeSnapshot("old", null, [
+      { name: "gain", kind: "state", type: "f32", data: encodeScalar("f32", 1) },
+    ]);
+    const result = await node.restore(blob);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain("migration boom");
+      expect(result.restored).toBe(0);
+    }
   } finally {
     h.cleanup();
   }

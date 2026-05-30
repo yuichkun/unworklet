@@ -31,11 +31,15 @@ import type {
 } from "./types.ts";
 import { midiEventToWire, wireToMidiEvent } from "./midiWire.ts";
 import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
-import { inspectSnapshot } from "./snapshot.ts";
-
-const notImplemented = (): never => {
-  throw new Error("not implemented");
-};
+import {
+  decodeScalar,
+  decodeSnapshot,
+  encodeSnapshot,
+  inspectSnapshot,
+  runMigrations,
+  type SnapshotSlot,
+} from "./snapshot.ts";
+import type { RestoreResult } from "./types.ts";
 
 /**
  * publishShared region 内 の i32 bit pattern を user surface 型 に 変 換
@@ -1404,6 +1408,103 @@ export async function createNode<C>(
     node.port.addEventListener("message", onMidiOverflowMessage);
   }
 
+  // snapshot / restore request-response (`05-client.md` §2.6 + `01-dsl.md` §8)。
+  // SAB を 使 わ ず port message で 往 復 = worklet が onmessage (= render quantum 境
+  // 界) で linear memory を read / write す る の で block-atomic (= §6.1)。 各 request
+  // に 連 番 id を 振 り、 worklet の response を pending map で 突 き 合 わ せ て resolve。
+  let snapshotRequestSeq = 0;
+  const pendingSnapshots = new Map<number, (slots: SnapshotSlot[]) => void>();
+  const pendingRestores = new Map<
+    number,
+    (report: { applied: string[]; skipped: string[]; missing: string[] }) => void
+  >();
+  const onSnapshotMessage = (event: MessageEvent): void => {
+    const data = event.data as
+      | {
+          kind?: unknown;
+          requestId?: unknown;
+          slots?: unknown;
+          applied?: unknown;
+          skipped?: unknown;
+          missing?: unknown;
+        }
+      | null
+      | undefined;
+    if (typeof data !== "object" || data === null) return;
+    if (typeof data.requestId !== "number") return;
+    if (data.kind === "snapshot-response") {
+      const resolve = pendingSnapshots.get(data.requestId);
+      if (resolve === undefined) return;
+      pendingSnapshots.delete(data.requestId);
+      resolve(Array.isArray(data.slots) ? (data.slots as SnapshotSlot[]) : []);
+    } else if (data.kind === "restore-done") {
+      const resolve = pendingRestores.get(data.requestId);
+      if (resolve === undefined) return;
+      pendingRestores.delete(data.requestId);
+      resolve({
+        applied: Array.isArray(data.applied) ? (data.applied as string[]) : [],
+        skipped: Array.isArray(data.skipped) ? (data.skipped as string[]) : [],
+        missing: Array.isArray(data.missing) ? (data.missing as string[]) : [],
+      });
+    }
+  };
+  node.port.addEventListener("message", onSnapshotMessage);
+
+  const snapshot = (options?: { profile?: string }): Promise<Uint8Array> => {
+    const requestId = snapshotRequestSeq++;
+    const profile = options?.profile;
+    return new Promise<Uint8Array>((resolve) => {
+      pendingSnapshots.set(requestId, (slots) => {
+        resolve(encodeSnapshot(processor.schemaHash, profile ?? null, slots));
+      });
+      node.port.postMessage({ kind: "snapshot-request", requestId, profile });
+    });
+  };
+
+  const restore = async (blob: Uint8Array): Promise<RestoreResult> => {
+    // Migrate the blob to the current schema first (`01-dsl.md` §8.3)。 A throwing
+    // migrate step fails the whole restore = the live node keeps its current state。
+    const migrated = runMigrations(blob, processor.migrations ?? [], processor.schemaHash);
+    if (!migrated.ok) {
+      return {
+        ok: false,
+        error: migrated.error,
+        applied: [],
+        restored: 0,
+        skipped: [],
+        missing: [],
+      };
+    }
+    const decoded = decodeSnapshot(migrated.blob);
+    const requestId = snapshotRequestSeq++;
+    // Hand ALL slots to the worklet — it is the single authority on declarations,
+    // so it computes applied / skipped / missing (across state / buffer / param) +
+    // writes state / buffer into linear memory at the quantum boundary。
+    const report = await new Promise<{
+      applied: string[];
+      skipped: string[];
+      missing: string[];
+    }>((resolve) => {
+      pendingRestores.set(requestId, resolve);
+      node.port.postMessage({ kind: "restore", requestId, slots: decoded.slots });
+    });
+    // param values live on `AudioParam` (main thread), so apply them here using
+    // the worklet's authoritative applied report。
+    for (const slot of decoded.slots) {
+      if (slot.kind !== "param") continue;
+      if (!report.applied.includes(slot.name)) continue;
+      const ap = params[slot.name];
+      if (ap) ap.value = Number(decodeScalar("f32", slot.data));
+    }
+    return {
+      ok: true,
+      applied: report.applied,
+      restored: report.applied.length,
+      skipped: report.skipped,
+      missing: report.missing,
+    };
+  };
+
   const { handles: inputHandles, proxies: inputProxies } = buildInputProxies(context, node, inputs);
 
   // sab-unavailable event を 1 度 だ け fire す る pending flag (= 04-worklet-
@@ -1423,8 +1524,8 @@ export async function createNode<C>(
     messages: messageSurface,
     midi: midiSurface,
     diagnostics: { transport: transportMode },
-    snapshot: notImplemented as unknown as UnworkletNode<C>["snapshot"],
-    restore: notImplemented as unknown as UnworkletNode<C>["restore"],
+    snapshot,
+    restore,
     dispose(): void {
       if (disposed) return;
       disposed = true;
@@ -1435,6 +1536,7 @@ export async function createNode<C>(
       node.port.removeEventListener("message", onMessageOverflowMessage);
       node.port.removeEventListener("message", onMidiOutMessage);
       node.port.removeEventListener("message", onMidiOverflowMessage);
+      node.port.removeEventListener("message", onSnapshotMessage);
       node.removeEventListener("processorerror", onErrorProcessor);
       errorSubscribers.clear();
       for (const subs of stateSubscribers.values()) subs.clear();
