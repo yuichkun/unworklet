@@ -22,6 +22,7 @@
 
 import type {
   AudioPortDecl,
+  BufferDecl,
   CapturedGraph,
   EventDeclAst,
   MessageDeclAst,
@@ -81,6 +82,13 @@ export type WorkletMeta = {
    */
   readonly midiInputs: readonly MidiInputDecl[];
   readonly midiOutputs: readonly MidiOutputDecl[];
+  /**
+   * 全 `state` / `buffer` declaration (= snapshot 対 象 判 定 用)。 publishStates は
+   * publish flag 持 ち の subset だ が、 snapshot は named + persistent 全 slot が
+   * 対 象 = full list が 要 る (= renderOffline / client の blob capture path)。
+   */
+  readonly states: readonly StateDecl[];
+  readonly buffers: readonly BufferDecl[];
 };
 
 export function extractWorkletMeta(graph: CapturedGraph): WorkletMeta {
@@ -96,6 +104,8 @@ export function extractWorkletMeta(graph: CapturedGraph): WorkletMeta {
     messages: graph.declarations.filter((d): d is MessageDeclAst => d.kind === "message"),
     midiInputs: graph.declarations.filter((d): d is MidiInputDecl => d.kind === "midiInput"),
     midiOutputs: graph.declarations.filter((d): d is MidiOutputDecl => d.kind === "midiOutput"),
+    states: graph.declarations.filter((d): d is StateDecl => d.kind === "state"),
+    buffers: graph.declarations.filter((d): d is BufferDecl => d.kind === "buffer"),
   };
 }
 

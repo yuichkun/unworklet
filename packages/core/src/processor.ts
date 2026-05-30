@@ -39,7 +39,7 @@ function brandGraph(graph: CapturedGraph): ProcessorGraph {
 
 export function defineProcessor<C = unknown>(
   body: (ctx: ProcessorContext) => ProcessorBody,
-  _options?: ProcessorOptions,
+  options?: ProcessorOptions,
 ): CompiledProcessor<C> {
   const captureCtx = newCaptureContext();
 
@@ -66,6 +66,7 @@ export function defineProcessor<C = unknown>(
     // §8.3); both must agree so a snapshot blob's stored hash can be matched.
     schemaHash: schemaHash(captured),
     worklet: makeWorkletNamespace(captured),
+    migrations: options?.migrations,
     __compiledProcessor: undefined as unknown as C,
   };
 }

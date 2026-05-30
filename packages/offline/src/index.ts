@@ -12,16 +12,21 @@
  *
  * Fill 済: audio I/O + param + main→worklet `message<T>` 注 入 + worklet→main
  * `event<T>` 捕 捉 + MIDI 双 方 向 (= inbound `config.events` 注 入 / outbound
- * `result.events` 捕 捉)。 snapshot blob (= `result.state`) は Phase 11 / D で fill。
- * duration × sampleRate を `SAMPLES_PER_BLOCK` で 切 り 上 げ た sample 数 ま で
- * render (= `13-offline-render.md` §2.1)。
+ * `result.events` 捕 捉) + snapshot capture (`result.state` = persistent slot) +
+ * restore (`config.restore` = 初 期 state 注 入 + migration chain)。 duration ×
+ * sampleRate を `SAMPLES_PER_BLOCK` で 切 り 上 げ た sample 数 ま で render
+ * (= `13-offline-render.md` §2.1)。
  */
 
-import type { CompiledProcessor, MidiEvent } from "@unworklet/core";
+import type { CompiledProcessor, MidiEvent, SnapshotSlot } from "@unworklet/core";
 import {
   compile,
+  decodeSnapshot,
+  encodeScalar,
+  encodeSnapshot,
   extractWorkletMeta,
   midiEventToWire,
+  runMigrations,
   SAMPLES_PER_BLOCK,
   wireToMidiEvent,
 } from "@unworklet/core";
@@ -68,7 +73,37 @@ export type RenderOfflineConfig = {
   events?: OfflineEvent[];
   /** Snapshot profile name; omitted = union of every `'persistent'` profile. */
   profile?: string;
+  /**
+   * Initial state blob written into the processor before rendering (= the
+   * offline `restore` path, `13-offline-render.md` §2.x). Migrated to the
+   * current schema via the processor's migration chain if the hashes differ.
+   */
+  restore?: Uint8Array;
 };
+
+/** Element byte size per snapshot scalar / buffer element type. */
+const ELEMENT_BYTES: Record<string, number> = {
+  f32: 4,
+  f64: 8,
+  i32: 4,
+  i64: 8,
+  bool: 4,
+  u8: 1,
+};
+
+/** Default snapshot policy by declaration kind (`01-dsl.md` §3 / §8.2). */
+function isPersistent(
+  policy: unknown,
+  defaultPolicy: "persistent" | "transient",
+  profile: string | undefined,
+): boolean {
+  const p = policy ?? defaultPolicy;
+  if (p === "persistent") return true;
+  if (p === "transient") return false;
+  const record = p as Record<string, string>;
+  if (profile !== undefined) return record[profile] === "persistent";
+  return Object.values(record).some((v) => v === "persistent");
+}
 
 export type RenderOfflineResult = {
   /** Output PCM per declared `audioOutput({ name })` port. */
@@ -159,6 +194,31 @@ export async function renderOffline<C>(
   const blockBuffer = new Float32Array(SAMPLES_PER_BLOCK);
   const inputScratch = new Float32Array(SAMPLES_PER_BLOCK);
   const paramScratch = new Float32Array(SAMPLES_PER_BLOCK);
+  // Last param value seen per param (= the snapshot's "current value" at end).
+  const paramCurrent: Record<string, number> = {};
+
+  // restore (= initial state injection, `13-offline-render.md` §2.x): migrate the
+  // blob to the current schema, then write state / buffer values into linear
+  // memory before the first quantum. Params follow `config.params`, not the blob.
+  if (config.restore !== undefined) {
+    const migrated = runMigrations(config.restore, processor.migrations ?? [], result.schemaHash);
+    if (migrated.ok) {
+      const decoded = decodeSnapshot(migrated.blob);
+      const mem = instance.memory.buffer;
+      for (const slot of decoded.slots) {
+        if (slot.kind === "state") {
+          const off = meta.layout.regions.states.slots[slot.name];
+          if (off !== undefined) new Uint8Array(mem, off, slot.data.length).set(slot.data);
+        } else if (slot.kind === "buffer") {
+          const off = meta.layout.regions.buffers.slots[slot.name];
+          if (off !== undefined) {
+            const len = Math.min(slot.data.length, mem.byteLength - off);
+            new Uint8Array(mem, off, len).set(slot.data.subarray(0, len));
+          }
+        }
+      }
+    }
+  }
 
   for (let b = 0; b < blocks; b++) {
     const blockStart = b * SAMPLES_PER_BLOCK;
@@ -191,6 +251,7 @@ export async function renderOffline<C>(
           }
         }
         instance.writeParam(decl.name, paramScratch);
+        paramCurrent[decl.name] = paramScratch[SAMPLES_PER_BLOCK - 1]!;
       }
     }
 
@@ -398,10 +459,50 @@ export async function renderOffline<C>(
     }
   }
 
+  // Capture the end-of-render snapshot blob: named + 'persistent' state / buffer
+  // slots read from linear memory, plus param current values (`05-client.md`
+  // §2.6, `01-dsl.md` §8.2). `config.profile` selects which profile's persistent
+  // slots are included; omitted = union of every persistent profile.
+  const mem = instance.memory.buffer;
+  const snapshotSlots: SnapshotSlot[] = [];
+  for (const s of meta.states) {
+    if (!s.userNamed || !isPersistent(s.snapshot, "persistent", config.profile)) continue;
+    const off = meta.layout.regions.states.slots[s.name];
+    if (off === undefined) continue;
+    snapshotSlots.push({
+      name: s.name,
+      kind: "state",
+      type: s.type,
+      data: new Uint8Array(mem.slice(off, off + ELEMENT_BYTES[s.type]!)),
+    });
+  }
+  for (const buf of meta.buffers) {
+    if (!buf.userNamed || !isPersistent(buf.snapshot, "transient", config.profile)) continue;
+    const off = meta.layout.regions.buffers.slots[buf.name];
+    if (off === undefined) continue;
+    const byteLen = buf.size * ELEMENT_BYTES[buf.type]!;
+    snapshotSlots.push({
+      name: buf.name,
+      kind: "buffer",
+      type: buf.type,
+      data: new Uint8Array(mem.slice(off, off + byteLen)),
+    });
+  }
+  for (const p of meta.params) {
+    if (p.name === "" || !isPersistent(p.snapshot, "persistent", config.profile)) continue;
+    snapshotSlots.push({
+      name: p.name,
+      kind: "param",
+      type: "f32",
+      data: encodeScalar("f32", paramCurrent[p.name] ?? p.default),
+    });
+  }
+  const state = encodeSnapshot(result.schemaHash, config.profile ?? null, snapshotSlots);
+
   return {
     outputs,
     events: emittedEvents,
-    state: new Uint8Array(0),
+    state,
     sampleRate: config.sampleRate,
   };
 }

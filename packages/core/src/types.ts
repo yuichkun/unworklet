@@ -558,6 +558,13 @@ export type CompiledProcessor<C> = {
   readonly graph: ProcessorGraph;
   readonly schemaHash: string;
   readonly worklet: WorkletNamespace;
+  /**
+   * Declarative schema-migration chain from the processor's options bag
+   * (`01-dsl.md` §8.3). Carried on the compiled artifact so `restore` /
+   * `replaceProcessor` can bridge an older blob to the current schema. Omitted
+   * when the processor declares no migrations.
+   */
+  readonly migrations?: readonly Migration[];
   readonly __compiledProcessor: C;
 };
 

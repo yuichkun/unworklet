@@ -99,6 +99,25 @@ export type { WorkletMeta } from "./worklet.ts";
 export { midiEventToWire, wireToMidiEvent } from "./midiWire.ts";
 export type { MidiWireBytes } from "./midiWire.ts";
 
+// Snapshot blob codec + migration engine (= `01-dsl.md` §8)。 offline renderer /
+// main client が blob を build / read / migrate する 共 有 infrastructure。
+export {
+  decodeScalar,
+  decodeSnapshot,
+  decodeTypedArray,
+  encodeScalar,
+  encodeSnapshot,
+  inspectSnapshot,
+  runMigrations,
+  SNAPSHOT_VERSION,
+} from "./snapshot.ts";
+export type {
+  DecodedSnapshot,
+  MigrationOutcome,
+  SnapshotSlot,
+  SnapshotSlotKind,
+} from "./snapshot.ts";
+
 // Main-thread client surface.
 export { createNode, inspect } from "./client.ts";
 

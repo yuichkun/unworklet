@@ -9,7 +9,15 @@
  */
 
 import "@unworklet/core"; // side-effect load for `.mul` method registration via primitives.ts
-import { defineProcessor, f32, i32, message, SAMPLES_PER_BLOCK, select } from "@unworklet/core";
+import {
+  defineProcessor,
+  f32,
+  i32,
+  inspectSnapshot,
+  message,
+  SAMPLES_PER_BLOCK,
+  select,
+} from "@unworklet/core";
 import { audioInput, audioOutput, buffer, event, forSample, param, state } from "@unworklet/core";
 import { expect, test } from "vite-plus/test";
 
@@ -352,12 +360,12 @@ test("`renderOffline` returns the result shape (= outputs / events / state)", as
     inputs: { main: [oneBlockInput(1), oneBlockInput(0.25)] },
     params: { gain: [0.5] },
   });
-  expect(result).toEqual({
-    outputs: { main: [oneBlockInput(0.5), oneBlockInput(0.125)] },
-    events: [],
-    state: new Uint8Array(0),
-    sampleRate: 48000,
-  });
+  expect(result.outputs).toEqual({ main: [oneBlockInput(0.5), oneBlockInput(0.125)] });
+  expect(result.events).toEqual([]);
+  expect(result.sampleRate).toBe(48000);
+  // The end-of-render snapshot captures the persistent `gain` param's value.
+  const inspected = inspectSnapshot(result.state);
+  expect(inspected.slots.gain).toEqual({ kind: "param", value: 0.5 });
 });
 
 test("`renderOffline` reproduces input × gain on each sample (= 1 block)", async () => {
@@ -372,12 +380,9 @@ test("`renderOffline` reproduces input × gain on each sample (= 1 block)", asyn
   });
   const expectedCh0 = new Float32Array(SAMPLES_PER_BLOCK);
   for (let i = 0; i < SAMPLES_PER_BLOCK; i++) expectedCh0[i] = (i / SAMPLES_PER_BLOCK) * 2;
-  expect(result).toEqual({
-    outputs: { main: [expectedCh0, oneBlockInput(0)] },
-    events: [],
-    state: new Uint8Array(0),
-    sampleRate: 48000,
-  });
+  expect(result.outputs).toEqual({ main: [expectedCh0, oneBlockInput(0)] });
+  expect(result.events).toEqual([]);
+  expect(result.sampleRate).toBe(48000);
 });
 
 test("`renderOffline` runs multiple blocks (= duration = 2 × SAMPLES_PER_BLOCK / sampleRate)", async () => {
@@ -392,12 +397,9 @@ test("`renderOffline` runs multiple blocks (= duration = 2 × SAMPLES_PER_BLOCK 
     inputs: { main: [inputCh, inputCh] },
     params: { gain: [0.5] },
   });
-  expect(result).toEqual({
-    outputs: { main: [expectedCh, expectedCh] },
-    events: [],
-    state: new Uint8Array(0),
-    sampleRate: 48000,
-  });
+  expect(result.outputs).toEqual({ main: [expectedCh, expectedCh] });
+  expect(result.events).toEqual([]);
+  expect(result.sampleRate).toBe(48000);
 });
 
 test("`renderOffline` rounds up duration × sampleRate to the next SAMPLES_PER_BLOCK boundary", async () => {
