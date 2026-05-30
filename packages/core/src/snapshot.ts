@@ -27,6 +27,36 @@ import type {
 export const SNAPSHOT_VERSION = 1;
 const MAGIC = 0x55574b31; // 'UWK1'
 
+/** Byte width of one scalar / buffer element by type (`01-dsl.md` §3 storage). */
+export const SNAPSHOT_ELEMENT_BYTES: Record<string, number> = {
+  f32: 4,
+  f64: 8,
+  i32: 4,
+  i64: 8,
+  bool: 4,
+  u8: 1,
+};
+
+/**
+ * Whether a declaration participates in a snapshot under `profile` (`01-dsl.md`
+ * §8.2). `defaultPolicy` is the per-kind default (`state` / `param` =
+ * `'persistent'`, `buffer` = `'transient'`). A profile-map policy is persistent
+ * for the named profile, or — when no profile is selected — if ANY profile marks
+ * it persistent (so the no-profile snapshot is the union of every profile).
+ */
+export function isPersistent(
+  policy: unknown,
+  defaultPolicy: "persistent" | "transient",
+  profile: string | undefined,
+): boolean {
+  const p = policy ?? defaultPolicy;
+  if (p === "persistent") return true;
+  if (p === "transient") return false;
+  const record = p as Record<string, string>;
+  if (profile !== undefined) return record[profile] === "persistent";
+  return Object.values(record).some((v) => v === "persistent");
+}
+
 export type SnapshotSlotKind = "state" | "param" | "buffer";
 
 /** One decoded slot: raw little-endian bytes tagged by kind + element type. */

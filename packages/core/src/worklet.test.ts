@@ -1157,10 +1157,14 @@ test("message inject (postMessage): ingress queue を ring capacity で bound �
   expect(state.messageQueueMirrors[0]!.length).toBe(capacity);
 });
 
-test("message ring (no decl): port.addEventListener は呼 ば れ な い + start も 呼 ば れ ない (= regression)", async () => {
+test("no message/midi rings: a port message listener is still registered + started (= snapshot/restore は universal、`11-midi.md` §4.4 / `05-client.md` §2.6)", async () => {
+  // snapshot / restore travel as port request-response and must work for every
+  // processor — even one with no message / midi rings — so `initialize` always
+  // wires one message listener + starts the port. (Earlier this was gated on
+  // message/midi rings; the universal snapshot capability superseded that.)
   const { wasm } = await compile(monoGain);
   const self = makeMockSelf();
   monoGain.worklet.initialize(self, { processorOptions: { wasm } });
-  expect(self.port.__listeners.length).toBe(0);
-  expect(self.port.__startCalled).toBe(false);
+  expect(self.port.__listeners.length).toBe(1);
+  expect(self.port.__startCalled).toBe(true);
 });

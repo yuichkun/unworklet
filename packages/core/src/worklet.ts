@@ -33,6 +33,12 @@ import type {
 } from "./compile/ast.ts";
 import { layout, type Layout } from "./compile/layout.ts";
 import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
+import {
+  encodeScalar,
+  isPersistent,
+  SNAPSHOT_ELEMENT_BYTES,
+  type SnapshotSlot,
+} from "./snapshot.ts";
 import type {
   EventRingSlotDescriptor,
   MessageRingSlotDescriptor,
@@ -849,21 +855,149 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       // audio thread 側 で receive、 messageQueueMirrors[i] に push し て 次 process
       // 開 始 で WASM ring に inject)。 SAB 時 は main 側 sender が SAB に 直 接 write
       // = listener は drop。
+      // snapshot / restore は SAB 不 要 = postMessage request/response で 処 理。
+      // worklet の port.onmessage は render quantum の 境 界 で 走 る (= process()
+      // と 同 じ audio thread だ が quantum 間) の で、 ここ で linear memory を 読 む /
+      // 書 く の は 構 造 的 に block-atomic (= `06-runtime.md` §6.1)。 capture は
+      // persistent state / buffer / param を read、 restore は state / buffer を write
+      // (= param は main 側 で AudioParam に 適 用)。 offline の end-of-render capture /
+      // config.restore と 同 logic を mirror。
+      const captureSnapshotSlots = (profile: string | undefined): SnapshotSlot[] => {
+        const out: SnapshotSlot[] = [];
+        const buf = memory.buffer;
+        for (const s of meta.states) {
+          if (s.userNamed !== true || !isPersistent(s.snapshot, "persistent", profile)) continue;
+          const off = lay.regions.states.slots[s.name];
+          if (off === undefined) continue;
+          out.push({
+            name: s.name,
+            kind: "state",
+            type: s.type,
+            data: new Uint8Array(buf.slice(off, off + SNAPSHOT_ELEMENT_BYTES[s.type]!)),
+          });
+        }
+        for (const b of meta.buffers) {
+          if (b.userNamed !== true || !isPersistent(b.snapshot, "transient", profile)) continue;
+          const off = lay.regions.buffers.slots[b.name];
+          if (off === undefined) continue;
+          const byteLen = b.size * SNAPSHOT_ELEMENT_BYTES[b.type]!;
+          out.push({
+            name: b.name,
+            kind: "buffer",
+            type: b.type,
+            data: new Uint8Array(buf.slice(off, off + byteLen)),
+          });
+        }
+        for (let pi = 0; pi < meta.params.length; pi++) {
+          const p = meta.params[pi]!;
+          if (p.name === "" || !isPersistent(p.snapshot, "persistent", profile)) continue;
+          out.push({
+            name: p.name,
+            kind: "param",
+            type: "f32",
+            data: encodeScalar("f32", paramViews[pi]![SAMPLES_PER_BLOCK - 1]!),
+          });
+        }
+        return out;
+      };
+      const applyRestoreSlots = (
+        slots: ReadonlyArray<SnapshotSlot>,
+      ): { applied: string[]; skipped: string[]; missing: string[] } => {
+        const applied: string[] = [];
+        const skipped: string[] = [];
+        const buf = memory.buffer;
+        const provided = new Set(slots.map((s) => s.name));
+        for (const slot of slots) {
+          if (slot.kind === "state") {
+            const off = lay.regions.states.slots[slot.name];
+            if (off === undefined) {
+              skipped.push(slot.name);
+              continue;
+            }
+            new Uint8Array(buf, off, slot.data.length).set(slot.data);
+            applied.push(slot.name);
+          } else if (slot.kind === "buffer") {
+            const off = lay.regions.buffers.slots[slot.name];
+            if (off === undefined) {
+              skipped.push(slot.name);
+              continue;
+            }
+            const len = Math.min(slot.data.length, buf.byteLength - off);
+            new Uint8Array(buf, off, len).set(slot.data.subarray(0, len));
+            applied.push(slot.name);
+          } else {
+            // param slot = AudioParam の 値 (= main 側 で 実 際 に set)。 worklet は
+            // declaration の 単 一 権 威 と し て 存 否 だ け 判 定 (= 存 在 → applied、
+            // 不 在 → skipped)、 値 適 用 は main の restore() が 行 う。
+            if (meta.params.some((p) => p.name === slot.name)) applied.push(slot.name);
+            else skipped.push(slot.name);
+          }
+        }
+        const missing: string[] = [];
+        for (const s of meta.states) {
+          if (
+            s.userNamed === true &&
+            isPersistent(s.snapshot, "persistent", undefined) &&
+            !provided.has(s.name)
+          ) {
+            missing.push(s.name);
+          }
+        }
+        for (const b of meta.buffers) {
+          if (
+            b.userNamed === true &&
+            isPersistent(b.snapshot, "transient", undefined) &&
+            !provided.has(b.name)
+          ) {
+            missing.push(b.name);
+          }
+        }
+        for (const p of meta.params) {
+          if (
+            p.name !== "" &&
+            isPersistent(p.snapshot, "persistent", undefined) &&
+            !provided.has(p.name)
+          ) {
+            missing.push(p.name);
+          }
+        }
+        return { applied, skipped, missing };
+      };
+
       const port = self.port as {
         addEventListener?: (kind: string, handler: (event: MessageEvent) => void) => void;
         start?: () => void;
       };
-      const hasMidiInPort = midiRingsMeta.some((r) => r.direction === "in");
-      if (
-        typeof port.addEventListener === "function" &&
-        (messageRings.length > 0 || hasMidiInPort)
-      ) {
+      if (typeof port.addEventListener === "function") {
         port.addEventListener("message", (event: MessageEvent) => {
           const data = event.data as
-            | { kind?: unknown; ringIndex?: unknown; payload?: unknown; item?: unknown }
+            | {
+                kind?: unknown;
+                ringIndex?: unknown;
+                payload?: unknown;
+                item?: unknown;
+                requestId?: unknown;
+                profile?: unknown;
+                slots?: unknown;
+              }
             | null
             | undefined;
           if (typeof data !== "object" || data === null) return;
+          if (data.kind === "snapshot-request") {
+            const profile = typeof data.profile === "string" ? data.profile : undefined;
+            self.port.postMessage({
+              kind: "snapshot-response",
+              requestId: data.requestId,
+              slots: captureSnapshotSlots(profile),
+            });
+            return;
+          }
+          if (data.kind === "restore") {
+            const slots = Array.isArray(data.slots) ? (data.slots as SnapshotSlot[]) : [];
+            const report = applyRestoreSlots(slots);
+            self.port.postMessage({ kind: "restore-done", requestId: data.requestId, ...report });
+            return;
+          }
           if (data.kind === "message") {
             if (typeof data.ringIndex !== "number") return;
             const ringIndex = data.ringIndex;
