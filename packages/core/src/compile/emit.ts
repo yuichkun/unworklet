@@ -710,7 +710,7 @@ function payloadSlotMeta(
   if (field === undefined) {
     throw new Error(`unknown message payload field: ${node.messageName}.${node.field}`);
   }
-  const content = layout.regions.payloadContent.slots[node.messageName];
+  const content = layout.regions.payloadContent.messageSlots[node.messageName];
   /* v8 ignore next 3 — typed-array field を 持 つ message は payloadContent に slot 既 push */
   if (content === undefined) {
     throw new Error(`unknown payloadContent for message: ${node.messageName}`);
@@ -813,7 +813,7 @@ function emitBufferCopyFrom(
   }
   const slot = layout.regions.messageRings.slots[node.messageName];
   const field = slot?.fields.find((f) => f.name === node.field);
-  const content = layout.regions.payloadContent.slots[node.messageName];
+  const content = layout.regions.payloadContent.messageSlots[node.messageName];
   /* v8 ignore next 3 — typed-array field 持 ち の message は slot + payloadContent 既 push */
   if (slot === undefined || field === undefined || content === undefined) {
     throw new Error(`unknown message payload field: ${node.messageName}.${node.field}`);
@@ -1607,7 +1607,7 @@ function emitEventEmitIf(
     // slotPtrTee 後 = EVENT_SLOT_PTR_LOCAL 確 定 済。
     if (field.payloadElementType !== undefined) {
       const emitField = emitFieldByName.get(field.name);
-      const content = layout.regions.payloadContent.slots[node.name];
+      const content = layout.regions.payloadContent.eventSlots[node.name];
       const bufferBase =
         emitField?.bufferName !== undefined
           ? layout.regions.buffers.slots[emitField.bufferName]

@@ -42,9 +42,14 @@ test("typed-array message compiles: proxy + payloadContent layout + payloadField
 
   // typed-array message には payloadContent region が割り当てられる。
   const memory = result.memory as unknown as {
-    regions: { payloadContent: { slots: Record<string, { base: number; capacity: number }> } };
+    regions: {
+      payloadContent: {
+        eventSlots: Record<string, { base: number; capacity: number }>;
+        messageSlots: Record<string, { base: number; capacity: number }>;
+      };
+    };
   };
-  const content = memory.regions.payloadContent.slots["upload"];
+  const content = memory.regions.payloadContent.messageSlots["upload"];
   expect(content).toBeDefined();
   expect(content!.capacity).toBeGreaterThan(0);
 });
@@ -72,9 +77,14 @@ test("typed-array message compiles: buf.copyFrom(payload) bulk-copy emit path", 
   const result = await compile(proc);
   expect(result.wasm.byteLength).toBeGreaterThan(0);
   const memory = result.memory as unknown as {
-    regions: { payloadContent: { slots: Record<string, { base: number; capacity: number }> } };
+    regions: {
+      payloadContent: {
+        eventSlots: Record<string, { base: number; capacity: number }>;
+        messageSlots: Record<string, { base: number; capacity: number }>;
+      };
+    };
   };
-  expect(memory.regions.payloadContent.slots["upload"]).toBeDefined();
+  expect(memory.regions.payloadContent.messageSlots["upload"]).toBeDefined();
 });
 
 test("typed-array event compiles: emitIf(buffer + length) emit path + payloadContent", async () => {
@@ -98,9 +108,14 @@ test("typed-array event compiles: emitIf(buffer + length) emit path + payloadCon
   const result = await compile(proc);
   expect(result.wasm.byteLength).toBeGreaterThan(0);
   const memory = result.memory as unknown as {
-    regions: { payloadContent: { slots: Record<string, { base: number; capacity: number }> } };
+    regions: {
+      payloadContent: {
+        eventSlots: Record<string, { base: number; capacity: number }>;
+        messageSlots: Record<string, { base: number; capacity: number }>;
+      };
+    };
   };
-  expect(memory.regions.payloadContent.slots["result"]).toBeDefined();
+  expect(memory.regions.payloadContent.eventSlots["result"]).toBeDefined();
 });
 
 test("typed-array event emitIf requires a length field (= guard)", () => {
@@ -133,4 +148,45 @@ test("buf.copyFrom rejects a non-payload source (= 型外れ guard)", () => {
       };
     }),
   ).toThrow(/typed-array message payload field/);
+});
+
+// 同名の message<T> と event<T> は独立した名前空間 (= 同名 OK)。typed-array の content
+// region は kind 別に分離され、同名でも別 region になる (= 名前だけ key にすると alias して
+// silent cross-channel corruption する bug の回帰防止)。layout 不変条件なので compile-coverage
+// で検証する (= end-to-end の各 channel 値は offline 黒箱で別途担保)。
+test("同名の message と event は別の content region を持つ (= 名前空間 kind 別、alias 防止)", async () => {
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const inMsg = message<{ x: Float32Array }>({ name: "dup" }); // main → worklet
+    const outEvt = event<{ x: Float32Array }>({ name: "dup", payloadCapacity: 64 }); // worklet → main
+    const buf = buffer.f32({ size: 4 });
+    return {
+      process: () => {
+        inMsg.onReceive(({ x }) => {
+          buf.write(0, x.at(0)); // message typed-array field を使う (= payloadElementType seal)
+        });
+        buf.write(1, f32(99));
+        outEvt.emitIf(true, { atSample: 0, x: buf, length: i32(1) }); // event typed-array field を使う
+        forSample((i) => {
+          out.ch(0).at(i).write(buf.read(0));
+        });
+      },
+    };
+  });
+  const result = await compile(proc);
+  expect(result.wasm.byteLength).toBeGreaterThan(0);
+  const memory = result.memory as unknown as {
+    regions: {
+      payloadContent: {
+        eventSlots: Record<string, { base: number }>;
+        messageSlots: Record<string, { base: number }>;
+      };
+    };
+  };
+  const ev = memory.regions.payloadContent.eventSlots["dup"];
+  const ms = memory.regions.payloadContent.messageSlots["dup"];
+  expect(ev).toBeDefined();
+  expect(ms).toBeDefined();
+  // 同名でも event と message は別 region = 片方の content がもう片方を壊さない。
+  expect(ev!.base).not.toBe(ms!.base);
 });

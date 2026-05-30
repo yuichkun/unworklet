@@ -386,7 +386,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
     }
     // typed-array field あ り の event は §4.3 content buffer を 持 つ。 SAB content
     // region を mirror / 直 抽 出 す る 先 の WASM base + capacity を descriptor に。
-    const content = lay.regions.payloadContent.slots[evt.name];
+    const content = lay.regions.payloadContent.eventSlots[evt.name];
     return {
       name: evt.name,
       wasmRingBase: slot.base,
@@ -412,7 +412,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
     // typed-array field あ り の message は §5.2 content buffer を 持 つ (= layout の
     // payloadContent slot)。 transport が SAB content region を mirror / 直 書 き す る
     // 先 の WASM base + capacity を descriptor に 載 せ る。
-    const content = lay.regions.payloadContent.slots[msg.name];
+    const content = lay.regions.payloadContent.messageSlots[msg.name];
     return {
       name: msg.name,
       wasmRingBase: slot.base,

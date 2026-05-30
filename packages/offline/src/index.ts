@@ -98,7 +98,7 @@ export async function renderOffline<C>(
       slotSize: slot.slotSize,
       fields: slot.fields,
       // typed-array field (§4.3 worklet→main) の中身を読む content region。
-      payloadContent: meta.layout.regions.payloadContent.slots[evt.name],
+      payloadContent: meta.layout.regions.payloadContent.eventSlots[evt.name],
     };
   });
   const emittedEvents: OfflineEmittedEvent[] = [];
@@ -114,7 +114,7 @@ export async function renderOffline<C>(
       capacity: slot.capacity,
       slotSize: slot.slotSize,
       // typed-array field の 中 身 を 置 く content region (= ナ シ な ら undefined)。
-      payloadContent: meta.layout.regions.payloadContent.slots[msg.name],
+      payloadContent: meta.layout.regions.payloadContent.messageSlots[msg.name],
       fields: slot.fields,
     };
   });

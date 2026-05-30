@@ -187,7 +187,12 @@ export type Layout = {
     messageRings: { base: number; slots: Record<string, MessageRingSlot> };
     payloadContent: {
       base: number;
-      slots: Record<string, { base: number; capacity: number; chunks: number }>;
+      // message<T> と event<T> は独立した名前空間 (= 同名 OK)。content region は kind 別に
+      // 分離する (= eventRings / messageRings と同じ分離)。1 map を名前だけで key にすると
+      // 同名 message/event が同じ region を alias して silent な cross-channel corruption を
+      // 起こす (= 名前空間 kind 別の決定)。
+      eventSlots: Record<string, { base: number; capacity: number; chunks: number }>;
+      messageSlots: Record<string, { base: number; capacity: number; chunks: number }>;
     };
     /** everyNSamples の per-call-site counter slot (= counterId → byte offset、§9.1)。 */
     everyNSamplesCounters: { base: number; slots: Record<number, number> };
@@ -368,8 +373,15 @@ export function layout(graph: CapturedGraph): Layout {
   // を 持 つ declaration ご と に payloadCapacity bytes (= 省 略 時 default) を allocate。
   // 末 尾 配 置 = typed-array ナ シ graph で base 不 変。
   const payloadContentBase = cursor;
-  const payloadContentSlots: Record<string, { base: number; capacity: number; chunks: number }> =
-    {};
+  // kind 別 map (= 同名 message/event が region を共有しない、名前空間 kind 別)。
+  const payloadContentEventSlots: Record<
+    string,
+    { base: number; capacity: number; chunks: number }
+  > = {};
+  const payloadContentMessageSlots: Record<
+    string,
+    { base: number; capacity: number; chunks: number }
+  > = {};
   for (const decl of graph.declarations) {
     if (
       (decl.kind === "message" || decl.kind === "event") &&
@@ -384,7 +396,8 @@ export function layout(graph: CapturedGraph): Layout {
       // region size で wrap = 同 じ 循 環 を 共 有。
       const chunks = Math.min(decl.capacity, MAX_CONTENT_SLOTS);
       const capacity = perPayload * chunks;
-      payloadContentSlots[decl.name] = { base: cursor, capacity, chunks };
+      const target = decl.kind === "event" ? payloadContentEventSlots : payloadContentMessageSlots;
+      target[decl.name] = { base: cursor, capacity, chunks };
       cursor += capacity;
     }
   }
@@ -425,7 +438,11 @@ export function layout(graph: CapturedGraph): Layout {
       ioScratch: { base: ioBase, inputs, outputs, params },
       eventRings: { base: eventRingsBase, slots: eventRingsSlots },
       messageRings: { base: messageRingsBase, slots: messageRingsSlots },
-      payloadContent: { base: payloadContentBase, slots: payloadContentSlots },
+      payloadContent: {
+        base: payloadContentBase,
+        eventSlots: payloadContentEventSlots,
+        messageSlots: payloadContentMessageSlots,
+      },
       everyNSamplesCounters: {
         base: everyNSamplesCountersBase,
         slots: everyNSamplesCounterSlots,
