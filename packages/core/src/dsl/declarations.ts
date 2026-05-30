@@ -23,6 +23,7 @@ import { inferAstType } from "../compile/ast.ts";
 import {
   addDeclaration,
   addStatement,
+  captureTemp,
   getCurrentCapture,
   isWrappedNode,
   unwrapAst,
@@ -250,11 +251,16 @@ function makeStateDecl<T extends ScalarType>(
 function makeStateHandle<T extends ScalarType>(decl: StateDecl): State<T> {
   const handle = {
     load: () =>
-      wrapAst<T>({
-        kind: "stateLoad",
-        type: decl.type,
-        name: decl.name,
-      }),
+      // Eager temp-local capture freezes the slot value at this lexical point
+      // (= `03-compiler.md` §2.7, issue #8) — a later `store` cannot change it.
+      captureTemp<T>(
+        {
+          kind: "stateLoad",
+          type: decl.type,
+          name: decl.name,
+        },
+        decl.type,
+      ),
     store: (v: Node<T> | ScalarOf<T>) => {
       addStatement({
         kind: "stateStore",
@@ -418,12 +424,17 @@ function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer
       return decl.name;
     },
     read: (idx: Node<"i32"> | number) =>
-      wrapAst({
-        kind: "bufferRead",
-        elementType: decl.type,
-        name: decl.name,
-        index: liftIndex(idx, "read"),
-      }),
+      // Eager temp-local capture (= issue #8): a later `write` to the same
+      // index cannot change what an already-bound read `Node` evaluates to.
+      captureTemp(
+        {
+          kind: "bufferRead",
+          elementType: decl.type,
+          name: decl.name,
+          index: liftIndex(idx, "read"),
+        },
+        decl.type === "u8" ? "i32" : decl.type,
+      ),
     write: (idx: Node<"i32"> | number, v: Node<ScalarType> | number) => {
       addStatement({
         kind: "bufferWrite",
@@ -440,12 +451,15 @@ function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer
           `unworklet: buffer "${decl.name}" readInterpolated(${pos}) pos is out of range [0, ${decl.size - 1}) (= 2-tap 補間は floor(pos)+1 まで読む; literal pos は capture で range-check)`,
         );
       }
-      return wrapAst({
-        kind: "bufferReadInterpolated",
-        elementType: decl.type,
-        name: decl.name,
-        pos: liftF32(pos),
-      });
+      return captureTemp(
+        {
+          kind: "bufferReadInterpolated",
+          elementType: decl.type,
+          name: decl.name,
+          pos: liftF32(pos),
+        },
+        decl.type === "u8" ? "i32" : decl.type,
+      );
     },
     copyFrom: (src: TypedArrayFieldRef<T>) => {
       const meta = (src as unknown as Record<symbol, PayloadFieldMeta | undefined>)[

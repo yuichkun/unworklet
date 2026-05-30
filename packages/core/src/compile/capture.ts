@@ -38,6 +38,13 @@ export type CaptureContext = {
   namePrefix: string;
   /** `createSubgraph` instance の auto name 採番 (= name 省略時、graph 内で決定的)。 */
   subgraphCount: number;
+  /**
+   * Mutable-read 固定用 temp local の通し番号 (= `03-compiler.md` §2.7、issue #8)。
+   * `state.load()` / `buffer.read()` / `buffer.readInterpolated()` の各 call site で
+   * 採番し、emit が固定 local の後ろに 1 slot ずつ割り付ける (= `TEMP_LOCAL_BASE +
+   * tempId`)。capture 順 = 0 から単調増加。
+   */
+  tempCount: number;
 };
 
 let currentCapture: CaptureContext | null = null;
@@ -50,7 +57,25 @@ export function newCaptureContext(): CaptureContext {
     everyNSamplesCount: 0,
     namePrefix: "",
     subgraphCount: 0,
+    tempCount: 0,
   };
+}
+
+/**
+ * Capture a mutable memory read (`stateLoad` / `bufferRead` /
+ * `bufferReadInterpolated`) into a temp WASM local at its lexical point and
+ * return a `tempRef` `Node<T>` that reads it (= `03-compiler.md` §2.7, issue
+ * #8). The `tempAssign` statement is recorded at the current statement position
+ * (= before any enclosing statement, since the read is evaluated inner-to-outer
+ * during graph capture), so a later `store` to the same slot cannot change what
+ * the returned `Node` evaluates to. Pure arithmetic over the returned `tempRef`
+ * stays referentially transparent under emit's lazy re-walk.
+ */
+export function captureTemp<T extends ScalarType>(read: AstNode, type: ScalarType): Node<T> {
+  const ctx = getCurrentCapture();
+  const tempId = ctx.tempCount++;
+  addStatement({ kind: "tempAssign", tempId, valueType: type, value: read });
+  return wrapAst<T>({ kind: "tempRef", tempId, type });
 }
 
 /** `everyNSamples` call-site に block 跨ぎ counter slot 用の一意 id を払い出す。 */

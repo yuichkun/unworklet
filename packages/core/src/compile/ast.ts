@@ -64,6 +64,16 @@ export type AstNode =
   // saturating form). `from === type` is folded away at the constructor (no
   // convert node emitted), so emit always sees a genuine type change.
   | { kind: "convert"; type: ScalarType; from: ScalarType; value: AstNode }
+  // Definition-order fix for mutable memory reads (`03-compiler.md` §2.7, issue
+  // #8). A `stateLoad` / `bufferRead` / `bufferReadInterpolated` is captured
+  // eagerly into a per-read WASM local at its lexical point: `tempAssign`
+  // evaluates the read once into local `tempId` (recorded as a statement in
+  // source order, before any enclosing statement), and every reference to the
+  // bound `Node` becomes a `tempRef` that reads the local. A later `store` to
+  // the same slot therefore cannot change what an already-bound `Node`
+  // evaluates to — the lazy re-walk that read post-store memory is gone.
+  | { kind: "tempAssign"; tempId: number; valueType: ScalarType; value: AstNode }
+  | { kind: "tempRef"; tempId: number; type: ScalarType }
   | { kind: "audioInRead"; portName: string; channel: number; offset: AstNode }
   | {
       kind: "audioOutWrite";
@@ -353,6 +363,7 @@ export function inferAstType(ast: AstNode): ScalarType {
     case "select":
     case "convert":
     case "stateLoad":
+    case "tempRef":
       return ast.type;
     // 比 較 = 結 果 は 常 に bool (= node の `type` は オ ペ ラ ン ド 型 f32)。
     case "eq":
@@ -399,6 +410,7 @@ export function inferAstType(ast: AstNode): ScalarType {
     case "bufferWrite":
     case "bufferCopyFrom":
     case "everyNSamples":
+    case "tempAssign":
       throw new Error(`statement node '${ast.kind}' cannot appear in expression position`);
   }
 }

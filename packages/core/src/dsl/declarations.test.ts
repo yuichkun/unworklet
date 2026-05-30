@@ -424,14 +424,17 @@ test("`state.<type>(initial)` 5 type 全 declare (= f32 / f64 / i32 / i64 / bool
   ]);
 });
 
-test("`state.f32(0).load()` returns a `stateLoad` AST tied to decl.name", () => {
+test("`state.f32(0).load()` eager-captures a `stateLoad` (tied to decl.name) and returns a `tempRef`", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const z = state.f32(0);
-    expect(unwrapAst(z.load())).toEqual({
-      kind: "stateLoad",
-      type: "f32",
-      name: "__state_0",
+    // load() freezes the read into a temp local (= issue #8): it returns a
+    // tempRef, and the stateLoad lives in the recorded tempAssign statement.
+    expect(unwrapAst(z.load())).toEqual({ kind: "tempRef", tempId: 0, type: "f32" });
+    expect(ctx.statements.at(-1)).toMatchObject({
+      kind: "tempAssign",
+      valueType: "f32",
+      value: { kind: "stateLoad", type: "f32", name: "__state_0" },
     });
   });
 });
@@ -563,10 +566,12 @@ test("`state.<type>.load()` の name は `.named` 後 fix を 反 映 (= late bi
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const handle = state.named("orig").f32(0).named("final");
-    expect(unwrapAst(handle.load())).toEqual({
-      kind: "stateLoad",
-      type: "f32",
-      name: "final",
+    // The eager-captured stateLoad (inside the tempAssign) reflects the
+    // late-bound final name; load() itself returns a tempRef.
+    expect(unwrapAst(handle.load())).toEqual({ kind: "tempRef", tempId: 0, type: "f32" });
+    expect(ctx.statements.at(-1)).toMatchObject({
+      kind: "tempAssign",
+      value: { kind: "stateLoad", type: "f32", name: "final" },
     });
   });
 });

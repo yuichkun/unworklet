@@ -124,6 +124,15 @@ const PAYLOAD_CLAMP_LOCAL = 17;
 const VEC_TEMP_LOCAL = 18;
 
 /**
+ * Base local index for mutable-read temp locals (= `03-compiler.md` §2.7, issue
+ * #8). The 19 fixed temp locals above occupy indices 0–18; per-read temps from
+ * `captureTemp` occupy `TEMP_LOCAL_BASE + tempId` (= 19, 20, …). `emit` scans
+ * the graph for `tempAssign` nodes and declares one local of the matching type
+ * per `tempId`, in `tempId` order, after the fixed block.
+ */
+const TEMP_LOCAL_BASE = 19;
+
+/**
  * 多 項 式 近 似 の math primitive (= sin / cos / tan / tanh / exp / log、 Q17) は
  * 共 有 プ ラ イ ベ ー ト WASM 関 数 (= `(f32) -> f32`、 export し な い) と し て emit し、
  * 呼 び 出 し 側 は `call` で 参 照。 各 関 数 は 自 前 の local を 持 つ の で `process`
@@ -153,6 +162,107 @@ export type EmitOptions = {
 
 const DEFAULT_EMIT_SAMPLE_RATE = 48000;
 
+/**
+ * Little-endian byte encoding of a `state.<type>(initial)` value, sized to the
+ * slot's element width. `bool` is held as i32 (0/1). Used to seed state slots
+ * via active data segments at WASM instantiation (= declaration defaults).
+ */
+function encodeStateInitial(type: ScalarType, value: number | bigint | boolean): Uint8Array {
+  const buf = new ArrayBuffer(8);
+  const dv = new DataView(buf);
+  switch (type) {
+    case "f32":
+      dv.setFloat32(0, Number(value), true);
+      return new Uint8Array(buf.slice(0, BYTES_PER_F32));
+    case "f64":
+      dv.setFloat64(0, Number(value), true);
+      return new Uint8Array(buf.slice(0, BYTES_PER_F64));
+    case "i32":
+      dv.setInt32(0, Number(value) | 0, true);
+      return new Uint8Array(buf.slice(0, BYTES_PER_I32));
+    case "i64":
+      dv.setBigInt64(0, BigInt(value as bigint), true);
+      return new Uint8Array(buf.slice(0, BYTES_PER_I64));
+    case "bool":
+      dv.setInt32(0, value ? 1 : 0, true);
+      return new Uint8Array(buf.slice(0, BYTES_PER_I32));
+  }
+}
+
+/**
+ * Active data segments that seed every `state.<type>` slot with its declared
+ * `initial` value at WASM instantiation (= declaration defaults; restore /
+ * migration overwrites later). Zero-valued initials are skipped — linear memory
+ * is already zero. Both the online worklet and the offline driver instantiate
+ * the same binary, so state init is consistent across runtimes.
+ */
+function stateInitSegments(
+  graph: CapturedGraph,
+  layout: Layout,
+  mod: BinaryenModule,
+): { offset: number; data: Uint8Array }[] {
+  const segments: { offset: number; data: Uint8Array }[] = [];
+  for (const decl of graph.declarations) {
+    if (decl.kind !== "state") continue;
+    const isZero = decl.type === "i64" ? decl.initial === 0n : Number(decl.initial) === 0;
+    if (isZero) continue;
+    const offset = layout.regions.states.slots[decl.name];
+    /* v8 ignore next 2 — state slot は layout で 必 ず push 済 = unreachable */
+    if (offset === undefined) throw new Error(`unknown state slot: ${decl.name}`);
+    segments.push({
+      offset: mod.i32.const(offset),
+      data: encodeStateInitial(decl.type, decl.initial),
+    });
+  }
+  return segments;
+}
+
+/** Map a scalar type to its binaryen value type (`bool` is held as i32). */
+function binaryenTypeOf(type: ScalarType, binaryen: BinaryenAPI): number {
+  switch (type) {
+    case "f32":
+      return binaryen.f32;
+    case "f64":
+      return binaryen.f64;
+    case "i64":
+      return binaryen.i64;
+    case "i32":
+    case "bool":
+      return binaryen.i32;
+  }
+}
+
+/**
+ * Collect the temp-local binaryen types declared by `captureTemp` (= issue #8),
+ * indexed by `tempId`. Walks statement containers only — `tempAssign` nodes are
+ * always recorded at statement level (the read is captured before its enclosing
+ * statement), never nested inside an expression operand, so a shallow walk over
+ * the statement-bearing kinds is exhaustive.
+ */
+function collectTempLocals(graph: CapturedGraph, binaryen: BinaryenAPI): number[] {
+  const byId = new Map<number, ScalarType>();
+  const walk = (stmts: readonly AstNode[]): void => {
+    for (const s of stmts) {
+      if (s.kind === "tempAssign") {
+        byId.set(s.tempId, s.valueType);
+      } else if (
+        s.kind === "forSample" ||
+        s.kind === "everyNSamples" ||
+        s.kind === "messageOnReceive"
+      ) {
+        walk(s.body);
+      }
+    }
+  };
+  walk(graph.statements);
+  const maxId = byId.size > 0 ? Math.max(...byId.keys()) : -1;
+  const locals: number[] = [];
+  for (let id = 0; id <= maxId; id++) {
+    locals.push(binaryenTypeOf(byId.get(id) ?? "i32", binaryen));
+  }
+  return locals;
+}
+
 export async function emit(
   graph: CapturedGraph,
   layout: Layout,
@@ -166,7 +276,9 @@ export async function emit(
   mod.setFeatures(mod.getFeatures() | binaryen.Features.BulkMemory | binaryen.Features.SIMD128);
 
   const pages = Math.max(1, Math.ceil(layout.totalBytes / PAGE_BYTES));
-  mod.setMemory(pages, pages, "memory");
+  // Active data segments seed `state.<type>` slots with their declared initial
+  // values at instantiation (= declaration defaults; restore overwrites later).
+  mod.setMemory(pages, pages, "memory", stateInitSegments(graph, layout, mod));
 
   // 多 項 式 近 似 の math primitive (= sin 等、 Q17) を 共 有 プ ラ イ ベ ー ト 関 数 と し て
   // 追 加。 graph で 使 わ れ て い る kind だ け emit。
@@ -224,6 +336,8 @@ export async function emit(
       binaryen.i32, // BUFINTERP_I0_LOCAL
       binaryen.i32, // PAYLOAD_CLAMP_LOCAL (= at OOB clamp idx)
       binaryen.v128, // VEC_TEMP_LOCAL (= SIMD sumLanes 用)
+      // Mutable-read temp locals (= TEMP_LOCAL_BASE +、issue #8、capture 順)。
+      ...collectTempLocals(graph, binaryen),
     ],
     body,
   );
@@ -1286,6 +1400,10 @@ export function emitExpression(
         `unworklet: unsupported message field wireType "${field.wireType}" (= sub-phase 7.7 段 階 で i32 / bool の み 対 応)`,
       );
     }
+    case "tempRef":
+      // Read the per-read temp local (= issue #8). The matching `tempAssign`
+      // ran earlier in statement order, so the local is already set.
+      return mod.local.get(TEMP_LOCAL_BASE + node.tempId, binaryenTypeOf(node.type, binaryen));
     case "audioOutWrite":
     case "forSample":
     case "stateStore":
@@ -1295,6 +1413,7 @@ export function emitExpression(
     case "bufferCopyFrom":
     case "bufferStoreVec":
     case "everyNSamples":
+    case "tempAssign":
       throw new Error(`statement node '${node.kind}' cannot appear in expression position`);
   }
 }
@@ -1463,6 +1582,12 @@ export function emitStatement(
        emitMessageOnReceive を 直 接 呼 ぶ path = emitStatement 経 由 hit ナ シ */
     case "messageOnReceive":
       return emitMessageOnReceive(node, layout, mod, binaryen);
+    case "tempAssign":
+      // Evaluate a mutable read once into its per-read local (= issue #8).
+      return mod.local.set(
+        TEMP_LOCAL_BASE + node.tempId,
+        emitExpression(node.value, layout, mod, binaryen),
+      );
     default:
       throw new Error(`expression node '${node.kind}' cannot appear in statement position`);
   }
@@ -1957,9 +2082,13 @@ function collectUsedMathKinds(graph: CapturedGraph): Set<string> {
           if (field.length !== undefined) visit(field.length);
         });
         break;
+      case "tempAssign":
+        visit(node.value);
+        break;
       case "literal":
       case "loopCounter":
       case "stateLoad":
+      case "tempRef":
       case "messageFieldRead":
         break;
     }

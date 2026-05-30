@@ -528,9 +528,9 @@ test("`renderOffline` preserves state across render quanta (= literal store cros
 test("`renderOffline` state f32 chained mul across blocks (= counter × 0.5 decay)", async () => {
   // canonical Ex 1 per-block meter decay path を simplify (= counter を 全 block 末 尾 で
   // 0.5 倍)。 state instance が 全 block で 共 有 + load × mul → store が cross-block
-  // で 動 く こ と を 確 認。 memory zero-init で 起 動 = counter 0 → store(0 × 0.5) = 0
-  // = 全 block 全 sample 0 (= declaration initial 値 を memory に inject する path は
-  // sub-phase 7.x で fill)。
+  // で 動 く こ と を 確 認。 counter は declaration initial 値 1 で seed さ れ る
+  // (= active data segment、 issue #8 と 同 commit)、 各 block 末 尾 で 0.5 倍 = block0
+  // で 1、 block1 で 0.5、 block2 で 0.25 を 全 sample 出 力。
   const stateDecay = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
     const counter = state.f32(1);
@@ -550,8 +550,12 @@ test("`renderOffline` state f32 chained mul across blocks (= counter × 0.5 deca
     duration: (totalBlocks * SAMPLES_PER_BLOCK) / 48000,
   });
   const ch = result.outputs["main"]![0]!;
-  for (let i = 0; i < totalBlocks * SAMPLES_PER_BLOCK; i++) {
-    expect(ch[i]).toBe(0);
+  // block b は その block 開 始 時 の counter 値 = 1 × 0.5^b を 全 sample に 出 力。
+  for (let b = 0; b < totalBlocks; b++) {
+    const expected = 0.5 ** b;
+    for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
+      expect(ch[b * SAMPLES_PER_BLOCK + i]).toBeCloseTo(expected, 6);
+    }
   }
 });
 
