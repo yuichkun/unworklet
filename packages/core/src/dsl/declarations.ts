@@ -228,7 +228,10 @@ function makeStateDecl<T extends ScalarType>(
 ): State<T> {
   const ctx = getCurrentCapture();
   const synthIdx = ctx.declarations.filter((d) => d.kind === "state").length;
-  const name = pendingExpose.name ?? `__state_${synthIdx}`;
+  // user name は subgraph instance prefix を前置 (= §5.6)。 auto name は global
+  // synthIdx で既に一意 = prefix 不要。
+  const name =
+    pendingExpose.name !== undefined ? ctx.namePrefix + pendingExpose.name : `__state_${synthIdx}`;
   checkStateName(name);
   const decl: StateDecl = {
     kind: "state",
@@ -261,8 +264,9 @@ function makeStateHandle<T extends ScalarType>(decl: StateDecl): State<T> {
       });
     },
     named: (name: string) => {
-      checkStateName(name, decl);
-      decl.name = name;
+      const fullName = getCurrentCapture().namePrefix + name;
+      checkStateName(fullName, decl);
+      decl.name = fullName;
       decl.userNamed = true;
       validateStateDecl(decl);
       return handle;

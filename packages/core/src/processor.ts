@@ -18,12 +18,14 @@ import type {
   ProcessorOptions,
 } from "./types.ts";
 import type { CapturedGraph } from "./compile/ast.ts";
-import { finalize, newCaptureContext, runCapture } from "./compile/capture.ts";
+import {
+  finalize,
+  getCurrentCapture,
+  isWrappedNode,
+  newCaptureContext,
+  runCapture,
+} from "./compile/capture.ts";
 import { makeWorkletNamespace } from "./worklet.ts";
-
-const notImplemented = (): never => {
-  throw new Error("not implemented");
-};
 
 /**
  * Brand the internal `CapturedGraph` as the opaque public
@@ -75,24 +77,64 @@ export interface SubgraphDecl<Args extends unknown[], Methods> {
   readonly [subgraphBrand]: { args: Args; methods: Methods };
 }
 
+const SUBGRAPH_BODY = Symbol("unworklet.subgraphBody");
+
 export function defineSubgraph<Args extends unknown[], Methods>(
-  _body: (...args: Args) => Methods,
+  body: (...args: Args) => Methods,
 ): SubgraphDecl<Args, Methods> {
-  return notImplemented();
+  // body を symbol-keyed で carry (= createSubgraph が取り出して現 capture 内で実行)。
+  return { [SUBGRAPH_BODY]: body } as unknown as SubgraphDecl<Args, Methods>;
 }
 
 export type CreateSubgraphOptions = {
   name?: string;
 };
 
+// 末尾引数が `{ name }` のみの plain object なら createSubgraph options と判定
+// (= lambda arg の Node / array / 多 key object とは区別)。
+function isCreateSubgraphOptions(v: unknown): v is CreateSubgraphOptions {
+  return (
+    v !== null &&
+    typeof v === "object" &&
+    !Array.isArray(v) &&
+    !isWrappedNode(v) &&
+    Object.keys(v).length > 0 &&
+    Object.keys(v).every((k) => k === "name")
+  );
+}
+
 /**
- * `createSubgraph(subgraph, ...lambdaArgs, options?)` — concrete signature
- * (variadic + optional trailing options) is impl-phase fill per Q53; this
- * stub accepts a permissive shape.
+ * `createSubgraph(subgraph, ...lambdaArgs, options?)` (= §5.6、Q53/54)。
+ *
+ * declaration scope で subgraph body を**現在の capture 内で実行** → 内部 state /
+ * buffer 宣言が親 graph に instance name prefix 付きで登録される (= 複数 instance で
+ * 独立 state)。 body が返す method record を**そのまま**返す (= SubgraphInstance ラッパ
+ * ナシ、Q54)。 method closure は instance の state を捕捉し、後で expression scope で呼べる。
  */
 export function createSubgraph<Args extends unknown[], Methods>(
-  _subgraph: SubgraphDecl<Args, Methods>,
-  ..._args: unknown[]
+  subgraph: SubgraphDecl<Args, Methods>,
+  ...rest: unknown[]
 ): Methods {
-  return notImplemented();
+  const body = (subgraph as unknown as Record<symbol, ((...a: Args) => Methods) | undefined>)[
+    SUBGRAPH_BODY
+  ];
+  if (typeof body !== "function") {
+    throw new Error("unworklet: createSubgraph requires a defineSubgraph(...) value");
+  }
+  let args = rest;
+  let instanceName: string | undefined;
+  const last = rest[rest.length - 1];
+  if (rest.length > 0 && isCreateSubgraphOptions(last)) {
+    instanceName = last.name;
+    args = rest.slice(0, -1);
+  }
+  const ctx = getCurrentCapture();
+  const name = instanceName ?? `__sg_${ctx.subgraphCount++}`;
+  const prevPrefix = ctx.namePrefix;
+  ctx.namePrefix = prevPrefix + name + "/";
+  try {
+    return body(...(args as Args));
+  } finally {
+    ctx.namePrefix = prevPrefix;
+  }
 }

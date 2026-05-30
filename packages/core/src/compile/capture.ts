@@ -30,12 +30,27 @@ export type CaptureContext = {
    * i32 slot を確保する。 capture 順に 0 から採番。
    */
   everyNSamplesCount: number;
+  /**
+   * `createSubgraph` instance の body 実行中だけ立つ name prefix (= §5.6、Q53)。
+   * subgraph 内の user-named state / buffer に `'<instance>/'` を前置して複数
+   * instance の衝突を避ける (= `'lpfL/z1'`)。 非 subgraph では `''`。
+   */
+  namePrefix: string;
+  /** `createSubgraph` instance の auto name 採番 (= name 省略時、graph 内で決定的)。 */
+  subgraphCount: number;
 };
 
 let currentCapture: CaptureContext | null = null;
 
 export function newCaptureContext(): CaptureContext {
-  return { declarations: [], statements: [], currentLoopBody: null, everyNSamplesCount: 0 };
+  return {
+    declarations: [],
+    statements: [],
+    currentLoopBody: null,
+    everyNSamplesCount: 0,
+    namePrefix: "",
+    subgraphCount: 0,
+  };
 }
 
 /** `everyNSamples` call-site に block 跨ぎ counter slot 用の一意 id を払い出す。 */
