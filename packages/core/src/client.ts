@@ -595,15 +595,18 @@ export async function createNode<C>(
                 // [payloadLen(bytes), payloadOffset(region 相 対)]。 worklet が content
                 // region を 1:1 mirror す る の で offset は region base 相 対 で 一 致。
                 if (messageContentView !== null && ArrayBuffer.isView(value)) {
-                  const src = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
                   const capacity = ring.payloadContent?.capacity ?? 0;
+                  // content region より大きい payload は truncate し て copy (= Q85:
+                  // no-trap。 clamp し な い と Uint8Array.set が RangeError を throw)。
+                  const copyBytes = Math.min(value.byteLength, capacity);
+                  const src = new Uint8Array(value.buffer, value.byteOffset, copyBytes);
                   const contentBase = messageContentSabOffsets[i]!;
                   let cursor = messageContentCursors[i]!;
-                  if (cursor + src.byteLength > capacity) cursor = 0;
+                  if (cursor + copyBytes > capacity) cursor = 0;
                   messageContentView.set(src, contentBase + cursor);
-                  messageRingsView.setUint32(byteOffset, src.byteLength, true);
+                  messageRingsView.setUint32(byteOffset, copyBytes, true);
                   messageRingsView.setUint32(byteOffset + 4, cursor, true);
-                  messageContentCursors[i] = cursor + src.byteLength;
+                  messageContentCursors[i] = cursor + copyBytes;
                 }
               } else if (typeof value === "boolean") {
                 messageRingsView.setInt32(byteOffset, value ? 1 : 0, true);

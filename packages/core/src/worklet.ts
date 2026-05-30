@@ -881,14 +881,17 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
               if (field.payloadElementType !== undefined) {
                 const contentWasm = state.messageContentWasmViews[i];
                 if (contentWasm !== null && ArrayBuffer.isView(value)) {
-                  const src = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+                  // content region より大きい payload は truncate (= Q85: no-trap。
+                  // clamp し な い と contentWasm.set が audio thread で RangeError を throw)。
+                  const copyBytes = Math.min(value.byteLength, contentWasm.length);
+                  const src = new Uint8Array(value.buffer, value.byteOffset, copyBytes);
                   let cursor = state.messageContentCursors[i]!;
-                  // region 末 尾 を 跨 ぐ な ら 先 頭 に wrap (= payloadCapacity sizing 前 提)。
-                  if (cursor + src.byteLength > contentWasm.length) cursor = 0;
+                  // region 末 尾 を 跨 ぐ な ら 先 頭 に wrap (= drop-oldest)。
+                  if (cursor + copyBytes > contentWasm.length) cursor = 0;
                   contentWasm.set(src, cursor);
-                  wasmDataView.setUint32(byteOffset, src.byteLength, true);
+                  wasmDataView.setUint32(byteOffset, copyBytes, true);
                   wasmDataView.setUint32(byteOffset + 4, cursor, true);
-                  state.messageContentCursors[i] = cursor + src.byteLength;
+                  state.messageContentCursors[i] = cursor + copyBytes;
                 }
               } else if (typeof value === "boolean") {
                 wasmDataView.setInt32(byteOffset, value ? 1 : 0, true);
