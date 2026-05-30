@@ -81,6 +81,7 @@ declare const nodeBrand: unique symbol;
 declare const stateBrand: unique symbol;
 declare const bufferBrand: unique symbol;
 declare const paramBrand: unique symbol;
+declare const typedArrayFieldRefBrand: unique symbol;
 
 /**
  * `Node<T>` — handle to a value computed during graph capture.
@@ -196,12 +197,26 @@ export type AudioOutputHandle<C extends number> = {
 
 /**
  * Variable-length typed-array field proxy in handler-context payloads
- * (`01-dsl.md` §4.3 + `decisions-log.md` Q36-b).
+ * (`01-dsl.md` §4.3 + `decisions-log.md` Q36-b / Q84).
+ *
+ * Direct per-element read (`.length` / `.at()`) is offered only for the `'f32'`
+ * element type (audio sample payloads). Other element types — e.g. `'u8'` byte /
+ * sysex data — are transfer-only: bulk-copy them into a `buffer.<type>` slot via
+ * `copyFrom` and read through the buffer (`buf.read(idx)`). The element type of a
+ * `message<T>` / `event<T>` field lives only in the TS type `T`, which is erased
+ * before graph capture, so the runtime cannot pick a per-element load instruction
+ * for non-`f32` direct reads; the byte path is routed through the buffer primitive
+ * instead (= realtime-safe `memory.copy`, Q31-c / Q49). The brand keeps the ref
+ * nominal so `copyFrom` enforces element-type compatibility against its buffer.
  */
 export type TypedArrayFieldRef<T extends BufferElementType> = {
-  readonly length: Node<"i32">;
-  at(idx: Node<"i32"> | number): Node<T extends "u8" ? "i32" : Extract<T, ScalarType>>;
-};
+  readonly [typedArrayFieldRefBrand]: T;
+} & (T extends "f32"
+  ? {
+      readonly length: Node<"i32">;
+      at(idx: Node<"i32"> | number): Node<"f32">;
+    }
+  : object);
 
 /**
  * Worklet-side `eventDecl.emitIf` payload as seen at emit call site.
@@ -229,12 +244,17 @@ export type EmitPayload<T> = {
     ? T[K] | Node<"f32"> | Node<"f64"> | Node<"i32"> | Node<"i64">
     : T[K] extends boolean
       ? T[K] | Node<"bool">
-      : // typed-array field (§4.3 worklet→main): worklet-declared buffer or an
-        // inbound payload proxy supplies the content (Q49); never a raw JS array.
+      : // typed-array field (§4.3 worklet→main): the content is supplied by a
+        // worklet-declared `buffer.<T>` (= the single build-time-fixed construction
+        // primitive, Q49); never a raw JS array. Re-emitting an inbound payload
+        // copies it into a `buffer.<T>` via `copyFrom` first, then passes the
+        // buffer here (Q84) — the inbound `TypedArrayFieldRef` is not accepted
+        // directly, since its element type is erased and the emit path copies from
+        // a buffer region.
         T[K] extends Float32Array
-        ? Buffer<"f32"> | TypedArrayFieldRef<"f32">
+        ? Buffer<"f32">
         : T[K] extends Uint8Array
-          ? Buffer<"u8"> | TypedArrayFieldRef<"u8">
+          ? Buffer<"u8">
           : T[K];
 } & {
   atSample?: Node<"i32"> | number;
