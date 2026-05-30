@@ -73,6 +73,9 @@ export type RenderOfflineResult = {
   sampleRate: number;
 };
 
+/** message / event ringbuffer header = [head, tail, overflowCount] × 4 byte。 */
+const MESSAGE_HEADER_BYTES = 12;
+
 export async function renderOffline<C>(
   processor: CompiledProcessor<C>,
   config: RenderOfflineConfig,
@@ -97,6 +100,20 @@ export async function renderOffline<C>(
     };
   });
   const emittedEvents: OfflineEmittedEvent[] = [];
+
+  // message ring meta (= main → worklet 注入用)。 worklet template の SAB 経路と
+  // 違い、 offline は WASM memory の ring header / slot を直接 poke して 1 quantum
+  // 先頭で push する (= event drain と対称の手書き transport)。
+  const messageRingMeta = meta.messages.map((msg) => {
+    const slot = meta.layout.regions.messageRings.slots[msg.name]!;
+    return {
+      name: msg.name,
+      base: slot.base,
+      capacity: slot.capacity,
+      slotSize: slot.slotSize,
+      fields: slot.fields,
+    };
+  });
 
   const totalSamples =
     Math.ceil((config.duration * config.sampleRate) / SAMPLES_PER_BLOCK) * SAMPLES_PER_BLOCK;
@@ -148,6 +165,34 @@ export async function renderOffline<C>(
         }
         instance.writeParam(decl.name, paramScratch);
       }
+    }
+
+    // message 注入 (= こ の quantum 宛 て の scheduled message を ring head に push)。
+    // worklet の onReceive drain (= process 冒 頭、 Q38-b) が tail→head を 消 化 す る。
+    // tail は 前 quantum の drain で head に commit 済 = 各 quantum で ring は空 start。
+    for (const m of config.messages ?? []) {
+      if ((m.atQuantum ?? 0) !== b) continue;
+      const ring = messageRingMeta.find((r) => r.name === m.name);
+      if (ring === undefined) {
+        throw new Error(
+          `unworklet: renderOffline message "${m.name}" has no matching message<T> declaration`,
+        );
+      }
+      const memory = instance.memory.buffer;
+      const headerView = new Int32Array(memory, ring.base, 3);
+      const head = headerView[0]!;
+      const slotByteOffset =
+        ring.base + MESSAGE_HEADER_BYTES + (head % ring.capacity) * ring.slotSize;
+      const dataView = new DataView(memory);
+      const payload = m.payload as Record<string, unknown>;
+      for (const field of ring.fields) {
+        const byteOffset = slotByteOffset + field.offsetInSlot;
+        // message field は Q46 で 現 状 全 て i32 wire (= number / boolean と も
+        // i32 word、 `makeMessagePayloadProxy`)。 typed-array は content buffer
+        // 経 路、 bool / f32 / f64 / i64 wire は 後 続 sub-stage で fill。
+        dataView.setInt32(byteOffset, Number(payload[field.name]) | 0, true);
+      }
+      headerView[0] = head + 1; // head を 1 slot 進 め る (= push)
     }
 
     instance.process();

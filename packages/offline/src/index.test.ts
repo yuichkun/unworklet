@@ -9,11 +9,97 @@
  */
 
 import "@unworklet/core"; // side-effect load for `.mul` method registration via primitives.ts
-import { defineProcessor, SAMPLES_PER_BLOCK } from "@unworklet/core";
+import { defineProcessor, f32, message, SAMPLES_PER_BLOCK, select } from "@unworklet/core";
 import { audioInput, audioOutput, event, forSample, param, state } from "@unworklet/core";
 import { expect, test } from "vite-plus/test";
 
 import { renderOffline } from "./index.ts";
+
+// message<T> 経由で state を更新する processor (= scalar message 注入の検証用)。
+// 出力はそのまま mul state の値 (= 注入が届けば block ごとに値が変わる)。
+const messageMul = defineProcessor(() => {
+  const out = audioOutput({ channels: 1, name: "main" });
+  const setMul = message<{ mul: number }>({ name: "setMul" });
+  const mulState = state.i32(1);
+  return {
+    process: () => {
+      setMul.onReceive(({ mul }) => {
+        mulState.store(mul);
+      });
+      forSample((i) => {
+        out.ch(0).at(i).write(f32(mulState.load()));
+      });
+    },
+  };
+});
+
+test("`renderOffline` delivers a scheduled scalar message to the worklet handler", async () => {
+  const result = await renderOffline(messageMul, {
+    sampleRate: 48000,
+    duration: (2 * SAMPLES_PER_BLOCK) / 48000,
+    messages: [
+      { name: "setMul", payload: { mul: 3 }, atQuantum: 0 },
+      { name: "setMul", payload: { mul: 7 }, atQuantum: 1 },
+    ],
+  });
+  const ch = result.outputs.main![0]!;
+  // quantum 0 で mul=3、quantum 1 で mul=7 が handler 経由で state に反映される。
+  expect(ch[0]).toBe(3);
+  expect(ch[SAMPLES_PER_BLOCK]).toBe(7);
+});
+
+test("`renderOffline` defaults message delivery to quantum 0 when atQuantum is omitted", async () => {
+  const result = await renderOffline(messageMul, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+    messages: [{ name: "setMul", payload: { mul: 5 } }],
+  });
+  expect(result.outputs.main![0]![0]).toBe(5);
+});
+
+// boolean-valued message field (= Q46 で 現状 i32 wire に lift される)。
+const messageFlag = defineProcessor(() => {
+  const out = audioOutput({ channels: 1, name: "main" });
+  const setOn = message<{ on: boolean }>({ name: "setOn" });
+  const flag = state.bool(false);
+  return {
+    process: () => {
+      setOn.onReceive(({ on }) => {
+        flag.store(on);
+      });
+      forSample((i) => {
+        out
+          .ch(0)
+          .at(i)
+          .write(select(flag.load(), f32(1), f32(0)));
+      });
+    },
+  };
+});
+
+test("`renderOffline` delivers a boolean-valued message field (true then false)", async () => {
+  const result = await renderOffline(messageFlag, {
+    sampleRate: 48000,
+    duration: (2 * SAMPLES_PER_BLOCK) / 48000,
+    messages: [
+      { name: "setOn", payload: { on: true }, atQuantum: 0 },
+      { name: "setOn", payload: { on: false }, atQuantum: 1 },
+    ],
+  });
+  const ch = result.outputs.main![0]!;
+  expect(ch[0]).toBe(1); // quantum 0: on=true
+  expect(ch[SAMPLES_PER_BLOCK]).toBe(0); // quantum 1: on=false
+});
+
+test("`renderOffline` throws on a message whose name has no matching declaration", async () => {
+  await expect(
+    renderOffline(messageMul, {
+      sampleRate: 48000,
+      duration: SAMPLES_PER_BLOCK / 48000,
+      messages: [{ name: "ghost", payload: {} }],
+    }),
+  ).rejects.toThrow(/no matching message/);
+});
 
 const stereoGain = defineProcessor(() => {
   const input = audioInput({ channels: 2, name: "main" });
