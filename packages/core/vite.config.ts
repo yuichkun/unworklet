@@ -36,6 +36,9 @@ export default defineConfig({
         // ま れ ない、 vite.browser*.config.ts 経 由 で real chromium で 駆 動 す る
         // 物 = node coverage 対 象 外。
         "src/__tests__/browser/fixtures/**",
+        // black-box behavior test harness (= test infrastructure, exercised by
+        // every behavior test; same exclusion rationale as `*.test.ts`).
+        "src/__tests__/behavior/render.ts",
       ],
       reporter: ["text", "html", "json-summary"],
       thresholds: {

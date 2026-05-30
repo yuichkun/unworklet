@@ -176,18 +176,19 @@ The Opal-compiled JavaScript executes at build time inside Vite. The output is a
 
 ```javascript
 // In a user's Vite config
-import unworklet from '@unworklet/vite-plugin';
-import unworkletRuby from '@unworklet/ruby/vite';
+import unworklet from "@unworklet/vite-plugin";
+import unworkletRuby from "@unworklet/ruby/vite";
 
 export default {
   plugins: [
-    unworklet(),       // handles .ts / .uwk.ts
-    unworkletRuby(),   // handles .uwk.rb
+    unworklet(), // handles .ts / .uwk.ts
+    unworkletRuby(), // handles .uwk.rb
   ],
 };
 ```
 
 The Ruby plugin:
+
 1. Globs `**/*.uwk.rb`.
 2. Invokes Opal to transpile each file to JavaScript.
 3. Resolves the result as a regular `?worklet` import.
@@ -228,22 +229,23 @@ end
 
 ### Declarations
 
-| Ruby form | Lowers to |
-| --------- | --------- |
-| `param :gain, 1.0, range: 0..4` | `param.f32({ default: 1.0, min: 0, max: 4, automationRate: 'a-rate' }).named('gain')` |
-| `param :gain, 1.0, range: 0..4, rate: :k_rate` | `param.f32({...}).named('gain')` with `automationRate: 'k-rate'` |
-| `state :z, 0` | `state.f32(0)` (plain) |
-| `state :meter_l, 0, publish: { rate_fps: 30 }` | `state.f32(0).expose({ name: 'meter_l', publish: { rateFps: 30 } })` |
-| `state :counter, 0, type: :i32` | `state.i32(0)` |
-| `buffer :ring, size: 44100` | `buffer.f32({ size: 44100 })` |
-| `audio_in :input, channels: 2` | `audioInput({ channels: 2, name: 'input' })` |
-| `audio_out :out, channels: 2` | `audioOutput({ channels: 2, name: 'out' })` |
-| `event :overshoot, payload: { level: :f32, channel: :i32 }` | `event<{ level: number, channel: number }>({ name: 'overshoot' })` |
-| `message :load_preset, payload: { slot: :i32 }` | `message<{ slot: number }>({ name: 'load_preset' })` |
-| `midi_in :note_in` | `midiInput({ name: 'note_in' })` |
-| `midi_out :arp_out` | `midiOutput({ name: 'arp_out' })` |
+| Ruby form                                                   | Lowers to                                                                             |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `param :gain, 1.0, range: 0..4`                             | `param.f32({ default: 1.0, min: 0, max: 4, automationRate: 'a-rate' }).named('gain')` |
+| `param :gain, 1.0, range: 0..4, rate: :k_rate`              | `param.f32({...}).named('gain')` with `automationRate: 'k-rate'`                      |
+| `state :z, 0`                                               | `state.f32(0)` (plain)                                                                |
+| `state :meter_l, 0, publish: { rate_fps: 30 }`              | `state.f32(0).expose({ name: 'meter_l', publish: { rateFps: 30 } })`                  |
+| `state :counter, 0, type: :i32`                             | `state.i32(0)`                                                                        |
+| `buffer :ring, size: 44100`                                 | `buffer.f32({ size: 44100 })`                                                         |
+| `audio_in :input, channels: 2`                              | `audioInput({ channels: 2, name: 'input' })`                                          |
+| `audio_out :out, channels: 2`                               | `audioOutput({ channels: 2, name: 'out' })`                                           |
+| `event :overshoot, payload: { level: :f32, channel: :i32 }` | `event<{ level: number, channel: number }>({ name: 'overshoot' })`                    |
+| `message :load_preset, payload: { slot: :i32 }`             | `message<{ slot: number }>({ name: 'load_preset' })`                                  |
+| `midi_in :note_in`                                          | `midiInput({ name: 'note_in' })`                                                      |
+| `midi_out :arp_out`                                         | `midiOutput({ name: 'arp_out' })`                                                     |
 
 Each declaration:
+
 - Takes the slot name as the first arg (= symbol).
 - The slot name auto-defines two methods on the processor context: a reader (`gain`) and a writer (`gain <<` via `<<` operator).
 - snake_case Ruby names map 1:1 to camelCase on the JS / main-thread side via the bridge's automatic conversion.
@@ -298,16 +300,16 @@ Each method (`set_frequency`, `tick`, `reset`) lowers to a key in the subgraph's
 
 Mapping:
 
-| Ruby operator | Maps to (= `@unworklet/core` primitive) |
-| -------------- | --------------------------------------- |
-| `+` / `-` / `*` / `/` / `%` | `add` / `sub` / `mul` / `div` / `mod` |
-| `**` | `pow` (= new primitive needed, see Open Questions O3) |
-| `-` (unary) | `neg` |
-| `==` / `!=` / `<` / `<=` / `>` / `>=` | `eq` / not(eq) / `lt` / `lte` / `gt` / `gte` |
-| `!` | `not` (= shared with RFC-001 S3) |
-| `[]` | sample-offset / buffer / param access |
-| `[]=` | sample-offset / buffer write |
-| `<<` (Node receiver) | `store` for state slots; `lshift` for `Node<'i32'>` bit-shift via method form |
+| Ruby operator                         | Maps to (= `@unworklet/core` primitive)                                       |
+| ------------------------------------- | ----------------------------------------------------------------------------- |
+| `+` / `-` / `*` / `/` / `%`           | `add` / `sub` / `mul` / `div` / `mod`                                         |
+| `**`                                  | `pow` (= new primitive needed, see Open Questions O3)                         |
+| `-` (unary)                           | `neg`                                                                         |
+| `==` / `!=` / `<` / `<=` / `>` / `>=` | `eq` / not(eq) / `lt` / `lte` / `gt` / `gte`                                  |
+| `!`                                   | `not` (= shared with RFC-001 S3)                                              |
+| `[]`                                  | sample-offset / buffer / param access                                         |
+| `[]=`                                 | sample-offset / buffer write                                                  |
+| `<<` (Node receiver)                  | `store` for state slots; `lshift` for `Node<'i32'>` bit-shift via method form |
 
 The `<<` overload is the one sharp edge: it overloads "store" semantics on `State<T>` receivers and "left bit-shift" semantics on `Node<'i32'>` receivers. Disambiguation is by receiver type at the AST level. Documented as a known Ruby-specific convention.
 
@@ -379,6 +381,7 @@ end
 Ruby code inside the `processor` block executes at build time (= via Opal). The Ruby `Node` class methods construct AST nodes (just like the TS Proxy-based capture). The graph is finalized when the block exits; the WASM emit stage takes over.
 
 Build-time Ruby features available:
+
 - Standard library (Math, Array, Hash, etc.) for build-time computation
 - Build-time loops (`NUM_VOICES.times do |v| ... end`) for unrolling
 - File I/O (= Opal supports this in Node.js build context) for loading coefficient tables
@@ -636,6 +639,7 @@ ${source}
 ```
 
 The Opal output is standard JavaScript that:
+
 1. Initializes Opal's runtime.
 2. Loads `unworklet-rb`'s Ruby module (= which has been pre-Opal-compiled and shipped with the library).
 3. Executes the user's Ruby code.
@@ -692,11 +696,11 @@ This is **out of scope for v0.1** of `@unworklet/ruby`. Deferred until build-tim
 
 ## Relationship to other RFCs
 
-| RFC | Scope | Status |
-| --- | ----- | ------ |
-| RFC-001 | `.uwk.ts` Tier B/C authoring frontend in main repo | Draft (this branch) |
-| RFC-002 | Reserved (= potentially Tier D bespoke language) | Not started |
-| RFC-003 (this) | `@unworklet/ruby` experimental library | Draft (this branch) |
+| RFC            | Scope                                              | Status              |
+| -------------- | -------------------------------------------------- | ------------------- |
+| RFC-001        | `.uwk.ts` Tier B/C authoring frontend in main repo | Draft (this branch) |
+| RFC-002        | Reserved (= potentially Tier D bespoke language)   | Not started         |
+| RFC-003 (this) | `@unworklet/ruby` experimental library             | Draft (this branch) |
 
 RFC-001 commits the main repo to a TypeScript-first contract. RFC-003 explores a Ruby-flavored sibling without touching that contract. They are **complementary, not exclusive** — both can ship; users pick whichever fits their workflow.
 
@@ -706,24 +710,24 @@ If RFC-002 (bespoke language) is later pursued, it would also live as a separate
 
 For `@unworklet/ruby` to work as a downstream library, `@unworklet/core` must export:
 
-| Export | Purpose | Already exported? |
-| ------ | ------- | ----------------- |
-| `defineProcessor` | Build processor | ✓ |
-| `defineSubgraph` | Build subgraph | ✓ |
-| `createSubgraph` | Instantiate subgraph | ✓ |
-| `audioInput` / `audioOutput` | Declarations | ✓ |
-| `state` / `buffer` / `param` | Declarations | ✓ |
-| `event` / `message` / `midiInput` / `midiOutput` | Declarations | ✓ |
-| `forSample` | Per-sample loop | ✓ |
-| `select` | Conditional | ✓ |
-| All math primitives (`sin`, `cos`, `exp`, etc.) | Math | ✓ |
-| Scalar constructors (`f32`, `i32`, etc.) | Constructors | ✓ |
-| `compile` | WASM emit | ✓ |
-| `Node<T>` type | TypeScript type | ✓ |
-| `State<T>` / `Buffer<T>` / `Param` types | TypeScript types | ✓ |
-| `not(b)` primitive (= RFC-001 S3) | Logical not | ✗ (= RFC-001 ratify) |
-| `Node<T>.pipe()` method (= RFC-001 S10) | Pipe chain | ✗ (= RFC-001 ratify) |
-| `pipe()` free function | Pipe free | ✗ (= RFC-001 ratify) |
+| Export                                           | Purpose              | Already exported?    |
+| ------------------------------------------------ | -------------------- | -------------------- |
+| `defineProcessor`                                | Build processor      | ✓                    |
+| `defineSubgraph`                                 | Build subgraph       | ✓                    |
+| `createSubgraph`                                 | Instantiate subgraph | ✓                    |
+| `audioInput` / `audioOutput`                     | Declarations         | ✓                    |
+| `state` / `buffer` / `param`                     | Declarations         | ✓                    |
+| `event` / `message` / `midiInput` / `midiOutput` | Declarations         | ✓                    |
+| `forSample`                                      | Per-sample loop      | ✓                    |
+| `select`                                         | Conditional          | ✓                    |
+| All math primitives (`sin`, `cos`, `exp`, etc.)  | Math                 | ✓                    |
+| Scalar constructors (`f32`, `i32`, etc.)         | Constructors         | ✓                    |
+| `compile`                                        | WASM emit            | ✓                    |
+| `Node<T>` type                                   | TypeScript type      | ✓                    |
+| `State<T>` / `Buffer<T>` / `Param` types         | TypeScript types     | ✓                    |
+| `not(b)` primitive (= RFC-001 S3)                | Logical not          | ✗ (= RFC-001 ratify) |
+| `Node<T>.pipe()` method (= RFC-001 S10)          | Pipe chain           | ✗ (= RFC-001 ratify) |
+| `pipe()` free function                           | Pipe free            | ✗ (= RFC-001 ratify) |
 
 The library is **fully buildable on `@unworklet/core` as it stands today** (= pre-RFC-001). The `not` / `pipe` items from RFC-001 are nice-to-have for the Ruby surface but not blockers — Ruby's `!` would lower to `select(eq, false, true)` until `not(b)` lands.
 
@@ -731,11 +735,11 @@ The library is **fully buildable on `@unworklet/core` as it stands today** (= pr
 
 ### O1 — Repo location and naming
 
-| Option | Repo | npm package | Notes |
-| ------ | ---- | ----------- | ----- |
-| (a) Same org, sibling repo | `yuichkun/unworklet-rb` | `@unworklet/ruby` | Branded as unworklet's experimental sibling |
-| (b) Separate org | `unworklet-rb/unworklet-rb` | `unworklet-rb` | Distance from main project; community-led potential |
-| (c) Inside `yuichkun/unworklet` as a subdirectory | `yuichkun/unworklet/experimental/ruby` | `@unworklet/ruby` | Same repo, different package — partial separation |
+| Option                                            | Repo                                   | npm package       | Notes                                               |
+| ------------------------------------------------- | -------------------------------------- | ----------------- | --------------------------------------------------- |
+| (a) Same org, sibling repo                        | `yuichkun/unworklet-rb`                | `@unworklet/ruby` | Branded as unworklet's experimental sibling         |
+| (b) Separate org                                  | `unworklet-rb/unworklet-rb`            | `unworklet-rb`    | Distance from main project; community-led potential |
+| (c) Inside `yuichkun/unworklet` as a subdirectory | `yuichkun/unworklet/experimental/ruby` | `@unworklet/ruby` | Same repo, different package — partial separation   |
 
 Recommendation: **(a)**. Sibling repo under same GitHub user / org, scoped npm package. Clear "experimental" naming, but inheriting visibility from main project.
 
@@ -776,6 +780,7 @@ Recommendation: (a). Explicit `select` is short enough; ternary trickery is risk
 ### O6 — `prev` keyword
 
 Bare `prev` inside `unit`'s `process` block injects a state slot. Library implementation:
+
 - `Unit` context object has a `prev` method that returns the slot reference.
 - The graph-capture mechanism detects `prev` reads and writes, and at unit-method-exit injects a `slot.store(returnValue)`.
 
@@ -797,17 +802,17 @@ Defer to post-v0.1. Reassess based on Tier B/C live-coding adoption + community 
 
 ## Implementation phases (= experimental library, not unworklet roadmap)
 
-| Phase | Scope | Deliverable | Effort (AI-assist) |
-| ----- | ----- | ----------- | ------------------ |
-| R0 | Repo setup, Opal smoke test | `unworklet-rb` empty package, "hello world" Ruby → JS → WASM via @unworklet/core | 1-2 days |
-| R1 | Core DSL (declarations + process + operator overloading + index access) | Ex 1 stereo gain ports verbatim, audio comes out | 3-5 days |
-| R2 | Stateful units + `prev` | Ex 2 biquad EQ ports | 2-3 days |
-| R3 | If-sugar + ternary + emit | Ex 4 limiter ports | 2 days |
-| R4 | MIDI handlers + dynamic slot reflection | Ex 6 arpeggiator ports | 2 days |
-| R5 | Source maps + Vite plugin polish | Errors project to `.uwk.rb` positions | 2 days |
-| R6 | Canonical Ex 1-10 all port + bit-exact regression | All canonical examples in `.uwk.rb`, identical WASM | 3 days |
-| R7 | Documentation + README + audience pitch | Library is documented; positioning vs Tier B/C clear | 2 days |
-| R8 | (= optional, deferred) Ruby.wasm REPL | Live coding playground | 5-8 days |
+| Phase | Scope                                                                   | Deliverable                                                                      | Effort (AI-assist) |
+| ----- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------ |
+| R0    | Repo setup, Opal smoke test                                             | `unworklet-rb` empty package, "hello world" Ruby → JS → WASM via @unworklet/core | 1-2 days           |
+| R1    | Core DSL (declarations + process + operator overloading + index access) | Ex 1 stereo gain ports verbatim, audio comes out                                 | 3-5 days           |
+| R2    | Stateful units + `prev`                                                 | Ex 2 biquad EQ ports                                                             | 2-3 days           |
+| R3    | If-sugar + ternary + emit                                               | Ex 4 limiter ports                                                               | 2 days             |
+| R4    | MIDI handlers + dynamic slot reflection                                 | Ex 6 arpeggiator ports                                                           | 2 days             |
+| R5    | Source maps + Vite plugin polish                                        | Errors project to `.uwk.rb` positions                                            | 2 days             |
+| R6    | Canonical Ex 1-10 all port + bit-exact regression                       | All canonical examples in `.uwk.rb`, identical WASM                              | 3 days             |
+| R7    | Documentation + README + audience pitch                                 | Library is documented; positioning vs Tier B/C clear                             | 2 days             |
+| R8    | (= optional, deferred) Ruby.wasm REPL                                   | Live coding playground                                                           | 5-8 days           |
 
 **Total: ~17-22 days for v0.1 (= R0-R7), excluding REPL.**
 

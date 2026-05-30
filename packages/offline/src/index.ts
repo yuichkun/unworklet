@@ -73,6 +73,9 @@ export type RenderOfflineResult = {
   sampleRate: number;
 };
 
+/** message / event ringbuffer header = [head, tail, overflowCount] × 4 byte。 */
+const MESSAGE_HEADER_BYTES = 12;
+
 export async function renderOffline<C>(
   processor: CompiledProcessor<C>,
   config: RenderOfflineConfig,
@@ -94,9 +97,27 @@ export async function renderOffline<C>(
       capacity: slot.capacity,
       slotSize: slot.slotSize,
       fields: slot.fields,
+      // typed-array field (§4.3 worklet→main) の中身を読む content region。
+      payloadContent: meta.layout.regions.payloadContent.eventSlots[evt.name],
     };
   });
   const emittedEvents: OfflineEmittedEvent[] = [];
+
+  // message ring meta (= main → worklet 注入用)。 worklet template の SAB 経路と
+  // 違い、 offline は WASM memory の ring header / slot を直接 poke して 1 quantum
+  // 先頭で push する (= event drain と対称の手書き transport)。
+  const messageRingMeta = meta.messages.map((msg) => {
+    const slot = meta.layout.regions.messageRings.slots[msg.name]!;
+    return {
+      name: msg.name,
+      base: slot.base,
+      capacity: slot.capacity,
+      slotSize: slot.slotSize,
+      // typed-array field の 中 身 を 置 く content region (= ナ シ な ら undefined)。
+      payloadContent: meta.layout.regions.payloadContent.messageSlots[msg.name],
+      fields: slot.fields,
+    };
+  });
 
   const totalSamples =
     Math.ceil((config.duration * config.sampleRate) / SAMPLES_PER_BLOCK) * SAMPLES_PER_BLOCK;
@@ -150,6 +171,50 @@ export async function renderOffline<C>(
       }
     }
 
+    // message 注入 (= こ の quantum 宛 て の scheduled message を ring head に push)。
+    // worklet の onReceive drain (= process 冒 頭、 Q38-b) が tail→head を 消 化 す る。
+    // tail は 前 quantum の drain で head に commit 済 = 各 quantum で ring は空 start。
+    for (const m of config.messages ?? []) {
+      if ((m.atQuantum ?? 0) !== b) continue;
+      const ring = messageRingMeta.find((r) => r.name === m.name);
+      if (ring === undefined) {
+        throw new Error(
+          `unworklet: renderOffline message "${m.name}" has no matching message<T> declaration`,
+        );
+      }
+      const memory = instance.memory.buffer;
+      const headerView = new Int32Array(memory, ring.base, 3);
+      const head = headerView[0]!;
+      const slotByteOffset =
+        ring.base + MESSAGE_HEADER_BYTES + (head % ring.capacity) * ring.slotSize;
+      const dataView = new DataView(memory);
+      const payload = m.payload as Record<string, unknown>;
+      for (const field of ring.fields) {
+        const byteOffset = slotByteOffset + field.offsetInSlot;
+        if (field.payloadElementType !== undefined) {
+          // typed-array field = 中 身 を payloadContent の per-slot chunk に 書 き、
+          // slot に [payloadLen(bytes), payloadOffset] を set (= §5.2 / Q85)。 1 quantum に
+          // 複 数 message を queue し て も content が 上 書 き さ れ な い よ う、 chunk =
+          // (head % chunks) × perChunk で slot ご と に 分 け る (= emit / SAB と 対 称)。
+          // chunks 枠 を 超 え た 連 射 は 循 環 再 利 用 = drop-oldest (= trap し な い)。
+          const src = payload[field.name] as Float32Array;
+          const content = ring.payloadContent!;
+          const perChunk = Math.floor(content.capacity / content.chunks);
+          const payloadOffset = (head % content.chunks) * perChunk;
+          const byteLen = Math.min(src.length * src.BYTES_PER_ELEMENT, perChunk);
+          new Uint8Array(memory, content.base + payloadOffset, byteLen).set(
+            new Uint8Array(src.buffer, src.byteOffset, byteLen),
+          );
+          dataView.setInt32(byteOffset, byteLen, true); // payloadLen (= bytes)
+          dataView.setInt32(byteOffset + 4, payloadOffset, true); // payloadOffset (= per-slot chunk)
+        } else {
+          // scalar field = Q46 で 現 状 全 て i32 wire (= number / boolean → i32 word)。
+          dataView.setInt32(byteOffset, Number(payload[field.name]) | 0, true);
+        }
+      }
+      headerView[0] = head + 1; // head を 1 slot 進 め る (= push)
+    }
+
     instance.process();
 
     // event ring drain (= 各 quantum 末 尾 で WASM ring の head が 進 ん だ 分 を
@@ -169,6 +234,25 @@ export async function renderOffline<C>(
         let atSample = 0;
         for (const field of ring.fields) {
           const byteOffset = slotByteOffset + field.offsetInSlot;
+          // typed-array field (§4.3) = slot の [payloadLen, payloadOffset] を読んで
+          // content region から fresh Float32Array を切り出す (= main 側は natural array)。
+          if (field.payloadElementType !== undefined) {
+            const payloadLen = dataView.getInt32(byteOffset, true); // bytes
+            const payloadOffset = dataView.getInt32(byteOffset + 4, true);
+            const srcBase = ring.payloadContent!.base + payloadOffset;
+            const bytes = memory.slice(srcBase, srcBase + payloadLen); // fresh copy
+            payload[field.name] =
+              field.payloadElementType === "f64"
+                ? new Float64Array(bytes)
+                : field.payloadElementType === "u8"
+                  ? new Uint8Array(bytes)
+                  : field.payloadElementType === "i32" || field.payloadElementType === "bool"
+                    ? new Int32Array(bytes)
+                    : field.payloadElementType === "i64"
+                      ? new BigInt64Array(bytes)
+                      : new Float32Array(bytes);
+            continue;
+          }
           let value: number | boolean | bigint;
           switch (field.wireType) {
             case "i32":

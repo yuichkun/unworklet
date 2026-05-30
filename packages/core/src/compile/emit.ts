@@ -19,6 +19,7 @@
 
 import type { AstNode, CapturedGraph } from "./ast.ts";
 import type { Layout } from "./layout.ts";
+import type { BufferElementType, ScalarType } from "../types.ts";
 
 export type BinaryenAPI = (typeof import("binaryen"))["default"];
 export type BinaryenModule = InstanceType<BinaryenAPI["Module"]>;
@@ -93,6 +94,36 @@ const MOD_B_F32_LOCAL = 9;
 const MOD_Q_F32_LOCAL = 10;
 
 /**
+ * f64 temp locals (= f32 版 と 同 役 割、 f64 path 用)。 frac の 二 重 評 価 回 避 と
+ * mod の JS `%` 準 拠 special impl で 使 う。
+ */
+const FRAC_F64_LOCAL = 11;
+const MOD_A_F64_LOCAL = 12;
+const MOD_B_F64_LOCAL = 13;
+const MOD_Q_F64_LOCAL = 14;
+
+/**
+ * `buffer.readInterpolated` 用 temp local。 pos を 1 度 評 価 し て f32 local に
+ * hold (= floor index と frac で 2 度 参 照)、 切 り 出 し た integer index を i32
+ * local に hold (= i / i+1 の 2 tap address で 2 度 参 照)。 二 重 評 価 回 避。
+ */
+const BUFINTERP_POS_LOCAL = 15;
+const BUFINTERP_I0_LOCAL = 16;
+
+/**
+ * `payloadField.at(idx)` の OOB clamp 用 i32 temp local (= §4.3)。 idx を 1 度 評 価 +
+ * local hold し、 `min(idx, length-1)` → `max(_, 0)` の 2 段 select で [0, length-1]
+ * に 丸 め て か ら content load する (= runtime trap 排 除、 idx を 複 数 回 参 照)。
+ */
+const PAYLOAD_CLAMP_LOCAL = 17;
+
+/**
+ * SIMD `sumLanes` 用 v128 temp local (= §7)。 vec を 1 度 評 価 し て hold し、
+ * 4 lane を `extract_lane` で 取 り 出 す (= vec expression の 4 重 評 価 回 避)。
+ */
+const VEC_TEMP_LOCAL = 18;
+
+/**
  * 多 項 式 近 似 の math primitive (= sin / cos / tan / tanh / exp / log、 Q17) は
  * 共 有 プ ラ イ ベ ー ト WASM 関 数 (= `(f32) -> f32`、 export し な い) と し て emit し、
  * 呼 び 出 し 側 は `call` で 参 照。 各 関 数 は 自 前 の local を 持 つ の で `process`
@@ -130,6 +161,9 @@ export async function emit(
   const sampleRate = options.sampleRate ?? DEFAULT_EMIT_SAMPLE_RATE;
   const binaryen = (await import("binaryen")).default;
   const mod = new binaryen.Module();
+  // buffer.copyFrom = memory.copy (= bulk-memory、Q31-c)、SIMD = f32x4 (= §7)。
+  // 既定 features (MVP) に足して emitBinary が opcode を出せるように。
+  mod.setFeatures(mod.getFeatures() | binaryen.Features.BulkMemory | binaryen.Features.SIMD128);
 
   const pages = Math.max(1, Math.ceil(layout.totalBytes / PAGE_BYTES));
   mod.setMemory(pages, pages, "memory");
@@ -182,6 +216,14 @@ export async function emit(
       binaryen.f32, // MOD_A_F32_LOCAL (= mod 被 除 数 temp)
       binaryen.f32, // MOD_B_F32_LOCAL (= mod 除 数 temp)
       binaryen.f32, // MOD_Q_F32_LOCAL (= mod quotient temp)
+      binaryen.f64, // FRAC_F64_LOCAL
+      binaryen.f64, // MOD_A_F64_LOCAL
+      binaryen.f64, // MOD_B_F64_LOCAL
+      binaryen.f64, // MOD_Q_F64_LOCAL
+      binaryen.f32, // BUFINTERP_POS_LOCAL
+      binaryen.i32, // BUFINTERP_I0_LOCAL
+      binaryen.i32, // PAYLOAD_CLAMP_LOCAL (= at OOB clamp idx)
+      binaryen.v128, // VEC_TEMP_LOCAL (= SIMD sumLanes 用)
     ],
     body,
   );
@@ -288,6 +330,583 @@ function emitPublishScheduler(
   return blocks;
 }
 
+/** The binaryen float namespace for a scalar type (`f64` or `f32`). */
+function floatNs(mod: BinaryenModule, type: ScalarType) {
+  return type === "f64" ? mod.f64 : mod.f32;
+}
+
+/**
+ * Type-dispatched `max` / `min`. WASM has native `f{32,64}.{max,min}` but **no**
+ * integer max/min instruction, so `i32` / `i64` lower to `select(a {>|<} b, a, b)`
+ * via a signed compare. The operand thunks are evaluated twice (once in the
+ * compare, once in the selected branch); operands are pure side-effect-free
+ * expressions with no intervening store, so both evaluations are identical.
+ */
+function emitMaxMin(
+  mod: BinaryenModule,
+  type: ScalarType,
+  op: "max" | "min",
+  emitA: () => number,
+  emitB: () => number,
+): number {
+  if (type === "i32") {
+    const cond = op === "max" ? mod.i32.gt_s(emitA(), emitB()) : mod.i32.lt_s(emitA(), emitB());
+    return mod.select(cond, emitA(), emitB());
+  }
+  if (type === "i64") {
+    const cond = op === "max" ? mod.i64.gt_s(emitA(), emitB()) : mod.i64.lt_s(emitA(), emitB());
+    return mod.select(cond, emitA(), emitB());
+  }
+  return op === "max"
+    ? floatNs(mod, type).max(emitA(), emitB())
+    : floatNs(mod, type).min(emitA(), emitB());
+}
+
+/**
+ * Type-dispatched `abs`. WASM has `f{32,64}.abs` but no integer abs, so `i32` /
+ * `i64` lower to `select(x < 0, -x, x)` (= signed compare + negate). The operand
+ * thunk is evaluated multiple times (pure side-effect-free expression → identical).
+ */
+function emitAbs(mod: BinaryenModule, type: ScalarType, emitX: () => number): number {
+  if (type === "i32") {
+    return mod.select(
+      mod.i32.lt_s(emitX(), mod.i32.const(0)),
+      emitNeg(mod, type, emitX()),
+      emitX(),
+    );
+  }
+  if (type === "i64") {
+    return mod.select(
+      mod.i64.lt_s(emitX(), i64Const(mod, 0n)),
+      emitNeg(mod, type, emitX()),
+      emitX(),
+    );
+  }
+  return floatNs(mod, type).abs(emitX());
+}
+
+/**
+ * Type-dispatched numeric binary op (= 多 型 arithmetic / comparison lowering)。
+ * `op` は binaryen 命 令 名 (= comparison は `le` / `ge`、 AST kind の `lte` /
+ * `gte` を 呼 び 出 し 側 で map)。 整 数 は 符 号 付 き (= `div_s` / `lt_s` 等)。
+ * i64 dispatch は i64 stage で 追 加。
+ */
+function emitNumericBinary(
+  mod: BinaryenModule,
+  type: ScalarType,
+  op: "add" | "sub" | "mul" | "div" | "eq" | "lt" | "gt" | "le" | "ge",
+  lhs: number,
+  rhs: number,
+): number {
+  if (type === "i32") {
+    switch (op) {
+      case "add":
+        return mod.i32.add(lhs, rhs);
+      case "sub":
+        return mod.i32.sub(lhs, rhs);
+      case "mul":
+        return mod.i32.mul(lhs, rhs);
+      case "div":
+        return mod.i32.div_s(lhs, rhs);
+      case "eq":
+        return mod.i32.eq(lhs, rhs);
+      case "lt":
+        return mod.i32.lt_s(lhs, rhs);
+      case "gt":
+        return mod.i32.gt_s(lhs, rhs);
+      case "le":
+        return mod.i32.le_s(lhs, rhs);
+      case "ge":
+        return mod.i32.ge_s(lhs, rhs);
+    }
+  }
+  // i64 = 符 号 付 き (= div_s / lt_s 等)。 comparison は i32 (= bool 0/1) を 返 す。
+  if (type === "i64") {
+    switch (op) {
+      case "add":
+        return mod.i64.add(lhs, rhs);
+      case "sub":
+        return mod.i64.sub(lhs, rhs);
+      case "mul":
+        return mod.i64.mul(lhs, rhs);
+      case "div":
+        return mod.i64.div_s(lhs, rhs);
+      case "eq":
+        return mod.i64.eq(lhs, rhs);
+      case "lt":
+        return mod.i64.lt_s(lhs, rhs);
+      case "gt":
+        return mod.i64.gt_s(lhs, rhs);
+      case "le":
+        return mod.i64.le_s(lhs, rhs);
+      case "ge":
+        return mod.i64.ge_s(lhs, rhs);
+    }
+  }
+  // f32 / f64.
+  const fl = floatNs(mod, type);
+  switch (op) {
+    case "add":
+      return fl.add(lhs, rhs);
+    case "sub":
+      return fl.sub(lhs, rhs);
+    case "mul":
+      return fl.mul(lhs, rhs);
+    case "div":
+      return fl.div(lhs, rhs);
+    case "eq":
+      return fl.eq(lhs, rhs);
+    case "lt":
+      return fl.lt(lhs, rhs);
+    case "gt":
+      return fl.gt(lhs, rhs);
+    case "le":
+      return fl.le(lhs, rhs);
+    case "ge":
+      return fl.ge(lhs, rhs);
+  }
+}
+
+/**
+ * `i64.const` from a bigint. binaryen 129 の `i64.const` は 単 一 bigint 引 数 を
+ * 取 る が bundled d.ts は 旧 `(low, high)` signature の ま ま (= 実 装 と 不 一 致)。
+ * member 式 を inline call し て cast = `this` 束 縛 を 保 っ た ま ま 型 を 通 す。
+ */
+function i64Const(mod: BinaryenModule, value: bigint): number {
+  return (mod.i64.const as unknown as (value: bigint) => number)(value);
+}
+
+/** Type-dispatched negation. WASM has no integer `neg` = `0 - x`. */
+function emitNeg(mod: BinaryenModule, type: ScalarType, x: number): number {
+  if (type === "i32") return mod.i32.sub(mod.i32.const(0), x);
+  if (type === "i64") return mod.i64.sub(i64Const(mod, 0n), x);
+  return floatNs(mod, type).neg(x);
+}
+
+/**
+ * Transcendental call (= sin / cos / tan / tanh / exp / log)。 共 有 関 数 は
+ * `(f32) -> f32` (= Q17 多 項 式 近 似、 関 数 本 体 は `addMathFunctions` で 追 加)。
+ * f64 operand は f32-bridge で 通 す: `promote(call(demote(value)))`。 共 有 関 数 を
+ * 型 ご と に 複 製 せ ず、 精 度 を f32 相 当 (~1e-4) に 揃 え る (= 型 不 問 の
+ * approximate-math 契 約)。 `value` は emit 済 の expression (= node.type に 一 致)。
+ */
+function emitTranscendental(
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+  kind: "sin" | "cos" | "tan" | "tanh" | "exp" | "log",
+  type: ScalarType,
+  value: number,
+): number {
+  if (type === "f64") {
+    return mod.f64.promote(
+      mod.call(`${MATH_FN_PREFIX}${kind}`, [mod.f32.demote(value)], binaryen.f32),
+    );
+  }
+  return mod.call(`${MATH_FN_PREFIX}${kind}`, [value], binaryen.f32);
+}
+
+/**
+ * Cross-precision convert lowering (= scalar constructor `f32(node)` 等、 no-trap:
+ * integer truncation は saturating)。 i32 ↔ f32 / i32 ↔ f64 / f32 ↔ f64 を 実 装、
+ * i64 / bool pair は 各 stage で 追 加。
+ */
+function emitConvert(mod: BinaryenModule, from: ScalarType, to: ScalarType, value: number): number {
+  if (from === "i32" && to === "f32") return mod.f32.convert_s.i32(value);
+  if (from === "f32" && to === "i32") return mod.i32.trunc_s_sat.f32(value);
+  if (from === "i32" && to === "f64") return mod.f64.convert_s.i32(value);
+  if (from === "f64" && to === "i32") return mod.i32.trunc_s_sat.f64(value);
+  if (from === "f32" && to === "f64") return mod.f64.promote(value);
+  if (from === "f64" && to === "f32") return mod.f32.demote(value);
+  // i64 は bigint-only construction (= 昇 格 convert ナ シ)、 narrowing だ け: i32 へ
+  // は wrap (= 下 位 32bit)、 f32 / f64 へ は signed convert。
+  if (from === "i64" && to === "i32") return mod.i32.wrap(value);
+  if (from === "i64" && to === "f32") return mod.f32.convert_s.i64(value);
+  if (from === "i64" && to === "f64") return mod.f64.convert_s.i64(value);
+  /* v8 ignore next 2 — 残 り convert pair (= bool) は bool stage で fill、 該 当 type の node は ま だ 構 築 不 可 */
+  throw new Error(`unworklet: convert ${from} → ${to} not implemented yet`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// buffer scalar access (= `01-dsl.md` §3.2)。 element ptr = base + index ×
+// sizeof。 u8 は 1 byte load8_u / store8 (= 下 位 8 bit)、 bool は i32 word。
+// ─────────────────────────────────────────────────────────────────────────
+
+const BUFFER_ELEMENT_BYTES_EMIT: Record<BufferElementType, number> = {
+  f32: 4,
+  f64: 8,
+  i32: 4,
+  i64: 8,
+  bool: 4,
+  u8: 1,
+};
+
+/** element pointer = bufferBase + index × sizeof(elementType)。 */
+function bufferElementPtr(
+  mod: BinaryenModule,
+  base: number,
+  elementType: BufferElementType,
+  indexExpr: number,
+): number {
+  return mod.i32.add(
+    mod.i32.const(base),
+    mod.i32.mul(indexExpr, mod.i32.const(BUFFER_ELEMENT_BYTES_EMIT[elementType])),
+  );
+}
+
+function emitBufferLoad(mod: BinaryenModule, elementType: BufferElementType, ptr: number): number {
+  switch (elementType) {
+    case "f32":
+      return mod.f32.load(0, BYTES_PER_F32, ptr);
+    case "f64":
+      return mod.f64.load(0, BYTES_PER_F64, ptr);
+    case "i32":
+    case "bool":
+      return mod.i32.load(0, BYTES_PER_I32, ptr);
+    case "i64":
+      return mod.i64.load(0, BYTES_PER_I64, ptr);
+    case "u8":
+      // u8 = zero-extended 下 位 8 bit → Node<'i32'>。
+      return mod.i32.load8_u(0, 1, ptr);
+  }
+}
+
+function emitBufferStore(
+  mod: BinaryenModule,
+  elementType: BufferElementType,
+  ptr: number,
+  value: number,
+): number {
+  switch (elementType) {
+    case "f32":
+      return mod.f32.store(0, BYTES_PER_F32, ptr, value);
+    case "f64":
+      return mod.f64.store(0, BYTES_PER_F64, ptr, value);
+    case "i32":
+    case "bool":
+      return mod.i32.store(0, BYTES_PER_I32, ptr, value);
+    case "i64":
+      return mod.i64.store(0, BYTES_PER_I64, ptr, value);
+    case "u8":
+      // 下 位 8 bit だ け store (= i32.store8)。
+      return mod.i32.store8(0, 1, ptr, value);
+  }
+}
+
+/** Convert a loaded buffer element to f32 (= f32-domain interpolation 用)。 */
+function bufferElementToF32(
+  mod: BinaryenModule,
+  elementType: BufferElementType,
+  loaded: number,
+): number {
+  switch (elementType) {
+    case "f32":
+      return loaded;
+    case "f64":
+      return mod.f32.demote(loaded);
+    case "i32":
+    case "bool":
+    case "u8":
+      return mod.f32.convert_s.i32(loaded);
+    case "i64":
+      return mod.f32.convert_s.i64(loaded);
+  }
+}
+
+/** Convert an interpolated f32 back to the element's surfaced scalar type。 */
+function f32ToBufferElement(
+  mod: BinaryenModule,
+  elementType: BufferElementType,
+  value: number,
+): number {
+  switch (elementType) {
+    case "f32":
+      return value;
+    case "f64":
+      return mod.f64.promote(value);
+    case "i32":
+    case "bool":
+    case "u8":
+      return mod.i32.trunc_s_sat.f32(value);
+    case "i64":
+      return mod.i64.trunc_s_sat.f32(value);
+  }
+}
+
+/**
+ * `buffer.readInterpolated(pos)` = 線 形 補 間 (= 2-tap)。 pos を f32 local に
+ * hold、 i0 = trunc(pos) を i32 local に hold (= 二 重 評 価 回 避)。 frac =
+ * pos - i0、 a = buf[i0]、 b = buf[i0+1]、 result = a + (b - a)·frac。 補 間 は
+ * f32 domain (= element を f32 に 変 換 し て 計 算 後、 element の scalar 型 へ 戻 す)。
+ * f64 buffer も f32 domain で 行 う (= wavetable 用 途 で 可 聴 差 ナ シ、 Q17 と 同 軸)。
+ */
+function emitBufferReadInterpolated(
+  node: AstNode & { kind: "bufferReadInterpolated" },
+  layout: Layout,
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): number {
+  const base = layout.regions.buffers.slots[node.name];
+  if (base === undefined) {
+    throw new Error(`unknown buffer: ${node.name}`);
+  }
+  const et = node.elementType;
+  const f = binaryen.f32;
+  const i = binaryen.i32;
+  const i0 = (): number => mod.local.get(BUFINTERP_I0_LOCAL, i);
+  const aF32 = bufferElementToF32(
+    mod,
+    et,
+    emitBufferLoad(mod, et, bufferElementPtr(mod, base, et, i0())),
+  );
+  const bF32 = bufferElementToF32(
+    mod,
+    et,
+    emitBufferLoad(mod, et, bufferElementPtr(mod, base, et, mod.i32.add(i0(), mod.i32.const(1)))),
+  );
+  // frac = pos - f32(i0)
+  const frac = mod.f32.sub(mod.local.get(BUFINTERP_POS_LOCAL, f), mod.f32.convert_s.i32(i0()));
+  // result = a + (b - a)·frac  (f32 domain)
+  const interp = mod.f32.add(aF32, mod.f32.mul(mod.f32.sub(bF32, aF32), frac));
+  const resultScalar = et === "u8" ? "i32" : et;
+  const resultTy =
+    resultScalar === "f64"
+      ? binaryen.f64
+      : resultScalar === "f32"
+        ? binaryen.f32
+        : resultScalar === "i64"
+          ? binaryen.i64
+          : binaryen.i32;
+  return mod.block(
+    null,
+    [
+      mod.local.set(BUFINTERP_POS_LOCAL, emitExpression(node.pos, layout, mod, binaryen)),
+      mod.local.set(
+        BUFINTERP_I0_LOCAL,
+        mod.i32.trunc_s_sat.f32(mod.local.get(BUFINTERP_POS_LOCAL, f)),
+      ),
+      f32ToBufferElement(mod, et, interp),
+    ],
+    resultTy,
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// typed-array payload reads (= `01-dsl.md` §4.3、 message onReceive handler)。
+// slot の [payloadLen, payloadOffset] (= EVENT_SLOT_PTR_LOCAL 経 由) + message
+// 別 payloadContent region base で 可 変 長 中 身 を index read / 要 素 数 取 得。
+// ─────────────────────────────────────────────────────────────────────────
+
+function payloadSlotMeta(
+  node: AstNode & { kind: "payloadFieldRead" | "payloadFieldLength" },
+  layout: Layout,
+): { offsetInSlot: number; contentBase: number; elemBytes: number } {
+  const slot = layout.regions.messageRings.slots[node.messageName];
+  /* v8 ignore next 3 — payloadFieldRead/Length は proxy 経 由 で 宣 言 済 message を 参 照 = unreachable guard */
+  if (slot === undefined) {
+    throw new Error(`unknown message: ${node.messageName}`);
+  }
+  const field = slot.fields.find((f) => f.name === node.field);
+  /* v8 ignore next 3 — field は proxy 経 由 で decl.fields に push 済 = unreachable guard */
+  if (field === undefined) {
+    throw new Error(`unknown message payload field: ${node.messageName}.${node.field}`);
+  }
+  const content = layout.regions.payloadContent.messageSlots[node.messageName];
+  /* v8 ignore next 3 — typed-array field を 持 つ message は payloadContent に slot 既 push */
+  if (content === undefined) {
+    throw new Error(`unknown payloadContent for message: ${node.messageName}`);
+  }
+  return {
+    offsetInSlot: field.offsetInSlot,
+    contentBase: content.base,
+    elemBytes: BUFFER_ELEMENT_BYTES_EMIT[node.elementType],
+  };
+}
+
+function emitPayloadFieldLength(
+  node: AstNode & { kind: "payloadFieldLength" },
+  layout: Layout,
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): number {
+  const { offsetInSlot, elemBytes } = payloadSlotMeta(node, layout);
+  // payloadLen (= bytes) を slot か ら load し、 element 数 = payloadLen / sizeof。
+  const payloadLen = mod.i32.load(
+    0,
+    BYTES_PER_I32,
+    mod.i32.add(mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32), mod.i32.const(offsetInSlot)),
+  );
+  return mod.i32.div_s(payloadLen, mod.i32.const(elemBytes));
+}
+
+function emitPayloadFieldRead(
+  node: AstNode & { kind: "payloadFieldRead" },
+  layout: Layout,
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): number {
+  const { offsetInSlot, contentBase, elemBytes } = payloadSlotMeta(node, layout);
+  const slotPtr = (): number => mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32);
+  // length = payloadLen (bytes) / sizeof。 OOB clamp の upper bound = length - 1。
+  const upper = (): number =>
+    mod.i32.sub(
+      mod.i32.div_s(
+        mod.i32.load(0, BYTES_PER_I32, mod.i32.add(slotPtr(), mod.i32.const(offsetInSlot))),
+        mod.i32.const(elemBytes),
+      ),
+      mod.i32.const(1),
+    );
+  const clamp = (): number => mod.local.get(PAYLOAD_CLAMP_LOCAL, binaryen.i32);
+  // payloadOffset (= contentBase 内 byte offset) を slot の offsetInSlot+4 か ら load。
+  const payloadOffset = mod.i32.load(
+    0,
+    BYTES_PER_I32,
+    mod.i32.add(slotPtr(), mod.i32.const(offsetInSlot + 4)),
+  );
+  // addr = contentBase + payloadOffset + clampedIdx × sizeof (= clampedIdx は block 内
+  // で [0, length-1] に 丸 め 済 を local.get)。
+  const addr = mod.i32.add(
+    mod.i32.add(mod.i32.const(contentBase), payloadOffset),
+    mod.i32.mul(clamp(), mod.i32.const(elemBytes)),
+  );
+  const blockType =
+    node.elementType === "f32"
+      ? binaryen.f32
+      : node.elementType === "f64"
+        ? binaryen.f64
+        : node.elementType === "i64"
+          ? binaryen.i64
+          : binaryen.i32; // i32 / bool / u8
+  // length = payloadLen / sizeof (= 要 素 数)。 空 payload (length 0) の 判 定 用。
+  const lengthExpr = (): number =>
+    mod.i32.div_s(
+      mod.i32.load(0, BYTES_PER_I32, mod.i32.add(slotPtr(), mod.i32.const(offsetInSlot))),
+      mod.i32.const(elemBytes),
+    );
+  // length === 0 で 返 す 0 (= elementType 別 の zero)。
+  const zeroConst =
+    node.elementType === "f32"
+      ? mod.f32.const(0)
+      : node.elementType === "f64"
+        ? mod.f64.const(0)
+        : node.elementType === "i64"
+          ? i64Const(mod, 0n)
+          : mod.i32.const(0); // i32 / bool / u8
+  // §4.3 select carrier-clamp: idx を 1 度 評 価 → [0, length-1] に 2 段 select で 丸 め →
+  // content load。 OOB (idx ≥ length or < 0) で も addr が payload 内 に 留 ま り trap し な い。
+  // ただ し length === 0 (= 空 payload) は upper = -1 で clamp が idx 0 に 潰 れ、 ゼ ロ byte
+  // し か 書 か れ て い な い chunk か ら 古 い content byte を leak す る (= 直 前 に そ の chunk を
+  // 使 っ た payload の 残 骸)。 length === 0 を select で 弾 い て 0 を 返 す。
+  return mod.block(
+    null,
+    [
+      mod.local.set(PAYLOAD_CLAMP_LOCAL, emitExpression(node.index, layout, mod, binaryen)),
+      // clamp = min(clamp, length - 1)
+      mod.local.set(
+        PAYLOAD_CLAMP_LOCAL,
+        mod.select(mod.i32.gt_s(clamp(), upper()), upper(), clamp()),
+      ),
+      // clamp = max(clamp, 0)
+      mod.local.set(
+        PAYLOAD_CLAMP_LOCAL,
+        mod.select(mod.i32.lt_s(clamp(), mod.i32.const(0)), mod.i32.const(0), clamp()),
+      ),
+      // length === 0 → 0、それ以外は clamp 済 content load (= 空 payload の stale leak 防止)。
+      mod.select(mod.i32.eqz(lengthExpr()), zeroConst, emitBufferLoad(mod, node.elementType, addr)),
+    ],
+    blockType,
+  );
+}
+
+// buf.copyFrom(payloadField) = content region → buffer の bulk `memory.copy` (= Q31-c)。
+// copyBytes = min(payloadLen, bufferSize × sizeof) (= min(buf.size, src.length) を byte 換 算)。
+function emitBufferCopyFrom(
+  node: AstNode & { kind: "bufferCopyFrom" },
+  layout: Layout,
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): number {
+  const base = layout.regions.buffers.slots[node.bufferName];
+  /* v8 ignore next 3 — buffer は宣言済 = layout に slot 既 push の unreachable guard */
+  if (base === undefined) {
+    throw new Error(`unknown buffer: ${node.bufferName}`);
+  }
+  const slot = layout.regions.messageRings.slots[node.messageName];
+  const field = slot?.fields.find((f) => f.name === node.field);
+  const content = layout.regions.payloadContent.messageSlots[node.messageName];
+  /* v8 ignore next 3 — typed-array field 持 ち の message は slot + payloadContent 既 push */
+  if (slot === undefined || field === undefined || content === undefined) {
+    throw new Error(`unknown message payload field: ${node.messageName}.${node.field}`);
+  }
+  const elemBytes = BUFFER_ELEMENT_BYTES_EMIT[node.elementType];
+  // payloadLen (= bytes) / payloadOffset を slot か ら load (= 評 価 ご と に fresh node)。
+  const slotPtr = (): number => mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32);
+  const payloadLen = (): number =>
+    mod.i32.load(0, BYTES_PER_I32, mod.i32.add(slotPtr(), mod.i32.const(field.offsetInSlot)));
+  const payloadOffset = mod.i32.load(
+    0,
+    BYTES_PER_I32,
+    mod.i32.add(slotPtr(), mod.i32.const(field.offsetInSlot + 4)),
+  );
+  const destCapBytes = (): number => mod.i32.const(node.bufferSize * elemBytes);
+  // copyBytes = min(payloadLen, destCapBytes) = select(len < cap, len, cap)。
+  const copyBytes = mod.select(
+    mod.i32.lt_u(payloadLen(), destCapBytes()),
+    payloadLen(),
+    destCapBytes(),
+  );
+  const destAddr = mod.i32.const(base);
+  const srcAddr = mod.i32.add(mod.i32.const(content.base), payloadOffset);
+  return mod.memory.copy(destAddr, srcAddr, copyBytes);
+}
+
+// SIMD f32x4 vec-producing node → v128 expr (= §7)。 vec4 = splat lane0 + replace_lane
+// 1/2/3、 splat = broadcast、 binary = f32x4.add/sub/mul/div。 lane scalar 引 数 は
+// emitExpression (= f32 path)、 vec オ ペ ラ ン ド は emitVec で 再 帰。
+function emitVec(
+  node: AstNode,
+  layout: Layout,
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): number {
+  const scalar = (n: AstNode): number => emitExpression(n, layout, mod, binaryen);
+  const vec = (n: AstNode): number => emitVec(n, layout, mod, binaryen);
+  switch (node.kind) {
+    case "vecSplat":
+      return mod.f32x4.splat(scalar(node.value));
+    case "vecConst": {
+      let v = mod.f32x4.splat(scalar(node.lanes[0]));
+      v = mod.f32x4.replace_lane(v, 1, scalar(node.lanes[1]));
+      v = mod.f32x4.replace_lane(v, 2, scalar(node.lanes[2]));
+      v = mod.f32x4.replace_lane(v, 3, scalar(node.lanes[3]));
+      return v;
+    }
+    case "vecAdd":
+      return mod.f32x4.add(vec(node.lhs), vec(node.rhs));
+    case "vecSub":
+      return mod.f32x4.sub(vec(node.lhs), vec(node.rhs));
+    case "vecMul":
+      return mod.f32x4.mul(vec(node.lhs), vec(node.rhs));
+    case "vecDiv":
+      return mod.f32x4.div(vec(node.lhs), vec(node.rhs));
+    case "bufferLoadVec": {
+      const base = layout.regions.buffers.slots[node.name];
+      /* v8 ignore next 3 — buffer は宣言済 = layout に slot 既 push = unreachable */
+      if (base === undefined) {
+        throw new Error(`unknown buffer: ${node.name}`);
+      }
+      // addr = bufferBase + offset × 4 (f32 element)。 v128.load = 4 lane (16 byte)。
+      const addr = mod.i32.add(
+        mod.i32.const(base),
+        mod.i32.mul(scalar(node.offset), mod.i32.const(BYTES_PER_F32)),
+      );
+      return mod.v128.load(0, BYTES_PER_F32, addr);
+    }
+    /* v8 ignore next 2 — scalar node が vec position に来るのは型で排除済 = unreachable */
+    default:
+      throw new Error(`unworklet: expected f32x4 node in vec position, got '${node.kind}'`);
+  }
+}
+
 export function emitExpression(
   node: AstNode,
   layout: Layout,
@@ -295,40 +914,34 @@ export function emitExpression(
   binaryen: BinaryenAPI,
 ): number {
   switch (node.kind) {
-    case "literal":
+    case "literal": {
+      // i64 literal は bigint (= Q33-c)。
+      if (node.type === "i64") {
+        return i64Const(mod, BigInt(node.value));
+      }
       // bool は 内 部 i32 表 現 (= 0/1) な の で i32.const に 落 と す (= select の
-      // boolean branch literal 等)。 i64 literal は `value: number` 制 約 下 で
-      // BigInt 表 現 不 完 全 = 後 続 sub-phase で literal 型 拡 張 と zip し て fill。
+      // boolean branch literal 等)。 残 り は 全 て JS number。
+      const value = Number(node.value);
       switch (node.type) {
         case "f32":
-          return mod.f32.const(node.value);
+          return mod.f32.const(value);
         case "f64":
-          return mod.f64.const(node.value);
+          return mod.f64.const(value);
         case "i32":
         case "bool":
-          return mod.i32.const(node.value);
-        case "i64":
-          throw new Error("i64 literal emission not implemented (= 後 続 sub-phase で fill)");
+          return mod.i32.const(value);
       }
+    }
     case "loopCounter":
       return mod.local.get(LOOP_COUNTER_LOCAL, binaryen.i32);
     case "mul":
-      return mod.f32.mul(
-        emitExpression(node.lhs, layout, mod, binaryen),
-        emitExpression(node.rhs, layout, mod, binaryen),
-      );
     case "add":
-      return mod.f32.add(
-        emitExpression(node.lhs, layout, mod, binaryen),
-        emitExpression(node.rhs, layout, mod, binaryen),
-      );
     case "sub":
-      return mod.f32.sub(
-        emitExpression(node.lhs, layout, mod, binaryen),
-        emitExpression(node.rhs, layout, mod, binaryen),
-      );
     case "div":
-      return mod.f32.div(
+      return emitNumericBinary(
+        mod,
+        node.type,
+        node.kind,
         emitExpression(node.lhs, layout, mod, binaryen),
         emitExpression(node.rhs, layout, mod, binaryen),
       );
@@ -345,6 +958,50 @@ export function emitExpression(
     // b / quotient は rhs 評 価・quotient 算 出 後 に だ け read = 内 側 mod の local
     // 上 書 き と 取 り 違 え ナ シ。 select は 直 前 の set で MOD_Q / MOD_B が 確 定 済 み。
     case "mod": {
+      // Integer remainder = signed `rem_s` (= WASM 標 準、 符 号 は 被 除 数)。
+      // float (f32 / f64) は 下 の JS `%` 準 拠 special impl。
+      if (node.type === "i32") {
+        return mod.i32.rem_s(
+          emitExpression(node.lhs, layout, mod, binaryen),
+          emitExpression(node.rhs, layout, mod, binaryen),
+        );
+      }
+      if (node.type === "i64") {
+        return mod.i64.rem_s(
+          emitExpression(node.lhs, layout, mod, binaryen),
+          emitExpression(node.rhs, layout, mod, binaryen),
+        );
+      }
+      // f64: f32 版 と 同 じ JS `%` 準 拠 special impl を f64 local で。
+      if (node.type === "f64") {
+        const aTeedF64 = mod.local.tee(
+          MOD_A_F64_LOCAL,
+          emitExpression(node.lhs, layout, mod, binaryen),
+          binaryen.f64,
+        );
+        const setQuotientF64 = mod.local.set(
+          MOD_Q_F64_LOCAL,
+          mod.f64.trunc(
+            mod.f64.div(
+              mod.local.get(MOD_A_F64_LOCAL, binaryen.f64),
+              mod.local.tee(
+                MOD_B_F64_LOCAL,
+                emitExpression(node.rhs, layout, mod, binaryen),
+                binaryen.f64,
+              ),
+            ),
+          ),
+        );
+        const productF64 = mod.select(
+          mod.f64.eq(mod.local.get(MOD_Q_F64_LOCAL, binaryen.f64), mod.f64.const(0)),
+          mod.f64.const(0),
+          mod.f64.mul(
+            mod.local.get(MOD_Q_F64_LOCAL, binaryen.f64),
+            mod.local.get(MOD_B_F64_LOCAL, binaryen.f64),
+          ),
+        );
+        return mod.f64.sub(aTeedF64, mod.block(null, [setQuotientF64, productF64], binaryen.f64));
+      }
       const aTeed = mod.local.tee(
         MOD_A_F32_LOCAL,
         emitExpression(node.lhs, layout, mod, binaryen),
@@ -375,18 +1032,26 @@ export function emitExpression(
       return mod.f32.sub(aTeed, mod.block(null, [setQuotient, product], binaryen.f32));
     }
     case "abs":
-      return mod.f32.abs(emitExpression(node.value, layout, mod, binaryen));
+      return emitAbs(mod, node.type, () => emitExpression(node.value, layout, mod, binaryen));
     case "neg":
-      return mod.f32.neg(emitExpression(node.value, layout, mod, binaryen));
+      return emitNeg(mod, node.type, emitExpression(node.value, layout, mod, binaryen));
     case "sqrt":
-      return mod.f32.sqrt(emitExpression(node.value, layout, mod, binaryen));
+      return floatNs(mod, node.type).sqrt(emitExpression(node.value, layout, mod, binaryen));
     case "floor":
-      return mod.f32.floor(emitExpression(node.value, layout, mod, binaryen));
+      return floatNs(mod, node.type).floor(emitExpression(node.value, layout, mod, binaryen));
     case "ceil":
-      return mod.f32.ceil(emitExpression(node.value, layout, mod, binaryen));
+      return floatNs(mod, node.type).ceil(emitExpression(node.value, layout, mod, binaryen));
     // frac(x) = x - floor(x) (= GLSL fract、 結 果 は [0,1))。 x を FRAC_F32_LOCAL に
     // tee し て 1 度 だ け 評 価、 floor 側 で get で 再 取 得 (= 二 重 評 価 回 避)。
     case "frac": {
+      if (node.type === "f64") {
+        const teedF64 = mod.local.tee(
+          FRAC_F64_LOCAL,
+          emitExpression(node.value, layout, mod, binaryen),
+          binaryen.f64,
+        );
+        return mod.f64.sub(teedF64, mod.f64.floor(mod.local.get(FRAC_F64_LOCAL, binaryen.f64)));
+      }
       const teed = mod.local.tee(
         FRAC_F32_LOCAL,
         emitExpression(node.value, layout, mod, binaryen),
@@ -394,77 +1059,70 @@ export function emitExpression(
       );
       return mod.f32.sub(teed, mod.f32.floor(mod.local.get(FRAC_F32_LOCAL, binaryen.f32)));
     }
-    // 多 項 式 近 似 の math primitive は 共 有 関 数 を call (= 関 数 本 体 は emit() で 追 加)。
+    // 多 項 式 近 似 の math primitive は 共 有 関 数 (= `(f32) -> f32`) を call。
+    // f64 form は f32-bridge: demote → call → promote (= Q17 = 型 不 問 の
+    // approximate-math 契 約、 精 度 は f32 相 当 ~1e-4)。
     case "sin":
-      return mod.call(
-        `${MATH_FN_PREFIX}sin`,
-        [emitExpression(node.value, layout, mod, binaryen)],
-        binaryen.f32,
-      );
     case "cos":
-      return mod.call(
-        `${MATH_FN_PREFIX}cos`,
-        [emitExpression(node.value, layout, mod, binaryen)],
-        binaryen.f32,
-      );
     case "tan":
-      return mod.call(
-        `${MATH_FN_PREFIX}tan`,
-        [emitExpression(node.value, layout, mod, binaryen)],
-        binaryen.f32,
-      );
     case "exp":
-      return mod.call(
-        `${MATH_FN_PREFIX}exp`,
-        [emitExpression(node.value, layout, mod, binaryen)],
-        binaryen.f32,
-      );
     case "log":
-      return mod.call(
-        `${MATH_FN_PREFIX}log`,
-        [emitExpression(node.value, layout, mod, binaryen)],
-        binaryen.f32,
-      );
     case "tanh":
-      return mod.call(
-        `${MATH_FN_PREFIX}tanh`,
-        [emitExpression(node.value, layout, mod, binaryen)],
-        binaryen.f32,
+      return emitTranscendental(
+        mod,
+        binaryen,
+        node.kind,
+        node.type,
+        emitExpression(node.value, layout, mod, binaryen),
       );
     case "max":
-      return mod.f32.max(
-        emitExpression(node.lhs, layout, mod, binaryen),
-        emitExpression(node.rhs, layout, mod, binaryen),
-      );
     case "min":
-      return mod.f32.min(
-        emitExpression(node.lhs, layout, mod, binaryen),
-        emitExpression(node.rhs, layout, mod, binaryen),
+      return emitMaxMin(
+        mod,
+        node.type,
+        node.kind,
+        () => emitExpression(node.lhs, layout, mod, binaryen),
+        () => emitExpression(node.rhs, layout, mod, binaryen),
       );
     // 比 較 (= 結 果 は i32 0/1 = bool 内 部 表 現、 state.bool / select cond /
     // emitIf cond で 利 用 さ れ る 既 存 bool=i32 表 現 と zip)
     case "eq":
-      return mod.f32.eq(
+      return emitNumericBinary(
+        mod,
+        node.type,
+        "eq",
         emitExpression(node.lhs, layout, mod, binaryen),
         emitExpression(node.rhs, layout, mod, binaryen),
       );
     case "lt":
-      return mod.f32.lt(
+      return emitNumericBinary(
+        mod,
+        node.type,
+        "lt",
         emitExpression(node.lhs, layout, mod, binaryen),
         emitExpression(node.rhs, layout, mod, binaryen),
       );
     case "gt":
-      return mod.f32.gt(
+      return emitNumericBinary(
+        mod,
+        node.type,
+        "gt",
         emitExpression(node.lhs, layout, mod, binaryen),
         emitExpression(node.rhs, layout, mod, binaryen),
       );
     case "lte":
-      return mod.f32.le(
+      return emitNumericBinary(
+        mod,
+        node.type,
+        "le",
         emitExpression(node.lhs, layout, mod, binaryen),
         emitExpression(node.rhs, layout, mod, binaryen),
       );
     case "gte":
-      return mod.f32.ge(
+      return emitNumericBinary(
+        mod,
+        node.type,
+        "ge",
         emitExpression(node.lhs, layout, mod, binaryen),
         emitExpression(node.rhs, layout, mod, binaryen),
       );
@@ -472,12 +1130,21 @@ export function emitExpression(
     // 二 重 評 価 ナ シ = temp local 不 要。 lo > hi の 退 化 ケ ー ス は hi を 返 す
     // (= max(x,lo) >= lo > hi な の で min(..., hi) = hi)、 決 定 的 挙 動。
     case "clamp":
-      return mod.f32.min(
-        mod.f32.max(
-          emitExpression(node.x, layout, mod, binaryen),
-          emitExpression(node.lo, layout, mod, binaryen),
-        ),
-        emitExpression(node.hi, layout, mod, binaryen),
+      // clamp(x, lo, hi) = min(max(x, lo), hi)。 整数は emitMaxMin の compare+select
+      // 経由 (= f32.min/max の整数 operand 不正 WASM を回避)。 float は native f{32,64}。
+      return emitMaxMin(
+        mod,
+        node.type,
+        "min",
+        () =>
+          emitMaxMin(
+            mod,
+            node.type,
+            "max",
+            () => emitExpression(node.x, layout, mod, binaryen),
+            () => emitExpression(node.lo, layout, mod, binaryen),
+          ),
+        () => emitExpression(node.hi, layout, mod, binaryen),
       );
     // select(cond, then, else) = WASM `select` 命 令 (= eager: 全 3 引 数 を 評 価
     // し て か ら 選 ぶ)。 then / else は 副 作 用 ナ シ の pure expression な の で
@@ -488,6 +1155,57 @@ export function emitExpression(
         emitExpression(node.ifTrue, layout, mod, binaryen),
         emitExpression(node.ifFalse, layout, mod, binaryen),
       );
+    case "convert":
+      return emitConvert(
+        mod,
+        node.from,
+        node.type,
+        emitExpression(node.value, layout, mod, binaryen),
+      );
+    case "bufferRead": {
+      const base = layout.regions.buffers.slots[node.name];
+      if (base === undefined) {
+        throw new Error(`unknown buffer: ${node.name}`);
+      }
+      const ptr = bufferElementPtr(
+        mod,
+        base,
+        node.elementType,
+        emitExpression(node.index, layout, mod, binaryen),
+      );
+      return emitBufferLoad(mod, node.elementType, ptr);
+    }
+    case "bufferReadInterpolated":
+      return emitBufferReadInterpolated(node, layout, mod, binaryen);
+    case "payloadFieldRead":
+      return emitPayloadFieldRead(node, layout, mod, binaryen);
+    case "payloadFieldLength":
+      return emitPayloadFieldLength(node, layout, mod, binaryen);
+    // SIMD lane 抽 出 = f32x4.extract_lane (= 定 数 lane index)。
+    case "vecLane":
+      return mod.f32x4.extract_lane(emitVec(node.value, layout, mod, binaryen), node.index);
+    // sumLanes = vec を v128 local に hold し て 4 lane を extract + add (= §7)。
+    case "vecSumLanes": {
+      const lane = (idx: number): number =>
+        mod.f32x4.extract_lane(mod.local.get(VEC_TEMP_LOCAL, binaryen.v128), idx);
+      return mod.block(
+        null,
+        [
+          mod.local.set(VEC_TEMP_LOCAL, emitVec(node.value, layout, mod, binaryen)),
+          mod.f32.add(mod.f32.add(lane(0), lane(1)), mod.f32.add(lane(2), lane(3))),
+        ],
+        binaryen.f32,
+      );
+    }
+    // vec-producing node は scalar position に来ない (= emitVec 経由で消費)。
+    case "vecConst":
+    case "vecSplat":
+    case "vecAdd":
+    case "vecSub":
+    case "vecMul":
+    case "vecDiv":
+    case "bufferLoadVec":
+      throw new Error(`f32x4 node '${node.kind}' cannot appear in scalar position`);
     case "audioInRead": {
       const portBase = layout.regions.ioScratch.inputs[node.portName];
       if (portBase === undefined) {
@@ -573,6 +1291,10 @@ export function emitExpression(
     case "stateStore":
     case "eventEmitIf":
     case "messageOnReceive":
+    case "bufferWrite":
+    case "bufferCopyFrom":
+    case "bufferStoreVec":
+    case "everyNSamples":
       throw new Error(`statement node '${node.kind}' cannot appear in expression position`);
   }
 }
@@ -675,6 +1397,66 @@ export function emitStatement(
         ]),
       ]);
     }
+    case "bufferWrite": {
+      const base = layout.regions.buffers.slots[node.name];
+      if (base === undefined) {
+        throw new Error(`unknown buffer: ${node.name}`);
+      }
+      const ptr = bufferElementPtr(
+        mod,
+        base,
+        node.elementType,
+        emitExpression(node.index, layout, mod, binaryen),
+      );
+      return emitBufferStore(
+        mod,
+        node.elementType,
+        ptr,
+        emitExpression(node.value, layout, mod, binaryen),
+      );
+    }
+    case "bufferCopyFrom":
+      return emitBufferCopyFrom(node, layout, mod, binaryen);
+    case "bufferStoreVec": {
+      const base = layout.regions.buffers.slots[node.name];
+      /* v8 ignore next 3 — buffer は宣言済 = layout に slot 既 push = unreachable */
+      if (base === undefined) {
+        throw new Error(`unknown buffer: ${node.name}`);
+      }
+      const addr = mod.i32.add(
+        mod.i32.const(base),
+        mod.i32.mul(
+          emitExpression(node.offset, layout, mod, binaryen),
+          mod.i32.const(BYTES_PER_F32),
+        ),
+      );
+      return mod.v128.store(0, BYTES_PER_F32, addr, emitVec(node.value, layout, mod, binaryen));
+    }
+    case "everyNSamples": {
+      // §9.1: (counter % divisor) == 0 で body を実行 + counter += stride。 counter は
+      // call-site ごとの memory slot で block 跨ぎ継続 (= zero-order hold は body 内の
+      // state.store が値を保持することで自然に成立)。
+      const counterOffset = layout.regions.everyNSamplesCounters.slots[node.counterId];
+      /* v8 ignore next 3 — counterId は capture で採番 + layout で slot 確保済 = unreachable */
+      if (counterOffset === undefined) {
+        throw new Error(`unworklet: missing everyNSamples counter slot ${node.counterId}`);
+      }
+      const loadCounter = (): number =>
+        mod.i32.load(0, BYTES_PER_I32, mod.i32.const(counterOffset));
+      const bodyEmits = node.body.map((s) => emitStatement(s, layout, mod, binaryen));
+      return mod.block(null, [
+        mod.if(
+          mod.i32.eq(mod.i32.rem_u(loadCounter(), mod.i32.const(node.divisor)), mod.i32.const(0)),
+          mod.block(null, bodyEmits.length > 0 ? bodyEmits : [mod.nop()]),
+        ),
+        mod.i32.store(
+          0,
+          BYTES_PER_I32,
+          mod.i32.const(counterOffset),
+          mod.i32.add(loadCounter(), mod.i32.const(node.stride)),
+        ),
+      ]);
+    }
     case "eventEmitIf":
       return emitEventEmitIf(node, layout, mod, binaryen);
     /* v8 ignore next 2 — messageOnReceive は emit top-level で 並 び 替 え 経 由 で
@@ -774,6 +1556,8 @@ function emitEventEmitIf(
     ["atSample", node.atSample],
     ...node.fields.map((f) => [f.name, f.value] as const),
   ]);
+  // typed-array field (§4.3) の emit メタ (= bufferName + length + elementType)。
+  const emitFieldByName = new Map(node.fields.map((f) => [f.name, f] as const));
 
   // overflow check + drop-oldest (= ring full ＝ distance head − tail ≥ capacity
   // で 既 fill 済 ＝ 次 emit が 古 い slot を 上 書 き = drop-oldest)。
@@ -832,6 +1616,83 @@ function emitEventEmitIf(
        field set 整 合 check で 排 除 済 = 構 造 上 unreachable defensive guard */
     if (valueAst === undefined) {
       throw new Error(`event "${node.name}" missing AST for field "${field.name}"`);
+    }
+    // typed-array field (§4.3 worklet→main) = buffer の中身を event content region に
+    // memory.copy + slot に [payloadLen, payloadOffset]。 payloadOffset = (head %
+    // capacity) × chunkBytes (= slot ご と の 固 定 chunk、 chunkBytes = content.capacity /
+    // ring capacity = perPayload)。 main は render 後 に ま と め て drain す る の で
+    // slot ご と に content を 分 け て 保 持 す る 必 要 が あ る。 copyBytes = min(length ×
+    // sizeof, chunkBytes)。 atSample が 常 に idx 0 = typed-array field は idx ≥ 1 =
+    // slotPtrTee 後 = EVENT_SLOT_PTR_LOCAL 確 定 済。
+    if (field.payloadElementType !== undefined) {
+      const emitField = emitFieldByName.get(field.name);
+      const content = layout.regions.payloadContent.eventSlots[node.name];
+      const bufferBase =
+        emitField?.bufferName !== undefined
+          ? layout.regions.buffers.slots[emitField.bufferName]
+          : undefined;
+      /* v8 ignore next 6 — typed-array emit field は declarations で bufferName +
+         length + payloadContent を 揃 え て push 済 = 構 造 上 unreachable guard */
+      if (
+        emitField?.length === undefined ||
+        emitField.bufferSize === undefined ||
+        content === undefined ||
+        bufferBase === undefined
+      ) {
+        throw new Error(`event "${node.name}" typed-array field "${field.name}" missing emit meta`);
+      }
+      const elemBytes = BUFFER_ELEMENT_BYTES_EMIT[field.payloadElementType];
+      // chunk は content.chunks 枠 (= min(capacity, MAX_CONTENT_SLOTS)、Q85) で 循 環。
+      // ring capacity が chunks を 超 え て も content は chunks 枠 を drop-oldest 再 利 用。
+      const chunkBytes = Math.floor(content.capacity / content.chunks);
+      // copy 上 限 = chunk と source buffer の 小 さ い 方。 これ が ナ イ と length が buffer
+      // サ イ ズ を 超 え た 時 (= author の 誤 指 定) に memory.copy が buffer.<T> 領 域 を 超 え て
+      // 隣 接 linear memory を 読 み、 そ の バ イ ト を main に publish す る (= memory disclosure)。
+      const bufferBytes = emitField.bufferSize * elemBytes;
+      const copyCap = Math.min(chunkBytes, bufferBytes);
+      const slotFieldPtr = (): number =>
+        mod.i32.add(
+          mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32),
+          mod.i32.const(field.offsetInSlot),
+        );
+      const payloadOffset = (): number =>
+        mod.i32.mul(
+          mod.i32.rem_u(
+            mod.local.get(EVENT_HEAD_LOCAL, binaryen.i32),
+            mod.i32.const(content.chunks),
+          ),
+          mod.i32.const(chunkBytes),
+        );
+      const lengthBytes = (): number =>
+        mod.i32.mul(
+          emitExpression(emitField.length!, layout, mod, binaryen),
+          mod.i32.const(elemBytes),
+        );
+      // copyBytes = min(length × sizeof, copyCap)。 unsigned 比 較 = 負 の length も
+      // 巨 大 unsigned 化 し て copyCap に 丸 ま る (= [0, copyCap] に 収 ま り OOB read ナ シ)。
+      const copyBytes = (): number =>
+        mod.select(
+          mod.i32.lt_u(lengthBytes(), mod.i32.const(copyCap)),
+          lengthBytes(),
+          mod.i32.const(copyCap),
+        );
+      fieldStores.push(
+        mod.block(null, [
+          mod.i32.store(0, BYTES_PER_I32, slotFieldPtr(), copyBytes()), // payloadLen
+          mod.i32.store(
+            0,
+            BYTES_PER_I32,
+            mod.i32.add(slotFieldPtr(), mod.i32.const(4)),
+            payloadOffset(),
+          ), // payloadOffset
+          mod.memory.copy(
+            mod.i32.add(mod.i32.const(content.base), payloadOffset()),
+            mod.i32.const(bufferBase),
+            copyBytes(),
+          ),
+        ]),
+      );
+      continue;
     }
     const ptr =
       idx === 0
@@ -1019,6 +1880,7 @@ function collectUsedMathKinds(graph: CapturedGraph): Set<string> {
       case "tanh":
       case "exp":
       case "log":
+      case "convert":
         visit(node.value);
         break;
       case "clamp":
@@ -1042,14 +1904,58 @@ function collectUsedMathKinds(graph: CapturedGraph): Set<string> {
       case "stateStore":
         visit(node.value);
         break;
+      case "bufferRead":
+        visit(node.index);
+        break;
+      case "bufferReadInterpolated":
+        visit(node.pos);
+        break;
+      case "payloadFieldRead":
+        visit(node.index);
+        break;
+      case "payloadFieldLength":
+        break;
+      case "bufferCopyFrom":
+        // math 関 数 を 含 む 子 expression ナ シ。
+        break;
+      case "vecConst":
+        node.lanes.forEach(visit);
+        break;
+      case "vecSplat":
+      case "vecLane":
+      case "vecSumLanes":
+        visit(node.value);
+        break;
+      case "vecAdd":
+      case "vecSub":
+      case "vecMul":
+      case "vecDiv":
+        visit(node.lhs);
+        visit(node.rhs);
+        break;
+      case "bufferLoadVec":
+        visit(node.offset);
+        break;
+      case "bufferStoreVec":
+        visit(node.offset);
+        visit(node.value);
+        break;
+      case "bufferWrite":
+        visit(node.index);
+        visit(node.value);
+        break;
       case "forSample":
       case "messageOnReceive":
+      case "everyNSamples":
         node.body.forEach(visit);
         break;
       case "eventEmitIf":
         visit(node.cond);
         visit(node.atSample);
-        node.fields.forEach((field) => visit(field.value));
+        node.fields.forEach((field) => {
+          visit(field.value);
+          if (field.length !== undefined) visit(field.length);
+        });
         break;
       case "literal":
       case "loopCounter":

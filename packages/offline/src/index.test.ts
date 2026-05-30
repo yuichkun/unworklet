@@ -9,11 +9,321 @@
  */
 
 import "@unworklet/core"; // side-effect load for `.mul` method registration via primitives.ts
-import { defineProcessor, SAMPLES_PER_BLOCK } from "@unworklet/core";
-import { audioInput, audioOutput, event, forSample, param, state } from "@unworklet/core";
+import { defineProcessor, f32, i32, message, SAMPLES_PER_BLOCK, select } from "@unworklet/core";
+import { audioInput, audioOutput, buffer, event, forSample, param, state } from "@unworklet/core";
 import { expect, test } from "vite-plus/test";
 
 import { renderOffline } from "./index.ts";
+
+// ─────────────────────────────────────────────────────────────────────────
+// typed-array message payload (Stage 2.5a) — message<{ samples: Float32Array }>
+// を main から送り、worklet で samples.at(i) / samples.length で読む。
+// ─────────────────────────────────────────────────────────────────────────
+
+// 受信した配列を per-element に buffer へ書き写し、それを再生する (= .at(Node) runtime read)。
+const samplePlayer = defineProcessor(() => {
+  const out = audioOutput({ channels: 1, name: "main" });
+  const upload = message<{ samples: Float32Array }>({ name: "upload" });
+  const buf = buffer.f32({ size: SAMPLES_PER_BLOCK });
+  return {
+    process: () => {
+      upload.onReceive(({ samples }) => {
+        forSample((i) => {
+          buf.write(i, samples.at(i)); // i は Node<i32> = runtime indexed read
+        });
+      });
+      forSample((i) => {
+        out.ch(0).at(i).write(buf.read(i));
+      });
+    },
+  };
+});
+
+test("`renderOffline` delivers a typed-array payload; samples.at(Node) reads each element", async () => {
+  const samples = new Float32Array(SAMPLES_PER_BLOCK);
+  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) samples[k] = k * 2;
+  const result = await renderOffline(samplePlayer, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+    messages: [{ name: "upload", payload: { samples } }],
+  });
+  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) {
+    expect(result.outputs.main![0]![k]).toBe(k * 2);
+  }
+});
+
+// 受信した配列を buf.copyFrom で一括コピー (= memory.copy、per-sample loop の代替)。
+const sampleCopier = defineProcessor(() => {
+  const out = audioOutput({ channels: 1, name: "main" });
+  const upload = message<{ samples: Float32Array }>({ name: "upload" });
+  const buf = buffer.f32({ size: SAMPLES_PER_BLOCK });
+  return {
+    process: () => {
+      upload.onReceive(({ samples }) => {
+        buf.copyFrom(samples); // 一括 bulk copy
+      });
+      forSample((i) => {
+        out.ch(0).at(i).write(buf.read(i));
+      });
+    },
+  };
+});
+
+test("`renderOffline` buf.copyFrom(payload) が配列を buffer に一括コピーする", async () => {
+  const samples = new Float32Array(SAMPLES_PER_BLOCK);
+  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) samples[k] = k * 3;
+  const result = await renderOffline(sampleCopier, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+    messages: [{ name: "upload", payload: { samples } }],
+  });
+  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) {
+    expect(result.outputs.main![0]![k]).toBe(k * 3);
+  }
+});
+
+test("`renderOffline` buf.copyFrom は min(buf.size, payload length) で clamp する", async () => {
+  // buf.size = 128、payload = 4 要素 → 先頭 4 要素だけ copy、残りは buffer 初期値 0。
+  const samples = new Float32Array([1.5, 2.5, 3.5, 4.5]);
+  const result = await renderOffline(sampleCopier, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+    messages: [{ name: "upload", payload: { samples } }],
+  });
+  expect(result.outputs.main![0]![0]).toBe(1.5);
+  expect(result.outputs.main![0]![3]).toBe(4.5);
+  expect(result.outputs.main![0]![4]).toBe(0); // payload 長を超えた領域は未変更
+});
+
+// samples.at の範囲外読み (= idx outside [0, length)) は §4.3 の select carrier-clamp で
+// runtime trap せず [0, length-1] に丸められる。far OOB を読んで last element が返ることを確認。
+const oobReader = defineProcessor(() => {
+  const out = audioOutput({ channels: 1, name: "main" });
+  const upload = message<{ samples: Float32Array }>({ name: "upload" });
+  const oobState = state.f32(0);
+  return {
+    process: () => {
+      upload.onReceive(({ samples }) => {
+        oobState.store(samples.at(100000)); // far OOB read
+      });
+      forSample((i) => {
+        out.ch(0).at(i).write(oobState.load());
+      });
+    },
+  };
+});
+
+test("`renderOffline` samples.at の範囲外読みは trap せず [0,length-1] に clamp する", async () => {
+  const result = await renderOffline(oobReader, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+    messages: [{ name: "upload", payload: { samples: new Float32Array([10, 20, 30, 40]) } }],
+  });
+  // idx 100000 は length 4 を超える → clamp で last element 40、trap なし。
+  expect(result.outputs.main![0]![0]).toBe(40);
+});
+
+// 同一 quantum に複数の typed-array message を queue しても content が上書きされず
+// 各 payload が保持される (§5.2 / Q85: content = perPayload × min(capacity, 16) 枠)。
+// handler は drain loop で per-slot 走る → 各 slot の samples.at(0) を state に加算。
+const twoUploads = defineProcessor(() => {
+  const out = audioOutput({ channels: 1, name: "main" });
+  const upload = message<{ samples: Float32Array }>({ name: "upload" });
+  const acc = state.f32(0);
+  return {
+    process: () => {
+      upload.onReceive(({ samples }) => {
+        acc.store(acc.load().add(samples.at(0)));
+      });
+      forSample((i) => {
+        out.ch(0).at(i).write(acc.load());
+      });
+    },
+  };
+});
+
+test("`renderOffline` 同一 quantum の 2 message が content 上書きされず両方保持される", async () => {
+  const result = await renderOffline(twoUploads, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+    messages: [
+      { name: "upload", atQuantum: 0, payload: { samples: new Float32Array([10, 0, 0, 0]) } },
+      { name: "upload", atQuantum: 0, payload: { samples: new Float32Array([20, 0, 0, 0]) } },
+    ],
+  });
+  // 両 payload 保持 = 10 + 20 = 30。単一 chunk 上書き bug なら 20 + 20 = 40。
+  expect(result.outputs.main![0]![0]).toBeCloseTo(30, 4);
+});
+
+test("`renderOffline` content 枠 (16) を超える連射でも trap せず render 完走する (Q85: drop-oldest)", () => {
+  // 1 quantum に 17 message を queue = 17 個目が最古の chunk を循環再利用で上書き。
+  // クラッシュ (trap / OOB) しないこと + 結果が有限値であることだけ担保。
+  const messages = Array.from({ length: 17 }, (_, k) => ({
+    name: "upload",
+    atQuantum: 0,
+    payload: { samples: new Float32Array([k + 1, 0, 0, 0]) },
+  }));
+  return renderOffline(twoUploads, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+    messages,
+  }).then((result) => {
+    expect(Number.isFinite(result.outputs.main![0]![0])).toBe(true);
+  });
+});
+
+// samples.length = 受信した配列長 (= Node<i32>)。出力にそのまま流して観測。
+const sampleLen = defineProcessor(() => {
+  const out = audioOutput({ channels: 1, name: "main" });
+  const upload = message<{ samples: Float32Array }>({ name: "upload" });
+  const lenState = state.i32(0);
+  return {
+    process: () => {
+      upload.onReceive(({ samples }) => {
+        lenState.store(samples.length);
+      });
+      forSample((i) => {
+        out.ch(0).at(i).write(f32(lenState.load()));
+      });
+    },
+  };
+});
+
+test("`renderOffline` resolves samples.length to the delivered payload length", async () => {
+  const result = await renderOffline(sampleLen, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+    messages: [{ name: "upload", payload: { samples: new Float32Array(10) } }],
+  });
+  expect(result.outputs.main![0]![0]).toBe(10);
+});
+
+// 空 payload (length 0) の .at(idx) は stale memory でなく 0 を返す (= §4.3、no-trap +
+// OOB/empty は 0)。content chunk を再利用させて leak を観測する: block 0 で 16 個の
+// 非空 message [42] を流して全 16 chunk を [42] で埋め、block 1 で空 message を head=16
+// = chunk 0 に wrap landing させる (= cross-block なので drop-oldest overflow も踏まない)。
+// stale read だと length-1=-1 で clamp が idx 0 に潰れ、chunk 0 の [42] を読んでしまう。
+const emptyPayloadReader = defineProcessor(() => {
+  const out = audioOutput({ channels: 1, name: "main" });
+  const upload = message<{ x: Float32Array }>({ name: "upload" });
+  const last = state.f32(-1);
+  return {
+    process: () => {
+      upload.onReceive(({ x }) => {
+        last.store(x.at(0));
+      });
+      forSample((i) => {
+        out.ch(0).at(i).write(last.load());
+      });
+    },
+  };
+});
+
+test("`renderOffline` 空 payload の .at(0) は stale memory でなく 0 を返す (§4.3)", async () => {
+  const fill42 = Array.from({ length: 16 }, () => ({
+    name: "upload",
+    atQuantum: 0,
+    payload: { x: new Float32Array([42]) },
+  }));
+  const result = await renderOffline(emptyPayloadReader, {
+    sampleRate: 48000,
+    duration: (2 * SAMPLES_PER_BLOCK) / 48000,
+    messages: [
+      ...fill42,
+      { name: "upload", atQuantum: 1, payload: { x: new Float32Array([]) } }, // 空 = chunk 0 に wrap
+    ],
+  });
+  // block 0 = 非空 [42] の処理結果 (= 経路 sanity)。
+  expect(result.outputs.main![0]![0]).toBe(42);
+  // block 1 = 空 payload。stale read なら chunk 0 の [42] が leak、fix 後は 0。
+  expect(result.outputs.main![0]![SAMPLES_PER_BLOCK]).toBe(0);
+});
+
+// message<T> 経由で state を更新する processor (= scalar message 注入の検証用)。
+// 出力はそのまま mul state の値 (= 注入が届けば block ごとに値が変わる)。
+const messageMul = defineProcessor(() => {
+  const out = audioOutput({ channels: 1, name: "main" });
+  const setMul = message<{ mul: number }>({ name: "setMul" });
+  const mulState = state.i32(1);
+  return {
+    process: () => {
+      setMul.onReceive(({ mul }) => {
+        mulState.store(mul);
+      });
+      forSample((i) => {
+        out.ch(0).at(i).write(f32(mulState.load()));
+      });
+    },
+  };
+});
+
+test("`renderOffline` delivers a scheduled scalar message to the worklet handler", async () => {
+  const result = await renderOffline(messageMul, {
+    sampleRate: 48000,
+    duration: (2 * SAMPLES_PER_BLOCK) / 48000,
+    messages: [
+      { name: "setMul", payload: { mul: 3 }, atQuantum: 0 },
+      { name: "setMul", payload: { mul: 7 }, atQuantum: 1 },
+    ],
+  });
+  const ch = result.outputs.main![0]!;
+  // quantum 0 で mul=3、quantum 1 で mul=7 が handler 経由で state に反映される。
+  expect(ch[0]).toBe(3);
+  expect(ch[SAMPLES_PER_BLOCK]).toBe(7);
+});
+
+test("`renderOffline` defaults message delivery to quantum 0 when atQuantum is omitted", async () => {
+  const result = await renderOffline(messageMul, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+    messages: [{ name: "setMul", payload: { mul: 5 } }],
+  });
+  expect(result.outputs.main![0]![0]).toBe(5);
+});
+
+// boolean-valued message field (= Q46 で 現状 i32 wire に lift される)。
+const messageFlag = defineProcessor(() => {
+  const out = audioOutput({ channels: 1, name: "main" });
+  const setOn = message<{ on: boolean }>({ name: "setOn" });
+  const flag = state.bool(false);
+  return {
+    process: () => {
+      setOn.onReceive(({ on }) => {
+        flag.store(on);
+      });
+      forSample((i) => {
+        out
+          .ch(0)
+          .at(i)
+          .write(select(flag.load(), f32(1), f32(0)));
+      });
+    },
+  };
+});
+
+test("`renderOffline` delivers a boolean-valued message field (true then false)", async () => {
+  const result = await renderOffline(messageFlag, {
+    sampleRate: 48000,
+    duration: (2 * SAMPLES_PER_BLOCK) / 48000,
+    messages: [
+      { name: "setOn", payload: { on: true }, atQuantum: 0 },
+      { name: "setOn", payload: { on: false }, atQuantum: 1 },
+    ],
+  });
+  const ch = result.outputs.main![0]!;
+  expect(ch[0]).toBe(1); // quantum 0: on=true
+  expect(ch[SAMPLES_PER_BLOCK]).toBe(0); // quantum 1: on=false
+});
+
+test("`renderOffline` throws on a message whose name has no matching declaration", async () => {
+  await expect(
+    renderOffline(messageMul, {
+      sampleRate: 48000,
+      duration: SAMPLES_PER_BLOCK / 48000,
+      messages: [{ name: "ghost", payload: {} }],
+    }),
+  ).rejects.toThrow(/no matching message/);
+});
 
 const stereoGain = defineProcessor(() => {
   const input = audioInput({ channels: 2, name: "main" });
@@ -473,6 +783,64 @@ test("`renderOffline` captures emitted events from event ring (= sub-phase 7.8c)
     expect(evt.atSample).toBeLessThan(SAMPLES_PER_BLOCK);
     expect((evt.payload as { level: number }).level).toBe(0.5);
   }
+});
+
+// worklet → main の typed-array event payload (§4.3 L708)。worklet 内 buffer に書いて
+// emitIf に buffer + framework-injected length を渡すと、main 側は length 長の fresh
+// Float32Array を受け取る。
+test("`renderOffline` captures a typed-array event payload as a Float32Array", async () => {
+  const arrayEmitter = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const buf = buffer.f32({ size: 4 });
+    const result = event<{ data: Float32Array }>({ name: "result", payloadCapacity: 64 });
+    return {
+      process: () => {
+        for (let k = 0; k < 4; k++) buf.write(k, f32((k + 1) * 11));
+        result.emitIf(true, { atSample: 0, data: buf, length: i32(4) });
+        forSample((i) => {
+          out.ch(0).at(i).write(f32(0));
+        });
+      },
+    };
+  });
+  const result = await renderOffline(arrayEmitter, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+  });
+  expect(result.events.length).toBe(1);
+  const ev = result.events[0]!;
+  expect(ev.name).toBe("result");
+  expect(Array.from((ev.payload as { data: Float32Array }).data)).toEqual([11, 22, 33, 44]);
+});
+
+// emitIf の length が buffer サイズを超えても、copy byte 数は buffer 境界に clamp される
+// (= さもないと memory.copy が buffer.<T> 領域を超えて隣接 linear memory を読み、その
+// バイトを main に publish する = memory disclosure)。length 1024 を size 4 buffer で emit
+// → drained payload は buffer の 4 要素に clamp される。
+test("`renderOffline` typed-array event は length が buffer 超でも buffer 境界に clamp (= leak 防止)", async () => {
+  const overEmitter = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const buf = buffer.f32({ size: 4 });
+    const result = event<{ data: Float32Array }>({ name: "result", payloadCapacity: 64 });
+    return {
+      process: () => {
+        for (let k = 0; k < 4; k++) buf.write(k, f32((k + 1) * 11));
+        result.emitIf(true, { atSample: 0, data: buf, length: i32(1024) }); // buffer(4) 超の length
+        forSample((i) => {
+          out.ch(0).at(i).write(f32(0));
+        });
+      },
+    };
+  });
+  const result = await renderOffline(overEmitter, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+  });
+  expect(result.events.length).toBe(1);
+  const data = (result.events[0]!.payload as { data: Float32Array }).data;
+  // length は buffer の 4 要素に clamp = 隣接 memory を leak しない。
+  expect(data.length).toBe(4);
+  expect(Array.from(data)).toEqual([11, 22, 33, 44]);
 });
 
 test("`renderOffline` captures bool wireType event field as JS boolean", async () => {

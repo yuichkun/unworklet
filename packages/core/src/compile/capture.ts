@@ -24,12 +24,39 @@ export type CaptureContext = {
    * for the duration of its callback.
    */
   currentLoopBody: AstNode[] | null;
+  /**
+   * `everyNSamples` の call-site ごとに振る counter id (= §9.1)。 各 sub-rate
+   * call site は block 跨ぎで継続する独立 counter を持つ = layout が id ごとに
+   * i32 slot を確保する。 capture 順に 0 から採番。
+   */
+  everyNSamplesCount: number;
+  /**
+   * `createSubgraph` instance の body 実行中だけ立つ name prefix (= §5.6、Q53)。
+   * subgraph 内の user-named state / buffer に `'<instance>/'` を前置して複数
+   * instance の衝突を避ける (= `'lpfL/z1'`)。 非 subgraph では `''`。
+   */
+  namePrefix: string;
+  /** `createSubgraph` instance の auto name 採番 (= name 省略時、graph 内で決定的)。 */
+  subgraphCount: number;
 };
 
 let currentCapture: CaptureContext | null = null;
 
 export function newCaptureContext(): CaptureContext {
-  return { declarations: [], statements: [], currentLoopBody: null };
+  return {
+    declarations: [],
+    statements: [],
+    currentLoopBody: null,
+    everyNSamplesCount: 0,
+    namePrefix: "",
+    subgraphCount: 0,
+  };
+}
+
+/** `everyNSamples` call-site に block 跨ぎ counter slot 用の一意 id を払い出す。 */
+export function nextEveryNSamplesCounterId(): number {
+  const ctx = getCurrentCapture();
+  return ctx.everyNSamplesCount++;
 }
 
 export function getCurrentCapture(): CaptureContext {
@@ -63,6 +90,20 @@ export function addStatement(node: AstNode): void {
 
 export function addDeclaration(decl: Declaration): void {
   const ctx = getCurrentCapture();
+  // declaration は declaration scope (= defineProcessor / defineSubgraph body の top、
+  // return 前) でのみ合法。expression scope (= forSample / forSample.byN / everyNSamples /
+  // onReceive / onEvent handler の body = currentLoopBody が立つ間) で state.* / buffer.* /
+  // param.* / event / message / createSubgraph を宣言するのは §5.6.4 / Q34 で
+  // graph-capture-time error (= state 領域の静的確保と instance 数の build-time 決定が崩れる)。
+  if (ctx.currentLoopBody !== null) {
+    const name = "name" in decl && typeof decl.name === "string" ? ` '${decl.name}'` : "";
+    throw new Error(
+      `unworklet: declaration '${decl.kind}'${name} inside expression scope ` +
+        `(forSample / everyNSamples / handler body). Declarations are only valid in ` +
+        `declaration scope — the top of a defineProcessor / defineSubgraph body, before ` +
+        `the returned process / method record. (stable ID 'scope-violation')`,
+    );
+  }
   ctx.declarations.push(decl);
 }
 

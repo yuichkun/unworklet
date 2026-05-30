@@ -10,10 +10,14 @@
  * superset)。
  */
 
-import type { PublishOptions, ScalarType, SnapshotPolicy } from "../types.ts";
+import type { BufferElementType, PublishOptions, ScalarType, SnapshotPolicy } from "../types.ts";
 
 export type AstNode =
-  | { kind: "literal"; type: ScalarType; value: number }
+  // `value` is a JS `number` for every scalar type except `'i64'`, whose
+  // literal carries a `bigint` (no implicit number lift, Q33-c) and lowers to
+  // `i64.const`. `loose` marks a `num(v)` chain-start literal (Q77) whose type
+  // is resolved from the chain's typed sibling (else stays the fallback `type`).
+  | { kind: "literal"; type: ScalarType; value: number | bigint; loose?: boolean }
   | { kind: "mul"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "add"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "sub"; type: ScalarType; lhs: AstNode; rhs: AstNode }
@@ -40,6 +44,26 @@ export type AstNode =
   | { kind: "gte"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "clamp"; type: ScalarType; x: AstNode; lo: AstNode; hi: AstNode }
   | { kind: "select"; type: ScalarType; cond: AstNode; ifTrue: AstNode; ifFalse: AstNode }
+  // SIMD f32x4 (`01-dsl.md` §7、Q59). vec-producing nodes (vecConst/vecSplat/vecAdd…)
+  // are `Node<'f32x4'>`; vecLane / vecSumLanes reduce back to `Node<'f32'>`.
+  | { kind: "vecConst"; lanes: [AstNode, AstNode, AstNode, AstNode] }
+  | { kind: "vecSplat"; value: AstNode }
+  | { kind: "vecAdd"; lhs: AstNode; rhs: AstNode }
+  | { kind: "vecSub"; lhs: AstNode; rhs: AstNode }
+  | { kind: "vecMul"; lhs: AstNode; rhs: AstNode }
+  | { kind: "vecDiv"; lhs: AstNode; rhs: AstNode }
+  | { kind: "vecLane"; index: number; value: AstNode }
+  | { kind: "vecSumLanes"; value: AstNode }
+  // SIMD buffer I/O (§7): load/store 4 contiguous f32 lanes at element offset.
+  | { kind: "bufferLoadVec"; name: string; offset: AstNode }
+  | { kind: "bufferStoreVec"; name: string; offset: AstNode; value: AstNode }
+  // Cross-precision conversion between `Node` types (= scalar constructors
+  // `f32(node)` / `i32(node)` / etc., `01-dsl.md` §2.2). `type` = target,
+  // `from` = source. Lowers to a single WASM convert / trunc_sat / extend /
+  // wrap / promote / demote instruction (no-trap: integer truncation uses the
+  // saturating form). `from === type` is folded away at the constructor (no
+  // convert node emitted), so emit always sees a genuine type change.
+  | { kind: "convert"; type: ScalarType; from: ScalarType; value: AstNode }
   | { kind: "audioInRead"; portName: string; channel: number; offset: AstNode }
   | {
       kind: "audioOutWrite";
@@ -53,6 +77,16 @@ export type AstNode =
   | { kind: "forSample"; stride: number; body: AstNode[] }
   | { kind: "stateLoad"; type: ScalarType; name: string }
   | { kind: "stateStore"; type: ScalarType; name: string; value: AstNode }
+  // sub-rate sub-block inside a `forSample` callback (`01-dsl.md` §9, Q43). Runs
+  // `body` on samples where `(counter % divisor) == 0`; the per-call-site counter
+  // advances by `stride` each iteration and is continuous across render quanta.
+  | {
+      kind: "everyNSamples";
+      divisor: number;
+      stride: number;
+      counterId: number;
+      body: AstNode[];
+    }
   | {
       kind: "eventEmitIf";
       name: string;
@@ -61,7 +95,48 @@ export type AstNode =
       fields: EventEmitField[];
     }
   | { kind: "messageOnReceive"; name: string; body: AstNode[] }
-  | { kind: "messageFieldRead"; name: string; field: string; wireType: ScalarType };
+  | { kind: "messageFieldRead"; name: string; field: string; wireType: ScalarType }
+  // `buffer.<type>` scalar access (`01-dsl.md` §3.2). `elementType` is the
+  // buffer's declared element type; the produced scalar type is the element
+  // type itself, except `'u8'` reads/writes through `Node<'i32'>` (low 8 bits).
+  | { kind: "bufferRead"; elementType: BufferElementType; name: string; index: AstNode }
+  | {
+      kind: "bufferWrite";
+      elementType: BufferElementType;
+      name: string;
+      index: AstNode;
+      value: AstNode;
+    }
+  | { kind: "bufferReadInterpolated"; elementType: BufferElementType; name: string; pos: AstNode }
+  // Bulk copy a typed-array message payload field into a buffer via `memory.copy`
+  // (`decisions-log.md` Q31-c). Realtime-safe alternative to a per-sample write
+  // loop; copies `min(bufferSize, payloadLen / sizeof element)` elements. Used
+  // inside a `message<T>` onReceive handler (= EVENT_SLOT_PTR drain context).
+  | {
+      kind: "bufferCopyFrom";
+      elementType: BufferElementType;
+      bufferName: string;
+      bufferSize: number;
+      messageName: string;
+      field: string;
+    }
+  // Variable-length typed-array payload reads inside a `message<T>` onReceive
+  // handler (`01-dsl.md` §4.3). The field's content lives in the payloadContent
+  // region; the slot carries `[payloadLen, payloadOffset]`. `length` = element
+  // count (= payloadLen bytes / sizeof element); `at` = single indexed element.
+  | {
+      kind: "payloadFieldLength";
+      messageName: string;
+      field: string;
+      elementType: BufferElementType;
+    }
+  | {
+      kind: "payloadFieldRead";
+      messageName: string;
+      field: string;
+      elementType: BufferElementType;
+      index: AstNode;
+    };
 
 /**
  * `eventDecl.emitIf` 1 emit site の 1 field 分 (= `01-dsl.md` §4.1 + Q71)。
@@ -74,6 +149,17 @@ export type EventEmitField = {
   name: string;
   wireType: ScalarType;
   value: AstNode;
+  /**
+   * Present when the field is a variable-length typed array (§4.3 worklet → main).
+   * `value` is then an unused placeholder; the bytes come from the worklet buffer
+   * `bufferName`, `length` elements copied into the event content region at emit
+   * time, and the slot carries `[payloadLen, payloadOffset]`.
+   */
+  payloadElementType?: BufferElementType;
+  bufferName?: string;
+  /** Source buffer の element 数 (= `buffer.<T>({ size })`)。emit が copy byte 数を buffer 境界に clamp する。 */
+  bufferSize?: number;
+  length?: AstNode;
 };
 
 export type AudioPortDecl = {
@@ -156,6 +242,12 @@ export type EventDeclAst = {
 export type EventDeclField = {
   name: string;
   wireType: ScalarType;
+  /**
+   * Present when the field is a variable-length typed array (§4.3 / §5.2). The
+   * slot carries `[payloadLen, payloadOffset]` (8 bytes); content lives in the
+   * event's `payloadContent` region.
+   */
+  payloadElementType?: BufferElementType;
 };
 
 /**
@@ -186,9 +278,40 @@ export type MessageDeclAst = {
 export type MessageDeclField = {
   name: string;
   wireType: ScalarType;
+  /**
+   * Present when the field is a variable-length typed array (`Float32Array` /
+   * `Uint8Array`, §4.3 / §5.2). The field then occupies a `[payloadLen,
+   * payloadOffset]` pair in the slot (not a scalar word) and indexes into the
+   * payloadContent region; `wireType` is unused for such a field.
+   */
+  payloadElementType?: BufferElementType;
 };
 
-export type Declaration = AudioPortDecl | ParamDecl | StateDecl | EventDeclAst | MessageDeclAst;
+/**
+ * `buffer.<type>({ size })` fixed-size array declaration (`01-dsl.md` §3.2).
+ *
+ * `type` は element type (= `ScalarType ∪ {'u8'}`)、 `size` は element count
+ * (= byte size は `size × sizeof(type)`、 `u8` = 1 byte)。 `snapshot` / `publish`
+ * / `userNamed` は state と 同 chain semantics (= `.named` / `.expose`、 default
+ * snapshot は buffer で `'transient'`)。
+ */
+export type BufferDecl = {
+  kind: "buffer";
+  name: string;
+  type: BufferElementType;
+  size: number;
+  snapshot?: SnapshotPolicy;
+  publish?: PublishOptions;
+  userNamed?: boolean;
+};
+
+export type Declaration =
+  | AudioPortDecl
+  | ParamDecl
+  | StateDecl
+  | BufferDecl
+  | EventDeclAst
+  | MessageDeclAst;
 
 export type CapturedGraph = {
   declarations: Declaration[];
@@ -228,6 +351,7 @@ export function inferAstType(ast: AstNode): ScalarType {
     case "min":
     case "clamp":
     case "select":
+    case "convert":
     case "stateLoad":
       return ast.type;
     // 比 較 = 結 果 は 常 に bool (= node の `type` は オ ペ ラ ン ド 型 f32)。
@@ -244,11 +368,37 @@ export function inferAstType(ast: AstNode): ScalarType {
       return "i32";
     case "messageFieldRead":
       return ast.wireType;
+    // buffer read result = element type, except `'u8'` surfaces as `'i32'`
+    // (= low 8 bits, no separate `Node<'u8'>` in the scalar type system).
+    case "bufferRead":
+    case "bufferReadInterpolated":
+    case "payloadFieldRead":
+      return ast.elementType === "u8" ? "i32" : ast.elementType;
+    case "payloadFieldLength":
+      return "i32";
+    // SIMD reduction = scalar f32 (= lane 抽出 / horizontal sum)。
+    case "vecLane":
+    case "vecSumLanes":
+      return "f32";
+    // SIMD vec-producing = f32x4 = scalar 型 system 外 = scalar position は不正。
+    case "vecConst":
+    case "vecSplat":
+    case "vecAdd":
+    case "vecSub":
+    case "vecMul":
+    case "vecDiv":
+    case "bufferLoadVec":
+      throw new Error(`f32x4 node '${ast.kind}' cannot appear in scalar position`);
+    case "bufferStoreVec":
+      throw new Error(`statement node '${ast.kind}' cannot appear in expression position`);
     case "audioOutWrite":
     case "forSample":
     case "stateStore":
     case "eventEmitIf":
     case "messageOnReceive":
+    case "bufferWrite":
+    case "bufferCopyFrom":
+    case "everyNSamples":
       throw new Error(`statement node '${ast.kind}' cannot appear in expression position`);
   }
 }

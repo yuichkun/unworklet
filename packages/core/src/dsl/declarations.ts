@@ -12,6 +12,7 @@
 
 import type {
   AstNode,
+  BufferDecl,
   EventDeclAst,
   EventEmitField,
   MessageDeclAst,
@@ -31,6 +32,7 @@ import type {
   AudioInputHandle,
   AudioOutputHandle,
   Buffer,
+  BufferElementType,
   Capacity,
   EventDecl,
   ExposeOptions,
@@ -44,11 +46,35 @@ import type {
   ScalarOf,
   ScalarType,
   State,
+  TypedArrayFieldRef,
 } from "../types.ts";
 
 const notImplemented = (): never => {
   throw new Error("not implemented");
 };
+
+/**
+ * typed-array payload proxy node に隠し持たせる「どの message のどの field か」
+ * の meta。`buf.copyFrom(payloadField)` が src からこれを読んで bufferCopyFrom AST
+ * を組む (= 公開型 `TypedArrayFieldRef` は length/at だけ、内部は symbol で carry)。
+ */
+const PAYLOAD_FIELD_META = Symbol("unworklet.payloadFieldMeta");
+
+type PayloadFieldMeta = { decl: MessageDeclAst; field: string };
+
+/**
+ * buffer handle に隠し持たせる identity (= name + element type)。`event.emitIf` が
+ * typed-array field の値として渡された buffer を検出 (= §4.3 worklet→main の emit
+ * 側) するための marker。公開型 `Buffer<T>` には現れない内部 symbol。
+ */
+const BUFFER_HANDLE_META = Symbol("unworklet.bufferHandleMeta");
+
+type BufferHandleMeta = { decl: BufferDecl };
+
+const bufferHandleMeta = (v: unknown): BufferHandleMeta | undefined =>
+  typeof v === "object" && v !== null
+    ? (v as Record<symbol, BufferHandleMeta | undefined>)[BUFFER_HANDLE_META]
+    : undefined;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Literal lift helpers (= Q36-a)
@@ -84,10 +110,9 @@ function liftStoreValue<T extends ScalarType>(type: T, v: Node<T> | ScalarOf<T>)
     return { kind: "literal", type: "i32", value: v ? 1 : 0 };
   }
   if (typeof v === "bigint") {
-    // i64 literal store の bigint path は ast.ts の literal `value: number`
-    // 制 約 下 で 表 現 不 完 全 = 後 続 sub-phase で literal 型 拡 張 と
-    // zip し て fill。 Node<'i64'> 経 由 (= stateLoad 等) は そ の ま ま 通 る。
-    throw new Error("i64 literal store not implemented (= 後 続 sub-phase で fill)");
+    // i64 literal store: bigint を そ の ま ま literal node に 担 ぐ (= emit が
+    // `i64.const` へ 32bit word 分 割)。 Node<'i64'> 経 由 (= stateLoad 等) も 同 path。
+    return { kind: "literal", type: "i64", value: v };
   }
   return unwrapAst(v as Node<ScalarType>);
 }
@@ -203,7 +228,10 @@ function makeStateDecl<T extends ScalarType>(
 ): State<T> {
   const ctx = getCurrentCapture();
   const synthIdx = ctx.declarations.filter((d) => d.kind === "state").length;
-  const name = pendingExpose.name ?? `__state_${synthIdx}`;
+  // user name は subgraph instance prefix を前置 (= §5.6)。 auto name は global
+  // synthIdx で既に一意 = prefix 不要。
+  const name =
+    pendingExpose.name !== undefined ? ctx.namePrefix + pendingExpose.name : `__state_${synthIdx}`;
   checkStateName(name);
   const decl: StateDecl = {
     kind: "state",
@@ -236,18 +264,22 @@ function makeStateHandle<T extends ScalarType>(decl: StateDecl): State<T> {
       });
     },
     named: (name: string) => {
-      checkStateName(name, decl);
-      decl.name = name;
+      const fullName = getCurrentCapture().namePrefix + name;
+      checkStateName(fullName, decl);
+      decl.name = fullName;
       decl.userNamed = true;
       validateStateDecl(decl);
       return handle;
     },
     expose: (options: ExposeOptions) => {
-      if (options.name !== undefined && options.name !== decl.name) {
-        checkStateName(options.name, decl);
-        decl.name = options.name;
+      // user name は subgraph instance prefix を前置 (= §5.6、buffer / .named と同軸)。
+      const exposeName =
+        options.name !== undefined ? getCurrentCapture().namePrefix + options.name : undefined;
+      if (exposeName !== undefined && exposeName !== decl.name) {
+        checkStateName(exposeName, decl);
+        decl.name = exposeName;
         decl.userNamed = true;
-      } else if (options.name !== undefined) {
+      } else if (exposeName !== undefined) {
         // 同 name 再 set = userNamed flag を true へ promote (= 後 付 け .expose
         // で 自 decl と 同 name 渡 す path = user 明 示 と み な す)
         decl.userNamed = true;
@@ -271,7 +303,7 @@ export const state: StateChain = makeStateChain(EMPTY_EXPOSE);
 // `buffer` — fixed-size arrays (`01-dsl.md` §3.2)
 // ─────────────────────────────────────────────────────────────────────────
 
-type BufferFactory<T extends ScalarType | "u8"> = (options: { size: number }) => Buffer<T>;
+type BufferFactory<T extends BufferElementType> = (options: { size: number }) => Buffer<T>;
 
 export interface BufferChain {
   readonly f32: BufferFactory<"f32">;
@@ -284,16 +316,224 @@ export interface BufferChain {
   expose(options: ExposeOptions): BufferChain;
 }
 
-export const buffer: BufferChain = {
-  f32: () => notImplemented(),
-  f64: () => notImplemented(),
-  i32: () => notImplemented(),
-  i64: () => notImplemented(),
-  bool: () => notImplemented(),
-  u8: () => notImplemented(),
-  named: () => notImplemented(),
-  expose: () => notImplemented(),
-};
+/** The scalar type a buffer element surfaces as (= `u8` is accessed via i32). */
+function bufferScalarType(t: BufferElementType): ScalarType {
+  return t === "u8" ? "i32" : t;
+}
+
+/** Lift a buffer write value (= Q33 literal lift, element-type aware). */
+function liftBufferValue(elementType: BufferElementType, v: Node<ScalarType> | number): AstNode {
+  const st = bufferScalarType(elementType);
+  if (typeof v === "number") {
+    return { kind: "literal", type: st, value: st === "i32" ? v | 0 : v };
+  }
+  return unwrapAst(v);
+}
+
+/**
+ * buffer slot の name uniqueness check (= `01-dsl.md` §3.2、 state と 同 規 約)。
+ * 同 kind 内 で unique (= type が違っても collide)。 `excludeDecl` で 後 付 け
+ * `.named` 時 の 自 collide 誤 検 出 を 回 避。
+ */
+function checkBufferName(name: string, excludeDecl: BufferDecl | null = null): void {
+  const ctx = getCurrentCapture();
+  if (ctx.declarations.some((d) => d.kind === "buffer" && d.name === name && d !== excludeDecl)) {
+    throw new Error(
+      `unworklet: duplicate buffer declaration name "${name}" — buffer names must be unique within a processor`,
+    );
+  }
+}
+
+/**
+ * buffer slot の publish / snapshot 整 合 性 check (= `01-dsl.md` §3.2)。 state と
+ * 同 軸 だ が publish の type 制 限 は ナ シ (= 全 element 型 で publish 可、 Q27-a/e)。
+ * persistent snapshot / publish は main-side identity 必 須 = userNamed 必 須。
+ */
+function validateBufferDecl(decl: BufferDecl): void {
+  if (decl.publish !== undefined) {
+    if (!Number.isFinite(decl.publish.rateFps) || decl.publish.rateFps <= 0) {
+      throw new Error(
+        `unworklet: publish rateFps must be a positive finite number, got ${decl.publish.rateFps}`,
+      );
+    }
+    if (!decl.userNamed) {
+      throw new Error(
+        `unworklet: buffer with publish requires user-defined name (= via .named('X') or .expose({ name: 'X' }))`,
+      );
+    }
+  }
+  if (decl.snapshot === "persistent" && !decl.userNamed) {
+    throw new Error(
+      `unworklet: buffer with snapshot 'persistent' requires user-defined name (= via .named('X') or .expose({ name: 'X' }))`,
+    );
+  }
+}
+
+function makeBufferDecl<T extends BufferElementType>(
+  type: T,
+  size: number,
+  pendingExpose: ExposeOptions,
+): Buffer<T> {
+  const ctx = getCurrentCapture();
+  const synthIdx = ctx.declarations.filter((d) => d.kind === "buffer").length;
+  // user name は subgraph instance prefix を前置 (= §5.6、state と同軸)。 auto name は
+  // global synthIdx で既に一意 = prefix 不要。 複数 instance で named buffer が衝突しない。
+  const name =
+    pendingExpose.name !== undefined ? ctx.namePrefix + pendingExpose.name : `__buffer_${synthIdx}`;
+  checkBufferName(name);
+  const decl: BufferDecl = {
+    kind: "buffer",
+    name,
+    type,
+    size,
+    userNamed: pendingExpose.name !== undefined,
+    snapshot: pendingExpose.snapshot,
+    publish: pendingExpose.publish,
+  };
+  validateBufferDecl(decl);
+  addDeclaration(decl);
+  return makeBufferHandle<T>(decl);
+}
+
+function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer<T> {
+  // literal index / offset を graph-capture 時に range check (= §3.2: literal range
+  // constraints は capture で reject)。 dynamic Node<'i32'> は caller 責任 (= no check)。
+  // lanes は SIMD load/store が触る連続要素数 (= read/write は 1、loadVec/storeVec は 4)。
+  const liftIndex = (idx: Node<"i32"> | number, op: string, lanes = 1): AstNode => {
+    if (typeof idx === "number") {
+      if (!Number.isInteger(idx) || idx < 0 || idx + lanes > decl.size) {
+        throw new Error(
+          `unworklet: buffer "${decl.name}" ${op}(${idx}) index is out of range [0, ${decl.size - lanes + 1}) (literal buffer indexes are range-checked at graph capture; use a Node<'i32'> for runtime indexing)`,
+        );
+      }
+      return { kind: "literal", type: "i32", value: idx };
+    }
+    return unwrapAst(idx);
+  };
+  const handle = {
+    get size() {
+      return decl.size;
+    },
+    get name() {
+      return decl.name;
+    },
+    read: (idx: Node<"i32"> | number) =>
+      wrapAst({
+        kind: "bufferRead",
+        elementType: decl.type,
+        name: decl.name,
+        index: liftIndex(idx, "read"),
+      }),
+    write: (idx: Node<"i32"> | number, v: Node<ScalarType> | number) => {
+      addStatement({
+        kind: "bufferWrite",
+        elementType: decl.type,
+        name: decl.name,
+        index: liftIndex(idx, "write"),
+        value: liftBufferValue(decl.type, v),
+      });
+    },
+    readInterpolated: (pos: Node<"f32"> | number) => {
+      // 補間は floor(pos) と floor(pos)+1 の 2-tap を読むので literal pos は [0, size-1)。
+      if (typeof pos === "number" && (!(pos >= 0) || pos >= decl.size - 1)) {
+        throw new Error(
+          `unworklet: buffer "${decl.name}" readInterpolated(${pos}) pos is out of range [0, ${decl.size - 1}) (= 2-tap 補間は floor(pos)+1 まで読む; literal pos は capture で range-check)`,
+        );
+      }
+      return wrapAst({
+        kind: "bufferReadInterpolated",
+        elementType: decl.type,
+        name: decl.name,
+        pos: liftF32(pos),
+      });
+    },
+    copyFrom: (src: TypedArrayFieldRef<T>) => {
+      const meta = (src as unknown as Record<symbol, PayloadFieldMeta | undefined>)[
+        PAYLOAD_FIELD_META
+      ];
+      if (meta === undefined) {
+        throw new Error(
+          "unworklet: buffer.copyFrom(src) requires a typed-array message payload field",
+        );
+      }
+      // field を dest buffer の element type で typed-array seal (= TypedArrayFieldRef<T>
+      // の T が buffer 型と一致する型制約があるので payloadContent + 8-byte slot 確保)。
+      const field = meta.decl.fields.find((f) => f.name === meta.field);
+      if (field !== undefined) field.payloadElementType = decl.type;
+      addStatement({
+        kind: "bufferCopyFrom",
+        elementType: decl.type,
+        bufferName: decl.name,
+        bufferSize: decl.size,
+        messageName: meta.decl.name,
+        field: meta.field,
+      });
+    },
+    // SIMD buffer I/O (= §7、型は @unworklet/core/simd の declaration merge で f32 限定)。
+    // offset は element 単位 = emit 側で × 4 byte。 4 lane を v128 で load/store。
+    loadVec: (offset: Node<"i32"> | number) =>
+      wrapAst<"f32x4">({
+        kind: "bufferLoadVec",
+        name: decl.name,
+        offset: liftIndex(offset, "loadVec", 4),
+      }),
+    storeVec: (offset: Node<"i32"> | number, value: Node<"f32x4">) => {
+      addStatement({
+        kind: "bufferStoreVec",
+        name: decl.name,
+        offset: liftIndex(offset, "storeVec", 4),
+        value: unwrapAst(value),
+      });
+    },
+    named: (name: string) => {
+      const fullName = getCurrentCapture().namePrefix + name;
+      checkBufferName(fullName, decl);
+      decl.name = fullName;
+      decl.userNamed = true;
+      validateBufferDecl(decl);
+      return handle;
+    },
+    expose: (options: ExposeOptions) => {
+      const exposeName =
+        options.name !== undefined ? getCurrentCapture().namePrefix + options.name : undefined;
+      if (exposeName !== undefined && exposeName !== decl.name) {
+        checkBufferName(exposeName, decl);
+        decl.name = exposeName;
+        decl.userNamed = true;
+      } else if (exposeName !== undefined) {
+        decl.userNamed = true;
+      }
+      if (options.snapshot !== undefined) {
+        decl.snapshot = options.snapshot;
+      }
+      if (options.publish !== undefined) {
+        decl.publish = options.publish;
+      }
+      validateBufferDecl(decl);
+      return handle;
+    },
+  } as unknown as Buffer<T>;
+  // event.emitIf が typed-array field の値として渡された buffer を識別する marker
+  // (= §4.3 worklet→main、 decl 参 照 で late-bind name も追従)。
+  Object.defineProperty(handle, BUFFER_HANDLE_META, {
+    value: { decl } satisfies BufferHandleMeta,
+    enumerable: false,
+  });
+  return handle;
+}
+
+const makeBufferChain = (pendingExpose: ExposeOptions): BufferChain => ({
+  f32: ({ size }) => makeBufferDecl("f32", size, pendingExpose),
+  f64: ({ size }) => makeBufferDecl("f64", size, pendingExpose),
+  i32: ({ size }) => makeBufferDecl("i32", size, pendingExpose),
+  i64: ({ size }) => makeBufferDecl("i64", size, pendingExpose),
+  bool: ({ size }) => makeBufferDecl("bool", size, pendingExpose),
+  u8: ({ size }) => makeBufferDecl("u8", size, pendingExpose),
+  named: (name) => makeBufferChain(mergeExpose(pendingExpose, { name })),
+  expose: (options) => makeBufferChain(mergeExpose(pendingExpose, options)),
+});
+
+export const buffer: BufferChain = makeBufferChain(EMPTY_EXPOSE);
 
 // ─────────────────────────────────────────────────────────────────────────
 // `param` — AudioParam-backed (`01-dsl.md` §3.3 + Q76 named-only)
@@ -498,6 +738,27 @@ function checkSealedEventField(decl: EventDeclAst, fieldName: string, wireType: 
   }
 }
 
+// typed-array (variable-length) field 用の checkSealedEventField (= Q71)。後続 emit site が
+// first site で seal されていない typed-array field を足す / element 型を変える のを弾く
+// (= scalar field と同じ field-set 一致契約を typed-array field にも適用)。
+function checkSealedTypedArrayField(
+  decl: EventDeclAst,
+  fieldName: string,
+  elementType: BufferElementType,
+): void {
+  const existing = decl.fields.find((f) => f.name === fieldName);
+  if (existing === undefined || existing.payloadElementType === undefined) {
+    throw new Error(
+      `unworklet: event "${decl.name}" emit site introduces new typed-array field "${fieldName}" — all emit sites for the same event<T> must agree on field set (Q71 / event-field-type-mismatch)`,
+    );
+  }
+  if (existing.payloadElementType !== elementType) {
+    throw new Error(
+      `unworklet: event "${decl.name}" typed-array field "${fieldName}" element-type mismatch — previously sealed as ${existing.payloadElementType}, this emit site supplies ${elementType} (Q71 / event-field-type-mismatch)`,
+    );
+  }
+}
+
 /**
  * `eventDecl.emitIf` 1 emit site で 1 field の 値 を AST 化 + wire 型 推 論。
  *
@@ -569,10 +830,17 @@ export function event<T>(options: EventOptions): EventDecl<T> {
                 );
               })();
 
-      const fieldNames = Object.keys(payload).filter((k) => k !== "atSample");
+      const allKeys = Object.keys(payload).filter((k) => k !== "atSample");
+      // typed-array field (§4.3 worklet→main) = 値が buffer handle のもの (§5.1: 高々 1 個)。
+      // 隣 接 の `length` field は framework-injected = その typed-array field の copy 長 =
+      // wire field 扱 い し ない (= consume)。
+      const taFieldName = allKeys.find((k) => bufferHandleMeta(payload[k]) !== undefined);
+      const scalarKeys = allKeys.filter(
+        (k) => k !== taFieldName && !(taFieldName !== undefined && k === "length"),
+      );
       const emitFields: EventEmitField[] = [];
       const isFirstEmit = decl.fields.length === 0;
-      for (const fieldName of fieldNames) {
+      for (const fieldName of scalarKeys) {
         const { ast, wireType } = liftEmitFieldValue(decl, fieldName, payload[fieldName]);
         if (isFirstEmit) {
           // 1 番 目 emit = full field set を seal (= 同 emit 内 で 重 複 field を
@@ -582,6 +850,34 @@ export function event<T>(options: EventOptions): EventDecl<T> {
           checkSealedEventField(decl, fieldName, wireType);
         }
         emitFields.push({ name: fieldName, wireType, value: ast });
+      }
+      if (taFieldName !== undefined) {
+        const bufMeta = bufferHandleMeta(payload[taFieldName])!;
+        const elementType = bufMeta.decl.type;
+        const lengthRaw = payload.length;
+        const lengthAst: AstNode = isWrappedNode(lengthRaw)
+          ? unwrapAst(lengthRaw)
+          : typeof lengthRaw === "number"
+            ? { kind: "literal", type: "i32", value: lengthRaw }
+            : (() => {
+                throw new Error(
+                  `unworklet: event "${decl.name}" typed-array field "${taFieldName}" requires a "length" field (Node<'i32'> | number)`,
+                );
+              })();
+        if (isFirstEmit) {
+          decl.fields.push({ name: taFieldName, wireType: "i32", payloadElementType: elementType });
+        } else {
+          checkSealedTypedArrayField(decl, taFieldName, elementType);
+        }
+        emitFields.push({
+          name: taFieldName,
+          wireType: "i32", // dummy (= slot は [payloadLen, payloadOffset]、 payloadElementType で 分 岐)
+          value: { kind: "literal", type: "i32", value: 0 }, // placeholder (= 未 使 用)
+          payloadElementType: elementType,
+          bufferName: bufMeta.decl.name,
+          bufferSize: bufMeta.decl.size, // emit が copy byte 数を buffer 境界に clamp する
+          length: lengthAst,
+        });
       }
       if (!isFirstEmit && emitFields.length !== decl.fields.length) {
         const missing = decl.fields.filter((f) => !emitFields.some((e) => e.name === f.name));
@@ -635,6 +931,15 @@ function checkMessageName(name: string): void {
  * 同 時 に decl.fields に push (= 1 番 目 onReceive で seal、 後 続 onReceive で
  * 同 field 名 を 何 度 access し て も 同 wire 型 で 通 す)。
  */
+/**
+ * `onReceive` handler が destructure で 触 る field を hybrid handle と し て 返 す。
+ * scalar 利 用 (= `state.store(field)` 等) は Node<'i32'> と し て 振 る 舞 い、
+ * typed-array 利 用 (= `field.at(i)` / `field.length`) は `01-dsl.md` §4.3 の
+ * proxy を 露 出。 field の wire 種 別 は 「ど ち ら の interface を 使 っ た か」 で
+ * seal す る (= TS の 2-view で user code は 一 貫 し て 片 方 だ け を 使 う)。
+ * typed-array element 型 は v1.0.0-a で f32 固 定 (= Float32Array audio payload、
+ * Uint8Array/u8 = sysex は MIDI scope)。
+ */
 function makeMessagePayloadProxy(decl: MessageDeclAst): Record<string, unknown> {
   return new Proxy(
     {},
@@ -644,16 +949,50 @@ function makeMessagePayloadProxy(decl: MessageDeclAst): Record<string, unknown> 
            は string key の み hit) */
         if (typeof prop !== "string") return undefined;
         const fieldName = prop;
-        // 既 seal 済 と 整 合 = 何 度 access し て も 同 wire 型、 未 seal = i32 で push
+        // 既 seal 済 と 整 合 = 何 度 access し て も 同 field、 未 seal = i32 で push
         if (!decl.fields.some((f) => f.name === fieldName)) {
           decl.fields.push({ name: fieldName, wireType: "i32" });
         }
-        return wrapAst<"i32">({
+        const sealTypedArray = (): void => {
+          const field = decl.fields.find((f) => f.name === fieldName);
+          if (field !== undefined) field.payloadElementType = "f32";
+        };
+        // scalar view = messageFieldRead i32 を astPayload に 持 つ Node。
+        const node = wrapAst<"i32">({
           kind: "messageFieldRead",
           name: decl.name,
           field: fieldName,
           wireType: "i32",
+        }) as unknown as Record<string, unknown>;
+        // typed-array view (= §4.3 proxy)。 access し た 時 点 で field を typed-array seal。
+        Object.defineProperty(node, "length", {
+          get() {
+            sealTypedArray();
+            return wrapAst<"i32">({
+              kind: "payloadFieldLength",
+              messageName: decl.name,
+              field: fieldName,
+              elementType: "f32",
+            });
+          },
         });
+        node["at"] = (idx: Node<"i32"> | number): Node<"f32"> => {
+          sealTypedArray();
+          return wrapAst<"f32">({
+            kind: "payloadFieldRead",
+            messageName: decl.name,
+            field: fieldName,
+            elementType: "f32",
+            index: liftOffset(idx),
+          });
+        };
+        // `buf.copyFrom(field)` 用 = field の所属 message + field 名を隠し carry
+        // (= buffer handle がここから bufferCopyFrom AST を組む、seal も向こうで行う)。
+        Object.defineProperty(node, PAYLOAD_FIELD_META, {
+          value: { decl, field: fieldName } satisfies PayloadFieldMeta,
+          enumerable: false,
+        });
+        return node;
       },
     },
   );

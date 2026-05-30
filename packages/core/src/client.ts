@@ -15,6 +15,7 @@
 
 import type {
   AudioPortDescriptor,
+  BufferElementType,
   CompiledProcessor,
   CreateNodeOptions,
   EventSubscriber,
@@ -65,6 +66,28 @@ function readEventFieldValue(
       return view.getBigInt64(byteOffset, true);
     case "bool":
       return view.getInt32(byteOffset, true) !== 0;
+  }
+}
+
+/**
+ * §4.3 typed-array event field の content bytes を element type 別 の fresh typed
+ * array に reinterpret (= worklet→main、 main 側 は natural JS typed array)。 `bytes`
+ * を slice で copy し て non-shared / 0-align の ArrayBuffer に し て か ら view を 張 る。
+ */
+function sliceTypedArray(bytes: Uint8Array, elementType: BufferElementType): ArrayBufferView {
+  const copy = bytes.slice();
+  switch (elementType) {
+    case "f64":
+      return new Float64Array(copy.buffer);
+    case "u8":
+      return copy;
+    case "i32":
+    case "bool":
+      return new Int32Array(copy.buffer);
+    case "i64":
+      return new BigInt64Array(copy.buffer);
+    case "f32":
+      return new Float32Array(copy.buffer);
   }
 }
 
@@ -347,6 +370,22 @@ export async function createNode<C>(
     eventRingsBuffer = new SharedArrayBuffer(eventRingsByteLength);
   }
 
+  // §4.3 content buffer (worklet→main) = typed-array field を 持 つ event ご と に
+  // payloadContent.capacity bytes を 連 続 配 置 (= ring index と zip)。 worklet が
+  // ここ に WASM content を mirror、 main が drain で slot の [len, offset] で slice。
+  let eventContentByteLength = 0;
+  const eventContentSabOffsets: number[] = [];
+  for (const ring of eventRings) {
+    eventContentSabOffsets.push(eventContentByteLength);
+    if (ring.payloadContent !== undefined) {
+      eventContentByteLength += ring.payloadContent.capacity;
+    }
+  }
+  let eventContentBuffer: SharedArrayBuffer | null = null;
+  if (eventContentByteLength > 0 && sabAvailable) {
+    eventContentBuffer = new SharedArrayBuffer(eventContentByteLength);
+  }
+
   // message ring buffer。 SAB 時 の み allocate (= postMessage path は main 側 が
   // `port.postMessage({ kind: 'message', ringIndex, payload })` で 直 送、 worklet
   // 側 が self.port.onmessage で receive + messageQueueMirrors に push + process
@@ -362,6 +401,24 @@ export async function createNode<C>(
   if (messageRingsByteLength > 0 && sabAvailable) {
     messageRingsBuffer = new SharedArrayBuffer(messageRingsByteLength);
   }
+
+  // §5.2 variable-length content buffer = typed-array field を 持 つ message ご と に
+  // `payloadContent.capacity` bytes を 連 続 配 置 (= ring index と zip、 content ナ シ
+  // の ring も offset を hold = 使 用 側 は descriptor.payloadContent 有 無 で 判 断)。
+  // SAB 時 = main が ここ に array を push → worklet が WASM content region に mirror。
+  let messageContentByteLength = 0;
+  const messageContentSabOffsets: number[] = [];
+  for (const ring of messageRings) {
+    messageContentSabOffsets.push(messageContentByteLength);
+    if (ring.payloadContent !== undefined) {
+      messageContentByteLength += ring.payloadContent.capacity;
+    }
+  }
+  let messageContentBuffer: SharedArrayBuffer | null = null;
+  if (messageContentByteLength > 0 && sabAvailable) {
+    messageContentBuffer = new SharedArrayBuffer(messageContentByteLength);
+  }
+  const messageContentCursors: number[] = messageRings.map(() => 0);
 
   // main 側 state surface 構 築 = transport mode で 経 路 が 分 岐:
   //
@@ -443,6 +500,10 @@ export async function createNode<C>(
     eventRingsView = new DataView(eventRingsBuffer);
     eventRingsHeaderView = new Int32Array(eventRingsBuffer);
   }
+  // §4.3 content buffer の byte view (= SAB 時 の み)。 drain で slot の [len, offset]
+  // を 読 ん で ここ か ら fresh typed array を slice。
+  const eventContentBytes: Uint8Array | null =
+    eventContentBuffer !== null ? new Uint8Array(eventContentBuffer) : null;
   if (eventRings.length > 0) {
     for (let i = 0; i < eventRings.length; i++) {
       const ring = eventRings[i]!;
@@ -496,6 +557,10 @@ export async function createNode<C>(
     messageRingsView = new DataView(messageRingsBuffer);
     messageRingsHeaderView = new Int32Array(messageRingsBuffer);
   }
+  // §5.2 content buffer の byte view (= SAB 時 の み)。 typed-array field 送 信 で
+  // ここ に array bytes を push、 slot に [payloadLen, payloadOffset] を 書 く。
+  const messageContentView: Uint8Array | null =
+    messageContentBuffer !== null ? new Uint8Array(messageContentBuffer) : null;
   if (messageRings.length > 0) {
     for (let i = 0; i < messageRings.length; i++) {
       const ring = messageRings[i]!;
@@ -525,7 +590,25 @@ export async function createNode<C>(
             for (const field of ring.fields) {
               const value = payload[field.name];
               const byteOffset = slotByteOffset + field.offsetInSlot;
-              if (typeof value === "boolean") {
+              if (field.payloadElementType !== undefined) {
+                // typed-array field = content SAB に bytes を 書 い て slot に
+                // [payloadLen(bytes), payloadOffset(region 相 対)]。 worklet が content
+                // region を 1:1 mirror す る の で offset は region base 相 対 で 一 致。
+                if (messageContentView !== null && ArrayBuffer.isView(value)) {
+                  const capacity = ring.payloadContent?.capacity ?? 0;
+                  // content region より大きい payload は truncate し て copy (= Q85:
+                  // no-trap。 clamp し な い と Uint8Array.set が RangeError を throw)。
+                  const copyBytes = Math.min(value.byteLength, capacity);
+                  const src = new Uint8Array(value.buffer, value.byteOffset, copyBytes);
+                  const contentBase = messageContentSabOffsets[i]!;
+                  let cursor = messageContentCursors[i]!;
+                  if (cursor + copyBytes > capacity) cursor = 0;
+                  messageContentView.set(src, contentBase + cursor);
+                  messageRingsView.setUint32(byteOffset, copyBytes, true);
+                  messageRingsView.setUint32(byteOffset + 4, cursor, true);
+                  messageContentCursors[i] = cursor + copyBytes;
+                }
+              } else if (typeof value === "boolean") {
                 messageRingsView.setInt32(byteOffset, value ? 1 : 0, true);
               } else if (typeof value === "number") {
                 messageRingsView.setInt32(byteOffset, value | 0, true);
@@ -617,11 +700,23 @@ export async function createNode<C>(
           const payload: Record<string, unknown> = {};
           for (const field of ring.fields) {
             const fieldByteOffset = slotByteOffset + field.offsetInSlot;
-            payload[field.name] = readEventFieldValue(
-              eventRingsView,
-              fieldByteOffset,
-              field.wireType,
-            );
+            if (field.payloadElementType !== undefined && eventContentBytes !== null) {
+              // typed-array field = slot の [payloadLen, payloadOffset] を 読 ん で
+              // SAB content region か ら fresh typed array を slice (= §4.3)。
+              const payloadLen = eventRingsView.getInt32(fieldByteOffset, true);
+              const payloadOffset = eventRingsView.getInt32(fieldByteOffset + 4, true);
+              const absBase = eventContentSabOffsets[i]! + payloadOffset;
+              payload[field.name] = sliceTypedArray(
+                eventContentBytes.subarray(absBase, absBase + payloadLen),
+                field.payloadElementType,
+              );
+            } else {
+              payload[field.name] = readEventFieldValue(
+                eventRingsView,
+                fieldByteOffset,
+                field.wireType,
+              );
+            }
           }
           for (const handler of subscribers) {
             try {
@@ -723,6 +818,8 @@ export async function createNode<C>(
             eventRingSabOffsets,
             transport: transportMode,
             ...(eventRingsBuffer !== null ? { eventRingsBuffer } : {}),
+            eventContentSabOffsets,
+            ...(eventContentBuffer !== null ? { eventContentBuffer } : {}),
           }
         : {}),
       // message ring あ り の 時 = transport mode 共 通 で descriptor + transport を
@@ -735,6 +832,8 @@ export async function createNode<C>(
             messageRingSabOffsets,
             transport: transportMode,
             ...(messageRingsBuffer !== null ? { messageRingsBuffer } : {}),
+            messageContentSabOffsets,
+            ...(messageContentBuffer !== null ? { messageContentBuffer } : {}),
           }
         : {}),
     },
@@ -884,6 +983,7 @@ export async function createNode<C>(
           newSlotsBytes?: unknown;
           newSlotCount?: unknown;
           overflowCount?: unknown;
+          contentBytes?: unknown;
         }
       | null
       | undefined;
@@ -906,15 +1006,25 @@ export async function createNode<C>(
       const subscribers = eventSubscribers.get(ring.name);
       if (!subscribers || subscribers.size === 0) return;
       const view = new DataView(data.newSlotsBytes);
+      // §4.3 typed-array field 用 = worklet が 同 梱 し た content snapshot (= offset 0
+      // 単 一 payload)。 slot の [payloadLen, payloadOffset] で ここ か ら slice。
+      const contentBytes =
+        data.contentBytes instanceof ArrayBuffer ? new Uint8Array(data.contentBytes) : null;
       for (let k = 0; k < data.newSlotCount; k++) {
         const slotByteOffset = k * ring.slotSize;
         const payload: Record<string, unknown> = {};
         for (const field of ring.fields) {
-          payload[field.name] = readEventFieldValue(
-            view,
-            slotByteOffset + field.offsetInSlot,
-            field.wireType,
-          );
+          const fieldByteOffset = slotByteOffset + field.offsetInSlot;
+          if (field.payloadElementType !== undefined && contentBytes !== null) {
+            const payloadLen = view.getInt32(fieldByteOffset, true);
+            const payloadOffset = view.getInt32(fieldByteOffset + 4, true);
+            payload[field.name] = sliceTypedArray(
+              contentBytes.subarray(payloadOffset, payloadOffset + payloadLen),
+              field.payloadElementType,
+            );
+            continue;
+          }
+          payload[field.name] = readEventFieldValue(view, fieldByteOffset, field.wireType);
         }
         for (const handler of subscribers) {
           try {

@@ -90,6 +90,10 @@ populated (Q1–Q82 ratify complete; Q28 is unassigned — a numbering artifact,
 | Q69 | SAB mode の event drain mechanism (= MessageChannel / Atomics.notify / rAF / setTimeout)                                                                                                                      | resolved — 実 装 AI 領 域 と し て close。 観 測 ル ー ル (= 「main thread reader が ringbuffer を 継 続 drain す る」 = `02-messaging.md` §4 / §5) と publish counter cadence (= Q39-a 「due tick で 不 等 確 increment」) を 満 た す 限 り、 SAB mode で の wake-up mechanism は impl 自 由 度。 `05-client.md` §5.1 の 「per-MessageChannel ping in SAB mode」 は 例 示 で あ り 仕 様 確 定 で は な い (= 実 装 期 で Atomics.notify / rAF 等 に 変 え て も 観 測 ル ー ル 違 反 を 起 こ さ な い)。 仕 様 invariant (= drain 観 測、 publish cadence) は 動 か ず、 mechanism 細 部 は 実 装 期 の AI agent が performance / browser compat trade-off で 決 め る                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | `02-messaging.md` §4 + `05-client.md` §5.1 + `.claude/skills/_shared/core-principles.md` §2                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | Q81 | `@unworklet/offline` backend simplification = WASM 1 backend に 統 一                                                                                                                                         | resolved — `renderOffline(processor, config)` を WASM 1 backend に 統 一、 config か ら `backend?: 'js'                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | 'wasm'`field 削 除、 pure-JS interpreter path を 仕 様 surface か ら 全 廃。 内 部 動 作 =`renderOffline`内 で`@unworklet/core`の 公 開 compile API を call + WASM emit + 駆 動 を 自 己 完 結 (= host JS = Node.js / Bun / Deno 等 の WebAssembly runtime で`WebAssembly.instantiate()`し render quantum 単 位 で WASM`process()` を 呼 ぶ、 audio thread / AudioContext 不 要、 Q82 で 仕 上 げ); 1 backend で server-side render / batch / preset preview / test の 4 use case 全 部 カ バ ー; pure-JS interpreter = mock 寄 り = 「framework が ship す る も の と 違 う path で 動 く」 構 造 的 矛 盾 で 棄 却                                                                                                                                                                                                                     | `13-offline-render.md` §3 + `06-testing.md` §2 + `10-roadmap.md` §1 + `03-compiler.md` §8 + `09-repo-structure.md` §2.4                    |
 | Q82 | compile invocation を `@unworklet/core` 公 開 API に shift (= vite-plugin scope narrow、 Q23+Q24+Q25 / Q52 部 分 retract)                                                                                     | resolved — WASM compile invocation を `@unworklet/core` の named export と し て expose、 consumer = vite-plugin (= build pipeline で call、 既 path)、 offline (= `renderOffline` 内 で 自 動 call、 新 path)、 純 Node / Bun / Deno / browser host script (= 直 接 import + call、 新 path) 全 て 同 API を call; binaryen (= 内 部 WASM emit toolkit) は `@unworklet/core` dependency に 入 る が dynamic import で load = compile を call し な い production runtime bundle に は 含 ま れ ず; compiler module 自 体 は core 内 部 module の ま ま で API surface だ け 公 開 = 公 開 4 package 維 持; vite-plugin 責 務 は bundler 統 合 (= core 公 開 compile API call + asset resolution + `?worklet` HMR boundary + source maps + build-error panel + analysis JSON) に narrow                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | `09-repo-structure.md` §2.1 / §2.4 + `07-vite-plugin.md` + `13-offline-render.md` + `03-compiler.md` + `04-worklet-runtime.md` + `08-deployment.md` §1 + `10-roadmap.md` Phase 11                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Q84 | typed-array message / event field の element 型 = 型消去で直接読み f32 限定、byte は buffer 経由 (= codex review #9 P1 ×2)                                                                                    | resolved — `.at()` / `.length` 直接読みを `Float32Array` (f32) 専用に narrow (= element 型は型 `T` にしか無く graph capture 前に消去 = runtime が per-element load 命令を選べない); `Uint8Array` 等 byte は `buffer.u8` + `copyFrom` + `buf.read` 経由 (= Q31-c bulk memory.copy、能力 loss ナシ); `event<T>` emit-side typed-array field は `EmitPayload<T>` で `Buffer<T>` のみ受容 (= 旧 Buffer/TypedArrayFieldRef union から narrow、re-emit は copyFrom→buffer); 型のみ enforce = runtime proxy / emit 無変更で正、canonical / 既存 test 書き換えゼロ; (B) runtime element-型 hint = T と二重指定で棄却、(C) seal 遅延解決 = 純 .at() u8 が「型通るが動かない」を残し棄却                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `01-dsl.md` §4.1 + §4.2 + §4.3 + `types.ts` + Q46 / Q36-b / Q49 / Q74                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Q85 | typed-array payload content の同時保持枠数を 16 に cap (= codex review #9 F-B)                                                                                                                                | resolved — content region = `perPayload × min(ringCapacity, 16)` (= 単一 chunk だと drain 前に複数 payload を queue した時に未 drain slot を上書きする bug 解消)。256 は scalar 用 default ring capacity で大 payload をその枠数確保すると過大 (= 64KB × 256 = 16MB で落ちる) なので同時保持を 16 枠に cap し default を 1MB に bound。producer は 16 枠を循環再利用 = 17 個以上を drain 前に積んだ時だけ最古を drop-oldest (= trap/OOB しない、余湖さん「クラッシュさえしなければ古いの消えるで OK」)。main→worklet は 1 quantum (2.7ms) に 17 個連射しない限り全保持。slot-indexed writer (event emit / offline inject) は chunks で modulo、cursor 系 (client/worklet) は region size で wrap。(B) full 256 枠 = 16MB で channel ごと明示サイズ必須で棄却、(C) payload default 縮小 = 大 payload が default で切れるで棄却                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `02-messaging.md` §5.2 + `compile/layout.ts` + `compile/emit.ts` + `@unworklet/offline`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Q86 | math primitive の型分類 = abs/min/max/clamp は全 numeric、sin/sqrt 系は float-only (= codex review #9 F-A/F-C)                                                                                                | resolved — 全 math を `<T extends ScalarType>` 一律にして整数 node でも `f32.max`/`f32.abs`/transcendental を emit = 不正 WASM だった。演算の意味で 2 分類: 全 numeric (f32/f64/i32/i64) = `add/sub/mul/div/mod/neg` + `abs/min/max/clamp` (= 整数で意味あり canonical Ex 5 も `i32(1).max`、整数 lowering は compare+select)、float-only (f32/f64) = `sin/cos/tan/tanh/exp/log/sqrt/floor/ceil/frac` (= 整数版ナンセンス、型 narrow で compile error、`f32(intNode).sqrt()` が明示 path)。型が通る⟺動くを型レベルで担保。(全 math 整数 lowering=ナンセンス誤用誘発で棄却、全 math float-only=整数 max/clamp/abs 頻出+canonical 使用で棄却、analyze reject=型で防げるものを runtime に落とすで棄却)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | `dsl/primitives.ts` + `compile/emit.ts` + `01-dsl.md` §2.1                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Q87 | message と event は独立した名前空間 = 同名 OK、content region は kind 別 (= codex review #9 P0)                                                                                                               | resolved — typed-array content region を name だけ key の 1 map に置いていたため、同名の `message<T>` と `event<T>` (uniqueness は kind 内のみ enforce で同名 legal) が content slot で name 衝突 = 後発宣言が先発の entry を上書き、両 channel が同一 region を alias して silent cross-channel corruption だった。ring (eventRings/messageRings) と同じく content も kind 別 map (eventSlots/messageSlots) に分離、同名でも別 region 確保。message (main→worklet) / event (worklet→main) は別方向・別アクセス面 (`node.messages` / `node.events`) なので同名は正当な in/out ペア命名 = user-free default 維持。修正は layout 内部 keying のみ、uniqueness check / public API 不変。(同名禁止 = 宣言キーワード/アクセス面が別で誤打ち余地小 + 正当ペア命名を奪う artificial 制約で棄却)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `compile/layout.ts` + `compile/emit.ts` + `worklet.ts` + `@unworklet/offline`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 ---
 
@@ -3867,3 +3871,119 @@ Phase 6 (= AudioWorklet 統合) 実装 中 に、 plan 着手 時 想定 を 越
 - ナ シ (= v1.0.0 surface で 5 件 全 て 完 結)
 
 ---
+
+## Q84 — typed-array message / event field の element 型は型消去で runtime 不可知 = 直接読みは f32 限定、byte は buffer 経由 (= codex review #9 P1 ×2 解消)
+
+**Status:** resolved.
+
+**背景:** `message<T>` / `event<T>` の可変長 typed-array field の element 型 (= `Float32Array` か `Uint8Array` か) は TS の型 `T` にしか無く、graph capture 前に消去される。proxy (`makeMessagePayloadProxy`) は field 名しか持たないため、`.at()` / `.length` の per-element load 命令 (= f32 なら `f32.load`、u8 なら `i32.load8_u` + sizeof 1) を runtime に選べない。実装は f32 を hardcode していたため、ratify 済み surface (Q46 + Q36-b + §4.3「`Uint8Array` → `Node<'i32'>`」 / Q49 + Q74 emit-side `TypedArrayFieldRef` re-emit) が「型は通るが f32 解釈で壊れる」状態だった (= codex review #9 の P1 ×2)。
+
+**Decision (Q84):**
+
+直接 per-element 読み (`.at()` / `.length`) を **`Float32Array` (f32) 専用**に narrow し、型 surface を実装の能力に揃える:
+
+1. `TypedArrayFieldRef<T>` は `T = 'f32'` のときだけ `.length: Node<'i32'>` + `.at(idx): Node<'f32'>` を持つ。`'u8'` 等は brand のみの **transfer-only** ref (= `copyFrom` 専用)。brand で `copyFrom` の element-type 一致 (Q31-c) を nominal に enforce。
+2. byte (`Uint8Array`) payload は `buffer.u8` + `copyFrom` + `buf.read(idx)` (= `Node<'i32'>` zero-extended) で扱う。bulk `memory.copy` = realtime-safe (Q31-c / Q49)。能力は失われず、canonical な byte path に集約。
+3. `event<T>` emit-side の typed-array field は `EmitPayload<T>` で **`Buffer<T>` のみ**受容 (= 旧 `Buffer<T> | TypedArrayFieldRef<T>` から narrow)。inbound payload の re-emit は `copyFrom` で `buffer.<T>` に写してから buffer を `emitIf` に渡す (= 単一構築 primitive = buffer、Q49 と整合)。runtime の emit 検出 (= buffer handle のみ) は narrow 後の型と一致して正。
+
+enforcement は型のみ (= 既 codebase の TS-driven surface 制限と同軸、e.g. SIMD opt-in)。runtime の proxy / emit は無変更で narrow 後の型の下で正しく動く。canonical 例・既存 test は f32 直接読み + buffer emit のみ使用 = 書き換えゼロ。
+
+**Rationale:**
+
+- 「型が通る ⟺ 動く」を最小機構で回復。実装は既に f32 専用 = 型 / docs を実装に寄せるだけで runtime 改変ナシ。
+- byte 機能は `buffer.u8` (= Q49 sysex の canonical primitive) で完全に表現可能 = feature loss ナシ、消えるのは「raw u8 field を copyFrom 無しで直接 `.at()`」という niche 形のみ。
+- pre-1.0.0 = 仕様を直すコスト ≪ 型消去を runtime hint 等で迂回するコスト。
+
+**Rejected:**
+
+- **(B) 宣言で element 型を runtime hint で渡す (= `message<T>({ payload: { bytes: 'u8' } })`)**: full feature だが `T` と二重指定で冗長、型と hint がズレる事故源、API surface 増。型 `T` に既に書いた情報を runtime で再記述させるのは declarative 原則に反する。
+- **(C) seal から遅延解決 + 純 `.at()` u8 は issue 化**: `copyFrom` 併用の u8 は直るが、copyFrom 無しの純 `.at()` u8 は型源が無く f32 default のまま = 「型通るが動かない」を 1 個残す = 本 narrow の目的 (= type ⟺ runtime 一致) に反する。
+
+**影響 file:**
+
+- `packages/core/src/types.ts`: `TypedArrayFieldRef` を brand + f32 conditional に narrow、`EmitPayload` typed-array field を `Buffer<T>` のみに narrow。
+- `01-dsl.md` §4.2 handler shape / §4.1 event 2-view / §4.3 proxy + emit-side を amend。
+- MIDI sysex (`MidiEventGraph` の `data: Buffer<'u8'> | TypedArrayFieldRef<'u8'>`) は stub のまま narrow 済み `TypedArrayFieldRef<'u8'>` (= brand only) を継承 = compile OK、MIDI 実装時に本 decision と同 path で揃える。
+
+### v1.x.0 deferral
+
+- ナシ (= byte per-element access は buffer 経由で v1.0.0 完結、直接 `.at()` u8 の need が出たら additive に runtime element-type 機構を検討可)。
+
+---
+
+## Q85 — typed-array payload content の同時保持枠数を 16 に cap (= codex review #9 F-B 解消)
+
+**Status:** resolved.
+
+**背景:** `message<T>` / `event<T>` の typed-array field の中身を置く content region が単一 chunk しか確保しておらず、consumer が drain する前に複数の payload が ring に積まれると producer cursor が wrap して未 drain の slot の中身を上書きしていた (= codex review #9 F-B、main が 1 quantum ≈ 2.7ms 以内に 2 個 typed-array message を送ると 1 個目が消失)。§5.2 の規範通り「per-payload × ring slot 数」枠を確保すれば直るが、ring の default capacity は 256、payload default は 64KB なので `64KB × 256 = 16MB` を確保して落ちる (= 実測 browser SAB "Invalid typed array length")。
+
+**Decision (Q85):**
+
+content region = `perPayload × min(ringCapacity, MAX_CONTENT_SLOTS)`、`MAX_CONTENT_SLOTS = 16`。
+
+- 256 は scalar message 用の default ring capacity であり、大きい typed-array payload をその枠数ぶん確保するのは過大。同時に中身を保持する payload を **16 枠**に cap し、default 確保量を `64KB × 16 = 1MB` に bound。
+- producer (= event emit / main→worklet send / offline inject) は 16 枠を循環再利用。16 枠を超えて drain 前に積まれた場合だけ最古の中身が上書きされる (= drop-oldest)。**trap / OOB は起こさない** (= offset は常に region 内、余湖さん明言「クラッシュさえしなければ古いものが消えるで OK」)。
+- main → worklet は 1 quantum (≈ 2.7ms) 以内に 17 個以上の typed-array message を連射しない限り全保持。realistic な使用では完全正しい。
+- slot-indexed writer (= event emit の `head % chunks`、offline inject) は `chunks = min(capacity, 16)` で modulo。cursor 系 (= client SAB send / worklet postMessage) は content region size で wrap = 同じ循環を共有。message も event も同形。
+
+**Rejected:**
+
+- **(B) spec 通り full ring capacity 枠 (= 256)**: 上書きゼロで完全正しいが default 16MB。typed-array channel ごとに capacity / payloadCapacity を明示必須になり、canonical / fixture (= 現状無指定) を全てサイズ指定に書き換える必要。default で動かないのは ergonomics を大きく損なう。
+- **(C) per-payload default を 64KB→4KB 等に縮小**: default 確保量は下がるが、大きい payload (= sample upload 等 typed-array message の中心用途) が default で切り詰められる。大 payload は結局 payloadCapacity 明示必須で、B と同様の負担。
+
+**影響 file:**
+
+- `compile/layout.ts`: content capacity を `perPayload × min(capacity, MAX_CONTENT_SLOTS)` に、descriptor に `chunks` を追加。
+- `compile/emit.ts`: event emit の payloadOffset を `head % chunks` に。
+- `@unworklet/offline`: inject を per-slot chunk offset に (= 旧 offset 0 固定)。
+- `02-messaging.md` §5.2: content buffer の sizing と drop-oldest を明記。
+
+### v1.x.0 deferral
+
+- 16 枠を超える連射を全保持したい need が出たら、typed-array channel に大きい capacity を明示する path で additive に対応可 (= per-channel override は既に payloadCapacity / capacity で存在)。
+
+## Q86 — math primitive の型分類: abs/min/max/clamp は全 numeric、sin/sqrt 系は float-only (= codex review #9 F-A/F-C 解消)
+
+**Status:** resolved.
+
+**背景:** 多型 scalar lowering で全 math primitive を `<T extends ScalarType>` 一律にしていたため、整数 node に対しても `floatNs(...).max/abs/floor/...` や `(f32)->f32` transcendental helper を emit して不正 WASM になっていた (= codex review #9 F-A `i32(1).max(...)` = canonical Ex 5、F-C `i32(-1).abs()` / `i32(1).sin()`)。`01-dsl.md` §2.1 は math を「`Node<'f32'>` or `Node<'f64'>`」と書いていたが、その list に `abs`/`min`/`max`/`clamp` も含めており、canonical Ex 5 の整数 `max` 使用と矛盾していた。
+
+**Decision (Q86):** 演算の意味で 2 分類する。
+
+- **全 numeric (f32/f64/i32/i64)**: `add`/`sub`/`mul`/`div`/`mod`/`neg` + `abs`/`min`/`max`/`clamp`。整数で意味があり canonical でも使う (= `i32(1).max(...)`)。整数 lowering = `max`/`min` は `select(a >|< b, a, b)`、`clamp` は `min(max())`、`abs` は `select(x < 0, -x, x)` (= WASM に整数 max/min/abs 命令が無いため compare + select)。
+- **float-only (f32/f64)**: `sin`/`cos`/`tan`/`tanh`/`exp`/`log`/`sqrt`/`floor`/`ceil`/`frac`。整数版はナンセンス (= sqrt of int は非整数、floor/ceil of int は no-op、frac は 0)。public surface で型 narrow (= method は `T extends 'f32'|'f64' ? () => Node<T> : never`、free function は `<T extends 'f32'|'f64'>`)。整数で呼ぶと compile error、明示変換 `f32(intNode).sqrt()` が path。
+
+「型が通る ⟺ 動く」を型レベルで担保: 意味のある整数演算 (= numeric group) は動かし、ナンセンスな整数演算 (= float-only group) は型エラー。
+
+**Rejected:**
+
+- **全 math を整数 lowering する**: sqrt/floor/sin 等の整数版はナンセンスで、定義しても誤用を誘う (= float に変換すべき場面で整数 sqrt を呼ぶ)。
+- **全 math を float-only にする (= abs/min/max/clamp も整数禁止)**: 整数 max/clamp/abs は DSP で頻出 (= sample index の clamp、整数 delta の abs)、canonical Ex 5 も整数 max を使う。float 往復を強制するのは型⟺動くに反し冗長。
+- **analyze で整数 float-only op を reject (= 型は通すが capture で落とす)**: 型レベルで防げるものを runtime error に落とすのは「型が通る ⟺ 動く」に劣る。
+
+**影響 file:** `dsl/primitives.ts` (= float-only narrow + abs を numeric に)、`compile/emit.ts` (= 整数 max/min/clamp/abs lowering)、`01-dsl.md` §2.1。
+
+### v1.x.0 deferral
+
+- ナシ。
+
+## Q87 — message と event は独立した名前空間 (= 同名 OK、content region は kind 別) (= codex review #9 P0 解消)
+
+**Status:** resolved.
+
+**背景:** typed-array payload の content region を `payloadContentSlots: Record<string, ...>` で name だけを key にした 1 map に置いていた。message / event の uniqueness check は kind 内のみ (= `checkMessageName` / `checkEventName` が同 kind だけ filter) なので、同名の `message<T>` と `event<T>` は両方 legal。だが両者が typed-array field を持つと content region の slot entry が name 衝突し、declaration 順で後発が先発を上書き = 両 channel が同一 region を指して silent な cross-channel corruption になる (= codex review #9 P0、`message "x"` に注入した payload を同名 `event "x"` の emit が踏み潰す)。ring buffer は `eventRings` / `messageRings` で別 map に分離済みだったが、content だけ name 一本で共有していた。
+
+**Decision (Q87):** message と event は独立した名前空間とし、同名を許す。content region も ring と同じく kind 別 map (`eventSlots` / `messageSlots`) に分離し、同名でも別 region を確保する。
+
+- message (main→worklet) と event (worklet→main) は別方向・別アクセス面 (`node.messages.<name>` / `node.events.<name>`) なので、同名は誤打ちでなく「同じ論理名の in/out ペア」を表す正当な用法。user-free default を保つ (= 制約を足さない)。
+- 修正は layout の内部 keying のみ。uniqueness check は kind 内のまま不変、public API も不変。consumer (emit message-read / event-emit、worklet descriptor、offline inject / drain) は各自が kind を知っているので kind 別 lookup に振り分けるだけ。
+
+**Rejected:**
+
+- **同名を capture-time error で禁止 (= 名前空間を全 kind 一意に):** typo は防げるが、message / event は宣言キーワード (`message<T>` vs `event<T>`) もアクセス面 (`node.messages` vs `node.events`) も別なので誤打ちの余地は小さく、「同じ論理名の in/out ペア」という正当な命名を奪う。user-free default に反する artificial 制約。
+
+**影響 file:** `compile/layout.ts` (= payloadContent を kind 別 map に分離 + Layout 型)、`compile/emit.ts` / `worklet.ts` / `@unworklet/offline` (= consumer を kind 別 lookup に)。
+
+### v1.x.0 deferral
+
+- ナシ。

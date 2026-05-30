@@ -13,7 +13,12 @@
  */
 
 import type { AstNode } from "../compile/ast.ts";
-import { addStatement, getCurrentCapture, wrapAst } from "../compile/capture.ts";
+import {
+  addStatement,
+  getCurrentCapture,
+  nextEveryNSamplesCounterId,
+  wrapAst,
+} from "../compile/capture.ts";
 import type { Node } from "../types.ts";
 
 export type EveryNSamples = (n: number, body: () => void) => void;
@@ -25,30 +30,47 @@ export interface ForSampleFn {
   byN(stride: number, callback: ForSampleCallback): void;
 }
 
-const notImplemented = (): never => {
-  throw new Error("not implemented");
-};
+// `everyNSamples(n, body)` (= §9) を 囲 う forSample の stride に bind し て 生 成。
+// body を sub-block として capture し、everyNSamples node を loop body に push。
+// counterId は call-site ごとに一意 = layout が block 跨ぎ counter slot を確保。
+const makeEveryNSamples =
+  (stride: number): EveryNSamples =>
+  (n, body) => {
+    const ctx = getCurrentCapture();
+    const counterId = nextEveryNSamplesCounterId();
+    const subBody: AstNode[] = [];
+    const prev = ctx.currentLoopBody;
+    ctx.currentLoopBody = subBody;
+    try {
+      body();
+    } finally {
+      ctx.currentLoopBody = prev;
+    }
+    addStatement({ kind: "everyNSamples", divisor: n, stride, counterId, body: subBody });
+  };
 
-const everyNSamplesStub: EveryNSamples = () => {
-  notImplemented();
-};
-
-const forSampleBase = (callback: ForSampleCallback): void => {
+// stride 単位の forSample 本体 (= stride 1 が `forSample`、任意 stride が `byN`)。
+// emit は既に node.stride 単位で loopCounter を進める (= 1 ブロック 128 / stride 回)。
+const forSampleStrided = (stride: number, callback: ForSampleCallback): void => {
   const ctx = getCurrentCapture();
   const loopBody: AstNode[] = [];
   const prev = ctx.currentLoopBody;
   ctx.currentLoopBody = loopBody;
   try {
     const i = wrapAst<"i32">({ kind: "loopCounter" });
-    callback(i, everyNSamplesStub);
+    callback(i, makeEveryNSamples(stride));
   } finally {
     ctx.currentLoopBody = prev;
   }
-  addStatement({ kind: "forSample", stride: 1, body: loopBody });
+  addStatement({ kind: "forSample", stride, body: loopBody });
+};
+
+const forSampleBase = (callback: ForSampleCallback): void => {
+  forSampleStrided(1, callback);
 };
 
 export const forSample: ForSampleFn = Object.assign(forSampleBase, {
-  byN(_stride: number, _callback: ForSampleCallback): void {
-    notImplemented();
+  byN(stride: number, callback: ForSampleCallback): void {
+    forSampleStrided(stride, callback);
   },
 });

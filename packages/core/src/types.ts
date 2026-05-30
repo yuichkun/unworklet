@@ -81,6 +81,7 @@ declare const nodeBrand: unique symbol;
 declare const stateBrand: unique symbol;
 declare const bufferBrand: unique symbol;
 declare const paramBrand: unique symbol;
+declare const typedArrayFieldRefBrand: unique symbol;
 
 /**
  * `Node<T>` — handle to a value computed during graph capture.
@@ -196,12 +197,26 @@ export type AudioOutputHandle<C extends number> = {
 
 /**
  * Variable-length typed-array field proxy in handler-context payloads
- * (`01-dsl.md` §4.3 + `decisions-log.md` Q36-b).
+ * (`01-dsl.md` §4.3 + `decisions-log.md` Q36-b / Q84).
+ *
+ * Direct per-element read (`.length` / `.at()`) is offered only for the `'f32'`
+ * element type (audio sample payloads). Other element types — e.g. `'u8'` byte /
+ * sysex data — are transfer-only: bulk-copy them into a `buffer.<type>` slot via
+ * `copyFrom` and read through the buffer (`buf.read(idx)`). The element type of a
+ * `message<T>` / `event<T>` field lives only in the TS type `T`, which is erased
+ * before graph capture, so the runtime cannot pick a per-element load instruction
+ * for non-`f32` direct reads; the byte path is routed through the buffer primitive
+ * instead (= realtime-safe `memory.copy`, Q31-c / Q49). The brand keeps the ref
+ * nominal so `copyFrom` enforces element-type compatibility against its buffer.
  */
 export type TypedArrayFieldRef<T extends BufferElementType> = {
-  readonly length: Node<"i32">;
-  at(idx: Node<"i32"> | number): Node<T extends "u8" ? "i32" : Extract<T, ScalarType>>;
-};
+  readonly [typedArrayFieldRefBrand]: T;
+} & (T extends "f32"
+  ? {
+      readonly length: Node<"i32">;
+      at(idx: Node<"i32"> | number): Node<"f32">;
+    }
+  : object);
 
 /**
  * Worklet-side `eventDecl.emitIf` payload as seen at emit call site.
@@ -217,24 +232,68 @@ export type TypedArrayFieldRef<T extends BufferElementType> = {
  * `forSample` callback (= the per-sample `i`), `0` at per-block top
  * level. Authors override by passing `atSample` explicitly.
  */
+/** `T` が typed-array field (= Float32Array / Uint8Array) を含むか。 */
+type HasTypedArrayField<T> = true extends {
+  [K in keyof T]: T[K] extends Float32Array | Uint8Array ? true : false;
+}[keyof T]
+  ? true
+  : false;
+
 export type EmitPayload<T> = {
   [K in keyof T]: T[K] extends number
     ? T[K] | Node<"f32"> | Node<"f64"> | Node<"i32"> | Node<"i64">
     : T[K] extends boolean
       ? T[K] | Node<"bool">
-      : T[K];
+      : // typed-array field (§4.3 worklet→main): the content is supplied by a
+        // worklet-declared `buffer.<T>` (= the single build-time-fixed construction
+        // primitive, Q49); never a raw JS array. Re-emitting an inbound payload
+        // copies it into a `buffer.<T>` via `copyFrom` first, then passes the
+        // buffer here (Q84) — the inbound `TypedArrayFieldRef` is not accepted
+        // directly, since its element type is erased and the emit path copies from
+        // a buffer region.
+        T[K] extends Float32Array
+        ? Buffer<"f32">
+        : T[K] extends Uint8Array
+          ? Buffer<"u8">
+          : T[K];
 } & {
   atSample?: Node<"i32"> | number;
-};
+} & (HasTypedArrayField<T> extends true
+    ? // framework-injected: number of elements to copy into the content buffer.
+      { length: Node<"i32"> | number }
+    : Record<never, never>);
 
 export type EventDecl<T> = {
   readonly name: string;
   emitIf(cond: Node<"bool"> | boolean, payload: EmitPayload<T>): void;
 };
 
+/**
+ * Worklet-side handler view of a `message<T>` payload (Q46 / Q36-b): the runtime
+ * proxy delivers every field as a graph node, so the handler-side type lifts each
+ * scalar field to its `Node<T>` form — `number` → `Node<'i32'>`, `boolean` →
+ * `Node<'bool'>` (Q46 uniform lift) — and each variable-length typed-array field
+ * to the `TypedArrayFieldRef` proxy. Lifting scalars to `Node` keeps build-time
+ * JS control flow (`slot + 1`, `if (armed)`) a type error, since those would run
+ * at graph capture against the proxy rather than emit DSP nodes; the DSL
+ * primitives (`slot.add(1)` / `select(armed, ...)`) are the supported path. The
+ * main-side send view (`node.messages.<name>(payload)`) keeps the plain JS `T`.
+ */
+export type MessageGraphPayload<T> = {
+  [K in keyof T]: T[K] extends Float32Array
+    ? TypedArrayFieldRef<"f32">
+    : T[K] extends Uint8Array
+      ? TypedArrayFieldRef<"u8">
+      : T[K] extends boolean
+        ? Node<"bool">
+        : T[K] extends number
+          ? Node<"i32">
+          : T[K];
+};
+
 export type MessageDecl<T> = {
   readonly name: string;
-  onReceive(handler: (payload: T) => void): void;
+  onReceive(handler: (payload: MessageGraphPayload<T>) => void): void;
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -380,7 +439,24 @@ export type EventRingSlotDescriptor = {
     readonly wireType: ScalarType;
     readonly offsetInSlot: number;
     readonly byteSize: number;
+    /**
+     * Present when the field is a variable-length typed array (§4.3 worklet→main).
+     * The slot carries `[payloadLen, payloadOffset]` at `offsetInSlot` (8 bytes);
+     * the bytes live in the event's `payloadContent` region.
+     */
+    readonly payloadElementType?: BufferElementType;
   }>;
+  /**
+   * Variable-length payload content buffer for this event (§5.2), present only
+   * when `T` has a typed-array field. `wasmBase` = byte offset of the content
+   * region in WASM linear memory; `capacity` = its byte size. The SAB transport
+   * mirrors a same-sized shared content region from `wasmBase`; the postMessage
+   * transport extracts the array from `wasmBase` on the audio thread.
+   */
+  readonly payloadContent?: {
+    readonly wasmBase: number;
+    readonly capacity: number;
+  };
 };
 
 /**
@@ -403,7 +479,25 @@ export type MessageRingSlotDescriptor = {
     readonly wireType: ScalarType;
     readonly offsetInSlot: number;
     readonly byteSize: number;
+    /**
+     * Present when the field is a variable-length typed array (§5.2). The slot
+     * carries `[payloadLen, payloadOffset]` at `offsetInSlot` (8 bytes); the
+     * bytes live in the message's `payloadContent` region — the transport copies
+     * them via the content buffer rather than inlining a scalar wire word.
+     */
+    readonly payloadElementType?: BufferElementType;
   }>;
+  /**
+   * Variable-length payload content buffer for this message (§5.2), present only
+   * when `T` has a typed-array field. `wasmBase` = byte offset of the content
+   * region in WASM linear memory; `capacity` = its byte size. The SAB transport
+   * mirrors a same-sized shared content region onto `wasmBase`; the postMessage
+   * transport writes the array bytes here directly on the audio thread.
+   */
+  readonly payloadContent?: {
+    readonly wasmBase: number;
+    readonly capacity: number;
+  };
 };
 
 /**

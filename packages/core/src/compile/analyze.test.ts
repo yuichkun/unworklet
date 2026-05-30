@@ -243,79 +243,13 @@ test("`analyze`: nested forSample 内 で 全 emit を 走 査 + 複 数 違 反
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// non-f32-arithmetic: 算術 / 比較 / math primitive は f32 path のみ emit する
-// ので、非 f32 オペランド (= state.i32 等) を渡すと invalid WASM になる。emit
-// 前に明確な診断エラーで弾く (= 多型 lowering は後続フェーズ)。
+// Type walk: 多 型 lowering 後 = i32 / f64 / i64 arithmetic は valid (= 旧
+// non-f32-arithmetic guard は 撤 去 済 み)。 walkForTypeErrors は select branch
+// 型 不 一 致 だ け を 弾 く。 多 型 算 術 が compile を 通 る こ と 自 体 は behavior
+// test (`__tests__/behavior/multitype.test.ts`) が 黒 箱 で 担 保。
 // ─────────────────────────────────────────────────────────────────────────
 
-test("`analyze` flags i32 arithmetic (= state.i32.load().add(1)) as non-f32-arithmetic", () => {
-  const graph: CapturedGraph = {
-    declarations: [{ kind: "state", name: "c", type: "i32", initial: 0 }],
-    statements: [
-      {
-        kind: "stateStore",
-        type: "i32",
-        name: "c",
-        value: {
-          kind: "add",
-          type: "f32",
-          lhs: { kind: "stateLoad", type: "i32", name: "c" },
-          rhs: { kind: "literal", type: "f32", value: 1 },
-        },
-      },
-    ],
-  };
-  const diags = analyze(graph);
-  expect(diags.some((d) => d.id === "non-f32-arithmetic")).toBe(true);
-});
-
-test("`analyze` flags i32 comparison operands as non-f32-arithmetic", () => {
-  const graph: CapturedGraph = {
-    declarations: [{ kind: "state", name: "c", type: "i32", initial: 0 }],
-    statements: [
-      {
-        kind: "stateStore",
-        type: "i32",
-        name: "c",
-        value: {
-          kind: "lt",
-          type: "f32",
-          lhs: { kind: "stateLoad", type: "i32", name: "c" },
-          rhs: { kind: "literal", type: "f32", value: 4 },
-        },
-      },
-    ],
-  };
-  expect(analyze(graph).some((d) => d.id === "non-f32-arithmetic")).toBe(true);
-});
-
-test("`analyze` flags nested i32 arithmetic at the inner node (= add(add(i32,1),2))", () => {
-  const inner = {
-    kind: "add" as const,
-    type: "f32" as const,
-    lhs: { kind: "stateLoad" as const, type: "i32" as const, name: "c" },
-    rhs: { kind: "literal" as const, type: "f32" as const, value: 1 },
-  };
-  const graph: CapturedGraph = {
-    declarations: [{ kind: "state", name: "c", type: "i32", initial: 0 }],
-    statements: [
-      {
-        kind: "stateStore",
-        type: "i32",
-        name: "c",
-        value: {
-          kind: "add",
-          type: "f32",
-          lhs: inner,
-          rhs: { kind: "literal", type: "f32", value: 2 },
-        },
-      },
-    ],
-  };
-  expect(analyze(graph).some((d) => d.id === "non-f32-arithmetic")).toBe(true);
-});
-
-test("`analyze` does NOT flag pure f32 arithmetic (= mul(audioIn, param))", () => {
+test("`analyze` returns no diagnostics for a valid f32 graph walked end-to-end", () => {
   const graph: CapturedGraph = {
     declarations: [
       { kind: "audioInput", name: "main", channels: 1 },
@@ -356,7 +290,7 @@ test("`analyze` does NOT flag pure f32 arithmetic (= mul(audioIn, param))", () =
       },
     ],
   };
-  expect(analyze(graph).some((d) => d.id === "non-f32-arithmetic")).toBe(false);
+  expect(analyze(graph)).toEqual([]);
 });
 
 test("`analyze` flags select with mismatched branch types as select-branch-type-mismatch", () => {

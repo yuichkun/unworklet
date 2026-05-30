@@ -10,7 +10,7 @@
 
 import { expect, test } from "vite-plus/test";
 
-import { createSubgraph, defineProcessor, defineSubgraph } from "./processor.ts";
+import { defineProcessor } from "./processor.ts";
 
 test("`defineProcessor` invokes the body lambda with a `ProcessorContext`", () => {
   let observedSampleRate: number | null = null;
@@ -56,12 +56,4 @@ test("`defineProcessor` propagates throws from the `process` lambda", () => {
       },
     })),
   ).toThrow("process fail");
-});
-
-test("`defineSubgraph` is a stub that throws `not implemented`", () => {
-  expect(() => defineSubgraph(() => ({}))).toThrow(/not implemented/);
-});
-
-test("`createSubgraph` is a stub that throws `not implemented`", () => {
-  expect(() => createSubgraph({} as never)).toThrow(/not implemented/);
 });

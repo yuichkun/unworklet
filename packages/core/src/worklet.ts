@@ -162,6 +162,13 @@ type WorkletState = {
   readonly eventRingsWasmHeaderViews: readonly Int32Array[];
   readonly eventRingsSabHeaderViews: readonly Int32Array[];
   /**
+   * §4.3 content buffer の per-ring view (= typed-array field を 持 つ event の み
+   * non-null、 ring index と zip)。 WASM = 読 取 source (= 両 transport)、 SAB =
+   * mirror 先 (= SAB 時 の み)。
+   */
+  readonly eventContentWasmViews: ReadonlyArray<Uint8Array | null>;
+  readonly eventContentSabViews: ReadonlyArray<Uint8Array | null>;
+  /**
    * postMessage path 用 = 各 event ring で 「前 quantum 末 で main へ 送 信 済 み の
    * head 値」 / 「同 overflow 値」。 次 quantum で 「currentHead != lastSent」 ま
    * た は 「currentOverflow != lastSent」 が 検 出 し た 時 だ け diff を port.postMessage
@@ -191,6 +198,19 @@ type WorkletState = {
   readonly messageRingsSabViews: readonly Uint8Array[];
   readonly messageRingsWasmHeaderViews: readonly Int32Array[];
   readonly messageRingsSabHeaderViews: readonly Int32Array[];
+  /**
+   * §5.2 variable-length content buffer の per-ring view (= typed-array field を
+   * 持 つ message の み non-null、 ring index と zip)。 WASM = 書 き 込 み 先 (=
+   * 両 transport)、 SAB = main が push 済 を mirror す る source (= SAB 時 の み)。
+   */
+  readonly messageContentWasmViews: ReadonlyArray<Uint8Array | null>;
+  readonly messageContentSabViews: ReadonlyArray<Uint8Array | null>;
+  /**
+   * postMessage path 用 = 各 message ring の content region 書 き 込 み cursor (=
+   * payload ご と に byteLen 分 進 め て wrap)。 SAB path は main 側 cursor を 使 う
+   * (= worklet は 全 region mirror) た め 不 使 用。
+   */
+  readonly messageContentCursors: number[];
   /**
    * postMessage path 用 = main 側 が `port.postMessage({ kind: 'message',
    * ringIndex, payload })` で 送 信 し た payload を audio thread の port.onmessage
@@ -276,6 +296,13 @@ type ProcessorOptionsBag = {
      */
     eventRingSabOffsets?: readonly number[];
     /**
+     * §4.3 content buffer 用 SAB (= typed-array field を 持 つ event が あ る 時 の み、
+     * SAB transport 限 定)。 worklet が WASM content region を ここ に mirror、 main が read。
+     */
+    eventContentBuffer?: SharedArrayBuffer | ArrayBuffer;
+    /** 各 event ring の content SAB 内 offset (= ring index と zip)。 */
+    eventContentSabOffsets?: readonly number[];
+    /**
      * message ring buffer 用 共 有 buffer (= sub-phase 7.7d)。 全 message ring を
      * 連 続 で 配 置 し た 1 SAB (= main で alloc)、 main 側 が SAB に slot push +
      * worklet template が per-quantum 開 始 で SAB → WASM ring に mirror (= drain
@@ -291,6 +318,17 @@ type ProcessorOptionsBag = {
      * 各 message ring の SAB 内 offset (= declaration 順、 messageRings と zip)。
      */
     messageRingSabOffsets?: readonly number[];
+    /**
+     * §5.2 variable-length content buffer 用 SAB (= typed-array field を 持 つ
+     * message が 1 つ で も あ る 時 の み hand、 SAB transport 限 定)。 全 content
+     * ring を 連 続 配 置、 per-ring base は messageContentSabOffsets で 引 く。
+     */
+    messageContentBuffer?: SharedArrayBuffer | ArrayBuffer;
+    /**
+     * 各 message ring の content SAB 内 offset (= ring index と zip、 content ナ シ の
+     * ring も 0 を hold = 使 用 側 は descriptor.payloadContent 有 無 で 判 断)。
+     */
+    messageContentSabOffsets?: readonly number[];
   };
 };
 
@@ -346,12 +384,18 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
     if (slot === undefined) {
       throw new Error(`unworklet: missing layout slot for event "${evt.name}"`);
     }
+    // typed-array field あ り の event は §4.3 content buffer を 持 つ。 SAB content
+    // region を mirror / 直 抽 出 す る 先 の WASM base + capacity を descriptor に。
+    const content = lay.regions.payloadContent.eventSlots[evt.name];
     return {
       name: evt.name,
       wasmRingBase: slot.base,
       capacity: slot.capacity,
       slotSize: slot.slotSize,
       fields: slot.fields,
+      ...(content !== undefined
+        ? { payloadContent: { wasmBase: content.base, capacity: content.capacity } }
+        : {}),
     };
   });
 
@@ -365,12 +409,19 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
     if (slot === undefined) {
       throw new Error(`unworklet: missing layout slot for message "${msg.name}"`);
     }
+    // typed-array field あ り の message は §5.2 content buffer を 持 つ (= layout の
+    // payloadContent slot)。 transport が SAB content region を mirror / 直 書 き す る
+    // 先 の WASM base + capacity を descriptor に 載 せ る。
+    const content = lay.regions.payloadContent.messageSlots[msg.name];
     return {
       name: msg.name,
       wasmRingBase: slot.base,
       capacity: slot.capacity,
       slotSize: slot.slotSize,
       fields: slot.fields,
+      ...(content !== undefined
+        ? { payloadContent: { wasmBase: content.base, capacity: content.capacity } }
+        : {}),
     };
   });
 
@@ -459,10 +510,16 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       const eventRingsBuffer = opts.processorOptions?.eventRingsBuffer ?? null;
       const eventRings = opts.processorOptions?.eventRings ?? [];
       const eventRingSabOffsets = opts.processorOptions?.eventRingSabOffsets ?? [];
+      // §4.3 content buffer (= typed-array field を 持 つ event の み)。 worklet が
+      // WASM content region を SAB に mirror (= SAB) / payload に 抽 出 (= postMessage)。
+      const eventContentBuffer = opts.processorOptions?.eventContentBuffer ?? null;
+      const eventContentSabOffsets = opts.processorOptions?.eventContentSabOffsets ?? [];
       const eventRingsWasmViews: Uint8Array[] = [];
       const eventRingsSabViews: Uint8Array[] = [];
       const eventRingsWasmHeaderViews: Int32Array[] = [];
       const eventRingsSabHeaderViews: Int32Array[] = [];
+      const eventContentWasmViews: Array<Uint8Array | null> = [];
+      const eventContentSabViews: Array<Uint8Array | null> = [];
       // postMessage path 用 = 各 ring の 「前 quantum で 送 信 済 み head / overflow」
       // を track (= 次 quantum で diff だ け 送 る path)。 SAB path は 参 照 ナ シ で
       // 初 期 値 0 の ま ま。
@@ -484,6 +541,21 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             new Int32Array(eventRingsBuffer, eventRingSabOffsets[i]!, 3),
           );
         }
+        const content = ring.payloadContent;
+        if (content !== undefined) {
+          eventContentWasmViews.push(
+            new Uint8Array(memory.buffer, content.wasmBase, content.capacity),
+          );
+          const sabOffset = eventContentSabOffsets[i];
+          eventContentSabViews.push(
+            eventContentBuffer !== null && sabOffset !== undefined
+              ? new Uint8Array(eventContentBuffer, sabOffset, content.capacity)
+              : null,
+          );
+        } else {
+          eventContentWasmViews.push(null);
+          eventContentSabViews.push(null);
+        }
       }
 
       // message ring meta + buffer pre-bind。 event ring と zip pattern、 mirror
@@ -502,11 +574,20 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       const messageRingsBuffer = opts.processorOptions?.messageRingsBuffer ?? null;
       const messageRings = opts.processorOptions?.messageRings ?? [];
       const messageRingSabOffsets = opts.processorOptions?.messageRingSabOffsets ?? [];
+      // §5.2 variable-length content buffer (= typed-array field を 持 つ message の み)。
+      // SAB 時 = main が content SAB に push 済 を per-quantum 先 頭 で WASM region に
+      // mirror、 postMessage 時 = audio thread で payload の typed array を WASM region に
+      // 直 書 き。 ring index と zip (= content ナ シ の ring は null)。
+      const messageContentBuffer = opts.processorOptions?.messageContentBuffer ?? null;
+      const messageContentSabOffsets = opts.processorOptions?.messageContentSabOffsets ?? [];
       const messageRingsWasmViews: Uint8Array[] = [];
       const messageRingsWasmDataViews: DataView[] = [];
       const messageRingsSabViews: Uint8Array[] = [];
       const messageRingsWasmHeaderViews: Int32Array[] = [];
       const messageRingsSabHeaderViews: Int32Array[] = [];
+      const messageContentWasmViews: Array<Uint8Array | null> = [];
+      const messageContentSabViews: Array<Uint8Array | null> = [];
+      const messageContentCursors: number[] = messageRings.map(() => 0);
       const messageQueueMirrors: Array<Array<Record<string, unknown>>> = messageRings.map(() => []);
       const lastSentMessageOverflows = messageRings.map(() => 0);
       for (let i = 0; i < messageRings.length; i++) {
@@ -526,6 +607,21 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
           messageRingsSabHeaderViews.push(
             new Int32Array(messageRingsBuffer, messageRingSabOffsets[i]!, 3),
           );
+        }
+        const content = ring.payloadContent;
+        if (content !== undefined) {
+          messageContentWasmViews.push(
+            new Uint8Array(memory.buffer, content.wasmBase, content.capacity),
+          );
+          const sabOffset = messageContentSabOffsets[i];
+          messageContentSabViews.push(
+            messageContentBuffer !== null && sabOffset !== undefined
+              ? new Uint8Array(messageContentBuffer, sabOffset, content.capacity)
+              : null,
+          );
+        } else {
+          messageContentWasmViews.push(null);
+          messageContentSabViews.push(null);
         }
       }
 
@@ -550,6 +646,8 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         eventRingsSabViews,
         eventRingsWasmHeaderViews,
         eventRingsSabHeaderViews,
+        eventContentWasmViews,
+        eventContentSabViews,
         lastSentEventHeads,
         lastSentEventOverflows,
         messageRingsBuffer,
@@ -560,6 +658,9 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         messageRingsSabViews,
         messageRingsWasmHeaderViews,
         messageRingsSabHeaderViews,
+        messageContentWasmViews,
+        messageContentSabViews,
+        messageContentCursors,
         messageQueueMirrors,
         lastSentMessageOverflows,
         failed: false,
@@ -731,6 +832,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         for (let i = 0; i < wasmViews.length; i++) {
           const sabH = sabHeaders[i]!;
           const wasmH = wasmHeaders[i]!;
+          const prevHead = wasmH[0]!;
           // §5.5 consumer protocol: head を acquire-load し て か ら slot data を
           // copy す る。 producer (= main) は slot 書 き 込 み → release-store(head)
           // の 順 な の で、 acquire-load(head) が slot copy よ り 前 で あ れ ば
@@ -740,6 +842,15 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
           wasmH[1] = Atomics.load(sabH, 1);
           wasmH[2] = Atomics.load(sabH, 2);
           wasmViews[i]!.set(sabViews[i]!);
+          // typed-array field 持 ち の ring = head が 進 ん だ quantum だ け content
+          // region 全 体 を SAB → WASM に mirror (= §5.2、 slot の payloadOffset は
+          // region base 相 対 の 絶 対 index = full mirror で addressing 一 致)。 head
+          // 不 変 な ら 新 規 payload ナ シ = 大 region memcpy を skip。
+          const contentWasm = state.messageContentWasmViews[i];
+          const contentSab = state.messageContentSabViews[i];
+          if (contentWasm !== null && contentSab !== null && wasmH[0]! !== prevHead) {
+            contentWasm.set(contentSab);
+          }
         }
       } else {
         // postMessage path = messageQueueMirrors を WASM ring に inject
@@ -761,12 +872,28 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
               wasmH[1] = tail + 1;
               wasmH[2] = wasmH[2]! + 1;
             }
-            // slot 書 き 込 み (= Q46 uniform lift で 全 number → i32 / boolean → 0/1 i32)
+            // slot 書 き 込 み (= Q46 uniform lift で 全 number → i32 / boolean → 0/1 i32、
+            // typed-array → §5.2 content region に bytes + slot に [payloadLen, payloadOffset])
             const slotByteOffset = 12 + (head % capacity) * slotSize;
             for (const field of ring.fields) {
               const value = payload[field.name];
               const byteOffset = slotByteOffset + field.offsetInSlot;
-              if (typeof value === "boolean") {
+              if (field.payloadElementType !== undefined) {
+                const contentWasm = state.messageContentWasmViews[i];
+                if (contentWasm !== null && ArrayBuffer.isView(value)) {
+                  // content region より大きい payload は truncate (= Q85: no-trap。
+                  // clamp し な い と contentWasm.set が audio thread で RangeError を throw)。
+                  const copyBytes = Math.min(value.byteLength, contentWasm.length);
+                  const src = new Uint8Array(value.buffer, value.byteOffset, copyBytes);
+                  let cursor = state.messageContentCursors[i]!;
+                  // region 末 尾 を 跨 ぐ な ら 先 頭 に wrap (= drop-oldest)。
+                  if (cursor + copyBytes > contentWasm.length) cursor = 0;
+                  contentWasm.set(src, cursor);
+                  wasmDataView.setUint32(byteOffset, copyBytes, true);
+                  wasmDataView.setUint32(byteOffset + 4, cursor, true);
+                  state.messageContentCursors[i] = cursor + copyBytes;
+                }
+              } else if (typeof value === "boolean") {
                 wasmDataView.setInt32(byteOffset, value ? 1 : 0, true);
               } else if (typeof value === "number") {
                 wasmDataView.setInt32(byteOffset, value | 0, true);
@@ -890,6 +1017,13 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         if (isSab && state.eventRingsBuffer !== null) {
           // SAB path = 既 bulk copy + header Atomics.store
           sabViews[i]!.set(wasmViews[i]!);
+          // §4.3 typed-array field 持 ち = content region を WASM → SAB に mirror
+          // (= head Atomics.store 前 = release fence で main が slot 越 し に 観 測 可)。
+          const contentWasm = state.eventContentWasmViews[i];
+          const contentSab = state.eventContentSabViews[i];
+          if (contentWasm !== null && contentSab !== null) {
+            contentSab.set(contentWasm);
+          }
           const sabH = sabHeaders[i]!;
           Atomics.store(sabH, 0, currentHead);
           Atomics.store(sabH, 1, currentTail);
@@ -913,13 +1047,27 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             const srcOffset = 12 + slotIdx * slotSize;
             slotsBytes.set(wasmRawView.subarray(srcOffset, srcOffset + slotSize), k * slotSize);
           }
-          self.port.postMessage({
+          const eventMsg: {
+            kind: "event";
+            ringIndex: number;
+            newSlotsBytes: ArrayBuffer;
+            newSlotCount: number;
+            overflowCount: number;
+            contentBytes?: ArrayBuffer;
+          } = {
             kind: "event",
             ringIndex: i,
             newSlotsBytes: slotsBytes.buffer,
             newSlotCount,
             overflowCount: currentOverflow,
-          });
+          };
+          // §4.3 typed-array field 持 ち = content region snapshot を 同 梱 (= main は
+          // WASM memory に 触 れ な い = slot の payloadOffset/Len で ここ か ら slice)。
+          const contentWasm = state.eventContentWasmViews[i];
+          if (contentWasm !== null) {
+            eventMsg.contentBytes = contentWasm.slice().buffer;
+          }
+          self.port.postMessage(eventMsg);
           state.lastSentEventHeads[i] = currentHead;
           state.lastSentEventOverflows[i] = currentOverflow;
         }

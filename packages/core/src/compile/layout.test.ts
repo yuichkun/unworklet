@@ -25,6 +25,7 @@ const emptyTail = (
   | "eventRings"
   | "messageRings"
   | "payloadContent"
+  | "everyNSamplesCounters"
   | "midiRings"
   | "sysexContent"
   | "publishShared"
@@ -35,7 +36,8 @@ const emptyTail = (
   buffers: { base: totalBytes, slots: {} },
   eventRings: { base: totalBytes, slots: {} },
   messageRings: { base: totalBytes, slots: {} },
-  payloadContent: { base: totalBytes, slots: {} },
+  payloadContent: { base: totalBytes, eventSlots: {}, messageSlots: {} },
+  everyNSamplesCounters: { base: totalBytes, slots: {} },
   midiRings: { base: totalBytes, slots: {} },
   sysexContent: { base: totalBytes, size: 0 },
   publishShared: { base: totalBytes, slots: {} },
