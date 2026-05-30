@@ -35,7 +35,7 @@ import type {
   MemoryJson,
 } from "../types.ts";
 
-import { analyze } from "./analyze.ts";
+import { analyze, checkMemoryBudget } from "./analyze.ts";
 import type { AudioPortDecl, CapturedGraph, ParamDecl } from "./ast.ts";
 import { emit } from "./emit.ts";
 import { layout } from "./layout.ts";
@@ -59,6 +59,11 @@ export async function compile<C>(
 ): Promise<CompileResult<C>> {
   const graph = processor.graph as unknown as CapturedGraph;
   const diagnostics = analyze(graph);
+  // layout はメモリ sub-region を pack して totalBytes を確定する pure な sizing。
+  // memory-budget (Q30) は totalBytes が決まって初めて判定できるので、error gate の
+  // 前に layout → budget check を済ませてから reject 判定に入る。
+  const memory = layout(graph);
+  diagnostics.push(...checkMemoryBudget(memory.totalBytes));
   // error severity diagnostic が 1 件 で も あ れ ば WASM emit 前 に reject
   // (= `03-compiler.md` §3 Layer 3 check の rejection 経 路、 stable ID を
   // error message に 含 め て consumer 側 で grep / FAQ 引 き 可)。
@@ -67,7 +72,6 @@ export async function compile<C>(
     const summary = errors.map((d) => `[${d.id}] ${d.message}`).join("\n");
     throw new Error(`unworklet: compile failed with ${errors.length} error(s):\n${summary}`);
   }
-  const memory = layout(graph);
   const sampleRate = options.sampleRate ?? DEFAULT_SAMPLE_RATE;
   const wasm = await emit(graph, memory, { sampleRate });
   const hash = await schemaHash(graph);

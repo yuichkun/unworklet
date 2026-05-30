@@ -8,8 +8,31 @@
 
 import { expect, test } from "vite-plus/test";
 
-import { analyze } from "./analyze.ts";
+import { analyze, checkMemoryBudget } from "./analyze.ts";
 import type { CapturedGraph } from "./ast.ts";
+
+const MIB = 1024 * 1024;
+const GIB = 1024 * 1024 * 1024;
+
+test("checkMemoryBudget: under 64 MiB produces no diagnostic", () => {
+  expect(checkMemoryBudget(0)).toEqual([]);
+  expect(checkMemoryBudget(64 * MIB)).toEqual([]);
+  expect(checkMemoryBudget(10 * MIB)).toEqual([]);
+});
+
+test("checkMemoryBudget: over 64 MiB produces a warning (not an error)", () => {
+  const diags = checkMemoryBudget(64 * MIB + 1);
+  expect(diags).toHaveLength(1);
+  expect(diags[0]!.id).toBe("memory-budget");
+  expect(diags[0]!.severity).toBe("warning");
+});
+
+test("checkMemoryBudget: over the 4 GiB WASM32 ceiling produces an error", () => {
+  const diags = checkMemoryBudget(4 * GIB + 1);
+  expect(diags).toHaveLength(1);
+  expect(diags[0]!.id).toBe("memory-budget");
+  expect(diags[0]!.severity).toBe("error");
+});
 
 const emptyGraph: CapturedGraph = { declarations: [], statements: [] };
 

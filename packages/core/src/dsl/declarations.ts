@@ -20,6 +20,7 @@ import type {
   StateDecl,
 } from "../compile/ast.ts";
 import { inferAstType } from "../compile/ast.ts";
+import { SAMPLES_PER_BLOCK } from "./constants.ts";
 import {
   addDeclaration,
   addStatement,
@@ -86,6 +87,24 @@ function liftOffset(i: Node<"i32"> | number): AstNode {
     return { kind: "literal", type: "i32", value: i };
   }
   return unwrapAst(i);
+}
+
+/**
+ * Lift a sample offset for an audio I/O / `param` `.at(k)` access, range-checking
+ * a JS-literal offset against `[0, SAMPLES_PER_BLOCK - 1]` (= 0..127, Q68). A
+ * `Node<'i32'>` offset (= a `forSample` loop counter or computed index) is
+ * unrestricted — only compile-time-literal offsets are bounded here. Stable ID
+ * `audio-sample-offset-out-of-range`.
+ */
+function liftSampleOffset(i: Node<"i32"> | number, ctx: string): AstNode {
+  if (typeof i === "number" && (!Number.isInteger(i) || i < 0 || i >= SAMPLES_PER_BLOCK)) {
+    throw new Error(
+      `unworklet: ${ctx} sample offset ${i} is out of range [0, ${SAMPLES_PER_BLOCK - 1}] ` +
+        `(JS-literal offsets must be an integer within the render quantum; use a forSample ` +
+        `loop counter for per-sample access). (stable ID 'audio-sample-offset-out-of-range')`,
+    );
+  }
+  return liftOffset(i);
 }
 
 function liftF32(v: Node<"f32"> | number): AstNode {
@@ -473,7 +492,20 @@ function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer
       // field を dest buffer の element type で typed-array seal (= TypedArrayFieldRef<T>
       // の T が buffer 型と一致する型制約があるので payloadContent + 8-byte slot 確保)。
       const field = meta.decl.fields.find((f) => f.name === meta.field);
-      if (field !== undefined) field.payloadElementType = decl.type;
+      if (field !== undefined) {
+        // Layer 2 backstop (Q31-c): the field's element type was already sealed
+        // (e.g. read via `.at()` = f32) to a type that disagrees with this
+        // buffer's element type. The TS binding prevents the well-typed case;
+        // this catches a bypassed binding before a mis-sized memory.copy.
+        if (field.payloadElementType !== undefined && field.payloadElementType !== decl.type) {
+          throw new Error(
+            `unworklet: buffer "${decl.name}".copyFrom(${meta.decl.name}.${meta.field}) element ` +
+              `type mismatch — field is '${field.payloadElementType}', buffer is '${decl.type}'. ` +
+              `(stable ID 'payload-element-type-mismatch')`,
+          );
+        }
+        field.payloadElementType = decl.type;
+      }
       addStatement({
         kind: "bufferCopyFrom",
         elementType: decl.type,
@@ -599,7 +631,7 @@ function makeParam(decl: ParamDecl): Param {
       wrapAst<"f32">({
         kind: "paramAt",
         paramName: decl.name,
-        offset: liftOffset(i),
+        offset: liftSampleOffset(i, `param "${decl.name}".at(...)`),
       }),
     named: (name: string) => {
       decl.name = name;
@@ -623,7 +655,7 @@ function makeInputView(portName: string, channel: number): InputChannelView<"f32
         kind: "audioInRead",
         portName,
         channel,
-        offset: liftOffset(i),
+        offset: liftSampleOffset(i, `audioInput "${portName}".at(...)`),
       }),
   };
 }
@@ -636,7 +668,7 @@ function makeOutputView(portName: string, channel: number): OutputChannelView<"f
           kind: "audioOutWrite",
           portName,
           channel,
-          offset: liftOffset(i),
+          offset: liftSampleOffset(i, `audioOutput "${portName}".at(...)`),
           value: liftF32(v),
         });
       },

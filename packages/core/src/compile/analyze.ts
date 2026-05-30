@@ -232,6 +232,46 @@ function checkPayloadFieldLimit(graph: CapturedGraph, diagnostics: DiagnosticEnt
   }
 }
 
+/** 64 MiB — low-end-device load-time concern (warning). */
+const MEMORY_WARN_BYTES = 64 * 1024 * 1024;
+/** 4 GiB — the WASM 32-bit linear-memory ceiling (hard error). */
+const MEMORY_ERROR_BYTES = 4 * 1024 * 1024 * 1024;
+
+/**
+ * Memory-budget check (Q30, `03-compiler.md` §2.6 stable ID `memory-budget`).
+ * The compiler auto-sums every declaration into a single linear-memory
+ * allocation; `memory.grow` on the audio thread is permanently excluded. A
+ * total above 64 MiB emits a build-time warning (load-time concern), above the
+ * 4 GiB WASM32 ceiling a hard error. Takes the laid-out `totalBytes` since the
+ * sum is only known after `layout`.
+ */
+export function checkMemoryBudget(totalBytes: number): DiagnosticEntry[] {
+  if (totalBytes > MEMORY_ERROR_BYTES) {
+    return [
+      {
+        id: "memory-budget",
+        severity: "error",
+        message:
+          `unworklet: declaration memory sum (${totalBytes} bytes) exceeds the WASM 32-bit ` +
+          `linear-memory ceiling of 4 GiB. Reduce buffer sizes or move large content to a ` +
+          `message<T> upload pattern. (stable ID 'memory-budget')`,
+      },
+    ];
+  }
+  if (totalBytes > MEMORY_WARN_BYTES) {
+    return [
+      {
+        id: "memory-budget",
+        severity: "warning",
+        message:
+          `unworklet: declaration memory sum (${totalBytes} bytes) exceeds 64 MiB — this loads ` +
+          `slowly on low-end devices. Consider reducing buffer sizes. (stable ID 'memory-budget')`,
+      },
+    ];
+  }
+  return [];
+}
+
 export function analyze(graph: CapturedGraph): DiagnosticEntry[] {
   const diagnostics: DiagnosticEntry[] = [];
   walkForLoopErrors(graph.statements, diagnostics);
