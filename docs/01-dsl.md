@@ -344,7 +344,7 @@ Each primitive's argument positions accept either a `Node<T>` or a JS `number` /
 ### 2.1 Inventory
 
 - **Arithmetic & numeric** (generic over `T extends 'f32' | 'f64' | 'i32' | 'i64'`): `add`, `sub`, `mul`, `div`, `mod`, `neg`, `abs`, `min`, `max`, `clamp` — meaningful for every numeric scalar (integer `max` / `min` / `clamp` lower to compare + `select`, integer `abs` to `select(x < 0, -x, x)`; Q86)
-- **Comparison** (generic over `T`, returns `Node<'bool'>`): `eq`, `lt`, `gt`, `lte`, `gte`
+- **Comparison** (numeric operands `T extends 'f32' | 'f64' | 'i32' | 'i64'`, returns `Node<'bool'>`): `eq`, `lt`, `gt`, `lte`, `gte` — `bool` operands are a compile error (use `select` / the boolean value directly)
 - **Math** (float-only, `Node<'f32'>` or `Node<'f64'>`): `sin`, `cos`, `tan`, `tanh`, `exp`, `log`, `sqrt`, `floor`, `ceil`, `frac` — integer operands are a compile error (their integer versions are non-sensical; convert first via `f32(intNode).sqrt()`)
 - **Control**: `select(cond: Node<'bool'>, then: Node<T>, else_: Node<T>): Node<T>` (generic over `T`)
 - **Memory**: `load` / `store` on `State<T>`; `.read` / `.write` / `.readInterpolated` / `.copyFrom` / `.loadVec` / `.storeVec` as methods on `Buffer<T>` (see §3.2 and §7). `loadVec` / `storeVec` are SIMD-only and exist on the buffer handle, not on `audioOutput`.

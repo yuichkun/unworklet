@@ -132,6 +132,20 @@ test("float-only math は整数 node で型エラー、abs は整数で可 (型�
   expect(true).toBe(true);
 });
 
+// arithmetic / comparison / min / max は numeric scalar (+ add/sub/mul/div は f32x4)
+// 限定 = bool node では method が never で呼べない (= bool(true).add(1) は compile error)。
+test("arithmetic/comparison/min/max は bool node で型エラー、numeric/f32x4 は可 (型契約)", () => {
+  expectTrue<IsNever<Node<"bool">["add"]>>();
+  expectTrue<IsNever<Node<"bool">["mul"]>>();
+  expectTrue<IsNever<Node<"bool">["neg"]>>();
+  expectTrue<IsNever<Node<"bool">["eq"]>>();
+  expectTrue<IsNever<Node<"bool">["max"]>>();
+  expectFalse<IsNever<Node<"i32">["add"]>>(); // i32 numeric は可
+  expectFalse<IsNever<Node<"f32x4">["add"]>>(); // f32x4 SIMD は可
+  expectFalse<IsNever<Node<"i32">["max"]>>(); // 整数 max は可
+  expect(true).toBe(true);
+});
+
 test("i32 neg: -(5) = -5", async () => {
   allEqual(await gen(() => f32(i32(5).neg())), -5);
 });
