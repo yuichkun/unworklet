@@ -411,7 +411,24 @@ export type EventRingSlotDescriptor = {
     readonly wireType: ScalarType;
     readonly offsetInSlot: number;
     readonly byteSize: number;
+    /**
+     * Present when the field is a variable-length typed array (§4.3 worklet→main).
+     * The slot carries `[payloadLen, payloadOffset]` at `offsetInSlot` (8 bytes);
+     * the bytes live in the event's `payloadContent` region.
+     */
+    readonly payloadElementType?: BufferElementType;
   }>;
+  /**
+   * Variable-length payload content buffer for this event (§5.2), present only
+   * when `T` has a typed-array field. `wasmBase` = byte offset of the content
+   * region in WASM linear memory; `capacity` = its byte size. The SAB transport
+   * mirrors a same-sized shared content region from `wasmBase`; the postMessage
+   * transport extracts the array from `wasmBase` on the audio thread.
+   */
+  readonly payloadContent?: {
+    readonly wasmBase: number;
+    readonly capacity: number;
+  };
 };
 
 /**

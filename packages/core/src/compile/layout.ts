@@ -358,7 +358,11 @@ export function layout(graph: CapturedGraph): Layout {
       (decl.kind === "message" || decl.kind === "event") &&
       decl.fields.some((f) => f.payloadElementType !== undefined)
     ) {
-      const capacity = decl.payloadCapacity ?? DEFAULT_PAYLOAD_CAPACITY;
+      const perPayload = decl.payloadCapacity ?? DEFAULT_PAYLOAD_CAPACITY;
+      // message (main→worklet) は worklet が 毎 quantum drain = 単 一 content region で
+      // 足 り る。 event (worklet→main) は main が rAF で render 後 に ま と め て drain =
+      // slot ご と に content chunk を 持 た せ て 保 持 (= perPayload × ring slot 数)。
+      const capacity = decl.kind === "event" ? perPayload * decl.capacity : perPayload;
       payloadContentSlots[decl.name] = { base: cursor, capacity };
       cursor += capacity;
     }

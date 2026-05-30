@@ -1421,11 +1421,12 @@ function emitEventEmitIf(
       throw new Error(`event "${node.name}" missing AST for field "${field.name}"`);
     }
     // typed-array field (§4.3 worklet→main) = buffer の中身を event content region に
-    // memory.copy + slot に [payloadLen, payloadOffset]。 payloadOffset = 0 固 定 (=
-    // 単 一 payload 前 提、 content ring 管 理 は message offline 注 入 と 同 じ く 後 続)。
-    // copyBytes = min(length × sizeof, content.capacity) で region 越 え を truncate。
-    // atSample が 常 に idx 0 = typed-array field は idx ≥ 1 = slotPtrTee 後 =
-    // EVENT_SLOT_PTR_LOCAL 確 定 済。
+    // memory.copy + slot に [payloadLen, payloadOffset]。 payloadOffset = (head %
+    // capacity) × chunkBytes (= slot ご と の 固 定 chunk、 chunkBytes = content.capacity /
+    // ring capacity = perPayload)。 main は render 後 に ま と め て drain す る の で
+    // slot ご と に content を 分 け て 保 持 す る 必 要 が あ る。 copyBytes = min(length ×
+    // sizeof, chunkBytes)。 atSample が 常 に idx 0 = typed-array field は idx ≥ 1 =
+    // slotPtrTee 後 = EVENT_SLOT_PTR_LOCAL 確 定 済。
     if (field.payloadElementType !== undefined) {
       const emitField = emitFieldByName.get(field.name);
       const content = layout.regions.payloadContent.slots[node.name];
@@ -1439,22 +1440,28 @@ function emitEventEmitIf(
         throw new Error(`event "${node.name}" typed-array field "${field.name}" missing emit meta`);
       }
       const elemBytes = BUFFER_ELEMENT_BYTES_EMIT[field.payloadElementType];
+      const chunkBytes = Math.floor(content.capacity / capacity);
       const slotFieldPtr = (): number =>
         mod.i32.add(
           mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32),
           mod.i32.const(field.offsetInSlot),
+        );
+      const payloadOffset = (): number =>
+        mod.i32.mul(
+          mod.i32.rem_u(mod.local.get(EVENT_HEAD_LOCAL, binaryen.i32), mod.i32.const(capacity)),
+          mod.i32.const(chunkBytes),
         );
       const lengthBytes = (): number =>
         mod.i32.mul(
           emitExpression(emitField.length!, layout, mod, binaryen),
           mod.i32.const(elemBytes),
         );
-      // copyBytes = min(length × sizeof, content.capacity)。
+      // copyBytes = min(length × sizeof, chunkBytes)。
       const copyBytes = (): number =>
         mod.select(
-          mod.i32.lt_u(lengthBytes(), mod.i32.const(content.capacity)),
+          mod.i32.lt_u(lengthBytes(), mod.i32.const(chunkBytes)),
           lengthBytes(),
-          mod.i32.const(content.capacity),
+          mod.i32.const(chunkBytes),
         );
       fieldStores.push(
         mod.block(null, [
@@ -1463,9 +1470,13 @@ function emitEventEmitIf(
             0,
             BYTES_PER_I32,
             mod.i32.add(slotFieldPtr(), mod.i32.const(4)),
-            mod.i32.const(0),
-          ), // payloadOffset = 0
-          mod.memory.copy(mod.i32.const(content.base), mod.i32.const(bufferBase), copyBytes()),
+            payloadOffset(),
+          ), // payloadOffset
+          mod.memory.copy(
+            mod.i32.add(mod.i32.const(content.base), payloadOffset()),
+            mod.i32.const(bufferBase),
+            copyBytes(),
+          ),
         ]),
       );
       continue;

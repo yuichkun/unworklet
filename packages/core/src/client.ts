@@ -15,6 +15,7 @@
 
 import type {
   AudioPortDescriptor,
+  BufferElementType,
   CompiledProcessor,
   CreateNodeOptions,
   EventSubscriber,
@@ -65,6 +66,28 @@ function readEventFieldValue(
       return view.getBigInt64(byteOffset, true);
     case "bool":
       return view.getInt32(byteOffset, true) !== 0;
+  }
+}
+
+/**
+ * §4.3 typed-array event field の content bytes を element type 別 の fresh typed
+ * array に reinterpret (= worklet→main、 main 側 は natural JS typed array)。 `bytes`
+ * を slice で copy し て non-shared / 0-align の ArrayBuffer に し て か ら view を 張 る。
+ */
+function sliceTypedArray(bytes: Uint8Array, elementType: BufferElementType): ArrayBufferView {
+  const copy = bytes.slice();
+  switch (elementType) {
+    case "f64":
+      return new Float64Array(copy.buffer);
+    case "u8":
+      return copy;
+    case "i32":
+    case "bool":
+      return new Int32Array(copy.buffer);
+    case "i64":
+      return new BigInt64Array(copy.buffer);
+    case "f32":
+      return new Float32Array(copy.buffer);
   }
 }
 
@@ -347,6 +370,22 @@ export async function createNode<C>(
     eventRingsBuffer = new SharedArrayBuffer(eventRingsByteLength);
   }
 
+  // §4.3 content buffer (worklet→main) = typed-array field を 持 つ event ご と に
+  // payloadContent.capacity bytes を 連 続 配 置 (= ring index と zip)。 worklet が
+  // ここ に WASM content を mirror、 main が drain で slot の [len, offset] で slice。
+  let eventContentByteLength = 0;
+  const eventContentSabOffsets: number[] = [];
+  for (const ring of eventRings) {
+    eventContentSabOffsets.push(eventContentByteLength);
+    if (ring.payloadContent !== undefined) {
+      eventContentByteLength += ring.payloadContent.capacity;
+    }
+  }
+  let eventContentBuffer: SharedArrayBuffer | null = null;
+  if (eventContentByteLength > 0 && sabAvailable) {
+    eventContentBuffer = new SharedArrayBuffer(eventContentByteLength);
+  }
+
   // message ring buffer。 SAB 時 の み allocate (= postMessage path は main 側 が
   // `port.postMessage({ kind: 'message', ringIndex, payload })` で 直 送、 worklet
   // 側 が self.port.onmessage で receive + messageQueueMirrors に push + process
@@ -461,6 +500,10 @@ export async function createNode<C>(
     eventRingsView = new DataView(eventRingsBuffer);
     eventRingsHeaderView = new Int32Array(eventRingsBuffer);
   }
+  // §4.3 content buffer の byte view (= SAB 時 の み)。 drain で slot の [len, offset]
+  // を 読 ん で ここ か ら fresh typed array を slice。
+  const eventContentBytes: Uint8Array | null =
+    eventContentBuffer !== null ? new Uint8Array(eventContentBuffer) : null;
   if (eventRings.length > 0) {
     for (let i = 0; i < eventRings.length; i++) {
       const ring = eventRings[i]!;
@@ -654,11 +697,23 @@ export async function createNode<C>(
           const payload: Record<string, unknown> = {};
           for (const field of ring.fields) {
             const fieldByteOffset = slotByteOffset + field.offsetInSlot;
-            payload[field.name] = readEventFieldValue(
-              eventRingsView,
-              fieldByteOffset,
-              field.wireType,
-            );
+            if (field.payloadElementType !== undefined && eventContentBytes !== null) {
+              // typed-array field = slot の [payloadLen, payloadOffset] を 読 ん で
+              // SAB content region か ら fresh typed array を slice (= §4.3)。
+              const payloadLen = eventRingsView.getInt32(fieldByteOffset, true);
+              const payloadOffset = eventRingsView.getInt32(fieldByteOffset + 4, true);
+              const absBase = eventContentSabOffsets[i]! + payloadOffset;
+              payload[field.name] = sliceTypedArray(
+                eventContentBytes.subarray(absBase, absBase + payloadLen),
+                field.payloadElementType,
+              );
+            } else {
+              payload[field.name] = readEventFieldValue(
+                eventRingsView,
+                fieldByteOffset,
+                field.wireType,
+              );
+            }
           }
           for (const handler of subscribers) {
             try {
@@ -760,6 +815,8 @@ export async function createNode<C>(
             eventRingSabOffsets,
             transport: transportMode,
             ...(eventRingsBuffer !== null ? { eventRingsBuffer } : {}),
+            eventContentSabOffsets,
+            ...(eventContentBuffer !== null ? { eventContentBuffer } : {}),
           }
         : {}),
       // message ring あ り の 時 = transport mode 共 通 で descriptor + transport を
@@ -923,6 +980,7 @@ export async function createNode<C>(
           newSlotsBytes?: unknown;
           newSlotCount?: unknown;
           overflowCount?: unknown;
+          contentBytes?: unknown;
         }
       | null
       | undefined;
@@ -945,15 +1003,25 @@ export async function createNode<C>(
       const subscribers = eventSubscribers.get(ring.name);
       if (!subscribers || subscribers.size === 0) return;
       const view = new DataView(data.newSlotsBytes);
+      // §4.3 typed-array field 用 = worklet が 同 梱 し た content snapshot (= offset 0
+      // 単 一 payload)。 slot の [payloadLen, payloadOffset] で ここ か ら slice。
+      const contentBytes =
+        data.contentBytes instanceof ArrayBuffer ? new Uint8Array(data.contentBytes) : null;
       for (let k = 0; k < data.newSlotCount; k++) {
         const slotByteOffset = k * ring.slotSize;
         const payload: Record<string, unknown> = {};
         for (const field of ring.fields) {
-          payload[field.name] = readEventFieldValue(
-            view,
-            slotByteOffset + field.offsetInSlot,
-            field.wireType,
-          );
+          const fieldByteOffset = slotByteOffset + field.offsetInSlot;
+          if (field.payloadElementType !== undefined && contentBytes !== null) {
+            const payloadLen = view.getInt32(fieldByteOffset, true);
+            const payloadOffset = view.getInt32(fieldByteOffset + 4, true);
+            payload[field.name] = sliceTypedArray(
+              contentBytes.subarray(payloadOffset, payloadOffset + payloadLen),
+              field.payloadElementType,
+            );
+            continue;
+          }
+          payload[field.name] = readEventFieldValue(view, fieldByteOffset, field.wireType);
         }
         for (const handler of subscribers) {
           try {

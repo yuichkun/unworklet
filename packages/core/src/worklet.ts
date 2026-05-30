@@ -162,6 +162,13 @@ type WorkletState = {
   readonly eventRingsWasmHeaderViews: readonly Int32Array[];
   readonly eventRingsSabHeaderViews: readonly Int32Array[];
   /**
+   * §4.3 content buffer の per-ring view (= typed-array field を 持 つ event の み
+   * non-null、 ring index と zip)。 WASM = 読 取 source (= 両 transport)、 SAB =
+   * mirror 先 (= SAB 時 の み)。
+   */
+  readonly eventContentWasmViews: ReadonlyArray<Uint8Array | null>;
+  readonly eventContentSabViews: ReadonlyArray<Uint8Array | null>;
+  /**
    * postMessage path 用 = 各 event ring で 「前 quantum 末 で main へ 送 信 済 み の
    * head 値」 / 「同 overflow 値」。 次 quantum で 「currentHead != lastSent」 ま
    * た は 「currentOverflow != lastSent」 が 検 出 し た 時 だ け diff を port.postMessage
@@ -289,6 +296,13 @@ type ProcessorOptionsBag = {
      */
     eventRingSabOffsets?: readonly number[];
     /**
+     * §4.3 content buffer 用 SAB (= typed-array field を 持 つ event が あ る 時 の み、
+     * SAB transport 限 定)。 worklet が WASM content region を ここ に mirror、 main が read。
+     */
+    eventContentBuffer?: SharedArrayBuffer | ArrayBuffer;
+    /** 各 event ring の content SAB 内 offset (= ring index と zip)。 */
+    eventContentSabOffsets?: readonly number[];
+    /**
      * message ring buffer 用 共 有 buffer (= sub-phase 7.7d)。 全 message ring を
      * 連 続 で 配 置 し た 1 SAB (= main で alloc)、 main 側 が SAB に slot push +
      * worklet template が per-quantum 開 始 で SAB → WASM ring に mirror (= drain
@@ -370,12 +384,18 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
     if (slot === undefined) {
       throw new Error(`unworklet: missing layout slot for event "${evt.name}"`);
     }
+    // typed-array field あ り の event は §4.3 content buffer を 持 つ。 SAB content
+    // region を mirror / 直 抽 出 す る 先 の WASM base + capacity を descriptor に。
+    const content = lay.regions.payloadContent.slots[evt.name];
     return {
       name: evt.name,
       wasmRingBase: slot.base,
       capacity: slot.capacity,
       slotSize: slot.slotSize,
       fields: slot.fields,
+      ...(content !== undefined
+        ? { payloadContent: { wasmBase: content.base, capacity: content.capacity } }
+        : {}),
     };
   });
 
@@ -490,10 +510,16 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       const eventRingsBuffer = opts.processorOptions?.eventRingsBuffer ?? null;
       const eventRings = opts.processorOptions?.eventRings ?? [];
       const eventRingSabOffsets = opts.processorOptions?.eventRingSabOffsets ?? [];
+      // §4.3 content buffer (= typed-array field を 持 つ event の み)。 worklet が
+      // WASM content region を SAB に mirror (= SAB) / payload に 抽 出 (= postMessage)。
+      const eventContentBuffer = opts.processorOptions?.eventContentBuffer ?? null;
+      const eventContentSabOffsets = opts.processorOptions?.eventContentSabOffsets ?? [];
       const eventRingsWasmViews: Uint8Array[] = [];
       const eventRingsSabViews: Uint8Array[] = [];
       const eventRingsWasmHeaderViews: Int32Array[] = [];
       const eventRingsSabHeaderViews: Int32Array[] = [];
+      const eventContentWasmViews: Array<Uint8Array | null> = [];
+      const eventContentSabViews: Array<Uint8Array | null> = [];
       // postMessage path 用 = 各 ring の 「前 quantum で 送 信 済 み head / overflow」
       // を track (= 次 quantum で diff だ け 送 る path)。 SAB path は 参 照 ナ シ で
       // 初 期 値 0 の ま ま。
@@ -514,6 +540,21 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
           eventRingsSabHeaderViews.push(
             new Int32Array(eventRingsBuffer, eventRingSabOffsets[i]!, 3),
           );
+        }
+        const content = ring.payloadContent;
+        if (content !== undefined) {
+          eventContentWasmViews.push(
+            new Uint8Array(memory.buffer, content.wasmBase, content.capacity),
+          );
+          const sabOffset = eventContentSabOffsets[i];
+          eventContentSabViews.push(
+            eventContentBuffer !== null && sabOffset !== undefined
+              ? new Uint8Array(eventContentBuffer, sabOffset, content.capacity)
+              : null,
+          );
+        } else {
+          eventContentWasmViews.push(null);
+          eventContentSabViews.push(null);
         }
       }
 
@@ -605,6 +646,8 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         eventRingsSabViews,
         eventRingsWasmHeaderViews,
         eventRingsSabHeaderViews,
+        eventContentWasmViews,
+        eventContentSabViews,
         lastSentEventHeads,
         lastSentEventOverflows,
         messageRingsBuffer,
@@ -971,6 +1014,13 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         if (isSab && state.eventRingsBuffer !== null) {
           // SAB path = 既 bulk copy + header Atomics.store
           sabViews[i]!.set(wasmViews[i]!);
+          // §4.3 typed-array field 持 ち = content region を WASM → SAB に mirror
+          // (= head Atomics.store 前 = release fence で main が slot 越 し に 観 測 可)。
+          const contentWasm = state.eventContentWasmViews[i];
+          const contentSab = state.eventContentSabViews[i];
+          if (contentWasm !== null && contentSab !== null) {
+            contentSab.set(contentWasm);
+          }
           const sabH = sabHeaders[i]!;
           Atomics.store(sabH, 0, currentHead);
           Atomics.store(sabH, 1, currentTail);
@@ -994,13 +1044,27 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             const srcOffset = 12 + slotIdx * slotSize;
             slotsBytes.set(wasmRawView.subarray(srcOffset, srcOffset + slotSize), k * slotSize);
           }
-          self.port.postMessage({
+          const eventMsg: {
+            kind: "event";
+            ringIndex: number;
+            newSlotsBytes: ArrayBuffer;
+            newSlotCount: number;
+            overflowCount: number;
+            contentBytes?: ArrayBuffer;
+          } = {
             kind: "event",
             ringIndex: i,
             newSlotsBytes: slotsBytes.buffer,
             newSlotCount,
             overflowCount: currentOverflow,
-          });
+          };
+          // §4.3 typed-array field 持 ち = content region snapshot を 同 梱 (= main は
+          // WASM memory に 触 れ な い = slot の payloadOffset/Len で ここ か ら slice)。
+          const contentWasm = state.eventContentWasmViews[i];
+          if (contentWasm !== null) {
+            eventMsg.contentBytes = contentWasm.slice().buffer;
+          }
+          self.port.postMessage(eventMsg);
           state.lastSentEventHeads[i] = currentHead;
           state.lastSentEventOverflows[i] = currentOverflow;
         }
