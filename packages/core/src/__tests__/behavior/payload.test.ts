@@ -211,3 +211,33 @@ test("payload に複数 typed-array field があると compile で reject する
   });
   await expect(compile(proc)).rejects.toThrow(/multiple-typed-array-fields/);
 });
+
+// Q71: event<T> の全 emit site は field set が一致する必要がある。scalar field は
+// checkSealedEventField が非 first emit を検証するが、typed-array field も同様に
+// first site で seal されてない field を後続 site が足したら reject されるべき
+// (= さもないと extra array field が silently 無視され Q71 field-set error にならない)。
+test("event emit: 後続 site が first で未 seal の typed-array field を足すと reject (Q71)", () => {
+  expect(() =>
+    defineProcessor(() => {
+      const out = audioOutput({ channels: 1, name: "main" });
+      const buf = buffer.f32({ size: 4 });
+      const evt = event<{ a: number }>({ name: "evt", payloadCapacity: 64 });
+      return {
+        process: () => {
+          evt.emitIf(true, { atSample: 0, a: i32(1) }); // first site = [a] を seal
+          // 後続 site が未 seal の typed-array "x" を追加 (型外 = cast) = Q71 field-set 違反
+          (evt as unknown as { emitIf(c: boolean, p: Record<string, unknown>): void }).emitIf(
+            true,
+            {
+              atSample: 0,
+              a: i32(1),
+              x: buf,
+              length: i32(4),
+            },
+          );
+          forSample((i) => out.ch(0).at(i).write(f32(0)));
+        },
+      };
+    }),
+  ).toThrow(/typed-array field|field set/i);
+});

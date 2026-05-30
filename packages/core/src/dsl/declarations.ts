@@ -738,6 +738,27 @@ function checkSealedEventField(decl: EventDeclAst, fieldName: string, wireType: 
   }
 }
 
+// typed-array (variable-length) field 用の checkSealedEventField (= Q71)。後続 emit site が
+// first site で seal されていない typed-array field を足す / element 型を変える のを弾く
+// (= scalar field と同じ field-set 一致契約を typed-array field にも適用)。
+function checkSealedTypedArrayField(
+  decl: EventDeclAst,
+  fieldName: string,
+  elementType: BufferElementType,
+): void {
+  const existing = decl.fields.find((f) => f.name === fieldName);
+  if (existing === undefined || existing.payloadElementType === undefined) {
+    throw new Error(
+      `unworklet: event "${decl.name}" emit site introduces new typed-array field "${fieldName}" — all emit sites for the same event<T> must agree on field set (Q71 / event-field-type-mismatch)`,
+    );
+  }
+  if (existing.payloadElementType !== elementType) {
+    throw new Error(
+      `unworklet: event "${decl.name}" typed-array field "${fieldName}" element-type mismatch — previously sealed as ${existing.payloadElementType}, this emit site supplies ${elementType} (Q71 / event-field-type-mismatch)`,
+    );
+  }
+}
+
 /**
  * `eventDecl.emitIf` 1 emit site で 1 field の 値 を AST 化 + wire 型 推 論。
  *
@@ -845,6 +866,8 @@ export function event<T>(options: EventOptions): EventDecl<T> {
               })();
         if (isFirstEmit) {
           decl.fields.push({ name: taFieldName, wireType: "i32", payloadElementType: elementType });
+        } else {
+          checkSealedTypedArrayField(decl, taFieldName, elementType);
         }
         emitFields.push({
           name: taFieldName,
