@@ -665,8 +665,14 @@ watch(reprByKey, () => redraw(), { deep: true });
   min-width: 0;
 }
 
+/* min-width: 0 is critical — <canvas> has an intrinsic width of 300px (the
+   default `width` attribute), and flex children default to `min-width: auto`
+   which honors that intrinsic floor. Without min-width: 0, `flex: 1` can't
+   shrink the canvas below 300px and the row overflows its parent card at
+   any viewport where the visual column is narrower than 300px. */
 .sparkline {
   flex: 1;
+  min-width: 0;
   height: 24px;
   background: var(--u-bg);
   border-radius: 3px;
@@ -674,6 +680,7 @@ watch(reprByKey, () => redraw(), { deep: true });
 
 .waveform {
   flex: 1;
+  min-width: 0;
   width: 100%;
   height: 80px;
   background-color: var(--u-bg);
@@ -687,6 +694,7 @@ watch(reprByKey, () => redraw(), { deep: true });
 
 .bar-chart {
   flex: 1;
+  min-width: 0;
   width: 100%;
   height: 60px;
   background-color: var(--u-bg);
