@@ -20,7 +20,7 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],
-      exclude: ["src/**/*.test.ts"],
+      exclude: ["src/**/*.test.ts", "src/golden/**"],
       reporter: ["text", "html", "json-summary"],
       thresholds: {
         branches: 98,
