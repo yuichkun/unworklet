@@ -447,6 +447,23 @@ registerNodeMethod(
 // Control
 // ─────────────────────────────────────────────────────────────────────────
 
+// Overloads keep a boolean branch valid only for a *bool* select (the canonical
+// `select(isMe, true, gate.load())` pattern) and reject a boolean mixed with a
+// numeric branch: that mix silently lifts both branches to bool and mistypes the
+// result as `Node<numeric>` ("type ⟺ works" breaks). The numeric overload is
+// listed first so loose `num(...)` branches resolve to a numeric select; the bool
+// overload only wins when a branch is literally `boolean`. The loose impl
+// signature below stays a supertype of both so the body still compiles.
+export function select<T extends "f32" | "f64" | "i32" | "i64" = "f32">(
+  cond: Node<"bool"> | boolean,
+  then: Node<T> | number,
+  else_: Node<T> | number,
+): Node<T>;
+export function select(
+  cond: Node<"bool"> | boolean,
+  then: Node<"bool"> | boolean,
+  else_: Node<"bool"> | boolean,
+): Node<"bool">;
 export function select<T extends ScalarType>(
   cond: Node<"bool"> | boolean,
   then: Node<T> | number | boolean,
