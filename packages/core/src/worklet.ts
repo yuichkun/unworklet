@@ -1005,16 +1005,38 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
           if (typeof data !== "object" || data === null) return;
           if (data.kind === "snapshot-request") {
             const profile = typeof data.profile === "string" ? data.profile : undefined;
+            // capture must always answer: an unhandled throw posts nothing and
+            // `client.snapshot()` awaits a reply that never comes (= hang).
+            let slots: SnapshotSlot[];
+            try {
+              slots = captureSnapshotSlots(profile);
+            } catch {
+              slots = [];
+            }
             self.port.postMessage({
               kind: "snapshot-response",
               requestId: data.requestId,
-              slots: captureSnapshotSlots(profile),
+              slots,
             });
             return;
           }
           if (data.kind === "restore") {
             const slots = Array.isArray(data.slots) ? (data.slots as SnapshotSlot[]) : [];
-            const report = applyRestoreSlots(slots);
+            // Same contract as capture: the handler must always post `restore-done`
+            // so the awaiting client settles. On an unexpected throw mid-apply,
+            // report nothing applied (= the live node keeps its current state).
+            let report: { applied: string[]; skipped: string[]; missing: string[] };
+            try {
+              report = applyRestoreSlots(slots);
+            } catch {
+              report = {
+                applied: [],
+                skipped: slots
+                  .map((s) => (s as { name?: unknown })?.name)
+                  .filter((n): n is string => typeof n === "string"),
+                missing: [],
+              };
+            }
             self.port.postMessage({ kind: "restore-done", requestId: data.requestId, ...report });
             return;
           }

@@ -1412,11 +1412,29 @@ export async function createNode<C>(
   // 界) で linear memory を read / write す る の で block-atomic (= §6.1)。 各 request
   // に 連 番 id を 振 り、 worklet の response を pending map で 突 き 合 わ せ て resolve。
   let snapshotRequestSeq = 0;
-  const pendingSnapshots = new Map<number, (slots: SnapshotSlot[]) => void>();
+  type RestoreReport = { applied: string[]; skipped: string[]; missing: string[] };
+  const pendingSnapshots = new Map<
+    number,
+    { resolve: (slots: SnapshotSlot[]) => void; reject: (err: Error) => void }
+  >();
   const pendingRestores = new Map<
     number,
-    (report: { applied: string[]; skipped: string[]; missing: string[] }) => void
+    { resolve: (report: RestoreReport) => void; reject: (err: Error) => void }
   >();
+  // Settle (= reject) every in-flight snapshot / restore, then clear. The worklet
+  // response is the only resolve signal, so on teardown (dispose) or a dead audio
+  // thread (processorerror) an un-settled promise would hang the caller forever.
+  const rejectAllPending = (reason: string): void => {
+    const err = new Error(`unworklet: ${reason}`);
+    for (const pending of pendingSnapshots.values()) pending.reject(err);
+    pendingSnapshots.clear();
+    for (const pending of pendingRestores.values()) pending.reject(err);
+    pendingRestores.clear();
+  };
+  const onProcessorErrorSettle = (): void => {
+    rejectAllPending("the audio thread reported a failure (processorerror)");
+  };
+  node.addEventListener("processorerror", onProcessorErrorSettle);
   const onSnapshotMessage = (event: MessageEvent): void => {
     const data = event.data as
       | {
@@ -1432,15 +1450,15 @@ export async function createNode<C>(
     if (typeof data !== "object" || data === null) return;
     if (typeof data.requestId !== "number") return;
     if (data.kind === "snapshot-response") {
-      const resolve = pendingSnapshots.get(data.requestId);
-      if (resolve === undefined) return;
+      const pending = pendingSnapshots.get(data.requestId);
+      if (pending === undefined) return;
       pendingSnapshots.delete(data.requestId);
-      resolve(Array.isArray(data.slots) ? (data.slots as SnapshotSlot[]) : []);
+      pending.resolve(Array.isArray(data.slots) ? (data.slots as SnapshotSlot[]) : []);
     } else if (data.kind === "restore-done") {
-      const resolve = pendingRestores.get(data.requestId);
-      if (resolve === undefined) return;
+      const pending = pendingRestores.get(data.requestId);
+      if (pending === undefined) return;
       pendingRestores.delete(data.requestId);
-      resolve({
+      pending.resolve({
         applied: Array.isArray(data.applied) ? (data.applied as string[]) : [],
         skipped: Array.isArray(data.skipped) ? (data.skipped as string[]) : [],
         missing: Array.isArray(data.missing) ? (data.missing as string[]) : [],
@@ -1450,17 +1468,37 @@ export async function createNode<C>(
   node.port.addEventListener("message", onSnapshotMessage);
 
   const snapshot = (options?: { profile?: string }): Promise<Uint8Array> => {
+    if (disposed) {
+      // No worklet to answer a disposed node — reject rather than pend forever.
+      return Promise.reject(new Error("unworklet: snapshot() called on a disposed node"));
+    }
     const requestId = snapshotRequestSeq++;
     const profile = options?.profile;
-    return new Promise<Uint8Array>((resolve) => {
-      pendingSnapshots.set(requestId, (slots) => {
-        resolve(encodeSnapshot(processor.schemaHash, profile ?? null, slots));
+    return new Promise<Uint8Array>((resolve, reject) => {
+      pendingSnapshots.set(requestId, {
+        resolve: (slots) => resolve(encodeSnapshot(processor.schemaHash, profile ?? null, slots)),
+        reject,
       });
       node.port.postMessage({ kind: "snapshot-request", requestId, profile });
     });
   };
 
   const restore = async (blob: Uint8Array): Promise<RestoreResult> => {
+    if (disposed) {
+      // A disposed node has no worklet to apply into — fail loud, never pend.
+      return {
+        ok: false,
+        error: {
+          step: "restore",
+          message: "restore() called on a disposed node",
+          cause: undefined,
+        },
+        applied: [],
+        restored: 0,
+        skipped: [],
+        missing: [],
+      };
+    }
     // Migrate the blob to the current schema first (`01-dsl.md` §8.3)。 A throwing
     // migrate step fails the whole restore = the live node keeps its current state。
     const migrated = runMigrations(blob, processor.migrations ?? [], processor.schemaHash);
@@ -1478,15 +1516,29 @@ export async function createNode<C>(
     const requestId = snapshotRequestSeq++;
     // Hand ALL slots to the worklet — it is the single authority on declarations,
     // so it computes applied / skipped / missing (across state / buffer / param) +
-    // writes state / buffer into linear memory at the quantum boundary。
-    const report = await new Promise<{
-      applied: string[];
-      skipped: string[];
-      missing: string[];
-    }>((resolve) => {
-      pendingRestores.set(requestId, resolve);
-      node.port.postMessage({ kind: "restore", requestId, slots: decoded.slots });
-    });
+    // writes state / buffer into linear memory at the quantum boundary。 dispose() /
+    // processorerror reject the pending promise so a torn-down node never hangs here。
+    let report: RestoreReport;
+    try {
+      report = await new Promise<RestoreReport>((resolve, reject) => {
+        pendingRestores.set(requestId, { resolve, reject });
+        node.port.postMessage({ kind: "restore", requestId, slots: decoded.slots });
+      });
+    } catch (err) {
+      pendingRestores.delete(requestId);
+      return {
+        ok: false,
+        error: {
+          step: "restore",
+          message: err instanceof Error ? err.message : "restore did not complete",
+          cause: err,
+        },
+        applied: [],
+        restored: 0,
+        skipped: [],
+        missing: [],
+      };
+    }
     // param values live on `AudioParam` (main thread), so apply them here using
     // the worklet's authoritative applied report。
     for (const slot of decoded.slots) {
@@ -1528,6 +1580,9 @@ export async function createNode<C>(
     dispose(): void {
       if (disposed) return;
       disposed = true;
+      // Settle any in-flight snapshot / restore before tearing down listeners, so
+      // awaiting callers get a rejection instead of hanging on a dead node.
+      rejectAllPending("node disposed before the worklet responded");
       stopRafLoop();
       node.port.removeEventListener("message", onErrorMessage);
       node.port.removeEventListener("message", onPublishMessage);
@@ -1537,6 +1592,7 @@ export async function createNode<C>(
       node.port.removeEventListener("message", onMidiOverflowMessage);
       node.port.removeEventListener("message", onSnapshotMessage);
       node.removeEventListener("processorerror", onErrorProcessor);
+      node.removeEventListener("processorerror", onProcessorErrorSettle);
       errorSubscribers.clear();
       for (const subs of stateSubscribers.values()) subs.clear();
       for (const subs of eventSubscribers.values()) subs.clear();

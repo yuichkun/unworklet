@@ -297,3 +297,23 @@ test("restore skips a buffer slot whose blob size ≠ declared byte size", async
   expect(done["applied"]).toEqual([]);
   expect(done["skipped"]).toEqual(["tbl"]);
 });
+
+test("a restore whose apply throws still posts restore-done (client never hangs)", async () => {
+  const proc = gainEcho();
+  const { wasm } = await compile(proc);
+  const self = makeMockSelf();
+  proc.worklet.initialize(self, { processorOptions: { wasm } });
+
+  // A malformed slot (`data` is not a typed array) throws inside the apply loop.
+  // The handler must still post `restore-done` so the awaiting client settles —
+  // an unhandled throw posts nothing and `client.restore()` hangs forever.
+  fireToWorklet(self, {
+    kind: "restore",
+    requestId: 9,
+    slots: [{ name: "gain", kind: "state", type: "f32", data: null as unknown as Uint8Array }],
+  });
+  const done = lastOfKind(self, "restore-done");
+  expect(done).toBeDefined();
+  expect(done!["requestId"]).toBe(9);
+  expect(done!["applied"]).toEqual([]);
+});

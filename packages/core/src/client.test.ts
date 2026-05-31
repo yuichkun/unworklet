@@ -3060,6 +3060,78 @@ test("node.restore(blob): worklet skipped / missing report is forwarded verbatim
   }
 });
 
+// ── hang safety: pending snapshot / restore must always settle ────────────────
+// The worklet response is the only resolve signal. If the node is torn down or
+// the audio thread dies, an un-settled promise hangs the caller forever. These
+// guard the dispose / processorerror / post-dispose settle paths.
+
+test("node.snapshot() after dispose() rejects instead of hanging", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    node.dispose();
+    await expect(node.snapshot()).rejects.toThrow(/dispos/i);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.restore() after dispose() resolves ok:false instead of hanging", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    node.dispose();
+    const blob = encodeSnapshot("test", null, [
+      { name: "gain", kind: "state", type: "f32", data: encodeScalar("f32", 0.5) },
+    ]);
+    const result = await node.restore(blob);
+    expect(result.ok).toBe(false);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("dispose() while a snapshot() is pending rejects the pending promise (no hang)", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    // The default mock port swallows the request (never responds).
+    const p = node.snapshot();
+    node.dispose();
+    await expect(p).rejects.toThrow(/dispos/i);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("processorerror while a restore() is pending settles it as ok:false (no hang)", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    const blob = encodeSnapshot("test", null, [
+      { name: "gain", kind: "state", type: "f32", data: encodeScalar("f32", 0.5) },
+    ]);
+    const p = node.restore(blob);
+    h.fireProcessorError("boom"); // audio thread died → it will never respond
+    const result = await p;
+    expect(result.ok).toBe(false);
+  } finally {
+    h.cleanup();
+  }
+});
+
 test("node.restore(blob): a throwing migration step fails the restore (RestoreFailure)", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
