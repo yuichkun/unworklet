@@ -10,7 +10,13 @@
  * superset)。
  */
 
-import type { BufferElementType, PublishOptions, ScalarType, SnapshotPolicy } from "../types.ts";
+import type {
+  BufferElementType,
+  MidiEventType,
+  PublishOptions,
+  ScalarType,
+  SnapshotPolicy,
+} from "../types.ts";
 
 export type AstNode =
   // `value` is a JS `number` for every scalar type except `'i64'`, whose
@@ -64,6 +70,16 @@ export type AstNode =
   // saturating form). `from === type` is folded away at the constructor (no
   // convert node emitted), so emit always sees a genuine type change.
   | { kind: "convert"; type: ScalarType; from: ScalarType; value: AstNode }
+  // Definition-order fix for mutable memory reads (`03-compiler.md` §2.7, issue
+  // #8). A `stateLoad` / `bufferRead` / `bufferReadInterpolated` is captured
+  // eagerly into a per-read WASM local at its lexical point: `tempAssign`
+  // evaluates the read once into local `tempId` (recorded as a statement in
+  // source order, before any enclosing statement), and every reference to the
+  // bound `Node` becomes a `tempRef` that reads the local. A later `store` to
+  // the same slot therefore cannot change what an already-bound `Node`
+  // evaluates to — the lazy re-walk that read post-store memory is gone.
+  | { kind: "tempAssign"; tempId: number; valueType: ScalarType; value: AstNode }
+  | { kind: "tempRef"; tempId: number; type: ScalarType }
   | { kind: "audioInRead"; portName: string; channel: number; offset: AstNode }
   | {
       kind: "audioOutWrite";
@@ -96,6 +112,40 @@ export type AstNode =
     }
   | { kind: "messageOnReceive"; name: string; body: AstNode[] }
   | { kind: "messageFieldRead"; name: string; field: string; wireType: ScalarType }
+  // MIDI (`11-midi.md`). Inbound: `midiInput().onEvent(type, handler)` registers a
+  // type-discriminated handler whose body drains the port's ringbuffer at the
+  // block boundary (Q38-b). `midiFieldRead` reads one decoded field of the
+  // current drain slot (= channel/note/velocity/… resolved per event type).
+  // Outbound: `midiOutput().emitIf(cond, event)` serializes a MidiEventGraph into
+  // the output ringbuffer (wire bytes computed in emit from the semantic args).
+  | { kind: "midiOnEvent"; port: string; eventType: MidiEventType; body: AstNode[] }
+  | { kind: "midiFieldRead"; field: MidiByteField }
+  // Inbound sysex (`11-midi.md` §4.3): the current drain slot's content chunk
+  // length, and a bulk copy of its bytes into a `buffer.u8` (the realtime-safe
+  // ingest path — `buf.copyFrom(data)` inside a `sysex` handler).
+  | { kind: "midiSysexLength"; port: string }
+  | { kind: "midiSysexCopy"; port: string; bufferName: string; bufferSize: number }
+  | {
+      kind: "midiEmitIf";
+      port: string;
+      eventType: MidiEventType;
+      cond: AstNode;
+      atSample: AstNode;
+      // Non-sysex events carry a channel (omitted for systemRealtime, whose raw
+      // status is `arg1`) plus two semantic data args; emit computes the 8-byte
+      // wire slot [status, data1, data2, _pad, atSample] per `eventType`.
+      channel?: AstNode;
+      arg1?: AstNode;
+      arg2?: AstNode;
+      // Sysex (variable length): bytes come from a worklet-declared `buffer.u8`
+      // (new content, `sysexBufferName`) or an inbound `TypedArrayFieldRef<'u8'>`
+      // thru (`sysexSourcePort` = the source midiInput's content region);
+      // `sysexLength` selects how many bytes ship into the port's content region.
+      sysexBufferName?: string;
+      sysexBufferSize?: number;
+      sysexSourcePort?: string;
+      sysexLength?: AstNode;
+    }
   // `buffer.<type>` scalar access (`01-dsl.md` §3.2). `elementType` is the
   // buffer's declared element type; the produced scalar type is the element
   // type itself, except `'u8'` reads/writes through `Node<'i32'>` (low 8 bits).
@@ -176,6 +226,13 @@ export type ParamDecl = {
   min: number;
   max: number;
   automationRate: "a-rate" | "k-rate";
+  /**
+   * Snapshot inclusion (`01-dsl.md` §3.3 + §8.2). Default `'persistent'` —
+   * param values are typically the user-controlled preset state. `.expose({
+   * snapshot })` overrides. Only the current value is snapshotted (automation
+   * queues are not preserved).
+   */
+  snapshot?: SnapshotPolicy;
 };
 
 /**
@@ -275,6 +332,29 @@ export type MessageDeclAst = {
   fields: MessageDeclField[];
 };
 
+/**
+ * Decoded field of a MIDI drain slot, read by `midiFieldRead` against the
+ * current drain slot pointer. `channel` masks the status low nibble; `data1` /
+ * `data2` are the two data bytes; `pitchBend14` recombines `data1 | data2 << 7`.
+ * The handler proxy maps each semantic field (note / velocity / controller / …)
+ * to one of these per event type (`11-midi.md` §2.2 / §4.1).
+ */
+export type MidiByteField = "status" | "channel" | "data1" | "data2" | "atSample" | "pitchBend14";
+
+/** `midiInput({ name, capacity })` declaration (`11-midi.md` §1). */
+export type MidiInputDecl = {
+  kind: "midiInput";
+  name: string;
+  capacity: number;
+};
+
+/** `midiOutput({ name, capacity })` declaration (`11-midi.md` §1). */
+export type MidiOutputDecl = {
+  kind: "midiOutput";
+  name: string;
+  capacity: number;
+};
+
 export type MessageDeclField = {
   name: string;
   wireType: ScalarType;
@@ -311,7 +391,9 @@ export type Declaration =
   | StateDecl
   | BufferDecl
   | EventDeclAst
-  | MessageDeclAst;
+  | MessageDeclAst
+  | MidiInputDecl
+  | MidiOutputDecl;
 
 export type CapturedGraph = {
   declarations: Declaration[];
@@ -353,6 +435,7 @@ export function inferAstType(ast: AstNode): ScalarType {
     case "select":
     case "convert":
     case "stateLoad":
+    case "tempRef":
       return ast.type;
     // 比 較 = 結 果 は 常 に bool (= node の `type` は オ ペ ラ ン ド 型 f32)。
     case "eq":
@@ -368,6 +451,10 @@ export function inferAstType(ast: AstNode): ScalarType {
       return "i32";
     case "messageFieldRead":
       return ast.wireType;
+    case "midiFieldRead":
+    case "midiSysexLength":
+      // Every decoded MIDI field surfaces as a graph i32 (= `MidiEventGraph`).
+      return "i32";
     // buffer read result = element type, except `'u8'` surfaces as `'i32'`
     // (= low 8 bits, no separate `Node<'u8'>` in the scalar type system).
     case "bufferRead":
@@ -399,6 +486,10 @@ export function inferAstType(ast: AstNode): ScalarType {
     case "bufferWrite":
     case "bufferCopyFrom":
     case "everyNSamples":
+    case "tempAssign":
+    case "midiOnEvent":
+    case "midiEmitIf":
+    case "midiSysexCopy":
       throw new Error(`statement node '${ast.kind}' cannot appear in expression position`);
   }
 }

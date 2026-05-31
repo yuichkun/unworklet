@@ -18,7 +18,16 @@ import { expect, test, vi } from "vite-plus/test";
 
 import { compile } from "./compile/index.ts";
 import { CAPACITY_16, SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
-import { audioInput, audioOutput, event, message, param } from "./dsl/declarations.ts";
+import { f32, num } from "./dsl/constructors.ts";
+import {
+  audioInput,
+  audioOutput,
+  buffer,
+  event,
+  message,
+  param,
+  state,
+} from "./dsl/declarations.ts";
 import { forSample } from "./dsl/loop.ts";
 import { defineProcessor } from "./processor.ts";
 
@@ -1157,10 +1166,65 @@ test("message inject (postMessage): ingress queue を ring capacity で bound �
   expect(state.messageQueueMirrors[0]!.length).toBe(capacity);
 });
 
-test("message ring (no decl): port.addEventListener は呼 ば れ な い + start も 呼 ば れ ない (= regression)", async () => {
+test("no message/midi rings: a port message listener is still registered + started (= snapshot/restore は universal、`11-midi.md` §4.4 / `05-client.md` §2.6)", async () => {
+  // snapshot / restore travel as port request-response and must work for every
+  // processor — even one with no message / midi rings — so `initialize` always
+  // wires one message listener + starts the port. (Earlier this was gated on
+  // message/midi rings; the universal snapshot capability superseded that.)
   const { wasm } = await compile(monoGain);
   const self = makeMockSelf();
   monoGain.worklet.initialize(self, { processorOptions: { wasm } });
-  expect(self.port.__listeners.length).toBe(0);
-  expect(self.port.__startCalled).toBe(false);
+  expect(self.port.__listeners.length).toBe(1);
+  expect(self.port.__startCalled).toBe(true);
+});
+
+// ── loose-literal re-lift at the store / write boundary (Q77, "type ⟺ works") ──
+// `num(n)` is a loose literal that defers its type to context. A `.store()` /
+// buffer `.write()` IS that context, so the literal must re-lift to the declared
+// slot type — emitting an `f32.const` into a non-f32 slot type-checks in TS yet
+// produces broken WASM. These run the compiled module and read the value back.
+
+test("`process`: state.f64.store(num(n)) re-lifts the loose literal to the f64 slot", async () => {
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const x = state.f64(0);
+    return {
+      process: () => {
+        x.store(num(5));
+        forSample((i) => {
+          out.ch(0).at(i).write(f32(x.load()));
+        });
+      },
+    };
+  });
+  const { wasm } = await compile(proc);
+  const self = makeMockSelf();
+  proc.worklet.initialize(self, { processorOptions: { wasm } });
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  proc.worklet.process(self, [], outputs, {});
+  expect(outputs[0]![0]![0]).toBeCloseTo(5);
+});
+
+test("`process`: buffer.i32.write(num(n)) re-lifts the loose literal to the i32 element type", async () => {
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const b = buffer.i32({ size: 4 });
+    return {
+      process: () => {
+        b.write(0, num(7));
+        forSample((i) => {
+          out
+            .ch(0)
+            .at(i)
+            .write(f32(b.read(0)));
+        });
+      },
+    };
+  });
+  const { wasm } = await compile(proc);
+  const self = makeMockSelf();
+  proc.worklet.initialize(self, { processorOptions: { wasm } });
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  proc.worklet.process(self, [], outputs, {});
+  expect(outputs[0]![0]![0]).toBeCloseTo(7);
 });

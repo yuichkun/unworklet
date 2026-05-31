@@ -16,7 +16,10 @@
 import { expect, test, vi } from "vite-plus/test";
 
 import { createNode, inspect } from "./client.ts";
-import type { CompiledProcessor } from "./types.ts";
+import { replaceProcessor } from "./replaceProcessor.ts";
+import { encodeScalar } from "./snapshot.ts";
+import { decodeSnapshot, encodeSnapshot } from "./snapshotBlob.ts";
+import type { CompiledProcessor, MidiEvent } from "./types.ts";
 
 type MockAudioParam = { value: number };
 
@@ -181,9 +184,11 @@ const installMockGlobals = (
   class MockWorkletNodeImpl {
     port: MockAudioWorkletNode["port"];
     parameters: MockAudioWorkletNode["parameters"];
+    context: unknown;
     __constructorRecord: ConstructorRecord;
     __processorErrorListeners: NodeListener[];
     constructor(ctx: unknown, name: string, opts: AudioWorkletNodeOptions) {
+      this.context = ctx; // AudioNode.context — read by replaceProcessor
       this.__constructorRecord = { context: ctx, name, options: opts };
       constructed.push(this.__constructorRecord);
       const portListeners: PortListener[] = [];
@@ -317,10 +322,19 @@ const makeMockProcessor = (overrides?: {
       byteSize: number;
     }>;
   }>;
+  midiRings?: Array<{
+    name: string;
+    direction: "in" | "out";
+    wasmRingBase: number;
+    capacity: number;
+    sysex?: { wasmBase: number; perChunk: number; chunks: number };
+  }>;
+  migrations?: CompiledProcessor<unknown>["migrations"];
 }): CompiledProcessor<unknown> =>
   ({
     graph: {} as never,
     schemaHash: "test",
+    migrations: overrides?.migrations,
     worklet: {
       initialize: () => {},
       process: () => true,
@@ -332,6 +346,7 @@ const makeMockProcessor = (overrides?: {
       publishSlots: overrides?.publishSlots ?? [],
       eventRings: overrides?.eventRings ?? [],
       messageRings: overrides?.messageRings ?? [],
+      midiRings: overrides?.midiRings ?? [],
       moduleUrl:
         overrides && "moduleUrl" in overrides ? overrides.moduleUrl : "/_assets/x.worklet.js",
       wasmUrl: overrides && "wasmUrl" in overrides ? overrides.wasmUrl : "/_assets/x.wasm",
@@ -1178,8 +1193,21 @@ test("awaitReady: stray events after settle are early-returned (= no double sett
   }
 });
 
-test("`inspect(blob)` stub throws", () => {
-  expect(() => inspect(new Uint8Array(0))).toThrow(/not implemented/);
+test("`inspect(blob)` decodes a snapshot blob into a structured view", async () => {
+  const { encodeScalar } = await import("./snapshot.ts");
+  const { encodeSnapshot } = await import("./snapshotBlob.ts");
+  const blob = encodeSnapshot("schemaX", null, [
+    { name: "gain", kind: "param", type: "f32", data: encodeScalar("f32", 0.5) },
+    { name: "count", kind: "state", type: "i32", data: encodeScalar("i32", 9) },
+  ]);
+  const r = inspect(blob);
+  expect(r.schemaHash).toBe("schemaX");
+  expect(r.slots.gain).toEqual({ kind: "param", value: 0.5 });
+  expect(r.slots.count).toEqual({ kind: "state", type: "i32", value: 9 });
+});
+
+test("`inspect(blob)` rejects a non-snapshot blob", () => {
+  expect(() => inspect(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]))).toThrow(/bad magic/);
 });
 
 test("fetchAndCompileWasm falls back to '' when the response exposes no headers / get accessor", async () => {
@@ -2717,6 +2745,626 @@ test("node.messages.<name>(payload): postMessage transport = port.postMessage �
     (node.messages["preset"] as (p: { slot: number }) => void)({ slot: 99 });
     expect(posted).toEqual([{ kind: "message", ringIndex: 0, payload: { slot: 99 } }]);
   } finally {
+    h.cleanup();
+  }
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// node.midi.<name> surface (`11-midi.md` §3) — main-thread MIDI transport.
+// send (inbound) encodes through the production `midiEventToWire` codec; onEvent
+// (outbound) decodes incoming slots. postMessage paths are fully synchronous via
+// the mock port; SAB paths read/write the shared ring buffer directly.
+// ───────────────────────────────────────────────────────────────────────────
+
+const midiInFixture = { name: "in", direction: "in" as const, wasmRingBase: 1024, capacity: 256 };
+const midiOutFixture = {
+  name: "out",
+  direction: "out" as const,
+  wasmRingBase: 4096,
+  capacity: 256,
+};
+
+test("node.midi.<in>.send: postMessage transport = wire byte に encode し て port.postMessage 直 送", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ midiRings: [midiInFixture] })),
+      h.fireReady,
+    );
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (m: unknown) => posted.push(m);
+    node.midi["in"]!.send({ type: "noteOn", channel: 3, note: 60, velocity: 100 });
+    expect(posted).toEqual([
+      { kind: "midi", ringIndex: 0, item: { status: 0x93, data1: 60, data2: 100, atSample: 0 } },
+    ]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.midi.<out>.onEvent: postMessage transport = midiOut slot を decode し て type 一 致 handler に dispatch", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ midiRings: [midiOutFixture] })),
+      h.fireReady,
+    );
+    const got: MidiEvent[] = [];
+    node.midi["out"]!.onEvent("noteOn", (e) => got.push(e));
+    const slot = new ArrayBuffer(8);
+    const dv = new DataView(slot);
+    dv.setUint8(0, 0x95); // noteOn channel 5
+    dv.setUint8(1, 64);
+    dv.setUint8(2, 120);
+    dv.setUint32(4, 7, true);
+    for (const l of h.lastNode!.port.__listeners) {
+      l({
+        data: { kind: "midiOut", ringIndex: 0, newSlotsBytes: slot, newSlotCount: 1 },
+      } as MessageEvent);
+    }
+    expect(got).toEqual([{ type: "noteOn", channel: 5, note: 64, velocity: 120 }]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.midi.<out>.onEvent: type 不 一 致 の event で は handler を fire し な い", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ midiRings: [midiOutFixture] })),
+      h.fireReady,
+    );
+    const notes: MidiEvent[] = [];
+    const ccs: MidiEvent[] = [];
+    node.midi["out"]!.onEvent("noteOn", (e) => notes.push(e));
+    node.midi["out"]!.onEvent("cc", (e) => ccs.push(e));
+    // a cc slot — only the cc handler should fire
+    const slot = new ArrayBuffer(8);
+    const dv = new DataView(slot);
+    dv.setUint8(0, 0xb2); // cc channel 2
+    dv.setUint8(1, 74);
+    dv.setUint8(2, 33);
+    for (const l of h.lastNode!.port.__listeners) {
+      l({
+        data: { kind: "midiOut", ringIndex: 0, newSlotsBytes: slot, newSlotCount: 1 },
+      } as MessageEvent);
+    }
+    expect(notes).toEqual([]);
+    expect(ccs).toEqual([{ type: "cc", channel: 2, controller: 74, value: 33 }]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.midi.<name>.diagnostics.overflowCount: postMessage transport = midi-overflow 通 知 で mirror 更 新", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ midiRings: [midiInFixture] })),
+      h.fireReady,
+    );
+    expect(node.midi["in"]!.diagnostics.overflowCount()).toBe(0);
+    for (const l of h.lastNode!.port.__listeners) {
+      l({ data: { kind: "midi-overflow", ringIndex: 0, overflowCount: 3 } } as MessageEvent);
+    }
+    expect(node.midi["in"]!.diagnostics.overflowCount()).toBe(3);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.midi.<in>.connectFromWebMIDI: MIDIInput.onmidimessage の raw bytes を send 経 由 で 注 入", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ midiRings: [midiInFixture] })),
+      h.fireReady,
+    );
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (m: unknown) => posted.push(m);
+    const fakeInput: { onmidimessage: ((e: { data: Uint8Array }) => void) | null } = {
+      onmidimessage: null,
+    };
+    node.midi["in"]!.connectFromWebMIDI(fakeInput);
+    fakeInput.onmidimessage!({ data: new Uint8Array([0x90, 60, 100]) });
+    expect(posted).toEqual([
+      { kind: "midi", ringIndex: 0, item: { status: 0x90, data1: 60, data2: 100, atSample: 0 } },
+    ]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.midi.<in>.send: SAB transport = 共 有 ring に wire slot write + head++", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ midiRings: [midiInFixture] })),
+      h.fireReady,
+    );
+    const opts = h.lastNode!.__constructorRecord.options.processorOptions as {
+      midiRingsBuffer: SharedArrayBuffer;
+    };
+    node.midi["in"]!.send({ type: "cc", channel: 0, controller: 7, value: 127 });
+    const header = new Int32Array(opts.midiRingsBuffer);
+    expect(header[0]).toBe(1); // head advanced 0 → 1
+    const dv = new DataView(opts.midiRingsBuffer);
+    expect(dv.getUint8(12)).toBe(0xb0); // cc status at slot 0 (after 12-byte header)
+    expect(dv.getUint8(13)).toBe(7);
+    expect(dv.getUint8(14)).toBe(127);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.midi.<out>.onEvent: SAB transport = rAF poll で 共 有 out-ring を drain + dispatch", async () => {
+  const raf = installRafMock();
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ midiRings: [midiOutFixture] })),
+      h.fireReady,
+    );
+    const opts = h.lastNode!.__constructorRecord.options.processorOptions as {
+      midiRingsBuffer: SharedArrayBuffer;
+    };
+    const got: MidiEvent[] = [];
+    node.midi["out"]!.onEvent("noteOn", (e) => got.push(e));
+    // worklet writes one out-ring slot (out is the only ring → SAB offset 0).
+    const dv = new DataView(opts.midiRingsBuffer);
+    dv.setUint8(12, 0x90);
+    dv.setUint8(13, 50);
+    dv.setUint8(14, 64);
+    Atomics.store(new Int32Array(opts.midiRingsBuffer), 0, 1); // head = 1
+    raf.flush();
+    expect(got).toEqual([{ type: "noteOn", channel: 0, note: 50, velocity: 64 }]);
+  } finally {
+    h.cleanup();
+    raf.restore();
+  }
+});
+
+test("node.midi: midi-less processor = 空 object", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    expect(node.midi).toEqual({});
+  } finally {
+    h.cleanup();
+  }
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// node.snapshot() / node.restore() (`05-client.md` §2.6, `01-dsl.md` §8).
+// Request-response over the port: snapshot() awaits the worklet's captured
+// slots and wraps them in a blob; restore() migrates + decodes the blob, hands
+// slots to the worklet, applies param values to AudioParams, and returns the
+// worklet's authoritative applied/skipped/missing report.
+// ───────────────────────────────────────────────────────────────────────────
+
+const findPosted = (posted: unknown[], kind: string): Record<string, unknown> | undefined =>
+  posted.find((m) => (m as Record<string, unknown>)?.["kind"] === kind) as
+    | Record<string, unknown>
+    | undefined;
+
+test("node.snapshot(): request → worklet response slots → encodeSnapshot blob", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (m: unknown) => posted.push(m);
+    const p = node.snapshot({ profile: "preset" });
+    const req = findPosted(posted, "snapshot-request")!;
+    expect(req).toBeDefined();
+    expect(req["profile"]).toBe("preset");
+    for (const l of h.lastNode!.port.__listeners) {
+      l({
+        data: {
+          kind: "snapshot-response",
+          requestId: req["requestId"],
+          slots: [{ name: "gain", kind: "state", type: "f32", data: encodeScalar("f32", 0.5) }],
+        },
+      } as MessageEvent);
+    }
+    const blob = await p;
+    const decoded = decodeSnapshot(blob);
+    expect(decoded.schemaHash).toBe("test");
+    expect(decoded.profile).toBe("preset");
+    expect(decoded.slots).toHaveLength(1);
+    expect(decoded.slots[0]!.name).toBe("gain");
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.restore(blob): ok path → worklet applies + param set on AudioParam + RestoreOk", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ params: [{ name: "freq" }] })),
+      h.fireReady,
+    );
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (m: unknown) => posted.push(m);
+    const blob = encodeSnapshot("test", null, [
+      { name: "gain", kind: "state", type: "f32", data: encodeScalar("f32", 0.5) },
+      { name: "freq", kind: "param", type: "f32", data: encodeScalar("f32", 440) },
+    ]);
+    const p = node.restore(blob);
+    const req = findPosted(posted, "restore")!;
+    expect((req["slots"] as unknown[]).length).toBe(2);
+    for (const l of h.lastNode!.port.__listeners) {
+      l({
+        data: {
+          kind: "restore-done",
+          requestId: req["requestId"],
+          applied: ["gain", "freq"],
+          skipped: [],
+          missing: [],
+        },
+      } as MessageEvent);
+    }
+    const result = await p;
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.applied).toEqual(["gain", "freq"]);
+      expect(result.restored).toBe(2);
+    }
+    // the param slot was applied to the live AudioParam
+    expect(node.params["freq"]!.value).toBeCloseTo(440);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.restore(blob): worklet skipped / missing report is forwarded verbatim", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (m: unknown) => posted.push(m);
+    const blob = encodeSnapshot("test", null, [
+      { name: "ghost", kind: "state", type: "f32", data: encodeScalar("f32", 1) },
+    ]);
+    const p = node.restore(blob);
+    const req = findPosted(posted, "restore")!;
+    for (const l of h.lastNode!.port.__listeners) {
+      l({
+        data: {
+          kind: "restore-done",
+          requestId: req["requestId"],
+          applied: [],
+          skipped: ["ghost"],
+          missing: ["gain"],
+        },
+      } as MessageEvent);
+    }
+    const result = await p;
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.applied).toEqual([]);
+      expect(result.skipped).toEqual(["ghost"]);
+      expect(result.missing).toEqual(["gain"]);
+      expect(result.restored).toBe(0);
+    }
+  } finally {
+    h.cleanup();
+  }
+});
+
+// ── hang safety: pending snapshot / restore must always settle ────────────────
+// The worklet response is the only resolve signal. If the node is torn down or
+// the audio thread dies, an un-settled promise hangs the caller forever. These
+// guard the dispose / processorerror / post-dispose settle paths.
+
+test("node.snapshot() after dispose() rejects instead of hanging", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    node.dispose();
+    await expect(node.snapshot()).rejects.toThrow(/dispos/i);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.restore() after dispose() resolves ok:false instead of hanging", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    node.dispose();
+    const blob = encodeSnapshot("test", null, [
+      { name: "gain", kind: "state", type: "f32", data: encodeScalar("f32", 0.5) },
+    ]);
+    const result = await node.restore(blob);
+    expect(result.ok).toBe(false);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("dispose() while a snapshot() is pending rejects the pending promise (no hang)", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    // The default mock port swallows the request (never responds).
+    const p = node.snapshot();
+    node.dispose();
+    await expect(p).rejects.toThrow(/dispos/i);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("processorerror while a restore() is pending settles it as ok:false (no hang)", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    const blob = encodeSnapshot("test", null, [
+      { name: "gain", kind: "state", type: "f32", data: encodeScalar("f32", 0.5) },
+    ]);
+    const p = node.restore(blob);
+    h.fireProcessorError("boom"); // audio thread died → it will never respond
+    const result = await p;
+    expect(result.ok).toBe(false);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.restore() forwards the blob's profile to the worklet (= profile-scoped missing)", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (m: unknown) => posted.push(m);
+    const blob = encodeSnapshot("test", "preset", [
+      { name: "a", kind: "state", type: "f32", data: encodeScalar("f32", 1) },
+    ]);
+    const p = node.restore(blob);
+    const req = findPosted(posted, "restore")!;
+    // The worklet needs the profile to scope its `missing` report correctly.
+    expect(req["profile"]).toBe("preset");
+    for (const l of h.lastNode!.port.__listeners) {
+      l({
+        data: {
+          kind: "restore-done",
+          requestId: req["requestId"],
+          applied: ["a"],
+          skipped: [],
+          missing: [],
+        },
+      } as MessageEvent);
+    }
+    await p;
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.restore(blob): a throwing migration step fails the restore (RestoreFailure)", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({
+            migrations: [
+              {
+                from: "old",
+                to: "test",
+                migrate: () => {
+                  throw new Error("migration boom");
+                },
+              },
+            ],
+          }),
+        ),
+      h.fireReady,
+    );
+    // Blob minted under the OLD hash → migration path old → test runs → throws.
+    const blob = encodeSnapshot("old", null, [
+      { name: "gain", kind: "state", type: "f32", data: encodeScalar("f32", 1) },
+    ]);
+    const result = await node.restore(blob);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain("migration boom");
+      expect(result.restored).toBe(0);
+    }
+  } finally {
+    h.cleanup();
+  }
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// replaceProcessor (`05-client.md` §8) — snapshot old → createNode new →
+// restore → ReplaceResult. Orchestration of already-tested pieces; the test
+// auto-responds to the snapshot / restore port round-trips + fires the new
+// node's ready handshake so the full async chain resolves.
+// ───────────────────────────────────────────────────────────────────────────
+
+const macrotask = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
+// Patch a mock node so its port auto-answers snapshot-request → snapshot-response
+// and restore → restore-done (with the given report), letting snapshot()/restore()
+// resolve without manual message firing.
+const autoAnswer = (
+  mockNode: MockAudioWorkletNode,
+  report: { applied: string[]; skipped: string[]; missing: string[] },
+): void => {
+  mockNode.port.postMessage = (m: unknown) => {
+    const msg = m as { kind?: string; requestId?: number };
+    if (msg?.kind === "snapshot-request") {
+      for (const l of mockNode.port.__listeners) {
+        l({
+          data: { kind: "snapshot-response", requestId: msg.requestId, slots: [] },
+        } as MessageEvent);
+      }
+    } else if (msg?.kind === "restore") {
+      for (const l of mockNode.port.__listeners) {
+        l({ data: { kind: "restore-done", requestId: msg.requestId, ...report } } as MessageEvent);
+      }
+    }
+  };
+};
+
+test("replaceProcessor: snapshots old, stands up new node, restores, returns ReplaceResult", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const oldNode = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    const oldMock = h.lastNode!;
+    autoAnswer(oldMock, { applied: [], skipped: [], missing: [] });
+
+    const newProc = makeMockProcessor({
+      processorName: "new-proc",
+      moduleUrl: "/new.worklet.js",
+      wasmUrl: "/new.wasm",
+      params: [{ name: "gain" }],
+    });
+    const p = replaceProcessor(oldNode, newProc as never);
+
+    // Wait for createNode(newProc) to construct the new node, then wire it up.
+    for (let i = 0; i < 20 && h.lastNode === oldMock; i++) await macrotask();
+    const newMock = h.lastNode!;
+    expect(newMock).not.toBe(oldMock);
+    autoAnswer(newMock, { applied: ["gain"], skipped: [], missing: [] });
+    for (const l of newMock.port.__listeners) l({ data: { kind: "ready" } } as MessageEvent);
+
+    const result = await p;
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.applied).toEqual(["gain"]);
+      expect(result.restored).toBe(1);
+    }
+    // The returned node is the freshly-created wrapper, not the old one.
+    expect(result.node).toBeDefined();
+    expect(result.node.node).toBe(newMock as unknown);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("replaceProcessor: a failed migration still returns a running node (ok:false + node)", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    // The new processor has a migration that throws; the old node's snapshot blob
+    // is minted under "test", so the migrate path runs + fails inside restore.
+    const oldNode = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    const oldMock = h.lastNode!;
+    // snapshot returns a blob under hash "test"; the new proc's current hash is
+    // "v2" with a throwing migration test → v2, so restore fails before the port.
+    oldMock.port.postMessage = (m: unknown) => {
+      const msg = m as { kind?: string; requestId?: number };
+      if (msg?.kind === "snapshot-request") {
+        for (const l of oldMock.port.__listeners) {
+          l({
+            data: { kind: "snapshot-response", requestId: msg.requestId, slots: [] },
+          } as MessageEvent);
+        }
+      }
+    };
+    const newProc = {
+      ...makeMockProcessor({ processorName: "v2-proc", moduleUrl: "/v2.js", wasmUrl: "/v2.wasm" }),
+      schemaHash: "v2",
+      migrations: [
+        {
+          from: "test",
+          to: "v2",
+          migrate: () => {
+            throw new Error("swap migration boom");
+          },
+        },
+      ],
+    };
+    const p = replaceProcessor(oldNode, newProc as never);
+    for (let i = 0; i < 20 && h.lastNode === oldMock; i++) await macrotask();
+    const newMock = h.lastNode!;
+    for (const l of newMock.port.__listeners) l({ data: { kind: "ready" } } as MessageEvent);
+
+    const result = await p;
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain("swap migration boom");
+    }
+    // Even on failure the new node is returned (runs on declaration defaults).
+    expect(result.node).toBeDefined();
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("replaceProcessor: warns once it exceeds 50 swaps on one AudioContext (Q63)", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    let current = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    autoAnswer(h.lastNode!, { applied: [], skipped: [], missing: [] });
+
+    const swap = async (): Promise<void> => {
+      const prevMock = h.lastNode!;
+      const newProc = makeMockProcessor({
+        processorName: "swap-proc",
+        moduleUrl: "/swap.worklet.js",
+        wasmUrl: "/swap.wasm",
+      });
+      const p = replaceProcessor(current, newProc as never);
+      for (let i = 0; i < 20 && h.lastNode === prevMock; i++) await macrotask();
+      const mock = h.lastNode!;
+      autoAnswer(mock, { applied: [], skipped: [], missing: [] });
+      for (const l of mock.port.__listeners) l({ data: { kind: "ready" } } as MessageEvent);
+      const result = await p;
+      current = result.node as never;
+    };
+
+    // 50 swaps: still under the threshold, no warning.
+    for (let i = 0; i < 50; i++) await swap();
+    expect(warnSpy).not.toHaveBeenCalled();
+    // 51st swap crosses the threshold (count > 50) and warns.
+    await swap();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(String(warnSpy.mock.calls[0]![0])).toContain("more than 50 times");
+    // The warning is one-shot per AudioContext — further swaps must NOT re-warn.
+    await swap();
+    await swap();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+  } finally {
+    warnSpy.mockRestore();
     h.cleanup();
   }
 });

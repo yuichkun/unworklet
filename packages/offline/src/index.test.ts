@@ -9,7 +9,15 @@
  */
 
 import "@unworklet/core"; // side-effect load for `.mul` method registration via primitives.ts
-import { defineProcessor, f32, i32, message, SAMPLES_PER_BLOCK, select } from "@unworklet/core";
+import {
+  defineProcessor,
+  f32,
+  i32,
+  inspectSnapshot,
+  message,
+  SAMPLES_PER_BLOCK,
+  select,
+} from "@unworklet/core";
 import { audioInput, audioOutput, buffer, event, forSample, param, state } from "@unworklet/core";
 import { expect, test } from "vite-plus/test";
 
@@ -352,12 +360,12 @@ test("`renderOffline` returns the result shape (= outputs / events / state)", as
     inputs: { main: [oneBlockInput(1), oneBlockInput(0.25)] },
     params: { gain: [0.5] },
   });
-  expect(result).toEqual({
-    outputs: { main: [oneBlockInput(0.5), oneBlockInput(0.125)] },
-    events: [],
-    state: new Uint8Array(0),
-    sampleRate: 48000,
-  });
+  expect(result.outputs).toEqual({ main: [oneBlockInput(0.5), oneBlockInput(0.125)] });
+  expect(result.events).toEqual([]);
+  expect(result.sampleRate).toBe(48000);
+  // The end-of-render snapshot captures the persistent `gain` param's value.
+  const inspected = inspectSnapshot(result.state);
+  expect(inspected.slots.gain).toEqual({ kind: "param", value: 0.5 });
 });
 
 test("`renderOffline` reproduces input × gain on each sample (= 1 block)", async () => {
@@ -372,12 +380,9 @@ test("`renderOffline` reproduces input × gain on each sample (= 1 block)", asyn
   });
   const expectedCh0 = new Float32Array(SAMPLES_PER_BLOCK);
   for (let i = 0; i < SAMPLES_PER_BLOCK; i++) expectedCh0[i] = (i / SAMPLES_PER_BLOCK) * 2;
-  expect(result).toEqual({
-    outputs: { main: [expectedCh0, oneBlockInput(0)] },
-    events: [],
-    state: new Uint8Array(0),
-    sampleRate: 48000,
-  });
+  expect(result.outputs).toEqual({ main: [expectedCh0, oneBlockInput(0)] });
+  expect(result.events).toEqual([]);
+  expect(result.sampleRate).toBe(48000);
 });
 
 test("`renderOffline` runs multiple blocks (= duration = 2 × SAMPLES_PER_BLOCK / sampleRate)", async () => {
@@ -392,12 +397,9 @@ test("`renderOffline` runs multiple blocks (= duration = 2 × SAMPLES_PER_BLOCK 
     inputs: { main: [inputCh, inputCh] },
     params: { gain: [0.5] },
   });
-  expect(result).toEqual({
-    outputs: { main: [expectedCh, expectedCh] },
-    events: [],
-    state: new Uint8Array(0),
-    sampleRate: 48000,
-  });
+  expect(result.outputs).toEqual({ main: [expectedCh, expectedCh] });
+  expect(result.events).toEqual([]);
+  expect(result.sampleRate).toBe(48000);
 });
 
 test("`renderOffline` rounds up duration × sampleRate to the next SAMPLES_PER_BLOCK boundary", async () => {
@@ -528,9 +530,9 @@ test("`renderOffline` preserves state across render quanta (= literal store cros
 test("`renderOffline` state f32 chained mul across blocks (= counter × 0.5 decay)", async () => {
   // canonical Ex 1 per-block meter decay path を simplify (= counter を 全 block 末 尾 で
   // 0.5 倍)。 state instance が 全 block で 共 有 + load × mul → store が cross-block
-  // で 動 く こ と を 確 認。 memory zero-init で 起 動 = counter 0 → store(0 × 0.5) = 0
-  // = 全 block 全 sample 0 (= declaration initial 値 を memory に inject する path は
-  // sub-phase 7.x で fill)。
+  // で 動 く こ と を 確 認。 counter は declaration initial 値 1 で seed さ れ る
+  // (= active data segment、 issue #8 と 同 commit)、 各 block 末 尾 で 0.5 倍 = block0
+  // で 1、 block1 で 0.5、 block2 で 0.25 を 全 sample 出 力。
   const stateDecay = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
     const counter = state.f32(1);
@@ -550,8 +552,12 @@ test("`renderOffline` state f32 chained mul across blocks (= counter × 0.5 deca
     duration: (totalBlocks * SAMPLES_PER_BLOCK) / 48000,
   });
   const ch = result.outputs["main"]![0]!;
-  for (let i = 0; i < totalBlocks * SAMPLES_PER_BLOCK; i++) {
-    expect(ch[i]).toBe(0);
+  // block b は その block 開 始 時 の counter 値 = 1 × 0.5^b を 全 sample に 出 力。
+  for (let b = 0; b < totalBlocks; b++) {
+    const expected = 0.5 ** b;
+    for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
+      expect(ch[b * SAMPLES_PER_BLOCK + i]).toBeCloseTo(expected, 6);
+    }
   }
 });
 

@@ -1,5 +1,69 @@
 import { defineConfig } from "vite-plus";
 
+import { WORKLET_REALM_FILES } from "./packages/core/src/worklet-realm-files.ts";
+
+// AudioWorkletGlobalScope (audio thread) に存在しない main-thread / Node の web API。
+// worklet バンドルに同梱されるソース (= `WORKLET_REALM_FILES`) がこれらを参照すると、
+// browser で worklet module load 時に即 throw し、その processor は一切鳴らせなくなる。
+// node の unit test は Node がこれらを持つので素通りする = lint で構造的に落とす。
+const WORKLET_FORBIDDEN_GLOBALS = [
+  "TextEncoder",
+  "TextDecoder",
+  "TextEncoderStream",
+  "TextDecoderStream",
+  "fetch",
+  "XMLHttpRequest",
+  "WebSocket",
+  "EventSource",
+  "Request",
+  "Response",
+  "Headers",
+  "FormData",
+  "setTimeout",
+  "setInterval",
+  "clearTimeout",
+  "clearInterval",
+  "setImmediate",
+  "clearImmediate",
+  "requestAnimationFrame",
+  "cancelAnimationFrame",
+  "requestIdleCallback",
+  "cancelIdleCallback",
+  "document",
+  "window",
+  "navigator",
+  "location",
+  "history",
+  "alert",
+  "localStorage",
+  "sessionStorage",
+  "indexedDB",
+  "caches",
+  "atob",
+  "btoa",
+  "Worker",
+  "SharedWorker",
+  "MessageChannel",
+  "BroadcastChannel",
+  "Blob",
+  "File",
+  "FileReader",
+  "URL",
+  "URLSearchParams",
+  "AudioContext",
+  "OfflineAudioContext",
+  "crypto",
+  "performance",
+];
+
+const workletRealmGlobalsRule = [
+  "error",
+  ...WORKLET_FORBIDDEN_GLOBALS.map((name) => ({
+    name,
+    message: `${name} is not available in AudioWorkletGlobalScope (audio thread). Keep worklet-realm code (reachable from worklet-entry.ts) free of main-thread / Node web APIs; move such code to a main-only module. See packages/core/src/worklet-realm-files.ts.`,
+  })),
+] as ["error", ...Array<{ name: string; message: string }>];
+
 export default defineConfig({
   fmt: {},
   staged: {
@@ -14,6 +78,29 @@ export default defineConfig({
     jsPlugins: [{ name: "vite-plus", specifier: "vite-plus/oxlint-plugin" }],
     rules: { "vite-plus/prefer-vite-plus-imports": "error" },
     options: { typeAware: true, typeCheck: true },
+    overrides: [
+      {
+        files: WORKLET_REALM_FILES.map((f) => `packages/core/${f}`),
+        rules: {
+          "no-restricted-globals": workletRealmGlobalsRule,
+          // 相対 main-only モジュールの混入は `worklet-realm-files.test.ts` が graph で
+          // 検出するが、bare module は graph トレース対象外。worklet バンドルへ入ると
+          // 致命的な node-only dep を import 段階で禁止する。
+          "no-restricted-imports": [
+            "error",
+            {
+              paths: [
+                {
+                  name: "binaryen",
+                  message:
+                    "binaryen (WASM compiler) must never enter the worklet bundle — it pulls Node-only APIs. compile() runs at build time only, outside AudioWorkletGlobalScope.",
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ],
   },
   run: {
     cache: true,

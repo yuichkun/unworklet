@@ -70,6 +70,22 @@ const EVENT_FIELD_BYTES: Record<ScalarType, number> = {
 const EVENT_HEADER_BYTES = 12;
 
 /**
+ * MIDI ringbuffer slot (`11-midi.md` §4.1): `[status:u8, data1:u8, data2:u8,
+ * _pad:u8, atSample:u32]` = 8 byte。 sysex は status=0xF0 + sysex content region
+ * の chunk index を data1 に 載 せ る (= §4.3、 C.4 で fill)。
+ */
+const MIDI_SLOT_BYTES = 8;
+const MIDI_HEADER_BYTES = 12;
+
+/**
+ * Per-sysex-port content region sizing (`11-midi.md` §4.3). `chunks` chunks of
+ * `SYSEX_PER_CHUNK_BYTES` each (= `[length:u32, data...]`), drop-oldest cycled
+ * by the slot's `chunkIdx`. 1 KiB/chunk × 16 chunks = 16 KiB per sysex port.
+ */
+const SYSEX_PER_CHUNK_BYTES = 1024;
+const SYSEX_CHUNKS = 16;
+
+/**
  * typed-array field が slot 内 で 占 め る byte (= `[payloadLen:u32,
  * payloadOffset:u32]`、 §5.1/§5.2)。
  */
@@ -173,6 +189,18 @@ export type MessageRingSlot = {
   }>;
 };
 
+/**
+ * Per-port MIDI ringbuffer metadata (`11-midi.md` §4). Header layout is shared
+ * with `event<T>` / `message<T>` (`[head, tail, overflowCount]`); the slot
+ * encoding is the fixed 8-byte MIDI slot. `direction` records producer/consumer
+ * roles (in: main produces, worklet drains; out: worklet emits, main drains).
+ */
+export type MidiRingSlot = {
+  base: number;
+  capacity: number;
+  direction: "in" | "out";
+};
+
 export type Layout = {
   regions: {
     states: { base: number; slots: Record<string, number> };
@@ -196,14 +224,33 @@ export type Layout = {
     };
     /** everyNSamples の per-call-site counter slot (= counterId → byte offset、§9.1)。 */
     everyNSamplesCounters: { base: number; slots: Record<number, number> };
-    midiRings: { base: number; slots: Record<string, number> };
-    sysexContent: { base: number; size: number };
+    midiRings: { base: number; slots: Record<string, MidiRingSlot> };
+    // Per-sysex-port content region (`11-midi.md` §4.3): `chunks` chunks of
+    // `perChunk` bytes, each `[length:u32, data bytes]`. The 8-byte ring slot
+    // carries `[0xF0, chunkIdx, _pad, _pad, atSample]`; `chunkIdx` indexes here.
+    sysexContent: {
+      base: number;
+      slots: Record<string, { base: number; perChunk: number; chunks: number }>;
+    };
     publishShared: { base: number; slots: Record<string, number> };
     publishCounters: { base: number; slots: Record<string, number> };
     snapshotRegion: { base: number; size: number };
   };
   totalBytes: number;
 };
+
+/**
+ * Round a byte offset up to the next 4-byte boundary. A `u8` buffer (1
+ * byte/element) or an odd `payloadCapacity` can leave the packing cursor on a
+ * non-4-multiple offset; an i32-viewed region placed after it must realign its
+ * base first, since `new Int32Array(memory.buffer, base, 3)` requires a
+ * 4-aligned byteOffset (a non-aligned base throws RangeError at bind time).
+ *
+ * Uses float arithmetic, not `& ~3`: a packing cursor can exceed the signed
+ * 32-bit range (the memory-budget ceiling is 4 GiB), and a 32-bit bitwise op
+ * would wrap such an offset and silently corrupt `totalBytes`.
+ */
+const align4 = (offset: number): number => Math.ceil(offset / 4) * 4;
 
 export function layout(graph: CapturedGraph): Layout {
   const inputs: Record<string, number> = {};
@@ -416,13 +463,70 @@ export function layout(graph: CapturedGraph): Layout {
       if (
         node.kind === "forSample" ||
         node.kind === "everyNSamples" ||
-        node.kind === "messageOnReceive"
+        node.kind === "messageOnReceive" ||
+        node.kind === "midiOnEvent"
       ) {
         collectEveryNCounters(node.body);
       }
     }
   };
   collectEveryNCounters(graph.statements);
+
+  // midiRings packing = everyNSamplesCounters 末 尾 を base に declaration 順 で
+  // per-port ring (= header 12 + capacity × 8) を 配 置 (= `11-midi.md` §4)。
+  // in / out port それぞれ 独 立 header + slot 列。 末 尾 配 置 = MIDI ナ シ graph で
+  // base 不 変 (= subset → superset 規 約)。 header を i32 view す る の で、 直 前 の
+  // u8 buffer / payloadContent が cursor を 4-align か ら 外 し て い て も base を
+  // 4 に 切 り 上 げ る (= `new Int32Array` bind の RangeError = crash 防 止)。
+  cursor = align4(cursor);
+  const midiRingsBase = cursor;
+  const midiRingSlots: Record<string, MidiRingSlot> = {};
+  for (const decl of graph.declarations) {
+    if (decl.kind === "midiInput" || decl.kind === "midiOutput") {
+      midiRingSlots[decl.name] = {
+        base: cursor,
+        capacity: decl.capacity,
+        direction: decl.kind === "midiInput" ? "in" : "out",
+      };
+      cursor += MIDI_HEADER_BYTES + decl.capacity * MIDI_SLOT_BYTES;
+    }
+  }
+
+  // sysexContent packing = midiRings 末 尾 を base に、 sysex を 使 う port ご と に
+  // content region (= chunks × perChunk) を 配 置 (= `11-midi.md` §4.3)。 sysex 使 用 =
+  // graph statements に 該 当 port の sysex midiOnEvent / midiEmitIf が あ る か で 判 定。
+  const sysexContentBase = cursor;
+  const sysexContentSlots: Record<string, { base: number; perChunk: number; chunks: number }> = {};
+  const sysexPorts = new Set<string>();
+  const scanSysex = (nodes: readonly AstNode[]): void => {
+    for (const node of nodes) {
+      if (
+        (node.kind === "midiOnEvent" || node.kind === "midiEmitIf") &&
+        node.eventType === "sysex"
+      ) {
+        sysexPorts.add(node.port);
+      }
+      if (
+        node.kind === "forSample" ||
+        node.kind === "everyNSamples" ||
+        node.kind === "messageOnReceive" ||
+        node.kind === "midiOnEvent"
+      ) {
+        scanSysex(node.body);
+      }
+    }
+  };
+  scanSysex(graph.statements);
+  for (const decl of graph.declarations) {
+    if ((decl.kind === "midiInput" || decl.kind === "midiOutput") && sysexPorts.has(decl.name)) {
+      sysexContentSlots[decl.name] = {
+        base: cursor,
+        perChunk: SYSEX_PER_CHUNK_BYTES,
+        chunks: SYSEX_CHUNKS,
+      };
+      cursor += SYSEX_PER_CHUNK_BYTES * SYSEX_CHUNKS;
+    }
+  }
 
   const totalBytes = cursor;
 
@@ -447,8 +551,8 @@ export function layout(graph: CapturedGraph): Layout {
         base: everyNSamplesCountersBase,
         slots: everyNSamplesCounterSlots,
       },
-      midiRings: { base: totalBytes, slots: {} },
-      sysexContent: { base: totalBytes, size: 0 },
+      midiRings: { base: midiRingsBase, slots: midiRingSlots },
+      sysexContent: { base: sysexContentBase, slots: sysexContentSlots },
       publishShared: { base: publishSharedBase, slots: publishSharedSlots },
       publishCounters: { base: publishCountersBase, slots: publishCountersSlots },
       snapshotRegion: { base: totalBytes, size: 0 },

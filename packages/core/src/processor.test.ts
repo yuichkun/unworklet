@@ -18,7 +18,8 @@ test("`defineProcessor` invokes the body lambda with a `ProcessorContext`", () =
     observedSampleRate = ctx.sampleRate;
     return { process: () => {} };
   });
-  expect(observedSampleRate).toBe(0);
+  // Eager capture uses the default rate; `compile` re-captures at the host rate.
+  expect(observedSampleRate).toBe(48000);
 });
 
 test("`defineProcessor` runs the returned `process` lambda exactly once during capture", () => {
@@ -33,7 +34,8 @@ test("`defineProcessor` runs the returned `process` lambda exactly once during c
 
 test("`defineProcessor` returns a `CompiledProcessor` shape (= graph + schemaHash + worklet)", () => {
   const cp = defineProcessor(() => ({ process: () => {} }));
-  expect(cp.schemaHash).toBe("phase-3-stub");
+  // Real migration anchor (= same sync hash `compile()` produces).
+  expect(cp.schemaHash).toMatch(/^[0-9a-f]{32}$/);
   expect(cp.graph).toBeDefined();
   expect(cp.worklet.parameterDescriptors).toEqual([]);
   expect(typeof cp.worklet.initialize).toBe("function");

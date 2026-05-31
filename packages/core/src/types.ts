@@ -11,8 +11,9 @@
  * - `docs/09-repo-structure.md` §2.1 public exports
  *
  * Concrete TS generic constraint shape and method-form expansion on
- * `Node<T>` are impl-phase fill — this file declares the type surface
- * that all stub modules and external consumers compile against.
+ * `Node<T>` live in the impl modules (`dsl/primitives.ts` 等) — this file
+ * declares the type surface that all modules and external consumers
+ * compile against.
  */
 
 import type {
@@ -347,8 +348,11 @@ export type MidiEventGraph =
     }
   | { type: "systemRealtime"; status: Node<"i32">; atSample: Node<"i32"> }
   | {
+      // Inbound handler `data` is a read-only proxy over the port's sysex content
+      // (bulk-copy into a `buffer.u8` via `copyFrom`). The emit side widens this
+      // to also accept a `Buffer<'u8'>` for new content (see `MidiEventEmit`).
       type: "sysex";
-      data: Buffer<"u8"> | TypedArrayFieldRef<"u8">;
+      data: TypedArrayFieldRef<"u8">;
       length: Node<"i32">;
       atSample: Node<"i32">;
     };
@@ -357,6 +361,29 @@ export type MidiEventType = MidiEvent["type"];
 
 export type MidiEventGraphOf<K extends MidiEventType> = Extract<MidiEventGraph, { type: K }>;
 
+/**
+ * Emit-side `midiOutput().emitIf` event shape: every `Node<'i32'>` field of
+ * `MidiEventGraph` is lifted to `Node<'i32'> | number` so authors write plain
+ * literals (`channel: 0`, `atSample: 0`) per the Q33 literal-lift rule
+ * (`11-midi.md` §2.2). The inbound `onEvent` handler keeps the strict
+ * `MidiEventGraph` (every field is a graph node). Mirrors `EmitPayload<T>`.
+ */
+export type MidiEventEmit = MidiEventGraph extends infer E
+  ? E extends MidiEventGraph
+    ? {
+        [K in keyof E]: E[K] extends Node<"i32">
+          ? Node<"i32"> | number
+          : // sysex emit accepts new content from a worklet `buffer.u8` as well as
+            // an inbound proxy for thru (`11-midi.md` §2.5).
+            E[K] extends TypedArrayFieldRef<"u8">
+            ? Buffer<"u8"> | TypedArrayFieldRef<"u8">
+            : E[K];
+      }
+    : never
+  : never;
+
+export type MidiEventEmitOf<K extends MidiEventType> = Extract<MidiEventEmit, { type: K }>;
+
 export type MidiInputHandle = {
   readonly name: string;
   onEvent<K extends MidiEventType>(type: K, handler: (event: MidiEventGraphOf<K>) => void): void;
@@ -364,7 +391,7 @@ export type MidiInputHandle = {
 
 export type MidiOutputHandle = {
   readonly name: string;
-  emitIf(cond: Node<"bool"> | boolean, event: MidiEventGraph): void;
+  emitIf(cond: Node<"bool"> | boolean, event: MidiEventEmit): void;
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -501,6 +528,36 @@ export type MessageRingSlotDescriptor = {
 };
 
 /**
+ * MIDI ring descriptor exposed on `WorkletNamespace.midiRings` (`11-midi.md` §4).
+ * Built from the layout's `midiRings` + `sysexContent` regions. One entry per
+ * `midiInput` / `midiOutput` declaration; `createNode` reads them to size the
+ * SAB ring + sysex content buffers and to wire `node.midi.<name>`, and the
+ * worklet template reads them to drain (in) / emit (out) the WASM ring.
+ *
+ * `direction` mirrors the message/event split: `"in"` = main produces, worklet
+ * drains (= message-ring transport); `"out"` = worklet emits, main drains
+ * (= event-ring transport). Each slot is the fixed 8-byte MIDI wire layout
+ * (§4.1); sysex (§4.3) travels through the optional `sysex` content region.
+ */
+export type MidiRingSlotDescriptor = {
+  readonly name: string;
+  readonly direction: "in" | "out";
+  readonly wasmRingBase: number;
+  readonly capacity: number;
+  /**
+   * Present when this port carries sysex (`0xF0`) events. `wasmBase` = byte
+   * offset of the content region in WASM linear memory; `perChunk` = bytes per
+   * `[length:u32, data]` chunk; `chunks` = chunk count. The 8-byte ring slot
+   * carries `[0xF0, chunkIdx, _pad, _pad, atSample]` and `chunkIdx` indexes here.
+   */
+  readonly sysex?: {
+    readonly wasmBase: number;
+    readonly perChunk: number;
+    readonly chunks: number;
+  };
+};
+
+/**
  * Worklet escape-hatch namespace exposed on `CompiledProcessor<C>.worklet`
  * (`01-dsl.md` §11 + Q80).
  *
@@ -523,6 +580,7 @@ export type WorkletNamespace = {
   publishSlots: readonly PublishSlotDescriptor[];
   eventRings: readonly EventRingSlotDescriptor[];
   messageRings: readonly MessageRingSlotDescriptor[];
+  midiRings: readonly MidiRingSlotDescriptor[];
   moduleUrl?: string;
   processorName?: string;
   wasmUrl?: string;
@@ -532,13 +590,33 @@ export type CompiledProcessor<C> = {
   readonly graph: ProcessorGraph;
   readonly schemaHash: string;
   readonly worklet: WorkletNamespace;
+  /**
+   * Declarative schema-migration chain from the processor's options bag
+   * (`01-dsl.md` §8.3). Carried on the compiled artifact so `restore` /
+   * `replaceProcessor` can bridge an older blob to the current schema. Omitted
+   * when the processor declares no migrations.
+   */
+  readonly migrations?: readonly Migration[];
+  /**
+   * Internal re-capture thunk: re-runs the `defineProcessor` body with the host
+   * `ctx.sampleRate` so `compile` emits rate-specific coefficients. The public
+   * `graph` is the rate-independent eager capture (declarations / layout / meta).
+   */
+  readonly __capture?: (sampleRate: number) => ProcessorGraph;
   readonly __compiledProcessor: C;
 };
 
 export type Migration = {
   from: string;
   to: string;
-  migrate: (blob: Uint8Array, helpers: MigrationHelpers) => void | Promise<void>;
+  /**
+   * Synchronous blob transform. Migrations must be sync: the same chain runs on
+   * the worklet's render-quantum boundary (no `await` possible) and in the
+   * offline renderer, so an async migrate cannot be honored consistently and is
+   * rejected at runtime. (`void` is permissive in TS, so an accidental async
+   * function still type-checks but fails loud during `restore`.)
+   */
+  migrate: (blob: Uint8Array, helpers: MigrationHelpers) => void;
 };
 
 export type MigrationHelpers = {

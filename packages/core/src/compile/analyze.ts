@@ -43,6 +43,15 @@ function walkForConstantTruthyEmitIf(
         message: `unworklet: event "${node.name}" emitIf has a constant-truthy cond inside forSample — unconditional emission at audio rate fills the ringbuffer in milliseconds. Use a state-edge gated cond, move the emission to a handler context, or wrap it in everyNSamples(N, ...) for sub-rate periodic emission (= Q32-c, stable ID 'constant-truthy-emitif')`,
       });
     }
+    // MIDI emit shares the same ring (= `11-midi.md` §4): an `emitIf(true)` at
+    // sample rate saturates the MIDI ringbuffer just as `event` does.
+    if (node.kind === "midiEmitIf" && isConstantTruthy(node.cond)) {
+      diagnostics.push({
+        id: "constant-truthy-emitif",
+        severity: "error",
+        message: `unworklet: midi port "${node.port}" emitIf has a constant-truthy cond inside forSample — unconditional emission at audio rate fills the ringbuffer in milliseconds. Use a state-edge gated cond, move the emission to a handler context, or wrap it in everyNSamples(N, ...) for sub-rate periodic emission (= Q32-c, stable ID 'constant-truthy-emitif')`,
+      });
+    }
     if (node.kind === "forSample") {
       walkForConstantTruthyEmitIf(node.body, diagnostics);
     }
@@ -232,10 +241,177 @@ function checkPayloadFieldLimit(graph: CapturedGraph, diagnostics: DiagnosticEnt
   }
 }
 
+/** 64 MiB — low-end-device load-time concern (warning). */
+const MEMORY_WARN_BYTES = 64 * 1024 * 1024;
+/** 4 GiB — the WASM 32-bit linear-memory ceiling (hard error). */
+const MEMORY_ERROR_BYTES = 4 * 1024 * 1024 * 1024;
+
+/**
+ * Memory-budget check (Q30, `03-compiler.md` §2.6 stable ID `memory-budget`).
+ * The compiler auto-sums every declaration into a single linear-memory
+ * allocation; `memory.grow` on the audio thread is permanently excluded. A
+ * total above 64 MiB emits a build-time warning (load-time concern), above the
+ * 4 GiB WASM32 ceiling a hard error. Takes the laid-out `totalBytes` since the
+ * sum is only known after `layout`.
+ */
+export function checkMemoryBudget(totalBytes: number): DiagnosticEntry[] {
+  if (totalBytes > MEMORY_ERROR_BYTES) {
+    return [
+      {
+        id: "memory-budget",
+        severity: "error",
+        message:
+          `unworklet: declaration memory sum (${totalBytes} bytes) exceeds the WASM 32-bit ` +
+          `linear-memory ceiling of 4 GiB. Reduce buffer sizes or move large content to a ` +
+          `message<T> upload pattern. (stable ID 'memory-budget')`,
+      },
+    ];
+  }
+  if (totalBytes > MEMORY_WARN_BYTES) {
+    return [
+      {
+        id: "memory-budget",
+        severity: "warning",
+        message:
+          `unworklet: declaration memory sum (${totalBytes} bytes) exceeds 64 MiB — this loads ` +
+          `slowly on low-end devices. Consider reducing buffer sizes. (stable ID 'memory-budget')`,
+      },
+    ];
+  }
+  return [];
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// handler-field-escape: a `message<T>` onReceive payload field (or a MIDI
+// onEvent field) decodes the *current drain slot* and is only valid inside the
+// handler body that drains it. Capturing such a field Node and reading it
+// elsewhere (a forSample, the per-block top level, another handler) makes emit
+// read an unset slot pointer = a silent 0 / garbage value. Detect statically.
+// ─────────────────────────────────────────────────────────────────────────
+
+type HandlerScope = { kind: "message"; name: string } | { kind: "midi"; port?: string } | null;
+
+// Every AstNode-valued child field except `body` (bodies carry handler scope and
+// are walked explicitly). Field-name based, so a new node kind is covered without
+// re-listing variants; a missed field only weakens detection, never flags valid code.
+const EXPR_CHILD_FIELDS = [
+  "lhs",
+  "rhs",
+  "value",
+  "x",
+  "lo",
+  "hi",
+  "cond",
+  "ifTrue",
+  "ifFalse",
+  "offset",
+  "index",
+  "pos",
+  "atSample",
+  "channel",
+  "arg1",
+  "arg2",
+  "sysexLength",
+] as const;
+
+function exprChildren(node: AstNode): AstNode[] {
+  const n = node as Record<string, unknown>;
+  const out: AstNode[] = [];
+  const push = (v: unknown): void => {
+    if (v !== null && typeof v === "object" && "kind" in v) out.push(v as AstNode);
+  };
+  for (const f of EXPR_CHILD_FIELDS) push(n[f]);
+  if (Array.isArray(n["lanes"])) for (const l of n["lanes"]) push(l);
+  if (Array.isArray(n["fields"])) {
+    for (const field of n["fields"] as Array<Record<string, unknown>>) {
+      push(field["value"]);
+      push(field["length"]);
+    }
+  }
+  return out;
+}
+
+function checkHandlerFieldEscape(
+  node: AstNode,
+  scope: HandlerScope,
+  diagnostics: DiagnosticEntry[],
+): void {
+  let want: "message" | "midi";
+  let wantName: string | undefined;
+  let label: string;
+  switch (node.kind) {
+    case "messageFieldRead":
+      want = "message";
+      wantName = node.name;
+      label = `message "${node.name}" field "${node.field}"`;
+      break;
+    case "payloadFieldRead":
+    case "payloadFieldLength":
+      want = "message";
+      wantName = node.messageName;
+      label = `message "${node.messageName}" field "${node.field}"`;
+      break;
+    case "bufferCopyFrom":
+      want = "message";
+      wantName = node.messageName;
+      label = `message "${node.messageName}" field "${node.field}"`;
+      break;
+    case "midiFieldRead":
+      want = "midi";
+      wantName = undefined;
+      label = `midi field "${node.field}"`;
+      break;
+    case "midiSysexLength":
+    case "midiSysexCopy":
+      want = "midi";
+      wantName = node.port;
+      label = `midi port "${node.port}" sysex`;
+      break;
+    default:
+      return;
+  }
+  const ok =
+    want === "midi"
+      ? scope !== null &&
+        scope.kind === "midi" &&
+        (wantName === undefined || scope.port === wantName)
+      : scope !== null && scope.kind === "message" && scope.name === wantName;
+  if (!ok) {
+    diagnostics.push({
+      id: "handler-field-escape",
+      severity: "error",
+      message:
+        `unworklet: ${label} is read outside its handler. Handler payload fields decode the ` +
+        `current drain slot and are only valid inside the on-receive / on-event body — a field ` +
+        `Node captured and read elsewhere reads an unset slot (= silent 0). Move the read into ` +
+        `the handler, or copy the value into a state / buffer first. (stable ID 'handler-field-escape')`,
+    });
+  }
+}
+
+function walkHandlerFieldEscape(
+  nodes: readonly AstNode[],
+  scope: HandlerScope,
+  diagnostics: DiagnosticEntry[],
+): void {
+  for (const node of nodes) {
+    checkHandlerFieldEscape(node, scope, diagnostics);
+    walkHandlerFieldEscape(exprChildren(node), scope, diagnostics);
+    if (node.kind === "messageOnReceive") {
+      walkHandlerFieldEscape(node.body, { kind: "message", name: node.name }, diagnostics);
+    } else if (node.kind === "midiOnEvent") {
+      walkHandlerFieldEscape(node.body, { kind: "midi", port: node.port }, diagnostics);
+    } else if (node.kind === "forSample" || node.kind === "everyNSamples") {
+      walkHandlerFieldEscape(node.body, scope, diagnostics);
+    }
+  }
+}
+
 export function analyze(graph: CapturedGraph): DiagnosticEntry[] {
   const diagnostics: DiagnosticEntry[] = [];
   walkForLoopErrors(graph.statements, diagnostics);
   checkPayloadFieldLimit(graph, diagnostics);
+  walkHandlerFieldEscape(graph.statements, null, diagnostics);
   for (const stmt of graph.statements) {
     if (stmt.kind === "forSample") {
       walkForConstantTruthyEmitIf(stmt.body, diagnostics);

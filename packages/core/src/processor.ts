@@ -26,6 +26,7 @@ import {
   runCapture,
 } from "./compile/capture.ts";
 import { makeWorkletNamespace } from "./worklet.ts";
+import { schemaHash } from "./compile/schemaHash.ts";
 
 /**
  * Brand the internal `CapturedGraph` as the opaque public
@@ -36,33 +37,53 @@ function brandGraph(graph: CapturedGraph): ProcessorGraph {
   return graph as unknown as ProcessorGraph;
 }
 
-export function defineProcessor<C = unknown>(
+/**
+ * Default capture rate for the eager `graph` (= the rate-independent metadata
+ * view: declarations, layout, worklet namespace, schema hash). The real host
+ * rate flows into `compile`'s re-capture (`ctx.sampleRate` is a build-time
+ * constant used for coefficient precomputation, so the emitted statements are
+ * rate-specific while the schema is not).
+ */
+export const DEFAULT_CAPTURE_RATE = 48000;
+
+/**
+ * Run a `defineProcessor` body through a fresh capture context with the given
+ * host sample rate bound to `ctx.sampleRate`, returning the captured AST DAG.
+ * Re-runnable: every call uses an isolated context, so `compile` can re-capture
+ * at the real rate without mutating the eager graph.
+ */
+export function captureProcessor(
   body: (ctx: ProcessorContext) => ProcessorBody,
-  _options?: ProcessorOptions,
-): CompiledProcessor<C> {
+  sampleRate: number,
+): CapturedGraph {
   const captureCtx = newCaptureContext();
-
-  // Declarations + the process lambda are gathered first. `ctx.sampleRate`
-  // is a Phase 3 placeholder — the host (= `renderOffline`) will supply
-  // the real rate when `compile()` is invoked end-to-end.
-  const compiledBody = runCapture(captureCtx, () => {
-    const procCtx: ProcessorContext = { sampleRate: 0 };
-    return body(procCtx);
-  });
-
-  // Invoke `process` once during capture so its top-level statements
-  // (= per-block code + `forSample` invocations) populate
-  // `captureCtx.statements`.
+  const compiledBody = runCapture(captureCtx, () => body({ sampleRate }));
   runCapture(captureCtx, () => {
     compiledBody.process();
   });
+  return finalize(captureCtx);
+}
 
-  const captured = finalize(captureCtx);
+export function defineProcessor<C = unknown>(
+  body: (ctx: ProcessorContext) => ProcessorBody,
+  options?: ProcessorOptions,
+): CompiledProcessor<C> {
+  // Eager capture at the default rate: declarations / layout / worklet namespace
+  // / schema hash are all rate-independent, so this view is correct regardless
+  // of the host rate. `compile` re-captures at the real rate for emission.
+  const captured = captureProcessor(body, DEFAULT_CAPTURE_RATE);
 
   return {
     graph: brandGraph(captured),
-    schemaHash: "phase-3-stub",
+    // Migration anchor (`01-dsl.md` §8.3): hashed over declarations only, so it
+    // is stable across host rates and process-body edits — a preset blob keeps
+    // matching unless the slot schema itself changes.
+    schemaHash: schemaHash(captured),
     worklet: makeWorkletNamespace(captured),
+    migrations: options?.migrations,
+    // Re-capture thunk: `compile` binds the real `ctx.sampleRate` here so
+    // coefficient precomputation (`440 / ctx.sampleRate`, etc.) uses the host rate.
+    __capture: (sampleRate: number) => brandGraph(captureProcessor(body, sampleRate)),
     __compiledProcessor: undefined as unknown as C,
   };
 }

@@ -2597,9 +2597,10 @@ test("`emit(message onReceive)` = ring 空 (= head == tail) で handler ナ シ 
   const lay = layout(graph);
   const { memory, process } = await instantiate(graph);
   process();
-  // ring 空 = handler fire ナ シ、 state は initial (= 0、 ema runtime 0 で start)
+  // ring 空 = handler fire ナ シ、 state は宣言した initial (= 99) のまま
+  // (= state init は active data segment で instantiation 時に seed される)。
   const capturedView = new Int32Array(memory.buffer, lay.regions.states.slots["captured"]!, 1);
-  expect(capturedView[0]).toBe(0);
+  expect(capturedView[0]).toBe(99);
 });
 
 test("`emit(message onReceive)` = 複 数 onReceive registration = registration order で 全 fire", async () => {

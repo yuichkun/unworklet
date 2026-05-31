@@ -631,6 +631,20 @@ test("`select(cond, boolNode, false)` lifts a `false` branch to bool literal val
   });
 });
 
+test("`select` rejects mixing a boolean branch with a numeric branch (type soundness)", () => {
+  const cond = wrapAst<"bool">({ kind: "stateLoad", type: "bool", name: "c" });
+  // A boolean is only a valid branch for a bool select. Mixing it with a numeric
+  // branch must be rejected at the type layer — otherwise it silently becomes a
+  // bool select typed as `Node<numeric>` ("type ⟺ works" breaks). These lines are
+  // verified by the typechecker (`vp check`), not the runtime assertion below.
+  // @ts-expect-error — a boolean branch is not assignable to a numeric (f32) select
+  P.select(cond, true, 0.5);
+  // @ts-expect-error — a boolean on the other branch is likewise rejected
+  P.select(cond, 0.5, true);
+  // A genuine all-bool select still type-checks and carries type 'bool'.
+  expect(unwrapAst(P.select(cond, true, false))).toMatchObject({ kind: "select", type: "bool" });
+});
+
 // ─────────────────────────────────────────────────────────────────────────
 // frac (= x - floor(x))
 // ─────────────────────────────────────────────────────────────────────────

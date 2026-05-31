@@ -24,17 +24,61 @@ import { forSample } from "./loop.ts";
 import { add, gt } from "./primitives.ts";
 
 // ─────────────────────────────────────────────────────────────────────────
-// stub 維 持 = param.expose / midi (= buffer / message は 別 path で 実 装 済 み)
+// param.expose = name + snapshot policy (`01-dsl.md` §3.3 + §8.2)
 // ─────────────────────────────────────────────────────────────────────────
 
-const stubs: ReadonlyArray<readonly [string, () => unknown]> = [
-  ["param.expose", () => param.expose({ name: "x" })],
-  ["midiInput", () => midiInput({ name: "mIn" })],
-  ["midiOutput", () => midiOutput({ name: "mOut" })],
-];
+test("`param.expose({ name, snapshot })` sets the param name + snapshot policy", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    param
+      .expose({ name: "route", snapshot: "transient" })
+      .f32({ default: 0, min: 0, max: 7, automationRate: "k-rate" });
+  });
+  expect(ctx.declarations).toEqual([
+    {
+      kind: "param",
+      name: "route",
+      type: "f32",
+      default: 0,
+      min: 0,
+      max: 7,
+      automationRate: "k-rate",
+      snapshot: "transient",
+    },
+  ]);
+});
 
-test.each(stubs)("`%s` stub throws not implemented", (_name, invoke) => {
-  expect(invoke).toThrow(/not implemented/);
+// ─────────────────────────────────────────────────────────────────────────
+// midiInput / midiOutput = declaration register (`11-midi.md` §1)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`midiInput` / `midiOutput` outside `defineProcessor` body throw", () => {
+  expect(() => midiInput({ name: "mIn" })).toThrow(/outside `defineProcessor` body/);
+  expect(() => midiOutput({ name: "mOut" })).toThrow(/outside `defineProcessor` body/);
+});
+
+test("`midiInput` / `midiOutput` register declarations with default capacity 256", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const inHandle = midiInput({ name: "mIn" });
+    const outHandle = midiOutput({ name: "mOut", capacity: 1024 });
+    expect(inHandle.name).toBe("mIn");
+    expect(outHandle.name).toBe("mOut");
+  });
+  expect(ctx.declarations).toEqual([
+    { kind: "midiInput", name: "mIn", capacity: 256 },
+    { kind: "midiOutput", name: "mOut", capacity: 1024 },
+  ]);
+});
+
+test("`midiInput().onEvent(type, handler)` captures a midiOnEvent statement", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    const midi = midiInput({ name: "mIn" });
+    midi.onEvent("noteOn", () => {});
+  });
+  const stmt = ctx.statements.at(-1)!;
+  expect(stmt).toMatchObject({ kind: "midiOnEvent", port: "mIn", eventType: "noteOn" });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -363,14 +407,16 @@ test("`param.at` の paramName は `.named` chain で update さ れ た name �
   });
 });
 
-test("`param` handle `.expose({...})` は throw stub 維 持", () => {
+test("`param` handle `.expose({...})` (= 後 付 け) updates name + snapshot policy", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const handle = param
+    param
       .f32({ default: 0, min: 0, max: 1, automationRate: "k-rate" })
-      .named("gain");
-    expect(() => handle.expose({ name: "x" })).toThrow(/not implemented/);
+      .named("gain")
+      .expose({ snapshot: "transient" });
   });
+  const decl = ctx.declarations[0];
+  expect(decl).toMatchObject({ kind: "param", name: "gain", snapshot: "transient" });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -424,14 +470,17 @@ test("`state.<type>(initial)` 5 type 全 declare (= f32 / f64 / i32 / i64 / bool
   ]);
 });
 
-test("`state.f32(0).load()` returns a `stateLoad` AST tied to decl.name", () => {
+test("`state.f32(0).load()` eager-captures a `stateLoad` (tied to decl.name) and returns a `tempRef`", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const z = state.f32(0);
-    expect(unwrapAst(z.load())).toEqual({
-      kind: "stateLoad",
-      type: "f32",
-      name: "__state_0",
+    // load() freezes the read into a temp local (= issue #8): it returns a
+    // tempRef, and the stateLoad lives in the recorded tempAssign statement.
+    expect(unwrapAst(z.load())).toEqual({ kind: "tempRef", tempId: 0, type: "f32" });
+    expect(ctx.statements.at(-1)).toMatchObject({
+      kind: "tempAssign",
+      valueType: "f32",
+      value: { kind: "stateLoad", type: "f32", name: "__state_0" },
     });
   });
 });
@@ -563,10 +612,12 @@ test("`state.<type>.load()` の name は `.named` 後 fix を 反 映 (= late bi
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const handle = state.named("orig").f32(0).named("final");
-    expect(unwrapAst(handle.load())).toEqual({
-      kind: "stateLoad",
-      type: "f32",
-      name: "final",
+    // The eager-captured stateLoad (inside the tempAssign) reflects the
+    // late-bound final name; load() itself returns a tempRef.
+    expect(unwrapAst(handle.load())).toEqual({ kind: "tempRef", tempId: 0, type: "f32" });
+    expect(ctx.statements.at(-1)).toMatchObject({
+      kind: "tempAssign",
+      value: { kind: "stateLoad", type: "f32", name: "final" },
     });
   });
 });

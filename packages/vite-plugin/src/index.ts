@@ -128,7 +128,23 @@ const ssrLoadSource = async (
   server: ViteDevServerLike,
   sourcePath: string,
 ): Promise<Record<string, unknown>> => {
-  return await server.ssrLoadModule(sourcePath);
+  // Force a fresh evaluation。 Vite caches `ssrLoadModule`, so without a
+  // cache-buster a `.processor.ts` edit is NOT reflected in dev until the dev
+  // server restarts — the watcher reloads the virtual `?worklet` module (so
+  // `load` re-runs), but `ssrLoadModule` keeps returning the stale evaluation,
+  // so `compile` recompiles old source。 Append an integer `?t=` buster (Vite's
+  // own HMR cache-bust convention) so each load re-transforms + re-runs the
+  // source。
+  //
+  // `Date.now()` rather than the source mtime: in dev `sourcePath` is a Vite
+  // root-relative URL (e.g. `/src/x.ts`), NOT a filesystem path, so it can't be
+  // `stat`-ed (the build path's `importFresh` resolves an absolute path and can)。
+  // An integer (no `.`) is required — a fractional query (`?t=123.45`) makes
+  // Vite read the trailing digits as the file extension, dropping the `.ts`
+  // transform。 `compile` is deterministic, so re-evaluating unchanged source
+  // still yields the same revision hash (= no spurious `replaceProcessor` churn);
+  // only a real edit changes the WASM bytes → new hash → swap。
+  return await server.ssrLoadModule(`${sourcePath}?t=${Date.now()}`);
 };
 
 /**
@@ -790,6 +806,20 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
         `export { __unworkletAugmented as ${exportName} };`,
         ``,
       ].join("\n");
+    },
+    handleHotUpdate(ctx) {
+      // A processor source edit must re-run the `?worklet` virtual module's
+      // `load` (= recompile)。 `addWatchFile` alone does not invalidate the
+      // virtual module here, so Vite serves the cached transform and edits are
+      // not reflected until the dev server restarts。 Explicitly invalidate the
+      // virtual module and steer the HMR update to it: its importer's
+      // `import.meta.hot.accept('...?worklet', ...)` then receives a freshly
+      // compiled processor (= live-coding via `replaceProcessor`, `07-vite-plugin.md` §4)。
+      if (!allowedSources.has(ctx.file)) return;
+      const virtualMod = ctx.server.moduleGraph.getModuleById(`${VIRTUAL_ID_PREFIX}${ctx.file}`);
+      if (!virtualMod) return;
+      ctx.server.moduleGraph.invalidateModule(virtualMod);
+      return [virtualMod];
     },
     devtools: {
       setup: (ctx) => setupDevtools(ctx, uiRoot),

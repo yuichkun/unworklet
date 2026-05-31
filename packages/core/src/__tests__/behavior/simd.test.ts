@@ -18,6 +18,29 @@ import { defineProcessor } from "../../processor.ts";
 
 import { render } from "./render.ts";
 
+test("Node<'f32x4'> exposes only vector ops at the type level (type-only guard)", () => {
+  // Never called — the body asserts the f32x4 method surface (`01-dsl.md` §7.2).
+  // The `@ts-expect-error` lines fail `vp check` if a scalar method ever leaks
+  // onto f32x4 (= the Phase 10 "型は通るが capture で throw" regression).
+  const _guard = (): void => {
+    const v = splat(f32(1));
+    v.add(v); // ✓ vector arithmetic is available
+    v.mul(v); // ✓
+    v.lane(0); // ✓ lane extraction
+    // @ts-expect-error sin is float-scalar-only — not on Node<'f32x4'>
+    v.sin();
+    // @ts-expect-error sqrt is float-scalar-only
+    v.sqrt();
+    // @ts-expect-error abs is numeric-scalar-only
+    v.abs();
+    // @ts-expect-error clamp is numeric-scalar-only
+    v.clamp(splat(f32(0)), splat(f32(1)));
+    // @ts-expect-error comparison is numeric-scalar-only
+    v.lt(v);
+  };
+  expect(typeof _guard).toBe("function");
+});
+
 test("SIMD: splat(2) × vec4(1,2,3,4) → sumLanes = 20", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });

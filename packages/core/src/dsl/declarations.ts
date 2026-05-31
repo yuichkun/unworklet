@@ -2,8 +2,8 @@
  * Declaration helpers (`01-dsl.md` §1 / §3 / §4 + `11-midi.md` §1).
  *
  * Declaration scope only: each helper registers a slot in the graph and
- * a region in WASM linear memory. state / buffer / event / message /
- * MIDI = Phase 3 throw stub (= 後 続 phase fill)。
+ * a region in WASM linear memory (state / buffer / param / event / message /
+ * MIDI input / MIDI output)。
  *
  * Named-factory chain (= Q79): `.named('X')` quick form / `.expose({ name, ... })`
  * full form are exposed both **before** the type method (`state.named('X').f32(0)`)
@@ -16,13 +16,18 @@ import type {
   EventDeclAst,
   EventEmitField,
   MessageDeclAst,
+  MidiByteField,
+  MidiInputDecl,
+  MidiOutputDecl,
   ParamDecl,
   StateDecl,
 } from "../compile/ast.ts";
 import { inferAstType } from "../compile/ast.ts";
+import { SAMPLES_PER_BLOCK } from "./constants.ts";
 import {
   addDeclaration,
   addStatement,
+  captureTemp,
   getCurrentCapture,
   isWrappedNode,
   unwrapAst,
@@ -38,6 +43,8 @@ import type {
   ExposeOptions,
   InputChannelView,
   MessageDecl,
+  MidiEventGraph,
+  MidiEventType,
   MidiInputHandle,
   MidiOutputHandle,
   Node,
@@ -49,10 +56,6 @@ import type {
   TypedArrayFieldRef,
 } from "../types.ts";
 
-const notImplemented = (): never => {
-  throw new Error("not implemented");
-};
-
 /**
  * typed-array payload proxy node に隠し持たせる「どの message のどの field か」
  * の meta。`buf.copyFrom(payloadField)` が src からこれを読んで bufferCopyFrom AST
@@ -61,6 +64,20 @@ const notImplemented = (): never => {
 const PAYLOAD_FIELD_META = Symbol("unworklet.payloadFieldMeta");
 
 type PayloadFieldMeta = { decl: MessageDeclAst; field: string };
+
+/**
+ * Inbound sysex `data` proxy (= `TypedArrayFieldRef<'u8'>`) hidden marker: the
+ * source MIDI port whose current drain-slot content chunk holds the bytes.
+ * `buf.copyFrom(data)` reads this to emit a `midiSysexCopy` (`11-midi.md` §2.5).
+ */
+const MIDI_SYSEX_META = Symbol("unworklet.midiSysexMeta");
+
+type MidiSysexMeta = { port: string };
+
+const midiSysexMeta = (v: unknown): MidiSysexMeta | undefined =>
+  typeof v === "object" && v !== null
+    ? (v as Record<symbol, MidiSysexMeta | undefined>)[MIDI_SYSEX_META]
+    : undefined;
 
 /**
  * buffer handle に隠し持たせる identity (= name + element type)。`event.emitIf` が
@@ -87,11 +104,50 @@ function liftOffset(i: Node<"i32"> | number): AstNode {
   return unwrapAst(i);
 }
 
+/**
+ * Lift a sample offset for an audio I/O / `param` `.at(k)` access, range-checking
+ * a JS-literal offset against `[0, SAMPLES_PER_BLOCK - 1]` (= 0..127, Q68). A
+ * `Node<'i32'>` offset (= a `forSample` loop counter or computed index) is
+ * unrestricted — only compile-time-literal offsets are bounded here. Stable ID
+ * `audio-sample-offset-out-of-range`.
+ */
+function liftSampleOffset(i: Node<"i32"> | number, ctx: string): AstNode {
+  if (typeof i === "number" && (!Number.isInteger(i) || i < 0 || i >= SAMPLES_PER_BLOCK)) {
+    throw new Error(
+      `unworklet: ${ctx} sample offset ${i} is out of range [0, ${SAMPLES_PER_BLOCK - 1}] ` +
+        `(JS-literal offsets must be an integer within the render quantum; use a forSample ` +
+        `loop counter for per-sample access). (stable ID 'audio-sample-offset-out-of-range')`,
+    );
+  }
+  return liftOffset(i);
+}
+
 function liftF32(v: Node<"f32"> | number): AstNode {
   if (typeof v === "number") {
     return { kind: "literal", type: "f32", value: v };
   }
   return unwrapAst(v);
+}
+
+/**
+ * A loose `num(n)` literal (Q77) carries a fallback `'f32'` type and defers to its
+ * concretely-typed context. A `.store()` / buffer `.write()` IS that context, so a
+ * loose literal re-lifts to the declared slot type here — otherwise an `f32.const`
+ * lands in a non-f32 slot, which type-checks in TS yet miscompiles ("type ⟺ works"
+ * breaks). A non-loose node's type is TS-guaranteed to match, so it passes through.
+ */
+function reliftLooseLiteral(ast: AstNode, type: ScalarType): AstNode {
+  if (ast.kind !== "literal" || ast.loose !== true) return ast;
+  if (type === "i64") {
+    // A JS number cannot safely represent integers beyond 2^53 - 1, so an i64 slot
+    // needs an explicit `i64(BigInt(...))`, never a loose `num()` literal.
+    throw new Error(
+      "unworklet: a loose num() literal cannot store into an i64 slot (JS number is " +
+        "precision-unsafe beyond 2^53 - 1). Use i64(BigInt(...)) explicitly.",
+    );
+  }
+  const n = Number(ast.value);
+  return { kind: "literal", type, value: type === "i32" ? n | 0 : n };
 }
 
 /**
@@ -114,7 +170,7 @@ function liftStoreValue<T extends ScalarType>(type: T, v: Node<T> | ScalarOf<T>)
     // `i64.const` へ 32bit word 分 割)。 Node<'i64'> 経 由 (= stateLoad 等) も 同 path。
     return { kind: "literal", type: "i64", value: v };
   }
-  return unwrapAst(v as Node<ScalarType>);
+  return reliftLooseLiteral(unwrapAst(v as Node<ScalarType>), type);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -250,11 +306,16 @@ function makeStateDecl<T extends ScalarType>(
 function makeStateHandle<T extends ScalarType>(decl: StateDecl): State<T> {
   const handle = {
     load: () =>
-      wrapAst<T>({
-        kind: "stateLoad",
-        type: decl.type,
-        name: decl.name,
-      }),
+      // Eager temp-local capture freezes the slot value at this lexical point
+      // (= `03-compiler.md` §2.7, issue #8) — a later `store` cannot change it.
+      captureTemp<T>(
+        {
+          kind: "stateLoad",
+          type: decl.type,
+          name: decl.name,
+        },
+        decl.type,
+      ),
     store: (v: Node<T> | ScalarOf<T>) => {
       addStatement({
         kind: "stateStore",
@@ -327,7 +388,7 @@ function liftBufferValue(elementType: BufferElementType, v: Node<ScalarType> | n
   if (typeof v === "number") {
     return { kind: "literal", type: st, value: st === "i32" ? v | 0 : v };
   }
-  return unwrapAst(v);
+  return reliftLooseLiteral(unwrapAst(v), st);
 }
 
 /**
@@ -418,12 +479,17 @@ function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer
       return decl.name;
     },
     read: (idx: Node<"i32"> | number) =>
-      wrapAst({
-        kind: "bufferRead",
-        elementType: decl.type,
-        name: decl.name,
-        index: liftIndex(idx, "read"),
-      }),
+      // Eager temp-local capture (= issue #8): a later `write` to the same
+      // index cannot change what an already-bound read `Node` evaluates to.
+      captureTemp(
+        {
+          kind: "bufferRead",
+          elementType: decl.type,
+          name: decl.name,
+          index: liftIndex(idx, "read"),
+        },
+        decl.type === "u8" ? "i32" : decl.type,
+      ),
     write: (idx: Node<"i32"> | number, v: Node<ScalarType> | number) => {
       addStatement({
         kind: "bufferWrite",
@@ -440,14 +506,34 @@ function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer
           `unworklet: buffer "${decl.name}" readInterpolated(${pos}) pos is out of range [0, ${decl.size - 1}) (= 2-tap 補間は floor(pos)+1 まで読む; literal pos は capture で range-check)`,
         );
       }
-      return wrapAst({
-        kind: "bufferReadInterpolated",
-        elementType: decl.type,
-        name: decl.name,
-        pos: liftF32(pos),
-      });
+      return captureTemp(
+        {
+          kind: "bufferReadInterpolated",
+          elementType: decl.type,
+          name: decl.name,
+          pos: liftF32(pos),
+        },
+        decl.type === "u8" ? "i32" : decl.type,
+      );
     },
     copyFrom: (src: TypedArrayFieldRef<T>) => {
+      // Inbound sysex `data` proxy → bulk copy the port's content chunk into this
+      // buffer (= `11-midi.md` §2.5 ingest path). u8 buffer only.
+      const sysexSrc = midiSysexMeta(src);
+      if (sysexSrc !== undefined) {
+        if (decl.type !== "u8") {
+          throw new Error(
+            `unworklet: buffer "${decl.name}".copyFrom(sysex data) requires a buffer.u8 (got '${decl.type}'). (stable ID 'payload-element-type-mismatch')`,
+          );
+        }
+        addStatement({
+          kind: "midiSysexCopy",
+          port: sysexSrc.port,
+          bufferName: decl.name,
+          bufferSize: decl.size,
+        });
+        return;
+      }
       const meta = (src as unknown as Record<symbol, PayloadFieldMeta | undefined>)[
         PAYLOAD_FIELD_META
       ];
@@ -459,7 +545,20 @@ function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer
       // field を dest buffer の element type で typed-array seal (= TypedArrayFieldRef<T>
       // の T が buffer 型と一致する型制約があるので payloadContent + 8-byte slot 確保)。
       const field = meta.decl.fields.find((f) => f.name === meta.field);
-      if (field !== undefined) field.payloadElementType = decl.type;
+      if (field !== undefined) {
+        // Layer 2 backstop (Q31-c): the field's element type was already sealed
+        // (e.g. read via `.at()` = f32) to a type that disagrees with this
+        // buffer's element type. The TS binding prevents the well-typed case;
+        // this catches a bypassed binding before a mis-sized memory.copy.
+        if (field.payloadElementType !== undefined && field.payloadElementType !== decl.type) {
+          throw new Error(
+            `unworklet: buffer "${decl.name}".copyFrom(${meta.decl.name}.${meta.field}) element ` +
+              `type mismatch — field is '${field.payloadElementType}', buffer is '${decl.type}'. ` +
+              `(stable ID 'payload-element-type-mismatch')`,
+          );
+        }
+        field.payloadElementType = decl.type;
+      }
       addStatement({
         kind: "bufferCopyFrom",
         elementType: decl.type,
@@ -556,27 +655,29 @@ export interface ParamChain {
 }
 
 // `param` chain (= Q76 named-required + Q79 chain-order free)。
-// `.f32(opts)` 時 に declaration を graph に append し、 chain の `.named()` は
-// 後 付 け / 前 付 け 両 方 で 同 declaration を 指 す (= after-wins、 mutate)。
-// `param.at(i)` は decl.name を late-binding で 読 む = `.named` 重 複 後 でも
-// 最 新 name を 反 映。 `.expose({...})` は Phase 7 で fill = throw stub 維 持。
+// `.f32(opts)` 時 に declaration を graph に append し、 chain の `.named()` /
+// `.expose({...})` は 後 付 け / 前 付 け 両 方 で 同 declaration を 指 す
+// (= after-wins、 mutate)。 `param.at(i)` は decl.name を late-binding で 読 む =
+// `.named` / `.expose` 重 複 後 でも 最 新 name を 反 映。 snapshot policy は
+// `.expose({ snapshot })` で 設 定 (default 'persistent')。
 
-const makeParamChain = (pendingName: string | undefined): ParamChain => ({
+const makeParamChain = (pending: ExposeOptions): ParamChain => ({
   f32: (options) => {
     const decl: ParamDecl = {
       kind: "param",
-      name: pendingName ?? "",
+      name: pending.name ?? "",
       type: "f32",
       default: options.default,
       min: options.min,
       max: options.max,
       automationRate: options.automationRate,
+      snapshot: pending.snapshot,
     };
     addDeclaration(decl);
     return makeParam(decl);
   },
-  named: (name) => makeParamChain(name),
-  expose: () => notImplemented(),
+  named: (name) => makeParamChain(mergeExpose(pending, { name })),
+  expose: (options) => makeParamChain(mergeExpose(pending, options)),
 });
 
 function makeParam(decl: ParamDecl): Param {
@@ -585,18 +686,22 @@ function makeParam(decl: ParamDecl): Param {
       wrapAst<"f32">({
         kind: "paramAt",
         paramName: decl.name,
-        offset: liftOffset(i),
+        offset: liftSampleOffset(i, `param "${decl.name}".at(...)`),
       }),
     named: (name: string) => {
       decl.name = name;
       return handle;
     },
-    expose: () => notImplemented(),
+    expose: (options: ExposeOptions) => {
+      if (options.name !== undefined) decl.name = options.name;
+      if (options.snapshot !== undefined) decl.snapshot = options.snapshot;
+      return handle;
+    },
   } as unknown as Param;
   return handle;
 }
 
-export const param: ParamChain = makeParamChain(undefined);
+export const param: ParamChain = makeParamChain(EMPTY_EXPOSE);
 
 // ─────────────────────────────────────────────────────────────────────────
 // Audio I/O declarations (`01-dsl.md` §1.1)
@@ -609,7 +714,7 @@ function makeInputView(portName: string, channel: number): InputChannelView<"f32
         kind: "audioInRead",
         portName,
         channel,
-        offset: liftOffset(i),
+        offset: liftSampleOffset(i, `audioInput "${portName}".at(...)`),
       }),
   };
 }
@@ -622,7 +727,7 @@ function makeOutputView(portName: string, channel: number): OutputChannelView<"f
           kind: "audioOutWrite",
           portName,
           channel,
-          offset: liftOffset(i),
+          offset: liftSampleOffset(i, `audioOutput "${portName}".at(...)`),
           value: liftF32(v),
         });
       },
@@ -1037,10 +1142,246 @@ export type MidiPortOptions = {
   capacity?: Capacity;
 };
 
-export function midiInput(_options: MidiPortOptions): MidiInputHandle {
-  return notImplemented();
+const MIDI_DEFAULT_CAPACITY = 256;
+
+/** Lift a `Node<'i32'> | number` to an AST node (i32 literal for numbers). */
+function liftI32(v: Node<"i32"> | number): AstNode {
+  return typeof v === "number" ? { kind: "literal", type: "i32", value: v | 0 } : unwrapAst(v);
 }
 
-export function midiOutput(_options: MidiPortOptions): MidiOutputHandle {
-  return notImplemented();
+const I32_ZERO: AstNode = { kind: "literal", type: "i32", value: 0 };
+
+/**
+ * A decoded MIDI drain-slot field as a graph `Node<'i32'>`. Eager-captured into
+ * a temp local at the handler's start (= `captureTemp`, same path as issue #8):
+ * the slot pointer (EVENT_SLOT_PTR_LOCAL) is reused by any `emitIf` later in the
+ * handler, so freezing the field value up front keeps reads correct across an
+ * intervening emit.
+ */
+function midiField(field: MidiByteField): Node<"i32"> {
+  return captureTemp<"i32">({ kind: "midiFieldRead", field }, "i32");
+}
+
+/**
+ * Build the `MidiEventGraph` an inbound `onEvent(type, handler)` receives: each
+ * semantic field maps to the decoded drain-slot byte for that event type
+ * (`11-midi.md` §2.2 / §4.1). The `sysex` variant's `data` proxy reads the
+ * port's content region (`port` identifies it).
+ */
+function makeMidiEventProxy(eventType: MidiEventType, port: string): MidiEventGraph {
+  const channel = midiField("channel");
+  const atSample = midiField("atSample");
+  switch (eventType) {
+    case "noteOn":
+    case "noteOff":
+      return {
+        type: eventType,
+        channel,
+        note: midiField("data1"),
+        velocity: midiField("data2"),
+        atSample,
+      };
+    case "cc":
+      return {
+        type: "cc",
+        channel,
+        controller: midiField("data1"),
+        value: midiField("data2"),
+        atSample,
+      };
+    case "pitchBend":
+      return { type: "pitchBend", channel, value: midiField("pitchBend14"), atSample };
+    case "programChange":
+      return { type: "programChange", channel, program: midiField("data1"), atSample };
+    case "channelPressure":
+      return { type: "channelPressure", channel, pressure: midiField("data1"), atSample };
+    case "aftertouch":
+      return {
+        type: "aftertouch",
+        channel,
+        note: midiField("data1"),
+        pressure: midiField("data2"),
+        atSample,
+      };
+    case "systemRealtime":
+      return { type: "systemRealtime", status: midiField("status"), atSample };
+    case "sysex":
+      return {
+        type: "sysex",
+        data: makeSysexDataProxy(port),
+        length: captureTemp<"i32">({ kind: "midiSysexLength", port }, "i32"),
+        atSample,
+      };
+  }
+}
+
+/**
+ * Inbound sysex `data` proxy: a read-only `TypedArrayFieldRef<'u8'>` whose
+ * `.length` is the current drain slot's content-chunk length and which carries
+ * a hidden port marker so `buf.copyFrom(data)` knows the source content region.
+ * `.at(idx)` reads one byte (rare; the canonical path is `copyFrom` bulk).
+ */
+function makeSysexDataProxy(port: string): TypedArrayFieldRef<"u8"> {
+  const proxy = {
+    length: wrapAst<"i32">({ kind: "midiSysexLength", port }),
+    at: (_idx: Node<"i32"> | number): Node<"i32"> => {
+      throw new Error(
+        "unworklet: per-byte .at() on inbound sysex data is not in v1.0.0 — bulk-copy into a buffer.u8 via copyFrom and read through the buffer",
+      );
+    },
+  };
+  Object.defineProperty(proxy, MIDI_SYSEX_META, {
+    value: { port } satisfies MidiSysexMeta,
+    enumerable: false,
+  });
+  return proxy as unknown as TypedArrayFieldRef<"u8">;
+}
+
+export function midiInput(options: MidiPortOptions): MidiInputHandle {
+  const decl: MidiInputDecl = {
+    kind: "midiInput",
+    name: options.name,
+    capacity: options.capacity ?? MIDI_DEFAULT_CAPACITY,
+  };
+  addDeclaration(decl);
+  return {
+    name: decl.name,
+    onEvent(type, handler) {
+      // Handler body is graph-captured (= same path as message onReceive): drains
+      // at the block boundary (Q38-b), fields bound to the current slot's bytes.
+      const ctx = getCurrentCapture();
+      const handlerBody: AstNode[] = [];
+      const prev = ctx.currentLoopBody;
+      ctx.currentLoopBody = handlerBody;
+      try {
+        handler(makeMidiEventProxy(type, decl.name) as never);
+      } finally {
+        ctx.currentLoopBody = prev;
+      }
+      addStatement({ kind: "midiOnEvent", port: decl.name, eventType: type, body: handlerBody });
+    },
+  };
+}
+
+export function midiOutput(options: MidiPortOptions): MidiOutputHandle {
+  const decl: MidiOutputDecl = {
+    kind: "midiOutput",
+    name: options.name,
+    capacity: options.capacity ?? MIDI_DEFAULT_CAPACITY,
+  };
+  addDeclaration(decl);
+  return {
+    name: decl.name,
+    emitIf(cond, event) {
+      const condAst: AstNode = isWrappedNode(cond)
+        ? unwrapAst(cond)
+        : { kind: "literal", type: "i32", value: cond ? 1 : 0 };
+      // `atSample` is a common field across every MidiEventEmit variant; default
+      // it like event<T> emit (loop counter inside forSample, else block-start 0).
+      const atSample: AstNode =
+        event.atSample === undefined
+          ? getCurrentCapture().currentLoopBody !== null
+            ? { kind: "loopCounter" }
+            : I32_ZERO
+          : liftI32(event.atSample);
+      // Map MidiEventGraph → semantic args; emit computes the 8-byte wire slot
+      // [status, data1, data2, _pad, atSample] from these per `eventType`.
+      const base = { kind: "midiEmitIf" as const, port: decl.name, cond: condAst, atSample };
+      switch (event.type) {
+        case "noteOn":
+        case "noteOff":
+          addStatement({
+            ...base,
+            eventType: event.type,
+            channel: liftI32(event.channel),
+            arg1: liftI32(event.note),
+            arg2: liftI32(event.velocity),
+          });
+          return;
+        case "cc":
+          addStatement({
+            ...base,
+            eventType: "cc",
+            channel: liftI32(event.channel),
+            arg1: liftI32(event.controller),
+            arg2: liftI32(event.value),
+          });
+          return;
+        case "pitchBend":
+          addStatement({
+            ...base,
+            eventType: "pitchBend",
+            channel: liftI32(event.channel),
+            arg1: liftI32(event.value),
+            arg2: I32_ZERO,
+          });
+          return;
+        case "programChange":
+          addStatement({
+            ...base,
+            eventType: "programChange",
+            channel: liftI32(event.channel),
+            arg1: liftI32(event.program),
+            arg2: I32_ZERO,
+          });
+          return;
+        case "channelPressure":
+          addStatement({
+            ...base,
+            eventType: "channelPressure",
+            channel: liftI32(event.channel),
+            arg1: liftI32(event.pressure),
+            arg2: I32_ZERO,
+          });
+          return;
+        case "aftertouch":
+          addStatement({
+            ...base,
+            eventType: "aftertouch",
+            channel: liftI32(event.channel),
+            arg1: liftI32(event.note),
+            arg2: liftI32(event.pressure),
+          });
+          return;
+        case "systemRealtime":
+          addStatement({
+            ...base,
+            eventType: "systemRealtime",
+            arg1: liftI32(event.status),
+            arg2: I32_ZERO,
+          });
+          return;
+        case "sysex": {
+          const dataRef = event.data;
+          const length = liftI32((event.length ?? 0) as Node<"i32"> | number);
+          const bufMeta = bufferHandleMeta(dataRef);
+          const sysexMeta = midiSysexMeta(dataRef);
+          if (bufMeta !== undefined) {
+            // New content from a worklet buffer.u8 → copy buf[0..length-1] into
+            // the port's content region.
+            addStatement({
+              ...base,
+              eventType: "sysex",
+              sysexBufferName: bufMeta.decl.name,
+              sysexBufferSize: bufMeta.decl.size,
+              sysexLength: length,
+            });
+          } else if (sysexMeta !== undefined) {
+            // Thru: copy the inbound port's content chunk into this port's region.
+            addStatement({
+              ...base,
+              eventType: "sysex",
+              sysexSourcePort: sysexMeta.port,
+              sysexLength: length,
+            });
+          } else {
+            throw new Error(
+              "unworklet: midiOutput sysex `data` must be a buffer.u8 (new content) or an inbound sysex `data` proxy (thru)",
+            );
+          }
+          return;
+        }
+      }
+    },
+  };
 }

@@ -124,6 +124,15 @@ const PAYLOAD_CLAMP_LOCAL = 17;
 const VEC_TEMP_LOCAL = 18;
 
 /**
+ * Base local index for mutable-read temp locals (= `03-compiler.md` §2.7, issue
+ * #8). The 19 fixed temp locals above occupy indices 0–18; per-read temps from
+ * `captureTemp` occupy `TEMP_LOCAL_BASE + tempId` (= 19, 20, …). `emit` scans
+ * the graph for `tempAssign` nodes and declares one local of the matching type
+ * per `tempId`, in `tempId` order, after the fixed block.
+ */
+const TEMP_LOCAL_BASE = 19;
+
+/**
  * 多 項 式 近 似 の math primitive (= sin / cos / tan / tanh / exp / log、 Q17) は
  * 共 有 プ ラ イ ベ ー ト WASM 関 数 (= `(f32) -> f32`、 export し な い) と し て emit し、
  * 呼 び 出 し 側 は `call` で 参 照。 各 関 数 は 自 前 の local を 持 つ の で `process`
@@ -153,6 +162,108 @@ export type EmitOptions = {
 
 const DEFAULT_EMIT_SAMPLE_RATE = 48000;
 
+/**
+ * Little-endian byte encoding of a `state.<type>(initial)` value, sized to the
+ * slot's element width. `bool` is held as i32 (0/1). Used to seed state slots
+ * via active data segments at WASM instantiation (= declaration defaults).
+ */
+function encodeStateInitial(type: ScalarType, value: number | bigint | boolean): Uint8Array {
+  const buf = new ArrayBuffer(8);
+  const dv = new DataView(buf);
+  switch (type) {
+    case "f32":
+      dv.setFloat32(0, Number(value), true);
+      return new Uint8Array(buf.slice(0, BYTES_PER_F32));
+    case "f64":
+      dv.setFloat64(0, Number(value), true);
+      return new Uint8Array(buf.slice(0, BYTES_PER_F64));
+    case "i32":
+      dv.setInt32(0, Number(value) | 0, true);
+      return new Uint8Array(buf.slice(0, BYTES_PER_I32));
+    case "i64":
+      dv.setBigInt64(0, BigInt(value as bigint), true);
+      return new Uint8Array(buf.slice(0, BYTES_PER_I64));
+    case "bool":
+      dv.setInt32(0, value ? 1 : 0, true);
+      return new Uint8Array(buf.slice(0, BYTES_PER_I32));
+  }
+}
+
+/**
+ * Active data segments that seed every `state.<type>` slot with its declared
+ * `initial` value at WASM instantiation (= declaration defaults; restore /
+ * migration overwrites later). Zero-valued initials are skipped — linear memory
+ * is already zero. Both the online worklet and the offline driver instantiate
+ * the same binary, so state init is consistent across runtimes.
+ */
+function stateInitSegments(
+  graph: CapturedGraph,
+  layout: Layout,
+  mod: BinaryenModule,
+): { offset: number; data: Uint8Array }[] {
+  const segments: { offset: number; data: Uint8Array }[] = [];
+  for (const decl of graph.declarations) {
+    if (decl.kind !== "state") continue;
+    const isZero = decl.type === "i64" ? decl.initial === 0n : Number(decl.initial) === 0;
+    if (isZero) continue;
+    const offset = layout.regions.states.slots[decl.name];
+    /* v8 ignore next 2 — state slot は layout で 必 ず push 済 = unreachable */
+    if (offset === undefined) throw new Error(`unknown state slot: ${decl.name}`);
+    segments.push({
+      offset: mod.i32.const(offset),
+      data: encodeStateInitial(decl.type, decl.initial),
+    });
+  }
+  return segments;
+}
+
+/** Map a scalar type to its binaryen value type (`bool` is held as i32). */
+function binaryenTypeOf(type: ScalarType, binaryen: BinaryenAPI): number {
+  switch (type) {
+    case "f32":
+      return binaryen.f32;
+    case "f64":
+      return binaryen.f64;
+    case "i64":
+      return binaryen.i64;
+    case "i32":
+    case "bool":
+      return binaryen.i32;
+  }
+}
+
+/**
+ * Collect the temp-local binaryen types declared by `captureTemp` (= issue #8),
+ * indexed by `tempId`. Walks statement containers only — `tempAssign` nodes are
+ * always recorded at statement level (the read is captured before its enclosing
+ * statement), never nested inside an expression operand, so a shallow walk over
+ * the statement-bearing kinds is exhaustive.
+ */
+function collectTempLocals(graph: CapturedGraph, binaryen: BinaryenAPI): number[] {
+  const byId = new Map<number, ScalarType>();
+  const walk = (stmts: readonly AstNode[]): void => {
+    for (const s of stmts) {
+      if (s.kind === "tempAssign") {
+        byId.set(s.tempId, s.valueType);
+      } else if (
+        s.kind === "forSample" ||
+        s.kind === "everyNSamples" ||
+        s.kind === "messageOnReceive" ||
+        s.kind === "midiOnEvent"
+      ) {
+        walk(s.body);
+      }
+    }
+  };
+  walk(graph.statements);
+  const maxId = byId.size > 0 ? Math.max(...byId.keys()) : -1;
+  const locals: number[] = [];
+  for (let id = 0; id <= maxId; id++) {
+    locals.push(binaryenTypeOf(byId.get(id) ?? "i32", binaryen));
+  }
+  return locals;
+}
+
 export async function emit(
   graph: CapturedGraph,
   layout: Layout,
@@ -166,7 +277,9 @@ export async function emit(
   mod.setFeatures(mod.getFeatures() | binaryen.Features.BulkMemory | binaryen.Features.SIMD128);
 
   const pages = Math.max(1, Math.ceil(layout.totalBytes / PAGE_BYTES));
-  mod.setMemory(pages, pages, "memory");
+  // Active data segments seed `state.<type>` slots with their declared initial
+  // values at instantiation (= declaration defaults; restore overwrites later).
+  mod.setMemory(pages, pages, "memory", stateInitSegments(graph, layout, mod));
 
   // 多 項 式 近 似 の math primitive (= sin 等、 Q17) を 共 有 プ ラ イ ベ ー ト 関 数 と し て
   // 追 加。 graph で 使 わ れ て い る kind だ け emit。
@@ -178,12 +291,20 @@ export async function emit(
   // 同 message の 複 数 onReceive registration は 1 つ の drain loop に 集 約 +
   // 各 slot で 全 registration body を registration order で 連 続 fire (= Q38-c)。
   const onReceiveByMessage = new Map<string, AstNode[]>();
+  // MIDI inbound handlers grouped per port (= Q38-b: drain before per-block /
+  // forSample, registration order Q38-c). One drain loop per port dispatches by
+  // status byte across all registered event-type handlers.
+  const midiHandlersByPort = new Map<string, Array<AstNode & { kind: "midiOnEvent" }>>();
   const otherStmts: AstNode[] = [];
   for (const s of graph.statements) {
     if (s.kind === "messageOnReceive") {
       const merged = onReceiveByMessage.get(s.name) ?? [];
       merged.push(...s.body);
       onReceiveByMessage.set(s.name, merged);
+    } else if (s.kind === "midiOnEvent") {
+      const list = midiHandlersByPort.get(s.port) ?? [];
+      list.push(s);
+      midiHandlersByPort.set(s.port, list);
     } else {
       otherStmts.push(s);
     }
@@ -191,9 +312,17 @@ export async function emit(
   const onReceiveEmits = [...onReceiveByMessage.entries()].map(([name, body]) =>
     emitMessageOnReceive({ kind: "messageOnReceive", name, body }, layout, mod, binaryen),
   );
+  const midiDrainEmits = [...midiHandlersByPort.entries()].map(([port, handlers]) =>
+    emitMidiInputDrain(port, handlers, layout, mod, binaryen),
+  );
   const otherEmits = otherStmts.map((s) => emitStatement(s, layout, mod, binaryen));
   const schedulerBlocks = emitPublishScheduler(graph, layout, sampleRate, mod, binaryen);
-  const body = mod.block(null, [...onReceiveEmits, ...otherEmits, ...schedulerBlocks]);
+  const body = mod.block(null, [
+    ...onReceiveEmits,
+    ...midiDrainEmits,
+    ...otherEmits,
+    ...schedulerBlocks,
+  ]);
 
   // function locals = [i32 loop counter, f32 subnormal guard temp, f64 subnormal guard temp,
   //                    i32 publish counter temp, i32 event head temp, i32 event/message slot ptr temp,
@@ -224,6 +353,8 @@ export async function emit(
       binaryen.i32, // BUFINTERP_I0_LOCAL
       binaryen.i32, // PAYLOAD_CLAMP_LOCAL (= at OOB clamp idx)
       binaryen.v128, // VEC_TEMP_LOCAL (= SIMD sumLanes 用)
+      // Mutable-read temp locals (= TEMP_LOCAL_BASE +、issue #8、capture 順)。
+      ...collectTempLocals(graph, binaryen),
     ],
     body,
   );
@@ -507,8 +638,9 @@ function emitTranscendental(
 
 /**
  * Cross-precision convert lowering (= scalar constructor `f32(node)` 等、 no-trap:
- * integer truncation は saturating)。 i32 ↔ f32 / i32 ↔ f64 / f32 ↔ f64 を 実 装、
- * i64 / bool pair は 各 stage で 追 加。
+ * integer truncation は saturating)。 i32 ↔ f32 / i32 ↔ f64 / f32 ↔ f64、 i64 の
+ * narrowing、 bool ↔ numeric を 実 装。 i64 へ の 昇 格 (= i32/f32/.. → i64) は
+ * bigint-only construction の 規 約 で convert ナ シ (= `i64(BigInt(...))` を 使 う)。
  */
 function emitConvert(mod: BinaryenModule, from: ScalarType, to: ScalarType, value: number): number {
   if (from === "i32" && to === "f32") return mod.f32.convert_s.i32(value);
@@ -522,7 +654,20 @@ function emitConvert(mod: BinaryenModule, from: ScalarType, to: ScalarType, valu
   if (from === "i64" && to === "i32") return mod.i32.wrap(value);
   if (from === "i64" && to === "f32") return mod.f32.convert_s.i64(value);
   if (from === "i64" && to === "f64") return mod.f64.convert_s.i64(value);
-  /* v8 ignore next 2 — 残 り convert pair (= bool) は bool stage で fill、 該 当 type の node は ま だ 構 築 不 可 */
+  // bool は 内 部 i32 (= 0/1)。 to bool = `x != 0`、 from bool = i32 (identity) /
+  // float (= 0.0/1.0 へ signed convert、 0/1 は signed/unsigned 同 値)。
+  if (to === "bool") {
+    if (from === "i32") return mod.i32.ne(value, mod.i32.const(0));
+    if (from === "i64") return mod.i64.ne(value, i64Const(mod, 0n));
+    if (from === "f32") return mod.f32.ne(value, mod.f32.const(0));
+    if (from === "f64") return mod.f64.ne(value, mod.f64.const(0));
+  }
+  if (from === "bool") {
+    if (to === "i32") return value; // already i32 0/1
+    if (to === "f32") return mod.f32.convert_s.i32(value);
+    if (to === "f64") return mod.f64.convert_s.i32(value);
+  }
+  /* v8 ignore next 2 — 残 る pair は i64 への 昇 格 (= 規 約 で convert ナ シ) だ け = unreachable */
   throw new Error(`unworklet: convert ${from} → ${to} not implemented yet`);
 }
 
@@ -1286,6 +1431,14 @@ export function emitExpression(
         `unworklet: unsupported message field wireType "${field.wireType}" (= sub-phase 7.7 段 階 で i32 / bool の み 対 応)`,
       );
     }
+    case "tempRef":
+      // Read the per-read temp local (= issue #8). The matching `tempAssign`
+      // ran earlier in statement order, so the local is already set.
+      return mod.local.get(TEMP_LOCAL_BASE + node.tempId, binaryenTypeOf(node.type, binaryen));
+    case "midiFieldRead":
+      return emitMidiFieldRead(node, mod, binaryen);
+    case "midiSysexLength":
+      return emitMidiSysexLength(node, layout, mod, binaryen);
     case "audioOutWrite":
     case "forSample":
     case "stateStore":
@@ -1295,6 +1448,10 @@ export function emitExpression(
     case "bufferCopyFrom":
     case "bufferStoreVec":
     case "everyNSamples":
+    case "tempAssign":
+    case "midiOnEvent":
+    case "midiEmitIf":
+    case "midiSysexCopy":
       throw new Error(`statement node '${node.kind}' cannot appear in expression position`);
   }
 }
@@ -1463,6 +1620,20 @@ export function emitStatement(
        emitMessageOnReceive を 直 接 呼 ぶ path = emitStatement 経 由 hit ナ シ */
     case "messageOnReceive":
       return emitMessageOnReceive(node, layout, mod, binaryen);
+    case "tempAssign":
+      // Evaluate a mutable read once into its per-read local (= issue #8).
+      return mod.local.set(
+        TEMP_LOCAL_BASE + node.tempId,
+        emitExpression(node.value, layout, mod, binaryen),
+      );
+    case "midiEmitIf":
+      return emitMidiEmitIf(node, layout, mod, binaryen);
+    case "midiSysexCopy":
+      return emitMidiSysexCopy(node, layout, mod, binaryen);
+    /* v8 ignore next 3 — midiOnEvent は emit top-level で port ご と に 並 び 替 え 経 由 で
+       emitMidiInputDrain を 直 接 呼 ぶ path = emitStatement 経 由 hit ナ シ */
+    case "midiOnEvent":
+      return emitMidiInputDrain(node.port, [node], layout, mod, binaryen);
     default:
       throw new Error(`expression node '${node.kind}' cannot appear in statement position`);
   }
@@ -1832,6 +2003,406 @@ function emitMessageOnReceive(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// MIDI (`11-midi.md` §4)。 8-byte slot [status, data1, data2, _pad, atSample:u32]。
+// inbound = block 境 界 で port の ring を drain + status 高 nibble で 型 dispatch。
+// outbound = `emitIf` で semantic args → wire byte に encode し て ring に push。
+// ─────────────────────────────────────────────────────────────────────────
+
+const MIDI_SLOT_BYTES_EMIT = 8;
+const MIDI_HEADER_BYTES_EMIT = 12;
+const MIDI_TAIL_OFFSET = 4;
+const MIDI_OVERFLOW_OFFSET = 8;
+
+/** channel-voice event の status 高 nibble (= `11-midi.md` §4.1)。 */
+const MIDI_STATUS_NIBBLE: Partial<Record<string, number>> = {
+  noteOff: 0x80,
+  noteOn: 0x90,
+  aftertouch: 0xa0,
+  cc: 0xb0,
+  programChange: 0xc0,
+  channelPressure: 0xd0,
+  pitchBend: 0xe0,
+};
+
+/** `midiFieldRead` (= drain slot byte decode、 EVENT_SLOT_PTR_LOCAL 経 由)。 */
+function emitMidiFieldRead(
+  field: AstNode & { kind: "midiFieldRead" },
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): number {
+  const ptr = (): number => mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32);
+  switch (field.field) {
+    case "status":
+      return mod.i32.load8_u(0, 1, ptr());
+    case "channel":
+      return mod.i32.and(mod.i32.load8_u(0, 1, ptr()), mod.i32.const(0x0f));
+    case "data1":
+      return mod.i32.load8_u(1, 1, ptr());
+    case "data2":
+      return mod.i32.load8_u(2, 1, ptr());
+    case "atSample":
+      return mod.i32.load(4, BYTES_PER_I32, ptr());
+    case "pitchBend14":
+      // value = data1 | (data2 << 7) (= 14-bit, `11-midi.md` §4.1)。
+      return mod.i32.or(
+        mod.i32.load8_u(1, 1, ptr()),
+        mod.i32.shl(mod.i32.load8_u(2, 1, ptr()), mod.i32.const(7)),
+      );
+  }
+}
+
+/**
+ * Address of the current inbound drain slot's sysex content chunk (`11-midi.md`
+ * §4.3): `contentBase + chunkIdx × perChunk`, where `chunkIdx` = the slot's
+ * data1 byte (= EVENT_SLOT_PTR_LOCAL + 1). The chunk is `[length:u32, bytes...]`.
+ */
+function sysexContentChunkPtr(
+  port: string,
+  layout: Layout,
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): number {
+  const region = layout.regions.sysexContent.slots[port];
+  /* v8 ignore next 2 — sysex を 使 う port は layout で content region を 確 保 済 */
+  if (region === undefined)
+    throw new Error(`unworklet: midiInput "${port}" has no sysex content region`);
+  return mod.i32.add(
+    mod.i32.const(region.base),
+    mod.i32.mul(
+      mod.i32.load8_u(1, 1, mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32)),
+      mod.i32.const(region.perChunk),
+    ),
+  );
+}
+
+/** `midiSysexLength` = inbound sysex content-chunk length (= `[length:u32]` head). */
+function emitMidiSysexLength(
+  node: AstNode & { kind: "midiSysexLength" },
+  layout: Layout,
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): number {
+  return mod.i32.load(0, BYTES_PER_I32, sysexContentChunkPtr(node.port, layout, mod, binaryen));
+}
+
+/** `midiSysexCopy` = bulk copy inbound sysex content chunk → a buffer.u8 (= §2.5). */
+function emitMidiSysexCopy(
+  node: AstNode & { kind: "midiSysexCopy" },
+  layout: Layout,
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): number {
+  const bufferBase = layout.regions.buffers.slots[node.bufferName];
+  /* v8 ignore next 2 — buffer は layout で 確 保 済 */
+  if (bufferBase === undefined) throw new Error(`unknown buffer: ${node.bufferName}`);
+  const chunkPtr = sysexContentChunkPtr(node.port, layout, mod, binaryen);
+  // copy min(contentLength, bufferSize) bytes from chunk+4 (= after the length
+  // header) into the buffer. Use BUFINTERP_I0_LOCAL as the chunk-ptr scratch so
+  // the length re-read and the copy address agree.
+  return mod.block(null, [
+    mod.local.set(BUFINTERP_I0_LOCAL, chunkPtr),
+    mod.memory.copy(
+      mod.i32.const(bufferBase),
+      mod.i32.add(mod.local.get(BUFINTERP_I0_LOCAL, binaryen.i32), mod.i32.const(4)),
+      minI32(
+        mod,
+        mod.i32.load(0, BYTES_PER_I32, mod.local.get(BUFINTERP_I0_LOCAL, binaryen.i32)),
+        mod.i32.const(node.bufferSize),
+      ),
+    ),
+  ]);
+}
+
+/** `min` of two i32 expressions (each evaluated once). */
+function minI32(mod: BinaryenModule, a: number, b: number): number {
+  return mod.select(mod.i32.lt_s(a, b), a, b);
+}
+
+/**
+ * Drain one `midiInput` port at the block boundary (Q38-b): walk tail→head,
+ * and for each registered handler emit `if (status matches eventType) { body }`
+ * (registration order, Q38-c). Handler `midiFieldRead` nodes resolve against
+ * EVENT_SLOT_PTR_LOCAL (= the current slot pointer, shared with message drain).
+ */
+function emitMidiInputDrain(
+  port: string,
+  handlers: ReadonlyArray<AstNode & { kind: "midiOnEvent" }>,
+  layout: Layout,
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): number {
+  const slot = layout.regions.midiRings.slots[port];
+  /* v8 ignore next 2 — midiInput port は layout で 必 ず push 済 = unreachable */
+  if (slot === undefined) throw new Error(`unknown midiInput port: ${port}`);
+  const ringBase = slot.base;
+  const capacity = slot.capacity;
+  const slotsBase = ringBase + MIDI_HEADER_BYTES_EMIT;
+  const status = (): number =>
+    mod.i32.load8_u(0, 1, mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32));
+
+  // status byte → event-type predicate。 channel-voice = 高 nibble 一 致、
+  // systemRealtime = 0xF8..0xFF (= status & 0xF8 == 0xF8)。
+  const predicate = (eventType: string): number => {
+    if (eventType === "sysex") {
+      return mod.i32.eq(status(), mod.i32.const(0xf0));
+    }
+    if (eventType === "systemRealtime") {
+      return mod.i32.eq(mod.i32.and(status(), mod.i32.const(0xf8)), mod.i32.const(0xf8));
+    }
+    const nibble = MIDI_STATUS_NIBBLE[eventType]!;
+    return mod.i32.eq(mod.i32.and(status(), mod.i32.const(0xf0)), mod.i32.const(nibble));
+  };
+
+  const dispatch: number[] = [];
+  for (const h of handlers) {
+    const body = h.body.map((s) => emitStatement(s, layout, mod, binaryen));
+    dispatch.push(
+      mod.if(predicate(h.eventType), mod.block(null, body.length > 0 ? body : [mod.nop()])),
+    );
+  }
+
+  // The loop condition re-reads `head` from memory each iteration (not a cached
+  // local): a handler may `emitIf` to another port, and that emit reuses
+  // EVENT_HEAD_LOCAL / EVENT_SLOT_PTR_LOCAL — so the drain must not depend on
+  // those surviving the handler body. `head` is stable during the drain (the
+  // producer is main / injection, never the handler).
+  return mod.block(null, [
+    mod.local.set(
+      MESSAGE_TAIL_LOCAL,
+      mod.i32.load(0, BYTES_PER_I32, mod.i32.const(ringBase + MIDI_TAIL_OFFSET)),
+    ),
+    mod.block("break", [
+      mod.loop(
+        "continue",
+        mod.block(null, [
+          mod.br_if(
+            "break",
+            mod.i32.eq(
+              mod.local.get(MESSAGE_TAIL_LOCAL, binaryen.i32),
+              mod.i32.load(0, BYTES_PER_I32, mod.i32.const(ringBase)),
+            ),
+          ),
+          mod.local.set(
+            EVENT_SLOT_PTR_LOCAL,
+            mod.i32.add(
+              mod.i32.const(slotsBase),
+              mod.i32.mul(
+                mod.i32.rem_u(
+                  mod.local.get(MESSAGE_TAIL_LOCAL, binaryen.i32),
+                  mod.i32.const(capacity),
+                ),
+                mod.i32.const(MIDI_SLOT_BYTES_EMIT),
+              ),
+            ),
+          ),
+          ...dispatch,
+          mod.local.set(
+            MESSAGE_TAIL_LOCAL,
+            mod.i32.add(mod.local.get(MESSAGE_TAIL_LOCAL, binaryen.i32), mod.i32.const(1)),
+          ),
+          mod.br("continue"),
+        ]),
+      ),
+    ]),
+    mod.i32.store(
+      0,
+      BYTES_PER_I32,
+      mod.i32.const(ringBase + MIDI_TAIL_OFFSET),
+      mod.local.get(MESSAGE_TAIL_LOCAL, binaryen.i32),
+    ),
+  ]);
+}
+
+/** Compute the [status, data1, data2] wire bytes for an outbound MIDI emit. */
+function emitMidiWireBytes(
+  node: AstNode & { kind: "midiEmitIf" },
+  layout: Layout,
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): { status: number; data1: number; data2: number } {
+  const ch = (): number =>
+    mod.i32.and(emitExpression(node.channel!, layout, mod, binaryen), mod.i32.const(0x0f));
+  const mask7 = (v: number): number => mod.i32.and(v, mod.i32.const(0x7f));
+  const arg1 = (): number => emitExpression(node.arg1!, layout, mod, binaryen);
+  const arg2 = (): number => emitExpression(node.arg2!, layout, mod, binaryen);
+  if (node.eventType === "systemRealtime") {
+    return {
+      status: mod.i32.and(arg1(), mod.i32.const(0xff)),
+      data1: mod.i32.const(0),
+      data2: mod.i32.const(0),
+    };
+  }
+  const nibble = MIDI_STATUS_NIBBLE[node.eventType]!;
+  const status = mod.i32.or(mod.i32.const(nibble), ch());
+  if (node.eventType === "pitchBend") {
+    const value = arg1();
+    // 14-bit value → data1 = value & 0x7F, data2 = (value >> 7) & 0x7F。
+    return {
+      status,
+      data1: mod.i32.and(value, mod.i32.const(0x7f)),
+      data2: mod.i32.and(mod.i32.shr_u(value, mod.i32.const(7)), mod.i32.const(0x7f)),
+    };
+  }
+  return { status, data1: mask7(arg1()), data2: mask7(arg2()) };
+}
+
+/** `midiOutput().emitIf(cond, event)` = serialize into the output ring (drop-oldest). */
+function emitMidiEmitIf(
+  node: AstNode & { kind: "midiEmitIf" },
+  layout: Layout,
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): number {
+  const slot = layout.regions.midiRings.slots[node.port];
+  /* v8 ignore next 2 — midiOutput port は layout で 必 ず push 済 = unreachable */
+  if (slot === undefined) throw new Error(`unknown midiOutput port: ${node.port}`);
+  const ringBase = slot.base;
+  const capacity = slot.capacity;
+  const slotsBase = ringBase + MIDI_HEADER_BYTES_EMIT;
+
+  const slotPtr = (): number => mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32);
+  const head = (): number => mod.local.get(EVENT_HEAD_LOCAL, binaryen.i32);
+  const atSample = emitExpression(node.atSample, layout, mod, binaryen);
+
+  // Common prologue: load head, drop-oldest on overflow, compute the dest slot ptr.
+  const prologue: number[] = [
+    mod.local.set(EVENT_HEAD_LOCAL, mod.i32.load(0, BYTES_PER_I32, mod.i32.const(ringBase))),
+    mod.if(
+      mod.i32.ge_s(
+        mod.i32.sub(
+          head(),
+          mod.i32.load(0, BYTES_PER_I32, mod.i32.const(ringBase + MIDI_TAIL_OFFSET)),
+        ),
+        mod.i32.const(capacity),
+      ),
+      mod.block(null, [
+        mod.i32.store(
+          0,
+          BYTES_PER_I32,
+          mod.i32.const(ringBase + MIDI_OVERFLOW_OFFSET),
+          mod.i32.add(
+            mod.i32.load(0, BYTES_PER_I32, mod.i32.const(ringBase + MIDI_OVERFLOW_OFFSET)),
+            mod.i32.const(1),
+          ),
+        ),
+        mod.i32.store(
+          0,
+          BYTES_PER_I32,
+          mod.i32.const(ringBase + MIDI_TAIL_OFFSET),
+          mod.i32.add(
+            mod.i32.load(0, BYTES_PER_I32, mod.i32.const(ringBase + MIDI_TAIL_OFFSET)),
+            mod.i32.const(1),
+          ),
+        ),
+      ]),
+    ),
+  ];
+
+  const advanceHead = mod.i32.store(
+    0,
+    BYTES_PER_I32,
+    mod.i32.const(ringBase),
+    mod.i32.add(head(), mod.i32.const(1)),
+  );
+
+  let body: number[];
+  if (node.eventType === "sysex") {
+    // Sysex: status=0xF0 + chunkIdx (= head % chunks) in data1; content chunk
+    // `[length, bytes]` filled from the source (worklet buffer.u8 or an inbound
+    // sysex content chunk for thru). Capture source ptr + copyLen BEFORE the
+    // dest slot ptr overwrites EVENT_SLOT_PTR_LOCAL (thru reads the source slot).
+    const region = layout.regions.sysexContent.slots[node.port];
+    /* v8 ignore next 2 — sysex emit する port は layout で content region 確 保 済 */
+    if (region === undefined)
+      throw new Error(`unworklet: midiOutput "${node.port}" has no sysex content region`);
+    const maxBody = region.perChunk - 4;
+    const lengthExpr = node.sysexLength
+      ? emitExpression(node.sysexLength, layout, mod, binaryen)
+      : mod.i32.const(0);
+    // SRC scratch = BUFINTERP_I0_LOCAL (= source byte address), LEN = PAYLOAD_CLAMP_LOCAL.
+    let srcSet: number;
+    if (node.sysexBufferName !== undefined) {
+      const bufferBase = layout.regions.buffers.slots[node.sysexBufferName]!;
+      srcSet = mod.local.set(BUFINTERP_I0_LOCAL, mod.i32.const(bufferBase));
+    } else {
+      // thru: source = source port's current drain chunk + 4 (after length header).
+      const srcRegion = layout.regions.sysexContent.slots[node.sysexSourcePort!]!;
+      srcSet = mod.local.set(
+        BUFINTERP_I0_LOCAL,
+        mod.i32.add(
+          mod.i32.add(
+            mod.i32.const(srcRegion.base),
+            mod.i32.mul(mod.i32.load8_u(1, 1, slotPtr()), mod.i32.const(srcRegion.perChunk)),
+          ),
+          mod.i32.const(4),
+        ),
+      );
+    }
+    const chunkOffset = (): number =>
+      mod.i32.mul(
+        mod.i32.rem_u(head(), mod.i32.const(region.chunks)),
+        mod.i32.const(region.perChunk),
+      );
+    const contentChunk = (): number => mod.i32.add(mod.i32.const(region.base), chunkOffset());
+    body = [
+      srcSet,
+      mod.local.set(PAYLOAD_CLAMP_LOCAL, minI32(mod, lengthExpr, mod.i32.const(maxBody))),
+      mod.local.set(
+        EVENT_SLOT_PTR_LOCAL,
+        mod.i32.add(
+          mod.i32.const(slotsBase),
+          mod.i32.mul(
+            mod.i32.rem_u(head(), mod.i32.const(capacity)),
+            mod.i32.const(MIDI_SLOT_BYTES_EMIT),
+          ),
+        ),
+      ),
+      // content chunk = [length:u32, bytes...]
+      mod.i32.store(
+        0,
+        BYTES_PER_I32,
+        contentChunk(),
+        mod.local.get(PAYLOAD_CLAMP_LOCAL, binaryen.i32),
+      ),
+      mod.memory.copy(
+        mod.i32.add(contentChunk(), mod.i32.const(4)),
+        mod.local.get(BUFINTERP_I0_LOCAL, binaryen.i32),
+        mod.local.get(PAYLOAD_CLAMP_LOCAL, binaryen.i32),
+      ),
+      // slot = [0xF0, chunkIdx, _pad, _pad, atSample]
+      mod.i32.store8(0, 1, slotPtr(), mod.i32.const(0xf0)),
+      mod.i32.store8(1, 1, slotPtr(), mod.i32.rem_u(head(), mod.i32.const(region.chunks))),
+      mod.i32.store(4, BYTES_PER_I32, slotPtr(), atSample),
+      advanceHead,
+    ];
+  } else {
+    const { status, data1, data2 } = emitMidiWireBytes(node, layout, mod, binaryen);
+    body = [
+      mod.local.set(
+        EVENT_SLOT_PTR_LOCAL,
+        mod.i32.add(
+          mod.i32.const(slotsBase),
+          mod.i32.mul(
+            mod.i32.rem_u(head(), mod.i32.const(capacity)),
+            mod.i32.const(MIDI_SLOT_BYTES_EMIT),
+          ),
+        ),
+      ),
+      mod.i32.store8(0, 1, slotPtr(), status),
+      mod.i32.store8(1, 1, slotPtr(), data1),
+      mod.i32.store8(2, 1, slotPtr(), data2),
+      mod.i32.store(4, BYTES_PER_I32, slotPtr(), atSample),
+      advanceHead,
+    ];
+  }
+
+  return mod.if(
+    emitExpression(node.cond, layout, mod, binaryen),
+    mod.block(null, [...prologue, ...body]),
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // 多 項 式 近 似 math primitive の 共 有 関 数 emit (= Q17、 sin / cos / tan / tanh /
 // exp / log)。 5〜7 次 minimax / Taylor、 最 大 誤 差 ~1e-4 = 24bit audio で 不 可 聴。
 // no-trap invariant: 整 数 化 は trunc_s_sat (= 飽 和・非 ト ラ ッ プ)、 reinterpret /
@@ -1957,9 +2528,27 @@ function collectUsedMathKinds(graph: CapturedGraph): Set<string> {
           if (field.length !== undefined) visit(field.length);
         });
         break;
+      case "tempAssign":
+        visit(node.value);
+        break;
+      case "midiOnEvent":
+        node.body.forEach(visit);
+        break;
+      case "midiEmitIf":
+        visit(node.cond);
+        visit(node.atSample);
+        if (node.channel !== undefined) visit(node.channel);
+        if (node.arg1 !== undefined) visit(node.arg1);
+        if (node.arg2 !== undefined) visit(node.arg2);
+        if (node.sysexLength !== undefined) visit(node.sysexLength);
+        break;
       case "literal":
       case "loopCounter":
       case "stateLoad":
+      case "tempRef":
+      case "midiFieldRead":
+      case "midiSysexLength":
+      case "midiSysexCopy":
       case "messageFieldRead":
         break;
     }

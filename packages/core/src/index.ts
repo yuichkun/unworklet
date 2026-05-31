@@ -94,6 +94,24 @@ export { compile } from "./compile/index.ts";
 export { extractWorkletMeta } from "./worklet.ts";
 export type { WorkletMeta } from "./worklet.ts";
 
+// MIDI wire codec (= 8-byte fixed slot ↔ MidiEvent、 `11-midi.md` §4.1)。
+// offline renderer / worklet template / main client が 共 有 す る wire 単 一 source。
+export { midiEventToWire, wireToMidiEvent } from "./midiWire.ts";
+export type { MidiWireBytes } from "./midiWire.ts";
+
+// Snapshot blob codec + migration engine (= `01-dsl.md` §8)。 offline renderer /
+// main client が blob を build / read / migrate する 共 有 infrastructure。
+export { decodeScalar, decodeTypedArray, encodeScalar } from "./snapshot.ts";
+export type { SnapshotSlot, SnapshotSlotKind } from "./snapshot.ts";
+export {
+  decodeSnapshot,
+  encodeSnapshot,
+  inspectSnapshot,
+  runMigrations,
+  SNAPSHOT_VERSION,
+} from "./snapshotBlob.ts";
+export type { DecodedSnapshot, MigrationOutcome } from "./snapshotBlob.ts";
+
 // Main-thread client surface.
 export { createNode, inspect } from "./client.ts";
 
@@ -120,6 +138,7 @@ export type {
   DiagnosticsJson,
   EmitPayload,
   EventDecl,
+  EventRingSlotDescriptor,
   EventSubscriber,
   ExposeOptions,
   GraphJson,
@@ -127,14 +146,19 @@ export type {
   InspectionResult,
   MemoryJson,
   MessageDecl,
+  MessageGraphPayload,
+  MessageRingSlotDescriptor,
   MessageSender,
   MidiEvent,
+  MidiEventEmit,
+  MidiEventEmitOf,
   MidiEventGraph,
   MidiEventGraphOf,
   MidiEventType,
   MidiInputHandle,
   MidiOutputHandle,
   MidiPortSurface,
+  MidiRingSlotDescriptor,
   Migration,
   MigrationHelpers,
   Node,

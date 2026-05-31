@@ -4,12 +4,11 @@
  * - `forSample(callback)` runs the callback for each sample of the current
  *   render quantum (stride 1).
  * - `forSample.byN(stride, callback)` runs once per `stride` samples
- *   (typical use: `stride = 4` for SIMD bulk operations). Phase 10 で fill。
+ *   (typical use: `stride = 4` for SIMD bulk operations).
  *
  * The callback's second argument `everyNSamples` (= sub-rate primitive
  * per Q43) is delivered as an optional callback parameter rather than as
  * a free function import, so its scope is enforced by TypeScript scoping.
- * Phase 3 = `everyNSamples` も throw stub (= Phase 8 で fill)。
  */
 
 import type { AstNode } from "../compile/ast.ts";

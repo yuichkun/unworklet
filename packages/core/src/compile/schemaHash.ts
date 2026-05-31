@@ -1,35 +1,47 @@
 /**
- * Schema-hash stage of the compile pipeline (= `01-dsl.md` §8.3 migration
- * anchor、 plan Q-D stage 別 internal module の 1 つ)。
+ * Schema-hash stage (= `01-dsl.md` §8.3 migration anchor). A deterministic,
+ * structural fingerprint of the captured graph: the snapshot blob records the
+ * hash it was minted under, and `restore` compares it to the current
+ * processor's hash to decide whether the migration chain must run.
  *
- * Phase 3 で hash 形 を fix = `JSON.stringify(graph)` + SHA-256 hex。
- * declaration / statement の 順 序 + 内 容 が hash に 反 映 = deterministic
- * + structural。 各 fixture の hex は schemaHash.test.ts の inline
- * snapshot で 固 定 = 後 続 phase で 形 を 変 え た 瞬 間 fail で 検 知。
+ * Synchronous (= pure-JS FNV-1a, no Web Crypto) so the same value is available
+ * at `defineProcessor` time (`CompiledProcessor.schemaHash`) and inside
+ * `compile` (`CompileResult.schemaHash`) without an `await` — the two must
+ * match for migration matching to work. Browser / Node / AudioWorkletGlobalScope
+ * all run it identically.
  *
- * Web Crypto API (`crypto.subtle.digest`) を 使 う = Node 19+ / browser /
- * AudioWorkletGlobalScope の 共 通 標 準 = 03-compiler.md §1 invariant
- * 「browser host scripts が compile() を runtime に call で きる」 と zip。
- * sync の Node-only `node:crypto.createHash` は browser bundle で 落 ち る。
- *
- * 後 続 phase で 形 を 変 え る 必 要 が 出 た 場 合 = 意 図 的 inline
- * snapshot 更 新 + 既 snapshot blob 互 換 を 別 path (= migration helper、
- * `01-dsl.md` §8.3.1) で 処 理 す る = 「絶 対 変 わ ら な い」 invariant を
- * 明 示 的 retract す る 形 で 拡 張。
+ * It hashes the **declarations** only — the slot schema a snapshot blob depends
+ * on (names, kinds, types, sizes, snapshot policy). Process-body edits and
+ * host-rate-specific coefficients do NOT change the hash, so a preset blob keeps
+ * matching across logic tweaks and sample rates; only a genuine schema change
+ * (slot rename / type widening / buffer resize, `01-dsl.md` §8.3) needs a
+ * migration. Changing this serialization is an intentional, snapshot-breaking
+ * act — the inline snapshots in `schemaHash.test.ts` guard it.
  */
 
 import type { CapturedGraph } from "./ast.ts";
 
-export async function schemaHash(graph: CapturedGraph): Promise<string> {
-  // i64 literal value / state initial は bigint = JSON が serialize で きない。
-  // `<value>n` 文 字 列 に 落 と し て deterministic + 値 別 に hash 反 映 (= number
-  // 由 来 の graph は bigint を 含 ま な い の で 既 存 hash は 不 変)。
-  const serialized = JSON.stringify(graph, (_key, value: unknown) =>
+const FNV_OFFSET = 0xcbf29ce484222325n;
+const FNV_PRIME = 0x100000001b3n;
+const MASK64 = 0xffffffffffffffffn;
+
+/** FNV-1a 64-bit over a byte stream, seeded by `offset`, returned as 16-hex. */
+function fnv1a(bytes: Uint8Array, offset: bigint): string {
+  let hash = offset;
+  for (const b of bytes) {
+    hash = ((hash ^ BigInt(b)) * FNV_PRIME) & MASK64;
+  }
+  return hash.toString(16).padStart(16, "0");
+}
+
+export function schemaHash(graph: CapturedGraph): string {
+  // Declarations only (= the slot schema). i64 literal value / state initial は
+  // bigint = JSON が serialize で きない → `<value>n` 文 字 列 に 落 と し て
+  // deterministic + 値 別 に hash 反 映。
+  const serialized = JSON.stringify(graph.declarations, (_key, value: unknown) =>
     typeof value === "bigint" ? `${value}n` : value,
   );
   const data = new TextEncoder().encode(serialized);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(hashBuffer))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  // 2 つ の 異 な る seed lane を 連 結 し て 128-bit (= 32 hex)、 衝 突 余 裕 を 確 保。
+  return fnv1a(data, FNV_OFFSET) + fnv1a(data, FNV_OFFSET ^ 0x9e3779b97f4a7c15n);
 }
