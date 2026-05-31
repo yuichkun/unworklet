@@ -16,6 +16,7 @@
 import { expect, test, vi } from "vite-plus/test";
 
 import { createNode, inspect } from "./client.ts";
+import { getDevNodes } from "./devRegistry.ts";
 import { replaceProcessor } from "./replaceProcessor.ts";
 import { encodeScalar } from "./snapshot.ts";
 import { decodeSnapshot, encodeSnapshot } from "./snapshotBlob.ts";
@@ -3359,6 +3360,88 @@ test("replaceProcessor: warns once it exceeds 50 swaps on one AudioContext (Q63)
     expect(warnSpy).toHaveBeenCalledTimes(1);
   } finally {
     warnSpy.mockRestore();
+    h.cleanup();
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// DevTools dev-node registry + dev-dump round-trip (gated on __UNWORKLET_DEVTOOLS__)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("devtools off (default): createNode does not register the node", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    expect(getDevNodes().some((x) => x.node === node)).toBe(false);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("devtools on: createNode auto-registers, devDump round-trips, dispose unregisters", async () => {
+  (globalThis as { __UNWORKLET_DEVTOOLS__?: boolean }).__UNWORKLET_DEVTOOLS__ = true;
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    const handle = getDevNodes().find((x) => x.node === node);
+    expect(handle).toBeDefined();
+    expect(handle!.processorName).toBe("stereoGain");
+
+    // devDump posts a dev-dump-request; capture it + reply with a response.
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (m: unknown) => {
+      posted.push(m);
+    };
+    const dumpPromise = handle!.devDump();
+    const req = posted.find(
+      (m): m is { kind: string; requestId: number } =>
+        typeof m === "object" &&
+        m !== null &&
+        (m as { kind?: unknown }).kind === "dev-dump-request",
+    );
+    expect(req).toBeDefined();
+    for (const listener of h.lastNode!.port.__listeners) {
+      listener({
+        data: {
+          kind: "dev-dump-response",
+          requestId: req!.requestId,
+          slots: [
+            { name: "meterL", kind: "state", type: "f32", data: new Uint8Array([0, 0, 128, 63]) },
+          ],
+        },
+      } as MessageEvent);
+    }
+    const slots = await dumpPromise;
+    expect(slots).toHaveLength(1);
+    expect(slots[0]!.name).toBe("meterL");
+
+    node.dispose();
+    expect(getDevNodes().some((x) => x.node === node)).toBe(false);
+  } finally {
+    delete (globalThis as { __UNWORKLET_DEVTOOLS__?: boolean }).__UNWORKLET_DEVTOOLS__;
+    h.cleanup();
+  }
+});
+
+test("devtools on: devDump on a disposed node rejects instead of hanging", async () => {
+  (globalThis as { __UNWORKLET_DEVTOOLS__?: boolean }).__UNWORKLET_DEVTOOLS__ = true;
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    const handle = getDevNodes().find((x) => x.node === node)!;
+    node.dispose();
+    await expect(handle.devDump()).rejects.toThrow(/disposed/);
+  } finally {
+    delete (globalThis as { __UNWORKLET_DEVTOOLS__?: boolean }).__UNWORKLET_DEVTOOLS__;
     h.cleanup();
   }
 });

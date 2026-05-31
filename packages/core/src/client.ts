@@ -32,6 +32,13 @@ import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
 import { decodeScalar, type SnapshotSlot } from "./snapshot.ts";
 import { decodeSnapshot, encodeSnapshot, inspectSnapshot, runMigrations } from "./snapshotBlob.ts";
 import type { RestoreResult } from "./types.ts";
+import { type DevNodeHandle, registerDevNode, unregisterDevNode } from "./devRegistry.ts";
+
+// Dev-only gate (DevTools integration §4): the Vite plugin defines this as
+// `true` in serve mode and `false` in build, so production tree-shakes the
+// registry wiring. In source / tests it is an undeclared global until set on
+// `globalThis`, hence the `typeof` guard at each use site.
+declare const __UNWORKLET_DEVTOOLS__: boolean;
 
 /**
  * publishShared region 内 の i32 bit pattern を user surface 型 に 変 換
@@ -1420,6 +1427,11 @@ export async function createNode<C>(
     number,
     { resolve: (report: RestoreReport) => void; reject: (err: Error) => void }
   >();
+  // Dev X-ray dumps share the request-id sequence + the snapshot port listener.
+  const pendingDevDumps = new Map<
+    number,
+    { resolve: (slots: SnapshotSlot[]) => void; reject: (err: Error) => void }
+  >();
   // Settle (= reject) every in-flight snapshot / restore, then clear. The worklet
   // response is the only resolve signal, so on teardown (dispose) or a dead audio
   // thread (processorerror) an un-settled promise would hang the caller forever.
@@ -1429,6 +1441,8 @@ export async function createNode<C>(
     pendingSnapshots.clear();
     for (const pending of pendingRestores.values()) pending.reject(err);
     pendingRestores.clear();
+    for (const pending of pendingDevDumps.values()) pending.reject(err);
+    pendingDevDumps.clear();
   };
   const onProcessorErrorSettle = (): void => {
     rejectAllPending("the audio thread reported a failure (processorerror)");
@@ -1462,6 +1476,11 @@ export async function createNode<C>(
         skipped: Array.isArray(data.skipped) ? (data.skipped as string[]) : [],
         missing: Array.isArray(data.missing) ? (data.missing as string[]) : [],
       });
+    } else if (data.kind === "dev-dump-response") {
+      const pending = pendingDevDumps.get(data.requestId);
+      if (pending === undefined) return;
+      pendingDevDumps.delete(data.requestId);
+      pending.resolve(Array.isArray(data.slots) ? (data.slots as SnapshotSlot[]) : []);
     }
   };
   node.port.addEventListener("message", onSnapshotMessage);
@@ -1570,6 +1589,9 @@ export async function createNode<C>(
   // 直 後 に subscribe で きる path を 想 定、 後 subscribe は drop)。
   // (= `disposed` latch は state surface 構 築 path で 既 上 で declare 済 = 重 複 declare せ ず)
   let pendingSabUnavailable = !sabAvailable;
+  // Dev registry handle: built + registered below only when devtools is active;
+  // referenced here so `dispose()` can unregister it.
+  let devHandle: DevNodeHandle | undefined;
 
   const unworkletNode: UnworkletNode<C> = {
     node,
@@ -1588,6 +1610,7 @@ export async function createNode<C>(
       // Settle any in-flight snapshot / restore before tearing down listeners, so
       // awaiting callers get a rejection instead of hanging on a dead node.
       rejectAllPending("node disposed before the worklet responded");
+      if (devHandle !== undefined) unregisterDevNode(devHandle);
       stopRafLoop();
       node.port.removeEventListener("message", onErrorMessage);
       node.port.removeEventListener("message", onPublishMessage);
@@ -1653,6 +1676,29 @@ export async function createNode<C>(
     },
     __processor: undefined as unknown as C,
   };
+
+  // Dev-only: auto-register this node so the injected page-script can X-ray it
+  // (zero-config — no app code involved). The dump round-trips through the same
+  // block-atomic port + pending map / listener as snapshot.
+  if (typeof __UNWORKLET_DEVTOOLS__ !== "undefined" && __UNWORKLET_DEVTOOLS__ === true) {
+    const devDump = (): Promise<SnapshotSlot[]> => {
+      if (disposed) {
+        return Promise.reject(new Error("unworklet: devDump() called on a disposed node"));
+      }
+      const requestId = snapshotRequestSeq++;
+      return new Promise<SnapshotSlot[]>((resolve, reject) => {
+        pendingDevDumps.set(requestId, { resolve, reject });
+        node.port.postMessage({ kind: "dev-dump-request", requestId });
+      });
+    };
+    devHandle = {
+      node: unworkletNode as UnworkletNode<unknown>,
+      processorName,
+      schemaHash: processor.schemaHash,
+      devDump,
+    };
+    registerDevNode(devHandle);
+  }
 
   return unworkletNode;
 }
