@@ -1,0 +1,264 @@
+/**
+ * `.uwk.ts` → virtual `.ts` lowering (RFC-001). This first slice implements S11:
+ * recognize the `process(() => {...})` macro + module-level declarations and wrap
+ * them into the canonical `defineProcessor((ctx) => { ...decls; return { process }
+ * })` shape that the existing `@unworklet/core` compile pipeline consumes. Sugar
+ * passes (operators, index access, $prev, …) transform the AST before the wrap
+ * and compose here as they land.
+ *
+ * The lowered module is plain public-DSL `.ts`: running it makes the same
+ * sequence of DSL calls as a hand-written Tier-A processor, so it compiles to a
+ * byte-identical `CompiledProcessor` (proven by the golden fingerprint harness).
+ */
+
+import ts from "typescript";
+
+/** Authoring identifiers re-exported by `@unworklet/core` (the lowering import set). */
+const CORE_AUTHORING_EXPORTS = new Set<string>([
+  "defineProcessor",
+  "defineSubgraph",
+  "createSubgraph",
+  "audioInput",
+  "audioOutput",
+  "state",
+  "param",
+  "event",
+  "forSample",
+  "select",
+  "f32",
+  "f64",
+  "i32",
+  "i64",
+  "bool",
+  "num",
+  "add",
+  "sub",
+  "mul",
+  "div",
+  "mod",
+  "neg",
+  "eq",
+  "lt",
+  "gt",
+  "lte",
+  "gte",
+  "sin",
+  "cos",
+  "tan",
+  "tanh",
+  "exp",
+  "log",
+  "sqrt",
+  "floor",
+  "ceil",
+  "frac",
+  "abs",
+  "min",
+  "max",
+  "clamp",
+  "SAMPLES_PER_BLOCK",
+  "CAPACITY_16",
+  "CAPACITY_32",
+  "CAPACITY_64",
+  "CAPACITY_128",
+  "CAPACITY_256",
+  "CAPACITY_512",
+  "CAPACITY_1024",
+  "CAPACITY_2048",
+  "CAPACITY_4096",
+  "CAPACITY_8192",
+  "CAPACITY_16384",
+]);
+
+const PROCESS_MACRO = "process";
+const MIGRATIONS_MACRO = "migrations";
+const OPTIONS_MACRO = "options";
+
+/** A lowering failure carrying a stable id for diagnostics. */
+export class LowerError extends Error {
+  readonly id: string;
+  constructor(id: string, message: string) {
+    super(message);
+    this.id = id;
+    this.name = "LowerError";
+  }
+}
+
+export type LowerOptions = {
+  /** Module specifier for the generated import. Defaults to `@unworklet/core`. */
+  coreModule?: string;
+};
+
+/** A top-level `name(...)` macro call (e.g. `process(() => {...})`). */
+type MacroCall = { name: string; call: ts.CallExpression };
+
+function topLevelMacroCall(stmt: ts.Statement): MacroCall | undefined {
+  if (!ts.isExpressionStatement(stmt)) return undefined;
+  const expr = stmt.expression;
+  if (!ts.isCallExpression(expr)) return undefined;
+  if (!ts.isIdentifier(expr.expression)) return undefined;
+  return { name: expr.expression.text, call: expr };
+}
+
+function callbackBody(call: ts.CallExpression): ts.Statement[] | undefined {
+  const arg = call.arguments[0];
+  if (arg === undefined) return undefined;
+  if (!ts.isArrowFunction(arg) && !ts.isFunctionExpression(arg)) return undefined;
+  if (ts.isBlock(arg.body)) return [...arg.body.statements];
+  // Expression-bodied arrow: `process(() => expr)` — wrap as a statement.
+  return [ts.factory.createExpressionStatement(arg.body)];
+}
+
+/** Collect `@unworklet/core` authoring identifiers actually referenced (excluding
+ * property names like `a.state`), so the generated import lists only what's used. */
+function collectUsedCoreExports(node: ts.Node): Set<string> {
+  const used = new Set<string>();
+  const visit = (n: ts.Node): void => {
+    if (ts.isIdentifier(n) && CORE_AUTHORING_EXPORTS.has(n.text)) {
+      const parent = n.parent as ts.Node | undefined;
+      const isPropertyName =
+        parent !== undefined &&
+        ((ts.isPropertyAccessExpression(parent) && parent.name === n) ||
+          (ts.isPropertyAssignment(parent) && parent.name === n) ||
+          (ts.isBindingElement(parent) && parent.propertyName === n));
+      if (!isPropertyName) used.add(n.text);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(node);
+  return used;
+}
+
+function makeCoreImport(names: readonly string[], coreModule: string): ts.ImportDeclaration {
+  const specifiers = names.map((name) =>
+    ts.factory.createImportSpecifier(false, undefined, ts.factory.createIdentifier(name)),
+  );
+  return ts.factory.createImportDeclaration(
+    undefined,
+    ts.factory.createImportClause(false, undefined, ts.factory.createNamedImports(specifiers)),
+    ts.factory.createStringLiteral(coreModule),
+  );
+}
+
+function makeDefineProcessor(
+  declarations: readonly ts.Statement[],
+  processBody: readonly ts.Statement[],
+  optionsArg: ts.Expression | undefined,
+): ts.ExportAssignment {
+  const processArrow = ts.factory.createArrowFunction(
+    undefined,
+    undefined,
+    [],
+    undefined,
+    ts.factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+    ts.factory.createBlock(processBody, true),
+  );
+  const returnObject = ts.factory.createReturnStatement(
+    ts.factory.createObjectLiteralExpression(
+      [ts.factory.createPropertyAssignment("process", processArrow)],
+      true,
+    ),
+  );
+  const ctxParam = ts.factory.createParameterDeclaration(
+    undefined,
+    undefined,
+    ts.factory.createIdentifier("ctx"),
+  );
+  const bodyArrow = ts.factory.createArrowFunction(
+    undefined,
+    undefined,
+    [ctxParam],
+    undefined,
+    ts.factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+    ts.factory.createBlock([...declarations, returnObject], true),
+  );
+  const args = optionsArg === undefined ? [bodyArrow] : [bodyArrow, optionsArg];
+  const call = ts.factory.createCallExpression(
+    ts.factory.createIdentifier("defineProcessor"),
+    undefined,
+    args,
+  );
+  return ts.factory.createExportAssignment(undefined, false, call);
+}
+
+/** Build the optional `defineProcessor` options arg from `migrations()` / `options()`. */
+function makeOptionsArg(
+  migrations: ts.Expression | undefined,
+  options: ts.Expression | undefined,
+): ts.Expression | undefined {
+  const props: ts.ObjectLiteralElementLike[] = [];
+  if (migrations !== undefined) {
+    props.push(ts.factory.createPropertyAssignment("migrations", migrations));
+  }
+  if (options !== undefined) {
+    props.push(ts.factory.createSpreadAssignment(options));
+  }
+  if (props.length === 0) return undefined;
+  return ts.factory.createObjectLiteralExpression(props, true);
+}
+
+/** Lower a `.uwk.ts` source string to a virtual `.ts` module string. */
+export function lower(source: string, options: LowerOptions = {}): string {
+  const coreModule = options.coreModule ?? "@unworklet/core";
+  const sf = ts.createSourceFile(
+    "input.uwk.ts",
+    source,
+    ts.ScriptTarget.ESNext,
+    true,
+    ts.ScriptKind.TS,
+  );
+
+  let processBody: ts.Statement[] | undefined;
+  let processCount = 0;
+  const declarations: ts.Statement[] = [];
+  let migrationsArg: ts.Expression | undefined;
+  let optionsObject: ts.Expression | undefined;
+
+  for (const stmt of sf.statements) {
+    const macro = topLevelMacroCall(stmt);
+    if (macro?.name === PROCESS_MACRO) {
+      processCount += 1;
+      const body = callbackBody(macro.call);
+      if (body === undefined) {
+        throw new LowerError(
+          "uwk-bad-process",
+          "process(...) must take an arrow or function callback",
+        );
+      }
+      processBody = body;
+      continue;
+    }
+    if (macro?.name === MIGRATIONS_MACRO) {
+      migrationsArg = macro.call.arguments[0];
+      continue;
+    }
+    if (macro?.name === OPTIONS_MACRO) {
+      optionsObject = macro.call.arguments[0];
+      continue;
+    }
+    declarations.push(stmt);
+  }
+
+  if (processCount === 0) {
+    throw new LowerError(
+      "uwk-no-process",
+      "a .uwk.ts file must contain a process(() => {...}) call",
+    );
+  }
+  if (processCount > 1) {
+    throw new LowerError(
+      "uwk-multiple-process",
+      "a .uwk.ts file must contain exactly one process(...) call",
+    );
+  }
+
+  const used = collectUsedCoreExports(sf);
+  used.add("defineProcessor");
+  const importDecl = makeCoreImport([...used].sort(), coreModule);
+  const optionsArg = makeOptionsArg(migrationsArg, optionsObject);
+  const exportDefault = makeDefineProcessor(declarations, processBody!, optionsArg);
+
+  const lowered = ts.factory.updateSourceFile(sf, [importDecl, exportDefault]);
+  const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
+  return printer.printFile(lowered);
+}
