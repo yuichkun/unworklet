@@ -293,7 +293,10 @@ onUnmounted(() => {
    window in human-friendly units (ms / s). */
 .waveform-zoom {
   display: grid;
-  grid-template-columns: auto minmax(80px, 1fr) auto;
+  /* min(0, 80px) = 0 floor so the slider can collapse below 80px when the
+     channel column is very narrow — otherwise the 80px floor pushes the
+     row wider than the parent and overflows. */
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
 }

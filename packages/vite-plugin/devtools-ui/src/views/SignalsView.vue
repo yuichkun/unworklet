@@ -445,7 +445,9 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 20px;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 24px 20px 18px;
   border-bottom: 1px solid var(--u-border);
   background: var(--u-bg-elev-1);
 }
@@ -461,10 +463,12 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
 .view-meta {
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
 .sub-tab-nav {
   display: flex;
+  flex-wrap: wrap;
   background: var(--u-bg-elev-1);
   border-bottom: 1px solid var(--u-border);
   padding: 0 16px;
@@ -537,6 +541,7 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
 
 .audio-header-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin-left: auto;
@@ -545,8 +550,11 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
 .audio-grid {
   display: grid;
   /* 280px min keeps all 3 ports on one row at typical devtool iframe widths
-     (~900px+). Wraps to 2 rows only past 4 ports / at very narrow viewports. */
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+     (~900px+). Wraps to 2 rows only past 4 ports / at very narrow viewports.
+     `min(100%, 280px)` clamps the floor so columns can shrink below 280px
+     when the container is narrower — otherwise auto-fit forces a 280px
+     column that overflows view-body horizontally. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
   gap: 14px;
   /* Don't stretch siblings to match the tallest. Each port-section keeps its
      own natural height, so capturing one port only grows that one — the
@@ -711,7 +719,7 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
 
 .latency-stats {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
   gap: 10px;
 }
 

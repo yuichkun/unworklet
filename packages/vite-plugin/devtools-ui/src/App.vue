@@ -2,7 +2,11 @@
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
-import logoUrl from "./assets/unworklet-logo.svg";
+// Inline-SVG via Vite's `?raw` query — the SVG string is dropped into the
+// template with v-html so the CSS below can size / restyle the markup
+// directly (= no <img> intrinsic-size friction, no extra Vite plugin).
+import chainSvg from "./assets/unworklet-logo-chain.svg?raw";
+import textSvg from "./assets/unworklet-logo-text.svg?raw";
 
 const router = useRouter();
 const route = useRoute();
@@ -21,8 +25,9 @@ const navItems = computed(() =>
 <template>
   <div class="app-shell">
     <aside class="sidebar">
-      <div class="brand">
-        <img class="brand-logo" :src="logoUrl" alt="Unworklet" />
+      <div class="brand" aria-label="Unworklet">
+        <div class="brand-chain" v-html="chainSvg"></div>
+        <div class="brand-text" v-html="textSvg"></div>
       </div>
 
       <nav class="nav">
@@ -66,15 +71,32 @@ const navItems = computed(() =>
 }
 
 .brand {
-  padding: 0 18px 24px;
+  padding: 0 10px 18px 22px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
 }
 
-/* SVG logo (icon + wordmark baked in, ~537×533 square-ish viewBox). Size
-   width-first; height auto preserves the embedded aspect. */
-.brand-logo {
+/* Chain mark (300×300 viewBox). Tweak `width` to resize. */
+.brand-chain {
+  width: 32px;
+}
+
+/* Wordmark (445.7×77.1 viewBox = aspect 5.78:1). Tweak `width` to resize. */
+.brand-text {
+  width: 110px;
+}
+
+/* v-html injects the <svg> verbatim — these rules make the SVG flow with its
+   wrapper instead of relying on the source file's intrinsic width/height
+   attributes. `:deep` is required because v-html content is not scoped. */
+.brand-chain :deep(svg),
+.brand-text :deep(svg) {
   display: block;
-  width: 90px;
+  width: 100%;
   height: auto;
+  padding: 2px;
 }
 
 .nav {

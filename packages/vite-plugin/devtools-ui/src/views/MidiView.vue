@@ -584,7 +584,9 @@ const octaveLabel = computed(() => `C${Math.floor(octaveBase.value / 12) - 1}`);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 20px;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 24px 20px 18px;
   border-bottom: 1px solid var(--u-border);
   background: var(--u-bg-elev-1);
 }
@@ -600,6 +602,7 @@ const octaveLabel = computed(() => `C${Math.floor(octaveBase.value / 12) - 1}`);
 .view-meta {
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
 .view-body {
