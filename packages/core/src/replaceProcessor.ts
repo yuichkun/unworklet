@@ -29,7 +29,8 @@ import type { CompiledProcessor, ReplaceResult, UnworkletNode } from "./types.ts
 /**
  * Each call adds one entry to the `AudioWorkletGlobalScope` registered-processor
  * table, which Web Audio cannot unload before the `AudioContext` is destroyed.
- * Past this count a one-shot warning fires per call (`05-client.md` §8.5, Q63).
+ * The first call that crosses this count fires a single one-shot warning per
+ * `AudioContext` (= not once per subsequent call, `05-client.md` §8.5, Q63).
  */
 const REPLACE_WARN_THRESHOLD = 50;
 const replaceCounts = new WeakMap<BaseAudioContext, number>();
@@ -41,7 +42,9 @@ export async function replaceProcessor<Old, New>(
   const context = oldNode.node.context;
   const count = (replaceCounts.get(context) ?? 0) + 1;
   replaceCounts.set(context, count);
-  if (count > REPLACE_WARN_THRESHOLD) {
+  // Fire only on the first call that crosses the threshold (= once), not on every
+  // call beyond it — repeated warnings on each subsequent swap are just noise.
+  if (count === REPLACE_WARN_THRESHOLD + 1) {
     console.warn(
       "unworklet: replaceProcessor has been called more than 50 times on this AudioContext. " +
         "Web Audio cannot unload old WASM modules; create a new AudioContext if memory growth matters.",

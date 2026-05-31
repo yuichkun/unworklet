@@ -3357,6 +3357,10 @@ test("replaceProcessor: warns once it exceeds 50 swaps on one AudioContext (Q63)
     await swap();
     expect(warnSpy).toHaveBeenCalledTimes(1);
     expect(String(warnSpy.mock.calls[0]![0])).toContain("more than 50 times");
+    // The warning is one-shot per AudioContext — further swaps must NOT re-warn.
+    await swap();
+    await swap();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
   } finally {
     warnSpy.mockRestore();
     h.cleanup();
