@@ -508,6 +508,16 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
   return {
     name: "@unworklet/vite-plugin",
     enforce: "pre",
+    config(_userConfig, env) {
+      // Dev-only gate for the core registry / page bridge: a single statically-
+      // replaced boolean — `true` in serve, `false` in build — so production
+      // tree-shakes the devtools wiring and tests (no plugin) leave it undefined.
+      return {
+        define: {
+          __UNWORKLET_DEVTOOLS__: env.command === "serve" ? "true" : "false",
+        },
+      };
+    },
     configResolved(config) {
       isServe = config.command === "serve";
       // Dev internal URLs (= `/@id/...`, `/__unworklet/...`) must be
@@ -522,6 +532,27 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
       } else {
         basePath = "/";
       }
+    },
+    transformIndexHtml() {
+      if (!isServe) return;
+      // Dev page bridge (zero-config, serve-only): expose the live-node registry
+      // + snapshot codec on the page so the DevTools panel — and chrome-devtools
+      // verification — can X-ray each node's linear memory. No application code
+      // is involved; the plugin injects this automatically.
+      return [
+        {
+          tag: "script",
+          attrs: { type: "module" },
+          injectTo: "head",
+          children: [
+            'import { getDevNodes } from "@unworklet/core/dev";',
+            'import { decodeScalar, decodeTypedArray } from "@unworklet/core";',
+            "globalThis.__unworklet_getDevNodes = getDevNodes;",
+            "globalThis.__unworklet_decodeScalar = decodeScalar;",
+            "globalThis.__unworklet_decodeTypedArray = decodeTypedArray;",
+          ].join("\n"),
+        },
+      ];
     },
     configureServer(server) {
       viteDevServer = server as unknown as ViteDevServerLike;
