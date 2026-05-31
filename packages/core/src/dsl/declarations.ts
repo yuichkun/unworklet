@@ -908,7 +908,7 @@ function liftEmitFieldValue(
   );
 }
 
-export function event<T>(options: EventOptions): EventDecl<T> {
+function eventToMain<T>(options: EventOptions): EventDecl<T> {
   checkEventName(options.name);
   const decl: EventDeclAst = {
     kind: "event",
@@ -1112,7 +1112,7 @@ function makeMessagePayloadProxy(decl: MessageDeclAst): Record<string, unknown> 
   );
 }
 
-export function message<T>(options: MessageOptions): MessageDecl<T> {
+function eventFromMain<T>(options: MessageOptions): MessageDecl<T> {
   checkMessageName(options.name);
   const decl: MessageDeclAst = {
     kind: "message",
@@ -1246,7 +1246,7 @@ function makeSysexDataProxy(port: string): TypedArrayFieldRef<"u8"> {
   return proxy as unknown as TypedArrayFieldRef<"u8">;
 }
 
-export function midiInput(options: MidiPortOptions): MidiInputHandle {
+function midiFromMain(options: MidiPortOptions): MidiInputHandle {
   const decl: MidiInputDecl = {
     kind: "midiInput",
     name: options.name,
@@ -1272,7 +1272,7 @@ export function midiInput(options: MidiPortOptions): MidiInputHandle {
   };
 }
 
-export function midiOutput(options: MidiPortOptions): MidiOutputHandle {
+function midiToMain(options: MidiPortOptions): MidiOutputHandle {
   const decl: MidiOutputDecl = {
     kind: "midiOutput",
     name: options.name,
@@ -1394,3 +1394,59 @@ export function midiOutput(options: MidiPortOptions): MidiOutputHandle {
     },
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Unified `event` family (issue #10): direction-aware over the message / event
+// / midiInput / midiOutput primitives. `from: 'main'` = worklet receives,
+// `to: 'main'` = worklet sends. MIDI is bridged through the main thread (Web
+// MIDI lives there), so the same from/to discriminator applies under
+// `event.midi`. The internal builders — and their declaration `kind`s / wire —
+// are unchanged; only the authoring surface is unified.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** `event<T>({ from: 'main' })` — main → worklet delivery (worklet `onReceive`). */
+export type EventFromMainOptions = {
+  from: "main";
+  name: string;
+  capacity?: Capacity;
+  payloadCapacity?: number;
+};
+
+/** `event<T>({ to: 'main' })` — worklet → main delivery (worklet `emitIf`). */
+export type EventToMainOptions = {
+  to: "main";
+  name: string;
+  capacity?: Capacity;
+  payloadCapacity?: number;
+};
+
+/** `event.midi({ from: 'main' })` — inbound MIDI (device → worklet, bridged via main). */
+export type MidiFromMainOptions = { from: "main"; name: string; capacity?: Capacity };
+
+/** `event.midi({ to: 'main' })` — outbound MIDI (worklet → device, bridged via main). */
+export type MidiToMainOptions = { to: "main"; name: string; capacity?: Capacity };
+
+export interface EventMidiFamily {
+  (options: MidiFromMainOptions): MidiInputHandle;
+  (options: MidiToMainOptions): MidiOutputHandle;
+}
+
+export interface EventFamily {
+  <T>(options: EventFromMainOptions): MessageDecl<T>;
+  <T>(options: EventToMainOptions): EventDecl<T>;
+  readonly midi: EventMidiFamily;
+}
+
+function eventImpl<T>(
+  options: EventFromMainOptions | EventToMainOptions,
+): MessageDecl<T> | EventDecl<T> {
+  return "from" in options ? eventFromMain<T>(options) : eventToMain<T>(options);
+}
+
+function midiImpl(
+  options: MidiFromMainOptions | MidiToMainOptions,
+): MidiInputHandle | MidiOutputHandle {
+  return "from" in options ? midiFromMain(options) : midiToMain(options);
+}
+
+export const event: EventFamily = Object.assign(eventImpl, { midi: midiImpl }) as EventFamily;

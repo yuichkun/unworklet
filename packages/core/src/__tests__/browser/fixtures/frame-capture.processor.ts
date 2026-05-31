@@ -26,6 +26,7 @@ export const frameCapture = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
   const buf = state.buffer.f32({ size: 128 });
   const frame = event<{ samples: Float32Array }>({
+    to: "main",
     name: "frame",
     capacity: 16,
     payloadCapacity: FRAME * 4,

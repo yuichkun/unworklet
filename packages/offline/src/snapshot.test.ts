@@ -9,13 +9,13 @@
 import "@unworklet/core";
 import {
   audioOutput,
+  event,
   defineProcessor,
   encodeScalar,
   encodeSnapshot,
   f32,
   forSample,
   inspectSnapshot,
-  message,
   state,
 } from "@unworklet/core";
 import { expect, test } from "vite-plus/test";
@@ -67,7 +67,7 @@ test("a persistent buffer round-trips through snapshot/restore", async () => {
   const wtProc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
     const wt = state.buffer.f32({ size: 8 }).expose({ name: "wt", snapshot: "persistent" });
-    const upload = message<{ samples: Float32Array }>({ name: "upload" });
+    const upload = event<{ samples: Float32Array }>({ from: "main", name: "upload" });
     return {
       process: () => {
         upload.onReceive(({ samples }) => {

@@ -6,11 +6,11 @@
  * 読めている、という黒箱確認。
  */
 
-import { audioOutput, defineProcessor, forSample, message, state } from "../../../index.ts";
+import { event, audioOutput, defineProcessor, forSample, state } from "../../../index.ts";
 
 export const uploadPlayback = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
-  const upload = message<{ samples: Float32Array }>({ name: "upload" });
+  const upload = event<{ samples: Float32Array }>({ from: "main", name: "upload" });
   const buf = state.buffer.f32({ size: 128 });
   const lenState = state
     .i32(0)

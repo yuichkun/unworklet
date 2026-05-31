@@ -17,7 +17,7 @@ export const eventEmitter = defineProcessor(() => {
   const input = audioInput({ channels: 1, name: "main" });
   const out = audioOutput({ channels: 1, name: "main" });
   const gate = state.named("gate").bool(true);
-  const peak = event<{ level: number }>({ name: "peak", capacity: 16 });
+  const peak = event<{ level: number }>({ to: "main", name: "peak", capacity: 16 });
   return {
     process: () => {
       gate.write(true);

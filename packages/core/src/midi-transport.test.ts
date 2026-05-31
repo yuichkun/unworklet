@@ -20,7 +20,7 @@ import { expect, test, vi } from "vite-plus/test";
 
 import { compile } from "./compile/index.ts";
 import { CAPACITY_16 } from "./dsl/constants.ts";
-import { midiInput, midiOutput } from "./dsl/declarations.ts";
+import { event } from "./dsl/declarations.ts";
 import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
 import { midiEventToWire, wireToMidiEvent } from "./midiWire.ts";
 import { defineProcessor } from "./processor.ts";
@@ -76,8 +76,8 @@ const emptyQuantum = (): {
 // still hands an output buffer, so the namespace tolerates an unused output.
 const makeThru = () =>
   defineProcessor(() => {
-    const midiIn = midiInput({ name: "in" });
-    const midiOut = midiOutput({ name: "out" });
+    const midiIn = event.midi({ from: "main", name: "in" });
+    const midiOut = event.midi({ to: "main", name: "out" });
     return {
       process: () => {
         midiIn.onEvent("noteOn", ({ channel, note, velocity, atSample }) => {
@@ -308,8 +308,8 @@ test("sab: inbound ring overflow drops oldest and advances the overflow counter"
   // drop-oldest (the client `send` SAB protocol), so the overflow counter must
   // read 4 and the ring retains the most-recent 16.
   const proc = defineProcessor(() => {
-    const midiIn = midiInput({ name: "in", capacity: CAPACITY_16 });
-    const midiOut = midiOutput({ name: "out" });
+    const midiIn = event.midi({ from: "main", name: "in", capacity: CAPACITY_16 });
+    const midiOut = event.midi({ to: "main", name: "out" });
     return {
       process: () => {
         midiIn.onEvent("noteOn", ({ channel, note, velocity, atSample }) => {

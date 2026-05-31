@@ -1002,7 +1002,7 @@ export function expectEventsContaining(
 export type ExpectedMidiEvent = MidiEvent & { atSample?: number };
 
 /**
- * 特 定 `midiOutput({ name })` port 経 由 emit さ れ た MIDI event 列 を
+ * 特 定 `event.midi({ to: 'main', name })` port 経 由 emit さ れ た MIDI event 列 を
  * `MidiEvent` 形 で 一 致 比 較。 `result.events` か ら `name === portName`
  * を filter、 payload を `MidiEvent` と み な し て 順 序 + type + 全 field
  * deep compare、 atSample は `expected.atSample` 省 略 = actual に zip、 明 示

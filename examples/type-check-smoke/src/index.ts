@@ -23,9 +23,6 @@ import {
   event,
   forSample,
   inspect,
-  message,
-  midiInput,
-  midiOutput,
   num,
   param,
   replaceProcessor,
@@ -112,10 +109,10 @@ const _typeCheckSmoke = (): void => {
 
   // ── canonical Ex 6 essence (= MIDI ports + event + message + onReceive).
   defineProcessor((_ctx: ProcessorContext) => {
-    const mIn = midiInput({ name: "noteIn" });
-    const mOut = midiOutput({ name: "arpOut", capacity: CAPACITY_256 });
-    const reset = message<{ slot: number }>({ name: "resetSlot" });
-    const fired = event<{ velocity: number }>({ name: "fired" });
+    const mIn = event.midi({ from: "main", name: "noteIn" });
+    const mOut = event.midi({ to: "main", name: "arpOut", capacity: CAPACITY_256 });
+    const reset = event<{ slot: number }>({ from: "main", name: "resetSlot" });
+    const fired = event<{ velocity: number }>({ to: "main", name: "fired" });
 
     return {
       process: () => {

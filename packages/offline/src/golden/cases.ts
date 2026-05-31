@@ -21,9 +21,6 @@ import {
   event,
   f32,
   forSample,
-  message,
-  midiInput,
-  midiOutput,
   num,
   param,
   select,
@@ -131,7 +128,7 @@ const audioParamLoops = defineProcessor(() => {
 const eventScalar = defineProcessor(() => {
   const input = audioInput({ channels: 1, name: "in" });
   const out = audioOutput({ channels: 1, name: "out" });
-  const peakEv = event<{ level: number; loud: boolean }>({ name: "peak" });
+  const peakEv = event<{ level: number; loud: boolean }>({ to: "main", name: "peak" });
   const env = state.f32(0).named("env");
   return {
     process: () => {
@@ -149,7 +146,7 @@ const eventScalar = defineProcessor(() => {
 const eventTypedArray = defineProcessor(() => {
   const input = audioInput({ channels: 1, name: "in" });
   const out = audioOutput({ channels: 1, name: "out" });
-  const scope = event<{ samples: Float32Array }>({ name: "scope" });
+  const scope = event<{ samples: Float32Array }>({ to: "main", name: "scope" });
   const ring = state.buffer.f32({ size: 16 });
   return {
     process: () => {
@@ -165,7 +162,7 @@ const eventTypedArray = defineProcessor(() => {
 // ── message<T> (main→worklet): scalar fields ─────────────────────────────────
 const messageScalar = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "out" });
-  const ctrl = message<{ gain: number; on: boolean }>({ name: "ctrl" });
+  const ctrl = event<{ gain: number; on: boolean }>({ from: "main", name: "ctrl" });
   const g = state.f32(1).named("g");
   const on = state.bool(true).named("on");
   return {
@@ -188,7 +185,7 @@ const messageScalar = defineProcessor(() => {
 const messageTypedArray = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "out" });
   const table = state.buffer.f32({ size: 16 }).named("table").expose({ snapshot: "persistent" });
-  const upload = message<{ data: Float32Array }>({ name: "upload" });
+  const upload = event<{ data: Float32Array }>({ from: "main", name: "upload" });
   const idx = state.i32(0).named("idx");
   return {
     process: () => {
@@ -206,7 +203,7 @@ const messageTypedArray = defineProcessor(() => {
 // ── midiInput: every inbound event type + sysex copyFrom ─────────────────────
 const allMidiIn = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "out" });
-  const port = midiInput({ name: "in" });
+  const port = event.midi({ from: "main", name: "in" });
   const acc = state.i32(0).named("acc");
   const sysbuf = state.buffer.u8({ size: 64 }).named("sysbuf");
   return {
@@ -249,7 +246,7 @@ const allMidiIn = defineProcessor(() => {
 // ── midiOutput: every outbound event type + sysex from a state.buffer.u8 ───────────
 const allMidiOut = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "out" });
-  const port = midiOutput({ name: "out" });
+  const port = event.midi({ to: "main", name: "out" });
   const sysbuf = state.buffer.u8({ size: 8 }).named("sysbuf");
   return {
     process: () => {
@@ -281,7 +278,7 @@ const limiter = defineProcessor((ctx) => {
   const dly = state.buffer.f32({ size: LOOKAHEAD });
   const dlyHead = state.i32(0);
   const env = state.f32(0);
-  const overshoot = event<{ level: number }>({ name: "overshoot" });
+  const overshoot = event<{ level: number }>({ to: "main", name: "overshoot" });
   return {
     process: () => {
       const relCoef = num(1).sub(
@@ -316,7 +313,7 @@ const reverb = defineProcessor(
     const ir = state.buffer.f32({ size: IR_LEN }).expose({ name: "ir", snapshot: "persistent" });
     const hist = state.buffer.f32({ size: IR_LEN });
     const histHead = state.i32(0);
-    const uploadIR = message<{ ir: Float32Array }>({ name: "uploadIR" });
+    const uploadIR = event<{ ir: Float32Array }>({ from: "main", name: "uploadIR" });
     return {
       process: () => {
         uploadIR.onReceive(({ ir: incoming }) => {

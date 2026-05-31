@@ -341,14 +341,14 @@ export type MessageDeclAst = {
  */
 export type MidiByteField = "status" | "channel" | "data1" | "data2" | "atSample" | "pitchBend14";
 
-/** `midiInput({ name, capacity })` declaration (`11-midi.md` §1). */
+/** `event.midi({ from: 'main', name, capacity })` declaration (`11-midi.md` §1). */
 export type MidiInputDecl = {
   kind: "midiInput";
   name: string;
   capacity: number;
 };
 
-/** `midiOutput({ name, capacity })` declaration (`11-midi.md` §1). */
+/** `event.midi({ to: 'main', name, capacity })` declaration (`11-midi.md` §1). */
 export type MidiOutputDecl = {
   kind: "midiOutput";
   name: string;

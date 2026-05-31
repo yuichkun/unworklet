@@ -14,7 +14,6 @@ import {
   f32,
   i32,
   inspectSnapshot,
-  message,
   SAMPLES_PER_BLOCK,
   select,
 } from "@unworklet/core";
@@ -31,7 +30,7 @@ import { renderOffline } from "./index.ts";
 // 受信した配列を per-element に buffer へ書き写し、それを再生する (= .at(Node) runtime read)。
 const samplePlayer = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
-  const upload = message<{ samples: Float32Array }>({ name: "upload" });
+  const upload = event<{ samples: Float32Array }>({ from: "main", name: "upload" });
   const buf = state.buffer.f32({ size: SAMPLES_PER_BLOCK });
   return {
     process: () => {
@@ -63,7 +62,7 @@ test("`renderOffline` delivers a typed-array payload; samples.at(Node) reads eac
 // 受信した配列を buf.copyFrom で一括コピー (= memory.copy、per-sample loop の代替)。
 const sampleCopier = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
-  const upload = message<{ samples: Float32Array }>({ name: "upload" });
+  const upload = event<{ samples: Float32Array }>({ from: "main", name: "upload" });
   const buf = state.buffer.f32({ size: SAMPLES_PER_BLOCK });
   return {
     process: () => {
@@ -107,7 +106,7 @@ test("`renderOffline` buf.copyFrom は min(buf.size, payload length) で clamp �
 // runtime trap せず [0, length-1] に丸められる。far OOB を読んで last element が返ることを確認。
 const oobReader = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
-  const upload = message<{ samples: Float32Array }>({ name: "upload" });
+  const upload = event<{ samples: Float32Array }>({ from: "main", name: "upload" });
   const oobState = state.f32(0);
   return {
     process: () => {
@@ -136,7 +135,7 @@ test("`renderOffline` samples.at の範囲外読みは trap せず [0,length-1] 
 // handler は drain loop で per-slot 走る → 各 slot の samples.at(0) を state に加算。
 const twoUploads = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
-  const upload = message<{ samples: Float32Array }>({ name: "upload" });
+  const upload = event<{ samples: Float32Array }>({ from: "main", name: "upload" });
   const acc = state.f32(0);
   return {
     process: () => {
@@ -183,7 +182,7 @@ test("`renderOffline` content 枠 (16) を超える連射でも trap せず rend
 // samples.length = 受信した配列長 (= Node<i32>)。出力にそのまま流して観測。
 const sampleLen = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
-  const upload = message<{ samples: Float32Array }>({ name: "upload" });
+  const upload = event<{ samples: Float32Array }>({ from: "main", name: "upload" });
   const lenState = state.i32(0);
   return {
     process: () => {
@@ -213,7 +212,7 @@ test("`renderOffline` resolves samples.length to the delivered payload length", 
 // stale read だと length-1=-1 で clamp が idx 0 に潰れ、chunk 0 の [42] を読んでしまう。
 const emptyPayloadReader = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
-  const upload = message<{ x: Float32Array }>({ name: "upload" });
+  const upload = event<{ x: Float32Array }>({ from: "main", name: "upload" });
   const last = state.f32(-1);
   return {
     process: () => {
@@ -251,7 +250,7 @@ test("`renderOffline` 空 payload の .at(0) は stale memory でなく 0 を返
 // 出力はそのまま mul state の値 (= 注入が届けば block ごとに値が変わる)。
 const messageMul = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
-  const setMul = message<{ mul: number }>({ name: "setMul" });
+  const setMul = event<{ mul: number }>({ from: "main", name: "setMul" });
   const mulState = state.i32(1);
   return {
     process: () => {
@@ -292,7 +291,7 @@ test("`renderOffline` defaults message delivery to quantum 0 when atQuantum is o
 // boolean-valued message field (= Q46 で 現状 i32 wire に lift される)。
 const messageFlag = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
-  const setOn = message<{ on: boolean }>({ name: "setOn" });
+  const setOn = event<{ on: boolean }>({ from: "main", name: "setOn" });
   const flag = state.bool(false);
   return {
     process: () => {
@@ -764,7 +763,7 @@ test("`renderOffline` subnormal flush integration (= state.f32 store 1e-40 → 0
 test("`renderOffline` captures emitted events from event ring (= sub-phase 7.8c)", async () => {
   const eventProc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "out" });
-    const peakEvt = event<{ level: number }>({ name: "peak", capacity: 16 });
+    const peakEvt = event<{ level: number }>({ to: "main", name: "peak", capacity: 16 });
     // gate state を true 固 定 + stateLoad cond で Q32-c constant-truthy 回 避
     const gate = state.named("gate").bool(true);
     return {
@@ -798,7 +797,11 @@ test("`renderOffline` captures a typed-array event payload as a Float32Array", a
   const arrayEmitter = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
     const buf = state.buffer.f32({ size: 4 });
-    const result = event<{ data: Float32Array }>({ name: "result", payloadCapacity: 64 });
+    const result = event<{ data: Float32Array }>({
+      to: "main",
+      name: "result",
+      payloadCapacity: 64,
+    });
     return {
       process: () => {
         for (let k = 0; k < 4; k++) buf.write(k, f32((k + 1) * 11));
@@ -827,7 +830,11 @@ test("`renderOffline` typed-array event は length が buffer 超でも buffer �
   const overEmitter = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
     const buf = state.buffer.f32({ size: 4 });
-    const result = event<{ data: Float32Array }>({ name: "result", payloadCapacity: 64 });
+    const result = event<{ data: Float32Array }>({
+      to: "main",
+      name: "result",
+      payloadCapacity: 64,
+    });
     return {
       process: () => {
         for (let k = 0; k < 4; k++) buf.write(k, f32((k + 1) * 11));
@@ -852,7 +859,7 @@ test("`renderOffline` typed-array event は length が buffer 超でも buffer �
 test("`renderOffline` captures bool wireType event field as JS boolean", async () => {
   const boolEvtProc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "out" });
-    const flagEvt = event<{ flag: boolean }>({ name: "flag", capacity: 16 });
+    const flagEvt = event<{ flag: boolean }>({ to: "main", name: "flag", capacity: 16 });
     const gate = state.named("gate").bool(true);
     return {
       process: () => {

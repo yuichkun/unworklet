@@ -10,7 +10,7 @@
 import { expect, test } from "vite-plus/test";
 
 import "../../dsl/primitives.ts"; // side-effect: register `Node<T>` method forms
-import { audioOutput, event, message, state } from "../../dsl/declarations.ts";
+import { audioOutput, event, state } from "../../dsl/declarations.ts";
 import { f32, i32 } from "../../dsl/constructors.ts";
 import { forSample } from "../../dsl/loop.ts";
 import { compile } from "../../compile/index.ts";
@@ -19,7 +19,7 @@ import { defineProcessor } from "../../processor.ts";
 test("typed-array message compiles: proxy + payloadContent layout + payloadField emit", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const upload = message<{ samples: Float32Array }>({ name: "upload" });
+    const upload = event<{ samples: Float32Array }>({ from: "main", name: "upload" });
     const buf = state.buffer.f32({ size: 8 });
     const lenState = state.named("len").i32(0);
     return {
@@ -60,7 +60,7 @@ test("typed-array message compiles: buf.copyFrom(payload) bulk-copy emit path", 
   // (= memory.copy) が compile を通ることを検証する (= core coverage)。
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const upload = message<{ samples: Float32Array }>({ name: "upload" });
+    const upload = event<{ samples: Float32Array }>({ from: "main", name: "upload" });
     const buf = state.buffer.f32({ size: 8 });
     return {
       process: () => {
@@ -94,7 +94,11 @@ test("typed-array event compiles: emitIf(buffer + length) emit path + payloadCon
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
     const buf = state.buffer.f32({ size: 4 });
-    const result = event<{ data: Float32Array }>({ name: "result", payloadCapacity: 64 });
+    const result = event<{ data: Float32Array }>({
+      to: "main",
+      name: "result",
+      payloadCapacity: 64,
+    });
     return {
       process: () => {
         buf.write(0, f32(1));
@@ -122,7 +126,11 @@ test("typed-array event emitIf requires a length field (= guard)", () => {
   expect(() =>
     defineProcessor(() => {
       const buf = state.buffer.f32({ size: 4 });
-      const result = event<{ data: Float32Array }>({ name: "result", payloadCapacity: 64 });
+      const result = event<{ data: Float32Array }>({
+        to: "main",
+        name: "result",
+        payloadCapacity: 64,
+      });
       return {
         process: () => {
           // length ナシ = throw。
@@ -157,8 +165,8 @@ test("buf.copyFrom rejects a non-payload source (= 型外れ guard)", () => {
 test("同名の message と event は別の content region を持つ (= 名前空間 kind 別、alias 防止)", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const inMsg = message<{ x: Float32Array }>({ name: "dup" }); // main → worklet
-    const outEvt = event<{ x: Float32Array }>({ name: "dup", payloadCapacity: 64 }); // worklet → main
+    const inMsg = event<{ x: Float32Array }>({ from: "main", name: "dup" }); // main → worklet
+    const outEvt = event<{ x: Float32Array }>({ to: "main", name: "dup", payloadCapacity: 64 }); // worklet → main
     const buf = state.buffer.f32({ size: 4 });
     return {
       process: () => {
@@ -197,7 +205,7 @@ test("同名の message と event は別の content region を持つ (= 名前�
 test("payload に複数 typed-array field があると compile で reject する (§5.1 single-field limit)", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const msg = message<{ a: Float32Array; b: Float32Array }>({ name: "two" });
+    const msg = event<{ a: Float32Array; b: Float32Array }>({ from: "main", name: "two" });
     const buf = state.buffer.f32({ size: 4 });
     return {
       process: () => {
@@ -221,7 +229,7 @@ test("event emit: 後続 site が first で未 seal の typed-array field を足
     defineProcessor(() => {
       const out = audioOutput({ channels: 1, name: "main" });
       const buf = state.buffer.f32({ size: 4 });
-      const evt = event<{ a: number }>({ name: "evt", payloadCapacity: 64 });
+      const evt = event<{ a: number }>({ to: "main", name: "evt", payloadCapacity: 64 });
       return {
         process: () => {
           evt.emitIf(true, { atSample: 0, a: i32(1) }); // first site = [a] を seal

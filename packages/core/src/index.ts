@@ -55,22 +55,16 @@ export {
 } from "./dsl/primitives.ts";
 
 // Declaration helpers.
-export {
-  audioInput,
-  audioOutput,
-  event,
-  message,
-  midiInput,
-  midiOutput,
-  param,
-  state,
-} from "./dsl/declarations.ts";
+export { audioInput, audioOutput, event, param, state } from "./dsl/declarations.ts";
 
 export type {
   BufferChain,
-  EventOptions,
-  MessageOptions,
-  MidiPortOptions,
+  EventFamily,
+  EventFromMainOptions,
+  EventMidiFamily,
+  EventToMainOptions,
+  MidiFromMainOptions,
+  MidiToMainOptions,
   ParamChain,
   ParamOptions,
   StateChain,

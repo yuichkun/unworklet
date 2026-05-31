@@ -14,7 +14,7 @@ import { expect, test } from "vite-plus/test";
 import "../../dsl/primitives.ts";
 import { compile } from "../../compile/index.ts";
 import { f32 } from "../../dsl/constructors.ts";
-import { audioOutput, state, message } from "../../dsl/declarations.ts";
+import { event, audioOutput, state } from "../../dsl/declarations.ts";
 import { forSample } from "../../dsl/loop.ts";
 import { defineProcessor } from "../../processor.ts";
 import type {
@@ -67,7 +67,7 @@ test("typed-array surface: element 型契約は vp check の typecheck で検証
 test("u8 byte payload は buffer.u8 + copyFrom 経由で compile を通る (= 案A の置き換えパス)", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const up = message<{ bytes: Uint8Array }>({ name: "sysexIn" });
+    const up = event<{ bytes: Uint8Array }>({ from: "main", name: "sysexIn" });
     const buf = state.buffer.u8({ size: 16 });
     return {
       process: () => {

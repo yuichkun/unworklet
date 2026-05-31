@@ -6,7 +6,7 @@
  */
 
 import "@unworklet/core";
-import { defineProcessor, midiInput, midiOutput, state } from "@unworklet/core";
+import { defineProcessor, event, state } from "@unworklet/core";
 import { renderOffline } from "@unworklet/offline";
 import { expect, test } from "vite-plus/test";
 
@@ -16,8 +16,8 @@ import { expectMidiBalance, expectMidiOut, midi } from "./index.ts";
 // port (transposed up an octave), so the rendered result carries real MIDI.
 // Pure-MIDI processor — no audio I/O.
 const noteThru = defineProcessor(() => {
-  const inPort = midiInput({ name: "in" });
-  const outPort = midiOutput({ name: "out" });
+  const inPort = event.midi({ from: "main", name: "in" });
+  const outPort = event.midi({ to: "main", name: "out" });
   const note = state.i32(0);
   const vel = state.i32(0);
   const gateOn = state.bool(false);

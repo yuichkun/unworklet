@@ -19,7 +19,7 @@ import { expect, test, vi } from "vite-plus/test";
 import { compile } from "./compile/index.ts";
 import { CAPACITY_16, SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
 import { f32, num } from "./dsl/constructors.ts";
-import { audioInput, audioOutput, event, message, param, state } from "./dsl/declarations.ts";
+import { audioInput, audioOutput, event, param, state } from "./dsl/declarations.ts";
 import { forSample } from "./dsl/loop.ts";
 import { defineProcessor } from "./processor.ts";
 
@@ -144,7 +144,7 @@ test("`messageRings` is empty when no `message<T>` declarations exist", () => {
 test("`messageRings` reflects declared `message<T>` per-message ringbuffer descriptor", () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "out" });
-    message<{ slot: number }>({ name: "preset", capacity: 16 });
+    event<{ slot: number }>({ from: "main", name: "preset", capacity: 16 });
     return {
       process: () => {
         forSample((i) => {
@@ -169,7 +169,7 @@ test("`messageRings` reflects declared `message<T>` per-message ringbuffer descr
 test("`eventRings` reflects declared `event<T>` per-event ringbuffer descriptor", () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "out" });
-    const peakEvt = event<{ level: number }>({ name: "peak", capacity: 16 });
+    const peakEvt = event<{ level: number }>({ to: "main", name: "peak", capacity: 16 });
     return {
       process: () => {
         forSample((i) => {
@@ -726,7 +726,7 @@ const eventEmitProc = defineProcessor(() => {
   // gate state を 毎 quantum 開 始 で true に set + stateLoad を cond で 使 う =
   // Q32-c (= constant-truthy) を 構 文 上 回 避 + 動 的 fire path (= analyze pass)。
   const gate = stateDecl.named("gate").bool(true);
-  const peakEvt = event<{ level: number }>({ name: "peak", capacity: 16 });
+  const peakEvt = event<{ level: number }>({ to: "main", name: "peak", capacity: 16 });
   return {
     process: () => {
       gate.write(true);
@@ -832,7 +832,7 @@ test("event ring copy: eventRingsBuffer ナ シ processor は event path skip (=
 const messageRecvProc = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "out" });
   const captured = stateDecl.named("captured").i32(0);
-  const ctrl = message<{ slot: number }>({ name: "ctrl", capacity: 16 });
+  const ctrl = event<{ slot: number }>({ from: "main", name: "ctrl", capacity: 16 });
   return {
     process: () => {
       ctrl.onReceive(({ slot }) => {
@@ -934,7 +934,7 @@ test("message ring mirror: messageRingsBuffer ナ シ processor は message path
 const messagePostProc = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "out" });
   const captured = stateDecl.i32(0).expose({ name: "captured", publish: { rateFps: 30 } });
-  const ctrl = message<{ slot: number }>({ name: "ctrl", capacity: CAPACITY_16 });
+  const ctrl = event<{ slot: number }>({ from: "main", name: "ctrl", capacity: CAPACITY_16 });
   return {
     process: () => {
       ctrl.onReceive(({ slot }) => {

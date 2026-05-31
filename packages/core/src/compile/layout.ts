@@ -135,7 +135,7 @@ const PUBLISH_COUNTERS_BYTES = 8;
  * Per-event ringbuffer metadata (= `02-messaging.md` §4 header + §5.1 slot)。
  *
  * - `base`: ring 全 体 (= header + slot 列) の memory offset
- * - `capacity`: slot 数 (= `event<T>({ capacity })` の override or default 256)
+ * - `capacity`: slot 数 (= `event<T>({ to: 'main', capacity })` の override or default 256)
  * - `slotSize`: 1 slot の byte 数 (= atSample + Σ field)
  * - `fields`: slot 内 per-field 内 訳 (= atSample を 含 む、 emit / drain で
  *   offset 引 き 用)。 field 並 び = atSample 先 頭、 残 り は 1 番 目 emit site

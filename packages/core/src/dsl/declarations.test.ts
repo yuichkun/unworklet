@@ -9,16 +9,7 @@
 import { expect, test } from "vite-plus/test";
 
 import { newCaptureContext, runCapture, unwrapAst, wrapAst } from "../compile/capture.ts";
-import {
-  audioInput,
-  audioOutput,
-  event,
-  message,
-  midiInput,
-  midiOutput,
-  param,
-  state,
-} from "./declarations.ts";
+import { audioInput, audioOutput, event, param, state } from "./declarations.ts";
 import { forSample } from "./loop.ts";
 import { add, gt } from "./primitives.ts";
 
@@ -52,15 +43,15 @@ test("`param.expose({ name, snapshot })` sets the param name + snapshot policy",
 // ─────────────────────────────────────────────────────────────────────────
 
 test("`midiInput` / `midiOutput` outside `defineProcessor` body throw", () => {
-  expect(() => midiInput({ name: "mIn" })).toThrow(/outside `defineProcessor` body/);
-  expect(() => midiOutput({ name: "mOut" })).toThrow(/outside `defineProcessor` body/);
+  expect(() => event.midi({ from: "main", name: "mIn" })).toThrow(/outside `defineProcessor` body/);
+  expect(() => event.midi({ to: "main", name: "mOut" })).toThrow(/outside `defineProcessor` body/);
 });
 
 test("`midiInput` / `midiOutput` register declarations with default capacity 256", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const inHandle = midiInput({ name: "mIn" });
-    const outHandle = midiOutput({ name: "mOut", capacity: 1024 });
+    const inHandle = event.midi({ from: "main", name: "mIn" });
+    const outHandle = event.midi({ to: "main", name: "mOut", capacity: 1024 });
     expect(inHandle.name).toBe("mIn");
     expect(outHandle.name).toBe("mOut");
   });
@@ -73,7 +64,7 @@ test("`midiInput` / `midiOutput` register declarations with default capacity 256
 test("`midiInput().onEvent(type, handler)` captures a midiOnEvent statement", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const midi = midiInput({ name: "mIn" });
+    const midi = event.midi({ from: "main", name: "mIn" });
     midi.onEvent("noteOn", () => {});
   });
   const stmt = ctx.statements.at(-1)!;
@@ -1107,33 +1098,33 @@ test("既 declared 別 state の name に `.named()` で 移 動 で collide", (
 // ─────────────────────────────────────────────────────────────────────────
 
 test("`event` outside `defineProcessor` body throws", () => {
-  expect(() => event({ name: "evt" })).toThrow(/outside `defineProcessor` body/);
+  expect(() => event({ to: "main", name: "evt" })).toThrow(/outside `defineProcessor` body/);
 });
 
-test("`event({ name })` registers an `event` declaration with default capacity 256", () => {
+test("`event({ to: 'main', name })` registers an `event` declaration with default capacity 256", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    event({ name: "peak" });
+    event({ to: "main", name: "peak" });
   });
   expect(ctx.declarations).toEqual([
     { kind: "event", name: "peak", capacity: 256, payloadCapacity: undefined, fields: [] },
   ]);
 });
 
-test("`event({ name, capacity })` accepts capacity override", () => {
+test("`event({ to: 'main', name, capacity })` accepts capacity override", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    event({ name: "peak", capacity: 32 });
+    event({ to: "main", name: "peak", capacity: 32 });
   });
   expect(ctx.declarations).toEqual([
     { kind: "event", name: "peak", capacity: 32, payloadCapacity: undefined, fields: [] },
   ]);
 });
 
-test("`event({ name, payloadCapacity })` accepts payloadCapacity option", () => {
+test("`event({ to: 'main', name, payloadCapacity })` accepts payloadCapacity option", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    event({ name: "spectrum", payloadCapacity: 4096 });
+    event({ to: "main", name: "spectrum", payloadCapacity: 4096 });
   });
   expect(ctx.declarations).toEqual([
     { kind: "event", name: "spectrum", capacity: 256, payloadCapacity: 4096, fields: [] },
@@ -1143,7 +1134,7 @@ test("`event({ name, payloadCapacity })` accepts payloadCapacity option", () => 
 test("`event` returns a handle carrying `name`", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const handle = event({ name: "peak" });
+    const handle = event({ to: "main", name: "peak" });
     expect(handle.name).toBe("peak");
   });
 });
@@ -1152,8 +1143,8 @@ test("重 複 `event` name = graph-capture-time error", () => {
   const ctx = newCaptureContext();
   expect(() =>
     runCapture(ctx, () => {
-      event({ name: "shared" });
-      event({ name: "shared" });
+      event({ to: "main", name: "shared" });
+      event({ to: "main", name: "shared" });
     }),
   ).toThrow(/duplicate event declaration name "shared"/);
 });
@@ -1162,7 +1153,7 @@ test("`event` を declare し て emit ナ シ で も silent OK (= unused decla
   // `01-dsl.md` §3.4 + canonical Ex 5 grainSpawned (emit ナ シ path) 規 範。
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    event<{ voice: number; pos: number }>({ name: "grainSpawned" });
+    event<{ voice: number; pos: number }>({ to: "main", name: "grainSpawned" });
   });
   expect(ctx.declarations).toHaveLength(1);
   expect(ctx.declarations[0]).toMatchObject({ kind: "event", name: "grainSpawned", fields: [] });
@@ -1175,7 +1166,7 @@ test("`event` を declare し て emit ナ シ で も silent OK (= unused decla
 test("`emitIf(true, payload)` per-block top-level で eventEmitIf statement を append", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const evt = event<{ level: number }>({ name: "peak" });
+    const evt = event<{ level: number }>({ to: "main", name: "peak" });
     evt.emitIf(true, { atSample: 0, level: 0.5 });
   });
   expect(ctx.statements).toHaveLength(1);
@@ -1197,7 +1188,7 @@ test("`emitIf(true, payload)` per-block top-level で eventEmitIf statement を 
 test("`emitIf(false, payload)` も AST に capture (= fold は 後 続 analyze で)", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const evt = event<{ level: number }>({ name: "peak" });
+    const evt = event<{ level: number }>({ to: "main", name: "peak" });
     evt.emitIf(false, { atSample: 0, level: 0.5 });
   });
   expect(ctx.statements[0]).toMatchObject({
@@ -1209,7 +1200,7 @@ test("`emitIf(false, payload)` も AST に capture (= fold は 後 続 analyze �
 test("`emitIf` `forSample` 内 = loop body に append (= top statements に は 出 な い)", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const evt = event<{ level: number }>({ name: "peak" });
+    const evt = event<{ level: number }>({ to: "main", name: "peak" });
     forSample(() => {
       evt.emitIf(true, { atSample: 0, level: 0.25 });
     });
@@ -1231,7 +1222,7 @@ test("`emitIf` `forSample` 内 = loop body に append (= top statements に は 
 test("atSample 省 略 = `forSample` 内 で loopCounter (= i) を default lift", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const evt = event<{ level: number }>({ name: "peak" });
+    const evt = event<{ level: number }>({ to: "main", name: "peak" });
     forSample(() => {
       evt.emitIf(true, { level: 0.5 });
     });
@@ -1247,7 +1238,7 @@ test("atSample 省 略 = `forSample` 内 で loopCounter (= i) を default lift"
 test("atSample 省 略 = per-block top で literal 0 を default lift", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const evt = event<{ level: number }>({ name: "peak" });
+    const evt = event<{ level: number }>({ to: "main", name: "peak" });
     evt.emitIf(true, { level: 0.5 });
   });
   expect(ctx.statements[0]).toMatchObject({
@@ -1259,7 +1250,7 @@ test("atSample 省 略 = per-block top で literal 0 を default lift", () => {
 test("atSample 明 示 = `forSample` 内 で も user override 通 過 (= number literal)", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const evt = event<{ level: number }>({ name: "peak" });
+    const evt = event<{ level: number }>({ to: "main", name: "peak" });
     forSample(() => {
       evt.emitIf(true, { atSample: 42, level: 0.5 });
     });
@@ -1276,7 +1267,7 @@ test("atSample 明 示 = `forSample` 内 で Node<'i32'> override 通 過", () =
   // user が i 以 外 の sample-offset 計 算 を 明 示 で 渡 す path = override 維 持。
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const evt = event<{ level: number }>({ name: "peak" });
+    const evt = event<{ level: number }>({ to: "main", name: "peak" });
     forSample(() => {
       // loopCounter を 明 示 で 渡 す = override path (= default と 結 果 同 値 だ が
       // 経 路 が 違 う = user 明 示 path も regression を 拾 う)
@@ -1295,7 +1286,7 @@ test("atSample 明 示 = `forSample` 内 で Node<'i32'> override 通 過", () =
 test("atSample 明 示 = per-block top で user override 通 過 (= 任 意 i32 literal)", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const evt = event<{ level: number }>({ name: "peak" });
+    const evt = event<{ level: number }>({ to: "main", name: "peak" });
     evt.emitIf(true, { atSample: 64, level: 0.5 });
   });
   expect(ctx.statements[0]).toMatchObject({
@@ -1308,7 +1299,7 @@ test("atSample 不 正 型 (= string) = throw (= override path で 不 正 値 r
   const ctx = newCaptureContext();
   expect(() =>
     runCapture(ctx, () => {
-      const evt = event<{ level: number }>({ name: "peak" });
+      const evt = event<{ level: number }>({ to: "main", name: "peak" });
       // @ts-expect-error — atSample に string = 不 正 型
       evt.emitIf(true, { atSample: "0", level: 0.5 });
     }),
@@ -1318,7 +1309,7 @@ test("atSample 不 正 型 (= string) = throw (= override path で 不 正 値 r
 test("Q71: 1 番 目 emit site で field wire 型 を seal (= number → f32 default)", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const evt = event<{ level: number }>({ name: "peak" });
+    const evt = event<{ level: number }>({ to: "main", name: "peak" });
     evt.emitIf(true, { atSample: 0, level: 0.5 });
     const decl = ctx.declarations.find((d) => d.kind === "event");
     if (decl?.kind !== "event") throw new Error("expected event decl");
@@ -1329,7 +1320,7 @@ test("Q71: 1 番 目 emit site で field wire 型 を seal (= number → f32 def
 test("Q71: 同 wire 型 で 後 続 emit site = 受 容", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const evt = event<{ level: number }>({ name: "peak" });
+    const evt = event<{ level: number }>({ to: "main", name: "peak" });
     evt.emitIf(true, { atSample: 0, level: 0.5 });
     evt.emitIf(true, { atSample: 0, level: 0.25 });
   });
@@ -1340,7 +1331,7 @@ test("Q71: wire 型 不 一 致 = graph-capture-time error (= event-field-type-m
   const ctx = newCaptureContext();
   expect(() =>
     runCapture(ctx, () => {
-      const evt = event<{ level: number }>({ name: "peak" });
+      const evt = event<{ level: number }>({ to: "main", name: "peak" });
       evt.emitIf(true, { atSample: 0, level: 0.5 });
       // 2 番 目 emit site で boolean field 値 → wireType = bool で seal 不 一 致
       evt.emitIf(true, { atSample: 0, level: true as unknown as number });
@@ -1355,7 +1346,7 @@ test("Q71: field set 縮 小 = graph-capture-time error (= missing field)", () =
   const ctx = newCaptureContext();
   expect(() =>
     runCapture(ctx, () => {
-      const evt = event<{ level: number; channel: number }>({ name: "peak" });
+      const evt = event<{ level: number; channel: number }>({ to: "main", name: "peak" });
       evt.emitIf(true, { atSample: 0, level: 0.5, channel: 0 });
       (evt as unknown as { emitIf: (c: boolean, p: Record<string, unknown>) => void }).emitIf(
         true,
@@ -1372,7 +1363,7 @@ test("Q71: 新 field を 後 続 emit site で 導 入 = error", () => {
   const ctx = newCaptureContext();
   expect(() =>
     runCapture(ctx, () => {
-      const evt = event<{ level: number; channel: number }>({ name: "peak" });
+      const evt = event<{ level: number; channel: number }>({ to: "main", name: "peak" });
       (evt as unknown as { emitIf: (c: boolean, p: Record<string, unknown>) => void }).emitIf(
         true,
         { atSample: 0, level: 0.5 },
@@ -1385,7 +1376,7 @@ test("Q71: 新 field を 後 続 emit site で 導 入 = error", () => {
 test("`emitIf` Node<'bool'> cond = unwrapAst で AST 化", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const evt = event<{ level: number }>({ name: "peak" });
+    const evt = event<{ level: number }>({ to: "main", name: "peak" });
     const condNode = wrapAst<"bool">({ kind: "literal", type: "i32", value: 1 });
     evt.emitIf(condNode, { atSample: 0, level: 0.5 });
   });
@@ -1398,7 +1389,7 @@ test("`emitIf` Node<'bool'> cond = unwrapAst で AST 化", () => {
 test("`emitIf` Node<'i32'> atSample = unwrapAst で AST 化", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const evt = event<{ level: number }>({ name: "peak" });
+    const evt = event<{ level: number }>({ to: "main", name: "peak" });
     const atSampleNode = wrapAst<"i32">({ kind: "loopCounter" });
     evt.emitIf(true, { atSample: atSampleNode, level: 0.5 });
   });
@@ -1412,7 +1403,7 @@ test("`emitIf` field 値 が 不 正 型 = throw", () => {
   const ctx = newCaptureContext();
   expect(() =>
     runCapture(ctx, () => {
-      const evt = event<{ level: number }>({ name: "peak" });
+      const evt = event<{ level: number }>({ to: "main", name: "peak" });
       // @ts-expect-error — 不 正 field 型 (= string)
       evt.emitIf(true, { atSample: 0, level: "hi" });
     }),
@@ -1422,7 +1413,7 @@ test("`emitIf` field 値 が 不 正 型 = throw", () => {
 test("Q71: Node<'i32'> field 値 = wireType i32 で seal", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const evt = event<{ tick: number }>({ name: "ticker" });
+    const evt = event<{ tick: number }>({ to: "main", name: "ticker" });
     const tickNode = wrapAst<"i32">({ kind: "loopCounter" });
     evt.emitIf(true, { atSample: 0, tick: tickNode });
     const decl = ctx.declarations.find((d) => d.kind === "event");
@@ -1434,7 +1425,7 @@ test("Q71: Node<'i32'> field 値 = wireType i32 で seal", () => {
 test("Q71: bool field 値 = wireType bool で seal", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const evt = event<{ flag: boolean }>({ name: "flagger" });
+    const evt = event<{ flag: boolean }>({ to: "main", name: "flagger" });
     evt.emitIf(true, { atSample: 0, flag: true });
     const decl = ctx.declarations.find((d) => d.kind === "event");
     if (decl?.kind !== "event") throw new Error("expected event decl");
@@ -1448,7 +1439,7 @@ test("Q71: number literal は seal 済 wire 型 (= i32) に lift", () => {
   // 異 な る path)。
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const evt = event<{ tick: number }>({ name: "ticker" });
+    const evt = event<{ tick: number }>({ to: "main", name: "ticker" });
     const tickNode = wrapAst<"i32">({ kind: "loopCounter" });
     evt.emitIf(true, { atSample: 0, tick: tickNode });
     evt.emitIf(true, { atSample: 0, tick: 42 });
@@ -1461,7 +1452,7 @@ test("Q71: number literal は seal 済 wire 型 (= i32) に lift", () => {
 test("inferAstType: literal Node field 値 = literal.type 由 来 で seal", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const evt = event<{ value: number }>({ name: "lit" });
+    const evt = event<{ value: number }>({ to: "main", name: "lit" });
     const litF64 = wrapAst<"f64">({ kind: "literal", type: "f64", value: 1.5 });
     evt.emitIf(true, { atSample: 0, value: litF64 });
     const decl = ctx.declarations.find((d) => d.kind === "event");
@@ -1473,7 +1464,7 @@ test("inferAstType: literal Node field 値 = literal.type 由 来 で seal", () 
 test("inferAstType: mul Node field 値 = mul.type 由 来 で seal", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const evt = event<{ value: number }>({ name: "muller" });
+    const evt = event<{ value: number }>({ to: "main", name: "muller" });
     const lhs = wrapAst<"f32">({ kind: "literal", type: "f32", value: 0.5 });
     const rhs = wrapAst<"f32">({ kind: "literal", type: "f32", value: 0.25 });
     const mulNode = wrapAst<"f32">({
@@ -1493,7 +1484,7 @@ test("inferAstType: audioInRead Node field 値 = f32 で seal", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const input = audioInput({ channels: 1, name: "main" });
-    const evt = event<{ value: number }>({ name: "echo" });
+    const evt = event<{ value: number }>({ to: "main", name: "echo" });
     evt.emitIf(true, { atSample: 0, value: input.ch(0).at(0) });
     const decl = ctx.declarations.find((d) => d.kind === "event");
     if (decl?.kind !== "event") throw new Error("expected event decl");
@@ -1510,7 +1501,7 @@ test("inferAstType: paramAt Node field 値 = f32 で seal", () => {
       max: 1,
       automationRate: "a-rate",
     });
-    const evt = event<{ value: number }>({ name: "echo" });
+    const evt = event<{ value: number }>({ to: "main", name: "echo" });
     evt.emitIf(true, { atSample: 0, value: gain.at(0) });
     const decl = ctx.declarations.find((d) => d.kind === "event");
     if (decl?.kind !== "event") throw new Error("expected event decl");
@@ -1522,7 +1513,7 @@ test("inferAstType: stateLoad Node field 値 = state.type 由 来 で seal", () 
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const z = state.named("z").f64(0);
-    const evt = event<{ value: number }>({ name: "echo" });
+    const evt = event<{ value: number }>({ to: "main", name: "echo" });
     evt.emitIf(true, { atSample: 0, value: z.read() });
     const decl = ctx.declarations.find((d) => d.kind === "event");
     if (decl?.kind !== "event") throw new Error("expected event decl");
@@ -1537,7 +1528,7 @@ test("inferAstType: statement kind が AST で 来 る = throw (= defensive guar
   const ctx = newCaptureContext();
   expect(() =>
     runCapture(ctx, () => {
-      const evt = event<{ value: number }>({ name: "echo" });
+      const evt = event<{ value: number }>({ to: "main", name: "echo" });
       const stmtAst = {
         kind: "stateStore",
         type: "i32",
@@ -1577,23 +1568,23 @@ test("`state.expose({ name })` 同 name 再 set = userNamed promote", () => {
 // ─────────────────────────────────────────────────────────────────────────
 
 test("`message` outside `defineProcessor` body throws", () => {
-  expect(() => message({ name: "msg" })).toThrow(/outside `defineProcessor` body/);
+  expect(() => event({ from: "main", name: "msg" })).toThrow(/outside `defineProcessor` body/);
 });
 
-test("`message({ name })` registers a `message` declaration with default capacity 256", () => {
+test("`event({ from: 'main', name })` registers a `message` declaration with default capacity 256", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    message({ name: "reset" });
+    event({ from: "main", name: "reset" });
   });
   expect(ctx.declarations).toEqual([
     { kind: "message", name: "reset", capacity: 256, payloadCapacity: undefined, fields: [] },
   ]);
 });
 
-test("`message({ name, capacity })` accepts capacity override", () => {
+test("`event({ from: 'main', name, capacity })` accepts capacity override", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    message({ name: "preset", capacity: 16 });
+    event({ from: "main", name: "preset", capacity: 16 });
   });
   expect(ctx.declarations[0]).toMatchObject({
     kind: "message",
@@ -1605,7 +1596,7 @@ test("`message({ name, capacity })` accepts capacity override", () => {
 test("`message` returns a handle carrying `name`", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const handle = message({ name: "preset" });
+    const handle = event({ from: "main", name: "preset" });
     expect(handle.name).toBe("preset");
   });
 });
@@ -1614,8 +1605,8 @@ test("重 複 `message` name = graph-capture-time error", () => {
   const ctx = newCaptureContext();
   expect(() =>
     runCapture(ctx, () => {
-      message({ name: "shared" });
-      message({ name: "shared" });
+      event({ from: "main", name: "shared" });
+      event({ from: "main", name: "shared" });
     }),
   ).toThrow(/duplicate message declaration name "shared"/);
 });
@@ -1623,7 +1614,7 @@ test("重 複 `message` name = graph-capture-time error", () => {
 test("`messageDecl.onReceive(handler)` で 統 計 ナ シ handler を build-time eval し て AST `messageOnReceive` を statements に push", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const reset = message<{ slot: number }>({ name: "reset" });
+    const reset = event<{ slot: number }>({ from: "main", name: "reset" });
     reset.onReceive(() => {
       // body 内 で AST 構 築 ナ シ = 空 handler
     });
@@ -1639,7 +1630,7 @@ test("`messageDecl.onReceive(handler)` で 統 計 ナ シ handler を build-tim
 test("`messageDecl.onReceive` 複 数 registration = source order で statements に 並 ぶ (= Q38-c)", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const reset = message<{ slot: number }>({ name: "reset" });
+    const reset = event<{ slot: number }>({ from: "main", name: "reset" });
     reset.onReceive(() => {});
     reset.onReceive(() => {});
   });
@@ -1654,7 +1645,7 @@ test("`messageDecl.onReceive` handler 引 数 = Q46 lift proxy で field access 
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const z = state.named("counter").i32(0);
-    const reset = message<{ slot: number }>({ name: "reset" });
+    const reset = event<{ slot: number }>({ from: "main", name: "reset" });
     reset.onReceive(({ slot }) => {
       z.write(slot);
     });
@@ -1677,7 +1668,7 @@ test("`messageDecl.onReceive` handler 引 数 = Q46 lift proxy で field access 
 test("`message` を declare し て onReceive ナ シ で も silent OK (= unused declaration)", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    message<{ slot: number }>({ name: "preset" });
+    event<{ slot: number }>({ from: "main", name: "preset" });
   });
   expect(ctx.declarations).toHaveLength(1);
   expect(ctx.declarations[0]).toMatchObject({ kind: "message", name: "preset" });
@@ -1688,7 +1679,7 @@ test("`messageDecl.onReceive` 同 field を 複 数 回 access し て も decl.
   // 複 数 回 access し て も、 decl.fields は 1 件 で seal (= proxy が 既 hit を check)。
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const reset = message<{ slot: number }>({ name: "reset" });
+    const reset = event<{ slot: number }>({ from: "main", name: "reset" });
     reset.onReceive((payload) => {
       void (payload as Record<string, unknown>)["slot"];
       void (payload as Record<string, unknown>)["slot"];
@@ -1706,7 +1697,7 @@ test("`messageDecl.onReceive` typed-array field = `.at` / `.length` で payload 
   runCapture(ctx, () => {
     const buf = state.buffer.f32({ size: 4 });
     const lenState = state.named("len").i32(0);
-    const upload = message<{ samples: Float32Array }>({ name: "upload" });
+    const upload = event<{ samples: Float32Array }>({ from: "main", name: "upload" });
     upload.onReceive(({ samples }) => {
       lenState.write(samples.length);
       buf.write(0, samples.at(0));
@@ -1726,8 +1717,8 @@ test("inferAstType: messageFieldRead Node を event emit field に 渡 す = wir
   // Node<'i32'> を 渡 す path = event decl.fields に i32 で seal さ れ る。
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const msg = message<{ slot: number }>({ name: "preset" });
-    const evt = event<{ value: number }>({ name: "ack" });
+    const msg = event<{ slot: number }>({ from: "main", name: "preset" });
+    const evt = event<{ value: number }>({ to: "main", name: "ack" });
     msg.onReceive(({ slot }) => {
       evt.emitIf(true, { atSample: 0, value: slot });
     });
@@ -1746,7 +1737,7 @@ test("`emitIf` field 値 が 算 術 node → wireType f32 (= inferAstType 網 �
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const input = audioInput({ channels: 1, name: "main" });
-    const evt = event<{ level: number }>({ name: "peak" });
+    const evt = event<{ level: number }>({ to: "main", name: "peak" });
     forSample((i) => {
       evt.emitIf(true, { atSample: i, level: add(input.ch(0).at(i), 1) });
     });
@@ -1760,7 +1751,7 @@ test("`emitIf` field 値 が 比 較 node → wireType bool (= inferAstType 網 
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const input = audioInput({ channels: 1, name: "main" });
-    const evt = event<{ hot: boolean }>({ name: "gate" });
+    const evt = event<{ hot: boolean }>({ to: "main", name: "gate" });
     forSample((i) => {
       evt.emitIf(true, { atSample: i, hot: gt(input.ch(0).at(i), 0.5) });
     });

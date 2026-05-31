@@ -19,9 +19,6 @@ import {
   i32,
   inspectSnapshot,
   lt,
-  message,
-  midiInput,
-  midiOutput,
   num,
   param,
   select,
@@ -133,17 +130,17 @@ const PATTERN_LEN = 4;
 
 const arpeggiator = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
-  const noteIn = midiInput({ name: "noteIn" });
-  const arpOut = midiOutput({ name: "arpOut" });
+  const noteIn = event.midi({ from: "main", name: "noteIn" });
+  const arpOut = event.midi({ to: "main", name: "arpOut" });
   const pattern: State<"i32">[] = [];
   for (let s = 0; s < PATTERN_LEN; s++) pattern.push(state.i32(0).named(`step_${s}`));
-  const loadPattern = message<{ steps: Float32Array }>({ name: "loadPattern" });
+  const loadPattern = event<{ steps: Float32Array }>({ from: "main", name: "loadPattern" });
   const rootNote = state.i32(60).named("rootNote");
   const lastVel = state.i32(96).named("lastVel");
   const stepIdx = state.i32(0).named("stepIdx");
   const samplesPerStep = state.i32(64).named("samplesPerStep"); // small for test
   const sampleAccum = state.i32(0);
-  const stepFired = event<{ step: number; note: number }>({ name: "stepFired" });
+  const stepFired = event<{ step: number; note: number }>({ to: "main", name: "stepFired" });
   return {
     process: () => {
       loadPattern.onReceive(({ steps }) => {
@@ -233,7 +230,7 @@ test("Ex8 polysynth voice: noteOn drives a non-silent, stable signal", async () 
   const NUM_VOICES = 4;
   const synth = defineProcessor((ctx) => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const keys = midiInput({ name: "keys" });
+    const keys = event.midi({ from: "main", name: "keys" });
     const voiceNote: State<"i32">[] = [];
     const voiceGate: State<"bool">[] = [];
     for (let v = 0; v < NUM_VOICES; v++) {
@@ -304,7 +301,7 @@ test("Ex4 limiter: delay line + envelope + overshoot event fire on ceiling cross
     const dly = state.buffer.f32({ size: LOOKAHEAD });
     const dlyHead = state.i32(0);
     const env = state.f32(0);
-    const overshoot = event<{ level: number }>({ name: "overshoot" });
+    const overshoot = event<{ level: number }>({ to: "main", name: "overshoot" });
     return {
       process: () => {
         // release coefficient uses ctx.sampleRate (= the rate-fix path).
@@ -371,7 +368,7 @@ function makeReverb(withMigrationTo?: string) {
       const ir = state.buffer.f32({ size: IR_LEN }).expose({ name: "ir", snapshot: "persistent" });
       const hist = state.buffer.f32({ size: IR_LEN });
       const histHead = state.i32(0);
-      const uploadIR = message<{ ir: Float32Array }>({ name: "uploadIR" });
+      const uploadIR = event<{ ir: Float32Array }>({ from: "main", name: "uploadIR" });
       return {
         process: () => {
           uploadIR.onReceive(({ ir: incoming }) => {
