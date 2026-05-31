@@ -144,36 +144,61 @@ export function encodeSnapshot(
 export function decodeSnapshot(blob: Uint8Array): DecodedSnapshot {
   const dv = new DataView(blob.buffer, blob.byteOffset, blob.byteLength);
   let p = 0;
+  // Bounds guard: a corrupt / truncated blob must fail loud with a clear error
+  // rather than a raw DataView RangeError or a silently-short subarray / slice
+  // (= a declared length overrunning the buffer reads garbage / zero-pads).
+  const need = (n: number): void => {
+    if (n < 0 || p + n > blob.byteLength) {
+      throw new Error(
+        `unworklet: corrupt or truncated snapshot blob (need ${n} bytes at offset ${p}, ` +
+          `have ${blob.byteLength}). (stable ID 'snapshot-decode-bounds')`,
+      );
+    }
+  };
+  need(4);
   if (dv.getUint32(p, true) !== MAGIC) {
     throw new Error("unworklet: not a valid snapshot blob (bad magic)");
   }
   p += 4;
+  need(4);
   const version = dv.getUint32(p, true);
   p += 4;
+  need(4);
   const hashLen = dv.getUint32(p, true);
   p += 4;
+  need(hashLen);
   const schemaHash = utf8d.decode(blob.subarray(p, p + hashLen));
   p += hashLen;
+  need(1);
   const hasProfile = dv.getUint8(p) === 1;
   p += 1;
+  need(4);
   const profileLen = dv.getUint32(p, true);
   p += 4;
+  need(profileLen);
   const profile = hasProfile ? utf8d.decode(blob.subarray(p, p + profileLen)) : null;
   p += profileLen;
+  need(4);
   const slotCount = dv.getUint32(p, true);
   p += 4;
   const slots: SnapshotSlot[] = [];
   for (let i = 0; i < slotCount; i++) {
+    need(4);
     const nameLen = dv.getUint32(p, true);
     p += 4;
+    need(nameLen);
     const name = utf8d.decode(blob.subarray(p, p + nameLen));
     p += nameLen;
+    need(1);
     const kind = KIND_BY_CODE[dv.getUint8(p)]!;
     p += 1;
+    need(1);
     const type = TYPE_BY_CODE[dv.getUint8(p)]!;
     p += 1;
+    need(4);
     const dataLen = dv.getUint32(p, true);
     p += 4;
+    need(dataLen);
     slots.push({ name, kind, type, data: blob.slice(p, p + dataLen) });
     p += dataLen;
   }

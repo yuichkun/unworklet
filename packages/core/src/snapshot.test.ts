@@ -54,6 +54,23 @@ test("decode rejects a non-snapshot byte array", () => {
   expect(() => decodeSnapshot(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]))).toThrow(/bad magic/);
 });
 
+test("decode throws a clear error on a truncated blob (not a raw RangeError / silent data)", () => {
+  const full = encodeSnapshot("schema", null, [
+    { name: "gain", kind: "state", type: "f32", data: encodeScalar("f32", 0.5) },
+  ]);
+  // Cut the slot's 4-byte payload short: the magic + header are intact, but the
+  // declared dataLen now overruns the buffer. Without bounds checks this either
+  // throws a raw DataView RangeError or silently returns a short `data` slice.
+  const truncated = full.slice(0, full.length - 3);
+  expect(() => decodeSnapshot(truncated)).toThrow(/corrupt or truncated/i);
+});
+
+test("decode throws a clear error when the header is cut mid-field", () => {
+  const full = encodeSnapshot("schema", null, []);
+  // 6 bytes = magic (4) + half of the version word → the next read overruns.
+  expect(() => decodeSnapshot(full.slice(0, 6))).toThrow(/corrupt or truncated/i);
+});
+
 test("inspect decodes values per slot kind", () => {
   const blob = encodeSnapshot("schemaX", null, [
     { name: "gain", kind: "param", type: "f32", data: encodeScalar("f32", 0.5) },
