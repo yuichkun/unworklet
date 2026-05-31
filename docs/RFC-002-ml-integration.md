@@ -88,13 +88,13 @@ unworklet は TypeScript で書い た audio DSP を pure WASM artifact とし�
 
 NN を unworklet と 組 み 合 わ せ る 際、 model 規 模 と 推論 rate で path が 分 か れ る。
 
-| NN 規模 | 推論 rate | 推奨 path | 代表例 |
-|---|---|---|---|
-| 小 (~ 数万 param) | per-sample (audio rate) | **AOT** (`@unworklet/onnx` / `@unworklet/nam`) | NAM amp model |
-| 小 (~ 数万 param) | per-block (~ ms) | AOT or runtime | DDSP control parameter |
-| 中 (~ 数百万 param) | per-block | **runtime bridge** | CREPE pitch detector |
-| 中 (~ 数百万 param) | per-second 〜 | runtime bridge | AI mastering settings |
-| 大 (~ 数億 param) | per-second 〜 | **runtime bridge + WebGPU** | RAVE timbre transfer、 Demucs |
+| NN 規模             | 推論 rate               | 推奨 path                                      | 代表例                        |
+| ------------------- | ----------------------- | ---------------------------------------------- | ----------------------------- |
+| 小 (~ 数万 param)   | per-sample (audio rate) | **AOT** (`@unworklet/onnx` / `@unworklet/nam`) | NAM amp model                 |
+| 小 (~ 数万 param)   | per-block (~ ms)        | AOT or runtime                                 | DDSP control parameter        |
+| 中 (~ 数百万 param) | per-block               | **runtime bridge**                             | CREPE pitch detector          |
+| 中 (~ 数百万 param) | per-second 〜           | runtime bridge                                 | AI mastering settings         |
+| 大 (~ 数億 param)   | per-second 〜           | **runtime bridge + WebGPU**                    | RAVE timbre transfer、 Demucs |
 
 判 断 基 準 を framework が 自 動 推 論 す る か、 user が build option で 明示 す る か は 実装 時 ratify。 提案 と し て は **model file の metadata + build option の hybrid**。 デ フ ォ ル ト は file size + parameter 数 か ら framework が auto-decide、 必要 な ら `loadOnnxModel('./model.onnx', { path: 'aot' })` で 強 制。
 
@@ -105,22 +105,23 @@ User が 書 く コード を 中 心 に 提案 を 示 す。 既 存 unworkl
 ### 4.1 Case A — NAM (neural amp modeler) AOT path
 
 ```typescript
-import { defineProcessor, audioInput, audioOutput, forSample } from '@unworklet/core';
-import { loadNamModel } from '@unworklet/nam';
+import { defineProcessor, audioInput, audioOutput, forSample } from "@unworklet/core";
+import { loadNamModel } from "@unworklet/nam";
 
 // build 時 に bundle、 AOT で WASM 内 に 展開 さ れ る
-const ampModel = loadNamModel('./marshall-jcm800.nam');
+const ampModel = loadNamModel("./marshall-jcm800.nam");
 
 export const ampPlugin = defineProcessor(() => {
-  const input = audioInput({ channels: 1, name: 'main' });
-  const out = audioOutput({ channels: 1, name: 'main' });
+  const input = audioInput({ channels: 1, name: "main" });
+  const out = audioOutput({ channels: 1, name: "main" });
 
   return {
-    process: () => forSample((i) => {
-      const x = input.ch(0).at(i);
-      const y = ampModel.process(x); // NN forward pass、 fused WASM 内 inline
-      out.ch(0).at(i).write(y);
-    })
+    process: () =>
+      forSample((i) => {
+        const x = input.ch(0).at(i);
+        const y = ampModel.process(x); // NN forward pass、 fused WASM 内 inline
+        out.ch(0).at(i).write(y);
+      }),
   };
 });
 ```
@@ -132,35 +133,40 @@ User の mental model = 「**NN は 単 な る `process(input) → output` の 
 ### 4.2 Case B — DDSP synthesizer (control NN は AOT、 audio rate は 古典 DSP)
 
 ```typescript
-import { defineProcessor, audioOutput, param, state, buffer, forSample } from '@unworklet/core';
-import { loadDdspModel, harmonicSynth, filteredNoise } from '@unworklet/ddsp';
+import { defineProcessor, audioOutput, param, state, buffer, forSample } from "@unworklet/core";
+import { loadDdspModel, harmonicSynth, filteredNoise } from "@unworklet/ddsp";
 
-const violinTimbre = loadDdspModel('./violin-trained.ddsp');
+const violinTimbre = loadDdspModel("./violin-trained.ddsp");
 
 export const violinSynth = defineProcessor(() => {
-  const out = audioOutput({ channels: 1, name: 'main' });
-  const pitch = param.f32({ default: 440, min: 50, max: 1000, automationRate: 'a-rate' }).named('pitch');
-  const loudness = param.f32({ default: 0.5, min: 0, max: 1, automationRate: 'a-rate' }).named('loudness');
+  const out = audioOutput({ channels: 1, name: "main" });
+  const pitch = param
+    .f32({ default: 440, min: 50, max: 1000, automationRate: "a-rate" })
+    .named("pitch");
+  const loudness = param
+    .f32({ default: 0.5, min: 0, max: 1, automationRate: "a-rate" })
+    .named("loudness");
 
   // DDSP control parameter (NN 出力) を hold す る state
-  const harmAmps = buffer.f32({ size: 64 }).named('harmAmps');
-  const noiseSpec = buffer.f32({ size: 32 }).named('noiseSpec');
+  const harmAmps = buffer.f32({ size: 64 }).named("harmAmps");
+  const noiseSpec = buffer.f32({ size: 32 }).named("noiseSpec");
 
   return {
-    process: () => forSample((i, everyNSamples) => {
-      // 10ms ご と に NN forward pass を 走 ら せ て control parameter を update
-      everyNSamples(480, () => {
-        violinTimbre.predict(
-          { pitch: pitch.at(i), loudness: loudness.at(i) },
-          { harmAmps, noiseSpec }
-        );
-      });
+    process: () =>
+      forSample((i, everyNSamples) => {
+        // 10ms ご と に NN forward pass を 走 ら せ て control parameter を update
+        everyNSamples(480, () => {
+          violinTimbre.predict(
+            { pitch: pitch.at(i), loudness: loudness.at(i) },
+            { harmAmps, noiseSpec },
+          );
+        });
 
-      // Audio rate synthesis (= 古典 DSP path、 NN を 通 ら な い)
-      const harm = harmonicSynth(pitch.at(i), harmAmps);
-      const noise = filteredNoise(noiseSpec);
-      out.ch(0).at(i).write(harm.add(noise));
-    })
+        // Audio rate synthesis (= 古典 DSP path、 NN を 通 ら な い)
+        const harm = harmonicSynth(pitch.at(i), harmAmps);
+        const noise = filteredNoise(noiseSpec);
+        out.ch(0).at(i).write(harm.add(noise));
+      }),
   };
 });
 ```
@@ -174,38 +180,39 @@ User 視点 で は 「**NN inference と 古典 DSP が 同 じ TS file の 同
 中 規 模 以 上 の NN は main 側 で onnxruntime-web で 動 か す path。
 
 ```typescript
-import { defineProcessor, audioInput, audioOutput, buffer, forSample } from '@unworklet/core';
+import { defineProcessor, audioInput, audioOutput, buffer, forSample } from "@unworklet/core";
 
 export const styleTransferPlugin = defineProcessor(() => {
-  const input = audioInput({ channels: 1, name: 'main' });
-  const out = audioOutput({ channels: 1, name: 'main' });
+  const input = audioInput({ channels: 1, name: "main" });
+  const out = audioOutput({ channels: 1, name: "main" });
 
   // Buffer in / out (= NN 推論用 に 積 み 込 む / 取 り 出 す)
-  const nnInput = buffer.f32({ size: 4096 }).named('nnInput');
-  const nnOutput = buffer.f32({ size: 4096 }).named('nnOutput');
+  const nnInput = buffer.f32({ size: 4096 }).named("nnInput");
+  const nnOutput = buffer.f32({ size: 4096 }).named("nnOutput");
 
   return {
-    process: () => forSample((i) => {
-      nnInput.write(i, input.ch(0).at(i));
-      out.ch(0).at(i).write(nnOutput.read(i));
-    })
+    process: () =>
+      forSample((i) => {
+        nnInput.write(i, input.ch(0).at(i));
+        out.ch(0).at(i).write(nnOutput.read(i));
+      }),
   };
 });
 ```
 
 ```typescript
 // Main 側
-import { createNode } from '@unworklet/core';
-import { OnnxBridge } from '@unworklet/ml';
+import { createNode } from "@unworklet/core";
+import { OnnxBridge } from "@unworklet/ml";
 
 const node = await createNode(audioCtx, styleTransferPlugin);
 
-const bridge = await OnnxBridge.create('./style-transfer.onnx', {
-  backend: 'webgpu',
-  inputBufferName: 'nnInput',
-  outputBufferName: 'nnOutput',
+const bridge = await OnnxBridge.create("./style-transfer.onnx", {
+  backend: "webgpu",
+  inputBufferName: "nnInput",
+  outputBufferName: "nnOutput",
   windowSize: 2048,
-  hopSize: 1024
+  hopSize: 1024,
 });
 
 bridge.attach(node);
@@ -236,9 +243,9 @@ function parseOnnxFile(filePath: string): OnnxModel {
   const model = onnx.ModelProto.decode(buffer);
   return {
     graph: model.graph,
-    initializers: model.graph.initializer,  // 学 習 済 み weights
+    initializers: model.graph.initializer, // 学 習 済 み weights
     inputs: model.graph.input,
-    outputs: model.graph.output
+    outputs: model.graph.output,
   };
 }
 ```
@@ -249,26 +256,26 @@ function parseOnnxFile(filePath: string): OnnxModel {
 
 ```typescript
 const operatorLowerings = {
-  'Add':     (inputs) => add(inputs[0], inputs[1]),
-  'Sub':     (inputs) => sub(inputs[0], inputs[1]),
-  'Mul':     (inputs) => mul(inputs[0], inputs[1]),
-  'Div':     (inputs) => div(inputs[0], inputs[1]),
-  'Tanh':    (inputs) => tanh(inputs[0]),
-  'Sigmoid': (inputs) => sigmoid(inputs[0]),
-  'Relu':    (inputs) => max(inputs[0], num(0)),
-  'MatMul':  lowerMatMul,
-  'Gemm':    lowerGemm,           // general matrix multiply with bias
-  'Conv':    lowerConv1d,         // 1D conv (audio 用)
-  'LSTM':    lowerLstmCell,
-  'GRU':     lowerGruCell,
-  'BatchNormalization': lowerBatchNorm,  // 推論 時 は 固定 affine
-  'Softmax': lowerSoftmax,
-  'Slice':   lowerSlice,
-  'Concat':  lowerConcat,
-  'Reshape': lowerReshape,
-  'Transpose': lowerTranspose,
-  'Identity': (inputs) => inputs[0],
-  'Constant': lowerConstant
+  Add: (inputs) => add(inputs[0], inputs[1]),
+  Sub: (inputs) => sub(inputs[0], inputs[1]),
+  Mul: (inputs) => mul(inputs[0], inputs[1]),
+  Div: (inputs) => div(inputs[0], inputs[1]),
+  Tanh: (inputs) => tanh(inputs[0]),
+  Sigmoid: (inputs) => sigmoid(inputs[0]),
+  Relu: (inputs) => max(inputs[0], num(0)),
+  MatMul: lowerMatMul,
+  Gemm: lowerGemm, // general matrix multiply with bias
+  Conv: lowerConv1d, // 1D conv (audio 用)
+  LSTM: lowerLstmCell,
+  GRU: lowerGruCell,
+  BatchNormalization: lowerBatchNorm, // 推論 時 は 固定 affine
+  Softmax: lowerSoftmax,
+  Slice: lowerSlice,
+  Concat: lowerConcat,
+  Reshape: lowerReshape,
+  Transpose: lowerTranspose,
+  Identity: (inputs) => inputs[0],
+  Constant: lowerConstant,
 };
 ```
 
@@ -291,7 +298,7 @@ function lowerOnnxToUnworklet(model: OnnxModel) {
 
   // topological order で operator を traverse
   for (const op of topologicalOrder(model.graph.nodes)) {
-    const inputs = op.inputs.map(name => valueMap.get(name));
+    const inputs = op.inputs.map((name) => valueMap.get(name));
     const result = operatorLowerings[op.op_type](inputs, op.attributes);
     op.outputs.forEach((name, idx) => {
       valueMap.set(name, Array.isArray(result) ? result[idx] : result);
@@ -299,9 +306,9 @@ function lowerOnnxToUnworklet(model: OnnxModel) {
   }
 
   return {
-    process: (input: Node<'f32'>) => {
+    process: (input: Node<"f32">) => {
       // ... 同 じ traversal で input → output graph を 構築
-    }
+    },
   };
 }
 ```
@@ -311,11 +318,11 @@ function lowerOnnxToUnworklet(model: OnnxModel) {
 ### 5.5 Step 5 — 量子化 / プルーニング pipeline
 
 ```typescript
-loadOnnxModel('./model.onnx', {
-  quantization: 'int8',
+loadOnnxModel("./model.onnx", {
+  quantization: "int8",
   pruning: { threshold: 0.001 },
   fuseOps: true,
-  simdWidth: 4
+  simdWidth: 4,
 });
 ```
 
@@ -340,13 +347,13 @@ ONNX / NAM / DDSP の 各 ML asset に 対 し て、 sidecar `.d.ts` を build 
 
 ```typescript
 // auto-generated: marshall.nam.d.ts
-declare module './marshall.nam' {
-  import type { Node } from '@unworklet/core';
+declare module "./marshall.nam" {
+  import type { Node } from "@unworklet/core";
   const model: {
-    process: (input: Node<'f32'>) => Node<'f32'>;
+    process: (input: Node<"f32">) => Node<"f32">;
     metadata: {
       readonly sampleRate: 48000;
-      readonly modelType: 'NAM';
+      readonly modelType: "NAM";
       readonly parameterCount: 32768;
       readonly authorName: string;
       readonly ampDescription: string;
@@ -359,8 +366,8 @@ declare module './marshall.nam' {
 こ れ で IDE / TS compiler 段 で:
 
 ```typescript
-import ampModel from './marshall.nam';
-ampModel.process('hello'); // TS error (string は Node<'f32'> じ ゃ な い)
+import ampModel from "./marshall.nam";
+ampModel.process("hello"); // TS error (string は Node<'f32'> じ ゃ な い)
 ampModel.process(input.ch(0).at(i)); // OK
 ampModel.metadata.sampleRate; // 型 = 48000 (literal type)
 ```
@@ -373,17 +380,17 @@ stereo / mono、 input channel 数、 output 数、 全 て type level で 表 �
 
 ```typescript
 // vite.config.ts
-import { unworklet } from '@unworklet/vite-plugin';
+import { unworklet } from "@unworklet/vite-plugin";
 
 export default {
   plugins: [
     unworklet({
       ml: {
-        onnxOptimize: { quantization: 'int8' },
-        namPath: './nam-models/',
-      }
-    })
-  ]
+        onnxOptimize: { quantization: "int8" },
+        namPath: "./nam-models/",
+      },
+    }),
+  ],
 };
 ```
 
@@ -415,12 +422,12 @@ runtime に deploy (= browser AudioWorklet / Node / 等)
 
 ```typescript
 // @unworklet/ml/runtime-bridge.ts
-import * as ort from 'onnxruntime-web';
+import * as ort from "onnxruntime-web";
 
 export class OnnxBridge {
   static async create(onnxPath: string, opts: OnnxBridgeOptions): Promise<OnnxBridge> {
     const session = await ort.InferenceSession.create(onnxPath, {
-      executionProviders: [opts.backend === 'webgpu' ? 'webgpu' : 'wasm']
+      executionProviders: [opts.backend === "webgpu" ? "webgpu" : "wasm"],
     });
     // warmup run、 model 形状 inspection、 等
     return new OnnxBridge(session, opts);
@@ -429,7 +436,7 @@ export class OnnxBridge {
   attach(node: UnworkletNode) {
     // unworklet node の buffer.publish を subscribe し て NN input を 取得
     node.buffer[this.opts.inputBufferName].subscribe(async (inputData) => {
-      const inputTensor = new ort.Tensor('float32', inputData, this.inputShape);
+      const inputTensor = new ort.Tensor("float32", inputData, this.inputShape);
       const results = await this.session.run({ [this.inputName]: inputTensor });
       const outputData = results[this.outputName].data as Float32Array;
       // 結果 を unworklet node の buffer に 送 り 返 す
@@ -437,7 +444,9 @@ export class OnnxBridge {
     });
   }
 
-  dispose() { /* session 解放 */ }
+  dispose() {
+    /* session 解放 */
+  }
 }
 ```
 
