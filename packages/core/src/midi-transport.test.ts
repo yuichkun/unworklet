@@ -16,7 +16,7 @@
 
 import "./dsl/primitives.ts"; // method form registration side-effect
 
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 
 import { compile } from "./compile/index.ts";
 import { CAPACITY_16 } from "./dsl/constants.ts";
@@ -364,4 +364,68 @@ test("sab: inbound ring overflow drops oldest and advances the overflow counter"
   const outIndex = midiRings.findIndex((r) => r.direction === "out");
   const outHeader = new Int32Array(midiBuf, offsets[outIndex]!, 3);
   expect(Atomics.load(outHeader, 0)).toBe(16);
+});
+
+// ── header release order ──────────────────────────────────────────────────────
+
+test("sab: the out-ring producer stores head LAST (release order, not torn)", async () => {
+  // head is the release point: a consumer that acquire-loads the new head must
+  // already see the matching tail + overflow. Storing head first lets a main-
+  // thread reader pair a new head with a stale tail and miscompute drop-oldest.
+  const thru = makeThru();
+  const { wasm } = await compile(thru);
+  const self = makeMockSelf();
+  const midiRings = thru.worklet.midiRings;
+  const offsets = ringOffsets(midiRings);
+  const midiBuf = new ArrayBuffer(ringsTotalBytes(midiRings));
+  thru.worklet.initialize(self, {
+    processorOptions: {
+      wasm,
+      transport: "sab",
+      midiRings,
+      midiRingsBuffer: midiBuf,
+      midiRingSabOffsets: offsets,
+      sysexContentSabOffsets: midiRings.map(() => 0),
+    },
+  });
+  const inIndex = midiRings.findIndex((r) => r.direction === "in");
+  const outIndex = midiRings.findIndex((r) => r.direction === "out");
+  const outOffset = offsets[outIndex]!;
+
+  // One inbound event so the thru re-emits on the out ring (= producer path).
+  const inOffset = offsets[inIndex]!;
+  const inHeader = new Int32Array(midiBuf, inOffset, 3);
+  const dv = new DataView(midiBuf);
+  const wire = midiEventToWire({ type: "noteOn", channel: 0, note: 60, velocity: 100 });
+  dv.setUint8(inOffset + 12, wire.status);
+  dv.setUint8(inOffset + 13, wire.data1);
+  dv.setUint8(inOffset + 14, wire.data2);
+  dv.setUint32(inOffset + 16, 0, true);
+  Atomics.store(inHeader, 0, 1);
+
+  // Record the index order of the producer's writes to the OUT-ring header.
+  const realStore = Atomics.store.bind(Atomics);
+  const outHeaderWrites: number[] = [];
+  const spy = vi.spyOn(Atomics, "store").mockImplementation(((
+    ta: Int32Array,
+    index: number,
+    value: number,
+  ): number => {
+    if (ta.buffer === midiBuf && ta.byteOffset === outOffset && ta.length === 3) {
+      outHeaderWrites.push(index);
+    }
+    return realStore(ta, index, value);
+  }) as typeof Atomics.store);
+  try {
+    const q = emptyQuantum();
+    thru.worklet.process(self, q.inputs, q.outputs, q.parameters);
+  } finally {
+    spy.mockRestore();
+  }
+
+  // head = index 0, tail = 1, overflow = 2. head must be written last.
+  expect(outHeaderWrites).toContain(0);
+  const headPos = outHeaderWrites.indexOf(0);
+  expect(headPos).toBeGreaterThan(outHeaderWrites.indexOf(1));
+  expect(headPos).toBeGreaterThan(outHeaderWrites.indexOf(2));
 });

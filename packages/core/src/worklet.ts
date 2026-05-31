@@ -1473,9 +1473,13 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             contentSab.set(contentWasm);
           }
           const sabH = sabHeaders[i]!;
-          Atomics.store(sabH, 0, currentHead);
+          // head is the release point: commit tail + overflow FIRST so a consumer
+          // that acquire-loads the new head already sees the matching window. Storing
+          // head first lets a cross-thread reader pair a new head with a stale tail /
+          // overflow and miscompute the drop-oldest clamp (= event garble race).
           Atomics.store(sabH, 1, currentTail);
           Atomics.store(sabH, 2, currentOverflow);
+          Atomics.store(sabH, 0, currentHead);
         } else {
           // postMessage path = 新 emit 分 を 抽 出 + port.postMessage 配 送
           const lastSentHead = state.lastSentEventHeads[i]!;
@@ -1579,9 +1583,12 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
               sysexSab.set(sysexWasm);
             }
             const sabH = state.midiRingsSabHeaderViews[i]!;
-            Atomics.store(sabH, 0, currentHead);
+            // head is the release point: commit tail + overflow FIRST so a consumer
+            // that acquire-loads the new head already sees the matching window
+            // (= same release order as the event out ring).
             Atomics.store(sabH, 1, currentTail);
             Atomics.store(sabH, 2, currentOverflow);
+            Atomics.store(sabH, 0, currentHead);
           } else {
             const lastSentHead = state.lastSentMidiHeads[i]!;
             const lastSentOverflow = state.lastSentMidiOverflows[i]!;
