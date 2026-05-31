@@ -900,6 +900,47 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         }
         return out;
       };
+      // Dev-only X-ray (DEVTOOLS integration §4): the unfiltered counterpart of
+      // `captureSnapshotSlots` — every state / buffer / param regardless of
+      // `userNamed` or snapshot policy, so the devtools panel can read the whole
+      // live memory (incl. anonymous `__state_N` / transient slots). Dormant in
+      // production: no `dev-dump-request` is sent without the dev page-script.
+      const captureDevDumpSlots = (): SnapshotSlot[] => {
+        const out: SnapshotSlot[] = [];
+        const buf = memory.buffer;
+        for (const s of meta.states) {
+          const off = lay.regions.states.slots[s.name];
+          if (off === undefined) continue;
+          out.push({
+            name: s.name,
+            kind: "state",
+            type: s.type,
+            data: new Uint8Array(buf.slice(off, off + SNAPSHOT_ELEMENT_BYTES[s.type]!)),
+          });
+        }
+        for (const b of meta.buffers) {
+          const off = lay.regions.buffers.slots[b.name];
+          if (off === undefined) continue;
+          const byteLen = b.size * SNAPSHOT_ELEMENT_BYTES[b.type]!;
+          out.push({
+            name: b.name,
+            kind: "buffer",
+            type: b.type,
+            data: new Uint8Array(buf.slice(off, off + byteLen)),
+          });
+        }
+        for (let pi = 0; pi < meta.params.length; pi++) {
+          const p = meta.params[pi]!;
+          if (p.name === "") continue;
+          out.push({
+            name: p.name,
+            kind: "param",
+            type: "f32",
+            data: encodeScalar("f32", paramViews[pi]![SAMPLES_PER_BLOCK - 1]!),
+          });
+        }
+        return out;
+      };
       const applyRestoreSlots = (
         slots: ReadonlyArray<SnapshotSlot>,
         // The blob's profile scopes which declarations are "expected" — `missing`
@@ -1018,6 +1059,21 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             }
             self.port.postMessage({
               kind: "snapshot-response",
+              requestId: data.requestId,
+              slots,
+            });
+            return;
+          }
+          if (data.kind === "dev-dump-request") {
+            // Same always-answer contract as snapshot: never hang the requester.
+            let slots: SnapshotSlot[];
+            try {
+              slots = captureDevDumpSlots();
+            } catch {
+              slots = [];
+            }
+            self.port.postMessage({
+              kind: "dev-dump-response",
               requestId: data.requestId,
               slots,
             });
