@@ -130,6 +130,27 @@ function liftF32(v: Node<"f32"> | number): AstNode {
 }
 
 /**
+ * A loose `num(n)` literal (Q77) carries a fallback `'f32'` type and defers to its
+ * concretely-typed context. A `.store()` / buffer `.write()` IS that context, so a
+ * loose literal re-lifts to the declared slot type here — otherwise an `f32.const`
+ * lands in a non-f32 slot, which type-checks in TS yet miscompiles ("type ⟺ works"
+ * breaks). A non-loose node's type is TS-guaranteed to match, so it passes through.
+ */
+function reliftLooseLiteral(ast: AstNode, type: ScalarType): AstNode {
+  if (ast.kind !== "literal" || ast.loose !== true) return ast;
+  if (type === "i64") {
+    // A JS number cannot safely represent integers beyond 2^53 - 1, so an i64 slot
+    // needs an explicit `i64(BigInt(...))`, never a loose `num()` literal.
+    throw new Error(
+      "unworklet: a loose num() literal cannot store into an i64 slot (JS number is " +
+        "precision-unsafe beyond 2^53 - 1). Use i64(BigInt(...)) explicitly.",
+    );
+  }
+  const n = Number(ast.value);
+  return { kind: "literal", type, value: type === "i32" ? n | 0 : n };
+}
+
+/**
  * `state.<type>.store(v)` の value 引 数 を AST に lift (= Q33 literal lift
  * + Node<T> unwrap)。 i64 は bigint 必 須、 bool は boolean → i32 0/1 に
  * 内 部 表 現 変 換 (= Q42 + emit.ts bool case と zip)。 既 ast.ts の
@@ -149,7 +170,7 @@ function liftStoreValue<T extends ScalarType>(type: T, v: Node<T> | ScalarOf<T>)
     // `i64.const` へ 32bit word 分 割)。 Node<'i64'> 経 由 (= stateLoad 等) も 同 path。
     return { kind: "literal", type: "i64", value: v };
   }
-  return unwrapAst(v as Node<ScalarType>);
+  return reliftLooseLiteral(unwrapAst(v as Node<ScalarType>), type);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -367,7 +388,7 @@ function liftBufferValue(elementType: BufferElementType, v: Node<ScalarType> | n
   if (typeof v === "number") {
     return { kind: "literal", type: st, value: st === "i32" ? v | 0 : v };
   }
-  return unwrapAst(v);
+  return reliftLooseLiteral(unwrapAst(v), st);
 }
 
 /**
