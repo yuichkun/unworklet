@@ -607,7 +607,9 @@ const octaveLabel = computed(() => `C${Math.floor(octaveBase.value / 12) - 1}`);
 
 .view-body {
   flex: 1;
-  overflow-y: auto;
+  /* horizontal scroll as a safety net at extreme narrow widths where nested
+     grid layouts cant shrink further (= controllers grid in MidiView, etc). */
+  overflow: auto;
   padding: 14px 18px 24px;
   display: flex;
   flex-direction: column;
@@ -616,8 +618,10 @@ const octaveLabel = computed(() => `C${Math.floor(octaveBase.value / 12) - 1}`);
 
 .section-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
+  gap: 6px;
   margin-bottom: 8px;
 }
 
@@ -763,6 +767,16 @@ const octaveLabel = computed(() => `C${Math.floor(octaveBase.value / 12) - 1}`);
 
 .repr-select {
   min-width: 180px;
+  max-width: 100%;
+}
+
+/* At narrow viewports the 180px min would push the select out of the inject
+   panel. Cap the floor instead. */
+@container (max-width: 480px) {
+  .repr-select {
+    min-width: 0;
+    width: 100%;
+  }
 }
 
 /* ── Keyboard + velocity ── */
@@ -991,6 +1005,7 @@ input[type="range"] {
 
 .log-filter {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
@@ -1068,6 +1083,21 @@ input[type="range"] {
     gap: 8px;
   }
   .log-port {
+    display: none;
+  }
+}
+
+/* At very narrow log-section widths (= sidebar + tiny viewport), even the
+   reduced 4-column grid overflows because the fixed ts+dir cols + minmax
+   floors total >container. Drop the type column (= "noteOn") too; the
+   body string already starts with the parameter rundown which carries
+   enough context. */
+@container (max-width: 380px) {
+  .log-row {
+    grid-template-columns: 70px 40px minmax(0, 1fr);
+    gap: 6px;
+  }
+  .log-type {
     display: none;
   }
 }

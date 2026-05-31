@@ -451,7 +451,9 @@ watch(reprByKey, () => redraw(), { deep: true });
 
 .view-body {
   flex: 1;
-  overflow-y: auto;
+  /* horizontal scroll as a safety net at extreme narrow widths where nested
+     grid layouts cant shrink further (= controllers grid in MidiView, etc). */
+  overflow: auto;
   padding: 14px 18px 24px;
   display: flex;
   flex-direction: column;
