@@ -8,10 +8,13 @@
     "build": "vp build"
   },
   "dependencies": {
+    "@unworklet/core": "workspace:*",
     "@unworklet/vite-plugin": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "@unworklet/offline": "workspace:*",
+    "@unworklet/test": "workspace:*",
     "@vitejs/devtools": "^0.2.0",
     "@vitejs/devtools-kit": "catalog:",
     "typescript": "catalog:",
