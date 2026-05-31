@@ -59,7 +59,7 @@ test("typed-array message: Float32Array upload → worklet で length 読 取 �
   const node = await createNode(ctx, uploadPlayback);
   node.outputs["main"]!.connect(ctx.destination);
   const samples = new Float32Array(128).fill(0.25);
-  const sender = node.messages["upload"] as (p: { samples: Float32Array }) => void;
+  const sender = node.events["upload"].emit;
   sender({ samples });
   await ctx.startRendering();
   await waitRAF(2);

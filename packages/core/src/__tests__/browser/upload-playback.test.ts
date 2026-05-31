@@ -1,7 +1,7 @@
 /**
  * Browser e2e (SAB transport): typed-array message payload を main → worklet で
  * 送って worklet 側で読めることを real `AudioContext` + `AudioWorkletNode` + SAB
- * 経由で検証。main で `node.messages.upload({ samples })` に `Float32Array` を渡し、
+ * 経由で検証。main で `node.events.upload.emit({ samples })` に `Float32Array` を渡し、
  * worklet が出力にそのまま再生 → 出力 PCM が送った配列と一致するかを黒箱 assert。
  */
 
@@ -28,7 +28,7 @@ test("typed-array message: main で Float32Array upload → worklet が出力に
   const samples = new Float32Array(128);
   for (let k = 0; k < 128; k++) samples[k] = (k + 1) / 256;
 
-  const sender = node.messages["upload"] as (p: { samples: Float32Array }) => void;
+  const sender = node.events["upload"].emit;
   sender({ samples });
 
   const rendered = await ctx.startRendering();
@@ -47,7 +47,7 @@ test("typed-array message: 別配列を送ると出力が切り替わる", async
   // 末尾 send が drain order で勝つ = 出力は 2 個目の配列。
   const first = new Float32Array(128).fill(0.1);
   const second = new Float32Array(128).fill(0.4);
-  const sender = node.messages["upload"] as (p: { samples: Float32Array }) => void;
+  const sender = node.events["upload"].emit;
   sender({ samples: first });
   sender({ samples: second });
 

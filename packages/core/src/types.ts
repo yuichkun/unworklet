@@ -278,7 +278,7 @@ export type EventDecl<T> = {
  * JS control flow (`slot + 1`, `if (armed)`) a type error, since those would run
  * at graph capture against the proxy rather than emit DSP nodes; the DSL
  * primitives (`slot.add(1)` / `select(armed, ...)`) are the supported path. The
- * main-side send view (`node.messages.<name>(payload)`) keeps the plain JS `T`.
+ * main-side send view (`node.events.<name>.emit(payload)`) keeps the plain JS `T`.
  */
 export type MessageGraphPayload<T> = {
   [K in keyof T]: T[K] extends Float32Array
@@ -754,14 +754,18 @@ export type BufferValueProxy<V> = {
   subscribe(handler: (value: V) => void): () => void;
 };
 
-export type EventSubscriber<T> = {
+/**
+ * Unified main-side event surface (Q88). A declared event name carries `.on`
+ * (worklet→main, `event({ to: 'main' })`), `.emit` (main→worklet,
+ * `event({ from: 'main' })`), or both for a same-name in/out pair (Q87).
+ * Per-name narrowing (B5) refines which methods a given name exposes.
+ */
+export type EventSurface<T> = {
   on(handler: (payload: T & { atSample: number }) => void): () => void;
-  readonly diagnostics: {
-    overflowCount(): number;
-  };
-};
-
-export type MessageSender<T> = ((payload: T) => void) & {
+  // Function-valued property (not a method) so callers can extract it as a bare
+  // sender (`const send = node.events.x.emit`) without an unbound-`this` hazard —
+  // it is a plain closure with no `this`, matching the former `MessageSender`.
+  emit: (payload: T) => void;
   readonly diagnostics: {
     overflowCount(): number;
   };
@@ -795,8 +799,7 @@ export type UnworkletNode<C> = {
   >;
   readonly params: Record<string, AudioParam>;
   readonly state: Record<string, StateValueProxy<unknown> | BufferValueProxy<unknown>>;
-  readonly events: Record<string, EventSubscriber<unknown>>;
-  readonly messages: Record<string, MessageSender<unknown>>;
+  readonly events: Record<string, EventSurface<unknown>>;
   readonly midi: Record<string, MidiPortSurface>;
   readonly diagnostics: { readonly transport: TransportMode };
   snapshot(options?: { profile?: string }): Promise<Uint8Array>;

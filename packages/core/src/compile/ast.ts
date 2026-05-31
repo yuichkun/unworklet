@@ -316,7 +316,7 @@ export type EventDeclField = {
  *
  * `T` の field 別 wire 型 は Q46 uniform lift rule: 全 number → i32 (= 4 byte)、
  * 全 boolean → bool (= 4 byte u32 align)、 typed-array → §5.2 variable-length
- * content buffer (= 後 続 sub-phase で fill)。 main 側 `node.messages.<name>(p)`
+ * content buffer (= 後 続 sub-phase で fill)。 main 側 `node.events.<name>.emit(p)`
  * か ら 来 る payload は plain JS = framework が wire 化 し て worklet 内 で handler
  * を 起 動 = field 別 推 論 ナ シ で 全 uniform path。
  *

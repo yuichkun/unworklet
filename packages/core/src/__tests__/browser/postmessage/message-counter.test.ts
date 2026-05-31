@@ -64,7 +64,7 @@ test("message: send + worklet onReceive で state 反 映 + main で 観 測 可
   const ctx = buildContext(32);
   const node = await createNode(ctx, messageCounter);
   node.outputs["main"]!.connect(ctx.destination);
-  const sender = node.messages["setCount"] as (p: { value: number }) => void;
+  const sender = node.events["setCount"].emit;
   sender({ value: 42 });
   await ctx.startRendering();
   await waitRAF(2);
@@ -79,7 +79,7 @@ test("message: subscribe handler で counter 反 映 を 受 領", async () => {
   node.outputs["main"]!.connect(ctx.destination);
   const values: number[] = [];
   const off = node.state["counter"]!.subscribe((v) => values.push(v as number));
-  const sender = node.messages["setCount"] as (p: { value: number }) => void;
+  const sender = node.events["setCount"].emit;
   sender({ value: 7 });
   await ctx.startRendering();
   await waitRAF(3);
@@ -98,7 +98,7 @@ test("message: 複 数 send は postMessage path で deliver 順 = registration 
   const ctx = buildContext(32);
   const node = await createNode(ctx, messageCounter);
   node.outputs["main"]!.connect(ctx.destination);
-  const sender = node.messages["setCount"] as (p: { value: number }) => void;
+  const sender = node.events["setCount"].emit;
   sender({ value: 1 });
   sender({ value: 2 });
   sender({ value: 3 });
@@ -120,12 +120,11 @@ test("message: diagnostics.overflowCount は postMessage path で 初 期 0 / WA
   const ctx = buildContext(1);
   const node = await createNode(ctx, messageCounter);
   node.outputs["main"]!.connect(ctx.destination);
-  const sender = node.messages["setCount"] as (p: { value: number }) => void;
+  const sender = node.events["setCount"].emit;
   for (let i = 0; i < 257; i++) {
     sender({ value: i });
   }
-  const diag = (node.messages["setCount"] as { diagnostics: { overflowCount(): number } })
-    .diagnostics;
+  const diag = node.events["setCount"].diagnostics;
   expect(diag.overflowCount()).toBeGreaterThanOrEqual(0);
   node.dispose();
 });
@@ -146,6 +145,6 @@ test("message: dispose 後 send で 例 外 出 ず (= no-op)", async () => {
   const node = await createNode(ctx, messageCounter);
   node.outputs["main"]!.connect(ctx.destination);
   node.dispose();
-  const sender = node.messages["setCount"] as (p: { value: number }) => void;
+  const sender = node.events["setCount"].emit;
   expect(() => sender({ value: 99 })).not.toThrow();
 });

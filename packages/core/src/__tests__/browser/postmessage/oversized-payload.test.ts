@@ -29,7 +29,7 @@ test("oversized typed-array message を postMessage で送っても worklet が 
 
   const samples = new Float32Array(512);
   for (let k = 0; k < 512; k++) samples[k] = (k + 1) / 1024;
-  const sender = node.messages["upload"] as (p: { samples: Float32Array }) => void;
+  const sender = node.events["upload"].emit;
   sender({ samples });
 
   // worklet が onmessage で content を clamp して書く (= clamp 前は audio thread で

@@ -17,9 +17,8 @@ import type {
   BufferElementType,
   CompiledProcessor,
   CreateNodeOptions,
-  EventSubscriber,
+  EventSurface,
   InspectionResult,
-  MessageSender,
   MidiEvent,
   MidiEventType,
   MidiPortSurface,
@@ -524,7 +523,7 @@ export async function createNode<C>(
   //   newSlotCount, overflowCount })` で 配 送 = main 側 で port.onmessage で
   //   receive 即 時 に subscriber dispatch (= rAF 不 要)。 overflowCount は
   //   eventOverflowMirror に carry し て diagnostics.overflowCount() で read。
-  const eventSurface: Record<string, EventSubscriber<unknown>> = {};
+  const eventSurface: Record<string, EventSurface<unknown>> = {};
   const eventSubscribers: Map<string, Set<(payload: Record<string, unknown>) => void>> = new Map();
   const eventLocalTails: number[] = eventRings.map(() => 0);
   // postMessage path 用 = ring ご と の overflowCount mirror (= diagnostics 読 み 用)。
@@ -570,7 +569,7 @@ export async function createNode<C>(
             return eventOverflowMirror[ringIndex]!;
           },
         },
-      };
+      } as EventSurface<unknown>;
     }
   }
 
@@ -584,7 +583,6 @@ export async function createNode<C>(
   //   で receive + WASM ring に inject + overflow は WASM 内 で drop-oldest 発 動
   //   時 に port.postMessage で main に 通 知 (= messageOverflowMirror 更 新)。
   //   diagnostics.overflowCount() = mirror か ら read。
-  const messageSurface: Record<string, MessageSender<unknown>> = {};
   const messageOverflowMirror: number[] = messageRings.map(() => 0);
   let messageRingsView: DataView | null = null;
   let messageRingsHeaderView: Int32Array | null = null;
@@ -657,19 +655,26 @@ export async function createNode<C>(
           node.port.postMessage({ kind: "message", ringIndex, payload });
         }
       };
-      const senderWithDiag = Object.assign(sender as (payload: unknown) => void, {
-        diagnostics: {
-          overflowCount(): number {
-            if (isSab && messageRingsHeaderView !== null) {
-              return Atomics.load(messageRingsHeaderView, overflowWordIdx);
-            }
-            // postMessage path = mirror か ら read (= worklet が message-overflow
-            // 通 知 で 更 新 し て いる)
-            return messageOverflowMirror[ringIndex]!;
-          },
+      const emit = sender as EventSurface<unknown>["emit"];
+      const diagnostics = {
+        overflowCount(): number {
+          if (isSab && messageRingsHeaderView !== null) {
+            return Atomics.load(messageRingsHeaderView, overflowWordIdx);
+          }
+          // postMessage path = mirror か ら read (= worklet が message-overflow
+          // 通 知 で 更 新 し て いる)
+          return messageOverflowMirror[ringIndex]!;
         },
-      }) as MessageSender<unknown>;
-      messageSurface[ring.name] = senderWithDiag;
+      };
+      // message ring の sender を event surface に統合 (Q88)。同名 in/out ペア
+      // (Q87) なら既存の receive (.on) entry に send (.emit) を足し、diagnostics
+      // は outbound event 側を保持する。
+      const existingEntry = eventSurface[ring.name] as EventSurface<unknown> | undefined;
+      if (existingEntry !== undefined) {
+        existingEntry.emit = emit;
+      } else {
+        eventSurface[ring.name] = { emit, diagnostics } as EventSurface<unknown>;
+      }
     }
   }
 
@@ -1573,7 +1578,6 @@ export async function createNode<C>(
     params,
     state: stateSurface,
     events: eventSurface,
-    messages: messageSurface,
     midi: midiSurface,
     diagnostics: { transport: transportMode },
     snapshot,

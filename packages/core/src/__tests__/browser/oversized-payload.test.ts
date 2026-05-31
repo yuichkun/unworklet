@@ -24,7 +24,7 @@ test("oversized typed-array message は truncate されて crash しない (Q85 
   const samples = new Float32Array(512);
   for (let k = 0; k < 512; k++) samples[k] = (k + 1) / 1024;
 
-  const sender = node.messages["upload"] as (p: { samples: Float32Array }) => void;
+  const sender = node.events["upload"].emit;
   expect(() => sender({ samples })).not.toThrow();
 
   const rendered = await ctx.startRendering();
