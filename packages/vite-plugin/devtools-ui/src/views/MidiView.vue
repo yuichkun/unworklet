@@ -832,6 +832,31 @@ const octaveLabel = computed(() => `C${Math.floor(octaveBase.value / 12) - 1}`);
   }
 }
 
+/* At very narrow inject-section widths (= devtool dock < ~480px ⇒ section
+   ≲ 220px), even the previous step's columns sum (290px + gaps) exceeds
+   the container and the slider pokes past the panel border. Aggressive
+   shrink: every column becomes content-fit (minmax(0, auto)) with the
+   slider as the lone 1fr; the num-input also drops from 60→40px so the
+   aux column lets go of more horizontal real estate. */
+@container (max-width: 480px) {
+  .inject-controllers {
+    grid-template-columns:
+      minmax(0, auto)
+      minmax(0, auto)
+      minmax(0, 1fr)
+      minmax(0, auto);
+    gap: 6px;
+  }
+  .inject-controllers .num-input {
+    width: 40px;
+  }
+  /* Hide the CC standard-name hint (= "Modulation") — it was already
+     ellipsizing and the aux column shouldn't compete with the slider here. */
+  .ctrl-row-aux-hint {
+    display: none;
+  }
+}
+
 .ctrl-row-send {
   justify-self: start;
 }
