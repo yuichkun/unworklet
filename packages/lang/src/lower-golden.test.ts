@@ -125,3 +125,32 @@ process(() => {
 
   await expectByteIdentical(uwk, tierA);
 });
+
+test("Tier C ambient I/O: lowered ≡ hand-written Tier A with injected stereo I/O", async () => {
+  const uwk = `
+const gain = param.f32({ default: 1, min: 0, max: 4, automationRate: "a-rate" }).named("gain");
+process(() => {
+  forSample((i) => {
+    out.left.at(i).write(input.left.at(i).mul(gain.at(i)));
+    out.right.at(i).write(input.right.at(i).mul(gain.at(i)));
+  });
+});
+`;
+  const tierA = defineProcessor(() => {
+    const input = core.audioInput({ channels: 2, name: "input" });
+    const out = core.audioOutput({ channels: 2, name: "out" });
+    const gain = core.param
+      .f32({ default: 1, min: 0, max: 4, automationRate: "a-rate" })
+      .named("gain");
+    return {
+      process: () => {
+        core.forSample((i) => {
+          out.left.at(i).write(input.left.at(i).mul(gain.at(i)));
+          out.right.at(i).write(input.right.at(i).mul(gain.at(i)));
+        });
+      },
+    };
+  });
+
+  await expectByteIdentical(uwk, tierA);
+});

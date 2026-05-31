@@ -197,6 +197,52 @@ function makeOptionsArg(
   return ts.factory.createObjectLiteralExpression(props, true);
 }
 
+/** A synthesized `const <varName> = <factory>({ channels, name });` declaration.
+ * Built with the factory (not parsed) so it carries no source positions — the
+ * printer must generate its text from structure, not read a foreign source. */
+function makeAudioDecl(
+  varName: string,
+  factory: string,
+  channels: number,
+  port: string,
+): ts.Statement {
+  const call = ts.factory.createCallExpression(ts.factory.createIdentifier(factory), undefined, [
+    ts.factory.createObjectLiteralExpression(
+      [
+        ts.factory.createPropertyAssignment("channels", ts.factory.createNumericLiteral(channels)),
+        ts.factory.createPropertyAssignment("name", ts.factory.createStringLiteral(port)),
+      ],
+      false,
+    ),
+  ]);
+  return ts.factory.createVariableStatement(
+    undefined,
+    ts.factory.createVariableDeclarationList(
+      [ts.factory.createVariableDeclaration(varName, undefined, undefined, call)],
+      ts.NodeFlags.Const,
+    ),
+  );
+}
+
+/** Whether any of `nodes` contains a call to the bare identifier `calleeName`. */
+function referencesCall(nodes: readonly ts.Node[], calleeName: string): boolean {
+  let found = false;
+  const visit = (n: ts.Node): void => {
+    if (found) return;
+    if (
+      ts.isCallExpression(n) &&
+      ts.isIdentifier(n.expression) &&
+      n.expression.text === calleeName
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  for (const n of nodes) visit(n);
+  return found;
+}
+
 /** Lower a `.uwk.ts` source string to a virtual `.ts` module string. */
 export function lower(source: string, options: LowerOptions = {}): string {
   const coreModule = options.coreModule ?? "@unworklet/core";
@@ -252,11 +298,26 @@ export function lower(source: string, options: LowerOptions = {}): string {
     );
   }
 
+  // S12: inject ambient stereo input / out when the file declares neither, so a
+  // Tier-C .uwk.ts needs no explicit I/O. An explicit declaration suppresses it.
+  const needInput = !referencesCall(declarations, "audioInput");
+  const needOutput = !referencesCall(declarations, "audioOutput");
+  const ambient: ts.Statement[] = [];
+  if (needInput) {
+    ambient.push(makeAudioDecl("input", "audioInput", 2, "input"));
+  }
+  if (needOutput) {
+    ambient.push(makeAudioDecl("out", "audioOutput", 2, "out"));
+  }
+  const allDeclarations = [...ambient, ...declarations];
+
   const used = collectUsedCoreExports(sf);
+  if (needInput) used.add("audioInput");
+  if (needOutput) used.add("audioOutput");
   used.add("defineProcessor");
   const importDecl = makeCoreImport([...used].sort(), coreModule);
   const optionsArg = makeOptionsArg(migrationsArg, optionsObject);
-  const exportDefault = makeDefineProcessor(declarations, processBody!, optionsArg);
+  const exportDefault = makeDefineProcessor(allDeclarations, processBody!, optionsArg);
 
   const lowered = ts.factory.updateSourceFile(sf, [importDecl, exportDefault]);
   const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });

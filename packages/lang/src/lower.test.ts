@@ -148,3 +148,31 @@ process(() => {});
   expect(names).not.toContain("clamp"); // object literal key
   expect(names).toContain("state");
 });
+
+test("S12: injects ambient stereo input / out when neither is declared (Tier C)", () => {
+  const out = lower(`
+const gain = param.f32({ default: 1, min: 0, max: 4 }).named("gain");
+process(() => {
+  forSample((i) => {
+    out.left.at(i).write(input.left.at(i).mul(gain.at(i)));
+  });
+});
+`);
+  expect(out).toContain('audioInput({ channels: 2, name: "input" })');
+  expect(out).toContain('audioOutput({ channels: 2, name: "out" })');
+  const names = importedNames(out);
+  expect(names).toContain("audioInput");
+  expect(names).toContain("audioOutput");
+});
+
+test("S12: an explicit audioInput / audioOutput suppresses the ambient injection", () => {
+  const out = lower(`
+const input = audioInput({ channels: 1, name: "main" });
+const sink = audioOutput({ channels: 1, name: "main" });
+process(() => {});
+`);
+  // The explicit mono declarations win; no stereo ambient pair is added.
+  expect(out).not.toContain('name: "input"');
+  expect(out).not.toContain('name: "out"');
+  expect(out).toContain("channels: 1");
+});
