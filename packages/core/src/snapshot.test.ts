@@ -4,14 +4,8 @@
 
 import { expect, test } from "vite-plus/test";
 
-import {
-  decodeSnapshot,
-  encodeScalar,
-  encodeSnapshot,
-  inspectSnapshot,
-  runMigrations,
-  type SnapshotSlot,
-} from "./snapshot.ts";
+import { encodeScalar, type SnapshotSlot } from "./snapshot.ts";
+import { decodeSnapshot, encodeSnapshot, inspectSnapshot, runMigrations } from "./snapshotBlob.ts";
 import type { Migration } from "./types.ts";
 
 test("encode → decode round-trips slots of every kind/type", () => {

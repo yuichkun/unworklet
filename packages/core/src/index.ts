@@ -101,22 +101,16 @@ export type { MidiWireBytes } from "./midiWire.ts";
 
 // Snapshot blob codec + migration engine (= `01-dsl.md` §8)。 offline renderer /
 // main client が blob を build / read / migrate する 共 有 infrastructure。
+export { decodeScalar, decodeTypedArray, encodeScalar } from "./snapshot.ts";
+export type { SnapshotSlot, SnapshotSlotKind } from "./snapshot.ts";
 export {
-  decodeScalar,
   decodeSnapshot,
-  decodeTypedArray,
-  encodeScalar,
   encodeSnapshot,
   inspectSnapshot,
   runMigrations,
   SNAPSHOT_VERSION,
-} from "./snapshot.ts";
-export type {
-  DecodedSnapshot,
-  MigrationOutcome,
-  SnapshotSlot,
-  SnapshotSlotKind,
-} from "./snapshot.ts";
+} from "./snapshotBlob.ts";
+export type { DecodedSnapshot, MigrationOutcome } from "./snapshotBlob.ts";
 
 // Main-thread client surface.
 export { createNode, inspect } from "./client.ts";

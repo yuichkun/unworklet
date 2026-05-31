@@ -30,14 +30,8 @@ import type {
 } from "./types.ts";
 import { midiEventToWire, wireToMidiEvent } from "./midiWire.ts";
 import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
-import {
-  decodeScalar,
-  decodeSnapshot,
-  encodeSnapshot,
-  inspectSnapshot,
-  runMigrations,
-  type SnapshotSlot,
-} from "./snapshot.ts";
+import { decodeScalar, type SnapshotSlot } from "./snapshot.ts";
+import { decodeSnapshot, encodeSnapshot, inspectSnapshot, runMigrations } from "./snapshotBlob.ts";
 import type { RestoreResult } from "./types.ts";
 
 /**

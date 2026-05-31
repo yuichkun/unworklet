@@ -17,7 +17,8 @@ import { expect, test, vi } from "vite-plus/test";
 
 import { createNode, inspect } from "./client.ts";
 import { replaceProcessor } from "./replaceProcessor.ts";
-import { decodeSnapshot, encodeScalar, encodeSnapshot } from "./snapshot.ts";
+import { encodeScalar } from "./snapshot.ts";
+import { decodeSnapshot, encodeSnapshot } from "./snapshotBlob.ts";
 import type { CompiledProcessor, MidiEvent } from "./types.ts";
 
 type MockAudioParam = { value: number };
@@ -1193,7 +1194,8 @@ test("awaitReady: stray events after settle are early-returned (= no double sett
 });
 
 test("`inspect(blob)` decodes a snapshot blob into a structured view", async () => {
-  const { encodeScalar, encodeSnapshot } = await import("./snapshot.ts");
+  const { encodeScalar } = await import("./snapshot.ts");
+  const { encodeSnapshot } = await import("./snapshotBlob.ts");
   const blob = encodeSnapshot("schemaX", null, [
     { name: "gain", kind: "param", type: "f32", data: encodeScalar("f32", 0.5) },
     { name: "count", kind: "state", type: "i32", data: encodeScalar("i32", 9) },
