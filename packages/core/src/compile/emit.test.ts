@@ -1230,7 +1230,7 @@ test("subnormal guard: mul(literal, literal) 結 果 subnormal は flush", async
 });
 
 test("subnormal guard: stateLoad source (= 別 state slot か ら load し た値 を そ の ま ま store)", async () => {
-  // src に 0.7 を store → dst に src.load() を store (= guard 通 過、 0.7 保 持)
+  // src に 0.7 を store → dst に src.read() を store (= guard 通 過、 0.7 保 持)
   const graph: CapturedGraph = {
     declarations: [
       { kind: "state", name: "src", type: "f32", initial: 0 },
@@ -1526,9 +1526,9 @@ test("subnormal guard: defineProcessor 経 由 path repro (= offline test と �
     return {
       process: () => {
         forSample((i) => {
-          out.ch(0).at(i).write(stored.load());
+          out.ch(0).at(i).write(stored.read());
         });
-        stored.store(input.ch(0).at(0).mul(2));
+        stored.write(input.ch(0).at(0).mul(2));
       },
     };
   });
@@ -1562,7 +1562,7 @@ test("subnormal guard: defineProcessor 経 由 path repro (= offline test と �
 
 test("subnormal guard: renderOffline と 同 形 ループ 再現 (= input fill → proc → output read を 2 度)", async () => {
   // renderOffline で NaN 出 る path を 詳細 再 現:
-  // - forSample 内 で out[i] = z.load() を write
+  // - forSample 内 で out[i] = z.read() を write
   // - forSample 外 で z = input[0] × 2 を store
   // - input fill 0.3 → proc → output check (block 0)
   // - input fill 0.7 → proc → output check (block 1) ← NaN trigger
@@ -3257,7 +3257,7 @@ test("`emit(select)` e2e: cond true → then(10) / cond false → else(20)", asy
   expect(f).toBe(20);
 });
 
-test("`emit(select)` e2e: bool literal branch を state.bool に store (= canonical select(cond, true, gate.load()))", async () => {
+test("`emit(select)` e2e: bool literal branch を state.bool に store (= canonical select(cond, true, gate.read()))", async () => {
   // cond true → bool literal `true`(=1) を選ぶ。 bool branch literal が emit で i32.const に
   // 落ち、 select 全体が i32 で評価され state.bool に書ける (= 以前は bool literal emit が throw)。
   const graph: CapturedGraph = {

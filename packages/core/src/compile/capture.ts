@@ -40,7 +40,7 @@ export type CaptureContext = {
   subgraphCount: number;
   /**
    * Mutable-read 固定用 temp local の通し番号 (= `03-compiler.md` §2.7、issue #8)。
-   * `state.load()` / `buffer.read()` / `buffer.readInterpolated()` の各 call site で
+   * `state.read()` / `buffer.read()` / `buffer.readInterpolated()` の各 call site で
    * 採番し、emit が固定 local の後ろに 1 slot ずつ割り付ける (= `TEMP_LOCAL_BASE +
    * tempId`)。capture 順 = 0 から単調増加。
    */

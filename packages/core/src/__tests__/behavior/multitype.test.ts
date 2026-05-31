@@ -416,12 +416,12 @@ test("i64 state round-trip: store 2^40 + 7, load → wrap to i32 = 7", async () 
     const acc = state.i64(0n);
     return {
       process: () => {
-        acc.store(i64(2n ** 40n + 7n));
+        acc.write(i64(2n ** 40n + 7n));
         forSample((i) => {
           out
             .ch(0)
             .at(i)
-            .write(f32(i32(acc.load())));
+            .write(f32(i32(acc.read())));
         });
       },
     };

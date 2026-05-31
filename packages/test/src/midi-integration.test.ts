@@ -27,33 +27,33 @@ const noteThru = defineProcessor(() => {
   return {
     process: () => {
       inPort.onEvent("noteOn", ({ note: n, velocity, atSample }) => {
-        note.store(n);
-        vel.store(velocity);
-        gateOn.store(true);
-        onAt.store(atSample);
+        note.write(n);
+        vel.write(velocity);
+        gateOn.write(true);
+        onAt.write(atSample);
       });
       inPort.onEvent("noteOff", ({ note: n, atSample }) => {
-        note.store(n);
-        gateOff.store(true);
-        offAt.store(atSample);
+        note.write(n);
+        gateOff.write(true);
+        offAt.write(atSample);
       });
-      outPort.emitIf(gateOn.load(), {
+      outPort.emitIf(gateOn.read(), {
         type: "noteOn",
         channel: 0,
-        note: note.load().add(12),
-        velocity: vel.load(),
-        atSample: onAt.load(),
+        note: note.read().add(12),
+        velocity: vel.read(),
+        atSample: onAt.read(),
       });
-      outPort.emitIf(gateOff.load(), {
+      outPort.emitIf(gateOff.read(), {
         type: "noteOff",
         channel: 0,
-        note: note.load().add(12),
+        note: note.read().add(12),
         velocity: 0,
-        atSample: offAt.load(),
+        atSample: offAt.read(),
       });
       // Reset the one-shot gates so each inbound event re-emits exactly once.
-      gateOn.store(false);
-      gateOff.store(false);
+      gateOn.write(false);
+      gateOff.write(false);
     },
   };
 });

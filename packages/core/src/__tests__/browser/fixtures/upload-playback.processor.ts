@@ -18,7 +18,7 @@ export const uploadPlayback = defineProcessor(() => {
   return {
     process: () => {
       upload.onReceive(({ samples }) => {
-        lenState.store(samples.length);
+        lenState.write(samples.length);
         forSample((i) => {
           buf.write(i, samples.at(i)); // i は Node<i32> = runtime indexed read
         });

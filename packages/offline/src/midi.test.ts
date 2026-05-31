@@ -31,10 +31,10 @@ test("inbound noteOn: handler stores the note, observable in output", async () =
     return {
       process: () => {
         midiIn.onEvent("noteOn", ({ note: n }) => {
-          note.store(n);
+          note.write(n);
         });
         forSample((i) => {
-          out.ch(0).at(i).write(f32(note.load()));
+          out.ch(0).at(i).write(f32(note.read()));
         });
       },
     };
@@ -69,14 +69,14 @@ test("inbound cc + pitchBend decode correctly in the handler", async () => {
     return {
       process: () => {
         midiIn.onEvent("cc", ({ value }) => {
-          ccVal.store(value);
+          ccVal.write(value);
         });
         midiIn.onEvent("pitchBend", ({ value }) => {
-          bend.store(value);
+          bend.write(value);
         });
         forSample((i) => {
-          out.ch(0).at(i).write(f32(ccVal.load()));
-          out.ch(1).at(i).write(f32(bend.load()));
+          out.ch(0).at(i).write(f32(ccVal.read()));
+          out.ch(1).at(i).write(f32(bend.read()));
         });
       },
     };
@@ -109,7 +109,7 @@ test("outbound noteOn: emitIf surfaces a MidiEvent in result.events", async () =
             .ch(0)
             .at(i)
             .write(0 as never);
-          const c = counter.load();
+          const c = counter.read();
           midiOut.emitIf(c.eq(0), {
             type: "noteOn",
             channel: 2,
@@ -117,7 +117,7 @@ test("outbound noteOn: emitIf surfaces a MidiEvent in result.events", async () =
             velocity: 80,
             atSample: i,
           });
-          counter.store(c.add(1).mod(128));
+          counter.write(c.add(1).mod(128));
         });
       },
     };
@@ -170,11 +170,11 @@ test("event<T> emit inside a MIDI handler does not corrupt the drain (Ex8-style)
     return {
       process: () => {
         keys.onEvent("noteOn", ({ note, atSample }) => {
-          last.store(note);
+          last.write(note);
           notePlayed.emitIf(true, { atSample, note });
         });
         forSample((i) => {
-          out.ch(0).at(i).write(f32(last.load()));
+          out.ch(0).at(i).write(f32(last.read()));
         });
       },
     };
@@ -209,7 +209,7 @@ test("sysex bridge: ingest, rewrite device-id byte, re-emit (Ex9-style)", async 
       process: () => {
         sysexIn.onEvent("sysex", ({ data, length, atSample }) => {
           buf.copyFrom(data);
-          buf.write(i32(1), targetId.load()); // rewrite byte 1 = device ID
+          buf.write(i32(1), targetId.read()); // rewrite byte 1 = device ID
           sysexOut.emitIf(true, { type: "sysex", data: buf, length, atSample });
         });
       },

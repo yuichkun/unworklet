@@ -56,10 +56,10 @@ test("multi-block render carries f32 state across quanta (= harness loops proces
       process: () => {
         forSample((i) => {
           // Store the running sum, then read it back for output. Binding the sum
-          // and reusing it would re-evaluate `acc.load()` after the store (the
+          // and reusing it would re-evaluate `acc.read()` after the store (the
           // graph re-emits shared subtrees rather than memoizing them).
-          acc.store(acc.load().add(inp.ch(0).at(i)));
-          out.ch(0).at(i).write(acc.load());
+          acc.write(acc.read().add(inp.ch(0).at(i)));
+          out.ch(0).at(i).write(acc.read());
         });
       },
     };

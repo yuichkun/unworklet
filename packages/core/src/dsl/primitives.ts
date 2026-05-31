@@ -448,7 +448,7 @@ registerNodeMethod(
 // ─────────────────────────────────────────────────────────────────────────
 
 // Overloads keep a boolean branch valid only for a *bool* select (the canonical
-// `select(isMe, true, gate.load())` pattern) and reject a boolean mixed with a
+// `select(isMe, true, gate.read())` pattern) and reject a boolean mixed with a
 // numeric branch: that mix silently lifts both branches to bool and mistypes the
 // result as `Node<numeric>` ("type ⟺ works" breaks). The numeric overload is
 // listed first so loose `num(...)` branches resolve to a numeric select; the bool

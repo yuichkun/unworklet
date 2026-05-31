@@ -31,9 +31,9 @@ const counterProc = defineProcessor(() => {
   return {
     process: () => {
       forSample((i) => {
-        out.ch(0).at(i).write(f32(counter.load()));
+        out.ch(0).at(i).write(f32(counter.read()));
       });
-      counter.store(counter.load().add(1));
+      counter.write(counter.read().add(1));
     },
   };
 });
@@ -108,7 +108,7 @@ test("restore runs the migration chain on a schema-hash mismatch", async () => {
     return {
       process: () => {
         forSample((i) => {
-          out.ch(0).at(i).write(f32(renamed.load()));
+          out.ch(0).at(i).write(f32(renamed.read()));
         });
       },
     };

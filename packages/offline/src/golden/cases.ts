@@ -56,16 +56,16 @@ const allScalarStates = defineProcessor(() => {
   return {
     process: () => {
       forSample((i) => {
-        sf32.store(sf32.load().mul(0.999).add(0.001));
-        si32.store(si32.load().add(1).mod(128));
-        sbool.store(si32.load().gt(64));
+        sf32.write(sf32.read().mul(0.999).add(0.001));
+        si32.write(si32.read().add(1).mod(128));
+        sbool.write(si32.read().gt(64));
         out
           .ch(0)
           .at(i)
-          .write(select(sbool.load(), sf32.load(), num(0)));
+          .write(select(sbool.read(), sf32.read(), num(0)));
       });
-      sf64.store(sf64.load().add(num(1)));
-      si64.store(si64.load());
+      sf64.write(sf64.read().add(num(1)));
+      si64.write(si64.read());
     },
   };
 });
@@ -90,7 +90,7 @@ const allBufferTypes = defineProcessor(() => {
       bf64.write(0, 3);
       bbool.write(0, 1);
       bu8.write(0, 255);
-      const h = head.load();
+      const h = head.read();
       forSample((i) => {
         bf32.write(h.add(i).mod(16), input.ch(0).at(i));
         const interp = bf32.readInterpolated(num(1.5));
@@ -102,7 +102,7 @@ const allBufferTypes = defineProcessor(() => {
           .add(select(bbool.read(0), num(1), num(0)));
         out.ch(0).at(i).write(mix.mul(0.001));
       });
-      head.store(h.add(128).mod(16));
+      head.write(h.add(128).mod(16));
     },
   };
 });
@@ -121,7 +121,7 @@ const audioParamLoops = defineProcessor(() => {
         stereoOut.right.at(i).write(stereoIn.right.at(i).mul(gain.at(i)).add(tilt.at(0)));
       });
       forSample.byN(4, (i) => {
-        tick.store(tick.load().add(1));
+        tick.write(tick.read().add(1));
         stereoOut.left.at(i).write(stereoIn.left.at(i).mul(0.5));
       });
     },
@@ -138,7 +138,7 @@ const eventScalar = defineProcessor(() => {
     process: () => {
       forSample((i) => {
         const x = input.ch(0).at(i).abs();
-        env.store(x.sub(env.load()).mul(0.01).add(env.load()));
+        env.write(x.sub(env.read()).mul(0.01).add(env.read()));
         out.ch(0).at(i).write(input.ch(0).at(i));
         peakEv.emitIf(x.gt(0.5), { atSample: i, level: x, loud: x.gt(0.9) });
       });
@@ -172,14 +172,14 @@ const messageScalar = defineProcessor(() => {
   return {
     process: () => {
       ctrl.onReceive(({ gain, on: onv }) => {
-        g.store(f32(gain));
-        on.store(onv);
+        g.write(f32(gain));
+        on.write(onv);
       });
       forSample((i) => {
         out
           .ch(0)
           .at(i)
-          .write(select(on.load(), g.load(), num(0)));
+          .write(select(on.read(), g.read(), num(0)));
       });
     },
   };
@@ -197,9 +197,9 @@ const messageTypedArray = defineProcessor(() => {
         table.copyFrom(data);
       });
       forSample((i) => {
-        out.ch(0).at(i).write(table.read(idx.load()).mul(0.001));
+        out.ch(0).at(i).write(table.read(idx.read()).mul(0.001));
       });
-      idx.store(idx.load().add(1).mod(16));
+      idx.write(idx.read().add(1).mod(16));
     },
   };
 });
@@ -213,32 +213,32 @@ const allMidiIn = defineProcessor(() => {
   return {
     process: () => {
       port.onEvent("noteOn", ({ note, velocity, channel }) => {
-        acc.store(acc.load().add(note).add(velocity).add(channel));
+        acc.write(acc.read().add(note).add(velocity).add(channel));
       });
       port.onEvent("noteOff", ({ note, velocity }) => {
-        acc.store(acc.load().add(note).sub(velocity));
+        acc.write(acc.read().add(note).sub(velocity));
       });
       port.onEvent("cc", ({ controller, value }) => {
-        acc.store(acc.load().add(controller).add(value));
+        acc.write(acc.read().add(controller).add(value));
       });
       port.onEvent("pitchBend", ({ value }) => {
-        acc.store(acc.load().add(value));
+        acc.write(acc.read().add(value));
       });
       port.onEvent("programChange", ({ program }) => {
-        acc.store(acc.load().add(program));
+        acc.write(acc.read().add(program));
       });
       port.onEvent("channelPressure", ({ pressure }) => {
-        acc.store(acc.load().add(pressure));
+        acc.write(acc.read().add(pressure));
       });
       port.onEvent("aftertouch", ({ note, pressure }) => {
-        acc.store(acc.load().add(note).add(pressure));
+        acc.write(acc.read().add(note).add(pressure));
       });
       port.onEvent("systemRealtime", ({ status }) => {
-        acc.store(acc.load().add(status));
+        acc.write(acc.read().add(status));
       });
       port.onEvent("sysex", ({ data, length }) => {
         sysbuf.copyFrom(data);
-        acc.store(acc.load().add(length));
+        acc.write(acc.read().add(length));
       });
       forSample((i) => {
         out.ch(0).at(i).write(num(0));
@@ -290,11 +290,11 @@ const limiter = defineProcessor((ctx) => {
           .div(num(0.05 * ctx.sampleRate))
           .exp(),
       );
-      const headBlock = dlyHead.load();
+      const headBlock = dlyHead.read();
       forSample((i) => {
         const x = input.ch(0).at(i);
         const peak = x.abs();
-        env.store(peak.sub(env.load()).mul(relCoef).add(env.load()));
+        env.write(peak.sub(env.read()).mul(relCoef).add(env.read()));
         const wIdx = headBlock.add(i).mod(LOOKAHEAD);
         dly.write(wIdx, x);
         out
@@ -303,7 +303,7 @@ const limiter = defineProcessor((ctx) => {
           .write(dly.read(wIdx.add(1).mod(LOOKAHEAD)));
         overshoot.emitIf(peak.gt(ceiling.at(0)), { atSample: i, level: peak });
       });
-      dlyHead.store(headBlock.add(128).mod(LOOKAHEAD));
+      dlyHead.write(headBlock.add(128).mod(LOOKAHEAD));
     },
   };
 });
@@ -323,7 +323,7 @@ const reverb = defineProcessor(
         uploadIR.onReceive(({ ir: incoming }) => {
           ir.copyFrom(incoming);
         });
-        const headBlock = histHead.load();
+        const headBlock = histHead.read();
         forSample((i) => {
           hist.write(headBlock.add(i).mod(IR_LEN), input.ch(0).at(i));
         });
@@ -336,7 +336,7 @@ const reverb = defineProcessor(
           }
           out.ch(0).at(i).write(sumLanes(acc));
         });
-        histHead.store(headBlock.add(128).mod(IR_LEN));
+        histHead.write(headBlock.add(128).mod(IR_LEN));
       },
     };
   },
@@ -361,9 +361,9 @@ function biquadDFIIT(
   z1: State<"f32">,
   z2: State<"f32">,
 ): Node<"f32"> {
-  const y = b0.mul(x).add(z1.load());
-  z1.store(z2.load().sub(y));
-  z2.store(b0.mul(x).sub(y));
+  const y = b0.mul(x).add(z1.read());
+  z1.write(z2.read().sub(y));
+  z2.write(b0.mul(x).sub(y));
   return y;
 }
 const peakingBand = defineSubgraph((_sr: number) => {

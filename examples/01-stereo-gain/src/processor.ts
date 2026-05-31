@@ -4,8 +4,8 @@
  * を WASM 内 で 計 算 + worklet template が SAB 経 由 で main に 30 fps で 公 開、
  * main 側 で `node.state.meterL.subscribe(...)` で UI に 接 続。
  *
- * meter 計 算: per-sample で abs(out).max(meter.load()) → state に store (= peak
- * hold)、 per-block 末 尾 で meter.store(meter.load() × 0.95) (= 減 衰 で meter
+ * meter 計 算: per-sample で abs(out).max(meter.read()) → state に store (= peak
+ * hold)、 per-block 末 尾 で meter.write(meter.read() × 0.95) (= 減 衰 で meter
  * が 直 近 peak に 張 り 付 か な い path)。
  */
 
@@ -32,11 +32,11 @@ export const stereoGain = defineProcessor(() => {
         const r = input.right.at(i).mul(gain.at(i));
         out.left.at(i).write(l);
         out.right.at(i).write(r);
-        meterL.store(l.abs().max(meterL.load()));
-        meterR.store(r.abs().max(meterR.load()));
+        meterL.write(l.abs().max(meterL.read()));
+        meterR.write(r.abs().max(meterR.read()));
       });
-      meterL.store(meterL.load().mul(0.95));
-      meterR.store(meterR.load().mul(0.95));
+      meterL.write(meterL.read().mul(0.95));
+      meterR.write(meterR.read().mul(0.95));
     },
   };
 });

@@ -24,9 +24,9 @@ const accum = defineSubgraph((step: number) => {
   const acc = state.f32(0);
   return {
     tick: () => {
-      acc.store(acc.load().add(step));
+      acc.write(acc.read().add(step));
     },
-    value: () => acc.load(),
+    value: () => acc.read(),
   };
 });
 
@@ -63,9 +63,9 @@ test("subgraph: user-named 内部 state は instance prefix で衝突しない",
     const acc = state.named("acc").f32(0);
     return {
       tick: () => {
-        acc.store(acc.load().add(step));
+        acc.write(acc.read().add(step));
       },
-      value: () => acc.load(),
+      value: () => acc.read(),
     };
   });
   const proc = defineProcessor(() => {
@@ -183,8 +183,8 @@ test("named slot 持ちの subgraph を instance 名ナシで createSubgraph す
   const namedSlot = defineSubgraph((step: number) => {
     const acc = state.named("acc").f32(0); // user-named slot = 安定 snapshot path が要る
     return {
-      tick: () => acc.store(acc.load().add(step)),
-      value: () => acc.load(),
+      tick: () => acc.write(acc.read().add(step)),
+      value: () => acc.read(),
     };
   });
   expect(() =>

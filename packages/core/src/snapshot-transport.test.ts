@@ -78,7 +78,7 @@ const gainEcho = () =>
     return {
       process: () => {
         forSample((i) => {
-          out.ch(0).at(i).write(gain.load());
+          out.ch(0).at(i).write(gain.read());
         });
       },
     };
@@ -174,7 +174,7 @@ test("snapshot of a processor with no persistent slots returns an empty slot lis
     return {
       process: () => {
         forSample((i) => {
-          acc.store(acc.load());
+          acc.write(acc.read());
           out.ch(0).at(i).write(0);
         });
       },
@@ -202,8 +202,8 @@ const twoState = () =>
     return {
       process: () => {
         forSample((i) => {
-          out.ch(0).at(i).write(a.load());
-          out.ch(1).at(i).write(b.load());
+          out.ch(0).at(i).write(a.read());
+          out.ch(1).at(i).write(b.read());
         });
       },
     };
@@ -334,8 +334,8 @@ const profiledStates = () =>
     return {
       process: () => {
         forSample((i) => {
-          out.ch(0).at(i).write(a.load());
-          out.ch(1).at(i).write(b.load());
+          out.ch(0).at(i).write(a.read());
+          out.ch(1).at(i).write(b.read());
         });
       },
     };

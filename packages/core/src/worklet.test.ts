@@ -617,7 +617,7 @@ const publishProc = defineProcessor(() => {
       forSample((i) => {
         out.ch(0).at(i).write(input.ch(0).at(i));
       });
-      meter.store(input.ch(0).at(0));
+      meter.write(input.ch(0).at(0));
     },
   };
 });
@@ -737,9 +737,9 @@ const eventEmitProc = defineProcessor(() => {
   const peakEvt = event<{ level: number }>({ name: "peak", capacity: 16 });
   return {
     process: () => {
-      gate.store(true);
+      gate.write(true);
       forSample((i) => {
-        peakEvt.emitIf(gate.load(), { atSample: i, level: 0.5 });
+        peakEvt.emitIf(gate.read(), { atSample: i, level: 0.5 });
         out.ch(0).at(i).write(input.ch(0).at(i));
       });
     },
@@ -844,7 +844,7 @@ const messageRecvProc = defineProcessor(() => {
   return {
     process: () => {
       ctrl.onReceive(({ slot }) => {
-        captured.store(slot);
+        captured.write(slot);
       });
       forSample((i) => {
         out.ch(0).at(i).write(0);
@@ -946,7 +946,7 @@ const messagePostProc = defineProcessor(() => {
   return {
     process: () => {
       ctrl.onReceive(({ slot }) => {
-        captured.store(slot);
+        captured.write(slot);
       });
       forSample((i) => {
         out.ch(0).at(i).write(0);
@@ -986,7 +986,7 @@ test("message inject (postMessage): firePortMessage で payload を queue に pu
   self.messages.length = 0;
   // main → worklet を simulate
   firePortMessage(self, { kind: "message", ringIndex: 0, payload: { slot: 42 } });
-  // process 開始 で WASM ring に inject + onReceive で captured.store(42) + 末尾
+  // process 開始 で WASM ring に inject + onReceive で captured.write(42) + 末尾
   // publish 経 由 で main へ port.postMessage 通 知 (= "publish" message)
   const inputs: Float32Array[][] = [];
   const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
@@ -1179,20 +1179,20 @@ test("no message/midi rings: a port message listener is still registered + start
 });
 
 // ── loose-literal re-lift at the store / write boundary (Q77, "type ⟺ works") ──
-// `num(n)` is a loose literal that defers its type to context. A `.store()` /
+// `num(n)` is a loose literal that defers its type to context. A `.write()` /
 // buffer `.write()` IS that context, so the literal must re-lift to the declared
 // slot type — emitting an `f32.const` into a non-f32 slot type-checks in TS yet
 // produces broken WASM. These run the compiled module and read the value back.
 
-test("`process`: state.f64.store(num(n)) re-lifts the loose literal to the f64 slot", async () => {
+test("`process`: state.f64.write(num(n)) re-lifts the loose literal to the f64 slot", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
     const x = state.f64(0);
     return {
       process: () => {
-        x.store(num(5));
+        x.write(num(5));
         forSample((i) => {
-          out.ch(0).at(i).write(f32(x.load()));
+          out.ch(0).at(i).write(f32(x.read()));
         });
       },
     };

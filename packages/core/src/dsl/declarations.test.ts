@@ -421,7 +421,7 @@ test("`param` handle `.expose({...})` (= 後 付 け) updates name + snapshot po
 
 // ─────────────────────────────────────────────────────────────────────────
 // state plain factory = Phase 7 sub-phase 7.1 (= state.<type>(initial)
-// scalar slot を declare、 .load() / .store(v) で AST 還 元)
+// scalar slot を declare、 .read() / .write(v) で AST 還 元)
 // ─────────────────────────────────────────────────────────────────────────
 
 test("`state.f32(0)` outside `defineProcessor` body throws", () => {
@@ -470,13 +470,13 @@ test("`state.<type>(initial)` 5 type 全 declare (= f32 / f64 / i32 / i64 / bool
   ]);
 });
 
-test("`state.f32(0).load()` eager-captures a `stateLoad` (tied to decl.name) and returns a `tempRef`", () => {
+test("`state.f32(0).read()` eager-captures a `stateLoad` (tied to decl.name) and returns a `tempRef`", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const z = state.f32(0);
     // load() freezes the read into a temp local (= issue #8): it returns a
     // tempRef, and the stateLoad lives in the recorded tempAssign statement.
-    expect(unwrapAst(z.load())).toEqual({ kind: "tempRef", tempId: 0, type: "f32" });
+    expect(unwrapAst(z.read())).toEqual({ kind: "tempRef", tempId: 0, type: "f32" });
     expect(ctx.statements.at(-1)).toMatchObject({
       kind: "tempAssign",
       valueType: "f32",
@@ -485,12 +485,12 @@ test("`state.f32(0).load()` eager-captures a `stateLoad` (tied to decl.name) and
   });
 });
 
-test("`state.f32(0).store(Node)` appends a `stateStore` AST to statements", () => {
+test("`state.f32(0).write(Node)` appends a `stateStore` AST to statements", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const z = state.f32(0);
     const v = wrapAst<"f32">({ kind: "literal", type: "f32", value: 0.5 });
-    z.store(v);
+    z.write(v);
   });
   expect(ctx.statements).toEqual([
     {
@@ -502,11 +502,11 @@ test("`state.f32(0).store(Node)` appends a `stateStore` AST to statements", () =
   ]);
 });
 
-test("`state.f32(0).store(literal)` lifts JS number to `f32` literal AST", () => {
+test("`state.f32(0).write(literal)` lifts JS number to `f32` literal AST", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const z = state.f32(0);
-    z.store(0.25);
+    z.write(0.25);
   });
   expect(ctx.statements).toEqual([
     {
@@ -518,11 +518,11 @@ test("`state.f32(0).store(literal)` lifts JS number to `f32` literal AST", () =>
   ]);
 });
 
-test("`state.i32(0).store(literal)` lifts JS number to `i32` literal AST", () => {
+test("`state.i32(0).write(literal)` lifts JS number to `i32` literal AST", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const z = state.i32(0);
-    z.store(42);
+    z.write(42);
   });
   expect(ctx.statements).toEqual([
     {
@@ -534,11 +534,11 @@ test("`state.i32(0).store(literal)` lifts JS number to `i32` literal AST", () =>
   ]);
 });
 
-test("`state.bool(false).store(true)` lifts boolean to internal i32 (= 0/1) literal", () => {
+test("`state.bool(false).write(true)` lifts boolean to internal i32 (= 0/1) literal", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const flag = state.bool(false);
-    flag.store(true);
+    flag.write(true);
   });
   expect(ctx.statements).toEqual([
     {
@@ -550,11 +550,11 @@ test("`state.bool(false).store(true)` lifts boolean to internal i32 (= 0/1) lite
   ]);
 });
 
-test("`state.bool(false).store(false)` lifts boolean to internal i32 0 literal", () => {
+test("`state.bool(false).write(false)` lifts boolean to internal i32 0 literal", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const flag = state.bool(true);
-    flag.store(false);
+    flag.write(false);
   });
   expect(ctx.statements[0]).toEqual({
     kind: "stateStore",
@@ -564,11 +564,11 @@ test("`state.bool(false).store(false)` lifts boolean to internal i32 0 literal",
   });
 });
 
-test("`state.i64(0n).store(bigint literal)` captures an `i64` literal AST", () => {
+test("`state.i64(0n).write(bigint literal)` captures an `i64` literal AST", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const z = state.i64(0n);
-    z.store(42n);
+    z.write(42n);
   });
   expect(ctx.statements).toEqual([
     {
@@ -608,13 +608,13 @@ test("chain で `.named` 重 複 = after-wins (= chain-rightmost name 採 用)",
   expect(ctx.declarations[0]?.name).toBe("final");
 });
 
-test("`state.<type>.load()` の name は `.named` 後 fix を 反 映 (= late binding)", () => {
+test("`state.<type>.read()` の name は `.named` 後 fix を 反 映 (= late binding)", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const handle = state.named("orig").f32(0).named("final");
     // The eager-captured stateLoad (inside the tempAssign) reflects the
     // late-bound final name; load() itself returns a tempRef.
-    expect(unwrapAst(handle.load())).toEqual({ kind: "tempRef", tempId: 0, type: "f32" });
+    expect(unwrapAst(handle.read())).toEqual({ kind: "tempRef", tempId: 0, type: "f32" });
     expect(ctx.statements.at(-1)).toMatchObject({
       kind: "tempAssign",
       value: { kind: "stateLoad", type: "f32", name: "final" },
@@ -622,11 +622,11 @@ test("`state.<type>.load()` の name は `.named` 後 fix を 反 映 (= late bi
   });
 });
 
-test("`state.<type>.store(v)` の name も `.named` 後 fix を 反 映 (= late binding)", () => {
+test("`state.<type>.write(v)` の name も `.named` 後 fix を 反 映 (= late binding)", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const handle = state.f32(0).named("final");
-    handle.store(0);
+    handle.write(0);
   });
   expect(ctx.statements[0]).toMatchObject({
     kind: "stateStore",
@@ -897,12 +897,12 @@ test("handle.expose 後 付 け で 別 state と 同 name 移 動 で collide r
   ).toThrow(/duplicate state declaration name "first"/);
 });
 
-test("`state.store(v)` inside `forSample` 内 = forSample body に append", () => {
+test("`state.write(v)` inside `forSample` 内 = forSample body に append", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const z = state.f32(0);
     forSample(() => {
-      z.store(0.5);
+      z.write(0.5);
     });
   });
   expect(ctx.statements).toEqual([
@@ -1524,7 +1524,7 @@ test("inferAstType: stateLoad Node field 値 = state.type 由 来 で seal", () 
   runCapture(ctx, () => {
     const z = state.named("z").f64(0);
     const evt = event<{ value: number }>({ name: "echo" });
-    evt.emitIf(true, { atSample: 0, value: z.load() });
+    evt.emitIf(true, { atSample: 0, value: z.read() });
     const decl = ctx.declarations.find((d) => d.kind === "event");
     if (decl?.kind !== "event") throw new Error("expected event decl");
     expect(decl.fields).toEqual([{ name: "value", wireType: "f64" }]);
@@ -1657,7 +1657,7 @@ test("`messageDecl.onReceive` handler 引 数 = Q46 lift proxy で field access 
     const z = state.named("counter").i32(0);
     const reset = message<{ slot: number }>({ name: "reset" });
     reset.onReceive(({ slot }) => {
-      z.store(slot);
+      z.write(slot);
     });
   });
   const onRecv = ctx.statements[0];
@@ -1709,7 +1709,7 @@ test("`messageDecl.onReceive` typed-array field = `.at` / `.length` で payload 
     const lenState = state.named("len").i32(0);
     const upload = message<{ samples: Float32Array }>({ name: "upload" });
     upload.onReceive(({ samples }) => {
-      lenState.store(samples.length);
+      lenState.write(samples.length);
       buf.write(0, samples.at(0));
     });
     const decl = ctx.declarations.find((d) => d.kind === "message");

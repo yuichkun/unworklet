@@ -25,7 +25,7 @@ test("typed-array message compiles: proxy + payloadContent layout + payloadField
     return {
       process: () => {
         upload.onReceive(({ samples }) => {
-          lenState.store(samples.length); // payloadFieldLength
+          lenState.write(samples.length); // payloadFieldLength
           forSample((i) => {
             buf.write(i, samples.at(i)); // payloadFieldRead (runtime indexed)
           });

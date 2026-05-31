@@ -99,13 +99,13 @@ const _typeCheckSmoke = (): void => {
           out.left.at(i).write(l);
           out.right.at(i).write(r);
 
-          meterL.store(l.abs().max(meterL.load()));
-          meterR.store(r.abs().max(meterR.load()));
+          meterL.write(l.abs().max(meterL.read()));
+          meterR.write(r.abs().max(meterR.read()));
         });
 
         // Per-block decay.
-        meterL.store(meterL.load().mul(0.95));
-        meterR.store(meterR.load().mul(0.95));
+        meterL.write(meterL.read().mul(0.95));
+        meterR.write(meterR.read().mul(0.95));
       },
     };
   });

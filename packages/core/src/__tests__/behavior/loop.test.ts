@@ -62,10 +62,10 @@ test("forSample.byN(8) は前ブロックの state を引き継ぐ (= cross-bloc
     return {
       process: () => {
         forSample.byN(8, () => {
-          count.store(count.load().add(1));
+          count.write(count.read().add(1));
         });
         forSample((i) => {
-          out.ch(0).at(i).write(f32(count.load()));
+          out.ch(0).at(i).write(f32(count.read()));
         });
       },
     };
@@ -87,9 +87,9 @@ test("everyNSamples(32) は 32 サンプルごとに sub-block を実行し、�
       process: () => {
         forSample((i, everyNSamples) => {
           everyNSamples(32, () => {
-            c.store(c.load().add(1));
+            c.write(c.read().add(1));
           });
-          out.ch(0).at(i).write(f32(c.load()));
+          out.ch(0).at(i).write(f32(c.read()));
         });
       },
     };
@@ -114,9 +114,9 @@ test("everyNSamples の counter は block 跨ぎで継続する (= 非 block-ali
       process: () => {
         forSample((i, everyNSamples) => {
           everyNSamples(48, () => {
-            c.store(c.load().add(1));
+            c.write(c.read().add(1));
           });
-          out.ch(0).at(i).write(f32(c.load()));
+          out.ch(0).at(i).write(f32(c.read()));
         });
       },
     };
@@ -158,9 +158,9 @@ const everyN = (n: number) =>
       process: () => {
         forSample((i, everyNSamples) => {
           everyNSamples(n, () => {
-            acc.store(acc.load().add(f32(1)));
+            acc.write(acc.read().add(f32(1)));
           });
-          out.ch(0).at(i).write(acc.load());
+          out.ch(0).at(i).write(acc.read());
         });
       },
     };

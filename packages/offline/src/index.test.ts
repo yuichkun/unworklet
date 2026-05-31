@@ -112,10 +112,10 @@ const oobReader = defineProcessor(() => {
   return {
     process: () => {
       upload.onReceive(({ samples }) => {
-        oobState.store(samples.at(100000)); // far OOB read
+        oobState.write(samples.at(100000)); // far OOB read
       });
       forSample((i) => {
-        out.ch(0).at(i).write(oobState.load());
+        out.ch(0).at(i).write(oobState.read());
       });
     },
   };
@@ -141,10 +141,10 @@ const twoUploads = defineProcessor(() => {
   return {
     process: () => {
       upload.onReceive(({ samples }) => {
-        acc.store(acc.load().add(samples.at(0)));
+        acc.write(acc.read().add(samples.at(0)));
       });
       forSample((i) => {
-        out.ch(0).at(i).write(acc.load());
+        out.ch(0).at(i).write(acc.read());
       });
     },
   };
@@ -188,10 +188,10 @@ const sampleLen = defineProcessor(() => {
   return {
     process: () => {
       upload.onReceive(({ samples }) => {
-        lenState.store(samples.length);
+        lenState.write(samples.length);
       });
       forSample((i) => {
-        out.ch(0).at(i).write(f32(lenState.load()));
+        out.ch(0).at(i).write(f32(lenState.read()));
       });
     },
   };
@@ -218,10 +218,10 @@ const emptyPayloadReader = defineProcessor(() => {
   return {
     process: () => {
       upload.onReceive(({ x }) => {
-        last.store(x.at(0));
+        last.write(x.at(0));
       });
       forSample((i) => {
-        out.ch(0).at(i).write(last.load());
+        out.ch(0).at(i).write(last.read());
       });
     },
   };
@@ -256,10 +256,10 @@ const messageMul = defineProcessor(() => {
   return {
     process: () => {
       setMul.onReceive(({ mul }) => {
-        mulState.store(mul);
+        mulState.write(mul);
       });
       forSample((i) => {
-        out.ch(0).at(i).write(f32(mulState.load()));
+        out.ch(0).at(i).write(f32(mulState.read()));
       });
     },
   };
@@ -297,13 +297,13 @@ const messageFlag = defineProcessor(() => {
   return {
     process: () => {
       setOn.onReceive(({ on }) => {
-        flag.store(on);
+        flag.write(on);
       });
       forSample((i) => {
         out
           .ch(0)
           .at(i)
-          .write(select(flag.load(), f32(1), f32(0)));
+          .write(select(flag.read(), f32(1), f32(0)));
       });
     },
   };
@@ -504,10 +504,10 @@ test("`renderOffline` preserves state across render quanta (= literal store cros
     return {
       process: () => {
         forSample((i) => {
-          out.ch(0).at(i).write(stored.load());
+          out.ch(0).at(i).write(stored.read());
         });
         // 全 block 末 尾 で literal 0.6 を store (= subnormal range 外 = guard 通 過)
-        stored.store(0.6);
+        stored.write(0.6);
       },
     };
   });
@@ -539,9 +539,9 @@ test("`renderOffline` state f32 chained mul across blocks (= counter × 0.5 deca
     return {
       process: () => {
         forSample((i) => {
-          out.ch(0).at(i).write(counter.load());
+          out.ch(0).at(i).write(counter.read());
         });
-        counter.store(counter.load().mul(0.5));
+        counter.write(counter.read().mul(0.5));
       },
     };
   });
@@ -574,9 +574,9 @@ test("`renderOffline` state declaration が driver から 除 外 さ れ る (=
     return {
       process: () => {
         forSample((i) => {
-          out.ch(0).at(i).write(stored.load());
+          out.ch(0).at(i).write(stored.read());
         });
-        stored.store(input.ch(0).at(0).mul(2));
+        stored.write(input.ch(0).at(0).mul(2));
       },
     };
   });
@@ -604,9 +604,9 @@ test("`renderOffline` state f32 cross-block via input-driven store + load (= 累
     return {
       process: () => {
         forSample((i) => {
-          out.ch(0).at(i).write(stored.load());
+          out.ch(0).at(i).write(stored.read());
         });
-        stored.store(input.ch(0).at(0).mul(2));
+        stored.write(input.ch(0).at(0).mul(2));
       },
     };
   });
@@ -649,7 +649,7 @@ test("`renderOffline` publish scheduler integration (= rateFps gate で sampleRa
         forSample((i) => {
           out.ch(0).at(i).write(input.ch(0).at(i));
         });
-        meter.store(input.ch(0).at(0));
+        meter.write(input.ch(0).at(0));
       },
     };
   });
@@ -696,15 +696,15 @@ test("`renderOffline` で sampleRate option が compile 経 由 で emit に 反
     return {
       process: () => {
         forSample((i) => {
-          out.ch(0).at(i).write(meter.load());
+          out.ch(0).at(i).write(meter.read());
         });
-        meter.store(0.5);
+        meter.write(0.5);
       },
     };
   });
 
-  // block 0 = forSample で meter.load() = 0 (= 初 期 値) を 全 sample に write、 末 尾 で
-  // meter.store(0.5)。 block 1 以 降 = forSample で 0.5 を 全 sample に write。
+  // block 0 = forSample で meter.read() = 0 (= 初 期 値) を 全 sample に write、 末 尾 で
+  // meter.write(0.5)。 block 1 以 降 = forSample で 0.5 を 全 sample に write。
   // publish 自 体 は SAB / main surface を 通 し て 観 測 で きな い (= sub-phase 7.4 / 7.5)、
   // ここ で は state 本 体 の cross-block 動 作 + sampleRate option が compile を 通 過 す る
   // path を 確 認 (= compile fail し な い + 出 力 path 維 持)。
@@ -736,9 +736,9 @@ test("`renderOffline` subnormal flush integration (= state.f32 store 1e-40 → 0
     return {
       process: () => {
         forSample((i) => {
-          out.ch(0).at(i).write(z.load());
+          out.ch(0).at(i).write(z.read());
         });
-        z.store(input.ch(0).at(0).mul(1e-40));
+        z.write(input.ch(0).at(0).mul(1e-40));
       },
     };
   });
@@ -769,9 +769,9 @@ test("`renderOffline` captures emitted events from event ring (= sub-phase 7.8c)
     const gate = state.named("gate").bool(true);
     return {
       process: () => {
-        gate.store(true);
+        gate.write(true);
         forSample((i) => {
-          peakEvt.emitIf(gate.load(), { atSample: i, level: 0.5 });
+          peakEvt.emitIf(gate.read(), { atSample: i, level: 0.5 });
           out.ch(0).at(i).write(0);
         });
       },
@@ -856,9 +856,9 @@ test("`renderOffline` captures bool wireType event field as JS boolean", async (
     const gate = state.named("gate").bool(true);
     return {
       process: () => {
-        gate.store(true);
+        gate.write(true);
         forSample((i) => {
-          flagEvt.emitIf(gate.load(), { atSample: i, flag: true });
+          flagEvt.emitIf(gate.read(), { atSample: i, flag: true });
           out.ch(0).at(i).write(0);
         });
       },

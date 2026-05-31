@@ -20,9 +20,9 @@ export const eventEmitter = defineProcessor(() => {
   const peak = event<{ level: number }>({ name: "peak", capacity: 16 });
   return {
     process: () => {
-      gate.store(true);
+      gate.write(true);
       forSample((i) => {
-        peak.emitIf(gate.load(), { atSample: i, level: input.ch(0).at(i) });
+        peak.emitIf(gate.read(), { atSample: i, level: input.ch(0).at(i) });
         out.ch(0).at(i).write(input.ch(0).at(i));
       });
     },

@@ -192,7 +192,7 @@ test("a message field read used inside its onReceive handler compiles (no false 
     const sel = state.named("sel").i32(0);
     m.onReceive(({ slot }) => {
       // Read inside the handler body — the canonical, valid usage.
-      sel.store(slot as Node<"i32">);
+      sel.write(slot as Node<"i32">);
     });
     return {
       process: () => {

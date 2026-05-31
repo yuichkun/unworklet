@@ -607,7 +607,7 @@ test("`select` の f32 branch は type 'f32' の ま ま", () => {
 
 test("`select(cond, true, boolNode)` lifts a boolean branch to a `bool` literal (= canonical bool-state pattern)", () => {
   // docs/canonical (00-foundations §145、12-canonical-examples Ex8) の
-  // `select(isMe, true, gate.load())` 形。 boolean branch literal が bool node に lift される。
+  // `select(isMe, true, gate.read())` 形。 boolean branch literal が bool node に lift される。
   const cond = wrapAst<"bool">({ kind: "stateLoad", type: "bool", name: "isMe" });
   const gate = wrapAst<"bool">({ kind: "stateLoad", type: "bool", name: "gate" });
   expect(unwrapAst(P.select(cond, true, gate))).toEqual({

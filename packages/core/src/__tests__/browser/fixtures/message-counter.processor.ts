@@ -15,7 +15,7 @@ export const messageCounter = defineProcessor(() => {
   return {
     process: () => {
       setCount.onReceive(({ value }) => {
-        counter.store(value);
+        counter.write(value);
       });
       forSample((i) => {
         out.ch(0).at(i).write(0);

@@ -131,7 +131,7 @@ function liftF32(v: Node<"f32"> | number): AstNode {
 
 /**
  * A loose `num(n)` literal (Q77) carries a fallback `'f32'` type and defers to its
- * concretely-typed context. A `.store()` / buffer `.write()` IS that context, so a
+ * concretely-typed context. A `.write()` / buffer `.write()` IS that context, so a
  * loose literal re-lifts to the declared slot type here — otherwise an `f32.const`
  * lands in a non-f32 slot, which type-checks in TS yet miscompiles ("type ⟺ works"
  * breaks). A non-loose node's type is TS-guaranteed to match, so it passes through.
@@ -151,7 +151,7 @@ function reliftLooseLiteral(ast: AstNode, type: ScalarType): AstNode {
 }
 
 /**
- * `state.<type>.store(v)` の value 引 数 を AST に lift (= Q33 literal lift
+ * `state.<type>.write(v)` の value 引 数 を AST に lift (= Q33 literal lift
  * + Node<T> unwrap)。 i64 は bigint 必 須、 bool は boolean → i32 0/1 に
  * 内 部 表 現 変 換 (= Q42 + emit.ts bool case と zip)。 既 ast.ts の
  * literal kind は `value: number` 制 約 = i64 literal の bigint store は
@@ -195,7 +195,7 @@ export interface StateChain {
 // (= `.f32(0)` 等) で makeStateDecl が 走 り decl を 作 成。 handle 後 付 け
 // `.named` / `.expose` も 同 merge logic で decl mutate。
 //
-// AST shape の name field は `decl.name` を `.load()` / `.store()` 呼 び 時 点
+// AST shape の name field は `decl.name` を `.read()` / `.write()` 呼 び 時 点
 // で closure capture (= late binding)、 chain 後 fix が反 映 さ れ る 順 序 と zip
 // (= 既 param と 同 規 律: chain は store/load 呼 び 出 し の 前 に 完 結 さ せ る
 // = user 責 任)。
@@ -305,9 +305,9 @@ function makeStateDecl<T extends ScalarType>(
 
 function makeStateHandle<T extends ScalarType>(decl: StateDecl): State<T> {
   const handle = {
-    load: () =>
+    read: () =>
       // Eager temp-local capture freezes the slot value at this lexical point
-      // (= `03-compiler.md` §2.7, issue #8) — a later `store` cannot change it.
+      // (= `03-compiler.md` §2.7, issue #8) — a later `write` cannot change it.
       captureTemp<T>(
         {
           kind: "stateLoad",
@@ -316,7 +316,7 @@ function makeStateHandle<T extends ScalarType>(decl: StateDecl): State<T> {
         },
         decl.type,
       ),
-    store: (v: Node<T> | ScalarOf<T>) => {
+    write: (v: Node<T> | ScalarOf<T>) => {
       addStatement({
         kind: "stateStore",
         type: decl.type,
@@ -1038,7 +1038,7 @@ function checkMessageName(name: string): void {
  */
 /**
  * `onReceive` handler が destructure で 触 る field を hybrid handle と し て 返 す。
- * scalar 利 用 (= `state.store(field)` 等) は Node<'i32'> と し て 振 る 舞 い、
+ * scalar 利 用 (= `state.write(field)` 等) は Node<'i32'> と し て 振 る 舞 い、
  * typed-array 利 用 (= `field.at(i)` / `field.length`) は `01-dsl.md` §4.3 の
  * proxy を 露 出。 field の wire 種 別 は 「ど ち ら の interface を 使 っ た か」 で
  * seal す る (= TS の 2-view で user code は 一 貫 し て 片 方 だ け を 使 う)。

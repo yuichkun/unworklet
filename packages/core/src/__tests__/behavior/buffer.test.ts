@@ -243,13 +243,13 @@ test("buffer ring delay: an impulse is delayed by 100 samples", async () => {
     return {
       process: () => {
         forSample((i) => {
-          const h = head.load();
+          const h = head.read();
           // read (n - DELAY) mod SIZE = the sample written DELAY samples ago.
           const delayed = buf.read(h.add(i32(SIZE - DELAY)).mod(i32(SIZE)));
           buf.write(h, inp.ch(0).at(i));
           out.ch(0).at(i).write(delayed);
           // advance the write head last (= load-before-store discipline).
-          head.store(h.add(i32(1)).mod(i32(SIZE)));
+          head.write(h.add(i32(1)).mod(i32(SIZE)));
         });
       },
     };

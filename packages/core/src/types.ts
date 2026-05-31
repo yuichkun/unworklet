@@ -100,8 +100,8 @@ export interface Node<T extends ScalarType | "f32x4" = ScalarType> {
 /** Scalar `state.<type>(initial)` handle (`01-dsl.md` §3.1). */
 export type State<T extends ScalarType> = {
   readonly [stateBrand]: T;
-  load(): Node<T>;
-  store(v: Node<T> | ScalarOf<T>): void;
+  read(): Node<T>;
+  write(v: Node<T> | ScalarOf<T>): void;
   named(name: string): State<T>;
   expose(options: ExposeOptions): State<T>;
 };
