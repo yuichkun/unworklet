@@ -3987,3 +3987,25 @@ content region = `perPayload × min(ringCapacity, MAX_CONTENT_SLOTS)`、`MAX_CON
 ### v1.x.0 deferral
 
 - ナシ。
+
+## Q88 — main-side surface を `node.events` に統合 (= `node.messages` 廃止、Q87 の main-side 半分を改訂)
+
+**Status:** resolved.
+
+**背景:** Q87 で message (main→worklet) と event (worklet→main) を独立名前空間として確定し、main-side accessor を `node.messages.<name>` (送信) / `node.events.<name>` (受信) の 2 面に分けていた。一方 issue #10 で authoring を direction-aware な単一 `event` family に統一した (`event({from:'main'})` = 旧 message、`event({to:'main'})` = 旧 event)。authoring が 1 概念なのに main-side だけ 2 面に割れているのは、#10 が消そうとした「2 語彙を覚える」コストそのもの。`event.midi({from/to})` の両方向が main-side で `node.midi.<name>` の 1 面に集約しているのとも不整合。
+
+**Decision (Q88):** main-side を `node.events.<name>` の 1 面に統合し、`node.messages` を廃止する。
+
+- `event({from:'main'})` の name → `node.events.<name>.emit(payload)` (送信)。`event({to:'main'})` の name → `node.events.<name>.on(cb)` (受信)。同名 in/out ペア (Q87) は同じ `node.events.<name>` が `.emit` と `.on` の両方を持つ。
+- per-name 型 narrowing (B5) が宣言の direction から `.emit` / `.on` を出し分ける。method 名 (`.emit` vs `.on`) は impl 領域。
+- **worklet 内部 wire は凍結:** ring (`eventRings` / `messageRings`)、content region (Q87 の kind 別 slot map)、IR kind (`message` / `event`) は不変。変わるのは main-thread の client surface (`client.ts`) と型 (`types.ts`) だけで、WASM / SAB / postMessage wire は byte 不変。
+
+**Rejected:**
+
+- **`node.messages` を残す (= Q87 の 2 面を維持):** namespace を見た瞬間に方向が分かる利点はあるが、authoring を `event` family に統一した以上、main-side だけ 2 語彙は非対称。`node.midi` の 1 面集約とも不整合で、#10 の「書いた構造がそのまま node surface に出る」原則 (authoring `event` → `node.events`) に反する。
+
+**影響 file:** `client.ts` (= messageSurface を eventSurface に名前キーで merge、node literal から `messages` 削除)、`types.ts` (= `UnworkletNode` の `events` を emit+on 統合型に、`messages` 削除、B5 per-name narrowing)、`client.test.ts` / browser postmessage tests (= `node.messages.<name>(p)` を `node.events.<name>.emit(p)` に)。
+
+### v1.x.0 deferral
+
+- ナシ。
