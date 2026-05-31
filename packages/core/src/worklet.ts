@@ -902,6 +902,9 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       };
       const applyRestoreSlots = (
         slots: ReadonlyArray<SnapshotSlot>,
+        // The blob's profile scopes which declarations are "expected" — `missing`
+        // is computed against it, not the union of every profile (`01-dsl.md` §8.2).
+        profile: string | undefined,
       ): { applied: string[]; skipped: string[]; missing: string[] } => {
         const applied: string[] = [];
         const skipped: string[] = [];
@@ -957,7 +960,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         for (const s of meta.states) {
           if (
             s.userNamed === true &&
-            isPersistent(s.snapshot, "persistent", undefined) &&
+            isPersistent(s.snapshot, "persistent", profile) &&
             !provided.has(s.name)
           ) {
             missing.push(s.name);
@@ -966,7 +969,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         for (const b of meta.buffers) {
           if (
             b.userNamed === true &&
-            isPersistent(b.snapshot, "transient", undefined) &&
+            isPersistent(b.snapshot, "transient", profile) &&
             !provided.has(b.name)
           ) {
             missing.push(b.name);
@@ -975,7 +978,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         for (const p of meta.params) {
           if (
             p.name !== "" &&
-            isPersistent(p.snapshot, "persistent", undefined) &&
+            isPersistent(p.snapshot, "persistent", profile) &&
             !provided.has(p.name)
           ) {
             missing.push(p.name);
@@ -1022,12 +1025,13 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
           }
           if (data.kind === "restore") {
             const slots = Array.isArray(data.slots) ? (data.slots as SnapshotSlot[]) : [];
+            const profile = typeof data.profile === "string" ? data.profile : undefined;
             // Same contract as capture: the handler must always post `restore-done`
             // so the awaiting client settles. On an unexpected throw mid-apply,
             // report nothing applied (= the live node keeps its current state).
             let report: { applied: string[]; skipped: string[]; missing: string[] };
             try {
-              report = applyRestoreSlots(slots);
+              report = applyRestoreSlots(slots, profile);
             } catch {
               report = {
                 applied: [],

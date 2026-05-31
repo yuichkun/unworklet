@@ -1522,7 +1522,14 @@ export async function createNode<C>(
     try {
       report = await new Promise<RestoreReport>((resolve, reject) => {
         pendingRestores.set(requestId, { resolve, reject });
-        node.port.postMessage({ kind: "restore", requestId, slots: decoded.slots });
+        node.port.postMessage({
+          kind: "restore",
+          requestId,
+          slots: decoded.slots,
+          // Scope the worklet's `missing` report to the profile the blob was
+          // captured under (= not the union of all profiles).
+          profile: decoded.profile ?? undefined,
+        });
       });
     } catch (err) {
       pendingRestores.delete(requestId);

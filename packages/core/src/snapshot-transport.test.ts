@@ -317,3 +317,45 @@ test("a restore whose apply throws still posts restore-done (client never hangs)
   expect(done!["requestId"]).toBe(9);
   expect(done!["applied"]).toEqual([]);
 });
+
+// ── profile-scoped `missing` ──────────────────────────────────────────────────
+// `a` is persistent only under "preset"; `b` only under "session". The `missing`
+// report must be computed against the restored blob's profile, not the union of
+// all profiles — otherwise a "preset" restore wrongly flags `b` as missing.
+const profiledStates = () =>
+  defineProcessor(() => {
+    const out = audioOutput({ channels: 2, name: "main" });
+    const a = state
+      .expose({ name: "a", snapshot: { preset: "persistent", session: "transient" } })
+      .f32(0);
+    const b = state
+      .expose({ name: "b", snapshot: { preset: "transient", session: "persistent" } })
+      .f32(0);
+    return {
+      process: () => {
+        forSample((i) => {
+          out.ch(0).at(i).write(a.load());
+          out.ch(1).at(i).write(b.load());
+        });
+      },
+    };
+  });
+
+test("restore computes `missing` against the blob's profile, not the union", async () => {
+  const proc = profiledStates();
+  const { wasm } = await compile(proc);
+  const self = makeMockSelf();
+  proc.worklet.initialize(self, { processorOptions: { wasm } });
+
+  // Capture under profile "preset" → only `a` participates there.
+  fireToWorklet(self, { kind: "snapshot-request", requestId: 1, profile: "preset" });
+  const captured = lastOfKind(self, "snapshot-response")!["slots"] as SnapshotSlot[];
+  expect(captured.map((s) => s.name)).toEqual(["a"]);
+
+  // Restore that blob (profile "preset"): `a` is provided, and `b` (persistent
+  // only under "session") must NOT be reported missing — it is not expected here.
+  fireToWorklet(self, { kind: "restore", requestId: 2, profile: "preset", slots: captured });
+  const done = lastOfKind(self, "restore-done")!;
+  expect(done["applied"]).toEqual(["a"]);
+  expect(done["missing"]).toEqual([]);
+});

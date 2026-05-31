@@ -3132,6 +3132,39 @@ test("processorerror while a restore() is pending settles it as ok:false (no han
   }
 });
 
+test("node.restore() forwards the blob's profile to the worklet (= profile-scoped missing)", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (m: unknown) => posted.push(m);
+    const blob = encodeSnapshot("test", "preset", [
+      { name: "a", kind: "state", type: "f32", data: encodeScalar("f32", 1) },
+    ]);
+    const p = node.restore(blob);
+    const req = findPosted(posted, "restore")!;
+    // The worklet needs the profile to scope its `missing` report correctly.
+    expect(req["profile"]).toBe("preset");
+    for (const l of h.lastNode!.port.__listeners) {
+      l({
+        data: {
+          kind: "restore-done",
+          requestId: req["requestId"],
+          applied: ["a"],
+          skipped: [],
+          missing: [],
+        },
+      } as MessageEvent);
+    }
+    await p;
+  } finally {
+    h.cleanup();
+  }
+});
+
 test("node.restore(blob): a throwing migration step fails the restore (RestoreFailure)", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
