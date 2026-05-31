@@ -914,7 +914,17 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
               skipped.push(slot.name);
               continue;
             }
-            new Uint8Array(buf, off, slot.data.length).set(slot.data);
+            // A corrupt / mis-migrated blob can hand a payload that does not match
+            // the declared slot width. Writing it raw would overrun the slot and
+            // corrupt adjacent state, so the declaration is the single authority:
+            // a size mismatch is rejected (= skipped, fail-loud), never written.
+            const decl = meta.states.find((s) => s.name === slot.name);
+            const expected = decl === undefined ? undefined : SNAPSHOT_ELEMENT_BYTES[decl.type];
+            if (expected === undefined || slot.data.length !== expected) {
+              skipped.push(slot.name);
+              continue;
+            }
+            new Uint8Array(buf, off, expected).set(slot.data);
             applied.push(slot.name);
           } else if (slot.kind === "buffer") {
             const off = lay.regions.buffers.slots[slot.name];
@@ -922,8 +932,18 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
               skipped.push(slot.name);
               continue;
             }
-            const len = Math.min(slot.data.length, buf.byteLength - off);
-            new Uint8Array(buf, off, len).set(slot.data.subarray(0, len));
+            // Declared byte size = size × element width (= the layout's slot bound).
+            // Same authority as state: a blob that does not match it is rejected,
+            // never clamped-and-written — a too-large payload would otherwise spill
+            // past the buffer into the regions packed after it.
+            const decl = meta.buffers.find((b) => b.name === slot.name);
+            const expected =
+              decl === undefined ? undefined : decl.size * SNAPSHOT_ELEMENT_BYTES[decl.type]!;
+            if (expected === undefined || slot.data.length !== expected) {
+              skipped.push(slot.name);
+              continue;
+            }
+            new Uint8Array(buf, off, expected).set(slot.data);
             applied.push(slot.name);
           } else {
             // param slot = AudioParam の 値 (= main 側 で 実 際 に set)。 worklet は

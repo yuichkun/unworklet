@@ -18,7 +18,7 @@ import { expect, test } from "vite-plus/test";
 
 import { compile } from "./compile/index.ts";
 import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
-import { audioOutput, state } from "./dsl/declarations.ts";
+import { audioOutput, buffer, state } from "./dsl/declarations.ts";
 import { forSample } from "./dsl/loop.ts";
 import { defineProcessor } from "./processor.ts";
 import { decodeScalar, encodeScalar, type SnapshotSlot } from "./snapshot.ts";
@@ -187,4 +187,113 @@ test("snapshot of a processor with no persistent slots returns an empty slot lis
   fireToWorklet(self, { kind: "snapshot-request", requestId: 1, profile: undefined });
   const resp = lastOfKind(self, "snapshot-response")!;
   expect(resp["slots"]).toEqual([]);
+});
+
+// ── blob-size validation (corrupt / mis-migrated blob must not corrupt memory) ─
+
+// Two adjacent persistent slots: `a` at the states-region base, `b` 4 bytes
+// after it. A wrong-sized restore for `a` would spill into `b` without bounds
+// validation, so both are captured back to prove no spill occurred.
+const twoState = () =>
+  defineProcessor(() => {
+    const out = audioOutput({ channels: 2, name: "main" });
+    const a = state.named("a").f32(0);
+    const b = state.named("b").f32(0);
+    return {
+      process: () => {
+        forSample((i) => {
+          out.ch(0).at(i).write(a.load());
+          out.ch(1).at(i).write(b.load());
+        });
+      },
+    };
+  });
+
+test("restore skips an oversized state slot and leaves the adjacent slot intact", async () => {
+  const proc = twoState();
+  const { wasm } = await compile(proc);
+  const self = makeMockSelf();
+  proc.worklet.initialize(self, { processorOptions: { wasm } });
+
+  // Seed adjacent slots a / b with valid 4-byte values.
+  fireToWorklet(self, {
+    kind: "restore",
+    requestId: 1,
+    slots: [
+      { name: "a", kind: "state", type: "f32", data: encodeScalar("f32", 0.1) },
+      { name: "b", kind: "state", type: "f32", data: encodeScalar("f32", 0.5) },
+    ],
+  });
+
+  // A mis-migrated blob hands 16 bytes for the 4-byte `a` slot. A raw write would
+  // overwrite 12 bytes past the slot — straight into `b`. It must be rejected.
+  fireToWorklet(self, {
+    kind: "restore",
+    requestId: 2,
+    slots: [{ name: "a", kind: "state", type: "f32", data: new Uint8Array(16).fill(0xff) }],
+  });
+  const done = lastOfKind(self, "restore-done")!;
+  expect(done["applied"]).toEqual([]);
+  expect(done["skipped"]).toEqual(["a"]);
+
+  // Capture both back: `a` keeps its seeded 0.1 (the oversized restore was
+  // skipped) and `b` is uncorrupted at 0.5 (no spill from the rejected write).
+  fireToWorklet(self, { kind: "snapshot-request", requestId: 3, profile: undefined });
+  const slots = lastOfKind(self, "snapshot-response")!["slots"] as SnapshotSlot[];
+  const byName = Object.fromEntries(slots.map((s) => [s.name, s]));
+  expect(decodeScalar("f32", byName["a"]!.data)).toBeCloseTo(0.1);
+  expect(decodeScalar("f32", byName["b"]!.data)).toBeCloseTo(0.5);
+});
+
+// A named buffer (4 × f32 = 16 declared bytes); element 0 is echoed to the
+// output so a restored value is observable in the next quantum.
+const tblEcho = () =>
+  defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const tbl = buffer.named("tbl").f32({ size: 4 });
+    return {
+      process: () => {
+        forSample((i) => {
+          out.ch(0).at(i).write(tbl.read(0));
+        });
+      },
+    };
+  });
+
+test("restore writes a correctly-sized buffer slot (next process reads element 0)", async () => {
+  const proc = tblEcho();
+  const { wasm } = await compile(proc);
+  const self = makeMockSelf();
+  proc.worklet.initialize(self, { processorOptions: { wasm } });
+
+  // 4 × f32 = 16 bytes; element 0 = 0.25.
+  const data = new Uint8Array(16);
+  new DataView(data.buffer).setFloat32(0, 0.25, true);
+  fireToWorklet(self, {
+    kind: "restore",
+    requestId: 1,
+    slots: [{ name: "tbl", kind: "buffer", type: "f32", data }],
+  });
+  expect(lastOfKind(self, "restore-done")!["applied"]).toEqual(["tbl"]);
+
+  const q = quantum();
+  proc.worklet.process(self, q.inputs, q.outputs, q.parameters);
+  expect(q.outputs[0]![0]![0]).toBeCloseTo(0.25);
+});
+
+test("restore skips a buffer slot whose blob size ≠ declared byte size", async () => {
+  const proc = tblEcho();
+  const { wasm } = await compile(proc);
+  const self = makeMockSelf();
+  proc.worklet.initialize(self, { processorOptions: { wasm } });
+
+  // Declared size is 4 × 4 = 16 bytes; a 64-byte blob would spill past the slot.
+  fireToWorklet(self, {
+    kind: "restore",
+    requestId: 1,
+    slots: [{ name: "tbl", kind: "buffer", type: "f32", data: new Uint8Array(64).fill(0xff) }],
+  });
+  const done = lastOfKind(self, "restore-done")!;
+  expect(done["applied"]).toEqual([]);
+  expect(done["skipped"]).toEqual(["tbl"]);
 });
