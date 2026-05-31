@@ -398,7 +398,8 @@ export async function renderOffline<C>(
             /* v8 ignore stop */
           }
           if (field.name === "atSample" && typeof value === "number") {
-            atSample = blockStart + value;
+            // Block-local (0..SAMPLES_PER_BLOCK-1), matching online (B7 / Q4-c-ii).
+            atSample = value;
           } else {
             payload[field.name] = value;
           }
@@ -441,7 +442,8 @@ export async function renderOffline<C>(
         } else {
           payload = wireToMidiEvent(status, data1, data2);
         }
-        emittedEvents.push({ name: port.name, payload, atSample: blockStart + slotAtSample });
+        // Block-local atSample (matches online + worklet→main events, B7 / Q4-c-ii).
+        emittedEvents.push({ name: port.name, payload, atSample: slotAtSample });
         tail += 1;
       }
       headerView[1] = head;

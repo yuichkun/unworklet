@@ -790,6 +790,34 @@ test("`renderOffline` captures emitted events from event ring (= sub-phase 7.8c)
   }
 });
 
+test("worklet→main event atSample is block-local across blocks (B7: offline matches online)", async () => {
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "out" });
+    const fired = event<{ block: number }>({ to: "main", name: "fired", capacity: 16 });
+    const blk = state.named("blk").i32(0);
+    return {
+      process: () => {
+        forSample((i) => {
+          // Fire once per block at block-local sample 5 (a dynamic, non-constant cond).
+          fired.emitIf(i.eq(5), { atSample: i, block: blk.read() });
+          out.ch(0).at(i).write(0);
+        });
+        blk.write(blk.read().add(1));
+      },
+    };
+  });
+  const result = await renderOffline(proc, {
+    sampleRate: 48000,
+    duration: (3 * SAMPLES_PER_BLOCK) / 48000, // 3 blocks
+  });
+  const fires = result.events.filter((e) => e.name === "fired");
+  expect(fires.length).toBe(3);
+  // Block-local: every fire reports atSample 5, NOT absolute 5 / 133 / 261.
+  expect(fires.map((e) => e.atSample)).toEqual([5, 5, 5]);
+  // The `block` payload confirms the events really span three distinct blocks.
+  expect(fires.map((e) => (e.payload as { block: number }).block)).toEqual([0, 1, 2]);
+});
+
 // worklet → main の typed-array event payload (§4.3 L708)。worklet 内 buffer に書いて
 // emitIf に buffer + framework-injected length を渡すと、main 側は length 長の fresh
 // Float32Array を受け取る。

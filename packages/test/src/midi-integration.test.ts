@@ -69,9 +69,11 @@ test("expectMidiOut matches the re-emitted notes from a real render", async () =
       ]),
     ],
   });
+  // atSample is block-local (B7): the noteOff fires in block 1 at block-local
+  // sample 0, not absolute 128 — matching the online worklet→main value.
   expectMidiOut(result, "out", [
     { type: "noteOn", channel: 0, note: 72, velocity: 100, atSample: 0 },
-    { type: "noteOff", channel: 0, note: 72, velocity: 0, atSample: 128 },
+    { type: "noteOff", channel: 0, note: 72, velocity: 0, atSample: 0 },
   ]);
 });
 
