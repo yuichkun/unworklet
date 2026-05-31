@@ -1116,3 +1116,33 @@ test("`layout(message 2 個)` = declaration 順 で 連 続 並 び", () => {
     totalBytes: 88,
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// MIDI ringbuffer region alignment (`11-midi.md` §4)
+//
+// The midiRings header (`[head, tail, overflowCount]` × i32) is bound as
+// `new Int32Array(memory.buffer, base, 3)` by the worklet template and the
+// offline renderer. `Int32Array` demands a 4-byte-aligned byteOffset, so the
+// region base must stay 4-aligned even when a preceding `u8` buffer (1
+// byte/element) leaves the packing cursor on an odd offset.
+// ─────────────────────────────────────────────────────────────────────────
+
+test("`layout(u8 buffer + midi)` keeps midiRings.base 4-aligned (= Int32Array header bind)", () => {
+  // A size-5 `u8` buffer leaves the cursor at byte 5; the midiRings base must
+  // not inherit that odd offset, or the header bind throws RangeError.
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "buffer", name: "scratch", type: "u8", size: 5 },
+      { kind: "midiInput", name: "in", capacity: 256 },
+    ],
+    statements: [],
+  };
+  const result = layout(graph);
+  const base = result.regions.midiRings.slots["in"]!.base;
+  expect(base % 4).toBe(0);
+  expect(result.regions.midiRings.base % 4).toBe(0);
+  // Reproduce the exact bind the worklet/offline runtime performs against the
+  // computed base; a non-4-aligned base throws RangeError here (= the A1 crash).
+  const mem = new ArrayBuffer(result.totalBytes);
+  expect(() => new Int32Array(mem, base, 3)).not.toThrow();
+});

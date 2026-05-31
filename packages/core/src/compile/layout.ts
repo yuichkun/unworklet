@@ -239,6 +239,19 @@ export type Layout = {
   totalBytes: number;
 };
 
+/**
+ * Round a byte offset up to the next 4-byte boundary. A `u8` buffer (1
+ * byte/element) or an odd `payloadCapacity` can leave the packing cursor on a
+ * non-4-multiple offset; an i32-viewed region placed after it must realign its
+ * base first, since `new Int32Array(memory.buffer, base, 3)` requires a
+ * 4-aligned byteOffset (a non-aligned base throws RangeError at bind time).
+ *
+ * Uses float arithmetic, not `& ~3`: a packing cursor can exceed the signed
+ * 32-bit range (the memory-budget ceiling is 4 GiB), and a 32-bit bitwise op
+ * would wrap such an offset and silently corrupt `totalBytes`.
+ */
+const align4 = (offset: number): number => Math.ceil(offset / 4) * 4;
+
 export function layout(graph: CapturedGraph): Layout {
   const inputs: Record<string, number> = {};
   const outputs: Record<string, number> = {};
@@ -462,7 +475,10 @@ export function layout(graph: CapturedGraph): Layout {
   // midiRings packing = everyNSamplesCounters 末 尾 を base に declaration 順 で
   // per-port ring (= header 12 + capacity × 8) を 配 置 (= `11-midi.md` §4)。
   // in / out port それぞれ 独 立 header + slot 列。 末 尾 配 置 = MIDI ナ シ graph で
-  // base 不 変 (= subset → superset 規 約)。
+  // base 不 変 (= subset → superset 規 約)。 header を i32 view す る の で、 直 前 の
+  // u8 buffer / payloadContent が cursor を 4-align か ら 外 し て い て も base を
+  // 4 に 切 り 上 げ る (= `new Int32Array` bind の RangeError = crash 防 止)。
+  cursor = align4(cursor);
   const midiRingsBase = cursor;
   const midiRingSlots: Record<string, MidiRingSlot> = {};
   for (const decl of graph.declarations) {
