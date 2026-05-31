@@ -109,6 +109,62 @@ test("`analyze`: forSample 内 で cond literal truthy = error diagnostic + stab
   expect(diags[0]!.message).toMatch(/peak/);
 });
 
+// MIDI emit shares the same ringbuffer-saturation hazard: `midiOut.emitIf(true,
+// ...)` at sample rate fills the MIDI ring in milliseconds, so `midiEmitIf` must
+// be subject to the same constant-truthy guard as `event`.
+const constantTruthyMidiEmitInForSample: CapturedGraph = {
+  declarations: [{ kind: "midiOutput", name: "out", capacity: 256 }],
+  statements: [
+    {
+      kind: "forSample",
+      stride: 1,
+      body: [
+        {
+          kind: "midiEmitIf",
+          port: "out",
+          eventType: "noteOn",
+          cond: { kind: "literal", type: "i32", value: 1 }, // truthy literal
+          atSample: { kind: "loopCounter" },
+          channel: { kind: "literal", type: "i32", value: 0 },
+          arg1: { kind: "literal", type: "i32", value: 60 },
+          arg2: { kind: "literal", type: "i32", value: 100 },
+        },
+      ],
+    },
+  ],
+};
+
+test("`analyze`: forSample 内 で midiEmitIf cond literal truthy = error + stable ID", () => {
+  const diags = analyze(constantTruthyMidiEmitInForSample);
+  expect(diags).toHaveLength(1);
+  expect(diags[0]).toMatchObject({
+    id: "constant-truthy-emitif",
+    severity: "error",
+  });
+  expect(diags[0]!.message).toMatch(/out/);
+});
+
+test("`analyze`: per-block top で midiEmitIf cond literal truthy = error ナ シ", () => {
+  // A `midiEmitIf(true)` outside `forSample` (= handler / per-block top) is the
+  // canonical 1:1 projection form and must not be rejected.
+  const graph: CapturedGraph = {
+    declarations: [{ kind: "midiOutput", name: "out", capacity: 256 }],
+    statements: [
+      {
+        kind: "midiEmitIf",
+        port: "out",
+        eventType: "noteOn",
+        cond: { kind: "literal", type: "i32", value: 1 },
+        atSample: { kind: "literal", type: "i32", value: 0 },
+        channel: { kind: "literal", type: "i32", value: 0 },
+        arg1: { kind: "literal", type: "i32", value: 60 },
+        arg2: { kind: "literal", type: "i32", value: 100 },
+      },
+    ],
+  };
+  expect(analyze(graph)).toEqual([]);
+});
+
 test("`analyze`: forSample 内 で cond literal falsy (= 0) = error ナ シ", () => {
   // falsy literal は graph-capture-time fold で drop さ れ る 規 範 だ が、 仮 に
   // AST に 残 っ て も analyze で error 出 さ な い (= unconditional 「fire ナ シ」

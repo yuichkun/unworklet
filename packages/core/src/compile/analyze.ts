@@ -43,6 +43,15 @@ function walkForConstantTruthyEmitIf(
         message: `unworklet: event "${node.name}" emitIf has a constant-truthy cond inside forSample — unconditional emission at audio rate fills the ringbuffer in milliseconds. Use a state-edge gated cond, move the emission to a handler context, or wrap it in everyNSamples(N, ...) for sub-rate periodic emission (= Q32-c, stable ID 'constant-truthy-emitif')`,
       });
     }
+    // MIDI emit shares the same ring (= `11-midi.md` §4): an `emitIf(true)` at
+    // sample rate saturates the MIDI ringbuffer just as `event` does.
+    if (node.kind === "midiEmitIf" && isConstantTruthy(node.cond)) {
+      diagnostics.push({
+        id: "constant-truthy-emitif",
+        severity: "error",
+        message: `unworklet: midi port "${node.port}" emitIf has a constant-truthy cond inside forSample — unconditional emission at audio rate fills the ringbuffer in milliseconds. Use a state-edge gated cond, move the emission to a handler context, or wrap it in everyNSamples(N, ...) for sub-rate periodic emission (= Q32-c, stable ID 'constant-truthy-emitif')`,
+      });
+    }
     if (node.kind === "forSample") {
       walkForConstantTruthyEmitIf(node.body, diagnostics);
     }
