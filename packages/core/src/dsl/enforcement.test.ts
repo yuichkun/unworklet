@@ -9,11 +9,12 @@
 import { expect, test } from "vite-plus/test";
 
 import "./primitives.ts";
-import { audioInput, audioOutput, buffer, message, param } from "./declarations.ts";
+import { f32 } from "./constructors.ts";
+import { audioInput, audioOutput, buffer, message, param, state } from "./declarations.ts";
 import { forSample } from "./loop.ts";
 import { compile } from "../compile/index.ts";
 import { defineProcessor } from "../processor.ts";
-import type { TypedArrayFieldRef } from "../types.ts";
+import type { Node, TypedArrayFieldRef } from "../types.ts";
 
 // ─────────────────────────────────────────────────────────────────────────
 // audio-sample-offset-out-of-range (Q68): JS-literal sample offset outside
@@ -156,4 +157,51 @@ test("a declaration sum over the 4 GiB ceiling makes compile reject", async () =
     };
   });
   await expect(compile(proc)).rejects.toThrow(/memory-budget/);
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// handler-field-escape: a message/MIDI handler payload field read outside the
+// handler body decodes an unset drain slot at emit time (= silent 0).
+// ─────────────────────────────────────────────────────────────────────────
+
+test("a message field read used outside its onReceive handler is rejected", async () => {
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const m = message<{ slot: number }>({ name: "m" });
+    let escaped: Node<"i32"> | undefined;
+    m.onReceive(({ slot }) => {
+      escaped = slot as Node<"i32">;
+    });
+    return {
+      process: () => {
+        forSample((i) => {
+          // `escaped` reads the message's drain slot, but here it is outside the
+          // handler — emit would read an unset slot pointer (= silent 0).
+          out.ch(0).at(i).write(f32(escaped!));
+        });
+      },
+    };
+  });
+  await expect(compile(proc)).rejects.toThrow(/handler-field-escape/);
+});
+
+test("a message field read used inside its onReceive handler compiles (no false escape)", async () => {
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const m = message<{ slot: number }>({ name: "m" });
+    const sel = state.named("sel").i32(0);
+    m.onReceive(({ slot }) => {
+      // Read inside the handler body — the canonical, valid usage.
+      sel.store(slot as Node<"i32">);
+    });
+    return {
+      process: () => {
+        forSample((i) => {
+          out.ch(0).at(i).write(0);
+        });
+      },
+    };
+  });
+  const { wasm } = await compile(proc);
+  expect(wasm).toBeInstanceOf(Uint8Array);
 });
