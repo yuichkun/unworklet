@@ -12,7 +12,6 @@ import { newCaptureContext, runCapture, unwrapAst, wrapAst } from "../compile/ca
 import {
   audioInput,
   audioOutput,
-  buffer,
   event,
   message,
   midiInput,
@@ -927,10 +926,10 @@ test("`state.write(v)` inside `forSample` 内 = forSample body に append", () =
 // (`../__tests__/behavior/buffer.test.ts`)、 ここ は 宣 言 / chain / validate。
 // ─────────────────────────────────────────────────────────────────────────
 
-test("`buffer.f32({ size })` registers a `buffer` declaration with synthetic name", () => {
+test("`state.buffer.f32({ size })` registers a `buffer` declaration with synthetic name", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    buffer.f32({ size: 64 });
+    state.buffer.f32({ size: 64 });
   });
   expect(ctx.declarations).toEqual([
     {
@@ -948,12 +947,12 @@ test("`buffer.f32({ size })` registers a `buffer` declaration with synthetic nam
 test("`buffer.<type>({ size })` 6 element 型 全 declare (= f32 / f64 / i32 / i64 / bool / u8)", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    buffer.f32({ size: 1 });
-    buffer.f64({ size: 2 });
-    buffer.i32({ size: 3 });
-    buffer.i64({ size: 4 });
-    buffer.bool({ size: 5 });
-    buffer.u8({ size: 6 });
+    state.buffer.f32({ size: 1 });
+    state.buffer.f64({ size: 2 });
+    state.buffer.i32({ size: 3 });
+    state.buffer.i64({ size: 4 });
+    state.buffer.bool({ size: 5 });
+    state.buffer.u8({ size: 6 });
   });
   expect(ctx.declarations.map((d) => (d.kind === "buffer" ? `${d.type}:${d.size}` : "?"))).toEqual([
     "f32:1",
@@ -965,10 +964,10 @@ test("`buffer.<type>({ size })` 6 element 型 全 declare (= f32 / f64 / i32 / i
   ]);
 });
 
-test("`buffer.named('X').f32({ size })` 前 付 け chain は name を 反 映", () => {
+test("`state.buffer.named('X').f32({ size })` 前 付 け chain は name を 反 映", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    buffer.named("ring").f32({ size: 16 });
+    state.buffer.named("ring").f32({ size: 16 });
   });
   expect(ctx.declarations).toEqual([
     {
@@ -983,10 +982,10 @@ test("`buffer.named('X').f32({ size })` 前 付 け chain は name を 反 映",
   ]);
 });
 
-test("`buffer.f32({ size }).named('X')` 後 付 け chain も 同 declaration", () => {
+test("`state.buffer.f32({ size }).named('X')` 後 付 け chain も 同 declaration", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    buffer.f32({ size: 16 }).named("ring");
+    state.buffer.f32({ size: 16 }).named("ring");
   });
   expect(ctx.declarations.map((d) => (d.kind === "buffer" ? d.name : "?"))).toEqual(["ring"]);
 });
@@ -995,8 +994,8 @@ test("buffer name uniqueness = 同 name を 2 度 declare で graph-capture-time
   const ctx = newCaptureContext();
   expect(() =>
     runCapture(ctx, () => {
-      buffer.named("dup").f32({ size: 4 });
-      buffer.named("dup").i32({ size: 4 });
+      state.buffer.named("dup").f32({ size: 4 });
+      state.buffer.named("dup").i32({ size: 4 });
     }),
   ).toThrow(/duplicate buffer declaration name "dup"/);
 });
@@ -1005,7 +1004,7 @@ test("buffer publish は 全 element 型 で 許 容 (= state の Q42 制 限 �
   const ctx = newCaptureContext();
   expect(() =>
     runCapture(ctx, () => {
-      buffer.f64({ size: 8 }).expose({ name: "spectrum", publish: { rateFps: 30 } });
+      state.buffer.f64({ size: 8 }).expose({ name: "spectrum", publish: { rateFps: 30 } });
     }),
   ).not.toThrow();
 });
@@ -1014,7 +1013,7 @@ test("buffer publish + name ナ シ = reject", () => {
   const ctx = newCaptureContext();
   expect(() =>
     runCapture(ctx, () => {
-      buffer.f32({ size: 8 }).expose({ publish: { rateFps: 30 } });
+      state.buffer.f32({ size: 8 }).expose({ publish: { rateFps: 30 } });
     }),
   ).toThrow(/buffer with publish requires user-defined name/);
 });
@@ -1023,7 +1022,7 @@ test("buffer publish rateFps <= 0 = reject", () => {
   const ctx = newCaptureContext();
   expect(() =>
     runCapture(ctx, () => {
-      buffer.f32({ size: 8 }).expose({ name: "x", publish: { rateFps: 0 } });
+      state.buffer.f32({ size: 8 }).expose({ name: "x", publish: { rateFps: 0 } });
     }),
   ).toThrow(/publish rateFps must be a positive finite number/);
 });
@@ -1032,7 +1031,7 @@ test("buffer snapshot 'persistent' + name ナ シ = reject", () => {
   const ctx = newCaptureContext();
   expect(() =>
     runCapture(ctx, () => {
-      buffer.f32({ size: 8 }).expose({ snapshot: "persistent" });
+      state.buffer.f32({ size: 8 }).expose({ snapshot: "persistent" });
     }),
   ).toThrow(/buffer with snapshot 'persistent' requires user-defined name/);
 });
@@ -1705,7 +1704,7 @@ test("`messageDecl.onReceive` typed-array field = `.at` / `.length` で payload 
   // field は typed-array seal (= payloadElementType = 'f32') さ れ る (= §4.3)。
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const buf = buffer.f32({ size: 4 });
+    const buf = state.buffer.f32({ size: 4 });
     const lenState = state.named("len").i32(0);
     const upload = message<{ samples: Float32Array }>({ name: "upload" });
     upload.onReceive(({ samples }) => {

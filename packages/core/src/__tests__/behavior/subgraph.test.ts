@@ -8,7 +8,7 @@
 import { expect, test } from "vite-plus/test";
 
 import "../../dsl/primitives.ts"; // side-effect: register `Node<T>` method forms
-import { audioOutput, buffer, state } from "../../dsl/declarations.ts";
+import { audioOutput, state } from "../../dsl/declarations.ts";
 import { f32 } from "../../dsl/constructors.ts";
 import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
 import { forSample } from "../../dsl/loop.ts";
@@ -94,7 +94,7 @@ test("subgraph: user-named 内部 buffer は instance prefix で衝突しない 
   // 両 instance が同じ 'buf' を named するが、prefix ('a/buf' 'b/buf') で衝突ナシ
   // (= prefix ナシなら checkBufferName で重複 throw する形)。
   const cell = defineSubgraph((val: number) => {
-    const buf = buffer.named("buf").f32({ size: 4 });
+    const buf = state.buffer.named("buf").f32({ size: 4 });
     return {
       tick: () => buf.write(0, f32(val)),
       value: () => buf.read(0),

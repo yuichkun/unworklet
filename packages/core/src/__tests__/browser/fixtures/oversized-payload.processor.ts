@@ -8,12 +8,12 @@
  * RangeError を出さない)。先頭 128 要素を buffer に写して出力に再生。
  */
 
-import { audioOutput, buffer, defineProcessor, forSample, message } from "../../../index.ts";
+import { audioOutput, state, defineProcessor, forSample, message } from "../../../index.ts";
 
 export const oversizedPayload = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
   const upload = message<{ samples: Float32Array }>({ name: "upload", payloadCapacity: 64 });
-  const buf = buffer.f32({ size: 128 });
+  const buf = state.buffer.f32({ size: 128 });
   return {
     process: () => {
       upload.onReceive(({ samples }) => {

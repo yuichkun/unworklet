@@ -58,7 +58,6 @@ export {
 export {
   audioInput,
   audioOutput,
-  buffer,
   event,
   message,
   midiInput,

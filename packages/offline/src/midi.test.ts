@@ -9,7 +9,6 @@ import "@unworklet/core";
 import type { MidiEvent } from "@unworklet/core";
 import {
   audioOutput,
-  buffer,
   defineProcessor,
   event,
   f32,
@@ -203,7 +202,7 @@ test("sysex bridge: ingest, rewrite device-id byte, re-emit (Ex9-style)", async 
   const bridge = defineProcessor(() => {
     const sysexIn = midiInput({ name: "sysexIn" });
     const sysexOut = midiOutput({ name: "sysexOut" });
-    const buf = buffer.u8({ size: MAX_SYSEX_LEN });
+    const buf = state.buffer.u8({ size: MAX_SYSEX_LEN });
     const targetId = state.i32(0x42);
     return {
       process: () => {

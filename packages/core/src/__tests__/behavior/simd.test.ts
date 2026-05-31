@@ -9,7 +9,7 @@ import { expect, test } from "vite-plus/test";
 
 import "../../dsl/primitives.ts"; // side-effect: register `Node<T>` method forms
 import "../../simd.ts"; // side-effect: register `.lane` method + SIMD types
-import { audioOutput, buffer } from "../../dsl/declarations.ts";
+import { audioOutput, state } from "../../dsl/declarations.ts";
 import { f32 } from "../../dsl/constructors.ts";
 import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
 import { forSample } from "../../dsl/loop.ts";
@@ -98,7 +98,7 @@ test("SIMD: buf.loadVec / storeVec で 4 lane を buffer 経由で I/O", async (
   // → storeVec(4) で buf[4..7] = 10,20,30,40 → read(4)+read(7) = 10+40 = 50。
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const buf = buffer.f32({ size: 8 });
+    const buf = state.buffer.f32({ size: 8 });
     return {
       process: () => {
         forSample((i) => {

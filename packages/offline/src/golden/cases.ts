@@ -3,8 +3,8 @@
  *
  * A curated set of processors that, together, exercise the entire authoring
  * surface the rename touches — every scalar/buffer type, every declaration
- * (state / buffer / param / event / message / midiInput / midiOutput / audio),
- * every access method (load/store, read/write/readInterpolated/copyFrom, emitIf,
+ * (state / state.buffer / param / event / message / midiInput / midiOutput /
+ * audio), every access method (read/write/readInterpolated/copyFrom, emitIf,
  * onReceive, onEvent, loadVec), plus subgraphs, SIMD, snapshot, and migration.
  *
  * Authored on the CURRENT (pre-rename) surface. During Phase A the authoring
@@ -15,7 +15,6 @@
 import {
   audioInput,
   audioOutput,
-  buffer,
   createSubgraph,
   defineProcessor,
   defineSubgraph,
@@ -74,12 +73,12 @@ const allScalarStates = defineProcessor(() => {
 const allBufferTypes = defineProcessor(() => {
   const input = audioInput({ channels: 1, name: "in" });
   const out = audioOutput({ channels: 1, name: "out" });
-  const bf32 = buffer.f32({ size: 16 }).named("bf32").expose({ snapshot: "persistent" });
-  const bf64 = buffer.f64({ size: 8 }).named("bf64");
-  const bi32 = buffer.i32({ size: 8 }).named("bi32");
-  const bi64 = buffer.i64({ size: 8 }).named("bi64");
-  const bbool = buffer.bool({ size: 8 }).named("bbool");
-  const bu8 = buffer
+  const bf32 = state.buffer.f32({ size: 16 }).named("bf32").expose({ snapshot: "persistent" });
+  const bf64 = state.buffer.f64({ size: 8 }).named("bf64");
+  const bi32 = state.buffer.i32({ size: 8 }).named("bi32");
+  const bi64 = state.buffer.i64({ size: 8 }).named("bi64");
+  const bbool = state.buffer.bool({ size: 8 }).named("bbool");
+  const bu8 = state.buffer
     .u8({ size: 8 })
     .named("bu8")
     .expose({ publish: { rateFps: 30 } });
@@ -151,7 +150,7 @@ const eventTypedArray = defineProcessor(() => {
   const input = audioInput({ channels: 1, name: "in" });
   const out = audioOutput({ channels: 1, name: "out" });
   const scope = event<{ samples: Float32Array }>({ name: "scope" });
-  const ring = buffer.f32({ size: 16 });
+  const ring = state.buffer.f32({ size: 16 });
   return {
     process: () => {
       forSample((i) => {
@@ -188,7 +187,7 @@ const messageScalar = defineProcessor(() => {
 // ── message<T> (main→worklet): Float32Array field + copyFrom into a buffer ────
 const messageTypedArray = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "out" });
-  const table = buffer.f32({ size: 16 }).named("table").expose({ snapshot: "persistent" });
+  const table = state.buffer.f32({ size: 16 }).named("table").expose({ snapshot: "persistent" });
   const upload = message<{ data: Float32Array }>({ name: "upload" });
   const idx = state.i32(0).named("idx");
   return {
@@ -209,7 +208,7 @@ const allMidiIn = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "out" });
   const port = midiInput({ name: "in" });
   const acc = state.i32(0).named("acc");
-  const sysbuf = buffer.u8({ size: 64 }).named("sysbuf");
+  const sysbuf = state.buffer.u8({ size: 64 }).named("sysbuf");
   return {
     process: () => {
       port.onEvent("noteOn", ({ note, velocity, channel }) => {
@@ -247,11 +246,11 @@ const allMidiIn = defineProcessor(() => {
   };
 });
 
-// ── midiOutput: every outbound event type + sysex from a buffer.u8 ───────────
+// ── midiOutput: every outbound event type + sysex from a state.buffer.u8 ───────────
 const allMidiOut = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "out" });
   const port = midiOutput({ name: "out" });
-  const sysbuf = buffer.u8({ size: 8 }).named("sysbuf");
+  const sysbuf = state.buffer.u8({ size: 8 }).named("sysbuf");
   return {
     process: () => {
       forSample((i) => {
@@ -271,7 +270,7 @@ const allMidiOut = defineProcessor(() => {
   };
 });
 
-// ── Integration: lookahead limiter (param + buffer.f32 + event + envelope) ────
+// ── Integration: lookahead limiter (param + state.buffer.f32 + event + envelope) ────
 const limiter = defineProcessor((ctx) => {
   const LOOKAHEAD = 32;
   const input = audioInput({ channels: 1, name: "main" });
@@ -279,7 +278,7 @@ const limiter = defineProcessor((ctx) => {
   const ceiling = param
     .f32({ default: 0.5, min: 0, max: 1, automationRate: "k-rate" })
     .named("ceiling");
-  const dly = buffer.f32({ size: LOOKAHEAD });
+  const dly = state.buffer.f32({ size: LOOKAHEAD });
   const dlyHead = state.i32(0);
   const env = state.f32(0);
   const overshoot = event<{ level: number }>({ name: "overshoot" });
@@ -314,8 +313,8 @@ const reverb = defineProcessor(
   () => {
     const input = audioInput({ channels: 1, name: "main" });
     const out = audioOutput({ channels: 1, name: "main" });
-    const ir = buffer.f32({ size: IR_LEN }).expose({ name: "ir", snapshot: "persistent" });
-    const hist = buffer.f32({ size: IR_LEN });
+    const ir = state.buffer.f32({ size: IR_LEN }).expose({ name: "ir", snapshot: "persistent" });
+    const hist = state.buffer.f32({ size: IR_LEN });
     const histHead = state.i32(0);
     const uploadIR = message<{ ir: Float32Array }>({ name: "uploadIR" });
     return {

@@ -12,7 +12,7 @@
 import { expect, test } from "vite-plus/test";
 
 import "../../dsl/primitives.ts"; // side-effect: register `Node<T>` method forms
-import { audioInput, audioOutput, buffer, state } from "../../dsl/declarations.ts";
+import { audioInput, audioOutput, state } from "../../dsl/declarations.ts";
 import { f32, num, select, type Node, type State } from "../../index.ts";
 import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
 import { forSample } from "../../dsl/loop.ts";
@@ -182,7 +182,7 @@ test("buffer read bound before a write to the same index keeps the pre-write val
   // v = buf.read(i) (= 0 initial); buf.write(i, 5); out = v  → 0, not 5.
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const buf = buffer.f32({ size: SAMPLES_PER_BLOCK });
+    const buf = state.buffer.f32({ size: SAMPLES_PER_BLOCK });
     return {
       process: () => {
         forSample((i) => {

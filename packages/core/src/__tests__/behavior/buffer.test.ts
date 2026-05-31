@@ -11,7 +11,7 @@
 import { expect, test } from "vite-plus/test";
 
 import "../../dsl/primitives.ts"; // side-effect: register `Node<T>` method forms
-import { audioInput, audioOutput, buffer, state } from "../../dsl/declarations.ts";
+import { audioInput, audioOutput, state } from "../../dsl/declarations.ts";
 import { bool, f32, f64, i32, i64 } from "../../dsl/constructors.ts";
 import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
 import { forSample } from "../../dsl/loop.ts";
@@ -23,7 +23,7 @@ import { render } from "./render.ts";
 test("buffer.f32 write then read at the same index round-trips the value", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const buf = buffer.f32({ size: 128 });
+    const buf = state.buffer.f32({ size: 128 });
     return {
       process: () => {
         forSample((i) => {
@@ -42,7 +42,7 @@ test("buffer.f32 write then read at the same index round-trips the value", async
 test("buffer.i32 round-trips an integer value (observed via f32)", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const buf = buffer.i32({ size: 128 });
+    const buf = state.buffer.i32({ size: 128 });
     return {
       process: () => {
         forSample((i) => {
@@ -62,7 +62,7 @@ test("buffer.i32 round-trips an integer value (observed via f32)", async () => {
 test("buffer.i64 round-trips a 64-bit value (observed via i32 → f32)", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const buf = buffer.i64({ size: 128 });
+    const buf = state.buffer.i64({ size: 128 });
     return {
       process: () => {
         forSample((i) => {
@@ -83,7 +83,7 @@ test("buffer.i64 round-trips a 64-bit value (observed via i32 → f32)", async (
 test("buffer.f64 round-trips a double value (observed via f32)", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const buf = buffer.f64({ size: 128 });
+    const buf = state.buffer.f64({ size: 128 });
     return {
       process: () => {
         forSample((i) => {
@@ -103,7 +103,7 @@ test("buffer.f64 round-trips a double value (observed via f32)", async () => {
 test("buffer.bool round-trips a boolean (observed via select)", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const buf = buffer.bool({ size: 128 });
+    const buf = state.buffer.bool({ size: 128 });
     return {
       process: () => {
         forSample((i) => {
@@ -123,7 +123,7 @@ test("buffer.bool round-trips a boolean (observed via select)", async () => {
 test("buffer.u8 stores the low 8 bits and reads back through Node<i32>", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const buf = buffer.u8({ size: 128 });
+    const buf = state.buffer.u8({ size: 128 });
     return {
       process: () => {
         forSample((i) => {
@@ -148,7 +148,7 @@ test("buffer.f32 readInterpolated linearly interpolates between two taps", async
   // floor(k/2) and floor(k/2)+1 are already written, both ≤ k.)
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const buf = buffer.f32({ size: 128 });
+    const buf = state.buffer.f32({ size: 128 });
     return {
       process: () => {
         forSample((i) => {
@@ -170,7 +170,7 @@ test("buffer.f32 readInterpolated linearly interpolates between two taps", async
 test("buffer.f64 readInterpolated interpolates in the f64 domain", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const buf = buffer.f64({ size: 128 });
+    const buf = state.buffer.f64({ size: 128 });
     return {
       process: () => {
         forSample((i) => {
@@ -192,7 +192,7 @@ test("buffer.f64 readInterpolated interpolates in the f64 domain", async () => {
 test("buffer.i32 readInterpolated reads the integer tap (frac 0) and surfaces it", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const buf = buffer.i32({ size: 128 });
+    const buf = state.buffer.i32({ size: 128 });
     return {
       process: () => {
         forSample((i) => {
@@ -215,7 +215,7 @@ test("buffer.i32 readInterpolated reads the integer tap (frac 0) and surfaces it
 test("buffer.i64 readInterpolated interpolates a constant-filled buffer to that constant", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const buf = buffer.i64({ size: 128 });
+    const buf = state.buffer.i64({ size: 128 });
     return {
       process: () => {
         forSample((i) => {
@@ -238,7 +238,7 @@ test("buffer ring delay: an impulse is delayed by 100 samples", async () => {
   const proc = defineProcessor(() => {
     const inp = audioInput({ channels: 1, name: "main" });
     const out = audioOutput({ channels: 1, name: "main" });
-    const buf = buffer.f32({ size: SIZE });
+    const buf = state.buffer.f32({ size: SIZE });
     const head = state.i32(0);
     return {
       process: () => {
@@ -265,10 +265,10 @@ test("buffer ring delay: an impulse is delayed by 100 samples", async () => {
 // literal な index / offset / pos は graph-capture 時に range-check されて隣接 memory
 // access を防ぐ (= §3.2、dynamic Node<'i32'> は caller 責任)。
 test("buffer literal index は範囲外を graph-capture で reject する", () => {
-  const build = (body: (buf: ReturnType<typeof buffer.f32>) => void): (() => void) => {
+  const build = (body: (buf: ReturnType<typeof state.buffer.f32>) => void): (() => void) => {
     return () =>
       defineProcessor(() => {
-        const buf = buffer.f32({ size: 8 });
+        const buf = state.buffer.f32({ size: 8 });
         return { process: () => body(buf) };
       });
   };

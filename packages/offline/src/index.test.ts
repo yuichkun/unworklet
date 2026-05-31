@@ -18,7 +18,7 @@ import {
   SAMPLES_PER_BLOCK,
   select,
 } from "@unworklet/core";
-import { audioInput, audioOutput, buffer, event, forSample, param, state } from "@unworklet/core";
+import { audioInput, audioOutput, event, forSample, param, state } from "@unworklet/core";
 import { expect, test } from "vite-plus/test";
 
 import { renderOffline } from "./index.ts";
@@ -32,7 +32,7 @@ import { renderOffline } from "./index.ts";
 const samplePlayer = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
   const upload = message<{ samples: Float32Array }>({ name: "upload" });
-  const buf = buffer.f32({ size: SAMPLES_PER_BLOCK });
+  const buf = state.buffer.f32({ size: SAMPLES_PER_BLOCK });
   return {
     process: () => {
       upload.onReceive(({ samples }) => {
@@ -64,7 +64,7 @@ test("`renderOffline` delivers a typed-array payload; samples.at(Node) reads eac
 const sampleCopier = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
   const upload = message<{ samples: Float32Array }>({ name: "upload" });
-  const buf = buffer.f32({ size: SAMPLES_PER_BLOCK });
+  const buf = state.buffer.f32({ size: SAMPLES_PER_BLOCK });
   return {
     process: () => {
       upload.onReceive(({ samples }) => {
@@ -797,7 +797,7 @@ test("`renderOffline` captures emitted events from event ring (= sub-phase 7.8c)
 test("`renderOffline` captures a typed-array event payload as a Float32Array", async () => {
   const arrayEmitter = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const buf = buffer.f32({ size: 4 });
+    const buf = state.buffer.f32({ size: 4 });
     const result = event<{ data: Float32Array }>({ name: "result", payloadCapacity: 64 });
     return {
       process: () => {
@@ -826,7 +826,7 @@ test("`renderOffline` captures a typed-array event payload as a Float32Array", a
 test("`renderOffline` typed-array event は length が buffer 超でも buffer 境界に clamp (= leak 防止)", async () => {
   const overEmitter = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const buf = buffer.f32({ size: 4 });
+    const buf = state.buffer.f32({ size: 4 });
     const result = event<{ data: Float32Array }>({ name: "result", payloadCapacity: 64 });
     return {
       process: () => {

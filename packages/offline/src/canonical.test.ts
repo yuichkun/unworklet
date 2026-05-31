@@ -10,7 +10,6 @@ import "@unworklet/core";
 import {
   audioInput,
   audioOutput,
-  buffer,
   createSubgraph,
   defineSubgraph,
   defineProcessor,
@@ -302,7 +301,7 @@ test("Ex4 limiter: delay line + envelope + overshoot event fire on ceiling cross
     const ceiling = param
       .f32({ default: 0.5, min: 0, max: 1, automationRate: "k-rate" })
       .named("ceiling");
-    const dly = buffer.f32({ size: LOOKAHEAD });
+    const dly = state.buffer.f32({ size: LOOKAHEAD });
     const dlyHead = state.i32(0);
     const env = state.f32(0);
     const overshoot = event<{ level: number }>({ name: "overshoot" });
@@ -369,8 +368,8 @@ function makeReverb(withMigrationTo?: string) {
     () => {
       const input = audioInput({ channels: 1, name: "main" });
       const out = audioOutput({ channels: 1, name: "main" });
-      const ir = buffer.f32({ size: IR_LEN }).expose({ name: "ir", snapshot: "persistent" });
-      const hist = buffer.f32({ size: IR_LEN });
+      const ir = state.buffer.f32({ size: IR_LEN }).expose({ name: "ir", snapshot: "persistent" });
+      const hist = state.buffer.f32({ size: IR_LEN });
       const histHead = state.i32(0);
       const uploadIR = message<{ ir: Float32Array }>({ name: "uploadIR" });
       return {

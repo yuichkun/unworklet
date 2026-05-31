@@ -12,7 +12,7 @@
 import {
   audioInput,
   audioOutput,
-  buffer,
+  state,
   defineProcessor,
   event,
   forSample,
@@ -24,7 +24,7 @@ const FRAME = 8; // main に送り返す先頭サンプル数
 export const frameCapture = defineProcessor(() => {
   const inp = audioInput({ channels: 1, name: "main" });
   const out = audioOutput({ channels: 1, name: "main" });
-  const buf = buffer.f32({ size: 128 });
+  const buf = state.buffer.f32({ size: 128 });
   const frame = event<{ samples: Float32Array }>({
     name: "frame",
     capacity: 16,

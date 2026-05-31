@@ -19,15 +19,7 @@ import { expect, test, vi } from "vite-plus/test";
 import { compile } from "./compile/index.ts";
 import { CAPACITY_16, SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
 import { f32, num } from "./dsl/constructors.ts";
-import {
-  audioInput,
-  audioOutput,
-  buffer,
-  event,
-  message,
-  param,
-  state,
-} from "./dsl/declarations.ts";
+import { audioInput, audioOutput, event, message, param, state } from "./dsl/declarations.ts";
 import { forSample } from "./dsl/loop.ts";
 import { defineProcessor } from "./processor.ts";
 
@@ -1208,7 +1200,7 @@ test("`process`: state.f64.write(num(n)) re-lifts the loose literal to the f64 s
 test("`process`: buffer.i32.write(num(n)) re-lifts the loose literal to the i32 element type", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const b = buffer.i32({ size: 4 });
+    const b = state.buffer.i32({ size: 4 });
     return {
       process: () => {
         b.write(0, num(7));

@@ -18,7 +18,7 @@ import { expect, test } from "vite-plus/test";
 
 import { compile } from "./compile/index.ts";
 import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
-import { audioOutput, buffer, state } from "./dsl/declarations.ts";
+import { audioOutput, state } from "./dsl/declarations.ts";
 import { forSample } from "./dsl/loop.ts";
 import { defineProcessor } from "./processor.ts";
 import { decodeScalar, encodeScalar, type SnapshotSlot } from "./snapshot.ts";
@@ -250,7 +250,7 @@ test("restore skips an oversized state slot and leaves the adjacent slot intact"
 const tblEcho = () =>
   defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const tbl = buffer.named("tbl").f32({ size: 4 });
+    const tbl = state.buffer.named("tbl").f32({ size: 4 });
     return {
       process: () => {
         forSample((i) => {

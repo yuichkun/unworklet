@@ -358,7 +358,8 @@ function makeStateHandle<T extends ScalarType>(decl: StateDecl): State<T> {
   return handle;
 }
 
-export const state: StateChain = makeStateChain(EMPTY_EXPOSE);
+// `state` (with its `state.buffer` array sub-namespace) is exported after the
+// buffer chain is defined below.
 
 // ─────────────────────────────────────────────────────────────────────────
 // `buffer` — fixed-size arrays (`01-dsl.md` §3.2)
@@ -632,7 +633,15 @@ const makeBufferChain = (pendingExpose: ExposeOptions): BufferChain => ({
   expose: (options) => makeBufferChain(mergeExpose(pendingExpose, options)),
 });
 
-export const buffer: BufferChain = makeBufferChain(EMPTY_EXPOSE);
+const bufferChain: BufferChain = makeBufferChain(EMPTY_EXPOSE);
+
+// `state` carries the scalar factory chain plus `state.buffer` — the array form
+// of state (Q76 buffer = state の配列版). `state.buffer` is the only place the
+// buffer chain is reachable; `state.named(...)` returns a plain `StateChain`.
+export const state: StateChain & { readonly buffer: BufferChain } = Object.assign(
+  makeStateChain(EMPTY_EXPOSE),
+  { buffer: bufferChain },
+);
 
 // ─────────────────────────────────────────────────────────────────────────
 // `param` — AudioParam-backed (`01-dsl.md` §3.3 + Q76 named-only)

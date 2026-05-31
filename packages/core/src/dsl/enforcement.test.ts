@@ -10,7 +10,7 @@ import { expect, test } from "vite-plus/test";
 
 import "./primitives.ts";
 import { f32 } from "./constructors.ts";
-import { audioInput, audioOutput, buffer, message, param, state } from "./declarations.ts";
+import { audioInput, audioOutput, message, param, state } from "./declarations.ts";
 import { forSample } from "./loop.ts";
 import { compile } from "../compile/index.ts";
 import { defineProcessor } from "../processor.ts";
@@ -121,7 +121,7 @@ test("the forSample loop-counter `i` offset is unrestricted (no literal check)",
 test("copyFrom of an f32-sealed payload field into an i32 buffer is a capture-time error", () => {
   expect(() =>
     defineProcessor(() => {
-      const dst = buffer.i32({ size: 16 });
+      const dst = state.buffer.i32({ size: 16 });
       const up = message<{ samples: Float32Array }>({ name: "up" });
       return {
         process: () => {
@@ -146,7 +146,7 @@ test("a declaration sum over the 4 GiB ceiling makes compile reject", async () =
   // arithmetic, no allocation); the memory-budget error fires before emit.
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    buffer.f32({ size: 1_200_000_000 });
+    state.buffer.f32({ size: 1_200_000_000 });
     return {
       process: () => {
         out

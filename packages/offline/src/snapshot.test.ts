@@ -9,7 +9,6 @@
 import "@unworklet/core";
 import {
   audioOutput,
-  buffer,
   defineProcessor,
   encodeScalar,
   encodeSnapshot,
@@ -67,7 +66,7 @@ test("restore seeds the persistent state slot (carry-forward across renders)", a
 test("a persistent buffer round-trips through snapshot/restore", async () => {
   const wtProc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const wt = buffer.f32({ size: 8 }).expose({ name: "wt", snapshot: "persistent" });
+    const wt = state.buffer.f32({ size: 8 }).expose({ name: "wt", snapshot: "persistent" });
     const upload = message<{ samples: Float32Array }>({ name: "upload" });
     return {
       process: () => {
