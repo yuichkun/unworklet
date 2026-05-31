@@ -609,7 +609,14 @@ export type CompiledProcessor<C> = {
 export type Migration = {
   from: string;
   to: string;
-  migrate: (blob: Uint8Array, helpers: MigrationHelpers) => void | Promise<void>;
+  /**
+   * Synchronous blob transform. Migrations must be sync: the same chain runs on
+   * the worklet's render-quantum boundary (no `await` possible) and in the
+   * offline renderer, so an async migrate cannot be honored consistently and is
+   * rejected at runtime. (`void` is permissive in TS, so an accidental async
+   * function still type-checks but fails loud during `restore`.)
+   */
+  migrate: (blob: Uint8Array, helpers: MigrationHelpers) => void;
 };
 
 export type MigrationHelpers = {

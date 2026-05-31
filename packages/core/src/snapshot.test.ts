@@ -149,6 +149,23 @@ test("runMigrations: a throwing migrate yields ok:false with the failing step", 
   expect(r.error.message).toBe("hostile migration");
 });
 
+test("runMigrations: an async migrate is rejected (migrations are sync-only)", () => {
+  const old = encodeSnapshot("aaaaaaaa", null, []);
+  const migrations: Migration[] = [
+    {
+      from: "aaaaaaaa",
+      to: "bbbbbbbb",
+      // `void` return is permissive in TS, so an async function type-checks; it
+      // must still fail loud since the chain runs on the sync quantum boundary.
+      migrate: async () => {},
+    },
+  ];
+  const r = runMigrations(old, migrations, "bbbbbbbb");
+  expect(r.ok).toBe(false);
+  if (r.ok) return;
+  expect(r.error.message).toMatch(/async migrate is not supported/i);
+});
+
 test("runMigrations: no path to the current hash → unchanged (caller falls back)", () => {
   const old = encodeSnapshot("zzzzzzzz", null, [
     { name: "x", kind: "state", type: "i32", data: encodeScalar("i32", 1) },

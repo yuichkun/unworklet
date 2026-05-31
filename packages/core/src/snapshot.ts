@@ -415,15 +415,23 @@ export function runMigrations(
     const written = new Set<string>();
     const helpers = makeHelpers(current, out, written);
     try {
-      const r = step.migrate(
+      // `migrate` is declared sync (= returns void), but `void` is permissive in
+      // TS so an accidental async function still reaches here as a Promise; read
+      // the result as `unknown` to detect + reject it at runtime.
+      const r: unknown = step.migrate(
         encodeSnapshot(current.schemaHash, current.profile, current.slots),
         helpers,
       );
       if (r instanceof Promise) {
-        // v1.0.0 offline migration runs sync; async migrate is awaited by the
-        // main-thread restore path, not here. Treat as unsupported in this sync runner.
+        // Migrations run sync on both the worklet render-quantum boundary (no
+        // await possible) and the offline renderer, so an async migrate cannot be
+        // honored consistently. Fail loud, and swallow the abandoned promise so it
+        // can't surface later as an unhandled rejection.
+        r.catch(() => {});
         throw new Error(
-          "unworklet: async migrate is not supported in the synchronous offline migration runner",
+          "unworklet: async migrate is not supported — migrations must be synchronous " +
+            "(they run on the audio render-quantum boundary, which cannot await). " +
+            "(stable ID 'async-migrate-unsupported')",
         );
       }
     } catch (cause) {
