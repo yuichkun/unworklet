@@ -145,7 +145,7 @@ const drawWaveform = (canvas: HTMLCanvasElement, samples: Float32Array | Int32Ar
   }
   const span = Math.max(Math.abs(min), Math.abs(max), 1);
 
-  ctx.strokeStyle = "#82bfff";
+  ctx.strokeStyle = "#fffaf0";
   ctx.lineWidth = 1.4;
   ctx.beginPath();
   for (let i = 0; i < samples.length; i++) {
@@ -193,7 +193,7 @@ const drawBars = (
     const barH = norm * (h - 4);
     const x = i * cellW + 1;
     const y = h - 2 - barH;
-    ctx.fillStyle = v >= baseline ? "#82bfff" : "#ff6363";
+    ctx.fillStyle = v >= baseline ? "#fffaf0" : "#ffb4ab";
     ctx.fillRect(x, y, barW, Math.max(1, barH));
   }
 };
@@ -241,8 +241,7 @@ const redraw = (): void => {
           const c = sparklineRefs.value[key];
           if (c) {
             const hist = live.getSlotHistory(key);
-            const color = slot.type === "bool" ? "#62d18a" : "#82bfff";
-            drawSparkline(c, hist, color);
+            drawSparkline(c, hist, "#fffaf0");
           }
         }
       } else {
@@ -296,10 +295,12 @@ watch(reprByKey, () => redraw(), { deep: true });
     <div class="view-body">
       <section v-for="node in unworkletNodes" :key="node.id" class="node-section">
         <header class="section-head">
-          <span class="section-dot" :class="`status-${node.status}`"></span>
-          <span class="section-name">{{ node.label }}</span>
-          <span class="u-pill">{{ node.audioNodeType }}</span>
-          <span class="u-pill u-pill--accent">
+          <div class="section-name-cell">
+            <span class="section-dot" :class="`status-${node.status}`"></span>
+            <span class="section-name">{{ node.label }}</span>
+          </div>
+          <span class="u-pill section-pill">{{ node.audioNodeType }}</span>
+          <span class="u-pill u-pill--accent section-count">
             {{ graph.publishSlots(node.id).length }} slots
           </span>
         </header>
@@ -312,9 +313,13 @@ watch(reprByKey, () => redraw(), { deep: true });
           <li v-for="slot in graph.publishSlots(node.id)" :key="slot.name" class="slot-row">
             <div class="slot-meta">
               <span class="slot-name mono">{{ slot.name }}</span>
-              <span class="u-pill" :class="`kind-pill-${slot.kind}`">{{ slot.kind }}</span>
+              <span class="u-pill slot-pill" :class="`kind-pill-${slot.kind}`">{{
+                slot.kind
+              }}</span>
               <span class="slot-type mono">{{ slot.type }}</span>
-              <span v-if="slot.kind === 'buffer'" class="slot-size mono">× {{ slot.size }}</span>
+              <span class="slot-size mono">
+                <template v-if="slot.kind === 'buffer'">× {{ slot.size }}</template>
+              </span>
               <span class="slot-rate mono">{{ slot.rateFps }} fps</span>
             </div>
 
@@ -331,64 +336,78 @@ watch(reprByKey, () => redraw(), { deep: true });
             </div>
 
             <div class="slot-value">
-              <template v-if="slot.kind === 'state'">
-                <template v-if="reprFor(node.id, slot) === 'history-line'">
-                  <span class="value-text mono">
-                    {{ formatScalar(live.getSlotScalar(slotKey(node.id, slot)) ?? 0, slot.type) }}
-                  </span>
-                  <canvas :ref="setSparklineRef(slotKey(node.id, slot))" class="sparkline"></canvas>
+              <!-- Numeric prefix (fixed-width column 1) — only rendered for
+                   state+history-line and state+numeric. Empty placeholder for
+                   every other row, so column 2 (the visual) always starts at
+                   the same x position. -->
+              <span class="slot-value-prefix mono">
+                <template
+                  v-if="
+                    slot.kind === 'state' &&
+                    (reprFor(node.id, slot) === 'history-line' ||
+                      reprFor(node.id, slot) === 'numeric')
+                  "
+                >
+                  {{ formatScalar(live.getSlotScalar(slotKey(node.id, slot)) ?? 0, slot.type) }}
                 </template>
-                <template v-else-if="reprFor(node.id, slot) === 'on-off'">
-                  <span
-                    class="onoff-indicator"
-                    :class="{ on: live.getSlotScalar(slotKey(node.id, slot)) === true }"
-                  >
-                    <span class="onoff-dot"></span>
-                    <span class="onoff-label">
-                      {{ live.getSlotScalar(slotKey(node.id, slot)) === true ? "on" : "off" }}
-                    </span>
-                  </span>
-                </template>
-                <template v-else>
-                  <span class="value-text mono">
-                    {{ formatScalar(live.getSlotScalar(slotKey(node.id, slot)) ?? 0, slot.type) }}
-                  </span>
-                </template>
-              </template>
+              </span>
 
-              <template v-else>
-                <template v-if="reprFor(node.id, slot) === 'waveform'">
-                  <canvas :ref="setWaveformRef(slotKey(node.id, slot))" class="waveform"></canvas>
-                </template>
-                <template v-else-if="reprFor(node.id, slot) === 'bar'">
-                  <canvas :ref="setBarRef(slotKey(node.id, slot))" class="bar-chart"></canvas>
-                </template>
-                <template v-else-if="reprFor(node.id, slot) === 'grid'">
-                  <div class="bool-grid">
+              <!-- Visual (column 2): sparkline / on-off / waveform / bar / grid / hex / list. -->
+              <div class="slot-value-visual">
+                <template v-if="slot.kind === 'state'">
+                  <template v-if="reprFor(node.id, slot) === 'history-line'">
+                    <canvas
+                      :ref="setSparklineRef(slotKey(node.id, slot))"
+                      class="sparkline"
+                    ></canvas>
+                  </template>
+                  <template v-else-if="reprFor(node.id, slot) === 'on-off'">
                     <span
-                      v-for="(v, i) in (live.getSlotBuffer(slotKey(node.id, slot)) ??
-                        []) as boolean[]"
-                      :key="i"
-                      class="bool-cell"
-                      :class="{ on: v }"
-                    ></span>
-                  </div>
+                      class="onoff-indicator"
+                      :class="{ on: live.getSlotScalar(slotKey(node.id, slot)) === true }"
+                    >
+                      <span class="onoff-dot"></span>
+                      <span class="onoff-label">
+                        {{ live.getSlotScalar(slotKey(node.id, slot)) === true ? "on" : "off" }}
+                      </span>
+                    </span>
+                  </template>
                 </template>
-                <template v-else-if="reprFor(node.id, slot) === 'hex'">
-                  <span class="hex-dump mono">
-                    {{
-                      formatHex(
-                        (live.getSlotBuffer(slotKey(node.id, slot)) ?? EMPTY_U8) as Uint8Array,
-                      )
-                    }}
-                  </span>
-                </template>
+
                 <template v-else>
-                  <span class="list-dump mono">
-                    {{ formatList(live.getSlotBuffer(slotKey(node.id, slot)) ?? EMPTY_U8) }}
-                  </span>
+                  <template v-if="reprFor(node.id, slot) === 'waveform'">
+                    <canvas :ref="setWaveformRef(slotKey(node.id, slot))" class="waveform"></canvas>
+                  </template>
+                  <template v-else-if="reprFor(node.id, slot) === 'bar'">
+                    <canvas :ref="setBarRef(slotKey(node.id, slot))" class="bar-chart"></canvas>
+                  </template>
+                  <template v-else-if="reprFor(node.id, slot) === 'grid'">
+                    <div class="bool-grid">
+                      <span
+                        v-for="(v, i) in (live.getSlotBuffer(slotKey(node.id, slot)) ??
+                          []) as boolean[]"
+                        :key="i"
+                        class="bool-cell"
+                        :class="{ on: v }"
+                      ></span>
+                    </div>
+                  </template>
+                  <template v-else-if="reprFor(node.id, slot) === 'hex'">
+                    <span class="hex-dump mono">
+                      {{
+                        formatHex(
+                          (live.getSlotBuffer(slotKey(node.id, slot)) ?? EMPTY_U8) as Uint8Array,
+                        )
+                      }}
+                    </span>
+                  </template>
+                  <template v-else>
+                    <span class="list-dump mono">
+                      {{ formatList(live.getSlotBuffer(slotKey(node.id, slot)) ?? EMPTY_U8) }}
+                    </span>
+                  </template>
                 </template>
-              </template>
+              </div>
             </div>
           </li>
         </ul>
@@ -409,25 +428,32 @@ watch(reprByKey, () => redraw(), { deep: true });
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 20px;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 24px 20px 18px;
   border-bottom: 1px solid var(--u-border);
   background: var(--u-bg-elev-1);
 }
 
 .view-title {
-  font-size: 14px;
+  font-family: var(--u-headline);
+  font-size: 20px;
   font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--u-text);
 }
 
 .view-meta {
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
 .view-body {
   flex: 1;
-  overflow-y: auto;
+  /* horizontal scroll as a safety net at extreme narrow widths where nested
+     grid layouts cant shrink further (= controllers grid in MidiView, etc). */
+  overflow: auto;
   padding: 14px 18px 24px;
   display: flex;
   flex-direction: column;
@@ -435,6 +461,9 @@ watch(reprByKey, () => redraw(), { deep: true });
 }
 
 .node-section {
+  /* container queries below target the node-section's actual width so we
+     can collapse the slot grid before it overflows the panel. */
+  container-type: inline-size;
   background: var(--u-bg-elev-1);
   border: 1px solid var(--u-border);
   border-radius: var(--u-radius);
@@ -442,18 +471,39 @@ watch(reprByKey, () => redraw(), { deep: true });
 }
 
 .section-head {
+  display: grid;
+  /* First two columns match .slot-meta's first two columns so the
+     "AudioWorkletNode" pill in the section header lines up vertically with
+     the per-row "state"/"buffer" pills below it. The trailing `auto` holds
+     the count pill ("N slots"). */
+  grid-template-columns: 130px 130px auto;
+  align-items: center;
+  column-gap: 10px;
+  padding: 0 4px 10px;
+  border-bottom: 1px solid var(--u-border);
+  margin-bottom: 10px;
+}
+
+.section-name-cell {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--u-border);
-  margin-bottom: 10px;
+  min-width: 0;
+}
+
+.section-pill {
+  justify-self: start;
+}
+
+.section-count {
+  justify-self: start;
 }
 
 .section-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .section-dot.status-ok {
@@ -469,9 +519,11 @@ watch(reprByKey, () => redraw(), { deep: true });
 }
 
 .section-name {
-  font-size: 13px;
+  font-family: var(--u-headline);
+  font-size: 16px;
   font-weight: 600;
-  color: var(--u-unworklet);
+  letter-spacing: -0.01em;
+  color: var(--u-text);
 }
 
 .empty {
@@ -498,7 +550,9 @@ watch(reprByKey, () => redraw(), { deep: true });
 
 .slot-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 140px minmax(160px, 2fr);
+  /* slot-meta sizes to its grid content (= 130 + 130 + 36 + 56 + 56 + gaps),
+     so the kind pill / type / size / rate columns are never clipped. */
+  grid-template-columns: auto 140px minmax(160px, 1fr);
   align-items: center;
   gap: 12px;
   padding: 6px 4px;
@@ -510,10 +564,40 @@ watch(reprByKey, () => redraw(), { deep: true });
 }
 
 .slot-meta {
-  display: flex;
+  display: grid;
+  /* slot-name fixed at 130px so the kind pill ("state"/"buffer") sits at a
+     stable x position across rows AND matches `.section-head`'s pill column.
+     pill column is 130px to fit the longest audio-node type string
+     ("AudioDestinationNode") in the section header above — the short
+     "state"/"buffer" pills in slot rows just left-align inside it. */
+  grid-template-columns: 130px 130px 36px 56px 56px;
   align-items: center;
-  gap: 6px;
+  column-gap: 10px;
   overflow: hidden;
+}
+
+/* Slot-row at full width needs ~794px (slot-meta 428 + 140 select + 160 vis
+   + gaps). Below ~760px the visualization column gets crushed — at ~580px
+   we stack to vertical instead. Mid-range (~580-760px) we drop the size +
+   rate columns so the visualization keeps breathing room. */
+@container (max-width: 760px) {
+  .slot-meta {
+    grid-template-columns: minmax(0, 1fr) 130px 36px;
+  }
+  .slot-size,
+  .slot-rate {
+    display: none;
+  }
+}
+
+@container (max-width: 580px) {
+  .slot-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+  .slot-meta {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
 }
 
 .slot-name {
@@ -523,6 +607,10 @@ watch(reprByKey, () => redraw(), { deep: true });
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.slot-pill {
+  justify-self: start;
 }
 
 .slot-type {
@@ -536,9 +624,9 @@ watch(reprByKey, () => redraw(), { deep: true });
 }
 
 .slot-rate {
-  margin-left: auto;
   font-size: 10.5px;
   color: var(--u-text-dim);
+  text-align: right;
 }
 
 .repr-select {
@@ -558,21 +646,35 @@ watch(reprByKey, () => redraw(), { deep: true });
 }
 
 .slot-value {
+  display: grid;
+  grid-template-columns: 60px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  min-width: 0;
+}
+
+.slot-value-prefix {
+  font-size: 12px;
+  color: var(--u-text);
+  text-align: right;
+  min-width: 0;
+}
+
+.slot-value-visual {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
 }
 
-.value-text {
-  font-size: 12px;
-  color: var(--u-text);
-  min-width: 56px;
-  text-align: right;
-}
-
+/* min-width: 0 is critical — <canvas> has an intrinsic width of 300px (the
+   default `width` attribute), and flex children default to `min-width: auto`
+   which honors that intrinsic floor. Without min-width: 0, `flex: 1` can't
+   shrink the canvas below 300px and the row overflows its parent card at
+   any viewport where the visual column is narrower than 300px. */
 .sparkline {
   flex: 1;
+  min-width: 0;
   height: 24px;
   background: var(--u-bg);
   border-radius: 3px;
@@ -580,20 +682,30 @@ watch(reprByKey, () => redraw(), { deep: true });
 
 .waveform {
   flex: 1;
+  min-width: 0;
   width: 100%;
   height: 80px;
-  background: var(--u-bg);
+  background-color: var(--u-bg);
+  background-image:
+    linear-gradient(rgba(255, 250, 240, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 250, 240, 0.04) 1px, transparent 1px);
+  background-size: 40px 40px;
   border: 1px solid var(--u-border);
-  border-radius: var(--u-radius-sm);
+  border-radius: var(--u-radius);
 }
 
 .bar-chart {
   flex: 1;
+  min-width: 0;
   width: 100%;
   height: 60px;
-  background: var(--u-bg);
+  background-color: var(--u-bg);
+  background-image:
+    linear-gradient(rgba(255, 250, 240, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 250, 240, 0.04) 1px, transparent 1px);
+  background-size: 40px 40px;
   border: 1px solid var(--u-border);
-  border-radius: var(--u-radius-sm);
+  border-radius: var(--u-radius);
 }
 
 .onoff-indicator {
@@ -608,8 +720,8 @@ watch(reprByKey, () => redraw(), { deep: true });
 }
 
 .onoff-indicator.on {
-  background: rgba(98, 209, 138, 0.18);
-  color: var(--u-success);
+  background: var(--u-bg-elev-4);
+  color: var(--u-text);
 }
 
 .onoff-dot {
@@ -672,13 +784,9 @@ watch(reprByKey, () => redraw(), { deep: true });
   flex: 1;
 }
 
-.kind-pill-state {
-  background: rgba(130, 191, 255, 0.16);
-  color: var(--u-accent);
-}
-
+.kind-pill-state,
 .kind-pill-buffer {
-  background: rgba(98, 209, 138, 0.16);
-  color: var(--u-success);
+  background: var(--u-bg-elev-4);
+  color: var(--u-text);
 }
 </style>

@@ -1,13 +1,20 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { Background, BackgroundVariant } from "@vue-flow/background";
+import { Controls } from "@vue-flow/controls";
+import { type Edge, MarkerType, type Node, VueFlow } from "@vue-flow/core";
+import { computed, markRaw, ref } from "vue";
 
+import UnworkletNode from "../components/UnworkletNode.vue";
 import { type BuildIssue, useMockGraph } from "../composables/useMockGraph";
 import { useMockSignals } from "../composables/useMockSignals";
+
+import "@vue-flow/core/dist/style.css";
+import "@vue-flow/core/dist/theme-default.css";
+import "@vue-flow/controls/dist/style.css";
 
 const COL_W = 200;
 const COL_X0 = 50;
 const ROW_Y0 = 70;
-const NODE_W = 140;
 const NODE_H = 60;
 
 const graph = useMockGraph();
@@ -19,28 +26,6 @@ const nodeLayout = computed(() =>
     x: COL_X0 + n.col * COL_W,
     y: ROW_Y0 + n.row * (NODE_H + 30),
   })),
-);
-
-const nodeById = computed(() => Object.fromEntries(nodeLayout.value.map((n) => [n.id, n])));
-
-const edgePaths = computed(() =>
-  graph.edges
-    .map((e) => {
-      const a = nodeById.value[e.from];
-      const b = nodeById.value[e.to];
-      if (!a || !b) return null;
-      const x1 = a.x + NODE_W;
-      const y1 = a.y + NODE_H / 2;
-      const x2 = b.x;
-      const y2 = b.y + NODE_H / 2;
-      const dx = (x2 - x1) * 0.5;
-      return {
-        id: e.id,
-        channel: e.channel,
-        d: `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`,
-      };
-    })
-    .filter((e): e is NonNullable<typeof e> => e !== null),
 );
 
 const selectedId = computed(() => graph.selectedId.value);
@@ -120,6 +105,46 @@ const closeSnapshot = (): void => {
 const onSnapshotBackdropClick = (event: MouseEvent): void => {
   if (event.target === snapshotModalRef.value) closeSnapshot();
 };
+
+// Vue Flow node-type mapping. `markRaw` avoids Vue reactively wrapping the
+// component definition (perf + warning suppression).
+const nodeTypes = {
+  unworklet: markRaw(UnworkletNode),
+  standard: markRaw(UnworkletNode),
+};
+
+const flowNodes = computed<Node[]>(() =>
+  nodeLayout.value.map((n) => ({
+    id: n.id,
+    type: n.kind === "unworklet" ? "unworklet" : "standard",
+    position: { x: n.x, y: n.y },
+    data: n,
+    selected: graph.selectedId.value === n.id,
+    selectable: true,
+    draggable: false,
+    connectable: false,
+  })),
+);
+
+const flowEdges = computed<Edge[]>(() =>
+  graph.edges.map((e) => ({
+    id: e.id,
+    source: e.from,
+    target: e.to,
+    type: "default",
+    animated: false,
+    markerEnd: MarkerType.ArrowClosed,
+    class: `edge-${e.channel}`,
+  })),
+);
+
+const onNodeClick = (event: { node: Node }): void => {
+  graph.selectNode(event.node.id);
+};
+
+const onPaneClick = (): void => {
+  // Click on empty pane area: clearing selection is optional — keep current selection.
+};
 </script>
 
 <template>
@@ -135,94 +160,33 @@ const onSnapshotBackdropClick = (event: MouseEvent): void => {
 
     <div class="view-body">
       <section class="graph-pane">
-        <svg
-          class="graph-svg"
-          viewBox="0 0 1340 220"
-          preserveAspectRatio="xMidYMid meet"
-          role="img"
-          aria-label="Audio graph diagram"
-        >
-          <defs>
-            <marker
-              id="arrow-audio"
-              viewBox="0 0 10 10"
-              refX="9"
-              refY="5"
-              markerWidth="6"
-              markerHeight="6"
-              orient="auto-start-reverse"
-            >
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--u-accent)" />
-            </marker>
-            <marker
-              id="arrow-midi"
-              viewBox="0 0 10 10"
-              refX="9"
-              refY="5"
-              markerWidth="6"
-              markerHeight="6"
-              orient="auto-start-reverse"
-            >
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--u-midi)" />
-            </marker>
-          </defs>
-
-          <path
-            v-for="edge in edgePaths"
-            :key="edge.id"
-            :d="edge.d"
-            class="edge"
-            :class="`edge-${edge.channel}`"
-            fill="none"
-            :marker-end="`url(#arrow-${edge.channel})`"
-          />
-
-          <g
-            v-for="node in nodeLayout"
-            :key="node.id"
-            class="node"
-            :class="[`kind-${node.kind}`, { selected: selectedId === node.id }]"
-            @click="graph.selectNode(node.id)"
+        <div class="graph-viewport">
+          <VueFlow
+            :nodes="flowNodes"
+            :edges="flowEdges"
+            :node-types="nodeTypes"
+            :nodes-draggable="false"
+            :nodes-connectable="false"
+            :elements-selectable="true"
+            :pan-on-drag="true"
+            :zoom-on-scroll="true"
+            :prevent-scrolling="true"
+            :min-zoom="0.2"
+            :max-zoom="6"
+            fit-view-on-init
+            :default-edge-options="{ type: 'default' }"
+            @node-click="onNodeClick"
+            @pane-click="onPaneClick"
           >
-            <rect
-              :x="node.x"
-              :y="node.y"
-              :width="NODE_W"
-              :height="NODE_H"
-              rx="8"
-              class="node-box"
+            <Background
+              :variant="BackgroundVariant.Dots"
+              :gap="20"
+              :size="1"
+              pattern-color="rgba(255, 250, 240, 0.12)"
             />
-            <circle
-              :cx="node.x + 12"
-              :cy="node.y + 12"
-              r="3.5"
-              class="status-dot"
-              :class="`status-${node.status}`"
-            />
-            <foreignObject
-              :x="node.x + 8"
-              :y="node.y + 16"
-              :width="NODE_W - 16"
-              :height="NODE_H - 22"
-            >
-              <div xmlns="http://www.w3.org/1999/xhtml" class="node-text">
-                <div class="node-name" :title="node.label">{{ node.label }}</div>
-                <div class="node-type" :title="node.audioNodeType">{{ node.audioNodeType }}</div>
-              </div>
-            </foreignObject>
-            <g v-if="node.errorCount > 0" class="node-badge-g">
-              <circle :cx="node.x + NODE_W - 12" :cy="node.y + 12" r="8" class="node-badge-bg" />
-              <text
-                :x="node.x + NODE_W - 12"
-                :y="node.y + 15"
-                text-anchor="middle"
-                class="node-badge-txt"
-              >
-                {{ node.errorCount }}
-              </text>
-            </g>
-          </g>
-        </svg>
+            <Controls :show-interactive="false" position="bottom-right" />
+          </VueFlow>
+        </div>
 
         <footer class="graph-legend">
           <span class="legend-item">
@@ -495,26 +459,40 @@ const onSnapshotBackdropClick = (event: MouseEvent): void => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 20px;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 24px 20px 18px;
   border-bottom: 1px solid var(--u-border);
   background: var(--u-bg-elev-1);
 }
 
 .view-title {
-  font-size: 14px;
+  font-family: var(--u-headline);
+  font-size: 20px;
   font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--u-text);
 }
 
 .view-meta {
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
 .view-body {
   flex: 1;
   display: flex;
   min-height: 0;
+}
+
+/* Stack the canvas + detail panes vertically once the viewport can't fit
+   sidebar (200) + a usable canvas (~320) + detail pane (380). Detail goes
+   below the canvas with a capped height instead of competing for width. */
+@media (max-width: 900px) {
+  .view-body {
+    flex-direction: column;
+  }
 }
 
 .graph-pane {
@@ -525,112 +503,114 @@ const onSnapshotBackdropClick = (event: MouseEvent): void => {
   overflow: hidden;
 }
 
-.graph-svg {
+.graph-viewport {
   flex: 1;
   width: 100%;
-  background: radial-gradient(circle at 30% 30%, rgba(130, 191, 255, 0.04), transparent 60%);
+  min-height: 0;
+  background-color: var(--u-bg-elev-1);
   border: 1px solid var(--u-border);
-  border-radius: var(--u-radius);
+  border-radius: var(--u-radius-lg);
+  overflow: hidden;
+  position: relative;
 }
 
-.edge {
-  stroke-width: 1.7;
-  transition: stroke-width 120ms;
+/* ──────────────────────────────────────────────────────────────────────
+   Vue Flow theme overrides (the default theme is light-ish; force monotone).
+   Selectors target Vue Flow's internal classes; we use :deep() to reach
+   them from this scoped style block.
+   ────────────────────────────────────────────────────────────────────── */
+
+.graph-viewport :deep(.vue-flow) {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  color: var(--u-text);
 }
 
-.edge-audio {
-  stroke: var(--u-accent);
+/* Hide the connection handles (we don't allow user-drawn connections;
+   they exist only as edge endpoints) */
+.graph-viewport :deep(.vue-flow__handle) {
+  width: 1px;
+  height: 1px;
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  opacity: 0;
+  pointer-events: none;
 }
 
-.edge-midi {
-  stroke: var(--u-midi);
+/* Edges */
+.graph-viewport :deep(.vue-flow__edge-path) {
+  stroke: var(--u-text-muted);
+  stroke-width: 1.5;
+  fill: none;
+}
+
+.graph-viewport :deep(.vue-flow__edge.edge-audio .vue-flow__edge-path) {
+  stroke: var(--u-text);
+}
+
+.graph-viewport :deep(.vue-flow__edge.edge-midi .vue-flow__edge-path) {
+  stroke: var(--u-text-muted);
   stroke-dasharray: 5 4;
 }
 
-.node {
-  cursor: pointer;
+.graph-viewport :deep(.vue-flow__edge.selected .vue-flow__edge-path) {
+  stroke: var(--u-text);
+  stroke-width: 2;
 }
 
-.node-box {
-  fill: var(--u-bg-elev-2);
-  stroke: var(--u-border-strong);
-  stroke-width: 1.2;
-  transition:
-    stroke 120ms,
-    stroke-width 120ms,
-    fill 120ms;
+.graph-viewport :deep(.vue-flow__arrowhead path) {
+  fill: var(--u-text);
+  stroke: var(--u-text);
 }
 
-.node.kind-unworklet .node-box {
-  stroke: var(--u-unworklet);
-}
-
-.node.selected .node-box {
-  stroke-width: 2.2;
-  fill: var(--u-bg-elev-3);
-}
-
-.status-dot.status-ok {
-  fill: var(--u-success);
-}
-
-.status-dot.status-warning {
-  fill: var(--u-warn);
-}
-
-.status-dot.status-errors {
-  fill: var(--u-danger);
-}
-
-.node-text {
+/* Controls (zoom in/out, fit-view buttons) */
+.graph-viewport :deep(.vue-flow__controls) {
+  background: var(--u-bg-elev-2);
+  border: 1px solid var(--u-border);
+  border-radius: var(--u-radius);
+  box-shadow: none;
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
+  flex-direction: row;
+  padding: 2px;
   gap: 2px;
-  pointer-events: none;
-  text-align: center;
 }
 
-.node-name {
-  font-family: var(--u-sans);
-  font-size: 12px;
-  font-weight: 600;
+.graph-viewport :deep(.vue-flow__controls-button) {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--u-text-muted);
+  width: 28px;
+  height: 28px;
+  fill: currentColor;
+}
+
+.graph-viewport :deep(.vue-flow__controls-button:hover) {
+  background: var(--u-bg-elev-3);
   color: var(--u-text);
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.node.kind-unworklet .node-name {
-  color: var(--u-unworklet);
+.graph-viewport :deep(.vue-flow__controls-button svg) {
+  max-width: 14px;
+  max-height: 14px;
 }
 
-.node-type {
-  font-family: var(--u-mono);
-  font-size: 9px;
-  color: var(--u-text-dim);
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* Selection / hover indicator on nodes — keep the node component's own
+   visual; just kill VueFlow's default focus outline. */
+.graph-viewport :deep(.vue-flow__node) {
+  outline: none;
 }
 
-.node-badge-bg {
-  fill: var(--u-danger);
-}
-
-.node-badge-txt {
-  font-family: var(--u-sans);
-  font-size: 10px;
-  font-weight: 700;
-  fill: var(--u-bg);
+.graph-viewport :deep(.vue-flow__node.selected) {
+  outline: none;
 }
 
 .graph-legend {
   display: flex;
+  align-items: center;
   gap: 18px;
   padding: 10px 4px 0;
   font-size: 11px;
@@ -683,14 +663,28 @@ const onSnapshotBackdropClick = (event: MouseEvent): void => {
   overflow-y: auto;
 }
 
+/* When the layout stacks (narrow viewports), the detail pane sits below the
+   canvas — cap its height so it doesn't claim the whole screen, and swap
+   the side border to a top border. */
+@media (max-width: 900px) {
+  .detail-pane {
+    flex: 0 0 auto;
+    max-height: 320px;
+    border-left: 0;
+    border-top: 1px solid var(--u-border);
+  }
+}
+
 .detail-head {
   padding: 14px 18px 10px;
   border-bottom: 1px solid var(--u-border);
 }
 
 .detail-title {
-  font-size: 14px;
-  font-weight: 700;
+  font-family: var(--u-headline);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--u-text);
   margin-bottom: 6px;
 }
@@ -738,9 +732,10 @@ const onSnapshotBackdropClick = (event: MouseEvent): void => {
 .summary-list {
   margin: 0;
   display: grid;
-  grid-template-columns: max-content 1fr;
+  grid-template-columns: 80px 1fr;
   column-gap: 14px;
-  row-gap: 4px;
+  row-gap: 6px;
+  align-items: baseline;
 }
 
 .summary-row {
@@ -748,14 +743,16 @@ const onSnapshotBackdropClick = (event: MouseEvent): void => {
 }
 
 .summary-row dt {
-  font-size: 11px;
-  color: var(--u-text-dim);
-  text-align: right;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--u-text-muted);
+  /* text-align: right; */
 }
 
 .summary-row dd {
-  margin: 0;
+  margin: 0 2rem;
   font-size: 12px;
+  line-height: 1.4;
   color: var(--u-text);
   display: inline-flex;
   align-items: baseline;
@@ -767,7 +764,7 @@ const onSnapshotBackdropClick = (event: MouseEvent): void => {
 
 .row-muted {
   color: var(--u-text-dim);
-  font-size: 10.5px;
+  font-size: 11px;
 }
 
 .status-pip {
@@ -792,13 +789,14 @@ const onSnapshotBackdropClick = (event: MouseEvent): void => {
 
 .section-link {
   margin: 8px 0 0;
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--u-text-dim);
+  opacity: 0.7;
 }
 
 .section-link strong {
-  color: var(--u-text);
-  font-weight: 600;
+  color: var(--u-text-muted);
+  font-weight: 500;
 }
 
 .issue-list {
@@ -1003,13 +1001,13 @@ const onSnapshotBackdropClick = (event: MouseEvent): void => {
 }
 
 .snippet-line.highlight-error {
-  background: rgba(255, 99, 99, 0.12);
+  background: rgba(255, 180, 171, 0.08);
   box-shadow: inset 3px 0 0 var(--u-danger);
 }
 
 .snippet-line.highlight-warning {
-  background: rgba(241, 197, 96, 0.14);
-  box-shadow: inset 3px 0 0 var(--u-warn);
+  background: rgba(255, 250, 240, 0.04);
+  box-shadow: inset 3px 0 0 var(--u-text-muted);
 }
 
 .snippet-lineno {
@@ -1026,11 +1024,11 @@ const onSnapshotBackdropClick = (event: MouseEvent): void => {
 }
 
 .snippet-line.highlight-error .snippet-text {
-  color: #ffe6e6;
+  color: var(--u-danger);
 }
 
 .snippet-line.highlight-warning .snippet-text {
-  color: #fff4d6;
+  color: var(--u-text);
 }
 
 .issue-section-title {

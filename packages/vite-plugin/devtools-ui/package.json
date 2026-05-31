@@ -10,6 +10,9 @@
     "check": "vp check"
   },
   "dependencies": {
+    "@vue-flow/background": "catalog:",
+    "@vue-flow/controls": "catalog:",
+    "@vue-flow/core": "catalog:",
     "jszip": "catalog:",
     "vue": "^3.5.0",
     "vue-router": "^4.4.0"

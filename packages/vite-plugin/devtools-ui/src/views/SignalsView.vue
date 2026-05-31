@@ -2,6 +2,7 @@
 import JSZip from "jszip";
 import { computed, onMounted, onUnmounted, ref } from "vue";
 
+import PortChannelView from "../components/PortChannelView.vue";
 import { type OutputPort, portKey, useMockSignals } from "../composables/useMockSignals";
 import { encodeWav, timestampLabel } from "../lib/wav";
 
@@ -63,6 +64,14 @@ const downloadPortWav = (port: OutputPort): void => {
   a.click();
 };
 
+const discardPort = (port: OutputPort): void => {
+  const key = portKey(port);
+  const snap = confirmed.value[key];
+  if (!snap) return;
+  URL.revokeObjectURL(snap.blobUrl);
+  delete confirmed.value[key];
+};
+
 const recordAll = (): void => {
   for (const port of signals.ports.value) {
     if (!isChecked(port)) continue;
@@ -92,79 +101,6 @@ const confirmedCount = computed(() => Object.keys(confirmed.value).length);
 const canDownloadZip = computed(() => confirmedCount.value > 0);
 
 const totalLatencyMs = computed(() => signals.getLatencyStats(signals.latencyTotalKey).mean);
-
-const waveformRefs = ref<Record<string, HTMLCanvasElement | null>>({});
-const spectrogramRefs = ref<Record<string, HTMLCanvasElement | null>>({});
-
-const setWaveformRef = (key: string) => (el: Element | null) => {
-  waveformRefs.value[key] = el as HTMLCanvasElement | null;
-};
-const setSpectrogramRef = (key: string) => (el: Element | null) => {
-  spectrogramRefs.value[key] = el as HTMLCanvasElement | null;
-};
-
-const drawWaveform = (canvas: HTMLCanvasElement, port: OutputPort): void => {
-  const dpr = window.devicePixelRatio || 1;
-  const w = canvas.clientWidth;
-  const h = canvas.clientHeight || 120;
-  if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
-    canvas.width = w * dpr;
-    canvas.height = h * dpr;
-  }
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, w, h);
-
-  ctx.strokeStyle = "rgba(168, 172, 184, 0.18)";
-  ctx.beginPath();
-  ctx.moveTo(0, h / 2);
-  ctx.lineTo(w, h / 2);
-  ctx.stroke();
-
-  const colors = ["#82bfff", "#62d18a"];
-  for (let c = 0; c < port.channels; c++) {
-    const frame = signals.getTimeDomainFrame(port, c);
-    ctx.strokeStyle = colors[c] ?? "#82bfff";
-    ctx.lineWidth = 1.4;
-    ctx.beginPath();
-    for (let i = 0; i < frame.length; i++) {
-      const x = (i / (frame.length - 1)) * w;
-      const y = h / 2 - frame[i]! * (h / 2 - 4);
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-  }
-};
-
-const drawSpectrogram = (canvas: HTMLCanvasElement, port: OutputPort): void => {
-  const dpr = window.devicePixelRatio || 1;
-  const w = canvas.clientWidth;
-  const h = canvas.clientHeight || 120;
-  if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
-    canvas.width = w * dpr;
-    canvas.height = h * dpr;
-  }
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  const stripPx = Math.max(2, Math.round(2 * dpr));
-  const existing = ctx.getImageData(stripPx, 0, canvas.width - stripPx, canvas.height);
-  ctx.putImageData(existing, 0, 0);
-  ctx.clearRect(canvas.width - stripPx, 0, stripPx, canvas.height);
-
-  const frame = signals.getFreqDomainFrame(port, 0);
-  const bins = frame.length;
-  for (let i = 0; i < bins; i++) {
-    const v = Math.max(0, Math.min(1, frame[bins - 1 - i]!));
-    const y = (i / bins) * canvas.height;
-    const cellH = canvas.height / bins + 1;
-    const hue = 230 - v * 200;
-    const light = 10 + v * 40;
-    ctx.fillStyle = `hsl(${hue}, 70%, ${light}%)`;
-    ctx.fillRect(canvas.width - stripPx, y, stripPx, cellH);
-  }
-};
 
 const latencyCanvasRef = ref<HTMLCanvasElement | null>(null);
 
@@ -245,18 +181,12 @@ const drawLatencyChart = (): void => {
   }
 };
 
+// Audio-tab canvases (waveform + spectrogram) are now driven by PortChannelView
+// instances themselves — each owns its rAF loop. This parent loop only services
+// the latency chart, which still lives inline in this view.
 let rafId: number | null = null;
 const loop = (): void => {
-  if (activeTab.value === "audio") {
-    for (const port of signals.ports.value) {
-      if (!isChecked(port)) continue;
-      const key = portKey(port);
-      const wc = waveformRefs.value[key];
-      if (wc) drawWaveform(wc, port);
-      const sc = spectrogramRefs.value[key];
-      if (sc) drawSpectrogram(sc, port);
-    }
-  } else if (activeTab.value === "latency") {
+  if (activeTab.value === "latency") {
     drawLatencyChart();
   }
   rafId = requestAnimationFrame(loop);
@@ -333,9 +263,6 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
             >
               Download zip
             </button>
-            <span v-if="confirmedCount > 0" class="confirmed-meta mono">
-              {{ confirmedCount }} captured
-            </span>
           </div>
         </header>
 
@@ -351,59 +278,60 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
             :class="{ captured: !!confirmed[portKey(port)] }"
           >
             <header class="port-head">
-              <label class="port-head-toggle">
-                <input type="checkbox" :checked="isChecked(port)" @change="toggleCheck(port)" />
-                <span class="port-head-name mono">{{ portKey(port) }}</span>
-              </label>
-              <span v-if="confirmed[portKey(port)]" class="capture-chip mono">
-                ✓ Captured
-                {{ formatDuration(confirmed[portKey(port)]!.durationS) }} ·
-                {{ confirmed[portKey(port)]!.ts }}
-              </span>
-              <span v-else class="port-head-meta mono">
+              <span class="port-head-name mono">{{ portKey(port) }}</span>
+              <span class="port-head-meta mono">
                 {{ port.channels }} ch · {{ signals.sampleRate }} Hz
               </span>
-              <div class="port-head-actions">
-                <button class="u-btn u-btn--primary" @click="recordPort(port)">
-                  {{ confirmed[portKey(port)] ? "Re-capture" : "Capture" }}
-                </button>
-                <template v-if="confirmed[portKey(port)]">
-                  <audio
-                    :src="confirmed[portKey(port)]!.blobUrl"
-                    controls
-                    preload="metadata"
-                    class="captured-audio"
-                  ></audio>
-                  <button
-                    class="icon-btn"
-                    @click="downloadPortWav(port)"
-                    title="Download as 16-bit PCM WAV"
-                    aria-label="Download WAV"
-                  >
-                    ↓
-                  </button>
-                </template>
-              </div>
+              <button class="u-btn u-btn--primary port-head-cta" @click="recordPort(port)">
+                {{ confirmed[portKey(port)] ? "Re-capture" : "Capture" }}
+              </button>
             </header>
 
             <div class="port-body">
-              <div class="port-canvas-block">
-                <header class="canvas-head">
-                  <span class="canvas-title">Waveform</span>
-                  <span class="canvas-meta mono">
-                    time domain · {{ port.channels }} ch overlay
-                  </span>
-                </header>
-                <canvas :ref="setWaveformRef(portKey(port))" class="waveform-canvas"></canvas>
-              </div>
-              <div class="port-canvas-block">
-                <header class="canvas-head">
-                  <span class="canvas-title">Spectrogram</span>
-                  <span class="canvas-meta mono">frequency domain · ch 0 · rolling</span>
-                </header>
-                <canvas :ref="setSpectrogramRef(portKey(port))" class="spectrogram-canvas"></canvas>
-              </div>
+              <!-- One PortChannelView per channel; today we render only ch 0,
+                   but the loop trivially generalizes to all channels (= remove
+                   the slice(0, 1)) once we expose a per-port channel picker. -->
+              <PortChannelView
+                v-for="ch in [0]"
+                :key="`${portKey(port)}-${ch}`"
+                :port="port"
+                :channel-index="ch"
+              />
             </div>
+
+            <footer v-if="confirmed[portKey(port)]" class="port-captured">
+              <div class="port-captured-row">
+                <div class="port-captured-meta">
+                  <span class="port-captured-tag mono">✓ Captured</span>
+                  <span class="port-captured-time mono">
+                    {{ formatDuration(confirmed[portKey(port)]!.durationS) }} ·
+                    {{ confirmed[portKey(port)]!.ts }}
+                  </span>
+                </div>
+                <button
+                  class="icon-btn"
+                  @click="downloadPortWav(port)"
+                  title="Download as 16-bit PCM WAV"
+                  aria-label="Download WAV"
+                >
+                  ↓
+                </button>
+                <button
+                  class="icon-btn"
+                  @click="discardPort(port)"
+                  title="Discard capture"
+                  aria-label="Discard capture"
+                >
+                  ×
+                </button>
+              </div>
+              <audio
+                :src="confirmed[portKey(port)]!.blobUrl"
+                controls
+                preload="metadata"
+                class="captured-audio"
+              ></audio>
+            </footer>
           </article>
         </div>
       </section>
@@ -517,36 +445,45 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 20px;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 24px 20px 18px;
   border-bottom: 1px solid var(--u-border);
   background: var(--u-bg-elev-1);
 }
 
 .view-title {
-  font-size: 14px;
+  font-family: var(--u-headline);
+  font-size: 20px;
   font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--u-text);
 }
 
 .view-meta {
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
 .sub-tab-nav {
   display: flex;
+  flex-wrap: wrap;
   background: var(--u-bg-elev-1);
   border-bottom: 1px solid var(--u-border);
   padding: 0 16px;
 }
 
 .sub-tab {
-  padding: 9px 14px;
+  padding: 10px 16px;
   background: transparent;
   border: 0;
   border-bottom: 2px solid transparent;
-  color: var(--u-text-dim);
-  font-size: 12px;
+  color: var(--u-text-muted);
+  font-family: var(--u-sans);
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
   cursor: pointer;
 }
 
@@ -555,14 +492,16 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
 }
 
 .sub-tab.active {
-  color: var(--u-accent);
-  border-bottom-color: var(--u-accent);
+  color: var(--u-text);
+  border-bottom-color: var(--u-text);
   font-weight: 600;
 }
 
 .view-body {
   flex: 1;
-  overflow-y: auto;
+  /* horizontal scroll as a safety net at extreme narrow widths where nested
+     grid layouts cant shrink further (= controllers grid in MidiView, etc). */
+  overflow: auto;
   padding: 14px 18px 24px;
 }
 
@@ -604,20 +543,25 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
 
 .audio-header-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin-left: auto;
 }
 
-.confirmed-meta {
-  font-size: 11px;
-  color: var(--u-text-dim);
-}
-
 .audio-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  /* 280px min keeps all 3 ports on one row at typical devtool iframe widths
+     (~900px+). Wraps to 2 rows only past 4 ports / at very narrow viewports.
+     `min(100%, 280px)` clamps the floor so columns can shrink below 280px
+     when the container is narrower — otherwise auto-fit forces a 280px
+     column that overflows view-body horizontally. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
   gap: 14px;
+  /* Don't stretch siblings to match the tallest. Each port-section keeps its
+     own natural height, so capturing one port only grows that one — the
+     others stay compact instead of inheriting an empty bottom area. */
+  align-items: start;
 }
 
 .port-section {
@@ -626,6 +570,11 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
   border: 1px solid var(--u-border);
   border-radius: var(--u-radius);
   padding: 10px 12px;
+  /* Stop the article from claiming more width than its grid cell allows.
+     Without this, the captured <audio> element's intrinsic min-width (~300px
+     for its controls) pushed the article wide enough that `auto-fit` in
+     `.audio-grid` dropped from 3 columns to 2 the moment any port captured. */
+  min-width: 0;
 }
 
 .port-head {
@@ -648,13 +597,6 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
   border-radius: var(--u-radius);
 }
 
-.port-head-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-}
-
 .port-head-name {
   font-size: 12.5px;
   font-weight: 600;
@@ -666,41 +608,51 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
   color: var(--u-text-dim);
 }
 
-.port-head-actions {
+.port-head-cta {
+  margin-left: auto;
+}
+
+.port-captured {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--u-bg-elev-1);
+  border: 1px solid var(--u-border);
+  border-radius: var(--u-radius);
+}
+
+.port-captured-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-left: auto;
-  flex-wrap: wrap;
+  gap: 10px;
 }
 
-.confirmed-info {
-  font-size: 10.5px;
-  color: var(--u-text-dim);
-  flex-basis: 100%;
-  margin-top: 4px;
-  padding-top: 4px;
-  border-top: 1px dashed var(--u-border);
+.port-captured-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
 }
 
-.capture-chip {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 8px;
-  background: rgba(98, 209, 138, 0.16);
-  color: var(--u-success);
-  border-radius: 999px;
+.port-captured-tag {
   font-size: 10.5px;
   font-weight: 600;
+  color: var(--u-success);
+  letter-spacing: 0.04em;
 }
 
-.port-section.captured {
-  border-left: 3px solid var(--u-success);
+.port-captured-time {
+  font-size: 10.5px;
+  color: var(--u-text-muted);
+  letter-spacing: 0.02em;
 }
 
 .captured-audio {
-  flex: 1;
-  min-width: 240px;
+  width: 100%;
+  min-width: 0;
   height: 32px;
 }
 
@@ -712,7 +664,9 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   width: 28px;
+  min-width: 28px;
   height: 28px;
   padding: 0;
   border: 1px solid var(--u-border);
@@ -733,29 +687,16 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
   color: var(--u-text);
 }
 
+/* Stacks multiple PortChannelView instances vertically (= one per channel).
+   The waveform / spectrogram side-by-side responsive layout lives inside
+   PortChannelView itself via its own container query. */
 .port-body {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
 }
 
-@container (min-width: 800px) {
-  .port-body {
-    flex-direction: row;
-  }
-
-  .port-canvas-block {
-    flex: 1;
-    min-width: 0;
-  }
-}
-
-.port-canvas-block {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
+/* Used by the latency chart header (PortChannelView has its own scoped copy). */
 .canvas-head {
   display: flex;
   align-items: baseline;
@@ -772,22 +713,6 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
   color: var(--u-text-dim);
 }
 
-.waveform-canvas {
-  width: 100%;
-  height: 110px;
-  background: var(--u-bg);
-  border: 1px solid var(--u-border);
-  border-radius: var(--u-radius-sm);
-}
-
-.spectrogram-canvas {
-  width: 100%;
-  height: 110px;
-  background: var(--u-bg);
-  border: 1px solid var(--u-border);
-  border-radius: var(--u-radius-sm);
-}
-
 .latency-tab {
   display: flex;
   flex-direction: column;
@@ -796,7 +721,7 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
 
 .latency-stats {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
   gap: 10px;
 }
 
@@ -855,9 +780,13 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
 .latency-canvas {
   width: 100%;
   height: 260px;
-  background: var(--u-bg);
+  background-color: var(--u-bg);
+  background-image:
+    linear-gradient(rgba(255, 250, 240, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 250, 240, 0.04) 1px, transparent 1px);
+  background-size: 40px 40px;
   border: 1px solid var(--u-border);
-  border-radius: var(--u-radius-sm);
+  border-radius: var(--u-radius);
 }
 
 .memory-tab {
@@ -947,9 +876,11 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
 }
 
 .memory-node-name {
-  font-size: 13px;
+  font-family: var(--u-headline);
+  font-size: 15px;
   font-weight: 600;
-  color: var(--u-unworklet);
+  letter-spacing: -0.01em;
+  color: var(--u-text);
 }
 
 .memory-node-bytes {
@@ -991,38 +922,14 @@ const memoryWarnRatio = computed(() => memoryTotalBytes.value / signals.memoryWa
   color: var(--u-text-muted);
 }
 
-.kind-pill-state {
-  background: rgba(130, 191, 255, 0.16);
-  color: var(--u-accent);
-}
-
-.kind-pill-buffer {
-  background: rgba(98, 209, 138, 0.16);
-  color: var(--u-success);
-}
-
-.kind-pill-lookup {
-  background: rgba(255, 139, 61, 0.16);
-  color: var(--u-orange);
-}
-
-.kind-pill-midi {
-  background: rgba(255, 99, 166, 0.16);
-  color: var(--u-midi);
-}
-
-.kind-pill-message {
-  background: rgba(200, 156, 255, 0.16);
-  color: var(--u-unworklet);
-}
-
-.kind-pill-param {
-  background: rgba(255, 99, 166, 0.16);
-  color: var(--u-midi);
-}
-
+.kind-pill-state,
+.kind-pill-buffer,
+.kind-pill-lookup,
+.kind-pill-midi,
+.kind-pill-message,
+.kind-pill-param,
 .kind-pill-event {
-  background: rgba(98, 209, 138, 0.16);
-  color: var(--u-success);
+  background: var(--u-bg-elev-4);
+  color: var(--u-text);
 }
 </style>

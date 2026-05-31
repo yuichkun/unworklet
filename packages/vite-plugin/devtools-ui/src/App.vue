@@ -2,6 +2,12 @@
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
+// Inline-SVG via Vite's `?raw` query — the SVG string is dropped into the
+// template with v-html so the CSS below can size / restyle the markup
+// directly (= no <img> intrinsic-size friction, no extra Vite plugin).
+import chainSvg from "./assets/unworklet-logo-chain.svg?raw";
+import textSvg from "./assets/unworklet-logo-text.svg?raw";
+
 const router = useRouter();
 const route = useRoute();
 
@@ -19,24 +25,9 @@ const navItems = computed(() =>
 <template>
   <div class="app-shell">
     <aside class="sidebar">
-      <div class="brand">
-        <svg
-          class="brand-mark"
-          viewBox="0 0 24 24"
-          width="18"
-          height="18"
-          fill="none"
-          aria-hidden="true"
-        >
-          <path
-            d="M2 12 L6 12 L8 4 L12 20 L14 8 L16 14 L18 12 L22 12"
-            stroke="currentColor"
-            stroke-width="1.8"
-            stroke-linejoin="round"
-            stroke-linecap="round"
-          />
-        </svg>
-        <span class="brand-name">unworklet</span>
+      <div class="brand" aria-label="Unworklet">
+        <div class="brand-chain" v-html="chainSvg"></div>
+        <div class="brand-text" v-html="textSvg"></div>
       </div>
 
       <nav class="nav">
@@ -70,61 +61,78 @@ const navItems = computed(() =>
 }
 
 .sidebar {
-  flex: 0 0 168px;
+  flex: 0 0 200px;
   display: flex;
   flex-direction: column;
-  background: var(--u-bg-elev-1);
+  background: var(--u-bg-elev-2);
   border-right: 1px solid var(--u-border);
-  padding: 12px 0;
+  padding: 20px 0 12px;
   overflow-y: auto;
 }
 
 .brand {
+  padding: 0 10px 18px 22px;
   display: flex;
+  flex-direction: row;
   align-items: center;
-  gap: 7px;
-  padding: 0 14px 10px;
-  border-bottom: 1px solid var(--u-border);
+  gap: 12px;
 }
 
-.brand-mark {
-  color: var(--u-unworklet);
+/* Chain mark (300×300 viewBox). Tweak `width` to resize. */
+.brand-chain {
+  width: 32px;
 }
 
-.brand-name {
-  font-weight: 700;
-  font-size: 12.5px;
-  letter-spacing: 0.02em;
-  color: var(--u-text);
+/* Wordmark (445.7×77.1 viewBox = aspect 5.78:1). Tweak `width` to resize. */
+.brand-text {
+  width: 110px;
+}
+
+/* v-html injects the <svg> verbatim — these rules make the SVG flow with its
+   wrapper instead of relying on the source file's intrinsic width/height
+   attributes. `:deep` is required because v-html content is not scoped. */
+.brand-chain :deep(svg),
+.brand-text :deep(svg) {
+  display: block;
+  width: 100%;
+  height: auto;
+  padding: 2px;
 }
 
 .nav {
   display: flex;
   flex-direction: column;
-  padding: 6px 6px;
+  padding: 4px 8px;
+  gap: 2px;
 }
 
 .nav-link {
   display: block;
-  padding: 5px 10px;
-  border-radius: var(--u-radius-sm);
+  padding: 8px 12px;
+  border-radius: var(--u-radius);
   color: var(--u-text-muted);
-  font-size: 11.5px;
+  font-family: var(--u-sans);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
   cursor: pointer;
+  border-right: 2px solid transparent;
   transition:
     background 100ms,
-    color 100ms;
+    color 100ms,
+    border-color 100ms;
 }
 
 .nav-link:hover {
-  background: var(--u-bg-elev-2);
+  background: var(--u-bg-elev-3);
   color: var(--u-text);
 }
 
 .nav-link.active {
   background: var(--u-bg-elev-3);
-  color: var(--u-accent);
+  color: var(--u-text);
   font-weight: 600;
+  border-right-color: var(--u-text);
 }
 
 .content {

@@ -23,13 +23,20 @@ const PORTS: MidiPortMeta[] = [
 
 export const portKey = (p: MidiPortMeta): string => `${p.nodeId}.${p.portName}`;
 
-export type MidiEvent =
+/**
+ * UI-facing event payload (what the inject button hands us). The engine fills
+ * `atSample` when the message lands inside a 128-sample render block.
+ */
+export type MidiEventInput =
   | { type: "noteOn"; channel: number; note: number; velocity: number }
   | { type: "noteOff"; channel: number; note: number; velocity: number }
   | { type: "cc"; channel: number; controller: number; value: number }
   | { type: "pitchBend"; channel: number; value: number }
   | { type: "programChange"; channel: number; program: number }
   | { type: "channelPressure"; channel: number; pressure: number };
+
+/** Engine-internal event = input + per-event sample-offset inside the block (0–127). */
+export type MidiEvent = MidiEventInput & { atSample: number };
 
 export type MidiLogEntry = {
   id: number;
@@ -85,18 +92,48 @@ const emitArpStep = (t: number): void => {
   lastStepEmitted = step;
   const wallTs = Date.now();
   const note = PATTERN_NOTES[step % PATTERN_NOTES.length]!;
+  // Step-aligned emits → atSample = 0 (= start of the block). Real sequencers
+  // sometimes land mid-block; tiny jitter helps the dev verify their handler
+  // honors atSample instead of assuming "always block start".
+  const atSample = (step * 7) % 128;
   if (lastNoteOnNote !== null) {
-    const off: MidiEvent = { type: "noteOff", channel: 0, note: lastNoteOnNote, velocity: 0 };
+    const off: MidiEvent = {
+      type: "noteOff",
+      channel: 0,
+      note: lastNoteOnNote,
+      velocity: 0,
+      atSample,
+    };
     pushLog({ portKey: "arpeggiator.arpOut", direction: "out", event: off }, wallTs);
     pushLog({ portKey: "polysynth.keys", direction: "in", event: off }, wallTs);
   }
-  const on: MidiEvent = { type: "noteOn", channel: 0, note, velocity: 96 };
+  const on: MidiEvent = { type: "noteOn", channel: 0, note, velocity: 96, atSample };
   pushLog({ portKey: "arpeggiator.arpOut", direction: "out", event: on }, wallTs);
   pushLog({ portKey: "polysynth.keys", direction: "in", event: on }, wallTs);
   lastNoteOnNote = note;
 };
 
-watch(phase, (t) => emitArpStep(t));
+// Simulate occasional ringbuffer overflow on polysynth.keys so the panel's
+// overflow alert has a "live demo" without manual flooding.
+let lastOverflowTick = -1;
+const OVERFLOW_INTERVAL_S = 25;
+const updateOverflow = (t: number): void => {
+  if (lastOverflowTick < 0) lastOverflowTick = t;
+  if (t - lastOverflowTick >= OVERFLOW_INTERVAL_S) {
+    if (Math.sin(t * 0.43) + Math.sin(t * 1.07) > 0.5) {
+      overflowMock.value = {
+        ...overflowMock.value,
+        "polysynth.keys": (overflowMock.value["polysynth.keys"] ?? 0) + 1,
+      };
+    }
+    lastOverflowTick = t;
+  }
+};
+
+watch(phase, (t) => {
+  emitArpStep(t);
+  updateOverflow(t);
+});
 
 const lastEventByPort = computed<Record<string, MidiLogEntry | undefined>>(() => {
   const out: Record<string, MidiLogEntry | undefined> = {};
@@ -113,8 +150,17 @@ const overflowMock = ref<Record<string, number>>({
   "polysynth.keys": 0,
 });
 
-const injectMidi = (targetPortKey: string, event: MidiEvent): void => {
-  pushLog({ portKey: targetPortKey, direction: "inject", event }, Date.now());
+const injectMidi = (targetPortKey: string, event: MidiEventInput): void => {
+  // UI doesn't know about block timing — engine puts injected events at the
+  // earliest valid offset (sample 0) of the next render block.
+  const full: MidiEvent = { ...event, atSample: 0 } as MidiEvent;
+  pushLog({ portKey: targetPortKey, direction: "inject", event: full }, Date.now());
+};
+
+const resetOverflow = (targetPortKey: string): void => {
+  if (overflowMock.value[targetPortKey] !== undefined) {
+    overflowMock.value = { ...overflowMock.value, [targetPortKey]: 0 };
+  }
 };
 
 export const useMockMidi = () => {
@@ -132,5 +178,6 @@ export const useMockMidi = () => {
     overflowMock,
     lastEventByPort,
     injectMidi,
+    resetOverflow,
   };
 };
