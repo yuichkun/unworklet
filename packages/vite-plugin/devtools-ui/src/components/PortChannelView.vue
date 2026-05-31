@@ -245,25 +245,15 @@ onUnmounted(() => {
   letter-spacing: 0.04em;
 }
 
+/* Waveform + spectrogram always stacked vertically — keeps the wave shape
+   and the rolling spectrogram aligned to the same time axis at the same
+   horizontal scale, which is more useful for signal inspection than a
+   side-by-side layout (the latter shrunk each canvas to half-width and
+   read as cramped at every realistic devtool dock size). */
 .channel-canvases {
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-
-/* Side-by-side waveform + spectrogram once the parent port-section has room.
-   `container-type: inline-size` is set on .port-section in SignalsView, so
-   this container query references that ancestor. Threshold lowered to 500px
-   (was 800px) — with the 280px audio-grid min, a single port-section never
-   reaches 800px at common viewports, so the old query was effectively dead. */
-@container (min-width: 500px) {
-  .channel-canvases {
-    flex-direction: row;
-  }
-  .canvas-block {
-    flex: 1;
-    min-width: 0;
-  }
 }
 
 .canvas-block {
