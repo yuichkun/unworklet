@@ -11,7 +11,7 @@
 import type {} from "@vitejs/devtools-kit"; // makes the bare module augmentable below
 import { getDevToolsRpcClient } from "@vitejs/devtools-kit/client";
 import { DEVTOOLS_MOUNT_PATH } from "@vitejs/devtools-kit/constants";
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, shallowRef } from "vue";
 
 export type LiveSlotType = "f32" | "f64" | "i32" | "i64" | "bool" | "u8";
 export type LiveScalar = {
@@ -69,7 +69,11 @@ export function numericOf(v: number | boolean | string): number | undefined {
 }
 
 export function useLiveState() {
-  const state = ref<LiveState>({ nodes: [] });
+  // shallowRef: `apply` always replaces `state.value` wholesale, so a shallow
+  // ref triggers updates on every poll without Vue deep-tracking the (up to
+  // 512-element) buffer arrays inside each node — that deep tracking was the
+  // source of the panel's re-render churn.
+  const state = shallowRef<LiveState>({ nodes: [] });
   const histories = new Map<string, number[]>();
 
   const apply = (s: LiveState | undefined): void => {
