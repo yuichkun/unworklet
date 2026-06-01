@@ -1,23 +1,66 @@
-# vite-plus-starter
+# @unworklet/vite-plugin
 
-A starter for creating a Vite Plus project.
-
-## Development
-
-- Install dependencies:
-
-```bash
-vp install
-```
-
-- Run the unit tests:
+The Vite plugin for unworklet. It turns a `?worklet` import into a ready-to-run
+AudioWorklet processor (compiles the graph to WASM, wires up the module URLs),
+lowers `.uwk.ts` sugar on the fly, emits analysis JSON on build, and hosts a
+DevTools panel (audio graph / live state / signals / MIDI) in dev.
 
 ```bash
-vp test
+npm install -D @unworklet/vite-plugin
+npm install @unworklet/core
 ```
 
-- Build the library:
+## Setup
 
-```bash
-vp pack
+```ts
+// vite.config.ts
+import { defineConfig } from "vite";
+import unworklet from "@unworklet/vite-plugin";
+
+export default defineConfig({
+  plugins: [unworklet()],
+});
 ```
+
+## Loading a processor
+
+Import the processor source with the **`?worklet` query** — this is what the
+plugin intercepts. The default export of that virtual module is a compiled
+processor ready for `createNode`.
+
+```ts
+import { createNode } from "@unworklet/core";
+import { stereoGain } from "./processor.ts?worklet";
+
+const ctx = new AudioContext();
+const node = await createNode(ctx, stereoGain);
+node.outputs.main.connect(ctx.destination);
+```
+
+A `.uwk.ts` processor is imported the same way (`./processor.uwk.ts?worklet`);
+the plugin lowers the sugar before compiling.
+
+## Options
+
+```ts
+unworklet({
+  emitAnalysisArtifacts: true, // default — emit <name>.graph/memory/diagnostics/schema-hash.json on build
+  include: ["src/**/*.processor.ts", "src/**/*.uwk.ts"], // optional globs
+  exclude: [], // optional globs
+});
+```
+
+## DevTools
+
+In `vite dev`, the plugin registers an "unworklet" panel in the Vite DevTools
+dock and injects a zero-config page bridge — your app writes no DevTools code.
+The panels read live data from every running node:
+
+- **Audio graph** — the real Web-Audio topology + a per-node detail pane.
+- **Live state** — each node's WASM slots (scalars + buffers), X-rayed live.
+- **Signals** — a scope / spectrogram / level meter per output (AnalyserNode
+  taps), declared memory, and the AudioContext's reported latency.
+- **MIDI** — real outbound events, port overflow counters, and a virtual
+  keyboard that injects into the running worklet.
+
+License: MIT.

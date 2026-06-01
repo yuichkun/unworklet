@@ -1,0 +1,89 @@
+# unworklet
+
+> unworklet compiles a declarative TypeScript graph into a WASM AudioWorklet
+> processor. You describe DSP with typed primitives; the compiler emits the
+> WASM, guarantees realtime safety, and handles the worklet/main-thread
+> plumbing. It targets the whole web audio/MIDI device surface.
+
+This file orients an AI agent that has installed unworklet. **The source code is
+the source of truth.** The call forms below are exact — do not substitute forms
+from memory. When in doubt, read a tested example (`examples/01-stereo-gain`,
+`docs/12-canonical-examples.md`) or the package READMEs in `node_modules`.
+
+## Packages (install what you use)
+
+- **@unworklet/core** — the DSL + compiler + main-thread client. Always needed.
+- **@unworklet/vite-plugin** (dev dep) — load processors via `?worklet`; DevTools.
+- **@unworklet/lang** — optional `.uwk.ts` sugar (`a * b` instead of `a.mul(b)`).
+- **@unworklet/offline** — render a processor to PCM in Node/Bun/Deno.
+- **@unworklet/test** — audio/event/MIDI assertions for Vitest.
+
+A processor is authored in `name.processor.ts` (or `name.uwk.ts`) and imported
+in the app with `import { x } from "./name.processor.ts?worklet"`.
+
+## DSL quick reference (exact forms)
+
+Declarations go at the top of `defineProcessor(() => { ... })`; the returned
+`process` runs every 128-sample block.
+
+```ts
+import { audioInput, audioOutput, defineProcessor, forSample, param, state, event } from "@unworklet/core";
+
+audioInput({ channels, name })       // read: in.left.at(i) / in.ch(c).at(i)
+audioOutput({ channels, name })      // write: out.left.at(i).write(v) / out.ch(c).at(i).write(v)
+param.f32({ default, min, max, automationRate: "a-rate" | "k-rate" }).named("g")  // read: g.at(i)
+state.f32(0).named("s")              // also .f64/.i32/.i64/.bool — read s.read(), write s.write(v)
+state.buffer.f32({ size }).named("b")    // buf.read(i), buf.write(i, v), buf.readInterpolated(pos)
+event({ to: "main", name })          // worklet→main: .emitIf(cond, payload)
+event({ from: "main", name })        // main→worklet: .onReceive(p => ...)
+event.midi({ from: "main", name })   // inbound MIDI: .onEvent("noteOn", e => ...)
+event.midi({ to: "main", name })     // outbound MIDI: .emitIf(cond, midiEvent)
+
+forSample((i) => { /* i = 0..127 */ })          // the per-sample loop
+forSample.byN(4, (i) => { ... })                // SIMD stride (divides 128)
+
+// operations — free function OR method form, identical:
+add sub mul div mod neg  eq lt lte gt gte  not select  abs min max clamp
+floor ceil frac  sin cos tan tanh exp log sqrt  pipe
+// scalar literals: f32(x) f64(x) i32(x) i64(1n) bool(true) num(x)
+```
+
+Naming: `.named("x")` or `.expose({ name, snapshot, publish: { rateFps } })`.
+`publish` streams to `node.state.<name>.subscribe(...)`; `snapshot:"persistent"`
+includes it in `node.snapshot()`. A `publish`/`persistent` slot must be named.
+
+## Do NOT hallucinate these (common mistakes)
+
+- State read/write is `s.read()` / `s.write(v)` — **not** `.load()/.store()`, **not** `.get()/.set()`.
+- Audio I/O and params index with `.at(i)`; buffers use `.read(i)` / `.write(i, v)`.
+- Ports require a `name`: `audioInput({ channels: 2, name: "main" })` — never positional.
+- There is **no** standalone `message<T>()`; main→worklet is `event({ from: "main", name })`.
+- MIDI is `event.midi({ from | to: "main", name })`, not a `midiInput()/midiOutput()` call.
+- Import processors with the `?worklet` query; don't import the raw module.
+- `.uwk.ts` sugar and the plain `.ts` API are not mixed in one file; `.uwk.ts` needs `// @ts-nocheck`.
+
+## Main-thread usage
+
+```ts
+import { createNode } from "@unworklet/core";
+import { stereoGain } from "./stereo-gain.processor.ts?worklet";
+const node = await createNode(ctx, stereoGain);
+node.outputs.main.connect(ctx.destination);   // also: node.inputs, node.params.<name>.value,
+                                               // node.state.<name>.subscribe, node.midi.<name>.send,
+                                               // node.events.<name>.on, node.snapshot()/restore(blob)
+```
+
+## Verify before you ship
+
+```ts
+import { renderOffline } from "@unworklet/offline";
+import { expectNoNaN, expectStable } from "@unworklet/test";
+const r = await renderOffline(stereoGain, { sampleRate: 48000, duration: 1, inputs: { main: [pcm] } });
+expectNoNaN(r); expectStable(r);
+```
+
+## More
+
+- Full DSL + examples: `docs/12-canonical-examples.md`, `docs/01-dsl.md`.
+- The unworklet Skill (`.claude/skills/unworklet/SKILL.md`) carries the same
+  reference for Claude/agent tooling.

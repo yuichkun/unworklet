@@ -1,23 +1,56 @@
-# vite-plus-starter
+# @unworklet/test
 
-A starter for creating a Vite Plus project.
-
-## Development
-
-- Install dependencies:
+Assertions and signal generators for testing unworklet processors. Render with
+`@unworklet/offline`, then assert on the audio, events, MIDI, and state. Works
+with any Vitest-compatible runner.
 
 ```bash
-vp install
+npm install -D @unworklet/test @unworklet/offline @unworklet/core
 ```
 
-- Run the unit tests:
+## Usage
 
-```bash
-vp test
+```ts
+import { test } from "vitest";
+import { renderOffline } from "@unworklet/offline";
+import { sine, expectNoNaN, expectGainAtFreq, expectStable } from "@unworklet/test";
+import { lowpass } from "./lowpass.ts";
+
+test("lowpass attenuates 10 kHz", async () => {
+  const result = await renderOffline(lowpass, {
+    sampleRate: 48000,
+    duration: 0.5,
+    inputs: { main: [sine({ freqHz: 10000, durationSamples: 24000, sampleRate: 48000 })] },
+  });
+  expectNoNaN(result);
+  expectStable(result); // finite, no runaway DC / clipping
+  expectGainAtFreq(result, 10000, -24, 3); // ~-24 dB ± 3 at 10 kHz
+});
 ```
 
-- Build the library:
+## Matchers (function form)
 
-```bash
-vp pack
-```
+- **Audio:** `expectAudioMatches`, `expectAudioMatchesGolden` (WAV file),
+  `expectAudioMatchesSnapshot`, `expectAudioMatchesSnapshotWithState`.
+- **Levels / stability:** `expectNoNaN`, `expectPeakUnder`, `expectRmsUnder`,
+  `expectStable`, `expectMaster`, `expectSilence`, `expectDcOffsetUnder`.
+- **Time / frequency:** `expectPeakAtSample`, `expectLatency`, `expectGainAtFreq`.
+- **Events / state / MIDI:** `expectEventsEqual`, `expectEventsContaining`,
+  `expectEventCount`, `expectStateMatches`, `expectMidiOut`, `expectMidiBalance`.
+
+## Generators & helpers
+
+- **Signals:** `sine`, `silence`, `impulse`, `sineSweep`, `whiteNoise`, `dc`, `ramp`.
+- **MIDI:** `midi.noteOn`, `midi.noteOff`, `midi.cc`, `midi.pitchBend`,
+  `midi.programChange`, `midi.channelPressure`, `midi.aftertouch`,
+  `midi.systemRealtime`, `midi.sysex`, `midi.sequence`.
+- **Time:** `samplesToMs`, `msToSamples`, `samplesToSec`, `secToSamples`,
+  `bpmToSamples`, `bpmToMs`.
+
+## Vitest chain form
+
+Import `@unworklet/test/extend` once (e.g. in a setup file) to get fluent
+matchers: `expect(result).toMatchAudio(...)`, `.toBeStable()`,
+`.toHaveGainAtFreq(...)`, `.toEmitMidi(...)`, and so on.
+
+License: MIT.
