@@ -738,6 +738,12 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
       // consumer-bundle re-import emitted by `load`. (The build path's raw Node
       // `import()` does not run transforms — `loadProcessorModuleFresh` lowers
       // there.) The `?worklet` / `?t=` / `?v=` query suffix is stripped first.
+      //
+      // Skip the plugin's OWN virtual modules: their id is `\0unworklet:<source>`
+      // (Vite's `\0` virtual-module convention), so it ends in the source path —
+      // possibly `.uwk.ts` — but the code is the already-generated augmented JS,
+      // not raw sugar. Lowering it would throw `uwk-no-process`.
+      if (id.startsWith("\0")) return undefined;
       const queryIdx = id.indexOf("?");
       const filePath = queryIdx < 0 ? id : id.slice(0, queryIdx);
       if (!isUwkSource(filePath)) return undefined;

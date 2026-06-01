@@ -398,6 +398,18 @@ test("transform returns undefined for a non-.uwk.ts id", () => {
   expect(callTransform("const x = 1;", "/abs/bar.processor.ts")).toBeUndefined();
 });
 
+test("transform skips the plugin's own virtual id ending in .uwk.ts", () => {
+  // The `\0unworklet:<source>` virtual module id ends in the source path (here
+  // `.uwk.ts`), but its code is already-generated augmented JS — lowering it
+  // would throw uwk-no-process. The `\0` guard must short-circuit it.
+  expect(
+    callTransform("export default __x;", `${VIRTUAL_ID_PREFIX}/abs/synth.uwk.ts`),
+  ).toBeUndefined();
+  expect(
+    callTransform("export default __x;", `${NUL}unworklet-worklet:/abs/synth.uwk.ts`),
+  ).toBeUndefined();
+});
+
 test("transform strips a query suffix before the .uwk.ts extension test", () => {
   const out = callTransform(UWK_MINIMAL, "/abs/synth.uwk.ts?t=123") as { code: string };
   expect(out.code).toContain("export const synth = defineProcessor(");
