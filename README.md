@@ -7,6 +7,7 @@ TypeScript-first framework for declarative Audio Worklet DSP, compiled to WebAss
 ```mermaid
 flowchart LR
   core["@unworklet/core<br/>(WASM compile + runtime)"]
+  lang["@unworklet/lang<br/>(.uwk.ts → core .ts lowering)"]
   plugin["@unworklet/vite-plugin<br/>(?worklet resolution + DevTools)"]
   offline["@unworklet/offline<br/>(OfflineAudioContext render)"]
   test["@unworklet/test<br/>(vitest matchers)"]
@@ -15,6 +16,8 @@ flowchart LR
   dt["experiments/devtools-proto"]
 
   plugin --> core
+  plugin --> lang
+  lang --> core
   offline --> core
   test --> core
   test --> offline
@@ -29,16 +32,17 @@ flowchart LR
   dt --> plugin
 ```
 
-`core` も devDep として `vite-plugin` に依存している (= browser e2e の test config で `?worklet` resolution を使う)。 build 順序は cycle になるので CI は `vp run --filter @unworklet/vite-plugin build && vp run --filter @unworklet/core build && ...` の chain で解決。
+`core` も devDep として `vite-plugin` に依存している (= browser e2e の test config で `?worklet` resolution を使う)。 build 順序は cycle になるので CI は `vp run --filter @unworklet/lang build && vp run --filter @unworklet/vite-plugin build && vp run --filter @unworklet/core build && ...` の chain で解決。
 
 ### packages/ (公開 npm)
 
-| package                  | 役割                                                                                |
-| ------------------------ | ----------------------------------------------------------------------------------- |
-| `@unworklet/core`        | DSL surface + capture/analyze/emit pipeline + worklet runtime + main thread surface |
-| `@unworklet/vite-plugin` | Vite plugin = `?worklet` import → CompiledProcessor、 DevTools panel host           |
-| `@unworklet/offline`     | `renderOffline` = OfflineAudioContext で blocking render                            |
-| `@unworklet/test`        | vitest matcher 拡張 (= `expectStateMatches`, `expectEventsContaining` 等)           |
+| package                  | 役割                                                                                   |
+| ------------------------ | -------------------------------------------------------------------------------------- |
+| `@unworklet/core`        | DSL surface + capture/analyze/emit pipeline + worklet runtime + main thread surface    |
+| `@unworklet/lang`        | `.uwk.ts` sugar authoring frontend = build-time に `@unworklet/core` の `.ts` へ lower |
+| `@unworklet/vite-plugin` | Vite plugin = `?worklet` / `.uwk.ts` import → CompiledProcessor、 DevTools panel host  |
+| `@unworklet/offline`     | `renderOffline` = OfflineAudioContext で blocking render                               |
+| `@unworklet/test`        | vitest matcher 拡張 (= `expectStateMatches`, `expectEventsContaining` 等)              |
 
 ### examples/ (内部 demo、 npm 非公開)
 
@@ -75,6 +79,7 @@ vp config      # pre-commit hook を local 設定 (= staged file に vp check --
 全 build chain (= `vp run -r build` は core / vite-plugin の cycle で fail するので、 順序を明示):
 
 ```bash
+vp run --filter @unworklet/lang build && \
 vp run --filter @unworklet/vite-plugin build && \
 vp run --filter @unworklet/core build && \
 vp run --filter @unworklet/offline build && \
