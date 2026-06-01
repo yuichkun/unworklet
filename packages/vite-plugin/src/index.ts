@@ -17,6 +17,7 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, rm, stat, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -765,6 +766,7 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
   const emitAnalysisArtifacts = options?.emitAnalysisArtifacts ?? true;
   const uiRoot = resolveDevtoolsUiRoot();
   let isServe = false;
+  let devtoolsKitAvailable = false;
   let basePath = "/";
   // Source paths the plugin has accepted via `?worklet` resolveId. Only these
   // are eligible for dev-mode evaluation + `compile(...)`. Without this gate,
@@ -824,6 +826,23 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
     },
     configResolved(config) {
       isServe = config.command === "serve";
+      // The dev page bridge imports `@vitejs/devtools-kit/client`. That package is
+      // this plugin's own dependency, but the bridge is a virtual module whose bare
+      // imports Vite resolves from the project root — so in a consumer / example /
+      // test app that does not itself depend on `@vitejs/devtools-kit`, the import is
+      // unresolvable and the injected `<script>` errors the page (a vite-error
+      // overlay). The bridge does nothing without the DevTools panel anyway, so only
+      // inject it when the package actually resolves from the project root.
+      if (isServe) {
+        try {
+          createRequire(path.join(config.root, "_unworklet_devtools_probe.js")).resolve(
+            "@vitejs/devtools-kit/client",
+          );
+          devtoolsKitAvailable = true;
+        } catch {
+          devtoolsKitAvailable = false;
+        }
+      }
       // Dev internal URLs (= `/@id/...`, `/__unworklet/...`) must be
       // request-path absolute so the middleware's `startsWith(...)` match
       // works。 Vite documents `base` may be `'./'` / `''` (= relative,
@@ -838,7 +857,7 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
       }
     },
     transformIndexHtml() {
-      if (!isServe) return;
+      if (!isServe || !devtoolsKitAvailable) return;
       // Dev page bridge (zero-config, serve-only): expose the live-node registry
       // + snapshot codec on the page so the DevTools panel — and chrome-devtools
       // verification — can X-ray each node's linear memory. No application code
