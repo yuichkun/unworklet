@@ -29,10 +29,10 @@ The example set is designed so that the union of all examples touches every conc
 | L2 `defineSubgraph` (caller-owned reuse)                                                                                                                  | 2, 8                   |
 | `State<T>` reference parameter                                                                                                                            | 2, 4                   |
 | `event<T>` (worklet → main, sample-accurate)                                                                                                              | 4, 5, 6, 8             |
-| `message<T>` (main → worklet)                                                                                                                             | 5, 6, 7, 9             |
+| `event<T>({ from: "main" })` (main → worklet)                                                                                                             | 5, 6, 7, 9             |
 | `emitIf` (conditional emission, generic event)                                                                                                            | 4, 6, 8                |
 | `onReceive` (per-block message handler)                                                                                                                   | 5, 6, 7, 9             |
-| `midiInput` / `midiOutput`                                                                                                                                | 5, 6, 8, 9             |
+| `event.midi({ from: "main" })` / `event.midi({ to: "main" })`                                                                                             | 5, 6, 8, 9             |
 | `onEvent` MIDI (`noteOn` / `noteOff` + `sysex`; `cc` / `pitchBend` / `programChange` / `channelPressure` / `aftertouch` / `systemRealtime` not exercised) | 5, 6, 8, 9             |
 | MIDI emission via `emitIf` (`noteOn` / `noteOff` in Ex 6; `sysex` in Ex 9)                                                                                | 6, 9                   |
 | SIMD `f32x4`, `splat`, `buf.loadVec`, `mulVec`, `addVec`, `vec.lane`, `sumLanes`                                                                          | 3, 7                   |
@@ -45,7 +45,7 @@ The example set is designed so that the union of all examples touches every conc
 | Main side: `node.params.<name>` (AudioParam)                                                                                                              | 1, 2, 4, 7, 8          |
 | Main side: `node.state.<name>.subscribe` / `.value`                                                                                                       | 1, 4, 5, 6, 7, 8, 9    |
 | Main side: `node.events.<name>.on` / `.diagnostics.overflowCount`                                                                                         | 4, 5, 6, 8             |
-| Main side: `node.messages.<name>` (incl. variable-length payload)                                                                                         | 5, 6, 7, 9             |
+| Main side: `node.events.<name>.emit` (incl. variable-length payload)                                                                                      | 5, 6, 7, 9             |
 | Main side: `node.midi.<name>.send` / `.connectFromWebMIDI` / `.onEvent`                                                                                   | 5, 6, 8, 9             |
 | Main side: `node.snapshot()` / `node.restore(blob)`                                                                                                       | 3, 7                   |
 | Main side: `replaceProcessor` (hot swap + `RestoreResult.ok` failure path)                                                                                | 10                     |
@@ -56,11 +56,11 @@ The example set is designed so that the union of all examples touches every conc
 2. **Three-band biquad EQ (minimum-phase)** — recursive `state` cascade with L1 + L2 helpers, denormal-aware feedback path, parameterized cookbook coefficients.
 3. **Three-band linear-phase EQ (partitioned convolution)** — mixed per-block + per-sample `process` body with sub-rate FFT, `forSample.byN(4)` SIMD bulk, overlap-add buffer accounting.
 4. **Lookahead limiter with overshoot event** — `buffer` delay line, per-sample envelope follower (L1 helper), `event<T>` with `atSample` for sample-accurate flagging, GR meter via `state.publish`.
-5. **Granular sampler** — bulk `message<T>` upload of sample buffer, voice-array state, `midiInput` note triggers, `buffer.publish` waveform display.
-6. **MIDI arpeggiator + sequencer** — `midiInput` ingest + `midiOutput` emission, generic `event<T>` for UI step indicator, `message<T>` for pattern reload.
+5. **Granular sampler** — bulk `event<T>({ from: "main" })` upload of sample buffer, voice-array state, `event.midi({ from: "main" })` note triggers, `buffer.publish` waveform display.
+6. **MIDI arpeggiator + sequencer** — `event.midi({ from: "main" })` ingest + `event.midi({ to: "main" })` emission, generic `event<T>` for UI step indicator, `event<T>({ from: "main" })` for pattern reload.
 7. **Convolution reverb with snapshot/restore migration** — large IR buffer, partitioned FFT, snapshot persistence with declarative migration chain.
-8. **Polyphonic synth with sidechain ducking** — voice allocator subgraph, sidechain `audioInput` driving the duck envelope, `midiInput` voice triggers, waveform `buffer.publish` for UI scope.
-9. **SysEx bridge** — pure MIDI processor that rewrites the device-ID byte of incoming sysex events and re-emits them to a downstream port. Exercises `midiInput().onEvent('sysex', ...)`, `buffer.u8` + `buf.copyFrom` + in-place `buf.write`, sysex `midiOut.emitIf`, and main-side dynamic device-ID control via `message<T>` + published `state.i32`.
+8. **Polyphonic synth with sidechain ducking** — voice allocator subgraph, sidechain `audioInput` driving the duck envelope, `event.midi({ from: "main" })` voice triggers, waveform `buffer.publish` for UI scope.
+9. **SysEx bridge** — pure MIDI processor that rewrites the device-ID byte of incoming sysex events and re-emits them to a downstream port. Exercises `event.midi({ from: "main" }).onEvent('sysex', ...)`, `buffer.u8` + `buf.copyFrom` + in-place `buf.write`, sysex `midiOut.emitIf`, and main-side dynamic device-ID control via `event<T>({ from: "main" })` + published `state.i32`.
 10. **Live coding REPL bridge** — REPL UI swaps the running processor with edited source via `replaceProcessor`. Exercises the full live-coding flow: `state.snapshot: 'persistent'` for state carry-forward (oscillator phase), main-side graph re-wire (disconnect / connect on the new wrapper), migration-failure recovery via `RestoreResult.ok = false`, and the Q63 accumulation warning surface.
 
 ## 1. Stereo gain + level meter
@@ -316,7 +316,6 @@ import {
   audioOutput,
   param,
   state,
-  buffer,
   forSample,
   SAMPLES_PER_BLOCK,
   type Node,
@@ -403,7 +402,7 @@ const impulse = designLinearPhaseImpulse({
 });
 
 // Inspect the current blob to verify schema before authoring an updated one.
-// (For the routine "load a fresh impulse" path, message<T> uploads are used —
+// (For the routine "load a fresh impulse" path, event<T>({ from: "main" }) uploads are used —
 // see Example 5 for that pattern. Snapshot-driven impulse swap is the long-
 // term-persistence path.)
 const blob = await node.snapshot();
@@ -423,7 +422,6 @@ import {
   audioOutput,
   param,
   state,
-  buffer,
   forSample,
   event,
   SAMPLES_PER_BLOCK,
@@ -583,10 +581,7 @@ import {
   audioOutput,
   param,
   state,
-  buffer,
   forSample,
-  midiInput,
-  message,
   event,
   num,
   select,
@@ -615,7 +610,7 @@ export const granularSampler = defineProcessor((ctx) => {
     .f32({ default: 1.0, min: 0.25, max: 4.0, automationRate: "a-rate" })
     .named("pitch");
 
-  // Sample buffer — uploaded via message<T> (variable-length payload).
+  // Sample buffer — uploaded via event<T>({ from: "main" }) (variable-length payload).
   const sampleBuf = state.buffer.f32({ size: SAMPLE_BUFFER_LEN }).expose({
     name: "sampleBuf",
     snapshot: "persistent",
@@ -654,13 +649,13 @@ export const granularSampler = defineProcessor((ctx) => {
     .expose({ name: "playingCount", snapshot: "transient", publish: { rateFps: 10 } });
 
   // Bulk upload from main: replaces sampleBuf contents and sets sampleLen.
-  const uploadSample = message<{ samples: Float32Array }>({ name: "uploadSample" });
+  const uploadSample = event<{ samples: Float32Array }>({ from: "main", name: "uploadSample" });
 
   // Sample-accurate event: fires whenever a grain is spawned, for UI flash.
   const grainSpawned = event<{ voice: number; pos: number }>({ name: "grainSpawned" });
 
   // MIDI in for note triggers.
-  const noteIn = midiInput({ name: "noteIn" });
+  const noteIn = event.midi({ from: "main", name: "noteIn" });
 
   return {
     process: () => {
@@ -775,7 +770,7 @@ node.midi.noteIn.connectFromWebMIDI(firstInput);
 // Upload a sample (loaded from a URL, decoded to Float32Array).
 const fetched = await fetch("/samples/voice-loop.wav");
 const decoded = await audioContext.decodeAudioData(await fetched.arrayBuffer());
-node.messages.uploadSample({ samples: decoded.getChannelData(0) });
+node.events.uploadSample.emit({ samples: decoded.getChannelData(0) });
 
 node.state.playingCount.subscribe((n) => voiceCountUI.set(n));
 node.state.waveformView.subscribe((view) => waveformUI.draw(view));
@@ -791,9 +786,6 @@ import {
   audioOutput,
   state,
   forSample,
-  midiInput,
-  midiOutput,
-  message,
   event,
   i32,
   lt,
@@ -810,8 +802,8 @@ export const arpeggiator = defineProcessor((ctx) => {
   // mono passthrough audioOutput so the AudioContext keeps the worklet alive.
   const out = audioOutput({ channels: 1, name: "main" });
 
-  const noteIn = midiInput({ name: "noteIn" });
-  const arpOut = midiOutput({ name: "arpOut" });
+  const noteIn = event.midi({ from: "main", name: "noteIn" });
+  const arpOut = event.midi({ to: "main", name: "arpOut" });
 
   // 16-step pattern of semitone offsets from the root note (Float32Array uploaded).
   // Shipped as named state slots since each step is preset-bearing — snapshot key required.
@@ -823,7 +815,7 @@ export const arpeggiator = defineProcessor((ctx) => {
   // Pattern reload from main. Values are small signed integers (note offsets);
   // they travel as a Float32Array so the handler can read them per-element with
   // `.at()` (= direct per-element read is f32-only, Q84) and convert via `i32(...)`.
-  const loadPattern = message<{ steps: Float32Array }>({ name: "loadPattern" });
+  const loadPattern = event<{ steps: Float32Array }>({ from: "main", name: "loadPattern" });
 
   const rootNote = state.i32(60).named("rootNote");
   const lastVel = state.i32(96).named("lastVel");
@@ -918,7 +910,7 @@ node.events.stepFired.on(({ step }) => stepUI.highlight(step));
 node.state.stepIdx.subscribe((s) => stepUI.cursorAt(s));
 
 // Load a pattern (ascending then descending arpeggio).
-node.messages.loadPattern({
+node.events.loadPattern.emit({
   steps: new Float32Array([0, 4, 7, 12, 16, 19, 24, 19, 16, 12, 7, 4, 0, -5, -8, -12]),
 });
 ```
@@ -932,9 +924,7 @@ import {
   audioOutput,
   param,
   state,
-  buffer,
   forSample,
-  message,
   SAMPLES_PER_BLOCK,
   type Node,
 } from "@unworklet/core";
@@ -972,7 +962,10 @@ export const convolutionReverb = defineProcessor(
       .expose({ name: "wetMeter", snapshot: "transient", publish: { rateFps: 30 } });
 
     // Bulk IR upload from main.
-    const uploadIR = message<{ irL: Float32Array; irR: Float32Array }>({ name: "uploadIR" });
+    const uploadIR = event<{ irL: Float32Array; irR: Float32Array }>({
+      from: "main",
+      name: "uploadIR",
+    });
 
     return {
       process: () => {
@@ -1071,7 +1064,7 @@ node.outputs.main.connect(audioContext.destination);
 // Load an IR pair from a stereo file.
 const irFile = await fetch("/irs/cathedral.wav");
 const decoded = await audioContext.decodeAudioData(await irFile.arrayBuffer());
-node.messages.uploadIR({
+node.events.uploadIR.emit({
   irL: decoded.getChannelData(0),
   irR: decoded.getChannelData(decoded.numberOfChannels > 1 ? 1 : 0),
 });
@@ -1109,9 +1102,7 @@ import {
   audioOutput,
   param,
   state,
-  buffer,
   forSample,
-  midiInput,
   event,
   SAMPLES_PER_BLOCK,
   num,
@@ -1208,7 +1199,7 @@ export const polySynth = defineProcessor((ctx) => {
     name: "notePlayed",
   });
 
-  const keys = midiInput({ name: "keys" });
+  const keys = event.midi({ from: "main", name: "keys" });
 
   // Eight independent synthVoice instances, allocated in declaration scope.
   const voices = [];
@@ -1327,23 +1318,14 @@ setInterval(() => {
 ## 9. SysEx bridge
 
 ```typescript
-import {
-  defineProcessor,
-  audioOutput,
-  state,
-  message,
-  midiInput,
-  midiOutput,
-  buffer,
-  i32,
-} from "@unworklet/core";
+import { defineProcessor, audioOutput, state, event, i32 } from "@unworklet/core";
 
 const MAX_SYSEX_LEN = 512;
 
 // SysEx bridge: rewrites the device-ID byte of each incoming sysex event and
 // re-emits the result to a downstream port (MFX-style routing). The device ID
 // to apply is held in a published `state.i32` and updated from the main side
-// via a `message<T>`. The wire format is the standard sysex layout
+// via a `event<T>({ from: "main" })`. The wire format is the standard sysex layout
 // `[0xF0, deviceId, ...payload..., 0xF7]` — byte index 1 is the device ID.
 export const sysexBridge = defineProcessor((ctx) => {
   // No audio processing — the worklet exists purely to mediate MIDI. A silent
@@ -1351,8 +1333,8 @@ export const sysexBridge = defineProcessor((ctx) => {
   // unwritten samples emit silence (Q37).
   const out = audioOutput({ channels: 1, name: "main" });
 
-  const sysexIn = midiInput({ name: "sysexIn" });
-  const sysexOut = midiOutput({ name: "sysexOut" });
+  const sysexIn = event.midi({ from: "main", name: "sysexIn" });
+  const sysexOut = event.midi({ to: "main", name: "sysexOut" });
 
   // 7-bit MIDI value (0x00–0x7F). Published so the main side can mirror the
   // current setting in the UI.
@@ -1364,7 +1346,7 @@ export const sysexBridge = defineProcessor((ctx) => {
 
   // main → worklet message that updates the device ID applied to subsequent
   // sysex events.
-  const setId = message<{ id: number }>({ name: "setId" });
+  const setId = event<{ id: number }>({ from: "main", name: "setId" });
 
   return {
     process: () => {
@@ -1412,7 +1394,7 @@ node.midi.sysexOut.onEvent("sysex", (event) => {
 
 // Update the device ID applied to every subsequent sysex passing through the
 // bridge.
-node.messages.setId({ id: 0x42 });
+node.events.setId.emit({ id: 0x42 });
 
 // Reflect the current setting in the UI.
 node.state.targetId.subscribe((id) => deviceIdUI.set(id));
