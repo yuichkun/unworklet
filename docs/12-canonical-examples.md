@@ -475,7 +475,7 @@ export const lookaheadLimiter = defineProcessor((ctx) => {
 
   // Sample-accurate overshoot event — fires when the linear envelope crosses
   // the ceiling. Used for diagnostic logging and visual flash on the UI.
-  const overshoot = event<{ level: number; channel: 0 | 1 }>({ name: "overshoot" });
+  const overshoot = event<{ level: number; channel: 0 | 1 }>({ to: "main", name: "overshoot" });
 
   return {
     process: () => {
@@ -652,7 +652,7 @@ export const granularSampler = defineProcessor((ctx) => {
   const uploadSample = event<{ samples: Float32Array }>({ from: "main", name: "uploadSample" });
 
   // Sample-accurate event: fires whenever a grain is spawned, for UI flash.
-  const grainSpawned = event<{ voice: number; pos: number }>({ name: "grainSpawned" });
+  const grainSpawned = event<{ voice: number; pos: number }>({ to: "main", name: "grainSpawned" });
 
   // MIDI in for note triggers.
   const noteIn = event.midi({ from: "main", name: "noteIn" });
@@ -826,7 +826,7 @@ export const arpeggiator = defineProcessor((ctx) => {
   const sampleAccum = state.i32(0); // worklet-private accumulator
 
   // UI step indicator — fires every step boundary.
-  const stepFired = event<{ step: number; note: number }>({ name: "stepFired" });
+  const stepFired = event<{ step: number; note: number }>({ to: "main", name: "stepFired" });
 
   return {
     process: () => {
@@ -1184,7 +1184,7 @@ export const polySynth = defineProcessor((ctx) => {
   const scEnv = state.f32(0);
 
   // UI: 1024-sample waveform thumbnail of the synth output.
-  const waveform = buffer
+  const waveform = state.buffer
     .f32({ size: 1024 })
     .expose({ name: "waveform", publish: { rateFps: 30 } });
   const wavePtr = state.i32(0);
@@ -1196,6 +1196,7 @@ export const polySynth = defineProcessor((ctx) => {
 
   // Sample-accurate event for note triggers (UI key flash).
   const notePlayed = event<{ note: number; voice: number; velocity: number }>({
+    to: "main",
     name: "notePlayed",
   });
 
