@@ -11,10 +11,10 @@
 import { createNode } from "@unworklet/core";
 import type { UnworkletNode } from "@unworklet/core";
 
-import crusher from "./processors/crusher.processor.ts?worklet";
-import midiSynth from "./processors/midi-synth.processor.ts?worklet";
-import noiseDrive from "./processors/noise-drive.processor.ts?worklet";
-import tapeDelay from "./processors/tape-delay.processor.ts?worklet";
+import crusher from "./processors/crusher.uwk.ts?worklet";
+import midiSynth from "./processors/midi-synth.uwk.ts?worklet";
+import noiseDrive from "./processors/noise-drive.uwk.ts?worklet";
+import tapeDelay from "./processors/tape-delay.uwk.ts?worklet";
 
 const startBtn = document.getElementById("start") as HTMLButtonElement;
 const statusEl = document.getElementById("status") as HTMLDivElement;
