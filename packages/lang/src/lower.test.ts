@@ -176,3 +176,28 @@ process(() => {});
   expect(out).not.toContain('name: "out"');
   expect(out).toContain("channels: 1");
 });
+
+/** Everything from the `defineProcessor(` call onward — the part that compiles. */
+function processorBody(lowered: string): string {
+  return lowered.slice(lowered.indexOf("defineProcessor("));
+}
+
+test("exportName emits a named export instead of the default export", () => {
+  const named = lower(STEREO_GAIN, { exportName: "stereoGain" });
+  expect(named).toContain("export const stereoGain = defineProcessor(");
+  expect(named).not.toContain("export default");
+});
+
+test("exportName changes only the export statement, not the processor body", () => {
+  // The defineProcessor call must be byte-identical with or without exportName, so
+  // a named-exported .uwk.ts compiles to the same CompiledProcessor as the default.
+  const def = lower(STEREO_GAIN);
+  const named = lower(STEREO_GAIN, { exportName: "stereoGain" });
+  expect(processorBody(named)).toBe(processorBody(def));
+});
+
+test("omitting exportName keeps the default export (lang golden compatibility)", () => {
+  const out = lower(STEREO_GAIN);
+  expect(out).toContain("export default defineProcessor(");
+  expect(out).not.toMatch(/export const \w+ = defineProcessor/);
+});

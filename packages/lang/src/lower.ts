@@ -93,6 +93,13 @@ export class LowerError extends Error {
 export type LowerOptions = {
   /** Module specifier for the generated import. Defaults to `@unworklet/core`. */
   coreModule?: string;
+  /**
+   * When set, the processor is emitted as a named `export const <exportName> =
+   * defineProcessor(...)` (a valid JS identifier). When omitted, it is emitted as
+   * `export default`. The vite-plugin passes a filename-derived name so the lowered
+   * module matches the named-export convention its loader expects.
+   */
+  exportName?: string;
 };
 
 /** A top-level `name(...)` macro call (e.g. `process(() => {...})`). */
@@ -150,7 +157,8 @@ function makeDefineProcessor(
   declarations: readonly ts.Statement[],
   processBody: readonly ts.Statement[],
   optionsArg: ts.Expression | undefined,
-): ts.ExportAssignment {
+  exportName: string | undefined,
+): ts.Statement {
   const processArrow = ts.factory.createArrowFunction(
     undefined,
     undefined,
@@ -184,6 +192,15 @@ function makeDefineProcessor(
     undefined,
     args,
   );
+  if (exportName !== undefined) {
+    return ts.factory.createVariableStatement(
+      [ts.factory.createToken(ts.SyntaxKind.ExportKeyword)],
+      ts.factory.createVariableDeclarationList(
+        [ts.factory.createVariableDeclaration(exportName, undefined, undefined, call)],
+        ts.NodeFlags.Const,
+      ),
+    );
+  }
   return ts.factory.createExportAssignment(undefined, false, call);
 }
 
@@ -321,9 +338,14 @@ export function lower(source: string, options: LowerOptions = {}): string {
   used.add("defineProcessor");
   const importDecl = makeCoreImport([...used].sort(), coreModule);
   const optionsArg = makeOptionsArg(migrationsArg, optionsObject);
-  const exportDefault = makeDefineProcessor(allDeclarations, processBody!, optionsArg);
+  const exported = makeDefineProcessor(
+    allDeclarations,
+    processBody!,
+    optionsArg,
+    options.exportName,
+  );
 
-  const lowered = ts.factory.updateSourceFile(sf, [importDecl, exportDefault]);
+  const lowered = ts.factory.updateSourceFile(sf, [importDecl, exported]);
   const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
   return printer.printFile(lowered);
 }
