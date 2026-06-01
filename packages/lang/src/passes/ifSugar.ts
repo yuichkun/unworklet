@@ -118,7 +118,12 @@ export function tryIfSugar(
   // Only a Node<'bool'>-derived condition is sugar; a JS boolean stays build-time.
   if (!isDspExpr(checker, node.expression)) return undefined;
   const v = (e: ts.Expression): ts.Expression => ts.visitNode(e, visit) as ts.Expression;
-  const cond = v(node.expression);
+  // A bare `State<'bool'>` condition sits in a `boolean` contextual position, so
+  // bare-state leaves it untouched — read it here.
+  const cond =
+    classify(checker, node.expression) === "state"
+      ? method(v(node.expression), "read", [])
+      : v(node.expression);
 
   if (node.elseStatement === undefined) {
     // Shape 3: guarded emit(s).

@@ -76,21 +76,30 @@ function replacePrev(node: ts.Node, slot: string, context: ts.TransformationCont
   return ts.visitNode(node, v) as ts.Node;
 }
 
+/** Strip any number of nested parentheses: `(({...}))` → `{...}`. */
+function unwrapParens(e: ts.Expression): ts.Expression {
+  let cur = e;
+  while (ts.isParenthesizedExpression(cur)) cur = cur.expression;
+  return cur;
+}
+
 /** The methods object returned by the factory arrow, plus any pre-return decls. */
 function returnedObject(
   arrow: ts.ArrowFunction,
 ): { obj: ts.ObjectLiteralExpression; pre: ts.Statement[] } | undefined {
   const b = arrow.body;
-  if (ts.isParenthesizedExpression(b) && ts.isObjectLiteralExpression(b.expression)) {
-    return { obj: b.expression, pre: [] };
-  }
-  if (ts.isObjectLiteralExpression(b)) return { obj: b, pre: [] };
   if (ts.isBlock(b)) {
     const ret = b.statements.find(ts.isReturnStatement);
-    if (ret?.expression !== undefined && ts.isObjectLiteralExpression(ret.expression)) {
-      return { obj: ret.expression, pre: b.statements.filter((s) => !ts.isReturnStatement(s)) };
+    if (ret?.expression !== undefined) {
+      const inner = unwrapParens(ret.expression);
+      if (ts.isObjectLiteralExpression(inner)) {
+        return { obj: inner, pre: b.statements.filter((s) => !ts.isReturnStatement(s)) };
+      }
     }
+    return undefined;
   }
+  const inner = unwrapParens(b);
+  if (ts.isObjectLiteralExpression(inner)) return { obj: inner, pre: [] };
   return undefined;
 }
 
@@ -126,34 +135,29 @@ export function tryPrev(
     // Lower the body's operator / index / bare-state sugar (treating `$prev` as a
     // Node), then replace `$prev` with the slot read.
     const loweredBody = ts.visitNode(fn.body, visit) as ts.ConciseBody;
+    const replaced = replacePrev(loweredBody, slot, context) as ts.ConciseBody;
     const r = id("__r");
-    const block = f.createBlock(
-      [
-        ts.isBlock(loweredBody)
-          ? loweredBody // a block-bodied method keeps its returns (rare with $prev)
-          : f.createVariableStatement(
-              undefined,
-              f.createVariableDeclarationList(
-                [
-                  f.createVariableDeclaration(
-                    "__r",
-                    undefined,
-                    undefined,
-                    replacePrev(loweredBody, slot, context) as ts.Expression,
-                  ),
-                ],
-                ts.NodeFlags.Const,
-              ),
-            ),
-        ...(ts.isBlock(loweredBody)
-          ? []
-          : [
-              f.createExpressionStatement(method(id(slot), "write", [r])),
-              f.createReturnStatement(r),
-            ]),
-      ],
-      true,
-    );
+    // Each returned value is stored into the slot before it is returned:
+    //   return e  →  const __r = e; <slot>.write(__r); return __r
+    const storeReturn = (e: ts.Expression): ts.Statement[] => [
+      f.createVariableStatement(
+        undefined,
+        f.createVariableDeclarationList(
+          [f.createVariableDeclaration("__r", undefined, undefined, e)],
+          ts.NodeFlags.Const,
+        ),
+      ),
+      f.createExpressionStatement(method(id(slot), "write", [r])),
+      f.createReturnStatement(r),
+    ];
+    const block = ts.isBlock(replaced)
+      ? f.createBlock(
+          replaced.statements.flatMap((s) =>
+            ts.isReturnStatement(s) && s.expression !== undefined ? storeReturn(s.expression) : [s],
+          ),
+          true,
+        )
+      : f.createBlock(storeReturn(replaced as ts.Expression), true);
     const newFn = f.createArrowFunction(
       fn.modifiers,
       fn.typeParameters,
@@ -166,7 +170,9 @@ export function tryPrev(
   });
 
   const newObj = f.createObjectLiteralExpression(props, true);
-  const newArrowBody = f.createBlock([...ret.pre, ...slots, f.createReturnStatement(newObj)], true);
+  // The factory's pre-return decls (`const g = coef * 2`) carry their own sugar.
+  const newPre = ret.pre.map((s) => ts.visitNode(s, visit) as ts.Statement);
+  const newArrowBody = f.createBlock([...newPre, ...slots, f.createReturnStatement(newObj)], true);
   const newArrow = f.createArrowFunction(
     arrow.modifiers,
     arrow.typeParameters,

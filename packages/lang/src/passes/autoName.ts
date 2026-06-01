@@ -1,15 +1,20 @@
 /**
  * Auto-name pass (RFC-001 S9) — purely syntactic, runs on module-top-level
- * `const X = <decl helper>` declarations. Name-required helpers derive their
- * name from the binding when none is given:
+ * `const X = <decl helper>` declarations. The binding name fills in a missing
+ * declared name; an explicit name always wins.
  *
- *   const cutoff = param.f32({...})        → param.f32({...}).named("cutoff")
- *   const input = audioInput({ channels })  → audioInput({ channels, name: "input" })
- *   const notes = event.midi({ from })       → event.midi({ from, name: "notes" })
+ *   const cutoff = param.f32({...})         → param.f32({...}).named("cutoff")
+ *   const input = audioInput({ channels })   → audioInput({ channels, name: "input" })
+ *   const notes = event.midi({ from })        → event.midi({ from, name: "notes" })
+ *   const meterL = state.f32(0).expose({...}) → ...expose({..., name: "meterL"})
+ *   const tap = state.f32(0).named()          → state.f32(0).named("tap")
  *
- * An explicit `name` / `.named(...)` always wins (left untouched). State / buffer
- * are name-optional: a plain `state.f32(0)` stays anonymous, and a `.named("x")`
- * keeps its explicit name — those are left as-is here.
+ * Name-required helpers (param / audioInput / audioOutput / event) always derive.
+ * Name-optional state / buffer derive ONLY through an explicit marker — a
+ * `.expose({...})` without a name, or a no-arg `.named()` — so a plain
+ * `state.f32(0)` stays anonymous. An explicit `name` / `.named("x")` / a
+ * `.expose({ name })` is left untouched, and a non-object options argument (an
+ * identifier or spread we cannot read) is left untouched too.
  */
 
 import ts from "typescript";
@@ -31,12 +36,12 @@ function rootCallee(expr: ts.Expression): string | undefined {
   return ts.isIdentifier(e) ? e.text : undefined;
 }
 
-/** Whether the chain already contains a `.named(...)` call. */
-function hasNamedCall(expr: ts.Expression): boolean {
+/** Whether the chain already contains a call to a method named `method`. */
+function hasMethodCall(expr: ts.Expression, method: string): boolean {
   let e: ts.Expression = expr;
   for (;;) {
     if (ts.isCallExpression(e)) {
-      if (ts.isPropertyAccessExpression(e.expression) && e.expression.name.text === "named") {
+      if (ts.isPropertyAccessExpression(e.expression) && e.expression.name.text === method) {
         return true;
       }
       e = e.expression;
@@ -49,6 +54,11 @@ function hasNamedCall(expr: ts.Expression): boolean {
   return false;
 }
 
+/** The method name of a call whose callee is `obj.method(...)`, else undefined. */
+function calledMethod(call: ts.CallExpression): string | undefined {
+  return ts.isPropertyAccessExpression(call.expression) ? call.expression.name.text : undefined;
+}
+
 /** Whether the call's first-arg options object already has a `name` property. */
 function optionsHaveName(call: ts.CallExpression): boolean {
   const arg = call.arguments[0];
@@ -59,6 +69,12 @@ function optionsHaveName(call: ts.CallExpression): boolean {
       ts.isIdentifier(p.name) &&
       p.name.text === "name",
   );
+}
+
+/** Whether the call's first argument can carry an injected `name` (object or absent). */
+function argIsInjectable(call: ts.CallExpression): boolean {
+  const arg = call.arguments[0];
+  return arg === undefined || ts.isObjectLiteralExpression(arg);
 }
 
 function withNameInOptions(call: ts.CallExpression, name: string): ts.CallExpression {
@@ -74,6 +90,42 @@ function withNameInOptions(call: ts.CallExpression, name: string): ts.CallExpres
   ]);
 }
 
+/** Compute the auto-named initializer, or undefined if nothing to do. */
+function autoNamedInit(init: ts.Expression, name: string): ts.Expression | undefined {
+  const root = rootCallee(init);
+  const outer = ts.isCallExpression(init) ? init : undefined;
+  const outerMethod = outer !== undefined ? calledMethod(outer) : undefined;
+
+  // `.expose({...})` (param / state / buffer) — the name lives in the expose
+  // options; derive it from the binding when absent, never clobber an explicit one.
+  if (outer !== undefined && outerMethod === "expose") {
+    return optionsHaveName(outer) ? undefined : withNameInOptions(outer, name);
+  }
+  // A no-arg `.named()` marker on a name-optional state / buffer — fill the name.
+  if (outer !== undefined && outerMethod === "named" && outer.arguments.length === 0) {
+    return f.updateCallExpression(outer, outer.expression, outer.typeArguments, [
+      f.createStringLiteral(name),
+    ]);
+  }
+  // Name-required option-bag helpers — inject `name` into the options object.
+  if (
+    (root === "audioInput" || root === "audioOutput" || root === "event") &&
+    ts.isCallExpression(init) &&
+    !optionsHaveName(init) &&
+    argIsInjectable(init)
+  ) {
+    return withNameInOptions(init, name);
+  }
+  // `param.<T>({...})` — name lives on a trailing `.named(...)`; append one (unless
+  // the param is already named or exposed).
+  if (root === "param" && !hasMethodCall(init, "named") && !hasMethodCall(init, "expose")) {
+    return f.createCallExpression(f.createPropertyAccessExpression(init, "named"), undefined, [
+      f.createStringLiteral(name),
+    ]);
+  }
+  return undefined;
+}
+
 /** Apply auto-name to one module-top-level statement (no-op if not applicable). */
 export function autoNameDeclaration(stmt: ts.Statement): ts.Statement {
   if (!ts.isVariableStatement(stmt)) return stmt;
@@ -81,25 +133,7 @@ export function autoNameDeclaration(stmt: ts.Statement): ts.Statement {
   const decl = stmt.declarationList.declarations[0]!;
   if (!ts.isIdentifier(decl.name) || decl.initializer === undefined) return stmt;
 
-  const name = decl.name.text;
-  const init = decl.initializer;
-  const root = rootCallee(init);
-
-  let newInit: ts.Expression | undefined;
-  if (
-    (root === "audioInput" || root === "audioOutput" || root === "event") &&
-    ts.isCallExpression(init) &&
-    !optionsHaveName(init)
-  ) {
-    // Name-required helper carrying an options object (audioInput / audioOutput /
-    // event / event.midi): add `name: "<binding>"`.
-    newInit = withNameInOptions(init, name);
-  } else if (root === "param" && !hasNamedCall(init)) {
-    // param.<T>({...}) — name lives on a `.named(...)`; append one.
-    newInit = f.createCallExpression(f.createPropertyAccessExpression(init, "named"), undefined, [
-      f.createStringLiteral(name),
-    ]);
-  }
+  const newInit = autoNamedInit(decl.initializer, decl.name.text);
   if (newInit === undefined) return stmt;
 
   return f.updateVariableStatement(
