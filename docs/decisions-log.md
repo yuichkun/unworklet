@@ -4009,3 +4009,24 @@ content region = `perPayload × min(ringCapacity, MAX_CONTENT_SLOTS)`、`MAX_CON
 ### v1.x.0 deferral
 
 - ナシ。
+
+## Q89 — `pipe` (合成 helper) + `not` (論理 primitive) を core に追加 (= RFC-001 S10 / S3)
+
+**Status:** resolved.
+
+**背景:** RFC-001 (`.uwk.ts` authoring frontend) は infix operator sugar の lowering 先として `not(b)` (= `!b` / `a!=b`) を、chain 可読性のために `pipe` を要求する。両方とも純粋追加で、既存 graph node・WASM byte・realtime-safety invariant を一切変えない。`.uwk.ts` だけでなく Tier A `.ts` でも使える。
+
+**Decision (Q89):**
+
+- **`pipe(x, ...fns)` free function + `Node<T>.pipe(fn)` method:** 左→右の関数合成。`pipe(x, f, g)` ≡ `g(f(x))`、`x.pipe(f)` ≡ `f(x)`。**graph node を持たない** = 値を変換列に通すだけなので、捕捉される graph (と emit される WASM) は手書き chain と byte 一致。8 overload (RxJS / fp-ts 慣習)。
+- **`not(b: Node<'bool'>): Node<'bool'>` primitive + `b.not()` method:** 論理否定。bool は内部 i32 0/1 なので **単一 `i32.eqz`** に lower (= "equals zero": operand が 0 なら 1、それ以外 0)。bool 専用 (= `not(numericNode)` は型エラー)。新 IR kind `not` を追加 (= neg と同形の unary)。
+
+**Rejected:**
+
+- **`not` を `select(b, false, true)` で表現 (= 新 primitive ナシ):** 既存 select で書けるが両枝を評価する。`i32.eqz` は分岐ナシ 1 命令で realtime に素直なので専用 primitive にした。
+
+**影響 file:** `dsl/primitives.ts` (= `not` free fn + method + `BoolUnary` 型)、`dsl/pipe.ts` (新規)、`index.ts` (= export)、`compile/ast.ts` (= `not` IR kind + inferAstType)、`compile/emit.ts` (= `i32.eqz` emit + visit)、`compile/analyze.ts` (= type-error walk)。frozen golden 不変 (= 既存 case は `not`/`pipe` 未使用)。
+
+### v1.x.0 deferral
+
+- ナシ。
