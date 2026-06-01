@@ -13,5 +13,10 @@
     "isolatedModules": true,
     "types": ["@vitejs/devtools-kit", "node"]
   },
-  "include": ["src/**/*", "vite.config.ts"]
+  "include": ["src/**/*", "vite.config.ts"],
+  // `.uwk.ts` is sugar — a deliberate TS error until lowered (the plugin lowers
+  // it); excluded from the standalone `tsc` program (each also carries
+  // `// @ts-nocheck` for the type-aware lint). `.uwklowered.ts` is the transient
+  // temp the build path writes while lowering.
+  "exclude": ["**/*.uwk.ts", "**/*.uwklowered.ts"]
 }
