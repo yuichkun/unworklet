@@ -4,8 +4,8 @@
  * history per scalar slot for sparklines.
  *
  * Scalar slots (state / param) carry real decoded values; buffer slots carry
- * metadata only (name / type / length) — their byte visualization is a later
- * wire. i64 values arrive as decimal strings (JSON has no bigint).
+ * their decoded elements (stride-downsampled when large — `length` is the true
+ * count). i64 scalar values arrive as decimal strings (JSON has no bigint).
  */
 
 import type {} from "@vitejs/devtools-kit"; // makes the bare module augmentable below
@@ -20,12 +20,18 @@ export type LiveScalar = {
   type: LiveSlotType;
   value: number | boolean | string;
 };
-export type LiveBufferMeta = { name: string; type: LiveSlotType; length: number };
+export type LiveBuffer = {
+  name: string;
+  type: LiveSlotType;
+  length: number;
+  data: number[];
+  downsampled: boolean;
+};
 export type LiveNodeState = {
   id: string;
   displayName: string;
   scalars: LiveScalar[];
-  buffers: LiveBufferMeta[];
+  buffers: LiveBuffer[];
 };
 export type LiveState = { nodes: LiveNodeState[] };
 
@@ -37,20 +43,39 @@ declare module "@vitejs/devtools-kit" {
 
 const HISTORY_LEN = 150;
 
+/**
+ * Coerce a (possibly partial) shared-state payload into a well-formed
+ * {@link LiveState}. Shared state can be the empty initial value, or — across a
+ * dev restart — a payload from a mismatched plugin version that omits a node's
+ * arrays or a buffer's `data`. Normalizing here means the template renders empty
+ * instead of throwing (e.g. `formatHex(b.data)` on an absent `data`).
+ */
+export function normalizeLiveState(s: LiveState | undefined): LiveState {
+  return {
+    nodes: (s?.nodes ?? []).map((n) => ({
+      id: n.id,
+      displayName: n.displayName,
+      scalars: n.scalars ?? [],
+      buffers: (n.buffers ?? []).map((b) => ({ ...b, data: b.data ?? [] })),
+    })),
+  };
+}
+
+/** Charting projection of a scalar value: number / bool→0|1, i64 string → none. */
+export function numericOf(v: number | boolean | string): number | undefined {
+  if (typeof v === "number") return v;
+  if (typeof v === "boolean") return v ? 1 : 0;
+  return undefined; // i64 decimal string — not charted
+}
+
 export function useLiveState() {
   const state = ref<LiveState>({ nodes: [] });
   const histories = new Map<string, number[]>();
 
-  const numericOf = (v: number | boolean | string): number | undefined => {
-    if (typeof v === "number") return v;
-    if (typeof v === "boolean") return v ? 1 : 0;
-    return undefined; // i64 decimal string — not charted
-  };
-
   const apply = (s: LiveState | undefined): void => {
-    const next = s ?? { nodes: [] };
-    state.value = next;
-    for (const n of next.nodes) {
+    const nodes = normalizeLiveState(s).nodes;
+    state.value = { nodes };
+    for (const n of nodes) {
       for (const sc of n.scalars) {
         const num = numericOf(sc.value);
         if (num === undefined) continue;

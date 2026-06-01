@@ -17,6 +17,9 @@ export type LiveGraphNode = {
   label: string;
   kind: "unworklet" | "standard";
   audioNodeType: string;
+  /** Declared audio port names (unworklet nodes only). */
+  inputs?: string[];
+  outputs?: string[];
 };
 export type LiveGraphEdge = { id: string; from: string; to: string };
 export type LiveGraph = { nodes: LiveGraphNode[]; edges: LiveGraphEdge[] };
@@ -35,7 +38,7 @@ const ROW_H = 96;
 const ROW_Y0 = 60;
 
 /** Longest-path-from-source column per node, rows packed within each column. */
-function layout(graph: LiveGraph): PlacedNode[] {
+export function layout(graph: LiveGraph): PlacedNode[] {
   const col = new Map<string, number>();
   for (const n of graph.nodes) col.set(n.id, 0);
   // Relax edges |V| times — small graphs, settles the longest-path depth.
