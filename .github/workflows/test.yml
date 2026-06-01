@@ -29,10 +29,11 @@ jobs:
           cache: true
       - run: vp install
       - name: Build packages in dependency order (= cycle 回避、 vite-plugin
-          先 → core → offline → test の順、 vp run -r は cycle 検出 で fail)
+          先 → core → lang → offline → test の順、 vp run -r は cycle 検出 で fail)
         run: |
           vp run --filter @unworklet/vite-plugin build
           vp run --filter @unworklet/core build
+          vp run --filter @unworklet/lang build
           vp run --filter @unworklet/offline build
           vp run --filter @unworklet/test build
       - name: Install playwright chromium (for browser e2e projects)
@@ -52,10 +53,11 @@ jobs:
           cache: true
       - run: vp install
       - name: Build packages in dependency order (= cycle 回避、 vite-plugin
-          先 → core → offline → test の順、 vp run -r は cycle 検出 で fail)
+          先 → core → lang → offline → test の順、 vp run -r は cycle 検出 で fail)
         run: |
           vp run --filter @unworklet/vite-plugin build
           vp run --filter @unworklet/core build
+          vp run --filter @unworklet/lang build
           vp run --filter @unworklet/offline build
           vp run --filter @unworklet/test build
       - name: Install playwright chromium
