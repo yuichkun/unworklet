@@ -149,6 +149,21 @@ test("audioInput EXPLICIT name in options WINS (not overridden by binding)", asy
   ).toStrictEqual(["main", "EXPL"]);
 });
 
+test('audioInput EXPLICIT QUOTED "name" WINS (StringLiteral key, not Identifier)', async () => {
+  // A quoted key is a StringLiteral; the auto-name guard must recognize it too, or
+  // it appends a second `name: "inA"` that wins and silently renames the port.
+  // (Reported by @codex on #12.)
+  expect(
+    await compiledDeclNames(
+      mono(
+        `const inA = audioInput({ channels: 1, "name": "EXPL" });`,
+        `out.ch(0).at(i).write(inA.ch(0).at(i));`,
+      ),
+      "audioInput",
+    ),
+  ).toStrictEqual(["main", "EXPL"]);
+});
+
 test("audioInput explicit-name sugar ≡ itself (idempotent: no double-name)", async () => {
   // Auto-name must NOT append a second name when one already exists.
   await expectSameLowering(

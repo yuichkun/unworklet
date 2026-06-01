@@ -336,11 +336,24 @@ export function lower(source: string, options: LowerOptions = {}): string {
   // argument is attached outside it, so such a reference would be out of scope at
   // module evaluation. (Reported by @codex on #12.)
   const bodyBindings = new Set<string>();
+  const collectBindingNames = (name: ts.BindingName): void => {
+    if (ts.isIdentifier(name)) {
+      bodyBindings.add(name.text);
+      return;
+    }
+    // ObjectBindingPattern | ArrayBindingPattern — recurse into each element
+    // (array holes are OmittedExpression, not BindingElement, so they are skipped).
+    for (const el of name.elements) {
+      if (ts.isBindingElement(el)) collectBindingNames(el.name);
+    }
+  };
   for (const decl of declarations) {
     if (ts.isVariableStatement(decl)) {
-      for (const d of decl.declarationList.declarations) {
-        if (ts.isIdentifier(d.name)) bodyBindings.add(d.name.text);
-      }
+      for (const d of decl.declarationList.declarations) collectBindingNames(d.name);
+    } else if (ts.isFunctionDeclaration(decl) && decl.name !== undefined) {
+      bodyBindings.add(decl.name.text);
+    } else if (ts.isClassDeclaration(decl) && decl.name !== undefined) {
+      bodyBindings.add(decl.name.text);
     }
   }
   const optionRefs = (expr: ts.Expression | undefined): string[] => {

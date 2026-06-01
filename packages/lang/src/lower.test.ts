@@ -136,6 +136,29 @@ test("rejects migrations()/options() referencing a processor-body binding", () =
   }
 });
 
+test("rejects migrations() referencing a moved FUNCTION declaration", () => {
+  // A function declaration is moved into the callback just like a const binding,
+  // so referencing it from migrations() is equally out of scope. (Reported by
+  // @codex on #12 — the first guard only collected identifier `const`s.)
+  try {
+    lower(
+      `function migrate(blob, h) { return h; }\nmigrations([{ to: 1, migrate }]);\nprocess(() => {});`,
+    );
+    throw new Error("expected throw");
+  } catch (e) {
+    expect((e as LowerError).id).toBe("uwk-options-binding");
+  }
+});
+
+test("rejects migrations() referencing a DESTRUCTURED top-level binding", () => {
+  try {
+    lower(`const { migrate } = helpers;\nmigrations([{ to: 1, migrate }]);\nprocess(() => {});`);
+    throw new Error("expected throw");
+  } catch (e) {
+    expect((e as LowerError).id).toBe("uwk-options-binding");
+  }
+});
+
 test("rejects a process() with no callback argument", () => {
   try {
     lower(`process();`);

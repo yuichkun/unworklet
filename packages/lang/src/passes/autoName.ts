@@ -63,10 +63,13 @@ function calledMethod(call: ts.CallExpression): string | undefined {
 function optionsHaveName(call: ts.CallExpression): boolean {
   const arg = call.arguments[0];
   if (arg === undefined || !ts.isObjectLiteralExpression(arg)) return false;
+  // The key may be written either bare (`name:`) or quoted (`"name":`) — a quoted
+  // key is a StringLiteral, not an Identifier. Missing the quoted form would let
+  // auto-name append a second `name`, silently renaming the slot / snapshot key.
   return arg.properties.some(
     (p) =>
       (ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)) &&
-      ts.isIdentifier(p.name) &&
+      (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) &&
       p.name.text === "name",
   );
 }
