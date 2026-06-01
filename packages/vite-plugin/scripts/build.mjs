@@ -13,8 +13,10 @@ const uiDest = path.join(pkgRoot, "dist", "ui");
 console.log(`[unworklet/vite-plugin] build:ui  (${uiRoot})`);
 execSync("vp build", { cwd: uiRoot, stdio: "inherit" });
 
+// Two entries: the plugin (`.`) and the dev-bridge browser module (`./devbridge`,
+// imported by the injected DevTools page-script). Both are declared in `exports`.
 console.log(`[unworklet/vite-plugin] pack     (${pkgRoot})`);
-execSync("vp pack", { cwd: pkgRoot, stdio: "inherit" });
+execSync("vp pack src/index.ts src/devbridge.ts", { cwd: pkgRoot, stdio: "inherit" });
 
 console.log(`[unworklet/vite-plugin] copy ui → dist/ui`);
 rmSync(uiDest, { recursive: true, force: true });

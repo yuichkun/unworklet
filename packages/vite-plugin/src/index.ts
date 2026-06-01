@@ -42,6 +42,9 @@ export type DevGraphNode = {
   label: string;
   kind: "unworklet" | "standard";
   audioNodeType: string;
+  /** Declared audio port names (unworklet nodes only). */
+  inputs?: string[];
+  outputs?: string[];
 };
 /** One directed audio connection. */
 export type DevGraphEdge = { id: string; from: string; to: string };
@@ -52,11 +55,11 @@ export type DevAudioGraph = { nodes: DevGraphNode[]; edges: DevGraphEdge[] };
 // ─────────────────────────────────────────────────────────────────────────
 //
 // The page-script polls each live node's `devDump()` (the worklet copies its
-// WASM slots into bytes), decodes the scalar slots, and pushes them here via
-// the `unworklet:state-update` action RPC; the server mirrors them into the
-// `unworklet:state` shared state the Live-state panel reads. Buffer slots are
-// surfaced as metadata only — streaming their bytes continuously would load the
-// audio thread and the wire, so their visualization is a later wire.
+// WASM slots into bytes), decodes every slot, and pushes them here via the
+// `unworklet:state-update` action RPC; the server mirrors them into the
+// `unworklet:state` shared state the Live-state panel reads. Buffers larger than
+// `BUFFER_MAX_POINTS` are stride-downsampled for the wire (full resolution is
+// not needed to visualize them) — `length` always carries the true element count.
 
 /** Element type of a slot's storage. */
 export type DevSlotType = "f32" | "f64" | "i32" | "i64" | "bool" | "u8";
@@ -67,13 +70,23 @@ export type DevStateScalar = {
   type: DevSlotType;
   value: number | boolean | string;
 };
-/** One buffer slot — metadata only for now (data viz is a later wire). */
-export type DevStateBufferMeta = { name: string; type: DevSlotType; length: number };
+/**
+ * One buffer slot's live data. `data` is the decoded elements (numbers; bool/u8
+ * as 0/1/byte), stride-downsampled when the buffer exceeds `BUFFER_MAX_POINTS`.
+ * `length` is the true element count; `downsampled` flags a reduced `data`.
+ */
+export type DevStateBuffer = {
+  name: string;
+  type: DevSlotType;
+  length: number;
+  data: number[];
+  downsampled: boolean;
+};
 export type DevNodeState = {
   id: string;
   displayName: string;
   scalars: DevStateScalar[];
-  buffers: DevStateBufferMeta[];
+  buffers: DevStateBuffer[];
 };
 export type DevLiveState = { nodes: DevNodeState[] };
 
@@ -882,6 +895,7 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
         return `
 import { getDevNodes, onDevNodesChanged } from "@unworklet/core/dev";
 import { decodeScalar, decodeTypedArray } from "@unworklet/core";
+import { foldProxyGraph, splitSlots } from "@unworklet/vite-plugin/devbridge";
 import { getDevToolsClientContext } from "@vitejs/devtools-kit/client";
 
 globalThis.__unworklet_getDevNodes = getDevNodes;
@@ -899,41 +913,33 @@ const idOf = (n) => {
 };
 
 const buildGraph = () => {
-  // Each unworklet node fronts every audio input with an internal proxy GainNode
-  // (createNode wires proxyGain -> AudioWorkletNode). Those proxies are framework
-  // plumbing the app never authored, so fold them into their owning node: an edge
-  // INTO a proxy becomes an edge into the node, the proxy's own outgoing edge is
-  // dropped, and the proxy is omitted from the node list. The graph then shows
-  // exactly the connections the app wrote.
-  const uw = new Map();        // AudioWorkletNode -> human-readable display name
-  const proxyOwner = new Map(); // proxyGainId -> owning unworklet node id
+  // Extract plain graph data (ids + labels + the proxy-owner map) from the live
+  // AudioNodes, then let foldProxyGraph (unit-tested) splice the internal input
+  // proxies out so the graph shows exactly the connections the app wrote.
+  const uw = new Map();        // AudioWorkletNode -> { label, inputs, outputs }
+  const proxyOwner = {};       // proxyGainId -> owning unworklet node id
   for (const h of getDevNodes()) {
     const awn = h.node.node;
-    uw.set(awn, h.displayName || h.processorName);
-    const ownerId = idOf(awn);
     const ins = h.node.inputs || {};
-    for (const k in ins) { const g = ins[k]; if (g) proxyOwner.set(idOf(g), ownerId); }
+    uw.set(awn, {
+      label: h.displayName || h.processorName,
+      inputs: Object.keys(ins),
+      outputs: Object.keys(h.node.outputs || {}),
+    });
+    const ownerId = idOf(awn);
+    for (const k in ins) { const g = ins[k]; if (g) proxyOwner[idOf(g)] = ownerId; }
   }
-  const nodes = [];
+  const rawNodes = [];
   for (const n of seen) {
-    const id = idOf(n);
-    if (proxyOwner.has(id)) continue; // internal input-proxy gain — not an app node
-    const name = uw.get(n);
+    const meta = uw.get(n);
     const type = (n.constructor && n.constructor.name) || "AudioNode";
-    nodes.push({ id, label: name || type, kind: name ? "unworklet" : "standard", audioNodeType: type });
+    if (meta) {
+      rawNodes.push({ id: idOf(n), label: meta.label, kind: "unworklet", audioNodeType: type, inputs: meta.inputs, outputs: meta.outputs });
+    } else {
+      rawNodes.push({ id: idOf(n), label: type, kind: "standard", audioNodeType: type });
+    }
   }
-  const outEdges = [];
-  const emitted = new Set();
-  for (const e of edges.values()) {
-    if (proxyOwner.has(e.from)) continue;             // drop proxy -> AudioWorkletNode plumbing
-    const to = proxyOwner.get(e.to) ?? e.to;          // fold edge-into-proxy onto the owning node
-    if (to === e.from) continue;                       // never a self-loop
-    const id = e.from + ">" + to;
-    if (emitted.has(id)) continue;
-    emitted.add(id);
-    outEdges.push({ id, from: e.from, to });
-  }
-  return { nodes, edges: outEdges };
+  return foldProxyGraph(rawNodes, [...edges.values()], proxyOwner);
 };
 
 let client = null;
@@ -956,17 +962,13 @@ const ensureClient = () => {
   if (polls++ < 40) setTimeout(ensureClient, 100);
 };
 
-// Live state X-ray: poll each node's devDump on a gentle cadence, decode the
-// scalar slots, and push them to the server. Buffers are surfaced as metadata
-// only (name/type/length) — copying their bytes every poll would load the audio
-// thread and the wire, so their visualization is a later wire. i64 values are
-// sent as decimal strings (JSON has no bigint).
-const STATE_ELEMENT_BYTES = { f32: 4, f64: 8, i32: 4, i64: 8, bool: 4, u8: 1 };
+// Live state X-ray: poll each node's devDump on a gentle cadence, decode every
+// slot, and push it to the server. Scalars carry their decoded value (i64 as a
+// decimal string — JSON has no bigint); buffers carry their decoded elements,
+// stride-downsampled to BUFFER_MAX_POINTS when large (the worklet already copied
+// the full bytes — this only keeps the wire light, the audio thread is untouched).
 const STATE_POLL_MS = 200;
-const decodeSlotValue = (s) => {
-  const v = decodeScalar(s.type, s.data);
-  return typeof v === "bigint" ? v.toString() : v;
-};
+const BUFFER_MAX_POINTS = 512;
 let statePolling = false;
 const pollState = async () => {
   if (statePolling || !client) return;
@@ -976,15 +978,8 @@ const pollState = async () => {
     for (const h of getDevNodes()) {
       let slots;
       try { slots = await h.devDump(); } catch (e) { slots = []; }
-      const scalars = [];
-      const buffers = [];
-      for (const s of slots) {
-        if (s.kind === "buffer") {
-          buffers.push({ name: s.name, type: s.type, length: s.data.byteLength / (STATE_ELEMENT_BYTES[s.type] || 1) });
-        } else {
-          scalars.push({ name: s.name, kind: s.kind, type: s.type, value: decodeSlotValue(s) });
-        }
-      }
+      // splitSlots (unit-tested) decodes scalars + downsamples buffers.
+      const { scalars, buffers } = splitSlots(slots, BUFFER_MAX_POINTS);
       nodes.push({ id: idOf(h.node.node), displayName: h.displayName || h.processorName, scalars, buffers });
     }
     if (client) { try { client.rpc.call("unworklet:state-update", { nodes }); } catch (e) { /* dev only */ } }

@@ -13,6 +13,11 @@
       "development": "./src/index.ts",
       "import": "./dist/index.mjs"
     },
+    "./devbridge": {
+      "types": "./src/devbridge.ts",
+      "development": "./src/devbridge.ts",
+      "import": "./dist/devbridge.mjs"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -21,7 +26,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "build:ui": "node scripts/build-ui.mjs",
-    "dev": "vp pack --watch",
+    "dev": "vp pack --watch src/index.ts src/devbridge.ts",
     "test": "vp test",
     "check": "vp check",
     "prepublishOnly": "vp run build"
