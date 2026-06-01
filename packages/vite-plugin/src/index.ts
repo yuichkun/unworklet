@@ -17,12 +17,13 @@
 /// <reference types="@vitejs/devtools-kit" />
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { stat } from "node:fs/promises";
+import { readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { compile, extractWorkletMeta } from "@unworklet/core";
 import type { CompiledProcessor } from "@unworklet/core";
+import { lower } from "@unworklet/lang";
 import type { Plugin } from "vite-plus";
 
 import { emitWorkletTemplate } from "./worklet-template.ts";
@@ -87,6 +88,78 @@ const computeProcessorName = (
 const importFresh = async (sourcePath: string): Promise<Record<string, unknown>> => {
   const s = await stat(sourcePath);
   return (await import(`${sourcePath}?t=${s.mtimeMs}`)) as Record<string, unknown>;
+};
+
+// ─────────────────────────────────────────────────────────────────────────
+// `.uwk.ts` sugar lowering
+// ─────────────────────────────────────────────────────────────────────────
+//
+// A `.uwk.ts` is sugar (RFC-001) that `@unworklet/lang`'s `lower()` desugars to a
+// plain core `.ts` exporting a single named `defineProcessor(...)`. The plugin
+// lowers it at every site that evaluates processor source: the `transform` hook
+// covers the Vite/rolldown pipeline (dev `ssrLoadModule`, the dev WASM middleware,
+// the consumer-bundle re-import), while the build path's raw Node `import()` is
+// handled explicitly by `loadProcessorModuleFresh` — Node does not run Vite
+// transforms. Both derive the export name from the filename identically, so the
+// two evaluations of the same source agree on the export key + registration name.
+
+const isUwkSource = (filePath: string): boolean => filePath.endsWith(".uwk.ts");
+
+/**
+ * Derive a valid camelCase JS identifier from a `.uwk.ts` filename — the single
+ * named export the lowered module exposes (and the `registerProcessor` prefix).
+ * The `.uwk.ts` suffix is stripped and kebab/snake segments are camel-cased, so
+ * `noise-drive.uwk.ts` → `noiseDrive`; a name with no identifier characters
+ * (`123.uwk.ts`) falls back to `processor`.
+ */
+const deriveExportName = (sourcePath: string): string => {
+  const base = path.basename(sourcePath).replace(/\.uwk\.ts$/, "");
+  const camel = base
+    .split(/[^A-Za-z0-9]+/)
+    .filter((seg) => seg.length > 0)
+    .map((seg, i) => (i === 0 ? seg : seg[0]!.toUpperCase() + seg.slice(1)))
+    .join("")
+    .replace(/^[^A-Za-z_$]+/, "");
+  return camel.length > 0 ? camel : "processor";
+};
+
+/**
+ * Memoize `lower()` by (path, content): the plugin re-evaluates the same source
+ * several times per `createNode` (virtual load + worklet entry + middleware) and
+ * each `lower()` builds a fresh in-memory ts.Program, so caching the desugared
+ * text keeps that cost off the hot path. Keyed by path, invalidated on content
+ * change.
+ */
+const loweredCache = new Map<string, { source: string; lowered: string }>();
+const lowerUwkSource = (sourcePath: string, source: string): string => {
+  const cached = loweredCache.get(sourcePath);
+  if (cached !== undefined && cached.source === source) return cached.lowered;
+  const lowered = lower(source, { exportName: deriveExportName(sourcePath) });
+  loweredCache.set(sourcePath, { source, lowered });
+  return lowered;
+};
+
+/**
+ * Build-path module load. A plain `.ts` is imported fresh via Node; a `.uwk.ts`
+ * is lowered first — written to a temp sibling so Node's native type-stripping
+ * runs AND `@unworklet/core` resolves from the source directory — then imported
+ * and removed. (Node `import()` does not run the Vite transform pipeline, so the
+ * build path cannot rely on the `transform` hook.)
+ */
+const loadProcessorModuleFresh = async (sourcePath: string): Promise<Record<string, unknown>> => {
+  if (!isUwkSource(sourcePath)) return importFresh(sourcePath);
+  const source = await readFile(sourcePath, "utf8");
+  const lowered = lowerUwkSource(sourcePath, source);
+  const dir = path.dirname(sourcePath);
+  const tag = createHash("sha256").update(lowered).digest("hex").slice(0, 8);
+  // A `.uwklowered.ts` suffix (not `.uwk.ts`) so the temp file is never re-lowered.
+  const tempPath = path.join(dir, `.${path.basename(sourcePath)}.${tag}.uwklowered.ts`);
+  await writeFile(tempPath, lowered);
+  try {
+    return (await import(`${tempPath}?t=${Date.now()}`)) as Record<string, unknown>;
+  } finally {
+    await rm(tempPath, { force: true });
+  }
 };
 
 /**
@@ -360,11 +433,13 @@ const pickCompiledProcessor = (
 };
 
 const assetBaseName = (sourcePath: string): string => {
-  const base = path.basename(sourcePath, path.extname(sourcePath));
-  // Strip an optional `.processor` suffix (= canonical fixture convention
-  // is `foo.processor.ts`) so emitted assets land at `dist/<processor>.<artifact>`,
+  let base = path.basename(sourcePath, path.extname(sourcePath));
+  // Strip an optional `.processor` (= `foo.processor.ts`) or `.uwk`
+  // (= `foo.uwk.ts`) suffix so emitted assets land at `dist/<processor>.<artifact>`,
   // zipping with the analysis-JSON convention in `07-vite-plugin.md` §6.3.
-  return base.endsWith(".processor") ? base.slice(0, -".processor".length) : base;
+  if (base.endsWith(".processor")) base = base.slice(0, -".processor".length);
+  if (base.endsWith(".uwk")) base = base.slice(0, -".uwk".length);
+  return base;
 };
 
 /**
@@ -655,6 +730,25 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
         });
       });
     },
+    transform(code, id) {
+      // Lower a `.uwk.ts` sugar source to plain core `.ts` before any downstream
+      // loader / bundler evaluates it. `enforce: "pre"` runs this ahead of Vite's
+      // own TS→JS transform, and it covers every Vite-pipeline evaluation of the
+      // source at once: dev `ssrLoadModule`, the dev WASM middleware, and the
+      // consumer-bundle re-import emitted by `load`. (The build path's raw Node
+      // `import()` does not run transforms — `loadProcessorModuleFresh` lowers
+      // there.) The `?worklet` / `?t=` / `?v=` query suffix is stripped first.
+      const queryIdx = id.indexOf("?");
+      const filePath = queryIdx < 0 ? id : id.slice(0, queryIdx);
+      if (!isUwkSource(filePath)) return undefined;
+      try {
+        return { code: lowerUwkSource(filePath, code), map: null };
+      } catch (err) {
+        // Surface a LowerError (or any lowering failure) as a Vite diagnostic
+        // anchored at the source rather than crashing the dev server / build.
+        this.error(err instanceof Error ? err.message : String(err));
+      }
+    },
     resolveId(source, importer) {
       if (source === DEVBRIDGE_ID) return source;
       if (source.startsWith(WORKLET_ENTRY_PREFIX)) return source;
@@ -721,7 +815,7 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
         // ring not involved。 Recompile + recompute the processorName from
         // the WASM bytes so dev and build produce the same registration name
         // for a given source / revision pair。
-        const sourceModule = await importFresh(sourcePath);
+        const sourceModule = await loadProcessorModuleFresh(sourcePath);
         const { exportName, processor } = pickCompiledProcessor(sourceModule, sourcePath);
         const buildResult = await compile(processor);
         const meta = extractWorkletMeta(
@@ -742,7 +836,7 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
       const sourceModule =
         isServe && viteDevServer
           ? await ssrLoadSource(viteDevServer, sourcePath)
-          : await importFresh(sourcePath);
+          : await loadProcessorModuleFresh(sourcePath);
       // Dev mode: fan watch dependencies out across every transitive file
       // reachable from the processor source = a helper edit invalidates this
       // virtual module just like editing the entry would (= 07-vite-plugin.md
