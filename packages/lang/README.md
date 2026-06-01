@@ -13,14 +13,15 @@ operators and bare reads/writes; `lower()` desugars it to a plain
 
 Same declarations as core, but the `process` body uses operators. There is no
 `defineProcessor` wrapper and no `return { process }` — the file _is_ the
-processor body, and `process(() => { ... })` is ambient. A `// @ts-nocheck`
-header is expected: the sugar is intentionally a type error until the plugin
-lowers it. `.named()` / `.expose({...})` with no name derive it from the binding.
+processor body, and `process(() => { ... })` is ambient. The core DSL names
+(`audioInput`, `state`, `param`, `forSample`, …) are ambient too: **write no
+import** — the lowering injects the `@unworklet/core` import for you. A
+`// @ts-nocheck` header is expected: the sugar is intentionally a type error
+until the plugin lowers it. `.named()` / `.expose({...})` with no name derive it
+from the binding.
 
 ```ts
 // @ts-nocheck — sugar is a TS error until lowered; the plugin lowers it at build.
-import { audioInput, audioOutput, forSample, param, state } from "@unworklet/core";
-
 const input = audioInput({ channels: 2, name: "main" });
 const out = audioOutput({ channels: 2, name: "main" });
 const gain = param.f32({ default: 1, min: 0, max: 4, automationRate: "a-rate" }).named();

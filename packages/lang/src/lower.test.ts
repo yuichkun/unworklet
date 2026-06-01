@@ -113,6 +113,17 @@ test("rejects a process() without an arrow / function callback", () => {
   }
 });
 
+test("rejects an import statement (.uwk.ts is ambient)", () => {
+  // An import would otherwise be moved into the generated defineProcessor
+  // callback as an illegal nested import (reported by @codex on #12).
+  try {
+    lower(`import { state } from "@unworklet/core";\nprocess(() => {});`);
+    throw new Error("expected throw");
+  } catch (e) {
+    expect((e as LowerError).id).toBe("uwk-no-import");
+  }
+});
+
 test("rejects a process() with no callback argument", () => {
   try {
     lower(`process();`);

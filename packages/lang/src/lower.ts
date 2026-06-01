@@ -303,6 +303,18 @@ export function lower(source: string, options: LowerOptions = {}): string {
       optionsObject = macro.call.arguments[0];
       continue;
     }
+    if (ts.isImportDeclaration(stmt)) {
+      // A .uwk.ts file is ambient: the @unworklet/core DSL is provided
+      // automatically and the lowering injects exactly the import it needs.
+      // A user import would otherwise be moved into the generated
+      // defineProcessor callback (an illegal nested import), so reject it
+      // with guidance rather than emit broken output.
+      throw new LowerError(
+        "uwk-no-import",
+        ".uwk.ts is ambient — remove the import statement. The @unworklet/core DSL " +
+          "(audioInput, state, param, forSample, …) is available without importing it.",
+      );
+    }
     declarations.push(autoNameDeclaration(stmt));
   }
 
