@@ -1697,6 +1697,7 @@ export async function createNode<C>(
       processorName,
       displayName: displayName ?? processorName,
       schemaHash: processor.schemaHash,
+      midiPorts: midiRings.map((r) => ({ name: r.name, direction: r.direction })),
       devDump,
     };
     registerDevNode(devHandle);

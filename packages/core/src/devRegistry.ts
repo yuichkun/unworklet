@@ -20,6 +20,8 @@ export type DevNodeHandle = {
   /** Human-readable processor name (the source export name) for tools. */
   readonly displayName: string;
   readonly schemaHash: string;
+  /** Declared MIDI ports (name + direction) for the DevTools MIDI panel. */
+  readonly midiPorts: ReadonlyArray<{ name: string; direction: "in" | "out" }>;
   /** Request the worklet's unfiltered all-slot dump (the live X-ray). */
   devDump(): Promise<SnapshotSlot[]>;
 };

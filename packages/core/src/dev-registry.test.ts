@@ -19,6 +19,7 @@ const fakeHandle = (name: string): DevNodeHandle => ({
   processorName: name,
   displayName: name,
   schemaHash: `hash-${name}`,
+  midiPorts: [],
   devDump: async () => [],
 });
 
