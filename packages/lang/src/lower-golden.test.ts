@@ -154,3 +154,107 @@ process(() => {
 
   await expectByteIdentical(uwk, tierA);
 });
+
+test("operator sugar: infix * + > and ternary ≡ hand-written Tier A chain calls", async () => {
+  const uwk = `
+const input = audioInput({ channels: 1, name: "main" });
+const out = audioOutput({ channels: 1, name: "main" });
+const thresh = state.f32(0.5).named("thresh");
+process(() => {
+  forSample((i) => {
+    const x = input.ch(0).at(i);
+    const y = x * 2 + 0.1;
+    const gated = x.abs() > thresh.read() ? y : 0;
+    out.ch(0).at(i).write(gated);
+  });
+});
+`;
+  const tierA = defineProcessor(() => {
+    const input = core.audioInput({ channels: 1, name: "main" });
+    const out = core.audioOutput({ channels: 1, name: "main" });
+    const thresh = core.state.f32(0.5).named("thresh");
+    return {
+      process: () => {
+        core.forSample((i) => {
+          const x = input.ch(0).at(i);
+          const y = core.add(core.mul(x, 2), 0.1);
+          const gated = core.select(core.gt(x.abs(), thresh.read()), y, 0);
+          out.ch(0).at(i).write(gated);
+        });
+      },
+    };
+  });
+
+  await expectByteIdentical(uwk, tierA);
+});
+
+test("bare-state sugar: reads in value positions, stays a handle at write / operator sites", async () => {
+  const uwk = `
+const input = audioInput({ channels: 1, name: "main" });
+const out = audioOutput({ channels: 1, name: "main" });
+const drive = state.f32(3.5).named("drive");
+const dcPrev = state.f32(0).named("dcPrev");
+process(() => {
+  forSample((i) => {
+    const x = input.ch(0).at(i);
+    const shaped = max(abs(dcPrev), drive) * x;
+    out.ch(0).at(i).write(shaped);
+    dcPrev.write(shaped);
+  });
+});
+`;
+  const tierA = defineProcessor(() => {
+    const input = core.audioInput({ channels: 1, name: "main" });
+    const out = core.audioOutput({ channels: 1, name: "main" });
+    const drive = core.state.f32(3.5).named("drive");
+    const dcPrev = core.state.f32(0).named("dcPrev");
+    return {
+      process: () => {
+        core.forSample((i) => {
+          const x = input.ch(0).at(i);
+          // bare `dcPrev` / `drive` read in arg positions; write target stays a handle.
+          const shaped = core.mul(core.max(core.abs(dcPrev.read()), drive.read()), x);
+          out.ch(0).at(i).write(shaped);
+          dcPrev.write(shaped);
+        });
+      },
+    };
+  });
+
+  await expectByteIdentical(uwk, tierA);
+});
+
+test("index sugar: channel / buffer [i] read+write ≡ hand-written chain (with operators)", async () => {
+  const uwk = `
+const input = audioInput({ channels: 1, name: "main" });
+const out = audioOutput({ channels: 1, name: "main" });
+const buf = state.buffer.f32({ size: 16 }).named("buf");
+const wi = state.i32(0).named("wi");
+process(() => {
+  forSample((i) => {
+    const w = wi.read();
+    buf[w] = input.ch(0)[i];
+    out.ch(0)[i] = buf[w];
+    wi.write((w + 1) % 16);
+  });
+});
+`;
+  const tierA = defineProcessor(() => {
+    const input = core.audioInput({ channels: 1, name: "main" });
+    const out = core.audioOutput({ channels: 1, name: "main" });
+    const buf = core.state.buffer.f32({ size: 16 }).named("buf");
+    const wi = core.state.i32(0).named("wi");
+    return {
+      process: () => {
+        core.forSample((i) => {
+          const w = wi.read();
+          buf.write(w, input.ch(0).at(i));
+          out.ch(0).at(i).write(buf.read(w));
+          wi.write(core.mod(core.add(w, 1), 16));
+        });
+      },
+    };
+  });
+
+  await expectByteIdentical(uwk, tierA);
+});

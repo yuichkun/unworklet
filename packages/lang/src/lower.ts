@@ -13,6 +13,9 @@
 
 import ts from "typescript";
 
+import { sugarTransformer } from "./passes/sugar.ts";
+import { buildProgram } from "./program.ts";
+
 /** Authoring identifiers re-exported by `@unworklet/core` (the lowering import set). */
 const CORE_AUTHORING_EXPORTS = new Set<string>([
   "defineProcessor",
@@ -25,6 +28,7 @@ const CORE_AUTHORING_EXPORTS = new Set<string>([
   "event",
   "forSample",
   "select",
+  "pipe",
   "f32",
   "f64",
   "i32",
@@ -37,6 +41,7 @@ const CORE_AUTHORING_EXPORTS = new Set<string>([
   "div",
   "mod",
   "neg",
+  "not",
   "eq",
   "lt",
   "gt",
@@ -246,13 +251,11 @@ function referencesCall(nodes: readonly ts.Node[], calleeName: string): boolean 
 /** Lower a `.uwk.ts` source string to a virtual `.ts` module string. */
 export function lower(source: string, options: LowerOptions = {}): string {
   const coreModule = options.coreModule ?? "@unworklet/core";
-  const sf = ts.createSourceFile(
-    "input.uwk.ts",
-    source,
-    ts.ScriptTarget.ESNext,
-    true,
-    ts.ScriptKind.TS,
-  );
+  // Build the type-directed program, then run the sugar passes (their type
+  // queries hit the pristine source). The remaining split / wrap / ambient logic
+  // operates on the desugared statements.
+  const { checker, sourceFile } = buildProgram(source);
+  const sf = ts.transform(sourceFile, [sugarTransformer(checker)]).transformed[0] as ts.SourceFile;
 
   let processBody: ts.Statement[] | undefined;
   let processCount = 0;
