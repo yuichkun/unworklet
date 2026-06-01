@@ -17,6 +17,7 @@
     "@unworklet/test": "workspace:*",
     "@vitejs/devtools": "^0.2.0",
     "@vitejs/devtools-kit": "catalog:",
+    "playwright": "catalog:",
     "typescript": "catalog:",
     "vite-plus": "catalog:"
   }

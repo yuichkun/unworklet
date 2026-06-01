@@ -11,4 +11,10 @@ const inTest = process.env.VITEST !== undefined;
 
 export default defineConfig({
   plugins: [...(inTest ? [] : [DevTools({ builtinDevTools: false })]), unworklet()],
+  test: {
+    // Default `vp test` runs the node-side offline tests only. The browser-mode
+    // e2e (`*.browser.test.ts`) needs a real AudioWorklet, so it runs separately
+    // via `vp test --config vite.browser.config.ts`.
+    exclude: ["**/*.browser.test.ts", "**/node_modules/**", "**/dist/**"],
+  },
 });

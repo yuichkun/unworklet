@@ -34,5 +34,9 @@ coverage
 test-results/
 playwright-report/
 
+# Vitest browser-mode run artifacts (failure screenshots / attachments)
+**/.vitest-attachments/
+**/__screenshots__/
+
 # Vite+ git hooks (= clone 後 `vp config` で local 生成)
 .vite-hooks/
