@@ -1440,19 +1440,14 @@ test("dev mode reuses the same snapshot ring across two loads of the same source
 // devtools setup = full UI panel registration
 // ─────────────────────────────────────────────────────────────────────────
 //
-// `setupDevtools` is the plugin's `devtools.setup` callback。 It registers
-// 5 diagnostic codes, logs one of each, posts a top-level message, and
-// installs a single dock entry routed at a static SPA root。 We mock the
-// devtools-kit context surface with a minimum-shape stub and assert the
-// observable side effects。
+// `setupDevtools` is the plugin's `devtools.setup` callback。 It installs a
+// single dock entry routed at a static SPA root and wires the graph / live-
+// state shared states + their update RPCs。 It emits no diagnostics or messages
+// of its own (real build diagnostics travel through the compile pipeline's
+// `.diagnostics.json` artifacts). We mock the devtools-kit context surface with
+// a minimum-shape stub and assert the observable side effects。
 
-type DiagnosticsLoggerStub = {
-  UWK0001: (params: { src: string; sym: string }) => void;
-  UWK0002: (params: Record<string, never>) => void;
-  UWK0004: (params: Record<string, never>) => void;
-  UWK0011: (params: { src: string }) => void;
-  UWK0015: (params: { src: string; slot: string }) => void;
-};
+type DiagnosticsLoggerStub = Record<string, (params: unknown) => void>;
 
 type DevToolsCtxStub = {
   diagnostics: {
@@ -1501,13 +1496,14 @@ const makeDevToolsCtxStub = (): DevToolsCtxStub => {
   const hostStaticCalls: Array<{ urlBase: string; root: string }> = [];
   const rpcRegisterCalls: unknown[] = [];
   const sharedStateGets: string[] = [];
-  const logger: DiagnosticsLoggerStub = {
-    UWK0001: (params) => loggerCalls.push({ code: "UWK0001", params }),
-    UWK0002: (params) => loggerCalls.push({ code: "UWK0002", params }),
-    UWK0004: (params) => loggerCalls.push({ code: "UWK0004", params }),
-    UWK0011: (params) => loggerCalls.push({ code: "UWK0011", params }),
-    UWK0015: (params) => loggerCalls.push({ code: "UWK0015", params }),
-  };
+  // Record a call under whatever diagnostic code is accessed — setupDevtools
+  // no longer logs any, so this exists only to assert zero calls.
+  const logger = new Proxy({} as DiagnosticsLoggerStub, {
+    get:
+      (_t, code: string) =>
+      (params: unknown): number =>
+        loggerCalls.push({ code, params }),
+  });
   return {
     diagnostics: {
       defineDiagnostics: (def) => {
@@ -1563,94 +1559,21 @@ const makeDevToolsCtxStub = (): DevToolsCtxStub => {
   };
 };
 
-test("devtools.setup defines the 5 diagnostic codes (UWK0001/UWK0002/UWK0004/UWK0011/UWK0015)", () => {
+test("devtools.setup emits no diagnostics or messages of its own (no fabricated build issues)", async () => {
+  // The panel must never surface invented problems. setupDevtools only hosts
+  // the UI + wires the live shared states; real build diagnostics reach the
+  // user through the compile pipeline's `.diagnostics.json` artifacts, not
+  // through hardcoded host-message scaffolding.
   const plugin = unworklet();
-  // PluginWithDevTools augments Plugin with an optional `devtools` slot
-  // that the kit reads。 We dig through that union since `Plugin` from
-  // vite-plus does not surface it natively in test types。
-  const setup = (plugin as unknown as { devtools?: { setup: (ctx: unknown) => void } }).devtools
-    ?.setup;
+  const setup = (plugin as unknown as { devtools?: { setup: (ctx: unknown) => Promise<void> } })
+    .devtools?.setup;
   expect(typeof setup).toBe("function");
   const ctx = makeDevToolsCtxStub();
-  setup!(ctx);
-  expect(ctx.diagnostics.__defineCalls).toHaveLength(1);
-  const def = ctx.diagnostics.__defineCalls[0] as { codes: Record<string, unknown> };
-  expect(Object.keys(def.codes).sort()).toEqual([
-    "UWK0001",
-    "UWK0002",
-    "UWK0004",
-    "UWK0011",
-    "UWK0015",
-  ]);
-});
-
-test("devtools.setup registers the diagnostics definition with the kit", () => {
-  const plugin = unworklet();
-  const setup = (plugin as unknown as { devtools?: { setup: (ctx: unknown) => void } }).devtools
-    ?.setup;
-  const ctx = makeDevToolsCtxStub();
-  setup!(ctx);
-  expect(ctx.diagnostics.__registerCalls).toHaveLength(1);
-});
-
-test("devtools.setup emits one log entry per diagnostic code (=  5 entries, code coverage)", () => {
-  const plugin = unworklet();
-  const setup = (plugin as unknown as { devtools?: { setup: (ctx: unknown) => void } }).devtools
-    ?.setup;
-  const ctx = makeDevToolsCtxStub();
-  setup!(ctx);
-  const codes = ctx.diagnostics.__loggerCalls.map((c) => c.code).sort();
-  expect(codes).toEqual(["UWK0001", "UWK0002", "UWK0004", "UWK0011", "UWK0015"]);
-});
-
-test("devtools.setup exercises each diagnostic message's `why` function with concrete params", () => {
-  // The `why` slots are functions or literals; invoking them at setup
-  // time also covers the lambda bodies (= L364-385 of index.ts)。
-  const plugin = unworklet();
-  const setup = (plugin as unknown as { devtools?: { setup: (ctx: unknown) => void } }).devtools
-    ?.setup;
-  const ctx = makeDevToolsCtxStub();
-  setup!(ctx);
-  const def = ctx.diagnostics.__defineCalls[0] as {
-    codes: Record<
-      string,
-      { why: string | ((params: Record<string, unknown>) => string); fix: string }
-    >;
-  };
-  // Exercise each `why` (= lambda or string) so the body is actually
-  // executed under coverage。
-  const uwk1 = def.codes["UWK0001"]!.why;
-  const w1 = typeof uwk1 === "function" ? uwk1({ src: "X", sym: "Y" }) : uwk1;
-  expect(w1).toMatch(/scope-violation/);
-  const uwk2 = def.codes["UWK0002"]!.why;
-  const w2 = typeof uwk2 === "function" ? uwk2({}) : uwk2;
-  expect(w2).toMatch(/illegal-stride/);
-  const uwk4 = def.codes["UWK0004"]!.why;
-  const w4 = typeof uwk4 === "function" ? uwk4({}) : uwk4;
-  expect(w4).toMatch(/memory-budget/);
-  const uwk11 = def.codes["UWK0011"]!.why;
-  const w11 = typeof uwk11 === "function" ? uwk11({ src: "Z" }) : uwk11;
-  expect(w11).toMatch(/constant-truthy-emitif/);
-  const uwk15 = def.codes["UWK0015"]!.why;
-  const w15 = typeof uwk15 === "function" ? uwk15({ src: "P", slot: "Q" }) : uwk15;
-  expect(w15).toMatch(/unused-named-slot/);
-});
-
-test("devtools.setup posts the build-issues summary message", () => {
-  const plugin = unworklet();
-  const setup = (plugin as unknown as { devtools?: { setup: (ctx: unknown) => void } }).devtools
-    ?.setup;
-  const ctx = makeDevToolsCtxStub();
-  setup!(ctx);
-  expect(ctx.messages.__addCalls).toHaveLength(1);
-  const msg = ctx.messages.__addCalls[0] as {
-    level: string;
-    message: string;
-    notify?: boolean;
-  };
-  expect(msg.level).toBe("error");
-  expect(msg.message).toMatch(/unworklet/);
-  expect(msg.notify).toBe(true);
+  await setup!(ctx);
+  expect(ctx.diagnostics.__defineCalls).toHaveLength(0);
+  expect(ctx.diagnostics.__registerCalls).toHaveLength(0);
+  expect(ctx.diagnostics.__loggerCalls).toHaveLength(0);
+  expect(ctx.messages.__addCalls).toHaveLength(0);
 });
 
 test("resolveDevtoolsUiRoot falls back to the first candidate path when nothing exists on disk", async () => {

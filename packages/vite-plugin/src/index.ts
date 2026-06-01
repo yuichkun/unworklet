@@ -529,66 +529,13 @@ const bigintReplacer = (_key: string, value: unknown): unknown =>
 // `devtools-ui/` の Vue SPA を `ctx.views.hostStatic` 経 由 で 1 iframe panel
 // と し て 提 供。 panel 内 で sidebar + 4 view (= Audio graph / Live state /
 // Signals / MIDI) を Vue Router で 切 替 = 他 plugin (= Vue/Nuxt DevTools 等)
-// を 押 し や ら ない 配 慮。 dummy diagnostics + messages は visual quality
-// 確 認 用 の prototype 配 線、 Phase 6 末 尾 で AudioNode.prototype hook +
-// AnalyserNode auto-attach + streaming/sharedState/RPC inject に shift。
+// を 押 し や ら ない 配 慮。 全 panel は page-script が 実 ノ ー ド か ら 集 め た
+// データ を sharedState 経 由 で 受 け 取 る (= graph / state / signals / midi)。
 
 const setupDevtools = async (
   ctx: import("@vitejs/devtools-kit").ViteDevToolsNodeContext,
   uiRoot: string,
 ): Promise<void> => {
-  const diag = ctx.diagnostics.defineDiagnostics({
-    docsBase: "",
-    codes: {
-      UWK0001: {
-        why: (params: { src: string; sym: string }) =>
-          `scope-violation: declaration call '${params.sym}' inside expression scope in ${params.src}`,
-        fix: "Move the declaration to the top of `defineProcessor((...) => { ... })` body, before the returned `process` lambda.",
-      },
-      UWK0002: {
-        why: "illegal-stride: `forSample.byN` stride must be a compile-time-constant positive integer dividing SAMPLES_PER_BLOCK (= 128).",
-        fix: "Pick from 1 / 2 / 4 / 8 / 16 / 32 / 64 / 128.",
-      },
-      UWK0004: {
-        why: "memory-budget: the declaration sum exceeds the 64 MB warning threshold.",
-        fix: "Reduce buffer sizes or move large content to a `message<T>` upload pattern.",
-      },
-      UWK0011: {
-        why: (params: { src: string }) =>
-          `constant-truthy-emitif: \`emitIf(true, ...)\` inside a \`forSample\` callback at ${params.src} — would emit at audio rate and saturate the ringbuffer.`,
-        fix: "Gate the emit on a state-edge expression, or use `everyNSamples(N, ...)`, or move it into a MIDI handler context.",
-      },
-      UWK0015: {
-        why: (params: { src: string; slot: string }) =>
-          `unused-named-slot: \`state.i32(0).named('${params.slot}')\` declared at ${params.src} but never referenced.`,
-        fix: "Remove the declaration, or drop the `.named(...)` chain to keep the slot worklet-private.",
-      },
-    },
-  });
-  ctx.diagnostics.register(diag);
-
-  ctx.diagnostics.logger.UWK0001({
-    src: "src/processors/polysynth.processor.ts:84:14",
-    sym: "buffer.f32",
-  });
-  ctx.diagnostics.logger.UWK0002({});
-  ctx.diagnostics.logger.UWK0011({
-    src: "src/processors/polysynth.processor.ts:51:18",
-  });
-  ctx.diagnostics.logger.UWK0004({});
-  ctx.diagnostics.logger.UWK0015({
-    src: "src/processors/arpeggiator.processor.ts:128:6",
-    slot: "legacyTickCounter",
-  });
-
-  void ctx.messages.add({
-    level: "error",
-    message: "unworklet: 5 build issues across 3 processors",
-    description:
-      "polysynth: 3 (scope-violation, constant-truthy-emitif, memory contribution); reverb: 1 (illegal-stride); arpeggiator: 1 (unused-named-slot warning).",
-    notify: true,
-  });
-
   // Register the dock + host the panel SPA synchronously, before any await:
   // the dock must appear independently of the async graph-state wiring below
   // (and keeps setup robust if the devtools-kit import / shared-state handshake
