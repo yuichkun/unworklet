@@ -1,42 +1,88 @@
 <script setup lang="ts">
 import { type ComponentPublicInstance, computed, onMounted, onUnmounted, ref } from "vue";
 
-import { type LiveScalar, useLiveState } from "../composables/useLiveState";
+import {
+  type LiveBuffer,
+  type LiveScalar,
+  type LiveSlotType,
+  useLiveState,
+} from "../composables/useLiveState";
 
 const live = useLiveState();
 
-// Scalar representation: bool → on/off, i64 → text (decimal string, not charted),
-// every other numeric type → value + history sparkline.
+// ── scalars ────────────────────────────────────────────────────────────────
+// bool → on/off, i64 → text (decimal string, not charted), other numeric types
+// → value + history sparkline.
 const isBool = (s: LiveScalar): boolean => s.type === "bool";
 const isCharted = (s: LiveScalar): boolean => s.type !== "bool" && s.type !== "i64";
 
-const formatValue = (value: number | boolean | string, type: LiveScalar["type"]): string => {
+const formatValue = (value: number | boolean | string, type: LiveSlotType): string => {
   if (typeof value === "boolean") return value ? "true" : "false";
   if (typeof value === "string") return value; // i64 decimal string
   if (type === "f32" || type === "f64") return value.toFixed(3);
   return String(value);
 };
 
-// ── sparkline drawing ────────────────────────────────────────────────────
+// ── buffers ──────────────────────────────────────────────────────────────--
+type BufferRepr = "waveform" | "bar" | "grid" | "hex" | "list";
+const BUFFER_OPTIONS: Record<LiveSlotType, BufferRepr[]> = {
+  f32: ["waveform", "bar", "list"],
+  f64: ["waveform", "bar", "list"],
+  i32: ["bar", "waveform", "list"],
+  i64: ["bar", "waveform", "list"],
+  bool: ["grid", "list"],
+  u8: ["hex", "bar", "list"],
+};
+const REPR_LABELS: Record<BufferRepr, string> = {
+  waveform: "Waveform",
+  bar: "Bar chart",
+  grid: "Grid",
+  hex: "Hex dump",
+  list: "List",
+};
+const reprByKey = ref<Record<string, BufferRepr>>({});
+const bufKey = (nodeId: string, name: string): string => `${nodeId}.${name}`;
+const optionsFor = (b: LiveBuffer): BufferRepr[] => BUFFER_OPTIONS[b.type];
+const reprFor = (nodeId: string, b: LiveBuffer): BufferRepr =>
+  reprByKey.value[bufKey(nodeId, b.name)] ?? optionsFor(b)[0]!;
+const setRepr = (nodeId: string, b: LiveBuffer, repr: BufferRepr): void => {
+  reprByKey.value[bufKey(nodeId, b.name)] = repr;
+};
 
-const drawSparkline = (
+const formatHex = (data: number[]): string =>
+  data.map((b) => (b & 0xff).toString(16).padStart(2, "0").toUpperCase()).join(" ");
+
+const formatList = (data: number[]): string => {
+  const fmt = data.map((v) => (Number.isInteger(v) ? String(v) : v.toFixed(3)));
+  if (fmt.length <= 16) return `[${fmt.join(", ")}]`;
+  return `[${fmt.slice(0, 16).join(", ")}, … ${fmt.length - 16} more]`;
+};
+
+// ── canvas drawing ─────────────────────────────────────────────────────────
+
+const sizeCanvas = (
   canvas: HTMLCanvasElement,
-  history: readonly number[],
-  color: string,
-): void => {
+  fallbackH: number,
+): CanvasRenderingContext2D | null => {
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth || 120;
-  const h = canvas.clientHeight || 24;
+  const h = canvas.clientHeight || fallbackH;
   if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
     canvas.width = w * dpr;
     canvas.height = h * dpr;
   }
   const ctx = canvas.getContext("2d");
-  if (!ctx) return;
+  if (!ctx) return null;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
+  return ctx;
+};
 
-  if (history.length < 2) return;
+const drawSparkline = (canvas: HTMLCanvasElement, history: readonly number[]): void => {
+  const ctx = sizeCanvas(canvas, 24);
+  if (!ctx || history.length < 2) return;
+  const w = canvas.clientWidth || 120;
+  const h = canvas.clientHeight || 24;
   let min = history[0]!;
   let max = history[0]!;
   for (const v of history) {
@@ -44,35 +90,101 @@ const drawSparkline = (
     if (v > max) max = v;
   }
   const range = max - min || 1;
-
-  ctx.strokeStyle = color;
+  ctx.strokeStyle = "#fffaf0";
   ctx.lineWidth = 1.4;
   ctx.beginPath();
   for (let i = 0; i < history.length; i++) {
     const x = (i / (history.length - 1)) * w;
-    const norm = (history[i]! - min) / range;
-    const y = h - 2 - norm * (h - 4);
+    const y = h - 2 - ((history[i]! - min) / range) * (h - 4);
     if (i === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
   }
   ctx.stroke();
 };
 
-const sparklineRefs = ref<Record<string, HTMLCanvasElement | null>>({});
+const drawWaveform = (canvas: HTMLCanvasElement, data: number[]): void => {
+  const ctx = sizeCanvas(canvas, 80);
+  if (!ctx) return;
+  const w = canvas.clientWidth || 120;
+  const h = canvas.clientHeight || 80;
+  ctx.strokeStyle = "rgba(255, 250, 240, 0.18)";
+  ctx.beginPath();
+  ctx.moveTo(0, h / 2);
+  ctx.lineTo(w, h / 2);
+  ctx.stroke();
+  if (data.length === 0) return;
+  let span = 1;
+  for (const v of data) span = Math.max(span, Math.abs(v));
+  ctx.strokeStyle = "#fffaf0";
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  for (let i = 0; i < data.length; i++) {
+    const x = (i / Math.max(1, data.length - 1)) * w;
+    const y = h / 2 - (data[i]! / span) * (h / 2 - 2);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+};
+
+const drawBars = (canvas: HTMLCanvasElement, data: number[]): void => {
+  const ctx = sizeCanvas(canvas, 60);
+  if (!ctx || data.length === 0) return;
+  const w = canvas.clientWidth || 120;
+  const h = canvas.clientHeight || 60;
+  let min = data[0]!;
+  let max = data[0]!;
+  for (const v of data) {
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  const baseline = min < 0 ? 0 : min;
+  const span = Math.max(Math.abs(max - baseline), Math.abs(min - baseline), 1);
+  const cellW = w / data.length;
+  const barW = Math.max(1, cellW - 2);
+  for (let i = 0; i < data.length; i++) {
+    const v = data[i]!;
+    const barH = ((v - baseline) / span) * (h - 4);
+    ctx.fillStyle = v >= baseline ? "#fffaf0" : "#ffb4ab";
+    ctx.fillRect(i * cellW + 1, h - 2 - barH, barW, Math.max(1, barH));
+  }
+};
+
+// ── canvas refs + redraw loop ────────────────────────────────────────────---
+
 type TemplateRefEl = Element | ComponentPublicInstance | null;
 const asCanvas = (el: TemplateRefEl): HTMLCanvasElement | null =>
   el instanceof HTMLCanvasElement ? el : null;
+const sparklineRefs = ref<Record<string, HTMLCanvasElement | null>>({});
+const waveformRefs = ref<Record<string, HTMLCanvasElement | null>>({});
+const barRefs = ref<Record<string, HTMLCanvasElement | null>>({});
 const setSparklineRef = (key: string) => (el: TemplateRefEl) => {
   sparklineRefs.value[key] = asCanvas(el);
 };
-const slotKey = (nodeId: string, name: string): string => `${nodeId}.${name}`;
+const setWaveformRef = (key: string) => (el: TemplateRefEl) => {
+  waveformRefs.value[key] = asCanvas(el);
+};
+const setBarRef = (key: string) => (el: TemplateRefEl) => {
+  barRefs.value[key] = asCanvas(el);
+};
 
 const redraw = (): void => {
   for (const node of live.nodes.value) {
     for (const s of node.scalars) {
       if (!isCharted(s)) continue;
-      const c = sparklineRefs.value[slotKey(node.id, s.name)];
-      if (c) drawSparkline(c, live.getHistory(node.id, s.name), "#fffaf0");
+      const c = sparklineRefs.value[bufKey(node.id, s.name)];
+      if (c) drawSparkline(c, live.getHistory(node.id, s.name));
+    }
+    for (const b of node.buffers) {
+      const key = bufKey(node.id, b.name);
+      const repr = reprFor(node.id, b);
+      if (repr === "waveform") {
+        const c = waveformRefs.value[key];
+        if (c) drawWaveform(c, b.data);
+      } else if (repr === "bar") {
+        const c = barRefs.value[key];
+        if (c) drawBars(c, b.data);
+      }
     }
   }
 };
@@ -126,7 +238,7 @@ const isEmpty = computed(() => live.nodes.value.length === 0);
         </div>
 
         <ul v-else class="slot-list">
-          <li v-for="s in node.scalars" :key="s.name" class="slot-row">
+          <li v-for="s in node.scalars" :key="`s.${s.name}`" class="slot-row">
             <div class="slot-meta">
               <span class="slot-name mono">{{ s.name }}</span>
               <span class="u-pill slot-pill" :class="`kind-pill-${s.kind}`">{{ s.kind }}</span>
@@ -137,7 +249,7 @@ const isEmpty = computed(() => live.nodes.value.length === 0);
               <div class="slot-value-visual">
                 <canvas
                   v-if="isCharted(s)"
-                  :ref="setSparklineRef(slotKey(node.id, s.name))"
+                  :ref="setSparklineRef(bufKey(node.id, s.name))"
                   class="sparkline"
                 ></canvas>
                 <span
@@ -152,17 +264,58 @@ const isEmpty = computed(() => live.nodes.value.length === 0);
             </div>
           </li>
 
-          <li v-for="b in node.buffers" :key="b.name" class="slot-row slot-row--buffer">
+          <li v-for="b in node.buffers" :key="`b.${b.name}`" class="slot-row slot-row--buffer">
             <div class="slot-meta">
               <span class="slot-name mono">{{ b.name }}</span>
               <span class="u-pill slot-pill kind-pill-buffer">buffer</span>
               <span class="slot-type mono">{{ b.type }}</span>
+              <span class="slot-size mono">× {{ b.length }}</span>
+              <span
+                v-if="b.downsampled"
+                class="slot-down mono"
+                title="stride-downsampled for display"
+              >
+                ↓{{ b.data.length }}
+              </span>
             </div>
-            <div class="slot-value">
-              <span class="slot-value-prefix mono">× {{ b.length }}</span>
-              <div class="slot-value-visual">
-                <span class="buffer-note">byte view — next wire</span>
+
+            <div class="slot-repr">
+              <select
+                class="repr-select"
+                :value="reprFor(node.id, b)"
+                @change="
+                  setRepr(node.id, b, ($event.target as HTMLSelectElement).value as BufferRepr)
+                "
+              >
+                <option v-for="opt in optionsFor(b)" :key="opt" :value="opt">
+                  {{ REPR_LABELS[opt] }}
+                </option>
+              </select>
+            </div>
+
+            <div class="slot-visual">
+              <canvas
+                v-if="reprFor(node.id, b) === 'waveform'"
+                :ref="setWaveformRef(bufKey(node.id, b.name))"
+                class="waveform"
+              ></canvas>
+              <canvas
+                v-else-if="reprFor(node.id, b) === 'bar'"
+                :ref="setBarRef(bufKey(node.id, b.name))"
+                class="bar-chart"
+              ></canvas>
+              <div v-else-if="reprFor(node.id, b) === 'grid'" class="bool-grid">
+                <span
+                  v-for="(v, i) in b.data"
+                  :key="i"
+                  class="bool-cell"
+                  :class="{ on: v !== 0 }"
+                ></span>
               </div>
+              <span v-else-if="reprFor(node.id, b) === 'hex'" class="hex-dump mono">{{
+                formatHex(b.data)
+              }}</span>
+              <span v-else class="list-dump mono">{{ formatList(b.data) }}</span>
             </div>
           </li>
         </ul>
@@ -291,12 +444,18 @@ const isEmpty = computed(() => live.nodes.value.length === 0);
   border-bottom: 1px solid var(--u-border);
 }
 
+.slot-row--buffer {
+  grid-template-columns: minmax(220px, auto) 130px minmax(160px, 1fr);
+  align-items: start;
+}
+
 .slot-row:last-child {
   border-bottom: 0;
 }
 
-@container (max-width: 520px) {
-  .slot-row {
+@container (max-width: 600px) {
+  .slot-row,
+  .slot-row--buffer {
     grid-template-columns: minmax(0, 1fr);
     gap: 6px;
   }
@@ -304,7 +463,7 @@ const isEmpty = computed(() => live.nodes.value.length === 0);
 
 .slot-meta {
   display: grid;
-  grid-template-columns: 150px 70px 36px;
+  grid-template-columns: 150px 70px 36px auto auto;
   align-items: center;
   column-gap: 10px;
   overflow: hidden;
@@ -327,9 +486,15 @@ const isEmpty = computed(() => live.nodes.value.length === 0);
   color: var(--u-accent);
 }
 
-.slot-type {
+.slot-type,
+.slot-size {
   font-size: 10.5px;
   color: var(--u-text-dim);
+}
+
+.slot-down {
+  font-size: 10px;
+  color: var(--u-text-muted);
 }
 
 .slot-value {
@@ -356,13 +521,55 @@ const isEmpty = computed(() => live.nodes.value.length === 0);
   min-width: 0;
 }
 
-/* min-width: 0 lets the canvas shrink below its 300px intrinsic width. */
+.repr-select {
+  width: 100%;
+  padding: 3px 6px;
+  background: var(--u-bg-elev-2);
+  border: 1px solid var(--u-border);
+  border-radius: var(--u-radius-sm);
+  color: var(--u-text);
+  font-size: 11.5px;
+  font-family: var(--u-sans);
+  cursor: pointer;
+}
+
+.repr-select:hover {
+  border-color: var(--u-border-strong);
+}
+
+.slot-visual {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+/* min-width: 0 lets a canvas shrink below its 300px intrinsic width. */
 .sparkline {
   flex: 1;
   min-width: 0;
   height: 24px;
   background: var(--u-bg);
   border-radius: 3px;
+}
+
+.waveform {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  height: 72px;
+  background-color: var(--u-bg);
+  border: 1px solid var(--u-border);
+  border-radius: var(--u-radius);
+}
+
+.bar-chart {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  height: 56px;
+  background-color: var(--u-bg);
+  border: 1px solid var(--u-border);
+  border-radius: var(--u-radius);
 }
 
 .onoff-indicator {
@@ -399,13 +606,34 @@ const isEmpty = computed(() => live.nodes.value.length === 0);
   font-size: 10.5px;
 }
 
-.slot-row--buffer .slot-name {
-  color: var(--u-text-muted);
+.bool-grid {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
 }
 
-.buffer-note {
-  font-size: 10.5px;
-  color: var(--u-text-dim);
-  font-style: italic;
+.bool-cell {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  background: var(--u-bg-elev-3);
+  border: 1px solid var(--u-border);
+}
+
+.bool-cell.on {
+  background: var(--u-success);
+  border-color: var(--u-success);
+}
+
+.hex-dump,
+.list-dump {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--u-text-muted);
+  word-break: break-all;
+}
+
+.slot-row--buffer .slot-name {
+  color: var(--u-text-muted);
 }
 </style>

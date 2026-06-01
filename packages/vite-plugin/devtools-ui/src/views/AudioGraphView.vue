@@ -6,12 +6,14 @@ import { computed, markRaw } from "vue";
 
 import UnworkletNode from "../components/UnworkletNode.vue";
 import { useLiveGraph } from "../composables/useLiveGraph";
+import { useLiveState } from "../composables/useLiveState";
 
 import "@vue-flow/core/dist/style.css";
 import "@vue-flow/core/dist/theme-default.css";
 import "@vue-flow/controls/dist/style.css";
 
 const live = useLiveGraph();
+const liveState = useLiveState();
 
 const nodeTypes = {
   unworklet: markRaw(UnworkletNode),
@@ -56,6 +58,32 @@ const connections = computed(() => {
 });
 
 const isEmpty = computed(() => live.graph.value.nodes.length === 0);
+
+// The selected node's live X-ray (params + state slots), correlated by node id
+// with the Live-state shared state. Present only for unworklet nodes once audio
+// is running; standard AudioNodes have none.
+const detail = computed(() => {
+  const sel = live.selectedNode.value;
+  if (!sel || sel.kind !== "unworklet") return null;
+  const ns = liveState.nodes.value.find((n) => n.id === sel.id);
+  const params = ns ? ns.scalars.filter((s) => s.kind === "param") : [];
+  const state = ns ? ns.scalars.filter((s) => s.kind === "state") : [];
+  return {
+    inputs: sel.inputs ?? [],
+    outputs: sel.outputs ?? [],
+    params,
+    state,
+    buffers: ns ? ns.buffers : [],
+    hasLive: ns !== undefined,
+  };
+});
+
+const fmtScalar = (value: number | boolean | string, type: string): string => {
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "string") return value;
+  if (type === "f32" || type === "f64") return value.toFixed(3);
+  return String(value);
+};
 
 const onNodeClick = (event: { node: Node }): void => {
   live.selectNode(event.node.id);
@@ -161,11 +189,77 @@ const onNodeClick = (event: { node: Node }): void => {
               </dl>
             </section>
 
-            <section class="summary-section">
-              <header class="summary-section-head">Analysis</header>
+            <template v-if="detail">
+              <section class="summary-section">
+                <header class="summary-section-head">Ports</header>
+                <dl class="summary-list">
+                  <div class="summary-row">
+                    <dt>in</dt>
+                    <dd class="mono">
+                      <template v-if="detail.inputs.length">{{
+                        detail.inputs.join(", ")
+                      }}</template>
+                      <span v-else class="row-muted">—</span>
+                    </dd>
+                  </div>
+                  <div class="summary-row">
+                    <dt>out</dt>
+                    <dd class="mono">
+                      <template v-if="detail.outputs.length">{{
+                        detail.outputs.join(", ")
+                      }}</template>
+                      <span v-else class="row-muted">—</span>
+                    </dd>
+                  </div>
+                </dl>
+              </section>
+
+              <section v-if="detail.params.length" class="summary-section">
+                <header class="summary-section-head">Params</header>
+                <dl class="kv-list">
+                  <div v-for="p in detail.params" :key="p.name" class="kv-row">
+                    <dt class="mono">{{ p.name }}</dt>
+                    <dd class="mono">{{ fmtScalar(p.value, p.type) }}</dd>
+                  </div>
+                </dl>
+              </section>
+
+              <section v-if="detail.state.length" class="summary-section">
+                <header class="summary-section-head">State</header>
+                <dl class="kv-list">
+                  <div v-for="s in detail.state" :key="s.name" class="kv-row">
+                    <dt class="mono">
+                      {{ s.name }}<span class="kv-type">{{ s.type }}</span>
+                    </dt>
+                    <dd class="mono">{{ fmtScalar(s.value, s.type) }}</dd>
+                  </div>
+                </dl>
+              </section>
+
+              <section v-if="detail.buffers.length" class="summary-section">
+                <header class="summary-section-head">Buffers</header>
+                <dl class="kv-list">
+                  <div v-for="b in detail.buffers" :key="b.name" class="kv-row">
+                    <dt class="mono">
+                      {{ b.name }}<span class="kv-type">{{ b.type }}</span>
+                    </dt>
+                    <dd class="mono row-muted">× {{ b.length }}</dd>
+                  </div>
+                </dl>
+                <p class="detail-hint">Open the Live state panel to visualize buffer contents.</p>
+              </section>
+
+              <section v-if="!detail.hasLive" class="summary-section">
+                <p class="pending-note">
+                  Start the app's audio to X-ray this node's live params + state.
+                </p>
+              </section>
+            </template>
+
+            <section v-else class="summary-section">
               <p class="pending-note">
-                Declared shape, params, diagnostics, and live state for this node are wired in the
-                following steps. This view currently shows the real Web-Audio topology only.
+                Standard Web-Audio node — unworklet exposes live params + state only for its own
+                processor nodes.
               </p>
             </section>
           </div>
@@ -489,6 +583,49 @@ const onNodeClick = (event: { node: Node }): void => {
   margin: 0;
   font-size: 11.5px;
   line-height: 1.55;
+  color: var(--u-text-dim);
+}
+
+.kv-list {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.kv-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: 12px;
+}
+
+.kv-row dt {
+  font-size: 12px;
+  color: var(--u-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kv-type {
+  margin-left: 6px;
+  font-size: 9.5px;
+  color: var(--u-text-dim);
+}
+
+.kv-row dd {
+  margin: 0;
+  font-size: 12px;
+  color: var(--u-text);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.detail-hint {
+  margin: 8px 0 0;
+  font-size: 10.5px;
+  line-height: 1.5;
   color: var(--u-text-dim);
 }
 
