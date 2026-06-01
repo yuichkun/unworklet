@@ -15,9 +15,13 @@
  * `ambient.d.ts` for editor LSP — one source of truth.
  */
 export const AMBIENT_DTS = `
-import type { AudioInputHandle, AudioOutputHandle, Node, ProcessorContext, ScalarType } from "@unworklet/core";
+import type { AudioInputHandle, AudioOutputHandle, ProcessorContext, ScalarType } from "@unworklet/core";
 
 declare global {
+  // Type aliases so a .uwk.ts can annotate L1-helper / subgraph signatures.
+  type Node<T extends ScalarType | "f32x4" = ScalarType> = import("@unworklet/core").Node<T>;
+  type State<T extends ScalarType> = import("@unworklet/core").State<T>;
+
   // ── Declaration helpers (reuse the exact runtime types of the core exports) ──
   const state: typeof import("@unworklet/core").state;
   const param: typeof import("@unworklet/core").param;

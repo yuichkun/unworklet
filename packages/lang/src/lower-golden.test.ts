@@ -329,3 +329,46 @@ process(() => {
 
   await expectByteIdentical(uwk, tierA);
 });
+
+test("$prev: subgraph IIR feedback ≡ hand-written explicit state slot + store", async () => {
+  const uwk = `
+const input = audioInput({ channels: 1, name: "main" });
+const out = audioOutput({ channels: 1, name: "main" });
+const onepole = defineSubgraph((coef: Node<"f32">) => ({
+  process: (x: Node<"f32">) => coef * x + (1 - coef) * $prev,
+}));
+const lp = createSubgraph(onepole, f32(0.2), { name: "lp" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(lp.process(input.ch(0).at(i)));
+  });
+});
+`;
+  const tierA = defineProcessor(() => {
+    const input = core.audioInput({ channels: 1, name: "main" });
+    const out = core.audioOutput({ channels: 1, name: "main" });
+    const onepole = core.defineSubgraph((coef: core.Node<"f32">) => {
+      const __prev_0 = core.state.f32(0);
+      return {
+        process: (x: core.Node<"f32">) => {
+          const __r = core.add(core.mul(coef, x), core.mul(core.sub(1, coef), __prev_0.read()));
+          __prev_0.write(__r);
+          return __r;
+        },
+      };
+    });
+    const lp = core.createSubgraph(onepole, core.f32(0.2), { name: "lp" });
+    return {
+      process: () => {
+        core.forSample((i) => {
+          out
+            .ch(0)
+            .at(i)
+            .write(lp.process(input.ch(0).at(i)));
+        });
+      },
+    };
+  });
+
+  await expectByteIdentical(uwk, tierA);
+});

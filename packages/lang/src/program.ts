@@ -24,6 +24,10 @@ const INPUT_PATH = path.join(SELF_DIR, "__uwk_input__.ts");
 
 const COMPILER_OPTIONS: ts.CompilerOptions = {
   target: ts.ScriptTarget.ESNext,
+  // ES libs only — NOT the DOM lib. DOM declares a non-generic `interface Node`,
+  // which would collide with the ambient's generic `Node<T>` alias (making a
+  // `Node<"f32">` annotation an error that resolves to `any`).
+  lib: ["lib.es2023.d.ts"],
   module: ts.ModuleKind.NodeNext,
   moduleResolution: ts.ModuleResolutionKind.NodeNext,
   // @unworklet/core's package.json exports a `development` condition → src/*.ts,
