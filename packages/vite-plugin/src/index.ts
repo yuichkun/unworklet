@@ -1263,8 +1263,12 @@ const realDisconnect = AN.disconnect;
 AN.connect = function (target) {
   const r = realConnect.apply(this, arguments);
   if (target instanceof AudioNode) {
-    const from = idOf(this), to = idOf(target), id = from + ">" + to;
-    edges.set(id, { id, from, to });
+    const from = idOf(this), to = idOf(target);
+    // Track the source output index so a numeric disconnect(output) can drop the
+    // right edges. The graph id stays from>to (foldProxyGraph dedups on it); the
+    // map key carries the output so multiple outputs to one target coexist.
+    const out = (typeof arguments[1] === "number") ? arguments[1] : 0;
+    edges.set(from + ">" + to + "#" + out, { id: from + ">" + to, from, to, out });
     push();
   }
   return r;
@@ -1272,8 +1276,19 @@ AN.connect = function (target) {
 AN.disconnect = function (target) {
   const r = realDisconnect.apply(this, arguments);
   const from = idOf(this);
-  if (target instanceof AudioNode) edges.delete(from + ">" + idOf(target));
-  else if (arguments.length === 0) for (const k of [...edges.keys()]) if (k.indexOf(from + ">") === 0) edges.delete(k);
+  // Mirror every AudioNode.disconnect overload so the captured graph never keeps
+  // an edge the real graph dropped — including disconnect(outputIndex), which
+  // node.outputs.<name>.disconnect() routes through.
+  const removeWhere = (pred) => {
+    for (const [k, e] of [...edges]) if (e.from === from && pred(e)) edges.delete(k);
+  };
+  if (arguments.length === 0) removeWhere(() => true);
+  else if (typeof target === "number") removeWhere((e) => e.out === target);
+  else if (target instanceof AudioNode) {
+    const to = idOf(target);
+    const out = (typeof arguments[1] === "number") ? arguments[1] : null;
+    removeWhere((e) => e.to === to && (out === null || e.out === out));
+  }
   push();
   return r;
 };
