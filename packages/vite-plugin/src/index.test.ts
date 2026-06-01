@@ -138,6 +138,27 @@ const FIXTURE_DUPLICATE_NAME_GAIN_PATH = fileURLToPath(
   new URL("../__fixtures__/01-stereo-gain-duplicate-name.processor.ts", import.meta.url),
 );
 
+/** `.uwk.ts` sugar equivalent of `01-stereo-gain.processor.ts` — same processor. */
+const FIXTURE_UWK_GAIN_PATH = fileURLToPath(
+  new URL("../__fixtures__/stereo-gain.uwk.ts", import.meta.url),
+);
+
+type TransformFn = (this: unknown, code: string, id: string) => unknown;
+
+/** Invoke the plugin's `transform` hook with a context whose `error` throws. */
+const callTransform = (code: string, id: string): unknown => {
+  const hook = unworklet().transform;
+  if (typeof hook !== "function") {
+    throw new Error("transform hook is not a function — expected plain function form");
+  }
+  const ctx = {
+    error: (msg: string): never => {
+      throw new Error(msg);
+    },
+  };
+  return (hook as unknown as TransformFn).call(ctx, code, id);
+};
+
 // ─────────────────────────────────────────────────────────────────────────
 // 5-B = factory shape
 // ─────────────────────────────────────────────────────────────────────────
@@ -355,6 +376,91 @@ test("augmented JS exports both default + named (= export identifier matches use
   const js = result as string;
   expect(js).toMatch(/export default/);
   expect(js).toContain("export { __unworkletAugmented as stereoGain }");
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// `.uwk.ts` sugar lowering (Part 4) — transform hook + build-path lowering
+// ─────────────────────────────────────────────────────────────────────────
+
+const UWK_MINIMAL = `const out = audioOutput({ channels: 1, name: "main" });
+process(() => {});`;
+
+test("transform lowers a .uwk.ts source to a filename-derived named export", () => {
+  const out = callTransform(UWK_MINIMAL, "/abs/synth.uwk.ts") as { code: string; map: null };
+  expect(out.code).toContain("export const synth = defineProcessor(");
+  expect(out.code).toContain('from "@unworklet/core"');
+  expect(out.code).not.toContain("export default");
+  expect(out.map).toBeNull();
+});
+
+test("transform returns undefined for a non-.uwk.ts id", () => {
+  expect(callTransform("const x = 1;", "/abs/foo.ts")).toBeUndefined();
+  expect(callTransform("const x = 1;", "/abs/bar.processor.ts")).toBeUndefined();
+});
+
+test("transform strips a query suffix before the .uwk.ts extension test", () => {
+  const out = callTransform(UWK_MINIMAL, "/abs/synth.uwk.ts?t=123") as { code: string };
+  expect(out.code).toContain("export const synth = defineProcessor(");
+});
+
+test("transform camel-cases a kebab-case filename into the export name", () => {
+  expect(
+    (callTransform(UWK_MINIMAL, "/abs/noise-drive.uwk.ts") as { code: string }).code,
+  ).toContain("export const noiseDrive = defineProcessor(");
+  expect((callTransform(UWK_MINIMAL, "/abs/tape-delay.uwk.ts") as { code: string }).code).toContain(
+    "export const tapeDelay = defineProcessor(",
+  );
+});
+
+test("transform falls back to `processor` when the filename has no identifier chars", () => {
+  expect((callTransform(UWK_MINIMAL, "/abs/123.uwk.ts") as { code: string }).code).toContain(
+    "export const processor = defineProcessor(",
+  );
+});
+
+test("transform surfaces a lowering error via this.error", () => {
+  // A .uwk.ts with no process() call is a LowerError, surfaced as a Vite error.
+  expect(() =>
+    callTransform(`const out = audioOutput({ channels: 1, name: "main" });`, "/abs/x.uwk.ts"),
+  ).toThrow(/process/);
+});
+
+test("load lowers the .uwk.ts fixture, compiles it, and emits the WASM as a build asset", async () => {
+  const { ctx } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_UWK_GAIN_PATH}`);
+
+  const wasmCall = assetCalls(ctx).find((c) => c.name.endsWith(".wasm"));
+  expect(wasmCall).toMatchObject({ type: "asset", name: "stereo-gain.wasm" });
+  expect(wasmCall!.source).toBeInstanceOf(Uint8Array);
+});
+
+test("a .uwk.ts processor compiles to byte-identical WASM as its hand-written equivalent", async () => {
+  // stereo-gain.uwk.ts is the sugar form of 01-stereo-gain.processor.ts; lowering
+  // must be transparent, so both authoring forms emit the same WASM bytes.
+  const { ctx: uwkCtx } = await callLoadWithMockContext(
+    `${VIRTUAL_ID_PREFIX}${FIXTURE_UWK_GAIN_PATH}`,
+  );
+  const { ctx: tsCtx } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`);
+  const uwkWasm = assetCalls(uwkCtx).find((c) => c.name.endsWith(".wasm"))!.source as Uint8Array;
+  const tsWasm = assetCalls(tsCtx).find((c) => c.name.endsWith(".wasm"))!.source as Uint8Array;
+  expect(Buffer.from(uwkWasm).equals(Buffer.from(tsWasm))).toBe(true);
+});
+
+test("the .uwk.ts augmented module re-imports + registers under the filename-derived name", async () => {
+  const { result } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_UWK_GAIN_PATH}`);
+
+  const js = result as string;
+  expect(js).toMatch(/processorName:\s*"stereoGain__[0-9a-f]{8}__[0-9a-f]{8}"/);
+  expect(js).toContain("import { stereoGain as __unworkletRaw }");
+  expect(js).toContain("export { __unworkletAugmented as stereoGain }");
+});
+
+test("load on the worklet-entry build branch lowers a .uwk.ts source", async () => {
+  const result = await callLoadNoContext(`\0unworklet-worklet:${FIXTURE_UWK_GAIN_PATH}`);
+
+  expect(typeof result).toBe("string");
+  const js = result as string;
+  expect(js).toContain("extends AudioWorkletProcessor");
+  expect(js).toContain("stereoGain__");
 });
 
 test("load on a WORKLET_ENTRY_PREFIX id returns the worklet runtime template", async () => {
