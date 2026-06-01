@@ -41,6 +41,11 @@ jobs:
         run: vp exec playwright install --with-deps chromium
       - name: Run vitest aggregation
         run: vp test
+      - name: Run experiment suites standalone (kept out of the cross-project
+          aggregation — `@vitejs/devtools` peer-keys a duplicate vite-plus-test
+          runner that breaks the shared collector; each runs as its own root here)
+        working-directory: experiments/devtools-proto
+        run: vp test run
 
   e2e:
     name: Playwright e2e (= dev server 経由)

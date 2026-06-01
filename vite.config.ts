@@ -114,10 +114,15 @@ export default defineConfig({
     projects: [
       "packages/*/vite.config.ts",
       "examples/*/vite.config.ts",
-      "experiments/*/vite.config.ts",
       "packages/core/vite.browser.config.ts",
       "packages/core/vite.browser-postmessage.config.ts",
     ],
+    // `experiments/*` are intentionally NOT aggregated here: an experiment that
+    // depends on `@vitejs/devtools` (devtools-proto) makes pnpm key a separate
+    // copy of the vite-plus test runner by that peer, so its files would load a
+    // different runner instance than this shared collector and throw "Vitest
+    // failed to find the current suite". They run standalone in CI instead, where
+    // each is its own root and there is a single runner instance.
     // root の default project は 何 も 拾 わ な い (= include 空)。 全 test は
     // sub project (= 上 の projects) 経 由 で 拾 う 形 に 統 一。
     include: [],
