@@ -331,6 +331,39 @@ export function lower(source: string, options: LowerOptions = {}): string {
     );
   }
 
+  // Reject options() / migrations() that reference a processor-body binding: the
+  // declarations are moved into the defineProcessor callback, but the options
+  // argument is attached outside it, so such a reference would be out of scope at
+  // module evaluation. (Reported by @codex on #12.)
+  const bodyBindings = new Set<string>();
+  for (const decl of declarations) {
+    if (ts.isVariableStatement(decl)) {
+      for (const d of decl.declarationList.declarations) {
+        if (ts.isIdentifier(d.name)) bodyBindings.add(d.name.text);
+      }
+    }
+  }
+  const optionRefs = (expr: ts.Expression | undefined): string[] => {
+    if (expr === undefined) return [];
+    const hits = new Set<string>();
+    const visit = (n: ts.Node): void => {
+      if (ts.isIdentifier(n) && bodyBindings.has(n.text)) hits.add(n.text);
+      ts.forEachChild(n, visit);
+    };
+    visit(expr);
+    return [...hits];
+  };
+  const referenced = [...new Set([...optionRefs(migrationsArg), ...optionRefs(optionsObject)])];
+  if (referenced.length > 0) {
+    throw new LowerError(
+      "uwk-options-binding",
+      `options() / migrations() cannot reference a processor-body binding (${referenced
+        .map((n) => `\`${n}\``)
+        .join(", ")}): declarations are moved into the defineProcessor callback, so the ` +
+        "reference would be out of scope. Inline the value, or move the binding into the object literal.",
+    );
+  }
+
   // S12: inject ambient stereo input / out when the file declares neither, so a
   // Tier-C .uwk.ts needs no explicit I/O. An explicit declaration suppresses it.
   const needInput = !referencesCall(declarations, "audioInput");

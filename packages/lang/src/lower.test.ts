@@ -124,6 +124,18 @@ test("rejects an import statement (.uwk.ts is ambient)", () => {
   }
 });
 
+test("rejects migrations()/options() referencing a processor-body binding", () => {
+  // `migrate` is moved into the defineProcessor callback, so referencing it from
+  // migrations() — which is attached outside the callback — is out of scope
+  // (reported by @codex on #12).
+  try {
+    lower(`const migrate = (h) => h;\nmigrations([{ to: 1, migrate }]);\nprocess(() => {});`);
+    throw new Error("expected throw");
+  } catch (e) {
+    expect((e as LowerError).id).toBe("uwk-options-binding");
+  }
+});
+
 test("rejects a process() with no callback argument", () => {
   try {
     lower(`process();`);
