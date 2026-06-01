@@ -290,6 +290,7 @@ const makeMockProcessor = (overrides?: {
   moduleUrl?: string | undefined;
   wasmUrl?: string | undefined;
   processorName?: string | undefined;
+  displayName?: string | undefined;
   inputs?: Array<{ name: string; channels: number }>;
   outputs?: Array<{ name: string; channels: number }>;
   params?: Array<{ name: string }>;
@@ -353,6 +354,7 @@ const makeMockProcessor = (overrides?: {
       wasmUrl: overrides && "wasmUrl" in overrides ? overrides.wasmUrl : "/_assets/x.wasm",
       processorName:
         overrides && "processorName" in overrides ? overrides.processorName : "stereoGain",
+      ...(overrides && "displayName" in overrides ? { displayName: overrides.displayName } : {}),
     },
     __compiledProcessor: undefined,
   }) as unknown as CompiledProcessor<unknown>;
@@ -3392,6 +3394,8 @@ test("devtools on: createNode auto-registers, devDump round-trips, dispose unreg
     const handle = getDevNodes().find((x) => x.node === node);
     expect(handle).toBeDefined();
     expect(handle!.processorName).toBe("stereoGain");
+    // No `worklet.displayName` supplied → handle falls back to processorName.
+    expect(handle!.displayName).toBe("stereoGain");
 
     // devDump posts a dev-dump-request; capture it + reply with a response.
     const posted: unknown[] = [];
@@ -3423,6 +3427,34 @@ test("devtools on: createNode auto-registers, devDump round-trips, dispose unreg
 
     node.dispose();
     expect(getDevNodes().some((x) => x.node === node)).toBe(false);
+  } finally {
+    delete (globalThis as { __UNWORKLET_DEVTOOLS__?: boolean }).__UNWORKLET_DEVTOOLS__;
+    h.cleanup();
+  }
+});
+
+test("devtools on: handle carries the clean displayName, not the hashed processorName", async () => {
+  (globalThis as { __UNWORKLET_DEVTOOLS__?: boolean }).__UNWORKLET_DEVTOOLS__ = true;
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    // The plugin mints `processorName` with HMR hash suffixes and carries the
+    // clean export name separately as `worklet.displayName`.
+    const node = await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({
+            processorName: "tapeDelay__24133496__81634d92",
+            displayName: "tapeDelay",
+          }),
+        ),
+      h.fireReady,
+    );
+    const handle = getDevNodes().find((x) => x.node === node);
+    expect(handle).toBeDefined();
+    expect(handle!.processorName).toBe("tapeDelay__24133496__81634d92");
+    expect(handle!.displayName).toBe("tapeDelay");
+    node.dispose();
   } finally {
     delete (globalThis as { __UNWORKLET_DEVTOOLS__?: boolean }).__UNWORKLET_DEVTOOLS__;
     h.cleanup();

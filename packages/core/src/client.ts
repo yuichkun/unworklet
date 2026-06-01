@@ -316,6 +316,7 @@ export async function createNode<C>(
   const moduleUrl = ns.moduleUrl;
   const wasmUrl = ns.wasmUrl;
   const processorName = ns.processorName;
+  const displayName = ns.displayName;
   if (!moduleUrl) {
     throw new Error(
       "unworklet: createNode() requires processor.worklet.moduleUrl — import via `?worklet` or supply equivalent bundler URLs",
@@ -1694,6 +1695,7 @@ export async function createNode<C>(
     devHandle = {
       node: unworkletNode as UnworkletNode<unknown>,
       processorName,
+      displayName: displayName ?? processorName,
       schemaHash: processor.schemaHash,
       devDump,
     };

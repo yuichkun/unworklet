@@ -570,6 +570,11 @@ export type MidiRingSlotDescriptor = {
  * an equivalent live-coding helper that populates the same fields)。
  * `createNode` reads them to wire `audioWorklet.addModule(...)` +
  * `new AudioWorkletNode(...)`.
+ *
+ * `displayName` is the human-readable processor name (the source's export
+ * name, e.g. `tapeDelay`). `processorName` is the `registerProcessor` key and
+ * carries source/revision hash suffixes for HMR uniqueness, so it is unfit for
+ * display — tools read `displayName` instead.
  */
 export type WorkletNamespace = {
   initialize: (...args: unknown[]) => void;
@@ -584,6 +589,7 @@ export type WorkletNamespace = {
   moduleUrl?: string;
   processorName?: string;
   wasmUrl?: string;
+  displayName?: string;
 };
 
 export type CompiledProcessor<C> = {

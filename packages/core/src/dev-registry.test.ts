@@ -17,6 +17,7 @@ import {
 const fakeHandle = (name: string): DevNodeHandle => ({
   node: {} as never,
   processorName: name,
+  displayName: name,
   schemaHash: `hash-${name}`,
   devDump: async () => [],
 });

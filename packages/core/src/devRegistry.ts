@@ -15,7 +15,10 @@ import type { UnworkletNode } from "./types.ts";
 
 export type DevNodeHandle = {
   readonly node: UnworkletNode<unknown>;
+  /** `registerProcessor` key — carries HMR hash suffixes, not for display. */
   readonly processorName: string;
+  /** Human-readable processor name (the source export name) for tools. */
+  readonly displayName: string;
   readonly schemaHash: string;
   /** Request the worklet's unfiltered all-slot dump (the live X-ray). */
   devDump(): Promise<SnapshotSlot[]>;
