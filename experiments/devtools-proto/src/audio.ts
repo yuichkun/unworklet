@@ -25,6 +25,9 @@ type Node = UnworkletNode<unknown>;
 
 let ctx: AudioContext | undefined;
 let nodes: Node[] = [];
+let noise: Node | undefined;
+let tape: Node | undefined;
+let crush: Node | undefined;
 let synth: Node | undefined;
 let bedGain: GainNode | undefined;
 let tone: BiquadFilterNode | undefined;
@@ -38,11 +41,14 @@ async function ensureAudio(): Promise<void> {
   const audioCtx = new AudioContext();
   await audioCtx.resume();
 
-  const noise = await createNode(audioCtx, noiseDrive);
-  const tape = await createNode(audioCtx, tapeDelay);
-  const crush = await createNode(audioCtx, crusher);
+  const noiseNode = await createNode(audioCtx, noiseDrive);
+  const tapeNode = await createNode(audioCtx, tapeDelay);
+  const crushNode = await createNode(audioCtx, crusher);
   const synthNode = await createNode(audioCtx, midiSynth);
-  nodes = [noise, tape, crush, synthNode];
+  nodes = [noiseNode, tapeNode, crushNode, synthNode];
+  noise = noiseNode;
+  tape = tapeNode;
+  crush = crushNode;
   synth = synthNode;
 
   bedGain = new GainNode(audioCtx, { gain: 0 }); // muted until `play`
@@ -51,12 +57,12 @@ async function ensureAudio(): Promise<void> {
   tone = new BiquadFilterNode(audioCtx, { type: "lowpass", frequency: 2950, Q: 0.7 });
   master = new GainNode(audioCtx, { gain: 0.7 });
 
-  noise.outputs["main"]!.connect(bedGain);
+  noiseNode.outputs["main"]!.connect(bedGain);
   bedGain.connect(mix);
   synthNode.outputs["main"]!.connect(mix);
-  mix.connect(tape.inputs["main"]!);
-  tape.outputs["main"]!.connect(crush.inputs["main"]!);
-  crush.outputs["main"]!.connect(tone);
+  mix.connect(tapeNode.inputs["main"]!);
+  tapeNode.outputs["main"]!.connect(crushNode.inputs["main"]!);
+  crushNode.outputs["main"]!.connect(tone);
   tone.connect(master);
   master.connect(audioCtx.destination);
 
@@ -92,6 +98,26 @@ export function setVol(v: number): void {
 /** `tone` knob (0..1) → low-pass cutoff (≈200 Hz .. 11 kHz, perceptual curve). */
 export function setTone(v: number): void {
   if (tone && ctx) tone.frequency.setTargetAtTime(200 + v * v * 11000, ctx.currentTime, 0.02);
+}
+
+/** `drive` knob (0..1) → noise-drive distortion param (0..8). */
+export function setDrive(v: number): void {
+  if (ctx) noise?.params["drive"]?.setTargetAtTime(v * 8, ctx.currentTime, 0.02);
+}
+
+/** `delay` knob (0..1) → tape echo wet-mix param (0..1). */
+export function setDelay(v: number): void {
+  if (ctx) tape?.params["mix"]?.setTargetAtTime(v, ctx.currentTime, 0.02);
+}
+
+/** `fbk` knob (0..1) → tape feedback param (0..0.95, sub-unity to stay stable). */
+export function setFbk(v: number): void {
+  if (ctx) tape?.params["feedback"]?.setTargetAtTime(v * 0.95, ctx.currentTime, 0.02);
+}
+
+/** `crush` knob (0..1) → crusher downsample-factor param (1..32). */
+export function setCrush(v: number): void {
+  if (ctx) crush?.params["crush"]?.setTargetAtTime(1 + v * 31, ctx.currentTime, 0.02);
 }
 
 export function dispose(): void {

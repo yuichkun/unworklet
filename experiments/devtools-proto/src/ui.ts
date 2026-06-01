@@ -31,16 +31,33 @@ const setStatus = (s: string): void => {
 };
 
 // ── knobs ────────────────────────────────────────────────────────────────
+// Each knob (0..1) → an audio engine setter (processor params + master post-chain).
+const KNOB_SETTERS: Record<string, (v: number) => void> = {
+  drive: audio.setDrive,
+  tone: audio.setTone,
+  delay: audio.setDelay,
+  fbk: audio.setFbk,
+  crush: audio.setCrush,
+  vol: audio.setVol,
+};
+
 const setKnob = (dial: HTMLElement, value: number): void => {
   const v = Math.min(1, Math.max(0, value));
   dial.dataset.value = v.toFixed(3);
   dial.style.setProperty("--rot", `${-135 + v * 270}deg`);
   const valEl = dial.parentElement?.querySelector<HTMLElement>(".kval");
   if (valEl) valEl.textContent = v.toFixed(2);
-  // Wired knobs drive the master post-chain; the effect knobs (drive/delay/fbk/
-  // crush) await processor params and are visual for now.
-  if (dial.dataset.param === "vol") audio.setVol(v);
-  else if (dial.dataset.param === "tone") audio.setTone(v);
+  KNOB_SETTERS[dial.dataset.param ?? ""]?.(v);
+};
+
+// On the first boot the engine exists, so push every knob's current value into it.
+let knobsSynced = false;
+const syncKnobs = (): void => {
+  if (knobsSynced) return;
+  knobsSynced = true;
+  document
+    .querySelectorAll<HTMLElement>(".dial")
+    .forEach((d) => setKnob(d, Number(d.dataset.value ?? "0.5")));
 };
 
 document.querySelectorAll<HTMLElement>(".dial").forEach((dial) => {
@@ -116,7 +133,7 @@ const noteOn = (note: number): void => {
   dispHz.textContent = `${Math.round(noteHz(note))} hz`;
   pulseNode("synth");
   dispMeter.style.width = "62%";
-  void audio.noteOn(note);
+  void audio.noteOn(note).then(syncKnobs);
 };
 
 const noteOff = (note: number): void => {
@@ -169,7 +186,7 @@ const setRunning = (on: boolean): void => {
 };
 
 playBtn.addEventListener("click", () => {
-  void audio.startBed();
+  void audio.startBed().then(syncKnobs);
   setRunning(true);
 });
 stopBtn.addEventListener("click", () => {
