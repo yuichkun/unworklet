@@ -38,6 +38,17 @@ export type MidiPortMeta = { nodeId: string; portName: string; kind: MidiPortKin
 
 export const portKey = (p: MidiPortMeta): string => `${p.nodeId}.${p.portName}`;
 
+/**
+ * Choose which input port the inject keyboard targets. The live port list arrives
+ * asynchronously (the RPC connects after mount), so the panel re-runs this on every
+ * port-list change: keep the current target while it still exists, otherwise fall
+ * back to the first available port (and to "" when there are none).
+ */
+export const pickInputTarget = (ports: readonly MidiPortMeta[], current: string): string => {
+  if (current && ports.some((p) => portKey(p) === current)) return current;
+  return ports[0] ? portKey(ports[0]) : "";
+};
+
 export type MidiLogEntry = {
   id: number;
   ts: number;

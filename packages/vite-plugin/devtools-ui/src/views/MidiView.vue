@@ -6,6 +6,7 @@ import {
   type MidiEvent,
   type MidiEventInput,
   type MidiPortMeta,
+  pickInputTarget,
   portKey,
   useLiveMidi,
 } from "../composables/useLiveMidi";
@@ -50,7 +51,14 @@ const whiteKeyCount = computed(() => keyboardKeys.value.filter((k) => k.white).l
 
 const inputPorts = computed<MidiPortMeta[]>(() => ports.value.filter((p) => p.kind === "input"));
 
-const targetPortKey = ref<string>(inputPorts.value[0] ? portKey(inputPorts.value[0]) : "");
+const targetPortKey = ref<string>(pickInputTarget(inputPorts.value, ""));
+// The live input list arrives asynchronously, so the initial target is usually "".
+// Re-pick whenever the list changes: select the first port once they arrive, and
+// re-select if the chosen port disappears — otherwise the keyboard / sliders
+// silently no-op because sendEvent early-returns on an empty target.
+watch(inputPorts, (ports) => {
+  targetPortKey.value = pickInputTarget(ports, targetPortKey.value);
+});
 const velocity = ref(96);
 const channel = ref(0);
 const ccController = ref(1); // = modulation wheel (most common dev test target)

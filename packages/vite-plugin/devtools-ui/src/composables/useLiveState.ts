@@ -79,11 +79,13 @@ export function useLiveState() {
   const apply = (s: LiveState | undefined): void => {
     const nodes = normalizeLiveState(s).nodes;
     state.value = { nodes };
+    const present = new Set<string>();
     for (const n of nodes) {
       for (const sc of n.scalars) {
         const num = numericOf(sc.value);
         if (num === undefined) continue;
         const key = `${n.id}.${sc.name}`;
+        present.add(key);
         let arr = histories.get(key);
         if (!arr) {
           arr = [];
@@ -93,6 +95,10 @@ export function useLiveState() {
         if (arr.length > HISTORY_LEN) arr.shift();
       }
     }
+    // Drop histories for slots no longer present (a disposed node / removed slot)
+    // so the map doesn't retain a 150-sample array per vanished scalar for the
+    // iframe's lifetime as node ids climb (mirrors useLiveSignals' frame reconcile).
+    for (const key of histories.keys()) if (!present.has(key)) histories.delete(key);
   };
 
   onMounted(() => {

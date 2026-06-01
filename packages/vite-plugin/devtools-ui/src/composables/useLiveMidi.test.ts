@@ -1,6 +1,14 @@
 import { expect, test } from "vite-plus/test";
 
-import { mapLog, mapOverflow, mapPorts, type MidiShared, normalizeMidi } from "./useLiveMidi";
+import {
+  mapLog,
+  mapOverflow,
+  mapPorts,
+  type MidiPortMeta,
+  type MidiShared,
+  normalizeMidi,
+  pickInputTarget,
+} from "./useLiveMidi";
 
 const sample = (): MidiShared => ({
   ports: [
@@ -55,4 +63,23 @@ test("mapLog: projects to panel entries, newest first", () => {
     event: { type: "noteOff", channel: 0, note: 60, velocity: 0 },
   });
   expect(log[1]!.direction).toBe("inject");
+});
+
+const inPort = (nodeId: string, portName: string): MidiPortMeta => ({
+  nodeId,
+  portName,
+  kind: "input",
+});
+
+test("pickInputTarget: keeps a live choice, falls back to first / empty otherwise", () => {
+  const ports = [inPort("1", "midiIn"), inPort("2", "ctrl")];
+  // The list arrives asynchronously: with no target yet, take the first port.
+  expect(pickInputTarget([], "")).toBe("");
+  expect(pickInputTarget(ports, "")).toBe("1.midiIn");
+  // A target that still exists is preserved (don't override a manual choice).
+  expect(pickInputTarget(ports, "2.ctrl")).toBe("2.ctrl");
+  // A target that disappeared (disposed node) falls back to the first available.
+  expect(pickInputTarget(ports, "9.gone")).toBe("1.midiIn");
+  // No ports at all clears the target so sendEvent stays a no-op.
+  expect(pickInputTarget([], "1.midiIn")).toBe("");
 });
