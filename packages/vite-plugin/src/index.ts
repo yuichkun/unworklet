@@ -1144,11 +1144,13 @@ let signalsBusy = false;
 const pollSignals = async () => {
   if (!client) return;
   const nodes = [];
+  const liveIds = new Set();
   let actx = null;
   for (const h of getDevNodes()) {
     const awn = h.node.node;
     actx = awn.context;
     const id = idOf(awn);
+    liveIds.add(id);
     const map = ensureAnalysers(awn, h.node.outputs);
     const ports = [];
     for (const [name, slot] of map) {
@@ -1164,6 +1166,10 @@ const pollSignals = async () => {
     }
     nodes.push({ id, displayName: h.displayName || h.processorName, ports, memory: mem.entries, memoryBytes: mem.totalBytes });
   }
+  // Drop cached memory layouts for nodes no longer live so this strong map does
+  // not retain an entry per disposed node for the page's lifetime as ids climb
+  // across processor recreation (mirrors the frame reconcile in useLiveSignals).
+  for (const k of memoryByNode.keys()) if (!liveIds.has(k)) memoryByNode.delete(k);
   const context = actx
     ? { sampleRate: actx.sampleRate || 0, baseLatencyMs: (actx.baseLatency || 0) * 1000, outputLatencyMs: (actx.outputLatency || 0) * 1000 }
     : { sampleRate: 0, baseLatencyMs: 0, outputLatencyMs: 0 };

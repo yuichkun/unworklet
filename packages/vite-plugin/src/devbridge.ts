@@ -102,7 +102,10 @@ export function foldProxyGraph<T extends { id: string }>(
   for (const e of edges) {
     if (proxyOwner[e.from] !== undefined) continue; // drop proxy → AudioWorkletNode plumbing
     const to = proxyOwner[e.to] ?? e.to; // fold edge-into-proxy onto the owner
-    if (to === e.from) continue; // never a self-loop
+    // A folded `owner → owner` edge is an authored feedback connection
+    // (`node.connect(node.inputs.fb)`, valid with a delay in the cycle): the only
+    // self-loop that survives the proxy-plumbing filter above, so keep it — the
+    // panel must report the real topology rather than hide the loop.
     const id = `${e.from}>${to}`;
     if (seen.has(id)) continue;
     seen.add(id);

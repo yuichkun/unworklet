@@ -154,6 +154,24 @@ test("foldProxyGraph: a chain through two proxies folds to direct edges, no self
   ]);
 });
 
+test("foldProxyGraph: keeps an authored feedback self-loop (node → its own input proxy)", () => {
+  // app wrote delay.connect(delay.inputs.fb) — a valid Web-Audio feedback loop.
+  // captured: delay → delayFb (authored output → own input proxy) and the internal
+  // delayFb → delay (the proxy forwarding into the worklet). Folding the input
+  // proxy out turns the authored edge into delay → delay, which must SURVIVE so the
+  // panel shows the loop rather than hiding it. (Reported by @codex on #12.)
+  const out = foldProxyGraph(
+    [n("delay"), n("delayFb")],
+    [
+      { from: "delay", to: "delayFb" },
+      { from: "delayFb", to: "delay" },
+    ],
+    { delayFb: "delay" },
+  );
+  expect(out.nodes.map((x) => x.id)).toEqual(["delay"]); // proxy folded out of nodes
+  expect(out.edges).toEqual([{ id: "delay>delay", from: "delay", to: "delay" }]); // feedback kept
+});
+
 // ── frameLevels ─────────────────────────────────────────────────────────────
 
 test("frameLevels: rms + absolute peak over a time frame", () => {
