@@ -46,6 +46,7 @@ export {
   mod,
   mul,
   neg,
+  not,
   select,
   sin,
   sqrt,
@@ -53,6 +54,9 @@ export {
   tan,
   tanh,
 } from "./dsl/primitives.ts";
+
+// Composition helper (`pipe(x, ...fns)` + `Node<T>.pipe(fn)`).
+export { pipe } from "./dsl/pipe.ts";
 
 // Declaration helpers.
 export { audioInput, audioOutput, event, param, state } from "./dsl/declarations.ts";

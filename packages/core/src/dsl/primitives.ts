@@ -54,6 +54,7 @@ type NumericClamp<T> = T extends NumericScalar
 type NumericCompare<T> = T extends NumericScalar
   ? (other: Node<T> | number) => Node<"bool">
   : never;
+type BoolUnary<T> = T extends "bool" ? () => Node<"bool"> : never;
 
 declare module "../types.ts" {
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type
@@ -72,6 +73,8 @@ declare module "../types.ts" {
     gt: NumericCompare<T>;
     lte: NumericCompare<T>;
     gte: NumericCompare<T>;
+    // Logical negation (bool only; `not()` on a numeric `Node` is a type error).
+    not: BoolUnary<T>;
     // Math — `sqrt` / `floor` / `ceil` / `frac` / transcendentals are float-only
     // (integer versions are non-sensical: sqrt of an int is non-integral, floor /
     // ceil of an int is a no-op, frac is 0). The method is typed `never` for
@@ -312,6 +315,18 @@ export function gte<T extends NumericScalar = "f32">(
 }
 registerNodeMethod("gte", function (this: Node<"f32">, other: Node<"f32"> | number): Node<"bool"> {
   return gte(this, other);
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Logical (bool only; bool is internally i32 0/1)
+// ─────────────────────────────────────────────────────────────────────────
+
+// `not(b)` lowers to a single `i32.eqz`. bool-only — `not(f32Node)` is a type error.
+export function not(b: Node<"bool"> | boolean): Node<"bool"> {
+  return wrapAst<"bool">({ kind: "not", type: "bool", value: lift(b, "bool") });
+}
+registerNodeMethod("not", function (this: Node<"bool">): Node<"bool"> {
+  return not(this);
 });
 
 // ─────────────────────────────────────────────────────────────────────────

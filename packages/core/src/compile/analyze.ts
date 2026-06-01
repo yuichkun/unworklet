@@ -82,6 +82,7 @@ function walkForTypeErrors(node: AstNode, diagnostics: DiagnosticEntry[]): void 
       break;
     case "abs":
     case "neg":
+    case "not":
     case "sqrt":
     case "floor":
     case "ceil":

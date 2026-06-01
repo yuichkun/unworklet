@@ -18,6 +18,7 @@ import { unwrapAst } from "./capture.ts";
 import { select } from "../dsl/primitives.ts";
 
 import type { AstNode, CapturedGraph } from "./ast.ts";
+import type { ScalarType } from "../types.ts";
 import type { BinaryenAPI, BinaryenModule } from "./emit.ts";
 import { emit, emitExpression, emitStatement } from "./emit.ts";
 import { layout } from "./layout.ts";
@@ -3120,7 +3121,9 @@ async function runCompareAndRead(value: AstNode): Promise<number> {
 }
 
 function cmp(
-  kind: Extract<AstNode, { lhs: AstNode; rhs: AstNode }>["kind"],
+  // Scalar binary kinds only (those carrying a `type`); the vec kinds also have
+  // `lhs`/`rhs` but no `type`, and this helper always sets one.
+  kind: Extract<AstNode, { lhs: AstNode; rhs: AstNode; type: ScalarType }>["kind"],
   a: number,
   b: number,
 ): AstNode {

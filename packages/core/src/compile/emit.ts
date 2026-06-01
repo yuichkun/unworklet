@@ -1180,6 +1180,10 @@ export function emitExpression(
       return emitAbs(mod, node.type, () => emitExpression(node.value, layout, mod, binaryen));
     case "neg":
       return emitNeg(mod, node.type, emitExpression(node.value, layout, mod, binaryen));
+    case "not":
+      // bool is internally i32 0/1; logical negation is a single `i32.eqz`
+      // (= "equals zero": 1 if the operand is 0, else 0).
+      return mod.i32.eqz(emitExpression(node.value, layout, mod, binaryen));
     case "sqrt":
       return floatNs(mod, node.type).sqrt(emitExpression(node.value, layout, mod, binaryen));
     case "floor":
@@ -2441,6 +2445,7 @@ function collectUsedMathKinds(graph: CapturedGraph): Set<string> {
         break;
       case "abs":
       case "neg":
+      case "not":
       case "sqrt":
       case "floor":
       case "ceil":

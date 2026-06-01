@@ -31,6 +31,7 @@ export type AstNode =
   | { kind: "mod"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "abs"; type: ScalarType; value: AstNode }
   | { kind: "neg"; type: ScalarType; value: AstNode }
+  | { kind: "not"; type: "bool"; value: AstNode }
   | { kind: "sqrt"; type: ScalarType; value: AstNode }
   | { kind: "floor"; type: ScalarType; value: AstNode }
   | { kind: "ceil"; type: ScalarType; value: AstNode }
@@ -418,6 +419,7 @@ export function inferAstType(ast: AstNode): ScalarType {
     case "div":
     case "mod":
     case "neg":
+    case "not":
     case "abs":
     case "sqrt":
     case "floor":
