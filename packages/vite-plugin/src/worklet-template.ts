@@ -35,12 +35,40 @@ export type EmitWorkletTemplateOptions = {
   meta: WorkletMeta;
 };
 
+/**
+ * Serialize a JSON-shaped value to a JavaScript object-literal string. Identical
+ * to `JSON.stringify` for every value EXCEPT `bigint`, which it renders as a
+ * native BigInt literal (`0n`). The result is embedded directly into the emitted
+ * worklet entry's JS source, so an `i64` state's `initial` (a `bigint`) survives
+ * as a real BigInt in the worklet realm — `JSON.stringify` throws outright on a
+ * `bigint`, and encoding it as a string would silently change the value's type.
+ */
+function serializeMetaToJs(value: unknown): string {
+  if (typeof value === "bigint") return `${value}n`;
+  if (Array.isArray(value)) {
+    return `[${value
+      .map((v) =>
+        v === undefined || typeof v === "function" || typeof v === "symbol"
+          ? "null"
+          : serializeMetaToJs(v),
+      )
+      .join(",")}]`;
+  }
+  if (value !== null && typeof value === "object") {
+    return `{${Object.entries(value)
+      .filter(([, v]) => v !== undefined && typeof v !== "function" && typeof v !== "symbol")
+      .map(([k, v]) => `${JSON.stringify(k)}:${serializeMetaToJs(v)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
 export function emitWorkletTemplate(options: EmitWorkletTemplateOptions): string {
   const { processorName, meta } = options;
-  // JSON.stringify on `WorkletMeta` is safe — every field is a plain
-  // serializable structure (= `Layout` is a record of offsets, decl arrays
-  // hold primitive props per `ast.ts`)。 No functions, no symbols。
-  const metaLiteral = JSON.stringify(meta);
+  // `WorkletMeta` can carry a `bigint` (= an `i64` state's `initial`), which
+  // `JSON.stringify` refuses to serialize. Emit a JS object literal so the
+  // bigint round-trips as a native `0n` literal in the worklet realm.
+  const metaLiteral = serializeMetaToJs(meta);
   return `import { makeWorkletNamespaceFromMeta } from "@unworklet/core/worklet";
 
 const __unworkletMeta = ${metaLiteral};
