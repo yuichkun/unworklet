@@ -19,7 +19,7 @@ process(() => {
   forSample((i) => {
     const hc = holdCounter.read();
     // Re-latch the held sample when the downsample counter wraps.
-    const held = select(hc % DOWNSAMPLE == 0, input.ch(0)[i], hold);
+    const held = hc % DOWNSAMPLE == 0 ? input.ch(0)[i] : hold;
     out.ch(0)[i] = held;
 
     // Map held ∈ [-1, 1] to a 0–255 byte and store into the pattern ring.

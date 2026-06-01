@@ -26,7 +26,7 @@ process(() => {
     // Leaky differentiator (cheap DC blocker): y = x - pole * prev.
     const blocked = shaped - dcPrev * DC_POLE;
     // `active` mutes the output to silence when false.
-    out.ch(0)[i] = select(active, blocked, 0);
+    out.ch(0)[i] = active ? blocked : 0;
 
     // Stores last (load-before-store discipline; no CSE).
     seed.write(next);

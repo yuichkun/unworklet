@@ -30,7 +30,7 @@ process(() => {
     const freqHz = exp((f32(note.read()) - 69) * LN2_OVER_12) * 440;
     const inc = freqHz * PHASE_INC_PER_HZ;
     const p = (phase.read() + f64(inc)) % TWO_PI;
-    const gain = select(gate, 0.3, 0);
+    const gain = gate ? 0.3 : 0;
     out.ch(0)[i] = f32(sin(p)) * gain;
     phase.write(p);
   });
