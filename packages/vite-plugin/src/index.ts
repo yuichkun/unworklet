@@ -1121,7 +1121,10 @@ const ensureAnalysers = (awn, outputs) => {
       const analyser = actx.createAnalyser();
       analyser.fftSize = 1024;
       analyser.smoothingTimeConstant = 0.4;
-      awn.connect(analyser, i, 0);
+      // Connect through the ORIGINAL connect so the AudioNode.connect patch
+      // below doesn't capture this devtools-owned tap as an application edge
+      // (it would otherwise add a phantom AnalyserNode to the Audio Graph).
+      realConnect.call(awn, analyser, i, 0);
       map.set(name, { analyser, time: new Float32Array(analyser.fftSize), freq: new Float32Array(analyser.frequencyBinCount) });
     } catch (e) { /* dev only: a node may reject the extra fan-out, skip it */ }
   }
