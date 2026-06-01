@@ -1,10 +1,17 @@
 <script setup lang="ts">
 import { Handle, Position } from "@vue-flow/core";
 
-import type { AudioGraphNode } from "../composables/useMockGraph";
-
+// Minimal shape shared by the live topology node and the (legacy) mock node:
+// `status` / `errorCount` are optional — live topology nodes carry only identity
+// until the diagnostics wire lands.
 defineProps<{
-  data: AudioGraphNode;
+  data: {
+    kind: string;
+    label: string;
+    audioNodeType: string;
+    status?: string;
+    errorCount?: number;
+  };
   selected: boolean;
 }>();
 </script>
