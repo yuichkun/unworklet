@@ -8,7 +8,9 @@ import { renderOffline } from "@unworklet/offline";
 import { expectAudioMatchesSnapshot, expectStable, sine } from "@unworklet/test";
 import { expect, test } from "vite-plus/test";
 
-import { crusher } from "./crusher.processor.ts";
+// `?worklet` consumes the `.uwk.ts` exactly as an app does — the plugin lowers +
+// compiles it and the augmented default IS the CompiledProcessor renderOffline reads.
+import crusher from "./crusher.uwk.ts?worklet";
 
 const SAMPLE_RATE = 48000;
 const DOWNSAMPLE = 8; // processor と同じ re-latch 間隔

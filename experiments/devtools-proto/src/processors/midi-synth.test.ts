@@ -9,7 +9,9 @@ import { renderOffline } from "@unworklet/offline";
 import { expectAudioMatchesSnapshot, expectSilence, expectStable, midi } from "@unworklet/test";
 import { expect, test } from "vite-plus/test";
 
-import { midiSynth } from "./midi-synth.processor.ts";
+// `?worklet` consumes the `.uwk.ts` exactly as an app does — the augmented default
+// IS the CompiledProcessor renderOffline reads.
+import midiSynth from "./midi-synth.uwk.ts?worklet";
 
 const SAMPLE_RATE = 48000;
 

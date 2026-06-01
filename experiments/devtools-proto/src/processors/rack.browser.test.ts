@@ -10,10 +10,10 @@
  * Runs via `vp test --config vite.browser.config.ts` (excluded from the default
  * node-side `vp test`).
  */
-import crusher from "./crusher.processor.ts?worklet";
-import midiSynth from "./midi-synth.processor.ts?worklet";
-import noiseDrive from "./noise-drive.processor.ts?worklet";
-import tapeDelay from "./tape-delay.processor.ts?worklet";
+import crusher from "./crusher.uwk.ts?worklet";
+import midiSynth from "./midi-synth.uwk.ts?worklet";
+import noiseDrive from "./noise-drive.uwk.ts?worklet";
+import tapeDelay from "./tape-delay.uwk.ts?worklet";
 import { createNode } from "@unworklet/core";
 import { expect, test } from "vite-plus/test";
 

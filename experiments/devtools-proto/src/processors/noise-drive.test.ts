@@ -9,7 +9,9 @@ import { renderOffline } from "@unworklet/offline";
 import { expectAudioMatchesSnapshot, expectStable } from "@unworklet/test";
 import { expect, test } from "vite-plus/test";
 
-import { noiseDrive } from "./noise-drive.processor.ts";
+// `?worklet` consumes the `.uwk.ts` exactly as an app does — the augmented default
+// IS the CompiledProcessor renderOffline reads.
+import noiseDrive from "./noise-drive.uwk.ts?worklet";
 
 const SAMPLE_RATE = 48000;
 

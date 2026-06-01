@@ -14,7 +14,9 @@ import {
 } from "@unworklet/test";
 import { expect, test } from "vite-plus/test";
 
-import { tapeDelay } from "./tape-delay.processor.ts";
+// `?worklet` consumes the `.uwk.ts` exactly as an app does — the augmented default
+// IS the CompiledProcessor renderOffline reads.
+import tapeDelay from "./tape-delay.uwk.ts?worklet";
 
 const SAMPLE_RATE = 48000;
 const DELAY = Math.round(SAMPLE_RATE * 0.3); // 14400 — processor と同じ tape-head spacing
