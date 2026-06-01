@@ -47,9 +47,40 @@ export type DevGraphNode = {
 export type DevGraphEdge = { id: string; from: string; to: string };
 export type DevAudioGraph = { nodes: DevGraphNode[]; edges: DevGraphEdge[] };
 
+// ─────────────────────────────────────────────────────────────────────────
+// DevTools live state X-ray (devDump)
+// ─────────────────────────────────────────────────────────────────────────
+//
+// The page-script polls each live node's `devDump()` (the worklet copies its
+// WASM slots into bytes), decodes the scalar slots, and pushes them here via
+// the `unworklet:state-update` action RPC; the server mirrors them into the
+// `unworklet:state` shared state the Live-state panel reads. Buffer slots are
+// surfaced as metadata only — streaming their bytes continuously would load the
+// audio thread and the wire, so their visualization is a later wire.
+
+/** Element type of a slot's storage. */
+export type DevSlotType = "f32" | "f64" | "i32" | "i64" | "bool" | "u8";
+/** One scalar slot's live value (i64 is sent as a decimal string — JSON-safe). */
+export type DevStateScalar = {
+  name: string;
+  kind: "state" | "param";
+  type: DevSlotType;
+  value: number | boolean | string;
+};
+/** One buffer slot — metadata only for now (data viz is a later wire). */
+export type DevStateBufferMeta = { name: string; type: DevSlotType; length: number };
+export type DevNodeState = {
+  id: string;
+  displayName: string;
+  scalars: DevStateScalar[];
+  buffers: DevStateBufferMeta[];
+};
+export type DevLiveState = { nodes: DevNodeState[] };
+
 declare module "@vitejs/devtools-kit" {
   interface DevToolsRpcSharedStates {
     "unworklet:graph": DevAudioGraph;
+    "unworklet:state": DevLiveState;
   }
 }
 
@@ -582,6 +613,24 @@ const setupDevtools = async (
   // `register()` takes the loosely-typed RpcFunctionDefinition union; defineRpcFunction
   // infers an argument-specific one (contravariant handler), so widen at the boundary.
   ctx.rpc.register(graphUpdate as Parameters<typeof ctx.rpc.register>[0]);
+
+  // Live state X-ray — the page-script polls each node's devDump and pushes the
+  // decoded scalar slots here; the Live-state panel reads `unworklet:state`.
+  const liveState = await ctx.rpc.sharedState.get("unworklet:state", {
+    initialValue: { nodes: [] },
+  });
+  const stateUpdate = defineRpcFunction({
+    name: "unworklet:state-update",
+    type: "action",
+    setup: () => ({
+      handler: async (state: DevLiveState): Promise<void> => {
+        liveState.mutate((draft) => {
+          draft.nodes = state.nodes;
+        });
+      },
+    }),
+  });
+  ctx.rpc.register(stateUpdate as Parameters<typeof ctx.rpc.register>[0]);
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -903,8 +952,54 @@ let polls = 0;
 const ensureClient = () => {
   if (client) return;
   client = getDevToolsClientContext() || null;
-  if (client) { push(); return; }
+  if (client) { push(); startStatePoll(); return; }
   if (polls++ < 40) setTimeout(ensureClient, 100);
+};
+
+// Live state X-ray: poll each node's devDump on a gentle cadence, decode the
+// scalar slots, and push them to the server. Buffers are surfaced as metadata
+// only (name/type/length) — copying their bytes every poll would load the audio
+// thread and the wire, so their visualization is a later wire. i64 values are
+// sent as decimal strings (JSON has no bigint).
+const STATE_ELEMENT_BYTES = { f32: 4, f64: 8, i32: 4, i64: 8, bool: 4, u8: 1 };
+const STATE_POLL_MS = 200;
+const decodeSlotValue = (s) => {
+  const v = decodeScalar(s.type, s.data);
+  return typeof v === "bigint" ? v.toString() : v;
+};
+let statePolling = false;
+const pollState = async () => {
+  if (statePolling || !client) return;
+  statePolling = true;
+  try {
+    const nodes = [];
+    for (const h of getDevNodes()) {
+      let slots;
+      try { slots = await h.devDump(); } catch (e) { slots = []; }
+      const scalars = [];
+      const buffers = [];
+      for (const s of slots) {
+        if (s.kind === "buffer") {
+          buffers.push({ name: s.name, type: s.type, length: s.data.byteLength / (STATE_ELEMENT_BYTES[s.type] || 1) });
+        } else {
+          scalars.push({ name: s.name, kind: s.kind, type: s.type, value: decodeSlotValue(s) });
+        }
+      }
+      nodes.push({ id: idOf(h.node.node), displayName: h.displayName || h.processorName, scalars, buffers });
+    }
+    if (client) { try { client.rpc.call("unworklet:state-update", { nodes }); } catch (e) { /* dev only */ } }
+  } finally {
+    statePolling = false;
+  }
+};
+let stateTimer = null;
+const startStatePoll = () => {
+  if (stateTimer !== null) return;
+  const loop = async () => {
+    await pollState();
+    stateTimer = setTimeout(loop, STATE_POLL_MS);
+  };
+  stateTimer = setTimeout(loop, STATE_POLL_MS);
 };
 
 const AN = AudioNode.prototype;

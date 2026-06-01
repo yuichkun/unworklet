@@ -1713,15 +1713,17 @@ test("devtools.setup registers a single dock entry at the `/__unworklet/` static
   expect(ctx.views.__hostStaticCalls[0]!.urlBase).toBe("/__unworklet/");
 });
 
-test("devtools.setup wires the `unworklet:graph` shared state + graph-update action RPC", async () => {
+test("devtools.setup wires the graph + live-state shared states and their update RPCs", async () => {
   const plugin = unworklet();
   const setup = (plugin as unknown as { devtools?: { setup: (ctx: unknown) => Promise<void> } })
     .devtools?.setup;
   const ctx = makeDevToolsCtxStub();
-  // The graph wiring is async (lazy devtools-kit import + shared-state get), so
-  // await the setup before asserting the RPC side effects.
+  // The wiring is async (lazy devtools-kit import + shared-state gets), so await
+  // the setup before asserting the RPC side effects.
   await setup!(ctx);
   expect(ctx.rpc.__sharedStateGets).toContain("unworklet:graph");
-  expect(ctx.rpc.__registerCalls).toHaveLength(1);
-  expect(ctx.rpc.__registerCalls[0]).toMatchObject({ name: "unworklet:graph-update" });
+  expect(ctx.rpc.__sharedStateGets).toContain("unworklet:state");
+  const registered = ctx.rpc.__registerCalls.map((f) => (f as { name: string }).name);
+  expect(registered).toContain("unworklet:graph-update");
+  expect(registered).toContain("unworklet:state-update");
 });
