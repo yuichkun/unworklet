@@ -1036,14 +1036,23 @@ const buildGraph = () => {
 };
 
 let client = null;
+// Fire an RPC and swallow both a synchronous throw and an async rejection — a
+// transient backend hiccup (or a second dev server stealing trust) must never
+// surface as an unhandled promise rejection in the app's console.
+const rpcCall = (name, arg) => {
+  if (!client) return;
+  try {
+    const r = client.rpc.call(name, arg);
+    if (r && typeof r.catch === "function") r.catch(() => {});
+  } catch (e) { /* dev only */ }
+};
 let pending = false;
 const push = () => {
   if (pending) return;
   pending = true;
   queueMicrotask(() => {
     pending = false;
-    if (!client) return;
-    try { client.rpc.call("unworklet:graph-update", buildGraph()); } catch (e) { /* dev only */ }
+    rpcCall("unworklet:graph-update", buildGraph());
   });
 };
 
@@ -1075,7 +1084,7 @@ const pollState = async () => {
       const { scalars, buffers } = splitSlots(slots, BUFFER_MAX_POINTS);
       nodes.push({ id: idOf(h.node.node), displayName: h.displayName || h.processorName, scalars, buffers });
     }
-    if (client) { try { client.rpc.call("unworklet:state-update", { nodes }); } catch (e) { /* dev only */ } }
+    rpcCall("unworklet:state-update", { nodes });
   } finally {
     statePolling = false;
   }
@@ -1146,7 +1155,7 @@ const pollSignals = async () => {
   const context = actx
     ? { sampleRate: actx.sampleRate || 0, baseLatencyMs: (actx.baseLatency || 0) * 1000, outputLatencyMs: (actx.outputLatency || 0) * 1000 }
     : { sampleRate: 0, baseLatencyMs: 0, outputLatencyMs: 0 };
-  try { client.rpc.call("unworklet:signals-update", { nodes, context }); } catch (e) { /* dev only */ }
+  rpcCall("unworklet:signals-update", { nodes, context });
 };
 let signalsTimer = null;
 const startSignalsPoll = () => {
@@ -1236,7 +1245,7 @@ const pollMidi = () => {
   const sig = JSON.stringify({ ports, log: midiLog });
   if (sig === lastMidiSig) return;
   lastMidiSig = sig;
-  try { client.rpc.call("unworklet:midi-update", { ports, log: midiLog }); } catch (e) { /* dev only */ }
+  rpcCall("unworklet:midi-update", { ports, log: midiLog });
 };
 let midiTimer = null;
 const startMidiPoll = () => {
