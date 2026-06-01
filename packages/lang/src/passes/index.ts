@@ -21,6 +21,17 @@ const f = ts.factory;
 const callMethod = (obj: ts.Expression, name: string, args: ts.Expression[]): ts.CallExpression =>
   f.createCallExpression(f.createPropertyAccessExpression(obj, name), undefined, args);
 
+/**
+ * Lower an index / value operand, read-wrapping a bare `State`. The operator pass
+ * read-wraps operator operands, but a direct `buf[wi]` index (or `buf[i] = s`
+ * value) has no operator and no contextual type for the bare-state pass to fire
+ * on, so it would otherwise pass a `State` handle where a `Node` is expected.
+ */
+function operand(checker: ts.TypeChecker, e: ts.Expression, visit: ts.Visitor): ts.Expression {
+  const visited = ts.visitNode(e, visit) as ts.Expression;
+  return classify(checker, e) === "state" ? callMethod(visited, "read", []) : visited;
+}
+
 export function tryIndex(
   checker: ts.TypeChecker,
   node: ts.Node,
@@ -35,8 +46,8 @@ export function tryIndex(
     const el = node.left;
     const cls = classify(checker, el.expression);
     const obj = ts.visitNode(el.expression, visit) as ts.Expression;
-    const idx = ts.visitNode(el.argumentExpression, visit) as ts.Expression;
-    const val = ts.visitNode(node.right, visit) as ts.Expression;
+    const idx = operand(checker, el.argumentExpression, visit);
+    const val = operand(checker, node.right, visit);
     if (cls === "outputChannel") return callMethod(callMethod(obj, "at", [idx]), "write", [val]);
     if (cls === "buffer") return callMethod(obj, "write", [idx, val]);
   }
@@ -45,7 +56,7 @@ export function tryIndex(
   if (ts.isElementAccessExpression(node)) {
     const cls = classify(checker, node.expression);
     const obj = ts.visitNode(node.expression, visit) as ts.Expression;
-    const idx = ts.visitNode(node.argumentExpression, visit) as ts.Expression;
+    const idx = operand(checker, node.argumentExpression, visit);
     if (cls === "inputChannel" || cls === "param") return callMethod(obj, "at", [idx]);
     if (cls === "buffer") return callMethod(obj, "read", [idx]);
   }
