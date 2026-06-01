@@ -150,13 +150,19 @@ export function tryPrev(
       f.createExpressionStatement(method(id(slot), "write", [r])),
       f.createReturnStatement(r),
     ];
+    // Wrap EVERY return with the store-then-return, including nested ones: a
+    // build-time `if (b) return x;` early-return must advance the slot too, or
+    // that path leaves `$prev` stale. Stop at function boundaries — a return
+    // inside a nested closure is not this method's return value.
+    const wrapReturns = (n: ts.Node): ts.Node => {
+      if (ts.isFunctionLike(n)) return n;
+      if (ts.isReturnStatement(n) && n.expression !== undefined) {
+        return f.createBlock(storeReturn(n.expression), true);
+      }
+      return ts.visitEachChild(n, wrapReturns, context);
+    };
     const block = ts.isBlock(replaced)
-      ? f.createBlock(
-          replaced.statements.flatMap((s) =>
-            ts.isReturnStatement(s) && s.expression !== undefined ? storeReturn(s.expression) : [s],
-          ),
-          true,
-        )
+      ? (ts.visitNode(replaced, wrapReturns) as ts.Block)
       : f.createBlock(storeReturn(replaced as ts.Expression), true);
     const newFn = f.createArrowFunction(
       fn.modifiers,

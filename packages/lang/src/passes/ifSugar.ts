@@ -18,6 +18,7 @@
 import ts from "typescript";
 
 import { classify, isDspExpr } from "../classify.ts";
+import { LowerError } from "../lower.ts";
 
 const f = ts.factory;
 const method = (obj: ts.Expression, name: string, args: ts.Expression[]): ts.Expression =>
@@ -25,6 +26,20 @@ const method = (obj: ts.Expression, name: string, args: ts.Expression[]): ts.Exp
 const exprStmt = (e: ts.Expression): ts.Statement => f.createExpressionStatement(e);
 const select = (c: ts.Expression, x: ts.Expression, y: ts.Expression): ts.Expression =>
   f.createCallExpression(f.createIdentifier("select"), undefined, [c, x, y]);
+
+// A Node<'bool'>-conditioned `if` that matches none of the three shapes cannot be
+// left as a build-time `if`: a `.uwk.ts` file is `@ts-nocheck`, so the condition is
+// a truthy DSP object at graph-capture time and only the then-branch would run —
+// silently producing wrong audio. Refuse it with guidance instead.
+const unsupportedDspIf = (): never => {
+  throw new LowerError(
+    "uwk-unsupported-if",
+    "an `if` with a Node<'bool'> condition lowers only as a single state/buffer write " +
+      "(optionally a symmetric `if`/`else` writing the same target) or guarded port.emit(...) " +
+      "calls. Rewrite this branch into one of those shapes, or compute the value directly with " +
+      "select(cond, whenTrue, whenFalse).",
+  );
+};
 
 type Write =
   | { kind: "state"; target: ts.Expression; value: ts.Expression }
@@ -140,7 +155,7 @@ export function tryIfSugar(
       const w = detectWrite(checker, then[0]!);
       if (w !== undefined) return writeWith(w, select(cond, v(w.value), writeRead(w)));
     }
-    return undefined;
+    return unsupportedDspIf();
   }
 
   // Shape 2: symmetric if-else to the same target.
@@ -153,5 +168,5 @@ export function tryIfSugar(
       return writeWith(tw, select(cond, v(tw.value), v(ew.value)));
     }
   }
-  return undefined;
+  return unsupportedDspIf();
 }

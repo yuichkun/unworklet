@@ -839,3 +839,42 @@ const s = createSubgraph(sg, f32(0.5), { name: "s" });`,
   expect(out).not.toMatch(/__prev_/);
   expect(out).not.toMatch(/state\.f32/);
 });
+
+// ──────────────── nested return advances the slot (build-time branch) ─────────
+// A $prev method whose returned value sits inside a nested branch must store the
+// slot on THAT path too. `if (true)` is the meta-program path: the captured return
+// is the nested one, so wrapping only direct returns would never write the slot
+// and the feedback would silently vanish. (Reported by @codex on #12.)
+
+function nestedIirRef(x: Float32Array, fb: number): Float32Array {
+  const y = new Float32Array(x.length);
+  let prev = 0;
+  for (let n = 0; n < x.length; n++) {
+    const v = fr(x[n]! + fr(prev * fb)); // x + ($prev * fb), f32 per op
+    y[n] = v;
+    prev = v;
+  }
+  return y;
+}
+
+test("SEMANTIC $prev in a build-time branch's nested return still feeds back", async () => {
+  const x = ramp();
+  const got = await renderMono(
+    `
+const sg = defineSubgraph(() => ({
+  run: (x: Node<"f32">) => {
+    if (true) return x + $prev * 0.5;
+    return x;
+  },
+}));
+const s = createSubgraph(sg, { name: "s" });`,
+    `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
+    x,
+  );
+  const ref = nestedIirRef(x, 0.5);
+  // With the bug (only direct returns wrapped) the slot is never written and the
+  // output collapses to x[n] with no feedback — this pins the recurrence instead.
+  for (let n = 0; n < N; n++) expect(got[n]!).toBeCloseTo(ref[n]!, 4);
+  // Sanity: the feedback term moves the output away from the raw input.
+  expect(got[5]!).not.toBeCloseTo(fr(x[5]!), 4);
+});

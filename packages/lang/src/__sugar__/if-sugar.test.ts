@@ -21,7 +21,8 @@
 
 import { expect, test } from "vite-plus/test";
 
-import { expectSameLowering, renderLowered } from "../goldenHarness.ts";
+import { expectSameLowering, lower, renderLowered } from "../goldenHarness.ts";
+import { LowerError } from "../lower.ts";
 
 const SR = 48000;
 const N = 128;
@@ -518,20 +519,22 @@ test("js-if: behavior — a build-time guard that is FALSE drops the write entir
 // (these are unsupported by if-sugar; the pass returns undefined)
 // ───────────────────────────────────────────────────────────────────────────
 
-test("no-lower: asymmetric if-else to DIFFERENT targets is NOT a select", async () => {
-  // Different write targets ⇒ sameTarget() is false ⇒ pass returns undefined.
-  // The explicit ground truth is the same if-statement with the condition lowered
-  // (the operator pass still rewrites `>` even though if-sugar declines the body).
-  await expectSameLowering(
-    mono(
-      "const a = state.f32(0).named('a');\nconst b = state.f32(0).named('b');",
-      `if (input.ch(0).at(i) > 0) a.write(f32(1)); else b.write(f32(2));`,
-    ),
-    mono(
-      "const a = state.f32(0).named('a');\nconst b = state.f32(0).named('b');",
-      `if (gt(input.ch(0).at(i), 0)) a.write(f32(1)); else b.write(f32(2));`,
-    ),
+test("reject: asymmetric if-else to DIFFERENT targets throws (would silently drop a branch)", () => {
+  // Different write targets ⇒ sameTarget() is false ⇒ no select shape. Leaving it as
+  // a build-time `if` is the footgun if-sugar exists to prevent: the forSample body
+  // runs once at capture, where the Node<'bool'> condition is a truthy object, so
+  // only `a.write(1)` would ever be compiled and `b.write(2)` is silently dropped.
+  // Refuse it instead. (Reported by @codex on #12.)
+  const src = mono(
+    "const a = state.f32(0).named('a');\nconst b = state.f32(0).named('b');",
+    `if (input.ch(0).at(i) > 0) a.write(f32(1)); else b.write(f32(2));`,
   );
+  expect(() => lower(src)).toThrow(LowerError);
+  try {
+    lower(src);
+  } catch (e) {
+    expect((e as LowerError).id).toBe("uwk-unsupported-if");
+  }
 });
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -609,4 +612,33 @@ test("adversarial: i64 behavior — selects the right BigInt branch through to f
     "const m = state.i64(0n).named('m');",
   );
   for (let n = 0; n < N; n++) expect(got[n]).toBeCloseTo(f32(x[n]!) > 0 ? 7 : 3, 5);
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// rejection — a Node<'bool'> condition that matches NONE of the three shapes is
+// refused, NOT left as a build-time `if`. A `.uwk.ts` file is `@ts-nocheck`, so
+// at graph-capture time the condition is a truthy DSP object and a JS `if` would
+// silently capture only the then-branch → wrong audio. (Reported by @codex on #12.)
+// ───────────────────────────────────────────────────────────────────────────
+
+test("reject: a DSP-cond if with two different writes throws (not silently dropped)", () => {
+  const src = mono(
+    "const s = state.f32(0).named('s');\nconst t = state.f32(0).named('t');",
+    `if (input.ch(0).at(i) > 0) { s.write(input.ch(0).at(i)); t.write(input.ch(0).at(i)); }`,
+  );
+  expect(() => lower(src)).toThrow(LowerError);
+  try {
+    lower(src);
+  } catch (e) {
+    expect((e as LowerError).id).toBe("uwk-unsupported-if");
+  }
+});
+
+test("accept: a JS-boolean if stays a build-time branch (the guard only fires on Node<'bool'>)", () => {
+  // A plain JS condition is the meta-program path: it must NOT trip the new guard.
+  const src = mono(
+    "const s = state.f32(0).named('s');",
+    `if (1 > 0) s.write(input.ch(0).at(i)); else s.write(0);`,
+  );
+  expect(() => lower(src)).not.toThrow();
 });
