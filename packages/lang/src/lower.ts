@@ -13,6 +13,7 @@
 
 import ts from "typescript";
 
+import { autoNameDeclaration } from "./passes/autoName.ts";
 import { sugarTransformer } from "./passes/sugar.ts";
 import { buildProgram } from "./program.ts";
 
@@ -285,7 +286,7 @@ export function lower(source: string, options: LowerOptions = {}): string {
       optionsObject = macro.call.arguments[0];
       continue;
     }
-    declarations.push(stmt);
+    declarations.push(autoNameDeclaration(stmt));
   }
 
   if (processCount === 0) {

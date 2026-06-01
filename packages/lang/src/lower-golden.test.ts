@@ -258,3 +258,35 @@ process(() => {
 
   await expectByteIdentical(uwk, tierA);
 });
+
+test("auto-name: name-required helpers derive their name from the binding", async () => {
+  const uwk = `
+const input = audioInput({ channels: 1 });
+const out = audioOutput({ channels: 1 });
+const cutoff = param.f32({ default: 0.5, min: 0, max: 1, automationRate: "a-rate" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(input.ch(0).at(i) * cutoff.at(i));
+  });
+});
+`;
+  const tierA = defineProcessor(() => {
+    const input = core.audioInput({ channels: 1, name: "input" });
+    const out = core.audioOutput({ channels: 1, name: "out" });
+    const cutoff = core.param
+      .f32({ default: 0.5, min: 0, max: 1, automationRate: "a-rate" })
+      .named("cutoff");
+    return {
+      process: () => {
+        core.forSample((i) => {
+          out
+            .ch(0)
+            .at(i)
+            .write(core.mul(input.ch(0).at(i), cutoff.at(i)));
+        });
+      },
+    };
+  });
+
+  await expectByteIdentical(uwk, tierA);
+});
