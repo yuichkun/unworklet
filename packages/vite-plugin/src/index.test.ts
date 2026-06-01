@@ -1636,7 +1636,7 @@ test("devtools.setup registers a single dock entry at the `/__unworklet/` static
   expect(ctx.views.__hostStaticCalls[0]!.urlBase).toBe("/__unworklet/");
 });
 
-test("devtools.setup wires the graph + live-state shared states and their update RPCs", async () => {
+test("devtools.setup wires the graph + live-state + signals shared states and their update RPCs", async () => {
   const plugin = unworklet();
   const setup = (plugin as unknown as { devtools?: { setup: (ctx: unknown) => Promise<void> } })
     .devtools?.setup;
@@ -1646,7 +1646,9 @@ test("devtools.setup wires the graph + live-state shared states and their update
   await setup!(ctx);
   expect(ctx.rpc.__sharedStateGets).toContain("unworklet:graph");
   expect(ctx.rpc.__sharedStateGets).toContain("unworklet:state");
+  expect(ctx.rpc.__sharedStateGets).toContain("unworklet:signals");
   const registered = ctx.rpc.__registerCalls.map((f) => (f as { name: string }).name);
   expect(registered).toContain("unworklet:graph-update");
   expect(registered).toContain("unworklet:state-update");
+  expect(registered).toContain("unworklet:signals-update");
 });

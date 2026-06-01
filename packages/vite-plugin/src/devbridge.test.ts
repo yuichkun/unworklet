@@ -1,6 +1,15 @@
 import { expect, test } from "vite-plus/test";
 
-import { type DevSlotType, foldProxyGraph, type RawSlot, splitSlots } from "./devbridge.ts";
+import {
+  type DevSlotType,
+  downsampleTo,
+  foldProxyGraph,
+  frameLevels,
+  normalizeFreqDb,
+  type RawSlot,
+  slotMemory,
+  splitSlots,
+} from "./devbridge.ts";
 
 // ── byte builders (black-box: construct the raw LE bytes devDump would return) ──
 
@@ -141,4 +150,71 @@ test("foldProxyGraph: a chain through two proxies folds to direct edges, no self
     { id: "mix>tape", from: "mix", to: "tape" },
     { id: "tape>crush", from: "tape", to: "crush" },
   ]);
+});
+
+// ── frameLevels ─────────────────────────────────────────────────────────────
+
+test("frameLevels: rms + absolute peak over a time frame", () => {
+  // [-1, 1, -1, 1] → rms = 1, peak = 1.
+  expect(frameLevels([-1, 1, -1, 1])).toEqual({ rms: 1, peak: 1 });
+  // DC at 0.5 → rms = 0.5, peak = 0.5.
+  expect(frameLevels([0.5, 0.5, 0.5, 0.5])).toEqual({ rms: 0.5, peak: 0.5 });
+  // peak tracks the largest magnitude regardless of sign.
+  expect(frameLevels([0, -0.8, 0.2]).peak).toBeCloseTo(0.8, 6);
+});
+
+test("frameLevels: empty frame is silent, not NaN", () => {
+  expect(frameLevels([])).toEqual({ rms: 0, peak: 0 });
+});
+
+// ── downsampleTo ────────────────────────────────────────────────────────────
+
+test("downsampleTo: frames at/under the target pass through unchanged", () => {
+  expect(downsampleTo([1, 2, 3], 4)).toEqual([1, 2, 3]);
+  expect(downsampleTo([1, 2, 3], 3)).toEqual([1, 2, 3]);
+});
+
+test("downsampleTo: stride-decimates a longer frame to the target length", () => {
+  const src = Array.from({ length: 100 }, (_, i) => i);
+  const out = downsampleTo(src, 10);
+  expect(out).toHaveLength(10);
+  // stride = 10 → first picks are 0, 10, 20, ...
+  expect(out[0]).toBe(0);
+  expect(out[1]).toBe(10);
+  expect(out[9]).toBe(90);
+});
+
+test("downsampleTo: zero points yields an empty frame", () => {
+  expect(downsampleTo([1, 2, 3], 0)).toEqual([]);
+});
+
+// ── normalizeFreqDb ─────────────────────────────────────────────────────────
+
+test("normalizeFreqDb: maps dB into 0..1 over [minDb, maxDb] and clamps", () => {
+  // minDb=-100, maxDb=-30, span=70. -65 dB → (−65 − −100)/70 = 0.5.
+  const out = normalizeFreqDb([-30, -65, -100, -140, 0], 5, -100, -30);
+  expect(out[0]).toBeCloseTo(1, 6); // -30 → top
+  expect(out[1]).toBeCloseTo(0.5, 6); // -65 → mid
+  expect(out[2]).toBeCloseTo(0, 6); // -100 → floor
+  expect(out[3]).toBe(0); // -140 clamps to 0
+  expect(out[4]).toBe(1); // 0 dB clamps to 1
+});
+
+// ── slotMemory ──────────────────────────────────────────────────────────────
+
+test("slotMemory: bytes per slot come from the real dumped byte length", () => {
+  const slots: RawSlot[] = [
+    { name: "phase", kind: "state", type: "f32", data: scalarBytes("f32", 0.5) }, // 4 B
+    { name: "count", kind: "state", type: "i64", data: scalarBytes("i64", 7n) }, // 8 B
+    { name: "delayLine", kind: "buffer", type: "f32", data: f32BufferBytes([0, 0, 0, 0]) }, // 16 B
+    { name: "pattern", kind: "buffer", type: "u8", data: u8BufferBytes([1, 2, 3]) }, // 3 B
+  ];
+  const { entries, totalBytes } = slotMemory(slots);
+  expect(entries).toEqual([
+    { name: "phase", kind: "state", bytes: 4 },
+    { name: "count", kind: "state", bytes: 8 },
+    { name: "delayLine", kind: "buffer", bytes: 16 },
+    { name: "pattern", kind: "buffer", bytes: 3 },
+  ]);
+  expect(totalBytes).toBe(31);
 });

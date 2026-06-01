@@ -90,10 +90,44 @@ export type DevNodeState = {
 };
 export type DevLiveState = { nodes: DevNodeState[] };
 
+// ─────────────────────────────────────────────────────────────────────────
+// DevTools signals (AnalyserNode taps + declared memory)
+// ─────────────────────────────────────────────────────────────────────────
+//
+// The page-script taps an AnalyserNode on each unworklet output port and pushes
+// the live scope (time domain), normalized spectrum (frequency domain), and
+// RMS/peak levels here via `unworklet:signals-update`. `memory` is the static
+// declared linear-memory layout from a one-shot devDump. Per-node DSP timing is
+// intentionally absent — it is not observable from the main thread; the panel
+// surfaces the AudioContext's reported latencies instead.
+
+export type DevSignalsPort = {
+  name: string;
+  /** Downsampled time-domain scope, samples in [-1, 1]. */
+  time: number[];
+  /** Normalized spectrum bins in [0, 1]. */
+  freq: number[];
+  rms: number;
+  peak: number;
+};
+export type DevSignalsMemoryEntry = { name: string; kind: string; bytes: number };
+export type DevSignalsNode = {
+  id: string;
+  displayName: string;
+  ports: DevSignalsPort[];
+  memory: DevSignalsMemoryEntry[];
+  memoryBytes: number;
+};
+export type DevSignalsState = {
+  nodes: DevSignalsNode[];
+  context: { sampleRate: number; baseLatencyMs: number; outputLatencyMs: number };
+};
+
 declare module "@vitejs/devtools-kit" {
   interface DevToolsRpcSharedStates {
     "unworklet:graph": DevAudioGraph;
     "unworklet:state": DevLiveState;
+    "unworklet:signals": DevSignalsState;
   }
 }
 
@@ -591,6 +625,29 @@ const setupDevtools = async (
     }),
   });
   ctx.rpc.register(stateUpdate as Parameters<typeof ctx.rpc.register>[0]);
+
+  // Signals — the page-script taps an AnalyserNode per output port and pushes
+  // the live scope / spectrum / levels + declared memory here; the Signals
+  // panel reads `unworklet:signals`.
+  const signalsState = await ctx.rpc.sharedState.get("unworklet:signals", {
+    initialValue: {
+      nodes: [],
+      context: { sampleRate: 0, baseLatencyMs: 0, outputLatencyMs: 0 },
+    },
+  });
+  const signalsUpdate = defineRpcFunction({
+    name: "unworklet:signals-update",
+    type: "action",
+    setup: () => ({
+      handler: async (signals: DevSignalsState): Promise<void> => {
+        signalsState.mutate((draft) => {
+          draft.nodes = signals.nodes;
+          draft.context = signals.context;
+        });
+      },
+    }),
+  });
+  ctx.rpc.register(signalsUpdate as Parameters<typeof ctx.rpc.register>[0]);
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -842,7 +899,7 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
         return `
 import { getDevNodes, onDevNodesChanged } from "@unworklet/core/dev";
 import { decodeScalar, decodeTypedArray } from "@unworklet/core";
-import { foldProxyGraph, splitSlots } from "@unworklet/vite-plugin/devbridge";
+import { downsampleTo, foldProxyGraph, frameLevels, normalizeFreqDb, slotMemory, splitSlots } from "@unworklet/vite-plugin/devbridge";
 import { getDevToolsClientContext } from "@vitejs/devtools-kit/client";
 
 globalThis.__unworklet_getDevNodes = getDevNodes;
@@ -905,7 +962,7 @@ let polls = 0;
 const ensureClient = () => {
   if (client) return;
   client = getDevToolsClientContext() || null;
-  if (client) { push(); startStatePoll(); return; }
+  if (client) { push(); startStatePoll(); startSignalsPoll(); return; }
   if (polls++ < 40) setTimeout(ensureClient, 100);
 };
 
@@ -942,6 +999,74 @@ const startStatePoll = () => {
     stateTimer = setTimeout(loop, STATE_POLL_MS);
   };
   stateTimer = setTimeout(loop, STATE_POLL_MS);
+};
+
+// Signals X-ray: tap an AnalyserNode on every unworklet output port and stream
+// the live scope (time domain) + spectrum (frequency domain) + levels to the
+// server. The analyser is a fan-out branch — it observes the signal without
+// altering what reaches the speakers. Memory is a static one-shot devDump.
+const SIGNALS_POLL_MS = 33;
+const SCOPE_POINTS = 256;
+const SPECTRUM_POINTS = 128;
+const analysersByNode = new WeakMap();
+const memoryByNode = new Map();
+const ensureAnalysers = (awn, outputs) => {
+  let map = analysersByNode.get(awn);
+  if (map) return map;
+  map = new Map();
+  const actx = awn.context;
+  const names = Object.keys(outputs || {});
+  const count = awn.numberOfOutputs || 0;
+  for (let i = 0; i < count; i++) {
+    const name = names[i] || ("out" + i);
+    try {
+      const analyser = actx.createAnalyser();
+      analyser.fftSize = 1024;
+      analyser.smoothingTimeConstant = 0.4;
+      awn.connect(analyser, i, 0);
+      map.set(name, { analyser, time: new Float32Array(analyser.fftSize), freq: new Float32Array(analyser.frequencyBinCount) });
+    } catch (e) { /* dev only: a node may reject the extra fan-out, skip it */ }
+  }
+  analysersByNode.set(awn, map);
+  return map;
+};
+let signalsBusy = false;
+const pollSignals = async () => {
+  if (!client) return;
+  const nodes = [];
+  let actx = null;
+  for (const h of getDevNodes()) {
+    const awn = h.node.node;
+    actx = awn.context;
+    const id = idOf(awn);
+    const map = ensureAnalysers(awn, h.node.outputs);
+    const ports = [];
+    for (const [name, slot] of map) {
+      slot.analyser.getFloatTimeDomainData(slot.time);
+      slot.analyser.getFloatFrequencyData(slot.freq);
+      const lv = frameLevels(slot.time);
+      ports.push({ name, time: downsampleTo(slot.time, SCOPE_POINTS), freq: normalizeFreqDb(slot.freq, SPECTRUM_POINTS), rms: lv.rms, peak: lv.peak });
+    }
+    let mem = memoryByNode.get(id);
+    if (!mem) {
+      try { mem = slotMemory(await h.devDump()); memoryByNode.set(id, mem); }
+      catch (e) { mem = { entries: [], totalBytes: 0 }; }
+    }
+    nodes.push({ id, displayName: h.displayName || h.processorName, ports, memory: mem.entries, memoryBytes: mem.totalBytes });
+  }
+  const context = actx
+    ? { sampleRate: actx.sampleRate || 0, baseLatencyMs: (actx.baseLatency || 0) * 1000, outputLatencyMs: (actx.outputLatency || 0) * 1000 }
+    : { sampleRate: 0, baseLatencyMs: 0, outputLatencyMs: 0 };
+  try { client.rpc.call("unworklet:signals-update", { nodes, context }); } catch (e) { /* dev only */ }
+};
+let signalsTimer = null;
+const startSignalsPoll = () => {
+  if (signalsTimer !== null) return;
+  const loop = async () => {
+    if (!signalsBusy) { signalsBusy = true; try { await pollSignals(); } finally { signalsBusy = false; } }
+    signalsTimer = setTimeout(loop, SIGNALS_POLL_MS);
+  };
+  signalsTimer = setTimeout(loop, SIGNALS_POLL_MS);
 };
 
 const AN = AudioNode.prototype;

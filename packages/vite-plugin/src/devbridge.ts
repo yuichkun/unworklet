@@ -110,3 +110,84 @@ export function foldProxyGraph<T extends { id: string }>(
   }
   return { nodes: outNodes, edges: outEdges };
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Signals panel transforms (= the DevTools page-script taps an AnalyserNode on
+// each unworklet output and turns its time/frequency frames into JSON-light
+// scope data). All pure + unit-tested here, away from the page-script string.
+// ─────────────────────────────────────────────────────────────────────────
+
+export type SignalLevels = { rms: number; peak: number };
+
+/**
+ * RMS + absolute peak of a time-domain frame. Computed on the full-resolution
+ * frame (before any display downsample) so the peak is never under-reported.
+ */
+export function frameLevels(time: ArrayLike<number>): SignalLevels {
+  const n = time.length;
+  if (n === 0) return { rms: 0, peak: 0 };
+  let sumSq = 0;
+  let peak = 0;
+  for (let i = 0; i < n; i++) {
+    const v = time[i] as number;
+    const a = v < 0 ? -v : v;
+    if (a > peak) peak = a;
+    sumSq += v * v;
+  }
+  return { rms: Math.sqrt(sumSq / n), peak };
+}
+
+/**
+ * Stride-decimate a numeric frame down to at most `points` samples for the
+ * wire. Frames already at/under the target pass through unchanged.
+ */
+export function downsampleTo(src: ArrayLike<number>, points: number): number[] {
+  const n = src.length;
+  if (points <= 0) return [];
+  if (n <= points) return Array.from(src as ArrayLike<number>, Number);
+  const stride = n / points;
+  return Array.from({ length: points }, (_, i) => Number(src[Math.floor(i * stride)]));
+}
+
+/**
+ * Map an AnalyserNode `getFloatFrequencyData` frame (dB magnitudes, typically
+ * ~ -140..0) into 0..1 over `[minDb, maxDb]`, decimated to `points` bins.
+ * Out-of-range values clamp so the heatmap LUT never indexes out of bounds.
+ */
+export function normalizeFreqDb(
+  freqDb: ArrayLike<number>,
+  points: number,
+  minDb = -100,
+  maxDb = -30,
+): number[] {
+  const n = freqDb.length;
+  if (points <= 0 || n === 0) return [];
+  const span = maxDb - minDb || 1;
+  const take = Math.min(points, n);
+  const stride = n / take;
+  return Array.from({ length: take }, (_, i) => {
+    const db = Number(freqDb[Math.floor(i * stride)]);
+    const norm = (db - minDb) / span;
+    return norm < 0 ? 0 : norm > 1 ? 1 : norm;
+  });
+}
+
+export type MemoryEntry = { name: string; kind: string; bytes: number };
+
+/**
+ * Declared linear-memory footprint of a node's dumped slots: each slot's byte
+ * count is the real length of the bytes `devDump()` copied out of WASM memory.
+ * This is the actual static layout, not an estimate.
+ */
+export function slotMemory(slots: readonly RawSlot[]): {
+  entries: MemoryEntry[];
+  totalBytes: number;
+} {
+  let totalBytes = 0;
+  const entries = slots.map((s) => {
+    const bytes = s.data.byteLength;
+    totalBytes += bytes;
+    return { name: s.name, kind: s.kind, bytes };
+  });
+  return { entries, totalBytes };
+}
