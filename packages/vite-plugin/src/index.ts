@@ -1011,6 +1011,7 @@ const buildGraph = () => {
   // proxies out so the graph shows exactly the connections the app wrote.
   const uw = new Map();        // AudioWorkletNode -> { label, inputs, outputs }
   const proxyOwner = {};       // proxyGainId -> owning unworklet node id
+  const liveIds = new Set();   // node ids that should remain in the graph
   for (const h of getDevNodes()) {
     const awn = h.node.node;
     const ins = h.node.inputs || {};
@@ -1020,16 +1021,24 @@ const buildGraph = () => {
       outputs: Object.keys(h.node.outputs || {}),
     });
     const ownerId = idOf(awn);
-    for (const k in ins) { const g = ins[k]; if (g) proxyOwner[idOf(g)] = ownerId; }
+    liveIds.add(ownerId);
+    for (const k in ins) { const g = ins[k]; if (g) { proxyOwner[idOf(g)] = ownerId; liveIds.add(idOf(g)); } }
   }
+  // A node stays in the graph only while it is a live unworklet node, one of its
+  // input proxies, or an endpoint of a current edge. Anything else (a disposed
+  // node, a disconnected standard node) is dropped — and freed from the seen/ids
+  // maps so the capture doesn't leak every AudioNode for the page's lifetime.
+  for (const e of edges.values()) { liveIds.add(e.from); liveIds.add(e.to); }
   const rawNodes = [];
-  for (const n of seen) {
+  for (const n of [...seen]) {
+    const id = idOf(n);
+    if (!liveIds.has(id)) { seen.delete(n); ids.delete(n); continue; }
     const meta = uw.get(n);
     const type = (n.constructor && n.constructor.name) || "AudioNode";
     if (meta) {
-      rawNodes.push({ id: idOf(n), label: meta.label, kind: "unworklet", audioNodeType: type, inputs: meta.inputs, outputs: meta.outputs });
+      rawNodes.push({ id, label: meta.label, kind: "unworklet", audioNodeType: type, inputs: meta.inputs, outputs: meta.outputs });
     } else {
-      rawNodes.push({ id: idOf(n), label: type, kind: "standard", audioNodeType: type });
+      rawNodes.push({ id, label: type, kind: "standard", audioNodeType: type });
     }
   }
   return foldProxyGraph(rawNodes, [...edges.values()], proxyOwner);
@@ -1125,7 +1134,7 @@ const ensureAnalysers = (awn, outputs) => {
       // below doesn't capture this devtools-owned tap as an application edge
       // (it would otherwise add a phantom AnalyserNode to the Audio Graph).
       realConnect.call(awn, analyser, i, 0);
-      map.set(name, { analyser, time: new Float32Array(analyser.fftSize), freq: new Float32Array(analyser.frequencyBinCount) });
+      map.set(name, { analyser, index: i, time: new Float32Array(analyser.fftSize), freq: new Float32Array(analyser.frequencyBinCount) });
     } catch (e) { /* dev only: a node may reject the extra fan-out, skip it */ }
   }
   analysersByNode.set(awn, map);
@@ -1264,30 +1273,44 @@ AN.connect = function (target) {
   const r = realConnect.apply(this, arguments);
   if (target instanceof AudioNode) {
     const from = idOf(this), to = idOf(target);
-    // Track the source output index so a numeric disconnect(output) can drop the
-    // right edges. The graph id stays from>to (foldProxyGraph dedups on it); the
-    // map key carries the output so multiple outputs to one target coexist.
+    // Track the source output AND destination input so disconnect overloads drop
+    // exactly the right edges. The graph id stays from>to (foldProxyGraph dedups
+    // on it); the map key carries out:in so parallel connections coexist.
     const out = (typeof arguments[1] === "number") ? arguments[1] : 0;
-    edges.set(from + ">" + to + "#" + out, { id: from + ">" + to, from, to, out });
+    const inp = (typeof arguments[2] === "number") ? arguments[2] : 0;
+    edges.set(from + ">" + to + "#" + out + ":" + inp, { id: from + ">" + to, from, to, out, in: inp });
     push();
   }
   return r;
+};
+// Re-attach a node's DevTools analyser tap(s) after the app's own disconnect
+// severs them — a tap shares the node's output, so disconnect() / disconnect(output)
+// cut it too, and ensureAnalysers() returns the cached (now-detached) analyser.
+// Without this the Signals panel would poll a dead analyser and show stale data.
+const reattachTaps = (node, outputIndex) => {
+  const map = analysersByNode.get(node);
+  if (!map) return;
+  for (const slot of map.values()) {
+    if (outputIndex !== null && slot.index !== outputIndex) continue;
+    try { realConnect.call(node, slot.analyser, slot.index, 0); } catch (e) { /* dev only */ }
+  }
 };
 AN.disconnect = function (target) {
   const r = realDisconnect.apply(this, arguments);
   const from = idOf(this);
   // Mirror every AudioNode.disconnect overload so the captured graph never keeps
-  // an edge the real graph dropped — including disconnect(outputIndex), which
-  // node.outputs.<name>.disconnect() routes through.
+  // an edge the real graph dropped.
   const removeWhere = (pred) => {
     for (const [k, e] of [...edges]) if (e.from === from && pred(e)) edges.delete(k);
   };
-  if (arguments.length === 0) removeWhere(() => true);
-  else if (typeof target === "number") removeWhere((e) => e.out === target);
+  if (arguments.length === 0) { removeWhere(() => true); reattachTaps(this, null); }
+  else if (typeof target === "number") { removeWhere((e) => e.out === target); reattachTaps(this, target); }
   else if (target instanceof AudioNode) {
     const to = idOf(target);
     const out = (typeof arguments[1] === "number") ? arguments[1] : null;
-    removeWhere((e) => e.to === to && (out === null || e.out === out));
+    const inp = (typeof arguments[2] === "number") ? arguments[2] : null;
+    removeWhere((e) => e.to === to && (out === null || e.out === out) && (inp === null || e.in === inp));
+    // disconnect(destinationNode, ...) targets the destination, never the tap.
   }
   push();
   return r;
