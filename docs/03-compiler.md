@@ -171,17 +171,17 @@ A separate runtime check (not graph-capture / static-analysis) fires when the wo
 
 ### 2.7 要対応: 共通部分式の再評価 (CSE) — [#8](https://github.com/yuichkun/unworklet/issues/8)
 
-graph capture が生む `Node<T>` AST は共有部分木を持つ DAG だが、emit は同じ `Node<T>` 式を複数回参照すると **参照ごとに式を再評価する**（共通部分式除去 = CSE をしない）。式が `state.load()` を含み、その間に同じ slot への `store` が挟まると、後続の参照が **store 後の値** を読んで結果が壊れる。
+graph capture が生む `Node<T>` AST は共有部分木を持つ DAG だが、emit は同じ `Node<T>` 式を複数回参照すると **参照ごとに式を再評価する**（共通部分式除去 = CSE をしない）。式が `state.read()` を含み、その間に同じ slot への `store` が挟まると、後続の参照が **store 後の値** を読んで結果が壊れる。
 
 最小例:
 
 ```ts
-const y = s.load().add(10); // y = いまの s + 10
-s.store(100); // s を 100 に
+const y = s.read().add(10); // y = いまの s + 10
+s.write(100); // s を 100 に
 out.ch(0).at(i).write(y); // 期待 10 / 実際 110 (out の y 再評価で s=100 を読む)
 ```
 
-canonical Ex2 の biquad (Direct Form II Transposed) もこれで壊れる: `y = b0·x + z1.load()` を z1n / z2n / return で 3 回使い、間に `z1.store()` が挟まるため、impulse 応答の先頭が `0.2929` (正) → `0.8787` (= store 後の z1 `0.5858` を足し込んだ値) になる。state フィードバックを持つ DSP (biquad / 1 次 LPF / 積分器) を自然な形で書くと全て踏む。
+canonical Ex2 の biquad (Direct Form II Transposed) もこれで壊れる: `y = b0·x + z1.read()` を z1n / z2n / return で 3 回使い、間に `z1.write()` が挟まるため、impulse 応答の先頭が `0.2929` (正) → `0.8787` (= store 後の z1 `0.5858` を足し込んだ値) になる。state フィードバックを持つ DSP (biquad / 1 次 LPF / 積分器) を自然な形で書くと全て踏む。
 
 **要件**: emit は共有 `Node<T>` 部分木を 1 度だけ計算して local に置き、各参照で使い回す (= DAG の共有を保つ)。これは state フィードバック DSP を教科書通りの自然な形で書けるための必須修正。回避策 (= 同じ slot への store を `forSample` の末尾にまとめる) は踏みやすく、canonical すら踏んでいたため不採用。tracking: [#8](https://github.com/yuichkun/unworklet/issues/8)。
 

@@ -66,8 +66,8 @@ const partitionedReverb = defineProcessor((ctx) => {
   return {
     process: () => {
       // Per-block code: advance partition pointer, run partitioned FFT setup.
-      const idx = partIdx.load();
-      partIdx.store(idx.add(1).mod(NUM_PARTITIONS));
+      const idx = partIdx.read();
+      partIdx.write(idx.add(1).mod(NUM_PARTITIONS));
       // ... partitioned FFT computation ...
 
       // Per-sample code: shovel input into inBuf, drain outBuf to output.
@@ -150,7 +150,7 @@ const y = stereo.ch(0).at(i); // ❌ Type error: i is undefined
 
 The actual channel count of the connected source is normalized by Web Audio's standard up-mix / down-mix rules (`channelInterpretation`, `channelCountMode`) before the worklet sees it; the framework does not intervene in this layer.
 
-The chain returns a regular `Node<'f32'>` from `.at(i)`, so the Q77 method form composes directly: `audioIn.ch(0).at(i).mul(gain.at(i)).sub(z.load())` is a single source-ordered DSP-flow line.
+The chain returns a regular `Node<'f32'>` from `.at(i)`, so the Q77 method form composes directly: `audioIn.ch(0).at(i).mul(gain.at(i)).sub(z.read())` is a single source-ordered DSP-flow line.
 
 ### 1.3 Writing audio outputs
 
@@ -232,8 +232,8 @@ const sin440 = defineProcessor((ctx) => {
   return {
     process: () => {
       forSample((i) => {
-        phase.store(phase.load().add(inc));
-        out.ch(0).at(i).write(phase.load().sin());
+        phase.write(phase.read().add(inc));
+        out.ch(0).at(i).write(phase.read().sin());
       });
     },
   };
@@ -254,7 +254,7 @@ Handle types for every declaration kind are exported from `@unworklet/core` for 
 - `InputChannelView<T>` (§1.2) — `audioIn.ch(c)` の 戻 り 値、 `.at(i): Node<T>` を 持 つ
 - `OutputChannelView<T>` (§1.3) — `audioOut.ch(c)` の 戻 り 値、 `.at(i): OutputChannelSample<T>` を 持 つ
 - `OutputChannelSample<T>` (§1.3) — `audioOut.ch(c).at(i)` の 戻 り 値、 `.write(v): void` を 持 つ (= 3-step writer chain の 終 端)
-- `State<T>` / `Buffer<T>` / `Param` (§3) — `.load()` / `.store(v)` / `.read(idx)` / `.write(idx, v)` / `.at(i)` 等
+- `State<T>` / `Buffer<T>` / `Param` (§3) — `.read()` / `.write(v)` / `.read(idx)` / `.write(idx, v)` / `.at(i)` 等
 - `EventDecl<T>` / `MessageDecl<T>` (§4) — worklet 側 `.emitIf(cond, payload)` / main 側 `.on(handler)` / `.send(payload)` (= MessageDecl のみ)
 - `MidiInputHandle` / `MidiOutputHandle` (`11-midi.md` §2) — worklet 側 `.onEvent(handler)` / `.emitIf(cond, event)`、 main 側 `.send(...)` / `.on(handler)`
 - `Node<T>` (§2) — per-sample 値 を 表 す branded handle
@@ -318,7 +318,7 @@ The convention is hybrid:
 
   ```typescript
   // chain — input flows through .sub → .mul → .add
-  const y = input.left.at(i).sub(z.load()).mul(k).add(z.load());
+  const y = input.left.at(i).sub(z.read()).mul(k).add(z.read());
   ```
 
 - **free function** when the operation has no natural receiver (= 3-arg `select`, SIMD constructors `splat` / `vec4` / `sumLanes`):
@@ -376,7 +376,7 @@ const def = bool(false);
 add(i32(0), i32(0)); // T = 'i32' fixed
 
 // i64: BigInt-required (no implicit lift):
-state.i64.load().add(i64(BigInt(123)));
+state.i64.read().add(i64(BigInt(123)));
 
 // Cross-precision conversion between Node types:
 const wide = f64(f32node);
@@ -635,8 +635,8 @@ const uploadIR = message<{ samples: Float32Array }>({ name: "uploadIR", capacity
 return {
   process: () => {
     reqReset.onReceive(() => {
-      meterL.store(0);
-      meterR.store(0);
+      meterL.write(0);
+      meterR.write(0);
     });
 
     loadPreset.onReceive(({ slot }) => {
@@ -656,7 +656,7 @@ A single message may have **multiple `onReceive` registrations**; all of them ru
 
 **Handler argument shape (Q46-aligned)**: the worklet-side `onReceive` handler receives `T` in **lifted shape** — every `number` field becomes `Node<'i32'>`, every `boolean` field becomes `Node<'bool'>`, every `Float32Array` field becomes the §4.3 typed-array-field proxy (`.at` / `.length`), and every `Uint8Array` (or other non-f32 element) field is transfer-only — bulk-copy it into a `buffer.<type>` via `copyFrom` and read through the buffer (§4.3 / Q84). Main-side `node.messages.<name>(payload)` sends the natural JS `T` (plain `number` / `boolean` / typed array); the framework lifts to the graph shape before the handler executes. Same 2-view pattern as `MidiEvent` / `MidiEventGraph` (Q46 + `11-midi.md` §2.2). `event<T>` (= worklet → main, §4.1) is a separate path: per-field wire types resolve at emit time from the `Node<T>` supplied to `emitIf` (Q71), so the worklet-side lifted shape carries f32 / i32 / bool / etc. on a per-field basis rather than the uniform `number → Node<'i32'>` rule used here.
 
-State observation inside a handler (Q38-d): `state.load()` reads the value at the start of the current quantum (= the value written by the previous quantum's last write). State written by `state.store(v)` inside the handler is observable in the same quantum's per-block computation and `forSample` callbacks (i.e. handlers can stage values for the per-block code that follows).
+State observation inside a handler (Q38-d): `state.read()` reads the value at the start of the current quantum (= the value written by the previous quantum's last write). State written by `state.write(v)` inside the handler is observable in the same quantum's per-block computation and `forSample` callbacks (i.e. handlers can stage values for the per-block code that follows).
 
 Inside a handler, the same expression-scope rules apply as in a `forSample` callback (Q56, `decisions-log.md`): primitive operators, `state.load/store`, buffer access, audio I/O via `audioIn.ch(c).at(i)` / `audioOut.ch(c).at(i).write(v)` / `param.at(i)`, `emitIf`, subgraph methods, and L1 helper calls are all legal. New declarations (`state.*` / `buffer.*` / `param.*` / `createSubgraph(...)`) are not allowed. The surrounding `forSample`'s `i` is not in scope (handlers drain before any `forSample` runs); sample-offset arguments accept `Node<'i32'> | number` from any source — the handler's own `atSample` arg (in MIDI handlers), a state slot value, a buffer read, or a JS literal.
 
@@ -694,7 +694,7 @@ loadPattern.onReceive(({ steps }) => {
   for (let s = 0; s < steps.length; s++) {
     // ← here `steps.length` is a JS number; see note below
     const v = steps.at(s);
-    pattern[s].store(v);
+    pattern[s].write(v);
   }
 });
 ```
@@ -723,7 +723,7 @@ const fft = defineProcessor((ctx) => {
         result.emitIf(spectrumReady, {
           atSample: i,
           spectrum: spectrumBuf, // Buffer<'f32'>
-          length: txLen.load(), // Node<'i32'>, framework-injected slot in the emit shape
+          length: txLen.read(), // Node<'i32'>, framework-injected slot in the emit shape
           bin: currentBin,
         });
       });
@@ -813,8 +813,8 @@ The caller-owned `State<T>` form lets a parent processor own state and delegate 
 
 ```typescript
 function smoothFollow(x: Node<"f32">, prev: State<"f32">, alpha: Node<"f32">): Node<"f32"> {
-  const y = add(prev.load(), mul(alpha, sub(x, prev.load())));
-  prev.store(y);
+  const y = add(prev.read(), mul(alpha, sub(x, prev.read())));
+  prev.write(y);
   return y;
 }
 ```
@@ -829,8 +829,8 @@ function envelopeFollow(
   alpha: Node<"f32">,
 ): Node<"f32"> {
   const peak = src.left.at(i).abs().max(src.right.at(i).abs());
-  const y = add(prev.load(), mul(alpha, sub(peak, prev.load())));
-  prev.store(y);
+  const y = add(prev.read(), mul(alpha, sub(peak, prev.read())));
+  prev.write(y);
   return y;
 }
 
@@ -849,7 +849,7 @@ function softclip(x: Node<"f32">): Node<"f32"> {
 }
 
 // Callable from per-block top level (e.g., on a state-load value):
-const lastPeak = peakState.load();
+const lastPeak = peakState.read();
 const clipped = softclip(lastPeak);
 
 // Callable from inside forSample on per-sample values:
@@ -941,8 +941,8 @@ const onepole = defineSubgraph((coef: Node<"f32">) => {
     process: (input: Node<"f32">) => {
       // ━━━ Expression scope (per method) ━━━
       // Method arguments (here `input`) are passed per-call.
-      const y = add(z.load(), mul(coef, sub(input, z.load())));
-      z.store(y);
+      const y = add(z.read(), mul(coef, sub(input, z.read())));
+      z.write(y);
       return y;
     },
   };
@@ -957,15 +957,15 @@ const oscillator = defineSubgraph((sr: number) => {
   const freq = state.f32(440);
   return {
     setFrequency: (hz: Node<"f32">) => {
-      freq.store(hz);
+      freq.write(hz);
     },
     tick: () => {
-      const inc = div(freq.load(), sr);
-      phase.store(add(phase.load(), inc));
-      return sin(mul(phase.load(), 2 * Math.PI));
+      const inc = div(freq.read(), sr);
+      phase.write(add(phase.read(), inc));
+      return sin(mul(phase.read(), 2 * Math.PI));
     },
     reset: () => {
-      phase.store(0);
+      phase.write(0);
     },
   };
 });
@@ -1285,8 +1285,8 @@ const onepole = defineSubgraph((coef: Node<"f32">) => {
   const z = state.f32(0).named("z"); // named — contributes to parent's snapshot when reached
   return {
     process: (input: Node<"f32">) => {
-      const y = input.sub(z.load()).mul(coef).add(z.load());
-      z.store(y);
+      const y = input.sub(z.read()).mul(coef).add(z.read());
+      z.write(y);
       return y;
     },
   };
@@ -1296,8 +1296,8 @@ const trivialOnepole = defineSubgraph((coef: Node<"f32">) => {
   const z = state.f32(0); // plain — worklet-private, never in snapshot
   return {
     process: (input: Node<"f32">) => {
-      const y = input.sub(z.load()).mul(coef).add(z.load());
-      z.store(y);
+      const y = input.sub(z.read()).mul(coef).add(z.read());
+      z.write(y);
       return y;
     },
   };
@@ -1466,13 +1466,13 @@ const synth = defineProcessor((ctx) => {
       forSample((i, everyNSamples) => {
         // 1 ms (= 48 sample) sub-rate block: LFO update.
         everyNSamples(48, () => {
-          lfoVal.store(computeLfo(/* ... */));
+          lfoVal.write(computeLfo(/* ... */));
         });
 
         // ~5 ms (= 256 sample) sub-rate block: FFT magnitude update.
         everyNSamples(256, () => {
           const mag = computeFft(inBuf);
-          fftMag.store(mag);
+          fftMag.write(mag);
         });
 
         // Audio-rate output uses held values from sub-rate slots.
@@ -1480,7 +1480,7 @@ const synth = defineProcessor((ctx) => {
         out
           .ch(0)
           .at(i)
-          .write(applyFilter(sample, lfoVal.load(), fftMag.load()));
+          .write(applyFilter(sample, lfoVal.read(), fftMag.read()));
       });
     },
   };
@@ -1491,7 +1491,7 @@ const synth = defineProcessor((ctx) => {
 
 - **Graph-capture-time meta primitive**: `everyNSamples` is _not_ a runtime callback. The callback body is evaluated once during graph capture; the resulting graph nodes are recorded as belonging to the `N`-rate sub-block.
 - **Compilation**: the sub-block compiles to a WASM branch keyed off an internal sample counter. On samples where `(counter % N) == 0`, the sub-block body executes; on other samples, it is skipped.
-- **State slots in the callback**: `state.<type>` slots written inside the callback hold their value between updates (zero-order hold). Reading them in the surrounding per-sample body (`slot.load()`) returns the most recent stored value.
+- **State slots in the callback**: `state.<type>` slots written inside the callback hold their value between updates (zero-order hold). Reading them in the surrounding per-sample body (`slot.read()`) returns the most recent stored value.
 - **Scope by callback argument, not by separate context check (Q43)**: `everyNSamples` is in scope only inside a `forSample(...)` or `forSample.byN(...)` callback that takes it as the second parameter. Using the name outside such a callback (handler bodies, per-block top level, declaration scope) is a TypeScript reference error — no separate compiler context check is performed. The second argument is optional; callbacks take `(i) => ...` when sub-rate is not needed and `(i, everyNSamples) => ...` when it is.
 - **Counter is per call, continuous across blocks**: each `everyNSamples(N, cb)` call site has its own counter; counters advance by 1 per `forSample` iteration (by `stride` per `forSample.byN(stride)` iteration), and are not reset at render-quantum boundaries — sub-rate timing is continuous across blocks. Multiple `everyNSamples` calls inside the same `forSample` callback do not share counters.
 - **Subgraph methods**: if a subgraph method needs sub-rate, it opens its own `forSample` inside the method body and takes `everyNSamples` from that callback — there is no caller-context propagation, because the surrounding `forSample` is local to the method.
@@ -1505,13 +1505,13 @@ A `forSample` callback can contain any number of `everyNSamples` blocks at any d
 ```typescript
 forSample((i, everyNSamples) => {
   everyNSamples(8, () => {
-    smoothing.store(/* ... */); // 8-sample rate
+    smoothing.write(/* ... */); // 8-sample rate
   });
   everyNSamples(48, () => {
-    lfo.store(/* ... */); // 48-sample rate (1 ms)
+    lfo.write(/* ... */); // 48-sample rate (1 ms)
   });
   everyNSamples(256, () => {
-    fftMag.store(/* ... */); // 256-sample rate
+    fftMag.write(/* ... */); // 256-sample rate
   });
   out.ch(0).at(i).write(/* audio rate */); // every sample
 });
@@ -1530,9 +1530,9 @@ const cutoffSampled = state.f32(0);
 
 forSample((i, everyNSamples) => {
   everyNSamples(8, () => {
-    cutoffSampled.store(cutoff.at(i));
+    cutoffSampled.write(cutoff.at(i));
   });
-  // audio-rate body uses cutoffSampled.load()
+  // audio-rate body uses cutoffSampled.read()
 });
 ```
 
@@ -1588,7 +1588,7 @@ type EveryNSamples = (n: number, body: () => void) => void;
 Inside a `forSample` callback, the same rules as L1 helper bodies (§5.5.5) apply:
 
 - **Forbidden**: new `state.*` / `buffer.*` / `param.*` / `audioInput` / `audioOutput` declarations; new `defineSubgraph` declarations or instantiations.
-- **Allowed**: primitive operators, `state.load()` / `state.store()`, sample-offset primitives (`audioIn.ch(c).at(i)`, `audioOut.ch(c).at(i).write(v)`, `param.at(i)`), buffer access, calls to L1 helpers, `everyNSamples`, and nested `forSample` invocations (rare; typically used for tile iteration in 2D buffers, or when an L1 helper called from inside a `forSample` itself calls `forSample`). The inner and outer `forSample` callbacks are separate functions, so their `i` parameters are independent; realtime-safety check applies the `SAMPLES_PER_BLOCK` bounded-loop rule to both invocations (Q58, `decisions-log.md`).
+- **Allowed**: primitive operators, `state.read()` / `state.write()`, sample-offset primitives (`audioIn.ch(c).at(i)`, `audioOut.ch(c).at(i).write(v)`, `param.at(i)`), buffer access, calls to L1 helpers, `everyNSamples`, and nested `forSample` invocations (rare; typically used for tile iteration in 2D buffers, or when an L1 helper called from inside a `forSample` itself calls `forSample`). The inner and outer `forSample` callbacks are separate functions, so their `i` parameters are independent; realtime-safety check applies the `SAMPLES_PER_BLOCK` bounded-loop rule to both invocations (Q58, `decisions-log.md`).
 
 ### 10.4 Examples
 
