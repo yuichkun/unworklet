@@ -252,6 +252,15 @@ const WORKLET_ENTRY_PREFIX = "\0unworklet-worklet:";
 const WORKLET_QUERY_PARAM = "worklet";
 
 /**
+ * Virtual module id for the serve-only DevTools page bridge. The bridge is
+ * injected as a `<script type="module" src>` rather than an inline script,
+ * because Vite rewrites the bare imports of a real module it loads but NOT those
+ * of an inline injected `<script>` (= the page would otherwise throw "Failed to
+ * resolve module specifier @unworklet/core/dev").
+ */
+const DEVBRIDGE_ID = "\0unworklet-devbridge";
+
+/**
  * URL prefix that the dev-server middleware (= `configureServer`) listens on.
  * `${base}__unworklet/<encoded-abs-source-path>/(worklet.js|wasm)`:
  * - `worklet.js` = the `AudioWorkletProcessor` wrapper served as JS, loaded
@@ -357,6 +366,15 @@ const assetBaseName = (sourcePath: string): string => {
   // zipping with the analysis-JSON convention in `07-vite-plugin.md` §6.3.
   return base.endsWith(".processor") ? base.slice(0, -".processor".length) : base;
 };
+
+/**
+ * `JSON.stringify` replacer that renders a `bigint` (= an `i64` literal / state
+ * `initial`) as a `"<n>n"` string — matching `schemaHash.ts`'s convention — so the
+ * build-time analysis artifacts serialize as valid JSON instead of throwing
+ * "Do not know how to serialize a BigInt".
+ */
+const bigintReplacer = (_key: string, value: unknown): unknown =>
+  typeof value === "bigint" ? `${value}n` : value;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Phase 6 末尾 5-F DevTools — 1 dock entry に 集 約 し て Vue SPA を host
@@ -539,18 +557,17 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
       // + snapshot codec on the page so the DevTools panel — and chrome-devtools
       // verification — can X-ray each node's linear memory. No application code
       // is involved; the plugin injects this automatically.
+      // Inject by `src` to a virtual module (`\0` → `__x00__` is Vite's URL
+      // encoding for virtual ids) so Vite resolves the bridge's bare imports
+      // through the normal pipeline.
       return [
         {
           tag: "script",
-          attrs: { type: "module" },
+          attrs: {
+            type: "module",
+            src: `${basePath}@id/__x00__${DEVBRIDGE_ID.slice(1)}`,
+          },
           injectTo: "head",
-          children: [
-            'import { getDevNodes } from "@unworklet/core/dev";',
-            'import { decodeScalar, decodeTypedArray } from "@unworklet/core";',
-            "globalThis.__unworklet_getDevNodes = getDevNodes;",
-            "globalThis.__unworklet_decodeScalar = decodeScalar;",
-            "globalThis.__unworklet_decodeTypedArray = decodeTypedArray;",
-          ].join("\n"),
         },
       ];
     },
@@ -639,6 +656,7 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
       });
     },
     resolveId(source, importer) {
+      if (source === DEVBRIDGE_ID) return source;
       if (source.startsWith(WORKLET_ENTRY_PREFIX)) return source;
       const detect = detectWorkletQuery(source);
       if (!detect) return undefined;
@@ -648,6 +666,17 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
       return `${VIRTUAL_ID_PREFIX}${resolved}`;
     },
     async load(id) {
+      if (id === DEVBRIDGE_ID) {
+        // The DevTools page bridge, served as a real module so Vite rewrites its
+        // bare imports (= `@unworklet/core/dev` / `@unworklet/core`).
+        return [
+          'import { getDevNodes } from "@unworklet/core/dev";',
+          'import { decodeScalar, decodeTypedArray } from "@unworklet/core";',
+          "globalThis.__unworklet_getDevNodes = getDevNodes;",
+          "globalThis.__unworklet_decodeScalar = decodeScalar;",
+          "globalThis.__unworklet_decodeTypedArray = decodeTypedArray;",
+        ].join("\n");
+      }
       if (id.startsWith(WORKLET_ENTRY_PREFIX)) {
         // The id can arrive with a `?v=<hash>` revision query in dev (=
         // Vite passes the full request id including query into `load`)。
@@ -794,22 +823,22 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
           this.emitFile({
             type: "asset",
             name: `${baseName}.graph.json`,
-            source: `${JSON.stringify(result.graph, null, 2)}\n`,
+            source: `${JSON.stringify(result.graph, bigintReplacer, 2)}\n`,
           });
           this.emitFile({
             type: "asset",
             name: `${baseName}.memory.json`,
-            source: `${JSON.stringify(result.memory, null, 2)}\n`,
+            source: `${JSON.stringify(result.memory, bigintReplacer, 2)}\n`,
           });
           this.emitFile({
             type: "asset",
             name: `${baseName}.diagnostics.json`,
-            source: `${JSON.stringify(result.diagnostics, null, 2)}\n`,
+            source: `${JSON.stringify(result.diagnostics, bigintReplacer, 2)}\n`,
           });
           this.emitFile({
             type: "asset",
             name: `${baseName}.schema-hash.json`,
-            source: `${JSON.stringify({ schemaHash: result.schemaHash }, null, 2)}\n`,
+            source: `${JSON.stringify({ schemaHash: result.schemaHash }, bigintReplacer, 2)}\n`,
           });
         }
       }
