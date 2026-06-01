@@ -14,7 +14,6 @@
  * artifact JSON emit + initial 3 DevTools panels.
  */
 
-/// <reference types="@vitejs/devtools-kit" />
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -25,6 +24,34 @@ import { compile, extractWorkletMeta } from "@unworklet/core";
 import type { CompiledProcessor } from "@unworklet/core";
 import { lower } from "@unworklet/lang";
 import type { Plugin } from "vite-plus";
+
+// ─────────────────────────────────────────────────────────────────────────
+// DevTools live audio-graph topology (Wire 4)
+// ─────────────────────────────────────────────────────────────────────────
+//
+// The dev page-script (injected in serve mode) monkey-patches
+// `AudioNode.prototype.connect/disconnect` and reads the `@unworklet/core/dev`
+// live-node registry to build the real Web-Audio graph, then pushes it here via
+// the `unworklet:graph-update` action RPC. The server mirrors it into the
+// `unworklet:graph` shared state, which the iframe Audio-graph panel renders.
+// No app code is involved (zero-config); WASM memory is never read for this.
+
+/** One node in the live audio graph. */
+export type DevGraphNode = {
+  id: string;
+  label: string;
+  kind: "unworklet" | "standard";
+  audioNodeType: string;
+};
+/** One directed audio connection. */
+export type DevGraphEdge = { id: string; from: string; to: string };
+export type DevAudioGraph = { nodes: DevGraphNode[]; edges: DevGraphEdge[] };
+
+declare module "@vitejs/devtools-kit" {
+  interface DevToolsRpcSharedStates {
+    "unworklet:graph": DevAudioGraph;
+  }
+}
 
 import { emitWorkletTemplate } from "./worklet-template.ts";
 
@@ -462,10 +489,10 @@ const bigintReplacer = (_key: string, value: unknown): unknown =>
 // 確 認 用 の prototype 配 線、 Phase 6 末 尾 で AudioNode.prototype hook +
 // AnalyserNode auto-attach + streaming/sharedState/RPC inject に shift。
 
-const setupDevtools = (
+const setupDevtools = async (
   ctx: import("@vitejs/devtools-kit").ViteDevToolsNodeContext,
   uiRoot: string,
-): void => {
+): Promise<void> => {
   const diag = ctx.diagnostics.defineDiagnostics({
     docsBase: "",
     codes: {
@@ -518,6 +545,10 @@ const setupDevtools = (
     notify: true,
   });
 
+  // Register the dock + host the panel SPA synchronously, before any await:
+  // the dock must appear independently of the async graph-state wiring below
+  // (and keeps setup robust if the devtools-kit import / shared-state handshake
+  // is slow or unavailable).
   ctx.docks.register({
     id: "unworklet",
     title: "unworklet",
@@ -526,6 +557,31 @@ const setupDevtools = (
     url: "/__unworklet/",
   });
   ctx.views.hostStatic("/__unworklet/", uiRoot);
+
+  // Live audio-graph topology — mirror the page-script's captured graph into a
+  // shared state the Audio-graph panel reads (Wire 4). `@vitejs/devtools-kit` is
+  // imported lazily (only when the devtools host actually drives setup) so the
+  // plugin's module graph — and anything importing it, e.g. tests — does not
+  // eagerly pull the devtools runtime.
+  const { defineRpcFunction } = await import("@vitejs/devtools-kit");
+  const graphState = await ctx.rpc.sharedState.get("unworklet:graph", {
+    initialValue: { nodes: [], edges: [] },
+  });
+  const graphUpdate = defineRpcFunction({
+    name: "unworklet:graph-update",
+    type: "action",
+    setup: () => ({
+      handler: async (graph: DevAudioGraph): Promise<void> => {
+        graphState.mutate((draft) => {
+          draft.nodes = graph.nodes;
+          draft.edges = graph.edges;
+        });
+      },
+    }),
+  });
+  // `register()` takes the loosely-typed RpcFunctionDefinition union; defineRpcFunction
+  // infers an argument-specific one (contravariant handler), so widen at the boundary.
+  ctx.rpc.register(graphUpdate as Parameters<typeof ctx.rpc.register>[0]);
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -768,14 +824,113 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
     async load(id) {
       if (id === DEVBRIDGE_ID) {
         // The DevTools page bridge, served as a real module so Vite rewrites its
-        // bare imports (= `@unworklet/core/dev` / `@unworklet/core`).
-        return [
-          'import { getDevNodes } from "@unworklet/core/dev";',
-          'import { decodeScalar, decodeTypedArray } from "@unworklet/core";',
-          "globalThis.__unworklet_getDevNodes = getDevNodes;",
-          "globalThis.__unworklet_decodeScalar = decodeScalar;",
-          "globalThis.__unworklet_decodeTypedArray = decodeTypedArray;",
-        ].join("\n");
+        // bare imports. Dev-only + injected by the plugin (the app writes no
+        // devtools code). It (1) exposes the live-node registry + snapshot codec
+        // for later live-state X-ray, and (2) captures the live audio-graph
+        // topology by monkey-patching AudioNode.connect/disconnect, then pushes
+        // it to the server via the `unworklet:graph-update` action RPC. No WASM
+        // memory is read here — this is Web-Audio graph structure only.
+        return `
+import { getDevNodes, onDevNodesChanged } from "@unworklet/core/dev";
+import { decodeScalar, decodeTypedArray } from "@unworklet/core";
+import { getDevToolsClientContext } from "@vitejs/devtools-kit/client";
+
+globalThis.__unworklet_getDevNodes = getDevNodes;
+globalThis.__unworklet_decodeScalar = decodeScalar;
+globalThis.__unworklet_decodeTypedArray = decodeTypedArray;
+
+const ids = new WeakMap();
+let seq = 0;
+const seen = new Set();
+const edges = new Map();
+const idOf = (n) => {
+  let id = ids.get(n);
+  if (id === undefined) { id = "n" + seq++; ids.set(n, id); seen.add(n); }
+  return id;
+};
+
+const buildGraph = () => {
+  // Each unworklet node fronts every audio input with an internal proxy GainNode
+  // (createNode wires proxyGain -> AudioWorkletNode). Those proxies are framework
+  // plumbing the app never authored, so fold them into their owning node: an edge
+  // INTO a proxy becomes an edge into the node, the proxy's own outgoing edge is
+  // dropped, and the proxy is omitted from the node list. The graph then shows
+  // exactly the connections the app wrote.
+  const uw = new Map();        // AudioWorkletNode -> human-readable display name
+  const proxyOwner = new Map(); // proxyGainId -> owning unworklet node id
+  for (const h of getDevNodes()) {
+    const awn = h.node.node;
+    uw.set(awn, h.displayName || h.processorName);
+    const ownerId = idOf(awn);
+    const ins = h.node.inputs || {};
+    for (const k in ins) { const g = ins[k]; if (g) proxyOwner.set(idOf(g), ownerId); }
+  }
+  const nodes = [];
+  for (const n of seen) {
+    const id = idOf(n);
+    if (proxyOwner.has(id)) continue; // internal input-proxy gain — not an app node
+    const name = uw.get(n);
+    const type = (n.constructor && n.constructor.name) || "AudioNode";
+    nodes.push({ id, label: name || type, kind: name ? "unworklet" : "standard", audioNodeType: type });
+  }
+  const outEdges = [];
+  const emitted = new Set();
+  for (const e of edges.values()) {
+    if (proxyOwner.has(e.from)) continue;             // drop proxy -> AudioWorkletNode plumbing
+    const to = proxyOwner.get(e.to) ?? e.to;          // fold edge-into-proxy onto the owning node
+    if (to === e.from) continue;                       // never a self-loop
+    const id = e.from + ">" + to;
+    if (emitted.has(id)) continue;
+    emitted.add(id);
+    outEdges.push({ id, from: e.from, to });
+  }
+  return { nodes, edges: outEdges };
+};
+
+let client = null;
+let pending = false;
+const push = () => {
+  if (pending) return;
+  pending = true;
+  queueMicrotask(() => {
+    pending = false;
+    if (!client) return;
+    try { client.rpc.call("unworklet:graph-update", buildGraph()); } catch (e) { /* dev only */ }
+  });
+};
+
+let polls = 0;
+const ensureClient = () => {
+  if (client) return;
+  client = getDevToolsClientContext() || null;
+  if (client) { push(); return; }
+  if (polls++ < 40) setTimeout(ensureClient, 100);
+};
+
+const AN = AudioNode.prototype;
+const realConnect = AN.connect;
+const realDisconnect = AN.disconnect;
+AN.connect = function (target) {
+  const r = realConnect.apply(this, arguments);
+  if (target instanceof AudioNode) {
+    const from = idOf(this), to = idOf(target), id = from + ">" + to;
+    edges.set(id, { id, from, to });
+    push();
+  }
+  return r;
+};
+AN.disconnect = function (target) {
+  const r = realDisconnect.apply(this, arguments);
+  const from = idOf(this);
+  if (target instanceof AudioNode) edges.delete(from + ">" + idOf(target));
+  else if (arguments.length === 0) for (const k of [...edges.keys()]) if (k.indexOf(from + ">") === 0) edges.delete(k);
+  push();
+  return r;
+};
+
+onDevNodesChanged(push);
+ensureClient();
+`;
       }
       if (id.startsWith(WORKLET_ENTRY_PREFIX)) {
         // The id can arrive with a `?v=<hash>` revision query in dev (=
@@ -959,6 +1114,7 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
         `    moduleUrl: ${moduleUrlExpr},`,
         `    wasmUrl: ${wasmUrlExpr},`,
         `    processorName: ${JSON.stringify(processorName)},`,
+        `    displayName: ${JSON.stringify(exportName)},`,
         `  },`,
         `};`,
         ``,

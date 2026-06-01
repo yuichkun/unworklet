@@ -342,6 +342,9 @@ test("load returns JS that augments the processor with moduleUrl / wasmUrl / pro
   // new revision of the same source registers under a new name (= forward-
   // compat with HMR / replaceProcessor)。
   expect(js).toMatch(/processorName:\s*"stereoGain__[0-9a-f]{8}__[0-9a-f]{8}"/);
+  // displayName = the clean export name (no hash), what tools show instead of
+  // the hashed registration key.
+  expect(js).toMatch(/displayName:\s*"stereoGain"/);
 });
 
 test("two source files exporting the same identifier get distinct processorName suffixes", async () => {
@@ -1472,6 +1475,21 @@ type DevToolsCtxStub = {
     hostStatic: (urlBase: string, root: string) => void;
     __hostStaticCalls: Array<{ urlBase: string; root: string }>;
   };
+  rpc: {
+    sharedState: {
+      get: (
+        key: string,
+        opts?: unknown,
+      ) => Promise<{
+        value: () => unknown;
+        on: (ev: string, cb: (v: unknown) => void) => void;
+        mutate: (fn: (draft: { nodes: unknown[]; edges: unknown[] }) => void) => void;
+      }>;
+    };
+    register: (fn: unknown) => void;
+    __registerCalls: unknown[];
+    __sharedStateGets: string[];
+  };
 };
 
 const makeDevToolsCtxStub = (): DevToolsCtxStub => {
@@ -1481,6 +1499,8 @@ const makeDevToolsCtxStub = (): DevToolsCtxStub => {
   const messageAddCalls: unknown[] = [];
   const dockRegisterCalls: unknown[] = [];
   const hostStaticCalls: Array<{ urlBase: string; root: string }> = [];
+  const rpcRegisterCalls: unknown[] = [];
+  const sharedStateGets: string[] = [];
   const logger: DiagnosticsLoggerStub = {
     UWK0001: (params) => loggerCalls.push({ code: "UWK0001", params }),
     UWK0002: (params) => loggerCalls.push({ code: "UWK0002", params }),
@@ -1519,6 +1539,26 @@ const makeDevToolsCtxStub = (): DevToolsCtxStub => {
         hostStaticCalls.push({ urlBase, root });
       },
       __hostStaticCalls: hostStaticCalls,
+    },
+    rpc: {
+      sharedState: {
+        get: async (key) => {
+          sharedStateGets.push(key);
+          const current = { nodes: [] as unknown[], edges: [] as unknown[] };
+          return {
+            value: () => current,
+            on: () => {},
+            mutate: (fn) => {
+              fn(current);
+            },
+          };
+        },
+      },
+      register: (fn) => {
+        rpcRegisterCalls.push(fn);
+      },
+      __registerCalls: rpcRegisterCalls,
+      __sharedStateGets: sharedStateGets,
     },
   };
 };
@@ -1671,4 +1711,17 @@ test("devtools.setup registers a single dock entry at the `/__unworklet/` static
   });
   expect(ctx.views.__hostStaticCalls).toHaveLength(1);
   expect(ctx.views.__hostStaticCalls[0]!.urlBase).toBe("/__unworklet/");
+});
+
+test("devtools.setup wires the `unworklet:graph` shared state + graph-update action RPC", async () => {
+  const plugin = unworklet();
+  const setup = (plugin as unknown as { devtools?: { setup: (ctx: unknown) => Promise<void> } })
+    .devtools?.setup;
+  const ctx = makeDevToolsCtxStub();
+  // The graph wiring is async (lazy devtools-kit import + shared-state get), so
+  // await the setup before asserting the RPC side effects.
+  await setup!(ctx);
+  expect(ctx.rpc.__sharedStateGets).toContain("unworklet:graph");
+  expect(ctx.rpc.__registerCalls).toHaveLength(1);
+  expect(ctx.rpc.__registerCalls[0]).toMatchObject({ name: "unworklet:graph-update" });
 });
