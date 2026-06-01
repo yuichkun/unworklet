@@ -56,3 +56,22 @@ for (const [name, uwk, hand, cfg] of cases) {
     expectSameAudio(a, b);
   });
 }
+
+// The UW-1 effect knobs work only if the new params actually reach the DSP. Drive
+// crusher's `crush` (downsample factor) to two values and assert the audio differs.
+test("a knob param drives the audio (crusher `crush` changes the downsampling)", async () => {
+  const input = sine({ freqHz: 1000, durationSamples: N, sampleRate: SR });
+  const at = (crush: number): RenderOfflineConfig => ({
+    sampleRate: SR,
+    duration: N / SR,
+    inputs: { main: [input] },
+    params: { crush: [crush] },
+  });
+  const [light, heavy] = await Promise.all([
+    renderOffline(crusherUwk, at(2)),
+    renderOffline(crusherUwk, at(24)),
+  ]);
+  const a = light.outputs.main![0]!;
+  const b = heavy.outputs.main![0]!;
+  expect(a.some((s, i) => s !== b[i])).toBe(true);
+});

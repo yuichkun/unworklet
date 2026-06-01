@@ -16,7 +16,10 @@ const out = audioOutput({ channels: 1, name: "main" });
 
 const delayLine = state.buffer.f32({ size: SIZE }).expose({ snapshot: "persistent" });
 const head = state.i32(0).named();
-const feedback = state.f32(FEEDBACK).named();
+// `feedback` + `mix` are knob params (defaults = the old fixed FEEDBACK / WET, so
+// the offline render is unchanged); the UW-1 fbk / delay knobs write them live.
+const feedback = param.f32({ default: FEEDBACK, min: 0, max: 0.95, automationRate: "a-rate" });
+const mix = param.f32({ default: WET, min: 0, max: 1, automationRate: "a-rate" });
 const sampleCount = state.i64(0n).named();
 const meter = state.f32(0).expose({ publish: { rateFps: 30 } });
 
@@ -25,11 +28,11 @@ process(() => {
     const h = head.read();
     const delayed = delayLine[(h + (SIZE - DELAY)) % SIZE];
     const x = input.ch(0)[i];
-    const wet = x + delayed * WET;
+    const wet = x + delayed * mix[i];
     out.ch(0)[i] = wet;
 
     // Feed input + feedback back into the line at the write head.
-    delayLine[h] = x + delayed * feedback;
+    delayLine[h] = x + delayed * feedback[i];
 
     // Decaying peak meter (published to main).
     meter.write(max(meter * METER_DECAY, abs(wet)));

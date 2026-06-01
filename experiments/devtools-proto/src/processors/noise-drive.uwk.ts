@@ -13,7 +13,9 @@ const DC_POLE = 0.995; // one-pole DC-blocker leak coefficient
 
 const out = audioOutput({ channels: 1, name: "main" });
 const seed = state.i32(22695477).named();
-const drive = state.f32(DRIVE).named();
+// `drive` is a knob param (default = the old fixed DRIVE, so the offline render is
+// unchanged); the UW-1 `drive` knob writes it live. auto-name derives "drive".
+const drive = param.f32({ default: DRIVE, min: 0, max: 8, automationRate: "a-rate" });
 const active = state.bool(true).named();
 // Anonymous: DC-blocker previous-sample memory. Worklet-private, dev-dump only.
 const dcPrev = state.f32(0);
@@ -22,7 +24,7 @@ process(() => {
   forSample((i) => {
     const next = seed * LCG_MUL + LCG_ADD;
     const raw = f32(next) * I32_SCALE;
-    const shaped = tanh(raw * drive);
+    const shaped = tanh(raw * drive[i]);
     // Leaky differentiator (cheap DC blocker): y = x - pole * prev.
     const blocked = shaped - dcPrev * DC_POLE;
     // `active` mutes the output to silence when false.

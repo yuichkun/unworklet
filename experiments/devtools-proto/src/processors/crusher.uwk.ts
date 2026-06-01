@@ -14,12 +14,16 @@ const crushPattern = state.buffer.u8({ size: PATTERN_SIZE }).named();
 const hold = state.f32(0).named();
 const holdCounter = state.i32(0).named();
 const writeIdx = state.i32(0).named();
+// `crush` = the downsample factor as a knob param (default = the old fixed
+// DOWNSAMPLE, so the offline render is unchanged; min 1 avoids a mod-by-zero). The
+// UW-1 crush knob writes it live. auto-name derives "crush".
+const crush = param.f32({ default: DOWNSAMPLE, min: 1, max: 32, automationRate: "a-rate" });
 
 process(() => {
   forSample((i) => {
     const hc = holdCounter.read();
     // Re-latch the held sample when the downsample counter wraps.
-    const held = hc % DOWNSAMPLE == 0 ? input.ch(0)[i] : hold;
+    const held = hc % i32(crush[i]) == 0 ? input.ch(0)[i] : hold;
     out.ch(0)[i] = held;
 
     // Map held ∈ [-1, 1] to a 0–255 byte and store into the pattern ring.
