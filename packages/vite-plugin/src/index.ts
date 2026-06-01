@@ -1166,6 +1166,7 @@ const MIDI_LOG_MAX = 200;
 const MIDI_POLL_MS = 150;
 let midiLog = [];
 let midiSeq = 0;
+let lastMidiSig = "";
 const midiTapped = new WeakSet();
 let lastInjectSeq = 0;
 let midiInjectSubscribed = false;
@@ -1230,6 +1231,11 @@ const pollMidi = () => {
       ports.push({ nodeId: id, node: h.displayName || h.processorName, name: pm.name, direction: pm.direction, overflow });
     }
   }
+  // Only push when ports / overflow / log actually changed — avoids re-rendering
+  // the panel every poll while the app is idle (no MIDI traffic).
+  const sig = JSON.stringify({ ports, log: midiLog });
+  if (sig === lastMidiSig) return;
+  lastMidiSig = sig;
   try { client.rpc.call("unworklet:midi-update", { ports, log: midiLog }); } catch (e) { /* dev only */ }
 };
 let midiTimer = null;
