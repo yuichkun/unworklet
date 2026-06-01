@@ -9,12 +9,15 @@
 import ts from "typescript";
 
 import { tryBareState } from "./bareState.ts";
+import { tryIfSugar } from "./ifSugar.ts";
 import { tryIndex } from "./index.ts";
 import { tryOperator } from "./operators.ts";
 
 export function sugarTransformer(checker: ts.TypeChecker): ts.TransformerFactory<ts.SourceFile> {
   return (context) => {
     const visit: ts.Visitor = (node) => {
+      const guarded = tryIfSugar(checker, node, visit);
+      if (guarded !== undefined) return guarded;
       const lowered = tryOperator(checker, node, visit);
       if (lowered !== undefined) return lowered;
       const indexed = tryIndex(checker, node, visit);

@@ -290,3 +290,42 @@ process(() => {
 
   await expectByteIdentical(uwk, tierA);
 });
+
+test("if-sugar: single write / symmetric if-else / guarded emit ≡ select / emitIf", async () => {
+  const uwk = `
+const input = audioInput({ channels: 1, name: "main" });
+const out = audioOutput({ channels: 1, name: "main" });
+const peak = state.f32(0).named("peak");
+const held = state.f32(0).named("held");
+const over = event<{ level: number }>({ to: "main", name: "over" });
+process(() => {
+  forSample((i) => {
+    const x = input.ch(0).at(i);
+    if (x.abs() > peak.read()) peak.write(x.abs());
+    if (x > 0) held.write(x); else held.write(x.neg());
+    if (x.abs() > 0.9) over.emit({ atSample: i, level: x.abs() });
+    out.ch(0).at(i).write(held.read());
+  });
+});
+`;
+  const tierA = defineProcessor(() => {
+    const input = core.audioInput({ channels: 1, name: "main" });
+    const out = core.audioOutput({ channels: 1, name: "main" });
+    const peak = core.state.f32(0).named("peak");
+    const held = core.state.f32(0).named("held");
+    const over = core.event<{ level: number }>({ to: "main", name: "over" });
+    return {
+      process: () => {
+        core.forSample((i) => {
+          const x = input.ch(0).at(i);
+          peak.write(core.select(core.gt(x.abs(), peak.read()), x.abs(), peak.read()));
+          held.write(core.select(core.gt(x, 0), x, x.neg()));
+          over.emitIf(core.gt(x.abs(), 0.9), { atSample: i, level: x.abs() });
+          out.ch(0).at(i).write(held.read());
+        });
+      },
+    };
+  });
+
+  await expectByteIdentical(uwk, tierA);
+});
