@@ -103,9 +103,18 @@ let started = false;
 
 const apply = (raw: LiveSignals | undefined): void => {
   const s = normalizeSignals(raw);
+  const present = new Set<string>();
   for (const n of s.nodes) {
-    for (const p of n.ports) frames.set(frameKey(n.id, p.name), p);
+    for (const p of n.ports) {
+      const k = frameKey(n.id, p.name);
+      frames.set(k, p);
+      present.add(k);
+    }
   }
+  // Drop frames for ports that vanished (a disposed node / removed output) so the
+  // non-reactive map doesn't retain their scope/spectrum arrays for the iframe's
+  // lifetime as node ids monotonically increase across processor recreation.
+  for (const k of frames.keys()) if (!present.has(k)) frames.delete(k);
   const sig = structureSignature(s);
   if (sig !== lastSig) {
     lastSig = sig;

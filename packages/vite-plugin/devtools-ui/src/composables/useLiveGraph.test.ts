@@ -48,6 +48,28 @@ test("layout: a node sits at its LONGEST path from a source (diamond)", () => {
   expect(col.d).toBe(2);
 });
 
+test("layout: a feedback cycle stays within |V|-1 columns (no runaway blowup)", () => {
+  // a → b → c → a (a delay-style feedback loop, a valid Web-Audio topology).
+  // Without the clamp, the longest-path relaxation pushes columns out to ~|V|²
+  // wide and the panel zooms to nothing. (Reported by @codex on #12.)
+  const g: LiveGraph = {
+    nodes: [
+      { id: "a", label: "a", kind: "standard", audioNodeType: "G" },
+      { id: "b", label: "b", kind: "standard", audioNodeType: "G" },
+      { id: "c", label: "c", kind: "standard", audioNodeType: "G" },
+    ],
+    edges: [
+      { id: "a>b", from: "a", to: "b" },
+      { id: "b>c", from: "b", to: "c" },
+      { id: "c>a", from: "c", to: "a" },
+    ],
+  };
+  for (const c of layout(g).map((n) => colOf(n.x))) {
+    expect(c).toBeGreaterThanOrEqual(0);
+    expect(c).toBeLessThanOrEqual(g.nodes.length - 1); // ≤ 2, not ~9
+  }
+});
+
 test("layout: nodes sharing a column are packed into distinct rows", () => {
   const g: LiveGraph = {
     nodes: [

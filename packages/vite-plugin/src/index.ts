@@ -1287,9 +1287,17 @@ AN.connect = function (target) {
 // severs them — a tap shares the node's output, so disconnect() / disconnect(output)
 // cut it too, and ensureAnalysers() returns the cached (now-detached) analyser.
 // Without this the Signals panel would poll a dead analyser and show stale data.
+const isLiveDevNode = (node) => {
+  for (const h of getDevNodes()) if (h.node && h.node.node === node) return true;
+  return false;
+};
 const reattachTaps = (node, outputIndex) => {
   const map = analysersByNode.get(node);
   if (!map) return;
+  // A zero-arg disconnect during dispose() (the handle is unregistered first)
+  // must NOT re-wire taps onto a dead node — drop them so disposed nodes don't
+  // accumulate detached analyser subgraphs across play/stop cycles.
+  if (outputIndex === null && !isLiveDevNode(node)) { analysersByNode.delete(node); return; }
   for (const slot of map.values()) {
     if (outputIndex !== null && slot.index !== outputIndex) continue;
     try { realConnect.call(node, slot.analyser, slot.index, 0); } catch (e) { /* dev only */ }

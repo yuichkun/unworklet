@@ -41,11 +41,16 @@ const ROW_Y0 = 60;
 export function layout(graph: LiveGraph): PlacedNode[] {
   const col = new Map<string, number>();
   for (const n of graph.nodes) col.set(n.id, 0);
-  // Relax edges |V| times — small graphs, settles the longest-path depth.
+  // Relax edges |V| times to settle the longest-path depth. Clamp at |V|-1: a
+  // feedback cycle (a valid Web-Audio topology, e.g. a delay routed back through
+  // a gain) would otherwise keep incrementing its members' columns every pass and
+  // blow the layout out to ~|V|² wide. A DAG's longest path never exceeds |V|-1,
+  // so the clamp leaves acyclic graphs unchanged.
+  const maxCol = Math.max(0, graph.nodes.length - 1);
   for (let i = 0; i < graph.nodes.length; i++) {
     for (const e of graph.edges) {
       if (!col.has(e.from) || !col.has(e.to)) continue;
-      const c = (col.get(e.from) ?? 0) + 1;
+      const c = Math.min((col.get(e.from) ?? 0) + 1, maxCol);
       if (c > (col.get(e.to) ?? 0)) col.set(e.to, c);
     }
   }
