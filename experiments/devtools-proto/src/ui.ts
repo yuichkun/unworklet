@@ -1,12 +1,13 @@
 /**
- * UW-1 pocket rack — UI shell (P7, visual-first pass).
+ * UW-1 pocket rack — UI layer (P7).
  *
- * Pure-DOM interaction layer for the Teenage-Engineering-style panel in
- * `index.html`: draggable knobs, an on-screen keyboard (mouse + computer keys),
- * and transport state. NO audio yet — this pass is for reviewing the look/feel;
- * the next pass wires `noteOn` / `noteOff` and the knob params into the
- * `.uwk.ts` rack.
+ * Pure-DOM interaction for the Teenage-Engineering-style panel in `index.html`:
+ * draggable knobs, an on-screen keyboard (mouse + computer keys), and transport.
+ * Drives the audio engine in `./audio.ts` — `play` ramps the noise bed, the
+ * keyboard plays the synth lead, and the `vol` / `tone` knobs shape the master.
  */
+
+import * as audio from "./audio.ts";
 
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 const noteName = (n: number): string => `${NOTE_NAMES[n % 12]!}${Math.floor(n / 12) - 1}`;
@@ -36,6 +37,10 @@ const setKnob = (dial: HTMLElement, value: number): void => {
   dial.style.setProperty("--rot", `${-135 + v * 270}deg`);
   const valEl = dial.parentElement?.querySelector<HTMLElement>(".kval");
   if (valEl) valEl.textContent = v.toFixed(2);
+  // Wired knobs drive the master post-chain; the effect knobs (drive/delay/fbk/
+  // crush) await processor params and are visual for now.
+  if (dial.dataset.param === "vol") audio.setVol(v);
+  else if (dial.dataset.param === "tone") audio.setTone(v);
 };
 
 document.querySelectorAll<HTMLElement>(".dial").forEach((dial) => {
@@ -111,7 +116,7 @@ const noteOn = (note: number): void => {
   dispHz.textContent = `${Math.round(noteHz(note))} hz`;
   pulseNode("synth");
   dispMeter.style.width = "62%";
-  // TODO(next pass): emit MIDI noteOn into the .uwk.ts midi-synth.
+  void audio.noteOn(note);
 };
 
 const noteOff = (note: number): void => {
@@ -122,7 +127,7 @@ const noteOff = (note: number): void => {
     dispNote.textContent = "—";
     dispMeter.style.width = "6%";
   }
-  // TODO(next pass): emit MIDI noteOff.
+  audio.noteOff(note);
 };
 
 // pointer (click / touch) on keys
@@ -133,7 +138,8 @@ keysRoot.addEventListener("pointerdown", (e) => {
   noteOn(Number(btn.dataset.note));
 });
 window.addEventListener("pointerup", () => {
-  for (const n of [...held]) noteOff(n);
+  // snapshot: noteOff() mutates `held` while we iterate
+  for (const n of Array.from(held)) noteOff(n);
 });
 
 // computer keyboard
@@ -160,10 +166,15 @@ const setRunning = (on: boolean): void => {
   setNodesLive(on);
   setStatus(on ? "running · play the keys" : "stopped");
   dispMeter.style.width = on ? "18%" : "6%";
-  // TODO(next pass): start / stop the AudioContext + the .uwk.ts rack.
 };
 
-playBtn.addEventListener("click", () => setRunning(true));
-stopBtn.addEventListener("click", () => setRunning(false));
+playBtn.addEventListener("click", () => {
+  void audio.startBed();
+  setRunning(true);
+});
+stopBtn.addEventListener("click", () => {
+  audio.stopBed();
+  setRunning(false);
+});
 
 setStatus("idle · press play");
