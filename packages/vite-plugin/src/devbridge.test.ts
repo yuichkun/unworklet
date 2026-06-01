@@ -1,8 +1,10 @@
 import { expect, test } from "vite-plus/test";
 
 import {
+  appendBounded,
   type DevSlotType,
   downsampleTo,
+  drainInjects,
   foldProxyGraph,
   frameLevels,
   normalizeFreqDb,
@@ -217,4 +219,44 @@ test("slotMemory: bytes per slot come from the real dumped byte length", () => {
     { name: "pattern", kind: "buffer", bytes: 3 },
   ]);
   expect(totalBytes).toBe(31);
+});
+
+// ── appendBounded ───────────────────────────────────────────────────────────
+
+test("appendBounded: appends below the cap, drops the oldest at the cap", () => {
+  expect(appendBounded([1, 2], 3, 5)).toEqual([1, 2, 3]);
+  // At the cap (3): appending 4 drops the oldest (1).
+  expect(appendBounded([1, 2, 3], 4, 3)).toEqual([2, 3, 4]);
+  // An already-oversized list collapses to the newest `max` items.
+  expect(appendBounded([1, 2, 3, 4, 5], 6, 3)).toEqual([4, 5, 6]);
+});
+
+// ── drainInjects ────────────────────────────────────────────────────────────
+
+test("drainInjects: returns only commands newer than lastSeq, in seq order", () => {
+  const cmds = [
+    { seq: 3, note: "c" },
+    { seq: 1, note: "a" },
+    { seq: 2, note: "b" },
+  ];
+  const out = drainInjects(cmds, 0);
+  expect(out.fresh.map((c) => c.note)).toEqual(["a", "b", "c"]);
+  expect(out.lastSeq).toBe(3);
+});
+
+test("drainInjects: a trailing noteOff in the same burst is never dropped", () => {
+  // noteOn (seq 5) then noteOff (seq 6) both land before the next drain.
+  const cmds = [
+    { seq: 5, kind: "noteOn" },
+    { seq: 6, kind: "noteOff" },
+  ];
+  const out = drainInjects(cmds, 4);
+  expect(out.fresh.map((c) => c.kind)).toEqual(["noteOn", "noteOff"]);
+  expect(out.lastSeq).toBe(6);
+});
+
+test("drainInjects: nothing new leaves lastSeq untouched", () => {
+  const out = drainInjects([{ seq: 2 }, { seq: 1 }], 2);
+  expect(out.fresh).toEqual([]);
+  expect(out.lastSeq).toBe(2);
 });

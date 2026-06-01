@@ -123,11 +123,58 @@ export type DevSignalsState = {
   context: { sampleRate: number; baseLatencyMs: number; outputLatencyMs: number };
 };
 
+// ─────────────────────────────────────────────────────────────────────────
+// DevTools MIDI (real port traffic)
+// ─────────────────────────────────────────────────────────────────────────
+//
+// The page-script taps `onEvent` on every outbound MIDI port for the live log,
+// reads each port's real overflow counter, and drains a server-seq'd inject
+// queue into `node.midi[port].send`. Directions: `out` events come straight from
+// the worklet; `inject` entries are panel key/controller sends into a real input
+// port. (A worklet's *inbound* traffic isn't observable from the main thread —
+// the main thread is the sender — so there is no honest `in` log direction.)
+
+export type DevMidiEvent =
+  | { type: "noteOn"; channel: number; note: number; velocity: number }
+  | { type: "noteOff"; channel: number; note: number; velocity: number }
+  | { type: "cc"; channel: number; controller: number; value: number }
+  | { type: "pitchBend"; channel: number; value: number }
+  | { type: "programChange"; channel: number; program: number }
+  | { type: "channelPressure"; channel: number; pressure: number }
+  | { type: "aftertouch"; channel: number; note: number; pressure: number }
+  | { type: "systemRealtime"; status: number }
+  | { type: "sysex"; data: number[] };
+export type DevMidiPort = {
+  nodeId: string;
+  node: string;
+  name: string;
+  direction: "in" | "out";
+  overflow: number;
+};
+export type DevMidiLogEntry = {
+  seq: number;
+  ts: number;
+  dir: "out" | "inject";
+  nodeId: string;
+  port: string;
+  event: DevMidiEvent;
+};
+export type DevMidiState = { ports: DevMidiPort[]; log: DevMidiLogEntry[] };
+export type DevMidiInjectCommand = {
+  seq: number;
+  nodeId: string;
+  port: string;
+  event: DevMidiEvent;
+};
+export type DevMidiInject = { commands: DevMidiInjectCommand[] };
+
 declare module "@vitejs/devtools-kit" {
   interface DevToolsRpcSharedStates {
     "unworklet:graph": DevAudioGraph;
     "unworklet:state": DevLiveState;
     "unworklet:signals": DevSignalsState;
+    "unworklet:midi": DevMidiState;
+    "unworklet:midi-inject": DevMidiInject;
   }
 }
 
@@ -648,6 +695,48 @@ const setupDevtools = async (
     }),
   });
   ctx.rpc.register(signalsUpdate as Parameters<typeof ctx.rpc.register>[0]);
+
+  // MIDI — the page-script pushes live port traffic (out events + overflow) here
+  // via `unworklet:midi-update`; the MIDI panel reads `unworklet:midi`.
+  const midiState = await ctx.rpc.sharedState.get("unworklet:midi", {
+    initialValue: { ports: [], log: [] },
+  });
+  const midiUpdate = defineRpcFunction({
+    name: "unworklet:midi-update",
+    type: "action",
+    setup: () => ({
+      handler: async (midi: DevMidiState): Promise<void> => {
+        midiState.mutate((draft) => {
+          draft.ports = midi.ports;
+          draft.log = midi.log;
+        });
+      },
+    }),
+  });
+  ctx.rpc.register(midiUpdate as Parameters<typeof ctx.rpc.register>[0]);
+
+  // MIDI inject — the panel's virtual keyboard calls `unworklet:midi-inject`,
+  // which appends a server-seq'd command to the `unworklet:midi-inject` shared
+  // state the page-script drains into the real `node.midi[port].send`. The seq
+  // (not state coalescing) keeps a fast burst — noteOn + its noteOff — intact.
+  const INJECT_QUEUE_MAX = 64;
+  let injectSeq = 0;
+  const injectState = await ctx.rpc.sharedState.get("unworklet:midi-inject", {
+    initialValue: { commands: [] },
+  });
+  const midiInject = defineRpcFunction({
+    name: "unworklet:midi-inject",
+    type: "action",
+    setup: () => ({
+      handler: async (cmd: Omit<DevMidiInjectCommand, "seq">): Promise<void> => {
+        injectState.mutate((draft) => {
+          const next: DevMidiInjectCommand = { seq: ++injectSeq, ...cmd };
+          draft.commands = [...draft.commands, next].slice(-INJECT_QUEUE_MAX);
+        });
+      },
+    }),
+  });
+  ctx.rpc.register(midiInject as Parameters<typeof ctx.rpc.register>[0]);
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -899,7 +988,7 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
         return `
 import { getDevNodes, onDevNodesChanged } from "@unworklet/core/dev";
 import { decodeScalar, decodeTypedArray } from "@unworklet/core";
-import { downsampleTo, foldProxyGraph, frameLevels, normalizeFreqDb, slotMemory, splitSlots } from "@unworklet/vite-plugin/devbridge";
+import { appendBounded, downsampleTo, drainInjects, foldProxyGraph, frameLevels, normalizeFreqDb, slotMemory, splitSlots } from "@unworklet/vite-plugin/devbridge";
 import { getDevToolsClientContext } from "@vitejs/devtools-kit/client";
 
 globalThis.__unworklet_getDevNodes = getDevNodes;
@@ -962,7 +1051,7 @@ let polls = 0;
 const ensureClient = () => {
   if (client) return;
   client = getDevToolsClientContext() || null;
-  if (client) { push(); startStatePoll(); startSignalsPoll(); return; }
+  if (client) { push(); startStatePoll(); startSignalsPoll(); startMidiPoll(); return; }
   if (polls++ < 40) setTimeout(ensureClient, 100);
 };
 
@@ -1067,6 +1156,87 @@ const startSignalsPoll = () => {
     signalsTimer = setTimeout(loop, SIGNALS_POLL_MS);
   };
   signalsTimer = setTimeout(loop, SIGNALS_POLL_MS);
+};
+
+// MIDI X-ray: tap onEvent on every outbound port for the live log, read each
+// port's real overflow counter, and drain a server-seq'd inject queue into
+// node.midi[port].send so the virtual keyboard plays the real worklet.
+const MIDI_TYPES = ["noteOn", "noteOff", "cc", "pitchBend", "programChange", "channelPressure", "aftertouch", "systemRealtime", "sysex"];
+const MIDI_LOG_MAX = 200;
+const MIDI_POLL_MS = 150;
+let midiLog = [];
+let midiSeq = 0;
+const midiTapped = new WeakSet();
+let lastInjectSeq = 0;
+let midiInjectSubscribed = false;
+const eventToJson = (e) => (e && e.type === "sysex" && e.data ? { type: "sysex", data: Array.from(e.data) } : e);
+const tapMidiOut = (h) => {
+  const awn = h.node.node;
+  if (midiTapped.has(awn)) return;
+  midiTapped.add(awn);
+  const id = idOf(awn);
+  const midi = h.node.midi || {};
+  for (const pm of h.midiPorts || []) {
+    if (pm.direction !== "out") continue;
+    const port = midi[pm.name];
+    if (!port || typeof port.onEvent !== "function") continue;
+    for (const t of MIDI_TYPES) {
+      try {
+        port.onEvent(t, (e) => {
+          midiLog = appendBounded(midiLog, { seq: ++midiSeq, ts: Date.now(), dir: "out", nodeId: id, port: pm.name, event: eventToJson(e) }, MIDI_LOG_MAX);
+        });
+      } catch (err) { /* dev only */ }
+    }
+  }
+};
+const findHandleById = (id) => {
+  for (const h of getDevNodes()) { if (idOf(h.node.node) === id) return h; }
+  return null;
+};
+const ensureMidiInjectSub = () => {
+  if (midiInjectSubscribed || !client || !client.rpc || !client.rpc.sharedState) return;
+  midiInjectSubscribed = true;
+  client.rpc.sharedState.get("unworklet:midi-inject").then((shared) => {
+    const onInject = (state) => {
+      const cmds = (state && state.commands) || [];
+      const drained = drainInjects(cmds, lastInjectSeq);
+      lastInjectSeq = drained.lastSeq;
+      for (const c of drained.fresh) {
+        const h = findHandleById(c.nodeId);
+        if (!h) continue;
+        const port = (h.node.midi || {})[c.port];
+        if (!port || typeof port.send !== "function") continue;
+        try {
+          port.send(c.event);
+          midiLog = appendBounded(midiLog, { seq: ++midiSeq, ts: Date.now(), dir: "inject", nodeId: c.nodeId, port: c.port, event: c.event }, MIDI_LOG_MAX);
+        } catch (err) { /* dev only */ }
+      }
+    };
+    onInject(shared.value());
+    shared.on("updated", onInject);
+  }).catch(() => { midiInjectSubscribed = false; });
+};
+const pollMidi = () => {
+  if (!client) return;
+  ensureMidiInjectSub();
+  const ports = [];
+  for (const h of getDevNodes()) {
+    tapMidiOut(h);
+    const id = idOf(h.node.node);
+    const midi = h.node.midi || {};
+    for (const pm of h.midiPorts || []) {
+      let overflow = 0;
+      try { const p = midi[pm.name]; if (p && p.diagnostics) overflow = p.diagnostics.overflowCount() || 0; } catch (e) { /* dev only */ }
+      ports.push({ nodeId: id, node: h.displayName || h.processorName, name: pm.name, direction: pm.direction, overflow });
+    }
+  }
+  try { client.rpc.call("unworklet:midi-update", { ports, log: midiLog }); } catch (e) { /* dev only */ }
+};
+let midiTimer = null;
+const startMidiPoll = () => {
+  if (midiTimer !== null) return;
+  const loop = () => { pollMidi(); midiTimer = setTimeout(loop, MIDI_POLL_MS); };
+  midiTimer = setTimeout(loop, MIDI_POLL_MS);
 };
 
 const AN = AudioNode.prototype;

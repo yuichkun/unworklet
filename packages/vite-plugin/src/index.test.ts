@@ -1647,8 +1647,12 @@ test("devtools.setup wires the graph + live-state + signals shared states and th
   expect(ctx.rpc.__sharedStateGets).toContain("unworklet:graph");
   expect(ctx.rpc.__sharedStateGets).toContain("unworklet:state");
   expect(ctx.rpc.__sharedStateGets).toContain("unworklet:signals");
+  expect(ctx.rpc.__sharedStateGets).toContain("unworklet:midi");
+  expect(ctx.rpc.__sharedStateGets).toContain("unworklet:midi-inject");
   const registered = ctx.rpc.__registerCalls.map((f) => (f as { name: string }).name);
   expect(registered).toContain("unworklet:graph-update");
   expect(registered).toContain("unworklet:state-update");
   expect(registered).toContain("unworklet:signals-update");
+  expect(registered).toContain("unworklet:midi-update");
+  expect(registered).toContain("unworklet:midi-inject");
 });

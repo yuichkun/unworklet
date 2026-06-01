@@ -172,6 +172,33 @@ export function normalizeFreqDb(
   });
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// MIDI panel transforms (= the page-script taps `onEvent` on each out port for
+// the live log, and drains a seq'd inject queue into `node.midi[port].send`).
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Append `entry`, keeping at most `max` most-recent items (oldest dropped). */
+export function appendBounded<T>(items: readonly T[], entry: T, max: number): T[] {
+  const start = items.length >= max ? items.length - max + 1 : 0;
+  const out = items.slice(start);
+  out.push(entry);
+  return out;
+}
+
+/**
+ * Select inject commands newer than `lastSeq`, in seq order, returning them plus
+ * the new high-water seq. A monotonic seq (not state coalescing) is what keeps a
+ * fast burst of key presses — including the trailing noteOff — from being lost
+ * when several land between two shared-state notifications.
+ */
+export function drainInjects<T extends { seq: number }>(
+  commands: readonly T[],
+  lastSeq: number,
+): { fresh: T[]; lastSeq: number } {
+  const fresh = commands.filter((c) => c.seq > lastSeq).sort((a, b) => a.seq - b.seq);
+  return { fresh, lastSeq: fresh.length > 0 ? fresh[fresh.length - 1]!.seq : lastSeq };
+}
+
 export type MemoryEntry = { name: string; kind: string; bytes: number };
 
 /**
