@@ -16,13 +16,13 @@ createNode<C>(
 ): Promise<UnworkletNode<C>>;
 
 type CreateNodeOptions<C> = {
-  // Per-param initial values only. Key is narrowed to the declared param-name
-  // literal union (= same narrowing discipline as `node.params.<name>` /
-  // `node.state.<name>` / `node.events.<name>` /
-  // `node.midi.<name>` / `node.inputs.<name>` / `node.outputs.<name>` — typo'd
-  // names surface as a TypeScript error at the call site). `state.*` / `buffer.*`
-  // initialization goes through `await node.restore(blob)` (Q57) —
-  // declaration-kind-specific overrides are not part of `initial`.
+  // Per-param initial values, keyed by the declared param name. In v1.0.0 the
+  // whole node surface (`params` / `state` / `events` / `midi` / `inputs` /
+  // `outputs`) is a flat `Record<string, …>`: keys are `string`, so a typo'd name
+  // is `undefined` at runtime, not a compile error. Per-name key / direction
+  // narrowing is deferred to v1.x. `state.*` / `buffer.*` initialization goes
+  // through `await node.restore(blob)` (Q57) — declaration-kind-specific overrides
+  // are not part of `initial`.
   initial?: Partial<Record<ParamName<C>, number>>;
 };
 ```

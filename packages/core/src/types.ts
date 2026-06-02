@@ -764,7 +764,13 @@ export type BufferValueProxy<V> = {
  * Unified main-side event surface (Q88). A declared event name carries `.on`
  * (worklet→main, `event({ to: 'main' })`), `.emit` (main→worklet,
  * `event({ from: 'main' })`), or both for a same-name in/out pair (Q87).
- * Per-name narrowing (B5) refines which methods a given name exposes.
+ *
+ * The whole node surface is intentionally a flat `Record<string, …>` in v1.0.0,
+ * so the TYPE exposes both `.on` and `.emit` for every name; the wrong-direction
+ * method is simply absent at runtime (calling it is a `TypeError`). Per-name
+ * narrowing — typing each declared name to exactly its direction — is deferred to
+ * v1.x, where it would type the whole node surface (inputs / params / state /
+ * events / midi), not events alone (#40 / codex on #12 G3).
  */
 export type EventSurface<T> = {
   on(handler: (payload: T & { atSample: number }) => void): () => void;
