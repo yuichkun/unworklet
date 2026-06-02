@@ -43,3 +43,6 @@ playwright-report/
 
 # Transient lowered-`.uwk.ts` temp the vite-plugin build path writes then removes
 *.uwklowered.ts
+
+# Vercel CLI project link (local, per-machine)
+.vercel

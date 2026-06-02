@@ -1,0 +1,15 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "vp run --filter @unworklet/lang build && vp run --filter @unworklet/vite-plugin build && vp run --filter @unworklet/core build && vp run --filter @unworklet/offline build && vp run --filter @unworklet/test build && vp run --filter @unworklet-examples/demo build",
+  "outputDirectory": "examples/demo/dist",
+  "framework": null,
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Cross-Origin-Opener-Policy", "value": "same-origin" },
+        { "key": "Cross-Origin-Embedder-Policy", "value": "require-corp" }
+      ]
+    }
+  ]
+}
