@@ -85,10 +85,9 @@ const gates = [
       "&& test -f plans/artifacts/browser-verify-state.json",
   },
   {
-    id: "WI-7 event-direction-narrowing",
-    desc: "#40 event 方向の型 narrowing test 緑",
-    cmd: "vp test run packages/core/src/event-direction.test-d.ts",
-    slow: true,
+    id: "WI-7 event-direction (#40 = keep flat, documented)",
+    desc: "#40 は現状維持+文書化（per-name narrowing は v1.x）。type/doc が flat surface を明記",
+    cmd: "rg -q 'deferred to' packages/core/src/types.ts && rg -q 'flat .Record' docs/05-client.md",
   },
   {
     id: "WI-8 prev-slot-type",
