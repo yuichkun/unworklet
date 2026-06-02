@@ -16,15 +16,23 @@ import { execSync } from "node:child_process";
 const FAST = process.argv.includes("--fast");
 
 // Old-API patterns that must not appear as CURRENT spec in the docs/READMEs.
+// PCRE2 (rg -P): `(?<!Atomics)\.(load|store)\(` excludes the Web-Platform
+// `Atomics.load/store` from the old DSL `state.<x>.load/store`, and
+// `(?<![.a-z])buffer\.` excludes the current `state.buffer.<type>`.
 const OLD_API =
-  "message<|node\\.messages|\\bmidiInput\\b|\\bmidiOutput\\b|messageDecl|[^.a-z]buffer\\.(f32|f64|i32|i64|bool|u8)|\\.load\\(|\\.store\\(";
+  "message<|node\\.messages|\\bmidiInput\\b|\\bmidiOutput\\b|messageDecl|(?<![.a-z])buffer\\.(f32|f64|i32|i64|bool|u8)|(?<!Atomics)\\.load\\(|(?<!Atomics)\\.store\\(";
+// Spec docs = everything under docs/ EXCEPT the historical record (decisions-log
+// + RFCs), which keep their as-decided wording with supersede notes (WI-2).
+// Use a directory arg (not a shell glob of explicit paths) so rg's -g filters
+// actually apply — `-g` is ignored for explicitly-listed file arguments.
+const SPEC_DOCS = "docs/ -g '*.md' -g '!decisions-log.md' -g '!rfc-*.md' -g '!RFC-*.md'";
 
 // A gate: { id, desc, cmd, slow? }. cmd must exit non-zero on FAIL.
 const gates = [
   {
     id: "WI-1 spec-docs-old-api",
-    desc: "docs/00-11.md は現行 API のみ（旧 message/midiInput/buffer.X/.load/.store ゼロ）",
-    cmd: `test "$(rg -c '${OLD_API}' docs/0*.md docs/1[01]*.md 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')" = "0"`,
+    desc: "spec docs（履歴除く全 docs）は現行 API のみ（旧 message/midiInput/buffer.X/.load/.store ゼロ）",
+    cmd: `test "$(rg -cP '${OLD_API}' ${SPEC_DOCS} 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')" = "0"`,
   },
   {
     id: "WI-2 history-docs-audit",
@@ -33,8 +41,8 @@ const gates = [
   },
   {
     id: "WI-3 temporal-historical",
-    desc: "docs に履歴的 temporal 表現ゼロ（originally/used to/legacy/retired/移動/廃止）",
-    cmd: `test "$(rg -ci 'originally|used to|\\blegacy\\b|retired|移動|廃止' docs/*.md 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')" = "0"`,
+    desc: "spec docs に履歴的 temporal 表現ゼロ（originally/used to/legacy/retired/移動/廃止）",
+    cmd: `test "$(rg -ci 'originally|used to|\\blegacy\\b|retired|移動|廃止' ${SPEC_DOCS} 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')" = "0"`,
   },
   {
     id: "WI-4 doc-examples-test",
@@ -58,7 +66,7 @@ const gates = [
   {
     id: "WI-11 readme-old-api",
     desc: "全 package README に旧 API ゼロ",
-    cmd: `test "$(rg -c '${OLD_API}' packages/*/README.md 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')" = "0"`,
+    cmd: `test "$(rg -cP '${OLD_API}' packages/*/README.md README.md 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')" = "0"`,
   },
   {
     id: "WI-12 root-readme-logo",
@@ -119,7 +127,8 @@ for (const g of gates) {
   }
 }
 
-const mark = (s) => (s === "PASS" ? "\x1b[32m✓\x1b[0m" : s === "FAIL" ? "\x1b[31m✗\x1b[0m" : "\x1b[2m–\x1b[0m");
+const mark = (s) =>
+  s === "PASS" ? "\x1b[32m✓\x1b[0m" : s === "FAIL" ? "\x1b[31m✗\x1b[0m" : "\x1b[2m–\x1b[0m";
 for (const [status, id, desc] of results) {
   console.log(`${mark(status)} ${id.padEnd(32)} ${desc}`);
 }

@@ -17,8 +17,8 @@ The example set is designed so that the union of all examples touches every conc
 | `param` (k-rate / a-rate, automation curves)                                                                                                              | 1, 2, 4, 5, 7, 8       |
 | `state.f32` / `state.i32` / `state.bool`                                                                                                                  | 2, 3, 4, 5, 6, 7, 8, 9 |
 | `state.publish` (scalar UI feedback)                                                                                                                      | 1, 4, 5, 6, 7, 8, 9    |
-| `buffer.f32` (per-sample memory)                                                                                                                          | 3, 4, 5, 7, 8          |
-| `buffer.u8` (byte memory for sysex / arbitrary octet streams)                                                                                             | 9                      |
+| `state.buffer.f32` (per-sample memory)                                                                                                                    | 3, 4, 5, 7, 8          |
+| `state.buffer.u8` (byte memory for sysex / arbitrary octet streams)                                                                                       | 9                      |
 | `buffer.publish` (waveform / spectrum frame to UI)                                                                                                        | 5, 8                   |
 | `buf.copyFrom(typedArrayField)` (bulk transfer from payload)                                                                                              | 5, 7, 9                |
 | `forSample` (per-sample loop)                                                                                                                             | 1, 2, 3, 4, 5, 6, 7, 8 |
@@ -60,7 +60,7 @@ The example set is designed so that the union of all examples touches every conc
 6. **MIDI arpeggiator + sequencer** — `event.midi({ from: "main" })` ingest + `event.midi({ to: "main" })` emission, generic `event<T>` for UI step indicator, `event<T>({ from: "main" })` for pattern reload.
 7. **Convolution reverb with snapshot/restore migration** — large IR buffer, partitioned FFT, snapshot persistence with declarative migration chain.
 8. **Polyphonic synth with sidechain ducking** — voice allocator subgraph, sidechain `audioInput` driving the duck envelope, `event.midi({ from: "main" })` voice triggers, waveform `buffer.publish` for UI scope.
-9. **SysEx bridge** — pure MIDI processor that rewrites the device-ID byte of incoming sysex events and re-emits them to a downstream port. Exercises `event.midi({ from: "main" }).onEvent('sysex', ...)`, `buffer.u8` + `buf.copyFrom` + in-place `buf.write`, sysex `midiOut.emitIf`, and main-side dynamic device-ID control via `event<T>({ from: "main" })` + published `state.i32`.
+9. **SysEx bridge** — pure MIDI processor that rewrites the device-ID byte of incoming sysex events and re-emits them to a downstream port. Exercises `event.midi({ from: "main" }).onEvent('sysex', ...)`, `state.buffer.u8` + `buf.copyFrom` + in-place `buf.write`, sysex `midiOut.emitIf`, and main-side dynamic device-ID control via `event<T>({ from: "main" })` + published `state.i32`.
 10. **Live coding REPL bridge** — REPL UI swaps the running processor with edited source via `replaceProcessor`. Exercises the full live-coding flow: `state.snapshot: 'persistent'` for state carry-forward (oscillator phase), main-side graph re-wire (disconnect / connect on the new wrapper), migration-failure recovery via `RestoreResult.ok = false`, and the Q63 accumulation warning surface.
 
 ## 1. Stereo gain + level meter
@@ -1508,7 +1508,7 @@ These are intentionally outside the example set today and are tracked as follow-
 - `everyNSamples` sub-rate work — the surface is defined in `01-dsl.md` §9 (Q7) but no current example uses it. A canonical example will land once a use case (e.g. envelope follower at sub-rate) is selected.
 - Cross-precision type conversion boundaries (`f64(node)` over an `f32` source, etc.) — the surface is in `01-dsl.md` §2 and `f32(node)` / `i32(node)` are exercised, but no example crosses a precision boundary today.
 - Math primitives `tan`, `tanh`, `sqrt` — listed in `01-dsl.md` §2 but unused across the example set.
-- `buffer.i32` — only `buffer.f32` is exercised.
+- `state.buffer.i32` — only `state.buffer.f32` is exercised.
 - MIDI variants beyond `noteOn` / `noteOff` / `sysex`: `cc`, `pitchBend`, `programChange`, `channelPressure`, `aftertouch`, `systemRealtime` are part of the Q4 surface but no current example uses them. Q4 covers the wire / handler shape; the canonical example set has a coverage gap for these variants.
 - `node.midi.<name>.diagnostics.overflowCount()` and `node.events.<name>.diagnostics.overflowCount()` (main-side diagnostics) are present in the spec but only Ex 4 and Ex 8 use them (one polling block each).
 

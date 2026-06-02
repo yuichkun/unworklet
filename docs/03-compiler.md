@@ -28,7 +28,7 @@ The compiler obtains the user's processor as an AST DAG by invoking the `defineP
 
 The `defineProcessor` body is ordinary JavaScript / TypeScript code, executed once. The framework supplies:
 
-- a `ctx` proxy exposing the compile-time `sampleRate` constant (= host AudioContext's sample rate, fixed for the processor's lifetime; canonical examples use `ctx.sampleRate` for build-time coefficient precomputation). Declaration helpers (`audioInput`, `audioOutput`, `state`, `buffer`, `param`, `defineSubgraph`, `createSubgraph`, `migrations`) are imported directly from `@unworklet/core` — they are not `ctx` members.
+- a `ctx` proxy exposing the compile-time `sampleRate` constant (= host AudioContext's sample rate, fixed for the processor's lifetime; canonical examples use `ctx.sampleRate` for build-time coefficient precomputation). Declaration helpers (`audioInput`, `audioOutput`, `state`, `param`, `event`, `defineSubgraph`, `createSubgraph`, `migrations`) are imported directly from `@unworklet/core` — they are not `ctx` members.
 - proxy implementations of all primitives exported from `@unworklet/core` (and `@unworklet/core/simd` if imported) that, when called with `Node<T>` arguments, return new `Node<T>` instances representing AST nodes rather than computing values;
 - a `forSample` proxy that, when called, accepts a callback, executes it once with a fresh `Node<'i32'>` proxy bound as `i`, and records the resulting AST as a per-sample loop body.
 
@@ -38,7 +38,7 @@ Build-time JavaScript continues to behave like ordinary JavaScript: literals, `M
 
 The body executes top-to-bottom; the framework recognises four phase boundaries:
 
-1. **Declaration scope** — the top of the `defineProcessor` body, before `return { process: ... }`. New `state.*`, `buffer.*`, `param.*`, `audioInput`, `audioOutput`, `event<T>`, `message<T>`, `midiInput`, `midiOutput`, and `createSubgraph(...)` instantiations are recorded as graph slots. (`defineSubgraph` itself is the module-level subgraph constructor — it produces a subgraph value at module scope; only `createSubgraph(subgraph, ...args)` calls inside the processor body create per-processor instances.) Each declaration registers a `name` (when supplied) for later snapshot identity (see `01-dsl.md` §8).
+1. **Declaration scope** — the top of the `defineProcessor` body, before `return { process: ... }`. New `state.*`, `state.buffer.*`, `param.*`, `audioInput`, `audioOutput`, `event` (with `from` / `to` direction, plus `event.midi` ports), and `createSubgraph(...)` instantiations are recorded as graph slots. (`defineSubgraph` itself is the module-level subgraph constructor — it produces a subgraph value at module scope; only `createSubgraph(subgraph, ...args)` calls inside the processor body create per-processor instances.) Each declaration registers a `name` (when supplied) for later snapshot identity (see `01-dsl.md` §8).
 
 2. **Process body (top level)** — the framework calls the returned `process` lambda. Statements at the top level of the body emit code that runs once at the start of every render quantum. `forSample(...)` invocations within the body capture a per-sample sub-loop in the AST. Source order is preserved at the AST and at runtime — top-level statements and `forSample` invocations execute in declared order within the render quantum, with no separate phase-segmentation step (see `00-foundations.md` §3 "Process body" for the JUCE / AudioWorklet mental model).
 
@@ -51,7 +51,7 @@ The body executes top-to-bottom; the framework recognises four phase boundaries:
 For each primitive call:
 
 - **Arithmetic / math / control / type conversion**: a typed AST node with the operator and operand handles, returning a fresh `Node<T>` of the inferred output type.
-- **`load` / `store`**: a memory-access AST node referencing the corresponding slot.
+- **`read` / `write`**: a memory-access AST node referencing the corresponding slot.
 - **Buffer access (`buf.read` / `buf.write` / `buf.readInterpolated`)**: an indexed access AST node; the index argument is itself a `Node<'i32'>` (typically a ring-buffer write head).
 - **Audio I/O (`audioIn.ch(c).at(i)` reader / `audioOut.ch(c).at(i).write(v)` writer per Q78)**: a sample-offset-aware AST node carrying the channel index, the sample-offset `i`, and (for the writer) the value to write. Each chain step takes exactly one argument so the role is method-named. The sample-offset is `Node<'i32'> | number`: the `Node<'i32'>` form binds the surrounding `forSample` callback's loop counter, and JS-literal offsets (Q36-a) accept the chain at any lexical position — at the per-block top level this uses literal `0` for block-start access (Q51). Stereo handles also accept `.left.at(i)` / `.right.at(i)` as alias for `.ch(0)` / `.ch(1)` (Q78).
 - **Param access (`param.at(i)` / `param.at(0)`)**: an AST node carrying the param slot reference and the sample-offset. `param.at(i)` is used inside `forSample` callbacks; `param.at(0)` at the per-block top level reads the block-start value.
@@ -76,7 +76,7 @@ The branded `Node<T>` type rejects JavaScript operators. The IDE surfaces these 
 
 The framework throws structured errors when proxy evaluation reaches a violation that the type system cannot express:
 
-- _Scope violations_: a declaration call (any of the 10 declaration helpers — see §2.6 `scope-violation` for the canonical list) inside expression scope (the `process` body, a `forSample` / `forSample.byN` callback, an `everyNSamples` callback, an L1 helper body, a subgraph method body, a `messageDecl.onReceive(...)` handler body, or a `midiInput().onEvent(...)` handler body — see `00-foundations.md` §3 for the canonical 6 expression-scope contexts).
+- _Scope violations_: a declaration call (any of the declaration helpers — see §2.6 `scope-violation` for the canonical list) inside expression scope (the `process` body, a `forSample` / `forSample.byN` callback, an `everyNSamples` callback, an L1 helper body, a subgraph method body, an `event({ from: 'main' }).onReceive(...)` handler body, or an `event.midi({ from: 'main' }).onEvent(...)` handler body — see `00-foundations.md` §3 for the canonical 6 expression-scope contexts).
 - _Missing `name`_: a snapshot-using processor with a declaration missing a required `name`. (Output coverage and duplicate-write are not enforced — unwritten samples are silence, duplicate writes use source-order semantics, both legal; see Q37.)
 - _Constraint violations_: `forSample.byN` called with a non-build-time-constant stride OR a stride that does not divide `SAMPLES_PER_BLOCK` (= 128) (stable ID `illegal-stride`, see §2.6; allowed strides: 1 / 2 / 4 / 8 / 16 / 32 / 64 / 128 per Q37-b); `vec.lane(i)` called with a non-build-time-constant `i` (stable ID `non-constant-lane`); JS-literal sample-offset outside `[0, SAMPLES_PER_BLOCK - 1]` (stable ID `audio-sample-offset-out-of-range`, Q68); etc.
 
@@ -87,8 +87,8 @@ Errors carry the source location (TypeScript file + line + column when source ma
 The compiler runs analysis passes over the captured DAG (see §3); violations detected at this layer are reported with the same source-location format as Layer 2.
 
 - _Allocation check_: an AST pattern that would require heap allocation on the audio thread.
-- _Loop boundedness_: a build-time loop that captured non-statically-bounded iteration. Applies to all audio-thread contexts — `forSample` callback bodies, `everyNSamples` sub-blocks, subgraph method bodies, and `messageDecl.onReceive(...)` / `midiInput().onEvent(...)` handler bodies (Q31-b).
-- _Memory budget_: the compiler auto-sums every declaration (`state` / `buffer` / `event` + `message` payload content / MIDI ringbuffer) into a single WASM linear-memory allocation. There is no user-side `memoryLimit` option (Q30, `decisions-log.md`). The compiler emits a build-time **warning** when the total exceeds 64 MB (= low-end-device load-time concern) and a build-time **error** when it exceeds the WASM 32-bit linear-memory ceiling (= 4 GB). Runtime `memory.grow` on the audio thread is permanently excluded (= would block the audio thread for milliseconds, violating realtime safety).
+- _Loop boundedness_: a build-time loop that captured non-statically-bounded iteration. Applies to all audio-thread contexts — `forSample` callback bodies, `everyNSamples` sub-blocks, subgraph method bodies, and `event({ from: 'main' }).onReceive(...)` / `event.midi({ from: 'main' }).onEvent(...)` handler bodies (Q31-b).
+- _Memory budget_: the compiler auto-sums every declaration (`state` / `state.buffer` / `event` payload content / `event.midi` ringbuffer) into a single WASM linear-memory allocation. There is no user-side `memoryLimit` option (Q30, `decisions-log.md`). The compiler emits a build-time **warning** when the total exceeds 64 MB (= low-end-device load-time concern) and a build-time **error** when it exceeds the WASM 32-bit linear-memory ceiling (= 4 GB). Runtime `memory.grow` on the audio thread is permanently excluded (= would block the audio thread for milliseconds, violating realtime safety).
 - _Out-of-block sample-offset arithmetic_: `i.add(lookahead)` exceeding `[0, SAMPLES_PER_BLOCK - 1]` when statically detectable.
 - _Constant-truthy `emitIf` cond inside `forSample`_: an `emitIf(cond, payload)` whose `cond` folds to a build-time-constant truthy value (e.g. `emitIf(true, ...)` or `emitIf(FORCE_FLAG, ...)` where `FORCE_FLAG` is a build-time `true`) is rejected when the call site is inside a `forSample` / `forSample.byN` / `everyNSamples` callback. Handler / per-block-top-level contexts are exempt because their natural rate is per-block, not per-sample (Q32-c, `decisions-log.md`).
 - _Type inference inconsistency_: a `Node<T>` whose inferred type conflicts with its expected use.
@@ -149,29 +149,29 @@ Stable error IDs are listed in §2.6 (inventory) and grow additively with each n
 
 Each `<stable-id>` is a kebab-case identifier used as the `error[unworklet/<stable-id>]` heading (§2.5). IDs are stable across versions — once shipped, they are not renamed; new checks introduce additional IDs. Consumers may grep / filter on them in CI / IDE / build-log pipelines.
 
-| Stable ID                          | Layer | Rule                                                                                                                                                                                                                                                                                                           | Q-ref       |
-| ---------------------------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
-| `scope-violation`                  | 2     | a declaration call (`state.*` / `buffer.*` / `param.*` / `audioInput` / `audioOutput` / `event<T>` / `message<T>` / `midiInput` / `midiOutput` / `createSubgraph(...)`) appears inside expression scope (= `process` body, `forSample` callback, handler body, or L1 helper)                                   | Q22-c       |
-| `declaration-inside-forsample`     | 2     | a declaration appears inside a `forSample` callback body (= scope-violation sub-case; the per-sample loop body cannot allocate new graph slots)                                                                                                                                                                | Q22-c       |
-| `missing-name`                     | 2     | a snapshot-using processor declares a `state.*` / `buffer.*` / `param.*` slot without the required `name` field                                                                                                                                                                                                | Q5-b        |
-| `subgraph-missing-name`            | 2     | a `createSubgraph(subgraph, ...args)` call omits the instance `name` while the subgraph declares a named-factory slot (`.named(...)` / `.expose({ name })` / `persistent` / `publish`) — the slot's snapshot / main-side path would otherwise be `__sg_N/...`, dependent on instantiation order (§8.1)         | Q41         |
-| `illegal-stride`                   | 2     | `forSample.byN(stride, callback)` is called with a non-build-time-constant `stride`, or a `stride` that does not divide `SAMPLES_PER_BLOCK` (= 128) — allowed values: `1`, `2`, `4`, `8`, `16`, `32`, `64`, `128`                                                                                              | Q37-b       |
-| `illegal-everyn-divisor`           | 2     | `everyNSamples(N, callback)` is called with an `N` that is not a build-time positive integer (must be an integer `>= 1`) — `N = 0` would lower to `i32.rem_u(counter, 0)` and trap on the audio thread; `N` need not divide `SAMPLES_PER_BLOCK` (free-running cross-block counter, §9.1)                       | §9.5        |
-| `non-constant-lane`                | 2     | `vec.lane(i)` is called with a non-build-time-constant lane index `i` (SIMD lane access must fold at graph capture)                                                                                                                                                                                            | Q3          |
-| `audio-sample-offset-out-of-range` | 2     | `audioIn.ch(c).at(k)` / `audioOut.ch(c).at(k).write(v)` / `param.at(k)` is called with a JS-literal sample-offset `k` outside `[0, SAMPLES_PER_BLOCK - 1]` (= `0`〜`127`)                                                                                                                                      | Q68         |
-| `payload-element-type-mismatch`    | 2     | `buf.copyFrom(payloadField)` is called with a typed-array payload whose element type does not match the buffer's `<T>` (e.g. `Float32Array` → `buffer.i32`)                                                                                                                                                    | Q31-c       |
-| `multiple-typed-array-fields`      | 2     | a `message<T>` / `event<T>` payload seals more than one variable-length (typed-array) field (e.g. `message<{ a: Float32Array; b: Float32Array }>` reading both `a.at(...)` and `b.at(...)`) — v1.0.0 allows at most one per payload, since the slot carries a single `[payloadLen, payloadOffset]` pair (§5.1) | §5.1        |
-| `migrations-unreachable`           | 2     | a `migrations: [...]` chain does not cover a path from a known `from` `schemaHash` to the current `schemaHash` (reported as warning by default; promoted to error under `migrationsStrict: true`)                                                                                                              | Q5-e        |
-| `constant-truthy-emitif`           | 3     | `emitIf(cond, payload)` inside a `forSample` / `forSample.byN` callback receives a `cond` expression that folds to a build-time-constant truthy value (would emit at audio rate and saturate the event ringbuffer)                                                                                             | Q32-c       |
-| `bounded-loop`                     | 3     | an audio-thread loop (in a `forSample` callback, `onReceive` handler, `midiInput().onEvent` handler, `everyNSamples` callback, or subgraph method) has an upper bound that does not fold to a build-time constant                                                                                              | Q31-b       |
-| `allocation-on-audio-thread`       | 3     | an AST pattern reachable from a `process` body or any audio-thread handler would imply heap allocation (e.g. `new Uint8Array(...)`, array literals, object spread)                                                                                                                                             | Q22-c, §5.1 |
-| `memory-budget`                    | 3     | the sum of all declarations in a processor exceeds the WASM linear-memory upper bound (= 4 GB hard error); a lower threshold (= 64 MB) emits a build-time warning under the same family                                                                                                                        | Q30         |
+| Stable ID                          | Layer | Rule                                                                                                                                                                                                                                                                                                   | Q-ref       |
+| ---------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------- |
+| `scope-violation`                  | 2     | a declaration call (`state.*` / `state.buffer.*` / `param.*` / `audioInput` / `audioOutput` / `event` (incl. `event.midi`) / `createSubgraph(...)`) appears inside expression scope (= `process` body, `forSample` callback, handler body, or L1 helper)                                               | Q22-c       |
+| `declaration-inside-forsample`     | 2     | a declaration appears inside a `forSample` callback body (= scope-violation sub-case; the per-sample loop body cannot allocate new graph slots)                                                                                                                                                        | Q22-c       |
+| `missing-name`                     | 2     | a snapshot-using processor declares a `state.*` / `state.buffer.*` / `param.*` slot without the required `name` field                                                                                                                                                                                  | Q5-b        |
+| `subgraph-missing-name`            | 2     | a `createSubgraph(subgraph, ...args)` call omits the instance `name` while the subgraph declares a named-factory slot (`.named(...)` / `.expose({ name })` / `persistent` / `publish`) — the slot's snapshot / main-side path would otherwise be `__sg_N/...`, dependent on instantiation order (§8.1) | Q41         |
+| `illegal-stride`                   | 2     | `forSample.byN(stride, callback)` is called with a non-build-time-constant `stride`, or a `stride` that does not divide `SAMPLES_PER_BLOCK` (= 128) — allowed values: `1`, `2`, `4`, `8`, `16`, `32`, `64`, `128`                                                                                      | Q37-b       |
+| `illegal-everyn-divisor`           | 2     | `everyNSamples(N, callback)` is called with an `N` that is not a build-time positive integer (must be an integer `>= 1`) — `N = 0` would lower to `i32.rem_u(counter, 0)` and trap on the audio thread; `N` need not divide `SAMPLES_PER_BLOCK` (free-running cross-block counter, §9.1)               | §9.5        |
+| `non-constant-lane`                | 2     | `vec.lane(i)` is called with a non-build-time-constant lane index `i` (SIMD lane access must fold at graph capture)                                                                                                                                                                                    | Q3          |
+| `audio-sample-offset-out-of-range` | 2     | `audioIn.ch(c).at(k)` / `audioOut.ch(c).at(k).write(v)` / `param.at(k)` is called with a JS-literal sample-offset `k` outside `[0, SAMPLES_PER_BLOCK - 1]` (= `0`〜`127`)                                                                                                                              | Q68         |
+| `payload-element-type-mismatch`    | 2     | `buf.copyFrom(payloadField)` is called with a typed-array payload whose element type does not match the buffer's `<T>` (e.g. `Float32Array` → `state.buffer.i32`)                                                                                                                                      | Q31-c       |
+| `multiple-typed-array-fields`      | 2     | an `event<T>` payload seals more than one variable-length (typed-array) field (e.g. `event<{ a: Float32Array; b: Float32Array }>` reading both `a.at(...)` and `b.at(...)`) — v1.0.0 allows at most one per payload, since the slot carries a single `[payloadLen, payloadOffset]` pair (§5.1)         | §5.1        |
+| `migrations-unreachable`           | 2     | a `migrations: [...]` chain does not cover a path from a known `from` `schemaHash` to the current `schemaHash` (reported as warning by default; promoted to error under `migrationsStrict: true`)                                                                                                      | Q5-e        |
+| `constant-truthy-emitif`           | 3     | `emitIf(cond, payload)` inside a `forSample` / `forSample.byN` callback receives a `cond` expression that folds to a build-time-constant truthy value (would emit at audio rate and saturate the event ringbuffer)                                                                                     | Q32-c       |
+| `bounded-loop`                     | 3     | an audio-thread loop (in a `forSample` callback, `event(...).onReceive` handler, `event.midi(...).onEvent` handler, `everyNSamples` callback, or subgraph method) has an upper bound that does not fold to a build-time constant                                                                       | Q31-b       |
+| `allocation-on-audio-thread`       | 3     | an AST pattern reachable from a `process` body or any audio-thread handler would imply heap allocation (e.g. `new Uint8Array(...)`, array literals, object spread)                                                                                                                                     | Q22-c, §5.1 |
+| `memory-budget`                    | 3     | the sum of all declarations in a processor exceeds the WASM linear-memory upper bound (= 4 GB hard error); a lower threshold (= 64 MB) emits a build-time warning under the same family                                                                                                                | Q30         |
 
 A separate runtime check (not graph-capture / static-analysis) fires when the worklet observes `outputs[0][0].length !== SAMPLES_PER_BLOCK` at the start of a render quantum (= `block-length-mismatch`); audio output switches to silence (zero buffer) while the node stays connected, and a `node.onError({ code: 'block-length-mismatch', expected, received })` event surfaces on the main side rather than a build-time `error[unworklet/...]` heading. See `04-worklet-runtime.md` §3 / §8 and Q18 / Q75.
 
 ### 2.7 要対応: 共通部分式の再評価 (CSE) — [#8](https://github.com/yuichkun/unworklet/issues/8)
 
-graph capture が生む `Node<T>` AST は共有部分木を持つ DAG だが、emit は同じ `Node<T>` 式を複数回参照すると **参照ごとに式を再評価する**（共通部分式除去 = CSE をしない）。式が `state.read()` を含み、その間に同じ slot への `store` が挟まると、後続の参照が **store 後の値** を読んで結果が壊れる。
+graph capture が生む `Node<T>` AST は共有部分木を持つ DAG だが、emit は同じ `Node<T>` 式を複数回参照すると **参照ごとに式を再評価する**（共通部分式除去 = CSE をしない）。式が `state.read()` を含み、その間に同じ slot への `write` が挟まると、後続の参照が **write 後の値** を読んで結果が壊れる。
 
 最小例:
 
@@ -181,9 +181,9 @@ s.write(100); // s を 100 に
 out.ch(0).at(i).write(y); // 期待 10 / 実際 110 (out の y 再評価で s=100 を読む)
 ```
 
-canonical Ex2 の biquad (Direct Form II Transposed) もこれで壊れる: `y = b0·x + z1.read()` を z1n / z2n / return で 3 回使い、間に `z1.write()` が挟まるため、impulse 応答の先頭が `0.2929` (正) → `0.8787` (= store 後の z1 `0.5858` を足し込んだ値) になる。state フィードバックを持つ DSP (biquad / 1 次 LPF / 積分器) を自然な形で書くと全て踏む。
+canonical Ex2 の biquad (Direct Form II Transposed) もこれで壊れる: `y = b0·x + z1.read()` を z1n / z2n / return で 3 回使い、間に `z1.write()` が挟まるため、impulse 応答の先頭が `0.2929` (正) → `0.8787` (= write 後の z1 `0.5858` を足し込んだ値) になる。state フィードバックを持つ DSP (biquad / 1 次 LPF / 積分器) を自然な形で書くと全て踏む。
 
-**要件**: emit は共有 `Node<T>` 部分木を 1 度だけ計算して local に置き、各参照で使い回す (= DAG の共有を保つ)。これは state フィードバック DSP を教科書通りの自然な形で書けるための必須修正。回避策 (= 同じ slot への store を `forSample` の末尾にまとめる) は踏みやすく、canonical すら踏んでいたため不採用。tracking: [#8](https://github.com/yuichkun/unworklet/issues/8)。
+**要件**: emit は共有 `Node<T>` 部分木を 1 度だけ計算して local に置き、各参照で使い回す (= DAG の共有を保つ)。これは state フィードバック DSP を教科書通りの自然な形で書けるための必須修正。回避策 (= 同じ slot への write を `forSample` の末尾にまとめる) は踏みやすく、canonical すら踏んでいたため不採用。tracking: [#8](https://github.com/yuichkun/unworklet/issues/8)。
 
 ## 3. Static analysis phase
 
@@ -217,11 +217,11 @@ canonical Ex2 の biquad (Direct Form II Transposed) もこれで壊れる: `y =
        1. state slots (Q5 — scalar `state.<T>` persisted across quanta)
        2. buffer slots (Q5 — fixed-size arrays persisted across quanta)
        3. I/O scratch (per-quantum input / output channel + param array views)
-       4. event<T> / message<T> ringbuffers (Q27-d — SAB when available)
-       5. event<T> / message<T> payload content buffers (Q27-e — variable-length)
+       4. event<T> ringbuffers (Q27-d — SAB when available)
+       5. event<T> payload content buffers (Q27-e — variable-length)
        6. MIDI ringbuffer (Q4-c — uniform with event<T> ringbuffer)
        7. sysex content buffer (Q4-c-iii — paired with MIDI ringbuffer)
-       8. state.publish / buffer.publish shared regions (Q27-a — SAB per slot)
+       8. state.publish / state.buffer.publish shared regions (Q27-a — SAB per slot)
        9. per-slot publish counters (§7 — initialized to 0 at instantiation)
        10. snapshot region (Q5 — block-atomic memcpy target for `node.snapshot()`)
 
@@ -239,7 +239,7 @@ canonical Ex2 の biquad (Direct Form II Transposed) もこれで壊れる: `y =
 
 ## 6. Client TS codegen
 
-<!-- Typed node wrapper with .params / .messages / .events; .d.ts emission for end-user consumption. -->
+<!-- Typed node wrapper with .params / .events; .d.ts emission for end-user consumption. -->
 
 ## 7. Source maps
 

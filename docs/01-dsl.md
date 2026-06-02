@@ -31,7 +31,7 @@ A `process` body has **two kinds of code distinguished by lexical position**:
 
 The body is read **top-to-bottom**: each statement (whether direct per-block code or a `forSample` invocation) executes in declared (source) order. Per-block code can interleave freely with `forSample` invocations — per-block setup → per-sample work → more per-block code → another `forSample` → … — all valid.
 
-**Handler registrations are an exception to source order at runtime.** `messageDecl.onReceive(handler)` and `midiInput().onEvent(type, handler)` registrations placed anywhere in the `process` body always run at block-boundary drain, **before** any per-block top-level statement or `forSample` invocation (Q38-b). Source order in the body controls graph-capture-time registration order (= multiple `onReceive` registrations for the same message run in registration order at drain); it does not control where handlers fire relative to per-block / per-sample code. See §4.2 + `02-messaging.md` §1 + `11-midi.md` §2.3 for the unified drain rule.
+**Handler registrations are an exception to source order at runtime.** `event<T>({ from: 'main' }).onReceive(handler)` and `event.midi({ from: 'main' }).onEvent(type, handler)` registrations placed anywhere in the `process` body always run at block-boundary drain, **before** any per-block top-level statement or `forSample` invocation (Q38-b). Source order in the body controls graph-capture-time registration order (= multiple `onReceive` registrations for the same inbound event run in registration order at drain); it does not control where handlers fire relative to per-block / per-sample code. See §4.2 + `02-messaging.md` §1 + `11-midi.md` §2.3 for the unified drain rule.
 
 Sample-offset access uses a **chain** for audio I/O (= `audioIn.ch(c).at(i)` reader, `audioOut.ch(c).at(i).write(v)` writer per Q78) and the **single `.at(i)` method** for `param` (= `param.at(i)`, channel concept ナシ). Each chain step takes exactly one argument so the meaning is method-named, not positional: `.ch(c)` selects a channel, `.at(i)` selects a sample offset, `.write(v)` (writer side) writes a value. The `i` argument accepts `Node<'i32'> | number`; a `Node<'i32'>` originates from a `forSample` callback parameter and is in scope only inside that callback (= TS reference error outside). JS-literal sample-offsets (most commonly `0`) lift to `Node<'i32'>` per Q36-a and are accepted everywhere the primitives appear: `param.at(0)` reads the block-start param value, `audioIn.ch(c).at(0)` reads the block-start input sample, `audioOut.ch(c).at(0).write(v)` writes the block-start output sample (Q51). JS-literal offsets must fall within `[0, SAMPLES_PER_BLOCK - 1]` (= `0`〜`127`); offsets outside this range fail at graph-capture time with `error[unworklet/audio-sample-offset-out-of-range]` (Q68). For stereo handles (`channels: 2`), `.left` / `.right` are sugar properties equivalent to `.ch(0)` / `.ch(1)` (Q78).
 
@@ -58,8 +58,8 @@ const gain = defineProcessor((ctx) => {
 const partitionedReverb = defineProcessor((ctx) => {
   const input      = audioInput ({ channels: 1, name: 'main' });
   const output     = audioOutput({ channels: 1, name: 'main' });
-  const inBuf      = buffer.f32({ size: SAMPLES_PER_BLOCK });
-  const outBuf     = buffer.f32({ size: SAMPLES_PER_BLOCK });
+  const inBuf      = state.buffer.f32({ size: SAMPLES_PER_BLOCK });
+  const outBuf     = state.buffer.f32({ size: SAMPLES_PER_BLOCK });
   const partIdx    = state.i32(0);
   const NUM_PARTITIONS = 8;
 
@@ -255,7 +255,7 @@ Handle types for every declaration kind are exported from `@unworklet/core` for 
 - `OutputChannelView<T>` (§1.3) — `audioOut.ch(c)` の 戻 り 値、 `.at(i): OutputChannelSample<T>` を 持 つ
 - `OutputChannelSample<T>` (§1.3) — `audioOut.ch(c).at(i)` の 戻 り 値、 `.write(v): void` を 持 つ (= 3-step writer chain の 終 端)
 - `State<T>` / `Buffer<T>` / `Param` (§3) — `.read()` / `.write(v)` / `.read(idx)` / `.write(idx, v)` / `.at(i)` 等
-- `EventDecl<T>` / `MessageDecl<T>` (§4) — worklet 側 `.emitIf(cond, payload)` / main 側 `.on(handler)` / `.send(payload)` (= MessageDecl のみ)
+- `EventDecl<T>` (= `event<T>({ to: 'main' })`) / `MessageDecl<T>` (= `event<T>({ from: 'main' })`) (§4) — worklet 側 `.emitIf(cond, payload)` (EventDecl) / `.onReceive(handler)` (MessageDecl)、 main 側 `node.events.<name>.on(handler)` (EventDecl) / `node.events.<name>.emit(payload)` (MessageDecl)
 - `MidiInputHandle` / `MidiOutputHandle` (`11-midi.md` §2) — worklet 側 `.onEvent(handler)` / `.emitIf(cond, event)`、 main 側 `.send(...)` / `.on(handler)`
 - `Node<T>` (§2) — per-sample 値 を 表 す branded handle
 
@@ -279,10 +279,10 @@ The package exports build-time constants at the top level, alongside `defineProc
 - **`SAMPLES_PER_BLOCK: 128`** — the render quantum length in samples. Web Audio specifies 128 samples per quantum across all environments; this value is fixed at build time. Used wherever processor code needs to refer to the block length by name rather than by the literal `128`.
 
   ```typescript
-  import { defineProcessor, buffer, forSample, SAMPLES_PER_BLOCK } from "@unworklet/core";
+  import { defineProcessor, state, forSample, SAMPLES_PER_BLOCK } from "@unworklet/core";
 
   defineProcessor(() => {
-    const scratch = buffer.f32({ size: SAMPLES_PER_BLOCK });
+    const scratch = state.buffer.f32({ size: SAMPLES_PER_BLOCK });
 
     return {
       process: () => {
@@ -347,9 +347,9 @@ Each primitive's argument positions accept either a `Node<T>` or a JS `number` /
 - **Comparison** (numeric operands `T extends 'f32' | 'f64' | 'i32' | 'i64'`, returns `Node<'bool'>`): `eq`, `lt`, `gt`, `lte`, `gte` — `bool` operands are a compile error (use `select` / the boolean value directly)
 - **Math** (float-only, `Node<'f32'>` or `Node<'f64'>`): `sin`, `cos`, `tan`, `tanh`, `exp`, `log`, `sqrt`, `floor`, `ceil`, `frac` — integer operands are a compile error (their integer versions are non-sensical; convert first via `f32(intNode).sqrt()`)
 - **Control**: `select(cond: Node<'bool'>, then: Node<T>, else_: Node<T>): Node<T>` (generic over `T`)
-- **Memory**: `load` / `store` on `State<T>`; `.read` / `.write` / `.readInterpolated` / `.copyFrom` / `.loadVec` / `.storeVec` as methods on `Buffer<T>` (see §3.2 and §7). `loadVec` / `storeVec` are SIMD-only and exist on the buffer handle, not on `audioOutput`.
+- **Memory**: `read` / `write` on `State<T>`; `.read` / `.write` / `.readInterpolated` / `.copyFrom` / `.loadVec` / `.storeVec` as methods on `Buffer<T>` (see §3.2 and §7). `loadVec` / `storeVec` are SIMD-only and exist on the buffer handle, not on `audioOutput`.
 
-**Method form availability (Q77)**: every Arithmetic, Comparison, and Math primitive listed above is also callable as a method on the `Node<T>` value (`a.add(b)` is identical to `add(a, b)`). SIMD vec primitives `addVec` / `subVec` / `mulVec` / `divVec` are likewise callable as `.add` / `.sub` / `.mul` / `.div` on `Node<'f32x4'>` values (see §7.2). The control primitive `select` and the SIMD constructors `splat` / `vec4` / `sumLanes` stay **free-function only** (= 3-arg / no natural receiver). Memory access (`load` / `store` / buffer methods) is already in method form on the handle types. Free function form and method form share the same captured graph node — choice is purely syntactic.
+**Method form availability (Q77)**: every Arithmetic, Comparison, and Math primitive listed above is also callable as a method on the `Node<T>` value (`a.add(b)` is identical to `add(a, b)`). SIMD vec primitives `addVec` / `subVec` / `mulVec` / `divVec` are likewise callable as `.add` / `.sub` / `.mul` / `.div` on `Node<'f32x4'>` values (see §7.2). The control primitive `select` and the SIMD constructors `splat` / `vec4` / `sumLanes` stay **free-function only** (= 3-arg / no natural receiver). Memory access (`read` / `write` / buffer methods) is already in method form on the handle types. Free function form and method form share the same captured graph node — choice is purely syntactic.
 
 Math-precision strategy (Q17, `decisions-log.md`): the `@unworklet/core` import path ships **polynomial approximations** (5–7th-order minimax) for every math primitive listed above. All approximations are emitted as WASM functions and run entirely inside the WASM module — there is no FFI / JS-WASM boundary crossing per call, so per-sample use stays realtime-safe. Maximum approximation error is on the order of `1e-4`, inaudible within audio's 24-bit dynamic range. Numerical-analysis use cases (where IEEE-754-faithful math matters) are outside unworklet's scope. v1.x.0 may additively introduce `@unworklet/core/precise` (WASM-bundled libm, std-math-equivalent precision) and `@unworklet/core/table` (precomputed lookup, even faster) import paths.
 
@@ -395,9 +395,9 @@ Authoritative rationale and rejected alternatives: `decisions-log.md` Q33 + Q77.
 
 ## 3. State, buffer, param declarations
 
-The three primitive declaration kinds — scalar `state`, fixed-size `buffer`, and `AudioParam`-backed `param` — are the only places where new memory slots enter the graph. Each kind separates into a **plain factory** (= worklet-private base) and a **named chain** (= `.named()` / `.expose()` method on top of plain) per Q76 + Q79:
+The three primitive declaration kinds — scalar `state`, fixed-size `state.buffer`, and `AudioParam`-backed `param` — are the only places where new memory slots enter the graph. Each kind separates into a **plain factory** (= worklet-private base) and a **named chain** (= `.named()` / `.expose()` method on top of plain) per Q76 + Q79:
 
-- **Plain factory** (`state.<type>` / `buffer.<type>`) — worklet-private slot, no name, no snapshot, no main-side identifier. The common case for filter state, oscillator phase, scratch buffers, internal accumulators. **`param` has no plain factory** (= name required for AudioParam descriptor identity, Q76).
+- **Plain factory** (`state.<type>` / `state.buffer.<type>`) — worklet-private slot, no name, no snapshot, no main-side identifier. The common case for filter state, oscillator phase, scratch buffers, internal accumulators. **`param` has no plain factory** (= name required for AudioParam descriptor identity, Q76).
 - **Named chain** (= `.named('X')` quick + `.expose({ name?, publish?, snapshot? })` full, Q79) — added to a plain declare via chain. Adds the slot to the snapshot blob (with policy default) and opens a main-side identifier reachable as `node.state.<name>` / `node.buffer.<name>` / `node.parameters.<name>`. Both chain methods can be placed **before** or **after** the type method (`.f32` / `.i32` / etc.); same captured graph, choose the order that reads best.
 
 ### 3.1 `state` — scalar slots
@@ -427,9 +427,9 @@ const meterL = state
 const renamed = state.named("orig").f32(0).expose({ name: "final" }); // name 'final' (= 後勝ち)
 ```
 
-`state.<type>(initial)` (= plain) declares a worklet-private scalar slot. Chaining `.named('X')` or `.expose({ name: 'X', ... })` onto a plain declare opens the slot to the snapshot blob and main-side access. Both chain forms are equivalent in graph effect; `.named('X')` is the short form (= name only, policy default), `.expose({ ... })` is the full form (= options object 1 つ で name + policy 全部 渡す). The `State<T>` handle exposes `load()` / `store(node)` regardless of whether the chain is plain or named.
+`state.<type>(initial)` (= plain) declares a worklet-private scalar slot. Chaining `.named('X')` or `.expose({ name: 'X', ... })` onto a plain declare opens the slot to the snapshot blob and main-side access. Both chain forms are equivalent in graph effect; `.named('X')` is the short form (= name only, policy default), `.expose({ ... })` is the full form (= options object 1 つ で name + policy 全部 渡す). The `State<T>` handle exposes `read()` / `write(node)` regardless of whether the chain is plain or named.
 
-State is sample-offset-independent: the `state` reference itself does not depend on the surrounding context. `load()` returns the value as updated by the most recent `store()`. State updates inside `forSample` callbacks are observable in subsequent samples in the same render quantum and in subsequent render quanta. State updates at per-block top level are observable for the rest of that render quantum and beyond. State load/store at per-block top level **after** a `forSample` invocation can observe the state's value at the end of the loop — useful for block-level summaries (peak detect, accumulator readout, etc.).
+State is sample-offset-independent: the `state` reference itself does not depend on the surrounding context. `read()` returns the value as updated by the most recent `write()`. State updates inside `forSample` callbacks are observable in subsequent samples in the same render quantum and in subsequent render quanta. State updates at per-block top level are observable for the rest of that render quantum and beyond. State read/write at per-block top level **after** a `forSample` invocation can observe the state's value at the end of the loop — useful for block-level summaries (peak detect, accumulator readout, etc.).
 
 **Plain factory takes no options other than the initial value.** Type method (`.f32` / `.i32` / etc.) options do not accept `name` / `snapshot` / `publish` fields — those are named-chain territory. Passing them at the type method position is a TypeScript error; the IDE points the author at `.named()` / `.expose()` chain.
 
@@ -447,37 +447,41 @@ Named chain options:
 
 Authoritative rationale: `decisions-log.md` Q27-a + Q42 + Q76 + Q79.
 
-### 3.2 `buffer` — fixed-size arrays
+### 3.2 `state.buffer` — fixed-size arrays
 
 ```typescript
 // Plain — worklet-private
-const ring = buffer.f32({ size: 44100 }); // delay line scratch
-const sysexBuf = buffer.u8({ size: 64 }); // byte buffer (= sysex emit; see 11-midi.md §2.5)
+const ring = state.buffer.f32({ size: 44100 }); // delay line scratch
+const sysexBuf = state.buffer.u8({ size: 64 }); // byte buffer (= sysex emit; see 11-midi.md §2.5)
 
 // Named via .named('X') quick chain (= policy default 'transient')
-const ir = buffer.f32({ size: 1024 }).named("ir"); // 後付け
-const ir = buffer.named("ir").f32({ size: 1024 }); // 前付け、 同 AST
+const ir = state.buffer.f32({ size: 1024 }).named("ir"); // 後付け
+const ir = state.buffer.named("ir").f32({ size: 1024 }); // 前付け、 同 AST
 
 // Named via .expose({ name, ... }) full chain
-const wave = buffer.f32({ size: 256 }).expose({ name: "wavetable", snapshot: "persistent" });
-const impulse = buffer.f32({ size: 1024 }).expose({ name: "impulse", snapshot: "persistent" });
-const display = buffer.f32({ size: 512 }).expose({ name: "spectrum", publish: { rateFps: 30 } });
+const wave = state.buffer.f32({ size: 256 }).expose({ name: "wavetable", snapshot: "persistent" });
+const impulse = state.buffer
+  .f32({ size: 1024 })
+  .expose({ name: "impulse", snapshot: "persistent" });
+const display = state.buffer
+  .f32({ size: 512 })
+  .expose({ name: "spectrum", publish: { rateFps: 30 } });
 ```
 
-`buffer.<type>({ size })` (= plain) declares a worklet-private fixed-size buffer with no main-side identifier. Chain `.named('X')` or `.expose({ name: 'X', ... })` onto a plain declare to open the slot to the snapshot blob and main-side access (Q79). The element-type method exposes `f32` / `f64` / `i32` / `i64` / `bool` / `u8`. The `'u8'` variant exists specifically for sysex emission (Q49) — byte values are written and read through `Node<'i32'>` (the lower 8 bits are stored), so no separate `Node<'u8'>` type is introduced into the scalar type system.
+`state.buffer.<type>({ size })` (= plain) declares a worklet-private fixed-size buffer with no main-side identifier. Chain `.named('X')` or `.expose({ name: 'X', ... })` onto a plain declare to open the slot to the snapshot blob and main-side access (Q79). The element-type method exposes `f32` / `f64` / `i32` / `i64` / `bool` / `u8`. The `'u8'` variant exists specifically for sysex emission (Q49) — byte values are written and read through `Node<'i32'>` (the lower 8 bits are stored), so no separate `Node<'u8'>` type is introduced into the scalar type system.
 
 Access goes through methods on the `Buffer<T>` handle (`buf.read(idx)`, `buf.write(idx, v)`, `buf.readInterpolated(pos)`, `buf.copyFrom(src)`); bounds and interpolation behavior are explicit at each call site. The index argument type is `Node<'i32'> | number` (Q36-a, `decisions-log.md`) — this can be a ring-buffer write head from a `state.i32` slot (per-block or per-sample), the loop counter `i` of a surrounding `forSample` (per-sample), any computed `Node<'i32'>` value, or a JS literal that lifts to `Node<'i32'>`. Range constraints (non-negative, within capacity) are enforced at graph capture.
 
-For bulk transfer from a `message<T>` / `event<T>` payload (e.g. uploading a sample buffer or IR), use `buf.copyFrom(payloadField)`: the framework emits a single WASM `memory.copy` instruction, runtime-clamped to `min(buf.size, src.length)`. This is the canonical replacement for per-sample loops driven by payload length, which would violate the realtime-safety invariant (see `decisions-log.md` Q31).
+For bulk transfer from an `event<T>` payload (e.g. uploading a sample buffer or IR), use `buf.copyFrom(payloadField)`: the framework emits a single WASM `memory.copy` instruction, runtime-clamped to `min(buf.size, src.length)`. This is the canonical replacement for per-sample loops driven by payload length, which would violate the realtime-safety invariant (see `decisions-log.md` Q31).
 
-The `Buffer<T>` handle returned by `buffer.<T>(...)` exposes the following methods (these are part of the handle type, not free function imports):
+The `Buffer<T>` handle returned by `state.buffer.<T>(...)` exposes the following methods (these are part of the handle type, not free function imports):
 
 ```typescript
 type Buffer<T extends ScalarType | "u8"> = {
   read(idx: Node<"i32"> | number): Node<T>;
   write(idx: Node<"i32"> | number, v: Node<T> | number): void;
   readInterpolated(pos: Node<"f32"> | number): Node<T>;
-  // Bulk copy from a typed-array field of the surrounding message / event payload (see §4).
+  // Bulk copy from a typed-array field of the surrounding inbound-event payload (see §4).
   // Compiles to a single WASM `memory.copy`; runtime length is clamped to min(buf.size, src.length).
   // See `decisions-log.md` Q31-c.
   copyFrom(src: TypedArrayFieldRef<T>): void;
@@ -571,27 +575,28 @@ Authoritative rationale for the snapshot defaults: `decisions-log.md` Q5 (Q5-b) 
 
 ### 3.4 Declared-but-unused slots
 
-Declaring a `state.*` / `buffer.*` / `param.*` / `event<T>` / `message<T>` / `midiInput` / `midiOutput` slot **without referencing it in the `process(...)` body or any handler** is silent OK — not a graph-capture-time error, not a warning. Canonical Ex 5 declares `playbackPos` (a `param`) and `grainSpawned` (an `event<T>`) without exercising them in the worklet body, expecting main-thread subscribers / param automation to wire them up at runtime. The framework keeps unused declarations in the snapshot schema, the shared SAB regions, and the publish counter set — impl AI agent **must not** emit a reject or a static-analysis warning for this pattern (= no `error[unworklet/dead-declaration]` ID in `03-compiler.md` §2.6).
+Declaring a `state.*` / `state.buffer.*` / `param.*` / `event<T>` / `event.midi` slot **without referencing it in the `process(...)` body or any handler** is silent OK — not a graph-capture-time error, not a warning. Canonical Ex 5 declares `playbackPos` (a `param`) and `grainSpawned` (an `event<T>({ to: 'main' })`) without exercising them in the worklet body, expecting main-thread subscribers / param automation to wire them up at runtime. The framework keeps unused declarations in the snapshot schema, the shared SAB regions, and the publish counter set — impl AI agent **must not** emit a reject or a static-analysis warning for this pattern (= no `error[unworklet/dead-declaration]` ID in `03-compiler.md` §2.6).
 
-## 4. Messages and events declarations
+## 4. Event declarations
 
-The two declaration kinds `event<T>` (worklet → main, sample-accurate) and `message<T>` (main → worklet, coarse-grained) share an authoring shape. Both are declared at declaration scope and consumed inside the `process` body. Wire-level transport, queue policy, and SAB-vs-postMessage handling live in `02-messaging.md`; this section covers only the DSL surface.
+The `event<T>` family unifies both directions of the worklet ↔ main channel: `event<T>({ to: 'main' })` (worklet → main, sample-accurate) and `event<T>({ from: 'main' })` (main → worklet, coarse-grained). Both directions share an authoring shape, distinguished by the `from` / `to` field. Both are declared at declaration scope and consumed inside the `process` body. Wire-level transport, queue policy, and SAB-vs-postMessage handling live in `02-messaging.md`; this section covers only the DSL surface.
 
-### 4.1 `event<T>` — worklet to main
+### 4.1 `event<T>({ to: 'main' })` — worklet to main
 
 ```typescript
-const peakEvt = event<{ level: number }>({ name: "peak" });
+const peakEvt = event<{ level: number }>({ to: "main", name: "peak" });
 const noteFired = event<{ note: number; velocity: number }>({
+  to: "main",
   name: "noteFired",
   capacity: CAPACITY_512,
 });
 ```
 
-`event<T>(options): EventDecl<T>` declares a typed worklet → main event channel. The payload type `T` is user-defined; an `atSample` field is **always carried on the wire** alongside `T` (mirroring MIDI Q4-c). Emission is via the `emitIf` method on the event handle (`eventDecl.emitIf(cond, payload)`) from any expression context where the audio-thread graph is captured — `forSample` / `forSample.byN` callbacks, `everyNSamples` callbacks (taken from the surrounding `forSample` callback's second argument; see §9 and Q43), `messageDecl.onReceive(...)` and `midiInput().onEvent(...)` handler bodies, and the per-block top level (statements in the `process` body outside any `forSample`). `emitIf` is the **single emission primitive**; there is no plain `emit(...)` form.
+`event<T>({ to: 'main', ...options }): EventDecl<T>` declares a typed worklet → main event channel. The payload type `T` is user-defined; an `atSample` field is **always carried on the wire** alongside `T` (mirroring MIDI Q4-c). Emission is via the `emitIf` method on the event handle (`eventDecl.emitIf(cond, payload)`) from any expression context where the audio-thread graph is captured — `forSample` / `forSample.byN` callbacks, `everyNSamples` callbacks (taken from the surrounding `forSample` callback's second argument; see §9 and Q43), `event<T>({ from: 'main' }).onReceive(...)` and `event.midi({ from: 'main' }).onEvent(...)` handler bodies, and the per-block top level (statements in the `process` body outside any `forSample`). `emitIf` is the **single emission primitive**; there is no plain `emit(...)` form.
 
-`event<T>` offers two TypeScript views of the same payload: main-side handlers receive `T & { atSample: number }` with plain JS scalars, while the worklet-side `emitIf` accepts a lifted shape derived **per-field at the emit call site** (Q71). The declared `T` carries field **names** and a coarse type family (numeric / boolean / typed-array) — the exact wire type of each numeric field is decided at emit time from the `Node<T>` the author passes (`Node<'f32'>` → 4-byte f32 on the wire, `Node<'i32'>` → 4-byte i32, `Node<'bool'>` → 1-byte bool). JS literals at the emit call site lift through Q33 literal-lift to the matching `Node<T>`. `Float32Array` / `Uint8Array` fields in `T` are supplied at emit time through a worklet-declared `buffer.<T>` (see §4.3); the emit shape accepts `Buffer<T>` for the field plus a framework-injected `length`.
+`event<T>({ to: 'main' })` offers two TypeScript views of the same payload: main-side handlers receive `T & { atSample: number }` with plain JS scalars, while the worklet-side `emitIf` accepts a lifted shape derived **per-field at the emit call site** (Q71). The declared `T` carries field **names** and a coarse type family (numeric / boolean / typed-array) — the exact wire type of each numeric field is decided at emit time from the `Node<T>` the author passes (`Node<'f32'>` → 4-byte f32 on the wire, `Node<'i32'>` → 4-byte i32, `Node<'bool'>` → 1-byte bool). JS literals at the emit call site lift through Q33 literal-lift to the matching `Node<T>`. `Float32Array` / `Uint8Array` fields in `T` are supplied at emit time through a worklet-declared `state.buffer.<T>` (see §4.3); the emit shape accepts `Buffer<T>` for the field plus a framework-injected `length`.
 
-The main-side `T & { atSample: number }` view holds plain JS numbers regardless of whether each field travels on the wire as f32 or i32 — main has no `Node` concept. The framework derives the main-side callback type by inspecting each emit site's `Node<T>` and exposing the corresponding JS scalar (f32 / i32 → `number`, bool → `boolean`). See `decisions-log.md` Q71 (per-field emit-time wire-type resolution) and Q46 (cross-thread 2-view separation, retained for MIDI / `message<T>`).
+The main-side `T & { atSample: number }` view holds plain JS numbers regardless of whether each field travels on the wire as f32 or i32 — main has no `Node` concept. The framework derives the main-side callback type by inspecting each emit site's `Node<T>` and exposing the corresponding JS scalar (f32 / i32 → `number`, bool → `boolean`). See `decisions-log.md` Q71 (per-field emit-time wire-type resolution) and Q46 (cross-thread 2-view separation, retained for MIDI / `event<T>({ from: 'main' })`).
 
 ```typescript
 // Inside forSample — cond gates per-sample emission.
@@ -602,7 +607,7 @@ forSample((i) => {
   });
 });
 
-// Inside a MIDI / message handler — `emitIf(true, payload)` is the canonical
+// Inside a MIDI / inbound-event handler — `emitIf(true, payload)` is the canonical
 // form for handler-context unconditional 1:1 projection.
 midi.onEvent("noteOn", ({ note, velocity, atSample }) => {
   notePlayed.emitIf(true, { atSample, note, velocity: velocity / 127 });
@@ -621,15 +626,19 @@ Options:
 
 Overflow: drop-oldest + monotonic `overflowCount` counter, exposed as `node.events.<name>.diagnostics.overflowCount()`. Variable-length payload fields (e.g. `Float32Array`) follow §4.3.
 
-### 4.2 `message<T>` — main to worklet
+### 4.2 `event<T>({ from: 'main' })` — main to worklet
 
 ```typescript
-const reqReset = message<void>({ name: "requestReset" });
-const loadPreset = message<{ slot: number }>({ name: "loadPreset" });
-const uploadIR = message<{ samples: Float32Array }>({ name: "uploadIR", capacity: CAPACITY_16 });
+const reqReset = event<void>({ from: "main", name: "requestReset" });
+const loadPreset = event<{ slot: number }>({ from: "main", name: "loadPreset" });
+const uploadIR = event<{ samples: Float32Array }>({
+  from: "main",
+  name: "uploadIR",
+  capacity: CAPACITY_16,
+});
 ```
 
-`message<T>(options): MessageDecl<T>` declares a typed main → worklet message channel. The worklet-side handler is registered inside the `process` body at per-block top level via `messageDecl.onReceive(handler)`:
+`event<T>({ from: 'main', ...options }): EventDecl<T>` declares a typed main → worklet event channel. The worklet-side handler is registered inside the `process` body at per-block top level via the event handle's `.onReceive(handler)` method:
 
 ```typescript
 return {
@@ -650,25 +659,26 @@ return {
 };
 ```
 
-Handler bodies run at the start of the current render quantum (= worklet author's viewpoint; from main, this is the next quantum after the `node.messages.<name>(...)` call — see Q38-a). At runtime, **all registered handlers (across all messages and MIDI inputs) drain first, before any per-block top-level statement or `forSample` runs** — even though the source order interleaves handler registrations with per-block code. The `process` body's top-to-bottom reading rule (§1) applies to graph capture; at runtime the order is always [handlers] → [per-block statements + forSamples, in source order]. This matches AudioWorklet's `MessagePort.onmessage` behavior (drained before `process` runs) — see Q38-b.
+Handler bodies run at the start of the current render quantum (= worklet author's viewpoint; from main, this is the next quantum after the `node.events.<name>.emit(...)` call — see Q38-a). At runtime, **all registered handlers (across all inbound events and MIDI inputs) drain first, before any per-block top-level statement or `forSample` runs** — even though the source order interleaves handler registrations with per-block code. The `process` body's top-to-bottom reading rule (§1) applies to graph capture; at runtime the order is always [handlers] → [per-block statements + forSamples, in source order]. This matches AudioWorklet's `MessagePort.onmessage` behavior (drained before `process` runs) — see Q38-b.
 
-A single message may have **multiple `onReceive` registrations**; all of them run in registration order at the start of the quantum (later registrations do not override earlier ones — Q38-c).
+A single inbound event may have **multiple `onReceive` registrations**; all of them run in registration order at the start of the quantum (later registrations do not override earlier ones — Q38-c).
 
-**Handler argument shape (Q46-aligned)**: the worklet-side `onReceive` handler receives `T` in **lifted shape** — every `number` field becomes `Node<'i32'>`, every `boolean` field becomes `Node<'bool'>`, every `Float32Array` field becomes the §4.3 typed-array-field proxy (`.at` / `.length`), and every `Uint8Array` (or other non-f32 element) field is transfer-only — bulk-copy it into a `buffer.<type>` via `copyFrom` and read through the buffer (§4.3 / Q84). Main-side `node.messages.<name>(payload)` sends the natural JS `T` (plain `number` / `boolean` / typed array); the framework lifts to the graph shape before the handler executes. Same 2-view pattern as `MidiEvent` / `MidiEventGraph` (Q46 + `11-midi.md` §2.2). `event<T>` (= worklet → main, §4.1) is a separate path: per-field wire types resolve at emit time from the `Node<T>` supplied to `emitIf` (Q71), so the worklet-side lifted shape carries f32 / i32 / bool / etc. on a per-field basis rather than the uniform `number → Node<'i32'>` rule used here.
+**Handler argument shape (Q46-aligned)**: the worklet-side `onReceive` handler receives `T` in **lifted shape** — every `number` field becomes `Node<'i32'>`, every `boolean` field becomes `Node<'bool'>`, every `Float32Array` field becomes the §4.3 typed-array-field proxy (`.at` / `.length`), and every `Uint8Array` (or other non-f32 element) field is transfer-only — bulk-copy it into a `state.buffer.<type>` via `copyFrom` and read through the buffer (§4.3 / Q84). Main-side `node.events.<name>.emit(payload)` sends the natural JS `T` (plain `number` / `boolean` / typed array); the framework lifts to the graph shape before the handler executes. Same 2-view pattern as `MidiEvent` / `MidiEventGraph` (Q46 + `11-midi.md` §2.2). `event<T>({ to: 'main' })` (= worklet → main, §4.1) is a separate path: per-field wire types resolve at emit time from the `Node<T>` supplied to `emitIf` (Q71), so the worklet-side lifted shape carries f32 / i32 / bool / etc. on a per-field basis rather than the uniform `number → Node<'i32'>` rule used here.
 
 State observation inside a handler (Q38-d): `state.read()` reads the value at the start of the current quantum (= the value written by the previous quantum's last write). State written by `state.write(v)` inside the handler is observable in the same quantum's per-block computation and `forSample` callbacks (i.e. handlers can stage values for the per-block code that follows).
 
-Inside a handler, the same expression-scope rules apply as in a `forSample` callback (Q56, `decisions-log.md`): primitive operators, `state.load/store`, buffer access, audio I/O via `audioIn.ch(c).at(i)` / `audioOut.ch(c).at(i).write(v)` / `param.at(i)`, `emitIf`, subgraph methods, and L1 helper calls are all legal. New declarations (`state.*` / `buffer.*` / `param.*` / `createSubgraph(...)`) are not allowed. The surrounding `forSample`'s `i` is not in scope (handlers drain before any `forSample` runs); sample-offset arguments accept `Node<'i32'> | number` from any source — the handler's own `atSample` arg (in MIDI handlers), a state slot value, a buffer read, or a JS literal.
+Inside a handler, the same expression-scope rules apply as in a `forSample` callback (Q56, `decisions-log.md`): primitive operators, `state.read/write`, buffer access, audio I/O via `audioIn.ch(c).at(i)` / `audioOut.ch(c).at(i).write(v)` / `param.at(i)`, `emitIf`, subgraph methods, and L1 helper calls are all legal. New declarations (`state.*` / `state.buffer.*` / `param.*` / `createSubgraph(...)`) are not allowed. The surrounding `forSample`'s `i` is not in scope (handlers drain before any `forSample` runs); sample-offset arguments accept `Node<'i32'> | number` from any source — the handler's own `atSample` arg (in MIDI handlers), a state slot value, a buffer read, or a JS literal.
 
 Options:
 
-- **`name: string`** — required. Used as the key for `node.messages.<name>(payload)` on the main thread.
-- **`capacity?: Capacity`** — default `CAPACITY_256`. Same overflow semantics and `Capacity` literal-union enforcement as `event<T>` (Q44).
+- **`from: 'main'`** — direction discriminant. Selects the main → worklet channel (vs `to: 'main'` for the §4.1 worklet → main channel).
+- **`name: string`** — required. Used as the key for `node.events.<name>.emit(payload)` on the main thread.
+- **`capacity?: Capacity`** — default `CAPACITY_256`. Same overflow semantics and `Capacity` literal-union enforcement as `event<T>({ to: 'main' })` (Q44).
 - **`payloadCapacity?: number`** — bytes reserved for variable-length payload content (`Float32Array` / `Uint8Array` / etc.). If omitted, the framework derives a default from the largest expected payload × ringbuffer slot count. See §4.3 and `02-messaging.md` §5.
 
 ### 4.3 Variable-length payloads
 
-Both `event<T>` and `message<T>` allow variable-length payload fields (`Float32Array`, `Uint8Array`, etc.) within `T`. The wire format borrows the MIDI sysex pattern (Q4-c): the main slot in the ringbuffer holds the fixed-size header + an index into a separate variable-length content buffer. The size of that content buffer is controlled by the `payloadCapacity` option on the declaration (`event<T>({ name, payloadCapacity })` / `message<T>({ name, payloadCapacity })`), measured in bytes. If omitted, the framework derives a default from the largest expected payload × ring-buffer slot count. Authoritative wire format and capacity policy: `02-messaging.md` §5.
+Both directions of `event<T>` (`to: 'main'` and `from: 'main'`) allow variable-length payload fields (`Float32Array`, `Uint8Array`, etc.) within `T`. The wire format borrows the MIDI sysex pattern (Q4-c): the main slot in the ringbuffer holds the fixed-size header + an index into a separate variable-length content buffer. The size of that content buffer is controlled by the `payloadCapacity` option on the declaration (`event<T>({ to: 'main', name, payloadCapacity })` / `event<T>({ from: 'main', name, payloadCapacity })`), measured in bytes. If omitted, the framework derives a default from the largest expected payload × ring-buffer slot count. Authoritative wire format and capacity policy: `02-messaging.md` §5.
 
 Inside a handler body, a `Float32Array` field is **not** a plain JS typed array — it is exposed as a **typed-array-field proxy** with two methods (Q36-b / Q84, `decisions-log.md`):
 
@@ -677,7 +687,7 @@ Inside a handler body, a `Float32Array` field is **not** a plain JS typed array 
   - **JS `number`** — build-time-folded read. The handler body is unrolled per element at graph capture (use this inside a JS `for` loop where the length is known build-time, or with a literal constant).
   - **`Node<'i32'>`** — runtime read. The graph captures a runtime-indexed load against the payload's content buffer.
 
-Direct per-element read (`.at()` / `.length`) is offered **only for `Float32Array` (f32)** fields. The element type of a `message<T>` / `event<T>` typed-array field lives only in the TS type `T`, which is erased before graph capture, so the framework cannot select a per-element load instruction for a non-`f32` field. Byte-oriented (`Uint8Array`) and other element types are therefore **transfer-only**: bulk-copy the field into a `buffer.<type>` slot via `copyFrom` (`buffer.u8(...)` for bytes) and read through the buffer (`buf.read(idx)` yields `Node<'i32'>`, zero-extended for `u8`). This is the realtime-safe `memory.copy` path (Q31-c / Q49 / Q84); it is also the canonical bulk path for f32 payloads that do not need per-element access.
+Direct per-element read (`.at()` / `.length`) is offered **only for `Float32Array` (f32)** fields. The element type of an `event<T>` typed-array field lives only in the TS type `T`, which is erased before graph capture, so the framework cannot select a per-element load instruction for a non-`f32` field. Byte-oriented (`Uint8Array`) and other element types are therefore **transfer-only**: bulk-copy the field into a `state.buffer.<type>` slot via `copyFrom` (`state.buffer.u8(...)` for bytes) and read through the buffer (`buf.read(idx)` yields `Node<'i32'>`, zero-extended for `u8`). This is the realtime-safe `memory.copy` path (Q31-c / Q49 / Q84); it is also the canonical bulk path for f32 payloads that do not need per-element access.
 
 ```typescript
 // Argument = Node — runtime-indexed read (e.g. sample player):
@@ -699,19 +709,20 @@ loadPattern.onReceive(({ steps }) => {
 });
 ```
 
-> Note on `.length` in build-time `for` loops: `samples.length` is normally `Node<'i32'>`. When the message declaration pins the payload length at build time (e.g. fixed-size content), `length` is additionally available as a build-time JS `number` for use in `for` loop bounds. The framework distinguishes these via the declared `capacity` policy in `02-messaging.md` §5.
+> Note on `.length` in build-time `for` loops: `samples.length` is normally `Node<'i32'>`. When the event declaration pins the payload length at build time (e.g. fixed-size content), `length` is additionally available as a build-time JS `number` for use in `for` loop bounds. The framework distinguishes these via the declared `capacity` policy in `02-messaging.md` §5.
 
-Bulk transfer of the entire payload into a `buffer.<type>` slot uses `buf.copyFrom(typedArrayField)` (see §3.2), which is the bounded, single-call path. `.at(node)` runtime read is the per-element path; both coexist.
+Bulk transfer of the entire payload into a `state.buffer.<type>` slot uses `buf.copyFrom(typedArrayField)` (see §3.2), which is the bounded, single-call path. `.at(node)` runtime read is the per-element path; both coexist.
 
 Out-of-range `.at(idx)` reads (idx outside `[0, length)`) are wrapped at graph capture by a `select`-based carrier-clamp so the runtime never traps; documenting the bound at the call site is the author's responsibility. For a non-empty payload the clamp lands on the nearest in-range element (idx below `0` → element `0`, idx `>= length` → element `length - 1`). For an **empty payload (`length === 0`)** every index is out of range and there is no element to clamp to: `.at(idx)` returns `0` (the carrier region may still hold stale bytes from a previously-rotated payload, so the framework explicitly substitutes `0` rather than reading them).
 
-**Emit-side for `event<T>` (worklet → main)**: a typed-array field in the payload is supplied through a worklet-declared `buffer.<T>` (= `buffer.f32(...)` / `buffer.u8(...)` / etc., see §3.2) — the emit shape accepts `Buffer<T>` for the field. The author writes content into the buffer and passes the buffer to `emitIf`; the framework additionally requires an adjacent `length: Node<'i32'>` field at the emit call site (not declared in `T` — framework-injected into the emit shape) and copies `data[0 .. length-1]` into the content buffer at emit time. The main-side handler receives a fresh natural typed array (`Float32Array` / `Uint8Array` / etc.) sized exactly to `length`. Re-emitting an incoming payload first copies it into a `buffer.<T>` via `copyFrom`, then passes that buffer to `emitIf` (= the inbound `TypedArrayFieldRef` is not passed to `emitIf` directly; its element type is erased and the emit path copies from a buffer region, Q84); for an f32 inbound field `data.length` supplies the `length`. No other path constructs typed-array content (no `Uint8Array` literals, no `new Float32Array(...)` at runtime) — the build-time-fixed `buffer.<T>` is the single primitive for new content, uniform with sysex emission (Q49). The §5.1 single variable-length field limit applies (= at most one typed-array field per `T` in v1.0.0); the framework rejects emit sites where multiple typed-array fields are populated as a graph-capture-time error.
+**Emit-side for `event<T>({ to: 'main' })` (worklet → main)**: a typed-array field in the payload is supplied through a worklet-declared `state.buffer.<T>` (= `state.buffer.f32(...)` / `state.buffer.u8(...)` / etc., see §3.2) — the emit shape accepts `Buffer<T>` for the field. The author writes content into the buffer and passes the buffer to `emitIf`; the framework additionally requires an adjacent `length: Node<'i32'>` field at the emit call site (not declared in `T` — framework-injected into the emit shape) and copies `data[0 .. length-1]` into the content buffer at emit time. The main-side handler receives a fresh natural typed array (`Float32Array` / `Uint8Array` / etc.) sized exactly to `length`. Re-emitting an incoming payload first copies it into a `state.buffer.<T>` via `copyFrom`, then passes that buffer to `emitIf` (= the inbound `TypedArrayFieldRef` is not passed to `emitIf` directly; its element type is erased and the emit path copies from a buffer region, Q84); for an f32 inbound field `data.length` supplies the `length`. No other path constructs typed-array content (no `Uint8Array` literals, no `new Float32Array(...)` at runtime) — the build-time-fixed `state.buffer.<T>` is the single primitive for new content, uniform with sysex emission (Q49). The §5.1 single variable-length field limit applies (= at most one typed-array field per `T` in v1.0.0); the framework rejects emit sites where multiple typed-array fields are populated as a graph-capture-time error.
 
 ```typescript
 const fft = defineProcessor((ctx) => {
-  const spectrumBuf = buffer.f32({ size: 512 });
+  const spectrumBuf = state.buffer.f32({ size: 512 });
   const txLen = state.i32(0);
   const result = event<{ spectrum: Float32Array; bin: number }>({
+    to: "main",
     name: "result",
     payloadCapacity: 512 * 4, // bytes reserved for the typed-array field
   });
@@ -791,8 +802,8 @@ L1 helpers are pure TypeScript functions that compose `Node<T>` values into new 
 
 unworklet code lives in two graph-capture-time scopes:
 
-- **Declaration scope** — the body of `defineProcessor` and `defineSubgraph` directly. The 10 declaration kinds canonically listed in `03-compiler.md` §2.6 `scope-violation` are created here: `state.*`, `buffer.*`, `param.*`, `audioInput`, `audioOutput`, `event<T>`, `message<T>`, `midiInput`, `midiOutput`, `createSubgraph(...)`. (`defineSubgraph` itself is a module-level subgraph constructor — not a declaration-scope helper; only `createSubgraph(...)` calls inside a processor body create per-processor instances.) Each declaration registers a slot in the graph (and ultimately a region in WASM linear memory).
-- **Expression scope** — the `process` lambda body (per-block top level + `forSample` / `forSample.byN` callbacks); L1 helper bodies; subgraph method bodies; `everyNSamples` callbacks; `messageDecl.onReceive(...)` handler bodies; `midiInput().onEvent(...)` handler bodies (`00-foundations.md` §3 canonical list, 6 contexts). Per-block and per-sample expressions live here. New declarations are forbidden in expression scope.
+- **Declaration scope** — the body of `defineProcessor` and `defineSubgraph` directly. The declaration kinds canonically listed in `03-compiler.md` §2.6 `scope-violation` are created here: `state.*`, `state.buffer.*`, `param.*`, `audioInput`, `audioOutput`, `event<T>` (`from: 'main'` / `to: 'main'`), `event.midi` (`from: 'main'` / `to: 'main'`), `createSubgraph(...)`. (`defineSubgraph` itself is a module-level subgraph constructor — not a declaration-scope helper; only `createSubgraph(...)` calls inside a processor body create per-processor instances.) Each declaration registers a slot in the graph (and ultimately a region in WASM linear memory).
+- **Expression scope** — the `process` lambda body (per-block top level + `forSample` / `forSample.byN` callbacks); L1 helper bodies; subgraph method bodies; `everyNSamples` callbacks; `event<T>({ from: 'main' }).onReceive(...)` handler bodies; `event.midi({ from: 'main' }).onEvent(...)` handler bodies (`00-foundations.md` §3 canonical list, 6 contexts). Per-block and per-sample expressions live here. New declarations are forbidden in expression scope.
 
 L1 helpers exist purely in expression scope, callable from either per-block top level or inside a `forSample` callback (depending on what the helper's body does).
 
@@ -803,7 +814,7 @@ L1 helpers exist purely in expression scope, callable from either per-block top 
 L1 helpers can receive:
 
 - `Node<T>` values (the most common case),
-- `State<T>` references owned by the caller, including their `load` / `store` methods,
+- `State<T>` references owned by the caller, including their `read` / `write` methods,
 - `Param` references owned by the caller, accessed via `param.at(i)` or `param.at(0)`,
 - `AudioInputHandle<C>` / `AudioOutputHandle<C>` references for helpers that perform per-sample I/O,
 - `Node<'i32'>` for sample-offset `i` when the helper itself uses sample-offset primitives,
@@ -893,15 +904,15 @@ The Q1 "no implicit widening" rule still applies inside the body: mixed-precisio
 
 Inside an L1 body, the following are **forbidden** and produce a graph-capture-time error:
 
-- New `state.*` / `buffer.*` / `param.*` declarations.
+- New `state.*` / `state.buffer.*` / `param.*` declarations.
 - New `defineSubgraph(...)` declarations or `createSubgraph(...)` instantiations (Q34, `decisions-log.md`).
 - New `audioInput` / `audioOutput` declarations.
-- `message` / `event` declarations.
+- `event<T>` / `event.midi` declarations.
 
 The following are **allowed**:
 
 - Primitive operators (`add`, `mul`, `tanh`, `select`, …).
-- `load` / `store` on `State<T>` references received as parameters.
+- `read` / `write` on `State<T>` references received as parameters.
 - `param.at(i)` (with `i` from a surrounding `forSample`) or `param.at(0)` (per-block context) on `Param` references received as parameters.
 - `audioIn.ch(c).at(i)` / `audioOut.ch(c).at(i).write(v)` on handles received as parameters (with `i` from a surrounding `forSample`).
 - Buffer access methods (`buf.read` / `buf.write` / `buf.readInterpolated`) on buffer references received as parameters.
@@ -1029,7 +1040,7 @@ The method call expression's type is inferred from the corresponding return.
 
 `createSubgraph(subgraph, ...args)` can only be called in **declaration scope** — the body of `defineProcessor` or another `defineSubgraph`, before the `return` of the body record. Calling it inside expression scope (a method body, a `forSample` callback, an L1 helper body, a handler body) is a graph-capture-time error. Each instantiation declares an independent state slot region; placing the call in declaration scope keeps state allocation static and the instance count statically determined at build time.
 
-The methods on the returned instance, however, can be called from **any expression context**: `forSample` / `forSample.byN` / `everyNSamples` callbacks, `midiInput().onEvent(...)` handlers, `messageDecl.onReceive(...)` handlers, and per-block top level. Method context is unrestricted regardless of return type — `Node<T>`-returning and `void`-returning methods are both callable everywhere. This matches the context rules for `state.load/store` and the primitive operators.
+The methods on the returned instance, however, can be called from **any expression context**: `forSample` / `forSample.byN` / `everyNSamples` callbacks, `event.midi({ from: 'main' }).onEvent(...)` handlers, `event<T>({ from: 'main' }).onReceive(...)` handlers, and per-block top level. Method context is unrestricted regardless of return type — `Node<T>`-returning and `void`-returning methods are both callable everywhere. This matches the context rules for `state.read/write` and the primitive operators.
 
 ```typescript
 const osc = createSubgraph(oscillator, ctx.sampleRate);
@@ -1090,7 +1101,7 @@ Authoritative rationale and rejected alternatives: `decisions-log.md` Q34.
 Inside a subgraph body:
 
 - **Declaration scope** (top of the body, before the `return` of the method record) allows new `state.*` / `buffer.*` / `param.*` declarations and `createSubgraph(...)` calls for nested subgraph instantiation.
-- **Expression scope** (inside any method body, including any nested `forSample`) follows the same rules as L1 helpers (§5.5.5): no new declarations, no `createSubgraph(...)` calls; primitives, `load` / `store`, audio-I/O / param access via `at` / `set` / `param.at(...)`, and method calls on subgraph instances passed in scope are allowed.
+- **Expression scope** (inside any method body, including any nested `forSample`) follows the same rules as L1 helpers (§5.5.5): no new declarations, no `createSubgraph(...)` calls; primitives, `read` / `write`, audio-I/O / param access via `audioIn.ch(c).at(i)` / `audioOut.ch(c).at(i).write(v)` / `param.at(...)`, and method calls on subgraph instances passed in scope are allowed.
 
 Violations are caught at graph-capture / static-analysis time with refactor-hint error messages, mirroring §5.5.6.
 
@@ -1098,7 +1109,7 @@ Violations are caught at graph-capture / static-analysis time with refactor-hint
 
 unworklet processors run a single execution body, the `process` lambda, on the audio thread every render quantum. Build-time evaluation of `process` captures an AST DAG; the framework emits the DAG as a per-block runtime program (per-block top-level statements run once per render quantum; `forSample` callbacks run per sample). Hard realtime constraints apply (no allocation, no unbounded loops, no I/O). Authoritative shape and semantics: §1, §10, and `decisions-log.md` Q22.
 
-There is **no separate `publish` lambda** and no `perBlock` body. State that the main thread observes (meter, spectrum, etc.) is declared with the `publish` option on `state` / `buffer` (see §3 and `decisions-log.md` Q27-a); worklet → main moment-in-time delivery is via `eventDecl.emitIf(cond, payload)` callable from any expression context (`forSample` / `forSample.byN`, `everyNSamples`, MIDI / message handler bodies, **per-block top level**) — see §4.1 and `decisions-log.md` Q32; main → worklet messages are handled by `onReceive` registered at per-block top of the `process` body (see §4.2). The framework manages all scheduling — there is no user-visible publish-lambda.
+There is **no separate `publish` lambda** and no `perBlock` body. State that the main thread observes (meter, spectrum, etc.) is declared with the `publish` option on `state` / `state.buffer` (see §3 and `decisions-log.md` Q27-a); worklet → main moment-in-time delivery is via `eventDecl.emitIf(cond, payload)` callable from any expression context (`forSample` / `forSample.byN`, `everyNSamples`, MIDI / inbound-event handler bodies, **per-block top level**) — see §4.1 and `decisions-log.md` Q32; main → worklet inbound events are handled by `onReceive` registered at per-block top of the `process` body (see §4.2). The framework manages all scheduling — there is no user-visible publish-lambda.
 
 ## 7. Opt-in SIMD
 
@@ -1189,7 +1200,7 @@ type BufferSimdMethods = {
 - `buf.loadVec(offset)` — load four contiguous f32 lanes from the buffer (offset in element units; alignment-agnostic per WASM v128 semantics). Typically called inside a `forSample.byN(4, ...)` callback, or at per-block top level (with build-time-loop unrolling) for bulk init.
 - `buf.storeVec(offset, value)` — store four contiguous f32 lanes into the buffer.
 
-The `Buffer<T>` handle is returned by `buffer.<T>({ size, name, ... })` declarations (see §3.2); the `.read` / `.write` / `.readInterpolated` scalar methods are always present, while `.loadVec` / `.storeVec` only become callable in modules that import `@unworklet/core/simd`.
+The `Buffer<T>` handle is returned by `state.buffer.<T>({ size, name, ... })` declarations (see §3.2); the `.read` / `.write` / `.readInterpolated` scalar methods are always present, while `.loadVec` / `.storeVec` only become callable in modules that import `@unworklet/core/simd`.
 
 ### 7.3 Beyond v1.0.0 (deferred to v1.x.0, additive)
 
@@ -1228,20 +1239,13 @@ The duplication is intentional: it keeps the scalar API surface untouched and si
 The canonical 4-sample-wide bulk pattern uses `forSample.byN(4, ...)` plus the buffer's `.loadVec` / `.storeVec` methods:
 
 ```typescript
-import {
-  defineProcessor,
-  audioInput,
-  audioOutput,
-  param,
-  buffer,
-  forSample,
-} from "@unworklet/core";
+import { defineProcessor, audioInput, audioOutput, param, state, forSample } from "@unworklet/core";
 import { mulVec, splat } from "@unworklet/core/simd";
 
 export const simdGain = defineProcessor((ctx) => {
   const input = audioInput({ channels: 1, name: "main" });
   const out = audioOutput({ channels: 1, name: "main" });
-  const scratch = buffer.f32({ size: SAMPLES_PER_BLOCK });
+  const scratch = state.buffer.f32({ size: SAMPLES_PER_BLOCK });
   const gain = param
     .f32({ default: 1.0, min: 0.0, max: 4.0, automationRate: "k-rate" })
     .named("gain");
@@ -1274,7 +1278,7 @@ Processors that need preset save/load, session restore, or AB compare declare sn
 
 ### 8.1 Slot identity rules (Q76)
 
-The snapshot blob contains exactly the slots declared via **named chains** (= a plain `state.<type>` / `buffer.<type>` declare with `.named('X')` quick or `.expose({ name: 'X', ... })` full chain attached per Q79, or a `param.<type>` declare with the same chain). Plain declares without `.named()` / `.expose()` chain are worklet-private and never enter any snapshot blob.
+The snapshot blob contains exactly the slots declared via **named chains** (= a plain `state.<type>` / `state.buffer.<type>` declare with `.named('X')` quick or `.expose({ name: 'X', ... })` full chain attached per Q79, or a `param.<type>` declare with the same chain). Plain declares without `.named()` / `.expose()` chain are worklet-private and never enter any snapshot blob.
 
 The `name` field on a named factory is **required at the TypeScript level** — there is no graph-capture-time check for missing names because the type system already rejects them at the IDE. Names are used as keys in snapshot blobs and as the path segment for `node.state.<name>` / `node.buffer.<name>` / `node.parameters.<name>` access.
 
@@ -1457,7 +1461,7 @@ Some processor-internal computations (LFO, envelope, FFT, modulation matrix, etc
 const synth = defineProcessor((ctx) => {
   const lfoVal = state.f32(0);
   const fftMag = state.f32(0);
-  const inBuf = buffer.f32({ size: 1024 });
+  const inBuf = state.buffer.f32({ size: 1024 });
   const audioIn = audioInput({ channels: 1, name: "main" });
   const out = audioOutput({ channels: 1, name: "main" });
 
@@ -1627,7 +1631,7 @@ const gainSat = defineProcessor((ctx) => {
 const simdProc = defineProcessor((ctx) => {
   const input   = audioInput ({ channels: 1, name: 'main' });
   const out     = audioOutput({ channels: 1, name: 'main' });
-  const scratch = buffer.f32({ size: SAMPLES_PER_BLOCK });
+  const scratch = state.buffer.f32({ size: SAMPLES_PER_BLOCK });
   const gain    = param.f32({ default: 1.0, ..., automationRate: 'k-rate' }).named('gain');
 
   return {
@@ -1741,7 +1745,7 @@ The default vite-plugin output continues to auto-register the processor under it
 
 - The author **must** call `initialize(this, opts)` in their constructor before returning. Failing to do so surfaces a runtime event on the first invocation of `process(this, ...)`: a structured `node.onError({ code: "worklet-initialize-not-called" })` is posted once from the audio thread (= `04-worklet-runtime.md` §8 の 5 番 目 code) + every subsequent quantum emits silence, with the node staying connected。 The audio thread does **not** throw (= `00-foundations.md` §5.1 invariant 3), so main-side observation goes through `.onError` rather than a `processorerror` exception。
 - `process(self, ...)`'s return value follows the AudioWorkletProcessor contract — `true` to continue, `false` to allow shutdown.
-- Declarative MIDI / event / message / audio I/O facilities (= `midiInput().onEvent`, etc.) continue to function inside the extended class without further intervention — they are wired through `initialize(...)`.
+- Declarative MIDI / event / audio I/O facilities (= `event.midi({ from: 'main' }).onEvent`, etc.) continue to function inside the extended class without further intervention — they are wired through `initialize(...)`.
 
 ### 11.5 v1.0.0 scope
 

@@ -32,11 +32,11 @@ The worklet's per-block marshalling normalizes the three AudioParam array length
 
 #### A4. Subnormal flush-to-zero
 
-`state.f32 / state.f64 .store(v)` is compiled with a subnormal guard (`|v| < 1e-30 → 0`), preventing CPU spikes from IIR feedback paths approaching zero. No opt-out in v1.0.0 (`decisions-log.md` Q21).
+`state.f32 / state.f64 .write(v)` is compiled with a subnormal guard (`|v| < 1e-30 → 0`), preventing CPU spikes from IIR feedback paths approaching zero. No opt-out in v1.0.0 (`decisions-log.md` Q21).
 
 #### A5. `SharedArrayBuffer` availability
 
-The runtime detects whether `SharedArrayBuffer` is constructible and `crossOriginIsolated` is true, then selects transport accordingly: SAB + Atomics when available, pre-allocated `postMessage` buffers at render-quantum granularity otherwise. The messaging surface (`node.messages.*`, `node.events.*`, MIDI) is byte-identical in both modes; only main-side observation latency differs. Consumers who care can observe the mode via `node.onError` (event code `sab-unavailable`). Full transport details in `02-messaging.md` and `decisions-log.md` Q27.
+The runtime detects whether `SharedArrayBuffer` is constructible and `crossOriginIsolated` is true, then selects transport accordingly: SAB + Atomics when available, pre-allocated `postMessage` buffers at render-quantum granularity otherwise. The messaging surface (`node.events.*`, MIDI) is byte-identical in both modes; only main-side observation latency differs. Consumers who care can observe the mode via `node.onError` (event code `sab-unavailable`). Full transport details in `02-messaging.md` and `decisions-log.md` Q27.
 
 #### A6. MIDI ringbuffer overflow
 

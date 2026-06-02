@@ -18,7 +18,7 @@ createNode<C>(
 type CreateNodeOptions<C> = {
   // Per-param initial values only. Key is narrowed to the declared param-name
   // literal union (= same narrowing discipline as `node.params.<name>` /
-  // `node.state.<name>` / `node.messages.<name>` / `node.events.<name>` /
+  // `node.state.<name>` / `node.events.<name>` /
   // `node.midi.<name>` / `node.inputs.<name>` / `node.outputs.<name>` — typo'd
   // names surface as a TypeScript error at the call site). `state.*` / `buffer.*`
   // initialization goes through `await node.restore(blob)` (Q57) —
@@ -49,19 +49,18 @@ The `UnworkletNode<C>` shape exposes the following members:
 - **`.params.<name>: AudioParam`** — real Web Audio `AudioParam` (`setValueAtTime` / `linearRampToValueAtTime` / `exponentialRampToValueAtTime` / connection-from-`AudioNode` all work).
 - **`.state.<name>.value: T`** — current value of a `state.publish` (or `buffer.publish`) slot. Returns the most recently published value synchronously. Read-only. `T` follows the declared slot type: `number` for `state.f32` / `state.i32`, `boolean` for `state.bool` (the framework casts the internal `i32` 0/1 representation; see Q42 in `decisions-log.md`); typed-array view for `buffer.<type>`. `state.f64` / `state.i64` do not accept `publish` in v1.0.0.
 - **`.state.<name>.subscribe(handler) → unsubscribe`** — listen for updates on a published state / buffer slot. Handler fires on every **due tick** (= `rateFps`-gated render quantum where the per-slot version counter has advanced; see `04-worklet-runtime.md` §7) — the framework does not compare values, so handlers receive every published update including identical re-publishes (Q39-b, `decisions-log.md`; see §5.2 for the dedupe pattern if you need it).
-- **`.events.<name>.on(handler) → unsubscribe`** — typed subscriber per declared `event<T>`. Handler receives the payload (including `atSample`).
-- **`.events.<name>.diagnostics.overflowCount(): number`** — monotonic counter of dropped events (see `02-messaging.md` §3).
-- **`.messages.<name>(payload): void`** — typed sender per declared `message<T>`. Fire-and-forget; in-arrival-order delivery, drained at the start of each render quantum on the worklet side.
-- **`.messages.<name>.diagnostics.overflowCount(): number`** — monotonic counter of dropped messages.
-- **`.midi.<name>.send(event, atTime?)`** — source-agnostic MIDI inject on a declared `midiInput({ name })`. Namespaced per port to allow multi-port processors (Q40, `decisions-log.md`). See `11-midi.md` §3.
-- **`.midi.<name>.connectFromWebMIDI(input)`** — Web MIDI bridge convenience on a declared `midiInput({ name })`.
-- **`.midi.<name>.onEvent(type, handler) → unsubscribe`** — typed MIDI event subscriber on a declared `midiOutput({ name })`. See `11-midi.md` §2.
+- **`.events.<name>.on(handler) → unsubscribe`** — typed subscriber per declared `event<T>({ to: "main" })` (worklet → main). Handler receives the payload (including `atSample`).
+- **`.events.<name>.emit(payload): void`** — typed sender per declared `event<T>({ from: "main" })` (main → worklet). Fire-and-forget; in-arrival-order delivery, drained at the start of each render quantum on the worklet side.
+- **`.events.<name>.diagnostics.overflowCount(): number`** — monotonic counter of dropped events for the named port (see `02-messaging.md` §3).
+- **`.midi.<name>.send(event, atTime?)`** — source-agnostic MIDI inject on a declared `event.midi({ from: "main", name })`. Namespaced per port to allow multi-port processors (Q40, `decisions-log.md`). See `11-midi.md` §3.
+- **`.midi.<name>.connectFromWebMIDI(input)`** — Web MIDI bridge convenience on a declared `event.midi({ from: "main", name })`.
+- **`.midi.<name>.onEvent(type, handler) → unsubscribe`** — typed MIDI event subscriber on a declared `event.midi({ to: "main", name })`. See `11-midi.md` §2.
 - **`.midi.<name>.diagnostics.overflowCount(): number`** — monotonic counter of dropped MIDI events for the named port.
 - **`.diagnostics.transport: 'sab' | 'postMessage'`** — active transport mode (see `02-messaging.md` §4 and `08-deployment.md` §3).
 - **`.snapshot(options?: { profile?: string }): Promise<Uint8Array>`** — capture current state slots into a binary blob (§2.6).
 - **`.restore(blob: Uint8Array): Promise<RestoreResult>`** — write the blob's slot values back into the running processor (§2.6).
 - **`.dispose()`** — tear down node, queues, worklet runtime, all subscribers.
-- **`.onError(handler: (event: NodeErrorEvent) => void): () => void`** — push 通 知 経 路 (= worklet traps, queue overflow events, SAB-mode change, block-length mismatch, escape-hatch init 漏 れ を 集 約 通 知)、 unsubscribe を 返 す。 5 event code (= `wasm-trap` / `queue-overflow` / `sab-unavailable` / `block-length-mismatch` / `worklet-initialize-not-called`) は `NodeErrorEvent` discriminated union (= `04-worklet-runtime.md` §8 で declare)。 queue overflow の 累 計 counter は pull 寄 り の `.events.<name>.diagnostics.overflowCount()` / `.messages.<name>.diagnostics.overflowCount()` / `.midi.<name>.diagnostics.overflowCount()` で 取 得 = push が 各 発 生 を 通 知、 pull が 累 計 を 観 測 す る 二 段 構 え。
+- **`.onError(handler: (event: NodeErrorEvent) => void): () => void`** — push 通 知 経 路 (= worklet traps, queue overflow events, SAB-mode change, block-length mismatch, escape-hatch init 漏 れ を 集 約 通 知)、 unsubscribe を 返 す。 5 event code (= `wasm-trap` / `queue-overflow` / `sab-unavailable` / `block-length-mismatch` / `worklet-initialize-not-called`) は `NodeErrorEvent` discriminated union (= `04-worklet-runtime.md` §8 で declare)。 queue overflow の 累 計 counter は pull 寄 り の `.events.<name>.diagnostics.overflowCount()` / `.midi.<name>.diagnostics.overflowCount()` で 取 得 = push が 各 発 生 を 通 知、 pull が 累 計 を 観 測 す る 二 段 構 え。
 - **signal probe opt-in method** (= 名 称 は Phase 6 末 尾 で ratify、 候 補 `attachSignalProbe()` / `enableProbes()` / `tapForDev()`) — dev 限 定 で 全 declared output port に pass-through `AnalyserNode` を 中 間 挿 入 し、 `@unworklet/vite-plugin` の DevTools panel `Signals & performance / Audio sub-tab` (= `07-vite-plugin.md` §6.1) に waveform / spectrogram / record path を 開 く。 production build で は method は no-op に compile (= consumer bundle へ の 影 響 ゼ ロ)。 idempotent (= 2 度 呼 ん で も attach は 1 度 だ け)。 Phase 6 末 尾 で fill (= `10-roadmap.md` Phase 6 B-3)。
 
 `.outputs.<name>.connect(target)` の 内 部 で 行 う `AudioWorkletNode.connect(...)` 呼 び 出 し は、 dev mode で `@unworklet/vite-plugin` が opt-in で 適 用 す る `AudioNode.prototype.connect/disconnect` monkey patch (= `07-vite-plugin.md` §6.4) に よ っ て **観 測 さ れ る** (= 全 5 connect overload + 全 5 disconnect overload を wrap、 戻 り 値 保 持、 edge 変 更 を DevTools の Audio graph panel に push)。 opt-out は `unworklet({ devtools: { observeAudioGraph: false } })` plugin option (= production build で は patch 自 体 が emit さ れ な い)。 `node.node.connect(...)` (= raw `AudioWorkletNode` 経 由) も 同 patch で 観 測 さ れ る。
@@ -70,7 +69,7 @@ The `UnworkletNode<C>` shape exposes the following members:
 
 The `.params.<name>` shape is a real `AudioParam` — distinct from the worklet-side `param.at(i)` graph-capture form. Main-thread JS uses standard Web Audio APIs; the worklet-side primitive is graph-capture only.
 
-The `.state.<name>` surface is **read-only on main**. Writing to a worklet-side state slot from main is not supported by design — main-driven state changes go through `params.<name>` (continuous values), `messages.<name>(payload)` (discrete commands), or `restore(blob)` (full state reload). Authoritative rationale: `decisions-log.md` Q27-a.
+The `.state.<name>` surface is **read-only on main**. Writing to a worklet-side state slot from main is not supported by design — main-driven state changes go through `params.<name>` (continuous values), `events.<name>.emit(payload)` (discrete commands), or `restore(blob)` (full state reload). Authoritative rationale: `decisions-log.md` Q27-a.
 
 ### 2.6 Snapshot / restore / inspect
 
@@ -195,7 +194,7 @@ Both `.events.<name>.on(handler)` and `.state.<name>.subscribe(handler)` return 
 
 The audio thread does not back off based on main-thread responsiveness. The framework's contract is "deliver as much as the ring buffer can hold; report overflow accurately". Consumers who need flow control build it on top:
 
-- Round-trip throttle: send a `messages.<name>(payload)` request to the worklet, have the worklet reply with an `event<T>` only when ready for more.
+- Round-trip throttle: send an `events.<name>.emit(payload)` request to the worklet, have the worklet reply with an `event<T>({ to: "main" })` only when ready for more.
 - Source-side throttle: monitor `overflowCount` on the consumer side and adjust emission cadence at the worklet author's level (e.g. wrap the emit site in `everyNSamples(N, () => eventDecl.emitIf(...))`).
 
 ## 6. Snapshot / restore semantics

@@ -10,12 +10,12 @@ fill 済 み 42 件 (= matcher 19 / signal 7 / MIDI 10 / sample-time 6) + chain 
 
 matcher 自 体 は 全 件 fill 済 み で `RenderOfflineResult` を 与 え れ ば 正 し く 動 く。 `renderOffline` の capture 状 況 別 の 影 響:
 
-- **`expectEventsEqual` / `expectEventCount` / `expectEventsContaining`** は `renderOffline.events` を 直 接 比 較。 `renderOffline` の event 捕 捉 は 実 装 済 み (= main → worklet `message<T>` injection + worklet → main `event<T>` 捕 捉、 typed-array payload 含 む)。 `events` は real renderOffline で 実 デ ー タ を 持 ち、 end-to-end の event assertion が そ の ま ま 通 る。
+- **`expectEventsEqual` / `expectEventCount` / `expectEventsContaining`** は `renderOffline.events` を 直 接 比 較。 `renderOffline` の event 捕 捉 は 実 装 済 み (= main → worklet `event<T>({ from: "main" })` injection + worklet → main `event<T>({ to: "main" })` 捕 捉、 typed-array payload 含 む)。 `events` は real renderOffline で 実 デ ー タ を 持 ち、 end-to-end の event assertion が そ の ま ま 通 る。
 - **`expectMidiOut` / `expectMidiBalance`** は MIDI renderer が 未 実 装 (= `10-roadmap.md` §Phase 9) の 間、 `renderOffline` が MIDI を 捕 捉 し な い た め `midiEvents` は 常 に `[]`、 「empty 期 待 = empty 実 測」 で 偽 pass、 非 empty 期 待 で は loud fail。 hand-built `RenderOfflineResult` (= test fixture) に 対 し て の 使 用 は 安 全、 real renderOffline 出 力 と の end-to-end zip は Phase 9 待 ち。
 - **`expectStateMatches`** は Phase 11 (= snapshot/restore) で renderer の `state` capture が fill さ れ る ま で `state` は 常 に `new Uint8Array(0)` (= 空 blob stub)、 「empty blob 期 待」 で 偽 pass。 非 empty 期 待 で は length mismatch で loud fail。
 - **`RenderOfflineResult.sampleRate`** field は `config.sampleRate` を そ の ま ま carry し て metadata と し て 信 頼 で き る (= `expectAudioMatches` / `expectAudioMatchesGolden` の sampleRate 比 較 で 使 う)。 一 方 で processor の `ctx.sampleRate` は Phase 3 placeholder = `0` で、 DSP 内 で `ctx.sampleRate` を 直 接 読 む code path は real rate が flow し て こ な い (= core 側 で の plumbing 完 了 = 後 続 phase)。 当 phase で sampleRate 比 較 が catch す る の は metadata mismatch (= 同 PCM / 異 rate label)、 「processor が ctx.sampleRate を 読 ん で 計 算 し た 結 果 が real rate に zip し て い な い」 path は core 側 fix 待 ち = matcher 側 の 振 る 舞 い と は 独 立。
 
-要 約: matcher は 入 力 contract (= `RenderOfflineResult`) に 対 し て 正 し く 動 き、 上 流 renderer が real data を 出 す ご と に end-to-end usage path が 開 く。 end-to-end 検 証 が 通 る の は audio 出 力 path + event path (= `event<T>` / `message<T>` の renderer 捕 捉 が 実 装 済 み)。 MIDI / state path は 後 続 phase (= `10-roadmap.md` §Phase 9 / Phase 11) で 順 次 zip。
+要 約: matcher は 入 力 contract (= `RenderOfflineResult`) に 対 し て 正 し く 動 き、 上 流 renderer が real data を 出 す ご と に end-to-end usage path が 開 く。 end-to-end 検 証 が 通 る の は audio 出 力 path + event path (= `event<T>`（from / to 両 方 向）の renderer 捕 捉 が 実 装 済 み)。 MIDI / state path は 後 続 phase (= `10-roadmap.md` §Phase 9 / Phase 11) で 順 次 zip。
 
 ## 1. Relationship to `@unworklet/offline`
 
@@ -58,7 +58,7 @@ result 型 = `RenderOfflineResult` = `{ outputs: Record<string, Float32Array[]>,
 
 ### 2.4 MIDI matchers
 
-- **`expectMidiOut(result, portName, expectedMidiEvents, opts?)`** — 特 定 `midiOutput({ name })` port 経 由 emit さ れ た MIDI event 列 を `MidiEvent` 形 (= `11-midi.md` §2.2) で 一 致 比 較。 `result.events[i].payload` は `13-offline-render.md` §2 contract で online handler に 渡 さ れ る 値 と 同 形 = `MidiEvent` 構 造 を そ の ま ま 担 う (= wire byte は `11-midi.md` §4 で 述 べ た 通 り compiler 内 部 = author / 消 費 者 surface で は ナ シ)、 matcher は 構 造 化 payload を 直 接 比 較。
+- **`expectMidiOut(result, portName, expectedMidiEvents, opts?)`** — 特 定 `event.midi({ to: "main", name })` port 経 由 emit さ れ た MIDI event 列 を `MidiEvent` 形 (= `11-midi.md` §2.2) で 一 致 比 較。 `result.events[i].payload` は `13-offline-render.md` §2 contract で online handler に 渡 さ れ る 値 と 同 形 = `MidiEvent` 構 造 を そ の ま ま 担 う (= wire byte は `11-midi.md` §4 で 述 べ た 通 り compiler 内 部 = author / 消 費 者 surface で は ナ シ)、 matcher は 構 造 化 payload を 直 接 比 較。
 - **`expectMidiBalance(result, portName, opts?: { hangingNotes? })`** — noteOn / noteOff pair が balance、 hanging note (= noteOn 後 noteOff な し) が `opts.hangingNotes` (default `0`) 件 ま で 許 容。 stray noteOff (= 出 現 時 点 で 対 応 (channel, note) の noteOn 在 庫 が ゼ ロ の noteOff = lifecycle 逆 転 / noteOn 1 に 対 し て noteOff 2 以 上) は always fail (= MIDI lifecycle で stray は 常 に bug = tolerance opt ナ シ)。 events を 時 系 列 走 査 す る running counter path で 「noteOff → noteOn (= 最 終 net 0)」 も 検 出。
 
 ### 2.5 State matchers

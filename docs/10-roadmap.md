@@ -138,19 +138,19 @@ DevTools panel の **real 連携** (= B 軸: AudioNode.prototype hook / Unworkle
 - main 側 `.state.<name>.subscribe()` / `.value`
 - SAB Atomics path
 - postMessage fallback (= SAB unavailable 環境)
-- `event<T>` (= worklet → main ringbuffer、 `emitIf` + `atSample`)
-- `message<T>` (= main → worklet、 `onReceive` handler、 block-boundary drain)
+- `event<T>({ to: "main" })` (= worklet → main ringbuffer、 `emitIf` + `atSample`)
+- `event<T>({ from: "main" })` (= main → worklet、 `onReceive` handler、 block-boundary drain)
 
 完了 条件: canonical Ex 1 が full (= meter 含む) で 動く + browser で meter が 30fps で UI に 流れる + DevTools panel 「Live state inspector」 (= named state slot + `state.publish` の live 値、 07-vite-plugin.md §6.1) が 動く。
 
 ### Phase 9 — MIDI
 
-- `midiInput` / `midiOutput` declaration (= 11-midi.md §1)
+- `event.midi({ from: "main" })` / `event.midi({ to: "main" })` declaration (= 11-midi.md §1)
 - `.onEvent(type, handler)` worklet 側 (= type-discriminated、 11-midi.md §2)
 - ringbuffer + `atSample` (= 02-messaging.md §5.5 と 同 protocol)
 - main 側 `.midi.<name>.send()` / `.onEvent()` / `.diagnostics.overflowCount()`
 - `connectFromWebMIDI` (= Web MIDI bridge、 source-agnostic injection)
-- sysex (= `buffer.u8` + variable-length content buffer、 Q49)
+- sysex (= `state.buffer.u8` + variable-length content buffer、 Q49)
 
 完了 条件: canonical Ex 5 (= granular sampler、 MIDI note in)、 Ex 6 (= MIDI arpeggiator)、 Ex 8 (= polyphonic synth)、 Ex 9 (= sysex bridge) が 動く + DevTools panel 「MIDI flow / overflow」 (= `node.midi.<name>.diagnostics`、 07-vite-plugin.md §6.1) が 動く。
 
@@ -205,7 +205,7 @@ The following items are intentionally postponed past v1.0.0. Each has a forward-
 
 ### 3.1 Mandatory mitigations (must ship in v1.x.0)
 
-- **Double-buffered `buffer.publish` regions** — eliminates torn reads on multi-byte published regions and variable-length `event<T>` / `message<T>` payloads. v1.0.0 ships single-buffered (acknowledged limitation in `decisions-log.md` Q27-f and `02-messaging.md` §5.4). v1.x.0 introduces 2× region per published slot with atomic index switch from the audio thread; main-side readers consume the most-recent-completed region. **Mandatory, not optional** — the v1.0.0 surface explicitly promises this upgrade.
+- **Double-buffered `buffer.publish` regions** — eliminates torn reads on multi-byte published regions and variable-length `event<T>` payloads (both directions). v1.0.0 ships single-buffered (acknowledged limitation in `decisions-log.md` Q27-f and `02-messaging.md` §5.4). v1.x.0 introduces 2× region per published slot with atomic index switch from the audio thread; main-side readers consume the most-recent-completed region. **Mandatory, not optional** — the v1.0.0 surface explicitly promises this upgrade.
 
 ### 3.2 Additive surface extensions (no v1.0.0 promise; rolled out as demand surfaces)
 
