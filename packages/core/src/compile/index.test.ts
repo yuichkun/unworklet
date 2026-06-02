@@ -1,21 +1,21 @@
 /**
- * Behavior of `compile()` orchestration (= `03-compiler.md` §1、 plan
- * Q-D stage 別 internal module を 順 次 invoke す る public entry)。
+ * Behavior of `compile()` orchestration (= `03-compiler.md` §1, the public
+ * entry point that invokes each internal module in stage order).
  *
- * 4 stage 配 線:
+ * 4-stage wiring:
  *   capturedGraph = processor.graph
  *   diagnostics   = analyze(graph)
  *   memory        = layout(graph)
  *   wasm          = await emit(graph, memory)
  *   schemaHash    = schemaHash(graph)
  *
- * 返 す `{ wasm, graph, memory, diagnostics, schemaHash, __compiledProcessor }`
- * は CompileResult<C> shape。
+ * Returns `{ wasm, graph, memory, diagnostics, schemaHash, __compiledProcessor }`
+ * conforming to the CompileResult<C> shape.
  */
 
 import { expect, test } from "vite-plus/test";
 
-import "../dsl/primitives.ts"; // side-effect = `.mul` method form を Node prototype に 登 録
+import "../dsl/primitives.ts"; // side-effect: registers `.mul` and other method forms on Node prototype
 import { SAMPLES_PER_BLOCK } from "../dsl/constants.ts";
 import { audioInput, audioOutput, param } from "../dsl/declarations.ts";
 import { forSample } from "../dsl/loop.ts";
@@ -73,14 +73,14 @@ test("`compile` orchestration drives stereo-gain processor to memory I/O end-to-
   }
 });
 
-test("`compile` is deterministic = 同 processor で 同 schemaHash を 返 す", async () => {
+test("`compile` is deterministic: same processor always produces the same schemaHash", async () => {
   const first = await compile(stereoGain);
   const second = await compile(stereoGain);
   expect(first.schemaHash).toBe(second.schemaHash);
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// makeDriver unit tests (= driver handle 単 体 で 各 method 経 路 を 観 測)
+// makeDriver unit tests: exercise each method path on the driver handle in isolation
 // ─────────────────────────────────────────────────────────────────────────
 
 const stereoGainGraph: CapturedGraph = {
@@ -100,7 +100,7 @@ const stereoGainGraph: CapturedGraph = {
   statements: [],
 };
 
-test("`makeDriver(...).instantiate()` の declarations = graph か ら CompileInstanceDeclaration へ narrow", async () => {
+test("`makeDriver(...).instantiate()` narrows graph declarations to CompileInstanceDeclaration shape", async () => {
   const lay = layout(stereoGainGraph);
   const wasm = await emit(stereoGainGraph, lay);
   const instance = await makeDriver(stereoGainGraph, lay, wasm).instantiate();
@@ -124,7 +124,7 @@ test("`instance.writeInput(port, channel, block)` writes into `inputs[port] + ch
   for (let i = 0; i < SAMPLES_PER_BLOCK; i++) block[i] = i / SAMPLES_PER_BLOCK;
   instance.writeInput("main", 1, block);
 
-  // channel 1 base = inputs.main (= 0) + 1 * 512 = 512
+  // channel 1 base offset = inputs.main (= 0) + 1 * 512 = 512
   const view = new Float32Array(instance.memory.buffer, 512, SAMPLES_PER_BLOCK);
   expect(view).toEqual(block);
 });
@@ -138,7 +138,7 @@ test("`instance.writeParam(name, block)` writes into `params[name]` offset", asy
   block.fill(0.75);
   instance.writeParam("gain", block);
 
-  // params.gain = 2048 (= stereoGainGraph layout)
+  // params.gain offset = 2048 (per stereoGainGraph layout)
   const view = new Float32Array(instance.memory.buffer, 2048, SAMPLES_PER_BLOCK);
   expect(view).toEqual(block);
 });
@@ -152,7 +152,7 @@ test("`instance.readOutput(port, channel, dest)` reads from `outputs[port] + cha
   const wasm = await emit(graph, lay);
   const instance = await makeDriver(graph, lay, wasm).instantiate();
 
-  // memory 直 接 書 込 (= outputs.main = 0、 channel 1 base = 512)
+  // write directly into memory (outputs.main = 0, channel 1 base = 512)
   const memoryView = new Float32Array(instance.memory.buffer, 512, SAMPLES_PER_BLOCK);
   for (let i = 0; i < SAMPLES_PER_BLOCK; i++) memoryView[i] = i * 0.01;
 
@@ -162,7 +162,7 @@ test("`instance.readOutput(port, channel, dest)` reads from `outputs[port] + cha
 });
 
 test("`instance.process()` invokes the WASM `process` export (= memory observable side effect)", async () => {
-  // top-level literal write で process() 呼 出 後 memory に 反 映 確 認
+  // verify that a top-level literal write is reflected in memory after process() is called
   const graph: CapturedGraph = {
     declarations: [{ kind: "audioOutput", name: "main", channels: 1 }],
     statements: [
@@ -180,13 +180,13 @@ test("`instance.process()` invokes the WASM `process` export (= memory observabl
   const instance = await makeDriver(graph, lay, wasm).instantiate();
   instance.process();
   const view = new Float32Array(instance.memory.buffer, 0, 1);
-  // f32 precision round = 0.42 は f32 で exact 表 現 不 能 = Math.fround で 期 待 値 を round
+  // 0.42 is not exactly representable as f32; use Math.fround to round the expected value
   expect(view[0]).toBe(Math.fround(0.42));
 });
 
-test("`compile` rejects analyze error diagnostics + error message に stable ID を 含 む", async () => {
-  // forSample 内 で constant-truthy emitIf = analyze で error diagnostic →
-  // compile が emit に 入 る 前 に throw、 message に stable ID 含 む。
+test("`compile` rejects when analyze produces error diagnostics and the error message contains a stable ID", async () => {
+  // A constant-truthy emitIf inside forSample triggers an error diagnostic from analyze;
+  // compile throws before reaching emit, and the message includes the stable diagnostic ID.
   const badProc: CapturedGraph = {
     declarations: [
       {

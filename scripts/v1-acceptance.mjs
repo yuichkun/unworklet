@@ -31,33 +31,33 @@ const SPEC_DOCS = "docs/ -g '*.md' -g '!decisions-log.md' -g '!rfc-*.md' -g '!RF
 const gates = [
   {
     id: "WI-1 spec-docs-old-api",
-    desc: "spec docs（履歴除く全 docs）は現行 API のみ（旧 message/midiInput/buffer.X/.load/.store ゼロ）",
+    desc: "Spec docs (all docs except the historical record) use only the current API — zero old message/midiInput/buffer.X/.load/.store",
     cmd: `test "$(rg -cP '${OLD_API}' ${SPEC_DOCS} 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')" = "0"`,
   },
   {
     id: "WI-2 history-docs-audit",
-    desc: "decisions-log/RFC の旧 API 残存は supersede 注記済（監査 artifact 存在）",
+    desc: "Old API still present in decisions-log/RFCs is annotated as superseded (audit artifact exists)",
     cmd: "test -f plans/artifacts/history-docs-audit.md",
   },
   {
     id: "WI-3 temporal-historical",
-    desc: "spec docs に履歴的 temporal 表現ゼロ（originally/used to/legacy/retired/移動/廃止）",
-    cmd: `test "$(rg -ci 'originally|used to|\\blegacy\\b|retired|移動|廃止' ${SPEC_DOCS} 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')" = "0"`,
+    desc: "Spec docs contain zero historical/temporal phrasing (originally/used to/legacy/retired)",
+    cmd: `test "$(rg -ci 'originally|used to|\\blegacy\\b|retired' ${SPEC_DOCS} 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')" = "0"`,
   },
   {
     id: "WI-4 doc-examples-test",
-    desc: "README/llms/SKILL の全コード例を機械抽出して compile/render する test 緑",
+    desc: "Test that machine-extracts every code example from README/llms/SKILL and compiles/renders it is green",
     cmd: "vp test run packages/offline/src/docs-examples.test.ts",
     slow: true,
   },
   {
     id: "WI-5 agents-consumer-index",
-    desc: "AGENTS.md に package README + llms.txt への consumer index",
+    desc: "AGENTS.md has a consumer index pointing to the package READMEs and llms.txt",
     cmd: "rg -q 'packages/core/README' AGENTS.md && rg -q 'llms.txt' AGENTS.md",
   },
   {
     id: "WI-11 readme-sections",
-    desc: "全 package README に install + usage(```ts) + API セクション",
+    desc: "Every package README has install + usage(```ts) + API sections",
     cmd:
       "for p in core lang offline test vite-plugin; do " +
       "rg -qi 'install' packages/$p/README.md && rg -q '```ts' packages/$p/README.md " +
@@ -65,19 +65,19 @@ const gates = [
   },
   {
     id: "WI-11 readme-old-api",
-    desc: "全 package README に旧 API ゼロ",
+    desc: "Every package README has zero old API",
     cmd: `test "$(rg -cP '${OLD_API}' packages/*/README.md README.md 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')" = "0"`,
   },
   {
     id: "WI-12 root-readme-logo",
-    desc: "root README に unworklet ロゴ + package index、logo asset 存在",
+    desc: "Root README has the unworklet logo + package index, and the logo asset exists",
     cmd:
       "rg -q 'unworklet-logo-chain' README.md && test -f assets/unworklet-logo-chain.svg " +
       "&& rg -qi 'quick start|getting started' README.md",
   },
   {
     id: "WI-6 browser-verify",
-    desc: "全 panel の browser 実機目視 artifact（graph/state/signals/midi）",
+    desc: "Real-browser visual-inspection artifacts for every panel (graph/state/signals/midi)",
     cmd:
       "test -f plans/artifacts/browser-verify-signals.json " +
       "&& test -f plans/artifacts/browser-verify-midi.json " +
@@ -86,23 +86,23 @@ const gates = [
   },
   {
     id: "WI-7 event-direction (#40 = keep flat, documented)",
-    desc: "#40 は現状維持+文書化（per-name narrowing は v1.x）。type/doc が flat surface を明記",
+    desc: "#40 stays as-is and is documented (per-name narrowing is v1.x); the type/doc explicitly states the flat surface",
     cmd: "rg -q 'deferred to' packages/core/src/types.ts && rg -q 'flat .Record' docs/05-client.md",
   },
   {
     id: "WI-8 prev-slot-type",
-    desc: "#47 $prev slot 型を戻り値から確定する test 緑",
+    desc: "#47 test that determines the $prev slot type from the return value is green",
     cmd: "vp test run packages/lang/src/__sugar__/prev.test.ts",
     slow: true,
   },
   {
     id: "WI-9 roadmap-status",
-    desc: "10-roadmap の A1-F1 status 事実化 artifact",
+    desc: "Artifact reconciling the A1-F1 status in 10-roadmap with reality",
     cmd: "test -f plans/artifacts/roadmap-status.md",
   },
   {
     id: "FINAL vp-check",
-    desc: "workspace 全体 vp check 緑",
+    desc: "vp check is green across the entire workspace",
     cmd: "vp check",
     slow: true,
   },

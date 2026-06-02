@@ -1,15 +1,15 @@
 /**
- * Main-thread client surface (`05-client.md` §1 + §2)。
+ * Main-thread client surface (`05-client.md` §1 + §2).
  *
- * - `createNode(context, processor, options?)` — `?worklet` 経 由 で
- *   augment さ れ た CompiledProcessor を 受 け 取 り、 `addModule` +
- *   `fetch(wasmUrl)` + `new AudioWorkletNode(...)` + readiness handshake
- *   を 経 て typed `UnworkletNode<C>` を 返 す。 audioWorklet.addModule
- *   は (context, moduleUrl) ご と に cache し て 二 重 register を 防 ぐ。
+ * - `createNode(context, processor, options?)` — takes the `CompiledProcessor`
+ *   augmented via `?worklet` and returns a typed `UnworkletNode<C>` after
+ *   `addModule` + `fetch(wasmUrl)` + `new AudioWorkletNode(...)` + the readiness
+ *   handshake. `audioWorklet.addModule` is cached per (context, moduleUrl) to
+ *   prevent double registration.
  * - `UnworkletNode<C>` full surface = `node` / `inputs.<name>` /
  *   `outputs.<name>` / `params.<name>` / `state` / `events` / `messages` /
- *   `midi` / `snapshot` / `restore` / `onError` / `diagnostics` / `dispose()`。
- * - `inspect(blob)` — non-realtime free function (Q48)、 `AudioContext` 不 要。
+ *   `midi` / `snapshot` / `restore` / `onError` / `diagnostics` / `dispose()`.
+ * - `inspect(blob)` — non-realtime free function (Q48); needs no `AudioContext`.
  */
 
 import type {
@@ -41,23 +41,24 @@ import { type DevNodeHandle, registerDevNode, unregisterDevNode } from "./devReg
 declare const __UNWORKLET_DEVTOOLS__: boolean;
 
 /**
- * publishShared region 内 の i32 bit pattern を user surface 型 に 変 換
- * (= sub-phase 7.5)。 f32 は bit pattern を Float32Array 経 由 で reinterpret、
- * bool は 0/1 → boolean、 i32 は そ の ま ま。 publish 対 応 type は Q42 で
- * f32 / i32 / bool 限 定 = 当 関 数 で 全 path cover。 module-level Float32Array
- * temp を 持 ち 回 す と main thread side で alloc が 発 生 する path = function-
- * level temp で 1 回 alloc + reuse (= main 側 = audio thread invariant の 対 象
- * 外、 ただ し 大 量 polling で の alloc 削 減 で 持 ち 回 し)。
+ * Convert an i32 bit pattern in the publishShared region into its user-surface
+ * type. `f32` reinterprets the bit pattern through a Float32Array, `bool` maps
+ * 0/1 → boolean, `i32` passes through unchanged. Per Q42 the publishable types
+ * are limited to f32 / i32 / bool, so this function covers every path. These
+ * module-level temps are allocated once and reused: the main thread is outside
+ * the audio-thread no-alloc invariant, but holding a shared buffer still avoids
+ * per-call allocation under heavy polling.
  */
 const F32_REINTERPRET_BUF = new ArrayBuffer(4);
 const F32_REINTERPRET_FLOAT = new Float32Array(F32_REINTERPRET_BUF);
 const F32_REINTERPRET_INT = new Int32Array(F32_REINTERPRET_BUF);
 
 /**
- * event ring slot か ら per-field 値 を reinterpret し て plain JS 値 で 取 る
- * (= sub-phase 7.6 commit 6)。 wireType は 1 番 目 emit で seal さ れ た 型
- * (= Q71)、 main 側 で は plain JS 値 (= number / boolean / bigint) と し て 公 開
- * (= EmitPayload で の Node<T> path は worklet 側 だ け、 main は 自 然 JS)。
+ * Read a per-field value out of an event ring slot and reinterpret it as a
+ * plain JS value. `wireType` is the type sealed at the first emit (Q71); on the
+ * main thread the value is exposed as a plain JS value (number / boolean /
+ * bigint) — the `Node<T>` form in `EmitPayload` exists only on the worklet
+ * side, the main thread sees natural JS.
  */
 function readEventFieldValue(
   view: DataView,
@@ -79,9 +80,10 @@ function readEventFieldValue(
 }
 
 /**
- * §4.3 typed-array event field の content bytes を element type 別 の fresh typed
- * array に reinterpret (= worklet→main、 main 側 は natural JS typed array)。 `bytes`
- * を slice で copy し て non-shared / 0-align の ArrayBuffer に し て か ら view を 張 る。
+ * §4.3 — reinterpret the content bytes of a typed-array event field into a
+ * fresh typed array of the matching element type (worklet→main; the main side
+ * gets a natural JS typed array). `bytes` is copied via `slice` into a
+ * non-shared, 0-aligned ArrayBuffer before a view is placed over it.
  */
 function sliceTypedArray(bytes: Uint8Array, elementType: BufferElementType): ArrayBufferView {
   const copy = bytes.slice();
@@ -108,15 +110,15 @@ function convertStateValue(bits: number, type: ScalarType): number | boolean {
   if (type === "bool") {
     return bits !== 0;
   }
-  return bits; // i32 / その 他 = そ の ま ま (= Q42 で publish 対 応 は f32 / i32 / bool 限 定)
+  return bits; // i32 / anything else = pass through (per Q42 publishable types are limited to f32 / i32 / bool)
 }
 
-// Per-context `addModule` deduplication。 The cache stores the in-flight (or
+// Per-context `addModule` deduplication. The cache stores the in-flight (or
 // settled) Promise itself, NOT just a "registered" flag — concurrent
 // `createNode()` calls for the same `(context, moduleUrl)` would otherwise
 // both miss the cache during the addModule round-trip and both call
 // `audioWorklet.addModule(...)`, which then hits `registerProcessor()` twice
-// with the same name (= MDN: duplicate name throws `NotSupportedError`)。
+// with the same name (= MDN: duplicate name throws `NotSupportedError`).
 const moduleCache = new WeakMap<object, Map<string, Promise<void>>>();
 
 const addModuleOnce = (
@@ -132,7 +134,7 @@ const addModuleOnce = (
   const existing = perContext.get(url);
   if (existing) return existing;
   // Drop a rejected entry so a subsequent call can retry (= a transient
-  // network blip should not permanently poison this (context, url))。
+  // network blip should not permanently poison this (context, url)).
   const promise = context.audioWorklet.addModule(url).catch((err: unknown) => {
     perContext!.delete(url);
     throw err;
@@ -143,14 +145,14 @@ const addModuleOnce = (
 
 /**
  * Fetch WASM bytes + asynchronously compile to a `WebAssembly.Module` on
- * the main thread。 The compiled `Module` is structured-clone-safe (= W3C
+ * the main thread. The compiled `Module` is structured-clone-safe (= W3C
  * wasm-web-api spec) and is what we hand off via
  * `AudioWorkletNodeOptions.processorOptions.module`, so the audio thread
- * only has to `new WebAssembly.Instance(module)` (= fast、 deterministic
+ * only has to `new WebAssembly.Instance(module)` (= fast, deterministic
  * cost) instead of a sync `new WebAssembly.Module(bytes)` (= MDN
- * explicitly recommends the async path for production)。 First-quantum
+ * explicitly recommends the async path for production). First-quantum
  * glitch potential disappears + Chrome's 4KB sync-compile reject path is
- * sidestepped entirely。
+ * sidestepped entirely.
  */
 const fetchAndCompileWasm = async (url: string): Promise<WebAssembly.Module> => {
   const response = await fetch(url);
@@ -161,8 +163,8 @@ const fetchAndCompileWasm = async (url: string): Promise<WebAssembly.Module> => 
   }
   // Use `WebAssembly.compileStreaming` when the response is the
   // `application/wasm` MIME — it skips the intermediate ArrayBuffer
-  // copy in conformant browsers。 Fall back to `WebAssembly.compile`
-  // with the buffer for other content types / older engines。
+  // copy in conformant browsers. Fall back to `WebAssembly.compile`
+  // with the buffer for other content types / older engines.
   const ct = response.headers?.get?.("Content-Type") ?? "";
   if (typeof WebAssembly.compileStreaming === "function" && /application\/wasm\b/.test(ct)) {
     return await WebAssembly.compileStreaming(response);
@@ -172,15 +174,15 @@ const fetchAndCompileWasm = async (url: string): Promise<WebAssembly.Module> => 
 };
 
 /**
- * Build per-`audioInput` AudioNode destinations。 Each port gets a
+ * Build per-`audioInput` AudioNode destinations. Each port gets a
  * pass-through `GainNode(gain=1)` pre-wired to the underlying
- * `AudioWorkletNode` at the correct input port index。 Users write
+ * `AudioWorkletNode` at the correct input port index. Users write
  * `source.connect(node.inputs.main)` and Web Audio routes the signal through
  * the gain proxy onto the right worklet input port — no wrapper / monkey
- * patching is in the path, just standard `AudioNode.connect(...)`。
+ * patching is in the path, just standard `AudioNode.connect(...)`.
  *
  * Returned array is index-aligned with `inputs` so `dispose()` can tear
- * down each gain proxy with one pass。
+ * down each gain proxy with one pass.
  */
 const buildInputProxies = (
   context: BaseAudioContext,
@@ -214,10 +216,10 @@ const buildOutputs = (
     result[desc.name] = {
       connect(target: AudioNode | AudioParam): void {
         // AudioWorkletNode.connect has overloads for AudioNode (= 3-arg)
-        // and AudioParam (= 2-arg) destinations。 AudioNode exposes a
+        // and AudioParam (= 2-arg) destinations. AudioNode exposes a
         // `connect` method, AudioParam does not = duck-type discriminate
         // rather than `instanceof AudioNode` (avoids relying on globals
-        // for offline / test environments)。
+        // for offline / test environments).
         if (typeof (target as { connect?: unknown }).connect === "function") {
           node.connect(target as AudioNode, idx, 0);
         } else {
@@ -245,10 +247,10 @@ const buildParams = (
 };
 
 /**
- * Default timeout (ms) for the `createNode` ready handshake。 Triggers a
+ * Default timeout (ms) for the `createNode` ready handshake. Triggers a
  * reject if the worklet never posts `{ kind: "ready" }` or `{ kind:
  * "init-error" }` — last-resort safety net for cases the structured paths
- * miss (= bug in the worklet template, message dropped, etc.)。
+ * miss (= bug in the worklet template, message dropped, etc.).
  */
 const READY_TIMEOUT_MS = 10_000;
 
@@ -256,8 +258,8 @@ const awaitReady = (node: AudioWorkletNode): Promise<void> =>
   new Promise<void>((resolve, reject) => {
     // `cleanup()` runs exactly once per settle path — it synchronously
     // removes both event listeners and clears the timer, so once it runs
-    // the corresponding handler can no longer fire。 No defensive
-    // `if (settled) return` guard is needed in the handlers themselves。
+    // the corresponding handler can no longer fire. No defensive
+    // `if (settled) return` guard is needed in the handlers themselves.
     const cleanup = (): void => {
       node.port.removeEventListener("message", onMessage);
       node.removeEventListener("processorerror", onProcessorError);
@@ -279,7 +281,7 @@ const awaitReady = (node: AudioWorkletNode): Promise<void> =>
     };
     const onProcessorError = (event: Event): void => {
       cleanup();
-      // `processorerror` carries no payload per MDN — surface what we can。
+      // `processorerror` carries no payload per MDN — surface what we can.
       const errEvent = event as ErrorEvent;
       const message = errEvent.message || "AudioWorkletProcessor constructor threw";
       reject(new Error(`unworklet: processorerror during init — ${message}`));
@@ -296,9 +298,9 @@ const awaitReady = (node: AudioWorkletNode): Promise<void> =>
     node.addEventListener("processorerror", onProcessorError);
     // Spec-compliant `MessagePort.start()` is a no-op when the port is
     // already started by `addEventListener('message', ...)` semantics, but
-    // some polyfilled / older engines surface `InvalidStateError` here。
+    // some polyfilled / older engines surface `InvalidStateError` here.
     // Wrap so the Promise rejects cleanly with cleanup instead of leaving
-    // listeners + timer pinned。
+    // listeners + timer pinned.
     try {
       node.port.start();
     } catch (err) {
@@ -346,30 +348,33 @@ export async function createNode<C>(
   const messageRings = ns.messageRings;
   const midiRings = ns.midiRings;
 
-  // transport mode 検 出 (= sub-phase 7.4)。 publishSlots ゼ ロ で も transport は
-  // 計 算 す る (= 後 続 で event<T> / message<T> / midi の SAB ringbuffer path で も
-  // 同 transport mode を 使 う = 既 declared diagnostics surface と zip)。
+  // Detect the transport mode. Compute transport even when publishSlots is
+  // empty — the event<T> / message<T> / midi SAB ringbuffer paths reuse the
+  // same transport mode, which lines up with the already-declared diagnostics
+  // surface.
   const sabAvailable =
     typeof SharedArrayBuffer === "function" &&
     typeof globalThis !== "undefined" &&
     (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated === true;
   const transportMode: "sab" | "postMessage" = sabAvailable ? "sab" : "postMessage";
 
-  // publish slot 1 つ あ た り 12 byte (= 4 byte publishShared + 8 byte publishCounters)。
-  // SAB 時 の み allocate (= postMessage path で は structured clone で main /
-  // worklet が 別 ArrayBuffer instance を 持 つ = mirror 不 能、 worklet 側 が
-  // port.postMessage 経 路 で 通 知 す る path = main 側 buffer 自 体 不 要)。
+  // 12 bytes per publish slot (= 4 byte publishShared + 8 byte publishCounters).
+  // Allocate only under SAB — on the postMessage path structured clone gives
+  // main / worklet separate ArrayBuffer instances, so they cannot mirror; the
+  // worklet notifies via port.postMessage instead, so the main side needs no
+  // buffer at all.
   const publishBufferByteLength = publishSlots.length * 12;
   let publishBuffer: SharedArrayBuffer | null = null;
   if (publishBufferByteLength > 0 && sabAvailable) {
     publishBuffer = new SharedArrayBuffer(publishBufferByteLength);
   }
 
-  // event ring buffer。 SAB 時 の み allocate (= postMessage path は structured
-  // clone で main / worklet が 別 ring instance に な る = mirror 不 能、 worklet
-  // 側 が port.postMessage で 新 emit 分 を 個 別 配 送 す る 経 路 = main 側 buffer
-  // 自 体 不 要)。 SAB 時 = 1 SAB に 全 event ring を 連 続 配 置 = per-ring 内
-  // offset = declaration 順 累 計 (= main / worklet で 同 path で 計 算)。
+  // event ring buffer. Allocate only under SAB — on the postMessage path
+  // structured clone gives main / worklet separate ring instances, so they
+  // cannot mirror; the worklet ships each new emit individually via
+  // port.postMessage, so the main side needs no buffer at all. Under SAB all
+  // event rings sit contiguously in one SAB, and each ring's offset is the
+  // running total in declaration order (computed identically on main / worklet).
   let eventRingsByteLength = 0;
   const eventRingSabOffsets: number[] = [];
   for (const ring of eventRings) {
@@ -381,9 +386,10 @@ export async function createNode<C>(
     eventRingsBuffer = new SharedArrayBuffer(eventRingsByteLength);
   }
 
-  // §4.3 content buffer (worklet→main) = typed-array field を 持 つ event ご と に
-  // payloadContent.capacity bytes を 連 続 配 置 (= ring index と zip)。 worklet が
-  // ここ に WASM content を mirror、 main が drain で slot の [len, offset] で slice。
+  // §4.3 content buffer (worklet→main): for each event with a typed-array
+  // field, lay out payloadContent.capacity bytes contiguously (aligned with the
+  // ring index). The worklet mirrors WASM content here; the main side slices it
+  // by the slot's [len, offset] during drain.
   let eventContentByteLength = 0;
   const eventContentSabOffsets: number[] = [];
   for (const ring of eventRings) {
@@ -397,11 +403,13 @@ export async function createNode<C>(
     eventContentBuffer = new SharedArrayBuffer(eventContentByteLength);
   }
 
-  // message ring buffer。 SAB 時 の み allocate (= postMessage path は main 側 が
-  // `port.postMessage({ kind: 'message', ringIndex, payload })` で 直 送、 worklet
-  // 側 が self.port.onmessage で receive + messageQueueMirrors に push + process
-  // 開 始 で WASM ring に inject = main 側 buffer 自 体 不 要)。 SAB 時 = event ring
-  // と zip pattern (= 1 SAB に 連 続 配 置、 main 側 sender が SAB に push)。
+  // message ring buffer. Allocate only under SAB — on the postMessage path the
+  // main side sends directly via
+  // `port.postMessage({ kind: 'message', ringIndex, payload })`, and the worklet
+  // receives it in self.port.onmessage, pushes onto messageQueueMirrors, and
+  // injects into the WASM ring once processing starts; the main side needs no
+  // buffer at all. Under SAB it mirrors the event-ring pattern (= contiguous in
+  // one SAB, with the main-side sender pushing into the SAB).
   let messageRingsByteLength = 0;
   const messageRingSabOffsets: number[] = [];
   for (const ring of messageRings) {
@@ -413,10 +421,12 @@ export async function createNode<C>(
     messageRingsBuffer = new SharedArrayBuffer(messageRingsByteLength);
   }
 
-  // §5.2 variable-length content buffer = typed-array field を 持 つ message ご と に
-  // `payloadContent.capacity` bytes を 連 続 配 置 (= ring index と zip、 content ナ シ
-  // の ring も offset を hold = 使 用 側 は descriptor.payloadContent 有 無 で 判 断)。
-  // SAB 時 = main が ここ に array を push → worklet が WASM content region に mirror。
+  // §5.2 variable-length content buffer: for each message with a typed-array
+  // field, lay out `payloadContent.capacity` bytes contiguously (aligned with
+  // the ring index; rings without content still hold an offset, and the
+  // consumer keys off whether descriptor.payloadContent is present). Under SAB
+  // the main side pushes the array here and the worklet mirrors it into the
+  // WASM content region.
   let messageContentByteLength = 0;
   const messageContentSabOffsets: number[] = [];
   for (const ring of messageRings) {
@@ -431,9 +441,10 @@ export async function createNode<C>(
   }
   const messageContentCursors: number[] = messageRings.map(() => 0);
 
-  // MIDI ring buffer (`11-midi.md` §4.4)。 in port = message と 同 transport (main →
-  // SAB / postMessage → worklet)、 out port = event と 同 (worklet → SAB / postMessage
-  // → main)。 8-byte 固 定 slot = 12 + capacity × 8 byte。 SAB 時 の み allocate。
+  // MIDI ring buffer (`11-midi.md` §4.4). An `in` port uses the same transport
+  // as message (main → SAB / postMessage → worklet); an `out` port uses the
+  // same as event (worklet → SAB / postMessage → main). Fixed 8-byte slot =
+  // 12 + capacity × 8 byte. Allocate only under SAB.
   let midiRingsByteLength = 0;
   const midiRingSabOffsets: number[] = [];
   for (const ring of midiRings) {
@@ -444,8 +455,9 @@ export async function createNode<C>(
   if (midiRingsByteLength > 0 && sabAvailable) {
     midiRingsBuffer = new SharedArrayBuffer(midiRingsByteLength);
   }
-  // §4.3 sysex content buffer = sysex port ご と に perChunk × chunks bytes を 連 続 配 置
-  // (= ring index と zip、 sysex ナ シ port も offset を hold)。 SAB 時 の み allocate。
+  // §4.3 sysex content buffer: for each sysex port, lay out perChunk × chunks
+  // bytes contiguously (aligned with the ring index; ports without sysex still
+  // hold an offset). Allocate only under SAB.
   let sysexContentByteLength = 0;
   const sysexContentSabOffsets: number[] = [];
   for (const ring of midiRings) {
@@ -458,28 +470,32 @@ export async function createNode<C>(
   if (sysexContentByteLength > 0 && sabAvailable) {
     sysexContentBuffer = new SharedArrayBuffer(sysexContentByteLength);
   }
-  // in port = main が SAB ring に push す る 時 の per-port head cursor は SAB header
-  // (= drop-oldest 判 定 で head/tail を Atomics 操 作)。 sysex content の per-port
-  // 書 き 込 み cursor は send ご と に head%chunks で 決 ま る = 別 cursor 不 要。
+  // For an `in` port, the per-port head cursor used when main pushes into the
+  // SAB ring lives in the SAB header (= head/tail manipulated via Atomics for
+  // the drop-oldest decision). The per-port write cursor for sysex content is
+  // determined per send by head%chunks, so no separate cursor is needed.
 
-  // main 側 state surface 構 築 = transport mode で 経 路 が 分 岐:
+  // Build the main-side state surface; the path forks on transport mode:
   //
-  // - SAB available: publishBuffer の Int32Array view を 各 slot ご と に `.value`
-  //   getter 経 由 で Atomics.load + 型 別 reinterpret。 `.subscribe(handler)` は
-  //   rAF polling driver を 起 動 し て version counter advance を 検 出 + handler fire。
-  // - SAB unavailable: 共 有 buffer 不 在、 worklet 側 が version advance 時 に
-  //   `port.postMessage({ kind: 'publish', slotIndex, valueBits, ... })` を 投 げ る
-  //   = main 側 で port.onmessage で receive 即 時 に internal mirror state を 更 新
-  //   + subscriber dispatch (= rAF 不 要、 polling latency ゼ ロ)。 `.value` getter
-  //   は mirror か ら bits read。 `.subscribe` は 単 に subscriber set に 追 加。
+  // - SAB available: the `.value` getter on each slot does Atomics.load on
+  //   publishBuffer's Int32Array view + per-type reinterpret.
+  //   `.subscribe(handler)` starts the rAF polling driver, which detects
+  //   version-counter advances and fires the handler.
+  // - SAB unavailable: no shared buffer; on a version advance the worklet posts
+  //   `port.postMessage({ kind: 'publish', slotIndex, valueBits, ... })`, and
+  //   the main side receives it in port.onmessage, immediately updating internal
+  //   mirror state + dispatching to subscribers (= no rAF, zero polling
+  //   latency). The `.value` getter reads bits from the mirror; `.subscribe`
+  //   merely adds to the subscriber set.
   const stateSurface: Record<string, StateValueProxy<unknown>> = {};
   const stateSubscribers: Map<string, Set<(value: unknown) => void>> = new Map();
   const lastSeenVersions: number[] = publishSlots.map(() => 0);
   let rafHandle: number | null = null;
   let disposed = false;
   let publishSharedView: Int32Array | null = null;
-  // postMessage path 用 internal mirror (= slotIndex 順 で valueBits / version を
-  // 保 持、 port.onmessage で 更 新 + `.value` getter / dedupe diagnostic で 参 照)。
+  // Internal mirror for the postMessage path (= holds valueBits / version in
+  // slotIndex order, updated in port.onmessage and read by the `.value` getter /
+  // dedupe diagnostic).
   const postMessageMirrorBits: number[] = publishSlots.map(() => 0);
   const postMessageMirrorVersions: number[] = publishSlots.map(() => 0);
   if (publishBuffer !== null && publishSlots.length > 0) {
@@ -498,22 +514,23 @@ export async function createNode<C>(
             const bits = Atomics.load(publishSharedView, valueSlotIdx);
             return convertStateValue(bits, slot.type);
           }
-          // postMessage path = internal mirror か ら read (= worklet 側 が 最 新 値 を
-          // port.postMessage で 投 げ た 結 果 が onPublishMessage で mirror に 反 映 済)。
+          // postMessage path = read from the internal mirror (= the worklet's
+          // latest value, posted via port.postMessage, has already been applied
+          // to the mirror in onPublishMessage).
           return convertStateValue(postMessageMirrorBits[slotIndex]!, slot.type);
         },
         subscribe(handler) {
           subscribers.add(handler);
-          // SAB path = rAF polling で version counter advance を 検 出 + dispatch。
-          // postMessage path = port.onmessage driven で immediate dispatch = polling 不 要。
+          // SAB path = rAF polling detects version-counter advances + dispatches.
+          // postMessage path = port.onmessage-driven immediate dispatch = no polling.
           if (transportMode === "sab") {
             ensureRafLoopRunning();
           }
           return () => {
             subscribers.delete(handler);
-            // 全 surface の subscriber が 0 に な っ た ら rAF polling を 停 止
-            // (= node 生 存 中 の temporary subscribe / unsubscribe で dispose ま で
-            // 毎 frame polling し 続 け る main-thread 浪 費 を 回 避)。
+            // Stop rAF polling once every surface has zero subscribers
+            // (= avoids wasting the main thread by polling every frame until
+            // dispose when a node only ever sees temporary subscribe / unsubscribe).
             if (!hasAnySubscribers()) stopRafLoop();
           };
         },
@@ -521,20 +538,22 @@ export async function createNode<C>(
     }
   }
 
-  // event ring surface 構 築 = transport mode で 経 路 が 分 岐:
+  // Build the event ring surface; the path forks on transport mode:
   //
-  // - SAB available: worklet が SAB に mirror し た event ring を main 側 rAF
-  //   polling で drain + 各 slot を per-field reinterpret し て handler に hand。
-  //   head / tail / overflowCount は SAB 内 で Atomics 経 由 で 観 測。
-  // - SAB unavailable: 共 有 buffer 不 在、 worklet が 新 emit 分 を per-quantum 末
-  //   尾 に `port.postMessage({ kind: 'event', ringIndex, newSlotsBytes,
-  //   newSlotCount, overflowCount })` で 配 送 = main 側 で port.onmessage で
-  //   receive 即 時 に subscriber dispatch (= rAF 不 要)。 overflowCount は
-  //   eventOverflowMirror に carry し て diagnostics.overflowCount() で read。
+  // - SAB available: the main side rAF-polls and drains the event ring the
+  //   worklet mirrored into the SAB, reinterprets each slot per field, and hands
+  //   it to the handler. head / tail / overflowCount are observed via Atomics
+  //   inside the SAB.
+  // - SAB unavailable: no shared buffer; at the end of each quantum the worklet
+  //   ships new emits via `port.postMessage({ kind: 'event', ringIndex,
+  //   newSlotsBytes, newSlotCount, overflowCount })`, and the main side
+  //   dispatches to subscribers immediately in port.onmessage (= no rAF).
+  //   overflowCount is carried into eventOverflowMirror and read by
+  //   diagnostics.overflowCount().
   const eventSurface: Record<string, EventSurface<unknown>> = {};
   const eventSubscribers: Map<string, Set<(payload: Record<string, unknown>) => void>> = new Map();
   const eventLocalTails: number[] = eventRings.map(() => 0);
-  // postMessage path 用 = ring ご と の overflowCount mirror (= diagnostics 読 み 用)。
+  // For the postMessage path = per-ring overflowCount mirror (= read by diagnostics).
   const eventOverflowMirror: number[] = eventRings.map(() => 0);
   let eventRingsView: DataView | null = null;
   let eventRingsHeaderView: Int32Array | null = null;
@@ -542,8 +561,8 @@ export async function createNode<C>(
     eventRingsView = new DataView(eventRingsBuffer);
     eventRingsHeaderView = new Int32Array(eventRingsBuffer);
   }
-  // §4.3 content buffer の byte view (= SAB 時 の み)。 drain で slot の [len, offset]
-  // を 読 ん で ここ か ら fresh typed array を slice。
+  // Byte view of the §4.3 content buffer (= SAB only). During drain, read the
+  // slot's [len, offset] and slice a fresh typed array from here.
   const eventContentBytes: Uint8Array | null =
     eventContentBuffer !== null ? new Uint8Array(eventContentBuffer) : null;
   if (eventRings.length > 0) {
@@ -557,8 +576,8 @@ export async function createNode<C>(
       eventSurface[ring.name] = {
         on(handler) {
           subscribers.add(handler as (payload: Record<string, unknown>) => void);
-          // SAB path = rAF polling で drain + dispatch。
-          // postMessage path = port.onmessage driven (= polling 不 要)。
+          // SAB path = rAF polling drains + dispatches.
+          // postMessage path = port.onmessage-driven (= no polling).
           if (transportMode === "sab") {
             ensureRafLoopRunning();
           }
@@ -572,8 +591,8 @@ export async function createNode<C>(
             if (transportMode === "sab" && eventRingsHeaderView !== null) {
               return Atomics.load(eventRingsHeaderView, overflowSabWordIdx);
             }
-            // postMessage path = mirror か ら read (= worklet 側 が 最 新 値 を 配 送
-            // 済 で eventOverflowMirror に carry さ れ て いる)。
+            // postMessage path = read from the mirror (= the worklet has already
+            // shipped the latest value, carried into eventOverflowMirror).
             return eventOverflowMirror[ringIndex]!;
           },
         },
@@ -581,16 +600,17 @@ export async function createNode<C>(
     }
   }
 
-  // message ring sender surface 構 築 = transport mode で 経 路 が 分 岐:
+  // Build the message ring sender surface; the path forks on transport mode:
   //
-  // - SAB available: main 側 が SAB に slot push + head += 1。 overflow path =
-  //   head - tail >= capacity で drop-oldest (= tail += 1 + overflowCount += 1)。
-  //   diagnostics.overflowCount() = SAB から Atomics.load。
-  // - SAB unavailable: 共 有 buffer 不 在 = `node.port.postMessage({ kind:
-  //   'message', ringIndex, payload })` で 直 送 = worklet 側 が self.port.onmessage
-  //   で receive + WASM ring に inject + overflow は WASM 内 で drop-oldest 発 動
-  //   時 に port.postMessage で main に 通 知 (= messageOverflowMirror 更 新)。
-  //   diagnostics.overflowCount() = mirror か ら read。
+  // - SAB available: the main side pushes a slot into the SAB + head += 1. The
+  //   overflow path = drop-oldest when head - tail >= capacity (= tail += 1 +
+  //   overflowCount += 1). diagnostics.overflowCount() = Atomics.load from the SAB.
+  // - SAB unavailable: no shared buffer = send directly via
+  //   `node.port.postMessage({ kind: 'message', ringIndex, payload })`; the
+  //   worklet receives it in self.port.onmessage + injects into the WASM ring,
+  //   and when WASM-internal drop-oldest fires it notifies main via
+  //   port.postMessage (= updates messageOverflowMirror).
+  //   diagnostics.overflowCount() = read from the mirror.
   const messageOverflowMirror: number[] = messageRings.map(() => 0);
   let messageRingsView: DataView | null = null;
   let messageRingsHeaderView: Int32Array | null = null;
@@ -598,8 +618,9 @@ export async function createNode<C>(
     messageRingsView = new DataView(messageRingsBuffer);
     messageRingsHeaderView = new Int32Array(messageRingsBuffer);
   }
-  // §5.2 content buffer の byte view (= SAB 時 の み)。 typed-array field 送 信 で
-  // ここ に array bytes を push、 slot に [payloadLen, payloadOffset] を 書 く。
+  // Byte view of the §5.2 content buffer (= SAB only). When sending a
+  // typed-array field, push the array bytes here and write [payloadLen,
+  // payloadOffset] into the slot.
   const messageContentView: Uint8Array | null =
     messageContentBuffer !== null ? new Uint8Array(messageContentBuffer) : null;
   if (messageRings.length > 0) {
@@ -614,7 +635,7 @@ export async function createNode<C>(
       const ringIndex = i;
       const sender = (payload: Record<string, unknown>): void => {
         if (isSab && messageRingsView !== null && messageRingsHeaderView !== null) {
-          // SAB path = 既 SAB write + head/tail 管 理
+          // SAB path = direct SAB write + head/tail management
           const headerView = messageRingsHeaderView;
           const head = Atomics.load(headerView, headWordIdx);
           const tail = Atomics.load(headerView, tailWordIdx);
@@ -632,13 +653,15 @@ export async function createNode<C>(
               const value = payload[field.name];
               const byteOffset = slotByteOffset + field.offsetInSlot;
               if (field.payloadElementType !== undefined) {
-                // typed-array field = content SAB に bytes を 書 い て slot に
-                // [payloadLen(bytes), payloadOffset(region 相 対)]。 worklet が content
-                // region を 1:1 mirror す る の で offset は region base 相 対 で 一 致。
+                // typed-array field = write bytes into the content SAB and store
+                // [payloadLen(bytes), payloadOffset(relative to region)] in the
+                // slot. The worklet mirrors the content region 1:1, so the offset
+                // matches relative to the region base.
                 if (messageContentView !== null && ArrayBuffer.isView(value)) {
                   const capacity = ring.payloadContent?.capacity ?? 0;
-                  // content region より大きい payload は truncate し て copy (= Q85:
-                  // no-trap。 clamp し な い と Uint8Array.set が RangeError を throw)。
+                  // A payload larger than the content region is truncated on
+                  // copy (= Q85: no-trap; without clamping, Uint8Array.set throws
+                  // RangeError).
                   const copyBytes = Math.min(value.byteLength, capacity);
                   const src = new Uint8Array(value.buffer, value.byteOffset, copyBytes);
                   const contentBase = messageContentSabOffsets[i]!;
@@ -658,8 +681,8 @@ export async function createNode<C>(
           }
           Atomics.store(headerView, headWordIdx, head + 1);
         } else {
-          // postMessage path = port.postMessage で 直 送。 worklet 側 で field 別
-          // に WASM ring に inject す る た め、 payload を そ の ま ま 載 せ る。
+          // postMessage path = send directly via port.postMessage. The worklet
+          // injects field by field into the WASM ring, so carry the payload as-is.
           node.port.postMessage({ kind: "message", ringIndex, payload });
         }
       };
@@ -669,14 +692,14 @@ export async function createNode<C>(
           if (isSab && messageRingsHeaderView !== null) {
             return Atomics.load(messageRingsHeaderView, overflowWordIdx);
           }
-          // postMessage path = mirror か ら read (= worklet が message-overflow
-          // 通 知 で 更 新 し て いる)
+          // postMessage path = read from the mirror (= updated by the worklet's
+          // message-overflow notification)
           return messageOverflowMirror[ringIndex]!;
         },
       };
-      // message ring の sender を event surface に統合 (Q88)。同名 in/out ペア
-      // (Q87) なら既存の receive (.on) entry に send (.emit) を足し、diagnostics
-      // は outbound event 側を保持する。
+      // Merge the message ring's sender into the event surface (Q88). For a
+      // same-name in/out pair (Q87), add send (.emit) onto the existing receive
+      // (.on) entry, keeping the outbound event side's diagnostics.
       const existingEntry = eventSurface[ring.name] as EventSurface<unknown> | undefined;
       if (existingEntry !== undefined) {
         existingEntry.emit = emit;
@@ -686,17 +709,21 @@ export async function createNode<C>(
     }
   }
 
-  // MIDI surface 構 築 (`11-midi.md` §3)。 in port = message と 同 transport で
-  // `send` / `connectFromWebMIDI`、 out port = event と 同 で `onEvent`。 両 方 に
-  // `diagnostics.overflowCount`。 8-byte 固 定 wire slot = midiWire codec で encode/decode。
+  // Build the MIDI surface (`11-midi.md` §3). An `in` port uses the same
+  // transport as message and exposes `send` / `connectFromWebMIDI`; an `out`
+  // port uses the same as event and exposes `onEvent`. Both have
+  // `diagnostics.overflowCount`. The fixed 8-byte wire slot is encoded/decoded
+  // by the midiWire codec.
   const midiSurface: Record<string, MidiPortSurface> = {};
-  // out port (= event-like) per-port subscriber: type 別 handler set。 in port は 空。
+  // Per-port subscriber for an out port (= event-like): a handler set per type.
+  // An in port has none.
   const midiOutSubscribers: Map<
     string,
     Map<MidiEventType, Set<(e: MidiEvent) => void>>
   > = new Map();
   const midiOutLocalTails: number[] = midiRings.map(() => 0);
-  // postMessage path 用 overflow mirror (= in/out 共 用、 ring index は in/out 排 他 = 曖 昧 ナ シ)。
+  // Overflow mirror for the postMessage path (= shared by in/out; a ring index
+  // is exclusively in or out, so there is no ambiguity).
   const midiOverflowMirror: number[] = midiRings.map(() => 0);
   let midiRingsView: DataView | null = null;
   let midiRingsHeaderView: Int32Array | null = null;
@@ -707,9 +734,10 @@ export async function createNode<C>(
   const sysexContentBytes: Uint8Array | null =
     sysexContentBuffer !== null ? new Uint8Array(sysexContentBuffer) : null;
 
-  // atTime → block-local atSample (§4.2)。 atTime 省 略 = 0 (= 次 block boundary)。
-  // atTime 指 定 = now から の sample offset を 1 block 内 に clamp (= near-future の
-  // sub-block accuracy、 far-future は block 先 頭 に saturate = postMessage 既 定 と zip)。
+  // atTime → block-local atSample (§4.2). Omitting atTime = 0 (= the next block
+  // boundary). A given atTime clamps the sample offset from now into one block
+  // (= sub-block accuracy for the near future; the far future saturates to the
+  // start of the block, matching the postMessage default).
   const ctxTimeOf = (): number => {
     const t = (context as unknown as { currentTime?: number }).currentTime;
     return typeof t === "number" ? t : 0;
@@ -725,9 +753,10 @@ export async function createNode<C>(
     return offset >= SAMPLES_PER_BLOCK ? SAMPLES_PER_BLOCK - 1 : offset;
   };
 
-  // 1 つ の 8-byte wire slot を decode (= status/data1/data2 + atSample)。 sysex は
-  // status 0xF0 = content から length-prefixed bytes を 読 む。 SAB poll / postMessage
-  // 両 path で 共 用 (= contentBytes は SAB region or postMessage 同 梱 snapshot)。
+  // Decode a single 8-byte wire slot (= status/data1/data2 + atSample). For
+  // sysex, status 0xF0 reads length-prefixed bytes from content. Shared by both
+  // the SAB-poll and postMessage paths (= contentBytes is either the SAB region
+  // or the snapshot bundled with the postMessage).
   const decodeMidiSlot = (
     view: DataView,
     slotByteOffset: number,
@@ -748,9 +777,11 @@ export async function createNode<C>(
     return { event: wireToMidiEvent(status, data1, data2), atSample };
   };
 
-  // out port subscriber に decode 済 event を dispatch (= type 一 致 handler だ け fire)。
-  // main-side `MidiEvent` は atSample を 持 た ない (§2.1、 sample-offset は worklet 内 部
-  // の sample-accurate gating 用 = block 完 了 後 の main に は 既 過 去) = plain event を 渡 す。
+  // Dispatch a decoded event to out-port subscribers (= only fire handlers whose
+  // type matches). The main-side `MidiEvent` has no atSample (§2.1: the
+  // sample-offset is for the worklet's internal sample-accurate gating, and by
+  // the time the block completes it is already in the past for main), so pass a
+  // plain event.
   const dispatchMidiEvent = (ringName: string, event: MidiEvent): void => {
     const byType = midiOutSubscribers.get(ringName);
     if (byType === undefined) return;
@@ -776,8 +807,8 @@ export async function createNode<C>(
       const slotsBase = sabOffset + 12;
       const isSab = transportMode === "sab";
 
-      // inbound (= main → worklet)。 SAB = ring に slot write + head++ (drop-oldest)、
-      // postMessage = `{ kind:'midi', ringIndex, item }` 直 送。
+      // inbound (= main → worklet). SAB = write a slot into the ring + head++
+      // (drop-oldest); postMessage = send `{ kind:'midi', ringIndex, item }` directly.
       const send = (event: MidiEvent, atTime?: number): void => {
         if (ring.direction !== "in") return;
         const atSample = atSampleFromTime(atTime);
@@ -824,8 +855,9 @@ export async function createNode<C>(
 
       const connectFromWebMIDI = (input: unknown): void => {
         const midiInput = input as { onmidimessage?: ((e: { data: Uint8Array }) => void) | null };
-        // Web MIDI の MIDIMessageEvent.data (= raw bytes) を MidiEvent に 復 元 し て send。
-        // sysex (0xF0) は 末 尾 0xF7 を 含 む raw bytes を そ の ま ま data に。
+        // Reconstruct a MidiEvent from Web MIDI's MIDIMessageEvent.data (= raw
+        // bytes) and send it. For sysex (0xF0), the raw bytes including the
+        // trailing 0xF7 go straight into data.
         midiInput.onmidimessage = (e: { data: Uint8Array }): void => {
           const bytes = e.data;
           if (bytes.length === 0) return;
@@ -837,8 +869,9 @@ export async function createNode<C>(
         };
       };
 
-      // outbound (= worklet → main)。 type 別 handler を 登 録、 SAB = rAF poll で drain、
-      // postMessage = onMidiOutMessage で dispatch。 unsubscribe を 返 す。
+      // outbound (= worklet → main). Register a handler per type; SAB drains via
+      // rAF poll, postMessage dispatches in onMidiOutMessage. Returns an
+      // unsubscribe function.
       const onEvent = <K extends MidiEventType>(
         type: K,
         handler: (event: Extract<MidiEvent, { type: K }>) => void,
@@ -877,8 +910,9 @@ export async function createNode<C>(
     }
   }
 
-  // SAB out-ring drain = rAF poll で WASM-mirror さ れ た SAB ring を tail→head で 消 化
-  // + decode + dispatch (= event ring poll と 同 lifecycle)。 in port は skip。
+  // SAB out-ring drain = on each rAF poll, consume the WASM-mirrored SAB ring
+  // tail→head + decode + dispatch (= same lifecycle as the event ring poll).
+  // Skip in ports.
   function pollMidiOutRings(): void {
     if (midiRingsView === null || midiRingsHeaderView === null) return;
     for (let i = 0; i < midiRings.length; i++) {
@@ -909,10 +943,11 @@ export async function createNode<C>(
     }
   }
 
-  // rAF polling driver = 全 publish slot + 全 event ring を walk。 publish は
-  // version 増 加 検 出 で subscriber fire、 event は head が main local tail を
-  // 越 え た 分 を drain + per-slot handler fire。 subscribe 1 番 目 で 開 始、
-  // 全 subscriber unsubscribe or dispose で 停 止 (= 既 rAF lifecycle と zip)。
+  // rAF polling driver = walk every publish slot + every event ring. For
+  // publish, fire subscribers on detecting a version increase; for event, drain
+  // however far head has advanced past the main-local tail + fire the per-slot
+  // handler. Starts on the first subscribe and stops once all subscribers
+  // unsubscribe or on dispose (= matching the rAF lifecycle).
   function pollPublishSlots(): void {
     if (publishSharedView === null) return;
     for (let i = 0; i < publishSlots.length; i++) {
@@ -952,8 +987,9 @@ export async function createNode<C>(
         transportMode === "sab"
           ? Atomics.load(eventRingsHeaderView, headSabWordIdx)
           : eventRingsHeaderView[headSabWordIdx]!;
-      // worklet 側 で drop-oldest 発 動 → SAB tail 進 ん で main local tail を 越 え
-      // て いる 可 能 性 = max(localTail, sabTail) で 巻 き 直 し し て drain。
+      // drop-oldest may have fired on the worklet side → the SAB tail may have
+      // advanced past the main-local tail, so rewind to max(localTail, sabTail)
+      // and drain.
       const tailSabWordIdx = headSabWordIdx + 1;
       const sabTail =
         transportMode === "sab"
@@ -972,8 +1008,8 @@ export async function createNode<C>(
           for (const field of ring.fields) {
             const fieldByteOffset = slotByteOffset + field.offsetInSlot;
             if (field.payloadElementType !== undefined && eventContentBytes !== null) {
-              // typed-array field = slot の [payloadLen, payloadOffset] を 読 ん で
-              // SAB content region か ら fresh typed array を slice (= §4.3)。
+              // typed-array field = read the slot's [payloadLen, payloadOffset]
+              // and slice a fresh typed array from the SAB content region (= §4.3).
               const payloadLen = eventRingsView.getInt32(fieldByteOffset, true);
               const payloadOffset = eventRingsView.getInt32(fieldByteOffset + 4, true);
               const absBase = eventContentSabOffsets[i]! + payloadOffset;
@@ -1005,14 +1041,15 @@ export async function createNode<C>(
 
   function ensureRafLoopRunning(): void {
     if (rafHandle !== null || disposed) return;
-    /* v8 ignore next 1 — subscribe path 経 由 で publish / event / midi-out surface 配 線 済 = unreachable defensive */
+    /* v8 ignore next 1 — the publish / event / midi-out surfaces are already wired via the subscribe path = unreachable defensive */
     if (publishSharedView === null && eventRingsView === null && midiRingsView === null) return;
     const raf = (globalThis as { requestAnimationFrame?: (cb: () => void) => number })
       .requestAnimationFrame;
     if (!raf) return;
-    // tick 内 で disposed branch ナ シ = `dispose()` で stopRafLoop が
-    // cancelAnimationFrame を 呼 び rafHandle を null に す る = 既 pending tick も
-    // cancel + 再 schedule path ナ シ = defensive disposed check 不 要。
+    // No disposed branch inside tick = `dispose()` has stopRafLoop call
+    // cancelAnimationFrame and set rafHandle to null = any pending tick is also
+    // cancelled and there is no re-schedule path = no defensive disposed check
+    // needed.
     const tick = (): void => {
       pollPublishSlots();
       pollEventRings();
@@ -1030,8 +1067,9 @@ export async function createNode<C>(
     rafHandle = null;
   }
 
-  // 全 publish slot + 全 event ring + 全 midi-out port の subscriber が 0 か。
-  // unsubscribe で 全 て 0 に な っ た 時 に rAF polling を 止 め る 判 定 に 使 う。
+  // Whether every publish slot + every event ring + every midi-out port has
+  // zero subscribers. Used to decide when to stop rAF polling once unsubscribe
+  // has brought them all to zero.
   function hasAnySubscribers(): boolean {
     for (const subs of stateSubscribers.values()) {
       if (subs.size > 0) return true;
@@ -1050,19 +1088,19 @@ export async function createNode<C>(
   // Drop `undefined` entries from initial param data — Web Audio's
   // `parameterData` is a `Record<string, double>`, and Firefox throws
   // `TypeError` when a key carries an undefined value (Chrome treats it
-  // as no-op)。 Normalize here so both engines see the same shape。
+  // as no-op). Normalize here so both engines see the same shape.
   const parameterData = options?.initial
     ? (Object.fromEntries(
         Object.entries(options.initial).filter(([, v]) => typeof v === "number"),
       ) as Record<string, number>)
     : undefined;
 
-  // `outputChannelCount` is only legal when `numberOfOutputs > 0`。 With
+  // `outputChannelCount` is only legal when `numberOfOutputs > 0`. With
   // zero outputs the W3C AudioWorkletNode constructor throws
   // `IndexSizeError` if `outputChannelCount.length` does not match
   // `numberOfOutputs` (= conservative engines reject `[]` mismatch even
-  // though both lengths are 0)。 Omit the field for input-only / MIDI-only
-  // processors instead of forcing the empty array。
+  // though both lengths are 0). Omit the field for input-only / MIDI-only
+  // processors instead of forcing the empty array.
   const nodeOptions: AudioWorkletNodeOptions = {
     numberOfInputs: inputs.length,
     numberOfOutputs: outputs.length,
@@ -1070,14 +1108,15 @@ export async function createNode<C>(
     // Hand the audio thread a pre-compiled `WebAssembly.Module` (= structured
     // cloneable per W3C wasm-web-api spec) so the worklet only needs to
     // `new WebAssembly.Instance(module)` (= no sync compile on the audio
-    // thread = no first-quantum glitch potential)。
+    // thread = no first-quantum glitch potential).
     processorOptions: {
       module: wasmModule,
-      // publish slot あ り の 時 = transport mode 共 通 で descriptor + transport を
-      // hand (= worklet template の initialize で receive + per-quantum 末 尾 で
-      // publish copy logic 走 ら す)。 publishBuffer は SAB 時 の み hand (= postMessage
-      // path で は structured clone で 別 instance に な る = mirror 不 能、 worklet
-      // 側 が port.postMessage で 個 別 通 知 す る path = buffer 不 要)。
+      // When there are publish slots = hand over the descriptor + transport for
+      // both transport modes (= the worklet template receives them in initialize
+      // and runs the publish-copy logic at the end of each quantum). publishBuffer
+      // is handed over only under SAB (= on the postMessage path structured clone
+      // makes a separate instance = cannot mirror; the worklet notifies
+      // individually via port.postMessage = no buffer needed).
       ...(publishSlots.length > 0
         ? {
             publishSlots,
@@ -1085,10 +1124,11 @@ export async function createNode<C>(
             ...(publishBuffer !== null ? { publishBuffer } : {}),
           }
         : {}),
-      // event ring あ り の 時 = transport mode 共 通 で descriptor + transport を
-      // hand。 eventRingsBuffer は SAB 時 の み hand (= postMessage path で は
-      // structured clone で 別 instance に な る = mirror 不 能、 worklet 側 が
-      // port.postMessage で 新 emit 分 を 個 別 配 送)。
+      // When there are event rings = hand over the descriptor + transport for
+      // both transport modes. eventRingsBuffer is handed over only under SAB
+      // (= on the postMessage path structured clone makes a separate instance =
+      // cannot mirror; the worklet ships each new emit individually via
+      // port.postMessage).
       ...(eventRings.length > 0
         ? {
             eventRings,
@@ -1099,10 +1139,11 @@ export async function createNode<C>(
             ...(eventContentBuffer !== null ? { eventContentBuffer } : {}),
           }
         : {}),
-      // message ring あ り の 時 = transport mode 共 通 で descriptor + transport を
-      // hand。 messageRingsBuffer は SAB 時 の み hand (= postMessage path は main 側
-      // が port.postMessage で 直 送、 worklet 側 が self.port.onmessage で receive
-      // = buffer 自 体 不 要)。
+      // When there are message rings = hand over the descriptor + transport for
+      // both transport modes. messageRingsBuffer is handed over only under SAB
+      // (= on the postMessage path the main side sends directly via
+      // port.postMessage and the worklet receives it in self.port.onmessage =
+      // no buffer needed at all).
       ...(messageRings.length > 0
         ? {
             messageRings,
@@ -1113,9 +1154,10 @@ export async function createNode<C>(
             ...(messageContentBuffer !== null ? { messageContentBuffer } : {}),
           }
         : {}),
-      // MIDI ring あ り の 時 = descriptor + offset + transport を hand。 buffer は SAB
-      // 時 の み (= postMessage path は main が `{ kind:'midi' }` 直 送 / worklet が
-      // `{ kind:'midiOut' }` 配 送 = main 側 buffer 不 要)。
+      // When there are MIDI rings = hand over the descriptor + offset + transport.
+      // The buffer is handed over only under SAB (= on the postMessage path main
+      // sends `{ kind:'midi' }` directly and the worklet ships `{ kind:'midiOut' }`
+      // = no main-side buffer needed).
       ...(midiRings.length > 0
         ? {
             midiRings,
@@ -1141,13 +1183,13 @@ export async function createNode<C>(
   } catch (err) {
     // The constructor succeeded but the handshake failed (= init-error
     // posted by the worklet, `processorerror` fired, or the 10s timeout
-    // tripped)。 Caller never sees an `UnworkletNode`, so they cannot call
-    // `dispose()` themselves — tear down the half-built node here。 MDN
+    // tripped). Caller never sees an `UnworkletNode`, so they cannot call
+    // `dispose()` themselves — tear down the half-built node here. MDN
     // documents that a `processorerror`-d node outputs silence for the
     // rest of its lifetime, so without this cleanup repeated retries
     // accumulate silent processor instances + open ports inside the
-    // AudioContext。 Best-effort: swallow secondary errors so the original
-    // failure is what surfaces to the caller。
+    // AudioContext. Best-effort: swallow secondary errors so the original
+    // failure is what surfaces to the caller.
     try {
       node.disconnect();
     } catch {
@@ -1167,13 +1209,13 @@ export async function createNode<C>(
   // Long-lived error forwarder = installed AFTER awaitReady's init-time
   // listeners are removed so the runtime error path (= worklet `{ kind:
   // "error", ... }` messages + `processorerror` event) keeps flowing to
-  // `onError(handler)` subscribers for the node's lifetime。 docs/05-client.md
+  // `onError(handler)` subscribers for the node's lifetime. docs/05-client.md
   // §2 declares `onError` as the discriminated-union surface for 4 codes
-  // (`wasm-trap` / `queue-overflow` / `sab-unavailable` / `block-length-mismatch`)。
+  // (`wasm-trap` / `queue-overflow` / `sab-unavailable` / `block-length-mismatch`).
   // Phase 6 wires the forwarder skeleton — only `block-length-mismatch` (= from
   // `worklet.ts` runtime guard) and `wasm-trap` (= from `processorerror`) are
-  // posted today。 `queue-overflow` / `sab-unavailable` plumbing lands when
-  // the matching transports ship (= 02-messaging.md / 04-worklet-runtime.md §8)。
+  // posted at this stage. `queue-overflow` / `sab-unavailable` plumbing lands when
+  // the matching transports ship (= 02-messaging.md / 04-worklet-runtime.md §8).
   const errorSubscribers = new Set<(event: NodeErrorEvent) => void>();
   const dispatchError = (event: NodeErrorEvent): void => {
     for (const fn of errorSubscribers) {
@@ -1185,11 +1227,11 @@ export async function createNode<C>(
     }
   };
   /**
-   * Set of `NodeErrorEvent.code` values the runtime currently posts。 Used
+   * Set of `NodeErrorEvent.code` values the runtime posts. Used
    * to drop unknown / malformed `{ kind: "error", ... }` messages instead
    * of forwarding their raw shape to subscribers as if they were typed
    * `NodeErrorEvent`s (= prevents the structured-union contract from
-   * silently widening when an unrelated message slips through)。
+   * silently widening when an unrelated message slips through).
    */
   const KNOWN_ERROR_CODES = new Set<NodeErrorEvent["code"]>([
     "wasm-trap",
@@ -1206,18 +1248,18 @@ export async function createNode<C>(
     if (!KNOWN_ERROR_CODES.has(data.code as NodeErrorEvent["code"])) return;
     // Strip the internal `kind` framing field so subscribers receive an
     // exact `NodeErrorEvent` (= docs/05-client.md §2 + 04-worklet-runtime
-    // §8 declared shape, no extra `kind`)。
+    // §8 declared shape, no extra `kind`).
     const { kind: _kind, ...rest } = data as Record<string, unknown> & { kind: "error" };
     dispatchError(rest as unknown as NodeErrorEvent);
   };
   const onErrorProcessor = (_event: Event): void => {
     // MDN documents the `processorerror` event as a plain `Event` with no
-    // payload — there is no portable `.message` to read。 The structured
+    // payload — there is no portable `.message` to read. The structured
     // wasm-trap details (= the actual error message) come through the
-    // `{ kind: "error", code: "wasm-trap", message }` path on the port。
+    // `{ kind: "error", code: "wasm-trap", message }` path on the port.
     // This handler only fires when the audio thread couldn't post that
     // message (= constructor / process trap before the structured catch
-    // ran), so emit a fixed fallback marker。
+    // ran), so emit a fixed fallback marker.
     dispatchError({
       code: "wasm-trap",
       message: "AudioWorkletProcessor reported a failure (processorerror)",
@@ -1226,11 +1268,11 @@ export async function createNode<C>(
   node.port.addEventListener("message", onErrorMessage);
   node.addEventListener("processorerror", onErrorProcessor);
 
-  // postMessage path 用 publish listener (= SAB unavailable 時 に worklet 側 が
-  // version advance 時 に `port.postMessage({ kind: 'publish', slotIndex, valueBits,
-  // sampleCounter, version })` を 投 げ る = main 側 で 即 時 mirror 更 新 + subscriber
-  // dispatch。 SAB 時 は worklet が 直 接 SAB に Atomics.store す る path = listener
-  // は 何 も せ ず drop)。
+  // Publish listener for the postMessage path (= when SAB is unavailable, on a
+  // version advance the worklet posts `port.postMessage({ kind: 'publish',
+  // slotIndex, valueBits, sampleCounter, version })` = the main side immediately
+  // updates the mirror + dispatches to subscribers. Under SAB the worklet
+  // Atomics.stores directly into the SAB = this listener does nothing and drops).
   const onPublishMessage = (event: MessageEvent): void => {
     const data = event.data as
       | { kind?: unknown; slotIndex?: unknown; valueBits?: unknown; version?: unknown }
@@ -1261,10 +1303,11 @@ export async function createNode<C>(
     node.port.addEventListener("message", onPublishMessage);
   }
 
-  // postMessage path 用 event listener (= SAB unavailable 時 に worklet 側 が 新
-  // emit 分 を `port.postMessage({ kind: 'event', ringIndex, newSlotsBytes,
-  // newSlotCount, overflowCount })` で 配 送 す る = main 側 で payload object 化 +
-  // subscriber dispatch + overflowCount mirror 更 新)。 SAB 時 は drop。
+  // Event listener for the postMessage path (= when SAB is unavailable, the
+  // worklet ships new emits via `port.postMessage({ kind: 'event', ringIndex,
+  // newSlotsBytes, newSlotCount, overflowCount })` = the main side turns them
+  // into payload objects + dispatches to subscribers + updates the overflowCount
+  // mirror). Drops under SAB.
   const onEventMessage = (event: MessageEvent): void => {
     const data = event.data as
       | {
@@ -1283,11 +1326,11 @@ export async function createNode<C>(
     const ringIndex = data.ringIndex;
     if (ringIndex < 0 || ringIndex >= eventRings.length) return;
     const ring = eventRings[ringIndex]!;
-    // overflowCount mirror 更 新 (= diagnostics.overflowCount() の read 元)
+    // Update the overflowCount mirror (= the read source for diagnostics.overflowCount())
     if (typeof data.overflowCount === "number") {
       eventOverflowMirror[ringIndex] = data.overflowCount;
     }
-    // slots を payload object 化 + subscriber dispatch
+    // Turn slots into payload objects + dispatch to subscribers
     if (
       data.newSlotsBytes instanceof ArrayBuffer &&
       typeof data.newSlotCount === "number" &&
@@ -1296,8 +1339,9 @@ export async function createNode<C>(
       const subscribers = eventSubscribers.get(ring.name);
       if (!subscribers || subscribers.size === 0) return;
       const view = new DataView(data.newSlotsBytes);
-      // §4.3 typed-array field 用 = worklet が 同 梱 し た content snapshot (= offset 0
-      // 単 一 payload)。 slot の [payloadLen, payloadOffset] で ここ か ら slice。
+      // For §4.3 typed-array fields = the content snapshot the worklet bundled in
+      // (= a single payload at offset 0). Slice from here by the slot's
+      // [payloadLen, payloadOffset].
       const contentBytes =
         data.contentBytes instanceof ArrayBuffer ? new Uint8Array(data.contentBytes) : null;
       for (let k = 0; k < data.newSlotCount; k++) {
@@ -1330,11 +1374,12 @@ export async function createNode<C>(
     node.port.addEventListener("message", onEventMessage);
   }
 
-  // postMessage path 用 message overflow listener (= SAB unavailable 時 に worklet
-  // 側 WASM ring で drop-oldest 発 動 し て overflowCount が 増 え た 場 合 に
-  // `port.postMessage({ kind: 'message-overflow', ringIndex, overflowCount })` で
-  // 通 知 さ れ る = main 側 messageOverflowMirror を 更 新 し て diagnostics.overflowCount()
-  // で read 可 能 に す る)。 SAB 時 は main 側 で 直 接 SAB header を 観 測 = drop。
+  // Message overflow listener for the postMessage path (= when SAB is
+  // unavailable and drop-oldest fires on the worklet-side WASM ring, raising
+  // overflowCount, it is notified via
+  // `port.postMessage({ kind: 'message-overflow', ringIndex, overflowCount })` =
+  // the main side updates messageOverflowMirror so diagnostics.overflowCount()
+  // can read it). Under SAB the main side observes the SAB header directly = drops.
   const onMessageOverflowMessage = (event: MessageEvent): void => {
     const data = event.data as
       | { kind?: unknown; ringIndex?: unknown; overflowCount?: unknown }
@@ -1352,9 +1397,10 @@ export async function createNode<C>(
     node.port.addEventListener("message", onMessageOverflowMessage);
   }
 
-  // postMessage path 用 MIDI outbound listener (= worklet 側 out-ring drain が
-  // `{ kind:'midiOut', ringIndex, newSlotsBytes, newSlotCount, overflowCount, sysexBytes? }`
-  // で 配 送 = main 側 で 各 slot を decode + type 一 致 handler に dispatch + overflow mirror 更 新)。
+  // MIDI outbound listener for the postMessage path (= the worklet-side out-ring
+  // drain ships `{ kind:'midiOut', ringIndex, newSlotsBytes, newSlotCount,
+  // overflowCount, sysexBytes? }` = the main side decodes each slot + dispatches
+  // to type-matching handlers + updates the overflow mirror).
   const onMidiOutMessage = (event: MessageEvent): void => {
     const data = event.data as
       | {
@@ -1394,9 +1440,10 @@ export async function createNode<C>(
     node.port.addEventListener("message", onMidiOutMessage);
   }
 
-  // postMessage path 用 MIDI inbound overflow listener (= worklet 側 in-ring で
-  // drop-oldest 発 動 時 に `{ kind:'midi-overflow', ringIndex, overflowCount }` で
-  // 通 知 = main 側 mirror 更 新 + diagnostics.overflowCount() で read 可)。
+  // MIDI inbound overflow listener for the postMessage path (= when drop-oldest
+  // fires on the worklet-side in-ring, it is notified via
+  // `{ kind:'midi-overflow', ringIndex, overflowCount }` = the main side updates
+  // the mirror so diagnostics.overflowCount() can read it).
   const onMidiOverflowMessage = (event: MessageEvent): void => {
     const data = event.data as
       | { kind?: unknown; ringIndex?: unknown; overflowCount?: unknown }
@@ -1414,10 +1461,11 @@ export async function createNode<C>(
     node.port.addEventListener("message", onMidiOverflowMessage);
   }
 
-  // snapshot / restore request-response (`05-client.md` §2.6 + `01-dsl.md` §8)。
-  // SAB を 使 わ ず port message で 往 復 = worklet が onmessage (= render quantum 境
-  // 界) で linear memory を read / write す る の で block-atomic (= §6.1)。 各 request
-  // に 連 番 id を 振 り、 worklet の response を pending map で 突 き 合 わ せ て resolve。
+  // snapshot / restore request-response (`05-client.md` §2.6 + `01-dsl.md` §8).
+  // Round-trips over port messages rather than the SAB = the worklet reads /
+  // writes linear memory in onmessage (= the render-quantum boundary), so it is
+  // block-atomic (= §6.1). Each request gets a sequential id, and the worklet's
+  // response is matched against the pending map to resolve.
   let snapshotRequestSeq = 0;
   type RestoreReport = { applied: string[]; skipped: string[]; missing: string[] };
   const pendingSnapshots = new Map<
@@ -1518,8 +1566,8 @@ export async function createNode<C>(
         missing: [],
       };
     }
-    // Migrate the blob to the current schema first (`01-dsl.md` §8.3)。 A throwing
-    // migrate step fails the whole restore = the live node keeps its current state。
+    // Migrate the blob to the current schema first (`01-dsl.md` §8.3). A throwing
+    // migrate step fails the whole restore = the live node keeps its current state.
     const migrated = runMigrations(blob, processor.migrations ?? [], processor.schemaHash);
     if (!migrated.ok) {
       return {
@@ -1535,8 +1583,8 @@ export async function createNode<C>(
     const requestId = snapshotRequestSeq++;
     // Hand ALL slots to the worklet — it is the single authority on declarations,
     // so it computes applied / skipped / missing (across state / buffer / param) +
-    // writes state / buffer into linear memory at the quantum boundary。 dispose() /
-    // processorerror reject the pending promise so a torn-down node never hangs here。
+    // writes state / buffer into linear memory at the quantum boundary. dispose() /
+    // processorerror reject the pending promise so a torn-down node never hangs here.
     let report: RestoreReport;
     try {
       report = await new Promise<RestoreReport>((resolve, reject) => {
@@ -1566,7 +1614,7 @@ export async function createNode<C>(
       };
     }
     // param values live on `AudioParam` (main thread), so apply them here using
-    // the worklet's authoritative applied report。
+    // the worklet's authoritative applied report.
     for (const slot of decoded.slots) {
       if (slot.kind !== "param") continue;
       if (!report.applied.includes(slot.name)) continue;
@@ -1584,11 +1632,12 @@ export async function createNode<C>(
 
   const { handles: inputHandles, proxies: inputProxies } = buildInputProxies(context, node, inputs);
 
-  // sab-unavailable event を 1 度 だ け fire す る pending flag (= 04-worklet-
-  // runtime.md §8、 sub-phase 7.4)。 SAB available なら 不 要、 fallback 環 境 で
-  // 1 番 目 の onError subscriber に 1 度 だ け 通 知 (= subscriber が createNode
-  // 直 後 に subscribe で きる path を 想 定、 後 subscribe は drop)。
-  // (= `disposed` latch は state surface 構 築 path で 既 上 で declare 済 = 重 複 declare せ ず)
+  // Pending flag to fire the sab-unavailable event exactly once (= 04-worklet-
+  // runtime.md §8). Unneeded when SAB is available; in a fallback environment it
+  // notifies the first onError subscriber exactly once (= assuming a subscriber
+  // can subscribe right after createNode; later subscribes drop).
+  // (= the `disposed` latch is already declared above on the state-surface build
+  // path = not re-declared here)
   let pendingSabUnavailable = !sabAvailable;
   // Dev registry handle: built + registered below only when devtools is active;
   // referenced here so `dispose()` can unregister it.
@@ -1629,10 +1678,10 @@ export async function createNode<C>(
         for (const handlers of byType.values()) handlers.clear();
       }
       // Cut each input proxy's outgoing edge to `node` so audio stops flowing
-      // through the disposed processor。 Upstream sources connected by the
+      // through the disposed processor. Upstream sources connected by the
       // user to `node.inputs.<name>` are their own to disconnect — unworklet
       // does not own the user's graph (= Q4-a / Q6: typed wrappers compose
-      // with Web Audio, framework does not mutate user-constructed edges)。
+      // with Web Audio, framework does not mutate user-constructed edges).
       for (const gain of inputProxies) {
         try {
           gain.disconnect();
@@ -1654,15 +1703,15 @@ export async function createNode<C>(
     onError(handler: (event: NodeErrorEvent) => void): () => void {
       if (disposed) {
         // Subscribing after dispose is a no-op (= docs/05-client.md §4 = all
-        // subscribers torn down at dispose)。 Returning a no-op unsubscribe
-        // keeps the caller's cleanup path symmetric。
+        // subscribers torn down at dispose). Returning a no-op unsubscribe
+        // keeps the caller's cleanup path symmetric.
         return () => {};
       }
       errorSubscribers.add(handler);
-      // pending sab-unavailable event を 1 度 だ け fire (= sub-phase 7.4)。
-      // SAB available 環 境 で は pendingSabUnavailable = false で 何 も し ない。
-      // fallback 環 境 で 1 番 目 の subscriber に だ け notify、 後 subscribe は
-      // pending flag を clear 済 で drop。
+      // Fire the pending sab-unavailable event exactly once. In a SAB-available
+      // environment pendingSabUnavailable = false, so nothing happens. In a
+      // fallback environment, notify only the first subscriber; later subscribes
+      // drop because the pending flag has already been cleared.
       if (pendingSabUnavailable) {
         pendingSabUnavailable = false;
         try {

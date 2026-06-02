@@ -1,16 +1,19 @@
 /**
- * `worklet-entry.ts` から static import で到達する core 内ファイル一覧（= worklet
- * バンドルに同梱され、AudioWorkletGlobalScope で評価されるソース集合）。
+ * The set of core files reachable from `worklet-entry.ts` via static imports —
+ * i.e. the sources bundled into the worklet and evaluated inside
+ * AudioWorkletGlobalScope.
  *
- * 単一ソースとして 2 箇所が参照する:
- *   - root `vite.config.ts` の `lint.overrides` … この集合にだけ `no-restricted-globals`
- *     を効かせ、AudioWorkletGlobalScope に無い main-thread / Node web API
- *     (`TextEncoder` / `fetch` / `setTimeout` / `document` 等) の使用を CI で落とす。
- *   - `worklet-realm-files.test.ts` … `worklet-entry.ts` から実際の import graph を
- *     辿り、この一覧と一致することを検証する。新しいファイルが worklet バンドルに
- *     入ったのに lint 対象から漏れる事故を防ぐ（= glob と graph のズレ検出）。
+ * This single source of truth is referenced in two places:
+ *   - `lint.overrides` in the root `vite.config.ts` — applies
+ *     `no-restricted-globals` to exactly this set, so CI fails on any use of
+ *     main-thread / Node web APIs absent from AudioWorkletGlobalScope
+ *     (`TextEncoder`, `fetch`, `setTimeout`, `document`, etc.).
+ *   - `worklet-realm-files.test.ts` — walks the actual import graph from
+ *     `worklet-entry.ts` and verifies it matches this list. This prevents the
+ *     case where a new file enters the worklet bundle but slips through the lint
+ *     coverage (i.e. it detects drift between the glob and the import graph).
  *
- * パスは packages/core からの相対。順序は意味を持たない（集合として比較する）。
+ * Paths are relative to packages/core. Order is irrelevant (compared as a set).
  */
 export const WORKLET_REALM_FILES = [
   "src/worklet-entry.ts",

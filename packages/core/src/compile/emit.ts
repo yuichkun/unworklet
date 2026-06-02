@@ -1,20 +1,21 @@
 /**
- * WASM emission stage of the compile pipeline (= plan Q-F 引 数 ナ シ +
- * 固 定 region WASM export、 plan Q-D stage 別 internal module の 1 つ)。
+ * WASM emission stage of the compile pipeline (= plan Q-F no-argument `process`
+ * plus fixed-region WASM exports; one of the per-stage internal modules of plan
+ * Q-D).
  *
- * binaryen を dynamic import (= `09-repo-structure.md` §2.4 invariant、
- * static path consumer の production runtime bundle に は 含 ま な い) し て
- * AST → binaryen IR lower。 出 力 = WASM binary (= Uint8Array)。
+ * Dynamically imports binaryen (= `09-repo-structure.md` §2.4 invariant: it is
+ * not included in the static-path consumer's production runtime bundle) and
+ * lowers AST → binaryen IR. Output = WASM binary (= Uint8Array).
  *
- * WASM の linear memory は `layout.totalBytes` を 64 KB page で 切 り 上 げ た
- * size を min == max で pre-allocate (= `memory.grow` 永 久 排 除、
- * `00-foundations.md` §5.1 invariant)。 export = `process` (= 引 数 ナ シ、
- * Q-F) + `memory` (= host が 固 定 offset で 入 出 力 marshal)。
+ * The WASM linear memory pre-allocates `layout.totalBytes` rounded up to 64 KB
+ * pages, with min == max (= permanently rules out `memory.grow`,
+ * `00-foundations.md` §5.1 invariant). Exports = `process` (= no arguments,
+ * Q-F) + `memory` (= the host marshals I/O at fixed offsets).
  *
- * forSample = bounded loop (= Phase 1 step-1.7 path 移 植) で stride 単 位 に
- * 増 加、 loopCounter は local 0 を 経 由。 Phase 3 = forSample 1 階 層 想 定
- * (= canonical Ex 1 minus meter)、 nested forSample / forSample.byN 対 応 は
- * 後 続 phase で fill。
+ * forSample = a bounded loop (= ported from the Phase 1 step-1.7 path) that
+ * advances by `stride` each iteration, with the loop counter held in local 0.
+ * Phase 3 assumes a single forSample level (= canonical Ex 1 minus the meter);
+ * nested forSample / forSample.byN support is filled in by a later phase.
  */
 
 import type { AstNode, CapturedGraph } from "./ast.ts";
@@ -32,70 +33,77 @@ const CHANNEL_STRIDE_BYTES = 128 * BYTES_PER_F32;
 const PAGE_BYTES = 65536;
 const LOOP_COUNTER_LOCAL = 0;
 /**
- * f32 / f64 用 subnormal guard temp local (= function locals array index 1 / 2)。
+ * Subnormal-guard temp locals for f32 / f64 (= function locals array index 1 / 2).
  *
- * subnormal guard で `|v| < 1e-30 ? 0 : v` を 構 築 す る 時、 v を `abs / lt` の
- * condition と `select` の else 側 で 2 度 参 照 す る 必要。 ナイーブ に
- * `emitExpression(valueNode, ...)` を 2 度 呼 ぶ と、 v が 「audioInRead 経 由 +
- * forSample 後 の 文 脈」 で binaryen 内 部 で 共 有 / 不 正 expression 生 成 path
- * に 入 り NaN を 生 む (= 実 測 確 認)。 `local.tee` で 1 度 だ け 評 価 + local に
- * 保 存 + 値 を 渡 し、 もう 1 度 必 要 な ら `local.get` で 再 取 得 す る 形 が
- * 標 準 path = 重 複 evaluation ナ シ + binaryen 内 部 共 有 path も 経 由 し な い。
+ * When the subnormal guard builds `|v| < 1e-30 ? 0 : v`, v has to be referenced
+ * twice: once in the `abs / lt` condition and once in the `select` else branch.
+ * Naively calling `emitExpression(valueNode, ...)` twice makes binaryen enter a
+ * shared / malformed expression-generation path for v "in the context of an
+ * audioInRead after forSample", producing NaN (= measured). The standard path
+ * is `local.tee`: evaluate v once, store it in a local, pass the value through,
+ * and re-fetch it with `local.get` whenever it is needed again = no duplicate
+ * evaluation and no traversal of binaryen's internal sharing path.
  */
 const SUBNORMAL_F32_LOCAL = 1;
 const SUBNORMAL_F64_LOCAL = 2;
 /**
- * publish scheduler 用 i32 temp local (= sub-phase 7.3)。 各 publish slot 用
- * の sample counter += 128 後 の 値 を 1 度 だ け 評 価 + threshold check + due path
- * で counter -= threshold で 再 取 得 する path (= 重 複 evaluation 回 避、
- * binaryen 内 部 path の 罠 回 避 = subnormal guard と 同 軸)。
+ * i32 temp local for the publish scheduler (= sub-phase 7.3). For each publish
+ * slot, the sample counter is evaluated once after += 128, the threshold check
+ * runs, and on the due path the counter is re-fetched as counter -= threshold
+ * (= avoids duplicate evaluation and sidesteps the binaryen internal-path
+ * pitfall, same approach as the subnormal guard).
  */
 const PUBLISH_COUNTER_LOCAL = 3;
 
 /**
- * `event.emitIf` 用 i32 temp local (= sub-phase 7.6 commit 4)。
+ * i32 temp locals for `event.emitIf` (= sub-phase 7.6 commit 4).
  *
- * - `EVENT_HEAD_LOCAL` = ring head を 1 度 load し て overflow check + slot offset
- *   計 算 + head += 1 store で 再 取 得 (= 重 複 evaluation ナ シ)。
- * - `EVENT_SLOT_PTR_LOCAL` = slot pointer (= base + 12 + (head % capacity) ×
- *   slotSize) を 1 度 計 算 し て 各 field store で 再 取 得 (= 重 複 計 算 + binaryen
- *   path の 罠 回 避)。
+ * - `EVENT_HEAD_LOCAL` = load the ring head once, then re-fetch it for the
+ *   overflow check, the slot-offset computation, and the head += 1 store
+ *   (= no duplicate evaluation).
+ * - `EVENT_SLOT_PTR_LOCAL` = compute the slot pointer (= base + 12 +
+ *   (head % capacity) × slotSize) once and re-fetch it for each field store
+ *   (= avoids recomputation and the binaryen-path pitfall).
  */
 const EVENT_HEAD_LOCAL = 4;
 const EVENT_SLOT_PTR_LOCAL = 5;
 /**
- * `message.onReceive` drain 用 i32 temp local (= sub-phase 7.7c)。
- * - `MESSAGE_TAIL_LOCAL` = ring tail を 1 度 load + drain loop 内 で += 1
- *   進 め + drain 末 尾 で SAB に commit。
- * EVENT_HEAD_LOCAL / EVENT_SLOT_PTR_LOCAL は message ring drain で 共 用
- * (= forSample / event emit と message drain は 同 process 内 で 排 他 実 行 =
- *   local lifetime 衝 突 ナ シ)。
+ * i32 temp local for the `message.onReceive` drain (= sub-phase 7.7c).
+ * - `MESSAGE_TAIL_LOCAL` = load the ring tail once, advance it by += 1 inside
+ *   the drain loop, and commit it to the SAB at the end of the drain.
+ * EVENT_HEAD_LOCAL / EVENT_SLOT_PTR_LOCAL are shared by the message ring drain
+ * (= forSample / event emit and message drain run mutually exclusively within
+ *   the same `process` call, so there is no local-lifetime conflict).
  */
 const MESSAGE_TAIL_LOCAL = 6;
 
 /**
- * `frac` 用 f32 temp local。 frac(x) = x - floor(x) で x を 2 度 参 照 する =
- * `tee` で 1 度 だ け 評 価 + local hold し、 floor 側 で `get` で 再 取 得。 WASM は
- * 厳 密 な 左→右 評 価 + emit は optimizer を 回 さ な い の で、 `tee(L,…)` 直 後 に
- * `get(L)` で 消 費 し 間 に L を 書 く 操 作 が な い 限 り、 ネ ス ト (= frac(frac(x)))
- * で も 取 り 違 え が 起 き な い (= 内 側 が 完 全 評 価 さ れ た 後 に 外 側 tee が L 上 書 き)。
+ * f32 temp local for `frac`. frac(x) = x - floor(x) references x twice =
+ * `tee` evaluates it once and holds it in the local, and the floor side
+ * re-fetches it with `get`. Because WASM has strict left-to-right evaluation and
+ * emit runs no optimizer, as long as the `get(L)` consumes the value right after
+ * `tee(L,…)` with no write to L in between, even nesting (= frac(frac(x))) cannot
+ * mix the values up (= the inner expression is fully evaluated before the outer
+ * tee overwrites L).
  */
 const FRAC_F32_LOCAL = 7;
 
 /**
- * `mod` 用 f32 temp local 3 つ。 mod(a,b) = a - trunc(a/b)·b で a / b / quotient を
- * 複 数 回 参 照 = local hold で 1 度 ず つ 評 価。 quotient (= MOD_Q) は 無 限 大 除 数
- * guard で 2 度 参 照 す る (= `0·Inf=NaN` 回 避、 後 述)。 ネ ス ト 安 全 性: a は 最 外
- * `sub` 左 operand で stack へ push し て 持 ち 回 り、 b / quotient は rhs 評 価・quotient
- * 算 出 後 に だ け read す る の で、 内 側 mod が 同 local を 上 書 き し て も 取 り 違 え ナ シ。
+ * Three f32 temp locals for `mod`. mod(a,b) = a - trunc(a/b)·b references a / b /
+ * quotient multiple times = each is evaluated once and held in a local. The
+ * quotient (= MOD_Q) is referenced twice by the infinite-divisor guard
+ * (= avoids `0·Inf=NaN`, see below). Nesting safety: a is pushed onto the stack
+ * as the left operand of the outermost `sub` and carried through, while b /
+ * quotient are read only after the rhs is evaluated and the quotient is
+ * computed, so even if an inner mod overwrites the same locals there is no mix-up.
  */
 const MOD_A_F32_LOCAL = 8;
 const MOD_B_F32_LOCAL = 9;
 const MOD_Q_F32_LOCAL = 10;
 
 /**
- * f64 temp locals (= f32 版 と 同 役 割、 f64 path 用)。 frac の 二 重 評 価 回 避 と
- * mod の JS `%` 準 拠 special impl で 使 う。
+ * f64 temp locals (= same roles as the f32 versions, for the f64 path). Used by
+ * the frac double-evaluation guard and the JS `%`-conforming special impl of mod.
  */
 const FRAC_F64_LOCAL = 11;
 const MOD_A_F64_LOCAL = 12;
@@ -103,23 +111,26 @@ const MOD_B_F64_LOCAL = 13;
 const MOD_Q_F64_LOCAL = 14;
 
 /**
- * `buffer.readInterpolated` 用 temp local。 pos を 1 度 評 価 し て f32 local に
- * hold (= floor index と frac で 2 度 参 照)、 切 り 出 し た integer index を i32
- * local に hold (= i / i+1 の 2 tap address で 2 度 参 照)。 二 重 評 価 回 避。
+ * Temp locals for `buffer.readInterpolated`. pos is evaluated once and held in
+ * an f32 local (= referenced twice, for the floor index and the frac), and the
+ * truncated integer index is held in an i32 local (= referenced twice, for the
+ * i / i+1 two-tap addresses). Avoids double evaluation.
  */
 const BUFINTERP_POS_LOCAL = 15;
 const BUFINTERP_I0_LOCAL = 16;
 
 /**
- * `payloadField.at(idx)` の OOB clamp 用 i32 temp local (= §4.3)。 idx を 1 度 評 価 +
- * local hold し、 `min(idx, length-1)` → `max(_, 0)` の 2 段 select で [0, length-1]
- * に 丸 め て か ら content load する (= runtime trap 排 除、 idx を 複 数 回 参 照)。
+ * i32 temp local for the OOB clamp of `payloadField.at(idx)` (= §4.3). idx is
+ * evaluated once and held in the local, then rounded into [0, length-1] by a
+ * two-stage select `min(idx, length-1)` → `max(_, 0)` before the content load
+ * (= eliminates runtime traps; idx is referenced multiple times).
  */
 const PAYLOAD_CLAMP_LOCAL = 17;
 
 /**
- * SIMD `sumLanes` 用 v128 temp local (= §7)。 vec を 1 度 評 価 し て hold し、
- * 4 lane を `extract_lane` で 取 り 出 す (= vec expression の 4 重 評 価 回 避)。
+ * v128 temp local for SIMD `sumLanes` (= §7). vec is evaluated once and held,
+ * then its 4 lanes are pulled out with `extract_lane` (= avoids evaluating the
+ * vec expression 4 times).
  */
 const VEC_TEMP_LOCAL = 18;
 
@@ -133,28 +144,29 @@ const VEC_TEMP_LOCAL = 18;
 const TEMP_LOCAL_BASE = 19;
 
 /**
- * 多 項 式 近 似 の math primitive (= sin / cos / tan / tanh / exp / log、 Q17) は
- * 共 有 プ ラ イ ベ ー ト WASM 関 数 (= `(f32) -> f32`、 export し な い) と し て emit し、
- * 呼 び 出 し 側 は `call` で 参 照。 各 関 数 は 自 前 の local を 持 つ の で `process`
- * 側 の 固 定 temp local と 干 渉 し な い。 graph で 実 際 に 使 わ れ て い る kind だ け
- * 追 加 す る (= `collectUsedMathKinds`)。
+ * The polynomial-approximation math primitives (= sin / cos / tan / tanh / exp /
+ * log, Q17) are emitted as shared private WASM functions (= `(f32) -> f32`, not
+ * exported), and the call sites reference them via `call`. Each function has its
+ * own locals, so they do not interfere with `process`'s fixed temp locals. Only
+ * the kinds actually used in the graph are added (= `collectUsedMathKinds`).
  */
 const MATH_FN_PREFIX = "$unworklet_";
 
 /**
- * Subnormal flush threshold (= Q21、 `04-worklet-runtime.md` §6)。
- * `state.f32` / `state.f64` の `.store(v)` で `|v| < 1e-30` を 0 に 落 と し て
- * IIR feedback path で の CPU spike を 撤 廃。 threshold 1e-30 は
- * IEEE 754 binary32 subnormal 範 囲 (≈ 1.18e-38 以 下) を 含 む 単 純
- * boundary、 normal 範 囲 末 端 も 同 時 flush だ が audio 出 力 と し て
- * 不 可 聴 = 1 値 fix。
+ * Subnormal flush threshold (= Q21, `04-worklet-runtime.md` §6).
+ * `state.f32` / `state.f64`'s `.store(v)` flushes `|v| < 1e-30` to 0 to
+ * eliminate the CPU spike on the IIR feedback path. The threshold 1e-30 is a
+ * simple boundary that covers the IEEE 754 binary32 subnormal range
+ * (≈ 1.18e-38 and below); the tail of the normal range is flushed too, but it is
+ * inaudible as audio output = a single-value fix.
  */
 const SUBNORMAL_THRESHOLD = 1e-30;
 
 /**
- * `emit` options (= sub-phase 7.3 で 追 加)。 sampleRate を build-time const
- * と し て publish scheduler の threshold = `Math.round(sampleRate / rateFps)`
- * に const fold す る。 default = 48000 (= 既 fixture / host 既 定 と zip)。
+ * `emit` options (= added in sub-phase 7.3). Const-folds sampleRate, as a
+ * build-time constant, into the publish scheduler's threshold =
+ * `Math.round(sampleRate / rateFps)`. default = 48000 (= matches the existing
+ * fixture / host default).
  */
 export type EmitOptions = {
   sampleRate?: number;
@@ -207,7 +219,7 @@ function stateInitSegments(
     const isZero = decl.type === "i64" ? decl.initial === 0n : Number(decl.initial) === 0;
     if (isZero) continue;
     const offset = layout.regions.states.slots[decl.name];
-    /* v8 ignore next 2 — state slot は layout で 必 ず push 済 = unreachable */
+    /* v8 ignore next 2 — the state slot is always pushed by layout = unreachable */
     if (offset === undefined) throw new Error(`unknown state slot: ${decl.name}`);
     segments.push({
       offset: mod.i32.const(offset),
@@ -272,8 +284,8 @@ export async function emit(
   const sampleRate = options.sampleRate ?? DEFAULT_EMIT_SAMPLE_RATE;
   const binaryen = (await import("binaryen")).default;
   const mod = new binaryen.Module();
-  // buffer.copyFrom = memory.copy (= bulk-memory、Q31-c)、SIMD = f32x4 (= §7)。
-  // 既定 features (MVP) に足して emitBinary が opcode を出せるように。
+  // buffer.copyFrom = memory.copy (= bulk-memory, Q31-c), SIMD = f32x4 (= §7).
+  // Added on top of the default features (MVP) so that emitBinary can emit the opcodes.
   mod.setFeatures(mod.getFeatures() | binaryen.Features.BulkMemory | binaryen.Features.SIMD128);
 
   const pages = Math.max(1, Math.ceil(layout.totalBytes / PAGE_BYTES));
@@ -281,15 +293,17 @@ export async function emit(
   // values at instantiation (= declaration defaults; restore overwrites later).
   mod.setMemory(pages, pages, "memory", stateInitSegments(graph, layout, mod));
 
-  // 多 項 式 近 似 の math primitive (= sin 等、 Q17) を 共 有 プ ラ イ ベ ー ト 関 数 と し て
-  // 追 加。 graph で 使 わ れ て い る kind だ け emit。
+  // Add the polynomial-approximation math primitives (= sin etc., Q17) as shared
+  // private functions. Only the kinds used in the graph are emitted.
   addMathFunctions(collectUsedMathKinds(graph), mod, binaryen);
 
-  // Q38-b 規 範: 全 onReceive handler は per-block top / forSample よ り 先 に drain。
-  // source order と zip し な い = framework が 「messageOnReceive 集 め て 先 emit
-  // + 他 statements 後 emit」 で 並 び 替 え (= docs `01-dsl.md` §4.2 + §1 規 定)。
-  // 同 message の 複 数 onReceive registration は 1 つ の drain loop に 集 約 +
-  // 各 slot で 全 registration body を registration order で 連 続 fire (= Q38-c)。
+  // Q38-b rule: every onReceive handler drains before the per-block top /
+  // forSample. The emit order does not follow source order = the framework
+  // reorders by "collect the messageOnReceive nodes and emit them first, then
+  // emit the other statements" (= docs `01-dsl.md` §4.2 + §1). Multiple
+  // onReceive registrations for the same message are merged into one drain loop,
+  // and at each slot all registration bodies fire back-to-back in registration
+  // order (= Q38-c).
   const onReceiveByMessage = new Map<string, AstNode[]>();
   // MIDI inbound handlers grouped per port (= Q38-b: drain before per-block /
   // forSample, registration order Q38-c). One drain loop per port dispatches by
@@ -326,9 +340,10 @@ export async function emit(
 
   // function locals = [i32 loop counter, f32 subnormal guard temp, f64 subnormal guard temp,
   //                    i32 publish counter temp, i32 event head temp, i32 event/message slot ptr temp,
-  //                    i32 message tail temp]。
-  // event emit が head / slot ptr を 1 度 だ け 評 価 + 各 field store で 再 取 得、
-  // message drain が tail を 1 度 load + drain loop で 進 め + commit。
+  //                    i32 message tail temp].
+  // Event emit evaluates head / slot ptr once and re-fetches them for each field
+  // store; the message drain loads tail once, advances it in the drain loop, and
+  // commits it.
   mod.addFunction(
     "process",
     binaryen.none,
@@ -341,9 +356,9 @@ export async function emit(
       binaryen.i32,
       binaryen.i32,
       binaryen.i32,
-      binaryen.f32, // FRAC_F32_LOCAL (= frac 用 temp)
-      binaryen.f32, // MOD_A_F32_LOCAL (= mod 被 除 数 temp)
-      binaryen.f32, // MOD_B_F32_LOCAL (= mod 除 数 temp)
+      binaryen.f32, // FRAC_F32_LOCAL (= frac temp)
+      binaryen.f32, // MOD_A_F32_LOCAL (= mod dividend temp)
+      binaryen.f32, // MOD_B_F32_LOCAL (= mod divisor temp)
       binaryen.f32, // MOD_Q_F32_LOCAL (= mod quotient temp)
       binaryen.f64, // FRAC_F64_LOCAL
       binaryen.f64, // MOD_A_F64_LOCAL
@@ -352,8 +367,8 @@ export async function emit(
       binaryen.f32, // BUFINTERP_POS_LOCAL
       binaryen.i32, // BUFINTERP_I0_LOCAL
       binaryen.i32, // PAYLOAD_CLAMP_LOCAL (= at OOB clamp idx)
-      binaryen.v128, // VEC_TEMP_LOCAL (= SIMD sumLanes 用)
-      // Mutable-read temp locals (= TEMP_LOCAL_BASE +、issue #8、capture 順)。
+      binaryen.v128, // VEC_TEMP_LOCAL (= for SIMD sumLanes)
+      // Mutable-read temp locals (= TEMP_LOCAL_BASE +, issue #8, in capture order).
       ...collectTempLocals(graph, binaryen),
     ],
     body,
@@ -366,18 +381,19 @@ export async function emit(
 }
 
 /**
- * publish scheduler emit (= sub-phase 7.3、 `04-worklet-runtime.md` §7)。
+ * publish scheduler emit (= sub-phase 7.3, `04-worklet-runtime.md` §7).
  *
- * 各 publish flag 持 つ state slot ご と に process function 末 尾 に inline:
+ * For each state slot carrying a publish flag, inlined at the end of the process
+ * function:
  * 1. local PUBLISH_COUNTER_LOCAL = `i32.load(counterOffset) + SAMPLES_PER_BLOCK`
  * 2. if local >= threshold:
- *    - publishShared に state 値 を copy (= type 別 load + store)
+ *    - copy the state value into publishShared (= per-type load + store)
  *    - i32.store(versionOffset, i32.load(versionOffset) + 1)
- *    - i32.store(counterOffset, local - threshold)  (= 残 り を carry)
+ *    - i32.store(counterOffset, local - threshold)  (= carry the remainder)
  *    else:
  *    - i32.store(counterOffset, local)
  *
- * threshold = `Math.round(sampleRate / rateFps)` = build-time const fold。
+ * threshold = `Math.round(sampleRate / rateFps)` = build-time const fold.
  */
 function emitPublishScheduler(
   graph: CapturedGraph,
@@ -392,7 +408,7 @@ function emitPublishScheduler(
     const stateOffset = layout.regions.states.slots[decl.name];
     const sharedOffset = layout.regions.publishShared.slots[decl.name];
     const counterOffset = layout.regions.publishCounters.slots[decl.name];
-    /* v8 ignore next 3 — publish 持 つ state slot は layout で 既 push 済 path =
+    /* v8 ignore next 3 — a state slot with publish is already pushed by layout =
        unreachable defensive guard */
     if (stateOffset === undefined || sharedOffset === undefined || counterOffset === undefined) {
       throw new Error(`unknown publish slot: ${decl.name}`);
@@ -400,7 +416,7 @@ function emitPublishScheduler(
     const versionOffset = counterOffset + 4;
     const threshold = Math.round(sampleRate / decl.publish.rateFps);
 
-    // type 別 load / store (= publish flag 持 つ type は Q42 で f32 / i32 / bool 制 限)
+    // per-type load / store (= types carrying a publish flag are restricted to f32 / i32 / bool by Q42)
     const loadValue =
       decl.type === "f32"
         ? mod.f32.load(0, BYTES_PER_F32, mod.i32.const(stateOffset))
@@ -517,10 +533,10 @@ function emitAbs(mod: BinaryenModule, type: ScalarType, emitX: () => number): nu
 }
 
 /**
- * Type-dispatched numeric binary op (= 多 型 arithmetic / comparison lowering)。
- * `op` は binaryen 命 令 名 (= comparison は `le` / `ge`、 AST kind の `lte` /
- * `gte` を 呼 び 出 し 側 で map)。 整 数 は 符 号 付 き (= `div_s` / `lt_s` 等)。
- * i64 dispatch は i64 stage で 追 加。
+ * Type-dispatched numeric binary op (= polymorphic arithmetic / comparison
+ * lowering). `op` is the binaryen instruction name (= comparisons use `le` /
+ * `ge`; the caller maps the AST kinds `lte` / `gte`). Integers are signed
+ * (= `div_s` / `lt_s` etc.). The i64 dispatch was added in the i64 stage.
  */
 function emitNumericBinary(
   mod: BinaryenModule,
@@ -551,7 +567,7 @@ function emitNumericBinary(
         return mod.i32.ge_s(lhs, rhs);
     }
   }
-  // i64 = 符 号 付 き (= div_s / lt_s 等)。 comparison は i32 (= bool 0/1) を 返 す。
+  // i64 = signed (= div_s / lt_s etc.). Comparisons return i32 (= bool 0/1).
   if (type === "i64") {
     switch (op) {
       case "add":
@@ -599,9 +615,10 @@ function emitNumericBinary(
 }
 
 /**
- * `i64.const` from a bigint. binaryen 129 の `i64.const` は 単 一 bigint 引 数 を
- * 取 る が bundled d.ts は 旧 `(low, high)` signature の ま ま (= 実 装 と 不 一 致)。
- * member 式 を inline call し て cast = `this` 束 縛 を 保 っ た ま ま 型 を 通 す。
+ * `i64.const` from a bigint. binaryen 129's `i64.const` takes a single bigint
+ * argument, but the bundled d.ts still has the old `(low, high)` signature
+ * (= mismatched with the implementation). Inline-call the member expression and
+ * cast = pass the types while preserving the `this` binding.
  */
 function i64Const(mod: BinaryenModule, value: bigint): number {
   return (mod.i64.const as unknown as (value: bigint) => number)(value);
@@ -615,11 +632,13 @@ function emitNeg(mod: BinaryenModule, type: ScalarType, x: number): number {
 }
 
 /**
- * Transcendental call (= sin / cos / tan / tanh / exp / log)。 共 有 関 数 は
- * `(f32) -> f32` (= Q17 多 項 式 近 似、 関 数 本 体 は `addMathFunctions` で 追 加)。
- * f64 operand は f32-bridge で 通 す: `promote(call(demote(value)))`。 共 有 関 数 を
- * 型 ご と に 複 製 せ ず、 精 度 を f32 相 当 (~1e-4) に 揃 え る (= 型 不 問 の
- * approximate-math 契 約)。 `value` は emit 済 の expression (= node.type に 一 致)。
+ * Transcendental call (= sin / cos / tan / tanh / exp / log). The shared function
+ * is `(f32) -> f32` (= Q17 polynomial approximation; the body is added by
+ * `addMathFunctions`). An f64 operand goes through the f32 bridge:
+ * `promote(call(demote(value)))`. Rather than duplicating the shared function per
+ * type, the precision is normalized to f32-equivalent (~1e-4) (= the
+ * type-agnostic approximate-math contract). `value` is an already-emitted
+ * expression (= matching node.type).
  */
 function emitTranscendental(
   mod: BinaryenModule,
@@ -637,10 +656,11 @@ function emitTranscendental(
 }
 
 /**
- * Cross-precision convert lowering (= scalar constructor `f32(node)` 等、 no-trap:
- * integer truncation は saturating)。 i32 ↔ f32 / i32 ↔ f64 / f32 ↔ f64、 i64 の
- * narrowing、 bool ↔ numeric を 実 装。 i64 へ の 昇 格 (= i32/f32/.. → i64) は
- * bigint-only construction の 規 約 で convert ナ シ (= `i64(BigInt(...))` を 使 う)。
+ * Cross-precision convert lowering (= scalar constructors `f32(node)` etc.,
+ * no-trap: integer truncation is saturating). Implements i32 ↔ f32 / i32 ↔ f64 /
+ * f32 ↔ f64, i64 narrowing, and bool ↔ numeric. Widening to i64 (= i32/f32/.. →
+ * i64) has no convert by the bigint-only construction convention (= use
+ * `i64(BigInt(...))`).
  */
 function emitConvert(mod: BinaryenModule, from: ScalarType, to: ScalarType, value: number): number {
   if (from === "i32" && to === "f32") return mod.f32.convert_s.i32(value);
@@ -649,13 +669,14 @@ function emitConvert(mod: BinaryenModule, from: ScalarType, to: ScalarType, valu
   if (from === "f64" && to === "i32") return mod.i32.trunc_s_sat.f64(value);
   if (from === "f32" && to === "f64") return mod.f64.promote(value);
   if (from === "f64" && to === "f32") return mod.f32.demote(value);
-  // i64 は bigint-only construction (= 昇 格 convert ナ シ)、 narrowing だ け: i32 へ
-  // は wrap (= 下 位 32bit)、 f32 / f64 へ は signed convert。
+  // i64 is bigint-only construction (= no widening convert), narrowing only: to
+  // i32 is wrap (= the low 32 bits), and to f32 / f64 is a signed convert.
   if (from === "i64" && to === "i32") return mod.i32.wrap(value);
   if (from === "i64" && to === "f32") return mod.f32.convert_s.i64(value);
   if (from === "i64" && to === "f64") return mod.f64.convert_s.i64(value);
-  // bool は 内 部 i32 (= 0/1)。 to bool = `x != 0`、 from bool = i32 (identity) /
-  // float (= 0.0/1.0 へ signed convert、 0/1 は signed/unsigned 同 値)。
+  // bool is internally i32 (= 0/1). To bool = `x != 0`; from bool = i32
+  // (identity) / float (= signed convert to 0.0/1.0; 0/1 is the same value
+  // signed or unsigned).
   if (to === "bool") {
     if (from === "i32") return mod.i32.ne(value, mod.i32.const(0));
     if (from === "i64") return mod.i64.ne(value, i64Const(mod, 0n));
@@ -667,13 +688,13 @@ function emitConvert(mod: BinaryenModule, from: ScalarType, to: ScalarType, valu
     if (to === "f32") return mod.f32.convert_s.i32(value);
     if (to === "f64") return mod.f64.convert_s.i32(value);
   }
-  /* v8 ignore next 2 — 残 る pair は i64 への 昇 格 (= 規 約 で convert ナ シ) だ け = unreachable */
+  /* v8 ignore next 2 — the remaining pairs are only widening to i64 (= no convert by convention) = unreachable */
   throw new Error(`unworklet: convert ${from} → ${to} not implemented yet`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// buffer scalar access (= `01-dsl.md` §3.2)。 element ptr = base + index ×
-// sizeof。 u8 は 1 byte load8_u / store8 (= 下 位 8 bit)、 bool は i32 word。
+// buffer scalar access (= `01-dsl.md` §3.2). element ptr = base + index ×
+// sizeof. u8 is a 1-byte load8_u / store8 (= the low 8 bits); bool is an i32 word.
 // ─────────────────────────────────────────────────────────────────────────
 
 const BUFFER_ELEMENT_BYTES_EMIT: Record<BufferElementType, number> = {
@@ -685,7 +706,7 @@ const BUFFER_ELEMENT_BYTES_EMIT: Record<BufferElementType, number> = {
   u8: 1,
 };
 
-/** element pointer = bufferBase + index × sizeof(elementType)。 */
+/** element pointer = bufferBase + index × sizeof(elementType). */
 function bufferElementPtr(
   mod: BinaryenModule,
   base: number,
@@ -710,7 +731,7 @@ function emitBufferLoad(mod: BinaryenModule, elementType: BufferElementType, ptr
     case "i64":
       return mod.i64.load(0, BYTES_PER_I64, ptr);
     case "u8":
-      // u8 = zero-extended 下 位 8 bit → Node<'i32'>。
+      // u8 = zero-extended low 8 bits → Node<'i32'>.
       return mod.i32.load8_u(0, 1, ptr);
   }
 }
@@ -732,12 +753,12 @@ function emitBufferStore(
     case "i64":
       return mod.i64.store(0, BYTES_PER_I64, ptr, value);
     case "u8":
-      // 下 位 8 bit だ け store (= i32.store8)。
+      // store only the low 8 bits (= i32.store8).
       return mod.i32.store8(0, 1, ptr, value);
   }
 }
 
-/** Convert a loaded buffer element to f32 (= f32-domain interpolation 用)。 */
+/** Convert a loaded buffer element to f32 (= for f32-domain interpolation). */
 function bufferElementToF32(
   mod: BinaryenModule,
   elementType: BufferElementType,
@@ -757,7 +778,7 @@ function bufferElementToF32(
   }
 }
 
-/** Convert an interpolated f32 back to the element's surfaced scalar type。 */
+/** Convert an interpolated f32 back to the element's surfaced scalar type. */
 function f32ToBufferElement(
   mod: BinaryenModule,
   elementType: BufferElementType,
@@ -778,11 +799,13 @@ function f32ToBufferElement(
 }
 
 /**
- * `buffer.readInterpolated(pos)` = 線 形 補 間 (= 2-tap)。 pos を f32 local に
- * hold、 i0 = trunc(pos) を i32 local に hold (= 二 重 評 価 回 避)。 frac =
- * pos - i0、 a = buf[i0]、 b = buf[i0+1]、 result = a + (b - a)·frac。 補 間 は
- * f32 domain (= element を f32 に 変 換 し て 計 算 後、 element の scalar 型 へ 戻 す)。
- * f64 buffer も f32 domain で 行 う (= wavetable 用 途 で 可 聴 差 ナ シ、 Q17 と 同 軸)。
+ * `buffer.readInterpolated(pos)` = linear interpolation (= 2-tap). pos is held in
+ * an f32 local, and i0 = trunc(pos) is held in an i32 local (= avoids double
+ * evaluation). frac = pos - i0, a = buf[i0], b = buf[i0+1], result =
+ * a + (b - a)·frac. The interpolation is done in the f32 domain (= convert the
+ * element to f32, compute, then convert back to the element's scalar type). f64
+ * buffers are also done in the f32 domain (= no audible difference for wavetable
+ * use, same approach as Q17).
  */
 function emitBufferReadInterpolated(
   node: AstNode & { kind: "bufferReadInterpolated" },
@@ -836,9 +859,10 @@ function emitBufferReadInterpolated(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// typed-array payload reads (= `01-dsl.md` §4.3、 message onReceive handler)。
-// slot の [payloadLen, payloadOffset] (= EVENT_SLOT_PTR_LOCAL 経 由) + message
-// 別 payloadContent region base で 可 変 長 中 身 を index read / 要 素 数 取 得。
+// typed-array payload reads (= `01-dsl.md` §4.3, message onReceive handler).
+// The slot's [payloadLen, payloadOffset] (= via EVENT_SLOT_PTR_LOCAL) plus the
+// per-message payloadContent region base give index-read access to the
+// variable-length content / its element count.
 // ─────────────────────────────────────────────────────────────────────────
 
 function payloadSlotMeta(
@@ -846,17 +870,17 @@ function payloadSlotMeta(
   layout: Layout,
 ): { offsetInSlot: number; contentBase: number; elemBytes: number } {
   const slot = layout.regions.messageRings.slots[node.messageName];
-  /* v8 ignore next 3 — payloadFieldRead/Length は proxy 経 由 で 宣 言 済 message を 参 照 = unreachable guard */
+  /* v8 ignore next 3 — payloadFieldRead/Length references a declared message via the proxy = unreachable guard */
   if (slot === undefined) {
     throw new Error(`unknown message: ${node.messageName}`);
   }
   const field = slot.fields.find((f) => f.name === node.field);
-  /* v8 ignore next 3 — field は proxy 経 由 で decl.fields に push 済 = unreachable guard */
+  /* v8 ignore next 3 — the field is already pushed to decl.fields via the proxy = unreachable guard */
   if (field === undefined) {
     throw new Error(`unknown message payload field: ${node.messageName}.${node.field}`);
   }
   const content = layout.regions.payloadContent.messageSlots[node.messageName];
-  /* v8 ignore next 3 — typed-array field を 持 つ message は payloadContent に slot 既 push */
+  /* v8 ignore next 3 — a message with a typed-array field already has its slot pushed in payloadContent */
   if (content === undefined) {
     throw new Error(`unknown payloadContent for message: ${node.messageName}`);
   }
@@ -874,7 +898,7 @@ function emitPayloadFieldLength(
   binaryen: BinaryenAPI,
 ): number {
   const { offsetInSlot, elemBytes } = payloadSlotMeta(node, layout);
-  // payloadLen (= bytes) を slot か ら load し、 element 数 = payloadLen / sizeof。
+  // Load payloadLen (= bytes) from the slot; element count = payloadLen / sizeof.
   const payloadLen = mod.i32.load(
     0,
     BYTES_PER_I32,
@@ -891,7 +915,7 @@ function emitPayloadFieldRead(
 ): number {
   const { offsetInSlot, contentBase, elemBytes } = payloadSlotMeta(node, layout);
   const slotPtr = (): number => mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32);
-  // length = payloadLen (bytes) / sizeof。 OOB clamp の upper bound = length - 1。
+  // length = payloadLen (bytes) / sizeof. OOB-clamp upper bound = length - 1.
   const upper = (): number =>
     mod.i32.sub(
       mod.i32.div_s(
@@ -901,14 +925,14 @@ function emitPayloadFieldRead(
       mod.i32.const(1),
     );
   const clamp = (): number => mod.local.get(PAYLOAD_CLAMP_LOCAL, binaryen.i32);
-  // payloadOffset (= contentBase 内 byte offset) を slot の offsetInSlot+4 か ら load。
+  // Load payloadOffset (= byte offset within contentBase) from the slot's offsetInSlot+4.
   const payloadOffset = mod.i32.load(
     0,
     BYTES_PER_I32,
     mod.i32.add(slotPtr(), mod.i32.const(offsetInSlot + 4)),
   );
-  // addr = contentBase + payloadOffset + clampedIdx × sizeof (= clampedIdx は block 内
-  // で [0, length-1] に 丸 め 済 を local.get)。
+  // addr = contentBase + payloadOffset + clampedIdx × sizeof (= clampedIdx is the
+  // value already rounded into [0, length-1] within the block, read via local.get).
   const addr = mod.i32.add(
     mod.i32.add(mod.i32.const(contentBase), payloadOffset),
     mod.i32.mul(clamp(), mod.i32.const(elemBytes)),
@@ -921,13 +945,13 @@ function emitPayloadFieldRead(
         : node.elementType === "i64"
           ? binaryen.i64
           : binaryen.i32; // i32 / bool / u8
-  // length = payloadLen / sizeof (= 要 素 数)。 空 payload (length 0) の 判 定 用。
+  // length = payloadLen / sizeof (= element count). Used to detect an empty payload (length 0).
   const lengthExpr = (): number =>
     mod.i32.div_s(
       mod.i32.load(0, BYTES_PER_I32, mod.i32.add(slotPtr(), mod.i32.const(offsetInSlot))),
       mod.i32.const(elemBytes),
     );
-  // length === 0 で 返 す 0 (= elementType 別 の zero)。
+  // The 0 returned when length === 0 (= the zero for each elementType).
   const zeroConst =
     node.elementType === "f32"
       ? mod.f32.const(0)
@@ -936,11 +960,13 @@ function emitPayloadFieldRead(
         : node.elementType === "i64"
           ? i64Const(mod, 0n)
           : mod.i32.const(0); // i32 / bool / u8
-  // §4.3 select carrier-clamp: idx を 1 度 評 価 → [0, length-1] に 2 段 select で 丸 め →
-  // content load。 OOB (idx ≥ length or < 0) で も addr が payload 内 に 留 ま り trap し な い。
-  // ただ し length === 0 (= 空 payload) は upper = -1 で clamp が idx 0 に 潰 れ、 ゼ ロ byte
-  // し か 書 か れ て い な い chunk か ら 古 い content byte を leak す る (= 直 前 に そ の chunk を
-  // 使 っ た payload の 残 骸)。 length === 0 を select で 弾 い て 0 を 返 す。
+  // §4.3 select carrier-clamp: evaluate idx once → round into [0, length-1] with
+  // a two-stage select → content load. Even on OOB (idx ≥ length or < 0), addr
+  // stays within the payload and does not trap. However, when length === 0
+  // (= empty payload), upper = -1 collapses the clamp to idx 0, which would leak
+  // stale content bytes from a chunk that has no bytes written (= leftover from
+  // the payload that last used that chunk). Reject length === 0 with a select and
+  // return 0.
   return mod.block(
     null,
     [
@@ -955,15 +981,16 @@ function emitPayloadFieldRead(
         PAYLOAD_CLAMP_LOCAL,
         mod.select(mod.i32.lt_s(clamp(), mod.i32.const(0)), mod.i32.const(0), clamp()),
       ),
-      // length === 0 → 0、それ以外は clamp 済 content load (= 空 payload の stale leak 防止)。
+      // length === 0 → 0, otherwise the clamped content load (= prevents stale leak from an empty payload).
       mod.select(mod.i32.eqz(lengthExpr()), zeroConst, emitBufferLoad(mod, node.elementType, addr)),
     ],
     blockType,
   );
 }
 
-// buf.copyFrom(payloadField) = content region → buffer の bulk `memory.copy` (= Q31-c)。
-// copyBytes = min(payloadLen, bufferSize × sizeof) (= min(buf.size, src.length) を byte 換 算)。
+// buf.copyFrom(payloadField) = bulk `memory.copy` from the content region into
+// the buffer (= Q31-c). copyBytes = min(payloadLen, bufferSize × sizeof)
+// (= min(buf.size, src.length) expressed in bytes).
 function emitBufferCopyFrom(
   node: AstNode & { kind: "bufferCopyFrom" },
   layout: Layout,
@@ -971,19 +998,19 @@ function emitBufferCopyFrom(
   binaryen: BinaryenAPI,
 ): number {
   const base = layout.regions.buffers.slots[node.bufferName];
-  /* v8 ignore next 3 — buffer は宣言済 = layout に slot 既 push の unreachable guard */
+  /* v8 ignore next 3 — the buffer is declared = its slot is already pushed in layout, unreachable guard */
   if (base === undefined) {
     throw new Error(`unknown buffer: ${node.bufferName}`);
   }
   const slot = layout.regions.messageRings.slots[node.messageName];
   const field = slot?.fields.find((f) => f.name === node.field);
   const content = layout.regions.payloadContent.messageSlots[node.messageName];
-  /* v8 ignore next 3 — typed-array field 持 ち の message は slot + payloadContent 既 push */
+  /* v8 ignore next 3 — a message with a typed-array field already has its slot + payloadContent pushed */
   if (slot === undefined || field === undefined || content === undefined) {
     throw new Error(`unknown message payload field: ${node.messageName}.${node.field}`);
   }
   const elemBytes = BUFFER_ELEMENT_BYTES_EMIT[node.elementType];
-  // payloadLen (= bytes) / payloadOffset を slot か ら load (= 評 価 ご と に fresh node)。
+  // Load payloadLen (= bytes) / payloadOffset from the slot (= a fresh node per evaluation).
   const slotPtr = (): number => mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32);
   const payloadLen = (): number =>
     mod.i32.load(0, BYTES_PER_I32, mod.i32.add(slotPtr(), mod.i32.const(field.offsetInSlot)));
@@ -993,7 +1020,7 @@ function emitBufferCopyFrom(
     mod.i32.add(slotPtr(), mod.i32.const(field.offsetInSlot + 4)),
   );
   const destCapBytes = (): number => mod.i32.const(node.bufferSize * elemBytes);
-  // copyBytes = min(payloadLen, destCapBytes) = select(len < cap, len, cap)。
+  // copyBytes = min(payloadLen, destCapBytes) = select(len < cap, len, cap).
   const copyBytes = mod.select(
     mod.i32.lt_u(payloadLen(), destCapBytes()),
     payloadLen(),
@@ -1004,9 +1031,10 @@ function emitBufferCopyFrom(
   return mod.memory.copy(destAddr, srcAddr, copyBytes);
 }
 
-// SIMD f32x4 vec-producing node → v128 expr (= §7)。 vec4 = splat lane0 + replace_lane
-// 1/2/3、 splat = broadcast、 binary = f32x4.add/sub/mul/div。 lane scalar 引 数 は
-// emitExpression (= f32 path)、 vec オ ペ ラ ン ド は emitVec で 再 帰。
+// SIMD f32x4 vec-producing node → v128 expr (= §7). vec4 = splat lane0 +
+// replace_lane 1/2/3, splat = broadcast, binary = f32x4.add/sub/mul/div. Scalar
+// lane arguments go through emitExpression (= f32 path); vec operands recurse
+// through emitVec.
 function emitVec(
   node: AstNode,
   layout: Layout,
@@ -1035,18 +1063,18 @@ function emitVec(
       return mod.f32x4.div(vec(node.lhs), vec(node.rhs));
     case "bufferLoadVec": {
       const base = layout.regions.buffers.slots[node.name];
-      /* v8 ignore next 3 — buffer は宣言済 = layout に slot 既 push = unreachable */
+      /* v8 ignore next 3 — the buffer is declared = its slot is already pushed in layout = unreachable */
       if (base === undefined) {
         throw new Error(`unknown buffer: ${node.name}`);
       }
-      // addr = bufferBase + offset × 4 (f32 element)。 v128.load = 4 lane (16 byte)。
+      // addr = bufferBase + offset × 4 (f32 element). v128.load = 4 lanes (16 bytes).
       const addr = mod.i32.add(
         mod.i32.const(base),
         mod.i32.mul(scalar(node.offset), mod.i32.const(BYTES_PER_F32)),
       );
       return mod.v128.load(0, BYTES_PER_F32, addr);
     }
-    /* v8 ignore next 2 — scalar node が vec position に来るのは型で排除済 = unreachable */
+    /* v8 ignore next 2 — a scalar node in vec position is ruled out by types = unreachable */
     default:
       throw new Error(`unworklet: expected f32x4 node in vec position, got '${node.kind}'`);
   }
@@ -1060,12 +1088,13 @@ export function emitExpression(
 ): number {
   switch (node.kind) {
     case "literal": {
-      // i64 literal は bigint (= Q33-c)。
+      // An i64 literal is a bigint (= Q33-c).
       if (node.type === "i64") {
         return i64Const(mod, BigInt(node.value));
       }
-      // bool は 内 部 i32 表 現 (= 0/1) な の で i32.const に 落 と す (= select の
-      // boolean branch literal 等)。 残 り は 全 て JS number。
+      // bool has the internal i32 representation (= 0/1), so it lowers to
+      // i32.const (= boolean branch literals of select, etc.). Everything else is
+      // a JS number.
       const value = Number(node.value);
       switch (node.type) {
         case "f32":
@@ -1090,21 +1119,24 @@ export function emitExpression(
         emitExpression(node.lhs, layout, mod, binaryen),
         emitExpression(node.rhs, layout, mod, binaryen),
       );
-    // mod(a, b) = a - trunc(a/b)·b (= JS `%` 準 拠、 切 り 捨 て・符 号 は 被 除 数)。
-    // a を MOD_A、 b を MOD_B、 quotient=trunc(a/b) を MOD_Q に hold。
-    //   - b=0 → a/0=Inf → trunc=Inf → Inf·0=NaN → a-NaN=NaN (= JS x%0=NaN)。
-    //   - 無 限 大 除 数 (|b|=Inf、 a 有 限) は quotient=trunc(a/Inf)=0 で 素 朴 な
-    //     product=0·Inf=NaN に 化 け る が、 JS は 5%Infinity===5 = 被 除 数 を 返 す。
-    //     quotient==0 (⟺ |a|<|b| = 余 り が a 自 身) な ら product を 0 に 固 定 し て
-    //     修 正 (= div by zero 等 で 生 じ た Inf が divisor に 流 れ て も 有 限 被 除 数 を
-    //     壊 さ な い、 Reported by @codex on #6)。 Inf%5 / Inf%Inf は quotient≠0 の ま ま
-    //     NaN を 維 持。
-    // ネ ス ト 安 全 性: a は 最 外 `sub` 左 operand で stack へ push し て 持 ち 回 り、
-    // b / quotient は rhs 評 価・quotient 算 出 後 に だ け read = 内 側 mod の local
-    // 上 書 き と 取 り 違 え ナ シ。 select は 直 前 の set で MOD_Q / MOD_B が 確 定 済 み。
+    // mod(a, b) = a - trunc(a/b)·b (= JS `%`-conforming: truncating, sign follows
+    // the dividend). Hold a in MOD_A, b in MOD_B, quotient=trunc(a/b) in MOD_Q.
+    //   - b=0 → a/0=Inf → trunc=Inf → Inf·0=NaN → a-NaN=NaN (= JS x%0=NaN).
+    //   - For an infinite divisor (|b|=Inf, a finite), quotient=trunc(a/Inf)=0,
+    //     so the naive product=0·Inf=NaN, but JS gives 5%Infinity===5 = returns
+    //     the dividend. When quotient==0 (⟺ |a|<|b| = the remainder is a itself),
+    //     fix this by pinning product to 0 (= so an Inf produced by div-by-zero
+    //     etc. flowing into the divisor does not corrupt a finite dividend,
+    //     reported by @codex on #6). Inf%5 / Inf%Inf keep quotient≠0 and so
+    //     preserve NaN.
+    // Nesting safety: a is pushed onto the stack as the left operand of the
+    // outermost `sub` and carried through, while b / quotient are read only after
+    // the rhs is evaluated and the quotient is computed = no mix-up with an inner
+    // mod overwriting the locals. The select sees MOD_Q / MOD_B already fixed by
+    // the immediately preceding set.
     case "mod": {
-      // Integer remainder = signed `rem_s` (= WASM 標 準、 符 号 は 被 除 数)。
-      // float (f32 / f64) は 下 の JS `%` 準 拠 special impl。
+      // Integer remainder = signed `rem_s` (= WASM standard, sign follows the
+      // dividend). float (f32 / f64) uses the JS `%`-conforming special impl below.
       if (node.type === "i32") {
         return mod.i32.rem_s(
           emitExpression(node.lhs, layout, mod, binaryen),
@@ -1117,7 +1149,7 @@ export function emitExpression(
           emitExpression(node.rhs, layout, mod, binaryen),
         );
       }
-      // f64: f32 版 と 同 じ JS `%` 準 拠 special impl を f64 local で。
+      // f64: the same JS `%`-conforming special impl as the f32 version, using f64 locals.
       if (node.type === "f64") {
         const aTeedF64 = mod.local.tee(
           MOD_A_F64_LOCAL,
@@ -1152,7 +1184,8 @@ export function emitExpression(
         emitExpression(node.lhs, layout, mod, binaryen),
         binaryen.f32,
       );
-      // get(MOD_A) は rhs 評 価 前 に read = a (内 側 mod の 上 書 き 前)。 同 時 に b を tee。
+      // get(MOD_A) is read before the rhs is evaluated = a (before any inner mod
+      // overwrites it). b is tee'd at the same time.
       const setQuotient = mod.local.set(
         MOD_Q_F32_LOCAL,
         mod.f32.trunc(
@@ -1190,8 +1223,9 @@ export function emitExpression(
       return floatNs(mod, node.type).floor(emitExpression(node.value, layout, mod, binaryen));
     case "ceil":
       return floatNs(mod, node.type).ceil(emitExpression(node.value, layout, mod, binaryen));
-    // frac(x) = x - floor(x) (= GLSL fract、 結 果 は [0,1))。 x を FRAC_F32_LOCAL に
-    // tee し て 1 度 だ け 評 価、 floor 側 で get で 再 取 得 (= 二 重 評 価 回 避)。
+    // frac(x) = x - floor(x) (= GLSL fract, result in [0,1)). x is tee'd into
+    // FRAC_F32_LOCAL so it is evaluated once, then re-fetched on the floor side
+    // with get (= avoids double evaluation).
     case "frac": {
       if (node.type === "f64") {
         const teedF64 = mod.local.tee(
@@ -1208,9 +1242,10 @@ export function emitExpression(
       );
       return mod.f32.sub(teed, mod.f32.floor(mod.local.get(FRAC_F32_LOCAL, binaryen.f32)));
     }
-    // 多 項 式 近 似 の math primitive は 共 有 関 数 (= `(f32) -> f32`) を call。
-    // f64 form は f32-bridge: demote → call → promote (= Q17 = 型 不 問 の
-    // approximate-math 契 約、 精 度 は f32 相 当 ~1e-4)。
+    // The polynomial-approximation math primitives call a shared function
+    // (= `(f32) -> f32`). The f64 form uses the f32 bridge: demote → call →
+    // promote (= Q17 = the type-agnostic approximate-math contract, precision
+    // f32-equivalent ~1e-4).
     case "sin":
     case "cos":
     case "tan":
@@ -1233,8 +1268,9 @@ export function emitExpression(
         () => emitExpression(node.lhs, layout, mod, binaryen),
         () => emitExpression(node.rhs, layout, mod, binaryen),
       );
-    // 比 較 (= 結 果 は i32 0/1 = bool 内 部 表 現、 state.bool / select cond /
-    // emitIf cond で 利 用 さ れ る 既 存 bool=i32 表 現 と zip)
+    // Comparison (= result is i32 0/1 = the internal bool representation, matching
+    // the existing bool=i32 representation used by state.bool / select cond /
+    // emitIf cond).
     case "eq":
       return emitNumericBinary(
         mod,
@@ -1275,12 +1311,14 @@ export function emitExpression(
         emitExpression(node.lhs, layout, mod, binaryen),
         emitExpression(node.rhs, layout, mod, binaryen),
       );
-    // clamp(x, lo, hi) = min(max(x, lo), hi)。 各 オ ペ ラ ン ド を 1 度 ず つ emit =
-    // 二 重 評 価 ナ シ = temp local 不 要。 lo > hi の 退 化 ケ ー ス は hi を 返 す
-    // (= max(x,lo) >= lo > hi な の で min(..., hi) = hi)、 決 定 的 挙 動。
+    // clamp(x, lo, hi) = min(max(x, lo), hi). Each operand is emitted exactly once
+    // = no double evaluation = no temp local needed. The degenerate lo > hi case
+    // returns hi (= max(x,lo) >= lo > hi, so min(..., hi) = hi), a deterministic
+    // behavior.
     case "clamp":
-      // clamp(x, lo, hi) = min(max(x, lo), hi)。 整数は emitMaxMin の compare+select
-      // 経由 (= f32.min/max の整数 operand 不正 WASM を回避)。 float は native f{32,64}。
+      // clamp(x, lo, hi) = min(max(x, lo), hi). Integers go through emitMaxMin's
+      // compare+select (= avoids the malformed WASM of f32.min/max with integer
+      // operands); floats use native f{32,64}.
       return emitMaxMin(
         mod,
         node.type,
@@ -1295,9 +1333,10 @@ export function emitExpression(
           ),
         () => emitExpression(node.hi, layout, mod, binaryen),
       );
-    // select(cond, then, else) = WASM `select` 命 令 (= eager: 全 3 引 数 を 評 価
-    // し て か ら 選 ぶ)。 then / else は 副 作 用 ナ シ の pure expression な の で
-    // eager で 意 味 不 変。 cond は i32 (= bool 0/1)。
+    // select(cond, then, else) = WASM `select` instruction (= eager: evaluates all
+    // 3 arguments before choosing). then / else are pure side-effect-free
+    // expressions, so eager evaluation does not change the meaning. cond is i32
+    // (= bool 0/1).
     case "select":
       return mod.select(
         emitExpression(node.cond, layout, mod, binaryen),
@@ -1330,10 +1369,10 @@ export function emitExpression(
       return emitPayloadFieldRead(node, layout, mod, binaryen);
     case "payloadFieldLength":
       return emitPayloadFieldLength(node, layout, mod, binaryen);
-    // SIMD lane 抽 出 = f32x4.extract_lane (= 定 数 lane index)。
+    // SIMD lane extraction = f32x4.extract_lane (= constant lane index).
     case "vecLane":
       return mod.f32x4.extract_lane(emitVec(node.value, layout, mod, binaryen), node.index);
-    // sumLanes = vec を v128 local に hold し て 4 lane を extract + add (= §7)。
+    // sumLanes = hold vec in a v128 local, then extract + add the 4 lanes (= §7).
     case "vecSumLanes": {
       const lane = (idx: number): number =>
         mod.f32x4.extract_lane(mod.local.get(VEC_TEMP_LOCAL, binaryen.v128), idx);
@@ -1346,7 +1385,7 @@ export function emitExpression(
         binaryen.f32,
       );
     }
-    // vec-producing node は scalar position に来ない (= emitVec 経由で消費)。
+    // A vec-producing node does not appear in scalar position (= consumed via emitVec).
     case "vecConst":
     case "vecSplat":
     case "vecAdd":
@@ -1400,23 +1439,24 @@ export function emitExpression(
         case "i64":
           return mod.i64.load(0, BYTES_PER_I64, ptr);
         case "bool":
-          // bool は 内 部 i32 表 現 (= 0 / 1)、 caller 側 で `select` / `lt` 等 で
-          // 利 用 す る (= Q42 + sub-phase 7.4 SAB publish path と zip)
+          // bool has the internal i32 representation (= 0 / 1) and is used by the
+          // caller via `select` / `lt` etc. (= matches Q42 + the sub-phase 7.4
+          // SAB publish path).
           return mod.i32.load(0, BYTES_PER_I32, ptr);
       }
     }
     case "messageFieldRead": {
-      // drain loop 内 で MESSAGE_SLOT_PTR (= EVENT_SLOT_PTR_LOCAL 共 用) が
-      // 既 set 済 = local.get 経 由 で 取 + field offset 加 算 で memory.load。
+      // Inside the drain loop, MESSAGE_SLOT_PTR (= shared with EVENT_SLOT_PTR_LOCAL)
+      // is already set = fetch it via local.get and memory.load at + the field offset.
       const slot = layout.regions.messageRings.slots[node.name];
-      /* v8 ignore next 3 — slot は emitMessageOnReceive で 既 check 済 path =
+      /* v8 ignore next 3 — the slot is already checked in emitMessageOnReceive =
          unreachable defensive guard */
       if (slot === undefined) {
         throw new Error(`unknown message slot: ${node.name}`);
       }
       const field = slot.fields.find((f) => f.name === node.field);
-      /* v8 ignore next 3 — field 名 は capture proxy 経 由 で decl.fields に push 済
-         = unreachable defensive guard */
+      /* v8 ignore next 3 — the field name is already pushed to decl.fields via the
+         capture proxy = unreachable defensive guard */
       if (field === undefined) {
         throw new Error(`unknown message field: ${node.name}.${node.field}`);
       }
@@ -1424,15 +1464,16 @@ export function emitExpression(
         mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32),
         mod.i32.const(field.offsetInSlot),
       );
-      // Q46 uniform lift で sub-phase 7.7 段 階 は wireType = i32 / bool の み seal、
-      // f32 / f64 / i64 は typed-array path と zip し て 後 続 sub-phase で fill。
+      // With the Q46 uniform lift, the sub-phase 7.7 stage seals only
+      // wireType = i32 / bool; f32 / f64 / i64 are filled in a later sub-phase
+      // alongside the typed-array path.
       if (field.wireType === "i32" || field.wireType === "bool") {
         return mod.i32.load(0, BYTES_PER_I32, ptr);
       }
-      /* v8 ignore next 3 — Q46 uniform lift path で wireType = i32 / bool だ け
-         seal = unreachable defensive guard */
+      /* v8 ignore next 3 — the Q46 uniform lift path seals only wireType = i32 /
+         bool = unreachable defensive guard */
       throw new Error(
-        `unworklet: unsupported message field wireType "${field.wireType}" (= sub-phase 7.7 段 階 で i32 / bool の み 対 応)`,
+        `unworklet: unsupported event field wireType "${field.wireType}" (= the sub-phase 7.7 stage supports only i32 / bool)`,
       );
     }
     case "tempRef":
@@ -1503,7 +1544,7 @@ export function emitStatement(
             emitExpression(node.value, layout, mod, binaryen),
           );
         case "bool":
-          // bool は 内 部 i32 表 現 (= store も i32.store、 subnormal guard ナ シ)
+          // bool has the internal i32 representation (= store is also i32.store, no subnormal guard)
           return mod.i32.store(
             0,
             BYTES_PER_I32,
@@ -1580,7 +1621,7 @@ export function emitStatement(
       return emitBufferCopyFrom(node, layout, mod, binaryen);
     case "bufferStoreVec": {
       const base = layout.regions.buffers.slots[node.name];
-      /* v8 ignore next 3 — buffer は宣言済 = layout に slot 既 push = unreachable */
+      /* v8 ignore next 3 — the buffer is declared = its slot is already pushed in layout = unreachable */
       if (base === undefined) {
         throw new Error(`unknown buffer: ${node.name}`);
       }
@@ -1594,11 +1635,12 @@ export function emitStatement(
       return mod.v128.store(0, BYTES_PER_F32, addr, emitVec(node.value, layout, mod, binaryen));
     }
     case "everyNSamples": {
-      // §9.1: (counter % divisor) == 0 で body を実行 + counter += stride。 counter は
-      // call-site ごとの memory slot で block 跨ぎ継続 (= zero-order hold は body 内の
-      // state.store が値を保持することで自然に成立)。
+      // §9.1: run the body when (counter % divisor) == 0, then counter += stride.
+      // The counter persists across blocks in a per-call-site memory slot
+      // (= zero-order hold arises naturally because the body's state.store retains
+      // the value).
       const counterOffset = layout.regions.everyNSamplesCounters.slots[node.counterId];
-      /* v8 ignore next 3 — counterId は capture で採番 + layout で slot 確保済 = unreachable */
+      /* v8 ignore next 3 — counterId is numbered at capture + its slot is reserved by layout = unreachable */
       if (counterOffset === undefined) {
         throw new Error(`unworklet: missing everyNSamples counter slot ${node.counterId}`);
       }
@@ -1620,8 +1662,8 @@ export function emitStatement(
     }
     case "eventEmitIf":
       return emitEventEmitIf(node, layout, mod, binaryen);
-    /* v8 ignore next 2 — messageOnReceive は emit top-level で 並 び 替 え 経 由 で
-       emitMessageOnReceive を 直 接 呼 ぶ path = emitStatement 経 由 hit ナ シ */
+    /* v8 ignore next 2 — messageOnReceive is reordered at the emit top level and
+       calls emitMessageOnReceive directly = never reached via emitStatement */
     case "messageOnReceive":
       return emitMessageOnReceive(node, layout, mod, binaryen);
     case "tempAssign":
@@ -1634,8 +1676,8 @@ export function emitStatement(
       return emitMidiEmitIf(node, layout, mod, binaryen);
     case "midiSysexCopy":
       return emitMidiSysexCopy(node, layout, mod, binaryen);
-    /* v8 ignore next 3 — midiOnEvent は emit top-level で port ご と に 並 び 替 え 経 由 で
-       emitMidiInputDrain を 直 接 呼 ぶ path = emitStatement 経 由 hit ナ シ */
+    /* v8 ignore next 3 — midiOnEvent is reordered per port at the emit top level and
+       calls emitMidiInputDrain directly = never reached via emitStatement */
     case "midiOnEvent":
       return emitMidiInputDrain(node.port, [node], layout, mod, binaryen);
     default:
@@ -1644,15 +1686,15 @@ export function emitStatement(
 }
 
 /**
- * Subnormal guard emit (= `|v| < 1e-30 ? 0 : v` の WASM IR、 Q21)。
- * f32 / f64 の `state.store(v)` で 自 動 inline。
+ * Subnormal guard emit (= the WASM IR for `|v| < 1e-30 ? 0 : v`, Q21).
+ * Automatically inlined by f32 / f64 `state.store(v)`.
  *
- * `block(name, [local.set(v), expression_using_local.get], type)` 形 で v を
- * 1 度 だ け 評 価 + local に 保 存 し、 後 続 expression で `local.get` を 2 度
- * 参 照 (= 1 度 = abs / lt の condition、 もう 1 度 = select else)。 ナ イー ブ
- * な 「v を 2 度 emit す る」 path は binaryen 内 部 で 「audioInRead 経 由 +
- * forSample 後 の 文 脈」 で NaN を 生 む trigger に な っ た (= 実 測 確 認)、
- * local 経 由 で 1 度 評 価 path に refactor し て 解 消。
+ * In the form `block(name, [local.set(v), expression_using_local.get], type)`, v
+ * is evaluated once and stored in a local, then the subsequent expression
+ * references `local.get` twice (= once in the abs / lt condition, once in the
+ * select else). The naive "emit v twice" path became a trigger for binaryen to
+ * produce NaN "in the context of an audioInRead after forSample" (= measured),
+ * and was resolved by refactoring to a single-evaluation-via-local path.
  */
 function emitSubnormalGuardF32(
   valueNode: AstNode,
@@ -1660,11 +1702,12 @@ function emitSubnormalGuardF32(
   mod: BinaryenModule,
   binaryen: BinaryenAPI,
 ): number {
-  // WASM `select` は eager evaluation = 全 3 引 数 を 先 に 評 価 し て か ら 選 ぶ。
-  // ifFalse 内 の `local.get` が 「`local.tee` よ り 前 に 評 価」 さ れ て local 初 期 値
-  // 0 を 取 っ て し ま う 罠 が 発 生 (= 実 測 確 認)。 `if-else` は lazy evaluation =
-  // condition 評 価 で `local.tee` が 走 っ て か ら、 then / else の どち ら だ け が
-  // 評 価 さ れ る = local が確 実 に v に な っ て か ら else 側 の `local.get` が 走 る。
+  // WASM `select` is eager evaluation = it evaluates all 3 arguments before
+  // choosing. This triggered a pitfall where the `local.get` inside ifFalse was
+  // "evaluated before `local.tee`" and picked up the local's initial value 0
+  // (= measured). `if-else` is lazy evaluation = the condition runs `local.tee`
+  // first, then only one of then / else is evaluated = the else-side `local.get`
+  // runs only after the local is guaranteed to hold v.
   const v = emitExpression(valueNode, layout, mod, binaryen);
   const teed = mod.local.tee(SUBNORMAL_F32_LOCAL, v, binaryen.f32);
   return mod.if(
@@ -1695,20 +1738,20 @@ const EVENT_TAIL_OFFSET = 4;
 const EVENT_OVERFLOW_OFFSET = 8;
 
 /**
- * `event.emitIf` WASM emit (= sub-phase 7.6 commit 4、 `02-messaging.md` §4 + §5.1)。
+ * `event.emitIf` WASM emit (= sub-phase 7.6 commit 4, `02-messaging.md` §4 + §5.1).
  *
- * cond truthy で fire path:
- * 1. head を 1 度 load + `EVENT_HEAD_LOCAL` に hold
- * 2. overflow check (= head + 1 - tail >= capacity) で drop-oldest:
+ * The fire path, when cond is truthy:
+ * 1. load head once + hold it in `EVENT_HEAD_LOCAL`
+ * 2. overflow check (= head + 1 - tail >= capacity) → drop-oldest:
  *    overflowCount += 1 + tail += 1
- * 3. slot ptr = base + 12 + (head % capacity) × slotSize を 1 度 計 算 +
- *    `EVENT_SLOT_PTR_LOCAL` に hold
- * 4. slot に atSample + 各 field を store (= layout.regions.eventRings.slots[name].fields
- *    の per-field offset / wireType に zip)
- * 5. head += 1 を store
+ * 3. compute slot ptr = base + 12 + (head % capacity) × slotSize once + hold it
+ *    in `EVENT_SLOT_PTR_LOCAL`
+ * 4. store atSample + each field into the slot (= matching the per-field offset /
+ *    wireType of layout.regions.eventRings.slots[name].fields)
+ * 5. store head += 1
  *
- * SAB Atomics は worklet template (= commit 5) で reflect、 こ こ で は 通 常
- * memory.load / store だ け。
+ * SAB Atomics are reflected in the worklet template (= commit 5); here it is just
+ * plain memory.load / store.
  */
 function emitEventEmitIf(
   node: AstNode & { kind: "eventEmitIf" },
@@ -1725,20 +1768,22 @@ function emitEventEmitIf(
   const slotSize = slot.slotSize;
   const slotsBase = ringBase + EVENT_HEADER_BYTES;
 
-  // value lookup helper (= AST field value AST → WASM expr)、 layout の field
-  // に zip し て emit (= atSample 先 頭 + payload 順)
+  // value lookup helper (= AST field value AST → WASM expr), emitted matching the
+  // layout fields (= atSample first, then payload order)
   const fieldValueByName = new Map<string, AstNode>([
     ["atSample", node.atSample],
     ...node.fields.map((f) => [f.name, f.value] as const),
   ]);
-  // typed-array field (§4.3) の emit メタ (= bufferName + length + elementType)。
+  // Emit metadata for typed-array fields (§4.3) (= bufferName + length + elementType).
   const emitFieldByName = new Map(node.fields.map((f) => [f.name, f] as const));
 
-  // overflow check + drop-oldest (= ring full ＝ distance head − tail ≥ capacity
-  // で 既 fill 済 ＝ 次 emit が 古 い slot を 上 書 き = drop-oldest)。
-  // 案 B 規 範 (= `02-messaging.md` §5.1): user 視 点 で 「capacity ＝ 何 個 fill 可 能 か」
-  // を そ の ま ま reflect、 head ・ tail を 単 調 増 加 i32 で 持 つ 形 だ か ら ring
-  // buffer 教 科 書 規 範 の 「1 slot 余 計 に 空 け る」 は 不 要。
+  // overflow check + drop-oldest (= ring full = when distance head - tail >=
+  // capacity it is already filled = the next emit overwrites the oldest slot =
+  // drop-oldest).
+  // Variant B rule (= `02-messaging.md` §5.1): reflects "capacity = how many can
+  // be filled" directly from the user's viewpoint, and because head / tail are
+  // held as monotonically increasing i32, the textbook ring-buffer convention of
+  // "leave one extra slot empty" is unnecessary.
   const overflowBlock = mod.if(
     mod.i32.ge_s(
       mod.i32.sub(
@@ -1769,7 +1814,7 @@ function emitEventEmitIf(
     ]),
   );
 
-  // slot ptr = slotsBase + (head % capacity) × slotSize、 1 度 計 算 + local hold
+  // slot ptr = slotsBase + (head % capacity) × slotSize, computed once + held in a local
   const slotPtrTee = mod.local.tee(
     EVENT_SLOT_PTR_LOCAL,
     mod.i32.add(
@@ -1782,23 +1827,25 @@ function emitEventEmitIf(
     binaryen.i32,
   );
 
-  // 各 field の store statement (= layout.fields 順)
+  // The store statement for each field (= in layout.fields order)
   const fieldStores: number[] = [];
   for (let idx = 0; idx < slot.fields.length; idx++) {
     const field = slot.fields[idx]!;
     const valueAst = fieldValueByName.get(field.name);
-    /* v8 ignore next 3 — capture 段 階 で 1 番 目 emit の seal + 後 続 emit の
-       field set 整 合 check で 排 除 済 = 構 造 上 unreachable defensive guard */
+    /* v8 ignore next 3 — ruled out by the seal of the first emit at the capture
+       stage + the field-set consistency check of subsequent emits = structurally
+       unreachable defensive guard */
     if (valueAst === undefined) {
       throw new Error(`event "${node.name}" missing AST for field "${field.name}"`);
     }
-    // typed-array field (§4.3 worklet→main) = buffer の中身を event content region に
-    // memory.copy + slot に [payloadLen, payloadOffset]。 payloadOffset = (head %
-    // capacity) × chunkBytes (= slot ご と の 固 定 chunk、 chunkBytes = content.capacity /
-    // ring capacity = perPayload)。 main は render 後 に ま と め て drain す る の で
-    // slot ご と に content を 分 け て 保 持 す る 必 要 が あ る。 copyBytes = min(length ×
-    // sizeof, chunkBytes)。 atSample が 常 に idx 0 = typed-array field は idx ≥ 1 =
-    // slotPtrTee 後 = EVENT_SLOT_PTR_LOCAL 確 定 済。
+    // typed-array field (§4.3 worklet→main) = memory.copy the buffer's content
+    // into the event content region + store [payloadLen, payloadOffset] into the
+    // slot. payloadOffset = (head % capacity) × chunkBytes (= the fixed per-slot
+    // chunk, chunkBytes = content.capacity / ring capacity = perPayload). Because
+    // main drains all at once after the render, content must be held separately
+    // per slot. copyBytes = min(length × sizeof, chunkBytes). Since atSample is
+    // always idx 0, a typed-array field is idx ≥ 1 = after slotPtrTee =
+    // EVENT_SLOT_PTR_LOCAL is already fixed.
     if (field.payloadElementType !== undefined) {
       const emitField = emitFieldByName.get(field.name);
       const content = layout.regions.payloadContent.eventSlots[node.name];
@@ -1806,8 +1853,8 @@ function emitEventEmitIf(
         emitField?.bufferName !== undefined
           ? layout.regions.buffers.slots[emitField.bufferName]
           : undefined;
-      /* v8 ignore next 6 — typed-array emit field は declarations で bufferName +
-         length + payloadContent を 揃 え て push 済 = 構 造 上 unreachable guard */
+      /* v8 ignore next 6 — a typed-array emit field is pushed in declarations with
+         bufferName + length + payloadContent all present = structurally unreachable guard */
       if (
         emitField?.length === undefined ||
         emitField.bufferSize === undefined ||
@@ -1817,12 +1864,14 @@ function emitEventEmitIf(
         throw new Error(`event "${node.name}" typed-array field "${field.name}" missing emit meta`);
       }
       const elemBytes = BUFFER_ELEMENT_BYTES_EMIT[field.payloadElementType];
-      // chunk は content.chunks 枠 (= min(capacity, MAX_CONTENT_SLOTS)、Q85) で 循 環。
-      // ring capacity が chunks を 超 え て も content は chunks 枠 を drop-oldest 再 利 用。
+      // The chunk cycles within the content.chunks budget (= min(capacity,
+      // MAX_CONTENT_SLOTS), Q85). Even when ring capacity exceeds chunks, content
+      // reuses the chunks budget drop-oldest.
       const chunkBytes = Math.floor(content.capacity / content.chunks);
-      // copy 上 限 = chunk と source buffer の 小 さ い 方。 これ が ナ イ と length が buffer
-      // サ イ ズ を 超 え た 時 (= author の 誤 指 定) に memory.copy が buffer.<T> 領 域 を 超 え て
-      // 隣 接 linear memory を 読 み、 そ の バ イ ト を main に publish す る (= memory disclosure)。
+      // Copy upper bound = the smaller of the chunk and the source buffer. Without
+      // this, when length exceeds the buffer size (= author misspecification),
+      // memory.copy would read past the buffer.<T> region into adjacent linear
+      // memory and publish those bytes to main (= memory disclosure).
       const bufferBytes = emitField.bufferSize * elemBytes;
       const copyCap = Math.min(chunkBytes, bufferBytes);
       const slotFieldPtr = (): number =>
@@ -1843,8 +1892,9 @@ function emitEventEmitIf(
           emitExpression(emitField.length!, layout, mod, binaryen),
           mod.i32.const(elemBytes),
         );
-      // copyBytes = min(length × sizeof, copyCap)。 unsigned 比 較 = 負 の length も
-      // 巨 大 unsigned 化 し て copyCap に 丸 ま る (= [0, copyCap] に 収 ま り OOB read ナ シ)。
+      // copyBytes = min(length × sizeof, copyCap). With an unsigned comparison, a
+      // negative length becomes a huge unsigned value and rounds down to copyCap
+      // (= stays within [0, copyCap], so no OOB read).
       const copyBytes = (): number =>
         mod.select(
           mod.i32.lt_u(lengthBytes(), mod.i32.const(copyCap)),
@@ -1871,7 +1921,7 @@ function emitEventEmitIf(
     }
     const ptr =
       idx === 0
-        ? slotPtrTee // 1 番 目 store で local hold
+        ? slotPtrTee // hold in the local at the first store
         : mod.i32.add(
             mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32),
             mod.i32.const(field.offsetInSlot),
@@ -1914,20 +1964,21 @@ function emitEventEmitIf(
 }
 
 /**
- * `message.onReceive` drain emit (= sub-phase 7.7c、 `02-messaging.md` §5.3)。
+ * `message.onReceive` drain emit (= sub-phase 7.7c, `02-messaging.md` §5.3).
  *
- * per-quantum 開 始 で 該 当 ring を drain (= tail → head walk + 各 slot で
- * handler body を 走 ら す)。 drain 末 尾 で tail を head に commit (= main 側 が
- * Atomics.store(head) で push し た 全 slot を 1 quantum 内 で 完 全 消 化)。
+ * At the start of each quantum, drain the relevant ring (= walk tail → head and
+ * run the handler body at each slot). At the end of the drain, commit tail to
+ * head (= fully consume, within one quantum, every slot that main pushed via
+ * Atomics.store(head)).
  *
- * loop 形:
+ * Loop form:
  *   $tail = load(base + 4)
  *   $head = load(base + 0)
  *   block break
  *     loop continue
  *       if ($tail == $head) br break
  *       $slot_ptr = base + 12 + ($tail % capacity) × slotSize
- *       <handler body>  (messageFieldRead は $slot_ptr + field.offsetInSlot)
+ *       <handler body>  (messageFieldRead is at $slot_ptr + field.offsetInSlot)
  *       $tail += 1
  *       br continue
  *   store(base + 4, $tail)
@@ -1949,8 +2000,8 @@ function emitMessageOnReceive(
   const HEAD_OFFSET = 0;
   const TAIL_OFFSET = 4;
 
-  // handler body emit (= messageFieldRead は $slot_ptr 経 由 で hit、 既 emit
-  // 経 路 で 解 決 さ れ る)。
+  // handler body emit (= messageFieldRead resolves via $slot_ptr through the
+  // existing emit path).
   const bodyEmits = node.body.map((s) => emitStatement(s, layout, mod, binaryen));
 
   return mod.block(null, [
@@ -2007,9 +2058,10 @@ function emitMessageOnReceive(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// MIDI (`11-midi.md` §4)。 8-byte slot [status, data1, data2, _pad, atSample:u32]。
-// inbound = block 境 界 で port の ring を drain + status 高 nibble で 型 dispatch。
-// outbound = `emitIf` で semantic args → wire byte に encode し て ring に push。
+// MIDI (`11-midi.md` §4). 8-byte slot [status, data1, data2, _pad, atSample:u32].
+// inbound = at the block boundary, drain the port's ring + dispatch by type on
+// the status high nibble.
+// outbound = `emitIf` encodes semantic args → wire bytes and pushes to the ring.
 // ─────────────────────────────────────────────────────────────────────────
 
 const MIDI_SLOT_BYTES_EMIT = 8;
@@ -2017,7 +2069,7 @@ const MIDI_HEADER_BYTES_EMIT = 12;
 const MIDI_TAIL_OFFSET = 4;
 const MIDI_OVERFLOW_OFFSET = 8;
 
-/** channel-voice event の status 高 nibble (= `11-midi.md` §4.1)。 */
+/** The status high nibble of a channel-voice event (= `11-midi.md` §4.1). */
 const MIDI_STATUS_NIBBLE: Partial<Record<string, number>> = {
   noteOff: 0x80,
   noteOn: 0x90,
@@ -2028,7 +2080,7 @@ const MIDI_STATUS_NIBBLE: Partial<Record<string, number>> = {
   pitchBend: 0xe0,
 };
 
-/** `midiFieldRead` (= drain slot byte decode、 EVENT_SLOT_PTR_LOCAL 経 由)。 */
+/** `midiFieldRead` (= decode drain-slot bytes, via EVENT_SLOT_PTR_LOCAL). */
 function emitMidiFieldRead(
   field: AstNode & { kind: "midiFieldRead" },
   mod: BinaryenModule,
@@ -2047,7 +2099,7 @@ function emitMidiFieldRead(
     case "atSample":
       return mod.i32.load(4, BYTES_PER_I32, ptr());
     case "pitchBend14":
-      // value = data1 | (data2 << 7) (= 14-bit, `11-midi.md` §4.1)。
+      // value = data1 | (data2 << 7) (= 14-bit, `11-midi.md` §4.1).
       return mod.i32.or(
         mod.i32.load8_u(1, 1, ptr()),
         mod.i32.shl(mod.i32.load8_u(2, 1, ptr()), mod.i32.const(7)),
@@ -2067,7 +2119,7 @@ function sysexContentChunkPtr(
   binaryen: BinaryenAPI,
 ): number {
   const region = layout.regions.sysexContent.slots[port];
-  /* v8 ignore next 2 — sysex を 使 う port は layout で content region を 確 保 済 */
+  /* v8 ignore next 2 — a port that uses sysex has its content region reserved by layout */
   if (region === undefined)
     throw new Error(`unworklet: midiInput "${port}" has no sysex content region`);
   return mod.i32.add(
@@ -2097,7 +2149,7 @@ function emitMidiSysexCopy(
   binaryen: BinaryenAPI,
 ): number {
   const bufferBase = layout.regions.buffers.slots[node.bufferName];
-  /* v8 ignore next 2 — buffer は layout で 確 保 済 */
+  /* v8 ignore next 2 — the buffer is reserved by layout */
   if (bufferBase === undefined) throw new Error(`unknown buffer: ${node.bufferName}`);
   const chunkPtr = sysexContentChunkPtr(node.port, layout, mod, binaryen);
   // copy min(contentLength, bufferSize) bytes from chunk+4 (= after the length
@@ -2136,7 +2188,7 @@ function emitMidiInputDrain(
   binaryen: BinaryenAPI,
 ): number {
   const slot = layout.regions.midiRings.slots[port];
-  /* v8 ignore next 2 — midiInput port は layout で 必 ず push 済 = unreachable */
+  /* v8 ignore next 2 — a midiInput port is always pushed by layout = unreachable */
   if (slot === undefined) throw new Error(`unknown midiInput port: ${port}`);
   const ringBase = slot.base;
   const capacity = slot.capacity;
@@ -2144,8 +2196,8 @@ function emitMidiInputDrain(
   const status = (): number =>
     mod.i32.load8_u(0, 1, mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32));
 
-  // status byte → event-type predicate。 channel-voice = 高 nibble 一 致、
-  // systemRealtime = 0xF8..0xFF (= status & 0xF8 == 0xF8)。
+  // status byte → event-type predicate. channel-voice = high-nibble match,
+  // systemRealtime = 0xF8..0xFF (= status & 0xF8 == 0xF8).
   const predicate = (eventType: string): number => {
     if (eventType === "sysex") {
       return mod.i32.eq(status(), mod.i32.const(0xf0));
@@ -2240,7 +2292,7 @@ function emitMidiWireBytes(
   const status = mod.i32.or(mod.i32.const(nibble), ch());
   if (node.eventType === "pitchBend") {
     const value = arg1();
-    // 14-bit value → data1 = value & 0x7F, data2 = (value >> 7) & 0x7F。
+    // 14-bit value → data1 = value & 0x7F, data2 = (value >> 7) & 0x7F.
     return {
       status,
       data1: mod.i32.and(value, mod.i32.const(0x7f)),
@@ -2258,7 +2310,7 @@ function emitMidiEmitIf(
   binaryen: BinaryenAPI,
 ): number {
   const slot = layout.regions.midiRings.slots[node.port];
-  /* v8 ignore next 2 — midiOutput port は layout で 必 ず push 済 = unreachable */
+  /* v8 ignore next 2 — a midiOutput port is always pushed by layout = unreachable */
   if (slot === undefined) throw new Error(`unknown midiOutput port: ${node.port}`);
   const ringBase = slot.base;
   const capacity = slot.capacity;
@@ -2316,7 +2368,7 @@ function emitMidiEmitIf(
     // sysex content chunk for thru). Capture source ptr + copyLen BEFORE the
     // dest slot ptr overwrites EVENT_SLOT_PTR_LOCAL (thru reads the source slot).
     const region = layout.regions.sysexContent.slots[node.port];
-    /* v8 ignore next 2 — sysex emit する port は layout で content region 確 保 済 */
+    /* v8 ignore next 2 — a port that emits sysex has its content region reserved by layout */
     if (region === undefined)
       throw new Error(`unworklet: midiOutput "${node.port}" has no sysex content region`);
     const maxBody = region.perChunk - 4;
@@ -2407,10 +2459,11 @@ function emitMidiEmitIf(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// 多 項 式 近 似 math primitive の 共 有 関 数 emit (= Q17、 sin / cos / tan / tanh /
-// exp / log)。 5〜7 次 minimax / Taylor、 最 大 誤 差 ~1e-4 = 24bit audio で 不 可 聴。
-// no-trap invariant: 整 数 化 は trunc_s_sat (= 飽 和・非 ト ラ ッ プ)、 reinterpret /
-// nearest / convert は 元 々 非 ト ラ ッ プ。
+// Shared-function emit for the polynomial-approximation math primitives (= Q17,
+// sin / cos / tan / tanh / exp / log). Degree-5..7 minimax / Taylor, max error
+// ~1e-4 = inaudible at 24-bit audio.
+// no-trap invariant: integer conversion uses trunc_s_sat (= saturating /
+// non-trapping); reinterpret / nearest / convert are non-trapping to begin with.
 // ─────────────────────────────────────────────────────────────────────────
 
 const TRANSCENDENTAL_KINDS: ReadonlySet<string> = new Set([
@@ -2422,7 +2475,7 @@ const TRANSCENDENTAL_KINDS: ReadonlySet<string> = new Set([
   "log",
 ]);
 
-/** graph の AST を walk し て 実 際 に 使 わ れ て い る transcendental kind を 収 集。 */
+/** Walk the graph's AST and collect the transcendental kinds actually used. */
 function collectUsedMathKinds(graph: CapturedGraph): Set<string> {
   const used = new Set<string>();
   const visit = (node: AstNode): void => {
@@ -2492,7 +2545,7 @@ function collectUsedMathKinds(graph: CapturedGraph): Set<string> {
       case "payloadFieldLength":
         break;
       case "bufferCopyFrom":
-        // math 関 数 を 含 む 子 expression ナ シ。
+        // no child expression that contains a math function.
         break;
       case "vecConst":
         node.lanes.forEach(visit);
@@ -2563,8 +2616,8 @@ function collectUsedMathKinds(graph: CapturedGraph): Set<string> {
 }
 
 /**
- * 依 存 展 開: cos / tan は sin を、 tan は cos も call す る (= 派 生 実 装)。 必 要 な
- * base 関 数 も used set に 含 め る。
+ * Dependency expansion: cos / tan call sin, and tan also calls cos (= derived
+ * implementations). Include the required base functions in the used set too.
  */
 function expandMathDeps(used: Set<string>): Set<string> {
   const out = new Set(used);
@@ -2574,7 +2627,7 @@ function expandMathDeps(used: Set<string>): Set<string> {
   return out;
 }
 
-/** used kind に 応 じ て 共 有 math 関 数 を module に 追 加 (= 依 存 順)。 */
+/** Add the shared math functions to the module according to the used kinds (= in dependency order). */
 function addMathFunctions(used: Set<string>, mod: BinaryenModule, binaryen: BinaryenAPI): void {
   const expanded = expandMathDeps(used);
   if (expanded.has("sin")) buildSinFn(mod, binaryen);
@@ -2588,10 +2641,10 @@ function addMathFunctions(used: Set<string>, mod: BinaryenModule, binaryen: Bina
 const MATH_PI = Math.PI;
 
 /**
- * `$unworklet_sin`: range reduce r = x - round(x/π)·π ∈ [-π/2, π/2] し、 odd
- * Taylor 9 次 で sin(r) を 評 価、 sign = (-1)^round(x/π) を 掛 け る。 [-π/2,π/2]
- * で の Taylor 9 次 誤 差 は ~3e-5 (= 1e-4 以 下)。 locals: 0=x(param) / 1=k_f /
- * 2=r / 3=z(=r²) / 4=k_i。
+ * `$unworklet_sin`: range-reduce r = x - round(x/π)·π ∈ [-π/2, π/2], evaluate
+ * sin(r) with a degree-9 odd Taylor series, and multiply by sign =
+ * (-1)^round(x/π). The degree-9 Taylor error on [-π/2,π/2] is ~3e-5 (= ≤ 1e-4).
+ * locals: 0=x(param) / 1=k_f / 2=r / 3=z(=r²) / 4=k_i.
  */
 function buildSinFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
   const f = binaryen.f32;
@@ -2635,7 +2688,7 @@ function buildSinFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
   mod.addFunction(`${MATH_FN_PREFIX}sin`, binaryen.f32, binaryen.f32, [f, f, f, i], body);
 }
 
-/** `$unworklet_cos`: cos(x) = sin(x + π/2) で sin 関 数 に 委 譲。 locals ナ シ。 */
+/** `$unworklet_cos`: cos(x) = sin(x + π/2), delegating to the sin function. No locals. */
 function buildCosFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
   const f = binaryen.f32;
   const body = mod.call(
@@ -2646,7 +2699,7 @@ function buildCosFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
   mod.addFunction(`${MATH_FN_PREFIX}cos`, binaryen.f32, binaryen.f32, [], body);
 }
 
-/** `$unworklet_tan`: tan(x) = sin(x)/cos(x)。 x は param local = 自 由 に 再 取 得。 */
+/** `$unworklet_tan`: tan(x) = sin(x)/cos(x). x is a param local = freely re-fetched. */
 function buildTanFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
   const f = binaryen.f32;
   const body = mod.f32.div(
@@ -2659,12 +2712,13 @@ function buildTanFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
 const MATH_LN2 = Math.LN2;
 
 /**
- * `$unworklet_exp`: x = k·ln2 + r (= k=round(x/ln2)、r∈[-ln2/2,ln2/2]) と 分 解 し、
- * exp(x) = 2^k · exp(r)。 exp(r) は degree-5 Taylor (= 誤 差 ~2.4e-6)、 2^k は
- * `(k+127)<<23` を f32 に reinterpret。 locals: 0=x(param) / 1=k_f / 2=r / 3=k_i。
- * k が f32 指 数 範 囲 外 (= k>127 / k<-126) で は bit-pack が wrap し て garbage に
- * な る の で、 select で overflow→+Inf / underflow→0 に clamp し て `Math.exp`
- * 準 拠 (= 非 ト ラ ッ プ)。 tanh も exp(2x) 経 由 で 大 負 入 力 が ±1 飽 和 す る。
+ * `$unworklet_exp`: decompose x = k·ln2 + r (= k=round(x/ln2), r∈[-ln2/2,ln2/2]),
+ * so exp(x) = 2^k · exp(r). exp(r) is a degree-5 Taylor (= error ~2.4e-6), and
+ * 2^k reinterprets `(k+127)<<23` as f32. locals: 0=x(param) / 1=k_f / 2=r / 3=k_i.
+ * When k is outside the f32 exponent range (= k>127 / k<-126), the bit-pack wraps
+ * to garbage, so a select clamps overflow→+Inf / underflow→0 to conform to
+ * `Math.exp` (= non-trapping). tanh likewise goes through exp(2x), so large
+ * negative inputs saturate to ±1.
  */
 function buildExpFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
   const f = binaryen.f32;
@@ -2700,8 +2754,8 @@ function buildExpFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
           mod.f32.mul(mod.local.get(KF, f), mod.f32.const(MATH_LN2)),
         ),
       ),
-      // k が f32 指 数 範 囲 外 = overflow → +Inf / underflow → 0 に clamp。
-      // select は eager だ が twoK·poly の garbage は 範 囲 外 で 捨 て ら れ る だ け。
+      // k outside the f32 exponent range = clamp overflow → +Inf / underflow → 0.
+      // select is eager, but the garbage twoK·poly is simply discarded out of range.
       mod.select(
         mod.i32.gt_s(mod.local.get(KI, i), mod.i32.const(127)),
         mod.f32.const(Number.POSITIVE_INFINITY),
@@ -2718,13 +2772,15 @@ function buildExpFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
 }
 
 /**
- * `$unworklet_log`: x = m·2^e (= e は f32 指 数 bit、 m∈[1,2) は 仮 数 bit を 指 数 127
- * に 固 定 し て reinterpret)。 log(x) = e·ln2 + log(m)、 log(m) は t=(m-1)/(m+1) の
- * atanh 級 数 2·(t + t³/3 + t⁵/5 + t⁷/7) (= t∈[0,1/3]、 誤 差 ~3e-6)。 定 義 域 外 /
- * 特 殊 値 は select で `Math.log` 準 拠 (= x<0 → NaN、 x==0 → -Inf、 NaN → NaN、
- * +Inf → +Inf)、 非 ト ラ ッ プ。 subnormal 入 力 は bit 分 解 前 に 2^24 倍 で normal
- * 域 へ 正 規 化 し 結 果 を 24·ln2 補 正 (= exponent field=0 の 破 綻 回 避)。
- * locals: 0=x(param) / 1=bits(i32) / 2=m / 3=t / 4=s(=t²) / 5=xn(正 規 化 後 入 力)。
+ * `$unworklet_log`: x = m·2^e (= e is the f32 exponent bits, m∈[1,2) is obtained
+ * by reinterpreting the mantissa bits with the exponent pinned to 127).
+ * log(x) = e·ln2 + log(m), where log(m) is the atanh series of t=(m-1)/(m+1):
+ * 2·(t + t³/3 + t⁵/5 + t⁷/7) (= t∈[0,1/3], error ~3e-6). Out-of-domain / special
+ * values conform to `Math.log` via select (= x<0 → NaN, x==0 → -Inf, NaN → NaN,
+ * +Inf → +Inf), non-trapping. A subnormal input is normalized into the normal
+ * range by ×2^24 before bit decomposition, and the result is corrected by 24·ln2
+ * (= avoids the breakdown when exponent field=0).
+ * locals: 0=x(param) / 1=bits(i32) / 2=m / 3=t / 4=s(=t²) / 5=xn(normalized input).
  */
 function buildLogFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
   const f = binaryen.f32;
@@ -2735,16 +2791,17 @@ function buildLogFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
   const T = 3;
   const S = 4;
   const XN = 5;
-  // 最 小 normal f32 = 2^-126。 こ れ 未 満 (= subnormal、 exponent field=0) は
-  // 素 朴 な bit 分 解 が 破 綻 す る の で、 2^24 倍 し て normal 域 に 押 し 上 げ て か ら
-  // 分 解 し、 log 結 果 か ら 24·ln2 を 引 い て 補 正 す る (全 subnormal は 2^24 で
-  // normal 域 に 収 ま る: 最 小 値 2^-149·2^24 = 2^-125)。
+  // Smallest normal f32 = 2^-126. Below this (= subnormal, exponent field=0),
+  // naive bit decomposition breaks down, so scale by 2^24 to push into the normal
+  // range, decompose, and correct the log result by subtracting 24·ln2 (every
+  // subnormal lands in the normal range under ×2^24: the smallest value
+  // 2^-149·2^24 = 2^-125).
   const FLT_MIN_NORMAL = 2 ** -126;
   const SUBNORMAL_SCALE = 2 ** 24;
   const SUBNORMAL_LOG_OFFSET = 24 * MATH_LN2;
   const isSubnormal = (): number => mod.f32.lt(mod.local.get(X, f), mod.f32.const(FLT_MIN_NORMAL));
   const s = (): number => mod.local.get(S, f);
-  // log(m) 多 項 式: poly_t = 1 + s·(1/3 + s·(1/5 + s·(1/7)))、 log(m) = 2·t·poly_t
+  // log(m) polynomial: poly_t = 1 + s·(1/3 + s·(1/5 + s·(1/7))), log(m) = 2·t·poly_t
   let polyT = mod.f32.add(mod.f32.const(1 / 5), mod.f32.mul(s(), mod.f32.const(1 / 7)));
   polyT = mod.f32.add(mod.f32.const(1 / 3), mod.f32.mul(s(), polyT));
   polyT = mod.f32.add(mod.f32.const(1), mod.f32.mul(s(), polyT));
@@ -2756,7 +2813,7 @@ function buildLogFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
       mod.i32.const(127),
     ),
   );
-  // subnormal を 2^24 倍 し た 分 だ け eF が 24 大 き く 出 る の で 24·ln2 を 引 い て 戻 す。
+  // The ×2^24 scaling of a subnormal makes eF come out 24 too large, so subtract 24·ln2 to undo it.
   const computed = mod.f32.sub(
     mod.f32.add(mod.f32.mul(eF, mod.f32.const(MATH_LN2)), logM),
     mod.select(isSubnormal(), mod.f32.const(SUBNORMAL_LOG_OFFSET), mod.f32.const(0)),
@@ -2764,7 +2821,7 @@ function buildLogFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
   const body = mod.block(
     null,
     [
-      // xn = x · (subnormal ? 2^24 : 1)。 以 降 の bit 分 解 は xn に 対 し て 行 う。
+      // xn = x · (subnormal ? 2^24 : 1). The subsequent bit decomposition operates on xn.
       mod.local.set(
         XN,
         mod.f32.mul(
@@ -2793,15 +2850,17 @@ function buildLogFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
       mod.local.set(S, mod.f32.mul(mod.local.get(T, f), mod.local.get(T, f))),
       mod.select(
         mod.f32.gt(mod.local.get(X, f), mod.f32.const(0)),
-        // x>0 の 枝: +Inf は bit 分 解 す る と m=1·2^128 で 128·ln2 付 近 の 有 限 値 に
-        // 化 け る の で 先 に 捕 ま え て +Inf を 保 つ。 有 限 正 値 だ け 近 似 を 通 す。
+        // x>0 branch: bit-decomposing +Inf would turn it into a finite value near
+        // 128·ln2 (m=1·2^128), so catch it first and keep +Inf. Only finite
+        // positive values go through the approximation.
         mod.select(
           mod.f32.eq(mod.local.get(X, f), mod.f32.const(Number.POSITIVE_INFINITY)),
           mod.f32.const(Number.POSITIVE_INFINITY),
           computed,
         ),
-        // x<=0 / NaN の 枝: x==0 だ け -Inf、 そ れ 以 外 (= 負 値 / NaN) は NaN。
-        // NaN は gt も eq(0) も false に な る の で 自 然 に NaN 側 に 落 ち る。
+        // x<=0 / NaN branch: only x==0 gives -Inf, everything else (= negative /
+        // NaN) gives NaN. NaN makes both gt and eq(0) false, so it naturally falls
+        // to the NaN side.
         mod.select(
           mod.f32.eq(mod.local.get(X, f), mod.f32.const(0)),
           mod.f32.const(Number.NEGATIVE_INFINITY),
@@ -2815,9 +2874,10 @@ function buildLogFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
 }
 
 /**
- * `$unworklet_tanh`: tanh(x) = 1 - 2/(exp(2x)+1) で exp 関 数 に 委 譲。 分 子 が 有 限
- * (= 2) な の で 大 入 力 で も Inf/Inf に な ら ず ±1 に 飽 和。 exp の rel 誤 差 が
- * tanh で は 1.2e-6 以 下 に 縮 む。 locals ナ シ (= x は param)。
+ * `$unworklet_tanh`: tanh(x) = 1 - 2/(exp(2x)+1), delegating to the exp function.
+ * Because the numerator is finite (= 2), large inputs do not produce Inf/Inf and
+ * instead saturate to ±1. exp's relative error shrinks to ≤ 1.2e-6 for tanh.
+ * No locals (= x is the param).
  */
 function buildTanhFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
   const f = binaryen.f32;

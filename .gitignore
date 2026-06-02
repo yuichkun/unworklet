@@ -38,7 +38,7 @@ playwright-report/
 **/.vitest-attachments/
 **/__screenshots__/
 
-# Vite+ git hooks (= clone 後 `vp config` で local 生成)
+# Vite+ git hooks (generated locally by `vp config` after clone)
 .vite-hooks/
 
 # Transient lowered-`.uwk.ts` temp the vite-plugin build path writes then removes

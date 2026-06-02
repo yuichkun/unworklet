@@ -1,9 +1,9 @@
 /**
- * `@unworklet/test/extend` — side-effect import で chain form 全 20 件 を vitest
- * `expect.extend(...)` に 登 録 + `vitest` `Assertion` interface declare merge
- * (`docs/06-testing.md` §6)。
+ * `@unworklet/test/extend` — a side-effect import that registers all 20 chain-form
+ * matchers with vitest's `expect.extend(...)` and declares a merge into vitest's
+ * `Assertion` interface (`docs/06-testing.md` §6).
  *
- * 使 い 方 (= test ファ イ ル 上 部 1 行):
+ * Usage (a single line at the top of a test file):
  *
  * ```ts
  * import "@unworklet/test/extend";
@@ -13,12 +13,14 @@
  * expect(result).toHavePeakUnder(-6);
  * ```
  *
- * plain 関 数 (= §2) と co-exist、 chain 名 は plain ↔ chain 1:1 機 械 派 生
- * で は な く vitest 慣 例 (= toBe / toHave / toMatch / toContain) に zip し て
- * 個 別 自 然 化 (`docs/06-testing.md` §6.1-6.2)。
+ * Coexists with the plain functions (§2). The chain names are not mechanically
+ * derived 1:1 from the plain names; they are mapped onto vitest's conventions
+ * (toBe / toHave / toMatch / toContain) and named naturally one by one
+ * (`docs/06-testing.md` §6.1-6.2).
  *
- * 実 装 = plain 関 数 を try / catch で wrap + vitest matcher 返 し 形
- * (= `{ pass, message }`) に 変 換 + plain 内 throw を chain test fail に zip。
+ * Implementation: wrap each plain function in try / catch and convert it into
+ * vitest's matcher return shape (`{ pass, message }`), mapping a throw inside the
+ * plain function to a chain-test failure.
  */
 
 import type { RenderOfflineResult } from "@unworklet/offline";
@@ -58,27 +60,28 @@ import {
 } from "./index.ts";
 
 /**
- * chain method を `expect(value)` の `value` 型 が `RenderOfflineResult`
- * の 時 だ け 露 出 さ せ る TS-only guard。 `expect(1).toMatchAudio(...)`
- * 等 は `never` に 解 け て build エ ラ ー (= runtime cost 不 在)。
+ * A TS-only guard that exposes the chain methods only when the `value` type in
+ * `expect(value)` is `RenderOfflineResult`. Calls like
+ * `expect(1).toMatchAudio(...)` resolve to `never` and become a build error
+ * (no runtime cost).
  */
 type WhenResult<T, M> = T extends RenderOfflineResult ? M : never;
 
 /**
- * `toMatchAudioSnapshot` 専 用 の 拡 大 guard。 plain
- * `expectAudioMatchesSnapshot` が `actual` を `RenderOfflineResult |
- * Float32Array | Float32Array[]` の 3 shape で 受 け る の に zip し て、
- * chain で も `expect(sine(...)).toMatchAudioSnapshot()` (= `Float32Array`
- * 直 接) / `expect([ch0, ch1]).toMatchAudioSnapshot()` (= `Float32Array[]`
- * multi-ch) を 通 す。 非 audio actual (= `number` / `string` 等) は 既
- * `WhenResult` 同 様 `never` に 解 け て build エ ラ ー。
+ * A widened guard specific to `toMatchAudioSnapshot`. Mirroring the plain
+ * `expectAudioMatchesSnapshot`, which accepts `actual` in all three shapes
+ * (`RenderOfflineResult | Float32Array | Float32Array[]`), the chain form also
+ * accepts `expect(sine(...)).toMatchAudioSnapshot()` (a `Float32Array`
+ * directly) and `expect([ch0, ch1]).toMatchAudioSnapshot()` (a `Float32Array[]`
+ * multi-channel value). Non-audio actuals (`number`, `string`, etc.) resolve to
+ * `never` and become a build error, just as with `WhenResult`.
  */
 type WhenAudioActual<T, M> = T extends RenderOfflineResult | Float32Array | Float32Array[]
   ? M
   : never;
 
 declare module "vite-plus/test" {
-  // biome-ignore lint/suspicious/noExplicitAny: vitest 標 準 `Assertion<T = any>` (= `node_modules/@vitest/expect/dist/index.d.ts`) と type parameter 揃 え 必 須、 declare merge で T が unused で も 形 を 合 わ せ る。
+  // biome-ignore lint/suspicious/noExplicitAny: must match the type parameter of vitest's standard `Assertion<T = any>` (`node_modules/@vitest/expect/dist/index.d.ts`); the declare merge keeps the same shape even though T is unused here.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   interface Assertion<T = any> {
     toMatchAudio: WhenResult<
@@ -142,17 +145,18 @@ const wrap =
   };
 
 /**
- * `toMatchAudioSnapshot` 専 用 chain matcher。 vitest `expect.extend(...)` 内
- * で `this` は per-test bound な `MatcherState` (= `this.testPath` /
- * `this.currentTestName` / `this.snapshotState` が 当 該 test の も の) を
- * carry す る。 plain form の global `expect.getState()` 経 由 path は
- * `test.concurrent` で 別 test の state を 読 む race を 持 つ が、 chain
- * form は bound `this` 経 由 で race 回 避 = concurrent safe。
+ * The chain matcher specific to `toMatchAudioSnapshot`. Inside vitest's
+ * `expect.extend(...)`, `this` carries a per-test bound `MatcherState` (whose
+ * `this.testPath` / `this.currentTestName` / `this.snapshotState` belong to the
+ * current test). The plain form's path through the global `expect.getState()`
+ * has a race under `test.concurrent` where it reads another test's state, but
+ * the chain form avoids that race by going through the bound `this`, making it
+ * concurrent-safe.
  *
- * `function () {}` (= 非 arrow) で 書 い て `this` binding を 受 け 取 る、
- * `wrapAsync` の generic wrap は global state path で plain func を 呼 ぶ
- * の で こ こ で は 使 え な い。 vitest `RawMatcherFn` 形 に zip す る た
- * め `this` は declare 省 略 + 内 部 cast。
+ * Written as `function () {}` (not an arrow) so it receives the `this` binding;
+ * `wrapAsync`'s generic wrapper calls the plain function via the global state
+ * path and so cannot be used here. To fit vitest's `RawMatcherFn` shape, `this`
+ * is left undeclared and cast internally.
  */
 async function toMatchAudioSnapshotChain(
   this: unknown,
@@ -160,11 +164,11 @@ async function toMatchAudioSnapshotChain(
   opts?: SnapshotOptions,
 ): Promise<MatcherResult> {
   try {
-    // `this` (= per-test-invocation `MatcherState`) に counter Map を attach し
-    // て carry。 chain form ご と (= test invocation ご と) に fresh Map = retry
-    // / watch rerun で counter drift ナ シ (= R6-1 fix)。 plain form path で
-    // は state に こ の field が 出 ず module-global Map に fallback (= 業 界
-    // 標 準 vitest 同 等 sequential-only limitation)。
+    // Attach a counter Map onto `this` (the per-test-invocation `MatcherState`)
+    // and carry it. A fresh Map per chain-form call (per test invocation) means
+    // no counter drift across retries or watch reruns (the R6-1 fix). On the
+    // plain-form path this field is absent from the state, so it falls back to a
+    // module-global Map (the same sequential-only limitation as standard vitest).
     const thisHost = this as { _unworkletCounters?: Map<string, number> };
     if (!thisHost._unworkletCounters) {
       thisHost._unworkletCounters = new Map();

@@ -28,8 +28,7 @@ jobs:
           node-version: "24"
           cache: true
       - run: vp install
-      - name: Build packages in dependency order (= cycle 回避、 vite-plugin
-          先 → core → lang → offline → test の順、 vp run -r は cycle 検出 で fail)
+      - name: Build packages in dependency order (avoid cycles; vite-plugin → core → lang → offline → test; vp run -r fails on cycle detection)
         run: |
           vp run --filter @unworklet/vite-plugin build
           vp run --filter @unworklet/core build
@@ -48,7 +47,7 @@ jobs:
         run: vp test run
 
   e2e:
-    name: Playwright e2e (= dev server 経由)
+    name: Playwright e2e (via dev server)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -57,8 +56,7 @@ jobs:
           node-version: "24"
           cache: true
       - run: vp install
-      - name: Build packages in dependency order (= cycle 回避、 vite-plugin
-          先 → core → lang → offline → test の順、 vp run -r は cycle 検出 で fail)
+      - name: Build packages in dependency order (avoid cycles; vite-plugin → core → lang → offline → test; vp run -r fails on cycle detection)
         run: |
           vp run --filter @unworklet/vite-plugin build
           vp run --filter @unworklet/core build

@@ -1,7 +1,8 @@
 /**
- * Browser e2e fixture = event<T> emit を 走 ら せ る processor。 forSample 内 で
- * gate state を true 固 定 + stateLoad cond で emitIf (= Q32-c constant-truthy
- * 回 避 path) = real audio quantum ご と に event 出 る。
+ * Browser e2e fixture: a processor that drives event<T> emission. Inside
+ * forSample, the gate state is held true and emitIf is driven by a stateLoad
+ * condition (the Q32-c constant-truthy avoidance path), causing one event to
+ * fire per real audio quantum.
  */
 
 import {

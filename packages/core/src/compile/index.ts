@@ -6,20 +6,20 @@
  * `renderOffline`, `replaceProcessor`, and pure Node / browser host
  * scripts that build processors at runtime) call.
  *
- * Orchestrates the 4 stage-別 internal modules (= plan Q-D):
+ * Orchestrates the 4 per-stage internal modules (= plan Q-D):
  *
- *   capturedGraph = processor.__capture(sampleRate)  ← host rate で 再 capture
- *                   (= ctx.sampleRate coefficient precomputation を real rate で)
- *   diagnostics   = analyze(graph)        ← Layer 3 check (memory-budget 等)
- *   memory        = layout(graph)         ← sub-region 区 切 り + ioScratch
+ *   capturedGraph = processor.__capture(sampleRate)  ← re-capture at the host rate
+ *                   (= ctx.sampleRate coefficient precomputation at the real rate)
+ *   diagnostics   = analyze(graph)        ← Layer 3 check (memory-budget, etc.)
+ *   memory        = layout(graph)         ← sub-region partitioning + ioScratch
  *   wasm          = await emit(graph,     ← binaryen lower (dynamic import)
  *                              memory)
  *   schemaHash    = schemaHash(graph)     ← declarations-only FNV-1a hex
  *
  * Returns `{ wasm, graph, memory, diagnostics, schemaHash,
- * __compiledProcessor }`。 graph / memory / diagnostics は opaque brand
- * cast = consumer は token と し て 扱 う (= vite-plugin / inspect 等 で
- * 内 部 type を 復 元 し て JSON artifact emit)。
+ * __compiledProcessor }`. `graph` / `memory` / `diagnostics` are opaque branded
+ * casts — consumers treat them as tokens (e.g. vite-plugin / inspect tooling
+ * restores the internal types to emit a JSON artifact).
  */
 
 import { SAMPLES_PER_BLOCK } from "../dsl/constants.ts";
@@ -46,10 +46,10 @@ const BYTES_PER_F32 = 4;
 const CHANNEL_STRIDE_BYTES = SAMPLES_PER_BLOCK * BYTES_PER_F32;
 
 /**
- * default sampleRate = 48000 (= 既 host 既 定 + 既 test fixture と zip)。
- * `compile(processor)` で sampleRate 省 略 す る と 48000 で emit、 別 sampleRate
- * 必 要 な consumer (= `renderOffline` で config.sampleRate を 渡 す path) は
- * 明 示 引 数 で 上 書 き。
+ * Default sampleRate = 48000 (= matches the host default and existing test fixtures).
+ * Omitting sampleRate in `compile(processor)` emits at 48000; consumers that need a
+ * different sampleRate (e.g. `renderOffline` passing `config.sampleRate`) override it
+ * via the explicit argument.
  */
 const DEFAULT_SAMPLE_RATE = 48000;
 
@@ -65,14 +65,14 @@ export async function compile<C>(
     ? processor.__capture(sampleRate)
     : processor.graph) as unknown as CapturedGraph;
   const diagnostics = analyze(graph);
-  // layout はメモリ sub-region を pack して totalBytes を確定する pure な sizing。
-  // memory-budget (Q30) は totalBytes が決まって初めて判定できるので、error gate の
-  // 前に layout → budget check を済ませてから reject 判定に入る。
+  // `layout` is pure sizing that packs the memory sub-regions and fixes `totalBytes`.
+  // The memory-budget (Q30) can only be judged once `totalBytes` is known, so we run
+  // layout → budget check before the error gate, then enter the reject decision.
   const memory = layout(graph);
   diagnostics.push(...checkMemoryBudget(memory.totalBytes));
-  // error severity diagnostic が 1 件 で も あ れ ば WASM emit 前 に reject
-  // (= `03-compiler.md` §3 Layer 3 check の rejection 経 路、 stable ID を
-  // error message に 含 め て consumer 側 で grep / FAQ 引 き 可)。
+  // If there is even one error-severity diagnostic, reject before WASM emit
+  // (= the rejection path of `03-compiler.md` §3 Layer 3 check; the stable ID is
+  // included in the error message so consumers can grep it / look it up in the FAQ).
   const errors = diagnostics.filter((d) => d.severity === "error");
   if (errors.length > 0) {
     const summary = errors.map((d) => `[${d.id}] ${d.message}`).join("\n");
@@ -92,14 +92,15 @@ export async function compile<C>(
 }
 
 export function makeDriver(graph: CapturedGraph, lay: Layout, wasm: Uint8Array): CompileDriver {
-  // driver の declarations 配 列 = renderOffline 等 の driver consumer が walk し て
-  // writeInput / writeParam / readOutput を 呼 ぶ 対 象。 audioInput / audioOutput /
-  // param の 3 kind だ け を 含 め、 state / buffer / event / message / midi
-  // declaration は driver から 除 外 (= driver consumer は state slot に 書 き 込 まない
-  // = state は WASM 内 で 完 結 + main thread surface は 別 経 路 で 取 得、 sub-phase
-  // 7.x で fill)。 既 「else で param 扱 い」 path = state を param と 誤 認 し て
-  // state slot に NaN (= `paramScratch.fill(undefined)` で 上 書 き) を 書 き 込 む root
-  // cause bug が 発 生 し た た め、 明 示 white list path に refactor。
+  // The driver's `declarations` array is what driver consumers (e.g. renderOffline)
+  // walk to call writeInput / writeParam / readOutput. Include only the 3 kinds
+  // audioInput / audioOutput / param, and exclude state / buffer / event / message /
+  // midi declarations (= driver consumers never write into a state slot — state stays
+  // fully inside WASM and the main-thread surface is fetched via a separate path,
+  // filled in sub-phase 7.x). A prior "treat as param in the else branch" path was the
+  // root-cause bug that misidentified state as a param and wrote NaN into a state slot
+  // (= overwritten by `paramScratch.fill(undefined)`), so this is refactored into an
+  // explicit white-list path.
   const declarations: CompileInstanceDeclaration[] = [];
   for (const d of graph.declarations) {
     if (d.kind === "audioInput") {
@@ -117,7 +118,7 @@ export function makeDriver(graph: CapturedGraph, lay: Layout, wasm: Uint8Array):
     } else if (d.kind === "param") {
       declarations.push({ kind: "param", name: d.name, default: (d as ParamDecl).default });
     }
-    // state / buffer / event / message / midi = driver か ら 除 外 (= 上 記 white list 以 外)
+    // state / buffer / event / message / midi = excluded from the driver (= not on the white list above)
   }
 
   return {

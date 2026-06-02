@@ -1,7 +1,7 @@
 /**
- * Browser e2e fixture = message<T> 経 由 で state を 反 映 す る processor。
- * `setCount({ value })` main → worklet で state.counter に store + state.publish
- * (= rateFps 30) で main 側 で 反 映 観 測。
+ * Browser e2e fixture: a processor that reflects state via message<T>.
+ * `setCount({ value })` sends a value from main → worklet, stores it in state.counter,
+ * and publishes it (rateFps 30) so the main thread can observe the update.
  */
 
 import { event, audioOutput, defineProcessor, forSample, state } from "../../../index.ts";

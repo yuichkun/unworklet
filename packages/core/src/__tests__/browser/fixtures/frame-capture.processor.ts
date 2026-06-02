@@ -1,12 +1,13 @@
 /**
- * Browser e2e fixture = worklet → main の typed-array event payload。
- * worklet が各ブロックの入力先頭 FRAME サンプルを buffer に写し、`event<{ samples:
- * Float32Array }>` で main に送る。main 側は length FRAME の fresh Float32Array を
- * `node.events.frame.on(...)` で受け取る。
+ * Browser e2e fixture for typed-array event payloads from worklet to main.
+ * On each block, the worklet copies the first FRAME samples of the input into a
+ * buffer and sends them to main via `event<{ samples: Float32Array }>`. Main
+ * receives a fresh Float32Array of length FRAME through `node.events.frame.on(...)`.
  *
- * 入力を AudioBufferSourceNode で既知信号にすると、受信配列が入力に厳密依存する =
- * transport が壊れていれば値が崩れる/届かない。入力 passthrough も同時に出力する
- * (= audioInput marshal も接続点に含める)。
+ * Feeding a known signal from an AudioBufferSourceNode makes the received array
+ * strictly dependent on the input — a broken transport manifests as corrupted or
+ * missing values. The input is also passed through to the output, so audioInput
+ * marshalling is exercised as part of the fixture.
  */
 
 import {
@@ -19,7 +20,7 @@ import {
   i32,
 } from "../../../index.ts";
 
-const FRAME = 8; // main に送り返す先頭サンプル数
+const FRAME = 8; // number of leading samples to capture and send to main
 
 export const frameCapture = defineProcessor(() => {
   const inp = audioInput({ channels: 1, name: "main" });
@@ -36,10 +37,10 @@ export const frameCapture = defineProcessor(() => {
     process: () => {
       forSample((i) => {
         const x = inp.ch(0).at(i);
-        buf.write(i, x); // 入力をバッファに写す
+        buf.write(i, x); // copy input sample into the buffer
         out.ch(0).at(i).write(x); // passthrough
       });
-      // ブロック先頭 FRAME サンプル (= buf[0..FRAME-1]) を main に送る。
+      // Send the first FRAME samples of the block (buf[0..FRAME-1]) to main.
       frame.emitIf(true, { atSample: 0, samples: buf, length: i32(FRAME) });
     },
   };

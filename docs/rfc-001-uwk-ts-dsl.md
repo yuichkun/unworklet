@@ -671,11 +671,11 @@ const gain = param.f32({
   min: 0,
   max: 4,
   automationRate: "a-rate",
-}); // auto-name 'gain' (= name 必須 helper)
+}); // auto-name 'gain' (= helper that requires a name)
 const meterL = state.f32(0).expose({
   snapshot: "transient",
   publish: { rateFps: 30 },
-}); // auto-name 'meterL' (= expose 経由)
+}); // auto-name 'meterL' (= via expose)
 const meterR = state.f32(0).expose({
   snapshot: "transient",
   publish: { rateFps: 30 },

@@ -1,7 +1,7 @@
 /**
- * Browser e2e fixture = canonical Ex 1 full (= stereo gain + meter L/R)。
- * `?worklet` import 経 由 で AudioWorkletNode に 載 せ て real `AudioContext`
- * で 走 ら す path。
+ * Browser e2e fixture — canonical example 1 in full (stereo gain + L/R meter).
+ * Loaded via `?worklet` import onto an AudioWorkletNode and executed inside a
+ * real `AudioContext`.
  */
 
 import {

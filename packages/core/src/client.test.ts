@@ -1,16 +1,15 @@
 /**
  * Behavioral tests for `createNode(ctx, processor, options?)` — Phase 6 A-3
- * implementation of `05-client.md` §1 + §2 (= minimum surface for AudioWorklet
- * 経 由 で processor を 起 動 す る main thread entrypoint)。
+ * implementation of `05-client.md` §1 + §2 (= minimum surface for the main
+ * thread entrypoint that boots a processor via AudioWorklet).
  *
- * Mock 戦 略:
- * - `audioContext.audioWorklet.addModule` を Promise を 返 す Mock 関 数 に
- * - `globalThis.fetch` を WASM bytes Promise に 返 す Mock 関 数 に
- * - `globalThis.AudioWorkletNode` を Mock class に (= constructor が options
- *   を 受 け 取 り、 `port` field と `parameters` field を 露 出)
- * - test 側 で 「ready ack を post す る」 タ イ ミ ン グ を コ ン ト ロ ー ル
- *   す る た め mock port は `postMessage` 経 由 で 自 分 自 身 へ message を
- *   配 送 す る path を 持 つ
+ * Mock strategy:
+ * - `audioContext.audioWorklet.addModule` → mock function returning a Promise
+ * - `globalThis.fetch` → mock function returning a WASM bytes Promise
+ * - `globalThis.AudioWorkletNode` → mock class whose constructor accepts
+ *   options and exposes `port` and `parameters` fields
+ * - the mock port has a self-delivery path via `postMessage` so the test can
+ *   control exactly when the ready ack is dispatched
  */
 
 import { expect, test, vi } from "vite-plus/test";
@@ -58,14 +57,14 @@ type MockHarnessOptions = {
   fetchStatusText?: string;
   /**
    * When true, every constructed mock port's `start()` throws — exercises
-   * the cleanup-on-throw branch inside `awaitReady`。
+   * the cleanup-on-throw branch inside `awaitReady`.
    */
   portStartThrows?: boolean;
   /**
-   * crossOriginIsolated を mock global に 設 定 す る か。 default true (= 既 test
-   * の 多 数 が SAB available 想 定 で 書 か れ て いる)、 sab-unavailable path を 試
-   * す test で `false` or `undefined` を 渡 す path。 `false` = explicit deny、
-   * `undefined` = delete property (= 既 environment と 同 形)。
+   * Whether to set `crossOriginIsolated` on the mock global. Defaults to true
+   * because most tests assume SAB is available. Pass `false` for explicit deny
+   * or `"deleted"` to remove the property entirely (mirroring real environments
+   * where the header is absent) when exercising the sab-unavailable path.
    */
   crossOriginIsolated?: boolean | "deleted";
 };
@@ -103,11 +102,10 @@ const installMockGlobals = (
   const fetchStatus = harnessOpts.fetchStatus ?? 200;
   const fetchStatusText = harnessOpts.fetchStatusText ?? "OK";
   const portStartThrows = harnessOpts.portStartThrows ?? false;
-  // 既 test の 多 数 が 「SAB available」 path 想 定 で 書 か れ て いる (= sub-phase
-  // 7.4 で sab-unavailable が 1 度 fire さ れ る 経 路 が 増 え た た め、 default
-  // で SAB available 環 境 を mock = 既 test の onError 経 路 で 余 計 な
-  // sab-unavailable 通 知 を 生 ま な い)。 sab-unavailable path を 試 す test は
-  // option で `crossOriginIsolated: 'deleted'` を 渡 し て delete 環 境 を mock。
+  // Most tests assume a SAB-available environment. Defaulting to true avoids
+  // spurious sab-unavailable notifications on the onError path. Tests that
+  // exercise the sab-unavailable path pass `crossOriginIsolated: 'deleted'`
+  // to mock an environment where the property is absent.
   const coiOption = harnessOpts.crossOriginIsolated ?? true;
   const coiTarget = globalThis as unknown as { crossOriginIsolated?: boolean };
   const prevCoi = coiTarget.crossOriginIsolated;
@@ -125,7 +123,7 @@ const installMockGlobals = (
 
   // Track every `GainNode` created via `context.createGain()` and its
   // outgoing edges so input-proxy tests can observe routing without a real
-  // Web Audio engine。
+  // Web Audio engine.
   const createdGains: MockGainNode[] = [];
   const context = {
     audioWorklet: {
@@ -170,10 +168,10 @@ const installMockGlobals = (
     });
   }) as typeof globalThis.fetch;
 
-  // Stub `WebAssembly.compile` so tests run without real WASM bytes。
+  // Stub `WebAssembly.compile` so tests run without real WASM bytes.
   // The returned object only needs an identity the production path can
   // forward through `processorOptions.module`; createNode tests assert
-  // it round-trips, no Module method is invoked。
+  // it round-trips, no Module method is invoked.
   const originalWasmCompile = WebAssembly.compile;
   const compiledModuleSentinels: unknown[] = [];
   WebAssembly.compile = ((_bytes: BufferSource) => {
@@ -457,11 +455,11 @@ test("createNode passes a pre-compiled WebAssembly.Module through processorOptio
     const sent = (opts.processorOptions as { module: WebAssembly.Module }).module;
     // The mock `WebAssembly.compile` stubs each call with a sentinel object;
     // the production path forwards that exact reference into processorOptions
-    // so the audio thread can `new WebAssembly.Instance(module)` directly。
+    // so the audio thread can `new WebAssembly.Instance(module)` directly.
     expect(sent).toBeDefined();
     expect((sent as unknown as { __mockModuleId?: number }).__mockModuleId).toBe(0);
     // Old bytes-bag path must NOT be sent on the declarative path α (= avoids
-    // sync `new WebAssembly.Module(bytes)` on the audio thread)。
+    // sync `new WebAssembly.Module(bytes)` on the audio thread).
     expect((opts.processorOptions as { wasm?: Uint8Array }).wasm).toBeUndefined();
   } finally {
     h.cleanup();
@@ -512,11 +510,11 @@ test("createNode dedupes addModule for concurrent calls with the same (context, 
   // settled cache during `addModule`'s round-trip and both invoke
   // `audioWorklet.addModule(...)`. Browsers reject duplicate
   // `registerProcessor()` names with NotSupportedError, so the second of two
-  // parallel loads would crash on real engines。
+  // parallel loads would crash on real engines.
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   // Replace the synchronous mock addModule with an async one that resolves
   // only when the test releases it, so both `createNode` invocations are
-  // genuinely in-flight when the cache lookup happens。
+  // genuinely in-flight when the cache lookup happens.
   let releaseAddModule!: () => void;
   const addModuleGate = new Promise<void>((resolve) => {
     releaseAddModule = resolve;
@@ -529,12 +527,12 @@ test("createNode dedupes addModule for concurrent calls with the same (context, 
     const promiseA = createNode(h.context as never, makeMockProcessor());
     const promiseB = createNode(h.context as never, makeMockProcessor());
     // Let microtasks resolve so both calls enter `addModuleOnce` and the
-    // cache decision is made before addModule settles。
+    // cache decision is made before addModule settles.
     await new Promise((r) => setTimeout(r, 0));
     expect(h.addModuleCalls).toEqual(["/_assets/x.worklet.js"]);
     releaseAddModule();
     // Allow `addModule` to resolve and both flows to construct their nodes
-    // before we fire the ready ack for both。
+    // before we fire the ready ack for both.
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setTimeout(r, 0));
     h.fireReadyAll();
@@ -589,7 +587,7 @@ test("UnworkletNode.outputs.<name>.connect routes through the node's output port
       return target;
     }) as MockAudioWorkletNode["connect"];
 
-    // AudioNode-shape destination (= has `.connect` method)。
+    // AudioNode-shape destination (= has `.connect` method).
     const destinationNode = { connect: () => undefined };
     node.outputs.main!.connect(destinationNode as never);
     node.outputs.send!.connect(destinationNode as never);
@@ -616,7 +614,7 @@ test("UnworkletNode.outputs.<name>.connect uses the 2-arg overload for AudioPara
       return target;
     }) as MockAudioWorkletNode["connect"];
 
-    // AudioParam shape = no `.connect` method。
+    // AudioParam shape = no `.connect` method.
     const paramTarget = { value: 0 };
     node.outputs.main!.connect(paramTarget as never);
 
@@ -644,9 +642,9 @@ test("UnworkletNode.inputs.<name> is an AudioNode destination already wired to t
     );
     // Spec: `source.connect(node.inputs.main)` — `.inputs.<name>` must be
     // an AudioNode the framework has already wired into the worklet's
-    // input port at `portIdx`。 The plugin uses a passthrough GainNode
+    // input port at `portIdx`. The plugin uses a passthrough GainNode
     // proxy per port (= GainNode is an AudioNode and stays out of the
-    // user's way)。
+    // user's way).
     expect(h.createdGains).toHaveLength(2);
     expect(node.inputs.main).toBe(h.createdGains[0]);
     expect(node.inputs.sidechain).toBe(h.createdGains[1]);
@@ -678,7 +676,7 @@ test("UnworkletNode.dispose() disconnects every input proxy from the worklet nod
     node.dispose();
     // Internal `proxy → worklet` edges are gone = audio path through the
     // disposed node is dead, even if user sources are still wired into
-    // the input proxies (= user owns the upstream graph)。
+    // the input proxies (= user owns the upstream graph).
     expect(h.createdGains[0]!.__outgoing).toHaveLength(0);
     expect(h.createdGains[1]!.__outgoing).toHaveLength(0);
   } finally {
@@ -704,7 +702,7 @@ test("UnworkletNode.onError receives block-length-mismatch messages posted by th
     }
     // Subscriber receives a clean `NodeErrorEvent` shape = the worklet's
     // internal `kind: "error"` framing field is stripped by the
-    // dispatcher。
+    // dispatcher.
     expect(received).toEqual([{ code: "block-length-mismatch", expected: 128, received: 256 }]);
   } finally {
     h.cleanup();
@@ -722,9 +720,9 @@ test("UnworkletNode.onError translates a post-ready `processorerror` into a fixe
     node.onError((event) => {
       received.push(event);
     });
-    // MDN: `processorerror` is a plain `Event` with no portable payload。
-    // Real structured trap info comes through the port message。 Verify
-    // the fallback marker does NOT read non-existent `.message`。
+    // MDN: `processorerror` is a plain `Event` with no portable payload.
+    // Real structured trap info comes through the port message. Verify
+    // the fallback marker does NOT read non-existent `.message`.
     for (const listener of h.lastNode!.__processorErrorListeners) {
       listener({} as Event);
     }
@@ -773,7 +771,7 @@ test("UnworkletNode.dispose() clears onError subscribers + removes long-lived li
     node.dispose();
     // After dispose, the long-lived message + processorerror listeners are
     // gone, so even if a stray event slips through nothing should reach the
-    // subscriber。
+    // subscriber.
     for (const listener of h.lastNode!.port.__listeners) {
       listener({
         data: { kind: "error", code: "block-length-mismatch", expected: 1, received: 2 },
@@ -830,16 +828,16 @@ test("createNode tears down the half-built worklet node when the handshake fails
   // Codex round-7 finding 2: if the worklet posts init-error / fires
   // processorerror / never acks within the timeout, the caller never
   // receives an UnworkletNode and therefore cannot dispose() the
-  // constructed AudioWorkletNode themselves。 createNode() must clean up
+  // constructed AudioWorkletNode themselves. createNode() must clean up
   // the half-built node before rejecting, otherwise silent processors
-  // accumulate inside the AudioContext。
+  // accumulate inside the AudioContext.
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     let disconnectCalls = 0;
     let closeCalls = 0;
     const promise = createNode(h.context as never, makeMockProcessor(), undefined);
     await new Promise((r) => setTimeout(r, 0));
-    // Hook the constructed node's cleanup paths before firing init-error。
+    // Hook the constructed node's cleanup paths before firing init-error.
     h.lastNode!.disconnect = () => {
       disconnectCalls++;
     };
@@ -886,7 +884,7 @@ test("createNode rejects with a timeout error when no ready / init-error / proce
     const promise = createNode(h.context as never, makeMockProcessor(), undefined);
     // Attach the rejection assertion synchronously (= before any timer
     // advance) to avoid `PromiseRejectionHandledWarning` from the timeout
-    // firing before the .rejects handler observes it。
+    // firing before the .rejects handler observes it.
     const assertion = expect(promise).rejects.toThrow(/timed out after 10000ms/);
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(10_000);
@@ -900,8 +898,8 @@ test("createNode rejects with a timeout error when no ready / init-error / proce
 test("createNode rejects with cleanup if `port.start()` throws", async () => {
   // Spec-conformant engines no-op on `port.start()` after `addEventListener
   // ('message', ...)`; polyfilled / older engines can throw
-  // InvalidStateError。 Cover the cleanup-on-throw branch so the Promise
-  // rejects cleanly + listeners / timer are not left pinned。
+  // InvalidStateError. Cover the cleanup-on-throw branch so the Promise
+  // rejects cleanly + listeners / timer are not left pinned.
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { portStartThrows: true });
   try {
     const promise = createNode(h.context as never, makeMockProcessor(), undefined);
@@ -937,7 +935,7 @@ test("onError subscriber that throws does not break dispatch to other subscriber
         });
       }
       // Second subscriber must still have received the event despite the
-      // first subscriber throwing。 The throw is surfaced via console.error。
+      // first subscriber throwing. The throw is surfaced via console.error.
       expect(received).toEqual([{ code: "block-length-mismatch", expected: 128, received: 64 }]);
       expect(consoleErrorCalls.length).toBeGreaterThan(0);
     } finally {
@@ -961,11 +959,11 @@ test("UnworkletNode.onError after dispose() is a no-op (= returns no-op unsubscr
       received.push(event);
     });
     // Calling the returned unsubscribe must not throw, even though it is
-    // a no-op (= we never added the handler in the first place)。
+    // a no-op (= we never added the handler in the first place).
     expect(() => unsub()).not.toThrow();
     // Dispatching after dispose cannot reach the late subscriber because
     // the listener has been removed from the underlying port + the
-    // subscriber Set is cleared。 Verify the late subscriber stays empty。
+    // subscriber Set is cleared. Verify the late subscriber stays empty.
     for (const listener of h.lastNode!.port.__listeners) {
       listener({
         data: { kind: "error", code: "block-length-mismatch", expected: 1, received: 2 },
@@ -979,8 +977,8 @@ test("UnworkletNode.onError after dispose() is a no-op (= returns no-op unsubscr
 
 test("addModule cache drops rejected entries so a subsequent call can retry", async () => {
   // Transient network failures must not permanently poison
-  // (context, moduleUrl)。 First call rejects → cache entry removed →
-  // second call enters addModule fresh。
+  // (context, moduleUrl). First call rejects → cache entry removed →
+  // second call enters addModule fresh.
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     let callIdx = 0;
@@ -994,7 +992,7 @@ test("addModule cache drops rejected entries so a subsequent call can retry", as
     };
     const first = createNode(h.context as never, makeMockProcessor(), undefined);
     await expect(first).rejects.toThrow(/CONNECTION_REFUSED/);
-    // Second attempt enters addModule again (= cache evicted)。
+    // Second attempt enters addModule again (= cache evicted).
     const second = createNode(h.context as never, makeMockProcessor(), undefined);
     await new Promise((r) => setTimeout(r, 0));
     h.fireReady();
@@ -1007,7 +1005,7 @@ test("addModule cache drops rejected entries so a subsequent call can retry", as
 
 test("fetchAndCompileWasm uses WebAssembly.compileStreaming when the response is application/wasm", async () => {
   // Override fetch + compileStreaming to confirm the streaming branch
-  // fires for application/wasm + the bytes path is skipped。
+  // fires for application/wasm + the bytes path is skipped.
   const originalCompileStreaming = WebAssembly.compileStreaming;
   let streamingCalls = 0;
   const fakeModule = { __via: "streaming" };
@@ -1017,7 +1015,7 @@ test("fetchAndCompileWasm uses WebAssembly.compileStreaming when the response is
   }) as typeof WebAssembly.compileStreaming;
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
-    // Override the mock fetch to advertise application/wasm。
+    // Override the mock fetch to advertise application/wasm.
     globalThis.fetch = ((url: string) => {
       h.fetchCalls.push(url);
       return Promise.resolve({
@@ -1070,7 +1068,7 @@ test("awaitReady: init-error message without a string payload falls back to '(no
     const promise = createNode(h.context as never, makeMockProcessor(), undefined);
     await new Promise((r) => setTimeout(r, 0));
     // Send init-error with no message field — covers the `typeof data.message
-    // === "string"` false branch in awaitReady's onMessage handler。
+    // === "string"` false branch in awaitReady's onMessage handler.
     for (const listener of h.lastNode!.port.__listeners) {
       listener({ data: { kind: "init-error" } });
     }
@@ -1136,10 +1134,10 @@ test("onErrorMessage drops error messages with non-string or unknown code", asyn
       received.push(event);
     });
     for (const listener of h.lastNode!.port.__listeners) {
-      // Non-string code → early return。
+      // Non-string code → early return.
       listener({ data: { kind: "error", code: 42 } });
       // Unknown code (= future / typo) → early return = guard against the
-      // structured-union contract widening silently。
+      // structured-union contract widening silently.
       listener({ data: { kind: "error", code: "some-future-code" } });
     }
     expect(received).toEqual([]);
@@ -1149,7 +1147,7 @@ test("onErrorMessage drops error messages with non-string or unknown code", asyn
 });
 
 test("UnworkletNode.dispose() is idempotent (= second call is a no-op)", async () => {
-  // Cover the `if (disposed) return` guard。
+  // Cover the `if (disposed) return` guard.
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     const node = await startCreate(
@@ -1162,7 +1160,7 @@ test("UnworkletNode.dispose() is idempotent (= second call is a no-op)", async (
     };
     node.dispose();
     node.dispose();
-    // Second dispose() must short-circuit before re-running cleanup。
+    // Second dispose() must short-circuit before re-running cleanup.
     expect(disconnectCalls).toBe(1);
   } finally {
     h.cleanup();
@@ -1171,9 +1169,9 @@ test("UnworkletNode.dispose() is idempotent (= second call is a no-op)", async (
 
 test("awaitReady: stray events after settle are early-returned (= no double settle)", async () => {
   // Cover the `if (settled) return` guards in onMessage / onProcessorError /
-  // timer。 Drive a ready ack first (= settles)、 then fire init-error /
+  // timer. Drive a ready ack first (= settles), then fire init-error /
   // processorerror / advance the timer past timeout = no rejection should
-  // occur because the promise already resolved。
+  // occur because the promise already resolved.
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   vi.useFakeTimers();
   try {
@@ -1185,8 +1183,8 @@ test("awaitReady: stray events after settle are early-returned (= no double sett
     // The original awaitReady listeners are already removed by cleanup()
     // inside awaitReady — driving extra events should hit `settled === true`
     // returns inside the (already-detached) handlers if they are still
-    // reachable through any closure。 In practice cleanup removes them, so
-    // these calls just verify no throws & no spurious rejection。
+    // reachable through any closure. In practice cleanup removes them, so
+    // these calls just verify no throws & no spurious rejection.
     expect(() => h.fireInitError("late")).not.toThrow();
     expect(() => h.fireProcessorError("late")).not.toThrow();
     await vi.advanceTimersByTimeAsync(15_000);
@@ -1214,11 +1212,11 @@ test("`inspect(blob)` rejects a non-snapshot blob", () => {
 });
 
 test("fetchAndCompileWasm falls back to '' when the response exposes no headers / get accessor", async () => {
-  // Cover the `?? ""` fallback in `response.headers?.get?.("Content-Type") ?? ""`。
+  // Cover the `?? ""` fallback in `response.headers?.get?.("Content-Type") ?? ""`.
   // Some fetch polyfills / non-standard responses can omit `headers` entirely
   // or omit the `get` method on the headers bag — optional chaining must
   // resolve to "" so the regex test runs against an empty string rather than
-  // throwing。
+  // throwing.
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     globalThis.fetch = ((url: string) => {
@@ -1227,7 +1225,7 @@ test("fetchAndCompileWasm falls back to '' when the response exposes no headers 
         ok: true,
         status: 200,
         statusText: "OK",
-        // No `headers` property at all = optional chain resolves to undefined。
+        // No `headers` property at all = optional chain resolves to undefined.
         arrayBuffer: (): Promise<ArrayBuffer> => Promise.resolve(new ArrayBuffer(0)),
       });
     }) as typeof globalThis.fetch;
@@ -1244,11 +1242,11 @@ test("fetchAndCompileWasm falls back to '' when the response exposes no headers 
 test("buildParams skips params whose `node.parameters.get(name)` returns undefined", async () => {
   // Cover the `if (got)` else branch in buildParams — exercised when the
   // host engine returns `undefined` for a declared param name (= conservative
-  // engines may return undefined if parameterData is partially populated)。
+  // engines may return undefined if parameterData is partially populated).
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
-    // Override the parameters.get to return undefined for `cutoff`、 a valid
-    // AudioParam shape for `gain`。
+    // Override the parameters.get to return undefined for `cutoff`, a valid
+    // AudioParam shape for `gain`.
     const originalAWN = (globalThis as Record<string, unknown>).AudioWorkletNode as new (
       ctx: unknown,
       name: string,
@@ -1272,7 +1270,7 @@ test("buildParams skips params whose `node.parameters.get(name)` returns undefin
       h.fireReady,
     );
     // Only the param the host engine returned a non-undefined handle for
-    // should appear on the node。
+    // should appear on the node.
     expect(node.params.gain).toBeDefined();
     expect(node.params.cutoff).toBeUndefined();
   } finally {
@@ -1284,18 +1282,18 @@ test("awaitReady drops non-object / null data without rejecting (= early return 
   // Cover the `if (typeof data !== 'object' || data === null) return` branch
   // inside `awaitReady`'s onMessage handler — exercised when an upstream
   // process posts arbitrary primitives through the port before the proper
-  // `{ kind: "ready" }` ack arrives。
+  // `{ kind: "ready" }` ack arrives.
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     const promise = createNode(h.context as never, makeMockProcessor(), undefined);
     await new Promise((r) => setTimeout(r, 0));
     for (const listener of h.lastNode!.port.__listeners) {
-      // Each of these must be ignored by awaitReady (= no resolve, no reject)。
+      // Each of these must be ignored by awaitReady (= no resolve, no reject).
       listener({ data: null });
       listener({ data: 42 });
       listener({ data: "string event" });
     }
-    // Now send the real ready — promise should still resolve cleanly。
+    // Now send the real ready — promise should still resolve cleanly.
     h.fireReady();
     const node = await promise;
     expect(node).toBeDefined();
@@ -1305,19 +1303,19 @@ test("awaitReady drops non-object / null data without rejecting (= early return 
 });
 
 test("awaitReady ignores object data whose kind is neither 'ready' nor 'init-error'", async () => {
-  // Cover the `if (data.kind === 'init-error')` else branch inside awaitReady。
+  // Cover the `if (data.kind === 'init-error')` else branch inside awaitReady.
   // An out-of-band message during handshake (= the long-lived runtime path
   // may post `{ kind: "error", ... }` before ready in some test orderings)
-  // must be ignored by the handshake handler so the real `ready` still settles。
+  // must be ignored by the handshake handler so the real `ready` still settles.
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     const promise = createNode(h.context as never, makeMockProcessor(), undefined);
     await new Promise((r) => setTimeout(r, 0));
     for (const listener of h.lastNode!.port.__listeners) {
-      // Object with a kind that is neither "ready" nor "init-error" = no-op。
+      // Object with a kind that is neither "ready" nor "init-error" = no-op.
       listener({ data: { kind: "error", code: "wasm-trap", message: "stray" } });
       listener({ data: { kind: "future-handshake-frame" } });
-      // Object without a `kind` field at all。
+      // Object without a `kind` field at all.
       listener({ data: { unrelated: true } });
     }
     h.fireReady();
@@ -1332,13 +1330,13 @@ test("awaitReady falls back to a fixed message when processorerror fires with no
   // Cover the `errEvent.message || ...` fallback branch in awaitReady's
   // `onProcessorError` handler — MDN documents `processorerror` as a plain
   // `Event` with no portable `.message`, so the fallback string is what
-  // surfaces in conformant engines。
+  // surfaces in conformant engines.
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     const promise = createNode(h.context as never, makeMockProcessor(), undefined);
     await new Promise((r) => setTimeout(r, 0));
     // Fire with NO message field = `errEvent.message` is undefined =
-    // falsy → fallback string is used。
+    // falsy → fallback string is used.
     for (const listener of h.lastNode!.__processorErrorListeners) {
       listener({} as Event);
     }
@@ -1353,12 +1351,12 @@ test("awaitReady falls back to a fixed message when processorerror fires with no
 test("awaitReady wraps non-Error throws from port.start() into a fresh Error", async () => {
   // Cover the `err instanceof Error ? err : new Error(String(err))` non-Error
   // branch — `port.start()` could conceivably throw a string / number /
-  // plain object (= non-Error) in obscure polyfilled engines。 The Promise
+  // plain object (= non-Error) in obscure polyfilled engines. The Promise
   // must still reject with an Error so downstream `.catch()` consumers see
-  // a uniform shape。
+  // a uniform shape.
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
-    // Re-install the mock node so port.start throws a non-Error string。
+    // Re-install the mock node so port.start throws a non-Error string.
     const originalAWN = (globalThis as Record<string, unknown>).AudioWorkletNode as new (
       ctx: unknown,
       name: string,
@@ -1381,10 +1379,10 @@ test("awaitReady wraps non-Error throws from port.start() into a fresh Error", a
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// transport mode 検 出 + SAB / fallback buffer allocate (= sub-phase 7.4)
+// Transport mode detection + SAB / fallback buffer allocation (sub-phase 7.4)
 // ─────────────────────────────────────────────────────────────────────────
 
-test("createNode without publishSlots = buffer ナ シ + processorOptions に publishBuffer 含 ま な い", async () => {
+test("createNode without publishSlots omits publishBuffer from processorOptions entirely", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     await startCreate(
@@ -1429,7 +1427,7 @@ test("createNode with publishSlots + crossOriginIsolated = SAB allocate + transp
   }
 });
 
-test("createNode with messageRings + crossOriginIsolated = SAB allocate + messageRings hand", async () => {
+test("createNode with messageRings + crossOriginIsolated = allocates SAB + passes messageRings to processorOptions", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     const messageRingsFixture = [
@@ -1453,7 +1451,7 @@ test("createNode with messageRings + crossOriginIsolated = SAB allocate + messag
       transport: string;
     };
     expect(opts.messageRingsBuffer).toBeInstanceOf(SharedArrayBuffer);
-    // ring 1 個 = header 12 + 16 × 4 = 76
+    // 1 ring = header 12 + 16 × 4 = 76
     expect((opts.messageRingsBuffer as SharedArrayBuffer).byteLength).toBe(76);
     expect(opts.messageRingSabOffsets).toEqual([0]);
     expect(opts.transport).toBe("sab");
@@ -1462,7 +1460,7 @@ test("createNode with messageRings + crossOriginIsolated = SAB allocate + messag
   }
 });
 
-test("createNode without messageRings = processorOptions に messageRingsBuffer hand な し", async () => {
+test("createNode without messageRings omits messageRingsBuffer from processorOptions", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     await startCreate(() => createNode(h.context as never, makeMockProcessor()), h.fireReady);
@@ -1477,10 +1475,11 @@ test("createNode without messageRings = processorOptions に messageRingsBuffer 
   }
 });
 
-test("createNode with messageRings + !crossOriginIsolated = messageRingsBuffer な し + descriptor hand", async () => {
-  // postMessage path = messageRingsBuffer を hand し な い (= main 側 が
-  // `port.postMessage({ kind: 'message', ... })` で 直 送、 worklet 側 が
-  // self.port.onmessage で receive + WASM ring に inject = buffer 自 体 不 要)。
+test("createNode with messageRings + !crossOriginIsolated = no messageRingsBuffer + descriptor only", async () => {
+  // postMessage path: the main side sends directly via
+  // `port.postMessage({ kind: 'message', ... })`; the worklet receives it
+  // via self.port.onmessage and injects into the WASM ring, so no shared
+  // buffer is needed.
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   try {
     await startCreate(
@@ -1514,7 +1513,7 @@ test("createNode with messageRings + !crossOriginIsolated = messageRingsBuffer �
   }
 });
 
-test("createNode with eventRings + crossOriginIsolated = SAB allocate + eventRings hand", async () => {
+test("createNode with eventRings + crossOriginIsolated = allocates SAB + passes eventRings to processorOptions", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     const eventRingsFixture = [
@@ -1540,7 +1539,7 @@ test("createNode with eventRings + crossOriginIsolated = SAB allocate + eventRin
       transport: string;
     };
     expect(opts.eventRingsBuffer).toBeInstanceOf(SharedArrayBuffer);
-    // ring 1 個 = header 12 + 16 × 8 = 140
+    // 1 ring = header 12 + 16 × 8 = 140
     expect((opts.eventRingsBuffer as SharedArrayBuffer).byteLength).toBe(140);
     expect(opts.eventRingSabOffsets).toEqual([0]);
     expect(opts.transport).toBe("sab");
@@ -1549,7 +1548,7 @@ test("createNode with eventRings + crossOriginIsolated = SAB allocate + eventRin
   }
 });
 
-test("createNode with 2 eventRings = SAB に 連 続 配 置 + sabOffsets で 累 計", async () => {
+test("createNode with 2 eventRings = contiguous SAB layout with cumulative sabOffsets", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     const eventRingsFixture = [
@@ -1579,7 +1578,7 @@ test("createNode with 2 eventRings = SAB に 連 続 配 置 + sabOffsets で �
       eventRingsBuffer: SharedArrayBuffer;
       eventRingSabOffsets: number[];
     };
-    // evt1 = 140 byte、 evt2 = 12 + 4 × 4 = 28 byte、 合 計 168
+    // evt1 = 140 bytes, evt2 = 12 + 4 × 4 = 28 bytes, total 168
     expect(opts.eventRingsBuffer.byteLength).toBe(168);
     expect(opts.eventRingSabOffsets).toEqual([0, 140]);
   } finally {
@@ -1587,7 +1586,7 @@ test("createNode with 2 eventRings = SAB に 連 続 配 置 + sabOffsets で �
   }
 });
 
-test("createNode without eventRings = processorOptions に eventRingsBuffer hand な し", async () => {
+test("createNode without eventRings omits eventRingsBuffer from processorOptions", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     await startCreate(() => createNode(h.context as never, makeMockProcessor()), h.fireReady);
@@ -1602,11 +1601,11 @@ test("createNode without eventRings = processorOptions に eventRingsBuffer hand
   }
 });
 
-test("createNode with eventRings + !crossOriginIsolated = eventRingsBuffer な し + descriptor hand", async () => {
-  // postMessage path = eventRingsBuffer を hand し な い (= structured clone で
-  // main / worklet が 別 ring instance に な る = mirror 不 能、 worklet 側 が
-  // port.postMessage で 新 emit 分 を 個 別 配 送 す る path)。 eventRings
-  // descriptor + transport だ け hand。
+test("createNode with eventRings + !crossOriginIsolated = no eventRingsBuffer + descriptor only", async () => {
+  // postMessage path: structured-clone would produce separate ring instances
+  // on main and worklet (= mirroring impossible), so no buffer is handed over.
+  // The worklet delivers new events individually via port.postMessage.
+  // Only the eventRings descriptor + transport are passed.
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   try {
     await startCreate(
@@ -1643,11 +1642,11 @@ test("createNode with eventRings + !crossOriginIsolated = eventRingsBuffer な �
   }
 });
 
-test("createNode with publishSlots + !crossOriginIsolated = publishBuffer な し + transport 'postMessage' + descriptor hand", async () => {
-  // postMessage path = publishBuffer を hand し な い (= structured clone で 別
-  // ArrayBuffer instance に な る = mirror 不 能、 worklet 側 が port.postMessage
-  // 経 路 で 通 知 す る = main 側 buffer 自 体 不 要)。 publishSlots descriptor +
-  // transport だ け hand し て worklet template が postMessage 経 路 を 走 ら す。
+test("createNode with publishSlots + !crossOriginIsolated = no publishBuffer + transport 'postMessage' + descriptor only", async () => {
+  // postMessage path: structured-clone would produce a separate ArrayBuffer
+  // instance (= mirroring impossible), so publishBuffer is not handed over.
+  // The worklet notifies via port.postMessage, making the main-side buffer
+  // unnecessary. Only the publishSlots descriptor + transport are passed.
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   try {
     const node = await startCreate(
@@ -1690,7 +1689,7 @@ test("createNode without publishSlots inherits transport from environment (= sab
   }
 });
 
-test("onError 1 番 目 subscriber は sab-unavailable env で `{ code: 'sab-unavailable' }` を 1 度 受 信", async () => {
+test("first onError subscriber receives `{ code: 'sab-unavailable' }` exactly once in a sab-unavailable environment", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   try {
     const node = await startCreate(
@@ -1700,7 +1699,7 @@ test("onError 1 番 目 subscriber は sab-unavailable env で `{ code: 'sab-una
     const events: unknown[] = [];
     node.onError((e) => events.push(e));
     expect(events).toEqual([{ code: "sab-unavailable" }]);
-    // 2 番 目 subscriber は pending 既 clear で 受 信 し な い
+    // second subscriber: pending already cleared, receives nothing
     const events2: unknown[] = [];
     node.onError((e) => events2.push(e));
     expect(events2).toEqual([]);
@@ -1709,7 +1708,7 @@ test("onError 1 番 目 subscriber は sab-unavailable env で `{ code: 'sab-una
   }
 });
 
-test("onError は SAB available env で sab-unavailable を fire し ない (= regression)", async () => {
+test("onError does not fire sab-unavailable in a SAB-available environment (regression guard)", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     const node = await startCreate(
@@ -1724,7 +1723,7 @@ test("onError は SAB available env で sab-unavailable を fire し ない (= r
   }
 });
 
-test("node.state.<name>.value = SAB mode で publish 済 値 を 同 期 read (= f32 / i32 / bool 各 型)", async () => {
+test("node.state.<name>.value synchronously reads published values in SAB mode (f32 / i32 / bool)", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     const node = await startCreate(
@@ -1741,20 +1740,20 @@ test("node.state.<name>.value = SAB mode で publish 済 値 を 同 期 read (=
         ),
       h.fireReady,
     );
-    // SAB に 値 を 直 接 write (= worklet が copy す る 経 路 を mock)
+    // Write directly into the SAB, simulating the worklet's copy path
     const buf = h.lastNode!.__constructorRecord.options.processorOptions!
       .publishBuffer as SharedArrayBuffer;
     const view = new Int32Array(buf);
-    // f32 0.5 を bit pattern で write
+    // write f32 0.5 as its bit pattern
     const f32Buf = new Float32Array([0.5]);
     const f32Bits = new Int32Array(f32Buf.buffer)[0]!;
     Atomics.store(view, 0, f32Bits);
     Atomics.store(view, 3, 42); // i32
-    Atomics.store(view, 6, 1); // bool true
+    Atomics.store(view, 6, 1); // bool: true
     expect(node.state["vF32"]!.value).toBe(0.5);
     expect(node.state["vI32"]!.value).toBe(42);
     expect(node.state["vBool"]!.value).toBe(true);
-    // bool 0 case
+    // bool: false
     Atomics.store(view, 6, 0);
     expect(node.state["vBool"]!.value).toBe(false);
   } finally {
@@ -1762,7 +1761,7 @@ test("node.state.<name>.value = SAB mode で publish 済 値 を 同 期 read (=
   }
 });
 
-test("node.state.<name>.value = postMessage mode で onPublishMessage 経 由 で mirror 更 新 + read 可", async () => {
+test("node.state.<name>.value reads mirror updated via onPublishMessage in postMessage mode", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   try {
     const node = await startCreate(
@@ -1775,10 +1774,10 @@ test("node.state.<name>.value = postMessage mode で onPublishMessage 経 由 �
         ),
       h.fireReady,
     );
-    // 初 期 値 = mirror 0 で .value も 0
+    // initial value = mirror at 0, so .value is 0
     expect(node.state["vI32"]!.value).toBe(0);
-    // worklet が version advance 時 に 投 げ る publish message を simulate
-    // (= port listener 経 由 で onPublishMessage が mirror 更 新)
+    // simulate the publish message the worklet sends on version advance
+    // (= onPublishMessage updates the mirror via the port listener)
     for (const listener of h.lastNode!.port.__listeners) {
       listener({
         data: { kind: "publish", slotIndex: 0, valueBits: 99, sampleCounter: 0, version: 1 },
@@ -1790,7 +1789,7 @@ test("node.state.<name>.value = postMessage mode で onPublishMessage 経 由 �
   }
 });
 
-test("node.state.<name>.subscribe(handler) は subscriber を 保 持 + unsubscribe 返 却", async () => {
+test("node.state.<name>.subscribe(handler) registers a subscriber and returns an unsubscribe function", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     const node = await startCreate(
@@ -1807,14 +1806,14 @@ test("node.state.<name>.subscribe(handler) は subscriber を 保 持 + unsubscr
     const unsub = node.state["v"]!.subscribe((v) => calls.push(v));
     expect(typeof unsub).toBe("function");
     unsub();
-    // unsub 後 の handler は polling driver fill 後 で fire ナ シ = 当 commit で は subscriber set 削 除 だ け 確 認
+    // after unsubscribe the handler does not fire on polling driver fill; confirm the subscriber set is cleared
     expect(calls).toEqual([]);
   } finally {
     h.cleanup();
   }
 });
 
-test("publish ナ シ processor は node.state = 空 object (= regression)", async () => {
+test("processor with no publishSlots produces an empty node.state object (regression guard)", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     const node = await startCreate(
@@ -1828,10 +1827,10 @@ test("publish ナ シ processor は node.state = 空 object (= regression)", asy
 });
 
 /**
- * rAF mock = requestAnimationFrame を 手 動 step 経 由 で 走 ら せ る path。
- * raf(tick) で tick を 集 め、 `flushRaf` で 1 度 だ け 同 期 invoke (= test
- * 経 路 で polling driver の 動 作 を 観 測 可)。 cancelAnimationFrame で handle
- * を 削 除 = dispose 時 の 停 止 check が 可 能。
+ * rAF mock: drives requestAnimationFrame manually.
+ * Collects ticks and invokes them synchronously on `flush()`, letting tests
+ * observe the polling driver. cancelAnimationFrame removes handles so
+ * dispose-time stop checks are verifiable.
  */
 type RafHook = {
   flush: () => void;
@@ -1861,8 +1860,8 @@ const installRafMock = (): RafHook => {
   };
   return {
     flush(): void {
-      // 現 在 pending な callback を 全 invoke (= snapshot 経 由 で flush 中 の
-      // re-schedule を 次 flush に 回 す)。
+      // Invoke all currently pending callbacks. Re-schedules made during flush
+      // are deferred to the next flush call.
       const snapshot = [...callbacks.entries()];
       callbacks.clear();
       for (const [, cb] of snapshot) {
@@ -1888,7 +1887,7 @@ const installRafMock = (): RafHook => {
   };
 };
 
-test("polling driver = subscribe 後 raf tick で version 増 加 検 出 → handler fire", async () => {
+test("polling driver fires handler when a version increment is detected on a rAF tick after subscribe", async () => {
   const raf = installRafMock();
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
@@ -1908,17 +1907,17 @@ test("polling driver = subscribe 後 raf tick で version 増 加 検 出 → ha
     const calls: unknown[] = [];
     node.state["v"]!.subscribe((value) => calls.push(value));
 
-    // 1 度 目 flush: version 0 = 変 化 ナ シ = fire ナ シ
+    // first flush: version 0 = no change = no fire
     raf.flush();
     expect(calls).toEqual([]);
 
-    // worklet が publish した path を mock = value 42、 version 1 を SAB に 直 接 write
+    // mock the worklet publish path: write value 42, version 1 directly into SAB
     Atomics.store(view, 0, 42);
     Atomics.store(view, 2, 1);
     raf.flush();
     expect(calls).toEqual([42]);
 
-    // 2 度 目 publish: value 99、 version 2
+    // second publish: value 99, version 2
     Atomics.store(view, 0, 99);
     Atomics.store(view, 2, 2);
     raf.flush();
@@ -1929,7 +1928,7 @@ test("polling driver = subscribe 後 raf tick で version 増 加 検 出 → ha
   }
 });
 
-test("polling driver = 全 subscriber unsubscribe で rAF loop 停 止 (= zero-subscriber で polling 浪 費 し ない)", async () => {
+test("polling driver stops the rAF loop when all subscribers unsubscribe (no polling wasted at zero subscribers)", async () => {
   const raf = installRafMock();
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
@@ -1944,13 +1943,13 @@ test("polling driver = 全 subscriber unsubscribe で rAF loop 停 止 (= zero-s
       h.fireReady,
     );
     const unsub = node.state["v"]!.subscribe(() => {});
-    // SAB mode = subscribe で rAF polling 開 始 (= 1 tick scheduled)
+    // SAB mode: subscribe starts the rAF polling loop (1 tick scheduled)
     expect(raf.pending).toBe(1);
 
     unsub();
-    // 全 surface の subscriber が 0 に な っ た = rAF loop 停 止 (= node 生 存 中 に
-    // temporary subscribe → unsubscribe し た 後、 dispose ま で 毎 frame polling
-    // し 続 け る main-thread 浪 費 を 回 避)。
+    // All subscribers on all slots are now zero: rAF loop stops. This avoids
+    // per-frame polling waste on the main thread after a temporary subscribe →
+    // unsubscribe while the node is still alive.
     expect(raf.pending).toBe(0);
     expect(raf.cancelledHandles.length).toBeGreaterThan(0);
   } finally {
@@ -1959,7 +1958,7 @@ test("polling driver = 全 subscriber unsubscribe で rAF loop 停 止 (= zero-s
   }
 });
 
-test("polling driver = 同 値 publish でも version 増 加 で fire (= no-dedupe、 Q39-b)", async () => {
+test("polling driver fires on every version increment even when the value is unchanged (no deduplication, Q39-b)", async () => {
   const raf = installRafMock();
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
@@ -1981,8 +1980,8 @@ test("polling driver = 同 値 publish でも version 増 加 で fire (= no-ded
     Atomics.store(view, 0, 50);
     Atomics.store(view, 2, 1);
     raf.flush();
-    Atomics.store(view, 0, 50); // 同 値
-    Atomics.store(view, 2, 2); // version は 増 加
+    Atomics.store(view, 0, 50); // same value
+    Atomics.store(view, 2, 2); // version incremented
     raf.flush();
     expect(calls).toEqual([50, 50]);
   } finally {
@@ -1991,7 +1990,7 @@ test("polling driver = 同 値 publish でも version 増 加 で fire (= no-ded
   }
 });
 
-test("polling driver = multiple subscribers で 同 値 fire + 1 番 目 throw で 2 番 目 fire 継 続", async () => {
+test("polling driver fires all subscribers with the same value; first subscriber throwing does not block the second", async () => {
   const raf = installRafMock();
   const originalConsoleError = console.error;
   const errLogs: unknown[] = [];
@@ -2030,7 +2029,7 @@ test("polling driver = multiple subscribers で 同 値 fire + 1 番 目 throw �
   }
 });
 
-test("polling driver = unsubscribe で 該 当 handler skip + dispose で raf 停 止", async () => {
+test("polling driver skips unsubscribed handler and stops rAF on dispose", async () => {
   const raf = installRafMock();
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
@@ -2057,8 +2056,8 @@ test("polling driver = unsubscribe で 該 当 handler skip + dispose で raf �
     Atomics.store(view, 0, 2);
     Atomics.store(view, 2, 2);
     raf.flush();
-    expect(calls).toEqual([1]); // 増 加 ナ シ
-    // dispose で raf 停 止 = pending 0 + 直 前 handle が cancel
+    expect(calls).toEqual([1]); // no increase
+    // dispose stops rAF: pending = 0 + the previous handle is cancelled
     node.dispose();
     expect(raf.cancelledHandles.length).toBeGreaterThan(0);
   } finally {
@@ -2067,10 +2066,10 @@ test("polling driver = unsubscribe で 該 当 handler skip + dispose で raf �
   }
 });
 
-test("publish dispatch = postMessage mode で port.onmessage 経 由 で subscriber 即 時 fire (= no rAF polling)", async () => {
-  // postMessage path で は rAF polling 不 要 = port.onmessage が dispatched す る と
-  // 即 時 subscriber fire。 rAF mock を 入 れ て も flush 前 に fire し て いる こ と
-  // を 担 保 (= polling driver 起 動 さ れ て い な い)。
+test("publish dispatch in postMessage mode fires subscribers immediately via port.onmessage (no rAF polling)", async () => {
+  // postMessage path: no rAF polling needed. A dispatched port.onmessage fires
+  // subscribers immediately. The rAF mock is installed to confirm no firing
+  // happens before flush (= polling driver is not started).
   const raf = installRafMock();
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   try {
@@ -2086,15 +2085,15 @@ test("publish dispatch = postMessage mode で port.onmessage 経 由 で subscri
     );
     const calls: unknown[] = [];
     node.state["v"]!.subscribe((value) => calls.push(value));
-    // worklet publish を simulate (= rAF flush せ ず に subscriber fire を 担 保)
+    // simulate a worklet publish (confirms subscriber fires before any rAF flush)
     for (const listener of h.lastNode!.port.__listeners) {
       listener({
         data: { kind: "publish", slotIndex: 0, valueBits: 88, sampleCounter: 0, version: 1 },
       } as MessageEvent);
     }
     expect(calls).toEqual([88]);
-    // rAF flush し て も 追 加 fire ナ シ (= polling driver は postMessage path で 起
-    // 動 し て い な い、 既 fire は port driven な の で raf tick で 増 え な い)
+    // rAF flush produces no additional fires: polling driver is not started
+    // on the postMessage path and the already-fired event is port-driven
     raf.flush();
     expect(calls).toEqual([88]);
   } finally {
@@ -2103,7 +2102,7 @@ test("publish dispatch = postMessage mode で port.onmessage 経 由 で subscri
   }
 });
 
-test("polling driver = cancelAnimationFrame 不 在 環 境 で dispose は ハ ン ド ル null 化 だ け で skip", async () => {
+test("polling driver: dispose in an environment without cancelAnimationFrame only nulls the handle (no throw)", async () => {
   const target = globalThis as unknown as {
     requestAnimationFrame?: (cb: () => void) => number;
     cancelAnimationFrame?: (handle: number) => void;
@@ -2125,7 +2124,7 @@ test("polling driver = cancelAnimationFrame 不 在 環 境 で dispose は ハ 
       h.fireReady,
     );
     node.state["v"]!.subscribe(() => {});
-    // dispose で cancelAnimationFrame 不 在 = guard で skip + rafHandle null 化
+    // cancelAnimationFrame absent on dispose: guard skips the call and nulls the handle
     expect(() => node.dispose()).not.toThrow();
   } finally {
     h.cleanup();
@@ -2135,9 +2134,9 @@ test("polling driver = cancelAnimationFrame 不 在 環 境 で dispose は ハ 
   }
 });
 
-test("polling driver = requestAnimationFrame 不 在 環 境 で subscribe は subscriber set add だ け (= raf skip)", async () => {
+test("polling driver: subscribe in an environment without requestAnimationFrame only adds to the subscriber set (rAF skipped)", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
-  // rAF を 削 除 (= polyfill ナ シ environment mock)
+  // Remove rAF to mock an environment without a polyfill
   const target = globalThis as unknown as {
     requestAnimationFrame?: (cb: () => void) => number;
   };
@@ -2162,7 +2161,7 @@ test("polling driver = requestAnimationFrame 不 在 環 境 で subscribe は s
   }
 });
 
-test("onError 1 番 目 subscriber が throw し て も pending sab-unavailable は clear (= 2 番 目 fire ナ シ)", async () => {
+test("pending sab-unavailable is cleared even when the first onError subscriber throws (second subscriber receives nothing)", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   const originalConsoleError = console.error;
   const errs: unknown[] = [];
@@ -2188,11 +2187,12 @@ test("onError 1 番 目 subscriber が throw し て も pending sab-unavailable
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// node.events.<name>.on / diagnostics (= sub-phase 7.6 commit 6)
+// node.events.<name>.on / diagnostics (sub-phase 7.6 commit 6)
 //
-// worklet → main moment-in-time delivery 経 路 の main 側 surface。 既 state
-// subscribe path (= rAF polling) と zip path で SAB から drain、 各 slot を
-// per-field reinterpret し て plain JS 値 で handler に hand。
+// Main-thread surface for the worklet → main moment-in-time delivery path.
+// Shares the rAF polling loop with the state subscribe path; drains the SAB
+// via the zip path, reinterprets each slot per-field, and hands plain JS
+// values to handlers.
 // ─────────────────────────────────────────────────────────────────────────
 
 const peakEventRing = {
@@ -2206,7 +2206,7 @@ const peakEventRing = {
   ],
 };
 
-test("node.events.<name>.on: subscribe + emit simulation で rAF tick で handler fire", async () => {
+test("node.events.<name>.on: subscribe + emit simulation fires handler on rAF tick", async () => {
   const raf = installRafMock();
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
@@ -2219,11 +2219,11 @@ test("node.events.<name>.on: subscribe + emit simulation で rAF tick で handle
     const calls: Array<{ atSample: number; level: number }> = [];
     node.events["peak"]!.on((p) => calls.push(p as { atSample: number; level: number }));
 
-    // head = 0 = drain ナ シ
+    // head = 0: nothing to drain
     raf.flush();
     expect(calls).toEqual([]);
 
-    // worklet emit を simulate: head = 1, slot 0 = atSample 5 / level 0.75
+    // simulate a worklet emit: head = 1, slot 0 = atSample 5 / level 0.75
     const header = new Int32Array(eventBuf, 0, 3);
     const slot0 = new DataView(eventBuf, 12);
     slot0.setInt32(0, 5, true);
@@ -2232,7 +2232,7 @@ test("node.events.<name>.on: subscribe + emit simulation で rAF tick で handle
     raf.flush();
     expect(calls).toEqual([{ atSample: 5, level: 0.75 }]);
 
-    // 2 emit 目: head = 2, slot 1 = atSample 7 / level 0.5
+    // second emit: head = 2, slot 1 = atSample 7 / level 0.5
     slot0.setInt32(8, 7, true);
     slot0.setFloat32(12, 0.5, true);
     Atomics.store(header, 0, 2);
@@ -2247,7 +2247,7 @@ test("node.events.<name>.on: subscribe + emit simulation で rAF tick で handle
   }
 });
 
-test("node.events.<name>.on: 多 重 subscribe = registration order で fire", async () => {
+test("node.events.<name>.on: multiple subscribers fire in registration order", async () => {
   const raf = installRafMock();
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
@@ -2274,7 +2274,7 @@ test("node.events.<name>.on: 多 重 subscribe = registration order で fire", a
   }
 });
 
-test("node.events.<name>.on: unsubscribe 後 fire ナ シ", async () => {
+test("node.events.<name>.on: handler does not fire after unsubscribe", async () => {
   const raf = installRafMock();
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
@@ -2300,14 +2300,14 @@ test("node.events.<name>.on: unsubscribe 後 fire ナ シ", async () => {
     slot0.setFloat32(12, 0.2, true);
     Atomics.store(header, 0, 2);
     raf.flush();
-    expect(calls.length).toBe(1); // unsubscribe 後 = fire ナ シ
+    expect(calls.length).toBe(1); // after unsubscribe: no further fires
   } finally {
     h.cleanup();
     raf.restore();
   }
 });
 
-test("node.events.<name>.diagnostics.overflowCount: SAB から Atomics.load", async () => {
+test("node.events.<name>.diagnostics.overflowCount reads from the SAB via Atomics.load", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     const node = await startCreate(
@@ -2318,14 +2318,14 @@ test("node.events.<name>.diagnostics.overflowCount: SAB から Atomics.load", as
       .eventRingsBuffer as SharedArrayBuffer;
     const header = new Int32Array(eventBuf, 0, 3);
     expect(node.events["peak"]!.diagnostics.overflowCount()).toBe(0);
-    Atomics.store(header, 2, 42); // overflowCount = 42
+    Atomics.store(header, 2, 42); // set overflowCount = 42
     expect(node.events["peak"]!.diagnostics.overflowCount()).toBe(42);
   } finally {
     h.cleanup();
   }
 });
 
-test("node.events.<name>.on: dispose で 全 subscriber clear + 後 続 fire ナ シ", async () => {
+test("node.events.<name>.on: dispose clears all subscribers and stops further fires", async () => {
   const raf = installRafMock();
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
@@ -2352,7 +2352,7 @@ test("node.events.<name>.on: dispose で 全 subscriber clear + 後 続 fire ナ
   }
 });
 
-test("node.events: event ナ シ processor で 空 object", async () => {
+test("node.events is an empty object for a processor with no event rings", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     const node = await startCreate(
@@ -2365,7 +2365,7 @@ test("node.events: event ナ シ processor で 空 object", async () => {
   }
 });
 
-test("node.events.<name>.on: f64 / i64 / bool field を plain JS 値 で 受 領", async () => {
+test("node.events.<name>.on: f64 / i64 / bool fields are delivered as plain JS values", async () => {
   const raf = installRafMock();
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
@@ -2373,7 +2373,7 @@ test("node.events.<name>.on: f64 / i64 / bool field を plain JS 値 で 受 領
       name: "wide",
       wasmRingBase: 0,
       capacity: 4,
-      slotSize: 24, // atSample(4) + f64(8) + i64(8) + bool(4) = 24
+      slotSize: 24, // atSample (4) + f64 (8) + i64 (8) + bool (4) = 24
       fields: [
         { name: "atSample", wireType: "i32" as const, offsetInSlot: 0, byteSize: 4 },
         { name: "amp", wireType: "f64" as const, offsetInSlot: 4, byteSize: 8 },
@@ -2405,11 +2405,11 @@ test("node.events.<name>.on: f64 / i64 / bool field を plain JS 値 で 受 領
   }
 });
 
-test("node.events.<name>.on: postMessage transport で port.onmessage 経 由 で subscriber + diagnostics 即 時 更 新", async () => {
-  // postMessage path = worklet 側 が `port.postMessage({ kind: 'event', ringIndex,
-  // newSlotsBytes, newSlotCount, overflowCount })` を 投 げ る = main 側 onEventMessage
-  // 経 由 で payload 解 読 + subscriber 即 時 fire + overflowCount mirror 更 新。
-  // rAF flush 不 要。
+test("node.events.<name>.on: postMessage transport updates subscribers and diagnostics immediately via port.onmessage", async () => {
+  // postMessage path: the worklet posts `{ kind: 'event', ringIndex,
+  // newSlotsBytes, newSlotCount, overflowCount }`. The main side decodes the
+  // payload via onEventMessage, fires subscribers immediately, and mirrors
+  // overflowCount. No rAF flush needed.
   const raf = installRafMock();
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   try {
@@ -2419,12 +2419,12 @@ test("node.events.<name>.on: postMessage transport で port.onmessage 経 由 �
     );
     const calls: unknown[] = [];
     node.events["peak"]!.on((p) => calls.push(p));
-    // 1 slot 分 (= atSample i32 + level f32 = 8 byte) の newSlotsBytes を 構 築。
+    // Build a newSlotsBytes buffer for 1 slot (atSample i32 + level f32 = 8 bytes)
     const slotBuf = new ArrayBuffer(8);
     const view = new DataView(slotBuf);
     view.setInt32(0, 3, true);
     view.setFloat32(4, 0.5, true);
-    // port listener 経 由 で event message dispatch を simulate
+    // simulate an event message dispatch via the port listener
     for (const listener of h.lastNode!.port.__listeners) {
       listener({
         data: {
@@ -2438,7 +2438,7 @@ test("node.events.<name>.on: postMessage transport で port.onmessage 経 由 �
     }
     expect(calls).toEqual([{ atSample: 3, level: 0.5 }]);
     expect(node.events["peak"]!.diagnostics.overflowCount()).toBe(7);
-    // rAF flush し て も 追 加 fire ナ シ (= polling 不 要 = port driven)
+    // rAF flush produces no additional fires (port-driven, no polling needed)
     raf.flush();
     expect(calls).toEqual([{ atSample: 3, level: 0.5 }]);
   } finally {
@@ -2447,9 +2447,9 @@ test("node.events.<name>.on: postMessage transport で port.onmessage 経 由 �
   }
 });
 
-test("node.events.<name>.on: drop-oldest 経 由 で sabTail 進 ん だ ら main local tail を 巻 き 直 す", async () => {
-  // worklet 側 で drop-oldest 発 動 → SAB tail が main local tail を 越 え る path =
-  // main 側 で max(localTail, sabTail) で drain 開 始 を 巻 き 直 す。
+test("node.events.<name>.on: when drop-oldest advances sabTail past the local tail, main resets its drain start position", async () => {
+  // When the worklet fires drop-oldest, the SAB tail advances past the main
+  // local tail. The main side then resets drain start to max(localTail, sabTail).
   const raf = installRafMock();
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
@@ -2463,9 +2463,9 @@ test("node.events.<name>.on: drop-oldest 経 由 で sabTail 進 ん だ ら mai
     node.events["peak"]!.on((p) => calls.push(p as Record<string, unknown>));
     const header = new Int32Array(eventBuf, 0, 3);
     const slotsView = new DataView(eventBuf, 12);
-    // worklet で 多 数 emit 後 drop-oldest 連 発 = head 20, tail 4 (= 16 個 ring 内 で
-    // 16 個 fill 済 + 4 個 drop)。 main local tail = 0、 sabTail = 4 = 巻 き 直 し で
-    // tail = 4 か ら drain。
+    // After many emits + repeated drop-oldest on the worklet: head = 20, tail = 4
+    // (ring filled with 16 slots, 4 dropped). Main local tail = 0, sabTail = 4,
+    // so drain resets to tail = 4.
     for (let i = 0; i < 16; i++) {
       const slotIdx = (4 + i) % 16;
       slotsView.setInt32(slotIdx * 8, 4 + i, true); // atSample
@@ -2474,7 +2474,7 @@ test("node.events.<name>.on: drop-oldest 経 由 で sabTail 進 ん だ ら mai
     Atomics.store(header, 1, 4); // tail = 4
     Atomics.store(header, 0, 20); // head = 20
     raf.flush();
-    // 巻 き 直 し で tail = 4 か ら 16 個 drain、 atSample 4..19 の 順
+    // drain resets to tail = 4, draining 16 slots in atSample order 4..19
     expect(calls.length).toBe(16);
     expect(calls[0]).toEqual({ atSample: 4, level: Math.fround(0.04) });
     expect(calls[15]).toEqual({ atSample: 19, level: Math.fround(0.19) });
@@ -2484,7 +2484,7 @@ test("node.events.<name>.on: drop-oldest 経 由 で sabTail 進 ん だ ら mai
   }
 });
 
-test("node.events.<name>.on: handler が throw して も catch + console.error + 後続 fire 続 行", async () => {
+test("node.events.<name>.on: handler throw is caught and logged to console.error; subsequent handlers still fire", async () => {
   const raf = installRafMock();
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   const originalConsoleError = console.error;
@@ -2509,8 +2509,8 @@ test("node.events.<name>.on: handler が throw して も catch + console.error 
     slot0.setFloat32(4, 0.1, true);
     Atomics.store(header, 0, 1);
     raf.flush();
-    expect(errs.length).toBeGreaterThan(0); // throw が console.error に 流 れ た
-    expect(goodCalls.length).toBe(1); // 後 続 handler は fire 続 行
+    expect(errs.length).toBeGreaterThan(0); // throw surfaced via console.error
+    expect(goodCalls.length).toBe(1); // subsequent handler still fired
   } finally {
     console.error = originalConsoleError;
     h.cleanup();
@@ -2530,7 +2530,7 @@ const presetMessageRing = {
   fields: [{ name: "slot", wireType: "i32" as const, offsetInSlot: 0, byteSize: 4 }],
 };
 
-test("node.events.<name>.emit(payload): SAB slot に field 値 push + head += 1", async () => {
+test("node.events.<name>.emit(payload): pushes field values into a SAB slot and increments head", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     const node = await startCreate(
@@ -2550,7 +2550,7 @@ test("node.events.<name>.emit(payload): SAB slot に field 値 push + head += 1"
   }
 });
 
-test("node.events.<name>.emit(payload): 連 続 send で slot 列 順 fill", async () => {
+test("node.events.<name>.emit(payload): sequential sends fill slots in order", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     const node = await startCreate(
@@ -2573,7 +2573,7 @@ test("node.events.<name>.emit(payload): 連 続 send で slot 列 順 fill", asy
   }
 });
 
-test("node.events.<name>.emit(payload): overflow path = capacity 4 で 5 send で overflowCount = 1", async () => {
+test("node.events.<name>.emit(payload): overflow path increments overflowCount when capacity is exceeded (capacity 4, 5 sends)", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     const smallRing = { ...presetMessageRing, capacity: 4 };
@@ -2599,7 +2599,7 @@ test("node.events.<name>.emit(payload): overflow path = capacity 4 で 5 send �
   }
 });
 
-test("node.events.<name>.diagnostics.overflowCount: SAB か ら Atomics.load", async () => {
+test("node.events.<name>.diagnostics.overflowCount reads from the SAB via Atomics.load (message ring)", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     const node = await startCreate(
@@ -2619,7 +2619,7 @@ test("node.events.<name>.diagnostics.overflowCount: SAB か ら Atomics.load", a
   }
 });
 
-test("node.events.<name>.emit(): void payload (= fields ナ シ) で fire = head += 1 + slot 書 込 ナ シ", async () => {
+test("node.events.<name>.emit(): void payload (no fields) increments head without writing slot data", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     const voidRing = {
@@ -2644,7 +2644,7 @@ test("node.events.<name>.emit(): void payload (= fields ナ シ) で fire = head
   }
 });
 
-test("node.events: message/event ナ シ processor で 空 object 且 つ node.messages は 消 滅", async () => {
+test("node.events is an empty object for a processor with no message/event rings, and node.messages is absent", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     const node = await startCreate(
@@ -2658,7 +2658,7 @@ test("node.events: message/event ナ シ processor で 空 object 且 つ node.m
   }
 });
 
-test("node.events.<name>.emit(payload): boolean field を 0/1 i32 で push (= Q46 lift)", async () => {
+test("node.events.<name>.emit(payload): boolean fields are encoded as 0/1 i32 (Q46 lift)", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     const flagRing = {
@@ -2684,13 +2684,13 @@ test("node.events.<name>.emit(payload): boolean field を 0/1 i32 で push (= Q4
   }
 });
 
-test("node.events.<name>.emit(payload): postMessage transport = port.postMessage 直 送 + overflow は worklet 側 通 知 経 由 で mirror 更 新", async () => {
-  // 新 仕 様: main 側 sender は SAB write じ ゃ な く `port.postMessage({ kind:
-  // 'message', ringIndex, payload })` で 直 送。 overflow は worklet 側 で WASM ring
-  // が 容 量 超 え 時 に drop-oldest 発 動 + port.postMessage({ kind: 'message-overflow',
-  // ringIndex, overflowCount }) で main へ 通 知 = main 側 mirror 更 新 = diagnostics
-  // で read。 ここ で は spy で port.postMessage を hook し て 5 件 全 送 信 担 保 +
-  // worklet 通 知 を simulate し て mirror 更 新 + diagnostics 観 測。
+test("node.events.<name>.emit(payload): postMessage transport sends directly via port.postMessage; overflow mirrors via worklet notification", async () => {
+  // The main sender uses `port.postMessage({ kind: 'message', ringIndex, payload })`
+  // rather than SAB writes. When the WASM ring exceeds capacity, the worklet
+  // fires drop-oldest and notifies via `{ kind: 'message-overflow', ringIndex,
+  // overflowCount }`, which mirrors the count for diagnostics. This test hooks
+  // port.postMessage via spy to confirm all 5 sends go through, then simulates
+  // the worklet notification and observes the mirrored diagnostics.
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   try {
     const smallRing = { ...presetMessageRing, capacity: 4 };
@@ -2708,14 +2708,14 @@ test("node.events.<name>.emit(payload): postMessage transport = port.postMessage
     send({ slot: 3 });
     send({ slot: 4 });
     send({ slot: 5 });
-    // 5 件 全 port.postMessage で 直 送
+    // all 5 sends delivered via port.postMessage
     expect(posted).toHaveLength(5);
     expect(posted[0]).toEqual({ kind: "message", ringIndex: 0, payload: { slot: 1 } });
     expect(posted[4]).toEqual({ kind: "message", ringIndex: 0, payload: { slot: 5 } });
-    // 初 期 overflow = 0 (= worklet 通 知 未 受 領)
+    // initial overflow = 0 (no worklet notification received yet)
     const diag = node.events["preset"].diagnostics;
     expect(diag.overflowCount()).toBe(0);
-    // worklet が drop-oldest 発 動 を 通 知 する path を simulate
+    // simulate the worklet's drop-oldest notification
     for (const listener of h.lastNode!.port.__listeners) {
       listener({
         data: { kind: "message-overflow", ringIndex: 0, overflowCount: 1 },
@@ -2727,7 +2727,7 @@ test("node.events.<name>.emit(payload): postMessage transport = port.postMessage
   }
 });
 
-test("node.events.<name>.emit(payload): postMessage transport = port.postMessage 直 送 (= payload そ の ま ま carry)", async () => {
+test("node.events.<name>.emit(payload): postMessage transport delivers payload unchanged via port.postMessage", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   try {
     const node = await startCreate(
@@ -2761,7 +2761,7 @@ const midiOutFixture = {
   capacity: 256,
 };
 
-test("node.midi.<in>.send: postMessage transport = wire byte に encode し て port.postMessage 直 送", async () => {
+test("node.midi.<in>.send: postMessage transport encodes to wire bytes and delivers via port.postMessage", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   try {
     const node = await startCreate(
@@ -2779,7 +2779,7 @@ test("node.midi.<in>.send: postMessage transport = wire byte に encode し て 
   }
 });
 
-test("node.midi.<out>.onEvent: postMessage transport = midiOut slot を decode し て type 一 致 handler に dispatch", async () => {
+test("node.midi.<out>.onEvent: postMessage transport decodes a midiOut slot and dispatches to matching type handler", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   try {
     const node = await startCreate(
@@ -2805,7 +2805,7 @@ test("node.midi.<out>.onEvent: postMessage transport = midiOut slot を decode �
   }
 });
 
-test("node.midi.<out>.onEvent: type 不 一 致 の event で は handler を fire し な い", async () => {
+test("node.midi.<out>.onEvent: handler does not fire when the event type does not match", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   try {
     const node = await startCreate(
@@ -2834,7 +2834,7 @@ test("node.midi.<out>.onEvent: type 不 一 致 の event で は handler を fi
   }
 });
 
-test("node.midi.<name>.diagnostics.overflowCount: postMessage transport = midi-overflow 通 知 で mirror 更 新", async () => {
+test("node.midi.<name>.diagnostics.overflowCount: postMessage transport mirrors the count via midi-overflow notification", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   try {
     const node = await startCreate(
@@ -2851,7 +2851,7 @@ test("node.midi.<name>.diagnostics.overflowCount: postMessage transport = midi-o
   }
 });
 
-test("node.midi.<in>.connectFromWebMIDI: MIDIInput.onmidimessage の raw bytes を send 経 由 で 注 入", async () => {
+test("node.midi.<in>.connectFromWebMIDI: injects MIDIInput.onmidimessage raw bytes via send", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   try {
     const node = await startCreate(
@@ -2873,7 +2873,7 @@ test("node.midi.<in>.connectFromWebMIDI: MIDIInput.onmidimessage の raw bytes �
   }
 });
 
-test("node.midi.<in>.send: SAB transport = 共 有 ring に wire slot write + head++", async () => {
+test("node.midi.<in>.send: SAB transport writes a wire slot into the shared ring and increments head", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     const node = await startCreate(
@@ -2895,7 +2895,7 @@ test("node.midi.<in>.send: SAB transport = 共 有 ring に wire slot write + he
   }
 });
 
-test("node.midi.<out>.onEvent: SAB transport = rAF poll で 共 有 out-ring を drain + dispatch", async () => {
+test("node.midi.<out>.onEvent: SAB transport drains the shared out-ring and dispatches via rAF poll", async () => {
   const raf = installRafMock();
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
@@ -2922,7 +2922,7 @@ test("node.midi.<out>.onEvent: SAB transport = rAF poll で 共 有 out-ring を
   }
 });
 
-test("node.midi: midi-less processor = 空 object", async () => {
+test("node.midi is an empty object for a processor with no MIDI rings", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
     const node = await startCreate(

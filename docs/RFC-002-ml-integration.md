@@ -1,108 +1,108 @@
 # RFC-002 — ML integration (ONNX / NAM / DDSP)
 
-unworklet user が learned neural-network ベース の DSP (= NAM amp model、 DDSP timbre transfer、 ONNX-exported audio NN 全般) を、 既存 primitive と同じ感覚で TS で書ける framework 拡張の提案。 build 時 に NN を AST に lower し て fused WASM に焼く AOT path と、 大規模 NN を main thread で動かす runtime bridge path の 2 つ を 統 合 的 に support する。
+A proposal for extending unworklet so that users can work with learned neural-network-based DSP (NAM amp models, DDSP timbre transfer, ONNX-exported audio NNs in general) using the same TypeScript primitives as existing built-ins. The proposal covers two integrated paths: an AOT path that lowers NNs into the AST and bakes them into a fused WASM binary at build time, and a runtime bridge path that runs large NNs on the main thread.
 
 ## Status
 
-**Draft** — proposed for v1.x.0 (post v1.0.0 additive)。 v1.0.0 scope 外、 v1.0.0 ship 後 の additive 拡張 path として 提案。 v1.0.0 spec / canonical examples の integrity rule に は 影 響 し な い。
+**Draft** — proposed for v1.x.0 (post v1.0.0 additive). Outside v1.0.0 scope; proposed as an additive extension after v1.0.0 ships. Does not affect the integrity rules of the v1.0.0 spec or canonical examples.
 
-本 RFC は提案 段階。 ratify 前 で あり、 採 用 / 修 正 / 却 下 い ず れ の path も 開 い て い る。 採 用 さ れ た 場 合 は decisions-log.md に 対 応 Q entry を 追 加 し て 各 component doc に 反 映 さ れ る。
+This RFC is in the proposal stage. It has not been ratified; adoption, revision, and rejection are all open paths. If adopted, corresponding Q entries will be added to `decisions-log.md` and each component doc will be updated accordingly.
 
-> **Surface note.** 旧 `message<T>` / `midiInput` / `midiOutput` の表記が残る箇所は、現行の **event family** (`event<T>({ from | to: "main" })` + `event.midi`、`decisions-log.md` Q87 / Q88) に読み替え。現行 surface は `01-dsl.md`。
+> **Surface note.** Any references to the old `message<T>` / `midiInput` / `midiOutput` surface should be read as the current **event family** (`event<T>({ from | to: "main" })` + `event.midi`, `decisions-log.md` Q87 / Q88). The current surface is defined in `01-dsl.md`.
 
 ## 1. Motivation
 
-unworklet は TypeScript で書い た audio DSP を pure WASM artifact として AOT compile する framework と し て v1.0.0 で 設 計 が 確 定 し て い る。 一 方、 audio software 業 界 で は 過 去 数 年、 neural-network ベ ー ス の DSP が production-grade の 表 現 力 を 獲 得 し て い る:
+unworklet is a framework that AOT-compiles audio DSP written in TypeScript into pure WASM artifacts, with its design finalized for v1.0.0. Meanwhile, the audio software industry has seen neural-network-based DSP reach production-grade expressive power over the past several years:
 
-- **NAM (Neural Amp Modeler)**: LSTM ベース の 小規模 NN (~30k parameter) で 真空管アンプ + cabinet を完全再現。 community で 数千 の 学習済み model が 公 開 さ れ て い る。
-- **DDSP (Differentiable DSP)**: Google Research 発、 NN が control parameter を 生成し、 audio rate は 古典 DSP で 合成する architecture。 violin / saxophone / 等 の 学習済み model が 利用可能。
-- **RAVE / autoencoder-based timbre transfer**: 任意 の 音 を 任 意 の timbre に 変換、 IRCAM の 研究 成果 を base に エ コ シ ス テ ム 拡 大 中。
-- **ONNX (Open Neural Network Exchange)**: Microsoft + Meta 主導、 ML interchange の de facto standard。 PyTorch / TensorFlow / JAX で 学 習 し た model を portable に 配布 す る universal format。 audio / vision / NLP / 全 ML domain で daily 使用。
+- **NAM (Neural Amp Modeler)**: A small LSTM-based NN (~30k parameters) that fully reproduces tube amplifiers and cabinets. Thousands of trained models are publicly available from the community.
+- **DDSP (Differentiable DSP)**: From Google Research — an architecture where a NN generates control parameters while audio-rate synthesis is handled by classical DSP. Trained models for violin, saxophone, and more are available.
+- **RAVE / autoencoder-based timbre transfer**: Converts arbitrary audio to an arbitrary timbre; an ecosystem growing from IRCAM research.
+- **ONNX (Open Neural Network Exchange)**: The de facto standard for ML interchange, led by Microsoft and Meta. A universal format for distributing models trained in PyTorch, TensorFlow, or JAX in a portable way. Used daily across audio, vision, NLP, and all ML domains.
 
-現状 の unworklet で は、 こ れ ら NN を 取 り 込 む path が 不在。 user は ONNX runtime web を main thread で 別途 setup し、 boilerplate な audio buffer 往復、 message 経 由 の control parameter 渡し、 latency 管理、 を 全 て 自分で 組む 必要 が ある。 こ れ は unworklet の 核 心 (= boilerplate を framework が 消す) と 矛 盾 す る 状態。
+Currently, unworklet has no path for incorporating these NNs. Users must set up onnxruntime-web separately on the main thread, then wire up audio buffer round-trips, control parameter passing via messages, and latency management entirely by hand. This contradicts the core principle of unworklet — that the framework eliminates boilerplate.
 
-一 方、 NN を first-class で 統 合 する framework は audio domain で は 現存 し ない:
+At the same time, no existing framework in the audio domain provides first-class NN integration:
 
-- Tone.js / Elementary Audio / Web Audio API: NN 統合 ナ シ
-- onnxruntime-web: NN 専用 runtime、 audio domain 統合 ナ シ
-- NAM C++ engine: 特定 model 形式 専用、 declarative TS から の 書 き 方 ナ シ
-- JUCE: C++ 一 般、 NN 統合 ナ シ、 audio plugin format 用
+- Tone.js / Elementary Audio / Web Audio API: no NN integration
+- onnxruntime-web: a NN-dedicated runtime with no audio-domain integration
+- NAM C++ engine: specific to one model format, with no declarative TS authoring path
+- JUCE: general-purpose C++, no NN integration, targets audio plugin formats
 
-つ ま り 「declarative TS で audio DSP と NN を 1 つ の processor 内 に 統合 で き る framework」 は 完全 に 空 い て い る 設 計 領 域。 unworklet の AOT compile + pure WASM artifact + 型 安全 の 哲学 を ML domain に 拡 張 す る natural extension と し て 位置 す る。
+In other words, "a framework where declarative TypeScript can integrate audio DSP and NNs within a single processor" is a completely open design space. This is a natural extension of unworklet's AOT compile + pure WASM artifact + type-safety philosophy into the ML domain.
 
-### 1.1 想 定 さ れ る user use case
+### 1.1 Anticipated user use cases
 
-提 案 が ratify さ れ た 場 合、 unworklet user が 書 け る よ う に な る も の:
+If the proposal is ratified, unworklet users will be able to build:
 
-- **Neural amp modeling**: ギター入力 を 真空管アンプ + cabinet の 学習済み NAM model に 通す
-- **DDSP timbre transfer**: 自分 の 声 を 楽器 音 (= サックス、 violin、 等) に 変換
-- **AI-driven mastering**: 入力 楽 曲 の 特徴 を NN で 分析、 EQ / compressor / limiter の settings を 自動調整
-- **Real-time pitch correction**: CREPE 等 の ML 系 pitch detector を 古典 Auto-Tune path に 取 り 込 む
-- **Adaptive effects**: 演奏 状況 (= 強弱、 chord、 mood) を NN で 検出、 reverb / delay の 設定 を adaptive に 変調
-- **Voice / source separation**: Demucs / Spleeter の audio thread 内 inference (= 重 い NN は runtime bridge 経 由)
-- **LLM-driven synth patches**: 自然 言 語 prompt → 生成 さ れ た unworklet TS code → 即 試聴
+- **Neural amp modeling**: pass guitar input through a trained NAM model of a tube amp and cabinet
+- **DDSP timbre transfer**: convert a voice into an instrument sound (saxophone, violin, etc.)
+- **AI-driven mastering**: analyze an input track's characteristics with a NN, then auto-adjust EQ / compressor / limiter settings
+- **Real-time pitch correction**: integrate an ML-based pitch detector like CREPE into a classical Auto-Tune path
+- **Adaptive effects**: detect playing context (dynamics, chord, mood) with a NN, then adaptively modulate reverb / delay settings
+- **Voice / source separation**: in-thread inference with Demucs / Spleeter (large NNs go through the runtime bridge)
+- **LLM-driven synth patches**: natural language prompt → generated unworklet TS code → immediate audition
 
 ## 2. Goals / Non-goals
 
 ### Goals
 
-- **Declarative integration**: NN を 既 存 primitive と 同 じ shape の API で 扱 え る (= `ampModel.process(x)` が `tanh(x)` と 同 じ 感 覚 で 呼 べ る)。
-- **AOT path で 小 〜 中規模 NN を per-sample 推論**: 学 習 済 み model を build 時 に AST 展開、 fused WASM と し て emit。 onnxruntime-web の generic runtime overhead を 排 除。
-- **Runtime bridge path で 大規模 NN を per-block 推論**: main thread で onnxruntime-web を 動 か し、 SAB / message<T> で worklet と 連携。 boilerplate は framework が 消 す。
-- **型 安全**: NN 入出力 の shape / 数値 type を branded `Node<T>` 系 に 反映、 IDE で typo / shape mismatch を catch。
-- **Portability の 維 持**: emit さ れ る artifact は pure WASM の ま ま、 browser AudioWorklet / Node / standalone WASM runtime / native plugin / embedded で 動 く 性 質 を 失 わ な い。
-- **既存 spec の non-disruptive 拡張**: v1.0.0 core surface (`defineProcessor`、 `Node<T>`、 `forSample` 等) を 変 え ず、 別 package と vite-plugin 拡張 で 完結。 既存 user の code に 影響 ナ シ。
+- **Declarative integration**: NNs are handled through an API with the same shape as existing primitives (i.e., `ampModel.process(x)` feels the same as calling `tanh(x)`).
+- **AOT path for per-sample inference on small-to-medium NNs**: expand trained models into the AST at build time and emit them as fused WASM, eliminating the generic runtime overhead of onnxruntime-web.
+- **Runtime bridge path for per-block inference on large NNs**: run onnxruntime-web on the main thread and connect it to the worklet via SAB / `message<T>`. The framework eliminates the boilerplate.
+- **Type safety**: reflect NN input/output shapes and numeric types in branded `Node<T>` types so the IDE and TS compiler catch typos and shape mismatches.
+- **Preserved portability**: the emitted artifact stays pure WASM, retaining the ability to run in a browser AudioWorklet, Node, a standalone WASM runtime, a native plugin host, or an embedded environment.
+- **Non-disruptive extension of the existing spec**: the v1.0.0 core surface (`defineProcessor`, `Node<T>`, `forSample`, etc.) remains unchanged; everything is contained within a separate package and a vite-plugin extension. No impact on existing user code.
 
 ### Non-goals
 
-- **Generic ONNX runtime の 自前 実 装**: ~200 operator 全 implement は scope 外。 audio で 使う subset (~20 operator) の み 実 装、 残 り は runtime bridge path で onnxruntime-web に 委 譲。
-- **NN 学習 path**: 学習 (= PyTorch / TF 等) は framework scope 外。 unworklet は 推論 専 用、 user が 別 環境 で 学習 し た model を 取 り 込 む path を 提 供。
-- **大規模 NN の audio-rate per-sample 推論**: 数億 parameter ク ラ ス の NN を audio thread 内 で 動 か す 試 み は scope 外。 latency / CPU 制約 上 不可能。 中規模 以 上 は runtime bridge 一 択。
-- **Specific plugin format adapter**: VST3 / AU / AAX 等 へ の ML model 統合 ラッパー は scope 外 (= host-format adapter 非 goal の 既存 invariant と zip)。
-- **Cloud-based inference API ラッパー**: OpenAI Whisper API 等 の ク ラ ウ ド 推論 へ の 統合 wrapper は user-land、 framework が 担 当 し な い。
+- **Self-implementing a generic ONNX runtime**: implementing all ~200 operators is out of scope. Only the audio-relevant subset (~20 operators) is implemented; the rest is delegated to onnxruntime-web via the runtime bridge.
+- **Training path**: training (PyTorch / TF, etc.) is outside framework scope. unworklet handles inference only; it provides a path for users to import models trained in a separate environment.
+- **Audio-rate per-sample inference for large NNs**: running NNs with hundreds of millions of parameters inside the audio thread is out of scope — impossible given latency and CPU constraints. Medium-and-larger NNs use the runtime bridge exclusively.
+- **Specific plugin format adapters**: ML model integration wrappers for VST3 / AU / AAX etc. are out of scope (consistent with the existing invariant that host-format adapters are a non-goal).
+- **Cloud inference API wrappers**: integration wrappers for cloud inference endpoints like the OpenAI Whisper API are user-land concerns; the framework does not own them.
 
 ## 3. Architecture overview
 
-3 つ の 新規 公開 package + 既存 unworklet の 拡張 で 構 成。
+Three new public packages plus extensions to the existing unworklet packages.
 
 ```
-@unworklet/core          (既存 + minor 拡張)
+@unworklet/core          (existing + minor extension)
    ↓ peer dep
-@unworklet/ml            (新規 — NN primitive と runtime bridge base)
+@unworklet/ml            (new — NN primitives and runtime bridge base)
    ↓ depends on
-@unworklet/onnx          (新規 — ONNX file parser + lower)
+@unworklet/onnx          (new — ONNX file parser + lowering)
 
-@unworklet/nam           (新規 — NAM-specific helper)
-@unworklet/ddsp          (新規 — DDSP primitive + loader)
+@unworklet/nam           (new — NAM-specific helpers)
+@unworklet/ddsp          (new — DDSP primitives + loader)
 
-@unworklet/vite-plugin   (既存 + ML asset import 拡張)
+@unworklet/vite-plugin   (existing + ML asset import extension)
 ```
 
-各 package の 責 務:
+Responsibilities of each package:
 
-- **`@unworklet/ml`**: NN primitive (`lstm_cell`、 `gru_cell`、 `dense_layer`、 `conv1d`、 `attention` 等) の 公開、 runtime bridge の base class、 個別 file format は 知 ら な い universal な NN compute layer。
-- **`@unworklet/onnx`**: ONNX file の protobuf parser、 operator graph → `@unworklet/ml` primitive 呼 び 出 し へ の lowering、 量子化 / プルーニング pipeline。
-- **`@unworklet/nam`**: NAM の `.json` / `.nam` file の 直接 reader、 LSTM ベース forward pass を AST に 展開 す る 高 level helper。 community で 大量 に 公 開 さ れ て い る .nam model を 即 import 可能 に す る 1 行 API。
-- **`@unworklet/ddsp`**: DDSP-specific primitive (harmonic additive synth、 filtered noise generator、 等)、 学習済み model loader、 control parameter NN の AOT 展開。
-- **`@unworklet/vite-plugin`** (既存 拡張): `*.onnx` / `*.nam` / `*.ddsp` import の handle、 build 時 に WASM 内 emit、 sidecar `.d.ts` 生成。
+- **`@unworklet/ml`**: exposes NN primitives (`lstm_cell`, `gru_cell`, `dense_layer`, `conv1d`, `attention`, etc.), the runtime bridge base class, and a universal NN compute layer that has no knowledge of individual file formats.
+- **`@unworklet/onnx`**: protobuf parser for ONNX files, lowering of operator graphs to `@unworklet/ml` primitive calls, and a quantization / pruning pipeline.
+- **`@unworklet/nam`**: a direct reader for NAM `.json` / `.nam` files, a high-level helper that expands the LSTM forward pass into the AST, and a one-liner API that makes it possible to import any of the `.nam` models available from the community.
+- **`@unworklet/ddsp`**: DDSP-specific primitives (harmonic additive synth, filtered noise generator, etc.), a trained model loader, and AOT expansion of the control-parameter NN.
+- **`@unworklet/vite-plugin`** (existing, extended): handles `*.onnx` / `*.nam` / `*.ddsp` imports, emits them into WASM at build time, and generates sidecar `.d.ts` files.
 
-### 3.1 AOT path と runtime path の 選 択 基 準
+### 3.1 Criteria for choosing the AOT path vs. the runtime path
 
-NN を unworklet と 組 み 合 わ せ る 際、 model 規 模 と 推論 rate で path が 分 か れ る。
+When combining a NN with unworklet, the appropriate path depends on model size and inference rate.
 
-| NN 規模             | 推論 rate               | 推奨 path                                      | 代表例                        |
-| ------------------- | ----------------------- | ---------------------------------------------- | ----------------------------- |
-| 小 (~ 数万 param)   | per-sample (audio rate) | **AOT** (`@unworklet/onnx` / `@unworklet/nam`) | NAM amp model                 |
-| 小 (~ 数万 param)   | per-block (~ ms)        | AOT or runtime                                 | DDSP control parameter        |
-| 中 (~ 数百万 param) | per-block               | **runtime bridge**                             | CREPE pitch detector          |
-| 中 (~ 数百万 param) | per-second 〜           | runtime bridge                                 | AI mastering settings         |
-| 大 (~ 数億 param)   | per-second 〜           | **runtime bridge + WebGPU**                    | RAVE timbre transfer、 Demucs |
+| NN size                   | Inference rate       | Recommended path                               | Example                        |
+| ------------------------- | -------------------- | ---------------------------------------------- | ------------------------------ |
+| Small (~tens of K params) | per-sample (audio rate) | **AOT** (`@unworklet/onnx` / `@unworklet/nam`) | NAM amp model                  |
+| Small (~tens of K params) | per-block (~ms)      | AOT or runtime                                 | DDSP control parameters        |
+| Medium (~millions of params) | per-block         | **runtime bridge**                             | CREPE pitch detector           |
+| Medium (~millions of params) | per-second or slower | runtime bridge                              | AI mastering settings          |
+| Large (~hundreds of M params) | per-second or slower | **runtime bridge + WebGPU**               | RAVE timbre transfer, Demucs   |
 
-判 断 基 準 を framework が 自 動 推 論 す る か、 user が build option で 明示 す る か は 実装 時 ratify。 提案 と し て は **model file の metadata + build option の hybrid**。 デ フ ォ ル ト は file size + parameter 数 か ら framework が auto-decide、 必要 な ら `loadOnnxModel('./model.onnx', { path: 'aot' })` で 強 制。
+Whether the framework auto-infers the choice or the user specifies it via a build option is a decision deferred to implementation-time ratification. The proposal is a **hybrid of model file metadata and build options**: the default has the framework auto-decide based on file size and parameter count, with an escape hatch like `loadOnnxModel('./model.onnx', { path: 'aot' })` to force a specific path.
 
 ## 4. User-facing API surface
 
-User が 書 く コード を 中 心 に 提案 を 示 す。 既 存 unworklet primitive と 完全 に 合 成 で き る こ と が 核 心。
+The proposal centers on the code users write. The core point is that NNs compose fully with existing unworklet primitives.
 
 ### 4.1 Case A — NAM (neural amp modeler) AOT path
 
@@ -110,7 +110,7 @@ User が 書 く コード を 中 心 に 提案 を 示 す。 既 存 unworkl
 import { defineProcessor, audioInput, audioOutput, forSample } from "@unworklet/core";
 import { loadNamModel } from "@unworklet/nam";
 
-// build 時 に bundle、 AOT で WASM 内 に 展開 さ れ る
+// bundled at build time; expanded into WASM via AOT
 const ampModel = loadNamModel("./marshall-jcm800.nam");
 
 export const ampPlugin = defineProcessor(() => {
@@ -121,18 +121,18 @@ export const ampPlugin = defineProcessor(() => {
     process: () =>
       forSample((i) => {
         const x = input.ch(0).at(i);
-        const y = ampModel.process(x); // NN forward pass、 fused WASM 内 inline
+        const y = ampModel.process(x); // NN forward pass, inlined into fused WASM
         out.ch(0).at(i).write(y);
       }),
   };
 });
 ```
 
-User の mental model = 「**NN は 単 な る `process(input) → output` の function**」。 既 存 の `tanh(x)` を 呼 ぶ の と 同 じ 感 覚 で `ampModel.process(x)` が 呼 べ る。 内部 で 何 が 起 こ っ て い る か (= LSTM forward pass、 量子化、 SIMD lane 展開) は 意 識 不要。
+The user's mental model is: **"a NN is just a `process(input) → output` function."** Calling `ampModel.process(x)` feels the same as calling `tanh(x)`. What happens internally (LSTM forward pass, quantization, SIMD lane expansion) requires no awareness.
 
-`loadNamModel` の 戻 り 値 は 型 推論 で `{ process: (x: Node<'f32'>) => Node<'f32'>; metadata: NamMetadata }` に narrow さ れ る (= sidecar `.d.ts` で 提供、 §6 参 照)。
+The return type of `loadNamModel` is narrowed by type inference to `{ process: (x: Node<'f32'>) => Node<'f32'>; metadata: NamMetadata }` (provided via a sidecar `.d.ts`; see §6).
 
-### 4.2 Case B — DDSP synthesizer (control NN は AOT、 audio rate は 古典 DSP)
+### 4.2 Case B — DDSP synthesizer (control NN is AOT; audio rate uses classical DSP)
 
 ```typescript
 import { defineProcessor, audioOutput, param, state, buffer, forSample } from "@unworklet/core";
@@ -149,14 +149,14 @@ export const violinSynth = defineProcessor(() => {
     .f32({ default: 0.5, min: 0, max: 1, automationRate: "a-rate" })
     .named("loudness");
 
-  // DDSP control parameter (NN 出力) を hold す る state
+  // state that holds DDSP control parameters (NN outputs)
   const harmAmps = buffer.f32({ size: 64 }).named("harmAmps");
   const noiseSpec = buffer.f32({ size: 32 }).named("noiseSpec");
 
   return {
     process: () =>
       forSample((i, everyNSamples) => {
-        // 10ms ご と に NN forward pass を 走 ら せ て control parameter を update
+        // run the NN forward pass every 10ms to update control parameters
         everyNSamples(480, () => {
           violinTimbre.predict(
             { pitch: pitch.at(i), loudness: loudness.at(i) },
@@ -164,7 +164,7 @@ export const violinSynth = defineProcessor(() => {
           );
         });
 
-        // Audio rate synthesis (= 古典 DSP path、 NN を 通 ら な い)
+        // audio-rate synthesis (classical DSP path — does not pass through the NN)
         const harm = harmonicSynth(pitch.at(i), harmAmps);
         const noise = filteredNoise(noiseSpec);
         out.ch(0).at(i).write(harm.add(noise));
@@ -173,13 +173,13 @@ export const violinSynth = defineProcessor(() => {
 });
 ```
 
-`violinTimbre.predict(...)` は **build 時 に AST 展開**、 全 体 が 1 つ の fused WASM 関数 に 焼 か れ る。 `harmonicSynth` と `filteredNoise` は 古典 DSP primitive (= unworklet 既存 primitive と `@unworklet/ddsp` 提供 helper の 組 み 合 わ せ)。
+`violinTimbre.predict(...)` is **expanded into the AST at build time**, so the whole thing is baked into a single fused WASM function. `harmonicSynth` and `filteredNoise` are classical DSP primitives (a combination of existing unworklet primitives and helpers from `@unworklet/ddsp`).
 
-User 視点 で は 「**NN inference と 古典 DSP が 同 じ TS file の 同 じ `forSample` 内 で 混在 す る**」 体験。
+From the user's perspective: **"NN inference and classical DSP coexist inside the same `forSample` loop in the same TS file."**
 
-### 4.3 Case C — 汎用 ONNX (runtime bridge path、 大規模 NN)
+### 4.3 Case C — General ONNX (runtime bridge path, large NNs)
 
-中 規 模 以 上 の NN は main 側 で onnxruntime-web で 動 か す path。
+For medium-and-larger NNs, the path runs onnxruntime-web on the main side.
 
 ```typescript
 import { defineProcessor, audioInput, audioOutput, buffer, forSample } from "@unworklet/core";
@@ -188,7 +188,7 @@ export const styleTransferPlugin = defineProcessor(() => {
   const input = audioInput({ channels: 1, name: "main" });
   const out = audioOutput({ channels: 1, name: "main" });
 
-  // Buffer in / out (= NN 推論用 に 積 み 込 む / 取 り 出 す)
+  // buffers to fill for NN inference and to read results from
   const nnInput = buffer.f32({ size: 4096 }).named("nnInput");
   const nnOutput = buffer.f32({ size: 4096 }).named("nnOutput");
 
@@ -203,7 +203,7 @@ export const styleTransferPlugin = defineProcessor(() => {
 ```
 
 ```typescript
-// Main 側
+// Main side
 import { createNode } from "@unworklet/core";
 import { OnnxBridge } from "@unworklet/ml";
 
@@ -220,41 +220,41 @@ const bridge = await OnnxBridge.create("./style-transfer.onnx", {
 bridge.attach(node);
 ```
 
-`OnnxBridge` が 以下 を framework 側 で 抽 象 化:
+`OnnxBridge` abstracts the following on the framework side:
 
-- onnxruntime-web の lifecycle (= load、 warmup、 dispose)
-- audio buffer の worklet ↔ main 往復 (= SAB / postMessage、 unworklet 既存 messaging layer 経 由)
-- overlap-add 合 成 (= window 切替 時 の 連続性 確保)
-- 推論 完 了 の signal
-- WebGPU / WASM backend 切替
+- onnxruntime-web lifecycle (load, warmup, dispose)
+- audio buffer round-trips between worklet and main (via SAB / postMessage, through the existing unworklet messaging layer)
+- overlap-add synthesis (continuity across window boundaries)
+- inference completion signaling
+- switching between WebGPU / WASM backends
 
-User は **「bridge を 作 っ て attach す る だ け**」 で 大規模 NN が 組 み 込 ま れ る。
+The user only needs to **create the bridge and call `.attach()`** to integrate a large NN.
 
-## 5. AOT path の internal architecture
+## 5. AOT path internal architecture
 
-`loadOnnxModel('./model.onnx')` が build 時 に 何 を す る か。
+What `loadOnnxModel('./model.onnx')` does at build time.
 
-### 5.1 Step 1 — ONNX file の parse
+### 5.1 Step 1 — Parse the ONNX file
 
-ONNX は Protocol Buffers format で serialize さ れ る。 既存 OSS package (= `onnx-proto`) で decode 可能。
+ONNX is serialized in Protocol Buffers format, which can be decoded using the existing OSS package `onnx-proto`.
 
 ```typescript
-// @unworklet/onnx 内部
+// inside @unworklet/onnx
 function parseOnnxFile(filePath: string): OnnxModel {
   const buffer = fs.readFileSync(filePath);
   const model = onnx.ModelProto.decode(buffer);
   return {
     graph: model.graph,
-    initializers: model.graph.initializer, // 学 習 済 み weights
+    initializers: model.graph.initializer, // trained weights
     inputs: model.graph.input,
     outputs: model.graph.output,
   };
 }
 ```
 
-### 5.2 Step 2 — operator lowering table
+### 5.2 Step 2 — Operator lowering table
 
-各 ONNX operator を unworklet primitive に lower す る table を 持 つ。 v1.x.0 初版 で 実 装 す る operator set (~20 個):
+A table that lowers each ONNX operator to unworklet primitives. The operator set implemented in the initial v1.x.0 release (~20 operators):
 
 ```typescript
 const operatorLowerings = {
@@ -267,10 +267,10 @@ const operatorLowerings = {
   Relu: (inputs) => max(inputs[0], num(0)),
   MatMul: lowerMatMul,
   Gemm: lowerGemm, // general matrix multiply with bias
-  Conv: lowerConv1d, // 1D conv (audio 用)
+  Conv: lowerConv1d, // 1D conv (for audio)
   LSTM: lowerLstmCell,
   GRU: lowerGruCell,
-  BatchNormalization: lowerBatchNorm, // 推論 時 は 固定 affine
+  BatchNormalization: lowerBatchNorm, // fixed affine transform at inference time
   Softmax: lowerSoftmax,
   Slice: lowerSlice,
   Concat: lowerConcat,
@@ -281,13 +281,13 @@ const operatorLowerings = {
 };
 ```
 
-audio domain で 必要 な subset (= LSTM、 GRU、 Conv1D、 dense、 activation、 element-wise math) は こ れ で カ バ ー さ れ る。 後 続 phase で SIMD / Attention layer / Transformer 等 を additive に 追加。
+This covers the subset needed for the audio domain (LSTM, GRU, Conv1D, dense, activation, element-wise math). SIMD, Attention layers, Transformers, etc. will be added additively in subsequent phases.
 
-### 5.3 Step 3 — weights の WASM constant bake
+### 5.3 Step 3 — Bake weights as WASM constants
 
-ONNX initializer (= 学習済み weights) を unworklet の `buffer.f32` constant initializer と し て emit。 weight は **runtime に load 不要、 WASM module 内 に 直接 embed**。 startup latency ゼ ロ、 cache friendly。
+ONNX initializers (trained weights) are emitted as `buffer.f32` constant initializers in unworklet. The weights are **embedded directly in the WASM module — no runtime loading required**. Zero startup latency, cache-friendly.
 
-### 5.4 Step 4 — graph 走査 + lowering
+### 5.4 Step 4 — Graph traversal and lowering
 
 ```typescript
 function lowerOnnxToUnworklet(model: OnnxModel) {
@@ -298,7 +298,7 @@ function lowerOnnxToUnworklet(model: OnnxModel) {
     valueMap.set(name, buf);
   }
 
-  // topological order で operator を traverse
+  // traverse operators in topological order
   for (const op of topologicalOrder(model.graph.nodes)) {
     const inputs = op.inputs.map((name) => valueMap.get(name));
     const result = operatorLowerings[op.op_type](inputs, op.attributes);
@@ -309,15 +309,15 @@ function lowerOnnxToUnworklet(model: OnnxModel) {
 
   return {
     process: (input: Node<"f32">) => {
-      // ... 同 じ traversal で input → output graph を 構築
+      // ... same traversal builds the input → output graph
     },
   };
 }
 ```
 
-結果 と し て ONNX file が 「`.process(input) → output` interface に変 換」 さ れ る。 unworklet の compile pipeline は こ の 結果 を `defineProcessor` body 内 の expression と し て 扱 う。
+The result is that an ONNX file is converted into a `.process(input) → output` interface. The unworklet compile pipeline treats this result as an expression inside a `defineProcessor` body.
 
-### 5.5 Step 5 — 量子化 / プルーニング pipeline
+### 5.5 Step 5 — Quantization / pruning pipeline
 
 ```typescript
 loadOnnxModel("./model.onnx", {
@@ -328,24 +328,24 @@ loadOnnxModel("./model.onnx", {
 });
 ```
 
-build 時 に effective な 最適化:
+Optimizations applied at build time:
 
-- **量子化**: weight を int8 で hold、 multiply 時 に dequant + multiply
-- **プルーニング**: 重 み 0 の MAC 演算 を AST か ら 除外 (sparse 展開)
-- **fuseOps**: 連続 す る `mul(a, b).add(c)` を 1 つ の fused multiply-add に
-- **SIMD**: 4 lane 並列展開 (= `f32x4` primitive へ の lower)
+- **Quantization**: weights are held as int8 and dequantized at multiply time
+- **Pruning**: MAC operations on zero weights are removed from the AST (sparse expansion)
+- **fuseOps**: consecutive `mul(a, b).add(c)` expressions are combined into a single fused multiply-add
+- **SIMD**: 4-lane parallel expansion (lowering to the `f32x4` primitive)
 
-こ れ ら の 最適化 は ONNX runtime web の generic interpret で は fully 効 か な い (= runtime 段 で 量子化 する path も あ る が AOT 同等 ま で は 出 な い)。 unworklet の per-NN 専用 AOT compile だ か ら こ そ 最 大 化 さ れ る。
+These optimizations are not fully achievable with the generic interpretation that onnxruntime-web performs at runtime (runtime-side quantization paths exist but do not reach AOT-equivalent results). They are maximized precisely because unworklet AOT-compiles per NN.
 
-### 5.6 Step 6 — DSP path と NN path の fusion
+### 5.6 Step 6 — Fusion of the DSP and NN paths
 
-NN forward pass と forSample loop が **同 じ fused WASM 関数 に 焼 か れ る** こ と が AOT path の 構造的 優位。 「NN 出力 を 直接 filter に 通 す」 「filter 出力 を NN 入力 に 渡 す」 が overhead な し で 結合 す る。 こ れ は runtime 推論 で は 構造的 に 不 可能 (= NN は 1 つ の module、 DSP は 別 module、 間 に memory copy が 入 る)。
+The structural advantage of the AOT path is that the NN forward pass and the `forSample` loop **are baked into the same fused WASM function**. "Pass the NN output directly into a filter" or "feed a filter output into the NN" compose with zero overhead. This is structurally impossible with runtime inference, where the NN is one module and DSP is another, with a memory copy between them.
 
 ## 6. Type safety
 
-ONNX / NAM / DDSP の 各 ML asset に 対 し て、 sidecar `.d.ts` を build 時 に generate す る path。 vite-plugin が responsible。
+For each ML asset (ONNX / NAM / DDSP), a sidecar `.d.ts` is generated at build time. The vite-plugin is responsible for this.
 
-例 え ば `marshall.nam` を import す る と、 build 時 に `marshall.nam.d.ts` が 生 成 さ れ:
+For example, importing `marshall.nam` causes `marshall.nam.d.ts` to be generated at build time:
 
 ```typescript
 // auto-generated: marshall.nam.d.ts
@@ -365,20 +365,20 @@ declare module "./marshall.nam" {
 }
 ```
 
-こ れ で IDE / TS compiler 段 で:
+This gives the IDE and TS compiler the ability to catch errors at compile time:
 
 ```typescript
 import ampModel from "./marshall.nam";
-ampModel.process("hello"); // TS error (string は Node<'f32'> じ ゃ な い)
+ampModel.process("hello"); // TS error (string is not Node<'f32'>)
 ampModel.process(input.ch(0).at(i)); // OK
-ampModel.metadata.sampleRate; // 型 = 48000 (literal type)
+ampModel.metadata.sampleRate; // type = 48000 (literal type)
 ```
 
-stereo / mono、 input channel 数、 output 数、 全 て type level で 表 現 さ れ る。 unworklet の 既存 型 安全性 が NN 周 り で も 一貫 す る。
+Stereo vs. mono, input channel count, output count — all are expressed at the type level. unworklet's existing type safety extends consistently into the NN layer.
 
-## 7. Build pipeline 統合 (vite-plugin 拡張)
+## 7. Build pipeline integration (vite-plugin extension)
 
-`@unworklet/vite-plugin` を 拡張 し て ML asset の 特殊 import を handle す る。
+`@unworklet/vite-plugin` is extended to handle special ML asset imports.
 
 ```typescript
 // vite.config.ts
@@ -396,31 +396,31 @@ export default {
 };
 ```
 
-build pipeline:
+Build pipeline:
 
 ```
 User code (TS)
   ↓
 @unworklet/vite-plugin
-  - *.onnx import を 検出 → @unworklet/onnx で parse → AST 展開 → 量子化
-  - *.nam import を 検出 → @unworklet/nam で parse → AST 展開
-  - *.ddsp import を 検出 → @unworklet/ddsp で parse → AST 展開
-  - 残 り の defineProcessor body と 統合 し て unworklet の compile() に 渡 す
+  - detects *.onnx imports → parses with @unworklet/onnx → expands to AST → quantizes
+  - detects *.nam imports  → parses with @unworklet/nam  → expands to AST
+  - detects *.ddsp imports → parses with @unworklet/ddsp → expands to AST
+  - merges with the rest of the defineProcessor body and passes to unworklet's compile()
   ↓
-@unworklet/core の compile()
+@unworklet/core compile()
   ↓
-binaryen で WASM emit
+WASM emit via binaryen
   ↓
-.wasm artifact (= NN + DSP が fused さ れ た 1 binary)
+.wasm artifact (a single binary with NN and DSP fused)
   ↓
-sidecar .d.ts も 生成 (型 推論 用)
+sidecar .d.ts also generated (for type inference)
   ↓
-runtime に deploy (= browser AudioWorklet / Node / 等)
+deployed at runtime (browser AudioWorklet / Node / etc.)
 ```
 
-## 8. Runtime bridge path の internal
+## 8. Runtime bridge path internals
 
-中 〜 大規模 NN を main 側 で 動 か す path。 `OnnxBridge` class が boilerplate を 抽 象 化。
+The path for running medium-to-large NNs on the main side. The `OnnxBridge` class abstracts the boilerplate.
 
 ```typescript
 // @unworklet/ml/runtime-bridge.ts
@@ -431,142 +431,142 @@ export class OnnxBridge {
     const session = await ort.InferenceSession.create(onnxPath, {
       executionProviders: [opts.backend === "webgpu" ? "webgpu" : "wasm"],
     });
-    // warmup run、 model 形状 inspection、 等
+    // warmup run, model shape inspection, etc.
     return new OnnxBridge(session, opts);
   }
 
   attach(node: UnworkletNode) {
-    // unworklet node の buffer.publish を subscribe し て NN input を 取得
+    // subscribe to the unworklet node's buffer.publish to receive NN input
     node.buffer[this.opts.inputBufferName].subscribe(async (inputData) => {
       const inputTensor = new ort.Tensor("float32", inputData, this.inputShape);
       const results = await this.session.run({ [this.inputName]: inputTensor });
       const outputData = results[this.outputName].data as Float32Array;
-      // 結果 を unworklet node の buffer に 送 り 返 す
+      // send the result back to the unworklet node's buffer
       node.messages.nnResultArrived(outputData);
     });
   }
 
   dispose() {
-    /* session 解放 */
+    /* release session */
   }
 }
 ```
 
-framework が 担 当:
+The framework handles:
 
-- onnxruntime-web の load / instantiate / warmup
-- WebGPU / WASM backend の 切替
-- audio buffer の SAB 経由 往復 (= 既存 unworklet messaging layer 経由)
-- window 切替 時 の overlap-add 合成
-- 推論 完了 の signal handling
-- model lifecycle (= dispose、 reload)
+- onnxruntime-web load / instantiate / warmup
+- switching between WebGPU / WASM backends
+- audio buffer round-trips via SAB (through the existing unworklet messaging layer)
+- overlap-add synthesis across window boundaries
+- inference completion signal handling
+- model lifecycle (dispose, reload)
 
-User は **`OnnxBridge.create(...)` + `.attach(node)` の 2 行** で 完結。
+The user completes integration with **`OnnxBridge.create(...)` + `.attach(node)` — two lines**.
 
-## 9. DevTools 統合
+## 9. DevTools integration
 
-unworklet の 既 存 8 DevTools panel (= `07-vite-plugin.md` §6.1) に **ML inspector panel** を 1 つ 追加。 v1.0.0 既存 panel に は 変更 ナ シ。
+One **ML inspector panel** is added to unworklet's existing 8 DevTools panels (see `07-vite-plugin.md` §6.1). No changes to the existing v1.0.0 panels.
 
-ML inspector panel が visualize す る も の:
+What the ML inspector panel visualizes:
 
-- **Operator graph viewer**: ONNX の operator graph を node-link diagram で 可視化、 各 layer の weight shape / quantization status / inference cost を 表 示
-- **Activation monitor**: 各 layer の output amplitude / spectrum を realtime monitor、 NN の 中 身 が 「見 え る」
-- **Inference profiler**: per-block / per-sample の NN 計算時間 を P50 / P95 / P99 で 計測 (= 既存 Live latency monitor と 整合)
-- **Quantization error**: fp32 vs int8 の output 差分 を realtime 比較
+- **Operator graph viewer**: visualizes the ONNX operator graph as a node-link diagram, showing weight shapes, quantization status, and inference cost per layer
+- **Activation monitor**: real-time monitoring of output amplitude and spectrum for each layer — making the internals of the NN visible
+- **Inference profiler**: measures per-block / per-sample NN computation time at P50 / P95 / P99 (consistent with the existing live latency monitor)
+- **Quantization error**: real-time comparison of fp32 vs. int8 output differences
 
-こ れ は NN が black box に な り が ち と い う DX 課題 を framework と し て 解決。 既 存 unworklet の error UX 投資 (= stable error ID + Rust-style template + DevTools panel) を NN domain に 拡 張 す る。
+This is the framework's answer to the DX problem of NNs being a black box. It extends the existing unworklet error UX investment (stable error IDs, Rust-style templates, DevTools panels) into the NN domain.
 
 ## 10. Implementation phases
 
-全 部 を 一 度 に は 作 れ な い。 phased rollout で:
+This cannot all be built at once. A phased rollout:
 
-### Phase 1 — NAM (~2 ヶ月)
+### Phase 1 — NAM (~2 months)
 
-- `@unworklet/nam` package 新規
-- NAM の `.json` / `.nam` 専用 loader
-- LSTM forward pass の AST 展開 (= ONNX 経由 な し、 NAM 固有 形式 か ら 直接)
-- vite-plugin に `*.nam` import handle 追加
-- canonical example と し て 「NAM amp model + simple cabinet IR」 plugin
+- New `@unworklet/nam` package
+- Dedicated loader for NAM `.json` / `.nam` files
+- AST expansion of the LSTM forward pass (directly from the NAM-specific format, not via ONNX)
+- Add `*.nam` import handling to the vite-plugin
+- Canonical example: a "NAM amp model + simple cabinet IR" plugin
 
-こ れ だ け で 「**TypeScript で 書 い た guitar amp が 真空管 Marshall stack の 音 で 鳴 る**」 が 成立。 community の signal 力 が 強 い。
+This alone establishes **"a guitar amp written in TypeScript that sounds like a tube Marshall stack."** The community signal potential is strong.
 
-### Phase 2 — DDSP (~2 ヶ月)
+### Phase 2 — DDSP (~2 months)
 
-- `@unworklet/ddsp` package 新規
-- DDSP control parameter MLP の AST 展開
-- `harmonicSynth`、 `filteredNoise` の DSP primitive
-- Google が 公 開 し て い る 学習済 み model (= violin、 saxophone、 等) を そ の ま ま 読 め る loader
-- canonical example と し て 「自分 の 歌声 → サックス」 voice morphing demo
+- New `@unworklet/ddsp` package
+- AST expansion of the DDSP control-parameter MLP
+- `harmonicSynth` and `filteredNoise` DSP primitives
+- A loader that reads Google's publicly available trained models (violin, saxophone, etc.) directly
+- Canonical example: a "your singing voice → saxophone" voice morphing demo
 
-### Phase 3 — 汎用 ONNX AOT (~4 ヶ月)
+### Phase 3 — General ONNX AOT (~4 months)
 
-- `@unworklet/onnx` package 新規
+- New `@unworklet/onnx` package
 - ONNX protobuf parser
-- ~20 operator (§5.2) の lowering
-- 量子化 / プルーニング pipeline
-- vite-plugin の `*.onnx` import handle
+- Lowering for ~20 operators (§5.2)
+- Quantization / pruning pipeline
+- `*.onnx` import handling in the vite-plugin
 
-こ れ で Hugging Face で ONNX export さ れ た audio model が 広 く 読 め る よ う に な る。
+This makes it possible to load audio models exported to ONNX from Hugging Face broadly.
 
-### Phase 4 — runtime bridge (~2 ヶ月)
+### Phase 4 — Runtime bridge (~2 months)
 
 - `@unworklet/ml/runtime-bridge`
-- onnxruntime-web の wrapping
-- WebGPU backend サ ポ ー ト
-- audio buffer の SAB 経由 往復 統合
-- overlap-add 合成
+- Wrapping of onnxruntime-web
+- WebGPU backend support
+- Integration of audio buffer round-trips via SAB
+- Overlap-add synthesis
 
-こ れ で RAVE、 Demucs、 Whisper、 CREPE 等 の 中 〜 大規模 NN が unworklet 経由 で 使え る。
+This makes medium-to-large NNs like RAVE, Demucs, Whisper, and CREPE usable through unworklet.
 
-### Phase 5 — DevTools 統合 (~2 ヶ月)
+### Phase 5 — DevTools integration (~2 months)
 
 - ML inspector panel
-- operator graph viewer
-- activation monitor
-- inference profiler
+- Operator graph viewer
+- Activation monitor
+- Inference profiler
 
-### 合 計 工 数 感
+### Total effort estimate
 
-12 ヶ月 で full ML integration 完成。 ただ し Phase 1 終了 時点 で community に 「**NAM が unworklet で 動 く**」 を 発信 で き る、 そ こ か ら interest が 広 が り 後続 phase の 投資 決断 を 検証 可能。
+Full ML integration complete in 12 months. However, at the end of Phase 1 the community can be shown **"NAM running inside unworklet"**, and the resulting interest can validate the investment decision for subsequent phases.
 
 ## 11. Open questions
 
-ratify 前 に 確定 し て お く べ き 設計 軸:
+Design axes to confirm before ratification:
 
-1. **AOT path / runtime path の 判 断 ロ ジ ッ ク**: framework が auto-decide する か、 user が build option で 明示 す る か、 hybrid に す る か。
-2. **ML asset の versioning**: NAM model が 更 新 さ れ た 時 の cache invalidation、 schema hash 統合、 既存 snapshot との 互換性。
-3. **量子化 fallback**: int8 量子化 で 音質 劣化 が 出 た 場合 の build 時 警 告 / fallback rule。
-4. **WebGPU backend の 必須要件**: runtime bridge で WebGPU を 使う 場合 の browser 対応 (= Safari 等)、 fallback path。
-5. **AudioWorklet 内 で の onnxruntime-web 利用**: audio thread 内 で 直接 ONNX runtime web を 動 か す 可能性 (= 構 造 的 に 困難 だ が future の WASM thread 進化 で 可能 に な る か も)。
-6. **学習 path の 統合**: 将来 的 に PyTorch / TF か ら ONNX export を 自動化 す る vite plugin の 範 囲。
-7. **Custom operator の 追加 path**: user が 自前 の operator (= ONNX に な い custom layer) を 追加 す る surface。
-8. **ML inspector panel の data channel**: 既存 DevTools panel の analysis JSON (= `dist/<processor>.graph.json` 等) と の 整合。
+1. **AOT vs. runtime path decision logic**: should the framework auto-decide, should the user specify via a build option, or should it be a hybrid?
+2. **ML asset versioning**: cache invalidation when a NAM model is updated, schema hash integration, compatibility with existing snapshots.
+3. **Quantization fallback**: build-time warning and fallback rules when int8 quantization causes audible quality degradation.
+4. **WebGPU backend requirements**: browser support when using WebGPU in the runtime bridge (e.g., Safari), and the fallback path.
+5. **Using onnxruntime-web inside the AudioWorklet**: the possibility of running the ONNX runtime directly inside the audio thread (structurally difficult today but may become feasible as WASM threads evolve).
+6. **Scope of training path integration**: how far a future vite plugin could automate ONNX export from PyTorch / TF.
+7. **Custom operator addition path**: the surface through which users can add custom operators (i.e., custom layers not present in ONNX).
+8. **ML inspector panel data channel**: alignment with the analysis JSON from existing DevTools panels (e.g., `dist/<processor>.graph.json`).
 
 ## 12. Alternatives considered
 
-### A. user-land で onnxruntime-web を 全部 直 接 触 る
+### A. Users interact with onnxruntime-web directly from user-land
 
-framework は 何 も 提 供 せ ず、 user が onnxruntime-web を main thread で 全 て setup す る。 boilerplate を framework が 消 さ な い path。
+The framework provides nothing; users set up onnxruntime-web on the main thread entirely by themselves. The path where the framework does not eliminate boilerplate.
 
-**却下理由**: unworklet の 核心 (= boilerplate を 消す) と 矛盾。 audio buffer の 往復、 overlap-add、 message channel 設計、 等 が user の 責 任 に な り、 audio framework と し て の value が 下 が る。 ま た AOT path の 構造的 優位 が 取 れ な い。
+**Rejected because**: it contradicts unworklet's core (eliminating boilerplate). Audio buffer round-trips, overlap-add, and message channel design all become the user's responsibility, lowering the value of the audio framework. The structural advantage of the AOT path is also lost.
 
-### B. NN を framework に 入 れ ず C++ engine (= JUCE) に 委 譲
+### B. Delegate NN integration to a C++ engine (e.g., JUCE) rather than including it in the framework
 
-audio framework と し て の NN 統合 を non-goal と し て、 user は JUCE 等 で NN plugin を 別途 書 く。
+Treat NN integration as a non-goal and let users write NN plugins separately in JUCE etc.
 
-**却下 理由**: unworklet の **TypeScript native + cross-platform** の 哲学 を 破る。 web で の 体験 が 損 な わ れ る、 plugin 開発 へ の reach が 狭 ま る。
+**Rejected because**: it breaks unworklet's **TypeScript-native + cross-platform** philosophy. The web experience is degraded and the reach for plugin development narrows.
 
-### C. 完全 generic な ONNX runtime を 自前 実 装
+### C. Self-implement a fully generic ONNX runtime
 
-~200 operator 全 て を 自分 で 実装、 onnxruntime-web に 依 存 し な い 完全 portable 実装。
+Implement all ~200 operators in-house for a completely portable implementation with no dependency on onnxruntime-web.
 
-**却下 理由**: 工数 過大 (= Microsoft が 数 十 人 月 か け て 作 っ て い る も の)、 maintenance 負担 大、 audio domain の subset (~20 operator) で 80% の use case が cover で き る の で ROI が 悪 い。 中 〜 大規模 NN は onnxruntime-web に 委 譲、 audio-specific subset は AOT で 持 つ、 が 現実 的。
+**Rejected because**: the implementation effort is prohibitive (Microsoft built this with dozens of person-months of effort), the maintenance burden is large, and the audio-domain subset (~20 operators) covers 80% of use cases, making the ROI poor. The practical approach is to delegate medium-to-large NNs to onnxruntime-web while owning the audio-specific subset via AOT.
 
-### D. 学習 path も framework に 統合
+### D. Integrate the training path into the framework
 
-PyTorch 相当 の autograd を unworklet に 追加 し、 学習 か ら 推論 ま で の full ML stack を framework と し て 提 供。
+Add PyTorch-equivalent autograd to unworklet and provide the full ML stack — training through inference — as the framework.
 
-**却下 理由**: scope 拡大 す ぎ。 学習 は 別 ecosystem (= Python + GPU + 大量 デ ー タ) で 既 に 確立、 そ こ に 後発 で 入 る 価値 ナシ。 unworklet は **推論 (= production inference) に focus**、 学習 は 別 環境 か ら ONNX export で 受 け 取 る。
+**Rejected because**: the scope expansion is excessive. Training is already a well-established separate ecosystem (Python + GPU + large datasets), and there is no value in entering it as a latecomer. unworklet **focuses on inference (production inference)**; training is received as an ONNX export from a separate environment.
 
 ## 13. References
 
@@ -580,27 +580,27 @@ PyTorch 相当 の autograd を unworklet に 追加 し、 学習 か ら 推�
 - Demucs source separation: https://github.com/facebookresearch/demucs
 - binaryen (WebAssembly toolkit): https://github.com/WebAssembly/binaryen
 
-## 14. v1.0.0 spec と の 関 係
+## 14. Relationship to the v1.0.0 spec
 
-本 RFC は v1.0.0 ship 後 の additive 拡張 と し て 位置 づ け、 v1.0.0 spec の 不変 部分 を 変 更 し な い:
+This RFC is positioned as an additive extension after v1.0.0 ships, and does not change any invariant parts of the v1.0.0 spec:
 
-- `defineProcessor` / `defineSubgraph` / `forSample` の signature 維 持
-- 既存 primitive (`add`, `mul`, `tanh`, ...) 変更 ナ シ
-- 既存 declaration (`state`, `buffer`, `param`, `audioInput`, `audioOutput`, `event`, `message`, `midiInput`, `midiOutput`) 変更 ナ シ
-- 既存 messaging (`SAB Atomics ringbuffer`, `state.publish` rate-gated copy) 変更 ナ シ
-- 既存 vite-plugin の `*.ts` build pipeline 変更 ナ シ
-- canonical examples の 既存 シ ェ イ プ 変更 ナ シ
+- `defineProcessor` / `defineSubgraph` / `forSample` signatures remain unchanged
+- Existing primitives (`add`, `mul`, `tanh`, ...) are unchanged
+- Existing declarations (`state`, `buffer`, `param`, `audioInput`, `audioOutput`, `event`, `message`, `midiInput`, `midiOutput`) are unchanged
+- Existing messaging (`SAB Atomics ringbuffer`, `state.publish` rate-gated copy) is unchanged
+- The existing vite-plugin `*.ts` build pipeline is unchanged
+- The shapes of existing canonical examples are unchanged
 
-新規 追加 は 全 て 別 package と vite-plugin の 追加 import handle で 完結 し、 既存 user の code に は 一 切 影響 し な い。 こ れ は v1.0.0 の AGENTS.md「Implementation invariant」 の 前 方互 換 invariant と zip し て お り、 RFC が ratify さ れ て も v1.0.0 commit の retract は 不要。
+All new additions are self-contained in separate packages and additional import handling in the vite-plugin, with zero impact on existing user code. This is consistent with the forward-compatibility invariant in the v1.0.0 AGENTS.md "Implementation invariant"; if the RFC is ratified, no retraction of v1.0.0 commits is required.
 
-## 15. 採用 / 修正 / 却下 の 道 筋
+## 15. Adoption / revision / rejection path
 
-本 RFC は draft 段階。 review process と し て:
+This RFC is in the draft stage. The review process:
 
-1. **stakeholder review**: framework owner、 audio DSP 経験者、 TypeScript エンジニア の 各 観点 か ら の feedback 収集
-2. **prototype 検証**: Phase 1 (NAM) の 最小実証 を 走 ら せ て、 提案 architecture の feasibility を 確認
-3. **canonical example 整合性 check**: 既存 `12-canonical-examples.md` が 提案 surface と 衝突 し な い こ と を 検証 (= AGENTS.md HARD CONTRACT)
-4. **decisions-log.md へ の Q entry 追加**: 採用 さ れ た 場合、 主要 設計 判断 (= AOT vs runtime path 選択 基準、 operator subset、 量子化 default、 等) を decisions-log に 移行
-5. **各 component doc へ の 反映**: 採用 後 は `01-dsl.md` / `02-messaging.md` / `07-vite-plugin.md` の 該当 セクション に 加筆
+1. **Stakeholder review**: collect feedback from the perspective of the framework owner, audio DSP practitioners, and TypeScript engineers
+2. **Prototype validation**: run a minimal proof of concept for Phase 1 (NAM) to confirm the feasibility of the proposed architecture
+3. **Canonical example consistency check**: verify that the existing `12-canonical-examples.md` does not conflict with the proposed surface (per the AGENTS.md HARD CONTRACT)
+4. **Q entry addition to `decisions-log.md`**: if adopted, migrate the major design decisions (AOT vs. runtime path selection criteria, operator subset, quantization defaults, etc.) into the decisions-log
+5. **Reflection in each component doc**: after adoption, add the relevant sections to `01-dsl.md` / `02-messaging.md` / `07-vite-plugin.md`
 
-ratify さ れ た 後 も、 実装 段 階 で 設計 修正 が 出 た 場合 は 本 RFC 自体 を update し て 経過 を 残 す (= 既存 unworklet の decisions-log と 同様 の audit trail を 維持)。
+Even after ratification, if design changes arise during implementation, this RFC itself will be updated to preserve a record of the evolution (maintaining the same audit trail as the existing unworklet decisions-log).

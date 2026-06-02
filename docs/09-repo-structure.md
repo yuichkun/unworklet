@@ -10,29 +10,29 @@ partial (§1–§5 settled at Q60 / Q61; §6 placeholder per Q61 = fill deferred
 
 ## 1. Monorepo tool
 
-pnpm workspaces。 root に `pnpm-workspace.yaml`、 root `package.json` の `packageManager` field で `pnpm@<version>` を 明 示、 cross-package reference は `workspace:*` protocol。 開 発 / CI で の 起 動 は 全 て `vp` CLI 経 由 で 統 一 (= AGENTS.md HARD CONTRACT、 npm / pnpm / yarn / npx 直 接 起 動 永 久 排 除)。 Q60 (`decisions-log.md`)。
+pnpm workspaces. A `pnpm-workspace.yaml` lives at the root, the root `package.json` pins the package manager via the `packageManager` field as `pnpm@<version>`, and cross-package references use the `workspace:*` protocol. All dev and CI invocations go through the `vp` CLI exclusively (= AGENTS.md HARD CONTRACT; direct invocation of npm / pnpm / yarn / npx is permanently banned). Q60 (`decisions-log.md`).
 
 ## 2. Package layout
 
-Day-one か ら 公 開 4 package + 内 部 module を 立 て る:
+Four public packages plus internal modules are established from day one:
 
-- 公 開: `@unworklet/core` / `@unworklet/vite-plugin` / `@unworklet/offline` / `@unworklet/test`
-- 公 開 subpath: `@unworklet/core/simd` / `@unworklet/core/worklet` / `@unworklet/test/extend`。
-  - `@unworklet/core/simd` = opt-in SIMD primitive 群 (§2.2)。
-  - `@unworklet/core/worklet` = vite-plugin が emit す る worklet entry template が `AudioWorkletGlobalScope` 内 で boot す る た め の runtime helper (= `makeWorkletNamespaceFromMeta(meta)`、 §2.3)。 user が 直 接 import す る 形 で は な く、 vite-plugin の `?worklet` 経 路 が emit し た template が 同 subpath を 参 照 す る = consumer の bundler が resolve す る semi-public surface = `exports` で 明 文 expose す る。
-  - `@unworklet/test/extend` = chain form `expect.extend(...)` 登 録 用 side-effect import path (`06-testing.md` §6)。
-- 内 部 module: compiler module は `@unworklet/core` 内 部 module だ が、 compile invocation 経 路 は `@unworklet/core` か ら 公 開 さ れ る `compile` 関 数 と し て expose (= vite-plugin / offline / `replaceProcessor` / 直 接 import す る consumer 全 て が 同 一 関 数 を call、 §2.1 + §2.4 参 照)。
+- Public: `@unworklet/core` / `@unworklet/vite-plugin` / `@unworklet/offline` / `@unworklet/test`
+- Public subpaths: `@unworklet/core/simd` / `@unworklet/core/worklet` / `@unworklet/test/extend`.
+  - `@unworklet/core/simd` = opt-in SIMD primitive set (§2.2).
+  - `@unworklet/core/worklet` = the runtime helper (`makeWorkletNamespaceFromMeta(meta)`, §2.3) that the worklet entry template emitted by the vite-plugin boots inside `AudioWorkletGlobalScope`. Users do not import this subpath directly; instead, the template emitted via the `?worklet` route references this subpath, and the consumer's bundler resolves it — making it a semi-public surface that is explicitly exposed via `exports`.
+  - `@unworklet/test/extend` = side-effect import path for registering matchers via the chain form `expect.extend(...)` (`06-testing.md` §6).
+- Internal modules: the compiler module lives inside `@unworklet/core` as an internal module, but the compile invocation path is exposed as the `compile` function exported from `@unworklet/core` (= all callers — vite-plugin / offline / `replaceProcessor` / consumers that import directly — call the same function, §2.1 + §2.4).
 
-権 威 規 定 = `decisions-log.md` Q13 + Q52。
+Authoritative definition: `decisions-log.md` Q13 + Q52.
 
 ### 2.1 `@unworklet/core` named exports (categorized list)
 
-`@unworklet/core` root か ら flat export す る v1.0.0 公 開 識 別 子 を category 別 に 整 理 (Q52 strict — DSL 識 別 子 は root に flat、 subpath split し な い)。 SIMD primitive は `@unworklet/core/simd` subpath か ら、 test matcher / signal utility / midi utility / sample-time utility / chain form は `@unworklet/test` (+ side-effect subpath `@unworklet/test/extend`) か ら、 offline runner は `@unworklet/offline` か ら 別 export。
+All v1.0.0 public identifiers exported flat from the `@unworklet/core` root, organized by category (Q52 strict — DSL identifiers are flat at root, no subpath split). SIMD primitives are exported from the `@unworklet/core/simd` subpath; test matchers / signal utilities / MIDI utilities / sample-time utilities / chain form come from `@unworklet/test` (plus the side-effect subpath `@unworklet/test/extend`); the offline runner comes from `@unworklet/offline`.
 
 | Category                                                 | Exports                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Processor / subgraph constructors                        | `defineProcessor`, `defineSubgraph`, `createSubgraph`, `replaceProcessor` (Q50)                                                                                                                                                                                                                                                                                                                                                        |
-| Compile invocation                                       | `compile(processor)` async 関 数 (= 戻 り 値 `{ wasm, graph, memory, diagnostics, schemaHash }` 一 括) — vite-plugin / offline / `replaceProcessor` / 直 接 import す る consumer (= visual programming editor / modular synth web app / on-the-fly source 評 価 等 動 的 path 含 む) 全 て が 同 一 関 数 を call (§2.4 invariant、 binaryen は こ の 関 数 内 部 で dynamic import、 TS generic constraint 細 部 は impl-phase fill) |
+| Compile invocation                                       | `compile(processor)` async function (= returns `{ wasm, graph, memory, diagnostics, schemaHash }` as a single object) — used by vite-plugin / offline / `replaceProcessor` / consumers that import directly (including dynamic paths such as visual programming editors, modular synth web apps, and on-the-fly source evaluation); all callers use the same function (§2.4 invariant; binaryen is dynamically imported inside this function; TS generic constraint details are impl-phase fill) |
 | Main-side surface                                        | `createNode`, `inspect` (Q48 — free function over blob)                                                                                                                                                                                                                                                                                                                                                                                |
 | Declarations                                             | `state.f32` / `state.f64` / `state.i32` / `state.i64` / `state.bool`, `state.buffer.f32` / `state.buffer.f64` / `state.buffer.i32` / `state.buffer.i64` / `state.buffer.bool` / `state.buffer.u8` (Q49), `param`, `audioInput`, `audioOutput`, `event` (`event<T>({ from \| to: "main" })` + `event.midi`)                                                                                                                             |
 | DSL primitive — arithmetic / comparison / math / control | `add`, `sub`, `mul`, `div`, `mod`, `neg`, `eq`, `lt`, `gt`, `lte`, `gte`, `sin`, `cos`, `tan`, `tanh`, `exp`, `log`, `sqrt`, `abs`, `floor`, `ceil`, `frac`, `min`, `max`, `clamp`, `select`                                                                                                                                                                                                                                           |
@@ -56,7 +56,7 @@ Lane access (`vec.lane(i)`) is a method on the `Node<'f32x4'>` value; `buf.loadV
 
 ### 2.3 `@unworklet/core/worklet` named exports
 
-vite-plugin が emit す る worklet entry template が `AudioWorkletGlobalScope` 内 で 走 ら せ る runtime helper。 user が 直 接 import す る 形 で は な く (= main bundle 側 で は `@unworklet/core` root か ら 入 る)、 template 内 の `import { makeWorkletNamespaceFromMeta } from "@unworklet/core/worklet"` を bundler が resolve す る semi-public surface。 worklet realm で safe に load 可 能 な surface だ け を 抜 き 出 し て お き、 `binaryen` / `defineProcessor` / graph capture machinery 等 は 一 切 含 め な い (= worklet realm に 不 要 / 不 安 全 な dep を 流 入 さ せ な い)。
+The runtime helper that the worklet entry template emitted by the vite-plugin runs inside `AudioWorkletGlobalScope`. Users do not import this directly (entry into the main bundle goes through the `@unworklet/core` root); instead, the `import { makeWorkletNamespaceFromMeta } from "@unworklet/core/worklet"` statement in the template is resolved by the bundler, making this a semi-public surface. Only the subset of the surface that is safe to load in the worklet realm is included here; `binaryen`, `defineProcessor`, graph capture machinery, and similar are entirely excluded (= prevents unsafe or unnecessary dependencies from entering the worklet realm).
 
 | Category     | Exports                                                 |
 | ------------ | ------------------------------------------------------- |
@@ -65,27 +65,27 @@ vite-plugin が emit す る worklet entry template が `AudioWorkletGlobalScope
 
 ### 2.4 Other public packages
 
-- `@unworklet/vite-plugin` — exports the Vite plugin factory + DevTools panel + analysis JSON artifact contract (`07-vite-plugin.md`)。 build pipeline 内 で `@unworklet/core` の `compile` 関 数 を call し て WASM を emit。
-- `@unworklet/offline` — exports `renderOffline` (`13-offline-render.md` §2)。 内 部 で `@unworklet/core` の `compile` 関 数 を call し て WASM 化、 host JS の `WebAssembly.instantiate` で offline 実 行。
-- `@unworklet/test` — exports vitest matchers + audio test utility (= 全 43 件 + chain form、 `06-testing.md` §2-§6 全 体)。 内 訳: matcher 20 件 (= audio / sample-level / event / midi / state、 `06-testing.md` §2)、 signal 構 築 utility 7 件 (= `sine` / `silence` / `impulse` / `sineSweep` / `whiteNoise` / `dc` / `ramp`、 §3)、 midi utility 10 件 (= namespace `midi` の 9 variants + `sequence`、 §4)、 sample/time 変 換 utility 6 件 (= `samplesToMs` / `msToSamples` / `samplesToSec` / `secToSamples` / `bpmToSamples` / `bpmToMs`、 §5)、 chain form (= `@unworklet/test/extend` side-effect import、 §6)。 depends on `@unworklet/offline`。
+- `@unworklet/vite-plugin` — exports the Vite plugin factory + DevTools panel + analysis JSON artifact contract (`07-vite-plugin.md`). Calls `@unworklet/core`'s `compile` function inside the build pipeline to emit WASM.
+- `@unworklet/offline` — exports `renderOffline` (`13-offline-render.md` §2). Calls `@unworklet/core`'s `compile` function internally to produce WASM, then executes it offline via the host JS `WebAssembly.instantiate`.
+- `@unworklet/test` — exports vitest matchers + audio test utilities (all 43 items plus chain form, covering `06-testing.md` §2–§6). Breakdown: 20 matchers (audio / sample-level / event / MIDI / state, `06-testing.md` §2), 7 signal construction utilities (`sine` / `silence` / `impulse` / `sineSweep` / `whiteNoise` / `dc` / `ramp`, §3), 10 MIDI utilities (9 variants in the `midi` namespace + `sequence`, §4), 6 sample/time conversion utilities (`samplesToMs` / `msToSamples` / `samplesToSec` / `secToSamples` / `bpmToSamples` / `bpmToMs`, §5), chain form (= `@unworklet/test/extend` side-effect import, §6). Depends on `@unworklet/offline`.
 
 Per-identifier signature detail / generic constraint is impl-phase fill per Q53 + Q61.
 
 ### 2.5 Package dependency graph
 
-公 開 4 package + 2 subpath + external dep の `package.json` dependency 関 係 を visual graph + table の 2 view で declare (= acceptance F1 で 公 開 surface check 対 象):
+The `package.json` dependency relationships among the 4 public packages, 2 subpaths, and external deps, declared in both a visual graph and a table (= subject to acceptance F1 public surface check):
 
 ```mermaid
 graph LR
   core["@unworklet/core"]
-  simd["@unworklet/core/simd （subpath）"]
-  workletSubpath["@unworklet/core/worklet （subpath）"]
+  simd["@unworklet/core/simd (subpath)"]
+  workletSubpath["@unworklet/core/worklet (subpath)"]
   vp["@unworklet/vite-plugin"]
-  vpUi["devtools-ui （internal SPA sub-project under vite-plugin）"]
+  vpUi["devtools-ui (internal SPA sub-project under vite-plugin)"]
   offline["@unworklet/offline"]
   test["@unworklet/test"]
-  testExtend["@unworklet/test/extend （subpath）"]
-  binaryen["binaryen （dynamic import）"]
+  testExtend["@unworklet/test/extend (subpath)"]
+  binaryen["binaryen (dynamic import)"]
   devtoolsKit["@vitejs/devtools-kit"]
   vue["vue / vue-router / @vitejs/plugin-vue"]
   jszip["jszip"]
@@ -108,30 +108,30 @@ graph LR
   test -.peer.-> vitest
 ```
 
-凡 例: 実 線 矢 印 = `dependencies` (= install で 自 動 解 決、 consumer の bundle に 入 る) — 例: `test --> offline`。 破 線 矢 印 + ラベル = relation 種 別 — `peer` (= `peerDependencies`、 consumer 側 で 揃 え る) / `dynamic` (= 内 部 dynamic import、 `compile` call 時 の み load、 production runtime bundle に 含 ま れ な い) / `subpath` (= 同 package 内 の sub-export path、 別 install ナ シ) / `dev` (= `devDependencies`、 dev 中 だ け 使 う、 consumer の production bundle に 含 ま れ な い) / `sub-project` (= 該 package 内 部 の nested sub-project、 別 install ナ シ、 親 package の build で `dist/` に bundle さ れ る)。
+Legend: solid arrow = `dependencies` (resolved automatically on install; included in the consumer's bundle) — e.g. `test --> offline`. Dashed arrow + label = relationship type — `peer` (= `peerDependencies`, must be provided by the consumer) / `dynamic` (= internal dynamic import, loaded only when `compile` is called, excluded from the production runtime bundle) / `subpath` (= sub-export path within the same package, no separate install needed) / `dev` (= `devDependencies`, used only during development, not included in the consumer's production bundle) / `sub-project` (= a nested sub-project inside the package, no separate install needed; bundled into `dist/` by the parent package's build).
 
-`@unworklet/vite-plugin` の devtools panel UI は `packages/vite-plugin/devtools-ui/` の Vue 3 SPA sub-project で 構 成 さ れ、 親 package の `vp run build` (= 同 phase で `vp build` + `vp pack` を 連 結 す る orchestration script) が SPA を `<vite-plugin>/dist/ui/` に コ ピ ー し て 1 bundle で ship。 SPA 自 体 は consumer の production runtime に は 触 れ ず、 dev mode (= `vp dev`) で だ け iframe panel と し て load さ れ る。
+The DevTools panel UI of `@unworklet/vite-plugin` is a Vue 3 SPA sub-project located at `packages/vite-plugin/devtools-ui/`. The parent package's `vp run build` (an orchestration script that chains `vp build` + `vp pack`) copies the compiled SPA into `<vite-plugin>/dist/ui/` and ships it as a single bundle. The SPA itself is never exposed to the consumer's production runtime; it is loaded as an iframe panel only in dev mode (= `vp dev`).
 
-| Package                  | `dependencies`                                                                                                                                        | `peerDependencies`           | 意 図                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Package                  | `dependencies`                                                                                                                                        | `peerDependencies`           | Intent                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `@unworklet/core`        | `binaryen` (= dynamic import、 `compile` call 時 のみ load、 production runtime bundle に 含 ま れ な い)                                             | (= ナ シ)                    | `compile` 関 数 内 で binaryen を dynamic import し て WASM emit、 production runtime で 静 的 path だ け を 使 う 経 路 (= 既 emit 済 WASM を load + 駆 動 す る だ け) で は binaryen は load さ れ ず bundle に も 含 ま れ な い。 invariant = `@unworklet/core` を import し て も `compile` を call し な い consumer (= deploy 後 の end-user app 等) は binaryen に 触 ら な い (= dynamic import で 構 造 的 担 保)。 動 的 path (= visual programming editor / live coding 等 で `compile` を runtime に call す る app) は 起 点 か ら の dynamic import 解 析 経 由 で binaryen chunk が bundle に 載 る = trade-off を user が 引 き 受 け る。 |
-| `@unworklet/vite-plugin` | (= ナ シ)                                                                                                                                             | `@unworklet/core` + `vite`   | user が install 済 の core / vite に 寄 生、 version drift を 避 け る。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `@unworklet/offline`     | (= 内 部 で host JS の WebAssembly runtime で WASM binary を instantiate し て 実 行 = Node.js / Bun / Deno 等 の `WebAssembly.instantiate` を 使 う) | `@unworklet/core`            | core と 同 major version で 動 か す 制 約、 WASM execution layer 自 体 は 内 部 module。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `@unworklet/test`        | `@unworklet/offline`                                                                                                                                  | `@unworklet/core` + `vitest` | matcher が offline を 必 ず 使 う = auto-resolve、 user install 数 削 減 (= 1 install で 動 く)。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `@unworklet/core`        | `binaryen` (= dynamic import; loaded only when `compile` is called; not included in the production runtime bundle)                                    | (= none)                     | binaryen is dynamically imported inside the `compile` function to emit WASM. Consumers that only use the static path (= load and drive an already-emitted WASM without calling `compile`) never load binaryen and it is not included in their bundle. Invariant: consumers of `@unworklet/core` that never call `compile` (e.g. end-user apps after deploy) never touch binaryen — this is structurally guaranteed by the dynamic import. Consumers on the dynamic path (e.g. visual programming editors or live coding apps that call `compile` at runtime) will have the binaryen chunk included in their bundle via dynamic import analysis — a trade-off those users accept. |
+| `@unworklet/vite-plugin` | (= none)                                                                                                                                              | `@unworklet/core` + `vite`   | Piggybacks on the core and vite already installed by the user, avoiding version drift.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `@unworklet/offline`     | (= instantiates and runs WASM binaries internally via the host JS WebAssembly runtime — Node.js / Bun / Deno `WebAssembly.instantiate`)               | `@unworklet/core`            | Must run with the same major version as core; the WASM execution layer itself is an internal module.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `@unworklet/test`        | `@unworklet/offline`                                                                                                                                  | `@unworklet/core` + `vitest` | Matchers always use offline, so it auto-resolves; reduces the number of installs the user needs (= works with a single install).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
-invariant: `@unworklet/core` の major version が 上 が る と 全 satellite package も 同 major で release (= peer 経 由 で version 強 制)。 acceptance F1 の 公 開 surface check は `package.json` の `dependencies` / `peerDependencies` field set が こ の 表 と 一 致 す る こ と を 検 証 (= binaryen は `@unworklet/core` の `dependencies` に declare、 ただし dynamic import 経 由 で 静 的 path consumer の production runtime bundle か ら 除 外 さ れ る 構 造 を 担 保)。
+Invariant: when `@unworklet/core` bumps a major version, all satellite packages release under the same major (enforced via peer dependencies). The acceptance F1 public surface check verifies that the `dependencies` / `peerDependencies` field sets in each `package.json` match this table (= binaryen is declared in `@unworklet/core`'s `dependencies`, but its dynamic import path structurally guarantees exclusion from the production runtime bundle of consumers on the static path).
 
 ## 3. License
 
-MIT。 Q60 (`decisions-log.md`)。
+MIT. Q60 (`decisions-log.md`).
 
 ## 4. npm scope
 
-`@unworklet`。 Q60 (`decisions-log.md`)。
+`@unworklet`. Q60 (`decisions-log.md`).
 
 ## 5. TypeScript version policy
 
-TypeScript 5.5 minimum。 Q60 (`decisions-log.md`)。
+TypeScript 5.5 minimum. Q60 (`decisions-log.md`).
 
 ## 6. Versioning policy
 

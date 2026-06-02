@@ -1408,9 +1408,9 @@ node.state.targetId.subscribe((id) => deviceIdUI.set(id));
 > **Framework surface vs consumer recipe**: the unworklet surface exercised in this example is `replaceProcessor` (`@unworklet/core`) + `state.snapshot 'persistent'` + the `RestoreResult.ok = false` failure path + the Q63 accumulation warning. **Everything else** in the main-side code (= `URL.createObjectURL(blob)`, `import(/* @vite-ignore */ url)`, source acquisition, REPL UI wiring, blob URL teardown) is a **consumer-side recipe** — not part of unworklet's surface. `/* @vite-ignore */` is a Vite-specific annotation, not an unworklet annotation. In production code a bundler HMR boundary or file watcher (= `07-vite-plugin.md` §4 recipe sketch) provides the same module-acquisition path; unworklet does not own the source-acquisition mechanism.
 
 ```typescript
-// initial.processor.ts — REPL の 初 期 processor。 user が editor で 書 き
-// 換 え て も 同 じ 公 開 surface (= audioOutput 'main' + param 'freq' +
-// state.f32 'phase' persistent) を 維 持 す る 想 定。
+// initial.processor.ts — The initial processor for the REPL. The user may edit
+// it freely, but is expected to keep the same public surface
+// (= audioOutput 'main' + param 'freq' + state.f32 'phase' persistent).
 
 import { defineProcessor, audioOutput, param, state, forSample, f32 } from "@unworklet/core";
 
@@ -1420,7 +1420,7 @@ export const initialOsc = defineProcessor(
     const freq = param
       .f32({ default: 440, min: 20, max: 20000, automationRate: "k-rate" })
       .named("freq");
-    // 'persistent' = swap を 跨 い で carry forward さ せ た い state。
+    // 'persistent' = state to carry forward across processor swaps.
     const phase = state.f32(0).expose({ name: "phase", snapshot: "persistent" });
 
     return {
@@ -1455,9 +1455,9 @@ export const initialOsc = defineProcessor(
 ```
 
 ```typescript
-// main side — REPL UI + Run button で hot swap。 unworklet は primitive だ け
-// 提 供 (= replaceProcessor)、 source 取 得 path / graph re-wire / error UI
-// は user-land。
+// main side — REPL UI with a Run button for hot swap. unworklet provides only
+// the primitive (= replaceProcessor); source acquisition, graph re-wiring,
+// and error UI are user-land concerns.
 
 import { createNode, replaceProcessor } from "@unworklet/core";
 import { initialOsc } from "./initial.processor.ts?worklet";
@@ -1468,23 +1468,24 @@ node.outputs.main.connect(audioCtx.destination);
 audioCtx.resume();
 
 runButton.addEventListener("click", async () => {
-  // editor の source を blob URL 経 由 で 新 module と し て import。 prod で は
-  // bundler HMR や file watcher 経 由 で 同 等 path を 組 む。
+  // Import the editor's source as a new module via a blob URL. In production,
+  // an equivalent path is assembled through bundler HMR or a file watcher.
   const source = editor.getValue();
   const blob = new Blob([source], { type: "application/javascript" });
   const url = URL.createObjectURL(blob);
   const mod = await import(/* @vite-ignore */ url);
 
-  // 旧 instance を 新 module で 置 き 換 え。 snapshot/restore + migration
-  // chain で state を carry forward、 失 敗 時 は ok: false で 復 帰 path。
+  // Replace the running instance with the new module. State is carried forward
+  // via snapshot/restore + the migration chain; on failure, ok: false surfaces
+  // the recovery path.
   const result = await replaceProcessor(node, mod.default);
   if (!result.ok) {
     statusUI.set(`migration failed at step ${result.error.step}: ${result.error.message}`);
     return;
   }
 
-  // graph 接 続 を 新 wrapper に 移 す。 unworklet は graph 操 作 し な い
-  // (Q50)、 user-land で disconnect → connect を 行 う。
+  // Move graph connections to the new wrapper. unworklet does not manipulate
+  // the graph (Q50) — disconnect → connect is user-land.
   node.outputs.main.disconnect();
   node = result.node;
   node.outputs.main.connect(audioCtx.destination);
@@ -1493,9 +1494,9 @@ runButton.addEventListener("click", async () => {
   URL.revokeObjectURL(url);
 });
 
-// 累 積 swap で Web Audio の registered-processor table が 解 放 さ れ な い
-// platform 制 約 (= Q63)。 51 回 目 の swap で framework が console.warn を
-// 1 度 出 す = user が 必 要 に 応 じ て AudioContext を 作 り 直 す path。
+// Platform constraint (Q63): the Web Audio registered-processor table is not
+// released across accumulated swaps. On the 51st swap the framework emits a
+// single console.warn; the user can then recreate the AudioContext if needed.
 ```
 
 ---

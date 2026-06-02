@@ -7,15 +7,16 @@
  * end-of-render snapshot blob.
  *
  * Internally calls `compile(processor)` to obtain the WASM binary and the
- * driver-friendly handle (= `result.driver.instantiate()`)、 そ の handle 越 し
- * に memory I/O + process() を render quantum 単 位 で 反 復。
+ * driver-friendly handle (= `result.driver.instantiate()`), then drives memory
+ * I/O + process() through that handle one render quantum at a time.
  *
- * Fill 済: audio I/O + param + main→worklet `message<T>` 注 入 + worklet→main
- * `event<T>` 捕 捉 + MIDI 双 方 向 (= inbound `config.events` 注 入 / outbound
- * `result.events` 捕 捉) + snapshot capture (`result.state` = persistent slot) +
- * restore (`config.restore` = 初 期 state 注 入 + migration chain)。 duration ×
- * sampleRate を `SAMPLES_PER_BLOCK` で 切 り 上 げ た sample 数 ま で render
- * (= `13-offline-render.md` §2.1)。
+ * Implemented: audio I/O + param + main→worklet `message<T>` injection +
+ * worklet→main `event<T>` capture + bidirectional MIDI (= inbound `config.events`
+ * injection / outbound `result.events` capture) + snapshot capture
+ * (`result.state` = persistent slots) + restore (`config.restore` = initial state
+ * injection + migration chain). Renders up to the sample count obtained by
+ * rounding duration × sampleRate up to a `SAMPLES_PER_BLOCK` boundary
+ * (= `13-offline-render.md` §2.1).
  */
 
 import type { CompiledProcessor, MidiEvent, SnapshotSlot } from "@unworklet/core";
@@ -112,25 +113,25 @@ export type RenderOfflineResult = {
   events: OfflineEmittedEvent[];
   /** Snapshot blob (Q5 format) captured at end-of-render. */
   state: Uint8Array;
-  /** Sample rate used for the render (= `config.sampleRate` carry、 wav 書 き 出 し / 再 render / consumer 自 動 化 で self-describe)。 */
+  /** Sample rate used for the render (= `config.sampleRate` carried through, self-describing for wav export / re-render / consumer automation). */
   sampleRate: number;
 };
 
-/** message / event ringbuffer header = [head, tail, overflowCount] × 4 byte。 */
+/** message / event ringbuffer header = [head, tail, overflowCount] × 4 bytes. */
 const MESSAGE_HEADER_BYTES = 12;
 
 export async function renderOffline<C>(
   processor: CompiledProcessor<C>,
   config: RenderOfflineConfig,
 ): Promise<RenderOfflineResult> {
-  // compile に config.sampleRate を hand (= sub-phase 7.3) = publish scheduler の
-  // threshold = `Math.round(sampleRate / rateFps)` が build-time const fold さ れ る。
+  // Hand config.sampleRate to compile so the publish scheduler's threshold,
+  // `Math.round(sampleRate / rateFps)`, is folded into a build-time constant.
   const result = await compile(processor, { sampleRate: config.sampleRate });
   const instance = await result.driver.instantiate();
 
-  // event ring meta を WorkletMeta 経 由 で 取 得 (= renderOffline 内 で WASM
-  // memory か ら 直 接 ring を walk = SAB 不 在 で も per-quantum 末 尾 で drain
-  // し て OfflineEmittedEvent 配 列 に 蓄 積)。
+  // Obtain the event ring meta via WorkletMeta so renderOffline can walk the
+  // ring directly in WASM memory: even without a SAB, it drains at the end of
+  // each quantum and accumulates into the OfflineEmittedEvent array.
   const meta = extractWorkletMeta(processor.graph as never);
   const eventRingMeta = meta.events.map((evt) => {
     const slot = meta.layout.regions.eventRings.slots[evt.name]!;
@@ -140,15 +141,16 @@ export async function renderOffline<C>(
       capacity: slot.capacity,
       slotSize: slot.slotSize,
       fields: slot.fields,
-      // typed-array field (§4.3 worklet→main) の中身を読む content region。
+      // Content region holding the contents of typed-array fields (§4.3 worklet→main).
       payloadContent: meta.layout.regions.payloadContent.eventSlots[evt.name],
     };
   });
   const emittedEvents: OfflineEmittedEvent[] = [];
 
-  // message ring meta (= main → worklet 注入用)。 worklet template の SAB 経路と
-  // 違い、 offline は WASM memory の ring header / slot を直接 poke して 1 quantum
-  // 先頭で push する (= event drain と対称の手書き transport)。
+  // message ring meta (= for main → worklet injection). Unlike the worklet
+  // template's SAB path, offline pokes the ring header / slot directly in WASM
+  // memory and pushes at the start of a quantum (= a hand-written transport,
+  // symmetric with the event drain).
   const messageRingMeta = meta.messages.map((msg) => {
     const slot = meta.layout.regions.messageRings.slots[msg.name]!;
     return {
@@ -156,7 +158,7 @@ export async function renderOffline<C>(
       base: slot.base,
       capacity: slot.capacity,
       slotSize: slot.slotSize,
-      // typed-array field の 中 身 を 置 く content region (= ナ シ な ら undefined)。
+      // Content region holding typed-array field contents (= undefined if none).
       payloadContent: meta.layout.regions.payloadContent.messageSlots[msg.name],
       fields: slot.fields,
     };
@@ -255,9 +257,10 @@ export async function renderOffline<C>(
       }
     }
 
-    // message 注入 (= こ の quantum 宛 て の scheduled message を ring head に push)。
-    // worklet の onReceive drain (= process 冒 頭、 Q38-b) が tail→head を 消 化 す る。
-    // tail は 前 quantum の drain で head に commit 済 = 各 quantum で ring は空 start。
+    // message injection (= push the scheduled messages for this quantum onto the
+    // ring head). The worklet's onReceive drain (= top of process, Q38-b) consumes
+    // tail→head. tail was committed to head by the previous quantum's drain, so the
+    // ring starts empty at each quantum.
     for (const m of config.messages ?? []) {
       if ((m.atQuantum ?? 0) !== b) continue;
       const ring = messageRingMeta.find((r) => r.name === m.name);
@@ -276,11 +279,12 @@ export async function renderOffline<C>(
       for (const field of ring.fields) {
         const byteOffset = slotByteOffset + field.offsetInSlot;
         if (field.payloadElementType !== undefined) {
-          // typed-array field = 中 身 を payloadContent の per-slot chunk に 書 き、
-          // slot に [payloadLen(bytes), payloadOffset] を set (= §5.2 / Q85)。 1 quantum に
-          // 複 数 message を queue し て も content が 上 書 き さ れ な い よ う、 chunk =
-          // (head % chunks) × perChunk で slot ご と に 分 け る (= emit / SAB と 対 称)。
-          // chunks 枠 を 超 え た 連 射 は 循 環 再 利 用 = drop-oldest (= trap し な い)。
+          // typed-array field = write the contents into payloadContent's per-slot
+          // chunk and set [payloadLen(bytes), payloadOffset] on the slot (= §5.2 / Q85).
+          // To keep content from being overwritten when multiple messages are queued
+          // within one quantum, split the chunk per slot as
+          // (head % chunks) × perChunk (= symmetric with emit / SAB). Bursts beyond
+          // the chunk budget recycle cyclically = drop-oldest (= no trap).
           const src = payload[field.name] as Float32Array;
           const content = ring.payloadContent!;
           const perChunk = Math.floor(content.capacity / content.chunks);
@@ -292,17 +296,18 @@ export async function renderOffline<C>(
           dataView.setInt32(byteOffset, byteLen, true); // payloadLen (= bytes)
           dataView.setInt32(byteOffset + 4, payloadOffset, true); // payloadOffset (= per-slot chunk)
         } else {
-          // scalar field = Q46 で 現 状 全 て i32 wire (= number / boolean → i32 word)。
+          // scalar field = Q46: all i32 wire (= number / boolean → i32 word).
           dataView.setInt32(byteOffset, Number(payload[field.name]) | 0, true);
         }
       }
-      headerView[0] = head + 1; // head を 1 slot 進 め る (= push)
+      headerView[0] = head + 1; // advance head by 1 slot (= push)
     }
 
-    // MIDI inbound 注 入 (= こ の quantum 宛 て の event を 該 当 port ring に push)。
-    // config.events.atSample は絶対 sample = quantum = floor(atSample / 128)、
-    // wire の atSample は block-local (= atSample % 128)。 worklet drain (= process
-    // 冒 頭、 Q38-b) が tail→head を 消 化 す る。
+    // MIDI inbound injection (= push the events for this quantum onto the matching
+    // port ring). config.events.atSample is an absolute sample, so
+    // quantum = floor(atSample / 128); the wire's atSample is block-local
+    // (= atSample % 128). The worklet drain (= top of process, Q38-b) consumes
+    // tail→head.
     for (const ev of config.events ?? []) {
       const port = midiInPorts.find((p) => p.name === ev.name);
       if (port === undefined) continue;
@@ -316,7 +321,7 @@ export async function renderOffline<C>(
       const payload = ev.payload as MidiEvent;
       if (payload.type === "sysex") {
         // Sysex: bytes → content chunk `[length, data]`, slot carries
-        // `[0xF0, chunkIdx, _pad, _pad, atSample]` (`11-midi.md` §4.3)。
+        // `[0xF0, chunkIdx, _pad, _pad, atSample]` (`11-midi.md` §4.3).
         const region = port.sysex!;
         const chunkIdx = head % region.chunks;
         const chunkBase = region.base + chunkIdx * region.perChunk;
@@ -339,10 +344,11 @@ export async function renderOffline<C>(
 
     instance.process();
 
-    // event ring drain (= 各 quantum 末 尾 で WASM ring の head が 進 ん だ 分 を
-    // OfflineEmittedEvent に 蓄 積)。 WASM 内 ring は per-quantum 完 結 = ring tail
-    // を 進 め な い と drop-oldest が 連 発 す る path = drain 後 tail = head に
-    // commit (= WASM memory 経 由 で 直 接 store)。
+    // event ring drain (= at the end of each quantum, accumulate however far the
+    // WASM ring's head advanced into OfflineEmittedEvent). The in-WASM ring is
+    // per-quantum self-contained: not advancing the ring tail leads to repeated
+    // drop-oldest, so after draining commit tail = head (= stored directly via
+    // WASM memory).
     for (const ring of eventRingMeta) {
       const memory = instance.memory.buffer;
       const headerView = new Int32Array(memory, ring.base, 3);
@@ -356,8 +362,9 @@ export async function renderOffline<C>(
         let atSample = 0;
         for (const field of ring.fields) {
           const byteOffset = slotByteOffset + field.offsetInSlot;
-          // typed-array field (§4.3) = slot の [payloadLen, payloadOffset] を読んで
-          // content region から fresh Float32Array を切り出す (= main 側は natural array)。
+          // typed-array field (§4.3) = read the slot's [payloadLen, payloadOffset]
+          // and slice a fresh Float32Array out of the content region (= a natural
+          // array on the main side).
           if (field.payloadElementType !== undefined) {
             const payloadLen = dataView.getInt32(byteOffset, true); // bytes
             const payloadOffset = dataView.getInt32(byteOffset + 4, true);
@@ -387,8 +394,9 @@ export async function renderOffline<C>(
             case "f32":
               value = dataView.getFloat32(byteOffset, true);
               break;
-            /* v8 ignore start — f64 / i64 event field は sub-phase 7.6 段 階 で
-               typed-array path と zip で 別 commit fill = unreachable defensive */
+            /* v8 ignore start — f64 / i64 event fields are filled in a separate
+               commit alongside the typed-array path at sub-phase 7.6 = unreachable
+               defensive */
             case "f64":
               value = dataView.getFloat64(byteOffset, true);
               break;
@@ -407,15 +415,16 @@ export async function renderOffline<C>(
         emittedEvents.push({ name: ring.name, payload, atSample });
         tail += 1;
       }
-      // drain 後 tail = head に commit (= 次 quantum で WASM ring が 空 状 態 で
-      // start、 drop-oldest 連 発 を 防 ぐ)。 ま た overflowCount も リ セ ッ ト ナ シ
-      // (= monotonic 維 持)。
+      // After draining, commit tail = head (= the WASM ring starts empty at the
+      // next quantum, preventing repeated drop-oldest). overflowCount is left
+      // unreset (= kept monotonic).
       headerView[1] = head;
     }
 
-    // MIDI outbound drain (= midiOutput port の ring を deserialize し て
-    // OfflineEmittedEvent に 蓄 積、 payload = MidiEvent 構 造、 §2.4 expectMidiOut
-    // が 直 接 比 較)。 event ring と 同 様 per-quantum 完 結 = 末 尾 で tail = head。
+    // MIDI outbound drain (= deserialize the midiOutput port's ring and accumulate
+    // into OfflineEmittedEvent; payload = MidiEvent structure, compared directly by
+    // §2.4 expectMidiOut). Per-quantum self-contained like the event ring = tail =
+    // head at the end.
     for (const port of midiOutPorts) {
       const memory = instance.memory.buffer;
       const headerView = new Int32Array(memory, port.base, 3);
@@ -431,7 +440,7 @@ export async function renderOffline<C>(
         const slotAtSample = dv.getUint32(slotByteOffset + 4, true);
         let payload: MidiEvent;
         if (status === 0xf0 && port.sysex !== undefined) {
-          // Sysex: chunkIdx = data1, content chunk = [length, bytes...]。
+          // Sysex: chunkIdx = data1, content chunk = [length, bytes...].
           const region = port.sysex;
           const chunkBase = region.base + (data1 % region.chunks) * region.perChunk;
           const len = dv.getUint32(chunkBase, true);

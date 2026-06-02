@@ -1,8 +1,9 @@
 /**
- * SIMD (f32x4) の黒箱テスト (`01-dsl.md` §7、Q59)。
+ * Black-box tests for SIMD (f32x4) (`01-dsl.md` §7, Q59).
  *
- * vec 演算 = pure audio-thread = compile + driver で出力 PCM を観測する黒箱で検証。
- * f32x4 の結果は sumLanes / .lane で scalar f32 に戻して audioOutput で観測する。
+ * Vector ops run on the pure audio thread; correctness is verified by observing
+ * output PCM through the compile + driver pipeline.
+ * f32x4 results are reduced to scalar f32 via sumLanes / .lane and observed through audioOutput.
  */
 
 import { expect, test } from "vite-plus/test";
@@ -21,7 +22,7 @@ import { render } from "./render.ts";
 test("Node<'f32x4'> exposes only vector ops at the type level (type-only guard)", () => {
   // Never called — the body asserts the f32x4 method surface (`01-dsl.md` §7.2).
   // The `@ts-expect-error` lines fail `vp check` if a scalar method ever leaks
-  // onto f32x4 (= the Phase 10 "型は通るが capture で throw" regression).
+  // onto f32x4 (= the Phase 10 "types pass but capture throws" regression).
   const _guard = (): void => {
     const v = splat(f32(1));
     v.add(v); // ✓ vector arithmetic is available
@@ -57,14 +58,14 @@ test("SIMD: splat(2) × vec4(1,2,3,4) → sumLanes = 20", async () => {
   for (let k = 0; k < SAMPLES_PER_BLOCK; k++) expect(outputs.main![0]![k]).toBe(20);
 });
 
-test("SIMD: addVec(vec4, vec4) の各レーンを lane(i) で取り出す", async () => {
+test("SIMD: extract each lane of addVec(vec4, vec4) via lane(i)", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
     return {
       process: () => {
         forSample((i) => {
           const v = addVec(vec4(10, 20, 30, 40), vec4(1, 2, 3, 4)); // [11, 22, 33, 44]
-          // lane 0+2 = 11 + 33 = 44 で観測 (= 各 lane が正しい位置)。
+          // lane 0 + lane 2 = 11 + 33 = 44, confirming each lane holds the correct value.
           out
             .ch(0)
             .at(i)
@@ -77,7 +78,7 @@ test("SIMD: addVec(vec4, vec4) の各レーンを lane(i) で取り出す", asyn
   for (let k = 0; k < SAMPLES_PER_BLOCK; k++) expect(outputs.main![0]![k]).toBe(44);
 });
 
-test("SIMD: method 形 splat(2).mul(vec4) が f32x4 で動く (= 型通り = 動く)", async () => {
+test("SIMD: method-form splat(2).mul(vec4) works on f32x4 (type-safe and runtime-correct)", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
     return {
@@ -93,9 +94,9 @@ test("SIMD: method 形 splat(2).mul(vec4) が f32x4 で動く (= 型通り = 動
   for (let k = 0; k < SAMPLES_PER_BLOCK; k++) expect(outputs.main![0]![k]).toBe(20);
 });
 
-test("SIMD: buf.loadVec / storeVec で 4 lane を buffer 経由で I/O", async () => {
+test("SIMD: buf.loadVec / storeVec round-trips 4 lanes through a buffer", async () => {
   // buf[0..3] = 1,2,3,4 → loadVec(0) = [1,2,3,4] → ×splat(10) = [10,20,30,40]
-  // → storeVec(4) で buf[4..7] = 10,20,30,40 → read(4)+read(7) = 10+40 = 50。
+  // → storeVec(4) writes buf[4..7] = 10,20,30,40 → read(4)+read(7) = 10+40 = 50.
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
     const buf = state.buffer.f32({ size: 8 });

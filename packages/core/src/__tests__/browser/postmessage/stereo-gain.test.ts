@@ -1,23 +1,23 @@
 /**
- * Browser e2e: canonical Ex 1 full (= stereo gain + meter L/R) を
- * postMessage fallback path で 動 作 確 認 (= SAB unavailable 環 境)。
+ * Browser e2e: canonical Ex 1 full (stereo gain + meter L/R) verified on the
+ * postMessage fallback path (SAB unavailable environment).
  *
- * 環 境: COOP/COEP ヘ ッ ダ 無 し config (= `vite.browser-postmessage.config.ts`)
- * 経 由 で `crossOriginIsolated === false` 担 保 = SAB 不 可 = unworklet
- * runtime が postMessage transport に fallback。
+ * Environment: served without COOP/COEP headers (`vite.browser-postmessage.config.ts`)
+ * so `crossOriginIsolated === false` is guaranteed, SAB is unavailable, and
+ * the unworklet runtime falls back to postMessage transport.
  *
- * 仕 様 anchor:
- * - `02-messaging.md` §4: SAB 不 可 時 = flag-bearing postMessage at
+ * Spec anchors:
+ * - `02-messaging.md` §4: when SAB is unavailable, flag-bearing postMessage at
  *   render-quantum boundary
- * - `04-worklet-runtime.md` §7: publish copy step を postMessage enqueue
- *   に 置 き 換 え
- * - Q27-d / Q11 A5: API surface は SAB と byte-identical、 main 側 観 測 latency
- *   だ け が postMessage round-trip を 拾 う
- * - Q39-a/b: audio thread = 無 条 件 store + 版 inc、 main side = 版 advance で
- *   handler 必 ず fire (= framework 値 比 較 ナ シ)
+ * - `04-worklet-runtime.md` §7: publish copy step replaced by postMessage enqueue
+ * - Q27-d / Q11 A5: API surface is byte-identical to the SAB path; only the
+ *   main-side observation latency reflects the postMessage round-trip
+ * - Q39-a/b: audio thread unconditionally stores + increments version; main side
+ *   fires handler on every version advance with no value deduplication
  *
- * test scope = SAB 側 `stereo-gain.test.ts` と 同 14 軸 + postMessage 環 境 担 保
- * 2 + no-dedupe (= Q39-b) 1 = 17 test、 transport mtx を fill。
+ * Test scope: same 14 axes as the SAB-side `stereo-gain.test.ts`, plus
+ * 2 environment-guarantee tests + 1 no-dedupe test (Q39-b) = 17 tests total,
+ * filling the transport matrix.
  */
 
 import { expect, test } from "vite-plus/test";
@@ -63,14 +63,14 @@ const buildStereoContext = (
 };
 
 // ─────────────────────────────────────────────────────────────────────────
-// 環 境 担 保 (= postMessage path 専 属)
+// Environment guarantees (postMessage path only)
 // ─────────────────────────────────────────────────────────────────────────
 
-test("環 境 担 保: COOP/COEP 無 し で crossOriginIsolated false", () => {
+test("environment: crossOriginIsolated is false without COOP/COEP headers", () => {
   expect(globalThis.crossOriginIsolated).toBe(false);
 });
 
-test("transport: SAB unavailable で postMessage に fallback", async () => {
+test("transport: falls back to postMessage when SAB is unavailable", async () => {
   const ctx = new OfflineAudioContext({
     numberOfChannels: 2,
     length: 128,
@@ -82,10 +82,10 @@ test("transport: SAB unavailable で postMessage に fallback", async () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// Audio I/O behavior (= transport non-dependent、 SAB / postMessage 同 結 果)
+// Audio I/O behavior (transport-independent; SAB and postMessage produce identical results)
 // ─────────────────────────────────────────────────────────────────────────
 
-test("audio: stereo gain × DC input = output 0.5 で 両 channel 安 定", async () => {
+test("audio: stereo gain applied to DC input yields 0.5 on both channels stably", async () => {
   const { ctx, merger, constantL, constantR } = buildStereoContext(8);
   const node = await createNode(ctx, stereoGain, { initial: { gain: 0.5 } });
   merger.connect(node.inputs["main"]!);
@@ -99,7 +99,7 @@ test("audio: stereo gain × DC input = output 0.5 で 両 channel 安 定", asyn
   node.dispose();
 });
 
-test("audio: gain = 0 で output が 全 sample 0 (= mute)", async () => {
+test("audio: gain = 0 produces all-zero output (mute)", async () => {
   const { ctx, merger, constantL, constantR } = buildStereoContext(4);
   const node = await createNode(ctx, stereoGain, { initial: { gain: 0 } });
   merger.connect(node.inputs["main"]!);
@@ -109,13 +109,13 @@ test("audio: gain = 0 で output が 全 sample 0 (= mute)", async () => {
   const rendered = await ctx.startRendering();
   const ch0 = rendered.getChannelData(0);
   for (let i = 64; i < ch0.length; i++) {
-    // 立 ち 上 が り transient を 避 け て 後 半 だ け check
+    // check only the latter half to skip startup transients
     expect(ch0[i]).toBe(0);
   }
   node.dispose();
 });
 
-test("audio: gain ramp で output が 滑 ら か に 推 移 (= a-rate path 担 保)", async () => {
+test("audio: gain ramp produces smoothly increasing output (a-rate path)", async () => {
   const { ctx, merger, constantL, constantR } = buildStereoContext(8);
   const node = await createNode(ctx, stereoGain, { initial: { gain: 0 } });
   merger.connect(node.inputs["main"]!);
@@ -135,10 +135,10 @@ test("audio: gain ramp で output が 滑 ら か に 推 移 (= a-rate path 担
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// Param behavior (= transport non-dependent)
+// Param behavior (transport-independent)
 // ─────────────────────────────────────────────────────────────────────────
 
-test("param: setValueAtTime で 後 半 quantum の gain 変 化", async () => {
+test("param: setValueAtTime changes gain starting at the specified quantum", async () => {
   const { ctx, merger, constantL, constantR } = buildStereoContext(8);
   const node = await createNode(ctx, stereoGain, { initial: { gain: 0.2 } });
   merger.connect(node.inputs["main"]!);
@@ -153,7 +153,7 @@ test("param: setValueAtTime で 後 半 quantum の gain 変 化", async () => {
   node.dispose();
 });
 
-test("param: node.params.gain.value で 直 接 set + 反 映", async () => {
+test("param: assigning node.params.gain.value is reflected in output", async () => {
   const { ctx, merger, constantL, constantR } = buildStereoContext(4);
   const node = await createNode(ctx, stereoGain);
   merger.connect(node.inputs["main"]!);
@@ -168,10 +168,10 @@ test("param: node.params.gain.value で 直 接 set + 反 映", async () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// state.publish behavior (= postMessage path で 仕 様 通 り 動 く か)
+// state.publish behavior (verifies correct operation on the postMessage path)
 // ─────────────────────────────────────────────────────────────────────────
 
-test("state.publish: meter L/R = render 後 .value で 0 < v ≤ 0.5", async () => {
+test("state.publish: meter L/R reports 0 < v ≤ 0.5 via .value after render", async () => {
   const { ctx, merger, constantL, constantR } = buildStereoContext(32);
   const node = await createNode(ctx, stereoGain, { initial: { gain: 0.5 } });
   merger.connect(node.inputs["main"]!);
@@ -179,8 +179,8 @@ test("state.publish: meter L/R = render 後 .value で 0 < v ≤ 0.5", async () 
   constantL.start();
   constantR.start();
   await ctx.startRendering();
-  // postMessage path は render 完 了 後 に port queue が drain さ れ て 値 が
-  // 反 映 さ れ る 必 要 = await waitRAF で 1 tick 待 つ。
+  // On the postMessage path, the port queue must drain after render completes
+  // before values are reflected — wait one RAF tick.
   await waitRAF(2);
   const meterL = node.state["meterL"]!.value as number;
   const meterR = node.state["meterR"]!.value as number;
@@ -191,7 +191,7 @@ test("state.publish: meter L/R = render 後 .value で 0 < v ≤ 0.5", async () 
   node.dispose();
 });
 
-test("state.publish: subscribe 経 路 で handler が 連 続 fire", async () => {
+test("state.publish: subscribe handler fires repeatedly", async () => {
   const { ctx, merger, constantL, constantR } = buildStereoContext(32);
   const node = await createNode(ctx, stereoGain, { initial: { gain: 0.5 } });
   merger.connect(node.inputs["main"]!);
@@ -214,7 +214,7 @@ test("state.publish: subscribe 経 路 で handler が 連 続 fire", async () =
   node.dispose();
 });
 
-test("state.publish: unsubscribe 後 handler が fire し な い", async () => {
+test("state.publish: handler does not fire after unsubscribe", async () => {
   const { ctx, merger, constantL, constantR } = buildStereoContext(32);
   const node = await createNode(ctx, stereoGain, { initial: { gain: 0.5 } });
   merger.connect(node.inputs["main"]!);
@@ -232,7 +232,7 @@ test("state.publish: unsubscribe 後 handler が fire し な い", async () => 
   node.dispose();
 });
 
-test("state.publish: 多 重 subscribe で 全 handler fire", async () => {
+test("state.publish: multiple subscribers each receive every fire", async () => {
   const { ctx, merger, constantL, constantR } = buildStereoContext(32);
   const node = await createNode(ctx, stereoGain, { initial: { gain: 0.5 } });
   merger.connect(node.inputs["main"]!);
@@ -253,12 +253,13 @@ test("state.publish: 多 重 subscribe で 全 handler fire", async () => {
   node.dispose();
 });
 
-test("state.publish: 同 値 publish で も handler 連 続 fire (= Q39-b no-dedupe)", async () => {
-  // 仕 様 Q39-a/b: audio thread = 無 条 件 inc、 main side = 版 advance で
-  // framework 値 比 較 ナ シ で handler 必 ず fire。 user dedupe は handler 内 1 行。
-  // gain = 0 で meter 値 = 0 の ま ま (= 同 値) で も 各 due tick で fire す る こ と
-  // を 観 測。
-  const { ctx, merger, constantL, constantR } = buildStereoContext(48); // 1 sec 弱 = 30fps で 30 fire 予 定
+test("state.publish: handler fires on every publish even when value is unchanged (Q39-b no-dedupe)", async () => {
+  // Spec Q39-a/b: audio thread unconditionally increments version; main side
+  // fires handler on every version advance with no framework-level value comparison.
+  // User-side deduplication is a single-line concern inside the handler itself.
+  // With gain = 0 the meter value stays at 0 (same value each time), but the
+  // handler must still fire on every due tick.
+  const { ctx, merger, constantL, constantR } = buildStereoContext(48); // ~1 sec, ~30 fires at 30fps
   const node = await createNode(ctx, stereoGain, { initial: { gain: 0 } });
   merger.connect(node.inputs["main"]!);
   node.outputs["main"]!.connect(ctx.destination);
@@ -268,27 +269,27 @@ test("state.publish: 同 値 publish で も handler 連 続 fire (= Q39-b no-de
   constantR.start();
   await ctx.startRendering();
   await waitRAF(10);
-  // gain = 0 で 全 sample 0 = 全 publish 値 0 (= 同 値)、 ただ し 各 due tick
-  // (= 1600 sample 周 期 = 48 quanta 中 約 4 回) で 必 ず fire = 1 件 以 上 受 信。
+  // gain = 0 makes all samples 0, so every publish value is 0 (same value);
+  // each due tick (1600-sample period = ~4 times across 48 quanta) must still fire.
   expect(values.length).toBeGreaterThan(0);
-  // 全 件 0 を 観 測 (= 同 値 dedupe さ れ て な い = framework 値 比 較 ナ シ 担 保)。
+  // All received values are 0, confirming no deduplication occurred.
   for (const v of values) expect(v).toBe(0);
   unsub();
   node.dispose();
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// Lifecycle behavior (= transport non-dependent)
+// Lifecycle behavior (transport-independent)
 // ─────────────────────────────────────────────────────────────────────────
 
-test("lifecycle: dispose 後 2 度 呼 ぶ で no-op (= 例 外 出 ず)", async () => {
+test("lifecycle: calling dispose twice is a no-op (no exception thrown)", async () => {
   const { ctx } = buildStereoContext(1);
   const node = await createNode(ctx, stereoGain);
   expect(() => node.dispose()).not.toThrow();
   expect(() => node.dispose()).not.toThrow();
 });
 
-test("lifecycle: onError handler 登 録 + unsubscribe path 動 く", async () => {
+test("lifecycle: onError handler registration and unsubscribe work correctly", async () => {
   const { ctx } = buildStereoContext(1);
   const node = await createNode(ctx, stereoGain);
   const errors: unknown[] = [];
@@ -298,25 +299,26 @@ test("lifecycle: onError handler 登 録 + unsubscribe path 動 く", async () =
   node.dispose();
 });
 
-test("lifecycle: onError 登 録 で sab-unavailable event を 1 度 だ け 受 信", async () => {
-  // 仕 様 `04-worklet-runtime.md` §8: SAB 不 可 環 境 で 1 番 目 の subscriber に
-  // 1 度 だ け 通 知、 2 番 目 以 降 は drop (= pending flag clear 済)。
+test("lifecycle: first onError subscriber receives sab-unavailable exactly once", async () => {
+  // Spec `04-worklet-runtime.md` §8: in a SAB-unavailable environment, the
+  // notification is delivered once to the first subscriber only; subsequent
+  // subscribers receive nothing (pending flag already cleared).
   const { ctx } = buildStereoContext(1);
   const node = await createNode(ctx, stereoGain);
   const eventsA: unknown[] = [];
   const offA = node.onError((e) => eventsA.push(e));
   const eventsB: unknown[] = [];
   const offB = node.onError((e) => eventsB.push(e));
-  // subscribe 即 時 に sab-unavailable を 受 信 = sync な promise.resolve 後 観 測
+  // sab-unavailable is delivered synchronously via a resolved promise — observe after one microtask
   await new Promise((r) => setTimeout(r, 0));
   expect(eventsA).toEqual([{ code: "sab-unavailable" }]);
-  expect(eventsB).toEqual([]); // 2 番 目 subscriber は drop
+  expect(eventsB).toEqual([]); // second subscriber receives nothing
   offA();
   offB();
   node.dispose();
 });
 
-test("lifecycle: dispose で subscribe handler が 以 後 fire し な い", async () => {
+test("lifecycle: subscribe handler stops firing after dispose", async () => {
   const { ctx, merger, constantL, constantR } = buildStereoContext(32);
   const node = await createNode(ctx, stereoGain, { initial: { gain: 0.5 } });
   merger.connect(node.inputs["main"]!);

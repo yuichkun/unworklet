@@ -1,8 +1,9 @@
 /**
- * forSample.byN + everyNSamples の黒箱テスト (`01-dsl.md` §10 + §9、Q43)。
+ * Black-box tests for forSample.byN + everyNSamples (`01-dsl.md` §10 + §9, Q43).
  *
- * pure audio-thread loop primitive = cross-thread transport ナシ = compile + driver
- * で出力 PCM を直接観測する黒箱ハーネスで検証 (= web e2e 不要)。
+ * Pure audio-thread loop primitives with no cross-thread transport — verified by
+ * directly observing output PCM through a compile + driver black-box harness
+ * (no browser e2e required).
  */
 
 import { expect, test } from "vite-plus/test";
@@ -17,16 +18,16 @@ import { defineProcessor } from "../../processor.ts";
 
 import { render } from "./render.ts";
 
-test("forSample.byN(4) は 4 サンプルおきに body を実行する (= 櫛状)", async () => {
+test("forSample.byN(4) executes body every 4 samples (comb pattern)", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
     return {
       process: () => {
         forSample((i) => {
-          out.ch(0).at(i).write(f32(0)); // 全 sample を 0 に
+          out.ch(0).at(i).write(f32(0)); // zero all samples
         });
         forSample.byN(4, (i) => {
-          out.ch(0).at(i).write(f32(1)); // 4 サンプルおきに 1
+          out.ch(0).at(i).write(f32(1)); // write 1 every 4 samples
         });
       },
     };
@@ -37,7 +38,7 @@ test("forSample.byN(4) は 4 サンプルおきに body を実行する (= 櫛�
   }
 });
 
-test("forSample.byN(1) は全サンプルで body を実行する (= stride 1 と等価)", async () => {
+test("forSample.byN(1) executes body on every sample (equivalent to stride 1)", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
     return {
@@ -54,8 +55,8 @@ test("forSample.byN(1) は全サンプルで body を実行する (= stride 1 �
   }
 });
 
-test("forSample.byN(8) は前ブロックの state を引き継ぐ (= cross-block stride)", async () => {
-  // byN(8) で counter を +1 → 1 ブロック 16 回。2 ブロックで 32。出力 = counter。
+test("forSample.byN(8) carries state across block boundaries (cross-block stride)", async () => {
+  // byN(8) increments counter by 1 — 16 times per block. After 2 blocks: 32. Output = counter.
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
     const count = state.i32(0);
@@ -71,15 +72,15 @@ test("forSample.byN(8) は前ブロックの state を引き継ぐ (= cross-bloc
     };
   });
   const { outputs } = await render(proc, { blocks: 2 });
-  // outputs.main[0] = ch0 の flat 配列 (= blocks × 128)。block 1 = [0..127]、block 2 = [128..255]。
-  // byN(8) は 1 ブロック 16 回。block 1 末 counter = 16、block 2 末 = 32。
+  // outputs.main[0] = flat array for ch0 (blocks × 128). block 1 = [0..127], block 2 = [128..255].
+  // byN(8) fires 16 times per block. Counter after block 1 = 16, after block 2 = 32.
   expect(outputs.main![0]![0]).toBe(16);
   expect(outputs.main![0]![128]).toBe(32);
 });
 
-test("everyNSamples(32) は 32 サンプルごとに sub-block を実行し、間は zero-order hold", async () => {
-  // everyNSamples(32) で counter を +1 (= 1 ブロック 128 で 4 回: sample 0/32/64/96)。
-  // 出力 = counter (held) → 階段状 1,2,3,4。
+test("everyNSamples(32) executes sub-block every 32 samples with zero-order hold between fires", async () => {
+  // everyNSamples(32) increments counter by 1 — 4 times per 128-sample block (at samples 0/32/64/96).
+  // Output = held counter value → staircase 1,2,3,4.
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
     const c = state.i32(0);
@@ -104,9 +105,9 @@ test("everyNSamples(32) は 32 サンプルごとに sub-block を実行し、�
   expect(outputs.main![0]![127]).toBe(4);
 });
 
-test("everyNSamples の counter は block 跨ぎで継続する (= 非 block-aligned divisor)", async () => {
-  // everyNSamples(48) は 128 を割り切らない。counter が block 跨ぎで継続すれば、
-  // fire 位置は block ごとにズレる (= 0, 48, 96, [block2] 144=16, ...)。
+test("everyNSamples counter persists across block boundaries (non-block-aligned divisor)", async () => {
+  // everyNSamples(48) does not evenly divide 128. When the counter persists across blocks,
+  // fire positions shift each block (= global 0, 48, 96, then [block2] 144=local 16, ...).
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
     const c = state.i32(0);
@@ -123,17 +124,17 @@ test("everyNSamples の counter は block 跨ぎで継続する (= 非 block-ali
   });
   const { outputs } = await render(proc, { blocks: 2 });
   const ch = outputs.main![0]!;
-  // block1: fire at 0,48,96 → counter 1,2,3。 block2 (= global 128..255): 次 fire は
-  // global 144 (= block2 sample 16) → そこで 4。block2 sample 0..15 = 3 (held)。
+  // block1: fires at 0,48,96 → counter 1,2,3. block2 (global 128..255): next fire at
+  // global 144 (= block2 sample 16) → counter becomes 4. block2 samples 0..15 = 3 (held).
   expect(ch[0]).toBe(1);
   expect(ch[47]).toBe(1);
   expect(ch[48]).toBe(2);
   expect(ch[96]).toBe(3);
   expect(ch[128]).toBe(3); // block2 sample 0 = held 3 (= 128%48 = 32 ≠ 0)
-  expect(ch[128 + 16]).toBe(4); // global 144 = 48×3 で fire
+  expect(ch[128 + 16]).toBe(4); // global 144 = 48×3 fires here
 });
 
-test("forSample.byN は 128 を割り切らない stride を compile で reject する", async () => {
+test("forSample.byN rejects a stride that does not evenly divide 128 at compile time", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
     return {
@@ -147,9 +148,10 @@ test("forSample.byN は 128 を割り切らない stride を compile で reject 
   await expect(compile(proc)).rejects.toThrow(/illegal-stride/);
 });
 
-// everyNSamples(N) の N は §9.5 で「compile-time な正の整数」。N=0 は emit が
-// i32.rem_u(counter, 0) を吐いて audio thread で除算 trap、負/非整数は無効。
-// → analyze が compile-time に reject する (= audio thread に届かせない)。
+// Per §9.5, the N in everyNSamples(N) must be a positive integer known at compile time.
+// N=0 would emit i32.rem_u(counter, 0), causing a division trap on the audio thread;
+// negative or non-integer values are likewise invalid.
+// → The analyzer rejects these at compile time, preventing them from reaching the audio thread.
 const everyN = (n: number) =>
   defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
@@ -166,16 +168,16 @@ const everyN = (n: number) =>
     };
   });
 
-test("everyNSamples(0) は compile で reject する (= audio thread の 0 除算 trap を防ぐ)", async () => {
+test("everyNSamples(0) is rejected at compile time (prevents division-by-zero trap on the audio thread)", async () => {
   await expect(compile(everyN(0))).rejects.toThrow(/illegal-everyn-divisor/);
 });
 
-test("everyNSamples は負/非整数の N を compile で reject する (= §9.5 正の整数)", async () => {
+test("everyNSamples rejects negative or non-integer N at compile time (§9.5 requires a positive integer)", async () => {
   await expect(compile(everyN(-2))).rejects.toThrow(/illegal-everyn-divisor/);
   await expect(compile(everyN(3.5))).rejects.toThrow(/illegal-everyn-divisor/);
 });
 
-test("everyNSamples(1) は正当 (= 毎サンプル実行) で compile を通る", async () => {
-  // N=1 は下限の正当値 (= 128 を割り切る必要はない、§9.5)。reject されない。
+test("everyNSamples(1) is valid (executes every sample) and passes compilation", async () => {
+  // N=1 is the minimum valid value (need not divide 128 evenly, per §9.5) and must not be rejected.
   await expect(compile(everyN(1))).resolves.toBeDefined();
 });

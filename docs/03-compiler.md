@@ -158,7 +158,7 @@ Each `<stable-id>` is a kebab-case identifier used as the `error[unworklet/<stab
 | `illegal-stride`                   | 2     | `forSample.byN(stride, callback)` is called with a non-build-time-constant `stride`, or a `stride` that does not divide `SAMPLES_PER_BLOCK` (= 128) — allowed values: `1`, `2`, `4`, `8`, `16`, `32`, `64`, `128`                                                                                      | Q37-b       |
 | `illegal-everyn-divisor`           | 2     | `everyNSamples(N, callback)` is called with an `N` that is not a build-time positive integer (must be an integer `>= 1`) — `N = 0` would lower to `i32.rem_u(counter, 0)` and trap on the audio thread; `N` need not divide `SAMPLES_PER_BLOCK` (free-running cross-block counter, §9.1)               | §9.5        |
 | `non-constant-lane`                | 2     | `vec.lane(i)` is called with a non-build-time-constant lane index `i` (SIMD lane access must fold at graph capture)                                                                                                                                                                                    | Q3          |
-| `audio-sample-offset-out-of-range` | 2     | `audioIn.ch(c).at(k)` / `audioOut.ch(c).at(k).write(v)` / `param.at(k)` is called with a JS-literal sample-offset `k` outside `[0, SAMPLES_PER_BLOCK - 1]` (= `0`〜`127`)                                                                                                                              | Q68         |
+| `audio-sample-offset-out-of-range` | 2     | `audioIn.ch(c).at(k)` / `audioOut.ch(c).at(k).write(v)` / `param.at(k)` is called with a JS-literal sample-offset `k` outside `[0, SAMPLES_PER_BLOCK - 1]` (= `0` to `127`)                                                                                                                              | Q68         |
 | `payload-element-type-mismatch`    | 2     | `buf.copyFrom(payloadField)` is called with a typed-array payload whose element type does not match the buffer's `<T>` (e.g. `Float32Array` → `state.buffer.i32`)                                                                                                                                      | Q31-c       |
 | `multiple-typed-array-fields`      | 2     | an `event<T>` payload seals more than one variable-length (typed-array) field (e.g. `event<{ a: Float32Array; b: Float32Array }>` reading both `a.at(...)` and `b.at(...)`) — v1.0.0 allows at most one per payload, since the slot carries a single `[payloadLen, payloadOffset]` pair (§5.1)         | §5.1        |
 | `migrations-unreachable`           | 2     | a `migrations: [...]` chain does not cover a path from a known `from` `schemaHash` to the current `schemaHash` (reported as warning by default; promoted to error under `migrationsStrict: true`)                                                                                                      | Q5-e        |
@@ -169,21 +169,21 @@ Each `<stable-id>` is a kebab-case identifier used as the `error[unworklet/<stab
 
 A separate runtime check (not graph-capture / static-analysis) fires when the worklet observes `outputs[0][0].length !== SAMPLES_PER_BLOCK` at the start of a render quantum (= `block-length-mismatch`); audio output switches to silence (zero buffer) while the node stays connected, and a `node.onError({ code: 'block-length-mismatch', expected, received })` event surfaces on the main side rather than a build-time `error[unworklet/...]` heading. See `04-worklet-runtime.md` §3 / §8 and Q18 / Q75.
 
-### 2.7 要対応: 共通部分式の再評価 (CSE) — [#8](https://github.com/yuichkun/unworklet/issues/8)
+### 2.7 Required fix: shared sub-expression re-evaluation (CSE) — [#8](https://github.com/yuichkun/unworklet/issues/8)
 
-graph capture が生む `Node<T>` AST は共有部分木を持つ DAG だが、emit は同じ `Node<T>` 式を複数回参照すると **参照ごとに式を再評価する**（共通部分式除去 = CSE をしない）。式が `state.read()` を含み、その間に同じ slot への `write` が挟まると、後続の参照が **write 後の値** を読んで結果が壊れる。
+The `Node<T>` AST produced by graph capture is a DAG with shared sub-trees, but the emitter currently **re-evaluates each shared `Node<T>` expression at every reference site** (no common sub-expression elimination = CSE). When the expression contains a `state.read()` and a `write` to the same slot is interleaved between two references, subsequent references read the **post-write value**, corrupting the result.
 
-最小例:
+Minimal example:
 
 ```ts
-const y = s.read().add(10); // y = いまの s + 10
-s.write(100); // s を 100 に
-out.ch(0).at(i).write(y); // 期待 10 / 実際 110 (out の y 再評価で s=100 を読む)
+const y = s.read().add(10); // y = current s + 10
+s.write(100); // overwrite s with 100
+out.ch(0).at(i).write(y); // expected 10 / actual 110 (y re-evaluated with s=100)
 ```
 
-canonical Ex2 の biquad (Direct Form II Transposed) もこれで壊れる: `y = b0·x + z1.read()` を z1n / z2n / return で 3 回使い、間に `z1.write()` が挟まるため、impulse 応答の先頭が `0.2929` (正) → `0.8787` (= write 後の z1 `0.5858` を足し込んだ値) になる。state フィードバックを持つ DSP (biquad / 1 次 LPF / 積分器) を自然な形で書くと全て踏む。
+The canonical Ex2 biquad (Direct Form II Transposed) is also broken by this: `y = b0·x + z1.read()` is referenced three times (for z1n, z2n, and the return value), with `z1.write()` interleaved, causing the first sample of the impulse response to be `0.2929` (correct) → `0.8787` (incorrect, because the re-evaluated z1 picks up the written value `0.5858`). Any DSP with state feedback (biquad, first-order LPF, integrator) hits this when written in the natural textbook form.
 
-**要件**: emit は共有 `Node<T>` 部分木を 1 度だけ計算して local に置き、各参照で使い回す (= DAG の共有を保つ)。これは state フィードバック DSP を教科書通りの自然な形で書けるための必須修正。回避策 (= 同じ slot への write を `forSample` の末尾にまとめる) は踏みやすく、canonical すら踏んでいたため不採用。tracking: [#8](https://github.com/yuichkun/unworklet/issues/8)。
+**Requirement**: the emitter must compute each shared `Node<T>` sub-tree exactly once, store the result in a local, and reuse it at every reference site (= preserve DAG sharing). This is a required fix for writing state-feedback DSP in the natural, textbook form. The workaround of gathering all writes to the same slot at the end of a `forSample` body is easy to miss — canonical examples were themselves affected — so it is not accepted as a solution. Tracking: [#8](https://github.com/yuichkun/unworklet/issues/8).
 
 ## 3. Static analysis phase
 
@@ -250,8 +250,8 @@ canonical Ex2 の biquad (Direct Form II Transposed) もこれで壊れる: `y =
 
 <!-- `@unworklet/offline` ships the offline path: the same WASM binary that
      `@unworklet/core`'s `compile` emits for the AudioWorklet is loaded into
-     the host JS runtime (Node.js / Bun / Deno など、 each shipping a
-     WebAssembly runtime in its standard library) and driven through render
+     the host JS runtime (Node.js / Bun / Deno, etc., each shipping a
+     WebAssembly runtime in their standard library) and driven through render
      quantum cycles to produce PCM output. `renderOffline` invokes
      `@unworklet/core`'s `compile` directly when handed a `defineProcessor`
      value with no prebuilt binary attached. This covers all 4 offline use

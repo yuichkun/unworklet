@@ -1,9 +1,9 @@
 /**
- * Browser e2e fixture = typed-array message payload を main → worklet で受領。
- * `upload({ samples })` で main から `Float32Array` を送ると、worklet が onReceive
- * で各サンプルを buffer に写し取り、forSample でそのまま出力に再生する。出力 PCM
- * が送った配列と一致すれば、配列が SAB content buffer 経由で worklet に届いて
- * 読めている、という黒箱確認。
+ * Browser e2e fixture — receives a typed-array message payload from main to worklet.
+ * When main calls `upload({ samples })` with a `Float32Array`, the worklet copies each
+ * sample into a buffer via onReceive and plays it back through forSample. If the output
+ * PCM matches the uploaded array, the black-box test confirms that the array reached the
+ * worklet through the SAB content buffer and was read correctly.
  */
 
 import { event, audioOutput, defineProcessor, forSample, state } from "../../../index.ts";
@@ -20,7 +20,7 @@ export const uploadPlayback = defineProcessor(() => {
       upload.onReceive(({ samples }) => {
         lenState.write(samples.length);
         forSample((i) => {
-          buf.write(i, samples.at(i)); // i は Node<i32> = runtime indexed read
+          buf.write(i, samples.at(i)); // i is Node<i32> = runtime indexed read
         });
       });
       forSample((i) => {

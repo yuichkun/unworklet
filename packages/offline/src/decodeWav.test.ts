@@ -1,11 +1,11 @@
 /**
  * `decodeWav` behavior = WAV bytes → Float32Array channels + sampleRate
- * (= `wavefile` read wrap)。 encodeWav と pair で round-trip 確 認。
+ * (thin wrapper around `wavefile` read). Paired with encodeWav for round-trip coverage.
  *
- * raw carry path = wavefile `getSamples` を そ の ま ま 返 す
- * (= 32f / 64f は -1〜1 正 規 化 値、 16/24/32 int PCM は raw signed int 値 を
- * Float32Array に carry)。 unworklet renderOffline 出 力 = 32f-default =
- * round-trip で bit-exact。
+ * Raw carry path: wavefile `getSamples` output returned as-is.
+ * 32f / 64f → normalized -1..1 values; 16/24/32-bit integer PCM → raw signed int
+ * values carried into Float32Array. renderOffline output defaults to 32f,
+ * so round-trips are bit-exact.
  */
 
 import { expect, test } from "vite-plus/test";

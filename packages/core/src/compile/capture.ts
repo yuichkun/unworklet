@@ -25,24 +25,27 @@ export type CaptureContext = {
    */
   currentLoopBody: AstNode[] | null;
   /**
-   * `everyNSamples` の call-site ごとに振る counter id (= §9.1)。 各 sub-rate
-   * call site は block 跨ぎで継続する独立 counter を持つ = layout が id ごとに
-   * i32 slot を確保する。 capture 順に 0 から採番。
+   * Counter id assigned per `everyNSamples` call-site (= §9.1). Each
+   * sub-rate call site owns an independent counter that persists across
+   * blocks, so the layout reserves one i32 slot per id. Numbered from 0
+   * in capture order.
    */
   everyNSamplesCount: number;
   /**
-   * `createSubgraph` instance の body 実行中だけ立つ name prefix (= §5.6、Q53)。
-   * subgraph 内の user-named state / buffer に `'<instance>/'` を前置して複数
-   * instance の衝突を避ける (= `'lpfL/z1'`)。 非 subgraph では `''`。
+   * Name prefix active only while a `createSubgraph` instance body runs
+   * (= §5.6, Q53). User-named state / buffer inside the subgraph are
+   * prefixed with `'<instance>/'` to avoid collisions across multiple
+   * instances (= `'lpfL/z1'`). Empty `''` outside subgraphs.
    */
   namePrefix: string;
-  /** `createSubgraph` instance の auto name 採番 (= name 省略時、graph 内で決定的)。 */
+  /** Auto-name numbering for `createSubgraph` instances (= when the name is omitted; deterministic within the graph). */
   subgraphCount: number;
   /**
-   * Mutable-read 固定用 temp local の通し番号 (= `03-compiler.md` §2.7、issue #8)。
-   * `state.read()` / `buffer.read()` / `buffer.readInterpolated()` の各 call site で
-   * 採番し、emit が固定 local の後ろに 1 slot ずつ割り付ける (= `TEMP_LOCAL_BASE +
-   * tempId`)。capture 順 = 0 から単調増加。
+   * Sequence number for the temp locals used to pin mutable reads
+   * (= `03-compiler.md` §2.7, issue #8). Assigned at each call site of
+   * `state.read()` / `buffer.read()` / `buffer.readInterpolated()`; emit
+   * allocates one slot per id past the fixed locals (= `TEMP_LOCAL_BASE +
+   * tempId`). Monotonically increasing from 0 in capture order.
    */
   tempCount: number;
 };
@@ -78,7 +81,7 @@ export function captureTemp<T extends ScalarType>(read: AstNode, type: ScalarTyp
   return wrapAst<T>({ kind: "tempRef", tempId, type });
 }
 
-/** `everyNSamples` call-site に block 跨ぎ counter slot 用の一意 id を払い出す。 */
+/** Hand out a unique id for the block-spanning counter slot of an `everyNSamples` call-site. */
 export function nextEveryNSamplesCounterId(): number {
   const ctx = getCurrentCapture();
   return ctx.everyNSamplesCount++;
@@ -115,11 +118,12 @@ export function addStatement(node: AstNode): void {
 
 export function addDeclaration(decl: Declaration): void {
   const ctx = getCurrentCapture();
-  // declaration は declaration scope (= defineProcessor / defineSubgraph body の top、
-  // return 前) でのみ合法。expression scope (= forSample / forSample.byN / everyNSamples /
-  // onReceive / onEvent handler の body = currentLoopBody が立つ間) で state.* / buffer.* /
-  // param.* / event / message / createSubgraph を宣言するのは §5.6.4 / Q34 で
-  // graph-capture-time error (= state 領域の静的確保と instance 数の build-time 決定が崩れる)。
+  // A declaration is only legal in declaration scope (= the top of a defineProcessor /
+  // defineSubgraph body, before the return). Declaring state.* / buffer.* / param.* /
+  // event / message / createSubgraph in expression scope (= inside a forSample /
+  // forSample.byN / everyNSamples / onReceive / onEvent handler body, while currentLoopBody
+  // is set) is a graph-capture-time error per §5.6.4 / Q34 (= it would break the static
+  // reservation of the state region and the build-time determination of the instance count).
   if (ctx.currentLoopBody !== null) {
     const name = "name" in decl && typeof decl.name === "string" ? ` '${decl.name}'` : "";
     throw new Error(
@@ -171,11 +175,13 @@ export function unwrapAst(node: Node<ScalarType | "f32x4">): AstNode {
 }
 
 /**
- * 値 が `Node<T>` (= `wrapAst` で 包 ま れ た AST proxy) か を 型 安 全 に 判 定。
+ * Type-safely test whether a value is a `Node<T>` (= an AST proxy wrapped
+ * by `wrapAst`).
  *
- * 主 用 途 = `eventDecl.emitIf` の payload field で 「Node<T> か JS literal か」
- * を 安 全 に 分 岐 (= unwrapAst を try-catch で 包 ま な い path)。 unwrapAst は
- * 失 敗 時 throw = ホ ッ ト path で catch 経 由 は cost が 不 必 要 に 高 い。
+ * Main use = branching safely between `Node<T>` and a JS literal in the
+ * payload field of `eventDecl.emitIf` (= a path that avoids wrapping
+ * unwrapAst in try-catch). unwrapAst throws on failure, so routing through
+ * a catch on the hot path costs more than necessary.
  */
 export function isWrappedNode(value: unknown): value is Node<ScalarType | "f32x4"> {
   if (value === null || typeof value !== "object") {

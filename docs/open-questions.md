@@ -1,5 +1,5 @@
 # Open questions
 
-v1.0.0 spec の grill phase を 終 了 (= 2026-05-24)。 残 entry は 全 て 実 装 期 の AI agent 領 域 と し て 預 け る (= 実 装 中 に 仕 様 不 整 合 が 出 た 段 階 で `decisions-log.md` に 追 加 ratify す る path)。
+The v1.0.0 spec grill phase is complete (= 2026-05-24). All remaining entries are handed off to the AI agent domain during the implementation phase (= the path where any spec inconsistency that surfaces during implementation is resolved by adding an additional ratify entry to `decisions-log.md`).
 
-ratify 済 decision = `decisions-log.md` を 参 照。
+For ratified decisions, see `decisions-log.md`.

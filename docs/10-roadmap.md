@@ -10,194 +10,194 @@ partial (§1 written at Q62; §2 implementation phases written; §3.1 mandatory 
 
 ## 1. v1.0.0 acceptance criteria
 
-「v1.0.0 ship 可 能」 を impl AI agent が 1 意 判 定 で き る checklist。 1 項 目 で も 落 ち た ら ship 不 可、 全 項 目 OK で ship。 Q62 (`decisions-log.md`)。
+A checklist that lets an impl AI agent make a single, unambiguous ship/no-ship call. Any item that fails blocks the release; all items passing clears it. Q62 (`decisions-log.md`).
 
 ### A. Build / compile
 
-- **A1** — 公 開 4 package + 内 部 module の `vp build` 通 過 (= exit 0)。
-- **A2** — canonical Ex 1〜8 の WASM emit 通 過 (= 各 Ex の `defineProcessor` body の graph capture + WASM 生 成 成 功)。
-- **A3** — `vp check` (= tsgo typecheck + oxlint + oxfmt) 通 過 (= exit 0)。
+- **A1** — `vp build` passes (exit 0) for all 4 public packages and internal modules.
+- **A2** — WASM emission succeeds for canonical Ex 1–8 (graph capture + WASM generation for each `defineProcessor` body).
+- **A3** — `vp check` passes (exit 0): tsgo typecheck + oxlint + oxfmt.
 
 ### B. Functional
 
-- **B1** — canonical Ex 1〜8 の 期 待 output が `@unworklet/offline` で 再 現 (= reference audio / event sequence と bit-exact)。
+- **B1** — Expected output for canonical Ex 1–8 is reproduced by `@unworklet/offline` with bit-exact agreement against the reference audio / event sequence.
 
 ### C. Safety
 
-- **C1** — realtime-safety invariants 5 件 (= no heap alloc / no unbounded loops / no throw / no blocking I/O / no GC、 `00-foundations.md` §5.1) を `00-foundations.md` §5.2 規 定 通 り の layered enforcement (= L1 / L2 / L3 / Emission / Runtime guard) で 検 出。 各 invariant に 対 す る 違 反 test を 仕 込 ん で 各 enforcement layer が 規 定 通 り に 弾 く こ と を 確 認。
+- **C1** — All 5 realtime-safety invariants (no heap alloc / no unbounded loops / no throw / no blocking I/O / no GC, `00-foundations.md` §5.1) are detected via the layered enforcement defined in `00-foundations.md` §5.2 (L1 / L2 / L3 / Emission / Runtime guard). A violation test is written for each invariant, and each enforcement layer is verified to reject violations as specified.
 
 ### D. Browser matrix
 
-- **D1** — browser smoke pass、 matrix = `Chromium × Firefox × Safari` × `{COOP/COEP cross-origin isolated, not isolated}` = 6 セ ル 全 て で canonical Ex 1〜3 が 起 動 + 出 音。
+- **D1** — Browser smoke pass across the full matrix: `Chromium × Firefox × Safari` × `{COOP/COEP cross-origin isolated, not isolated}` — 6 cells total, each running canonical Ex 1–3 with successful startup and audio output.
 
-  **smoke test 仕 様**: `connectFromWebMIDI` (= Web MIDI 標 準 wrapper) は test 対 象 外 (= emission boundary 外 側、 consumer 責 任、 `08-deployment.md` §2 B1)。 全 browser セ ル で `node.midi.<name>.send(event)` source-agnostic injection (= `11-midi.md` §3) 経 由 で MIDI 動 作 を 統 一 検 証。
+  **Smoke test scope**: `connectFromWebMIDI` (the standard Web MIDI wrapper) is excluded from the test (it sits outside the emission boundary and is the consumer's responsibility; see `08-deployment.md` §2 B1). MIDI behavior is verified uniformly across all browser cells via source-agnostic injection through `node.midi.<name>.send(event)` (`11-midi.md` §3).
 
 ### E. Integrity
 
-- **E1** — `open-questions.md` が 空 (= 全 質 問 が `decisions-log.md` に 移 さ れ て こ の file の 質 問 リ ス ト が 0 件 に な っ た 状 態)。
+- **E1** — `open-questions.md` is empty: every question has been moved to `decisions-log.md`, leaving zero open items in this file.
 
 ### F. Public surface integrity
 
-- **F1** — `.d.ts` 公 開 surface が `decisions-log.md` Q1〜Q77 全 entry (Q28 は unassigned numbering artifact で 対 象 外) と 整 合 (= 各 ratify が 公 開 surface に 反 映)。
+- **F1** — The `.d.ts` public surface is consistent with all entries in `decisions-log.md` Q1–Q77 (Q28 is excluded as an unassigned numbering artifact), meaning every ratified decision is reflected in the public surface.
 
 ## 2. Implementation phases
 
-v1.0.0 ship を target に 14 phase で 段階 構築。 各 phase = 数 conversation 単位 で 完結、 commit + diff review pause cadence。 各 phase 内 step の 詳細 計画 (= 触る file、 構築 順、 検証 方法) は phase 着手 時 に plan mode で 個別 fix、 ここ で は phase scope と 完了 条件 だけ declare。
+14 phases targeting v1.0.0 ship, each completing within a few conversation units with a commit + diff review pause cadence. Detailed step-level plans for each phase (files touched, build order, verification method) are fixed in plan mode at the start of each phase; only phase scope and completion criteria are declared here.
 
-phase 順 は dependency 軸 (= 後続 phase が 前 phase の 成果 物 に 依存) で 決まる。 「動く 単位 を 早く 出す」 軸 を 優先、 「foundation を 先 に 完璧 に」 軸 は 後 回し。
+Phase ordering is determined by dependency: later phases depend on the outputs of earlier ones. The guiding axis is "ship a working unit as early as possible"; getting the foundation perfect before moving on is not the priority.
 
-### 実装 invariant (HARD CONTRACT)
+### Implementation invariant (HARD CONTRACT)
 
-各 phase で の **minimal / vertical slice 実装 は 設計 上 OK** だ が、 以下 は **絶対 ナシ** (= `AGENTS.md` "Implementation invariant" と zip):
+**Minimal / vertical-slice implementations within a phase are acceptable by design**, but the following are **absolutely prohibited** (aligned with `AGENTS.md` "Implementation invariant"):
 
-1. **docs 規定 と 乖離 し た ad hoc 実装** — 公開 API surface (= 公開 type / 引数 形 / 戻り値 形、 09-repo-structure.md §2.1 + §2.2 + 各 component doc 規定) は docs 規定 と zip。 phase 内 で 「とりあえず 違う 形 で 出して 後 で 直す」 は 不可。
-2. **前方 互換性 ナシ 実装** — 後続 phase で 追加 さ れる surface (= declaration kind 追加 / new primitive / main side method 拡張 / messaging surface 拡張 等) と 衝突 する 設計 は 不可。 phase 内 で 実装 する 範囲 は 必ず 最終 アーキテクチャ 像 の **subset** で あり、 後続 phase で **superset** に 拡張 し て いく shape。
+1. **Ad hoc implementations that diverge from docs** — The public API surface (public types / argument shapes / return shapes, as specified in `09-repo-structure.md` §2.1 + §2.2 and each component doc) must be kept in sync with the docs. "Ship it in a different shape now and fix it later" is not allowed within a phase.
+2. **Implementations that break forward compatibility** — Any design that conflicts with surfaces added in later phases (additional declaration kinds / new primitives / main-side method extensions / messaging surface extensions, etc.) is prohibited. Everything implemented within a phase must be a **subset** of the final architecture, expanding to a **superset** as later phases build on top.
 
-各 phase 着手 時、 触る surface に 関わる docs (= `00-foundations.md` / `01-dsl.md` / 各 component doc / `decisions-log.md` の 該当 Q entry) を 必ず 参照、 最終 像 の subset と し て 実装 す る。 「minimal = 動く だけ で OK」 と 「ad hoc = 後 で 大幅 rewrite」 は 違う = 前 者 は 許 容、 後 者 は phase 完了 条件 違 反 と し て retract 対 象。
+At the start of each phase, consult the docs covering the surfaces being touched (`00-foundations.md` / `01-dsl.md` / each component doc / the relevant Q entries in `decisions-log.md`) and implement as a subset of the final design. "Minimal = just enough to work" is acceptable; "ad hoc = needs a major rewrite later" is not — the latter is a phase-completion violation subject to retraction.
 
-skeleton 段階 (= Phase 2) で **公開 type は 最終 形 で declare、 中身 は stub 実装** (= `throw new Error('not implemented')` 等) で OK。 後続 phase は declared surface の 中身 を 順次 fill。 これ で 「全 公開 surface declared 済 + 一部 実装」 state を 後 戻り なし で 進める。
+At the skeleton stage (Phase 2), **public types are declared in their final form; the bodies are stub implementations** (e.g. `throw new Error('not implemented')`). Later phases fill in the declared surfaces one by one. This keeps the project in a "all public surfaces declared, some implemented" state that advances without backtracking.
 
-### Phase 1 — WASM emit 動作 確認
+### Phase 1 — WASM emit verification
 
-WASM emit pipeline の foundation phase。 binaryen (= WASM toolkit JS package、 IR を 組み立てて WASM binary を 吐く build-time library) を 使って、 host JS (= Node.js / Bun / Deno) で 最小 WASM module を build + 実行 + `.wat` (= WASM の text 形式、 人間 が 読める) 出力 を 段階 的 に 試す。
+Foundation phase for the WASM emission pipeline. Using binaryen (a JS package for building WASM IR and emitting WASM binaries at build time), progressively build, run, and inspect `.wat` output (the human-readable text format of WASM) for minimal WASM modules from host JS (Node.js / Bun / Deno).
 
-binaryen は v1.0.0 で の 確定 WASM emit path = 採用 是非 の 検討 phase で は ない。 この phase の 目的 = 「必要 opcode が binaryen IR API 経由 で 正しく emit され、 emit 済 WASM が host JS の `WebAssembly.instantiate()` で 走る」 を 段階 的 に 確認 + WASM 動作 (= memory model / function signature / instruction set) を 把握 する こと。
+binaryen is the confirmed WASM emission path for v1.0.0 — this phase is not a feasibility evaluation. The goal is to incrementally verify that the required opcodes emit correctly through the binaryen IR API and that the emitted WASM runs under `WebAssembly.instantiate()` in host JS, while gaining hands-on understanding of WASM behavior (memory model / function signatures / instruction set).
 
-各 step で 「binaryen で 構築 → `.wat` 出力 → Node で `instantiate` + 実行 → output 確認」 の loop。 PoC は repo 内 専用 directory で 単発 完結 (= monorepo 構造 と は 独立、 後続 phase で 直接 import し ない)。 binaryen は `@unworklet/core` の dependency と し て 配置、 `@unworklet/core` か ら 公 開 さ れ る `compile` 関 数 (= Phase 3 で 露 出) の 内部 実装 に 限って 使用、 dynamic import で 静 的 path consumer の production runtime bundle から 除外 (= consumer の 出荷 bundle に は 含まれ ない、 09-repo-structure.md §2.4 と zip)。
+Each step follows the loop: build with binaryen → emit `.wat` → `instantiate` + run in Node → verify output. The PoC lives in a dedicated directory inside the repo and is self-contained (independent of the monorepo structure; not imported by later phases directly). binaryen is placed as a dependency of `@unworklet/core` and used exclusively inside the `compile` function exposed from `@unworklet/core` (exposed in Phase 3), loaded via dynamic import so it is excluded from the production runtime bundle of static-path consumers (not included in the consumer's shipped bundle; aligned with `09-repo-structure.md` §2.4).
 
-完了 条件: 最小 WASM (= constant 出力 / passthrough / scalar 乗算 / runtime param 経由 乗算 / forSample loop 相当 の bounded loop) が binaryen 経由 で emit + Node で 動く こと が 順次 確認 済み。 各 step の `.wat` 出力 を 一緒 に 読 ん で WASM の 動作 が 把握 済 み の 状態 で Phase 2 に 進む。
+Completion criteria: minimal WASM variants (constant output / passthrough / scalar multiply / runtime-param multiply / bounded loop equivalent to `forSample`) are each emitted via binaryen and confirmed running in Node. The `.wat` output for each step has been read and understood, leaving WASM behavior fully internalized before entering Phase 2.
 
-### Phase 2 — Foundation: repo + 4 package skeleton
+### Phase 2 — Foundation: repo + 4-package skeleton
 
-pnpm workspace + `vp` CLI gate + MIT license + TS 5.5+ + vitest 設定 (= 09-repo-structure.md §1 / §3 / §4 / §5 通り)。 公開 4 package + `/simd` subpath の 空 entry + dependency 線 (= 09-repo-structure.md §2.4 通り)。 各 package の `package.json` + `tsconfig.json` + `src/index.ts` (= 空 export) を 立てる。
+pnpm workspace + `vp` CLI gate + MIT license + TS 5.5+ + vitest configuration (per `09-repo-structure.md` §1 / §3 / §4 / §5). Empty entry points for all 4 public packages + `/simd` subpath + dependency edges (per `09-repo-structure.md` §2.4). Each package gets `package.json` + `tsconfig.json` + `src/index.ts` (empty exports).
 
-完了 条件: `vp install` + `vp check` + `vp test` が 全 package で exit 0 + 4 package 間 の workspace ref が 正しく 解決 + **09-repo-structure.md §2.1 + §2.2 + 各 component doc 規定 の 公開 named exports / 公開 type を 全 declare 済 (= stub 実装 OK、 中身 は `throw new Error('not implemented')` 等)、 external consumer が TypeScript で 全 surface に 対して type check 通る state を 確立** (= 実装 invariant の 「公開 surface skeleton 先行 declare」 path)。
+Completion criteria: `vp install` + `vp check` + `vp test` exit 0 across all packages; workspace refs between the 4 packages resolve correctly; **all public named exports and public types specified in `09-repo-structure.md` §2.1 + §2.2 and each component doc are declared (stub implementations acceptable; bodies may be `throw new Error('not implemented')`), with the codebase in a state where an external consumer can type-check against the full surface in TypeScript** (the "public surface skeleton declared first" path of the implementation invariant).
 
-### Phase 3 — Vertical slice: stereo gain (meter なし) を `renderOffline` で 動かす
+### Phase 3 — Vertical slice: stereo gain (no meter) running under `renderOffline`
 
-最小 vertical slice として canonical Ex 1 の meter cut 版 を end-to-end で 走らせる。 触る 範囲:
+Run the minimum vertical slice — a meter-less version of canonical Ex 1 — end-to-end. Scope:
 
-- `Node<T>` proxy (= branded type + AST node 構築 base)
-- declaration helper 最小 (= `audioInput` / `audioOutput` / `param.f32.named`)
-- `defineProcessor` の graph capture (= proxy 経由 で AST DAG 構築)
-- `forSample` + 最小 primitive (= `mul`、 method form `.mul` も)
-- WASM emission の core path (= literal / mul / audio I/O marshalling / param marshalling / forSample loop)
-- `compile(processor)` 関 数 を `@unworklet/core` か ら export (= 引 数 = `defineProcessor()` 戻 り 値 = graph capture 済 AST、 戻 り 値 = `{ wasm, graph, memory, diagnostics, schemaHash }` 一 括 async。 内部 で binaryen を dynamic import で 呼び出す = Phase 1 PoC で 検証 済 の binaryen 経由 path を core compile module 内 に 配置)
-- `renderOffline()` の WASM 駆動 path (= `compile` を 内部 で 自前 invoke + `WebAssembly.instantiate()` + input PCM を render quantum 単位 で WASM に 流す + output PCM 集める = `renderOffline` 単独 で graph capture + compile + 駆動 を 自己 完結、 Vite plugin に 依存 し ない)
+- `Node<T>` proxy (branded type + AST node construction base)
+- Minimal declaration helpers (`audioInput` / `audioOutput` / `param.f32.named`)
+- `defineProcessor` graph capture (builds the AST DAG via the proxy)
+- `forSample` + minimal primitives (`mul`, including method form `.mul`)
+- WASM emission core path (literal / mul / audio I/O marshalling / param marshalling / `forSample` loop)
+- `compile(processor)` exported from `@unworklet/core` (argument: the return value of `defineProcessor()`, a graph-captured AST; return value: `{ wasm, graph, memory, diagnostics, schemaHash }` all at once, async. Internally calls binaryen via dynamic import — the binaryen path validated in the Phase 1 PoC is placed inside the core compile module)
+- `renderOffline()` WASM-driven path (internally invokes `compile`, then `WebAssembly.instantiate()`, feeds input PCM to WASM in render-quantum chunks, and collects output PCM — `renderOffline` is self-contained: graph capture + compile + execution all happen inside it, with no dependency on the Vite plugin)
 
-meter 部分 (= `state.publish`) は Phase 6 (= messaging) で 拡張 する 設計 で、 Phase 3 で は cut。 Phase 1 PoC の binaryen 経験 を 元 に WASM emission module を `@unworklet/core` 内部 に 置く。
+The meter portion (`state.publish`) is designed to be added in Phase 6 (messaging) and is omitted here. The binaryen experience from Phase 1 informs the WASM emission module placed inside `@unworklet/core`.
 
-完了 条件: Ex 1 minus meter が `renderOffline()` で 動き、 input × param の gain が output PCM に 反映 される。
+Completion criteria: Ex 1 minus meter runs under `renderOffline()`, with the input × param gain reflected in the output PCM.
 
 ### Phase 4 — Test infrastructure
 
-`@unworklet/test` の declared surface 全 43 件 + chain form (= `06-testing.md` §2-§6) を `renderOffline` 上 に 載 せ る:
+Mount all 43 declared surface items + chain form from `@unworklet/test` (per `06-testing.md` §2–§6) on top of `renderOffline`:
 
-- matcher 20 件 (= audio 3 / sample-level 10 / event 3 / MIDI 2 / state 2)
-- signal utility 7 件 (= sine / silence / impulse / sineSweep / whiteNoise / dc / ramp)
-- MIDI utility 10 件 (= `midi` namespace + `sequence`)
-- sample/time utility 6 件 (= samplesToMs / msToSamples / samplesToSec / secToSamples / bpmToSamples / bpmToMs)
-- chain form (= `@unworklet/test/extend` side-effect import で vitest `expect.extend(...)` 全 件 登 録 + TS-only `WhenResult<T, M>` guard で `RenderOfflineResult` 以 外 chain method を `never` 化)
+- 20 matchers (audio 3 / sample-level 10 / event 3 / MIDI 2 / state 2)
+- 7 signal utilities (sine / silence / impulse / sineSweep / whiteNoise / dc / ramp)
+- 10 MIDI utilities (`midi` namespace + `sequence`)
+- 6 sample/time utilities (samplesToMs / msToSamples / samplesToSec / secToSamples / bpmToSamples / bpmToMs)
+- Chain form (`@unworklet/test/extend` side-effect import registers all matchers via vitest `expect.extend(...)`; TS-only `WhenResult<T, M>` guard makes chain methods `never` on anything other than `RenderOfflineResult`)
 
-vitest snapshot path 経 由 wav auto-write + bit-exact 比 較 (= `expectAudioMatchesSnapshot` / `expectAudioMatchesGolden`) で canonical Ex 1 (= meter なし 版) の reference PCM を 取 っ て 回 帰 防 止。 `expectStateValue` は 上 流 `inspect` (= 05-client.md §2.6) fill 待 ち で Phase 11 同 ship。
+vitest snapshot-based wav auto-write + bit-exact comparison (`expectAudioMatchesSnapshot` / `expectAudioMatchesGolden`) captures reference PCM for canonical Ex 1 (meter-less version) and guards against regression. `expectStateValue` depends on upstream `inspect` (`05-client.md` §2.6) and ships together with Phase 11.
 
-`renderOffline` 内 で compile + 駆動 自己 完結 (= Phase 3 で 確立 した shape) の 帰結 と し て、 test は Vite plugin 不要 で 動く (= Vitest 標準 環境 だけ で test 走る、 build pipeline 統合 は Phase 5 の Vite plugin 責務)。
+Because `renderOffline` is self-contained for compile + execution (established in Phase 3), tests run without the Vite plugin (standard Vitest environment only; build pipeline integration is the Vite plugin's responsibility in Phase 5).
 
-完了 条件: Vitest で Ex 1 (= meter なし) の audio output が tolerance=0 で reference と 一致、 CI で 安定 pass。
+Completion criteria: Vitest reports the audio output of Ex 1 (meter-less) matching the reference at tolerance=0; CI passes stably.
 
-### Phase 5 — Vite plugin (= 基本 機能 + DevTools panel visual)
+### Phase 5 — Vite plugin (core functionality + DevTools panel visuals)
 
-`@unworklet/vite-plugin` の bundler 統合 機能 + DevTools panel surface の visual を ship。 後続 phase の vertical slice 検証 が dev server 上 で 即 試せ る state を ここ で 立てる。 触る 範囲:
+Ship the bundler integration features of `@unworklet/vite-plugin` and the visual shell of the DevTools panel, putting later vertical-slice verification on a dev server immediately. Scope:
 
-- `?worklet` query resolution (= `import processorUrl from './x.processor.ts?worklet'` を vite が 解決、 plugin が `@unworklet/core` の `compile` 関 数 を call)
-- source-change 検知 + build pipeline 統合 (= dev server / production build で `compile` を invocation)
-- metadata artifact emit (= `dist/<processor>.graph.json` / `.memory.json` / `.diagnostics.json` / `.schema-hash.json`、 07-vite-plugin.md §6.3)
-- DevTools Kit 統合 path (= 1 dock entry を register + Vue 3 SPA sub-project `packages/vite-plugin/devtools-ui/` を `<vite-plugin>/dist/ui/` に bundle) + 4 panel + 1 secondary を mock data 駆動 で ship: Audio graph / Live state / Signals & performance / MIDI + Audio graph 内 Snapshot tab (= 07-vite-plugin.md §6.1)
-- mock data 軸 = リアル ワールド + 多様 + integrated (= AGENTS.md "Mock data rule")。 audio chain mock = arpeggiator → polysynth → limiter → reverb → master → destination (= 4 unworklet + 2 standard)、 各 unworklet node の publish slot は canonical examples Ex 1-10 から 借用 し て 全 type carry (= scalar f32/i32/bool + buffer f32/i32/bool/u8)、 値 の 動き は real chain 因果 (= polysynth meter 上昇 → limiter GR か か り → reverb tail 出る) を 模倣
+- `?worklet` query resolution (`import processorUrl from './x.processor.ts?worklet'` resolved by Vite; plugin calls `compile` from `@unworklet/core`)
+- Source-change detection + build pipeline integration (invoke `compile` in dev server and production build)
+- Metadata artifact emission (`dist/<processor>.graph.json` / `.memory.json` / `.diagnostics.json` / `.schema-hash.json`, per `07-vite-plugin.md` §6.3)
+- DevTools Kit integration path (register 1 dock entry + bundle the Vue 3 SPA sub-project `packages/vite-plugin/devtools-ui/` into `<vite-plugin>/dist/ui/`) + ship 4 panels + 1 secondary driven by mock data: Audio graph / Live state / Signals & performance / MIDI + Snapshot tab inside Audio graph (per `07-vite-plugin.md` §6.1)
+- Mock data must be realistic, diverse, and integrated (per `AGENTS.md` "Mock data rule"). Audio chain mock: arpeggiator → polysynth → limiter → reverb → master → destination (4 unworklet nodes + 2 standard nodes); each unworklet node's publish slots are borrowed from canonical examples Ex 1–10, covering all types (scalar f32/i32/bool + buffer f32/i32/bool/u8); value changes simulate real chain causality (polysynth meter rising → limiter applying GR → reverb tail appearing)
 
-HMR boundary (= `replaceProcessor` 依存) と source maps (= `.ts` → AST → `.wasm` 位置 propagation、 sidecar `.wasm.map`) は Phase 12 で 切り出し。 panel の **real 連携** (= AudioNode.prototype hook / UnworkletNode WeakSet / signal probe opt-in method / latency 計測 / MIDI inject RPC / diagnostics push) は dependency が 揃 う 各 surface phase (= Phase 7 messaging / Phase 9 MIDI / Phase 12 HMR + source map) で 1 swap で fill (= mock composable を real に 入 れ 替 え る 設 計、 UI 改 訂 ナ シ)。
+HMR boundary (depends on `replaceProcessor`) and source maps (`.ts` → AST → `.wasm` position propagation, sidecar `.wasm.map`) are split out to Phase 12. **Real panel wiring** (AudioNode.prototype hook / UnworkletNode WeakSet / signal probe opt-in method / latency measurement / MIDI inject RPC / diagnostics push) is deferred to the phase where each dependency becomes available (Phase 7 messaging / Phase 9 MIDI / Phase 12 HMR + source maps), replacing mock composables with real ones in a single swap with no UI revisions.
 
-完了 条件: real Vite project で `?worklet` import が 動く + 4 metadata artifact JSON が emit + 1 dock entry が Vite DevTools 上 で 立ち上がる + 4 panel + 1 secondary が mock data 駆動 で 視覚 確認 可 (= waveform / spectrogram / latency rolling chart / memory budget / virtual keyboard inject が anim する)。
+Completion criteria: `?worklet` import works in a real Vite project; 4 metadata artifact JSONs are emitted; 1 dock entry appears in Vite DevTools; 4 panels + 1 secondary are visually confirmed with mock data (waveform / spectrogram / latency rolling chart / memory budget / virtual keyboard inject all animate).
 
-### Phase 6 — AudioWorklet 統合 (= real audio thread)
+### Phase 6 — AudioWorklet integration (real audio thread)
 
-worklet runtime template (= `AudioWorkletProcessor` 派生 class、 WASM module を audio thread で instantiate、 `process()` で WASM 呼ぶ) + main thread `UnworkletNode<C>` 最小 surface (= `createNode` / `node.node` raw / `dispose` / `node.params.<name>` / `node.inputs.<name>` / `node.outputs.<name>`)。 加 え て init failure / WASM trap / block-length-mismatch / queue-overflow / sab-unavailable / worklet-initialize-not-called を 観 測 す る `node.onError(handler)` の wiring skeleton (= queue-overflow / sab-unavailable は 該 当 transport が 後 phase で 立 ち 上 が っ た 時 に 配 線、 残 り 3 code は Phase 6 で fill)。
+Worklet runtime template (`AudioWorkletProcessor` subclass, instantiating the WASM module on the audio thread and calling WASM from `process()`) + minimal main-thread `UnworkletNode<C>` surface (`createNode` / `node.node` raw / `dispose` / `node.params.<name>` / `node.inputs.<name>` / `node.outputs.<name>`). Additionally, wiring skeleton for `node.onError(handler)` to observe init failure / WASM trap / block-length-mismatch / queue-overflow / sab-unavailable / worklet-initialize-not-called (queue-overflow and sab-unavailable are wired when their respective transports come up in later phases; the remaining 3 codes are filled in Phase 6).
 
-DevTools panel の **real 連携** (= B 軸: AudioNode.prototype hook / UnworkletNode WeakSet / signal probe opt-in method / latency 計 測 / memory streaming / diagnostics push / MIDI inject RPC) は messaging / MIDI surface が 立 ち 上 が っ た 後 phase に 持 ち 越 し。 該 当 sub-step は 各 surface phase (= Phase 7 messaging / Phase 9 MIDI / Phase 12 HMR + source map) に zip し て 配 信 す る (= dependency が 揃 う 段 階 で 1 swap で UI 改 訂 ナ シ で real data 化、 plan で 確 定)。
+**Real DevTools panel wiring** (AudioNode.prototype hook / UnworkletNode WeakSet / signal probe opt-in method / latency measurement / memory streaming / diagnostics push / MIDI inject RPC) is carried over to the phases where messaging and MIDI surfaces are ready. Each sub-step is zipped to the relevant surface phase (Phase 7 messaging / Phase 9 MIDI / Phase 12 HMR + source maps) and swapped from mock to real data in one operation with no UI revisions (confirmed in plan).
 
-完了 条件:
+Completion criteria:
 
-- canonical Ex 1 (= meter なし) が browser で 鳴る
-- Vitest browser mode で smoke test 通る
-- `vp check` + `vp test` 全 package 通過
-- coverage 98% gate 維持
+- Canonical Ex 1 (meter-less) plays audio in the browser
+- Smoke test passes in Vitest browser mode
+- `vp check` + `vp test` pass across all packages
+- 98% coverage gate maintained
 
 ### Phase 7 — Messaging
 
-- `state.publish` (= per-slot rate-gated copy + version counter + shared region、 04-worklet-runtime.md §7 通り)
-- main 側 `.state.<name>.subscribe()` / `.value`
+- `state.publish` (per-slot rate-gated copy + version counter + shared region, per `04-worklet-runtime.md` §7)
+- Main-side `.state.<name>.subscribe()` / `.value`
 - SAB Atomics path
-- postMessage fallback (= SAB unavailable 環境)
-- `event<T>({ to: "main" })` (= worklet → main ringbuffer、 `emitIf` + `atSample`)
-- `event<T>({ from: "main" })` (= main → worklet、 `onReceive` handler、 block-boundary drain)
+- postMessage fallback (for environments where SAB is unavailable)
+- `event<T>({ to: "main" })` (worklet → main ringbuffer, `emitIf` + `atSample`)
+- `event<T>({ from: "main" })` (main → worklet, `onReceive` handler, block-boundary drain)
 
-完了 条件: canonical Ex 1 が full (= meter 含む) で 動く + browser で meter が 30fps で UI に 流れる + DevTools panel 「Live state inspector」 (= named state slot + `state.publish` の live 値、 07-vite-plugin.md §6.1) が 動く。
+Completion criteria: canonical Ex 1 runs in full (meter included), meter streams to the UI in the browser at 30 fps, and the DevTools panel "Live state inspector" (named state slots + live values from `state.publish`, per `07-vite-plugin.md` §6.1) is functional.
 
 ### Phase 9 — MIDI
 
-- `event.midi({ from: "main" })` / `event.midi({ to: "main" })` declaration (= 11-midi.md §1)
-- `.onEvent(type, handler)` worklet 側 (= type-discriminated、 11-midi.md §2)
-- ringbuffer + `atSample` (= 02-messaging.md §5.5 と 同 protocol)
-- main 側 `.midi.<name>.send()` / `.onEvent()` / `.diagnostics.overflowCount()`
-- `connectFromWebMIDI` (= Web MIDI bridge、 source-agnostic injection)
-- sysex (= `state.buffer.u8` + variable-length content buffer、 Q49)
+- `event.midi({ from: "main" })` / `event.midi({ to: "main" })` declarations (per `11-midi.md` §1)
+- `.onEvent(type, handler)` on the worklet side (type-discriminated, per `11-midi.md` §2)
+- Ringbuffer + `atSample` (same protocol as `02-messaging.md` §5.5)
+- Main-side `.midi.<name>.send()` / `.onEvent()` / `.diagnostics.overflowCount()`
+- `connectFromWebMIDI` (Web MIDI bridge, source-agnostic injection)
+- Sysex (`state.buffer.u8` + variable-length content buffer, Q49)
 
-完了 条件: canonical Ex 5 (= granular sampler、 MIDI note in)、 Ex 6 (= MIDI arpeggiator)、 Ex 8 (= polyphonic synth)、 Ex 9 (= sysex bridge) が 動く + DevTools panel 「MIDI flow / overflow」 (= `node.midi.<name>.diagnostics`、 07-vite-plugin.md §6.1) が 動く。
+Completion criteria: canonical Ex 5 (granular sampler, MIDI note in), Ex 6 (MIDI arpeggiator), Ex 8 (polyphonic synth), and Ex 9 (sysex bridge) are functional; the DevTools panel "MIDI flow / overflow" (`node.midi.<name>.diagnostics`, per `07-vite-plugin.md` §6.1) is functional.
 
 ### Phase 10 — SIMD subpath
 
-opt-in `@unworklet/core/simd` (= `vec4` / `splat` / `addVec`〜`divVec` / `sumLanes` / `lane` / `buffer.loadVec` / `storeVec` + method 形 `a.mul(b)` の f32x4 対応 + `forSample.byN(4, ...)`) は 実 装 済 み。 scalar-only import が 影響 受け ない opt-in も 維 持。 残:
+The opt-in `@unworklet/core/simd` surface (`vec4` / `splat` / `addVec`–`divVec` / `sumLanes` / `lane` / `buffer.loadVec` / `storeVec` + method form `a.mul(b)` for f32x4 + `forSample.byN(4, ...)`) is implemented. The opt-in design that keeps scalar-only imports unaffected is also in place. Remaining work:
 
-- `Node<'f32x4'>` の method surface 制約: `add` / `sub` / `mul` / `div` 以外 の scalar method (= `sin` / `cos` / `tan` / `tanh` / `exp` / `log` / `sqrt` / `abs` / `floor` / `ceil` / `frac` / `mod` / `neg` / 比較 / `min` / `max` / `clamp`) を conditional method 型 (`T extends ScalarType ? … : never`) ま た は overload 分割 で `f32x4` か ら 除外 す る。 現 状 は scalar method merge が `T extends ScalarType | 'f32x4'` で 全 method を f32x4 に も 載 せ る た め、 `splat(g).sin()` / `.clamp(...)` が **型 は 通 る が capture 時 に throw** す る (= 「型 通 る が 動 か ない」)。 vector tag に は documented な vector op (= `.add` / `.sub` / `.mul` / `.div`、 01-dsl.md §7.2) だ け 露出 す べ き。
+- `Node<'f32x4'>` method surface constraint: scalar methods other than `add` / `sub` / `mul` / `div` (i.e. `sin` / `cos` / `tan` / `tanh` / `exp` / `log` / `sqrt` / `abs` / `floor` / `ceil` / `frac` / `mod` / `neg` / comparisons / `min` / `max` / `clamp`) must be excluded from the `f32x4` tag via conditional method types (`T extends ScalarType ? … : never`) or overload splitting. Currently, the scalar method merge uses `T extends ScalarType | 'f32x4'`, exposing all scalar methods on f32x4 as well — meaning `splat(g).sin()` / `.clamp(...)` **type-check but throw at capture time** ("types pass but it doesn't work"). Only the documented vector ops (`.add` / `.sub` / `.mul` / `.div`, per `01-dsl.md` §7.2) should be exposed on the vector tag.
 
-完了 条件: canonical Ex 3 (= linear-phase EQ partitioned convolution) の SIMD path が 動く。
+Completion criteria: canonical Ex 3 (linear-phase EQ partitioned convolution) runs on the SIMD path.
 
 ### Phase 11 — Snapshot / restore + migration
 
-snapshot/restore + migration chain + `replaceProcessor` を 後 寄り に 配置 する 理由: 他 phase (= core DSL / messaging / MIDI / SIMD) が 揃 っ た 上 で の state persistence + version 跨 ぎ migration が 検証 価 値 を 持 つ た め。 触 る 範 囲:
+Snapshot/restore, the migration chain, and `replaceProcessor` are placed late in the sequence because their value — persisting state and migrating across versions — is only meaningful once the other phases (core DSL / messaging / MIDI / SIMD) are in place. Scope:
 
-- schema hash 計算 (= AST structural hash、 declarations から derive)
-- blob format (= version + schemaHash + slot records、 Uint8Array)
-- `snapshot()` / `restore()` API + block-atomic memcpy (= 05-client.md §6.1)
-- migration chain executor + `MigrationHelpers` API (= 01-dsl.md §8.3)
-- transient vs persistent profile (= per-slot snapshot flag、 01-dsl.md §3 + §8.2)
-- `inspect(blob)` free function (= Q48)
-- `replaceProcessor` raw primitive (= 05-client.md §8、 Q50)
+- Schema hash computation (structural AST hash derived from declarations)
+- Blob format (version + schemaHash + slot records, Uint8Array)
+- `snapshot()` / `restore()` API + block-atomic memcpy (per `05-client.md` §6.1)
+- Migration chain executor + `MigrationHelpers` API (per `01-dsl.md` §8.3)
+- Transient vs. persistent profile (per-slot snapshot flag, per `01-dsl.md` §3 + §8.2)
+- `inspect(blob)` free function (Q48)
+- `replaceProcessor` raw primitive (per `05-client.md` §8, Q50)
 
-完了 条件: canonical Ex 7 (= convolution reverb with snapshot/restore migration) と Ex 10 (= live coding REPL bridge、 ただし HMR boundary は Phase 12 で fill) の snapshot/restore + migration path が 動く + Q63 swap 累積 warning surface 自体 (= `console.warn` を 51 回目 で 1 度 出す path) が 用意 さ れる + DevTools panel 「Snapshot inspector」 (= `snapshot()` + `inspect(blob)` の panel UI 形) + 「Swap history」 (= `replaceProcessor` invocations + `ReplaceResult` log、 07-vite-plugin.md §6.1) が 動く。
+Completion criteria: the snapshot/restore + migration path works for canonical Ex 7 (convolution reverb with snapshot/restore migration) and Ex 10 (live coding REPL bridge, with the HMR boundary filled in Phase 12); the cumulative-swap warning surface from Q63 is in place (a single `console.warn` emitted on the 51st swap); the DevTools panel "Snapshot inspector" (`snapshot()` + `inspect(blob)` as a panel UI) and "Swap history" (`replaceProcessor` invocations + `ReplaceResult` log, per `07-vite-plugin.md` §6.1) are functional.
 
-### Phase 12 — HMR boundary + source maps + 残り Vite plugin 機能
+### Phase 12 — HMR boundary + source maps + remaining Vite plugin features
 
-Phase 5 で 基本 機能 (= `?worklet` resolution + metadata artifact + DevTools panel visual) を ship、 Phase 6 末尾 で panel real 連携 を fill。 Phase 11 で `replaceProcessor` raw primitive が 揃った 後、 Phase 12 で HMR 依存 部分 + source map propagation を fill:
+Phase 5 ships core functionality (`?worklet` resolution + metadata artifacts + DevTools panel visuals); real panel wiring is filled at the end of Phase 6. Once `replaceProcessor` raw primitive is in place after Phase 11, Phase 12 fills the HMR-dependent parts + source map propagation:
 
-- HMR boundary (= `replaceProcessor` を user-land で 呼べる shape、 `?worklet` import を hot-acceptable に mark、 07-vite-plugin.md §4)
-- HMR recipe sketch (= user-land で の `import.meta.hot.accept` 経由 orchestrate path、 07-vite-plugin.md §4)
-- 累積 swap warning surface (= Q63、 51 回目 で `console.warn` を 1 度 だけ)
-- source maps (= `.ts` → AST → `.wasm` 位置 propagation、 sidecar `.wasm.map`、 07-vite-plugin.md §5)
+- HMR boundary (`replaceProcessor` callable from user-land; `?worklet` import marked as hot-acceptable, per `07-vite-plugin.md` §4)
+- HMR recipe sketch (user-land orchestration path via `import.meta.hot.accept`, per `07-vite-plugin.md` §4)
+- Cumulative swap warning surface (Q63: a single `console.warn` emitted on the 51st swap)
+- Source maps (`.ts` → AST → `.wasm` position propagation, sidecar `.wasm.map`, per `07-vite-plugin.md` §5)
 
-完了 条件: real Vite project で source edit → `import.meta.hot.accept` 経由 で `replaceProcessor` が user-land で 呼べる + canonical Ex 10 (= live coding REPL bridge) の HMR path が 動く + 51 回目 の swap で console warning が 出る + source map が browser DevTools で source code 紐付き で 読める。 Record sub-tab の wav encoder は 既 Phase 5 で 自前 16-bit PCM encoder (= ring buffer + RIFF / WAVE 自前) として ship 済 — MediaRecorder path は 全 phase で 採用 ナシ (= AGENTS.md "DevTools panel — recurring violations to avoid")。
+Completion criteria: in a real Vite project, editing a source file and accepting the update via `import.meta.hot.accept` allows `replaceProcessor` to be called from user-land; canonical Ex 10 (live coding REPL bridge) works end-to-end on the HMR path; the 51st swap triggers a console warning; source maps are readable in browser DevTools with source code linkage. The wav encoder for the Record sub-tab was shipped in Phase 5 as a self-contained 16-bit PCM encoder (ring buffer + hand-written RIFF/WAVE) — the MediaRecorder path is not adopted in any phase (per `AGENTS.md` "DevTools panel — recurring violations to avoid").
 
-### Phase 13 — 残り canonical examples の 整合 確認
+### Phase 13 — Alignment verification across remaining canonical examples
 
-Phase 3 で Ex 1 minus meter、 Phase 7 で Ex 1 full、 Phase 9 で Ex 5/6/8/9、 Phase 10 で Ex 3、 Phase 11 で Ex 7/10 (= ただし Ex 10 の HMR path は Phase 12 で 完成) が 動く 見込み。 Phase 13 で 残る Ex 2 (= 3-band biquad EQ) + Ex 4 (= lookahead limiter) と 既 動作 Ex 全件 を 改めて 通し で 走らせる、 互換 性 確認。 動か ない Ex が 出たら そこ で 必要 な primitive / surface を 補修。
+By the end of earlier phases: Ex 1 (meter-less) in Phase 3, Ex 1 (full) in Phase 7, Ex 5/6/8/9 in Phase 9, Ex 3 in Phase 10, Ex 7/10 (Ex 10 HMR path completed in Phase 12) in Phase 11. Phase 13 runs the remaining Ex 2 (3-band biquad EQ) and Ex 4 (lookahead limiter) end-to-end alongside all previously passing examples, verifying compatibility. Any example that fails triggers targeted repairs to the required primitives or surface areas.
 
-完了 条件: canonical Ex 1〜10 全 件 が `renderOffline` で reference PCM と bit-exact、 browser でも 鳴る。
+Completion criteria: all of canonical Ex 1–10 produce bit-exact output against reference PCM under `renderOffline` and play audio correctly in the browser.
 
-### Phase 14 — Acceptance criteria 全 項目 検証 + ship
+### Phase 14 — Acceptance criteria full verification + ship
 
-§1 全 項目 (= A1-A3 / B1 / C1 / D1 / E1 / F1) を impl AI agent が 1 意 判定。 1 項目 で も 落ちたら ship 不可、 全 項目 OK で v1.0.0 ship。
+All §1 items (A1–A3 / B1 / C1 / D1 / E1 / F1) receive a single, unambiguous pass/fail determination from the impl AI agent. Any item that fails blocks the release; all items passing clears v1.0.0 for ship.
 
-完了 条件: v1.0.0 release tag + npm publish + 4 package が 公開 dependency graph (= 09-repo-structure.md §2.4) と 整合。
+Completion criteria: v1.0.0 release tag + npm publish; all 4 packages are consistent with the public dependency graph (per `09-repo-structure.md` §2.4).
 
 ## 3. Explicitly deferred
 
@@ -209,7 +209,7 @@ The following items are intentionally postponed past v1.0.0. Each has a forward-
 
 ### 3.2 Additive surface extensions (no v1.0.0 promise; rolled out as demand surfaces)
 
-- **Standard MIDI File loader for `@unworklet/test`** — `loadSmf(path, opts)` / `parseSmf(bytes, opts)` を `@unworklet/test` に 追 加、 `.mid` file を `OfflineEvent[]` に 変 換 し て `renderOffline` に 渡 す path。 既 知 reference song / MIDI seq を 入 力 と し て synth / arp の audio 出 力 を 検 証 す る ユ ー ス 想 定。 第 三 者 SMF parser (= `midi-file` 等) を `@unworklet/test` 内 部 依 存 と し て 持 つ か 自 前 emit か は 採 用 時 別 grill。 v1.0.0 ship 範 囲 か ら 外 し、 demand が 出 た 段 で additive 追 加。
+- **Standard MIDI File loader for `@unworklet/test`** — adds `loadSmf(path, opts)` / `parseSmf(bytes, opts)` to `@unworklet/test`, converting `.mid` files to `OfflineEvent[]` for passing to `renderOffline`. Intended for verifying synth / arp audio output against a known reference song or MIDI sequence. Whether to use a third-party SMF parser (e.g. `midi-file`) as an internal dependency or to hand-write the emitter is a separate decision deferred to adoption time. Excluded from the v1.0.0 scope; added additively when demand arises.
 
 <!-- Other candidates (to be filled in as additional resolutions settle in decisions-log.md):
        - Variable-rate iteration (`forSampleRange(start, end, callback)`)

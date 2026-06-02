@@ -145,14 +145,14 @@ function numberLiteral(value: number, t: ScalarType): AstNode {
 /** Lift an operand to an AST node of type `t` (Q33 literal lift). */
 function lift(value: Operand, t: ScalarType): AstNode {
   if (typeof value === "boolean") {
-    // bool は 内 部 i32 表 現 (= 0/1)。
+    // bool is represented internally as i32 (0/1).
     return { kind: "literal", type: "bool", value: value ? 1 : 0 };
   }
   if (typeof value === "number") {
     return numberLiteral(value, t);
   }
   const ast = unwrapAst(value);
-  // 型 未 確 定 の loose num literal は、 sibling で 解 決 し た t へ 再 lift。
+  // A type-undetermined loose num literal is re-lifted to the type `t` resolved from a sibling operand.
   if (isLooseLiteral(ast)) {
     return numberLiteral(Number(ast.value), t);
   }
@@ -163,10 +163,11 @@ function lift(value: Operand, t: ScalarType): AstNode {
 // Arithmetic (polymorphic over 'f32' | 'f64' | 'i32' | 'i64' + SIMD 'f32x4')
 // ─────────────────────────────────────────────────────────────────────────
 
-// SIMD f32x4 (= §7): add/sub/mul/div の method 形 は f32x4 でも型宣言されている
-// (= primitives.ts の Node augment が T に "f32x4" を含む)。 オペランドが vec-producing
-// node なら scalar 経路ではなく vec node を生成する (= 型通るが動かない を防止)。 number
-// は splat で 4 lane に broadcast。
+// SIMD f32x4 (§7): the method form of add/sub/mul/div is also declared for f32x4
+// (the Node augment in primitives.ts includes "f32x4" in T). When an operand is a
+// vec-producing node, a vec node is generated instead of taking the scalar path
+// (preventing the "type-checks but doesn't run" case). A number is broadcast to
+// all 4 lanes via splat.
 const VEC_KINDS = new Set(["vecConst", "vecSplat", "vecAdd", "vecSub", "vecMul", "vecDiv"]);
 const isF32x4Operand = (op: Operand): boolean =>
   isWrappedNode(op) && VEC_KINDS.has(unwrapAst(op).kind);
@@ -181,9 +182,11 @@ const vecBinaryOrNull = (
 ): AstNode | null =>
   isF32x4Operand(a) || isF32x4Operand(b) ? { kind, lhs: liftVec(a), rhs: liftVec(b) } : null;
 
-// 算術 (add/sub/mul/div) は numeric scalar + SIMD f32x4。mod/neg は numeric scalar
-// のみ。bool は除外 (= bool 演算は f32 命令に落ちて不正 WASM)。registration の `this`
-// は型表現上 f32 (= operandType / vecBinaryOrNull が実型を読むので vec / f64 も動く)。
+// Arithmetic (add/sub/mul/div) covers numeric scalars + SIMD f32x4. mod/neg cover
+// numeric scalars only. bool is excluded (bool arithmetic would lower to f32
+// instructions and produce invalid WASM). In the registration, `this` is typed as
+// f32 at the type level (operandType / vecBinaryOrNull read the actual type, so vec
+// / f64 work too).
 export function add<T extends NumericScalar = "f32">(
   a: Node<T> | number,
   b: Node<T> | number,
@@ -260,8 +263,9 @@ registerNodeMethod("neg", function (this: Node<"f32">): Node<"f32"> {
 // the operand type so emission selects the signed/float compare instruction)
 // ─────────────────────────────────────────────────────────────────────────
 
-// 比較は numeric operand → Node<'bool'>。bool / f32x4 operand は除外。registration
-// の `this` は型表現上 f32 (= operandType が実型を読む)。
+// Comparisons take numeric operands → Node<'bool'>. bool / f32x4 operands are
+// excluded. In the registration, `this` is typed as f32 at the type level
+// (operandType reads the actual type).
 export function eq<T extends NumericScalar = "f32">(
   a: Node<T> | number,
   b: Node<T> | number,
@@ -333,9 +337,10 @@ registerNodeMethod("not", function (this: Node<"bool">): Node<"bool"> {
 // Math (f32 / f64 — `f64` lowering lands with the f64 path; `f32` here)
 // ─────────────────────────────────────────────────────────────────────────
 
-// sqrt / floor / ceil / frac + transcendentals は float (f32/f64) 限定。整数 operand は
-// 型エラー (= 整数の sqrt/floor/sin はナンセンス、`f32(intNode).sin()` が明示 path)。
-// runtime registration の `this` は型表現上 f32 (= operandType が実型を読むので f64 も動く)。
+// sqrt / floor / ceil / frac + transcendentals are float-only (f32/f64). An integer
+// operand is a type error (sqrt/floor/sin of an integer is non-sensical;
+// `f32(intNode).sin()` is the explicit path). In the runtime registration, `this` is
+// typed as f32 at the type level (operandType reads the actual type, so f64 works too).
 type FloatScalar = "f32" | "f64";
 export function sin<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T> {
   const t = operandType(x);
@@ -386,7 +391,7 @@ export function sqrt<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T
 registerNodeMethod("sqrt", function (this: Node<"f32">): Node<"f32"> {
   return sqrt(this);
 });
-// abs は全 numeric scalar (f32/f64/i32/i64) で有効。整数は emit で select(x<0,-x,x)。
+// abs is valid for every numeric scalar (f32/f64/i32/i64). Integers emit as select(x<0,-x,x).
 export function abs<T extends FloatScalar | "i32" | "i64" = "f32">(x: Node<T> | number): Node<T> {
   const t = operandType(x);
   return wrapAst<T>({ kind: "abs", type: t, value: lift(x, t) });
@@ -415,8 +420,9 @@ export function frac<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T
 registerNodeMethod("frac", function (this: Node<"f32">): Node<"f32"> {
   return frac(this);
 });
-// min/max/clamp は numeric scalar のみ (= bool / f32x4 除外、整数は emit で
-// compare+select)。registration の `this` は型表現上 f32 (= operandType が実型を読む)。
+// min/max/clamp cover numeric scalars only (bool / f32x4 excluded; integers emit as
+// compare+select). In the registration, `this` is typed as f32 at the type level
+// (operandType reads the actual type).
 export function min<T extends NumericScalar = "f32">(
   a: Node<T> | number,
   b: Node<T> | number,
@@ -494,7 +500,7 @@ export function select<T extends ScalarType>(
     type: branchType,
     cond:
       typeof cond === "boolean"
-        ? // bool は 内 部 i32 表 現 (= 0/1) = WASM select cond も i32。
+        ? // bool is represented internally as i32 (0/1), so the WASM select cond is also i32.
           { kind: "literal", type: "i32", value: cond ? 1 : 0 }
         : unwrapAst(cond),
     ifTrue: lift(then, branchType),

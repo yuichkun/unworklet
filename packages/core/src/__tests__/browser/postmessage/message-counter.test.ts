@@ -1,16 +1,17 @@
 /**
- * Browser e2e: message<T> 経 路 を postMessage fallback path で 動 作 確 認
- * (= SAB unavailable 環 境)。
+ * Browser e2e: verifies message<T> routing over the postMessage fallback path
+ * (i.e. environments where SAB is unavailable).
  *
- * 仕 様 anchor:
- * - `02-messaging.md` §4 + Q27-d: SAB 不 可 時 = message<T> も postMessage 経 路
- * - `04-worklet-runtime.md` §2 step 1: per-quantum 開 始 で 全 handler drain
- *   (= Q38-b)、 transport 非 依 存 で 同 surface
- * - Q47: diagnostics.overflowCount は pull 観 測 = transport 非 依 存
+ * Spec anchors:
+ * - `02-messaging.md` §4 + Q27-d: when SAB is unavailable, message<T> also routes via postMessage
+ * - `04-worklet-runtime.md` §2 step 1: all handlers are drained at the start of each quantum
+ *   (= Q38-b); surface is transport-independent
+ * - Q47: diagnostics.overflowCount is pull-observed = transport-independent
  *
- * test scope = SAB 側 `message-counter.test.ts` と 同 6 件 mirror + 環 境 担 保
- * 2 件 = 8 件。 send / 多 重 send / overflow / counter publish 反 映 / dispose 後
- * send 例 外 ナ シ を 両 transport で 同 surface で 担 保。
+ * test scope = 6 mirror cases matching the SAB-side `message-counter.test.ts`
+ * + 2 environment-guarantee cases = 8 total.
+ * Covers: send / multi-send / overflow / counter publish reflection / no exception after dispose —
+ * guaranteed on the same surface across both transports.
  */
 
 import { expect, test } from "vite-plus/test";
@@ -42,14 +43,14 @@ const buildContext = (durationQuanta: number): OfflineAudioContext =>
   });
 
 // ─────────────────────────────────────────────────────────────────────────
-// 環 境 担 保 (= postMessage path 専 属)
+// Environment guarantees (postMessage path exclusive)
 // ─────────────────────────────────────────────────────────────────────────
 
-test("環 境 担 保: COOP/COEP 無 し で crossOriginIsolated false", () => {
+test("environment: crossOriginIsolated is false without COOP/COEP headers", () => {
   expect(globalThis.crossOriginIsolated).toBe(false);
 });
 
-test("transport: SAB unavailable で postMessage に fallback", async () => {
+test("transport: falls back to postMessage when SAB is unavailable", async () => {
   const ctx = buildContext(1);
   const node = await createNode(ctx, messageCounter);
   expect(node.diagnostics.transport).toBe("postMessage");
@@ -57,10 +58,10 @@ test("transport: SAB unavailable で postMessage に fallback", async () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// message<T> behavior (= SAB 側 6 件 mirror)
+// message<T> behavior (6 mirror cases from the SAB-side test)
 // ─────────────────────────────────────────────────────────────────────────
 
-test("message: send + worklet onReceive で state 反 映 + main で 観 測 可", async () => {
+test("message: send + worklet onReceive reflects state, observable on main thread", async () => {
   const ctx = buildContext(32);
   const node = await createNode(ctx, messageCounter);
   node.outputs["main"]!.connect(ctx.destination);
@@ -73,7 +74,7 @@ test("message: send + worklet onReceive で state 反 映 + main で 観 測 可
   node.dispose();
 });
 
-test("message: subscribe handler で counter 反 映 を 受 領", async () => {
+test("message: subscribe handler receives counter updates", async () => {
   const ctx = buildContext(32);
   const node = await createNode(ctx, messageCounter);
   node.outputs["main"]!.connect(ctx.destination);
@@ -88,13 +89,14 @@ test("message: subscribe handler で counter 反 映 を 受 領", async () => {
   node.dispose();
 });
 
-test("message: 複 数 send は postMessage path で deliver 順 = registration order (= 最 終 値 1-3)", async () => {
-  // OfflineAudioContext sync render + postMessage path = 複 数 send が 単 一
-  // render 内 で 全 deliver さ れ る か は browser 実 装 依 存 (= MessageChannel
-  // task queue の drain timing)。 期 待 = 「少 な く と も 1 件 deliver + 最 大 で
-  // 全 件 = order 保 持 で 最 終 値 が 1-3 の 範 囲」。 SAB path で の 完 全 順 序
-  // 担 保 は 既 別 test で 担 保。 real-time AudioContext で の delivery 整 合 性
-  // は v1.0.0 ship 前 別 phase で 検 証。
+test("message: multiple sends over postMessage path deliver in registration order, final value in range 1-3", async () => {
+  // OfflineAudioContext sync render + postMessage path: whether all sends are
+  // delivered within a single render is browser-implementation-dependent
+  // (MessageChannel task queue drain timing). Expected: at least 1 message
+  // delivered, at most all 3, with order preserved so the final value is 1-3.
+  // Full ordering guarantee on the SAB path is covered in a separate test.
+  // Delivery consistency on a real-time AudioContext is verified in a separate
+  // phase before v1.0.0 ship.
   const ctx = buildContext(32);
   const node = await createNode(ctx, messageCounter);
   node.outputs["main"]!.connect(ctx.destination);
@@ -110,13 +112,15 @@ test("message: 複 数 send は postMessage path で deliver 順 = registration 
   node.dispose();
 });
 
-test("message: diagnostics.overflowCount は postMessage path で 初 期 0 / WASM 内 drop-oldest で 増 加 (= 配 線 担 保)", async () => {
-  // OfflineAudioContext + postMessage path で の overflow 観 測 = main → worklet
-  // の 全 件 deliver が render 中 行 わ れ な い (= MessageChannel task queue が
-  // sync render 中 drain さ れ な い 制 約) = WASM 内 ring 容 量 超 え 起 き な い
-  // = overflow 0。 当 test は 配 線 動 作 (= sender push 時 例 外 ナ シ + diagnostics
-  // 配 線 = mirror か ら read = 初 期 0) を 担 保。 真 の overflow 発 動 観 測 は
-  // real-time AudioContext + 適 切 timing wait で 別 phase で 検 証。
+test("message: diagnostics.overflowCount starts at 0 on postMessage path; WASM drop-oldest increments it (wiring check)", async () => {
+  // OfflineAudioContext + postMessage path: all main→worklet messages are not
+  // guaranteed to be delivered during sync render (MessageChannel task queue is
+  // not drained while the offline renderer runs synchronously), so the WASM
+  // ring buffer capacity is never exceeded and overflow stays at 0.
+  // This test verifies wiring correctness: push does not throw, and
+  // diagnostics are readable via the mirror (initial value = 0).
+  // Observing actual overflow requires a real-time AudioContext with appropriate
+  // timing, verified in a separate phase.
   const ctx = buildContext(1);
   const node = await createNode(ctx, messageCounter);
   node.outputs["main"]!.connect(ctx.destination);
@@ -129,7 +133,7 @@ test("message: diagnostics.overflowCount は postMessage path で 初 期 0 / WA
   node.dispose();
 });
 
-test("message: send ナ シ で counter = 初 期 0 維 持 (= regression)", async () => {
+test("message: counter stays at initial value of 0 when no sends are made (regression)", async () => {
   const ctx = buildContext(32);
   const node = await createNode(ctx, messageCounter);
   node.outputs["main"]!.connect(ctx.destination);
@@ -140,7 +144,7 @@ test("message: send ナ シ で counter = 初 期 0 維 持 (= regression)", asy
   node.dispose();
 });
 
-test("message: dispose 後 send で 例 外 出 ず (= no-op)", async () => {
+test("message: send after dispose does not throw (no-op)", async () => {
   const ctx = buildContext(1);
   const node = await createNode(ctx, messageCounter);
   node.outputs["main"]!.connect(ctx.destination);

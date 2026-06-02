@@ -1,23 +1,25 @@
 /**
- * `CompiledProcessor.worklet` 関数 namespace の 中身 (= `01-dsl.md` §11、
- * `04-worklet-runtime.md` §2、 Q80)。
+ * The contents of the `CompiledProcessor.worklet` function namespace
+ * (`01-dsl.md` §11, `04-worklet-runtime.md` §2, Q80).
  *
- * `makeWorkletNamespace(graph)` は per-processor closure を 返す。 中身 3 件:
+ * `makeWorkletNamespace(graph)` returns a per-processor closure with three
+ * members:
  *
- * - `initialize(self, opts)` — `opts.processorOptions.wasm` の bytes を sync
- *   path で 即 instantiate (= `new WebAssembly.Module` / `new WebAssembly.Instance`
- *   は AudioWorkletGlobalScope + Node test の 両 環境 で 同 等 に 動 く)、
- *   driver state を `self` の internal symbol 経 由 で 保 存、 `port.postMessage`
- *   で readiness ack。
- * - `process(self, inputs, outputs, parameters)` — `04-worklet-runtime.md` §2
- *   step 順 で 走 る: block-length guard (= Q75) → input/param marshal → WASM
- *   process → output marshal → return true。
- * - `parameterDescriptors` — graph 内 の `param` declaration を Web Audio の
- *   `AudioParamDescriptor` 形 に 変 換。
+ * - `initialize(self, opts)` — instantiates the bytes from
+ *   `opts.processorOptions.wasm` synchronously (`new WebAssembly.Module` /
+ *   `new WebAssembly.Instance` behave identically in both the
+ *   AudioWorkletGlobalScope and the Node test environment), stores the driver
+ *   state behind an internal symbol on `self`, and acks readiness via
+ *   `port.postMessage`.
+ * - `process(self, inputs, outputs, parameters)` — runs the steps in
+ *   `04-worklet-runtime.md` §2 order: block-length guard (Q75) → input/param
+ *   marshal → WASM process → output marshal → return true.
+ * - `parameterDescriptors` — converts the `param` declarations in the graph
+ *   into Web Audio `AudioParamDescriptor` shape.
  *
- * 自 動 register path (= vite-plugin が emit する worklet JS template) と
- * escape hatch path (= user 自 前 の `class extends AudioWorkletProcessor`、
- * Q80) の 両 方 が こ の 関 数 namespace を 共 通 基 盤 と し て 使 う。
+ * Both the auto-register path (the worklet JS template the vite-plugin emits)
+ * and the escape-hatch path (a user's own `class extends AudioWorkletProcessor`,
+ * Q80) share this function namespace as their common foundation.
  */
 
 import type {
@@ -51,11 +53,11 @@ import type {
 /**
  * Metadata bundle that fully describes a processor's worklet-side runtime
  * shape — everything needed to build a `WorkletNamespace` without
- * re-evaluating the authoring source。 The vite-plugin computes this at
+ * re-evaluating the authoring source. The vite-plugin computes this at
  * build / dev time from `compile(processor)` and inlines it (as JSON) into
  * the emitted worklet entry, so `audioWorklet.addModule()` only ever loads
  * a runtime-only artifact (= no `?worklet` virtual ever re-runs `defineProcessor`
- * inside `AudioWorkletGlobalScope`)。
+ * inside `AudioWorkletGlobalScope`).
  */
 export type WorkletMeta = {
   readonly layout: Layout;
@@ -63,36 +65,40 @@ export type WorkletMeta = {
   readonly audioOutputs: readonly AudioPortDecl[];
   readonly params: readonly ParamDecl[];
   /**
-   * publish flag を 持 つ state declaration 一 覧 (= sub-phase 7.4 で SAB copy
-   * logic が 参 照)。 layout.regions.publishShared / publishCounters と zip で
-   * 各 slot の WASM memory offset + 型 (= f32 / i32 / bool で SAB copy 方 法 が
-   * 異 な る、 Q42 で 全 4 byte word) を 取 得 す る path。
+   * The list of state declarations carrying a publish flag (referenced by the
+   * SAB copy logic in sub-phase 7.4). Zipped with
+   * layout.regions.publishShared / publishCounters to obtain each slot's WASM
+   * memory offset plus type (f32 / i32 / bool differ in SAB copy method, all
+   * 4-byte words per Q42).
    */
   readonly publishStates: readonly StateDecl[];
   /**
-   * `event<T>` declaration 一 覧 (= sub-phase 7.6)。 declaration 順 で layout
-   * の eventRings slot と zip。 worklet template が per-quantum 末 尾 で WASM
-   * ring → SAB ring に copy する path で 参 照。
+   * The list of `event<T>` declarations (sub-phase 7.6). Zipped in declaration
+   * order with the layout's eventRings slots. Referenced by the worklet
+   * template's path that copies the WASM ring → SAB ring at the tail of each
+   * quantum.
    */
   readonly events: readonly EventDeclAst[];
   /**
-   * `message<T>` declaration 一 覧 (= sub-phase 7.7)。 declaration 順 で layout
-   * の messageRings slot と zip。 worklet template が per-quantum 開 始 で SAB
-   * ring → WASM ring に mirror する path で 参 照。
+   * The list of `message<T>` declarations (sub-phase 7.7). Zipped in
+   * declaration order with the layout's messageRings slots. Referenced by the
+   * worklet template's path that mirrors the SAB ring → WASM ring at the start
+   * of each quantum.
    */
   readonly messages: readonly MessageDeclAst[];
   /**
-   * `midiInput` / `midiOutput` declaration 一 覧 (= `11-midi.md` §1)。 declaration
-   * 順 で layout の midiRings slot と zip。 worklet template / offline renderer /
-   * main client が port ご と の ring (= header + 8-byte slot 列) を walk する path
-   * で 参 照。
+   * The list of `midiInput` / `midiOutput` declarations (`11-midi.md` §1).
+   * Zipped in declaration order with the layout's midiRings slots. Referenced
+   * by the path where the worklet template / offline renderer / main client
+   * walks each port's ring (header + a run of 8-byte slots).
    */
   readonly midiInputs: readonly MidiInputDecl[];
   readonly midiOutputs: readonly MidiOutputDecl[];
   /**
-   * 全 `state` / `buffer` declaration (= snapshot 対 象 判 定 用)。 publishStates は
-   * publish flag 持 ち の subset だ が、 snapshot は named + persistent 全 slot が
-   * 対 象 = full list が 要 る (= renderOffline / client の blob capture path)。
+   * All `state` / `buffer` declarations (used to decide what is in scope for a
+   * snapshot). publishStates is the subset carrying a publish flag, but a
+   * snapshot targets every named + persistent slot, so the full list is
+   * required (the renderOffline / client blob-capture path).
    */
   readonly states: readonly StateDecl[];
   readonly buffers: readonly BufferDecl[];
@@ -123,7 +129,7 @@ const MIDI_SLOT_BYTES = 8;
 
 const STATE_KEY = Symbol("unworklet.workletState");
 /**
- * `initialize(self, opts)` was entered at least once。 Used by `process` to
+ * `initialize(self, opts)` was entered at least once. Used by `process` to
  * distinguish two failure modes when no state is attached to `self`:
  *
  *   - `INIT_CALLED_KEY === true` AND no state → initialize ran but threw
@@ -135,20 +141,20 @@ const STATE_KEY = Symbol("unworklet.workletState");
  * The second case has no compile-time check (custom class lives in user
  * code), so the runtime posts `worklet-initialize-not-called` once and
  * keeps emitting silence — fail-fast signal to main without throwing on
- * the audio thread (= `00-foundations.md` §5.1 invariant 3)。
+ * the audio thread (= `00-foundations.md` §5.1 invariant 3).
  */
 const INIT_CALLED_KEY = Symbol("unworklet.initCalled");
 const INIT_NOT_CALLED_POSTED_KEY = Symbol("unworklet.initNotCalledPosted");
 
 /**
- * Per-instance worklet state cached on the AudioWorkletProcessor `self`。
+ * Per-instance worklet state cached on the AudioWorkletProcessor `self`.
  * All `Float32Array` views over WASM linear memory are pre-bound during
  * `initialize(...)` and reused on every render quantum, because
  * `00-foundations.md` §5.1 forbids allocations / GC pressure on the audio
- * thread。 unworklet's WASM module never calls `memory.grow` (= the layout
- * sizing is computed at compile time)、 so these views stay valid for the
+ * thread. unworklet's WASM module never calls `memory.grow` (= the layout
+ * sizing is computed at compile time), so these views stay valid for the
  * processor's lifetime — they would otherwise need to be re-bound on every
- * growth event, since growth detaches the backing ArrayBuffer。
+ * growth event, since growth detaches the backing ArrayBuffer.
  */
 /**
  * One queued inbound MIDI event on the postMessage path (`11-midi.md` §4.4).
@@ -168,21 +174,21 @@ type WorkletState = {
   readonly audioInputs: readonly AudioPortDecl[];
   readonly audioOutputs: readonly AudioPortDecl[];
   readonly params: readonly ParamDecl[];
-  /** Index-aligned with `audioInputs`; inner array is per-channel views。 */
+  /** Index-aligned with `audioInputs`; inner array is per-channel views. */
   readonly inputViews: readonly Float32Array[][];
-  /** Index-aligned with `audioOutputs`。 */
+  /** Index-aligned with `audioOutputs`. */
   readonly outputViews: readonly Float32Array[][];
-  /** Index-aligned with `params`。 */
+  /** Index-aligned with `params`. */
   readonly paramViews: readonly Float32Array[];
   /**
-   * publish slot meta + buffer + per-slot lastVersion (= sub-phase 7.4)。
-   * publishBuffer = main か ら hand さ れ た SAB or ArrayBuffer (= main 観 測 用)、
-   * publishSlots = WASM memory 内 offset map、 lastVersions[i] = i 番 slot で
-   * 最 後 に main へ copy し た version (= 同 値 ナ ラ skip)。
-   * publishSlots.length === 0 で publishBuffer が null = publish ナ シ processor。
-   * publishWasmSharedViews / CounterViews = WASM memory 内 publishShared /
-   * publishCounters region の Int32Array view (= initialize で pre-bind、
-   * audio thread alloc 回 避)。
+   * publish slot meta + buffer + per-slot lastVersion (sub-phase 7.4).
+   * publishBuffer = the SAB or ArrayBuffer handed in by main (for main-side
+   * observation); publishSlots = the offset map within WASM memory;
+   * lastVersions[i] = the version last copied to main for slot i (skip when
+   * unchanged). publishSlots.length === 0 with a null publishBuffer = a
+   * processor with no publish. publishWasmSharedViews / CounterViews =
+   * Int32Array views over the publishShared / publishCounters regions in WASM
+   * memory (pre-bound in initialize to avoid audio-thread allocation).
    */
   readonly publishSharedView: Int32Array | null;
   readonly publishSlots: readonly PublishSlotDescriptor[];
@@ -191,118 +197,126 @@ type WorkletState = {
   readonly publishWasmSharedViews: readonly Int32Array[];
   readonly publishWasmCounterViews: readonly Int32Array[];
   /**
-   * event ring SAB copy meta (= sub-phase 7.6 commit 5c)。 main か ら hand さ れ た
-   * eventRingsBuffer (= SAB or ArrayBuffer) + per-ring descriptor + per-ring SAB
-   * 内 offset。 eventRingsWasmViews / SabViews = pre-bind し た Uint8Array view
-   * (= per-quantum bulk copy で 毎 quantum alloc 回 避、 realtime safety)。
-   * event ナ シ processor で は null + 空 配 列。
+   * event ring SAB copy meta (sub-phase 7.6 commit 5c). The eventRingsBuffer
+   * (SAB or ArrayBuffer) handed in by main + a per-ring descriptor + each
+   * ring's offset within the SAB. eventRingsWasmViews / SabViews = pre-bound
+   * Uint8Array views (so the per-quantum bulk copy avoids per-quantum
+   * allocation, for realtime safety). A processor with no event has null + an
+   * empty array.
    */
   readonly eventRingsBuffer: SharedArrayBuffer | ArrayBuffer | null;
   readonly eventRings: readonly EventRingSlotDescriptor[];
   readonly eventRingSabOffsets: readonly number[];
   readonly eventRingsWasmViews: readonly Uint8Array[];
   readonly eventRingsSabViews: readonly Uint8Array[];
-  /** Per-ring header (= head / tail / overflow) Int32Array view = SAB Atomics.store 用 */
+  /** Per-ring header (head / tail / overflow) Int32Array view = for SAB Atomics.store */
   readonly eventRingsWasmHeaderViews: readonly Int32Array[];
   readonly eventRingsSabHeaderViews: readonly Int32Array[];
   /**
-   * §4.3 content buffer の per-ring view (= typed-array field を 持 つ event の み
-   * non-null、 ring index と zip)。 WASM = 読 取 source (= 両 transport)、 SAB =
-   * mirror 先 (= SAB 時 の み)。
+   * §4.3 content buffer per-ring view (non-null only for events with a
+   * typed-array field, zipped with ring index). WASM = the read source (both
+   * transports); SAB = the mirror target (SAB only).
    */
   readonly eventContentWasmViews: ReadonlyArray<Uint8Array | null>;
   readonly eventContentSabViews: ReadonlyArray<Uint8Array | null>;
   /**
-   * postMessage path 用 = 各 event ring で 「前 quantum 末 で main へ 送 信 済 み の
-   * head 値」 / 「同 overflow 値」。 次 quantum で 「currentHead != lastSent」 ま
-   * た は 「currentOverflow != lastSent」 が 検 出 し た 時 だ け diff を port.postMessage
-   * で 配 送 (= 変 化 ナ シ quantum は skip)。 SAB path で は 参 照 し な い (= SAB
-   * mirror copy だ け で main 側 が rAF polling で 直 接 観 測)。
+   * For the postMessage path = per event ring, the "head value already sent to
+   * main at the end of the previous quantum" / "the same overflow value". Only
+   * when the next quantum detects "currentHead != lastSent" or
+   * "currentOverflow != lastSent" is the diff delivered via port.postMessage
+   * (an unchanged quantum is skipped). Not referenced on the SAB path (main
+   * observes the SAB mirror copy directly via rAF polling).
    */
   readonly lastSentEventHeads: number[];
   readonly lastSentEventOverflows: number[];
   /**
-   * message ring SAB ↔ WASM mirror meta (= sub-phase 7.7d)。 event ring と zip
-   * pattern、 ま た push 方 向 が 逆 (= main → worklet) = process 開 始 で
-   * SAB → WASM mirror (= main が push し た slot を WASM ring に bulk copy +
-   * head を WASM ring に commit)、 drain 末 尾 で WASM tail を SAB tail に commit
-   * (= main 側 で 「drain 済」 を 観 測)。
+   * message ring SAB ↔ WASM mirror meta (sub-phase 7.7d). Same zip pattern as
+   * the event ring, but the push direction is reversed (main → worklet): at the
+   * start of process, mirror SAB → WASM (bulk-copy the slots main pushed into
+   * the WASM ring + commit head into the WASM ring); at the tail of the drain,
+   * commit the WASM tail into the SAB tail (so main observes "drained").
    */
   readonly messageRingsBuffer: SharedArrayBuffer | ArrayBuffer | null;
   readonly messageRings: readonly MessageRingSlotDescriptor[];
   readonly messageRingSabOffsets: readonly number[];
   readonly messageRingsWasmViews: readonly Uint8Array[];
   /**
-   * postMessage inject path 用 = 各 message ring の WASM 内 region を 1 度 だ け
-   * pre-bind し た DataView (= field 別 setInt32 用)。 process() で 毎 quantum
-   * `new DataView(...)` す る と audio thread alloc に な る た め init で 確 保
-   * (= `messageRingsWasmViews` と 同 region、 `00-foundations.md` §5.1)。
+   * For the postMessage inject path = a DataView bound once over each message
+   * ring's WASM region (for per-field setInt32). Allocating a
+   * `new DataView(...)` every quantum in process() would allocate on the audio
+   * thread, so it is reserved at init (same region as `messageRingsWasmViews`,
+   * `00-foundations.md` §5.1).
    */
   readonly messageRingsWasmDataViews: readonly DataView[];
   readonly messageRingsSabViews: readonly Uint8Array[];
   readonly messageRingsWasmHeaderViews: readonly Int32Array[];
   readonly messageRingsSabHeaderViews: readonly Int32Array[];
   /**
-   * §5.2 variable-length content buffer の per-ring view (= typed-array field を
-   * 持 つ message の み non-null、 ring index と zip)。 WASM = 書 き 込 み 先 (=
-   * 両 transport)、 SAB = main が push 済 を mirror す る source (= SAB 時 の み)。
+   * §5.2 variable-length content buffer per-ring view (non-null only for
+   * messages with a typed-array field, zipped with ring index). WASM = the
+   * write target (both transports); SAB = the source mirroring what main has
+   * pushed (SAB only).
    */
   readonly messageContentWasmViews: ReadonlyArray<Uint8Array | null>;
   readonly messageContentSabViews: ReadonlyArray<Uint8Array | null>;
   /**
-   * postMessage path 用 = 各 message ring の content region 書 き 込 み cursor (=
-   * payload ご と に byteLen 分 進 め て wrap)。 SAB path は main 側 cursor を 使 う
-   * (= worklet は 全 region mirror) た め 不 使 用。
+   * For the postMessage path = each message ring's content-region write cursor
+   * (advanced by byteLen per payload, then wraps). Unused on the SAB path,
+   * which uses main's cursor (the worklet mirrors the whole region).
    */
   readonly messageContentCursors: number[];
   /**
-   * postMessage path 用 = main 側 が `port.postMessage({ kind: 'message',
-   * ringIndex, payload })` で 送 信 し た payload を audio thread の port.onmessage
-   * で 受 領 し て push す る 一 時 queue。 process 開 始 で WASM ring に inject +
-   * drain (= SAB path で main → SAB → WASM mirror で 走 る path の 代 替)。
-   * SAB path で は 使 用 し な い (= 空 配 列 の ま ま)。
+   * For the postMessage path = a temporary queue holding payloads that main
+   * sent via `port.postMessage({ kind: 'message', ringIndex, payload })`,
+   * received on the audio thread's port.onmessage and pushed here. Injected
+   * into the WASM ring + drained at the start of process (the substitute for
+   * the SAB path's main → SAB → WASM mirror). Unused on the SAB path (stays an
+   * empty array).
    */
   readonly messageQueueMirrors: Array<Array<Record<string, unknown>>>;
   /**
-   * postMessage path 用 = 各 message ring で 「前 quantum 末 で main へ 送 信 済 み の
-   * overflow 値」。 WASM 内 で drop-oldest 発 動 し て overflowCount が 増 え た 場 合、
-   * 次 quantum 末 で diff 検 出 + port.postMessage で main に 通 知 (= main 側
-   * diagnostics.overflowCount() の mirror 元)。
+   * For the postMessage path = per message ring, the "overflow value already
+   * sent to main at the end of the previous quantum". When drop-oldest fires
+   * inside WASM and overflowCount increases, the diff is detected at the end of
+   * the next quantum and main is notified via port.postMessage (the mirror
+   * source for main's diagnostics.overflowCount()).
    */
   readonly lastSentMessageOverflows: number[];
   /**
-   * MIDI ring SAB ↔ WASM mirror meta (`11-midi.md` §4)。 in port = message ring と
-   * 同 transport (= main → SAB / postMessage → WASM ring)、 out port = event ring
-   * と 同 transport (= WASM ring → SAB / postMessage → main)。 8-byte 固 定 slot な の で
-   * field 別 DataView は 不 要 = byte-level Uint8Array copy で 完 結。
+   * MIDI ring SAB ↔ WASM mirror meta (`11-midi.md` §4). The in port shares the
+   * message ring's transport (main → SAB / postMessage → WASM ring); the out
+   * port shares the event ring's transport (WASM ring → SAB / postMessage →
+   * main). The fixed 8-byte slot means no per-field DataView is needed = a
+   * byte-level Uint8Array copy is sufficient.
    */
   readonly midiRingsBuffer: SharedArrayBuffer | ArrayBuffer | null;
   readonly midiRings: readonly MidiRingSlotDescriptor[];
   readonly midiRingsWasmViews: readonly Uint8Array[];
-  /** pre-bind し た WASM memory 全 域 DataView (= wire byte / atSample u32 書 き 込 み 用)。 */
+  /** Pre-bound DataView over all of WASM memory (for writing wire bytes / the atSample u32). */
   readonly midiWasmDataView: DataView | null;
   readonly midiRingsWasmHeaderViews: readonly Int32Array[];
   readonly midiRingsSabViews: readonly Uint8Array[];
   readonly midiRingsSabHeaderViews: readonly Int32Array[];
-  /** sysex content region view (= sysex port の み non-null、 §4.3)。 ring index と zip。 */
+  /** sysex content region view (non-null only for the sysex port, §4.3). Zipped with ring index. */
   readonly sysexContentWasmViews: ReadonlyArray<Uint8Array | null>;
   readonly sysexContentSabViews: ReadonlyArray<Uint8Array | null>;
-  /** out port (= event-like) postMessage path 用 = 前 quantum で 送 信 済 み の head / overflow。 */
+  /** For the out port (event-like) postMessage path = the head / overflow sent in the previous quantum. */
   readonly lastSentMidiHeads: number[];
   readonly lastSentMidiOverflows: number[];
   /**
-   * in port (= message-like) postMessage path 用 = main が `port.postMessage({
-   * kind:'midi', ... })` で 送 信 し た event を audio thread で 蓄 積、 process 開 始 で
-   * WASM ring に inject。 ring index と zip (= out port は 常 に 空)。
+   * For the in port (message-like) postMessage path = events that main sent via
+   * `port.postMessage({ kind:'midi', ... })`, accumulated on the audio thread
+   * and injected into the WASM ring at the start of process. Zipped with ring
+   * index (the out port is always empty).
    */
   readonly midiInQueues: Array<Array<MidiQueueItem>>;
-  /** in port postMessage path 用 = WASM ring 内 で drop-oldest 発 動 し た 回 数 mirror。 */
+  /** For the in port postMessage path = a mirror of how many times drop-oldest fired inside the WASM ring. */
   readonly lastSentMidiInOverflows: number[];
   /**
-   * Latched once a WASM trap escapes `state.process()`。 Subsequent quanta
+   * Latched once a WASM trap escapes `state.process()`. Subsequent quanta
    * emit silence and skip the WASM call so a single trap does not get
    * re-posted every render quantum (= main receives one `wasm-trap` event
-   * and the node keeps outputting silence, per docs/05-client.md §4)。
+   * and the node keeps outputting silence, per docs/05-client.md §4).
    */
   failed: boolean;
 };
@@ -317,112 +331,124 @@ type SelfWithState = {
 type ProcessorOptionsBag = {
   processorOptions?: {
     /**
-     * Pre-compiled `WebAssembly.Module` minted on the main thread。 Audio
-     * thread only does `new WebAssembly.Instance(module)` (= fast、
-     * deterministic、 spec-recommended path)。 This is the primary handoff
-     * shape produced by `createNode`。
+     * Pre-compiled `WebAssembly.Module` minted on the main thread. Audio
+     * thread only does `new WebAssembly.Instance(module)` (= fast,
+     * deterministic, spec-recommended path). This is the primary handoff
+     * shape produced by `createNode`.
      */
     module?: WebAssembly.Module;
     /**
      * Legacy `Uint8Array` bytes path = sync `new WebAssembly.Module(bytes)`
-     * inside `initialize`。 Kept for path β escape hatches (= author自前
+     * inside `initialize`. Kept for path β escape hatches (= an author's own
      * `class extends AudioWorkletProcessor` that hands raw bytes through
-     * `processorOptions`)、 but the declarative path α prefers `.module`。
+     * `processorOptions`), but the declarative path α prefers `.module`.
      */
     wasm?: Uint8Array;
     /**
-     * publish slot 用 共 有 buffer (= sub-phase 7.4)。 SAB available 環 境 で は
-     * SharedArrayBuffer、 fallback 環 境 で は ArrayBuffer。 worklet template が
-     * per-quantum 末 尾 で WASM publishShared / Counters 値 を こ の buffer に copy
-     * (= main thread 側 が 同 buffer へ の reference を 既 持 つ、 main / worklet
-     * 両 方 か ら 観 測)。 publish ナ シ processor で は hand さ れ な い。
+     * Shared buffer for publish slots (sub-phase 7.4). A SharedArrayBuffer when
+     * SAB is available, an ArrayBuffer in the fallback environment. At the tail
+     * of each quantum the worklet template copies the WASM publishShared /
+     * Counters values into this buffer (the main thread already holds a
+     * reference to the same buffer, observed from both main and worklet). Not
+     * handed in for a processor with no publish.
      */
     publishBuffer?: SharedArrayBuffer | ArrayBuffer;
     /**
-     * publish slot descriptor 配 列 (= declaration 順、 publishBuffer の slot 配
-     * 置 と zip)。 worklet template が WASM memory の どこ か ら read す る か を
-     * 各 slot で 取 得 (= sharedOffset / counterOffset)。
+     * The publish slot descriptor array (declaration order, zipped with the
+     * slot placement in publishBuffer). For each slot the worklet template
+     * obtains where in WASM memory to read from (sharedOffset / counterOffset).
      */
     publishSlots?: readonly PublishSlotDescriptor[];
     /**
-     * transport mode (= 'sab' or 'postMessage')。 worklet template が copy 経 路
-     * を 切 り 替 え る path で 参 照。 default = 'postMessage' (= safer fallback)。
+     * transport mode ('sab' or 'postMessage'). Referenced by the worklet
+     * template's path that switches the copy route. default = 'postMessage'
+     * (the safer fallback).
      */
     transport?: TransportMode;
     /**
-     * event ring buffer 用 共 有 buffer (= sub-phase 7.6 commit 5b)。 全 event ring
-     * を 連 続 で 配 置 し た 1 SAB (= main で alloc)、 worklet template が
-     * per-quantum 末 尾 で WASM ring → SAB ring に copy (= commit 5c で fill)。
-     * event ナ シ processor で は hand さ れ な い。
+     * Shared buffer for the event ring buffer (sub-phase 7.6 commit 5b). A
+     * single SAB (allocated by main) holding all event rings laid out
+     * contiguously; at the tail of each quantum the worklet template copies the
+     * WASM ring → SAB ring (filled in commit 5c). Not handed in for a processor
+     * with no event.
      */
     eventRingsBuffer?: SharedArrayBuffer | ArrayBuffer;
     /**
-     * event ring descriptor 配 列 (= declaration 順、 layout の eventRings slot と
-     * zip)。 worklet template が WASM memory の どこ か ら read す る か を 各 ring
-     * で 取 得 (= wasmRingBase / capacity / slotSize / fields)。
+     * The event ring descriptor array (declaration order, zipped with the
+     * layout's eventRings slots). For each ring the worklet template obtains
+     * where in WASM memory to read from (wasmRingBase / capacity / slotSize /
+     * fields).
      */
     eventRings?: readonly EventRingSlotDescriptor[];
     /**
-     * 各 event ring の SAB 内 offset (= declaration 順、 eventRings と zip)。
-     * worklet template が per-ring の SAB 書 き 込 み base を 取 る path。
+     * Each event ring's offset within the SAB (declaration order, zipped with
+     * eventRings). The path where the worklet template takes the per-ring SAB
+     * write base.
      */
     eventRingSabOffsets?: readonly number[];
     /**
-     * §4.3 content buffer 用 SAB (= typed-array field を 持 つ event が あ る 時 の み、
-     * SAB transport 限 定)。 worklet が WASM content region を ここ に mirror、 main が read。
+     * SAB for the §4.3 content buffer (only when at least one event has a
+     * typed-array field, SAB transport only). The worklet mirrors the WASM
+     * content region here, and main reads it.
      */
     eventContentBuffer?: SharedArrayBuffer | ArrayBuffer;
-    /** 各 event ring の content SAB 内 offset (= ring index と zip)。 */
+    /** Each event ring's content offset within the SAB (zipped with ring index). */
     eventContentSabOffsets?: readonly number[];
     /**
-     * message ring buffer 用 共 有 buffer (= sub-phase 7.7d)。 全 message ring を
-     * 連 続 で 配 置 し た 1 SAB (= main で alloc)、 main 側 が SAB に slot push +
-     * worklet template が per-quantum 開 始 で SAB → WASM ring に mirror (= drain
-     * は WASM 内 で 走 ら す path)。 message ナ シ processor は hand さ れ ない。
+     * Shared buffer for the message ring buffer (sub-phase 7.7d). A single SAB
+     * (allocated by main) holding all message rings laid out contiguously; main
+     * pushes slots into the SAB + the worklet template mirrors SAB → WASM ring
+     * at the start of each quantum (the drain runs inside WASM). Not handed in
+     * for a processor with no message.
      */
     messageRingsBuffer?: SharedArrayBuffer | ArrayBuffer;
     /**
-     * message ring descriptor 配 列 (= declaration 順、 layout の messageRings
-     * slot と zip)。
+     * The message ring descriptor array (declaration order, zipped with the
+     * layout's messageRings slots).
      */
     messageRings?: readonly MessageRingSlotDescriptor[];
     /**
-     * 各 message ring の SAB 内 offset (= declaration 順、 messageRings と zip)。
+     * Each message ring's offset within the SAB (declaration order, zipped with
+     * messageRings).
      */
     messageRingSabOffsets?: readonly number[];
     /**
-     * §5.2 variable-length content buffer 用 SAB (= typed-array field を 持 つ
-     * message が 1 つ で も あ る 時 の み hand、 SAB transport 限 定)。 全 content
-     * ring を 連 続 配 置、 per-ring base は messageContentSabOffsets で 引 く。
+     * SAB for the §5.2 variable-length content buffer (handed in only when at
+     * least one message has a typed-array field, SAB transport only). All
+     * content rings laid out contiguously; the per-ring base is taken from
+     * messageContentSabOffsets.
      */
     messageContentBuffer?: SharedArrayBuffer | ArrayBuffer;
     /**
-     * 各 message ring の content SAB 内 offset (= ring index と zip、 content ナ シ の
-     * ring も 0 を hold = 使 用 側 は descriptor.payloadContent 有 無 で 判 断)。
+     * Each message ring's content offset within the SAB (zipped with ring
+     * index; a ring with no content also holds 0 = the consumer decides by the
+     * presence of descriptor.payloadContent).
      */
     messageContentSabOffsets?: readonly number[];
     /**
-     * MIDI ring descriptor 配 列 (= `11-midi.md` §4、 declaration 順 で midiInput →
-     * midiOutput)。 direction で in (= message と 同 transport) / out (= event と 同
-     * transport) を 区 別。 in port = main が wire slot を push + worklet が WASM ring
-     * に inject、 out port = WASM が emit + worklet が drain し て main へ。
+     * The MIDI ring descriptor array (`11-midi.md` §4, declaration order
+     * midiInput → midiOutput). direction distinguishes in (same transport as
+     * message) / out (same transport as event). in port = main pushes wire
+     * slots + the worklet injects them into the WASM ring; out port = WASM emits
+     * + the worklet drains them to main.
      */
     midiRings?: readonly MidiRingSlotDescriptor[];
     /**
-     * 全 MIDI ring を 連 続 配 置 し た 1 SAB (= main で alloc、 SAB transport 限 定)。
-     * in port = main が SAB ring に push → worklet が 先 頭 で SAB → WASM mirror、
-     * out port = worklet が 末 尾 で WASM → SAB mirror → main が rAF drain。
+     * A single SAB (allocated by main, SAB transport only) holding all MIDI
+     * rings laid out contiguously. in port = main pushes into the SAB ring →
+     * the worklet mirrors SAB → WASM up front; out port = the worklet mirrors
+     * WASM → SAB at the tail → main drains via rAF.
      */
     midiRingsBuffer?: SharedArrayBuffer | ArrayBuffer;
-    /** 各 MIDI ring の SAB 内 offset (= midiRings と zip)。 */
+    /** Each MIDI ring's offset within the SAB (zipped with midiRings). */
     midiRingSabOffsets?: readonly number[];
     /**
-     * §4.3 sysex content 用 SAB (= sysex port が 1 つ で も あ る 時 の み hand、 SAB
-     * transport 限 定)。 全 sysex port の content region を 連 続 配 置、 per-port base
-     * は sysexContentSabOffsets で 引 く。
+     * SAB for §4.3 sysex content (handed in only when at least one sysex port
+     * exists, SAB transport only). The content regions of all sysex ports laid
+     * out contiguously; the per-port base is taken from sysexContentSabOffsets.
      */
     sysexContentBuffer?: SharedArrayBuffer | ArrayBuffer;
-    /** 各 MIDI ring の sysex content SAB 内 offset (= midiRings と zip、 sysex ナ シ は 0)。 */
+    /** Each MIDI ring's sysex content offset within the SAB (zipped with midiRings, 0 when no sysex). */
     sysexContentSabOffsets?: readonly number[];
   };
 };
@@ -459,9 +485,10 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
   const inputDescriptors = audioInputs.map((p) => ({ name: p.name, channels: p.channels }));
   const outputDescriptors = audioOutputs.map((p) => ({ name: p.name, channels: p.channels }));
 
-  // publishSlots = declaration 順 で {name, type, sharedOffset, counterOffset} を 構 築。
-  // createNode が transport mode 検 出 + SAB allocate + worklet template が per-quantum 末 尾
-  // で WASM memory 経 由 で SAB に copy す る 時 に 参 照 (= sub-phase 7.4 / 7.5)。
+  // publishSlots = build {name, type, sharedOffset, counterOffset} in declaration order.
+  // Referenced when createNode detects the transport mode + allocates the SAB and the
+  // worklet template copies through WASM memory into the SAB at the tail of each quantum
+  // (sub-phase 7.4 / 7.5).
   const publishSlots = publishStates.map((s) => ({
     name: s.name,
     type: s.type,
@@ -469,18 +496,18 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
     counterOffset: lay.regions.publishCounters.slots[s.name]!,
   }));
 
-  // eventRings = declaration 順 で {name, wasmRingBase, capacity, slotSize, fields} を 構 築。
-  // createNode が SAB ringbuffer allocate + worklet template が per-quantum 末 尾 で WASM
-  // ring → SAB ring に copy す る 時 に 参 照 (= sub-phase 7.6 commit 5b/5c)。
+  // eventRings = build {name, wasmRingBase, capacity, slotSize, fields} in declaration order.
+  // Referenced when createNode allocates the SAB ringbuffer and the worklet template copies
+  // the WASM ring → SAB ring at the tail of each quantum (sub-phase 7.6 commit 5b/5c).
   const eventRings: EventRingSlotDescriptor[] = meta.events.map((evt) => {
     const slot = lay.regions.eventRings.slots[evt.name];
-    /* v8 ignore next 3 — event declaration が 既 capture 段 階 で layout に push
-       済 = 構 造 上 unreachable defensive guard */
+    /* v8 ignore next 3 — the event declaration is already pushed into the layout
+       at capture time = structurally unreachable defensive guard */
     if (slot === undefined) {
       throw new Error(`unworklet: missing layout slot for event "${evt.name}"`);
     }
-    // typed-array field あ り の event は §4.3 content buffer を 持 つ。 SAB content
-    // region を mirror / 直 抽 出 す る 先 の WASM base + capacity を descriptor に。
+    // An event with a typed-array field has a §4.3 content buffer. Put the WASM
+    // base + capacity to mirror / directly extract the SAB content region into the descriptor.
     const content = lay.regions.payloadContent.eventSlots[evt.name];
     return {
       name: evt.name,
@@ -494,19 +521,19 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
     };
   });
 
-  // messageRings = declaration 順 で per-message descriptor を 構 築 (= sub-phase 7.7d)。
-  // createNode が messageRingsBuffer SAB allocate + worklet template が per-quantum
-  // 開 始 で SAB → WASM mirror で 参 照。
+  // messageRings = build the per-message descriptor in declaration order (sub-phase 7.7d).
+  // Referenced when createNode allocates the messageRingsBuffer SAB and the worklet template
+  // mirrors SAB → WASM at the start of each quantum.
   const messageRings: MessageRingSlotDescriptor[] = meta.messages.map((msg) => {
     const slot = lay.regions.messageRings.slots[msg.name];
-    /* v8 ignore next 3 — message declaration が 既 capture 段 階 で layout に push
-       済 = 構 造 上 unreachable defensive guard */
+    /* v8 ignore next 3 — the message declaration is already pushed into the layout
+       at capture time = structurally unreachable defensive guard */
     if (slot === undefined) {
       throw new Error(`unworklet: missing layout slot for message "${msg.name}"`);
     }
-    // typed-array field あ り の message は §5.2 content buffer を 持 つ (= layout の
-    // payloadContent slot)。 transport が SAB content region を mirror / 直 書 き す る
-    // 先 の WASM base + capacity を descriptor に 載 せ る。
+    // A message with a typed-array field has a §5.2 content buffer (the layout's
+    // payloadContent slot). Put the WASM base + capacity that the transport mirrors /
+    // writes the SAB content region directly into onto the descriptor.
     const content = lay.regions.payloadContent.messageSlots[msg.name];
     return {
       name: msg.name,
@@ -520,19 +547,19 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
     };
   });
 
-  // midiRings = declaration 順 で midiInput / midiOutput を 1 配 列 に 並 べ た
-  // descriptor (= `11-midi.md` §4)。 direction で main → worklet (in、 message と
-  // 同 transport) / worklet → main (out、 event と 同 transport) を 区 別。 sysex
-  // port は content region の wasmBase / perChunk / chunks を 同 梱 (= §4.3)。
-  // createNode が SAB ring + sysex buffer を size + worklet template が drain / emit。
+  // midiRings = a descriptor laying midiInput / midiOutput out into one array in
+  // declaration order (`11-midi.md` §4). direction distinguishes main → worklet (in,
+  // same transport as message) / worklet → main (out, same transport as event). A sysex
+  // port bundles the content region's wasmBase / perChunk / chunks (§4.3).
+  // createNode sizes the SAB ring + sysex buffer, and the worklet template drains / emits.
   const midiDecls = [
     ...meta.midiInputs.map((d) => ({ decl: d, direction: "in" as const })),
     ...meta.midiOutputs.map((d) => ({ decl: d, direction: "out" as const })),
   ];
   const midiRings: MidiRingSlotDescriptor[] = midiDecls.map(({ decl, direction }) => {
     const slot = lay.regions.midiRings.slots[decl.name];
-    /* v8 ignore next 3 — midi declaration が 既 capture 段 階 で layout に push
-       済 = 構 造 上 unreachable defensive guard */
+    /* v8 ignore next 3 — the midi declaration is already pushed into the layout
+       at capture time = structurally unreachable defensive guard */
     if (slot === undefined) {
       throw new Error(`unworklet: missing layout slot for midi port "${decl.name}"`);
     }
@@ -553,14 +580,14 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
     const opts = (args[1] ?? {}) as ProcessorOptionsBag;
     // Mark `initialize` as entered so `process()` can tell init-failed
     // (= flag set but no state) from init-never-called (= flag unset),
-    // and surface the latter via `worklet-initialize-not-called`。
+    // and surface the latter via `worklet-initialize-not-called`.
     self[INIT_CALLED_KEY] = true;
     try {
       // Prefer the pre-compiled `WebAssembly.Module` (= main-thread async
-      // compile)、 fall back to sync `new WebAssembly.Module(bytes)` if a
-      // path-β escape hatch still hands raw bytes through。 Either way,
+      // compile), fall back to sync `new WebAssembly.Module(bytes)` if a
+      // path-β escape hatch still hands raw bytes through. Either way,
       // `new WebAssembly.Instance(module)` happens here in the audio
-      // realm — that step is cheap + spec-recommended。
+      // realm — that step is cheap + spec-recommended.
       const wasmModule =
         opts.processorOptions?.module ??
         (opts.processorOptions?.wasm
@@ -576,10 +603,10 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       const memory = instance.exports["memory"] as WebAssembly.Memory;
       const procFn = instance.exports["process"] as () => void;
 
-      // Pre-bind one Float32Array view per (port, channel) and per param。
+      // Pre-bind one Float32Array view per (port, channel) and per param.
       // Reused on every `process()` call to keep the audio thread alloc-free
-      // (= `00-foundations.md` §5.1)。 Memory.grow is never invoked by
-      // generated WASM = the views stay valid for the processor's lifetime。
+      // (= `00-foundations.md` §5.1). Memory.grow is never invoked by
+      // generated WASM = the views stay valid for the processor's lifetime.
       const inputViews: Float32Array[][] = [];
       for (const decl of audioInputs) {
         const portBase = lay.regions.ioScratch.inputs[decl.name]!;
@@ -608,18 +635,18 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         paramViews.push(new Float32Array(memory.buffer, paramBase, SAMPLES_PER_BLOCK));
       }
 
-      // publish 関 連 meta + buffer を opts か ら 取 り 出 し (= sub-phase 7.4)。
-      // publish ナ シ processor は publishBuffer ナ シ で hand さ れ る = view = null、
-      // publishSlots = []、 lastVersions = [] で start = process 末 尾 copy logic は
-      // 空 walk = no-op。
+      // Pull the publish-related meta + buffer out of opts (sub-phase 7.4).
+      // A processor with no publish is handed in without a publishBuffer = view = null,
+      // publishSlots = [], lastVersions = [] at start = the copy logic at the tail of
+      // process walks nothing = no-op.
       const publishBuffer = opts.processorOptions?.publishBuffer ?? null;
       const publishSlots = opts.processorOptions?.publishSlots ?? [];
       const transport = opts.processorOptions?.transport ?? "postMessage";
       const publishSharedView = publishBuffer ? new Int32Array(publishBuffer) : null;
       const lastVersions = publishSlots.map(() => 0);
-      // WASM memory 内 publishShared / publishCounters region の view を per-slot
-      // で pre-bind = process 末 尾 copy で 毎 quantum alloc を 避 け る
-      // (= `00-foundations.md` §5.1 realtime safety)。
+      // Pre-bind per-slot views over the publishShared / publishCounters regions
+      // within WASM memory = the copy at the tail of process avoids per-quantum
+      // allocation (`00-foundations.md` §5.1 realtime safety).
       const publishWasmSharedViews: Int32Array[] = [];
       const publishWasmCounterViews: Int32Array[] = [];
       for (const slot of publishSlots) {
@@ -627,14 +654,14 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         publishWasmCounterViews.push(new Int32Array(memory.buffer, slot.counterOffset, 2));
       }
 
-      // event ring meta + buffer を opts か ら 取 り 出 し (= sub-phase 7.6 commit 5c)。
-      // 各 ring で WASM memory 上 と SAB 上 の Uint8Array view を pre-bind し て
-      // per-quantum 末 尾 で bulk copy + Atomics.store(head / overflow) で main 公 開。
+      // Pull the event ring meta + buffer out of opts (sub-phase 7.6 commit 5c).
+      // For each ring, pre-bind the Uint8Array views over WASM memory and the SAB,
+      // then bulk-copy at the tail of each quantum + Atomics.store(head / overflow) to expose to main.
       const eventRingsBuffer = opts.processorOptions?.eventRingsBuffer ?? null;
       const eventRings = opts.processorOptions?.eventRings ?? [];
       const eventRingSabOffsets = opts.processorOptions?.eventRingSabOffsets ?? [];
-      // §4.3 content buffer (= typed-array field を 持 つ event の み)。 worklet が
-      // WASM content region を SAB に mirror (= SAB) / payload に 抽 出 (= postMessage)。
+      // §4.3 content buffer (only for events with a typed-array field). The worklet
+      // mirrors the WASM content region into the SAB (SAB) / extracts it into the payload (postMessage).
       const eventContentBuffer = opts.processorOptions?.eventContentBuffer ?? null;
       const eventContentSabOffsets = opts.processorOptions?.eventContentSabOffsets ?? [];
       const eventRingsWasmViews: Uint8Array[] = [];
@@ -643,14 +670,14 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       const eventRingsSabHeaderViews: Int32Array[] = [];
       const eventContentWasmViews: Array<Uint8Array | null> = [];
       const eventContentSabViews: Array<Uint8Array | null> = [];
-      // postMessage path 用 = 各 ring の 「前 quantum で 送 信 済 み head / overflow」
-      // を track (= 次 quantum で diff だ け 送 る path)。 SAB path は 参 照 ナ シ で
-      // 初 期 値 0 の ま ま。
+      // For the postMessage path = track each ring's "head / overflow already sent
+      // in the previous quantum" (the path that sends only the diff in the next
+      // quantum). The SAB path never references it, so it stays at the initial 0.
       const lastSentEventHeads = eventRings.map(() => 0);
       const lastSentEventOverflows = eventRings.map(() => 0);
-      // WASM views = 両 transport で 必 要 (= worklet が WASM 内 ring を 読 む path
-      // は SAB / postMessage 共 通)。 SAB views = SAB 時 の み bind (= postMessage
-      // path は eventRingsBuffer 不 在)。
+      // WASM views = needed on both transports (the path where the worklet reads
+      // the WASM ring is common to SAB / postMessage). SAB views = bound only when
+      // SAB is present (the postMessage path has no eventRingsBuffer).
       for (let i = 0; i < eventRings.length; i++) {
         const ring = eventRings[i]!;
         const ringTotalBytes = 12 + ring.capacity * ring.slotSize;
@@ -681,26 +708,27 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         }
       }
 
-      // message ring meta + buffer pre-bind。 event ring と zip pattern、 mirror
-      // 方 向 が 逆 (= main → worklet)。 transport mode で 経 路 が 分 岐:
+      // message ring meta + buffer pre-bind. Same zip pattern as the event ring, but
+      // the mirror direction is reversed (main → worklet). The route branches on
+      // transport mode:
       //
-      // - SAB available: main 側 が SAB に push + worklet 側 process 開 始 で SAB →
-      //   WASM bulk copy + drain 末 尾 で WASM tail を SAB tail に commit
-      // - SAB unavailable: 共 有 buffer 不 在、 main 側 が `port.postMessage({
-      //   kind:'message', ringIndex, payload })` で 直 送 = worklet 側 が
-      //   self.port.onmessage で 受 領 + messageQueueMirrors に push + process 開 始 で
-      //   WASM ring に field 別 inject + WASM 内 overflowCount を 末 尾 で main に
-      //   port.postMessage で 通 知 (= main mirror 更 新)。
+      // - SAB available: main pushes into the SAB + the worklet bulk-copies SAB →
+      //   WASM at the start of process + commits the WASM tail into the SAB tail at the tail of the drain
+      // - SAB unavailable: no shared buffer, main sends directly via `port.postMessage({
+      //   kind:'message', ringIndex, payload })` = the worklet receives it on
+      //   self.port.onmessage + pushes to messageQueueMirrors + injects per field into
+      //   the WASM ring at the start of process + notifies main of the in-WASM
+      //   overflowCount via port.postMessage at the tail (updates the main mirror).
       //
-      // WASM views = 両 transport で 必 要 (= worklet が WASM 内 ring を 書 く)。
-      // SAB views = SAB 時 の み bind。
+      // WASM views = needed on both transports (the worklet writes the WASM ring).
+      // SAB views = bound only when SAB is present.
       const messageRingsBuffer = opts.processorOptions?.messageRingsBuffer ?? null;
       const messageRings = opts.processorOptions?.messageRings ?? [];
       const messageRingSabOffsets = opts.processorOptions?.messageRingSabOffsets ?? [];
-      // §5.2 variable-length content buffer (= typed-array field を 持 つ message の み)。
-      // SAB 時 = main が content SAB に push 済 を per-quantum 先 頭 で WASM region に
-      // mirror、 postMessage 時 = audio thread で payload の typed array を WASM region に
-      // 直 書 き。 ring index と zip (= content ナ シ の ring は null)。
+      // §5.2 variable-length content buffer (only for messages with a typed-array field).
+      // On SAB = mirror what main has pushed into the content SAB into the WASM region at
+      // the start of each quantum; on postMessage = write the payload's typed array directly
+      // into the WASM region on the audio thread. Zipped with ring index (a ring with no content is null).
       const messageContentBuffer = opts.processorOptions?.messageContentBuffer ?? null;
       const messageContentSabOffsets = opts.processorOptions?.messageContentSabOffsets ?? [];
       const messageRingsWasmViews: Uint8Array[] = [];
@@ -748,17 +776,17 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         }
       }
 
-      // MIDI ring meta + buffer pre-bind (`11-midi.md` §4)。 8-byte 固 定 slot な の で
-      // event / message の field 別 DataView は 不 要 = byte-level Uint8Array copy。
-      // in port = message と 同 (= main → WASM)、 out port = event と 同 (= WASM → main)。
+      // MIDI ring meta + buffer pre-bind (`11-midi.md` §4). The fixed 8-byte slot means
+      // event / message's per-field DataView is unnecessary = a byte-level Uint8Array copy.
+      // in port = same as message (main → WASM); out port = same as event (WASM → main).
       const midiRingsBuffer = opts.processorOptions?.midiRingsBuffer ?? null;
       const midiRingsMeta = opts.processorOptions?.midiRings ?? [];
       const midiRingSabOffsets = opts.processorOptions?.midiRingSabOffsets ?? [];
       const sysexContentBuffer = opts.processorOptions?.sysexContentBuffer ?? null;
       const sysexContentSabOffsets = opts.processorOptions?.sysexContentSabOffsets ?? [];
       const midiRingsWasmViews: Uint8Array[] = [];
-      // wire byte / atSample u32 書 き 込 み 用 の WASM memory 全 域 DataView を 1 度 だ け
-      // bind (= per-quantum alloc 回 避、 `00-foundations.md` §5.1)。 MIDI ナ シ は null。
+      // Bind a DataView over all of WASM memory once for writing wire bytes / the
+      // atSample u32 (avoids per-quantum allocation, `00-foundations.md` §5.1). null when no MIDI.
       const midiWasmDataView = midiRingsMeta.length > 0 ? new DataView(memory.buffer) : null;
       const midiRingsWasmHeaderViews: Int32Array[] = [];
       const midiRingsSabViews: Uint8Array[] = [];
@@ -850,18 +878,18 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         failed: false,
       };
 
-      // postMessage path 用 incoming message listener (= main 側 sender が
-      // `port.postMessage({ kind: 'message', ringIndex, payload })` で 送 信 す る を
-      // audio thread 側 で receive、 messageQueueMirrors[i] に push し て 次 process
-      // 開 始 で WASM ring に inject)。 SAB 時 は main 側 sender が SAB に 直 接 write
-      // = listener は drop。
-      // snapshot / restore は SAB 不 要 = postMessage request/response で 処 理。
-      // worklet の port.onmessage は render quantum の 境 界 で 走 る (= process()
-      // と 同 じ audio thread だ が quantum 間) の で、 ここ で linear memory を 読 む /
-      // 書 く の は 構 造 的 に block-atomic (= `06-runtime.md` §6.1)。 capture は
-      // persistent state / buffer / param を read、 restore は state / buffer を write
-      // (= param は main 側 で AudioParam に 適 用)。 offline の end-of-render capture /
-      // config.restore と 同 logic を mirror。
+      // Incoming-message listener for the postMessage path (receive on the audio
+      // thread what the main-side sender sends via `port.postMessage({ kind: 'message',
+      // ringIndex, payload })`, push to messageQueueMirrors[i], and inject into the WASM
+      // ring at the start of the next process). On SAB the main-side sender writes
+      // directly into the SAB = the listener is dropped.
+      // snapshot / restore needs no SAB = handled by postMessage request/response.
+      // The worklet's port.onmessage runs at render quantum boundaries (the same
+      // audio thread as process(), but between quanta), so reading / writing linear
+      // memory here is structurally block-atomic (`06-runtime.md` §6.1). capture
+      // reads persistent state / buffer / param; restore writes state / buffer
+      // (param is applied to the AudioParam on the main side). Mirrors the same logic
+      // as offline's end-of-render capture / config.restore.
       const captureSnapshotSlots = (profile: string | undefined): SnapshotSlot[] => {
         const out: SnapshotSlot[] = [];
         const buf = memory.buffer;
@@ -990,9 +1018,9 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             new Uint8Array(buf, off, expected).set(slot.data);
             applied.push(slot.name);
           } else {
-            // param slot = AudioParam の 値 (= main 側 で 実 際 に set)。 worklet は
-            // declaration の 単 一 権 威 と し て 存 否 だ け 判 定 (= 存 在 → applied、
-            // 不 在 → skipped)、 値 適 用 は main の restore() が 行 う。
+            // param slot = the AudioParam's value (actually set on the main side). The
+            // worklet, as the single authority of the declaration, only decides presence
+            // (present → applied, absent → skipped); the value is applied by main's restore().
             if (meta.params.some((p) => p.name === slot.name)) applied.push(slot.name);
             else skipped.push(slot.name);
           }
@@ -1105,12 +1133,13 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             const ringIndex = data.ringIndex;
             if (ringIndex < 0 || ringIndex >= messageRings.length) return;
             if (typeof data.payload !== "object" || data.payload === null) return;
-            // ingress を ring capacity で bound (= drop-oldest)。 main が 1 quantum 間 に
-            // capacity 超 の burst を post し て も queue が 膨 ら ま ず、 process() の
-            // `for (const payload of queue)` drain loop が audio thread で burst 比 例 =
-            // unbounded loop に な ら な い (= `00-foundations.md` §5.1 invariant 2)。 drop
-            // し た 分 は WASM ring overflow counter に 計 上 (= SAB path の ring drop-oldest
-            // と 同 じ overflowCount semantics、 process 末 尾 で main に notify)。
+            // Bound ingress by ring capacity (drop-oldest). Even if main posts a burst
+            // beyond capacity within one quantum, the queue does not grow, so process()'s
+            // `for (const payload of queue)` drain loop is not proportional to the burst
+            // on the audio thread = not an unbounded loop (`00-foundations.md` §5.1
+            // invariant 2). The dropped count is recorded in the WASM ring overflow counter
+            // (same overflowCount semantics as the SAB path's ring drop-oldest, notified to
+            // main at the tail of process).
             const queue = messageQueueMirrors[ringIndex]!;
             if (queue.length >= messageRings[ringIndex]!.capacity) {
               queue.shift();
@@ -1121,9 +1150,9 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             return;
           }
           if (data.kind === "midi") {
-            // inbound MIDI (= main の `node.midi.<name>.send(...)`)。 message と 同 じ く
-            // queue に 蓄 積 + capacity で bound (drop-oldest)、 process 開 始 で WASM
-            // in-ring に inject (= §4.4 postMessage path)。
+            // inbound MIDI (main's `node.midi.<name>.send(...)`). Like message, accumulate
+            // in a queue + bound by capacity (drop-oldest), and inject into the WASM in-ring
+            // at the start of process (§4.4 postMessage path).
             if (typeof data.ringIndex !== "number") return;
             const ringIndex = data.ringIndex;
             if (ringIndex < 0 || ringIndex >= midiRingsMeta.length) return;
@@ -1139,9 +1168,9 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             queue.push(item);
           }
         });
-        // MessagePort spec = addEventListener 経 路 は implicit start し な い =
-        // start() 明 示 で 受 信 を 有 効 化 (= onmessage = ... path は auto-start
-        // だ が、 addEventListener path は 別 必 要)。
+        // MessagePort spec = the addEventListener route does not implicitly start =
+        // an explicit start() enables receiving (the onmessage = ... path auto-starts,
+        // but the addEventListener path needs it separately).
         if (typeof port.start === "function") {
           port.start();
         }
@@ -1151,10 +1180,10 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
     } catch (err) {
       // Surface the failure via a structured handshake message so
       // `createNode()` on main can reject with context (= debug clarity
-      // beyond `processorerror`, which carries no payload per MDN)。
+      // beyond `processorerror`, which carries no payload per MDN).
       // Do NOT rethrow: the audio thread must not propagate exceptions
-      // (= `00-foundations.md` §5.1 invariant 3)、 subsequent `process()`
-      // calls will see no state and emit silence。
+      // (= `00-foundations.md` §5.1 invariant 3), subsequent `process()`
+      // calls will see no state and emit silence.
       self.port.postMessage({
         kind: "init-error",
         message: errorMessage(err),
@@ -1174,9 +1203,9 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       // signal once if `initialize` was never called (= author forgot
       // `def.worklet.initialize(this, opts)`); otherwise stay silent
       // (= initialize ran but threw, in which case `init-error` was
-      // already posted during the createNode handshake)。 Either way:
-      // emit silence、 `return true` to keep the AudioWorkletProcessor
-      // alive、 no throw on the audio thread。
+      // already posted during the createNode handshake). Either way:
+      // emit silence, `return true` to keep the AudioWorkletProcessor
+      // alive, no throw on the audio thread.
       const initCalled = self[INIT_CALLED_KEY] === true;
       if (!initCalled && !self[INIT_NOT_CALLED_POSTED_KEY]) {
         self.port.postMessage({ kind: "error", code: "worklet-initialize-not-called" });
@@ -1189,17 +1218,17 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       // A previous quantum trapped inside `state.process()`. Per
       // docs/05-client.md §4 the node stays connected + outputs silence
       // for the rest of its lifetime — the wasm-trap message was already
-      // posted once, do not flood the port。
+      // posted once, do not flood the port.
       fillOutputsSilent(outputs);
       return true;
     }
 
-    // 04-worklet-runtime.md §3 / §8 / Q75 — block-length runtime guard。
+    // 04-worklet-runtime.md §3 / §8 / Q75 — block-length runtime guard.
     // First mismatch latches `state.failed` (= same uniform fallback path
     // as wasm-trap) so every subsequent quantum stays silent for the rest
     // of the node's lifetime, even if the host transiently returns to the
-    // expected length。 The single mismatch event is posted once; later
-    // quanta short-circuit on `state.failed` above before reaching here。
+    // expected length. The single mismatch event is posted once; later
+    // quanta short-circuit on `state.failed` above before reaching here.
     const firstOut = outputs[0]?.[0];
     if (firstOut && firstOut.length !== SAMPLES_PER_BLOCK) {
       state.failed = true;
@@ -1213,9 +1242,9 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       return true;
     }
 
-    // Marshal inputs into linear memory ioScratch.inputs[port][channel]。
+    // Marshal inputs into linear memory ioScratch.inputs[port][channel].
     // All views were pre-bound in `initialize` = no Float32Array allocation
-    // on the audio thread。
+    // on the audio thread.
     const inputViews = state.inputViews;
     for (let portIdx = 0; portIdx < state.audioInputs.length; portIdx++) {
       const decl = state.audioInputs[portIdx]!;
@@ -1232,7 +1261,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       }
     }
 
-    // Marshal parameters into linear memory ioScratch.params[name]。
+    // Marshal parameters into linear memory ioScratch.params[name].
     // AudioWorklet hands us length 0 (= no automation, use declared default),
     // 1 (= k-rate or unchanged a-rate, broadcast), or SAMPLES_PER_BLOCK
     // (= per-sample a-rate). 08-deployment.md §2 A3 unifies them at this seam.
@@ -1250,19 +1279,19 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       }
     }
 
-    // message ring mirror = transport mode で 経 路 が 分 岐 (process 開 始 で WASM
-    // ring に main 側 push 分 を inject + drain logic が WASM 内 で 走 る):
+    // message ring mirror = the route branches on transport mode (at the start of
+    // process, inject what main pushed into the WASM ring + the drain logic runs inside WASM):
     //
-    // - SAB available: main 側 が SAB に push 済 = header を Atomics.load で acquire
-    //   し て か ら SAB → WASM bulk copy (= §5.5 acquire-before-read) + WASM ring 反 映。
-    // - SAB unavailable: 共 有 buffer 不 在 = main 側 が port.postMessage で 直 送
-    //   = messageQueueMirrors[i] に 蓄 積 済 = process 開 始 で 各 payload を WASM
-    //   ring slot に field 別 inject + 容 量 超 え で drop-oldest 発 動 + 内 部
-    //   overflowCount += 1 (= 末 尾 で main に 通 知)。
+    // - SAB available: main has pushed into the SAB = acquire the header via Atomics.load
+    //   first, then bulk-copy SAB → WASM (§5.5 acquire-before-read) + reflect into the WASM ring.
+    // - SAB unavailable: no shared buffer = main sends directly via port.postMessage
+    //   = it is accumulated in messageQueueMirrors[i] = at the start of process, inject
+    //   each payload per field into a WASM ring slot + fire drop-oldest on overflow +
+    //   internal overflowCount += 1 (notified to main at the tail).
     if (state.messageRings.length > 0) {
       const isSab = state.transport === "sab";
       if (isSab && state.messageRingsBuffer !== null) {
-        // SAB path = 既 SAB → WASM bulk copy + header mirror
+        // SAB path = existing SAB → WASM bulk copy + header mirror
         const wasmViews = state.messageRingsWasmViews;
         const sabViews = state.messageRingsSabViews;
         const wasmHeaders = state.messageRingsWasmHeaderViews;
@@ -1271,19 +1300,20 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
           const sabH = sabHeaders[i]!;
           const wasmH = wasmHeaders[i]!;
           const prevHead = wasmH[0]!;
-          // §5.5 consumer protocol: head を acquire-load し て か ら slot data を
-          // copy す る。 producer (= main) は slot 書 き 込 み → release-store(head)
-          // の 順 な の で、 acquire-load(head) が slot copy よ り 前 で あ れ ば
-          // 「head が 観 測 し た 分 の slot bytes」 は happens-before で 可 視。
-          // copy を acquire の 前 に 置 く と 並 行 producer write を torn read す る。
+          // §5.5 consumer protocol: acquire-load head, then copy the slot data.
+          // The producer (main) writes the slot → release-store(head) in that order,
+          // so if acquire-load(head) comes before the slot copy, "the slot bytes head
+          // observed" are visible via happens-before. Placing the copy before the
+          // acquire would torn-read a concurrent producer write.
           wasmH[0] = Atomics.load(sabH, 0);
           wasmH[1] = Atomics.load(sabH, 1);
           wasmH[2] = Atomics.load(sabH, 2);
           wasmViews[i]!.set(sabViews[i]!);
-          // typed-array field 持 ち の ring = head が 進 ん だ quantum だ け content
-          // region 全 体 を SAB → WASM に mirror (= §5.2、 slot の payloadOffset は
-          // region base 相 対 の 絶 対 index = full mirror で addressing 一 致)。 head
-          // 不 変 な ら 新 規 payload ナ シ = 大 region memcpy を skip。
+          // For a ring with a typed-array field = mirror the entire content region
+          // SAB → WASM only on quanta where head advanced (§5.2; the slot's payloadOffset
+          // is an absolute index relative to the region base = a full mirror keeps the
+          // addressing consistent). If head is unchanged there is no new payload = skip
+          // the large region memcpy.
           const contentWasm = state.messageContentWasmViews[i];
           const contentSab = state.messageContentSabViews[i];
           if (contentWasm !== null && contentSab !== null && wasmH[0]! !== prevHead) {
@@ -1291,14 +1321,14 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
           }
         }
       } else {
-        // postMessage path = messageQueueMirrors を WASM ring に inject
+        // postMessage path = inject messageQueueMirrors into the WASM ring
         for (let i = 0; i < state.messageRings.length; i++) {
           const queue = state.messageQueueMirrors[i]!;
           if (queue.length === 0) continue;
           const ring = state.messageRings[i]!;
           const wasmH = state.messageRingsWasmHeaderViews[i]!;
-          // ring view は init で pre-bind 済 み を 使 い 回 す (= audio thread で の
-          // per-quantum DataView alloc を 避 け る、 `00-foundations.md` §5.1)。
+          // Reuse the ring view pre-bound at init (avoids per-quantum DataView
+          // allocation on the audio thread, `00-foundations.md` §5.1).
           const wasmDataView = state.messageRingsWasmDataViews[i]!;
           const capacity = ring.capacity;
           const slotSize = ring.slotSize;
@@ -1310,8 +1340,8 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
               wasmH[1] = tail + 1;
               wasmH[2] = wasmH[2]! + 1;
             }
-            // slot 書 き 込 み (= Q46 uniform lift で 全 number → i32 / boolean → 0/1 i32、
-            // typed-array → §5.2 content region に bytes + slot に [payloadLen, payloadOffset])
+            // slot write (Q46 uniform lift: every number → i32 / boolean → 0/1 i32,
+            // typed-array → bytes into the §5.2 content region + [payloadLen, payloadOffset] into the slot)
             const slotByteOffset = 12 + (head % capacity) * slotSize;
             for (const field of ring.fields) {
               const value = payload[field.name];
@@ -1319,12 +1349,12 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
               if (field.payloadElementType !== undefined) {
                 const contentWasm = state.messageContentWasmViews[i];
                 if (contentWasm !== null && ArrayBuffer.isView(value)) {
-                  // content region より大きい payload は truncate (= Q85: no-trap。
-                  // clamp し な い と contentWasm.set が audio thread で RangeError を throw)。
+                  // Truncate a payload larger than the content region (Q85: no-trap.
+                  // Without clamping, contentWasm.set would throw a RangeError on the audio thread).
                   const copyBytes = Math.min(value.byteLength, contentWasm.length);
                   const src = new Uint8Array(value.buffer, value.byteOffset, copyBytes);
                   let cursor = state.messageContentCursors[i]!;
-                  // region 末 尾 を 跨 ぐ な ら 先 頭 に wrap (= drop-oldest)。
+                  // If it would straddle the end of the region, wrap to the start (drop-oldest).
                   if (cursor + copyBytes > contentWasm.length) cursor = 0;
                   contentWasm.set(src, cursor);
                   wasmDataView.setUint32(byteOffset, copyBytes, true);
@@ -1344,13 +1374,13 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       }
     }
 
-    // MIDI in-ring inject = message と 同 transport (main → WASM)。 Q38-b: handler は
-    // per-block / forSample よ り 先 に drain す る た め、 inject は WASM process 前。
+    // MIDI in-ring inject = same transport as message (main → WASM). Q38-b: the handler
+    // drains before per-block / forSample, so the inject happens before the WASM process.
     //
-    // - SAB available: main が SAB ring に push 済 = header を acquire-load し て か ら
-    //   SAB → WASM bulk copy (= §5.5 acquire-before-read) + sysex content も head 前 進 時 mirror。
-    // - SAB unavailable: midiInQueues に 蓄 積 済 = 各 item を WASM ring slot に wire byte
-    //   で 書 き 込 み + 容 量 超 え で drop-oldest + 内 部 overflowCount += 1。
+    // - SAB available: main has pushed into the SAB ring = acquire-load the header first,
+    //   then bulk-copy SAB → WASM (§5.5 acquire-before-read) + also mirror sysex content when head advances.
+    // - SAB unavailable: accumulated in midiInQueues = write each item into a WASM ring slot
+    //   as wire bytes + drop-oldest on overflow + internal overflowCount += 1.
     if (state.midiRings.length > 0) {
       const isSab = state.transport === "sab";
       const dv = state.midiWasmDataView!;
@@ -1359,7 +1389,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         if (ring.direction !== "in") continue;
         const wasmH = state.midiRingsWasmHeaderViews[i]!;
         if (isSab && state.midiRingsBuffer !== null) {
-          // SAB path = SAB → WASM bulk copy (= header acquire-load 後 に slot copy)
+          // SAB path = SAB → WASM bulk copy (slot copy after header acquire-load)
           const sabH = state.midiRingsSabHeaderViews[i]!;
           const prevHead = wasmH[0]!;
           wasmH[0] = Atomics.load(sabH, 0);
@@ -1372,7 +1402,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             sysexWasm.set(sysexSab);
           }
         } else {
-          // postMessage path = midiInQueues を WASM ring に wire byte で inject
+          // postMessage path = inject midiInQueues into the WASM ring as wire bytes
           const queue = state.midiInQueues[i]!;
           if (queue.length === 0) continue;
           const capacity = ring.capacity;
@@ -1386,7 +1416,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             }
             const slotByteOffset = 12 + (head % capacity) * MIDI_SLOT_BYTES;
             if (item.sysex !== undefined && ring.sysex !== undefined && sysexWasm !== null) {
-              // sysex = content chunk に [length, data]、 slot に [0xF0, chunkIdx, _, _, atSample]
+              // sysex = [length, data] into the content chunk, [0xF0, chunkIdx, _, _, atSample] into the slot
               const region = ring.sysex;
               const chunkIdx = head % region.chunks;
               const chunkBase = chunkIdx * region.perChunk;
@@ -1414,12 +1444,12 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       state.process();
     } catch (err) {
       // WASM trap during process() (= div-by-zero, OOB memory access,
-      // unreachable instruction, etc。 V8 surfaces these as JS exceptions
-      // of `WebAssembly.RuntimeError` per the WebAssembly spec)。 Latch
+      // unreachable instruction, etc. V8 surfaces these as JS exceptions
+      // of `WebAssembly.RuntimeError` per the WebAssembly spec). Latch
       // failed state so subsequent quanta short-circuit, emit silence for
-      // this quantum, and surface the trap to main via `onError` channel。
+      // this quantum, and surface the trap to main via `onError` channel.
       // Keep returning true so the AudioWorkletProcessor stays alive (=
-      // node stays connected per docs/05-client.md §4)。
+      // node stays connected per docs/05-client.md §4).
       state.failed = true;
       fillOutputsSilent(outputs);
       self.port.postMessage({
@@ -1430,7 +1460,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       return true;
     }
 
-    // Marshal outputs from linear memory ioScratch.outputs[port][channel]。
+    // Marshal outputs from linear memory ioScratch.outputs[port][channel].
     const outputViews = state.outputViews;
     for (let portIdx = 0; portIdx < state.audioOutputs.length; portIdx++) {
       const decl = state.audioOutputs[portIdx]!;
@@ -1445,19 +1475,19 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       }
     }
 
-    // publish copy (= sub-phase 7.4 + postMessage path fix)。 WASM publish
-    // scheduler が publishCounters 内 version を 更 新 し た slot だ け 走 査 し て
-    // 版 advance 時 に main 側 に 値 を 配 達 す る。 transport mode で 経 路 が 分 岐:
+    // publish copy (sub-phase 7.4 + postMessage path fix). Walk only the slots whose
+    // version in publishCounters the WASM publish scheduler updated, and deliver the
+    // value to main when the version advances. The route branches on transport mode:
     //
-    // - SAB available: 共 有 SAB を Atomics.store で 更 新 (= main 側 が rAF polling
-    //   + Atomics.load で torn read 回 避 + version advance を 検 出 し て dispatch)。
-    // - SAB unavailable: 共 有 buffer は 不 在 (= structured clone で main / worklet
-    //   が 別 instance を 持 つ た め mirror 不 能) = port.postMessage で main へ
-    //   個 別 通 知。 main 側 は port.onmessage で 即 時 mirror state 更 新 + subscriber
-    //   dispatch (= rAF polling 不 要 = `02-messaging.md` §4 / `04-worklet-runtime.md`
-    //   §7 通 り)。
+    // - SAB available: update the shared SAB via Atomics.store (main does rAF polling
+    //   + Atomics.load to avoid a torn read + detects the version advance and dispatches).
+    // - SAB unavailable: no shared buffer (structured clone gives main / worklet
+    //   separate instances, so a mirror is impossible) = notify main individually via
+    //   port.postMessage. main updates its mirror state immediately on port.onmessage +
+    //   dispatches to subscribers (no rAF polling needed, per `02-messaging.md` §4 /
+    //   `04-worklet-runtime.md` §7).
     //
-    // 版 advance チェック を 共 通 化 し た 上 で、 配 達 経 路 だ け 分 岐。
+    // The version-advance check is unified; only the delivery route branches.
     const slots = state.publishSlots;
     const lastVersions = state.lastVersions;
     const sharedViews = state.publishWasmSharedViews;
@@ -1476,10 +1506,10 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
           Atomics.store(sharedView, slotIdx + 1, sampleCounter);
           Atomics.store(sharedView, slotIdx + 2, currentVersion);
         } else {
-          // postMessage path = main 側 へ flag-bearing 通 知。 slotIndex で 識 別、
-          // valueBits は publish 値 を i32 bit pattern と し て carry (= main 側 で
-          // 型 別 reinterpret)、 sampleCounter は diagnostics 用、 version は
-          // main local lastSeenVersion 比 較 の anchor。
+          // postMessage path = a flag-bearing notification to main. Identified by
+          // slotIndex; valueBits carries the publish value as an i32 bit pattern
+          // (reinterpreted per type on the main side); sampleCounter is for
+          // diagnostics; version is the anchor for comparing against main's local lastSeenVersion.
           self.port.postMessage({
             kind: "publish",
             slotIndex: i,
@@ -1492,20 +1522,21 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       }
     }
 
-    // event ring copy = transport mode で 経 路 が 分 岐:
+    // event ring copy = the route branches on transport mode:
     //
-    // - SAB available: 既 SAB bulk copy (= ring 全 体 を SAB に mirror) + header
-    //   Atomics.store (= main 側 が rAF polling + Atomics.load で head release
-    //   fence を 取 っ て slot 列 visibility 担 保)。
-    // - SAB unavailable: 共 有 buffer 不 在 (= structured clone で main / worklet が
-    //   別 ring instance) = 新 emit 分 (= lastSentHead .. currentHead) を Uint8Array
-    //   slice で 抽 出 + port.postMessage で 配 送 (= main 側 onEventMessage で payload
-    //   object 化 + subscriber dispatch、 overflowCount は payload に carry し て
-    //   main mirror を 更 新)。 変 化 ナ シ quantum は skip。
+    // - SAB available: existing SAB bulk copy (mirror the whole ring into the SAB) +
+    //   header Atomics.store (main does rAF polling + Atomics.load to take the head
+    //   release fence and guarantee visibility of the slot run).
+    // - SAB unavailable: no shared buffer (structured clone gives main / worklet
+    //   separate ring instances) = extract the newly emitted range (lastSentHead ..
+    //   currentHead) as a Uint8Array slice + deliver via port.postMessage (main turns
+    //   it into payload objects on onEventMessage + dispatches to subscribers;
+    //   overflowCount is carried on the payload to update the main mirror). An
+    //   unchanged quantum is skipped.
     //
-    // 注: postMessage path で per-quantum `new Uint8Array(...)` alloc は 02-messaging
-    // §4 の 「pre-allocated transferable buffers + ownership transfer」 ping-pong
-    // path に v1.0.0 ship 前 に refactor 予 定 (= 当 wave は「動 く」 まで)。
+    // Note: the per-quantum `new Uint8Array(...)` allocation on the postMessage path is
+    // slated to be refactored, before v1.0.0 ship, to the 02-messaging §4 "pre-allocated
+    // transferable buffers + ownership transfer" ping-pong path (this wave is "make it work").
     if (state.eventRings.length > 0) {
       const wasmViews = state.eventRingsWasmViews;
       const sabViews = state.eventRingsSabViews;
@@ -1519,10 +1550,10 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         const currentTail = wasmH[1]!;
         const currentOverflow = wasmH[2]!;
         if (isSab && state.eventRingsBuffer !== null) {
-          // SAB path = 既 bulk copy + header Atomics.store
+          // SAB path = existing bulk copy + header Atomics.store
           sabViews[i]!.set(wasmViews[i]!);
-          // §4.3 typed-array field 持 ち = content region を WASM → SAB に mirror
-          // (= head Atomics.store 前 = release fence で main が slot 越 し に 観 測 可)。
+          // §4.3 with a typed-array field = mirror the content region WASM → SAB
+          // (before the head Atomics.store = the release fence lets main observe it through the slots).
           const contentWasm = state.eventContentWasmViews[i];
           const contentSab = state.eventContentSabViews[i];
           if (contentWasm !== null && contentSab !== null) {
@@ -1537,18 +1568,18 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
           Atomics.store(sabH, 2, currentOverflow);
           Atomics.store(sabH, 0, currentHead);
         } else {
-          // postMessage path = 新 emit 分 を 抽 出 + port.postMessage 配 送
+          // postMessage path = extract the newly emitted range + deliver via port.postMessage
           const lastSentHead = state.lastSentEventHeads[i]!;
           const lastSentOverflow = state.lastSentEventOverflows[i]!;
           if (currentHead === lastSentHead && currentOverflow === lastSentOverflow) continue;
-          // drop-oldest 発 動 で tail が lastSentHead を 越 え て いる 可 能 性 = max
-          // で 巻 き 直 し (= 古 い slot は overflow 済 で 飛 ば す)。
+          // drop-oldest may have advanced tail past lastSentHead = re-anchor with max
+          // (the old slots have already overflowed, so skip them).
           const from = lastSentHead < currentTail ? currentTail : lastSentHead;
           const newSlotCount = currentHead - from;
           const slotSize = ring.slotSize;
           const capacity = ring.capacity;
           const wasmRawView = wasmViews[i]!;
-          // 新 slot 群 を Uint8Array に bulk copy (= main 側 で field 解 読)
+          // bulk-copy the new slots into a Uint8Array (main decodes the fields)
           const slotsBytes = new Uint8Array(newSlotCount * slotSize);
           for (let k = 0; k < newSlotCount; k++) {
             const slotIdx = (from + k) % capacity;
@@ -1569,8 +1600,8 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             newSlotCount,
             overflowCount: currentOverflow,
           };
-          // §4.3 typed-array field 持 ち = content region snapshot を 同 梱 (= main は
-          // WASM memory に 触 れ な い = slot の payloadOffset/Len で ここ か ら slice)。
+          // §4.3 with a typed-array field = bundle a content-region snapshot (main never
+          // touches WASM memory = it slices from here using the slot's payloadOffset/Len).
           const contentWasm = state.eventContentWasmViews[i];
           if (contentWasm !== null) {
             eventMsg.contentBytes = contentWasm.slice().buffer;
@@ -1582,14 +1613,14 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       }
     }
 
-    // message ring tail commit / overflow notify = transport mode で 経 路 が 分 岐:
+    // message ring tail commit / overflow notify = the route branches on transport mode:
     //
-    // - SAB available: WASM drain で 進 ん だ tail を SAB に commit (= main 側 が
-    //   SAB tail を Atomics.load で 「drain 済 ま で」 観 測 可)。
-    // - SAB unavailable: WASM 内 で drop-oldest 発 動 し た 場 合 = overflowCount が
-    //   変 化 し て いる = main に port.postMessage で 通 知 (= main 側 messageOverflowMirror
-    //   が 更 新 + diagnostics.overflowCount() で read 可)。 tail commit は 不 要
-    //   (= main 側 mirror 無 い path = SAB tail 観 測 ナ シ)。
+    // - SAB available: commit the tail advanced by the WASM drain into the SAB (main
+    //   observes "up to drained" via Atomics.load on the SAB tail).
+    // - SAB unavailable: when drop-oldest fired inside WASM = overflowCount has changed
+    //   = notify main via port.postMessage (main's messageOverflowMirror updates + it is
+    //   readable via diagnostics.overflowCount()). No tail commit is needed (this path has
+    //   no main-side mirror = no SAB tail observation).
     if (state.messageRings.length > 0) {
       const isSab = state.transport === "sab";
       const wasmHeaders = state.messageRingsWasmHeaderViews;
@@ -1616,12 +1647,12 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       }
     }
 
-    // MIDI ring copy / commit = direction で 経 路 が 分 岐 (`11-midi.md` §4.4):
+    // MIDI ring copy / commit = the route branches on direction (`11-midi.md` §4.4):
     //
-    // - out port (= event と 同): SAB = WASM ring → SAB bulk copy + sysex content mirror
-    //   + header Atomics.store。 postMessage = 新 slot 群 を 抽 出 + `{ kind:'midiOut' }` 配 送。
-    // - in port (= message と 同): SAB = WASM drain tail を SAB tail に commit (= main の
-    //   drop-oldest 判 定 の 観 測 元)。 postMessage = overflow 変 化 を `{ kind:'midi-overflow' }` 通 知。
+    // - out port (same as event): SAB = WASM ring → SAB bulk copy + sysex content mirror
+    //   + header Atomics.store. postMessage = extract the new slots + deliver `{ kind:'midiOut' }`.
+    // - in port (same as message): SAB = commit the WASM drain tail into the SAB tail (the
+    //   source main observes for its drop-oldest decision). postMessage = notify overflow changes via `{ kind:'midi-overflow' }`.
     if (state.midiRings.length > 0) {
       const isSab = state.transport === "sab";
       for (let i = 0; i < state.midiRings.length; i++) {
@@ -1676,8 +1707,8 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
               newSlotCount,
               overflowCount: currentOverflow,
             };
-            // sysex port = content region snapshot を 同 梱 (= main は WASM に 触 れ ず
-            // slot の chunkIdx で ここ か ら length-prefixed bytes を 読 む)。
+            // sysex port = bundle a content-region snapshot (main never touches WASM =
+            // it reads the length-prefixed bytes from here using the slot's chunkIdx).
             const sysexWasm = state.sysexContentWasmViews[i];
             if (sysexWasm !== null) {
               midiOutMsg.sysexBytes = sysexWasm.slice().buffer;
@@ -1687,7 +1718,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             state.lastSentMidiOverflows[i] = currentOverflow;
           }
         } else {
-          // in port = WASM drain tail を main に 公 開 / overflow 通 知
+          // in port = expose the WASM drain tail to main / notify overflow
           if (isSab && state.midiRingsBuffer !== null) {
             Atomics.store(state.midiRingsSabHeaderViews[i]!, 1, wasmH[1]!);
           } else {

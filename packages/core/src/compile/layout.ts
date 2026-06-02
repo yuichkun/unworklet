@@ -1,17 +1,19 @@
 /**
- * Linear-memory layout stage of the compile pipeline (= plan Q-C
- * sub-region 区 切 り + 各 region 内 declaration 順 auto-pack)。
+ * Linear-memory layout stage of the compile pipeline (carves out the plan Q-C
+ * sub-regions and auto-packs each region in declaration order).
  *
- * `Layout` = `03-compiler.md` §4 で 列 挙 さ れ る 10 sub-region (= states /
+ * A `Layout` holds the 10 sub-regions enumerated in `03-compiler.md` §4 (states /
  * buffers / ioScratch / event ring buffers / payload content / MIDI
  * ring buffer / sysex content / publish shared / publish counters /
- * snapshot region) を 持 ち、 各 region は `totalBytes` 連 続 で base 動 的
- * 計 算 + region 内 declaration 順 packing。
+ * snapshot region). The regions are laid out contiguously up to `totalBytes`,
+ * with each base computed dynamically and the slots within a region packed in
+ * declaration order.
  *
- * Phase 7 sub-phase 7.1 で `states` region を fill (= `state.<type>(initial)`
- * plain factory の scalar slot、 type 別 byte size で declaration 順
- * packing)。 ioScratch packing の 直 後 に states region を 配 置 し、
- * 残 り 8 region は `totalBytes` 連 続 (= 後 続 sub-phase で 順 次 fill)。
+ * Phase 7 sub-phase 7.1 fills the `states` region: scalar slots for the
+ * `state.<type>(initial)` plain factory, packed in declaration order by
+ * per-type byte size. The states region is placed immediately after the
+ * ioScratch packing, with the remaining 8 regions contiguous up to `totalBytes`
+ * (filled in by later sub-phases).
  */
 
 import { SAMPLES_PER_BLOCK } from "../dsl/constants.ts";
@@ -22,9 +24,9 @@ const BYTES_PER_F32 = 4;
 const PARAM_SLOT_BYTES = SAMPLES_PER_BLOCK * BYTES_PER_F32;
 
 /**
- * scalar state slot の byte size (= `01-dsl.md` §3.1 + Q42)。
- * f32 / i32 / bool = 4 byte (= bool は 内 部 i32 表 現)、 f64 / i64 = 8 byte。
- * sub-phase 7.4 で SAB publish へ copy す る path と zip。
+ * Byte size of a scalar state slot (`01-dsl.md` §3.1 + Q42).
+ * f32 / i32 / bool = 4 bytes (bool uses an internal i32 representation), and
+ * f64 / i64 = 8 bytes. Aligned with the SAB-publish copy path in sub-phase 7.4.
  */
 const STATE_SLOT_BYTES: Record<ScalarType, number> = {
   f32: 4,
@@ -35,9 +37,9 @@ const STATE_SLOT_BYTES: Record<ScalarType, number> = {
 };
 
 /**
- * `buffer.<type>` の element byte size (= `01-dsl.md` §3.2)。 scalar 型 は state
- * と 同 size、 `u8` は 1 byte (= sysex byte buffer)。 buffer は `size × この値`
- * を 占 有。
+ * Element byte size for `buffer.<type>` (`01-dsl.md` §3.2). Scalar types match
+ * the state slot sizes, and `u8` is 1 byte (a sysex byte buffer). A buffer
+ * occupies `size × this value`.
  */
 const BUFFER_ELEMENT_BYTES: Record<BufferElementType, number> = {
   f32: 4,
@@ -49,11 +51,11 @@ const BUFFER_ELEMENT_BYTES: Record<BufferElementType, number> = {
 };
 
 /**
- * `event<T>` ringbuffer slot の per-field wire size (= `02-messaging.md` §5.1)。
+ * Per-field wire size of an `event<T>` ringbuffer slot (`02-messaging.md` §5.1).
  *
- * u32 align within the slot (= bool は 1 byte だ が u32 word 占 有 = 4 byte)。
- * f64 / i64 = 8 byte natural size。 slot 全 体 = atSample + Σ field、 各 field
- * は declaration 順 に offset packing。
+ * u32 align within the slot (bool is 1 byte but occupies a full u32 word = 4
+ * bytes). f64 / i64 use their 8-byte natural size. The whole slot is
+ * atSample + Σ field, with each field packed at its offset in declaration order.
  */
 const EVENT_FIELD_BYTES: Record<ScalarType, number> = {
   f32: 4,
@@ -64,15 +66,15 @@ const EVENT_FIELD_BYTES: Record<ScalarType, number> = {
 };
 
 /**
- * `event<T>` ringbuffer の header byte size (= `02-messaging.md` §4 + §5.1)。
- * `[head:i32, tail:i32, overflowCount:i32]` = 3 × 4 byte = 12 byte。
+ * Header byte size of an `event<T>` ringbuffer (`02-messaging.md` §4 + §5.1).
+ * `[head:i32, tail:i32, overflowCount:i32]` = 3 × 4 bytes = 12 bytes.
  */
 const EVENT_HEADER_BYTES = 12;
 
 /**
  * MIDI ringbuffer slot (`11-midi.md` §4.1): `[status:u8, data1:u8, data2:u8,
- * _pad:u8, atSample:u32]` = 8 byte。 sysex は status=0xF0 + sysex content region
- * の chunk index を data1 に 載 せ る (= §4.3、 C.4 で fill)。
+ * _pad:u8, atSample:u32]` = 8 bytes. For sysex, status=0xF0 and data1 carries
+ * the chunk index into the sysex content region (§4.3, filled in C.4).
  */
 const MIDI_SLOT_BYTES = 8;
 const MIDI_HEADER_BYTES = 12;
@@ -86,63 +88,68 @@ const SYSEX_PER_CHUNK_BYTES = 1024;
 const SYSEX_CHUNKS = 16;
 
 /**
- * typed-array field が slot 内 で 占 め る byte (= `[payloadLen:u32,
- * payloadOffset:u32]`、 §5.1/§5.2)。
+ * Bytes a typed-array field occupies within a slot (`[payloadLen:u32,
+ * payloadOffset:u32]`, §5.1/§5.2).
  */
 const PAYLOAD_SLOT_BYTES = 8;
 
 /**
- * payloadCapacity 省 略 時 の 1 payload あ た り content default (= bytes)。 明 示
- * `payloadCapacity` で 上 書 き す る。
+ * Default content bytes per payload when `payloadCapacity` is omitted.
+ * Overridden by an explicit `payloadCapacity`.
  */
 const DEFAULT_PAYLOAD_CAPACITY = 65536;
 
 /**
- * typed-array payload content の 同 時 保 持 枠 数 の 上 限 (= Q85)。 content region は
- * `perPayload × min(capacity, MAX_CONTENT_SLOTS)` bytes。 ring が `capacity` slot
- * (= default 256) を 持 て て も、 大 き い payload を そ の 枠 数 ぶ ん 確 保 す る と
- * 過 大 (= 64KB × 256 = 16MB) に な る た め、 同 時 に 中 身 を 保 持 す る payload を
- * 16 枠 に cap す る。 producer は 枠 を 循 環 再 利 用 = 16 枠 を 超 え て drain 前 に
- * 積 ま れ た 場 合 だ け 古 い 中 身 が 上 書 き さ れ る (= drop-oldest、trap し な い)。
- * main → worklet は 1 quantum (≈ 2.7ms) 以 内 に 17 個 以 上 の typed-array message を
- * 連 射 し な い 限 り 全 保 持。
+ * Upper bound on the number of typed-array payload contents held concurrently
+ * (Q85). The content region is `perPayload × min(capacity, MAX_CONTENT_SLOTS)`
+ * bytes. Even though the ring can hold `capacity` slots (default 256),
+ * reserving content for that many slots would be excessive for large payloads
+ * (64KB × 256 = 16MB), so the number of payloads whose content is held
+ * concurrently is capped at 16. The producer cycles through the slots: only
+ * payloads pushed beyond the 16 slots before a drain overwrite the oldest
+ * content (drop-oldest, no trap). main → worklet keeps everything as long as it
+ * does not fire 17 or more typed-array messages within a single quantum
+ * (≈ 2.7ms).
  */
 const MAX_CONTENT_SLOTS = 16;
 
 /**
- * `event<T>` ringbuffer の atSample field byte size (= `02-messaging.md` §5.1)。
- * sample-accurate end-to-end の wire-injected field、 i32 (= 0..127) 固 定。
+ * Byte size of the atSample field in an `event<T>` ringbuffer
+ * (`02-messaging.md` §5.1). A wire-injected field for sample-accurate
+ * end-to-end delivery, fixed as i32 (0..127).
  */
 const EVENT_ATSAMPLE_BYTES = 4;
 
 /**
- * publishShared slot の byte size (= Q42 + `02-messaging.md` §5.4)。
- * publish 対 応 type (= f32 / i32 / bool) は 全 て 4 byte 単 一 word で SAB に
- * Atomics.store 可 能。 f64 / i64 は publish 不 可 (= TS / runtime で reject 済)、
- * region size 計 算 で hit し な い。
+ * Byte size of a publishShared slot (Q42 + `02-messaging.md` §5.4).
+ * The publishable types (f32 / i32 / bool) are all a single 4-byte word and can
+ * be written to the SAB with Atomics.store. f64 / i64 are not publishable
+ * (rejected by TS / at runtime), so they never reach this region-size
+ * computation.
  */
 const PUBLISH_SHARED_BYTES = 4;
 
 /**
- * publishCounters slot の byte size (= `04-worklet-runtime.md` §7)。
- * sample counter (= 4 byte i32) + version counter (= 4 byte i32) = 8 byte per slot。
- * sub-phase 7.3 で per-block scheduler が sample counter を SAMPLES_PER_BLOCK
- * 加 算 + threshold 越 え で copy + version increment。
+ * Byte size of a publishCounters slot (`04-worklet-runtime.md` §7).
+ * sample counter (4-byte i32) + version counter (4-byte i32) = 8 bytes per slot.
+ * In sub-phase 7.3 the per-block scheduler advances the sample counter by
+ * SAMPLES_PER_BLOCK and, when it crosses the threshold, copies the value and
+ * increments the version.
  */
 const PUBLISH_COUNTERS_BYTES = 8;
 
 /**
- * Per-event ringbuffer metadata (= `02-messaging.md` §4 header + §5.1 slot)。
+ * Per-event ringbuffer metadata (`02-messaging.md` §4 header + §5.1 slot).
  *
- * - `base`: ring 全 体 (= header + slot 列) の memory offset
- * - `capacity`: slot 数 (= `event<T>({ to: 'main', capacity })` の override or default 256)
- * - `slotSize`: 1 slot の byte 数 (= atSample + Σ field)
- * - `fields`: slot 内 per-field 内 訳 (= atSample を 含 む、 emit / drain で
- *   offset 引 き 用)。 field 並 び = atSample 先 頭、 残 り は 1 番 目 emit site
- *   で seal さ れ た `EventDeclAst.fields` 順
+ * - `base`: memory offset of the whole ring (header + slot array)
+ * - `capacity`: number of slots (the `event<T>({ to: 'main', capacity })` override, or default 256)
+ * - `slotSize`: byte size of one slot (atSample + Σ field)
+ * - `fields`: per-field breakdown within a slot (including atSample), used to
+ *   resolve offsets on emit / drain. Field order is atSample first, with the
+ *   rest in the `EventDeclAst.fields` order sealed at the first emit site.
  *
- * memory map: `base` ~ `base + 12` = header `[head, tail, overflowCount]`、
- * `base + 12 + i × slotSize` = i 番 目 slot 先 頭。
+ * memory map: `base` ~ `base + 12` is the header `[head, tail, overflowCount]`,
+ * and `base + 12 + i × slotSize` is the start of the i-th slot.
  */
 export type EventRingSlot = {
   base: number;
@@ -163,13 +170,14 @@ export type EventRingSlot = {
 };
 
 /**
- * Per-message ringbuffer metadata (= `02-messaging.md` §5.3)。
+ * Per-message ringbuffer metadata (`02-messaging.md` §5.3).
  *
- * event ring と zip pattern、 ただ し slot 内 に atSample ナ シ (= main → worklet
- * で sample-offset 概 念 ナ シ)。 fields = 1 番 目 onReceive で seal さ れ た
- * Q46 uniform-lift wire 型 順 (= 全 number → i32 4 byte / 全 boolean → bool 4 byte
- * u32 align)。 void payload (= fields = []) は slot size 0 = ring = header 12
- * の み で fire 回 数 を head - tail で 観 測。
+ * Mirrors the event ring, except there is no atSample in the slot (main →
+ * worklet has no notion of a sample offset). fields are in the Q46 uniform-lift
+ * wire-type order sealed at the first onReceive (all number → i32 4 bytes / all
+ * boolean → bool 4 bytes, u32 align). A void payload (fields = []) has slot size
+ * 0, so the ring is just the 12-byte header and the fire count is observed via
+ * head - tail.
  */
 export type MessageRingSlot = {
   base: number;
@@ -215,14 +223,15 @@ export type Layout = {
     messageRings: { base: number; slots: Record<string, MessageRingSlot> };
     payloadContent: {
       base: number;
-      // message<T> と event<T> は独立した名前空間 (= 同名 OK)。content region は kind 別に
-      // 分離する (= eventRings / messageRings と同じ分離)。1 map を名前だけで key にすると
-      // 同名 message/event が同じ region を alias して silent な cross-channel corruption を
-      // 起こす (= 名前空間 kind 別の決定)。
+      // message<T> and event<T> have independent namespaces (the same name is OK).
+      // The content region is therefore separated by kind (the same split as
+      // eventRings / messageRings). Keying a single map by name alone would let a
+      // same-named message/event alias the same region, causing silent
+      // cross-channel corruption — hence the decision to split by namespace kind.
       eventSlots: Record<string, { base: number; capacity: number; chunks: number }>;
       messageSlots: Record<string, { base: number; capacity: number; chunks: number }>;
     };
-    /** everyNSamples の per-call-site counter slot (= counterId → byte offset、§9.1)。 */
+    /** Per-call-site counter slots for everyNSamples (counterId → byte offset, §9.1). */
     everyNSamplesCounters: { base: number; slots: Record<number, number> };
     midiRings: { base: number; slots: Record<string, MidiRingSlot> };
     // Per-sysex-port content region (`11-midi.md` §4.3): `chunks` chunks of
@@ -260,8 +269,8 @@ export function layout(graph: CapturedGraph): Layout {
   const ioBase = 0;
   let cursor = ioBase;
 
-  // ioScratch packing = audioInput / audioOutput / param を declaration
-  // 順 に 並 べ る。 state は こ こ で skip し て 後 段 で states region に packing。
+  // ioScratch packing: lay out audioInput / audioOutput / param in declaration
+  // order. state is skipped here and packed into the states region later.
   for (const decl of graph.declarations) {
     if (decl.kind === "audioInput") {
       inputs[decl.name] = cursor;
@@ -275,8 +284,8 @@ export function layout(graph: CapturedGraph): Layout {
     }
   }
 
-  // states packing = ioScratch 末 尾 を base に declaration 順 で type 別
-  // byte size を allocate (= Q42 + sub-phase 7.4 SAB publish path と zip)。
+  // states packing: based at the end of ioScratch, allocate per-type byte size
+  // in declaration order (Q42 + aligned with the sub-phase 7.4 SAB publish path).
   const statesBase = cursor;
   const stateSlots: Record<string, number> = {};
   for (const decl of graph.declarations) {
@@ -286,9 +295,10 @@ export function layout(graph: CapturedGraph): Layout {
     }
   }
 
-  // publishShared packing = states 末 尾 を base に publish flag を 持 つ
-  // state slot だ け を declaration 順 で allocate (= sub-phase 7.2、 全 type で
-  // 4 byte 単 一 word = Q42)。 publish flag な い state slot は ここ に hit せ ず。
+  // publishShared packing: based at the end of states, allocate only the state
+  // slots that carry a publish flag, in declaration order (sub-phase 7.2, every
+  // type a single 4-byte word = Q42). State slots without a publish flag do not
+  // land here.
   const publishSharedBase = cursor;
   const publishSharedSlots: Record<string, number> = {};
   for (const decl of graph.declarations) {
@@ -298,9 +308,10 @@ export function layout(graph: CapturedGraph): Layout {
     }
   }
 
-  // publishCounters packing = publishShared 末 尾 を base に 同 順 で 8 byte
-  // per slot (= sample counter + version counter)。 publishShared と publish
-  // flag set が 一 致 = 同 declaration 順 で packing 一 致。
+  // publishCounters packing: based at the end of publishShared, in the same
+  // order, 8 bytes per slot (sample counter + version counter). The publish-flag
+  // set matches publishShared, so the same declaration order keeps the packing
+  // aligned.
   const publishCountersBase = cursor;
   const publishCountersSlots: Record<string, number> = {};
   for (const decl of graph.declarations) {
@@ -310,10 +321,11 @@ export function layout(graph: CapturedGraph): Layout {
     }
   }
 
-  // eventRings packing = publishCounters 末 尾 を base に declaration 順 で
-  // per-event ring (= header 12 + capacity × slotSize) を 配 置 (= `02-messaging.md`
-  // §5.1)。 slot 内 = atSample 先 頭 + 1 番 目 emit で seal さ れ た fields 順 で
-  // 並 べ る = u32 align (= bool は 1 byte だ が u32 word 占 有 = 4 byte)。
+  // eventRings packing: based at the end of publishCounters, place a per-event
+  // ring (header 12 + capacity × slotSize) in declaration order
+  // (`02-messaging.md` §5.1). Within a slot, atSample comes first, followed by
+  // the fields in the order sealed at the first emit, with u32 align (bool is
+  // 1 byte but occupies a full u32 word = 4 bytes).
   const eventRingsBase = cursor;
   const eventRingsSlots: Record<string, EventRingSlot> = {};
   for (const decl of graph.declarations) {
@@ -325,8 +337,8 @@ export function layout(graph: CapturedGraph): Layout {
       let fieldCursor = EVENT_ATSAMPLE_BYTES;
       for (const field of decl.fields) {
         if (field.payloadElementType !== undefined) {
-          // typed-array field = slot に [payloadLen(4), payloadOffset(4)] = 8 byte
-          // (= §4.3/§5.2)。 中 身 は payloadContent region。
+          // typed-array field: the slot holds [payloadLen(4), payloadOffset(4)]
+          // = 8 bytes (§4.3/§5.2). The content lives in the payloadContent region.
           slotFields.push({
             name: field.name,
             wireType: field.wireType,
@@ -357,10 +369,11 @@ export function layout(graph: CapturedGraph): Layout {
     }
   }
 
-  // messageRings packing = eventRings 末 尾 を base に declaration 順 で
-  // per-message ring (= header 12 + capacity × slotSize) を 配 置 (= `02-messaging.md`
-  // §5.3)。 event ring と zip pattern だ が slot 内 atSample ナ シ + fields 順 で
-  // 並 び (= Q46 uniform lift = 全 i32 / bool が 4 byte で 並 ぶ)。
+  // messageRings packing: based at the end of eventRings, place a per-message
+  // ring (header 12 + capacity × slotSize) in declaration order
+  // (`02-messaging.md` §5.3). Mirrors the event ring but with no atSample in the
+  // slot, fields in field order (Q46 uniform lift = all i32 / bool laid out as
+  // 4 bytes).
   const messageRingsBase = cursor;
   const messageRingsSlots: Record<string, MessageRingSlot> = {};
   for (const decl of graph.declarations) {
@@ -370,8 +383,8 @@ export function layout(graph: CapturedGraph): Layout {
       let fieldCursor = 0;
       for (const field of decl.fields) {
         if (field.payloadElementType !== undefined) {
-          // typed-array field = slot に [payloadLen(4), payloadOffset(4)] = 8 byte
-          // (= §5.2/§5.3)。 中 身 は payloadContent region。
+          // typed-array field: the slot holds [payloadLen(4), payloadOffset(4)]
+          // = 8 bytes (§5.2/§5.3). The content lives in the payloadContent region.
           slotFields.push({
             name: field.name,
             wireType: field.wireType,
@@ -402,10 +415,11 @@ export function layout(graph: CapturedGraph): Layout {
     }
   }
 
-  // buffers packing = messageRings 末 尾 を base に declaration 順 で `size ×
-  // sizeof` を allocate (= `01-dsl.md` §3.2、 u8 = 1 byte)。 worklet-private
-  // scratch / delay line / wavetable region。 末 尾 配 置 = buffer ナ シ graph
-  // で 既 region base 不 変 (= subset → superset 規 約)。
+  // buffers packing: based at the end of messageRings, allocate `size × sizeof`
+  // in declaration order (`01-dsl.md` §3.2, u8 = 1 byte). A worklet-private
+  // scratch / delay-line / wavetable region. Placing it at the tail keeps the
+  // existing region bases unchanged for a graph with no buffers (the subset →
+  // superset rule).
   const buffersBase = cursor;
   const bufferSlots: Record<string, number> = {};
   for (const decl of graph.declarations) {
@@ -415,12 +429,14 @@ export function layout(graph: CapturedGraph): Layout {
     }
   }
 
-  // payloadContent packing = message<T> (main→worklet) / event<T> (worklet→main)
-  // の typed-array field の 可 変 長 中 身 を 置 く region (= §5.2)。 typed-array field
-  // を 持 つ declaration ご と に payloadCapacity bytes (= 省 略 時 default) を allocate。
-  // 末 尾 配 置 = typed-array ナ シ graph で base 不 変。
+  // payloadContent packing: the region holding the variable-length content of
+  // typed-array fields for message<T> (main→worklet) / event<T> (worklet→main)
+  // (§5.2). For each declaration with a typed-array field, allocate
+  // payloadCapacity bytes (the default when omitted). Placing it at the tail
+  // keeps the bases unchanged for a graph with no typed arrays.
   const payloadContentBase = cursor;
-  // kind 別 map (= 同名 message/event が region を共有しない、名前空間 kind 別)。
+  // Maps split by kind (a same-named message/event does not share a region;
+  // separated by namespace kind).
   const payloadContentEventSlots: Record<
     string,
     { base: number; capacity: number; chunks: number }
@@ -435,12 +451,13 @@ export function layout(graph: CapturedGraph): Layout {
       decl.fields.some((f) => f.payloadElementType !== undefined)
     ) {
       const perPayload = decl.payloadCapacity ?? DEFAULT_PAYLOAD_CAPACITY;
-      // content は payload を slot ご と に 別 chunk で 保 持 (= 次 の drain ま で に
-      // 複 数 payload が ring に 積 ま れ て も 上 書 き さ れ な い、§5.2)。 ただ し 枠 数 は
-      // MAX_CONTENT_SLOTS で cap (= 大 payload × ring capacity が 過 大 に な る の を 防 ぐ、
-      // Q85)。 message も event も 同 形。 slot-indexed writer (= event emit / offline
-      // inject) は `chunks` で modulo、cursor 系 (= client / worklet postMessage) は
-      // region size で wrap = 同 じ 循 環 を 共 有。
+      // The content keeps each payload in its own chunk, so multiple payloads
+      // piling up in the ring before the next drain are not overwritten (§5.2).
+      // The number of slots is capped at MAX_CONTENT_SLOTS to keep
+      // large-payload × ring-capacity from growing excessive (Q85). message and
+      // event share the same shape. Slot-indexed writers (event emit / offline
+      // inject) take modulo `chunks`, while cursor-based writers (client /
+      // worklet postMessage) wrap at the region size — both share the same cycle.
       const chunks = Math.min(decl.capacity, MAX_CONTENT_SLOTS);
       const capacity = perPayload * chunks;
       const target = decl.kind === "event" ? payloadContentEventSlots : payloadContentMessageSlots;
@@ -449,9 +466,11 @@ export function layout(graph: CapturedGraph): Layout {
     }
   }
 
-  // everyNSamples の per-call-site counter slot (= §9.1)。 各 counterId に i32 4 byte。
-  // forSample / everyNSamples / messageOnReceive body を 再 帰 walk し て collect。 末 尾
-  // 配 置 = everyNSamples ナ シ graph で totalBytes 不 変。 memory zero-init = counter 初 期 0。
+  // Per-call-site counter slots for everyNSamples (§9.1): an i32 4 bytes per
+  // counterId. Collected by recursively walking forSample / everyNSamples /
+  // messageOnReceive bodies. Placing it at the tail keeps totalBytes unchanged
+  // for a graph with no everyNSamples. Zero-initialized memory means counters
+  // start at 0.
   const everyNSamplesCountersBase = cursor;
   const everyNSamplesCounterSlots: Record<number, number> = {};
   const collectEveryNCounters = (nodes: readonly AstNode[]): void => {
@@ -472,12 +491,14 @@ export function layout(graph: CapturedGraph): Layout {
   };
   collectEveryNCounters(graph.statements);
 
-  // midiRings packing = everyNSamplesCounters 末 尾 を base に declaration 順 で
-  // per-port ring (= header 12 + capacity × 8) を 配 置 (= `11-midi.md` §4)。
-  // in / out port それぞれ 独 立 header + slot 列。 末 尾 配 置 = MIDI ナ シ graph で
-  // base 不 変 (= subset → superset 規 約)。 header を i32 view す る の で、 直 前 の
-  // u8 buffer / payloadContent が cursor を 4-align か ら 外 し て い て も base を
-  // 4 に 切 り 上 げ る (= `new Int32Array` bind の RangeError = crash 防 止)。
+  // midiRings packing: based at the end of everyNSamplesCounters, place a
+  // per-port ring (header 12 + capacity × 8) in declaration order
+  // (`11-midi.md` §4). Each in / out port gets its own header + slot array.
+  // Placing it at the tail keeps the bases unchanged for a graph with no MIDI
+  // (the subset → superset rule). Since the header is viewed as i32, round the
+  // base up to 4 in case a preceding u8 buffer / payloadContent left the cursor
+  // off the 4-byte alignment (prevents the `new Int32Array` bind RangeError =
+  // crash).
   cursor = align4(cursor);
   const midiRingsBase = cursor;
   const midiRingSlots: Record<string, MidiRingSlot> = {};
@@ -492,9 +513,10 @@ export function layout(graph: CapturedGraph): Layout {
     }
   }
 
-  // sysexContent packing = midiRings 末 尾 を base に、 sysex を 使 う port ご と に
-  // content region (= chunks × perChunk) を 配 置 (= `11-midi.md` §4.3)。 sysex 使 用 =
-  // graph statements に 該 当 port の sysex midiOnEvent / midiEmitIf が あ る か で 判 定。
+  // sysexContent packing: based at the end of midiRings, place a content region
+  // (chunks × perChunk) for each port that uses sysex (`11-midi.md` §4.3). Sysex
+  // usage is determined by whether the graph statements contain a sysex
+  // midiOnEvent / midiEmitIf for that port.
   const sysexContentBase = cursor;
   const sysexContentSlots: Record<string, { base: number; perChunk: number; chunks: number }> = {};
   const sysexPorts = new Set<string>();
@@ -530,11 +552,12 @@ export function layout(graph: CapturedGraph): Layout {
 
   const totalBytes = cursor;
 
-  // sub-phase 7.7b で fill 対 象 外 の 4 region = base 全 て totalBytes (= 連 続)、
-  // slots / size 0。 後 続 sub-phase で 該 当 region に slot が 追 加 さ れ た 時
-  // 順 次 base を 再 計 算 す る path = layout 関 数 を 拡 張 す る だ け で
-  // 既 ioScratch / states / publishShared / publishCounters / eventRings 配 置
-  // に は 影 響 ナ シ (= subset → superset 規 約)。
+  // The 4 regions not filled in sub-phase 7.7b all have base = totalBytes
+  // (contiguous), with empty slots / size 0. When a later sub-phase adds slots
+  // to one of those regions, recomputing the bases in turn is just an extension
+  // of the layout function and does not affect the existing
+  // ioScratch / states / publishShared / publishCounters / eventRings placement
+  // (the subset → superset rule).
   return {
     regions: {
       states: { base: statesBase, slots: stateSlots },

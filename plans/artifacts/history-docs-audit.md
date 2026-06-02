@@ -1,8 +1,8 @@
-# WI-2 — history docs old-API audit (FORK A: spec全移行 + 歴史は注記)
+# WI-2 — history docs old-API audit (FORK A: full spec migration + history kept as annotations)
 
 The historical record (decisions-log + RFC drafts) intentionally KEEPS the
 surface as decided at the time — rewriting "we decided/rejected message<T>" into
-the current API would distort the history. Per 余湖さん's FORK A ruling, these
+the current API would distort the history. Per the maintainer's FORK A ruling, these
 files are annotated, not rewritten.
 
 ## Unification is recorded as a decision

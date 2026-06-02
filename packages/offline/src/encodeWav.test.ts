@@ -1,10 +1,11 @@
 /**
- * `encodeWav` behavior = Float32Array[] channels → WAV bytes (= `wavefile`
- * wrap)。 round-trip test で WAV spec compliance を 担 保 (= encodeWav →
- * wavefile read で sample bit-exact 戻 る + RIFF header 確 認)。
+ * `encodeWav` takes Float32Array[] channels and returns WAV bytes via a
+ * `wavefile` wrapper. Round-trip tests verify WAV spec compliance: encodeWav
+ * output → wavefile read → sample bit-exact recovery + RIFF header check.
  *
- * `wavefile` = WAV spec compliance 1 位 (= 24-bit / multi-ch 自 動
- * `WAVE_FORMAT_EXTENSIBLE` 切 替 + dwChannelMask + ADPCM/Alaw/Mulaw 全 対 応)。
+ * `wavefile` is used for its first-class WAV spec compliance: automatic
+ * `WAVE_FORMAT_EXTENSIBLE` switching for 24-bit and multi-channel output,
+ * dwChannelMask support, and full ADPCM/Alaw/Mulaw coverage.
  */
 
 import { expect, test } from "vite-plus/test";

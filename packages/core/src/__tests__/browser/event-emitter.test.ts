@@ -1,7 +1,7 @@
 /**
- * Browser e2e: event<T> 経 路 全 behavior。 worklet 側 で gate-cond emitIf
- * (= Q32-c 回 避 + 動 的 path) + main 側 で `node.events.<name>.on(handler)`
- * 受 領 + atSample / 多 重 / unsubscribe / overflow / diagnostics 担 保。
+ * Browser e2e: full event<T> path behavior. Worklet side uses gate-conditioned emitIf
+ * (Q32-c avoidance + dynamic path); main side receives via `node.events.<name>.on(handler)`.
+ * Covers atSample, multiple subscribers, unsubscribe, overflow, and diagnostics.
  */
 
 import { expect, test } from "vite-plus/test";
@@ -44,7 +44,7 @@ const buildContext = (
 // event<T> behavior
 // ─────────────────────────────────────────────────────────────────────────
 
-test("event: on(handler) で emitIf 受 領 + payload + atSample 担 保", async () => {
+test("event: on(handler) receives emitIf payload with correct atSample", async () => {
   const { ctx, source } = buildContext(4);
   const node = await createNode(ctx, eventEmitter);
   source.connect(node.inputs["main"]!);
@@ -67,7 +67,7 @@ test("event: on(handler) で emitIf 受 領 + payload + atSample 担 保", async
   node.dispose();
 });
 
-test("event: 多 重 subscribe = 全 handler が registration order で fire", async () => {
+test("event: multiple subscribers all fire in registration order", async () => {
   const { ctx, source } = buildContext(4);
   const node = await createNode(ctx, eventEmitter);
   source.connect(node.inputs["main"]!);
@@ -81,13 +81,13 @@ test("event: 多 重 subscribe = 全 handler が registration order で fire", a
   await waitRAF(3);
   expect(a.length).toBeGreaterThan(0);
   expect(b.length).toBeGreaterThan(0);
-  expect(a.length).toBe(b.length); // 全 event で 両 handler が fire
+  expect(a.length).toBe(b.length); // both handlers fire on every event
   unsubA();
   unsubB();
   node.dispose();
 });
 
-test("event: unsubscribe 後 handler が fire し な い", async () => {
+test("event: handler does not fire after unsubscribe", async () => {
   const { ctx, source } = buildContext(8);
   const node = await createNode(ctx, eventEmitter);
   source.connect(node.inputs["main"]!);
@@ -105,14 +105,14 @@ test("event: unsubscribe 後 handler が fire し な い", async () => {
   node.dispose();
 });
 
-test("event: overflow path で diagnostics.overflowCount が 増 加", async () => {
-  // event-emitter は capacity 16、 1 quantum = 128 emit = drop-oldest 連 発、
-  // overflowCount = 128 - 16 = 112 / quantum 程 度。
+test("event: diagnostics.overflowCount increments on overflow path", async () => {
+  // event-emitter has capacity 16; 1 quantum emits 128 events = repeated drop-oldest,
+  // so overflowCount should be around 128 - 16 = 112 per quantum.
   const { ctx, source } = buildContext(4);
   const node = await createNode(ctx, eventEmitter);
   source.connect(node.inputs["main"]!);
   node.outputs["main"]!.connect(ctx.destination);
-  // subscribe ナ シ で render 走 ら す = main drain ナ シ で SAB overflow 直 接 観 測
+  // render without a subscriber = no main-thread drain, observing SAB overflow directly
   source.start();
   await ctx.startRendering();
   await waitRAF(2);
@@ -121,7 +121,7 @@ test("event: overflow path で diagnostics.overflowCount が 増 加", async () 
   node.dispose();
 });
 
-test("event: dispose で 全 subscriber clear + 以 後 fire ナ シ", async () => {
+test("event: dispose clears all subscribers and stops firing", async () => {
   const { ctx, source } = buildContext(8);
   const node = await createNode(ctx, eventEmitter);
   source.connect(node.inputs["main"]!);
@@ -137,14 +137,14 @@ test("event: dispose で 全 subscriber clear + 以 後 fire ナ シ", async () 
   expect(calls.length).toBe(beforeDispose);
 });
 
-test("event: subscribe ナ シ で も render 自 体 は 動 作 (= silent OK)", async () => {
+test("event: render works without any subscriber (silent OK)", async () => {
   const { ctx, source } = buildContext(4);
   const node = await createNode(ctx, eventEmitter);
   source.connect(node.inputs["main"]!);
   node.outputs["main"]!.connect(ctx.destination);
   source.start();
   await ctx.startRendering();
-  // output は input passthrough = 0.7 期 待
-  // (= subscribe ナ シ で も audio path 走 る regression check)
+  // output is input passthrough, expected level 0.7
+  // (regression check: audio path runs even with no subscribers)
   node.dispose();
 });

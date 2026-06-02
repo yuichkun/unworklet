@@ -33,7 +33,7 @@ The body is read **top-to-bottom**: each statement (whether direct per-block cod
 
 **Handler registrations are an exception to source order at runtime.** `event<T>({ from: 'main' }).onReceive(handler)` and `event.midi({ from: 'main' }).onEvent(type, handler)` registrations placed anywhere in the `process` body always run at block-boundary drain, **before** any per-block top-level statement or `forSample` invocation (Q38-b). Source order in the body controls graph-capture-time registration order (= multiple `onReceive` registrations for the same inbound event run in registration order at drain); it does not control where handlers fire relative to per-block / per-sample code. See §4.2 + `02-messaging.md` §1 + `11-midi.md` §2.3 for the unified drain rule.
 
-Sample-offset access uses a **chain** for audio I/O (= `audioIn.ch(c).at(i)` reader, `audioOut.ch(c).at(i).write(v)` writer per Q78) and the **single `.at(i)` method** for `param` (= `param.at(i)`, channel concept ナシ). Each chain step takes exactly one argument so the meaning is method-named, not positional: `.ch(c)` selects a channel, `.at(i)` selects a sample offset, `.write(v)` (writer side) writes a value. The `i` argument accepts `Node<'i32'> | number`; a `Node<'i32'>` originates from a `forSample` callback parameter and is in scope only inside that callback (= TS reference error outside). JS-literal sample-offsets (most commonly `0`) lift to `Node<'i32'>` per Q36-a and are accepted everywhere the primitives appear: `param.at(0)` reads the block-start param value, `audioIn.ch(c).at(0)` reads the block-start input sample, `audioOut.ch(c).at(0).write(v)` writes the block-start output sample (Q51). JS-literal offsets must fall within `[0, SAMPLES_PER_BLOCK - 1]` (= `0`〜`127`); offsets outside this range fail at graph-capture time with `error[unworklet/audio-sample-offset-out-of-range]` (Q68). For stereo handles (`channels: 2`), `.left` / `.right` are sugar properties equivalent to `.ch(0)` / `.ch(1)` (Q78).
+Sample-offset access uses a **chain** for audio I/O (= `audioIn.ch(c).at(i)` reader, `audioOut.ch(c).at(i).write(v)` writer per Q78) and the **single `.at(i)` method** for `param` (= `param.at(i)`, no channel concept). Each chain step takes exactly one argument so the meaning is method-named, not positional: `.ch(c)` selects a channel, `.at(i)` selects a sample offset, `.write(v)` (writer side) writes a value. The `i` argument accepts `Node<'i32'> | number`; a `Node<'i32'>` originates from a `forSample` callback parameter and is in scope only inside that callback (= TS reference error outside). JS-literal sample-offsets (most commonly `0`) lift to `Node<'i32'>` per Q36-a and are accepted everywhere the primitives appear: `param.at(0)` reads the block-start param value, `audioIn.ch(c).at(0)` reads the block-start input sample, `audioOut.ch(c).at(0).write(v)` writes the block-start output sample (Q51). JS-literal offsets must fall within `[0, SAMPLES_PER_BLOCK - 1]` (= `0` to `127`); offsets outside this range fail at graph-capture time with `error[unworklet/audio-sample-offset-out-of-range]` (Q68). For stereo handles (`channels: 2`), `.left` / `.right` are sugar properties equivalent to `.ch(0)` / `.ch(1)` (Q78).
 
 This keeps the mental model identical to JUCE's `AudioProcessor::processBlock` and AudioWorklet's `process` — the body runs top-to-bottom, any sample-offset access can happen at any point, and `forSample` is purely a loop construct over the block (write the same output multiple times, last write wins per Q37; read any input sample at any point).
 
@@ -251,22 +251,22 @@ Authoritative rationale and rejected alternatives: see `decisions-log.md` Q6 (de
 Handle types for every declaration kind are exported from `@unworklet/core` for use in helper / subgraph signatures and main-side typing:
 
 - `AudioInputHandle<C>` / `AudioOutputHandle<C>` (§1.2 / §1.3) — `.ch(c)` chain entry; stereo handles also expose `.left` / `.right` sugar
-- `InputChannelView<T>` (§1.2) — `audioIn.ch(c)` の 戻 り 値、 `.at(i): Node<T>` を 持 つ
-- `OutputChannelView<T>` (§1.3) — `audioOut.ch(c)` の 戻 り 値、 `.at(i): OutputChannelSample<T>` を 持 つ
-- `OutputChannelSample<T>` (§1.3) — `audioOut.ch(c).at(i)` の 戻 り 値、 `.write(v): void` を 持 つ (= 3-step writer chain の 終 端)
-- `State<T>` / `Buffer<T>` / `Param` (§3) — `.read()` / `.write(v)` / `.read(idx)` / `.write(idx, v)` / `.at(i)` 等
-- `EventDecl<T>` (= `event<T>({ to: 'main' })`) / `MessageDecl<T>` (= `event<T>({ from: 'main' })`) (§4) — worklet 側 `.emitIf(cond, payload)` (EventDecl) / `.onReceive(handler)` (MessageDecl)、 main 側 `node.events.<name>.on(handler)` (EventDecl) / `node.events.<name>.emit(payload)` (MessageDecl)
-- `MidiInputHandle` / `MidiOutputHandle` (`11-midi.md` §2) — worklet 側 `.onEvent(handler)` / `.emitIf(cond, event)`、 main 側 `.send(...)` / `.on(handler)`
-- `Node<T>` (§2) — per-sample 値 を 表 す branded handle
+- `InputChannelView<T>` (§1.2) — return value of `audioIn.ch(c)`; exposes `.at(i): Node<T>`
+- `OutputChannelView<T>` (§1.3) — return value of `audioOut.ch(c)`; exposes `.at(i): OutputChannelSample<T>`
+- `OutputChannelSample<T>` (§1.3) — return value of `audioOut.ch(c).at(i)`; exposes `.write(v): void` (= terminal of the 3-step writer chain)
+- `State<T>` / `Buffer<T>` / `Param` (§3) — `.read()` / `.write(v)` / `.read(idx)` / `.write(idx, v)` / `.at(i)`, etc.
+- `EventDecl<T>` (= `event<T>({ to: 'main' })`) / `MessageDecl<T>` (= `event<T>({ from: 'main' })`) (§4) — worklet-side `.emitIf(cond, payload)` (EventDecl) / `.onReceive(handler)` (MessageDecl); main-side `node.events.<name>.on(handler)` (EventDecl) / `node.events.<name>.emit(payload)` (MessageDecl)
+- `MidiInputHandle` / `MidiOutputHandle` (`11-midi.md` §2) — worklet-side `.onEvent(handler)` / `.emitIf(cond, event)`; main-side `.send(...)` / `.on(handler)`
+- `Node<T>` (§2) — branded handle representing a per-sample value
 
-Processor-shape types (= `defineProcessor` 周 辺):
+Processor-shape types (= types surrounding `defineProcessor`):
 
 - `ProcessorContext` (= argument to `defineProcessor` body) — `{ sampleRate: Node<'f32'>, hz: Node<'f32'>, samples: Node<'i32'> }`
-- `ProcessorBody` (= return value of `defineProcessor` body) — **strict shape** `{ process: () => void }`; 余 計 な field を 載 せ る と graph-capture-time error (declarative 原 則 で、 body は process 1 個 だ け で 構 成)
-- `CompiledProcessor<C>` (= return value of `defineProcessor`) — `{ readonly graph: ProcessorGraph; readonly schemaHash: string }`; `createNode` / `replaceProcessor` に 渡 す opaque 型
-- `UnworkletNode<C>` (= return value of `createNode`) — main-side 公 開 surface。 method/field 集 約 は `05-client.md` §2 で declare
-- `Migration` (= entry of `migrations: Migration[]`) — `{ from: string; to: string; migrate: (blob: Uint8Array, helpers: MigrationHelpers) => void | Promise<void> }`; `migrate` は Promise を 返 し て も OK で、 framework が main thread で await し て か ら worklet 側 へ apply (= No blocking I/O invariant は audio thread 限 定、 main thread で の async OK)
-- `MigrationHelpers` (= second argument to `migrate`) — §8.3.1 で 全 method declare
+- `ProcessorBody` (= return value of `defineProcessor` body) — **strict shape** `{ process: () => void }`; extra fields cause a graph-capture-time error (per the declarative principle: the body consists of exactly one `process` entry)
+- `CompiledProcessor<C>` (= return value of `defineProcessor`) — `{ readonly graph: ProcessorGraph; readonly schemaHash: string }`; the opaque type passed to `createNode` / `replaceProcessor`
+- `UnworkletNode<C>` (= return value of `createNode`) — the public main-side surface; all methods and fields are declared in `05-client.md` §2
+- `Migration` (= entry of `migrations: Migration[]`) — `{ from: string; to: string; migrate: (blob: Uint8Array, helpers: MigrationHelpers) => void | Promise<void> }`; `migrate` may return a Promise, and the framework awaits it on the main thread before applying to the worklet side (= the No-blocking-I/O invariant is audio-thread-only; async is fine on the main thread)
+- `MigrationHelpers` (= second argument to `migrate`) — all methods declared in §8.3.1
 
 The value returned by `createSubgraph(...)` is **the subgraph body's return record itself** (= the author-named methods declared by `defineSubgraph`'s body) — no separate `SubgraphInstance<S>` wrapper type is exported. When a helper signature needs to receive a subgraph instance, use `ReturnType<typeof subgraphDecl>` (TypeScript's standard inference). Authoritative rationale: `decisions-log.md` Q54.
 
@@ -411,23 +411,23 @@ const idx = state.i32(0);
 const fl = state.bool(false);
 
 // Named via .named('X') quick chain (= policy default 'persistent')
-const cutoffSampled = state.f32(0).named("cutoffSampled"); // 後付け
-const cutoffSampled = state.named("cutoffSampled").f32(0); // 前付け、 同 AST
+const cutoffSampled = state.f32(0).named("cutoffSampled"); // chain appended after type
+const cutoffSampled = state.named("cutoffSampled").f32(0); // chain prepended before type, same AST
 
-// Named via .expose({ name, ... }) full chain (= policy 明示)
-const meterL = state.f32(0).expose({ name: "meterL", publish: { rateFps: 30 } }); // 後付け
-const meterL = state.expose({ name: "meterL", publish: { rateFps: 30 } }).f32(0); // 前付け
-const route = state.f32(0).expose({ name: "route", snapshot: "transient" }); // 主側 addressable、 snapshot 除外
+// Named via .expose({ name, ... }) full chain (= explicit policy)
+const meterL = state.f32(0).expose({ name: "meterL", publish: { rateFps: 30 } }); // chain appended
+const meterL = state.expose({ name: "meterL", publish: { rateFps: 30 } }).f32(0); // chain prepended
+const route = state.f32(0).expose({ name: "route", snapshot: "transient" }); // main-side addressable, excluded from snapshot
 
-// Chain 重複 (= field merge 後勝ち)
+// Duplicate chain entries (= field merge, last wins)
 const meterL = state
   .named("meterL")
   .f32(0)
   .expose({ publish: { rateFps: 30 } }); // name 'meterL' + publish bundled
-const renamed = state.named("orig").f32(0).expose({ name: "final" }); // name 'final' (= 後勝ち)
+const renamed = state.named("orig").f32(0).expose({ name: "final" }); // name 'final' (= last wins)
 ```
 
-`state.<type>(initial)` (= plain) declares a worklet-private scalar slot. Chaining `.named('X')` or `.expose({ name: 'X', ... })` onto a plain declare opens the slot to the snapshot blob and main-side access. Both chain forms are equivalent in graph effect; `.named('X')` is the short form (= name only, policy default), `.expose({ ... })` is the full form (= options object 1 つ で name + policy 全部 渡す). The `State<T>` handle exposes `read()` / `write(node)` regardless of whether the chain is plain or named.
+`state.<type>(initial)` (= plain) declares a worklet-private scalar slot. Chaining `.named('X')` or `.expose({ name: 'X', ... })` onto a plain declare opens the slot to the snapshot blob and main-side access. Both chain forms are equivalent in graph effect; `.named('X')` is the short form (= name only, policy default), `.expose({ ... })` is the full form (= passes name and all policy options in a single options object). The `State<T>` handle exposes `read()` / `write(node)` regardless of whether the chain is plain or named.
 
 State is sample-offset-independent: the `state` reference itself does not depend on the surrounding context. `read()` returns the value as updated by the most recent `write()`. State updates inside `forSample` callbacks are observable in subsequent samples in the same render quantum and in subsequent render quanta. State updates at per-block top level are observable for the rest of that render quantum and beyond. State read/write at per-block top level **after** a `forSample` invocation can observe the state's value at the end of the loop — useful for block-level summaries (peak detect, accumulator readout, etc.).
 
@@ -443,7 +443,7 @@ Named chain options:
 
   `state` with type method `.bool` is represented internally as `i32` (0 / 1); the audio thread stores `cond ? 1 : 0` via `Atomics.store`, and the main side casts back to `boolean` when delivering to subscribers (so `node.state.<name>.value` is typed `boolean`).
 
-**Chain order invariant (Q79)**: `.named()` / `.expose()` may appear before or after the type method; the captured graph is identical. When both `.named()` and `.expose()` appear in the same chain, fields are merged with **after-wins** semantics (= the chain-rightmost `name` / `publish` / `snapshot` value overrides earlier ones). A chain containing `.expose({ publish: ... })` without a `name` somewhere in the chain is a graph-capture-time error (= name 1 度 必須).
+**Chain order invariant (Q79)**: `.named()` / `.expose()` may appear before or after the type method; the captured graph is identical. When both `.named()` and `.expose()` appear in the same chain, fields are merged with **after-wins** semantics (= the chain-rightmost `name` / `publish` / `snapshot` value overrides earlier ones). A chain containing `.expose({ publish: ... })` without a `name` anywhere in the chain is a graph-capture-time error (= a name is required exactly once).
 
 Authoritative rationale: `decisions-log.md` Q27-a + Q42 + Q76 + Q79.
 
@@ -455,8 +455,8 @@ const ring = state.buffer.f32({ size: 44100 }); // delay line scratch
 const sysexBuf = state.buffer.u8({ size: 64 }); // byte buffer (= sysex emit; see 11-midi.md §2.5)
 
 // Named via .named('X') quick chain (= policy default 'transient')
-const ir = state.buffer.f32({ size: 1024 }).named("ir"); // 後付け
-const ir = state.buffer.named("ir").f32({ size: 1024 }); // 前付け、 同 AST
+const ir = state.buffer.f32({ size: 1024 }).named("ir"); // chain appended after type
+const ir = state.buffer.named("ir").f32({ size: 1024 }); // chain prepended before type, same AST
 
 // Named via .expose({ name, ... }) full chain
 const wave = state.buffer.f32({ size: 256 }).expose({ name: "wavetable", snapshot: "persistent" });
@@ -526,7 +526,7 @@ const cutoff = param
   })
   .named("cutoff");
 
-// full chain (= snapshot policy 渡し)
+// full chain (= explicit snapshot policy)
 const route = param.expose({ name: "route", snapshot: "transient" }).f32({
   default: 0,
   min: 0,
@@ -1212,7 +1212,7 @@ Adding any of the following does not change the v1.0.0 surface:
 - Comparison primitives (`ltVec`, `eqVec`, …).
 - Gather / scatter (load from non-contiguous offsets).
 
-Rollout order は v1.0.0 で は 未 確 定。 v1.x.0 で 早 期 DSP package か ら の 利 用 報 告 を 集 め て か ら 別 途 ratify す る (= 本 文 書 で declare 不 在、 acceptance criteria Q62 と は 別 軸)。
+Rollout order is not fixed for v1.0.0. It will be ratified separately after gathering early adoption reports from DSP packages in v1.x.0 (= not declared in this document; a separate axis from acceptance criteria Q62).
 
 ### 7.4 Use within L1 / L2 / processors
 
@@ -1421,14 +1421,14 @@ type MigrationHelpers = {
 
 Slots not written by `migrate` are auto-carried from the old blob to the new blob whenever a slot of the same name and compatible type exists in the new schema. **Most migration entries are short** — only the slots that actually change need explicit handling.
 
-**Profile-scoped helpers の semantics**: `parseSlotInProfile` / `writeSlotInProfile` の `profile` 引 数 は それぞれ:
+**Profile-scoped helpers semantics**: the `profile` argument to `parseSlotInProfile` / `writeSlotInProfile` means:
 
-- `parseSlotInProfile(blob, name, type, profile)` — **旧 blob 内 で 該 当 profile に 配 置 さ れ て いた slot を 読 む**。 `profile` は 旧 schema 側 の profile 名 (= rename 前 の 名 前)。 `oldProfileName` が `null` で な い 場 合 (= 旧 blob が profile-restricted snapshot) は `profile === oldProfileName` の slot だ け が 見 え、 他 profile slot は `undefined`。 `oldProfileName === null` (= union snapshot) の 場 合 は 全 profile slot を 走 査 可。
-- `writeSlotInProfile(name, type, value, profile)` — **新 blob 内 で 該 当 profile に slot を 書 く**。 `profile` は 新 schema 側 の profile 名 (= rename 後 の 名 前)。
+- `parseSlotInProfile(blob, name, type, profile)` — **reads the slot that was stored under the given profile in the old blob**. `profile` is the profile name on the old schema side (= the name before any rename). When `oldProfileName` is not `null` (= the old blob is a profile-restricted snapshot), only the slot matching `profile === oldProfileName` is visible; slots from other profiles return `undefined`. When `oldProfileName === null` (= a union snapshot), all profile slots can be read.
+- `writeSlotInProfile(name, type, value, profile)` — **writes the slot under the given profile in the new blob**. `profile` is the profile name on the new schema side (= the name after any rename).
 
-`oldProfileName` は 旧 blob が `snapshot({ profile: 'preset' })` で 出 し た 場 合 = `'preset'`、 `snapshot()` (no arg、 union) で 出 し た 場 合 = `null`。 v1.0.0 で snapshot blob は 「単 一 profile 限 定」 ま た は 「全 profile union」 の 2 形 だ け で、 「複 数 profile の subset」 は 出 力 ナ シ (= profile field は 1 つ の 文 字 列 か `null`)。
+`oldProfileName` is `'preset'` when the old blob was produced by `snapshot({ profile: 'preset' })`, or `null` when produced by `snapshot()` (no argument, union). In v1.0.0, snapshot blobs exist in exactly two forms — single-profile-restricted or full-union — and a subset-of-profiles form is not emitted (= the profile field is either a single string or `null`).
 
-典 型 use case = profile rename 「`'preset'` → `'patch'`」 (= canonical Ex 7 拡 張 path 想 定): `if (helpers.oldProfileName === 'preset') { const v = helpers.parseSlotInProfile(blob, 'gain', 'f32', 'preset'); if (v !== undefined) helpers.writeSlotInProfile('gain', 'f32', v, 'patch'); }`。
+Typical use case — profile rename from `'preset'` to `'patch'` (= anticipated extension path of canonical Ex 7): `if (helpers.oldProfileName === 'preset') { const v = helpers.parseSlotInProfile(blob, 'gain', 'f32', 'preset'); if (v !== undefined) helpers.writeSlotInProfile('gain', 'f32', v, 'patch'); }`.
 
 #### 8.3.2 Compile-time validation
 
@@ -1577,7 +1577,7 @@ type EveryNSamples = (n: number, body: () => void) => void;
 `everyNSamples` is delivered as the **second callback argument** (Q43, `decisions-log.md`); the parameter is optional and most `forSample` callbacks just take `(i) => ...`. See §9 for sub-rate semantics.
 
 - `forSample(callback)` — the callback body runs once per sample of the current render quantum. `i` is a `Node<'i32'>` bound at WASM-emission time to the loop counter, advancing by 1 each iteration.
-- `forSample.byN(stride, callback)` — same shape, but `i` advances by `stride` each iteration. Typical use is `stride = 4` for SIMD bulk operations paired with the buffer-handle methods `buf.loadVec` / `buf.storeVec`. SIMD store is buffer-only by design (Q3-b、 §2.1) — `audioOut.storeVec` is not part of the surface, so audio output writes in `forSample.byN` use scalar `audioOut.set` per iteration. The stride must be a compile-time-constant positive integer **and must divide `SAMPLES_PER_BLOCK` (= 128)** — allowed values are `1`, `2`, `4`, `8`, `16`, `32`, `64`, `128` (Q37-b, `decisions-log.md`). Non-constant strides or strides that do not divide 128 are graph-capture-time errors at the `forSample.byN(...)` call site. Sample-offsets skipped by the stride (e.g. `stride = 4` with `audioOut.set` writes only `i = 0, 4, 8, ..., 124`) are emitted as silence unless other code writes them — same silence-for-unwritten-samples behavior as §1.3 (no coverage requirement; Q37).
+- `forSample.byN(stride, callback)` — same shape, but `i` advances by `stride` each iteration. Typical use is `stride = 4` for SIMD bulk operations paired with the buffer-handle methods `buf.loadVec` / `buf.storeVec`. SIMD store is buffer-only by design (Q3-b, §2.1) — `audioOut.storeVec` is not part of the surface, so audio output writes in `forSample.byN` use scalar `audioOut.set` per iteration. The stride must be a compile-time-constant positive integer **and must divide `SAMPLES_PER_BLOCK` (= 128)** — allowed values are `1`, `2`, `4`, `8`, `16`, `32`, `64`, `128` (Q37-b, `decisions-log.md`). Non-constant strides or strides that do not divide 128 are graph-capture-time errors at the `forSample.byN(...)` call site. Sample-offsets skipped by the stride (e.g. `stride = 4` with `audioOut.set` writes only `i = 0, 4, 8, ..., 124`) are emitted as silence unless other code writes them — same silence-for-unwritten-samples behavior as §1.3 (no coverage requirement; Q37).
 
 ### 10.2 Semantics
 
@@ -1693,7 +1693,7 @@ def.worklet = {
 - `initialize(self, opts)` runs all unworklet-internal init (WASM module wiring, ringbuffer refs, declarative slot bindings) against the author's `self`.
 - `process(self, ...)` invokes the WASM body; the return value is the standard `AudioWorkletProcessor` lifecycle boolean.
 - `parameterDescriptors` is the unworklet-generated descriptor list — the author returns it from their `static get parameterDescriptors()`.
-- `inputs` / `outputs` carry per-port metadata (= `{ name, channels }`) the framework needs to pre-wire `AudioWorkletNodeOptions.numberOfInputs` / `numberOfOutputs` / `outputChannelCount` from the path-α (auto-register) side。 path β authors can read them too if their custom class wants to mirror the declarative port count。
+- `inputs` / `outputs` carry per-port metadata (= `{ name, channels }`) the framework needs to pre-wire `AudioWorkletNodeOptions.numberOfInputs` / `numberOfOutputs` / `outputChannelCount` from the path-α (auto-register) side. Path-β authors can read them too if their custom class wants to mirror the declarative port count.
 
 ### 11.2 Canonical extends shape
 
@@ -1743,7 +1743,7 @@ The default vite-plugin output continues to auto-register the processor under it
 
 ### 11.4 Constraints
 
-- The author **must** call `initialize(this, opts)` in their constructor before returning. Failing to do so surfaces a runtime event on the first invocation of `process(this, ...)`: a structured `node.onError({ code: "worklet-initialize-not-called" })` is posted once from the audio thread (= `04-worklet-runtime.md` §8 の 5 番 目 code) + every subsequent quantum emits silence, with the node staying connected。 The audio thread does **not** throw (= `00-foundations.md` §5.1 invariant 3), so main-side observation goes through `.onError` rather than a `processorerror` exception。
+- The author **must** call `initialize(this, opts)` in their constructor before returning. Failing to do so surfaces a runtime event on the first invocation of `process(this, ...)`: a structured `node.onError({ code: "worklet-initialize-not-called" })` is posted once from the audio thread (= the 5th code in `04-worklet-runtime.md` §8) + every subsequent quantum emits silence, with the node staying connected. The audio thread does **not** throw (= `00-foundations.md` §5.1 invariant 3), so main-side observation goes through `.onError` rather than a `processorerror` exception.
 - `process(self, ...)`'s return value follows the AudioWorkletProcessor contract — `true` to continue, `false` to allow shutdown.
 - Declarative MIDI / event / audio I/O facilities (= `event.midi({ from: 'main' }).onEvent`, etc.) continue to function inside the extended class without further intervention — they are wired through `initialize(...)`.
 

@@ -19,13 +19,13 @@ The package is intentionally a single primitive — `renderOffline` — applicab
 
 The package does **not** wrap any I/O concern (no wav writer, no http server, no mp3 encoder, no UI). Output is in-memory `Float32Array`; the consumer composes file I/O / encoders / UI separately. Keeping the surface a pure function maximizes reuse across the four use cases above.
 
-こ れ ら 全 use case で Vite project は 不 要 = 純 Node / Bun / Deno script で `@unworklet/core` (= `defineProcessor(...)` の 戻 り 値 を 提 供) + `@unworklet/offline` (= `renderOffline` を 提 供) を import す る だ け で 動 く。 build pipeline / bundler / browser host を 要 求 し な い (= compile も driver も `renderOffline` 内 で 自 己 完 結、 §3 + §4 参 照)。
+None of the above use cases require a Vite project. A plain Node / Bun / Deno script that imports `@unworklet/core` (which provides the `defineProcessor(...)` return value) and `@unworklet/offline` (which provides `renderOffline`) is sufficient. No build pipeline, bundler, or browser host is required — compilation and the render driver are both self-contained inside `renderOffline` (see §3 and §4).
 
 ## 2. API
 
 ```typescript
 import { renderOffline } from "@unworklet/offline";
-import { myProcessor } from "./my-processor"; // `defineProcessor(...)` の 戻 り 値 (= `CompiledProcessor<C>`) を そ の ま ま import。 vite-plugin 経 由 の `?worklet` import path も 並 列 で OK (= `.processor.ts` 内 で `defineProcessor(...)` を 名 前 付 き export し て お け ば either path で 同 一 artifact を 受 け 取 れ る)。
+import { myProcessor } from "./my-processor"; // Import the return value of `defineProcessor(...)` (i.e. `CompiledProcessor<C>`) directly. The `?worklet` import path via vite-plugin also works in parallel — as long as `defineProcessor(...)` is a named export inside the `.processor.ts` file, either import path yields the same artifact.
 
 const result = await renderOffline(myProcessor, {
   sampleRate: 48000,
@@ -40,7 +40,7 @@ const result = await renderOffline(myProcessor, {
       },
       atQuantum: 0,
     },
-  ], // main → worklet messages、 atQuantum で 配 達 タ イ ミ ン グ を block 番 号 で 指 定 (省 略 = 0 = render 開 始 時)。 online で の Q38-a 「各 render quantum 開 始 時 に drain」 と 直 接 zip。
+  ], // Main-to-worklet messages. `atQuantum` specifies the delivery timing as a block index (omitted = 0 = at the start of the render). Directly mirrors the Q38-a online behavior of draining the message queue at the start of each render quantum.
   events: [
     {
       name: "noteOn",
@@ -53,14 +53,14 @@ const result = await renderOffline(myProcessor, {
 });
 
 result.outputs.main; // Float32Array[]   per-channel PCM (key = `audioOutput` declared `name`; canonical convention is `'main'`. Length = ceil(duration × sampleRate / 128) × 128, see §2.1.)
-result.events; // Array<{ name, payload, atSample }>   events the processor emitted (= name は declaration の `name`、 payload は online で `.events.<name>.on(handler)` の handler に 渡 さ れ る 値 と 同 形、 atSample は block-local sample offset)
+result.events; // Array<{ name, payload, atSample }>   events emitted by the processor. `name` matches the declaration's `name`; `payload` has the same shape as the value passed to the `.events.<name>.on(handler)` callback in the online path; `atSample` is the block-local sample offset.
 result.state; // Uint8Array       snapshot blob (Q5 format) at end-of-render
-result.sampleRate; // number          render に 使 っ た sample rate (= `config.sampleRate` を そ の ま ま carry、 wav 書 き 出 し / 再 render / consumer 自 動 化 で の self-describe path)
+result.sampleRate; // number          the sample rate used for the render (carries `config.sampleRate` through as-is, enabling self-describing output for wav encoding, re-renders, and consumer automation)
 ```
 
-### 2.1 Duration の 端 数 処 理
+### 2.1 Duration rounding
 
-`duration × sampleRate` が `SAMPLES_PER_BLOCK` (= 128) で 割 り 切 れ な い 場 合、 `renderOffline` は 内 部 で `ceil(duration × sampleRate / 128) × 128` sample ま で 切 り 上 げ て render し、 余 剰 sample を silence で pad す る。 入 力 PCM (= `inputs.<name>`) も 同 長 さ ま で silence auto-pad (= user 側 で pre-pad 不 要)。 戻 り 値 `result.outputs.<name>` の length は 切 り 上 げ 後 の sample 数 = block boundary を 跨 が ず reference output と bit-exact 比 較 が 可 能。 ち ょう ど `duration × sampleRate` sample だ け 必 要 な consumer は `pcm.subarray(0, Math.floor(duration * sampleRate))` で 自 力 truncate (= framework は user 制 約 ゼ ロ で 一 意 path を 採 る)。
+When `duration × sampleRate` is not evenly divisible by `SAMPLES_PER_BLOCK` (= 128), `renderOffline` internally rounds up to `ceil(duration × sampleRate / 128) × 128` samples and pads the surplus with silence. Input PCM (`inputs.<name>`) is also silence-padded to the same length automatically — no pre-padding is required on the caller's side. The length of `result.outputs.<name>` equals the rounded-up sample count, which means bit-exact comparisons against a reference output never straddle a block boundary. Consumers that need exactly `duration × sampleRate` samples can truncate with `pcm.subarray(0, Math.floor(duration * sampleRate))` — the framework takes the unambiguous path with no constraints imposed on the user.
 
 <!-- TODO §2.x:
      - Full type signature with generics over processor declarations (output names, event types, message types).
@@ -80,15 +80,15 @@ result.sampleRate; // number          render に 使 っ た sample rate (= `con
 
 ## 3. Execution model
 
-`renderOffline` は host JS の WebAssembly runtime (= Node.js / Bun / Deno 等 の `WebAssembly.instantiate` を 持 つ environment) で processor の WASM binary を そ の ま ま instantiate し、 host JS 上 で render quantum (= 128 sample) 単 位 に WASM `process()` を 呼 び 出 し て output PCM を 集 め る。 `AudioContext` も audio thread も 介 在 し な い (= browser 不 要、 server-side で も そ の ま ま 走 る)。 production の online 経 路 (= `05-client.md`) が `AudioWorkletNode` 越 し に 走 ら せ る の と 同 一 の WASM binary を、 同 一 の per-quantum entry point で driver す る path = byte-identical な emission を offline で 再 現 す る (= Q17 polynomial approximation は WASM 内 で inline emit、 host JS 側 に 計 算 が 漏 れ な い)。
+`renderOffline` instantiates the processor's WASM binary directly in the host JavaScript WebAssembly runtime (any environment with `WebAssembly.instantiate`, such as Node.js, Bun, or Deno), then drives the WASM `process()` entry point in 128-sample render quanta on the host JS side, collecting the output PCM. No `AudioContext` and no audio thread are involved — no browser is required, and it runs identically server-side. The same WASM binary that the production online path (see `05-client.md`) drives through an `AudioWorkletNode` is driven here through the same per-quantum entry point, reproducing byte-identical emission offline. (Q17 polynomial approximations are inlined inside the WASM; no computation leaks to the host JS side.)
 
-compile 自 体 も `renderOffline` 内 で 完 結 す る (= `@unworklet/core` の `compile` 関 数 を call し て、 引 数 で 受 け 取 っ た processor (= `defineProcessor(...)` の 戻 り 値) の graph capture + WASM emit を 走 ら せ る)。 Vite 経 由 で 事 前 build 済 の WASM binary を 渡 す 必 要 ナ シ = 純 Node / Bun / Deno script が `defineProcessor(...)` の 戻 り 値 を そ の ま ま `renderOffline` に 渡 せ ば、 graph capture → WASM emit → instantiate → driver が 1 call 内 で 順 に 走 る。 同 一 processor 入 力 + 同 一 compile path = 同 一 WASM binary が emit さ れ る た め、 online (= vite-plugin が build 時 に 同 じ `compile` を call し て 出 し た binary) と byte-identical な artifact が 得 ら れ る (= §4 参 照)。
+Compilation is also self-contained inside `renderOffline`: it calls `@unworklet/core`'s `compile` function on the processor passed as an argument (the return value of `defineProcessor(...)`), running graph capture and WASM emit internally. There is no need to supply a pre-built WASM binary via Vite. A plain Node / Bun / Deno script can pass the `defineProcessor(...)` return value directly to `renderOffline`, and graph capture → WASM emit → instantiate → driver all run sequentially within that single call. Because the same processor input and the same compile path always produce the same WASM binary, the resulting artifact is byte-identical to what the vite-plugin produces at build time (see §4).
 
-backend 選 択 肢 は な い (= `renderOffline` config に backend 切 替 field は 持 た な い)。 config (= `sampleRate`, `duration`, `inputs`, `params`, `messages`, `events`) と processor 入 力 が 同 一 で あ れ ば `renderOffline` の 戻 り 値 は host JS environment を 跨 い で bit-exact = test deterministic。 acceptance B2 (= `06-testing.md` §2) は 単 一 binary の 1 path 走 行 で 自 然 と pass す る (= 比 較 対 象 が な い = tolerance 概 念 不 在)。
+There is no backend selection option — `renderOffline`'s config has no field for switching backends. Given identical config (`sampleRate`, `duration`, `inputs`, `params`, `messages`, `events`) and identical processor input, `renderOffline`'s return value is bit-exact across host JS environments, making it fully deterministic for tests. Acceptance criterion B2 (see `06-testing.md` §2) is satisfied naturally by a single binary on a single code path — there is no comparison target, so the concept of tolerance does not arise.
 
 ## 4. Relationship to other packages
 
 - `@unworklet/test` (= `06-testing.md`) builds matchers on top of `renderOffline`.
-- `@unworklet/core` (= `05-client.md` + `defineProcessor` + 公 開 `compile` 関 数) は offline runner が 依 存 す る 唯 一 の `@unworklet/` package (= `@unworklet/offline` peer dep)。 `renderOffline` は 引 数 で 受 け 取 っ た processor (= `defineProcessor(...)` の 戻 り 値) を 内 部 で `@unworklet/core` の `compile` 経 由 で WASM 化 + host JS の WebAssembly runtime で instantiate + 駆 動 す る (= §3)。 Vite project に 依 存 し な い 純 Node / Bun / Deno / browser host script で 動 く (= build pipeline / bundler を 要 求 し な い)。
-- `@unworklet/vite-plugin` (= `07-vite-plugin.md`) は `@unworklet/core` の `compile` を build pipeline で call す る 1 consumer の 1 つ で あ り、 offline runner は そ れ と は 独 立 に 自 前 で 同 じ `compile` を call す る (= offline は vite-plugin に 依 存 し な い)。 online runtime (= browser AudioWorkletGlobalScope) と offline runtime (= host JS WebAssembly runtime) が **同 一 compile path** (= `@unworklet/core` の `compile` 関 数) を 通 る た め、 emit さ れ る WASM binary + metadata artifact (= `.graph.json` / `.memory.json` / `.schema-hash.json` 相 当) が byte-identical = `schemaHash` も 一 致 す る (= Q5-e で 担 保)。 こ れ に よ り offline 側 で 走 ら せ た blob (= `result.state`) を online `node.restore(blob)` に 渡 し て も schema mismatch reject が 起 こ ら な い (= canonical Ex 7 migration chain test の cross-runtime path)。
+- `@unworklet/core` (see `05-client.md`; provides `defineProcessor` and the public `compile` function) is the only `@unworklet/` package the offline runner depends on (peer dep of `@unworklet/offline`). `renderOffline` compiles the processor it receives (the return value of `defineProcessor(...)`) via `@unworklet/core`'s `compile`, instantiates the resulting WASM binary in the host JS WebAssembly runtime, and drives it (see §3). It works in plain Node / Bun / Deno / browser host scripts without a Vite project — no build pipeline or bundler is required.
+- `@unworklet/vite-plugin` (see `07-vite-plugin.md`) is one consumer of `@unworklet/core`'s `compile` within a build pipeline. The offline runner independently calls that same `compile` function without depending on the vite-plugin. Because both the online runtime (browser `AudioWorkletGlobalScope`) and the offline runtime (host JS WebAssembly runtime) go through the **same compile path** (the `compile` function in `@unworklet/core`), the emitted WASM binary and metadata artifacts (equivalent to `.graph.json` / `.memory.json` / `.schema-hash.json`) are byte-identical, and `schemaHash` values match (guaranteed by Q5-e). As a result, a blob produced by `renderOffline` (`result.state`) can be passed to the online `node.restore(blob)` without triggering a schema-mismatch rejection (the cross-runtime path in the canonical Ex 7 migration chain test).
 - `@unworklet/core`'s client-side surface (= `05-client.md`) is the **online** counterpart: same processor, different runtime path. The snapshot format (Q5) is shared, so a `renderOffline` result's `state` blob can be passed to `node.restore(state)` after `createNode` to continue an offline-prepared session online (Q57; the two-step pattern is the v1.0.0 canonical form, see `05-client.md` §1).

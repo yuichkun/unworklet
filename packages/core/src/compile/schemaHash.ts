@@ -35,13 +35,13 @@ function fnv1a(bytes: Uint8Array, offset: bigint): string {
 }
 
 export function schemaHash(graph: CapturedGraph): string {
-  // Declarations only (= the slot schema). i64 literal value / state initial は
-  // bigint = JSON が serialize で きない → `<value>n` 文 字 列 に 落 と し て
-  // deterministic + 値 別 に hash 反 映。
+  // Declarations only (= the slot schema). i64 literal values / state initials
+  // are bigint, which JSON cannot serialize, so they are rendered as the string
+  // `<value>n` to stay deterministic and reflect each distinct value in the hash.
   const serialized = JSON.stringify(graph.declarations, (_key, value: unknown) =>
     typeof value === "bigint" ? `${value}n` : value,
   );
   const data = new TextEncoder().encode(serialized);
-  // 2 つ の 異 な る seed lane を 連 結 し て 128-bit (= 32 hex)、 衝 突 余 裕 を 確 保。
+  // Concatenate two lanes with distinct seeds to form 128 bits (= 32 hex), leaving ample collision headroom.
   return fnv1a(data, FNV_OFFSET) + fnv1a(data, FNV_OFFSET ^ 0x9e3779b97f4a7c15n);
 }

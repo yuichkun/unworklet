@@ -1,10 +1,10 @@
 /**
- * Browser e2e: canonical Ex 1 full (= stereo gain + meter L/R) の 全 behavior
- * を real `AudioContext` + `AudioWorkletNode` + SAB + Atomics 経 由 で 検 証。
+ * Browser e2e: full behavior of canonical Ex 1 (stereo gain + meter L/R)
+ * verified through a real `AudioContext` + `AudioWorkletNode` + SAB + Atomics.
  *
- * cover: Audio I/O / param 操 作 (= setValueAtTime / linearRampToValueAtTime) /
- * state.publish (= sync read + subscribe rAF polling + 同 値 fire) / lifecycle
- * (= dispose / 2 度 dispose / onError) / transport diagnostics。
+ * Covers: Audio I/O / param automation (setValueAtTime / linearRampToValueAtTime) /
+ * state.publish (sync read + subscribe rAF polling + same-value fire) / lifecycle
+ * (dispose / double dispose / onError) / transport diagnostics.
  */
 
 import { expect, test } from "vite-plus/test";
@@ -57,7 +57,7 @@ const buildStereoContext = (
 // Audio I/O behavior
 // ─────────────────────────────────────────────────────────────────────────
 
-test("audio: stereo gain × DC input = output 0.5 で 両 channel 安 定", async () => {
+test("audio: stereo gain × DC input = both channels stable at output 0.5", async () => {
   const { ctx, merger, constantL, constantR } = buildStereoContext(8);
   const node = await createNode(ctx, stereoGain, { initial: { gain: 0.5 } });
   merger.connect(node.inputs["main"]!);
@@ -71,7 +71,7 @@ test("audio: stereo gain × DC input = output 0.5 で 両 channel 安 定", asyn
   node.dispose();
 });
 
-test("audio: gain = 0 で output が 全 sample 0 (= mute)", async () => {
+test("audio: gain = 0 produces all-zero output (mute)", async () => {
   const { ctx, merger, constantL, constantR } = buildStereoContext(4);
   const node = await createNode(ctx, stereoGain, { initial: { gain: 0 } });
   merger.connect(node.inputs["main"]!);
@@ -81,18 +81,18 @@ test("audio: gain = 0 で output が 全 sample 0 (= mute)", async () => {
   const rendered = await ctx.startRendering();
   const ch0 = rendered.getChannelData(0);
   for (let i = 64; i < ch0.length; i++) {
-    // 立 ち 上 が り transient を 避 け て 後 半 だ け check
+    // skip the leading transient; check only the steady-state tail
     expect(ch0[i]).toBe(0);
   }
   node.dispose();
 });
 
-test("audio: gain ramp で output が 滑 ら か に 推 移 (= a-rate path 担 保)", async () => {
+test("audio: gain ramp produces smoothly transitioning output (a-rate path)", async () => {
   const { ctx, merger, constantL, constantR } = buildStereoContext(8);
   const node = await createNode(ctx, stereoGain, { initial: { gain: 0 } });
   merger.connect(node.inputs["main"]!);
   node.outputs["main"]!.connect(ctx.destination);
-  // 0 → 1.0 を 8 quantum 分 か け て ramp
+  // ramp gain from 0 to 1.0 over 8 quanta
   node.params["gain"]!.setValueAtTime(0, 0);
   node.params["gain"]!.linearRampToValueAtTime(1.0, (128 * 8) / SAMPLE_RATE);
   constantL.start();
@@ -100,7 +100,7 @@ test("audio: gain ramp で output が 滑 ら か に 推 移 (= a-rate path 担
   const rendered = await ctx.startRendering();
   const ch0 = rendered.getChannelData(0);
   const samplesPerBlock = 128;
-  // 開 始 付 近 = 0 寄 り、 末 尾 付 近 = 1.0 寄 り、 単 調 増 加
+  // near the start: close to 0; near the end: close to 1.0; monotonically increasing
   const early = ch0[samplesPerBlock]!;
   const late = ch0[samplesPerBlock * 7]!;
   expect(early).toBeLessThan(late);
@@ -112,24 +112,24 @@ test("audio: gain ramp で output が 滑 ら か に 推 移 (= a-rate path 担
 // Param behavior
 // ─────────────────────────────────────────────────────────────────────────
 
-test("param: setValueAtTime で 後 半 quantum の gain 変 化", async () => {
+test("param: setValueAtTime changes gain in the latter half of the render", async () => {
   const { ctx, merger, constantL, constantR } = buildStereoContext(8);
   const node = await createNode(ctx, stereoGain, { initial: { gain: 0.2 } });
   merger.connect(node.inputs["main"]!);
   node.outputs["main"]!.connect(ctx.destination);
-  // 4 quantum 後 に 0.8 へ
+  // switch to 0.8 after 4 quanta
   node.params["gain"]!.setValueAtTime(0.8, (128 * 4) / SAMPLE_RATE);
   constantL.start();
   constantR.start();
   const rendered = await ctx.startRendering();
   const ch0 = rendered.getChannelData(0);
-  // block 1 (= 0.2) と block 6 (= 0.8) で 差 が 出 る
+  // block 1 should reflect 0.2 and block 6 should reflect 0.8
   expect(ch0[128]).toBeCloseTo(0.2, 2);
   expect(ch0[128 * 6]).toBeCloseTo(0.8, 2);
   node.dispose();
 });
 
-test("param: node.params.gain.value で 直 接 set + 反 映", async () => {
+test("param: direct assignment to node.params.gain.value takes effect", async () => {
   const { ctx, merger, constantL, constantR } = buildStereoContext(4);
   const node = await createNode(ctx, stereoGain);
   merger.connect(node.inputs["main"]!);
@@ -147,7 +147,7 @@ test("param: node.params.gain.value で 直 接 set + 反 映", async () => {
 // state.publish behavior
 // ─────────────────────────────────────────────────────────────────────────
 
-test("state.publish: meter L/R = render 後 SAB 経 由 で 0 < v ≤ 0.5", async () => {
+test("state.publish: meter L/R readable via SAB after render, values in (0, 0.5]", async () => {
   const { ctx, merger, constantL, constantR } = buildStereoContext(32);
   const node = await createNode(ctx, stereoGain, { initial: { gain: 0.5 } });
   merger.connect(node.inputs["main"]!);
@@ -164,7 +164,7 @@ test("state.publish: meter L/R = render 後 SAB 経 由 で 0 < v ≤ 0.5", asyn
   node.dispose();
 });
 
-test("state.publish: subscribe handler が rAF tick で fire", async () => {
+test("state.publish: subscribe handler fires on rAF ticks", async () => {
   const { ctx, merger, constantL, constantR } = buildStereoContext(32);
   const node = await createNode(ctx, stereoGain, { initial: { gain: 0.5 } });
   merger.connect(node.inputs["main"]!);
@@ -181,7 +181,7 @@ test("state.publish: subscribe handler が rAF tick で fire", async () => {
   node.dispose();
 });
 
-test("state.publish: unsubscribe 後 handler が fire し な い", async () => {
+test("state.publish: handler does not fire after unsubscribe", async () => {
   const { ctx, merger, constantL, constantR } = buildStereoContext(32);
   const node = await createNode(ctx, stereoGain, { initial: { gain: 0.5 } });
   merger.connect(node.inputs["main"]!);
@@ -199,7 +199,7 @@ test("state.publish: unsubscribe 後 handler が fire し な い", async () => 
   node.dispose();
 });
 
-test("state.publish: 多 重 subscribe で 全 handler fire", async () => {
+test("state.publish: all handlers fire when multiple subscribers are registered", async () => {
   const { ctx, merger, constantL, constantR } = buildStereoContext(32);
   const node = await createNode(ctx, stereoGain, { initial: { gain: 0.5 } });
   merger.connect(node.inputs["main"]!);
@@ -220,10 +220,11 @@ test("state.publish: 多 重 subscribe で 全 handler fire", async () => {
   node.dispose();
 });
 
-test("state.publish: 同 値 publish で も handler 連 続 fire (= Q39-b no-dedupe)", async () => {
-  // 仕 様 Q39-a/b: audio thread = 無 条 件 inc、 main side = 版 advance で
-  // framework 値 比 較 ナ シ で handler 必 ず fire。 gain = 0 で meter 値 が
-  // 0 の ま ま (= 同 値) で も 各 due tick で fire す る こ と を SAB path で も 担 保。
+test("state.publish: handler fires on every tick even when the published value is unchanged (Q39-b no-dedupe)", async () => {
+  // Spec Q39-a/b: the audio thread unconditionally increments the version counter;
+  // the main side fires handlers on every version advance with no value comparison.
+  // Even when gain = 0 keeps meterL at 0 (same value each publish), the handler
+  // must fire on every due tick — verified through the SAB path.
   const { ctx, merger, constantL, constantR } = buildStereoContext(48);
   const node = await createNode(ctx, stereoGain, { initial: { gain: 0 } });
   merger.connect(node.inputs["main"]!);
@@ -244,14 +245,14 @@ test("state.publish: 同 値 publish で も handler 連 続 fire (= Q39-b no-de
 // Lifecycle behavior
 // ─────────────────────────────────────────────────────────────────────────
 
-test("lifecycle: dispose 後 2 度 呼 ぶ で no-op (= 例 外 出 ず)", async () => {
+test("lifecycle: calling dispose twice is a no-op (no exception thrown)", async () => {
   const { ctx } = buildStereoContext(1);
   const node = await createNode(ctx, stereoGain);
   expect(() => node.dispose()).not.toThrow();
   expect(() => node.dispose()).not.toThrow();
 });
 
-test("lifecycle: onError handler 登 録 + unsubscribe path 動 く", async () => {
+test("lifecycle: onError handler registration and unsubscribe path work", async () => {
   const { ctx } = buildStereoContext(1);
   const node = await createNode(ctx, stereoGain);
   const errors: unknown[] = [];
@@ -261,7 +262,7 @@ test("lifecycle: onError handler 登 録 + unsubscribe path 動 く", async () =
   node.dispose();
 });
 
-test("lifecycle: dispose で subscribe handler が 以 後 fire し な い", async () => {
+test("lifecycle: subscribe handlers do not fire after dispose", async () => {
   const { ctx, merger, constantL, constantR } = buildStereoContext(32);
   const node = await createNode(ctx, stereoGain, { initial: { gain: 0.5 } });
   merger.connect(node.inputs["main"]!);
@@ -282,7 +283,7 @@ test("lifecycle: dispose で subscribe handler が 以 後 fire し な い", as
 // Transport diagnostics
 // ─────────────────────────────────────────────────────────────────────────
 
-test("transport: COOP/COEP 経 由 で sab", async () => {
+test("transport: COOP/COEP headers enable SAB transport", async () => {
   const { ctx } = buildStereoContext(1);
   const node = await createNode(ctx, stereoGain);
   expect(node.diagnostics.transport).toBe("sab");

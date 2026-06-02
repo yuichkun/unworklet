@@ -262,9 +262,9 @@ test("buffer ring delay: an impulse is delayed by 100 samples", async () => {
   }
 });
 
-// literal な index / offset / pos は graph-capture 時に range-check されて隣接 memory
-// access を防ぐ (= §3.2、dynamic Node<'i32'> は caller 責任)。
-test("buffer literal index は範囲外を graph-capture で reject する", () => {
+// Literal index / offset / pos values are range-checked at graph-capture time to
+// prevent adjacent-memory access (§3.2; dynamic Node<'i32'> is the caller's responsibility).
+test("buffer literal index out of bounds is rejected at graph-capture", () => {
   const build = (body: (buf: ReturnType<typeof state.buffer.f32>) => void): (() => void) => {
     return () =>
       defineProcessor(() => {
@@ -273,10 +273,10 @@ test("buffer literal index は範囲外を graph-capture で reject する", () 
       });
   };
   expect(build((buf) => buf.read(-1))).toThrow(/out of range/);
-  expect(build((buf) => buf.read(8))).toThrow(/out of range/); // size = 8 = 上限外
+  expect(build((buf) => buf.read(8))).toThrow(/out of range/); // size = 8; index 8 is one past the end
   expect(build((buf) => buf.write(8, f32(1)))).toThrow(/out of range/);
-  expect(build((buf) => buf.read(1.5))).toThrow(/out of range/); // 非整数
-  // in-range は throw しない (= 0 と size-1)。
+  expect(build((buf) => buf.read(1.5))).toThrow(/out of range/); // non-integer index
+  // In-range indices (0 and size-1) must not throw.
   expect(build((buf) => buf.read(0))).not.toThrow();
   expect(build((buf) => buf.read(7))).not.toThrow();
 });

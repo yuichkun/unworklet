@@ -1,17 +1,19 @@
 /**
- * Static-analysis stage of the compile pipeline (= `03-compiler.md` §3、
- * plan Q-D stage 別 internal module の 1 つ目)。
+ * Static-analysis stage of the compile pipeline (= `03-compiler.md` §3, the
+ * first of the plan Q-D per-stage internal modules).
  *
- * Layer 3 check 群 を kind ご と に 順 次 fill。 現 状 fill 済:
- *   - `constant-truthy-emitif` (Q32-c): `forSample` callback 内 で 構 文 上
- *     constant-truthy な `emitIf` cond は emit 前 に reject。
- *   - `select-branch-type-mismatch`: `select` の 2 branch が 異 な る scalar 型 =
- *     WASM `select` は 同 型 branch 必 須 = reject。 多 型 lowering 後 も branch 型
- *     不 一 致 (= TS をすり抜けた 場 合) を fail-loud で 弾 く。
+ * Layer 3 checks are filled in per kind. Currently implemented:
+ *   - `constant-truthy-emitif` (Q32-c): an `emitIf` cond that is syntactically
+ *     constant-truthy inside a `forSample` callback is rejected before emit.
+ *   - `select-branch-type-mismatch`: the two branches of a `select` have
+ *     different scalar types — WASM `select` requires same-type branches, so
+ *     this is rejected. Even after polymorphic lowering, a branch type mismatch
+ *     (= one that slipped past TS) is caught fail-loud.
  *
- * 算 術 / 比 較 は operand の scalar 型 を AST に 担 ぎ、 emit が 型 別 命 令 を
- * 出 す (= 多 型 lowering)。 旧 `non-f32-arithmetic` guard (= f32 固 定 emit 時 代 の
- * silent mis-compile 防 止) は 撤 去 済 み。
+ * Arithmetic / comparison carry the operands' scalar type on the AST, and emit
+ * issues type-specific instructions (= polymorphic lowering). The former
+ * `non-f32-arithmetic` guard (= which prevented silent mis-compilation back when
+ * emit was fixed to f32) has been removed.
  */
 
 import type { AstNode, CapturedGraph } from "./ast.ts";
@@ -24,8 +26,9 @@ export type DiagnosticEntry = {
 };
 
 /**
- * cond AST が build-time-constant な truthy 値 を 表 す か。 graph capture 時
- * の literal lift と zip し て、 literal で value !== 0 = truthy と 判 定。
+ * Whether the cond AST represents a build-time-constant truthy value. Paired
+ * with the literal lift done at graph-capture time, it treats a literal with
+ * value !== 0 as truthy.
  */
 function isConstantTruthy(node: AstNode): boolean {
   return node.kind === "literal" && node.value !== 0;
@@ -59,9 +62,11 @@ function walkForConstantTruthyEmitIf(
 }
 
 /**
- * 全 node を walk し、 `select` の branch 型 不 一 致 を 検 出 (= `select-branch-type-mismatch`)。
- * literal branch は select builder が branch 型 へ lift 済 み (= Q33)、 ここ で 弾 く の は
- * TS を す り 抜 け た 真 の 型 不 一 致 (= `Node<'f32'>` と `Node<'i32'>` の 2 branch 等)。
+ * Walks every node and detects branch type mismatches in `select`
+ * (= `select-branch-type-mismatch`). Literal branches are already lifted to the
+ * branch type by the select builder (= Q33); what is caught here is a genuine
+ * type mismatch that slipped past TS (e.g. a `Node<'f32'>` and a `Node<'i32'>`
+ * as the two branches).
  */
 function walkForTypeErrors(node: AstNode, diagnostics: DiagnosticEntry[]): void {
   switch (node.kind) {
@@ -139,7 +144,7 @@ function walkForTypeErrors(node: AstNode, diagnostics: DiagnosticEntry[]): void 
     case "payloadFieldLength":
       break;
     case "bufferCopyFrom":
-      // 子 expression ナ シ (= bufferName / messageName / field は string)。
+      // No child expressions (= bufferName / messageName / field are strings).
       break;
     case "bufferWrite":
       walkForTypeErrors(node.index, diagnostics);
@@ -188,15 +193,18 @@ function walkForTypeErrors(node: AstNode, diagnostics: DiagnosticEntry[]): void 
   }
 }
 
-// forSample.byN(stride) で許可する stride = 1 ブロック (128) を割り切る 2 の冪。
-// SIMD bulk (stride 4 で 4 sample load) 等で 128 / stride が整数になる必要がある。
+// The strides allowed for forSample.byN(stride) = powers of two that evenly
+// divide one block (128). Cases like SIMD bulk (a 4-sample load at stride 4)
+// require 128 / stride to be an integer.
 const ALLOWED_STRIDES = new Set([1, 2, 4, 8, 16, 32, 64, 128]);
 
-// loop primitive (forSample.byN / everyNSamples) の compile-time 静的検証。
-// forSample.byN stride は 128 を割り切る 2 の冪 (= ALLOWED_STRIDES)、everyNSamples
-// の divisor N は §9.5 で「compile-time な正の整数」(= block 跨ぎ free-running counter
-// なので 128 を割り切る必要はない、§9.1)。どちらも違反は audio thread に届く前に reject:
-// N=0 は emit が i32.rem_u(counter, 0) を吐いて audio thread で 0 除算 trap する。
+// Compile-time static validation of the loop primitives (forSample.byN /
+// everyNSamples). The forSample.byN stride must be a power of two that divides
+// 128 (= ALLOWED_STRIDES); per §9.5 the everyNSamples divisor N must be a
+// "compile-time positive integer" (= because the counter free-runs across
+// blocks it need not divide 128, §9.1). Either violation is rejected before it
+// reaches the audio thread: with N=0, emit would emit i32.rem_u(counter, 0),
+// which traps on a divide-by-zero on the audio thread.
 function walkForLoopErrors(body: readonly AstNode[], diagnostics: DiagnosticEntry[]): void {
   for (const node of body) {
     if (node.kind === "forSample") {
@@ -204,7 +212,7 @@ function walkForLoopErrors(body: readonly AstNode[], diagnostics: DiagnosticEntr
         diagnostics.push({
           id: "illegal-stride",
           severity: "error",
-          message: `unworklet: forSample.byN stride ${node.stride} は render quantum (128) を割り切る 2 の冪ではない。許可: 1, 2, 4, 8, 16, 32, 64, 128 (stable ID 'illegal-stride')`,
+          message: `unworklet: forSample.byN stride ${node.stride} is not a power of two that evenly divides the render quantum (128). Allowed: 1, 2, 4, 8, 16, 32, 64, 128 (stable ID 'illegal-stride')`,
         });
       }
       walkForLoopErrors(node.body, diagnostics);
@@ -213,7 +221,7 @@ function walkForLoopErrors(body: readonly AstNode[], diagnostics: DiagnosticEntr
         diagnostics.push({
           id: "illegal-everyn-divisor",
           severity: "error",
-          message: `unworklet: everyNSamples(N) の N は compile-time な正の整数でなければならない (got ${node.divisor})。N=0 は audio thread で 0 除算 trap、負/非整数は無効 (stable ID 'illegal-everyn-divisor')`,
+          message: `unworklet: everyNSamples(N) requires N to be a compile-time positive integer (got ${node.divisor}). N=0 traps on a divide-by-zero on the audio thread; negative or non-integer values are invalid (stable ID 'illegal-everyn-divisor')`,
         });
       }
       walkForLoopErrors(node.body, diagnostics);
@@ -221,10 +229,11 @@ function walkForLoopErrors(body: readonly AstNode[], diagnostics: DiagnosticEntr
   }
 }
 
-// §5.1: message<T> / event<T> の payload は variable-length (typed-array) field を
-// 1 つまで。slot は単一の [payloadLen, payloadOffset] pair しか持てないので、複数あると
-// transport が破綻する → graph-capture-time error。field は access (.at() / copyFrom /
-// emitIf) 時に payloadElementType が seal されるので、seal 済を数えて 2 つ以上で reject。
+// §5.1: a message<T> / event<T> payload may have at most one variable-length
+// (typed-array) field. A slot can only hold a single [payloadLen, payloadOffset]
+// pair, so more than one breaks the transport → graph-capture-time error. A
+// field's payloadElementType is sealed on access (.at() / copyFrom / emitIf), so
+// count the sealed ones and reject at two or more.
 function checkPayloadFieldLimit(graph: CapturedGraph, diagnostics: DiagnosticEntry[]): void {
   for (const decl of graph.declarations) {
     if (decl.kind !== "message" && decl.kind !== "event") continue;

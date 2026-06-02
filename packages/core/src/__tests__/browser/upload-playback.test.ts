@@ -1,8 +1,9 @@
 /**
- * Browser e2e (SAB transport): typed-array message payload を main → worklet で
- * 送って worklet 側で読めることを real `AudioContext` + `AudioWorkletNode` + SAB
- * 経由で検証。main で `node.events.upload.emit({ samples })` に `Float32Array` を渡し、
- * worklet が出力にそのまま再生 → 出力 PCM が送った配列と一致するかを黒箱 assert。
+ * Browser e2e (SAB transport): verifies that a typed-array message payload sent
+ * from main → worklet is readable on the worklet side via a real `AudioContext` +
+ * `AudioWorkletNode` + SAB. Main calls `node.events.upload.emit({ samples })` with
+ * a `Float32Array`; the worklet plays it back verbatim to the output → black-box
+ * assert that the rendered PCM matches the uploaded array.
  */
 
 import { expect, test } from "vite-plus/test";
@@ -19,12 +20,12 @@ const buildContext = (durationQuanta: number): OfflineAudioContext =>
     sampleRate: SAMPLE_RATE,
   });
 
-test("typed-array message: main で Float32Array upload → worklet が出力に再生", async () => {
+test("typed-array message: Float32Array uploaded from main is played back by the worklet", async () => {
   const ctx = buildContext(1);
   const node = await createNode(ctx, uploadPlayback);
   node.outputs["main"]!.connect(ctx.destination);
 
-  // 0.004..0.5 の ramp (= 全要素 m/256 = f32 で厳密表現可)。
+  // Ramp from 0.004 to 0.5 (each element = m/256, exactly representable as f32).
   const samples = new Float32Array(128);
   for (let k = 0; k < 128; k++) samples[k] = (k + 1) / 256;
 
@@ -39,12 +40,12 @@ test("typed-array message: main で Float32Array upload → worklet が出力に
   node.dispose();
 });
 
-test("typed-array message: 別配列を送ると出力が切り替わる", async () => {
+test("typed-array message: sending a second array switches the output to that array", async () => {
   const ctx = buildContext(1);
   const node = await createNode(ctx, uploadPlayback);
   node.outputs["main"]!.connect(ctx.destination);
 
-  // 末尾 send が drain order で勝つ = 出力は 2 個目の配列。
+  // The last send wins in drain order, so the output reflects the second array.
   const first = new Float32Array(128).fill(0.1);
   const second = new Float32Array(128).fill(0.4);
   const sender = node.events["upload"].emit;
@@ -58,7 +59,7 @@ test("typed-array message: 別配列を送ると出力が切り替わる", async
   node.dispose();
 });
 
-test("typed-array message: upload ナシで出力 0 維持 (= regression)", async () => {
+test("typed-array message: output stays zero when no upload is sent (regression)", async () => {
   const ctx = buildContext(1);
   const node = await createNode(ctx, uploadPlayback);
   node.outputs["main"]!.connect(ctx.destination);

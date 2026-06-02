@@ -147,7 +147,7 @@ Dev-time live channels (= Shared State + Streaming over the DevTools Kit RPC) ca
 
 ### 6.4 New surface declared alongside the panel set
 
-The panel set depends on a small set of new public surfaces. Each entry below is the spec-side contract; the runtime fill lands in Phase 6 末 尾 (see `10-roadmap.md`).
+The panel set depends on a small set of new public surfaces. Each entry below is the spec-side contract; the runtime fill lands at the tail of Phase 6 (see `10-roadmap.md`).
 
 - **`AudioNode.prototype.connect/disconnect` monkey patch** (dev-only, opt-out via `unworklet({ devtools: { observeAudioGraph: false } })`). Wraps all 5 connect overloads + all 5 disconnect overloads, preserves return values via `.apply(this, arguments)`, records edge changes into a Shared State channel so the Audio graph panel can render the live AudioContext graph. Production builds emit no patch.
 - **`UnworkletNode` auto-registry** (= internal WeakSet inside `@unworklet/core`). `createNode(...)` registers the produced wrapper; `dispose()` removes it. Panels discover live unworklet nodes through a server RPC against this set without exposing it as a public consumer surface.

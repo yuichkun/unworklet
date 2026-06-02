@@ -1,13 +1,13 @@
 /**
  * Behavioral tests for `emitWorkletTemplate(...)` — the JS source emitter
  * that vite-plugin uses to construct the worklet runtime entry (= the file
- * loaded via `audioWorklet.addModule(url)` in the worklet realm)。
+ * loaded via `audioWorklet.addModule(url)` in the worklet realm).
  *
  * Contract: the template embeds inline metadata + boots through
- * `@unworklet/core/worklet`'s `makeWorkletNamespaceFromMeta(...)`。 It MUST
+ * `@unworklet/core/worklet`'s `makeWorkletNamespaceFromMeta(...)`. It MUST
  * NOT re-import the authoring processor source from the worklet realm
  * (= no `defineProcessor` re-evaluation on the audio thread,
- * `00-foundations.md` §5.1 + 04-worklet-runtime §2)。
+ * `00-foundations.md` §5.1 + 04-worklet-runtime §2).
  */
 
 import {
@@ -54,7 +54,7 @@ test("emits a JS module that imports only from `@unworklet/core/worklet` (no aut
   });
   expect(out).toContain('from "@unworklet/core/worklet"');
   expect(out).toContain("makeWorkletNamespaceFromMeta");
-  // The processor source must NOT be re-imported in the worklet realm。
+  // The processor source must NOT be re-imported in the worklet realm.
   expect(out).not.toContain("/abs/");
   expect(out).not.toContain(".processor.ts");
   expect(out).not.toContain("defineProcessor");
@@ -65,7 +65,7 @@ test("inlines the WorkletMeta as a JSON literal next to the namespace bootstrap"
     processorName: "stereoGain__abcd1234",
     meta: META_FIXTURE,
   });
-  // The metadata appears in JSON form, not as a function call。
+  // The metadata appears in JSON form, not as a function call.
   const inlined = JSON.stringify(META_FIXTURE);
   expect(out).toContain(inlined);
   expect(out).toContain("makeWorkletNamespaceFromMeta(__unworkletMeta)");

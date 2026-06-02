@@ -46,8 +46,9 @@ export function i64(v: bigint): Node<"i64"> {
 export function bool(v: boolean): Node<"bool">;
 export function bool(v: Node<ScalarType>): Node<"bool">;
 export function bool(v: boolean | Node<ScalarType>): Node<"bool"> {
-  // bool は 内 部 i32 表 現 (= 0/1)。 boolean literal は そ の ま ま、 numeric Node は
-  // `x != 0` で 明 示 変 換 (= `01-dsl.md` §4「Integer and boolean conversions」)。
+  // bool is represented internally as i32 (0/1). A boolean literal maps directly,
+  // while a numeric Node is converted explicitly via `x != 0` (see `01-dsl.md`
+  // §4 "Integer and boolean conversions").
   if (typeof v === "boolean") {
     return wrapAst<"bool">({ kind: "literal", type: "bool", value: v ? 1 : 0 });
   }
