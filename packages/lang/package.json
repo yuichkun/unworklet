@@ -41,7 +41,6 @@
     "@unworklet/core": "workspace:*",
     "@volar/language-core": "catalog:",
     "@volar/typescript": "catalog:",
-    "muggle-string": "catalog:",
     "typescript": "catalog:"
   },
   "devDependencies": {

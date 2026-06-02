@@ -196,6 +196,14 @@ test("an explicit name is never overwritten by auto-name", () => {
   expect(c).not.toContain('.named("custom").named');
 });
 
+test("an explicit name on an event — even quoted — is not duplicated", () => {
+  const c = code(`const taps = event({ "name": "explicit", from: "main" });
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => { taps.onReceive(() => {}); forSample((i) => { out.ch(0)[i] = 0; }); });`);
+  expect(c).toContain('event({ "name": "explicit", from: "main" })');
+  expect(c).not.toContain('name: "taps"');
+});
+
 // ───────────────────────── build-time (non-DSL) pass-through ────────────────
 
 test("a build-time ternary and a prefix-minus on a literal stay as JavaScript", () => {
