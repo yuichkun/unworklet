@@ -13,13 +13,17 @@
       "development": "./src/index.ts",
       "import": "./dist/index.mjs"
     },
+    "./browser": {
+      "types": "./src/browser.ts",
+      "import": "./dist/browser.mjs"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "vp pack",
+    "build": "node scripts/build.mjs",
     "dev": "vp pack --watch",
     "test": "vp test",
     "check": "vp check",
@@ -34,6 +38,7 @@
     "@typescript/native-preview": "7.0.0-dev.20260509.2",
     "@unworklet/offline": "workspace:*",
     "bumpp": "^11.1.0",
+    "esbuild": "catalog:",
     "vite-plus": "catalog:"
   },
   "peerDependencies": {
