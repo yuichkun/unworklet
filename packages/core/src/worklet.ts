@@ -1252,7 +1252,12 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       const portViews = inputViews[portIdx]!;
       for (let c = 0; c < decl.channels; c++) {
         const view = portViews[c]!;
-        const src = portInput[c];
+        // A mono source feeding a stereo-declared port hands us fewer channels
+        // than declared (AudioWorklet channelCountMode 'max'). Up-mix the missing
+        // channel from channel 0 (Web Audio 'speakers' convention) so every
+        // declared channel carries signal — otherwise the right output is silent
+        // ("left-only"). A fully disconnected port (no channel 0) stays silence.
+        const src = portInput[c] ?? portInput[0];
         if (src && src.length === SAMPLES_PER_BLOCK) {
           view.set(src);
         } else {

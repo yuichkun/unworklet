@@ -324,6 +324,29 @@ test("`process` handles a disconnected input port (= empty channel array) as sil
   }
 });
 
+test("`process` up-mixes a mono input across a stereo-declared port (no left-only)", async () => {
+  // A mono source connected to a stereo `audioInput({ channels: 2 })` effect:
+  // AudioWorklet (channelCountMode 'max') hands the worklet ONE input channel.
+  // The declared 2nd channel must be filled from channel 0 (Web Audio 'speakers'
+  // up-mix), not zeroed — otherwise the right output is silent (the "left-only"
+  // bug). A disconnected port (zero channels) still maps to silence (test above).
+  const { wasm } = await compile(stereoGain);
+  const self = makeMockSelf();
+  stereoGain.worklet.initialize(self, { processorOptions: { wasm } });
+
+  const mono = new Float32Array(SAMPLES_PER_BLOCK).fill(0.5);
+  const inputs = [[mono]]; // ONE channel feeding a 2-channel input port
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK), new Float32Array(SAMPLES_PER_BLOCK)]];
+  const parameters = { gain: new Float32Array([2]) };
+
+  stereoGain.worklet.process(self, inputs, outputs, parameters);
+
+  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
+    expect(outputs[0][0]![i]).toBeCloseTo(1.0); // left  = 0.5 × 2
+    expect(outputs[0][1]![i]).toBeCloseTo(1.0); // right = up-mixed 0.5 × 2 (currently 0)
+  }
+});
+
 test("`process` on path-β escape hatch with missing `initialize(self, opts)` posts `worklet-initialize-not-called` exactly once", async () => {
   // Path β = user-authored `class extends AudioWorkletProcessor` whose
   // constructor forgot to invoke `def.worklet.initialize(this, opts)`
