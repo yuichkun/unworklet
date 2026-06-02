@@ -27,8 +27,6 @@ import { AMBIENT_DTS } from "./ambient.ts";
 // disk-relative paths below are never resolved against a real file system; they
 // are just stable keys that match the captured snapshot.
 const SELF_DIR = (import.meta as { dirname?: string }).dirname ?? "/__uwk__";
-const AMBIENT_PATH = `${SELF_DIR}/__uwk_ambient__.d.ts`;
-const INPUT_PATH = `${SELF_DIR}/__uwk_input__.ts`;
 
 const COMPILER_OPTIONS: ts.CompilerOptions = {
   target: ts.ScriptTarget.ESNext,
@@ -79,6 +77,16 @@ export type FsSnapshot = {
   currentDirectory: string;
   useCaseSensitiveFileNames: boolean;
   newLine: string;
+  /**
+   * The directory the entry virtuals (`__uwk_input__.ts` / `__uwk_ambient__.d.ts`)
+   * were placed under WHEN THE SNAPSHOT WAS RECORDED. Module resolution starts from
+   * this directory, so every recorded `fileExists` / `directoryExists` /
+   * `getDirectories` / `realpath` key is derived from it. Replay MUST build the
+   * program with the same entry directory, otherwise the checker asks for
+   * differently-rooted paths the snapshot never recorded, `@unworklet/core`'s types
+   * fail to resolve, and type-directed lowering silently degrades to a no-op.
+   */
+  selfDir: string;
 };
 
 export type BuildProgramOptions = {
@@ -104,17 +112,26 @@ export function emptySnapshot(): FsSnapshot {
     currentDirectory: "",
     useCaseSensitiveFileNames: true,
     newLine: "\n",
+    // Seeded with the record-time directory; replay overrides the live SELF_DIR
+    // with the snapshot's value so the entry paths match what was recorded.
+    selfDir: SELF_DIR,
   };
 }
 
-const virtualsFor = (source: string): Record<string, string> => ({
-  [AMBIENT_PATH]: AMBIENT_DTS,
-  [INPUT_PATH]: source,
+const ambientPathFor = (selfDir: string): string => `${selfDir}/__uwk_ambient__.d.ts`;
+const inputPathFor = (selfDir: string): string => `${selfDir}/__uwk_input__.ts`;
+
+const virtualsFor = (source: string, selfDir: string): Record<string, string> => ({
+  [ambientPathFor(selfDir)]: AMBIENT_DTS,
+  [inputPathFor(selfDir)]: source,
 });
 
 /** A host that answers purely from a captured snapshot — no disk, no `ts.sys`. */
 function replayHost(source: string, snap: FsSnapshot): ts.CompilerHost {
-  const virtuals = virtualsFor(source);
+  // Use the snapshot's record-time directory so the entry paths — and therefore
+  // every module-resolution lookup the checker derives from them — match the
+  // recorded keys exactly.
+  const virtuals = virtualsFor(source, snap.selfDir);
   const text = (fileName: string): string | undefined =>
     virtuals[fileName] ?? snap.sourceTexts[fileName];
   return {
@@ -150,8 +167,9 @@ function diskHost(source: string, record?: FsSnapshot): ts.CompilerHost {
     record.currentDirectory = host.getCurrentDirectory();
     record.useCaseSensitiveFileNames = host.useCaseSensitiveFileNames();
     record.newLine = host.getNewLine();
+    record.selfDir = SELF_DIR;
   }
-  const virtuals = virtualsFor(source);
+  const virtuals = virtualsFor(source, SELF_DIR);
   const base = {
     getSourceFile: host.getSourceFile.bind(host),
     readFile: host.readFile.bind(host),
@@ -207,10 +225,11 @@ function diskHost(source: string, record?: FsSnapshot): ts.CompilerHost {
   return host;
 }
 
-function buildFrom(source: string, host: ts.CompilerHost): BuiltProgram {
-  const program = ts.createProgram([AMBIENT_PATH, INPUT_PATH], COMPILER_OPTIONS, host);
+function buildFrom(source: string, host: ts.CompilerHost, selfDir: string): BuiltProgram {
+  const inputPath = inputPathFor(selfDir);
+  const program = ts.createProgram([ambientPathFor(selfDir), inputPath], COMPILER_OPTIONS, host);
   const checker = program.getTypeChecker();
-  const sourceFile = program.getSourceFile(INPUT_PATH);
+  const sourceFile = program.getSourceFile(inputPath);
   if (sourceFile === undefined) {
     throw new Error("unworklet/lang: failed to build the .uwk.ts program (input not found)");
   }
@@ -226,7 +245,10 @@ function buildFrom(source: string, host: ts.CompilerHost): BuiltProgram {
  */
 export function buildProgram(source: string, options: BuildProgramOptions = {}): BuiltProgram {
   if (options.snapshot !== undefined) {
-    return buildFrom(source, replayHost(source, options.snapshot));
+    // Replay: build with the snapshot's record-time directory so resolution
+    // matches the recorded host answers (the live SELF_DIR is the browser's
+    // `/__uwk__` fallback, which would never match a Node-recorded snapshot).
+    return buildFrom(source, replayHost(source, options.snapshot), options.snapshot.selfDir);
   }
-  return buildFrom(source, diskHost(source, options.record));
+  return buildFrom(source, diskHost(source, options.record), SELF_DIR);
 }

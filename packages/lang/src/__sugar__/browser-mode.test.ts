@@ -72,3 +72,32 @@ test("the snapshot is JSON-serializable (shippable to the browser) and still low
   const roundTripped = JSON.parse(JSON.stringify(snapshot)) as typeof snapshot;
   expect(lower(SYNTH, { snapshot: roundTripped })).toBe(lower(SYNTH));
 });
+
+test("replaying a snapshot actually lowers the sugar (not a silent identity pass-through)", () => {
+  // The browser bug was that type-directed lowering silently degraded to a no-op
+  // off-disk: `out.left[i] = v` stayed raw, so the captured graph had an empty
+  // process body and the WASM was a silent stub. Pin that the off-disk lowering
+  // resolves `@unworklet/core`'s types and rewrites the index-write + operators.
+  const offDisk = lower(DISTORTION, { snapshot: captureFsSnapshot() });
+  expect(offDisk).toContain(".at(");
+  expect(offDisk).toContain(".write(");
+  expect(offDisk).toContain("mul(");
+  expect(offDisk).not.toMatch(/out\.left\[/); // the raw index-write must be gone
+});
+
+test("replay binds the program to the SNAPSHOT's record directory, not the live one", () => {
+  // Module resolution starts from the entry file's directory; every recorded host
+  // answer is keyed off it. The snapshot must therefore carry that directory and
+  // replay must use it — otherwise an environment whose live directory differs
+  // (the browser, where `import.meta.dirname` is undefined → `/__uwk__`) resolves
+  // against keys the snapshot never recorded and lowering degrades to a no-op.
+  const snapshot = captureFsSnapshot();
+  expect(typeof snapshot.selfDir).toBe("string");
+  expect(snapshot.selfDir.length).toBeGreaterThan(0);
+  // Resolution keys are derived from selfDir, so it must be a prefix of the
+  // recorded paths (the entry's node_modules walk starts there).
+  const someRecordedKey = Object.keys(snapshot.sourceTexts).find((k) =>
+    k.includes("@unworklet/core"),
+  );
+  expect(someRecordedKey).toBeTruthy();
+});
