@@ -15,7 +15,7 @@ import ts from "typescript";
 
 import { autoNameDeclaration } from "./passes/autoName.ts";
 import { sugarTransformer } from "./passes/sugar.ts";
-import { buildProgram } from "./program.ts";
+import { buildProgram, type FsSnapshot } from "./program.ts";
 
 /** Authoring identifiers re-exported by `@unworklet/core` (the lowering import set). */
 const CORE_AUTHORING_EXPORTS = new Set<string>([
@@ -100,6 +100,18 @@ export type LowerOptions = {
    * module matches the named-export convention its loader expects.
    */
   exportName?: string;
+  /**
+   * A captured file-system snapshot (`captureFsSnapshot()`), used to build the
+   * type-directed program off-disk — the path that makes `lower()` run in the
+   * browser, where there is no `ts.sys` / disk. Omit it in Node (disk-backed).
+   */
+  snapshot?: FsSnapshot;
+  /**
+   * @internal Record every disk answer into this snapshot while lowering (Node).
+   * Used by `captureFsSnapshot` to capture the type environment — including the
+   * lazy `import("...")` resolutions the passes trigger — for later browser replay.
+   */
+  captureInto?: FsSnapshot;
 };
 
 /** A top-level `name(...)` macro call (e.g. `process(() => {...})`). */
@@ -272,7 +284,10 @@ export function lower(source: string, options: LowerOptions = {}): string {
   // Build the type-directed program, then run the sugar passes (their type
   // queries hit the pristine source). The remaining split / wrap / ambient logic
   // operates on the desugared statements.
-  const { checker, sourceFile } = buildProgram(source);
+  const { checker, sourceFile } = buildProgram(source, {
+    snapshot: options.snapshot,
+    record: options.captureInto,
+  });
   const sf = ts.transform(sourceFile, [sugarTransformer(checker)]).transformed[0] as ts.SourceFile;
 
   let processBody: ts.Statement[] | undefined;

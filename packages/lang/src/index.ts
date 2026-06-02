@@ -6,3 +6,5 @@
 
 export { lower, LowerError } from "./lower.ts";
 export type { LowerOptions } from "./lower.ts";
+export { captureFsSnapshot } from "./capture.ts";
+export type { FsSnapshot } from "./program.ts";
