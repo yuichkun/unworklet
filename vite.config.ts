@@ -110,24 +110,17 @@ export default defineConfig({
     // A single `vp test` aggregates node-side + browser e2e (SAB / postMessage)
     // into one stage. Via vitest 4's `projects` feature, each package's
     // vite.config.ts is the default project, and packages/core's two browser
-    // configs run in parallel as separate projects. The playwright spec
-    // (i.e. examples/01-stereo-gain/tests/) uses a different runner and is
-    // outside the vitest aggregation; it is chained via scripts.test in the
-    // root package.json.
+    // configs run in parallel as separate projects.
     projects: [
       "packages/*/vite.config.ts",
       "examples/*/vite.config.ts",
       "packages/core/vite.browser.config.ts",
       "packages/core/vite.browser-postmessage.config.ts",
     ],
-    // `experiments/*` are intentionally NOT aggregated here: an experiment that
-    // depends on `@vitejs/devtools` (devtools-proto) makes pnpm key a separate
-    // copy of the vite-plus test runner by that peer, so its files would load a
-    // different runner instance than this shared collector and throw "Vitest
-    // failed to find the current suite". They run standalone in CI instead, where
-    // each is its own root and there is a single runner instance.
-    // The root's default project picks up nothing (i.e. empty include). All tests
-    // are collected uniformly through the sub-projects (i.e. the projects above).
+    // The demo's runtime-compile browser e2e (examples/demo/vite.browser.config.ts)
+    // needs a real audio device for `addModule`, so it runs on its own rather than
+    // in this aggregation. The root's default project collects nothing (empty
+    // include); every test comes from the sub-projects above.
     include: [],
   },
 });
