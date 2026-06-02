@@ -5,11 +5,12 @@ compiles it to WASM that runs on the audio thread. You describe the DSP with
 typed primitives — no manual `AudioWorkletProcessor`, no `postMessage`
 plumbing, no hand-written WASM.
 
-> **For AI agents / LLMs:** the call forms below are exact. Do **not** invent
-> alternatives (no `.load()/.store()`, no bare `message<T>()`, no positional
-> `audioInput(2)`). When unsure, read a tested example: `examples/01-stereo-gain`
-> and the canonical set in `docs/12-canonical-examples.md`. The source is the
-> source of truth.
+> **For AI agents / LLMs:** the call forms below are exact and complete — do
+> **not** invent alternatives or guess method names. Scalar state read/write is
+> `.read()` / `.write(v)`; main↔worklet messaging is the `event` family
+> (`event<T>({ from | to: "main" })`, `event.midi`). When unsure, copy a tested
+> example: `examples/01-stereo-gain` and `docs/12-canonical-examples.md`. The
+> source is the source of truth.
 
 ```bash
 npm install @unworklet/core

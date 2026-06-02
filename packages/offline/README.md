@@ -45,6 +45,14 @@ await Deno.writeFile("out.wav", encodeWav(result.outputs.main, result.sampleRate
 
 ## Also exported
 
-- `encodeWav(channels, sampleRate, opts?)` / `decodeWav(bytes)` — 16/24/32-bit PCM WAV.
+- `encodeWav(channels, sampleRate, opts?)` / `decodeWav(bytes)` — 8/16/24/32-bit
+  integer and 32f/64 float PCM WAV (`opts.bitDepth`, default `"32f"`).
+
+## Related packages
+
+- `@unworklet/core` — define the processor you render here (`defineProcessor`, the DSL primitives).
+- `@unworklet/test` — Vitest matchers built on top of `renderOffline`.
+- `@unworklet/lang` — write processors in `.uwk.ts` sugar.
+- `@unworklet/vite-plugin` — load processors in the browser via `?worklet`, plus DevTools.
 
 License: MIT.

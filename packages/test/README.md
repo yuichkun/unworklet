@@ -53,4 +53,11 @@ Import `@unworklet/test/extend` once (e.g. in a setup file) to get fluent
 matchers: `expect(result).toMatchAudio(...)`, `.toBeStable()`,
 `.toHaveGainAtFreq(...)`, `.toEmitMidi(...)`, and so on.
 
+## Related packages
+
+- `@unworklet/offline` — the renderer these matchers assert on (`renderOffline`).
+- `@unworklet/core` — define the processor under test (`defineProcessor`, the DSL primitives).
+- `@unworklet/lang` — write processors in `.uwk.ts` sugar.
+- `@unworklet/vite-plugin` — load processors in the browser via `?worklet`, plus DevTools.
+
 License: MIT.

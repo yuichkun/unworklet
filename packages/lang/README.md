@@ -9,6 +9,14 @@ operators and bare reads/writes; `lower()` desugars it to a plain
 > `@unworklet/core`. The declarations are identical; only the bodies change
 > (operators instead of method calls). Don't mix the two styles in one file.
 
+```bash
+# Pulled in transitively by the Vite plugin — install that, not this directly:
+npm install -D @unworklet/vite-plugin
+npm install @unworklet/core
+# Only needed if you call `lower()` yourself (custom build step):
+npm install -D @unworklet/lang
+```
+
 ## What a `.uwk.ts` file looks like
 
 Same declarations as core, but the `process` body uses operators. There is no
@@ -68,5 +76,12 @@ const tsSource = lower(uwkSource, { exportName: "myProcessor" });
 Most projects don't import this — `@unworklet/vite-plugin` lowers `.uwk.ts`
 imports on the fly. Plain `.ts` / `.processor.ts` processors (the core API) work
 everywhere `.uwk.ts` does; the sugar is opt-in.
+
+## Related packages
+
+- `@unworklet/core` — the primitives `.uwk.ts` lowers to (`audioInput`, `state`, `param`, `forSample`, …).
+- `@unworklet/vite-plugin` — lowers `.uwk.ts` imports on the fly via `?worklet`.
+- `@unworklet/offline` — render a processor to PCM in Node/Bun/Deno.
+- `@unworklet/test` — audio/event/MIDI assertions for Vitest.
 
 License: MIT.

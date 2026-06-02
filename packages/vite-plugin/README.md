@@ -22,7 +22,7 @@ export default defineConfig({
 });
 ```
 
-## Loading a processor
+## Usage: loading a processor
 
 Import the processor source with the **`?worklet` query** — this is what the
 plugin intercepts. The default export of that virtual module is a compiled
@@ -62,5 +62,12 @@ The panels read live data from every running node:
   taps), declared memory, and the AudioContext's reported latency.
 - **MIDI** — real outbound events, port overflow counters, and a virtual
   keyboard that injects into the running worklet.
+
+## Related packages
+
+- `@unworklet/core` — the processors this plugin loads (`defineProcessor`, `createNode`).
+- `@unworklet/lang` — the `.uwk.ts` sugar this plugin lowers on the fly.
+- `@unworklet/offline` — render a processor to PCM in Node/Bun/Deno.
+- `@unworklet/test` — audio/event/MIDI assertions for Vitest.
 
 License: MIT.
