@@ -90,13 +90,13 @@ Responsibilities of each package:
 
 When combining a NN with unworklet, the appropriate path depends on model size and inference rate.
 
-| NN size                   | Inference rate       | Recommended path                               | Example                        |
-| ------------------------- | -------------------- | ---------------------------------------------- | ------------------------------ |
-| Small (~tens of K params) | per-sample (audio rate) | **AOT** (`@unworklet/onnx` / `@unworklet/nam`) | NAM amp model                  |
-| Small (~tens of K params) | per-block (~ms)      | AOT or runtime                                 | DDSP control parameters        |
-| Medium (~millions of params) | per-block         | **runtime bridge**                             | CREPE pitch detector           |
-| Medium (~millions of params) | per-second or slower | runtime bridge                              | AI mastering settings          |
-| Large (~hundreds of M params) | per-second or slower | **runtime bridge + WebGPU**               | RAVE timbre transfer, Demucs   |
+| NN size                       | Inference rate          | Recommended path                               | Example                      |
+| ----------------------------- | ----------------------- | ---------------------------------------------- | ---------------------------- |
+| Small (~tens of K params)     | per-sample (audio rate) | **AOT** (`@unworklet/onnx` / `@unworklet/nam`) | NAM amp model                |
+| Small (~tens of K params)     | per-block (~ms)         | AOT or runtime                                 | DDSP control parameters      |
+| Medium (~millions of params)  | per-block               | **runtime bridge**                             | CREPE pitch detector         |
+| Medium (~millions of params)  | per-second or slower    | runtime bridge                                 | AI mastering settings        |
+| Large (~hundreds of M params) | per-second or slower    | **runtime bridge + WebGPU**                    | RAVE timbre transfer, Demucs |
 
 Whether the framework auto-infers the choice or the user specifies it via a build option is a decision deferred to implementation-time ratification. The proposal is a **hybrid of model file metadata and build options**: the default has the framework auto-decide based on file size and parameter count, with an escape hatch like `loadOnnxModel('./model.onnx', { path: 'aot' })` to force a specific path.
 
