@@ -2,6 +2,19 @@
 
 Guidance for AI agents implementing unworklet v1.0.0.
 
+> **Using unworklet (not contributing to it)?** This file is the _contributor /
+> implementation_ contract. If you are an AI agent helping someone _build with_
+> unworklet, the consumer-facing entry points are:
+>
+> - [`llms.txt`](./llms.txt) — install-time entry point + DSL quick reference.
+> - Package READMEs with the exact call forms:
+>   [`packages/core/README.md`](./packages/core/README.md),
+>   [`packages/vite-plugin/README.md`](./packages/vite-plugin/README.md),
+>   [`packages/lang/README.md`](./packages/lang/README.md),
+>   [`packages/offline/README.md`](./packages/offline/README.md),
+>   [`packages/test/README.md`](./packages/test/README.md).
+> - [`.claude/skills/unworklet/SKILL.md`](./.claude/skills/unworklet/SKILL.md) — the same surface as a skill.
+
 ## What this repository is
 
 A from-scratch implementation of `unworklet` — a TypeScript-first framework for declarative Audio Worklet DSP, compiled to WebAssembly. The v1.0.0 implementation is being driven by AI agents working in parallel against the specifications in `docs/`.
