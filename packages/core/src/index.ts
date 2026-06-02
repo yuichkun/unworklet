@@ -91,6 +91,12 @@ export { compile } from "./compile/index.ts";
 export { extractWorkletMeta } from "./worklet.ts";
 export type { WorkletMeta } from "./worklet.ts";
 
+// The single worklet-module source emitter, shared by the build-time `?worklet`
+// chunk (vite-plugin, `import` runtime) and the in-browser runtime-compile path
+// (`@unworklet/lang/browser`, `inline` runtime).
+export { emitWorkletModuleSource, serializeMetaToJs } from "./worklet-module.ts";
+export type { WorkletRuntimeSource, EmitWorkletModuleOptions } from "./worklet-module.ts";
+
 // MIDI wire codec (= 8-byte fixed slot ↔ MidiEvent, `11-midi.md` §4.1).
 // The single wire-format source shared by the offline renderer, worklet template, and main client.
 export { midiEventToWire, wireToMidiEvent } from "./midiWire.ts";
