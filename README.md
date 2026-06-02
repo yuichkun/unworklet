@@ -192,33 +192,81 @@ expectStable(r); // finite, no runaway DC / clipping
 
 ## DevTools
 
-The audio thread is normally a black box. unworklet's Vite DevTools panel
-X-rays it — **zero-config**: add the plugin and everything appears; remove it and
-your app is byte-for-byte unchanged. Every value it shows is read bit-exact from
-WASM memory, so the inspector never lies.
+The audio thread is normally a black box. unworklet's Vite DevTools panel X-rays
+it. Every value it shows is read bit-exact from WASM memory, so the inspector
+never lies; in a production build the plugin compiles to nothing and your app is
+byte-for-byte unchanged.
 
 - **Live state** — every `state` / buffer slot, live from WASM memory (waveform / bar / list per type)
 - **Audio graph** — the running `AudioContext` topology
 - **Signals & performance** — per-output waveform / spectrum + per-quantum latency
 - **MIDI** — event activity + a virtual keyboard to inject notes
 
-<!-- TODO: drop the DevTools panel screenshot at ./assets/devtools-panels.png -->
-<p align="center">
-  <img src="./assets/devtools-panels.png" alt="unworklet DevTools — Live state, Audio graph, Signals, MIDI" width="820" />
-</p>
+<table>
+  <tr>
+    <td width="50%"><img src="./screenshots/live_state.png" alt="DevTools — Live state" /><br /><sub><b>Live state</b> — every <code>state</code> / buffer slot, live from WASM memory</sub></td>
+    <td width="50%"><img src="./screenshots/audio_graph.png" alt="DevTools — Audio graph" /><br /><sub><b>Audio graph</b> — the running <code>AudioContext</code> topology</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="./screenshots/signals.png" alt="DevTools — Signals & performance" /><br /><sub><b>Signals &amp; performance</b> — per-output waveform / spectrum + latency</sub></td>
+    <td width="50%"><img src="./screenshots/midi_view.png" alt="DevTools — MIDI" /><br /><sub><b>MIDI</b> — event log + a virtual keyboard to inject notes</sub></td>
+  </tr>
+</table>
 
-The panels can't be deployed as a static demo — clone the repo and run `vp dev`
-in an example to try them live.
+### Enabling it
+
+The panel is a dock inside the [Vite DevTools](https://devtools.vite.dev) overlay,
+so you install that host (plus its client kit, which the panel's page bridge
+imports) and add it to your config. The unworklet plugin itself needs no extra
+config — it auto-docks once the host is present.
+
+```sh
+npm install -D @vitejs/devtools @vitejs/devtools-kit
+```
+
+```ts
+// vite.config.ts
+import { DevTools } from "@vitejs/devtools";
+import unworklet from "@unworklet/vite-plugin";
+import { defineConfig } from "vite";
+
+export default defineConfig(({ command }) => ({
+  plugins: [
+    unworklet(),
+    // Dev only — the DevTools host runs a long-lived server, pointless in a build
+    // and it would keep the test runner from exiting.
+    ...(command === "serve" ? [DevTools({ builtinDevTools: false })] : []),
+  ],
+}));
+```
+
+Run your dev server, open the Vite DevTools overlay, and pick the **unworklet** dock.
+
+Two gotchas worth knowing up front:
+
+- **Install `@vitejs/devtools-kit` as a direct dependency too**, matching the
+  version `@unworklet/vite-plugin` builds against (`0.2.x` at the time of writing).
+  The panel's page bridge imports `@vitejs/devtools-kit/client`, which must resolve
+  from your app — a transitive copy is not enough.
+- **Do not set `Cross-Origin-Embedder-Policy: require-corp` on the dev server.**
+  Cross-origin isolation is what `SharedArrayBuffer` wants, but COEP also blocks the
+  DevTools iframe (`/__unworklet/`). Leave the headers off the dev server —
+  unworklet falls back to the fully functional postMessage transport in dev — and
+  apply COOP/COEP only to your production / preview builds (where there's no
+  DevTools to break).
+
+The panels can't be deployed as a static demo: the host is a dev-time server, so
+clone the repo and start an example locally to try them live.
 
 ## Packages
 
-| package                                                      | what it does                                                                  |
-| ------------------------------------------------------------ | ----------------------------------------------------------------------------- |
-| [`@unworklet/core`](./packages/core/README.md)               | The DSL, the WASM compiler, the worklet runtime, and the typed main-thread node. |
-| [`@unworklet/vite-plugin`](./packages/vite-plugin/README.md) | Loads `.processor.ts` / `.uwk.ts` via `?worklet`; ships the DevTools panel.    |
+| package                                                      | what it does                                                                       |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| [`@unworklet/core`](./packages/core/README.md)               | The DSL, the WASM compiler, the worklet runtime, and the typed main-thread node.   |
+| [`@unworklet/vite-plugin`](./packages/vite-plugin/README.md) | Loads `.processor.ts` / `.uwk.ts` via `?worklet`; ships the DevTools panel.        |
 | [`@unworklet/lang`](./packages/lang/README.md)               | The `.uwk.ts` authoring sugar (infix operators, index access) that lowers to core. |
-| [`@unworklet/offline`](./packages/offline/README.md)         | Render a processor to PCM headlessly in Node / Bun / Deno.                     |
-| [`@unworklet/test`](./packages/test/README.md)               | Audio / event / MIDI / state assertions and signal generators for Vitest.     |
+| [`@unworklet/offline`](./packages/offline/README.md)         | Render a processor to PCM headlessly in Node / Bun / Deno.                         |
+| [`@unworklet/test`](./packages/test/README.md)               | Audio / event / MIDI / state assertions and signal generators for Vitest.          |
 
 ## Docs
 
