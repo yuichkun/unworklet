@@ -15,11 +15,15 @@
     "@unworklet/core": "workspace:*",
     "@unworklet/lang": "workspace:*",
     "@unworklet/offline": "workspace:*",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vue": "catalog:",
+    "vue-router": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",
     "@unworklet/vite-plugin": "workspace:*",
+    "@vitejs/plugin-vue": "catalog:",
+    "esbuild": "catalog:",
     "playwright": "catalog:",
     "vite-plus": "catalog:"
   }

@@ -1,13 +1,10 @@
 /// <reference types="vite/client" />
 
-declare module "*?worker&url" {
-  const url: string;
-  export default url;
+declare module "*.vue" {
+  import type { DefineComponent } from "vue";
+
+  const component: DefineComponent<Record<string, unknown>, Record<string, unknown>, unknown>;
+  export default component;
 }
 
-declare module "virtual:uwk-type-snapshot" {
-  import type { FsSnapshot } from "@unworklet/lang";
-
-  const snapshot: FsSnapshot;
-  export default snapshot;
-}
+declare module "*.css";

@@ -1,0 +1,129 @@
+:root {
+  color-scheme: dark;
+  --bg: #0e0f13;
+  --panel: #15171d;
+  --line: #262a33;
+  --fg: #e7e9ee;
+  --muted: #9aa3b2;
+  --accent: #6ee7b7;
+  --accent2: #60a5fa;
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--accent2);
+  text-decoration: none;
+}
+
+code,
+pre,
+textarea.editor {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+.wrap {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 4rem;
+}
+
+button {
+  font: inherit;
+  color: var(--fg);
+  background: #20242d;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.5rem 0.9rem;
+  cursor: pointer;
+}
+button:hover {
+  border-color: var(--accent2);
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+button.primary {
+  background: var(--accent);
+  color: #04130c;
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.card {
+  display: block;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 1rem 1.1rem;
+  margin-bottom: 0.8rem;
+}
+.card:hover {
+  border-color: var(--accent2);
+}
+.tag {
+  font-size: 0.72rem;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+}
+
+textarea.editor {
+  width: 100%;
+  min-height: 320px;
+  background: #0b0c10;
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.8rem;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  tab-size: 2;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.muted {
+  color: var(--muted);
+}
+.status {
+  font-size: 0.85rem;
+  color: var(--muted);
+  min-height: 1.2em;
+}
+.error {
+  color: #fca5a5;
+  white-space: pre-wrap;
+  font-size: 0.85rem;
+}
+header.top {
+  border-bottom: 1px solid var(--line);
+}
+header.top .wrap {
+  padding-top: 1rem;
+  padding-bottom: 1rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+}
