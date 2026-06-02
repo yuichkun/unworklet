@@ -3,10 +3,12 @@
 <template>
   <header class="top">
     <div class="wrap">
-      <strong style="font-size: 1.05rem">
-        <RouterLink to="/" style="color: var(--fg)">unworklet</RouterLink>
-      </strong>
-      <span class="muted" style="font-size: 0.85rem">live examples — compiled in your browser</span>
+      <RouterLink to="/" class="brand">unworklet<span class="brand-dot">.</span></RouterLink>
+      <span class="top-tag">live examples</span>
+      <span class="top-spacer" />
+      <a class="top-tag" href="https://github.com/yuichkun/unworklet" target="_blank" rel="noopener"
+        >GitHub ↗</a
+      >
     </div>
   </header>
   <main class="wrap">

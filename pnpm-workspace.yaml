@@ -28,6 +28,10 @@ catalog:
   vue-router: ^4.6.4
   "@vitejs/plugin-vue": ^6.0.7
   esbuild: ^0.28.0
+  monaco-editor: ^0.55.1
+  "@fontsource-variable/geist": ^5.2.9
+  "@fontsource-variable/jetbrains-mono": ^5.2.8
+  "@vitejs/devtools": 0.2.0
 overrides:
   vite: "catalog:"
   vitest: "catalog:"

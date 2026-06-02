@@ -12,9 +12,12 @@
     "check": "vp check"
   },
   "dependencies": {
+    "@fontsource-variable/geist": "catalog:",
+    "@fontsource-variable/jetbrains-mono": "catalog:",
     "@unworklet/core": "workspace:*",
     "@unworklet/lang": "workspace:*",
     "@unworklet/offline": "workspace:*",
+    "monaco-editor": "catalog:",
     "typescript": "catalog:",
     "vue": "catalog:",
     "vue-router": "catalog:"
@@ -23,6 +26,8 @@
     "@types/node": "catalog:",
     "@unworklet/test": "workspace:*",
     "@unworklet/vite-plugin": "workspace:*",
+    "@vitejs/devtools": "catalog:",
+    "@vitejs/devtools-kit": "catalog:",
     "@vitejs/plugin-vue": "catalog:",
     "esbuild": "catalog:",
     "playwright": "catalog:",
