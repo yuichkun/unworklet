@@ -878,3 +878,80 @@ const s = createSubgraph(sg, { name: "s" });`,
   // Sanity: the feedback term moves the output away from the raw input.
   expect(got[5]!).not.toBeCloseTo(fr(x[5]!), 4);
 });
+
+// ──────────────── slot type comes from the RETURN, not the param (#47) ─────────
+// The $prev slot stores the method's previous RETURN value, so its scalar type
+// must match the return — NOT the first parameter. Here the method takes a
+// Node<'bool'> trigger but returns Node<'f32'>; reading the slot type off the
+// param gives a bool slot that truncates the f32 decay envelope to 0/1.
+// (Reported by @codex on #12 J2.)
+
+function decayRef(impulse: Float32Array): Float32Array {
+  const y = new Float32Array(impulse.length);
+  let prev = 0;
+  for (let n = 0; n < impulse.length; n++) {
+    const v = impulse[n]! > 0.5 ? 1 : fr(prev * 0.95);
+    y[n] = v;
+    prev = v;
+  }
+  return y;
+}
+
+test("SEMANTIC $prev slot type follows the RETURN (bool param, f32 return → f32 decay)", async () => {
+  const impulse = new Float32Array(N);
+  impulse[0] = 1; // single trigger at sample 0, then silence
+  const got = await renderMono(
+    `
+const decay = defineSubgraph(() => ({
+  run: (trigger: Node<"bool">): Node<"f32"> => select(trigger, f32(1), $prev * 0.95),
+}));
+const d = createSubgraph(decay, { name: "d" });`,
+    `out.ch(0).at(i).write(d.run(input.ch(0).at(i) > 0.5));`,
+    impulse,
+  );
+  const ref = decayRef(impulse);
+  // The envelope must decay smoothly as f32 (1, 0.95, 0.95², …). A bool slot pins
+  // $prev to 0/1 and the decay never happens.
+  for (let n = 0; n < N; n++) expect(got[n]!).toBeCloseTo(ref[n]!, 4);
+  expect(got[0]!).toBeCloseTo(1, 5);
+  expect(got[3]!).toBeCloseTo(fr(fr(fr(1 * 0.95) * 0.95) * 0.95), 4); // ≈ 0.857, not 0/1
+});
+
+test("SEMANTIC $prev slot type from a NO-ARG method's return annotation (f64)", async () => {
+  // No parameter to read a type from, so the old default (f32) is wrong: the body
+  // mixes the f64 slot with f64 literals and would not compile as f32. The return
+  // annotation `Node<"f64">` is authoritative.
+  const got = await renderMono(
+    `
+const acc = defineSubgraph(() => ({
+  step: (): Node<"f64"> => $prev.mul(f64(0.5)).add(f64(0.25)),
+}));
+const a = createSubgraph(acc, { name: "a" });`,
+    `out.ch(0).at(i).write(f32(a.step()));`,
+    block(0),
+  );
+  // prev=0 → 0.25, 0.375, 0.4375, … converging to 0.5 (computed in f64).
+  expect(got[0]!).toBeCloseTo(0.25, 5);
+  expect(got[1]!).toBeCloseTo(0.375, 5);
+  expect(got[2]!).toBeCloseTo(0.4375, 5);
+  expect(got[N - 1]!).toBeCloseTo(0.5, 4);
+});
+
+test("SEMANTIC $prev slot type from the return EXPRESSION when un-annotated (i32 param, f32 return)", async () => {
+  // No return annotation; the param is i32 but the body is anchored by f32(...),
+  // so the return type is f32. The checker resolves the method-form body, so the
+  // slot is f32 (not i32 from the param).
+  const got = await renderMono(
+    `
+const sg = defineSubgraph(() => ({
+  run: (steps: Node<"i32">) => f32(steps).mul(f32(0.1)).add($prev.mul(f32(0.5))),
+}));
+const s = createSubgraph(sg, { name: "s" });`,
+    `out.ch(0).at(i).write(s.run(i32(2)));`,
+    block(0),
+  );
+  // v = f32(2)*0.1 + prev*0.5 = 0.2 + prev*0.5 → 0.2, 0.3, 0.35, … → 0.4 (f32).
+  expect(got[0]!).toBeCloseTo(fr(0.2), 5);
+  expect(got[1]!).toBeCloseTo(fr(fr(0.2) + fr(fr(0.2) * 0.5)), 5);
+  expect(got[N - 1]!).toBeCloseTo(0.4, 3);
+});

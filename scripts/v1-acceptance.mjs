@@ -93,7 +93,7 @@ const gates = [
   {
     id: "WI-8 prev-slot-type",
     desc: "#47 $prev slot 型を戻り値から確定する test 緑",
-    cmd: "vp test run packages/lang/src/__sugar__/prev-return-type.test.ts",
+    cmd: "vp test run packages/lang/src/__sugar__/prev.test.ts",
     slow: true,
   },
   {

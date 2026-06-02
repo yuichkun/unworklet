@@ -8,10 +8,12 @@
  *   2. rewrite `$prev` → `__prev_N.read()`,
  *   3. wrap the return: `(p) => e` → `(p) => { const __r = e; __prev_N.write(__r); return __r; }`.
  *
- * The slot type T is read from the method's first `Node<T>` PARAMETER (RFC O4) —
- * the return type is unreliable because the body's operator sugar is a TS error
- * until lowered. `$prev` is left untouched by the operator pass (its ambient type
- * is `Node`), and replaced here after operators lower.
+ * The slot type T follows the method's RETURN (the slot stores the previous return
+ * value): a return-type annotation, else the return expression's checker type when
+ * resolvable, else the first `Node<T>` parameter (RFC O4 — correct when param type
+ * == return type), else `f32`. See {@link slotScalar}. `$prev` is left untouched by
+ * the operator pass (its ambient type is `Node`), and replaced here after operators
+ * lower.
  */
 
 import ts from "typescript";
@@ -42,10 +44,47 @@ function usesPrev(node: ts.Node): boolean {
   return found;
 }
 
-/** Slot type from the method's first `Node<T>` parameter; default `f32`. */
+const NODE_SCALAR = /^Node<"(\w+)">/;
+
+/** The method's representative return expression (first `return`, or the concise body). */
+function returnExpression(m: ts.ArrowFunction): ts.Expression | undefined {
+  if (!ts.isBlock(m.body)) return m.body;
+  let found: ts.Expression | undefined;
+  const v = (n: ts.Node): void => {
+    if (found !== undefined || ts.isFunctionLike(n)) return; // a nested closure's return is not this method's
+    if (ts.isReturnStatement(n) && n.expression !== undefined) {
+      found = n.expression;
+      return;
+    }
+    ts.forEachChild(n, v);
+  };
+  ts.forEachChild(m.body, v);
+  return found;
+}
+
+/**
+ * Scalar type of the `$prev` slot. The slot stores the method's previous RETURN
+ * value, so the return type — not a parameter — is authoritative. We read it from,
+ * in order:
+ *   1. an explicit return-type annotation `(p): Node<'X'> => ...` (always reliable),
+ *   2. the return expression's checker type, when resolvable (a method-form /
+ *      constructor-anchored body types cleanly even under `@ts-nocheck`; pure infix
+ *      operator sugar is a TS error and falls through),
+ *   3. the first `Node<T>` parameter (RFC O4 — correct when param type == return type),
+ *   4. `f32`.
+ */
 function slotScalar(checker: ts.TypeChecker, m: ts.ArrowFunction): string {
+  if (m.type !== undefined) {
+    const match = NODE_SCALAR.exec(m.type.getText());
+    if (match) return match[1]!;
+  }
+  const ret = returnExpression(m);
+  if (ret !== undefined) {
+    const match = NODE_SCALAR.exec(typeString(checker, ret));
+    if (match) return match[1]!;
+  }
   for (const p of m.parameters) {
-    const match = /^Node<"(\w+)">/.exec(typeString(checker, p.name));
+    const match = NODE_SCALAR.exec(typeString(checker, p.name));
     if (match) return match[1]!;
   }
   return "f32";
