@@ -17,6 +17,14 @@
       "types": "./src/browser.ts",
       "import": "./dist/browser.mjs"
     },
+    "./typescript-plugin": {
+      "require": "./dist/typescript-plugin.cjs",
+      "default": "./dist/typescript-plugin.cjs"
+    },
+    "./ambient": {
+      "types": "./dist/ambient.d.ts"
+    },
+    "./ambient.d.ts": "./dist/ambient.d.ts",
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -31,6 +39,9 @@
   },
   "dependencies": {
     "@unworklet/core": "workspace:*",
+    "@volar/language-core": "catalog:",
+    "@volar/typescript": "catalog:",
+    "muggle-string": "catalog:",
     "typescript": "catalog:"
   },
   "devDependencies": {

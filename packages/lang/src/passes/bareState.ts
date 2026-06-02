@@ -59,26 +59,35 @@ function read(node: ts.Expression): ts.CallExpression {
   );
 }
 
-export function tryBareState(checker: ts.TypeChecker, node: ts.Node): ts.Node | undefined {
-  if (!ts.isIdentifier(node)) return undefined;
-  if (classify(checker, node) !== "state") return undefined;
+/**
+ * Whether a bare `State<T>` identifier reads (`gain` → `gain.read()`) at this
+ * position. The single source of truth for the bare-state decision, shared by the
+ * lowering pass ({@link tryBareState}) and the IDE virtual-code generator — both
+ * must rewrite the exact same identifiers, or the editor would diverge from the
+ * build.
+ */
+export function readsAsBareState(checker: ts.TypeChecker, node: ts.Node): boolean {
+  if (!ts.isIdentifier(node)) return false;
+  if (classify(checker, node) !== "state") return false;
 
   const p = node.parent;
   // Object of a property access (`gain.read` / `.write` / `.named` / `.expose`) — the handle.
-  if (p !== undefined && ts.isPropertyAccessExpression(p) && p.expression === node)
-    return undefined;
+  if (p !== undefined && ts.isPropertyAccessExpression(p) && p.expression === node) return false;
   // The binding being declared.
-  if (p !== undefined && ts.isVariableDeclaration(p) && p.name === node) return undefined;
+  if (p !== undefined && ts.isVariableDeclaration(p) && p.name === node) return false;
   // Operator operands are read-wrapped by the operator pass.
-  if (isSugarOperatorOperand(checker, node)) return undefined;
+  if (isSugarOperatorOperand(checker, node)) return false;
 
   // An emit payload field accepts Node | number at runtime even though its TS
   // field type prints `number`, so a bare State there must read.
-  if (isEmitPayloadField(node)) return read(node);
+  if (isEmitPayloadField(node)) return true;
 
   // Otherwise only a position whose contextual type accepts a Node is a value position.
   const ctx = checker.getContextualType(node);
-  if (ctx === undefined) return undefined;
-  if (!checker.typeToString(ctx).includes("Node<")) return undefined;
-  return read(node);
+  if (ctx === undefined) return false;
+  return checker.typeToString(ctx).includes("Node<");
+}
+
+export function tryBareState(checker: ts.TypeChecker, node: ts.Node): ts.Node | undefined {
+  return readsAsBareState(checker, node) ? read(node as ts.Expression) : undefined;
 }

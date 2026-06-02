@@ -19,7 +19,7 @@ import ts from "typescript";
 
 import { classify, isDspExpr, isSugarBinaryOperator } from "../classify.ts";
 
-const BINARY_FN: Partial<Record<ts.SyntaxKind, string>> = {
+export const BINARY_FN: Partial<Record<ts.SyntaxKind, string>> = {
   [ts.SyntaxKind.PlusToken]: "add",
   [ts.SyntaxKind.MinusToken]: "sub",
   [ts.SyntaxKind.AsteriskToken]: "mul",
@@ -32,7 +32,7 @@ const BINARY_FN: Partial<Record<ts.SyntaxKind, string>> = {
   [ts.SyntaxKind.EqualsEqualsToken]: "eq",
   [ts.SyntaxKind.EqualsEqualsEqualsToken]: "eq",
 };
-const NEGATED_EQ = new Set<ts.SyntaxKind>([
+export const NEGATED_EQ = new Set<ts.SyntaxKind>([
   ts.SyntaxKind.ExclamationEqualsToken,
   ts.SyntaxKind.ExclamationEqualsEqualsToken,
 ]);

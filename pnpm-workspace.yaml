@@ -32,6 +32,9 @@ catalog:
   "@fontsource-variable/geist": ^5.2.9
   "@fontsource-variable/jetbrains-mono": ^5.2.8
   "@vitejs/devtools": 0.2.0
+  '@volar/language-core': 2.4.15
+  '@volar/typescript': 2.4.15
+  muggle-string: 0.4.1
 overrides:
   vite: "catalog:"
   vitest: "catalog:"

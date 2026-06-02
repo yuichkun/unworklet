@@ -22,7 +22,7 @@ import ts from "typescript";
 const f = ts.factory;
 
 /** The leftmost identifier of a call/property chain (the root helper name). */
-function rootCallee(expr: ts.Expression): string | undefined {
+export function rootCallee(expr: ts.Expression): string | undefined {
   let e: ts.Expression = expr;
   for (;;) {
     if (ts.isCallExpression(e)) {
@@ -55,12 +55,12 @@ function hasMethodCall(expr: ts.Expression, method: string): boolean {
 }
 
 /** The method name of a call whose callee is `obj.method(...)`, else undefined. */
-function calledMethod(call: ts.CallExpression): string | undefined {
+export function calledMethod(call: ts.CallExpression): string | undefined {
   return ts.isPropertyAccessExpression(call.expression) ? call.expression.name.text : undefined;
 }
 
 /** Whether the call's first-arg options object already has a `name` property. */
-function optionsHaveName(call: ts.CallExpression): boolean {
+export function optionsHaveName(call: ts.CallExpression): boolean {
   const arg = call.arguments[0];
   if (arg === undefined || !ts.isObjectLiteralExpression(arg)) return false;
   // The key may be written either bare (`name:`) or quoted (`"name":`) — a quoted
@@ -75,7 +75,7 @@ function optionsHaveName(call: ts.CallExpression): boolean {
 }
 
 /** Whether the call's first argument can carry an injected `name` (object or absent). */
-function argIsInjectable(call: ts.CallExpression): boolean {
+export function argIsInjectable(call: ts.CallExpression): boolean {
   const arg = call.arguments[0];
   return arg === undefined || ts.isObjectLiteralExpression(arg);
 }

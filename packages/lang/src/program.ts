@@ -21,12 +21,22 @@ import ts from "typescript";
 
 import { AMBIENT_DTS } from "./ambient.ts";
 
-// `import.meta.dirname` is a plain string in Node and `undefined` in the browser
-// — a property read, NOT a `node:url` / `node:path` import (those externalize and
-// crash the browser bundle). In the browser a snapshot is always supplied, so the
-// disk-relative paths below are never resolved against a real file system; they
-// are just stable keys that match the captured snapshot.
-const SELF_DIR = (import.meta as { dirname?: string }).dirname ?? "/__uwk__";
+// The directory the in-memory virtuals are placed under, which disk-backed module
+// resolution (Node) walks up from to find `@unworklet/core`. `import.meta.dirname`
+// is a plain string under Node ESM and `undefined` in the browser — a property
+// read, NOT a `node:url` / `node:path` import (those externalize and crash the
+// browser bundle). The editor TS-plugin is bundled to CJS, where `import.meta` is
+// empty but esbuild supplies `__dirname` (the bundle's dir, which sits in
+// `node_modules/@unworklet/lang/dist`, so core resolves from the same install) —
+// `typeof __dirname` is the one safe way to reach it without a ReferenceError in
+// ESM. In the browser a snapshot is always supplied, so these paths are never
+// resolved against disk; they are just stable keys matching the captured snapshot.
+/* v8 ignore next 3 — environment detection: under the Node ESM test runner
+   `import.meta.dirname` is always set, so the CJS-bundle (`__dirname`, used by the
+   editor TS plugin) and browser (`/__uwk__`) fallbacks are unreachable here. */
+const SELF_DIR =
+  (import.meta as { dirname?: string }).dirname ??
+  (typeof __dirname === "string" ? __dirname : "/__uwk__");
 
 const COMPILER_OPTIONS: ts.CompilerOptions = {
   target: ts.ScriptTarget.ESNext,
