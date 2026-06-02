@@ -1,9 +1,11 @@
 # unworklet
 
-> unworklet compiles a declarative TypeScript graph into a WASM AudioWorklet
-> processor. You describe DSP with typed primitives; the compiler emits the
-> WASM, guarantees realtime safety, and handles the worklet/main-thread
-> plumbing. It targets the whole web audio/MIDI device surface.
+> unworklet compiles declarative TypeScript into realtime-safe WebAssembly that
+> runs on any audio thread — browser, server, or microcontroller. You compose a
+> processor from typed, reusable primitives (audio, params, state, events, MIDI);
+> the compiler proves it is allocation-free, GC-free, and bounded, then emits the
+> WASM, the AudioWorkletProcessor glue, and a typed main-thread node. Effects,
+> synths, samplers, MIDI processors — built from the same primitives.
 
 This file orients an AI agent that has installed unworklet. **The source code is
 the source of truth.** The call forms below are exact — do not substitute forms
