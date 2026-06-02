@@ -1,15 +1,17 @@
 /**
- * Browser e2e (postMessage fallback): typed-array message payload を SAB 不 可 環 境
- * (= COOP/COEP ナ シ) で main → worklet に 送 れ る か を 検 証。
+ * Browser e2e (postMessage fallback): verifies that typed-array message payloads
+ * can be sent from main → worklet in environments without SAB (i.e. no COOP/COEP).
  *
- * postMessage path で は main 側 sender が `port.postMessage({ kind: 'message',
- * ringIndex, payload })` で Float32Array を structured-clone 送 信 → audio thread が
- * onmessage で 受 領 → 次 process 開 始 で content region + slot に 直 書 き。
+ * On the postMessage path, the main-side sender calls
+ * `port.postMessage({ kind: 'message', ringIndex, payload })` to structured-clone a
+ * Float32Array to the audio thread, which receives it via onmessage and writes
+ * directly into the content region + slot at the start of the next process() call.
  *
- * 出 力 PCM は postMessage delivery timing (= MessageChannel task queue の drain) が
- * sync offline render 中 非 決 定 的 な た め、 SAB 側 と 同 じ く 値 一 致 は SAB test
- * で 担 保 し、 こ こ で は 「配 列 が worklet に 届 い て length が 読 め る」 を publish
- * 経 由 (= counter test と 同 reliable path) で 担 保 す る。
+ * Output PCM value equality is not asserted here because postMessage delivery timing
+ * (MessageChannel task queue drain) is non-deterministic during a synchronous offline
+ * render. Value correctness is covered by the SAB-path tests. This suite asserts only
+ * that the array reaches the worklet and its length is readable via the publish path
+ * (the same reliable path used by the counter tests).
  */
 
 import { expect, test } from "vite-plus/test";
@@ -40,26 +42,27 @@ const buildContext = (durationQuanta: number): OfflineAudioContext =>
     sampleRate: SAMPLE_RATE,
   });
 
-test("環 境 担 保: COOP/COEP 無 し で crossOriginIsolated false", () => {
+test("environment check: crossOriginIsolated is false without COOP/COEP", () => {
   expect(globalThis.crossOriginIsolated).toBe(false);
 });
 
-test("transport: SAB unavailable で postMessage に fallback", async () => {
+test("transport: falls back to postMessage when SAB is unavailable", async () => {
   const ctx = buildContext(1);
   const node = await createNode(ctx, uploadPlayback);
   expect(node.diagnostics.transport).toBe("postMessage");
   node.dispose();
 });
 
-test("typed-array message: Float32Array upload → worklet で length 読 取 可", async () => {
-  // 配 列 (128 要 素) を upload → handler が `samples.length` を len state に store
-  // → publish 経 由 で main 観 測。 len = 128 = 配 列 が content region 経 由 で 届 い て
-  // payloadLen が 正 し く 書 か れ た 証 (= postMessage path の 配 線 担 保)。
+test("typed-array message: Float32Array upload → worklet can read length", async () => {
+  // Uploads a 128-element array; the handler stores `samples.length` in the len state,
+  // which is observed from main via the publish path. len === 128 confirms the array
+  // arrived through the content region with payloadLen written correctly
+  // (i.e. the postMessage path is wired end-to-end).
   const ctx = buildContext(32);
   const node = await createNode(ctx, uploadPlayback);
   node.outputs["main"]!.connect(ctx.destination);
   const samples = new Float32Array(128).fill(0.25);
-  const sender = node.messages["upload"] as (p: { samples: Float32Array }) => void;
+  const sender = node.events["upload"].emit;
   sender({ samples });
   await ctx.startRendering();
   await waitRAF(2);
@@ -67,7 +70,7 @@ test("typed-array message: Float32Array upload → worklet で length 読 取 �
   node.dispose();
 });
 
-test("typed-array message: upload ナ シ で len = 初 期 0 維 持 (= regression)", async () => {
+test("typed-array message: len stays at initial 0 when no upload is sent (regression guard)", async () => {
   const ctx = buildContext(32);
   const node = await createNode(ctx, uploadPlayback);
   node.outputs["main"]!.connect(ctx.destination);

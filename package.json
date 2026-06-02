@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "vp test && vp run --filter ./examples/01-stereo-gain test:e2e",
+    "test": "vp test",
     "ready": "vp check && vp run test && vp run -r build"
   },
   "devDependencies": {

@@ -110,39 +110,39 @@ test("i64 max/min: max(3n, 7n) = 7, min = 3 (integer compare+select)", async () 
   allEqual(await gen(() => f32(i64(3n).min(i64(7n)))), 3);
 });
 
-// abs は整数で意味があるので i32/i64 で動く (= select(x < 0, -x, x)、f32.abs ではない)。
+// abs is meaningful on integers and lowers to select(x < 0, -x, x), not f32.abs.
 test("i32/i64 abs: |-7| = 7 (integer select-based, not f32.abs)", async () => {
   allEqual(await gen(() => f32(i32(-7).abs())), 7);
   allEqual(await gen(() => f32(i32(7).abs())), 7);
   allEqual(await gen(() => f32(i64(-7n).abs())), 7);
 });
 
-// float-only math (sqrt/floor/ceil/frac + transcendentals) は f32/f64 限定 = 整数 node
-// では method が never で呼べない (= i32(1).sin() は compile error)。abs は整数で可。
+// Float-only math (sqrt/floor/ceil/frac + transcendentals) is restricted to f32/f64:
+// calling these methods on integer nodes is a compile-time type error. abs is allowed on integers.
 type IsNever<X> = [X] extends [never] ? true : false;
 function expectTrue<_T extends true>(): void {}
 function expectFalse<_T extends false>(): void {}
-test("float-only math は整数 node で型エラー、abs は整数で可 (型契約)", () => {
+test("float-only math is a type error on integer nodes; abs is allowed on integers (type contract)", () => {
   expectTrue<IsNever<Node<"i32">["sin"]>>();
   expectTrue<IsNever<Node<"i32">["sqrt"]>>();
   expectTrue<IsNever<Node<"i32">["floor"]>>();
   expectTrue<IsNever<Node<"i64">["exp"]>>();
-  expectFalse<IsNever<Node<"f32">["sin"]>>(); // f32 は使える
-  expectFalse<IsNever<Node<"i32">["abs"]>>(); // 整数 abs は使える
+  expectFalse<IsNever<Node<"f32">["sin"]>>(); // f32 is allowed
+  expectFalse<IsNever<Node<"i32">["abs"]>>(); // integer abs is allowed
   expect(true).toBe(true);
 });
 
-// arithmetic / comparison / min / max は numeric scalar (+ add/sub/mul/div は f32x4)
-// 限定 = bool node では method が never で呼べない (= bool(true).add(1) は compile error)。
-test("arithmetic/comparison/min/max は bool node で型エラー、numeric/f32x4 は可 (型契約)", () => {
+// arithmetic / comparison / min / max are restricted to numeric scalars (plus add/sub/mul/div on f32x4):
+// calling these methods on a bool node is a compile-time type error.
+test("arithmetic/comparison/min/max are type errors on bool nodes; numeric and f32x4 are allowed (type contract)", () => {
   expectTrue<IsNever<Node<"bool">["add"]>>();
   expectTrue<IsNever<Node<"bool">["mul"]>>();
   expectTrue<IsNever<Node<"bool">["neg"]>>();
   expectTrue<IsNever<Node<"bool">["eq"]>>();
   expectTrue<IsNever<Node<"bool">["max"]>>();
-  expectFalse<IsNever<Node<"i32">["add"]>>(); // i32 numeric は可
-  expectFalse<IsNever<Node<"f32x4">["add"]>>(); // f32x4 SIMD は可
-  expectFalse<IsNever<Node<"i32">["max"]>>(); // 整数 max は可
+  expectFalse<IsNever<Node<"i32">["add"]>>(); // i32 numeric is allowed
+  expectFalse<IsNever<Node<"f32x4">["add"]>>(); // f32x4 SIMD is allowed
+  expectFalse<IsNever<Node<"i32">["max"]>>(); // integer max is allowed
   expect(true).toBe(true);
 });
 
@@ -416,12 +416,12 @@ test("i64 state round-trip: store 2^40 + 7, load → wrap to i32 = 7", async () 
     const acc = state.i64(0n);
     return {
       process: () => {
-        acc.store(i64(2n ** 40n + 7n));
+        acc.write(i64(2n ** 40n + 7n));
         forSample((i) => {
           out
             .ch(0)
             .at(i)
-            .write(f32(i32(acc.load())));
+            .write(f32(i32(acc.read())));
         });
       },
     };

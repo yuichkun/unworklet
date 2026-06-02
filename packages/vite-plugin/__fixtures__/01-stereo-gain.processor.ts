@@ -1,10 +1,11 @@
 /**
- * Vite plugin test fixture = canonical Ex 1 minus meter (= `examples/01-stereo-gain/src/processor.ts`
- * を そ の ま ま 流 用)。 plugin の `?worklet` import path で 評 価 +
- * `compile()` 経 由 で WASM emit + dist asset として 出 力 されるか の
- * end-to-end 検 証 input。 内容 を examples 側 と zip し て お く こ と で、
- * 単 一 processor が plugin / offline 経 由 で 同 一 byte の WASM artifact
- * を 生 む 担 保 (= `13-offline-render.md` §4)。
+ * Vite plugin test fixture — canonical Ex 1 without the meter
+ * (mirrors `examples/01-stereo-gain/src/processor.ts`).
+ * End-to-end verification input: checks that the `?worklet` import path
+ * triggers `compile()`, emits WASM, and writes the artifact to dist.
+ * Keeping this in sync with the examples/ copy guarantees that a single
+ * processor produces an identical WASM artifact whether built via the
+ * plugin or via the offline path (see `13-offline-render.md` §4).
  */
 
 import { audioInput, audioOutput, defineProcessor, forSample, param } from "@unworklet/core";

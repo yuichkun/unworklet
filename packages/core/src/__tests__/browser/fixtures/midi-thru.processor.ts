@@ -5,12 +5,12 @@
  * `process()` so `OfflineAudioContext` pulls the node each render quantum.
  */
 
-import { audioOutput, defineProcessor, forSample, midiInput, midiOutput } from "../../../index.ts";
+import { audioOutput, defineProcessor, event, forSample } from "../../../index.ts";
 
 export const midiThru = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
-  const midiIn = midiInput({ name: "in" });
-  const midiOut = midiOutput({ name: "out" });
+  const midiIn = event.midi({ from: "main", name: "in" });
+  const midiOut = event.midi({ to: "main", name: "out" });
   return {
     process: () => {
       midiIn.onEvent("noteOn", ({ channel, note, velocity, atSample }) => {

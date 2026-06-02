@@ -6,6 +6,13 @@ A pure-TypeScript authoring layer on top of `@unworklet/core`. End-users write `
 
 **Draft.** Not ratified. Not part of the v1.0.0 14-phase roadmap (`10-roadmap.md` §2). Targeted for grilling toward v1.1.0 after v1.0.0 ship.
 
+> **Surface note.** This draft predates two ratified core changes: scalar state
+> read/write is `.read()` / `.write()` (not `.load()` / `.store()`), and the
+> message / midiInput / midiOutput surface was unified into the **event family**
+> (`event<T>({ from | to: "main" })` + `event.midi`, see `decisions-log.md` Q87 /
+> Q88). Where the prose below shows the older names, the current core surface is
+> `01-dsl.md`.
+
 Author: AI agent draft on branch `claude/dsl-syntax-compiler-design-wGngh`, awaiting human reviewer grilling.
 
 ## Summary
@@ -664,11 +671,11 @@ const gain = param.f32({
   min: 0,
   max: 4,
   automationRate: "a-rate",
-}); // auto-name 'gain' (= name 必須 helper)
+}); // auto-name 'gain' (= helper that requires a name)
 const meterL = state.f32(0).expose({
   snapshot: "transient",
   publish: { rateFps: 30 },
-}); // auto-name 'meterL' (= expose 経由)
+}); // auto-name 'meterL' (= via expose)
 const meterR = state.f32(0).expose({
   snapshot: "transient",
   publish: { rateFps: 30 },

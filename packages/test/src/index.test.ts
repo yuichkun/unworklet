@@ -1,7 +1,7 @@
 /**
- * `@unworklet/test` matcher + utility behavior (= `docs/06-testing.md` §2-§6)。
- * TDD 規 範 = 振 る 舞 い ベ ー ス test 先 行 + 実 装 fill。 各 export ご と
- * に happy path + fail path test を 並 べ る。
+ * `@unworklet/test` matcher + utility behavior (= `docs/06-testing.md` §2-§6).
+ * TDD rule: behavior-based tests written first, then implementation filled in.
+ * Each export gets a happy-path test followed by a fail-path test.
  */
 
 import { mkdtempSync, writeFileSync } from "node:fs";
@@ -86,7 +86,7 @@ test("`expectAudioMatches`: single-port `Float32Array[]` value mismatch throws (
   expect(() => expectAudioMatches(monoResult(filled(8, 0.5)), [filled(8, 0.6)])).toThrow(/diff/);
 });
 
-test("`expectAudioMatches`: multi-port actual + `Float32Array[]` expected throws (= 曖 昧)", () => {
+test("`expectAudioMatches`: multi-port actual + `Float32Array[]` expected throws (= ambiguous port)", () => {
   const result: RenderOfflineResult = {
     outputs: { main: [filled(8, 0.5)], send: [filled(8, 0.3)] },
     events: [],
@@ -112,13 +112,13 @@ test("`expectAudioMatches`: full result form happy path (= multi-port + multi-ch
   expect(() => expectAudioMatches(a, b)).not.toThrow();
 });
 
-test("`expectAudioMatches`: full result form port set mismatch throws (= 主 missing)", () => {
+test("`expectAudioMatches`: full result form port set mismatch throws (= expected port missing)", () => {
   const a = monoResult(filled(8, 0.5), "main");
   const b = monoResult(filled(8, 0.5), "send");
   expect(() => expectAudioMatches(a, b)).toThrow(/port/);
 });
 
-test("`expectAudioMatches`: full result form port count mismatch throws (= actual 多)", () => {
+test("`expectAudioMatches`: full result form port count mismatch throws (= actual has more ports)", () => {
   const a: RenderOfflineResult = {
     outputs: { main: [filled(8, 0.5)], send: [filled(8, 0.3)] },
     events: [],
@@ -147,13 +147,13 @@ test("`expectAudioMatches`: tolerance > 0 admits per-sample diff within band", (
   expect(() => expectAudioMatches(a, b, { tolerance: 0.001 })).not.toThrow();
 });
 
-test("`expectAudioMatches`: tolerance default = 0 = bit-exact (= 微 diff も 弾 く)", () => {
+test("`expectAudioMatches`: tolerance default = 0 = bit-exact (= even tiny diff fails)", () => {
   const a = monoResult(new Float32Array([0.5]));
   const b = monoResult(new Float32Array([0.5000001]));
   expect(() => expectAudioMatches(a, b)).toThrow(/diff/);
 });
 
-test("`expectAudioMatches`: sampleRate mismatch = throw (= 同 PCM / 異 rate で pitch / timing bug を 検 出)", () => {
+test("`expectAudioMatches`: sampleRate mismatch = throw (= same PCM / different rate catches pitch and timing bugs)", () => {
   const sameData = new Float32Array([0.1, 0.2, 0.3]);
   const a: RenderOfflineResult = {
     outputs: { main: [sameData] },
@@ -194,10 +194,10 @@ test("`expectNoNaN`: -Infinity throws", () => {
   expect(() => expectNoNaN(monoResult(ch))).toThrow(/Infinity/);
 });
 
-test("`expectNoNaN`: 多 port + 多 channel 全 走 査", () => {
+test("`expectNoNaN`: scans all ports and all channels", () => {
   const ch0 = filled(8, 0.5);
   const ch1 = filled(8, 0.5);
-  ch1[5] = NaN; // 検 出 対 象
+  ch1[5] = NaN; // target for detection
   const result: RenderOfflineResult = {
     outputs: { main: [ch0], send: [ch0, ch1] },
     events: [],
@@ -217,7 +217,7 @@ test("`expectPeakUnder`: peak at-or-above threshold throws (= 1.0 = 0 dBFS >= -3
   expect(() => expectPeakUnder(monoResult(filled(8, 1.0)), -3)).toThrow(/peak/);
 });
 
-test("`expectPeakUnder`: 負 値 abs で 検 知 (= -1.0 も 0 dBFS)", () => {
+test("`expectPeakUnder`: negative values detected via abs (= -1.0 is also 0 dBFS)", () => {
   expect(() => expectPeakUnder(monoResult(filled(8, -1.0)), -3)).toThrow(/peak/);
 });
 
@@ -380,15 +380,15 @@ test("`expectAudioMatchesGolden`: tolerance band admits small diff", () => {
   ).not.toThrow();
 });
 
-test("`expectAudioMatchesGolden`: sampleRate mismatch = throw (= 同 PCM / 異 rate で pitch / timing bug を 検 出)", () => {
-  // wav 44.1k で 書 か れ た 同 PCM を actual 48k と 比 較 = mismatch fail
-  // (= 後 で round-trip し て も rate metadata の 違 い で pitch bug)。
+test("`expectAudioMatchesGolden`: sampleRate mismatch = throw (= same PCM / different rate catches pitch and timing bugs)", () => {
+  // wav written at 44.1k, compared against actual at 48k = mismatch fail
+  // (= round-trip would still differ due to rate metadata causing pitch bugs)
   const ch = filled(128, 0.5);
   const path = tmpWav([ch], 44100);
   expect(() => expectAudioMatchesGolden(monoResult(ch), path)).toThrow(/sampleRate mismatch/);
 });
 
-test("`expectAudioMatchesGolden`: multi-port actual throws (= single-port 推 論 で き ず)", () => {
+test("`expectAudioMatchesGolden`: multi-port actual throws (= cannot infer single port)", () => {
   const path = tmpWav([filled(128, 0.5)]);
   const result: RenderOfflineResult = {
     outputs: { main: [filled(128, 0.5)], send: [filled(128, 0.3)] },
@@ -401,13 +401,13 @@ test("`expectAudioMatchesGolden`: multi-port actual throws (= single-port 推 �
 
 // ━━━━━━━━━━━━━━━━━━━━━ expectAudioMatchesSnapshot ━━━━━━━━━━━━━━━━━━━━━━━
 
-test("`expectAudioMatchesSnapshot`: round-trip = 初 回 書 き 出 し + 2 回 目 bit-exact pass", async () => {
+test("`expectAudioMatchesSnapshot`: round-trip = first run writes snapshot, second run is bit-exact pass", async () => {
   const result = monoResult(filled(128, 0.5));
   await expectAudioMatchesSnapshot(result, { snapshotName: "index-round-trip-128-0.5" });
   await expectAudioMatchesSnapshot(result, { snapshotName: "index-round-trip-128-0.5" });
 });
 
-test("`expectAudioMatchesSnapshot`: multi-port + opts.port 未 指 定 で throw", async () => {
+test("`expectAudioMatchesSnapshot`: multi-port + opts.port not specified = throw", async () => {
   const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-"));
   const path = join(dir, "ref.wav");
   const result: RenderOfflineResult = {
@@ -421,7 +421,7 @@ test("`expectAudioMatchesSnapshot`: multi-port + opts.port 未 指 定 で throw
   );
 });
 
-test("`expectAudioMatchesSnapshot`: opts.port 明 示 で 多 port → 該 当 port を wav 化", async () => {
+test("`expectAudioMatchesSnapshot`: opts.port specified resolves the target port from multi-port result", async () => {
   const result: RenderOfflineResult = {
     outputs: { main: [filled(8, 0.5)], send: [filled(8, 0.3)] },
     events: [],
@@ -434,7 +434,7 @@ test("`expectAudioMatchesSnapshot`: opts.port 明 示 で 多 port → 該 当 p
   });
 });
 
-test("`expectAudioMatchesSnapshot`: opts.port が actual.outputs に な い と throw", async () => {
+test("`expectAudioMatchesSnapshot`: opts.port not present in actual.outputs = throw", async () => {
   const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-"));
   const path = join(dir, "ref.wav");
   const result = monoResult(filled(8, 0));
@@ -444,40 +444,40 @@ test("`expectAudioMatchesSnapshot`: opts.port が actual.outputs に な い と
 });
 
 test("expectAudioMatchesSnapshot auto-infer path", async () => {
-  // 自 動 推 論 = `<test-file-dir>/__snapshots__/<test-file-name>__<test-name>__<counter>.wav`、
-  // 初 回 走 行 時 に snapshot wav が repo に commit さ れ、 以 降 bit-exact 回 帰 防 止。
+  // auto-infer = `<test-file-dir>/__snapshots__/<test-file-name>__<test-name>__<counter>.wav`
+  // On first run the snapshot wav is committed to the repo; subsequent runs guard against regressions bit-exactly.
   const result = monoResult(filled(8, 0));
   await expectAudioMatchesSnapshot(result);
 });
 
 test("expectAudioMatchesSnapshot opts.snapshotName path", async () => {
-  // `snapshotName` 明 示 = file 名 中 の test 名 部 分 を 上 書 き、 counter ナ シ、
-  // `<test-file-base>__<safe(snapshotName)>.wav` で 書 き 出 し。
+  // `snapshotName` overrides the test-name segment of the filename (no counter),
+  // writing `<test-file-base>__<safe(snapshotName)>.wav`.
   const result = monoResult(filled(8, 0));
   await expectAudioMatchesSnapshot(result, { snapshotName: "snapshotName demo" });
 });
 
-test("expectAudioMatchesSnapshot opts.snapshotName Unicode 保 持 (= 「テ ス ト 名 」)", async () => {
-  // sanitize は Unicode を 保 持、 ASCII-only sanitize で 空 に な っ て
-  // hidden `.wav` を 作 る regression を 防 ぐ。
+test("expectAudioMatchesSnapshot opts.snapshotName preserves Unicode (= 'Тест имя')", async () => {
+  // sanitize preserves Unicode — guards against an ASCII-only sanitizer that
+  // strips all characters and creates a hidden `.wav` file.
   const result = monoResult(filled(8, 0));
-  await expectAudioMatchesSnapshot(result, { snapshotName: "テ ス ト 名" });
+  await expectAudioMatchesSnapshot(result, { snapshotName: "Тест имя" });
 });
 
-test("`expectAudioMatchesSnapshot`: snapshotName 全 unsafe で 空 sanitize = throw", async () => {
-  // 「???」 等 = sanitize で 全 て _ → trim で 空 → `.wav` (hidden file) を
-  // 作 ら ず throw で fail-fast。
+test("`expectAudioMatchesSnapshot`: entirely unsafe snapshotName sanitizes to empty string = throw", async () => {
+  // '???' etc. = every char replaced by _ then trimmed to empty — throw
+  // fail-fast instead of creating a hidden `.wav` file.
   const result = monoResult(filled(8, 0));
   await expect(expectAudioMatchesSnapshot(result, { snapshotName: "???" })).rejects.toThrow(
     /sanitizes to empty filename/,
   );
 });
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━ matcher stubs (= 12 件 残) ━━━━━━━━━━━━━━━━━━━━━
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━ matcher stubs (= 12 remaining) ━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━ expectStable ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-test("`expectStable`: clean PCM passes (= audio level 問 わ ず)", () => {
+test("`expectStable`: clean PCM passes (= regardless of audio level)", () => {
   expect(() => expectStable(monoResult(filled(8, 1.5)))).not.toThrow();
 });
 
@@ -487,7 +487,7 @@ test("`expectStable`: NaN throws", () => {
   expect(() => expectStable(monoResult(ch))).toThrow(/NaN/);
 });
 
-test("`expectStable`: Infinity throws (= 発 散 検 知)", () => {
+test("`expectStable`: Infinity throws (= divergence detected)", () => {
   const ch = filled(8, 0.5);
   ch[3] = Infinity;
   expect(() => expectStable(monoResult(ch))).toThrow(/Infinity/);
@@ -495,32 +495,32 @@ test("`expectStable`: Infinity throws (= 発 散 検 知)", () => {
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━ expectMaster ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-test("`expectMaster`: 低 level + clean = pass (= default thresholds)", () => {
+test("`expectMaster`: low level + clean = pass (= default thresholds)", () => {
   expect(() => expectMaster(monoResult(filled(8, 0.1)))).not.toThrow();
 });
 
-test("`expectMaster`: peak ≥ default -0.1 dBFS で throw", () => {
+test("`expectMaster`: peak >= default -0.1 dBFS = throw", () => {
   expect(() => expectMaster(monoResult(filled(8, 1.0)))).toThrow(/peak/);
 });
 
-test("`expectMaster`: RMS ≥ default -14 dBFS で throw", () => {
+test("`expectMaster`: RMS >= default -14 dBFS = throw", () => {
   expect(() => expectMaster(monoResult(filled(8, 0.5)))).toThrow(/RMS/);
 });
 
-test("`expectMaster`: opts.peakDbfs 上 書 き で 緩 い threshold", () => {
+test("`expectMaster`: opts.peakDbfs override relaxes threshold", () => {
   expect(() => expectMaster(monoResult(filled(8, 0.1)), { peakDbfs: 0, rmsDbfs: 0 })).not.toThrow();
 });
 
-test("`expectMaster`: NaN 含 む = default で throw", () => {
+test("`expectMaster`: buffer containing NaN = throw (= default thresholds)", () => {
   const ch = filled(8, 0.1);
   ch[3] = NaN;
   expect(() => expectMaster(monoResult(ch))).toThrow(/NaN/);
 });
 
-test("`expectMaster`: NaN check は always on (= opts で 無 効 化 で き な い)", () => {
-  // underlying expectPeakUnder / expectRmsUnder が unconditional NaN guard
-  // で、 master 側 で 「NaN OK」 escape hatch を 持 つ と dead option に な
-  // る。 noNan opt は 削 除 = 常 に fail に zip。
+test("`expectMaster`: NaN check is always on (= cannot be disabled via opts)", () => {
+  // underlying expectPeakUnder / expectRmsUnder have an unconditional NaN guard,
+  // so a 'noNan' escape hatch at the master level would be a dead option.
+  // The noNan opt is removed — always fails on NaN.
   const ch = filled(8, 0.1);
   ch[3] = NaN;
   expect(() => expectMaster(monoResult(ch), { peakDbfs: 0, rmsDbfs: 0 })).toThrow(/NaN/);
@@ -528,15 +528,15 @@ test("`expectMaster`: NaN check は always on (= opts で 無 効 化 で き �
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━ expectSilence ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-test("`expectSilence`: 全 0 = pass", () => {
+test("`expectSilence`: all zeros = pass", () => {
   expect(() => expectSilence(monoResult(filled(8, 0)))).not.toThrow();
 });
 
-test("`expectSilence`: 非 silence = throw", () => {
+test("`expectSilence`: non-silence = throw", () => {
   expect(() => expectSilence(monoResult(filled(8, 0.1)))).toThrow(/silence/i);
 });
 
-test("`expectSilence`: opts.tolerance 内 = pass", () => {
+test("`expectSilence`: value within opts.tolerance = pass", () => {
   expect(() => expectSilence(monoResult(filled(8, 0.0001)), { tolerance: 0.001 })).not.toThrow();
 });
 
@@ -546,19 +546,19 @@ test("`expectPeakAtSample`: impulse → peak at 0 = pass", () => {
   expect(() => expectPeakAtSample(monoResult(impulse(8)), 0)).not.toThrow();
 });
 
-test("`expectPeakAtSample`: opts.atSample で 移 動 し た impulse", () => {
+test("`expectPeakAtSample`: opts.atSample shifts the impulse position", () => {
   expect(() => expectPeakAtSample(monoResult(impulse(8, { atSample: 3 })), 3)).not.toThrow();
 });
 
-test("`expectPeakAtSample`: tolerance 越 え で throw", () => {
+test("`expectPeakAtSample`: exceeds tolerance = throw", () => {
   expect(() => expectPeakAtSample(monoResult(impulse(8)), 5)).toThrow(/peak/);
 });
 
-test("`expectPeakAtSample`: tolerance 内 で pass", () => {
+test("`expectPeakAtSample`: within tolerance = pass", () => {
   expect(() => expectPeakAtSample(monoResult(impulse(8)), 2, { tolerance: 3 })).not.toThrow();
 });
 
-test("`expectPeakAtSample`: multi-port + opts.port 未 指 定 = throw", () => {
+test("`expectPeakAtSample`: multi-port + opts.port not specified = throw", () => {
   const result: RenderOfflineResult = {
     outputs: { main: [impulse(8)], send: [impulse(8, { atSample: 5 })] },
     events: [],
@@ -568,7 +568,7 @@ test("`expectPeakAtSample`: multi-port + opts.port 未 指 定 = throw", () => {
   expect(() => expectPeakAtSample(result, 0)).toThrow(/multi-port/);
 });
 
-test("`expectPeakAtSample`: opts.port 明 示 で 多 port 該 当", () => {
+test("`expectPeakAtSample`: opts.port specified resolves the target port from multi-port result", () => {
   const result: RenderOfflineResult = {
     outputs: { main: [impulse(8)], send: [impulse(8, { atSample: 5 })] },
     events: [],
@@ -578,15 +578,15 @@ test("`expectPeakAtSample`: opts.port 明 示 で 多 port 該 当", () => {
   expect(() => expectPeakAtSample(result, 5, { port: "send" })).not.toThrow();
 });
 
-test("`expectPeakAtSample`: opts.port 不 在 = throw", () => {
+test("`expectPeakAtSample`: opts.port absent from result.outputs = throw", () => {
   expect(() => expectPeakAtSample(monoResult(impulse(8)), 0, { port: "nonexistent" })).toThrow(
     /not in result.outputs/,
   );
 });
 
-test("`expectPeakAtSample`: silent buffer + expectedAtSample 0 = throw (= mute regression を 偽 pass さ せ な い)", () => {
-  // 全 0 buffer で maxAbs 初 期 = -1 + abs 0 > -1 で maxIdx 0 が 立 ち、
-  // expectedAtSample 0 で 偽 pass す る path を guard で 塞 ぐ。
+test("`expectPeakAtSample`: silent buffer + expectedAtSample 0 = throw (= prevents mute regression false pass)", () => {
+  // An all-zero buffer where the initial maxAbs is -1 and abs(0) > -1 sets maxIdx to 0,
+  // which would yield a false pass when expectedAtSample is 0. The guard blocks this path.
   expect(() => expectPeakAtSample(monoResult(filled(8, 0)), 0)).toThrow(/no detectable response/);
 });
 
@@ -600,8 +600,8 @@ test("`expectDcOffsetUnder`: DC 0.5 + threshold 0.001 = throw", () => {
   expect(() => expectDcOffsetUnder(monoResult(filled(8, 0.5)), 0.001)).toThrow(/DC offset/);
 });
 
-test("`expectDcOffsetUnder`: 振 動 信 号 (= 平 均 0) = pass", () => {
-  // sine 1 周 期 → 平 均 ≈ 0
+test("`expectDcOffsetUnder`: oscillating signal (= mean ~0) = pass", () => {
+  // one full sine period → mean ≈ 0
   const buf = sine({ freqHz: 1, durationSamples: 100, sampleRate: 100 });
   expect(() => expectDcOffsetUnder(monoResult(buf), 0.01)).not.toThrow();
 });
@@ -618,15 +618,15 @@ test("`expectDcOffsetUnder`: empty channel (= length 0) = mean 0 = pass", () => 
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━ expectGainAtFreq ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-test("`expectGainAtFreq`: 純 音 amplitude 1 = 0 dB ± 2 dB で pass (= spectral leakage 受 容)", () => {
-  // sine 1000 Hz amplitude 1 / 1024 sample @ 48k、 bin 21 が 1000 Hz 周 辺。
-  // freqHz が bin 中 心 に 完 全 に 乗 ら な い 時 spectral leakage で 隣 接 bin
-  // に 振 幅 が 分 散 = tolerance 2 dB で OK。
+test("`expectGainAtFreq`: pure tone amplitude 1 = 0 dB ± 2 dB passes (= spectral leakage tolerance)", () => {
+  // sine 1000 Hz amplitude 1 / 1024 samples @ 48k, bin 21 is near 1000 Hz.
+  // When freqHz does not land exactly on a bin center, spectral leakage spreads
+  // amplitude across adjacent bins — 2 dB tolerance covers this.
   const buf = sine({ freqHz: 1000, durationSamples: 1024, sampleRate: 48000, amplitude: 1 });
   expect(() => expectGainAtFreq(monoResult(buf), 1000, 0, 2)).not.toThrow();
 });
 
-test("`expectGainAtFreq`: amplitude 0.5 = -6 dB ± 2 dB で pass", () => {
+test("`expectGainAtFreq`: amplitude 0.5 = -6 dB ± 2 dB passes", () => {
   const buf = sine({ freqHz: 1000, durationSamples: 1024, sampleRate: 48000, amplitude: 0.5 });
   expect(() => expectGainAtFreq(monoResult(buf), 1000, -6, 2)).not.toThrow();
 });
@@ -635,7 +635,7 @@ test("`expectGainAtFreq`: silence (= -Infinity dB) vs 0 dB expected = throw", ()
   expect(() => expectGainAtFreq(monoResult(silence(1024)), 1000, 0, 1)).toThrow(/gain/);
 });
 
-test("`expectGainAtFreq`: multi-port で throw", () => {
+test("`expectGainAtFreq`: multi-port = throw", () => {
   const result: RenderOfflineResult = {
     outputs: { main: [silence(1024)], send: [silence(1024)] },
     events: [],
@@ -645,7 +645,7 @@ test("`expectGainAtFreq`: multi-port で throw", () => {
   expect(() => expectGainAtFreq(result, 1000, 0, 1)).toThrow(/single-port/);
 });
 
-test("`expectGainAtFreq`: empty channel で throw", () => {
+test("`expectGainAtFreq`: empty channel = throw", () => {
   const result: RenderOfflineResult = {
     outputs: { main: [new Float32Array(0)] },
     events: [],
@@ -655,36 +655,36 @@ test("`expectGainAtFreq`: empty channel で throw", () => {
   expect(() => expectGainAtFreq(result, 1000, 0, 1)).toThrow(/empty/);
 });
 
-test("`expectGainAtFreq`: Nyquist 越 え freq で throw", () => {
+test("`expectGainAtFreq`: frequency above Nyquist = throw", () => {
   expect(() => expectGainAtFreq(monoResult(silence(1024)), 30000, 0, 1)).toThrow(/out of range/);
 });
 
-test("`expectGainAtFreq`: 非 2 ^ k 長 さ (= L = 48000) で 純 音 amplitude 1 = 0 dB ± 1.5 dB regression", () => {
-  // L = 48000 sr = 48000 f = 1000 で nextPow2 = 65536 zero-pad、 bin 1365 が
-  // 1000 Hz 周 辺 (= bin freq = 999.756 Hz = -0.244 Hz offset)。 元 信 号 長
-  // `ch.length` で 正 規 化 す る path = leakage 込 み で -0.87 dB (= sinc
-  // factor 0.905)、 zero-pad 後 N で 正 規 化 す る path = 追 加 で L / N =
-  // 0.732 倍 過 小 = -3.57 dB で 1.5 dB tolerance fail。
+test("`expectGainAtFreq`: non-power-of-2 length (= L = 48000) pure tone amplitude 1 = 0 dB ± 1.5 dB regression", () => {
+  // L = 48000, sr = 48000, f = 1000 → nextPow2 = 65536 zero-padded, bin 1365 is
+  // near 1000 Hz (= bin freq = 999.756 Hz = -0.244 Hz offset). Normalizing by
+  // ch.length instead of zero-padded N causes leakage-induced amplitude error of
+  // -0.87 dB (sinc factor 0.905); normalizing by padded N causes an additional
+  // L/N = 0.732x underestimate = -3.57 dB, which fails the 1.5 dB tolerance.
   const buf = sine({ freqHz: 1000, durationSamples: 48000, sampleRate: 48000, amplitude: 1 });
   expect(() => expectGainAtFreq(monoResult(buf), 1000, 0, 1.5)).not.toThrow();
 });
 
-test("`expectGainAtFreq`: multichannel + opts.channel 未 指 定 = throw (= silent blind spot 防 止)", () => {
+test("`expectGainAtFreq`: multichannel + opts.channel not specified = throw (= prevents silent blind spot)", () => {
   const buf = sine({ freqHz: 1000, durationSamples: 1024, sampleRate: 48000, amplitude: 1 });
   const result = stereoResult(buf, silence(1024));
   expect(() => expectGainAtFreq(result, 1000, 0, 2)).toThrow(/multichannel.*opts\.channel/);
 });
 
-test("`expectGainAtFreq`: multichannel + opts.channel 指 定 = 指 定 ch 解 析 (= 壊 れ た 非 第 0 ch を 検 出)", () => {
-  // ch 0 = 純 音 0 dB、 ch 1 = silence (= -Infinity dB)。 opts.channel: 1
-  // 指 定 で ch 1 silence を 解 析 = expected 0 dB と mismatch で throw。
+test("`expectGainAtFreq`: multichannel + opts.channel specified = analyzes the specified channel (= catches broken non-zero channels)", () => {
+  // ch 0 = pure tone at 0 dB, ch 1 = silence (= -Infinity dB).
+  // With opts.channel: 1, ch 1 silence is analyzed = mismatch against expected 0 dB = throw.
   const buf = sine({ freqHz: 1000, durationSamples: 1024, sampleRate: 48000, amplitude: 1 });
   const result = stereoResult(buf, silence(1024));
   expect(() => expectGainAtFreq(result, 1000, 0, 2, { channel: 0 })).not.toThrow();
   expect(() => expectGainAtFreq(result, 1000, 0, 2, { channel: 1 })).toThrow(/gain/);
 });
 
-test("`expectGainAtFreq`: opts.channel 範 囲 外 = throw", () => {
+test("`expectGainAtFreq`: opts.channel out of range = throw", () => {
   const buf = sine({ freqHz: 1000, durationSamples: 1024, sampleRate: 48000, amplitude: 1 });
   expect(() => expectGainAtFreq(monoResult(buf), 1000, 0, 2, { channel: 5 })).toThrow(
     /out of range/,
@@ -697,21 +697,21 @@ test("`expectLatency`: impulse at 0 → latency 0 = pass", () => {
   expect(() => expectLatency(monoResult(impulse(8)), 0)).not.toThrow();
 });
 
-test("`expectLatency`: delay 5 sample impulse → latency 5", () => {
+test("`expectLatency`: 5-sample delayed impulse → latency 5", () => {
   expect(() => expectLatency(monoResult(impulse(16, { atSample: 5 })), 5)).not.toThrow();
 });
 
-test("`expectLatency`: 期 待 mismatch で throw", () => {
+test("`expectLatency`: expected mismatch = throw", () => {
   expect(() => expectLatency(monoResult(impulse(16, { atSample: 5 })), 10)).toThrow(/delay/);
 });
 
-test("`expectLatency`: tolerance band で pass", () => {
+test("`expectLatency`: within tolerance band = pass", () => {
   expect(() =>
     expectLatency(monoResult(impulse(16, { atSample: 5 })), 7, { tolerance: 3 }),
   ).not.toThrow();
 });
 
-test("`expectLatency`: multi-port で throw", () => {
+test("`expectLatency`: multi-port = throw", () => {
   const result: RenderOfflineResult = {
     outputs: { main: [impulse(8)], send: [impulse(8)] },
     events: [],
@@ -721,32 +721,32 @@ test("`expectLatency`: multi-port で throw", () => {
   expect(() => expectLatency(result, 0)).toThrow(/single-port/);
 });
 
-test("`expectLatency`: multichannel + opts.channel 未 指 定 = throw (= silent blind spot 防 止)", () => {
+test("`expectLatency`: multichannel + opts.channel not specified = throw (= prevents silent blind spot)", () => {
   const result = stereoResult(impulse(8, { atSample: 0 }), impulse(8, { atSample: 5 }));
   expect(() => expectLatency(result, 0)).toThrow(/multichannel.*opts\.channel/);
 });
 
-test("`expectLatency`: multichannel + opts.channel 指 定 = 指 定 ch 解 析 (= 壊 れ た 非 第 0 ch を 検 出)", () => {
-  // ch 0 = impulse @ 0、 ch 1 = impulse @ 5。 latency 0 期 待 で channel: 0
-  // pass / channel: 1 fail。
+test("`expectLatency`: multichannel + opts.channel specified = analyzes the specified channel (= catches broken non-zero channels)", () => {
+  // ch 0 = impulse @ 0, ch 1 = impulse @ 5. With expected latency 0:
+  // channel: 0 passes, channel: 1 fails.
   const result = stereoResult(impulse(8, { atSample: 0 }), impulse(8, { atSample: 5 }));
   expect(() => expectLatency(result, 0, { channel: 0 })).not.toThrow();
   expect(() => expectLatency(result, 0, { channel: 1 })).toThrow(/delay/);
 });
 
-test("`expectLatency`: opts.channel 範 囲 外 = throw", () => {
+test("`expectLatency`: opts.channel out of range = throw", () => {
   expect(() => expectLatency(monoResult(impulse(8)), 0, { channel: 5 })).toThrow(/out of range/);
 });
 
-test("`expectLatency`: silent buffer + expectedSamples 0 = throw (= mute regression を 偽 pass さ せ な い)", () => {
-  // 全 0 buffer で maxAbs 初 期 = -1 + abs 0 > -1 で maxIdx 0 が 立 ち、
-  // expectedSamples 0 で 偽 pass す る path を guard で 塞 ぐ。
+test("`expectLatency`: silent buffer + expectedSamples 0 = throw (= prevents mute regression false pass)", () => {
+  // An all-zero buffer where the initial maxAbs is -1 and abs(0) > -1 sets maxIdx to 0,
+  // which would yield a false pass when expectedSamples is 0. The guard blocks this path.
   expect(() => expectLatency(monoResult(filled(8, 0)), 0)).toThrow(/no detectable response/);
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━ expectEventCount ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-test("`expectEventCount`: 同 name 件 数 一 致 = pass", () => {
+test("`expectEventCount`: matching count for a given name = pass", () => {
   const result: RenderOfflineResult = {
     outputs: {},
     events: [
@@ -760,7 +760,7 @@ test("`expectEventCount`: 同 name 件 数 一 致 = pass", () => {
   expect(() => expectEventCount(result, "peak", 2)).not.toThrow();
 });
 
-test("`expectEventCount`: 不 一 致 で throw", () => {
+test("`expectEventCount`: count mismatch = throw", () => {
   const result: RenderOfflineResult = {
     outputs: {},
     events: [{ name: "peak", payload: {}, atSample: 0 }],
@@ -770,13 +770,13 @@ test("`expectEventCount`: 不 一 致 で throw", () => {
   expect(() => expectEventCount(result, "peak", 2)).toThrow(/count 1 != expected 2/);
 });
 
-test("`expectEventCount`: 不 在 name = 0 = pass", () => {
+test("`expectEventCount`: absent name = 0 = pass", () => {
   expect(() => expectEventCount(monoResult(filled(8, 0)), "ghost", 0)).not.toThrow();
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━ expectEventsContaining ━━━━━━━━━━━━━━━━━━━━━━━━
 
-test("`expectEventsContaining`: 全 partial 件 が result に exists = pass", () => {
+test("`expectEventsContaining`: all partial entries exist in result = pass", () => {
   const result: RenderOfflineResult = {
     outputs: {},
     events: [
@@ -789,7 +789,7 @@ test("`expectEventsContaining`: 全 partial 件 が result に exists = pass", (
   expect(() => expectEventsContaining(result, [{ name: "peak" }, { name: "other" }])).not.toThrow();
 });
 
-test("`expectEventsContaining`: payload 部 分 一 致", () => {
+test("`expectEventsContaining`: partial payload match", () => {
   const result: RenderOfflineResult = {
     outputs: {},
     events: [{ name: "peak", payload: { level: 0.5 }, atSample: 10 }],
@@ -801,7 +801,7 @@ test("`expectEventsContaining`: payload 部 分 一 致", () => {
   ).not.toThrow();
 });
 
-test("`expectEventsContaining`: payload mismatch で throw", () => {
+test("`expectEventsContaining`: payload mismatch = throw", () => {
   const result: RenderOfflineResult = {
     outputs: {},
     events: [{ name: "peak", payload: { level: 0.5 }, atSample: 10 }],
@@ -813,7 +813,7 @@ test("`expectEventsContaining`: payload mismatch で throw", () => {
   );
 });
 
-test("`expectEventsContaining`: atSample 一 致 path", () => {
+test("`expectEventsContaining`: atSample match path", () => {
   const result: RenderOfflineResult = {
     outputs: {},
     events: [{ name: "peak", payload: {}, atSample: 10 }],
@@ -823,7 +823,7 @@ test("`expectEventsContaining`: atSample 一 致 path", () => {
   expect(() => expectEventsContaining(result, [{ name: "peak", atSample: 10 }])).not.toThrow();
 });
 
-test("`expectEventsContaining`: atSample mismatch で throw", () => {
+test("`expectEventsContaining`: atSample mismatch = throw", () => {
   const result: RenderOfflineResult = {
     outputs: {},
     events: [{ name: "peak", payload: {}, atSample: 10 }],
@@ -835,7 +835,7 @@ test("`expectEventsContaining`: atSample mismatch で throw", () => {
   );
 });
 
-test("`expectEventsContaining`: 余 計 な event は 許 容 (= 順 不 同 / 部 分 一 致)", () => {
+test("`expectEventsContaining`: extra events are tolerated (= unordered / partial match)", () => {
   const result: RenderOfflineResult = {
     outputs: {},
     events: [
@@ -853,9 +853,9 @@ test("`expectEventsContaining`: empty partial = pass", () => {
   expect(() => expectEventsContaining(monoResult(filled(8, 0)), [])).not.toThrow();
 });
 
-// ━━━━━━━━━━━━━━ NaN guard regression (= 全 numerical matcher) ━━━━━━━━━━━━━━━
-// `Math.abs(NaN) > x = false` / `NaN >= x = false` で NaN 入 力 が 偽 pass す
-// る 経 路 を 各 matcher の 冒 頭 `expectNoNaN(result)` で 塞 ぐ。
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ NaN guard regression (= all numerical matchers) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// `Math.abs(NaN) > x = false` / `NaN >= x = false` means NaN input can produce
+// false passes. Each matcher blocks this at the start via `expectNoNaN(result)`.
 
 const nanResult = (): RenderOfflineResult => {
   const ch = filled(8, 0.5);
@@ -863,35 +863,35 @@ const nanResult = (): RenderOfflineResult => {
   return monoResult(ch);
 };
 
-test("`expectAudioMatches`: NaN actual = throw (= silent compare pass を 防 ぐ)", () => {
+test("`expectAudioMatches`: NaN actual = throw (= prevents silent compare pass)", () => {
   expect(() => expectAudioMatches(nanResult(), [filled(8, 0.5)])).toThrow(/NaN/);
 });
 
-test("`expectAudioMatches`: NaN expected (= Float32Array[] 形) = throw (= corrupted reference freeze 防 止)", () => {
+test("`expectAudioMatches`: NaN expected (= Float32Array[] form) = throw (= prevents corrupted reference from being frozen)", () => {
   const nanCh = filled(8, 0.5);
   nanCh[3] = NaN;
   expect(() => expectAudioMatches(monoResult(filled(8, 0.5)), [nanCh])).toThrow(/expected.*NaN/);
 });
 
-test("`expectAudioMatches`: NaN expected (= RenderOfflineResult 形) = throw", () => {
+test("`expectAudioMatches`: NaN expected (= RenderOfflineResult form) = throw", () => {
   expect(() => expectAudioMatches(monoResult(filled(8, 0.5)), nanResult())).toThrow(
     /expected.*NaN/,
   );
 });
 
-test("`expectAudioMatchesGolden`: NaN actual = throw (= 内 部 `expectAudioMatches` 経 由)", () => {
+test("`expectAudioMatchesGolden`: NaN actual = throw (= via internal `expectAudioMatches`)", () => {
   const path = tmpWav([filled(8, 0.5)]);
   expect(() => expectAudioMatchesGolden(nanResult(), path)).toThrow(/NaN/);
 });
 
-test("`expectAudioMatchesGolden`: NaN を 含 む golden wav = throw (= 過 去 の broken run が freeze し た reference を 拒 否)", () => {
+test("`expectAudioMatchesGolden`: golden wav containing NaN = throw (= rejects a broken reference frozen by a past run)", () => {
   const nanCh = filled(8, 0.5);
   nanCh[3] = NaN;
   const path = tmpWav([nanCh]);
   expect(() => expectAudioMatchesGolden(monoResult(filled(8, 0.5)), path)).toThrow(/expected.*NaN/);
 });
 
-test("`expectAudioMatchesSnapshot`: NaN actual = throw (= snapshot 初 回 書 き で 壊 れ た wav を 永 続 化 し な い)", async () => {
+test("`expectAudioMatchesSnapshot`: NaN actual = throw (= prevents persisting a broken wav on first snapshot write)", async () => {
   const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-nan-"));
   const path = join(dir, "ref.wav");
   await expect(expectAudioMatchesSnapshot(nanResult(), { snapshotPath: path })).rejects.toThrow(
@@ -899,46 +899,46 @@ test("`expectAudioMatchesSnapshot`: NaN actual = throw (= snapshot 初 回 書 �
   );
 });
 
-test("`expectPeakUnder`: NaN = throw (= peak が 0 の ま ま 留 ま っ て -Infinity dB で 偽 pass を 防 ぐ)", () => {
+test("`expectPeakUnder`: NaN = throw (= prevents false pass when peak stays 0, reading as -Infinity dB)", () => {
   expect(() => expectPeakUnder(nanResult(), -3)).toThrow(/NaN/);
 });
 
-test("`expectRmsUnder`: NaN = throw (= rms = NaN ≥ dbfs = false で 偽 pass を 防 ぐ)", () => {
+test("`expectRmsUnder`: NaN = throw (= prevents false pass when rms = NaN >= dbfs = false)", () => {
   expect(() => expectRmsUnder(nanResult(), -3)).toThrow(/NaN/);
 });
 
-test("`expectSilence`: NaN = throw (= abs(NaN) > 0 = false で 偽 pass を 防 ぐ)", () => {
+test("`expectSilence`: NaN = throw (= prevents false pass when abs(NaN) > 0 = false)", () => {
   expect(() => expectSilence(nanResult())).toThrow(/NaN/);
 });
 
-test("`expectPeakAtSample`: NaN = throw (= maxIdx が 初 期 値 の ま ま で 偽 pass を 防 ぐ)", () => {
+test("`expectPeakAtSample`: NaN = throw (= prevents false pass when maxIdx stays at its initial value)", () => {
   expect(() => expectPeakAtSample(nanResult(), 3)).toThrow(/NaN/);
 });
 
-test("`expectGainAtFreq`: NaN = throw (= FFT magnitude NaN 伝 播 で 偽 pass を 防 ぐ)", () => {
+test("`expectGainAtFreq`: NaN = throw (= prevents false pass from NaN propagation through FFT magnitude)", () => {
   expect(() => expectGainAtFreq(nanResult(), 1000, 0, 1)).toThrow(/NaN/);
 });
 
-test("`expectLatency`: NaN = throw (= maxIdx が 初 期 値 で 偽 pass を 防 ぐ)", () => {
+test("`expectLatency`: NaN = throw (= prevents false pass when maxIdx stays at its initial value)", () => {
   expect(() => expectLatency(nanResult(), 0)).toThrow(/NaN/);
 });
 
-test("`expectDcOffsetUnder`: NaN = throw (= mean = NaN ≥ threshold = false で 偽 pass を 防 ぐ)", () => {
+test("`expectDcOffsetUnder`: NaN = throw (= prevents false pass when mean = NaN >= threshold = false)", () => {
   expect(() => expectDcOffsetUnder(nanResult(), 0.001)).toThrow(/NaN/);
 });
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━ signal utility 7 件 ━━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━ signal utilities (7 cases) ━━━━━━━━━━━━━━━━━━━━━━━━━
 
-test("`sine`: 440 Hz @ 48k で 第 1 sample = 0 + 4 分 周 期 sample で 1", () => {
-  // 周 期 sample 数 = 48000 / 440 ≈ 109.09、 4 分 周 期 ≈ 27.27 sample
+test("`sine`: 440 Hz @ 48k — sample 0 = 0, quarter-period sample ≈ 1", () => {
+  // period in samples = 48000 / 440 ≈ 109.09, quarter period ≈ 27.27 samples
   const buf = sine({ freqHz: 440, durationSamples: 128, sampleRate: 48000 });
   expect(buf.length).toBe(128);
   expect(buf[0]).toBeCloseTo(0, 6);
-  // sample 27 周 辺 で sin が 1 に 近 く な る
+  // around sample 27 sin approaches 1
   expect(buf[27]).toBeCloseTo(1, 1);
 });
 
-test("`sine`: amplitude / phase 反 映", () => {
+test("`sine`: amplitude and phase are applied", () => {
   const buf = sine({
     freqHz: 1,
     durationSamples: 4,
@@ -946,27 +946,27 @@ test("`sine`: amplitude / phase 反 映", () => {
     amplitude: 0.5,
     phase: Math.PI / 2,
   });
-  // phase = π/2 で sample 0 = sin(π/2) = 1、 amplitude 0.5 で 0.5
+  // phase = π/2 → sample 0 = sin(π/2) = 1, scaled by amplitude 0.5 = 0.5
   expect(buf[0]).toBeCloseTo(0.5, 6);
 });
 
-test("`silence`: 全 0", () => {
+test("`silence`: all zeros", () => {
   const buf = silence(8);
   expect(buf.length).toBe(8);
   expect([...buf]).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
 });
 
-test("`impulse`: default = 第 0 sample = 1、 残 0", () => {
+test("`impulse`: default = sample 0 = 1, rest 0", () => {
   const buf = impulse(4);
   expect([...buf]).toEqual([1, 0, 0, 0]);
 });
 
-test("`impulse`: opts.atSample で 位 置 上 書 き", () => {
+test("`impulse`: opts.atSample shifts the impulse position", () => {
   const buf = impulse(4, { atSample: 2 });
   expect([...buf]).toEqual([0, 0, 1, 0]);
 });
 
-test("`impulse`: opts.atSample 範 囲 外 = 全 0", () => {
+test("`impulse`: opts.atSample out of range = all zeros", () => {
   const buf = impulse(4, { atSample: 100 });
   expect([...buf]).toEqual([0, 0, 0, 0]);
 });
@@ -974,7 +974,7 @@ test("`impulse`: opts.atSample 範 囲 外 = 全 0", () => {
 test("`sineSweep`: log sweep deterministic", () => {
   const buf = sineSweep({ startHz: 100, endHz: 1000, durationSamples: 64, sampleRate: 48000 });
   expect(buf.length).toBe(64);
-  // 第 0 sample = 0 (phase = 2π * 100 / 48000)
+  // sample 0 = 0 (phase = 2π * 100 / 48000)
   expect(Math.abs(buf[0]!)).toBeCloseTo((2 * Math.PI * 100) / 48000, 4);
 });
 
@@ -989,19 +989,19 @@ test("`sineSweep`: lin type", () => {
   expect(buf.length).toBe(16);
 });
 
-test("`whiteNoise`: deterministic seed = 同 buffer", () => {
+test("`whiteNoise`: deterministic seed produces identical buffers", () => {
   const a = whiteNoise({ durationSamples: 32, seed: 42 });
   const b = whiteNoise({ durationSamples: 32, seed: 42 });
   expect([...a]).toEqual([...b]);
 });
 
-test("`whiteNoise`: 違 う seed = 違 う buffer", () => {
+test("`whiteNoise`: different seeds produce different buffers", () => {
   const a = whiteNoise({ durationSamples: 32, seed: 1 });
   const b = whiteNoise({ durationSamples: 32, seed: 2 });
   expect([...a]).not.toEqual([...b]);
 });
 
-test("`whiteNoise`: amplitude 反 映 = 全 sample |s| <= amplitude", () => {
+test("`whiteNoise`: amplitude is respected — all samples |s| <= amplitude", () => {
   const buf = whiteNoise({ durationSamples: 1024, amplitude: 0.5 });
   for (const s of buf) expect(Math.abs(s)).toBeLessThanOrEqual(0.5);
 });
@@ -1011,24 +1011,24 @@ test("`dc`: default value = 1", () => {
   expect([...buf]).toEqual([1, 1, 1, 1]);
 });
 
-test("`dc`: 任 意 value", () => {
+test("`dc`: arbitrary value", () => {
   const buf = dc(3, 0.25);
   expect([...buf]).toEqual([0.25, 0.25, 0.25]);
 });
 
-test("`ramp`: 0..1 / 5 sample = [0, 0.25, 0.5, 0.75, 1]", () => {
+test("`ramp`: 0..1 / 5 samples = [0, 0.25, 0.5, 0.75, 1]", () => {
   const buf = ramp({ durationSamples: 5, from: 0, to: 1 });
   expect([...buf]).toEqual([0, 0.25, 0.5, 0.75, 1]);
 });
 
-test("`ramp`: 単 一 sample = from", () => {
+test("`ramp`: single sample = from", () => {
   const buf = ramp({ durationSamples: 1, from: 0.5, to: 1 });
   expect(buf[0]).toBe(0.5);
 });
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━ midi namespace 10 件 ━━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━ midi namespace (10 cases) ━━━━━━━━━━━━━━━━━━━━━━━━━
 
-test("`midi.noteOn`: 構 築 + default channel 0", () => {
+test("`midi.noteOn`: builds message with default channel 0", () => {
   expect(midi.noteOn({ note: 60, velocity: 100 })).toEqual({
     type: "noteOn",
     channel: 0,
@@ -1046,7 +1046,7 @@ test("`midi.noteOff`: default velocity 0", () => {
   });
 });
 
-test("`midi.cc`: 構 築 + channel 上 書 き", () => {
+test("`midi.cc`: builds message with channel override", () => {
   expect(midi.cc({ controller: 7, value: 100, channel: 5 })).toEqual({
     type: "cc",
     channel: 5,
@@ -1055,7 +1055,7 @@ test("`midi.cc`: 構 築 + channel 上 書 き", () => {
   });
 });
 
-test("`midi.pitchBend`: 構 築", () => {
+test("`midi.pitchBend`: builds message", () => {
   expect(midi.pitchBend({ value: 8192 })).toEqual({
     type: "pitchBend",
     channel: 0,
@@ -1063,7 +1063,7 @@ test("`midi.pitchBend`: 構 築", () => {
   });
 });
 
-test("`midi.programChange`: 構 築", () => {
+test("`midi.programChange`: builds message", () => {
   expect(midi.programChange({ program: 42 })).toEqual({
     type: "programChange",
     channel: 0,
@@ -1071,7 +1071,7 @@ test("`midi.programChange`: 構 築", () => {
   });
 });
 
-test("`midi.channelPressure`: 構 築", () => {
+test("`midi.channelPressure`: builds message", () => {
   expect(midi.channelPressure({ pressure: 80 })).toEqual({
     type: "channelPressure",
     channel: 0,
@@ -1079,7 +1079,7 @@ test("`midi.channelPressure`: 構 築", () => {
   });
 });
 
-test("`midi.aftertouch`: 構 築", () => {
+test("`midi.aftertouch`: builds message", () => {
   expect(midi.aftertouch({ note: 60, pressure: 80 })).toEqual({
     type: "aftertouch",
     channel: 0,
@@ -1088,16 +1088,16 @@ test("`midi.aftertouch`: 構 築", () => {
   });
 });
 
-test("`midi.systemRealtime`: 構 築 (= 0xF8 = timing clock)", () => {
+test("`midi.systemRealtime`: builds message (= 0xF8 = timing clock)", () => {
   expect(midi.systemRealtime(0xf8)).toEqual({ type: "systemRealtime", status: 0xf8 });
 });
 
-test("`midi.sysex`: 構 築 (= data carry)", () => {
+test("`midi.sysex`: builds message (= data carry)", () => {
   const bytes = new Uint8Array([0xf0, 0x7e, 0x7f, 0x06, 0x01, 0xf7]);
   expect(midi.sysex(bytes)).toEqual({ type: "sysex", data: bytes });
 });
 
-test("`midi.sequence`: 配 列 → OfflineEvent[] 変 換", () => {
+test("`midi.sequence`: converts array to OfflineEvent[]", () => {
   const seq = midi.sequence("midiIn", [
     { at: 0, event: midi.noteOn({ note: 60, velocity: 100 }) },
     { at: 480, event: midi.noteOff({ note: 60 }) },
@@ -1118,7 +1118,7 @@ test("`midi.sequence`: 配 列 → OfflineEvent[] 変 換", () => {
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━ expectMidiOut ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-test("`expectMidiOut`: 順 序 + type + payload 一 致 = pass", () => {
+test("`expectMidiOut`: order + type + payload match = pass", () => {
   const result: RenderOfflineResult = {
     outputs: {},
     events: [
@@ -1136,7 +1136,7 @@ test("`expectMidiOut`: 順 序 + type + payload 一 致 = pass", () => {
   ).not.toThrow();
 });
 
-test("`expectMidiOut`: 件 数 不 一 致 で throw", () => {
+test("`expectMidiOut`: count mismatch = throw", () => {
   const result: RenderOfflineResult = {
     outputs: {},
     events: [{ name: "out", payload: midi.noteOn({ note: 60, velocity: 100 }), atSample: 0 }],
@@ -1146,7 +1146,7 @@ test("`expectMidiOut`: 件 数 不 一 致 で throw", () => {
   expect(() => expectMidiOut(result, "out", [])).toThrow(/count/);
 });
 
-test("`expectMidiOut`: type mismatch で throw", () => {
+test("`expectMidiOut`: type mismatch = throw", () => {
   const result: RenderOfflineResult = {
     outputs: {},
     events: [{ name: "out", payload: midi.noteOn({ note: 60, velocity: 100 }), atSample: 0 }],
@@ -1156,7 +1156,7 @@ test("`expectMidiOut`: type mismatch で throw", () => {
   expect(() => expectMidiOut(result, "out", [midi.noteOff({ note: 60 })])).toThrow(/type/);
 });
 
-test("`expectMidiOut`: atSample tolerance 越 え で throw", () => {
+test("`expectMidiOut`: atSample exceeds tolerance = throw", () => {
   const result: RenderOfflineResult = {
     outputs: {},
     events: [{ name: "out", payload: midi.noteOn({ note: 60, velocity: 100 }), atSample: 100 }],
@@ -1168,7 +1168,7 @@ test("`expectMidiOut`: atSample tolerance 越 え で throw", () => {
   ).toThrow(/atSample/);
 });
 
-test("`expectMidiOut`: payload field mismatch で throw", () => {
+test("`expectMidiOut`: payload field mismatch = throw", () => {
   const result: RenderOfflineResult = {
     outputs: {},
     events: [{ name: "out", payload: midi.noteOn({ note: 60, velocity: 100 }), atSample: 0 }],
@@ -1182,7 +1182,7 @@ test("`expectMidiOut`: payload field mismatch で throw", () => {
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━ expectMidiBalance ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-test("`expectMidiBalance`: 完 全 pair = pass", () => {
+test("`expectMidiBalance`: fully paired noteOn/noteOff = pass", () => {
   const result: RenderOfflineResult = {
     outputs: {},
     events: [
@@ -1205,7 +1205,7 @@ test("`expectMidiBalance`: hanging noteOn = throw", () => {
   expect(() => expectMidiBalance(result, "out")).toThrow(/hanging/);
 });
 
-test("`expectMidiBalance`: opts.hangingNotes で 許 容", () => {
+test("`expectMidiBalance`: opts.hangingNotes allows a permitted number of hanging notes", () => {
   const result: RenderOfflineResult = {
     outputs: {},
     events: [
@@ -1218,7 +1218,7 @@ test("`expectMidiBalance`: opts.hangingNotes で 許 容", () => {
   expect(() => expectMidiBalance(result, "out", { hangingNotes: 2 })).not.toThrow();
 });
 
-test("`expectMidiBalance`: 違 う channel は 別 note と し て track", () => {
+test("`expectMidiBalance`: different channels are tracked as separate notes", () => {
   const result: RenderOfflineResult = {
     outputs: {},
     events: [
@@ -1228,12 +1228,12 @@ test("`expectMidiBalance`: 違 う channel は 別 note と し て track", () =
     state: new Uint8Array(0),
     sampleRate: 48000,
   };
-  // ch 0 noteOn が hanging、 ch 1 noteOff が stray (= 双 方 fail に カ ウ ン ト)。
+  // ch 0 noteOn is hanging, ch 1 noteOff is stray (= both counted as failures).
   expect(() => expectMidiBalance(result, "out")).toThrow(/hanging.*stray|stray.*hanging/);
 });
 
-test("`expectMidiBalance`: stray noteOff (= 対 応 noteOn ナ シ) = throw", () => {
-  // single noteOff の み = lifecycle 不 正 = always fail (tolerance opt ナ シ)。
+test("`expectMidiBalance`: stray noteOff (= noteOn without a matching pair) = throw", () => {
+  // a lone noteOff = invalid lifecycle = always fails (no tolerance opt).
   const result: RenderOfflineResult = {
     outputs: {},
     events: [{ name: "out", payload: midi.noteOff({ note: 60 }), atSample: 0 }],
@@ -1244,7 +1244,7 @@ test("`expectMidiBalance`: stray noteOff (= 対 応 noteOn ナ シ) = throw", ()
 });
 
 test("`expectMidiBalance`: double noteOff (= noteOn 1 → noteOff 2) = throw", () => {
-  // 同 一 note を 2 回 off = noteOff over-count = stray fail。
+  // sending noteOff twice for the same note = noteOff over-count = stray fail.
   const result: RenderOfflineResult = {
     outputs: {},
     events: [
@@ -1258,8 +1258,8 @@ test("`expectMidiBalance`: double noteOff (= noteOn 1 → noteOff 2) = throw", (
   expect(() => expectMidiBalance(result, "out")).toThrow(/stray/);
 });
 
-test("`expectMidiBalance`: stray noteOff は hangingNotes opts で 救 え な い", () => {
-  // hangingNotes opt は hanging noteOn だ け に 効 く、 stray は always fail。
+test("`expectMidiBalance`: stray noteOff cannot be pardoned by hangingNotes opt", () => {
+  // hangingNotes only applies to hanging noteOns; stray noteOffs always fail.
   const result: RenderOfflineResult = {
     outputs: {},
     events: [{ name: "out", payload: midi.noteOff({ note: 60 }), atSample: 0 }],
@@ -1269,9 +1269,9 @@ test("`expectMidiBalance`: stray noteOff は hangingNotes opts で 救 え な �
   expect(() => expectMidiBalance(result, "out", { hangingNotes: 100 })).toThrow(/stray/);
 });
 
-test("`expectMidiBalance`: noteOff → noteOn (= 順 序 逆 転、 最 終 net 0) = throw", () => {
-  // 最 終 合 算 path だ と 0 で pass し て し ま う lifecycle 逆 転 を、
-  // running counter path で stray と し て 即 検 出 す る regression。
+test("`expectMidiBalance`: noteOff before noteOn (= reversed order, net 0) = throw", () => {
+  // A final-sum approach would pass because on/off cancel out, but the running
+  // counter catches the stray noteOff immediately — regression guard.
   const result: RenderOfflineResult = {
     outputs: {},
     events: [
@@ -1284,30 +1284,30 @@ test("`expectMidiBalance`: noteOff → noteOn (= 順 序 逆 転、 最 終 net 
   expect(() => expectMidiBalance(result, "out")).toThrow(/stray/);
 });
 
-// ━━━━━━━━━━━━━━━━━━━━━━━ sample / time utility 6 件 ━━━━━━━━━━━━━━━━━━━━━━
+// ━━━━━━━━━━━━━━━━━━━━━━━ sample / time utilities (6 cases) ━━━━━━━━━━━━━━━━━━━━━━
 
-test("`samplesToMs`: 480 sample @ 48k = 10 ms", () => {
+test("`samplesToMs`: 480 samples @ 48k = 10 ms", () => {
   expect(samplesToMs(480, 48000)).toBe(10);
 });
 
-test("`msToSamples`: 10 ms @ 48k = 480 sample", () => {
+test("`msToSamples`: 10 ms @ 48k = 480 samples", () => {
   expect(msToSamples(10, 48000)).toBe(480);
 });
 
-test("`samplesToSec`: 48000 sample @ 48k = 1 sec", () => {
+test("`samplesToSec`: 48000 samples @ 48k = 1 sec", () => {
   expect(samplesToSec(48000, 48000)).toBe(1);
 });
 
-test("`secToSamples`: 1 sec @ 48k = 48000 sample", () => {
+test("`secToSamples`: 1 sec @ 48k = 48000 samples", () => {
   expect(secToSamples(1, 48000)).toBe(48000);
 });
 
-test("`bpmToSamples`: 120 BPM 1/4 @ 48k = 24000 sample (= half sec)", () => {
-  // 120 BPM = 0.5 sec / beat、 1/4 = 1 beat = 0.5 sec = 24000 sample @ 48k
+test("`bpmToSamples`: 120 BPM 1/4 @ 48k = 24000 samples (= half sec)", () => {
+  // 120 BPM = 0.5 sec / beat, 1/4 = 1 beat = 0.5 sec = 24000 samples @ 48k
   expect(bpmToSamples({ bpm: 120, division: "1/4", sampleRate: 48000 })).toBe(24000);
 });
 
-test("`bpmToSamples`: 120 BPM 1/16 @ 48k = 6000 sample (= 1/16 beat)", () => {
+test("`bpmToSamples`: 120 BPM 1/16 @ 48k = 6000 samples (= 1/16 beat)", () => {
   expect(bpmToSamples({ bpm: 120, division: "1/16", sampleRate: 48000 })).toBe(6000);
 });
 
@@ -1315,12 +1315,12 @@ test("`bpmToMs`: 120 BPM 1/4 = 500 ms", () => {
   expect(bpmToMs({ bpm: 120, division: "1/4" })).toBe(500);
 });
 
-test("`bpmToMs`: 60 BPM 1/1 = 4000 ms (= 4 beat = 1 whole)", () => {
+test("`bpmToMs`: 60 BPM 1/1 = 4000 ms (= 4 beats = 1 whole note)", () => {
   expect(bpmToMs({ bpm: 60, division: "1/1" })).toBe(4000);
 });
 
-test("`bpmToMs`: 各 division factor = (1/1: 4, 1/2: 2, 1/4: 1, 1/8: 0.5, 1/16: 0.25, 1/32: 0.125)", () => {
-  // 60 BPM × 1000 ms / beat = 1000 ms/beat、 各 division で の ms
+test("`bpmToMs`: division factors (1/1: 4, 1/2: 2, 1/4: 1, 1/8: 0.5, 1/16: 0.25, 1/32: 0.125)", () => {
+  // 60 BPM × 1000 ms/beat = 1000 ms/beat; ms per division
   expect(bpmToMs({ bpm: 60, division: "1/1" })).toBe(4000);
   expect(bpmToMs({ bpm: 60, division: "1/2" })).toBe(2000);
   expect(bpmToMs({ bpm: 60, division: "1/4" })).toBe(1000);
@@ -1329,11 +1329,10 @@ test("`bpmToMs`: 各 division factor = (1/1: 4, 1/2: 2, 1/4: 1, 1/8: 0.5, 1/16: 
   expect(bpmToMs({ bpm: 60, division: "1/32" })).toBe(125);
 });
 
-// ━━━━━━━━━━━━━━━━━ 残 分 岐 coverage (= -Infinity / snapshot state) ━━━━━━━━━━━━━━━━
+// ━━━━━━━━━━━━━━━━━━━━━━━ remaining branch coverage (= -Infinity / snapshot state) ━━━━━━━━━━━━━━━━
 
-test("`expectAudioMatches`: +Infinity expected (= Float32Array[] 形) = throw (= sign 分 岐 +Infinity 経 路)", () => {
-  // `assertChannelsFinite` 内 `v > 0 ? "+Infinity" : "-Infinity"` の true 分 岐
-  // (= 正 無 限 大) を hit。
+test("`expectAudioMatches`: +Infinity expected (= Float32Array[] form) = throw (= positive-infinity branch)", () => {
+  // Hits the `v > 0 ? "+Infinity" : "-Infinity"` true branch inside `assertChannelsFinite`.
   const posInfCh = filled(8, 0.5);
   posInfCh[3] = Infinity;
   expect(() => expectAudioMatches(monoResult(filled(8, 0.5)), [posInfCh])).toThrow(
@@ -1341,9 +1340,9 @@ test("`expectAudioMatches`: +Infinity expected (= Float32Array[] 形) = throw (=
   );
 });
 
-test("`expectAudioMatches`: -Infinity expected (= Float32Array[] 形) = throw (= sign 分 岐 -Infinity 経 路)", () => {
-  // `assertChannelsFinite` 内 `v > 0 ? "+Infinity" : "-Infinity"` の false 分 岐
-  // (= 負 無 限 大) を hit。 既 +Infinity test と 対 で 両 分 岐 を 揃 え る。
+test("`expectAudioMatches`: -Infinity expected (= Float32Array[] form) = throw (= negative-infinity branch)", () => {
+  // Hits the `v > 0 ? "+Infinity" : "-Infinity"` false branch inside `assertChannelsFinite`.
+  // Paired with the +Infinity test to cover both branches.
   const negInfCh = filled(8, 0.5);
   negInfCh[3] = -Infinity;
   expect(() => expectAudioMatches(monoResult(filled(8, 0.5)), [negInfCh])).toThrow(
@@ -1351,26 +1350,26 @@ test("`expectAudioMatches`: -Infinity expected (= Float32Array[] 形) = throw (=
   );
 });
 
-test("`expectAudioMatchesSnapshotWithState`: snapshotName 渡 し + state.testPath ナ シ = throw", () => {
-  // `resolveSnapshotPath` 内 `if (!state.testPath)` 分 岐 (= snapshotName 経 路)
-  // を hit。 state を 空 object で 渡 し て 明 示 的 に testPath ナ シ を 作 る。
+test("`expectAudioMatchesSnapshotWithState`: snapshotName provided + state.testPath absent = throw", () => {
+  // Hits the `if (!state.testPath)` branch inside `resolveSnapshotPath` (snapshotName path).
+  // Passing an empty state object explicitly creates the missing-testPath condition.
   return expect(
     expectAudioMatchesSnapshotWithState(monoResult(filled(8, 0.5)), { snapshotName: "demo" }, {}),
-  ).rejects.toThrow(/testPath が 必 要/);
+  ).rejects.toThrow(/requires testPath/);
 });
 
-test("`expectAudioMatchesSnapshotWithState`: auto-infer + state.testPath ナ シ = throw", () => {
-  // `resolveSnapshotPath` 末 尾 `if (!state.testPath || !state.currentTestName)`
-  // 分 岐 (= auto-infer 経 路) を hit。 testPath も currentTestName も ナ シ
-  // の state で 渡 し て fail-fast。
+test("`expectAudioMatchesSnapshotWithState`: auto-infer + state.testPath absent = throw", () => {
+  // Hits the `if (!state.testPath || !state.currentTestName)` branch inside
+  // `resolveSnapshotPath` (auto-infer path). Passing a state with neither field
+  // triggers fail-fast.
   return expect(
     expectAudioMatchesSnapshotWithState(monoResult(filled(8, 0.5)), {}, {}),
   ).rejects.toThrow(/auto-infer requires testPath/);
 });
 
-test("`expectAudioMatchesSnapshotWithState`: auto-infer + currentTestName ナ シ = throw", () => {
-  // 上 と 同 分 岐 (= 短 絡 評 価 の 右 辺 `!state.currentTestName` 単 独 を
-  // 通 す path、 testPath だ け 渡 す 形 で 右 辺 trigger)。
+test("`expectAudioMatchesSnapshotWithState`: auto-infer + currentTestName absent = throw", () => {
+  // Hits the same branch via the short-circuit right operand `!state.currentTestName`
+  // by providing testPath only, leaving currentTestName absent.
   return expect(
     expectAudioMatchesSnapshotWithState(
       monoResult(filled(8, 0.5)),
@@ -1382,12 +1381,12 @@ test("`expectAudioMatchesSnapshotWithState`: auto-infer + currentTestName ナ �
   ).rejects.toThrow(/auto-infer requires testPath/);
 });
 
-test("`expectAudioMatchesSnapshotWithState`: 全 unsafe な currentTestName で auto-infer = `_` placeholder slug", async () => {
-  // `resolveSnapshotPath` 末 尾 `safeName.length > 0 ? safeName : "_"` の false
-  // 分 岐 (= sanitize で 全 char が 削 ら れ た 結 果 空 string) を hit。
-  // 「???」 は sanitize で 全 部 unsafe → 空 → "_" placeholder 経 路。
-  // testPath / currentTestName 両 方 set + snapshotState ナ シ で `?? "new"`
-  // fallback (= L506) も 同 時 に hit。
+test("`expectAudioMatchesSnapshotWithState`: fully unsafe currentTestName in auto-infer = `_` placeholder slug", async () => {
+  // Hits the `safeName.length > 0 ? safeName : "_"` false branch inside
+  // `resolveSnapshotPath` — all chars in '???' are unsafe, producing an empty
+  // string, which falls through to the '_' placeholder path.
+  // testPath + currentTestName both set, snapshotState absent → also hits the
+  // `?? "new"` fallback (= L506).
   const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-unsafe-"));
   const result = monoResult(filled(8, 0));
   await expectAudioMatchesSnapshotWithState(
@@ -1400,11 +1399,10 @@ test("`expectAudioMatchesSnapshotWithState`: 全 unsafe な currentTestName で 
   );
 });
 
-test("`expectMidiBalance`: noteOn / noteOff 以 外 の MIDI message (= cc / pitchBend 等) は balance に 影 響 ナ シ", () => {
-  // `expectMidiBalance` の 内 部 if-else `m.type === "noteOn"` →
-  // `else if (m.type === "noteOff")` の 「ど ち ら で も な い」 path
-  // (= cc / pitchBend / programChange / sysex / etc) を hit。 cc 等 は
-  // running count に 影 響 し な い = balanced と し て pass。
+test("`expectMidiBalance`: non-noteOn/noteOff MIDI messages (= cc / pitchBend etc.) do not affect balance", () => {
+  // Hits the `else` branch (neither noteOn nor noteOff) inside `expectMidiBalance`,
+  // e.g. cc / pitchBend / programChange / sysex / etc. These do not affect
+  // the running note count and therefore pass as balanced.
   const result: RenderOfflineResult = {
     outputs: {},
     events: [
@@ -1420,9 +1418,9 @@ test("`expectMidiBalance`: noteOn / noteOff 以 外 の MIDI message (= cc / pit
   expectMidiBalance(result, "out");
 });
 
-test("`sineSweep`: durationSamples=1 = 単 一 sample (= t 計 算 の 0 fallback 経 路)", () => {
-  // `sineSweep` 内 `opts.durationSamples > 1 ? ... : 0` の false 分 岐
-  // (= durationSamples = 1 で div by zero 回 避 fallback) を hit。
+test("`sineSweep`: durationSamples=1 = single sample (= t-calculation div-by-zero fallback path)", () => {
+  // Hits the `opts.durationSamples > 1 ? ... : 0` false branch inside `sineSweep`
+  // (= durationSamples = 1 avoids division by zero via fallback to 0).
   const out = sineSweep({
     durationSamples: 1,
     sampleRate: 48000,
@@ -1432,16 +1430,16 @@ test("`sineSweep`: durationSamples=1 = 単 一 sample (= t 計 算 の 0 fallbac
   expect(out.length).toBe(1);
 });
 
-test("`whiteNoise`: seed = 0 (= xorshift32 シ ー ド 0 → 1 救 済) hit", () => {
-  // `whiteNoise` 内 `if (s === 0) s = 1` の true 分 岐 = seed 0 渡 し で
-  // hit (= xorshift32 は s=0 で 固 着 す る た め 1 に 強 制)。
+test("`whiteNoise`: seed = 0 hits xorshift32 zero-seed rescue path", () => {
+  // Hits the `if (s === 0) s = 1` true branch inside `whiteNoise`
+  // (= xorshift32 gets stuck at 0, so seed 0 is forced to 1).
   const out = whiteNoise({ durationSamples: 8, seed: 0 });
   expect(out.length).toBe(8);
 });
 
-test("`midi.cc`: channel default (= channel 省 略 で 0) 経 路", () => {
-  // `midi.cc` 内 `opts.channel ?? 0` の null fallback 分 岐 (= channel 省 略)
-  // を hit。 既 channel 上 書 き test (= 5) と 対 で 両 分 岐 を 揃 え る。
+test("`midi.cc`: channel omitted defaults to 0 (= null-fallback branch)", () => {
+  // Hits the `opts.channel ?? 0` null-fallback branch inside `midi.cc` (channel omitted).
+  // Paired with the channel-override test (= 5) to cover both branches.
   expect(midi.cc({ controller: 7, value: 100 })).toEqual({
     type: "cc",
     channel: 0,

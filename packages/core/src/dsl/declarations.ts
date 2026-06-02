@@ -3,7 +3,7 @@
  *
  * Declaration scope only: each helper registers a slot in the graph and
  * a region in WASM linear memory (state / buffer / param / event / message /
- * MIDI input / MIDI output)。
+ * MIDI input / MIDI output).
  *
  * Named-factory chain (= Q79): `.named('X')` quick form / `.expose({ name, ... })`
  * full form are exposed both **before** the type method (`state.named('X').f32(0)`)
@@ -57,9 +57,10 @@ import type {
 } from "../types.ts";
 
 /**
- * typed-array payload proxy node に隠し持たせる「どの message のどの field か」
- * の meta。`buf.copyFrom(payloadField)` が src からこれを読んで bufferCopyFrom AST
- * を組む (= 公開型 `TypedArrayFieldRef` は length/at だけ、内部は symbol で carry)。
+ * Hidden meta attached to a typed-array payload proxy node identifying which
+ * field of which message it refers to. `buf.copyFrom(payloadField)` reads this
+ * off the source to build the `bufferCopyFrom` AST (= the public `TypedArrayFieldRef`
+ * type exposes only length/at, while the internals are carried via this symbol).
  */
 const PAYLOAD_FIELD_META = Symbol("unworklet.payloadFieldMeta");
 
@@ -80,9 +81,10 @@ const midiSysexMeta = (v: unknown): MidiSysexMeta | undefined =>
     : undefined;
 
 /**
- * buffer handle に隠し持たせる identity (= name + element type)。`event.emitIf` が
- * typed-array field の値として渡された buffer を検出 (= §4.3 worklet→main の emit
- * 側) するための marker。公開型 `Buffer<T>` には現れない内部 symbol。
+ * Hidden identity attached to a buffer handle (= name + element type). A marker
+ * that lets `event.emitIf` detect a buffer passed as a typed-array field's value
+ * (= the emit side of the §4.3 worklet→main path). An internal symbol that never
+ * appears on the public `Buffer<T>` type.
  */
 const BUFFER_HANDLE_META = Symbol("unworklet.bufferHandleMeta");
 
@@ -131,7 +133,7 @@ function liftF32(v: Node<"f32"> | number): AstNode {
 
 /**
  * A loose `num(n)` literal (Q77) carries a fallback `'f32'` type and defers to its
- * concretely-typed context. A `.store()` / buffer `.write()` IS that context, so a
+ * concretely-typed context. A `.write()` / buffer `.write()` IS that context, so a
  * loose literal re-lifts to the declared slot type here — otherwise an `f32.const`
  * lands in a non-f32 slot, which type-checks in TS yet miscompiles ("type ⟺ works"
  * breaks). A non-loose node's type is TS-guaranteed to match, so it passes through.
@@ -151,23 +153,25 @@ function reliftLooseLiteral(ast: AstNode, type: ScalarType): AstNode {
 }
 
 /**
- * `state.<type>.store(v)` の value 引 数 を AST に lift (= Q33 literal lift
- * + Node<T> unwrap)。 i64 は bigint 必 須、 bool は boolean → i32 0/1 に
- * 内 部 表 現 変 換 (= Q42 + emit.ts bool case と zip)。 既 ast.ts の
- * literal kind は `value: number` 制 約 = i64 literal の bigint store は
- * 後 続 sub-phase で literal 型 拡 張 と zip し て fill。
+ * Lift the value argument of `state.<type>.write(v)` to an AST (= Q33 literal lift
+ * + `Node<T>` unwrap). i64 requires a bigint; bool converts boolean → i32 0/1 as
+ * its internal representation (= Q42, matching the bool case in emit.ts). The
+ * existing `literal` kind in ast.ts constrains `value: number`, so storing an i64
+ * literal as a bigint is filled in by a later sub-phase together with the literal
+ * type extension.
  */
 function liftStoreValue<T extends ScalarType>(type: T, v: Node<T> | ScalarOf<T>): AstNode {
   if (typeof v === "number") {
     return { kind: "literal", type, value: v };
   }
   if (typeof v === "boolean") {
-    // bool は 内 部 i32 表 現 (= store 経 路 で i32.store)。
+    // bool uses an i32 internal representation (= an i32.store on the store path).
     return { kind: "literal", type: "i32", value: v ? 1 : 0 };
   }
   if (typeof v === "bigint") {
-    // i64 literal store: bigint を そ の ま ま literal node に 担 ぐ (= emit が
-    // `i64.const` へ 32bit word 分 割)。 Node<'i64'> 経 由 (= stateLoad 等) も 同 path。
+    // i64 literal store: carry the bigint directly on the literal node (= emit
+    // splits it into 32-bit words for `i64.const`). A value arriving via
+    // `Node<'i64'>` (= stateLoad etc.) follows the same path.
     return { kind: "literal", type: "i64", value: v };
   }
   return reliftLooseLiteral(unwrapAst(v as Node<ScalarType>), type);
@@ -190,18 +194,19 @@ export interface StateChain {
 }
 
 // `state` chain (= Q79 chain-order free + Q76 plain factory + Q42 publish
-// type 制 限)。 chain `.named('X')` / `.expose({ name, snapshot, publish })`
-// を pendingExpose に accumulate (= field after-wins merge)、 type method
-// (= `.f32(0)` 等) で makeStateDecl が 走 り decl を 作 成。 handle 後 付 け
-// `.named` / `.expose` も 同 merge logic で decl mutate。
+// type restriction). The chain accumulates `.named('X')` /
+// `.expose({ name, snapshot, publish })` into pendingExpose (= field after-wins
+// merge), and the type method (= `.f32(0)` etc.) runs makeStateDecl to create
+// the decl. Post-hoc `.named` / `.expose` on the handle mutate the decl with the
+// same merge logic.
 //
-// AST shape の name field は `decl.name` を `.load()` / `.store()` 呼 び 時 点
-// で closure capture (= late binding)、 chain 後 fix が反 映 さ れ る 順 序 と zip
-// (= 既 param と 同 規 律: chain は store/load 呼 び 出 し の 前 に 完 結 さ せ る
-// = user 責 任)。
+// The name field of the AST shape closure-captures `decl.name` at the point of
+// the `.read()` / `.write()` call (= late binding), matching the order in which
+// a post-chain fix takes effect (= same discipline as param: the chain must be
+// completed before any store/load call = user's responsibility).
 //
-// validate timing は eager (= chain ご と) で 走 る = 早 期 error で chain
-// 途 中 で 即 reject。
+// Validation timing is eager (= per chain method), so an invalid chain is
+// rejected early, mid-chain.
 
 const EMPTY_EXPOSE: ExposeOptions = {};
 
@@ -224,13 +229,13 @@ const makeStateChain = (pendingExpose: ExposeOptions): StateChain => ({
 });
 
 /**
- * state slot の name uniqueness check (= `01-dsl.md` §3.1 + Q5-b)。
+ * Name-uniqueness check for a state slot (= `01-dsl.md` §3.1 + Q5-b).
  *
- * declare 時 (= `state.f32(0)` / `state.named('X').f32(0)`) と .named() /
- * .expose() 後 付 け mutate 時 の 両 path で 走 る。 `excludeDecl` を 渡 す と
- * 自 decl を 除 外 し て check (= .named() で 自 分 を 上 書 き す る path で
- * 自 collide を 誤 検 出 し な い)。 同 kind 内 で name は unique = type が違 っ
- * て も collide。
+ * Runs on both paths: at declaration time (= `state.f32(0)` /
+ * `state.named('X').f32(0)`) and on a post-hoc .named() / .expose() mutation.
+ * Passing `excludeDecl` excludes the decl itself from the check (= so the path
+ * where .named() overwrites its own name does not falsely report a self-collision).
+ * Names are unique within a kind = a collision occurs even across differing types.
  */
 function checkStateName(name: string, excludeDecl: StateDecl | null = null): void {
   const ctx = getCurrentCapture();
@@ -244,13 +249,13 @@ function checkStateName(name: string, excludeDecl: StateDecl | null = null): voi
 const PUBLISH_ALLOWED_TYPES: ReadonlySet<ScalarType> = new Set(["f32", "i32", "bool"]);
 
 /**
- * state slot の publish / snapshot 整 合 性 check (= Q42 + `01-dsl.md` §3.1)。
- * - publish + 不 正 type (f64 / i64) → throw
- * - publish + rateFps <= 0 (NaN 含 む) → throw
+ * Publish / snapshot consistency check for a state slot (= Q42 + `01-dsl.md` §3.1).
+ * - publish + invalid type (f64 / i64) → throw
+ * - publish + rateFps <= 0 (including NaN) → throw
  * - publish + userNamed = false (= synthetic name) → throw
  * - snapshot 'persistent' + userNamed = false → throw
  *
- * eager (= chain method ご と) で 走 る = 不 正 chain を 早 期 reject。
+ * Runs eagerly (= per chain method), rejecting an invalid chain early.
  */
 function validateStateDecl(decl: StateDecl): void {
   if (decl.publish !== undefined) {
@@ -284,8 +289,8 @@ function makeStateDecl<T extends ScalarType>(
 ): State<T> {
   const ctx = getCurrentCapture();
   const synthIdx = ctx.declarations.filter((d) => d.kind === "state").length;
-  // user name は subgraph instance prefix を前置 (= §5.6)。 auto name は global
-  // synthIdx で既に一意 = prefix 不要。
+  // A user name is prefixed with the subgraph instance prefix (= §5.6). An auto
+  // name is already unique via the global synthIdx = no prefix needed.
   const name =
     pendingExpose.name !== undefined ? ctx.namePrefix + pendingExpose.name : `__state_${synthIdx}`;
   checkStateName(name);
@@ -305,9 +310,9 @@ function makeStateDecl<T extends ScalarType>(
 
 function makeStateHandle<T extends ScalarType>(decl: StateDecl): State<T> {
   const handle = {
-    load: () =>
+    read: () =>
       // Eager temp-local capture freezes the slot value at this lexical point
-      // (= `03-compiler.md` §2.7, issue #8) — a later `store` cannot change it.
+      // (= `03-compiler.md` §2.7, issue #8) — a later `write` cannot change it.
       captureTemp<T>(
         {
           kind: "stateLoad",
@@ -316,7 +321,7 @@ function makeStateHandle<T extends ScalarType>(decl: StateDecl): State<T> {
         },
         decl.type,
       ),
-    store: (v: Node<T> | ScalarOf<T>) => {
+    write: (v: Node<T> | ScalarOf<T>) => {
       addStatement({
         kind: "stateStore",
         type: decl.type,
@@ -333,7 +338,8 @@ function makeStateHandle<T extends ScalarType>(decl: StateDecl): State<T> {
       return handle;
     },
     expose: (options: ExposeOptions) => {
-      // user name は subgraph instance prefix を前置 (= §5.6、buffer / .named と同軸)。
+      // A user name is prefixed with the subgraph instance prefix (= §5.6, same
+      // axis as buffer / .named).
       const exposeName =
         options.name !== undefined ? getCurrentCapture().namePrefix + options.name : undefined;
       if (exposeName !== undefined && exposeName !== decl.name) {
@@ -341,8 +347,9 @@ function makeStateHandle<T extends ScalarType>(decl: StateDecl): State<T> {
         decl.name = exposeName;
         decl.userNamed = true;
       } else if (exposeName !== undefined) {
-        // 同 name 再 set = userNamed flag を true へ promote (= 後 付 け .expose
-        // で 自 decl と 同 name 渡 す path = user 明 示 と み な す)
+        // Re-setting the same name promotes the userNamed flag to true (= a
+        // post-hoc .expose passing the same name as the decl itself = treated as
+        // user-explicit).
         decl.userNamed = true;
       }
       if (options.snapshot !== undefined) {
@@ -358,7 +365,8 @@ function makeStateHandle<T extends ScalarType>(decl: StateDecl): State<T> {
   return handle;
 }
 
-export const state: StateChain = makeStateChain(EMPTY_EXPOSE);
+// `state` (with its `state.buffer` array sub-namespace) is exported after the
+// buffer chain is defined below.
 
 // ─────────────────────────────────────────────────────────────────────────
 // `buffer` — fixed-size arrays (`01-dsl.md` §3.2)
@@ -392,9 +400,9 @@ function liftBufferValue(elementType: BufferElementType, v: Node<ScalarType> | n
 }
 
 /**
- * buffer slot の name uniqueness check (= `01-dsl.md` §3.2、 state と 同 規 約)。
- * 同 kind 内 で unique (= type が違っても collide)。 `excludeDecl` で 後 付 け
- * `.named` 時 の 自 collide 誤 検 出 を 回 避。
+ * Name-uniqueness check for a buffer slot (= `01-dsl.md` §3.2, same convention as
+ * state). Unique within a kind (= a collision occurs even across differing types).
+ * `excludeDecl` avoids a false self-collision on a post-hoc `.named`.
  */
 function checkBufferName(name: string, excludeDecl: BufferDecl | null = null): void {
   const ctx = getCurrentCapture();
@@ -406,9 +414,10 @@ function checkBufferName(name: string, excludeDecl: BufferDecl | null = null): v
 }
 
 /**
- * buffer slot の publish / snapshot 整 合 性 check (= `01-dsl.md` §3.2)。 state と
- * 同 軸 だ が publish の type 制 限 は ナ シ (= 全 element 型 で publish 可、 Q27-a/e)。
- * persistent snapshot / publish は main-side identity 必 須 = userNamed 必 須。
+ * Publish / snapshot consistency check for a buffer slot (= `01-dsl.md` §3.2).
+ * Same axis as state, but with no type restriction on publish (= publish is
+ * allowed for every element type, Q27-a/e). A persistent snapshot / publish
+ * requires a main-side identity = requires userNamed.
  */
 function validateBufferDecl(decl: BufferDecl): void {
   if (decl.publish !== undefined) {
@@ -437,8 +446,9 @@ function makeBufferDecl<T extends BufferElementType>(
 ): Buffer<T> {
   const ctx = getCurrentCapture();
   const synthIdx = ctx.declarations.filter((d) => d.kind === "buffer").length;
-  // user name は subgraph instance prefix を前置 (= §5.6、state と同軸)。 auto name は
-  // global synthIdx で既に一意 = prefix 不要。 複数 instance で named buffer が衝突しない。
+  // A user name is prefixed with the subgraph instance prefix (= §5.6, same axis
+  // as state). An auto name is already unique via the global synthIdx = no prefix
+  // needed. Named buffers do not collide across multiple instances.
   const name =
     pendingExpose.name !== undefined ? ctx.namePrefix + pendingExpose.name : `__buffer_${synthIdx}`;
   checkBufferName(name);
@@ -457,9 +467,10 @@ function makeBufferDecl<T extends BufferElementType>(
 }
 
 function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer<T> {
-  // literal index / offset を graph-capture 時に range check (= §3.2: literal range
-  // constraints は capture で reject)。 dynamic Node<'i32'> は caller 責任 (= no check)。
-  // lanes は SIMD load/store が触る連続要素数 (= read/write は 1、loadVec/storeVec は 4)。
+  // Range-check a literal index / offset at graph-capture time (= §3.2: literal
+  // range constraints are rejected at capture). A dynamic `Node<'i32'>` is the
+  // caller's responsibility (= no check). `lanes` is the count of contiguous
+  // elements a SIMD load/store touches (= 1 for read/write, 4 for loadVec/storeVec).
   const liftIndex = (idx: Node<"i32"> | number, op: string, lanes = 1): AstNode => {
     if (typeof idx === "number") {
       if (!Number.isInteger(idx) || idx < 0 || idx + lanes > decl.size) {
@@ -500,10 +511,11 @@ function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer
       });
     },
     readInterpolated: (pos: Node<"f32"> | number) => {
-      // 補間は floor(pos) と floor(pos)+1 の 2-tap を読むので literal pos は [0, size-1)。
+      // Interpolation reads the 2-tap pair floor(pos) and floor(pos)+1, so a
+      // literal pos must be within [0, size-1).
       if (typeof pos === "number" && (!(pos >= 0) || pos >= decl.size - 1)) {
         throw new Error(
-          `unworklet: buffer "${decl.name}" readInterpolated(${pos}) pos is out of range [0, ${decl.size - 1}) (= 2-tap 補間は floor(pos)+1 まで読む; literal pos は capture で range-check)`,
+          `unworklet: buffer "${decl.name}" readInterpolated(${pos}) pos is out of range [0, ${decl.size - 1}) (= 2-tap interpolation reads up to floor(pos)+1; a literal pos is range-checked at capture)`,
         );
       }
       return captureTemp(
@@ -542,8 +554,9 @@ function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer
           "unworklet: buffer.copyFrom(src) requires a typed-array message payload field",
         );
       }
-      // field を dest buffer の element type で typed-array seal (= TypedArrayFieldRef<T>
-      // の T が buffer 型と一致する型制約があるので payloadContent + 8-byte slot 確保)。
+      // Typed-array-seal the field with the dest buffer's element type (= since the
+      // T of `TypedArrayFieldRef<T>` is type-constrained to match the buffer type,
+      // reserve a payloadContent + 8-byte slot).
       const field = meta.decl.fields.find((f) => f.name === meta.field);
       if (field !== undefined) {
         // Layer 2 backstop (Q31-c): the field's element type was already sealed
@@ -568,8 +581,9 @@ function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer
         field: meta.field,
       });
     },
-    // SIMD buffer I/O (= §7、型は @unworklet/core/simd の declaration merge で f32 限定)。
-    // offset は element 単位 = emit 側で × 4 byte。 4 lane を v128 で load/store。
+    // SIMD buffer I/O (= §7; the type is restricted to f32 via the declaration
+    // merge in @unworklet/core/simd). The offset is in element units = ×4 bytes on
+    // the emit side. Load/store 4 lanes as a v128.
     loadVec: (offset: Node<"i32"> | number) =>
       wrapAst<"f32x4">({
         kind: "bufferLoadVec",
@@ -612,8 +626,9 @@ function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer
       return handle;
     },
   } as unknown as Buffer<T>;
-  // event.emitIf が typed-array field の値として渡された buffer を識別する marker
-  // (= §4.3 worklet→main、 decl 参 照 で late-bind name も追従)。
+  // A marker by which event.emitIf identifies a buffer passed as a typed-array
+  // field's value (= §4.3 worklet→main; via the decl reference, a late-bound name
+  // is also tracked).
   Object.defineProperty(handle, BUFFER_HANDLE_META, {
     value: { decl } satisfies BufferHandleMeta,
     enumerable: false,
@@ -632,7 +647,15 @@ const makeBufferChain = (pendingExpose: ExposeOptions): BufferChain => ({
   expose: (options) => makeBufferChain(mergeExpose(pendingExpose, options)),
 });
 
-export const buffer: BufferChain = makeBufferChain(EMPTY_EXPOSE);
+const bufferChain: BufferChain = makeBufferChain(EMPTY_EXPOSE);
+
+// `state` carries the scalar factory chain plus `state.buffer` — the array form
+// of state (Q76 buffer = the array form of state). `state.buffer` is the only place the
+// buffer chain is reachable; `state.named(...)` returns a plain `StateChain`.
+export const state: StateChain & { readonly buffer: BufferChain } = Object.assign(
+  makeStateChain(EMPTY_EXPOSE),
+  { buffer: bufferChain },
+);
 
 // ─────────────────────────────────────────────────────────────────────────
 // `param` — AudioParam-backed (`01-dsl.md` §3.3 + Q76 named-only)
@@ -654,12 +677,12 @@ export interface ParamChain {
   expose(options: ExposeOptions): ParamChain;
 }
 
-// `param` chain (= Q76 named-required + Q79 chain-order free)。
-// `.f32(opts)` 時 に declaration を graph に append し、 chain の `.named()` /
-// `.expose({...})` は 後 付 け / 前 付 け 両 方 で 同 declaration を 指 す
-// (= after-wins、 mutate)。 `param.at(i)` は decl.name を late-binding で 読 む =
-// `.named` / `.expose` 重 複 後 でも 最 新 name を 反 映。 snapshot policy は
-// `.expose({ snapshot })` で 設 定 (default 'persistent')。
+// `param` chain (= Q76 named-required + Q79 chain-order free).
+// `.f32(opts)` appends the declaration to the graph, and the chain's `.named()` /
+// `.expose({...})` — whether post-hoc or pre-hoc — point at the same declaration
+// (= after-wins, mutate). `param.at(i)` reads decl.name via late-binding = it
+// reflects the latest name even after repeated `.named` / `.expose`. The snapshot
+// policy is set via `.expose({ snapshot })` (default 'persistent').
 
 const makeParamChain = (pending: ExposeOptions): ParamChain => ({
   f32: (options) => {
@@ -808,11 +831,12 @@ export type MessageOptions = {
 const EVENT_DEFAULT_CAPACITY = 256;
 
 /**
- * `event<T>` declaration の name uniqueness check (= `01-dsl.md` §4.1)。
+ * Name-uniqueness check for an `event<T>` declaration (= `01-dsl.md` §4.1).
  *
- * 同 kind 内 で name unique = state と zip pattern (= cross-kind は 物 理 layout
- * region 別 で 衝 突 ナ シ、 同 kind 内 だ け check)。 `node.events.<name>` の
- * key collision を 防 ぐ 第 一 目 的。
+ * Names are unique within a kind = same pattern as state (= across kinds there is
+ * no collision since they occupy separate physical layout regions, so only the
+ * same kind is checked). Its primary purpose is to prevent key collisions on
+ * `node.events.<name>`.
  */
 function checkEventName(name: string): void {
   const ctx = getCurrentCapture();
@@ -824,10 +848,10 @@ function checkEventName(name: string): void {
 }
 
 /**
- * `event<T>` 2 番 目 以 降 の emit site で 既 seal 済 field と name + wire 型
- * 整 合 を check (= `01-dsl.md` §4.1)。 不 一 致 = graph-capture-time error
- * (= stable ID `event-field-type-mismatch`)。 1 番 目 emit site で の seal は
- * emitIf 内 で 直 接 `decl.fields.push` で 行 う。
+ * For the second and later emit sites of an `event<T>`, check name + wire-type
+ * consistency against the already-sealed fields (= `01-dsl.md` §4.1). A mismatch
+ * is a graph-capture-time error (= stable ID `event-field-type-mismatch`). The
+ * seal at the first emit site is done directly via `decl.fields.push` inside emitIf.
  */
 function checkSealedEventField(decl: EventDeclAst, fieldName: string, wireType: ScalarType): void {
   const existing = decl.fields.find((f) => f.name === fieldName);
@@ -843,9 +867,10 @@ function checkSealedEventField(decl: EventDeclAst, fieldName: string, wireType: 
   }
 }
 
-// typed-array (variable-length) field 用の checkSealedEventField (= Q71)。後続 emit site が
-// first site で seal されていない typed-array field を足す / element 型を変える のを弾く
-// (= scalar field と同じ field-set 一致契約を typed-array field にも適用)。
+// The checkSealedEventField counterpart for typed-array (variable-length) fields
+// (= Q71). Rejects a later emit site that adds a typed-array field not sealed at
+// the first site, or that changes the element type (= applies the same field-set
+// agreement contract used for scalar fields to typed-array fields too).
 function checkSealedTypedArrayField(
   decl: EventDeclAst,
   fieldName: string,
@@ -865,14 +890,17 @@ function checkSealedTypedArrayField(
 }
 
 /**
- * `eventDecl.emitIf` 1 emit site で 1 field の 値 を AST 化 + wire 型 推 論。
+ * For one field at one emit site of `eventDecl.emitIf`, build its value AST and
+ * infer the wire type.
  *
- * - `Node<T>` → unwrapAst + inferAstType で wireType 取 得
- * - `boolean` → literal { type: 'bool', value: 0/1 path = 内 部 i32 表 現、 wireType = 'bool' }
- * - `number` → 既 sealed wire 型 が あ れ ば そ れ に lift (= 後 続 emit site の literal は 1 番 目 の wire 型 に zip)、 未 sealed = default f32 lift (= Q33 規 範)
+ * - `Node<T>` → get the wireType via unwrapAst + inferAstType
+ * - `boolean` → literal { type: 'bool', value 0/1 path = internal i32 representation, wireType = 'bool' }
+ * - `number` → if a wire type is already sealed, lift to it (= a later emit site's
+ *   literal matches the first site's wire type); if unsealed, default-lift to f32
+ *   (= the Q33 convention)
  *
- * Q71 docs 規 範: 1 番 目 emit site で wire 型 確 定。 literal だ け の 1 番 目
- * emit = default f32 (= Q33 numeric literal → Node<'f32'>)。
+ * Q71 docs convention: the wire type is fixed at the first emit site. A first emit
+ * with only a literal = default f32 (= Q33 numeric literal → Node<'f32'>).
  */
 function liftEmitFieldValue(
   decl: EventDeclAst,
@@ -899,7 +927,7 @@ function liftEmitFieldValue(
   );
 }
 
-export function event<T>(options: EventOptions): EventDecl<T> {
+function eventToMain<T>(options: EventOptions): EventDecl<T> {
   checkEventName(options.name);
   const decl: EventDeclAst = {
     kind: "event",
@@ -915,11 +943,12 @@ export function event<T>(options: EventOptions): EventDecl<T> {
       const condAst: AstNode = isWrappedNode(cond)
         ? unwrapAst(cond)
         : { kind: "literal", type: "i32", value: cond ? 1 : 0 };
-      // atSample default lift (= B 案):
-      // - forSample callback 内 (= currentLoopBody !== null) → loopCounter Node
-      // - per-block top level (= currentLoopBody === null) → literal 0
-      // user override は そ の ま ま 通 過 (= Node<'i32'> | number)。 不 正 型 (= string 等)
-      // = throw。 sub-phase 7.7 / 9 で handler context default を 追 加 path。
+      // atSample default lift (= option B):
+      // - inside a forSample callback (= currentLoopBody !== null) → loopCounter Node
+      // - at per-block top level (= currentLoopBody === null) → literal 0
+      // A user override passes through unchanged (= Node<'i32'> | number). An invalid
+      // type (= string etc.) throws. A handler-context default is added in a later
+      // path (sub-phase 7.7 / 9).
       const atSampleRaw = payload.atSample;
       const atSampleAst: AstNode = isWrappedNode(atSampleRaw)
         ? unwrapAst(atSampleRaw)
@@ -936,9 +965,9 @@ export function event<T>(options: EventOptions): EventDecl<T> {
               })();
 
       const allKeys = Object.keys(payload).filter((k) => k !== "atSample");
-      // typed-array field (§4.3 worklet→main) = 値が buffer handle のもの (§5.1: 高々 1 個)。
-      // 隣 接 の `length` field は framework-injected = その typed-array field の copy 長 =
-      // wire field 扱 い し ない (= consume)。
+      // A typed-array field (§4.3 worklet→main) = one whose value is a buffer handle
+      // (§5.1: at most one). The adjacent `length` field is framework-injected = the
+      // copy length of that typed-array field = not treated as a wire field (= consumed).
       const taFieldName = allKeys.find((k) => bufferHandleMeta(payload[k]) !== undefined);
       const scalarKeys = allKeys.filter(
         (k) => k !== taFieldName && !(taFieldName !== undefined && k === "length"),
@@ -948,8 +977,8 @@ export function event<T>(options: EventOptions): EventDecl<T> {
       for (const fieldName of scalarKeys) {
         const { ast, wireType } = liftEmitFieldValue(decl, fieldName, payload[fieldName]);
         if (isFirstEmit) {
-          // 1 番 目 emit = full field set を seal (= 同 emit 内 で 重 複 field を
-          // 受 け 取 ら な い path、 Object.keys は unique = OK)。
+          // The first emit = seal the full field set (= no duplicate fields are
+          // received within one emit, since Object.keys is unique = OK).
           decl.fields.push({ name: fieldName, wireType });
         } else {
           checkSealedEventField(decl, fieldName, wireType);
@@ -976,19 +1005,19 @@ export function event<T>(options: EventOptions): EventDecl<T> {
         }
         emitFields.push({
           name: taFieldName,
-          wireType: "i32", // dummy (= slot は [payloadLen, payloadOffset]、 payloadElementType で 分 岐)
-          value: { kind: "literal", type: "i32", value: 0 }, // placeholder (= 未 使 用)
+          wireType: "i32", // dummy (= the slot is [payloadLen, payloadOffset], branched on by payloadElementType)
+          value: { kind: "literal", type: "i32", value: 0 }, // placeholder (= unused)
           payloadElementType: elementType,
           bufferName: bufMeta.decl.name,
-          bufferSize: bufMeta.decl.size, // emit が copy byte 数を buffer 境界に clamp する
+          bufferSize: bufMeta.decl.size, // emit clamps the copied byte count to the buffer boundary
           length: lengthAst,
         });
       }
       if (!isFirstEmit && emitFields.length !== decl.fields.length) {
         const missing = decl.fields.filter((f) => !emitFields.some((e) => e.name === f.name));
-        /* v8 ignore next 8 — extra field path は checkSealedEventField で 既 throw、
-           こ こ の missing.length > 0 path だ け が field-count 不 一 致 か つ extra ナ シ
-           = 「subset emit」 path で hit、 既 「Q71: field set 縮 小」 test で hit 済 */
+        /* v8 ignore next 8 — the extra-field path already throws in checkSealedEventField;
+           only this missing.length > 0 path hits the field-count mismatch with no extras
+           = the "subset emit" path, already covered by the "Q71: field-set shrink" test */
         if (missing.length > 0) {
           throw new Error(
             `unworklet: event "${decl.name}" emit site missing field(s) "${missing
@@ -1015,8 +1044,8 @@ export function event<T>(options: EventOptions): EventDecl<T> {
 const MESSAGE_DEFAULT_CAPACITY = 256;
 
 /**
- * `message<T>` declaration の name uniqueness check (= `01-dsl.md` §4.2)。
- * 同 kind 内 で name unique = state / event と zip pattern。
+ * Name-uniqueness check for a `message<T>` declaration (= `01-dsl.md` §4.2).
+ * Names are unique within a kind = same pattern as state / event.
  */
 function checkMessageName(name: string): void {
   const ctx = getCurrentCapture();
@@ -1028,33 +1057,35 @@ function checkMessageName(name: string): void {
 }
 
 /**
- * `onReceive` handler の payload proxy (= Q46 uniform lift)。
+ * Payload proxy for an `onReceive` handler (= Q46 uniform lift).
  *
- * user が `({ slot, gain }) => ...` で destructure す る = proxy.get(prop) で
- * 各 field name を 拾 い + `Node<'i32'>` (= field type erasure path = 全 number
- * field 統 一 lift、 boolean / typed-array は 後 続 sub-phase で fill) を 返 す。
- * 同 時 に decl.fields に push (= 1 番 目 onReceive で seal、 後 続 onReceive で
- * 同 field 名 を 何 度 access し て も 同 wire 型 で 通 す)。
+ * When the user destructures with `({ slot, gain }) => ...`, proxy.get(prop)
+ * picks up each field name and returns a `Node<'i32'>` (= the field-type-erasure
+ * path = a uniform lift for every number field; boolean / typed-array are filled
+ * in by a later sub-phase). It simultaneously pushes onto decl.fields (= sealed
+ * at the first onReceive, so repeated accesses of the same field name in later
+ * onReceive calls all resolve to the same wire type).
  */
 /**
- * `onReceive` handler が destructure で 触 る field を hybrid handle と し て 返 す。
- * scalar 利 用 (= `state.store(field)` 等) は Node<'i32'> と し て 振 る 舞 い、
- * typed-array 利 用 (= `field.at(i)` / `field.length`) は `01-dsl.md` §4.3 の
- * proxy を 露 出。 field の wire 種 別 は 「ど ち ら の interface を 使 っ た か」 で
- * seal す る (= TS の 2-view で user code は 一 貫 し て 片 方 だ け を 使 う)。
- * typed-array element 型 は v1.0.0-a で f32 固 定 (= Float32Array audio payload、
- * Uint8Array/u8 = sysex は MIDI scope)。
+ * Return the fields an `onReceive` handler touches via destructuring as a hybrid
+ * handle. Scalar use (= `state.write(field)` etc.) behaves as a Node<'i32'>, while
+ * typed-array use (= `field.at(i)` / `field.length`) exposes the `01-dsl.md` §4.3
+ * proxy. A field's wire kind is sealed by "which interface was used" (= TS's
+ * 2-view means user code consistently uses only one of them). The typed-array
+ * element type is fixed to f32 in v1.0.0-a (= a Float32Array audio payload;
+ * Uint8Array/u8 = sysex belongs to MIDI scope).
  */
 function makeMessagePayloadProxy(decl: MessageDeclAst): Record<string, unknown> {
   return new Proxy(
     {},
     {
       get(_target, prop): unknown {
-        /* v8 ignore next 2 — defensive symbol access guard (= destructure path
-           は string key の み hit) */
+        /* v8 ignore next 2 — defensive symbol access guard (= the destructure path
+           only hits string keys) */
         if (typeof prop !== "string") return undefined;
         const fieldName = prop;
-        // 既 seal 済 と 整 合 = 何 度 access し て も 同 field、 未 seal = i32 で push
+        // Stay consistent with the already-sealed field = repeated accesses resolve
+        // to the same field; if unsealed, push as i32.
         if (!decl.fields.some((f) => f.name === fieldName)) {
           decl.fields.push({ name: fieldName, wireType: "i32" });
         }
@@ -1062,14 +1093,14 @@ function makeMessagePayloadProxy(decl: MessageDeclAst): Record<string, unknown> 
           const field = decl.fields.find((f) => f.name === fieldName);
           if (field !== undefined) field.payloadElementType = "f32";
         };
-        // scalar view = messageFieldRead i32 を astPayload に 持 つ Node。
+        // scalar view = a Node holding a messageFieldRead i32 as its astPayload.
         const node = wrapAst<"i32">({
           kind: "messageFieldRead",
           name: decl.name,
           field: fieldName,
           wireType: "i32",
         }) as unknown as Record<string, unknown>;
-        // typed-array view (= §4.3 proxy)。 access し た 時 点 で field を typed-array seal。
+        // typed-array view (= §4.3 proxy). The field is typed-array-sealed the moment it is accessed.
         Object.defineProperty(node, "length", {
           get() {
             sealTypedArray();
@@ -1091,8 +1122,9 @@ function makeMessagePayloadProxy(decl: MessageDeclAst): Record<string, unknown> 
             index: liftOffset(idx),
           });
         };
-        // `buf.copyFrom(field)` 用 = field の所属 message + field 名を隠し carry
-        // (= buffer handle がここから bufferCopyFrom AST を組む、seal も向こうで行う)。
+        // For `buf.copyFrom(field)` = hidden-carry the field's owning message + field
+        // name (= the buffer handle builds the bufferCopyFrom AST from this, and the
+        // seal is done on that side).
         Object.defineProperty(node, PAYLOAD_FIELD_META, {
           value: { decl, field: fieldName } satisfies PayloadFieldMeta,
           enumerable: false,
@@ -1103,7 +1135,7 @@ function makeMessagePayloadProxy(decl: MessageDeclAst): Record<string, unknown> 
   );
 }
 
-export function message<T>(options: MessageOptions): MessageDecl<T> {
+function eventFromMain<T>(options: MessageOptions): MessageDecl<T> {
   checkMessageName(options.name);
   const decl: MessageDeclAst = {
     kind: "message",
@@ -1116,8 +1148,8 @@ export function message<T>(options: MessageOptions): MessageDecl<T> {
   const handle = {
     name: decl.name,
     onReceive(handler: (payload: Record<string, unknown>) => void) {
-      // handler body を build-time eval し て AST 化、 既 forSample path と zip
-      // (= currentLoopBody を sub-list に 切 替 え て collect、 戻 し て push)。
+      // Build-time-eval the handler body into an AST, matching the forSample path
+      // (= swap currentLoopBody to a sub-list to collect, then restore and push).
       const ctx = getCurrentCapture();
       const handlerBody: AstNode[] = [];
       const prev = ctx.currentLoopBody;
@@ -1237,7 +1269,7 @@ function makeSysexDataProxy(port: string): TypedArrayFieldRef<"u8"> {
   return proxy as unknown as TypedArrayFieldRef<"u8">;
 }
 
-export function midiInput(options: MidiPortOptions): MidiInputHandle {
+function midiFromMain(options: MidiPortOptions): MidiInputHandle {
   const decl: MidiInputDecl = {
     kind: "midiInput",
     name: options.name,
@@ -1263,7 +1295,7 @@ export function midiInput(options: MidiPortOptions): MidiInputHandle {
   };
 }
 
-export function midiOutput(options: MidiPortOptions): MidiOutputHandle {
+function midiToMain(options: MidiPortOptions): MidiOutputHandle {
   const decl: MidiOutputDecl = {
     kind: "midiOutput",
     name: options.name,
@@ -1385,3 +1417,59 @@ export function midiOutput(options: MidiPortOptions): MidiOutputHandle {
     },
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Unified `event` family (issue #10): direction-aware over the message / event
+// / midiInput / midiOutput primitives. `from: 'main'` = worklet receives,
+// `to: 'main'` = worklet sends. MIDI is bridged through the main thread (Web
+// MIDI lives there), so the same from/to discriminator applies under
+// `event.midi`. The internal builders — and their declaration `kind`s / wire —
+// are unchanged; only the authoring surface is unified.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** `event<T>({ from: 'main' })` — main → worklet delivery (worklet `onReceive`). */
+export type EventFromMainOptions = {
+  from: "main";
+  name: string;
+  capacity?: Capacity;
+  payloadCapacity?: number;
+};
+
+/** `event<T>({ to: 'main' })` — worklet → main delivery (worklet `emitIf`). */
+export type EventToMainOptions = {
+  to: "main";
+  name: string;
+  capacity?: Capacity;
+  payloadCapacity?: number;
+};
+
+/** `event.midi({ from: 'main' })` — inbound MIDI (device → worklet, bridged via main). */
+export type MidiFromMainOptions = { from: "main"; name: string; capacity?: Capacity };
+
+/** `event.midi({ to: 'main' })` — outbound MIDI (worklet → device, bridged via main). */
+export type MidiToMainOptions = { to: "main"; name: string; capacity?: Capacity };
+
+export interface EventMidiFamily {
+  (options: MidiFromMainOptions): MidiInputHandle;
+  (options: MidiToMainOptions): MidiOutputHandle;
+}
+
+export interface EventFamily {
+  <T>(options: EventFromMainOptions): MessageDecl<T>;
+  <T>(options: EventToMainOptions): EventDecl<T>;
+  readonly midi: EventMidiFamily;
+}
+
+function eventImpl<T>(
+  options: EventFromMainOptions | EventToMainOptions,
+): MessageDecl<T> | EventDecl<T> {
+  return "from" in options ? eventFromMain<T>(options) : eventToMain<T>(options);
+}
+
+function midiImpl(
+  options: MidiFromMainOptions | MidiToMainOptions,
+): MidiInputHandle | MidiOutputHandle {
+  return "from" in options ? midiFromMain(options) : midiToMain(options);
+}
+
+export const event: EventFamily = Object.assign(eventImpl, { midi: midiImpl }) as EventFamily;

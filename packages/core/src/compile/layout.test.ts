@@ -1,11 +1,11 @@
 /**
  * Behavior of the linear-memory layout stage (= plan Q-C sub-region
- * 区 切 り + 各 region 内 declaration 順 auto-pack)。
+ * boundaries + declaration-order auto-packing within each region).
  *
- * Phase 3 = `ioScratch` 1 region だ け fill、 他 9 region は 空 (= slots
- * / size 0、 base = totalBytes 連 続)。 後 続 phase で 該 当 region を
- * 順 次 fill = subset → superset = 「拡 張 path」 = inline snapshot で
- * は な く 各 fixture の 完 全 一 致 (= `toEqual`) で declare。
+ * Phase 3 fills only the `ioScratch` region; the other 9 regions are empty
+ * (= slots / size 0, base = totalBytes, contiguous). Subsequent phases fill
+ * the remaining regions incrementally (subset → superset), so each fixture
+ * uses an exact-match assertion (= `toEqual`) rather than an inline snapshot.
  */
 
 import { expect, test } from "vite-plus/test";
@@ -14,8 +14,8 @@ import type { CapturedGraph } from "./ast.ts";
 import { layout } from "./layout.ts";
 import type { Layout } from "./layout.ts";
 
-// Phase 3 で fill 対 象 外 の 9 region は 全 fixture で 同 形 = base が
-// `totalBytes` で 各 fixture ご と に shape を 組 む helper。
+// The 9 regions not filled in Phase 3 share the same shape across all fixtures:
+// base = totalBytes. This helper builds that shape per fixture.
 const emptyTail = (
   totalBytes: number,
 ): Pick<
@@ -107,7 +107,7 @@ test("`layout(paramOnly)` = 128 sample × 4 byte = 512", () => {
   });
 });
 
-test("`layout(twoInputs)` packs declarations in source order (= 先 declare が 低 offset)", () => {
+test("`layout(twoInputs)` packs declarations in source order (= earlier declaration gets lower offset)", () => {
   const graph: CapturedGraph = {
     declarations: [
       { kind: "audioInput", name: "first", channels: 1 },
@@ -129,7 +129,7 @@ test("`layout(twoInputs)` packs declarations in source order (= 先 declare が 
   });
 });
 
-test("`layout(outputPlusParam)` = audioOutput + param が ioScratch 内 共 通 cursor で packing", () => {
+test("`layout(outputPlusParam)` = audioOutput + param packed with a shared cursor within ioScratch", () => {
   const graph: CapturedGraph = {
     declarations: [
       { kind: "audioOutput", name: "main", channels: 1 },
@@ -191,8 +191,8 @@ test("`layout(stereoGain)` = canonical Ex 1 minus meter (= 1024 + 1024 + 512 = 2
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// states region = Phase 7 sub-phase 7.1 (= state.<type> plain factory の
-// scalar slot を ioScratch 末 尾 か ら declaration 順 で packing)
+// states region = Phase 7 sub-phase 7.1 (= scalar slots from state.<type>
+// plain factories, packed in declaration order starting after ioScratch)
 // ─────────────────────────────────────────────────────────────────────────
 
 test("`layout(stateF32Only)` = 4 byte at states region base 0", () => {
@@ -255,7 +255,7 @@ test("`layout(stateI64Only)` = 8 byte slot for i64", () => {
   });
 });
 
-test("`layout(stateBoolOnly)` = 4 byte slot for bool (= 内 部 i32 表 現)", () => {
+test("`layout(stateBoolOnly)` = 4 byte slot for bool (= stored as i32 internally)", () => {
   const graph: CapturedGraph = {
     declarations: [{ kind: "state", name: "x", type: "bool", initial: false }],
     statements: [],
@@ -270,7 +270,7 @@ test("`layout(stateBoolOnly)` = 4 byte slot for bool (= 内 部 i32 表 現)", (
   });
 });
 
-test("`layout(mixedStates)` = 5 type 全 並 列 で declaration 順 packing (= 4+8+4+8+4 = 28)", () => {
+test("`layout(mixedStates)` = all 5 types packed in declaration order (= 4+8+4+8+4 = 28)", () => {
   const graph: CapturedGraph = {
     declarations: [
       { kind: "state", name: "a", type: "f32", initial: 0 },
@@ -291,7 +291,7 @@ test("`layout(mixedStates)` = 5 type 全 並 列 で declaration 順 packing (= 
   });
 });
 
-test("`layout(audioInputPlusState)` = state は ioScratch 末 尾 か ら 配 置 (= base = 512)", () => {
+test("`layout(audioInputPlusState)` = state region starts after ioScratch (= base = 512)", () => {
   const graph: CapturedGraph = {
     declarations: [
       { kind: "audioInput", name: "main", channels: 1 },
@@ -343,9 +343,9 @@ test("`layout(canonicalEx1Full)` = stereoIn + stereoOut + gain param + meterL/R 
   });
 });
 
-test("`layout(stateBeforeAudio)` = declaration 順 ナ シ で ioScratch packing 優 先 (= state base = ioScratch 末 尾)", () => {
-  // state を 先 declare し て も ioScratch packing が 先 走 る (= 既 region
-  // 区 切 り 規 約)、 state は 必 ず states region に packing される。
+test("`layout(stateBeforeAudio)` = ioScratch packing takes priority regardless of declaration order (= state base = end of ioScratch)", () => {
+  // Even when state is declared first, ioScratch packing runs first
+  // (= region boundary contract). States always land in the states region.
   const graph: CapturedGraph = {
     declarations: [
       { kind: "state", name: "z", type: "f32", initial: 0 },
@@ -364,12 +364,12 @@ test("`layout(stateBeforeAudio)` = declaration 順 ナ シ で ioScratch packing
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// publishShared / publishCounters region = Phase 7 sub-phase 7.2 (= publish
-// flag を 持 つ state slot だ け が region に hit、 publishShared = 4 byte
-// 単 一 word、 publishCounters = 8 byte = sample counter + version counter)
+// publishShared / publishCounters region = Phase 7 sub-phase 7.2 (= only
+// state slots with the publish flag land here; publishShared = single 4-byte
+// word; publishCounters = 8 bytes = sample counter + version counter)
 // ─────────────────────────────────────────────────────────────────────────
 
-test("`layout(publishF32Only)` = publish flag f32 で publishShared/Counters slot 配 置", () => {
+test("`layout(publishF32Only)` = f32 with publish flag allocates publishShared/Counters slots", () => {
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -395,7 +395,7 @@ test("`layout(publishF32Only)` = publish flag f32 で publishShared/Counters slo
   });
 });
 
-test("`layout(publishI32 + bool)` = 全 type で 4 byte 単 一 word slot (= Q42)", () => {
+test("`layout(publishI32 + bool)` = all types use a 4-byte single-word slot in publishShared (= Q42)", () => {
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -433,12 +433,12 @@ test("`layout(publishI32 + bool)` = 全 type で 4 byte 単 一 word slot (= Q42
   });
 });
 
-test("`layout(mixedPublishAndPlain)` = publish flag ナ シ slot は publish region に hit せ ず", () => {
+test("`layout(mixedPublishAndPlain)` = slots without publish flag do not appear in publish regions", () => {
   const graph: CapturedGraph = {
     declarations: [
-      // private z (= publish ナ シ、 synthetic name)
+      // private state (= no publish, synthetic name)
       { kind: "state", name: "__state_0", type: "f32", initial: 0 },
-      // public meter (= publish 設 定)
+      // public meter (= publish configured)
       {
         kind: "state",
         name: "meterL",
@@ -451,7 +451,7 @@ test("`layout(mixedPublishAndPlain)` = publish flag ナ シ slot は publish reg
     statements: [],
   };
   // state region = 4 + 4 = 8 byte (= __state_0 0, meterL 4)
-  // publishShared = 4 byte (= meterL の み = 4 = meterL 8)
+  // publishShared = 4 byte (= meterL only; meterL at 8)
   // publishCounters = 8 byte (= meterL 12)
   // total = 20 byte
   expect(layout(graph)).toEqual({
@@ -466,9 +466,9 @@ test("`layout(mixedPublishAndPlain)` = publish flag ナ シ slot は publish reg
   });
 });
 
-test("`layout(snapshotOnlyNoPublish)` = snapshot 設 定 だ け で publish region は empty", () => {
-  // snapshot 'persistent' を 持 つ が publish ナ シ → publishShared / Counters
-  // 共 に empty (= sub-phase 11 で snapshot blob 経 由 で 取 得)
+test("`layout(snapshotOnlyNoPublish)` = snapshot config alone leaves publish regions empty", () => {
+  // Has snapshot 'persistent' but no publish → publishShared / Counters
+  // both empty (= values retrieved via snapshot blob in sub-phase 11)
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -552,13 +552,13 @@ test("`layout(canonicalEx1FullWithPublish)` = stereoIn + stereoOut + gain + mete
 // ─────────────────────────────────────────────────────────────────────────
 // `event<T>` ringbuffer region (= `02-messaging.md` §5.1 + §4 header layout)
 //
-// 1 event = header (12 byte = [head, tail, overflowCount] × i32) + capacity
-// 個 slot。 slot size = atSample (4 byte i32) + Σ field wire size、 全 体 を
-// 4-byte align で round up (= u32 align、 §5.1 「implicit u32 alignment
-// within the slot」)。
+// 1 event = header (12 bytes = [head, tail, overflowCount] × i32) + capacity
+// slots. slot size = atSample (4-byte i32) + sum of field wire sizes, rounded
+// up to 4-byte alignment (= u32 align; §5.1 "implicit u32 alignment within
+// the slot").
 // ─────────────────────────────────────────────────────────────────────────
 
-test("`layout(event 1 個 emit ナ シ)` = header + atSample のみ の slot 256 個", () => {
+test("`layout(event no fields, no emit)` = header + atSample-only slots, 256 entries", () => {
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -571,9 +571,9 @@ test("`layout(event 1 個 emit ナ シ)` = header + atSample のみ の slot 256
     ],
     statements: [],
   };
-  // slot size = atSample (4) = 4 byte / slot
-  // ring 全 体 = header 12 + 256 × 4 = 12 + 1024 = 1036 byte
-  // state / publish ナ シ → publishShared / publishCounters.base = state 末 尾 = 0
+  // slot size = atSample (4) = 4 bytes / slot
+  // ring total = header 12 + 256 × 4 = 12 + 1024 = 1036 bytes
+  // no states / publish → publishShared / publishCounters.base = end of states = 0
   expect(layout(graph)).toEqual({
     regions: {
       ioScratch: { base: 0, inputs: {}, outputs: {}, params: {} },
@@ -610,7 +610,7 @@ test("`layout(event 1 field f32)` = atSample (4) + level (4) = 8 byte / slot", (
     ],
     statements: [],
   };
-  // ring 全 体 = header 12 + 256 × 8 = 12 + 2048 = 2060 byte
+  // ring total = header 12 + 256 × 8 = 12 + 2048 = 2060 bytes
   expect(layout(graph)).toEqual({
     regions: {
       ioScratch: { base: 0, inputs: {}, outputs: {}, params: {} },
@@ -637,8 +637,8 @@ test("`layout(event 1 field f32)` = atSample (4) + level (4) = 8 byte / slot", (
   });
 });
 
-test("`layout(event 複 数 field)` = atSample + f32 + i32 + bool = 16 byte / slot", () => {
-  // bool は u32 word 占 有 (= §5.1 「implicit u32 alignment」、 4 byte)。
+test("`layout(event multiple fields)` = atSample + f32 + i32 + bool = 16 bytes / slot", () => {
+  // bool occupies a full u32 word (= §5.1 "implicit u32 alignment", 4 bytes).
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -685,7 +685,7 @@ test("`layout(event 複 数 field)` = atSample + f32 + i32 + bool = 16 byte / sl
   });
 });
 
-test("`layout(event f64 / i64 field)` = 8 byte field を 受 容", () => {
+test("`layout(event f64 / i64 field)` = accepts 8-byte fields", () => {
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -730,7 +730,7 @@ test("`layout(event f64 / i64 field)` = 8 byte field を 受 容", () => {
   });
 });
 
-test("`layout(event capacity override)` = slot 数 = capacity option", () => {
+test("`layout(event capacity override)` = slot count equals the capacity option", () => {
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -770,7 +770,7 @@ test("`layout(event capacity override)` = slot 数 = capacity option", () => {
   });
 });
 
-test("`layout(event 2 個)` = declaration 順 で 連 続 並 び", () => {
+test("`layout(two events)` = rings laid out contiguously in declaration order", () => {
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -825,7 +825,7 @@ test("`layout(event 2 個)` = declaration 順 で 連 続 並 び", () => {
   });
 });
 
-test("`layout(state + event 混 在)` = states / publish 後 に eventRings", () => {
+test("`layout(state + event mixed)` = eventRings placed after states / publish regions", () => {
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -880,13 +880,14 @@ test("`layout(state + event 混 在)` = states / publish 後 に eventRings", ()
 // ─────────────────────────────────────────────────────────────────────────
 // `message<T>` ringbuffer region (= `02-messaging.md` §5.3)
 //
-// 1 message = header (12 byte = [head, tail, overflowCount] × i32) + capacity
-// 個 slot。 slot = atSample ナ シ (= main → worklet で sample-offset 概念 ナ シ)
-// + Q46 uniform lift (= 全 number field = i32 4 byte / 全 boolean = bool 4 byte
-// u32 align)。 1 番目 onReceive で seal さ れた fields の 順 で 並ぶ。
+// 1 message = header (12 bytes = [head, tail, overflowCount] × i32) + capacity
+// slots. Slots have no atSample field (= no sample-offset concept on the
+// main → worklet direction) + Q46 uniform lift (= all number fields = i32
+// 4 bytes / all booleans = bool 4 bytes u32 aligned). Fields appear in the
+// order sealed by the first onReceive call.
 // ─────────────────────────────────────────────────────────────────────────
 
-test("`layout(message 1 個 fields ナ シ = void payload)` = header の み の 12 byte ring", () => {
+test("`layout(message no fields = void payload)` = header-only 12-byte ring", () => {
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -899,8 +900,8 @@ test("`layout(message 1 個 fields ナ シ = void payload)` = header の み の
     ],
     statements: [],
   };
-  // slot size = 0 byte (= void payload、 head - tail で fire 数 観 測)、
-  // ring 全 体 = header 12 + 16 × 0 = 12 byte
+  // slot size = 0 bytes (= void payload; fire count observed via head - tail)
+  // ring total = header 12 + 16 × 0 = 12 bytes
   expect(layout(graph)).toEqual({
     regions: {
       ioScratch: { base: 0, inputs: {}, outputs: {}, params: {} },
@@ -962,7 +963,7 @@ test("`layout(message 1 field i32)` = slot 4 byte × 256 + header 12 = 1036", ()
   });
 });
 
-test("`layout(message 複 数 field)` = i32 + bool = 8 byte / slot", () => {
+test("`layout(message multiple fields)` = i32 + bool = 8 bytes / slot", () => {
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -978,7 +979,7 @@ test("`layout(message 複 数 field)` = i32 + bool = 8 byte / slot", () => {
     ],
     statements: [],
   };
-  // slot = slot (4) + muted (4) = 8、 ring = 12 + 256 × 8 = 2060
+  // slot = slot (4) + muted (4) = 8; ring = 12 + 256 × 8 = 2060
   expect(layout(graph)).toEqual({
     regions: {
       ioScratch: { base: 0, inputs: {}, outputs: {}, params: {} },
@@ -1006,7 +1007,7 @@ test("`layout(message 複 数 field)` = i32 + bool = 8 byte / slot", () => {
   });
 });
 
-test("`layout(message + event 混 在)` = eventRings 末 尾 か ら messageRings", () => {
+test("`layout(message + event mixed)` = messageRings placed after eventRings", () => {
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -1066,7 +1067,7 @@ test("`layout(message + event 混 在)` = eventRings 末 尾 か ら messageRing
   });
 });
 
-test("`layout(message 2 個)` = declaration 順 で 連 続 並 び", () => {
+test("`layout(two messages)` = rings laid out contiguously in declaration order", () => {
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -1086,7 +1087,7 @@ test("`layout(message 2 個)` = declaration 順 で 連 続 並 び", () => {
     ],
     statements: [],
   };
-  // m1 = 12 + 16 × 4 = 76、 m2 = 12 + 8 × 0 = 12、 total = 88
+  // m1 = 12 + 16 × 4 = 76; m2 = 12 + 8 × 0 = 12; total = 88
   expect(layout(graph)).toEqual({
     regions: {
       ioScratch: { base: 0, inputs: {}, outputs: {}, params: {} },

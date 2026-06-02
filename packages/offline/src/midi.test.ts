@@ -7,18 +7,7 @@
 
 import "@unworklet/core";
 import type { MidiEvent } from "@unworklet/core";
-import {
-  audioOutput,
-  buffer,
-  defineProcessor,
-  event,
-  f32,
-  forSample,
-  i32,
-  midiInput,
-  midiOutput,
-  state,
-} from "@unworklet/core";
+import { audioOutput, defineProcessor, event, f32, forSample, i32, state } from "@unworklet/core";
 import { expect, test } from "vite-plus/test";
 
 import { renderOffline } from "./index.ts";
@@ -26,15 +15,15 @@ import { renderOffline } from "./index.ts";
 test("inbound noteOn: handler stores the note, observable in output", async () => {
   const synth = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const midiIn = midiInput({ name: "midiIn" });
+    const midiIn = event.midi({ from: "main", name: "midiIn" });
     const note = state.i32(0);
     return {
       process: () => {
         midiIn.onEvent("noteOn", ({ note: n }) => {
-          note.store(n);
+          note.write(n);
         });
         forSample((i) => {
-          out.ch(0).at(i).write(f32(note.load()));
+          out.ch(0).at(i).write(f32(note.read()));
         });
       },
     };
@@ -63,20 +52,20 @@ test("inbound noteOn: handler stores the note, observable in output", async () =
 test("inbound cc + pitchBend decode correctly in the handler", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 2, name: "main" });
-    const midiIn = midiInput({ name: "midiIn" });
+    const midiIn = event.midi({ from: "main", name: "midiIn" });
     const ccVal = state.i32(0);
     const bend = state.i32(0);
     return {
       process: () => {
         midiIn.onEvent("cc", ({ value }) => {
-          ccVal.store(value);
+          ccVal.write(value);
         });
         midiIn.onEvent("pitchBend", ({ value }) => {
-          bend.store(value);
+          bend.write(value);
         });
         forSample((i) => {
-          out.ch(0).at(i).write(f32(ccVal.load()));
-          out.ch(1).at(i).write(f32(bend.load()));
+          out.ch(0).at(i).write(f32(ccVal.read()));
+          out.ch(1).at(i).write(f32(bend.read()));
         });
       },
     };
@@ -100,7 +89,7 @@ test("inbound cc + pitchBend decode correctly in the handler", async () => {
 test("outbound noteOn: emitIf surfaces a MidiEvent in result.events", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const midiOut = midiOutput({ name: "midiOut" });
+    const midiOut = event.midi({ to: "main", name: "midiOut" });
     const counter = state.i32(0);
     return {
       process: () => {
@@ -109,7 +98,7 @@ test("outbound noteOn: emitIf surfaces a MidiEvent in result.events", async () =
             .ch(0)
             .at(i)
             .write(0 as never);
-          const c = counter.load();
+          const c = counter.read();
           midiOut.emitIf(c.eq(0), {
             type: "noteOn",
             channel: 2,
@@ -117,7 +106,7 @@ test("outbound noteOn: emitIf surfaces a MidiEvent in result.events", async () =
             velocity: 80,
             atSample: i,
           });
-          counter.store(c.add(1).mod(128));
+          counter.write(c.add(1).mod(128));
         });
       },
     };
@@ -132,7 +121,7 @@ test("outbound noteOn: emitIf surfaces a MidiEvent in result.events", async () =
 test("outbound emit is sample-accurate via atSample: i", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const midiOut = midiOutput({ name: "midiOut" });
+    const midiOut = event.midi({ to: "main", name: "midiOut" });
     return {
       process: () => {
         forSample((i) => {
@@ -164,17 +153,17 @@ test("event<T> emit inside a MIDI handler does not corrupt the drain (Ex8-style)
   // emit reuses the drain's head/slot locals, so the loop must re-read head.
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const keys = midiInput({ name: "keys" });
-    const notePlayed = event<{ note: number }>({ name: "notePlayed" });
+    const keys = event.midi({ from: "main", name: "keys" });
+    const notePlayed = event<{ note: number }>({ to: "main", name: "notePlayed" });
     const last = state.i32(0);
     return {
       process: () => {
         keys.onEvent("noteOn", ({ note, atSample }) => {
-          last.store(note);
+          last.write(note);
           notePlayed.emitIf(true, { atSample, note });
         });
         forSample((i) => {
-          out.ch(0).at(i).write(f32(last.load()));
+          out.ch(0).at(i).write(f32(last.read()));
         });
       },
     };
@@ -201,15 +190,15 @@ test("event<T> emit inside a MIDI handler does not corrupt the drain (Ex8-style)
 test("sysex bridge: ingest, rewrite device-id byte, re-emit (Ex9-style)", async () => {
   const MAX_SYSEX_LEN = 64;
   const bridge = defineProcessor(() => {
-    const sysexIn = midiInput({ name: "sysexIn" });
-    const sysexOut = midiOutput({ name: "sysexOut" });
-    const buf = buffer.u8({ size: MAX_SYSEX_LEN });
+    const sysexIn = event.midi({ from: "main", name: "sysexIn" });
+    const sysexOut = event.midi({ to: "main", name: "sysexOut" });
+    const buf = state.buffer.u8({ size: MAX_SYSEX_LEN });
     const targetId = state.i32(0x42);
     return {
       process: () => {
         sysexIn.onEvent("sysex", ({ data, length, atSample }) => {
           buf.copyFrom(data);
-          buf.write(i32(1), targetId.load()); // rewrite byte 1 = device ID
+          buf.write(i32(1), targetId.read()); // rewrite byte 1 = device ID
           sysexOut.emitIf(true, { type: "sysex", data: buf, length, atSample });
         });
       },

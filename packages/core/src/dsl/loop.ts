@@ -29,9 +29,9 @@ export interface ForSampleFn {
   byN(stride: number, callback: ForSampleCallback): void;
 }
 
-// `everyNSamples(n, body)` (= §9) を 囲 う forSample の stride に bind し て 生 成。
-// body を sub-block として capture し、everyNSamples node を loop body に push。
-// counterId は call-site ごとに一意 = layout が block 跨ぎ counter slot を確保。
+// Builds `everyNSamples(n, body)` (§9) bound to the stride of the enclosing forSample.
+// The body is captured as a sub-block, and the everyNSamples node is pushed onto the loop body.
+// Each call site gets a unique counterId, so the layout reserves a counter slot that persists across blocks.
 const makeEveryNSamples =
   (stride: number): EveryNSamples =>
   (n, body) => {
@@ -48,8 +48,8 @@ const makeEveryNSamples =
     addStatement({ kind: "everyNSamples", divisor: n, stride, counterId, body: subBody });
   };
 
-// stride 単位の forSample 本体 (= stride 1 が `forSample`、任意 stride が `byN`)。
-// emit は既に node.stride 単位で loopCounter を進める (= 1 ブロック 128 / stride 回)。
+// Core of forSample, parameterized by stride (stride 1 is `forSample`; any stride is `byN`).
+// Emission already advances loopCounter in units of node.stride, so one block runs 128 / stride iterations.
 const forSampleStrided = (stride: number, callback: ForSampleCallback): void => {
   const ctx = getCurrentCapture();
   const loopBody: AstNode[] = [];

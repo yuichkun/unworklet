@@ -1,15 +1,15 @@
 /**
- * Browser e2e: event<T> 経 路 を postMessage fallback path で 動 作 確 認
- * (= SAB unavailable 環 境)。
+ * Browser e2e: verifies event<T> routing via the postMessage fallback path
+ * (SAB unavailable environment).
  *
- * 仕 様 anchor:
- * - `02-messaging.md` §4 + Q27-d: SAB 不 可 時 = event<T> も postMessage 経 路
- * - `04-worklet-runtime.md` §7 (= event ring も per-quantum 末 尾 で 配 送)
- * - Q47: diagnostics.overflowCount は pull 観 測 = transport 非 依 存
+ * Spec anchors:
+ * - `02-messaging.md` §4 + Q27-d: when SAB is unavailable, event<T> also uses the postMessage path
+ * - `04-worklet-runtime.md` §7: event ring is delivered at the end of each quantum
+ * - Q47: diagnostics.overflowCount is observed by pull, independent of transport
  *
- * test scope = SAB 側 `event-emitter.test.ts` と 同 6 件 mirror + 環 境 担 保
- * 2 件 = 8 件。 emit / 多 重 subscribe / unsubscribe / overflow / dispose /
- * subscribe ナ シ 動 作 を 両 transport で 同 surface で 担 保。
+ * Test scope: mirrors the 6 cases from the SAB-side `event-emitter.test.ts` plus 2
+ * environment-guarantee tests = 8 total. Covers emit / multiple subscribers /
+ * unsubscribe / overflow / dispose / render-without-subscriber across both transports.
  */
 
 import { expect, test } from "vite-plus/test";
@@ -49,14 +49,14 @@ const buildContext = (
 };
 
 // ─────────────────────────────────────────────────────────────────────────
-// 環 境 担 保 (= postMessage path 専 属)
+// Environment guarantees (postMessage path only)
 // ─────────────────────────────────────────────────────────────────────────
 
-test("環 境 担 保: COOP/COEP 無 し で crossOriginIsolated false", () => {
+test("environment: crossOriginIsolated is false without COOP/COEP headers", () => {
   expect(globalThis.crossOriginIsolated).toBe(false);
 });
 
-test("transport: SAB unavailable で postMessage に fallback", async () => {
+test("transport: falls back to postMessage when SAB is unavailable", async () => {
   const { ctx } = buildContext(1);
   const node = await createNode(ctx, eventEmitter);
   expect(node.diagnostics.transport).toBe("postMessage");
@@ -64,10 +64,10 @@ test("transport: SAB unavailable で postMessage に fallback", async () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// event<T> behavior (= SAB 側 6 件 mirror)
+// event<T> behavior (mirrors the 6 SAB-side cases)
 // ─────────────────────────────────────────────────────────────────────────
 
-test("event: on(handler) で emitIf 受 領 + payload + atSample 担 保", async () => {
+test("event: on(handler) receives emitIf payload with correct atSample", async () => {
   const { ctx, source } = buildContext(4);
   const node = await createNode(ctx, eventEmitter);
   source.connect(node.inputs["main"]!);
@@ -89,7 +89,7 @@ test("event: on(handler) で emitIf 受 領 + payload + atSample 担 保", async
   node.dispose();
 });
 
-test("event: 多 重 subscribe = 全 handler が registration order で fire", async () => {
+test("event: multiple subscribers all fire in registration order", async () => {
   const { ctx, source } = buildContext(4);
   const node = await createNode(ctx, eventEmitter);
   source.connect(node.inputs["main"]!);
@@ -109,7 +109,7 @@ test("event: 多 重 subscribe = 全 handler が registration order で fire", a
   node.dispose();
 });
 
-test("event: unsubscribe 後 handler が fire し な い", async () => {
+test("event: handler does not fire after unsubscribe", async () => {
   const { ctx, source } = buildContext(8);
   const node = await createNode(ctx, eventEmitter);
   source.connect(node.inputs["main"]!);
@@ -127,7 +127,7 @@ test("event: unsubscribe 後 handler が fire し な い", async () => {
   node.dispose();
 });
 
-test("event: overflow path で diagnostics.overflowCount が 増 加", async () => {
+test("event: diagnostics.overflowCount increments on overflow", async () => {
   const { ctx, source } = buildContext(4);
   const node = await createNode(ctx, eventEmitter);
   source.connect(node.inputs["main"]!);
@@ -140,7 +140,7 @@ test("event: overflow path で diagnostics.overflowCount が 増 加", async () 
   node.dispose();
 });
 
-test("event: dispose で 全 subscriber clear + 以 後 fire ナ シ", async () => {
+test("event: dispose clears all subscribers and stops further firing", async () => {
   const { ctx, source } = buildContext(8);
   const node = await createNode(ctx, eventEmitter);
   source.connect(node.inputs["main"]!);
@@ -156,7 +156,7 @@ test("event: dispose で 全 subscriber clear + 以 後 fire ナ シ", async () 
   expect(calls.length).toBe(beforeDispose);
 });
 
-test("event: subscribe ナ シ で も render 自 体 は 動 作 (= silent OK)", async () => {
+test("event: render completes normally with no subscribers", async () => {
   const { ctx, source } = buildContext(4);
   const node = await createNode(ctx, eventEmitter);
   source.connect(node.inputs["main"]!);

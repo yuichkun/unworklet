@@ -1,15 +1,17 @@
 /**
- * worklet realm 安全ガードの「適用範囲」を守るテスト。
+ * Ensures the declared scope of the worklet realm safety guard stays in sync
+ * with the actual worklet bundle graph.
  *
- * `vite.config.ts` の `lint.overrides` は `WORKLET_REALM_FILES` にだけ
- * `no-restricted-globals`（AudioWorkletGlobalScope に無い main-thread API の禁止）を
- * 効かせる。その glob が「実際に worklet バンドルへ入るファイル集合」とズレると、
- * 新しく worklet グラフへ入ったファイルが禁止 API チェックの網から漏れる
- * （= denylist / glob 方式の唯一の弱点）。
+ * `vite.config.ts` `lint.overrides` applies `no-restricted-globals`
+ * (which bans main-thread APIs absent from AudioWorkletGlobalScope) exclusively
+ * to `WORKLET_REALM_FILES`. If that glob drifts from the set of files that
+ * actually land in the worklet bundle, newly added worklet-graph files escape
+ * the banned-API check — the sole structural weakness of the denylist/glob approach.
  *
- * このテストは `worklet-entry.ts` から static import / export を辿って実際のグラフを
- * 計算し、`WORKLET_REALM_FILES` と完全一致することを検証する。ズレたら fail。
- * → lint の対象集合が常に worklet グラフ＝バンドル内容と一致することを構造的に保証する。
+ * This test traces static imports/exports from `worklet-entry.ts` to compute the
+ * real graph, then asserts exact equality with `WORKLET_REALM_FILES`. Any mismatch
+ * is a test failure, structurally guaranteeing that the lint target set always
+ * matches the worklet graph (i.e., the bundle contents).
  */
 
 import { readFileSync } from "node:fs";
@@ -24,10 +26,12 @@ const SRC_DIR = dirname(fileURLToPath(import.meta.url));
 const PKG_DIR = dirname(SRC_DIR);
 
 /**
- * `entryRel`（packages/core 相対）から static な `from "./…"` / `import "./…"`
- * を辿って到達する core 内ファイルを packages/core 相対パスの集合で返す。
- * 型のみ import（`import type … from "./…"`）も含む = lint 対象としては超集合で
- * 構わない（型ファイルに禁止 global の値参照は無いので無害、かつ保守的）。
+ * Starting from `entryRel` (relative to packages/core), traces static
+ * `from "./…"` / `import "./…"` edges and returns the set of reachable
+ * in-package files as paths relative to packages/core.
+ * Type-only imports (`import type … from "./…"`) are included — as a
+ * lint superset this is safe, since type files never reference banned
+ * globals as values, and the conservative over-approximation is preferable.
  */
 function traceWorkletGraph(entryRel: string): Set<string> {
   const seen = new Set<string>();
@@ -51,7 +55,7 @@ function traceWorkletGraph(entryRel: string): Set<string> {
   return seen;
 }
 
-test("worklet realm の import graph が WORKLET_REALM_FILES と一致する（lint ガードの適用漏れ防止）", () => {
+test("worklet realm import graph matches WORKLET_REALM_FILES exactly (prevents lint guard gaps)", () => {
   const graph = traceWorkletGraph("src/worklet-entry.ts");
   const declared = new Set<string>(WORKLET_REALM_FILES);
 
@@ -60,11 +64,11 @@ test("worklet realm の import graph が WORKLET_REALM_FILES と一致する（l
 
   expect(
     missing,
-    "worklet-entry.ts から到達する（= worklet バンドルに入る）のに WORKLET_REALM_FILES に無い。" +
-      "no-restricted-globals の網から漏れている。worklet-realm-files.ts に追加するか、該当 import を worklet 非依存にすること。",
+    "File is reachable from worklet-entry.ts (i.e., lands in the worklet bundle) but is absent from WORKLET_REALM_FILES." +
+      " It escapes the no-restricted-globals check. Either add it to worklet-realm-files.ts or remove the worklet dependency.",
   ).toEqual([]);
   expect(
     stale,
-    "WORKLET_REALM_FILES にあるが worklet-entry.ts から到達しない。worklet-realm-files.ts から削除すること。",
+    "File is listed in WORKLET_REALM_FILES but is not reachable from worklet-entry.ts. Remove it from worklet-realm-files.ts.",
   ).toEqual([]);
 });

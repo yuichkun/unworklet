@@ -1,14 +1,14 @@
 /**
- * `@unworklet/core` browser e2e config (= sub-phase 7.x e2e 体 制)。
+ * `@unworklet/core` browser e2e config.
  *
- * playwright 経 由 で chromium を 起 動、 real `AudioContext` /
- * `AudioWorkletNode` / `WebAssembly` / `SharedArrayBuffer` / `Atomics` /
- * `requestAnimationFrame` が 揃 う 環 境 で `src/__tests__/browser/` の e2e
- * fixture を 走 ら す。 起 動: `vp test --config vite.browser.config.ts`。
+ * Launches chromium via playwright in an environment that provides real
+ * `AudioContext` / `AudioWorkletNode` / `WebAssembly` / `SharedArrayBuffer` /
+ * `Atomics` / `requestAnimationFrame`, and runs the e2e fixtures under
+ * `src/__tests__/browser/`. To run: `vp test --config vite.browser.config.ts`.
  *
- * SAB / Atomics は cross-origin isolation (= COOP/COEP) が 必 要 = vite の
- * `server.headers` で `Cross-Origin-Opener-Policy: same-origin` + `Cross-
- * Origin-Embedder-Policy: require-corp` を 設 定 す る path。
+ * SAB / Atomics require cross-origin isolation (COOP/COEP), which is enabled
+ * via `server.headers` with `Cross-Origin-Opener-Policy: same-origin` and
+ * `Cross-Origin-Embedder-Policy: require-corp`.
  */
 
 import unworklet from "@unworklet/vite-plugin";

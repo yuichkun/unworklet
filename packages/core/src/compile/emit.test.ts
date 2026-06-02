@@ -1,15 +1,15 @@
 /**
- * Behavior of the WASM emission stage (= plan Q-F 引 数 ナ シ + 固 定 region
- * WASM export、 plan Q-D stage 別 internal module の 1 つ)。
+ * Behavior of the WASM emission stage (one of the Q-D internal modules:
+ * no arguments, fixed-region WASM exports).
  *
- * binaryen を dynamic import し て AST → binaryen IR lower → WASM binary
- * を 返 す。 2 層 test:
- * - unit = emitExpression / emitStatement 単 体 invoke + binaryen module
- *   wrap + emitText で WAT 全 体 を inline snapshot で fix (= schemaHash
- *   と 同 「絶 対 変 わ ら な い」 regression check path、 binaryen
- *   version 更 新 / lower 戦 略 変 更 で snapshot fail = 意 図 的 retract)
- * - e2e = emit ⇒ WebAssembly.instantiate ⇒ memory に 入 力 set ⇒ process()
- *   ⇒ memory か ら 出 力 read で 期 待 値 確 認
+ * Dynamically imports binaryen, lowers AST to binaryen IR, and returns
+ * a WASM binary. Two test layers:
+ * - unit = invoke emitExpression / emitStatement directly, wrap in a
+ *   binaryen module, and fix the full WAT via inline snapshots
+ *   (regression check equivalent to schemaHash — intentional retract on
+ *   binaryen version bump or lowering strategy change)
+ * - e2e = emit -> WebAssembly.instantiate -> write inputs into memory ->
+ *   call process() -> read outputs from memory and verify expected values
  */
 
 import { expect, test } from "vite-plus/test";
@@ -18,6 +18,7 @@ import { unwrapAst } from "./capture.ts";
 import { select } from "../dsl/primitives.ts";
 
 import type { AstNode, CapturedGraph } from "./ast.ts";
+import type { ScalarType } from "../types.ts";
 import type { BinaryenAPI, BinaryenModule } from "./emit.ts";
 import { emit, emitExpression, emitStatement } from "./emit.ts";
 import { layout } from "./layout.ts";
@@ -170,7 +171,7 @@ async function instantiate(graph: CapturedGraph): Promise<{
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Unit tests: emitExpression / emitStatement の 中 間 IR 形 (WAT 全 体 一 致)
+// Unit tests: emitExpression / emitStatement intermediate IR (full WAT match)
 // ─────────────────────────────────────────────────────────────────────────
 
 const emptyLayout = layout({ declarations: [], statements: [] });
@@ -311,7 +312,7 @@ test("`emitExpression(max)` lowers to `f32.max`", async () => {
   mod.dispose();
 });
 
-test("`emit(abs + max)` e2e: peak detector で 期 待 値 = max(abs(in), state)", async () => {
+test("`emit(abs + max)` e2e: peak detector — expected value = max(abs(in), state)", async () => {
   const graph: CapturedGraph = {
     declarations: [
       { kind: "audioInput", name: "main", channels: 1 },
@@ -348,7 +349,7 @@ test("`emit(abs + max)` e2e: peak detector で 期 待 値 = max(abs(in), state)
   };
   const lay = layout(graph);
   const { memory, process } = await instantiate(graph);
-  // input に [-0.3, 0.5, -0.7, 0.2, ...] = abs で max = 0.7
+  // input [-0.3, 0.5, -0.7, 0.2, ...] — peak via abs: max = 0.7
   const inputView = new Float32Array(memory.buffer, lay.regions.ioScratch.inputs["main"]!, 128);
   inputView[0] = -0.3;
   inputView[1] = 0.5;
@@ -528,7 +529,7 @@ test("`emitStatement(forSample)` lowers to the fixed WAT", async () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// E2E tests: emit → WebAssembly.compile → instantiate → memory I/O
+// E2E tests: emit -> WebAssembly.compile -> instantiate -> memory I/O
 // ─────────────────────────────────────────────────────────────────────────
 
 test("`emit(emptyGraph, emptyLayout)` returns valid WASM bytes (= Uint8Array)", async () => {
@@ -542,16 +543,16 @@ test("`emit(emptyGraph)` produces a no-op `process` that runs cleanly", async ()
   expect(() => process()).not.toThrow();
 });
 
-test("`emit(monoLiteralWrite)` = top-level literal write が memory に 反 映 (= 1 sample)", async () => {
+test("`emit(monoLiteralWrite)` = top-level literal write is reflected in memory (1 sample)", async () => {
   const lay = layout(monoLiteralWriteGraph);
   const { memory, process } = await instantiate(monoLiteralWriteGraph);
   process();
   const out = new Float32Array(memory.buffer, lay.regions.ioScratch.outputs["main"]!, 128);
   expect(out[0]).toBe(0.5);
-  expect(out[1]).toBe(0); // 他 sample は zero
+  expect(out[1]).toBe(0); // remaining samples are zero
 });
 
-test("`emit(monoPassthrough)` = input が そ の ま ま output へ copy さ れ る", async () => {
+test("`emit(monoPassthrough)` = input is copied directly to output", async () => {
   const lay = layout(monoPassthroughGraph);
   const { memory, process } = await instantiate(monoPassthroughGraph);
   const input = new Float32Array(memory.buffer, lay.regions.ioScratch.inputs["main"]!, 128);
@@ -565,7 +566,7 @@ test("`emit(monoPassthrough)` = input が そ の ま ま output へ copy さ �
   }
 });
 
-test("`emit(stereoGain)` = (input × gain) が channel ご と に output へ 書 か れ る", async () => {
+test("`emit(stereoGain)` = (input * gain) is written per channel to output", async () => {
   const lay = layout(stereoGainGraph);
   const { memory, process } = await instantiate(stereoGainGraph);
   const inputCh0 = new Float32Array(memory.buffer, lay.regions.ioScratch.inputs["main"]!, 128);
@@ -604,11 +605,11 @@ test("`emit` allocates multiple 64KB pages when totalBytes exceeds one page", as
   const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
   const instance = await WebAssembly.instantiate(wasmModule);
   const memory = instance.exports["memory"] as WebAssembly.Memory;
-  // 2 page = 131072 byte 確 保 さ れ て いる こ と (= 130 input × 512 = 66560 > 65536)
+  // 2 pages = 131072 bytes allocated (130 inputs * 512 = 66560 > 65536)
   expect(memory.buffer.byteLength).toBe(131072);
 });
 
-test("`emit` throws on unknown audioInput port (= layout に な し)", async () => {
+test("`emit` throws on unknown audioInput port (absent from layout)", async () => {
   const graph: CapturedGraph = {
     declarations: [{ kind: "audioOutput", name: "out", channels: 1 }],
     statements: [
@@ -776,9 +777,9 @@ test("`emit` rejects expression-kind nodes in statement position (= structural g
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// stateLoad / stateStore = Phase 7 sub-phase 7.1 (= state.<type> plain
-// factory の load / store WASM emit + subnormal flush guard for f32/f64)。
-// 5 scalar type 全 round-trip + subnormal guard 境 界 + unknown slot reject。
+// stateLoad / stateStore — Phase 7 sub-phase 7.1
+// (state.<type> plain factory: load/store WASM emit + subnormal flush guard for f32/f64)
+// All 5 scalar type round-trips + subnormal guard boundary cases + unknown slot rejection.
 // ─────────────────────────────────────────────────────────────────────────
 
 test("`emitExpression(stateStore)` rejects statement node in expression position", async () => {
@@ -840,16 +841,17 @@ test("`emit` throws on unknown state slot in stateStore", async () => {
   await expect(emit(graph, layout(graph))).rejects.toThrow(/unknown state slot: ghost/);
 });
 
-// state round-trip 用 fixture builder = store literal → forSample で 全 sample
-// に load 結 果 を write、 process() 後 output[0] が 期 待 値 で あ る こ と を 確 認。
+// Fixture builder for state round-trip tests: store a literal, write
+// the loaded result across all samples in forSample, then verify
+// output[0] equals the expected value after process().
 function makeStateRoundtripGraph(
   type: "f32" | "f64" | "i32" | "i64" | "bool",
   storeValue: AstNode,
   initial: number | bigint | boolean,
 ): CapturedGraph {
-  // f64 / i64 を audio output に そ の ま ま 流 せ な い (= audio output は f32) =
-  // state ↔ state round-trip で 確 認 (= store した値 を 別 state に load → store)。
-  // f32 / i32 / bool は audio output (= f32) に 流 し て 直 接 観 測。
+  // f64/i64 cannot be routed through audio output (which is f32), so
+  // verification uses a state-to-state round-trip (store into src, load
+  // into dst). f32/i32/bool are piped through audio output for direct observation.
   if (type === "f64" || type === "i64") {
     return {
       declarations: [
@@ -886,10 +888,9 @@ function makeStateRoundtripGraph(
             value:
               type === "f32"
                 ? { kind: "stateLoad", type: "f32", name: "x" }
-                : // i32 / bool は内 部 i32 = audio output (= f32) に そ の ま ま 流 す と
-                  // type mismatch、 ただ unit test の memory I/O で 直 接 観 測 す る
-                  // path は audio output 経 由 ナ シ。 i32 / bool 用 fixture は 別 path
-                  // で 組 む (= makeStateMemoryRoundtripGraph で 直 接 memory dump)。
+                : // i32/bool are internally i32, which type-mismatches audio output (f32).
+                  // Direct memory I/O observation skips the audio output path.
+                  // A separate fixture handles i32/bool verification via direct memory dump.
                   { kind: "literal", type: "f32", value: 0 },
           },
         ],
@@ -898,7 +899,7 @@ function makeStateRoundtripGraph(
   };
 }
 
-test("`emit` state.f32 round-trip = store value が load で 取 れ る", async () => {
+test("`emit` state.f32 round-trip = stored value is recovered by load", async () => {
   const graph = makeStateRoundtripGraph("f32", { kind: "literal", type: "f32", value: 7.5 }, 0);
   const lay = layout(graph);
   const wasm = await emit(graph, lay);
@@ -913,7 +914,7 @@ test("`emit` state.f32 round-trip = store value が load で 取 れ る", async
   }
 });
 
-test("`emit` state.f32 subnormal flush = 1e-40 store → load で 0", async () => {
+test("`emit` state.f32 subnormal flush = 1e-40 stored, loaded as 0", async () => {
   const graph = makeStateRoundtripGraph("f32", { kind: "literal", type: "f32", value: 1e-40 }, 0);
   const lay = layout(graph);
   const wasm = await emit(graph, lay);
@@ -926,7 +927,7 @@ test("`emit` state.f32 subnormal flush = 1e-40 store → load で 0", async () =
   expect(out[0]).toBe(0);
 });
 
-test("`emit` state.f32 subnormal threshold = 1e-29 store → load で そ の ま ま (= 境 界 超 え 保 持)", async () => {
+test("`emit` state.f32 subnormal threshold = 1e-29 stored and preserved (above flush boundary)", async () => {
   const graph = makeStateRoundtripGraph("f32", { kind: "literal", type: "f32", value: 1e-29 }, 0);
   const lay = layout(graph);
   const wasm = await emit(graph, lay);
@@ -936,14 +937,14 @@ test("`emit` state.f32 subnormal threshold = 1e-29 store → load で そ の �
   const proc = instance.exports["process"] as () => void;
   proc();
   const out = new Float32Array(memory.buffer, lay.regions.ioScratch.outputs["main"]!, 128);
-  // 1e-29 は f32 で 表 現 可 能 = Math.fround で 同 値 近 似 (= subnormal range の 外)
+  // 1e-29 is representable as f32; Math.fround gives the same approximation (outside subnormal range)
   expect(out[0]).toBeCloseTo(Math.fround(1e-29), 35);
   expect(out[0]).not.toBe(0);
 });
 
 test("`emit` state.f64 round-trip + subnormal flush via memory dump", async () => {
-  // f64 は audio output (= f32) に 流 せ な い = state ↔ state round-trip + memory
-  // 直 接 read で 確 認。 src に 1e-40 store → guard で 0 flush → dst に copy → dst slot を read。
+  // f64 cannot be routed through audio output (f32), so verification uses a state-to-state
+  // round-trip with direct memory reads. Store 1e-40 into src -> guard flushes to 0 -> copy to dst -> read dst slot.
   const graph = makeStateRoundtripGraph("f64", { kind: "literal", type: "f64", value: 1e-40 }, 0);
   const lay = layout(graph);
   const wasm = await emit(graph, lay);
@@ -956,12 +957,12 @@ test("`emit` state.f64 round-trip + subnormal flush via memory dump", async () =
   const dstOffset = lay.regions.states.slots["dst"]!;
   const srcView = new Float64Array(memory.buffer, srcOffset, 1);
   const dstView = new Float64Array(memory.buffer, dstOffset, 1);
-  // 1e-40 store → subnormal guard で 0 に flush
+  // 1e-40 stored -> subnormal guard flushes to 0
   expect(srcView[0]).toBe(0);
   expect(dstView[0]).toBe(0);
 });
 
-test("`emit` state.f64 subnormal threshold = 1e-29 store で そ の ま ま", async () => {
+test("`emit` state.f64 subnormal threshold = 1e-29 stored and preserved", async () => {
   const graph = makeStateRoundtripGraph("f64", { kind: "literal", type: "f64", value: 1e-29 }, 0);
   const lay = layout(graph);
   const wasm = await emit(graph, lay);
@@ -975,7 +976,7 @@ test("`emit` state.f64 subnormal threshold = 1e-29 store で そ の ま ま", a
   expect(srcView[0]).not.toBe(0);
 });
 
-test("`emit` state.i32 round-trip via memory dump (= subnormal guard 不 適 用)", async () => {
+test("`emit` state.i32 round-trip via memory dump (subnormal guard does not apply)", async () => {
   const graph: CapturedGraph = {
     declarations: [{ kind: "state", name: "x", type: "i32", initial: 0 }],
     statements: [
@@ -999,10 +1000,10 @@ test("`emit` state.i32 round-trip via memory dump (= subnormal guard 不 適 用
 });
 
 test("`emit` state.i64 round-trip via memory dump", async () => {
-  // i64 は audio output に 流 せ な い = state ↔ state round-trip + memory 直 接 read。
-  // ただ i64 literal は AstNode kind=literal で value が number 型 = i64 を 表 現 困 難 =
-  // 0 store の 単 純 round-trip だ け で kind=i64 case 経 路 を hit 確 認 (= layout は 8 byte
-  // slot allocate、 emit は i64.store 経 由)。
+  // i64 cannot be routed through audio output, so verification uses a state-to-state
+  // round-trip with direct memory reads. i64 literals are awkward because AstNode
+  // literal.value is typed as number, so this test uses a simple 0 round-trip to
+  // exercise the i64 code path (layout allocates an 8-byte slot; emit goes through i64.store).
   const graph: CapturedGraph = {
     declarations: [{ kind: "state", name: "x", type: "i64", initial: 0n }],
     statements: [
@@ -1010,8 +1011,8 @@ test("`emit` state.i64 round-trip via memory dump", async () => {
         kind: "stateStore",
         type: "i64",
         name: "x",
-        // literal i64 の 直 接 表 現 path は ast.ts の literal 制 約 (= value: number) で
-        // 限 定 的 = stateLoad の round-trip で 「初 期 値 0 を そ の ま ま 戻 す」 path。
+        // Direct i64 literal representation is constrained by the ast.ts literal (value: number)
+        // type, so this uses a stateLoad round-trip to restore the initial value of 0.
         value: { kind: "stateLoad", type: "i64", name: "x" },
       },
     ],
@@ -1024,10 +1025,10 @@ test("`emit` state.i64 round-trip via memory dump", async () => {
   const proc = instance.exports["process"] as () => void;
   proc();
   const view = new BigInt64Array(memory.buffer, lay.regions.states.slots["x"]!, 1);
-  expect(view[0]).toBe(0n); // 初 期 memory zero、 load → store で そ の ま ま
+  expect(view[0]).toBe(0n); // initial memory is zero; load -> store preserves it
 });
 
-test("`emit` state.bool round-trip via memory dump (= 内 部 i32 表 現)", async () => {
+test("`emit` state.bool round-trip via memory dump (internally represented as i32)", async () => {
   const graph: CapturedGraph = {
     declarations: [{ kind: "state", name: "x", type: "bool", initial: false }],
     statements: [
@@ -1114,9 +1115,9 @@ test("`emit` state.bool stateLoad hit via state ↔ state copy", async () => {
   expect(view[0]).toBe(1);
 });
 
-test("`emitExpression(literal bool)` emits i32.const (= bool は内部 i32 表現 0/1)", async () => {
-  // select の boolean branch (= `select(cond, true, boolNode)`、canonical bool-state パターン)
-  // が bool literal に lift される → emit で i32.const に落ちること (= 以前は throw stub)。
+test("`emitExpression(literal bool)` emits i32.const (bool is internally represented as i32 0/1)", async () => {
+  // A boolean branch in select (e.g. `select(cond, true, boolNode)`, the canonical bool-state
+  // pattern) is lifted to a bool literal and must lower to i32.const in emit.
   const binaryen = await loadBinaryen();
   const mod = makeMod(binaryen);
   const ref = emitExpression(
@@ -1130,12 +1131,13 @@ test("`emitExpression(literal bool)` emits i32.const (= bool は内部 i32 表�
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// subnormal guard 振 る 舞 い 仕 様 (= spec-state-store-behavior.md)
-// 値 source の バ リ エ ー シ ョ ン × forSample 内/外 × 境 界 値 × 特 殊 値 で
-// guard が 一 律 適 用 さ れ る 振 る 舞 い を 全 case 担 保。
+// Subnormal guard behavior specification (spec-state-store-behavior.md)
+// Exhaustive coverage: value source variations x inside/outside forSample
+// x boundary values x special values — guard applies uniformly in all cases.
 // ─────────────────────────────────────────────────────────────────────────
 
-// 値 source 別 = store value AST を build 直 接 + state.f32 round-trip + memory dump で 結 果 確 認
+// Per value source: build the store-value AST directly, do a state.f32 round-trip,
+// and confirm the result via memory dump.
 function makeStoreValueGraph(
   storeValue: AstNode,
   extraDeclarations: CapturedGraph["declarations"] = [],
@@ -1158,53 +1160,53 @@ async function runStoreAndRead(graph: CapturedGraph): Promise<number> {
   return view[0]!;
 }
 
-test("subnormal guard: literal store (= normal range で 保 持)", async () => {
+test("subnormal guard: literal store in normal range is preserved", async () => {
   const stored = await runStoreAndRead(
     makeStoreValueGraph({ kind: "literal", type: "f32", value: 0.5 }),
   );
   expect(stored).toBe(0.5);
 });
 
-test("subnormal guard: literal store (= subnormal range で 0 flush)", async () => {
+test("subnormal guard: literal store in subnormal range is flushed to 0", async () => {
   const stored = await runStoreAndRead(
     makeStoreValueGraph({ kind: "literal", type: "f32", value: 1e-40 }),
   );
   expect(stored).toBe(0);
 });
 
-test("subnormal guard: 境 界 1e-30 ぴ っ た り は 保 持 (= strict `<` flush rule)", async () => {
+test("subnormal guard: exact boundary 1e-30 is preserved (strict `<` flush rule)", async () => {
   const stored = await runStoreAndRead(
     makeStoreValueGraph({ kind: "literal", type: "f32", value: 1e-30 }),
   );
-  // 1e-30 は f32 で fround = 約 1.000000035e-30、 guard は abs < 1e-30 で 判 定 =
-  // 境 界 値 は flush し な い (= 保 持)
+  // 1e-30 rounds to ~1.000000035e-30 in f32; guard condition is abs < 1e-30,
+  // so the boundary value itself is not flushed (preserved)
   expect(stored).toBeCloseTo(Math.fround(1e-30), 35);
   expect(stored).not.toBe(0);
 });
 
-test("subnormal guard: 境 界 直 下 1e-31 は flush", async () => {
+test("subnormal guard: just below boundary 1e-31 is flushed", async () => {
   const stored = await runStoreAndRead(
     makeStoreValueGraph({ kind: "literal", type: "f32", value: 1e-31 }),
   );
   expect(stored).toBe(0);
 });
 
-test("subnormal guard: 負 値 -1e-40 は abs で 判 定 し て flush", async () => {
+test("subnormal guard: negative -1e-40 is judged by abs and flushed", async () => {
   const stored = await runStoreAndRead(
     makeStoreValueGraph({ kind: "literal", type: "f32", value: -1e-40 }),
   );
   expect(stored).toBe(0);
 });
 
-test("subnormal guard: 負 normal -0.5 は 保 持", async () => {
+test("subnormal guard: negative normal -0.5 is preserved", async () => {
   const stored = await runStoreAndRead(
     makeStoreValueGraph({ kind: "literal", type: "f32", value: -0.5 }),
   );
   expect(stored).toBe(-0.5);
 });
 
-test("subnormal guard: mul(literal, literal) 結 果 normal は 保 持", async () => {
-  // 2 × 0.5 = 1.0
+test("subnormal guard: mul(literal, literal) result in normal range is preserved", async () => {
+  // 2 * 0.5 = 1.0
   const stored = await runStoreAndRead(
     makeStoreValueGraph({
       kind: "mul",
@@ -1216,8 +1218,8 @@ test("subnormal guard: mul(literal, literal) 結 果 normal は 保 持", async 
   expect(stored).toBe(1);
 });
 
-test("subnormal guard: mul(literal, literal) 結 果 subnormal は flush", async () => {
-  // 1e-20 × 1e-15 = 1e-35 = subnormal range
+test("subnormal guard: mul(literal, literal) result in subnormal range is flushed", async () => {
+  // 1e-20 * 1e-15 = 1e-35 = subnormal range
   const stored = await runStoreAndRead(
     makeStoreValueGraph({
       kind: "mul",
@@ -1229,8 +1231,8 @@ test("subnormal guard: mul(literal, literal) 結 果 subnormal は flush", async
   expect(stored).toBe(0);
 });
 
-test("subnormal guard: stateLoad source (= 別 state slot か ら load し た値 を そ の ま ま store)", async () => {
-  // src に 0.7 を store → dst に src.load() を store (= guard 通 過、 0.7 保 持)
+test("subnormal guard: stateLoad source — value loaded from another state slot is preserved on store", async () => {
+  // Store 0.7 into src, then store src.read() into dst (passes guard, 0.7 preserved)
   const graph: CapturedGraph = {
     declarations: [
       { kind: "state", name: "src", type: "f32", initial: 0 },
@@ -1262,8 +1264,8 @@ test("subnormal guard: stateLoad source (= 別 state slot か ら load し た�
   expect(dstView[0]).toBe(Math.fround(0.7));
 });
 
-test("subnormal guard: self load × literal chain (= counter × 0.5 decay path)", async () => {
-  // counter に 0.8 を store → counter × 0.5 を store → memory に 0.4 期 待
+test("subnormal guard: self-load * literal chain (counter * 0.5 decay path)", async () => {
+  // Store 0.8 into counter, then store counter * 0.5 -> expect 0.4 in memory
   const graph: CapturedGraph = {
     declarations: [{ kind: "state", name: "counter", type: "f32", initial: 0 }],
     statements: [
@@ -1297,9 +1299,9 @@ test("subnormal guard: self load × literal chain (= counter × 0.5 decay path)"
   expect(view[0]).toBeCloseTo(0.4, 6);
 });
 
-test("subnormal guard: audioInRead × literal、 forSample 外 (= per-block top-level)", async () => {
-  // input[0] = 0.3、 store value = audioInRead × 2 = 0.6 期 待 (= guard 通 過)。
-  // audio I/O 経 由 で memory load を 含 む value source の guard 通 過 path 担 保。
+test("subnormal guard: audioInRead * literal, outside forSample (per-block top-level)", async () => {
+  // input[0] = 0.3, store value = audioInRead * 2, expect 0.6 (passes guard).
+  // Verifies that value sources involving audio I/O memory loads also pass the guard.
   const graph: CapturedGraph = {
     declarations: [
       { kind: "state", name: "z", type: "f32", initial: 0 },
@@ -1337,9 +1339,9 @@ test("subnormal guard: audioInRead × literal、 forSample 外 (= per-block top-
   expect(view[0]).toBeCloseTo(0.6, 6);
 });
 
-test("subnormal guard: audioInRead × literal、 forSample 内", async () => {
-  // forSample 内 で input[i] × 2 を store = 各 sample で 上 書 き、 最 後 (= i=127) の
-  // 値 が memory に残 る = input[127] × 2 = 0.3 × 2 = 0.6 期 待
+test("subnormal guard: audioInRead * literal, inside forSample", async () => {
+  // Store input[i] * 2 inside forSample, overwriting each sample. The last write (i=127)
+  // remains in memory: input[127] * 2 = 0.3 * 2 = 0.6 expected.
   const graph: CapturedGraph = {
     declarations: [
       { kind: "state", name: "z", type: "f32", initial: 0 },
@@ -1383,7 +1385,7 @@ test("subnormal guard: audioInRead × literal、 forSample 内", async () => {
   expect(view[0]).toBeCloseTo(0.6, 6);
 });
 
-test("subnormal guard: paramAt × literal、 forSample 内", async () => {
+test("subnormal guard: paramAt * literal, inside forSample", async () => {
   const graph: CapturedGraph = {
     declarations: [
       { kind: "state", name: "z", type: "f32", initial: 0 },
@@ -1430,8 +1432,8 @@ test("subnormal guard: paramAt × literal、 forSample 内", async () => {
   expect(view[0]).toBeCloseTo(0.6, 6);
 });
 
-test("subnormal guard: deeply nested mul chain (= 3 段)", async () => {
-  // (((0.4 × 0.5) × 0.5) × 0.5) = 0.05
+test("subnormal guard: deeply nested mul chain (3 levels)", async () => {
+  // (((0.4 * 0.5) * 0.5) * 0.5) = 0.05
   const storeValue: AstNode = {
     kind: "mul",
     type: "f32",
@@ -1452,37 +1454,37 @@ test("subnormal guard: deeply nested mul chain (= 3 段)", async () => {
   expect(stored).toBeCloseTo(0.05, 6);
 });
 
-test("subnormal guard: NaN store は guard 不発 で 保持 (= NaN < 1e-30 = false in IEEE 754)", async () => {
+test("subnormal guard: NaN store bypasses guard and is preserved (NaN < 1e-30 = false in IEEE 754)", async () => {
   const stored = await runStoreAndRead(
     makeStoreValueGraph({ kind: "literal", type: "f32", value: Number.NaN }),
   );
   expect(Number.isNaN(stored)).toBe(true);
 });
 
-test("subnormal guard: +Infinity store は 保 持", async () => {
+test("subnormal guard: +Infinity store is preserved", async () => {
   const stored = await runStoreAndRead(
     makeStoreValueGraph({ kind: "literal", type: "f32", value: Number.POSITIVE_INFINITY }),
   );
   expect(stored).toBe(Number.POSITIVE_INFINITY);
 });
 
-test("subnormal guard: -Infinity store は 保 持", async () => {
+test("subnormal guard: -Infinity store is preserved", async () => {
   const stored = await runStoreAndRead(
     makeStoreValueGraph({ kind: "literal", type: "f32", value: Number.NEGATIVE_INFINITY }),
   );
   expect(stored).toBe(Number.NEGATIVE_INFINITY);
 });
 
-test("subnormal guard: -0 store は abs(-0) = 0 < 1e-30 で flush → +0", async () => {
+test("subnormal guard: -0 store is flushed to +0 (abs(-0) = 0 < 1e-30)", async () => {
   const stored = await runStoreAndRead(
     makeStoreValueGraph({ kind: "literal", type: "f32", value: -0 }),
   );
-  // -0 を store → guard で 0 に flush → memory の bit pattern = +0
-  // Object.is で +0 / -0 区 別 可、 ただ 「flush 後 +0」 を 担 保 す る path
+  // Store -0 -> guard flushes to 0 -> memory bit pattern is +0.
+  // Object.is distinguishes +0/-0; this path asserts +0 after flush.
   expect(Object.is(stored, 0)).toBe(true);
 });
 
-test("subnormal guard: 同 block 内 で 同 state 2 度 store = 最 後 (= 0.7) が残 る", async () => {
+test("subnormal guard: two stores to the same state in one block — last write (0.7) wins", async () => {
   const graph: CapturedGraph = {
     declarations: [{ kind: "state", name: "z", type: "f32", initial: 0 }],
     statements: [
@@ -1508,12 +1510,12 @@ test("subnormal guard: 同 block 内 で 同 state 2 度 store = 最 後 (= 0.7)
   const proc = instance.exports["process"] as () => void;
   proc();
   const view = new Float32Array(memory.buffer, lay.regions.states.slots["z"]!, 1);
-  // 0.7 を f32 に fround = 0.699999988079071 = memory に そ の bit pattern で store
+  // 0.7 rounded to f32 = 0.699999988079071; that bit pattern is what gets stored
   expect(view[0]).toBe(Math.fround(0.7));
 });
 
-test("subnormal guard: defineProcessor 経 由 path repro (= offline test と 同 graph 構 築 経 路)", async () => {
-  // import side-effect = `.mul` method form を Node prototype に 登 録
+test("subnormal guard: defineProcessor path repro (same graph construction route as offline tests)", async () => {
+  // Import side-effect: registers `.mul` method on the Node prototype
   await import("../dsl/primitives.ts");
   const { defineProcessor } = await import("../processor.ts");
   const { audioInput, audioOutput, state } = await import("../dsl/declarations.ts");
@@ -1526,14 +1528,14 @@ test("subnormal guard: defineProcessor 経 由 path repro (= offline test と �
     return {
       process: () => {
         forSample((i) => {
-          out.ch(0).at(i).write(stored.load());
+          out.ch(0).at(i).write(stored.read());
         });
-        stored.store(input.ch(0).at(0).mul(2));
+        stored.write(input.ch(0).at(0).mul(2));
       },
     };
   });
 
-  // captured graph を 取 り 出 し 直 接 emit + 走 ら せ る
+  // Extract the captured graph and emit + run it directly
   const capturedGraph = accumulator.graph as unknown as CapturedGraph;
   const lay = layout(capturedGraph);
   const wasm = await emit(capturedGraph, lay);
@@ -1560,12 +1562,12 @@ test("subnormal guard: defineProcessor 経 由 path repro (= offline test と �
   for (let s = 0; s < 128; s++) expect(output1[s]).toBeCloseTo(0.6, 6);
 });
 
-test("subnormal guard: renderOffline と 同 形 ループ 再現 (= input fill → proc → output read を 2 度)", async () => {
-  // renderOffline で NaN 出 る path を 詳細 再 現:
-  // - forSample 内 で out[i] = z.load() を write
-  // - forSample 外 で z = input[0] × 2 を store
-  // - input fill 0.3 → proc → output check (block 0)
-  // - input fill 0.7 → proc → output check (block 1) ← NaN trigger
+test("subnormal guard: renderOffline-equivalent loop repro (input fill -> proc -> output read, twice)", async () => {
+  // Detailed repro of the NaN-producing path in renderOffline:
+  // - inside forSample: write out[i] = z.read()
+  // - outside forSample: store z = input[0] * 2
+  // - input fill 0.3 -> proc -> check output (block 0)
+  // - input fill 0.7 -> proc -> check output (block 1) <- NaN trigger
   const graph: CapturedGraph = {
     declarations: [
       { kind: "audioInput", name: "main", channels: 1 },
@@ -1613,25 +1615,25 @@ test("subnormal guard: renderOffline と 同 形 ループ 再現 (= input fill 
   const inputBase = lay.regions.ioScratch.inputs["main"]!;
   const outputBase = lay.regions.ioScratch.outputs["main"]!;
 
-  // block 0: input fill 0.3 → proc → output 確認
+  // block 0: input fill 0.3 -> proc -> check output
   const input0 = new Float32Array(memory.buffer, inputBase, 128);
   for (let s = 0; s < 128; s++) input0[s] = 0.3;
   proc();
   const output0 = new Float32Array(memory.buffer, outputBase, 128);
-  // block 0: z 初期値 = 0 = output 全 0
+  // block 0: z initial value = 0 -> entire output is 0
   for (let s = 0; s < 128; s++) expect(output0[s]).toBe(0);
 
-  // block 1: input fill 0.7 → proc → output 確認
+  // block 1: input fill 0.7 -> proc -> check output
   const input1 = new Float32Array(memory.buffer, inputBase, 128);
   for (let s = 0; s < 128; s++) input1[s] = 0.7;
   proc();
   const output1 = new Float32Array(memory.buffer, outputBase, 128);
-  // block 1: z = block 0 末尾 で store した 0.6 = output 全 0.6
+  // block 1: z = 0.6 stored at the end of block 0 -> entire output is 0.6
   for (let s = 0; s < 128; s++) expect(output1[s]).toBeCloseTo(0.6, 6);
 });
 
-test("subnormal guard: forSample 後 audioInRead × literal store、 2 度 process (= multi-block 駆 動 path)", async () => {
-  // proc() を 2 度 呼 ぶ = multi-block 駆 動 = state slot が render quantum 跨 い で 持 続。
+test("subnormal guard: audioInRead * literal store after forSample, process called twice (multi-block drive path)", async () => {
+  // Calling proc() twice exercises the multi-block drive path: the state slot persists across render quanta.
   const graph: CapturedGraph = {
     declarations: [
       { kind: "audioInput", name: "main", channels: 1 },
@@ -1679,19 +1681,19 @@ test("subnormal guard: forSample 後 audioInRead × literal store、 2 度 proce
   const inputView = new Float32Array(memory.buffer, lay.regions.ioScratch.inputs["main"]!, 128);
   inputView.fill(0.3);
   proc();
-  // 1 度 目: z = 0.6 期 待
+  // 1st call: z = 0.6 expected
   const view1 = new Float32Array(memory.buffer, lay.regions.states.slots["z"]!, 1);
   expect(view1[0]).toBeCloseTo(0.6, 6);
-  // 2 度 目: input = 0.3 のまま、 z = 0.6 期待 (= NaN な し)
+  // 2nd call: input still 0.3, z = 0.6 expected (no NaN)
   proc();
   const view2 = new Float32Array(memory.buffer, lay.regions.states.slots["z"]!, 1);
   expect(view2[0]).toBeCloseTo(0.6, 6);
 });
 
-test("subnormal guard: forSample 後 audioInRead × literal store (= offline integration 再 現)", async () => {
-  // offline/index.test.ts で NaN 出 た fixture を emit unit test に 再 現:
-  // forSample で audioOutput に stateLoad を write → forSample 外 で stateStore に
-  // audioInRead × 2 を store。 input = 0.3 → z = 0.6 期 待。
+test("subnormal guard: audioInRead * literal store after forSample (offline integration repro)", async () => {
+  // Reproduces the NaN-producing fixture from offline/index.test.ts at the emit unit level:
+  // forSample writes stateLoad to audioOutput; outside forSample, stateStore stores audioInRead * 2.
+  // input = 0.3 -> z = 0.6 expected.
   const graph: CapturedGraph = {
     declarations: [
       { kind: "audioInput", name: "main", channels: 1 },
@@ -1744,12 +1746,12 @@ test("subnormal guard: forSample 後 audioInRead × literal store (= offline int
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// per-block publish scheduler = Phase 7 sub-phase 7.3
-// (= publish flag 持 つ state slot を process 末 尾 で counter += 128 + threshold
-// 越 え で copy + version increment + counter -= threshold で carry)
+// Per-block publish scheduler — Phase 7 sub-phase 7.3
+// (state slots with publish flag: at process end, counter += 128;
+//  when counter >= threshold: copy + increment version + counter -= threshold)
 // ─────────────────────────────────────────────────────────────────────────
 
-test("publish scheduler: publish ナ シ processor は emit に 影 響 ナ シ (= regression)", async () => {
+test("publish scheduler: processor with no publish slots is unaffected (regression)", async () => {
   const graph: CapturedGraph = {
     declarations: [{ kind: "state", name: "z", type: "f32", initial: 0 }],
     statements: [
@@ -1763,9 +1765,9 @@ test("publish scheduler: publish ナ シ processor は emit に 影 響 ナ シ 
   };
   const lay = layout(graph);
   const wasm = await emit(graph, lay);
-  // publishShared / Counters region は empty = total bytes は state region 末 尾
+  // publishShared/Counters regions are empty; total bytes end at the state region
   expect(wasm).toBeInstanceOf(Uint8Array);
-  // basic regression: emit が 成 功 + state slot に 0.5 store さ れ る
+  // basic regression: emit succeeds and 0.5 is stored in the state slot
   const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
   const instance = await WebAssembly.instantiate(wasmModule);
   const memory = instance.exports["memory"] as WebAssembly.Memory;
@@ -1775,10 +1777,10 @@ test("publish scheduler: publish ナ シ processor は emit に 影 響 ナ シ 
   expect(view[0]).toBe(0.5);
 });
 
-test("publish scheduler: f32 1 slot で counter += 128 + threshold 越 え で due", async () => {
-  // sampleRate 48000、 rateFps 30 → threshold = round(1600) = 1600
-  // block 0..12 = not due (= counter = 128..1664)
-  // block 13 で 1664 >= 1600 = due → copy + version 1 + counter = 64
+test("publish scheduler: f32 single slot — counter += 128, triggers when threshold exceeded", async () => {
+  // sampleRate 48000, rateFps 30 -> threshold = round(1600) = 1600
+  // blocks 0..12 = not due (counter = 128..1664)
+  // block 13: 1664 >= 1600 = due -> copy + version 1 + counter = 64
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -1817,17 +1819,17 @@ test("publish scheduler: f32 1 slot で counter += 128 + threshold 越 え で d
   for (let b = 0; b < 13; b++) {
     proc();
   }
-  // sample counter = 13 × 128 = 1664、 ただ し block 13 で due 後 = 64
+  // sample counter = 13 * 128 = 1664, but after block 13 fires due = 64
   expect(counterView[0]).toBe(64);
   expect(counterView[1]).toBe(1); // version = 1
   expect(sharedView[0]).toBe(Math.fround(0.7)); // copied
-  // state side も 0.7 (= store)
+  // state side is also 0.7 (from store)
   expect(stateView[0]).toBe(Math.fround(0.7));
 });
 
-test("publish scheduler: 2 block 連 続 で 2 度 due (= version 増 加)", async () => {
-  // sampleRate 48000、 rateFps 30 → threshold 1600
-  // 13 block 目 で 1 度 目 due (= counter 64)、 25 block 目 で 2 度 目 due
+test("publish scheduler: fires twice across consecutive blocks (version increments)", async () => {
+  // sampleRate 48000, rateFps 30 -> threshold 1600
+  // block 13: first due (counter 64); block 25: second due
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -1856,18 +1858,18 @@ test("publish scheduler: 2 block 連 続 で 2 度 due (= version 増 加)", asy
   const proc = instance.exports["process"] as () => void;
   const counterView = new Int32Array(memory.buffer, lay.regions.publishCounters.slots["x"]!, 2);
 
-  // 25 block 走 ら せ る (= 1664 + 12 × 128 = 3200 = 2 × 1600)
+  // Run 25 blocks (1664 + 12 * 128 = 3200 = 2 * 1600)
   for (let b = 0; b < 25; b++) {
     proc();
   }
-  // 13 block 目 = due 1 (= 64)
-  // 14..24 block = counter 64 + 11 × 128 = 1472
-  // 25 block 目 = counter 1472 + 128 = 1600 ≥ 1600 = due 2 → counter 0
+  // block 13 = due 1 (counter 64)
+  // blocks 14..24: counter 64 + 11 * 128 = 1472
+  // block 25: counter 1472 + 128 = 1600 >= 1600 = due 2 -> counter 0
   expect(counterView[0]).toBe(0);
   expect(counterView[1]).toBe(2); // version = 2
 });
 
-test("publish scheduler: i32 type で 値 copy", async () => {
+test("publish scheduler: i32 type value is copied on due", async () => {
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -1897,14 +1899,14 @@ test("publish scheduler: i32 type で 値 copy", async () => {
   const proc = instance.exports["process"] as () => void;
   const sharedView = new Int32Array(memory.buffer, lay.regions.publishShared.slots["x"]!, 1);
 
-  // 4 block 走 ら せ る = counter 512 ≥ 480 = due
+  // Run 4 blocks: counter 512 >= 480 = due
   for (let b = 0; b < 4; b++) {
     proc();
   }
   expect(sharedView[0]).toBe(99);
 });
 
-test("publish scheduler: bool type で 値 copy (= 内 部 i32 表 現)", async () => {
+test("publish scheduler: bool type value is copied on due (internally i32)", async () => {
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -1933,20 +1935,19 @@ test("publish scheduler: bool type で 値 copy (= 内 部 i32 表 現)", async 
   const proc = instance.exports["process"] as () => void;
   const sharedView = new Int32Array(memory.buffer, lay.regions.publishShared.slots["gate"]!, 1);
 
-  // 4 block = counter 512 ≥ 480 = due
+  // 4 blocks: counter 512 >= 480 = due
   for (let b = 0; b < 4; b++) {
     proc();
   }
   expect(sharedView[0]).toBe(1);
 });
 
-test("publish scheduler: 2 publish slot は 独 立 counter / version", async () => {
-  // 1 つ目 = rateFps 30 (threshold 1600)、 2 つ目 = rateFps 60 (threshold 800)
-  // 13 block 走 ら せ る と:
-  // - slot1 = 1664 → due 1、 counter 64、 version 1
-  // - slot2 = 7 due (= 800 / 128 = 6.25、 7 block 目 で 896 ≥ 800、 13 block 目 で 1664 → 800 = 864 → 64)
-  //   詳 細: block 7 で counter 896 ≥ 800 → due 1、 counter 96
-  //         block 14 までは = 13 block 目 = counter 96 + 6 × 128 = 864 ≥ 800 → due 2、 counter 64
+test("publish scheduler: two publish slots have independent counters and versions", async () => {
+  // slot 1: rateFps 30 (threshold 1600); slot 2: rateFps 60 (threshold 800)
+  // After 13 blocks:
+  // - slot1: 1664 -> due 1, counter 64, version 1
+  // - slot2: due twice (800/128=6.25; block 7: 896>=800 -> due 1, counter 96;
+  //   block 13: counter 96+6*128=864>=800 -> due 2, counter 64)
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -1980,17 +1981,17 @@ test("publish scheduler: 2 publish slot は 独 立 counter / version", async ()
   for (let b = 0; b < 13; b++) {
     proc();
   }
-  // slow (rateFps 30、 threshold 1600): version 1、 counter 64
+  // slow (rateFps 30, threshold 1600): version 1, counter 64
   expect(slowCounter[1]).toBe(1);
   expect(slowCounter[0]).toBe(64);
-  // fast (rateFps 60、 threshold 800): block 7 で due 1、 block 13 で due 2 (= counter 96 + 6×128 = 864 → 64)
+  // fast (rateFps 60, threshold 800): due 1 at block 7, due 2 at block 13 (counter 96+6*128=864 -> 64)
   expect(fastCounter[1]).toBe(2);
   expect(fastCounter[0]).toBe(64);
 });
 
-test("publish scheduler: threshold round 0 で 毎 block due", async () => {
-  // sampleRate 100、 rateFps 1000 → threshold = round(0.1) = 0
-  // counter 加 算 後 = 128 ≥ 0 = 毎 block due、 counter -= 0 = 128 残 す = 次 block も 毎 度 due
+test("publish scheduler: threshold rounds to 0 — fires every block", async () => {
+  // sampleRate 100, rateFps 1000 -> threshold = round(0.1) = 0
+  // After counter += 128: 128 >= 0 = due every block; counter -= 0 leaves 128, so next block fires too
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -2012,17 +2013,17 @@ test("publish scheduler: threshold round 0 で 毎 block due", async () => {
   const proc = instance.exports["process"] as () => void;
   const counterView = new Int32Array(memory.buffer, lay.regions.publishCounters.slots["x"]!, 2);
 
-  // 5 block 走 ら せ る = 毎 度 due
+  // Run 5 blocks — fires every block
   for (let b = 0; b < 5; b++) {
     proc();
   }
-  // counter: 各 block で 128 ≥ 0 = due → counter -= 0 = 128 → 次 block も同 = 5 度 due、 counter 128
+  // Each block: 128 >= 0 = due -> counter -= 0 = 128 -> next block also fires; 5 dues total, counter 128
   // version = 5
   expect(counterView[1]).toBe(5);
 });
 
-test("publish scheduler: sampleRate option 反 映 (= threshold が sampleRate に 応 じ て 変 化)", async () => {
-  // 同 processor で sampleRate 48000 vs 96000 = threshold 1600 vs 3200
+test("publish scheduler: sampleRate option is reflected (threshold scales with sampleRate)", async () => {
+  // Same processor: sampleRate 48000 vs 96000 = threshold 1600 vs 3200
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -2038,7 +2039,7 @@ test("publish scheduler: sampleRate option 反 映 (= threshold が sampleRate �
   };
   const lay = layout(graph);
 
-  // sampleRate 48000 → threshold 1600 → 13 block で due
+  // sampleRate 48000 -> threshold 1600 -> due at block 13
   const wasm48 = await emit(graph, lay, { sampleRate: 48000 });
   const mod48 = await WebAssembly.compile(wasm48.buffer as ArrayBuffer);
   const inst48 = await WebAssembly.instantiate(mod48);
@@ -2051,7 +2052,7 @@ test("publish scheduler: sampleRate option 反 映 (= threshold が sampleRate �
   for (let b = 0; b < 13; b++) proc48();
   expect(counter48[1]).toBe(1); // version = 1
 
-  // sampleRate 96000 → threshold 3200 → 25 block で due
+  // sampleRate 96000 -> threshold 3200 -> due at block 25
   const wasm96 = await emit(graph, lay, { sampleRate: 96000 });
   const mod96 = await WebAssembly.compile(wasm96.buffer as ArrayBuffer);
   const inst96 = await WebAssembly.instantiate(mod96);
@@ -2061,17 +2062,17 @@ test("publish scheduler: sampleRate option 反 映 (= threshold が sampleRate �
     lay.regions.publishCounters.slots["x"]!,
     2,
   );
-  // 13 block では due ナ シ (= counter 1664 < 3200)
+  // 13 blocks: no due (counter 1664 < 3200)
   for (let b = 0; b < 13; b++) proc96();
   expect(counter96[1]).toBe(0);
-  // 25 block で due
+  // 25 blocks: fires
   for (let b = 0; b < 12; b++) proc96();
   expect(counter96[1]).toBe(1);
 });
 
-test("subnormal guard f64: stateLoad source (= cross-precision な し path)", async () => {
-  // f64 state ↔ state copy (= literal f64 を 経 由 し な い path、 既 NaN bug
-  // と は 別 経 路 で 動 作 確 認)
+test("subnormal guard f64: stateLoad source (no cross-precision path)", async () => {
+  // f64 state-to-state copy via stateLoad (does not go through a literal f64);
+  // verifies a different code path from the known NaN bug.
   const graph: CapturedGraph = {
     declarations: [
       { kind: "state", name: "src", type: "f64", initial: 0 },
@@ -2104,20 +2105,20 @@ test("subnormal guard f64: stateLoad source (= cross-precision な し path)", a
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// `event.emitIf` WASM emit (= sub-phase 7.6 commit 4)
+// `event.emitIf` WASM emit (sub-phase 7.6 commit 4)
 //
-// AST `eventEmitIf` を:
-// - cond branch (= cond truthy で fire、 falsy で skip)
-// - overflow check (= head + 1 - tail >= capacity で drop-oldest + overflowCount += 1)
-// - slot fill (= base + 12 + (head % capacity) × slotSize に atSample + fields store)
+// Lowers AST `eventEmitIf` to WASM IR:
+// - cond branch (fire when truthy, skip when falsy)
+// - overflow check (head+1-tail >= capacity: drop-oldest + overflowCount += 1)
+// - slot fill (store atSample + fields at base+12+(head%capacity)*slotSize)
 // - head += 1
-// の WASM IR に lower。 SAB Atomics は worklet template (= commit 5) で reflect、
-// WASM 内 は 通 常 i32.load/store。
+// SAB Atomics are reflected in the worklet template (commit 5);
+// inside WASM, plain i32.load/store is used.
 // ─────────────────────────────────────────────────────────────────────────
 
-test("`emit(event emit 128 回)` = forSample 内 全 sample fire で slot 0..127 fill", async () => {
-  // forSample 内 で emitIf(true, { atSample: i, level: 0.5 }) を 128 回 fire =
-  // ringbuffer slot 0..127 を atSample = i / level = 0.5 で fill、 head = 128。
+test("`emit(event emit 128 times)` = all samples fire inside forSample, filling slots 0..127", async () => {
+  // Fire emitIf(true, { atSample: i, level: 0.5 }) 128 times inside forSample —
+  // fills ringbuffer slots 0..127 with atSample=i, level=0.5; head=128.
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -2158,7 +2159,7 @@ test("`emit(event emit 128 回)` = forSample 内 全 sample fire で slot 0..127
   expect(headView[0]).toBe(128); // head
   expect(headView[1]).toBe(0); // tail
   expect(headView[2]).toBe(0); // overflowCount
-  // slot 0..127 = atSample + level = 8 byte × 128 = 1024 byte
+  // slots 0..127: atSample + level = 8 bytes * 128 = 1024 bytes
   const slotsBase = ringBase + 12;
   const slotsAsI32 = new Int32Array(memory.buffer, slotsBase, 128 * 2);
   const slotsAsF32 = new Float32Array(memory.buffer, slotsBase, 128 * 2);
@@ -2168,7 +2169,7 @@ test("`emit(event emit 128 回)` = forSample 内 全 sample fire で slot 0..127
   }
 });
 
-test("`emit(event emit cond=false)` = 全 sample skip で slot 不 変、 head = 0", async () => {
+test("`emit(event emit cond=false)` = all samples skipped, slots unchanged, head = 0", async () => {
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -2206,15 +2207,14 @@ test("`emit(event emit cond=false)` = 全 sample skip で slot 不 変、 head =
   process();
   const ringBase = lay.regions.eventRings.slots["peak"]!.base;
   const headView = new Int32Array(memory.buffer, ringBase, 3);
-  expect(headView[0]).toBe(0); // head 不 変
+  expect(headView[0]).toBe(0); // head unchanged
   expect(headView[1]).toBe(0);
   expect(headView[2]).toBe(0);
 });
 
-test("`emit(event overflow)` = capacity 4 に 5 回 emit = head 5 / tail 1 / overflowCount 1", async () => {
-  // capacity 4 の ring に 5 回 fire = 4 slot 埋 ま っ た 後 の 5 回 目 で drop-oldest 1 回 発 動。
-  // forSample.stride を 256 / 128 = 2 に 設 定 し て iter 数 を 制 御 = ナ シ、 ま ず 「forSample
-  // ナ シ で per-block top level 5 個 statement」 path で 5 回 fire 表 現。
+test("`emit(event overflow)` = 5 emits into capacity-4 ring = head 5 / tail 1 / overflowCount 1", async () => {
+  // Fire 5 times into a capacity-4 ring: 4 slots fill, then the 5th triggers drop-oldest once.
+  // Expressed as 5 top-level per-block statements (no forSample) to control the fire count.
   const makeEmit = (atSample: number, level: number): AstNode => ({
     kind: "eventEmitIf",
     name: "peak",
@@ -2248,16 +2248,16 @@ test("`emit(event overflow)` = capacity 4 に 5 回 emit = head 5 / tail 1 / ove
   const ringBase = lay.regions.eventRings.slots["peak"]!.base;
   const headView = new Int32Array(memory.buffer, ringBase, 3);
   expect(headView[0]).toBe(5); // head
-  expect(headView[1]).toBe(1); // tail (= drop-oldest で 1 回 進 ん だ)
+  expect(headView[1]).toBe(1); // tail (advanced once by drop-oldest)
   expect(headView[2]).toBe(1); // overflowCount
-  // slot 0 = 5 回 目 emit (= atSample = 4, level = 0.5) で 上 書 き
+  // slot 0 overwritten by 5th emit (atSample=4, level=0.5)
   const slot0AsI32 = new Int32Array(memory.buffer, ringBase + 12, 2);
   const slot0AsF32 = new Float32Array(memory.buffer, ringBase + 12, 2);
   expect(slot0AsI32[0]).toBe(4);
   expect(slot0AsF32[1]).toBe(0.5);
 });
 
-test("`emit(event 複 数 field 型)` = atSample (i32) + level (f32) + tick (i32) + flag (bool)", async () => {
+test("`emit(event multiple field types)` = atSample (i32) + level (f32) + tick (i32) + flag (bool)", async () => {
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -2300,10 +2300,10 @@ test("`emit(event 複 数 field 型)` = atSample (i32) + level (f32) + tick (i32
   expect(slot0[0]).toBe(7); // atSample
   expect(slot0Floats[1]).toBe(0.75); // level
   expect(slot0[2]).toBe(42); // tick
-  expect(slot0[3]).toBe(1); // flag (= u32 word 占 有)
+  expect(slot0[3]).toBe(1); // flag (occupies a u32 word)
 });
 
-test("`emit(event 複 数 declare)` = base 別 で 独 立 fire", async () => {
+test("`emit(event multiple declarations)` = independent fire per base address", async () => {
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -2353,7 +2353,7 @@ test("`emit(event 複 数 declare)` = base 別 で 独 立 fire", async () => {
   expect(new Int32Array(memory.buffer, evt2Base, 1)[0]).toBe(1); // evt2 head
 });
 
-test("`emit(event f64 field)` = atSample (i32) + value (f64) で 8 byte store", async () => {
+test("`emit(event f64 field)` = atSample (i32) + value (f64) stored as 8 bytes", async () => {
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -2384,17 +2384,17 @@ test("`emit(event f64 field)` = atSample (i32) + value (f64) で 8 byte store", 
   const lay = layout(graph);
   process();
   const ringBase = lay.regions.eventRings.slots["wide"]!.base;
-  // slot offset = ringBase + 12 (= header) + 0 (= atSample) / + 4 (= value f64)
-  // f64 wire field は 4-byte align で 書 か れ る (= WASM mem.store align 制 約 ナ シ)、
-  // JS 側 Float64Array は 8-byte align 必 須 ＝ DataView 経 由 で read。
+  // slot offset = ringBase + 12 (header) + 0 (atSample) / +4 (value f64)
+  // f64 wire fields are written with 4-byte alignment (no WASM mem.store alignment constraint);
+  // JS Float64Array requires 8-byte alignment, so read via DataView.
   const view = new DataView(memory.buffer);
   expect(view.getInt32(ringBase + 12, true)).toBe(3); // atSample
   expect(view.getFloat64(ringBase + 12 + 4, true)).toBe(1.5); // value
 });
 
-test("`emit(event i64 field)` = atSample (i32) + stamp (i64) で 8 byte store", async () => {
-  // i64 literal emit 未 サ ポ ー ト (= ast.ts literal `value: number` 制 約)、
-  // stateLoad i64 経 由 で field 値 を 取 得 path で test。
+test("`emit(event i64 field)` = atSample (i32) + stamp (i64) stored as 8 bytes", async () => {
+  // i64 literal emit is unsupported (ast.ts literal value: number constraint),
+  // so the field value is obtained via stateLoad i64.
   const graph: CapturedGraph = {
     declarations: [
       { kind: "state", name: "tick", type: "i64", initial: 0n, userNamed: true },
@@ -2424,14 +2424,14 @@ test("`emit(event i64 field)` = atSample (i32) + stamp (i64) で 8 byte store", 
   };
   const { memory, process } = await instantiate(graph);
   const lay = layout(graph);
-  // tick state slot に 42n を 直 接 書 い て stateLoad が それ を 拾 う path
+  // Write 42n directly into the tick state slot so stateLoad picks it up
   const tickOffset = lay.regions.states.slots["tick"]!;
   new BigInt64Array(memory.buffer, tickOffset, 1)[0] = 42n;
   process();
   const ringBase = lay.regions.eventRings.slots["tickEvt"]!.base;
-  // slot offset = ringBase + 12 (= header) + 0 (= atSample i32) / + 4 (= stamp i64)
-  // i64 wire field は 4-byte align、 JS 側 BigInt64Array は 8-byte align 必 須 ＝
-  // DataView 経 由 で read。
+  // slot offset = ringBase + 12 (header) + 0 (atSample i32) / +4 (stamp i64)
+  // i64 wire fields are written with 4-byte alignment;
+  // JS BigInt64Array requires 8-byte alignment, so read via DataView.
   const view = new DataView(memory.buffer);
   expect(view.getInt32(ringBase + 12, true)).toBe(5); // atSample
   expect(view.getBigInt64(ringBase + 12 + 4, true)).toBe(42n); // stamp
@@ -2454,18 +2454,17 @@ test("`emit` throws on unknown event slot in eventEmitIf", async () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// `message.onReceive` WASM emit (= sub-phase 7.7c)
+// `message.onReceive` WASM emit (sub-phase 7.7c)
 //
-// per-quantum 開 始 で 全 message ring を drain (= tail か ら head ま で walk +
-// 各 slot で handler body を 走 ら す)。 handler 内 `messageFieldRead` は slot
-// offset + field offset で memory.load。 drain 後 tail = head に 進 め る。
-// Q38-b: 全 handler が per-block / forSample よ り 先 に 走 る。
+// At the start of each quantum: drain all message rings (walk from tail to
+// head, run handler body for each slot). `messageFieldRead` inside the handler
+// loads from slot offset + field offset. After draining, tail advances to head.
+// Q38-b: all handlers run before per-block statements and forSample.
 // ─────────────────────────────────────────────────────────────────────────
 
-test("`emit(message onReceive)` = ring 内 slot を drain + handler body 走 ら す", async () => {
-  // ring に main → worklet で 1 slot 入 れ た 状 態 で process → onReceive で
-  // state slot に field 値 が 反 映 さ れ る。 onReceive handler 内 で stateStore
-  // 経 由 で 状 態 反 映 path。
+test("`emit(message onReceive)` = drains ring slots and runs handler body", async () => {
+  // Place 1 slot in the ring (simulating main-thread -> worklet send), then
+  // call process(). The onReceive handler reflects the field value into a state slot.
   const graph: CapturedGraph = {
     declarations: [
       { kind: "state", name: "captured", type: "i32", initial: 0, userNamed: true },
@@ -2499,22 +2498,22 @@ test("`emit(message onReceive)` = ring 内 slot を drain + handler body 走 ら
   };
   const lay = layout(graph);
   const { memory, process } = await instantiate(graph);
-  // main 側 simulation = ring に 1 slot push: slot[0].slot = 42、 head = 1
+  // Main-side simulation: push 1 slot into the ring (slot[0].slot=42, head=1)
   const ringBase = lay.regions.messageRings.slots["ctrl"]!.base;
   const headerView = new Int32Array(memory.buffer, ringBase, 3);
   const slotsView = new Int32Array(memory.buffer, ringBase + 12);
   slotsView[0] = 42;
   headerView[0] = 1; // head = 1
   process();
-  // handler が drain で fire = captured state に 42 が 反 映
+  // handler fires on drain: 42 is reflected in the captured state slot
   const capturedOffset = lay.regions.states.slots["captured"]!;
   const capturedView = new Int32Array(memory.buffer, capturedOffset, 1);
   expect(capturedView[0]).toBe(42);
-  // tail も head ま で 進 め ら れ る (= 全 drain 済 印)
+  // tail is also advanced to head (fully drained)
   expect(headerView[1]).toBe(1);
 });
 
-test("`emit(message onReceive)` = ring 内 複 数 slot 全 drain で handler 連 続 fire", async () => {
+test("`emit(message onReceive)` = multiple slots fully drained, handler fires for each", async () => {
   const graph: CapturedGraph = {
     declarations: [
       { kind: "state", name: "captured", type: "i32", initial: 0, userNamed: true },
@@ -2556,13 +2555,13 @@ test("`emit(message onReceive)` = ring 内 複 数 slot 全 drain で handler �
   slotsView[2] = 30;
   headerView[0] = 3;
   process();
-  // 最 後 emit (= slot[2] = 30) が state に 残 る (= 連 続 fire の 最 後 反 映)
+  // Last emit (slot[2]=30) is the final state value (last consecutive fire wins)
   const capturedView = new Int32Array(memory.buffer, lay.regions.states.slots["captured"]!, 1);
   expect(capturedView[0]).toBe(30);
   expect(headerView[1]).toBe(3); // tail = 3 = head
 });
 
-test("`emit(message onReceive)` = ring 空 (= head == tail) で handler ナ シ + skip", async () => {
+test("`emit(message onReceive)` = empty ring (head == tail) — handler not called, skipped", async () => {
   const graph: CapturedGraph = {
     declarations: [
       { kind: "state", name: "captured", type: "i32", initial: 99, userNamed: true },
@@ -2597,13 +2596,13 @@ test("`emit(message onReceive)` = ring 空 (= head == tail) で handler ナ シ 
   const lay = layout(graph);
   const { memory, process } = await instantiate(graph);
   process();
-  // ring 空 = handler fire ナ シ、 state は宣言した initial (= 99) のまま
-  // (= state init は active data segment で instantiation 時に seed される)。
+  // Ring empty: handler not fired; state remains at declared initial value (99).
+  // (State init is seeded via active data segment at instantiation time.)
   const capturedView = new Int32Array(memory.buffer, lay.regions.states.slots["captured"]!, 1);
   expect(capturedView[0]).toBe(99);
 });
 
-test("`emit(message onReceive)` = 複 数 onReceive registration = registration order で 全 fire", async () => {
+test("`emit(message onReceive)` = multiple onReceive registrations — all fire in registration order", async () => {
   const graph: CapturedGraph = {
     declarations: [
       { kind: "state", name: "a", type: "i32", initial: 0, userNamed: true },
@@ -2657,7 +2656,7 @@ test("`emit(message onReceive)` = 複 数 onReceive registration = registration 
   expect(bView[0]).toBe(77);
 });
 
-test("`emit(message onReceive)` = bool wireType field を i32.load (= 1 / 0 で 受 領)", async () => {
+test("`emit(message onReceive)` = bool wireType field loaded via i32.load (received as 1/0)", async () => {
   const graph: CapturedGraph = {
     declarations: [
       { kind: "state", name: "active", type: "bool", initial: false, userNamed: true },
@@ -2696,9 +2695,9 @@ test("`emit(message onReceive)` = bool wireType field を i32.load (= 1 / 0 で 
   expect(activeView[0]).toBe(1);
 });
 
-test("`emit(message onReceive)` = void payload (= fields ナ シ) = fire 数 を head - tail で 観 測 + drain で tail 進 め", async () => {
-  // void payload = slot size 0 = slot ptr 計 算 で slotSize === 0 path を 通 る。
-  // handler 本 体 = state.store で 「呼 ば れ た 数」 を increment し て fire 数 観 測。
+test("`emit(message onReceive)` = void payload (no fields) — fire count observed via head-tail diff, tail advances on drain", async () => {
+  // void payload: slot size 0, exercises the slotSize === 0 code path in slot pointer calculation.
+  // Handler body: stateStore with a fixed value to observe fires (overwrites on each call).
   const graph: CapturedGraph = {
     declarations: [
       { kind: "state", name: "fireCount", type: "i32", initial: 0, userNamed: true },
@@ -2715,9 +2714,9 @@ test("`emit(message onReceive)` = void payload (= fields ナ シ) = fire 数 を
         kind: "messageOnReceive",
         name: "ping",
         body: [
-          // fireCount += 1 = stateLoad + literal 1 + add path = ema mul で 偽 実 装 で OK
-          // ま ず stateStore で fixed value 1 = 1 回 fire し か observable で な い
-          // (= 上 書 き)、 tail 進 む 観 測 だ け で 規 範。
+          // fireCount += 1 via stateLoad + add is not yet needed here;
+          // stateStore with fixed value 1 means only one fire is observable (overwrites).
+          // The normative check is tail advancement.
           {
             kind: "stateStore",
             type: "i32",
@@ -2732,10 +2731,10 @@ test("`emit(message onReceive)` = void payload (= fields ナ シ) = fire 数 を
   const { memory, process } = await instantiate(graph);
   const ringBase = lay.regions.messageRings.slots["ping"]!.base;
   const headerView = new Int32Array(memory.buffer, ringBase, 3);
-  // fire 3 個 (= head = 3、 slot 中 身 ナ シ = void payload)
+  // Queue 3 fires (head = 3, no slot contents = void payload)
   headerView[0] = 3;
   process();
-  // drain で tail = 3 に 進 む + handler fire で state = 1
+  // drain advances tail to 3; handler fires, state = 1
   expect(headerView[1]).toBe(3);
   const fireView = new Int32Array(memory.buffer, lay.regions.states.slots["fireCount"]!, 1);
   expect(fireView[0]).toBe(1);
@@ -2756,8 +2755,9 @@ test("`emit` throws on unknown message slot in messageOnReceive", async () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// DSL primitive operators (`01-dsl.md` §2.1) — emit lowering + e2e。
-// 各 operator は AST node → binaryen IR の lower を WAT で確認 + memory I/O で数値検証。
+// DSL primitive operators (`01-dsl.md` §2.1) — emit lowering + e2e.
+// Each operator: confirm the AST node -> binaryen IR lowering via WAT,
+// then verify numeric results via memory I/O.
 // ─────────────────────────────────────────────────────────────────────────
 
 test("`emitExpression(add)` lowers to `f32.add`", async () => {
@@ -2790,7 +2790,7 @@ test("`emit(add)` e2e: 2 + 3 = 5", async () => {
   expect(stored).toBe(5);
 });
 
-test("`emit(add)` e2e: 2 + (-5) = -3 (負値)", async () => {
+test("`emit(add)` e2e: 2 + (-5) = -3 (negative value)", async () => {
   const stored = await runStoreAndRead(
     makeStoreValueGraph({
       kind: "add",
@@ -2832,7 +2832,7 @@ test("`emit(sub)` e2e: 5 - 3 = 2", async () => {
   expect(stored).toBe(2);
 });
 
-test("`emit(sub)` e2e: 3 - 5 = -2 (負値)", async () => {
+test("`emit(sub)` e2e: 3 - 5 = -2 (negative value)", async () => {
   const stored = await runStoreAndRead(
     makeStoreValueGraph({
       kind: "sub",
@@ -2874,7 +2874,7 @@ test("`emit(div)` e2e: 10 / 2 = 5", async () => {
   expect(stored).toBe(5);
 });
 
-test("`emit(div)` e2e: 1 / 0 = +Infinity (= 非トラップ)", async () => {
+test("`emit(div)` e2e: 1 / 0 = +Infinity (non-trapping)", async () => {
   const stored = await runStoreAndRead(
     makeStoreValueGraph({
       kind: "div",
@@ -2937,7 +2937,7 @@ test("`emit(min)` e2e: min(3, 5) = 3 / min(5, 3) = 3", async () => {
   expect(hi).toBe(3);
 });
 
-test("`emit(min)` e2e: min(-1, 2) = -1 (負値混在)", async () => {
+test("`emit(min)` e2e: min(-1, 2) = -1 (mixed negative value)", async () => {
   const stored = await runStoreAndRead(
     makeStoreValueGraph({
       kind: "min",
@@ -3013,7 +3013,7 @@ test("`emit(sqrt)` e2e: sqrt(4) = 2 / sqrt(2) ≈ 1.4142", async () => {
   expect(two).toBeCloseTo(Math.SQRT2, 6);
 });
 
-test("`emit(sqrt)` e2e: sqrt(-1) = NaN (= 非トラップ)", async () => {
+test("`emit(sqrt)` e2e: sqrt(-1) = NaN (non-trapping)", async () => {
   const stored = await runStoreAndRead(
     makeStoreValueGraph({
       kind: "sqrt",
@@ -3104,7 +3104,7 @@ test("`emit(ceil)` e2e: ceil(1.2)=2 / ceil(-1.7)=-1 / ceil(3)=3", async () => {
   expect(c).toBe(3);
 });
 
-// 比 較 operator の e2e: 結 果 は i32 (= bool 0/1) なので state.i32 slot に store し て read。
+// Comparison operator e2e: result is i32 (bool 0/1); stored in a state.i32 slot and read back.
 async function runCompareAndRead(value: AstNode): Promise<number> {
   const graph: CapturedGraph = {
     declarations: [{ kind: "state", name: "c", type: "i32", initial: 0 }],
@@ -3120,7 +3120,9 @@ async function runCompareAndRead(value: AstNode): Promise<number> {
 }
 
 function cmp(
-  kind: Extract<AstNode, { lhs: AstNode; rhs: AstNode }>["kind"],
+  // Scalar binary kinds only (those carrying a `type`); the vec kinds also have
+  // `lhs`/`rhs` but no `type`, and this helper always sets one.
+  kind: Extract<AstNode, { lhs: AstNode; rhs: AstNode; type: ScalarType }>["kind"],
   a: number,
   b: number,
 ): AstNode {
@@ -3154,7 +3156,7 @@ test("`emitExpression(lt)` lowers to `f32.lt`", async () => {
   mod.dispose();
 });
 
-test("`emit(lt)` e2e: 3<5 → 1 / 5<3 → 0 / 3<3 → 0 (等値境界)", async () => {
+test("`emit(lt)` e2e: 3<5 → 1 / 5<3 → 0 / 3<3 → 0 (equal-value boundary)", async () => {
   expect(await runCompareAndRead(cmp("lt", 3, 5))).toBe(1);
   expect(await runCompareAndRead(cmp("lt", 5, 3))).toBe(0);
   expect(await runCompareAndRead(cmp("lt", 3, 3))).toBe(0);
@@ -3168,7 +3170,7 @@ test("`emitExpression(gt)` lowers to `f32.gt`", async () => {
   mod.dispose();
 });
 
-test("`emit(gt)` e2e: 5>3 → 1 / 3>5 → 0 / 3>3 → 0 (等値境界)", async () => {
+test("`emit(gt)` e2e: 5>3 → 1 / 3>5 → 0 / 3>3 → 0 (equal-value boundary)", async () => {
   expect(await runCompareAndRead(cmp("gt", 5, 3))).toBe(1);
   expect(await runCompareAndRead(cmp("gt", 3, 5))).toBe(0);
   expect(await runCompareAndRead(cmp("gt", 3, 3))).toBe(0);
@@ -3182,7 +3184,7 @@ test("`emitExpression(lte)` lowers to `f32.le`", async () => {
   mod.dispose();
 });
 
-test("`emit(lte)` e2e: 3<=3 → 1 / 3<=5 → 1 / 5<=3 → 0 (等値境界)", async () => {
+test("`emit(lte)` e2e: 3<=3 → 1 / 3<=5 → 1 / 5<=3 → 0 (equal-value boundary)", async () => {
   expect(await runCompareAndRead(cmp("lte", 3, 3))).toBe(1);
   expect(await runCompareAndRead(cmp("lte", 3, 5))).toBe(1);
   expect(await runCompareAndRead(cmp("lte", 5, 3))).toBe(0);
@@ -3196,7 +3198,7 @@ test("`emitExpression(gte)` lowers to `f32.ge`", async () => {
   mod.dispose();
 });
 
-test("`emit(gte)` e2e: 3>=3 → 1 / 5>=3 → 1 / 3>=5 → 0 (等値境界)", async () => {
+test("`emit(gte)` e2e: 3>=3 → 1 / 5>=3 → 1 / 3>=5 → 0 (equal-value boundary)", async () => {
   expect(await runCompareAndRead(cmp("gte", 3, 3))).toBe(1);
   expect(await runCompareAndRead(cmp("gte", 5, 3))).toBe(1);
   expect(await runCompareAndRead(cmp("gte", 3, 5))).toBe(0);
@@ -3222,13 +3224,13 @@ test("`emitExpression(clamp)` lowers to nested `f32.min`/`f32.max`", async () =>
   mod.dispose();
 });
 
-test("`emit(clamp)` e2e: 範囲内/lo未満/hi超過", async () => {
+test("`emit(clamp)` e2e: within range / below lo / above hi", async () => {
   expect(await runStoreAndRead(makeStoreValueGraph(clampAst(0.5, 0, 1)))).toBe(0.5);
   expect(await runStoreAndRead(makeStoreValueGraph(clampAst(-1, 0, 1)))).toBe(0);
   expect(await runStoreAndRead(makeStoreValueGraph(clampAst(5, 0, 1)))).toBe(1);
 });
 
-test("`emit(clamp)` e2e: lo > hi 退化ケースは hi を返す", async () => {
+test("`emit(clamp)` e2e: degenerate case lo > hi returns hi", async () => {
   expect(await runStoreAndRead(makeStoreValueGraph(clampAst(0.5, 1, 0)))).toBe(0);
 });
 
@@ -3257,9 +3259,9 @@ test("`emit(select)` e2e: cond true → then(10) / cond false → else(20)", asy
   expect(f).toBe(20);
 });
 
-test("`emit(select)` e2e: bool literal branch を state.bool に store (= canonical select(cond, true, gate.load()))", async () => {
-  // cond true → bool literal `true`(=1) を選ぶ。 bool branch literal が emit で i32.const に
-  // 落ち、 select 全体が i32 で評価され state.bool に書ける (= 以前は bool literal emit が throw)。
+test("`emit(select)` e2e: bool literal branch stored into state.bool (canonical select(cond, true, gate.read()))", async () => {
+  // cond true -> picks bool literal `true` (=1). The bool branch literal must lower to i32.const in emit,
+  // so the entire select evaluates as i32 and can be written into state.bool.
   const graph: CapturedGraph = {
     declarations: [{ kind: "state", name: "gate", type: "bool", initial: false }],
     statements: [
@@ -3292,7 +3294,7 @@ function fracAst(value: AstNode): AstNode {
   return { kind: "frac", type: "f32", value };
 }
 
-test("`emitExpression(frac)` lowers to `f32.sub` + `f32.floor` (temp local 経由)", async () => {
+test("`emitExpression(frac)` lowers to `f32.sub` + `f32.floor` (via temp local)", async () => {
   const binaryen = await loadBinaryen();
   const mod = makeMod(binaryen);
   const ref = emitExpression(
@@ -3318,21 +3320,21 @@ test("`emit(frac)` e2e: frac(1.25)=0.25 / frac(3)=0", async () => {
   ).toBe(0);
 });
 
-test("`emit(frac)` e2e: frac(-0.3) ≈ 0.7 (= GLSL fract、結果 [0,1))", async () => {
+test("`emit(frac)` e2e: frac(-0.3) ≈ 0.7 (GLSL fract semantics, result in [0,1))", async () => {
   const v = await runStoreAndRead(
     makeStoreValueGraph(fracAst({ kind: "literal", type: "f32", value: -0.3 })),
   );
   expect(v).toBeCloseTo(0.7, 5);
 });
 
-test("`emit(frac)` e2e: ネスト frac(frac(1.75)) = 0.75 (= 共有 local がネストで壊れない)", async () => {
+test("`emit(frac)` e2e: nested frac(frac(1.75)) = 0.75 (shared local survives nesting)", async () => {
   const v = await runStoreAndRead(
     makeStoreValueGraph(fracAst(fracAst({ kind: "literal", type: "f32", value: 1.75 }))),
   );
   expect(v).toBeCloseTo(0.75, 5);
 });
 
-test("`emitExpression(mod)` lowers to sub/trunc/div (= JS % 相当)", async () => {
+test("`emitExpression(mod)` lowers to sub/trunc/div (JS % equivalent)", async () => {
   const binaryen = await loadBinaryen();
   const mod = makeMod(binaryen);
   const ref = emitExpression(cmp("mod", 7, 3), emptyLayout, mod, binaryen);
@@ -3348,7 +3350,7 @@ test("`emit(mod)` e2e: 7%3=1 / 7.5%2=1.5", async () => {
   expect(await runStoreAndRead(makeStoreValueGraph(cmp("mod", 7.5, 2)))).toBe(1.5);
 });
 
-test("`emit(mod)` e2e: 負の被除数 -7%3=-1 / 7%-3=1 (= JS % は符号が被除数)", async () => {
+test("`emit(mod)` e2e: negative dividend -7%3=-1 / 7%-3=1 (JS % sign follows dividend)", async () => {
   expect(await runStoreAndRead(makeStoreValueGraph(cmp("mod", -7, 3)))).toBe(-1);
   expect(await runStoreAndRead(makeStoreValueGraph(cmp("mod", 7, -3)))).toBe(1);
 });
@@ -3358,7 +3360,7 @@ test("`emit(mod)` e2e: 5%0 = NaN (= JS x%0)", async () => {
   expect(Number.isNaN(v)).toBe(true);
 });
 
-test("`emit(mod)` e2e: ネスト mod(mod(10,7),2)=1 (= 共有 local 安全性)", async () => {
+test("`emit(mod)` e2e: nested mod(mod(10,7),2)=1 (shared local safety)", async () => {
   const nested: AstNode = {
     kind: "mod",
     type: "f32",
@@ -3368,8 +3370,8 @@ test("`emit(mod)` e2e: ネスト mod(mod(10,7),2)=1 (= 共有 local 安全性)",
   expect(await runStoreAndRead(makeStoreValueGraph(nested))).toBe(1);
 });
 
-test("`emit(mod)` e2e: 無限大除数は有限被除数を返す (= JS 5%Infinity===5、0*Inf の NaN 化なし)", async () => {
-  // div by zero 等で生じた Inf が divisor に流れても有限な被除数を壊さないこと。
+test("`emit(mod)` e2e: infinite divisor returns finite dividend (JS 5%Infinity===5, no 0*Inf NaN)", async () => {
+  // Inf flowing into the divisor (e.g. from div-by-zero) must not corrupt a finite dividend.
   expect(await runStoreAndRead(makeStoreValueGraph(cmp("mod", 5, Number.POSITIVE_INFINITY)))).toBe(
     5,
   );
@@ -3381,7 +3383,7 @@ test("`emit(mod)` e2e: 無限大除数は有限被除数を返す (= JS 5%Infini
   );
 });
 
-test("`emit(mod)` e2e: 無限大被除数は NaN を維持 (= JS Inf%5 / Inf%Inf)", async () => {
+test("`emit(mod)` e2e: infinite dividend produces NaN (JS Inf%5 / Inf%Inf)", async () => {
   const infMod5 = await runStoreAndRead(
     makeStoreValueGraph(cmp("mod", Number.POSITIVE_INFINITY, 5)),
   );
@@ -3396,7 +3398,7 @@ function mathAst(kind: "sin" | "cos" | "tan" | "exp" | "log" | "tanh", x: number
   return { kind, type: "f32", value: { kind: "literal", type: "f32", value: x } };
 }
 
-test("`emit(sin)` e2e: Math.sin と |誤差| < 1e-4 で一致 (grid)", async () => {
+test("`emit(sin)` e2e: matches Math.sin with |error| < 1e-4 (grid)", async () => {
   const xs = [
     0,
     Math.PI / 6,
@@ -3418,12 +3420,12 @@ test("`emit(sin)` e2e: Math.sin と |誤差| < 1e-4 で一致 (grid)", async () 
   }
 });
 
-test("`emit(sin)` e2e: 大引数 sin(100) も range reduction で近似 (f32 精度内)", async () => {
+test("`emit(sin)` e2e: large argument sin(100) approximated via range reduction (within f32 precision)", async () => {
   const got = await runStoreAndRead(makeStoreValueGraph(mathAst("sin", 100)));
   expect(Math.abs(got - Math.sin(100))).toBeLessThan(1e-3);
 });
 
-test("`emit(cos)` e2e: Math.cos と |誤差| < 1e-4 で一致 (grid)", async () => {
+test("`emit(cos)` e2e: matches Math.cos with |error| < 1e-4 (grid)", async () => {
   const xs = [
     0,
     Math.PI / 6,
@@ -3443,55 +3445,55 @@ test("`emit(cos)` e2e: Math.cos と |誤差| < 1e-4 で一致 (grid)", async () 
   }
 });
 
-test("`emit(tan)` e2e: 非特異点で Math.tan と一致", async () => {
+test("`emit(tan)` e2e: matches Math.tan at non-singular points", async () => {
   for (const x of [0, Math.PI / 6, Math.PI / 4, Math.PI / 3, -Math.PI / 4, -Math.PI / 6]) {
     const got = await runStoreAndRead(makeStoreValueGraph(mathAst("tan", x)));
     expect(Math.abs(got - Math.tan(x))).toBeLessThan(1e-3);
   }
 });
 
-test("`emit(tan)` e2e: π/2 近傍は大きな有限値 (= 非トラップ、NaN ナシ)", async () => {
+test("`emit(tan)` e2e: near pi/2 produces a large finite value (non-trapping, no NaN)", async () => {
   const got = await runStoreAndRead(makeStoreValueGraph(mathAst("tan", 1.5)));
   expect(Number.isNaN(got)).toBe(false);
   expect(Math.abs(got)).toBeGreaterThan(10);
 });
 
-test("`emit(exp)` e2e: Math.exp と相対誤差 < 1e-4 (grid)", async () => {
+test("`emit(exp)` e2e: relative error < 1e-4 vs Math.exp (grid)", async () => {
   for (const x of [-20, -5, -1, -0.5, 0, 0.5, 1, 2, 5, 10, 20, 30]) {
     const got = await runStoreAndRead(makeStoreValueGraph(mathAst("exp", x)));
     expect(Math.abs(got - Math.exp(x)) / Math.exp(x)).toBeLessThan(1e-4);
   }
 });
 
-test("`emit(log)` e2e: Math.log と |誤差| < 1e-4 (grid)", async () => {
+test("`emit(log)` e2e: matches Math.log with |error| < 1e-4 (grid)", async () => {
   for (const x of [0.001, 0.1, 0.5, 1, Math.E, 2, 10, 100, 1000, 1e6]) {
     const got = await runStoreAndRead(makeStoreValueGraph(mathAst("log", x)));
     expect(Math.abs(got - Math.log(x))).toBeLessThan(1e-4);
   }
 });
 
-test("`emit(log)` e2e: 定義域外は Math.log 準拠 (= log(0)→-Inf / log(-1)→NaN、非トラップ)", async () => {
+test("`emit(log)` e2e: out-of-domain follows Math.log (log(0)->-Inf / log(-1)->NaN, non-trapping)", async () => {
   const zero = await runStoreAndRead(makeStoreValueGraph(mathAst("log", 0)));
   expect(zero).toBe(Number.NEGATIVE_INFINITY);
   const neg = await runStoreAndRead(makeStoreValueGraph(mathAst("log", -1)));
   expect(Number.isNaN(neg)).toBe(true);
 });
 
-test("`emit(log)` e2e: 特殊値も Math.log 準拠 (= log(NaN)→NaN / log(+Inf)→+Inf)", async () => {
-  // NaN は x>0 / x<0 が共に false で内側 select に落ちる → -Inf に化けないこと。
+test("`emit(log)` e2e: special values follow Math.log (log(NaN)->NaN / log(+Inf)->+Inf)", async () => {
+  // NaN: both x>0 and x<0 are false, so it falls into the inner select path -> must not become -Inf.
   const nan = await runStoreAndRead(makeStoreValueGraph(mathAst("log", Number.NaN)));
   expect(Number.isNaN(nan)).toBe(true);
-  // +Inf は x>0 が true なので bit 分解の近似 (= 128·ln2 付近の有限値) に化けないこと。
+  // +Inf: x>0 is true, so the bit-decomposition approximation (finite value near 128*ln2) must not be returned.
   const posInf = await runStoreAndRead(
     makeStoreValueGraph(mathAst("log", Number.POSITIVE_INFINITY)),
   );
   expect(posInf).toBe(Number.POSITIVE_INFINITY);
 });
 
-test("`emit(log)` e2e: subnormal 入力も Math.log 準拠 (= 分解前に normal 域へ正規化)", async () => {
-  // 0 < x < FLT_MIN(≈1.1755e-38) は exponent field=0 で素朴な bit 分解が破綻し、
-  // log(1e-45) が ~-88 (正しくは ~-103) に化ける。const は f32 に丸められるので
-  // 照合は fround 後の値の Math.log と取る。
+test("`emit(log)` e2e: subnormal input follows Math.log (normalized to normal range before decomposition)", async () => {
+  // For 0 < x < FLT_MIN (~1.1755e-38), exponent field=0 breaks naive bit decomposition:
+  // log(1e-45) would come out ~-88 instead of ~-103. Constants are rounded to f32,
+  // so comparison is against Math.log of the fround'd value.
   for (const x of [1e-45, 1e-40, 5e-39, 1e-38]) {
     const ref = Math.log(Math.fround(x));
     const got = await runStoreAndRead(makeStoreValueGraph(mathAst("log", x)));
@@ -3499,19 +3501,19 @@ test("`emit(log)` e2e: subnormal 入力も Math.log 準拠 (= 分解前に norma
   }
 });
 
-test("`emit(tanh)` e2e: Math.tanh と |誤差| < 1e-4 (grid)", async () => {
+test("`emit(tanh)` e2e: matches Math.tanh with |error| < 1e-4 (grid)", async () => {
   for (const x of [0, 0.5, 1, -1, 2, -2, 3, -3, 6]) {
     const got = await runStoreAndRead(makeStoreValueGraph(mathAst("tanh", x)));
     expect(Math.abs(got - Math.tanh(x))).toBeLessThan(1e-4);
   }
 });
 
-test("`emit(tanh)` e2e: 大入力は ±1 に飽和 (= Inf/Inf にならない)", async () => {
+test("`emit(tanh)` e2e: large inputs saturate to ±1 (no Inf/Inf)", async () => {
   expect(await runStoreAndRead(makeStoreValueGraph(mathAst("tanh", 10)))).toBeCloseTo(1, 4);
   expect(await runStoreAndRead(makeStoreValueGraph(mathAst("tanh", -10)))).toBeCloseTo(-1, 4);
 });
 
-test("`emit(tanh)` e2e: ネスト tanh(sin(0.5)) (= walker が内側 sin を収集)", async () => {
+test("`emit(tanh)` e2e: nested tanh(sin(0.5)) (walker collects inner sin)", async () => {
   const nested: AstNode = {
     kind: "tanh",
     type: "f32",
@@ -3521,9 +3523,9 @@ test("`emit(tanh)` e2e: ネスト tanh(sin(0.5)) (= walker が内側 sin を収�
   expect(Math.abs(got - Math.tanh(Math.sin(0.5)))).toBeLessThan(1e-3);
 });
 
-// 定 数 bool cond の select (= `select(true/false, a, b)`) が emit で throw せ ず 分 岐
-// す る こ と (= P2 fix、 Reported by @codex on #6)。 bool は 内 部 i32 表 現 な の で
-// cond は i32 literal 0/1 に lift さ れ る。
+// select with a constant bool cond (`select(true/false, a, b)`) must branch without
+// throwing in emit (P2 fix, reported by @codex on #6). bool is internally i32,
+// so cond is lifted to i32 literal 0/1.
 test("`emit(select)` e2e: select(true, 10, 20) → 10 / select(false, 10, 20) → 20", async () => {
   const t = await runStoreAndRead(makeStoreValueGraph(unwrapAst(select(true, 10, 20))));
   expect(t).toBe(10);
@@ -3531,16 +3533,16 @@ test("`emit(select)` e2e: select(true, 10, 20) → 10 / select(false, 10, 20) �
   expect(f).toBe(20);
 });
 
-// exp の 2^k bit-pack を 指 数 範 囲 外 で clamp (= overflow→+Inf / underflow→0)。
-// Reported by @codex on #6。
-test("`emit(exp)` e2e: 大入力 overflow → +Inf / 大負入力 underflow → 0", async () => {
+// exp's 2^k bit-pack is clamped outside the exponent range (overflow->+Inf / underflow->0).
+// Reported by @codex on #6.
+test("`emit(exp)` e2e: large input overflows to +Inf / large negative input underflows to 0", async () => {
   expect(await runStoreAndRead(makeStoreValueGraph(mathAst("exp", 90)))).toBe(
     Number.POSITIVE_INFINITY,
   );
   expect(await runStoreAndRead(makeStoreValueGraph(mathAst("exp", -100)))).toBe(0);
 });
 
-test("`emit(tanh)` e2e: 大負入力 tanh(-50) ≈ -1 (= exp underflow 経由)", async () => {
+test("`emit(tanh)` e2e: large negative input tanh(-50) ≈ -1 (via exp underflow path)", async () => {
   const got = await runStoreAndRead(makeStoreValueGraph(mathAst("tanh", -50)));
   expect(got).toBeCloseTo(-1, 4);
 });

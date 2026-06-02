@@ -6,7 +6,7 @@
  */
 
 import "@unworklet/core";
-import { defineProcessor, midiInput, midiOutput, state } from "@unworklet/core";
+import { defineProcessor, event, state } from "@unworklet/core";
 import { renderOffline } from "@unworklet/offline";
 import { expect, test } from "vite-plus/test";
 
@@ -16,8 +16,8 @@ import { expectMidiBalance, expectMidiOut, midi } from "./index.ts";
 // port (transposed up an octave), so the rendered result carries real MIDI.
 // Pure-MIDI processor — no audio I/O.
 const noteThru = defineProcessor(() => {
-  const inPort = midiInput({ name: "in" });
-  const outPort = midiOutput({ name: "out" });
+  const inPort = event.midi({ from: "main", name: "in" });
+  const outPort = event.midi({ to: "main", name: "out" });
   const note = state.i32(0);
   const vel = state.i32(0);
   const gateOn = state.bool(false);
@@ -27,33 +27,33 @@ const noteThru = defineProcessor(() => {
   return {
     process: () => {
       inPort.onEvent("noteOn", ({ note: n, velocity, atSample }) => {
-        note.store(n);
-        vel.store(velocity);
-        gateOn.store(true);
-        onAt.store(atSample);
+        note.write(n);
+        vel.write(velocity);
+        gateOn.write(true);
+        onAt.write(atSample);
       });
       inPort.onEvent("noteOff", ({ note: n, atSample }) => {
-        note.store(n);
-        gateOff.store(true);
-        offAt.store(atSample);
+        note.write(n);
+        gateOff.write(true);
+        offAt.write(atSample);
       });
-      outPort.emitIf(gateOn.load(), {
+      outPort.emitIf(gateOn.read(), {
         type: "noteOn",
         channel: 0,
-        note: note.load().add(12),
-        velocity: vel.load(),
-        atSample: onAt.load(),
+        note: note.read().add(12),
+        velocity: vel.read(),
+        atSample: onAt.read(),
       });
-      outPort.emitIf(gateOff.load(), {
+      outPort.emitIf(gateOff.read(), {
         type: "noteOff",
         channel: 0,
-        note: note.load().add(12),
+        note: note.read().add(12),
         velocity: 0,
-        atSample: offAt.load(),
+        atSample: offAt.read(),
       });
       // Reset the one-shot gates so each inbound event re-emits exactly once.
-      gateOn.store(false);
-      gateOff.store(false);
+      gateOn.write(false);
+      gateOff.write(false);
     },
   };
 });
@@ -69,9 +69,11 @@ test("expectMidiOut matches the re-emitted notes from a real render", async () =
       ]),
     ],
   });
+  // atSample is block-local (B7): the noteOff fires in block 1 at block-local
+  // sample 0, not absolute 128 — matching the online worklet→main value.
   expectMidiOut(result, "out", [
     { type: "noteOn", channel: 0, note: 72, velocity: 100, atSample: 0 },
-    { type: "noteOff", channel: 0, note: 72, velocity: 0, atSample: 128 },
+    { type: "noteOff", channel: 0, note: 72, velocity: 0, atSample: 0 },
   ]);
 });
 

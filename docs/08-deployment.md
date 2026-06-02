@@ -32,11 +32,11 @@ The worklet's per-block marshalling normalizes the three AudioParam array length
 
 #### A4. Subnormal flush-to-zero
 
-`state.f32 / state.f64 .store(v)` is compiled with a subnormal guard (`|v| < 1e-30 → 0`), preventing CPU spikes from IIR feedback paths approaching zero. No opt-out in v1.0.0 (`decisions-log.md` Q21).
+`state.f32 / state.f64 .write(v)` is compiled with a subnormal guard (`|v| < 1e-30 → 0`), preventing CPU spikes from IIR feedback paths approaching zero. No opt-out in v1.0.0 (`decisions-log.md` Q21).
 
 #### A5. `SharedArrayBuffer` availability
 
-The runtime detects whether `SharedArrayBuffer` is constructible and `crossOriginIsolated` is true, then selects transport accordingly: SAB + Atomics when available, pre-allocated `postMessage` buffers at render-quantum granularity otherwise. The messaging surface (`node.messages.*`, `node.events.*`, MIDI) is byte-identical in both modes; only main-side observation latency differs. Consumers who care can observe the mode via `node.onError` (event code `sab-unavailable`). Full transport details in `02-messaging.md` and `decisions-log.md` Q27.
+The runtime detects whether `SharedArrayBuffer` is constructible and `crossOriginIsolated` is true, then selects transport accordingly: SAB + Atomics when available, pre-allocated `postMessage` buffers at render-quantum granularity otherwise. The messaging surface (`node.events.*`, MIDI) is byte-identical in both modes; only main-side observation latency differs. Consumers who care can observe the mode via `node.onError` (event code `sab-unavailable`). Full transport details in `02-messaging.md` and `decisions-log.md` Q27.
 
 #### A6. MIDI ringbuffer overflow
 
@@ -64,7 +64,7 @@ midiAccess.onstatechange = (e) => {
 };
 ```
 
-**Safari は Web MIDI API 非 サ ポ ー ト** (Apple 公 式 ス タ ン ス、 fingerprinting 懸 念)。 consumer は `navigator.requestMIDIAccess` を feature-detect し、 Safari で は `connectFromWebMIDI` を skip し て `node.midi.<name>.send(event)` source-agnostic injection (`11-midi.md` §3) 経 由 に fallback す る。 unworklet 内 部 の MIDI 処 理 自 体 (= worklet 内 / source-agnostic send / 全 declaration surface) は Safari で 動 く。
+**Safari does not support the Web MIDI API** (Apple's official position, citing fingerprinting concerns). Consumers should feature-detect `navigator.requestMIDIAccess` and, on Safari, skip `connectFromWebMIDI` and fall back to source-agnostic injection via `node.midi.<name>.send(event)` (`11-midi.md` §3). unworklet's internal MIDI processing itself (= within the worklet / source-agnostic send / the full declaration surface) works on Safari.
 
 #### B2. AudioContext lifecycle / sampleRate
 
@@ -82,7 +82,7 @@ Cross-origin isolation (`Cross-Origin-Opener-Policy: same-origin` + `Cross-Origi
 
 ### Per-browser validation
 
-`Chromium × Firefox × Safari` × `{cross-origin isolated, not isolated}` is the validation matrix unworklet runs for every release. Quirks that fall **inside the boundary** are absorbed in a patch release if a browser update introduces new variance. Quirks that fall **outside the boundary** are documented in this section; consumer code is expected to handle them via the standard web platform APIs. Web MIDI 標 準 (= B1) の 存 在 自 体 は unworklet の test 対 象 外 (= emission boundary 外 側、 consumer 責 任) — Safari セ ル で は `connectFromWebMIDI` を 含 ま な い smoke (= unworklet 内 部 機 能 + source-agnostic injection 経 路) で 検 証 す る (Q62, `decisions-log.md`)。
+`Chromium × Firefox × Safari` × `{cross-origin isolated, not isolated}` is the validation matrix unworklet runs for every release. Quirks that fall **inside the boundary** are absorbed in a patch release if a browser update introduces new variance. Quirks that fall **outside the boundary** are documented in this section; consumer code is expected to handle them via the standard web platform APIs. The existence of the Web MIDI standard (= B1) is outside unworklet's test scope (= beyond the emission boundary, consumer responsibility) — the Safari cell is validated with a smoke suite that excludes `connectFromWebMIDI` and covers only unworklet-internal functionality and the source-agnostic injection path (Q62, `decisions-log.md`).
 
 ## 3. SharedArrayBuffer graceful degradation
 

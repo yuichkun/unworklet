@@ -1,22 +1,22 @@
 /**
- * `@unworklet/test` の signal generator (= sine / silence / impulse /
- * sineSweep / whiteNoise / dc / ramp) の 出 力 を wav snapshot に 取 る
- * (= 耳 / 目 で DSP 動 作 確 認 path、 `docs/06-testing.md` §3)。
+ * Captures WAV snapshots of each signal generator in `@unworklet/test`
+ * (sine / silence / impulse / sineSweep / whiteNoise / dc / ramp) for
+ * DSP behaviour verification by ear and waveform viewer (`docs/06-testing.md` §3).
  *
- * 既 数 値 assertion test (= `index.test.ts` 内) と は 別 軸:
- * - 既 = `[...buf]` 等 で 個 別 sample 値 を 機 械 的 check (= unit)
- * - 本 file = 1 sec @ 48k wav を `__snapshots__/` に auto-write + commit、
- *   余 湖 さん が 耳 / waveform viewer で DSP 振 る 舞 い を ジ ャ ッ ジ する
- *   path。 impl 変 更 で wav 変 化 = bit-exact 比 較 で test fail = 余 湖
- *   さん 再 判 断 path に carry。
+ * Complementary to the numeric assertion tests in `index.test.ts`:
+ * - Those tests mechanically check individual sample values via `[...buf]` etc. (unit).
+ * - This file writes 1 s @ 48 kHz WAV files to `__snapshots__/` and commits them;
+ *   a human judges DSP behaviour by ear or waveform viewer.
+ *   Any implementation change that alters a WAV causes a bit-exact comparison failure,
+ *   routing the change back for human re-evaluation.
  *
- * 注 意 = sine / sineSweep / whiteNoise = amplitude 1 = peak 0 dBFS = 大
- * 音 量 = volume 調 整 し て か ら 再 生 推 奨。 silence / dc / ramp = 耳 で
- * は ほ ぼ 無 音 = waveform viewer で 形 を 確 認 す る path。
+ * Note: sine / sineSweep / whiteNoise have amplitude 1 (peak 0 dBFS) — adjust
+ * playback volume before listening. silence / dc / ramp are near-silent by ear;
+ * verify their shape in a waveform viewer.
  *
- * 各 件 で `opts.snapshotName` 明 示 = file 名 cleaner (= test 名 = test 何 を
- * 担 保 す る か の 自 由 説 明、 snapshotName = file 名 識 別 子 と し て 短 い
- * 形 で carry)。
+ * Each test specifies `opts.snapshotName` explicitly to keep file names clean.
+ * The test title is a free-form description of what the test guarantees;
+ * snapshotName is the short identifier used as the output filename.
  */
 
 import { test } from "vite-plus/test";
@@ -35,13 +35,13 @@ import {
 const sampleRate = 48000;
 const durationSamples = sampleRate; // 1 sec
 
-test("sine generator output (= A4 純 音 / 1s)", async () => {
+test("sine generator output (= A4 pure tone / 1s)", async () => {
   await expectAudioMatchesSnapshot(sine({ freqHz: 440, durationSamples, sampleRate }), {
     snapshotName: "sine",
   });
 });
 
-test("silence generator output (= 全 0 / 1s)", async () => {
+test("silence generator output (= all zeros / 1s)", async () => {
   await expectAudioMatchesSnapshot(silence(durationSamples), { snapshotName: "silence" });
 });
 
@@ -66,7 +66,7 @@ test("dc generator output (= value 1.0 / 1s)", async () => {
   await expectAudioMatchesSnapshot(dc(durationSamples, 1.0), { snapshotName: "dc" });
 });
 
-test("ramp generator output (= 0 → 1 線 形 / 1s)", async () => {
+test("ramp generator output (= 0 → 1 linear / 1s)", async () => {
   await expectAudioMatchesSnapshot(ramp({ durationSamples, from: 0, to: 1 }), {
     snapshotName: "ramp",
   });

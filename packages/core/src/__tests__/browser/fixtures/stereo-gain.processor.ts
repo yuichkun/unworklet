@@ -1,7 +1,7 @@
 /**
- * Browser e2e fixture = canonical Ex 1 full (= stereo gain + meter L/R)。
- * `?worklet` import 経 由 で AudioWorkletNode に 載 せ て real `AudioContext`
- * で 走 ら す path。
+ * Browser e2e fixture — canonical example 1 in full (stereo gain + L/R meter).
+ * Loaded via `?worklet` import onto an AudioWorkletNode and executed inside a
+ * real `AudioContext`.
  */
 
 import {
@@ -34,11 +34,11 @@ export const stereoGain = defineProcessor(() => {
         const r = input.right.at(i).mul(gain.at(i));
         out.left.at(i).write(l);
         out.right.at(i).write(r);
-        meterL.store(l.abs().max(meterL.load()));
-        meterR.store(r.abs().max(meterR.load()));
+        meterL.write(l.abs().max(meterL.read()));
+        meterR.write(r.abs().max(meterR.read()));
       });
-      meterL.store(meterL.load().mul(0.95));
-      meterR.store(meterR.load().mul(0.95));
+      meterL.write(meterL.read().mul(0.95));
+      meterR.write(meterR.read().mul(0.95));
     },
   };
 });

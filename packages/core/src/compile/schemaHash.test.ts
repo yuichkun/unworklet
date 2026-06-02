@@ -1,10 +1,11 @@
 /**
- * Behavior of the schema-hash stage (= `01-dsl.md` §8.3 migration anchor、
- * plan Q-D stage 別 internal module の 1 つ)。
+ * Behavior of the schema-hash stage (= `01-dsl.md` §8.3 migration anchor,
+ * one of the internal modules in the Q-D stage pipeline).
  *
- * Phase 3 で hash 形 を fix (= `JSON.stringify(graph)` + SHA-256 hex) =
- * 後 続 phase で 形 を 変 え た 瞬 間 inline snapshot fail で 検 知 + 既
- * snapshot blob 互 換 を 別 path で 意 図 的 migrate す る path に zip。
+ * The hash format is fixed as `JSON.stringify(graph)` + SHA-256 hex.
+ * Any future change to the format is caught immediately by inline snapshot
+ * failures, and existing snapshot blob compatibility is handled via an
+ * explicit migration path.
  */
 
 import { expect, test } from "vite-plus/test";
@@ -49,30 +50,30 @@ test("`schemaHash(stereoGain)` = fixed hex (= inline snapshot)", () => {
   expect(schemaHash(stereoGain)).toMatchInlineSnapshot(`"5262505d98866efd9e3fa9d5f9b2cca0"`);
 });
 
-test("`schemaHash(swappedOrder)` = fixed hex 別 値 (= structural over declaration order)", () => {
+test("`schemaHash(swappedOrder)` = distinct fixed hex (= hash is sensitive to declaration order)", () => {
   expect(schemaHash(swappedOrder)).toMatchInlineSnapshot(`"e1b1643ea5cc41e3f598c65b8ffa5ffe"`);
 });
 
-test("`schemaHash(alteredBody)` = `schemaHash(stereoGain)` (= body は anchor に 影 響 し ない)", () => {
+test("`schemaHash(alteredBody)` = `schemaHash(stereoGain)` (= process body does not affect the migration anchor)", () => {
   // Declarations identical, only the process body differs → same migration
   // anchor (a preset blob survives logic tweaks; `01-dsl.md` §8.3).
   expect(schemaHash(alteredBody)).toBe(schemaHash(stereoGain));
 });
 
-test("`schemaHash(emptyGraph)` = fixed hex (= 空 graph で も 有 効 hex)", () => {
+test("`schemaHash(emptyGraph)` = fixed hex (= produces a valid hex even for an empty graph)", () => {
   expect(schemaHash(emptyGraph)).toMatchInlineSnapshot(`"09612b07b5ecb5a5b61565cb8f28b3e4"`);
 });
 
-test("`schemaHash` is deterministic = 同 graph で 二 度 呼 ぶ と 同 hex", () => {
+test("`schemaHash` is deterministic = calling twice with the same graph yields the same hex", () => {
   expect(schemaHash(stereoGain)).toBe(schemaHash(stereoGain));
 });
 
-test("declaration が 異 な る fixture は 異 な る hex を 生 む (= structural 担 保)", () => {
-  // alteredBody は declarations が stereoGain と 同 一 = 同 hash (= 別 test で 担 保)。
+test("fixtures with different declarations produce distinct hashes (= structural integrity guarantee)", () => {
+  // alteredBody shares identical declarations with stereoGain, so they hash the same (covered by a separate test).
   const hashes = [schemaHash(stereoGain), schemaHash(swappedOrder), schemaHash(emptyGraph)];
   expect(new Set(hashes).size).toBe(hashes.length);
 });
 
-test("hex shape = 32-char lowercase (= 2-lane FNV-1a 128-bit hex 形 担 保)", () => {
+test("hex shape = 32-char lowercase (= validates 2-lane FNV-1a 128-bit hex format)", () => {
   expect(schemaHash(stereoGain)).toMatch(/^[0-9a-f]{32}$/);
 });

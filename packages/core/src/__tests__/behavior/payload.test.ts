@@ -1,16 +1,17 @@
 /**
- * typed-array message payload (Stage 2.5a) の compile-pipeline カバレッジ。
+ * Compile-pipeline coverage for typed-array message payloads (Stage 2.5a).
  *
- * end-to-end の振る舞い (= 受信した配列を at/length で読む) は driver が message
- * 注入を持たないため `@unworklet/offline` の renderOffline 黒箱テストで担保する。
- * ここは core 内で proxy (capture) + payloadContent layout + payloadField emit の
- * pipeline が compile を通り、layout に content region が確保されることを検証する。
+ * End-to-end behavior (reading a received array via at/length) is covered by
+ * renderOffline black-box tests in `@unworklet/offline`, because the driver
+ * has no message-injection capability. These tests verify that the
+ * proxy (capture) + payloadContent layout + payloadField emit pipeline
+ * compiles successfully and that the layout reserves a content region.
  */
 
 import { expect, test } from "vite-plus/test";
 
 import "../../dsl/primitives.ts"; // side-effect: register `Node<T>` method forms
-import { audioOutput, buffer, event, message, state } from "../../dsl/declarations.ts";
+import { audioOutput, event, state } from "../../dsl/declarations.ts";
 import { f32, i32 } from "../../dsl/constructors.ts";
 import { forSample } from "../../dsl/loop.ts";
 import { compile } from "../../compile/index.ts";
@@ -19,13 +20,13 @@ import { defineProcessor } from "../../processor.ts";
 test("typed-array message compiles: proxy + payloadContent layout + payloadField emit", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const upload = message<{ samples: Float32Array }>({ name: "upload" });
-    const buf = buffer.f32({ size: 8 });
+    const upload = event<{ samples: Float32Array }>({ from: "main", name: "upload" });
+    const buf = state.buffer.f32({ size: 8 });
     const lenState = state.named("len").i32(0);
     return {
       process: () => {
         upload.onReceive(({ samples }) => {
-          lenState.store(samples.length); // payloadFieldLength
+          lenState.write(samples.length); // payloadFieldLength
           forSample((i) => {
             buf.write(i, samples.at(i)); // payloadFieldRead (runtime indexed)
           });
@@ -40,7 +41,7 @@ test("typed-array message compiles: proxy + payloadContent layout + payloadField
   const result = await compile(proc);
   expect(result.wasm.byteLength).toBeGreaterThan(0);
 
-  // typed-array message には payloadContent region が割り当てられる。
+  // A typed-array message must have a payloadContent region allocated.
   const memory = result.memory as unknown as {
     regions: {
       payloadContent: {
@@ -55,13 +56,14 @@ test("typed-array message compiles: proxy + payloadContent layout + payloadField
 });
 
 test("typed-array message compiles: buf.copyFrom(payload) bulk-copy emit path", async () => {
-  // end-to-end の振る舞い (= copy 結果の値一致 / clamp) は `@unworklet/offline` の
-  // 黒箱テストで担保。ここは core 内で copyFrom proxy meta + bufferCopyFrom emit
-  // (= memory.copy) が compile を通ることを検証する (= core coverage)。
+  // End-to-end behavior (copied value equality / clamping) is covered by
+  // `@unworklet/offline` black-box tests. This test verifies that the
+  // copyFrom proxy meta + bufferCopyFrom emit (= memory.copy) path
+  // compiles successfully within core.
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const upload = message<{ samples: Float32Array }>({ name: "upload" });
-    const buf = buffer.f32({ size: 8 });
+    const upload = event<{ samples: Float32Array }>({ from: "main", name: "upload" });
+    const buf = state.buffer.f32({ size: 8 });
     return {
       process: () => {
         upload.onReceive(({ samples }) => {
@@ -88,13 +90,19 @@ test("typed-array message compiles: buf.copyFrom(payload) bulk-copy emit path", 
 });
 
 test("typed-array event compiles: emitIf(buffer + length) emit path + payloadContent", async () => {
-  // end-to-end の振る舞い (= 受信した配列の値一致) は `@unworklet/offline` の黒箱で担保。
-  // ここは core 内で emitIf の buffer 検出 + event payloadContent layout + emitEventEmitIf
-  // (= memory.copy) が compile を通り、event に content region が割り当たることを検証する。
+  // End-to-end behavior (received array value equality) is covered by the
+  // `@unworklet/offline` black-box tests. This test verifies that
+  // emitIf buffer detection + event payloadContent layout + emitEventEmitIf
+  // (= memory.copy) compile successfully and that a content region is
+  // allocated for the event within core.
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const buf = buffer.f32({ size: 4 });
-    const result = event<{ data: Float32Array }>({ name: "result", payloadCapacity: 64 });
+    const buf = state.buffer.f32({ size: 4 });
+    const result = event<{ data: Float32Array }>({
+      to: "main",
+      name: "result",
+      payloadCapacity: 64,
+    });
     return {
       process: () => {
         buf.write(0, f32(1));
@@ -121,11 +129,15 @@ test("typed-array event compiles: emitIf(buffer + length) emit path + payloadCon
 test("typed-array event emitIf requires a length field (= guard)", () => {
   expect(() =>
     defineProcessor(() => {
-      const buf = buffer.f32({ size: 4 });
-      const result = event<{ data: Float32Array }>({ name: "result", payloadCapacity: 64 });
+      const buf = state.buffer.f32({ size: 4 });
+      const result = event<{ data: Float32Array }>({
+        to: "main",
+        name: "result",
+        payloadCapacity: 64,
+      });
       return {
         process: () => {
-          // length ナシ = throw。
+          // Omitting length must throw.
           (result as unknown as { emitIf(c: boolean, p: unknown): void }).emitIf(true, {
             atSample: 0,
             data: buf,
@@ -136,13 +148,13 @@ test("typed-array event emitIf requires a length field (= guard)", () => {
   ).toThrow(/requires a "length" field/);
 });
 
-test("buf.copyFrom rejects a non-payload source (= 型外れ guard)", () => {
+test("buf.copyFrom rejects a non-payload source (= type guard)", () => {
   expect(() =>
     defineProcessor(() => {
-      const buf = buffer.f32({ size: 8 });
+      const buf = state.buffer.f32({ size: 8 });
       return {
         process: () => {
-          // payload field じゃない値を渡す = PAYLOAD_FIELD_META ナシ = throw。
+          // Passing a non-payload-field value (no PAYLOAD_FIELD_META) must throw.
           (buf as unknown as { copyFrom(x: unknown): void }).copyFrom({ length: 4 });
         },
       };
@@ -150,23 +162,25 @@ test("buf.copyFrom rejects a non-payload source (= 型外れ guard)", () => {
   ).toThrow(/typed-array message payload field/);
 });
 
-// 同名の message<T> と event<T> は独立した名前空間 (= 同名 OK)。typed-array の content
-// region は kind 別に分離され、同名でも別 region になる (= 名前だけ key にすると alias して
-// silent cross-channel corruption する bug の回帰防止)。layout 不変条件なので compile-coverage
-// で検証する (= end-to-end の各 channel 値は offline 黒箱で別途担保)。
-test("同名の message と event は別の content region を持つ (= 名前空間 kind 別、alias 防止)", async () => {
+// A message<T> and an event<T> with the same name occupy independent namespaces.
+// Typed-array content regions are partitioned by kind, so same-named entries
+// always map to distinct regions. (Keying only by name would alias them,
+// causing silent cross-channel corruption — this test is a regression guard.)
+// The layout invariant is verified at compile time; per-channel value equality
+// in end-to-end scenarios is covered separately by offline black-box tests.
+test("same-named message and event get distinct content regions (namespace is kind-scoped, alias prevention)", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const inMsg = message<{ x: Float32Array }>({ name: "dup" }); // main → worklet
-    const outEvt = event<{ x: Float32Array }>({ name: "dup", payloadCapacity: 64 }); // worklet → main
-    const buf = buffer.f32({ size: 4 });
+    const inMsg = event<{ x: Float32Array }>({ from: "main", name: "dup" }); // main → worklet (message)
+    const outEvt = event<{ x: Float32Array }>({ to: "main", name: "dup", payloadCapacity: 64 }); // worklet → main (event)
+    const buf = state.buffer.f32({ size: 4 });
     return {
       process: () => {
         inMsg.onReceive(({ x }) => {
-          buf.write(0, x.at(0)); // message typed-array field を使う (= payloadElementType seal)
+          buf.write(0, x.at(0)); // use message typed-array field (= payloadElementType seal)
         });
         buf.write(1, f32(99));
-        outEvt.emitIf(true, { atSample: 0, x: buf, length: i32(1) }); // event typed-array field を使う
+        outEvt.emitIf(true, { atSample: 0, x: buf, length: i32(1) }); // use event typed-array field
         forSample((i) => {
           out.ch(0).at(i).write(buf.read(0));
         });
@@ -187,23 +201,24 @@ test("同名の message と event は別の content region を持つ (= 名前�
   const ms = memory.regions.payloadContent.messageSlots["dup"];
   expect(ev).toBeDefined();
   expect(ms).toBeDefined();
-  // 同名でも event と message は別 region = 片方の content がもう片方を壊さない。
+  // Even with the same name, event and message occupy separate regions so neither corrupts the other.
   expect(ev!.base).not.toBe(ms!.base);
 });
 
-// §5.1: payload (T) は variable-length (typed-array) field を 1 つまで。複数あると
-// slot は単一の [payloadLen, payloadOffset] しか持てず transport が破綻するので
-// graph-capture-time error。message 受信側 (a.at()/b.at() の両 seal) で検証。
-test("payload に複数 typed-array field があると compile で reject する (§5.1 single-field limit)", async () => {
+// §5.1: A payload (T) may contain at most one variable-length (typed-array) field.
+// Multiple such fields cannot be transported because a slot holds only a single
+// [payloadLen, payloadOffset] pair — this must be caught as a graph-capture-time error.
+// Verified on the message-receive side (both a.at() and b.at() seals trigger it).
+test("payload with multiple typed-array fields is rejected at compile time (§5.1 single-field limit)", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const msg = message<{ a: Float32Array; b: Float32Array }>({ name: "two" });
-    const buf = buffer.f32({ size: 4 });
+    const msg = event<{ a: Float32Array; b: Float32Array }>({ from: "main", name: "two" });
+    const buf = state.buffer.f32({ size: 4 });
     return {
       process: () => {
         msg.onReceive(({ a, b }) => {
-          buf.write(0, a.at(0)); // a を typed-array field として seal
-          buf.write(1, b.at(0)); // b も seal = 2 個目 = NG
+          buf.write(0, a.at(0)); // seal a as a typed-array field
+          buf.write(1, b.at(0)); // sealing b as a second typed-array field — must be rejected
         });
         forSample((i) => out.ch(0).at(i).write(buf.read(0)));
       },
@@ -212,20 +227,22 @@ test("payload に複数 typed-array field があると compile で reject する
   await expect(compile(proc)).rejects.toThrow(/multiple-typed-array-fields/);
 });
 
-// Q71: event<T> の全 emit site は field set が一致する必要がある。scalar field は
-// checkSealedEventField が非 first emit を検証するが、typed-array field も同様に
-// first site で seal されてない field を後続 site が足したら reject されるべき
-// (= さもないと extra array field が silently 無視され Q71 field-set error にならない)。
-test("event emit: 後続 site が first で未 seal の typed-array field を足すと reject (Q71)", () => {
+// Q71: All emit sites for an event<T> must declare the same field set.
+// checkSealedEventField already enforces this for scalar fields on non-first emits,
+// but typed-array fields must be subject to the same rule: if a subsequent emit site
+// introduces a field not sealed at the first site, it must be rejected.
+// (Without this guard, the extra array field would be silently ignored instead of
+// raising a Q71 field-set error.)
+test("event emit: subsequent site adding an unsealed typed-array field is rejected (Q71)", () => {
   expect(() =>
     defineProcessor(() => {
       const out = audioOutput({ channels: 1, name: "main" });
-      const buf = buffer.f32({ size: 4 });
-      const evt = event<{ a: number }>({ name: "evt", payloadCapacity: 64 });
+      const buf = state.buffer.f32({ size: 4 });
+      const evt = event<{ a: number }>({ to: "main", name: "evt", payloadCapacity: 64 });
       return {
         process: () => {
-          evt.emitIf(true, { atSample: 0, a: i32(1) }); // first site = [a] を seal
-          // 後続 site が未 seal の typed-array "x" を追加 (型外 = cast) = Q71 field-set 違反
+          evt.emitIf(true, { atSample: 0, a: i32(1) }); // first site seals [a]
+          // Subsequent site adds unsealed typed-array "x" (cast to bypass types) — Q71 field-set violation
           (evt as unknown as { emitIf(c: boolean, p: Record<string, unknown>): void }).emitIf(
             true,
             {

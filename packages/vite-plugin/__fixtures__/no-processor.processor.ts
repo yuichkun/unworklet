@@ -1,7 +1,7 @@
 /**
- * Plugin test fixture = source file が `defineProcessor()` 戻 り 値 を
- * named export し て い な い ケ ー ス。 plugin の load hook が
- * `pickCompiledProcessor` の 「0 件」 error path に 落 ち る こ と を 担 保。
+ * Plugin test fixture: a source file that does not named-export the return value
+ * of `defineProcessor()`. Ensures the plugin's load hook reaches the
+ * "zero results" error path of `pickCompiledProcessor`.
  */
 
 export const notAProcessor = 42;

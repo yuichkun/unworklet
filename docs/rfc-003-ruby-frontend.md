@@ -8,6 +8,10 @@ An **experimental, separately-versioned, downstream library** that provides a Ru
 
 Author: AI agent draft on branch `claude/dsl-syntax-compiler-design-wGngh`, awaiting human reviewer grilling.
 
+> **Surface note.** Where this draft shows `message<T>` / `midiInput` / `midiOutput`,
+> the ratified core uses the unified **event family** (`event<T>({ from | to: "main" })`
+> and `event.midi`, see `decisions-log.md` Q87 / Q88). Current surface: `01-dsl.md`.
+
 ## Summary
 
 Ruby has 3 properties that make it a strong DSL host for audio:

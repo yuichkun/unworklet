@@ -6,8 +6,8 @@
  * TypeScript level, and the same shape serializes directly to
  * `dist/<processor>.graph.json` (= `07-vite-plugin.md` §6.3).
  *
- * 各 stage は 追 加 discriminant の switch case を 順 次 fill (= subset →
- * superset)。
+ * Each stage progressively fills in switch cases for the additional
+ * discriminants (= subset → superset).
  */
 
 import type {
@@ -31,6 +31,7 @@ export type AstNode =
   | { kind: "mod"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "abs"; type: ScalarType; value: AstNode }
   | { kind: "neg"; type: ScalarType; value: AstNode }
+  | { kind: "not"; type: "bool"; value: AstNode }
   | { kind: "sqrt"; type: ScalarType; value: AstNode }
   | { kind: "floor"; type: ScalarType; value: AstNode }
   | { kind: "ceil"; type: ScalarType; value: AstNode }
@@ -50,7 +51,7 @@ export type AstNode =
   | { kind: "gte"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "clamp"; type: ScalarType; x: AstNode; lo: AstNode; hi: AstNode }
   | { kind: "select"; type: ScalarType; cond: AstNode; ifTrue: AstNode; ifFalse: AstNode }
-  // SIMD f32x4 (`01-dsl.md` §7、Q59). vec-producing nodes (vecConst/vecSplat/vecAdd…)
+  // SIMD f32x4 (`01-dsl.md` §7, Q59). vec-producing nodes (vecConst/vecSplat/vecAdd…)
   // are `Node<'f32x4'>`; vecLane / vecSumLanes reduce back to `Node<'f32'>`.
   | { kind: "vecConst"; lanes: [AstNode, AstNode, AstNode, AstNode] }
   | { kind: "vecSplat"; value: AstNode }
@@ -189,11 +190,12 @@ export type AstNode =
     };
 
 /**
- * `eventDecl.emitIf` 1 emit site の 1 field 分 (= `01-dsl.md` §4.1 + Q71)。
+ * One field of one `eventDecl.emitIf` emit site (= `01-dsl.md` §4.1 + Q71).
  *
- * `wireType` = emit-time に 確 定 し た per-field wire 型 (= `Node<T>` の T を
- * lookup、 literal は lift 経 由 で 確 定)。 同 `event<T>` handle の 別 emit site
- * で 同 field 名 の `wireType` が 不 一 致 = graph-capture-time error。
+ * `wireType` = the per-field wire type resolved at emit-time (= looked up from
+ * the `T` of `Node<T>`; literals are resolved via lift). If the same field name
+ * has a mismatched `wireType` at a different emit site of the same `event<T>`
+ * handle, that is a graph-capture-time error.
  */
 export type EventEmitField = {
   name: string;
@@ -207,7 +209,7 @@ export type EventEmitField = {
    */
   payloadElementType?: BufferElementType;
   bufferName?: string;
-  /** Source buffer の element 数 (= `buffer.<T>({ size })`)。emit が copy byte 数を buffer 境界に clamp する。 */
+  /** Element count of the source buffer (= `buffer.<T>({ size })`). Emit clamps the number of copied bytes to the buffer's bounds. */
   bufferSize?: number;
   length?: AstNode;
 };
@@ -236,16 +238,16 @@ export type ParamDecl = {
 };
 
 /**
- * Scalar `state.<type>(initial)` slot declaration (`01-dsl.md` §3.1)。
+ * Scalar `state.<type>(initial)` slot declaration (`01-dsl.md` §3.1).
  *
- * `initial` は scalar value (= f32/f64 → number、 i32 → number、 i64 →
- * bigint、 bool → boolean)。 SAB publish path (= 7.4) で の 型 変 換 と
- * 同 set。
+ * `initial` is a scalar value (= f32/f64 → number, i32 → number, i64 → bigint,
+ * bool → boolean), the same set of type conversions as the SAB publish path
+ * (= 7.4).
  *
- * `snapshot` / `publish` は `.expose({...})` / `.named()` chain で 設 定
- * (= sub-phase 7.2、 `01-dsl.md` §3.1 + Q42 + Q79):
- * - `snapshot`: default ナ シ = worklet-private、 set あ り で snapshot blob 経 由 で 取 得 (= sub-phase 11 で fill)。 default は state / param で `'persistent'`、 buffer で `'transient'`。
- * - `publish`: set あ り で main thread 公 開 (= sub-phase 7.3-7.5 で SAB / postMessage 経 由)。 type 制 限 = f32 / i32 / bool で だ け 受 容 (= Q42)。
+ * `snapshot` / `publish` are configured via the `.expose({...})` / `.named()`
+ * chain (= sub-phase 7.2, `01-dsl.md` §3.1 + Q42 + Q79):
+ * - `snapshot`: unset by default = worklet-private; when set, the value is restored via the snapshot blob (= filled in by sub-phase 11). The default is `'persistent'` for state / param and `'transient'` for buffer.
+ * - `publish`: when set, the value is exposed to the main thread (= via SAB / postMessage, sub-phase 7.3-7.5). The type is restricted to f32 / i32 / bool only (= Q42).
  */
 export type StateDecl = {
   kind: "state";
@@ -255,31 +257,32 @@ export type StateDecl = {
   snapshot?: SnapshotPolicy;
   publish?: PublishOptions;
   /**
-   * `.named('X')` or `.expose({ name: 'X' })` 経 由 で user が 明 示 指 定 し た
-   * name か。 plain factory (= `state.f32(0)`) は synthetic name (= `__state_<idx>`)
-   * で declare = `userNamed` 未 設 定 / false、 chain で 明 示 set さ れ た 段 階
-   * で `true`。 finalize check で 「publish or snapshot 'persistent' は
-   * user-defined name 必 須」 を 担 保 (= synthetic name path を invalid と し て
-   * 落 と す)。 optional = test fixture で literal declare path を 維 持。
+   * Whether the user explicitly assigned a name via `.named('X')` or
+   * `.expose({ name: 'X' })`. A plain factory (= `state.f32(0)`) is declared
+   * with a synthetic name (= `__state_<idx>`), so `userNamed` is unset / false;
+   * it becomes `true` once explicitly set in the chain. The finalize check
+   * enforces "publish or snapshot 'persistent' requires a user-defined name"
+   * (= rejecting the synthetic-name path as invalid). Optional so that test
+   * fixtures can keep using the literal declare path.
    */
   userNamed?: boolean;
 };
 
 /**
- * `event<T>(options)` declaration (`01-dsl.md` §4.1)。
+ * `event<T>(options)` declaration (`01-dsl.md` §4.1).
  *
- * Worklet → main moment-in-time delivery 用 の ringbuffer-backed channel。
- * `T` の field 名 と 大 体 の 型 family (numeric / boolean / typed-array) は
- * declaration 段 階 で 確 定 し、 各 numeric field の wire 型 は emit-time に
- * `Node<T>` の lookup で 確 定 (= Q71)。 1 つ の `event<T>` handle へ の 複 数 emit
- * site で per-field 型 が 不 一 致 = graph-capture-time error (= stable ID
- * `event-field-type-mismatch`)。
+ * A ringbuffer-backed channel for worklet → main moment-in-time delivery. The
+ * field names of `T` and their broad type family (numeric / boolean /
+ * typed-array) are fixed at declaration time, while each numeric field's wire
+ * type is resolved at emit-time by looking up `Node<T>` (= Q71). A per-field
+ * type mismatch across multiple emit sites of a single `event<T>` handle is a
+ * graph-capture-time error (= stable ID `event-field-type-mismatch`).
  *
- * `capacity` = ringbuffer slot count (= `Capacity` literal-union で TS-level
- * enforce、 Q44)、 default = 256 (= `02-messaging.md` §4.1 + MIDI Q4-c-i)。
- * `payloadCapacity` = variable-length payload (= `Float32Array` / `Uint8Array`
- * field) 用 content buffer bytes、 declare 時 optional、 omit 時 framework が
- * 「最 大 期 待 payload × slot count」 で derive。
+ * `capacity` = ringbuffer slot count (= enforced at the TS level via the
+ * `Capacity` literal-union, Q44), default = 256 (= `02-messaging.md` §4.1 +
+ * MIDI Q4-c-i). `payloadCapacity` = content buffer bytes for variable-length
+ * payloads (= `Float32Array` / `Uint8Array` fields), optional at declare time;
+ * when omitted the framework derives it as "max expected payload × slot count".
  */
 export type EventDeclAst = {
   kind: "event";
@@ -287,11 +290,12 @@ export type EventDeclAst = {
   capacity: number;
   payloadCapacity?: number;
   /**
-   * emit site で 確 定 し た per-field wire 型 を accumulate (= Q71)。 declare
-   * 直 後 は 空、 1 番 目 の emit site で 各 field の wire 型 を seal + 後 続
-   * emit site は 同 field 名 / 同 wire 型 を 強 制。 multi-emit-site で
-   * 不 一 致 (= 同 field 名 で wire 型 違 い、 field 名 が 違 う) = graph-capture-time
-   * error (= stable ID `event-field-type-mismatch`)。
+   * Accumulates the per-field wire types resolved at emit sites (= Q71). Empty
+   * right after declaration; the first emit site seals each field's wire type,
+   * and subsequent emit sites are forced to use the same field names / wire
+   * types. A mismatch across multiple emit sites (= same field name with a
+   * differing wire type, or a differing field name) is a graph-capture-time
+   * error (= stable ID `event-field-type-mismatch`).
    */
   fields: EventDeclField[];
 };
@@ -308,21 +312,25 @@ export type EventDeclField = {
 };
 
 /**
- * `message<T>(options)` declaration (`01-dsl.md` §4.2)。
+ * `message<T>(options)` declaration (`01-dsl.md` §4.2).
  *
- * Main → worklet coarse-grained delivery 用 ringbuffer-backed channel。 handler
- * は `onReceive(handler)` 経 由 で per-block top に 登 録、 quantum 開 始 で drain
- * (= Q38-b: 全 handler が per-block / forSample よ り 先 に 走 る)。
+ * A ringbuffer-backed channel for main → worklet coarse-grained delivery. The
+ * handler is registered at the top of each block via `onReceive(handler)` and
+ * drained at the start of the quantum (= Q38-b: all handlers run per-block,
+ * before forSample).
  *
- * `T` の field 別 wire 型 は Q46 uniform lift rule: 全 number → i32 (= 4 byte)、
- * 全 boolean → bool (= 4 byte u32 align)、 typed-array → §5.2 variable-length
- * content buffer (= 後 続 sub-phase で fill)。 main 側 `node.messages.<name>(p)`
- * か ら 来 る payload は plain JS = framework が wire 化 し て worklet 内 で handler
- * を 起 動 = field 別 推 論 ナ シ で 全 uniform path。
+ * The per-field wire types of `T` follow the Q46 uniform lift rule: every
+ * number → i32 (= 4 bytes), every boolean → bool (= 4-byte u32 align),
+ * typed-array → §5.2 variable-length content buffer (= filled in by a later
+ * sub-phase). The payload arriving from the main side
+ * `node.events.<name>.emit(p)` is plain JS = the framework wires it up and
+ * dispatches the handler inside the worklet = a fully uniform path with no
+ * per-field inference.
  *
- * `fields` = onReceive handler が destructure し た field 名 + wire 型 (= number
- * は i32 / boolean は bool / typed-array は 後 続 fill)。 1 番 目 onReceive で seal、
- * 後 続 onReceive で 同 field 名 set / 同 wire 型 (= 既 sealed 集 合 と 整 合 check)。
+ * `fields` = the field names + wire types destructured by the onReceive handler
+ * (= number → i32 / boolean → bool / typed-array filled in later). Sealed by the
+ * first onReceive; subsequent onReceives must use the same field names / same
+ * wire types (= checked for consistency against the already-sealed set).
  */
 export type MessageDeclAst = {
   kind: "message";
@@ -341,14 +349,14 @@ export type MessageDeclAst = {
  */
 export type MidiByteField = "status" | "channel" | "data1" | "data2" | "atSample" | "pitchBend14";
 
-/** `midiInput({ name, capacity })` declaration (`11-midi.md` §1). */
+/** `event.midi({ from: 'main', name, capacity })` declaration (`11-midi.md` §1). */
 export type MidiInputDecl = {
   kind: "midiInput";
   name: string;
   capacity: number;
 };
 
-/** `midiOutput({ name, capacity })` declaration (`11-midi.md` §1). */
+/** `event.midi({ to: 'main', name, capacity })` declaration (`11-midi.md` §1). */
 export type MidiOutputDecl = {
   kind: "midiOutput";
   name: string;
@@ -370,10 +378,10 @@ export type MessageDeclField = {
 /**
  * `buffer.<type>({ size })` fixed-size array declaration (`01-dsl.md` §3.2).
  *
- * `type` は element type (= `ScalarType ∪ {'u8'}`)、 `size` は element count
- * (= byte size は `size × sizeof(type)`、 `u8` = 1 byte)。 `snapshot` / `publish`
- * / `userNamed` は state と 同 chain semantics (= `.named` / `.expose`、 default
- * snapshot は buffer で `'transient'`)。
+ * `type` is the element type (= `ScalarType ∪ {'u8'}`), `size` is the element
+ * count (= byte size is `size × sizeof(type)`, `u8` = 1 byte). `snapshot` /
+ * `publish` / `userNamed` follow the same chain semantics as state
+ * (= `.named` / `.expose`; the default snapshot for buffer is `'transient'`).
  */
 export type BufferDecl = {
   kind: "buffer";
@@ -401,16 +409,17 @@ export type CapturedGraph = {
 };
 
 /**
- * expression node の 結 果 ScalarType を 推 論。 `eventDecl.emitIf` の Q71
- * per-field wire-type resolution (= `01-dsl.md` §4.1) と、 analyze の
- * 非 f32 算 術 検 出 (= `03-compiler.md` §3) で 共 用。
+ * Infers the result ScalarType of an expression node. Shared between the Q71
+ * per-field wire-type resolution of `eventDecl.emitIf` (= `01-dsl.md` §4.1) and
+ * analyze's non-f32 arithmetic detection (= `03-compiler.md` §3).
  *
- * expression position に 立 つ kind だ け 受 け 取 る (= statement kind は
- * `unwrapAst` 段 階 で 排 除 さ れ る 想 定、 仮 に 来 て も 明 示 throw)。
+ * Only accepts kinds that occupy an expression position (= statement kinds are
+ * expected to have been excluded at the `unwrapAst` stage; if one does arrive,
+ * it throws explicitly).
  */
 export function inferAstType(ast: AstNode): ScalarType {
   switch (ast.kind) {
-    // 算 術 / math / 制 御 = 結 果 型 は node の `type` (= f32 path)。
+    // Arithmetic / math / control flow = result type is the node's `type` (= f32 path).
     case "literal":
     case "mul":
     case "add":
@@ -418,6 +427,7 @@ export function inferAstType(ast: AstNode): ScalarType {
     case "div":
     case "mod":
     case "neg":
+    case "not":
     case "abs":
     case "sqrt":
     case "floor":
@@ -437,7 +447,7 @@ export function inferAstType(ast: AstNode): ScalarType {
     case "stateLoad":
     case "tempRef":
       return ast.type;
-    // 比 較 = 結 果 は 常 に bool (= node の `type` は オ ペ ラ ン ド 型 f32)。
+    // Comparison = result is always bool (= the node's `type` is the f32 operand type).
     case "eq":
     case "lt":
     case "gt":
@@ -463,11 +473,11 @@ export function inferAstType(ast: AstNode): ScalarType {
       return ast.elementType === "u8" ? "i32" : ast.elementType;
     case "payloadFieldLength":
       return "i32";
-    // SIMD reduction = scalar f32 (= lane 抽出 / horizontal sum)。
+    // SIMD reduction = scalar f32 (= lane extraction / horizontal sum).
     case "vecLane":
     case "vecSumLanes":
       return "f32";
-    // SIMD vec-producing = f32x4 = scalar 型 system 外 = scalar position は不正。
+    // SIMD vec-producing = f32x4 = outside the scalar type system = invalid in scalar position.
     case "vecConst":
     case "vecSplat":
     case "vecAdd":

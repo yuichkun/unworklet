@@ -1,15 +1,17 @@
 /**
  * `@unworklet/test` — Vitest matchers + audio test utility for `@unworklet/core`
- * processors (`docs/06-testing.md` §2-§6)。
+ * processors (`docs/06-testing.md` §2-§6).
  *
- * Plain function form (= `expectAudioMatches(result, ...)`) で 失 敗 時 = `Error`
- * を throw、 vitest が catch し て test fail。 chain form (= `expect(result).
- * toMatchAudio(...)`) は subpath `@unworklet/test/extend` の side-effect import
- * で 別 登 録 (= §6、 plain と 並 立)。
+ * The plain function form (`expectAudioMatches(result, ...)`) throws an `Error`
+ * on failure, which vitest catches and reports as a test failure. The chain form
+ * (`expect(result).toMatchAudio(...)`) is registered separately via the
+ * side-effect import of the `@unworklet/test/extend` subpath (§6, available
+ * alongside the plain form).
  *
- * v1.0.0 ship surface = matcher 20 件 + signal utility 7 件 + midi utility 10
- * 件 + sample/time utility 6 件 + chain form。 plain function form は こ の
- * module、 chain form は subpath `@unworklet/test/extend` の side-effect import。
+ * v1.0.0 ship surface: 20 matchers + 7 signal utilities + 10 MIDI utilities + 6
+ * sample/time utilities + the chain form. The plain function form lives in this
+ * module; the chain form is the side-effect import of the `@unworklet/test/extend`
+ * subpath.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -23,15 +25,15 @@ import { expect } from "vite-plus/test";
 
 export type AudioMatchOptions = {
   /**
-   * Sample-absolute-difference tolerance。 default `0` = bit-exact
-   * (= `renderOffline` は 同 入 力 に 対 し 同 WASM binary を 同 host JS
-   * runtime で instantiate す る 設 計、 識 別 入 力 = 識 別 出 力 が
-   * 自 然 に 成 立 す る た め)。
+   * Sample-absolute-difference tolerance. Default `0` means bit-exact, because
+   * `renderOffline` is designed to instantiate the same WASM binary on the same
+   * host JS runtime for the same input, so identical input naturally yields
+   * identical output.
    */
   tolerance?: number;
 };
 
-/** Single event entry expected by `expectEventsEqual`。 */
+/** Single event entry expected by `expectEventsEqual`. */
 export type ExpectedEvent = {
   name: string;
   payload: unknown;
@@ -39,11 +41,11 @@ export type ExpectedEvent = {
 };
 
 /**
- * `Float32Array[]` の 全 sample が finite (= NaN / ±Infinity ナ シ) を
- * `label` 付 き で assert。 `expectAudioMatches` の `expected` 側 が
- * `Float32Array[]` 形 で 渡 さ れ る path / `expectAudioMatchesGolden` の
- * decoded golden で reference 側 を 検 査 し て、 corrupted golden / NaN
- * fixture が 偽 pass し な い path を 塞 ぐ 共 通 helper。
+ * Asserts, with a `label` prefix, that every sample in a `Float32Array[]` is
+ * finite (no NaN / ±Infinity). Shared helper that inspects the reference side
+ * when `expectAudioMatches` receives its `expected` as a `Float32Array[]`, or
+ * when `expectAudioMatchesGolden` decodes a golden, so that a corrupted golden
+ * or a NaN fixture cannot pass falsely.
  */
 const assertChannelsFinite = (label: string, channels: Float32Array[]): void => {
   for (let c = 0; c < channels.length; c++) {
@@ -62,9 +64,10 @@ const assertChannelsFinite = (label: string, channels: Float32Array[]): void => 
 };
 
 /**
- * `RenderOfflineResult.outputs` 全 channel finite check + `label` 付 き
- * error。 `expectNoNaN` の 内 部 impl は こ ち ら を 使 い、 `expectAudioMatches`
- * の expected 側 も RenderOfflineResult 形 で こ の 経 路 を 通 る。
+ * Finite-check across all channels of `RenderOfflineResult.outputs`, raising a
+ * `label`-prefixed error. `expectNoNaN` is implemented in terms of this, and the
+ * `expected` side of `expectAudioMatches` also goes through this path when it is
+ * a `RenderOfflineResult`.
  */
 const assertResultFinite = (label: string, result: RenderOfflineResult): void => {
   for (const port of Object.keys(result.outputs)) {
@@ -117,26 +120,28 @@ const compareChannels = (
 
 /**
  * Assert that `actual.outputs` matches `expected` channel-by-channel within
- * `opts.tolerance` (default `0`)。 `expected` は 2 shape:
- * - `RenderOfflineResult` = 多 port 比 較 (= `actual.outputs` の port set 全 件)
- *   + `actual.sampleRate` と `expected.sampleRate` 一 致 check (= 同 PCM /
- *   異 rate = pitch / timing bug、 PCM 一 致 で 偽 pass さ せ な い)。
- * - `Float32Array[]` = single-port 推 論 (= `actual.outputs` が 1 port な ら
- *   そ の port の channels と 比 較、 2 port 以 上 で throw + 多 port 用 form
- *   へ 誘 導)。 sampleRate 比 較 は 無 し (= raw buffer は rate metadata を
- *   持 た な い = consumer が rate sensitive な ら full result form で 渡 す)。
+ * `opts.tolerance` (default `0`). `expected` has two shapes:
+ * - `RenderOfflineResult` = multi-port comparison (the entire port set of
+ *   `actual.outputs`), plus a `actual.sampleRate` vs `expected.sampleRate`
+ *   equality check (identical PCM at a different rate is a pitch / timing bug,
+ *   so matching PCM must not pass falsely).
+ * - `Float32Array[]` = single-port inference (if `actual.outputs` has exactly
+ *   one port, compare against that port's channels; with two or more ports it
+ *   throws and points to the multi-port form). No sampleRate comparison is
+ *   done, because a raw buffer carries no rate metadata — if the consumer is
+ *   rate-sensitive, pass the full result form.
  *
- * chain 形 = `expect(actual).toMatchAudio(expected, opts?)` (= `@unworklet/test/extend`)。
+ * Chain form: `expect(actual).toMatchAudio(expected, opts?)` (`@unworklet/test/extend`).
  */
 export function expectAudioMatches(
   actual: RenderOfflineResult,
   expected: RenderOfflineResult | Float32Array[],
   opts?: AudioMatchOptions,
 ): void {
-  // NaN / ±Infinity 入 力 を 先 に 弾 く (= `Math.abs(NaN) > tolerance =
-  // false` で 偽 pass す る 経 路 を 塞 ぐ、 actual / expected 両 側)。
-  // expected 側 を 抜 か す と corrupted golden / NaN fixture が freeze さ
-  // れ た state で 後 続 regression が green に 見 え る = 危 険。
+  // Reject NaN / ±Infinity input up front on both the actual and expected
+  // sides, since `Math.abs(NaN) > tolerance` is `false` and would otherwise
+  // pass falsely. Skipping the expected side is dangerous: a corrupted golden
+  // or NaN fixture frozen into state would make later regressions look green.
   assertResultFinite("expectAudioMatches: actual", actual);
   const tolerance = opts?.tolerance ?? 0;
   if (Array.isArray(expected)) {
@@ -153,7 +158,7 @@ export function expectAudioMatches(
   assertResultFinite("expectAudioMatches: expected", expected);
   if (actual.sampleRate !== expected.sampleRate) {
     throw new Error(
-      `expectAudioMatches: sampleRate mismatch — actual=${actual.sampleRate}, expected=${expected.sampleRate} (= pitch / timing は サ ン プ ル レ ー ト に 比 例 = PCM が 一 致 し て も 異 rate は bug)`,
+      `expectAudioMatches: sampleRate mismatch — actual=${actual.sampleRate}, expected=${expected.sampleRate} (pitch and timing scale with sample rate, so identical PCM at different rates is still a mismatch)`,
     );
   }
   const actualPorts = Object.keys(actual.outputs).sort();
@@ -172,9 +177,9 @@ export function expectAudioMatches(
 }
 
 /**
- * Assert that `result.outputs` contains no NaN / ±Infinity samples。
+ * Assert that `result.outputs` contains no NaN / ±Infinity samples.
  *
- * chain 形 = `expect(result).toBeFinite()` (= `@unworklet/test/extend`)。
+ * Chain form: `expect(result).toBeFinite()` (`@unworklet/test/extend`).
  */
 export function expectNoNaN(result: RenderOfflineResult): void {
   assertResultFinite("expectNoNaN", result);
@@ -183,13 +188,14 @@ export function expectNoNaN(result: RenderOfflineResult): void {
 const linearToDb = (linear: number): number => 20 * Math.log10(linear);
 
 /**
- * Assert peak amplitude below the given dBFS threshold。
+ * Assert peak amplitude below the given dBFS threshold.
  *
- * chain 形 = `expect(result).toHavePeakUnder(dbfs)` (= `@unworklet/test/extend`)。
+ * Chain form: `expect(result).toHavePeakUnder(dbfs)` (`@unworklet/test/extend`).
  */
 export function expectPeakUnder(result: RenderOfflineResult, dbfs: number): void {
-  // `Math.abs(NaN) > peak = false` で peak が 0 の ま ま 留 ま り、 db =
-  // -Infinity が threshold を 下 回 っ て 偽 pass す る 経 路 を 塞 ぐ。
+  // Since `Math.abs(NaN) > peak` is `false`, peak would stay 0 and db would be
+  // -Infinity, falling below the threshold and passing falsely; reject NaN first
+  // to close that path.
   expectNoNaN(result);
   let peak = 0;
   for (const port of Object.keys(result.outputs)) {
@@ -209,12 +215,14 @@ export function expectPeakUnder(result: RenderOfflineResult, dbfs: number): void
 }
 
 /**
- * Assert RMS amplitude below the given dBFS threshold (= 全 channel 平 方 和 平 均 の 平 方 根)。
+ * Assert RMS amplitude below the given dBFS threshold (the root mean square of
+ * the squared samples across all channels).
  *
- * chain 形 = `expect(result).toHaveRmsUnder(dbfs)` (= `@unworklet/test/extend`)。
+ * Chain form: `expect(result).toHaveRmsUnder(dbfs)` (`@unworklet/test/extend`).
  */
 export function expectRmsUnder(result: RenderOfflineResult, dbfs: number): void {
-  // NaN を sumSq に 混 ぜ る と rms = NaN、 `NaN >= dbfs = false` で 偽 pass。
+  // A NaN mixed into sumSq makes rms NaN, and `NaN >= dbfs` is `false`, which
+  // would pass falsely.
   expectNoNaN(result);
   let sumSq = 0;
   let count = 0;
@@ -237,9 +245,9 @@ export function expectRmsUnder(result: RenderOfflineResult, dbfs: number): void 
 }
 
 /**
- * Assert emitted events (= name + payload + atSample) match the expected sequence。
+ * Assert emitted events (name + payload + atSample) match the expected sequence.
  *
- * chain 形 = `expect(result).toMatchEvents(expectedEvents)` (= `@unworklet/test/extend`)。
+ * Chain form: `expect(result).toMatchEvents(expectedEvents)` (`@unworklet/test/extend`).
  */
 export function expectEventsEqual(
   result: RenderOfflineResult,
@@ -274,10 +282,10 @@ export function expectEventsEqual(
 
 /**
  * Assert that the end-of-render snapshot blob matches `expectedSnapshot`
- * (= `'persistent'` slot 限 定、 Q5 format)。 transient slot は audio 出 力
- * 経 由 で `expectAudioMatches` で 検 出。
+ * (`'persistent'` slot only, Q5 format). Transient slots are observed through
+ * the audio output and detected via `expectAudioMatches`.
  *
- * chain 形 = `expect(result).toMatchState(expectedSnapshot)` (= `@unworklet/test/extend`)。
+ * Chain form: `expect(result).toMatchState(expectedSnapshot)` (`@unworklet/test/extend`).
  */
 export function expectStateMatches(
   result: RenderOfflineResult,
@@ -300,12 +308,13 @@ export function expectStateMatches(
 
 /**
  * Assert that `actual.outputs` matches the PCM stored in the WAV file at
- * `wavPath` (= `docs/06-testing.md` §2.1 + §7)。 単 一 port 専 用 (= 多 port
- * は `expectAudioMatches(actual, fullResult)` で 明 示)。 wav header の
- * `sampleRate` と `actual.sampleRate` を 必 ず 比 較 = mismatch = throw (=
- * 同 PCM / 異 rate で pitch / timing bug が 通 る path を 塞 ぐ)。
+ * `wavPath` (`docs/06-testing.md` §2.1 + §7). Single-port only — for multi-port
+ * results, be explicit with `expectAudioMatches(actual, fullResult)`. The WAV
+ * header's `sampleRate` is always compared against `actual.sampleRate`, and a
+ * mismatch throws, closing the path where identical PCM at a different rate
+ * would let a pitch / timing bug through.
  *
- * chain 形 = `expect(actual).toMatchAudioFile(wavPath, opts?)` (= `@unworklet/test/extend`)。
+ * Chain form: `expect(actual).toMatchAudioFile(wavPath, opts?)` (`@unworklet/test/extend`).
  */
 export function expectAudioMatchesGolden(
   actual: RenderOfflineResult,
@@ -316,7 +325,7 @@ export function expectAudioMatchesGolden(
   const decoded = decodeWav(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength));
   if (decoded.sampleRate !== actual.sampleRate) {
     throw new Error(
-      `expectAudioMatchesGolden: sampleRate mismatch — actual=${actual.sampleRate}, wav '${wavPath}'=${decoded.sampleRate} (= PCM が 一 致 し て も rate が 違 え ば pitch / timing が ズ レ る)`,
+      `expectAudioMatchesGolden: sampleRate mismatch — actual=${actual.sampleRate}, wav '${wavPath}'=${decoded.sampleRate} (even when the PCM matches, a different rate shifts pitch and timing)`,
     );
   }
   expectAudioMatches(actual, decoded.channels, opts);
@@ -325,11 +334,11 @@ export function expectAudioMatchesGolden(
 // ━━━━━━━━━━━━━━━━━━━━━━━━ matcher: golden / snapshot / peak / EQ ━━━━━━━━━━━━━━━━━━━━━━━━
 
 export type SnapshotOptions = {
-  /** full path 上 書 き (= dir + file 名 を consumer が 完 全 制 御)。 省 略 + `snapshotName` 省 略 = auto-infer (= test 名 base)。 */
+  /** Overrides the full path so the consumer fully controls both directory and filename. Omitting this together with `snapshotName` triggers auto-inference based on the test name. */
   snapshotPath?: string;
-  /** file 名 中 の test 名 部 分 だ け 上 書 き (= `<test-file-base>__<safe(snapshotName)>.wav`、 counter ナ シ、 consumer が unique 命 名 責 任)。 test 名 自 体 は test 説 明 free に carry し つ つ file 名 を cleaner に。 `snapshotPath` 明 示 時 は そ ち ら 優 先。 */
+  /** Overrides only the test-name portion of the filename (`<test-file-base>__<safe(snapshotName)>.wav`, with no counter — the consumer is responsible for unique naming). Keeps the test name free for descriptive text while making the filename cleaner. When `snapshotPath` is set, that takes precedence. */
   snapshotName?: string;
-  /** `actual` = `Float32Array` / `Float32Array[]` 渡 し path で wav header に 書 く sample rate (default `48000`)。 `RenderOfflineResult` 渡 し で は ignored (= `result.sampleRate` 優 先)。 */
+  /** Sample rate written into the WAV header when `actual` is passed as a `Float32Array` / `Float32Array[]` (default `48000`). Ignored when a `RenderOfflineResult` is passed, in which case `result.sampleRate` takes precedence. */
   sampleRate?: number;
   tolerance?: number;
   port?: string;
@@ -339,23 +348,25 @@ const snapshotCounters = new Map<string, number>();
 const snapshotTestBoundary: { lastKey: string | undefined } = { lastKey: undefined };
 
 /**
- * Filename-safe 文 字 列 化。 ASCII alphanumerics は そ の ま ま、 Unicode (=
- * 日 本 語 等) も そ の ま ま 保 持、 filesystem-unsafe 文 字 (= `/`, `\`,
- * `:`, `*`, `?`, `"`, `<`, `>`, `|`) と whitespace は `_` に collapse、 先
- * 頭 / 末 尾 の `_` を trim。 Unicode を ASCII-only に sanitize す る と 「テ
- * ス ト」 が "" に な っ て `.wav` (= hidden dotfile) を 作 る regression が
- * あ っ た た め、 Unicode 保 持 path を 取 る。
+ * Turns a string into a filename-safe form. ASCII alphanumerics are kept as-is,
+ * and Unicode (Japanese and the like) is preserved as well; filesystem-unsafe
+ * characters (`/`, `\`, `:`, `*`, `?`, `"`, `<`, `>`, `|`) and whitespace are
+ * collapsed to `_`, and leading / trailing `_` are trimmed. Sanitizing Unicode
+ * down to ASCII-only once caused a regression where a non-ASCII name like "Тест"
+ * became "" and a
+ * `.wav` (a hidden dotfile) was created, so this preserves Unicode instead.
  */
 const sanitizeForFilename = (name: string): string => {
-  // 制 御 文 字 (\x00-\x1f) も filesystem で 不 安 全 = 明 示 的 に 弾 く
+  // Control characters (\x00-\x1f) are also filesystem-unsafe, so reject them explicitly.
   // eslint-disable-next-line no-control-regex
   return name.replace(/[/\\:*?"<>|\s\x00-\x1f]+/g, "_").replace(/^_+|_+$/g, "");
 };
 
 /**
- * FNV-1a 32-bit hash (= 8 桁 hex)。 auto-infer filename に 付 与 し て、 sanitize 後 同 一
- * slug に な る 異 な る test 名 (= 例: "foo bar" / "foo!bar" → 両 方 "foo_bar")
- * が 別 path に 解 決 さ れ る collision resistance を 与 え る。
+ * FNV-1a 32-bit hash (8 hex digits). Appended to auto-inferred filenames to give
+ * collision resistance, so that distinct test names that sanitize to the same
+ * slug (for example "foo bar" and "foo!bar" both become "foo_bar") resolve to
+ * different paths.
  */
 const shortHash = (s: string): string => {
   let h = 0x811c9dc5;
@@ -367,17 +378,18 @@ const shortHash = (s: string): string => {
 };
 
 /**
- * Per-test 状 態 (= vitest `MatcherState` の subset)。 chain form は
- * `expect.extend(...)` 内 で `this` 経 由 で per-test bound state を 受
- * け 取 れ る (= concurrent test で も race ナ シ)、 plain form は global
- * `expect.getState()` 経 由 で 取 得 (= sequential 専 用、 concurrent
- * で は cross-test 干 渉 リ ス ク)。
+ * Per-test state (a subset of vitest's `MatcherState`). The chain form receives
+ * per-test bound state via `this` inside `expect.extend(...)`, so there is no
+ * race even with concurrent tests; the plain form reads it from the global
+ * `expect.getState()` (sequential use only — concurrent use risks cross-test
+ * interference).
  *
- * `_unworkletCounters` は 自 動 推 論 path で 使 う counter Map の expando
- * field。 chain form は `this` (= per-test-invocation MatcherState) に
- * fresh Map を attach し て carry = invocation ご と に 自 然 リ セ ッ ト =
- * vitest retry / watch rerun で も counter drift ナ シ。 plain form は こ
- * の field 未 設 定 で module-global Map に fallback (= sequential 用 path)。
+ * `_unworkletCounters` is the expando field for the counter Map used by the
+ * auto-inference path. The chain form attaches a fresh Map to `this` (the
+ * per-test-invocation MatcherState) and carries it, so it resets naturally per
+ * invocation and there is no counter drift across vitest retries / watch reruns.
+ * The plain form leaves this field unset and falls back to the module-global Map
+ * (the sequential path).
  */
 export type SnapshotResolutionState = {
   testPath?: string;
@@ -391,20 +403,21 @@ const resolveSnapshotPath = (state: SnapshotResolutionState, opts: SnapshotOptio
     return opts.snapshotPath;
   }
   if (opts.snapshotName !== undefined) {
-    // 明 示 `snapshotName` path = `__snapshots__/<safe(snapshotName)>.wav` 直 接 計 算
-    // (= test-file-base prefix も counter も ナ シ、 consumer が unique 命 名 責 任、
-    // test 名 と は 独 立 = test 説 明 free path)。 sanitize で 空 に な る 名 前
-    // (= 全 部 filesystem-unsafe / whitespace = 例: "??") は throw、 hidden
-    // `.wav` を 作 ら な い。
+    // Explicit `snapshotName` path: compute `__snapshots__/<safe(snapshotName)>.wav`
+    // directly (no test-file-base prefix and no counter — the consumer is
+    // responsible for unique naming, and this is independent of the test name, so
+    // the test description stays free). A name that sanitizes to empty (entirely
+    // filesystem-unsafe / whitespace, e.g. "??") throws rather than creating a
+    // hidden `.wav`.
     if (!state.testPath) {
       throw new Error(
-        `expectAudioMatchesSnapshot: opts.snapshotName path 計 算 に は testPath が 必 要; pass opts.snapshotPath explicitly to override.`,
+        `expectAudioMatchesSnapshot: computing the opts.snapshotName path requires testPath; pass opts.snapshotPath explicitly to override.`,
       );
     }
     const safeName = sanitizeForFilename(opts.snapshotName);
     if (safeName.length === 0) {
       throw new Error(
-        `expectAudioMatchesSnapshot: opts.snapshotName "${opts.snapshotName}" sanitizes to empty filename (= filesystem-safe な 文 字 が ナ シ); pass opts.snapshotPath で 明 示 す る か、 alphanumeric / Unicode を 含 む 名 前 を 使 う。`,
+        `expectAudioMatchesSnapshot: opts.snapshotName "${opts.snapshotName}" sanitizes to empty filename (no filesystem-safe characters); pass opts.snapshotPath explicitly, or use a name containing alphanumeric / Unicode characters.`,
       );
     }
     return join(dirname(state.testPath), "__snapshots__", `${safeName}.wav`);
@@ -418,11 +431,12 @@ const resolveSnapshotPath = (state: SnapshotResolutionState, opts: SnapshotOptio
   const base = basename(state.testPath, extname(state.testPath));
   const safeName = sanitizeForFilename(state.currentTestName);
   const key = `${state.testPath}::${state.currentTestName}`;
-  // counter source: chain form は `state._unworkletCounters` (= per-test-invocation
-  // Map = MatcherState bound) を 持 っ て く る = retry / watch 等 で 自 然 リ
-  // セ ッ ト = drift ナ シ。 plain form は 未 設 定 で module-global Map に
-  // fallback + boundary heuristic (= 別 test 移 行 時 だ け reset)、 同 test 連
-  // 続 invoke は drift = docs §2.1 で 明 示 snapshotName / chain form を 推 奨。
+  // Counter source: the chain form brings its own `state._unworkletCounters`
+  // (a per-test-invocation Map bound to MatcherState), so it resets naturally on
+  // retry / watch and never drifts. The plain form leaves it unset and falls back
+  // to the module-global Map plus a boundary heuristic (reset only when moving to
+  // a different test); repeated invocations within the same test drift, so
+  // docs §2.1 recommends an explicit snapshotName or the chain form.
   const counterMap = state._unworkletCounters ?? snapshotCounters;
   if (counterMap === snapshotCounters && snapshotTestBoundary.lastKey !== key) {
     snapshotCounters.delete(key);
@@ -430,26 +444,28 @@ const resolveSnapshotPath = (state: SnapshotResolutionState, opts: SnapshotOptio
   }
   const counter = (counterMap.get(key) ?? 0) + 1;
   counterMap.set(key, counter);
-  // sanitize 結 果 が 空 な ら "_" placeholder + hash で 区 別 (= 全 unsafe な
-  // test 名 で hidden file を 作 ら な い safety net)。 通 常 test 名 は
-  // ASCII / Unicode を 含 む の で safeName non-empty。
+  // If the sanitize result is empty, use a "_" placeholder plus the hash to keep
+  // them distinct (a safety net so an entirely-unsafe test name never creates a
+  // hidden file). Normal test names contain ASCII / Unicode, so safeName is
+  // non-empty.
   const slug = safeName.length > 0 ? safeName : "_";
   const hash = shortHash(state.currentTestName);
   return join(dir, "__snapshots__", `${base}__${slug}_${hash}__${counter}.wav`);
 };
 
 /**
- * State explicit な internal worker (= chain form は `this` (= per-test bound
- * `MatcherState`) を 渡 す、 plain form は `expect.getState()` global を 渡
- * す)。 全 path / update mode resolve を state 経 由 で 行 う = global state
- * 依 存 を 排 除 し て concurrent safe path (= chain form 用) を 提 供。
+ * State-explicit internal worker. The chain form passes `this` (the per-test
+ * bound `MatcherState`); the plain form passes the `expect.getState()` global.
+ * All path and update-mode resolution goes through `state`, removing the
+ * dependency on global state and providing a concurrent-safe path for the chain
+ * form.
  */
 export async function expectAudioMatchesSnapshotWithState(
   actual: RenderOfflineResult | Float32Array | Float32Array[],
   opts: SnapshotOptions,
   state: SnapshotResolutionState,
 ): Promise<void> {
-  // actual 正 規 化 = Float32Array / Float32Array[] 渡 し は RenderOfflineResult 形 に wrap。
+  // Normalize actual: a Float32Array / Float32Array[] is wrapped into RenderOfflineResult form.
   let result: RenderOfflineResult;
   if (actual instanceof Float32Array) {
     result = {
@@ -469,9 +485,9 @@ export async function expectAudioMatchesSnapshotWithState(
     result = actual;
   }
 
-  // NaN / ±Infinity samples を 先 に 弾 く (= 初 回 書 き 出 し で 壊 れ た
-  // wav を snapshot 化 し て し ま う と 以 降 bit-exact pass し 続 け て
-  // catastrophic DSP failure を 見 逃 す 経 路 を 塞 ぐ)。
+  // Reject NaN / ±Infinity samples first: if a broken wav is snapshotted on the
+  // initial write, it would keep passing bit-exact afterwards and hide a
+  // catastrophic DSP failure.
   expectNoNaN(result);
 
   const ports = Object.keys(result.outputs);
@@ -495,18 +511,18 @@ export async function expectAudioMatchesSnapshotWithState(
 
   const snapshotPath = resolveSnapshotPath(state, opts);
 
-  // vitest snapshot state 経 由 で update / CI mode 取 得 (= jest 互 換 path
-  // `_updateSnapshot` = "all" (= `-u`) / "new" (= default、 不 在 で 書 く) /
-  // "none" (= `--ci`、 不 在 で fail))。 vitest 標 準 toMatchFileSnapshot は
-  // Uint8Array を text JSON で serialize し て し ま い 再 生 可 能 な wav
-  // バ イ ナ リ に な ら な い た め、 こ こ は 自 力 fs API path を 取 る。
+  // Read the update / CI mode from vitest snapshot state (the jest-compatible
+  // `_updateSnapshot`: "all" = `-u`, "new" = default, write when missing, and
+  // "none" = `--ci`, fail when missing). vitest's built-in toMatchFileSnapshot
+  // serializes Uint8Array as text JSON and never produces a playable wav binary,
+  // so this takes its own fs API path.
   const updateMode = state.snapshotState?._updateSnapshot ?? "new";
   const exists = existsSync(snapshotPath);
 
   if (!exists) {
     if (updateMode === "none") {
       throw new Error(
-        `expectAudioMatchesSnapshot: snapshot file does not exist at ${snapshotPath} (= vitest --ci mode で 新 規 snapshot 作 成 不 可)`,
+        `expectAudioMatchesSnapshot: snapshot file does not exist at ${snapshotPath} (vitest --ci mode cannot create new snapshots)`,
       );
     }
     mkdirSync(dirname(snapshotPath), { recursive: true });
@@ -532,47 +548,50 @@ export async function expectAudioMatchesSnapshotWithState(
       );
     }
   }
-  // Promise<void> 返 し maintain (= API は async、 内 部 同 期 I/O は cosmetic)
+  // Maintain the Promise<void> return: the API is async, and the internal
+  // synchronous I/O is cosmetic.
   return Promise.resolve();
 }
 
 /**
  * Assert that `actual` matches a vitest-style auto-managed wav snapshot
- * (`docs/06-testing.md` §2.1)。 `actual` は 3 shape:
- * - `RenderOfflineResult` = 既 path、 sample rate = `actual.sampleRate` 経 由
- * - `Float32Array` = mono 1 channel 直 接 = `opts.sampleRate` (default `48000`)
- *   で wav 化 (= signal generator 出 力 等 を wrap な し で 渡 す path)
- * - `Float32Array[]` = multi-channel 直 接 = 同 上 で wav 化
+ * (`docs/06-testing.md` §2.1). `actual` has three shapes:
+ * - `RenderOfflineResult` = the usual path; sample rate comes from `actual.sampleRate`
+ * - `Float32Array` = a mono single channel directly, encoded to wav at
+ *   `opts.sampleRate` (default `48000`) — the path for passing a signal
+ *   generator's output and the like without wrapping
+ * - `Float32Array[]` = multiple channels directly, encoded the same way
  *
- * path 解 決 優 先 順:
- * 1. `opts.snapshotPath` 明 示 = full path 上 書 き
- * 2. `opts.snapshotName` 明 示 = `<test-file-dir>/__snapshots__/<safe(snapshotName)>.wav` (= test-file-base prefix も counter も ナ シ、 consumer が unique 命 名 責 任)
- * 3. 両 省 略 = auto-infer = `<test-file-dir>/__snapshots__/<test-file-base>__<safe(test-name)>__<counter>.wav` (= test 名 自 動 推 論 = 衝 突 防 止 で prefix + counter 必 須)
+ * Path resolution precedence:
+ * 1. Explicit `opts.snapshotPath` = full-path override
+ * 2. Explicit `opts.snapshotName` = `<test-file-dir>/__snapshots__/<safe(snapshotName)>.wav` (no test-file-base prefix and no counter; the consumer is responsible for unique naming)
+ * 3. Both omitted = auto-infer = `<test-file-dir>/__snapshots__/<test-file-base>__<safe(test-name)>__<counter>.wav` (the test name is inferred automatically, so a prefix + counter are required to prevent collisions)
  *
- * 初 回 = wav 自 動 書 き 出 し + pass、 2 回 目 以 降 = bit-exact 比 較、
- * `vitest -u` で 強 制 上 書 き、 CI mode = 不 在 で fail (= vitest snapshot
- * state 経 由 で update / CI mode 判 定)。
+ * On the first run the wav is written automatically and the assertion passes;
+ * subsequent runs do a bit-exact comparison. `vitest -u` forces an overwrite,
+ * and CI mode fails when the snapshot is missing (the update / CI mode is
+ * decided via vitest snapshot state).
  *
- * 単 一 port 専 用 (= 1 port な ら 推 論、 `opts.port` で 明 示 上 書 き、 多
- * port + `opts.port` 未 指 定 で throw)。
+ * Single-port only (inferred when there is one port, overridden explicitly via
+ * `opts.port`, and a throw for multi-port without `opts.port`).
  *
- * Concurrent test 注 意: plain function 形 は `expect.getState()` global
- * を 読 む = `test.concurrent` 配 下 で 別 test の testName / counter を
- * 拾 う 可 能 性 = sequential 用 path。 concurrent 配 下 で 使 う 時 は
- * `expect(actual).toMatchAudioSnapshot(opts?)` chain form (= `@unworklet/test/extend`)
- * を 使 う = `expect.extend` の bound matcher state (= `this.testPath` /
- * `this.currentTestName` per-test) 経 由 で race を 回 避。 or
- * `opts.snapshotPath` を 明 示 す れ ば auto-infer path を skip し て
- * concurrent でも 安 全 (= state 読 み ゼ ロ)。
+ * Concurrent-test caveat: the plain function form reads the `expect.getState()`
+ * global, so under `test.concurrent` it may pick up another test's testName /
+ * counter — it is a sequential-only path. When used under concurrency, use the
+ * `expect(actual).toMatchAudioSnapshot(opts?)` chain form
+ * (`@unworklet/test/extend`), which avoids the race via `expect.extend`'s bound
+ * matcher state (per-test `this.testPath` / `this.currentTestName`). Alternatively,
+ * setting `opts.snapshotPath` explicitly skips the auto-infer path and is
+ * concurrent-safe (zero state reads).
  *
- * chain 形 = `await expect(actual).toMatchAudioSnapshot(opts?)` (= `@unworklet/test/extend`)。
+ * Chain form: `await expect(actual).toMatchAudioSnapshot(opts?)` (`@unworklet/test/extend`).
  */
 export async function expectAudioMatchesSnapshot(
   actual: RenderOfflineResult | Float32Array | Float32Array[],
   opts: SnapshotOptions = {},
 ): Promise<void> {
-  // plain form = global `expect.getState()` 経 由 = sequential 用 path
-  // (= concurrent では bound state を carry す る chain form を 推 奨)。
+  // Plain form: via the global `expect.getState()`, a sequential-only path
+  // (under concurrency, prefer the chain form, which carries bound state).
   return expectAudioMatchesSnapshotWithState(
     actual,
     opts,
@@ -581,11 +600,11 @@ export async function expectAudioMatchesSnapshot(
 }
 
 /**
- * NaN ナ シ + 全 sample finite (= 発 散 ナ シ) を 1 行 で wrap。 IIR
- * feedback / 長 時 間 render の 安 定 性 sanity check (`docs/06-testing.md`
- * §2.2)。 audio level は 問 わ ず (= clip し て て も pass)。
+ * One-line wrapper for "no NaN and every sample finite" (no divergence). A
+ * stability sanity check for IIR feedback / long renders (`docs/06-testing.md`
+ * §2.2). Audio level is not considered, so it passes even when clipping.
  *
- * chain 形 = `expect(result).toBeStable()` (= `@unworklet/test/extend`)。
+ * Chain form: `expect(result).toBeStable()` (`@unworklet/test/extend`).
  */
 export function expectStable(result: RenderOfflineResult): void {
   expectNoNaN(result);
@@ -597,13 +616,14 @@ export type MasterOptions = {
 };
 
 /**
- * Master bus デフ ォ check = NaN ナ シ + peak < `opts.peakDbfs` (default
- * `-0.1`) + RMS < `opts.rmsDbfs` (default `-14`) を 1 行 wrap。 `expectStable`
- * ⊂ `expectMaster` (= master は stable 含 む + clip / 過 大 loudness 検 出)。
- * NaN check は always on (= 全 numerical matcher で uniform に 自 衛、
- * underlying `expectPeakUnder` / `expectRmsUnder` も unconditional check)。
+ * One-line wrapper for a default master-bus check: no NaN, peak < `opts.peakDbfs`
+ * (default `-0.1`), and RMS < `opts.rmsDbfs` (default `-14`). `expectStable` ⊂
+ * `expectMaster` (master includes stability plus clip / excessive-loudness
+ * detection). The NaN check is always on (every numerical matcher guards itself
+ * uniformly, and the underlying `expectPeakUnder` / `expectRmsUnder` also check
+ * unconditionally).
  *
- * chain 形 = `expect(result).toBeMasterReady(opts?)` (= `@unworklet/test/extend`)。
+ * Chain form: `expect(result).toBeMasterReady(opts?)` (`@unworklet/test/extend`).
  */
 export function expectMaster(result: RenderOfflineResult, opts: MasterOptions = {}): void {
   const peakDbfs = opts.peakDbfs ?? -0.1;
@@ -614,17 +634,17 @@ export function expectMaster(result: RenderOfflineResult, opts: MasterOptions = 
 }
 
 /**
- * 全 sample が tolerance 内 で 0 (= default `0` = bit-exact silence)。 pure
- * MIDI processor / mute / 起 動 直 後 等。
+ * Every sample is 0 within tolerance (default `0` = bit-exact silence). For a
+ * pure MIDI processor, mute, the moment right after startup, and similar cases.
  *
- * chain 形 = `expect(result).toBeSilent(opts?)` (= `@unworklet/test/extend`)。
+ * Chain form: `expect(result).toBeSilent(opts?)` (`@unworklet/test/extend`).
  */
 export function expectSilence(
   result: RenderOfflineResult,
   opts: { tolerance?: number } = {},
 ): void {
-  // `Math.abs(NaN) > tolerance = false` で NaN sample が silence と し て
-  // 偽 pass す る 経 路 を 塞 ぐ。
+  // Since `Math.abs(NaN) > tolerance` is `false`, a NaN sample would pass falsely
+  // as silence; reject NaN first to close that path.
   expectNoNaN(result);
   const tolerance = opts.tolerance ?? 0;
   for (const port of Object.keys(result.outputs)) {
@@ -649,19 +669,21 @@ export type PeakAtSampleOptions = {
 };
 
 /**
- * Time domain = 最 大 abs index が `expectedAtSample` ± `opts.tolerance`
- * (= sample 単 位)。 envelope attack peak / impulse response peak 位 置 等。
- * port = `opts.port` 明 示 or 単 一 port 推 論 (= 多 port + 未 指 定 で throw)。
+ * Time domain: the index of the maximum absolute value is within
+ * `expectedAtSample` ± `opts.tolerance` (in samples). For the envelope attack
+ * peak, the impulse-response peak position, and similar cases. The port is
+ * either `opts.port` explicitly or inferred for a single port (multi-port
+ * without one throws).
  *
- * chain 形 = `expect(result).toHavePeakAtSample(expectedAtSample, opts?)` (= `@unworklet/test/extend`)。
+ * Chain form: `expect(result).toHavePeakAtSample(expectedAtSample, opts?)` (`@unworklet/test/extend`).
  */
 export function expectPeakAtSample(
   result: RenderOfflineResult,
   expectedAtSample: number,
   opts: PeakAtSampleOptions = {},
 ): void {
-  // NaN を 含 む と max abs 比 較 が 全 て false に な り maxIdx が 初 期
-  // 値 (= -1 / 0) の ま ま で 偽 pass す る 経 路 を 塞 ぐ。
+  // If NaN is present, every max-abs comparison is false and maxIdx stays at its
+  // initial value (-1 / 0), which would pass falsely; reject NaN first.
   expectNoNaN(result);
   const tolerance = opts.tolerance ?? 0;
   const ports = Object.keys(result.outputs);
@@ -693,12 +715,12 @@ export function expectPeakAtSample(
       }
     }
   }
-  // 全 0 buffer = maxAbs 0 で maxIdx 0 が 立 つ = `expectedAtSample === 0`
-  // で 偽 pass さ せ な い (= mute / processor が 全 く 反 応 し な か っ
-  // た regression を 拾 う た め、 silent buffer は 明 確 に fail)。
+  // An all-zero buffer has maxAbs 0 and leaves maxIdx at 0, which would pass
+  // falsely when `expectedAtSample === 0`; fail a silent buffer explicitly so a
+  // mute / non-responding-processor regression is caught.
   if (maxAbs <= 0) {
     throw new Error(
-      `expectPeakAtSample: port '${portName}' has no detectable response (max abs ${maxAbs}) = silent buffer = peak index 推 論 不 能`,
+      `expectPeakAtSample: port '${portName}' has no detectable response (max abs ${maxAbs}) = silent buffer = cannot infer peak index`,
     );
   }
   if (Math.abs(maxIdx - expectedAtSample) > tolerance) {
@@ -708,7 +730,7 @@ export function expectPeakAtSample(
   }
 }
 
-/** Next power of 2 (= FFT 入 力 サ イ ズ 用)。 */
+/** Next power of 2 (for the FFT input size). */
 const nextPow2 = (n: number): number => {
   let p = 1;
   while (p < n) p <<= 1;
@@ -716,8 +738,9 @@ const nextPow2 = (n: number): number => {
 };
 
 /**
- * In-place radix-2 Cooley-Tukey FFT (= `expectGainAtFreq` 用 内 部 FFT)。
- * 入 力 = `real` / `imag` (= 同 長 さ + length が 2 ^ k)、 出 力 = 上 書 き。
+ * In-place radix-2 Cooley-Tukey FFT (the internal FFT used by `expectGainAtFreq`).
+ * Input: `real` / `imag` (equal length, with a length that is a power of two);
+ * output is written in place.
  */
 const fftInPlace = (real: Float32Array, imag: Float32Array): void => {
   const n = real.length;
@@ -764,25 +787,27 @@ const fftInPlace = (real: Float32Array, imag: Float32Array): void => {
 
 export type GainAtFreqOptions = {
   /**
-   * Multichannel 時 に 解 析 す る channel index (= 単 一 ch port は ignored)。
-   * `result.outputs[port]` が ch 2 以 上 で `channel` 未 指 定 = blind spot
-   * 防 止 で throw (= consumer に explicit 選 択 を 強 制)、 単 一 ch port は
-   * default `0` で 自 動 選 択。 範 囲 外 = throw。
+   * The channel index to analyze for multichannel input (ignored for a
+   * single-channel port). When `result.outputs[port]` has two or more channels
+   * and `channel` is unspecified, it throws to prevent a blind spot, forcing the
+   * consumer to choose explicitly; a single-channel port defaults to `0`. Out of
+   * range throws.
    */
   channel?: number;
 };
 
 /**
- * Freq domain = 内 部 FFT 経 由 で `freqHz` 周 辺 の dB ゲ イ ン が
- * `expectedDb` ± `tolerance`。 EQ test の core (`docs/06-testing.md` §2.2)。
- * 単 一 port 推 論 (= 多 port で throw)、 channel は 単 一 ch = ch 0、 多
- * ch = `opts.channel` 必 須 (= 未 指 定 で throw、 silent blind spot 防 止)。
- * FFT サ イ ズ = 入 力 を 次 の 2 ^ k へ zero-pad、 freqHz → bin = round(freqHz
- * × N / sampleRate)、 magnitude = 2 × sqrt(re² + im²) / L (= 元 信 号 長
- * `ch.length` で 正 規 化、 zero-pad 部 分 は DFT 和 に 0 寄 与 = 振 幅 は L
- * に だ け 比 例)、 dB = 20 × log10(magnitude)。
+ * Frequency domain: via the internal FFT, the dB gain around `freqHz` is within
+ * `expectedDb` ± `tolerance`. The core of EQ tests (`docs/06-testing.md` §2.2).
+ * Single-port inference (multi-port throws); the channel is ch 0 for a single
+ * channel, and `opts.channel` is required for multiple channels (unspecified
+ * throws, to prevent a silent blind spot). FFT size: the input is zero-padded to
+ * the next power of two; freqHz → bin = round(freqHz × N / sampleRate);
+ * magnitude = 2 × sqrt(re² + im²) / L (normalized by the original signal length
+ * `ch.length`, since the zero-padded part contributes 0 to the DFT sum so the
+ * amplitude is proportional to L only); dB = 20 × log10(magnitude).
  *
- * chain 形 = `expect(result).toHaveGainAtFreq(freqHz, expectedDb, tolerance, opts?)` (= `@unworklet/test/extend`)。
+ * Chain form: `expect(result).toHaveGainAtFreq(freqHz, expectedDb, tolerance, opts?)` (`@unworklet/test/extend`).
  */
 export function expectGainAtFreq(
   result: RenderOfflineResult,
@@ -791,8 +816,9 @@ export function expectGainAtFreq(
   tolerance: number,
   opts: GainAtFreqOptions = {},
 ): void {
-  // NaN を FFT に 通 す と magnitude / db = NaN、 `Math.abs(NaN - expectedDb)
-  // > tolerance = false` で 偽 pass す る 経 路 を 塞 ぐ。
+  // Running NaN through the FFT makes magnitude / db NaN, and
+  // `Math.abs(NaN - expectedDb) > tolerance` is `false`, which would pass falsely;
+  // reject NaN first.
   expectNoNaN(result);
   const ports = Object.keys(result.outputs);
   if (ports.length !== 1) {
@@ -832,8 +858,9 @@ export function expectGainAtFreq(
       `expectGainAtFreq: freqHz ${freqHz} out of range for sampleRate ${result.sampleRate} (= Nyquist ${result.sampleRate / 2})`,
     );
   }
-  // spectral leakage 緩 和 = bin ± 1 周 辺 で max magnitude (= freqHz が bin
-  // 中 心 に exact に 乗 ら な い 時 の 振 幅 過 小 評 価 を 隣 接 bin で 救 う)。
+  // Mitigate spectral leakage by taking the max magnitude over bin ± 1, so that
+  // when freqHz does not land exactly on a bin center, the adjacent bins rescue
+  // the otherwise-underestimated amplitude.
   let mag = 0;
   const startK = Math.max(0, bin - 1);
   const endK = Math.min(n / 2 - 1, bin + 1);
@@ -852,21 +879,22 @@ export function expectGainAtFreq(
 }
 
 /**
- * 入 力 impulse → 出 力 max abs index の delay sample 数 計 測 + assert。
- * lookahead processor の 設 計 latency 担 保。 単 一 port 推 論、 channel
- * は 単 一 ch = ch 0、 多 ch = `opts.channel` 必 須 (= 未 指 定 で throw、
- * silent blind spot 防 止)。 consumer は impulse 入 力 で renderOffline 走 ら せ た 結 果
- * を 渡 す。
+ * Measures and asserts the delay, in samples, between the input impulse and the
+ * max-abs index of the output. Guarantees the designed latency of a lookahead
+ * processor. Single-port inference; the channel is ch 0 for a single channel,
+ * and `opts.channel` is required for multiple channels (unspecified throws, to
+ * prevent a silent blind spot). The consumer passes the result of running
+ * renderOffline with an impulse input.
  *
- * chain 形 = `expect(result).toHaveLatency(expectedSamples, opts?)` (= `@unworklet/test/extend`)。
+ * Chain form: `expect(result).toHaveLatency(expectedSamples, opts?)` (`@unworklet/test/extend`).
  */
 export function expectLatency(
   result: RenderOfflineResult,
   expectedSamples: number,
   opts: { tolerance?: number; channel?: number } = {},
 ): void {
-  // NaN を 含 む と max abs 比 較 が 全 て false に な り maxIdx が 初 期
-  // 値 (= -1) の ま ま で 偽 pass す る 経 路 を 塞 ぐ。
+  // If NaN is present, every max-abs comparison is false and maxIdx stays at its
+  // initial value (-1), which would pass falsely; reject NaN first.
   expectNoNaN(result);
   const tolerance = opts.tolerance ?? 0;
   const ports = Object.keys(result.outputs);
@@ -900,12 +928,12 @@ export function expectLatency(
       maxIdx = s;
     }
   }
-  // 全 0 buffer = maxAbs 0 で maxIdx 0 が 立 つ = `expectedSamples === 0`
-  // で 偽 pass さ せ な い (= lookahead processor が 反 応 し な か っ た
-  // regression を 拾 う、 silent buffer は 明 確 に fail)。
+  // An all-zero buffer has maxAbs 0 and leaves maxIdx at 0, which would pass
+  // falsely when `expectedSamples === 0`; fail a silent buffer explicitly so a
+  // non-responding lookahead-processor regression is caught.
   if (maxAbs <= 0) {
     throw new Error(
-      `expectLatency: port '${portName}' channel ${channelIdx} has no detectable response (max abs ${maxAbs}) = silent buffer = delay 推 論 不 能`,
+      `expectLatency: port '${portName}' channel ${channelIdx} has no detectable response (max abs ${maxAbs}) = silent buffer = cannot infer delay`,
     );
   }
   if (Math.abs(maxIdx - expectedSamples) > tolerance) {
@@ -916,14 +944,16 @@ export function expectLatency(
 }
 
 /**
- * 全 sample 平 均 値 (= DC bias) 絶 対 値 が `threshold` 未 満。 filter /
- * EQ の DC 振 る 舞 い 確 認。 channel ご と に 平 均 を 計 算、 ど の channel
- * の DC 絶 対 値 が threshold 以 上 で も throw。
+ * The absolute value of the mean of all samples (the DC bias) is below
+ * `threshold`. Checks the DC behavior of a filter / EQ. The mean is computed
+ * per channel, and it throws if any channel's absolute DC value is at or above
+ * the threshold.
  *
- * chain 形 = `expect(result).toHaveDcOffsetUnder(threshold)` (= `@unworklet/test/extend`)。
+ * Chain form: `expect(result).toHaveDcOffsetUnder(threshold)` (`@unworklet/test/extend`).
  */
 export function expectDcOffsetUnder(result: RenderOfflineResult, threshold: number): void {
-  // NaN を sum に 混 ぜ る と mean = NaN、 `NaN >= threshold = false` で 偽 pass。
+  // A NaN mixed into the sum makes the mean NaN, and `NaN >= threshold` is
+  // `false`, which would pass falsely.
   expectNoNaN(result);
   for (const port of Object.keys(result.outputs)) {
     const channels = result.outputs[port]!;
@@ -943,9 +973,9 @@ export function expectDcOffsetUnder(result: RenderOfflineResult, threshold: numb
 }
 
 /**
- * 特 定 name の event 件 数 一 致 (= 順 序 / payload は 問 わ ず)。
+ * The number of events with a given name matches (order / payload are ignored).
  *
- * chain 形 = `expect(result).toHaveEventCount(name, expectedCount)` (= `@unworklet/test/extend`)。
+ * Chain form: `expect(result).toHaveEventCount(name, expectedCount)` (`@unworklet/test/extend`).
  */
 export function expectEventCount(
   result: RenderOfflineResult,
@@ -961,7 +991,7 @@ export function expectEventCount(
   }
 }
 
-/** `expectEventsContaining` の partial event shape。 */
+/** The partial event shape for `expectEventsContaining`. */
 export type PartialExpectedEvent = {
   name: string;
   payload?: unknown;
@@ -969,11 +999,11 @@ export type PartialExpectedEvent = {
 };
 
 /**
- * 部 分 一 致 (= `partial[i]` が `result.events` の ど こ か に exists)。 順
- * 不 同 + 余 計 な event 許 容。 `payload` / `atSample` 省 略 = そ の field
- * を 比 較 し な い (= name だ け hit で OK)。
+ * Partial match: each `partial[i]` exists somewhere in `result.events`. Order is
+ * irrelevant and extra events are allowed. Omitting `payload` / `atSample` means
+ * that field is not compared (matching on name alone is enough).
  *
- * chain 形 = `expect(result).toContainEvents(partial)` (= `@unworklet/test/extend`)。
+ * Chain form: `expect(result).toContainEvents(partial)` (`@unworklet/test/extend`).
  */
 export function expectEventsContaining(
   result: RenderOfflineResult,
@@ -998,17 +1028,18 @@ export function expectEventsContaining(
   }
 }
 
-/** `expectMidiOut` で 渡 す MIDI event + 任 意 atSample。 */
+/** A MIDI event passed to `expectMidiOut`, plus an optional atSample. */
 export type ExpectedMidiEvent = MidiEvent & { atSample?: number };
 
 /**
- * 特 定 `midiOutput({ name })` port 経 由 emit さ れ た MIDI event 列 を
- * `MidiEvent` 形 で 一 致 比 較。 `result.events` か ら `name === portName`
- * を filter、 payload を `MidiEvent` と み な し て 順 序 + type + 全 field
- * deep compare、 atSample は `expected.atSample` 省 略 = actual に zip、 明 示
- * の 時 は ± `opts.tolerance` (default 0) で 比 較。
+ * Compares the sequence of MIDI events emitted through a specific
+ * `event.midi({ to: 'main', name })` port against an expected sequence in
+ * `MidiEvent` form. Filters `result.events` to `name === portName`, treats each
+ * payload as a `MidiEvent`, and deep-compares order + type + all fields; for
+ * atSample, omitting `expected.atSample` zips it to the actual value, while an
+ * explicit value is compared within ± `opts.tolerance` (default 0).
  *
- * chain 形 = `expect(result).toEmitMidi(portName, expectedMidiEvents, opts?)` (= `@unworklet/test/extend`)。
+ * Chain form: `expect(result).toEmitMidi(portName, expectedMidiEvents, opts?)` (`@unworklet/test/extend`).
  */
 export function expectMidiOut(
   result: RenderOfflineResult,
@@ -1038,7 +1069,7 @@ export function expectMidiOut(
         `expectMidiOut: port '${portName}' event ${i} atSample ${a.atSample} not within ±${tolerance} of expected ${expAtSample}`,
       );
     }
-    // payload deep compare (= atSample を 除 い た MidiEvent 全 field)
+    // Deep-compare the payload (all MidiEvent fields except atSample).
     const { atSample: _atSampleStripped, ...expWithoutAt } = e;
     void _atSampleStripped;
     if (!isDeepStrictEqual(aPayload, expWithoutAt)) {
@@ -1050,17 +1081,18 @@ export function expectMidiOut(
 }
 
 /**
- * noteOn / noteOff pair が balance、 hanging note (= noteOn 後 noteOff
- * な し) が `opts.hangingNotes` (default `0`) 件 ま で 許 容。 stray
- * noteOff (= 出 現 時 点 で 対 応 (channel, note) の noteOn 在 庫 が ゼ
- * ロ の noteOff = lifecycle 逆 転 / noteOn 1 に 対 し て noteOff 2 以 上)
- * は always fail (= MIDI lifecycle で stray は 常 に bug = tolerance opt
- * ナ シ)。 events を 時 系 列 走 査 し て (channel, note) ご と の running
- * counter を track、 noteOff 到 着 時 cur ≤ 0 = 即 stray 計 上 = 「noteOff
- * → noteOn (= net 0)」 や 「noteOn 1 → noteOff 2」 を 順 序 sensitive に
- * 検 出 (= 最 終 合 算 path で は 拾 え な い 偽 pass を 塞 ぐ)。
+ * noteOn / noteOff pairs are balanced, with up to `opts.hangingNotes` (default
+ * `0`) hanging notes allowed (a noteOn with no following noteOff). A stray
+ * noteOff (a noteOff with no in-flight noteOn for its (channel, note) at the
+ * time it appears — a lifecycle inversion, or two or more noteOffs for one
+ * noteOn) always fails: a stray is always a bug in the MIDI lifecycle, so there
+ * is no tolerance option. Walks the events in time order, tracking a running
+ * counter per (channel, note); when a noteOff arrives with cur ≤ 0, it is
+ * immediately counted as stray, detecting "noteOff → noteOn (net 0)" and
+ * "noteOn 1 → noteOff 2" in an order-sensitive way (closing false passes that a
+ * final-sum path would miss).
  *
- * chain 形 = `expect(result).toHaveBalancedMidi(portName, opts?)` (= `@unworklet/test/extend`)。
+ * Chain form: `expect(result).toHaveBalancedMidi(portName, opts?)` (`@unworklet/test/extend`).
  */
 export function expectMidiBalance(
   result: RenderOfflineResult,
@@ -1112,7 +1144,7 @@ export function expectMidiBalance(
   }
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━ signal utility (= 7 件) ━━━━━━━━━━━━━━━━━━━━━━━
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━ signal utility (7 total) ━━━━━━━━━━━━━━━━━━━━━━━
 
 export type SineOpts = {
   freqHz: number;
@@ -1122,7 +1154,7 @@ export type SineOpts = {
   phase?: number;
 };
 
-/** 純 音 (= `amplitude` default `1`、 `phase` default `0` rad)。 */
+/** A pure tone (`amplitude` default `1`, `phase` default `0` rad). */
 export function sine(opts: SineOpts): Float32Array {
   const amplitude = opts.amplitude ?? 1;
   const phase = opts.phase ?? 0;
@@ -1134,12 +1166,12 @@ export function sine(opts: SineOpts): Float32Array {
   return data;
 }
 
-/** 全 0 の `Float32Array`。 */
+/** An all-zero `Float32Array`. */
 export function silence(durationSamples: number): Float32Array {
   return new Float32Array(durationSamples);
 }
 
-/** 単 一 sample 1.0、 残 り 0 (= impulse response 入 力)。 `atSample` default `0`。 */
+/** A single sample of 1.0 with the rest 0 (an impulse-response input). `atSample` default `0`. */
 export function impulse(durationSamples: number, opts: { atSample?: number } = {}): Float32Array {
   const data = new Float32Array(durationSamples);
   const atSample = opts.atSample ?? 0;
@@ -1156,7 +1188,7 @@ export type SineSweepOpts = {
   amplitude?: number;
 };
 
-/** 周 波 数 sweep (= EQ test 入 力)。 `type` default `'log'`。 */
+/** A frequency sweep (an EQ-test input). `type` default `'log'`. */
 export function sineSweep(opts: SineSweepOpts): Float32Array {
   const amplitude = opts.amplitude ?? 1;
   const type = opts.type ?? "log";
@@ -1181,7 +1213,7 @@ export type WhiteNoiseOpts = {
   seed?: number;
 };
 
-/** 決 定 的 seed 経 由 white noise = test 再 現 性 担 保 (= xorshift32)。 */
+/** White noise from a deterministic seed (xorshift32), so tests stay reproducible. */
 export function whiteNoise(opts: WhiteNoiseOpts): Float32Array {
   const amplitude = opts.amplitude ?? 1;
   let s = (opts.seed ?? 1) | 0;
@@ -1196,7 +1228,7 @@ export function whiteNoise(opts: WhiteNoiseOpts): Float32Array {
   return data;
 }
 
-/** 定 数 信 号 (= DC gain test 等)。 `value` default `1`。 */
+/** A constant signal (for DC-gain tests and the like). `value` default `1`. */
 export function dc(durationSamples: number, value = 1): Float32Array {
   const data = new Float32Array(durationSamples);
   data.fill(value);
@@ -1209,7 +1241,7 @@ export type RampOpts = {
   to: number;
 };
 
-/** 線 形 ramp (= gain ramp / param automation 模 倣)。 */
+/** A linear ramp (mimicking a gain ramp / param automation). */
 export function ramp(opts: RampOpts): Float32Array {
   const data = new Float32Array(opts.durationSamples);
   const denom = Math.max(1, opts.durationSamples - 1);
@@ -1232,10 +1264,11 @@ export type MidiAftertouchOpts = { note: number; pressure: number; channel?: num
 export type MidiSequenceEntry = { at: number; event: MidiEvent };
 
 /**
- * MIDI event 構 築 namespace。 `MidiEvent` (= main-side、 `docs/11-midi.md`
- * §2.2) を 構 築 し て `renderOffline({ events })` の `payload` field に 渡
- * す path。 9 variants + `sequence` (= 配 列 一 括 構 築 で `OfflineEvent[]`
- * 返 し)。 `channel` default `0`、 `noteOff` の `velocity` default `0`。
+ * A namespace for constructing MIDI events. Builds a `MidiEvent` (main-side,
+ * `docs/11-midi.md` §2.2) to pass into the `payload` field of
+ * `renderOffline({ events })`. 9 variants plus `sequence` (which builds a whole
+ * array at once and returns `OfflineEvent[]`). `channel` defaults to `0`, and
+ * `noteOff`'s `velocity` defaults to `0`.
  */
 export const midi = {
   noteOn(opts: MidiNoteOnOpts): MidiEvent {
@@ -1290,9 +1323,9 @@ export const midi = {
   },
 };
 
-// ━━━━━━━━━━━━━━━━━━━━━━ sample / time utility (= 6 件) ━━━━━━━━━━━━━━━━━━━━
+// ━━━━━━━━━━━━━━━━━━━━━━ sample / time utility (6 total) ━━━━━━━━━━━━━━━━━━━━
 
-/** `Division` literal union (= v1.0.0 core 6 件)。 */
+/** The `Division` literal union (the 6 in v1.0.0 core). */
 export type Division = "1/1" | "1/2" | "1/4" | "1/8" | "1/16" | "1/32";
 
 const DIVISION_FACTOR: Record<Division, number> = {
@@ -1304,27 +1337,27 @@ const DIVISION_FACTOR: Record<Division, number> = {
   "1/32": 0.125,
 };
 
-/** sample 数 → ms。 */
+/** Samples → ms. */
 export function samplesToMs(samples: number, sampleRate: number): number {
   return (samples / sampleRate) * 1000;
 }
 
-/** ms → sample 数。 */
+/** ms → samples. */
 export function msToSamples(ms: number, sampleRate: number): number {
   return (ms * sampleRate) / 1000;
 }
 
-/** sample 数 → sec。 */
+/** Samples → sec. */
 export function samplesToSec(samples: number, sampleRate: number): number {
   return samples / sampleRate;
 }
 
-/** sec → sample 数。 */
+/** sec → samples. */
 export function secToSamples(sec: number, sampleRate: number): number {
   return sec * sampleRate;
 }
 
-/** 拍 → sample 数 (= `(60 / bpm) * factor(division) * sampleRate`、 factor: 1/4 = 1 = 1 beat at given BPM)。 */
+/** Beats → samples (`(60 / bpm) * factor(division) * sampleRate`; factor: 1/4 = 1 = 1 beat at the given BPM). */
 export function bpmToSamples(opts: {
   bpm: number;
   division: Division;
@@ -1333,7 +1366,7 @@ export function bpmToSamples(opts: {
   return (60 / opts.bpm) * DIVISION_FACTOR[opts.division] * opts.sampleRate;
 }
 
-/** 拍 → ms (= `(60 / bpm) * factor(division) * 1000`)。 */
+/** Beats → ms (`(60 / bpm) * factor(division) * 1000`). */
 export function bpmToMs(opts: { bpm: number; division: Division }): number {
   return (60 / opts.bpm) * DIVISION_FACTOR[opts.division] * 1000;
 }

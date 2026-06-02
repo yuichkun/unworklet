@@ -1,92 +1,92 @@
 # 06 — Testing (`@unworklet/test`)
 
-Vitest matchers + audio test utility for unworklet processors。 `@unworklet/offline` (= `13-offline-render.md`) を ラ ッ プ し、 audio-domain assertion + 入 力 信 号 構 築 + MIDI event 構 築 + sample/time 変 換 を 提 供。 全 て deterministic + browser 不 要 で 走 行 (= host JS WebAssembly runtime path、 `13-offline-render.md` §3)。
+Vitest matchers and audio test utilities for unworklet processors. Wraps `@unworklet/offline` (see `13-offline-render.md`) and provides audio-domain assertions, input signal construction, MIDI event construction, and sample/time conversion. Everything runs deterministically without a browser (host JS WebAssembly runtime path; see `13-offline-render.md` §3).
 
 ## Status
 
-fill 済 み 42 件 (= matcher 19 / signal 7 / MIDI 10 / sample-time 6) + chain form 全 19 件 + TS-only chain typing guard (= `WhenResult<T, M>` / `WhenAudioActual<T, M>`)。 `expectStateValue` (= snapshot blob slot 値 assert) は 上 流 `inspect` (= `05-client.md` §2.6) fill 待 ち で Phase 11 に plain + chain 同 ship 予 定 = 当 phase の export surface か ら は 除 外 (= 常 に throw す る public API を ship し な い 行 動 規 律、 v1.0.0 surface は 動 く matcher だ け 並 べ る)。
+42 matchers implemented (19 audio/signal/event/MIDI/state matchers + 7 signal utilities + 10 MIDI utilities + 6 sample-time utilities) with all 19 chain-form equivalents and TypeScript-only chain typing guards (`WhenResult<T, M>` / `WhenAudioActual<T, M>`). `expectStateValue` (asserts a snapshot blob slot value) depends on upstream `inspect` (see `05-client.md` §2.6) and is planned to ship alongside it in Phase 11 in both plain and chain forms; it is excluded from the current export surface (the principle: never ship a public API that always throws — v1.0.0 surface contains only working matchers).
 
-### Upstream 依 存 状 況 (= renderer capture 状 況)
+### Upstream dependency status (renderer capture status)
 
-matcher 自 体 は 全 件 fill 済 み で `RenderOfflineResult` を 与 え れ ば 正 し く 動 く。 `renderOffline` の capture 状 況 別 の 影 響:
+All matchers are implemented and work correctly when given a `RenderOfflineResult`. Impact by capture status of `renderOffline`:
 
-- **`expectEventsEqual` / `expectEventCount` / `expectEventsContaining`** は `renderOffline.events` を 直 接 比 較。 `renderOffline` の event 捕 捉 は 実 装 済 み (= main → worklet `message<T>` injection + worklet → main `event<T>` 捕 捉、 typed-array payload 含 む)。 `events` は real renderOffline で 実 デ ー タ を 持 ち、 end-to-end の event assertion が そ の ま ま 通 る。
-- **`expectMidiOut` / `expectMidiBalance`** は MIDI renderer が 未 実 装 (= `10-roadmap.md` §Phase 9) の 間、 `renderOffline` が MIDI を 捕 捉 し な い た め `midiEvents` は 常 に `[]`、 「empty 期 待 = empty 実 測」 で 偽 pass、 非 empty 期 待 で は loud fail。 hand-built `RenderOfflineResult` (= test fixture) に 対 し て の 使 用 は 安 全、 real renderOffline 出 力 と の end-to-end zip は Phase 9 待 ち。
-- **`expectStateMatches`** は Phase 11 (= snapshot/restore) で renderer の `state` capture が fill さ れ る ま で `state` は 常 に `new Uint8Array(0)` (= 空 blob stub)、 「empty blob 期 待」 で 偽 pass。 非 empty 期 待 で は length mismatch で loud fail。
-- **`RenderOfflineResult.sampleRate`** field は `config.sampleRate` を そ の ま ま carry し て metadata と し て 信 頼 で き る (= `expectAudioMatches` / `expectAudioMatchesGolden` の sampleRate 比 較 で 使 う)。 一 方 で processor の `ctx.sampleRate` は Phase 3 placeholder = `0` で、 DSP 内 で `ctx.sampleRate` を 直 接 読 む code path は real rate が flow し て こ な い (= core 側 で の plumbing 完 了 = 後 続 phase)。 当 phase で sampleRate 比 較 が catch す る の は metadata mismatch (= 同 PCM / 異 rate label)、 「processor が ctx.sampleRate を 読 ん で 計 算 し た 結 果 が real rate に zip し て い な い」 path は core 側 fix 待 ち = matcher 側 の 振 る 舞 い と は 独 立。
+- **`expectEventsEqual` / `expectEventCount` / `expectEventsContaining`** compare `renderOffline.events` directly. Event capture in `renderOffline` is implemented (main → worklet `event<T>({ from: "main" })` injection and worklet → main `event<T>({ to: "main" })` capture, including typed-array payloads). `events` carries real data from a real `renderOffline` call, so end-to-end event assertions pass as-is.
+- **`expectMidiOut` / `expectMidiBalance`** — while the MIDI renderer is not yet implemented (see `10-roadmap.md` §Phase 9), `renderOffline` does not capture MIDI, so `midiEvents` is always `[]`. An assertion expecting empty passes spuriously; an assertion expecting non-empty fails loudly. Using these matchers against a hand-built `RenderOfflineResult` (a test fixture) is safe; end-to-end use against real `renderOffline` output awaits Phase 9.
+- **`expectStateMatches`** — until Phase 11 (snapshot/restore) fills in `state` capture in the renderer, `state` is always `new Uint8Array(0)` (an empty blob stub). An assertion expecting an empty blob passes spuriously; a non-empty expectation fails loudly with a length mismatch.
+- **`RenderOfflineResult.sampleRate`** carries `config.sampleRate` as reliable metadata (used by `expectAudioMatches` / `expectAudioMatchesGolden` for sample-rate comparison). The processor's `ctx.sampleRate` is a Phase 3 placeholder equal to `0`; code paths that read `ctx.sampleRate` directly inside DSP do not receive the real rate (core-side plumbing is a later phase). Within this phase, sample-rate comparison catches metadata mismatches (same PCM, different rate label); the path where a processor reads `ctx.sampleRate` to compute a result and that result is compared against the real rate awaits the core-side fix — this is independent of matcher behavior.
 
-要 約: matcher は 入 力 contract (= `RenderOfflineResult`) に 対 し て 正 し く 動 き、 上 流 renderer が real data を 出 す ご と に end-to-end usage path が 開 く。 end-to-end 検 証 が 通 る の は audio 出 力 path + event path (= `event<T>` / `message<T>` の renderer 捕 捉 が 実 装 済 み)。 MIDI / state path は 後 続 phase (= `10-roadmap.md` §Phase 9 / Phase 11) で 順 次 zip。
+Summary: matchers behave correctly against their input contract (`RenderOfflineResult`); each end-to-end usage path opens as the upstream renderer produces real data. End-to-end verification works for audio output and event paths (both directions of `event<T>` capture are implemented). MIDI and state paths unlock in subsequent phases (see `10-roadmap.md` §Phase 9 / Phase 11).
 
 ## 1. Relationship to `@unworklet/offline`
 
-`@unworklet/test` does **not** re-implement rendering。 `@unworklet/offline` の `renderOffline` を 内 部 呼 び 出 し、 戻 り 値 `RenderOfflineResult` (= `{ outputs, events, state }`) に audio-domain assertion を 重 ね る。 こ の split で offline rendering は server-side / batch / preview UI で 単 独 利 用 可 (= `13-offline-render.md` §1)、 test-specific 関 心 (= matcher / golden file / signal utility 等) は こ ち ら に 集 約。
+`@unworklet/test` does **not** re-implement rendering. It calls `renderOffline` from `@unworklet/offline` internally and layers audio-domain assertions on top of the returned `RenderOfflineResult` (`{ outputs, events, state }`). This split allows offline rendering to be used standalone in server-side, batch, or preview-UI contexts (see `13-offline-render.md` §1), while test-specific concerns (matchers, golden files, signal utilities, etc.) are consolidated here.
 
-Standard MIDI File loader (= `loadSmf` / `parseSmf`) は v1.0.0 ship 範 囲 外 = `10-roadmap.md` §3.2 additive で 追 加 想 定 (= 既 知 MIDI song を 入 力 と し て synth / arp 出 力 を 検 証 す る ユ ー ス)。
+Standard MIDI File loader (`loadSmf` / `parseSmf`) is outside the v1.0.0 ship scope; see `10-roadmap.md` §3.2 for the planned additive addition (verifying synth/arp output against a known MIDI song as input).
 
-## 2. Matchers (= 19 件 + `expectStateValue` Phase 11)
+## 2. Matchers (19 + `expectStateValue` in Phase 11)
 
-全 matcher は **plain function form** で declare、 失 敗 時 = `Error` を throw、 vitest が catch し て test fail と し て 表 示。 chain form (= `expect.extend(...)`) は §6 で 別 declare、 plain と 並 立。
+All matchers are declared as **plain functions**. On failure they throw an `Error`; Vitest catches it and reports the test as failed. The chain form (via `expect.extend(...)`) is declared separately in §6 and coexists with the plain form.
 
-result 型 = `RenderOfflineResult` = `{ outputs: Record<string, Float32Array[]>, events: OfflineEmittedEvent[], state: Uint8Array }` (`13-offline-render.md` §2)。
+Result type: `RenderOfflineResult` = `{ outputs: Record<string, Float32Array[]>, events: OfflineEmittedEvent[], state: Uint8Array }` (see `13-offline-render.md` §2).
 
-全 numerical matcher (= audio compare / golden / snapshot / peak / rms / silence / peak-at / gain-at-freq / latency / DC offset) は 冒 頭 で `expectNoNaN` 相 当 の guard を 走 ら せ、 NaN / ±Infinity 入 力 を 必 ず fail に 落 と す。 理 由 = `Math.abs(NaN) > x = false` / `NaN >= x = false` の 特 性 で 数 値 比 較 系 matcher が NaN を 暗 黙 に 通 し て catastrophic DSP failure を 偽 pass さ せ る経 路 を 機 械 的 に 塞 ぐ た め (= sanity check と し て `expectStable` を 別 途 呼 ば な く て も matcher 自 体 が 自 衛)。 `expectAudioMatches` / `expectAudioMatchesGolden` は actual / expected 双 方 (= reference 側 も = corrupted golden や NaN fixture を freeze さ せ な い)。
+All numerical matchers (audio compare, golden, snapshot, peak, RMS, silence, peak-at, gain-at-freq, latency, DC offset) run a guard equivalent to `expectNoNaN` at the top, unconditionally failing on NaN or ±Infinity input. The reason: `Math.abs(NaN) > x` evaluates to `false` and `NaN >= x` evaluates to `false`, so numeric comparison matchers would silently pass NaN inputs and allow catastrophic DSP failures to go undetected. This guard closes that path mechanically, so matchers are self-defending even without a separate `expectStable` call. `expectAudioMatches` / `expectAudioMatchesGolden` guard both actual and expected (including the reference side, to prevent a corrupted golden or NaN fixture from being frozen in place).
 
 ### 2.1 Audio matchers
 
-- **`expectAudioMatches(actual, expected, opts?)`** — sample 単 位 比 較。 `expected` 型 = `RenderOfflineResult | Float32Array[]` (= 全 result 形 / 単 一 port 形)。 `opts.tolerance` default `0` = bit-exact (= `renderOffline` deterministic 保 証 で 自 然 成 立)。 多 port + Float32Array[] form は 単 一 port 推 論 不 能 で throw、 consumer は full result form に 寄 せ る。 `RenderOfflineResult` 形 で 渡 し た 時 は `actual.sampleRate` と `expected.sampleRate` 一 致 を 必 須 check (= 同 PCM / 異 rate = pitch / timing bug を 偽 pass さ せ な い)、 `Float32Array[]` 形 は raw buffer = rate metadata 不 在 = 比 較 無 し (= consumer が rate sensitive な ら full result form で 渡 す)。
-- **`expectAudioMatchesGolden(actual, wavPath, opts?)`** — wav file (= 明 示 fixture) を decode し て bit-exact 比 較。 `opts.tolerance` default `0`。 単 一 port 専 用 = 多 port は throw。 業 界 standard reference file 等 を 外 部 か ら 持 ち 込 む 場 面 用。 wav header の `sampleRate` と `actual.sampleRate` も 必 須 check (= 異 rate で 同 PCM な ら pitch / timing が ズ レ る た め)。
-- **`expectAudioMatchesSnapshot(actual, opts?): Promise<void>`** — vitest `toMatchSnapshot` 同 形 path。 `actual` は 3 shape = `RenderOfflineResult` (= `result.sampleRate` 経 由) / `Float32Array` (= mono 1 ch 直 接、 `opts.sampleRate` default `48000`) / `Float32Array[]` (= multi-ch 直 接、 同 上) = signal generator 出 力 等 を wrap な し で 渡 す path。 path 解 決 優 先 順 = (1) `opts.snapshotPath` 明 示 = full path 上 書 き、 (2) `opts.snapshotName` 明 示 = `<test-file-dir>/__snapshots__/<safe(snapshotName)>.wav` (= test-file-base prefix も counter も ナ シ、 consumer が unique 命 名 責 任 で test 名 と 独 立 に 短 い 識 別 子 を carry)、 (3) 両 省 略 = auto-infer = `<test-file-dir>/__snapshots__/<test-file-base>__<safe(test-name)>_<hash8>__<counter>.wav` (= 8 桁 FNV-1a hash を test 名 か ら 派 生 し て 付 与 = sanitize 後 同 一 slug に な る 異 な る test 名 (= "foo bar" と "foo!bar" 等) が 別 path に 解 決)。 sanitize は Unicode 保 持 + filesystem-unsafe (`/`, `\`, `:`, `*`, `?`, `"`, `<`, `>`, `|`) + whitespace + 制 御 文 字 だ け `_` に collapse、 `snapshotName` で sanitize 結 果 が 空 な ら throw (= hidden `.wav` を 作 ら な い)。 初 回 = snapshot 不 在 → wav 自 動 書 き 出 し + test pass (= 耳 確 認 path、 dev 中 心)、 2 回 目 以 降 = bit-exact 比 較、 `vitest -u` で 強 制 上 書 き、 CI mode = snapshot 不 在 で fail。 **Concurrent test 注 意**: plain function 形 は `expect.getState()` global 経 由 で testPath / currentTestName / snapshot mode を 取 得 = `test.concurrent` 配 下 で 別 test の state を 読 む race 可 能 性 = sequential test 用 path。 concurrent 配 下 で auto-infer / `snapshotName` path を 使 う 時 は chain form (= `expect(actual).toMatchAudioSnapshot(opts?)` = `@unworklet/test/extend` 経 由) を 使 う = `expect.extend` の per-test bound `MatcherState` (= `this.testPath` / `this.currentTestName` / `this.snapshotState`) で race 回 避。 `opts.snapshotPath` を 明 示 す れ ば state 読 み ゼ ロ で concurrent でも 安 全。 **Retry / watch 注 意**: auto-infer counter は test boundary heuristic (= 直 前 と test key が 違 え ば reset) で sequential rerun は handle す る が、 同 一 process で 同 一 test が 連 続 invoke さ れ る (= vitest retry) 経 路 で は counter drift し て 新 規 file (= `_2.wav` / `_3.wav`) が 増 え る 可 能 性 = retry を 使 う test で は 明 示 `snapshotName` か `snapshotPath` を 推 奨。
+- **`expectAudioMatches(actual, expected, opts?)`** — sample-by-sample comparison. `expected` type: `RenderOfflineResult | Float32Array[]` (full-result form or single-port form). `opts.tolerance` defaults to `0` (bit-exact; satisfied naturally by `renderOffline`'s determinism guarantee). Passing a `Float32Array[]` when there are multiple ports is ambiguous and throws; consumers should use the full result form in that case. When passed as `RenderOfflineResult`, `actual.sampleRate` and `expected.sampleRate` must match (same PCM with different rate labels would be a pitch/timing bug passed off as correct); when passed as `Float32Array[]`, the data is a raw buffer with no rate metadata so no rate comparison is performed (rate-sensitive consumers should use the full result form).
+- **`expectAudioMatchesGolden(actual, wavPath, opts?)`** — decodes an explicit WAV fixture and compares bit-exactly. `opts.tolerance` defaults to `0`. Single-port only; throws for multiple ports. Intended for bringing in industry-standard reference files from outside the project. The WAV header's `sampleRate` is also checked against `actual.sampleRate` (same PCM at a different rate would introduce pitch/timing drift).
+- **`expectAudioMatchesSnapshot(actual, opts?): Promise<void>`** — mirrors the Vitest `toMatchSnapshot` pattern. `actual` accepts three shapes: `RenderOfflineResult` (sample rate from `result.sampleRate`), `Float32Array` (mono, single channel, `opts.sampleRate` defaults to `48000`), or `Float32Array[]` (multi-channel, same default) — allowing signal generator output to be passed directly without wrapping. Path resolution priority: (1) `opts.snapshotPath` explicit — used as the full path verbatim; (2) `opts.snapshotName` explicit — resolves to `<test-file-dir>/__snapshots__/<safe(snapshotName)>.wav` (no test-file base prefix, no counter; the consumer is responsible for unique naming independently of the test name); (3) both omitted — auto-infer: `<test-file-dir>/__snapshots__/<test-file-base>__<safe(test-name)>_<hash8>__<counter>.wav`, where an 8-digit FNV-1a hash derived from the test name disambiguates different test names that produce the same sanitized slug (e.g. "foo bar" vs "foo!bar"). Sanitization preserves Unicode and replaces only filesystem-unsafe characters (`/`, `\`, `:`, `*`, `?`, `"`, `<`, `>`, `|`), whitespace, and control characters with `_`; if the sanitized result of `snapshotName` is empty, throws (to prevent creating a hidden `.wav` file). First run: snapshot absent → WAV is written automatically and the test passes (ear-check path, development-oriented). Subsequent runs: bit-exact comparison. `vitest -u` forces overwrite. CI mode: fails when snapshot is absent. **Concurrent test note**: the plain function form reads `testPath`, `currentTestName`, and snapshot mode from `expect.getState()` globally, which creates a race condition under `test.concurrent` where another test's state may be read; this is a sequential-test path. When using auto-infer or `snapshotName` paths under `test.concurrent`, use the chain form (`expect(actual).toMatchAudioSnapshot(opts?)` via `@unworklet/test/extend`), which uses the per-test-bound `MatcherState` (`this.testPath` / `this.currentTestName` / `this.snapshotState`) provided by `expect.extend` and avoids the race. Providing `opts.snapshotPath` explicitly requires no state reads and is safe in concurrent tests. **Retry / watch note**: the auto-infer counter uses a test-boundary heuristic (resets when the test key changes) that handles sequential reruns, but when the same test is invoked repeatedly within the same process (e.g. Vitest retry), the counter may drift and create new files (`_2.wav`, `_3.wav`, etc.); tests that use retry are recommended to provide an explicit `snapshotName` or `snapshotPath`.
 
 ### 2.2 Sample-level matchers
 
-- **`expectNoNaN(result)`** — `result.outputs` 全 channel 走 査、 NaN / ±Infinity 検 出 で throw。
-- **`expectPeakUnder(result, dbfs)`** — peak abs を 20·log10 で dBFS 換 算、 threshold 以 上 で throw。
-- **`expectRmsUnder(result, dbfs)`** — 全 channel 平 方 和 平 均 平 方 根 を dBFS 換 算、 threshold 以 上 で throw。
-- **`expectStable(result)`** — NaN ナ シ + 全 sample finite (= 発 散 ナ シ) を 1 行 で wrap。 IIR feedback / 長 時 間 render の 安 定 性 sanity check。 audio level は 問 わ ず (= clip し て て も pass)。
-- **`expectMaster(result, opts?: { peakDbfs?, rmsDbfs? })`** — master bus デフ ォ check = NaN ナ シ + peak < `opts.peakDbfs` (default `-0.1`) + RMS < `opts.rmsDbfs` (default `-14`) を 1 行 wrap。 `expectStable` ⊂ `expectMaster` 関 係 = master は stable 含 む + clip / 過 大 loudness も 検 出。 NaN check は always on (= 全 numerical matcher で uniform = escape hatch ナ シ)。
-- **`expectSilence(result, opts?: { tolerance? })`** — 全 sample が tolerance 内 で 0 (= default `0` = bit-exact silence)。 pure MIDI processor / mute / 起 動 直 後 等。
-- **`expectPeakAtSample(result, expectedAtSample, opts?: { tolerance?, port? })`** — time domain = 最 大 abs index が `expectedAtSample` ± `opts.tolerance` (= sample 単 位)。 envelope attack peak 位 置 / impulse response peak 位 置 等。 全 0 buffer (= silent / mute / processor 無 反 応) は 「no detectable response」 で 必 ず throw (= 偽 sample 0 を peak と し て 通 さ な い、 mute regression を 拾 う)。
-- **`expectGainAtFreq(result, freqHz, expectedDb, tolerance, opts?: { channel? })`** — freq domain = 内 部 FFT 経 由 で `freqHz` 周 辺 の dB ゲ イ ン が `expectedDb` ± `tolerance`。 EQ test の core。 単 一 ch port = ch 0 自 動、 多 ch port = `opts.channel` 必 須 (= 未 指 定 で throw、 silent blind spot 防 止)。
-- **`expectLatency(result, expectedSamples, opts?: { tolerance?, channel? })`** — 入 力 impulse → 出 力 max abs index の delay sample 数 計 測 + assert。 lookahead processor の 設 計 latency 担 保。 channel 推 論 は `expectGainAtFreq` と 同 形 (= 単 一 自 動 / 多 ch 必 須)。 全 0 buffer (= 処 理 失 敗 / impulse 入 力 が 通 過 し な か っ た 状 態) は `expectPeakAtSample` と 同 様 「no detectable response」 で 必 ず throw。
-- **`expectDcOffsetUnder(result, threshold)`** — 全 sample 平 均 値 (= DC bias) 絶 対 値 が threshold 未 満。 filter / EQ の DC 振 る 舞 い 確 認。
+- **`expectNoNaN(result)`** — scans all channels in `result.outputs`; throws on NaN or ±Infinity.
+- **`expectPeakUnder(result, dbfs)`** — converts peak absolute value to dBFS via 20·log10; throws if at or above threshold.
+- **`expectRmsUnder(result, dbfs)`** — converts the root-mean-square of all channels to dBFS; throws if at or above threshold.
+- **`expectStable(result)`** — one-line wrapper asserting no NaN and all samples finite (no divergence). Sanity check for stability of IIR feedback or long renders. Audio level is not checked (clipping passes).
+- **`expectMaster(result, opts?: { peakDbfs?, rmsDbfs? })`** — master bus default check: no NaN + peak < `opts.peakDbfs` (default `-0.1`) + RMS < `opts.rmsDbfs` (default `-14`), wrapped in one call. `expectStable` ⊂ `expectMaster`: master implies stable and additionally catches clipping and excessive loudness. NaN check is always on (uniform across all numerical matchers; no escape hatch).
+- **`expectSilence(result, opts?: { tolerance? })`** — all samples are 0 within tolerance (default `0`, bit-exact silence). Useful for pure MIDI processors, mute states, or immediately after startup.
+- **`expectPeakAtSample(result, expectedAtSample, opts?: { tolerance?, port? })`** — time domain: asserts that the index of the maximum absolute value is within `expectedAtSample` ± `opts.tolerance` (in samples). Used for envelope attack peak position, impulse response peak position, etc. An all-zero buffer (silent, muted, or unresponsive processor) always throws with "no detectable response" — sample 0 is never passed as the peak, catching mute regressions.
+- **`expectGainAtFreq(result, freqHz, expectedDb, tolerance, opts?: { channel? })`** — frequency domain: via internal FFT, asserts that the dB gain around `freqHz` is within `expectedDb` ± `tolerance`. Core of EQ testing. Single-channel port defaults to channel 0; multi-channel port requires `opts.channel` (throws if not provided, preventing silent blind spots).
+- **`expectLatency(result, expectedSamples, opts?: { tolerance?, channel? })`** — measures the delay in samples from an input impulse to the output's maximum absolute value index and asserts it. Guarantees the designed latency of a lookahead processor. Channel inference follows the same rule as `expectGainAtFreq` (single: automatic; multi: required). An all-zero buffer (processing failure or impulse not passed through) always throws with "no detectable response", matching `expectPeakAtSample` behavior.
+- **`expectDcOffsetUnder(result, threshold)`** — asserts that the absolute mean of all samples (DC bias) is below threshold. Verifies DC behavior of filters and EQ.
 
 ### 2.3 Event matchers
 
-- **`expectEventsEqual(result, expectedEvents)`** — `result.events` (= `{ name, payload, atSample }[]`) と 順 序 + 全 件 + payload 完 全 一 致 比 較。
-- **`expectEventCount(result, name, expectedCount)`** — 特 定 name の event 件 数 一 致 (= 順 序 / payload は 問 わ ず)。
-- **`expectEventsContaining(result, partial)`** — 部 分 一 致 (= `partial[i]` が `result.events` の ど こ か に exists)。 順 不 同 + 余 計 な event 許 容。
+- **`expectEventsEqual(result, expectedEvents)`** — compares `result.events` (`{ name, payload, atSample }[]`) against expected events with strict ordering, full count, and exact payload match.
+- **`expectEventCount(result, name, expectedCount)`** — asserts the count of events with a specific name (order and payload are not checked).
+- **`expectEventsContaining(result, partial)`** — partial match: asserts that each entry in `partial` exists somewhere in `result.events`. Order-independent; extra events are allowed.
 
 ### 2.4 MIDI matchers
 
-- **`expectMidiOut(result, portName, expectedMidiEvents, opts?)`** — 特 定 `midiOutput({ name })` port 経 由 emit さ れ た MIDI event 列 を `MidiEvent` 形 (= `11-midi.md` §2.2) で 一 致 比 較。 `result.events[i].payload` は `13-offline-render.md` §2 contract で online handler に 渡 さ れ る 値 と 同 形 = `MidiEvent` 構 造 を そ の ま ま 担 う (= wire byte は `11-midi.md` §4 で 述 べ た 通 り compiler 内 部 = author / 消 費 者 surface で は ナ シ)、 matcher は 構 造 化 payload を 直 接 比 較。
-- **`expectMidiBalance(result, portName, opts?: { hangingNotes? })`** — noteOn / noteOff pair が balance、 hanging note (= noteOn 後 noteOff な し) が `opts.hangingNotes` (default `0`) 件 ま で 許 容。 stray noteOff (= 出 現 時 点 で 対 応 (channel, note) の noteOn 在 庫 が ゼ ロ の noteOff = lifecycle 逆 転 / noteOn 1 に 対 し て noteOff 2 以 上) は always fail (= MIDI lifecycle で stray は 常 に bug = tolerance opt ナ シ)。 events を 時 系 列 走 査 す る running counter path で 「noteOff → noteOn (= 最 終 net 0)」 も 検 出。
+- **`expectMidiOut(result, portName, expectedMidiEvents, opts?)`** — compares the sequence of MIDI events emitted via a specific `event.midi({ to: "main", name })` port against `MidiEvent` values (see `11-midi.md` §2.2). `result.events[i].payload` follows the `13-offline-render.md` §2 contract and carries the same value passed to the online handler — it directly holds the `MidiEvent` structure (wire bytes are an internal compiler concern, as described in `11-midi.md` §4; they never appear on the author/consumer surface). The matcher compares the structured payload directly.
+- **`expectMidiBalance(result, portName, opts?: { hangingNotes? })`** — asserts that noteOn/noteOff pairs are balanced. Hanging notes (a noteOn with no matching noteOff) are tolerated up to `opts.hangingNotes` (default `0`). Stray noteOffs (a noteOff with no prior noteOn for the same `(channel, note)`, or more noteOffs than noteOns for a given pair) always fail — stray noteOffs are always a bug in MIDI lifecycle, so no tolerance option is provided. Implemented as a running counter over the time-ordered event stream, also detecting "noteOff before noteOn" patterns that net to zero.
 
 ### 2.5 State matchers
 
-- **`expectStateMatches(result, expectedSnapshot)`** — `result.state` (= snapshot blob、 `'persistent'` slot 限 定) と byte-exact 比 較。
-- **`expectStateValue(result, slotName, expectedValue)`** — _Phase 11 同 ship 予 定 = 当 phase の export ナ シ_。 snapshot blob を 内 部 で `inspect` (= `05-client.md` §2.6) し て 1 slot 値 取 得 + assert す る 設 計、 上 流 `inspect` fill 後 plain + chain 同 時 に export 復 活。
+- **`expectStateMatches(result, expectedSnapshot)`** — byte-exact comparison of `result.state` (snapshot blob, `'persistent'` slots only) against the expected snapshot.
+- **`expectStateValue(result, slotName, expectedValue)`** — _planned to ship with Phase 11; not exported in the current phase_. Designed to call `inspect` (see `05-client.md` §2.6) internally to retrieve a single slot value from the snapshot blob and assert it. Both plain and chain forms will be exported once upstream `inspect` is implemented.
 
-### 2.6 役 割 分 担: audio 出 力 / event / state snapshot
+### 2.6 Separation of concerns: audio output / events / state snapshot
 
-`expectAudioMatches` 系 (= DSP 計 算 path 全 体 を sample 単 位 で 担 保)、 `expectEventsEqual` 系 (= sample-accurate emit 検 証)、 `expectStateMatches` 系 (= migration / restore round-trip 経 路 担 保) は **役 割 直 交**。 transient slot (= filter coefficient、 phase accumulator 等) の bug は audio output に 現 れ る = `expectAudioMatches` で 検 出、 `'persistent'` slot は blob round-trip 経 路 で = `expectStateMatches` で 検 出。 三 軸 構 成 で 全 bug を cover。
+`expectAudioMatches` (covers the entire DSP computation path at sample granularity), `expectEventsEqual` (verifies sample-accurate emission), and `expectStateMatches` (covers migration/restore round-trip paths) have **orthogonal responsibilities**. Bugs in transient slots (filter coefficients, phase accumulators, etc.) surface in audio output and are caught by `expectAudioMatches`. Bugs in `'persistent'` slots surface in blob round-trips and are caught by `expectStateMatches`. The three axes together provide full coverage.
 
-## 3. Signal construction utility (= 7 件)
+## 3. Signal construction utility (7 functions)
 
-入 力 信 号 を `new Float32Array(N)` で 自 力 構 築 す る boilerplate を 削 減。 全 て deterministic = test 再 現 性 を 保 つ。
+Eliminates the boilerplate of constructing input signals manually with `new Float32Array(N)`. All functions are deterministic, preserving test reproducibility.
 
-- **`sine(opts: { freqHz, durationSamples, sampleRate, amplitude?, phase? }): Float32Array`** — 純 音 (= `amplitude` default `1`、 `phase` default `0` rad)。
-- **`silence(durationSamples): Float32Array`** — 全 0。
-- **`impulse(durationSamples, opts?: { atSample? }): Float32Array`** — 単 一 sample 1.0、 残 り 0 (= impulse response 入 力)。 `atSample` default `0`。
-- **`sineSweep(opts: { startHz, endHz, durationSamples, sampleRate, type?: 'lin' | 'log', amplitude? }): Float32Array`** — 周 波 数 sweep (= EQ test 入 力)。 `type` default `'log'`。
-- **`whiteNoise(opts: { durationSamples, amplitude?, seed? }): Float32Array`** — 決 定 的 seed で xorshift 等 = test 再 現 性 担 保。
-- **`dc(durationSamples, value?): Float32Array`** — 定 数 信 号 (= DC gain test 等)。 `value` default `1`。
-- **`ramp(opts: { durationSamples, from, to }): Float32Array`** — 線 形 ramp (= gain ramp / param automation 模 倣)。
+- **`sine(opts: { freqHz, durationSamples, sampleRate, amplitude?, phase? }): Float32Array`** — pure tone (`amplitude` defaults to `1`, `phase` defaults to `0` rad).
+- **`silence(durationSamples): Float32Array`** — all zeros.
+- **`impulse(durationSamples, opts?: { atSample? }): Float32Array`** — single sample at `1.0`, rest `0` (impulse response input). `atSample` defaults to `0`.
+- **`sineSweep(opts: { startHz, endHz, durationSamples, sampleRate, type?: 'lin' | 'log', amplitude? }): Float32Array`** — frequency sweep (EQ test input). `type` defaults to `'log'`.
+- **`whiteNoise(opts: { durationSamples, amplitude?, seed? }): Float32Array`** — deterministic with a fixed seed via xorshift or equivalent, guaranteeing test reproducibility.
+- **`dc(durationSamples, value?): Float32Array`** — constant signal (DC gain tests, etc.). `value` defaults to `1`.
+- **`ramp(opts: { durationSamples, from, to }): Float32Array`** — linear ramp (gain ramp, parameter automation simulation).
 
-## 4. MIDI utility (= 10 件)
+## 4. MIDI utility (10 functions)
 
-### 4.1 MIDI event 構 築 (= namespace `midi`、 9 variants + sequence)
+### 4.1 MIDI event construction (namespace `midi`, 9 variants + sequence)
 
-`renderOffline` の `events` 配 列 に 渡 す main-side `MidiEvent` (= `11-midi.md` §2.2) を 構 築 す る namespace。 9 variants 全 て を 1 namespace に 集 約 し て top-level pollution を 回 避。
+A namespace for constructing main-side `MidiEvent` values (see `11-midi.md` §2.2) to pass in the `events` array of `renderOffline`. All 9 variants are collected under one namespace to avoid top-level pollution.
 
 ```ts
 const midi: {
@@ -103,51 +103,51 @@ const midi: {
 };
 ```
 
-`midi.sequence(portName, events)` は 配 列 一 括 構 築 で `OfflineEvent[]` (= `13-offline-render.md` §2) を 返 し、 `renderOffline({ events })` に そ の ま ま 渡 せ る path。 `channel` default `0`、 `noteOff` の `velocity` default `0`。
+`midi.sequence(portName, events)` constructs an entire array at once and returns `OfflineEvent[]` (see `13-offline-render.md` §2), which can be passed directly to `renderOffline({ events })`. `channel` defaults to `0`; `noteOff` `velocity` defaults to `0`.
 
-## 5. Sample / time conversion utility (= 6 件)
+## 5. Sample / time conversion utility (6 functions)
 
-DSP test で sample / ms / sec / BPM の 行 き 来 を 1 行 で。
+One-liners for converting between samples, milliseconds, seconds, and BPM in DSP tests.
 
 - **`samplesToMs(samples: number, sampleRate: number): number`**
 - **`msToSamples(ms: number, sampleRate: number): number`**
 - **`samplesToSec(samples: number, sampleRate: number): number`**
 - **`secToSamples(sec: number, sampleRate: number): number`**
-- **`bpmToSamples(opts: { bpm: number; division: Division; sampleRate: number }): number`** — 拍 → sample。
-- **`bpmToMs(opts: { bpm: number; division: Division }): number`** — 拍 → ms。
+- **`bpmToSamples(opts: { bpm: number; division: Division; sampleRate: number }): number`** — beat to samples.
+- **`bpmToMs(opts: { bpm: number; division: Division }): number`** — beat to milliseconds.
 
-`Division` literal union (= v1.0.0 core 6 件):
+`Division` literal union (v1.0.0 core, 6 values):
 
 ```ts
 type Division = "1/1" | "1/2" | "1/4" | "1/8" | "1/16" | "1/32";
 ```
 
-三 連 (= `'1/8t'` / `'1/16t'`) / dotted (= `'1/4d'` / `'1/8d'`) は v1.0.0 ship 範 囲 外 = `10-roadmap.md` §3.2 additive で 追 加 検 討。
+Triplets (`'1/8t'` / `'1/16t'`) and dotted values (`'1/4d'` / `'1/8d'`) are outside the v1.0.0 ship scope; see `10-roadmap.md` §3.2 for the planned additive addition.
 
-## 6. Matcher chain form (= `expect.extend`)
+## 6. Matcher chain form (`expect.extend`)
 
-vitest `expect.extend(...)` 登 録 経 由 で chain form (= `expect(result).toMatchAudio(...)`) も 並 立 で 提 供。 plain function form (= §2) と co-exist (= 同 test 内 で 両 形 混 在 OK)。 別 subpath `@unworklet/test/extend` で 分 離、 import 1 行 で test 全 体 に 反 映 + chain form を 使 わ な い consumer の bundle に chain 部 分 が 入 ら な い (= tree shake 整 合):
+A chain form (`expect(result).toMatchAudio(...)`) is also provided via Vitest's `expect.extend(...)` registration. It coexists with the plain function form (§2); both forms may be used within the same test. It is separated into a subpath `@unworklet/test/extend` so that a single import applies the registration to the entire test file, and consumers who do not use chain form do not include it in their bundle (tree-shake compatible):
 
 ```ts
-import "@unworklet/test/extend"; // = chain form 全 20 件 登 録 + TypeScript declare merge
+import "@unworklet/test/extend"; // registers all 20 chain forms + TypeScript declare merge
 ```
 
-### 6.1 chain 名 規 約
+### 6.1 Chain name conventions
 
-vitest core (= `toBe` / `toHave` / `toMatch` / `toContain` 等) に zip し て 個 別 自 然 化。 軸:
+Chain names align naturally with Vitest core conventions (`toBe` / `toHave` / `toMatch` / `toContain`, etc.). Axes:
 
-- **`toBe...`** = state / 形 容 詞 (= 「the result is X」)。 例: `toBeStable` / `toBeSilent` / `toBeFinite` / `toBeMasterReady`。
-- **`toHave...`** = property 値 (= 「the result has X within bound」)。 例: `toHavePeakUnder(dbfs)` / `toHaveLatency(n)` / `toHaveDcOffsetUnder(threshold)`。
-- **`toMatch...`** = pattern match (= 「the result matches Y」)。 例: `toMatchAudio(expected)` / `toMatchEvents(events)` / `toMatchState(blob)`。
-- **`toContain...`** = 部 分 一 致 (= 「the result contains Z」)。 例: `toContainEvents(partial)`。
-- snapshot 系 = vitest 標 準 `toMatchSnapshot` / `toMatchFileSnapshot` に zip。 例: `toMatchAudioSnapshot()` / `toMatchAudioFile(path)`。
-- 動 詞 系 (= MIDI emit 等、 vitest `toThrow` 系) = 動 詞 化。 例: `toEmitMidi(port, events)`。
+- **`toBe...`** — state / adjective ("the result is X"). Examples: `toBeStable` / `toBeSilent` / `toBeFinite` / `toBeMasterReady`.
+- **`toHave...`** — property value ("the result has X within bound"). Examples: `toHavePeakUnder(dbfs)` / `toHaveLatency(n)` / `toHaveDcOffsetUnder(threshold)`.
+- **`toMatch...`** — pattern match ("the result matches Y"). Examples: `toMatchAudio(expected)` / `toMatchEvents(events)` / `toMatchState(blob)`.
+- **`toContain...`** — partial match ("the result contains Z"). Examples: `toContainEvents(partial)`.
+- Snapshot variants mirror Vitest's standard `toMatchSnapshot` / `toMatchFileSnapshot`. Examples: `toMatchAudioSnapshot()` / `toMatchAudioFile(path)`.
+- Verb-based variants (MIDI emit, etc., analogous to Vitest's `toThrow`). Examples: `toEmitMidi(port, events)`.
 
-plain 名 と chain 名 は 1:1 機 械 派 生 で は な い (= chain 側 を 自 然 化 優 先)。 plain ↔ chain mapping は 各 plain 関 数 / chain method の JSDoc で 双 方 向 carry し て IDE hover 経 由 で 解 決。
+Plain names and chain names are not mechanically 1:1 derived — chain names prioritize natural English. The plain ↔ chain mapping is carried bidirectionally in JSDoc on each plain function and chain method, resolvable via IDE hover.
 
-chain method の receiver 型 は 既 定 で `expect(result).toMatchAudio(...)` の よ う に `RenderOfflineResult` だ け に 露 出 (= `WhenResult<T, M>` guard)。 例 外 = `toMatchAudioSnapshot` は plain `expectAudioMatchesSnapshot` の polymorphic actual (= `RenderOfflineResult | Float32Array | Float32Array[]`、 §2.1) に zip し て `WhenAudioActual<T, M>` で 拡 大、 `expect(sine(...)).toMatchAudioSnapshot()` (= signal generator 出 力 直 接) や `expect([ch0, ch1]).toMatchAudioSnapshot()` (= multi-ch buffer 直 接) も typecheck 通 過。
+The receiver type of chain methods is constrained by default so that, for example, `expect(result).toMatchAudio(...)` is only exposed on `RenderOfflineResult` (via the `WhenResult<T, M>` guard). Exception: `toMatchAudioSnapshot` widens to `WhenAudioActual<T, M>` to match the polymorphic `actual` of `expectAudioMatchesSnapshot` (`RenderOfflineResult | Float32Array | Float32Array[]`; see §2.1), allowing `expect(sine(...)).toMatchAudioSnapshot()` (signal generator output directly) and `expect([ch0, ch1]).toMatchAudioSnapshot()` (multi-channel buffer directly) to pass type-checking.
 
-### 6.2 全 20 件 mapping
+### 6.2 All 20 mappings
 
 | plain                        | chain                  |
 | ---------------------------- | ---------------------- |

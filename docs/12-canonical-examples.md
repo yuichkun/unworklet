@@ -17,8 +17,8 @@ The example set is designed so that the union of all examples touches every conc
 | `param` (k-rate / a-rate, automation curves)                                                                                                              | 1, 2, 4, 5, 7, 8       |
 | `state.f32` / `state.i32` / `state.bool`                                                                                                                  | 2, 3, 4, 5, 6, 7, 8, 9 |
 | `state.publish` (scalar UI feedback)                                                                                                                      | 1, 4, 5, 6, 7, 8, 9    |
-| `buffer.f32` (per-sample memory)                                                                                                                          | 3, 4, 5, 7, 8          |
-| `buffer.u8` (byte memory for sysex / arbitrary octet streams)                                                                                             | 9                      |
+| `state.buffer.f32` (per-sample memory)                                                                                                                    | 3, 4, 5, 7, 8          |
+| `state.buffer.u8` (byte memory for sysex / arbitrary octet streams)                                                                                       | 9                      |
 | `buffer.publish` (waveform / spectrum frame to UI)                                                                                                        | 5, 8                   |
 | `buf.copyFrom(typedArrayField)` (bulk transfer from payload)                                                                                              | 5, 7, 9                |
 | `forSample` (per-sample loop)                                                                                                                             | 1, 2, 3, 4, 5, 6, 7, 8 |
@@ -29,10 +29,10 @@ The example set is designed so that the union of all examples touches every conc
 | L2 `defineSubgraph` (caller-owned reuse)                                                                                                                  | 2, 8                   |
 | `State<T>` reference parameter                                                                                                                            | 2, 4                   |
 | `event<T>` (worklet → main, sample-accurate)                                                                                                              | 4, 5, 6, 8             |
-| `message<T>` (main → worklet)                                                                                                                             | 5, 6, 7, 9             |
+| `event<T>({ from: "main" })` (main → worklet)                                                                                                             | 5, 6, 7, 9             |
 | `emitIf` (conditional emission, generic event)                                                                                                            | 4, 6, 8                |
 | `onReceive` (per-block message handler)                                                                                                                   | 5, 6, 7, 9             |
-| `midiInput` / `midiOutput`                                                                                                                                | 5, 6, 8, 9             |
+| `event.midi({ from: "main" })` / `event.midi({ to: "main" })`                                                                                             | 5, 6, 8, 9             |
 | `onEvent` MIDI (`noteOn` / `noteOff` + `sysex`; `cc` / `pitchBend` / `programChange` / `channelPressure` / `aftertouch` / `systemRealtime` not exercised) | 5, 6, 8, 9             |
 | MIDI emission via `emitIf` (`noteOn` / `noteOff` in Ex 6; `sysex` in Ex 9)                                                                                | 6, 9                   |
 | SIMD `f32x4`, `splat`, `buf.loadVec`, `mulVec`, `addVec`, `vec.lane`, `sumLanes`                                                                          | 3, 7                   |
@@ -45,7 +45,7 @@ The example set is designed so that the union of all examples touches every conc
 | Main side: `node.params.<name>` (AudioParam)                                                                                                              | 1, 2, 4, 7, 8          |
 | Main side: `node.state.<name>.subscribe` / `.value`                                                                                                       | 1, 4, 5, 6, 7, 8, 9    |
 | Main side: `node.events.<name>.on` / `.diagnostics.overflowCount`                                                                                         | 4, 5, 6, 8             |
-| Main side: `node.messages.<name>` (incl. variable-length payload)                                                                                         | 5, 6, 7, 9             |
+| Main side: `node.events.<name>.emit` (incl. variable-length payload)                                                                                      | 5, 6, 7, 9             |
 | Main side: `node.midi.<name>.send` / `.connectFromWebMIDI` / `.onEvent`                                                                                   | 5, 6, 8, 9             |
 | Main side: `node.snapshot()` / `node.restore(blob)`                                                                                                       | 3, 7                   |
 | Main side: `replaceProcessor` (hot swap + `RestoreResult.ok` failure path)                                                                                | 10                     |
@@ -56,11 +56,11 @@ The example set is designed so that the union of all examples touches every conc
 2. **Three-band biquad EQ (minimum-phase)** — recursive `state` cascade with L1 + L2 helpers, denormal-aware feedback path, parameterized cookbook coefficients.
 3. **Three-band linear-phase EQ (partitioned convolution)** — mixed per-block + per-sample `process` body with sub-rate FFT, `forSample.byN(4)` SIMD bulk, overlap-add buffer accounting.
 4. **Lookahead limiter with overshoot event** — `buffer` delay line, per-sample envelope follower (L1 helper), `event<T>` with `atSample` for sample-accurate flagging, GR meter via `state.publish`.
-5. **Granular sampler** — bulk `message<T>` upload of sample buffer, voice-array state, `midiInput` note triggers, `buffer.publish` waveform display.
-6. **MIDI arpeggiator + sequencer** — `midiInput` ingest + `midiOutput` emission, generic `event<T>` for UI step indicator, `message<T>` for pattern reload.
+5. **Granular sampler** — bulk `event<T>({ from: "main" })` upload of sample buffer, voice-array state, `event.midi({ from: "main" })` note triggers, `buffer.publish` waveform display.
+6. **MIDI arpeggiator + sequencer** — `event.midi({ from: "main" })` ingest + `event.midi({ to: "main" })` emission, generic `event<T>` for UI step indicator, `event<T>({ from: "main" })` for pattern reload.
 7. **Convolution reverb with snapshot/restore migration** — large IR buffer, partitioned FFT, snapshot persistence with declarative migration chain.
-8. **Polyphonic synth with sidechain ducking** — voice allocator subgraph, sidechain `audioInput` driving the duck envelope, `midiInput` voice triggers, waveform `buffer.publish` for UI scope.
-9. **SysEx bridge** — pure MIDI processor that rewrites the device-ID byte of incoming sysex events and re-emits them to a downstream port. Exercises `midiInput().onEvent('sysex', ...)`, `buffer.u8` + `buf.copyFrom` + in-place `buf.write`, sysex `midiOut.emitIf`, and main-side dynamic device-ID control via `message<T>` + published `state.i32`.
+8. **Polyphonic synth with sidechain ducking** — voice allocator subgraph, sidechain `audioInput` driving the duck envelope, `event.midi({ from: "main" })` voice triggers, waveform `buffer.publish` for UI scope.
+9. **SysEx bridge** — pure MIDI processor that rewrites the device-ID byte of incoming sysex events and re-emits them to a downstream port. Exercises `event.midi({ from: "main" }).onEvent('sysex', ...)`, `state.buffer.u8` + `buf.copyFrom` + in-place `buf.write`, sysex `midiOut.emitIf`, and main-side dynamic device-ID control via `event<T>({ from: "main" })` + published `state.i32`.
 10. **Live coding REPL bridge** — REPL UI swaps the running processor with edited source via `replaceProcessor`. Exercises the full live-coding flow: `state.snapshot: 'persistent'` for state carry-forward (oscillator phase), main-side graph re-wire (disconnect / connect on the new wrapper), migration-failure recovery via `RestoreResult.ok = false`, and the Q63 accumulation warning surface.
 
 ## 1. Stereo gain + level meter
@@ -96,13 +96,13 @@ export const stereoGain = defineProcessor(() => {
         out.left.at(i).write(l);
         out.right.at(i).write(r);
 
-        meterL.store(l.abs().max(meterL.load()));
-        meterR.store(r.abs().max(meterR.load()));
+        meterL.write(l.abs().max(meterL.read()));
+        meterR.write(r.abs().max(meterR.read()));
       });
 
       // Per-block decay so the meter does not stick at the most recent peak forever.
-      meterL.store(meterL.load().mul(0.95));
-      meterR.store(meterR.load().mul(0.95));
+      meterL.write(meterL.read().mul(0.95));
+      meterR.write(meterR.read().mul(0.95));
     },
   };
 });
@@ -164,11 +164,11 @@ function biquadDFIIT(
   z1: State<"f32">,
   z2: State<"f32">,
 ): Node<"f32"> {
-  const y = b0.mul(x).add(z1.load());
-  const z1n = b1.mul(x).add(z2.load()).sub(a1.mul(y));
+  const y = b0.mul(x).add(z1.read());
+  const z1n = b1.mul(x).add(z2.read()).sub(a1.mul(y));
   const z2n = b2.mul(x).sub(a2.mul(y));
-  z1.store(z1n);
-  z2.store(z2n);
+  z1.write(z1n);
+  z2.write(z2n);
   return y;
 }
 
@@ -305,7 +305,7 @@ node.params.hiQ.value = 1.4;
 node.onError((err) => console.error("[3bandEQ]", err));
 ```
 
-> Denormal note: feedback paths through `z1` / `z2` decay toward zero on long tails of silence and would otherwise enter the IEEE 754 subnormal range (5–100× slower per op on most CPUs). unworklet's compiler auto-inserts a subnormal guard at every `state.f32` / `state.f64` `.store(v)` site, flushing values below `1e-30` to zero — see Q21 in `decisions-log.md` and `04-worklet-runtime.md` §6. No user-side mitigation is required.
+> Denormal note: feedback paths through `z1` / `z2` decay toward zero on long tails of silence and would otherwise enter the IEEE 754 subnormal range (5–100× slower per op on most CPUs). unworklet's compiler auto-inserts a subnormal guard at every `state.f32` / `state.f64` `.write(v)` site, flushing values below `1e-30` to zero — see Q21 in `decisions-log.md` and `04-worklet-runtime.md` §6. No user-side mitigation is required.
 
 ## 3. Three-band linear-phase EQ (partitioned convolution)
 
@@ -316,7 +316,6 @@ import {
   audioOutput,
   param,
   state,
-  buffer,
   forSample,
   SAMPLES_PER_BLOCK,
   type Node,
@@ -336,9 +335,11 @@ export const linearPhaseEQ = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
 
   // Precomputed real-valued impulse, length FIR_LEN. Persisted across reloads.
-  const impulse = buffer.f32({ size: FIR_LEN }).expose({ name: "impulse", snapshot: "persistent" });
+  const impulse = state.buffer
+    .f32({ size: FIR_LEN })
+    .expose({ name: "impulse", snapshot: "persistent" });
   // Sliding history of input samples (1024).
-  const history = buffer.f32({ size: HISTORY_LEN });
+  const history = state.buffer.f32({ size: HISTORY_LEN });
   // Write head into history.
   const histHead = state.i32(0);
 
@@ -346,7 +347,7 @@ export const linearPhaseEQ = defineProcessor(() => {
     process: () => {
       // Per-block: capture the input block-end index into the history start
       // for use by the partitioned overlap-add below.
-      const startHead = histHead.load();
+      const startHead = histHead.read();
 
       // forSample (input shovel): copy input into history ring buffer.
       forSample((i) => {
@@ -373,7 +374,7 @@ export const linearPhaseEQ = defineProcessor(() => {
       });
 
       // Per-block: advance the head by one block.
-      histHead.store(startHead.add(SAMPLES_PER_BLOCK).mod(HISTORY_LEN));
+      histHead.write(startHead.add(SAMPLES_PER_BLOCK).mod(HISTORY_LEN));
     },
   };
 });
@@ -401,7 +402,7 @@ const impulse = designLinearPhaseImpulse({
 });
 
 // Inspect the current blob to verify schema before authoring an updated one.
-// (For the routine "load a fresh impulse" path, message<T> uploads are used —
+// (For the routine "load a fresh impulse" path, event<T>({ from: "main" }) uploads are used —
 // see Example 5 for that pattern. Snapshot-driven impulse swap is the long-
 // term-persistence path.)
 const blob = await node.snapshot();
@@ -421,7 +422,6 @@ import {
   audioOutput,
   param,
   state,
-  buffer,
   forSample,
   event,
   SAMPLES_PER_BLOCK,
@@ -441,9 +441,9 @@ function envelopeFollow(
   prev: State<"f32">,
 ): Node<"f32"> {
   const r = x.abs();
-  const coef = select(r.gt(prev.load()), attackCoef, releaseCoef);
-  const y = r.sub(prev.load()).mul(coef).add(prev.load());
-  prev.store(y);
+  const coef = select(r.gt(prev.read()), attackCoef, releaseCoef);
+  const y = r.sub(prev.read()).mul(coef).add(prev.read());
+  prev.write(y);
   return y;
 }
 
@@ -459,8 +459,8 @@ export const lookaheadLimiter = defineProcessor((ctx) => {
     .named("releaseMs");
 
   // Lookahead delay line — separate per channel.
-  const dlyL = buffer.f32({ size: LOOKAHEAD_SAMPLES });
-  const dlyR = buffer.f32({ size: LOOKAHEAD_SAMPLES });
+  const dlyL = state.buffer.f32({ size: LOOKAHEAD_SAMPLES });
+  const dlyR = state.buffer.f32({ size: LOOKAHEAD_SAMPLES });
   const dlyHead = state.i32(0);
 
   // Envelope state for sidechain detection.
@@ -475,7 +475,7 @@ export const lookaheadLimiter = defineProcessor((ctx) => {
 
   // Sample-accurate overshoot event — fires when the linear envelope crosses
   // the ceiling. Used for diagnostic logging and visual flash on the UI.
-  const overshoot = event<{ level: number; channel: 0 | 1 }>({ name: "overshoot" });
+  const overshoot = event<{ level: number; channel: 0 | 1 }>({ to: "main", name: "overshoot" });
 
   return {
     process: () => {
@@ -488,7 +488,7 @@ export const lookaheadLimiter = defineProcessor((ctx) => {
       const releaseCoef = num(1).sub(num(-1).div(releaseSamples).exp());
       const attackCoef = 1.0; // instantaneous attack — limiter style
 
-      const headBlock = dlyHead.load();
+      const headBlock = dlyHead.read();
 
       forSample((i) => {
         // Sidechain envelope on the live (pre-delay) signal.
@@ -528,13 +528,13 @@ export const lookaheadLimiter = defineProcessor((ctx) => {
 
         // Track the most-negative GR (in dB) reached during this block; published
         // to UI by the rateFps scheduler.
-        gainReductionDb.store(gainReductionDb.load().min(grDb20));
+        gainReductionDb.write(gainReductionDb.read().min(grDb20));
       });
 
       // Per-block: advance head, decay published GR back toward 0 dB so meter
       // tracks recent rather than historical.
-      dlyHead.store(headBlock.add(SAMPLES_PER_BLOCK).mod(LOOKAHEAD_SAMPLES));
-      gainReductionDb.store(gainReductionDb.load().mul(0.85));
+      dlyHead.write(headBlock.add(SAMPLES_PER_BLOCK).mod(LOOKAHEAD_SAMPLES));
+      gainReductionDb.write(gainReductionDb.read().mul(0.85));
     },
   };
 });
@@ -581,10 +581,7 @@ import {
   audioOutput,
   param,
   state,
-  buffer,
   forSample,
-  midiInput,
-  message,
   event,
   num,
   select,
@@ -613,15 +610,15 @@ export const granularSampler = defineProcessor((ctx) => {
     .f32({ default: 1.0, min: 0.25, max: 4.0, automationRate: "a-rate" })
     .named("pitch");
 
-  // Sample buffer — uploaded via message<T> (variable-length payload).
-  const sampleBuf = buffer.f32({ size: SAMPLE_BUFFER_LEN }).expose({
+  // Sample buffer — uploaded via event<T>({ from: "main" }) (variable-length payload).
+  const sampleBuf = state.buffer.f32({ size: SAMPLE_BUFFER_LEN }).expose({
     name: "sampleBuf",
     snapshot: "persistent",
   });
   const sampleLen = state.i32(0); // populated when uploaded (worklet-private)
 
   // UI-visible waveform thumbnail (downsampled view, published at low rate).
-  const waveformView = buffer.f32({ size: WAVEFORM_FRAME }).expose({
+  const waveformView = state.buffer.f32({ size: WAVEFORM_FRAME }).expose({
     name: "waveformView",
     publish: { rateFps: 15 },
   });
@@ -652,13 +649,13 @@ export const granularSampler = defineProcessor((ctx) => {
     .expose({ name: "playingCount", snapshot: "transient", publish: { rateFps: 10 } });
 
   // Bulk upload from main: replaces sampleBuf contents and sets sampleLen.
-  const uploadSample = message<{ samples: Float32Array }>({ name: "uploadSample" });
+  const uploadSample = event<{ samples: Float32Array }>({ from: "main", name: "uploadSample" });
 
   // Sample-accurate event: fires whenever a grain is spawned, for UI flash.
-  const grainSpawned = event<{ voice: number; pos: number }>({ name: "grainSpawned" });
+  const grainSpawned = event<{ voice: number; pos: number }>({ to: "main", name: "grainSpawned" });
 
   // MIDI in for note triggers.
-  const noteIn = midiInput({ name: "noteIn" });
+  const noteIn = event.midi({ from: "main", name: "noteIn" });
 
   return {
     process: () => {
@@ -668,7 +665,7 @@ export const granularSampler = defineProcessor((ctx) => {
       // payload-driven for-loop on the audio thread.
       uploadSample.onReceive(({ samples }) => {
         sampleBuf.copyFrom(samples);
-        sampleLen.store(samples.length);
+        sampleLen.write(samples.length);
 
         // Downsampled thumbnail: build-time unroll over WAVEFORM_FRAME (a
         // build-time constant); each slot reads from a payload-driven offset.
@@ -682,11 +679,11 @@ export const granularSampler = defineProcessor((ctx) => {
 
       // MIDI handlers — store the latest note for grain pitch shifting.
       noteIn.onEvent("noteOn", ({ note, velocity, atSample }) => {
-        activeNote.store(note);
-        activeVel.store(f32(velocity).div(127));
+        activeNote.write(note);
+        activeVel.write(f32(velocity).div(127));
       });
       noteIn.onEvent("noteOff", () => {
-        activeVel.store(0);
+        activeVel.write(0);
       });
 
       // Per-block: derive grain spawn interval from grainHz.
@@ -695,9 +692,9 @@ export const granularSampler = defineProcessor((ctx) => {
 
       forSample((i) => {
         // Spawn a grain when the countdown reaches 0.
-        const cd = nextSpawnIn.load().sub(1);
+        const cd = nextSpawnIn.read().sub(1);
         const spawn = cd.lte(0);
-        nextSpawnIn.store(select(spawn, i32(samplesPerSpawn), cd));
+        nextSpawnIn.write(select(spawn, i32(samplesPerSpawn), cd));
 
         // On spawn: pick a voice (round-robin), assign position and length.
         // (We unroll the voice selection inline.)
@@ -709,9 +706,9 @@ export const granularSampler = defineProcessor((ctx) => {
         let lSum = f32(0);
         let rSum = f32(0);
         for (let v = 0; v < NUM_VOICES; v++) {
-          const gate = voiceGate[v].load();
-          const pos = voicePos[v].load();
-          const rem = voiceRemaining[v].load();
+          const gate = voiceGate[v].read();
+          const pos = voicePos[v].read();
+          const rem = voiceRemaining[v].read();
 
           // Window envelope: simple cos^2 over the grain duration.
           const phase = f32(1).sub(f32(rem).div(grainSamples));
@@ -720,7 +717,7 @@ export const granularSampler = defineProcessor((ctx) => {
 
           // Pitch-shifted read with linear interpolation.
           const sample = sampleBuf.readInterpolated(pos);
-          const sig = sample.mul(win.mul(activeVel.load()));
+          const sig = sample.mul(win.mul(activeVel.read()));
 
           // Accumulate (gated by voice activity).
           const contrib = select(gate, sig, 0);
@@ -728,12 +725,12 @@ export const granularSampler = defineProcessor((ctx) => {
           rSum = rSum.add(contrib);
 
           // Advance voice cursor.
-          voicePos[v].store(
+          voicePos[v].write(
             select(
               gate,
               pos.add(
                 pitch.at(i).mul(
-                  f32(activeNote.load().sub(60))
+                  f32(activeNote.read().sub(60))
                     .mul(Math.LN2 / 12)
                     .exp(),
                 ),
@@ -741,8 +738,8 @@ export const granularSampler = defineProcessor((ctx) => {
               pos,
             ),
           );
-          voiceRemaining[v].store(select(gate, rem.sub(1), rem));
-          voiceGate[v].store(select(gate, rem.gt(0), gate));
+          voiceRemaining[v].write(select(gate, rem.sub(1), rem));
+          voiceGate[v].write(select(gate, rem.gt(0), gate));
         }
 
         out.left.at(i).write(lSum);
@@ -752,9 +749,9 @@ export const granularSampler = defineProcessor((ctx) => {
       // Per-block: count active voices for UI.
       let count = i32(0);
       for (let v = 0; v < NUM_VOICES; v++) {
-        count = count.add(select(voiceGate[v].load(), 1, 0));
+        count = count.add(select(voiceGate[v].read(), 1, 0));
       }
-      playingCount.store(count);
+      playingCount.write(count);
     },
   };
 });
@@ -773,7 +770,7 @@ node.midi.noteIn.connectFromWebMIDI(firstInput);
 // Upload a sample (loaded from a URL, decoded to Float32Array).
 const fetched = await fetch("/samples/voice-loop.wav");
 const decoded = await audioContext.decodeAudioData(await fetched.arrayBuffer());
-node.messages.uploadSample({ samples: decoded.getChannelData(0) });
+node.events.uploadSample.emit({ samples: decoded.getChannelData(0) });
 
 node.state.playingCount.subscribe((n) => voiceCountUI.set(n));
 node.state.waveformView.subscribe((view) => waveformUI.draw(view));
@@ -789,9 +786,6 @@ import {
   audioOutput,
   state,
   forSample,
-  midiInput,
-  midiOutput,
-  message,
   event,
   i32,
   lt,
@@ -808,8 +802,8 @@ export const arpeggiator = defineProcessor((ctx) => {
   // mono passthrough audioOutput so the AudioContext keeps the worklet alive.
   const out = audioOutput({ channels: 1, name: "main" });
 
-  const noteIn = midiInput({ name: "noteIn" });
-  const arpOut = midiOutput({ name: "arpOut" });
+  const noteIn = event.midi({ from: "main", name: "noteIn" });
+  const arpOut = event.midi({ to: "main", name: "arpOut" });
 
   // 16-step pattern of semitone offsets from the root note (Float32Array uploaded).
   // Shipped as named state slots since each step is preset-bearing — snapshot key required.
@@ -821,7 +815,7 @@ export const arpeggiator = defineProcessor((ctx) => {
   // Pattern reload from main. Values are small signed integers (note offsets);
   // they travel as a Float32Array so the handler can read them per-element with
   // `.at()` (= direct per-element read is f32-only, Q84) and convert via `i32(...)`.
-  const loadPattern = message<{ steps: Float32Array }>({ name: "loadPattern" });
+  const loadPattern = event<{ steps: Float32Array }>({ from: "main", name: "loadPattern" });
 
   const rootNote = state.i32(60).named("rootNote");
   const lastVel = state.i32(96).named("lastVel");
@@ -832,7 +826,7 @@ export const arpeggiator = defineProcessor((ctx) => {
   const sampleAccum = state.i32(0); // worklet-private accumulator
 
   // UI step indicator — fires every step boundary.
-  const stepFired = event<{ step: number; note: number }>({ name: "stepFired" });
+  const stepFired = event<{ step: number; note: number }>({ to: "main", name: "stepFired" });
 
   return {
     process: () => {
@@ -842,14 +836,14 @@ export const arpeggiator = defineProcessor((ctx) => {
       // (decisions-log Q31-d).
       loadPattern.onReceive(({ steps }) => {
         for (let s = 0; s < PATTERN_LEN; s++) {
-          pattern[s].store(select(lt(s, steps.length), i32(steps.at(s)), pattern[s].load()));
+          pattern[s].write(select(lt(s, steps.length), i32(steps.at(s)), pattern[s].read()));
         }
       });
 
       // MIDI in: track the most recent note as the root.
       noteIn.onEvent("noteOn", ({ note, velocity, atSample }) => {
-        rootNote.store(note);
-        lastVel.store(velocity);
+        rootNote.write(note);
+        lastVel.write(velocity);
       });
       // noteOff handling intentionally omitted — arpeggiator runs on the latched
       // root until a new note arrives.
@@ -859,25 +853,25 @@ export const arpeggiator = defineProcessor((ctx) => {
         out.ch(0).at(i).write(0);
 
         // Increment sample accumulator; on rollover, advance the step.
-        const acc = sampleAccum.load().add(1);
-        const roll = acc.gt(samplesPerStep.load());
-        sampleAccum.store(select(roll, 0, acc));
+        const acc = sampleAccum.read().add(1);
+        const roll = acc.gt(samplesPerStep.read());
+        sampleAccum.write(select(roll, 0, acc));
 
-        const nextStep = stepIdx.load().add(1).mod(PATTERN_LEN);
+        const nextStep = stepIdx.read().add(1).mod(PATTERN_LEN);
 
         // On step rollover: emit a MIDI noteOn at this sample, plus a UI event.
         // Read the offset for the new step. (Build-time unroll via select chain.)
-        let offset: Node<"i32"> = pattern[0].load();
+        let offset: Node<"i32"> = pattern[0].read();
         for (let s = 1; s < PATTERN_LEN; s++) {
-          offset = select(nextStep.eq(s), pattern[s].load(), offset);
+          offset = select(nextStep.eq(s), pattern[s].read(), offset);
         }
-        const fireNote = rootNote.load().add(offset);
+        const fireNote = rootNote.read().add(offset);
 
         arpOut.emitIf(roll, {
           type: "noteOn",
           atSample: i,
           note: fireNote,
-          velocity: lastVel.load(),
+          velocity: lastVel.read(),
           channel: 0,
         });
         // Schedule a noteOff one step later by emitting at the boundary -1 sample.
@@ -886,7 +880,7 @@ export const arpeggiator = defineProcessor((ctx) => {
 
         stepFired.emitIf(roll, { atSample: i, step: nextStep, note: fireNote });
 
-        stepIdx.store(select(roll, nextStep, stepIdx.load()));
+        stepIdx.write(select(roll, nextStep, stepIdx.read()));
       });
     },
   };
@@ -916,7 +910,7 @@ node.events.stepFired.on(({ step }) => stepUI.highlight(step));
 node.state.stepIdx.subscribe((s) => stepUI.cursorAt(s));
 
 // Load a pattern (ascending then descending arpeggio).
-node.messages.loadPattern({
+node.events.loadPattern.emit({
   steps: new Float32Array([0, 4, 7, 12, 16, 19, 24, 19, 16, 12, 7, 4, 0, -5, -8, -12]),
 });
 ```
@@ -930,9 +924,7 @@ import {
   audioOutput,
   param,
   state,
-  buffer,
   forSample,
-  message,
   SAMPLES_PER_BLOCK,
   type Node,
 } from "@unworklet/core";
@@ -954,14 +946,14 @@ export const convolutionReverb = defineProcessor(
       .named("dryGain");
 
     // IR — snapshotted because preset = (wet/dry settings + which IR is loaded).
-    const irL = buffer.f32({ size: IR_LEN }).expose({ name: "irL", snapshot: "persistent" });
-    const irR = buffer.f32({ size: IR_LEN }).expose({ name: "irR", snapshot: "persistent" });
+    const irL = state.buffer.f32({ size: IR_LEN }).expose({ name: "irL", snapshot: "persistent" });
+    const irR = state.buffer.f32({ size: IR_LEN }).expose({ name: "irR", snapshot: "persistent" });
 
     // History of input samples (1 partition each, FIFO; old discarded).
     // Real partitioned-convolution implementations use FFT-domain partitioning;
     // this scaffold shows the time-domain accumulation pattern with SIMD bulk.
-    const histL = buffer.f32({ size: IR_LEN });
-    const histR = buffer.f32({ size: IR_LEN });
+    const histL = state.buffer.f32({ size: IR_LEN });
+    const histR = state.buffer.f32({ size: IR_LEN });
     const histHead = state.i32(0);
 
     // Wet output level, published to UI.
@@ -970,7 +962,10 @@ export const convolutionReverb = defineProcessor(
       .expose({ name: "wetMeter", snapshot: "transient", publish: { rateFps: 30 } });
 
     // Bulk IR upload from main.
-    const uploadIR = message<{ irL: Float32Array; irR: Float32Array }>({ name: "uploadIR" });
+    const uploadIR = event<{ irL: Float32Array; irR: Float32Array }>({
+      from: "main",
+      name: "uploadIR",
+    });
 
     return {
       process: () => {
@@ -985,7 +980,7 @@ export const convolutionReverb = defineProcessor(
           irR.copyFrom(ir);
         });
 
-        const headBlock = histHead.load();
+        const headBlock = histHead.read();
 
         forSample((i) => {
           const idx = headBlock.add(i).mod(IR_LEN);
@@ -1018,11 +1013,11 @@ export const convolutionReverb = defineProcessor(
           out.left.at(i).write(dryL.add(wetL));
           out.right.at(i).write(dryR.add(wetR));
 
-          wetMeter.store(wetMeter.load().max(wetL.abs().max(wetR.abs())));
+          wetMeter.write(wetMeter.read().max(wetL.abs().max(wetR.abs())));
         });
 
-        histHead.store(headBlock.add(SAMPLES_PER_BLOCK).mod(IR_LEN));
-        wetMeter.store(wetMeter.load().mul(0.93));
+        histHead.write(headBlock.add(SAMPLES_PER_BLOCK).mod(IR_LEN));
+        wetMeter.write(wetMeter.read().mul(0.93));
       },
     };
   },
@@ -1069,7 +1064,7 @@ node.outputs.main.connect(audioContext.destination);
 // Load an IR pair from a stereo file.
 const irFile = await fetch("/irs/cathedral.wav");
 const decoded = await audioContext.decodeAudioData(await irFile.arrayBuffer());
-node.messages.uploadIR({
+node.events.uploadIR.emit({
   irL: decoded.getChannelData(0),
   irR: decoded.getChannelData(decoded.numberOfChannels > 1 ? 1 : 0),
 });
@@ -1107,9 +1102,7 @@ import {
   audioOutput,
   param,
   state,
-  buffer,
   forSample,
-  midiInput,
   event,
   SAMPLES_PER_BLOCK,
   num,
@@ -1142,13 +1135,13 @@ const synthVoice = defineSubgraph((sr: number) => {
       // Update envelope sample-by-sample.
       const target = select(gate, velocity, 0);
       const coef = select(gate, aCoef, rCoef);
-      const e = target.sub(env.load()).mul(coef).add(env.load());
-      env.store(e);
+      const e = target.sub(env.read()).mul(coef).add(env.read());
+      env.write(e);
 
       // Update phase.
       const inc = noteHz.div(sr);
-      const p = phase.load().add(inc);
-      phase.store(select(p.gt(1), p.sub(1), p));
+      const p = phase.read().add(inc);
+      phase.write(select(p.gt(1), p.sub(1), p));
 
       // Sine osc + envelope.
       return p
@@ -1191,7 +1184,7 @@ export const polySynth = defineProcessor((ctx) => {
   const scEnv = state.f32(0);
 
   // UI: 1024-sample waveform thumbnail of the synth output.
-  const waveform = buffer
+  const waveform = state.buffer
     .f32({ size: 1024 })
     .expose({ name: "waveform", publish: { rateFps: 30 } });
   const wavePtr = state.i32(0);
@@ -1203,10 +1196,11 @@ export const polySynth = defineProcessor((ctx) => {
 
   // Sample-accurate event for note triggers (UI key flash).
   const notePlayed = event<{ note: number; voice: number; velocity: number }>({
+    to: "main",
     name: "notePlayed",
   });
 
-  const keys = midiInput({ name: "keys" });
+  const keys = event.midi({ from: "main", name: "keys" });
 
   // Eight independent synthVoice instances, allocated in declaration scope.
   const voices = [];
@@ -1218,22 +1212,22 @@ export const polySynth = defineProcessor((ctx) => {
     process: () => {
       keys.onEvent("noteOn", ({ note, velocity, atSample }) => {
         // Round-robin voice allocator.
-        const v = allocCursor.load();
+        const v = allocCursor.read();
         // Build-time unrolled selection: pick the slot that matches `v`.
         for (let s = 0; s < NUM_VOICES; s++) {
           const isMe = v.eq(s);
-          voiceNote[s].store(select(isMe, note, voiceNote[s].load()));
-          voiceVel[s].store(select(isMe, f32(velocity).div(127), voiceVel[s].load()));
-          voiceGate[s].store(select(isMe, true, voiceGate[s].load()));
+          voiceNote[s].write(select(isMe, note, voiceNote[s].read()));
+          voiceVel[s].write(select(isMe, f32(velocity).div(127), voiceVel[s].read()));
+          voiceGate[s].write(select(isMe, true, voiceGate[s].read()));
         }
-        allocCursor.store(v.add(1).mod(NUM_VOICES));
+        allocCursor.write(v.add(1).mod(NUM_VOICES));
 
         notePlayed.emitIf(true, { atSample, note, voice: v, velocity: f32(velocity).div(127) });
       });
 
       keys.onEvent("noteOff", ({ note }) => {
         for (let s = 0; s < NUM_VOICES; s++) {
-          voiceGate[s].store(select(voiceNote[s].load().eq(note), false, voiceGate[s].load()));
+          voiceGate[s].write(select(voiceNote[s].read().eq(note), false, voiceGate[s].read()));
         }
       });
 
@@ -1245,23 +1239,23 @@ export const polySynth = defineProcessor((ctx) => {
           .exp(),
       );
 
-      const wpStart = wavePtr.load();
+      const wpStart = wavePtr.read();
 
       forSample((i) => {
         // Sidechain envelope (peak detector with separate attack/release).
         const scPeak = sidechain.left.at(i).abs().max(sidechain.right.at(i).abs());
-        const scC = select(scPeak.gt(scEnv.load()), aCoef, rCoef);
-        scEnv.store(scPeak.sub(scEnv.load()).mul(scC).add(scEnv.load()));
+        const scC = select(scPeak.gt(scEnv.read()), aCoef, rCoef);
+        scEnv.write(scPeak.sub(scEnv.read()).mul(scC).add(scEnv.read()));
 
         // Duck factor: 1.0 - duckAmount * scEnv.
-        const duck = num(1).sub(duckAmount.at(0).mul(scEnv.load()));
+        const duck = num(1).sub(duckAmount.at(0).mul(scEnv.read()));
 
         // Sum voices.
         let mix = f32(0);
         for (let s = 0; s < NUM_VOICES; s++) {
-          const note = voiceNote[s].load();
-          const vel = voiceVel[s].load();
-          const gate = voiceGate[s].load();
+          const note = voiceNote[s].read();
+          const vel = voiceVel[s].read();
+          const gate = voiceGate[s].read();
           const hz = f32(note.sub(69))
             .mul(Math.LN2 / 12)
             .exp()
@@ -1278,14 +1272,14 @@ export const polySynth = defineProcessor((ctx) => {
         waveform.write(wp, sig);
       });
 
-      wavePtr.store(wpStart.add(SAMPLES_PER_BLOCK).mod(1024));
+      wavePtr.write(wpStart.add(SAMPLES_PER_BLOCK).mod(1024));
 
       // Count active voices for UI.
       let count = i32(0);
       for (let s = 0; s < NUM_VOICES; s++) {
-        count = count.add(select(voiceGate[s].load(), 1, 0));
+        count = count.add(select(voiceGate[s].read(), 1, 0));
       }
-      activeVoices.store(count);
+      activeVoices.write(count);
     },
   };
 });
@@ -1325,23 +1319,14 @@ setInterval(() => {
 ## 9. SysEx bridge
 
 ```typescript
-import {
-  defineProcessor,
-  audioOutput,
-  state,
-  message,
-  midiInput,
-  midiOutput,
-  buffer,
-  i32,
-} from "@unworklet/core";
+import { defineProcessor, audioOutput, state, event, i32 } from "@unworklet/core";
 
 const MAX_SYSEX_LEN = 512;
 
 // SysEx bridge: rewrites the device-ID byte of each incoming sysex event and
 // re-emits the result to a downstream port (MFX-style routing). The device ID
 // to apply is held in a published `state.i32` and updated from the main side
-// via a `message<T>`. The wire format is the standard sysex layout
+// via a `event<T>({ from: "main" })`. The wire format is the standard sysex layout
 // `[0xF0, deviceId, ...payload..., 0xF7]` — byte index 1 is the device ID.
 export const sysexBridge = defineProcessor((ctx) => {
   // No audio processing — the worklet exists purely to mediate MIDI. A silent
@@ -1349,8 +1334,8 @@ export const sysexBridge = defineProcessor((ctx) => {
   // unwritten samples emit silence (Q37).
   const out = audioOutput({ channels: 1, name: "main" });
 
-  const sysexIn = midiInput({ name: "sysexIn" });
-  const sysexOut = midiOutput({ name: "sysexOut" });
+  const sysexIn = event.midi({ from: "main", name: "sysexIn" });
+  const sysexOut = event.midi({ to: "main", name: "sysexOut" });
 
   // 7-bit MIDI value (0x00–0x7F). Published so the main side can mirror the
   // current setting in the UI.
@@ -1358,16 +1343,16 @@ export const sysexBridge = defineProcessor((ctx) => {
 
   // Byte buffer that holds the in-flight sysex while we rewrite byte 1.
   // Sized for the longest payload the bridge is expected to handle.
-  const buf = buffer.u8({ size: MAX_SYSEX_LEN });
+  const buf = state.buffer.u8({ size: MAX_SYSEX_LEN });
 
   // main → worklet message that updates the device ID applied to subsequent
   // sysex events.
-  const setId = message<{ id: number }>({ name: "setId" });
+  const setId = event<{ id: number }>({ from: "main", name: "setId" });
 
   return {
     process: () => {
       setId.onReceive(({ id }) => {
-        targetId.store(id);
+        targetId.write(id);
       });
 
       // Copy the incoming sysex bytes into `buf`, overwrite byte 1 with the
@@ -1375,7 +1360,7 @@ export const sysexBridge = defineProcessor((ctx) => {
       // downstream sees the same payload size as the inbound event.
       sysexIn.onEvent("sysex", ({ data, length, atSample }) => {
         buf.copyFrom(data);
-        buf.write(i32(1), targetId.load());
+        buf.write(i32(1), targetId.read());
         sysexOut.emitIf(true, {
           type: "sysex",
           data: buf,
@@ -1410,7 +1395,7 @@ node.midi.sysexOut.onEvent("sysex", (event) => {
 
 // Update the device ID applied to every subsequent sysex passing through the
 // bridge.
-node.messages.setId({ id: 0x42 });
+node.events.setId.emit({ id: 0x42 });
 
 // Reflect the current setting in the UI.
 node.state.targetId.subscribe((id) => deviceIdUI.set(id));
@@ -1423,9 +1408,9 @@ node.state.targetId.subscribe((id) => deviceIdUI.set(id));
 > **Framework surface vs consumer recipe**: the unworklet surface exercised in this example is `replaceProcessor` (`@unworklet/core`) + `state.snapshot 'persistent'` + the `RestoreResult.ok = false` failure path + the Q63 accumulation warning. **Everything else** in the main-side code (= `URL.createObjectURL(blob)`, `import(/* @vite-ignore */ url)`, source acquisition, REPL UI wiring, blob URL teardown) is a **consumer-side recipe** — not part of unworklet's surface. `/* @vite-ignore */` is a Vite-specific annotation, not an unworklet annotation. In production code a bundler HMR boundary or file watcher (= `07-vite-plugin.md` §4 recipe sketch) provides the same module-acquisition path; unworklet does not own the source-acquisition mechanism.
 
 ```typescript
-// initial.processor.ts — REPL の 初 期 processor。 user が editor で 書 き
-// 換 え て も 同 じ 公 開 surface (= audioOutput 'main' + param 'freq' +
-// state.f32 'phase' persistent) を 維 持 す る 想 定。
+// initial.processor.ts — The initial processor for the REPL. The user may edit
+// it freely, but is expected to keep the same public surface
+// (= audioOutput 'main' + param 'freq' + state.f32 'phase' persistent).
 
 import { defineProcessor, audioOutput, param, state, forSample, f32 } from "@unworklet/core";
 
@@ -1435,16 +1420,16 @@ export const initialOsc = defineProcessor(
     const freq = param
       .f32({ default: 440, min: 20, max: 20000, automationRate: "k-rate" })
       .named("freq");
-    // 'persistent' = swap を 跨 い で carry forward さ せ た い state。
+    // 'persistent' = state to carry forward across processor swaps.
     const phase = state.f32(0).expose({ name: "phase", snapshot: "persistent" });
 
     return {
       process: () => {
         forSample((i) => {
-          const p = phase.load();
+          const p = phase.read();
           const inc = freq.at(0).mul(f32((2 * Math.PI) / ctx.sampleRate));
           out.ch(0).at(i).write(p.sin());
-          phase.store(p.add(inc).mod(f32(2 * Math.PI)));
+          phase.write(p.add(inc).mod(f32(2 * Math.PI)));
         });
       },
     };
@@ -1470,9 +1455,9 @@ export const initialOsc = defineProcessor(
 ```
 
 ```typescript
-// main side — REPL UI + Run button で hot swap。 unworklet は primitive だ け
-// 提 供 (= replaceProcessor)、 source 取 得 path / graph re-wire / error UI
-// は user-land。
+// main side — REPL UI with a Run button for hot swap. unworklet provides only
+// the primitive (= replaceProcessor); source acquisition, graph re-wiring,
+// and error UI are user-land concerns.
 
 import { createNode, replaceProcessor } from "@unworklet/core";
 import { initialOsc } from "./initial.processor.ts?worklet";
@@ -1483,23 +1468,24 @@ node.outputs.main.connect(audioCtx.destination);
 audioCtx.resume();
 
 runButton.addEventListener("click", async () => {
-  // editor の source を blob URL 経 由 で 新 module と し て import。 prod で は
-  // bundler HMR や file watcher 経 由 で 同 等 path を 組 む。
+  // Import the editor's source as a new module via a blob URL. In production,
+  // an equivalent path is assembled through bundler HMR or a file watcher.
   const source = editor.getValue();
   const blob = new Blob([source], { type: "application/javascript" });
   const url = URL.createObjectURL(blob);
   const mod = await import(/* @vite-ignore */ url);
 
-  // 旧 instance を 新 module で 置 き 換 え。 snapshot/restore + migration
-  // chain で state を carry forward、 失 敗 時 は ok: false で 復 帰 path。
+  // Replace the running instance with the new module. State is carried forward
+  // via snapshot/restore + the migration chain; on failure, ok: false surfaces
+  // the recovery path.
   const result = await replaceProcessor(node, mod.default);
   if (!result.ok) {
     statusUI.set(`migration failed at step ${result.error.step}: ${result.error.message}`);
     return;
   }
 
-  // graph 接 続 を 新 wrapper に 移 す。 unworklet は graph 操 作 し な い
-  // (Q50)、 user-land で disconnect → connect を 行 う。
+  // Move graph connections to the new wrapper. unworklet does not manipulate
+  // the graph (Q50) — disconnect → connect is user-land.
   node.outputs.main.disconnect();
   node = result.node;
   node.outputs.main.connect(audioCtx.destination);
@@ -1508,9 +1494,9 @@ runButton.addEventListener("click", async () => {
   URL.revokeObjectURL(url);
 });
 
-// 累 積 swap で Web Audio の registered-processor table が 解 放 さ れ な い
-// platform 制 約 (= Q63)。 51 回 目 の swap で framework が console.warn を
-// 1 度 出 す = user が 必 要 に 応 じ て AudioContext を 作 り 直 す path。
+// Platform constraint (Q63): the Web Audio registered-processor table is not
+// released across accumulated swaps. On the 51st swap the framework emits a
+// single console.warn; the user can then recreate the AudioContext if needed.
 ```
 
 ---
@@ -1523,7 +1509,7 @@ These are intentionally outside the example set today and are tracked as follow-
 - `everyNSamples` sub-rate work — the surface is defined in `01-dsl.md` §9 (Q7) but no current example uses it. A canonical example will land once a use case (e.g. envelope follower at sub-rate) is selected.
 - Cross-precision type conversion boundaries (`f64(node)` over an `f32` source, etc.) — the surface is in `01-dsl.md` §2 and `f32(node)` / `i32(node)` are exercised, but no example crosses a precision boundary today.
 - Math primitives `tan`, `tanh`, `sqrt` — listed in `01-dsl.md` §2 but unused across the example set.
-- `buffer.i32` — only `buffer.f32` is exercised.
+- `state.buffer.i32` — only `state.buffer.f32` is exercised.
 - MIDI variants beyond `noteOn` / `noteOff` / `sysex`: `cc`, `pitchBend`, `programChange`, `channelPressure`, `aftertouch`, `systemRealtime` are part of the Q4 surface but no current example uses them. Q4 covers the wire / handler shape; the canonical example set has a coverage gap for these variants.
 - `node.midi.<name>.diagnostics.overflowCount()` and `node.events.<name>.diagnostics.overflowCount()` (main-side diagnostics) are present in the spec but only Ex 4 and Ex 8 use them (one polling block each).
 

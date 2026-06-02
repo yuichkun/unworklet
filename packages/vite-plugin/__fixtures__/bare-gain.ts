@@ -1,10 +1,11 @@
 /**
- * Plugin test fixture = source file name に `.processor.` 中 間 を 持 た な い
- * ケ ー ス。 plugin の `assetNameFromSourcePath` が `.processor` suffix を 削
- * る branch の 「削 ら な い 側」 (= base name そ の ま ま) を 担 保 す る。
+ * Plugin test fixture for a source file whose name does NOT contain the
+ * `.processor.` middle segment. Exercises the branch of
+ * `assetNameFromSourcePath` that leaves the base name unchanged instead of
+ * stripping the `.processor` suffix.
  *
- * 中 身 は canonical Ex 1 minus meter と 同 形 (= Phase 3 で fill 済 surface
- * 限 定、 stub に hit し な い)。
+ * The DSP graph matches canonical Example 1 without the meter node, covering
+ * only the surface area filled by Phase 3 (no stub paths hit).
  */
 
 import { audioInput, audioOutput, defineProcessor, forSample, param } from "@unworklet/core";

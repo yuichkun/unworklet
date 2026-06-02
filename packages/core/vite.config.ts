@@ -3,7 +3,7 @@ import { defineConfig } from "vite-plus";
 export default defineConfig({
   pack: {
     dts: true,
-    entry: ["src/index.ts", "src/worklet-entry.ts", "src/simd.ts"],
+    entry: ["src/index.ts", "src/worklet-entry.ts", "src/simd.ts", "src/dev.ts"],
     exports: false,
   },
   lint: {
@@ -15,26 +15,26 @@ export default defineConfig({
   fmt: {},
   test: {
     include: ["src/**/*.test.ts"],
-    // Browser-mode e2e は 別 config (= `vite.browser.config.ts`) で 起 動。
-    // default `vp test` は node-side unit / integration の み = browser fixture
-    // path を 全 exclude (= real `AudioContext` / `SharedArrayBuffer` / `Atomics`
-    // 必 須 で node 環 境 で fail する path)。
+    // Browser-mode e2e runs under a separate config (`vite.browser.config.ts`).
+    // The default `vp test` covers only node-side unit / integration tests, so it
+    // excludes every browser-fixture path (those require a real `AudioContext` /
+    // `SharedArrayBuffer` / `Atomics` and would fail in a node environment).
     exclude: ["src/**/*.browser.test.ts", "src/__tests__/browser/**", "**/node_modules/**"],
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],
       // Exclude types-only files + public re-export hubs + test files
-      // (= `AGENTS.md` Testing policy 通 り).
+      // (per the `AGENTS.md` Testing policy).
       exclude: [
         "src/**/*.test.ts",
         // types-only (= no functions / branches)
         "src/types.ts",
         "src/compile/ast.ts",
-        // public re-export hub (= `export` 文 だ け)
+        // public re-export hub (`export` statements only)
         "src/index.ts",
-        // browser e2e fixtures = real `AudioContext` 必 須 で node-side test に 含
-        // ま れ ない、 vite.browser*.config.ts 経 由 で real chromium で 駆 動 す る
-        // 物 = node coverage 対 象 外。
+        // browser e2e fixtures require a real `AudioContext`, so they are not part
+        // of node-side tests; they run under real chromium via vite.browser*.config.ts
+        // and are therefore outside node coverage.
         "src/__tests__/browser/fixtures/**",
         // black-box behavior test harness (= test infrastructure, exercised by
         // every behavior test; same exclusion rationale as `*.test.ts`).

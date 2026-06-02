@@ -1,9 +1,9 @@
 /**
- * Behavior of the static-analysis stage (= `03-compiler.md` §3、
- * plan Q-D stage 別 internal module の 1 つ目)。
+ * Behavior of the static-analysis stage (= `03-compiler.md` §3,
+ * the first internal module of the Q-D stage plan).
  *
- * Phase 3 = noop = `[]` 返 す だ け (= layered error model の Layer 3
- * check は 後 続 phase で fill、 plan「analyze は Phase 3 = noop」 規 定)。
+ * Phase 3 = noop = returns `[]` only (= Layer 3 checks in the layered error
+ * model are filled by subsequent phases; plan specifies "analyze is Phase 3 = noop").
  */
 
 import { expect, test } from "vite-plus/test";
@@ -63,7 +63,7 @@ test("`analyze(populatedGraph)` returns an empty diagnostics array (= Phase 3 no
 
 // ─────────────────────────────────────────────────────────────────────────
 // Q32-c: constant-truthy `emitIf` inside `forSample` = static-analysis error
-// (`01-dsl.md` §4.1 + `decisions-log.md` Q32-c)。 stable ID = `constant-truthy-emitif`。
+// (`01-dsl.md` §4.1 + `decisions-log.md` Q32-c). stable ID = `constant-truthy-emitif`.
 // ─────────────────────────────────────────────────────────────────────────
 
 const constantTruthyEmitInForSample: CapturedGraph = {
@@ -99,7 +99,7 @@ const constantTruthyEmitInForSample: CapturedGraph = {
   ],
 };
 
-test("`analyze`: forSample 内 で cond literal truthy = error diagnostic + stable ID", () => {
+test("`analyze`: constant-truthy cond literal inside forSample produces an error diagnostic with a stable ID", () => {
   const diags = analyze(constantTruthyEmitInForSample);
   expect(diags).toHaveLength(1);
   expect(diags[0]).toMatchObject({
@@ -134,7 +134,7 @@ const constantTruthyMidiEmitInForSample: CapturedGraph = {
   ],
 };
 
-test("`analyze`: forSample 内 で midiEmitIf cond literal truthy = error + stable ID", () => {
+test("`analyze`: constant-truthy midiEmitIf cond literal inside forSample produces an error with a stable ID", () => {
   const diags = analyze(constantTruthyMidiEmitInForSample);
   expect(diags).toHaveLength(1);
   expect(diags[0]).toMatchObject({
@@ -144,7 +144,7 @@ test("`analyze`: forSample 内 で midiEmitIf cond literal truthy = error + stab
   expect(diags[0]!.message).toMatch(/out/);
 });
 
-test("`analyze`: per-block top で midiEmitIf cond literal truthy = error ナ シ", () => {
+test("`analyze`: constant-truthy midiEmitIf cond literal at per-block top level produces no error", () => {
   // A `midiEmitIf(true)` outside `forSample` (= handler / per-block top) is the
   // canonical 1:1 projection form and must not be rejected.
   const graph: CapturedGraph = {
@@ -165,10 +165,10 @@ test("`analyze`: per-block top で midiEmitIf cond literal truthy = error ナ �
   expect(analyze(graph)).toEqual([]);
 });
 
-test("`analyze`: forSample 内 で cond literal falsy (= 0) = error ナ シ", () => {
-  // falsy literal は graph-capture-time fold で drop さ れ る 規 範 だ が、 仮 に
-  // AST に 残 っ て も analyze で error 出 さ な い (= unconditional 「fire ナ シ」
-  // = ringbuffer 詰 ま ら な い、 違 反 軸 で は な い)。
+test("`analyze`: falsy (= 0) cond literal inside forSample produces no error", () => {
+  // A falsy literal is normally folded away at graph-capture time, but even if
+  // it survives to the AST, analyze must not error — unconditional "never fires"
+  // cannot saturate the ringbuffer, so it is not a violation.
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -204,9 +204,9 @@ test("`analyze`: forSample 内 で cond literal falsy (= 0) = error ナ シ", ()
   expect(analyze(graph)).toEqual([]);
 });
 
-test("`analyze`: per-block top で cond literal truthy = error ナ シ (= 規 範 spelling)", () => {
-  // handler context / per-block top level で の `emitIf(true, payload)` は
-  // canonical unconditional emission = OK。 forSample 限 定 の error。
+test("`analyze`: constant-truthy cond literal at per-block top level produces no error (canonical spelling)", () => {
+  // `emitIf(true, payload)` at handler context / per-block top level is canonical
+  // unconditional emission and must be accepted. The error is forSample-scoped only.
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -236,9 +236,9 @@ test("`analyze`: per-block top で cond literal truthy = error ナ シ (= 規 �
   expect(analyze(graph)).toEqual([]);
 });
 
-test("`analyze`: forSample 内 で cond non-literal (= stateLoad) = error ナ シ", () => {
-  // state-edge gated cond = 動 的 = OK。 forSample 内 の constant-truthy だ け を
-  // reject す る 規 範。
+test("`analyze`: non-literal cond (= stateLoad) inside forSample produces no error", () => {
+  // A state-edge-gated cond is dynamic and must be accepted. Only a constant-truthy
+  // literal inside forSample is rejected.
   const graph: CapturedGraph = {
     declarations: [
       { kind: "state", name: "gate", type: "bool", initial: false, userNamed: true },
@@ -275,7 +275,7 @@ test("`analyze`: forSample 内 で cond non-literal (= stateLoad) = error ナ �
   expect(analyze(graph)).toEqual([]);
 });
 
-test("`analyze`: nested forSample 内 で 全 emit を 走 査 + 複 数 違 反 を 全 報 告", () => {
+test("`analyze`: scans all emits inside forSample and reports every violation", () => {
   const graph: CapturedGraph = {
     declarations: [
       {
@@ -322,10 +322,11 @@ test("`analyze`: nested forSample 内 で 全 emit を 走 査 + 複 数 違 反
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// Type walk: 多 型 lowering 後 = i32 / f64 / i64 arithmetic は valid (= 旧
-// non-f32-arithmetic guard は 撤 去 済 み)。 walkForTypeErrors は select branch
-// 型 不 一 致 だ け を 弾 く。 多 型 算 術 が compile を 通 る こ と 自 体 は behavior
-// test (`__tests__/behavior/multitype.test.ts`) が 黒 箱 で 担 保。
+// Type walk: after multi-type lowering, i32 / f64 / i64 arithmetic is valid
+// (the former non-f32-arithmetic guard has been removed). walkForTypeErrors
+// rejects only select branches with mismatched types. That multi-type arithmetic
+// passes compilation is covered as a black-box behavioral guarantee by
+// `__tests__/behavior/multitype.test.ts`.
 // ─────────────────────────────────────────────────────────────────────────
 
 test("`analyze` returns no diagnostics for a valid f32 graph walked end-to-end", () => {

@@ -9,14 +9,13 @@
 import "@unworklet/core";
 import {
   audioOutput,
-  buffer,
+  event,
   defineProcessor,
   encodeScalar,
   encodeSnapshot,
   f32,
   forSample,
   inspectSnapshot,
-  message,
   state,
 } from "@unworklet/core";
 import { expect, test } from "vite-plus/test";
@@ -31,9 +30,9 @@ const counterProc = defineProcessor(() => {
   return {
     process: () => {
       forSample((i) => {
-        out.ch(0).at(i).write(f32(counter.load()));
+        out.ch(0).at(i).write(f32(counter.read()));
       });
-      counter.store(counter.load().add(1));
+      counter.write(counter.read().add(1));
     },
   };
 });
@@ -67,8 +66,8 @@ test("restore seeds the persistent state slot (carry-forward across renders)", a
 test("a persistent buffer round-trips through snapshot/restore", async () => {
   const wtProc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const wt = buffer.f32({ size: 8 }).expose({ name: "wt", snapshot: "persistent" });
-    const upload = message<{ samples: Float32Array }>({ name: "upload" });
+    const wt = state.buffer.f32({ size: 8 }).expose({ name: "wt", snapshot: "persistent" });
+    const upload = event<{ samples: Float32Array }>({ from: "main", name: "upload" });
     return {
       process: () => {
         upload.onReceive(({ samples }) => {
@@ -108,7 +107,7 @@ test("restore runs the migration chain on a schema-hash mismatch", async () => {
     return {
       process: () => {
         forSample((i) => {
-          out.ch(0).at(i).write(f32(renamed.load()));
+          out.ch(0).at(i).write(f32(renamed.read()));
         });
       },
     };

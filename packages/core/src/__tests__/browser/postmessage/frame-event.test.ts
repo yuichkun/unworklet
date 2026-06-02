@@ -1,17 +1,19 @@
 /**
- * Browser e2e (postMessage fallback): worklet → main の typed-array event payload を
- * SAB 不 可 環 境 (= COOP/COEP ナ シ) で 検 証。
+ * Browser e2e (postMessage fallback): verifies typed-array event payloads from
+ * worklet → main in an environment without SAB (no COOP/COEP headers).
  *
- * worklet が WASM content から配列を抽出して `port.postMessage` に同梱 → main の
- * onEventMessage が slot の [payloadLen, payloadOffset] で snapshot から slice。
+ * The worklet extracts an array from WASM content and attaches it to `port.postMessage`;
+ * on the main side, onEventMessage slices from the snapshot using the slot's
+ * [payloadLen, payloadOffset].
  *
- * 「通れば成功以外ありえない」設計 (= SAB 版と同軸):
- * - 入力を AudioBufferSourceNode で既知 ramp (i/256) にして worklet に流す。
- * - worklet が各ブロックの入力先頭 8 サンプルを event 配列で送り返す。
- * - postMessage delivery は OfflineAudioContext で best-effort (= MessageChannel
- *   task queue の drain timing) なので「受信した分」だけ検証するが、MessageChannel
- *   は順序保証 = 受信 k 件目が入力 block k と**ビット一致**することを assert。
- *   入力依存 + 順序 + ビット一致 = 途中の接続点が壊れれば崩れる。
+ * Design invariant (mirrors the SAB variant — pass means correctness):
+ * - Feed a known ramp signal (i/256) via AudioBufferSourceNode into the worklet.
+ * - The worklet sends back the first 8 input samples of each block as an event array.
+ * - postMessage delivery under OfflineAudioContext is best-effort (MessageChannel task
+ *   queue drain timing), so only received messages are asserted — but MessageChannel
+ *   guarantees order, meaning the k-th received message must **bit-exactly** match
+ *   input block k. Input dependency + order + bit-exactness: any broken link in the
+ *   chain will surface as a failure.
  */
 
 import { expect, test } from "vite-plus/test";
@@ -39,11 +41,11 @@ const waitRAF = (ticks: number): Promise<void> =>
 const expectedBlock = (b: number): number[] =>
   Array.from({ length: FRAME }, (_, k) => (b * 128 + k) / 256);
 
-test("環 境 担 保: COOP/COEP 無 し で crossOriginIsolated false", () => {
+test("env assertion: crossOriginIsolated is false without COOP/COEP", () => {
   expect(globalThis.crossOriginIsolated).toBe(false);
 });
 
-test("transport: SAB unavailable で postMessage に fallback", async () => {
+test("transport: falls back to postMessage when SAB is unavailable", async () => {
   const ctx = new OfflineAudioContext({
     numberOfChannels: 1,
     length: 128,
@@ -54,7 +56,7 @@ test("transport: SAB unavailable で postMessage に fallback", async () => {
   node.dispose();
 });
 
-test("typed-array event: worklet→main で入力先頭8サンプルが配列で届く (postMessage)", async () => {
+test("typed-array event: first 8 input samples per block arrive as an array via worklet→main (postMessage)", async () => {
   const BLOCKS = 3;
   const ctx = new OfflineAudioContext({
     numberOfChannels: 1,
@@ -79,8 +81,9 @@ test("typed-array event: worklet→main で入力先頭8サンプルが配列で
   await ctx.startRendering();
   await waitRAF(3);
 
-  // postMessage = best-effort delivery だが MessageChannel は順序保証。 受信 k 件目が
-  // 入力 block k とビット一致 = 入力依存 + 順序 + 値、で偶然/破損を排除。
+  // postMessage is best-effort delivery, but MessageChannel guarantees order.
+  // The k-th received message must bit-exactly match input block k,
+  // ruling out coincidental passes and silent corruption.
   expect(received.length).toBeGreaterThan(0);
   received.forEach((r, k) => {
     expect(Array.from(r.samples)).toEqual(expectedBlock(k));

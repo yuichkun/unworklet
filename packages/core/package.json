@@ -23,6 +23,11 @@
       "development": "./src/worklet-entry.ts",
       "import": "./dist/worklet-entry.mjs"
     },
+    "./dev": {
+      "types": "./src/dev.ts",
+      "development": "./src/dev.ts",
+      "import": "./dist/dev.mjs"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {

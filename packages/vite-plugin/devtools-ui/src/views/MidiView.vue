@@ -6,11 +6,12 @@ import {
   type MidiEvent,
   type MidiEventInput,
   type MidiPortMeta,
+  pickInputTarget,
   portKey,
-  useMockMidi,
-} from "../composables/useMockMidi";
+  useLiveMidi,
+} from "../composables/useLiveMidi";
 
-const midi = useMockMidi();
+const { ports, log, overflow, injectMidi } = useLiveMidi();
 
 // Keyboard window = 2 octaves (25 keys) starting at the configurable octave base.
 const KEYBOARD_KEY_COUNT = 25;
@@ -48,9 +49,16 @@ const keyboardKeys = computed<KeyDef[]>(() => {
 
 const whiteKeyCount = computed(() => keyboardKeys.value.filter((k) => k.white).length);
 
-const inputPorts = computed<MidiPortMeta[]>(() => midi.ports.filter((p) => p.kind === "input"));
+const inputPorts = computed<MidiPortMeta[]>(() => ports.value.filter((p) => p.kind === "input"));
 
-const targetPortKey = ref<string>(inputPorts.value[0] ? portKey(inputPorts.value[0]) : "");
+const targetPortKey = ref<string>(pickInputTarget(inputPorts.value, ""));
+// The live input list arrives asynchronously, so the initial target is usually "".
+// Re-pick whenever the list changes: select the first port once they arrive, and
+// re-select if the chosen port disappears — otherwise the keyboard / sliders
+// silently no-op because sendEvent early-returns on an empty target.
+watch(inputPorts, (ports) => {
+  targetPortKey.value = pickInputTarget(ports, targetPortKey.value);
+});
 const velocity = ref(96);
 const channel = ref(0);
 const ccController = ref(1); // = modulation wheel (most common dev test target)
@@ -63,7 +71,7 @@ const pressedKeys = ref<Set<number>>(new Set());
 
 const sendEvent = (event: MidiEventInput): void => {
   if (!targetPortKey.value) return;
-  midi.injectMidi(targetPortKey.value, event);
+  injectMidi(targetPortKey.value, event);
 };
 
 // ──────────────────────────────────────────────────────────────────
@@ -136,7 +144,9 @@ const sendProgramChange = (): void => {
 
 const panic = (): void => {
   if (!targetPortKey.value) return;
-  for (const note of [...pressedKeys.value]) {
+  // Snapshot the notes before sending — the loop body doesn't mutate the set
+  // (the clear happens after), so iterating it directly is safe.
+  for (const note of pressedKeys.value) {
     sendEvent({ type: "noteOff", channel: channel.value, note, velocity: 0 });
   }
   pressedKeys.value.clear();
@@ -277,19 +287,27 @@ const ccCurrentName = computed(
 // ──────────────────────────────────────────────────────────────────
 
 const formatEventBody = (e: MidiEvent): string => {
-  const base = `ch ${e.channel} · sample ${e.atSample}`;
+  // Main-side events carry no per-sample offset (it is consumed inside the
+  // worklet's render block), so the log shows the semantic payload only.
+  const ch = "channel" in e ? `ch ${e.channel} · ` : "";
   switch (e.type) {
     case "noteOn":
     case "noteOff":
-      return `${base} · note ${e.note} (${noteLabel(e.note)}) · vel ${e.velocity}`;
+      return `${ch}note ${e.note} (${noteLabel(e.note)}) · vel ${e.velocity}`;
     case "cc":
-      return `${base} · cc ${e.controller} · val ${e.value}`;
+      return `${ch}cc ${e.controller} · val ${e.value}`;
     case "pitchBend":
-      return `${base} · val ${e.value}`;
+      return `${ch}val ${e.value}`;
     case "programChange":
-      return `${base} · prog ${e.program}`;
+      return `${ch}prog ${e.program}`;
     case "channelPressure":
-      return `${base} · pressure ${e.pressure}`;
+      return `${ch}pressure ${e.pressure}`;
+    case "aftertouch":
+      return `${ch}note ${e.note} (${noteLabel(e.note)}) · pressure ${e.pressure}`;
+    case "systemRealtime":
+      return `status 0x${e.status.toString(16).padStart(2, "0")}`;
+    case "sysex":
+      return `${e.data.length} bytes`;
   }
 };
 
@@ -307,23 +325,21 @@ const formatTs = (ms: number): string => {
   );
 };
 
+// Only `out` (worklet emits) and `inject` (panel sends) are observable from the
+// main thread — a worklet's inbound traffic isn't, since main is the sender.
 const directionLabel: Record<string, string> = {
-  in: "↓ in",
   out: "↑ out",
   inject: "→ inject",
 };
 
-const directionFilter = ref<Record<"in" | "out" | "inject", boolean>>({
-  in: true,
+const directionFilter = ref<Record<"out" | "inject", boolean>>({
   out: true,
   inject: true,
 });
 
-const filteredLog = computed(() =>
-  midi.log.value.filter((e) => directionFilter.value[e.direction]),
-);
+const filteredLog = computed(() => log.value.filter((e) => directionFilter.value[e.direction]));
 
-const toggleDirection = (d: "in" | "out" | "inject"): void => {
+const toggleDirection = (d: "out" | "inject"): void => {
   directionFilter.value = { ...directionFilter.value, [d]: !directionFilter.value[d] };
 };
 
@@ -331,9 +347,9 @@ const toggleDirection = (d: "in" | "out" | "inject"): void => {
 // Overflow alert (= dropped events on the currently-targeted input port)
 // ──────────────────────────────────────────────────────────────────
 
-const overflowForTarget = computed(() => midi.overflowMock.value[targetPortKey.value] ?? 0);
-
-const resetOverflowForTarget = (): void => midi.resetOverflow(targetPortKey.value);
+// Real cumulative dropped-event count from the port's ringbuffer diagnostics.
+// It is a monotonic worklet counter — not resettable from the DevTools side.
+const overflowForTarget = computed(() => overflow.value[targetPortKey.value] ?? 0);
 
 // ──────────────────────────────────────────────────────────────────
 // Keyboard geometry
@@ -354,8 +370,8 @@ const octaveLabel = computed(() => `C${Math.floor(octaveBase.value / 12) - 1}`);
     <header class="view-header">
       <div class="view-title">MIDI</div>
       <div class="view-meta">
-        <span class="u-pill">{{ midi.ports.length }} ports</span>
-        <span class="u-pill u-pill--accent">{{ midi.log.value.length }} log entries</span>
+        <span class="u-pill">{{ ports.length }} ports</span>
+        <span class="u-pill u-pill--accent">{{ log.length }} log entries</span>
       </div>
     </header>
 
@@ -366,7 +382,7 @@ const octaveLabel = computed(() => `C${Math.floor(octaveBase.value / 12) - 1}`);
           <span class="section-title">Event log</span>
           <div class="log-filter">
             <button
-              v-for="d in ['in', 'out', 'inject'] as const"
+              v-for="d in ['out', 'inject'] as const"
               :key="d"
               type="button"
               class="log-filter-chip"
@@ -376,9 +392,7 @@ const octaveLabel = computed(() => `C${Math.floor(octaveBase.value / 12) - 1}`);
             >
               {{ directionLabel[d] }}
             </button>
-            <span class="section-meta mono"
-              >{{ filteredLog.length }} / {{ midi.log.value.length }}</span
-            >
+            <span class="section-meta mono">{{ filteredLog.length }} / {{ log.length }}</span>
           </div>
         </header>
 
@@ -403,7 +417,7 @@ const octaveLabel = computed(() => `C${Math.floor(octaveBase.value / 12) - 1}`);
       <section class="inject-section">
         <header class="section-head">
           <span class="section-title">Virtual keyboard inject</span>
-          <span class="section-meta mono">dev only · routed via mock RPC</span>
+          <span class="section-meta mono">dev only · sends into the live worklet</span>
         </header>
 
         <div class="inject-split">
@@ -421,17 +435,9 @@ const octaveLabel = computed(() => `C${Math.floor(octaveBase.value / 12) - 1}`);
               <span
                 v-if="overflowForTarget > 0"
                 class="overflow-badge"
-                :title="`${overflowForTarget} event(s) dropped on ${targetPortKey} — your injection rate is exceeding port capacity`"
+                :title="`${overflowForTarget} event(s) dropped on ${targetPortKey} — the injection rate exceeded the port's ringbuffer capacity`"
               >
                 ⚠ {{ overflowForTarget }} dropped
-                <button
-                  type="button"
-                  class="overflow-reset"
-                  title="Reset counter"
-                  @click="resetOverflowForTarget"
-                >
-                  ×
-                </button>
               </span>
               <label class="control">
                 <span class="control-label">channel</span>

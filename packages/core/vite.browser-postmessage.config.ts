@@ -1,11 +1,11 @@
 /**
- * `@unworklet/core` browser e2e config (= postMessage fallback path 専 用)。
+ * `@unworklet/core` browser e2e config for the postMessage fallback path only.
  *
- * COOP/COEP ヘ ッ ダ を 設 定 し な い = `crossOriginIsolated === false` =
- * `SharedArrayBuffer` 不 可 = unworklet runtime が postMessage transport に
- * fallback す る 経 路 を test。
+ * No COOP/COEP headers are set, so `crossOriginIsolated === false`,
+ * `SharedArrayBuffer` is unavailable, and the unworklet runtime falls back
+ * to postMessage transport. This config exercises that fallback path.
  *
- * 起 動: `vp test --config vite.browser-postmessage.config.ts`。
+ * Run: `vp test --config vite.browser-postmessage.config.ts`.
  */
 
 import unworklet from "@unworklet/vite-plugin";

@@ -1,7 +1,6 @@
 packages:
   - "packages/**"
   - "examples/*"
-  - "experiments/devtools-proto"
   - "!**/node_modules/**"
 
 catalogMode: prefer
@@ -25,9 +24,24 @@ catalog:
   "@vue-flow/core": ^1.48.2
   "@vue-flow/background": ^1.3.2
   "@vue-flow/controls": ^1.1.3
+  vue: ^3.5.34
+  vue-router: ^4.6.4
+  "@vitejs/plugin-vue": ^6.0.7
+  esbuild: ^0.28.0
+  monaco-editor: ^0.55.1
+  "@fontsource-variable/geist": ^5.2.9
+  "@fontsource-variable/jetbrains-mono": ^5.2.8
+  "@vitejs/devtools": 0.2.0
 overrides:
   vite: "catalog:"
   vitest: "catalog:"
+  # `@vitejs/devtools-kit` peer-resolves an older vite-plus-core/test (0.1.22),
+  # which duplicates the test runner — two `playwright()` provider types that don't
+  # unify (TS2769) and a second collector that hangs the shared aggregation. Pin the
+  # direct package names (the `vite`/`vitest` aliases above don't cover them) to the
+  # repo's single version.
+  "@voidzero-dev/vite-plus-core": "0.1.24"
+  "@voidzero-dev/vite-plus-test": "0.1.24"
 peerDependencyRules:
   allowAny:
     - vite

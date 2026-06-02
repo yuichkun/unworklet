@@ -1,7 +1,8 @@
 /**
- * Browser e2e: message<T> 経 路 全 behavior。 main 側 で `node.messages.<name>(p)`
- * 送 信 + worklet onReceive で state 反 映 + state.publish で main 側 観 測 + overflow
- * + diagnostics 担 保。
+ * Browser e2e: full message<T> path behavior. Main thread sends via
+ * `node.events.<name>.emit(p)`, worklet onReceive reflects state,
+ * state.publish exposes it to the main thread; overflow and diagnostics
+ * are also covered.
  */
 
 import { expect, test } from "vite-plus/test";
@@ -36,14 +37,16 @@ const buildContext = (durationQuanta: number): OfflineAudioContext =>
 // message<T> behavior
 // ─────────────────────────────────────────────────────────────────────────
 
-test("message: send + worklet onReceive で state 反 映 + main で 観 測 可", async () => {
-  // main で `node.messages.setCount({ value: 42 })` 送 信 → worklet drain で
-  // counter state に 42 store → state.publish (= rateFps 30) で SAB 経 由 で main 観 測。
-  // 32 quantum (= 4096 sample ≈ publish threshold 1600 越 え) で publish 反 映。
+test("message: send + worklet onReceive reflects state, observable from main thread", async () => {
+  // Main thread emits `node.events.setCount.emit({ value: 42 })`. The worklet
+  // drains the queue and stores 42 in counter state. state.publish (rateFps 30)
+  // propagates it via SAB to the main thread.
+  // 32 quanta (= 4096 samples, exceeds the publish threshold of 1600) ensures
+  // the published value is visible.
   const ctx = buildContext(32);
   const node = await createNode(ctx, messageCounter);
   node.outputs["main"]!.connect(ctx.destination);
-  const sender = node.messages["setCount"] as (p: { value: number }) => void;
+  const sender = node.events["setCount"].emit;
   sender({ value: 42 });
   await ctx.startRendering();
   const observed = node.state["counter"]!.value as number;
@@ -51,13 +54,13 @@ test("message: send + worklet onReceive で state 反 映 + main で 観 測 可
   node.dispose();
 });
 
-test("message: subscribe handler で counter 反 映 を rAF tick で 受 領", async () => {
+test("message: subscribe handler receives counter update within rAF ticks", async () => {
   const ctx = buildContext(32);
   const node = await createNode(ctx, messageCounter);
   node.outputs["main"]!.connect(ctx.destination);
   const values: number[] = [];
   const off = node.state["counter"]!.subscribe((v) => values.push(v as number));
-  const sender = node.messages["setCount"] as (p: { value: number }) => void;
+  const sender = node.events["setCount"].emit;
   sender({ value: 7 });
   await ctx.startRendering();
   await waitRAF(3);
@@ -66,37 +69,36 @@ test("message: subscribe handler で counter 反 映 を rAF tick で 受 領", 
   node.dispose();
 });
 
-test("message: 複 数 send が registration order で drain", async () => {
+test("message: multiple sends are drained in registration order", async () => {
   const ctx = buildContext(32);
   const node = await createNode(ctx, messageCounter);
   node.outputs["main"]!.connect(ctx.destination);
-  const sender = node.messages["setCount"] as (p: { value: number }) => void;
+  const sender = node.events["setCount"].emit;
   sender({ value: 1 });
   sender({ value: 2 });
   sender({ value: 3 });
   await ctx.startRendering();
-  // drain で 1 → 2 → 3 の 順 で store = 最 終 state = 3
+  // Drained in order 1 → 2 → 3; final state is 3.
   const observed = node.state["counter"]!.value as number;
   expect(observed).toBe(3);
   node.dispose();
 });
 
-test("message: overflow path で diagnostics.overflowCount が 増 加", async () => {
-  // capacity 256 (= default)、 257 件 send で drop-oldest 発 動。
+test("message: overflow path increments diagnostics.overflowCount", async () => {
+  // Default capacity is 256; sending 257 messages triggers drop-oldest.
   const ctx = buildContext(1);
   const node = await createNode(ctx, messageCounter);
   node.outputs["main"]!.connect(ctx.destination);
-  const sender = node.messages["setCount"] as (p: { value: number }) => void;
+  const sender = node.events["setCount"].emit;
   for (let i = 0; i < 257; i++) {
     sender({ value: i });
   }
-  const diag = (node.messages["setCount"] as { diagnostics: { overflowCount(): number } })
-    .diagnostics;
+  const diag = node.events["setCount"].diagnostics;
   expect(diag.overflowCount()).toBeGreaterThan(0);
   node.dispose();
 });
 
-test("message: send ナ シ で counter = 初 期 0 維 持 (= regression)", async () => {
+test("message: counter stays at initial value 0 when no messages are sent (regression)", async () => {
   const ctx = buildContext(32);
   const node = await createNode(ctx, messageCounter);
   node.outputs["main"]!.connect(ctx.destination);
@@ -106,12 +108,13 @@ test("message: send ナ シ で counter = 初 期 0 維 持 (= regression)", asy
   node.dispose();
 });
 
-test("message: dispose 後 send で 例 外 出 ず (= no-op)", async () => {
+test("message: send after dispose does not throw (no-op)", async () => {
   const ctx = buildContext(1);
   const node = await createNode(ctx, messageCounter);
   node.outputs["main"]!.connect(ctx.destination);
   node.dispose();
-  // dispose 後 send = node 既 切 断 = SAB write は 走 る が consumer ナ シ = 例 外 ナ シ path
-  const sender = node.messages["setCount"] as (p: { value: number }) => void;
+  // After dispose, the node is disconnected. SAB writes still execute, but there
+  // is no consumer — the path must not throw.
+  const sender = node.events["setCount"].emit;
   expect(() => sender({ value: 99 })).not.toThrow();
 });

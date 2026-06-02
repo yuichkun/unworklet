@@ -103,7 +103,8 @@ const SUBGRAPH_BODY = Symbol("unworklet.subgraphBody");
 export function defineSubgraph<Args extends unknown[], Methods>(
   body: (...args: Args) => Methods,
 ): SubgraphDecl<Args, Methods> {
-  // body を symbol-keyed で carry (= createSubgraph が取り出して現 capture 内で実行)。
+  // Carry the body under a symbol key so createSubgraph can retrieve it and
+  // run it inside the active capture.
   return { [SUBGRAPH_BODY]: body } as unknown as SubgraphDecl<Args, Methods>;
 }
 
@@ -111,8 +112,9 @@ export type CreateSubgraphOptions = {
   name?: string;
 };
 
-// 末尾引数が `{ name }` のみの plain object なら createSubgraph options と判定
-// (= lambda arg の Node / array / 多 key object とは区別)。
+// Treat a trailing argument as createSubgraph options only when it is a plain
+// object whose sole key is `name` — this distinguishes it from a lambda arg that
+// is a Node, an array, or a multi-key object.
 function isCreateSubgraphOptions(v: unknown): v is CreateSubgraphOptions {
   return (
     v !== null &&
@@ -125,12 +127,14 @@ function isCreateSubgraphOptions(v: unknown): v is CreateSubgraphOptions {
 }
 
 /**
- * `createSubgraph(subgraph, ...lambdaArgs, options?)` (= §5.6、Q53/54)。
+ * `createSubgraph(subgraph, ...lambdaArgs, options?)` (= §5.6, Q53/Q54).
  *
- * declaration scope で subgraph body を**現在の capture 内で実行** → 内部 state /
- * buffer 宣言が親 graph に instance name prefix 付きで登録される (= 複数 instance で
- * 独立 state)。 body が返す method record を**そのまま**返す (= SubgraphInstance ラッパ
- * ナシ、Q54)。 method closure は instance の state を捕捉し、後で expression scope で呼べる。
+ * In declaration scope, the subgraph body runs **inside the active capture**, so
+ * its internal state / buffer declarations are registered into the parent graph
+ * under the instance name prefix (= each instance gets independent state). The
+ * method record returned by the body is returned **as-is** (= no
+ * `SubgraphInstance` wrapper, Q54). Each method closure captures the instance's
+ * state and can later be invoked in expression scope.
  */
 export function createSubgraph<Args extends unknown[], Methods>(
   subgraph: SubgraphDecl<Args, Methods>,
@@ -145,20 +149,24 @@ export function createSubgraph<Args extends unknown[], Methods>(
   let args = rest;
   let instanceName: string | undefined;
   const last = rest[rest.length - 1];
-  // 末尾を options 扱いするのは「options 形 ({name} only) かつ rest 数が lambda の arity を
-  // 超える」時だけ。さもないと outer lambda が {name} 形 config を取る subgraph で
-  // createSubgraph(sg, {name:"osc"}) の object が options と誤認され、型上 lambda 引数に
-  // bind されるのに runtime が slice して body が undefined を掴む (= 型⟺動く 違反)。
-  // arity を超えた末尾だけ options = TS の `[...Args, options?]` tuple 解釈と一致する。
+  // Treat the trailing argument as options only when it has the options shape
+  // ({name} only) AND the number of rest args exceeds the lambda's arity.
+  // Otherwise, for a subgraph whose outer lambda takes a {name}-shaped config,
+  // createSubgraph(sg, {name:"osc"}) would have its object misread as options:
+  // the type binds it to the lambda arg, but at runtime it gets sliced off and
+  // the body sees undefined (= a "types ⟺ runtime" violation). Treating only the
+  // arity-exceeding trailing arg as options matches TS's `[...Args, options?]`
+  // tuple interpretation.
   if (rest.length > 0 && isCreateSubgraphOptions(last) && rest.length > body.length) {
     instanceName = last.name;
     args = rest.slice(0, -1);
   }
   const ctx = getCurrentCapture();
-  // createSubgraph は declaration scope 専用 (§5.6.4 / Q34)。expression scope
-  // (= forSample / everyNSamples / handler body = currentLoopBody が立つ間) での
-  // instantiation は graph-capture-time error。内部 state を持たない plain subgraph も
-  // ここで弾く (= 内部宣言ありの場合は body 内の addDeclaration が同じ error を出す)。
+  // createSubgraph is declaration-scope only (§5.6.4 / Q34). Instantiating in
+  // expression scope (= while currentLoopBody is active: forSample /
+  // everyNSamples / handler body) is a graph-capture-time error. Even a plain
+  // subgraph with no internal state is rejected here (= when there are internal
+  // declarations, addDeclaration in the body raises the same error).
   if (ctx.currentLoopBody !== null) {
     throw new Error(
       "unworklet: createSubgraph(...) inside expression scope " +
@@ -177,10 +185,12 @@ export function createSubgraph<Args extends unknown[], Methods>(
   } finally {
     ctx.namePrefix = prevPrefix;
   }
-  // §8.1 / Q41: instance 名ナシ + named-factory slot (= user-named / persistent / publish =
-  // userNamed true) は snapshot / main-side path が auto prefix '__sg_N/...' = instantiation
-  // 順依存になり positional drift を招く → graph-capture-time error。plain-only (= 内部が全
-  // anonymous slot) は安定 path が要らないので名前不要 (= 共通ケース、§8.1)。
+  // §8.1 / Q41: an instance with no name plus a named-factory slot (= user-named
+  // / persistent / publish = userNamed true) would have its snapshot / main-side
+  // path use the auto prefix '__sg_N/...', which is instantiation-order
+  // dependent and causes positional drift → graph-capture-time error. A
+  // plain-only instance (= all internal slots anonymous) needs no stable path,
+  // so no name is required (= the common case, §8.1).
   if (instanceName === undefined) {
     const named = ctx.declarations
       .slice(declStart)

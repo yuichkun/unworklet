@@ -10,7 +10,6 @@ import "@unworklet/core";
 import {
   audioInput,
   audioOutput,
-  buffer,
   createSubgraph,
   defineSubgraph,
   defineProcessor,
@@ -20,9 +19,6 @@ import {
   i32,
   inspectSnapshot,
   lt,
-  message,
-  midiInput,
-  midiOutput,
   num,
   param,
   select,
@@ -70,11 +66,11 @@ function biquadDFIIT(
   z1: State<"f32">,
   z2: State<"f32">,
 ): Node<"f32"> {
-  const y = b0.mul(x).add(z1.load());
-  const z1n = b1.mul(x).add(z2.load()).sub(a1.mul(y));
+  const y = b0.mul(x).add(z1.read());
+  const z1n = b1.mul(x).add(z2.read()).sub(a1.mul(y));
   const z2n = b2.mul(x).sub(a2.mul(y));
-  z1.store(z1n);
-  z2.store(z2n);
+  z1.write(z1n);
+  z2.write(z2n);
   return y;
 }
 
@@ -134,48 +130,48 @@ const PATTERN_LEN = 4;
 
 const arpeggiator = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
-  const noteIn = midiInput({ name: "noteIn" });
-  const arpOut = midiOutput({ name: "arpOut" });
+  const noteIn = event.midi({ from: "main", name: "noteIn" });
+  const arpOut = event.midi({ to: "main", name: "arpOut" });
   const pattern: State<"i32">[] = [];
   for (let s = 0; s < PATTERN_LEN; s++) pattern.push(state.i32(0).named(`step_${s}`));
-  const loadPattern = message<{ steps: Float32Array }>({ name: "loadPattern" });
+  const loadPattern = event<{ steps: Float32Array }>({ from: "main", name: "loadPattern" });
   const rootNote = state.i32(60).named("rootNote");
   const lastVel = state.i32(96).named("lastVel");
   const stepIdx = state.i32(0).named("stepIdx");
   const samplesPerStep = state.i32(64).named("samplesPerStep"); // small for test
   const sampleAccum = state.i32(0);
-  const stepFired = event<{ step: number; note: number }>({ name: "stepFired" });
+  const stepFired = event<{ step: number; note: number }>({ to: "main", name: "stepFired" });
   return {
     process: () => {
       loadPattern.onReceive(({ steps }) => {
         for (let s = 0; s < PATTERN_LEN; s++) {
-          pattern[s]!.store(select(lt(s, steps.length), i32(steps.at(s)), pattern[s]!.load()));
+          pattern[s]!.write(select(lt(s, steps.length), i32(steps.at(s)), pattern[s]!.read()));
         }
       });
       noteIn.onEvent("noteOn", ({ note, velocity }) => {
-        rootNote.store(note);
-        lastVel.store(velocity);
+        rootNote.write(note);
+        lastVel.write(velocity);
       });
       forSample((i) => {
         out.ch(0).at(i).write(num(0));
-        const acc = sampleAccum.load().add(1);
-        const roll = acc.gt(samplesPerStep.load());
-        sampleAccum.store(select(roll, num(0), acc));
-        const nextStep = stepIdx.load().add(1).mod(PATTERN_LEN);
-        let offset: Node<"i32"> = pattern[0]!.load();
+        const acc = sampleAccum.read().add(1);
+        const roll = acc.gt(samplesPerStep.read());
+        sampleAccum.write(select(roll, num(0), acc));
+        const nextStep = stepIdx.read().add(1).mod(PATTERN_LEN);
+        let offset: Node<"i32"> = pattern[0]!.read();
         for (let s = 1; s < PATTERN_LEN; s++) {
-          offset = select(nextStep.eq(s), pattern[s]!.load(), offset);
+          offset = select(nextStep.eq(s), pattern[s]!.read(), offset);
         }
-        const fireNote = rootNote.load().add(offset);
+        const fireNote = rootNote.read().add(offset);
         arpOut.emitIf(roll, {
           type: "noteOn",
           atSample: i,
           note: fireNote,
-          velocity: lastVel.load(),
+          velocity: lastVel.read(),
           channel: 0,
         });
         stepFired.emitIf(roll, { atSample: i, step: nextStep, note: fireNote });
-        stepIdx.store(select(roll, nextStep, stepIdx.load()));
+        stepIdx.write(select(roll, nextStep, stepIdx.read()));
       });
     },
   };
@@ -217,11 +213,11 @@ const synthVoice = defineSubgraph((sr: number) => {
   return {
     process: (noteHz: Node<"f32">, velocity: Node<"f32">, gate: Node<"bool">) => {
       const target = select(gate, velocity, num(0));
-      const e = target.sub(env.load()).mul(0.01).add(env.load());
-      env.store(e);
+      const e = target.sub(env.read()).mul(0.01).add(env.read());
+      env.write(e);
       const inc = noteHz.div(sr);
-      const p = phase.load().add(inc);
-      phase.store(select(p.gt(1), p.sub(1), p));
+      const p = phase.read().add(inc);
+      phase.write(select(p.gt(1), p.sub(1), p));
       return p
         .mul(2 * Math.PI)
         .sin()
@@ -234,7 +230,7 @@ test("Ex8 polysynth voice: noteOn drives a non-silent, stable signal", async () 
   const NUM_VOICES = 4;
   const synth = defineProcessor((ctx) => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const keys = midiInput({ name: "keys" });
+    const keys = event.midi({ from: "main", name: "keys" });
     const voiceNote: State<"i32">[] = [];
     const voiceGate: State<"bool">[] = [];
     for (let v = 0; v < NUM_VOICES; v++) {
@@ -248,19 +244,19 @@ test("Ex8 polysynth voice: noteOn drives a non-silent, stable signal", async () 
     return {
       process: () => {
         keys.onEvent("noteOn", ({ note }) => {
-          const c = cursor.load();
+          const c = cursor.read();
           for (let v = 0; v < NUM_VOICES; v++) {
             const isMe = c.eq(v);
-            voiceNote[v]!.store(select(isMe, note, voiceNote[v]!.load()));
-            voiceGate[v]!.store(select(isMe, num(true), voiceGate[v]!.load()));
+            voiceNote[v]!.write(select(isMe, note, voiceNote[v]!.read()));
+            voiceGate[v]!.write(select(isMe, num(true), voiceGate[v]!.read()));
           }
-          cursor.store(c.add(1).mod(NUM_VOICES));
+          cursor.write(c.add(1).mod(NUM_VOICES));
         });
         forSample((i) => {
           let mix = num(0);
           for (let v = 0; v < NUM_VOICES; v++) {
             const hz = num(440); // simplified fixed pitch for the test
-            mix = mix.add(voices[v]!.process(hz, num(0.5), voiceGate[v]!.load()));
+            mix = mix.add(voices[v]!.process(hz, num(0.5), voiceGate[v]!.read()));
           }
           out.ch(0).at(i).write(mix);
         });
@@ -302,10 +298,10 @@ test("Ex4 limiter: delay line + envelope + overshoot event fire on ceiling cross
     const ceiling = param
       .f32({ default: 0.5, min: 0, max: 1, automationRate: "k-rate" })
       .named("ceiling");
-    const dly = buffer.f32({ size: LOOKAHEAD });
+    const dly = state.buffer.f32({ size: LOOKAHEAD });
     const dlyHead = state.i32(0);
     const env = state.f32(0);
-    const overshoot = event<{ level: number }>({ name: "overshoot" });
+    const overshoot = event<{ level: number }>({ to: "main", name: "overshoot" });
     return {
       process: () => {
         // release coefficient uses ctx.sampleRate (= the rate-fix path).
@@ -314,12 +310,12 @@ test("Ex4 limiter: delay line + envelope + overshoot event fire on ceiling cross
             .div(num(0.05 * ctx.sampleRate))
             .exp(),
         );
-        const headBlock = dlyHead.load();
+        const headBlock = dlyHead.read();
         forSample((i) => {
           const x = input.ch(0).at(i);
           const peak = x.abs();
           // one-pole envelope follower (state feedback).
-          env.store(peak.sub(env.load()).mul(relCoef).add(env.load()));
+          env.write(peak.sub(env.read()).mul(relCoef).add(env.read()));
           const wIdx = headBlock.add(i).mod(LOOKAHEAD);
           dly.write(wIdx, x);
           out
@@ -329,7 +325,7 @@ test("Ex4 limiter: delay line + envelope + overshoot event fire on ceiling cross
           // fire when the true peak exceeds the ceiling.
           overshoot.emitIf(peak.gt(ceiling.at(0)), { atSample: i, level: peak });
         });
-        dlyHead.store(headBlock.add(128).mod(LOOKAHEAD));
+        dlyHead.write(headBlock.add(128).mod(LOOKAHEAD));
       },
     };
   });
@@ -369,16 +365,16 @@ function makeReverb(withMigrationTo?: string) {
     () => {
       const input = audioInput({ channels: 1, name: "main" });
       const out = audioOutput({ channels: 1, name: "main" });
-      const ir = buffer.f32({ size: IR_LEN }).expose({ name: "ir", snapshot: "persistent" });
-      const hist = buffer.f32({ size: IR_LEN });
+      const ir = state.buffer.f32({ size: IR_LEN }).expose({ name: "ir", snapshot: "persistent" });
+      const hist = state.buffer.f32({ size: IR_LEN });
       const histHead = state.i32(0);
-      const uploadIR = message<{ ir: Float32Array }>({ name: "uploadIR" });
+      const uploadIR = event<{ ir: Float32Array }>({ from: "main", name: "uploadIR" });
       return {
         process: () => {
           uploadIR.onReceive(({ ir: incoming }) => {
             ir.copyFrom(incoming);
           });
-          const headBlock = histHead.load();
+          const headBlock = histHead.read();
           forSample((i) => {
             hist.write(headBlock.add(i).mod(IR_LEN), input.ch(0).at(i));
           });
@@ -391,7 +387,7 @@ function makeReverb(withMigrationTo?: string) {
             }
             out.ch(0).at(i).write(sumLanes(acc));
           });
-          histHead.store(headBlock.add(128).mod(IR_LEN));
+          histHead.write(headBlock.add(128).mod(IR_LEN));
         },
       };
     },

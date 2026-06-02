@@ -1,7 +1,7 @@
 /**
  * Primitive operator behavior (= `01-dsl.md` §2.1, `decisions-log.md`
  * Q77). Step 3.3 = `mul` fill (= free function + `Node<T>.mul` method
- * form + literal lift)、 残 り primitive は throw stub 維 持。
+ * form + literal lift); remaining primitives keep their throw stubs.
  */
 
 import { expect, test } from "vite-plus/test";
@@ -64,7 +64,7 @@ test("`Node<T>.mul(number)` method form accepts JS literals (= Q33 literal lift)
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// abs / max = sub-phase 7.8a fill (canonical Ex 1 meter で 必 須)
+// abs / max = sub-phase 7.8a fill (required by canonical Ex 1 meter)
 // ─────────────────────────────────────────────────────────────────────────
 
 test("`abs(node)` returns a `Node` carrying an `abs` AST", () => {
@@ -84,7 +84,7 @@ test("`abs(number)` lifts the literal to `f32`", () => {
   });
 });
 
-test("`Node<T>.abs()` method form = free function 同 AST", () => {
+test("`Node<T>.abs()` method form produces the same AST as the free function", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: -2 });
   expect(unwrapAst(a.abs())).toEqual(unwrapAst(abs(a)));
 });
@@ -100,7 +100,7 @@ test("`max(node, node)` returns a `Node` carrying a `max` AST", () => {
   });
 });
 
-test("`Node<T>.max(other)` method form = free function 同 AST", () => {
+test("`Node<T>.max(other)` method form produces the same AST as the free function", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 0.5 });
   const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 0.7 });
   expect(unwrapAst(a.max(b))).toEqual(unwrapAst(max(a, b)));
@@ -149,7 +149,7 @@ test("`add(number, number)` lifts both operands", () => {
   });
 });
 
-test("`Node<T>.add(other)` method form = free function 同 AST", () => {
+test("`Node<T>.add(other)` method form produces the same AST as the free function", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 2 });
   const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
   expect(unwrapAst(a.add(b))).toEqual(unwrapAst(P.add(a, b)));
@@ -180,7 +180,7 @@ test("`sub(node, number)` lifts the number literal", () => {
   });
 });
 
-test("`Node<T>.sub(other)` method form = free function 同 AST", () => {
+test("`Node<T>.sub(other)` method form produces the same AST as the free function", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 5 });
   const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
   expect(unwrapAst(a.sub(b))).toEqual(unwrapAst(P.sub(a, b)));
@@ -211,7 +211,7 @@ test("`div(node, number)` lifts the number literal", () => {
   });
 });
 
-test("`Node<T>.div(other)` method form = free function 同 AST", () => {
+test("`Node<T>.div(other)` method form produces the same AST as the free function", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 10 });
   const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 2 });
   expect(unwrapAst(a.div(b))).toEqual(unwrapAst(P.div(a, b)));
@@ -241,7 +241,7 @@ test("`min(number, number)` lifts both operands", () => {
   });
 });
 
-test("`Node<T>.min(other)` method form = free function 同 AST", () => {
+test("`Node<T>.min(other)` method form produces the same AST as the free function", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
   const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 5 });
   expect(unwrapAst(a.min(b))).toEqual(unwrapAst(P.min(a, b)));
@@ -268,7 +268,7 @@ test("`neg(number)` lifts the literal", () => {
   });
 });
 
-test("`Node<T>.neg()` method form = free function 同 AST", () => {
+test("`Node<T>.neg()` method form produces the same AST as the free function", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 5 });
   expect(unwrapAst(a.neg())).toEqual(unwrapAst(P.neg(a)));
 });
@@ -294,7 +294,7 @@ test("`sqrt(number)` lifts the literal", () => {
   });
 });
 
-test("`Node<T>.sqrt()` method form = free function 同 AST", () => {
+test("`Node<T>.sqrt()` method form produces the same AST as the free function", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 4 });
   expect(unwrapAst(a.sqrt())).toEqual(unwrapAst(P.sqrt(a)));
 });
@@ -320,7 +320,7 @@ test("`floor(number)` lifts the literal", () => {
   });
 });
 
-test("`Node<T>.floor()` method form = free function 同 AST", () => {
+test("`Node<T>.floor()` method form produces the same AST as the free function", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1.7 });
   expect(unwrapAst(a.floor())).toEqual(unwrapAst(P.floor(a)));
 });
@@ -346,13 +346,13 @@ test("`ceil(number)` lifts the literal", () => {
   });
 });
 
-test("`Node<T>.ceil()` method form = free function 同 AST", () => {
+test("`Node<T>.ceil()` method form produces the same AST as the free function", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1.2 });
   expect(unwrapAst(a.ceil())).toEqual(unwrapAst(P.ceil(a)));
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// eq (= f32.eq、結果 Node<'bool'>)
+// eq (= f32.eq, result Node<'bool'>)
 // ─────────────────────────────────────────────────────────────────────────
 
 test("`eq(node, node)` returns a `Node` carrying an `eq` AST (operand type f32)", () => {
@@ -376,14 +376,14 @@ test("`eq(node, number)` lifts the number literal", () => {
   });
 });
 
-test("`Node<T>.eq(other)` method form = free function 同 AST", () => {
+test("`Node<T>.eq(other)` method form produces the same AST as the free function", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
   const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
   expect(unwrapAst(a.eq(b))).toEqual(unwrapAst(P.eq(a, b)));
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// lt (= f32.lt、結果 Node<'bool'>)
+// lt (= f32.lt, result Node<'bool'>)
 // ─────────────────────────────────────────────────────────────────────────
 
 test("`lt(node, node)` returns a `Node` carrying an `lt` AST", () => {
@@ -407,14 +407,14 @@ test("`lt(node, number)` lifts the number literal", () => {
   });
 });
 
-test("`Node<T>.lt(other)` method form = free function 同 AST", () => {
+test("`Node<T>.lt(other)` method form produces the same AST as the free function", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
   const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 5 });
   expect(unwrapAst(a.lt(b))).toEqual(unwrapAst(P.lt(a, b)));
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// gt (= f32.gt、結果 Node<'bool'>)
+// gt (= f32.gt, result Node<'bool'>)
 // ─────────────────────────────────────────────────────────────────────────
 
 test("`gt(node, node)` returns a `Node` carrying a `gt` AST", () => {
@@ -438,14 +438,14 @@ test("`gt(node, number)` lifts the number literal", () => {
   });
 });
 
-test("`Node<T>.gt(other)` method form = free function 同 AST", () => {
+test("`Node<T>.gt(other)` method form produces the same AST as the free function", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 5 });
   const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
   expect(unwrapAst(a.gt(b))).toEqual(unwrapAst(P.gt(a, b)));
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// lte (= f32.le、結果 Node<'bool'>)
+// lte (= f32.le, result Node<'bool'>)
 // ─────────────────────────────────────────────────────────────────────────
 
 test("`lte(node, node)` returns a `Node` carrying an `lte` AST", () => {
@@ -469,14 +469,14 @@ test("`lte(node, number)` lifts the number literal", () => {
   });
 });
 
-test("`Node<T>.lte(other)` method form = free function 同 AST", () => {
+test("`Node<T>.lte(other)` method form produces the same AST as the free function", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
   const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 5 });
   expect(unwrapAst(a.lte(b))).toEqual(unwrapAst(P.lte(a, b)));
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// gte (= f32.ge、結果 Node<'bool'>)
+// gte (= f32.ge, result Node<'bool'>)
 // ─────────────────────────────────────────────────────────────────────────
 
 test("`gte(node, node)` returns a `Node` carrying a `gte` AST", () => {
@@ -500,7 +500,7 @@ test("`gte(node, number)` lifts the number literal", () => {
   });
 });
 
-test("`Node<T>.gte(other)` method form = free function 同 AST", () => {
+test("`Node<T>.gte(other)` method form produces the same AST as the free function", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 5 });
   const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
   expect(unwrapAst(a.gte(b))).toEqual(unwrapAst(P.gte(a, b)));
@@ -531,13 +531,13 @@ test("`clamp(number, number, number)` lifts all operands", () => {
   });
 });
 
-test("`Node<T>.clamp(lo, hi)` method form = free function 同 AST", () => {
+test("`Node<T>.clamp(lo, hi)` method form produces the same AST as the free function", () => {
   const x = wrapAst<"f32">({ kind: "literal", type: "f32", value: 5 });
   expect(unwrapAst(x.clamp(0, 1))).toEqual(unwrapAst(P.clamp(x, 0, 1)));
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// select (= WASM select 命令、free function のみ)
+// select (= WASM select instruction, free function only)
 // ─────────────────────────────────────────────────────────────────────────
 
 test("`select(condNode, then, else)` returns a `Node` carrying a `select` AST", () => {
@@ -571,7 +571,7 @@ test("`select(true, then, else)` lifts the boolean literal cond to a `bool` lite
   });
 });
 
-test("`select(false, then, else)` は bool literal cond を value 0 に lift", () => {
+test("`select(false, then, else)` lifts the boolean literal cond to a `bool` literal node with value 0", () => {
   expect(unwrapAst(P.select(false, 1, 0))).toEqual({
     kind: "select",
     type: "f32",
@@ -581,7 +581,7 @@ test("`select(false, then, else)` は bool literal cond を value 0 に lift", (
   });
 });
 
-test("`select` の AST type は branch の scalar 型 を 担 ぐ (= i32 branch → 'i32')", () => {
+test("`select` AST type tracks the scalar type of its branches (i32 branches → type 'i32')", () => {
   const cond = wrapAst<"bool">({
     kind: "gt",
     type: "f32",
@@ -590,11 +590,11 @@ test("`select` の AST type は branch の scalar 型 を 担 ぐ (= i32 branch 
   });
   const a = wrapAst<"i32">({ kind: "stateLoad", type: "i32", name: "x" });
   const b = wrapAst<"i32">({ kind: "stateLoad", type: "i32", name: "y" });
-  // f32 固 定 だ と i32 select が f32 と 誤 推 論 さ れ guard を す り 抜 け る (= codex P1)。
+  // Hardcoding f32 would cause an i32 select to be mistyped as f32, bypassing the guard (codex P1).
   expect(unwrapAst(P.select(cond, a, b))).toMatchObject({ kind: "select", type: "i32" });
 });
 
-test("`select` の f32 branch は type 'f32' の ま ま", () => {
+test("`select` with f32 branches carries type 'f32'", () => {
   const cond = wrapAst<"bool">({
     kind: "gt",
     type: "f32",
@@ -606,8 +606,9 @@ test("`select` の f32 branch は type 'f32' の ま ま", () => {
 });
 
 test("`select(cond, true, boolNode)` lifts a boolean branch to a `bool` literal (= canonical bool-state pattern)", () => {
-  // docs/canonical (00-foundations §145、12-canonical-examples Ex8) の
-  // `select(isMe, true, gate.load())` 形。 boolean branch literal が bool node に lift される。
+  // Mirrors the `select(isMe, true, gate.read())` pattern from docs/canonical
+  // (00-foundations §145, 12-canonical-examples Ex8): a boolean branch literal
+  // is lifted to a bool node.
   const cond = wrapAst<"bool">({ kind: "stateLoad", type: "bool", name: "isMe" });
   const gate = wrapAst<"bool">({ kind: "stateLoad", type: "bool", name: "gate" });
   expect(unwrapAst(P.select(cond, true, gate))).toEqual({
@@ -635,7 +636,7 @@ test("`select` rejects mixing a boolean branch with a numeric branch (type sound
   const cond = wrapAst<"bool">({ kind: "stateLoad", type: "bool", name: "c" });
   // A boolean is only a valid branch for a bool select. Mixing it with a numeric
   // branch must be rejected at the type layer — otherwise it silently becomes a
-  // bool select typed as `Node<numeric>` ("type ⟺ works" breaks). These lines are
+  // bool select typed as `Node<numeric>` (type soundness breaks). These lines are
   // verified by the typechecker (`vp check`), not the runtime assertion below.
   // @ts-expect-error — a boolean branch is not assignable to a numeric (f32) select
   P.select(cond, true, 0.5);
@@ -666,13 +667,13 @@ test("`frac(number)` lifts the literal", () => {
   });
 });
 
-test("`Node<T>.frac()` method form = free function 同 AST", () => {
+test("`Node<T>.frac()` method form produces the same AST as the free function", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1.25 });
   expect(unwrapAst(a.frac())).toEqual(unwrapAst(P.frac(a)));
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// mod (= a - trunc(a/b)*b、JS `%` 準拠)
+// mod (= a - trunc(a/b)*b, JS `%` semantics)
 // ─────────────────────────────────────────────────────────────────────────
 
 test("`mod(node, node)` returns a `Node` carrying a `mod` AST", () => {
@@ -696,14 +697,14 @@ test("`mod(node, number)` lifts the number literal", () => {
   });
 });
 
-test("`Node<T>.mod(other)` method form = free function 同 AST", () => {
+test("`Node<T>.mod(other)` method form produces the same AST as the free function", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 7 });
   const b = wrapAst<"f32">({ kind: "literal", type: "f32", value: 3 });
   expect(unwrapAst(a.mod(b))).toEqual(unwrapAst(P.mod(a, b)));
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// sin (= 多項式近似、共有 WASM 関数)
+// sin (= polynomial approximation, shared WASM function)
 // ─────────────────────────────────────────────────────────────────────────
 
 test("`sin(node)` returns a `Node` carrying a `sin` AST", () => {
@@ -723,13 +724,13 @@ test("`sin(number)` lifts the literal", () => {
   });
 });
 
-test("`Node<T>.sin()` method form = free function 同 AST", () => {
+test("`Node<T>.sin()` method form produces the same AST as the free function", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1 });
   expect(unwrapAst(a.sin())).toEqual(unwrapAst(P.sin(a)));
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// cos (= sin(x + π/2)、共有 WASM 関数)
+// cos (= sin(x + π/2), shared WASM function)
 // ─────────────────────────────────────────────────────────────────────────
 
 test("`cos(node)` returns a `Node` carrying a `cos` AST", () => {
@@ -749,13 +750,13 @@ test("`cos(number)` lifts the literal", () => {
   });
 });
 
-test("`Node<T>.cos()` method form = free function 同 AST", () => {
+test("`Node<T>.cos()` method form produces the same AST as the free function", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1 });
   expect(unwrapAst(a.cos())).toEqual(unwrapAst(P.cos(a)));
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// tan (= sin(x)/cos(x)、共有 WASM 関数)
+// tan (= sin(x)/cos(x), shared WASM function)
 // ─────────────────────────────────────────────────────────────────────────
 
 test("`tan(node)` returns a `Node` carrying a `tan` AST", () => {
@@ -775,13 +776,13 @@ test("`tan(number)` lifts the literal", () => {
   });
 });
 
-test("`Node<T>.tan()` method form = free function 同 AST", () => {
+test("`Node<T>.tan()` method form produces the same AST as the free function", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1 });
   expect(unwrapAst(a.tan())).toEqual(unwrapAst(P.tan(a)));
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// exp (= 2^k·exp(r) 分解、共有 WASM 関数)
+// exp (= 2^k·exp(r) decomposition, shared WASM function)
 // ─────────────────────────────────────────────────────────────────────────
 
 test("`exp(node)` returns a `Node` carrying an `exp` AST", () => {
@@ -801,13 +802,13 @@ test("`exp(number)` lifts the literal", () => {
   });
 });
 
-test("`Node<T>.exp()` method form = free function 同 AST", () => {
+test("`Node<T>.exp()` method form produces the same AST as the free function", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1 });
   expect(unwrapAst(a.exp())).toEqual(unwrapAst(P.exp(a)));
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// log (= 自然対数、共有 WASM 関数)
+// log (= natural logarithm, shared WASM function)
 // ─────────────────────────────────────────────────────────────────────────
 
 test("`log(node)` returns a `Node` carrying a `log` AST", () => {
@@ -827,13 +828,13 @@ test("`log(number)` lifts the literal", () => {
   });
 });
 
-test("`Node<T>.log()` method form = free function 同 AST", () => {
+test("`Node<T>.log()` method form produces the same AST as the free function", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 2 });
   expect(unwrapAst(a.log())).toEqual(unwrapAst(P.log(a)));
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// tanh (= 1 - 2/(exp(2x)+1)、共有 WASM 関数)
+// tanh (= 1 - 2/(exp(2x)+1), shared WASM function)
 // ─────────────────────────────────────────────────────────────────────────
 
 test("`tanh(node)` returns a `Node` carrying a `tanh` AST", () => {
@@ -853,7 +854,7 @@ test("`tanh(number)` lifts the literal", () => {
   });
 });
 
-test("`Node<T>.tanh()` method form = free function 同 AST", () => {
+test("`Node<T>.tanh()` method form produces the same AST as the free function", () => {
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1 });
   expect(unwrapAst(a.tanh())).toEqual(unwrapAst(P.tanh(a)));
 });

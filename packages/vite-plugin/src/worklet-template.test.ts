@@ -1,15 +1,24 @@
 /**
  * Behavioral tests for `emitWorkletTemplate(...)` — the JS source emitter
  * that vite-plugin uses to construct the worklet runtime entry (= the file
- * loaded via `audioWorklet.addModule(url)` in the worklet realm)。
+ * loaded via `audioWorklet.addModule(url)` in the worklet realm).
  *
  * Contract: the template embeds inline metadata + boots through
- * `@unworklet/core/worklet`'s `makeWorkletNamespaceFromMeta(...)`。 It MUST
+ * `@unworklet/core/worklet`'s `makeWorkletNamespaceFromMeta(...)`. It MUST
  * NOT re-import the authoring processor source from the worklet realm
  * (= no `defineProcessor` re-evaluation on the audio thread,
- * `00-foundations.md` §5.1 + 04-worklet-runtime §2)。
+ * `00-foundations.md` §5.1 + 04-worklet-runtime §2).
  */
 
+import {
+  audioOutput,
+  compile,
+  defineProcessor,
+  extractWorkletMeta,
+  forSample,
+  i64,
+  state,
+} from "@unworklet/core";
 import { expect, test } from "vite-plus/test";
 
 import { emitWorkletTemplate } from "./worklet-template.ts";
@@ -45,7 +54,7 @@ test("emits a JS module that imports only from `@unworklet/core/worklet` (no aut
   });
   expect(out).toContain('from "@unworklet/core/worklet"');
   expect(out).toContain("makeWorkletNamespaceFromMeta");
-  // The processor source must NOT be re-imported in the worklet realm。
+  // The processor source must NOT be re-imported in the worklet realm.
   expect(out).not.toContain("/abs/");
   expect(out).not.toContain(".processor.ts");
   expect(out).not.toContain("defineProcessor");
@@ -56,7 +65,7 @@ test("inlines the WorkletMeta as a JSON literal next to the namespace bootstrap"
     processorName: "stereoGain__abcd1234",
     meta: META_FIXTURE,
   });
-  // The metadata appears in JSON form, not as a function call。
+  // The metadata appears in JSON form, not as a function call.
   const inlined = JSON.stringify(META_FIXTURE);
   expect(out).toContain(inlined);
   expect(out).toContain("makeWorkletNamespaceFromMeta(__unworkletMeta)");
@@ -100,4 +109,31 @@ test("returns deterministic output for the same input", () => {
     meta: META_FIXTURE,
   });
   expect(a).toBe(b);
+});
+
+test("emits a worklet entry for an i64 state without a BigInt serialization crash", async () => {
+  // A real processor with an `i64` state — its `initial` is a `bigint`, which
+  // `JSON.stringify` refuses to serialize. This is the exact metadata shape that
+  // crashed the devtools-proto rack at `addModule` time ("Do not know how to
+  // serialize a BigInt"); the emitter must round-trip the bigint as a JS literal.
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const count = state.i64(0n).named("count");
+    return {
+      process: () => {
+        forSample((i) => {
+          out.ch(0).at(i).write(0);
+          count.write(count.read().add(i64(1n)));
+        });
+      },
+    };
+  });
+  await compile(proc);
+  const meta = extractWorkletMeta(
+    proc.graph as unknown as Parameters<typeof extractWorkletMeta>[0],
+  );
+  // Must not throw, and the i64 initial must survive as a BigInt literal (`0n`)
+  // in the emitted JS source so the worklet realm reconstructs the real value.
+  const emitted = emitWorkletTemplate({ processorName: "i64Counter__deadbeef", meta });
+  expect(emitted).toContain('"initial":0n');
 });

@@ -11,8 +11,8 @@
  * - `docs/09-repo-structure.md` §2.1 public exports
  *
  * Concrete TS generic constraint shape and method-form expansion on
- * `Node<T>` live in the impl modules (`dsl/primitives.ts` 等) — this file
- * declares the type surface that all modules and external consumers
+ * `Node<T>` live in the impl modules (`dsl/primitives.ts` and others) — this
+ * file declares the type surface that all modules and external consumers
  * compile against.
  */
 
@@ -100,8 +100,8 @@ export interface Node<T extends ScalarType | "f32x4" = ScalarType> {
 /** Scalar `state.<type>(initial)` handle (`01-dsl.md` §3.1). */
 export type State<T extends ScalarType> = {
   readonly [stateBrand]: T;
-  load(): Node<T>;
-  store(v: Node<T> | ScalarOf<T>): void;
+  read(): Node<T>;
+  write(v: Node<T> | ScalarOf<T>): void;
   named(name: string): State<T>;
   expose(options: ExposeOptions): State<T>;
 };
@@ -233,7 +233,7 @@ export type TypedArrayFieldRef<T extends BufferElementType> = {
  * `forSample` callback (= the per-sample `i`), `0` at per-block top
  * level. Authors override by passing `atSample` explicitly.
  */
-/** `T` が typed-array field (= Float32Array / Uint8Array) を含むか。 */
+/** Whether `T` contains a typed-array field (= `Float32Array` / `Uint8Array`). */
 type HasTypedArrayField<T> = true extends {
   [K in keyof T]: T[K] extends Float32Array | Uint8Array ? true : false;
 }[keyof T]
@@ -278,7 +278,7 @@ export type EventDecl<T> = {
  * JS control flow (`slot + 1`, `if (armed)`) a type error, since those would run
  * at graph capture against the proxy rather than emit DSP nodes; the DSL
  * primitives (`slot.add(1)` / `select(armed, ...)`) are the supported path. The
- * main-side send view (`node.messages.<name>(payload)`) keeps the plain JS `T`.
+ * main-side send view (`node.events.<name>.emit(payload)`) keeps the plain JS `T`.
  */
 export type MessageGraphPayload<T> = {
   [K in keyof T]: T[K] extends Float32Array
@@ -418,8 +418,8 @@ export type ProcessorGraph = {
 
 /**
  * Audio I/O port metadata exposed on `WorkletNamespace.inputs` /
- * `WorkletNamespace.outputs` (= declaration order に 対応、 port index は
- * 配列 index と 同じ)。
+ * `WorkletNamespace.outputs` (= follows declaration order; the port index is
+ * the array index).
  */
 export type AudioPortDescriptor = {
   readonly name: string;
@@ -427,16 +427,17 @@ export type AudioPortDescriptor = {
 };
 
 /**
- * publish slot metadata exposed on `WorkletNamespace.publishSlots` (= sub-phase 7.4)。
+ * publish slot metadata exposed on `WorkletNamespace.publishSlots` (= sub-phase 7.4).
  *
- * createNode が transport mode 検 出 + SAB allocate + processorOptions に hand
- * す る 時 + worklet template が per-quantum 末 尾 で WASM memory か ら SAB に
- * copy す る 時 に 参 照。 declaration 順 = SAB 配 列 index と zip。
+ * Referenced by `createNode` when it detects the transport mode, allocates the
+ * SAB, and hands it to `processorOptions`, and by the worklet template when it
+ * copies from WASM memory to the SAB at the end of each quantum. Declaration
+ * order zips with the SAB array index.
  *
  * - `name`: state slot name
- * - `type`: scalar type (= f32 / i32 / bool、 Q42 で 制 限 + 全 4 byte 単 一 word)
- * - `sharedOffset`: WASM memory 内 の publishShared region 内 offset (= 値 copy 元)
- * - `counterOffset`: WASM memory 内 の publishCounters region 内 offset (= 8 byte = sample counter + version counter)
+ * - `type`: scalar type (= f32 / i32 / bool; restricted by Q42, all a single 4-byte word)
+ * - `sharedOffset`: offset within the publishShared region of WASM memory (= copy source for the value)
+ * - `counterOffset`: offset within the publishCounters region of WASM memory (= 8 bytes = sample counter + version counter)
  */
 export type PublishSlotDescriptor = {
   readonly name: string;
@@ -446,15 +447,16 @@ export type PublishSlotDescriptor = {
 };
 
 /**
- * `event<T>` ringbuffer の per-event descriptor (= `02-messaging.md` §4 + §5.1)。
+ * Per-event descriptor for an `event<T>` ringbuffer (= `02-messaging.md` §4 + §5.1).
  *
- * `createNode` + worklet template が SAB allocate + copy 経 路 を 構 築 する 時 の
- * shared shape。 layout の `EventRingSlot` (= compile/layout.ts) を public surface
- * に lift し て main / worklet で 共 通 で 取 る path。
+ * The shared shape used when `createNode` and the worklet template build the
+ * SAB allocate + copy path. Lifts the layout's `EventRingSlot`
+ * (= compile/layout.ts) to the public surface so main and worklet can read it
+ * in common.
  *
- * memory map: `wasmRingBase` ~ + 12 = header `[head, tail, overflowCount]`、
- * + 12 + i × slotSize = i 番 目 slot 先 頭。 各 field の offsetInSlot / byteSize で
- * slot 内 の read / write 位 置 を 取 る。
+ * memory map: `wasmRingBase` ~ + 12 = header `[head, tail, overflowCount]`;
+ * + 12 + i × slotSize = start of the i-th slot. Each field's offsetInSlot /
+ * byteSize give the read / write position within the slot.
  */
 export type EventRingSlotDescriptor = {
   readonly name: string;
@@ -487,14 +489,14 @@ export type EventRingSlotDescriptor = {
 };
 
 /**
- * `message<T>` ringbuffer の per-message descriptor (= `02-messaging.md` §5.3)。
+ * Per-message descriptor for a `message<T>` ringbuffer (= `02-messaging.md` §5.3).
  *
- * event descriptor と zip pattern、 ただ し slot 内 atSample ナ シ。 main 側 が
- * SAB に push し た slot を worklet 側 で WASM memory ring に mirror し て drain
- * する path。
+ * Same pattern as the event descriptor and zips with it, except there is no
+ * atSample within the slot. The main side pushes slots into the SAB, which the
+ * worklet side mirrors into the WASM memory ring and drains.
  *
- * memory map: `wasmRingBase` ~ + 12 = header `[head, tail, overflowCount]`、
- * + 12 + i × slotSize = i 番 目 slot 先 頭。
+ * memory map: `wasmRingBase` ~ + 12 = header `[head, tail, overflowCount]`;
+ * + 12 + i × slotSize = start of the i-th slot.
  */
 export type MessageRingSlotDescriptor = {
   readonly name: string;
@@ -567,9 +569,14 @@ export type MidiRingSlotDescriptor = {
  *
  * `moduleUrl` / `processorName` / `wasmUrl` appear only on processors
  * imported via `@unworklet/vite-plugin`'s `?worklet` virtual module (or
- * an equivalent live-coding helper that populates the same fields)。
+ * an equivalent live-coding helper that populates the same fields).
  * `createNode` reads them to wire `audioWorklet.addModule(...)` +
  * `new AudioWorkletNode(...)`.
+ *
+ * `displayName` is the human-readable processor name (the source's export
+ * name, e.g. `tapeDelay`). `processorName` is the `registerProcessor` key and
+ * carries source/revision hash suffixes for HMR uniqueness, so it is unfit for
+ * display — tools read `displayName` instead.
  */
 export type WorkletNamespace = {
   initialize: (...args: unknown[]) => void;
@@ -584,6 +591,7 @@ export type WorkletNamespace = {
   moduleUrl?: string;
   processorName?: string;
   wasmUrl?: string;
+  displayName?: string;
 };
 
 export type CompiledProcessor<C> = {
@@ -676,24 +684,23 @@ export type CompileResult<C> = {
 };
 
 /**
- * `compile(processor, options)` 第 2 引 数 (= sub-phase 7.3 で 追 加)。
+ * Second argument to `compile(processor, options)` (= added in sub-phase 7.3).
  *
- * - `sampleRate`: build-time 既 知 と し て emit に hand (= publish scheduler の
- *   threshold = `Math.round(sampleRate / rateFps)` を const fold)。 default
- *   = 48000 (= 既 test fixture / host 既 定 と zip)。 1 wasm = 1 sampleRate =
- *   別 sampleRate な ら 別 wasm を emit。
+ * - `sampleRate`: handed to emit as a build-time-known value (= const-folds the
+ *   publish scheduler's threshold `Math.round(sampleRate / rateFps)`). default
+ *   = 48000 (= zips with existing test fixtures / host defaults). One wasm = one
+ *   sampleRate; a different sampleRate emits a different wasm.
  */
 export type CompileOptions = {
   sampleRate?: number;
 };
 
 /**
- * Driver-friendly handle exposed on `CompileResult.driver`。 internal
- * layout / graph を 隠 蔽 し て、 `renderOffline` / Phase 6 worklet
- * template が memory I/O + process() を 駆 動 す る ため の 公 開 surface。
- * lazy = `instantiate()` を 呼 ぶ と 初 め て WebAssembly.compile +
- * instantiate を 実 行 (= 1 wasm を 複 数 instance で 走 ら せ る 用 途
- * 担 保)。
+ * Driver-friendly handle exposed on `CompileResult.driver`. Hides the internal
+ * layout / graph and gives `renderOffline` / the Phase 6 worklet template a
+ * public surface for driving memory I/O + process(). Lazy: WebAssembly.compile
+ * + instantiate runs only on the first `instantiate()` call (= so one wasm can
+ * be run as multiple instances).
  */
 export type CompileDriver = {
   instantiate(): Promise<CompileInstance>;
@@ -703,11 +710,11 @@ export type CompileInstance = {
   readonly memory: WebAssembly.Memory;
   process(): void;
   readonly declarations: ReadonlyArray<CompileInstanceDeclaration>;
-  /** Caller invariant: `blockData.length === SAMPLES_PER_BLOCK`。 */
+  /** Caller invariant: `blockData.length === SAMPLES_PER_BLOCK`. */
   writeInput(portName: string, channel: number, blockData: Float32Array): void;
-  /** Caller invariant: `blockData.length === SAMPLES_PER_BLOCK`。 */
+  /** Caller invariant: `blockData.length === SAMPLES_PER_BLOCK`. */
   writeParam(paramName: string, blockData: Float32Array): void;
-  /** Caller invariant: `dest.length === SAMPLES_PER_BLOCK`。 */
+  /** Caller invariant: `dest.length === SAMPLES_PER_BLOCK`. */
   readOutput(portName: string, channel: number, dest: Float32Array): void;
 };
 
@@ -735,10 +742,10 @@ export type NodeErrorEvent =
    * `class extends AudioWorkletProcessor` forgot to call
    * `def.worklet.initialize(this, opts)` in their constructor, so
    * `def.worklet.process(this, ...)` runs without any WASM state attached
-   * to `self`。 The audio thread cannot throw (= `00-foundations.md` §5.1
+   * to `self`. The audio thread cannot throw (= `00-foundations.md` §5.1
    * invariant 3), so the runtime posts this once and then continues
-   * emitting silence。 Compile-time check is impossible (= the custom
-   * class lives in user code), so this is the runtime fail-fast signal。
+   * emitting silence. A compile-time check is impossible (= the custom
+   * class lives in user code), so this is the runtime fail-fast signal.
    */
   | { code: "worklet-initialize-not-called" };
 
@@ -754,14 +761,24 @@ export type BufferValueProxy<V> = {
   subscribe(handler: (value: V) => void): () => void;
 };
 
-export type EventSubscriber<T> = {
+/**
+ * Unified main-side event surface (Q88). A declared event name carries `.on`
+ * (worklet→main, `event({ to: 'main' })`), `.emit` (main→worklet,
+ * `event({ from: 'main' })`), or both for a same-name in/out pair (Q87).
+ *
+ * The whole node surface is intentionally a flat `Record<string, …>` in v1.0.0,
+ * so the TYPE exposes both `.on` and `.emit` for every name; the wrong-direction
+ * method is simply absent at runtime (calling it is a `TypeError`). Per-name
+ * narrowing — typing each declared name to exactly its direction — is deferred to
+ * v1.x, where it would type the whole node surface (inputs / params / state /
+ * events / midi), not events alone (#40 / codex on #12 G3).
+ */
+export type EventSurface<T> = {
   on(handler: (payload: T & { atSample: number }) => void): () => void;
-  readonly diagnostics: {
-    overflowCount(): number;
-  };
-};
-
-export type MessageSender<T> = ((payload: T) => void) & {
+  // Function-valued property (not a method) so callers can extract it as a bare
+  // sender (`const send = node.events.x.emit`) without an unbound-`this` hazard —
+  // it is a plain closure with no `this`, matching the former `MessageSender`.
+  emit: (payload: T) => void;
   readonly diagnostics: {
     overflowCount(): number;
   };
@@ -782,11 +799,11 @@ export type MidiPortSurface = {
 export type UnworkletNode<C> = {
   readonly node: AudioWorkletNode;
   /**
-   * Per-`audioInput` AudioNode destinations。 Users write
+   * Per-`audioInput` AudioNode destinations. Users write
    * `source.connect(node.inputs.main)` and the framework internally routes
    * to the correct input port index of the underlying `AudioWorkletNode`
-   * (= Q6 + canonical Ex 1 / 2)。 Each handle is an `AudioNode`、 so all of
-   * `AudioNode.connect(...)` / `disconnect(...)` overloads work natively。
+   * (= Q6 + canonical Ex 1 / 2). Each handle is an `AudioNode`, so all of
+   * the `AudioNode.connect(...)` / `disconnect(...)` overloads work natively.
    */
   readonly inputs: Record<string, AudioNode>;
   readonly outputs: Record<
@@ -795,8 +812,7 @@ export type UnworkletNode<C> = {
   >;
   readonly params: Record<string, AudioParam>;
   readonly state: Record<string, StateValueProxy<unknown> | BufferValueProxy<unknown>>;
-  readonly events: Record<string, EventSubscriber<unknown>>;
-  readonly messages: Record<string, MessageSender<unknown>>;
+  readonly events: Record<string, EventSurface<unknown>>;
   readonly midi: Record<string, MidiPortSurface>;
   readonly diagnostics: { readonly transport: TransportMode };
   snapshot(options?: { profile?: string }): Promise<Uint8Array>;

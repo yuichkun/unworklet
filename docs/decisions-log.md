@@ -6,6 +6,15 @@ Cross-cutting reference: every resolved design question, recorded with its ratio
 
 populated (Q1–Q82 ratify complete; Q28 is unassigned — a numbering artifact, not a withheld decision)
 
+> **Surface-evolution note (read before any pre-Q87 entry).** This is a historical
+> record: each Q is preserved with the surface as decided _at the time_. The
+> authoring + main-side surface was later unified into the **event family** —
+> `message<T>(...)` → `event<T>({ from: "main" })`, `midiInput` / `midiOutput` →
+> `event.midi({ from | to: "main" })`, and the main-side `node.messages.<name>` →
+> `node.events.<name>.emit` (see **Q87** and **Q88**, issue #10). Q-entries below
+> that still name `message<T>` / `midiInput` / `midiOutput` / `node.messages`
+> describe the as-decided surface; the current surface is `01-dsl.md` / `11-midi.md`.
+
 ## Index
 
 | #   | Topic                                                                                                                                                                                                         | Decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Authoritative section                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
@@ -3983,6 +3992,49 @@ content region = `perPayload × min(ringCapacity, MAX_CONTENT_SLOTS)`、`MAX_CON
 - **同名を capture-time error で禁止 (= 名前空間を全 kind 一意に):** typo は防げるが、message / event は宣言キーワード (`message<T>` vs `event<T>`) もアクセス面 (`node.messages` vs `node.events`) も別なので誤打ちの余地は小さく、「同じ論理名の in/out ペア」という正当な命名を奪う。user-free default に反する artificial 制約。
 
 **影響 file:** `compile/layout.ts` (= payloadContent を kind 別 map に分離 + Layout 型)、`compile/emit.ts` / `worklet.ts` / `@unworklet/offline` (= consumer を kind 別 lookup に)。
+
+### v1.x.0 deferral
+
+- ナシ。
+
+## Q88 — main-side surface を `node.events` に統合 (= `node.messages` 廃止、Q87 の main-side 半分を改訂)
+
+**Status:** resolved.
+
+**背景:** Q87 で message (main→worklet) と event (worklet→main) を独立名前空間として確定し、main-side accessor を `node.messages.<name>` (送信) / `node.events.<name>` (受信) の 2 面に分けていた。一方 issue #10 で authoring を direction-aware な単一 `event` family に統一した (`event({from:'main'})` = 旧 message、`event({to:'main'})` = 旧 event)。authoring が 1 概念なのに main-side だけ 2 面に割れているのは、#10 が消そうとした「2 語彙を覚える」コストそのもの。`event.midi({from/to})` の両方向が main-side で `node.midi.<name>` の 1 面に集約しているのとも不整合。
+
+**Decision (Q88):** main-side を `node.events.<name>` の 1 面に統合し、`node.messages` を廃止する。
+
+- `event({from:'main'})` の name → `node.events.<name>.emit(payload)` (送信)。`event({to:'main'})` の name → `node.events.<name>.on(cb)` (受信)。同名 in/out ペア (Q87) は同じ `node.events.<name>` が `.emit` と `.on` の両方を持つ。
+- per-name 型 narrowing (B5) が宣言の direction から `.emit` / `.on` を出し分ける。method 名 (`.emit` vs `.on`) は impl 領域。
+- **worklet 内部 wire は凍結:** ring (`eventRings` / `messageRings`)、content region (Q87 の kind 別 slot map)、IR kind (`message` / `event`) は不変。変わるのは main-thread の client surface (`client.ts`) と型 (`types.ts`) だけで、WASM / SAB / postMessage wire は byte 不変。
+
+**Rejected:**
+
+- **`node.messages` を残す (= Q87 の 2 面を維持):** namespace を見た瞬間に方向が分かる利点はあるが、authoring を `event` family に統一した以上、main-side だけ 2 語彙は非対称。`node.midi` の 1 面集約とも不整合で、#10 の「書いた構造がそのまま node surface に出る」原則 (authoring `event` → `node.events`) に反する。
+
+**影響 file:** `client.ts` (= messageSurface を eventSurface に名前キーで merge、node literal から `messages` 削除)、`types.ts` (= `UnworkletNode` の `events` を emit+on 統合型に、`messages` 削除、B5 per-name narrowing)、`client.test.ts` / browser postmessage tests (= `node.messages.<name>(p)` を `node.events.<name>.emit(p)` に)。
+
+### v1.x.0 deferral
+
+- ナシ。
+
+## Q89 — `pipe` (合成 helper) + `not` (論理 primitive) を core に追加 (= RFC-001 S10 / S3)
+
+**Status:** resolved.
+
+**背景:** RFC-001 (`.uwk.ts` authoring frontend) は infix operator sugar の lowering 先として `not(b)` (= `!b` / `a!=b`) を、chain 可読性のために `pipe` を要求する。両方とも純粋追加で、既存 graph node・WASM byte・realtime-safety invariant を一切変えない。`.uwk.ts` だけでなく Tier A `.ts` でも使える。
+
+**Decision (Q89):**
+
+- **`pipe(x, ...fns)` free function + `Node<T>.pipe(fn)` method:** 左→右の関数合成。`pipe(x, f, g)` ≡ `g(f(x))`、`x.pipe(f)` ≡ `f(x)`。**graph node を持たない** = 値を変換列に通すだけなので、捕捉される graph (と emit される WASM) は手書き chain と byte 一致。8 overload (RxJS / fp-ts 慣習)。
+- **`not(b: Node<'bool'>): Node<'bool'>` primitive + `b.not()` method:** 論理否定。bool は内部 i32 0/1 なので **単一 `i32.eqz`** に lower (= "equals zero": operand が 0 なら 1、それ以外 0)。bool 専用 (= `not(numericNode)` は型エラー)。新 IR kind `not` を追加 (= neg と同形の unary)。
+
+**Rejected:**
+
+- **`not` を `select(b, false, true)` で表現 (= 新 primitive ナシ):** 既存 select で書けるが両枝を評価する。`i32.eqz` は分岐ナシ 1 命令で realtime に素直なので専用 primitive にした。
+
+**影響 file:** `dsl/primitives.ts` (= `not` free fn + method + `BoolUnary` 型)、`dsl/pipe.ts` (新規)、`index.ts` (= export)、`compile/ast.ts` (= `not` IR kind + inferAstType)、`compile/emit.ts` (= `i32.eqz` emit + visit)、`compile/analyze.ts` (= type-error walk)。frozen golden 不変 (= 既存 case は `not`/`pipe` 未使用)。
 
 ### v1.x.0 deferral
 

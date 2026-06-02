@@ -1,24 +1,29 @@
 /**
- * Browser e2e fixture (= Q85 no-trap): content region より大きい typed-array
- * message を送っても crash せず truncate される、を検証する。
+ * Browser e2e fixture (= Q85 no-trap): verifies that sending a typed-array message
+ * larger than the content region does not crash — it is silently truncated instead.
  *
  * `payloadCapacity: 64` bytes → content region = 64 × min(capacity 256, 16) = 1024
- * bytes = 256 f32。これより大きい配列を送ると、producer 側 (client SAB / worklet
- * postMessage) は region に truncate して copy するべき (= `Uint8Array.set` の
- * RangeError を出さない)。先頭 128 要素を buffer に写して出力に再生。
+ * bytes = 256 f32. When the producer (client SAB / worklet postMessage) sends an array
+ * larger than this, it must truncate-copy into the region without throwing a
+ * `Uint8Array.set` RangeError. The first 128 elements are written to the buffer and
+ * played back as output.
  */
 
-import { audioOutput, buffer, defineProcessor, forSample, message } from "../../../index.ts";
+import { event, audioOutput, state, defineProcessor, forSample } from "../../../index.ts";
 
 export const oversizedPayload = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
-  const upload = message<{ samples: Float32Array }>({ name: "upload", payloadCapacity: 64 });
-  const buf = buffer.f32({ size: 128 });
+  const upload = event<{ samples: Float32Array }>({
+    from: "main",
+    name: "upload",
+    payloadCapacity: 64,
+  });
+  const buf = state.buffer.f32({ size: 128 });
   return {
     process: () => {
       upload.onReceive(({ samples }) => {
         forSample((i) => {
-          buf.write(i, samples.at(i)); // truncate 後の先頭 128 (= region 256 f32 ⊃ 128)
+          buf.write(i, samples.at(i)); // first 128 elements after truncation (region holds 256 f32 ⊃ 128)
         });
       });
       forSample((i) => {

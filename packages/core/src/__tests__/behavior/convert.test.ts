@@ -54,8 +54,8 @@ test("i32(bool node) and f32(bool node) surface the internal 0/1", async () => {
           out
             .ch(0)
             .at(i)
-            .write(f32(i32(t.load()))); // true → 1
-          out.ch(1).at(i).write(f32(f.load())); // false → 0
+            .write(f32(i32(t.read()))); // true → 1
+          out.ch(1).at(i).write(f32(f.read())); // false → 0
         });
       },
     };
@@ -76,8 +76,8 @@ test("bool(i32 node) round-trips through select", async () => {
           out
             .ch(0)
             .at(i)
-            .write(select(bool(counter.load()), num(1), num(0)));
-          counter.store(counter.load().add(1));
+            .write(select(bool(counter.read()), num(1), num(0)));
+          counter.write(counter.read().add(1));
         });
       },
     };

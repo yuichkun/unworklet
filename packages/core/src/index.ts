@@ -46,6 +46,7 @@ export {
   mod,
   mul,
   neg,
+  not,
   select,
   sin,
   sqrt,
@@ -54,24 +55,20 @@ export {
   tanh,
 } from "./dsl/primitives.ts";
 
+// Composition helper (`pipe(x, ...fns)` + `Node<T>.pipe(fn)`).
+export { pipe } from "./dsl/pipe.ts";
+
 // Declaration helpers.
-export {
-  audioInput,
-  audioOutput,
-  buffer,
-  event,
-  message,
-  midiInput,
-  midiOutput,
-  param,
-  state,
-} from "./dsl/declarations.ts";
+export { audioInput, audioOutput, event, param, state } from "./dsl/declarations.ts";
 
 export type {
   BufferChain,
-  EventOptions,
-  MessageOptions,
-  MidiPortOptions,
+  EventFamily,
+  EventFromMainOptions,
+  EventMidiFamily,
+  EventToMainOptions,
+  MidiFromMainOptions,
+  MidiToMainOptions,
   ParamChain,
   ParamOptions,
   StateChain,
@@ -90,17 +87,23 @@ export { compile } from "./compile/index.ts";
 
 // Worklet meta extraction (= used by vite-plugin to inline runtime-only
 // metadata into the AudioWorkletGlobalScope entry, avoiding any
-// re-evaluation of the authoring source in the worklet realm)。
+// re-evaluation of the authoring source in the worklet realm).
 export { extractWorkletMeta } from "./worklet.ts";
 export type { WorkletMeta } from "./worklet.ts";
 
-// MIDI wire codec (= 8-byte fixed slot ↔ MidiEvent、 `11-midi.md` §4.1)。
-// offline renderer / worklet template / main client が 共 有 す る wire 単 一 source。
+// The single worklet-module source emitter, shared by the build-time `?worklet`
+// chunk (vite-plugin, `import` runtime) and the in-browser runtime-compile path
+// (`@unworklet/lang/browser`, `inline` runtime).
+export { emitWorkletModuleSource, serializeMetaToJs } from "./worklet-module.ts";
+export type { WorkletRuntimeSource, EmitWorkletModuleOptions } from "./worklet-module.ts";
+
+// MIDI wire codec (= 8-byte fixed slot ↔ MidiEvent, `11-midi.md` §4.1).
+// The single wire-format source shared by the offline renderer, worklet template, and main client.
 export { midiEventToWire, wireToMidiEvent } from "./midiWire.ts";
 export type { MidiWireBytes } from "./midiWire.ts";
 
-// Snapshot blob codec + migration engine (= `01-dsl.md` §8)。 offline renderer /
-// main client が blob を build / read / migrate する 共 有 infrastructure。
+// Snapshot blob codec + migration engine (= `01-dsl.md` §8). Shared
+// infrastructure used by the offline renderer and main client to build, read, and migrate blobs.
 export { decodeScalar, decodeTypedArray, encodeScalar } from "./snapshot.ts";
 export type { SnapshotSlot, SnapshotSlotKind } from "./snapshot.ts";
 export {
@@ -139,7 +142,7 @@ export type {
   EmitPayload,
   EventDecl,
   EventRingSlotDescriptor,
-  EventSubscriber,
+  EventSurface,
   ExposeOptions,
   GraphJson,
   InputChannelView,
@@ -148,7 +151,6 @@ export type {
   MessageDecl,
   MessageGraphPayload,
   MessageRingSlotDescriptor,
-  MessageSender,
   MidiEvent,
   MidiEventEmit,
   MidiEventEmitOf,

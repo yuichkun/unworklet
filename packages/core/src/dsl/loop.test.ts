@@ -1,7 +1,7 @@
 /**
  * `forSample` / `forSample.byN` behavior (= `01-dsl.md` §10). Step 3.3
  * fills `forSample` (= per-sample loop AST node + loopCounter binding);
- * `forSample.byN` は Phase 10 SIMD で fill = throw stub 維 持。
+ * `forSample.byN` is filled in Phase 10 (SIMD) — stub throws until then.
  */
 
 import { expect, test } from "vite-plus/test";

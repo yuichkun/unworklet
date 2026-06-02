@@ -1,11 +1,12 @@
 /**
- * Plugin test fixture = source file が `defineProcessor()` 戻 り 値 を
- * 2 個 以 上 named export し て い る ケ ー ス。 plugin の load hook が
- * `pickCompiledProcessor` の 「多 重 export」 error path に 落 ち る こ と
- * を 担 保 (= v1.0.0 convention = 1 file 1 processor)。
+ * Plugin test fixture: a source file that named-exports two or more
+ * `defineProcessor()` return values. Verifies that the plugin's load hook
+ * falls into the "multiple export" error path of `pickCompiledProcessor`
+ * (v1.0.0 convention: one file, one processor).
  *
- * 中 身 は Phase 3 で fill 済 の surface 限 定 (= canonical Ex 1 と 同 形)、
- * stub surface (= `out.ch(...).at(...).write(...)` 等) を 叩 か な い 構 造。
+ * The body uses only the surface filled in Phase 3 (same shape as canonical
+ * Ex 1) and does not exercise stub surface such as
+ * `out.ch(...).at(...).write(...)`.
  */
 
 import { audioInput, audioOutput, defineProcessor, forSample, param } from "@unworklet/core";

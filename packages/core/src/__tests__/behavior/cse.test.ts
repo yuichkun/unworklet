@@ -2,7 +2,7 @@
  * Black-box behavior: shared-subtree / mutable-read evaluation order
  * (`03-compiler.md` §2.7, issue #8).
  *
- * A `state.load()` / `buffer.read()` captures the slot value at the lexical
+ * A `state.read()` / `buffer.read()` captures the slot value at the lexical
  * point of the load — a later `store()` must NOT change what an already-bound
  * `Node` evaluates to. The naive lazy emit re-walks the read after the store
  * and observes the post-store value (the bug). These tests pin the correct
@@ -12,7 +12,7 @@
 import { expect, test } from "vite-plus/test";
 
 import "../../dsl/primitives.ts"; // side-effect: register `Node<T>` method forms
-import { audioInput, audioOutput, buffer, state } from "../../dsl/declarations.ts";
+import { audioInput, audioOutput, state } from "../../dsl/declarations.ts";
 import { f32, num, select, type Node, type State } from "../../index.ts";
 import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
 import { forSample } from "../../dsl/loop.ts";
@@ -21,7 +21,7 @@ import { defineProcessor } from "../../processor.ts";
 import { render } from "./render.ts";
 
 test("§2.7: a Node bound before store() keeps its pre-store value (single reference)", async () => {
-  // const y = s.load().add(10); s.store(100); out.write(y)
+  // const y = s.read().add(10); s.write(100); out.write(y)
   // Block 0: s starts 0 → y = 0 + 10 = 10 (NOT 110). Then s := 100.
   // Block 1: s is 100 → y = 100 + 10 = 110. Then s := 100 again.
   const proc = defineProcessor(() => {
@@ -29,8 +29,8 @@ test("§2.7: a Node bound before store() keeps its pre-store value (single refer
     const s = state.f32(0);
     return {
       process: () => {
-        const y = s.load().add(10);
-        s.store(100);
+        const y = s.read().add(10);
+        s.write(100);
         forSample((i) => {
           out.ch(0).at(i).write(y);
         });
@@ -53,11 +53,11 @@ test("biquad Direct Form II Transposed impulse response matches a JS reference",
     a2 = 0.05;
 
   function biquadDFIIT(x: Node<"f32">, z1: State<"f32">, z2: State<"f32">): Node<"f32"> {
-    const y = num(b0).mul(x).add(z1.load());
-    const z1n = num(b1).mul(x).add(z2.load()).sub(num(a1).mul(y));
+    const y = num(b0).mul(x).add(z1.read());
+    const z1n = num(b1).mul(x).add(z2.read()).sub(num(a1).mul(y));
     const z2n = num(b2).mul(x).sub(num(a2).mul(y));
-    z1.store(z1n);
-    z2.store(z2n);
+    z1.write(z1n);
+    z2.write(z2n);
     return y;
   }
 
@@ -127,18 +127,18 @@ test("a shared pure subtree evaluates consistently at every reference", async ()
 });
 
 test("a per-block load used inside forSample reflects the block-start value", async () => {
-  // base = s.load() (per-block); forSample writes base; then s.store advances.
+  // base = s.read() (per-block); forSample writes base; then s.store advances.
   // Each block writes the value of s as of that block's start.
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
     const s = state.f32(7);
     return {
       process: () => {
-        const base = s.load();
+        const base = s.read();
         forSample((i) => {
           out.ch(0).at(i).write(base);
         });
-        s.store(s.load().add(1));
+        s.write(s.read().add(1));
       },
     };
   });
@@ -160,13 +160,13 @@ test("state slots are seeded with their declared initial value (every scalar typ
     return {
       process: () => {
         forSample((i) => {
-          out.ch(0).at(i).write(sf.load());
-          out.ch(1).at(i).write(f32(si.load()));
-          out.ch(2).at(i).write(f32(sl.load()));
+          out.ch(0).at(i).write(sf.read());
+          out.ch(1).at(i).write(f32(si.read()));
+          out.ch(2).at(i).write(f32(sl.read()));
           out
             .ch(3)
             .at(i)
-            .write(select(sb.load(), num(1), num(0)));
+            .write(select(sb.read(), num(1), num(0)));
         });
       },
     };
@@ -182,7 +182,7 @@ test("buffer read bound before a write to the same index keeps the pre-write val
   // v = buf.read(i) (= 0 initial); buf.write(i, 5); out = v  → 0, not 5.
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const buf = buffer.f32({ size: SAMPLES_PER_BLOCK });
+    const buf = state.buffer.f32({ size: SAMPLES_PER_BLOCK });
     return {
       process: () => {
         forSample((i) => {

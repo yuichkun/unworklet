@@ -16,5 +16,10 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true
-  }
+  },
+  // `.uwk.ts` is sugar — a deliberate TS error until lowered. Excluded from the
+  // standalone `tsc` program here; the per-file `// @ts-nocheck` header is what
+  // additionally silences the type-aware lint (tsgolint type-checks per file).
+  // `.uwklowered.ts` is the transient temp the build path writes while lowering.
+  "exclude": ["**/*.uwk.ts", "**/*.uwklowered.ts"]
 }

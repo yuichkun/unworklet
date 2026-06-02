@@ -10,7 +10,7 @@ import { expect, test } from "vite-plus/test";
 
 import "./primitives.ts";
 import { f32 } from "./constructors.ts";
-import { audioInput, audioOutput, buffer, message, param, state } from "./declarations.ts";
+import { event, audioInput, audioOutput, param, state } from "./declarations.ts";
 import { forSample } from "./loop.ts";
 import { compile } from "../compile/index.ts";
 import { defineProcessor } from "../processor.ts";
@@ -121,8 +121,8 @@ test("the forSample loop-counter `i` offset is unrestricted (no literal check)",
 test("copyFrom of an f32-sealed payload field into an i32 buffer is a capture-time error", () => {
   expect(() =>
     defineProcessor(() => {
-      const dst = buffer.i32({ size: 16 });
-      const up = message<{ samples: Float32Array }>({ name: "up" });
+      const dst = state.buffer.i32({ size: 16 });
+      const up = event<{ samples: Float32Array }>({ from: "main", name: "up" });
       return {
         process: () => {
           up.onReceive(({ samples }) => {
@@ -146,7 +146,7 @@ test("a declaration sum over the 4 GiB ceiling makes compile reject", async () =
   // arithmetic, no allocation); the memory-budget error fires before emit.
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    buffer.f32({ size: 1_200_000_000 });
+    state.buffer.f32({ size: 1_200_000_000 });
     return {
       process: () => {
         out
@@ -167,7 +167,7 @@ test("a declaration sum over the 4 GiB ceiling makes compile reject", async () =
 test("a message field read used outside its onReceive handler is rejected", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const m = message<{ slot: number }>({ name: "m" });
+    const m = event<{ slot: number }>({ from: "main", name: "m" });
     let escaped: Node<"i32"> | undefined;
     m.onReceive(({ slot }) => {
       escaped = slot as Node<"i32">;
@@ -188,11 +188,11 @@ test("a message field read used outside its onReceive handler is rejected", asyn
 test("a message field read used inside its onReceive handler compiles (no false escape)", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const m = message<{ slot: number }>({ name: "m" });
+    const m = event<{ slot: number }>({ from: "main", name: "m" });
     const sel = state.named("sel").i32(0);
     m.onReceive(({ slot }) => {
       // Read inside the handler body — the canonical, valid usage.
-      sel.store(slot as Node<"i32">);
+      sel.write(slot as Node<"i32">);
     });
     return {
       process: () => {

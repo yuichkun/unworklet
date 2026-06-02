@@ -20,8 +20,8 @@ partial (§7 publish scheduling written; §1–§6 + §8 placeholder)
         sub-region set:
           - state slots + buffer slots (Q5; values restored if `restore`
             blob was provided)
-          - event<T> / message<T> ringbuffers (Q27-d — SAB when available)
-          - event<T> / message<T> payload content buffers (Q27-e)
+          - event<T> ringbuffers (both directions — Q27-d, SAB when available)
+          - event<T> payload content buffers (Q27-e)
           - MIDI in / out ringbuffers (Q4-c)
           - sysex content buffer (Q4-c-iii)
           - state.publish / buffer.publish shared regions (Q27-a)
@@ -35,8 +35,8 @@ partial (§7 publish scheduling written; §1–§6 + §8 placeholder)
 ## 2. Per-block execution
 
 <!-- Per-block runtime step order:
-     1. Drain **all** registered handlers across `message<T>.onReceive` + every
-        `midiInput().onEvent` port (Q38-b — handlers run before any per-block
+     1. Drain **all** registered handlers across `event<T>({ from: "main" }).onReceive`
+        + every `event.midi({ from: "main" }).onEvent` port (Q38-b — handlers run before any per-block
         top-level statement or `forSample`, in registration order). Sample-
         accurate `atSample` is carried into the handler arg (Q38-d).
      2. Marshal input channels into linear memory (Q19 — channel count baked
@@ -98,17 +98,17 @@ Consumers who genuinely need full-performance from the very first quantum (rare 
 
 ## 6. Denormal handling
 
-IEEE 754 の **subnormal** 範 囲 (= 約 1e-38 以 下 の 極 小 値) は 多 く の CPU で 通 常 計 算 の 5〜100 倍 遅 い。 audio DSP の filter feedback path (= IIR filter の 内 部 state) が 長 い 無 音 区 間 で 0 に 漸 近 す る と こ の 範 囲 に 入 り、 audio thread の CPU spike → 音 切 れ の 原 因 と な る。
+IEEE 754 **subnormal** values (magnitudes below approximately 1e-38) are 5–100x slower than normal-range arithmetic on many CPUs. When the internal state of an IIR filter's feedback path approaches zero during a long silence, it can enter this range, causing CPU spikes on the audio thread and audible dropouts.
 
-unworklet は こ の 経 路 を **コ ン パ イ ル 時 に 自 動 で 塞 ぐ** (Q21, `decisions-log.md`):
+unworklet **closes this path automatically at compile time** (Q21, `decisions-log.md`):
 
-- `state.f32` / `state.f64` の `.store(v)` を WASM emission 時 に subnormal ガ ー ド で 包 む — 絶 対 値 が **`1e-30`** 以 下 な ら 0 に 落 と す。 閾 値 1e-30 は IEEE 754 binary32 の subnormal 範 囲 (≈ 2^-126 〜 2^-149、 ≈ 1.18e-38 以 下) を 完 全 に 含 む 単 純 boundary で、 normal 範 囲 の 末 端 (1.18e-38 〜 1e-30) も 同 時 に flush さ れ る が audio 出 力 と し て 不 可 聴 (= Q21 rationale)、 user 調 整 余 地 ナ シ で 1 値 fix
-- ガ ー ド は 1 比 較 + 1 select の 軽 量 inline、 通 常 計 算 path で の cost は 無 視 で きる レ ベ ル
-- user code は 変 更 ナ シ で 自 動 適 用 = audio DSP 業 界 標 準 の flush-to-zero と 同 等 の 挙 動
+- Every `.write(v)` call on `state.f32` / `state.f64` is wrapped with a subnormal guard during WASM emission: values whose absolute magnitude falls below **`1e-30`** are flushed to zero. The 1e-30 threshold fully covers the IEEE 754 binary32 subnormal range (approximately 2^-126 to 2^-149, i.e. below approximately 1.18e-38); the narrow tail of normal-range values between 1.18e-38 and 1e-30 is also flushed, but those magnitudes are inaudible as audio output (= Q21 rationale). The threshold is a single fixed value with no user adjustment.
+- The guard is a lightweight inline sequence — one comparison and one select — with negligible cost on the normal execution path.
+- The guard applies automatically with no change to user code, equivalent to the flush-to-zero behavior that is standard practice in audio DSP frameworks.
 
-v1.0.0 で opt-out 機 能 は な い。 subnormal 値 を そ の ま ま 保 ち た い 数 値 計 算 用 途 (= 科 学 計 算 等) は unworklet の scope 外 と し て 扱 う。 必 要 性 が 出 た 時 点 で v1.x.0 で opt-out option を additive に 追 加 検 討。
+v1.0.0 does not provide an opt-out. Use cases that require subnormal values to be preserved (e.g. scientific computation) are outside unworklet's scope. If such a need arises, an opt-out option can be added additively in v1.x.0.
 
-framework が user 値 を 暗 黙 で 変 え る 形 に な る が、 1e-40 等 の 極 小 値 は audio 出 力 と し て 不 可 聴 = 0 と み な し て 音 の 意 味 は 変 わ ら な い こ と、 既 audio framework (JUCE 等) で の 業 界 標 準 と 整 合 す る こ と、 footgun 撤 廃 の 価 値 で declarative 原 則 か ら の 例 外 を 正 当 化 す る。
+Although the framework silently modifies user-written values, values as small as 1e-40 are inaudible as audio output and are therefore semantically equivalent to zero. This behavior is consistent with established audio frameworks such as JUCE, and the footgun-elimination value justifies the exception to the declarative principle.
 
 ## 7. State publish scheduling
 
@@ -131,7 +131,7 @@ Authoritative rationale: `decisions-log.md` Q27.
 
 ## 8. Error handling
 
-Main-side `node.onError(handler)` receives a discriminated union. v1.0.0 の event-code カ タ ロ グ は 5 種:
+Main-side `node.onError(handler)` receives a discriminated union. The v1.0.0 event-code catalog has five entries:
 
 ```typescript
 type NodeErrorEvent =
@@ -143,11 +143,11 @@ type NodeErrorEvent =
 ```
 
 1. **`wasm-trap`** — WASM runtime trap during `process(...)`. Audio output: silence for the current quantum + the following quanta until the node is disposed. The audio thread does not propagate the trap as a thrown exception (= realtime-safety invariant 3 in `00-foundations.md` §5.1).
-2. **`queue-overflow`** — `event<T>` / `message<T>` / MIDI ringbuffer drop-oldest fired (Q27 + Q4-c-iv)。 Audio output unaffected。 Per-channel 累 計 counter は `node.<kind>.<name>.diagnostics.overflowCount()` で pull 観 測 (Q47)。 つ ま り push (= `.onError`) で 各 drop の 発 生 を 通 知、 pull (= `.diagnostics`) で 累 計 を 取 る 二 段 構 え。
-3. **`sab-unavailable`** — runtime detected `SharedArrayBuffer` is not constructible / `crossOriginIsolated` is false and selected the postMessage fallback transport (= A5 of `08-deployment.md` §2 / Q11)。 Audio output unaffected; only main-side observation latency picks up the postMessage round-trip.
-4. **`block-length-mismatch`** — `outputs[0][0].length !== SAMPLES_PER_BLOCK` detected at the worklet entry (= §3 / Q18 / Q68 / Q75)。 Audio output: silence (zero buffer) on every quantum after the first detection, until the node is disposed (= same path as `wasm-trap`). Node stays connected; consumer decides whether to `.dispose()` and replace.
-5. **`worklet-initialize-not-called`** — path-β escape hatch (= `01-dsl.md` §11) で author 自 前 の `class extends AudioWorkletProcessor` が `def.worklet.initialize(this, opts)` を constructor で 呼 び 忘 れ た 状 態 で `def.worklet.process(this, ...)` が 呼 ば れ た こ と を 検 知。 audio thread は throw で き な い (= invariant 3) の で structured postMessage 経 由 で 1 度 だ け 通 知 + 以 降 silence。 Q80。
+2. **`queue-overflow`** — `event<T>` (both directions) / MIDI ringbuffer drop-oldest fired (Q27 + Q4-c-iv). The `source` discriminant identifies which transport overflowed: `"event"` for `event<T>({ to: "main" })` (worklet → main), `"message"` for `event<T>({ from: "main" })` (main → worklet), and `"midi"` for MIDI. Audio output is unaffected. Per-channel cumulative overflow counts are observable via `node.<kind>.<name>.diagnostics.overflowCount()` (Q47) — push (`.onError`) reports each individual drop as it occurs, while pull (`.diagnostics`) exposes the running total.
+3. **`sab-unavailable`** — runtime detected that `SharedArrayBuffer` is not constructible or `crossOriginIsolated` is false, and selected the postMessage fallback transport (= A5 of `08-deployment.md` §2 / Q11). Audio output is unaffected; only main-side observation latency picks up the postMessage round-trip.
+4. **`block-length-mismatch`** — `outputs[0][0].length !== SAMPLES_PER_BLOCK` detected at the worklet entry (= §3 / Q18 / Q68 / Q75). Audio output: silence (zero buffer) on every quantum after the first detection, until the node is disposed (= same path as `wasm-trap`). Node stays connected; consumer decides whether to `.dispose()` and replace.
+5. **`worklet-initialize-not-called`** — in the path-beta escape hatch (= `01-dsl.md` §11), an author-supplied `class extends AudioWorkletProcessor` called `def.worklet.process(this, ...)` without first calling `def.worklet.initialize(this, opts)` in the constructor. Because the audio thread cannot throw (= invariant 3), the worklet sends a single structured postMessage notification and produces silence thereafter. Q80.
 
-Node destruction is initiated only by the consumer via `.dispose()` (= `05-client.md` §2)。 There is no framework-side "destroy node on error" path in v1.0.0 — `wasm-trap` / `block-length-mismatch` / `worklet-initialize-not-called` emit silence on the output channels while keeping the node object addressable and connected, so the consumer can observe `.onError` + tear down explicitly (Q75).
+Node destruction is initiated only by the consumer via `.dispose()` (= `05-client.md` §2). There is no framework-side "destroy node on error" path in v1.0.0 — `wasm-trap` / `block-length-mismatch` / `worklet-initialize-not-called` emit silence on the output channels while keeping the node object addressable and connected, so the consumer can observe `.onError` + tear down explicitly (Q75).
 
-Per-error-code message shape の細部、 source-location attribution (= §7 source maps 経 由)、 recovery semantics は impl-phase fill per Q61。
+Fine-grained details of per-error-code message shape, source-location attribution (via §7 source maps), and recovery semantics are impl-phase fill per Q61.

@@ -34,5 +34,15 @@ coverage
 test-results/
 playwright-report/
 
-# Vite+ git hooks (= clone 後 `vp config` で local 生成)
+# Vitest browser-mode run artifacts (failure screenshots / attachments)
+**/.vitest-attachments/
+**/__screenshots__/
+
+# Vite+ git hooks (generated locally by `vp config` after clone)
 .vite-hooks/
+
+# Transient lowered-`.uwk.ts` temp the vite-plugin build path writes then removes
+*.uwklowered.ts
+
+# Vercel CLI project link (local, per-machine)
+.vercel

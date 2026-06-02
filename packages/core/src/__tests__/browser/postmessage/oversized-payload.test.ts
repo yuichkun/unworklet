@@ -1,11 +1,12 @@
 /**
- * Browser e2e (postMessage fallback): content region より大きい typed-array
- * message を postMessage 経由で送っても worklet (audio thread) が content 書き込みで
- * crash しない (= Q85 no-trap、worklet.ts の clamp)。
+ * Browser e2e (postMessage fallback): sending a typed-array message larger than
+ * the content region via postMessage must not crash the worklet (audio thread)
+ * during content write (Q85 no-trap; clamp in worklet.ts).
  *
- * worklet は onmessage で content region に直書きするため、clamp 前は src > region
- * で `Uint8Array.set` が audio thread で RangeError を throw した。送信 → render 完走
- * → 先頭 128 要素が出力に届くことを担保。
+ * The worklet writes directly into the content region in onmessage, so before
+ * clamping, src > region caused `Uint8Array.set` to throw RangeError on the
+ * audio thread. This test ensures the send → render cycle completes and the
+ * first 128 elements reach the output.
  */
 
 import { expect, test } from "vite-plus/test";
@@ -18,22 +19,22 @@ const SAMPLE_RATE = 48_000;
 const buildContext = (quanta: number): OfflineAudioContext =>
   new OfflineAudioContext({ numberOfChannels: 1, length: 128 * quanta, sampleRate: SAMPLE_RATE });
 
-test("環境担保: COOP/COEP 無しで crossOriginIsolated false", () => {
+test("environment check: crossOriginIsolated is false without COOP/COEP headers", () => {
   expect(globalThis.crossOriginIsolated).toBe(false);
 });
 
-test("oversized typed-array message を postMessage で送っても worklet が crash しない", async () => {
+test("worklet does not crash when an oversized typed-array message is sent via postMessage", async () => {
   const ctx = buildContext(4);
   const node = await createNode(ctx, oversizedPayload);
   node.outputs["main"]!.connect(ctx.destination);
 
   const samples = new Float32Array(512);
   for (let k = 0; k < 512; k++) samples[k] = (k + 1) / 1024;
-  const sender = node.messages["upload"] as (p: { samples: Float32Array }) => void;
+  const sender = node.events["upload"].emit;
   sender({ samples });
 
-  // worklet が onmessage で content を clamp して書く (= clamp 前は audio thread で
-  // RangeError)。render が throw せず完走することを担保。
+  // The worklet clamps content writes in onmessage; without clamping, the audio
+  // thread would throw RangeError. Assert that render completes without throwing.
   const rendered = await ctx.startRendering();
   expect(rendered.length).toBe(128 * 4);
   node.dispose();

@@ -1,12 +1,14 @@
 /**
- * typed-array messaging の element-型 surface contract (= 案A: 型を実装に合わせる)。
+ * Element-type surface contract for typed-array messaging (approach A: align types with implementation).
  *
- * message / event の可変長 typed-array field の element 型 (f32 / u8) は TS の型 T に
- * しか無く実行時に消える。実装は proxy で f32 を扱うので、型 surface も「直接読み
- * (.at / .length) は f32 専用、byte (u8) 等は buffer.<T> + copyFrom 経由」に揃える。
+ * The element type (f32 / u8) of variable-length typed-array fields in messages/events
+ * exists only in the TS type T and is erased at runtime. Because the implementation
+ * handles f32 via proxy, the type surface follows the same rule: direct reads
+ * (.at / .length) are f32-only; byte (u8) access goes through buffer.<T> + copyFrom.
  *
- * ここは public 型 (MessageGraphPayload / EmitPayload / TypedArrayFieldRef) に対する
- * 型レベル黒箱契約 + emit 側の fail-loud guard を検証する。
+ * This file verifies the type-level black-box contract for public types
+ * (MessageGraphPayload / EmitPayload / TypedArrayFieldRef) and the fail-loud guard
+ * on the emit side.
  */
 
 import { expect, test } from "vite-plus/test";
@@ -14,7 +16,7 @@ import { expect, test } from "vite-plus/test";
 import "../../dsl/primitives.ts";
 import { compile } from "../../compile/index.ts";
 import { f32 } from "../../dsl/constructors.ts";
-import { audioOutput, buffer, message } from "../../dsl/declarations.ts";
+import { event, audioOutput, state } from "../../dsl/declarations.ts";
 import { forSample } from "../../dsl/loop.ts";
 import { defineProcessor } from "../../processor.ts";
 import type {
@@ -25,8 +27,8 @@ import type {
   TypedArrayFieldRef,
 } from "../../types.ts";
 
-// ── 型レベル契約 (= `vp check` の typecheck が検証、実行時 no-op) ────────────
-// 制約 (`T extends true/false`) を満たさない型が来ると call site で型エラー = RED。
+// ── Type-level contract (verified by `vp check` typecheck; runtime no-op) ───────────
+// A type that fails the constraint (`T extends true/false`) produces a type error at the call site = RED.
 type Has<K extends string, T> = K extends keyof T ? true : false;
 type AssignableTo<A, B> = A extends B ? true : false;
 function expectTrue<_T extends true>(): void {}
@@ -39,22 +41,23 @@ type ScalarPayload = MessageGraphPayload<{ slot: number; armed: boolean }>;
 type SlotField = ScalarPayload["slot"];
 type ArmedField = ScalarPayload["armed"];
 
-test("typed-array surface: element 型契約は vp check の typecheck で検証される", () => {
-  // f32 typed-array field は直接読み (.at / .length) を持つ。
+test("typed-array surface: element-type contract is verified by vp check typecheck", () => {
+  // f32 typed-array fields expose direct reads (.at / .length).
   expectTrue<Has<"at", F32Field>>();
   expectTrue<Has<"length", F32Field>>();
-  // u8 typed-array field は copyFrom 専用 = 直接読みを持たない。
+  // u8 typed-array fields are copyFrom-only = no direct reads.
   expectFalse<Has<"at", U8Field>>();
   expectFalse<Has<"length", U8Field>>();
-  // copyFrom には element 型一致で渡せる (= Q31-c の element-type compatibility)。
+  // copyFrom accepts a matching element type (element-type compatibility).
   expectTrue<AssignableTo<U8Field, Parameters<BufferHandle<"u8">["copyFrom"]>[0]>>();
   expectTrue<AssignableTo<F32Field, Parameters<BufferHandle<"f32">["copyFrom"]>[0]>>();
-  // emit 側の typed-array field は Buffer<T> のみ = inbound proxy (TypedArrayFieldRef) は
-  // 直接渡せない (= re-emit は copyFrom→buffer 経由)。
+  // The emit-side typed-array field accepts only Buffer<T>; the inbound proxy
+  // (TypedArrayFieldRef) is not directly assignable — re-emit must go through copyFrom→buffer.
   expectTrue<AssignableTo<BufferHandle<"f32">, EmitData>>();
   expectFalse<AssignableTo<TypedArrayFieldRef<"f32">, EmitData>>();
-  // scalar message field は handler 側で Node に lift される (= Q46)。raw JS 値の
-  // まま漏らすと slot + 1 / if(armed) が capture 時 proxy に対して走って壊れる。
+  // Scalar message fields are lifted to Node on the handler side. Leaking them as raw
+  // JS values would cause slot + 1 / if(armed) to run against a proxy at capture time
+  // and corrupt the graph.
   expectTrue<AssignableTo<SlotField, Node<"i32">>>();
   expectFalse<AssignableTo<SlotField, number>>();
   expectTrue<AssignableTo<ArmedField, Node<"bool">>>();
@@ -62,19 +65,19 @@ test("typed-array surface: element 型契約は vp check の typecheck で検証
   expect(true).toBe(true);
 });
 
-// ── 案A の置き換えパス: byte (u8) は buffer.u8 + copyFrom で動く ──────────────
+// ── Approach A replacement path: byte (u8) access works via buffer.u8 + copyFrom ───────
 
-test("u8 byte payload は buffer.u8 + copyFrom 経由で compile を通る (= 案A の置き換えパス)", async () => {
+test("u8 byte payload compiles successfully via buffer.u8 + copyFrom (approach A replacement path)", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const up = message<{ bytes: Uint8Array }>({ name: "sysexIn" });
-    const buf = buffer.u8({ size: 16 });
+    const up = event<{ bytes: Uint8Array }>({ from: "main", name: "sysexIn" });
+    const buf = state.buffer.u8({ size: 16 });
     return {
       process: () => {
         up.onReceive(({ bytes }) => {
-          buf.copyFrom(bytes); // u8 element 型で seal + memory.copy
+          buf.copyFrom(bytes); // seals with u8 element type + memory.copy
         });
-        // buf.read(i) は Node<'i32'> (= zero-extended byte)、f32 に変換して出力。
+        // buf.read(i) returns Node<'i32'> (zero-extended byte); convert to f32 for output.
         forSample((i) => {
           out
             .ch(0)

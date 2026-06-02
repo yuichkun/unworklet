@@ -2,10 +2,11 @@ import { defineConfig } from "vite-plus";
 
 import { WORKLET_REALM_FILES } from "./packages/core/src/worklet-realm-files.ts";
 
-// AudioWorkletGlobalScope (audio thread) に存在しない main-thread / Node の web API。
-// worklet バンドルに同梱されるソース (= `WORKLET_REALM_FILES`) がこれらを参照すると、
-// browser で worklet module load 時に即 throw し、その processor は一切鳴らせなくなる。
-// node の unit test は Node がこれらを持つので素通りする = lint で構造的に落とす。
+// main-thread / Node web APIs that do not exist in AudioWorkletGlobalScope (audio thread).
+// If source bundled into the worklet (i.e. `WORKLET_REALM_FILES`) references any of these,
+// the browser throws immediately when loading the worklet module, and that processor can
+// never produce sound. Node unit tests pass silently because Node provides these globals,
+// so we catch the problem structurally with lint instead.
 const WORKLET_FORBIDDEN_GLOBALS = [
   "TextEncoder",
   "TextDecoder",
@@ -67,11 +68,11 @@ const workletRealmGlobalsRule = [
 export default defineConfig({
   fmt: {},
   staged: {
-    // pre-commit hook で staged file に vp check --fix を 自動 (= fmt + lint
-    // auto-fix)。 test は 走 ら さ ない (= commit 単位 で 落 ち て いる の は OK、
-    // format は 常 に 自 動)。 hooks の install は `vp config` で 1 度 だ け、
-    // `.vite-hooks/` を repo に commit し て 他 dev clone で も 同 hook を 効
-    // か せ る。
+    // Run vp check --fix automatically on staged files in the pre-commit hook
+    // (i.e. fmt + lint auto-fix). Tests are not run (failing tests within a
+    // commit are OK; formatting is always applied automatically). Install the
+    // hooks once with `vp config`, and commit `.vite-hooks/` to the repo so the
+    // same hook is active for other devs who clone it.
     "*.{js,jsx,ts,tsx,json,yaml,yml}": "vp check --fix",
   },
   lint: {
@@ -83,9 +84,9 @@ export default defineConfig({
         files: WORKLET_REALM_FILES.map((f) => `packages/core/${f}`),
         rules: {
           "no-restricted-globals": workletRealmGlobalsRule,
-          // 相対 main-only モジュールの混入は `worklet-realm-files.test.ts` が graph で
-          // 検出するが、bare module は graph トレース対象外。worklet バンドルへ入ると
-          // 致命的な node-only dep を import 段階で禁止する。
+          // `worklet-realm-files.test.ts` detects leaked relative main-only modules
+          // via the graph, but bare modules are outside graph tracing. Forbid, at
+          // the import level, node-only deps that would be fatal in the worklet bundle.
           "no-restricted-imports": [
             "error",
             {
@@ -106,20 +107,21 @@ export default defineConfig({
     cache: true,
   },
   test: {
-    // `vp test` 1 発で node-side + browser e2e (SAB / postMessage) を 1 stage で
-    // 集 約。 vitest 4 の `projects` 機 能 経 由 で 各 package の vite.config.ts
-    // を default project、 packages/core の 2 browser config を 別 project と し
-    // て 並 列 実 行。 playwright spec (= examples/01-stereo-gain/tests/) は別
-    // runner = vitest 集 約 外、 root package.json の scripts.test で chain。
+    // A single `vp test` aggregates node-side + browser e2e (SAB / postMessage)
+    // into one stage. Via vitest 4's `projects` feature, each package's
+    // vite.config.ts is the default project, and packages/core's two browser
+    // configs run in parallel as separate projects.
     projects: [
       "packages/*/vite.config.ts",
-      "examples/*/vite.config.ts",
-      "experiments/*/vite.config.ts",
       "packages/core/vite.browser.config.ts",
       "packages/core/vite.browser-postmessage.config.ts",
     ],
-    // root の default project は 何 も 拾 わ な い (= include 空)。 全 test は
-    // sub project (= 上 の projects) 経 由 で 拾 う 形 に 統 一。
+    // examples/demo is NOT aggregated here. It depends on `@vitejs/devtools`, whose
+    // peer wiring spins up a second vite-plus-test runner that breaks this shared
+    // collector (it hangs). The demo runs in its own CI jobs instead: the node suite
+    // standalone (`cd examples/demo && vp test run`) and the runtime-compile browser
+    // e2e on its own config (examples/demo/vite.browser.config.ts). The root's
+    // default project collects nothing; every test comes from the projects above.
     include: [],
   },
 });

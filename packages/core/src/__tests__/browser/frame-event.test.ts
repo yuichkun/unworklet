@@ -1,15 +1,17 @@
 /**
- * Browser e2e (SAB transport): worklet → main の typed-array event payload を
- * real AudioWorkletNode + 実 SAB + 実 Atomics 経由で end-to-end 検証。
+ * Browser e2e (SAB transport): end-to-end verification of typed-array event payloads
+ * sent from worklet → main via a real AudioWorkletNode, real SAB, and real Atomics.
  *
- * 「通れば成功以外ありえない」設計:
- * - 入力を AudioBufferSourceNode で既知 ramp (i/256 = f32 exact, per-sample distinct)
- *   にして worklet に流す。worklet が各ブロックの入力先頭 8 サンプルを event 配列で
- *   main に送り返す。
- * - 受信配列が入力に厳密依存 = 途中のどの接続点 (compile → WASM boot → worklet content
- *   → SAB mirror → cross-thread → main rAF drain → handler) が壊れても値が崩れる/届かない。
- * - 複数ブロックで複数の異なる配列を確認 = 固定値の偶然一致を排除。
- * - ビット一致 (toEqual) で照合。
+ * Design rationale — any breakage anywhere surfaces as a failure:
+ * - Feed a known ramp (i/256, f32-exact, per-sample distinct) from an AudioBufferSourceNode
+ *   into the worklet. The worklet sends the first FRAME samples of each block back to main
+ *   as an event array.
+ * - The received array is strictly determined by the input, so any broken link in the chain
+ *   (compile → WASM boot → worklet content → SAB mirror → cross-thread → main rAF drain
+ *   → handler) produces wrong or missing values.
+ * - Multiple blocks produce multiple distinct arrays, ruling out accidental matches on a
+ *   fixed value.
+ * - Compared bit-for-bit with toEqual.
  */
 
 import { expect, test } from "vite-plus/test";
@@ -34,18 +36,18 @@ const waitRAF = (ticks: number): Promise<void> =>
     requestAnimationFrame(wait);
   });
 
-// block b の期待配列 = input[b*128 .. b*128+FRAME-1] = (b*128+k)/256。
+// Expected array for block b: input[b*128 .. b*128+FRAME-1] = (b*128+k)/256.
 const expectedBlock = (b: number): number[] =>
   Array.from({ length: FRAME }, (_, k) => (b * 128 + k) / 256);
 
-test("typed-array event: 各ブロックの入力先頭8サンプルが worklet→main で配列として届く", async () => {
+test("typed-array event: first 8 samples of each block are delivered as an array from worklet to main", async () => {
   const BLOCKS = 3;
   const ctx = new OfflineAudioContext({
     numberOfChannels: 1,
     length: 128 * BLOCKS,
     sampleRate: SAMPLE_RATE,
   });
-  // 既知 input = 通し番号 ramp i/256 (= f32 で厳密表現、per-sample distinct、block 間で別値)。
+  // Known input: sequential ramp i/256 (f32-exact, per-sample distinct, distinct across blocks).
   const inputBuf = ctx.createBuffer(1, 128 * BLOCKS, SAMPLE_RATE);
   const inData = inputBuf.getChannelData(0);
   for (let i = 0; i < inData.length; i++) inData[i] = i / 256;
@@ -64,7 +66,7 @@ test("typed-array event: 各ブロックの入力先頭8サンプルが worklet�
   await ctx.startRendering();
   await waitRAF(3);
 
-  // 3 ブロック → 3 event。受信配列の集合が期待 3 ブロックと一致 (= 順序非依存)。
+  // 3 blocks → 3 events. The set of received arrays matches the expected 3 blocks (order-independent).
   expect(received.length).toBe(BLOCKS);
   const got = received.map((r) => Array.from(r.samples).join(","));
   const want = [expectedBlock(0), expectedBlock(1), expectedBlock(2)].map((a) => a.join(","));

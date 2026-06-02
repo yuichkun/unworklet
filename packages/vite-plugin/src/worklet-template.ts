@@ -1,64 +1,28 @@
 /**
- * Emit the worklet runtime entry source (= the JS that becomes
- * `<processor>.worklet.js` and is loaded via `audioWorklet.addModule(url)`
- * in the AudioWorkletGlobalScope realm)。
+ * Build-time adapter over `@unworklet/core`'s `emitWorkletModuleSource` — emits
+ * the `?worklet` chunk's source (the JS loaded via `audioWorklet.addModule(url)`
+ * in the worklet realm). The chunk is served at a real URL, so it boots the
+ * runtime via `import { makeWorkletNamespaceFromMeta } from "@unworklet/core/worklet"`
+ * (the `import` runtime source). The shared emitter inlines the `WorkletMeta` and
+ * never re-imports the authoring source into the audio thread.
  *
- * Authoritative shape (= `01-dsl.md` §11 + Q80 + `04-worklet-runtime.md` §2):
- * the worklet entry exposes a `class extends AudioWorkletProcessor` that
- * wires its 3 entry points (= `initialize` / `process` /
- * `parameterDescriptors`) onto an instance built from compile-time
- * **metadata only**。 The template MUST NOT re-import the authoring source
- * inside `AudioWorkletGlobalScope` — that would re-evaluate
- * `defineProcessor(...)` and any author top-level side effects in the
- * worklet realm, breaking the spec's audio-thread safety guarantees
- * (`00-foundations.md` §5.1) and forcing every `?worklet` consumer to
- * keep their processor source worklet-safe by hand。
- *
- * Instead the template inlines a JSON metadata blob (= layout + decl list)
- * computed once at build / dev time from `compile(processor).graph`, and
- * boots the runtime via `@unworklet/core/worklet`'s
- * `makeWorkletNamespaceFromMeta(meta)` — a thin entry that pulls in only
- * the runtime helpers (no `binaryen`, no `defineProcessor`, no graph
- * capture machinery)。
+ * The in-browser runtime-compile path (`@unworklet/lang/browser`) uses the same
+ * emitter with the `inline` runtime source instead.
  */
 
+import { emitWorkletModuleSource } from "@unworklet/core";
 import type { WorkletMeta } from "@unworklet/core";
 
 export type EmitWorkletTemplateOptions = {
   /** Identifier passed to `registerProcessor(...)` (= main-side `processorName`). */
   processorName: string;
-  /**
-   * Serializable metadata extracted from the processor's captured graph at
-   * build / dev time。 Inlined into the emitted worklet entry as JSON so
-   * the worklet chunk depends only on compile outputs。
-   */
+  /** Serializable metadata extracted from the processor's captured graph. */
   meta: WorkletMeta;
 };
 
 export function emitWorkletTemplate(options: EmitWorkletTemplateOptions): string {
-  const { processorName, meta } = options;
-  // JSON.stringify on `WorkletMeta` is safe — every field is a plain
-  // serializable structure (= `Layout` is a record of offsets, decl arrays
-  // hold primitive props per `ast.ts`)。 No functions, no symbols。
-  const metaLiteral = JSON.stringify(meta);
-  return `import { makeWorkletNamespaceFromMeta } from "@unworklet/core/worklet";
-
-const __unworkletMeta = ${metaLiteral};
-const __unworkletNs = makeWorkletNamespaceFromMeta(__unworkletMeta);
-
-class UnworkletProcessor extends AudioWorkletProcessor {
-  static get parameterDescriptors() {
-    return __unworkletNs.parameterDescriptors;
-  }
-  constructor(opts) {
-    super();
-    __unworkletNs.initialize(this, opts);
-  }
-  process(inputs, outputs, parameters) {
-    return __unworkletNs.process(this, inputs, outputs, parameters);
-  }
-}
-
-registerProcessor(${JSON.stringify(processorName)}, UnworkletProcessor);
-`;
+  return emitWorkletModuleSource(options.meta, {
+    processorName: options.processorName,
+    runtime: { kind: "import" },
+  });
 }

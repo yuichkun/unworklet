@@ -1,9 +1,9 @@
 /**
  * Plugin test fixture = same export identifier (`stereoGain`) as
- * `01-stereo-gain.processor.ts` but at a distinct absolute path。 Used to
+ * `01-stereo-gain.processor.ts` but at a distinct absolute path. Used to
  * assert that the plugin derives a per-source-path `processorName` so two
  * unrelated processors that happen to share an export name do not collide
- * inside `registerProcessor(...)`。
+ * inside `registerProcessor(...)`.
  */
 
 import { audioInput, audioOutput, defineProcessor, forSample, param } from "@unworklet/core";

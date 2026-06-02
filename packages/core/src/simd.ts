@@ -20,7 +20,7 @@ import type { AstNode } from "./compile/ast.ts";
 import { isWrappedNode, registerNodeMethod, unwrapAst, wrapAst } from "./compile/capture.ts";
 import type { Node } from "./types.ts";
 
-/** scalar (f32) 引 数 を AST node に lift (= number → f32 literal、Node → unwrap)。 */
+/** Lift a scalar (f32) argument into an AST node (number → f32 literal, Node → unwrap). */
 const liftLane = (v: Node<"f32"> | number): AstNode =>
   isWrappedNode(v) ? unwrapAst(v) : { kind: "literal", type: "f32", value: v };
 
@@ -91,7 +91,7 @@ export function sumLanes(v: Node<"f32x4">): Node<"f32"> {
   return wrapAst<"f32">({ kind: "vecSumLanes", value: unwrapAst(v) });
 }
 
-// `.lane(i)` method form (= §7、定 数 lane index 0..3 → Node<'f32'>)。
+// `.lane(i)` method form (§7 — constant lane index 0..3 → Node<'f32'>).
 registerNodeMethod("lane", function lane(this: Node<"f32x4">, i: 0 | 1 | 2 | 3): Node<"f32"> {
   return wrapAst<"f32">({ kind: "vecLane", index: i, value: unwrapAst(this) });
 });

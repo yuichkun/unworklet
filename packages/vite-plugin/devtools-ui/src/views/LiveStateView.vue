@@ -1,27 +1,31 @@
 <script setup lang="ts">
-import { computed, type ComponentPublicInstance, onMounted, onUnmounted, ref, watch } from "vue";
+import { type ComponentPublicInstance, computed, onMounted, onUnmounted, ref } from "vue";
 
-import { useLiveStateMock } from "../composables/useLiveStateMock";
 import {
-  type AudioGraphNode,
-  type PublishSlotMeta,
-  useMockGraph,
-} from "../composables/useMockGraph";
+  type LiveBuffer,
+  type LiveScalar,
+  type LiveSlotType,
+  useLiveState,
+} from "../composables/useLiveState";
 
-type ScalarRepr = "history-line" | "on-off" | "numeric";
-type BufferRepr = "waveform" | "bar" | "grid" | "hex" | "list";
-type Repr = ScalarRepr | BufferRepr;
+const live = useLiveState();
 
-const SCALAR_OPTIONS: Record<PublishSlotMeta["type"], ScalarRepr[]> = {
-  f32: ["history-line", "numeric"],
-  f64: ["history-line", "numeric"],
-  i32: ["history-line", "numeric"],
-  i64: ["history-line", "numeric"],
-  bool: ["on-off", "history-line", "numeric"],
-  u8: ["numeric", "history-line"],
+// ── scalars ────────────────────────────────────────────────────────────────
+// bool → on/off, i64 → text (decimal string, not charted), other numeric types
+// → value + history sparkline.
+const isBool = (s: LiveScalar): boolean => s.type === "bool";
+const isCharted = (s: LiveScalar): boolean => s.type !== "bool" && s.type !== "i64";
+
+const formatValue = (value: number | boolean | string, type: LiveSlotType): string => {
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "string") return value; // i64 decimal string
+  if (type === "f32" || type === "f64") return value.toFixed(3);
+  return String(value);
 };
 
-const BUFFER_OPTIONS: Record<PublishSlotMeta["type"], BufferRepr[]> = {
+// ── buffers ──────────────────────────────────────────────────────────────--
+type BufferRepr = "waveform" | "bar" | "grid" | "hex" | "list";
+const BUFFER_OPTIONS: Record<LiveSlotType, BufferRepr[]> = {
   f32: ["waveform", "bar", "list"],
   f64: ["waveform", "bar", "list"],
   i32: ["bar", "waveform", "list"],
@@ -29,73 +33,56 @@ const BUFFER_OPTIONS: Record<PublishSlotMeta["type"], BufferRepr[]> = {
   bool: ["grid", "list"],
   u8: ["hex", "bar", "list"],
 };
-
-const REPR_LABELS: Record<Repr, string> = {
-  "history-line": "History line",
-  "on-off": "On / off",
-  numeric: "Numeric",
+const REPR_LABELS: Record<BufferRepr, string> = {
   waveform: "Waveform",
   bar: "Bar chart",
   grid: "Grid",
   hex: "Hex dump",
   list: "List",
 };
-
-const graph = useMockGraph();
-const live = useLiveStateMock();
-
-const unworkletNodes = computed<AudioGraphNode[]>(() =>
-  graph.nodes.filter((n) => n.kind === "unworklet"),
-);
-
-const totalPublishCount = computed(() =>
-  unworkletNodes.value.reduce((acc, n) => acc + graph.publishSlots(n.id).length, 0),
-);
-
-const reprByKey = ref<Record<string, Repr>>({});
-
-const optionsFor = (slot: PublishSlotMeta): Repr[] =>
-  slot.kind === "state" ? SCALAR_OPTIONS[slot.type] : BUFFER_OPTIONS[slot.type];
-
-const defaultRepr = (slot: PublishSlotMeta): Repr => optionsFor(slot)[0]!;
-
-const reprFor = (nodeId: string, slot: PublishSlotMeta): Repr => {
-  const key = `${nodeId}.${slot.name}`;
-  return reprByKey.value[key] ?? defaultRepr(slot);
+const reprByKey = ref<Record<string, BufferRepr>>({});
+const bufKey = (nodeId: string, name: string): string => `${nodeId}.${name}`;
+const optionsFor = (b: LiveBuffer): BufferRepr[] => BUFFER_OPTIONS[b.type];
+const reprFor = (nodeId: string, b: LiveBuffer): BufferRepr =>
+  reprByKey.value[bufKey(nodeId, b.name)] ?? optionsFor(b)[0]!;
+const setRepr = (nodeId: string, b: LiveBuffer, repr: BufferRepr): void => {
+  reprByKey.value[bufKey(nodeId, b.name)] = repr;
 };
 
-const setRepr = (nodeId: string, slot: PublishSlotMeta, repr: Repr): void => {
-  reprByKey.value[`${nodeId}.${slot.name}`] = repr;
+const formatHex = (data: number[]): string =>
+  data.map((b) => (b & 0xff).toString(16).padStart(2, "0").toUpperCase()).join(" ");
+
+const formatList = (data: number[]): string => {
+  const fmt = data.map((v) => (Number.isInteger(v) ? String(v) : v.toFixed(3)));
+  if (fmt.length <= 16) return `[${fmt.join(", ")}]`;
+  return `[${fmt.slice(0, 16).join(", ")}, … ${fmt.length - 16} more]`;
 };
 
-const slotKey = (nodeId: string, slot: PublishSlotMeta): string => `${nodeId}.${slot.name}`;
+// ── canvas drawing ─────────────────────────────────────────────────────────
 
-const formatScalar = (value: number | boolean, type: PublishSlotMeta["type"]): string => {
-  if (typeof value === "boolean") return value ? "true" : "false";
-  if (type === "f32" || type === "f64") {
-    return value.toFixed(3);
-  }
-  return String(value);
-};
-
-const drawSparkline = (
+const sizeCanvas = (
   canvas: HTMLCanvasElement,
-  history: readonly number[],
-  color: string,
-): void => {
+  fallbackH: number,
+): CanvasRenderingContext2D | null => {
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth || 120;
-  const h = canvas.clientHeight || 24;
+  const h = canvas.clientHeight || fallbackH;
   if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
     canvas.width = w * dpr;
     canvas.height = h * dpr;
   }
   const ctx = canvas.getContext("2d");
-  if (!ctx) return;
+  if (!ctx) return null;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
+  return ctx;
+};
 
-  if (history.length < 2) return;
+const drawSparkline = (canvas: HTMLCanvasElement, history: readonly number[]): void => {
+  const ctx = sizeCanvas(canvas, 24);
+  if (!ctx || history.length < 2) return;
+  const w = canvas.clientWidth || 120;
+  const h = canvas.clientHeight || 24;
   let min = history[0]!;
   let max = history[0]!;
   for (const v of history) {
@@ -103,122 +90,74 @@ const drawSparkline = (
     if (v > max) max = v;
   }
   const range = max - min || 1;
-
-  ctx.strokeStyle = color;
+  ctx.strokeStyle = "#fffaf0";
   ctx.lineWidth = 1.4;
   ctx.beginPath();
   for (let i = 0; i < history.length; i++) {
     const x = (i / (history.length - 1)) * w;
-    const norm = (history[i]! - min) / range;
-    const y = h - 2 - norm * (h - 4);
+    const y = h - 2 - ((history[i]! - min) / range) * (h - 4);
     if (i === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
   }
   ctx.stroke();
 };
 
-const drawWaveform = (canvas: HTMLCanvasElement, samples: Float32Array | Int32Array): void => {
-  const dpr = window.devicePixelRatio || 1;
-  const w = canvas.clientWidth;
-  const h = canvas.clientHeight || 80;
-  if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
-    canvas.width = w * dpr;
-    canvas.height = h * dpr;
-  }
-  const ctx = canvas.getContext("2d");
+const drawWaveform = (canvas: HTMLCanvasElement, data: number[]): void => {
+  const ctx = sizeCanvas(canvas, 80);
   if (!ctx) return;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, w, h);
-
-  ctx.strokeStyle = "rgba(168, 172, 184, 0.18)";
+  const w = canvas.clientWidth || 120;
+  const h = canvas.clientHeight || 80;
+  ctx.strokeStyle = "rgba(255, 250, 240, 0.18)";
   ctx.beginPath();
   ctx.moveTo(0, h / 2);
   ctx.lineTo(w, h / 2);
   ctx.stroke();
-
-  if (samples.length === 0) return;
-  let min = samples[0]!;
-  let max = samples[0]!;
-  for (const v of samples) {
-    if (v < min) min = v;
-    if (v > max) max = v;
-  }
-  const span = Math.max(Math.abs(min), Math.abs(max), 1);
-
+  if (data.length === 0) return;
+  let span = 1;
+  for (const v of data) span = Math.max(span, Math.abs(v));
   ctx.strokeStyle = "#fffaf0";
   ctx.lineWidth = 1.4;
   ctx.beginPath();
-  for (let i = 0; i < samples.length; i++) {
-    const x = (i / (samples.length - 1)) * w;
-    const norm = samples[i]! / span;
-    const y = h / 2 - norm * (h / 2 - 2);
+  for (let i = 0; i < data.length; i++) {
+    const x = (i / Math.max(1, data.length - 1)) * w;
+    const y = h / 2 - (data[i]! / span) * (h / 2 - 2);
     if (i === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
   }
   ctx.stroke();
 };
 
-const drawBars = (
-  canvas: HTMLCanvasElement,
-  samples: Float32Array | Int32Array | Uint8Array,
-): void => {
-  const dpr = window.devicePixelRatio || 1;
-  const w = canvas.clientWidth;
+const drawBars = (canvas: HTMLCanvasElement, data: number[]): void => {
+  const ctx = sizeCanvas(canvas, 60);
+  if (!ctx || data.length === 0) return;
+  const w = canvas.clientWidth || 120;
   const h = canvas.clientHeight || 60;
-  if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
-    canvas.width = w * dpr;
-    canvas.height = h * dpr;
-  }
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, w, h);
-
-  if (samples.length === 0) return;
-  let min = Number(samples[0]!);
-  let max = Number(samples[0]!);
-  for (const v of samples) {
-    const n = Number(v);
-    if (n < min) min = n;
-    if (n > max) max = n;
+  let min = data[0]!;
+  let max = data[0]!;
+  for (const v of data) {
+    if (v < min) min = v;
+    if (v > max) max = v;
   }
   const baseline = min < 0 ? 0 : min;
   const span = Math.max(Math.abs(max - baseline), Math.abs(min - baseline), 1);
-
-  const cellW = w / samples.length;
+  const cellW = w / data.length;
   const barW = Math.max(1, cellW - 2);
-  for (let i = 0; i < samples.length; i++) {
-    const v = Number(samples[i]!);
-    const norm = (v - baseline) / span;
-    const barH = norm * (h - 4);
-    const x = i * cellW + 1;
-    const y = h - 2 - barH;
+  for (let i = 0; i < data.length; i++) {
+    const v = data[i]!;
+    const barH = ((v - baseline) / span) * (h - 4);
     ctx.fillStyle = v >= baseline ? "#fffaf0" : "#ffb4ab";
-    ctx.fillRect(x, y, barW, Math.max(1, barH));
+    ctx.fillRect(i * cellW + 1, h - 2 - barH, barW, Math.max(1, barH));
   }
 };
 
-const formatHex = (bytes: Uint8Array): string =>
-  Array.from(bytes, (b) => b.toString(16).padStart(2, "0").toUpperCase()).join(" ");
+// ── canvas refs + redraw loop ────────────────────────────────────────────---
 
-const formatList = (samples: Float32Array | Int32Array | Uint8Array | boolean[]): string => {
-  const arr = Array.from(samples as ArrayLike<number | boolean>);
-  const formatted = arr.map((v) =>
-    typeof v === "boolean" ? (v ? "1" : "0") : Number.isInteger(v) ? String(v) : v.toFixed(3),
-  );
-  if (formatted.length <= 16) return `[${formatted.join(", ")}]`;
-  return `[${formatted.slice(0, 16).join(", ")}, … ${formatted.length - 16} more]`;
-};
-
+type TemplateRefEl = Element | ComponentPublicInstance | null;
+const asCanvas = (el: TemplateRefEl): HTMLCanvasElement | null =>
+  el instanceof HTMLCanvasElement ? el : null;
 const sparklineRefs = ref<Record<string, HTMLCanvasElement | null>>({});
 const waveformRefs = ref<Record<string, HTMLCanvasElement | null>>({});
 const barRefs = ref<Record<string, HTMLCanvasElement | null>>({});
-
-type TemplateRefEl = Element | ComponentPublicInstance | null;
-
-const asCanvas = (el: TemplateRefEl): HTMLCanvasElement | null =>
-  el instanceof HTMLCanvasElement ? el : null;
-
 const setSparklineRef = (key: string) => (el: TemplateRefEl) => {
   sparklineRefs.value[key] = asCanvas(el);
 };
@@ -229,38 +168,22 @@ const setBarRef = (key: string) => (el: TemplateRefEl) => {
   barRefs.value[key] = asCanvas(el);
 };
 
-const EMPTY_U8 = new Uint8Array();
-
 const redraw = (): void => {
-  for (const node of unworkletNodes.value) {
-    for (const slot of graph.publishSlots(node.id)) {
-      const key = slotKey(node.id, slot);
-      const repr = reprFor(node.id, slot);
-      if (slot.kind === "state") {
-        if (repr === "history-line") {
-          const c = sparklineRefs.value[key];
-          if (c) {
-            const hist = live.getSlotHistory(key);
-            drawSparkline(c, hist, "#fffaf0");
-          }
-        }
-      } else {
-        const buf = live.getSlotBuffer(key);
-        if (!buf) continue;
-        if (repr === "waveform") {
-          const c = waveformRefs.value[key];
-          if (c && (buf instanceof Float32Array || buf instanceof Int32Array)) {
-            drawWaveform(c, buf);
-          }
-        } else if (repr === "bar") {
-          const c = barRefs.value[key];
-          if (
-            c &&
-            (buf instanceof Float32Array || buf instanceof Int32Array || buf instanceof Uint8Array)
-          ) {
-            drawBars(c, buf);
-          }
-        }
+  for (const node of live.nodes.value) {
+    for (const s of node.scalars) {
+      if (!isCharted(s)) continue;
+      const c = sparklineRefs.value[bufKey(node.id, s.name)];
+      if (c) drawSparkline(c, live.getHistory(node.id, s.name));
+    }
+    for (const b of node.buffers) {
+      const key = bufKey(node.id, b.name);
+      const repr = reprFor(node.id, b);
+      if (repr === "waveform") {
+        const c = waveformRefs.value[key];
+        if (c) drawWaveform(c, b.data);
+      } else if (repr === "bar") {
+        const c = barRefs.value[key];
+        if (c) drawBars(c, b.data);
       }
     }
   }
@@ -271,7 +194,6 @@ const loop = (): void => {
   redraw();
   rafId = requestAnimationFrame(loop);
 };
-
 onMounted(() => {
   rafId = requestAnimationFrame(loop);
 });
@@ -279,7 +201,7 @@ onUnmounted(() => {
   if (rafId !== null) cancelAnimationFrame(rafId);
 });
 
-watch(reprByKey, () => redraw(), { deep: true });
+const isEmpty = computed(() => live.nodes.value.length === 0);
 </script>
 
 <template>
@@ -287,127 +209,113 @@ watch(reprByKey, () => redraw(), { deep: true });
     <header class="view-header">
       <div class="view-title">Live state</div>
       <div class="view-meta">
-        <span class="u-pill u-pill--accent">{{ unworkletNodes.length }} nodes</span>
-        <span class="u-pill">{{ totalPublishCount }} publish slots</span>
+        <span class="u-pill u-pill--accent">{{ live.nodes.value.length }} nodes</span>
+        <span class="u-pill">{{ live.totalScalars.value }} scalar slots</span>
+        <span class="u-pill u-pill--accent">live</span>
       </div>
     </header>
 
     <div class="view-body">
-      <section v-for="node in unworkletNodes" :key="node.id" class="node-section">
+      <div v-if="isEmpty" class="empty empty-page">
+        <p>No live nodes yet.</p>
+        <p class="empty-sub">
+          Start the app's audio — every <code>createNode</code> appears here and its WASM state
+          slots are polled in real time.
+        </p>
+      </div>
+
+      <section v-for="node in live.nodes.value" :key="node.id" class="node-section">
         <header class="section-head">
-          <div class="section-name-cell">
-            <span class="section-dot" :class="`status-${node.status}`"></span>
-            <span class="section-name">{{ node.label }}</span>
-          </div>
-          <span class="u-pill section-pill">{{ node.audioNodeType }}</span>
-          <span class="u-pill u-pill--accent section-count">
-            {{ graph.publishSlots(node.id).length }} slots
-          </span>
+          <span class="section-name">{{ node.displayName }}</span>
+          <span class="u-pill u-pill--accent section-count">{{ node.scalars.length }} scalars</span>
+          <span v-if="node.buffers.length" class="u-pill section-count"
+            >{{ node.buffers.length }} buffers</span
+          >
         </header>
 
-        <div v-if="graph.publishSlots(node.id).length === 0" class="empty">
-          This node declares no <code>publish</code> slots.
+        <div v-if="node.scalars.length === 0 && node.buffers.length === 0" class="empty">
+          This node declares no state slots.
         </div>
 
         <ul v-else class="slot-list">
-          <li v-for="slot in graph.publishSlots(node.id)" :key="slot.name" class="slot-row">
+          <li v-for="s in node.scalars" :key="`s.${s.name}`" class="slot-row">
             <div class="slot-meta">
-              <span class="slot-name mono">{{ slot.name }}</span>
-              <span class="u-pill slot-pill" :class="`kind-pill-${slot.kind}`">{{
-                slot.kind
-              }}</span>
-              <span class="slot-type mono">{{ slot.type }}</span>
-              <span class="slot-size mono">
-                <template v-if="slot.kind === 'buffer'">× {{ slot.size }}</template>
+              <span class="slot-name mono">{{ s.name }}</span>
+              <span class="u-pill slot-pill" :class="`kind-pill-${s.kind}`">{{ s.kind }}</span>
+              <span class="slot-type mono">{{ s.type }}</span>
+            </div>
+            <div class="slot-value">
+              <span class="slot-value-prefix mono">{{ formatValue(s.value, s.type) }}</span>
+              <div class="slot-value-visual">
+                <canvas
+                  v-if="isCharted(s)"
+                  :ref="setSparklineRef(bufKey(node.id, s.name))"
+                  class="sparkline"
+                ></canvas>
+                <span
+                  v-else-if="isBool(s)"
+                  class="onoff-indicator"
+                  :class="{ on: s.value === true }"
+                >
+                  <span class="onoff-dot"></span>
+                  <span class="onoff-label">{{ s.value === true ? "on" : "off" }}</span>
+                </span>
+              </div>
+            </div>
+          </li>
+
+          <li v-for="b in node.buffers" :key="`b.${b.name}`" class="slot-row slot-row--buffer">
+            <div class="slot-meta">
+              <span class="slot-name mono">{{ b.name }}</span>
+              <span class="u-pill slot-pill kind-pill-buffer">buffer</span>
+              <span class="slot-type mono">{{ b.type }}</span>
+              <span class="slot-size mono">× {{ b.length }}</span>
+              <span
+                v-if="b.downsampled"
+                class="slot-down mono"
+                title="stride-downsampled for display"
+              >
+                ↓{{ b.data.length }}
               </span>
-              <span class="slot-rate mono">{{ slot.rateFps }} fps</span>
             </div>
 
             <div class="slot-repr">
               <select
                 class="repr-select"
-                :value="reprFor(node.id, slot)"
-                @change="setRepr(node.id, slot, ($event.target as HTMLSelectElement).value as Repr)"
+                :value="reprFor(node.id, b)"
+                @change="
+                  setRepr(node.id, b, ($event.target as HTMLSelectElement).value as BufferRepr)
+                "
               >
-                <option v-for="opt in optionsFor(slot)" :key="opt" :value="opt">
+                <option v-for="opt in optionsFor(b)" :key="opt" :value="opt">
                   {{ REPR_LABELS[opt] }}
                 </option>
               </select>
             </div>
 
-            <div class="slot-value">
-              <!-- Numeric prefix (fixed-width column 1) — only rendered for
-                   state+history-line and state+numeric. Empty placeholder for
-                   every other row, so column 2 (the visual) always starts at
-                   the same x position. -->
-              <span class="slot-value-prefix mono">
-                <template
-                  v-if="
-                    slot.kind === 'state' &&
-                    (reprFor(node.id, slot) === 'history-line' ||
-                      reprFor(node.id, slot) === 'numeric')
-                  "
-                >
-                  {{ formatScalar(live.getSlotScalar(slotKey(node.id, slot)) ?? 0, slot.type) }}
-                </template>
-              </span>
-
-              <!-- Visual (column 2): sparkline / on-off / waveform / bar / grid / hex / list. -->
-              <div class="slot-value-visual">
-                <template v-if="slot.kind === 'state'">
-                  <template v-if="reprFor(node.id, slot) === 'history-line'">
-                    <canvas
-                      :ref="setSparklineRef(slotKey(node.id, slot))"
-                      class="sparkline"
-                    ></canvas>
-                  </template>
-                  <template v-else-if="reprFor(node.id, slot) === 'on-off'">
-                    <span
-                      class="onoff-indicator"
-                      :class="{ on: live.getSlotScalar(slotKey(node.id, slot)) === true }"
-                    >
-                      <span class="onoff-dot"></span>
-                      <span class="onoff-label">
-                        {{ live.getSlotScalar(slotKey(node.id, slot)) === true ? "on" : "off" }}
-                      </span>
-                    </span>
-                  </template>
-                </template>
-
-                <template v-else>
-                  <template v-if="reprFor(node.id, slot) === 'waveform'">
-                    <canvas :ref="setWaveformRef(slotKey(node.id, slot))" class="waveform"></canvas>
-                  </template>
-                  <template v-else-if="reprFor(node.id, slot) === 'bar'">
-                    <canvas :ref="setBarRef(slotKey(node.id, slot))" class="bar-chart"></canvas>
-                  </template>
-                  <template v-else-if="reprFor(node.id, slot) === 'grid'">
-                    <div class="bool-grid">
-                      <span
-                        v-for="(v, i) in (live.getSlotBuffer(slotKey(node.id, slot)) ??
-                          []) as boolean[]"
-                        :key="i"
-                        class="bool-cell"
-                        :class="{ on: v }"
-                      ></span>
-                    </div>
-                  </template>
-                  <template v-else-if="reprFor(node.id, slot) === 'hex'">
-                    <span class="hex-dump mono">
-                      {{
-                        formatHex(
-                          (live.getSlotBuffer(slotKey(node.id, slot)) ?? EMPTY_U8) as Uint8Array,
-                        )
-                      }}
-                    </span>
-                  </template>
-                  <template v-else>
-                    <span class="list-dump mono">
-                      {{ formatList(live.getSlotBuffer(slotKey(node.id, slot)) ?? EMPTY_U8) }}
-                    </span>
-                  </template>
-                </template>
+            <div class="slot-visual">
+              <canvas
+                v-if="reprFor(node.id, b) === 'waveform'"
+                :ref="setWaveformRef(bufKey(node.id, b.name))"
+                class="waveform"
+              ></canvas>
+              <canvas
+                v-else-if="reprFor(node.id, b) === 'bar'"
+                :ref="setBarRef(bufKey(node.id, b.name))"
+                class="bar-chart"
+              ></canvas>
+              <div v-else-if="reprFor(node.id, b) === 'grid'" class="bool-grid">
+                <span
+                  v-for="(v, i) in b.data"
+                  :key="i"
+                  class="bool-cell"
+                  :class="{ on: v !== 0 }"
+                ></span>
               </div>
+              <span v-else-if="reprFor(node.id, b) === 'hex'" class="hex-dump mono">{{
+                formatHex(b.data)
+              }}</span>
+              <span v-else class="list-dump mono">{{ formatList(b.data) }}</span>
             </div>
           </li>
         </ul>
@@ -451,8 +359,6 @@ watch(reprByKey, () => redraw(), { deep: true });
 
 .view-body {
   flex: 1;
-  /* horizontal scroll as a safety net at extreme narrow widths where nested
-     grid layouts cant shrink further (= controllers grid in MidiView, etc). */
   overflow: auto;
   padding: 14px 18px 24px;
   display: flex;
@@ -461,8 +367,6 @@ watch(reprByKey, () => redraw(), { deep: true });
 }
 
 .node-section {
-  /* container queries below target the node-section's actual width so we
-     can collapse the slot grid before it overflows the panel. */
   container-type: inline-size;
   background: var(--u-bg-elev-1);
   border: 1px solid var(--u-border);
@@ -471,51 +375,12 @@ watch(reprByKey, () => redraw(), { deep: true });
 }
 
 .section-head {
-  display: grid;
-  /* First two columns match .slot-meta's first two columns so the
-     "AudioWorkletNode" pill in the section header lines up vertically with
-     the per-row "state"/"buffer" pills below it. The trailing `auto` holds
-     the count pill ("N slots"). */
-  grid-template-columns: 130px 130px auto;
+  display: flex;
   align-items: center;
-  column-gap: 10px;
+  gap: 10px;
   padding: 0 4px 10px;
   border-bottom: 1px solid var(--u-border);
   margin-bottom: 10px;
-}
-
-.section-name-cell {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.section-pill {
-  justify-self: start;
-}
-
-.section-count {
-  justify-self: start;
-}
-
-.section-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.section-dot.status-ok {
-  background: var(--u-success);
-}
-
-.section-dot.status-errors {
-  background: var(--u-danger);
-}
-
-.section-dot.status-warning {
-  background: var(--u-warn);
 }
 
 .section-name {
@@ -524,6 +389,8 @@ watch(reprByKey, () => redraw(), { deep: true });
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--u-text);
+  margin-right: auto;
+  overflow-wrap: anywhere;
 }
 
 .empty {
@@ -539,6 +406,26 @@ watch(reprByKey, () => redraw(), { deep: true });
   font-family: var(--u-mono);
 }
 
+.empty-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+  padding: 48px 20px;
+}
+
+.empty-page p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.empty-sub {
+  max-width: 380px;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
 .slot-list {
   margin: 0;
   padding: 0;
@@ -550,54 +437,36 @@ watch(reprByKey, () => redraw(), { deep: true });
 
 .slot-row {
   display: grid;
-  /* slot-meta sizes to its grid content (= 130 + 130 + 36 + 56 + 56 + gaps),
-     so the kind pill / type / size / rate columns are never clipped. */
-  grid-template-columns: auto 140px minmax(160px, 1fr);
+  grid-template-columns: minmax(220px, auto) minmax(160px, 1fr);
   align-items: center;
   gap: 12px;
   padding: 6px 4px;
   border-bottom: 1px solid var(--u-border);
 }
 
+.slot-row--buffer {
+  grid-template-columns: minmax(220px, auto) 130px minmax(160px, 1fr);
+  align-items: start;
+}
+
 .slot-row:last-child {
   border-bottom: 0;
 }
 
-.slot-meta {
-  display: grid;
-  /* slot-name fixed at 130px so the kind pill ("state"/"buffer") sits at a
-     stable x position across rows AND matches `.section-head`'s pill column.
-     pill column is 130px to fit the longest audio-node type string
-     ("AudioDestinationNode") in the section header above — the short
-     "state"/"buffer" pills in slot rows just left-align inside it. */
-  grid-template-columns: 130px 130px 36px 56px 56px;
-  align-items: center;
-  column-gap: 10px;
-  overflow: hidden;
-}
-
-/* Slot-row at full width needs ~794px (slot-meta 428 + 140 select + 160 vis
-   + gaps). Below ~760px the visualization column gets crushed — at ~580px
-   we stack to vertical instead. Mid-range (~580-760px) we drop the size +
-   rate columns so the visualization keeps breathing room. */
-@container (max-width: 760px) {
-  .slot-meta {
-    grid-template-columns: minmax(0, 1fr) 130px 36px;
-  }
-  .slot-size,
-  .slot-rate {
-    display: none;
-  }
-}
-
-@container (max-width: 580px) {
-  .slot-row {
+@container (max-width: 600px) {
+  .slot-row,
+  .slot-row--buffer {
     grid-template-columns: minmax(0, 1fr);
     gap: 6px;
   }
-  .slot-meta {
-    grid-template-columns: minmax(0, 1fr) auto auto;
-  }
+}
+
+.slot-meta {
+  display: grid;
+  grid-template-columns: 150px 70px 36px auto auto;
+  align-items: center;
+  column-gap: 10px;
+  overflow: hidden;
 }
 
 .slot-name {
@@ -613,20 +482,43 @@ watch(reprByKey, () => redraw(), { deep: true });
   justify-self: start;
 }
 
-.slot-type {
-  font-size: 10.5px;
-  color: var(--u-text-dim);
+.kind-pill-param {
+  color: var(--u-accent);
 }
 
+.slot-type,
 .slot-size {
   font-size: 10.5px;
   color: var(--u-text-dim);
 }
 
-.slot-rate {
-  font-size: 10.5px;
-  color: var(--u-text-dim);
+.slot-down {
+  font-size: 10px;
+  color: var(--u-text-muted);
+}
+
+.slot-value {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  min-width: 0;
+}
+
+.slot-value-prefix {
+  font-size: 12px;
+  color: var(--u-text);
   text-align: right;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.slot-value-visual {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .repr-select {
@@ -645,33 +537,13 @@ watch(reprByKey, () => redraw(), { deep: true });
   border-color: var(--u-border-strong);
 }
 
-.slot-value {
-  display: grid;
-  grid-template-columns: 60px minmax(0, 1fr);
-  align-items: center;
-  column-gap: 8px;
-  min-width: 0;
-}
-
-.slot-value-prefix {
-  font-size: 12px;
-  color: var(--u-text);
-  text-align: right;
-  min-width: 0;
-}
-
-.slot-value-visual {
+.slot-visual {
   display: flex;
   align-items: center;
-  gap: 8px;
   min-width: 0;
 }
 
-/* min-width: 0 is critical — <canvas> has an intrinsic width of 300px (the
-   default `width` attribute), and flex children default to `min-width: auto`
-   which honors that intrinsic floor. Without min-width: 0, `flex: 1` can't
-   shrink the canvas below 300px and the row overflows its parent card at
-   any viewport where the visual column is narrower than 300px. */
+/* min-width: 0 lets a canvas shrink below its 300px intrinsic width. */
 .sparkline {
   flex: 1;
   min-width: 0;
@@ -684,12 +556,8 @@ watch(reprByKey, () => redraw(), { deep: true });
   flex: 1;
   min-width: 0;
   width: 100%;
-  height: 80px;
+  height: 72px;
   background-color: var(--u-bg);
-  background-image:
-    linear-gradient(rgba(255, 250, 240, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 250, 240, 0.04) 1px, transparent 1px);
-  background-size: 40px 40px;
   border: 1px solid var(--u-border);
   border-radius: var(--u-radius);
 }
@@ -698,12 +566,8 @@ watch(reprByKey, () => redraw(), { deep: true });
   flex: 1;
   min-width: 0;
   width: 100%;
-  height: 60px;
+  height: 56px;
   background-color: var(--u-bg);
-  background-image:
-    linear-gradient(rgba(255, 250, 240, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 250, 240, 0.04) 1px, transparent 1px);
-  background-size: 40px 40px;
   border: 1px solid var(--u-border);
   border-radius: var(--u-radius);
 }
@@ -749,8 +613,8 @@ watch(reprByKey, () => redraw(), { deep: true });
 }
 
 .bool-cell {
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   border-radius: 3px;
   background: var(--u-bg-elev-3);
   border: 1px solid var(--u-border);
@@ -761,32 +625,15 @@ watch(reprByKey, () => redraw(), { deep: true });
   border-color: var(--u-success);
 }
 
-.hex-dump {
-  font-size: 11px;
-  color: var(--u-text);
-  background: var(--u-bg);
-  border: 1px solid var(--u-border);
-  border-radius: var(--u-radius-sm);
-  padding: 6px 8px;
-  letter-spacing: 0.04em;
-  word-break: break-all;
-  flex: 1;
-}
-
+.hex-dump,
 .list-dump {
   font-size: 11px;
+  line-height: 1.5;
   color: var(--u-text-muted);
-  background: var(--u-bg);
-  border: 1px solid var(--u-border);
-  border-radius: var(--u-radius-sm);
-  padding: 6px 8px;
   word-break: break-all;
-  flex: 1;
 }
 
-.kind-pill-state,
-.kind-pill-buffer {
-  background: var(--u-bg-elev-4);
-  color: var(--u-text);
+.slot-row--buffer .slot-name {
+  color: var(--u-text-muted);
 }
 </style>
