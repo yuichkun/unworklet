@@ -21,6 +21,7 @@
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "@unworklet/test": "workspace:*",
     "@unworklet/vite-plugin": "workspace:*",
     "@vitejs/plugin-vue": "catalog:",
     "esbuild": "catalog:",
