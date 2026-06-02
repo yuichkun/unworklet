@@ -1,82 +1,89 @@
-# unworklet
+<p align="center">
+  <img src="./assets/unworklet-logo-chain.svg" alt="unworklet" width="420" />
+</p>
 
-TypeScript-first framework for declarative Audio Worklet DSP, compiled to WebAssembly. v1.0.0 implementation in progress (see `docs/10-roadmap.md`).
+<p align="center">
+  Write an AudioWorklet as a declarative TypeScript graph — compiled to WebAssembly that runs on the audio thread.
+</p>
 
-## Monorepo layout
+---
 
-```mermaid
-flowchart LR
-  core["@unworklet/core<br/>(WASM compile + runtime)"]
-  lang["@unworklet/lang<br/>(.uwk.ts → core .ts lowering)"]
-  plugin["@unworklet/vite-plugin<br/>(?worklet resolution + DevTools)"]
-  offline["@unworklet/offline<br/>(OfflineAudioContext render)"]
-  test["@unworklet/test<br/>(vitest matchers)"]
-  ex1["examples/01-stereo-gain"]
-  ex2["examples/type-check-smoke"]
-  dt["experiments/devtools-proto"]
+No hand-written `AudioWorkletProcessor`, no `postMessage` plumbing, no manual WASM.
+You describe the DSP with typed primitives; unworklet compiles it to WebAssembly,
+loads it into an `AudioWorklet`, and hands you a typed main-thread node. A
+processor that compiles is realtime-safe — the compiler enforces the audio-thread
+contract (no allocation, no unbounded loops, no GC) at build time.
 
-  plugin --> core
-  plugin --> lang
-  lang --> core
-  offline --> core
-  test --> core
-  test --> offline
-  ex1 --> core
-  ex1 --> offline
-  ex1 --> test
-  ex1 --> plugin
-  ex2 --> core
-  ex2 --> offline
-  ex2 --> test
-  ex2 --> plugin
-  dt --> plugin
-```
+> **Status:** v1.0.0 implementation in progress (see [`docs/10-roadmap.md`](./docs/10-roadmap.md)).
 
-`core` も devDep として `vite-plugin` に依存している (= browser e2e の test config で `?worklet` resolution を使う)。 build 順序は cycle になるので CI は `vp run --filter @unworklet/lang build && vp run --filter @unworklet/vite-plugin build && vp run --filter @unworklet/core build && ...` の chain で解決。
-
-### packages/ (公開 npm)
-
-| package                  | 役割                                                                                   |
-| ------------------------ | -------------------------------------------------------------------------------------- |
-| `@unworklet/core`        | DSL surface + capture/analyze/emit pipeline + worklet runtime + main thread surface    |
-| `@unworklet/lang`        | `.uwk.ts` sugar authoring frontend = build-time に `@unworklet/core` の `.ts` へ lower |
-| `@unworklet/vite-plugin` | Vite plugin = `?worklet` / `.uwk.ts` import → CompiledProcessor、 DevTools panel host  |
-| `@unworklet/offline`     | `renderOffline` = OfflineAudioContext で blocking render                               |
-| `@unworklet/test`        | vitest matcher 拡張 (= `expectStateMatches`, `expectEventsContaining` 等)              |
-
-### examples/ (内部 demo、 npm 非公開)
-
-| package                                | 役割                                                                  |
-| -------------------------------------- | --------------------------------------------------------------------- |
-| `@unworklet-examples/01-stereo-gain`   | canonical Ex 1 full = stereo gain + meter L/R subscribe + diagnostics |
-| `@unworklet-examples/type-check-smoke` | 公開 surface の TS 型を end-to-end で typecheck する smoke            |
-
-### experiments/ (scratch、 npm 非公開)
-
-| package          | 役割                                                |
-| ---------------- | --------------------------------------------------- |
-| `devtools-proto` | DevTools UI prototype (= Vue で mock data 駆動表示) |
-
-## Setup
+## Quick start
 
 ```bash
-vp install     # 依存 install
-vp config      # pre-commit hook を local 設定 (= staged file に vp check --fix 自動)
+npm install @unworklet/core
+npm install -D @unworklet/vite-plugin   # loads processors via the ?worklet query
 ```
 
-## Development
+```ts
+// processor.ts — runs on the audio thread, compiled to WASM
+import { audioInput, audioOutput, defineProcessor, forSample, param } from "@unworklet/core";
 
-| Action                                         | Command                                              |
-| ---------------------------------------------- | ---------------------------------------------------- |
-| 全 lint + format + typecheck                   | `vp check` (= auto-fix `vp check --fix`)             |
-| 全 test (= vitest 集約 + playwright e2e chain) | `vp run test`                                        |
-| Vitest 集約のみ (= node-side + browser e2e)    | `vp test`                                            |
-| Playwright e2e のみ                            | `vp run --filter ./examples/01-stereo-gain test:e2e` |
-| 全 build (= 下記 chain、 cycle 回避)           | (下のコードブロック)                                 |
-| Examples dev server                            | `vp run --filter ./examples/01-stereo-gain dev`      |
-| 全 check + test + build (= ship 直前 sanity)   | `vp run ready`                                       |
+export const gain = defineProcessor(() => {
+  const input = audioInput({ channels: 2, name: "main" });
+  const out = audioOutput({ channels: 2, name: "main" });
+  const g = param.f32({ default: 1, min: 0, max: 4, automationRate: "a-rate" }).named("gain");
+  return {
+    process: () =>
+      forSample((i) => {
+        out.left.at(i).write(input.left.at(i).mul(g.at(i)));
+        out.right.at(i).write(input.right.at(i).mul(g.at(i)));
+      }),
+  };
+});
+```
 
-全 build chain (= `vp run -r build` は core / vite-plugin の cycle で fail するので、 順序を明示):
+```ts
+// main.ts — the typed main-thread handle
+import { createNode } from "@unworklet/core";
+import { gain } from "./processor.ts?worklet"; // the ?worklet query is required
+
+const ctx = new AudioContext();
+const node = await createNode(ctx, gain);
+source.connect(node.inputs.main);
+node.outputs.main.connect(ctx.destination);
+node.params.gain.value = 2;
+```
+
+Prefer infix math? Write the same processor in `.uwk.ts` sugar with
+[`@unworklet/lang`](./packages/lang/README.md) — `out.left[i] = input.left[i] * gain[i]`.
+
+## Packages
+
+| package                                                      | what it does                                                                             |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| [`@unworklet/core`](./packages/core/README.md)               | The DSL surface, the WASM compiler, the worklet runtime, and the typed main-thread node. |
+| [`@unworklet/vite-plugin`](./packages/vite-plugin/README.md) | Loads `.processor.ts` / `.uwk.ts` via `?worklet`; hosts the DevTools panel.              |
+| [`@unworklet/lang`](./packages/lang/README.md)               | `.uwk.ts` authoring sugar (infix operators, index access) that lowers to core.           |
+| [`@unworklet/offline`](./packages/offline/README.md)         | Render a processor to PCM headlessly in Node / Bun / Deno.                               |
+| [`@unworklet/test`](./packages/test/README.md)               | Audio / event / MIDI assertions and signal generators for Vitest.                        |
+
+## Docs
+
+- **Specification:** [`docs/`](./docs/) — start at [`docs/00-foundations.md`](./docs/00-foundations.md); every decision is logged in [`docs/decisions-log.md`](./docs/decisions-log.md).
+- **Canonical examples:** [`docs/12-canonical-examples.md`](./docs/12-canonical-examples.md).
+- **For AI agents / LLMs:** [`llms.txt`](./llms.txt) is the install-time entry point; the per-package READMEs above carry the exact call forms.
+
+## Contributing
+
+This is a pnpm monorepo driven entirely through the Vite+ CLI (`vp`).
+
+```bash
+vp install        # install dependencies
+vp check          # lint + format + typecheck (vp check --fix to auto-fix)
+vp test           # vitest aggregation (node-side + browser SAB / postMessage)
+```
+
+Packages have a build cycle (`core` ↔ `vite-plugin`), so the build runs in an
+explicit order rather than `vp run -r build`:
 
 ```bash
 vp run --filter @unworklet/lang build && \
@@ -86,4 +93,6 @@ vp run --filter @unworklet/offline build && \
 vp run --filter @unworklet/test build
 ```
 
-詳細な実装規約 + AI agent 向け guidance は [`AGENTS.md`](./AGENTS.md) を参照。
+Implementation conventions and AI-agent guidance: [`AGENTS.md`](./AGENTS.md).
+
+License: MIT.
