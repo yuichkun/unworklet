@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "vp run --filter @unworklet/lang build && vp run --filter @unworklet/vite-plugin build && vp run --filter @unworklet/core build && vp run --filter @unworklet/offline build && vp run --filter @unworklet/test build && vp run --filter @unworklet-examples/demo build",
+  "buildCommand": "bash scripts/vercel-build.sh",
   "outputDirectory": "examples/demo/dist",
   "framework": null,
   "headers": [
