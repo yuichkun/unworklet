@@ -194,5 +194,6 @@ expectStable(r);
 → `out.left.at(i).write(v)`, `buf[i]` → `buf.read(i)`, a bare `state` in a value
 position → `state.read()`. Scalar writes are still explicit `state.write(v)`.
 The body is wrapped in ambient `process(() => { ... })`. For IDE type-checking of
-the sugar (drop `// @ts-nocheck`), add the `@unworklet/lang/typescript-plugin` +
-`types: ["@unworklet/lang/ambient"]` to `tsconfig`. See `@unworklet/lang`'s README.
+the sugar (drop `// @ts-nocheck`), add `@unworklet/lang/typescript-plugin` to
+`tsconfig` `plugins` and `include` the shipped ambient `.d.ts`. See
+`@unworklet/lang`'s README → IDE support.
