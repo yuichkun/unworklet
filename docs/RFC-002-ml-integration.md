@@ -8,6 +8,8 @@ unworklet user が learned neural-network ベース の DSP (= NAM amp model、 
 
 本 RFC は提案 段階。 ratify 前 で あり、 採 用 / 修 正 / 却 下 い ず れ の path も 開 い て い る。 採 用 さ れ た 場 合 は decisions-log.md に 対 応 Q entry を 追 加 し て 各 component doc に 反 映 さ れ る。
 
+> **Surface note.** 旧 `message<T>` / `midiInput` / `midiOutput` の表記が残る箇所は、現行の **event family** (`event<T>({ from | to: "main" })` + `event.midi`、`decisions-log.md` Q87 / Q88) に読み替え。現行 surface は `01-dsl.md`。
+
 ## 1. Motivation
 
 unworklet は TypeScript で書い た audio DSP を pure WASM artifact として AOT compile する framework と し て v1.0.0 で 設 計 が 確 定 し て い る。 一 方、 audio software 業 界 で は 過 去 数 年、 neural-network ベ ー ス の DSP が production-grade の 表 現 力 を 獲 得 し て い る:
