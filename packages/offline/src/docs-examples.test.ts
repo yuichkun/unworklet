@@ -63,11 +63,13 @@ const findBlock = (needle: string): string => {
 };
 
 test("every documented defineProcessor example compiles (docs can't drift from the API)", async () => {
-  // Coverage floor = the complete, self-contained processor examples currently
-  // documented: stereoGain (core README + Skill), the root README gain, and
-  // midiSynth (Skill). If a documented example is removed, this notices instead
-  // of silently shrinking coverage.
-  expect(docProcessors.length).toBeGreaterThanOrEqual(4);
+  // Coverage floor = the complete, self-contained `defineProcessor` examples
+  // currently documented: stereoGain (core README + Skill) and midiSynth (Skill).
+  // The root README's examples are `.uwk.ts` sugar — not parsed here (this evals
+  // plain-JS processor blocks), but verified by the demo's offline-render tests.
+  // If a documented `defineProcessor` example is removed, this notices instead of
+  // silently shrinking coverage.
+  expect(docProcessors.length).toBeGreaterThanOrEqual(3);
   for (const { id, block } of docProcessors) {
     const proc = evalProcessor(block);
     const compiled = await core.compile(proc);

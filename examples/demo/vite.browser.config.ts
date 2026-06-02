@@ -30,9 +30,10 @@ export default defineConfig({
     browser: {
       enabled: true,
       provider: playwright(),
-      // webkit = Safari's engine: the worklet module registers WITHOUT a module
-      // import (Safari can't resolve imports in addModule()'d code).
-      instances: [{ browser: "chromium" }, { browser: "webkit" }],
+      // chromium only: this suite asserts the compiled artifacts (module string is
+      // import-free / Safari-safe, valid WASM magic) — engine-agnostic checks — so a
+      // second engine adds no coverage while doubling CI browser-install cost.
+      instances: [{ browser: "chromium" }],
       headless: true,
     },
   },

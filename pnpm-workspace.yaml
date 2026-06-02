@@ -35,6 +35,13 @@ catalog:
 overrides:
   vite: "catalog:"
   vitest: "catalog:"
+  # `@vitejs/devtools-kit` peer-resolves an older vite-plus-core/test (0.1.22),
+  # which duplicates the test runner — two `playwright()` provider types that don't
+  # unify (TS2769) and a second collector that hangs the shared aggregation. Pin the
+  # direct package names (the `vite`/`vitest` aliases above don't cover them) to the
+  # repo's single version.
+  "@voidzero-dev/vite-plus-core": "0.1.24"
+  "@voidzero-dev/vite-plus-test": "0.1.24"
 peerDependencyRules:
   allowAny:
     - vite

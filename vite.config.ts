@@ -113,14 +113,15 @@ export default defineConfig({
     // configs run in parallel as separate projects.
     projects: [
       "packages/*/vite.config.ts",
-      "examples/*/vite.config.ts",
       "packages/core/vite.browser.config.ts",
       "packages/core/vite.browser-postmessage.config.ts",
     ],
-    // The demo's runtime-compile browser e2e (examples/demo/vite.browser.config.ts)
-    // needs a real audio device for `addModule`, so it runs on its own rather than
-    // in this aggregation. The root's default project collects nothing (empty
-    // include); every test comes from the sub-projects above.
+    // examples/demo is NOT aggregated here. It depends on `@vitejs/devtools`, whose
+    // peer wiring spins up a second vite-plus-test runner that breaks this shared
+    // collector (it hangs). The demo runs in its own CI jobs instead: the node suite
+    // standalone (`cd examples/demo && vp test run`) and the runtime-compile browser
+    // e2e on its own config (examples/demo/vite.browser.config.ts). The root's
+    // default project collects nothing; every test comes from the projects above.
     include: [],
   },
 });

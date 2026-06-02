@@ -36,14 +36,14 @@ jobs:
           vp run --filter @unworklet/offline build
           vp run --filter @unworklet/test build
       - name: Install playwright chromium (for browser e2e projects)
-        working-directory: examples/01-stereo-gain
+        working-directory: examples/demo
         run: vp exec playwright install --with-deps chromium
       - name: Run vitest aggregation
         run: vp test
-      - name: Run experiment suites standalone (kept out of the cross-project
-          aggregation — `@vitejs/devtools` peer-keys a duplicate vite-plus-test
-          runner that breaks the shared collector; each runs as its own root here)
-        working-directory: experiments/devtools-proto
+      - name: Run the demo suite standalone (kept out of the aggregation — its
+          `@vitejs/devtools` dep peer-keys a duplicate vite-plus-test runner that
+          breaks the shared collector; it runs as its own root here)
+        working-directory: examples/demo
         run: vp test run
 
   e2e:
@@ -64,7 +64,8 @@ jobs:
           vp run --filter @unworklet/offline build
           vp run --filter @unworklet/test build
       - name: Install playwright chromium
-        working-directory: examples/01-stereo-gain
+        working-directory: examples/demo
         run: vp exec playwright install --with-deps chromium
-      - name: Run playwright e2e
-        run: vp run --filter ./examples/01-stereo-gain test:e2e
+      - name: Run the demo runtime-compile browser e2e
+        working-directory: examples/demo
+        run: vp test run --config vite.browser.config.ts
