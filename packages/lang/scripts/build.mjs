@@ -12,7 +12,7 @@
  *  4. The ambient `.d.ts` is emitted from the single in-source `AMBIENT_DTS`
  *     string → `dist/ambient.d.ts`, the file users add to their `tsconfig` types.
  */
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 
 import { build } from "esbuild";
 
@@ -24,20 +24,30 @@ execSync("vp pack", { stdio: "inherit" });
 console.log("[unworklet/lang] build:browser (vite lib → dist/browser.mjs)");
 execSync("vp build --config vite.browser.config.ts", { stdio: "inherit" });
 
-console.log("[unworklet/lang] bundle TS plugin (→ dist/typescript-plugin.cjs)");
+// tsserver resolves a tsconfig `plugins` entry with a LEGACY resolver that ignores
+// the package `exports` map and only probes `<name>.js` / `<name>/index.js` (never
+// `.cjs`). So the plugin must live at `<pkg>/typescript-plugin/index.js` with a
+// sibling `package.json` marking it CommonJS (this package is `type: module`), so
+// `@unworklet/lang/typescript-plugin` resolves for the editor. `typescript` stays
+// external to share the editor's instance; the default export is re-published as
+// `module.exports` so tsserver gets the factory directly.
+console.log("[unworklet/lang] bundle TS plugin (→ typescript-plugin/index.js)");
+mkdirSync("typescript-plugin", { recursive: true });
 await build({
   entryPoints: ["src/typescript-plugin.ts"],
-  outfile: "dist/typescript-plugin.cjs",
+  outfile: "typescript-plugin/index.js",
   bundle: true,
   platform: "node",
   format: "cjs",
   target: "node18",
-  // tsserver provides `typescript`; sharing its instance is required.
   external: ["typescript"],
-  // esbuild emits `exports.default = …`; tsserver wants the factory at module.exports.
   footer: { js: "module.exports = module.exports.default;" },
   logLevel: "info",
 });
+writeFileSync(
+  "typescript-plugin/package.json",
+  `${JSON.stringify({ type: "commonjs" }, null, 2)}\n`,
+);
 
 console.log("[unworklet/lang] emit ambient .d.ts (→ dist/ambient.d.ts)");
 const ambientBundle = await build({

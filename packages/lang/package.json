@@ -4,7 +4,8 @@
   "description": "Build-time `.uwk.ts` → virtual `.ts` authoring frontend that lowers to `@unworklet/core`.",
   "license": "MIT",
   "files": [
-    "dist"
+    "dist",
+    "typescript-plugin"
   ],
   "type": "module",
   "exports": {
@@ -18,8 +19,8 @@
       "import": "./dist/browser.mjs"
     },
     "./typescript-plugin": {
-      "require": "./dist/typescript-plugin.cjs",
-      "default": "./dist/typescript-plugin.cjs"
+      "require": "./typescript-plugin/index.js",
+      "default": "./typescript-plugin/index.js"
     },
     "./ambient": {
       "types": "./dist/ambient.d.ts"

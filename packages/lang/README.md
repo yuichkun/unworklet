@@ -72,7 +72,7 @@ writes use the index-assignment form above. `number op number` (e.g.
 `.uwk.ts` is syntactically TypeScript, so any editor highlights it and navigates
 it with zero setup. To make the **sugar type-check** — no red squiggles on
 `a * b`, no `// @ts-nocheck` — add the TypeScript-server plugin to your
-`tsconfig.json`, and `include` the shipped ambient `.d.ts` (it declares
+`tsconfig.json`, and pull in the shipped ambient `.d.ts` via `files` (it declares
 `audioInput` / `state` / `process` / `input` / `out` / `$prev` … as globals):
 
 ```jsonc
@@ -80,18 +80,20 @@ it with zero setup. To make the **sugar type-check** — no red squiggles on
   "compilerOptions": {
     "plugins": [{ "name": "@unworklet/lang/typescript-plugin" }],
   },
-  "include": ["src", "node_modules/@unworklet/lang/dist/ambient.d.ts"],
+  "include": ["src"],
+  "files": ["node_modules/@unworklet/lang/dist/ambient.d.ts"],
 }
 ```
 
-(The ambient is `include`d by path rather than via `compilerOptions.types`
-because the `types` array does not resolve an `exports` subpath in every
-resolver.)
+(The ambient goes in `files`, not `compilerOptions.types` or `include`: the
+`types` array does not resolve an `exports` subpath in every resolver, and
+`include` globs skip `node_modules`. `files` entries are always loaded.)
 
 In VS Code, also run **“TypeScript: Select TypeScript Version → Use Workspace
-Version”** so the editor loads the plugin. You then get, on the sugar itself:
-diagnostics, hover (`Node<"f32">`), completion (`input.` → `left` / `right` /
-`ch`), rename, and go-to-definition — all projected onto your `.uwk.ts` source.
+Version”** so the editor loads the plugin (TS-server plugins only load under the
+workspace TypeScript, not VS Code's bundled one). You then get, on the sugar
+itself: diagnostics, hover (`Node<"f32">`), completion (`input.` → `left` /
+`right` / `ch`), rename, and go-to-definition — projected onto your `.uwk.ts`.
 
 How it works (Volar): the plugin generates a virtual TypeScript file where only
 the sugar is desugared to the chain primitives stock TS accepts (`a * b` →
