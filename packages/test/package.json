@@ -21,6 +21,17 @@
     "./package.json": "./package.json"
   },
   "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.mts",
+        "import": "./dist/index.mjs"
+      },
+      "./extend": {
+        "types": "./dist/extend.d.mts",
+        "import": "./dist/extend.mjs"
+      },
+      "./package.json": "./package.json"
+    },
     "access": "public"
   },
   "scripts": {
@@ -44,6 +55,6 @@
   },
   "peerDependencies": {
     "@unworklet/core": "workspace:*",
-    "vitest": "catalog:"
+    "vitest": "^3 || ^4"
   }
 }

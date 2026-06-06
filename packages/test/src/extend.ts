@@ -24,7 +24,7 @@
  */
 
 import type { RenderOfflineResult } from "@unworklet/offline";
-import { expect } from "vite-plus/test";
+import { expect } from "vitest";
 
 import type {
   AudioMatchOptions,
@@ -80,7 +80,7 @@ type WhenAudioActual<T, M> = T extends RenderOfflineResult | Float32Array | Floa
   ? M
   : never;
 
-declare module "vite-plus/test" {
+declare module "vitest" {
   // biome-ignore lint/suspicious/noExplicitAny: must match the type parameter of vitest's standard `Assertion<T = any>` (`node_modules/@vitest/expect/dist/index.d.ts`); the declare merge keeps the same shape even though T is unused here.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   interface Assertion<T = any> {

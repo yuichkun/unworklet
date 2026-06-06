@@ -21,7 +21,7 @@ import { isDeepStrictEqual } from "node:util";
 import type { MidiEvent } from "@unworklet/core";
 import { decodeWav, encodeWav } from "@unworklet/offline";
 import type { OfflineEmittedEvent, OfflineEvent, RenderOfflineResult } from "@unworklet/offline";
-import { expect } from "vite-plus/test";
+import { expect } from "vitest";
 
 export type AudioMatchOptions = {
   /**
