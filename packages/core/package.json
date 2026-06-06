@@ -31,6 +31,25 @@
     "./package.json": "./package.json"
   },
   "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.mts",
+        "import": "./dist/index.mjs"
+      },
+      "./simd": {
+        "types": "./dist/simd.d.mts",
+        "import": "./dist/simd.mjs"
+      },
+      "./worklet": {
+        "types": "./dist/worklet-entry.d.mts",
+        "import": "./dist/worklet-entry.mjs"
+      },
+      "./dev": {
+        "types": "./dist/dev.d.mts",
+        "import": "./dist/dev.mjs"
+      },
+      "./package.json": "./package.json"
+    },
     "access": "public"
   },
   "scripts": {
