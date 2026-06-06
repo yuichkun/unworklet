@@ -183,6 +183,51 @@ test("$prev outside any defineSubgraph method is left verbatim (no slot to type 
   expect(c).not.toContain("as Node<");
 });
 
+test("a defineSubgraph whose factory is a named reference is scanned without crashing", () => {
+  // The factory arrow lives in a separate binding, so the $prev scalar scan finds no
+  // inline arrow to walk — it must pass through (the operator sugar still lowers).
+  const c = code(`const out = audioOutput({ channels: 1, name: "main" });
+const input = audioInput({ channels: 1, name: "main" });
+const factory = (k: Node<"f32">) => ({ run: (x: Node<"f32">) => k * x });
+const sg = defineSubgraph(factory);
+const s = createSubgraph(sg, f32(0.5), { name: "s" });
+process(() => { forSample((i) => { out.ch(0)[i] = s.run(input.ch(0)[i]); }); });`);
+  expect(c).toContain("defineSubgraph(factory)");
+});
+
+test("a subgraph method object with non-$prev / non-arrow properties is scanned cleanly", () => {
+  // The returned object mixes a value property (`gain`) and a method that does NOT
+  // use $prev — neither is a feedback site, so the scan skips both and only the
+  // operator sugar inside the method lowers.
+  const c = code(`const out = audioOutput({ channels: 1, name: "main" });
+const input = audioInput({ channels: 1, name: "main" });
+const sg = defineSubgraph((k: Node<"f32">) => ({
+  gain: k,
+  run: (x: Node<"f32">) => k * x,
+}));
+const s = createSubgraph(sg, f32(0.5), { name: "s" });
+process(() => { forSample((i) => { out.ch(0)[i] = s.run(input.ch(0)[i]); }); });`);
+  expect(c).toContain("mul(k, x)");
+});
+
+test("a $prev method containing a NESTED defineSubgraph types only its own $prev", () => {
+  // `markOwnedPrev` must stop at the nested `defineSubgraph` — the inner method's
+  // `$prev` belongs to the inner method, not the outer one. The outer `$prev` is cast
+  // to the outer slot scalar; the scan walks past the nested subgraph without error.
+  const c = code(`const out = audioOutput({ channels: 1, name: "main" });
+const input = audioInput({ channels: 1, name: "main" });
+const sg = defineSubgraph((k: Node<"f32">) => ({
+  run: (x: Node<"f32">) => {
+    const inner = defineSubgraph(() => ({ step: (y: Node<"f32">) => y + $prev }));
+    return x + $prev * k;
+  },
+}));
+const s = createSubgraph(sg, f32(0.5), { name: "s" });
+process(() => { forSample((i) => { out.ch(0)[i] = s.run(input.ch(0)[i]); }); });`);
+  expect(c).toContain('as Node<"f32">');
+  expect(c).toContain("defineSubgraph");
+});
+
 // ───────────────────────── guarded emit (if-sugar shape 3) ──────────────────
 
 test("a guarded emit rewrites `.emit(` to `.emitIf(true, ` (payload kept, desugared)", () => {
@@ -208,6 +253,20 @@ test("a bare `.emit(` outside a DSP-guarded if is left verbatim", () => {
     ),
   );
   expect(c).toContain("ev.emit({");
+  expect(c).not.toContain("emitIf");
+});
+
+test("an `.emit(` that is NOT a bare statement (used as a value) is left verbatim", () => {
+  // Inside a DSP-guarded `if`, but the emit result is consumed (assigned), so its
+  // parent is not an expression statement — the guarded-emit rewrite must not fire.
+  const c = code(`const out = audioOutput({ channels: 1, name: "main" });
+const input = audioInput({ channels: 1, name: "main" });
+const ev = event<{ level: number }>({ to: "main", name: "ev" });
+const sink = state.f32(0).named("sink");
+process(() => { forSample((i) => {
+  if (input.ch(0)[i] > 0) sink.write(f32(ev.emit({ atSample: i, level: f32(1) })));
+}); });`);
+  expect(c).toContain("ev.emit(");
   expect(c).not.toContain("emitIf");
 });
 

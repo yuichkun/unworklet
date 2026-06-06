@@ -594,6 +594,57 @@ test("a const whose initializer is NOT a call (object literal) is untouched", as
   expect(lowered).not.toContain(`name: "cfg"`);
 });
 
+test("options object with a SPREAD element still gets a name injected", async () => {
+  // A `...base` element is a SpreadAssignment, not a PropertyAssignment, so the
+  // `name`-presence scan must skip it (not crash) and still inject the binding name
+  // because no explicit `name` is present.
+  const lowered = lower(
+    mono(
+      `const base = { from: "main" } as const;
+const taps = event({ ...base });`,
+      `taps.onReceive(() => {}); out.ch(0).at(i).write(input.ch(0).at(i));`,
+    ),
+  );
+  expect(lowered).toContain(`name: "taps"`);
+});
+
+test("an explicit name AMONG a spread is still honored (not double-named)", async () => {
+  // The spread is skipped by the scan, but the explicit `name` property is found, so
+  // auto-name leaves the declaration untouched.
+  const lowered = lower(
+    mono(
+      `const base = { from: "main" } as const;
+const taps = event({ ...base, name: "explicit" });`,
+      `taps.onReceive(() => {}); out.ch(0).at(i).write(input.ch(0).at(i));`,
+    ),
+  );
+  expect(lowered).toContain(`name: "explicit"`);
+  expect(lowered).not.toContain(`name: "taps"`);
+});
+
+test("a no-argument name-required helper gets a fresh { name } options object", async () => {
+  // `audioInput()` has no first argument, so auto-name must CREATE the options
+  // object `{ name: "<binding>" }` rather than mutate an existing one.
+  const lowered = lower(
+    `const sideIn = audioInput();
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => { forSample((i) => { out.ch(0).at(i).write(0); }); });`,
+  );
+  expect(lowered).toContain(`audioInput({ name: "sideIn" })`);
+});
+
+test("a multi-declaration `const a = …, b = …` statement is left untouched", async () => {
+  // The auto-name pass only fires on a single-declaration statement; a comma list is
+  // passed through verbatim (no name derived for either binding).
+  const lowered = lower(
+    mono(
+      `const a = state.f32(0).named('a'), b = state.f32(1).named('b');`,
+      `out.ch(0).at(i).write(a.read().add(b.read()));`,
+    ),
+  );
+  expect(lowered).toContain(`const a = state.f32(0).named('a'), b = state.f32(1).named('b');`);
+});
+
 // ───────────────────────────────────────────────────────────────────────────
 // 7. Mixed: many declarations in one module, each named independently
 // ───────────────────────────────────────────────────────────────────────────

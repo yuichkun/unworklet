@@ -175,8 +175,9 @@ function isGuardedEmit(checker: ts.TypeChecker, call: ts.CallExpression): boolea
   const container = stmt.parent;
   const inBlock = ts.isBlock(container);
   const ifStmt = inBlock ? container.parent : container;
+  // With no else, the statement under the `if` is always its then-branch, so a
+  // guarded emit only has to confirm the enclosing `if` has no else and is DSP.
   if (!ts.isIfStatement(ifStmt) || ifStmt.elseStatement !== undefined) return false;
-  if (ifStmt.thenStatement !== (inBlock ? container : stmt)) return false;
   return isDspExpr(checker, ifStmt.expression);
 }
 

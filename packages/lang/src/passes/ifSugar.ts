@@ -95,10 +95,10 @@ const writeWith = (w: Write, value: ts.Expression): ts.Statement =>
 
 /** Same write target (by source text) — symmetric-if requires it. */
 function sameTarget(a: Write, b: Write): boolean {
-  if (a.kind !== b.kind) return false;
   if (a.kind === "state" && b.kind === "state") return a.target.getText() === b.target.getText();
   if (a.kind === "buffer" && b.kind === "buffer")
     return a.buf.getText() === b.buf.getText() && a.idx.getText() === b.idx.getText();
+  // The kinds differ (a state write vs a buffer write) — not the same target.
   return false;
 }
 

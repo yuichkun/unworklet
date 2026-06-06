@@ -19,6 +19,9 @@ import { classify, isDspExpr, isSugarBinaryOperator } from "../classify.ts";
  * JS-boolean ternary is NOT lowered, so its branches are NOT operator operands. */
 function isSugarOperatorOperand(checker: ts.TypeChecker, node: ts.Node): boolean {
   const p = node.parent;
+  // Every expression node in a parsed tree has a parent (only the SourceFile root
+  // does not, and that is never an operand) — a defensive guard, never taken.
+  /* v8 ignore next */
   if (p === undefined) return false;
   if (ts.isBinaryExpression(p) && isSugarBinaryOperator(p.operatorToken.kind)) {
     return p.left === node || p.right === node;
@@ -41,6 +44,9 @@ function isEmitPayloadField(node: ts.Node): boolean {
   if (prop === undefined || !ts.isPropertyAssignment(prop) || prop.initializer !== node)
     return false;
   const obj = prop.parent;
+  // A PropertyAssignment in a parsed tree always sits inside an ObjectLiteral, so
+  // `obj` is never undefined here — the `=== undefined` arm is a defensive guard.
+  /* v8 ignore next */
   if (obj === undefined || !ts.isObjectLiteralExpression(obj)) return false;
   const call = obj.parent;
   return (

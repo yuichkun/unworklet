@@ -955,3 +955,170 @@ const s = createSubgraph(sg, { name: "s" });`,
   expect(got[1]!).toBeCloseTo(fr(fr(0.2) + fr(fr(0.2) * 0.5)), 5);
   expect(got[N - 1]!).toBeCloseTo(0.4, 3);
 });
+
+// ───────────────────── slot-type edge cases (un-annotated / side-effect) ─────
+// $prev methods whose slot type cannot be read from a return-type annotation or a
+// resolvable return-expression type fall back through the parameter, then to f32.
+
+test("SEMANTIC un-annotated $prev method with no return: the slot never advances", async () => {
+  // The method uses $prev only for a side-effect write and has NO `return`, so the
+  // store-then-return wrapper never runs — the slot holds its initial 0 forever and
+  // `$prev` reads 0 every sample. The slot scalar comes from the i32 parameter, so
+  // the integer recurrence stays exact.
+  const got = await renderMono(
+    `
+const acc = state.i32(0).named("acc");
+const sg = defineSubgraph(() => ({
+  bump: (step: Node<"i32">) => { acc.write(($prev + step) % 4); },
+}));
+const s = createSubgraph(sg, { name: "s" });`,
+    `s.bump(i32(1));\nout.ch(0).at(i).write(f32(acc.read()));`,
+    block(0),
+  );
+  // $prev stays 0 (no return advances it): acc = (0 + 1) % 4 = 1 every sample.
+  for (let n = 0; n < N; n++) expect(got[n]!).toBe(1);
+});
+
+test("STRUCT a no-param, un-annotated $prev method falls all the way back to an f32 slot", async () => {
+  // No return-type annotation, the return expression (`$prev`) types as the broad
+  // ambient `Node<ScalarType>` (no concrete scalar), and there is no parameter — so
+  // the slot scalar defaults to f32. The explicit form spells the f32 slot out.
+  const sugar = mono(
+    `
+const sg = defineSubgraph(() => ({
+  tick: () => $prev,
+}));
+const s = createSubgraph(sg, { name: "s" });`,
+    `out.ch(0).at(i).write(s.tick());`,
+  );
+  const explicit = mono(
+    `
+const sg = defineSubgraph(() => {
+  const __prev_0 = state.f32(0);
+  return {
+    tick: () => {
+      const __r = __prev_0.read();
+      __prev_0.write(__r);
+      return __r;
+    },
+  };
+});
+const s = createSubgraph(sg, { name: "s" });`,
+    `out.ch(0).at(i).write(s.tick());`,
+  );
+  await expectSameLowering(sugar, explicit);
+});
+
+test("STRUCT $prev method with a NON-Node return annotation ≡ explicit i32 slot", async () => {
+  // A return-type annotation that is not a `Node<'X'>` brand cannot pin the slot, so
+  // the pass falls through to the i32 parameter. The explicit form spells the i32 slot.
+  const sugar = mono(
+    `
+const sg = defineSubgraph(() => ({
+  run: (x: Node<"i32">): unknown => $prev + x,
+}));
+const s = createSubgraph(sg, { name: "s" });`,
+    `out.ch(0).at(i).write(f32(s.run(i32(1))));`,
+  );
+  const explicit = mono(
+    `
+const sg = defineSubgraph(() => {
+  const __prev_0 = state.i32(0);
+  return {
+    run: (x: Node<"i32">): unknown => {
+      const __r = __prev_0.read().add(x);
+      __prev_0.write(__r);
+      return __r;
+    },
+  };
+});
+const s = createSubgraph(sg, { name: "s" });`,
+    `out.ch(0).at(i).write(f32(s.run(i32(1))));`,
+  );
+  await expectSameLowering(sugar, explicit);
+});
+
+test("STRUCT a nested closure return inside a $prev method is NOT slot-wrapped", async () => {
+  // `wrapReturns` must stop at function boundaries: the inner `() => 1` closure's
+  // return belongs to the closure, not the method, so only the method's own return
+  // stores the slot. The explicit form keeps the closure's `return 1` untouched.
+  const sugar = mono(
+    `
+const sg = defineSubgraph(() => ({
+  run: (x: Node<"f32">) => {
+    const k = (() => 1)();
+    return x + $prev * f32(k);
+  },
+}));
+const s = createSubgraph(sg, { name: "s" });`,
+    `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
+  );
+  const explicit = mono(
+    `
+const sg = defineSubgraph(() => {
+  const __prev_0 = state.f32(0);
+  return {
+    run: (x: Node<"f32">) => {
+      const k = (() => 1)();
+      const __r = x.add(__prev_0.read().mul(f32(k)));
+      __prev_0.write(__r);
+      return __r;
+    },
+  };
+});
+const s = createSubgraph(sg, { name: "s" });`,
+    `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
+  );
+  await expectSameLowering(sugar, explicit);
+});
+
+// ───────────────────── subgraphs the $prev pass leaves untouched ─────────────
+// A `defineSubgraph` whose factory does not return an object-literal of methods, or
+// is not an inline arrow, carries no `$prev` slot — the pass passes it through.
+
+test("a defineSubgraph factory with a block body and no return is passed through", () => {
+  // The factory block has no `return`, so there is no methods object to scan — the
+  // pass must leave the call as-is rather than crash.
+  const src = mono(
+    `
+const weird = defineSubgraph((k: Node<"f32">) => {
+  const unused = k;
+});`,
+    `out.ch(0).at(i).write(input.ch(0).at(i));`,
+  );
+  const lowered = lower(src);
+  expect(lowered).toContain("defineSubgraph");
+  expect(lowered).not.toContain("__prev_");
+});
+
+test("a defineSubgraph factory that returns a non-object value is passed through", () => {
+  // Block-bodied `=> { return k; }` and concise `=> k` both return a non-object, so
+  // there is no methods object and no slot to inject.
+  const blockForm = mono(
+    `const a = defineSubgraph((k: Node<"f32">) => { return k; });`,
+    `out.ch(0).at(i).write(input.ch(0).at(i));`,
+  );
+  const conciseForm = mono(
+    `const b = defineSubgraph((k: Node<"f32">) => k);`,
+    `out.ch(0).at(i).write(input.ch(0).at(i));`,
+  );
+  expect(lower(blockForm)).toContain("defineSubgraph");
+  expect(lower(blockForm)).not.toContain("__prev_");
+  expect(lower(conciseForm)).toContain("defineSubgraph");
+  expect(lower(conciseForm)).not.toContain("__prev_");
+});
+
+test("a defineSubgraph whose factory is a named reference (not an inline arrow) is passed through", () => {
+  // `defineSubgraph(factory)` cannot be scanned for `$prev` (the arrow lives in a
+  // separate binding), so the pass leaves it untouched.
+  const src = mono(
+    `
+const factory = (k: Node<"f32">) => ({ run: (x: Node<"f32">) => k * x });
+const sg = defineSubgraph(factory);
+const s = createSubgraph(sg, f32(0.5), { name: "s" });`,
+    `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
+  );
+  const lowered = lower(src);
+  expect(lowered).toContain("defineSubgraph(factory)");
+  expect(lowered).not.toContain("__prev_");
+});

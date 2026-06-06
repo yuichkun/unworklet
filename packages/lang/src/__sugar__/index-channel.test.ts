@@ -25,7 +25,7 @@
 
 import { expect, test } from "vite-plus/test";
 
-import { expectSameLowering, renderLowered } from "../goldenHarness.ts";
+import { expectSameLowering, lower, renderLowered } from "../goldenHarness.ts";
 
 const SR = 48000;
 const DUR = 128 / SR;
@@ -356,4 +356,33 @@ test("behavioral: last-write-wins semantics through the sugar", async () => {
     { sampleRate: SR, duration: DUR, inputs: { main: [x] } },
   );
   expect(r.outputs.main![0]![0]).toBeCloseTo(-0.6, 5); // second write wins
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// index sugar by object KIND — an element access whose object is neither a
+// writable output channel / buffer (for a write) nor a readable input channel /
+// param / buffer (for a read) is NOT a recognized index shape, so the index pass
+// leaves the assignment / access alone (only the inner access read-lowers).
+// ───────────────────────────────────────────────────────────────────────────
+
+test("an assignment whose LHS object is an INPUT channel is not an index write", () => {
+  // `input.ch(0)[i] = v` — the object is an input channel (read-only), so the write
+  // shape does not match; the `[i]` read-lowers to `.at(i)` but the `= v` stays.
+  const lowered = lower(
+    mono("", `input.ch(0)[i] = f32(1); out.ch(0).at(i).write(input.ch(0).at(i));`),
+  );
+  expect(lowered).toContain(`input.ch(0).at(i) = `);
+  expect(lowered).not.toContain(`input.ch(0).write(`);
+});
+
+test("reading an OUTPUT channel element has no read form and is left verbatim", () => {
+  // `out.ch(0)[i]` as a value — an output channel is write-only, so there is no
+  // `.at`/`.read` read rewrite; the element access stays as written.
+  const lowered = lower(
+    mono(
+      "const s = state.f32(0).named('s');",
+      `s.write(f32(out.ch(0)[i])); out.ch(0).at(i).write(s.read());`,
+    ),
+  );
+  expect(lowered).toContain(`out.ch(0)[i]`);
 });

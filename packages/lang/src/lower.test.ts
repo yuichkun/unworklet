@@ -159,6 +159,38 @@ test("rejects migrations() referencing a DESTRUCTURED top-level binding", () => 
   }
 });
 
+test("rejects options() referencing a moved CLASS declaration", () => {
+  // A class declaration is moved into the callback like a const / function binding,
+  // so referencing it from the (outside-the-callback) options arg is out of scope.
+  try {
+    lower(`class Tag {}\noptions({ tag: Tag });\nprocess(() => {});`);
+    throw new Error("expected throw");
+  } catch (e) {
+    expect((e as LowerError).id).toBe("uwk-options-binding");
+  }
+});
+
+test("rejects migrations() referencing an ARRAY-DESTRUCTURED binding (with a hole)", () => {
+  // Array destructuring with a hole (`[, second]`) exercises the omitted-element
+  // path of the binding-name scan; the named element is still collected, so a
+  // migrations() reference to it is caught as out of scope.
+  try {
+    lower(
+      `const [, second] = pair;\nmigrations([{ to: 1, migrate: second }]);\nprocess(() => {});`,
+    );
+    throw new Error("expected throw");
+  } catch (e) {
+    expect((e as LowerError).id).toBe("uwk-options-binding");
+  }
+});
+
+test("a top-level class declaration is moved into the processor body untouched", () => {
+  // A class that is NOT referenced from options()/migrations() is a valid body
+  // declaration and survives verbatim inside the defineProcessor callback.
+  const lowered = lower(`class Helper {}\nprocess(() => {});`);
+  expect(lowered).toContain("class Helper");
+});
+
 test("rejects a process() with no callback argument", () => {
   try {
     lower(`process();`);
