@@ -34,6 +34,7 @@ import ts from "typescript";
 import { argIsInjectable, calledMethod, optionsHaveName, rootCallee } from "../passes/autoName.ts";
 import { classify, isDspExpr, isSugarBinaryOperator } from "../classify.ts";
 import { readsAsBareState } from "../passes/bareState.ts";
+import { detectEmits } from "../passes/ifSugar.ts";
 import { BINARY_FN, NEGATED_EQ } from "../passes/operators.ts";
 import { prevSlotScalars } from "../passes/prev.ts";
 import { buildProgram, type FsSnapshot } from "../program.ts";
@@ -162,12 +163,16 @@ function autoNameInsertions(sourceFile: ts.SourceFile): Insertion[] {
 }
 
 /**
- * A `port.emit(payload)` call that sits as a statement in the then-branch of a
- * DSP-guarded `if` with no else — exactly the shape {@link tryIfSugar} rewrites to
- * `port.emitIf(cond, payload)`. The worklet `EventDecl` exposes only `emitIf`, so a
- * verbatim `emit` would draw a bogus "Property 'emit' does not exist". `emit` appears
- * only in this guarded shape in a `.uwk.ts`, so matching it is enough to scope the
- * rewrite to genuine if-sugar.
+ * A `port.emit(payload)` call that sits in the then-branch of a DSP-guarded `if`
+ * with no else, where EVERY statement of that branch is an emit — exactly the shape
+ * {@link tryIfSugar} rewrites to `port.emitIf(cond, payload)`. The worklet `EventDecl`
+ * exposes only `emitIf`, so a verbatim `emit` would draw a bogus "Property 'emit'
+ * does not exist".
+ *
+ * The all-emits gate (`detectEmits`, the build's own check) is load-bearing: a branch
+ * mixing an emit with any other statement is rejected by the build
+ * (`uwk-unsupported-if`), so the editor must leave `emit` unrewritten there too —
+ * otherwise it would green-light a `.uwk.ts` the build refuses to compile.
  */
 function isGuardedEmit(checker: ts.TypeChecker, call: ts.CallExpression): boolean {
   const stmt = call.parent;
@@ -175,10 +180,10 @@ function isGuardedEmit(checker: ts.TypeChecker, call: ts.CallExpression): boolea
   const container = stmt.parent;
   const inBlock = ts.isBlock(container);
   const ifStmt = inBlock ? container.parent : container;
-  // With no else, the statement under the `if` is always its then-branch, so a
-  // guarded emit only has to confirm the enclosing `if` has no else and is DSP.
+  // With no else, the statement under the `if` is always its then-branch.
   if (!ts.isIfStatement(ifStmt) || ifStmt.elseStatement !== undefined) return false;
-  return isDspExpr(checker, ifStmt.expression);
+  if (!isDspExpr(checker, ifStmt.expression)) return false;
+  return detectEmits(ifStmt.thenStatement) !== undefined;
 }
 
 /**

@@ -249,6 +249,23 @@ process(() => {
   expect(diagnostics(src)).toEqual([]);
 });
 
+test("a guarded block mixing an emit with a write is NOT silently accepted (build rejects it)", () => {
+  // The build's `detectEmits` only accepts an all-emits then-branch; a block mixing
+  // an emit with a state write throws `uwk-unsupported-if`. The editor must mirror
+  // that — leave `emit` unrewritten so its `Property 'emit' does not exist` surfaces,
+  // rather than green-light a `.uwk.ts` the build will reject.
+  const src = `const out = audioOutput({ channels: 1, name: "main" });
+const input = audioInput({ channels: 1, name: "main" });
+const ev = event<{ level: number }>({ to: "main", name: "ev" });
+const s = state.f32(0).named("s");
+process(() => {
+  forSample((i) => {
+    if (input.ch(0)[i] > 0) { ev.emit({ atSample: i, level: input.ch(0)[i] }); s.write(f32(1)); }
+  });
+});`;
+  expect(diagnostics(src).some((d) => d.message.includes("emit"))).toBe(true);
+});
+
 // ───────────────────────── real type errors surface, mapped to source ───────
 
 test("assigning a bool Node to an f32 output channel is a mapped error on the value", () => {

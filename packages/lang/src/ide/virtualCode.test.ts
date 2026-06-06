@@ -270,6 +270,21 @@ process(() => { forSample((i) => {
   expect(c).not.toContain("emitIf");
 });
 
+test("a guarded block mixing an emit with a non-emit statement is left verbatim", () => {
+  // The build's `detectEmits` rejects a then-branch that is not all-emits (it throws
+  // `uwk-unsupported-if`), so the IDE must NOT rewrite the emit — it stays verbatim
+  // (and keeps its `Property 'emit'` error) rather than silently type-checking.
+  const c = code(`const out = audioOutput({ channels: 1, name: "main" });
+const input = audioInput({ channels: 1, name: "main" });
+const ev = event<{ level: number }>({ to: "main", name: "ev" });
+const s = state.f32(0).named("s");
+process(() => { forSample((i) => {
+  if (input.ch(0)[i] > 0) { ev.emit({ atSample: i, level: f32(1) }); s.write(f32(1)); }
+}); });`);
+  expect(c).toContain("ev.emit({");
+  expect(c).not.toContain("emitIf");
+});
+
 // ───────────────────────── auto-name (S9) for type-checking ─────────────────
 
 test("no-arg .named() is filled with the binding name", () => {
