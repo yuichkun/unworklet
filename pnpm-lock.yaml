@@ -178,9 +178,6 @@ importers:
 
   packages/lang:
     dependencies:
-      '@unworklet/core':
-        specifier: workspace:*
-        version: link:../core
       '@volar/language-core':
         specifier: 'catalog:'
         version: 2.4.15
@@ -197,6 +194,9 @@ importers:
       '@typescript/native-preview':
         specifier: 7.0.0-dev.20260509.2
         version: 7.0.0-dev.20260509.2
+      '@unworklet/core':
+        specifier: workspace:*
+        version: link:../core
       '@unworklet/offline':
         specifier: workspace:*
         version: link:../offline
