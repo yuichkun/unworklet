@@ -95,15 +95,18 @@ const writeWith = (w: Write, value: ts.Expression): ts.Statement =>
 
 /** Same write target (by source text) — symmetric-if requires it. */
 function sameTarget(a: Write, b: Write): boolean {
-  if (a.kind !== b.kind) return false;
   if (a.kind === "state" && b.kind === "state") return a.target.getText() === b.target.getText();
   if (a.kind === "buffer" && b.kind === "buffer")
     return a.buf.getText() === b.buf.getText() && a.idx.getText() === b.idx.getText();
+  // The kinds differ (a state write vs a buffer write) — not the same target.
   return false;
 }
 
-/** A block whose statements are all `port.emit(payload)` calls. */
-function detectEmits(
+/** A block whose statements are all `port.emit(payload)` calls. Exported so the IDE
+ * virtual-code generator gates its guarded-emit rewrite on the SAME all-emits shape
+ * the build accepts — a then-branch mixing an emit with anything else is rejected by
+ * the build (`uwk-unsupported-if`), so the editor must not rewrite it either. */
+export function detectEmits(
   stmt: ts.Statement,
 ): Array<{ port: ts.Expression; payload: ts.Expression }> | undefined {
   const out: Array<{ port: ts.Expression; payload: ts.Expression }> = [];

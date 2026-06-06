@@ -62,7 +62,7 @@ includes it in `node.snapshot()`. A `publish`/`persistent` slot must be named.
 - There is **no** standalone `message<T>()`; main→worklet is `event({ from: "main", name })`.
 - MIDI is `event.midi({ from | to: "main", name })`, not a `midiInput()/midiOutput()` call.
 - Import processors with the `?worklet` query; don't import the raw module.
-- `.uwk.ts` sugar and the plain `.ts` API are not mixed in one file; `.uwk.ts` needs `// @ts-nocheck`.
+- `.uwk.ts` sugar and the plain `.ts` API are not mixed in one file. Without the `@unworklet/lang` editor plugin a `.uwk.ts` needs `// @ts-nocheck`; install the plugin (`tsconfig` `plugins` + the shipped ambient `.d.ts` in `files`, not `include` — `include` globs skip `node_modules`) and the sugar type-checks so the header is dropped (see `@unworklet/lang`'s README → IDE support).
 
 ## Main-thread usage
 

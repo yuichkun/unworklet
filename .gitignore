@@ -44,5 +44,8 @@ playwright-report/
 # Transient lowered-`.uwk.ts` temp the vite-plugin build path writes then removes
 *.uwklowered.ts
 
+# Generated editor TS-server plugin bundle (built by @unworklet/lang's build.mjs)
+/packages/lang/typescript-plugin/
+
 # Vercel CLI project link (local, per-machine)
 .vercel

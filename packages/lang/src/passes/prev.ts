@@ -142,6 +142,70 @@ function returnedObject(
   return undefined;
 }
 
+/**
+ * Mark every `$prev` identifier OWNED by this method body (i.e. not inside a nested
+ * `defineSubgraph`, whose `$prev` belongs to that inner method) with `scalar`. This
+ * mirrors the lowering's {@link replacePrev}, which rewrites exactly those `$prev`
+ * to the method's slot after any nested subgraph has already been lowered.
+ */
+function markOwnedPrev(
+  body: ts.Node,
+  scalar: string,
+  sourceFile: ts.SourceFile,
+  out: Map<number, string>,
+): void {
+  const v = (n: ts.Node): void => {
+    if (isDefineSubgraph(n)) return; // a nested subgraph's `$prev` is the inner method's
+    if (ts.isIdentifier(n) && n.text === "$prev") {
+      out.set(n.getStart(sourceFile), scalar);
+      return;
+    }
+    ts.forEachChild(n, v);
+  };
+  v(body);
+}
+
+/**
+ * Map each `$prev` identifier (keyed by its source start offset) to the slot scalar
+ * the lowering would give it — the SAME per-method {@link slotScalar} `tryPrev`
+ * injects. The IDE virtual-code generator uses this to type `$prev` as the concrete
+ * `Node<scalar>` the build lowers it to, instead of the broad ambient
+ * `Node<ScalarType>` that draws bogus editor diagnostics on otherwise-valid feedback.
+ */
+export function prevSlotScalars(
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+): Map<number, string> {
+  const out = new Map<number, string>();
+  const visit = (node: ts.Node): void => {
+    if (isDefineSubgraph(node)) {
+      const arrow = node.arguments[0];
+      if (arrow !== undefined && ts.isArrowFunction(arrow)) {
+        const ret = returnedObject(arrow);
+        if (ret !== undefined) {
+          for (const p of ret.obj.properties) {
+            if (
+              ts.isPropertyAssignment(p) &&
+              ts.isArrowFunction(p.initializer) &&
+              usesPrev(p.initializer)
+            ) {
+              markOwnedPrev(
+                p.initializer.body,
+                slotScalar(checker, p.initializer),
+                sourceFile,
+                out,
+              );
+            }
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return out;
+}
+
 export function tryPrev(
   checker: ts.TypeChecker,
   node: ts.Node,

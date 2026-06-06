@@ -186,12 +186,14 @@ expectStable(r);
 - No standalone `message<T>()`: main→worklet delivery is `event({ from: "main", name })`.
 - No `midiInput()/midiOutput()`: use `event.midi({ from | to: "main", name })`.
 - Import a processor with `?worklet`; don't import the raw module into the app.
-- Don't mix `.uwk.ts` sugar with the plain `.ts` API in one file; `.uwk.ts` needs a `// @ts-nocheck` header.
+- Don't mix `.uwk.ts` sugar with the plain `.ts` API in one file. A `.uwk.ts` needs a `// @ts-nocheck` header UNLESS the `@unworklet/lang` editor plugin is set up (then the sugar type-checks and the header is dropped).
 
 ## `.uwk.ts` sugar (optional)
 
 `.uwk.ts` desugars to the same primitives: `a * b` → `a.mul(b)`, `out.left[i] = v`
 → `out.left.at(i).write(v)`, `buf[i]` → `buf.read(i)`, a bare `state` in a value
 position → `state.read()`. Scalar writes are still explicit `state.write(v)`.
-The body is wrapped in ambient `process(() => { ... })`. See
-`@unworklet/lang`'s README.
+The body is wrapped in ambient `process(() => { ... })`. For IDE type-checking of
+the sugar (drop `// @ts-nocheck`), add `@unworklet/lang/typescript-plugin` to
+`tsconfig` `plugins` and put the shipped ambient `.d.ts` in `files` (not `include` —
+`include` globs skip `node_modules`). See `@unworklet/lang`'s README → IDE support.

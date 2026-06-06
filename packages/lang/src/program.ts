@@ -21,12 +21,22 @@ import ts from "typescript";
 
 import { AMBIENT_DTS } from "./ambient.ts";
 
-// `import.meta.dirname` is a plain string in Node and `undefined` in the browser
-// — a property read, NOT a `node:url` / `node:path` import (those externalize and
-// crash the browser bundle). In the browser a snapshot is always supplied, so the
-// disk-relative paths below are never resolved against a real file system; they
-// are just stable keys that match the captured snapshot.
-const SELF_DIR = (import.meta as { dirname?: string }).dirname ?? "/__uwk__";
+// The directory the in-memory virtuals are placed under, which disk-backed module
+// resolution (Node) walks up from to find `@unworklet/core`. `import.meta.dirname`
+// is a plain string under Node ESM and `undefined` in the browser — a property
+// read, NOT a `node:url` / `node:path` import (those externalize and crash the
+// browser bundle). The editor TS-plugin is bundled to CJS, where `import.meta` is
+// empty but esbuild supplies `__dirname` (the bundle's dir, which sits in
+// `node_modules/@unworklet/lang/dist`, so core resolves from the same install) —
+// `typeof __dirname` is the one safe way to reach it without a ReferenceError in
+// ESM. In the browser a snapshot is always supplied, so these paths are never
+// resolved against disk; they are just stable keys matching the captured snapshot.
+/* v8 ignore next 3 — environment detection: under the Node ESM test runner
+   `import.meta.dirname` is always set, so the CJS-bundle (`__dirname`, used by the
+   editor TS plugin) and browser (`/__uwk__`) fallbacks are unreachable here. */
+const SELF_DIR =
+  (import.meta as { dirname?: string }).dirname ??
+  (typeof __dirname === "string" ? __dirname : "/__uwk__");
 
 const COMPILER_OPTIONS: ts.CompilerOptions = {
   target: ts.ScriptTarget.ESNext,
@@ -137,6 +147,9 @@ function replayHost(source: string, snap: FsSnapshot): ts.CompilerHost {
   return {
     getSourceFile: (fileName, languageVersionOrOptions) => {
       const content = text(fileName);
+      // Every file the checker requests during replay is present in the snapshot
+      // (the captured graph is complete), so the `undefined` arm is defensive.
+      /* v8 ignore next */
       return content === undefined
         ? undefined
         : ts.createSourceFile(fileName, content, languageVersionOrOptions, true, ts.ScriptKind.TS);
@@ -147,11 +160,18 @@ function replayHost(source: string, snap: FsSnapshot): ts.CompilerHost {
       snap.sourceTexts[fileName] !== undefined ||
       snap.fileExists[fileName] === true,
     directoryExists: (dir) => snap.dirExists[dir] === true,
+    // The `?? []` / `?? p` fallbacks only fire for a key the snapshot never recorded;
+    // a complete capture answers every lookup, so they are defensive normalization.
+    /* v8 ignore next 2 */
     getDirectories: (dir) => snap.dirs[dir] ?? [],
     realpath: (p) => snap.realpath[p] ?? p,
     writeFile: () => undefined,
     getDefaultLibFileName: () => snap.defaultLibFileName,
     getCurrentDirectory: () => snap.currentDirectory,
+    // `useCaseSensitiveFileNames` mirrors the recording host; on a case-insensitive
+    // file system only the `toLowerCase()` arm runs, on a case-sensitive one only
+    // the identity arm — one side is always dead for a given recording environment.
+    /* v8 ignore next */
     getCanonicalFileName: (f) => (snap.useCaseSensitiveFileNames ? f : f.toLowerCase()),
     useCaseSensitiveFileNames: () => snap.useCaseSensitiveFileNames,
     getNewLine: () => snap.newLine,
@@ -190,17 +210,26 @@ function diskHost(source: string, record?: FsSnapshot): ts.CompilerHost {
     return sf;
   };
   host.readFile = (fileName) => {
+    // The virtuals are served through `getSourceFile`; the program build never
+    // routes them through `readFile`, so the virtual short-circuit is defensive.
+    /* v8 ignore next */
     if (virtuals[fileName] !== undefined) return virtuals[fileName];
     const content = base.readFile(fileName);
     if (record && content !== undefined) record.sourceTexts[fileName] = content;
     return content;
   };
   host.fileExists = (fileName) => {
+    // Same as `readFile`: resolution checks the virtuals via `getSourceFile`, not
+    // through `fileExists`, so this short-circuit is defensive.
+    /* v8 ignore next */
     if (virtuals[fileName] !== undefined) return true;
     const exists = base.fileExists(fileName);
     if (record) record.fileExists[fileName] = exists;
     return exists;
   };
+  // `ts.createCompilerHost` always supplies these three methods on Node, so the
+  // `false` arm (host lacks the method) is unreachable in this environment.
+  /* v8 ignore next */
   if (base.directoryExists) {
     host.directoryExists = (dir) => {
       const exists = base.directoryExists!(dir);
@@ -208,6 +237,7 @@ function diskHost(source: string, record?: FsSnapshot): ts.CompilerHost {
       return exists;
     };
   }
+  /* v8 ignore next */
   if (base.getDirectories) {
     host.getDirectories = (dir) => {
       const dirs = base.getDirectories!(dir);
@@ -215,6 +245,7 @@ function diskHost(source: string, record?: FsSnapshot): ts.CompilerHost {
       return dirs;
     };
   }
+  /* v8 ignore next */
   if (base.realpath) {
     host.realpath = (p) => {
       const rp = base.realpath!(p);
@@ -230,6 +261,9 @@ function buildFrom(source: string, host: ts.CompilerHost, selfDir: string): Buil
   const program = ts.createProgram([ambientPathFor(selfDir), inputPath], COMPILER_OPTIONS, host);
   const checker = program.getTypeChecker();
   const sourceFile = program.getSourceFile(inputPath);
+  // `inputPath` is one of the two files passed to `createProgram` and the host
+  // always serves it, so the program always contains it — a defensive guard.
+  /* v8 ignore next 3 */
   if (sourceFile === undefined) {
     throw new Error("unworklet/lang: failed to build the .uwk.ts program (input not found)");
   }

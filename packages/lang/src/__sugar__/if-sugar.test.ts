@@ -642,3 +642,99 @@ test("accept: a JS-boolean if stays a build-time branch (the guard only fires on
   );
   expect(() => lower(src)).not.toThrow();
 });
+
+// ───────────────────────────────────────────────────────────────────────────
+// more unsupported DSP-cond shapes — each must throw `uwk-unsupported-if`, never
+// silently lower to one branch. These pin the rejection of every then/else shape
+// the three sugar forms (single write / symmetric write / guarded emit) reject.
+// ───────────────────────────────────────────────────────────────────────────
+
+/** Lower `src` and return the thrown LowerError id (or "<no throw>"). */
+function lowerErrorId(src: string): string {
+  try {
+    lower(src);
+  } catch (e) {
+    return (e as LowerError).id;
+  }
+  return "<no throw>";
+}
+
+test("reject: then-branch is a single NON-write statement (a bare read)", () => {
+  // `s.read()` is not a write, so no single-write shape matches → refuse, don't drop.
+  const src = mono("const s = state.f32(0).named('s');", `if (input.ch(0).at(i) > 0) s.read();`);
+  expect(lowerErrorId(src)).toBe("uwk-unsupported-if");
+});
+
+test("reject: then-branch is a declaration (not an expression statement)", () => {
+  const src = mono(
+    "const s = state.f32(0).named('s');",
+    `if (input.ch(0).at(i) > 0) { let z = i; }`,
+  );
+  expect(lowerErrorId(src)).toBe("uwk-unsupported-if");
+});
+
+test("reject: an empty then-block matches neither emit nor write", () => {
+  const src = mono("const s = state.f32(0).named('s');", `if (input.ch(0).at(i) > 0) {}`);
+  expect(lowerErrorId(src)).toBe("uwk-unsupported-if");
+});
+
+test("reject: writing to an output-channel sample inside a DSP-cond if", () => {
+  // `out.ch(0).at(i).write(v)` is a `.write` call, but the target is not a state /
+  // two-arg buffer write, so the single-write shape does not match.
+  const src = mono("", `if (input.ch(0).at(i) > 0) out.ch(0).at(i).write(f32(1));`);
+  expect(lowerErrorId(src)).toBe("uwk-unsupported-if");
+});
+
+test("reject: symmetric if-else writing DIFFERENT kinds (state vs buffer)", () => {
+  const src = mono(
+    "const s = state.f32(0).named('s');\nconst buf = state.buffer.f32({ size: 8 }).named('buf');",
+    `if (input.ch(0).at(i) > 0) s.write(f32(1)); else buf[i] = f32(2);`,
+  );
+  expect(lowerErrorId(src)).toBe("uwk-unsupported-if");
+});
+
+test("reject: symmetric if-else writing two DIFFERENT buffers", () => {
+  const src = mono(
+    "const a = state.buffer.f32({ size: 8 }).named('a');\nconst b = state.buffer.f32({ size: 8 }).named('b');",
+    `if (input.ch(0).at(i) > 0) a[i] = f32(1); else b[i] = f32(2);`,
+  );
+  expect(lowerErrorId(src)).toBe("uwk-unsupported-if");
+});
+
+test("reject: symmetric if-else where the then-branch has two statements", () => {
+  const src = mono(
+    "const s = state.f32(0).named('s');\nconst t = state.f32(0).named('t');",
+    `if (input.ch(0).at(i) > 0) { s.write(f32(1)); t.write(f32(2)); } else s.write(f32(3));`,
+  );
+  expect(lowerErrorId(src)).toBe("uwk-unsupported-if");
+});
+
+test("reject: a then-block mixing a declaration with an emit is not a guarded emit", () => {
+  const src = `const out = audioOutput({ channels: 1, name: "main" });
+const input = audioInput({ channels: 1, name: "main" });
+const ev = event<{ x: number }>({ to: "main", name: "ev" });
+process(() => { forSample((i) => {
+  if (input.ch(0)[i] > 0) { const z = f32(1); ev.emit({ atSample: i, x: z }); }
+}); });`;
+  expect(lowerErrorId(src)).toBe("uwk-unsupported-if");
+});
+
+test("reject: symmetric if-else writing two DIFFERENT states (target mismatch)", () => {
+  // Both branches are state writes but to different slots, so the symmetric-write
+  // shape does not match — the two targets are not the same.
+  const src = mono(
+    "const s = state.f32(0).named('s');\nconst t = state.f32(0).named('t');",
+    `if (input.ch(0).at(i) > 0) s.write(f32(1)); else t.write(f32(2));`,
+  );
+  expect(lowerErrorId(src)).toBe("uwk-unsupported-if");
+});
+
+test("reject: symmetric if-else writing the SAME buffer at DIFFERENT indices", () => {
+  // Same buffer, but `buf[i]` vs `buf[head]` are different index expressions, so the
+  // write targets are not identical.
+  const src = mono(
+    "const buf = state.buffer.f32({ size: 8 }).named('buf');\nconst head = state.i32(0).named('head');",
+    `if (input.ch(0).at(i) > 0) buf[i] = f32(1); else buf[head] = f32(2);`,
+  );
+  expect(lowerErrorId(src)).toBe("uwk-unsupported-if");
+});

@@ -23,13 +23,16 @@ Same declarations as core, but the `process` body uses operators. There is no
 `defineProcessor` wrapper and no `return { process }` — the file _is_ the
 processor body, and `process(() => { ... })` is ambient. The core DSL names
 (`audioInput`, `state`, `param`, `forSample`, …) are ambient too: **write no
-import** — the lowering injects the `@unworklet/core` import for you. A
-`// @ts-nocheck` header is expected: the sugar is intentionally a type error
-until the plugin lowers it. `.named()` / `.expose({...})` with no name derive it
-from the binding.
+import** — the lowering injects the `@unworklet/core` import for you.
+`.named()` / `.expose({...})` with no name derive it from the binding.
+
+Out of the box, stock TypeScript flags the sugar (`a * b` on two `Node`s is an
+"operator cannot be applied" error), so a `// @ts-nocheck` header is needed.
+**Install the editor plugin ([IDE support](#ide-support)) and the header goes
+away** — the sugar type-checks, with hover / completion / go-to-definition on
+the operands.
 
 ```ts
-// @ts-nocheck — sugar is a TS error until lowered; the plugin lowers it at build.
 const input = audioInput({ channels: 2, name: "main" });
 const out = audioOutput({ channels: 2, name: "main" });
 const gain = param.f32({ default: 1, min: 0, max: 4, automationRate: "a-rate" }).named();
@@ -63,6 +66,45 @@ lowers to `state.read()`, but you still **write** it explicitly with
 writes use the index-assignment form above. `number op number` (e.g.
 `SAMPLE_RATE * 0.5`) is left untouched — only expressions involving a
 `Node`/`State` are lowered.
+
+## IDE support
+
+`.uwk.ts` is syntactically TypeScript, so any editor highlights it and navigates
+it with zero setup. To make the **sugar type-check** — no red squiggles on
+`a * b`, no `// @ts-nocheck` — add the TypeScript-server plugin to your
+`tsconfig.json`, and pull in the shipped ambient `.d.ts` via `files` (it declares
+`audioInput` / `state` / `process` / `input` / `out` / `$prev` … as globals):
+
+```jsonc
+{
+  "compilerOptions": {
+    "plugins": [{ "name": "@unworklet/lang/typescript-plugin" }],
+  },
+  "include": ["src"],
+  "files": ["node_modules/@unworklet/lang/dist/ambient.d.ts"],
+}
+```
+
+(The ambient goes in `files`, not `compilerOptions.types` or `include`: the
+`types` array does not resolve an `exports` subpath in every resolver, and
+`include` globs skip `node_modules`. `files` entries are always loaded.)
+
+In VS Code, also run **“TypeScript: Select TypeScript Version → Use Workspace
+Version”** so the editor loads the plugin (TS-server plugins only load under the
+workspace TypeScript, not VS Code's bundled one). You then get, on the sugar
+itself: diagnostics, hover (`Node<"f32">`), completion (`input.` → `left` /
+`right` / `ch`), rename, and go-to-definition — projected onto your `.uwk.ts`.
+
+How it works (Volar): the plugin generates a virtual TypeScript file where only
+the sugar is desugared to the chain primitives stock TS accepts (`a * b` →
+`mul(a, b)`, `out.left[i] = v` → `out.left.at(i).write(v)`, a bare `state` read →
+`state.read()`), type-checks _that_, and maps every result back to your source.
+It uses the same desugar dispatch as the build, so the editor never disagrees
+with `lower()`. The plugin is edit-time only; the actual build still runs
+`lower()`.
+
+For CI / headless type-checking, the same language plugin drives a Volar program
+proxy — see `createUwkLanguagePlugin` in `@unworklet/lang`.
 
 ## API
 

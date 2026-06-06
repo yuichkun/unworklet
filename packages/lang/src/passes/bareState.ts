@@ -19,6 +19,9 @@ import { classify, isDspExpr, isSugarBinaryOperator } from "../classify.ts";
  * JS-boolean ternary is NOT lowered, so its branches are NOT operator operands. */
 function isSugarOperatorOperand(checker: ts.TypeChecker, node: ts.Node): boolean {
   const p = node.parent;
+  // Every expression node in a parsed tree has a parent (only the SourceFile root
+  // does not, and that is never an operand) — a defensive guard, never taken.
+  /* v8 ignore next */
   if (p === undefined) return false;
   if (ts.isBinaryExpression(p) && isSugarBinaryOperator(p.operatorToken.kind)) {
     return p.left === node || p.right === node;
@@ -41,6 +44,9 @@ function isEmitPayloadField(node: ts.Node): boolean {
   if (prop === undefined || !ts.isPropertyAssignment(prop) || prop.initializer !== node)
     return false;
   const obj = prop.parent;
+  // A PropertyAssignment in a parsed tree always sits inside an ObjectLiteral, so
+  // `obj` is never undefined here — the `=== undefined` arm is a defensive guard.
+  /* v8 ignore next */
   if (obj === undefined || !ts.isObjectLiteralExpression(obj)) return false;
   const call = obj.parent;
   return (
@@ -59,26 +65,35 @@ function read(node: ts.Expression): ts.CallExpression {
   );
 }
 
-export function tryBareState(checker: ts.TypeChecker, node: ts.Node): ts.Node | undefined {
-  if (!ts.isIdentifier(node)) return undefined;
-  if (classify(checker, node) !== "state") return undefined;
+/**
+ * Whether a bare `State<T>` identifier reads (`gain` → `gain.read()`) at this
+ * position. The single source of truth for the bare-state decision, shared by the
+ * lowering pass ({@link tryBareState}) and the IDE virtual-code generator — both
+ * must rewrite the exact same identifiers, or the editor would diverge from the
+ * build.
+ */
+export function readsAsBareState(checker: ts.TypeChecker, node: ts.Node): boolean {
+  if (!ts.isIdentifier(node)) return false;
+  if (classify(checker, node) !== "state") return false;
 
   const p = node.parent;
   // Object of a property access (`gain.read` / `.write` / `.named` / `.expose`) — the handle.
-  if (p !== undefined && ts.isPropertyAccessExpression(p) && p.expression === node)
-    return undefined;
+  if (p !== undefined && ts.isPropertyAccessExpression(p) && p.expression === node) return false;
   // The binding being declared.
-  if (p !== undefined && ts.isVariableDeclaration(p) && p.name === node) return undefined;
+  if (p !== undefined && ts.isVariableDeclaration(p) && p.name === node) return false;
   // Operator operands are read-wrapped by the operator pass.
-  if (isSugarOperatorOperand(checker, node)) return undefined;
+  if (isSugarOperatorOperand(checker, node)) return false;
 
   // An emit payload field accepts Node | number at runtime even though its TS
   // field type prints `number`, so a bare State there must read.
-  if (isEmitPayloadField(node)) return read(node);
+  if (isEmitPayloadField(node)) return true;
 
   // Otherwise only a position whose contextual type accepts a Node is a value position.
   const ctx = checker.getContextualType(node);
-  if (ctx === undefined) return undefined;
-  if (!checker.typeToString(ctx).includes("Node<")) return undefined;
-  return read(node);
+  if (ctx === undefined) return false;
+  return checker.typeToString(ctx).includes("Node<");
+}
+
+export function tryBareState(checker: ts.TypeChecker, node: ts.Node): ts.Node | undefined {
+  return readsAsBareState(checker, node) ? read(node as ts.Expression) : undefined;
 }

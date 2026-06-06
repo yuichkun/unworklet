@@ -4,7 +4,8 @@
   "description": "Build-time `.uwk.ts` → virtual `.ts` authoring frontend that lowers to `@unworklet/core`.",
   "license": "MIT",
   "files": [
-    "dist"
+    "dist",
+    "typescript-plugin"
   ],
   "type": "module",
   "exports": {
@@ -17,6 +18,14 @@
       "types": "./src/browser.ts",
       "import": "./dist/browser.mjs"
     },
+    "./typescript-plugin": {
+      "require": "./typescript-plugin/index.js",
+      "default": "./typescript-plugin/index.js"
+    },
+    "./ambient": {
+      "types": "./dist/ambient.d.ts"
+    },
+    "./ambient.d.ts": "./dist/ambient.d.ts",
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -31,6 +40,8 @@
   },
   "dependencies": {
     "@unworklet/core": "workspace:*",
+    "@volar/language-core": "catalog:",
+    "@volar/typescript": "catalog:",
     "typescript": "catalog:"
   },
   "devDependencies": {
