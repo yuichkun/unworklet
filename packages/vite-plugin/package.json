@@ -21,6 +21,17 @@
     "./package.json": "./package.json"
   },
   "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.mts",
+        "import": "./dist/index.mjs"
+      },
+      "./devbridge": {
+        "types": "./dist/devbridge.d.mts",
+        "import": "./dist/devbridge.mjs"
+      },
+      "./package.json": "./package.json"
+    },
     "access": "public"
   },
   "scripts": {
@@ -45,6 +56,6 @@
   },
   "peerDependencies": {
     "@unworklet/core": "workspace:*",
-    "vite": "catalog:"
+    "vite": "^6 || ^7 || ^8"
   }
 }
