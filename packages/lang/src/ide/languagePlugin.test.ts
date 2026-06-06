@@ -217,6 +217,38 @@ process(() => { forSample((i) => { out.ch(0)[i] = f32(m.run(i32(1))); }); });`;
   expect(diagnostics(src)).toEqual([]);
 });
 
+// ───────────────────────── guarded emit (if-sugar shape 3) ──────────────────
+// `if (dspCond) port.emit(payload)` lowers to `port.emitIf(cond, payload)` — the
+// worklet EventDecl exposes only `emitIf`, so a verbatim `emit` draws a bogus
+// "Property 'emit' does not exist". The editor must mirror the lowering.
+
+test("a guarded emit `if (c) ev.emit(p)` reports NO diagnostics", () => {
+  const src = `const out = audioOutput({ channels: 1, name: "main" });
+const input = audioInput({ channels: 1, name: "main" });
+const ev = event<{ level: number }>({ to: "main", name: "ev" });
+process(() => {
+  forSample((i) => {
+    if (input.ch(0)[i] > 0) ev.emit({ atSample: i, level: input.ch(0)[i] });
+    out.ch(0)[i] = input.ch(0)[i];
+  });
+});`;
+  expect(diagnostics(src)).toEqual([]);
+});
+
+test("a guarded multi-emit block `if (c) { a.emit(); b.emit(); }` reports NO diagnostics", () => {
+  const src = `const out = audioOutput({ channels: 1, name: "main" });
+const input = audioInput({ channels: 1, name: "main" });
+const a = event<{ x: number }>({ to: "main", name: "a" });
+const b = event<{ y: number }>({ to: "main", name: "b" });
+process(() => {
+  forSample((i) => {
+    if (input.ch(0)[i] > 0) { a.emit({ atSample: i, x: f32(1) }); b.emit({ atSample: i, y: f32(2) }); }
+    out.ch(0)[i] = input.ch(0)[i];
+  });
+});`;
+  expect(diagnostics(src)).toEqual([]);
+});
+
 // ───────────────────────── real type errors surface, mapped to source ───────
 
 test("assigning a bool Node to an f32 output channel is a mapped error on the value", () => {

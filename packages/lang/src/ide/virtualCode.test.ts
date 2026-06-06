@@ -183,6 +183,34 @@ test("$prev outside any defineSubgraph method is left verbatim (no slot to type 
   expect(c).not.toContain("as Node<");
 });
 
+// ───────────────────────── guarded emit (if-sugar shape 3) ──────────────────
+
+test("a guarded emit rewrites `.emit(` to `.emitIf(true, ` (payload kept, desugared)", () => {
+  const src = `const out = audioOutput({ channels: 1, name: "main" });
+const input = audioInput({ channels: 1, name: "main" });
+const ev = event<{ level: number }>({ to: "main", name: "ev" });
+process(() => { forSample((i) => {
+  if (input.ch(0)[i] > 0) ev.emit({ atSample: i, level: input.ch(0)[i] * 2 });
+}); });`;
+  const c = code(src);
+  // the real guard stays the surrounding `if`; the payload's `* 2` sugar still lowers.
+  expect(c).toContain("ev.emitIf(true, { atSample: i, level: mul(input.ch(0).at(i), 2) })");
+  expect(c).not.toContain("ev.emit(");
+});
+
+test("a bare `.emit(` outside a DSP-guarded if is left verbatim", () => {
+  // No enclosing DSP `if`, so it is not the lowering's guarded-emit shape — the IDE
+  // leaves it untouched (it stays the same `Property 'emit'` the build would reject).
+  const c = code(
+    mono(
+      "const ev = event<{ x: number }>({ to: 'main', name: 'ev' });",
+      `ev.emit({ atSample: i, x: f32(1) });`,
+    ),
+  );
+  expect(c).toContain("ev.emit({");
+  expect(c).not.toContain("emitIf");
+});
+
 // ───────────────────────── auto-name (S9) for type-checking ─────────────────
 
 test("no-arg .named() is filled with the binding name", () => {

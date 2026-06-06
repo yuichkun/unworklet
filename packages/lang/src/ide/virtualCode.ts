@@ -162,6 +162,25 @@ function autoNameInsertions(sourceFile: ts.SourceFile): Insertion[] {
 }
 
 /**
+ * A `port.emit(payload)` call that sits as a statement in the then-branch of a
+ * DSP-guarded `if` with no else — exactly the shape {@link tryIfSugar} rewrites to
+ * `port.emitIf(cond, payload)`. The worklet `EventDecl` exposes only `emitIf`, so a
+ * verbatim `emit` would draw a bogus "Property 'emit' does not exist". `emit` appears
+ * only in this guarded shape in a `.uwk.ts`, so matching it is enough to scope the
+ * rewrite to genuine if-sugar.
+ */
+function isGuardedEmit(checker: ts.TypeChecker, call: ts.CallExpression): boolean {
+  const stmt = call.parent;
+  if (!ts.isExpressionStatement(stmt)) return false;
+  const container = stmt.parent;
+  const inBlock = ts.isBlock(container);
+  const ifStmt = inBlock ? container.parent : container;
+  if (!ts.isIfStatement(ifStmt) || ifStmt.elseStatement !== undefined) return false;
+  if (ifStmt.thenStatement !== (inBlock ? container : stmt)) return false;
+  return isDspExpr(checker, ifStmt.expression);
+}
+
+/**
  * Lower a `.uwk.ts` source string to the virtual TypeScript the editor type-checks,
  * plus the source↔generated mappings Volar maps positions through.
  */
@@ -217,6 +236,30 @@ export function generateVirtualCode(
   /** Try to emit `node` as a sugar rewrite; return false if it is not sugar. The
    * cursor is left at `node.getEnd()` on success. */
   const tryEmitSugar = (node: ts.Node): boolean => {
+    // Guarded emit: `port.emit(payload)` inside a DSP-guarded `if` (no else) lowers
+    // to `port.emitIf(cond, payload)`; the worklet EventDecl exposes only `emitIf`,
+    // so a verbatim `emit` is a bogus "Property 'emit' does not exist". Rewrite the
+    // method to `emitIf` with a `true` guard — the real guard stays the surrounding
+    // `if`, and a literal `true` satisfies emitIf's `Node<"bool"> | boolean` first
+    // param, so the payload type-checks exactly as the build checks it.
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === "emit" &&
+      node.arguments.length === 1 &&
+      isGuardedEmit(checker, node)
+    ) {
+      const access = node.expression;
+      flushTo(node.getStart(sourceFile));
+      operandObject(access.expression);
+      b.synth(".emitIf(true, ", access.name.getStart(sourceFile));
+      cursor = node.arguments[0]!.getStart(sourceFile);
+      operandObject(node.arguments[0]!);
+      b.synth(")", node.getEnd());
+      cursor = node.getEnd();
+      return true;
+    }
+
     // Binary operator: `L op R` → `add(L, R)` / `not(eq(L, R))` (DSP operands only).
     if (ts.isBinaryExpression(node) && isSugarBinaryOperator(node.operatorToken.kind)) {
       if (!isDspExpr(checker, node.left) && !isDspExpr(checker, node.right)) return false;
