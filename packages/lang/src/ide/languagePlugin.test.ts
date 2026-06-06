@@ -166,6 +166,57 @@ process(() => {
   expect(diagnostics(src)).toEqual([]);
 });
 
+// ───────────────────────── $prev carries its concrete scalar ────────────────
+// The lowering rewrites `$prev` inside a defineSubgraph method to a typed slot
+// read (`state.<scalar>(0).read()` → Node<scalar>), so the editor must give `$prev`
+// that same concrete scalar — NOT the broad ambient `Node<ScalarType>`. Without it,
+// valid feedback that `lower()` compiles cleanly draws bogus operator / assignment
+// errors. The scalar follows the same rule the build uses (return annotation, else
+// return-expression type, else first `Node<T>` param, else f32).
+
+test("a one-pole $prev feedback written to an f32 channel reports NO diagnostics", () => {
+  const src = `const onepole = defineSubgraph((coef: Node<"f32">) => ({
+  process: (x: Node<"f32">) => coef * x + (1 - coef) * $prev,
+}));
+const lp = createSubgraph(onepole, f32(0.5), { name: "lp" });
+const out = audioOutput({ channels: 1, name: "main" });
+const input = audioInput({ channels: 1, name: "main" });
+process(() => { forSample((i) => { out.ch(0)[i] = lp.process(input.ch(0)[i]); }); });`;
+  expect(diagnostics(src)).toEqual([]);
+});
+
+test('a $prev method with a Node<"f32"> return annotation reports NO diagnostics', () => {
+  // bool param, f32 return: the slot scalar follows the RETURN, so $prev is f32.
+  const src = `const decay = defineSubgraph(() => ({
+  run: (trigger: Node<"bool">): Node<"f32"> => select(trigger, f32(1), $prev * 0.95),
+}));
+const out = audioOutput({ channels: 1, name: "main" });
+const input = audioInput({ channels: 1, name: "main" });
+const d = createSubgraph(decay, { name: "d" });
+process(() => { forSample((i) => { out.ch(0)[i] = d.run(input.ch(0)[i] > 0.5); }); });`;
+  expect(diagnostics(src)).toEqual([]);
+});
+
+test("a $prev method with an f64 return annotation reports NO diagnostics", () => {
+  const src = `const acc = defineSubgraph(() => ({
+  step: (): Node<"f64"> => $prev.mul(f64(0.5)).add(f64(0.25)),
+}));
+const out = audioOutput({ channels: 1, name: "main" });
+const a = createSubgraph(acc, { name: "a" });
+process(() => { forSample((i) => { out.ch(0)[i] = f32(a.step()); }); });`;
+  expect(diagnostics(src)).toEqual([]);
+});
+
+test("an i32 accumulator's $prev (slot scalar from the param) reports NO diagnostics", () => {
+  const src = `const sg = defineSubgraph(() => ({
+  run: (k: Node<"i32">) => k + $prev,
+}));
+const m = createSubgraph(sg, { name: "m" });
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => { forSample((i) => { out.ch(0)[i] = f32(m.run(i32(1))); }); });`;
+  expect(diagnostics(src)).toEqual([]);
+});
+
 // ───────────────────────── real type errors surface, mapped to source ───────
 
 test("assigning a bool Node to an f32 output channel is a mapped error on the value", () => {

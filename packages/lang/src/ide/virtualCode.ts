@@ -35,6 +35,7 @@ import { argIsInjectable, calledMethod, optionsHaveName, rootCallee } from "../p
 import { classify, isDspExpr, isSugarBinaryOperator } from "../classify.ts";
 import { readsAsBareState } from "../passes/bareState.ts";
 import { BINARY_FN, NEGATED_EQ } from "../passes/operators.ts";
+import { prevSlotScalars } from "../passes/prev.ts";
 import { buildProgram, type FsSnapshot } from "../program.ts";
 
 /** Author-written code: every language feature maps through 1:1. */
@@ -173,6 +174,9 @@ export function generateVirtualCode(
   const b = new Builder();
   b.raw(MODULE_PREFIX);
   let cursor = 0;
+
+  // `$prev` sites (by source offset) → the slot scalar the lowering would assign.
+  const prevScalars = prevSlotScalars(checker, sourceFile);
 
   const insertions = autoNameInsertions(sourceFile);
   let nextInsertion = 0;
@@ -313,6 +317,22 @@ export function generateVirtualCode(
       b.synth(")", node.getEnd());
       cursor = node.getEnd();
       return true;
+    }
+
+    // `$prev` inside a defineSubgraph method: the lowering rewrites it to a typed
+    // slot read (`state.<scalar>(0).read()` → Node<scalar>). Cast it to that same
+    // scalar so the editor type-checks the concrete type the build assigns, not the
+    // broad ambient `Node<ScalarType>` (which draws bogus errors on valid feedback).
+    // `$prev` itself stays author text, so hover / navigation land on the real token.
+    if (ts.isIdentifier(node) && node.text === "$prev") {
+      const scalar = prevScalars.get(node.getStart(sourceFile));
+      if (scalar !== undefined) {
+        flushTo(node.getStart(sourceFile));
+        b.synth("(", node.getStart(sourceFile));
+        flushTo(node.getEnd());
+        b.synth(` as Node<"${scalar}">)`, node.getEnd());
+        return true;
+      }
     }
 
     // Bare `state` read: `gain` → `gain.read()` (value positions only).

@@ -150,7 +150,7 @@ test("a bare state read in a value position lowers to .read(); a write stays exp
   expect(c).toContain("env.write(mul(env.read(), 0.99))"); // operand reads; the write target stays
 });
 
-test("$prev is left verbatim (it is an ambient Node, not rewritten by the IDE layer)", () => {
+test("$prev is cast to the method's slot scalar (the concrete type the build lowers it to)", () => {
   const src = `const onepole = defineSubgraph((coef: Node<"f32">) => ({
   process: (x: Node<"f32">) => coef * x + (1 - coef) * $prev,
 }));
@@ -158,9 +158,29 @@ const input = audioInput({ channels: 1, name: "main" });
 const out = audioOutput({ channels: 1, name: "main" });
 process(() => { forSample((i) => { out.ch(0)[i] = input.ch(0)[i]; }); });`;
   const c = code(src);
-  expect(c).toContain("$prev");
-  // the user's explicit parens around `(1 - coef)` are preserved verbatim
-  expect(c).toContain("add(mul(coef, x), mul((sub(1, coef)), $prev))");
+  // `$prev` stays author text, wrapped in a cast to its slot scalar (here `f32`, the
+  // method's `Node<"f32">` param) so the editor sees the concrete type — the broad
+  // ambient `Node<ScalarType>` would draw a bogus operator error against the f32 ops.
+  // The user's explicit parens around `(1 - coef)` are preserved verbatim.
+  expect(c).toContain('add(mul(coef, x), mul((sub(1, coef)), ($prev as Node<"f32">)))');
+});
+
+test("$prev's slot scalar follows a return annotation, not the param (bool param, f32 return)", () => {
+  const src = `const decay = defineSubgraph(() => ({
+  run: (trigger: Node<"bool">): Node<"f32"> => select(trigger, f32(1), $prev * 0.95),
+}));
+const out = audioOutput({ channels: 1, name: "main" });
+const d = createSubgraph(decay, { name: "d" });
+process(() => { forSample((i) => { out.ch(0)[i] = 0; }); });`;
+  expect(code(src)).toContain('($prev as Node<"f32">)');
+});
+
+test("$prev outside any defineSubgraph method is left verbatim (no slot to type it)", () => {
+  // A stray `$prev` at module scope is not a feedback site — there is no method slot
+  // to give it a scalar, so the IDE leaves it untouched (it stays the ambient Node).
+  const c = code(mono("const k = $prev;", `out.ch(0)[i] = input.ch(0)[i];`));
+  expect(c).toContain("const k = $prev;");
+  expect(c).not.toContain("as Node<");
 });
 
 // ───────────────────────── auto-name (S9) for type-checking ─────────────────
