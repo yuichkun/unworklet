@@ -93,6 +93,18 @@ void _wrong;
 void processor;
 `,
   );
+
+  // A named import. The plugin emits a default AND a filename-derived named
+  // export, but the name is dynamic, so a wildcard ambient can only type the
+  // default. The named form is the unsupported (untyped) path — docs use the
+  // default everywhere.
+  writeFileSync(
+    path.join(dir, "named-import.ts"),
+    `/// <reference types="@unworklet/vite-plugin/client" />
+import { stereoGain } from "./gain.processor.ts?worklet";
+void stereoGain;
+`,
+  );
 });
 
 afterAll(() => {
@@ -123,6 +135,12 @@ test("with the client reference, a `?worklet` import resolves to CompiledProcess
 
 test("the same client reference also types a `.uwk.ts?worklet` import", () => {
   expect(diagnose("with-ref-uwk.ts")).toEqual([]);
+});
+
+test("a named `?worklet` import is the unsupported path — only the default is typed", () => {
+  const msgs = diagnose("named-import.ts");
+  // TS even points the user back to the supported form ("Did you mean ... import x from").
+  expect(msgs.some((m) => /has no exported member 'stereoGain'/.test(m))).toBe(true);
 });
 
 test("the `?worklet` default export is typed (CompiledProcessor), not a blanket any", () => {
