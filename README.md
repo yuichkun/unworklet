@@ -56,7 +56,7 @@ realtime-safe:
 
 ```ts
 // distortion.uwk.ts — soft-clip distortion, compiled to a WASM AudioWorklet
-// @ts-nocheck — until you add the @unworklet/lang IDE plugin (one tsconfig line; see README).
+// @ts-nocheck — drop it once you add the @unworklet/lang editor plugin (see “Type-check the sugar in your editor”).
 const input = audioInput({ channels: 2, name: "main" });
 const out = audioOutput({ channels: 2, name: "main" });
 const drive = param.f32({ default: 4, min: 1, max: 20, automationRate: "a-rate" }).named();
@@ -94,6 +94,28 @@ Prefer explicit method calls over operator sugar? Write the same processor as a
 plain `.processor.ts` with the core API (`input.left.at(i).mul(drive.at(i))`) —
 the sugar is opt-in and lowers to exactly that.
 
+### Type-check the sugar in your editor
+
+The `// @ts-nocheck` above is only needed until you add the `@unworklet/lang`
+editor plugin. Add that package as a direct dev dependency and drop one line into
+`tsconfig.json`:
+
+```bash
+npm install -D @unworklet/lang
+```
+
+```jsonc
+// tsconfig.json
+{ "compilerOptions": { "plugins": [{ "name": "@unworklet/lang/typescript-plugin" }] } }
+```
+
+In VS Code, run **“TypeScript: Select TypeScript Version → Use Workspace Version”**
+(TS-server plugins load only under the workspace TypeScript). The sugar now
+type-checks — delete the `// @ts-nocheck` — with hover (`Node<"f32">`), completion,
+and go-to-definition on the operands. For build / CI, the same package ships
+`unworklet-tsc`, a drop-in `tsc` that type-checks `.uwk.ts` too — details in the
+[`@unworklet/lang` README](./packages/lang/README.md#ide-support).
+
 ## What you can build
 
 The primitives — `audioInput` / `param` / `state` / `state.buffer` / `event` /
@@ -107,7 +129,7 @@ on the audio thread and oscillates:
 
 ```ts
 // synth.uwk.ts — a monophonic MIDI sine voice
-// @ts-nocheck — until you add the @unworklet/lang IDE plugin (one tsconfig line; see README).
+// @ts-nocheck — drop it once you add the @unworklet/lang editor plugin (see “Type-check the sugar in your editor”).
 const out = audioOutput({ channels: 1, name: "main" });
 const keys = event.midi({ from: "main", name: "keys" });
 
