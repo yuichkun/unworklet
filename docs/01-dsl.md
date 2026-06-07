@@ -261,7 +261,7 @@ Handle types for every declaration kind are exported from `@unworklet/core` for 
 
 Processor-shape types (= types surrounding `defineProcessor`):
 
-- `ProcessorContext` (= argument to `defineProcessor` body) — `{ sampleRate: Node<'f32'>, hz: Node<'f32'>, samples: Node<'i32'> }`
+- `ProcessorContext` (= argument to `defineProcessor` body) — `{ readonly sampleRate: number }`: the host sample rate as a build-time JS number (e.g. `440 / ctx.sampleRate`)
 - `ProcessorBody` (= return value of `defineProcessor` body) — **strict shape** `{ process: () => void }`; extra fields cause a graph-capture-time error (per the declarative principle: the body consists of exactly one `process` entry)
 - `CompiledProcessor<C>` (= return value of `defineProcessor`) — `{ readonly graph: ProcessorGraph; readonly schemaHash: string }`; the opaque type passed to `createNode` / `replaceProcessor`
 - `UnworkletNode<C>` (= return value of `createNode`) — the public main-side surface; all methods and fields are declared in `05-client.md` §2
