@@ -257,12 +257,13 @@ Two gotchas worth knowing up front:
   version `@unworklet/vite-plugin` builds against (`0.2.x` at the time of writing).
   The panel's page bridge imports `@vitejs/devtools-kit/client`, which must resolve
   from your app — a transitive copy is not enough.
-- **Do not set `Cross-Origin-Embedder-Policy: require-corp` on the dev server.**
-  Cross-origin isolation is what `SharedArrayBuffer` wants, but COEP also blocks the
-  DevTools iframe (`/__unworklet/`). Leave the headers off the dev server —
-  unworklet falls back to the fully functional postMessage transport in dev — and
-  apply COOP/COEP only to your production / preview builds (where there's no
-  DevTools to break).
+- **Cross-origin isolation.** The plugin makes the dev server cross-origin
+  isolated by default (COOP `same-origin` + COEP `credentialless`) so
+  `SharedArrayBuffer` works with no config — `credentialless` rather than
+  `require-corp`, which would block the DevTools iframe (`/__unworklet/`). If
+  isolation conflicts with a cross-origin resource or the DevTools panel, opt out
+  with `unworklet({ crossOriginIsolation: false })`; unworklet then uses the
+  postMessage transport in dev. Production headers remain your server's job.
 
 The panels can't be deployed as a static demo: the host is a dev-time server, so
 clone the repo and start an example locally to try them live.
