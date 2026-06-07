@@ -16,26 +16,40 @@ type ConfigHook = (
   this: unknown,
   userConfig: Record<string, unknown>,
   env: { command: string; mode: string },
-) => { server?: { headers?: Record<string, string> } } | undefined;
+) =>
+  | {
+      server?: { headers?: Record<string, string> };
+      preview?: { headers?: Record<string, string> };
+    }
+  | undefined;
 
 const callConfig = (
   command: string,
   options?: Parameters<typeof unworklet>[0],
   userConfig: Record<string, unknown> = {},
-): { server?: { headers?: Record<string, string> } } | undefined => {
+):
+  | {
+      server?: { headers?: Record<string, string> };
+      preview?: { headers?: Record<string, string> };
+    }
+  | undefined => {
   const hook = unworklet(options).config;
   if (typeof hook !== "function") throw new Error("config hook is not a plain function");
   return (hook as unknown as ConfigHook).call(null, userConfig, { command, mode: "development" });
 };
 
-test("the dev server is cross-origin isolated by default", () => {
-  const headers = callConfig("serve")?.server?.headers;
-  expect(headers?.["Cross-Origin-Opener-Policy"]).toBe("same-origin");
-  expect(headers?.["Cross-Origin-Embedder-Policy"]).toBe("credentialless");
+test("the dev and preview servers are cross-origin isolated by default", () => {
+  const config = callConfig("serve");
+  for (const scope of [config?.server, config?.preview]) {
+    expect(scope?.headers?.["Cross-Origin-Opener-Policy"]).toBe("same-origin");
+    expect(scope?.headers?.["Cross-Origin-Embedder-Policy"]).toBe("credentialless");
+  }
 });
 
-test("crossOriginIsolation: false leaves the dev server headers untouched", () => {
-  expect(callConfig("serve", { crossOriginIsolation: false })?.server).toBeUndefined();
+test("crossOriginIsolation: false leaves the dev and preview headers untouched", () => {
+  const config = callConfig("serve", { crossOriginIsolation: false });
+  expect(config?.server).toBeUndefined();
+  expect(config?.preview).toBeUndefined();
 });
 
 test("an app's own COOP/COEP header is respected, not overridden", () => {

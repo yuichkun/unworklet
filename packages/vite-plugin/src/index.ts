@@ -440,8 +440,9 @@ export type UnworkletPluginOptions = {
    * transport, works with no app config. Default `true`. `credentialless` is the
    * least-breaking isolation level: cross-origin subresources still load, just
    * without credentials. Set `false` if your app serves its own COOP/COEP headers;
-   * an app that already sets either header is left untouched regardless. This only
-   * affects vite's dev server — production headers are always your server's job.
+   * an app that already sets either header is left untouched regardless. This
+   * affects vite's dev and preview servers — production headers are always your
+   * server's job.
    */
   crossOriginIsolation?: boolean;
 };
@@ -836,11 +837,11 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
       if (!crossOriginIsolation) return { define };
       // `SharedArrayBuffer` needs a cross-origin-isolated page. `credentialless`
       // is the least-breaking isolation level (cross-origin subresources still
-      // load, without credentials). These go on `server.headers`, not
-      // `preview.headers`, so they touch only the dev server — `vite preview`
-      // keeps mirroring production, where the headers are the app server's job.
-      // `mergeConfig` would let a plugin override the app's config, so set only the
-      // headers the app left unset and never clobber an app's own COOP/COEP.
+      // load, without credentials). Both the dev server and `vite preview` get the
+      // headers, so SAB works the same when iterating and when checking the build;
+      // production headers stay the app server's job. `mergeConfig` would let a
+      // plugin override the app's config, so set only the headers the app left
+      // unset and never clobber an app's own COOP/COEP.
       const appHeaders =
         (userConfig as { server?: { headers?: Record<string, string> } }).server?.headers ?? {};
       const headers: Record<string, string> = {};
@@ -850,7 +851,9 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
       if (!("Cross-Origin-Embedder-Policy" in appHeaders)) {
         headers["Cross-Origin-Embedder-Policy"] = "credentialless";
       }
-      return Object.keys(headers).length > 0 ? { define, server: { headers } } : { define };
+      return Object.keys(headers).length > 0
+        ? { define, server: { headers }, preview: { headers } }
+        : { define };
     },
     configResolved(config) {
       isServe = config.command === "serve";
