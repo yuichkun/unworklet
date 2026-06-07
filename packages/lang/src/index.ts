@@ -9,6 +9,11 @@ export type { LowerOptions } from "./lower.ts";
 export { captureFsSnapshot } from "./capture.ts";
 export type { FsSnapshot } from "./program.ts";
 
+// Headless authoring: lower a `.uwk.ts` source straight to a `CompiledProcessor`
+// for `@unworklet/offline`'s `renderOffline` — no Vite plugin, no browser. The
+// browser entry exposes the same call backed by a build-time type snapshot.
+export { lowerToProcessor } from "./eval-lowered.ts";
+
 // IDE / editor tooling (RFC-001 "Volar.js / TS LSP integration"): the language
 // plugin + virtual-code generator that make `.uwk.ts` sugar type-check in an
 // editor or a headless Volar program proxy.

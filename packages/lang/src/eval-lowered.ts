@@ -30,7 +30,15 @@ export function evalLowered(loweredTs: string): CompiledProcessor<unknown> {
   return fn(...CORE_KEYS.map((k) => (core as Record<string, unknown>)[k]));
 }
 
-/** Lower + evaluate a `.uwk.ts` source to a raw `CompiledProcessor`. */
-export function lowerToProcessor(source: string, snapshot: FsSnapshot): CompiledProcessor<unknown> {
-  return evalLowered(lower(source, { snapshot }));
+/**
+ * Lower + evaluate a `.uwk.ts` source to a raw `CompiledProcessor`. The snapshot
+ * is optional: in Node, `lower()` resolves the `@unworklet/core` types from disk,
+ * so the offline / test path passes nothing; the browser entry passes its bundled
+ * snapshot so `lower()` runs with no filesystem.
+ */
+export function lowerToProcessor(
+  source: string,
+  snapshot?: FsSnapshot,
+): CompiledProcessor<unknown> {
+  return evalLowered(lower(source, snapshot ? { snapshot } : {}));
 }
