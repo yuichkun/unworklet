@@ -45,9 +45,12 @@ event({ to: "main", name })          // worklet→main: .emitIf(cond, payload)
 event({ from: "main", name })        // main→worklet: .onReceive(p => ...)
 event.midi({ from: "main", name })   // inbound MIDI: .onEvent("noteOn", e => ...)
 event.midi({ to: "main", name })     // outbound MIDI: .emitIf(cond, midiEvent)
+defineSubgraph((args) => ({ run: (x) => ... }))  // reusable block; createSubgraph(sg, ...args, { name }) in decl scope ($prev feedback is .uwk.ts-only)
 
 forSample((i) => { /* i = 0..127 */ })          // the per-sample loop
 forSample.byN(4, (i) => { ... })                // SIMD stride (divides 128)
+// SIMD ops are an opt-in subpath: import { vec4, splat, addVec, mulVec, sumLanes } from "@unworklet/core/simd"
+//   v = buf.loadVec(i);  v.lane(0..3);  buf.storeVec(i, v)   (f32 buffers; .ts only)
 
 // operations — free function OR method form, identical:
 add sub mul div mod neg  eq lt lte gt gte  not select  abs min max clamp
@@ -58,6 +61,8 @@ floor ceil frac  sin cos tan tanh exp log sqrt  pipe
 Naming: `.named("x")` or `.expose({ name, snapshot, publish: { rateFps } })`.
 `publish` streams to `node.state.<name>.subscribe(...)`; `snapshot:"persistent"`
 includes it in `node.snapshot()`. A `publish`/`persistent` slot must be named.
+Migrate persisted state across schema changes with the 2nd `defineProcessor` arg:
+`defineProcessor(body, { migrations: [{ from, to, migrate(blob, h) { ... } }] })` (`migrate` is sync).
 
 ## Do NOT hallucinate these (common mistakes)
 
@@ -66,6 +71,7 @@ includes it in `node.snapshot()`. A `publish`/`persistent` slot must be named.
 - Ports require a `name`: `audioInput({ channels: 2, name: "main" })` — never positional.
 - There is **no** standalone `message<T>()`; main→worklet is `event({ from: "main", name })`.
 - MIDI is `event.midi({ from | to: "main", name })`, not a `midiInput()/midiOutput()` call.
+- Infix operators (`a * b`, `a + b`) on `Node`s work ONLY in `.uwk.ts`. In `.ts` / `.processor.ts` use methods or free functions (`a.mul(b)` / `mul(a, b)`) — a `Node` has no JS operators.
 - Import processors with the `?worklet` query as the **default** import (`import x from "...?worklet"`) — not a named import, and don't import the raw module.
 - `.uwk.ts` sugar and the plain `.ts` API are not mixed in one file. Without the `@unworklet/lang` editor plugin a `.uwk.ts` needs `// @ts-nocheck`; add the plugin to `tsconfig` `plugins` (it auto-injects the shipped ambient — no `files` / `types` entry) and the sugar type-checks so the header is dropped (see `@unworklet/lang`'s README → IDE support).
 
@@ -76,8 +82,10 @@ import { createNode } from "@unworklet/core";
 import stereoGain from "./stereo-gain.processor.ts?worklet";
 const node = await createNode(ctx, stereoGain);
 node.outputs.main.connect(ctx.destination);   // also: node.inputs, node.params.<name>.value,
-                                               // node.state.<name>.subscribe, node.midi.<name>.send,
-                                               // node.events.<name>.on, node.snapshot()/restore(blob)
+                                               // node.state.<name>.subscribe(cb),
+                                               // node.events.<name>.on(cb) / .emit(payload),   // .emit = main→worklet send
+                                               // node.midi.<name>.send(ev) / .onEvent("noteOn", e => ...),
+                                               // await node.snapshot() / await node.restore(blob)   // both async
 ```
 
 ## Verify before you ship
@@ -85,8 +93,9 @@ node.outputs.main.connect(ctx.destination);   // also: node.inputs, node.params.
 ```ts
 import { renderOffline } from "@unworklet/offline";
 import { expectNoNaN, expectStable } from "@unworklet/test";
-const r = await renderOffline(stereoGain, { sampleRate: 48000, duration: 1, inputs: { main: [pcm] } });
-expectNoNaN(r); expectStable(r);
+const r = await renderOffline(stereoGain, { sampleRate: 48000, duration: 1, inputs: { main: [pcm] },
+  params: { g: [0.5] }, messages: [{ name, payload }], events: [{ name, payload, atSample }] });  // events = inbound MIDI
+expectNoNaN(r); expectStable(r);   // r.outputs, r.events (worklet→main + outbound MIDI), r.state (snapshot blob)
 ```
 
 ## More
