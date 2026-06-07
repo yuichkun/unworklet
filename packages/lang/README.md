@@ -13,7 +13,8 @@ operators and bare reads/writes; `lower()` desugars it to a plain
 # Pulled in transitively by the Vite plugin — install that, not this directly:
 npm install -D @unworklet/vite-plugin
 npm install @unworklet/core
-# Only needed if you call `lower()` yourself (custom build step):
+# For `.uwk.ts` authoring — the editor plugin, the `unworklet-tsc` build checker,
+# and `lower()`. Add it directly: a bin only resolves for a direct dependency.
 npm install -D @unworklet/lang
 ```
 
@@ -103,20 +104,32 @@ proxy — see `createUwkLanguagePlugin` in `@unworklet/lang`.
 
 ## Building a `.uwk.ts` project
 
-A Vite build script usually runs `tsc` first (`tsc && vite build`). `tsc` does
-**not** run the editor plugin, so once you add the plugin and drop the
-`// @ts-nocheck` headers, exclude `.uwk.ts` from `tsc` — otherwise it flags the
-raw sugar and fails the build:
+A Vite build script usually type-checks first, then builds (`tsc && vite build`).
+But `tsc` doesn't run the editor plugin, so it flags the raw `.uwk.ts` sugar
+(`a * b` on two `Node`s) and fails the build.
+
+Use `unworklet-tsc` in place of `tsc`. It's a drop-in `tsc` — every flag passes
+through — that understands `.uwk.ts`, type-checking the sugar with the _same_
+language plugin the editor uses, so your `.uwk.ts` files are checked at build
+rather than skipped:
 
 ```jsonc
-// tsconfig.json
+// package.json
 {
-  "exclude": ["**/*.uwk.ts"],
+  "scripts": {
+    "build": "unworklet-tsc --noEmit && vite build",
+  },
 }
 ```
 
-The Vite plugin still lowers + compiles those files at build (and surfaces any
-`lower()` error there); the editor plugin type-checks them while you edit.
+The Vite plugin lowers + compiles `.uwk.ts` at build regardless (surfacing any
+`lower()` error there); `unworklet-tsc` adds the type-check, and the editor
+plugin gives the same diagnostics while you edit — all three driven by one
+desugar, so they never disagree.
+
+If you'd rather not type-check the sugar at build, `"exclude": ["**/*.uwk.ts"]`
+in `tsconfig.json` keeps plain `tsc` from flagging it (the Vite plugin compiles
+those files regardless; they're just unchecked at build).
 
 ## Compile in the browser (live coding)
 
