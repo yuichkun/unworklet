@@ -4,7 +4,8 @@
   "description": "Vite plugin for `@unworklet/core` processors (`?worklet` imports, source maps, DevTools panels, analysis JSON).",
   "license": "MIT",
   "files": [
-    "dist"
+    "dist",
+    "client.d.ts"
   ],
   "type": "module",
   "exports": {
@@ -18,6 +19,9 @@
       "development": "./src/devbridge.ts",
       "import": "./dist/devbridge.mjs"
     },
+    "./client": {
+      "types": "./client.d.ts"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -29,6 +33,9 @@
       "./devbridge": {
         "types": "./dist/devbridge.d.mts",
         "import": "./dist/devbridge.mjs"
+      },
+      "./client": {
+        "types": "./client.d.ts"
       },
       "./package.json": "./package.json"
     },
