@@ -23,8 +23,6 @@ import type { Readable, Writable } from "node:stream";
 import { build } from "esbuild";
 import { afterAll, beforeAll, expect, test } from "vite-plus/test";
 
-import { AMBIENT_DTS } from "../ambient.ts";
-
 const LANG = path.resolve(import.meta.dirname, "../..");
 const REPO = path.resolve(LANG, "../..");
 const CORE = path.join(REPO, "packages/core");
@@ -135,13 +133,13 @@ beforeAll(async () => {
     `${JSON.stringify({ type: "commonjs" })}\n`,
   );
 
-  // A throwaway consumer project: node_modules symlinks to the real packages, the
-  // ambient pulled in via `files`, a tsconfig that registers the plugin.
+  // A throwaway consumer project: node_modules symlinks to the real packages and a
+  // tsconfig that registers ONLY the plugin (no `files`). The plugin auto-injects
+  // the shipped ambient `.d.ts`, so `plugins` is the entire setup.
   dir = mkdtempSync(path.join(tmpdir(), "uwk-tsserver-"));
   mkdirSync(path.join(dir, "node_modules/@unworklet"), { recursive: true });
   symlinkSync(LANG, path.join(dir, "node_modules/@unworklet/lang"));
   symlinkSync(CORE, path.join(dir, "node_modules/@unworklet/core"));
-  writeFileSync(path.join(dir, "uwk-ambient.d.ts"), AMBIENT_DTS);
   writeFileSync(
     path.join(dir, "tsconfig.json"),
     JSON.stringify({
@@ -156,7 +154,6 @@ beforeAll(async () => {
         skipLibCheck: true,
         plugins: [{ name: "@unworklet/lang/typescript-plugin" }],
       },
-      files: ["uwk-ambient.d.ts"],
       include: ["."],
     }),
   );
