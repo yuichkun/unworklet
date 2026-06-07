@@ -13,9 +13,9 @@ loops, exceptions, blocking I/O, and GC on the audio thread).
 
 **The source code is the source of truth.** The forms below are exact and are
 covered by tests (`packages/offline/src/docs-examples.test.ts`). Do not
-substitute API shapes from memory. If you need a form not shown here, read a
-tested example (`examples/01-stereo-gain`, `docs/12-canonical-examples.md`) or
-the package READMEs in `node_modules/@unworklet/*/README.md`.
+substitute API shapes from memory. If you need a form not shown here, read the
+package READMEs in `node_modules/@unworklet/*/README.md` or
+`docs/12-canonical-examples.md`.
 
 ## Packages
 
@@ -73,7 +73,7 @@ import {
   state,
 } from "@unworklet/core";
 
-export const midiSynth = defineProcessor(() => {
+export const midiSynth = defineProcessor((ctx) => {
   const out = audioOutput({ channels: 1, name: "main" });
   const notes = event.midi({ from: "main", name: "notes" });
   const phase = state.f64(0).named("phase");
@@ -97,7 +97,7 @@ export const midiSynth = defineProcessor(() => {
           .mul(440);
         const p = phase
           .read()
-          .add(f64(freqHz.mul((2 * Math.PI) / 48000)))
+          .add(f64(freqHz.mul((2 * Math.PI) / ctx.sampleRate)))
           .mod(2 * Math.PI);
         out
           .ch(0)

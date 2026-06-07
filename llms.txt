@@ -9,8 +9,8 @@
 
 This file orients an AI agent that has installed unworklet. **The source code is
 the source of truth.** The call forms below are exact — do not substitute forms
-from memory. When in doubt, read a tested example (`examples/01-stereo-gain`,
-`docs/12-canonical-examples.md`) or the package READMEs in `node_modules`.
+from memory. When in doubt, read the package READMEs in `node_modules` (e.g.
+`@unworklet/core`'s) or `docs/12-canonical-examples.md` in the repo.
 
 ## Packages (install what you use)
 
@@ -28,8 +28,10 @@ Type the `?worklet` import once per project by adding
 
 ## DSL quick reference (exact forms)
 
-Declarations go at the top of `defineProcessor(() => { ... })`; the returned
-`process` runs every 128-sample block.
+Declarations go at the top of `defineProcessor((ctx) => { ... })`; the returned
+`process` runs every 128-sample block. `ctx.sampleRate` is the host sample rate —
+use it for anything rate-dependent, e.g. an oscillator's phase step
+(`const step = 440 / ctx.sampleRate`) or a filter coefficient.
 
 ```ts
 import { audioInput, audioOutput, defineProcessor, forSample, param, state, event } from "@unworklet/core";
