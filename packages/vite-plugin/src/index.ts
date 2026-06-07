@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import { compile, extractWorkletMeta } from "@unworklet/core";
 import type { CompiledProcessor } from "@unworklet/core";
 import { lower } from "@unworklet/lang";
-import type { Plugin } from "vite-plus";
+import type { Plugin } from "vite";
 
 // ─────────────────────────────────────────────────────────────────────────
 // DevTools live audio-graph topology (Wire 4)

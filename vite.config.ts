@@ -110,6 +110,13 @@ export default defineConfig({
         files: ["packages/test/src/index.ts", "packages/test/src/extend.ts"],
         rules: { "vite-plus/prefer-vite-plus-imports": "off" },
       },
+      {
+        // `@unworklet/vite-plugin`'s peer is plain `vite`, so its public type must
+        // reference `vite` (a stock-vite consumer has no `vite-plus`). Don't let
+        // the import rule rewrite that `vite` type import to the fork.
+        files: ["packages/vite-plugin/src/index.ts"],
+        rules: { "vite-plus/prefer-vite-plus-imports": "off" },
+      },
     ],
   },
   run: {
