@@ -79,8 +79,6 @@ one-time console warning).
 unworklet({
   emitAnalysisArtifacts: true, // default — emit <name>.graph/memory/diagnostics/schema-hash.json on build
   crossOriginIsolation: true, // default — set COOP/COEP on the dev server so SharedArrayBuffer works
-  include: ["src/**/*.processor.ts", "src/**/*.uwk.ts"], // optional globs
-  exclude: [], // optional globs
 });
 ```
 

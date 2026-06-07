@@ -171,9 +171,7 @@ test("`unworklet()` returns a Vite Plugin object with a stable name", () => {
 test("`unworklet()` accepts an options bag without throwing", () => {
   expect(() => unworklet({})).not.toThrow();
   expect(() => unworklet({ emitAnalysisArtifacts: false })).not.toThrow();
-  expect(() =>
-    unworklet({ include: ["**/*.processor.ts"], exclude: ["**/node_modules/**"] }),
-  ).not.toThrow();
+  expect(() => unworklet({ crossOriginIsolation: false })).not.toThrow();
 });
 
 test("`unworkletPlugin` is the same reference as the default export", () => {

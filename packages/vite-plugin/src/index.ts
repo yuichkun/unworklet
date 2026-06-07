@@ -430,10 +430,6 @@ export type UnworkletPluginOptions = {
    * Default `true`.
    */
   emitAnalysisArtifacts?: boolean;
-  /** Glob patterns / file paths to treat as processor sources. */
-  include?: string[];
-  /** Glob patterns / file paths to exclude. */
-  exclude?: string[];
   /**
    * Make the dev server cross-origin isolated — COOP `same-origin` + COEP
    * `credentialless` — so `SharedArrayBuffer`, unworklet's fast main↔worklet
