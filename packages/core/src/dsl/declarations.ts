@@ -758,6 +758,30 @@ function makeOutputView(portName: string, channel: number): OutputChannelView<"f
   };
 }
 
+/**
+ * Define `.left` / `.right` on a non-stereo port as throwing getters. The `.ts`
+ * handle type already omits them unless `channels` is 2, but the `.uwk.ts` sugar
+ * path lowers `port.left[i]` without that type — so without this guard a mono
+ * author hits an opaque `undefined` TypeError instead of being pointed at `.ch`.
+ */
+function defineStereoOnlyGuards(
+  handle: Record<string, unknown>,
+  kind: "audioInput" | "audioOutput",
+  name: string,
+  channels: number,
+): void {
+  for (const side of ["left", "right"] as const) {
+    Object.defineProperty(handle, side, {
+      get(): never {
+        throw new Error(
+          `${kind} "${name}" has ${channels} channel(s) — ".${side}" is stereo-only (channels: 2); use .ch(${side === "left" ? 0 : 1}).`,
+        );
+      },
+      enumerable: false,
+    });
+  }
+}
+
 export function audioInput<C extends number>(options: {
   channels: C;
   name: string;
@@ -781,6 +805,8 @@ export function audioInput<C extends number>(options: {
       get: () => makeInputView(options.name, 1),
       enumerable: true,
     });
+  } else {
+    defineStereoOnlyGuards(handle, "audioInput", options.name, options.channels);
   }
   return handle as AudioInputHandle<C>;
 }
@@ -808,6 +834,8 @@ export function audioOutput<C extends number>(options: {
       get: () => makeOutputView(options.name, 1),
       enumerable: true,
     });
+  } else {
+    defineStereoOnlyGuards(handle, "audioOutput", options.name, options.channels);
   }
   return handle as AudioOutputHandle<C>;
 }

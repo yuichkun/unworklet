@@ -105,12 +105,18 @@ test("`audioInput` stereo handle exposes `.left` / `.right` sugar", () => {
   });
 });
 
-test("`audioInput` mono handle does NOT carry `.left` / `.right` sugar", () => {
+test("`audioInput` mono handle's `.left` / `.right` throw a clear stereo-only error", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const handle = audioInput({ channels: 1, name: "mono" });
-    expect("left" in handle).toBe(false);
-    expect("right" in handle).toBe(false);
+    // The `.ts` type omits `.left`/`.right` for non-stereo ports; the runtime
+    // guard makes the `.uwk.ts` sugar path fail clearly instead of with an opaque
+    // `undefined` TypeError. The cast reaches the guarded getters.
+    const handle = audioInput({ channels: 1, name: "mono" }) as unknown as {
+      left: unknown;
+      right: unknown;
+    };
+    expect(() => handle.left).toThrow(/stereo-only/);
+    expect(() => handle.right).toThrow(/stereo-only/);
   });
 });
 
@@ -197,12 +203,15 @@ test("`audioOutput` stereo handle exposes `.left` / `.right` sugar", () => {
   });
 });
 
-test("`audioOutput` mono handle does NOT carry `.left` / `.right` sugar", () => {
+test("`audioOutput` mono handle's `.left` / `.right` throw a clear stereo-only error", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const handle = audioOutput({ channels: 1, name: "mono" });
-    expect("left" in handle).toBe(false);
-    expect("right" in handle).toBe(false);
+    const handle = audioOutput({ channels: 1, name: "mono" }) as unknown as {
+      left: unknown;
+      right: unknown;
+    };
+    expect(() => handle.left).toThrow(/stereo-only/);
+    expect(() => handle.right).toThrow(/stereo-only/);
   });
 });
 
