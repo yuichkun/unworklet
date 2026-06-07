@@ -434,6 +434,16 @@ export type UnworkletPluginOptions = {
   include?: string[];
   /** Glob patterns / file paths to exclude. */
   exclude?: string[];
+  /**
+   * Make the dev server cross-origin isolated — COOP `same-origin` + COEP
+   * `credentialless` — so `SharedArrayBuffer`, unworklet's fast main↔worklet
+   * transport, works with no app config. Default `true`. `credentialless` is the
+   * least-breaking isolation level: cross-origin subresources still load, just
+   * without credentials. Set `false` if your app serves its own COOP/COEP headers;
+   * an app that already sets either header is left untouched regardless. This only
+   * affects vite's dev server — production headers are always your server's job.
+   */
+  crossOriginIsolation?: boolean;
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -765,6 +775,7 @@ const setupDevtools = async (
  */
 export default function unworklet(options?: UnworkletPluginOptions): Plugin {
   const emitAnalysisArtifacts = options?.emitAnalysisArtifacts ?? true;
+  const crossOriginIsolation = options?.crossOriginIsolation ?? true;
   const uiRoot = resolveDevtoolsUiRoot();
   let isServe = false;
   let devtoolsActive = false;
@@ -815,15 +826,31 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
   return {
     name: "@unworklet/vite-plugin",
     enforce: "pre",
-    config(_userConfig, env) {
+    config(userConfig, env) {
       // Dev-only gate for the core registry / page bridge: a single statically-
       // replaced boolean — `true` in serve, `false` in build — so production
       // tree-shakes the devtools wiring and tests (no plugin) leave it undefined.
-      return {
-        define: {
-          __UNWORKLET_DEVTOOLS__: env.command === "serve" ? "true" : "false",
-        },
+      const define = {
+        __UNWORKLET_DEVTOOLS__: env.command === "serve" ? "true" : "false",
       };
+      if (!crossOriginIsolation) return { define };
+      // `SharedArrayBuffer` needs a cross-origin-isolated page. `credentialless`
+      // is the least-breaking isolation level (cross-origin subresources still
+      // load, without credentials). These go on `server.headers`, not
+      // `preview.headers`, so they touch only the dev server — `vite preview`
+      // keeps mirroring production, where the headers are the app server's job.
+      // `mergeConfig` would let a plugin override the app's config, so set only the
+      // headers the app left unset and never clobber an app's own COOP/COEP.
+      const appHeaders =
+        (userConfig as { server?: { headers?: Record<string, string> } }).server?.headers ?? {};
+      const headers: Record<string, string> = {};
+      if (!("Cross-Origin-Opener-Policy" in appHeaders)) {
+        headers["Cross-Origin-Opener-Policy"] = "same-origin";
+      }
+      if (!("Cross-Origin-Embedder-Policy" in appHeaders)) {
+        headers["Cross-Origin-Embedder-Policy"] = "credentialless";
+      }
+      return Object.keys(headers).length > 0 ? { define, server: { headers } } : { define };
     },
     configResolved(config) {
       isServe = config.command === "serve";
