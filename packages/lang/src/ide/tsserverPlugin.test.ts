@@ -32,7 +32,9 @@ const TSSERVER = path.join(TS_DIR, "lib/tsserver.js");
 const VALID = `const input = audioInput({ channels: 2 });
 const out = audioOutput({ channels: 2 });
 const gain = param.f32({ default: 1, min: 0, max: 4, automationRate: "a-rate" });
+const keys = event.midi({ from: "main", name: "keys" });
 process(() => {
+  keys.onEvent("noteOn", () => {});
   forSample((i) => {
     const l = input.left[i] * gain[i];
     out.left[i] = l;
@@ -148,7 +150,8 @@ beforeAll(async () => {
         moduleResolution: "nodenext",
         customConditions: ["development"],
         allowImportingTsExtensions: true,
-        lib: ["es2023"],
+        lib: ["es2023", "dom"],
+        types: ["node"],
         strict: true,
         noEmit: true,
         skipLibCheck: true,

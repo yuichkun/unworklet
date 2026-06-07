@@ -53,12 +53,17 @@ const SYNTH: CodeInformation = { verification: true };
 
 /**
  * Prepended to the virtual module. `export {}` (appended) makes the file a module
- * so this local `process` shadows BOTH the ambient `declare global` macro and
- * `@types/node`'s `var process: Process` (which would otherwise win and report
- * "Type 'Process' has no call signatures" on every `process(() => {...})`). The
- * other ambient names need no shadow — they collide with nothing in lib / node.
+ * so these local declarations shadow BOTH the ambient `declare global` macros AND
+ * the platform globals they collide with — otherwise the platform global wins:
+ * - `process` vs `@types/node`'s `var process: Process` ("Type 'Process' has no
+ *   call signatures" on every `process(() => {...})`).
+ * - `event` vs `lib.dom`'s `var event: Event | undefined` ("Property 'midi' does
+ *   not exist on type 'Event'" on every `event.midi(...)` / `event<T>(...)`).
+ * The remaining ambient names collide with nothing in lib / node.
  */
-const MODULE_PREFIX = "declare function process(callback: () => void): void;\n";
+const MODULE_PREFIX =
+  "declare function process(callback: () => void): void;\n" +
+  'declare const event: typeof import("@unworklet/core").event;\n';
 const MODULE_SUFFIX = "\nexport {};\n";
 
 /** A name string the auto-name pass would inject, materialised as source text. */
