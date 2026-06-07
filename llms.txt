@@ -21,7 +21,10 @@ from memory. When in doubt, read a tested example (`examples/01-stereo-gain`,
 - **@unworklet/test** — audio/event/MIDI assertions for Vitest.
 
 A processor is authored in `name.processor.ts` (or `name.uwk.ts`) and imported
-in the app with `import { x } from "./name.processor.ts?worklet"`.
+in the app with a **default** import: `import x from "./name.processor.ts?worklet"`.
+Type the `?worklet` import once per project by adding
+`/// <reference types="@unworklet/vite-plugin/client" />` to a `.d.ts` (e.g.
+`vite-env.d.ts`).
 
 ## DSL quick reference (exact forms)
 
@@ -61,14 +64,14 @@ includes it in `node.snapshot()`. A `publish`/`persistent` slot must be named.
 - Ports require a `name`: `audioInput({ channels: 2, name: "main" })` — never positional.
 - There is **no** standalone `message<T>()`; main→worklet is `event({ from: "main", name })`.
 - MIDI is `event.midi({ from | to: "main", name })`, not a `midiInput()/midiOutput()` call.
-- Import processors with the `?worklet` query; don't import the raw module.
+- Import processors with the `?worklet` query as the **default** import (`import x from "...?worklet"`) — not a named import, and don't import the raw module.
 - `.uwk.ts` sugar and the plain `.ts` API are not mixed in one file. Without the `@unworklet/lang` editor plugin a `.uwk.ts` needs `// @ts-nocheck`; add the plugin to `tsconfig` `plugins` (it auto-injects the shipped ambient — no `files` / `types` entry) and the sugar type-checks so the header is dropped (see `@unworklet/lang`'s README → IDE support).
 
 ## Main-thread usage
 
 ```ts
 import { createNode } from "@unworklet/core";
-import { stereoGain } from "./stereo-gain.processor.ts?worklet";
+import stereoGain from "./stereo-gain.processor.ts?worklet";
 const node = await createNode(ctx, stereoGain);
 node.outputs.main.connect(ctx.destination);   // also: node.inputs, node.params.<name>.value,
                                                // node.state.<name>.subscribe, node.midi.<name>.send,

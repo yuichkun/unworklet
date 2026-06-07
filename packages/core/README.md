@@ -59,7 +59,7 @@ Load and run it in the browser (with `@unworklet/vite-plugin`):
 
 ```ts
 import { createNode } from "@unworklet/core";
-import { stereoGain } from "./processor.ts?worklet"; // the `?worklet` query is required
+import stereoGain from "./processor.ts?worklet"; // the `?worklet` query is required (default import)
 
 const ctx = new AudioContext();
 const node = await createNode(ctx, stereoGain);

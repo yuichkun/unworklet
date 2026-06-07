@@ -1460,7 +1460,7 @@ export const initialOsc = defineProcessor(
 // and error UI are user-land concerns.
 
 import { createNode, replaceProcessor } from "@unworklet/core";
-import { initialOsc } from "./initial.processor.ts?worklet";
+import initialOsc from "./initial.processor.ts?worklet";
 
 const audioCtx = new AudioContext();
 let node = await createNode(audioCtx, initialOsc);

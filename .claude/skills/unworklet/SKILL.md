@@ -150,7 +150,7 @@ Literals: `f32(x) f64(x) i32(x) i64(1n) bool(true) num(x)`.
 
 ```ts
 import { createNode } from "@unworklet/core";
-import { stereoGain } from "./stereo-gain.processor.ts?worklet"; // ?worklet is required
+import stereoGain from "./stereo-gain.processor.ts?worklet"; // ?worklet is required (default import)
 
 const node = await createNode(ctx, stereoGain);
 node.outputs.main.connect(ctx.destination);

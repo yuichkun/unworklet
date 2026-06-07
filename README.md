@@ -41,6 +41,15 @@ import unworklet from "@unworklet/vite-plugin";
 export default { plugins: [unworklet()] };
 ```
 
+Add one line to your `vite-env.d.ts` so the `?worklet` import is typed (next to
+Vite's own client types):
+
+```ts
+// vite-env.d.ts
+/// <reference types="vite/client" />
+/// <reference types="@unworklet/vite-plugin/client" />
+```
+
 A processor is a `.uwk.ts` file — write the DSP as plain expressions and
 unworklet lowers it to the core primitives, compiles it to WASM, and proves it's
 realtime-safe:

@@ -54,6 +54,14 @@ The plugin is the only first-party bundler integration in v1.0.0. Other bundlers
      - Vite asset pipeline integration: file hashing, public path, base URL respect.
      - Worklet module loading via `audioContext.audioWorklet.addModule(processorUrl)`. -->
 
+The `?worklet` import is typed by an ambient `declare module "*?worklet"` the
+plugin ships at `@unworklet/vite-plugin/client` (the same shape as `vite/client`).
+A consumer pulls it in with one line — `/// <reference types="@unworklet/vite-plugin/client" />`
+in a `.d.ts` such as `vite-env.d.ts` — and the **default** export of a `?worklet`
+module types as `CompiledProcessor<unknown>`. The per-processor type witness is
+erased across the virtual-module boundary, so the typed surface is `unknown`; the
+default export is the supported import form (a named import is not typed).
+
 ## 4. HMR boundary
 
 The plugin does **not** orchestrate hot-reload. The Web Audio spec offers no `removeModule()`, `registerProcessor()` rejects duplicate names, and `AudioWorkletGlobalScope` registrations live as long as the `AudioContext` — meaning any "auto-swap on file change" pattern is fundamentally a user-land choice with trade-offs the framework should not bake in. The dynamic-swap primitive itself (`replaceProcessor`) lives in `@unworklet/core` (`05-client.md` §8); this plugin only ensures that a `?worklet` import is a valid Vite HMR boundary so user-land code can wire it up.

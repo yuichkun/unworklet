@@ -22,15 +22,24 @@ export default defineConfig({
 });
 ```
 
+Type the `?worklet` import with one line in your `vite-env.d.ts` (alongside
+Vite's own client types):
+
+```ts
+// vite-env.d.ts
+/// <reference types="vite/client" />
+/// <reference types="@unworklet/vite-plugin/client" />
+```
+
 ## Usage: loading a processor
 
 Import the processor source with the **`?worklet` query** — this is what the
-plugin intercepts. The default export of that virtual module is a compiled
+plugin intercepts. The **default export** of that virtual module is a compiled
 processor ready for `createNode`.
 
 ```ts
 import { createNode } from "@unworklet/core";
-import { stereoGain } from "./processor.ts?worklet";
+import stereoGain from "./processor.ts?worklet";
 
 const ctx = new AudioContext();
 const node = await createNode(ctx, stereoGain);
