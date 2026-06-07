@@ -152,6 +152,13 @@ export interface Node<T extends ScalarType | "f32x4" = ScalarType> {
   clamp: NumericClamp<T>;
   /** Thread this node through `fn`: `x.pipe(f)` ≡ `f(x)`. */
   pipe<U extends ScalarType | "f32x4">(fn: (x: Node<T>) => Node<U>): Node<U>;
+  /**
+   * SIMD lane access (opt-in `@unworklet/core/simd`): resolves to a value only on
+   * a `Node<'f32x4'>`, which only the simd surface (`vec4` / `splat` / …) can
+   * produce, so it is `never` for every scalar `Node`. Declared here (not via a
+   * `@unworklet/core/simd` augmentation) so it survives dts bundling.
+   */
+  lane(i: 0 | 1 | 2 | 3): T extends "f32x4" ? Node<"f32"> : never;
 }
 
 /** Scalar `state.<type>(initial)` handle (`01-dsl.md` §3.1). */
@@ -179,6 +186,14 @@ export interface Buffer<T extends BufferElementType> {
   copyFrom(src: TypedArrayFieldRef<T>): void;
   named(name: string): Buffer<T>;
   expose(options: ExposeOptions): Buffer<T>;
+  /**
+   * SIMD buffer I/O: load / store four contiguous f32 lanes (element-units
+   * offset). Real only for `Buffer<'f32'>`, `never` otherwise. The runtime lives
+   * in core (every buffer carries it); declared here (not via a
+   * `@unworklet/core/simd` augmentation) so it survives dts bundling.
+   */
+  loadVec(offset: Node<"i32"> | number): T extends "f32" ? Node<"f32x4"> : never;
+  storeVec(offset: Node<"i32"> | number, value: Node<"f32x4">): T extends "f32" ? void : never;
 }
 
 /** AudioParam-backed `param.f32(...)` handle (`01-dsl.md` §3.3). */

@@ -65,3 +65,15 @@ export const r = [n.add(1), n.sub(1), n.mul(2), n.div(2), n.mod(1), n.neg(), n.e
   );
   expect(msgs).toEqual([]);
 });
+
+test("shipped dist carries the simd method surface (lane / loadVec / storeVec)", () => {
+  const msgs = diagnoseAgainstDist(
+    `import { addVec, splat, vec4 } from "./core-dist/simd.mjs";
+const v = addVec(vec4(1, 2, 3, 4), splat(1));
+const buf = state.buffer.f32({ size: 8 });
+export const lane = v.lane(0);
+export const loaded = buf.loadVec(0);
+export function store(): void { buf.storeVec(4, v); }`,
+  );
+  expect(msgs).toEqual([]);
+});
