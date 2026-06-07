@@ -83,6 +83,8 @@ type MockHarness = {
   };
   addModuleCalls: string[];
   fetchCalls: string[];
+  /** First argument of every `console.warn` during the harness lifetime. */
+  warnCalls: string[];
   constructed: ConstructorRecord[];
   nodes: MockAudioWorkletNode[];
   createdGains: MockGainNode[];
@@ -180,6 +182,14 @@ const installMockGlobals = (
     return Promise.resolve(sentinel as unknown as WebAssembly.Module);
   }) as typeof WebAssembly.compile;
 
+  // Capture `console.warn` so the SAB-unavailable dev notice (and any other warn)
+  // doesn't print across the suite, and the dedicated test can assert on it.
+  const originalWarn = console.warn;
+  const warnCalls: string[] = [];
+  console.warn = ((...args: unknown[]) => {
+    warnCalls.push(String(args[0]));
+  }) as typeof console.warn;
+
   class MockWorkletNodeImpl {
     port: MockAudioWorkletNode["port"];
     parameters: MockAudioWorkletNode["parameters"];
@@ -238,6 +248,7 @@ const installMockGlobals = (
     context,
     addModuleCalls,
     fetchCalls,
+    warnCalls,
     constructed,
     nodes,
     createdGains,
@@ -274,6 +285,7 @@ const installMockGlobals = (
     cleanup() {
       globalThis.fetch = originalFetch;
       WebAssembly.compile = originalWasmCompile;
+      console.warn = originalWarn;
       delete (globalThis as Record<string, unknown>).AudioWorkletNode;
       if (prevCoi === undefined) {
         delete coiTarget.crossOriginIsolated;
@@ -1684,6 +1696,42 @@ test("createNode without publishSlots inherits transport from environment (= sab
       h.fireReady,
     );
     expect(node.diagnostics.transport).toBe("sab");
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode warns once per context when the page is not cross-origin isolated", async () => {
+  // `onError({ code: 'sab-unavailable' })` is opt-in; a dev who never subscribes
+  // would get no signal. A default console warning makes the fallback visible.
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ publishSlots: [] })),
+      h.fireReady,
+    );
+    await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ publishSlots: [] })),
+      h.fireReady,
+    );
+    // One warning for the context, not one per node …
+    expect(h.warnCalls).toHaveLength(1);
+    // … and it names the fix.
+    expect(h.warnCalls[0]).toMatch(/cross-origin isolated/i);
+    expect(h.warnCalls[0]).toMatch(/Cross-Origin-Embedder-Policy/);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode does not warn when the page is cross-origin isolated", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2])); // isolated by default
+  try {
+    await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ publishSlots: [] })),
+      h.fireReady,
+    );
+    expect(h.warnCalls).toHaveLength(0);
   } finally {
     h.cleanup();
   }
