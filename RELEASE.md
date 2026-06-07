@@ -13,7 +13,7 @@ unworklet ships five public packages from this monorepo:
 | A3  | `vp check` (typecheck + oxlint + oxfmt) exit 0               | ✅ root `vp check` clean (0 errors, 0 warnings)                                                                            |
 | B1  | Canonical Ex 1–8 offline output bit-exact vs reference       | ✅ offline golden / canonical tests pass                                                                                   |
 | C1  | Realtime-safety invariants enforced (layered)                | ✅ `packages/core/src/dsl/enforcement.test.ts`                                                                             |
-| D1  | Browser smoke: Chromium × Firefox × Safari × {isolated, not} | ⚠️ Chromium verified (devtools-proto + `examples/01-stereo-gain` Playwright); Firefox / Safari not yet run on this machine |
+| D1  | Browser smoke: Chromium × Firefox × Safari × {isolated, not} | ⚠️ Chromium verified (devtools-proto + `packages/core/src/__tests__/browser/` Playwright); Firefox / Safari not yet run on this machine |
 | E1  | `open-questions.md` empty                                    | ✅ all moved to `decisions-log.md`                                                                                         |
 | F1  | `.d.ts` public surface matches `decisions-log.md` Q1–Q77     | ✅ public exports stable; verified against the READMEs / Skill                                                             |
 
@@ -29,14 +29,17 @@ Versions are currently `0.0.0` (unpublished). To cut a release:
 2. Bump versions across the public packages (e.g. `vp dlx bumpp` or set each
    `packages/*/package.json` `version`), keeping them in lockstep.
 3. Tag: `git tag vX.Y.Z`.
-4. Publish each public package (`prepublishOnly` runs `vp run build`):
-   `@unworklet/core`, `@unworklet/lang`, `@unworklet/offline`,
+4. Publish with **pnpm** (`vp pm publish` / `pnpm publish`) — **never `npm publish`**.
+   Only pnpm rewrites the `workspace:*` (offline/test → core, test → offline) and
+   `catalog:` (wavefile) protocols into real versions; `npm publish` ships them
+   literally and every consumer install breaks. `prepublishOnly` runs `vp run build`
+   for each: `@unworklet/core`, `@unworklet/lang`, `@unworklet/offline`,
    `@unworklet/test`, `@unworklet/vite-plugin`.
 
 There is no automated changeset/changelog pipeline yet; the cut is manual.
 
 ## What ships
 
-Each package publishes its `dist/` plus its `README.md` (npm always includes
-the README). The root `llms.txt` and `.claude/skills/unworklet/` orient AI
+Each package publishes its `dist/` plus its `README.md` and `LICENSE` (npm always
+includes those). The root `llms.txt` and `.claude/skills/unworklet/` orient AI
 agents working with the library from the repository / web.
