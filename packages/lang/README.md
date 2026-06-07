@@ -101,6 +101,52 @@ with `lower()`. The plugin is edit-time only; the actual build still runs
 For CI / headless type-checking, the same language plugin drives a Volar program
 proxy — see `createUwkLanguagePlugin` in `@unworklet/lang`.
 
+## Building a `.uwk.ts` project
+
+A Vite build script usually runs `tsc` first (`tsc && vite build`). `tsc` does
+**not** run the editor plugin, so once you add the plugin and drop the
+`// @ts-nocheck` headers, exclude `.uwk.ts` from `tsc` — otherwise it flags the
+raw sugar and fails the build:
+
+```jsonc
+// tsconfig.json
+{
+  "exclude": ["**/*.uwk.ts"],
+}
+```
+
+The Vite plugin still lowers + compiles those files at build (and surfaces any
+`lower()` error there); the editor plugin type-checks them while you edit.
+
+## Compile in the browser (live coding)
+
+`@unworklet/lang/browser` runs the whole lower → compile → worklet pipeline in the
+browser, so a `.uwk.ts` source **string** becomes a playable processor at runtime
+— the live-coding / editor path, with no Vite plugin or build step involved.
+
+```ts
+import { createNode, replaceProcessor } from "@unworklet/core";
+import { compileSource } from "@unworklet/lang/browser";
+
+const ctx = new AudioContext();
+let node = await createNode(ctx, await compileSource(editor.value));
+node.outputs.main.connect(ctx.destination);
+
+// recompile the edited source and hot-swap it, live:
+runButton.onclick = async () => {
+  const swapped = await replaceProcessor(node, await compileSource(editor.value));
+  node = swapped.node;
+};
+```
+
+`compileSource(source)` returns a `CompiledProcessor` ready for `createNode`;
+`lowerToProcessor(source)` returns the same processor without the worklet module,
+for a headless `renderOffline`. The WASM compiler (binaryen) ships in this entry,
+so the browser bundle includes it — import `@unworklet/lang/browser` lazily if you
+only need it behind a live-coding UI. (A build-time `"node:module" … externalized,
+imported by binaryen` warning is expected and harmless: binaryen's Node-only path
+is stubbed for the browser; its in-browser path is what runs.)
+
 ## API
 
 ```ts
