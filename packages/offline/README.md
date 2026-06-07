@@ -53,6 +53,29 @@ npm install -D @types/node
 
 Run it with any TS runner — `tsx`, or `node` ≥ 22.6 (which strips types natively).
 
+## Rendering a `.uwk.ts` processor
+
+`renderOffline` takes a `CompiledProcessor`. A `.processor.ts` exports one
+directly; `.uwk.ts` sugar is lowered to one first with `@unworklet/lang` — no
+Vite plugin, no browser:
+
+```bash
+npm install -D @unworklet/lang
+```
+
+```ts
+import { readFileSync } from "node:fs";
+
+import { lowerToProcessor } from "@unworklet/lang";
+import { renderOffline } from "@unworklet/offline";
+
+const proc = lowerToProcessor(readFileSync("./sine.uwk.ts", "utf8"));
+const result = await renderOffline(proc, { sampleRate: 48000, duration: 1 });
+```
+
+`lowerToProcessor` resolves `@unworklet/core`'s types from disk, so it runs from
+any working directory once both packages are installed.
+
 ## `RenderOfflineConfig`
 
 | field        | meaning                                                                      |

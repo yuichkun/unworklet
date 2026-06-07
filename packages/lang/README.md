@@ -153,8 +153,10 @@ runButton.onclick = async () => {
 ```
 
 `compileSource(source)` returns a `CompiledProcessor` ready for `createNode`;
-`lowerToProcessor(source)` returns the same processor without the worklet module,
-for a headless `renderOffline`. The WASM compiler (binaryen) ships in this entry,
+`lowerToProcessor(source)` stops at the processor (no worklet module) for an
+in-browser headless render. (For Node, import `lowerToProcessor` from the root
+`@unworklet/lang` — the same call, resolved off disk, pulling in no compiler.)
+The WASM compiler (binaryen) ships in this entry,
 so the browser bundle includes it — import `@unworklet/lang/browser` lazily if you
 only need it behind a live-coding UI. (A build-time `"node:module" … externalized,
 imported by binaryen` warning is expected and harmless: binaryen's Node-only path
@@ -168,6 +170,9 @@ import { lower, LowerError } from "@unworklet/lang";
 const tsSource = lower(uwkSource, { exportName: "myProcessor" });
 // LowerError carries a source location for malformed sugar.
 ```
+
+For a headless render, `lowerToProcessor(source)` lowers straight to a
+`CompiledProcessor` for `@unworklet/offline` in Node — see that package's README.
 
 Most projects don't import this — `@unworklet/vite-plugin` lowers `.uwk.ts`
 imports on the fly. Plain `.ts` / `.processor.ts` processors (the core API) work
