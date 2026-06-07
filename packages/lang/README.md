@@ -54,11 +54,12 @@ process(() => {
 
 | `.uwk.ts`                                    | lowers to `@unworklet/core`                      |
 | -------------------------------------------- | ------------------------------------------------ |
-| `a * b` `a + b` `a - b` `a / b` `a % b` `-a` | `a.mul(b)` … `a.neg()`                           |
+| `a * b` `a + b` `a - b` `a / b` `a % b` `-a` | `mul(a, b)` `add(a, b)` … `neg(a)`               |
 | `a == b` `a < b` `a <= b` `a > b` `a >= b`   | `eq(a, b)` `lt(a, b)` …                          |
 | `!b`                                         | `not(b)`                                         |
 | `cond ? x : y`                               | `select(cond, x, y)`                             |
-| `input.left[i]` / `param[i]` / `buf[i]`      | `.at(i)` / `.read(i)`                            |
+| `input.left[i]` / `param[i]`                 | `input.left.at(i)` / `param.at(i)`               |
+| `buf[i]` (buffer read)                       | `buf.read(i)`                                    |
 | `output.left[i] = v` / `buf[i] = v`          | `output.left.at(i).write(v)` / `buf.write(i, v)` |
 | `state` in a read position                   | `state.read()`                                   |
 | `$prev` (in a subgraph)                      | injected feedback state                          |
