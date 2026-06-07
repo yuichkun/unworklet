@@ -8,9 +8,9 @@ plumbing, no hand-written WASM.
 > **For AI agents / LLMs:** the call forms below are exact and complete — do
 > **not** invent alternatives or guess method names. Scalar state read/write is
 > `.read()` / `.write(v)`; main↔worklet messaging is the `event` family
-> (`event<T>({ from | to: "main" })`, `event.midi`). When unsure, copy a tested
-> example: `examples/01-stereo-gain` and `docs/12-canonical-examples.md`. The
-> source is the source of truth.
+> (`event<T>({ from | to: "main" })`, `event.midi`). When unsure, copy one of the
+> exact examples in this README rather than guessing. The source is the source of
+> truth.
 
 ```bash
 npm install @unworklet/core
@@ -20,8 +20,8 @@ npm install -D @unworklet/vite-plugin
 
 ## A complete processor
 
-This is `examples/01-stereo-gain` (canonical Ex 1) — a stereo gain with a
-per-channel peak meter. It compiles and renders under the test suite.
+A stereo gain with a per-channel peak meter — an effect that reads an input and
+writes an output:
 
 ```ts
 import { audioInput, audioOutput, defineProcessor, forSample, param, state } from "@unworklet/core";
@@ -67,6 +67,35 @@ source.connect(node.inputs.main);
 node.outputs.main.connect(ctx.destination);
 node.params.gain.value = 2.0;
 node.state.meterL.subscribe((db) => (meterEl.style.height = `${db}px`));
+```
+
+## Generate a tone
+
+A processor needs no input. This is a 440 Hz sine, synthesized from a phasor —
+so the body takes `ctx` to read the host `sampleRate` (the phase step depends on
+it), and writes a **mono** output through `.ch(0)`:
+
+```ts
+import { audioOutput, defineProcessor, forSample, state } from "@unworklet/core";
+
+const TWO_PI = 2 * Math.PI;
+
+export const sine = defineProcessor((ctx) => {
+  const out = audioOutput({ channels: 1, name: "main" });
+  const phase = state.f32(0); // a 0..1 phasor
+  const step = 440 / ctx.sampleRate; // cycles advanced per sample
+
+  return {
+    process: () => {
+      forSample((i) => {
+        const next = phase.read().add(step).frac(); // advance, wrap to [0, 1)
+        phase.write(next);
+        const sample = next.mul(TWO_PI).sin().mul(0.2); // 0.2 amplitude
+        out.ch(0).at(i).write(sample);
+      });
+    },
+  };
+});
 ```
 
 ## The DSL surface (exact forms)
@@ -132,8 +161,8 @@ forSample.byN(4, (i) => {
 
 ## Public API (beyond the DSL)
 
-- `defineProcessor(body)` / `defineSubgraph(body)` / `createSubgraph(decl, ...args)` — compose graphs.
-- `compile(processor, opts?)` — graph → `{ wasm, graph, memory, diagnostics, schemaHash }`.
+- `defineProcessor(body)` / `defineSubgraph(body)` / `createSubgraph(decl, ...args)` — compose graphs. `defineProcessor` already returns a ready `CompiledProcessor` — hand it straight to `createNode` or `renderOffline` (`@unworklet/offline`).
+- `compile(processor, opts?)` — graph → `{ wasm, graph, memory, diagnostics, schemaHash }`. You rarely call this yourself; the Vite plugin and the offline renderer compile for you.
 - `createNode(context, processor, options?)` — main-thread `UnworkletNode<C>` (`node`, `inputs`, `outputs`, `params`, `state`, `events`, `midi`, `snapshot`, `restore`, `onError`, `dispose`).
 - `replaceProcessor(oldNode, newProcessor)` — hot-swap a running processor.
 - `inspect(blob)` — decode a snapshot without an `AudioContext`.
