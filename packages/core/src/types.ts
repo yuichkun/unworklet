@@ -92,9 +92,66 @@ declare const typedArrayFieldRefBrand: unique symbol;
  * hybrid chain methods (arithmetic / comparison / math) and the SIMD
  * vec methods. This declaration carries the brand only.
  */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+/**
+ * Method-form type helpers (Q77 hybrid): each restricts a chain method to the
+ * scalar types it has a meaningful lowering for, typing the member `never`
+ * elsewhere so the call site fails to compile (`bool(true).add(1)` /
+ * `i32(1).sin()` are errors). These are declared with the `Node` interface — not
+ * as a cross-file `declare module` augmentation — so the method surface survives
+ * dts bundling into the published `dist/*.d.mts`. The runtime impl lives in
+ * `dsl/primitives.ts` / `dsl/pipe.ts` (attached via `registerNodeMethod`).
+ */
+type NumericScalar = "f32" | "f64" | "i32" | "i64";
+type FloatMethod<T> = T extends "f32" | "f64" ? () => Node<T> : never;
+type NumericVecBinary<T> = T extends NumericScalar | "f32x4"
+  ? (other: Node<T> | number) => Node<T>
+  : never;
+type NumericBinary<T> = T extends NumericScalar ? (other: Node<T> | number) => Node<T> : never;
+type NumericUnary<T> = T extends NumericScalar ? () => Node<T> : never;
+type NumericClamp<T> = T extends NumericScalar
+  ? (lo: Node<T> | number, hi: Node<T> | number) => Node<T>
+  : never;
+type NumericCompare<T> = T extends NumericScalar
+  ? (other: Node<T> | number) => Node<"bool">
+  : never;
+type BoolUnary<T> = T extends "bool" ? () => Node<"bool"> : never;
+
 export interface Node<T extends ScalarType | "f32x4" = ScalarType> {
   readonly [nodeBrand]: T;
+  // Arithmetic (numeric scalars; add/sub/mul/div also lower for SIMD f32x4).
+  // `bool` is excluded — `bool(true).add(1)` would emit f32 ops on an i32 operand.
+  add: NumericVecBinary<T>;
+  sub: NumericVecBinary<T>;
+  mul: NumericVecBinary<T>;
+  div: NumericVecBinary<T>;
+  mod: NumericBinary<T>;
+  neg: NumericUnary<T>;
+  // Comparison (numeric operands, `Node<'bool'>` result; bool / f32x4 excluded).
+  eq: NumericCompare<T>;
+  lt: NumericCompare<T>;
+  gt: NumericCompare<T>;
+  lte: NumericCompare<T>;
+  gte: NumericCompare<T>;
+  // Logical negation (bool only; `not()` on a numeric `Node` is a type error).
+  not: BoolUnary<T>;
+  // Math — `sqrt` / `floor` / `ceil` / `frac` / transcendentals are float-only;
+  // `abs` is meaningful for every numeric scalar (lowered to `select(x<0,-x,x)`).
+  sin: FloatMethod<T>;
+  cos: FloatMethod<T>;
+  tan: FloatMethod<T>;
+  tanh: FloatMethod<T>;
+  exp: FloatMethod<T>;
+  log: FloatMethod<T>;
+  sqrt: FloatMethod<T>;
+  floor: FloatMethod<T>;
+  ceil: FloatMethod<T>;
+  frac: FloatMethod<T>;
+  abs: NumericUnary<T>;
+  min: NumericBinary<T>;
+  max: NumericBinary<T>;
+  clamp: NumericClamp<T>;
+  /** Thread this node through `fn`: `x.pipe(f)` ≡ `f(x)`. */
+  pipe<U extends ScalarType | "f32x4">(fn: (x: Node<T>) => Node<U>): Node<U>;
 }
 
 /** Scalar `state.<type>(initial)` handle (`01-dsl.md` §3.1). */

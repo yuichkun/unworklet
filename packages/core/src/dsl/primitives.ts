@@ -25,78 +25,14 @@ import { inferAstType } from "../compile/ast.ts";
 import { isWrappedNode, registerNodeMethod, unwrapAst, wrapAst } from "../compile/capture.ts";
 import type { Node, ScalarType } from "../types.ts";
 
-// ─────────────────────────────────────────────────────────────────────────
-// Node<T> method form (= Q77 chain, declaration merging into `../types.ts`)
-// ─────────────────────────────────────────────────────────────────────────
-
 /**
- * Method type helpers that restrict a primitive to the scalar types it has a
- * meaningful lowering for, typing the member `never` elsewhere so the call site
- * fails to compile (= e.g. `bool(true).add(1)` / `i32(1).sin()` are errors).
- *
- * - `FloatMethod` — float-only math (`sqrt` / `floor` / transcendentals).
- * - `NumericVecBinary` — arithmetic that also lowers for SIMD vec (`add` / `sub`
- *   / `mul` / `div`): numeric scalars + `'f32x4'`.
- * - `NumericBinary` / `NumericUnary` / `NumericClamp` — numeric-scalar-only ops
- *   (`mod` / `min` / `max`; `neg`; `clamp`). `'bool'` / `'f32x4'` are excluded.
- * - `NumericCompare` — comparisons (numeric operands, `Node<'bool'>` result).
+ * Scalar types every numeric primitive (free-function form) accepts. The method
+ * form (`a.add(b)` …) is declared on the `Node` interface in `../types.ts`,
+ * co-located with `Node` so the method surface survives dts bundling into the
+ * published package; this file owns the runtime impl (free functions +
+ * `registerNodeMethod`).
  */
 type NumericScalar = "f32" | "f64" | "i32" | "i64";
-type FloatMethod<T> = T extends "f32" | "f64" ? () => Node<T> : never;
-type NumericVecBinary<T> = T extends NumericScalar | "f32x4"
-  ? (other: Node<T> | number) => Node<T>
-  : never;
-type NumericBinary<T> = T extends NumericScalar ? (other: Node<T> | number) => Node<T> : never;
-type NumericUnary<T> = T extends NumericScalar ? () => Node<T> : never;
-type NumericClamp<T> = T extends NumericScalar
-  ? (lo: Node<T> | number, hi: Node<T> | number) => Node<T>
-  : never;
-type NumericCompare<T> = T extends NumericScalar
-  ? (other: Node<T> | number) => Node<"bool">
-  : never;
-type BoolUnary<T> = T extends "bool" ? () => Node<"bool"> : never;
-
-declare module "../types.ts" {
-  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
-  interface Node<T extends ScalarType | "f32x4" = ScalarType> {
-    // Arithmetic (numeric scalars; add/sub/mul/div also lower for SIMD f32x4).
-    // `bool` is excluded — `bool(true).add(1)` would emit f32 ops on an i32 operand.
-    add: NumericVecBinary<T>;
-    sub: NumericVecBinary<T>;
-    mul: NumericVecBinary<T>;
-    div: NumericVecBinary<T>;
-    mod: NumericBinary<T>;
-    neg: NumericUnary<T>;
-    // Comparison (numeric operands, `Node<'bool'>` result; bool / f32x4 excluded)
-    eq: NumericCompare<T>;
-    lt: NumericCompare<T>;
-    gt: NumericCompare<T>;
-    lte: NumericCompare<T>;
-    gte: NumericCompare<T>;
-    // Logical negation (bool only; `not()` on a numeric `Node` is a type error).
-    not: BoolUnary<T>;
-    // Math — `sqrt` / `floor` / `ceil` / `frac` / transcendentals are float-only
-    // (integer versions are non-sensical: sqrt of an int is non-integral, floor /
-    // ceil of an int is a no-op, frac is 0). The method is typed `never` for
-    // non-float `T` so e.g. `i32(1).sin()` is a compile error (`f32(i32(1)).sin()`
-    // is the explicit path). `abs` is meaningful for every numeric scalar, so it
-    // stays available on `i32` / `i64` (lowered to `select(x < 0, -x, x)`).
-    sin: FloatMethod<T>;
-    cos: FloatMethod<T>;
-    tan: FloatMethod<T>;
-    tanh: FloatMethod<T>;
-    exp: FloatMethod<T>;
-    log: FloatMethod<T>;
-    sqrt: FloatMethod<T>;
-    floor: FloatMethod<T>;
-    ceil: FloatMethod<T>;
-    frac: FloatMethod<T>;
-    abs: NumericUnary<T>;
-    min: NumericBinary<T>;
-    max: NumericBinary<T>;
-    clamp: NumericClamp<T>;
-  }
-}
 
 // ─────────────────────────────────────────────────────────────────────────
 // Type inference + literal lift (= Q33 context-dependent lift)
