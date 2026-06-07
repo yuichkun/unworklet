@@ -2,7 +2,26 @@
   "name": "@unworklet/core",
   "version": "0.0.0",
   "description": "Audio Worklet DSP authored in TypeScript, compiled to WebAssembly.",
+  "keywords": [
+    "audio",
+    "audioworklet",
+    "dsp",
+    "midi",
+    "realtime",
+    "synthesis",
+    "typescript",
+    "wasm",
+    "web-audio",
+    "webassembly"
+  ],
+  "homepage": "https://github.com/yuichkun/unworklet#readme",
+  "bugs": "https://github.com/yuichkun/unworklet/issues",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yuichkun/unworklet.git",
+    "directory": "packages/core"
+  },
   "files": [
     "dist"
   ],

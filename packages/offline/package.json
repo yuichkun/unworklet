@@ -2,7 +2,23 @@
   "name": "@unworklet/offline",
   "version": "0.0.0",
   "description": "Pure-JS offline renderer for `@unworklet/core` processors (Node / Bun / Deno).",
+  "keywords": [
+    "audio",
+    "dsp",
+    "offline",
+    "render",
+    "testing",
+    "wav",
+    "webassembly"
+  ],
+  "homepage": "https://github.com/yuichkun/unworklet#readme",
+  "bugs": "https://github.com/yuichkun/unworklet/issues",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yuichkun/unworklet.git",
+    "directory": "packages/offline"
+  },
   "files": [
     "dist"
   ],
