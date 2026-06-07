@@ -8,6 +8,8 @@ operators and bare reads/writes; `lower()` desugars it to a plain
 > **For AI agents:** `.uwk.ts` is _sugar over the exact same primitives_ as
 > `@unworklet/core`. The declarations are identical; only the bodies change
 > (operators instead of method calls). Don't mix the two styles in one file.
+> One exception: SIMD (`@unworklet/core/simd`) is `.ts`-only — `.uwk.ts` has no
+> SIMD surface.
 
 ```bash
 # Pulled in transitively by the Vite plugin — install that, not this directly:

@@ -5,8 +5,10 @@ Assertions and signal generators for testing unworklet processors. Render with
 with any Vitest-compatible runner.
 
 ```bash
-npm install -D @unworklet/test @unworklet/offline @unworklet/core
+npm install -D @unworklet/test @unworklet/offline @unworklet/core vitest
 ```
+
+(`vitest` is a peer dependency — `@unworklet/test` imports `expect`/`vi` from it.)
 
 ## Usage
 

@@ -754,7 +754,7 @@ const setupDevtools = async (
 
 /**
  * Construct the Vite plugin instance. Default export per Vite convention;
- * also re-exported as a named export `unworklet` for explicit import.
+ * also re-exported as a named export `unworkletPlugin` for explicit import.
  *
  * Phase 5-E status (build mode):
  * - `name` declared
