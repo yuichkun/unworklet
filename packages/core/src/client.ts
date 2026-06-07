@@ -309,6 +309,12 @@ const awaitReady = (node: AudioWorkletNode): Promise<void> =>
     }
   });
 
+/**
+ * Contexts already warned about an unavailable SharedArrayBuffer, so the dev
+ * notice fires once per AudioContext instead of once per node.
+ */
+const sabUnavailableWarned = new WeakSet<BaseAudioContext>();
+
 export async function createNode<C>(
   context: BaseAudioContext,
   processor: CompiledProcessor<C>,
@@ -357,6 +363,19 @@ export async function createNode<C>(
     typeof globalThis !== "undefined" &&
     (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated === true;
   const transportMode: "sab" | "postMessage" = sabAvailable ? "sab" : "postMessage";
+
+  // Make the SAB fallback visible by default. `onError({ code: 'sab-unavailable' })`
+  // is opt-in, so a dev who never subscribes would otherwise hit the slower
+  // postMessage path with no signal. Warn once per context (not per node).
+  if (!sabAvailable && !sabUnavailableWarned.has(context)) {
+    sabUnavailableWarned.add(context);
+    console.warn(
+      "unworklet: SharedArrayBuffer is unavailable, so audio I/O falls back to a slower " +
+        "postMessage transport. This usually means the page is not cross-origin isolated — serve " +
+        "Cross-Origin-Opener-Policy: same-origin and Cross-Origin-Embedder-Policy: credentialless " +
+        "to enable it (@unworklet/vite-plugin sets these on the dev server by default).",
+    );
+  }
 
   // 12 bytes per publish slot (= 4 byte publishShared + 8 byte publishCounters).
   // Allocate only under SAB — on the postMessage path structured clone gives
