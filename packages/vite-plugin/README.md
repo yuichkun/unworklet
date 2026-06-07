@@ -61,17 +61,17 @@ Cross-Origin-Opener-Policy: same-origin
 Cross-Origin-Embedder-Policy: credentialless
 ```
 
-The plugin sets these on the **dev server** for you, so `vite dev` just works.
-`credentialless` is the least-breaking level — cross-origin subresources still
-load, just without credentials. Opt out with `unworklet({ crossOriginIsolation:
-false })` if you serve your own headers (an app that already sets either header
-is left untouched).
+The plugin sets these on the **dev and preview servers** for you, so `vite dev`
+and `vite preview` both just work (SAB behaves the same while you iterate and when
+you check the build). `credentialless` is the least-breaking level — cross-origin
+subresources still load, just without credentials. Opt out with `unworklet({
+crossOriginIsolation: false })` if you serve your own headers (an app that already
+sets either header is left untouched).
 
 **Production is your server's job.** The plugin can't set headers on your
 production host — serve the same two headers there, or `SharedArrayBuffer` is
 unavailable and unworklet falls back to a slower `postMessage` transport (with a
-one-time console warning). `vite preview` deliberately does **not** inject the
-headers, so it mirrors that production behavior.
+one-time console warning).
 
 ## Options
 
