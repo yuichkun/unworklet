@@ -78,10 +78,17 @@ import distortion from "./distortion.uwk.ts?worklet"; // the ?worklet query is r
 
 const ctx = new AudioContext();
 const node = await createNode(ctx, distortion);
-source.connect(node.inputs.main);
+
+// an unworklet node is a normal AudioNode — feed it anything, route it anywhere:
+const osc = new OscillatorNode(ctx, { frequency: 110 });
+osc.connect(node.inputs.main);
 node.outputs.main.connect(ctx.destination);
 node.params.drive.value = 8; // the AudioParam, fully typed
+osc.start();
 ```
+
+Browsers start an `AudioContext` only after a user gesture, so call
+`ctx.resume()` from a click handler to actually hear it.
 
 Prefer explicit method calls over operator sugar? Write the same processor as a
 plain `.processor.ts` with the core API (`input.left.at(i).mul(drive.at(i))`) —
