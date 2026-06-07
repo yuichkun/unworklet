@@ -24,7 +24,9 @@ Same declarations as core, but the `process` body uses operators. There is no
 `defineProcessor` wrapper and no `return { process }` — the file _is_ the
 processor body, and `process(() => { ... })` is ambient. The core DSL names
 (`audioInput`, `state`, `param`, `forSample`, …) are ambient too: **write no
-import** — the lowering injects the `@unworklet/core` import for you.
+import** — the lowering injects the `@unworklet/core` import for you. `ctx` is
+ambient as well — the same `ProcessorContext` that core's `defineProcessor((ctx)
+=> …)` passes you, so `ctx.sampleRate` is how a generator reaches the sample rate.
 `.named()` / `.expose({...})` with no name derive it from the binding.
 
 Out of the box, stock TypeScript flags the sugar (`a * b` on two `Node`s is an
@@ -65,7 +67,7 @@ Bare-state sugar is **read-only**: a scalar `state` used in a value position
 lowers to `state.read()`, but you still **write** it explicitly with
 `state.write(v)` (there is no `state = v` for scalars). Buffer / output element
 writes use the index-assignment form above. `number op number` (e.g.
-`SAMPLE_RATE * 0.5`) is left untouched — only expressions involving a
+`ctx.sampleRate * 0.5`) is left untouched — only expressions involving a
 `Node`/`State` are lowered.
 
 ## IDE support
@@ -120,6 +122,15 @@ rather than skipped:
     "build": "unworklet-tsc --noEmit && vite build",
   },
 }
+```
+
+`unworklet-tsc` checks against your existing `tsconfig.json`, so make sure it
+`include`s your `.uwk.ts` files. It injects the language plugin itself — so it
+works whether or not the tsconfig carries the editor's `plugins` entry (that entry
+is only for your editor). Run it ad-hoc the same way:
+
+```bash
+npx unworklet-tsc --noEmit
 ```
 
 The Vite plugin lowers + compiles `.uwk.ts` at build regardless (surfacing any
