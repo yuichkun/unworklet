@@ -5,7 +5,7 @@ export default defineConfig({
     dts: {
       tsgo: true,
     },
-    entry: ["src/index.ts", "src/browser.ts"],
+    entry: ["src/index.ts", "src/browser.ts", "src/unworklet-tsc.ts"],
     exports: false,
   },
   lint: {
@@ -25,7 +25,9 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],
-      exclude: ["src/**/*.test.ts", "src/index.ts", "src/golden/**"],
+      // `unworklet-tsc` is a CLI entry exercised by a spawn-based e2e test (its
+      // code runs in a child process, so v8 can't instrument it from here).
+      exclude: ["src/**/*.test.ts", "src/index.ts", "src/golden/**", "src/unworklet-tsc.ts"],
       reporter: ["text", "html", "json-summary"],
       thresholds: {
         branches: 98,

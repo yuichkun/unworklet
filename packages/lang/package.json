@@ -3,6 +3,9 @@
   "version": "0.0.0",
   "description": "Build-time `.uwk.ts` → virtual `.ts` authoring frontend that lowers to `@unworklet/core`.",
   "license": "MIT",
+  "bin": {
+    "unworklet-tsc": "./dist/unworklet-tsc.mjs"
+  },
   "files": [
     "dist",
     "typescript-plugin"
