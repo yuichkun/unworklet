@@ -80,49 +80,56 @@ type WhenAudioActual<T, M> = T extends RenderOfflineResult | Float32Array | Floa
   ? M
   : never;
 
+/**
+ * The chain matchers `@unworklet/test/extend` adds to `expect(...)`. Declared
+ * once here and merged into the assertion type by the augmentation below. The
+ * shipped augmentation target is `vitest` — the module a stock-vitest consumer's
+ * `expect` resolves to. (This repo's own runner is the vite-plus-test fork,
+ * where `expect` comes through `vite-plus/test`; `fork-assertion.d.ts` bridges
+ * these same matchers onto that module for in-repo type-checking only, and is
+ * never shipped.)
+ */
+export interface UnworkletAudioMatchers<T> {
+  toMatchAudio: WhenResult<
+    T,
+    (expected: RenderOfflineResult | Float32Array[], opts?: AudioMatchOptions) => void
+  >;
+  toMatchAudioFile: WhenResult<T, (wavPath: string, opts?: AudioMatchOptions) => void>;
+  toMatchAudioSnapshot: WhenAudioActual<T, (opts?: SnapshotOptions) => Promise<void>>;
+  toBeFinite: WhenResult<T, () => void>;
+  toHavePeakUnder: WhenResult<T, (dbfs: number) => void>;
+  toHaveRmsUnder: WhenResult<T, (dbfs: number) => void>;
+  toBeStable: WhenResult<T, () => void>;
+  toBeMasterReady: WhenResult<T, (opts?: MasterOptions) => void>;
+  toBeSilent: WhenResult<T, (opts?: { tolerance?: number }) => void>;
+  toHavePeakAtSample: WhenResult<T, (expectedAtSample: number, opts?: PeakAtSampleOptions) => void>;
+  toHaveGainAtFreq: WhenResult<
+    T,
+    (freqHz: number, expectedDb: number, tolerance: number, opts?: GainAtFreqOptions) => void
+  >;
+  toHaveLatency: WhenResult<
+    T,
+    (expectedSamples: number, opts?: { tolerance?: number; channel?: number }) => void
+  >;
+  toHaveDcOffsetUnder: WhenResult<T, (threshold: number) => void>;
+  toMatchEvents: WhenResult<T, (expectedEvents: ExpectedEvent[]) => void>;
+  toHaveEventCount: WhenResult<T, (name: string, expectedCount: number) => void>;
+  toContainEvents: WhenResult<T, (partial: PartialExpectedEvent[]) => void>;
+  toEmitMidi: WhenResult<
+    T,
+    (
+      portName: string,
+      expectedMidiEvents: ExpectedMidiEvent[],
+      opts?: { tolerance?: number },
+    ) => void
+  >;
+  toHaveBalancedMidi: WhenResult<T, (portName: string, opts?: { hangingNotes?: number }) => void>;
+  toMatchState: WhenResult<T, (expectedSnapshot: Uint8Array) => void>;
+}
+
 declare module "vitest" {
-  // biome-ignore lint/suspicious/noExplicitAny: must match the type parameter of vitest's standard `Assertion<T = any>` (`node_modules/@vitest/expect/dist/index.d.ts`); the declare merge keeps the same shape even though T is unused here.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  interface Assertion<T = any> {
-    toMatchAudio: WhenResult<
-      T,
-      (expected: RenderOfflineResult | Float32Array[], opts?: AudioMatchOptions) => void
-    >;
-    toMatchAudioFile: WhenResult<T, (wavPath: string, opts?: AudioMatchOptions) => void>;
-    toMatchAudioSnapshot: WhenAudioActual<T, (opts?: SnapshotOptions) => Promise<void>>;
-    toBeFinite: WhenResult<T, () => void>;
-    toHavePeakUnder: WhenResult<T, (dbfs: number) => void>;
-    toHaveRmsUnder: WhenResult<T, (dbfs: number) => void>;
-    toBeStable: WhenResult<T, () => void>;
-    toBeMasterReady: WhenResult<T, (opts?: MasterOptions) => void>;
-    toBeSilent: WhenResult<T, (opts?: { tolerance?: number }) => void>;
-    toHavePeakAtSample: WhenResult<
-      T,
-      (expectedAtSample: number, opts?: PeakAtSampleOptions) => void
-    >;
-    toHaveGainAtFreq: WhenResult<
-      T,
-      (freqHz: number, expectedDb: number, tolerance: number, opts?: GainAtFreqOptions) => void
-    >;
-    toHaveLatency: WhenResult<
-      T,
-      (expectedSamples: number, opts?: { tolerance?: number; channel?: number }) => void
-    >;
-    toHaveDcOffsetUnder: WhenResult<T, (threshold: number) => void>;
-    toMatchEvents: WhenResult<T, (expectedEvents: ExpectedEvent[]) => void>;
-    toHaveEventCount: WhenResult<T, (name: string, expectedCount: number) => void>;
-    toContainEvents: WhenResult<T, (partial: PartialExpectedEvent[]) => void>;
-    toEmitMidi: WhenResult<
-      T,
-      (
-        portName: string,
-        expectedMidiEvents: ExpectedMidiEvent[],
-        opts?: { tolerance?: number },
-      ) => void
-    >;
-    toHaveBalancedMidi: WhenResult<T, (portName: string, opts?: { hangingNotes?: number }) => void>;
-    toMatchState: WhenResult<T, (expectedSnapshot: Uint8Array) => void>;
-  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- match vitest's own `Assertion<T = any>` signature so the declarations merge.
+  interface Assertion<T = any> extends UnworkletAudioMatchers<T> {}
 }
 
 type MatcherResult = { pass: boolean; message: () => string };
