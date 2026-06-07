@@ -13,6 +13,8 @@ npm install @unworklet/offline @unworklet/core
 ## Usage
 
 ```ts
+import { writeFileSync } from "node:fs";
+
 import { renderOffline, encodeWav } from "@unworklet/offline";
 import { myProcessor } from "./processor.ts"; // a defineProcessor(...) export
 
@@ -27,8 +29,29 @@ result.outputs.main; // Float32Array[] per channel
 result.events; // worklet → main events (event({to:'main'}) + outbound MIDI), with atSample
 result.state; // snapshot blob captured at the end of the render
 
-await Deno.writeFile("out.wav", encodeWav(result.outputs.main, result.sampleRate));
+writeFileSync("out.wav", encodeWav(result.outputs.main, result.sampleRate)); // Bun/Deno: use their own write API
 ```
+
+In a Node + TypeScript project, install Node's types and let `tsc` import the
+`.ts` processor source directly:
+
+```bash
+npm install -D @types/node
+```
+
+```jsonc
+// tsconfig.json
+{
+  "compilerOptions": {
+    "module": "nodenext",
+    "types": ["node"],
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+  },
+}
+```
+
+Run it with any TS runner — `tsx`, or `node` ≥ 22.6 (which strips types natively).
 
 ## `RenderOfflineConfig`
 
