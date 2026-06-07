@@ -47,7 +47,7 @@ realtime-safe:
 
 ```ts
 // distortion.uwk.ts — soft-clip distortion, compiled to a WASM AudioWorklet
-// @ts-nocheck — sugar is a TS error until the plugin lowers it at build.
+// @ts-nocheck — until you add the @unworklet/lang IDE plugin (one tsconfig line; see README).
 const input = audioInput({ channels: 2, name: "main" });
 const out = audioOutput({ channels: 2, name: "main" });
 const drive = param.f32({ default: 4, min: 1, max: 20, automationRate: "a-rate" }).named();
@@ -91,7 +91,7 @@ on the audio thread and oscillates:
 
 ```ts
 // synth.uwk.ts — a monophonic MIDI sine voice
-// @ts-nocheck — sugar is a TS error until the plugin lowers it at build.
+// @ts-nocheck — until you add the @unworklet/lang IDE plugin (one tsconfig line; see README).
 const out = audioOutput({ channels: 1, name: "main" });
 const keys = event.midi({ from: "main", name: "keys" });
 

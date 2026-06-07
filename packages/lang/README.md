@@ -72,22 +72,17 @@ writes use the index-assignment form above. `number op number` (e.g.
 `.uwk.ts` is syntactically TypeScript, so any editor highlights it and navigates
 it with zero setup. To make the **sugar type-check** — no red squiggles on
 `a * b`, no `// @ts-nocheck` — add the TypeScript-server plugin to your
-`tsconfig.json`, and pull in the shipped ambient `.d.ts` via `files` (it declares
-`audioInput` / `state` / `process` / `input` / `out` / `$prev` … as globals):
+`tsconfig.json`. That single entry is the whole setup: the plugin auto-injects the
+shipped ambient `.d.ts` (it declares `audioInput` / `state` / `process` / `input` /
+`out` / `$prev` … as globals), so there is no `files` or `types` entry to add.
 
 ```jsonc
 {
   "compilerOptions": {
     "plugins": [{ "name": "@unworklet/lang/typescript-plugin" }],
   },
-  "include": ["src"],
-  "files": ["node_modules/@unworklet/lang/dist/ambient.d.ts"],
 }
 ```
-
-(The ambient goes in `files`, not `compilerOptions.types` or `include`: the
-`types` array does not resolve an `exports` subpath in every resolver, and
-`include` globs skip `node_modules`. `files` entries are always loaded.)
 
 In VS Code, also run **“TypeScript: Select TypeScript Version → Use Workspace
 Version”** so the editor loads the plugin (TS-server plugins only load under the
