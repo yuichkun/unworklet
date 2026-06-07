@@ -140,6 +140,12 @@ Literals: `f32(x) f64(x) i32(x) i64(1n) bool(true) num(x)`.
 
 **Loop:** `forSample((i) => ...)` (i = 0..127) · `forSample.byN(4, (i) => ...)`.
 
+**SIMD (`.ts` only, opt-in):** `import { vec4, splat, addVec, mulVec, sumLanes } from "@unworklet/core/simd"` — then `v = buf.loadVec(i)`, `v.lane(0..3)`, `buf.storeVec(i, v)` (f32 buffers; pairs with `forSample.byN(4)`).
+
+**Subgraphs:** `defineSubgraph((args) => ({ run: (x) => ... }))` + `createSubgraph(sg, ...args, { name })` in declaration scope (`$prev` feedback is `.uwk.ts`-only).
+
+**Migrations:** `defineProcessor(body, { migrations: [{ from, to, migrate(blob, h) { ... } }] })` (`migrate` is sync).
+
 **Events / MIDI bodies:**
 `ev.emitIf(cond, { field: value })` (worklet→main) ·
 `ev.onReceive(({ a, b }) => ...)` (main→worklet) ·
@@ -157,9 +163,11 @@ node.outputs.main.connect(ctx.destination);
 source.connect(node.inputs.main);
 node.params.gain.value = 2;                    // AudioParam
 node.state.meterL.subscribe((v) => { ... });   // published value
-node.midi.notes.send({ type: "noteOn", channel: 0, note: 60, velocity: 100 });
+node.midi.notes.send({ type: "noteOn", channel: 0, note: 60, velocity: 100 });   // main → worklet
+node.midi.out.onEvent("noteOn", (e) => { ... });   // outbound MIDI: worklet → main
 node.events.tempo.on((p) => { ... });          // worklet → main event
-const blob = node.snapshot();                  // persistent state; node.restore(blob)
+node.events.setCount.emit({ value: 42 });      // main → worklet send (event({ from: "main" }))
+const blob = await node.snapshot();            // ASYNC; const res = await node.restore(blob); if (!res.ok) {...}
 ```
 
 ## Verify
@@ -173,6 +181,7 @@ const r = await renderOffline(stereoGain, {
   duration: 1,
   inputs: { main: [sine({ freqHz: 440, durationSamples: 48000, sampleRate: 48000 })] },
   params: { gain: [2] },
+  // drive inbound too: messages: [{ name, payload }], events: [{ name, payload, atSample }] (events = inbound MIDI)
 });
 expectNoNaN(r);
 expectStable(r);
@@ -186,6 +195,7 @@ expectStable(r);
 - No standalone `message<T>()`: main→worklet delivery is `event({ from: "main", name })`.
 - No `midiInput()/midiOutput()`: use `event.midi({ from | to: "main", name })`.
 - Import a processor with `?worklet`; don't import the raw module into the app.
+- Infix operators (`a * b`, `a + b`) on `Node`s are `.uwk.ts`-only. In `.ts` / `.processor.ts` use methods or free functions (`a.mul(b)` / `mul(a, b)`).
 - Don't mix `.uwk.ts` sugar with the plain `.ts` API in one file. A `.uwk.ts` needs a `// @ts-nocheck` header UNLESS the `@unworklet/lang` editor plugin is set up (then the sugar type-checks and the header is dropped).
 
 ## `.uwk.ts` sugar (optional)
