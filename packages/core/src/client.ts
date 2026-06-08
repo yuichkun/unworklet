@@ -1666,7 +1666,7 @@ export async function createNode<C>(
     node,
     inputs: inputHandles,
     outputs: buildOutputs(node, outputs) as UnworkletNode<C>["outputs"],
-    params,
+    params: params as UnworkletNode<C>["params"],
     state: stateSurface,
     events: eventSurface,
     midi: midiSurface,

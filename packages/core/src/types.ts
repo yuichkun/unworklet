@@ -882,7 +882,16 @@ export type UnworkletNode<C> = {
     string,
     { connect(target: AudioNode | AudioParam): void; disconnect(): void }
   >;
-  readonly params: Record<string, AudioParam>;
+  /**
+   * Per-param AudioParam, keyed by the declared name. When the compiled processor
+   * carries a param-name witness (the `?worklet` per-file type the plugin emits),
+   * the keys are the exact declared names — `node.params.<name>` completes and an
+   * undeclared name is a type error. An unknown witness keeps the permissive map,
+   * so a processor without a per-file type behaves as a plain `Record`.
+   */
+  readonly params: C extends { params: infer P }
+    ? { readonly [K in keyof P]: AudioParam }
+    : Record<string, AudioParam>;
   readonly state: Record<string, StateValueProxy<unknown> | BufferValueProxy<unknown>>;
   readonly events: Record<string, EventSurface<unknown>>;
   readonly midi: Record<string, MidiPortSurface>;
