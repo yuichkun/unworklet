@@ -850,14 +850,17 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
       const outDir = path.join(projectRoot, ".unworklet");
       await mkdir(outDir, { recursive: true });
       const entries = [...workletWitness].map(([source, ns]) => ({ source, ns }));
-      await writeFile(path.join(outDir, "worklets.d.ts"), workletsDts(entries));
-      // A tsconfig the consumer extends with one line. It carries the three
-      // unworklet type settings so no `vite-env.d.ts` is needed (bundler-agnostic):
-      // `types` resolves the `?worklet` import, `plugins` type-checks `.uwk.ts`
-      // sugar in the editor, and `include` pulls the generated `worklets.d.ts` (the
-      // dot-folder is skipped by globs, so it is listed explicitly). Content is
-      // fixed — adding processors only regrows `worklets.d.ts`, never this file.
-      await writeFile(path.join(outDir, "tsconfig.json"), GENERATED_TSCONFIG);
+      const next = workletsDts(entries);
+      // Write ONLY when the content actually changed. The dev server re-runs every
+      // `?worklet` load on each page load, which calls this — rewriting an unchanged
+      // file churns its mtime, Vite's watcher fires, and the cycle never settles.
+      // The fixed `tsconfig.json` is intentionally NOT written here: it is seeded
+      // once by `seedUnworkletDir` (before the watcher starts). Vite watches tsconfig
+      // files and a rewrite forces a cache-clearing full reload, so re-emitting it on
+      // every load would loop the dev server forever.
+      const witnessPath = path.join(outDir, "worklets.d.ts");
+      const current = existsSync(witnessPath) ? await readFile(witnessPath, "utf8") : null;
+      if (current !== next) await writeFile(witnessPath, next);
     } catch (err) {
       // Type generation is best-effort: the WASM still compiles and runs without
       // it (the wildcard `?worklet` type keeps resolving). Warn once so a real

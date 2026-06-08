@@ -9,7 +9,7 @@
  * and asserts the file the plugin writes to disk.
  */
 
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -96,4 +96,27 @@ test("handleHotUpdate re-emits the witness for an edited processor (no browser n
   });
   const witness = path.join(root, ".unworklet", "worklets.d.ts");
   expect(readFileSync(witness, "utf8")).toContain("gain");
+});
+
+test("re-loading a `?worklet` rewrites neither tsconfig nor an unchanged witness (no dev reload loop)", async () => {
+  // Regression: the dev server re-runs `load` on every page load. Vite watches
+  // tsconfig files and re-emitting `.unworklet/tsconfig.json` (or churning the
+  // witness mtime) made it clear its cache and full-reload, which re-ran `load`,
+  // which re-emitted — an infinite reload loop. `load` must touch neither file
+  // when nothing changed; the fixed tsconfig is written once by configResolved.
+  const plugin = unworklet();
+  (plugin.configResolved as unknown as ConfigResolvedFn)({ command: "serve", root, base: "/" });
+  const tsconfig = path.join(root, ".unworklet", "tsconfig.json");
+  const witness = path.join(root, ".unworklet", "worklets.d.ts");
+  const tsconfigMtime = statSync(tsconfig).mtimeMs;
+
+  await (plugin.load as unknown as LoadFn).call(mockCtx(), `${VIRTUAL_ID_PREFIX}${FIXTURE}`);
+  const witnessMtimeAfterFirst = statSync(witness).mtimeMs;
+
+  // Second load of the same processor — as a page reload would do.
+  await (plugin.load as unknown as LoadFn).call(mockCtx(), `${VIRTUAL_ID_PREFIX}${FIXTURE}`);
+
+  // tsconfig untouched by any load; witness not rewritten when its content is the same.
+  expect(statSync(tsconfig).mtimeMs).toBe(tsconfigMtime);
+  expect(statSync(witness).mtimeMs).toBe(witnessMtimeAfterFirst);
 });
