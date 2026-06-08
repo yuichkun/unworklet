@@ -1596,7 +1596,7 @@ ensureClient();
         ``,
       ].join("\n");
     },
-    handleHotUpdate(ctx) {
+    async handleHotUpdate(ctx) {
       // A processor source edit must re-run the `?worklet` virtual module's
       // `load` (= recompile). `addWatchFile` alone does not invalidate the
       // virtual module here, so Vite serves the cached transform and edits are
@@ -1605,6 +1605,21 @@ ensureClient();
       // `import.meta.hot.accept('...?worklet', ...)` then receives a freshly
       // compiled processor (= live-coding via `replaceProcessor`, `07-vite-plugin.md` §4).
       if (!allowedSources.has(ctx.file)) return;
+      // Re-evaluate the edited processor and re-emit the witness so the editor's
+      // file watch refreshes node.params completions even with no browser
+      // attached to drive an HMR `load` (best-effort: a parse error mid-edit
+      // must not break HMR).
+      try {
+        const mod =
+          isServe && viteDevServer
+            ? await ssrLoadSource(viteDevServer, ctx.file)
+            : await loadProcessorModuleFresh(ctx.file);
+        const { processor } = pickCompiledProcessor(mod, ctx.file);
+        workletWitness.set(ctx.file, processor.worklet);
+        await writeWorkletsWitness();
+      } catch {
+        // keep the previous witness; the next successful edit refreshes it
+      }
       const virtualMod = ctx.server.moduleGraph.getModuleById(`${VIRTUAL_ID_PREFIX}${ctx.file}`);
       if (!virtualMod) return;
       ctx.server.moduleGraph.invalidateModule(virtualMod);

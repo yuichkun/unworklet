@@ -25,6 +25,17 @@ const VIRTUAL_ID_PREFIX = "\0unworklet:";
 
 type ConfigResolvedFn = (config: { command: string; root: string; base: string }) => void;
 type LoadFn = (this: { emitFile: () => string; addWatchFile: () => void }, id: string) => unknown;
+type ResolveIdFn = (
+  source: string,
+  importer: string | undefined,
+  options: { isEntry: boolean },
+) => unknown;
+type HotFn = (ctx: {
+  file: string;
+  server: { moduleGraph: { getModuleById: () => unknown; invalidateModule: () => void } };
+  modules: unknown[];
+  read: () => Promise<string>;
+}) => Promise<unknown>;
 
 const mockCtx = (): { emitFile: () => string; addWatchFile: () => void } => ({
   emitFile: () => "ref",
@@ -57,4 +68,20 @@ test("configResolved alone creates the witness file so the vite-env reference re
   // configResolved kicks off the write fire-and-forget; give it a tick.
   await new Promise((r) => setTimeout(r, 50));
   expect(existsSync(path.join(root, ".unworklet", "worklets.d.ts"))).toBe(true);
+});
+
+test("handleHotUpdate re-emits the witness for an edited processor (no browser needed)", async () => {
+  const plugin = unworklet();
+  (plugin.configResolved as unknown as ConfigResolvedFn)({ command: "serve", root, base: "/" });
+  // Register the source the way a `?worklet` import would, so the edit is ours.
+  (plugin.resolveId as unknown as ResolveIdFn)(`${FIXTURE}?worklet`, undefined, { isEntry: false });
+  const server = { moduleGraph: { getModuleById: () => null, invalidateModule: () => {} } };
+  await (plugin.handleHotUpdate as unknown as HotFn)({
+    file: FIXTURE,
+    server,
+    modules: [],
+    read: async () => "",
+  });
+  const witness = path.join(root, ".unworklet", "worklets.d.ts");
+  expect(readFileSync(witness, "utf8")).toContain("gain");
 });
