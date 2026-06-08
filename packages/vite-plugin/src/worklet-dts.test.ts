@@ -80,8 +80,12 @@ beforeAll(() => {
   // The per-file witness the plugin emits for this processor file.
   writeFileSync(path.join(dir, "gain.worklet.d.ts"), workletDts(SPECIFIER, gainProc.worklet));
 
-  writeFileSync(path.join(dir, "typed.ts"), USAGE("  node.params.gain.value = 0.5;"));
+  writeFileSync(
+    path.join(dir, "typed.ts"),
+    USAGE("  node.params.gain.value = 0.5;\n  node.outputs.main.connect(ctx.destination);"),
+  );
   writeFileSync(path.join(dir, "undeclared.ts"), USAGE("  void node.params.notAParam;"));
+  writeFileSync(path.join(dir, "undeclared-output.ts"), USAGE("  void node.outputs.nope;"));
 });
 
 afterAll(() => {
@@ -108,4 +112,10 @@ test("the per-file witness types node.params.<declared> as an AudioParam", () =>
 test("the per-file witness rejects an undeclared param name", () => {
   const msgs = diagnose("undeclared.ts");
   expect(msgs.some((m) => /notAParam/.test(m) && /does not exist/.test(m))).toBe(true);
+});
+
+test("the per-file witness also types node.outputs.<name> and rejects an undeclared output", () => {
+  expect(diagnose("typed.ts")).toEqual([]); // node.outputs.main now resolves
+  const msgs = diagnose("undeclared-output.ts");
+  expect(msgs.some((m) => /nope/.test(m) && /does not exist/.test(m))).toBe(true);
 });

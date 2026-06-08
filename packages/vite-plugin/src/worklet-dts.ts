@@ -18,11 +18,32 @@ import type { WorkletNamespace } from "@unworklet/core";
  * never hand-maintained.
  */
 export function workletDts(specifier: string, ns: WorkletNamespace): string {
-  const params = ns.parameterDescriptors
-    .map((d) => `${JSON.stringify((d as { name: string }).name)}: "f32"`)
-    .join("; ");
+  const named = (list: readonly unknown[], value: (d: Record<string, unknown>) => string): string =>
+    list
+      .map((d) => {
+        const r = d as Record<string, unknown>;
+        return `${JSON.stringify(r.name as string)}: ${value(r)}`;
+      })
+      .join("; ");
+  // Names come straight off the compiled namespace. Values: params are always
+  // AudioParams ("f32" marker), state carries its scalar type, the rest key on
+  // the name with an `unknown` value — enough for completion + a typed surface,
+  // since UnworkletNode maps each name to its fixed handle type.
+  const params = named(ns.parameterDescriptors, () => `"f32"`);
+  const state = named(ns.publishSlots, (d) => JSON.stringify(d.type as string));
+  const events = named([...ns.eventRings, ...ns.messageRings], () => "unknown");
+  const midi = named(ns.midiRings, () => "unknown");
+  const inputs = named(ns.inputs, () => "unknown");
+  const outputs = named(ns.outputs, () => "unknown");
   return `declare module ${JSON.stringify(specifier)} {
-  const processor: import("@unworklet/core").CompiledProcessor<{ params: { ${params} } }>;
+  const processor: import("@unworklet/core").CompiledProcessor<{
+    params: { ${params} };
+    state: { ${state} };
+    events: { ${events} };
+    midi: { ${midi} };
+    inputs: { ${inputs} };
+    outputs: { ${outputs} };
+  }>;
   export default processor;
 }
 `;
