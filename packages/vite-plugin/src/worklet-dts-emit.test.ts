@@ -50,3 +50,11 @@ test("load writes an aggregate witness d.ts under the project root", async () =>
   expect(content).toContain("01-stereo-gain.processor.ts?worklet");
   expect(content).toContain("gain");
 });
+
+test("configResolved alone creates the witness file so the vite-env reference resolves", async () => {
+  const plugin = unworklet();
+  (plugin.configResolved as unknown as ConfigResolvedFn)({ command: "serve", root, base: "/" });
+  // configResolved kicks off the write fire-and-forget; give it a tick.
+  await new Promise((r) => setTimeout(r, 50));
+  expect(existsSync(path.join(root, ".unworklet", "worklets.d.ts"))).toBe(true);
+});

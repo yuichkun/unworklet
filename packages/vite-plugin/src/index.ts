@@ -790,7 +790,7 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
     // Only write into an existing project root. A non-existent root means a
     // synthetic config (e.g. a unit test passing a placeholder path), and the
     // recursive mkdir would otherwise materialise that fake tree on disk.
-    if (!projectRoot || !existsSync(projectRoot) || workletWitness.size === 0) return;
+    if (!projectRoot || !existsSync(projectRoot)) return;
     try {
       const outDir = path.join(projectRoot, ".unworklet");
       await mkdir(outDir, { recursive: true });
@@ -885,6 +885,9 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
     configResolved(config) {
       isServe = config.command === "serve";
       projectRoot = config.root;
+      // Create the witness up front so the consumer's vite-env reference resolves
+      // even before the first processor import (empty until a `?worklet` loads).
+      void writeWorkletsWitness();
       // Dev internal URLs (= `/@id/...`, `/__unworklet/...`) must be
       // request-path absolute so the middleware's `startsWith(...)` match
       // works. Vite documents `base` may be `'./'` / `''` (= relative,
