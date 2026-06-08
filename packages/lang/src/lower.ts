@@ -96,7 +96,7 @@ export type LowerOptions = {
   /**
    * When set, the processor is emitted as a named `export const <exportName> =
    * defineProcessor(...)` (a valid JS identifier). When omitted, it is emitted as
-   * `export default`. The vite-plugin passes a filename-derived name so the lowered
+   * `export default`. The unplugin passes a filename-derived name so the lowered
    * module matches the named-export convention its loader expects.
    */
   exportName?: string;

@@ -28,9 +28,9 @@ jobs:
           node-version: "24"
           cache: true
       - run: vp install
-      - name: Build packages in dependency order (avoid cycles; vite-plugin → core → lang → offline → test; vp run -r fails on cycle detection)
+      - name: Build packages in dependency order (avoid cycles; unplugin → core → lang → offline → test; vp run -r fails on cycle detection)
         run: |
-          vp run --filter @unworklet/vite-plugin build
+          vp run --filter @unworklet/unplugin build
           vp run --filter @unworklet/core build
           vp run --filter @unworklet/lang build
           vp run --filter @unworklet/offline build
@@ -56,9 +56,9 @@ jobs:
           node-version: "24"
           cache: true
       - run: vp install
-      - name: Build packages in dependency order (avoid cycles; vite-plugin → core → lang → offline → test; vp run -r fails on cycle detection)
+      - name: Build packages in dependency order (avoid cycles; unplugin → core → lang → offline → test; vp run -r fails on cycle detection)
         run: |
-          vp run --filter @unworklet/vite-plugin build
+          vp run --filter @unworklet/unplugin build
           vp run --filter @unworklet/core build
           vp run --filter @unworklet/lang build
           vp run --filter @unworklet/offline build

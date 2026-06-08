@@ -4,7 +4,7 @@
  * Tagged union with `kind` discriminant — exhaustive switch in
  * `analyze` / `layout` / `emit` stages catches missing branches at
  * TypeScript level, and the same shape serializes directly to
- * `dist/<processor>.graph.json` (= `07-vite-plugin.md` §6.3).
+ * `dist/<processor>.graph.json` (= `07-unplugin.md` §6.3).
  *
  * Each stage progressively fills in switch cases for the additional
  * discriminants (= subset → superset).

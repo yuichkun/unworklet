@@ -15,8 +15,8 @@ import { afterAll, beforeAll, expect, test } from "vite-plus/test";
 
 import { workletsDts } from "./worklet-dts.ts";
 
-const VITE_PLUGIN = path.resolve(import.meta.dirname, "..");
-const REPO = path.resolve(VITE_PLUGIN, "../..");
+const UNPLUGIN = path.resolve(import.meta.dirname, "..");
+const REPO = path.resolve(UNPLUGIN, "../..");
 const CORE = path.join(REPO, "packages/core");
 
 const makeProc = (paramName: string) =>
@@ -33,7 +33,7 @@ const makeProc = (paramName: string) =>
   });
 
 const USAGE = (tail: string): string =>
-  `/// <reference types="@unworklet/vite-plugin/client" />
+  `/// <reference types="@unworklet/unplugin/client" />
 /// <reference path="./worklets.d.ts" />
 import { createNode } from "@unworklet/core";
 import gain from "./gain.processor.ts?worklet";
@@ -51,7 +51,7 @@ let dir: string;
 beforeAll(() => {
   dir = mkdtempSync(path.join(tmpdir(), "uwk-worklets-multi-"));
   mkdirSync(path.join(dir, "node_modules/@unworklet"), { recursive: true });
-  symlinkSync(VITE_PLUGIN, path.join(dir, "node_modules/@unworklet/vite-plugin"));
+  symlinkSync(UNPLUGIN, path.join(dir, "node_modules/@unworklet/unplugin"));
   symlinkSync(CORE, path.join(dir, "node_modules/@unworklet/core"));
   writeFileSync(
     path.join(dir, "tsconfig.json"),

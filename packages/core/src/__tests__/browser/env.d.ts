@@ -1,7 +1,7 @@
 /**
  * Ambient module declaration for `?worklet` imports in browser e2e fixture
  * This is the TypeScript type surface of the virtual module resolved by
- * `@unworklet/vite-plugin`.
+ * `@unworklet/unplugin`.
  */
 
 declare module "*?worklet" {

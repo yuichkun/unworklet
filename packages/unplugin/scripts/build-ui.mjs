@@ -6,5 +6,5 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const uiRoot = path.resolve(here, "..", "devtools-ui");
 
-console.log(`[unworklet/vite-plugin] build:ui  (${uiRoot})`);
+console.log(`[unworklet/unplugin] build:ui  (${uiRoot})`);
 execSync("vp build", { cwd: uiRoot, stdio: "inherit" });

@@ -21,10 +21,10 @@ import { afterAll, beforeAll, expect, test } from "vite-plus/test";
 
 import { workletDts } from "./worklet-dts.ts";
 
-const VITE_PLUGIN = path.resolve(import.meta.dirname, "..");
-const REPO = path.resolve(VITE_PLUGIN, "../..");
+const UNPLUGIN = path.resolve(import.meta.dirname, "..");
+const REPO = path.resolve(UNPLUGIN, "../..");
 const CORE = path.join(REPO, "packages/core");
-const TSSERVER = path.join(VITE_PLUGIN, "node_modules/typescript/lib/tsserver.js");
+const TSSERVER = path.join(UNPLUGIN, "node_modules/typescript/lib/tsserver.js");
 
 const SPECIFIER = "*/gain.processor.ts?worklet";
 
@@ -42,7 +42,7 @@ const makeProc = (paramName: string) =>
     };
   });
 
-const MAIN = `/// <reference types="@unworklet/vite-plugin/client" />
+const MAIN = `/// <reference types="@unworklet/unplugin/client" />
 /// <reference path="./gain.worklet.d.ts" />
 import { createNode } from "@unworklet/core";
 import proc from "./gain.processor.ts?worklet";
@@ -120,7 +120,7 @@ let dir: string;
 beforeAll(() => {
   dir = mkdtempSync(path.join(tmpdir(), "uwk-worklet-live-"));
   mkdirSync(path.join(dir, "node_modules/@unworklet"), { recursive: true });
-  symlinkSync(VITE_PLUGIN, path.join(dir, "node_modules/@unworklet/vite-plugin"));
+  symlinkSync(UNPLUGIN, path.join(dir, "node_modules/@unworklet/unplugin"));
   symlinkSync(CORE, path.join(dir, "node_modules/@unworklet/core"));
   writeFileSync(
     path.join(dir, "tsconfig.json"),

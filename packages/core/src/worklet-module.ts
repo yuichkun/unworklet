@@ -7,7 +7,7 @@
  * `00-foundations.md` §5.1).
  *
  * Two runtime sources share this one template:
- * - `import` — the build-time `?worklet` chunk (`@unworklet/vite-plugin`) loads
+ * - `import` — the build-time `?worklet` chunk (`@unworklet/unplugin`) loads
  *   the runtime via `import ... from "@unworklet/core/worklet"`. The module is
  *   served at a real URL, so its import resolves.
  * - `inline` — the in-browser runtime-compile path (`@unworklet/lang/browser`)

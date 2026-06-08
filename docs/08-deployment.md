@@ -8,7 +8,7 @@ partial (§1 + §2 written at Q23 / Q24 / Q25 / Q62; §3 / §4 placeholder per Q
 
 ## 1. Bundler integration
 
-unworklet ships **one** first-party bundler integration in v1.0.0: `@unworklet/vite-plugin` (= authoritative spec in `07-vite-plugin.md`). The plugin calls the `compile` function exposed from `@unworklet/core` from the build pipeline and provides WASM emission, asset resolution (= `?worklet` query), HMR, source maps, and the DevTools panel surface in a single package. unworklet has **no CLI of its own**: `vite build` and `vite` are the user-facing entry points.
+unworklet ships **one** first-party bundler integration in v1.0.0: `@unworklet/unplugin` (= authoritative spec in `07-unplugin.md`). The plugin calls the `compile` function exposed from `@unworklet/core` from the build pipeline and provides WASM emission, asset resolution (= `?worklet` query), HMR, source maps, and the DevTools panel surface in a single package. unworklet has **no CLI of its own**: `vite build` and `vite` are the user-facing entry points.
 
 Other bundlers (Webpack, Rollup, esbuild, etc.) are out of v1.0.0 scope and may be added additively in v1.x.0 when consumer demand materializes. The `compile` function is part of `@unworklet/core`'s public surface and is bundler-agnostic — Vite, Webpack, Rollup, esbuild, or any other build tool can call the same function to integrate, and a plain Node script or browser-side host script can call it directly without any bundler at all. Consumers who are not on Vite can write a custom integration against this function in the meantime. Authoritative rationale: `decisions-log.md` Q23+Q24+Q25.
 

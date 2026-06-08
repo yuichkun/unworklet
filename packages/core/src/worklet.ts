@@ -17,7 +17,7 @@
  * - `parameterDescriptors` — converts the `param` declarations in the graph
  *   into Web Audio `AudioParamDescriptor` shape.
  *
- * Both the auto-register path (the worklet JS template the vite-plugin emits)
+ * Both the auto-register path (the worklet JS template the unplugin emits)
  * and the escape-hatch path (a user's own `class extends AudioWorkletProcessor`,
  * Q80) share this function namespace as their common foundation.
  */
@@ -53,7 +53,7 @@ import type {
 /**
  * Metadata bundle that fully describes a processor's worklet-side runtime
  * shape — everything needed to build a `WorkletNamespace` without
- * re-evaluating the authoring source. The vite-plugin computes this at
+ * re-evaluating the authoring source. The unplugin computes this at
  * build / dev time from `compile(processor)` and inlines it (as JSON) into
  * the emitted worklet entry, so `audioWorklet.addModule()` only ever loads
  * a runtime-only artifact (= no `?worklet` virtual ever re-runs `defineProcessor`

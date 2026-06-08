@@ -1,8 +1,8 @@
 /**
- * Ambient types for `@unworklet/vite-plugin`. Pull them in with one line at the
+ * Ambient types for `@unworklet/unplugin`. Pull them in with one line at the
  * top of any `.d.ts` in your project (or via tsconfig `compilerOptions.types`):
  *
- *     /// <reference types="@unworklet/vite-plugin/client" />
+ *     /// <reference types="@unworklet/unplugin/client" />
  *
  * It types the `?worklet` import the plugin intercepts. Vite's own HMR types
  * (`import.meta.hot`) live in `vite/client` — reference that too if you use HMR.

@@ -9,7 +9,7 @@ Guidance for AI agents implementing unworklet v1.0.0.
 > - [`llms.txt`](./llms.txt) — install-time entry point + DSL quick reference.
 > - Package READMEs with the exact call forms:
 >   [`packages/core/README.md`](./packages/core/README.md),
->   [`packages/vite-plugin/README.md`](./packages/vite-plugin/README.md),
+>   [`packages/unplugin/README.md`](./packages/unplugin/README.md),
 >   [`packages/lang/README.md`](./packages/lang/README.md),
 >   [`packages/offline/README.md`](./packages/offline/README.md),
 >   [`packages/test/README.md`](./packages/test/README.md).
@@ -151,7 +151,7 @@ List the applicable paths in `test.coverage.exclude` in each package's `vite.con
 
 These 5 design directions surfaced during the 5-F panel grill and were **explicitly rejected** by the reviewer. Treat them as permanently blocked — do not re-introduce them under refactor, plan revisions, or "wouldn't it be nice if..." arguments. Each entry carries the reason so the rule survives future re-evaluation.
 
-1. **MediaRecorder for audio capture.** Reject. WebM is browser-internal; bug reports need to be openable in any DAW or audio tool. The only sanctioned recording path is `AnalyserNode` → main-thread ring buffer (10 s rolling) → in-house 16-bit signed PCM WAV encoder. See `docs/07-vite-plugin.md` §6 Audio sub-tab.
+1. **MediaRecorder for audio capture.** Reject. WebM is browser-internal; bug reports need to be openable in any DAW or audio tool. The only sanctioned recording path is `AnalyserNode` → main-thread ring buffer (10 s rolling) → in-house 16-bit signed PCM WAV encoder. See `docs/07-unplugin.md` §6 Audio sub-tab.
 2. **Domain-specific layout baked into the framework UI** (e.g. polysynth "voice 8 grid", envelope chips, amp meter bars). Reject. unworklet does not interpret user domain; the panel surfaces declared `state.publish` / `buffer.publish` slots through type-driven representations + a switchable dropdown. Anything beyond that is user-land UI.
 3. **Jump-to-source button in the Build errors modal.** Reject. The modal already shows the source snippet + line + Why + Fix. Opening an IDE adds a side step the audio engineer didn't ask for.
 4. **Swap history panel for `replaceProcessor`.** Reject. `replaceProcessor` returns `ReplaceResult` synchronously, and the Q63 accumulation warning fires once. There is no need to model a history surface — framework does not orchestrate the swap (`docs/decisions-log.md` Q50).

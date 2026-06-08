@@ -1025,8 +1025,8 @@ export const convolutionReverb = defineProcessor(
     // Snapshot migration chain — when older blob versions show up, lift them
     // forward declaratively. Each entry's from/to is the schema hash computed
     // by `@unworklet/core`'s `compile` function and emitted to
-    // `dist/<processor>.schema-hash.json` by `@unworklet/vite-plugin` as part
-    // of the bundler-integration metadata artifact set (= 07-vite-plugin §6.3).
+    // `dist/<processor>.schema-hash.json` by `@unworklet/unplugin` as part
+    // of the bundler-integration metadata artifact set (= 07-unplugin §6.3).
     // The mono-IR shape stored a single buffer named 'ir'; the stereo-IR shape
     // splits it into irL/irR; the latest schema adds dryGain.
     migrations: [
@@ -1405,7 +1405,7 @@ node.state.targetId.subscribe((id) => deviceIdUI.set(id));
 
 ## 10. Live coding REPL bridge
 
-> **Framework surface vs consumer recipe**: the unworklet surface exercised in this example is `replaceProcessor` (`@unworklet/core`) + `state.snapshot 'persistent'` + the `RestoreResult.ok = false` failure path + the Q63 accumulation warning. **Everything else** in the main-side code (= `URL.createObjectURL(blob)`, `import(/* @vite-ignore */ url)`, source acquisition, REPL UI wiring, blob URL teardown) is a **consumer-side recipe** — not part of unworklet's surface. `/* @vite-ignore */` is a Vite-specific annotation, not an unworklet annotation. In production code a bundler HMR boundary or file watcher (= `07-vite-plugin.md` §4 recipe sketch) provides the same module-acquisition path; unworklet does not own the source-acquisition mechanism.
+> **Framework surface vs consumer recipe**: the unworklet surface exercised in this example is `replaceProcessor` (`@unworklet/core`) + `state.snapshot 'persistent'` + the `RestoreResult.ok = false` failure path + the Q63 accumulation warning. **Everything else** in the main-side code (= `URL.createObjectURL(blob)`, `import(/* @vite-ignore */ url)`, source acquisition, REPL UI wiring, blob URL teardown) is a **consumer-side recipe** — not part of unworklet's surface. `/* @vite-ignore */` is a Vite-specific annotation, not an unworklet annotation. In production code a bundler HMR boundary or file watcher (= `07-unplugin.md` §4 recipe sketch) provides the same module-acquisition path; unworklet does not own the source-acquisition mechanism.
 
 ```typescript
 // initial.processor.ts — The initial processor for the REPL. The user may edit

@@ -1,9 +1,9 @@
 /**
- * The consumer-facing type contract of `@unworklet/vite-plugin/client`. The
+ * The consumer-facing type contract of `@unworklet/unplugin/client`. The
  * marquee import — `import x from "./foo.processor.ts?worklet"` — only
  * type-checks if the package ships an ambient `declare module "*?worklet"` AND
  * wires it through `exports` so a single
- * `/// <reference types="@unworklet/vite-plugin/client" />` pulls it in (the
+ * `/// <reference types="@unworklet/unplugin/client" />` pulls it in (the
  * same shape as `vite/client`).
  *
  * Black-box: this runs the real TypeScript module resolver over a throwaway
@@ -20,8 +20,8 @@ import path from "node:path";
 import ts from "typescript";
 import { afterAll, beforeAll, expect, test } from "vite-plus/test";
 
-const VITE_PLUGIN = path.resolve(import.meta.dirname, "..");
-const REPO = path.resolve(VITE_PLUGIN, "../..");
+const UNPLUGIN = path.resolve(import.meta.dirname, "..");
+const REPO = path.resolve(UNPLUGIN, "../..");
 const CORE = path.join(REPO, "packages/core");
 
 let dir: string;
@@ -31,7 +31,7 @@ beforeAll(() => {
   // published `exports` (not a relative path) does the resolution.
   dir = mkdtempSync(path.join(tmpdir(), "uwk-client-types-"));
   mkdirSync(path.join(dir, "node_modules/@unworklet"), { recursive: true });
-  symlinkSync(VITE_PLUGIN, path.join(dir, "node_modules/@unworklet/vite-plugin"));
+  symlinkSync(UNPLUGIN, path.join(dir, "node_modules/@unworklet/unplugin"));
   symlinkSync(CORE, path.join(dir, "node_modules/@unworklet/core"));
   writeFileSync(
     path.join(dir, "tsconfig.json"),
@@ -54,7 +54,7 @@ beforeAll(() => {
   // ?worklet import WITH the client reference, assigned to the expected type.
   writeFileSync(
     path.join(dir, "with-ref.ts"),
-    `/// <reference types="@unworklet/vite-plugin/client" />
+    `/// <reference types="@unworklet/unplugin/client" />
 import type { CompiledProcessor } from "@unworklet/core";
 import processor from "./osc.processor.ts?worklet";
 const _typed: CompiledProcessor<unknown> = processor;
@@ -66,7 +66,7 @@ void _typed;
   // matches the specifier string, so both authoring syntaxes resolve identically.
   writeFileSync(
     path.join(dir, "with-ref-uwk.ts"),
-    `/// <reference types="@unworklet/vite-plugin/client" />
+    `/// <reference types="@unworklet/unplugin/client" />
 import type { CompiledProcessor } from "@unworklet/core";
 import processor from "./osc.uwk.ts?worklet";
 const _typed: CompiledProcessor<unknown> = processor;
@@ -79,7 +79,7 @@ void _typed;
   // silently swallow any assignment.
   writeFileSync(
     path.join(dir, "with-ref-strict.ts"),
-    `/// <reference types="@unworklet/vite-plugin/client" />
+    `/// <reference types="@unworklet/unplugin/client" />
 import processor from "./osc.processor.ts?worklet";
 const _wrong: string = processor;
 void _wrong;
@@ -100,7 +100,7 @@ void processor;
   // default everywhere.
   writeFileSync(
     path.join(dir, "named-import.ts"),
-    `/// <reference types="@unworklet/vite-plugin/client" />
+    `/// <reference types="@unworklet/unplugin/client" />
 import { stereoGain } from "./gain.processor.ts?worklet";
 void stereoGain;
 `,

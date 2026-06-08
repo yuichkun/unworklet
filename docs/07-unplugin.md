@@ -1,4 +1,4 @@
-# 07 — Vite plugin (`@unworklet/vite-plugin`)
+# 07 — Vite plugin (`@unworklet/unplugin`)
 
 The integration package that invokes the `compile` function exposed from `@unworklet/core` for each processor source, resolves their assets, emits source maps + analysis artifacts, and contributes the one DevTools panel (build errors) that unworklet itself ships. unworklet has no CLI; `vite build` and `vite` are the user-facing entry points. Hot module reload orchestration, live-coding glue, and richer DevTools panels are explicitly **out of scope** — they are user-land recipes built on the `replaceProcessor` primitive (`05-client.md` §8) plus the analysis artifacts this plugin emits.
 
@@ -55,8 +55,8 @@ The plugin is the only first-party bundler integration in v1.0.0. Other bundlers
      - Worklet module loading via `audioContext.audioWorklet.addModule(processorUrl)`. -->
 
 The `?worklet` import is typed by an ambient `declare module "*?worklet"` the
-plugin ships at `@unworklet/vite-plugin/client` (the same shape as `vite/client`).
-A consumer pulls it in with one line — `/// <reference types="@unworklet/vite-plugin/client" />`
+plugin ships at `@unworklet/unplugin/client` (the same shape as `vite/client`).
+A consumer pulls it in with one line — `/// <reference types="@unworklet/unplugin/client" />`
 in a `.d.ts` such as `vite-env.d.ts` — and the **default** export of a `?worklet`
 module types as `CompiledProcessor<unknown>`. The per-processor type witness is
 erased across the virtual-module boundary, so the typed surface is `unknown`; the

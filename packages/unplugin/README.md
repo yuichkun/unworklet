@@ -1,4 +1,4 @@
-# @unworklet/vite-plugin
+# @unworklet/unplugin
 
 The Vite plugin for unworklet. It turns a `?worklet` import into a ready-to-run
 AudioWorklet processor (compiles the graph to WASM, wires up the module URLs),
@@ -6,7 +6,7 @@ lowers `.uwk.ts` sugar on the fly, emits analysis JSON on build, and hosts a
 DevTools panel (audio graph / live state / signals / MIDI) in dev.
 
 ```bash
-npm install -D @unworklet/vite-plugin
+npm install -D @unworklet/unplugin
 npm install @unworklet/core
 ```
 
@@ -15,7 +15,7 @@ npm install @unworklet/core
 ```ts
 // vite.config.ts
 import { defineConfig } from "vite";
-import unworklet from "@unworklet/vite-plugin";
+import unworklet from "@unworklet/unplugin";
 
 export default defineConfig({
   plugins: [unworklet()],
@@ -29,7 +29,7 @@ generates — it makes `node.params.<name>` typed on the main thread:
 ```ts
 // vite-env.d.ts
 /// <reference types="vite/client" />
-/// <reference types="@unworklet/vite-plugin/client" />
+/// <reference types="@unworklet/unplugin/client" />
 /// <reference path="./.unworklet/worklets.d.ts" />
 ```
 

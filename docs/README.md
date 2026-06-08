@@ -28,7 +28,7 @@ If your work touches an area not covered here, **stop and surface the gap** to t
                   └──────►  11-midi.md  ◄──────┘
                            │
                            ▼
-        06-testing.md ──► 13-offline-render.md   07-vite-plugin.md   08-deployment.md
+        06-testing.md ──► 13-offline-render.md   07-unplugin.md   08-deployment.md
 ```
 
 Independent and can be picked up at any time:
@@ -49,7 +49,7 @@ Independent and can be picked up at any time:
 | `04-worklet-runtime.md`    | partial (§7 publish scheduling written; §1–§6 + §8 placeholder)                                                                                  |
 | `05-client.md`             | partial (§2 surface listing + §2.6 snapshot/restore + §5 event/state subscription + §6 timing + §7 latency-comp written; §1, §3, §4 placeholder) |
 | `06-testing.md`            | skeleton (Q23 + Q24 + Q25 resolved at the scope level; per-section detail to be filled in incrementally)                                         |
-| `07-vite-plugin.md`        | skeleton (Q23 + Q24 + Q25 resolved at the scope level; per-section detail to be filled in incrementally)                                         |
+| `07-unplugin.md`           | skeleton (Q23 + Q24 + Q25 resolved at the scope level; per-section detail to be filled in incrementally)                                         |
 | `08-deployment.md`         | partial (§1 + §2 written at Q23 / Q24 / Q25 / Q62; §3 / §4 placeholder per Q61)                                                                  |
 | `09-repo-structure.md`     | partial (§1–§5 settled at Q60 / Q61; §6 placeholder per Q61)                                                                                     |
 | `10-roadmap.md`            | partial (§1 written at Q62; §3.1 mandatory deferred mitigations written; §2, §3.2 placeholder)                                                   |

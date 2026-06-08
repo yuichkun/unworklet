@@ -1,7 +1,7 @@
 /**
  * `@unworklet/core/worklet` — worklet-realm-only entry point.
  *
- * Loaded by the vite-plugin-emitted `<processor>.worklet.js` template
+ * Loaded by the unplugin-emitted `<processor>.worklet.js` template
  * inside `AudioWorkletGlobalScope`. Exposes the minimum surface needed to
  * boot a `WorkletNamespace` from inlined metadata + WASM bytes (= no
  * `defineProcessor` / no graph capture / no `binaryen` import) so the

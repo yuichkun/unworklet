@@ -100,6 +100,6 @@ any working directory once both packages are installed.
 - `@unworklet/core` — define the processor you render here (`defineProcessor`, the DSL primitives).
 - `@unworklet/test` — Vitest matchers built on top of `renderOffline`.
 - `@unworklet/lang` — write processors in `.uwk.ts` sugar.
-- `@unworklet/vite-plugin` — load processors in the browser via `?worklet`, plus DevTools.
+- `@unworklet/unplugin` — load processors in the browser via `?worklet`, plus DevTools.
 
 License: MIT.

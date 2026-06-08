@@ -1,6 +1,6 @@
 /**
  * Behavioral tests for `emitWorkletTemplate(...)` — the JS source emitter
- * that vite-plugin uses to construct the worklet runtime entry (= the file
+ * that unplugin uses to construct the worklet runtime entry (= the file
  * loaded via `audioWorklet.addModule(url)` in the worklet realm).
  *
  * Contract: the template embeds inline metadata + boots through

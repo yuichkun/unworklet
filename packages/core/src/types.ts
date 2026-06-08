@@ -640,7 +640,7 @@ export type MidiRingSlotDescriptor = {
  * `defineProcessor` time.
  *
  * `moduleUrl` / `processorName` / `wasmUrl` appear only on processors
- * imported via `@unworklet/vite-plugin`'s `?worklet` virtual module (or
+ * imported via `@unworklet/unplugin`'s `?worklet` virtual module (or
  * an equivalent live-coding helper that populates the same fields).
  * `createNode` reads them to wire `audioWorklet.addModule(...)` +
  * `new AudioWorkletNode(...)`.

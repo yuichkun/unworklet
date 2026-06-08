@@ -19,13 +19,13 @@ package READMEs in `node_modules/@unworklet/*/README.md` or
 
 ## Packages
 
-| package                        | role                                                    |
-| ------------------------------ | ------------------------------------------------------- |
-| `@unworklet/core`              | the DSL + compiler + main-thread client (always needed) |
-| `@unworklet/vite-plugin` (dev) | load processors via `?worklet`; DevTools panel          |
-| `@unworklet/lang`              | optional `.uwk.ts` sugar (`a * b` for `a.mul(b)`)       |
-| `@unworklet/offline`           | render a processor to PCM in Node/Bun/Deno              |
-| `@unworklet/test`              | audio/event/MIDI/state assertions for Vitest            |
+| package                     | role                                                    |
+| --------------------------- | ------------------------------------------------------- |
+| `@unworklet/core`           | the DSL + compiler + main-thread client (always needed) |
+| `@unworklet/unplugin` (dev) | load processors via `?worklet`; DevTools panel          |
+| `@unworklet/lang`           | optional `.uwk.ts` sugar (`a * b` for `a.mul(b)`)       |
+| `@unworklet/offline`        | render a processor to PCM in Node/Bun/Deno              |
+| `@unworklet/test`           | audio/event/MIDI/state assertions for Vitest            |
 
 ## Workflow
 
@@ -178,7 +178,7 @@ const blob = await node.snapshot();            // ASYNC; const res = await node.
 
 Every `node.*` surface above (params / state / events / midi / inputs / outputs)
 is typed per-processor — names complete, an undeclared name errors — when
-`vite-env.d.ts` references both `@unworklet/vite-plugin/client` and the
+`vite-env.d.ts` references both `@unworklet/unplugin/client` and the
 plugin-generated `./.unworklet/worklets.d.ts`. The plugin writes `.unworklet/` on
 dev/build; gitignore it.
 

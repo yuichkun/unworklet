@@ -31,12 +31,12 @@ DevTools.
 
 ```bash
 npm install @unworklet/core
-npm install -D @unworklet/vite-plugin @unworklet/lang   # ?worklet loader + .uwk.ts editor support
+npm install -D @unworklet/unplugin @unworklet/lang   # ?worklet loader + .uwk.ts editor support
 ```
 
 ```ts
 // vite.config.ts
-import unworklet from "@unworklet/vite-plugin";
+import unworklet from "@unworklet/unplugin";
 
 export default { plugins: [unworklet()] };
 ```
@@ -49,7 +49,7 @@ plugin generates, so `node.params.<name>` (and `state` / `events` / `midi` /
 ```ts
 // vite-env.d.ts
 /// <reference types="vite/client" />
-/// <reference types="@unworklet/vite-plugin/client" />
+/// <reference types="@unworklet/unplugin/client" />
 /// <reference path="./.unworklet/worklets.d.ts" />
 ```
 
@@ -262,7 +262,7 @@ npm install -D @vitejs/devtools @vitejs/devtools-kit
 ```ts
 // vite.config.ts
 import { DevTools } from "@vitejs/devtools";
-import unworklet from "@unworklet/vite-plugin";
+import unworklet from "@unworklet/unplugin";
 import { defineConfig } from "vite";
 
 export default defineConfig(({ command }) => ({
@@ -280,7 +280,7 @@ Run your dev server, open the Vite DevTools overlay, and pick the **unworklet** 
 Two gotchas worth knowing up front:
 
 - **Install `@vitejs/devtools-kit` as a direct dependency too**, matching the
-  version `@unworklet/vite-plugin` builds against (`0.2.x` at the time of writing).
+  version `@unworklet/unplugin` builds against (`0.2.x` at the time of writing).
   The panel's page bridge imports `@vitejs/devtools-kit/client`, which must resolve
   from your app — a transitive copy is not enough.
 - **Cross-origin isolation.** The plugin makes the dev server cross-origin
@@ -296,13 +296,13 @@ clone the repo and start an example locally to try them live.
 
 ## Packages
 
-| package                                                      | what it does                                                                       |
-| ------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| [`@unworklet/core`](./packages/core/README.md)               | The DSL, the WASM compiler, the worklet runtime, and the typed main-thread node.   |
-| [`@unworklet/vite-plugin`](./packages/vite-plugin/README.md) | Loads `.processor.ts` / `.uwk.ts` via `?worklet`; ships the DevTools panel.        |
-| [`@unworklet/lang`](./packages/lang/README.md)               | The `.uwk.ts` authoring sugar (infix operators, index access) that lowers to core. |
-| [`@unworklet/offline`](./packages/offline/README.md)         | Render a processor to PCM headlessly in Node / Bun / Deno.                         |
-| [`@unworklet/test`](./packages/test/README.md)               | Audio / event / MIDI / state assertions and signal generators for Vitest.          |
+| package                                                | what it does                                                                       |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| [`@unworklet/core`](./packages/core/README.md)         | The DSL, the WASM compiler, the worklet runtime, and the typed main-thread node.   |
+| [`@unworklet/unplugin`](./packages/unplugin/README.md) | Loads `.processor.ts` / `.uwk.ts` via `?worklet`; ships the DevTools panel.        |
+| [`@unworklet/lang`](./packages/lang/README.md)         | The `.uwk.ts` authoring sugar (infix operators, index access) that lowers to core. |
+| [`@unworklet/offline`](./packages/offline/README.md)   | Render a processor to PCM headlessly in Node / Bun / Deno.                         |
+| [`@unworklet/test`](./packages/test/README.md)         | Audio / event / MIDI / state assertions and signal generators for Vitest.          |
 
 ## Docs
 
@@ -321,12 +321,12 @@ vp check          # lint + format + typecheck (vp check --fix to auto-fix)
 vp test run       # vitest (node-side + browser SAB / postMessage)
 ```
 
-`core` and `vite-plugin` form a build cycle, so packages build in an explicit
+`core` and `unplugin` form a build cycle, so packages build in an explicit
 order rather than `vp run -r build`:
 
 ```bash
 vp run --filter @unworklet/lang build && \
-vp run --filter @unworklet/vite-plugin build && \
+vp run --filter @unworklet/unplugin build && \
 vp run --filter @unworklet/core build && \
 vp run --filter @unworklet/offline build && \
 vp run --filter @unworklet/test build

@@ -25,7 +25,7 @@
   "devDependencies": {
     "@types/node": "catalog:",
     "@unworklet/test": "workspace:*",
-    "@unworklet/vite-plugin": "workspace:*",
+    "@unworklet/unplugin": "workspace:*",
     "@vitejs/devtools": "catalog:",
     "@vitejs/devtools-kit": "catalog:",
     "@vitejs/plugin-vue": "catalog:",

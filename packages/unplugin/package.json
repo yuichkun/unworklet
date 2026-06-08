@@ -1,13 +1,13 @@
 {
-  "name": "@unworklet/vite-plugin",
+  "name": "@unworklet/unplugin",
   "version": "0.0.0",
   "description": "Vite plugin for `@unworklet/core` processors (`?worklet` imports, source maps, DevTools panels, analysis JSON).",
   "keywords": [
     "audio",
     "audioworklet",
     "dsp",
+    "unplugin",
     "vite",
-    "vite-plugin",
     "webassembly",
     "worklet"
   ],
@@ -17,7 +17,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/yuichkun/unworklet.git",
-    "directory": "packages/vite-plugin"
+    "directory": "packages/unplugin"
   },
   "files": [
     "dist",

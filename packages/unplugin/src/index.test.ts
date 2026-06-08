@@ -1,6 +1,6 @@
 /**
  * `unworklet` Vite plugin factory shape + `?worklet` resolve / load hooks
- * (= `07-vite-plugin.md` + `10-roadmap.md` Phase 5).
+ * (= `07-unplugin.md` + `10-roadmap.md` Phase 5).
  * 5-B: factory returns a real Vite `Plugin` object.
  * 5-C: sources with a `?worklet` query are resolved to a virtual id.
  * 5-D: load receives the virtual id, dynamically imports the source module,
@@ -165,7 +165,7 @@ const callTransform = (code: string, id: string): unknown => {
 
 test("`unworklet()` returns a Vite Plugin object with a stable name", () => {
   const plugin = unworklet();
-  expect(plugin).toMatchObject({ name: "@unworklet/vite-plugin" });
+  expect(plugin).toMatchObject({ name: "@unworklet/unplugin" });
 });
 
 test("`unworklet()` accepts an options bag without throwing", () => {

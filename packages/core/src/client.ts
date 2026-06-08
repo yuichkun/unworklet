@@ -373,7 +373,7 @@ export async function createNode<C>(
       "unworklet: SharedArrayBuffer is unavailable, so audio I/O falls back to a slower " +
         "postMessage transport. This usually means the page is not cross-origin isolated — serve " +
         "Cross-Origin-Opener-Policy: same-origin and Cross-Origin-Embedder-Policy: credentialless " +
-        "to enable it (@unworklet/vite-plugin sets these on the dev server by default).",
+        "to enable it (@unworklet/unplugin sets these on the dev server by default).",
     );
   }
 

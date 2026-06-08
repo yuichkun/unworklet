@@ -1,8 +1,8 @@
 /**
- * `@unworklet/vite-plugin` — Vite plugin for `@unworklet/core` processors
- * (`07-vite-plugin.md`).
+ * `@unworklet/unplugin` — Vite plugin for `@unworklet/core` processors
+ * (`07-unplugin.md`).
  *
- * Responsibilities (= `07-vite-plugin.md` §1):
+ * Responsibilities (= `07-unplugin.md` §1):
  * 1. WASM compile invocation (= calls `@unworklet/core`'s `compile`)
  * 2. Asset resolution (= `?worklet` query)
  * 3. HMR boundary (= mark `?worklet` imports as Vite HMR boundaries; Phase 12)
@@ -200,7 +200,7 @@ import { emitWorkletTemplate } from "./worklet-template.ts";
  *   can coexist with in-flight nodes from the previous revision until
  *   the consumer disposes them. This is the only browser-API-compliant
  *   path for forward-compatible `?worklet` HMR / `replaceProcessor`
- *   wiring (= `07-vite-plugin.md` §4, Q50).
+ *   wiring (= `07-unplugin.md` §4, Q50).
  *
  * 8 hex chars per component = 32 bit. Collision probability across the
  * cartesian product of (source path × revision) is negligible for any
@@ -231,7 +231,7 @@ const computeProcessorName = (
  *
  * Build-mode fallback only — dev mode goes through `ssrLoadModule` so the
  * full transitive import graph rides on Vite's module graph (= helper file
- * edits invalidate automatically = `07-vite-plugin.md` §3 dev/build symmetry).
+ * edits invalidate automatically = `07-unplugin.md` §3 dev/build symmetry).
  *
  * The buster appears as a URL query (= `?t=<mtimeMs>`). Node treats the
  * resulting specifier as a fresh module identity = forces re-evaluation.
@@ -447,7 +447,7 @@ export type UnworkletPluginOptions = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────
-// Analysis JSON artifact contract (= `07-vite-plugin.md` §6.3)
+// Analysis JSON artifact contract (= `07-unplugin.md` §6.3)
 // ─────────────────────────────────────────────────────────────────────────
 //
 // Concrete byte-layout / JSON schema detail per artifact is impl-phase fill
@@ -505,7 +505,7 @@ const DEVBRIDGE_ID = "\0unworklet-devbridge";
  *
  * Build mode emits the same two artifacts via `this.emitFile` so the
  * consumer-side import shape is identical (= dev / build symmetry per
- * `07-vite-plugin.md` §3 "Vite asset pipeline integration").
+ * `07-unplugin.md` §3 "Vite asset pipeline integration").
  */
 const DEV_URL_PREFIX = "__unworklet";
 
@@ -521,7 +521,7 @@ const decodeSourceFromDevUrl = (encoded: string): string =>
  * carry this token, so even if the author edits and saves between
  * `audioWorklet.addModule(...)` and `fetch(wasmUrl)` the original URLs
  * still resolve to the snapshot they were minted from (= no inline-meta
- * vs WASM bytes skew, `07-vite-plugin.md` §3 dev/build symmetry).
+ * vs WASM bytes skew, `07-unplugin.md` §3 dev/build symmetry).
  */
 const REVISION_HASH_LEN = 8;
 const computeRevisionHash = (wasm: Uint8Array): string =>
@@ -583,12 +583,12 @@ const pickCompiledProcessor = (
   }
   if (matches.length === 0) {
     throw new Error(
-      `@unworklet/vite-plugin: ${sourcePath} has no defineProcessor exports (a named export of \`defineProcessor(...)\` return value is required).`,
+      `@unworklet/unplugin: ${sourcePath} has no defineProcessor exports (a named export of \`defineProcessor(...)\` return value is required).`,
     );
   }
   if (matches.length > 1) {
     throw new Error(
-      `@unworklet/vite-plugin: ${sourcePath} has multiple defineProcessor exports (${matches.join(", ")}); v1.0.0 supports one processor per file.`,
+      `@unworklet/unplugin: ${sourcePath} has multiple defineProcessor exports (${matches.join(", ")}); v1.0.0 supports one processor per file.`,
     );
   }
   return found!;
@@ -598,7 +598,7 @@ const assetBaseName = (sourcePath: string): string => {
   let base = path.basename(sourcePath, path.extname(sourcePath));
   // Strip an optional `.processor` (= `foo.processor.ts`) or `.uwk`
   // (= `foo.uwk.ts`) suffix so emitted assets land at `dist/<processor>.<artifact>`,
-  // zipping with the analysis-JSON convention in `07-vite-plugin.md` §6.3.
+  // zipping with the analysis-JSON convention in `07-unplugin.md` §6.3.
   if (base.endsWith(".processor")) base = base.slice(0, -".processor".length);
   if (base.endsWith(".uwk")) base = base.slice(0, -".uwk".length);
   return base;
@@ -769,7 +769,7 @@ const setupDevtools = async (
  *   a build asset via `this.emitFile`, and (when `emitAnalysisArtifacts` is
  *   enabled = default) also emits 4 sibling metadata JSON files
  *   (`<processor>.graph.json` / `.memory.json` / `.diagnostics.json` /
- *   `.schema-hash.json`) per `07-vite-plugin.md` §6.3. The hook's return
+ *   `.schema-hash.json`) per `07-unplugin.md` §6.3. The hook's return
  *   value is a JS module that defers the WASM URL through Rolldown's
  *   `import.meta.ROLLUP_FILE_URL_<refId>`.
  * - Dev-mode middleware path (= ad-hoc WASM serve for `?worklet` requests in
@@ -807,7 +807,7 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
       witnessWarned = true;
       const at = path.join(projectRoot, ".unworklet", "worklets.d.ts");
       console.warn(
-        `[@unworklet/vite-plugin] could not write ${at} — node.params types are unavailable: ${err instanceof Error ? err.message : String(err)}`,
+        `[@unworklet/unplugin] could not write ${at} — node.params types are unavailable: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   };
@@ -855,7 +855,7 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
   const findSnapshot = (sourcePath: string, hash: string): CompileSnapshot | undefined =>
     snapshotsBySource.get(sourcePath)?.find((s) => s.hash === hash);
   return {
-    name: "@unworklet/vite-plugin",
+    name: "@unworklet/unplugin",
     enforce: "pre",
     config(userConfig, env) {
       // Dev-only gate for the core registry / page bridge: a single statically-
@@ -1002,7 +1002,7 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
           res.setHeader("Cache-Control", "no-cache");
           res.end(Buffer.from(bytes));
         })().catch((err: unknown) => {
-          console.error("[@unworklet/vite-plugin] middleware error:", err);
+          console.error("[@unworklet/unplugin] middleware error:", err);
           res.statusCode = 500;
           res.end(String(err));
         });
@@ -1055,7 +1055,7 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
         return `
 import { getDevNodes, onDevNodesChanged } from "@unworklet/core/dev";
 import { decodeScalar, decodeTypedArray } from "@unworklet/core";
-import { appendBounded, downsampleTo, drainInjects, foldProxyGraph, frameLevels, normalizeFreqDb, slotMemory, splitSlots } from "@unworklet/vite-plugin/devbridge";
+import { appendBounded, downsampleTo, drainInjects, foldProxyGraph, frameLevels, normalizeFreqDb, slotMemory, splitSlots } from "@unworklet/unplugin/devbridge";
 import { getDevToolsClientContext } from "@vitejs/devtools-kit/client";
 
 globalThis.__unworklet_getDevNodes = getDevNodes;
@@ -1469,7 +1469,7 @@ ensureClient();
           : await loadProcessorModuleFresh(sourcePath);
       // Dev mode: fan watch dependencies out across every transitive file
       // reachable from the processor source = a helper edit invalidates this
-      // virtual module just like editing the entry would (= 07-vite-plugin.md
+      // virtual module just like editing the entry would (= 07-unplugin.md
       // §3 dev/build symmetry).
       if (isServe && viteDevServer) {
         for (const dep of collectTransitiveDeps(viteDevServer, sourcePath)) {
@@ -1606,7 +1606,7 @@ ensureClient();
       // not reflected until the dev server restarts. Explicitly invalidate the
       // virtual module and steer the HMR update to it: its importer's
       // `import.meta.hot.accept('...?worklet', ...)` then receives a freshly
-      // compiled processor (= live-coding via `replaceProcessor`, `07-vite-plugin.md` §4).
+      // compiled processor (= live-coding via `replaceProcessor`, `07-unplugin.md` §4).
       if (!allowedSources.has(ctx.file)) return;
       // Re-evaluate the edited processor and re-emit the witness so the editor's
       // file watch refreshes node.params completions even with no browser
@@ -1655,7 +1655,7 @@ ensureClient();
  * `emitFile` chunk + `import.meta.ROLLUP_FILE_URL_*`).
  */
 const unworkletUnplugin = createUnplugin<UnworkletPluginOptions | undefined, false>((options) => ({
-  name: "@unworklet/vite-plugin",
+  name: "@unworklet/unplugin",
   enforce: "pre",
   // unplugin types its `vite` field against the real `vite` package's `Plugin`,
   // while this repo aliases `vite` → `@voidzero-dev/vite-plus-core`. The two `Plugin`

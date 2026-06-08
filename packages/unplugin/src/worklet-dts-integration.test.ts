@@ -22,8 +22,8 @@ import { afterEach, beforeEach, expect, test } from "vite-plus/test";
 
 import unworklet from "./index.ts";
 
-const VITE_PLUGIN = path.resolve(import.meta.dirname, "..");
-const REPO = path.resolve(VITE_PLUGIN, "../..");
+const UNPLUGIN = path.resolve(import.meta.dirname, "..");
+const REPO = path.resolve(UNPLUGIN, "../..");
 const CORE = path.join(REPO, "packages/core");
 const FIXTURE = fileURLToPath(
   new URL("../__fixtures__/01-stereo-gain.processor.ts", import.meta.url),
@@ -47,7 +47,7 @@ afterEach(() => {
 
 test("plugin-emitted witness types node.params via tsconfig include (no per-file ref)", async () => {
   mkdirSync(path.join(root, "node_modules/@unworklet"), { recursive: true });
-  symlinkSync(VITE_PLUGIN, path.join(root, "node_modules/@unworklet/vite-plugin"));
+  symlinkSync(UNPLUGIN, path.join(root, "node_modules/@unworklet/unplugin"));
   symlinkSync(CORE, path.join(root, "node_modules/@unworklet/core"));
 
   // The plugin writes <root>/.unworklet/worklets.d.ts as a side effect of load.
@@ -58,7 +58,7 @@ test("plugin-emitted witness types node.params via tsconfig include (no per-file
   // The docs setup: client reference in vite-env, `.unworklet` on the include.
   writeFileSync(
     path.join(root, "vite-env.d.ts"),
-    `/// <reference types="@unworklet/vite-plugin/client" />
+    `/// <reference types="@unworklet/unplugin/client" />
 /// <reference path="./.unworklet/worklets.d.ts" />
 `,
   );

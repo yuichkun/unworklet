@@ -15,7 +15,7 @@ plumbing, no hand-written WASM.
 ```bash
 npm install @unworklet/core
 # Almost always paired with the Vite plugin to load processors:
-npm install -D @unworklet/vite-plugin
+npm install -D @unworklet/unplugin
 ```
 
 ## A complete processor
@@ -55,7 +55,7 @@ export const stereoGain = defineProcessor(() => {
 });
 ```
 
-Load and run it in the browser (with `@unworklet/vite-plugin`):
+Load and run it in the browser (with `@unworklet/unplugin`):
 
 ```ts
 import { createNode } from "@unworklet/core";
@@ -197,7 +197,7 @@ processor that compiles is realtime-safe.
 
 ## Related packages
 
-- `@unworklet/vite-plugin` — load processors via `?worklet`, plus DevTools.
+- `@unworklet/unplugin` — load processors via `?worklet`, plus DevTools.
 - `@unworklet/lang` — write processors in `.uwk.ts` sugar (infix operators, index access).
 - `@unworklet/offline` — render a processor to PCM in Node/Bun/Deno.
 - `@unworklet/test` — audio/event/MIDI assertions for Vitest.

@@ -1,6 +1,6 @@
 /**
  * Pure transforms for the DevTools page-script (the dev bridge). They run in the
- * browser — imported by the injected page-script via `@unworklet/vite-plugin/devbridge`
+ * browser — imported by the injected page-script via `@unworklet/unplugin/devbridge`
  * — but are plain data functions with no browser globals, so they are unit-tested
  * directly in Node (`devbridge.test.ts`). Keeping them here, rather than inline in
  * the page-script string, is what makes that coverage possible.

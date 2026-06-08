@@ -13,7 +13,7 @@ operators and bare reads/writes; `lower()` desugars it to a plain
 
 ```bash
 # Pulled in transitively by the Vite plugin — install that, not this directly:
-npm install -D @unworklet/vite-plugin
+npm install -D @unworklet/unplugin
 npm install @unworklet/core
 # For `.uwk.ts` authoring — the editor plugin, the `unworklet-tsc` build checker,
 # and `lower()`. Add it directly: a bin only resolves for a direct dependency.
@@ -195,14 +195,14 @@ const tsSource = lower(uwkSource, { exportName: "myProcessor" });
 For a headless render, `lowerToProcessor(source)` lowers straight to a
 `CompiledProcessor` for `@unworklet/offline` in Node — see that package's README.
 
-Most projects don't import this — `@unworklet/vite-plugin` lowers `.uwk.ts`
+Most projects don't import this — `@unworklet/unplugin` lowers `.uwk.ts`
 imports on the fly. Plain `.ts` / `.processor.ts` processors (the core API) work
 everywhere `.uwk.ts` does; the sugar is opt-in.
 
 ## Related packages
 
 - `@unworklet/core` — the primitives `.uwk.ts` lowers to (`audioInput`, `state`, `param`, `forSample`, …).
-- `@unworklet/vite-plugin` — lowers `.uwk.ts` imports on the fly via `?worklet`.
+- `@unworklet/unplugin` — lowers `.uwk.ts` imports on the fly via `?worklet`.
 - `@unworklet/offline` — render a processor to PCM in Node/Bun/Deno.
 - `@unworklet/test` — audio/event/MIDI assertions for Vitest.
 

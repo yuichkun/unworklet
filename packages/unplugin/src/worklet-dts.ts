@@ -5,7 +5,7 @@ import type { WorkletNamespace } from "@unworklet/core";
 /**
  * Emit the per-file `?worklet` type witness for a compiled processor.
  *
- * The shipped `@unworklet/vite-plugin/client` reference declares a WILDCARD
+ * The shipped `@unworklet/unplugin/client` reference declares a WILDCARD
  * `declare module "*?worklet"` typed as `CompiledProcessor<unknown>` — enough to
  * resolve the import, but it erases the per-processor surface so `node.params.x`
  * is an untyped `Record`. This emits a MORE SPECIFIC `declare module` for one

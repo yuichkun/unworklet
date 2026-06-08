@@ -11,7 +11,7 @@
  * `Cross-Origin-Embedder-Policy: require-corp`.
  */
 
-import unworklet from "@unworklet/vite-plugin";
+import unworklet from "@unworklet/unplugin";
 import { playwright } from "vite-plus/test/browser-playwright";
 import { defineConfig } from "vite-plus";
 

@@ -5,7 +5,7 @@
  *
  * In the worklet, the namespace 3 entry points (`initialize` / `process` /
  * `parameterDescriptors`) are wired into a `class extends AudioWorkletProcessor`
- * (either the vite-plugin-emitted template auto-register path, or a
+ * (either the unplugin-emitted template auto-register path, or a
  * user-authored escape-hatch class). Tests stand in for the host by passing a
  * minimal `self` object with a `port.postMessage` collector + the same
  * `inputs` / `outputs` / `parameters` shape that AudioWorkletProcessor.process

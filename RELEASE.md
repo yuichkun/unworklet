@@ -2,13 +2,13 @@
 
 unworklet ships five public packages from this monorepo:
 `@unworklet/core`, `@unworklet/lang`, `@unworklet/offline`, `@unworklet/test`,
-`@unworklet/vite-plugin`. They are versioned together.
+`@unworklet/unplugin`. They are versioned together.
 
 ## v1.0.0 acceptance criteria (`docs/10-roadmap.md` §1)
 
 | ID  | Criterion                                                    | Status                                                                                                                                  |
 | --- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
-| A1  | 4 public packages + internal module `vp build` exit 0        | ✅ `vp pack` builds each package; `vp run build` builds core + vite-plugin (incl. devtools UI)                                          |
+| A1  | 4 public packages + internal module `vp build` exit 0        | ✅ `vp pack` builds each package; `vp run build` builds core + unplugin (incl. devtools UI)                                             |
 | A2  | Canonical Ex 1–8 WASM emit                                   | ✅ covered by `packages/offline/src/canonical.test.ts` + golden cases                                                                   |
 | A3  | `vp check` (typecheck + oxlint + oxfmt) exit 0               | ✅ root `vp check` clean (0 errors, 0 warnings)                                                                                         |
 | B1  | Canonical Ex 1–8 offline output bit-exact vs reference       | ✅ offline golden / canonical tests pass                                                                                                |
@@ -34,7 +34,7 @@ Versions are currently `0.0.0` (unpublished). To cut a release:
    `catalog:` (wavefile) protocols into real versions; `npm publish` ships them
    literally and every consumer install breaks. `prepublishOnly` runs `vp run build`
    for each: `@unworklet/core`, `@unworklet/lang`, `@unworklet/offline`,
-   `@unworklet/test`, `@unworklet/vite-plugin`.
+   `@unworklet/test`, `@unworklet/unplugin`.
 
 There is no automated changeset/changelog pipeline yet; the cut is manual.
 

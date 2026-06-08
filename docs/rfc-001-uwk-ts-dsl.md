@@ -548,7 +548,7 @@ Reason: with operator sugar, `1 - mix` lifts the `1` literal automatically via t
 
 ## Capture mechanics
 
-The Vite plugin (`@unworklet/vite-plugin`) gains a `.uwk.ts` loader that transforms the file via AST passes and routes the result through the existing `compile()` invocation pipeline (`07-vite-plugin.md` §2).
+The Vite plugin (`@unworklet/unplugin`) gains a `.uwk.ts` loader that transforms the file via AST passes and routes the result through the existing `compile()` invocation pipeline (`07-unplugin.md` §2).
 
 ### Lowering pipeline
 
@@ -1140,7 +1140,7 @@ This RFC is **strictly additive** to the v1.0.0 surface (`10-roadmap.md` §1 acc
 2. **`Node<T>.pipe<U>(fn: (x: Node<T>) => Node<U>): Node<U>`** method — `01-dsl.md` §2 addition via declaration merging.
 3. **`pipe(x, ...fs)`** free function — `@unworklet/core` export with variadic-overload typing.
 4. **`@unworklet/lang` package** — `09-repo-structure.md` §2.4 addition (= new 5th public package).
-5. **`.uwk.ts` file format** — `07-vite-plugin.md` §2 / §3 addition: the Vite plugin globs for `**/*.uwk.ts`, applies the lowering pipeline, and emits the same artifact set as `.ts` processors.
+5. **`.uwk.ts` file format** — `07-unplugin.md` §2 / §3 addition: the Vite plugin globs for `**/*.uwk.ts`, applies the lowering pipeline, and emits the same artifact set as `.ts` processors.
 6. **`'use unworklet/strict'` directive** — reserved name; not implemented in v1.1.0 first cut. Future opt-out for ambient default I/O.
 
 ### Canonical examples integrity rule (`AGENTS.md`)
@@ -1357,7 +1357,7 @@ The proposal introduces one new public package:
 
 Existing packages affected:
 
-- **`@unworklet/vite-plugin`** — gains a `.uwk.ts` loader that invokes `@unworklet/lang` for the lowering pipeline. Output artifact set unchanged (`07-vite-plugin.md` §6.3).
+- **`@unworklet/unplugin`** — gains a `.uwk.ts` loader that invokes `@unworklet/lang` for the lowering pipeline. Output artifact set unchanged (`07-unplugin.md` §6.3).
 - **`@unworklet/core`** — additive: `not(b)` primitive (`01-dsl.md` §2.1), `Node<T>.pipe()` method (§2.x), `pipe()` free function (§2.x export). No breaking changes.
 - **`@unworklet/test`** — no change.
 - **`@unworklet/offline`** — no change.
@@ -1375,7 +1375,7 @@ Existing packages affected:
 - `03-compiler.md` §1, §2, §7 — compile pipeline + source-map propagation.
 - `03-compiler.md` §2.4 — three error layers preserved by this RFC.
 - `03-compiler.md` §2.6 — stable error IDs (this RFC adds new IDs additively).
-- `07-vite-plugin.md` §2, §3, §5 — Vite plugin integration point.
+- `07-unplugin.md` §2, §3, §5 — Vite plugin integration point.
 - `09-repo-structure.md` §2.1, §2.4 — public package layout for the proposed `@unworklet/lang`.
 - `10-roadmap.md` §1, §2 — v1.0.0 acceptance criteria + 14-phase roadmap (= unaffected).
 - `12-canonical-examples.md` — production examples this RFC translates as comparisons.

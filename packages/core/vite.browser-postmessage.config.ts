@@ -9,7 +9,7 @@
  * Run: `vp test --config vite.browser-postmessage.config.ts`.
  */
 
-import unworklet from "@unworklet/vite-plugin";
+import unworklet from "@unworklet/unplugin";
 import { playwright } from "vite-plus/test/browser-playwright";
 import { defineConfig } from "vite-plus";
 

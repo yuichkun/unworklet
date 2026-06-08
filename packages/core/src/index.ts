@@ -85,14 +85,14 @@ export type { CreateSubgraphOptions, SubgraphDecl } from "./processor.ts";
 // Compile invocation.
 export { compile } from "./compile/index.ts";
 
-// Worklet meta extraction (= used by vite-plugin to inline runtime-only
+// Worklet meta extraction (= used by unplugin to inline runtime-only
 // metadata into the AudioWorkletGlobalScope entry, avoiding any
 // re-evaluation of the authoring source in the worklet realm).
 export { extractWorkletMeta } from "./worklet.ts";
 export type { WorkletMeta } from "./worklet.ts";
 
 // The single worklet-module source emitter, shared by the build-time `?worklet`
-// chunk (vite-plugin, `import` runtime) and the in-browser runtime-compile path
+// chunk (unplugin, `import` runtime) and the in-browser runtime-compile path
 // (`@unworklet/lang/browser`, `inline` runtime).
 export { emitWorkletModuleSource, serializeMetaToJs } from "./worklet-module.ts";
 export type { WorkletRuntimeSource, EmitWorkletModuleOptions } from "./worklet-module.ts";

@@ -1373,7 +1373,7 @@ const synth = defineProcessor(
 );
 ```
 
-The migration array lives on the **processor's options bag** (the second argument to `defineProcessor`), not in the declaration body — this keeps the processor body focused on the live runtime graph and isolates schema-evolution concerns from per-block / per-sample logic. Each entry's `from` and `to` are schema hashes emitted by `@unworklet/vite-plugin` into `dist/<processor>.schema-hash.json` (per-processor artifact; authoritative shape in `07-vite-plugin.md` §6.3). The framework constructs a directed graph from the entries and finds the path `blob.schemaHash → currentSchemaHash`; entries are applied in order, with each step's output hash verified against its declared `to`.
+The migration array lives on the **processor's options bag** (the second argument to `defineProcessor`), not in the declaration body — this keeps the processor body focused on the live runtime graph and isolates schema-evolution concerns from per-block / per-sample logic. Each entry's `from` and `to` are schema hashes emitted by `@unworklet/unplugin` into `dist/<processor>.schema-hash.json` (per-processor artifact; authoritative shape in `07-unplugin.md` §6.3). The framework constructs a directed graph from the entries and finds the path `blob.schemaHash → currentSchemaHash`; entries are applied in order, with each step's output hash verified against its declared `to`.
 
 #### 8.3.1 `helpers` API
 
@@ -1674,7 +1674,7 @@ Authoritative rationale and rejected alternatives: see `decisions-log.md` Q22 (Q
 
 ## 11. Worklet-thread escape hatch
 
-The declarative path (= `defineProcessor` + vite-plugin auto `registerProcessor`) covers the vast majority of authoring needs. For the rare case where an author must touch the **web-standard `AudioWorkletProcessor` API surface directly** — `constructor(opts)` for receiving arbitrary `processorOptions` (e.g. SAB refs from an external sample-accurate source), raw `this.port.onmessage` / `postMessage`, the `process()` return-value lifecycle, `static get parameterDescriptors`, or custom methods added to the class — `defineProcessor` exposes a function namespace on `def.worklet` so authors can build their own `class extends AudioWorkletProcessor` (Q80).
+The declarative path (= `defineProcessor` + unplugin auto `registerProcessor`) covers the vast majority of authoring needs. For the rare case where an author must touch the **web-standard `AudioWorkletProcessor` API surface directly** — `constructor(opts)` for receiving arbitrary `processorOptions` (e.g. SAB refs from an external sample-accurate source), raw `this.port.onmessage` / `postMessage`, the `process()` return-value lifecycle, `static get parameterDescriptors`, or custom methods added to the class — `defineProcessor` exposes a function namespace on `def.worklet` so authors can build their own `class extends AudioWorkletProcessor` (Q80).
 
 ### 11.1 Surface
 
@@ -1739,7 +1739,7 @@ registerProcessor("polySynth-with-sidecar", PolySynthWithSidecar);
 
 ### 11.3 Coexistence with the auto-register path
 
-The default vite-plugin output continues to auto-register the processor under its compile-time name (= path α). Authoring `class extends AudioWorkletProcessor { ... }` with `def.worklet` registers an additional processor under a **different name** chosen by the author (= path β). Both names are simultaneously addressable from the main thread; the same `CompiledProcessor<C>` can back either path through `createNode` (path-α default name) or `new AudioWorkletNode(ctx, 'path-β-name', { processorOptions })` (constructed manually by the author).
+The default unplugin output continues to auto-register the processor under its compile-time name (= path α). Authoring `class extends AudioWorkletProcessor { ... }` with `def.worklet` registers an additional processor under a **different name** chosen by the author (= path β). Both names are simultaneously addressable from the main thread; the same `CompiledProcessor<C>` can back either path through `createNode` (path-α default name) or `new AudioWorkletNode(ctx, 'path-β-name', { processorOptions })` (constructed manually by the author).
 
 ### 11.4 Constraints
 
