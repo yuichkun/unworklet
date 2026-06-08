@@ -22,14 +22,22 @@ export default defineConfig({
 });
 ```
 
-Type the `?worklet` import with one line in your `vite-env.d.ts` (alongside
-Vite's own client types):
+Type the `?worklet` import in your `vite-env.d.ts` (alongside Vite's own client
+types). The second unworklet reference is the per-processor type the plugin
+generates — it makes `node.params.<name>` typed on the main thread:
 
 ```ts
 // vite-env.d.ts
 /// <reference types="vite/client" />
 /// <reference types="@unworklet/vite-plugin/client" />
+/// <reference path="./.unworklet/worklets.d.ts" />
 ```
+
+The plugin writes `.unworklet/worklets.d.ts` on `vite dev` / `vite build` from
+your processors' own declarations, so `node.params.<name>` completes and an
+undeclared name (or a wrong-typed assignment) is a type error — no annotations
+to maintain, refreshed as you edit. Add `.unworklet/` to `.gitignore`; it's a
+generated artifact (the same shape as Nuxt's `.nuxt/` or Prisma's client).
 
 ## Usage: loading a processor
 
