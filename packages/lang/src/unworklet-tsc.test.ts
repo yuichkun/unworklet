@@ -108,6 +108,53 @@ process(() => {
   expect(code).toBe(0);
 });
 
+test("unworklet-tsc passes on a real DOM + @types/node app with skipLibCheck off (the injected ambient globals must not fail the build)", () => {
+  // The blind-install repro: a normal audio app loads lib.dom (global `Node`,
+  // `event`) and @types/node (global `process`). The ambient declares those same
+  // names as authoring globals, so they collide as `Duplicate identifier` /
+  // `Cannot redeclare` in `.d.ts` space. That overlap is an artifact of injecting
+  // the ambient — not an error in the user's code — so the checker must pass it
+  // regardless of `skipLibCheck`. Its OWN tsconfig (separate dir) so the shared
+  // one is untouched.
+  const app = path.join(dir, "realapp");
+  mkdirSync(app, { recursive: true });
+  writeFileSync(
+    path.join(app, "tsconfig.json"),
+    JSON.stringify({
+      compilerOptions: {
+        module: "nodenext",
+        moduleResolution: "nodenext",
+        allowImportingTsExtensions: true,
+        lib: ["es2023", "dom", "dom.iterable"],
+        types: ["node"], // global `process` from @types/node
+        strict: true,
+        noEmit: true,
+        skipLibCheck: false, // the strict shop — the ambient overlap must still pass
+        // deliberately NO `plugins` — the CLI injects the language plugin itself.
+      },
+      include: ["synth.uwk.ts"],
+    }),
+  );
+  writeFileSync(
+    path.join(app, "synth.uwk.ts"),
+    `const out = audioOutput({ channels: 2 });
+const gain = param.f32({ default: 1, min: 0, max: 4, automationRate: "a-rate" });
+const env = state.f32(0).named();
+const keys = event.midi({ from: "main", name: "keys" });
+process(() => {
+  keys.onEvent("noteOn", (e) => { env.write(f32(e.velocity)); });
+  forSample((i) => {
+    out.left[i] = env * gain[i];
+    out.right[i] = env * gain[i];
+  });
+});`,
+  );
+  const r = spawnSync("node", [bin, "--noEmit"], { cwd: app, encoding: "utf8" });
+  const output = `${r.stdout}${r.stderr}`;
+  expect(output).toBe("");
+  expect(r.status).toBe(0);
+});
+
 test("unworklet-tsc reports a .uwk.ts type error, mapped to the source, and exits non-zero", () => {
   const { code, output } = check(`const out = audioOutput({ channels: 2 });
 const gate = state.bool(false).named();

@@ -32,5 +32,15 @@ runTsc(tscPath, [".uwk.ts"], (ts, options) => {
   if (!options.rootNames.includes(ambient)) {
     (options as Mutable<typeof options>).rootNames = [...options.rootNames, ambient];
   }
+  // The ambient declares the authoring globals (`Node` / `event` / `process`) that
+  // intentionally shadow the same-named `lib.dom` / `@types/node` globals — a `.uwk.ts`
+  // writes no imports, so they must be global. That overlap is an artifact of
+  // injecting the ambient, not a mistake in the user's code, so it must not fail
+  // the build: under `skipLibCheck: false` it otherwise surfaces as `Duplicate
+  // identifier 'Node'` / `Cannot redeclare 'event'` pointing into `lib.dom.d.ts`.
+  // Skipping `.d.ts` checks scopes this checker to its job — the sugar. Your
+  // `.uwk.ts` / `.ts` are still fully checked; auditing `lib` / `@types` conflicts
+  // is your own `tsc`'s job, which never injects this ambient and so never sees it.
+  options.options.skipLibCheck = true;
   return { languagePlugins: [createUwkLanguagePlugin(ts)] };
 });
