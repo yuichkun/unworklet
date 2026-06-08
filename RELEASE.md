@@ -6,16 +6,16 @@ unworklet ships five public packages from this monorepo:
 
 ## v1.0.0 acceptance criteria (`docs/10-roadmap.md` §1)
 
-| ID  | Criterion                                                    | Status                                                                                                                     |
-| --- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| A1  | 4 public packages + internal module `vp build` exit 0        | ✅ `vp pack` builds each package; `vp run build` builds core + vite-plugin (incl. devtools UI)                             |
-| A2  | Canonical Ex 1–8 WASM emit                                   | ✅ covered by `packages/offline/src/canonical.test.ts` + golden cases                                                      |
-| A3  | `vp check` (typecheck + oxlint + oxfmt) exit 0               | ✅ root `vp check` clean (0 errors, 0 warnings)                                                                            |
-| B1  | Canonical Ex 1–8 offline output bit-exact vs reference       | ✅ offline golden / canonical tests pass                                                                                   |
-| C1  | Realtime-safety invariants enforced (layered)                | ✅ `packages/core/src/dsl/enforcement.test.ts`                                                                             |
+| ID  | Criterion                                                    | Status                                                                                                                                  |
+| --- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| A1  | 4 public packages + internal module `vp build` exit 0        | ✅ `vp pack` builds each package; `vp run build` builds core + vite-plugin (incl. devtools UI)                                          |
+| A2  | Canonical Ex 1–8 WASM emit                                   | ✅ covered by `packages/offline/src/canonical.test.ts` + golden cases                                                                   |
+| A3  | `vp check` (typecheck + oxlint + oxfmt) exit 0               | ✅ root `vp check` clean (0 errors, 0 warnings)                                                                                         |
+| B1  | Canonical Ex 1–8 offline output bit-exact vs reference       | ✅ offline golden / canonical tests pass                                                                                                |
+| C1  | Realtime-safety invariants enforced (layered)                | ✅ `packages/core/src/dsl/enforcement.test.ts`                                                                                          |
 | D1  | Browser smoke: Chromium × Firefox × Safari × {isolated, not} | ⚠️ Chromium verified (devtools-proto + `packages/core/src/__tests__/browser/` Playwright); Firefox / Safari not yet run on this machine |
-| E1  | `open-questions.md` empty                                    | ✅ all moved to `decisions-log.md`                                                                                         |
-| F1  | `.d.ts` public surface matches `decisions-log.md` Q1–Q77     | ✅ public exports stable; verified against the READMEs / Skill                                                             |
+| E1  | `open-questions.md` empty                                    | ✅ all moved to `decisions-log.md`                                                                                                      |
+| F1  | `.d.ts` public surface matches `decisions-log.md` Q1–Q77     | ✅ public exports stable; verified against the READMEs / Skill                                                                          |
 
 The full unit + integration suite is green (~2000 tests across the six test
 projects); `vp check` and `vp test run` both pass at the repo root.
