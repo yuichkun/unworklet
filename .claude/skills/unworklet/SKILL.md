@@ -136,7 +136,9 @@ event.midi({ to: "main", name })     event.midi({ from: "main", name })
 **Operations** — free function or method form (identical):
 `add sub mul div mod neg` · `eq lt lte gt gte` · `not select` · `abs min max
 clamp floor ceil frac` · `sin cos tan tanh exp log sqrt` · `pipe`.
-Literals: `f32(x) f64(x) i32(x) i64(1n) bool(true) num(x)`.
+Scalar constructors / casts: `f32(x) f64(x) i32(x) i64(1n) bool(true) num(x)` —
+`f32(node)` also casts any scalar `Node` to `Node<"f32">` (the `i32`→`f32` bridge,
+e.g. a MIDI field; see the synth above).
 
 **Loop:** `forSample((i) => ...)` (i = 0..127) · `forSample.byN(4, (i) => ...)`.
 
@@ -151,6 +153,10 @@ Literals: `f32(x) f64(x) i32(x) i64(1n) bool(true) num(x)`.
 `ev.onReceive(({ a, b }) => ...)` (main→worklet) ·
 `midiIn.onEvent("noteOn", ({ note, velocity, channel }) => ...)` ·
 `midiOut.emitIf(cond, { type: "noteOn", channel, note, velocity })`.
+An inbound handler's fields (`note` / `velocity` / `channel` / `atSample`) are
+`Node<"i32">`, not JS numbers — cast with `f32(note)` for float math and write them
+into `state` to reach `process` (see the synth above). A worklet→main `event` has
+only `.emitIf` (no bare `.emit`).
 
 ## Loading + driving (main thread)
 
@@ -205,5 +211,7 @@ expectStable(r);
 position → `state.read()`. Scalar writes are still explicit `state.write(v)`.
 The body is wrapped in ambient `process(() => { ... })`. For IDE type-checking of
 the sugar (drop `// @ts-nocheck`), add `@unworklet/lang/typescript-plugin` to
-`tsconfig` `plugins` and put the shipped ambient `.d.ts` in `files` (not `include` —
-`include` globs skip `node_modules`). See `@unworklet/lang`'s README → IDE support.
+`tsconfig` `plugins` — that single entry is the whole setup; the plugin auto-injects
+the shipped ambient `.d.ts`, so there is no `files` / `types` entry to add. For a
+build-time check, use `unworklet-tsc` in place of `tsc`. See `@unworklet/lang`'s
+README → IDE support.
