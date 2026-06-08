@@ -15,7 +15,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -779,6 +779,30 @@ const GENERATED_TSCONFIG = `${JSON.stringify(
   2,
 )}\n`;
 
+/**
+ * Synchronously seed `.unworklet/` with the extended `tsconfig.json` (and an empty
+ * `worklets.d.ts` if none exists yet) the moment the config resolves. This MUST be
+ * synchronous and up front: Vite/Rolldown reads the consumer's
+ * `{ "extends": "./.unworklet/tsconfig.json" }` when the build starts, and an async
+ * write loses that race — the first `vite build` / `vite dev` on a fresh checkout
+ * would otherwise fail with "Tsconfig not found" before the plugin ever writes it.
+ * The tsconfig is fixed content; the witness is filled in as each `?worklet` loads.
+ * No-op when the root doesn't exist (a synthetic unit-test config), so it never
+ * materialises a placeholder tree on disk.
+ */
+const seedUnworkletDir = (root: string): void => {
+  if (!root || !existsSync(root)) return;
+  try {
+    const outDir = path.join(root, ".unworklet");
+    mkdirSync(outDir, { recursive: true });
+    writeFileSync(path.join(outDir, "tsconfig.json"), GENERATED_TSCONFIG);
+    const witness = path.join(outDir, "worklets.d.ts");
+    if (!existsSync(witness)) writeFileSync(witness, "");
+  } catch {
+    // Best-effort; the async writeWorkletsWitness warns once on a real failure.
+  }
+};
+
 // ─────────────────────────────────────────────────────────────────────────
 // Plugin factory
 // ─────────────────────────────────────────────────────────────────────────
@@ -923,9 +947,12 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
     configResolved(config) {
       isServe = config.command === "serve";
       projectRoot = config.root;
-      // Seed `.unworklet/` up front (the extended tsconfig + an empty witness) so
-      // the consumer's `extends` resolves even before the first processor import
-      // (the witness fills in as each `?worklet` loads).
+      // Seed `.unworklet/` SYNCHRONOUSLY here so the consumer's `extends` target
+      // exists before Vite/Rolldown reads the tsconfig at build start (an async
+      // write loses that race — the first build would fail with "Tsconfig not
+      // found"). The async pass then fills the witness with the real per-processor
+      // types as each `?worklet` loads.
+      seedUnworkletDir(projectRoot);
       void writeWorkletsWitness();
       // Dev internal URLs (= `/@id/...`, `/__unworklet/...`) must be
       // request-path absolute so the middleware's `startsWith(...)` match

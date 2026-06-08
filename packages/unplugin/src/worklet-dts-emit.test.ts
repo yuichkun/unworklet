@@ -62,17 +62,17 @@ test("load writes an aggregate witness d.ts under the project root", async () =>
   expect(content).toContain("gain");
 });
 
-test("configResolved alone seeds .unworklet/ (tsconfig + witness) so the consumer's extends resolves", async () => {
+test("configResolved SYNCHRONOUSLY seeds .unworklet/ (tsconfig + witness) so the extends resolves before the build reads it", () => {
   const plugin = unworklet();
   (plugin.configResolved as unknown as ConfigResolvedFn)({ command: "serve", root, base: "/" });
-  // configResolved kicks off the write fire-and-forget; give it a tick.
-  await new Promise((r) => setTimeout(r, 50));
-  // Both files must exist up front: the witness so the per-processor types resolve,
-  // and the tsconfig so `{ "extends": "./.unworklet/tsconfig.json" }` is not a
-  // "cannot find base config" error before the first processor import.
-  expect(existsSync(path.join(root, ".unworklet", "worklets.d.ts"))).toBe(true);
+  // No tick: the files must exist the instant configResolved returns. Vite/Rolldown
+  // reads the consumer's `{ "extends": "./.unworklet/tsconfig.json" }` at build
+  // start, before any async write flushes — an async seed would fail the first
+  // build with "Tsconfig not found". So the tsconfig (and an empty witness, the
+  // `include` target) are written synchronously here.
   const tsconfig = path.join(root, ".unworklet", "tsconfig.json");
   expect(existsSync(tsconfig)).toBe(true);
+  expect(existsSync(path.join(root, ".unworklet", "worklets.d.ts"))).toBe(true);
   const cfg = JSON.parse(readFileSync(tsconfig, "utf8")) as {
     compilerOptions: { types: string[]; plugins: { name: string }[] };
     include: string[];
