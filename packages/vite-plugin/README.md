@@ -34,8 +34,10 @@ Vite's own client types):
 ## Usage: loading a processor
 
 Import the processor source with the **`?worklet` query** — this is what the
-plugin intercepts. The **default export** of that virtual module is a compiled
-processor ready for `createNode`.
+plugin intercepts. It takes the file's single `defineProcessor` export (you write
+`export const stereoGain = …`; don't add `export default`) and re-exposes it as
+that virtual module's **default export**, a compiled processor ready for
+`createNode`.
 
 ```ts
 import { createNode } from "@unworklet/core";
@@ -48,6 +50,11 @@ node.outputs.main.connect(ctx.destination);
 
 A `.uwk.ts` processor is imported the same way (`./processor.uwk.ts?worklet`);
 the plugin lowers the sugar before compiling.
+
+That snippet is the unworklet wiring; the rest is a normal Vite app — an
+`index.html` that loads your entry module, and a user gesture (a click) that calls
+`ctx.resume()`, since an `AudioContext` starts suspended and otherwise stays
+silent.
 
 ## Cross-origin isolation (SharedArrayBuffer)
 
