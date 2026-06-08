@@ -69,6 +69,13 @@ node.params.gain.value = 2.0;
 node.state.meterL.subscribe((db) => (meterEl.style.height = `${db}px`));
 ```
 
+`?worklet` hands you the file's `defineProcessor` export as the **default import** —
+you write `export const stereoGain = …` in the processor file and import it as the
+default here; the plugin bridges the two, so don't add `export default`. (`source`
+and `meterEl` are your own input node and DOM element.) One browser rule: an
+`AudioContext` starts **suspended**, so call `ctx.resume()` from a user gesture (a
+click) — otherwise you wire everything up and hear nothing.
+
 ## Generate a tone
 
 A processor needs no input. This is a 440 Hz sine, synthesized from a phasor —
@@ -117,10 +124,20 @@ event.midi({ from: "main", name })  // inbound MIDI; .onEvent("noteOn", e => ...
 event.midi({ to: "main", name })    // outbound MIDI; .emitIf(cond, midiEvent)
 ```
 
+In an inbound-MIDI handler — `keys.onEvent("noteOn", e => …)` — the event `e`
+carries `note`, `velocity`, `channel`, `atSample` as **`Node<"i32">`** (graph
+values, not JS numbers). Reach the oscillator by writing them into `state` in the
+handler and reading that `state` back in `process`; lift one into float math with
+`f32(e.note)`. A worklet→main `event` has only `.emitIf(cond, payload)` (no bare
+`emit`), so "fire on note start" is: set a flag `state` in the handler, then
+`out.emitIf(flag.read(), …)` in `process`.
+
 `.named("x")` (quick) and `.expose({ name, snapshot, publish })` (full) both name
 a slot for main-thread access. `publish` (state/buffer, `{ rateFps }`) streams a
-value to `node.state.<name>.subscribe(...)`. `snapshot: "persistent"` includes it
-in `node.snapshot()`. Naming is required for `publish`/`persistent`.
+value to `node.state.<name>.subscribe(...)`. A named scalar `state` is **persistent
+by default** — captured in `node.snapshot()` and offline `result.state`; pass
+`snapshot: "transient"` to opt a named slot out. Buffers are the reverse (transient
+unless `snapshot: "persistent"`). Naming is required for `publish`/`persistent`.
 
 ### Read / write (the part most often guessed wrong)
 
@@ -146,7 +163,9 @@ pipe                               // pipe(x, f, g) or x.pipe(f).pipe(g)
 ```
 
 Both forms work: `mul(a, b)` ≡ `a.mul(b)`; `tanh(x)` ≡ `x.tanh()`. Scalar
-literals: `f32(0.5)`, `i32(1)`, `i64(1n)`, `bool(true)`, `num(x)` (loose f32).
+constructors: `f32(0.5)`, `i32(1)`, `i64(1n)`, `bool(true)`, `num(x)` (loose f32).
+Each also **casts a `Node`**: `f32(node)` reinterprets any scalar `Node` to
+`Node<"f32">` — the `i32`→`f32` bridge float math needs (e.g. on a MIDI field).
 
 ### The loop
 
