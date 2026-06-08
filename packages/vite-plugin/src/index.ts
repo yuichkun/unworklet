@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import { compile, extractWorkletMeta } from "@unworklet/core";
 import type { CompiledProcessor, WorkletNamespace } from "@unworklet/core";
 import { lower } from "@unworklet/lang";
+import { createUnplugin, type UnpluginOptions } from "unplugin";
 import type { Plugin } from "vite";
 
 import { workletsDts } from "./worklet-dts.ts";
@@ -755,8 +756,10 @@ const setupDevtools = async (
 // ─────────────────────────────────────────────────────────────────────────
 
 /**
- * Construct the Vite plugin instance. Default export per Vite convention;
- * also re-exported as a named export `unworkletPlugin` for explicit import.
+ * Construct the Vite plugin instance — the resolve / compile / WASM-emit pipeline
+ * plus the Vite-only dev-server features (HMR, COOP/COEP headers, the WASM
+ * middleware, the DevTools bridge, and witness generation). `unworklet()` wraps it
+ * through unplugin (below) for the public entry.
  *
  * Phase 5-E status (build mode):
  * - `name` declared
@@ -772,7 +775,7 @@ const setupDevtools = async (
  * - Dev-mode middleware path (= ad-hoc WASM serve for `?worklet` requests in
  *   `vp dev`) is filled in a follow-up sub-step.
  */
-export default function unworklet(options?: UnworkletPluginOptions): Plugin {
+function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
   const emitAnalysisArtifacts = options?.emitAnalysisArtifacts ?? true;
   const crossOriginIsolation = options?.crossOriginIsolation ?? true;
   const uiRoot = resolveDevtoolsUiRoot();
@@ -1637,6 +1640,37 @@ ensureClient();
       },
     },
   };
+}
+
+/**
+ * unplugin wrapper. The plugin is authored against Vite's plugin context; routing
+ * it through unplugin lets the package grow bundler-agnostic build entries
+ * (webpack / rollup / esbuild) without a second implementation. For the `.vite()`
+ * output unplugin keeps the plugin's native context untouched, so the produced
+ * value is exactly what `buildVitePlugin` constructs. The dev-server features (HMR,
+ * COOP/COEP, the WASM middleware, the DevTools bridge, witness generation) are
+ * Vite-only by design and live under the `vite` key; lifting the portable
+ * resolve/compile/emit hooks onto the universal surface is a later step (it needs a
+ * per-bundler asset-emit strategy, since the build path relies on rolldown's
+ * `emitFile` chunk + `import.meta.ROLLUP_FILE_URL_*`).
+ */
+const unworkletUnplugin = createUnplugin<UnworkletPluginOptions | undefined, false>((options) => ({
+  name: "@unworklet/vite-plugin",
+  enforce: "pre",
+  // unplugin types its `vite` field against the real `vite` package's `Plugin`,
+  // while this repo aliases `vite` → `@voidzero-dev/vite-plus-core`. The two `Plugin`
+  // shapes are structurally identical but nominally distinct, so a direct assignment
+  // overruns the structural-comparison depth; bridge the single boundary here. The
+  // runtime value is exactly a Vite plugin (the hook tests exercise it).
+  vite: buildVitePlugin(options) as unknown as UnpluginOptions["vite"],
+}));
+
+/**
+ * The unworklet Vite plugin. Default export per Vite convention; also re-exported
+ * as the named `unworkletPlugin` for explicit import.
+ */
+export default function unworklet(options?: UnworkletPluginOptions): Plugin {
+  return unworkletUnplugin.vite(options) as unknown as Plugin;
 }
 
 export { unworklet as unworkletPlugin };
