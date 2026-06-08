@@ -41,6 +41,9 @@ import unworklet from "@unworklet/unplugin";
 export default { plugins: [unworklet()] };
 ```
 
+The loader is built on [unplugin](https://unplugin.unjs.io/), and the type wiring
+below is plain `tsconfig` — the Vite integration is what ships today.
+
 Add one line to your `tsconfig.json`. The plugin generates a `.unworklet/tsconfig.json`
 that wires up the main-thread types **and** the `.uwk.ts` editor checker, so
 `node.params.<name>` (and `state` / `events` / `midi` / `inputs` / `outputs`) are
