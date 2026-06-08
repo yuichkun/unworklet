@@ -877,11 +877,17 @@ export type UnworkletNode<C> = {
    * (= Q6 + canonical Ex 1 / 2). Each handle is an `AudioNode`, so all of
    * the `AudioNode.connect(...)` / `disconnect(...)` overloads work natively.
    */
-  readonly inputs: Record<string, AudioNode>;
-  readonly outputs: Record<
-    string,
-    { connect(target: AudioNode | AudioParam): void; disconnect(): void }
-  >;
+  readonly inputs: C extends { inputs: infer I }
+    ? { readonly [K in keyof I]: AudioNode }
+    : Record<string, AudioNode>;
+  readonly outputs: C extends { outputs: infer O }
+    ? {
+        readonly [K in keyof O]: {
+          connect(target: AudioNode | AudioParam): void;
+          disconnect(): void;
+        };
+      }
+    : Record<string, { connect(target: AudioNode | AudioParam): void; disconnect(): void }>;
   /**
    * Per-param AudioParam, keyed by the declared name. When the compiled processor
    * carries a param-name witness (the `?worklet` per-file type the plugin emits),
@@ -892,9 +898,15 @@ export type UnworkletNode<C> = {
   readonly params: C extends { params: infer P }
     ? { readonly [K in keyof P]: AudioParam }
     : Record<string, AudioParam>;
-  readonly state: Record<string, StateValueProxy<unknown> | BufferValueProxy<unknown>>;
-  readonly events: Record<string, EventSurface<unknown>>;
-  readonly midi: Record<string, MidiPortSurface>;
+  readonly state: C extends { state: infer S }
+    ? { readonly [K in keyof S]: StateValueProxy<unknown> | BufferValueProxy<unknown> }
+    : Record<string, StateValueProxy<unknown> | BufferValueProxy<unknown>>;
+  readonly events: C extends { events: infer E }
+    ? { readonly [K in keyof E]: EventSurface<unknown> }
+    : Record<string, EventSurface<unknown>>;
+  readonly midi: C extends { midi: infer M }
+    ? { readonly [K in keyof M]: MidiPortSurface }
+    : Record<string, MidiPortSurface>;
   readonly diagnostics: { readonly transport: TransportMode };
   snapshot(options?: { profile?: string }): Promise<Uint8Array>;
   restore(blob: Uint8Array): Promise<RestoreResult>;

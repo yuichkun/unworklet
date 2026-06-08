@@ -83,6 +83,37 @@ export async function f(): Promise<void> {
 }
 `,
   );
+
+  // Every surface — params / state / events / midi / inputs / outputs — keyed by
+  // the declared names: each declared member usable, each undeclared one an error.
+  writeFileSync(
+    path.join(dir, "all-surfaces.ts"),
+    `${PRELUDE}
+declare const proc: CompiledProcessor<{
+  params: { gain: "f32" };
+  state: { level: "f32" };
+  events: { tick: unknown };
+  midi: { keys: unknown };
+  inputs: { main: unknown };
+  outputs: { main: unknown };
+}>;
+export async function f(): Promise<void> {
+  const node = await createNode(ctx, proc);
+  node.params.gain.value = 0.5;
+  node.state.level.subscribe(() => {});
+  node.events.tick.on(() => {});
+  node.midi.keys.send({ type: "noteOn", channel: 0, note: 60, velocity: 100 });
+  node.outputs.main.connect(ctx.destination);
+  void node.inputs.main;
+  // @ts-expect-error undeclared state name
+  void node.state.nope;
+  // @ts-expect-error undeclared midi name
+  void node.midi.nope;
+  // @ts-expect-error undeclared input name
+  void node.inputs.nope;
+}
+`,
+  );
 });
 
 afterAll(() => {
@@ -113,4 +144,8 @@ test("an undeclared param name is a type error", () => {
 
 test("an unknown processor witness keeps the permissive param map (back-compat)", () => {
   expect(diagnose("unknown-witness.ts")).toEqual([]);
+});
+
+test("declared names across every surface are typed; undeclared names error", () => {
+  expect(diagnose("all-surfaces.ts")).toEqual([]);
 });

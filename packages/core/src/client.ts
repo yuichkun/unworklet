@@ -1664,12 +1664,12 @@ export async function createNode<C>(
 
   const unworkletNode: UnworkletNode<C> = {
     node,
-    inputs: inputHandles,
+    inputs: inputHandles as UnworkletNode<C>["inputs"],
     outputs: buildOutputs(node, outputs) as UnworkletNode<C>["outputs"],
     params: params as UnworkletNode<C>["params"],
-    state: stateSurface,
-    events: eventSurface,
-    midi: midiSurface,
+    state: stateSurface as UnworkletNode<C>["state"],
+    events: eventSurface as UnworkletNode<C>["events"],
+    midi: midiSurface as UnworkletNode<C>["midi"],
     diagnostics: { transport: transportMode },
     snapshot,
     restore,
