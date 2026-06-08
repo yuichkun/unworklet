@@ -66,7 +66,8 @@
     "prepublishOnly": "vp run build"
   },
   "dependencies": {
-    "@unworklet/lang": "workspace:*"
+    "@unworklet/lang": "workspace:*",
+    "unplugin": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",
