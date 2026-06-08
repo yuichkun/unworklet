@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import type { WorkletNamespace } from "@unworklet/core";
 
 /**
@@ -24,4 +26,19 @@ export function workletDts(specifier: string, ns: WorkletNamespace): string {
   export default processor;
 }
 `;
+}
+
+/**
+ * The aggregate witness for every `?worklet`-imported processor in the project:
+ * one `declare module` per source, keyed on its filename so the wildcard matches
+ * the consumer's `import x from "./<file>?worklet"`. The plugin writes this single
+ * file and re-emits it on every processor edit; the editor's file watch refreshes
+ * `node.params.<name>` completions without a restart (proven in worklet-dts-live).
+ *
+ * The module pattern is `*​/<basename>?worklet`, so two processors sharing a
+ * basename in different folders would collide — the caller must warn rather than
+ * silently shadow one.
+ */
+export function workletsDts(entries: { source: string; ns: WorkletNamespace }[]): string {
+  return entries.map((e) => workletDts(`*/${path.basename(e.source)}?worklet`, e.ns)).join("\n");
 }
