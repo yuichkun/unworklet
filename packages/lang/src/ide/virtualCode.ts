@@ -59,11 +59,14 @@ const SYNTH: CodeInformation = { verification: true };
  *   call signatures" on every `process(() => {...})`).
  * - `event` vs `lib.dom`'s `var event: Event | undefined` ("Property 'midi' does
  *   not exist on type 'Event'" on every `event.midi(...)` / `event<T>(...)`).
+ * - `Node` vs `lib.dom`'s non-generic `interface Node` ("Node is not generic" on
+ *   every `Node<"f32">` L1-helper annotation under a DOM lib).
  * The remaining ambient names collide with nothing in lib / node.
  */
 const MODULE_PREFIX =
   "declare function process(callback: () => void): void;\n" +
-  'declare const event: typeof import("@unworklet/core").event;\n';
+  'declare const event: typeof import("@unworklet/core").event;\n' +
+  'type Node<T extends import("@unworklet/core").ScalarType | "f32x4"> = import("@unworklet/core").Node<T>;\n';
 const MODULE_SUFFIX = "\nexport {};\n";
 
 /** A name string the auto-name pass would inject, materialised as source text. */

@@ -50,6 +50,21 @@ process(() => {
   });
 });`;
 
+// A `Node<T>` annotation on an L1 helper. Under a DOM lib (which a normal app
+// tsconfig has), lib.dom's non-generic `interface Node` must NOT shadow the
+// ambient's generic `Node<T>` — otherwise `Node<"f32">` is "Node is not generic".
+const NODE_ANNOTATION = `function softclip(x: Node<"f32">): Node<"f32"> {
+  return x;
+}
+const input = audioInput({ channels: 2 });
+const out = audioOutput({ channels: 2 });
+process(() => {
+  forSample((i) => {
+    out.left[i] = softclip(input.left[i]);
+    out.right[i] = softclip(input.right[i]);
+  });
+});`;
+
 let dir: string;
 
 /** A minimal tsserver protocol client: newline-delimited requests, Content-Length
@@ -162,6 +177,7 @@ beforeAll(async () => {
   );
   writeFileSync(path.join(dir, "valid.uwk.ts"), VALID);
   writeFileSync(path.join(dir, "broken.uwk.ts"), BROKEN);
+  writeFileSync(path.join(dir, "node-annotation.uwk.ts"), NODE_ANNOTATION);
 });
 
 afterAll(() => {
@@ -213,6 +229,23 @@ test("a real tsserver loads the plugin and type-checks .uwk.ts sugar end to end"
     const broken = await server.request<Diag[]>("semanticDiagnosticsSync", { file: brokenPath });
     const texts = (broken.body ?? []).map((d) => d.text);
     expect(texts.some((t) => t.includes('Node<"bool">') && t.includes('Node<"f32">'))).toBe(true);
+  } finally {
+    server.dispose();
+  }
+});
+
+test("a Node<T> annotation type-checks under a DOM lib (lib.dom Node must not shadow the ambient)", async () => {
+  const server = new TsServer(dir);
+  try {
+    const file = path.join(dir, "node-annotation.uwk.ts");
+    server.notify("open", { file, fileContent: NODE_ANNOTATION, scriptKindName: "TS" });
+    let diags: Diag[] = [{ text: "pending" }];
+    for (let i = 0; i < 20 && diags.length > 0; i++) {
+      await sleep(500);
+      const r = await server.request<Diag[]>("semanticDiagnosticsSync", { file });
+      diags = r.body ?? [];
+    }
+    expect(diags).toEqual([]); // `Node<"f32">` is generic — no "Node is not generic"
   } finally {
     server.dispose();
   }
