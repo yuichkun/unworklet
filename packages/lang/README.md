@@ -31,8 +31,10 @@ ambient as well — the same `ProcessorContext` that core's `defineProcessor((ct
 => …)` passes you, so `ctx.sampleRate` is how a generator reaches the sample rate.
 `.named()` / `.expose({...})` with no name derive it from the binding.
 
-Out of the box, stock TypeScript flags the sugar (`a * b` on two `Node`s is an
-"operator cannot be applied" error), so a `// @ts-nocheck` header is needed.
+Out of the box, stock TypeScript flags the sugar — a `.uwk.ts` writes no imports,
+so the authoring names (`audioInput`, `state`, …) are undefined and the infix
+operators on the resulting values don't type-check — so a `// @ts-nocheck` header
+is needed.
 **Install the editor plugin ([IDE support](#ide-support)) and the header goes
 away** — the sugar type-checks, with hover / completion / go-to-definition on
 the operands.
@@ -51,6 +53,11 @@ process(() => {
   });
 });
 ```
+
+Events and MIDI carry no infix sugar — they work exactly as in core. Declare
+`const keys = event.midi({ from: "main" })`, then in `process` handle a message and
+write the result into `state`: `keys.onEvent("noteOn", e => freq.write(f32(e.note)))`
+(the handler's `e.note` / `e.velocity` are `Node<"i32">` — see the core README).
 
 ## The sugar (desugars to core)
 
