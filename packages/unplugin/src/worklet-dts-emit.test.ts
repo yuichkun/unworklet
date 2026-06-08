@@ -62,12 +62,24 @@ test("load writes an aggregate witness d.ts under the project root", async () =>
   expect(content).toContain("gain");
 });
 
-test("configResolved alone creates the witness file so the vite-env reference resolves", async () => {
+test("configResolved alone seeds .unworklet/ (tsconfig + witness) so the consumer's extends resolves", async () => {
   const plugin = unworklet();
   (plugin.configResolved as unknown as ConfigResolvedFn)({ command: "serve", root, base: "/" });
   // configResolved kicks off the write fire-and-forget; give it a tick.
   await new Promise((r) => setTimeout(r, 50));
+  // Both files must exist up front: the witness so the per-processor types resolve,
+  // and the tsconfig so `{ "extends": "./.unworklet/tsconfig.json" }` is not a
+  // "cannot find base config" error before the first processor import.
   expect(existsSync(path.join(root, ".unworklet", "worklets.d.ts"))).toBe(true);
+  const tsconfig = path.join(root, ".unworklet", "tsconfig.json");
+  expect(existsSync(tsconfig)).toBe(true);
+  const cfg = JSON.parse(readFileSync(tsconfig, "utf8")) as {
+    compilerOptions: { types: string[]; plugins: { name: string }[] };
+    include: string[];
+  };
+  expect(cfg.compilerOptions.types).toContain("@unworklet/unplugin/client");
+  expect(cfg.compilerOptions.plugins).toContainEqual({ name: "@unworklet/lang/typescript-plugin" });
+  expect(cfg.include).toContain("worklets.d.ts");
 });
 
 test("handleHotUpdate re-emits the witness for an edited processor (no browser needed)", async () => {

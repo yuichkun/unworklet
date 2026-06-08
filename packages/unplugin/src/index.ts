@@ -751,6 +751,34 @@ const setupDevtools = async (
   ctx.rpc.register(midiInject as Parameters<typeof ctx.rpc.register>[0]);
 };
 
+/**
+ * The `.unworklet/tsconfig.json` the plugin generates next to `worklets.d.ts`. A
+ * consumer extends it with one line — `"extends": "./.unworklet/tsconfig.json"` —
+ * and inherits the three unworklet type settings, so no `vite-env.d.ts` is needed:
+ * - `types` pulls the `*?worklet` ambient (resolves the import).
+ * - `plugins` runs the `.uwk.ts` editor type-checker.
+ * - `include` lists `worklets.d.ts` (the per-processor types; a glob skips the
+ *   dot-folder) plus the project's sources via `../**​/*.ts`.
+ *
+ * `extends` does NOT merge `include`, so the consumer must not declare their own
+ * `include` on the extending tsconfig (it would shadow this one). Projects that
+ * need their own `include` use the manual path instead (the same three settings
+ * written directly). `compilerOptions` like `module` / `lib` come from the
+ * consumer's tsconfig and merge on top of these.
+ */
+const GENERATED_TSCONFIG = `${JSON.stringify(
+  {
+    compilerOptions: {
+      types: ["@unworklet/unplugin/client"],
+      plugins: [{ name: "@unworklet/lang/typescript-plugin" }],
+    },
+    include: ["worklets.d.ts", "../**/*.ts"],
+    exclude: ["../node_modules"],
+  },
+  null,
+  2,
+)}\n`;
+
 // ─────────────────────────────────────────────────────────────────────────
 // Plugin factory
 // ─────────────────────────────────────────────────────────────────────────
@@ -799,6 +827,13 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
       await mkdir(outDir, { recursive: true });
       const entries = [...workletWitness].map(([source, ns]) => ({ source, ns }));
       await writeFile(path.join(outDir, "worklets.d.ts"), workletsDts(entries));
+      // A tsconfig the consumer extends with one line. It carries the three
+      // unworklet type settings so no `vite-env.d.ts` is needed (bundler-agnostic):
+      // `types` resolves the `?worklet` import, `plugins` type-checks `.uwk.ts`
+      // sugar in the editor, and `include` pulls the generated `worklets.d.ts` (the
+      // dot-folder is skipped by globs, so it is listed explicitly). Content is
+      // fixed — adding processors only regrows `worklets.d.ts`, never this file.
+      await writeFile(path.join(outDir, "tsconfig.json"), GENERATED_TSCONFIG);
     } catch (err) {
       // Type generation is best-effort: the WASM still compiles and runs without
       // it (the wildcard `?worklet` type keeps resolving). Warn once so a real
@@ -888,8 +923,9 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
     configResolved(config) {
       isServe = config.command === "serve";
       projectRoot = config.root;
-      // Create the witness up front so the consumer's vite-env reference resolves
-      // even before the first processor import (empty until a `?worklet` loads).
+      // Seed `.unworklet/` up front (the extended tsconfig + an empty witness) so
+      // the consumer's `extends` resolves even before the first processor import
+      // (the witness fills in as each `?worklet` loads).
       void writeWorkletsWitness();
       // Dev internal URLs (= `/@id/...`, `/__unworklet/...`) must be
       // request-path absolute so the middleware's `startsWith(...)` match
