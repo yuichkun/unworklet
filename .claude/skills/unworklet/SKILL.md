@@ -176,6 +176,12 @@ node.events.setCount.emit({ value: 42 });      // main → worklet send (event({
 const blob = await node.snapshot();            // ASYNC; const res = await node.restore(blob); if (!res.ok) {...}
 ```
 
+Every `node.*` surface above (params / state / events / midi / inputs / outputs)
+is typed per-processor — names complete, an undeclared name errors — when
+`vite-env.d.ts` references both `@unworklet/vite-plugin/client` and the
+plugin-generated `./.unworklet/worklets.d.ts`. The plugin writes `.unworklet/` on
+dev/build; gitignore it.
+
 ## Verify
 
 ```ts

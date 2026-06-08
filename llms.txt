@@ -22,9 +22,12 @@ from memory. When in doubt, read the package READMEs in `node_modules` (e.g.
 
 A processor is authored in `name.processor.ts` (or `name.uwk.ts`) and imported
 in the app with a **default** import: `import x from "./name.processor.ts?worklet"`.
-Type the `?worklet` import once per project by adding
-`/// <reference types="@unworklet/vite-plugin/client" />` to a `.d.ts` (e.g.
-`vite-env.d.ts`).
+Type the `?worklet` import once per project by adding two references to a `.d.ts`
+(e.g. `vite-env.d.ts`): `/// <reference types="@unworklet/vite-plugin/client" />`
+types the import, and `/// <reference path="./.unworklet/worklets.d.ts" />` pulls
+in the per-processor types the plugin generates on dev/build so
+`node.params.<name>` (and state / events / midi / inputs / outputs) are typed and
+an undeclared name errors. `.unworklet/` is a generated artifact — gitignore it.
 
 ## DSL quick reference (exact forms)
 

@@ -41,14 +41,21 @@ import unworklet from "@unworklet/vite-plugin";
 export default { plugins: [unworklet()] };
 ```
 
-Add one line to your `vite-env.d.ts` so the `?worklet` import is typed (next to
-Vite's own client types):
+Add two references to your `vite-env.d.ts` (next to Vite's own client types): the
+first types the `?worklet` import, the second pulls in the per-processor types the
+plugin generates, so `node.params.<name>` (and `state` / `events` / `midi` /
+`inputs` / `outputs`) are typed on the main thread:
 
 ```ts
 // vite-env.d.ts
 /// <reference types="vite/client" />
 /// <reference types="@unworklet/vite-plugin/client" />
+/// <reference path="./.unworklet/worklets.d.ts" />
 ```
+
+The plugin writes `.unworklet/worklets.d.ts` from your processors' declarations on
+`vite dev` / `vite build`; add `.unworklet/` to `.gitignore` (a generated
+artifact, like Nuxt's `.nuxt/` or Prisma's client).
 
 A processor is a `.uwk.ts` file — write the DSP as plain expressions and
 unworklet lowers it to the core primitives, compiles it to WASM, and proves it's
