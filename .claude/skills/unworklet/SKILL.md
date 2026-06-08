@@ -177,10 +177,13 @@ const blob = await node.snapshot();            // ASYNC; const res = await node.
 ```
 
 Every `node.*` surface above (params / state / events / midi / inputs / outputs)
-is typed per-processor — names complete, an undeclared name errors — when
-`vite-env.d.ts` references both `@unworklet/unplugin/client` and the
-plugin-generated `./.unworklet/worklets.d.ts`. The plugin writes `.unworklet/` on
-dev/build; gitignore it.
+is typed per-processor — names complete, an undeclared name errors — when the
+project's `tsconfig.json` does `{ "extends": "./.unworklet/tsconfig.json" }` (no
+`vite-env.d.ts`). The plugin writes `.unworklet/` on dev/build (that tsconfig plus a
+`worklets.d.ts` of per-processor types); gitignore it. Don't add your own `include`
+to that tsconfig. Can't extend? Put `types: ["@unworklet/unplugin/client"]` +
+`plugins: [{ name: "@unworklet/lang/typescript-plugin" }]` in `compilerOptions` and
+list `.unworklet/worklets.d.ts` in `include` directly.
 
 ## Verify
 
@@ -215,9 +218,9 @@ expectStable(r);
 `.uwk.ts` desugars to the same primitives: `a * b` → `a.mul(b)`, `out.left[i] = v`
 → `out.left.at(i).write(v)`, `buf[i]` → `buf.read(i)`, a bare `state` in a value
 position → `state.read()`. Scalar writes are still explicit `state.write(v)`.
-The body is wrapped in ambient `process(() => { ... })`. For IDE type-checking of
-the sugar (drop `// @ts-nocheck`), add `@unworklet/lang/typescript-plugin` to
-`tsconfig` `plugins` — that single entry is the whole setup; the plugin auto-injects
-the shipped ambient `.d.ts`, so there is no `files` / `types` entry to add. For a
-build-time check, use `unworklet-tsc` in place of `tsc`. See `@unworklet/lang`'s
-README → IDE support.
+The body is wrapped in ambient `process(() => { ... })`. IDE type-checking of the
+sugar (drop `// @ts-nocheck`) comes from the `@unworklet/lang/typescript-plugin`
+language-service plugin, which the `{ "extends": "./.unworklet/tsconfig.json" }`
+setup already includes (it auto-injects the shipped ambient `.d.ts`, so there is no
+`files` / `types` entry to add). For a build-time check, use `unworklet-tsc` in
+place of `tsc`. See `@unworklet/lang`'s README → IDE support.

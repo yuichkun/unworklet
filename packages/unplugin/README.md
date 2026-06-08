@@ -22,22 +22,28 @@ export default defineConfig({
 });
 ```
 
-Type the `?worklet` import in your `vite-env.d.ts` (alongside Vite's own client
-types). The second unworklet reference is the per-processor type the plugin
-generates — it makes `node.params.<name>` typed on the main thread:
+Type the `?worklet` import with one line in your `tsconfig.json` — no
+`vite-env.d.ts`:
 
-```ts
-// vite-env.d.ts
-/// <reference types="vite/client" />
-/// <reference types="@unworklet/unplugin/client" />
-/// <reference path="./.unworklet/worklets.d.ts" />
+```jsonc
+// tsconfig.json
+{ "extends": "./.unworklet/tsconfig.json" }
 ```
 
-The plugin writes `.unworklet/worklets.d.ts` on `vite dev` / `vite build` from
-your processors' own declarations, so `node.params.<name>` completes and an
-undeclared name (or a wrong-typed assignment) is a type error — no annotations
-to maintain, refreshed as you edit. Add `.unworklet/` to `.gitignore`; it's a
-generated artifact (the same shape as Nuxt's `.nuxt/` or Prisma's client).
+On `vite dev` / `vite build` the plugin writes `.unworklet/` — that `tsconfig.json`
+plus a `worklets.d.ts` of per-processor types — so `node.params.<name>` completes
+and an undeclared name (or a wrong-typed assignment) is a type error, refreshed as
+you edit. Adding processors only regrows `worklets.d.ts`; the tsconfig never
+changes. `extends` doesn't merge `include`, so don't declare your own on this
+tsconfig. Add `.unworklet/` to `.gitignore`; it's a generated artifact (the same
+shape as Nuxt's `.nuxt/` or Prisma's client).
+
+The extended config also carries `@unworklet/lang`'s editor plugin, so `.uwk.ts`
+sugar type-checks with no `// @ts-nocheck`. **Can't extend** (an existing tsconfig
+you can't restructure)? Write the same settings directly instead:
+`compilerOptions.types: ["@unworklet/unplugin/client"]`, `compilerOptions.plugins:
+[{ name: "@unworklet/lang/typescript-plugin" }]`, and list `.unworklet/worklets.d.ts`
+in `include` (a `**/*` glob skips the dot-folder).
 
 ## Usage: loading a processor
 

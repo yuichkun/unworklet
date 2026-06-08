@@ -97,6 +97,10 @@ shipped ambient `.d.ts` (it declares `audioInput` / `state` / `process` / `input
 }
 ```
 
+If you use `@unworklet/unplugin`, its `{ "extends": "./.unworklet/tsconfig.json" }`
+setup already carries this plugin — add it yourself only when using `@unworklet/lang`
+on its own.
+
 In VS Code, also run **“TypeScript: Select TypeScript Version → Use Workspace
 Version”** so the editor loads the plugin (TS-server plugins only load under the
 workspace TypeScript, not VS Code's bundled one). You then get, on the sugar

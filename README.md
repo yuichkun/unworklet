@@ -41,35 +41,51 @@ import unworklet from "@unworklet/unplugin";
 export default { plugins: [unworklet()] };
 ```
 
-Add two references to your `vite-env.d.ts` (next to Vite's own client types): the
-first types the `?worklet` import, the second pulls in the per-processor types the
-plugin generates, so `node.params.<name>` (and `state` / `events` / `midi` /
-`inputs` / `outputs`) are typed on the main thread:
-
-```ts
-// vite-env.d.ts
-/// <reference types="vite/client" />
-/// <reference types="@unworklet/unplugin/client" />
-/// <reference path="./.unworklet/worklets.d.ts" />
-```
-
-The plugin writes `.unworklet/worklets.d.ts` from your processors' declarations on
-`vite dev` / `vite build`; add `.unworklet/` to `.gitignore` (a generated
-artifact, like Nuxt's `.nuxt/` or Prisma's client).
-
-To type-check `.uwk.ts` sugar in your editor, add `@unworklet/lang`'s plugin to
-`tsconfig.json` — then the sugar type-checks with hover, completion, and
-diagnostics, no `@ts-nocheck`:
+Add one line to your `tsconfig.json`. The plugin generates a `.unworklet/tsconfig.json`
+that wires up the main-thread types **and** the `.uwk.ts` editor checker, so
+`node.params.<name>` (and `state` / `events` / `midi` / `inputs` / `outputs`) are
+typed and the sugar type-checks with no `@ts-nocheck` — no `vite-env.d.ts` needed:
 
 ```jsonc
 // tsconfig.json
-{ "compilerOptions": { "plugins": [{ "name": "@unworklet/lang/typescript-plugin" }] } }
+{ "extends": "./.unworklet/tsconfig.json" }
 ```
 
+The plugin writes `.unworklet/` (the tsconfig above plus a `worklets.d.ts` carrying
+your processors' types) on `vite dev` / `vite build`; add `.unworklet/` to
+`.gitignore` (a generated artifact, like Nuxt's `.nuxt/`). Adding processors only
+regrows `worklets.d.ts` — you never touch your tsconfig again. Don't put your own
+`include` on this tsconfig: `extends` doesn't merge `include`, so the generated one
+must own it (need your own? use the manual setup below).
+
 In VS Code, run **“TypeScript: Select TypeScript Version → Use Workspace
-Version”** (TS-server plugins load only under the workspace TypeScript). For
-build / CI the same package ships `unworklet-tsc`, a drop-in `tsc` that checks
+Version”** (the editor plugin loads only under the workspace TypeScript). For
+build / CI, `@unworklet/lang` ships `unworklet-tsc`, a drop-in `tsc` that checks
 `.uwk.ts` too.
+
+<details>
+<summary>Can’t extend (an existing tsconfig you can’t restructure)?</summary>
+
+Write the same three settings into your own `tsconfig.json` directly — still no
+`vite-env.d.ts`:
+
+```jsonc
+// tsconfig.json
+{
+  "compilerOptions": {
+    "types": ["@unworklet/unplugin/client"],
+    "plugins": [{ "name": "@unworklet/lang/typescript-plugin" }],
+  },
+  "include": ["src", ".unworklet/worklets.d.ts"],
+}
+```
+
+List `.unworklet/worklets.d.ts` explicitly in `include` — a `**/*` glob skips the
+dot-folder. If this is the first `types` entry in your config, also list the type
+packages you already rely on (e.g. `"node"`), since `types` disables automatic
+`@types` loading.
+
+</details>
 
 A processor is a `.uwk.ts` file — write the DSP as plain expressions and
 unworklet lowers it to the core primitives, compiles it to WASM, and proves it's

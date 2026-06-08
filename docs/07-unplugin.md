@@ -54,13 +54,20 @@ The plugin is the only first-party bundler integration in v1.0.0. Other bundlers
      - Vite asset pipeline integration: file hashing, public path, base URL respect.
      - Worklet module loading via `audioContext.audioWorklet.addModule(processorUrl)`. -->
 
-The `?worklet` import is typed by an ambient `declare module "*?worklet"` the
-plugin ships at `@unworklet/unplugin/client` (the same shape as `vite/client`).
-A consumer pulls it in with one line — `/// <reference types="@unworklet/unplugin/client" />`
-in a `.d.ts` such as `vite-env.d.ts` — and the **default** export of a `?worklet`
-module types as `CompiledProcessor<unknown>`. The per-processor type witness is
-erased across the virtual-module boundary, so the typed surface is `unknown`; the
-default export is the supported import form (a named import is not typed).
+The `?worklet` import is typed through `tsconfig.json` alone — no `vite-env.d.ts`,
+so the wiring is bundler-agnostic. The plugin ships an ambient
+`declare module "*?worklet"` at `@unworklet/unplugin/client` (the same shape as
+`vite/client`) whose **default** export types as `CompiledProcessor<unknown>`, and
+on dev/build it generates two artifacts under `.unworklet/`: a `worklets.d.ts`
+carrying a more specific `declare module "*/<file>?worklet"` per processor (the
+per-processor types win by longest-match), and a `tsconfig.json` that carries
+`types` (the client ambient), `plugins` (the `.uwk.ts` editor checker), and an
+`include` listing `worklets.d.ts`. A consumer extends it with one line —
+`{ "extends": "./.unworklet/tsconfig.json" }` — and `node.params.<name>` (and the
+other surfaces) type per-processor; the default export is the supported import form
+(a named import is not typed). `extends` does not merge `include`, so the generated
+config owns it; a project that needs its own `include` instead writes the three
+settings directly (the escape hatch). The generated artifacts are gitignored.
 
 ## 4. HMR boundary
 

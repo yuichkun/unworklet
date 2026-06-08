@@ -22,12 +22,16 @@ from memory. When in doubt, read the package READMEs in `node_modules` (e.g.
 
 A processor is authored in `name.processor.ts` (or `name.uwk.ts`) and imported
 in the app with a **default** import: `import x from "./name.processor.ts?worklet"`.
-Type the `?worklet` import once per project by adding two references to a `.d.ts`
-(e.g. `vite-env.d.ts`): `/// <reference types="@unworklet/unplugin/client" />`
-types the import, and `/// <reference path="./.unworklet/worklets.d.ts" />` pulls
-in the per-processor types the plugin generates on dev/build so
-`node.params.<name>` (and state / events / midi / inputs / outputs) are typed and
-an undeclared name errors. `.unworklet/` is a generated artifact — gitignore it.
+Type the `?worklet` import once per project by extending the tsconfig the plugin
+generates: `{ "extends": "./.unworklet/tsconfig.json" }` (no `vite-env.d.ts`). The
+plugin writes `.unworklet/` on dev/build — the tsconfig plus a `worklets.d.ts` of
+per-processor types — so `node.params.<name>` (and state / events / midi / inputs /
+outputs) are typed and an undeclared name errors. Don't add your own `include` to
+that tsconfig (`extends` doesn't merge it). Can't extend? Write the three settings
+directly: `compilerOptions.types: ["@unworklet/unplugin/client"]`,
+`compilerOptions.plugins: [{ name: "@unworklet/lang/typescript-plugin" }]`, and list
+`.unworklet/worklets.d.ts` in `include` (a glob skips the dot-folder). `.unworklet/`
+is a generated artifact — gitignore it.
 
 ## DSL quick reference (exact forms)
 
@@ -81,7 +85,7 @@ Migrate persisted state across schema changes with the 2nd `defineProcessor` arg
 - A worklet→main `event` emits only via `.emitIf(cond, payload)` — there is no bare `.emit()` on the worklet side. To fire once on a note, set a flag `state` in the handler and `.emitIf(flag.read(), …)` in `process`.
 - Infix operators (`a * b`, `a + b`) on `Node`s work ONLY in `.uwk.ts`. In `.ts` / `.processor.ts` use methods or free functions (`a.mul(b)` / `mul(a, b)`) — a `Node` has no JS operators.
 - Import processors with the `?worklet` query as the **default** import (`import x from "...?worklet"`) — not a named import, and don't import the raw module.
-- `.uwk.ts` sugar and the plain `.ts` API are not mixed in one file. Without the `@unworklet/lang` editor plugin a `.uwk.ts` needs `// @ts-nocheck`; add the plugin to `tsconfig` `plugins` (it auto-injects the shipped ambient — no `files` / `types` entry) and the sugar type-checks so the header is dropped (see `@unworklet/lang`'s README → IDE support).
+- `.uwk.ts` sugar and the plain `.ts` API are not mixed in one file. Without the `@unworklet/lang` editor plugin a `.uwk.ts` needs `// @ts-nocheck`; the `{ "extends": "./.unworklet/tsconfig.json" }` setup above already includes that plugin (it auto-injects the shipped ambient — no `files` / `types` entry), so the sugar type-checks and the header is dropped (see `@unworklet/lang`'s README → IDE support).
 
 ## Main-thread usage
 
