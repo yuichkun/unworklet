@@ -40,7 +40,6 @@ export function useUnworkletDemo() {
   let master: GainNode | null = null;
   let source: AudioBufferSourceNode | OscillatorNode | null = null;
   let fileBuffer: AudioBuffer | null = null;
-  let fileName: string | null = null;
   let current: Example | null = null;
 
   const ensureCtx = async (): Promise<AudioContext> => {
@@ -221,15 +220,8 @@ export function useUnworkletDemo() {
   async function loadFile(file: File): Promise<void> {
     const c = await ensureCtx();
     fileBuffer = await c.decodeAudioData(await file.arrayBuffer());
-    fileName = file.name;
     if (playing.value && current?.kind === "effect") void play();
   }
-  function clearFile(): void {
-    fileBuffer = null;
-    fileName = null;
-    if (playing.value && current?.kind === "effect") void play();
-  }
-  const loadedFileName = (): string | null => fileName;
 
   async function teardown(): Promise<void> {
     stop();
@@ -264,8 +256,6 @@ export function useUnworkletDemo() {
     noteOff,
     recompile,
     loadFile,
-    clearFile,
-    loadedFileName,
     destroy,
   };
 }

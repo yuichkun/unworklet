@@ -29,7 +29,6 @@
     "@vitejs/devtools": "catalog:",
     "@vitejs/devtools-kit": "catalog:",
     "@vitejs/plugin-vue": "catalog:",
-    "esbuild": "catalog:",
     "playwright": "catalog:",
     "vite-plus": "catalog:"
   }
