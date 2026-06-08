@@ -16,14 +16,16 @@
 
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { compile, extractWorkletMeta } from "@unworklet/core";
-import type { CompiledProcessor } from "@unworklet/core";
+import type { CompiledProcessor, WorkletNamespace } from "@unworklet/core";
 import { lower } from "@unworklet/lang";
 import type { Plugin } from "vite";
+
+import { workletsDts } from "./worklet-dts.ts";
 
 // ─────────────────────────────────────────────────────────────────────────
 // DevTools live audio-graph topology (Wire 4)
@@ -777,6 +779,35 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
   let isServe = false;
   let devtoolsActive = false;
   let basePath = "/";
+  let projectRoot = "";
+  // Every `?worklet`-imported processor's compiled namespace, accumulated as
+  // `load` evaluates each one. The aggregate witness `.d.ts` re-emits with the
+  // full set on every (re)load — the typed `node.params` surface, no per-file
+  // reference needed (mirrors Nuxt's `.nuxt/` codegen + Prisma's generate).
+  const workletWitness = new Map<string, WorkletNamespace>();
+  let witnessWarned = false;
+  const writeWorkletsWitness = async (): Promise<void> => {
+    // Only write into an existing project root. A non-existent root means a
+    // synthetic config (e.g. a unit test passing a placeholder path), and the
+    // recursive mkdir would otherwise materialise that fake tree on disk.
+    if (!projectRoot || !existsSync(projectRoot) || workletWitness.size === 0) return;
+    try {
+      const outDir = path.join(projectRoot, ".unworklet");
+      await mkdir(outDir, { recursive: true });
+      const entries = [...workletWitness].map(([source, ns]) => ({ source, ns }));
+      await writeFile(path.join(outDir, "worklets.d.ts"), workletsDts(entries));
+    } catch (err) {
+      // Type generation is best-effort: the WASM still compiles and runs without
+      // it (the wildcard `?worklet` type keeps resolving). Warn once so a real
+      // permission / path problem is visible without flooding the dev log.
+      if (witnessWarned) return;
+      witnessWarned = true;
+      const at = path.join(projectRoot, ".unworklet", "worklets.d.ts");
+      console.warn(
+        `[@unworklet/vite-plugin] could not write ${at} — node.params types are unavailable: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  };
   // Source paths the plugin has accepted via `?worklet` resolveId. Only these
   // are eligible for dev-mode evaluation + `compile(...)`. Without this gate,
   // the middleware would happily evaluate any absolute path that base64url-
@@ -853,6 +884,7 @@ export default function unworklet(options?: UnworkletPluginOptions): Plugin {
     },
     configResolved(config) {
       isServe = config.command === "serve";
+      projectRoot = config.root;
       // Dev internal URLs (= `/@id/...`, `/__unworklet/...`) must be
       // request-path absolute so the middleware's `startsWith(...)` match
       // works. Vite documents `base` may be `'./'` / `''` (= relative,
@@ -1439,6 +1471,11 @@ ensureClient();
         }
       }
       const { exportName, processor } = pickCompiledProcessor(sourceModule, sourcePath);
+
+      // Record this processor's compiled namespace and (re-)emit the aggregate
+      // witness so the consumer's `node.params.<name>` (and friends) is typed.
+      workletWitness.set(sourcePath, processor.worklet);
+      await writeWorkletsWitness();
 
       const baseName = assetBaseName(sourcePath);
 
