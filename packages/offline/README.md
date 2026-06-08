@@ -51,7 +51,8 @@ npm install -D @types/node
 }
 ```
 
-Run it with any TS runner — `tsx`, or `node` ≥ 22.6 (which strips types natively).
+The packages are ESM-only, so your `package.json` needs `"type": "module"`. Run it
+with any TS runner — `tsx`, or `node` ≥ 22.6 (which strips types natively).
 
 ## Rendering a `.uwk.ts` processor
 

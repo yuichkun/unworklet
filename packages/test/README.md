@@ -40,6 +40,11 @@ test("lowpass attenuates 10 kHz", async () => {
 - **Events / state / MIDI:** `expectEventsEqual`, `expectEventsContaining`,
   `expectEventCount`, `expectStateMatches`, `expectMidiOut`, `expectMidiBalance`.
 
+The time / frequency matchers take a trailing `opts`. On a **multichannel** port
+you must pass `{ channel }` to choose which channel to measure —
+`expectGainAtFreq(result, 10000, -24, 3, { channel: 1 })` — so a broken non-first
+channel can't slip by; a mono port defaults to channel 0.
+
 ## Generators & helpers
 
 - **Signals:** `sine`, `silence`, `impulse`, `sineSweep`, `whiteNoise`, `dc`, `ramp`.
@@ -51,9 +56,19 @@ test("lowpass attenuates 10 kHz", async () => {
 
 ## Vitest chain form
 
-Import `@unworklet/test/extend` once (e.g. in a setup file) to get fluent
-matchers: `expect(result).toMatchAudio(...)`, `.toBeStable()`,
-`.toHaveGainAtFreq(...)`, `.toEmitMidi(...)`, and so on.
+Import `@unworklet/test/extend` once to get fluent matchers:
+`expect(result).toMatchAudio(...)`, `.toBeStable()`, `.toHaveGainAtFreq(...)`,
+`.toEmitMidi(...)`, and so on. Put the import in a setup file and register it in
+your Vitest config:
+
+```ts
+// vitest.setup.ts
+import "@unworklet/test/extend";
+
+// vitest.config.ts
+import { defineConfig } from "vitest/config";
+export default defineConfig({ test: { setupFiles: ["./vitest.setup.ts"] } });
+```
 
 ## Related packages
 
