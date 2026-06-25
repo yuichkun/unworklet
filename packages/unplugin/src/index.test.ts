@@ -1648,9 +1648,27 @@ test("devtools.setup wires the graph + live-state + signals shared states and th
   expect(ctx.rpc.__sharedStateGets).toContain("unworklet:midi");
   expect(ctx.rpc.__sharedStateGets).toContain("unworklet:midi-inject");
   const registered = ctx.rpc.__registerCalls.map((f) => (f as { name: string }).name);
-  expect(registered).toContain("unworklet:graph-update");
-  expect(registered).toContain("unworklet:state-update");
-  expect(registered).toContain("unworklet:signals-update");
-  expect(registered).toContain("unworklet:midi-update");
+  // The four page-pushed methods MUST carry the `devframe:anonymous:` scope, or the
+  // untrusted page client is rejected with DTK0013 and the 33ms signals poll floods
+  // the console (blocking the panel). MIDI inject is panel-driven (trusted), so it
+  // stays unscoped — locking this distinction is the regression guard.
+  expect(registered).toContain("devframe:anonymous:unworklet:graph-update");
+  expect(registered).toContain("devframe:anonymous:unworklet:state-update");
+  expect(registered).toContain("devframe:anonymous:unworklet:signals-update");
+  expect(registered).toContain("devframe:anonymous:unworklet:midi-update");
   expect(registered).toContain("unworklet:midi-inject");
+  expect(registered).not.toContain("devframe:anonymous:unworklet:midi-inject");
+});
+
+test("the devbridge page-script pushes via anonymous-scoped RPC names (the page is an untrusted client)", async () => {
+  const js = (await callLoadNoContext("\0unworklet-devbridge")) as string;
+  // The page pushes graph / state / signals / MIDI here; each must call the
+  // `devframe:anonymous:`-scoped name registered server-side, or the untrusted page
+  // client is rejected with DTK0013 and the 33ms signals poll floods the console.
+  expect(js).toContain('"devframe:anonymous:unworklet:signals-update"');
+  expect(js).toContain('"devframe:anonymous:unworklet:graph-update"');
+  expect(js).toContain('"devframe:anonymous:unworklet:state-update"');
+  expect(js).toContain('"devframe:anonymous:unworklet:midi-update"');
+  // No unscoped page push slipped through.
+  expect(js).not.toMatch(/rpcCall\("unworklet:/);
 });

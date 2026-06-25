@@ -648,11 +648,22 @@ const setupDevtools = async (
   // plugin's module graph — and anything importing it, e.g. tests — does not
   // eagerly pull the devtools runtime.
   const { defineRpcFunction } = await import("@vitejs/devtools-kit");
+  // The page-script (devbridge) pushes graph / state / signals / MIDI here, but it
+  // is an UNTRUSTED devtools client (no auth token), so a normal RPC name is
+  // rejected with DTK0013 "Unauthorized access to method" — and the 33ms signals
+  // poll turns that into a console flood that blocks the panel. The only bypass is
+  // `@vitejs/devtools`'s anonymous-method mechanism: a method whose name starts with
+  // its internal `ANONYMOUS_SCOPE` skips the client-auth check. That scope is
+  // version-coupled and unexported — `vite:anonymous:` in devtools 0.2.x,
+  // `devframe:anonymous:` in 0.3.x — so this string tracks the `@vitejs/devtools-kit`
+  // peer range (^0.3). These pushes are dev-only, local, and non-sensitive, so
+  // anonymous is the right scope. (MIDI inject below is called from the trusted
+  // panel, not the page, so it needs no prefix.)
   const graphState = await ctx.rpc.sharedState.get("unworklet:graph", {
     initialValue: { nodes: [], edges: [] },
   });
   const graphUpdate = defineRpcFunction({
-    name: "unworklet:graph-update",
+    name: "devframe:anonymous:unworklet:graph-update",
     type: "action",
     setup: () => ({
       handler: async (graph: DevAudioGraph): Promise<void> => {
@@ -673,7 +684,7 @@ const setupDevtools = async (
     initialValue: { nodes: [] },
   });
   const stateUpdate = defineRpcFunction({
-    name: "unworklet:state-update",
+    name: "devframe:anonymous:unworklet:state-update",
     type: "action",
     setup: () => ({
       handler: async (state: DevLiveState): Promise<void> => {
@@ -695,7 +706,7 @@ const setupDevtools = async (
     },
   });
   const signalsUpdate = defineRpcFunction({
-    name: "unworklet:signals-update",
+    name: "devframe:anonymous:unworklet:signals-update",
     type: "action",
     setup: () => ({
       handler: async (signals: DevSignalsState): Promise<void> => {
@@ -714,7 +725,7 @@ const setupDevtools = async (
     initialValue: { ports: [], log: [] },
   });
   const midiUpdate = defineRpcFunction({
-    name: "unworklet:midi-update",
+    name: "devframe:anonymous:unworklet:midi-update",
     type: "action",
     setup: () => ({
       handler: async (midi: DevMidiState): Promise<void> => {
@@ -1194,7 +1205,7 @@ const push = () => {
   pending = true;
   queueMicrotask(() => {
     pending = false;
-    rpcCall("unworklet:graph-update", buildGraph());
+    rpcCall("devframe:anonymous:unworklet:graph-update", buildGraph());
   });
 };
 
@@ -1226,7 +1237,7 @@ const pollState = async () => {
       const { scalars, buffers } = splitSlots(slots, BUFFER_MAX_POINTS);
       nodes.push({ id: idOf(h.node.node), displayName: h.displayName || h.processorName, scalars, buffers });
     }
-    rpcCall("unworklet:state-update", { nodes });
+    rpcCall("devframe:anonymous:unworklet:state-update", { nodes });
   } finally {
     statePolling = false;
   }
@@ -1306,7 +1317,7 @@ const pollSignals = async () => {
   const context = actx
     ? { sampleRate: actx.sampleRate || 0, baseLatencyMs: (actx.baseLatency || 0) * 1000, outputLatencyMs: (actx.outputLatency || 0) * 1000 }
     : { sampleRate: 0, baseLatencyMs: 0, outputLatencyMs: 0 };
-  rpcCall("unworklet:signals-update", { nodes, context });
+  rpcCall("devframe:anonymous:unworklet:signals-update", { nodes, context });
 };
 let signalsTimer = null;
 const startSignalsPoll = () => {
@@ -1396,7 +1407,7 @@ const pollMidi = () => {
   const sig = JSON.stringify({ ports, log: midiLog });
   if (sig === lastMidiSig) return;
   lastMidiSig = sig;
-  rpcCall("unworklet:midi-update", { ports, log: midiLog });
+  rpcCall("devframe:anonymous:unworklet:midi-update", { ports, log: midiLog });
 };
 let midiTimer = null;
 const startMidiPoll = () => {
