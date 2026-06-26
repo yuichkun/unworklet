@@ -25,16 +25,18 @@ npm install -D @unworklet/lang
 Same declarations as core, but the `process` body uses operators. There is no
 `defineProcessor` wrapper and no `return { process }` — the file _is_ the
 processor body, and `process(() => { ... })` is ambient. The core DSL names
-(`audioInput`, `state`, `param`, `forSample`, …) are ambient too: **write no
-import** — the lowering injects the `@unworklet/core` import for you. `ctx` is
-ambient as well — the same `ProcessorContext` that core's `defineProcessor((ctx)
-=> …)` passes you, so `ctx.sampleRate` is how a generator reaches the sample rate.
+(`audioInput`, `state`, `param`, `forSample`, …) are ambient too: **the DSL needs
+no import** — the lowering injects the `@unworklet/core` import for you. You can
+still `import` from your own files (shared constants, params, helpers); those are
+kept at module scope and resolve as usual. `ctx` is ambient as well — the same
+`ProcessorContext` that core's `defineProcessor((ctx) => …)` passes you, so
+`ctx.sampleRate` is how a generator reaches the sample rate.
 `.named()` / `.expose({...})` with no name derive it from the binding.
 
-Out of the box, stock TypeScript flags the sugar — a `.uwk.ts` writes no imports,
-so the authoring names (`audioInput`, `state`, …) are undefined and the infix
-operators on the resulting values don't type-check — so a `// @ts-nocheck` header
-is needed.
+Out of the box, stock TypeScript flags the sugar — a `.uwk.ts` imports no DSL
+names, so the authoring names (`audioInput`, `state`, …) are undefined and the
+infix operators on the resulting values don't type-check — so a `// @ts-nocheck`
+header is needed.
 **Install the editor plugin ([IDE support](#ide-support)) and the header goes
 away** — the sugar type-checks, with hover / completion / go-to-definition on
 the operands.
