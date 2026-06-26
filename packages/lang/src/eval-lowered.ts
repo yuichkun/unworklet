@@ -24,6 +24,20 @@ export function evalLowered(loweredTs: string): CompiledProcessor<unknown> {
   const body = js
     .replace(/import\s*\{[^}]*\}\s*from\s*["']@unworklet\/core["'];?/g, "")
     .replace(/export\s+default\s+/, "return ");
+  // Any import left after stripping the core one is a cross-file import (sharing a
+  // constant / helper from a sibling). The in-memory / browser runtime-compile path
+  // evaluates the module via `new Function`, which has no module loader and no
+  // filesystem — so it cannot resolve them. Surface that as an actionable error
+  // rather than the opaque `SyntaxError: Cannot use import statement` Function throws.
+  const residual = /(?:^|\n)\s*(?:import|export)\b[^\n]*\bfrom\b/.exec(body);
+  if (residual !== null) {
+    throw new Error(
+      "unworklet: a .uwk.ts compiled in the browser / in-memory runtime cannot import " +
+        `from other files (found \`${residual[0].trim()}\`). Cross-file imports resolve ` +
+        "through the bundler (`?worklet`) build path; in the runtime-compile path, inline " +
+        "the value instead.",
+    );
+  }
   // The injected identifiers ARE the real core exports — equivalent to importing them.
   // oxlint-disable-next-line typescript/no-implied-eval
   const fn = new Function(...CORE_KEYS, body) as (...args: unknown[]) => CompiledProcessor<unknown>;

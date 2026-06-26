@@ -113,15 +113,45 @@ test("rejects a process() without an arrow / function callback", () => {
   }
 });
 
-test("rejects an import statement (.uwk.ts is ambient)", () => {
-  // An import would otherwise be moved into the generated defineProcessor
-  // callback as an illegal nested import (reported by @codex on #12).
-  try {
-    lower(`import { state } from "@unworklet/core";\nprocess(() => {});`);
-    throw new Error("expected throw");
-  } catch (e) {
-    expect((e as LowerError).id).toBe("uwk-no-import");
-  }
+test("preserves a user import at module top-level (cross-file constant sharing)", () => {
+  // Imports must survive at module scope — not be moved into the defineProcessor
+  // callback (an illegal nested import) — so a `.uwk.ts` can share constants /
+  // params from sibling files. The lowered module is written next to the source,
+  // so the relative specifier resolves unchanged.
+  const out = lower(
+    `import { BASE_GAIN } from "./constants.ts";\n` +
+      `const out = audioOutput({ channels: 1, name: "main" });\n` +
+      `process(() => {\n` +
+      `  forSample((i) => {\n` +
+      `    out.ch(0).at(i).write(f32(BASE_GAIN));\n` +
+      `  });\n` +
+      `});`,
+  );
+  expect(out).toContain('import { BASE_GAIN } from "./constants.ts"');
+  // It sits at module scope, ahead of the defineProcessor wrap — not nested inside.
+  const userImportIdx = out.indexOf("import { BASE_GAIN }");
+  expect(userImportIdx).toBeGreaterThanOrEqual(0);
+  expect(userImportIdx).toBeLessThan(out.indexOf("defineProcessor"));
+  // The injected core import is still emitted and the constant is referenced.
+  expect(out).toContain('from "@unworklet/core"');
+  expect(out).toContain("f32(BASE_GAIN)");
+});
+
+test("a user import of an ambient core name keeps a single binding (no duplicate)", () => {
+  // Importing a name the DSL already provides ambiently must not double-bind it:
+  // the injected core import drops any name the user imports explicitly.
+  const out = lower(
+    `import { state } from "@unworklet/core";\n` +
+      `const s = state.f32(0).named("s");\n` +
+      `process(() => {\n` +
+      `  s.write(f32(1));\n` +
+      `});`,
+  );
+  expect(out).toContain('import { state } from "@unworklet/core"');
+  // The injected import (the one carrying defineProcessor) must NOT also bind `state`.
+  const coreImports = out.match(/import \{[^}]*\} from "@unworklet\/core"/g) ?? [];
+  const injected = coreImports.find((i) => i.includes("defineProcessor"))!;
+  expect(injected).not.toContain("state");
 });
 
 test("rejects migrations()/options() referencing a processor-body binding", () => {

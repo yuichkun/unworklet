@@ -153,6 +153,26 @@ function collectUsedCoreExports(node: ts.Node): Set<string> {
   return used;
 }
 
+/** The local binding names a user import introduces (default / namespace / named,
+ * each as its in-scope alias). The injected core import drops these so a name the
+ * user imports explicitly is never double-bound (e.g. `import { state }`). */
+function importBoundNames(imports: readonly ts.ImportDeclaration[]): Set<string> {
+  const names = new Set<string>();
+  for (const decl of imports) {
+    const clause = decl.importClause;
+    if (clause === undefined) continue;
+    if (clause.name !== undefined) names.add(clause.name.text);
+    const bindings = clause.namedBindings;
+    if (bindings === undefined) continue;
+    if (ts.isNamespaceImport(bindings)) {
+      names.add(bindings.name.text);
+    } else {
+      for (const el of bindings.elements) names.add(el.name.text);
+    }
+  }
+  return names;
+}
+
 function makeCoreImport(names: readonly string[], coreModule: string): ts.ImportDeclaration {
   const specifiers = names.map((name) =>
     ts.factory.createImportSpecifier(false, undefined, ts.factory.createIdentifier(name)),
@@ -292,6 +312,7 @@ export function lower(source: string, options: LowerOptions = {}): string {
   let processBody: ts.Statement[] | undefined;
   let processCount = 0;
   const declarations: ts.Statement[] = [];
+  const userImports: ts.ImportDeclaration[] = [];
   let migrationsArg: ts.Expression | undefined;
   let optionsObject: ts.Expression | undefined;
 
@@ -318,16 +339,15 @@ export function lower(source: string, options: LowerOptions = {}): string {
       continue;
     }
     if (ts.isImportDeclaration(stmt)) {
-      // A .uwk.ts file is ambient: the @unworklet/core DSL is provided
-      // automatically and the lowering injects exactly the import it needs.
-      // A user import would otherwise be moved into the generated
-      // defineProcessor callback (an illegal nested import), so reject it
-      // with guidance rather than emit broken output.
-      throw new LowerError(
-        "uwk-no-import",
-        ".uwk.ts is ambient — remove the import statement. The @unworklet/core DSL " +
-          "(audioInput, state, param, forSample, …) is available without importing it.",
-      );
+      // A .uwk.ts is ambient — the @unworklet/core DSL needs no import — but a
+      // user import (sharing constants / params / helpers from a sibling file)
+      // must survive at module scope, NOT be moved into the defineProcessor
+      // callback (an illegal nested import). Keep it at the top of the lowered
+      // module; the bindings it introduces stay in scope for the callback by
+      // closure. The lowered module is emitted next to the source, so a relative
+      // specifier resolves unchanged.
+      userImports.push(stmt);
+      continue;
     }
     declarations.push(autoNameDeclaration(stmt));
   }
@@ -408,6 +428,10 @@ export function lower(source: string, options: LowerOptions = {}): string {
   if (needInput) used.add("audioInput");
   if (needOutput) used.add("audioOutput");
   used.add("defineProcessor");
+  // Drop any name the user imports explicitly so the injected core import never
+  // double-binds it (their import provides it). This also strips the user
+  // import's own specifier identifiers, which `collectUsedCoreExports` counts.
+  for (const name of importBoundNames(userImports)) used.delete(name);
   const importDecl = makeCoreImport([...used].sort(), coreModule);
   const optionsArg = makeOptionsArg(migrationsArg, optionsObject);
   const exported = makeDefineProcessor(
@@ -417,7 +441,7 @@ export function lower(source: string, options: LowerOptions = {}): string {
     options.exportName,
   );
 
-  const lowered = ts.factory.updateSourceFile(sf, [importDecl, exported]);
+  const lowered = ts.factory.updateSourceFile(sf, [...userImports, importDecl, exported]);
   const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
   return printer.printFile(lowered);
 }
