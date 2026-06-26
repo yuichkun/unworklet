@@ -718,7 +718,7 @@ For `@unworklet/ruby` to work as a downstream library, `@unworklet/core` must ex
 | ------------------------------------------------ | -------------------- | -------------------- |
 | `defineProcessor`                                | Build processor      | ✓                    |
 | `defineSubgraph`                                 | Build subgraph       | ✓                    |
-| `createSubgraph`                                 | Instantiate subgraph | ✓                    |
+| `instantiate`                                    | Instantiate subgraph | ✓                    |
 | `audioInput` / `audioOutput`                     | Declarations         | ✓                    |
 | `state` / `buffer` / `param`                     | Declarations         | ✓                    |
 | `event` / `message` / `midiInput` / `midiOutput` | Declarations         | ✓                    |

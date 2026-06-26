@@ -52,7 +52,7 @@ event({ to: "main", name })          // worklet→main: .emitIf(cond, payload)
 event({ from: "main", name })        // main→worklet: .onReceive(p => ...)
 event.midi({ from: "main", name })   // inbound MIDI: .onEvent("noteOn", e => ...)
 event.midi({ to: "main", name })     // outbound MIDI: .emitIf(cond, midiEvent)
-defineSubgraph((args) => ({ run: (x) => ... }))  // reusable block; createSubgraph(sg, ...args, { name }) in decl scope ($prev feedback is .uwk.ts-only)
+defineSubgraph((args) => ({ run: (x) => ... }))  // reusable block; instantiate(sg, ...args, { name }) in decl scope ($prev feedback is .uwk.ts-only)
 
 forSample((i) => { /* i = 0..127 */ })          // the per-sample loop
 forSample.byN(4, (i) => { ... })                // SIMD stride (divides 128)

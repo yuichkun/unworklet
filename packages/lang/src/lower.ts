@@ -21,7 +21,7 @@ import { buildProgram, type FsSnapshot } from "./program.ts";
 const CORE_AUTHORING_EXPORTS = new Set<string>([
   "defineProcessor",
   "defineSubgraph",
-  "createSubgraph",
+  "instantiate",
   "audioInput",
   "audioOutput",
   "state",

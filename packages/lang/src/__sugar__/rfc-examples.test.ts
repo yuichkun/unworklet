@@ -319,7 +319,7 @@ test("Ex2 $prev one-pole: `coef*x + (1-coef)*$prev` ≡ explicit injected-state 
     `const onepole = defineSubgraph((coef: Node<"f32">) => ({
        process: (x: Node<"f32">) => coef * x + (1 - coef) * $prev,
      }));
-     const lp = createSubgraph(onepole, f32(0.5), { name: "lp" });`,
+     const lp = instantiate(onepole, f32(0.5), { name: "lp" });`,
     `out.ch(0).at(i).write(lp.process(input.ch(0).at(i)));`,
   );
   const explicit = mono(
@@ -333,7 +333,7 @@ test("Ex2 $prev one-pole: `coef*x + (1-coef)*$prev` ≡ explicit injected-state 
          },
        };
      });
-     const lp = createSubgraph(onepole, f32(0.5), { name: "lp" });`,
+     const lp = instantiate(onepole, f32(0.5), { name: "lp" });`,
     `out.ch(0).at(i).write(lp.process(input.ch(0).at(i)));`,
   );
   await expectSameLowering(sugar, explicit);
@@ -344,7 +344,7 @@ test("Ex2 $prev behavioral: one-pole low-pass step response, coef=0.5", async ()
     `const onepole = defineSubgraph((coef: Node<"f32">) => ({
        process: (x: Node<"f32">) => coef * x + (1 - coef) * $prev,
      }));
-     const lp = createSubgraph(onepole, f32(0.5), { name: "lp" });`,
+     const lp = instantiate(onepole, f32(0.5), { name: "lp" });`,
     `out.ch(0).at(i).write(lp.process(input.ch(0).at(i)));`,
   );
   const res = await renderLowered(uwk, {
@@ -371,7 +371,7 @@ test("Ex2 $prev multi-method: each method gets an independent slot", async () =>
        processL: (x: Node<"f32">) => coef * x + (1 - coef) * $prev,
        processR: (x: Node<"f32">) => coef * x + (1 - coef) * $prev,
      }));
-     const s = createSubgraph(sop, f32(0.5), { name: "s" });`,
+     const s = instantiate(sop, f32(0.5), { name: "s" });`,
     `out.left.at(i).write(s.processL(input.left.at(i)));
      out.right.at(i).write(s.processR(input.right.at(i)));`,
   );
@@ -392,7 +392,7 @@ test("Ex2 $prev multi-method: each method gets an independent slot", async () =>
          },
        };
      });
-     const s = createSubgraph(sop, f32(0.5), { name: "s" });`,
+     const s = instantiate(sop, f32(0.5), { name: "s" });`,
     `out.left.at(i).write(s.processL(input.left.at(i)));
      out.right.at(i).write(s.processR(input.right.at(i)));`,
   );

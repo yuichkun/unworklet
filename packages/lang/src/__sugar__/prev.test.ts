@@ -83,7 +83,7 @@ const onepoleDecls = (coef: number): string => `
 const onepole = defineSubgraph((coef: Node<"f32">) => ({
   process: (x: Node<"f32">) => coef * x + (1 - coef) * $prev,
 }));
-const lp = createSubgraph(onepole, f32(${coef}), { name: "lp" });`;
+const lp = instantiate(onepole, f32(${coef}), { name: "lp" });`;
 const onepoleBody = `out.ch(0).at(i).write(lp.process(input.ch(0).at(i)));`;
 
 test("SEMANTIC one-pole coef=0.5, constant input: feedback persists across samples", async () => {
@@ -134,7 +134,7 @@ const onepole = defineSubgraph((coef: Node<"f32">) => {
     },
   };
 });
-const lp = createSubgraph(onepole, f32(0.2), { name: "lp" });`,
+const lp = instantiate(onepole, f32(0.2), { name: "lp" });`,
     onepoleBody,
   );
   await expectSameLowering(sugar, explicit);
@@ -161,7 +161,7 @@ test("SEMANTIC accumulator x + $prev is a running sum", async () => {
 const acc = defineSubgraph(() => ({
   run: (x: Node<"f32">) => x + $prev,
 }));
-const a = createSubgraph(acc, { name: "a" });`,
+const a = instantiate(acc, { name: "a" });`,
     `out.ch(0).at(i).write(a.run(input.ch(0).at(i)));`,
     x,
   );
@@ -178,7 +178,7 @@ test("STRUCT accumulator x + $prev ≡ explicit; no Node<T> param ⇒ default f3
 const acc = defineSubgraph(() => ({
   run: (x: Node<"f32">) => x + $prev,
 }));
-const a = createSubgraph(acc, { name: "a" });`,
+const a = instantiate(acc, { name: "a" });`,
     `out.ch(0).at(i).write(a.run(input.ch(0).at(i)));`,
   );
   const explicit = mono(
@@ -193,7 +193,7 @@ const acc = defineSubgraph(() => {
     },
   };
 });
-const a = createSubgraph(acc, { name: "a" });`,
+const a = instantiate(acc, { name: "a" });`,
     `out.ch(0).at(i).write(a.run(input.ch(0).at(i)));`,
   );
   await expectSameLowering(sugar, explicit);
@@ -208,7 +208,7 @@ test("SEMANTIC x - $prev: prev is subtracted (sign / position correct)", async (
 const sg = defineSubgraph(() => ({
   run: (x: Node<"f32">) => x - $prev,
 }));
-const s = createSubgraph(sg, { name: "s" });`,
+const s = instantiate(sg, { name: "s" });`,
     `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
     x,
   );
@@ -229,7 +229,7 @@ test("SEMANTIC $prev twice in one expr reads the SAME slot both times", async ()
 const sg = defineSubgraph((coef: Node<"f32">) => ({
   run: (x: Node<"f32">) => $prev * coef + $prev * x,
 }));
-const s = createSubgraph(sg, f32(${coef}), { name: "s" });`,
+const s = instantiate(sg, f32(${coef}), { name: "s" });`,
     `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
     x,
   );
@@ -244,7 +244,7 @@ test("SEMANTIC $prev twice with additive offset grows (both reads see prev, not 
 const sg = defineSubgraph(() => ({
   run: (x: Node<"f32">) => $prev + $prev + x,
 }));
-const s = createSubgraph(sg, { name: "s" });`,
+const s = instantiate(sg, { name: "s" });`,
     `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
     x,
   );
@@ -261,7 +261,7 @@ test("STRUCT $prev twice ≡ explicit (single slot, two reads)", async () => {
 const sg = defineSubgraph((coef: Node<"f32">) => ({
   run: (x: Node<"f32">) => $prev * coef + $prev * x,
 }));
-const s = createSubgraph(sg, f32(0.5), { name: "s" });`,
+const s = instantiate(sg, f32(0.5), { name: "s" });`,
     `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
   );
   const explicit = mono(
@@ -276,7 +276,7 @@ const sg = defineSubgraph((coef: Node<"f32">) => {
     },
   };
 });
-const s = createSubgraph(sg, f32(0.5), { name: "s" });`,
+const s = instantiate(sg, f32(0.5), { name: "s" });`,
     `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
   );
   await expectSameLowering(sugar, explicit);
@@ -295,7 +295,7 @@ const dual = defineSubgraph(() => ({
   a: (x: Node<"f32">) => x + $prev,
   b: (y: Node<"f32">) => y - $prev,
 }));
-const d = createSubgraph(dual, { name: "d" });`,
+const d = instantiate(dual, { name: "d" });`,
       // call BOTH each sample; output a()'s result. If slots were shared, b() would
       // clobber a()'s prev and the running sum would break.
       `const av = d.a(input.ch(0).at(i)); const bv = d.b(input.ch(0).at(i)); out.ch(0).at(i).write(av);`,
@@ -319,7 +319,7 @@ const dual = defineSubgraph(() => ({
   a: (x: Node<"f32">) => x + $prev,
   b: (y: Node<"f32">) => y - $prev,
 }));
-const d = createSubgraph(dual, { name: "d" });`,
+const d = instantiate(dual, { name: "d" });`,
       `const av = d.a(input.ch(0).at(i)); const bv = d.b(input.ch(0).at(i)); out.ch(0).at(i).write(bv);`,
     ),
     { sampleRate: SR, duration: DUR, inputs: { main: [x] } },
@@ -339,7 +339,7 @@ const dual = defineSubgraph((coef: Node<"f32">) => ({
   a: (x: Node<"f32">) => coef * x + (1 - coef) * $prev,
   b: (y: Node<"f32">) => y + $prev,
 }));
-const d = createSubgraph(dual, f32(0.3), { name: "d" });`,
+const d = instantiate(dual, f32(0.3), { name: "d" });`,
     `out.ch(0).at(i).write(d.a(input.ch(0).at(i)).add(d.b(input.ch(0).at(i))));`,
   );
   const explicit = mono(
@@ -360,7 +360,7 @@ const dual = defineSubgraph((coef: Node<"f32">) => {
     },
   };
 });
-const d = createSubgraph(dual, f32(0.3), { name: "d" });`,
+const d = instantiate(dual, f32(0.3), { name: "d" });`,
     `out.ch(0).at(i).write(d.a(input.ch(0).at(i)).add(d.b(input.ch(0).at(i))));`,
   );
   await expectSameLowering(sugar, explicit);
@@ -374,7 +374,7 @@ const sg = defineSubgraph((coef: Node<"f32">) => ({
   passthru: (x: Node<"f32">) => coef * x,
   fb: (y: Node<"f32">) => y + 0.5 * $prev,
 }));
-const s = createSubgraph(sg, f32(0.5), { name: "s" });`,
+const s = instantiate(sg, f32(0.5), { name: "s" });`,
     `out.ch(0).at(i).write(s.fb(s.passthru(input.ch(0).at(i))));`,
   );
   const explicit = mono(
@@ -390,7 +390,7 @@ const sg = defineSubgraph((coef: Node<"f32">) => {
     },
   };
 });
-const s = createSubgraph(sg, f32(0.5), { name: "s" });`,
+const s = instantiate(sg, f32(0.5), { name: "s" });`,
     `out.ch(0).at(i).write(s.fb(s.passthru(input.ch(0).at(i))));`,
   );
   await expectSameLowering(sugar, explicit);
@@ -404,7 +404,7 @@ const sg = defineSubgraph((coef: Node<"f32">) => ({
   b: (y: Node<"f32">) => y + $prev,
   c: (z: Node<"f32">) => z * coef,
 }));
-const s = createSubgraph(sg, f32(0.5), { name: "s" });`,
+const s = instantiate(sg, f32(0.5), { name: "s" });`,
     `out.ch(0).at(i).write(s.c(s.b(s.a(input.ch(0).at(i)))));`,
   );
   const explicit = mono(
@@ -421,7 +421,7 @@ const sg = defineSubgraph((coef: Node<"f32">) => {
     c: (z: Node<"f32">) => z.mul(coef),
   };
 });
-const s = createSubgraph(sg, f32(0.5), { name: "s" });`,
+const s = instantiate(sg, f32(0.5), { name: "s" });`,
     `out.ch(0).at(i).write(s.c(s.b(s.a(input.ch(0).at(i)))));`,
   );
   await expectSameLowering(sugar, explicit);
@@ -435,7 +435,7 @@ test("STRUCT f64 method param ⇒ state.f64(0) slot", async () => {
 const acc = defineSubgraph(() => ({
   run: (x: Node<"f64">) => x + $prev,
 }));
-const a = createSubgraph(acc, { name: "a" });`,
+const a = instantiate(acc, { name: "a" });`,
     `out.ch(0).at(i).write(f32(a.run(f64(input.ch(0).at(i)))));`,
   );
   const explicit = mono(
@@ -450,7 +450,7 @@ const acc = defineSubgraph(() => {
     },
   };
 });
-const a = createSubgraph(acc, { name: "a" });`,
+const a = instantiate(acc, { name: "a" });`,
     `out.ch(0).at(i).write(f32(a.run(f64(input.ch(0).at(i)))));`,
   );
   await expectSameLowering(sugar, explicit);
@@ -462,7 +462,7 @@ test("STRUCT i32 method param ⇒ state.i32(0) slot", async () => {
 const sg = defineSubgraph(() => ({
   run: (k: Node<"i32">) => k + $prev,
 }));
-const m = createSubgraph(sg, { name: "m" });`,
+const m = instantiate(sg, { name: "m" });`,
     `out.ch(0).at(i).write(f32(m.run(i32(1))));`,
   );
   const explicit = mono(
@@ -477,7 +477,7 @@ const sg = defineSubgraph(() => {
     },
   };
 });
-const m = createSubgraph(sg, { name: "m" });`,
+const m = instantiate(sg, { name: "m" });`,
     `out.ch(0).at(i).write(f32(m.run(i32(1))));`,
   );
   await expectSameLowering(sugar, explicit);
@@ -489,7 +489,7 @@ test("STRUCT i64 method param ⇒ state.i64(0) slot", async () => {
 const sg = defineSubgraph(() => ({
   run: (x: Node<"i64">) => x + $prev,
 }));
-const s = createSubgraph(sg, { name: "s" });`,
+const s = instantiate(sg, { name: "s" });`,
     `out.ch(0).at(i).write(f32(0));`,
   );
   const explicit = mono(
@@ -504,7 +504,7 @@ const sg = defineSubgraph(() => {
     },
   };
 });
-const s = createSubgraph(sg, { name: "s" });`,
+const s = instantiate(sg, { name: "s" });`,
     `out.ch(0).at(i).write(f32(0));`,
   );
   await expectSameLowering(sugar, explicit);
@@ -516,7 +516,7 @@ test("STRUCT first param is `number` (build-time): slot type taken from 2nd, the
 const sg = defineSubgraph(() => ({
   run: (k: number, x: Node<"i32">) => x + $prev,
 }));
-const s = createSubgraph(sg, { name: "s" });`,
+const s = instantiate(sg, { name: "s" });`,
     `out.ch(0).at(i).write(f32(0));`,
   );
   const explicit = mono(
@@ -531,7 +531,7 @@ const sg = defineSubgraph(() => {
     },
   };
 });
-const s = createSubgraph(sg, { name: "s" });`,
+const s = instantiate(sg, { name: "s" });`,
     `out.ch(0).at(i).write(f32(0));`,
   );
   await expectSameLowering(sugar, explicit);
@@ -545,7 +545,7 @@ test("STRUCT $prev inside select (ternary) position lowers correctly", async () 
 const sg = defineSubgraph((g: Node<"f32">) => ({
   run: (x: Node<"f32">) => x > 0 ? x : $prev,
 }));
-const s = createSubgraph(sg, f32(0), { name: "s" });`,
+const s = instantiate(sg, f32(0), { name: "s" });`,
     `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
   );
   const explicit = mono(
@@ -560,7 +560,7 @@ const sg = defineSubgraph((g: Node<"f32">) => {
     },
   };
 });
-const s = createSubgraph(sg, f32(0), { name: "s" });`,
+const s = instantiate(sg, f32(0), { name: "s" });`,
     `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
   );
   await expectSameLowering(sugar, explicit);
@@ -579,7 +579,7 @@ test("SEMANTIC $prev inside ternary acts as sample-and-hold (holds last positive
 const sg = defineSubgraph(() => ({
   run: (x: Node<"f32">) => x > 0 ? x : $prev,
 }));
-const s = createSubgraph(sg, { name: "s" });`,
+const s = instantiate(sg, { name: "s" });`,
     `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
     x,
   );
@@ -596,7 +596,7 @@ test("STRUCT $prev inside clamp() call argument lowers correctly", async () => {
 const sg = defineSubgraph((coef: Node<"f32">) => ({
   run: (x: Node<"f32">) => clamp(coef * x + (1 - coef) * $prev, -1, 1),
 }));
-const s = createSubgraph(sg, f32(0.5), { name: "s" });`,
+const s = instantiate(sg, f32(0.5), { name: "s" });`,
     `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
   );
   const explicit = mono(
@@ -611,7 +611,7 @@ const sg = defineSubgraph((coef: Node<"f32">) => {
     },
   };
 });
-const s = createSubgraph(sg, f32(0.5), { name: "s" });`,
+const s = instantiate(sg, f32(0.5), { name: "s" });`,
     `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
   );
   await expectSameLowering(sugar, explicit);
@@ -623,7 +623,7 @@ test("STRUCT bare $prev only (identity feedback) ≡ explicit read", async () =>
 const sg = defineSubgraph(() => ({
   run: (x: Node<"f32">) => $prev,
 }));
-const s = createSubgraph(sg, { name: "s" });`,
+const s = instantiate(sg, { name: "s" });`,
     `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
   );
   const explicit = mono(
@@ -638,7 +638,7 @@ const sg = defineSubgraph(() => {
     },
   };
 });
-const s = createSubgraph(sg, { name: "s" });`,
+const s = instantiate(sg, { name: "s" });`,
     `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
   );
   await expectSameLowering(sugar, explicit);
@@ -653,7 +653,7 @@ const fb = state.f32(0).named("fb");
 const sg = defineSubgraph((coef: Node<"f32">) => ({
   run: (x: Node<"f32">) => coef * x + fb * $prev,
 }));
-const s = createSubgraph(sg, f32(0.5), { name: "s" });`,
+const s = instantiate(sg, f32(0.5), { name: "s" });`,
     `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
   );
   const explicit = mono(
@@ -669,21 +669,21 @@ const sg = defineSubgraph((coef: Node<"f32">) => {
     },
   };
 });
-const s = createSubgraph(sg, f32(0.5), { name: "s" });`,
+const s = instantiate(sg, f32(0.5), { name: "s" });`,
     `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
   );
   await expectSameLowering(sugar, explicit);
 });
 
-// ─────────────── createSubgraph with an operator / const arg ─────────────────
+// ─────────────── instantiate with an operator / const arg ─────────────────
 
-test("STRUCT createSubgraph with an operator arg lowers the arg (Node + Node ⇒ add)", async () => {
+test("STRUCT instantiate with an operator arg lowers the arg (Node + Node ⇒ add)", async () => {
   const sugar = mono(
     `
 const sg = defineSubgraph((coef: Node<"f32">) => ({
   run: (x: Node<"f32">) => coef * x + (1 - coef) * $prev,
 }));
-const lp = createSubgraph(sg, f32(0.1) + f32(0.2), { name: "lp" });`,
+const lp = instantiate(sg, f32(0.1) + f32(0.2), { name: "lp" });`,
     `out.ch(0).at(i).write(lp.run(input.ch(0).at(i)));`,
   );
   const explicit = mono(
@@ -698,19 +698,19 @@ const sg = defineSubgraph((coef: Node<"f32">) => {
     },
   };
 });
-const lp = createSubgraph(sg, f32(0.1).add(f32(0.2)), { name: "lp" });`,
+const lp = instantiate(sg, f32(0.1).add(f32(0.2)), { name: "lp" });`,
     `out.ch(0).at(i).write(lp.run(input.ch(0).at(i)));`,
   );
   await expectSameLowering(sugar, explicit);
 });
 
-test("STRUCT createSubgraph with a build-time const arg stays JS (0.5 * 0.5 not lowered)", async () => {
+test("STRUCT instantiate with a build-time const arg stays JS (0.5 * 0.5 not lowered)", async () => {
   const sugar = mono(
     `
 const sg = defineSubgraph((coef: Node<"f32">) => ({
   run: (x: Node<"f32">) => coef * x + (1 - coef) * $prev,
 }));
-const lp = createSubgraph(sg, f32(0.5 * 0.5), { name: "lp" });`,
+const lp = instantiate(sg, f32(0.5 * 0.5), { name: "lp" });`,
     `out.ch(0).at(i).write(lp.run(input.ch(0).at(i)));`,
   );
   // Ground truth: the arg is a plain `f32(0.25)` because `0.5 * 0.5` is build-time.
@@ -726,25 +726,25 @@ const sg = defineSubgraph((coef: Node<"f32">) => {
     },
   };
 });
-const lp = createSubgraph(sg, f32(0.25), { name: "lp" });`,
+const lp = instantiate(sg, f32(0.25), { name: "lp" });`,
     `out.ch(0).at(i).write(lp.run(input.ch(0).at(i)));`,
   );
   await expectSameLowering(sugar, explicit);
 });
 
-test("DEBUG createSubgraph const arg lowers `0.5 * 0.5` as a number, not mul()", () => {
+test("DEBUG instantiate const arg lowers `0.5 * 0.5` as a number, not mul()", () => {
   const out = lower(
     mono(
       `
 const sg = defineSubgraph((coef: Node<"f32">) => ({
   run: (x: Node<"f32">) => coef * x + (1 - coef) * $prev,
 }));
-const lp = createSubgraph(sg, f32(0.5 * 0.5), { name: "lp" });`,
+const lp = instantiate(sg, f32(0.5 * 0.5), { name: "lp" });`,
       `out.ch(0).at(i).write(lp.run(input.ch(0).at(i)));`,
     ),
   );
-  expect(out).toMatch(/createSubgraph\(sg, f32\(0\.5 \* 0\.5\)/);
-  expect(out).not.toMatch(/createSubgraph\(sg, f32\(mul\(/);
+  expect(out).toMatch(/instantiate\(sg, f32\(0\.5 \* 0\.5\)/);
+  expect(out).not.toMatch(/instantiate\(sg, f32\(mul\(/);
 });
 
 // ─────────────────────────── nested subgraphs ───────────────────────────────
@@ -756,10 +756,10 @@ const inner = defineSubgraph((coef: Node<"f32">) => ({
   run: (x: Node<"f32">) => coef * x + (1 - coef) * $prev,
 }));
 const outer = defineSubgraph(() => {
-  const lp = createSubgraph(inner, f32(0.5));
+  const lp = instantiate(inner, f32(0.5));
   return { run: (x: Node<"f32">) => lp.run(x) };
 });
-const s = createSubgraph(outer, { name: "s" });`,
+const s = instantiate(outer, { name: "s" });`,
     `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
   );
   const explicit = mono(
@@ -775,10 +775,10 @@ const inner = defineSubgraph((coef: Node<"f32">) => {
   };
 });
 const outer = defineSubgraph(() => {
-  const lp = createSubgraph(inner, f32(0.5));
+  const lp = instantiate(inner, f32(0.5));
   return { run: (x: Node<"f32">) => lp.run(x) };
 });
-const s = createSubgraph(outer, { name: "s" });`,
+const s = instantiate(outer, { name: "s" });`,
     `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
   );
   await expectSameLowering(sugar, explicit);
@@ -792,10 +792,10 @@ const inner = defineSubgraph((coef: Node<"f32">) => ({
   run: (x: Node<"f32">) => coef * x + (1 - coef) * $prev,
 }));
 const outer = defineSubgraph(() => {
-  const lp = createSubgraph(inner, f32(0.3));
+  const lp = instantiate(inner, f32(0.3));
   return { run: (x: Node<"f32">) => lp.run(x) };
 });
-const s = createSubgraph(outer, { name: "s" });`,
+const s = instantiate(outer, { name: "s" });`,
     `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
     x,
   );
@@ -811,7 +811,7 @@ test("STRUCT a subgraph with NO $prev gets no slot and no store wrap", async () 
 const sg = defineSubgraph((coef: Node<"f32">) => ({
   run: (x: Node<"f32">) => coef * x,
 }));
-const s = createSubgraph(sg, f32(0.5), { name: "s" });`,
+const s = instantiate(sg, f32(0.5), { name: "s" });`,
     `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
   );
   const explicit = mono(
@@ -819,7 +819,7 @@ const s = createSubgraph(sg, f32(0.5), { name: "s" });`,
 const sg = defineSubgraph((coef: Node<"f32">) => ({
   run: (x: Node<"f32">) => coef.mul(x),
 }));
-const s = createSubgraph(sg, f32(0.5), { name: "s" });`,
+const s = instantiate(sg, f32(0.5), { name: "s" });`,
     `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
   );
   await expectSameLowering(sugar, explicit);
@@ -832,7 +832,7 @@ test("DEBUG no-$prev subgraph: lowered output has no state slot injected", () =>
 const sg = defineSubgraph((coef: Node<"f32">) => ({
   run: (x: Node<"f32">) => coef * x,
 }));
-const s = createSubgraph(sg, f32(0.5), { name: "s" });`,
+const s = instantiate(sg, f32(0.5), { name: "s" });`,
       `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
     ),
   );
@@ -867,7 +867,7 @@ const sg = defineSubgraph(() => ({
     return x;
   },
 }));
-const s = createSubgraph(sg, { name: "s" });`,
+const s = instantiate(sg, { name: "s" });`,
     `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
     x,
   );
@@ -905,7 +905,7 @@ test("SEMANTIC $prev slot type follows the RETURN (bool param, f32 return → f3
 const decay = defineSubgraph(() => ({
   run: (trigger: Node<"bool">): Node<"f32"> => select(trigger, f32(1), $prev * 0.95),
 }));
-const d = createSubgraph(decay, { name: "d" });`,
+const d = instantiate(decay, { name: "d" });`,
     `out.ch(0).at(i).write(d.run(input.ch(0).at(i) > 0.5));`,
     impulse,
   );
@@ -926,7 +926,7 @@ test("SEMANTIC $prev slot type from a NO-ARG method's return annotation (f64)", 
 const acc = defineSubgraph(() => ({
   step: (): Node<"f64"> => $prev.mul(f64(0.5)).add(f64(0.25)),
 }));
-const a = createSubgraph(acc, { name: "a" });`,
+const a = instantiate(acc, { name: "a" });`,
     `out.ch(0).at(i).write(f32(a.step()));`,
     block(0),
   );
@@ -946,7 +946,7 @@ test("SEMANTIC $prev slot type from the return EXPRESSION when un-annotated (i32
 const sg = defineSubgraph(() => ({
   run: (steps: Node<"i32">) => f32(steps).mul(f32(0.1)).add($prev.mul(f32(0.5))),
 }));
-const s = createSubgraph(sg, { name: "s" });`,
+const s = instantiate(sg, { name: "s" });`,
     `out.ch(0).at(i).write(s.run(i32(2)));`,
     block(0),
   );
@@ -971,7 +971,7 @@ const acc = state.i32(0).named("acc");
 const sg = defineSubgraph(() => ({
   bump: (step: Node<"i32">) => { acc.write(($prev + step) % 4); },
 }));
-const s = createSubgraph(sg, { name: "s" });`,
+const s = instantiate(sg, { name: "s" });`,
     `s.bump(i32(1));\nout.ch(0).at(i).write(f32(acc.read()));`,
     block(0),
   );
@@ -988,7 +988,7 @@ test("STRUCT a no-param, un-annotated $prev method falls all the way back to an 
 const sg = defineSubgraph(() => ({
   tick: () => $prev,
 }));
-const s = createSubgraph(sg, { name: "s" });`,
+const s = instantiate(sg, { name: "s" });`,
     `out.ch(0).at(i).write(s.tick());`,
   );
   const explicit = mono(
@@ -1003,7 +1003,7 @@ const sg = defineSubgraph(() => {
     },
   };
 });
-const s = createSubgraph(sg, { name: "s" });`,
+const s = instantiate(sg, { name: "s" });`,
     `out.ch(0).at(i).write(s.tick());`,
   );
   await expectSameLowering(sugar, explicit);
@@ -1017,7 +1017,7 @@ test("STRUCT $prev method with a NON-Node return annotation ≡ explicit i32 slo
 const sg = defineSubgraph(() => ({
   run: (x: Node<"i32">): unknown => $prev + x,
 }));
-const s = createSubgraph(sg, { name: "s" });`,
+const s = instantiate(sg, { name: "s" });`,
     `out.ch(0).at(i).write(f32(s.run(i32(1))));`,
   );
   const explicit = mono(
@@ -1032,7 +1032,7 @@ const sg = defineSubgraph(() => {
     },
   };
 });
-const s = createSubgraph(sg, { name: "s" });`,
+const s = instantiate(sg, { name: "s" });`,
     `out.ch(0).at(i).write(f32(s.run(i32(1))));`,
   );
   await expectSameLowering(sugar, explicit);
@@ -1050,7 +1050,7 @@ const sg = defineSubgraph(() => ({
     return x + $prev * f32(k);
   },
 }));
-const s = createSubgraph(sg, { name: "s" });`,
+const s = instantiate(sg, { name: "s" });`,
     `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
   );
   const explicit = mono(
@@ -1066,7 +1066,7 @@ const sg = defineSubgraph(() => {
     },
   };
 });
-const s = createSubgraph(sg, { name: "s" });`,
+const s = instantiate(sg, { name: "s" });`,
     `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
   );
   await expectSameLowering(sugar, explicit);
@@ -1115,7 +1115,7 @@ test("a defineSubgraph whose factory is a named reference (not an inline arrow) 
     `
 const factory = (k: Node<"f32">) => ({ run: (x: Node<"f32">) => k * x });
 const sg = defineSubgraph(factory);
-const s = createSubgraph(sg, f32(0.5), { name: "s" });`,
+const s = instantiate(sg, f32(0.5), { name: "s" });`,
     `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`,
   );
   const lowered = lower(src);

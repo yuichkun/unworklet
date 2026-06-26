@@ -79,7 +79,7 @@ export { forSample } from "./dsl/loop.ts";
 export type { EveryNSamples, ForSampleCallback, ForSampleFn } from "./dsl/loop.ts";
 
 // Processor / subgraph constructors.
-export { createSubgraph, defineProcessor, defineSubgraph } from "./processor.ts";
+export { instantiate, defineProcessor, defineSubgraph } from "./processor.ts";
 export type { CreateSubgraphOptions, SubgraphDecl } from "./processor.ts";
 
 // Compile invocation.

@@ -15,7 +15,7 @@
 import {
   audioInput,
   audioOutput,
-  createSubgraph,
+  instantiate,
   defineProcessor,
   defineSubgraph,
   div,
@@ -369,8 +369,8 @@ const peakingBand = defineSubgraph((_sr: number) => {
 const subgraphEq = defineProcessor((ctx) => {
   const input = audioInput({ channels: 1, name: "main" });
   const out = audioOutput({ channels: 1, name: "main" });
-  const low = createSubgraph(peakingBand, ctx.sampleRate);
-  const hi = createSubgraph(peakingBand, ctx.sampleRate);
+  const low = instantiate(peakingBand, ctx.sampleRate);
+  const hi = instantiate(peakingBand, ctx.sampleRate);
   return {
     process: () => {
       forSample((i) => {

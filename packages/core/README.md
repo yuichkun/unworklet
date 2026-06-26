@@ -180,7 +180,7 @@ forSample.byN(4, (i) => {
 
 ## Public API (beyond the DSL)
 
-- `defineProcessor(body)` / `defineSubgraph(body)` / `createSubgraph(decl, ...args)` — compose graphs. `defineProcessor` already returns a ready `CompiledProcessor` — hand it straight to `createNode` or `renderOffline` (`@unworklet/offline`).
+- `defineProcessor(body)` / `defineSubgraph(body)` / `instantiate(decl, ...args)` — compose graphs. `defineProcessor` already returns a ready `CompiledProcessor` — hand it straight to `createNode` or `renderOffline` (`@unworklet/offline`).
 - `compile(processor, opts?)` — graph → `{ wasm, driver, graph, memory, diagnostics, schemaHash }` (`driver` instantiates the WASM; the offline renderer uses it). You rarely call this yourself; the Vite plugin and the offline renderer compile for you.
 - `createNode(context, processor, options?)` — main-thread `UnworkletNode<C>` (`node`, `inputs`, `outputs`, `params`, `state`, `events`, `midi`, `snapshot`, `restore`, `onError`, `diagnostics`, `dispose`).
 - `replaceProcessor(oldNode, newProcessor)` — hot-swap a running processor.

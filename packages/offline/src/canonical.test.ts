@@ -11,7 +11,7 @@ import {
   add,
   audioInput,
   audioOutput,
-  createSubgraph,
+  instantiate,
   defineSubgraph,
   defineProcessor,
   div,
@@ -99,9 +99,9 @@ test("Ex2 biquad EQ: unity-coefficient cascade is a passthrough + stable", async
   const eq = defineProcessor((ctx) => {
     const input = audioInput({ channels: 1, name: "main" });
     const out = audioOutput({ channels: 1, name: "main" });
-    const low = createSubgraph(peakingBand, ctx.sampleRate);
-    const mid = createSubgraph(peakingBand, ctx.sampleRate);
-    const hi = createSubgraph(peakingBand, ctx.sampleRate);
+    const low = instantiate(peakingBand, ctx.sampleRate);
+    const mid = instantiate(peakingBand, ctx.sampleRate);
+    const hi = instantiate(peakingBand, ctx.sampleRate);
     return {
       process: () => {
         forSample((i) => {
@@ -242,7 +242,7 @@ test("Ex8 polysynth voice: noteOn drives a non-silent, stable signal", async () 
     }
     const cursor = state.i32(0);
     const voices = Array.from({ length: NUM_VOICES }, () =>
-      createSubgraph(synthVoice, ctx.sampleRate),
+      instantiate(synthVoice, ctx.sampleRate),
     );
     return {
       process: () => {

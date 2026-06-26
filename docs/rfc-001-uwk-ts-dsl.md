@@ -29,7 +29,7 @@ This RFC proposes a thin authoring layer for end-users:
    - Bare-`state` auto-load in `Node<T>` positions (write stays explicit `.store(v)`).
    - `if` statement sugar with `Node<'bool'>` condition (3 accepted shapes).
    - `$prev` contextual keyword inside `defineSubgraph` method bodies for IIR feedback.
-4. **Variable-name → `name` auto-derive** — `const cutoff = param.f32({...})` auto-injects `name: 'cutoff'` from the binding (= spec already requires a name per Q76; the compiler fills it in). Same for `audioInput`, `audioOutput`, `event`, `message`, `midiInput`, `midiOutput`. For name-optional helpers (`state` / `buffer` / `createSubgraph`), the `.named()` / `.expose({})` marker preserves the plain vs named distinction.
+4. **Variable-name → `name` auto-derive** — `const cutoff = param.f32({...})` auto-injects `name: 'cutoff'` from the binding (= spec already requires a name per Q76; the compiler fills it in). Same for `audioInput`, `audioOutput`, `event`, `message`, `midiInput`, `midiOutput`. For name-optional helpers (`state` / `buffer` / `instantiate`), the `.named()` / `.expose({})` marker preserves the plain vs named distinction.
 5. **Ambient default I/O** — when no `audioInput` / `audioOutput` is declared, default stereo `input` / `out` bindings are visible in `<process>`. Explicit declaration overrides via TS shadowing.
 6. **Pipe composition** — `.pipe(f)` method on `Node<T>` + `pipe(x, ...fs)` free function. Pure TS, no parser extension, improves chain readability for user-defined L1 helpers.
 
@@ -358,7 +358,7 @@ const onepole = defineSubgraph((coef: Node<"f32">) => {
 });
 ```
 
-**Precision inference** at generic call sites — for `defineSubgraph(<P extends 'f32' | 'f64'>(coef: Node<P>) => ({ process: (input: Node<P>) => ... }))`, `$prev` is `Node<P>` and the injected slot is `state.<P>(0)`. The slot factory uses the concrete `P` resolved at `createSubgraph(...)` time. See §"Open Questions" O5.
+**Precision inference** at generic call sites — for `defineSubgraph(<P extends 'f32' | 'f64'>(coef: Node<P>) => ({ process: (input: Node<P>) => ... }))`, `$prev` is `Node<P>` and the injected slot is `state.<P>(0)`. The slot factory uses the concrete `P` resolved at `instantiate(...)` time. See §"Open Questions" O5.
 
 ### S9. Variable-name → `name` auto-derive
 
@@ -379,16 +379,16 @@ A module-top-level `const X = ...` declaration whose RHS is a unworklet declarat
 
 **Name-optional helpers — auto-derive triggers when an explicit "name me" marker is present but unfilled.** The marker preserves the plain-vs-named distinction: plain stays worklet-private, `.named()` no-arg or `.expose({...without name})` switches to named with auto-derived identity.
 
-| Declaration                                                     | Effect                                                                                  |
-| --------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `const X = state.<T>(init)` (no chain)                          | **plain** — worklet-private, no snapshot, no main-side identity (unchanged from v1.0.0) |
-| `const X = state.<T>(init).named()` (no-arg)                    | named — inject `'X'` as argument                                                        |
-| `const X = state.<T>(init).expose({...without name...})`        | named — inject `name: 'X'` into expose options                                          |
-| `const X = buffer.<T>({...})` (no chain)                        | **plain** — worklet-private (unchanged)                                                 |
-| `const X = buffer.<T>({...}).named()`                           | named — inject `'X'`                                                                    |
-| `const X = buffer.<T>({...}).expose({...without name...})`      | named — inject `name: 'X'`                                                              |
-| `const X = createSubgraph(decl, ...args)` (no options arg)      | inject `, { name: 'X' }`                                                                |
-| `const X = createSubgraph(decl, ...args, {...without name...})` | inject `name: 'X'` into options                                                         |
+| Declaration                                                  | Effect                                                                                  |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| `const X = state.<T>(init)` (no chain)                       | **plain** — worklet-private, no snapshot, no main-side identity (unchanged from v1.0.0) |
+| `const X = state.<T>(init).named()` (no-arg)                 | named — inject `'X'` as argument                                                        |
+| `const X = state.<T>(init).expose({...without name...})`     | named — inject `name: 'X'` into expose options                                          |
+| `const X = buffer.<T>({...})` (no chain)                     | **plain** — worklet-private (unchanged)                                                 |
+| `const X = buffer.<T>({...}).named()`                        | named — inject `'X'`                                                                    |
+| `const X = buffer.<T>({...}).expose({...without name...})`   | named — inject `name: 'X'`                                                              |
+| `const X = instantiate(decl, ...args)` (no options arg)      | inject `, { name: 'X' }`                                                                |
+| `const X = instantiate(decl, ...args, {...without name...})` | inject `name: 'X'` into options                                                         |
 
 **API addition needed for name-optional helpers:** `.named()` no-arg overload added to `01-dsl.md` §3 State / Buffer chain — see §"Open Questions" O2.
 
@@ -1069,7 +1069,7 @@ declare function message<T>(opts?: {...}): MessageDecl<T>;
 declare function midiInput(opts?: {...}): MidiInputHandle;
 declare function midiOutput(opts?: {...}): MidiOutputHandle;
 declare function defineSubgraph<...>(...): SubgraphDecl<...>;
-declare function createSubgraph<...>(...): ...;
+declare function instantiate<...>(...): ...;
 declare function forSample(...): void;
 declare function process(callback: () => void): void;
 declare function migrations(list: Migration[]): void;
@@ -1190,7 +1190,7 @@ Recommendation: (b). Single directive isn't critical; can land additively withou
 
 For `defineSubgraph(<P extends 'f32' | 'f64'>(coef: Node<P>) => ({ process: (input: Node<P>) => ... }))`, `$prev` must be typed `Node<P>` and the injected slot must be `state.<P>(0)`. Implementation:
 
-- The slot factory uses the concrete `P` resolved at `createSubgraph(...)` time.
+- The slot factory uses the concrete `P` resolved at `instantiate(...)` time.
 - If the method has no `Node<T>` argument from which `P` can be inferred, emit a graph-capture-time error pointing at the explicit `state.<T>(0)` form.
 
 Confirmation needed during implementation.
@@ -1362,7 +1362,7 @@ Existing packages affected:
 - `00-foundations.md` §5 — realtime-safety invariants preserved by this RFC.
 - `01-dsl.md` §§1-10 — Tier A chain DSL surface this RFC lowers to.
 - `01-dsl.md` §5.5.1 — declaration scope vs expression scope canonical definitions.
-- `01-dsl.md` §5.6 — `defineSubgraph` / `createSubgraph` (= `$prev` keyword's host).
+- `01-dsl.md` §5.6 — `defineSubgraph` / `instantiate` (= `$prev` keyword's host).
 - `01-dsl.md` §8.1 — slot identity rules + named chain semantics (= S9 auto-derive target).
 - `03-compiler.md` §1, §2, §7 — compile pipeline + source-map propagation.
 - `03-compiler.md` §2.4 — three error layers preserved by this RFC.

@@ -178,7 +178,7 @@ test("a one-pole $prev feedback written to an f32 channel reports NO diagnostics
   const src = `const onepole = defineSubgraph((coef: Node<"f32">) => ({
   process: (x: Node<"f32">) => coef * x + (1 - coef) * $prev,
 }));
-const lp = createSubgraph(onepole, f32(0.5), { name: "lp" });
+const lp = instantiate(onepole, f32(0.5), { name: "lp" });
 const out = audioOutput({ channels: 1, name: "main" });
 const input = audioInput({ channels: 1, name: "main" });
 process(() => { forSample((i) => { out.ch(0)[i] = lp.process(input.ch(0)[i]); }); });`;
@@ -192,7 +192,7 @@ test('a $prev method with a Node<"f32"> return annotation reports NO diagnostics
 }));
 const out = audioOutput({ channels: 1, name: "main" });
 const input = audioInput({ channels: 1, name: "main" });
-const d = createSubgraph(decay, { name: "d" });
+const d = instantiate(decay, { name: "d" });
 process(() => { forSample((i) => { out.ch(0)[i] = d.run(input.ch(0)[i] > 0.5); }); });`;
   expect(diagnostics(src)).toEqual([]);
 });
@@ -202,7 +202,7 @@ test("a $prev method with an f64 return annotation reports NO diagnostics", () =
   step: (): Node<"f64"> => $prev.mul(f64(0.5)).add(f64(0.25)),
 }));
 const out = audioOutput({ channels: 1, name: "main" });
-const a = createSubgraph(acc, { name: "a" });
+const a = instantiate(acc, { name: "a" });
 process(() => { forSample((i) => { out.ch(0)[i] = f32(a.step()); }); });`;
   expect(diagnostics(src)).toEqual([]);
 });
@@ -211,7 +211,7 @@ test("an i32 accumulator's $prev (slot scalar from the param) reports NO diagnos
   const src = `const sg = defineSubgraph(() => ({
   run: (k: Node<"i32">) => k + $prev,
 }));
-const m = createSubgraph(sg, { name: "m" });
+const m = instantiate(sg, { name: "m" });
 const out = audioOutput({ channels: 1, name: "main" });
 process(() => { forSample((i) => { out.ch(0)[i] = f32(m.run(i32(1))); }); });`;
   expect(diagnostics(src)).toEqual([]);

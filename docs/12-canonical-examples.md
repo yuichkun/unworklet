@@ -141,7 +141,7 @@ window.addEventListener("beforeunload", () => {
 import {
   defineProcessor,
   defineSubgraph,
-  createSubgraph,
+  instantiate,
   audioInput,
   audioOutput,
   param,
@@ -206,7 +206,7 @@ function peakingCoeffs(
 }
 
 // L2 subgraph: one mono peaking-EQ band. Owns its own z1/z2 state pair.
-// Lambda argument `sr` is bound at createSubgraph time; method arguments
+// Lambda argument `sr` is bound at instantiate time; method arguments
 // (input / freq / q / gainDb) are per-call.
 const peakingBand = defineSubgraph((sr: number) => {
   const z1 = state.f32(0);
@@ -252,12 +252,12 @@ export const threeBandEQ = defineProcessor((ctx) => {
     .named("hiGain");
 
   // Six independent peakingBand instances (3 bands × 2 channels), allocated in declaration scope.
-  const lowL = createSubgraph(peakingBand, ctx.sampleRate);
-  const midL = createSubgraph(peakingBand, ctx.sampleRate);
-  const hiL = createSubgraph(peakingBand, ctx.sampleRate);
-  const lowR = createSubgraph(peakingBand, ctx.sampleRate);
-  const midR = createSubgraph(peakingBand, ctx.sampleRate);
-  const hiR = createSubgraph(peakingBand, ctx.sampleRate);
+  const lowL = instantiate(peakingBand, ctx.sampleRate);
+  const midL = instantiate(peakingBand, ctx.sampleRate);
+  const hiL = instantiate(peakingBand, ctx.sampleRate);
+  const lowR = instantiate(peakingBand, ctx.sampleRate);
+  const midR = instantiate(peakingBand, ctx.sampleRate);
+  const hiR = instantiate(peakingBand, ctx.sampleRate);
 
   return {
     process: () => {
@@ -1100,7 +1100,7 @@ if (stored) {
 import {
   defineProcessor,
   defineSubgraph,
-  createSubgraph,
+  instantiate,
   audioInput,
   audioOutput,
   param,
@@ -1120,7 +1120,7 @@ import {
 const NUM_VOICES = 8;
 
 // L2 voice subgraph: simple 1-osc synth voice with ADSR envelope.
-// Lambda argument `sr` is bound at createSubgraph time; method arguments are per-call.
+// Lambda argument `sr` is bound at instantiate time; method arguments are per-call.
 const synthVoice = defineSubgraph((sr: number) => {
   const phase = state.f32(0);
   const env = state.f32(0);
@@ -1209,7 +1209,7 @@ export const polySynth = defineProcessor((ctx) => {
   // Eight independent synthVoice instances, allocated in declaration scope.
   const voices = [];
   for (let s = 0; s < NUM_VOICES; s++) {
-    voices.push(createSubgraph(synthVoice, ctx.sampleRate));
+    voices.push(instantiate(synthVoice, ctx.sampleRate));
   }
 
   return {
