@@ -839,6 +839,11 @@ const GENERATED_TSCONFIG = `${JSON.stringify(
     compilerOptions: {
       types: ["@unworklet/unplugin/client"],
       plugins: [{ name: "@unworklet/lang/typescript-plugin" }],
+      // Importing a subgraph from a sibling `.uwk.ts` uses the explicit `.uwk.ts`
+      // specifier, which TS only allows with `allowImportingTsExtensions` (itself
+      // requiring `noEmit` — this is a type layer; the bundler does the emit).
+      allowImportingTsExtensions: true,
+      noEmit: true,
     },
     include: ["worklets.d.ts", "../**/*.ts"],
     exclude: ["../node_modules"],

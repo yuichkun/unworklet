@@ -65,6 +65,25 @@ process(() => {
   });
 });`;
 
+// A subgraph-only LIBRARY module (no process()), for a processor to import.
+const LIB_SUBGRAPH = `export const onepole = defineSubgraph((coef: Node<"f32">) => {
+  const z1 = state.f32(0).named("z1");
+  return { tick: (x: Node<"f32">) => z1 + (x - z1) * coef };
+});`;
+
+// A processor that imports the subgraph from a sibling `.uwk.ts` and instantiates
+// it. The cross-file subgraph type must resolve: `onepole` is a `SubgraphDecl`, so
+// `instantiate(onepole, ...)` and `lpf.tick(...)` type-check with no diagnostics.
+const SUBGRAPH_CONSUMER = `import { onepole } from "./lib-subgraph.uwk.ts";
+const input = audioInput({ channels: 1, name: "main" });
+const out = audioOutput({ channels: 1, name: "main" });
+const lpf = instantiate(onepole, 0.2, { name: "lpf" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = lpf.tick(input.ch(0)[i]);
+  });
+});`;
+
 let dir: string;
 
 /** A minimal tsserver protocol client: newline-delimited requests, Content-Length
@@ -178,6 +197,8 @@ beforeAll(async () => {
   writeFileSync(path.join(dir, "valid.uwk.ts"), VALID);
   writeFileSync(path.join(dir, "broken.uwk.ts"), BROKEN);
   writeFileSync(path.join(dir, "node-annotation.uwk.ts"), NODE_ANNOTATION);
+  writeFileSync(path.join(dir, "lib-subgraph.uwk.ts"), LIB_SUBGRAPH);
+  writeFileSync(path.join(dir, "subgraph-consumer.uwk.ts"), SUBGRAPH_CONSUMER);
 });
 
 afterAll(() => {
@@ -185,6 +206,30 @@ afterAll(() => {
 });
 
 type Diag = { text: string };
+
+test("a processor .uwk.ts imports a subgraph from a sibling .uwk.ts with no diagnostics (cross-file)", async () => {
+  const server = new TsServer(dir);
+  try {
+    const consumerPath = path.join(dir, "subgraph-consumer.uwk.ts");
+    server.notify("open", {
+      file: consumerPath,
+      fileContent: SUBGRAPH_CONSUMER,
+      scriptKindName: "TS",
+    });
+    // Poll until the plugin attaches (raw sugar errors clear). If the cross-file
+    // subgraph type failed to resolve, a diagnostic on `instantiate(onepole, ...)`
+    // would persist and the assertion below would fail.
+    let diags: Diag[] = [{ text: "pending" }];
+    for (let i = 0; i < 20 && diags.length > 0; i++) {
+      await sleep(500);
+      const r = await server.request<Diag[]>("semanticDiagnosticsSync", { file: consumerPath });
+      diags = r.body ?? [];
+    }
+    expect(diags).toEqual([]);
+  } finally {
+    server.dispose();
+  }
+});
 
 test("a real tsserver loads the plugin and type-checks .uwk.ts sugar end to end", async () => {
   const server = new TsServer(dir);
