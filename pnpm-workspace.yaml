@@ -8,9 +8,9 @@ catalogMode: prefer
 catalog:
   "@types/node": ^24
   typescript: ^5
-  vite: npm:@voidzero-dev/vite-plus-core@latest
+  vite: npm:@voidzero-dev/vite-plus-core@0.1.24
   vitest: npm:@voidzero-dev/vite-plus-test@^0.1.24
-  vite-plus: latest
+  vite-plus: 0.1.24
   binaryen: ^129.0.0
   "@vitest/coverage-v8": ^4.1.7
   wavefile: ^11.0.0
@@ -39,11 +39,12 @@ catalog:
 overrides:
   vite: "catalog:"
   vitest: "catalog:"
-  # `@vitejs/devtools-kit` peer-resolves an older vite-plus-core/test (0.1.22),
-  # which duplicates the test runner — two `playwright()` provider types that don't
-  # unify (TS2769) and a second collector that hangs the shared aggregation. Pin the
-  # direct package names (the `vite`/`vitest` aliases above don't cover them) to the
-  # repo's single version.
+  # Belt-and-suspenders pin to the repo's single vite-plus version. A transitive dep
+  # (e.g. a `vite: *` peer) resolving a second vite-plus-core/test duplicates the test
+  # runner — two `playwright()` provider types that don't unify (TS2769) and a second
+  # collector that hangs the shared aggregation. The catalog `vite`/`vite-plus` entries
+  # are pinned to 0.1.24 too, but these direct `@voidzero-dev/*` names are not reachable
+  # through those aliases, so pin them here as well.
   "@voidzero-dev/vite-plus-core": "0.1.24"
   "@voidzero-dev/vite-plus-test": "0.1.24"
 peerDependencyRules:

@@ -8,8 +8,7 @@
  */
 
 import type {} from "@vitejs/devtools-kit"; // makes the bare module augmentable below
-import { getDevToolsRpcClient } from "@vitejs/devtools-kit/client";
-import { DEVTOOLS_MOUNT_PATH } from "@vitejs/devtools-kit/constants";
+import { getPanelRpc } from "../lib/rpc";
 import { computed, onMounted, ref } from "vue";
 
 export type LiveGraphNode = {
@@ -75,14 +74,9 @@ export function useLiveGraph() {
   };
 
   onMounted(() => {
-    // The dock panel runs in an iframe. The host overlay only initialises the
-    // global client context on the TOP page — it explicitly skips iframes — so
-    // `getDevToolsClientContext()` is never populated here. Instead the panel
-    // opens its own RPC channel to the devtools backend, mounted at
-    // DEVTOOLS_MOUNT_PATH on this same origin (mirrors how the host bootstraps
-    // the embedded top-page client).
+    // Token-trusted devtools connection shared across views (see `getPanelRpc`).
     const connect = async (): Promise<void> => {
-      const rpc = await getDevToolsRpcClient({ baseURL: DEVTOOLS_MOUNT_PATH });
+      const rpc = await getPanelRpc();
       const shared = await rpc.sharedState.get("unworklet:graph");
       // sharedState hands back a deep-readonly view; we only read it, so widen.
       apply(shared.value() as LiveGraph | undefined);

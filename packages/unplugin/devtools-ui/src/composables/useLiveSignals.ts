@@ -12,8 +12,7 @@
  */
 
 import type {} from "@vitejs/devtools-kit"; // makes the bare module augmentable below
-import { getDevToolsRpcClient } from "@vitejs/devtools-kit/client";
-import { DEVTOOLS_MOUNT_PATH } from "@vitejs/devtools-kit/constants";
+import { getPanelRpc } from "../lib/rpc";
 import { computed, onMounted, shallowRef } from "vue";
 
 export type LiveSignalsPort = {
@@ -134,10 +133,9 @@ const apply = (raw: LiveSignals | undefined): void => {
 const ensureStarted = (): void => {
   if (started) return;
   started = true;
-  // The dock panel runs in an iframe; open its own RPC channel to the backend
-  // (mirrors useLiveState — the host only seeds the client context on the top page).
+  // Token-trusted devtools connection shared across views (see `getPanelRpc`).
   const connect = async (): Promise<void> => {
-    const rpc = await getDevToolsRpcClient({ baseURL: DEVTOOLS_MOUNT_PATH });
+    const rpc = await getPanelRpc();
     const shared = await rpc.sharedState.get("unworklet:signals");
     apply(shared.value() as LiveSignals | undefined);
     shared.on("updated", (s) => apply(s as LiveSignals));

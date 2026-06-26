@@ -12,8 +12,7 @@
  */
 
 import type {} from "@vitejs/devtools-kit"; // makes the bare module augmentable below
-import { getDevToolsRpcClient } from "@vitejs/devtools-kit/client";
-import { DEVTOOLS_MOUNT_PATH } from "@vitejs/devtools-kit/constants";
+import { getPanelRpc, type PanelRpc } from "../lib/rpc";
 import { computed, onMounted, ref } from "vue";
 
 export type MidiEvent =
@@ -119,15 +118,14 @@ export function mapLog(s: MidiShared): MidiLogEntry[] {
 
 // ── module-level singleton (one RPC subscription shared by every consumer) ──
 const shared = ref<MidiShared>({ ports: [], log: [] });
-type RpcClient = Awaited<ReturnType<typeof getDevToolsRpcClient>>;
-let rpcClient: RpcClient | null = null;
+let rpcClient: PanelRpc | null = null;
 let started = false;
 
 const ensureStarted = (): void => {
   if (started) return;
   started = true;
   const connect = async (): Promise<void> => {
-    const rpc = await getDevToolsRpcClient({ baseURL: DEVTOOLS_MOUNT_PATH });
+    const rpc = await getPanelRpc();
     rpcClient = rpc;
     const s = await rpc.sharedState.get("unworklet:midi");
     shared.value = normalizeMidi(s.value() as MidiShared | undefined);

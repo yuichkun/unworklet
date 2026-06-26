@@ -1623,12 +1623,19 @@ test("devtools.setup registers a single dock entry at the `/__unworklet/` static
     title: string;
     type: string;
     url: string;
+    remote: { transport: string };
   };
   expect(dock).toMatchObject({
     id: "unworklet",
     title: "unworklet",
     type: "iframe",
     url: "/__unworklet/",
+    // `remote` makes the host inject a session token into the panel iframe, so it
+    // connects as a token-trusted client instead of an anonymous one whose RPC
+    // scope is version-coupled to the host's devtools-kit. `transport: "query"` is
+    // required because the panel's hash-mode router would otherwise clobber a
+    // fragment descriptor. Load-bearing — drop it and the panel renders empty.
+    remote: { transport: "query" },
   });
   expect(ctx.views.__hostStaticCalls).toHaveLength(1);
   expect(ctx.views.__hostStaticCalls[0]!.urlBase).toBe("/__unworklet/");

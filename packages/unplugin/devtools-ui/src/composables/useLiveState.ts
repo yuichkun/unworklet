@@ -9,8 +9,7 @@
  */
 
 import type {} from "@vitejs/devtools-kit"; // makes the bare module augmentable below
-import { getDevToolsRpcClient } from "@vitejs/devtools-kit/client";
-import { DEVTOOLS_MOUNT_PATH } from "@vitejs/devtools-kit/constants";
+import { getPanelRpc } from "../lib/rpc";
 import { computed, onMounted, shallowRef } from "vue";
 
 export type LiveSlotType = "f32" | "f64" | "i32" | "i64" | "bool" | "u8";
@@ -102,10 +101,9 @@ export function useLiveState() {
   };
 
   onMounted(() => {
-    // The dock panel runs in an iframe; open its own RPC channel to the backend
-    // (mirrors useLiveGraph — the host only seeds the client context on the top page).
+    // Token-trusted devtools connection shared across views (see `getPanelRpc`).
     const connect = async (): Promise<void> => {
-      const rpc = await getDevToolsRpcClient({ baseURL: DEVTOOLS_MOUNT_PATH });
+      const rpc = await getPanelRpc();
       const shared = await rpc.sharedState.get("unworklet:state");
       apply(shared.value() as LiveState | undefined);
       shared.on("updated", (s) => apply(s as LiveState));

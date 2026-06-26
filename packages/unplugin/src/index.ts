@@ -639,6 +639,23 @@ const setupDevtools = async (
     icon: "ph:waveform-duotone",
     type: "iframe",
     url: "/__unworklet/",
+    // The panel runs in an iframe the devtools host does NOT inject its client
+    // context into (it only does that for the top page). Without `remote`, the
+    // panel would self-connect as an anonymous client, and an anonymous RPC name
+    // is version-coupled to the host's devtools-kit (`vite:anonymous:` in 0.2.x,
+    // `devframe:anonymous:` in 0.3.x) — a panel built against one and embedded in
+    // a host of the other is rejected (DTK0013) and renders empty. `remote` makes
+    // the host inject a session auth token into the iframe URL; the panel calls
+    // `connectRemoteDevTools()` and connects as a TRUSTED client, bypassing the
+    // anonymous-scope check. Auth is then by token, not by a version-matched scope
+    // string, so the panel works against any host the user's toolchain ships.
+    //
+    // `transport: "query"` (not the default `"fragment"`) is REQUIRED here: the
+    // panel SPA uses a hash-mode Vue Router, so a descriptor placed in the URL
+    // fragment is clobbered by the router before `connectRemoteDevTools()` reads
+    // it (the panel then never connects and renders empty). The query string is
+    // untouched by hash routing. Verified end-to-end against a real devtools host.
+    remote: { transport: "query" },
   });
   ctx.views.hostStatic("/__unworklet/", uiRoot);
 
