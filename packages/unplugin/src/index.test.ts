@@ -875,6 +875,52 @@ test("dev mode load fans transitive helper imports out to addWatchFile", async (
   expect(ctx.watched).toContain(helperB);
 });
 
+test("dev HMR: editing a subgraph .uwk.ts invalidates the processors that import it", async () => {
+  const proc = "/abs/project/src/synth.uwk.ts";
+  const subgraph = "/abs/project/src/onepole.uwk.ts";
+  const plugin = unworklet();
+  (plugin.configResolved as unknown as ConfigResolvedFn).call(null, {
+    command: "serve",
+    root: "/abs/project",
+    base: "/",
+  });
+  // Allowlist the processor via `?worklet` resolveId (no compile needed here).
+  (plugin.resolveId as unknown as ResolveIdFn).call(null, `${proc}?worklet`, undefined, {
+    isEntry: false,
+  });
+
+  // Module graph: the processor imports the subgraph; the processor's `?worklet`
+  // virtual module is the thing HMR must invalidate when the subgraph changes.
+  type GNode = { file: string; importedModules: Set<GNode> };
+  const subNode: GNode = { file: subgraph, importedModules: new Set() };
+  const procNode: GNode = { file: proc, importedModules: new Set([subNode]) };
+  const procVirtual = { id: `${VIRTUAL_ID_PREFIX}${proc}` };
+  const invalidated: unknown[] = [];
+  const server = {
+    middlewares: { use: () => {} },
+    ssrLoadModule: async () => {
+      throw new Error("skip compile in this unit test");
+    },
+    moduleGraph: {
+      getModulesByFile: (file: string) => (file === proc ? new Set([procNode]) : undefined),
+      getModuleById: (id: string) => (id === procVirtual.id ? procVirtual : undefined),
+      invalidateModule: (m: unknown) => invalidated.push(m),
+    },
+  };
+  (plugin.configureServer as unknown as ConfigureServerFn).call(null, server as never);
+
+  const handleHotUpdate = plugin.handleHotUpdate as unknown as (
+    this: unknown,
+    ctx: { file: string; server: unknown },
+  ) => Promise<unknown[] | undefined>;
+  const result = await handleHotUpdate.call(null, { file: subgraph, server });
+
+  // Editing the subgraph (not a processor itself) invalidated the importing
+  // processor's virtual module — so a `replaceProcessor` HMR fires for it.
+  expect(invalidated).toContain(procVirtual);
+  expect(result).toContain(procVirtual);
+});
+
 test("dev mode WORKLET_ENTRY load rejects sourcePaths the plugin never accepted via `?worklet`", async () => {
   // Round-6 finding 1: Vite exposes virtual ids as `/@id/__x00__<rest>` in
   // dev, so a crafted request could otherwise force the worklet-entry load

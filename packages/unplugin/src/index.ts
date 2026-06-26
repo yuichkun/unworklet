@@ -1777,26 +1777,38 @@ ensureClient();
       // virtual module and steer the HMR update to it: its importer's
       // `import.meta.hot.accept('...?worklet', ...)` then receives a freshly
       // compiled processor (= live-coding via `replaceProcessor`, `07-unplugin.md` §4).
-      if (!allowedSources.has(ctx.file)) return;
-      // Re-evaluate the edited processor and re-emit the witness so the editor's
-      // file watch refreshes node.params completions even with no browser
-      // attached to drive an HMR `load` (best-effort: a parse error mid-edit
-      // must not break HMR).
-      try {
-        const mod =
-          isServe && viteDevServer
-            ? await ssrLoadSource(viteDevServer, ctx.file)
-            : await loadProcessorModuleFresh(ctx.file);
-        const { processor } = pickCompiledProcessor(mod, ctx.file);
-        workletWitness.set(ctx.file, processor.worklet);
-        await writeWorkletsWitness();
-      } catch {
-        // keep the previous witness; the next successful edit refreshes it
+      //
+      // Which processor(s) does this edit affect? A processor edit affects itself;
+      // a helper / subgraph edit (a `.uwk.ts` imported by a processor) affects every
+      // processor whose transitive deps include it — so editing a subgraph file
+      // recompiles the processors that instantiate it, not just the entry.
+      const server = viteDevServer;
+      const affected = allowedSources.has(ctx.file)
+        ? [ctx.file]
+        : isServe && server
+          ? [...allowedSources].filter((p) => collectTransitiveDeps(server, p).has(ctx.file))
+          : [];
+      if (affected.length === 0) return;
+      // Re-evaluate each affected processor and re-emit the witness so the editor's
+      // file watch refreshes node.params completions even with no browser attached
+      // to drive an HMR `load` (best-effort: a parse error mid-edit must not break HMR).
+      for (const proc of affected) {
+        try {
+          const mod =
+            isServe && server
+              ? await ssrLoadSource(server, proc)
+              : await loadProcessorModuleFresh(proc);
+          workletWitness.set(proc, pickCompiledProcessor(mod, proc).processor.worklet);
+        } catch {
+          // keep the previous witness; the next successful edit refreshes it
+        }
       }
-      const virtualMod = ctx.server.moduleGraph.getModuleById(`${VIRTUAL_ID_PREFIX}${ctx.file}`);
-      if (!virtualMod) return;
-      ctx.server.moduleGraph.invalidateModule(virtualMod);
-      return [virtualMod];
+      await writeWorkletsWitness();
+      const mods = affected
+        .map((proc) => ctx.server.moduleGraph.getModuleById(`${VIRTUAL_ID_PREFIX}${proc}`))
+        .filter((m): m is NonNullable<typeof m> => m != null);
+      for (const m of mods) ctx.server.moduleGraph.invalidateModule(m);
+      return mods.length > 0 ? mods : undefined;
     },
     devtools: {
       setup: (ctx) => {
