@@ -53,6 +53,8 @@ event({ from: "main", name })        // main→worklet: .onReceive(p => ...)
 event.midi({ from: "main", name })   // inbound MIDI: .onEvent("noteOn", e => ...)
 event.midi({ to: "main", name })     // outbound MIDI: .emitIf(cond, midiEvent)
 defineSubgraph((args) => ({ run: (x) => ... }))  // reusable block; instantiate(sg, ...args, { name }) in decl scope ($prev feedback is .uwk.ts-only)
+// A subgraph can live in its own file: a .uwk.ts with no process() is a library module that exports defineSubgraph(...);
+// a processor imports it with a normal `import { sg } from "./sg.uwk.ts"` (not ?worklet). Publishing one: @unworklet/core as a peerDependency.
 
 forSample((i) => { /* i = 0..127 */ })          // the per-sample loop
 forSample.byN(4, (i) => { ... })                // SIMD stride (divides 128)

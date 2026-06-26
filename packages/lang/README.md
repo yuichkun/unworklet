@@ -158,6 +158,52 @@ If you'd rather not type-check the sugar at build, `"exclude": ["**/*.uwk.ts"]`
 in `tsconfig.json` keeps plain `tsc` from flagging it (the Vite plugin compiles
 those files regardless; they're just unchecked at build).
 
+## Subgraphs in their own files
+
+A `.uwk.ts` with no `process()` is a **library module**: it exports
+`defineSubgraph(...)` blocks (and any helper constants) for a processor to import.
+Use it to share a reusable filter / oscillator / envelope across processors, or to
+publish one as a package.
+
+```ts
+// onepole.uwk.ts — a subgraph in its own file (no process())
+export const onepole = defineSubgraph((coef: Node<"f32">) => {
+  const z1 = state.f32(0).named("z1");
+  return {
+    tick: (x: Node<"f32">) => {
+      const y = z1 + (x - z1) * coef; // bare `z1` reads; the write is explicit
+      z1.write(y);
+      return y;
+    },
+  };
+});
+```
+
+```ts
+// synth.uwk.ts — a processor that imports and instantiates it
+import { onepole } from "./onepole.uwk.ts";
+
+const input = audioInput({ channels: 1, name: "main" });
+const out = audioOutput({ channels: 1, name: "main" });
+const lpf = instantiate(onepole, 0.2, { name: "lpf" });
+
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = lpf.tick(input.ch(0)[i]);
+  });
+});
+```
+
+Import a subgraph file with a normal import (the explicit `.uwk.ts` extension) — not
+`?worklet`, which is for processors. The library module's sugar is lowered just like
+a processor's, and splitting a subgraph into its own file produces byte-identical
+output to defining it inline.
+
+**Publishing a subgraph library:** declare `@unworklet/core` as a `peerDependency`
+— do not bundle it. The consumer provides one `@unworklet/core`; a second bundled
+copy makes `instantiate(...)` reject the imported subgraph, because its
+`defineSubgraph` marker comes from a different `@unworklet/core` instance.
+
 ## Compile in the browser (live coding)
 
 `@unworklet/lang/browser` runs the whole lower → compile → worklet pipeline in the

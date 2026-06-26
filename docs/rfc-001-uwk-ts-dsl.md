@@ -164,15 +164,23 @@ Tier C is not a separate file format — it's "Tier B without an `audioInput` / 
 - Start in Tier C: write a `process(...)` macro call, no I/O declarations needed.
 - As the processor grows, declare named state / params (= still Tier C if `audioInput` / `audioOutput` defaults are accepted).
 - When custom I/O channel counts are needed, declare `audioInput` / `audioOutput` explicitly (= moves to Tier B).
-- When publishing to npm, transcribe to Tier A `.ts` for the canonical library shape.
+- When publishing to npm, ship a reusable subgraph as its own `.uwk.ts` library module (no `process()`), or transcribe to Tier A `.ts` for a sugar-free shape.
 
 Tier A → B → C is **strictly opt-in sugar**; B → A is mechanical desugaring (= the Vite plugin can emit the lowered `.ts` for inspection or for an "eject" workflow).
 
 ### Interoperability
 
-A Tier B `.uwk.ts` file can `import` Tier A `.ts` modules (= L1 helpers, `defineSubgraph` values published as a library). The TS LSP resolves the imported types normally; the lowering layer doesn't intervene.
+A `.uwk.ts` file can `import` from other modules — Tier A `.ts` (L1 helpers,
+`defineSubgraph` values) and other `.uwk.ts` library modules alike. The TS LSP
+resolves the imported types normally; the lowering layer keeps the import at module
+scope.
 
-A Tier A `.ts` file **cannot** import from a `.uwk.ts` source file directly — `.uwk.ts` is a processor file that resolves to a `?worklet` URL via the Vite plugin, not a regular module. (Future: `eject` flow that emits a Tier A `.ts` from a Tier B `.uwk.ts` for npm publishing.)
+A `.uwk.ts` resolves two ways by content. A **processor** file (one `process(...)`
+macro) resolves to a `?worklet` URL via the plugin, not a regular module. A
+**library module** (no `process()`, exporting `defineSubgraph(...)` / constants) is
+an ordinary module that any `.ts` or `.uwk.ts` imports directly with the explicit
+`.uwk.ts` specifier. A subgraph library can therefore ship as `.uwk.ts`, not only as
+transcribed Tier A `.ts`.
 
 ## Surface — what's new
 

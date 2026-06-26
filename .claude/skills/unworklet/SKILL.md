@@ -144,7 +144,7 @@ e.g. a MIDI field; see the synth above).
 
 **SIMD (`.ts` only, opt-in):** `import { vec4, splat, addVec, mulVec, sumLanes } from "@unworklet/core/simd"` — then `v = buf.loadVec(i)`, `v.lane(0..3)`, `buf.storeVec(i, v)` (f32 buffers; pairs with `forSample.byN(4)`).
 
-**Subgraphs:** `defineSubgraph((args) => ({ run: (x) => ... }))` + `instantiate(sg, ...args, { name })` in declaration scope (`$prev` feedback is `.uwk.ts`-only).
+**Subgraphs:** `defineSubgraph((args) => ({ run: (x) => ... }))` + `instantiate(sg, ...args, { name })` in declaration scope (`$prev` feedback is `.uwk.ts`-only). A subgraph can live in its own file: a `.uwk.ts` with no `process()` is a library module that `export`s `defineSubgraph(...)`; a processor imports it with a normal `import { sg } from "./sg.uwk.ts"` (not `?worklet`). Publishing such a library: declare `@unworklet/core` as a `peerDependency` (a second bundled copy makes `instantiate` reject the subgraph).
 
 **Migrations:** `defineProcessor(body, { migrations: [{ from, to, migrate(blob, h) { ... } }] })` (`migrate` is sync).
 
