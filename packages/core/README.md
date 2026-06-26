@@ -182,7 +182,7 @@ forSample.byN(4, (i) => {
 
 - `defineProcessor(body)` / `defineSubgraph(body)` / `instantiate(decl, ...args)` — compose graphs. `defineProcessor` already returns a ready `CompiledProcessor` — hand it straight to `createNode` or `renderOffline` (`@unworklet/offline`).
 - `compile(processor, opts?)` — graph → `{ wasm, driver, graph, memory, diagnostics, schemaHash }` (`driver` instantiates the WASM; the offline renderer uses it). You rarely call this yourself; the Vite plugin and the offline renderer compile for you.
-- `createNode(context, processor, options?)` — main-thread `UnworkletNode<C>` (`node`, `inputs`, `outputs`, `params`, `state`, `events`, `midi`, `snapshot`, `restore`, `onError`, `diagnostics`, `dispose`).
+- `createNode(context, processor, options?)` — main-thread `UnworkletNode<C>` (`node`, `inputs`, `outputs`, `params`, `state`, `events`, `midi`, `snapshot`, `restore`, `onError`, `diagnostics`, `dispose`). To name the handle's type up front — a class field or `let` you assign later — write `UnworkletNode<typeof import("./x.processor.ts?worklet")>`: it takes the `?worklet` import directly, so every surface stays typed without a `createNode` round-trip.
 - `replaceProcessor(oldNode, newProcessor)` — hot-swap a running processor.
 - `inspect(blob)` — decode a snapshot without an `AudioContext`.
 - Snapshot codec: `encodeSnapshot` / `decodeSnapshot` / `inspectSnapshot` / `runMigrations` / `SNAPSHOT_VERSION`.

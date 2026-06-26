@@ -102,6 +102,10 @@ node.outputs.main.connect(ctx.destination);   // also: node.inputs, node.params.
                                                // await node.snapshot() / await node.restore(blob)   // both async
 ```
 
+Name the handle's type up front (a `let` / class field you assign later) with
+`UnworkletNode<typeof import("./x.processor.ts?worklet")>` — it takes the `?worklet`
+import directly, so every surface stays typed without a `createNode` round-trip.
+
 ## Verify before you ship
 
 ```ts

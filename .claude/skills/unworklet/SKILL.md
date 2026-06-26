@@ -183,7 +183,10 @@ project's `tsconfig.json` does `{ "extends": "./.unworklet/tsconfig.json" }` (no
 `worklets.d.ts` of per-processor types); gitignore it. Don't add your own `include`
 to that tsconfig. Can't extend? Put `types: ["@unworklet/unplugin/client"]` +
 `plugins: [{ name: "@unworklet/lang/typescript-plugin" }]` in `compilerOptions` and
-list `.unworklet/worklets.d.ts` in `include` directly.
+list `.unworklet/worklets.d.ts` in `include` directly. To name the handle's type
+up front (a `let` / class field you assign later), write
+`UnworkletNode<typeof import("./x.processor.ts?worklet")>` — it takes the `?worklet`
+import directly, so every surface stays typed.
 
 ## Verify
 
