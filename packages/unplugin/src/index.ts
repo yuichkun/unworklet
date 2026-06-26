@@ -846,6 +846,9 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
   let devtoolsActive = false;
   let basePath = "/";
   let projectRoot = "";
+  // The page's effective COEP (captured from the resolved config), mirrored onto
+  // the DevTools panel iframe so a cross-origin-isolated app can embed it.
+  let pageCoep: string | undefined;
   // Every `?worklet`-imported processor's compiled namespace, accumulated as
   // `load` evaluates each one. The aggregate witness `.d.ts` re-emits with the
   // full set on every (re)load — the typed `node.params` surface, no per-file
@@ -980,6 +983,14 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
       } else {
         basePath = "/";
       }
+      // The resolved `server.headers` already merge the app's COOP/COEP with the
+      // ones this plugin's `config` hook injected, so this is the single source of
+      // truth for the page's effective COEP. The DevTools panel iframe mirrors it
+      // (see `configureServer`); undefined here means the page is not isolated and
+      // the panel needs no COEP.
+      const resolvedHeaders =
+        (config as { server?: { headers?: Record<string, string> } }).server?.headers ?? {};
+      pageCoep = resolvedHeaders["Cross-Origin-Embedder-Policy"];
     },
     transformIndexHtml() {
       if (!isServe || !devtoolsActive) return;
@@ -1003,6 +1014,26 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
     },
     configureServer(server) {
       viteDevServer = server as unknown as ViteDevServerLike;
+      // DevTools panel iframe COEP (serve-only). The `@vitejs/devtools` host serves
+      // the panel SPA as a static iframe at `/__unworklet/`, and its static
+      // middleware sets only content headers — never COEP. A cross-origin-isolated
+      // page (= the default, so `SharedArrayBuffer` works) blocks every embedded
+      // iframe that lacks its own COEP header, so the panel "refused to connect".
+      // Mirror the page's COEP onto the panel responses so the iframe is embeddable
+      // while the page stays isolated. This plugin is `enforce: "pre"` and the
+      // devtools host is `enforce: "post"`, so this middleware is registered — and
+      // runs — before the host's static serve: the header set here is still on the
+      // response when the host pipes the file. Skipped when the page has no COEP.
+      const coep = pageCoep;
+      if (coep) {
+        server.middlewares.use((req, res, next) => {
+          const pathOnly = req.url?.split("?", 1)[0];
+          if (pathOnly?.startsWith("/__unworklet/")) {
+            res.setHeader("Cross-Origin-Embedder-Policy", coep);
+          }
+          next();
+        });
+      }
       // Dev-mode middleware = serve compiled WASM bytes at a hash-pinned URL.
       // The worklet entry JS is **not** served here — it goes through
       // Vite's module pipeline (= `\0unworklet-worklet:` virtual id under

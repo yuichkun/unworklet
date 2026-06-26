@@ -1634,6 +1634,80 @@ test("devtools.setup registers a single dock entry at the `/__unworklet/` static
   expect(ctx.views.__hostStaticCalls[0]!.urlBase).toBe("/__unworklet/");
 });
 
+test("the panel iframe is served the page's COEP so a cross-origin-isolated app can embed it", () => {
+  // The `@vitejs/devtools` host serves the panel SPA as a static iframe at
+  // `/__unworklet/` and sets only content headers — never COEP. When cross-origin
+  // isolation is on (the default, so `SharedArrayBuffer` works), the app page
+  // carries COEP, and a COEP page blocks every embedded iframe that lacks its own
+  // COEP header — the panel then "refused to connect". The plugin mirrors the
+  // page's COEP onto the panel responses so the iframe stays embeddable.
+  const plugin = unworklet();
+  const configHook = plugin.configResolved as unknown as (
+    this: unknown,
+    config: {
+      command: string;
+      root: string;
+      base: string;
+      server?: { headers?: Record<string, string> };
+    },
+  ) => void;
+  configHook.call(null, {
+    command: "serve",
+    root: "/",
+    base: "/",
+    server: { headers: { "Cross-Origin-Embedder-Policy": "credentialless" } },
+  });
+  const configureServerHook = plugin.configureServer as unknown as ConfigureServerFn;
+  const server = makeServerStub();
+  configureServerHook.call(null, server);
+
+  // Run every registered middleware against a URL and collect what each sets +
+  // whether it yields to next().
+  const runAll = (url: string): Array<{ headers: Record<string, string>; nexted: boolean }> =>
+    server.__registered.map((mw) => {
+      const headers: Record<string, string> = {};
+      const res: ResponseStub = {
+        ...makeResponseStub(),
+        setHeader: (k, v) => {
+          headers[k] = v;
+        },
+      };
+      let nexted = false;
+      mw({ url }, res, () => {
+        nexted = true;
+      });
+      return { headers, nexted };
+    });
+
+  // Exactly one middleware sets the page COEP on the panel root, and it yields to
+  // next() so the devtools host's static serve still pipes the file afterwards.
+  const panelCoep = runAll("/__unworklet/").filter(
+    (r) => r.headers["Cross-Origin-Embedder-Policy"] === "credentialless",
+  );
+  expect(panelCoep).toHaveLength(1);
+  expect(panelCoep[0]!.nexted).toBe(true);
+
+  // A normal app request outside the panel namespace never gets COEP from here —
+  // the app server owns the page's own COEP.
+  const appCoep = runAll("/src/main.ts").filter(
+    (r) => r.headers["Cross-Origin-Embedder-Policy"] !== undefined,
+  );
+  expect(appCoep).toHaveLength(0);
+});
+
+test("no panel-COEP middleware is registered when the page has no COEP", () => {
+  // With isolation disabled and no app COEP, the page is not cross-origin
+  // isolated, so the panel iframe embeds without a COEP header — the plugin must
+  // not register the mirroring middleware (only the WASM serve one remains).
+  const plugin = unworklet({ crossOriginIsolation: false });
+  const configHook = plugin.configResolved as unknown as ConfigResolvedFn;
+  configHook.call(null, { command: "serve", root: "/", base: "/" });
+  const configureServerHook = plugin.configureServer as unknown as ConfigureServerFn;
+  const server = makeServerStub();
+  configureServerHook.call(null, server);
+  expect(server.__registered).toHaveLength(1);
+});
+
 test("devtools.setup wires the graph + live-state + signals shared states and their update RPCs", async () => {
   const plugin = unworklet();
   const setup = (plugin as unknown as { devtools?: { setup: (ctx: unknown) => Promise<void> } })
