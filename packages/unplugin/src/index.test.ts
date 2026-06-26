@@ -143,6 +143,11 @@ const FIXTURE_UWK_GAIN_PATH = fileURLToPath(
   new URL("../__fixtures__/stereo-gain.uwk.ts", import.meta.url),
 );
 
+/** A processor `.uwk.ts` that imports a subgraph from a sibling library `.uwk.ts`. */
+const FIXTURE_USES_SUBGRAPH_PATH = fileURLToPath(
+  new URL("../__fixtures__/uses-onepole.uwk.ts", import.meta.url),
+);
+
 type TransformFn = (this: unknown, code: string, id: string) => unknown;
 
 /** Invoke the plugin's `transform` hook with a context whose `error` throws. */
@@ -461,6 +466,17 @@ test("load lowers the .uwk.ts fixture, compiles it, and emits the WASM as a buil
   const wasmCall = assetCalls(ctx).find((c) => c.name.endsWith(".wasm"));
   expect(wasmCall).toMatchObject({ type: "asset", name: "stereo-gain.wasm" });
   expect(wasmCall!.source).toBeInstanceOf(Uint8Array);
+});
+
+test("build: a processor .uwk.ts that imports a subgraph .uwk.ts compiles to WASM", async () => {
+  // The build evaluates the processor via raw Node import to compute the WASM. The
+  // imported subgraph library `.uwk.ts` must be lowered too, or Node sees raw sugar
+  // (`defineSubgraph` undefined) and throws. This is the cross-file build path.
+  const { ctx } = await callLoadWithMockContext(
+    `${VIRTUAL_ID_PREFIX}${FIXTURE_USES_SUBGRAPH_PATH}`,
+  );
+  const wasmCall = assetCalls(ctx).find((c) => c.name.endsWith(".wasm"));
+  expect(wasmCall?.source).toBeInstanceOf(Uint8Array);
 });
 
 test("a .uwk.ts processor compiles to byte-identical WASM as its hand-written equivalent", async () => {

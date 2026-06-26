@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 
 import { compile, extractWorkletMeta } from "@unworklet/core";
 import type { CompiledProcessor, WorkletNamespace } from "@unworklet/core";
-import { lower } from "@unworklet/lang";
+import { lower, rewriteImportSpecifiers, uwkImportSpecifiers } from "@unworklet/lang";
 import { createUnplugin, type UnpluginOptions } from "unplugin";
 import type { Plugin } from "vite";
 
@@ -295,25 +295,65 @@ const lowerUwkSource = (sourcePath: string, source: string): string => {
 };
 
 /**
+ * Lower `sourcePath` to a temp sibling and recursively lower the transitive
+ * `.uwk.ts` imports it makes — a processor importing a subgraph from a sibling
+ * library `.uwk.ts` — rewriting each importer's specifier to point at the lowered
+ * sibling. Returns the entry temp path; every temp written is pushed to `cleanup`.
+ *
+ * `.uwklowered.ts` suffix (not `.uwk.ts`) so a temp is never re-lowered; written
+ * next to its source so Node's native type-stripping runs and `@unworklet/core`
+ * (+ plain `.ts` imports) resolve from the source directory. A single-file
+ * processor (no `.uwk.ts` imports) writes exactly one temp.
+ */
+const materializeLowered = async (
+  sourcePath: string,
+  done: Map<string, string>,
+  inProgress: Set<string>,
+  cleanup: string[],
+): Promise<string> => {
+  const already = done.get(sourcePath);
+  if (already !== undefined) return already;
+  if (inProgress.has(sourcePath)) {
+    throw new Error(`@unworklet/unplugin: cyclic .uwk.ts import involving ${sourcePath}`);
+  }
+  inProgress.add(sourcePath);
+  const source = await readFile(sourcePath, "utf8");
+  let lowered = lowerUwkSource(sourcePath, source);
+  const dir = path.dirname(sourcePath);
+  const remap: Record<string, string> = {};
+  for (const spec of uwkImportSpecifiers(lowered)) {
+    const targetTemp = await materializeLowered(path.resolve(dir, spec), done, inProgress, cleanup);
+    let rel = path.relative(dir, targetTemp).split(path.sep).join("/");
+    // The temp basename is a dotfile (`.x.<tag>.uwklowered.ts`), so a same-dir
+    // `path.relative` yields a leading-dot name that Node would read as a bare
+    // specifier — force an explicit `./` (or keep an existing `../`).
+    if (!rel.startsWith("./") && !rel.startsWith("../")) rel = `./${rel}`;
+    remap[spec] = rel;
+  }
+  if (Object.keys(remap).length > 0) lowered = rewriteImportSpecifiers(lowered, remap);
+  const tag = createHash("sha256").update(lowered).digest("hex").slice(0, 8);
+  const tempPath = path.join(dir, `.${path.basename(sourcePath)}.${tag}.uwklowered.ts`);
+  await writeFile(tempPath, lowered);
+  done.set(sourcePath, tempPath);
+  inProgress.delete(sourcePath);
+  cleanup.push(tempPath);
+  return tempPath;
+};
+
+/**
  * Build-path module load. A plain `.ts` is imported fresh via Node; a `.uwk.ts`
- * is lowered first — written to a temp sibling so Node's native type-stripping
- * runs AND `@unworklet/core` resolves from the source directory — then imported
- * and removed. (Node `import()` does not run the Vite transform pipeline, so the
- * build path cannot rely on the `transform` hook.)
+ * is lowered (with its transitive `.uwk.ts` imports — see {@link materializeLowered})
+ * to temp siblings, imported, then removed. (Node `import()` does not run the Vite
+ * transform pipeline, so the build path cannot rely on the `transform` hook.)
  */
 const loadProcessorModuleFresh = async (sourcePath: string): Promise<Record<string, unknown>> => {
   if (!isUwkSource(sourcePath)) return importFresh(sourcePath);
-  const source = await readFile(sourcePath, "utf8");
-  const lowered = lowerUwkSource(sourcePath, source);
-  const dir = path.dirname(sourcePath);
-  const tag = createHash("sha256").update(lowered).digest("hex").slice(0, 8);
-  // A `.uwklowered.ts` suffix (not `.uwk.ts`) so the temp file is never re-lowered.
-  const tempPath = path.join(dir, `.${path.basename(sourcePath)}.${tag}.uwklowered.ts`);
-  await writeFile(tempPath, lowered);
+  const cleanup: string[] = [];
+  const entryTemp = await materializeLowered(sourcePath, new Map(), new Set(), cleanup);
   try {
-    return (await import(`${tempPath}?t=${Date.now()}`)) as Record<string, unknown>;
+    return (await import(`${entryTemp}?t=${Date.now()}`)) as Record<string, unknown>;
   } finally {
-    await rm(tempPath, { force: true });
+    await Promise.all(cleanup.map((p) => rm(p, { force: true })));
   }
 };
 

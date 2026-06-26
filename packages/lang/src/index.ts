@@ -9,6 +9,10 @@ export type { LowerOptions } from "./lower.ts";
 export { captureFsSnapshot } from "./capture.ts";
 export type { FsSnapshot } from "./program.ts";
 
+// AST helpers over a lowered module's imports, for a bundler to lower transitive
+// `.uwk.ts` imports (a processor importing a subgraph from a sibling `.uwk.ts`).
+export { rewriteImportSpecifiers, uwkImportSpecifiers } from "./uwk-imports.ts";
+
 // Headless authoring: lower a `.uwk.ts` source straight to a `CompiledProcessor`
 // for `@unworklet/offline`'s `renderOffline` — no Vite plugin, no browser. The
 // browser entry exposes the same call backed by a build-time type snapshot.
