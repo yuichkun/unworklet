@@ -148,6 +148,11 @@ const FIXTURE_USES_SUBGRAPH_PATH = fileURLToPath(
   new URL("../__fixtures__/uses-onepole.uwk.ts", import.meta.url),
 );
 
+/** The inline equivalent (same subgraph defined in the processor file). */
+const FIXTURE_INLINE_SUBGRAPH_PATH = fileURLToPath(
+  new URL("../__fixtures__/inline-onepole.uwk.ts", import.meta.url),
+);
+
 type TransformFn = (this: unknown, code: string, id: string) => unknown;
 
 /** Invoke the plugin's `transform` hook with a context whose `error` throws. */
@@ -477,6 +482,20 @@ test("build: a processor .uwk.ts that imports a subgraph .uwk.ts compiles to WAS
   );
   const wasmCall = assetCalls(ctx).find((c) => c.name.endsWith(".wasm"));
   expect(wasmCall?.source).toBeInstanceOf(Uint8Array);
+});
+
+test("build: a split-subgraph processor compiles byte-identical to the inline equivalent", async () => {
+  // A subgraph is inlined at instantiate() regardless of which file it was defined
+  // in, so splitting it into its own `.uwk.ts` must not change the compiled graph.
+  const { ctx: split } = await callLoadWithMockContext(
+    `${VIRTUAL_ID_PREFIX}${FIXTURE_USES_SUBGRAPH_PATH}`,
+  );
+  const { ctx: inline } = await callLoadWithMockContext(
+    `${VIRTUAL_ID_PREFIX}${FIXTURE_INLINE_SUBGRAPH_PATH}`,
+  );
+  const splitWasm = assetCalls(split).find((c) => c.name.endsWith(".wasm"))!.source as Uint8Array;
+  const inlineWasm = assetCalls(inline).find((c) => c.name.endsWith(".wasm"))!.source as Uint8Array;
+  expect(Buffer.from(splitWasm).equals(Buffer.from(inlineWasm))).toBe(true);
 });
 
 test("a .uwk.ts processor compiles to byte-identical WASM as its hand-written equivalent", async () => {
