@@ -86,13 +86,56 @@ process(() => {});
   expect(names).toContain("state");
 });
 
-test("rejects a file with no process() call", () => {
+test("rejects a file with no process() and no export (it would do nothing)", () => {
+  // A .uwk.ts with neither a process() nor any export produces no processor and
+  // exposes nothing — a mistake. (A no-process file WITH an export is a valid
+  // library module; see the subgraph-only test below.)
   expect(() => lower(`const s = state.f32(0).named("s");`)).toThrow(LowerError);
   try {
     lower(`const s = state.f32(0).named("s");`);
   } catch (e) {
-    expect((e as LowerError).id).toBe("uwk-no-process");
+    expect((e as LowerError).id).toBe("uwk-empty");
   }
+});
+
+test("lowers a subgraph-only file to a plain library module (no defineProcessor wrap, no ambient I/O)", () => {
+  // A .uwk.ts with no process() but with exports is a "library module": the
+  // exports are emitted verbatim at module scope, the sugar in subgraph method
+  // bodies is still desugared, and there is NO defineProcessor wrap and NO
+  // synthesized ambient stereo I/O.
+  const out = lower(
+    `export const onepole = defineSubgraph((coef: Node<"f32">) => ({\n` +
+      `  tick: (x: Node<"f32">) => x * coef,\n` +
+      `}));`,
+  );
+  // The export survives verbatim at module scope.
+  expect(out).toContain("export const onepole = defineSubgraph(");
+  // Sugar in the method body is desugared (x * coef -> mul(x, coef)).
+  expect(out).toContain("mul(");
+  // No processor wrap, no synthesized ambient stereo I/O.
+  expect(out).not.toContain("defineProcessor");
+  expect(out).not.toContain("audioInput({ channels: 2");
+  expect(out).not.toContain("audioOutput({ channels: 2");
+  // The core import carries defineSubgraph + mul but NOT defineProcessor / audioInput.
+  const names = importedNames(out);
+  expect(names).toContain("defineSubgraph");
+  expect(names).toContain("mul");
+  expect(names).not.toContain("defineProcessor");
+  expect(names).not.toContain("audioInput");
+});
+
+test("a library module keeps a sibling import at module scope", () => {
+  const out = lower(
+    `import { TWO_PI } from "./constants.ts";\n` +
+      `export const osc = defineSubgraph((hz: Node<"f32">) => ({\n` +
+      `  tick: () => hz * TWO_PI,\n` +
+      `}));`,
+  );
+  expect(out).toContain('import { TWO_PI } from "./constants.ts"');
+  // The sibling import sits at module scope, ahead of the exported subgraph.
+  expect(out.indexOf("import { TWO_PI }")).toBeLessThan(out.indexOf("defineSubgraph"));
+  // The injected core import drops nothing the user imports; TWO_PI is not core.
+  expect(out).toContain("mul("); // hz * TWO_PI desugared
 });
 
 test("rejects more than one process() call", () => {

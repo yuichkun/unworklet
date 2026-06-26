@@ -21,6 +21,17 @@ export function evalLowered(loweredTs: string): CompiledProcessor<unknown> {
   const js = ts.transpileModule(loweredTs, {
     compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext },
   }).outputText;
+  // A processor lowers to `export default defineProcessor(...)`. No default export
+  // means a library module (`export const x = defineSubgraph(...)`, no process()) —
+  // not a processor, so there is nothing to render here. Surface that rather than
+  // crashing in `new Function` on the surviving named `export`.
+  if (!/export\s+default\s+/.test(js)) {
+    throw new Error(
+      "unworklet: this .uwk.ts is a library module (no process()), not a processor. " +
+        "It exports values (e.g. a defineSubgraph) for a processor to import; render the " +
+        "processor that imports and instantiate()s it, not this file.",
+    );
+  }
   const body = js
     .replace(/import\s*\{[^}]*\}\s*from\s*["']@unworklet\/core["'];?/g, "")
     .replace(/export\s+default\s+/, "return ");

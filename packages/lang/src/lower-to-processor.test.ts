@@ -60,6 +60,19 @@ test("lowerToProcessor reports a clear error for a cross-file import (runtime-co
   ).toThrow(/cannot import from other files/i);
 });
 
+test("lowerToProcessor on a library module (subgraph-only) errors clearly", () => {
+  // A no-process `.uwk.ts` is a library module that exports a subgraph for a
+  // processor to import — it is not a processor and cannot be rendered directly.
+  // The error must say so, not crash in `new Function` on the named export.
+  expect(() =>
+    lowerToProcessor(
+      `export const onepole = defineSubgraph((coef: Node<"f32">) => ({\n` +
+        `  tick: (x: Node<"f32">) => x * coef,\n` +
+        `}));`,
+    ),
+  ).toThrow(/library module|not a processor/i);
+});
+
 test("a .uwk.ts that imports a sibling constant compiles end-to-end (build path)", async () => {
   // The build path writes the lowered module next to the source and imports it,
   // so a relative specifier resolves. Replicate that here (lower → write sibling →

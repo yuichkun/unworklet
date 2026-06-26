@@ -432,10 +432,27 @@ test("transform falls back to `processor` when the filename has no identifier ch
 });
 
 test("transform surfaces a lowering error via this.error", () => {
-  // A .uwk.ts with no process() call is a LowerError, surfaced as a Vite error.
+  // A .uwk.ts with neither a process() nor an export is a LowerError (uwk-empty),
+  // surfaced as a Vite error.
   expect(() =>
     callTransform(`const out = audioOutput({ channels: 1, name: "main" });`, "/abs/x.uwk.ts"),
   ).toThrow(/process/);
+});
+
+test("transform lowers a subgraph-only .uwk.ts as a library module (no defineProcessor)", () => {
+  // A no-process `.uwk.ts` that exports a subgraph is a library module: the
+  // transform lowers it as a plain module (export preserved, no defineProcessor
+  // wrap), so a processor `.uwk.ts` can import it.
+  const code = (
+    callTransform(
+      `export const onepole = defineSubgraph((coef: Node<"f32">) => ({\n` +
+        `  tick: (x: Node<"f32">) => x * coef,\n` +
+        `}));`,
+      "/abs/onepole.uwk.ts",
+    ) as { code: string }
+  ).code;
+  expect(code).toContain("export const onepole = defineSubgraph(");
+  expect(code).not.toContain("defineProcessor");
 });
 
 test("load lowers the .uwk.ts fixture, compiles it, and emits the WASM as a build asset", async () => {

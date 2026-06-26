@@ -278,6 +278,15 @@ function makeAudioDecl(
   );
 }
 
+/** Whether a top-level statement exports something (an `export` modifier, or a
+ * bare `export { ... }` / `export default`). Used to tell a library module (no
+ * `process()`, but exports a value) from a no-op file (neither). */
+function isExportedStatement(stmt: ts.Statement): boolean {
+  if (ts.isExportDeclaration(stmt) || ts.isExportAssignment(stmt)) return true;
+  const mods = ts.canHaveModifiers(stmt) ? ts.getModifiers(stmt) : undefined;
+  return mods?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false;
+}
+
 /** Whether any of `nodes` contains a call to the bare identifier `calleeName`. */
 function referencesCall(nodes: readonly ts.Node[], calleeName: string): boolean {
   let found = false;
@@ -353,10 +362,31 @@ export function lower(source: string, options: LowerOptions = {}): string {
   }
 
   if (processCount === 0) {
-    throw new LowerError(
-      "uwk-no-process",
-      "a .uwk.ts file must contain a process(() => {...}) call",
-    );
+    // No process() = a "library module": emit the (already-desugared) top-level
+    // declarations + exports as a plain module — no defineProcessor wrap, no
+    // synthesized ambient stereo I/O. Consumed via a normal import (e.g. a file
+    // that `export`s a defineSubgraph; a processor file imports it and places
+    // instances with instantiate()).
+    if (migrationsArg !== undefined || optionsObject !== undefined) {
+      throw new LowerError(
+        "uwk-options-without-process",
+        "migrations() / options() are processor-only — a .uwk.ts with no process() " +
+          "call is a library module and cannot carry them.",
+      );
+    }
+    if (!declarations.some(isExportedStatement)) {
+      throw new LowerError(
+        "uwk-empty",
+        "a .uwk.ts must contain a process(() => {...}) call, or export at least one " +
+          "value (e.g. `export const x = defineSubgraph(...)`).",
+      );
+    }
+    const used = collectUsedCoreExports(sf);
+    for (const name of importBoundNames(userImports)) used.delete(name);
+    const importDecl = makeCoreImport([...used].sort(), coreModule);
+    const lowered = ts.factory.updateSourceFile(sf, [...userImports, importDecl, ...declarations]);
+    const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
+    return printer.printFile(lowered);
   }
   if (processCount > 1) {
     throw new LowerError(
