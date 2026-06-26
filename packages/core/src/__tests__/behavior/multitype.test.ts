@@ -17,7 +17,7 @@ import { audioOutput, state } from "../../dsl/declarations.ts";
 import { bool, f32, f64, i32, i64, num } from "../../dsl/constructors.ts";
 import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
 import { forSample } from "../../dsl/loop.ts";
-import { select } from "../../dsl/primitives.ts";
+import { clamp, select } from "../../dsl/primitives.ts";
 import { defineProcessor } from "../../processor.ts";
 import type { Node } from "../../types.ts";
 
@@ -108,6 +108,36 @@ test("i32 clamp: clamp(x, 0, 5) saturates (9→5, -2→0, 3→3)", async () => {
 test("i64 max/min: max(3n, 7n) = 7, min = 3 (integer compare+select)", async () => {
   allEqual(await gen(() => f32(i64(3n).max(i64(7n)))), 7);
   allEqual(await gen(() => f32(i64(3n).min(i64(7n)))), 3);
+});
+
+// "type ⟺ works": a numeric op that mixes two CONCRETE scalar-typed nodes (here
+// i32 and f32) previously lowered an i32 op fed an f32 operand → invalid WASM that
+// only surfaced as a raw validator error (`i32.lt_s expected type i32, found f32`)
+// the author could not act on. It must fail at build with a readable unworklet
+// error that names the op + the mismatched types. (Number literals still lift to a
+// sibling's type — only typed-node-vs-typed-node mismatches error.)
+test("mixing scalar types in clamp fails with a readable unworklet error, not raw WASM", async () => {
+  // The throw may surface either while tracing the body or during compile, so wrap
+  // both in one async assertion. The message must name the op (`clamp`) and the two
+  // mismatched types — NOT leak a raw WASM validator error.
+  await expect(async () => {
+    const proc = defineProcessor(() => {
+      const out = audioOutput({ channels: 1, name: "main" });
+      const iv = state.i32(0).named("iv");
+      const fv = state.f32(0).named("fv");
+      return {
+        process: () => {
+          forSample((s) => {
+            out
+              .ch(0)
+              .at(s)
+              .write(f32(clamp(iv.read(), 0, fv.read())));
+          });
+        },
+      };
+    });
+    await render(proc);
+  }).rejects.toThrow(/unworklet:[\s\S]*clamp[\s\S]*(i32|f32)/i);
 });
 
 // abs is meaningful on integers and lowers to select(x < 0, -x, x), not f32.abs.
