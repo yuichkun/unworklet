@@ -22,7 +22,7 @@ export {
 } from "./dsl/constants.ts";
 
 // Scalar constructors.
-export { bool, f32, f64, i32, i64, num } from "./dsl/constructors.ts";
+export { bool, f32, f64, i32, i64 } from "./dsl/constructors.ts";
 
 // DSL primitive operators (Node<T> method form extended via declaration merging).
 export {

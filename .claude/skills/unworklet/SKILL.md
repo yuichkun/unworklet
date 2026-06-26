@@ -136,7 +136,7 @@ event.midi({ to: "main", name })     event.midi({ from: "main", name })
 **Operations** — free function or method form (identical):
 `add sub mul div mod neg` · `eq lt lte gt gte` · `not select` · `abs min max
 clamp floor ceil frac` · `sin cos tan tanh exp log sqrt` · `pipe`.
-Scalar constructors / casts: `f32(x) f64(x) i32(x) i64(1n) bool(true) num(x)` —
+Scalar constructors / casts: `f32(x) f64(x) i32(x) i64(1n) bool(true)` —
 `f32(node)` also casts any scalar `Node` to `Node<"f32">` (the `i32`→`f32` bridge,
 e.g. a MIDI field; see the synth above).
 

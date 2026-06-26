@@ -43,7 +43,6 @@ declare global {
   const i32: typeof import("@unworklet/core").i32;
   const i64: typeof import("@unworklet/core").i64;
   const bool: typeof import("@unworklet/core").bool;
-  const num: typeof import("@unworklet/core").num;
 
   // ── Math / logical / composition free-function forms ──
   const add: typeof import("@unworklet/core").add;

@@ -18,8 +18,7 @@ import { expect, test, vi } from "vite-plus/test";
 
 import { compile } from "./compile/index.ts";
 import { CAPACITY_16, SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
-import { f32, num } from "./dsl/constructors.ts";
-import { audioInput, audioOutput, event, param, state } from "./dsl/declarations.ts";
+import { audioInput, audioOutput, event, param } from "./dsl/declarations.ts";
 import { forSample } from "./dsl/loop.ts";
 import { defineProcessor } from "./processor.ts";
 
@@ -1201,55 +1200,4 @@ test("no message/midi rings: a port message listener is still registered + start
   monoGain.worklet.initialize(self, { processorOptions: { wasm } });
   expect(self.port.__listeners.length).toBe(1);
   expect(self.port.__startCalled).toBe(true);
-});
-
-// ── loose-literal re-lift at the store / write boundary (Q77, "type ⟺ works") ──
-// `num(n)` is a loose literal that defers its type to context. A `.write()` /
-// buffer `.write()` IS that context, so the literal must re-lift to the declared
-// slot type — emitting an `f32.const` into a non-f32 slot type-checks in TS yet
-// produces broken WASM. These run the compiled module and read the value back.
-
-test("`process`: state.f64.write(num(n)) re-lifts the loose literal to the f64 slot", async () => {
-  const proc = defineProcessor(() => {
-    const out = audioOutput({ channels: 1, name: "main" });
-    const x = state.f64(0);
-    return {
-      process: () => {
-        x.write(num(5));
-        forSample((i) => {
-          out.ch(0).at(i).write(f32(x.read()));
-        });
-      },
-    };
-  });
-  const { wasm } = await compile(proc);
-  const self = makeMockSelf();
-  proc.worklet.initialize(self, { processorOptions: { wasm } });
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
-  proc.worklet.process(self, [], outputs, {});
-  expect(outputs[0]![0]![0]).toBeCloseTo(5);
-});
-
-test("`process`: buffer.i32.write(num(n)) re-lifts the loose literal to the i32 element type", async () => {
-  const proc = defineProcessor(() => {
-    const out = audioOutput({ channels: 1, name: "main" });
-    const b = state.buffer.i32({ size: 4 });
-    return {
-      process: () => {
-        b.write(0, num(7));
-        forSample((i) => {
-          out
-            .ch(0)
-            .at(i)
-            .write(f32(b.read(0)));
-        });
-      },
-    };
-  });
-  const { wasm } = await compile(proc);
-  const self = makeMockSelf();
-  proc.worklet.initialize(self, { processorOptions: { wasm } });
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
-  proc.worklet.process(self, [], outputs, {});
-  expect(outputs[0]![0]![0]).toBeCloseTo(7);
 });

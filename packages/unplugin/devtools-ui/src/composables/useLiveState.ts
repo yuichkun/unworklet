@@ -81,8 +81,8 @@ export function useLiveState() {
     const present = new Set<string>();
     for (const n of nodes) {
       for (const sc of n.scalars) {
-        const num = numericOf(sc.value);
-        if (num === undefined) continue;
+        const scalarVal = numericOf(sc.value);
+        if (scalarVal === undefined) continue;
         const key = `${n.id}.${sc.name}`;
         present.add(key);
         let arr = histories.get(key);
@@ -90,7 +90,7 @@ export function useLiveState() {
           arr = [];
           histories.set(key, arr);
         }
-        arr.push(num);
+        arr.push(scalarVal);
         if (arr.length > HISTORY_LEN) arr.shift();
       }
     }

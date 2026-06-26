@@ -178,13 +178,13 @@ function peakingCoeffs(freq: Node<"f32">, q: Node<"f32">, gainDb: Node<"f32">) {
   const w0 = freq.mul((2 * Math.PI) / sr);
   const cosw0 = cos(w0);
   const alpha = sin(w0).div(q.mul(2));
-  const inv = num(1).div(num(1).add(alpha.div(A)));
+  const inv = div(1, add(1, alpha.div(A)));
   return {
-    b0: num(1).add(alpha.mul(A)).mul(inv),
-    b1: num(-2).mul(cosw0).mul(inv),
-    b2: num(1).sub(alpha.mul(A)).mul(inv),
-    a1: num(-2).mul(cosw0).mul(inv),
-    a2: num(1).sub(alpha.div(A)).mul(inv),
+    b0: add(1, alpha.mul(A)).mul(inv),
+    b1: mul(-2, cosw0).mul(inv),
+    b2: sub(1, alpha.mul(A)).mul(inv),
+    a1: mul(-2, cosw0).mul(inv),
+    a2: sub(1, alpha.div(A)).mul(inv),
   };
 }`;
 
@@ -327,7 +327,7 @@ test("Ex2 $prev one-pole: `coef*x + (1-coef)*$prev` ≡ explicit injected-state 
        const slot = state.f32(0);
        return {
          process: (x: Node<"f32">) => {
-           const r = coef.mul(x).add(num(1).sub(coef).mul(slot.read()));
+           const r = coef.mul(x).add(sub(1, coef).mul(slot.read()));
            slot.write(r);
            return r;
          },
@@ -381,12 +381,12 @@ test("Ex2 $prev multi-method: each method gets an independent slot", async () =>
        const slotR = state.f32(0);
        return {
          processL: (x: Node<"f32">) => {
-           const r = coef.mul(x).add(num(1).sub(coef).mul(slotL.read()));
+           const r = coef.mul(x).add(sub(1, coef).mul(slotL.read()));
            slotL.write(r);
            return r;
          },
          processR: (x: Node<"f32">) => {
-           const r = coef.mul(x).add(num(1).sub(coef).mul(slotR.read()));
+           const r = coef.mul(x).add(sub(1, coef).mul(slotR.read()));
            slotR.write(r);
            return r;
          },

@@ -44,13 +44,13 @@ Three sites from `12-canonical-examples.md` show where the chain DSL accumulates
 **Ex 2 — Audio EQ Cookbook peaking coefficients (`12-canonical-examples.md` §2):**
 
 ```typescript
-const b0Raw = num(1).add(alpha.mul(A));
+const b0Raw = add(1, alpha.mul(A));
 const b1Raw = cosw0.mul(-2);
-const b2Raw = num(1).sub(alpha.mul(A));
-const inv = num(1).div(num(1).add(alpha.div(A)));
+const b2Raw = sub(1, alpha.mul(A));
+const inv = div(1, add(1, alpha.div(A)));
 ```
 
-The math is `1 + α·A`, `-2·cos(ω0)`, `1 - α·A`, `1 / (1 + α/A)`. The chain form reads bottom-up; the textbook reads top-down. `num(1)` is required at every literal-leading chain start because JS literals carry no methods.
+The math is `1 + α·A`, `-2·cos(ω0)`, `1 - α·A`, `1 / (1 + α/A)`. The chain form reads bottom-up; the textbook reads top-down.
 
 **Ex 4 — Lookahead limiter inner loop (`12-canonical-examples.md` §4):**
 
@@ -538,14 +538,6 @@ These are visible when no `const input` / `const out` is in scope. When the user
 
 **Tier C limits** — ambient defaults cover the single most common case (stereo in / stereo out). Multi-port, sidechain, multi-bus processors require explicit declarations.
 
-### S13. `num()` removed
-
-The literal-leading chain helper `num(v)` (`01-dsl.md` §2.2) is **not** ambient in `.uwk.ts` files and not importable from the lowered virtual module's `@unworklet/core` ambient set.
-
-Reason: with operator sugar, `1 - mix` lifts the `1` literal automatically via the existing Q33 / Q36-a rules. `num()` was a workaround for "JS literals carry no methods" — no longer needed.
-
-`@unworklet/core` continues exporting `num()` for Tier A `.ts` consumers.
-
 ## Capture mechanics
 
 The Vite plugin (`@unworklet/unplugin`) gains a `.uwk.ts` loader that transforms the file via AST passes and routes the result through the existing `compile()` invocation pipeline (`07-unplugin.md` §2).
@@ -734,13 +726,13 @@ function peakingCoeffs(freq: Node<"f32">, q: Node<"f32">, gainDb: Node<"f32">, s
   const sinw0 = w0.sin();
   const alpha = sinw0.div(q.mul(2));
 
-  const b0Raw = num(1).add(alpha.mul(A));
+  const b0Raw = add(1, alpha.mul(A));
   const b1Raw = cosw0.mul(-2);
-  const b2Raw = num(1).sub(alpha.mul(A));
-  const a0Raw = num(1).add(alpha.div(A));
+  const b2Raw = sub(1, alpha.mul(A));
+  const a0Raw = add(1, alpha.div(A));
   const a1Raw = cosw0.mul(-2);
-  const a2Raw = num(1).sub(alpha.div(A));
-  const inv = num(1).div(a0Raw);
+  const a2Raw = sub(1, alpha.div(A));
+  const inv = div(1, a0Raw);
   return {
     b0: b0Raw.mul(inv),
     b1: b1Raw.mul(inv),
@@ -867,7 +859,7 @@ return {
       .mul(Math.LN10 * 0.05)
       .exp();
     const releaseSamples = releaseMs.at(0).mul(ctx.sampleRate / 1000);
-    const releaseCoef = num(1).sub(num(-1).div(releaseSamples).exp());
+    const releaseCoef = sub(1, div(-1, releaseSamples).exp());
     const attackCoef = 1.0;
     const headBlock = dlyHead.load();
 
@@ -1126,7 +1118,7 @@ This RFC is **strictly additive** to the v1.0.0 surface (`10-roadmap.md` §1 acc
 - **Q22-b** (single form for sample-offset primitives): preserved. Index access (`audioIn.left[i]`) is sugar that lowers to the same single form (`.at(i)`). The "no sugar" rationale targeted runtime-distinguishable forms that hid `i`; here `i` stays visible at every call site.
 - **Q22-c** (three error layers): preserved. The RFC adds L1 TypeScript-error coverage for some scope violations (= ambient-aware scope checks) that today only surface at L2 (`scope-violation`). No layer removed.
 - **Q22-d** (Rust-style error template + stable IDs): preserved. New stable error IDs added by this RFC follow the same template.
-- **Q33 + Q36-a** (context-dependent literal lift): preserved. Operator sugar uses the existing rule unchanged. `num()` becomes unnecessary at chain starts; the rule itself is identical.
+- **Q33 + Q36-a** (context-dependent literal lift): preserved. Operator sugar uses the existing rule unchanged.
 - **Q37** (no output coverage requirement, source-order last-write-wins): preserved.
 - **Q43** (`everyNSamples` delivered as 2nd `forSample` callback arg): preserved.
 - **Q49 / Q74** (variable-length payloads, sysex emit surface): preserved.

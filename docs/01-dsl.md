@@ -327,10 +327,10 @@ The convention is hybrid:
   const out = select(eq(useA.at(i), 1), lpfA.process(x), lpfB.process(x));
   ```
 
-- **literal-leading chain** uses the `num(v)` lift helper (= §2.2; JS literals have no methods, so `1.sub(m)` is a parse error):
+- **free function at a literal-leading start** — a JS literal carries no methods (`1.sub(m)` is a parse error), so an expression that leads with a literal uses the free-function form for the first op (the literal lifts per §2.2), then chains methods:
 
   ```typescript
-  const dry = num(1).sub(mix).mul(drySig);
+  const dry = sub(1, mix).mul(drySig);
   ```
 
 Each primitive's argument positions accept either a `Node<T>` or a JS `number` / `boolean` literal that lifts to `Node<T>` according to the **context-dependent literal lift rule** (see `00-foundations.md` §4 + `decisions-log.md` Q1 + Q33 + Q36):
@@ -355,7 +355,7 @@ Math-precision strategy (Q17, `decisions-log.md`): the `@unworklet/core` import 
 
 ### 2.2 Scalar constructors
 
-Six scalar constructors lift JS values to `Node<T>` explicitly. Used wherever the implicit lift does not apply — declarations, ambiguous-call disambiguation, i64 construction, cross-precision conversion between `Node` types, and method-chain starting points (= `num(v)` per Q77):
+Five scalar constructors lift JS values to `Node<T>` explicitly. Used wherever the implicit lift does not apply — declarations, ambiguous-call disambiguation, i64 construction, and cross-precision conversion between `Node` types:
 
 ```typescript
 f32(v: number):  Node<'f32'>;
@@ -363,7 +363,6 @@ f64(v: number):  Node<'f64'>;
 i32(v: number):  Node<'i32'>;
 i64(v: bigint):  Node<'i64'>;
 bool(v: boolean): Node<'bool'>;
-num<T>(v: number | boolean): Node<T>;   // Q77 — context-inferred lift for method chain starts
 ```
 
 ```typescript
@@ -382,16 +381,11 @@ state.i64.read().add(i64(BigInt(123)));
 const wide = f64(f32node);
 const narrow = f32(f64node);
 const idx = i32(f32node); // truncate
-
-// Method-chain starting point (= literal-leading chain, JS literals have no methods):
-const dry = num(1).sub(mix).mul(drySig); // T inferred from .sub(mix) → Node<'f32'>
-const off = num(60).add(noteOffset); // T inferred from .add(noteOffset) → Node<'i32'>
-const trig = num(true).select(activeBranch, idleBranch); // T = 'bool' (literal is bool)
 ```
 
-Constructor naming follows GLSL (`vec3(0.0)` / `float(0)`) and WGSL (`f32(0)`) convention. `num(v)` is the chain-start helper introduced by Q77; its `T` is inferred from the surrounding context (= the type of the value passed to the next method in the chain) via the same context-dependent lift rule as Q33 / Q36, falling back to `'f32'` when no context constrains it. Boolean literals fix `T = 'bool'` unambiguously.
+Constructor naming follows GLSL (`vec3(0.0)` / `float(0)`) and WGSL (`f32(0)`) convention.
 
-Authoritative rationale and rejected alternatives: `decisions-log.md` Q33 + Q77.
+Authoritative rationale and rejected alternatives: `decisions-log.md` Q33.
 
 ## 3. State, buffer, param declarations
 
@@ -1616,7 +1610,7 @@ const gainSat = defineProcessor((ctx) => {
         const cleanR = inR.mul(g);
         const satL   = inL.mul(g.mul(3.0)).tanh();
         const satR   = inR.mul(g.mul(3.0)).tanh();
-        const m = num(1).sub(d);
+        const m = sub(1, d);
         out.left .at(i).write(cleanL.mul(m).add(satL.mul(d)));
         out.right.at(i).write(cleanR.mul(m).add(satR.mul(d)));
       });
@@ -1698,15 +1692,15 @@ def.worklet = {
 ### 11.2 Canonical extends shape
 
 ```typescript
-import { defineProcessor, audioOutput, forSample, num } from "@unworklet/core";
+import { defineProcessor, audioOutput, forSample } from "@unworklet/core";
 
 export const polySynth = defineProcessor((ctx) => {
   const out = audioOutput({ channels: 2, name: "main" });
   return {
     process: () => {
       forSample((i) => {
-        out.ch(0).at(i).write(num(0));
-        out.ch(1).at(i).write(num(0));
+        out.ch(0).at(i).write(0);
+        out.ch(1).at(i).write(0);
       });
     },
   };

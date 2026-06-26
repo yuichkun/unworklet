@@ -35,7 +35,6 @@ const CORE_AUTHORING_EXPORTS = new Set<string>([
   "i32",
   "i64",
   "bool",
-  "num",
   "add",
   "sub",
   "mul",

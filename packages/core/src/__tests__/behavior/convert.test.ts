@@ -8,7 +8,7 @@ import { expect, test } from "vite-plus/test";
 
 import "../../dsl/primitives.ts";
 import { audioInput, audioOutput, state } from "../../dsl/declarations.ts";
-import { bool, f32, i32, num, select } from "../../index.ts";
+import { bool, f32, i32, select } from "../../index.ts";
 import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
 import { forSample } from "../../dsl/loop.ts";
 import { defineProcessor } from "../../processor.ts";
@@ -26,7 +26,7 @@ test("bool(f32 node) is true exactly when the value is non-zero", async () => {
           out
             .ch(0)
             .at(i)
-            .write(select(b, num(1), num(0)));
+            .write(select(b, 1, 0));
           out.ch(1).at(i).write(f32(b)); // bool → f32 (0.0 / 1.0)
         });
       },
@@ -76,7 +76,7 @@ test("bool(i32 node) round-trips through select", async () => {
           out
             .ch(0)
             .at(i)
-            .write(select(bool(counter.read()), num(1), num(0)));
+            .write(select(bool(counter.read()), 1, 0));
           counter.write(counter.read().add(1));
         });
       },

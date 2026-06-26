@@ -268,7 +268,7 @@ Lowers to:
 
 ```javascript
 const onepole = defineSubgraph((coef) => ({
-  process: (input) => coef.mul(input).add(num(1).sub(coef).mul(prev)),
+  process: (input) => coef.mul(input).add(sub(1, coef).mul(prev)),
 }));
 ```
 

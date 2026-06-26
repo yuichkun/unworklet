@@ -264,7 +264,7 @@ const operatorLowerings = {
   Div: (inputs) => div(inputs[0], inputs[1]),
   Tanh: (inputs) => tanh(inputs[0]),
   Sigmoid: (inputs) => sigmoid(inputs[0]),
-  Relu: (inputs) => max(inputs[0], num(0)),
+  Relu: (inputs) => max(inputs[0], 0),
   MatMul: lowerMatMul,
   Gemm: lowerGemm, // general matrix multiply with bias
   Conv: lowerConv1d, // 1D conv (for audio)

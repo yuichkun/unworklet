@@ -8,7 +8,7 @@ import { expect, test } from "vite-plus/test";
 
 import "../../dsl/primitives.ts";
 import { audioInput, audioOutput } from "../../dsl/declarations.ts";
-import { not, num, select } from "../../index.ts";
+import { not, select } from "../../index.ts";
 import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
 import { forSample } from "../../dsl/loop.ts";
 import { defineProcessor } from "../../processor.ts";
@@ -26,7 +26,7 @@ test("not(b) inverts a computed bool (free-function form)", async () => {
           out
             .ch(0)
             .at(i)
-            .write(select(not(gate), num(1), num(0))); // 1 when NOT (input > 0.5)
+            .write(select(not(gate), 1, 0)); // 1 when NOT (input > 0.5)
         });
       },
     };
@@ -51,7 +51,7 @@ test("b.not() method form matches not(b)", async () => {
           out
             .ch(0)
             .at(i)
-            .write(select(gate.not(), num(1), num(0)));
+            .write(select(gate.not(), 1, 0));
         });
       },
     };
@@ -74,7 +74,7 @@ test("not(not(b)) round-trips to b", async () => {
           out
             .ch(0)
             .at(i)
-            .write(select(not(not(gate)), num(1), num(0)));
+            .write(select(not(not(gate)), 1, 0));
         });
       },
     };

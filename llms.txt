@@ -62,7 +62,7 @@ forSample.byN(4, (i) => { ... })                // SIMD stride (divides 128)
 // operations — free function OR method form, identical:
 add sub mul div mod neg  eq lt lte gt gte  not select  abs min max clamp
 floor ceil frac  sin cos tan tanh exp log sqrt  pipe
-// scalar constructors AND casts: f32(x) f64(x) i32(x) i64(1n) bool(true) num(x)
+// scalar constructors AND casts: f32(x) f64(x) i32(x) i64(1n) bool(true)
 //   f32(node) reinterprets any scalar Node to Node<"f32"> (the i32→f32 bridge, e.g. a MIDI field)
 ```
 

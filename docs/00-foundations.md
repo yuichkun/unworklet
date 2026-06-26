@@ -51,7 +51,7 @@ A handle to a value computed during per-sample iteration. `T` is one of `'f32'`,
 
 A pure operation over `Node<T>` values (and possibly other compile-time constants) returning a `Node<T>`. Examples: `add`, `mul`, `tanh`, `select`, `splat`. Primitives execute at _graph capture time_ (build time), constructing AST nodes; they do not run per sample.
 
-Primitives appear in **two equivalent forms** (Q77): a **free function form** (`add(a, b)`) and a **method form** on the `Node<T>` value itself (`a.add(b)`). Both shapes compile to the same captured graph node and produce the same numeric output; the choice is purely syntactic. The convention is hybrid — method chain when the input flows through a sequence of operations (= DSP-flow order, e.g. `input.ch(0).at(i).sub(z.read()).mul(k).add(z.read())`), free function for 3-arg control (`select(cond, then, else)`), SIMD constructors (`splat(x)`, `vec4(a, b, c, d)`, `sumLanes(v)`), and complex non-flowing expressions. Method form is available on every Arithmetic / Comparison / Math / SIMD-vec primitive; `select` and the SIMD constructors stay free-function only (= no natural receiver). Handle-bound chains (`buf.read(idx)`, `buf.loadVec(offset)`, `state.read()`, `vec.lane(i)`, `audioIn.ch(c).at(i)`, `audioOut.ch(c).at(i).write(v)` per Q78, etc.) are chain form by construction. Literal-leading chains use the `num(v)` lift helper from `01-dsl.md` §2.2.
+Primitives appear in **two equivalent forms** (Q77): a **free function form** (`add(a, b)`) and a **method form** on the `Node<T>` value itself (`a.add(b)`). Both shapes compile to the same captured graph node and produce the same numeric output; the choice is purely syntactic. The convention is hybrid — method chain when the input flows through a sequence of operations (= DSP-flow order, e.g. `input.ch(0).at(i).sub(z.read()).mul(k).add(z.read())`), free function for 3-arg control (`select(cond, then, else)`), SIMD constructors (`splat(x)`, `vec4(a, b, c, d)`, `sumLanes(v)`), and complex non-flowing expressions. Method form is available on every Arithmetic / Comparison / Math / SIMD-vec primitive; `select` and the SIMD constructors stay free-function only (= no natural receiver). Handle-bound chains (`buf.read(idx)`, `buf.loadVec(offset)`, `state.read()`, `vec.lane(i)`, `audioIn.ch(c).at(i)`, `audioOut.ch(c).at(i).write(v)` per Q78, etc.) are chain form by construction.
 
 ### Declaration scope
 
@@ -162,7 +162,7 @@ Range constraints that the type system cannot express (channel index must be a n
 
 ### Scalar constructors (explicit lift outside primitive arguments)
 
-Six scalar constructors lift JS values to `Node<T>` explicitly. They are required wherever the implicit lift does not apply — variable declarations, ambiguous-call disambiguation, i64 construction, cross-precision conversion, and method-chain starting points (= `num(v)` per Q77):
+Five scalar constructors lift JS values to `Node<T>` explicitly. They are required wherever the implicit lift does not apply — variable declarations, ambiguous-call disambiguation, i64 construction, and cross-precision conversion:
 
 ```typescript
 f32(v: number):  Node<'f32'>;
@@ -170,7 +170,6 @@ f64(v: number):  Node<'f64'>;
 i32(v: number):  Node<'i32'>;
 i64(v: bigint):  Node<'i64'>;
 bool(v: boolean): Node<'bool'>;
-num<T>(v: number | boolean): Node<T>;   // Q77 — context-inferred lift for method chain starts
 ```
 
 ```typescript

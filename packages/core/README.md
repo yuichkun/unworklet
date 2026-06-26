@@ -163,7 +163,7 @@ pipe                               // pipe(x, f, g) or x.pipe(f).pipe(g)
 ```
 
 Both forms work: `mul(a, b)` ≡ `a.mul(b)`; `tanh(x)` ≡ `x.tanh()`. Scalar
-constructors: `f32(0.5)`, `i32(1)`, `i64(1n)`, `bool(true)`, `num(x)` (loose f32).
+constructors: `f32(0.5)`, `i32(1)`, `i64(1n)`, `bool(true)`.
 Each also **casts a `Node`**: `f32(node)` reinterprets any scalar `Node` to
 `Node<"f32">` — the `i32`→`f32` bridge float math needs (e.g. on a MIDI field).
 

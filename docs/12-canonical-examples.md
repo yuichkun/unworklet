@@ -147,7 +147,9 @@ import {
   param,
   state,
   forSample,
-  num,
+  add,
+  sub,
+  div,
   type Node,
   type State,
 } from "@unworklet/core";
@@ -186,14 +188,14 @@ function peakingCoeffs(
   const sinw0 = w0.sin();
   const alpha = sinw0.div(q.mul(2));
 
-  const b0Raw = num(1).add(alpha.mul(A));
+  const b0Raw = add(1, alpha.mul(A));
   const b1Raw = cosw0.mul(-2);
-  const b2Raw = num(1).sub(alpha.mul(A));
-  const a0Raw = num(1).add(alpha.div(A));
+  const b2Raw = sub(1, alpha.mul(A));
+  const a0Raw = add(1, alpha.div(A));
   const a1Raw = cosw0.mul(-2);
-  const a2Raw = num(1).sub(alpha.div(A));
+  const a2Raw = sub(1, alpha.div(A));
 
-  const inv = num(1).div(a0Raw);
+  const inv = div(1, a0Raw);
   return {
     b0: b0Raw.mul(inv),
     b1: b1Raw.mul(inv),
@@ -425,7 +427,8 @@ import {
   forSample,
   event,
   SAMPLES_PER_BLOCK,
-  num,
+  sub,
+  div,
   select,
   type Node,
   type State,
@@ -485,7 +488,7 @@ export const lookaheadLimiter = defineProcessor((ctx) => {
         .mul(Math.LN10 * 0.05)
         .exp();
       const releaseSamples = releaseMs.at(0).mul(ctx.sampleRate / 1000);
-      const releaseCoef = num(1).sub(num(-1).div(releaseSamples).exp());
+      const releaseCoef = sub(1, div(-1, releaseSamples).exp());
       const attackCoef = 1.0; // instantaneous attack — limiter style
 
       const headBlock = dlyHead.read();
@@ -583,7 +586,7 @@ import {
   state,
   forSample,
   event,
-  num,
+  div,
   select,
   f32,
   i32,
@@ -687,7 +690,7 @@ export const granularSampler = defineProcessor((ctx) => {
       });
 
       // Per-block: derive grain spawn interval from grainHz.
-      const samplesPerSpawn = num(ctx.sampleRate).div(grainDensity.at(0));
+      const samplesPerSpawn = div(ctx.sampleRate, grainDensity.at(0));
       const grainSamples = grainSize.at(0).mul(ctx.sampleRate / 1000);
 
       forSample((i) => {
@@ -1105,7 +1108,8 @@ import {
   forSample,
   event,
   SAMPLES_PER_BLOCK,
-  num,
+  sub,
+  div,
   select,
   f32,
   i32,
@@ -1129,8 +1133,8 @@ const synthVoice = defineSubgraph((sr: number) => {
       releaseS: Node<"f32">,
     ) => {
       // Envelope coefficients (k-rate inputs).
-      const aCoef = num(1).sub(num(-1).div(attackS.mul(sr)).exp());
-      const rCoef = num(1).sub(num(-1).div(releaseS.mul(sr)).exp());
+      const aCoef = sub(1, div(-1, attackS.mul(sr)).exp());
+      const rCoef = sub(1, div(-1, releaseS.mul(sr)).exp());
 
       // Update envelope sample-by-sample.
       const target = select(gate, velocity, 0);
@@ -1233,11 +1237,7 @@ export const polySynth = defineProcessor((ctx) => {
 
       // Per-block: derive the sidechain envelope's attack/release coefficients.
       const aCoef = 0.05;
-      const rCoef = num(1).sub(
-        num(-1)
-          .div(0.2 * ctx.sampleRate)
-          .exp(),
-      );
+      const rCoef = sub(1, div(-1, 0.2 * ctx.sampleRate).exp());
 
       const wpStart = wavePtr.read();
 
@@ -1248,7 +1248,7 @@ export const polySynth = defineProcessor((ctx) => {
         scEnv.write(scPeak.sub(scEnv.read()).mul(scC).add(scEnv.read()));
 
         // Duck factor: 1.0 - duckAmount * scEnv.
-        const duck = num(1).sub(duckAmount.at(0).mul(scEnv.read()));
+        const duck = sub(1, duckAmount.at(0).mul(scEnv.read()));
 
         // Sum voices.
         let mix = f32(0);
