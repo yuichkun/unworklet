@@ -84,6 +84,38 @@ export async function f(): Promise<void> {
 `,
   );
 
+  // `UnworkletNode<typeof processorImport>` — naming the node handle's type
+  // straight off a `?worklet` import (a `CompiledProcessor<config>`), without a
+  // `createNode` round-trip. The same per-processor surface must resolve, so the
+  // type argument accepts the processor itself, not just its inner config.
+  writeFileSync(
+    path.join(dir, "node-from-processor.ts"),
+    `${PRELUDE}
+import type { UnworkletNode } from "@unworklet/core";
+declare const proc: CompiledProcessor<{
+  params: { gain: "f32" };
+  state: { level: "f32" };
+  events: { tick: unknown };
+  midi: { keys: unknown };
+  inputs: { main: unknown };
+  outputs: { main: unknown };
+}>;
+declare const node: UnworkletNode<typeof proc>;
+export function f(): void {
+  node.params.gain.value = 0.5;
+  node.state.level.subscribe(() => {});
+  node.events.tick.on(() => {});
+  node.midi.keys.send({ type: "noteOn", channel: 0, note: 60, velocity: 100 });
+  node.outputs.main.connect(ctx.destination);
+  void node.inputs.main;
+  // @ts-expect-error undeclared param name
+  void node.params.nope;
+  // @ts-expect-error undeclared state name
+  void node.state.nope;
+}
+`,
+  );
+
   // Every surface — params / state / events / midi / inputs / outputs — keyed by
   // the declared names: each declared member usable, each undeclared one an error.
   writeFileSync(
@@ -148,4 +180,8 @@ test("an unknown processor witness keeps the permissive param map (back-compat)"
 
 test("declared names across every surface are typed; undeclared names error", () => {
   expect(diagnose("all-surfaces.ts")).toEqual([]);
+});
+
+test("UnworkletNode<typeof processorImport> resolves the per-processor surface directly", () => {
+  expect(diagnose("node-from-processor.ts")).toEqual([]);
 });

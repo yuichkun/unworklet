@@ -1743,7 +1743,7 @@ export async function createNode<C>(
         errorSubscribers.delete(handler);
       };
     },
-    __processor: undefined as unknown as C,
+    __processor: undefined as unknown as UnworkletNode<C>["__processor"],
   };
 
   // Dev-only: auto-register this node so the injected page-script can X-ray it
