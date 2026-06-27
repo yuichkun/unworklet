@@ -172,6 +172,29 @@ export function f(): void {
 }
 `,
   );
+
+  // instantiate(subgraph, ...args) constrains the lambda args to the subgraph's
+  // declared tuple (each Node arg also accepting its liftable primitive — the
+  // sugar `instantiate(sg, 0.5)`), plus an optional trailing options. A wrong
+  // type and a missing arg are compile errors; a plain-number subgraph arg
+  // stays a plain number.
+  writeFileSync(
+    path.join(dir, "instantiate-args.ts"),
+    `import { instantiate, defineSubgraph, f32 } from "@unworklet/core";
+import type { Node } from "@unworklet/core";
+const onepole = defineSubgraph((coef: Node<"f32">) => ({ value: coef }));
+const peaking = defineSubgraph((sr: number) => ({ rate: f32(sr) }));
+export function f(): void {
+  instantiate(onepole, f32(0.5), { name: "lp" });
+  instantiate(onepole, 0.5);
+  instantiate(peaking, 48000);
+  // @ts-expect-error wrong arg type (string where Node<"f32"> / number expected)
+  instantiate(onepole, "nope");
+  // @ts-expect-error missing required arg
+  instantiate(onepole);
+}
+`,
+  );
 });
 
 afterAll(() => {
@@ -214,4 +237,8 @@ test("UnworkletNode<typeof processorImport> resolves the per-processor surface d
 
 test("the main-side event surface narrows .on / .emit by the declared direction", () => {
   expect(diagnose("event-direction.ts")).toEqual([]);
+});
+
+test("instantiate constrains lambda args to the subgraph's declared tuple", () => {
+  expect(diagnose("instantiate-args.ts")).toEqual([]);
 });
