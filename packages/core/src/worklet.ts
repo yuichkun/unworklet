@@ -36,6 +36,15 @@ import type {
 import { layout, type Layout } from "./compile/layout.ts";
 import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
 import { atomicMonotoneMax, ringCount, ringSlotIndex } from "./ringIndex.ts";
+import { checkRingHeader } from "./selfcheck.ts";
+
+/**
+ * Debug-only audio-thread invariant monitor (Layer F). Injected by the unplugin
+ * (`true` in serve, `false` in build) and tree-shaken from production; left
+ * `undefined` in node tests with no plugin, where a test can set it on the
+ * global to exercise the self-check.
+ */
+declare const __UNWORKLET_SELFCHECK__: boolean;
 import {
   encodeScalar,
   isPersistent,
@@ -1812,6 +1821,34 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
           }
         }
       }
+    }
+
+    // Layer F: debug-only invariant monitor. Every quantum, assert each SAB ring
+    // header is sane (no overfill, no tail rewind, no negative overflow) and
+    // surface any corruption to main the instant it happens. The whole block is
+    // gated behind a define that is `false` in production and tree-shaken away,
+    // so prod stays byte-identical.
+    if (typeof __UNWORKLET_SELFCHECK__ !== "undefined" && __UNWORKLET_SELFCHECK__ === true) {
+      const audit = (
+        headers: readonly Int32Array[],
+        rings: ReadonlyArray<{ readonly capacity: number }>,
+        kind: string,
+      ): void => {
+        for (let i = 0; i < headers.length; i++) {
+          const h = headers[i]!;
+          const violation = checkRingHeader(h[0]!, h[1]!, h[2]!, rings[i]!.capacity);
+          if (violation !== null) {
+            self.port.postMessage({
+              kind: "selfcheck-violation",
+              ring: `${kind}[${i}]`,
+              detail: violation,
+            });
+          }
+        }
+      };
+      audit(state.eventRingsWasmHeaderViews, state.eventRings, "event");
+      audit(state.messageRingsWasmHeaderViews, state.messageRings, "message");
+      audit(state.midiRingsWasmHeaderViews, state.midiRings, "midi");
     }
 
     return true;

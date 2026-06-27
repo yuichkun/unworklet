@@ -1001,6 +1001,9 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
       // tree-shakes the devtools wiring and tests (no plugin) leave it undefined.
       const define = {
         __UNWORKLET_DEVTOOLS__: env.command === "serve" ? "true" : "false",
+        // Debug-only audio-thread invariant monitor (Layer F): `true` in serve,
+        // `false` in build so production tree-shakes every self-check call.
+        __UNWORKLET_SELFCHECK__: env.command === "serve" ? "true" : "false",
       };
       if (!crossOriginIsolation) return { define };
       // `SharedArrayBuffer` needs a cross-origin-isolated page. `credentialless`
