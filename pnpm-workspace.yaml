@@ -36,6 +36,7 @@ catalog:
   "@volar/typescript": 2.4.15
   muggle-string: 0.4.1
   unplugin: ^3.0.0
+  fast-check: ^4.8.0
 overrides:
   vite: "catalog:"
   vitest: "catalog:"

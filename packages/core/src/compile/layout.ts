@@ -455,7 +455,11 @@ export function layout(graph: CapturedGraph): Layout {
       (decl.kind === "message" || decl.kind === "event") &&
       decl.fields.some((f) => f.payloadElementType !== undefined)
     ) {
-      const perPayload = decl.payloadCapacity ?? DEFAULT_PAYLOAD_CAPACITY;
+      // Round the per-chunk capacity up to 4 bytes so every chunk base stays
+      // 4-aligned: the main side builds a `Float32Array` view at
+      // contentOffset + chunkIdx * perPayload, which throws RangeError on a
+      // misaligned offset (a custom payloadCapacity need not be a multiple of 4).
+      const perPayload = align4(decl.payloadCapacity ?? DEFAULT_PAYLOAD_CAPACITY);
       // The content keeps each payload in its own chunk, so multiple payloads
       // piling up in the ring before the next drain are not overwritten (§5.2).
       // The number of slots is capped at MAX_CONTENT_SLOTS to keep

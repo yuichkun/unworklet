@@ -48,6 +48,9 @@ catalogs:
     esbuild:
       specifier: ^0.28.0
       version: 0.28.0
+    fast-check:
+      specifier: ^4.8.0
+      version: 4.8.0
     jszip:
       specifier: ^3.10.1
       version: 3.10.1
@@ -140,7 +143,7 @@ importers:
         version: 0.2.0(typescript@5.9.3)(vite@8.0.14)
       '@vitejs/plugin-vue':
         specifier: 'catalog:'
-        version: 6.0.7(vite@8.0.14(@types/node@24.12.4)(esbuild@0.28.0)(jiti@2.7.0)(yaml@2.9.0))(vue@3.5.34(typescript@5.9.3))
+        version: 6.0.7(vite@8.0.14)(vue@3.5.34(typescript@5.9.3))
       playwright:
         specifier: 'catalog:'
         version: 1.60.0
@@ -166,6 +169,9 @@ importers:
       bumpp:
         specifier: ^11.1.0
         version: 11.1.0
+      fast-check:
+        specifier: 'catalog:'
+        version: 4.8.0
       playwright:
         specifier: 'catalog:'
         version: 1.60.0
@@ -174,7 +180,7 @@ importers:
         version: 5.9.3
       vite-plus:
         specifier: 'catalog:'
-        version: 0.1.24(@types/node@24.12.4)(@vitest/coverage-v8@4.1.7(vitest@4.1.7))(esbuild@0.28.0)(jiti@2.7.0)(publint@0.3.21)(typescript@5.9.3)(vite@8.0.14(@types/node@24.12.4)(esbuild@0.28.0)(jiti@2.7.0)(yaml@2.9.0))(yaml@2.9.0)
+        version: 0.1.24(@types/node@24.12.4)(@vitest/coverage-v8@4.1.7)(esbuild@0.28.0)(jiti@2.7.0)(publint@0.3.21)(typescript@5.9.3)(vite@8.0.14(@types/node@24.12.4)(esbuild@0.28.0)(jiti@2.7.0)(yaml@2.9.0))(yaml@2.9.0)
 
   packages/lang:
     dependencies:
@@ -328,7 +334,7 @@ importers:
         version: 24.12.4
       '@vitejs/plugin-vue':
         specifier: ^6.0.0
-        version: 6.0.7(vite@8.0.14(@types/node@24.12.4)(esbuild@0.28.0)(jiti@2.7.0)(yaml@2.9.0))(vue@3.5.34(typescript@5.9.3))
+        version: 6.0.7(vite@8.0.14)(vue@3.5.34(typescript@5.9.3))
       typescript:
         specifier: 'catalog:'
         version: 5.9.3
@@ -1703,6 +1709,10 @@ packages:
     resolution: {integrity: sha512-knvyeauYhqjOYvQ66MznSMs83wmHrCycNEN6Ao+2AeYEfxUIkuiVxdEa1qlGEPK+We3n0THiDciYSsCcgW/DoA==}
     engines: {node: '>=12.0.0'}
 
+  fast-check@4.8.0:
+    resolution: {integrity: sha512-GOJ158CUMnN6cSahsv4+ExARvIDuzzinFjkp0E9WtiBa5zcVeLozVkWaE4IzFcc+Y48Wp1EDlUZsXRyAztQcSg==}
+    engines: {node: '>=12.17.0'}
+
   fast-deep-equal@3.1.3:
     resolution: {integrity: sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==}
 
@@ -2071,6 +2081,9 @@ packages:
     resolution: {integrity: sha512-OqejcnMV6E9zel2oCrUOJEiiFkGiAAni0A6ibfQNh1k9Gu5z4F+Yso8lllam7AzmV6Do0vp7u3UpZNRBwuXaHQ==}
     engines: {node: '>=18'}
     hasBin: true
+
+  pure-rand@8.4.1:
+    resolution: {integrity: sha512-c58R2+SPFcSIPXoU834QN/KPDDOSd8sXcSrqf6e83Me6Rrp1EYkxukkjXMVrKvKaADs1SOyNkWdfvLf6zY8qLQ==}
 
   quansync@1.0.0:
     resolution: {integrity: sha512-5xZacEEufv3HSTPQuchrvV6soaiACMFnq1H8wkVioctoH3TRha9Sz66lOxRwPK/qZj7HPiSveih9yAyh98gvqA==}
@@ -3159,7 +3172,7 @@ snapshots:
       - uploadthing
       - utf-8-validate
 
-  '@vitejs/plugin-vue@6.0.7(vite@8.0.14(@types/node@24.12.4)(esbuild@0.28.0)(jiti@2.7.0)(yaml@2.9.0))(vue@3.5.34(typescript@5.9.3))':
+  '@vitejs/plugin-vue@6.0.7(vite@8.0.14)(vue@3.5.34(typescript@5.9.3))':
     dependencies:
       '@rolldown/pluginutils': 1.0.1
       vite: 8.0.14(@types/node@24.12.4)(@vitejs/devtools@0.2.0)(esbuild@0.28.0)(jiti@2.7.0)(yaml@2.9.0)
@@ -3675,6 +3688,10 @@ snapshots:
 
   expect-type@1.3.0: {}
 
+  fast-check@4.8.0:
+    dependencies:
+      pure-rand: 8.4.1
+
   fast-deep-equal@3.1.3: {}
 
   fast-safe-stringify@2.1.1: {}
@@ -4182,6 +4199,8 @@ snapshots:
       package-manager-detector: 1.6.0
       picocolors: 1.1.1
       sade: 1.8.1
+
+  pure-rand@8.4.1: {}
 
   quansync@1.0.0: {}
 
