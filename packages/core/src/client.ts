@@ -341,6 +341,27 @@ export async function createNode<C>(
     );
   }
 
+  // The `?worklet` WASM bakes rate-dependent coefficients at build time, so a
+  // context running at a different rate would detune the output (and can push a
+  // coefficient-dependent IIR out of its stable region). Reject early. The future
+  // recompile-at-rate path replaces this throw with a main-thread recompile at
+  // `context.sampleRate` — `bakedSampleRate` on the namespace is the seam.
+  const bakedSampleRate = ns.bakedSampleRate;
+  const contextSampleRate = (context as unknown as { sampleRate?: number }).sampleRate;
+  if (
+    bakedSampleRate !== undefined &&
+    typeof contextSampleRate === "number" &&
+    contextSampleRate !== bakedSampleRate
+  ) {
+    throw new Error(
+      `unworklet: createNode() — this processor was compiled for ${bakedSampleRate} Hz but the ` +
+        `AudioContext runs at ${contextSampleRate} Hz. Its coefficients are baked at build time, so ` +
+        `running it at a different rate would detune the output. Create the node on an AudioContext at ` +
+        `${bakedSampleRate} Hz (e.g. \`new AudioContext({ sampleRate: ${bakedSampleRate} })\`). ` +
+        `Recompiling at the context rate is not yet supported.`,
+    );
+  }
+
   await addModuleOnce(
     context as unknown as { audioWorklet: { addModule: (url: string) => Promise<void> } },
     moduleUrl,

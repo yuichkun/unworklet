@@ -664,6 +664,16 @@ export type WorkletNamespace = {
   processorName?: string;
   wasmUrl?: string;
   displayName?: string;
+  /**
+   * The sampleRate the `?worklet` WASM was compiled at (build time). Rate-dependent
+   * coefficients (`tan(pi*fc/sr)`, a delay length `sr*seconds`, a phase increment
+   * `freq/sr`) are frozen into the WASM, so running on a context at a different rate
+   * detunes the output. `createNode` compares this against `context.sampleRate` and
+   * rejects on mismatch. Present only on `?worklet`-imported processors; `undefined`
+   * for inline namespaces (no fixed build rate). This is the seam for a future
+   * recompile-at-rate path (recompile at the context rate instead of throwing).
+   */
+  bakedSampleRate?: number;
 };
 
 export type CompiledProcessor<C> = {

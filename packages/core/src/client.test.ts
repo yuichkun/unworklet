@@ -342,6 +342,7 @@ const makeMockProcessor = (overrides?: {
     sysex?: { wasmBase: number; perChunk: number; chunks: number };
   }>;
   migrations?: CompiledProcessor<unknown>["migrations"];
+  bakedSampleRate?: number;
 }): CompiledProcessor<unknown> =>
   ({
     graph: {} as never,
@@ -365,6 +366,9 @@ const makeMockProcessor = (overrides?: {
       processorName:
         overrides && "processorName" in overrides ? overrides.processorName : "stereoGain",
       ...(overrides && "displayName" in overrides ? { displayName: overrides.displayName } : {}),
+      ...(overrides && "bakedSampleRate" in overrides
+        ? { bakedSampleRate: overrides.bakedSampleRate }
+        : {}),
     },
     __compiledProcessor: undefined,
   }) as unknown as CompiledProcessor<unknown>;
@@ -405,6 +409,51 @@ test("createNode throws when processor has no processorName", async () => {
     await expect(
       createNode(h.context as never, makeMockProcessor({ processorName: undefined }), undefined),
     ).rejects.toThrow(/processorName/);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode throws when context.sampleRate differs from the processor's baked sampleRate", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    await expect(
+      createNode(
+        { ...h.context, sampleRate: 44100 } as never,
+        makeMockProcessor({ bakedSampleRate: 48000 }),
+        undefined,
+      ),
+    ).rejects.toThrow(/compiled for 48000 Hz.*runs at 44100 Hz/);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode proceeds when context.sampleRate matches the baked sampleRate", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          { ...h.context, sampleRate: 48000 } as never,
+          makeMockProcessor({ bakedSampleRate: 48000 }),
+        ),
+      h.fireReady,
+    );
+    expect(node).toBeTruthy();
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode does not guard the rate when the processor carries no baked sampleRate", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode({ ...h.context, sampleRate: 44100 } as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    expect(node).toBeTruthy();
   } finally {
     h.cleanup();
   }
