@@ -20,6 +20,7 @@
 
 import type { AstNode, CapturedGraph } from "./ast.ts";
 import type { Layout } from "./layout.ts";
+import { formatVerifyViolations, verifyRealtimeSafe } from "./verify.ts";
 import type { BufferElementType, ScalarType } from "../types.ts";
 
 export type BinaryenAPI = (typeof import("binaryen"))["default"];
@@ -399,6 +400,16 @@ export async function emit(
     body,
   );
   mod.addFunctionExport("process", "process");
+
+  // Layer A: prove the emitted audio path is realtime-safe by construction
+  // (allocation-free, no unbounded loop, no deliberate trap) before it can ever
+  // become bytes. A violation fails compile() rather than shipping a binary that
+  // could glitch or latch silence on the audio thread.
+  const violations = verifyRealtimeSafe(mod, binaryen);
+  if (violations.length > 0) {
+    mod.dispose();
+    throw new Error(formatVerifyViolations(violations));
+  }
 
   const wasm = mod.emitBinary();
   mod.dispose();
