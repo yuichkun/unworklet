@@ -210,6 +210,17 @@ type WorkletState = {
   readonly eventRingSabOffsets: readonly number[];
   readonly eventRingsWasmViews: readonly Uint8Array[];
   readonly eventRingsSabViews: readonly Uint8Array[];
+  /**
+   * Slot-region-only views (= the ring minus its 12-byte header), pre-bound for
+   * the out-ring publish bulk copy. The bulk copy must NOT span the header: the
+   * SAB header is written solely by the release `Atomics.store(head)`, so a
+   * consumer that acquire-loads the new head synchronizes-with the slot writes.
+   * A whole-ring copy would also write head with a plain store before the
+   * release, and a consumer could read-from that plain write and miss the
+   * happens-before on the slots (a torn read).
+   */
+  readonly eventRingsWasmSlotViews: readonly Uint8Array[];
+  readonly eventRingsSabSlotViews: readonly Uint8Array[];
   /** Per-ring header (head / tail / overflow) Int32Array view = for SAB Atomics.store */
   readonly eventRingsWasmHeaderViews: readonly Int32Array[];
   readonly eventRingsSabHeaderViews: readonly Int32Array[];
@@ -297,6 +308,13 @@ type WorkletState = {
   readonly midiWasmDataView: DataView | null;
   readonly midiRingsWasmHeaderViews: readonly Int32Array[];
   readonly midiRingsSabViews: readonly Uint8Array[];
+  /**
+   * Slot-region-only views (ring minus the 12-byte header) for the header-safe
+   * bulk copy on both directions (out publish / in mirror). The header is
+   * carried solely by the `Atomics` header words, never the plain bulk copy.
+   */
+  readonly midiRingsWasmSlotViews: readonly Uint8Array[];
+  readonly midiRingsSabSlotViews: readonly Uint8Array[];
   readonly midiRingsSabHeaderViews: readonly Int32Array[];
   /** sysex content region view (non-null only for the sysex port, §4.3). Zipped with ring index. */
   readonly sysexContentWasmViews: ReadonlyArray<Uint8Array | null>;
@@ -667,6 +685,8 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       const eventContentSabOffsets = opts.processorOptions?.eventContentSabOffsets ?? [];
       const eventRingsWasmViews: Uint8Array[] = [];
       const eventRingsSabViews: Uint8Array[] = [];
+      const eventRingsWasmSlotViews: Uint8Array[] = [];
+      const eventRingsSabSlotViews: Uint8Array[] = [];
       const eventRingsWasmHeaderViews: Int32Array[] = [];
       const eventRingsSabHeaderViews: Int32Array[] = [];
       const eventContentWasmViews: Array<Uint8Array | null> = [];
@@ -683,10 +703,16 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         const ring = eventRings[i]!;
         const ringTotalBytes = 12 + ring.capacity * ring.slotSize;
         eventRingsWasmViews.push(new Uint8Array(memory.buffer, ring.wasmRingBase, ringTotalBytes));
+        eventRingsWasmSlotViews.push(
+          new Uint8Array(memory.buffer, ring.wasmRingBase + 12, ringTotalBytes - 12),
+        );
         eventRingsWasmHeaderViews.push(new Int32Array(memory.buffer, ring.wasmRingBase, 3));
         if (eventRingsBuffer !== null) {
           eventRingsSabViews.push(
             new Uint8Array(eventRingsBuffer, eventRingSabOffsets[i]!, ringTotalBytes),
+          );
+          eventRingsSabSlotViews.push(
+            new Uint8Array(eventRingsBuffer, eventRingSabOffsets[i]! + 12, ringTotalBytes - 12),
           );
           eventRingsSabHeaderViews.push(
             new Int32Array(eventRingsBuffer, eventRingSabOffsets[i]!, 3),
@@ -791,6 +817,8 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       const midiWasmDataView = midiRingsMeta.length > 0 ? new DataView(memory.buffer) : null;
       const midiRingsWasmHeaderViews: Int32Array[] = [];
       const midiRingsSabViews: Uint8Array[] = [];
+      const midiRingsWasmSlotViews: Uint8Array[] = [];
+      const midiRingsSabSlotViews: Uint8Array[] = [];
       const midiRingsSabHeaderViews: Int32Array[] = [];
       const sysexContentWasmViews: Array<Uint8Array | null> = [];
       const sysexContentSabViews: Array<Uint8Array | null> = [];
@@ -802,10 +830,16 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         const ring = midiRingsMeta[i]!;
         const ringTotalBytes = 12 + ring.capacity * MIDI_SLOT_BYTES;
         midiRingsWasmViews.push(new Uint8Array(memory.buffer, ring.wasmRingBase, ringTotalBytes));
+        midiRingsWasmSlotViews.push(
+          new Uint8Array(memory.buffer, ring.wasmRingBase + 12, ringTotalBytes - 12),
+        );
         midiRingsWasmHeaderViews.push(new Int32Array(memory.buffer, ring.wasmRingBase, 3));
         if (midiRingsBuffer !== null) {
           midiRingsSabViews.push(
             new Uint8Array(midiRingsBuffer, midiRingSabOffsets[i]!, ringTotalBytes),
+          );
+          midiRingsSabSlotViews.push(
+            new Uint8Array(midiRingsBuffer, midiRingSabOffsets[i]! + 12, ringTotalBytes - 12),
           );
           midiRingsSabHeaderViews.push(new Int32Array(midiRingsBuffer, midiRingSabOffsets[i]!, 3));
         }
@@ -844,6 +878,8 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         eventRingSabOffsets,
         eventRingsWasmViews,
         eventRingsSabViews,
+        eventRingsWasmSlotViews,
+        eventRingsSabSlotViews,
         eventRingsWasmHeaderViews,
         eventRingsSabHeaderViews,
         eventContentWasmViews,
@@ -869,6 +905,8 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         midiWasmDataView,
         midiRingsWasmHeaderViews,
         midiRingsSabViews,
+        midiRingsWasmSlotViews,
+        midiRingsSabSlotViews,
         midiRingsSabHeaderViews,
         sysexContentWasmViews,
         sysexContentSabViews,
@@ -1545,7 +1583,8 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
     // transferable buffers + ownership transfer" ping-pong path (this wave is "make it work").
     if (state.eventRings.length > 0) {
       const wasmViews = state.eventRingsWasmViews;
-      const sabViews = state.eventRingsSabViews;
+      const sabSlotViews = state.eventRingsSabSlotViews;
+      const wasmSlotViews = state.eventRingsWasmSlotViews;
       const wasmHeaders = state.eventRingsWasmHeaderViews;
       const sabHeaders = state.eventRingsSabHeaderViews;
       const isSab = state.transport === "sab";
@@ -1556,8 +1595,11 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         const currentTail = wasmH[1]!;
         const currentOverflow = wasmH[2]!;
         if (isSab && state.eventRingsBuffer !== null) {
-          // SAB path = existing bulk copy + header Atomics.store
-          sabViews[i]!.set(wasmViews[i]!);
+          // SAB path = slot-region bulk copy (NOT the header) + header Atomics.store.
+          // Copying the header here would write `head` with a plain store before the
+          // release store below, letting a consumer read-from it without the
+          // happens-before that publishes the slots (a torn read).
+          sabSlotViews[i]!.set(wasmSlotViews[i]!);
           // §4.3 with a typed-array field = mirror the content region WASM → SAB
           // (before the head Atomics.store = the release fence lets main observe it through the slots).
           const contentWasm = state.eventContentWasmViews[i];
@@ -1669,7 +1711,9 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
           const currentTail = wasmH[1]!;
           const currentOverflow = wasmH[2]!;
           if (isSab && state.midiRingsBuffer !== null) {
-            state.midiRingsSabViews[i]!.set(state.midiRingsWasmViews[i]!);
+            // Slot-region copy only — the header is carried by the release
+            // Atomics.store below, never the plain bulk copy (= no torn read).
+            state.midiRingsSabSlotViews[i]!.set(state.midiRingsWasmSlotViews[i]!);
             const sysexWasm = state.sysexContentWasmViews[i];
             const sysexSab = state.sysexContentSabViews[i];
             if (sysexWasm !== null && sysexSab !== null) {
