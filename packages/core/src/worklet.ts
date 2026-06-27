@@ -261,6 +261,14 @@ type WorkletState = {
    */
   readonly messageRingsWasmDataViews: readonly DataView[];
   readonly messageRingsSabViews: readonly Uint8Array[];
+  /**
+   * Slot-region-only views (ring minus the 12-byte header) for the in-ring
+   * mirror. The SAB → WASM copy must NOT span the header: the WASM header is set
+   * by the acquire-loads, and a whole-ring copy would clobber it with a
+   * non-synchronized plain re-read (an unsynchronized drain bound).
+   */
+  readonly messageRingsWasmSlotViews: readonly Uint8Array[];
+  readonly messageRingsSabSlotViews: readonly Uint8Array[];
   readonly messageRingsWasmHeaderViews: readonly Int32Array[];
   readonly messageRingsSabHeaderViews: readonly Int32Array[];
   /**
@@ -761,6 +769,8 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       const messageRingsWasmViews: Uint8Array[] = [];
       const messageRingsWasmDataViews: DataView[] = [];
       const messageRingsSabViews: Uint8Array[] = [];
+      const messageRingsWasmSlotViews: Uint8Array[] = [];
+      const messageRingsSabSlotViews: Uint8Array[] = [];
       const messageRingsWasmHeaderViews: Int32Array[] = [];
       const messageRingsSabHeaderViews: Int32Array[] = [];
       const messageContentWasmViews: Array<Uint8Array | null> = [];
@@ -777,10 +787,16 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         messageRingsWasmDataViews.push(
           new DataView(memory.buffer, ring.wasmRingBase, ringTotalBytes),
         );
+        messageRingsWasmSlotViews.push(
+          new Uint8Array(memory.buffer, ring.wasmRingBase + 12, ringTotalBytes - 12),
+        );
         messageRingsWasmHeaderViews.push(new Int32Array(memory.buffer, ring.wasmRingBase, 3));
         if (messageRingsBuffer !== null) {
           messageRingsSabViews.push(
             new Uint8Array(messageRingsBuffer, messageRingSabOffsets[i]!, ringTotalBytes),
+          );
+          messageRingsSabSlotViews.push(
+            new Uint8Array(messageRingsBuffer, messageRingSabOffsets[i]! + 12, ringTotalBytes - 12),
           );
           messageRingsSabHeaderViews.push(
             new Int32Array(messageRingsBuffer, messageRingSabOffsets[i]!, 3),
@@ -892,6 +908,8 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         messageRingsWasmViews,
         messageRingsWasmDataViews,
         messageRingsSabViews,
+        messageRingsWasmSlotViews,
+        messageRingsSabSlotViews,
         messageRingsWasmHeaderViews,
         messageRingsSabHeaderViews,
         messageContentWasmViews,
@@ -1335,12 +1353,12 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
     if (state.messageRings.length > 0) {
       const isSab = state.transport === "sab";
       if (isSab && state.messageRingsBuffer !== null) {
-        // SAB path = existing SAB → WASM bulk copy + header mirror
-        const wasmViews = state.messageRingsWasmViews;
-        const sabViews = state.messageRingsSabViews;
+        // SAB path = SAB → WASM slot-region copy + header acquire-loads
+        const wasmSlotViews = state.messageRingsWasmSlotViews;
+        const sabSlotViews = state.messageRingsSabSlotViews;
         const wasmHeaders = state.messageRingsWasmHeaderViews;
         const sabHeaders = state.messageRingsSabHeaderViews;
-        for (let i = 0; i < wasmViews.length; i++) {
+        for (let i = 0; i < wasmSlotViews.length; i++) {
           const sabH = sabHeaders[i]!;
           const wasmH = wasmHeaders[i]!;
           const prevHead = wasmH[0]!;
@@ -1352,7 +1370,10 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
           wasmH[0] = Atomics.load(sabH, 0);
           wasmH[1] = Atomics.load(sabH, 1);
           wasmH[2] = Atomics.load(sabH, 2);
-          wasmViews[i]!.set(sabViews[i]!);
+          // Copy the slot region ONLY — never the header. A whole-ring copy would
+          // clobber the acquire-loaded head above with a non-synchronized plain
+          // re-read, making the drain bound unsynchronized (a torn read).
+          wasmSlotViews[i]!.set(sabSlotViews[i]!);
           // For a ring with a typed-array field = mirror the entire content region
           // SAB → WASM only on quanta where head advanced (§5.2; the slot's payloadOffset
           // is an absolute index relative to the region base = a full mirror keeps the
@@ -1433,13 +1454,15 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         if (ring.direction !== "in") continue;
         const wasmH = state.midiRingsWasmHeaderViews[i]!;
         if (isSab && state.midiRingsBuffer !== null) {
-          // SAB path = SAB → WASM bulk copy (slot copy after header acquire-load)
+          // SAB path = SAB → WASM slot-region copy after the header acquire-loads
           const sabH = state.midiRingsSabHeaderViews[i]!;
           const prevHead = wasmH[0]!;
           wasmH[0] = Atomics.load(sabH, 0);
           wasmH[1] = Atomics.load(sabH, 1);
           wasmH[2] = Atomics.load(sabH, 2);
-          state.midiRingsWasmViews[i]!.set(state.midiRingsSabViews[i]!);
+          // Slot region only — never the header, which is the acquire-loaded value
+          // above (a whole-ring copy would clobber it with a non-synchronized read).
+          state.midiRingsWasmSlotViews[i]!.set(state.midiRingsSabSlotViews[i]!);
           const sysexWasm = state.sysexContentWasmViews[i];
           const sysexSab = state.sysexContentSabViews[i];
           if (sysexWasm !== null && sysexSab !== null && wasmH[0]! !== prevHead) {

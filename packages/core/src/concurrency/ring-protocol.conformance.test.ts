@@ -19,10 +19,11 @@ import "./../dsl/primitives.ts"; // method form registration side-effect
 import { expect, test, vi } from "vite-plus/test";
 
 import { compile } from "./../compile/index.ts";
-import { audioOutput, event } from "./../dsl/declarations.ts";
+import { audioOutput, event, state as stateDecl } from "./../dsl/declarations.ts";
+import { forSample } from "./../dsl/loop.ts";
 import { midiEventToWire } from "./../midiWire.ts";
 import { defineProcessor } from "./../processor.ts";
-import { type AbstractRingOp, OUT_RING_PUBLISH_OPS } from "./ring-model.ts";
+import { type AbstractRingOp, IN_RING_MIRROR_OPS, OUT_RING_PUBLISH_OPS } from "./ring-model.ts";
 
 // ── mock audio-thread `self` ────────────────────────────────────────────────
 
@@ -104,6 +105,59 @@ const capturePublish = (
     run();
   } finally {
     storeSpy.mockRestore();
+    Uint8Array.prototype.set = realSet;
+  }
+  return captured;
+};
+
+/**
+ * Run `run()` while recording, in execution order, the worklet's in-ring mirror
+ * of one ring: each header `Atomics.load` (acquire) and the bulk `.set()` copy
+ * whose SOURCE is the SAB ring (tagged with whether the source starts at the
+ * header — i.e. whether the copy spans the 12-byte header).
+ */
+const captureMirror = (
+  sab: ArrayBuffer,
+  sabRingOffset: number,
+  ringTotalBytes: number,
+  run: () => void,
+): AbstractRingOp[] => {
+  const captured: AbstractRingOp[] = [];
+
+  const realLoad = Atomics.load.bind(Atomics);
+  const loadSpy = vi.spyOn(Atomics, "load").mockImplementation(((
+    ta: Int32Array,
+    index: number,
+  ): number => {
+    if (ta.buffer === sab && ta.byteOffset === sabRingOffset && ta.length === 3) {
+      captured.push({
+        op: "atomic-load",
+        word: index === 0 ? "head" : index === 1 ? "tail" : "overflow",
+      });
+    }
+    return realLoad(ta, index);
+  }) as typeof Atomics.load);
+
+  const realSet = Uint8Array.prototype.set;
+  // eslint-disable-next-line no-extend-native -- restored in finally
+  Uint8Array.prototype.set = function (this: Uint8Array, src: ArrayLike<number>, offset?: number) {
+    if (ArrayBuffer.isView(src)) {
+      const v = src as ArrayBufferView;
+      if (
+        v.buffer === sab &&
+        v.byteOffset >= sabRingOffset &&
+        v.byteOffset < sabRingOffset + ringTotalBytes
+      ) {
+        captured.push({ op: "bulk-copy", touchesHeader: v.byteOffset === sabRingOffset });
+      }
+    }
+    return offset === undefined ? realSet.call(this, src) : realSet.call(this, src, offset);
+  };
+
+  try {
+    run();
+  } finally {
+    loadSpy.mockRestore();
     Uint8Array.prototype.set = realSet;
   }
   return captured;
@@ -208,4 +262,106 @@ test("conformance: the MIDI out-ring publish matches the model's safe op-order",
   });
 
   expect(captured).toEqual(OUT_RING_PUBLISH_OPS);
+});
+
+// ── message in-ring (worklet.ts message mirror) ─────────────────────────────
+
+test("conformance: the message in-ring mirror matches the model's safe op-order", async () => {
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "out" });
+    const captured = stateDecl.named("captured").i32(0);
+    const ctrl = event<{ slot: number }>({ from: "main", name: "ctrl", capacity: 16 });
+    return {
+      process: () => {
+        ctrl.onReceive(({ slot }) => {
+          captured.write(slot);
+        });
+        forSample((i) => {
+          out.ch(0).at(i).write(0);
+        });
+      },
+    };
+  });
+  const { wasm } = await compile(proc);
+  const messageRings = proc.worklet.messageRings;
+  const ring = messageRings[0]!;
+  const ringTotalBytes = 12 + ring.capacity * ring.slotSize;
+  const sab = new ArrayBuffer(ringTotalBytes);
+  const self = makeMockSelf();
+  proc.worklet.initialize(self, {
+    processorOptions: {
+      wasm,
+      transport: "sab",
+      messageRings,
+      messageRingsBuffer: sab,
+      messageRingSabOffsets: [0],
+    },
+  });
+  // Simulate a main-side push: write slot 0 and release head = 1.
+  const headerView = new Int32Array(sab, 0, 3);
+  const slotsView = new Int32Array(sab, 12);
+  slotsView[0] = 42;
+  Atomics.store(headerView, 0, 1);
+
+  const q = emptyQuantum();
+  const captured = captureMirror(sab, 0, ringTotalBytes, () => {
+    proc.worklet.process(self, q.inputs, q.outputs, q.parameters);
+  });
+
+  expect(captured).toEqual(IN_RING_MIRROR_OPS);
+});
+
+// ── MIDI in-ring (worklet.ts MIDI mirror) ───────────────────────────────────
+
+test("conformance: the MIDI in-ring mirror matches the model's safe op-order", async () => {
+  const thru = defineProcessor(() => {
+    const midiIn = event.midi({ from: "main", name: "in" });
+    const midiOut = event.midi({ to: "main", name: "out" });
+    return {
+      process: () => {
+        midiIn.onEvent("noteOn", ({ channel, note, velocity, atSample }) => {
+          midiOut.emitIf(true, { type: "noteOn", channel, note, velocity, atSample });
+        });
+      },
+    };
+  });
+  const { wasm } = await compile(thru);
+  const midiRings = thru.worklet.midiRings;
+  let total = 0;
+  const offsets: number[] = [];
+  for (const r of midiRings) {
+    offsets.push(total);
+    total += 12 + r.capacity * 8;
+  }
+  const sab = new ArrayBuffer(total);
+  const self = makeMockSelf();
+  thru.worklet.initialize(self, {
+    processorOptions: {
+      wasm,
+      transport: "sab",
+      midiRings,
+      midiRingsBuffer: sab,
+      midiRingSabOffsets: offsets,
+      sysexContentSabOffsets: midiRings.map(() => 0),
+    },
+  });
+
+  const inIndex = midiRings.findIndex((r) => r.direction === "in");
+  const inOffset = offsets[inIndex]!;
+  const inHeader = new Int32Array(sab, inOffset, 3);
+  const dv = new DataView(sab);
+  const wire = midiEventToWire({ type: "noteOn", channel: 0, note: 60, velocity: 100 });
+  dv.setUint8(inOffset + 12, wire.status);
+  dv.setUint8(inOffset + 13, wire.data1);
+  dv.setUint8(inOffset + 14, wire.data2);
+  dv.setUint32(inOffset + 16, 0, true);
+  Atomics.store(inHeader, 0, 1);
+
+  const inRingTotalBytes = 12 + midiRings[inIndex]!.capacity * 8;
+  const q = emptyQuantum();
+  const captured = captureMirror(sab, inOffset, inRingTotalBytes, () => {
+    thru.worklet.process(self, q.inputs, q.outputs, q.parameters);
+  });
+
+  expect(captured).toEqual(IN_RING_MIRROR_OPS);
 });
