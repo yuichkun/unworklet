@@ -217,3 +217,35 @@ test("sysex bridge: ingest, rewrite device-id byte, re-emit (Ex9-style)", async 
   // byte 1 rewritten to 0x42, length preserved, rest unchanged.
   expect(Array.from(ev.data)).toEqual([0xf0, 0x42, 0x01, 0x02, 0x03, 0xf7]);
 });
+
+test("offline drops a sysex event sent to a port with no sysex region (no crash)", async () => {
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const midiIn = event.midi({ from: "main", name: "midiIn" }); // note-only, no sysex handler
+    const note = state.i32(0);
+    return {
+      process: () => {
+        midiIn.onEvent("noteOn", ({ note: n }) => {
+          note.write(n);
+        });
+        forSample((i) => {
+          out.ch(0).at(i).write(f32(note.read()));
+        });
+      },
+    };
+  });
+  // Inject a sysex into the note-only port — it has no sysex content region. The
+  // event must be dropped, not crash on a `port.sysex!` deref.
+  const r = await renderOffline(proc, {
+    sampleRate: 48000,
+    duration: 128 / 48000,
+    events: [
+      {
+        name: "midiIn",
+        payload: { type: "sysex", data: new Uint8Array([0xf0, 0x7e, 0xf7]) },
+        atSample: 0,
+      },
+    ],
+  });
+  expect(r.outputs.main![0]![0]).toBe(0); // no note delivered, default state
+});

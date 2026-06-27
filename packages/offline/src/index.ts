@@ -337,9 +337,13 @@ export async function renderOffline<C>(
       const dv = new DataView(memory);
       const payload = ev.payload as MidiEvent;
       if (payload.type === "sysex") {
+        // A sysex event sent to a port with no sysex region (the processor declares
+        // no sysex handler) has nowhere to land — drop it rather than dereferencing
+        // the absent region and crashing.
+        if (port.sysex === undefined) continue;
         // Sysex: bytes → content chunk `[length, data]`, slot carries
         // `[0xF0, chunkIdx, _pad, _pad, atSample]` (`11-midi.md` §4.3).
-        const region = port.sysex!;
+        const region = port.sysex;
         const chunkIdx = head % region.chunks;
         const chunkBase = region.base + chunkIdx * region.perChunk;
         const len = Math.min(payload.data.length, region.perChunk - 4);
