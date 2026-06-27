@@ -69,3 +69,42 @@ jobs:
       - name: Run the demo runtime-compile browser e2e
         working-directory: examples/demo
         run: vp test run --config vite.browser.config.ts
+
+  packaging:
+    name: Packaging (publint + arethetypeswrong)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: "24"
+          cache: true
+      - run: vp install
+      - name: Build packages in dependency order (unplugin → core → lang → offline → test)
+        run: |
+          vp run --filter @unworklet/unplugin build
+          vp run --filter @unworklet/core build
+          vp run --filter @unworklet/lang build
+          vp run --filter @unworklet/offline build
+          vp run --filter @unworklet/test build
+      - name: publint + attw on each packed tarball
+        # Verifies the PUBLISHED surface (publishConfig.exports → dist/.d.mts/.mjs),
+        # the path source tests never exercise (they resolve the `development` →
+        # src condition). `fallback-condition` is the known TS50762 quirk for an
+        # ESM-only package carrying both a dev (src) and publish (dist) export
+        # condition — types still resolve, so it is ignored; real breaks (a missing
+        # dist target, a broken .d.mts, an unresolved subpath) still fail the gate.
+        run: |
+          set -e
+          for p in core lang offline test unplugin; do
+            echo "::group::@unworklet/$p"
+            # lang's ./typescript-plugin export is a tsserver plugin (referenced by
+            # name in tsconfig `plugins`, never type-imported), so it intentionally
+            # ships no .d.ts → ignore attw's untyped-resolution for lang only.
+            ignore=(fallback-condition)
+            if [ "$p" = "lang" ]; then ignore=(fallback-condition untyped-resolution); fi
+            ( cd "packages/$p" \
+              && vp dlx publint \
+              && vp dlx @arethetypeswrong/cli --pack --profile esm-only --ignore-rules "${ignore[@]}" )
+            echo "::endgroup::"
+          done
