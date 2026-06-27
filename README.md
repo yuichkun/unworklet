@@ -275,7 +275,7 @@ imports) and add it to your config. The unworklet plugin itself needs no extra
 config — it auto-docks once the host is present.
 
 ```sh
-npm install -D @vitejs/devtools @vitejs/devtools-kit
+npm install -D @vitejs/devtools@0.3.3 @vitejs/devtools-kit@0.3.3
 ```
 
 ```ts
@@ -298,10 +298,13 @@ Run your dev server, open the Vite DevTools overlay, and pick the **unworklet** 
 
 Two gotchas worth knowing up front:
 
-- **Install `@vitejs/devtools-kit` as a direct dependency too**, matching the
-  version `@unworklet/unplugin` builds against (`0.2.x` at the time of writing).
-  The panel's page bridge imports `@vitejs/devtools-kit/client`, which must resolve
-  from your app — a transitive copy is not enough.
+- **Install both at exactly `0.3.3`.** `@unworklet/unplugin` pins this DevTools
+  version (an exact, optional `peerDependency`): the live panels reach the dev server
+  through an anonymous RPC scope whose prefix is coupled to the DevTools major
+  (`devframe:anonymous:` in 0.3), so a mismatched host silently rejects every push and
+  the panels stay empty. The panel's page bridge also imports
+  `@vitejs/devtools-kit/client` as a direct dependency, which must resolve from your
+  app — a transitive copy is not enough.
 - **Cross-origin isolation.** The plugin makes the dev server cross-origin
   isolated by default (COOP `same-origin` + COEP `credentialless`) so
   `SharedArrayBuffer` works with no config — `credentialless` rather than
