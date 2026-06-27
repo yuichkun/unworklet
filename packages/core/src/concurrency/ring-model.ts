@@ -444,3 +444,72 @@ export const inRingMirrorSpec = (opts: { readonly clobbersHeader: boolean }): Mo
     ],
   };
 };
+
+// The split-writer tail scenario fixes a starting tail and a per-quantum drain
+// count so the correctness invariant can name the expected value.
+const TAIL0 = 5;
+const DRAINED = 2;
+
+/**
+ * How the in-ring `tail` is advanced by its two writers.
+ *   - "store": the current code — each writes an ABSOLUTE value via a plain
+ *     `Atomics.store`. A lost update rewinds tail → a slot is delivered twice.
+ *   - "max": the fix — each does an atomic monotone-max (a `compareExchange`
+ *     retry): `tail := max(tail, ownProposal)`. Never rewinds, never over-advances.
+ *   - "add": a naive `Atomics.add` of each writer's delta. Atomic (so monotone),
+ *     but it DOUBLE-COUNTS the dropped-and-drained overlap and over-advances tail
+ *     past the correct value, skipping a live slot.
+ */
+export type TailWriteMode = "store" | "max" | "add";
+
+/**
+ * Model of the **split-writer in-ring tail** (message / MIDI-in). Two threads
+ * advance the SAB `tail`: the main `send` drop-oldest (`tail := loaded + 1` when
+ * the ring is full) and the worklet drain-commit (`tail := quantum-start tail +
+ * messages drained`). They must compose so tail only moves forward.
+ */
+export const splitWriterTailSpec = (mode: TailWriteMode): ModelSpec => {
+  const mainOps: Op[] = [{ kind: "load", loc: "tail", into: "rMain", mode: "acquire" }];
+  const workletOps: Op[] = [{ kind: "load", loc: "tail", into: "rWork", mode: "acquire" }];
+  if (mode === "store") {
+    mainOps.push({ kind: "store", loc: "tail", value: (r) => r.rMain! + 1, mode: "release" });
+    workletOps.push({
+      kind: "store",
+      loc: "tail",
+      value: (r) => r.rWork! + DRAINED,
+      mode: "release",
+    });
+  } else if (mode === "max") {
+    mainOps.push({ kind: "rmw", loc: "tail", update: (cur, r) => Math.max(cur, r.rMain! + 1) });
+    workletOps.push({
+      kind: "rmw",
+      loc: "tail",
+      update: (cur, r) => Math.max(cur, r.rWork! + DRAINED),
+    });
+  } else {
+    mainOps.push({ kind: "rmw", loc: "tail", update: (cur) => cur + 1 });
+    workletOps.push({ kind: "rmw", loc: "tail", update: (cur) => cur + DRAINED });
+  }
+  return {
+    locations: { tail: TAIL0 },
+    threads: [
+      { name: "main", ops: mainOps },
+      { name: "worklet", ops: workletOps },
+    ],
+  };
+};
+
+/**
+ * The correct final tail is the MAX of every writer's proposal (the main drop
+ * point `rMain + 1` and the worklet drain point `rWork + drained`), never their
+ * sum. `Atomics.add` of deltas fails this by double-counting the overlap.
+ */
+export const correctTail: Invariant = (s) => {
+  const arr = s.memory.get("tail");
+  if (arr === undefined) return null;
+  const final = arr[arr.length - 1]!.value;
+  const rMain = s.regs.main?.rMain ?? TAIL0;
+  const rWork = s.regs.worklet?.rWork ?? TAIL0;
+  const expected = Math.max(TAIL0, rMain + 1, rWork + DRAINED);
+  return final === expected ? null : `tail = ${final}, expected max-of-proposals ${expected}`;
+};

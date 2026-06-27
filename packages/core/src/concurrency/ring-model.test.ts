@@ -21,11 +21,13 @@ import {
   type FinalState,
   type ModelSpec,
   RING_SLOT_MARKER,
+  correctTail,
   explore,
   freshDelivery,
   inRingMirrorSpec,
   monotoneLocation,
   outRingPublishSpec,
+  splitWriterTailSpec,
 } from "./ring-model.ts";
 
 const MARKER = 7;
@@ -250,4 +252,37 @@ test("in-ring mirror: a slots-only bulk copy is SAFE on every interleaving", () 
   const result = explore(inRingMirrorSpec({ clobbersHeader: false }), [inv]);
   expect(result.terminals).toBeGreaterThan(0);
   expect(result.violations).toEqual([]);
+});
+
+// ── ring protocol proof: split-writer tail lost update (bug #3) ─────────────
+//
+// The model also DECIDES the fix: of the three candidate tail writes, only the
+// monotone-max compose is both non-rewinding AND non-over-advancing.
+
+test("split-writer tail: two absolute Atomics.store writers rewind tail (duplicate delivery)", () => {
+  const result = explore(splitWriterTailSpec("store"), [monotoneLocation("tail")]);
+  expect(result.terminals).toBeGreaterThan(0);
+  expect(result.violations.length).toBeGreaterThan(0);
+});
+
+test("split-writer tail: atomic monotone-max never rewinds tail", () => {
+  const result = explore(splitWriterTailSpec("max"), [monotoneLocation("tail")]);
+  expect(result.terminals).toBeGreaterThan(0);
+  expect(result.violations).toEqual([]);
+});
+
+test("split-writer tail: atomic monotone-max lands the correct max-of-proposals", () => {
+  const result = explore(splitWriterTailSpec("max"), [correctTail]);
+  expect(result.terminals).toBeGreaterThan(0);
+  expect(result.violations).toEqual([]);
+  // Guard: a state with no tail location is ignored.
+  expect(correctTail({ regs: {}, memory: new Map() })).toBeNull();
+});
+
+test("split-writer tail: a naive Atomics.add of deltas over-advances tail (so NOT the fix)", () => {
+  // Atomic, so it never rewinds, but it double-counts the dropped-and-drained
+  // overlap and skips a live slot -- which is why the fix is monotone-max, not add.
+  const result = explore(splitWriterTailSpec("add"), [correctTail]);
+  expect(result.terminals).toBeGreaterThan(0);
+  expect(result.violations.length).toBeGreaterThan(0);
 });
