@@ -52,16 +52,21 @@ const makeEveryNSamples =
 // Emission already advances loopCounter in units of node.stride, so one block runs 128 / stride iterations.
 const forSampleStrided = (stride: number, callback: ForSampleCallback): void => {
   const ctx = getCurrentCapture();
+  // This level's nesting depth, carried on the loop node and on every read of its
+  // `i`, so emit gives each level its own loop-counter local (Q58).
+  const depth = ctx.loopDepth;
   const loopBody: AstNode[] = [];
   const prev = ctx.currentLoopBody;
   ctx.currentLoopBody = loopBody;
+  ctx.loopDepth = depth + 1;
   try {
-    const i = wrapAst<"i32">({ kind: "loopCounter" });
+    const i = wrapAst<"i32">({ kind: "loopCounter", depth });
     callback(i, makeEveryNSamples(stride));
   } finally {
     ctx.currentLoopBody = prev;
+    ctx.loopDepth = depth;
   }
-  addStatement({ kind: "forSample", stride, body: loopBody });
+  addStatement({ kind: "forSample", stride, depth, body: loopBody });
 };
 
 const forSampleBase = (callback: ForSampleCallback): void => {

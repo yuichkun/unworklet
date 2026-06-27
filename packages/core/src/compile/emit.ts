@@ -144,6 +144,21 @@ const VEC_TEMP_LOCAL = 18;
 const TEMP_LOCAL_BASE = 19;
 
 /**
+ * Per-emit loop-counter local mapping for nested `forSample` (= Q58). A loop /
+ * `loopCounter` at nesting depth `d` uses local `loopCounterLocal(d)`: depth 0
+ * reuses `LOOP_COUNTER_LOCAL` (= byte-identical to the single-loop case), deeper
+ * levels get fresh i32 locals appended after the mutable-read temp locals
+ * (`nestBase + (d - 1)`). `nestBase` is set per-emit; `maxDepth` (the deepest loop
+ * seen) drives how many extra locals the function declares. Reset at the top of
+ * `emit()`; emit runs synchronously after the binaryen import, so a concurrent
+ * compile cannot interleave. Depth is carried on the AST node (not a runtime
+ * stack), so each case is a pure depth → local computation.
+ */
+const loopEmit = { nestBase: 0, maxDepth: 0 };
+const loopCounterLocal = (depth: number): number =>
+  depth === 0 ? LOOP_COUNTER_LOCAL : loopEmit.nestBase + (depth - 1);
+
+/**
  * The polynomial-approximation math primitives (= sin / cos / tan / tanh / exp /
  * log, Q17) are emitted as shared private WASM functions (= `(f32) -> f32`, not
  * exported), and the call sites reference them via `call`. Each function has its
@@ -304,6 +319,13 @@ export async function emit(
   // onReceive registrations for the same message are merged into one drain loop,
   // and at each slot all registration bodies fire back-to-back in registration
   // order (= Q38-c).
+  // Mutable-read temp locals occupy TEMP_LOCAL_BASE.. ; nested loop-counter
+  // locals (if any) are appended after them. Reset the per-emit loop state before
+  // building the body (the forSample case fills `maxDepth`).
+  const tempLocals = collectTempLocals(graph, binaryen);
+  loopEmit.nestBase = TEMP_LOCAL_BASE + tempLocals.length;
+  loopEmit.maxDepth = 0;
+
   const onReceiveByMessage = new Map<string, AstNode[]>();
   // MIDI inbound handlers grouped per port (= Q38-b: drain before per-block /
   // forSample, registration order Q38-c). One drain loop per port dispatches by
@@ -369,7 +391,10 @@ export async function emit(
       binaryen.i32, // PAYLOAD_CLAMP_LOCAL (= at OOB clamp idx)
       binaryen.v128, // VEC_TEMP_LOCAL (= for SIMD sumLanes)
       // Mutable-read temp locals (= TEMP_LOCAL_BASE +, issue #8, in capture order).
-      ...collectTempLocals(graph, binaryen),
+      ...tempLocals,
+      // Extra i32 loop-counter locals for nested forSample (= depth >= 1, Q58).
+      // Empty when no forSample nests, so the single-loop case stays byte-identical.
+      ...Array.from({ length: Math.max(0, loopEmit.maxDepth - 1) }, () => binaryen.i32),
     ],
     body,
   );
@@ -1107,7 +1132,9 @@ export function emitExpression(
       }
     }
     case "loopCounter":
-      return mod.local.get(LOOP_COUNTER_LOCAL, binaryen.i32);
+      // Read this level's own counter local, so an outer `i` read inside an inner
+      // loop body (= a lower depth) still reads the outer counter.
+      return mod.local.get(loopCounterLocal(node.depth ?? 0), binaryen.i32);
     case "mul":
     case "add":
     case "sub":
@@ -1574,26 +1601,34 @@ export function emitStatement(
       );
     }
     case "forSample": {
+      // Depth 0 keeps LOOP_COUNTER_LOCAL (byte-identical to the single-loop case);
+      // deeper levels get a fresh local appended after the temp locals.
+      const depth = node.depth ?? 0;
+      const counterLocal = loopCounterLocal(depth);
+      if (depth + 1 > loopEmit.maxDepth) loopEmit.maxDepth = depth + 1;
       const loopBody = node.body.map((s) => emitStatement(s, layout, mod, binaryen));
+      // Depth 0 keeps the bare break/continue labels; nested levels get a per-depth
+      // suffix so a nested loop never aliases the outer targets. Label names are not
+      // in the WASM binary (branches encode as relative depths), so this is
+      // byte-identical to the single-loop form.
+      const brk = depth === 0 ? "break" : `break_${depth}`;
+      const cont = depth === 0 ? "continue" : `continue_${depth}`;
       return mod.block(null, [
-        mod.local.set(LOOP_COUNTER_LOCAL, mod.i32.const(0)),
-        mod.block("break", [
+        mod.local.set(counterLocal, mod.i32.const(0)),
+        mod.block(brk, [
           mod.loop(
-            "continue",
+            cont,
             mod.block(null, [
               mod.br_if(
-                "break",
-                mod.i32.ge_s(mod.local.get(LOOP_COUNTER_LOCAL, binaryen.i32), mod.i32.const(128)),
+                brk,
+                mod.i32.ge_s(mod.local.get(counterLocal, binaryen.i32), mod.i32.const(128)),
               ),
               ...loopBody,
               mod.local.set(
-                LOOP_COUNTER_LOCAL,
-                mod.i32.add(
-                  mod.local.get(LOOP_COUNTER_LOCAL, binaryen.i32),
-                  mod.i32.const(node.stride),
-                ),
+                counterLocal,
+                mod.i32.add(mod.local.get(counterLocal, binaryen.i32), mod.i32.const(node.stride)),
               ),
-              mod.br("continue"),
+              mod.br(cont),
             ]),
           ),
         ]),

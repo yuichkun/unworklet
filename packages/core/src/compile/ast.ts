@@ -89,8 +89,10 @@ export type AstNode =
       value: AstNode;
     }
   | { kind: "paramAt"; paramName: string; offset: AstNode }
-  | { kind: "loopCounter" }
-  | { kind: "forSample"; stride: number; body: AstNode[] }
+  // `depth` = forSample nesting level (Q58). The capture path always sets it;
+  // omitted ⇒ top level (0), so a hand-built single-loop fixture stays valid.
+  | { kind: "loopCounter"; depth?: number }
+  | { kind: "forSample"; stride: number; depth?: number; body: AstNode[] }
   | { kind: "stateLoad"; type: ScalarType; name: string }
   | { kind: "stateStore"; type: ScalarType; name: string; value: AstNode }
   // sub-rate sub-block inside a `forSample` callback (`01-dsl.md` §9, Q43). Runs

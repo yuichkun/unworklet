@@ -34,7 +34,7 @@ test("`forSample(cb)` binds `i` as a `Node<'i32'>` carrying the `loopCounter` AS
       observed = unwrapAst(i);
     });
   });
-  expect(observed).toEqual({ kind: "loopCounter" });
+  expect(observed).toEqual({ kind: "loopCounter", depth: 0 });
 });
 
 test("`forSample(cb)` appends a `forSample` AST node (stride 1) at the top of statements", () => {
@@ -42,7 +42,7 @@ test("`forSample(cb)` appends a `forSample` AST node (stride 1) at the top of st
   runCapture(ctx, () => {
     forSample(() => {});
   });
-  expect(ctx.statements).toEqual([{ kind: "forSample", stride: 1, body: [] }]);
+  expect(ctx.statements).toEqual([{ kind: "forSample", stride: 1, depth: 0, body: [] }]);
 });
 
 test("`addStatement` inside the `forSample` callback lands in the loop body, not in top statements", () => {
@@ -56,6 +56,7 @@ test("`addStatement` inside the `forSample` callback lands in the loop body, not
     {
       kind: "forSample",
       stride: 1,
+      depth: 0,
       body: [{ kind: "literal", type: "f32", value: 1 }],
     },
   ]);
@@ -72,7 +73,8 @@ test("nested `forSample` = inner appended to outer body, not to top statements",
     {
       kind: "forSample",
       stride: 1,
-      body: [{ kind: "forSample", stride: 1, body: [] }],
+      depth: 0,
+      body: [{ kind: "forSample", stride: 1, depth: 1, body: [] }],
     },
   ]);
 });

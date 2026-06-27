@@ -48,6 +48,13 @@ export type CaptureContext = {
    * tempId`). Monotonically increasing from 0 in capture order.
    */
   tempCount: number;
+  /**
+   * Current `forSample` nesting depth (= Q58 nested loops). 0 at the top level,
+   * incremented for the duration of each `forSample` callback. Carried as `depth`
+   * on the `forSample` node and on every `loopCounter` read of its `i`, so emit
+   * gives each nesting level its own WASM loop-counter local.
+   */
+  loopDepth: number;
 };
 
 let currentCapture: CaptureContext | null = null;
@@ -61,6 +68,7 @@ export function newCaptureContext(): CaptureContext {
     namePrefix: "",
     subgraphCount: 0,
     tempCount: 0,
+    loopDepth: 0,
   };
 }
 

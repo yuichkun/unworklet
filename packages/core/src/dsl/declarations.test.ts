@@ -293,12 +293,13 @@ test("`.write(v)` inside `forSample` appends to the loop body (not to top-level 
     {
       kind: "forSample",
       stride: 1,
+      depth: 0,
       body: [
         {
           kind: "audioOutWrite",
           portName: "mono",
           channel: 0,
-          offset: { kind: "loopCounter" },
+          offset: { kind: "loopCounter", depth: 0 },
           value: { kind: "literal", type: "f32", value: 0 },
         },
       ],
@@ -908,6 +909,7 @@ test("`state.write(v)` inside `forSample` appends to the loop body", () => {
     {
       kind: "forSample",
       stride: 1,
+      depth: 0,
       body: [
         {
           kind: "stateStore",
