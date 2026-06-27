@@ -845,7 +845,7 @@ const GENERATED_TSCONFIG = `${JSON.stringify(
       allowImportingTsExtensions: true,
       noEmit: true,
     },
-    include: ["worklets.d.ts", "../**/*.ts"],
+    include: ["worklets.d.ts", "../**/*.ts", "../**/*.tsx"],
     exclude: ["../node_modules"],
   },
   null,

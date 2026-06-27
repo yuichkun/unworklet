@@ -80,6 +80,10 @@ test("configResolved SYNCHRONOUSLY seeds .unworklet/ (tsconfig + witness) so the
   expect(cfg.compilerOptions.types).toContain("@unworklet/unplugin/client");
   expect(cfg.compilerOptions.plugins).toContainEqual({ name: "@unworklet/lang/typescript-plugin" });
   expect(cfg.include).toContain("worklets.d.ts");
+  // App source must be covered so `?worklet` imports get the witness types —
+  // including .tsx, the source extension of a React/Solid app.
+  expect(cfg.include).toContain("../**/*.ts");
+  expect(cfg.include).toContain("../**/*.tsx");
 });
 
 test("handleHotUpdate re-emits the witness for an edited processor (no browser needed)", async () => {
