@@ -132,7 +132,13 @@ export async function renderOffline<C>(
   // Obtain the event ring meta via WorkletMeta so renderOffline can walk the
   // ring directly in WASM memory: even without a SAB, it drains at the end of
   // each quantum and accumulates into the OfflineEmittedEvent array.
-  const meta = extractWorkletMeta(processor.graph as never);
+  //
+  // Derive every region offset from the graph `compile` re-captured at the host
+  // rate (`result.graph`), NOT the eager `processor.graph` (captured at the
+  // default 48000): a buffer whose size depends on `ctx.sampleRate` lays the
+  // buffers region out differently per rate, shifting the rings packed after it.
+  // The eager offsets would then poke the host-rate WASM at the wrong place.
+  const meta = extractWorkletMeta(result.graph as never);
   const eventRingMeta = meta.events.map((evt) => {
     const slot = meta.layout.regions.eventRings.slots[evt.name]!;
     return {
