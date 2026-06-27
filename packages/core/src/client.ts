@@ -1318,7 +1318,19 @@ export async function createNode<C>(
       message: "AudioWorkletProcessor reported a failure (processorerror)",
     });
   };
+  // Debug-build only: the audio-thread self-check (Layer F, gated behind the
+  // `__UNWORKLET_SELFCHECK__` define) posts a ring-header invariant violation
+  // here. Surface it loudly to the console so corruption is visible while
+  // developing; production tree-shakes the self-check, so this never fires there.
+  const onSelfcheckMessage = (event: MessageEvent): void => {
+    const data = event.data as { kind?: unknown; ring?: unknown; detail?: unknown } | null;
+    if (typeof data !== "object" || data === null || data.kind !== "selfcheck-violation") return;
+    console.error(
+      `unworklet: audio-thread self-check violation on ${String(data.ring)} — ${String(data.detail)}`,
+    );
+  };
   node.port.addEventListener("message", onErrorMessage);
+  node.port.addEventListener("message", onSelfcheckMessage);
   node.addEventListener("processorerror", onErrorProcessor);
 
   // Publish listener for the postMessage path (= when SAB is unavailable, on a
@@ -1716,6 +1728,7 @@ export async function createNode<C>(
       if (devHandle !== undefined) unregisterDevNode(devHandle);
       stopRafLoop();
       node.port.removeEventListener("message", onErrorMessage);
+      node.port.removeEventListener("message", onSelfcheckMessage);
       node.port.removeEventListener("message", onPublishMessage);
       node.port.removeEventListener("message", onEventMessage);
       node.port.removeEventListener("message", onMessageOverflowMessage);

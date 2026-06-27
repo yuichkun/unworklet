@@ -795,6 +795,40 @@ test("UnworkletNode.onError translates a post-ready `processorerror` into a fixe
   }
 });
 
+test("createNode surfaces a debug self-check violation to the console", async () => {
+  // Layer F: the audio-thread self-check (behind the __UNWORKLET_SELFCHECK__
+  // define) posts `selfcheck-violation`; createNode must forward it so a dev
+  // build's invariant monitor is actually visible, not silent on the raw port.
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  const errors: string[] = [];
+  const originalError = console.error;
+  console.error = ((...args: unknown[]) => {
+    errors.push(String(args[0]));
+  }) as typeof console.error;
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    for (const listener of h.lastNode!.port.__listeners) {
+      listener({
+        data: {
+          kind: "selfcheck-violation",
+          ring: "event[0]",
+          detail: "fill 99 exceeds capacity 16",
+        },
+      });
+    }
+    expect(errors.some((e) => e.includes("self-check violation") && e.includes("event[0]"))).toBe(
+      true,
+    );
+    node.dispose();
+  } finally {
+    console.error = originalError;
+    h.cleanup();
+  }
+});
+
 test("UnworkletNode.onError unsubscribe stops further dispatch", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {
