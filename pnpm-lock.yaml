@@ -161,7 +161,7 @@ importers:
         specifier: 7.0.0-dev.20260509.2
         version: 7.0.0-dev.20260509.2
       '@unworklet/unplugin':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../unplugin
       bumpp:
         specifier: ^11.1.0
@@ -195,10 +195,10 @@ importers:
         specifier: 7.0.0-dev.20260509.2
         version: 7.0.0-dev.20260509.2
       '@unworklet/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
       '@unworklet/offline':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../offline
       bumpp:
         specifier: ^11.1.0
@@ -225,7 +225,7 @@ importers:
         specifier: 7.0.0-dev.20260509.2
         version: 7.0.0-dev.20260509.2
       '@unworklet/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
       bumpp:
         specifier: ^11.1.0
@@ -240,7 +240,7 @@ importers:
   packages/test:
     dependencies:
       '@unworklet/offline':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../offline
       vitest:
         specifier: npm:@voidzero-dev/vite-plus-test@^0.1.24
@@ -253,7 +253,7 @@ importers:
         specifier: 7.0.0-dev.20260509.2
         version: 7.0.0-dev.20260509.2
       '@unworklet/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
       bumpp:
         specifier: ^11.1.0
@@ -268,10 +268,10 @@ importers:
   packages/unplugin:
     dependencies:
       '@unworklet/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
       '@unworklet/lang':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../lang
       unplugin:
         specifier: 'catalog:'
@@ -4565,7 +4565,7 @@ snapshots:
       picomatch: 4.0.4
       std-env: 4.1.0
       tinybench: 2.9.0
-      tinyexec: 1.2.2
+      tinyexec: 1.2.4
       tinyglobby: 0.2.16
       tinyrainbow: 3.1.0
       vite: 8.0.14(@types/node@24.12.4)(@vitejs/devtools@0.2.0)(esbuild@0.28.0)(jiti@2.7.0)(yaml@2.9.0)

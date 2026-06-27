@@ -86,7 +86,7 @@
   "devDependencies": {
     "@types/node": "catalog:",
     "@typescript/native-preview": "7.0.0-dev.20260509.2",
-    "@unworklet/unplugin": "workspace:*",
+    "@unworklet/unplugin": "workspace:^",
     "bumpp": "^11.1.0",
     "playwright": "catalog:",
     "typescript": "catalog:",
