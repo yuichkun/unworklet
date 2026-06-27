@@ -61,5 +61,8 @@
   },
   "peerDependencies": {
     "@unworklet/core": "workspace:^"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
