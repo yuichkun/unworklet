@@ -771,6 +771,8 @@ export type CompileResult<C> = {
   memory: MemoryJson;
   diagnostics: DiagnosticsJson;
   schemaHash: string;
+  /** The sampleRate this artifact was compiled at (the rate baked into its coefficients). */
+  sampleRate: number;
   driver: CompileDriver;
   __compiledProcessor: C;
 };

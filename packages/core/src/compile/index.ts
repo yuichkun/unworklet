@@ -86,6 +86,7 @@ export async function compile<C>(
     memory: memory as unknown as MemoryJson,
     diagnostics: diagnostics as unknown as DiagnosticsJson,
     schemaHash: hash,
+    sampleRate,
     driver: makeDriver(graph, memory, wasm),
     __compiledProcessor: undefined as unknown as C,
   };

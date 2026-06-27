@@ -1658,6 +1658,7 @@ ensureClient();
       let moduleUrlExpr: string;
       let wasmUrlExpr: string;
       let processorName: string;
+      let bakedSampleRate: number;
 
       if (isServe) {
         // Dev: compile up front so we can mint a revision token + cache the
@@ -1699,6 +1700,7 @@ ensureClient();
         moduleUrlExpr = JSON.stringify(`${virtualWorkletUrlPath}?v=${hash}`);
         wasmUrlExpr = JSON.stringify(`${basePath}${DEV_URL_PREFIX}/${encoded}/${hash}/wasm`);
         processorName = devProcessorName;
+        bakedSampleRate = result.sampleRate;
       } else {
         // Build mode: emit chunk + asset via rolldown's `emitFile`. URLs are
         // resolved through `import.meta.ROLLUP_FILE_URL_<refId>` placeholders
@@ -1717,6 +1719,7 @@ ensureClient();
         moduleUrlExpr = `import.meta.ROLLUP_FILE_URL_${workletRefId}`;
         wasmUrlExpr = `import.meta.ROLLUP_FILE_URL_${wasmRefId}`;
         processorName = computeProcessorName(exportName, sourcePath, result.wasm);
+        bakedSampleRate = result.sampleRate;
 
         if (emitAnalysisArtifacts) {
           this.emitFile({
@@ -1761,6 +1764,7 @@ ensureClient();
         `    wasmUrl: ${wasmUrlExpr},`,
         `    processorName: ${JSON.stringify(processorName)},`,
         `    displayName: ${JSON.stringify(exportName)},`,
+        `    bakedSampleRate: ${bakedSampleRate},`,
         `  },`,
         `};`,
         ``,

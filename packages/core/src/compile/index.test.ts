@@ -49,6 +49,13 @@ test("`compile(processor)` returns a `CompileResult` with all 5 stage outputs", 
   expect(result.graph).toBeDefined();
 });
 
+test("`compile` records the sampleRate it baked at (default 48000, overridable)", async () => {
+  const def = await compile(stereoGain);
+  expect(def.sampleRate).toBe(48000);
+  const at44k = await compile(stereoGain, { sampleRate: 44100 });
+  expect(at44k.sampleRate).toBe(44100);
+});
+
 test("`compile` orchestration drives stereo-gain processor to memory I/O end-to-end", async () => {
   const { wasm } = await compile(stereoGain);
   const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);

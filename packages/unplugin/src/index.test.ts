@@ -353,6 +353,9 @@ test("load returns JS that augments the processor with moduleUrl / wasmUrl / pro
   // displayName = the clean export name (no hash), what tools show instead of
   // the hashed registration key.
   expect(js).toMatch(/displayName:\s*"stereoGain"/);
+  // The build-time sampleRate is baked into the namespace so createNode can
+  // reject a context running at a different rate (gh#22). Default = 48000.
+  expect(js).toMatch(/bakedSampleRate:\s*48000/);
 });
 
 test("two source files exporting the same identifier get distinct processorName suffixes", async () => {
