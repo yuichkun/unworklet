@@ -212,7 +212,7 @@ export type MidiRingSlot = {
 export type Layout = {
   regions: {
     states: { base: number; slots: Record<string, number> };
-    buffers: { base: number; slots: Record<string, number> };
+    buffers: { base: number; slots: Record<string, number>; lengths: Record<string, number> };
     ioScratch: {
       base: number;
       inputs: Record<string, number>;
@@ -422,9 +422,14 @@ export function layout(graph: CapturedGraph): Layout {
   // superset rule).
   const buffersBase = cursor;
   const bufferSlots: Record<string, number> = {};
+  // Element count per buffer — used by emit to clamp a user `buffer[i]` index
+  // into range (an out-of-range access must saturate, never trap or corrupt an
+  // adjacent region).
+  const bufferLengths: Record<string, number> = {};
   for (const decl of graph.declarations) {
     if (decl.kind === "buffer") {
       bufferSlots[decl.name] = cursor;
+      bufferLengths[decl.name] = decl.size;
       cursor += decl.size * BUFFER_ELEMENT_BYTES[decl.type];
     }
   }
@@ -561,7 +566,7 @@ export function layout(graph: CapturedGraph): Layout {
   return {
     regions: {
       states: { base: statesBase, slots: stateSlots },
-      buffers: { base: buffersBase, slots: bufferSlots },
+      buffers: { base: buffersBase, slots: bufferSlots, lengths: bufferLengths },
       ioScratch: { base: ioBase, inputs, outputs, params },
       eventRings: { base: eventRingsBase, slots: eventRingsSlots },
       messageRings: { base: messageRingsBase, slots: messageRingsSlots },

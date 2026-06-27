@@ -33,7 +33,7 @@ const emptyTail = (
   | "snapshotRegion"
 > => ({
   states: { base: totalBytes, slots: {} },
-  buffers: { base: totalBytes, slots: {} },
+  buffers: { base: totalBytes, slots: {}, lengths: {} },
   eventRings: { base: totalBytes, slots: {} },
   messageRings: { base: totalBytes, slots: {} },
   payloadContent: { base: totalBytes, eventSlots: {}, messageSlots: {} },

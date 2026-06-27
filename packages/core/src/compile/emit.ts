@@ -755,6 +755,44 @@ function bufferElementPtr(
   );
 }
 
+/**
+ * Clamp a user buffer index into `[0, length - 1]` so an out-of-range
+ * `buffer[i]` saturates to the nearest element instead of trapping or
+ * reading/writing an adjacent memory region (the audio path must never trap —
+ * a single trap latches the processor to permanent silence). The index is
+ * evaluated exactly once into PAYLOAD_CLAMP_LOCAL (so a side-effecting index is
+ * safe), then rounded by a two-stage select. The local is reused from a fully
+ * bottom-up evaluation, so a nested payload read that also uses it has already
+ * completed before the outer `set`.
+ */
+function clampBufferIndex(
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+  indexExpr: number,
+  length: number,
+): number {
+  const clamp = (): number => mod.local.get(PAYLOAD_CLAMP_LOCAL, binaryen.i32);
+  const upper = (): number => mod.i32.const(Math.max(0, length - 1));
+  return mod.block(
+    null,
+    [
+      mod.local.set(PAYLOAD_CLAMP_LOCAL, indexExpr),
+      // clamp = min(clamp, length - 1)
+      mod.local.set(
+        PAYLOAD_CLAMP_LOCAL,
+        mod.select(mod.i32.gt_s(clamp(), upper()), upper(), clamp()),
+      ),
+      // clamp = max(clamp, 0)
+      mod.local.set(
+        PAYLOAD_CLAMP_LOCAL,
+        mod.select(mod.i32.lt_s(clamp(), mod.i32.const(0)), mod.i32.const(0), clamp()),
+      ),
+      clamp(),
+    ],
+    binaryen.i32,
+  );
+}
+
 function emitBufferLoad(mod: BinaryenModule, elementType: BufferElementType, ptr: number): number {
   switch (elementType) {
     case "f32":
@@ -1397,7 +1435,12 @@ export function emitExpression(
         mod,
         base,
         node.elementType,
-        emitExpression(node.index, layout, mod, binaryen),
+        clampBufferIndex(
+          mod,
+          binaryen,
+          emitExpression(node.index, layout, mod, binaryen),
+          layout.regions.buffers.lengths[node.name] ?? 0,
+        ),
       );
       return emitBufferLoad(mod, node.elementType, ptr);
     }
@@ -1654,7 +1697,12 @@ export function emitStatement(
         mod,
         base,
         node.elementType,
-        emitExpression(node.index, layout, mod, binaryen),
+        clampBufferIndex(
+          mod,
+          binaryen,
+          emitExpression(node.index, layout, mod, binaryen),
+          layout.regions.buffers.lengths[node.name] ?? 0,
+        ),
       );
       return emitBufferStore(
         mod,
