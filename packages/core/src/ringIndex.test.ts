@@ -7,7 +7,7 @@
 
 import { expect, test } from "vite-plus/test";
 
-import { ringCount, ringSlotIndex } from "./ringIndex.ts";
+import { atomicMonotoneMax, ringCount, ringSlotIndex } from "./ringIndex.ts";
 
 // What `rem_u` computes: the counter taken as a uint32, then `% mod`. Derived
 // from first principles (BigInt), not from the implementation under test.
@@ -83,4 +83,44 @@ test("ringCount returns the true unsigned fill across the i32 wrap, including th
   const straddleTail = 0x7fffffff;
   expect(straddleHead - straddleTail).toBeLessThan(0);
   expect(ringCount(straddleHead, straddleTail)).toBe(256);
+});
+
+test("atomicMonotoneMax advances when the target is ahead and never rewinds when behind", () => {
+  const view = new Int32Array(1);
+  view[0] = 5;
+  expect(atomicMonotoneMax(view, 0, 8)).toBe(8); // ahead → advance
+  expect(view[0]).toBe(8);
+  expect(atomicMonotoneMax(view, 0, 6)).toBe(8); // behind → no rewind
+  expect(view[0]).toBe(8);
+  expect(atomicMonotoneMax(view, 0, 8)).toBe(8); // equal → unchanged
+  expect(view[0]).toBe(8);
+});
+
+test("atomicMonotoneMax composes two split writers to the max (no lost update)", () => {
+  // The race the fix removes: two writers propose different advances; the result
+  // must be the larger, never the smaller (which would rewind tail).
+  const view = new Int32Array(1);
+  for (const [a, b] of [
+    [7, 6],
+    [6, 7],
+  ]) {
+    view[0] = 5;
+    atomicMonotoneMax(view, 0, a!);
+    atomicMonotoneMax(view, 0, b!);
+    expect(view[0]).toBe(7);
+  }
+});
+
+test("atomicMonotoneMax treats 'ahead' wrap-safely across the i32 counter wrap", () => {
+  const view = new Int32Array(1);
+  // cur = last positive i32; target = one step past it, which reads back negative
+  // through the Int32Array but is one AHEAD in the ring's modular order.
+  view[0] = 0x7fffffff;
+  const wrapped = (0x7fffffff + 1) | 0; // 2^31 stored as a signed i32 = -0x80000000
+  expect(wrapped).toBe(-0x80000000);
+  expect(atomicMonotoneMax(view, 0, wrapped)).toBe(-0x80000000); // advanced across the wrap
+  expect(view[0]).toBe(-0x80000000);
+  // The reverse: the pre-wrap value is now one step BEHIND and must not rewind.
+  expect(atomicMonotoneMax(view, 0, 0x7fffffff)).toBe(-0x80000000);
+  expect(view[0]).toBe(-0x80000000);
 });

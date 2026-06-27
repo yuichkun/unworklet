@@ -88,6 +88,7 @@ const capturePublish = (
     return realStore(ta, index, value);
   }) as typeof Atomics.store);
 
+  // oxlint-disable-next-line typescript/unbound-method -- saved to restore the native method; only ever invoked via .call(this)
   const realSet = Uint8Array.prototype.set;
   // eslint-disable-next-line no-extend-native -- restored in finally
   Uint8Array.prototype.set = function (this: Uint8Array, src: ArrayLike<number>, offset?: number) {
@@ -123,13 +124,17 @@ const captureMirror = (
   run: () => void,
 ): AbstractRingOp[] => {
   const captured: AbstractRingOp[] = [];
+  // The mirror runs at the START of the quantum and ends at its bulk copy; stop
+  // recording after it so a later same-ring access (e.g. the tail-commit load)
+  // is not folded into the mirror sequence.
+  let done = false;
 
   const realLoad = Atomics.load.bind(Atomics);
   const loadSpy = vi.spyOn(Atomics, "load").mockImplementation(((
     ta: Int32Array,
     index: number,
   ): number => {
-    if (ta.buffer === sab && ta.byteOffset === sabRingOffset && ta.length === 3) {
+    if (!done && ta.buffer === sab && ta.byteOffset === sabRingOffset && ta.length === 3) {
       captured.push({
         op: "atomic-load",
         word: index === 0 ? "head" : index === 1 ? "tail" : "overflow",
@@ -138,10 +143,11 @@ const captureMirror = (
     return realLoad(ta, index);
   }) as typeof Atomics.load);
 
+  // oxlint-disable-next-line typescript/unbound-method -- saved to restore the native method; only ever invoked via .call(this)
   const realSet = Uint8Array.prototype.set;
   // eslint-disable-next-line no-extend-native -- restored in finally
   Uint8Array.prototype.set = function (this: Uint8Array, src: ArrayLike<number>, offset?: number) {
-    if (ArrayBuffer.isView(src)) {
+    if (!done && ArrayBuffer.isView(src)) {
       const v = src as ArrayBufferView;
       if (
         v.buffer === sab &&
@@ -149,6 +155,7 @@ const captureMirror = (
         v.byteOffset < sabRingOffset + ringTotalBytes
       ) {
         captured.push({ op: "bulk-copy", touchesHeader: v.byteOffset === sabRingOffset });
+        done = true;
       }
     }
     return offset === undefined ? realSet.call(this, src) : realSet.call(this, src, offset);
@@ -161,6 +168,52 @@ const captureMirror = (
     Uint8Array.prototype.set = realSet;
   }
   return captured;
+};
+
+/**
+ * Run `run()` while recording, in order, how the worklet writes the `tail` word
+ * (index 1) of one in-ring's SAB header: via a plain `Atomics.store` (the lost-
+ * update-prone form) or an `Atomics.compareExchange` (the monotone-max form).
+ * The in-ring tail has a second writer (the main drop-oldest), so the safe form
+ * is the compare-exchange.
+ */
+const captureTailCommit = (
+  sab: ArrayBuffer,
+  ringSabOffset: number,
+  run: () => void,
+): Array<"store" | "cas"> => {
+  const writes: Array<"store" | "cas"> = [];
+  const isTail = (ta: Int32Array, index: number): boolean =>
+    ta.buffer === sab && ta.byteOffset === ringSabOffset && ta.length === 3 && index === 1;
+
+  const realStore = Atomics.store.bind(Atomics);
+  const storeSpy = vi.spyOn(Atomics, "store").mockImplementation(((
+    ta: Int32Array,
+    index: number,
+    value: number,
+  ): number => {
+    if (isTail(ta, index)) writes.push("store");
+    return realStore(ta, index, value);
+  }) as typeof Atomics.store);
+
+  const realCx = Atomics.compareExchange.bind(Atomics);
+  const cxSpy = vi.spyOn(Atomics, "compareExchange").mockImplementation(((
+    ta: Int32Array,
+    index: number,
+    expected: number,
+    replacement: number,
+  ): number => {
+    if (isTail(ta, index)) writes.push("cas");
+    return realCx(ta, index, expected, replacement);
+  }) as typeof Atomics.compareExchange);
+
+  try {
+    run();
+  } finally {
+    storeSpy.mockRestore();
+    cxSpy.mockRestore();
+  }
+  return writes;
 };
 
 // ── event out-ring (worklet.ts event publish) ───────────────────────────────
@@ -364,4 +417,104 @@ test("conformance: the MIDI in-ring mirror matches the model's safe op-order", a
   });
 
   expect(captured).toEqual(IN_RING_MIRROR_OPS);
+});
+
+// ── in-ring tail commit mechanism (bug #3: split-writer tail) ───────────────
+
+test("conformance: the worklet commits the message in-ring tail via compare-exchange", async () => {
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "out" });
+    const captured = stateDecl.named("captured").i32(0);
+    const ctrl = event<{ slot: number }>({ from: "main", name: "ctrl", capacity: 16 });
+    return {
+      process: () => {
+        ctrl.onReceive(({ slot }) => {
+          captured.write(slot);
+        });
+        forSample((i) => {
+          out.ch(0).at(i).write(0);
+        });
+      },
+    };
+  });
+  const { wasm } = await compile(proc);
+  const messageRings = proc.worklet.messageRings;
+  const ring = messageRings[0]!;
+  const ringTotalBytes = 12 + ring.capacity * ring.slotSize;
+  const sab = new ArrayBuffer(ringTotalBytes);
+  const self = makeMockSelf();
+  proc.worklet.initialize(self, {
+    processorOptions: {
+      wasm,
+      transport: "sab",
+      messageRings,
+      messageRingsBuffer: sab,
+      messageRingSabOffsets: [0],
+    },
+  });
+  // One pending message so the worklet drains (advances tail) and commits it.
+  const headerView = new Int32Array(sab, 0, 3);
+  new Int32Array(sab, 12)[0] = 42;
+  Atomics.store(headerView, 0, 1);
+
+  const q = emptyQuantum();
+  const writes = captureTailCommit(sab, 0, () => {
+    proc.worklet.process(self, q.inputs, q.outputs, q.parameters);
+  });
+
+  // The tail is written by compare-exchange (monotone-max), never a plain store
+  // that could rewind the main drop-oldest's advance.
+  expect(writes).toEqual(["cas"]);
+});
+
+test("conformance: the worklet commits the MIDI in-ring tail via compare-exchange", async () => {
+  const thru = defineProcessor(() => {
+    const midiIn = event.midi({ from: "main", name: "in" });
+    const midiOut = event.midi({ to: "main", name: "out" });
+    return {
+      process: () => {
+        midiIn.onEvent("noteOn", ({ channel, note, velocity, atSample }) => {
+          midiOut.emitIf(true, { type: "noteOn", channel, note, velocity, atSample });
+        });
+      },
+    };
+  });
+  const { wasm } = await compile(thru);
+  const midiRings = thru.worklet.midiRings;
+  let total = 0;
+  const offsets: number[] = [];
+  for (const r of midiRings) {
+    offsets.push(total);
+    total += 12 + r.capacity * 8;
+  }
+  const sab = new ArrayBuffer(total);
+  const self = makeMockSelf();
+  thru.worklet.initialize(self, {
+    processorOptions: {
+      wasm,
+      transport: "sab",
+      midiRings,
+      midiRingsBuffer: sab,
+      midiRingSabOffsets: offsets,
+      sysexContentSabOffsets: midiRings.map(() => 0),
+    },
+  });
+
+  const inIndex = midiRings.findIndex((r) => r.direction === "in");
+  const inOffset = offsets[inIndex]!;
+  const inHeader = new Int32Array(sab, inOffset, 3);
+  const dv = new DataView(sab);
+  const wire = midiEventToWire({ type: "noteOn", channel: 0, note: 60, velocity: 100 });
+  dv.setUint8(inOffset + 12, wire.status);
+  dv.setUint8(inOffset + 13, wire.data1);
+  dv.setUint8(inOffset + 14, wire.data2);
+  dv.setUint32(inOffset + 16, 0, true);
+  Atomics.store(inHeader, 0, 1);
+
+  const q = emptyQuantum();
+  const writes = captureTailCommit(sab, inOffset, () => {
+    thru.worklet.process(self, q.inputs, q.outputs, q.parameters);
+  });
+
+  expect(writes).toEqual(["cas"]);
 });

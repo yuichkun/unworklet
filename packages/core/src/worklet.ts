@@ -35,7 +35,7 @@ import type {
 } from "./compile/ast.ts";
 import { layout, type Layout } from "./compile/layout.ts";
 import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
-import { ringCount, ringSlotIndex } from "./ringIndex.ts";
+import { atomicMonotoneMax, ringCount, ringSlotIndex } from "./ringIndex.ts";
 import {
   encodeScalar,
   isPersistent,
@@ -1700,7 +1700,10 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         for (let i = 0; i < wasmHeaders.length; i++) {
           const wasmH = wasmHeaders[i]!;
           const sabH = sabHeaders[i]!;
-          Atomics.store(sabH, 1, wasmH[1]!);
+          // Monotone-max, not a plain store: the main `send` drop-oldest also
+          // writes this tail, and a plain store from either side can clobber the
+          // other's advance (a lost update) and rewind tail, re-delivering a slot.
+          atomicMonotoneMax(sabH, 1, wasmH[1]!);
         }
       } else {
         for (let i = 0; i < wasmHeaders.length; i++) {
@@ -1793,7 +1796,9 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         } else {
           // in port = expose the WASM drain tail to main / notify overflow
           if (isSab && state.midiRingsBuffer !== null) {
-            Atomics.store(state.midiRingsSabHeaderViews[i]!, 1, wasmH[1]!);
+            // Monotone-max, not a plain store (= same split-writer tail race as
+            // the message in-ring: the main drop-oldest also writes this tail).
+            atomicMonotoneMax(state.midiRingsSabHeaderViews[i]!, 1, wasmH[1]!);
           } else {
             const currentOverflow = wasmH[2]!;
             if (currentOverflow !== state.lastSentMidiInOverflows[i]) {

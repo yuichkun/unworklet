@@ -30,3 +30,32 @@ export function ringSlotIndex(counter: number, mod: number): number {
 export function ringCount(head: number, tail: number): number {
   return (head - tail) >>> 0;
 }
+
+/**
+ * Atomically advance the i32 ring counter `view[index]` to `target` if `target`
+ * is AHEAD of the current value, and return the resulting value. A behind-or-
+ * equal target leaves the word unchanged (never a rewind).
+ *
+ * The in-ring `tail` has two writers — the main `send` drop-oldest and the
+ * worklet drain-commit — and a plain `Atomics.store` from either can clobber the
+ * other's advance (a lost update), rewinding `tail` so a slot is delivered
+ * twice. Composing both writers through this monotone-max keeps `tail` moving
+ * only forward. It is lock-free: both writers only ever increase the word, so a
+ * displaced compare-exchange retries against a strictly newer value and the loop
+ * converges.
+ *
+ * "Ahead" is wrap-safe. A single advance is bounded (at most the ring capacity),
+ * so the signed 32-bit difference `(target - cur) | 0` is positive exactly when
+ * `target` leads `cur` — even across the 2^31 counter wrap, where `target` reads
+ * back negative through the `Int32Array`. A signed `target > cur` would instead
+ * reject the legitimate advance at the wrap and latch the ring (see `ringCount`).
+ */
+export function atomicMonotoneMax(view: Int32Array, index: number, target: number): number {
+  let cur = Atomics.load(view, index);
+  while (((target - cur) | 0) > 0) {
+    const prev = Atomics.compareExchange(view, index, cur, target);
+    if (prev === cur) return target;
+    cur = prev;
+  }
+  return cur;
+}

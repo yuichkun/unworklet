@@ -29,7 +29,7 @@ import type {
 } from "./types.ts";
 import { midiEventToWire, wireToMidiEvent } from "./midiWire.ts";
 import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
-import { ringCount, ringSlotIndex } from "./ringIndex.ts";
+import { atomicMonotoneMax, ringCount, ringSlotIndex } from "./ringIndex.ts";
 import { decodeScalar, type SnapshotSlot } from "./snapshot.ts";
 import { decodeSnapshot, encodeSnapshot, inspectSnapshot, runMigrations } from "./snapshotBlob.ts";
 import type { RestoreResult } from "./types.ts";
@@ -681,7 +681,10 @@ export async function createNode<C>(
           const head = Atomics.load(headerView, headWordIdx);
           const tail = Atomics.load(headerView, tailWordIdx);
           if (ringCount(head, tail) >= ring.capacity) {
-            Atomics.store(headerView, tailWordIdx, tail + 1);
+            // Monotone-max drop-oldest: the worklet drain-commit also writes this
+            // tail, so a plain store could rewind its advance (a lost update that
+            // re-delivers a slot). Advance only if still ahead.
+            atomicMonotoneMax(headerView, tailWordIdx, tail + 1);
             Atomics.store(
               headerView,
               overflowWordIdx,
@@ -858,7 +861,10 @@ export async function createNode<C>(
           const head = Atomics.load(headerView, headWordIdx);
           const tail = Atomics.load(headerView, tailWordIdx);
           if (ringCount(head, tail) >= ring.capacity) {
-            Atomics.store(headerView, tailWordIdx, tail + 1);
+            // Monotone-max drop-oldest: the worklet drain-commit also writes this
+            // tail, so a plain store could rewind its advance (a lost update that
+            // re-delivers a slot). Advance only if still ahead.
+            atomicMonotoneMax(headerView, tailWordIdx, tail + 1);
             Atomics.store(
               headerView,
               overflowWordIdx,
