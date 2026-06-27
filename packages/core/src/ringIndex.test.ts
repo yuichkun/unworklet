@@ -7,7 +7,7 @@
 
 import { expect, test } from "vite-plus/test";
 
-import { ringSlotIndex } from "./ringIndex.ts";
+import { ringCount, ringSlotIndex } from "./ringIndex.ts";
 
 // What `rem_u` computes: the counter taken as a uint32, then `% mod`. Derived
 // from first principles (BigInt), not from the implementation under test.
@@ -61,4 +61,26 @@ test("a counter that wraps past 2^31 indexes out of bounds with a bare %, but st
   expect(idx).toBeGreaterThanOrEqual(0);
   expect(idx).toBeLessThan(cap);
   expect(idx).toBe(unsignedRef(header[0]!, cap));
+});
+
+test("ringCount returns the true unsigned fill across the i32 wrap, including the head-wrapped-tail-not window", () => {
+  const cases = [
+    { head: 5, tail: 0, fill: 5 },
+    { head: 256, tail: 250, fill: 6 },
+    // The dangerous window: head has wrapped past 2^31, tail has not.
+    { head: -0x80000000, tail: 0x7fffffff, fill: 1 }, // 2^31 vs 2^31 - 1
+    { head: -0x80000000 + 255, tail: 0x7fffffff, fill: 256 }, // a full ring straddling the wrap
+    { head: -1, tail: -256, fill: 255 }, // both wrapped (2^32 - 1 vs 2^32 - 256)
+    { head: 0, tail: -1, fill: 1 }, // tail = 2^32 - 1, head wrapped back to 0
+  ];
+  for (const { head, tail, fill } of cases) {
+    expect(ringCount(head, tail)).toBe(fill);
+  }
+  // The bug it removes: in the straddling case a bare signed subtraction is a
+  // huge negative, so `head - tail >= capacity` reports "not full" when the ring
+  // is actually full.
+  const straddleHead = -0x80000000 + 255;
+  const straddleTail = 0x7fffffff;
+  expect(straddleHead - straddleTail).toBeLessThan(0);
+  expect(ringCount(straddleHead, straddleTail)).toBe(256);
 });
