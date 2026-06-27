@@ -268,12 +268,19 @@ test("a real tsserver loads the plugin and type-checks .uwk.ts sugar end to end"
     expect(names).toEqual(expect.arrayContaining(["left", "right", "ch"]));
 
     // A genuine type error (bool Node written to an f32 output) surfaces, mapped
-    // back onto the author's `.uwk.ts`.
+    // back onto the author's `.uwk.ts`. Poll until the diagnostic lands — under a
+    // busy machine the first computation can arrive after a single sleep, so a
+    // one-shot check is flaky; match the resilient polling the valid file uses.
     server.notify("open", { file: brokenPath, fileContent: BROKEN, scriptKindName: "TS" });
-    await sleep(500);
-    const broken = await server.request<Diag[]>("semanticDiagnosticsSync", { file: brokenPath });
-    const texts = (broken.body ?? []).map((d) => d.text);
-    expect(texts.some((t) => t.includes('Node<"bool">') && t.includes('Node<"f32">'))).toBe(true);
+    const hasMismatch = (texts: string[]): boolean =>
+      texts.some((t) => t.includes('Node<"bool">') && t.includes('Node<"f32">'));
+    let brokenTexts: string[] = [];
+    for (let i = 0; i < 20 && !hasMismatch(brokenTexts); i++) {
+      await sleep(500);
+      const broken = await server.request<Diag[]>("semanticDiagnosticsSync", { file: brokenPath });
+      brokenTexts = (broken.body ?? []).map((d) => d.text);
+    }
+    expect(hasMismatch(brokenTexts)).toBe(true);
   } finally {
     server.dispose();
   }
