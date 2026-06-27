@@ -138,6 +138,14 @@ function isCreateSubgraphOptions(v: unknown): v is CreateSubgraphOptions {
  */
 export function instantiate<Args extends unknown[], Methods>(
   subgraph: SubgraphDecl<Args, Methods>,
+  ...args: Args
+): Methods;
+export function instantiate<Args extends unknown[], Methods>(
+  subgraph: SubgraphDecl<Args, Methods>,
+  ...args: [...Args, CreateSubgraphOptions]
+): Methods;
+export function instantiate<Args extends unknown[], Methods>(
+  subgraph: SubgraphDecl<Args, Methods>,
   ...rest: unknown[]
 ): Methods {
   const body = (subgraph as unknown as Record<symbol, ((...a: Args) => Methods) | undefined>)[
