@@ -20,9 +20,11 @@ import { expect, test } from "vite-plus/test";
 import {
   type FinalState,
   type ModelSpec,
+  RING_SLOT_MARKER,
   explore,
   freshDelivery,
   monotoneLocation,
+  outRingPublishSpec,
 } from "./ring-model.ts";
 
 const MARKER = 7;
@@ -206,4 +208,25 @@ test("rmw exposes the prior value and reads a preceding non-release store", () =
 
 test("explore throws rather than hanging when the state space is capped", () => {
   expect(() => explore(twoIncrements(false), [], { maxTerminals: 0 })).toThrow(/state space/);
+});
+
+// ── ring protocol proof: out-ring publish torn read (bug #1) ────────────────
+
+test("out-ring publish: a header-touching bulk copy IS a torn read", () => {
+  // The bulk copy writes `head` (plain) before the release store; the consumer
+  // can acquire-load that plain head, gain no happens-before, and read a stale
+  // slot. The model witnesses ≥1 such interleaving.
+  const inv = freshDelivery("main", "h", "t", "s", RING_SLOT_MARKER);
+  const result = explore(outRingPublishSpec({ touchesHeader: true }), [inv]);
+  expect(result.terminals).toBeGreaterThan(0);
+  expect(result.violations.length).toBeGreaterThan(0);
+});
+
+test("out-ring publish: a slots-only bulk copy is SAFE on every interleaving", () => {
+  // With the header left untouched, the release store is the only `head` write,
+  // so any consumer that observes the new head synchronizes-with it.
+  const inv = freshDelivery("main", "h", "t", "s", RING_SLOT_MARKER);
+  const result = explore(outRingPublishSpec({ touchesHeader: false }), [inv]);
+  expect(result.terminals).toBeGreaterThan(0);
+  expect(result.violations).toEqual([]);
 });

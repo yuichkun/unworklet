@@ -318,3 +318,75 @@ export const freshDelivery =
     }
     return null;
   };
+
+// ── the real ring transport protocol (worklet.ts ↔ client.ts) ───────────────
+
+/** A non-zero value the producer writes into a slot; 0 is the empty/stale slot. */
+export const RING_SLOT_MARKER = 1;
+
+/** A header word index in the 12-byte `[head, tail, overflow]` SAB ring header. */
+export type HeaderWord = "head" | "tail" | "overflow";
+
+/**
+ * One operation of the ring transport, in the vocabulary the conformance test
+ * captures from the REAL `worklet.ts` (via spies on `Atomics` + `.set()`). The
+ * model translates this same sequence into relaxed-memory ops; binding the two
+ * to one descriptor is what stops the model drifting into a false green.
+ */
+export type AbstractRingOp =
+  | { readonly op: "bulk-copy"; readonly touchesHeader: boolean }
+  | { readonly op: "atomic-store"; readonly word: HeaderWord };
+
+/**
+ * The op-sequence the **fixed** out-ring publish must emit: a slot-region-only
+ * bulk copy (never the header), then the three release stores with `head` last.
+ * `ring-protocol.conformance.test.ts` deep-equals the real worklet's captured
+ * sequence to this.
+ */
+export const OUT_RING_PUBLISH_OPS: readonly AbstractRingOp[] = [
+  { op: "bulk-copy", touchesHeader: false },
+  { op: "atomic-store", word: "tail" },
+  { op: "atomic-store", word: "overflow" },
+  { op: "atomic-store", word: "head" },
+];
+
+/**
+ * Model of the **out-ring publish** (worklet → main), e.g. an event/MIDI-out
+ * ring. The worklet copies its WASM ring into the SAB and then release-stores
+ * tail, overflow, head (head last, the release point). The consumer (main rAF
+ * poll, `client.ts` `pollEventRings`) acquire-loads head and tail, then
+ * plain-reads the slot.
+ *
+ * `touchesHeader: true` reproduces the bug — the bulk `.set()` spans the whole
+ * ring including the 12-byte header, so it writes `head` with a plain store
+ * BEFORE the release store. A consumer's acquire-load of head can read-from that
+ * plain write (its value coincides with the release store's), gaining no
+ * happens-before, and then read a stale slot. `touchesHeader: false` (slot
+ * region only) leaves the release store as the sole `head` write.
+ */
+export const outRingPublishSpec = (opts: { readonly touchesHeader: boolean }): ModelSpec => {
+  const m = RING_SLOT_MARKER;
+  const worklet: Op[] = [];
+  if (opts.touchesHeader) {
+    // The bulk `.set()` copies the header words (plain) before the slot region.
+    worklet.push({ kind: "store", loc: "head", value: () => 1, mode: "plain" });
+    worklet.push({ kind: "store", loc: "tail", value: () => 0, mode: "plain" });
+  }
+  worklet.push({ kind: "store", loc: "slot", value: () => m, mode: "plain" }); // .set() slot region
+  worklet.push({ kind: "store", loc: "tail", value: () => 0, mode: "release" }); // Atomics.store(tail)
+  worklet.push({ kind: "store", loc: "head", value: () => 1, mode: "release" }); // Atomics.store(head) — last
+  return {
+    locations: { head: 0, tail: 0, slot: 0 },
+    threads: [
+      { name: "worklet", ops: worklet },
+      {
+        name: "main",
+        ops: [
+          { kind: "load", loc: "head", into: "h", mode: "acquire" },
+          { kind: "load", loc: "tail", into: "t", mode: "acquire" },
+          { kind: "load", loc: "slot", into: "s", mode: "plain" },
+        ],
+      },
+    ],
+  };
+};
