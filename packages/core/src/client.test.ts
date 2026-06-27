@@ -3525,3 +3525,35 @@ test("devtools on: devDump on a disposed node rejects instead of hanging", async
     h.cleanup();
   }
 });
+
+test("rAF loop does not re-arm after dispose() is called from inside a subscriber handler", async () => {
+  const raf = installRafMock();
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({
+            publishSlots: [{ name: "v", type: "i32", sharedOffset: 0, counterOffset: 4 }],
+          }),
+        ),
+      h.fireReady,
+    );
+    const buf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .publishBuffer as SharedArrayBuffer;
+    const view = new Int32Array(buf);
+    // Self-dispose from inside the handler (a normal one-shot pattern).
+    node.state["v"]!.subscribe(() => node.dispose());
+    // Publish version 1 → handler fires → disposes the node mid-tick.
+    Atomics.store(view, 0, 42);
+    Atomics.store(view, 2, 1);
+    raf.flush();
+    // dispose()'s stopRafLoop ran during the tick; the loop must NOT re-arm itself
+    // (a trailing re-arm would poll every frame for the page lifetime, pinning the SAB).
+    expect(raf.pending).toBe(0);
+  } finally {
+    h.cleanup();
+    raf.restore();
+  }
+});

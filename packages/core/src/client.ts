@@ -1065,14 +1065,20 @@ export async function createNode<C>(
     const raf = (globalThis as { requestAnimationFrame?: (cb: () => void) => number })
       .requestAnimationFrame;
     if (!raf) return;
-    // No disposed branch inside tick = `dispose()` has stopRafLoop call
-    // cancelAnimationFrame and set rafHandle to null = any pending tick is also
-    // cancelled and there is no re-schedule path = no defensive disposed check
-    // needed.
+    // The polls fire user handlers synchronously, and a handler may dispose() the
+    // node or unsubscribe the last subscriber — both run stopRafLoop, but
+    // cancelAnimationFrame cannot stop the tick already on the call stack. Without
+    // this guard the trailing re-arm would resurrect the loop for the page lifetime,
+    // polling every frame and pinning the SAB-backed views (a leak that defeats
+    // dispose()).
     const tick = (): void => {
       pollPublishSlots();
       pollEventRings();
       pollMidiOutRings();
+      if (disposed || !hasAnySubscribers()) {
+        rafHandle = null;
+        return;
+      }
       rafHandle = raf(tick);
     };
     rafHandle = raf(tick);
