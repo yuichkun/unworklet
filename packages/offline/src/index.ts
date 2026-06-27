@@ -214,15 +214,26 @@ export async function renderOffline<C>(
       const decoded = decodeSnapshot(migrated.blob);
       const mem = instance.memory.buffer;
       for (const slot of decoded.slots) {
+        // The declaration is the single width authority: a blob whose payload does
+        // not match the declared slot width is skipped (fail-loud), never written
+        // raw, so a mis-migrated slot cannot overrun into the regions packed after
+        // it. Mirrors the worklet's applyRestoreSlots guard.
         if (slot.kind === "state") {
           const off = meta.layout.regions.states.slots[slot.name];
-          if (off !== undefined) new Uint8Array(mem, off, slot.data.length).set(slot.data);
+          const decl = meta.states.find((s) => s.name === slot.name);
+          const expected = decl === undefined ? undefined : ELEMENT_BYTES[decl.type];
+          if (off === undefined || expected === undefined || slot.data.length !== expected) {
+            continue;
+          }
+          new Uint8Array(mem, off, expected).set(slot.data);
         } else if (slot.kind === "buffer") {
           const off = meta.layout.regions.buffers.slots[slot.name];
-          if (off !== undefined) {
-            const len = Math.min(slot.data.length, mem.byteLength - off);
-            new Uint8Array(mem, off, len).set(slot.data.subarray(0, len));
+          const decl = meta.buffers.find((b) => b.name === slot.name);
+          const expected = decl === undefined ? undefined : decl.size * ELEMENT_BYTES[decl.type]!;
+          if (off === undefined || expected === undefined || slot.data.length !== expected) {
+            continue;
           }
+          new Uint8Array(mem, off, expected).set(slot.data);
         }
       }
     }
