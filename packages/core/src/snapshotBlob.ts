@@ -160,10 +160,24 @@ export function decodeSnapshot(blob: Uint8Array): DecodedSnapshot {
     const name = utf8d.decode(blob.subarray(p, p + nameLen));
     p += nameLen;
     need(1);
-    const kind = KIND_BY_CODE[dv.getUint8(p)]!;
+    const kindCode = dv.getUint8(p);
+    const kind = KIND_BY_CODE[kindCode];
+    if (kind === undefined) {
+      throw new Error(
+        `unworklet: corrupt snapshot blob (invalid slot kind code ${kindCode} at offset ${p}). ` +
+          `(stable ID 'snapshot-decode-bounds')`,
+      );
+    }
     p += 1;
     need(1);
-    const type = TYPE_BY_CODE[dv.getUint8(p)]!;
+    const typeCode = dv.getUint8(p);
+    const type = TYPE_BY_CODE[typeCode];
+    if (type === undefined) {
+      throw new Error(
+        `unworklet: corrupt snapshot blob (invalid slot type code ${typeCode} at offset ${p}). ` +
+          `(stable ID 'snapshot-decode-bounds')`,
+      );
+    }
     p += 1;
     need(4);
     const dataLen = dv.getUint32(p, true);
