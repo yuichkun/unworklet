@@ -8,7 +8,7 @@ with any Vitest-compatible runner.
 npm install -D @unworklet/test @unworklet/offline @unworklet/core vitest
 ```
 
-(`vitest` is a peer dependency — `@unworklet/test` imports `expect`/`vi` from it.)
+(`vitest` is a peer dependency — `@unworklet/test` imports `expect` from it.)
 
 ## Usage
 
@@ -40,10 +40,12 @@ test("lowpass attenuates 10 kHz", async () => {
 - **Events / state / MIDI:** `expectEventsEqual`, `expectEventsContaining`,
   `expectEventCount`, `expectStateMatches`, `expectMidiOut`, `expectMidiBalance`.
 
-The time / frequency matchers take a trailing `opts`. On a **multichannel** port
-you must pass `{ channel }` to choose which channel to measure —
+`expectLatency` and `expectGainAtFreq` take a trailing `opts`. On a **multichannel**
+port you must pass `{ channel }` to choose which channel to measure —
 `expectGainAtFreq(result, 10000, -24, 3, { channel: 1 })` — so a broken non-first
-channel can't slip by; a mono port defaults to channel 0.
+channel can't slip by; a mono port defaults to channel 0. `expectPeakAtSample`
+instead reduces across all channels for the global peak and selects the port via
+`{ port }` (no per-channel option).
 
 ## Generators & helpers
 
