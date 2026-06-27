@@ -158,7 +158,7 @@ export interface Node<T extends ScalarType | "f32x4" = ScalarType> {
    * produce, so it is `never` for every scalar `Node`. Declared here (not via a
    * `@unworklet/core/simd` augmentation) so it survives dts bundling.
    */
-  lane(i: 0 | 1 | 2 | 3): T extends "f32x4" ? Node<"f32"> : never;
+  lane: T extends "f32x4" ? (i: 0 | 1 | 2 | 3) => Node<"f32"> : never;
 }
 
 /** Scalar `state.<type>(initial)` handle (`01-dsl.md` §3.1). */
@@ -192,8 +192,8 @@ export interface Buffer<T extends BufferElementType> {
    * in core (every buffer carries it); declared here (not via a
    * `@unworklet/core/simd` augmentation) so it survives dts bundling.
    */
-  loadVec(offset: Node<"i32"> | number): T extends "f32" ? Node<"f32x4"> : never;
-  storeVec(offset: Node<"i32"> | number, value: Node<"f32x4">): T extends "f32" ? void : never;
+  loadVec: T extends "f32" ? (offset: Node<"i32"> | number) => Node<"f32x4"> : never;
+  storeVec: T extends "f32" ? (offset: Node<"i32"> | number, value: Node<"f32x4">) => void : never;
 }
 
 /** AudioParam-backed `param.f32(...)` handle (`01-dsl.md` §3.3). */
