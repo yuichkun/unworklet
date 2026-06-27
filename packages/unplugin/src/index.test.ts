@@ -9,6 +9,7 @@
  * `import.meta.ROLLUP_FILE_URL_<refId>`.
  */
 
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { compile } from "@unworklet/core";
@@ -1853,4 +1854,27 @@ test("the devbridge page-script pushes via anonymous-scoped RPC names (the page 
   expect(js).toContain('"devframe:anonymous:unworklet:midi-update"');
   // No unscoped page push slipped through.
   expect(js).not.toMatch(/rpcCall\("unworklet:/);
+});
+
+test("the @vitejs/devtools-kit peer is pinned EXACT to the 0.3 major that owns the `devframe:anonymous:` scope", () => {
+  // The live panels register under `devframe:anonymous:` — the anonymous-RPC scope of
+  // the @vitejs/devtools 0.3 host. A host on a different major checks a different
+  // ANONYMOUS_SCOPE prefix (`vite:anonymous:` in 0.2), so every untrusted page push is
+  // rejected with DTK0013 and the panels stay empty. The scope string is fixed in the
+  // plugin, so the host it talks to must be pinned to the matching major. A range such
+  // as `^0.3` would let a future 0.4 host — with a possibly different scope — satisfy
+  // the peer and silently break the panel, so the pin is EXACT. This guard fails the
+  // moment that pin loosens or moves off 0.3, coupling the dependency to the scope the
+  // code above registers.
+  const pkg = JSON.parse(
+    readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"),
+  ) as {
+    peerDependencies?: Record<string, string>;
+    peerDependenciesMeta?: Record<string, { optional?: boolean }>;
+  };
+  // Exact 0.3.x only: rejects `^0.3.3`, `~0.3.3`, `0.3.x`, `0.4.0`, any `||` range.
+  expect(pkg.peerDependencies?.["@vitejs/devtools-kit"]).toMatch(/^0\.3\.\d+$/);
+  // DevTools is a dev-only convenience; a consumer who doesn't open the panel must not
+  // be forced to install the kit, so the exact peer is also optional.
+  expect(pkg.peerDependenciesMeta?.["@vitejs/devtools-kit"]?.optional).toBe(true);
 });
