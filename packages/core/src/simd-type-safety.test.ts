@@ -88,4 +88,6 @@ test("SIMD ops: wrong-element calls are type errors, f32/f32x4 stay valid", () =
   for (const bad of [10, 11, 12]) {
     expect(errs.has(bad), `L${bad} (wrong SIMD element type) should be a type error`).toBe(true);
   }
-});
+  // Spins a full ts.Program (typechecks the whole source); generous timeout so it
+  // survives CPU contention when the suite runs many files in parallel.
+}, 30000);

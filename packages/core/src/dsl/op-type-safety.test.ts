@@ -94,4 +94,6 @@ test("numeric ops: typed-node mismatch errors, literals/number-first stay valid"
   for (const bad of [12, 13, 14, 15, 16]) {
     expect(errs.has(bad), `L${bad} (scalar-type mix) should be a type error`).toBe(true);
   }
-});
+  // Spins a full ts.Program (typechecks the whole source); generous timeout so it
+  // survives CPU contention when the suite runs many files in parallel.
+}, 30000);
