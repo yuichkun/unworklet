@@ -27,6 +27,7 @@ import {
   encodeSnapshot,
   extractWorkletMeta,
   midiEventToWire,
+  ringSlotIndex,
   runMigrations,
   SAMPLES_PER_BLOCK,
   wireToMidiEvent,
@@ -290,7 +291,7 @@ export async function renderOffline<C>(
       const headerView = new Int32Array(memory, ring.base, 3);
       const head = headerView[0]!;
       const slotByteOffset =
-        ring.base + MESSAGE_HEADER_BYTES + (head % ring.capacity) * ring.slotSize;
+        ring.base + MESSAGE_HEADER_BYTES + ringSlotIndex(head, ring.capacity) * ring.slotSize;
       const dataView = new DataView(memory);
       const payload = m.payload as Record<string, unknown>;
       for (const field of ring.fields) {
@@ -305,7 +306,7 @@ export async function renderOffline<C>(
           const src = payload[field.name] as Float32Array;
           const content = ring.payloadContent!;
           const perChunk = Math.floor(content.capacity / content.chunks);
-          const payloadOffset = (head % content.chunks) * perChunk;
+          const payloadOffset = ringSlotIndex(head, content.chunks) * perChunk;
           const byteLen = Math.min(src.length * src.BYTES_PER_ELEMENT, perChunk);
           new Uint8Array(memory, content.base + payloadOffset, byteLen).set(
             new Uint8Array(src.buffer, src.byteOffset, byteLen),
@@ -333,7 +334,7 @@ export async function renderOffline<C>(
       const headerView = new Int32Array(memory, port.base, 3);
       const head = headerView[0]!;
       const slotByteOffset =
-        port.base + MESSAGE_HEADER_BYTES + (head % port.capacity) * MIDI_SLOT_BYTES;
+        port.base + MESSAGE_HEADER_BYTES + ringSlotIndex(head, port.capacity) * MIDI_SLOT_BYTES;
       const dv = new DataView(memory);
       const payload = ev.payload as MidiEvent;
       if (payload.type === "sysex") {
@@ -344,7 +345,7 @@ export async function renderOffline<C>(
         // Sysex: bytes → content chunk `[length, data]`, slot carries
         // `[0xF0, chunkIdx, _pad, _pad, atSample]` (`11-midi.md` §4.3).
         const region = port.sysex;
-        const chunkIdx = head % region.chunks;
+        const chunkIdx = ringSlotIndex(head, region.chunks);
         const chunkBase = region.base + chunkIdx * region.perChunk;
         const len = Math.min(payload.data.length, region.perChunk - 4);
         dv.setUint32(chunkBase, len, true);
@@ -376,7 +377,7 @@ export async function renderOffline<C>(
       let head = headerView[0]!;
       let tail = headerView[1]!;
       while (tail !== head) {
-        const slotIdx = tail % ring.capacity;
+        const slotIdx = ringSlotIndex(tail, ring.capacity);
         const slotByteOffset = ring.base + 12 + slotIdx * ring.slotSize;
         const dataView = new DataView(memory);
         const payload: Record<string, unknown> = {};
@@ -454,7 +455,7 @@ export async function renderOffline<C>(
       const dv = new DataView(memory);
       while (tail !== head) {
         const slotByteOffset =
-          port.base + MESSAGE_HEADER_BYTES + (tail % port.capacity) * MIDI_SLOT_BYTES;
+          port.base + MESSAGE_HEADER_BYTES + ringSlotIndex(tail, port.capacity) * MIDI_SLOT_BYTES;
         const status = dv.getUint8(slotByteOffset);
         const data1 = dv.getUint8(slotByteOffset + 1);
         const data2 = dv.getUint8(slotByteOffset + 2);

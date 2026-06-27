@@ -35,6 +35,7 @@ import type {
 } from "./compile/ast.ts";
 import { layout, type Layout } from "./compile/layout.ts";
 import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
+import { ringCount, ringSlotIndex } from "./ringIndex.ts";
 import {
   encodeScalar,
   isPersistent,
@@ -1340,14 +1341,14 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
           for (const payload of queue) {
             const head = wasmH[0]!;
             const tail = wasmH[1]!;
-            // overflow check = head - tail >= capacity = drop-oldest
-            if (head - tail >= capacity) {
+            // overflow check = ringCount(head, tail) >= capacity = drop-oldest
+            if (ringCount(head, tail) >= capacity) {
               wasmH[1] = tail + 1;
               wasmH[2] = wasmH[2]! + 1;
             }
             // slot write (Q46 uniform lift: every number → i32 / boolean → 0/1 i32,
             // typed-array → bytes into the §5.2 content region + [payloadLen, payloadOffset] into the slot)
-            const slotByteOffset = 12 + (head % capacity) * slotSize;
+            const slotByteOffset = 12 + ringSlotIndex(head, capacity) * slotSize;
             for (const field of ring.fields) {
               const value = payload[field.name];
               const byteOffset = slotByteOffset + field.offsetInSlot;
@@ -1415,15 +1416,15 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
           for (const item of queue) {
             const head = wasmH[0]!;
             const tail = wasmH[1]!;
-            if (head - tail >= capacity) {
+            if (ringCount(head, tail) >= capacity) {
               wasmH[1] = tail + 1;
               wasmH[2] = wasmH[2]! + 1;
             }
-            const slotByteOffset = 12 + (head % capacity) * MIDI_SLOT_BYTES;
+            const slotByteOffset = 12 + ringSlotIndex(head, capacity) * MIDI_SLOT_BYTES;
             if (item.sysex !== undefined && ring.sysex !== undefined && sysexWasm !== null) {
               // sysex = [length, data] into the content chunk, [0xF0, chunkIdx, _, _, atSample] into the slot
               const region = ring.sysex;
-              const chunkIdx = head % region.chunks;
+              const chunkIdx = ringSlotIndex(head, region.chunks);
               const chunkBase = chunkIdx * region.perChunk;
               const len = Math.min(item.sysex.length, region.perChunk - 4);
               dv.setUint32(ring.sysex.wasmBase + chunkBase, len, true);
@@ -1587,7 +1588,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
           // bulk-copy the new slots into a Uint8Array (main decodes the fields)
           const slotsBytes = new Uint8Array(newSlotCount * slotSize);
           for (let k = 0; k < newSlotCount; k++) {
-            const slotIdx = (from + k) % capacity;
+            const slotIdx = ringSlotIndex(from + k, capacity);
             const srcOffset = 12 + slotIdx * slotSize;
             slotsBytes.set(wasmRawView.subarray(srcOffset, srcOffset + slotSize), k * slotSize);
           }
@@ -1691,7 +1692,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             const wasmRawView = state.midiRingsWasmViews[i]!;
             const slotsBytes = new Uint8Array(newSlotCount * MIDI_SLOT_BYTES);
             for (let k = 0; k < newSlotCount; k++) {
-              const slotIdx = (from + k) % capacity;
+              const slotIdx = ringSlotIndex(from + k, capacity);
               const srcOffset = 12 + slotIdx * MIDI_SLOT_BYTES;
               slotsBytes.set(
                 wasmRawView.subarray(srcOffset, srcOffset + MIDI_SLOT_BYTES),

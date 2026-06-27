@@ -29,6 +29,7 @@ import type {
 } from "./types.ts";
 import { midiEventToWire, wireToMidiEvent } from "./midiWire.ts";
 import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
+import { ringCount, ringSlotIndex } from "./ringIndex.ts";
 import { decodeScalar, type SnapshotSlot } from "./snapshot.ts";
 import { decodeSnapshot, encodeSnapshot, inspectSnapshot, runMigrations } from "./snapshotBlob.ts";
 import type { RestoreResult } from "./types.ts";
@@ -679,7 +680,7 @@ export async function createNode<C>(
           const headerView = messageRingsHeaderView;
           const head = Atomics.load(headerView, headWordIdx);
           const tail = Atomics.load(headerView, tailWordIdx);
-          if (head - tail >= ring.capacity) {
+          if (ringCount(head, tail) >= ring.capacity) {
             Atomics.store(headerView, tailWordIdx, tail + 1);
             Atomics.store(
               headerView,
@@ -688,7 +689,7 @@ export async function createNode<C>(
             );
           }
           if (ring.slotSize > 0) {
-            const slotByteOffset = slotsBase + (head % ring.capacity) * ring.slotSize;
+            const slotByteOffset = slotsBase + ringSlotIndex(head, ring.capacity) * ring.slotSize;
             for (const field of ring.fields) {
               const value = payload[field.name];
               const byteOffset = slotByteOffset + field.offsetInSlot;
@@ -856,7 +857,7 @@ export async function createNode<C>(
           const headerView = midiRingsHeaderView;
           const head = Atomics.load(headerView, headWordIdx);
           const tail = Atomics.load(headerView, tailWordIdx);
-          if (head - tail >= ring.capacity) {
+          if (ringCount(head, tail) >= ring.capacity) {
             Atomics.store(headerView, tailWordIdx, tail + 1);
             Atomics.store(
               headerView,
@@ -864,10 +865,10 @@ export async function createNode<C>(
               Atomics.load(headerView, overflowWordIdx) + 1,
             );
           }
-          const slotByteOffset = slotsBase + (head % ring.capacity) * 8;
+          const slotByteOffset = slotsBase + ringSlotIndex(head, ring.capacity) * 8;
           if (event.type === "sysex" && ring.sysex !== undefined && sysexContentBytes !== null) {
             const sysex = ring.sysex;
-            const chunkIdx = head % sysex.chunks;
+            const chunkIdx = ringSlotIndex(head, sysex.chunks);
             const contentBase = sysexContentSabOffsets[i]! + chunkIdx * sysex.perChunk;
             const len = Math.min(event.data.length, sysex.perChunk - 4);
             new DataView(sysexContentBytes.buffer).setUint32(contentBase, len, true);
@@ -974,7 +975,7 @@ export async function createNode<C>(
             )
           : null;
       while (tail !== currentHead) {
-        const slotByteOffset = slotsBase + (tail % ring.capacity) * 8;
+        const slotByteOffset = slotsBase + ringSlotIndex(tail, ring.capacity) * 8;
         const { event } = decodeMidiSlot(midiRingsView, slotByteOffset, i, contentBytes);
         dispatchMidiEvent(ring.name, event);
         tail += 1;
@@ -1041,7 +1042,7 @@ export async function createNode<C>(
       const subscribers = eventSubscribers.get(ring.name);
       const slotsBase = sabOffset + 12;
       while (tail !== currentHead) {
-        const slotIdx = tail % ring.capacity;
+        const slotIdx = ringSlotIndex(tail, ring.capacity);
         const slotByteOffset = slotsBase + slotIdx * ring.slotSize;
         if (subscribers !== undefined && subscribers.size > 0) {
           const payload: Record<string, unknown> = {};
