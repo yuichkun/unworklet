@@ -856,16 +856,11 @@ export type BufferValueProxy<V> = {
 };
 
 /**
- * Unified main-side event surface (Q88). A declared event name carries `.on`
- * (worklet→main, `event({ to: 'main' })`), `.emit` (main→worklet,
- * `event({ from: 'main' })`), or both for a same-name in/out pair (Q87).
- *
- * The whole node surface is intentionally a flat `Record<string, …>` in v1.0.0,
- * so the TYPE exposes both `.on` and `.emit` for every name; the wrong-direction
- * method is simply absent at runtime (calling it is a `TypeError`). Per-name
- * narrowing — typing each declared name to exactly its direction — is deferred to
- * v1.x, where it would type the whole node surface (inputs / params / state /
- * events / midi), not events alone (#40 / codex on #12 G3).
+ * The full main-side event surface (Q88): `.on` (worklet→main, `event({ to:
+ * 'main' })`), `.emit` (main→main, `event({ from: 'main' })`), and the
+ * diagnostics handle. `EventSurfaceFor` narrows this down to the directions an
+ * individual declared name actually carries; an unknown / permissive witness
+ * keeps the full surface here.
  */
 export type EventSurface<T> = {
   on(handler: (payload: T & { atSample: number }) => void): () => void;
@@ -877,6 +872,26 @@ export type EventSurface<T> = {
     overflowCount(): number;
   };
 };
+
+/**
+ * The main-side surface for one declared event, narrowed by the per-name
+ * direction marker the `?worklet` witness emits:
+ * - `"out"` (`to:'main'`, worklet→main) — receive only (`.on`).
+ * - `"in"` (`from:'main'`, main→worklet) — send only (`.emit`).
+ * - `"inout"` (a same-name in/out pair, Q87) — both.
+ *
+ * Any other marker (the legacy `unknown` witness value, or an inline processor's
+ * permissive map) keeps the full surface so existing code is unaffected. The
+ * wrong-direction method `TypeError`s at runtime, so narrowing turns that into a
+ * compile error (type ⟺ runtime). The payload `T` is erased at build time and
+ * not recoverable from the runtime namespace, so the witness path carries
+ * `unknown`.
+ */
+export type EventSurfaceFor<D> = D extends "out"
+  ? Omit<EventSurface<unknown>, "emit">
+  : D extends "in"
+    ? Omit<EventSurface<unknown>, "on">
+    : EventSurface<unknown>;
 
 export type MidiPortSurface = {
   send(event: MidiEvent, atTime?: number): void;
@@ -931,7 +946,7 @@ type UnworkletNodeOf<C> = {
     ? { readonly [K in keyof S]: StateValueProxy<unknown> | BufferValueProxy<unknown> }
     : Record<string, StateValueProxy<unknown> | BufferValueProxy<unknown>>;
   readonly events: C extends { events: infer E }
-    ? { readonly [K in keyof E]: EventSurface<unknown> }
+    ? { readonly [K in keyof E]: EventSurfaceFor<E[K]> }
     : Record<string, EventSurface<unknown>>;
   readonly midi: C extends { midi: infer M }
     ? { readonly [K in keyof M]: MidiPortSurface }

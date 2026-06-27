@@ -146,6 +146,32 @@ export async function f(): Promise<void> {
 }
 `,
   );
+
+  // The main-side event surface narrows on `.on` / `.emit` by the declared
+  // direction: a `to:'main'` event ("out", worklet→main) exposes only `.on`,
+  // a `from:'main'` event ("in", main→worklet) exposes only `.emit`, and a
+  // same-name in/out pair ("inout") exposes both. Calling the wrong-direction
+  // method — which would `TypeError` at runtime — is a compile error.
+  writeFileSync(
+    path.join(dir, "event-direction.ts"),
+    `${PRELUDE}
+import type { UnworkletNode } from "@unworklet/core";
+declare const proc: CompiledProcessor<{
+  events: { peak: "out"; ctrl: "in"; both: "inout" };
+}>;
+declare const node: UnworkletNode<typeof proc>;
+export function f(): void {
+  node.events.peak.on(() => {});
+  // @ts-expect-error a receive-only ("out") event has no .emit on the main side
+  node.events.peak.emit({});
+  node.events.ctrl.emit({});
+  // @ts-expect-error a send-only ("in") event has no .on on the main side
+  node.events.ctrl.on(() => {});
+  node.events.both.on(() => {});
+  node.events.both.emit({});
+}
+`,
+  );
 });
 
 afterAll(() => {
@@ -184,4 +210,8 @@ test("declared names across every surface are typed; undeclared names error", ()
 
 test("UnworkletNode<typeof processorImport> resolves the per-processor surface directly", () => {
   expect(diagnose("node-from-processor.ts")).toEqual([]);
+});
+
+test("the main-side event surface narrows .on / .emit by the declared direction", () => {
+  expect(diagnose("event-direction.ts")).toEqual([]);
 });
