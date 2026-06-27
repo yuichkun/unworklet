@@ -119,3 +119,24 @@ test("the per-file witness also types node.outputs.<name> and rejects an undecla
   const msgs = diagnose("undeclared-output.ts");
   expect(msgs.some((m) => /nope/.test(m) && /does not exist/.test(m))).toBe(true);
 });
+
+// Unit test of the direction-marker emission (the string the witness writes),
+// driven by a minimal namespace so it covers the marker logic — including the
+// same-name in/out pair — without depending on event DSL plumbing.
+test("the witness marks event direction: eventRings → out, messageRings → in, a same-name pair → inout", () => {
+  const ns = {
+    initialize: () => {},
+    process: () => true,
+    parameterDescriptors: [],
+    publishSlots: [],
+    eventRings: [{ name: "peak" }, { name: "both" }],
+    messageRings: [{ name: "ctrl" }, { name: "both" }],
+    midiRings: [],
+    inputs: [],
+    outputs: [],
+  } as unknown as Parameters<typeof workletDts>[1];
+  const dts = workletDts("*/x.processor.ts?worklet", ns);
+  expect(dts).toContain('"peak": "out"');
+  expect(dts).toContain('"ctrl": "in"');
+  expect(dts).toContain('"both": "inout"');
+});

@@ -31,7 +31,25 @@ export function workletDts(specifier: string, ns: WorkletNamespace): string {
   // since UnworkletNode maps each name to its fixed handle type.
   const params = named(ns.parameterDescriptors, () => `"f32"`);
   const state = named(ns.publishSlots, (d) => JSON.stringify(d.type as string));
-  const events = named([...ns.eventRings, ...ns.messageRings], () => "unknown");
+  // Direction marker per event so the node surface narrows `.on` / `.emit`:
+  // eventRings = `event({ to: 'main' })` (worklet→main) → main receives → "out";
+  // messageRings = `event({ from: 'main' })` (main→worklet) → main sends → "in";
+  // a name declared in both (a same-name in/out pair, Q87) → "inout".
+  const eventDir = new Map<string, { out: boolean; in: boolean }>();
+  for (const r of ns.eventRings) {
+    const name = (r as { name: string }).name;
+    eventDir.set(name, { out: true, in: eventDir.get(name)?.in ?? false });
+  }
+  for (const r of ns.messageRings) {
+    const name = (r as { name: string }).name;
+    eventDir.set(name, { out: eventDir.get(name)?.out ?? false, in: true });
+  }
+  const events = [...eventDir]
+    .map(
+      ([name, d]) =>
+        `${JSON.stringify(name)}: ${JSON.stringify(d.out && d.in ? "inout" : d.out ? "out" : "in")}`,
+    )
+    .join("; ");
   const midi = named(ns.midiRings, () => "unknown");
   const inputs = named(ns.inputs, () => "unknown");
   const outputs = named(ns.outputs, () => "unknown");
