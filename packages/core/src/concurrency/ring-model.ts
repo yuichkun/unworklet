@@ -335,7 +335,8 @@ export type HeaderWord = "head" | "tail" | "overflow";
  */
 export type AbstractRingOp =
   | { readonly op: "bulk-copy"; readonly touchesHeader: boolean }
-  | { readonly op: "atomic-store"; readonly word: HeaderWord };
+  | { readonly op: "atomic-store"; readonly word: HeaderWord }
+  | { readonly op: "atomic-load"; readonly word: HeaderWord };
 
 /**
  * The op-sequence the **fixed** out-ring publish must emit: a slot-region-only
@@ -387,6 +388,59 @@ export const outRingPublishSpec = (opts: { readonly touchesHeader: boolean }): M
           { kind: "load", loc: "slot", into: "s", mode: "plain" },
         ],
       },
+    ],
+  };
+};
+
+/**
+ * The op-sequence the **fixed** in-ring mirror must emit: three header acquire
+ * loads, then a slot-region-only bulk copy. The copy must NOT span the header —
+ * clobbering it would replace the acquire-loaded head with a non-synchronized
+ * plain re-read, making the drain bound unsynchronized.
+ */
+export const IN_RING_MIRROR_OPS: readonly AbstractRingOp[] = [
+  { op: "atomic-load", word: "head" },
+  { op: "atomic-load", word: "tail" },
+  { op: "atomic-load", word: "overflow" },
+  { op: "bulk-copy", touchesHeader: false },
+];
+
+/**
+ * Model of the **in-ring mirror** (main → worklet), e.g. a message/MIDI-in ring.
+ * The producer (main `send`) writes the slot then release-stores head. The
+ * consumer (worklet) acquire-loads head/tail/overflow from the SAB, bulk-copies
+ * the SAB ring into its WASM ring, and drains using its WASM header.
+ *
+ * `clobbersHeader: true` reproduces the bug: the whole-ring bulk copy re-reads
+ * the header words with a plain store, OVERWRITING the just-acquired head with a
+ * non-acquire value. A producer that advanced head between the acquire and the
+ * copy is then drained against a non-synchronized bound, and its freshly written
+ * slot can be read stale. `clobbersHeader: false` (slots only) keeps the
+ * acquire-loaded head, so the drain bound carries the producer's happens-before.
+ */
+export const inRingMirrorSpec = (opts: { readonly clobbersHeader: boolean }): ModelSpec => {
+  const m = RING_SLOT_MARKER;
+  const worklet: Op[] = [
+    { kind: "load", loc: "head", into: opts.clobbersHeader ? "hAcq" : "hDrain", mode: "acquire" },
+    { kind: "load", loc: "tail", into: "t", mode: "acquire" },
+    { kind: "load", loc: "overflow", into: "o", mode: "acquire" },
+  ];
+  if (opts.clobbersHeader) {
+    // The whole-ring bulk copy re-reads head (plain), overwriting the acquired value.
+    worklet.push({ kind: "load", loc: "head", into: "hDrain", mode: "plain" });
+  }
+  worklet.push({ kind: "load", loc: "slot", into: "s", mode: "plain" }); // slot copy → WASM read
+  return {
+    locations: { head: 0, tail: 0, overflow: 0, slot: 0 },
+    threads: [
+      {
+        name: "main",
+        ops: [
+          { kind: "store", loc: "slot", value: () => m, mode: "plain" }, // main writes the slot
+          { kind: "store", loc: "head", value: () => 1, mode: "release" }, // Atomics.store(head)
+        ],
+      },
+      { name: "worklet", ops: worklet },
     ],
   };
 };

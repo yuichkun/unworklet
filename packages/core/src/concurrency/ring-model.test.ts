@@ -23,6 +23,7 @@ import {
   RING_SLOT_MARKER,
   explore,
   freshDelivery,
+  inRingMirrorSpec,
   monotoneLocation,
   outRingPublishSpec,
 } from "./ring-model.ts";
@@ -227,6 +228,26 @@ test("out-ring publish: a slots-only bulk copy is SAFE on every interleaving", (
   // so any consumer that observes the new head synchronizes-with it.
   const inv = freshDelivery("main", "h", "t", "s", RING_SLOT_MARKER);
   const result = explore(outRingPublishSpec({ touchesHeader: false }), [inv]);
+  expect(result.terminals).toBeGreaterThan(0);
+  expect(result.violations).toEqual([]);
+});
+
+// ── ring protocol proof: in-ring mirror non-acquire bound (bug #2) ──────────
+
+test("in-ring mirror: a header-clobbering bulk copy IS a torn read", () => {
+  // The bulk copy re-reads head (plain), discarding the acquire; the worklet can
+  // then drain against a head it never synchronized on and read a stale slot.
+  const inv = freshDelivery("worklet", "hDrain", "t", "s", RING_SLOT_MARKER);
+  const result = explore(inRingMirrorSpec({ clobbersHeader: true }), [inv]);
+  expect(result.terminals).toBeGreaterThan(0);
+  expect(result.violations.length).toBeGreaterThan(0);
+});
+
+test("in-ring mirror: a slots-only bulk copy is SAFE on every interleaving", () => {
+  // Keeping the acquire-loaded head means the drain bound carries the producer's
+  // happens-before, so the slot it reads is the one the producer published.
+  const inv = freshDelivery("worklet", "hDrain", "t", "s", RING_SLOT_MARKER);
+  const result = explore(inRingMirrorSpec({ clobbersHeader: false }), [inv]);
   expect(result.terminals).toBeGreaterThan(0);
   expect(result.violations).toEqual([]);
 });
