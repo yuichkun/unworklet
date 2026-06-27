@@ -102,6 +102,11 @@ export type { WorkletRuntimeSource, EmitWorkletModuleOptions } from "./worklet-m
 export { midiEventToWire, wireToMidiEvent } from "./midiWire.ts";
 export type { MidiWireBytes } from "./midiWire.ts";
 
+// Shared ring-index helper (= the single source of truth for mapping a ring
+// head/tail counter to a slot index, correct across the i32 2^31 wrap). Used by
+// the worklet SAB copy, the main-thread drain, and the offline renderer.
+export { ringSlotIndex } from "./ringIndex.ts";
+
 // Snapshot blob codec + migration engine (= `01-dsl.md` §8). Shared
 // infrastructure used by the offline renderer and main client to build, read, and migrate blobs.
 export { decodeScalar, decodeTypedArray, encodeScalar } from "./snapshot.ts";
