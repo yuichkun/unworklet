@@ -712,10 +712,11 @@ const setupDevtools = async (
   // `@vitejs/devtools`'s anonymous-method mechanism: a method whose name starts with
   // its internal `ANONYMOUS_SCOPE` skips the client-auth check. That scope is
   // version-coupled and unexported — `vite:anonymous:` in devtools 0.2.x,
-  // `devframe:anonymous:` in 0.3.x — so this string tracks the `@vitejs/devtools-kit`
-  // peer range (^0.3). These pushes are dev-only, local, and non-sensitive, so
-  // anonymous is the right scope. (MIDI inject below is called from the trusted
-  // panel, not the page, so it needs no prefix.)
+  // `devframe:anonymous:` in 0.3.x — so the `@vitejs/devtools-kit` peer is pinned to
+  // an exact 0.3 version (not a range): a mismatched version changes this prefix and
+  // silently empties every panel. These pushes are dev-only, local, and
+  // non-sensitive, so anonymous is the right scope. (MIDI inject below is called from
+  // the trusted panel, not the page, so it needs no prefix.)
   const graphState = await ctx.rpc.sharedState.get("unworklet:graph", {
     initialValue: { nodes: [], edges: [] },
   });
