@@ -112,7 +112,8 @@ export const stereoGain = defineProcessor(() => {
 // main thread
 import { createNode } from "@unworklet/core";
 
-const audioContext = new AudioContext();
+// ?worklet bakes its coefficients at 48 kHz, so run the context at 48 kHz.
+const audioContext = new AudioContext({ sampleRate: 48000 });
 const node = await createNode(audioContext, stereoGain);
 
 source.connect(node.inputs.main);
@@ -1376,7 +1377,8 @@ export const sysexBridge = defineProcessor((ctx) => {
 
 import { createNode } from "@unworklet/core";
 
-const audioCtx = new AudioContext();
+// ?worklet bakes its coefficients at 48 kHz, so run the context at 48 kHz.
+const audioCtx = new AudioContext({ sampleRate: 48000 });
 const node = await createNode(audioCtx, sysexBridge);
 audioCtx.resume();
 
@@ -1462,7 +1464,8 @@ export const initialOsc = defineProcessor(
 import { createNode, replaceProcessor } from "@unworklet/core";
 import initialOsc from "./initial.processor.ts?worklet";
 
-const audioCtx = new AudioContext();
+// ?worklet bakes its coefficients at 48 kHz, so run the context at 48 kHz.
+const audioCtx = new AudioContext({ sampleRate: 48000 });
 let node = await createNode(audioCtx, initialOsc);
 node.outputs.main.connect(audioCtx.destination);
 audioCtx.resume();

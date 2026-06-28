@@ -84,7 +84,8 @@ What user-land does on top:
 import { createNode, replaceProcessor } from "@unworklet/core";
 import MyProcessor from "./my.processor.ts?worklet";
 
-const audioCtx = new AudioContext();
+// ?worklet bakes its coefficients at 48 kHz, so run the context at 48 kHz.
+const audioCtx = new AudioContext({ sampleRate: 48000 });
 let current = await createNode(audioCtx, MyProcessor);
 current.connect(audioCtx.destination);
 
