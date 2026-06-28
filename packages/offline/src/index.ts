@@ -27,6 +27,7 @@ import {
   encodeSnapshot,
   extractWorkletMeta,
   midiEventToWire,
+  ringSlotIndex,
   runMigrations,
   SAMPLES_PER_BLOCK,
   wireToMidiEvent,
@@ -132,7 +133,13 @@ export async function renderOffline<C>(
   // Obtain the event ring meta via WorkletMeta so renderOffline can walk the
   // ring directly in WASM memory: even without a SAB, it drains at the end of
   // each quantum and accumulates into the OfflineEmittedEvent array.
-  const meta = extractWorkletMeta(processor.graph as never);
+  //
+  // Derive every region offset from the graph `compile` re-captured at the host
+  // rate (`result.graph`), NOT the eager `processor.graph` (captured at the
+  // default 48000): a buffer whose size depends on `ctx.sampleRate` lays the
+  // buffers region out differently per rate, shifting the rings packed after it.
+  // The eager offsets would then poke the host-rate WASM at the wrong place.
+  const meta = extractWorkletMeta(result.graph as never);
   const eventRingMeta = meta.events.map((evt) => {
     const slot = meta.layout.regions.eventRings.slots[evt.name]!;
     return {
@@ -208,15 +215,26 @@ export async function renderOffline<C>(
       const decoded = decodeSnapshot(migrated.blob);
       const mem = instance.memory.buffer;
       for (const slot of decoded.slots) {
+        // The declaration is the single width authority: a blob whose payload does
+        // not match the declared slot width is skipped (fail-loud), never written
+        // raw, so a mis-migrated slot cannot overrun into the regions packed after
+        // it. Mirrors the worklet's applyRestoreSlots guard.
         if (slot.kind === "state") {
           const off = meta.layout.regions.states.slots[slot.name];
-          if (off !== undefined) new Uint8Array(mem, off, slot.data.length).set(slot.data);
+          const decl = meta.states.find((s) => s.name === slot.name);
+          const expected = decl === undefined ? undefined : ELEMENT_BYTES[decl.type];
+          if (off === undefined || expected === undefined || slot.data.length !== expected) {
+            continue;
+          }
+          new Uint8Array(mem, off, expected).set(slot.data);
         } else if (slot.kind === "buffer") {
           const off = meta.layout.regions.buffers.slots[slot.name];
-          if (off !== undefined) {
-            const len = Math.min(slot.data.length, mem.byteLength - off);
-            new Uint8Array(mem, off, len).set(slot.data.subarray(0, len));
+          const decl = meta.buffers.find((b) => b.name === slot.name);
+          const expected = decl === undefined ? undefined : decl.size * ELEMENT_BYTES[decl.type]!;
+          if (off === undefined || expected === undefined || slot.data.length !== expected) {
+            continue;
           }
+          new Uint8Array(mem, off, expected).set(slot.data);
         }
       }
     }
@@ -273,7 +291,7 @@ export async function renderOffline<C>(
       const headerView = new Int32Array(memory, ring.base, 3);
       const head = headerView[0]!;
       const slotByteOffset =
-        ring.base + MESSAGE_HEADER_BYTES + (head % ring.capacity) * ring.slotSize;
+        ring.base + MESSAGE_HEADER_BYTES + ringSlotIndex(head, ring.capacity) * ring.slotSize;
       const dataView = new DataView(memory);
       const payload = m.payload as Record<string, unknown>;
       for (const field of ring.fields) {
@@ -288,7 +306,7 @@ export async function renderOffline<C>(
           const src = payload[field.name] as Float32Array;
           const content = ring.payloadContent!;
           const perChunk = Math.floor(content.capacity / content.chunks);
-          const payloadOffset = (head % content.chunks) * perChunk;
+          const payloadOffset = ringSlotIndex(head, content.chunks) * perChunk;
           const byteLen = Math.min(src.length * src.BYTES_PER_ELEMENT, perChunk);
           new Uint8Array(memory, content.base + payloadOffset, byteLen).set(
             new Uint8Array(src.buffer, src.byteOffset, byteLen),
@@ -316,14 +334,18 @@ export async function renderOffline<C>(
       const headerView = new Int32Array(memory, port.base, 3);
       const head = headerView[0]!;
       const slotByteOffset =
-        port.base + MESSAGE_HEADER_BYTES + (head % port.capacity) * MIDI_SLOT_BYTES;
+        port.base + MESSAGE_HEADER_BYTES + ringSlotIndex(head, port.capacity) * MIDI_SLOT_BYTES;
       const dv = new DataView(memory);
       const payload = ev.payload as MidiEvent;
       if (payload.type === "sysex") {
+        // A sysex event sent to a port with no sysex region (the processor declares
+        // no sysex handler) has nowhere to land — drop it rather than dereferencing
+        // the absent region and crashing.
+        if (port.sysex === undefined) continue;
         // Sysex: bytes → content chunk `[length, data]`, slot carries
         // `[0xF0, chunkIdx, _pad, _pad, atSample]` (`11-midi.md` §4.3).
-        const region = port.sysex!;
-        const chunkIdx = head % region.chunks;
+        const region = port.sysex;
+        const chunkIdx = ringSlotIndex(head, region.chunks);
         const chunkBase = region.base + chunkIdx * region.perChunk;
         const len = Math.min(payload.data.length, region.perChunk - 4);
         dv.setUint32(chunkBase, len, true);
@@ -355,7 +377,7 @@ export async function renderOffline<C>(
       let head = headerView[0]!;
       let tail = headerView[1]!;
       while (tail !== head) {
-        const slotIdx = tail % ring.capacity;
+        const slotIdx = ringSlotIndex(tail, ring.capacity);
         const slotByteOffset = ring.base + 12 + slotIdx * ring.slotSize;
         const dataView = new DataView(memory);
         const payload: Record<string, unknown> = {};
@@ -433,7 +455,7 @@ export async function renderOffline<C>(
       const dv = new DataView(memory);
       while (tail !== head) {
         const slotByteOffset =
-          port.base + MESSAGE_HEADER_BYTES + (tail % port.capacity) * MIDI_SLOT_BYTES;
+          port.base + MESSAGE_HEADER_BYTES + ringSlotIndex(tail, port.capacity) * MIDI_SLOT_BYTES;
         const status = dv.getUint8(slotByteOffset);
         const data1 = dv.getUint8(slotByteOffset + 1);
         const data2 = dv.getUint8(slotByteOffset + 2);

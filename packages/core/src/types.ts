@@ -92,9 +92,73 @@ declare const typedArrayFieldRefBrand: unique symbol;
  * hybrid chain methods (arithmetic / comparison / math) and the SIMD
  * vec methods. This declaration carries the brand only.
  */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+/**
+ * Method-form type helpers (Q77 hybrid): each restricts a chain method to the
+ * scalar types it has a meaningful lowering for, typing the member `never`
+ * elsewhere so the call site fails to compile (`bool(true).add(1)` /
+ * `i32(1).sin()` are errors). These are declared with the `Node` interface — not
+ * as a cross-file `declare module` augmentation — so the method surface survives
+ * dts bundling into the published `dist/*.d.mts`. The runtime impl lives in
+ * `dsl/primitives.ts` / `dsl/pipe.ts` (attached via `registerNodeMethod`).
+ */
+type NumericScalar = "f32" | "f64" | "i32" | "i64";
+type FloatMethod<T> = T extends "f32" | "f64" ? () => Node<T> : never;
+type NumericVecBinary<T> = T extends NumericScalar | "f32x4"
+  ? (other: Node<T> | number) => Node<T>
+  : never;
+type NumericBinary<T> = T extends NumericScalar ? (other: Node<T> | number) => Node<T> : never;
+type NumericUnary<T> = T extends NumericScalar ? () => Node<T> : never;
+type NumericClamp<T> = T extends NumericScalar
+  ? (lo: Node<T> | number, hi: Node<T> | number) => Node<T>
+  : never;
+type NumericCompare<T> = T extends NumericScalar
+  ? (other: Node<T> | number) => Node<"bool">
+  : never;
+type BoolUnary<T> = T extends "bool" ? () => Node<"bool"> : never;
+
 export interface Node<T extends ScalarType | "f32x4" = ScalarType> {
   readonly [nodeBrand]: T;
+  // Arithmetic (numeric scalars; add/sub/mul/div also lower for SIMD f32x4).
+  // `bool` is excluded — `bool(true).add(1)` would emit f32 ops on an i32 operand.
+  add: NumericVecBinary<T>;
+  sub: NumericVecBinary<T>;
+  mul: NumericVecBinary<T>;
+  div: NumericVecBinary<T>;
+  mod: NumericBinary<T>;
+  neg: NumericUnary<T>;
+  // Comparison (numeric operands, `Node<'bool'>` result; bool / f32x4 excluded).
+  eq: NumericCompare<T>;
+  lt: NumericCompare<T>;
+  gt: NumericCompare<T>;
+  lte: NumericCompare<T>;
+  gte: NumericCompare<T>;
+  // Logical negation (bool only; `not()` on a numeric `Node` is a type error).
+  not: BoolUnary<T>;
+  // Math — `sqrt` / `floor` / `ceil` / `frac` / transcendentals are float-only;
+  // `abs` is meaningful for every numeric scalar (lowered to `select(x<0,-x,x)`).
+  sin: FloatMethod<T>;
+  cos: FloatMethod<T>;
+  tan: FloatMethod<T>;
+  tanh: FloatMethod<T>;
+  exp: FloatMethod<T>;
+  log: FloatMethod<T>;
+  sqrt: FloatMethod<T>;
+  floor: FloatMethod<T>;
+  ceil: FloatMethod<T>;
+  frac: FloatMethod<T>;
+  abs: NumericUnary<T>;
+  min: NumericBinary<T>;
+  max: NumericBinary<T>;
+  clamp: NumericClamp<T>;
+  /** Thread this node through `fn`: `x.pipe(f)` ≡ `f(x)`. */
+  pipe<U extends ScalarType | "f32x4">(fn: (x: Node<T>) => Node<U>): Node<U>;
+  /**
+   * SIMD lane access (opt-in `@unworklet/core/simd`): resolves to a value only on
+   * a `Node<'f32x4'>`, which only the simd surface (`vec4` / `splat` / …) can
+   * produce, so it is `never` for every scalar `Node`. Declared here (not via a
+   * `@unworklet/core/simd` augmentation) so it survives dts bundling.
+   */
+  lane: T extends "f32x4" ? (i: 0 | 1 | 2 | 3) => Node<"f32"> : never;
 }
 
 /** Scalar `state.<type>(initial)` handle (`01-dsl.md` §3.1). */
@@ -122,6 +186,14 @@ export interface Buffer<T extends BufferElementType> {
   copyFrom(src: TypedArrayFieldRef<T>): void;
   named(name: string): Buffer<T>;
   expose(options: ExposeOptions): Buffer<T>;
+  /**
+   * SIMD buffer I/O: load / store four contiguous f32 lanes (element-units
+   * offset). Real only for `Buffer<'f32'>`, `never` otherwise. The runtime lives
+   * in core (every buffer carries it); declared here (not via a
+   * `@unworklet/core/simd` augmentation) so it survives dts bundling.
+   */
+  loadVec: T extends "f32" ? (offset: Node<"i32"> | number) => Node<"f32x4"> : never;
+  storeVec: T extends "f32" ? (offset: Node<"i32"> | number, value: Node<"f32x4">) => void : never;
 }
 
 /** AudioParam-backed `param.f32(...)` handle (`01-dsl.md` §3.3). */
@@ -568,7 +640,7 @@ export type MidiRingSlotDescriptor = {
  * `defineProcessor` time.
  *
  * `moduleUrl` / `processorName` / `wasmUrl` appear only on processors
- * imported via `@unworklet/vite-plugin`'s `?worklet` virtual module (or
+ * imported via `@unworklet/unplugin`'s `?worklet` virtual module (or
  * an equivalent live-coding helper that populates the same fields).
  * `createNode` reads them to wire `audioWorklet.addModule(...)` +
  * `new AudioWorkletNode(...)`.
@@ -592,6 +664,16 @@ export type WorkletNamespace = {
   processorName?: string;
   wasmUrl?: string;
   displayName?: string;
+  /**
+   * The sampleRate the `?worklet` WASM was compiled at (build time). Rate-dependent
+   * coefficients (`tan(pi*fc/sr)`, a delay length `sr*seconds`, a phase increment
+   * `freq/sr`) are frozen into the WASM, so running on a context at a different rate
+   * detunes the output. `createNode` compares this against `context.sampleRate` and
+   * rejects on mismatch. Present only on `?worklet`-imported processors; `undefined`
+   * for inline namespaces (no fixed build rate). This is the seam for a future
+   * recompile-at-rate path (recompile at the context rate instead of throwing).
+   */
+  bakedSampleRate?: number;
 };
 
 export type CompiledProcessor<C> = {
@@ -613,6 +695,16 @@ export type CompiledProcessor<C> = {
   readonly __capture?: (sampleRate: number) => ProcessorGraph;
   readonly __compiledProcessor: C;
 };
+
+/**
+ * Resolve a node-handle config from either the config directly or a
+ * `CompiledProcessor<config>` (a `?worklet` import), so `UnworkletNode<P>` can be
+ * named with the processor itself —
+ * `let node: UnworkletNode<typeof import("./x.processor.ts?worklet")>` — and not
+ * only its inner config. A config (no `CompiledProcessor` shape) passes through
+ * unchanged, so `createNode`'s internal `UnworkletNode<C>` is unaffected.
+ */
+type ConfigOf<P> = P extends CompiledProcessor<infer C> ? C : P;
 
 export type Migration = {
   from: string;
@@ -679,6 +771,8 @@ export type CompileResult<C> = {
   memory: MemoryJson;
   diagnostics: DiagnosticsJson;
   schemaHash: string;
+  /** The sampleRate this artifact was compiled at (the rate baked into its coefficients). */
+  sampleRate: number;
   driver: CompileDriver;
   __compiledProcessor: C;
 };
@@ -762,16 +856,11 @@ export type BufferValueProxy<V> = {
 };
 
 /**
- * Unified main-side event surface (Q88). A declared event name carries `.on`
- * (worklet→main, `event({ to: 'main' })`), `.emit` (main→worklet,
- * `event({ from: 'main' })`), or both for a same-name in/out pair (Q87).
- *
- * The whole node surface is intentionally a flat `Record<string, …>` in v1.0.0,
- * so the TYPE exposes both `.on` and `.emit` for every name; the wrong-direction
- * method is simply absent at runtime (calling it is a `TypeError`). Per-name
- * narrowing — typing each declared name to exactly its direction — is deferred to
- * v1.x, where it would type the whole node surface (inputs / params / state /
- * events / midi), not events alone (#40 / codex on #12 G3).
+ * The full main-side event surface (Q88): `.on` (worklet→main, `event({ to:
+ * 'main' })`), `.emit` (main→main, `event({ from: 'main' })`), and the
+ * diagnostics handle. `EventSurfaceFor` narrows this down to the directions an
+ * individual declared name actually carries; an unknown / permissive witness
+ * keeps the full surface here.
  */
 export type EventSurface<T> = {
   on(handler: (payload: T & { atSample: number }) => void): () => void;
@@ -783,6 +872,26 @@ export type EventSurface<T> = {
     overflowCount(): number;
   };
 };
+
+/**
+ * The main-side surface for one declared event, narrowed by the per-name
+ * direction marker the `?worklet` witness emits:
+ * - `"out"` (`to:'main'`, worklet→main) — receive only (`.on`).
+ * - `"in"` (`from:'main'`, main→worklet) — send only (`.emit`).
+ * - `"inout"` (a same-name in/out pair, Q87) — both.
+ *
+ * Any other marker (the legacy `unknown` witness value, or an inline processor's
+ * permissive map) keeps the full surface so existing code is unaffected. The
+ * wrong-direction method `TypeError`s at runtime, so narrowing turns that into a
+ * compile error (type ⟺ runtime). The payload `T` is erased at build time and
+ * not recoverable from the runtime namespace, so the witness path carries
+ * `unknown`.
+ */
+export type EventSurfaceFor<D> = D extends "out"
+  ? Omit<EventSurface<unknown>, "emit">
+  : D extends "in"
+    ? Omit<EventSurface<unknown>, "on">
+    : EventSurface<unknown>;
 
 export type MidiPortSurface = {
   send(event: MidiEvent, atTime?: number): void;
@@ -796,7 +905,14 @@ export type MidiPortSurface = {
   };
 };
 
-export type UnworkletNode<C> = {
+export type UnworkletNode<P> = UnworkletNodeOf<ConfigOf<P>>;
+
+/**
+ * The structural node-handle surface, resolved against a processor's config `C`.
+ * `UnworkletNode<P>` dispatches here after unwrapping a `CompiledProcessor`, so a
+ * `?worklet` import and its inner config both land on the same surface.
+ */
+type UnworkletNodeOf<C> = {
   readonly node: AudioWorkletNode;
   /**
    * Per-`audioInput` AudioNode destinations. Users write
@@ -805,15 +921,36 @@ export type UnworkletNode<C> = {
    * (= Q6 + canonical Ex 1 / 2). Each handle is an `AudioNode`, so all of
    * the `AudioNode.connect(...)` / `disconnect(...)` overloads work natively.
    */
-  readonly inputs: Record<string, AudioNode>;
-  readonly outputs: Record<
-    string,
-    { connect(target: AudioNode | AudioParam): void; disconnect(): void }
-  >;
-  readonly params: Record<string, AudioParam>;
-  readonly state: Record<string, StateValueProxy<unknown> | BufferValueProxy<unknown>>;
-  readonly events: Record<string, EventSurface<unknown>>;
-  readonly midi: Record<string, MidiPortSurface>;
+  readonly inputs: C extends { inputs: infer I }
+    ? { readonly [K in keyof I]: AudioNode }
+    : Record<string, AudioNode>;
+  readonly outputs: C extends { outputs: infer O }
+    ? {
+        readonly [K in keyof O]: {
+          connect(target: AudioNode | AudioParam): void;
+          disconnect(): void;
+        };
+      }
+    : Record<string, { connect(target: AudioNode | AudioParam): void; disconnect(): void }>;
+  /**
+   * Per-param AudioParam, keyed by the declared name. When the compiled processor
+   * carries a param-name witness (the `?worklet` per-file type the plugin emits),
+   * the keys are the exact declared names — `node.params.<name>` completes and an
+   * undeclared name is a type error. An unknown witness keeps the permissive map,
+   * so a processor without a per-file type behaves as a plain `Record`.
+   */
+  readonly params: C extends { params: infer P }
+    ? { readonly [K in keyof P]: AudioParam }
+    : Record<string, AudioParam>;
+  readonly state: C extends { state: infer S }
+    ? { readonly [K in keyof S]: StateValueProxy<unknown> | BufferValueProxy<unknown> }
+    : Record<string, StateValueProxy<unknown> | BufferValueProxy<unknown>>;
+  readonly events: C extends { events: infer E }
+    ? { readonly [K in keyof E]: EventSurfaceFor<E[K]> }
+    : Record<string, EventSurface<unknown>>;
+  readonly midi: C extends { midi: infer M }
+    ? { readonly [K in keyof M]: MidiPortSurface }
+    : Record<string, MidiPortSurface>;
   readonly diagnostics: { readonly transport: TransportMode };
   snapshot(options?: { profile?: string }): Promise<Uint8Array>;
   restore(blob: Uint8Array): Promise<RestoreResult>;

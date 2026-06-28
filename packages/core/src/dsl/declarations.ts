@@ -132,27 +132,6 @@ function liftF32(v: Node<"f32"> | number): AstNode {
 }
 
 /**
- * A loose `num(n)` literal (Q77) carries a fallback `'f32'` type and defers to its
- * concretely-typed context. A `.write()` / buffer `.write()` IS that context, so a
- * loose literal re-lifts to the declared slot type here — otherwise an `f32.const`
- * lands in a non-f32 slot, which type-checks in TS yet miscompiles ("type ⟺ works"
- * breaks). A non-loose node's type is TS-guaranteed to match, so it passes through.
- */
-function reliftLooseLiteral(ast: AstNode, type: ScalarType): AstNode {
-  if (ast.kind !== "literal" || ast.loose !== true) return ast;
-  if (type === "i64") {
-    // A JS number cannot safely represent integers beyond 2^53 - 1, so an i64 slot
-    // needs an explicit `i64(BigInt(...))`, never a loose `num()` literal.
-    throw new Error(
-      "unworklet: a loose num() literal cannot store into an i64 slot (JS number is " +
-        "precision-unsafe beyond 2^53 - 1). Use i64(BigInt(...)) explicitly.",
-    );
-  }
-  const n = Number(ast.value);
-  return { kind: "literal", type, value: type === "i32" ? n | 0 : n };
-}
-
-/**
  * Lift the value argument of `state.<type>.write(v)` to an AST (= Q33 literal lift
  * + `Node<T>` unwrap). i64 requires a bigint; bool converts boolean → i32 0/1 as
  * its internal representation (= Q42, matching the bool case in emit.ts). The
@@ -174,7 +153,8 @@ function liftStoreValue<T extends ScalarType>(type: T, v: Node<T> | ScalarOf<T>)
     // `Node<'i64'>` (= stateLoad etc.) follows the same path.
     return { kind: "literal", type: "i64", value: v };
   }
-  return reliftLooseLiteral(unwrapAst(v as Node<ScalarType>), type);
+  // A node's scalar type is TS-guaranteed to match the slot, so it passes through.
+  return unwrapAst(v as Node<ScalarType>);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -396,7 +376,8 @@ function liftBufferValue(elementType: BufferElementType, v: Node<ScalarType> | n
   if (typeof v === "number") {
     return { kind: "literal", type: st, value: st === "i32" ? v | 0 : v };
   }
-  return reliftLooseLiteral(unwrapAst(v), st);
+  // A node's scalar type is TS-guaranteed to match the element, so it passes through.
+  return unwrapAst(v);
 }
 
 /**
@@ -758,6 +739,30 @@ function makeOutputView(portName: string, channel: number): OutputChannelView<"f
   };
 }
 
+/**
+ * Define `.left` / `.right` on a non-stereo port as throwing getters. The `.ts`
+ * handle type already omits them unless `channels` is 2, but the `.uwk.ts` sugar
+ * path lowers `port.left[i]` without that type — so without this guard a mono
+ * author hits an opaque `undefined` TypeError instead of being pointed at `.ch`.
+ */
+function defineStereoOnlyGuards(
+  handle: Record<string, unknown>,
+  kind: "audioInput" | "audioOutput",
+  name: string,
+  channels: number,
+): void {
+  for (const side of ["left", "right"] as const) {
+    Object.defineProperty(handle, side, {
+      get(): never {
+        throw new Error(
+          `${kind} "${name}" has ${channels} channel(s) — ".${side}" is stereo-only (channels: 2); use .ch(${side === "left" ? 0 : 1}).`,
+        );
+      },
+      enumerable: false,
+    });
+  }
+}
+
 export function audioInput<C extends number>(options: {
   channels: C;
   name: string;
@@ -781,6 +786,8 @@ export function audioInput<C extends number>(options: {
       get: () => makeInputView(options.name, 1),
       enumerable: true,
     });
+  } else {
+    defineStereoOnlyGuards(handle, "audioInput", options.name, options.channels);
   }
   return handle as AudioInputHandle<C>;
 }
@@ -808,6 +815,8 @@ export function audioOutput<C extends number>(options: {
       get: () => makeOutputView(options.name, 1),
       enumerable: true,
     });
+  } else {
+    defineStereoOnlyGuards(handle, "audioOutput", options.name, options.channels);
   }
   return handle as AudioOutputHandle<C>;
 }

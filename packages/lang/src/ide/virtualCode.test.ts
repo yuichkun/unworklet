@@ -170,7 +170,7 @@ test("$prev's slot scalar follows a return annotation, not the param (bool param
   run: (trigger: Node<"bool">): Node<"f32"> => select(trigger, f32(1), $prev * 0.95),
 }));
 const out = audioOutput({ channels: 1, name: "main" });
-const d = createSubgraph(decay, { name: "d" });
+const d = instantiate(decay, { name: "d" });
 process(() => { forSample((i) => { out.ch(0)[i] = 0; }); });`;
   expect(code(src)).toContain('($prev as Node<"f32">)');
 });
@@ -190,7 +190,7 @@ test("a defineSubgraph whose factory is a named reference is scanned without cra
 const input = audioInput({ channels: 1, name: "main" });
 const factory = (k: Node<"f32">) => ({ run: (x: Node<"f32">) => k * x });
 const sg = defineSubgraph(factory);
-const s = createSubgraph(sg, f32(0.5), { name: "s" });
+const s = instantiate(sg, f32(0.5), { name: "s" });
 process(() => { forSample((i) => { out.ch(0)[i] = s.run(input.ch(0)[i]); }); });`);
   expect(c).toContain("defineSubgraph(factory)");
 });
@@ -205,7 +205,7 @@ const sg = defineSubgraph((k: Node<"f32">) => ({
   gain: k,
   run: (x: Node<"f32">) => k * x,
 }));
-const s = createSubgraph(sg, f32(0.5), { name: "s" });
+const s = instantiate(sg, f32(0.5), { name: "s" });
 process(() => { forSample((i) => { out.ch(0)[i] = s.run(input.ch(0)[i]); }); });`);
   expect(c).toContain("mul(k, x)");
 });
@@ -222,7 +222,7 @@ const sg = defineSubgraph((k: Node<"f32">) => ({
     return x + $prev * k;
   },
 }));
-const s = createSubgraph(sg, f32(0.5), { name: "s" });
+const s = instantiate(sg, f32(0.5), { name: "s" });
 process(() => { forSample((i) => { out.ch(0)[i] = s.run(input.ch(0)[i]); }); });`);
   expect(c).toContain('as Node<"f32">');
   expect(c).toContain("defineSubgraph");

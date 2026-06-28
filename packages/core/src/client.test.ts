@@ -83,6 +83,8 @@ type MockHarness = {
   };
   addModuleCalls: string[];
   fetchCalls: string[];
+  /** First argument of every `console.warn` during the harness lifetime. */
+  warnCalls: string[];
   constructed: ConstructorRecord[];
   nodes: MockAudioWorkletNode[];
   createdGains: MockGainNode[];
@@ -180,6 +182,14 @@ const installMockGlobals = (
     return Promise.resolve(sentinel as unknown as WebAssembly.Module);
   }) as typeof WebAssembly.compile;
 
+  // Capture `console.warn` so the SAB-unavailable dev notice (and any other warn)
+  // doesn't print across the suite, and the dedicated test can assert on it.
+  const originalWarn = console.warn;
+  const warnCalls: string[] = [];
+  console.warn = ((...args: unknown[]) => {
+    warnCalls.push(String(args[0]));
+  }) as typeof console.warn;
+
   class MockWorkletNodeImpl {
     port: MockAudioWorkletNode["port"];
     parameters: MockAudioWorkletNode["parameters"];
@@ -238,6 +248,7 @@ const installMockGlobals = (
     context,
     addModuleCalls,
     fetchCalls,
+    warnCalls,
     constructed,
     nodes,
     createdGains,
@@ -274,6 +285,7 @@ const installMockGlobals = (
     cleanup() {
       globalThis.fetch = originalFetch;
       WebAssembly.compile = originalWasmCompile;
+      console.warn = originalWarn;
       delete (globalThis as Record<string, unknown>).AudioWorkletNode;
       if (prevCoi === undefined) {
         delete coiTarget.crossOriginIsolated;
@@ -330,6 +342,7 @@ const makeMockProcessor = (overrides?: {
     sysex?: { wasmBase: number; perChunk: number; chunks: number };
   }>;
   migrations?: CompiledProcessor<unknown>["migrations"];
+  bakedSampleRate?: number;
 }): CompiledProcessor<unknown> =>
   ({
     graph: {} as never,
@@ -353,6 +366,9 @@ const makeMockProcessor = (overrides?: {
       processorName:
         overrides && "processorName" in overrides ? overrides.processorName : "stereoGain",
       ...(overrides && "displayName" in overrides ? { displayName: overrides.displayName } : {}),
+      ...(overrides && "bakedSampleRate" in overrides
+        ? { bakedSampleRate: overrides.bakedSampleRate }
+        : {}),
     },
     __compiledProcessor: undefined,
   }) as unknown as CompiledProcessor<unknown>;
@@ -393,6 +409,51 @@ test("createNode throws when processor has no processorName", async () => {
     await expect(
       createNode(h.context as never, makeMockProcessor({ processorName: undefined }), undefined),
     ).rejects.toThrow(/processorName/);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode throws when context.sampleRate differs from the processor's baked sampleRate", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    await expect(
+      createNode(
+        { ...h.context, sampleRate: 44100 } as never,
+        makeMockProcessor({ bakedSampleRate: 48000 }),
+        undefined,
+      ),
+    ).rejects.toThrow(/compiled for 48000 Hz.*runs at 44100 Hz/);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode proceeds when context.sampleRate matches the baked sampleRate", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          { ...h.context, sampleRate: 48000 } as never,
+          makeMockProcessor({ bakedSampleRate: 48000 }),
+        ),
+      h.fireReady,
+    );
+    expect(node).toBeTruthy();
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode does not guard the rate when the processor carries no baked sampleRate", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode({ ...h.context, sampleRate: 44100 } as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    expect(node).toBeTruthy();
   } finally {
     h.cleanup();
   }
@@ -730,6 +791,40 @@ test("UnworkletNode.onError translates a post-ready `processorerror` into a fixe
       { code: "wasm-trap", message: "AudioWorkletProcessor reported a failure (processorerror)" },
     ]);
   } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode surfaces a debug self-check violation to the console", async () => {
+  // Layer F: the audio-thread self-check (behind the __UNWORKLET_SELFCHECK__
+  // define) posts `selfcheck-violation`; createNode must forward it so a dev
+  // build's invariant monitor is actually visible, not silent on the raw port.
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  const errors: string[] = [];
+  const originalError = console.error;
+  console.error = ((...args: unknown[]) => {
+    errors.push(String(args[0]));
+  }) as typeof console.error;
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    for (const listener of h.lastNode!.port.__listeners) {
+      listener({
+        data: {
+          kind: "selfcheck-violation",
+          ring: "event[0]",
+          detail: "fill 99 exceeds capacity 16",
+        },
+      });
+    }
+    expect(errors.some((e) => e.includes("self-check violation") && e.includes("event[0]"))).toBe(
+      true,
+    );
+    node.dispose();
+  } finally {
+    console.error = originalError;
     h.cleanup();
   }
 });
@@ -1684,6 +1779,42 @@ test("createNode without publishSlots inherits transport from environment (= sab
       h.fireReady,
     );
     expect(node.diagnostics.transport).toBe("sab");
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode warns once per context when the page is not cross-origin isolated", async () => {
+  // `onError({ code: 'sab-unavailable' })` is opt-in; a dev who never subscribes
+  // would get no signal. A default console warning makes the fallback visible.
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ publishSlots: [] })),
+      h.fireReady,
+    );
+    await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ publishSlots: [] })),
+      h.fireReady,
+    );
+    // One warning for the context, not one per node …
+    expect(h.warnCalls).toHaveLength(1);
+    // … and it names the fix.
+    expect(h.warnCalls[0]).toMatch(/cross-origin isolated/i);
+    expect(h.warnCalls[0]).toMatch(/Cross-Origin-Embedder-Policy/);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode does not warn when the page is cross-origin isolated", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2])); // isolated by default
+  try {
+    await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ publishSlots: [] })),
+      h.fireReady,
+    );
+    expect(h.warnCalls).toHaveLength(0);
   } finally {
     h.cleanup();
   }
@@ -3475,5 +3606,37 @@ test("devtools on: devDump on a disposed node rejects instead of hanging", async
   } finally {
     delete (globalThis as { __UNWORKLET_DEVTOOLS__?: boolean }).__UNWORKLET_DEVTOOLS__;
     h.cleanup();
+  }
+});
+
+test("rAF loop does not re-arm after dispose() is called from inside a subscriber handler", async () => {
+  const raf = installRafMock();
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({
+            publishSlots: [{ name: "v", type: "i32", sharedOffset: 0, counterOffset: 4 }],
+          }),
+        ),
+      h.fireReady,
+    );
+    const buf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .publishBuffer as SharedArrayBuffer;
+    const view = new Int32Array(buf);
+    // Self-dispose from inside the handler (a normal one-shot pattern).
+    node.state["v"]!.subscribe(() => node.dispose());
+    // Publish version 1 → handler fires → disposes the node mid-tick.
+    Atomics.store(view, 0, 42);
+    Atomics.store(view, 2, 1);
+    raf.flush();
+    // dispose()'s stopRafLoop ran during the tick; the loop must NOT re-arm itself
+    // (a trailing re-arm would poll every frame for the page lifetime, pinning the SAB).
+    expect(raf.pending).toBe(0);
+  } finally {
+    h.cleanup();
+    raf.restore();
   }
 });

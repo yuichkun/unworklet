@@ -23,8 +23,6 @@ import type { Readable, Writable } from "node:stream";
 import { build } from "esbuild";
 import { afterAll, beforeAll, expect, test } from "vite-plus/test";
 
-import { AMBIENT_DTS } from "../ambient.ts";
-
 const LANG = path.resolve(import.meta.dirname, "../..");
 const REPO = path.resolve(LANG, "../..");
 const CORE = path.join(REPO, "packages/core");
@@ -34,7 +32,9 @@ const TSSERVER = path.join(TS_DIR, "lib/tsserver.js");
 const VALID = `const input = audioInput({ channels: 2 });
 const out = audioOutput({ channels: 2 });
 const gain = param.f32({ default: 1, min: 0, max: 4, automationRate: "a-rate" });
+const keys = event.midi({ from: "main", name: "keys" });
 process(() => {
+  keys.onEvent("noteOn", () => {});
   forSample((i) => {
     const l = input.left[i] * gain[i];
     out.left[i] = l;
@@ -47,6 +47,40 @@ const gate = state.bool(false).named();
 process(() => {
   forSample((i) => {
     out.left[i] = gate;
+  });
+});`;
+
+// A `Node<T>` annotation on an L1 helper. Under a DOM lib (which a normal app
+// tsconfig has), lib.dom's non-generic `interface Node` must NOT shadow the
+// ambient's generic `Node<T>` — otherwise `Node<"f32">` is "Node is not generic".
+const NODE_ANNOTATION = `function softclip(x: Node<"f32">): Node<"f32"> {
+  return x;
+}
+const input = audioInput({ channels: 2 });
+const out = audioOutput({ channels: 2 });
+process(() => {
+  forSample((i) => {
+    out.left[i] = softclip(input.left[i]);
+    out.right[i] = softclip(input.right[i]);
+  });
+});`;
+
+// A subgraph-only LIBRARY module (no process()), for a processor to import.
+const LIB_SUBGRAPH = `export const onepole = defineSubgraph((coef: Node<"f32">) => {
+  const z1 = state.f32(0).named("z1");
+  return { tick: (x: Node<"f32">) => z1 + (x - z1) * coef };
+});`;
+
+// A processor that imports the subgraph from a sibling `.uwk.ts` and instantiates
+// it. The cross-file subgraph type must resolve: `onepole` is a `SubgraphDecl`, so
+// `instantiate(onepole, ...)` and `lpf.tick(...)` type-check with no diagnostics.
+const SUBGRAPH_CONSUMER = `import { onepole } from "./lib-subgraph.uwk.ts";
+const input = audioInput({ channels: 1, name: "main" });
+const out = audioOutput({ channels: 1, name: "main" });
+const lpf = instantiate(onepole, 0.2, { name: "lpf" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = lpf.tick(input.ch(0)[i]);
   });
 });`;
 
@@ -135,13 +169,13 @@ beforeAll(async () => {
     `${JSON.stringify({ type: "commonjs" })}\n`,
   );
 
-  // A throwaway consumer project: node_modules symlinks to the real packages, the
-  // ambient pulled in via `files`, a tsconfig that registers the plugin.
+  // A throwaway consumer project: node_modules symlinks to the real packages and a
+  // tsconfig that registers ONLY the plugin (no `files`). The plugin auto-injects
+  // the shipped ambient `.d.ts`, so `plugins` is the entire setup.
   dir = mkdtempSync(path.join(tmpdir(), "uwk-tsserver-"));
   mkdirSync(path.join(dir, "node_modules/@unworklet"), { recursive: true });
   symlinkSync(LANG, path.join(dir, "node_modules/@unworklet/lang"));
   symlinkSync(CORE, path.join(dir, "node_modules/@unworklet/core"));
-  writeFileSync(path.join(dir, "uwk-ambient.d.ts"), AMBIENT_DTS);
   writeFileSync(
     path.join(dir, "tsconfig.json"),
     JSON.stringify({
@@ -150,18 +184,21 @@ beforeAll(async () => {
         moduleResolution: "nodenext",
         customConditions: ["development"],
         allowImportingTsExtensions: true,
-        lib: ["es2023"],
+        lib: ["es2023", "dom"],
+        types: ["node"],
         strict: true,
         noEmit: true,
         skipLibCheck: true,
         plugins: [{ name: "@unworklet/lang/typescript-plugin" }],
       },
-      files: ["uwk-ambient.d.ts"],
       include: ["."],
     }),
   );
   writeFileSync(path.join(dir, "valid.uwk.ts"), VALID);
   writeFileSync(path.join(dir, "broken.uwk.ts"), BROKEN);
+  writeFileSync(path.join(dir, "node-annotation.uwk.ts"), NODE_ANNOTATION);
+  writeFileSync(path.join(dir, "lib-subgraph.uwk.ts"), LIB_SUBGRAPH);
+  writeFileSync(path.join(dir, "subgraph-consumer.uwk.ts"), SUBGRAPH_CONSUMER);
 });
 
 afterAll(() => {
@@ -169,6 +206,30 @@ afterAll(() => {
 });
 
 type Diag = { text: string };
+
+test("a processor .uwk.ts imports a subgraph from a sibling .uwk.ts with no diagnostics (cross-file)", async () => {
+  const server = new TsServer(dir);
+  try {
+    const consumerPath = path.join(dir, "subgraph-consumer.uwk.ts");
+    server.notify("open", {
+      file: consumerPath,
+      fileContent: SUBGRAPH_CONSUMER,
+      scriptKindName: "TS",
+    });
+    // Poll until the plugin attaches (raw sugar errors clear). If the cross-file
+    // subgraph type failed to resolve, a diagnostic on `instantiate(onepole, ...)`
+    // would persist and the assertion below would fail.
+    let diags: Diag[] = [{ text: "pending" }];
+    for (let i = 0; i < 20 && diags.length > 0; i++) {
+      await sleep(500);
+      const r = await server.request<Diag[]>("semanticDiagnosticsSync", { file: consumerPath });
+      diags = r.body ?? [];
+    }
+    expect(diags).toEqual([]);
+  } finally {
+    server.dispose();
+  }
+});
 
 test("a real tsserver loads the plugin and type-checks .uwk.ts sugar end to end", async () => {
   const server = new TsServer(dir);
@@ -207,12 +268,36 @@ test("a real tsserver loads the plugin and type-checks .uwk.ts sugar end to end"
     expect(names).toEqual(expect.arrayContaining(["left", "right", "ch"]));
 
     // A genuine type error (bool Node written to an f32 output) surfaces, mapped
-    // back onto the author's `.uwk.ts`.
+    // back onto the author's `.uwk.ts`. Poll until the diagnostic lands — under a
+    // busy machine the first computation can arrive after a single sleep, so a
+    // one-shot check is flaky; match the resilient polling the valid file uses.
     server.notify("open", { file: brokenPath, fileContent: BROKEN, scriptKindName: "TS" });
-    await sleep(500);
-    const broken = await server.request<Diag[]>("semanticDiagnosticsSync", { file: brokenPath });
-    const texts = (broken.body ?? []).map((d) => d.text);
-    expect(texts.some((t) => t.includes('Node<"bool">') && t.includes('Node<"f32">'))).toBe(true);
+    const hasMismatch = (texts: string[]): boolean =>
+      texts.some((t) => t.includes('Node<"bool">') && t.includes('Node<"f32">'));
+    let brokenTexts: string[] = [];
+    for (let i = 0; i < 20 && !hasMismatch(brokenTexts); i++) {
+      await sleep(500);
+      const broken = await server.request<Diag[]>("semanticDiagnosticsSync", { file: brokenPath });
+      brokenTexts = (broken.body ?? []).map((d) => d.text);
+    }
+    expect(hasMismatch(brokenTexts)).toBe(true);
+  } finally {
+    server.dispose();
+  }
+});
+
+test("a Node<T> annotation type-checks under a DOM lib (lib.dom Node must not shadow the ambient)", async () => {
+  const server = new TsServer(dir);
+  try {
+    const file = path.join(dir, "node-annotation.uwk.ts");
+    server.notify("open", { file, fileContent: NODE_ANNOTATION, scriptKindName: "TS" });
+    let diags: Diag[] = [{ text: "pending" }];
+    for (let i = 0; i < 20 && diags.length > 0; i++) {
+      await sleep(500);
+      const r = await server.request<Diag[]>("semanticDiagnosticsSync", { file });
+      diags = r.body ?? [];
+    }
+    expect(diags).toEqual([]); // `Node<"f32">` is generic — no "Node is not generic"
   } finally {
     server.dispose();
   }

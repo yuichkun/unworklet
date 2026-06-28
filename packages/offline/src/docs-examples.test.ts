@@ -33,8 +33,9 @@ function tsBlocks(md: string): string[] {
   return out;
 }
 
-/** A block that defines a complete processor (not a fragment or a main-thread example). */
-const isProcessorBlock = (b: string): boolean => /defineProcessor\(\s*\(\s*\)\s*=>/.test(b);
+/** A block that defines a complete processor (not a fragment or a main-thread example).
+ * Matches both `defineProcessor(() => …)` and `defineProcessor((ctx) => …)`. */
+const isProcessorBlock = (b: string): boolean => /defineProcessor\(\s*\(\s*\w*\s*\)\s*=>/.test(b);
 
 /**
  * Evaluate a documented processor block into a CompiledProcessor. The example
@@ -64,12 +65,12 @@ const findBlock = (needle: string): string => {
 
 test("every documented defineProcessor example compiles (docs can't drift from the API)", async () => {
   // Coverage floor = the complete, self-contained `defineProcessor` examples
-  // currently documented: stereoGain (core README + Skill) and midiSynth (Skill).
-  // The root README's examples are `.uwk.ts` sugar — not parsed here (this evals
-  // plain-JS processor blocks), but verified by the demo's offline-render tests.
-  // If a documented `defineProcessor` example is removed, this notices instead of
-  // silently shrinking coverage.
-  expect(docProcessors.length).toBeGreaterThanOrEqual(3);
+  // currently documented: stereoGain + the sine oscillator (core README), and
+  // stereoGain + midiSynth (Skill). The root README's examples are `.uwk.ts`
+  // sugar — not parsed here (this evals plain-JS processor blocks), but verified
+  // by the demo's offline-render tests. If a documented example is removed, this
+  // notices instead of silently shrinking coverage.
+  expect(docProcessors.length).toBeGreaterThanOrEqual(4);
   for (const { id, block } of docProcessors) {
     const proc = evalProcessor(block);
     const compiled = await core.compile(proc);

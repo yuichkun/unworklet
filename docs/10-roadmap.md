@@ -107,12 +107,12 @@ Completion criteria: Vitest reports the audio output of Ex 1 (meter-less) matchi
 
 ### Phase 5 — Vite plugin (core functionality + DevTools panel visuals)
 
-Ship the bundler integration features of `@unworklet/vite-plugin` and the visual shell of the DevTools panel, putting later vertical-slice verification on a dev server immediately. Scope:
+Ship the bundler integration features of `@unworklet/unplugin` and the visual shell of the DevTools panel, putting later vertical-slice verification on a dev server immediately. Scope:
 
 - `?worklet` query resolution (`import processorUrl from './x.processor.ts?worklet'` resolved by Vite; plugin calls `compile` from `@unworklet/core`)
 - Source-change detection + build pipeline integration (invoke `compile` in dev server and production build)
-- Metadata artifact emission (`dist/<processor>.graph.json` / `.memory.json` / `.diagnostics.json` / `.schema-hash.json`, per `07-vite-plugin.md` §6.3)
-- DevTools Kit integration path (register 1 dock entry + bundle the Vue 3 SPA sub-project `packages/vite-plugin/devtools-ui/` into `<vite-plugin>/dist/ui/`) + ship 4 panels + 1 secondary driven by mock data: Audio graph / Live state / Signals & performance / MIDI + Snapshot tab inside Audio graph (per `07-vite-plugin.md` §6.1)
+- Metadata artifact emission (`dist/<processor>.graph.json` / `.memory.json` / `.diagnostics.json` / `.schema-hash.json`, per `07-unplugin.md` §6.3)
+- DevTools Kit integration path (register 1 dock entry + bundle the Vue 3 SPA sub-project `packages/unplugin/devtools-ui/` into `<unplugin>/dist/ui/`) + ship 4 panels + 1 secondary driven by mock data: Audio graph / Live state / Signals & performance / MIDI + Snapshot tab inside Audio graph (per `07-unplugin.md` §6.1)
 - Mock data must be realistic, diverse, and integrated (per `AGENTS.md` "Mock data rule"). Audio chain mock: arpeggiator → polysynth → limiter → reverb → master → destination (4 unworklet nodes + 2 standard nodes); each unworklet node's publish slots are borrowed from canonical examples Ex 1–10, covering all types (scalar f32/i32/bool + buffer f32/i32/bool/u8); value changes simulate real chain causality (polysynth meter rising → limiter applying GR → reverb tail appearing)
 
 HMR boundary (depends on `replaceProcessor`) and source maps (`.ts` → AST → `.wasm` position propagation, sidecar `.wasm.map`) are split out to Phase 12. **Real panel wiring** (AudioNode.prototype hook / UnworkletNode WeakSet / signal probe opt-in method / latency measurement / MIDI inject RPC / diagnostics push) is deferred to the phase where each dependency becomes available (Phase 7 messaging / Phase 9 MIDI / Phase 12 HMR + source maps), replacing mock composables with real ones in a single swap with no UI revisions.
@@ -141,7 +141,7 @@ Completion criteria:
 - `event<T>({ to: "main" })` (worklet → main ringbuffer, `emitIf` + `atSample`)
 - `event<T>({ from: "main" })` (main → worklet, `onReceive` handler, block-boundary drain)
 
-Completion criteria: canonical Ex 1 runs in full (meter included), meter streams to the UI in the browser at 30 fps, and the DevTools panel "Live state inspector" (named state slots + live values from `state.publish`, per `07-vite-plugin.md` §6.1) is functional.
+Completion criteria: canonical Ex 1 runs in full (meter included), meter streams to the UI in the browser at 30 fps, and the DevTools panel "Live state inspector" (named state slots + live values from `state.publish`, per `07-unplugin.md` §6.1) is functional.
 
 ### Phase 9 — MIDI
 
@@ -152,7 +152,7 @@ Completion criteria: canonical Ex 1 runs in full (meter included), meter streams
 - `connectFromWebMIDI` (Web MIDI bridge, source-agnostic injection)
 - Sysex (`state.buffer.u8` + variable-length content buffer, Q49)
 
-Completion criteria: canonical Ex 5 (granular sampler, MIDI note in), Ex 6 (MIDI arpeggiator), Ex 8 (polyphonic synth), and Ex 9 (sysex bridge) are functional; the DevTools panel "MIDI flow / overflow" (`node.midi.<name>.diagnostics`, per `07-vite-plugin.md` §6.1) is functional.
+Completion criteria: canonical Ex 5 (granular sampler, MIDI note in), Ex 6 (MIDI arpeggiator), Ex 8 (polyphonic synth), and Ex 9 (sysex bridge) are functional; the DevTools panel "MIDI flow / overflow" (`node.midi.<name>.diagnostics`, per `07-unplugin.md` §6.1) is functional.
 
 ### Phase 10 — SIMD subpath
 
@@ -174,16 +174,16 @@ Snapshot/restore, the migration chain, and `replaceProcessor` are placed late in
 - `inspect(blob)` free function (Q48)
 - `replaceProcessor` raw primitive (per `05-client.md` §8, Q50)
 
-Completion criteria: the snapshot/restore + migration path works for canonical Ex 7 (convolution reverb with snapshot/restore migration) and Ex 10 (live coding REPL bridge, with the HMR boundary filled in Phase 12); the cumulative-swap warning surface from Q63 is in place (a single `console.warn` emitted on the 51st swap); the DevTools panel "Snapshot inspector" (`snapshot()` + `inspect(blob)` as a panel UI) and "Swap history" (`replaceProcessor` invocations + `ReplaceResult` log, per `07-vite-plugin.md` §6.1) are functional.
+Completion criteria: the snapshot/restore + migration path works for canonical Ex 7 (convolution reverb with snapshot/restore migration) and Ex 10 (live coding REPL bridge, with the HMR boundary filled in Phase 12); the cumulative-swap warning surface from Q63 is in place (a single `console.warn` emitted on the 51st swap); the DevTools panel "Snapshot inspector" (`snapshot()` + `inspect(blob)` as a panel UI) and "Swap history" (`replaceProcessor` invocations + `ReplaceResult` log, per `07-unplugin.md` §6.1) are functional.
 
 ### Phase 12 — HMR boundary + source maps + remaining Vite plugin features
 
 Phase 5 ships core functionality (`?worklet` resolution + metadata artifacts + DevTools panel visuals); real panel wiring is filled at the end of Phase 6. Once `replaceProcessor` raw primitive is in place after Phase 11, Phase 12 fills the HMR-dependent parts + source map propagation:
 
-- HMR boundary (`replaceProcessor` callable from user-land; `?worklet` import marked as hot-acceptable, per `07-vite-plugin.md` §4)
-- HMR recipe sketch (user-land orchestration path via `import.meta.hot.accept`, per `07-vite-plugin.md` §4)
+- HMR boundary (`replaceProcessor` callable from user-land; `?worklet` import marked as hot-acceptable, per `07-unplugin.md` §4)
+- HMR recipe sketch (user-land orchestration path via `import.meta.hot.accept`, per `07-unplugin.md` §4)
 - Cumulative swap warning surface (Q63: a single `console.warn` emitted on the 51st swap)
-- Source maps (`.ts` → AST → `.wasm` position propagation, sidecar `.wasm.map`, per `07-vite-plugin.md` §5)
+- Source maps (`.ts` → AST → `.wasm` position propagation, sidecar `.wasm.map`, per `07-unplugin.md` §5)
 
 Completion criteria: in a real Vite project, editing a source file and accepting the update via `import.meta.hot.accept` allows `replaceProcessor` to be called from user-land; canonical Ex 10 (live coding REPL bridge) works end-to-end on the HMR path; the 51st swap triggers a console warning; source maps are readable in browser DevTools with source code linkage. The wav encoder for the Record sub-tab was shipped in Phase 5 as a self-contained 16-bit PCM encoder (ring buffer + hand-written RIFF/WAVE) — the MediaRecorder path is not adopted in any phase (per `AGENTS.md` "DevTools panel — recurring violations to avoid").
 

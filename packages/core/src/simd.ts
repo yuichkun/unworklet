@@ -24,26 +24,11 @@ import type { Node } from "./types.ts";
 const liftLane = (v: Node<"f32"> | number): AstNode =>
   isWrappedNode(v) ? unwrapAst(v) : { kind: "literal", type: "f32", value: v };
 
-// ─────────────────────────────────────────────────────────────────────────
-// Declaration merging — Node<'f32x4'> lane + Buffer<'f32'> SIMD methods
-// ─────────────────────────────────────────────────────────────────────────
-
-declare module "./types.ts" {
-  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
-  interface Node<
-    T extends import("./types.ts").ScalarType | "f32x4" = import("./types.ts").ScalarType,
-  > {
-    /** SIMD lane access — only resolves to a real value type when `T = 'f32x4'`. */
-    lane(i: 0 | 1 | 2 | 3): T extends "f32x4" ? Node<"f32"> : never;
-  }
-
-  interface Buffer<T extends import("./types.ts").BufferElementType> {
-    /** Load four contiguous f32 lanes from a buffer (element-units offset). */
-    loadVec(offset: Node<"i32"> | number): T extends "f32" ? Node<"f32x4"> : never;
-    /** Store four contiguous f32 lanes into a buffer. */
-    storeVec(offset: Node<"i32"> | number, value: Node<"f32x4">): T extends "f32" ? void : never;
-  }
-}
+// `Node<'f32x4'>.lane` and `Buffer<'f32'>.loadVec` / `.storeVec` are declared on
+// the `Node` / `Buffer` interfaces in `./types.ts` (co-located so they survive dts
+// bundling — a cross-file `declare module` augmentation is orphaned when the
+// interfaces are bundled into a renamed chunk). This file owns the `lane` runtime
+// (below); the buffer SIMD I/O runtime lives in `dsl/declarations.ts`.
 
 // ─────────────────────────────────────────────────────────────────────────
 // Free function form

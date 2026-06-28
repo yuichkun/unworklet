@@ -17,7 +17,7 @@
  * - `parameterDescriptors` — converts the `param` declarations in the graph
  *   into Web Audio `AudioParamDescriptor` shape.
  *
- * Both the auto-register path (the worklet JS template the vite-plugin emits)
+ * Both the auto-register path (the worklet JS template the unplugin emits)
  * and the escape-hatch path (a user's own `class extends AudioWorkletProcessor`,
  * Q80) share this function namespace as their common foundation.
  */
@@ -35,6 +35,16 @@ import type {
 } from "./compile/ast.ts";
 import { layout, type Layout } from "./compile/layout.ts";
 import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
+import { atomicMonotoneMax, ringCount, ringSlotIndex } from "./ringIndex.ts";
+import { checkRingHeader } from "./selfcheck.ts";
+
+/**
+ * Debug-only audio-thread invariant monitor (Layer F). Injected by the unplugin
+ * (`true` in serve, `false` in build) and tree-shaken from production; left
+ * `undefined` in node tests with no plugin, where a test can set it on the
+ * global to exercise the self-check.
+ */
+declare const __UNWORKLET_SELFCHECK__: boolean;
 import {
   encodeScalar,
   isPersistent,
@@ -53,7 +63,7 @@ import type {
 /**
  * Metadata bundle that fully describes a processor's worklet-side runtime
  * shape — everything needed to build a `WorkletNamespace` without
- * re-evaluating the authoring source. The vite-plugin computes this at
+ * re-evaluating the authoring source. The unplugin computes this at
  * build / dev time from `compile(processor)` and inlines it (as JSON) into
  * the emitted worklet entry, so `audioWorklet.addModule()` only ever loads
  * a runtime-only artifact (= no `?worklet` virtual ever re-runs `defineProcessor`
@@ -209,6 +219,17 @@ type WorkletState = {
   readonly eventRingSabOffsets: readonly number[];
   readonly eventRingsWasmViews: readonly Uint8Array[];
   readonly eventRingsSabViews: readonly Uint8Array[];
+  /**
+   * Slot-region-only views (= the ring minus its 12-byte header), pre-bound for
+   * the out-ring publish bulk copy. The bulk copy must NOT span the header: the
+   * SAB header is written solely by the release `Atomics.store(head)`, so a
+   * consumer that acquire-loads the new head synchronizes-with the slot writes.
+   * A whole-ring copy would also write head with a plain store before the
+   * release, and a consumer could read-from that plain write and miss the
+   * happens-before on the slots (a torn read).
+   */
+  readonly eventRingsWasmSlotViews: readonly Uint8Array[];
+  readonly eventRingsSabSlotViews: readonly Uint8Array[];
   /** Per-ring header (head / tail / overflow) Int32Array view = for SAB Atomics.store */
   readonly eventRingsWasmHeaderViews: readonly Int32Array[];
   readonly eventRingsSabHeaderViews: readonly Int32Array[];
@@ -249,6 +270,14 @@ type WorkletState = {
    */
   readonly messageRingsWasmDataViews: readonly DataView[];
   readonly messageRingsSabViews: readonly Uint8Array[];
+  /**
+   * Slot-region-only views (ring minus the 12-byte header) for the in-ring
+   * mirror. The SAB → WASM copy must NOT span the header: the WASM header is set
+   * by the acquire-loads, and a whole-ring copy would clobber it with a
+   * non-synchronized plain re-read (an unsynchronized drain bound).
+   */
+  readonly messageRingsWasmSlotViews: readonly Uint8Array[];
+  readonly messageRingsSabSlotViews: readonly Uint8Array[];
   readonly messageRingsWasmHeaderViews: readonly Int32Array[];
   readonly messageRingsSabHeaderViews: readonly Int32Array[];
   /**
@@ -296,6 +325,13 @@ type WorkletState = {
   readonly midiWasmDataView: DataView | null;
   readonly midiRingsWasmHeaderViews: readonly Int32Array[];
   readonly midiRingsSabViews: readonly Uint8Array[];
+  /**
+   * Slot-region-only views (ring minus the 12-byte header) for the header-safe
+   * bulk copy on both directions (out publish / in mirror). The header is
+   * carried solely by the `Atomics` header words, never the plain bulk copy.
+   */
+  readonly midiRingsWasmSlotViews: readonly Uint8Array[];
+  readonly midiRingsSabSlotViews: readonly Uint8Array[];
   readonly midiRingsSabHeaderViews: readonly Int32Array[];
   /** sysex content region view (non-null only for the sysex port, §4.3). Zipped with ring index. */
   readonly sysexContentWasmViews: ReadonlyArray<Uint8Array | null>;
@@ -666,6 +702,8 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       const eventContentSabOffsets = opts.processorOptions?.eventContentSabOffsets ?? [];
       const eventRingsWasmViews: Uint8Array[] = [];
       const eventRingsSabViews: Uint8Array[] = [];
+      const eventRingsWasmSlotViews: Uint8Array[] = [];
+      const eventRingsSabSlotViews: Uint8Array[] = [];
       const eventRingsWasmHeaderViews: Int32Array[] = [];
       const eventRingsSabHeaderViews: Int32Array[] = [];
       const eventContentWasmViews: Array<Uint8Array | null> = [];
@@ -682,10 +720,16 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         const ring = eventRings[i]!;
         const ringTotalBytes = 12 + ring.capacity * ring.slotSize;
         eventRingsWasmViews.push(new Uint8Array(memory.buffer, ring.wasmRingBase, ringTotalBytes));
+        eventRingsWasmSlotViews.push(
+          new Uint8Array(memory.buffer, ring.wasmRingBase + 12, ringTotalBytes - 12),
+        );
         eventRingsWasmHeaderViews.push(new Int32Array(memory.buffer, ring.wasmRingBase, 3));
         if (eventRingsBuffer !== null) {
           eventRingsSabViews.push(
             new Uint8Array(eventRingsBuffer, eventRingSabOffsets[i]!, ringTotalBytes),
+          );
+          eventRingsSabSlotViews.push(
+            new Uint8Array(eventRingsBuffer, eventRingSabOffsets[i]! + 12, ringTotalBytes - 12),
           );
           eventRingsSabHeaderViews.push(
             new Int32Array(eventRingsBuffer, eventRingSabOffsets[i]!, 3),
@@ -734,6 +778,8 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       const messageRingsWasmViews: Uint8Array[] = [];
       const messageRingsWasmDataViews: DataView[] = [];
       const messageRingsSabViews: Uint8Array[] = [];
+      const messageRingsWasmSlotViews: Uint8Array[] = [];
+      const messageRingsSabSlotViews: Uint8Array[] = [];
       const messageRingsWasmHeaderViews: Int32Array[] = [];
       const messageRingsSabHeaderViews: Int32Array[] = [];
       const messageContentWasmViews: Array<Uint8Array | null> = [];
@@ -750,10 +796,16 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         messageRingsWasmDataViews.push(
           new DataView(memory.buffer, ring.wasmRingBase, ringTotalBytes),
         );
+        messageRingsWasmSlotViews.push(
+          new Uint8Array(memory.buffer, ring.wasmRingBase + 12, ringTotalBytes - 12),
+        );
         messageRingsWasmHeaderViews.push(new Int32Array(memory.buffer, ring.wasmRingBase, 3));
         if (messageRingsBuffer !== null) {
           messageRingsSabViews.push(
             new Uint8Array(messageRingsBuffer, messageRingSabOffsets[i]!, ringTotalBytes),
+          );
+          messageRingsSabSlotViews.push(
+            new Uint8Array(messageRingsBuffer, messageRingSabOffsets[i]! + 12, ringTotalBytes - 12),
           );
           messageRingsSabHeaderViews.push(
             new Int32Array(messageRingsBuffer, messageRingSabOffsets[i]!, 3),
@@ -790,6 +842,8 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       const midiWasmDataView = midiRingsMeta.length > 0 ? new DataView(memory.buffer) : null;
       const midiRingsWasmHeaderViews: Int32Array[] = [];
       const midiRingsSabViews: Uint8Array[] = [];
+      const midiRingsWasmSlotViews: Uint8Array[] = [];
+      const midiRingsSabSlotViews: Uint8Array[] = [];
       const midiRingsSabHeaderViews: Int32Array[] = [];
       const sysexContentWasmViews: Array<Uint8Array | null> = [];
       const sysexContentSabViews: Array<Uint8Array | null> = [];
@@ -801,10 +855,16 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         const ring = midiRingsMeta[i]!;
         const ringTotalBytes = 12 + ring.capacity * MIDI_SLOT_BYTES;
         midiRingsWasmViews.push(new Uint8Array(memory.buffer, ring.wasmRingBase, ringTotalBytes));
+        midiRingsWasmSlotViews.push(
+          new Uint8Array(memory.buffer, ring.wasmRingBase + 12, ringTotalBytes - 12),
+        );
         midiRingsWasmHeaderViews.push(new Int32Array(memory.buffer, ring.wasmRingBase, 3));
         if (midiRingsBuffer !== null) {
           midiRingsSabViews.push(
             new Uint8Array(midiRingsBuffer, midiRingSabOffsets[i]!, ringTotalBytes),
+          );
+          midiRingsSabSlotViews.push(
+            new Uint8Array(midiRingsBuffer, midiRingSabOffsets[i]! + 12, ringTotalBytes - 12),
           );
           midiRingsSabHeaderViews.push(new Int32Array(midiRingsBuffer, midiRingSabOffsets[i]!, 3));
         }
@@ -843,6 +903,8 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         eventRingSabOffsets,
         eventRingsWasmViews,
         eventRingsSabViews,
+        eventRingsWasmSlotViews,
+        eventRingsSabSlotViews,
         eventRingsWasmHeaderViews,
         eventRingsSabHeaderViews,
         eventContentWasmViews,
@@ -855,6 +917,8 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         messageRingsWasmViews,
         messageRingsWasmDataViews,
         messageRingsSabViews,
+        messageRingsWasmSlotViews,
+        messageRingsSabSlotViews,
         messageRingsWasmHeaderViews,
         messageRingsSabHeaderViews,
         messageContentWasmViews,
@@ -868,6 +932,8 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         midiWasmDataView,
         midiRingsWasmHeaderViews,
         midiRingsSabViews,
+        midiRingsWasmSlotViews,
+        midiRingsSabSlotViews,
         midiRingsSabHeaderViews,
         sysexContentWasmViews,
         sysexContentSabViews,
@@ -1296,12 +1362,12 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
     if (state.messageRings.length > 0) {
       const isSab = state.transport === "sab";
       if (isSab && state.messageRingsBuffer !== null) {
-        // SAB path = existing SAB → WASM bulk copy + header mirror
-        const wasmViews = state.messageRingsWasmViews;
-        const sabViews = state.messageRingsSabViews;
+        // SAB path = SAB → WASM slot-region copy + header acquire-loads
+        const wasmSlotViews = state.messageRingsWasmSlotViews;
+        const sabSlotViews = state.messageRingsSabSlotViews;
         const wasmHeaders = state.messageRingsWasmHeaderViews;
         const sabHeaders = state.messageRingsSabHeaderViews;
-        for (let i = 0; i < wasmViews.length; i++) {
+        for (let i = 0; i < wasmSlotViews.length; i++) {
           const sabH = sabHeaders[i]!;
           const wasmH = wasmHeaders[i]!;
           const prevHead = wasmH[0]!;
@@ -1313,7 +1379,10 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
           wasmH[0] = Atomics.load(sabH, 0);
           wasmH[1] = Atomics.load(sabH, 1);
           wasmH[2] = Atomics.load(sabH, 2);
-          wasmViews[i]!.set(sabViews[i]!);
+          // Copy the slot region ONLY — never the header. A whole-ring copy would
+          // clobber the acquire-loaded head above with a non-synchronized plain
+          // re-read, making the drain bound unsynchronized (a torn read).
+          wasmSlotViews[i]!.set(sabSlotViews[i]!);
           // For a ring with a typed-array field = mirror the entire content region
           // SAB → WASM only on quanta where head advanced (§5.2; the slot's payloadOffset
           // is an absolute index relative to the region base = a full mirror keeps the
@@ -1340,14 +1409,14 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
           for (const payload of queue) {
             const head = wasmH[0]!;
             const tail = wasmH[1]!;
-            // overflow check = head - tail >= capacity = drop-oldest
-            if (head - tail >= capacity) {
+            // overflow check = ringCount(head, tail) >= capacity = drop-oldest
+            if (ringCount(head, tail) >= capacity) {
               wasmH[1] = tail + 1;
               wasmH[2] = wasmH[2]! + 1;
             }
             // slot write (Q46 uniform lift: every number → i32 / boolean → 0/1 i32,
             // typed-array → bytes into the §5.2 content region + [payloadLen, payloadOffset] into the slot)
-            const slotByteOffset = 12 + (head % capacity) * slotSize;
+            const slotByteOffset = 12 + ringSlotIndex(head, capacity) * slotSize;
             for (const field of ring.fields) {
               const value = payload[field.name];
               const byteOffset = slotByteOffset + field.offsetInSlot;
@@ -1394,13 +1463,15 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         if (ring.direction !== "in") continue;
         const wasmH = state.midiRingsWasmHeaderViews[i]!;
         if (isSab && state.midiRingsBuffer !== null) {
-          // SAB path = SAB → WASM bulk copy (slot copy after header acquire-load)
+          // SAB path = SAB → WASM slot-region copy after the header acquire-loads
           const sabH = state.midiRingsSabHeaderViews[i]!;
           const prevHead = wasmH[0]!;
           wasmH[0] = Atomics.load(sabH, 0);
           wasmH[1] = Atomics.load(sabH, 1);
           wasmH[2] = Atomics.load(sabH, 2);
-          state.midiRingsWasmViews[i]!.set(state.midiRingsSabViews[i]!);
+          // Slot region only — never the header, which is the acquire-loaded value
+          // above (a whole-ring copy would clobber it with a non-synchronized read).
+          state.midiRingsWasmSlotViews[i]!.set(state.midiRingsSabSlotViews[i]!);
           const sysexWasm = state.sysexContentWasmViews[i];
           const sysexSab = state.sysexContentSabViews[i];
           if (sysexWasm !== null && sysexSab !== null && wasmH[0]! !== prevHead) {
@@ -1415,15 +1486,15 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
           for (const item of queue) {
             const head = wasmH[0]!;
             const tail = wasmH[1]!;
-            if (head - tail >= capacity) {
+            if (ringCount(head, tail) >= capacity) {
               wasmH[1] = tail + 1;
               wasmH[2] = wasmH[2]! + 1;
             }
-            const slotByteOffset = 12 + (head % capacity) * MIDI_SLOT_BYTES;
+            const slotByteOffset = 12 + ringSlotIndex(head, capacity) * MIDI_SLOT_BYTES;
             if (item.sysex !== undefined && ring.sysex !== undefined && sysexWasm !== null) {
               // sysex = [length, data] into the content chunk, [0xF0, chunkIdx, _, _, atSample] into the slot
               const region = ring.sysex;
-              const chunkIdx = head % region.chunks;
+              const chunkIdx = ringSlotIndex(head, region.chunks);
               const chunkBase = chunkIdx * region.perChunk;
               const len = Math.min(item.sysex.length, region.perChunk - 4);
               dv.setUint32(ring.sysex.wasmBase + chunkBase, len, true);
@@ -1544,7 +1615,8 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
     // transferable buffers + ownership transfer" ping-pong path (this wave is "make it work").
     if (state.eventRings.length > 0) {
       const wasmViews = state.eventRingsWasmViews;
-      const sabViews = state.eventRingsSabViews;
+      const sabSlotViews = state.eventRingsSabSlotViews;
+      const wasmSlotViews = state.eventRingsWasmSlotViews;
       const wasmHeaders = state.eventRingsWasmHeaderViews;
       const sabHeaders = state.eventRingsSabHeaderViews;
       const isSab = state.transport === "sab";
@@ -1555,8 +1627,11 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         const currentTail = wasmH[1]!;
         const currentOverflow = wasmH[2]!;
         if (isSab && state.eventRingsBuffer !== null) {
-          // SAB path = existing bulk copy + header Atomics.store
-          sabViews[i]!.set(wasmViews[i]!);
+          // SAB path = slot-region bulk copy (NOT the header) + header Atomics.store.
+          // Copying the header here would write `head` with a plain store before the
+          // release store below, letting a consumer read-from it without the
+          // happens-before that publishes the slots (a torn read).
+          sabSlotViews[i]!.set(wasmSlotViews[i]!);
           // §4.3 with a typed-array field = mirror the content region WASM → SAB
           // (before the head Atomics.store = the release fence lets main observe it through the slots).
           const contentWasm = state.eventContentWasmViews[i];
@@ -1587,7 +1662,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
           // bulk-copy the new slots into a Uint8Array (main decodes the fields)
           const slotsBytes = new Uint8Array(newSlotCount * slotSize);
           for (let k = 0; k < newSlotCount; k++) {
-            const slotIdx = (from + k) % capacity;
+            const slotIdx = ringSlotIndex(from + k, capacity);
             const srcOffset = 12 + slotIdx * slotSize;
             slotsBytes.set(wasmRawView.subarray(srcOffset, srcOffset + slotSize), k * slotSize);
           }
@@ -1634,7 +1709,10 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         for (let i = 0; i < wasmHeaders.length; i++) {
           const wasmH = wasmHeaders[i]!;
           const sabH = sabHeaders[i]!;
-          Atomics.store(sabH, 1, wasmH[1]!);
+          // Monotone-max, not a plain store: the main `send` drop-oldest also
+          // writes this tail, and a plain store from either side can clobber the
+          // other's advance (a lost update) and rewind tail, re-delivering a slot.
+          atomicMonotoneMax(sabH, 1, wasmH[1]!);
         }
       } else {
         for (let i = 0; i < wasmHeaders.length; i++) {
@@ -1668,7 +1746,9 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
           const currentTail = wasmH[1]!;
           const currentOverflow = wasmH[2]!;
           if (isSab && state.midiRingsBuffer !== null) {
-            state.midiRingsSabViews[i]!.set(state.midiRingsWasmViews[i]!);
+            // Slot-region copy only — the header is carried by the release
+            // Atomics.store below, never the plain bulk copy (= no torn read).
+            state.midiRingsSabSlotViews[i]!.set(state.midiRingsWasmSlotViews[i]!);
             const sysexWasm = state.sysexContentWasmViews[i];
             const sysexSab = state.sysexContentSabViews[i];
             if (sysexWasm !== null && sysexSab !== null) {
@@ -1691,7 +1771,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             const wasmRawView = state.midiRingsWasmViews[i]!;
             const slotsBytes = new Uint8Array(newSlotCount * MIDI_SLOT_BYTES);
             for (let k = 0; k < newSlotCount; k++) {
-              const slotIdx = (from + k) % capacity;
+              const slotIdx = ringSlotIndex(from + k, capacity);
               const srcOffset = 12 + slotIdx * MIDI_SLOT_BYTES;
               slotsBytes.set(
                 wasmRawView.subarray(srcOffset, srcOffset + MIDI_SLOT_BYTES),
@@ -1725,7 +1805,9 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         } else {
           // in port = expose the WASM drain tail to main / notify overflow
           if (isSab && state.midiRingsBuffer !== null) {
-            Atomics.store(state.midiRingsSabHeaderViews[i]!, 1, wasmH[1]!);
+            // Monotone-max, not a plain store (= same split-writer tail race as
+            // the message in-ring: the main drop-oldest also writes this tail).
+            atomicMonotoneMax(state.midiRingsSabHeaderViews[i]!, 1, wasmH[1]!);
           } else {
             const currentOverflow = wasmH[2]!;
             if (currentOverflow !== state.lastSentMidiInOverflows[i]) {
@@ -1739,6 +1821,34 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
           }
         }
       }
+    }
+
+    // Layer F: debug-only invariant monitor. Every quantum, assert each SAB ring
+    // header is sane (no overfill, no tail rewind, no negative overflow) and
+    // surface any corruption to main the instant it happens. The whole block is
+    // gated behind a define that is `false` in production and tree-shaken away,
+    // so prod stays byte-identical.
+    if (typeof __UNWORKLET_SELFCHECK__ !== "undefined" && __UNWORKLET_SELFCHECK__ === true) {
+      const audit = (
+        headers: readonly Int32Array[],
+        rings: ReadonlyArray<{ readonly capacity: number }>,
+        kind: string,
+      ): void => {
+        for (let i = 0; i < headers.length; i++) {
+          const h = headers[i]!;
+          const violation = checkRingHeader(h[0]!, h[1]!, h[2]!, rings[i]!.capacity);
+          if (violation !== null) {
+            self.port.postMessage({
+              kind: "selfcheck-violation",
+              ring: `${kind}[${i}]`,
+              detail: violation,
+            });
+          }
+        }
+      };
+      audit(state.eventRingsWasmHeaderViews, state.eventRings, "event");
+      audit(state.messageRingsWasmHeaderViews, state.messageRings, "message");
+      audit(state.midiRingsWasmHeaderViews, state.midiRings, "midi");
     }
 
     return true;

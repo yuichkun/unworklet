@@ -1,6 +1,6 @@
 import { DevTools } from "@vitejs/devtools";
 import vue from "@vitejs/plugin-vue";
-import unworklet from "@unworklet/vite-plugin";
+import unworklet from "@unworklet/unplugin";
 import { defineConfig } from "vite-plus";
 import type { Plugin } from "vite-plus";
 

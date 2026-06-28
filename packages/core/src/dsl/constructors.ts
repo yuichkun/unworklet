@@ -1,9 +1,9 @@
 /**
- * Scalar constructors (`01-dsl.md` §2.2 + `decisions-log.md` Q33 + Q77).
+ * Scalar constructors (`01-dsl.md` §2.2 + `decisions-log.md` Q33).
  *
  * Used wherever the implicit literal lift does not apply — declarations,
- * ambiguous-call disambiguation, i64 construction (BigInt-required),
- * cross-precision conversion, and method-chain starting points (`num(v)`).
+ * ambiguous-call disambiguation, i64 construction (BigInt-required), and
+ * cross-precision conversion.
  *
  * A JS `number` lifts to a literal of the constructor's type; a `Node<T>`
  * lifts to a cross-precision `convert` node (or passes through unchanged when
@@ -53,24 +53,4 @@ export function bool(v: boolean | Node<ScalarType>): Node<"bool"> {
     return wrapAst<"bool">({ kind: "literal", type: "bool", value: v ? 1 : 0 });
   }
   return convertTo("bool", v);
-}
-
-/**
- * Method-chain starting helper (Q77). `T` is inferred from the surrounding
- * context (= the type of the value passed to the next method in the chain);
- * falls back to `'f32'` when no context constrains it. A boolean argument
- * fixes `T = 'bool'` unambiguously.
- *
- * A numeric `num` captures a **loose** literal: it carries the JS value with a
- * fallback `'f32'` type and defers to the chain's first concretely-typed
- * sibling (so `num(1).sub(mix)` follows `mix`'s type). With no typed sibling it
- * stays `'f32'`.
- */
-export function num(v: boolean): Node<"bool">;
-export function num<T extends ScalarType = "f32">(v: number): Node<T>;
-export function num<T extends ScalarType = "f32">(v: number | boolean): Node<T> {
-  if (typeof v === "boolean") {
-    return wrapAst<T>({ kind: "literal", type: "bool", value: v ? 1 : 0 });
-  }
-  return wrapAst<T>({ kind: "literal", type: "f32", value: v, loose: true });
 }

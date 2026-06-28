@@ -27,7 +27,7 @@ declare global {
   const param: typeof import("@unworklet/core").param;
   const event: typeof import("@unworklet/core").event;
   const defineSubgraph: typeof import("@unworklet/core").defineSubgraph;
-  const createSubgraph: typeof import("@unworklet/core").createSubgraph;
+  const instantiate: typeof import("@unworklet/core").instantiate;
 
   // ── Audio I/O (name optional in .uwk.ts; the auto-name pass fills it) ──
   function audioInput<C extends number>(options: { channels: C; name?: string }): AudioInputHandle<C>;
@@ -43,7 +43,6 @@ declare global {
   const i32: typeof import("@unworklet/core").i32;
   const i64: typeof import("@unworklet/core").i64;
   const bool: typeof import("@unworklet/core").bool;
-  const num: typeof import("@unworklet/core").num;
 
   // ── Math / logical / composition free-function forms ──
   const add: typeof import("@unworklet/core").add;

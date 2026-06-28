@@ -15,16 +15,17 @@
 import {
   audioInput,
   audioOutput,
-  createSubgraph,
+  instantiate,
   defineProcessor,
   defineSubgraph,
+  div,
   event,
   f32,
   forSample,
-  num,
   param,
   select,
   state,
+  sub,
   type Node,
   type State,
 } from "@unworklet/core";
@@ -58,9 +59,9 @@ const allScalarStates = defineProcessor(() => {
         out
           .ch(0)
           .at(i)
-          .write(select(sbool.read(), sf32.read(), num(0)));
+          .write(select(sbool.read(), sf32.read(), 0));
       });
-      sf64.write(sf64.read().add(num(1)));
+      sf64.write(sf64.read().add(1));
       si64.write(si64.read());
     },
   };
@@ -89,13 +90,13 @@ const allBufferTypes = defineProcessor(() => {
       const h = head.read();
       forSample((i) => {
         bf32.write(h.add(i).mod(16), input.ch(0).at(i));
-        const interp = bf32.readInterpolated(num(1.5));
+        const interp = bf32.readInterpolated(1.5);
         const mix = interp
           .add(f32(bi32.read(0)))
           .add(f32(bf64.read(0)))
           .add(f32(bi64.read(0)))
           .add(f32(bu8.read(0)))
-          .add(select(bbool.read(0), num(1), num(0)));
+          .add(select(bbool.read(0), 1, 0));
         out.ch(0).at(i).write(mix.mul(0.001));
       });
       head.write(h.add(128).mod(16));
@@ -175,7 +176,7 @@ const messageScalar = defineProcessor(() => {
         out
           .ch(0)
           .at(i)
-          .write(select(on.read(), g.read(), num(0)));
+          .write(select(on.read(), g.read(), 0));
       });
     },
   };
@@ -237,7 +238,7 @@ const allMidiIn = defineProcessor(() => {
         acc.write(acc.read().add(length));
       });
       forSample((i) => {
-        out.ch(0).at(i).write(num(0));
+        out.ch(0).at(i).write(0);
       });
     },
   };
@@ -251,7 +252,7 @@ const allMidiOut = defineProcessor(() => {
   return {
     process: () => {
       forSample((i) => {
-        out.ch(0).at(i).write(num(0));
+        out.ch(0).at(i).write(0);
         const fire = i.eq(0);
         port.emitIf(fire, { type: "noteOn", atSample: i, channel: 0, note: 60, velocity: 100 });
         port.emitIf(fire, { type: "noteOff", atSample: i, channel: 0, note: 60, velocity: 0 });
@@ -281,11 +282,7 @@ const limiter = defineProcessor((ctx) => {
   const overshoot = event<{ level: number }>({ to: "main", name: "overshoot" });
   return {
     process: () => {
-      const relCoef = num(1).sub(
-        num(-1)
-          .div(num(0.05 * ctx.sampleRate))
-          .exp(),
-      );
+      const relCoef = sub(1, div(-1, 0.05 * ctx.sampleRate).exp());
       const headBlock = dlyHead.read();
       forSample((i) => {
         const x = input.ch(0).at(i);
@@ -325,7 +322,7 @@ const reverb = defineProcessor(
         });
         forSample.byN(4, (i) => {
           const outIdx = headBlock.add(i).mod(IR_LEN);
-          let acc = splat(num(0));
+          let acc = splat(0);
           for (let k = 0; k < IR_LEN; k += 4) {
             const histIdx = outIdx.sub(k).sub(3).add(IR_LEN).mod(IR_LEN);
             acc = acc.add(mulVec(hist.loadVec(histIdx), ir.loadVec(k)));
@@ -372,8 +369,8 @@ const peakingBand = defineSubgraph((_sr: number) => {
 const subgraphEq = defineProcessor((ctx) => {
   const input = audioInput({ channels: 1, name: "main" });
   const out = audioOutput({ channels: 1, name: "main" });
-  const low = createSubgraph(peakingBand, ctx.sampleRate);
-  const hi = createSubgraph(peakingBand, ctx.sampleRate);
+  const low = instantiate(peakingBand, ctx.sampleRate);
+  const hi = instantiate(peakingBand, ctx.sampleRate);
   return {
     process: () => {
       forSample((i) => {
@@ -381,7 +378,7 @@ const subgraphEq = defineProcessor((ctx) => {
         out
           .ch(0)
           .at(i)
-          .write(hi.process(low.process(x, num(1)), num(1)));
+          .write(hi.process(low.process(x, f32(1)), f32(1)));
       });
     },
   };

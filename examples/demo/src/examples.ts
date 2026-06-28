@@ -61,8 +61,8 @@ const cutoff = param.f32({ default: 0.2, min: 0.01, max: 1 }).named();
 const onepole = defineSubgraph((k: Node<"f32">) => ({
   process: (x: Node<"f32">) => k * x + (1 - k) * $prev,
 }));
-const lpL = createSubgraph(onepole, f32(0.2), { name: "lpL" });
-const lpR = createSubgraph(onepole, f32(0.2), { name: "lpR" });
+const lpL = instantiate(onepole, f32(0.2), { name: "lpL" });
+const lpR = instantiate(onepole, f32(0.2), { name: "lpR" });
 
 process(() => {
   forSample((i) => {
@@ -134,10 +134,10 @@ const high  = param.f32({ default: 1, min: 0, max: 2 }).named();
 const lp = defineSubgraph((k: Node<"f32">) => ({
   process: (x: Node<"f32">) => k * x + (1 - k) * $prev,
 }));
-const loL = createSubgraph(lp, f32(0.08), { name: "loL" }); // low band
-const loR = createSubgraph(lp, f32(0.08), { name: "loR" });
-const hiL = createSubgraph(lp, f32(0.5), { name: "hiL" });  // low+mid split
-const hiR = createSubgraph(lp, f32(0.5), { name: "hiR" });
+const loL = instantiate(lp, f32(0.08), { name: "loL" }); // low band
+const loR = instantiate(lp, f32(0.08), { name: "loR" });
+const hiL = instantiate(lp, f32(0.5), { name: "hiL" });  // low+mid split
+const hiR = instantiate(lp, f32(0.5), { name: "hiR" });
 
 process(() => {
   forSample((i) => {

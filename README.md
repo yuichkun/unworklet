@@ -31,15 +31,64 @@ DevTools.
 
 ```bash
 npm install @unworklet/core
-npm install -D @unworklet/vite-plugin   # loads processors via the ?worklet query
+npm install -D @unworklet/unplugin @unworklet/lang   # ?worklet loader + .uwk.ts editor support
 ```
 
 ```ts
 // vite.config.ts
-import unworklet from "@unworklet/vite-plugin";
+import unworklet from "@unworklet/unplugin";
 
 export default { plugins: [unworklet()] };
 ```
+
+The loader is built on [unplugin](https://unplugin.unjs.io/), and the type wiring
+below is plain `tsconfig` — the Vite integration is what ships today.
+
+Add one line to your `tsconfig.json`. The plugin generates a `.unworklet/tsconfig.json`
+that wires up the main-thread types **and** the `.uwk.ts` editor checker, so
+`node.params.<name>` (and `state` / `events` / `midi` / `inputs` / `outputs`) are
+typed and the sugar type-checks with no `@ts-nocheck` — no `vite-env.d.ts` needed:
+
+```jsonc
+// tsconfig.json
+{ "extends": "./.unworklet/tsconfig.json" }
+```
+
+The plugin writes `.unworklet/` (the tsconfig above plus a `worklets.d.ts` carrying
+your processors' types) on `vite dev` / `vite build`; add `.unworklet/` to
+`.gitignore` (a generated artifact, like Nuxt's `.nuxt/`). Adding processors only
+regrows `worklets.d.ts` — you never touch your tsconfig again. Don't put your own
+`include` on this tsconfig: `extends` doesn't merge `include`, so the generated one
+must own it (need your own? use the manual setup below).
+
+In VS Code, run **“TypeScript: Select TypeScript Version → Use Workspace
+Version”** (the editor plugin loads only under the workspace TypeScript). For
+build / CI, `@unworklet/lang` ships `unworklet-tsc`, a drop-in `tsc` that checks
+`.uwk.ts` too.
+
+<details>
+<summary>Can’t extend (an existing tsconfig you can’t restructure)?</summary>
+
+Write the same three settings into your own `tsconfig.json` directly — still no
+`vite-env.d.ts`:
+
+```jsonc
+// tsconfig.json
+{
+  "compilerOptions": {
+    "types": ["@unworklet/unplugin/client"],
+    "plugins": [{ "name": "@unworklet/lang/typescript-plugin" }],
+  },
+  "include": ["src", ".unworklet/worklets.d.ts"],
+}
+```
+
+List `.unworklet/worklets.d.ts` explicitly in `include` — a `**/*` glob skips the
+dot-folder. If this is the first `types` entry in your config, also list the type
+packages you already rely on (e.g. `"node"`), since `types` disables automatic
+`@types` loading.
+
+</details>
 
 A processor is a `.uwk.ts` file — write the DSP as plain expressions and
 unworklet lowers it to the core primitives, compiles it to WASM, and proves it's
@@ -47,7 +96,6 @@ realtime-safe:
 
 ```ts
 // distortion.uwk.ts — soft-clip distortion, compiled to a WASM AudioWorklet
-// @ts-nocheck — sugar is a TS error until the plugin lowers it at build.
 const input = audioInput({ channels: 2, name: "main" });
 const out = audioOutput({ channels: 2, name: "main" });
 const drive = param.f32({ default: 4, min: 1, max: 20, automationRate: "a-rate" }).named();
@@ -67,12 +115,21 @@ process(() => {
 import { createNode } from "@unworklet/core";
 import distortion from "./distortion.uwk.ts?worklet"; // the ?worklet query is required
 
-const ctx = new AudioContext();
+// The ?worklet artifact bakes its rate-dependent coefficients at 48 kHz, so run
+// the context at 48 kHz too. The browser resamples to the device's native rate.
+const ctx = new AudioContext({ sampleRate: 48000 });
 const node = await createNode(ctx, distortion);
-source.connect(node.inputs.main);
+
+// an unworklet node is a normal AudioNode — feed it anything, route it anywhere:
+const osc = new OscillatorNode(ctx, { frequency: 110 });
+osc.connect(node.inputs.main);
 node.outputs.main.connect(ctx.destination);
 node.params.drive.value = 8; // the AudioParam, fully typed
+osc.start();
 ```
+
+Browsers start an `AudioContext` only after a user gesture, so call
+`ctx.resume()` from a click handler to actually hear it.
 
 Prefer explicit method calls over operator sugar? Write the same processor as a
 plain `.processor.ts` with the core API (`input.left.at(i).mul(drive.at(i))`) —
@@ -91,7 +148,6 @@ on the audio thread and oscillates:
 
 ```ts
 // synth.uwk.ts — a monophonic MIDI sine voice
-// @ts-nocheck — sugar is a TS error until the plugin lowers it at build.
 const out = audioOutput({ channels: 1, name: "main" });
 const keys = event.midi({ from: "main", name: "keys" });
 
@@ -221,13 +277,13 @@ imports) and add it to your config. The unworklet plugin itself needs no extra
 config — it auto-docks once the host is present.
 
 ```sh
-npm install -D @vitejs/devtools @vitejs/devtools-kit
+npm install -D @vitejs/devtools@0.3.3 @vitejs/devtools-kit@0.3.3
 ```
 
 ```ts
 // vite.config.ts
 import { DevTools } from "@vitejs/devtools";
-import unworklet from "@unworklet/vite-plugin";
+import unworklet from "@unworklet/unplugin";
 import { defineConfig } from "vite";
 
 export default defineConfig(({ command }) => ({
@@ -244,29 +300,33 @@ Run your dev server, open the Vite DevTools overlay, and pick the **unworklet** 
 
 Two gotchas worth knowing up front:
 
-- **Install `@vitejs/devtools-kit` as a direct dependency too**, matching the
-  version `@unworklet/vite-plugin` builds against (`0.2.x` at the time of writing).
-  The panel's page bridge imports `@vitejs/devtools-kit/client`, which must resolve
-  from your app — a transitive copy is not enough.
-- **Do not set `Cross-Origin-Embedder-Policy: require-corp` on the dev server.**
-  Cross-origin isolation is what `SharedArrayBuffer` wants, but COEP also blocks the
-  DevTools iframe (`/__unworklet/`). Leave the headers off the dev server —
-  unworklet falls back to the fully functional postMessage transport in dev — and
-  apply COOP/COEP only to your production / preview builds (where there's no
-  DevTools to break).
+- **Install both at exactly `0.3.3`.** `@unworklet/unplugin` pins this DevTools
+  version (an exact, optional `peerDependency`): the live panels reach the dev server
+  through an anonymous RPC scope whose prefix is coupled to the DevTools major
+  (`devframe:anonymous:` in 0.3), so a mismatched host silently rejects every push and
+  the panels stay empty. The panel's page bridge also imports
+  `@vitejs/devtools-kit/client` as a direct dependency, which must resolve from your
+  app — a transitive copy is not enough.
+- **Cross-origin isolation.** The plugin makes the dev server cross-origin
+  isolated by default (COOP `same-origin` + COEP `credentialless`) so
+  `SharedArrayBuffer` works with no config — `credentialless` rather than
+  `require-corp`, which would block the DevTools iframe (`/__unworklet/`). If
+  isolation conflicts with a cross-origin resource or the DevTools panel, opt out
+  with `unworklet({ crossOriginIsolation: false })`; unworklet then uses the
+  postMessage transport in dev. Production headers remain your server's job.
 
 The panels can't be deployed as a static demo: the host is a dev-time server, so
 clone the repo and start an example locally to try them live.
 
 ## Packages
 
-| package                                                      | what it does                                                                       |
-| ------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| [`@unworklet/core`](./packages/core/README.md)               | The DSL, the WASM compiler, the worklet runtime, and the typed main-thread node.   |
-| [`@unworklet/vite-plugin`](./packages/vite-plugin/README.md) | Loads `.processor.ts` / `.uwk.ts` via `?worklet`; ships the DevTools panel.        |
-| [`@unworklet/lang`](./packages/lang/README.md)               | The `.uwk.ts` authoring sugar (infix operators, index access) that lowers to core. |
-| [`@unworklet/offline`](./packages/offline/README.md)         | Render a processor to PCM headlessly in Node / Bun / Deno.                         |
-| [`@unworklet/test`](./packages/test/README.md)               | Audio / event / MIDI / state assertions and signal generators for Vitest.          |
+| package                                                | what it does                                                                       |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| [`@unworklet/core`](./packages/core/README.md)         | The DSL, the WASM compiler, the worklet runtime, and the typed main-thread node.   |
+| [`@unworklet/unplugin`](./packages/unplugin/README.md) | Loads `.processor.ts` / `.uwk.ts` via `?worklet`; ships the DevTools panel.        |
+| [`@unworklet/lang`](./packages/lang/README.md)         | The `.uwk.ts` authoring sugar (infix operators, index access) that lowers to core. |
+| [`@unworklet/offline`](./packages/offline/README.md)   | Render a processor to PCM headlessly in Node / Bun / Deno.                         |
+| [`@unworklet/test`](./packages/test/README.md)         | Audio / event / MIDI / state assertions and signal generators for Vitest.          |
 
 ## Docs
 
@@ -285,12 +345,12 @@ vp check          # lint + format + typecheck (vp check --fix to auto-fix)
 vp test run       # vitest (node-side + browser SAB / postMessage)
 ```
 
-`core` and `vite-plugin` form a build cycle, so packages build in an explicit
+`core` and `unplugin` form a build cycle, so packages build in an explicit
 order rather than `vp run -r build`:
 
 ```bash
 vp run --filter @unworklet/lang build && \
-vp run --filter @unworklet/vite-plugin build && \
+vp run --filter @unworklet/unplugin build && \
 vp run --filter @unworklet/core build && \
 vp run --filter @unworklet/offline build && \
 vp run --filter @unworklet/test build

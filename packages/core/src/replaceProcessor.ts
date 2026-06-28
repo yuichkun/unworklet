@@ -11,7 +11,7 @@
  *      (fresh `moduleUrl` / `processorName`) is the new processor's own — for a
  *      genuinely different processor it is naturally distinct; for live-coding /
  *      HMR of the SAME source the versioned URL is supplied by the bundler
- *      integration (`@unworklet/vite-plugin`), which `replaceProcessor` does not
+ *      integration (`@unworklet/unplugin`), which `replaceProcessor` does not
  *      orchestrate (Q50).
  *   3. `restore(blob)` runs against the new instance, executing the migration
  *      chain (Q45).

@@ -13,19 +13,19 @@ loops, exceptions, blocking I/O, and GC on the audio thread).
 
 **The source code is the source of truth.** The forms below are exact and are
 covered by tests (`packages/offline/src/docs-examples.test.ts`). Do not
-substitute API shapes from memory. If you need a form not shown here, read a
-tested example (`examples/01-stereo-gain`, `docs/12-canonical-examples.md`) or
-the package READMEs in `node_modules/@unworklet/*/README.md`.
+substitute API shapes from memory. If you need a form not shown here, read the
+package READMEs in `node_modules/@unworklet/*/README.md` or
+`docs/12-canonical-examples.md`.
 
 ## Packages
 
-| package                        | role                                                    |
-| ------------------------------ | ------------------------------------------------------- |
-| `@unworklet/core`              | the DSL + compiler + main-thread client (always needed) |
-| `@unworklet/vite-plugin` (dev) | load processors via `?worklet`; DevTools panel          |
-| `@unworklet/lang`              | optional `.uwk.ts` sugar (`a * b` for `a.mul(b)`)       |
-| `@unworklet/offline`           | render a processor to PCM in Node/Bun/Deno              |
-| `@unworklet/test`              | audio/event/MIDI/state assertions for Vitest            |
+| package                     | role                                                    |
+| --------------------------- | ------------------------------------------------------- |
+| `@unworklet/core`           | the DSL + compiler + main-thread client (always needed) |
+| `@unworklet/unplugin` (dev) | load processors via `?worklet`; DevTools panel          |
+| `@unworklet/lang`           | optional `.uwk.ts` sugar (`a * b` for `a.mul(b)`)       |
+| `@unworklet/offline`        | render a processor to PCM in Node/Bun/Deno              |
+| `@unworklet/test`           | audio/event/MIDI/state assertions for Vitest            |
 
 ## Workflow
 
@@ -73,7 +73,7 @@ import {
   state,
 } from "@unworklet/core";
 
-export const midiSynth = defineProcessor(() => {
+export const midiSynth = defineProcessor((ctx) => {
   const out = audioOutput({ channels: 1, name: "main" });
   const notes = event.midi({ from: "main", name: "notes" });
   const phase = state.f64(0).named("phase");
@@ -97,7 +97,7 @@ export const midiSynth = defineProcessor(() => {
           .mul(440);
         const p = phase
           .read()
-          .add(f64(freqHz.mul((2 * Math.PI) / 48000)))
+          .add(f64(freqHz.mul((2 * Math.PI) / ctx.sampleRate)))
           .mod(2 * Math.PI);
         out
           .ch(0)
@@ -136,31 +136,57 @@ event.midi({ to: "main", name })     event.midi({ from: "main", name })
 **Operations** — free function or method form (identical):
 `add sub mul div mod neg` · `eq lt lte gt gte` · `not select` · `abs min max
 clamp floor ceil frac` · `sin cos tan tanh exp log sqrt` · `pipe`.
-Literals: `f32(x) f64(x) i32(x) i64(1n) bool(true) num(x)`.
+Scalar constructors / casts: `f32(x) f64(x) i32(x) i64(1n) bool(true)` —
+`f32(node)` also casts any scalar `Node` to `Node<"f32">` (the `i32`→`f32` bridge,
+e.g. a MIDI field; see the synth above).
 
 **Loop:** `forSample((i) => ...)` (i = 0..127) · `forSample.byN(4, (i) => ...)`.
+
+**SIMD (`.ts` only, opt-in):** `import { vec4, splat, addVec, mulVec, sumLanes } from "@unworklet/core/simd"` — then `v = buf.loadVec(i)`, `v.lane(0..3)`, `buf.storeVec(i, v)` (f32 buffers; pairs with `forSample.byN(4)`).
+
+**Subgraphs:** `defineSubgraph((args) => ({ run: (x) => ... }))` + `instantiate(sg, ...args, { name })` in declaration scope (`$prev` feedback is `.uwk.ts`-only). A subgraph can live in its own file: a `.uwk.ts` with no `process()` is a library module that `export`s `defineSubgraph(...)`; a processor imports it with a normal `import { sg } from "./sg.uwk.ts"` (not `?worklet`). Publishing such a library: declare `@unworklet/core` as a `peerDependency` (a second bundled copy makes `instantiate` reject the subgraph).
+
+**Migrations:** `defineProcessor(body, { migrations: [{ from, to, migrate(blob, h) { ... } }] })` (`migrate` is sync).
 
 **Events / MIDI bodies:**
 `ev.emitIf(cond, { field: value })` (worklet→main) ·
 `ev.onReceive(({ a, b }) => ...)` (main→worklet) ·
 `midiIn.onEvent("noteOn", ({ note, velocity, channel }) => ...)` ·
 `midiOut.emitIf(cond, { type: "noteOn", channel, note, velocity })`.
+An inbound handler's fields (`note` / `velocity` / `channel` / `atSample`) are
+`Node<"i32">`, not JS numbers — cast with `f32(note)` for float math and write them
+into `state` to reach `process` (see the synth above). A worklet→main `event` has
+only `.emitIf` (no bare `.emit`).
 
 ## Loading + driving (main thread)
 
 ```ts
 import { createNode } from "@unworklet/core";
-import { stereoGain } from "./stereo-gain.processor.ts?worklet"; // ?worklet is required
+import stereoGain from "./stereo-gain.processor.ts?worklet"; // ?worklet is required (default import)
 
 const node = await createNode(ctx, stereoGain);
 node.outputs.main.connect(ctx.destination);
 source.connect(node.inputs.main);
 node.params.gain.value = 2;                    // AudioParam
 node.state.meterL.subscribe((v) => { ... });   // published value
-node.midi.notes.send({ type: "noteOn", channel: 0, note: 60, velocity: 100 });
+node.midi.notes.send({ type: "noteOn", channel: 0, note: 60, velocity: 100 });   // main → worklet
+node.midi.out.onEvent("noteOn", (e) => { ... });   // outbound MIDI: worklet → main
 node.events.tempo.on((p) => { ... });          // worklet → main event
-const blob = node.snapshot();                  // persistent state; node.restore(blob)
+node.events.setCount.emit({ value: 42 });      // main → worklet send (event({ from: "main" }))
+const blob = await node.snapshot();            // ASYNC; const res = await node.restore(blob); if (!res.ok) {...}
 ```
+
+Every `node.*` surface above (params / state / events / midi / inputs / outputs)
+is typed per-processor — names complete, an undeclared name errors — when the
+project's `tsconfig.json` does `{ "extends": "./.unworklet/tsconfig.json" }` (no
+`vite-env.d.ts`). The plugin writes `.unworklet/` on dev/build (that tsconfig plus a
+`worklets.d.ts` of per-processor types); gitignore it. Don't add your own `include`
+to that tsconfig. Can't extend? Put `types: ["@unworklet/unplugin/client"]` +
+`plugins: [{ name: "@unworklet/lang/typescript-plugin" }]` in `compilerOptions` and
+list `.unworklet/worklets.d.ts` in `include` directly. To name the handle's type
+up front (a `let` / class field you assign later), write
+`UnworkletNode<typeof import("./x.processor.ts?worklet")>` — it takes the `?worklet`
+import directly, so every surface stays typed.
 
 ## Verify
 
@@ -173,6 +199,7 @@ const r = await renderOffline(stereoGain, {
   duration: 1,
   inputs: { main: [sine({ freqHz: 440, durationSamples: 48000, sampleRate: 48000 })] },
   params: { gain: [2] },
+  // drive inbound too: messages: [{ name, payload }], events: [{ name, payload, atSample }] (events = inbound MIDI)
 });
 expectNoNaN(r);
 expectStable(r);
@@ -186,6 +213,7 @@ expectStable(r);
 - No standalone `message<T>()`: main→worklet delivery is `event({ from: "main", name })`.
 - No `midiInput()/midiOutput()`: use `event.midi({ from | to: "main", name })`.
 - Import a processor with `?worklet`; don't import the raw module into the app.
+- Infix operators (`a * b`, `a + b`) on `Node`s are `.uwk.ts`-only. In `.ts` / `.processor.ts` use methods or free functions (`a.mul(b)` / `mul(a, b)`).
 - Don't mix `.uwk.ts` sugar with the plain `.ts` API in one file. A `.uwk.ts` needs a `// @ts-nocheck` header UNLESS the `@unworklet/lang` editor plugin is set up (then the sugar type-checks and the header is dropped).
 
 ## `.uwk.ts` sugar (optional)
@@ -193,7 +221,9 @@ expectStable(r);
 `.uwk.ts` desugars to the same primitives: `a * b` → `a.mul(b)`, `out.left[i] = v`
 → `out.left.at(i).write(v)`, `buf[i]` → `buf.read(i)`, a bare `state` in a value
 position → `state.read()`. Scalar writes are still explicit `state.write(v)`.
-The body is wrapped in ambient `process(() => { ... })`. For IDE type-checking of
-the sugar (drop `// @ts-nocheck`), add `@unworklet/lang/typescript-plugin` to
-`tsconfig` `plugins` and put the shipped ambient `.d.ts` in `files` (not `include` —
-`include` globs skip `node_modules`). See `@unworklet/lang`'s README → IDE support.
+The body is wrapped in ambient `process(() => { ... })`. IDE type-checking of the
+sugar (drop `// @ts-nocheck`) comes from the `@unworklet/lang/typescript-plugin`
+language-service plugin, which the `{ "extends": "./.unworklet/tsconfig.json" }`
+setup already includes (it auto-injects the shipped ambient `.d.ts`, so there is no
+`files` / `types` entry to add). For a build-time check, use `unworklet-tsc` in
+place of `tsc`. See `@unworklet/lang`'s README → IDE support.

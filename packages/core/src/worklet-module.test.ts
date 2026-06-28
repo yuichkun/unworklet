@@ -1,7 +1,7 @@
 /**
  * Behavioral tests for `emitWorkletModuleSource(...)` — the single source-string
  * emitter for an `addModule()`'d worklet entry, shared by the build-time
- * `?worklet` path (vite-plugin, `import` runtime) and the runtime in-browser
+ * `?worklet` path (unplugin, `import` runtime) and the runtime in-browser
  * compile path (`@unworklet/lang/browser`, `inline` runtime — Safari can't
  * resolve imports inside a Blob module).
  */

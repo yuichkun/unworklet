@@ -2,10 +2,10 @@
  * Behavior of the schema-hash stage (= `01-dsl.md` §8.3 migration anchor,
  * one of the internal modules in the Q-D stage pipeline).
  *
- * The hash format is fixed as `JSON.stringify(graph)` + SHA-256 hex.
- * Any future change to the format is caught immediately by inline snapshot
- * failures, and existing snapshot blob compatibility is handled via an
- * explicit migration path.
+ * The hash format is fixed as a 2-lane FNV-1a over `JSON.stringify(graph)`, emitted
+ * as 32 lowercase hex chars (= 128 bits; pure JS, no Web Crypto). Any future change
+ * to the format is caught immediately by inline snapshot failures, and existing
+ * snapshot blob compatibility is handled via an explicit migration path.
  */
 
 import { expect, test } from "vite-plus/test";

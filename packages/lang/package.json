@@ -2,7 +2,25 @@
   "name": "@unworklet/lang",
   "version": "0.0.0",
   "description": "Build-time `.uwk.ts` → virtual `.ts` authoring frontend that lowers to `@unworklet/core`.",
+  "keywords": [
+    "audio",
+    "audioworklet",
+    "dsl",
+    "dsp",
+    "sugar",
+    "typescript"
+  ],
+  "homepage": "https://github.com/yuichkun/unworklet#readme",
+  "bugs": "https://github.com/yuichkun/unworklet/issues",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yuichkun/unworklet.git",
+    "directory": "packages/lang"
+  },
+  "bin": {
+    "unworklet-tsc": "./dist/unworklet-tsc.mjs"
+  },
   "files": [
     "dist",
     "typescript-plugin"
@@ -29,6 +47,25 @@
     "./package.json": "./package.json"
   },
   "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.mts",
+        "import": "./dist/index.mjs"
+      },
+      "./browser": {
+        "types": "./dist/browser.d.mts",
+        "import": "./dist/browser.mjs"
+      },
+      "./typescript-plugin": {
+        "require": "./typescript-plugin/index.js",
+        "default": "./typescript-plugin/index.js"
+      },
+      "./ambient": {
+        "types": "./dist/ambient.d.ts"
+      },
+      "./ambient.d.ts": "./dist/ambient.d.ts",
+      "./package.json": "./package.json"
+    },
     "access": "public"
   },
   "scripts": {
@@ -39,7 +76,6 @@
     "prepublishOnly": "vp run build"
   },
   "dependencies": {
-    "@unworklet/core": "workspace:*",
     "@volar/language-core": "catalog:",
     "@volar/typescript": "catalog:",
     "typescript": "catalog:"
@@ -47,12 +83,16 @@
   "devDependencies": {
     "@types/node": "catalog:",
     "@typescript/native-preview": "7.0.0-dev.20260509.2",
-    "@unworklet/offline": "workspace:*",
+    "@unworklet/core": "workspace:^",
+    "@unworklet/offline": "workspace:^",
     "bumpp": "^11.1.0",
     "esbuild": "catalog:",
     "vite-plus": "catalog:"
   },
   "peerDependencies": {
-    "@unworklet/core": "workspace:*"
+    "@unworklet/core": "workspace:^"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

@@ -65,6 +65,28 @@ test("decode throws a clear error when the header is cut mid-field", () => {
   expect(() => decodeSnapshot(full.slice(0, 6))).toThrow(/corrupt or truncated/i);
 });
 
+// Kind/type bytes of the (only) slot of `encodeSnapshot("h", null, [{name:"x",...}])`:
+//   magic(4)+version(4)+hashLen(4)+hash"h"(1)+hasProfile(1)+profileLen(4)
+//   +slotCount(4)+nameLen(4)+name"x"(1) → kind at 27, type at 28.
+const oneSlotBlob = (): Uint8Array =>
+  encodeSnapshot("h", null, [
+    { name: "x", kind: "state", type: "i32", data: encodeScalar("i32", 7) },
+  ]).slice();
+
+test("decode rejects an out-of-range slot kind code (corrupt blob, not silent undefined)", () => {
+  const blob = oneSlotBlob();
+  expect(blob[27]).toBe(0); // KIND_CODE.state
+  blob[27] = 3; // KIND_BY_CODE only has codes 0..2
+  expect(() => decodeSnapshot(blob)).toThrow(/corrupt/i);
+});
+
+test("decode rejects an out-of-range slot type code (corrupt blob, not silent undefined)", () => {
+  const blob = oneSlotBlob();
+  expect(blob[28]).toBe(2); // TYPE_CODE.i32
+  blob[28] = 6; // TYPE_BY_CODE only has codes 0..5
+  expect(() => decodeSnapshot(blob)).toThrow(/corrupt/i);
+});
+
 test("inspect decodes values per slot kind", () => {
   const blob = encodeSnapshot("schemaX", null, [
     { name: "gain", kind: "param", type: "f32", data: encodeScalar("f32", 0.5) },

@@ -31,7 +31,7 @@ const out   = audioOutput({ channels: 1, name: "main" });
 const onepole = defineSubgraph((k: Node<"f32">) => ({
   process: (x: Node<"f32">) => k * x + (1 - k) * $prev,
 }));
-const lp = createSubgraph(onepole, f32(0.15), { name: "lp" });
+const lp = instantiate(onepole, f32(0.15), { name: "lp" });
 process(() => {
   forSample((i) => {
     out.ch(0)[i] = lp.process(input.ch(0)[i]);

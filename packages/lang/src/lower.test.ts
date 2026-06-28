@@ -86,13 +86,56 @@ process(() => {});
   expect(names).toContain("state");
 });
 
-test("rejects a file with no process() call", () => {
+test("rejects a file with no process() and no export (it would do nothing)", () => {
+  // A .uwk.ts with neither a process() nor any export produces no processor and
+  // exposes nothing — a mistake. (A no-process file WITH an export is a valid
+  // library module; see the subgraph-only test below.)
   expect(() => lower(`const s = state.f32(0).named("s");`)).toThrow(LowerError);
   try {
     lower(`const s = state.f32(0).named("s");`);
   } catch (e) {
-    expect((e as LowerError).id).toBe("uwk-no-process");
+    expect((e as LowerError).id).toBe("uwk-empty");
   }
+});
+
+test("lowers a subgraph-only file to a plain library module (no defineProcessor wrap, no ambient I/O)", () => {
+  // A .uwk.ts with no process() but with exports is a "library module": the
+  // exports are emitted verbatim at module scope, the sugar in subgraph method
+  // bodies is still desugared, and there is NO defineProcessor wrap and NO
+  // synthesized ambient stereo I/O.
+  const out = lower(
+    `export const onepole = defineSubgraph((coef: Node<"f32">) => ({\n` +
+      `  tick: (x: Node<"f32">) => x * coef,\n` +
+      `}));`,
+  );
+  // The export survives verbatim at module scope.
+  expect(out).toContain("export const onepole = defineSubgraph(");
+  // Sugar in the method body is desugared (x * coef -> mul(x, coef)).
+  expect(out).toContain("mul(");
+  // No processor wrap, no synthesized ambient stereo I/O.
+  expect(out).not.toContain("defineProcessor");
+  expect(out).not.toContain("audioInput({ channels: 2");
+  expect(out).not.toContain("audioOutput({ channels: 2");
+  // The core import carries defineSubgraph + mul but NOT defineProcessor / audioInput.
+  const names = importedNames(out);
+  expect(names).toContain("defineSubgraph");
+  expect(names).toContain("mul");
+  expect(names).not.toContain("defineProcessor");
+  expect(names).not.toContain("audioInput");
+});
+
+test("a library module keeps a sibling import at module scope", () => {
+  const out = lower(
+    `import { TWO_PI } from "./constants.ts";\n` +
+      `export const osc = defineSubgraph((hz: Node<"f32">) => ({\n` +
+      `  tick: () => hz * TWO_PI,\n` +
+      `}));`,
+  );
+  expect(out).toContain('import { TWO_PI } from "./constants.ts"');
+  // The sibling import sits at module scope, ahead of the exported subgraph.
+  expect(out.indexOf("import { TWO_PI }")).toBeLessThan(out.indexOf("defineSubgraph"));
+  // The injected core import drops nothing the user imports; TWO_PI is not core.
+  expect(out).toContain("mul("); // hz * TWO_PI desugared
 });
 
 test("rejects more than one process() call", () => {
@@ -113,15 +156,45 @@ test("rejects a process() without an arrow / function callback", () => {
   }
 });
 
-test("rejects an import statement (.uwk.ts is ambient)", () => {
-  // An import would otherwise be moved into the generated defineProcessor
-  // callback as an illegal nested import (reported by @codex on #12).
-  try {
-    lower(`import { state } from "@unworklet/core";\nprocess(() => {});`);
-    throw new Error("expected throw");
-  } catch (e) {
-    expect((e as LowerError).id).toBe("uwk-no-import");
-  }
+test("preserves a user import at module top-level (cross-file constant sharing)", () => {
+  // Imports must survive at module scope — not be moved into the defineProcessor
+  // callback (an illegal nested import) — so a `.uwk.ts` can share constants /
+  // params from sibling files. The lowered module is written next to the source,
+  // so the relative specifier resolves unchanged.
+  const out = lower(
+    `import { BASE_GAIN } from "./constants.ts";\n` +
+      `const out = audioOutput({ channels: 1, name: "main" });\n` +
+      `process(() => {\n` +
+      `  forSample((i) => {\n` +
+      `    out.ch(0).at(i).write(f32(BASE_GAIN));\n` +
+      `  });\n` +
+      `});`,
+  );
+  expect(out).toContain('import { BASE_GAIN } from "./constants.ts"');
+  // It sits at module scope, ahead of the defineProcessor wrap — not nested inside.
+  const userImportIdx = out.indexOf("import { BASE_GAIN }");
+  expect(userImportIdx).toBeGreaterThanOrEqual(0);
+  expect(userImportIdx).toBeLessThan(out.indexOf("defineProcessor"));
+  // The injected core import is still emitted and the constant is referenced.
+  expect(out).toContain('from "@unworklet/core"');
+  expect(out).toContain("f32(BASE_GAIN)");
+});
+
+test("a user import of an ambient core name keeps a single binding (no duplicate)", () => {
+  // Importing a name the DSL already provides ambiently must not double-bind it:
+  // the injected core import drops any name the user imports explicitly.
+  const out = lower(
+    `import { state } from "@unworklet/core";\n` +
+      `const s = state.f32(0).named("s");\n` +
+      `process(() => {\n` +
+      `  s.write(f32(1));\n` +
+      `});`,
+  );
+  expect(out).toContain('import { state } from "@unworklet/core"');
+  // The injected import (the one carrying defineProcessor) must NOT also bind `state`.
+  const coreImports = out.match(/import \{[^}]*\} from "@unworklet\/core"/g) ?? [];
+  const injected = coreImports.find((i) => i.includes("defineProcessor"))!;
+  expect(injected).not.toContain("state");
 });
 
 test("rejects migrations()/options() referencing a processor-body binding", () => {

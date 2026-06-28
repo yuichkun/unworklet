@@ -2,7 +2,26 @@
   "name": "@unworklet/core",
   "version": "0.0.0",
   "description": "Audio Worklet DSP authored in TypeScript, compiled to WebAssembly.",
+  "keywords": [
+    "audio",
+    "audioworklet",
+    "dsp",
+    "midi",
+    "realtime",
+    "synthesis",
+    "typescript",
+    "wasm",
+    "web-audio",
+    "webassembly"
+  ],
+  "homepage": "https://github.com/yuichkun/unworklet#readme",
+  "bugs": "https://github.com/yuichkun/unworklet/issues",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yuichkun/unworklet.git",
+    "directory": "packages/core"
+  },
   "files": [
     "dist"
   ],
@@ -31,6 +50,25 @@
     "./package.json": "./package.json"
   },
   "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.mts",
+        "import": "./dist/index.mjs"
+      },
+      "./simd": {
+        "types": "./dist/simd.d.mts",
+        "import": "./dist/simd.mjs"
+      },
+      "./worklet": {
+        "types": "./dist/worklet-entry.d.mts",
+        "import": "./dist/worklet-entry.mjs"
+      },
+      "./dev": {
+        "types": "./dist/dev.d.mts",
+        "import": "./dist/dev.mjs"
+      },
+      "./package.json": "./package.json"
+    },
     "access": "public"
   },
   "scripts": {
@@ -48,10 +86,14 @@
   "devDependencies": {
     "@types/node": "catalog:",
     "@typescript/native-preview": "7.0.0-dev.20260509.2",
-    "@unworklet/vite-plugin": "workspace:*",
+    "@unworklet/unplugin": "workspace:^",
     "bumpp": "^11.1.0",
+    "fast-check": "catalog:",
     "playwright": "catalog:",
     "typescript": "catalog:",
     "vite-plus": "catalog:"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

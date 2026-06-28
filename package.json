@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "test": "vp test",
-    "ready": "vp check && vp run test && vp run -r build"
+    "build": "vp run --filter @unworklet/unplugin build && vp run --filter @unworklet/core build && vp run --filter @unworklet/lang build && vp run --filter @unworklet/offline build && vp run --filter @unworklet/test build",
+    "ready": "vp check && vp run test && vp run build"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "catalog:",

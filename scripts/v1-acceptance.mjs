@@ -59,7 +59,7 @@ const gates = [
     id: "WI-11 readme-sections",
     desc: "Every package README has install + usage(```ts) + API sections",
     cmd:
-      "for p in core lang offline test vite-plugin; do " +
+      "for p in core lang offline test unplugin; do " +
       "rg -qi 'install' packages/$p/README.md && rg -q '```ts' packages/$p/README.md " +
       "&& rg -qi '## .*API|## Usage|## Reference' packages/$p/README.md || exit 1; done",
   },

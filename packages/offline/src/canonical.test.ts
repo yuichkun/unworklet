@@ -8,21 +8,24 @@
 
 import "@unworklet/core";
 import {
+  add,
   audioInput,
   audioOutput,
-  createSubgraph,
+  instantiate,
   defineSubgraph,
   defineProcessor,
+  div,
   encodeSnapshot,
   event,
+  f32,
   forSample,
   i32,
   inspectSnapshot,
   lt,
-  num,
   param,
   select,
   state,
+  sub,
   type Node,
   type State,
 } from "@unworklet/core";
@@ -43,7 +46,7 @@ test("ctx.sampleRate flows the host rate into build-time coefficient precomputat
           out
             .ch(0)
             .at(i)
-            .write(num(rate / 1000));
+            .write(rate / 1000);
         });
       },
     };
@@ -96,16 +99,16 @@ test("Ex2 biquad EQ: unity-coefficient cascade is a passthrough + stable", async
   const eq = defineProcessor((ctx) => {
     const input = audioInput({ channels: 1, name: "main" });
     const out = audioOutput({ channels: 1, name: "main" });
-    const low = createSubgraph(peakingBand, ctx.sampleRate);
-    const mid = createSubgraph(peakingBand, ctx.sampleRate);
-    const hi = createSubgraph(peakingBand, ctx.sampleRate);
+    const low = instantiate(peakingBand, ctx.sampleRate);
+    const mid = instantiate(peakingBand, ctx.sampleRate);
+    const hi = instantiate(peakingBand, ctx.sampleRate);
     return {
       process: () => {
         forSample((i) => {
           const x = input.ch(0).at(i);
-          const y1 = low.process(x, num(1), num(0), num(0), num(0), num(0));
-          const y2 = mid.process(y1, num(1), num(0), num(0), num(0), num(0));
-          const y3 = hi.process(y2, num(1), num(0), num(0), num(0), num(0));
+          const y1 = low.process(x, f32(1), f32(0), f32(0), f32(0), f32(0));
+          const y2 = mid.process(y1, f32(1), f32(0), f32(0), f32(0), f32(0));
+          const y3 = hi.process(y2, f32(1), f32(0), f32(0), f32(0), f32(0));
           out.ch(0).at(i).write(y3);
         });
       },
@@ -153,10 +156,10 @@ const arpeggiator = defineProcessor(() => {
         lastVel.write(velocity);
       });
       forSample((i) => {
-        out.ch(0).at(i).write(num(0));
+        out.ch(0).at(i).write(0);
         const acc = sampleAccum.read().add(1);
         const roll = acc.gt(samplesPerStep.read());
-        sampleAccum.write(select(roll, num(0), acc));
+        sampleAccum.write(select(roll, 0, acc));
         const nextStep = stepIdx.read().add(1).mod(PATTERN_LEN);
         let offset: Node<"i32"> = pattern[0]!.read();
         for (let s = 1; s < PATTERN_LEN; s++) {
@@ -212,7 +215,7 @@ const synthVoice = defineSubgraph((sr: number) => {
   const env = state.f32(0);
   return {
     process: (noteHz: Node<"f32">, velocity: Node<"f32">, gate: Node<"bool">) => {
-      const target = select(gate, velocity, num(0));
+      const target = select(gate, velocity, 0);
       const e = target.sub(env.read()).mul(0.01).add(env.read());
       env.write(e);
       const inc = noteHz.div(sr);
@@ -239,7 +242,7 @@ test("Ex8 polysynth voice: noteOn drives a non-silent, stable signal", async () 
     }
     const cursor = state.i32(0);
     const voices = Array.from({ length: NUM_VOICES }, () =>
-      createSubgraph(synthVoice, ctx.sampleRate),
+      instantiate(synthVoice, ctx.sampleRate),
     );
     return {
       process: () => {
@@ -248,15 +251,15 @@ test("Ex8 polysynth voice: noteOn drives a non-silent, stable signal", async () 
           for (let v = 0; v < NUM_VOICES; v++) {
             const isMe = c.eq(v);
             voiceNote[v]!.write(select(isMe, note, voiceNote[v]!.read()));
-            voiceGate[v]!.write(select(isMe, num(true), voiceGate[v]!.read()));
+            voiceGate[v]!.write(select(isMe, true, voiceGate[v]!.read()));
           }
           cursor.write(c.add(1).mod(NUM_VOICES));
         });
         forSample((i) => {
-          let mix = num(0);
+          let mix: Node<"f32"> | number = 0;
           for (let v = 0; v < NUM_VOICES; v++) {
-            const hz = num(440); // simplified fixed pitch for the test
-            mix = mix.add(voices[v]!.process(hz, num(0.5), voiceGate[v]!.read()));
+            const hz = f32(440); // simplified fixed pitch for the test
+            mix = add(mix, voices[v]!.process(hz, f32(0.5), voiceGate[v]!.read()));
           }
           out.ch(0).at(i).write(mix);
         });
@@ -305,11 +308,7 @@ test("Ex4 limiter: delay line + envelope + overshoot event fire on ceiling cross
     return {
       process: () => {
         // release coefficient uses ctx.sampleRate (= the rate-fix path).
-        const relCoef = num(1).sub(
-          num(-1)
-            .div(num(0.05 * ctx.sampleRate))
-            .exp(),
-        );
+        const relCoef = sub(1, div(-1, 0.05 * ctx.sampleRate).exp());
         const headBlock = dlyHead.read();
         forSample((i) => {
           const x = input.ch(0).at(i);
@@ -380,7 +379,7 @@ function makeReverb(withMigrationTo?: string) {
           });
           forSample.byN(4, (i) => {
             const outIdx = headBlock.add(i).mod(IR_LEN);
-            let acc = splat(num(0));
+            let acc = splat(0);
             for (let k = 0; k < IR_LEN; k += 4) {
               const histIdx = outIdx.sub(k).sub(3).add(IR_LEN).mod(IR_LEN);
               acc = acc.add(mulVec(hist.loadVec(histIdx), ir.loadVec(k)));

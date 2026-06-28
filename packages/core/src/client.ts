@@ -29,6 +29,7 @@ import type {
 } from "./types.ts";
 import { midiEventToWire, wireToMidiEvent } from "./midiWire.ts";
 import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
+import { atomicMonotoneMax, ringCount, ringSlotIndex } from "./ringIndex.ts";
 import { decodeScalar, type SnapshotSlot } from "./snapshot.ts";
 import { decodeSnapshot, encodeSnapshot, inspectSnapshot, runMigrations } from "./snapshotBlob.ts";
 import type { RestoreResult } from "./types.ts";
@@ -309,6 +310,12 @@ const awaitReady = (node: AudioWorkletNode): Promise<void> =>
     }
   });
 
+/**
+ * Contexts already warned about an unavailable SharedArrayBuffer, so the dev
+ * notice fires once per AudioContext instead of once per node.
+ */
+const sabUnavailableWarned = new WeakSet<BaseAudioContext>();
+
 export async function createNode<C>(
   context: BaseAudioContext,
   processor: CompiledProcessor<C>,
@@ -335,6 +342,27 @@ export async function createNode<C>(
     );
   }
 
+  // The `?worklet` WASM bakes rate-dependent coefficients at build time, so a
+  // context running at a different rate would detune the output (and can push a
+  // coefficient-dependent IIR out of its stable region). Reject early. The future
+  // recompile-at-rate path replaces this throw with a main-thread recompile at
+  // `context.sampleRate` — `bakedSampleRate` on the namespace is the seam.
+  const bakedSampleRate = ns.bakedSampleRate;
+  const contextSampleRate = (context as unknown as { sampleRate?: number }).sampleRate;
+  if (
+    bakedSampleRate !== undefined &&
+    typeof contextSampleRate === "number" &&
+    contextSampleRate !== bakedSampleRate
+  ) {
+    throw new Error(
+      `unworklet: createNode() — this processor was compiled for ${bakedSampleRate} Hz but the ` +
+        `AudioContext runs at ${contextSampleRate} Hz. Its coefficients are baked at build time, so ` +
+        `running it at a different rate would detune the output. Create the node on an AudioContext at ` +
+        `${bakedSampleRate} Hz (e.g. \`new AudioContext({ sampleRate: ${bakedSampleRate} })\`). ` +
+        `Recompiling at the context rate is not yet supported.`,
+    );
+  }
+
   await addModuleOnce(
     context as unknown as { audioWorklet: { addModule: (url: string) => Promise<void> } },
     moduleUrl,
@@ -357,6 +385,19 @@ export async function createNode<C>(
     typeof globalThis !== "undefined" &&
     (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated === true;
   const transportMode: "sab" | "postMessage" = sabAvailable ? "sab" : "postMessage";
+
+  // Make the SAB fallback visible by default. `onError({ code: 'sab-unavailable' })`
+  // is opt-in, so a dev who never subscribes would otherwise hit the slower
+  // postMessage path with no signal. Warn once per context (not per node).
+  if (!sabAvailable && !sabUnavailableWarned.has(context)) {
+    sabUnavailableWarned.add(context);
+    console.warn(
+      "unworklet: SharedArrayBuffer is unavailable, so audio I/O falls back to a slower " +
+        "postMessage transport. This usually means the page is not cross-origin isolated — serve " +
+        "Cross-Origin-Opener-Policy: same-origin and Cross-Origin-Embedder-Policy: credentialless " +
+        "to enable it (@unworklet/unplugin sets these on the dev server by default).",
+    );
+  }
 
   // 12 bytes per publish slot (= 4 byte publishShared + 8 byte publishCounters).
   // Allocate only under SAB — on the postMessage path structured clone gives
@@ -639,8 +680,11 @@ export async function createNode<C>(
           const headerView = messageRingsHeaderView;
           const head = Atomics.load(headerView, headWordIdx);
           const tail = Atomics.load(headerView, tailWordIdx);
-          if (head - tail >= ring.capacity) {
-            Atomics.store(headerView, tailWordIdx, tail + 1);
+          if (ringCount(head, tail) >= ring.capacity) {
+            // Monotone-max drop-oldest: the worklet drain-commit also writes this
+            // tail, so a plain store could rewind its advance (a lost update that
+            // re-delivers a slot). Advance only if still ahead.
+            atomicMonotoneMax(headerView, tailWordIdx, tail + 1);
             Atomics.store(
               headerView,
               overflowWordIdx,
@@ -648,7 +692,7 @@ export async function createNode<C>(
             );
           }
           if (ring.slotSize > 0) {
-            const slotByteOffset = slotsBase + (head % ring.capacity) * ring.slotSize;
+            const slotByteOffset = slotsBase + ringSlotIndex(head, ring.capacity) * ring.slotSize;
             for (const field of ring.fields) {
               const value = payload[field.name];
               const byteOffset = slotByteOffset + field.offsetInSlot;
@@ -816,18 +860,21 @@ export async function createNode<C>(
           const headerView = midiRingsHeaderView;
           const head = Atomics.load(headerView, headWordIdx);
           const tail = Atomics.load(headerView, tailWordIdx);
-          if (head - tail >= ring.capacity) {
-            Atomics.store(headerView, tailWordIdx, tail + 1);
+          if (ringCount(head, tail) >= ring.capacity) {
+            // Monotone-max drop-oldest: the worklet drain-commit also writes this
+            // tail, so a plain store could rewind its advance (a lost update that
+            // re-delivers a slot). Advance only if still ahead.
+            atomicMonotoneMax(headerView, tailWordIdx, tail + 1);
             Atomics.store(
               headerView,
               overflowWordIdx,
               Atomics.load(headerView, overflowWordIdx) + 1,
             );
           }
-          const slotByteOffset = slotsBase + (head % ring.capacity) * 8;
+          const slotByteOffset = slotsBase + ringSlotIndex(head, ring.capacity) * 8;
           if (event.type === "sysex" && ring.sysex !== undefined && sysexContentBytes !== null) {
             const sysex = ring.sysex;
-            const chunkIdx = head % sysex.chunks;
+            const chunkIdx = ringSlotIndex(head, sysex.chunks);
             const contentBase = sysexContentSabOffsets[i]! + chunkIdx * sysex.perChunk;
             const len = Math.min(event.data.length, sysex.perChunk - 4);
             new DataView(sysexContentBytes.buffer).setUint32(contentBase, len, true);
@@ -934,7 +981,7 @@ export async function createNode<C>(
             )
           : null;
       while (tail !== currentHead) {
-        const slotByteOffset = slotsBase + (tail % ring.capacity) * 8;
+        const slotByteOffset = slotsBase + ringSlotIndex(tail, ring.capacity) * 8;
         const { event } = decodeMidiSlot(midiRingsView, slotByteOffset, i, contentBytes);
         dispatchMidiEvent(ring.name, event);
         tail += 1;
@@ -1001,7 +1048,7 @@ export async function createNode<C>(
       const subscribers = eventSubscribers.get(ring.name);
       const slotsBase = sabOffset + 12;
       while (tail !== currentHead) {
-        const slotIdx = tail % ring.capacity;
+        const slotIdx = ringSlotIndex(tail, ring.capacity);
         const slotByteOffset = slotsBase + slotIdx * ring.slotSize;
         if (subscribers !== undefined && subscribers.size > 0) {
           const payload: Record<string, unknown> = {};
@@ -1046,14 +1093,20 @@ export async function createNode<C>(
     const raf = (globalThis as { requestAnimationFrame?: (cb: () => void) => number })
       .requestAnimationFrame;
     if (!raf) return;
-    // No disposed branch inside tick = `dispose()` has stopRafLoop call
-    // cancelAnimationFrame and set rafHandle to null = any pending tick is also
-    // cancelled and there is no re-schedule path = no defensive disposed check
-    // needed.
+    // The polls fire user handlers synchronously, and a handler may dispose() the
+    // node or unsubscribe the last subscriber — both run stopRafLoop, but
+    // cancelAnimationFrame cannot stop the tick already on the call stack. Without
+    // this guard the trailing re-arm would resurrect the loop for the page lifetime,
+    // polling every frame and pinning the SAB-backed views (a leak that defeats
+    // dispose()).
     const tick = (): void => {
       pollPublishSlots();
       pollEventRings();
       pollMidiOutRings();
+      if (disposed || !hasAnySubscribers()) {
+        rafHandle = null;
+        return;
+      }
       rafHandle = raf(tick);
     };
     rafHandle = raf(tick);
@@ -1265,7 +1318,19 @@ export async function createNode<C>(
       message: "AudioWorkletProcessor reported a failure (processorerror)",
     });
   };
+  // Debug-build only: the audio-thread self-check (Layer F, gated behind the
+  // `__UNWORKLET_SELFCHECK__` define) posts a ring-header invariant violation
+  // here. Surface it loudly to the console so corruption is visible while
+  // developing; production tree-shakes the self-check, so this never fires there.
+  const onSelfcheckMessage = (event: MessageEvent): void => {
+    const data = event.data as { kind?: unknown; ring?: unknown; detail?: unknown } | null;
+    if (typeof data !== "object" || data === null || data.kind !== "selfcheck-violation") return;
+    console.error(
+      `unworklet: audio-thread self-check violation on ${String(data.ring)} — ${String(data.detail)}`,
+    );
+  };
   node.port.addEventListener("message", onErrorMessage);
+  node.port.addEventListener("message", onSelfcheckMessage);
   node.addEventListener("processorerror", onErrorProcessor);
 
   // Publish listener for the postMessage path (= when SAB is unavailable, on a
@@ -1645,12 +1710,12 @@ export async function createNode<C>(
 
   const unworkletNode: UnworkletNode<C> = {
     node,
-    inputs: inputHandles,
+    inputs: inputHandles as UnworkletNode<C>["inputs"],
     outputs: buildOutputs(node, outputs) as UnworkletNode<C>["outputs"],
-    params,
-    state: stateSurface,
-    events: eventSurface,
-    midi: midiSurface,
+    params: params as UnworkletNode<C>["params"],
+    state: stateSurface as UnworkletNode<C>["state"],
+    events: eventSurface as UnworkletNode<C>["events"],
+    midi: midiSurface as UnworkletNode<C>["midi"],
     diagnostics: { transport: transportMode },
     snapshot,
     restore,
@@ -1663,6 +1728,7 @@ export async function createNode<C>(
       if (devHandle !== undefined) unregisterDevNode(devHandle);
       stopRafLoop();
       node.port.removeEventListener("message", onErrorMessage);
+      node.port.removeEventListener("message", onSelfcheckMessage);
       node.port.removeEventListener("message", onPublishMessage);
       node.port.removeEventListener("message", onEventMessage);
       node.port.removeEventListener("message", onMessageOverflowMessage);
@@ -1724,7 +1790,7 @@ export async function createNode<C>(
         errorSubscribers.delete(handler);
       };
     },
-    __processor: undefined as unknown as C,
+    __processor: undefined as unknown as UnworkletNode<C>["__processor"],
   };
 
   // Dev-only: auto-register this node so the injected page-script can X-ray it

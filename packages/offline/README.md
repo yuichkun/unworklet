@@ -13,6 +13,8 @@ npm install @unworklet/offline @unworklet/core
 ## Usage
 
 ```ts
+import { writeFileSync } from "node:fs";
+
 import { renderOffline, encodeWav } from "@unworklet/offline";
 import { myProcessor } from "./processor.ts"; // a defineProcessor(...) export
 
@@ -27,8 +29,53 @@ result.outputs.main; // Float32Array[] per channel
 result.events; // worklet → main events (event({to:'main'}) + outbound MIDI), with atSample
 result.state; // snapshot blob captured at the end of the render
 
-await Deno.writeFile("out.wav", encodeWav(result.outputs.main, result.sampleRate));
+writeFileSync("out.wav", encodeWav(result.outputs.main, result.sampleRate)); // Bun/Deno: use their own write API
 ```
+
+In a Node + TypeScript project, install Node's types and let `tsc` import the
+`.ts` processor source directly:
+
+```bash
+npm install -D @types/node
+```
+
+```jsonc
+// tsconfig.json
+{
+  "compilerOptions": {
+    "module": "nodenext",
+    "types": ["node"],
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+  },
+}
+```
+
+The packages are ESM-only, so your `package.json` needs `"type": "module"`. Run it
+with any TS runner — `tsx`, or `node` ≥ 22.6 (which strips types natively).
+
+## Rendering a `.uwk.ts` processor
+
+`renderOffline` takes a `CompiledProcessor`. A `.processor.ts` exports one
+directly; `.uwk.ts` sugar is lowered to one first with `@unworklet/lang` — no
+Vite plugin, no browser:
+
+```bash
+npm install -D @unworklet/lang
+```
+
+```ts
+import { readFileSync } from "node:fs";
+
+import { lowerToProcessor } from "@unworklet/lang";
+import { renderOffline } from "@unworklet/offline";
+
+const proc = lowerToProcessor(readFileSync("./sine.uwk.ts", "utf8"));
+const result = await renderOffline(proc, { sampleRate: 48000, duration: 1 });
+```
+
+`lowerToProcessor` resolves `@unworklet/core`'s types from disk, so it runs from
+any working directory once both packages are installed.
 
 ## `RenderOfflineConfig`
 
@@ -53,6 +100,6 @@ await Deno.writeFile("out.wav", encodeWav(result.outputs.main, result.sampleRate
 - `@unworklet/core` — define the processor you render here (`defineProcessor`, the DSL primitives).
 - `@unworklet/test` — Vitest matchers built on top of `renderOffline`.
 - `@unworklet/lang` — write processors in `.uwk.ts` sugar.
-- `@unworklet/vite-plugin` — load processors in the browser via `?worklet`, plus DevTools.
+- `@unworklet/unplugin` — load processors in the browser via `?worklet`, plus DevTools.
 
 License: MIT.

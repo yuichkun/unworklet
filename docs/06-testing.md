@@ -4,18 +4,17 @@ Vitest matchers and audio test utilities for unworklet processors. Wraps `@unwor
 
 ## Status
 
-42 matchers implemented (19 audio/signal/event/MIDI/state matchers + 7 signal utilities + 10 MIDI utilities + 6 sample-time utilities) with all 19 chain-form equivalents and TypeScript-only chain typing guards (`WhenResult<T, M>` / `WhenAudioActual<T, M>`). `expectStateValue` (asserts a snapshot blob slot value) depends on upstream `inspect` (see `05-client.md` §2.6) and is planned to ship alongside it in Phase 11 in both plain and chain forms; it is excluded from the current export surface (the principle: never ship a public API that always throws — v1.0.0 surface contains only working matchers).
+19 matchers (audio / signal / event / MIDI / state), plus 7 signal utilities, 10 MIDI utilities, and 6 sample-time utilities — each matcher with a chain-form equivalent and TypeScript-only chain typing guards (`WhenResult<T, M>` / `WhenAudioActual<T, M>`). `expectStateValue` (asserts a snapshot blob slot value) is not in the v1.0.0 export surface — the principle is to never ship a public API that always throws, so the surface carries only working matchers.
 
-### Upstream dependency status (renderer capture status)
+### Renderer capture
 
-All matchers are implemented and work correctly when given a `RenderOfflineResult`. Impact by capture status of `renderOffline`:
-
-- **`expectEventsEqual` / `expectEventCount` / `expectEventsContaining`** compare `renderOffline.events` directly. Event capture in `renderOffline` is implemented (main → worklet `event<T>({ from: "main" })` injection and worklet → main `event<T>({ to: "main" })` capture, including typed-array payloads). `events` carries real data from a real `renderOffline` call, so end-to-end event assertions pass as-is.
-- **`expectMidiOut` / `expectMidiBalance`** — while the MIDI renderer is not yet implemented (see `10-roadmap.md` §Phase 9), `renderOffline` does not capture MIDI, so `midiEvents` is always `[]`. An assertion expecting empty passes spuriously; an assertion expecting non-empty fails loudly. Using these matchers against a hand-built `RenderOfflineResult` (a test fixture) is safe; end-to-end use against real `renderOffline` output awaits Phase 9.
-- **`expectStateMatches`** — until Phase 11 (snapshot/restore) fills in `state` capture in the renderer, `state` is always `new Uint8Array(0)` (an empty blob stub). An assertion expecting an empty blob passes spuriously; a non-empty expectation fails loudly with a length mismatch.
-- **`RenderOfflineResult.sampleRate`** carries `config.sampleRate` as reliable metadata (used by `expectAudioMatches` / `expectAudioMatchesGolden` for sample-rate comparison). The processor's `ctx.sampleRate` is a Phase 3 placeholder equal to `0`; code paths that read `ctx.sampleRate` directly inside DSP do not receive the real rate (core-side plumbing is a later phase). Within this phase, sample-rate comparison catches metadata mismatches (same PCM, different rate label); the path where a processor reads `ctx.sampleRate` to compute a result and that result is compared against the real rate awaits the core-side fix — this is independent of matcher behavior.
-
-Summary: matchers behave correctly against their input contract (`RenderOfflineResult`); each end-to-end usage path opens as the upstream renderer produces real data. End-to-end verification works for audio output and event paths (both directions of `event<T>` capture are implemented). MIDI and state paths unlock in subsequent phases (see `10-roadmap.md` §Phase 9 / Phase 11).
+All matchers work against a `RenderOfflineResult`, and `renderOffline` captures
+every path end-to-end against the real render: audio output, `event<T>` in both
+directions (`{ from: "main" }` injection and `{ to: "main" }` capture, typed-array
+payloads included), inbound and outbound MIDI, and the end-of-render `state` blob.
+The event, MIDI, and state matchers therefore verify real rendered data, not just
+hand-built fixtures. A processor's `ctx.sampleRate` is the real host rate
+(re-captured at compile), so rate-dependent DSP renders and compares correctly.
 
 ## 1. Relationship to `@unworklet/offline`
 
@@ -23,7 +22,7 @@ Summary: matchers behave correctly against their input contract (`RenderOfflineR
 
 Standard MIDI File loader (`loadSmf` / `parseSmf`) is outside the v1.0.0 ship scope; see `10-roadmap.md` §3.2 for the planned additive addition (verifying synth/arp output against a known MIDI song as input).
 
-## 2. Matchers (19 + `expectStateValue` in Phase 11)
+## 2. Matchers
 
 All matchers are declared as **plain functions**. On failure they throw an `Error`; Vitest catches it and reports the test as failed. The chain form (via `expect.extend(...)`) is declared separately in §6 and coexists with the plain form.
 

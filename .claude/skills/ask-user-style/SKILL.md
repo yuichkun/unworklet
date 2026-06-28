@@ -19,7 +19,14 @@ description: 余湖さんに 何かを 選んで もらう / 方向性 を 確�
 
 ## 設計 grill の md form (= 重い 判断 = md 別 file)
 
-判断 が 設計 / 仕様 に 触れて TUI 数行 に 収まらない 時 だけ md を 別 file に 出す。 TUI は 「1 行 intro + md path + AskUserQuestion」。 md は 次 の **4 ブロック だけ**、 各 ブロック 最小:
+### 鉄則 (= 累犯 防止、 AskUserQuestion を 叩く 前 に 毎回 self-check)
+
+- **質問 1 つ に つき 専用 md を 新規 に 書く。** 既存 の dense な 集約 md (調査 メモ / triage / open-questions 等) を **指して 済ます の は NG**。 集約 md は 自分 用、 質問 用 に は 必ず その 質問 だけ の 4 ブロック md を 起こす。
+- **md に は 必ず 具体 的 な code 例 を 入れる。** 「問題」 ブロック が 散文 だけ = NG。 最小 case を 数行、 期待 と 実際 を 1 行 コメント で。 例 ナシ の 質問 は 投げない。
+- **順序 を 飛ばさない**: ① 専用 md (4 ブロック + code 例) を 書く → ② TUI に 「1 行 intro + md path」 → ③ AskUserQuestion。 この 3 手 を 毎回。 md を 書かず に いきなり AskUserQuestion = 規範 違反。
+- **一 度 に 1 問**。 次 の 質問 は 前 の 回答 を 記録 し て から。
+
+TUI は 「1 行 intro + md path + AskUserQuestion」。 md は 次 の **4 ブロック だけ**、 各 ブロック 最小:
 
 1. **1 行 intro** — 何の 判断 か (例:「codex P1 ×2、 両方 本物」)
 2. **問題** — 壊れて いる 構文 を **最小 code 例** で。 1 case = 数行、 期待 と 実際 を 1 行 コメント

@@ -212,7 +212,7 @@ export type MidiRingSlot = {
 export type Layout = {
   regions: {
     states: { base: number; slots: Record<string, number> };
-    buffers: { base: number; slots: Record<string, number> };
+    buffers: { base: number; slots: Record<string, number>; lengths: Record<string, number> };
     ioScratch: {
       base: number;
       inputs: Record<string, number>;
@@ -422,9 +422,14 @@ export function layout(graph: CapturedGraph): Layout {
   // superset rule).
   const buffersBase = cursor;
   const bufferSlots: Record<string, number> = {};
+  // Element count per buffer — used by emit to clamp a user `buffer[i]` index
+  // into range (an out-of-range access must saturate, never trap or corrupt an
+  // adjacent region).
+  const bufferLengths: Record<string, number> = {};
   for (const decl of graph.declarations) {
     if (decl.kind === "buffer") {
       bufferSlots[decl.name] = cursor;
+      bufferLengths[decl.name] = decl.size;
       cursor += decl.size * BUFFER_ELEMENT_BYTES[decl.type];
     }
   }
@@ -450,7 +455,11 @@ export function layout(graph: CapturedGraph): Layout {
       (decl.kind === "message" || decl.kind === "event") &&
       decl.fields.some((f) => f.payloadElementType !== undefined)
     ) {
-      const perPayload = decl.payloadCapacity ?? DEFAULT_PAYLOAD_CAPACITY;
+      // Round the per-chunk capacity up to 4 bytes so every chunk base stays
+      // 4-aligned: the main side builds a `Float32Array` view at
+      // contentOffset + chunkIdx * perPayload, which throws RangeError on a
+      // misaligned offset (a custom payloadCapacity need not be a multiple of 4).
+      const perPayload = align4(decl.payloadCapacity ?? DEFAULT_PAYLOAD_CAPACITY);
       // The content keeps each payload in its own chunk, so multiple payloads
       // piling up in the ring before the next drain are not overwritten (§5.2).
       // The number of slots is capped at MAX_CONTENT_SLOTS to keep
@@ -561,7 +570,7 @@ export function layout(graph: CapturedGraph): Layout {
   return {
     regions: {
       states: { base: statesBase, slots: stateSlots },
-      buffers: { base: buffersBase, slots: bufferSlots },
+      buffers: { base: buffersBase, slots: bufferSlots, lengths: bufferLengths },
       ioScratch: { base: ioBase, inputs, outputs, params },
       eventRings: { base: eventRingsBase, slots: eventRingsSlots },
       messageRings: { base: messageRingsBase, slots: messageRingsSlots },

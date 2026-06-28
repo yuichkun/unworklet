@@ -20,6 +20,7 @@
 
 import type { AstNode, CapturedGraph } from "./ast.ts";
 import type { Layout } from "./layout.ts";
+import { formatVerifyViolations, verifyRealtimeSafe } from "./verify.ts";
 import type { BufferElementType, ScalarType } from "../types.ts";
 
 export type BinaryenAPI = (typeof import("binaryen"))["default"];
@@ -142,6 +143,21 @@ const VEC_TEMP_LOCAL = 18;
  * per `tempId`, in `tempId` order, after the fixed block.
  */
 const TEMP_LOCAL_BASE = 19;
+
+/**
+ * Per-emit loop-counter local mapping for nested `forSample` (= Q58). A loop /
+ * `loopCounter` at nesting depth `d` uses local `loopCounterLocal(d)`: depth 0
+ * reuses `LOOP_COUNTER_LOCAL` (= byte-identical to the single-loop case), deeper
+ * levels get fresh i32 locals appended after the mutable-read temp locals
+ * (`nestBase + (d - 1)`). `nestBase` is set per-emit; `maxDepth` (the deepest loop
+ * seen) drives how many extra locals the function declares. Reset at the top of
+ * `emit()`; emit runs synchronously after the binaryen import, so a concurrent
+ * compile cannot interleave. Depth is carried on the AST node (not a runtime
+ * stack), so each case is a pure depth → local computation.
+ */
+const loopEmit = { nestBase: 0, maxDepth: 0 };
+const loopCounterLocal = (depth: number): number =>
+  depth === 0 ? LOOP_COUNTER_LOCAL : loopEmit.nestBase + (depth - 1);
 
 /**
  * The polynomial-approximation math primitives (= sin / cos / tan / tanh / exp /
@@ -304,6 +320,13 @@ export async function emit(
   // onReceive registrations for the same message are merged into one drain loop,
   // and at each slot all registration bodies fire back-to-back in registration
   // order (= Q38-c).
+  // Mutable-read temp locals occupy TEMP_LOCAL_BASE.. ; nested loop-counter
+  // locals (if any) are appended after them. Reset the per-emit loop state before
+  // building the body (the forSample case fills `maxDepth`).
+  const tempLocals = collectTempLocals(graph, binaryen);
+  loopEmit.nestBase = TEMP_LOCAL_BASE + tempLocals.length;
+  loopEmit.maxDepth = 0;
+
   const onReceiveByMessage = new Map<string, AstNode[]>();
   // MIDI inbound handlers grouped per port (= Q38-b: drain before per-block /
   // forSample, registration order Q38-c). One drain loop per port dispatches by
@@ -369,11 +392,24 @@ export async function emit(
       binaryen.i32, // PAYLOAD_CLAMP_LOCAL (= at OOB clamp idx)
       binaryen.v128, // VEC_TEMP_LOCAL (= for SIMD sumLanes)
       // Mutable-read temp locals (= TEMP_LOCAL_BASE +, issue #8, in capture order).
-      ...collectTempLocals(graph, binaryen),
+      ...tempLocals,
+      // Extra i32 loop-counter locals for nested forSample (= depth >= 1, Q58).
+      // Empty when no forSample nests, so the single-loop case stays byte-identical.
+      ...Array.from({ length: Math.max(0, loopEmit.maxDepth - 1) }, () => binaryen.i32),
     ],
     body,
   );
   mod.addFunctionExport("process", "process");
+
+  // Layer A: prove the emitted audio path is realtime-safe by construction
+  // (allocation-free, no unbounded loop, no deliberate trap) before it can ever
+  // become bytes. A violation fails compile() rather than shipping a binary that
+  // could glitch or latch silence on the audio thread.
+  const violations = verifyRealtimeSafe(mod, binaryen);
+  if (violations.length > 0) {
+    mod.dispose();
+    throw new Error(formatVerifyViolations(violations));
+  }
 
   const wasm = mod.emitBinary();
   mod.dispose();
@@ -716,6 +752,44 @@ function bufferElementPtr(
   return mod.i32.add(
     mod.i32.const(base),
     mod.i32.mul(indexExpr, mod.i32.const(BUFFER_ELEMENT_BYTES_EMIT[elementType])),
+  );
+}
+
+/**
+ * Clamp a user buffer index into `[0, length - 1]` so an out-of-range
+ * `buffer[i]` saturates to the nearest element instead of trapping or
+ * reading/writing an adjacent memory region (the audio path must never trap —
+ * a single trap latches the processor to permanent silence). The index is
+ * evaluated exactly once into PAYLOAD_CLAMP_LOCAL (so a side-effecting index is
+ * safe), then rounded by a two-stage select. The local is reused from a fully
+ * bottom-up evaluation, so a nested payload read that also uses it has already
+ * completed before the outer `set`.
+ */
+function clampBufferIndex(
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+  indexExpr: number,
+  length: number,
+): number {
+  const clamp = (): number => mod.local.get(PAYLOAD_CLAMP_LOCAL, binaryen.i32);
+  const upper = (): number => mod.i32.const(Math.max(0, length - 1));
+  return mod.block(
+    null,
+    [
+      mod.local.set(PAYLOAD_CLAMP_LOCAL, indexExpr),
+      // clamp = min(clamp, length - 1)
+      mod.local.set(
+        PAYLOAD_CLAMP_LOCAL,
+        mod.select(mod.i32.gt_s(clamp(), upper()), upper(), clamp()),
+      ),
+      // clamp = max(clamp, 0)
+      mod.local.set(
+        PAYLOAD_CLAMP_LOCAL,
+        mod.select(mod.i32.lt_s(clamp(), mod.i32.const(0)), mod.i32.const(0), clamp()),
+      ),
+      clamp(),
+    ],
+    binaryen.i32,
   );
 }
 
@@ -1107,7 +1181,9 @@ export function emitExpression(
       }
     }
     case "loopCounter":
-      return mod.local.get(LOOP_COUNTER_LOCAL, binaryen.i32);
+      // Read this level's own counter local, so an outer `i` read inside an inner
+      // loop body (= a lower depth) still reads the outer counter.
+      return mod.local.get(loopCounterLocal(node.depth ?? 0), binaryen.i32);
     case "mul":
     case "add":
     case "sub":
@@ -1359,7 +1435,12 @@ export function emitExpression(
         mod,
         base,
         node.elementType,
-        emitExpression(node.index, layout, mod, binaryen),
+        clampBufferIndex(
+          mod,
+          binaryen,
+          emitExpression(node.index, layout, mod, binaryen),
+          layout.regions.buffers.lengths[node.name] ?? 0,
+        ),
       );
       return emitBufferLoad(mod, node.elementType, ptr);
     }
@@ -1574,26 +1655,34 @@ export function emitStatement(
       );
     }
     case "forSample": {
+      // Depth 0 keeps LOOP_COUNTER_LOCAL (byte-identical to the single-loop case);
+      // deeper levels get a fresh local appended after the temp locals.
+      const depth = node.depth ?? 0;
+      const counterLocal = loopCounterLocal(depth);
+      if (depth + 1 > loopEmit.maxDepth) loopEmit.maxDepth = depth + 1;
       const loopBody = node.body.map((s) => emitStatement(s, layout, mod, binaryen));
+      // Depth 0 keeps the bare break/continue labels; nested levels get a per-depth
+      // suffix so a nested loop never aliases the outer targets. Label names are not
+      // in the WASM binary (branches encode as relative depths), so this is
+      // byte-identical to the single-loop form.
+      const brk = depth === 0 ? "break" : `break_${depth}`;
+      const cont = depth === 0 ? "continue" : `continue_${depth}`;
       return mod.block(null, [
-        mod.local.set(LOOP_COUNTER_LOCAL, mod.i32.const(0)),
-        mod.block("break", [
+        mod.local.set(counterLocal, mod.i32.const(0)),
+        mod.block(brk, [
           mod.loop(
-            "continue",
+            cont,
             mod.block(null, [
               mod.br_if(
-                "break",
-                mod.i32.ge_s(mod.local.get(LOOP_COUNTER_LOCAL, binaryen.i32), mod.i32.const(128)),
+                brk,
+                mod.i32.ge_s(mod.local.get(counterLocal, binaryen.i32), mod.i32.const(128)),
               ),
               ...loopBody,
               mod.local.set(
-                LOOP_COUNTER_LOCAL,
-                mod.i32.add(
-                  mod.local.get(LOOP_COUNTER_LOCAL, binaryen.i32),
-                  mod.i32.const(node.stride),
-                ),
+                counterLocal,
+                mod.i32.add(mod.local.get(counterLocal, binaryen.i32), mod.i32.const(node.stride)),
               ),
-              mod.br("continue"),
+              mod.br(cont),
             ]),
           ),
         ]),
@@ -1608,7 +1697,12 @@ export function emitStatement(
         mod,
         base,
         node.elementType,
-        emitExpression(node.index, layout, mod, binaryen),
+        clampBufferIndex(
+          mod,
+          binaryen,
+          emitExpression(node.index, layout, mod, binaryen),
+          layout.regions.buffers.lengths[node.name] ?? 0,
+        ),
       );
       return emitBufferStore(
         mod,

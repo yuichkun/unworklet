@@ -4,7 +4,7 @@
  * Tagged union with `kind` discriminant — exhaustive switch in
  * `analyze` / `layout` / `emit` stages catches missing branches at
  * TypeScript level, and the same shape serializes directly to
- * `dist/<processor>.graph.json` (= `07-vite-plugin.md` §6.3).
+ * `dist/<processor>.graph.json` (= `07-unplugin.md` §6.3).
  *
  * Each stage progressively fills in switch cases for the additional
  * discriminants (= subset → superset).
@@ -21,9 +21,8 @@ import type {
 export type AstNode =
   // `value` is a JS `number` for every scalar type except `'i64'`, whose
   // literal carries a `bigint` (no implicit number lift, Q33-c) and lowers to
-  // `i64.const`. `loose` marks a `num(v)` chain-start literal (Q77) whose type
-  // is resolved from the chain's typed sibling (else stays the fallback `type`).
-  | { kind: "literal"; type: ScalarType; value: number | bigint; loose?: boolean }
+  // `i64.const`.
+  | { kind: "literal"; type: ScalarType; value: number | bigint }
   | { kind: "mul"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "add"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "sub"; type: ScalarType; lhs: AstNode; rhs: AstNode }
@@ -90,8 +89,10 @@ export type AstNode =
       value: AstNode;
     }
   | { kind: "paramAt"; paramName: string; offset: AstNode }
-  | { kind: "loopCounter" }
-  | { kind: "forSample"; stride: number; body: AstNode[] }
+  // `depth` = forSample nesting level (Q58). The capture path always sets it;
+  // omitted ⇒ top level (0), so a hand-built single-loop fixture stays valid.
+  | { kind: "loopCounter"; depth?: number }
+  | { kind: "forSample"; stride: number; depth?: number; body: AstNode[] }
   | { kind: "stateLoad"; type: ScalarType; name: string }
   | { kind: "stateStore"; type: ScalarType; name: string; value: AstNode }
   // sub-rate sub-block inside a `forSample` callback (`01-dsl.md` §9, Q43). Runs

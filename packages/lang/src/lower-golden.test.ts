@@ -337,7 +337,7 @@ const out = audioOutput({ channels: 1, name: "main" });
 const onepole = defineSubgraph((coef: Node<"f32">) => ({
   process: (x: Node<"f32">) => coef * x + (1 - coef) * $prev,
 }));
-const lp = createSubgraph(onepole, f32(0.2), { name: "lp" });
+const lp = instantiate(onepole, f32(0.2), { name: "lp" });
 process(() => {
   forSample((i) => {
     out.ch(0).at(i).write(lp.process(input.ch(0).at(i)));
@@ -357,7 +357,7 @@ process(() => {
         },
       };
     });
-    const lp = core.createSubgraph(onepole, core.f32(0.2), { name: "lp" });
+    const lp = core.instantiate(onepole, core.f32(0.2), { name: "lp" });
     return {
       process: () => {
         core.forSample((i) => {

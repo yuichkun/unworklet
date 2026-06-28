@@ -51,7 +51,7 @@ If the proposal is ratified, unworklet users will be able to build:
 - **Runtime bridge path for per-block inference on large NNs**: run onnxruntime-web on the main thread and connect it to the worklet via SAB / `message<T>`. The framework eliminates the boilerplate.
 - **Type safety**: reflect NN input/output shapes and numeric types in branded `Node<T>` types so the IDE and TS compiler catch typos and shape mismatches.
 - **Preserved portability**: the emitted artifact stays pure WASM, retaining the ability to run in a browser AudioWorklet, Node, a standalone WASM runtime, a native plugin host, or an embedded environment.
-- **Non-disruptive extension of the existing spec**: the v1.0.0 core surface (`defineProcessor`, `Node<T>`, `forSample`, etc.) remains unchanged; everything is contained within a separate package and a vite-plugin extension. No impact on existing user code.
+- **Non-disruptive extension of the existing spec**: the v1.0.0 core surface (`defineProcessor`, `Node<T>`, `forSample`, etc.) remains unchanged; everything is contained within a separate package and a unplugin extension. No impact on existing user code.
 
 ### Non-goals
 
@@ -75,7 +75,7 @@ Three new public packages plus extensions to the existing unworklet packages.
 @unworklet/nam           (new — NAM-specific helpers)
 @unworklet/ddsp          (new — DDSP primitives + loader)
 
-@unworklet/vite-plugin   (existing + ML asset import extension)
+@unworklet/unplugin   (existing + ML asset import extension)
 ```
 
 Responsibilities of each package:
@@ -84,7 +84,7 @@ Responsibilities of each package:
 - **`@unworklet/onnx`**: protobuf parser for ONNX files, lowering of operator graphs to `@unworklet/ml` primitive calls, and a quantization / pruning pipeline.
 - **`@unworklet/nam`**: a direct reader for NAM `.json` / `.nam` files, a high-level helper that expands the LSTM forward pass into the AST, and a one-liner API that makes it possible to import any of the `.nam` models available from the community.
 - **`@unworklet/ddsp`**: DDSP-specific primitives (harmonic additive synth, filtered noise generator, etc.), a trained model loader, and AOT expansion of the control-parameter NN.
-- **`@unworklet/vite-plugin`** (existing, extended): handles `*.onnx` / `*.nam` / `*.ddsp` imports, emits them into WASM at build time, and generates sidecar `.d.ts` files.
+- **`@unworklet/unplugin`** (existing, extended): handles `*.onnx` / `*.nam` / `*.ddsp` imports, emits them into WASM at build time, and generates sidecar `.d.ts` files.
 
 ### 3.1 Criteria for choosing the AOT path vs. the runtime path
 
@@ -264,7 +264,7 @@ const operatorLowerings = {
   Div: (inputs) => div(inputs[0], inputs[1]),
   Tanh: (inputs) => tanh(inputs[0]),
   Sigmoid: (inputs) => sigmoid(inputs[0]),
-  Relu: (inputs) => max(inputs[0], num(0)),
+  Relu: (inputs) => max(inputs[0], 0),
   MatMul: lowerMatMul,
   Gemm: lowerGemm, // general matrix multiply with bias
   Conv: lowerConv1d, // 1D conv (for audio)
@@ -343,7 +343,7 @@ The structural advantage of the AOT path is that the NN forward pass and the `fo
 
 ## 6. Type safety
 
-For each ML asset (ONNX / NAM / DDSP), a sidecar `.d.ts` is generated at build time. The vite-plugin is responsible for this.
+For each ML asset (ONNX / NAM / DDSP), a sidecar `.d.ts` is generated at build time. The unplugin is responsible for this.
 
 For example, importing `marshall.nam` causes `marshall.nam.d.ts` to be generated at build time:
 
@@ -376,13 +376,13 @@ ampModel.metadata.sampleRate; // type = 48000 (literal type)
 
 Stereo vs. mono, input channel count, output count — all are expressed at the type level. unworklet's existing type safety extends consistently into the NN layer.
 
-## 7. Build pipeline integration (vite-plugin extension)
+## 7. Build pipeline integration (unplugin extension)
 
-`@unworklet/vite-plugin` is extended to handle special ML asset imports.
+`@unworklet/unplugin` is extended to handle special ML asset imports.
 
 ```typescript
 // vite.config.ts
-import { unworklet } from "@unworklet/vite-plugin";
+import { unworklet } from "@unworklet/unplugin";
 
 export default {
   plugins: [
@@ -401,7 +401,7 @@ Build pipeline:
 ```
 User code (TS)
   ↓
-@unworklet/vite-plugin
+@unworklet/unplugin
   - detects *.onnx imports → parses with @unworklet/onnx → expands to AST → quantizes
   - detects *.nam imports  → parses with @unworklet/nam  → expands to AST
   - detects *.ddsp imports → parses with @unworklet/ddsp → expands to AST
@@ -465,7 +465,7 @@ The user completes integration with **`OnnxBridge.create(...)` + `.attach(node)`
 
 ## 9. DevTools integration
 
-One **ML inspector panel** is added to unworklet's existing 8 DevTools panels (see `07-vite-plugin.md` §6.1). No changes to the existing v1.0.0 panels.
+One **ML inspector panel** is added to unworklet's existing 8 DevTools panels (see `07-unplugin.md` §6.1). No changes to the existing v1.0.0 panels.
 
 What the ML inspector panel visualizes:
 
@@ -485,7 +485,7 @@ This cannot all be built at once. A phased rollout:
 - New `@unworklet/nam` package
 - Dedicated loader for NAM `.json` / `.nam` files
 - AST expansion of the LSTM forward pass (directly from the NAM-specific format, not via ONNX)
-- Add `*.nam` import handling to the vite-plugin
+- Add `*.nam` import handling to the unplugin
 - Canonical example: a "NAM amp model + simple cabinet IR" plugin
 
 This alone establishes **"a guitar amp written in TypeScript that sounds like a tube Marshall stack."** The community signal potential is strong.
@@ -504,7 +504,7 @@ This alone establishes **"a guitar amp written in TypeScript that sounds like a 
 - ONNX protobuf parser
 - Lowering for ~20 operators (§5.2)
 - Quantization / pruning pipeline
-- `*.onnx` import handling in the vite-plugin
+- `*.onnx` import handling in the unplugin
 
 This makes it possible to load audio models exported to ONNX from Hugging Face broadly.
 
@@ -588,10 +588,10 @@ This RFC is positioned as an additive extension after v1.0.0 ships, and does not
 - Existing primitives (`add`, `mul`, `tanh`, ...) are unchanged
 - Existing declarations (`state`, `buffer`, `param`, `audioInput`, `audioOutput`, `event`, `message`, `midiInput`, `midiOutput`) are unchanged
 - Existing messaging (`SAB Atomics ringbuffer`, `state.publish` rate-gated copy) is unchanged
-- The existing vite-plugin `*.ts` build pipeline is unchanged
+- The existing unplugin `*.ts` build pipeline is unchanged
 - The shapes of existing canonical examples are unchanged
 
-All new additions are self-contained in separate packages and additional import handling in the vite-plugin, with zero impact on existing user code. This is consistent with the forward-compatibility invariant in the v1.0.0 AGENTS.md "Implementation invariant"; if the RFC is ratified, no retraction of v1.0.0 commits is required.
+All new additions are self-contained in separate packages and additional import handling in the unplugin, with zero impact on existing user code. This is consistent with the forward-compatibility invariant in the v1.0.0 AGENTS.md "Implementation invariant"; if the RFC is ratified, no retraction of v1.0.0 commits is required.
 
 ## 15. Adoption / revision / rejection path
 
@@ -601,6 +601,6 @@ This RFC is in the draft stage. The review process:
 2. **Prototype validation**: run a minimal proof of concept for Phase 1 (NAM) to confirm the feasibility of the proposed architecture
 3. **Canonical example consistency check**: verify that the existing `12-canonical-examples.md` does not conflict with the proposed surface (per the AGENTS.md HARD CONTRACT)
 4. **Q entry addition to `decisions-log.md`**: if adopted, migrate the major design decisions (AOT vs. runtime path selection criteria, operator subset, quantization defaults, etc.) into the decisions-log
-5. **Reflection in each component doc**: after adoption, add the relevant sections to `01-dsl.md` / `02-messaging.md` / `07-vite-plugin.md`
+5. **Reflection in each component doc**: after adoption, add the relevant sections to `01-dsl.md` / `02-messaging.md` / `07-unplugin.md`
 
 Even after ratification, if design changes arise during implementation, this RFC itself will be updated to preserve a record of the evolution (maintaining the same audit trail as the existing unworklet decisions-log).

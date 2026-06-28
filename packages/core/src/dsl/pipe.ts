@@ -11,13 +11,9 @@
 import { registerNodeMethod } from "../compile/capture.ts";
 import type { Node, ScalarType } from "../types.ts";
 
-declare module "../types.ts" {
-  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
-  interface Node<T extends ScalarType | "f32x4" = ScalarType> {
-    /** Thread this node through `fn`: `x.pipe(f)` ≡ `f(x)`. */
-    pipe<U extends ScalarType | "f32x4">(fn: (x: Node<T>) => Node<U>): Node<U>;
-  }
-}
+// The `Node<T>.pipe(fn)` method is declared on the `Node` interface in
+// `../types.ts` (co-located with `Node` so it survives dts bundling); this file
+// owns the runtime impl (free function + `registerNodeMethod`).
 
 export function pipe<A>(x: A): A;
 export function pipe<A, B>(x: A, f1: (x: A) => B): B;

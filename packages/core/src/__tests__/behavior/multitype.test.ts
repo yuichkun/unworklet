@@ -14,10 +14,10 @@
 import { expect, test } from "vite-plus/test";
 
 import { audioOutput, state } from "../../dsl/declarations.ts";
-import { bool, f32, f64, i32, i64, num } from "../../dsl/constructors.ts";
+import { bool, f32, f64, i32, i64 } from "../../dsl/constructors.ts";
 import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
 import { forSample } from "../../dsl/loop.ts";
-import { select } from "../../dsl/primitives.ts";
+import { clamp, select } from "../../dsl/primitives.ts";
 import { defineProcessor } from "../../processor.ts";
 import type { Node } from "../../types.ts";
 
@@ -108,6 +108,38 @@ test("i32 clamp: clamp(x, 0, 5) saturates (9→5, -2→0, 3→3)", async () => {
 test("i64 max/min: max(3n, 7n) = 7, min = 3 (integer compare+select)", async () => {
   allEqual(await gen(() => f32(i64(3n).max(i64(7n)))), 7);
   allEqual(await gen(() => f32(i64(3n).min(i64(7n)))), 3);
+});
+
+// "type ⟺ works": a numeric op that mixes two CONCRETE scalar-typed nodes (here
+// i32 and f32) previously lowered an i32 op fed an f32 operand → invalid WASM that
+// only surfaced as a raw validator error (`i32.lt_s expected type i32, found f32`)
+// the author could not act on. It must fail at build with a readable unworklet
+// error that names the op + the mismatched types. (Number literals still lift to a
+// sibling's type — only typed-node-vs-typed-node mismatches error.)
+test("mixing scalar types in clamp fails with a readable unworklet error, not raw WASM", async () => {
+  // The throw may surface either while tracing the body or during compile, so wrap
+  // both in one async assertion. The message must name the op (`clamp`) and the two
+  // mismatched types — NOT leak a raw WASM validator error.
+  await expect(async () => {
+    const proc = defineProcessor(() => {
+      const out = audioOutput({ channels: 1, name: "main" });
+      const iv = state.i32(0).named("iv");
+      const fv = state.f32(0).named("fv");
+      return {
+        process: () => {
+          forSample((s) => {
+            // The mix is ALSO a compile-time type error now (per-type overloads).
+            // Suppress it here to prove the RUNTIME guard still catches a mix that
+            // slips past the types — a `.uwk.ts` under `@ts-nocheck`, an `as` cast.
+            // @ts-expect-error clamp() rejects mixed i32/f32 operands at the type level
+            const gate = clamp(iv.read(), 0, fv.read());
+            out.ch(0).at(s).write(f32(gate));
+          });
+        },
+      };
+    });
+    await render(proc);
+  }).rejects.toThrow(/unworklet:[\s\S]*clamp[\s\S]*(i32|f32)/i);
 });
 
 // abs is meaningful on integers and lowers to select(x < 0, -x, x), not f32.abs.
@@ -431,10 +463,8 @@ test("i64 state round-trip: store 2^40 + 7, load → wrap to i32 = 7", async () 
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// bool constructor + num() chain-start helper (Stage 1d). `bool(v)` lifts a JS
-// boolean to the internal i32 (0/1) representation; `num(v)` is the literal-
-// leading chain helper (Q77) — a numeric `num` is a loose literal whose type is
-// resolved from the chain's typed sibling (else f32), a boolean `num` is a bool.
+// bool constructor (Stage 1d). `bool(v)` lifts a JS boolean to the internal i32
+// (0/1) representation.
 // ─────────────────────────────────────────────────────────────────────────
 
 test("bool(true) drives select → then branch", async () => {
@@ -445,40 +475,6 @@ test("bool(false) drives select → else branch", async () => {
   allEqual(await gen(() => select(bool(false), f32(7), f32(8))), 8);
 });
 
-test("num(1).add(f32(0.5)) = 1.5 (loose literal lifts to the f32 sibling)", async () => {
-  allEqual(await gen(() => num(1).add(f32(0.5))), 1.5);
-});
-
-test("num(1).sub(f32(0.25)).mul(f32(2)) = 1.5 (dry/wet style chain start)", async () => {
-  allEqual(await gen(() => num(1).sub(f32(0.25)).mul(f32(2))), 1.5);
-});
-
-test("num(2).mul(f32(3)) = 6", async () => {
-  allEqual(await gen(() => num(2).mul(f32(3))), 6);
-});
-
-test("num(5).neg() = -5 (no sibling → f32 default)", async () => {
-  allEqual(await gen(() => num(5).neg()), -5);
-});
-
-test("num(true) drives select → then branch (boolean num is a bool node)", async () => {
-  allEqual(await gen(() => select(num(true), f32(1), f32(0))), 1);
-});
-
-test("num(false) drives select → else branch", async () => {
-  allEqual(await gen(() => select(num(false), f32(1), f32(0))), 0);
-});
-
 test("same-type constructor is a no-op: f32(f32(0.5)) = 0.5", async () => {
   allEqual(await gen(() => f32(f32(0.5))), 0.5);
-});
-
-// A `num` whose type is fixed by context (here an i32-typed binding) lifts to
-// that type when it meets a typed sibling: 10 + 5 = 15 in integer arithmetic.
-test("num infers i32 from a typed sibling: num(10).add(i32(5)) = 15", async () => {
-  const out = await gen(() => {
-    const base: Node<"i32"> = num(10);
-    return f32(base.add(i32(5)));
-  });
-  allEqual(out, 15);
 });

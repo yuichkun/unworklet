@@ -25,78 +25,14 @@ import { inferAstType } from "../compile/ast.ts";
 import { isWrappedNode, registerNodeMethod, unwrapAst, wrapAst } from "../compile/capture.ts";
 import type { Node, ScalarType } from "../types.ts";
 
-// ─────────────────────────────────────────────────────────────────────────
-// Node<T> method form (= Q77 chain, declaration merging into `../types.ts`)
-// ─────────────────────────────────────────────────────────────────────────
-
 /**
- * Method type helpers that restrict a primitive to the scalar types it has a
- * meaningful lowering for, typing the member `never` elsewhere so the call site
- * fails to compile (= e.g. `bool(true).add(1)` / `i32(1).sin()` are errors).
- *
- * - `FloatMethod` — float-only math (`sqrt` / `floor` / transcendentals).
- * - `NumericVecBinary` — arithmetic that also lowers for SIMD vec (`add` / `sub`
- *   / `mul` / `div`): numeric scalars + `'f32x4'`.
- * - `NumericBinary` / `NumericUnary` / `NumericClamp` — numeric-scalar-only ops
- *   (`mod` / `min` / `max`; `neg`; `clamp`). `'bool'` / `'f32x4'` are excluded.
- * - `NumericCompare` — comparisons (numeric operands, `Node<'bool'>` result).
+ * Scalar types every numeric primitive (free-function form) accepts. The method
+ * form (`a.add(b)` …) is declared on the `Node` interface in `../types.ts`,
+ * co-located with `Node` so the method surface survives dts bundling into the
+ * published package; this file owns the runtime impl (free functions +
+ * `registerNodeMethod`).
  */
 type NumericScalar = "f32" | "f64" | "i32" | "i64";
-type FloatMethod<T> = T extends "f32" | "f64" ? () => Node<T> : never;
-type NumericVecBinary<T> = T extends NumericScalar | "f32x4"
-  ? (other: Node<T> | number) => Node<T>
-  : never;
-type NumericBinary<T> = T extends NumericScalar ? (other: Node<T> | number) => Node<T> : never;
-type NumericUnary<T> = T extends NumericScalar ? () => Node<T> : never;
-type NumericClamp<T> = T extends NumericScalar
-  ? (lo: Node<T> | number, hi: Node<T> | number) => Node<T>
-  : never;
-type NumericCompare<T> = T extends NumericScalar
-  ? (other: Node<T> | number) => Node<"bool">
-  : never;
-type BoolUnary<T> = T extends "bool" ? () => Node<"bool"> : never;
-
-declare module "../types.ts" {
-  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
-  interface Node<T extends ScalarType | "f32x4" = ScalarType> {
-    // Arithmetic (numeric scalars; add/sub/mul/div also lower for SIMD f32x4).
-    // `bool` is excluded — `bool(true).add(1)` would emit f32 ops on an i32 operand.
-    add: NumericVecBinary<T>;
-    sub: NumericVecBinary<T>;
-    mul: NumericVecBinary<T>;
-    div: NumericVecBinary<T>;
-    mod: NumericBinary<T>;
-    neg: NumericUnary<T>;
-    // Comparison (numeric operands, `Node<'bool'>` result; bool / f32x4 excluded)
-    eq: NumericCompare<T>;
-    lt: NumericCompare<T>;
-    gt: NumericCompare<T>;
-    lte: NumericCompare<T>;
-    gte: NumericCompare<T>;
-    // Logical negation (bool only; `not()` on a numeric `Node` is a type error).
-    not: BoolUnary<T>;
-    // Math — `sqrt` / `floor` / `ceil` / `frac` / transcendentals are float-only
-    // (integer versions are non-sensical: sqrt of an int is non-integral, floor /
-    // ceil of an int is a no-op, frac is 0). The method is typed `never` for
-    // non-float `T` so e.g. `i32(1).sin()` is a compile error (`f32(i32(1)).sin()`
-    // is the explicit path). `abs` is meaningful for every numeric scalar, so it
-    // stays available on `i32` / `i64` (lowered to `select(x < 0, -x, x)`).
-    sin: FloatMethod<T>;
-    cos: FloatMethod<T>;
-    tan: FloatMethod<T>;
-    tanh: FloatMethod<T>;
-    exp: FloatMethod<T>;
-    log: FloatMethod<T>;
-    sqrt: FloatMethod<T>;
-    floor: FloatMethod<T>;
-    ceil: FloatMethod<T>;
-    frac: FloatMethod<T>;
-    abs: NumericUnary<T>;
-    min: NumericBinary<T>;
-    max: NumericBinary<T>;
-    clamp: NumericClamp<T>;
-  }
-}
 
 // ─────────────────────────────────────────────────────────────────────────
 // Type inference + literal lift (= Q33 context-dependent lift)
@@ -104,29 +40,35 @@ declare module "../types.ts" {
 
 type Operand = Node<ScalarType> | number | boolean;
 
-/** A `num(v)` chain-start literal whose type defers to a typed sibling (Q77). */
-function isLooseLiteral(ast: AstNode): ast is Extract<AstNode, { kind: "literal" }> {
-  return ast.kind === "literal" && ast.loose === true;
-}
-
-/**
- * The scalar type of a polymorphic primitive call: the type of the first
- * concretely-typed `Node<T>` operand (a loose `num` literal defers), else
- * `'bool'` when only boolean literals are present, else `'f32'` (the all-loose
- * / all-literal numeric default).
- */
-function operandType(...operands: Operand[]): ScalarType {
-  for (const op of operands) {
-    if (isWrappedNode(op)) {
-      const ast = unwrapAst(op);
-      if (isLooseLiteral(ast)) continue;
-      return inferAstType(ast);
+// Resolve the shared scalar type of a homogeneous op's operands. A mix of two
+// CONCRETELY-typed nodes (e.g. i32 and f32) is REJECTED here with a readable error:
+// it used to lower an op of one type fed an operand of the other → invalid WASM that
+// surfaced only as a raw validator message ("i32.lt_s expected type i32, found f32")
+// the author could not act on. Number literals stay flexible (they lift to a typed
+// sibling), so only typed-node-vs-typed-node mismatches throw. ("type ⟺ works".)
+function sameType(op: string, ...operands: Operand[]): ScalarType {
+  let resolved: ScalarType | null = null;
+  for (const operand of operands) {
+    if (!isWrappedNode(operand)) continue;
+    const ast = unwrapAst(operand);
+    const t = inferAstType(ast);
+    if (resolved === null) resolved = t;
+    else if (resolved !== t) {
+      throw new Error(
+        `unworklet: ${op}() got operands of different scalar types (${resolved} and ${t}). ` +
+          `A numeric op needs one type — cast explicitly, e.g. f32(x) or i32(x).`,
+      );
     }
   }
-  for (const op of operands) {
-    if (typeof op === "boolean") return "bool";
-  }
+  if (resolved !== null) return resolved;
+  for (const operand of operands) if (typeof operand === "boolean") return "bool";
   return "f32";
+}
+
+// Single-/uniform-operand resolution; delegates to `sameType` (unary ops pass one
+// operand and can't mismatch, so they use the generic label).
+function operandType(...operands: Operand[]): ScalarType {
+  return sameType("operation", ...operands);
 }
 
 /** Lift a JS number to an AST literal of type `t` (Q33 literal lift). */
@@ -151,12 +93,7 @@ function lift(value: Operand, t: ScalarType): AstNode {
   if (typeof value === "number") {
     return numberLiteral(value, t);
   }
-  const ast = unwrapAst(value);
-  // A type-undetermined loose num literal is re-lifted to the type `t` resolved from a sibling operand.
-  if (isLooseLiteral(ast)) {
-    return numberLiteral(Number(ast.value), t);
-  }
-  return ast;
+  return unwrapAst(value);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -187,63 +124,83 @@ const vecBinaryOrNull = (
 // instructions and produce invalid WASM). In the registration, `this` is typed as
 // f32 at the type level (operandType / vecBinaryOrNull read the actual type, so vec
 // / f64 work too).
+export function add(a: Node<"f32"> | number, b: Node<"f32"> | number): Node<"f32">;
+export function add(a: Node<"i32"> | number, b: Node<"i32"> | number): Node<"i32">;
+export function add(a: Node<"f64"> | number, b: Node<"f64"> | number): Node<"f64">;
+export function add(a: Node<"i64"> | number, b: Node<"i64"> | number): Node<"i64">;
 export function add<T extends NumericScalar = "f32">(
   a: Node<T> | number,
   b: Node<T> | number,
 ): Node<T> {
   const vec = vecBinaryOrNull("vecAdd", a, b);
   if (vec !== null) return wrapAst(vec) as Node<T>;
-  const t = operandType(a, b);
+  const t = sameType("add", a, b);
   return wrapAst<T>({ kind: "add", type: t, lhs: lift(a, t), rhs: lift(b, t) });
 }
 registerNodeMethod("add", function (this: Node<"f32">, other: Node<"f32"> | number): Node<"f32"> {
   return add(this, other);
 });
 
+export function sub(a: Node<"f32"> | number, b: Node<"f32"> | number): Node<"f32">;
+export function sub(a: Node<"i32"> | number, b: Node<"i32"> | number): Node<"i32">;
+export function sub(a: Node<"f64"> | number, b: Node<"f64"> | number): Node<"f64">;
+export function sub(a: Node<"i64"> | number, b: Node<"i64"> | number): Node<"i64">;
 export function sub<T extends NumericScalar = "f32">(
   a: Node<T> | number,
   b: Node<T> | number,
 ): Node<T> {
   const vec = vecBinaryOrNull("vecSub", a, b);
   if (vec !== null) return wrapAst(vec) as Node<T>;
-  const t = operandType(a, b);
+  const t = sameType("sub", a, b);
   return wrapAst<T>({ kind: "sub", type: t, lhs: lift(a, t), rhs: lift(b, t) });
 }
 registerNodeMethod("sub", function (this: Node<"f32">, other: Node<"f32"> | number): Node<"f32"> {
   return sub(this, other);
 });
 
+export function mul(a: Node<"f32"> | number, b: Node<"f32"> | number): Node<"f32">;
+export function mul(a: Node<"i32"> | number, b: Node<"i32"> | number): Node<"i32">;
+export function mul(a: Node<"f64"> | number, b: Node<"f64"> | number): Node<"f64">;
+export function mul(a: Node<"i64"> | number, b: Node<"i64"> | number): Node<"i64">;
 export function mul<T extends NumericScalar = "f32">(
   a: Node<T> | number,
   b: Node<T> | number,
 ): Node<T> {
   const vec = vecBinaryOrNull("vecMul", a, b);
   if (vec !== null) return wrapAst(vec) as Node<T>;
-  const t = operandType(a, b);
+  const t = sameType("mul", a, b);
   return wrapAst<T>({ kind: "mul", type: t, lhs: lift(a, t), rhs: lift(b, t) });
 }
 registerNodeMethod("mul", function (this: Node<"f32">, other: Node<"f32"> | number): Node<"f32"> {
   return mul(this, other);
 });
 
+export function div(a: Node<"f32"> | number, b: Node<"f32"> | number): Node<"f32">;
+export function div(a: Node<"i32"> | number, b: Node<"i32"> | number): Node<"i32">;
+export function div(a: Node<"f64"> | number, b: Node<"f64"> | number): Node<"f64">;
+export function div(a: Node<"i64"> | number, b: Node<"i64"> | number): Node<"i64">;
 export function div<T extends NumericScalar = "f32">(
   a: Node<T> | number,
   b: Node<T> | number,
 ): Node<T> {
   const vec = vecBinaryOrNull("vecDiv", a, b);
   if (vec !== null) return wrapAst(vec) as Node<T>;
-  const t = operandType(a, b);
+  const t = sameType("div", a, b);
   return wrapAst<T>({ kind: "div", type: t, lhs: lift(a, t), rhs: lift(b, t) });
 }
 registerNodeMethod("div", function (this: Node<"f32">, other: Node<"f32"> | number): Node<"f32"> {
   return div(this, other);
 });
 
+export function mod(a: Node<"f32"> | number, b: Node<"f32"> | number): Node<"f32">;
+export function mod(a: Node<"i32"> | number, b: Node<"i32"> | number): Node<"i32">;
+export function mod(a: Node<"f64"> | number, b: Node<"f64"> | number): Node<"f64">;
+export function mod(a: Node<"i64"> | number, b: Node<"i64"> | number): Node<"i64">;
 export function mod<T extends NumericScalar = "f32">(
   a: Node<T> | number,
   b: Node<T> | number,
 ): Node<T> {
-  const t = operandType(a, b);
+  const t = sameType("mod", a, b);
   return wrapAst<T>({ kind: "mod", type: t, lhs: lift(a, t), rhs: lift(b, t) });
 }
 registerNodeMethod("mod", function (this: Node<"f32">, other: Node<"f32"> | number): Node<"f32"> {
@@ -266,55 +223,75 @@ registerNodeMethod("neg", function (this: Node<"f32">): Node<"f32"> {
 // Comparisons take numeric operands → Node<'bool'>. bool / f32x4 operands are
 // excluded. In the registration, `this` is typed as f32 at the type level
 // (operandType reads the actual type).
+export function eq(a: Node<"f32"> | number, b: Node<"f32"> | number): Node<"bool">;
+export function eq(a: Node<"i32"> | number, b: Node<"i32"> | number): Node<"bool">;
+export function eq(a: Node<"f64"> | number, b: Node<"f64"> | number): Node<"bool">;
+export function eq(a: Node<"i64"> | number, b: Node<"i64"> | number): Node<"bool">;
 export function eq<T extends NumericScalar = "f32">(
   a: Node<T> | number,
   b: Node<T> | number,
 ): Node<"bool"> {
-  const t = operandType(a, b);
+  const t = sameType("eq", a, b);
   return wrapAst<"bool">({ kind: "eq", type: t, lhs: lift(a, t), rhs: lift(b, t) });
 }
 registerNodeMethod("eq", function (this: Node<"f32">, other: Node<"f32"> | number): Node<"bool"> {
   return eq(this, other);
 });
 
+export function lt(a: Node<"f32"> | number, b: Node<"f32"> | number): Node<"bool">;
+export function lt(a: Node<"i32"> | number, b: Node<"i32"> | number): Node<"bool">;
+export function lt(a: Node<"f64"> | number, b: Node<"f64"> | number): Node<"bool">;
+export function lt(a: Node<"i64"> | number, b: Node<"i64"> | number): Node<"bool">;
 export function lt<T extends NumericScalar = "f32">(
   a: Node<T> | number,
   b: Node<T> | number,
 ): Node<"bool"> {
-  const t = operandType(a, b);
+  const t = sameType("lt", a, b);
   return wrapAst<"bool">({ kind: "lt", type: t, lhs: lift(a, t), rhs: lift(b, t) });
 }
 registerNodeMethod("lt", function (this: Node<"f32">, other: Node<"f32"> | number): Node<"bool"> {
   return lt(this, other);
 });
 
+export function gt(a: Node<"f32"> | number, b: Node<"f32"> | number): Node<"bool">;
+export function gt(a: Node<"i32"> | number, b: Node<"i32"> | number): Node<"bool">;
+export function gt(a: Node<"f64"> | number, b: Node<"f64"> | number): Node<"bool">;
+export function gt(a: Node<"i64"> | number, b: Node<"i64"> | number): Node<"bool">;
 export function gt<T extends NumericScalar = "f32">(
   a: Node<T> | number,
   b: Node<T> | number,
 ): Node<"bool"> {
-  const t = operandType(a, b);
+  const t = sameType("gt", a, b);
   return wrapAst<"bool">({ kind: "gt", type: t, lhs: lift(a, t), rhs: lift(b, t) });
 }
 registerNodeMethod("gt", function (this: Node<"f32">, other: Node<"f32"> | number): Node<"bool"> {
   return gt(this, other);
 });
 
+export function lte(a: Node<"f32"> | number, b: Node<"f32"> | number): Node<"bool">;
+export function lte(a: Node<"i32"> | number, b: Node<"i32"> | number): Node<"bool">;
+export function lte(a: Node<"f64"> | number, b: Node<"f64"> | number): Node<"bool">;
+export function lte(a: Node<"i64"> | number, b: Node<"i64"> | number): Node<"bool">;
 export function lte<T extends NumericScalar = "f32">(
   a: Node<T> | number,
   b: Node<T> | number,
 ): Node<"bool"> {
-  const t = operandType(a, b);
+  const t = sameType("lte", a, b);
   return wrapAst<"bool">({ kind: "lte", type: t, lhs: lift(a, t), rhs: lift(b, t) });
 }
 registerNodeMethod("lte", function (this: Node<"f32">, other: Node<"f32"> | number): Node<"bool"> {
   return lte(this, other);
 });
 
+export function gte(a: Node<"f32"> | number, b: Node<"f32"> | number): Node<"bool">;
+export function gte(a: Node<"i32"> | number, b: Node<"i32"> | number): Node<"bool">;
+export function gte(a: Node<"f64"> | number, b: Node<"f64"> | number): Node<"bool">;
+export function gte(a: Node<"i64"> | number, b: Node<"i64"> | number): Node<"bool">;
 export function gte<T extends NumericScalar = "f32">(
   a: Node<T> | number,
   b: Node<T> | number,
 ): Node<"bool"> {
-  const t = operandType(a, b);
+  const t = sameType("gte", a, b);
   return wrapAst<"bool">({ kind: "gte", type: t, lhs: lift(a, t), rhs: lift(b, t) });
 }
 registerNodeMethod("gte", function (this: Node<"f32">, other: Node<"f32"> | number): Node<"bool"> {
@@ -423,32 +400,60 @@ registerNodeMethod("frac", function (this: Node<"f32">): Node<"f32"> {
 // min/max/clamp cover numeric scalars only (bool / f32x4 excluded; integers emit as
 // compare+select). In the registration, `this` is typed as f32 at the type level
 // (operandType reads the actual type).
+export function min(a: Node<"f32"> | number, b: Node<"f32"> | number): Node<"f32">;
+export function min(a: Node<"i32"> | number, b: Node<"i32"> | number): Node<"i32">;
+export function min(a: Node<"f64"> | number, b: Node<"f64"> | number): Node<"f64">;
+export function min(a: Node<"i64"> | number, b: Node<"i64"> | number): Node<"i64">;
 export function min<T extends NumericScalar = "f32">(
   a: Node<T> | number,
   b: Node<T> | number,
 ): Node<T> {
-  const t = operandType(a, b);
+  const t = sameType("min", a, b);
   return wrapAst<T>({ kind: "min", type: t, lhs: lift(a, t), rhs: lift(b, t) });
 }
 registerNodeMethod("min", function (this: Node<"f32">, other: Node<"f32"> | number): Node<"f32"> {
   return min(this, other);
 });
+export function max(a: Node<"f32"> | number, b: Node<"f32"> | number): Node<"f32">;
+export function max(a: Node<"i32"> | number, b: Node<"i32"> | number): Node<"i32">;
+export function max(a: Node<"f64"> | number, b: Node<"f64"> | number): Node<"f64">;
+export function max(a: Node<"i64"> | number, b: Node<"i64"> | number): Node<"i64">;
 export function max<T extends NumericScalar = "f32">(
   a: Node<T> | number,
   b: Node<T> | number,
 ): Node<T> {
-  const t = operandType(a, b);
+  const t = sameType("max", a, b);
   return wrapAst<T>({ kind: "max", type: t, lhs: lift(a, t), rhs: lift(b, t) });
 }
 registerNodeMethod("max", function (this: Node<"f32">, other: Node<"f32"> | number): Node<"f32"> {
   return max(this, other);
 });
+export function clamp(
+  x: Node<"f32"> | number,
+  lo: Node<"f32"> | number,
+  hi: Node<"f32"> | number,
+): Node<"f32">;
+export function clamp(
+  x: Node<"i32"> | number,
+  lo: Node<"i32"> | number,
+  hi: Node<"i32"> | number,
+): Node<"i32">;
+export function clamp(
+  x: Node<"f64"> | number,
+  lo: Node<"f64"> | number,
+  hi: Node<"f64"> | number,
+): Node<"f64">;
+export function clamp(
+  x: Node<"i64"> | number,
+  lo: Node<"i64"> | number,
+  hi: Node<"i64"> | number,
+): Node<"i64">;
 export function clamp<T extends NumericScalar = "f32">(
   x: Node<T> | number,
   lo: Node<T> | number,
   hi: Node<T> | number,
 ): Node<T> {
-  const t = operandType(x, lo, hi);
+  const t = sameType("clamp", x, lo, hi);
   return wrapAst<T>({
     kind: "clamp",
     type: t,
@@ -471,15 +476,30 @@ registerNodeMethod(
 // Overloads keep a boolean branch valid only for a *bool* select (the canonical
 // `select(isMe, true, gate.read())` pattern) and reject a boolean mixed with a
 // numeric branch: that mix silently lifts both branches to bool and mistypes the
-// result as `Node<numeric>` ("type ⟺ works" breaks). The numeric overload is
-// listed first so loose `num(...)` branches resolve to a numeric select; the bool
-// overload only wins when a branch is literally `boolean`. The loose impl
-// signature below stays a supertype of both so the body still compiles.
-export function select<T extends "f32" | "f64" | "i32" | "i64" = "f32">(
+// result as `Node<numeric>` ("type ⟺ works" breaks). The numeric overloads are
+// listed first so a number branch resolves to a numeric select; the bool overload
+// only wins when a branch is literally `boolean`. The wide impl signature below
+// stays a supertype of all so the body still compiles.
+export function select(
   cond: Node<"bool"> | boolean,
-  then: Node<T> | number,
-  else_: Node<T> | number,
-): Node<T>;
+  then: Node<"f32"> | number,
+  else_: Node<"f32"> | number,
+): Node<"f32">;
+export function select(
+  cond: Node<"bool"> | boolean,
+  then: Node<"i32"> | number,
+  else_: Node<"i32"> | number,
+): Node<"i32">;
+export function select(
+  cond: Node<"bool"> | boolean,
+  then: Node<"f64"> | number,
+  else_: Node<"f64"> | number,
+): Node<"f64">;
+export function select(
+  cond: Node<"bool"> | boolean,
+  then: Node<"i64"> | number,
+  else_: Node<"i64"> | number,
+): Node<"i64">;
 export function select(
   cond: Node<"bool"> | boolean,
   then: Node<"bool"> | boolean,
@@ -494,7 +514,7 @@ export function select<T extends ScalarType>(
   // downstream inference / emission pick the right type. Literal branches lift
   // to the type of whichever branch is a `Node<T>` (Q33 context-dependent
   // lift); both-literal falls back to `'f32'` (numeric) or `'bool'`.
-  const branchType = operandType(then, else_);
+  const branchType = sameType("select", then, else_);
   return wrapAst<T>({
     kind: "select",
     type: branchType,

@@ -8,20 +8,20 @@ plumbing, no hand-written WASM.
 > **For AI agents / LLMs:** the call forms below are exact and complete — do
 > **not** invent alternatives or guess method names. Scalar state read/write is
 > `.read()` / `.write(v)`; main↔worklet messaging is the `event` family
-> (`event<T>({ from | to: "main" })`, `event.midi`). When unsure, copy a tested
-> example: `examples/01-stereo-gain` and `docs/12-canonical-examples.md`. The
-> source is the source of truth.
+> (`event<T>({ from | to: "main" })`, `event.midi`). When unsure, copy one of the
+> exact examples in this README rather than guessing. The source is the source of
+> truth.
 
 ```bash
 npm install @unworklet/core
 # Almost always paired with the Vite plugin to load processors:
-npm install -D @unworklet/vite-plugin
+npm install -D @unworklet/unplugin
 ```
 
 ## A complete processor
 
-This is `examples/01-stereo-gain` (canonical Ex 1) — a stereo gain with a
-per-channel peak meter. It compiles and renders under the test suite.
+A stereo gain with a per-channel peak meter — an effect that reads an input and
+writes an output:
 
 ```ts
 import { audioInput, audioOutput, defineProcessor, forSample, param, state } from "@unworklet/core";
@@ -55,11 +55,11 @@ export const stereoGain = defineProcessor(() => {
 });
 ```
 
-Load and run it in the browser (with `@unworklet/vite-plugin`):
+Load and run it in the browser (with `@unworklet/unplugin`):
 
 ```ts
 import { createNode } from "@unworklet/core";
-import { stereoGain } from "./processor.ts?worklet"; // the `?worklet` query is required
+import stereoGain from "./processor.ts?worklet"; // the `?worklet` query is required (default import)
 
 const ctx = new AudioContext();
 const node = await createNode(ctx, stereoGain);
@@ -67,6 +67,42 @@ source.connect(node.inputs.main);
 node.outputs.main.connect(ctx.destination);
 node.params.gain.value = 2.0;
 node.state.meterL.subscribe((db) => (meterEl.style.height = `${db}px`));
+```
+
+`?worklet` hands you the file's `defineProcessor` export as the **default import** —
+you write `export const stereoGain = …` in the processor file and import it as the
+default here; the plugin bridges the two, so don't add `export default`. (`source`
+and `meterEl` are your own input node and DOM element.) One browser rule: an
+`AudioContext` starts **suspended**, so call `ctx.resume()` from a user gesture (a
+click) — otherwise you wire everything up and hear nothing.
+
+## Generate a tone
+
+A processor needs no input. This is a 440 Hz sine, synthesized from a phasor —
+so the body takes `ctx` to read the host `sampleRate` (the phase step depends on
+it), and writes a **mono** output through `.ch(0)`:
+
+```ts
+import { audioOutput, defineProcessor, forSample, state } from "@unworklet/core";
+
+const TWO_PI = 2 * Math.PI;
+
+export const sine = defineProcessor((ctx) => {
+  const out = audioOutput({ channels: 1, name: "main" });
+  const phase = state.f32(0); // a 0..1 phasor
+  const step = 440 / ctx.sampleRate; // cycles advanced per sample
+
+  return {
+    process: () => {
+      forSample((i) => {
+        const next = phase.read().add(step).frac(); // advance, wrap to [0, 1)
+        phase.write(next);
+        const sample = next.mul(TWO_PI).sin().mul(0.2); // 0.2 amplitude
+        out.ch(0).at(i).write(sample);
+      });
+    },
+  };
+});
 ```
 
 ## The DSL surface (exact forms)
@@ -88,10 +124,20 @@ event.midi({ from: "main", name })  // inbound MIDI; .onEvent("noteOn", e => ...
 event.midi({ to: "main", name })    // outbound MIDI; .emitIf(cond, midiEvent)
 ```
 
+In an inbound-MIDI handler — `keys.onEvent("noteOn", e => …)` — the event `e`
+carries `note`, `velocity`, `channel`, `atSample` as **`Node<"i32">`** (graph
+values, not JS numbers). Reach the oscillator by writing them into `state` in the
+handler and reading that `state` back in `process`; lift one into float math with
+`f32(e.note)`. A worklet→main `event` has only `.emitIf(cond, payload)` (no bare
+`emit`), so "fire on note start" is: set a flag `state` in the handler, then
+`out.emitIf(flag.read(), …)` in `process`.
+
 `.named("x")` (quick) and `.expose({ name, snapshot, publish })` (full) both name
 a slot for main-thread access. `publish` (state/buffer, `{ rateFps }`) streams a
-value to `node.state.<name>.subscribe(...)`. `snapshot: "persistent"` includes it
-in `node.snapshot()`. Naming is required for `publish`/`persistent`.
+value to `node.state.<name>.subscribe(...)`. A named scalar `state` is **persistent
+by default** — captured in `node.snapshot()` and offline `result.state`; pass
+`snapshot: "transient"` to opt a named slot out. Buffers are the reverse (transient
+unless `snapshot: "persistent"`). Naming is required for `publish`/`persistent`.
 
 ### Read / write (the part most often guessed wrong)
 
@@ -117,7 +163,9 @@ pipe                               // pipe(x, f, g) or x.pipe(f).pipe(g)
 ```
 
 Both forms work: `mul(a, b)` ≡ `a.mul(b)`; `tanh(x)` ≡ `x.tanh()`. Scalar
-literals: `f32(0.5)`, `i32(1)`, `i64(1n)`, `bool(true)`, `num(x)` (loose f32).
+constructors: `f32(0.5)`, `i32(1)`, `i64(1n)`, `bool(true)`.
+Each also **casts a `Node`**: `f32(node)` reinterprets any scalar `Node` to
+`Node<"f32">` — the `i32`→`f32` bridge float math needs (e.g. on a MIDI field).
 
 ### The loop
 
@@ -132,9 +180,9 @@ forSample.byN(4, (i) => {
 
 ## Public API (beyond the DSL)
 
-- `defineProcessor(body)` / `defineSubgraph(body)` / `createSubgraph(decl, ...args)` — compose graphs.
-- `compile(processor, opts?)` — graph → `{ wasm, graph, memory, diagnostics, schemaHash }`.
-- `createNode(context, processor, options?)` — main-thread `UnworkletNode<C>` (`node`, `inputs`, `outputs`, `params`, `state`, `events`, `midi`, `snapshot`, `restore`, `onError`, `dispose`).
+- `defineProcessor(body)` / `defineSubgraph(body)` / `instantiate(decl, ...args)` — compose graphs. `defineProcessor` already returns a ready `CompiledProcessor` — hand it straight to `createNode` or `renderOffline` (`@unworklet/offline`).
+- `compile(processor, opts?)` — graph → `{ wasm, driver, graph, memory, diagnostics, schemaHash }` (`driver` instantiates the WASM; the offline renderer uses it). You rarely call this yourself; the Vite plugin and the offline renderer compile for you.
+- `createNode(context, processor, options?)` — main-thread `UnworkletNode<C>` (`node`, `inputs`, `outputs`, `params`, `state`, `events`, `midi`, `snapshot`, `restore`, `onError`, `diagnostics`, `dispose`). To name the handle's type up front — a class field or `let` you assign later — write `UnworkletNode<typeof import("./x.processor.ts?worklet")>`: it takes the `?worklet` import directly, so every surface stays typed without a `createNode` round-trip.
 - `replaceProcessor(oldNode, newProcessor)` — hot-swap a running processor.
 - `inspect(blob)` — decode a snapshot without an `AudioContext`.
 - Snapshot codec: `encodeSnapshot` / `decodeSnapshot` / `inspectSnapshot` / `runMigrations` / `SNAPSHOT_VERSION`.
@@ -149,7 +197,7 @@ processor that compiles is realtime-safe.
 
 ## Related packages
 
-- `@unworklet/vite-plugin` — load processors via `?worklet`, plus DevTools.
+- `@unworklet/unplugin` — load processors via `?worklet`, plus DevTools.
 - `@unworklet/lang` — write processors in `.uwk.ts` sugar (infix operators, index access).
 - `@unworklet/offline` — render a processor to PCM in Node/Bun/Deno.
 - `@unworklet/test` — audio/event/MIDI assertions for Vitest.

@@ -29,7 +29,7 @@ This RFC proposes a thin authoring layer for end-users:
    - Bare-`state` auto-load in `Node<T>` positions (write stays explicit `.store(v)`).
    - `if` statement sugar with `Node<'bool'>` condition (3 accepted shapes).
    - `$prev` contextual keyword inside `defineSubgraph` method bodies for IIR feedback.
-4. **Variable-name → `name` auto-derive** — `const cutoff = param.f32({...})` auto-injects `name: 'cutoff'` from the binding (= spec already requires a name per Q76; the compiler fills it in). Same for `audioInput`, `audioOutput`, `event`, `message`, `midiInput`, `midiOutput`. For name-optional helpers (`state` / `buffer` / `createSubgraph`), the `.named()` / `.expose({})` marker preserves the plain vs named distinction.
+4. **Variable-name → `name` auto-derive** — `const cutoff = param.f32({...})` auto-injects `name: 'cutoff'` from the binding (= spec already requires a name per Q76; the compiler fills it in). Same for `audioInput`, `audioOutput`, `event`, `message`, `midiInput`, `midiOutput`. For name-optional helpers (`state` / `buffer` / `instantiate`), the `.named()` / `.expose({})` marker preserves the plain vs named distinction.
 5. **Ambient default I/O** — when no `audioInput` / `audioOutput` is declared, default stereo `input` / `out` bindings are visible in `<process>`. Explicit declaration overrides via TS shadowing.
 6. **Pipe composition** — `.pipe(f)` method on `Node<T>` + `pipe(x, ...fs)` free function. Pure TS, no parser extension, improves chain readability for user-defined L1 helpers.
 
@@ -44,13 +44,13 @@ Three sites from `12-canonical-examples.md` show where the chain DSL accumulates
 **Ex 2 — Audio EQ Cookbook peaking coefficients (`12-canonical-examples.md` §2):**
 
 ```typescript
-const b0Raw = num(1).add(alpha.mul(A));
+const b0Raw = add(1, alpha.mul(A));
 const b1Raw = cosw0.mul(-2);
-const b2Raw = num(1).sub(alpha.mul(A));
-const inv = num(1).div(num(1).add(alpha.div(A)));
+const b2Raw = sub(1, alpha.mul(A));
+const inv = div(1, add(1, alpha.div(A)));
 ```
 
-The math is `1 + α·A`, `-2·cos(ω0)`, `1 - α·A`, `1 / (1 + α/A)`. The chain form reads bottom-up; the textbook reads top-down. `num(1)` is required at every literal-leading chain start because JS literals carry no methods.
+The math is `1 + α·A`, `-2·cos(ω0)`, `1 - α·A`, `1 / (1 + α/A)`. The chain form reads bottom-up; the textbook reads top-down.
 
 **Ex 4 — Lookahead limiter inner loop (`12-canonical-examples.md` §4):**
 
@@ -164,15 +164,23 @@ Tier C is not a separate file format — it's "Tier B without an `audioInput` / 
 - Start in Tier C: write a `process(...)` macro call, no I/O declarations needed.
 - As the processor grows, declare named state / params (= still Tier C if `audioInput` / `audioOutput` defaults are accepted).
 - When custom I/O channel counts are needed, declare `audioInput` / `audioOutput` explicitly (= moves to Tier B).
-- When publishing to npm, transcribe to Tier A `.ts` for the canonical library shape.
+- When publishing to npm, ship a reusable subgraph as its own `.uwk.ts` library module (no `process()`), or transcribe to Tier A `.ts` for a sugar-free shape.
 
 Tier A → B → C is **strictly opt-in sugar**; B → A is mechanical desugaring (= the Vite plugin can emit the lowered `.ts` for inspection or for an "eject" workflow).
 
 ### Interoperability
 
-A Tier B `.uwk.ts` file can `import` Tier A `.ts` modules (= L1 helpers, `defineSubgraph` values published as a library). The TS LSP resolves the imported types normally; the lowering layer doesn't intervene.
+A `.uwk.ts` file can `import` from other modules — Tier A `.ts` (L1 helpers,
+`defineSubgraph` values) and other `.uwk.ts` library modules alike. The TS LSP
+resolves the imported types normally; the lowering layer keeps the import at module
+scope.
 
-A Tier A `.ts` file **cannot** import from a `.uwk.ts` source file directly — `.uwk.ts` is a processor file that resolves to a `?worklet` URL via the Vite plugin, not a regular module. (Future: `eject` flow that emits a Tier A `.ts` from a Tier B `.uwk.ts` for npm publishing.)
+A `.uwk.ts` resolves two ways by content. A **processor** file (one `process(...)`
+macro) resolves to a `?worklet` URL via the plugin, not a regular module. A
+**library module** (no `process()`, exporting `defineSubgraph(...)` / constants) is
+an ordinary module that any `.ts` or `.uwk.ts` imports directly with the explicit
+`.uwk.ts` specifier. A subgraph library can therefore ship as `.uwk.ts`, not only as
+transcribed Tier A `.ts`.
 
 ## Surface — what's new
 
@@ -358,7 +366,7 @@ const onepole = defineSubgraph((coef: Node<"f32">) => {
 });
 ```
 
-**Precision inference** at generic call sites — for `defineSubgraph(<P extends 'f32' | 'f64'>(coef: Node<P>) => ({ process: (input: Node<P>) => ... }))`, `$prev` is `Node<P>` and the injected slot is `state.<P>(0)`. The slot factory uses the concrete `P` resolved at `createSubgraph(...)` time. See §"Open Questions" O5.
+**Precision inference** at generic call sites — for `defineSubgraph(<P extends 'f32' | 'f64'>(coef: Node<P>) => ({ process: (input: Node<P>) => ... }))`, `$prev` is `Node<P>` and the injected slot is `state.<P>(0)`. The slot factory uses the concrete `P` resolved at `instantiate(...)` time. See §"Open Questions" O5.
 
 ### S9. Variable-name → `name` auto-derive
 
@@ -379,16 +387,16 @@ A module-top-level `const X = ...` declaration whose RHS is a unworklet declarat
 
 **Name-optional helpers — auto-derive triggers when an explicit "name me" marker is present but unfilled.** The marker preserves the plain-vs-named distinction: plain stays worklet-private, `.named()` no-arg or `.expose({...without name})` switches to named with auto-derived identity.
 
-| Declaration                                                     | Effect                                                                                  |
-| --------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `const X = state.<T>(init)` (no chain)                          | **plain** — worklet-private, no snapshot, no main-side identity (unchanged from v1.0.0) |
-| `const X = state.<T>(init).named()` (no-arg)                    | named — inject `'X'` as argument                                                        |
-| `const X = state.<T>(init).expose({...without name...})`        | named — inject `name: 'X'` into expose options                                          |
-| `const X = buffer.<T>({...})` (no chain)                        | **plain** — worklet-private (unchanged)                                                 |
-| `const X = buffer.<T>({...}).named()`                           | named — inject `'X'`                                                                    |
-| `const X = buffer.<T>({...}).expose({...without name...})`      | named — inject `name: 'X'`                                                              |
-| `const X = createSubgraph(decl, ...args)` (no options arg)      | inject `, { name: 'X' }`                                                                |
-| `const X = createSubgraph(decl, ...args, {...without name...})` | inject `name: 'X'` into options                                                         |
+| Declaration                                                  | Effect                                                                                  |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| `const X = state.<T>(init)` (no chain)                       | **plain** — worklet-private, no snapshot, no main-side identity (unchanged from v1.0.0) |
+| `const X = state.<T>(init).named()` (no-arg)                 | named — inject `'X'` as argument                                                        |
+| `const X = state.<T>(init).expose({...without name...})`     | named — inject `name: 'X'` into expose options                                          |
+| `const X = buffer.<T>({...})` (no chain)                     | **plain** — worklet-private (unchanged)                                                 |
+| `const X = buffer.<T>({...}).named()`                        | named — inject `'X'`                                                                    |
+| `const X = buffer.<T>({...}).expose({...without name...})`   | named — inject `name: 'X'`                                                              |
+| `const X = instantiate(decl, ...args)` (no options arg)      | inject `, { name: 'X' }`                                                                |
+| `const X = instantiate(decl, ...args, {...without name...})` | inject `name: 'X'` into options                                                         |
 
 **API addition needed for name-optional helpers:** `.named()` no-arg overload added to `01-dsl.md` §3 State / Buffer chain — see §"Open Questions" O2.
 
@@ -538,17 +546,9 @@ These are visible when no `const input` / `const out` is in scope. When the user
 
 **Tier C limits** — ambient defaults cover the single most common case (stereo in / stereo out). Multi-port, sidechain, multi-bus processors require explicit declarations.
 
-### S13. `num()` removed
-
-The literal-leading chain helper `num(v)` (`01-dsl.md` §2.2) is **not** ambient in `.uwk.ts` files and not importable from the lowered virtual module's `@unworklet/core` ambient set.
-
-Reason: with operator sugar, `1 - mix` lifts the `1` literal automatically via the existing Q33 / Q36-a rules. `num()` was a workaround for "JS literals carry no methods" — no longer needed.
-
-`@unworklet/core` continues exporting `num()` for Tier A `.ts` consumers.
-
 ## Capture mechanics
 
-The Vite plugin (`@unworklet/vite-plugin`) gains a `.uwk.ts` loader that transforms the file via AST passes and routes the result through the existing `compile()` invocation pipeline (`07-vite-plugin.md` §2).
+The Vite plugin (`@unworklet/unplugin`) gains a `.uwk.ts` loader that transforms the file via AST passes and routes the result through the existing `compile()` invocation pipeline (`07-unplugin.md` §2).
 
 ### Lowering pipeline
 
@@ -734,13 +734,13 @@ function peakingCoeffs(freq: Node<"f32">, q: Node<"f32">, gainDb: Node<"f32">, s
   const sinw0 = w0.sin();
   const alpha = sinw0.div(q.mul(2));
 
-  const b0Raw = num(1).add(alpha.mul(A));
+  const b0Raw = add(1, alpha.mul(A));
   const b1Raw = cosw0.mul(-2);
-  const b2Raw = num(1).sub(alpha.mul(A));
-  const a0Raw = num(1).add(alpha.div(A));
+  const b2Raw = sub(1, alpha.mul(A));
+  const a0Raw = add(1, alpha.div(A));
   const a1Raw = cosw0.mul(-2);
-  const a2Raw = num(1).sub(alpha.div(A));
-  const inv = num(1).div(a0Raw);
+  const a2Raw = sub(1, alpha.div(A));
+  const inv = div(1, a0Raw);
   return {
     b0: b0Raw.mul(inv),
     b1: b1Raw.mul(inv),
@@ -867,7 +867,7 @@ return {
       .mul(Math.LN10 * 0.05)
       .exp();
     const releaseSamples = releaseMs.at(0).mul(ctx.sampleRate / 1000);
-    const releaseCoef = num(1).sub(num(-1).div(releaseSamples).exp());
+    const releaseCoef = sub(1, div(-1, releaseSamples).exp());
     const attackCoef = 1.0;
     const headBlock = dlyHead.load();
 
@@ -1077,7 +1077,7 @@ declare function message<T>(opts?: {...}): MessageDecl<T>;
 declare function midiInput(opts?: {...}): MidiInputHandle;
 declare function midiOutput(opts?: {...}): MidiOutputHandle;
 declare function defineSubgraph<...>(...): SubgraphDecl<...>;
-declare function createSubgraph<...>(...): ...;
+declare function instantiate<...>(...): ...;
 declare function forSample(...): void;
 declare function process(callback: () => void): void;
 declare function migrations(list: Migration[]): void;
@@ -1126,7 +1126,7 @@ This RFC is **strictly additive** to the v1.0.0 surface (`10-roadmap.md` §1 acc
 - **Q22-b** (single form for sample-offset primitives): preserved. Index access (`audioIn.left[i]`) is sugar that lowers to the same single form (`.at(i)`). The "no sugar" rationale targeted runtime-distinguishable forms that hid `i`; here `i` stays visible at every call site.
 - **Q22-c** (three error layers): preserved. The RFC adds L1 TypeScript-error coverage for some scope violations (= ambient-aware scope checks) that today only surface at L2 (`scope-violation`). No layer removed.
 - **Q22-d** (Rust-style error template + stable IDs): preserved. New stable error IDs added by this RFC follow the same template.
-- **Q33 + Q36-a** (context-dependent literal lift): preserved. Operator sugar uses the existing rule unchanged. `num()` becomes unnecessary at chain starts; the rule itself is identical.
+- **Q33 + Q36-a** (context-dependent literal lift): preserved. Operator sugar uses the existing rule unchanged.
 - **Q37** (no output coverage requirement, source-order last-write-wins): preserved.
 - **Q43** (`everyNSamples` delivered as 2nd `forSample` callback arg): preserved.
 - **Q49 / Q74** (variable-length payloads, sysex emit surface): preserved.
@@ -1140,7 +1140,7 @@ This RFC is **strictly additive** to the v1.0.0 surface (`10-roadmap.md` §1 acc
 2. **`Node<T>.pipe<U>(fn: (x: Node<T>) => Node<U>): Node<U>`** method — `01-dsl.md` §2 addition via declaration merging.
 3. **`pipe(x, ...fs)`** free function — `@unworklet/core` export with variadic-overload typing.
 4. **`@unworklet/lang` package** — `09-repo-structure.md` §2.4 addition (= new 5th public package).
-5. **`.uwk.ts` file format** — `07-vite-plugin.md` §2 / §3 addition: the Vite plugin globs for `**/*.uwk.ts`, applies the lowering pipeline, and emits the same artifact set as `.ts` processors.
+5. **`.uwk.ts` file format** — `07-unplugin.md` §2 / §3 addition: the Vite plugin globs for `**/*.uwk.ts`, applies the lowering pipeline, and emits the same artifact set as `.ts` processors.
 6. **`'use unworklet/strict'` directive** — reserved name; not implemented in v1.1.0 first cut. Future opt-out for ambient default I/O.
 
 ### Canonical examples integrity rule (`AGENTS.md`)
@@ -1198,7 +1198,7 @@ Recommendation: (b). Single directive isn't critical; can land additively withou
 
 For `defineSubgraph(<P extends 'f32' | 'f64'>(coef: Node<P>) => ({ process: (input: Node<P>) => ... }))`, `$prev` must be typed `Node<P>` and the injected slot must be `state.<P>(0)`. Implementation:
 
-- The slot factory uses the concrete `P` resolved at `createSubgraph(...)` time.
+- The slot factory uses the concrete `P` resolved at `instantiate(...)` time.
 - If the method has no `Node<T>` argument from which `P` can be inferred, emit a graph-capture-time error pointing at the explicit `state.<T>(0)` form.
 
 Confirmation needed during implementation.
@@ -1357,7 +1357,7 @@ The proposal introduces one new public package:
 
 Existing packages affected:
 
-- **`@unworklet/vite-plugin`** — gains a `.uwk.ts` loader that invokes `@unworklet/lang` for the lowering pipeline. Output artifact set unchanged (`07-vite-plugin.md` §6.3).
+- **`@unworklet/unplugin`** — gains a `.uwk.ts` loader that invokes `@unworklet/lang` for the lowering pipeline. Output artifact set unchanged (`07-unplugin.md` §6.3).
 - **`@unworklet/core`** — additive: `not(b)` primitive (`01-dsl.md` §2.1), `Node<T>.pipe()` method (§2.x), `pipe()` free function (§2.x export). No breaking changes.
 - **`@unworklet/test`** — no change.
 - **`@unworklet/offline`** — no change.
@@ -1370,12 +1370,12 @@ Existing packages affected:
 - `00-foundations.md` §5 — realtime-safety invariants preserved by this RFC.
 - `01-dsl.md` §§1-10 — Tier A chain DSL surface this RFC lowers to.
 - `01-dsl.md` §5.5.1 — declaration scope vs expression scope canonical definitions.
-- `01-dsl.md` §5.6 — `defineSubgraph` / `createSubgraph` (= `$prev` keyword's host).
+- `01-dsl.md` §5.6 — `defineSubgraph` / `instantiate` (= `$prev` keyword's host).
 - `01-dsl.md` §8.1 — slot identity rules + named chain semantics (= S9 auto-derive target).
 - `03-compiler.md` §1, §2, §7 — compile pipeline + source-map propagation.
 - `03-compiler.md` §2.4 — three error layers preserved by this RFC.
 - `03-compiler.md` §2.6 — stable error IDs (this RFC adds new IDs additively).
-- `07-vite-plugin.md` §2, §3, §5 — Vite plugin integration point.
+- `07-unplugin.md` §2, §3, §5 — Vite plugin integration point.
 - `09-repo-structure.md` §2.1, §2.4 — public package layout for the proposed `@unworklet/lang`.
 - `10-roadmap.md` §1, §2 — v1.0.0 acceptance criteria + 14-phase roadmap (= unaffected).
 - `12-canonical-examples.md` — production examples this RFC translates as comparisons.

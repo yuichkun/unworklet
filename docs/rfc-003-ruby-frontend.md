@@ -38,7 +38,7 @@ This is the architectural core of this RFC.
 
 - The v1.0.0 spec (`docs/`)
 - `@unworklet/core` — WASM emission, runtime, public DSL surface
-- `@unworklet/vite-plugin` — build pipeline integration
+- `@unworklet/unplugin` — build pipeline integration
 - `@unworklet/offline` — headless render
 - `@unworklet/test` — test matchers
 - `@unworklet/lang` (proposed in RFC-001) — `.uwk.ts` AST rewriting + TS LSP plugin
@@ -156,7 +156,7 @@ github.com/yuichkun/unworklet-rb              # separate repo (= proposed naming
 ```
 @unworklet/ruby (this library)
 ├── @unworklet/core         (= peer / regular dep, ^x.y.z)
-├── @unworklet/vite-plugin  (= optional peer for build integration)
+├── @unworklet/unplugin  (= optional peer for build integration)
 ├── opal-compiler           (= Ruby-to-JS compiler, ~1 MB)
 └── @opal/runtime           (= Opal's runtime support, included via opal-compiler)
 ```
@@ -180,7 +180,7 @@ The Opal-compiled JavaScript executes at build time inside Vite. The output is a
 
 ```javascript
 // In a user's Vite config
-import unworklet from "@unworklet/vite-plugin";
+import unworklet from "@unworklet/unplugin";
 import unworkletRuby from "@unworklet/ruby/vite";
 
 export default {
@@ -196,9 +196,9 @@ The Ruby plugin:
 1. Globs `**/*.uwk.rb`.
 2. Invokes Opal to transpile each file to JavaScript.
 3. Resolves the result as a regular `?worklet` import.
-4. Delegates to `@unworklet/vite-plugin` for WASM compilation / artifact emission.
+4. Delegates to `@unworklet/unplugin` for WASM compilation / artifact emission.
 
-The plugin chains transparently; `@unworklet/vite-plugin` never knows the Ruby plugin exists.
+The plugin chains transparently; `@unworklet/unplugin` never knows the Ruby plugin exists.
 
 ## Ruby DSL design
 
@@ -268,7 +268,7 @@ Lowers to:
 
 ```javascript
 const onepole = defineSubgraph((coef) => ({
-  process: (input) => coef.mul(input).add(num(1).sub(coef).mul(prev)),
+  process: (input) => coef.mul(input).add(sub(1, coef).mul(prev)),
 }));
 ```
 
@@ -718,7 +718,7 @@ For `@unworklet/ruby` to work as a downstream library, `@unworklet/core` must ex
 | ------------------------------------------------ | -------------------- | -------------------- |
 | `defineProcessor`                                | Build processor      | ✓                    |
 | `defineSubgraph`                                 | Build subgraph       | ✓                    |
-| `createSubgraph`                                 | Instantiate subgraph | ✓                    |
+| `instantiate`                                    | Instantiate subgraph | ✓                    |
 | `audioInput` / `audioOutput`                     | Declarations         | ✓                    |
 | `state` / `buffer` / `param`                     | Declarations         | ✓                    |
 | `event` / `message` / `midiInput` / `midiOutput` | Declarations         | ✓                    |
@@ -794,7 +794,7 @@ Confirm during PoC implementation.
 
 `@unworklet/ruby` exports its compiled `CompiledProcessor<C>` to TS consumers. The `.d.ts` declares the wrapped processor's `C` channel count and named slot map for `node.params.<name>`, `node.state.<name>`, etc.
 
-Need: the library tooling generates `.d.ts` files alongside the JS output, matching the structure of `@unworklet/vite-plugin`'s typed client emission.
+Need: the library tooling generates `.d.ts` files alongside the JS output, matching the structure of `@unworklet/unplugin`'s typed client emission.
 
 ### O8 — Source map fidelity
 

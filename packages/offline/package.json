@@ -2,7 +2,23 @@
   "name": "@unworklet/offline",
   "version": "0.0.0",
   "description": "Pure-JS offline renderer for `@unworklet/core` processors (Node / Bun / Deno).",
+  "keywords": [
+    "audio",
+    "dsp",
+    "offline",
+    "render",
+    "testing",
+    "wav",
+    "webassembly"
+  ],
+  "homepage": "https://github.com/yuichkun/unworklet#readme",
+  "bugs": "https://github.com/yuichkun/unworklet/issues",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yuichkun/unworklet.git",
+    "directory": "packages/offline"
+  },
   "files": [
     "dist"
   ],
@@ -16,6 +32,13 @@
     "./package.json": "./package.json"
   },
   "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.mts",
+        "import": "./dist/index.mjs"
+      },
+      "./package.json": "./package.json"
+    },
     "access": "public"
   },
   "scripts": {
@@ -31,12 +54,15 @@
   "devDependencies": {
     "@types/node": "catalog:",
     "@typescript/native-preview": "7.0.0-dev.20260509.2",
-    "@unworklet/core": "workspace:*",
+    "@unworklet/core": "workspace:^",
     "bumpp": "^11.1.0",
     "typescript": "catalog:",
     "vite-plus": "catalog:"
   },
   "peerDependencies": {
-    "@unworklet/core": "workspace:*"
+    "@unworklet/core": "workspace:^"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

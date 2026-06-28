@@ -101,6 +101,22 @@ export default defineConfig({
           ],
         },
       },
+      {
+        // `@unworklet/test` is a published vitest-extension library: its shipped
+        // src must import the consumer's own `vitest` (peer) so `expect.extend`
+        // attaches to the consumer's `expect`. The vite-plus import rule rewrites
+        // `vitest` → `vite-plus/test` (a fork), which breaks that for stock-vitest
+        // consumers, so disable it for these two shipped files only.
+        files: ["packages/test/src/index.ts", "packages/test/src/extend.ts"],
+        rules: { "vite-plus/prefer-vite-plus-imports": "off" },
+      },
+      {
+        // `@unworklet/unplugin`'s peer is plain `vite`, so its public type must
+        // reference `vite` (a stock-vite consumer has no `vite-plus`). Don't let
+        // the import rule rewrite that `vite` type import to the fork.
+        files: ["packages/unplugin/src/index.ts"],
+        rules: { "vite-plus/prefer-vite-plus-imports": "off" },
+      },
     ],
   },
   run: {

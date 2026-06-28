@@ -1,5 +1,5 @@
 /**
- * Black-box tests for L2 subgraph (defineSubgraph / createSubgraph) (`01-dsl.md` §5.6, Q53/54).
+ * Black-box tests for L2 subgraph (defineSubgraph / instantiate) (`01-dsl.md` §5.6, Q53/54).
  *
  * A subgraph is a reusable component with internal state. Tests verify independent state +
  * per-instance args across multiple instances by observing output PCM (pure audio-thread).
@@ -12,7 +12,7 @@ import { audioOutput, state } from "../../dsl/declarations.ts";
 import { f32 } from "../../dsl/constructors.ts";
 import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
 import { forSample } from "../../dsl/loop.ts";
-import { createSubgraph, defineProcessor, defineSubgraph } from "../../processor.ts";
+import { instantiate, defineProcessor, defineSubgraph } from "../../processor.ts";
 import type { Node } from "../../types.ts";
 
 import { render } from "./render.ts";
@@ -34,8 +34,8 @@ const accum = defineSubgraph((step: number) => {
 test("subgraph: two instances maintain independent state and per-instance args", async () => {
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 2, name: "main" });
-    const a = createSubgraph(accum, 1); // +1 / tick
-    const b = createSubgraph(accum, 10); // +10 / tick
+    const a = instantiate(accum, 1); // +1 / tick
+    const b = instantiate(accum, 10); // +10 / tick
     return {
       process: () => {
         forSample((i) => {
@@ -71,8 +71,8 @@ test("subgraph: user-named internal state does not collide across instances due 
   });
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 2, name: "main" });
-    const a = createSubgraph(named, 1, { name: "a" });
-    const b = createSubgraph(named, 10, { name: "b" });
+    const a = instantiate(named, 1, { name: "a" });
+    const b = instantiate(named, 10, { name: "b" });
     return {
       process: () => {
         forSample((i) => {
@@ -103,8 +103,8 @@ test("subgraph: user-named internal buffer does not collide across instances due
   });
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 2, name: "main" });
-    const a = createSubgraph(cell, 3, { name: "a" });
-    const b = createSubgraph(cell, 7, { name: "b" });
+    const a = instantiate(cell, 3, { name: "a" });
+    const b = instantiate(cell, 7, { name: "b" });
     return {
       process: () => {
         forSample((i) => {
@@ -141,19 +141,19 @@ test("L1 helper: pure TS function over Node is inlined inside forSample", async 
   for (let k = 0; k < SAMPLES_PER_BLOCK; k++) expect(outputs.main![0]![k]).toBe(5);
 });
 
-// §5.6.4 / Q34: createSubgraph(...) and declarations (state.* / buffer.* / ...) are
+// §5.6.4 / Q34: instantiate(...) and declarations (state.* / buffer.* / ...) are
 // restricted to declaration scope (top of defineProcessor / defineSubgraph body, before
 // return). Calling them in expression scope (forSample / everyNSamples / handler body)
 // throws at graph-capture time. defineProcessor runs process() during capture, so the
 // throw surfaces at defineProcessor call time.
-test("createSubgraph called inside forSample (expression scope) throws at graph-capture time (§5.6.4/Q34)", () => {
+test("instantiate called inside forSample (expression scope) throws at graph-capture time (§5.6.4/Q34)", () => {
   expect(() =>
     defineProcessor(() => {
       const out = audioOutput({ channels: 1, name: "main" });
       return {
         process: () => {
           forSample((i) => {
-            createSubgraph(accum, 1); // expression scope = NG
+            instantiate(accum, 1); // expression scope = NG
             out.ch(0).at(i).write(f32(0));
           });
         },
@@ -181,7 +181,7 @@ test("state declaration called inside forSample (expression scope) throws at gra
 // §8.1 / Q41: Creating a subgraph that contains named-factory slots (user-named / persistent /
 // publish) without an instance name causes the slot's snapshot path to use an auto prefix
 // '__sg_N/...' that depends on instantiation order (positional drift) → graph-capture-time error.
-test("createSubgraph without an instance name throws when the subgraph contains named slots (§8.1/Q41)", () => {
+test("instantiate without an instance name throws when the subgraph contains named slots (§8.1/Q41)", () => {
   const namedSlot = defineSubgraph((step: number) => {
     const acc = state.named("acc").f32(0); // user-named slot requires a stable snapshot path
     return {
@@ -192,7 +192,7 @@ test("createSubgraph without an instance name throws when the subgraph contains 
   expect(() =>
     defineProcessor(() => {
       const out = audioOutput({ channels: 1, name: "main" });
-      const a = createSubgraph(namedSlot, 1); // no instance name + named slot = error
+      const a = instantiate(namedSlot, 1); // no instance name + named slot = error
       return {
         process: () => {
           forSample((i) => {
@@ -209,7 +209,7 @@ test("subgraph with only anonymous slots can be created without an instance name
   // accum uses state.f32(0) = anonymous slot = no snapshot path drift = no name required.
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const a = createSubgraph(accum, 5); // no instance name + anonymous slot = ok
+    const a = instantiate(accum, 5); // no instance name + anonymous slot = ok
     return {
       process: () => {
         forSample((i) => {
@@ -223,19 +223,19 @@ test("subgraph with only anonymous slots can be created without an instance name
   expect(outputs.main![0]![0]).toBe(5); // first sample: +5/tick
 });
 
-// createSubgraph(subgraph, ...lambdaArgs, options?): when the outer lambda takes a
-// {name}-shaped config object, createSubgraph(sg, {name:"osc"}) must bind that object as
+// instantiate(subgraph, ...lambdaArgs, options?): when the outer lambda takes a
+// {name}-shaped config object, instantiate(sg, {name:"osc"}) must bind that object as
 // the lambda argument (no options present). Runtime must match the type (type⟺behavior).
 // Distinction from the options form ({name} only) is made by arity: only when
 // rest.length > lambda arity is the trailing argument treated as options.
-test("createSubgraph: lambda taking a {name} config object is not mistaken for instance options (type⟺behavior)", async () => {
+test("instantiate: lambda taking a {name} config object is not mistaken for instance options (type⟺behavior)", async () => {
   const labeled = defineSubgraph((cfg: { name: string }) => {
     const len = cfg.name.length; // build-time number; observable in output if config was delivered
     return { value: () => f32(len) };
   });
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const sg = createSubgraph(labeled, { name: "osc" }); // "osc".length=3, bound as lambda arg not options
+    const sg = instantiate(labeled, { name: "osc" }); // "osc".length=3, bound as lambda arg not options
     return {
       process: () => {
         forSample((i) => out.ch(0).at(i).write(sg.value()));

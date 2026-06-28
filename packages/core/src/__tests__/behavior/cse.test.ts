@@ -13,7 +13,7 @@ import { expect, test } from "vite-plus/test";
 
 import "../../dsl/primitives.ts"; // side-effect: register `Node<T>` method forms
 import { audioInput, audioOutput, state } from "../../dsl/declarations.ts";
-import { f32, num, select, type Node, type State } from "../../index.ts";
+import { f32, mul, select, type Node, type State } from "../../index.ts";
 import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
 import { forSample } from "../../dsl/loop.ts";
 import { defineProcessor } from "../../processor.ts";
@@ -53,9 +53,9 @@ test("biquad Direct Form II Transposed impulse response matches a JS reference",
     a2 = 0.05;
 
   function biquadDFIIT(x: Node<"f32">, z1: State<"f32">, z2: State<"f32">): Node<"f32"> {
-    const y = num(b0).mul(x).add(z1.read());
-    const z1n = num(b1).mul(x).add(z2.read()).sub(num(a1).mul(y));
-    const z2n = num(b2).mul(x).sub(num(a2).mul(y));
+    const y = mul(b0, x).add(z1.read());
+    const z1n = mul(b1, x).add(z2.read()).sub(mul(a1, y));
+    const z2n = mul(b2, x).sub(mul(a2, y));
     z1.write(z1n);
     z2.write(z2n);
     return y;
@@ -166,7 +166,7 @@ test("state slots are seeded with their declared initial value (every scalar typ
           out
             .ch(3)
             .at(i)
-            .write(select(sb.read(), num(1), num(0)));
+            .write(select(sb.read(), 1, 0));
         });
       },
     };

@@ -32,13 +32,13 @@ export type CaptureContext = {
    */
   everyNSamplesCount: number;
   /**
-   * Name prefix active only while a `createSubgraph` instance body runs
+   * Name prefix active only while a `instantiate` instance body runs
    * (= §5.6, Q53). User-named state / buffer inside the subgraph are
    * prefixed with `'<instance>/'` to avoid collisions across multiple
    * instances (= `'lpfL/z1'`). Empty `''` outside subgraphs.
    */
   namePrefix: string;
-  /** Auto-name numbering for `createSubgraph` instances (= when the name is omitted; deterministic within the graph). */
+  /** Auto-name numbering for `instantiate` instances (= when the name is omitted; deterministic within the graph). */
   subgraphCount: number;
   /**
    * Sequence number for the temp locals used to pin mutable reads
@@ -48,6 +48,13 @@ export type CaptureContext = {
    * tempId`). Monotonically increasing from 0 in capture order.
    */
   tempCount: number;
+  /**
+   * Current `forSample` nesting depth (= Q58 nested loops). 0 at the top level,
+   * incremented for the duration of each `forSample` callback. Carried as `depth`
+   * on the `forSample` node and on every `loopCounter` read of its `i`, so emit
+   * gives each nesting level its own WASM loop-counter local.
+   */
+  loopDepth: number;
 };
 
 let currentCapture: CaptureContext | null = null;
@@ -61,6 +68,7 @@ export function newCaptureContext(): CaptureContext {
     namePrefix: "",
     subgraphCount: 0,
     tempCount: 0,
+    loopDepth: 0,
   };
 }
 
@@ -120,7 +128,7 @@ export function addDeclaration(decl: Declaration): void {
   const ctx = getCurrentCapture();
   // A declaration is only legal in declaration scope (= the top of a defineProcessor /
   // defineSubgraph body, before the return). Declaring state.* / buffer.* / param.* /
-  // event / message / createSubgraph in expression scope (= inside a forSample /
+  // event / message / instantiate in expression scope (= inside a forSample /
   // forSample.byN / everyNSamples / onReceive / onEvent handler body, while currentLoopBody
   // is set) is a graph-capture-time error per §5.6.4 / Q34 (= it would break the static
   // reservation of the state region and the build-time determination of the instance count).

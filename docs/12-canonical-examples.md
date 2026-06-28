@@ -112,7 +112,8 @@ export const stereoGain = defineProcessor(() => {
 // main thread
 import { createNode } from "@unworklet/core";
 
-const audioContext = new AudioContext();
+// ?worklet bakes its coefficients at 48 kHz, so run the context at 48 kHz.
+const audioContext = new AudioContext({ sampleRate: 48000 });
 const node = await createNode(audioContext, stereoGain);
 
 source.connect(node.inputs.main);
@@ -141,13 +142,15 @@ window.addEventListener("beforeunload", () => {
 import {
   defineProcessor,
   defineSubgraph,
-  createSubgraph,
+  instantiate,
   audioInput,
   audioOutput,
   param,
   state,
   forSample,
-  num,
+  add,
+  sub,
+  div,
   type Node,
   type State,
 } from "@unworklet/core";
@@ -186,14 +189,14 @@ function peakingCoeffs(
   const sinw0 = w0.sin();
   const alpha = sinw0.div(q.mul(2));
 
-  const b0Raw = num(1).add(alpha.mul(A));
+  const b0Raw = add(1, alpha.mul(A));
   const b1Raw = cosw0.mul(-2);
-  const b2Raw = num(1).sub(alpha.mul(A));
-  const a0Raw = num(1).add(alpha.div(A));
+  const b2Raw = sub(1, alpha.mul(A));
+  const a0Raw = add(1, alpha.div(A));
   const a1Raw = cosw0.mul(-2);
-  const a2Raw = num(1).sub(alpha.div(A));
+  const a2Raw = sub(1, alpha.div(A));
 
-  const inv = num(1).div(a0Raw);
+  const inv = div(1, a0Raw);
   return {
     b0: b0Raw.mul(inv),
     b1: b1Raw.mul(inv),
@@ -204,7 +207,7 @@ function peakingCoeffs(
 }
 
 // L2 subgraph: one mono peaking-EQ band. Owns its own z1/z2 state pair.
-// Lambda argument `sr` is bound at createSubgraph time; method arguments
+// Lambda argument `sr` is bound at instantiate time; method arguments
 // (input / freq / q / gainDb) are per-call.
 const peakingBand = defineSubgraph((sr: number) => {
   const z1 = state.f32(0);
@@ -250,12 +253,12 @@ export const threeBandEQ = defineProcessor((ctx) => {
     .named("hiGain");
 
   // Six independent peakingBand instances (3 bands × 2 channels), allocated in declaration scope.
-  const lowL = createSubgraph(peakingBand, ctx.sampleRate);
-  const midL = createSubgraph(peakingBand, ctx.sampleRate);
-  const hiL = createSubgraph(peakingBand, ctx.sampleRate);
-  const lowR = createSubgraph(peakingBand, ctx.sampleRate);
-  const midR = createSubgraph(peakingBand, ctx.sampleRate);
-  const hiR = createSubgraph(peakingBand, ctx.sampleRate);
+  const lowL = instantiate(peakingBand, ctx.sampleRate);
+  const midL = instantiate(peakingBand, ctx.sampleRate);
+  const hiL = instantiate(peakingBand, ctx.sampleRate);
+  const lowR = instantiate(peakingBand, ctx.sampleRate);
+  const midR = instantiate(peakingBand, ctx.sampleRate);
+  const hiR = instantiate(peakingBand, ctx.sampleRate);
 
   return {
     process: () => {
@@ -425,7 +428,8 @@ import {
   forSample,
   event,
   SAMPLES_PER_BLOCK,
-  num,
+  sub,
+  div,
   select,
   type Node,
   type State,
@@ -485,7 +489,7 @@ export const lookaheadLimiter = defineProcessor((ctx) => {
         .mul(Math.LN10 * 0.05)
         .exp();
       const releaseSamples = releaseMs.at(0).mul(ctx.sampleRate / 1000);
-      const releaseCoef = num(1).sub(num(-1).div(releaseSamples).exp());
+      const releaseCoef = sub(1, div(-1, releaseSamples).exp());
       const attackCoef = 1.0; // instantaneous attack — limiter style
 
       const headBlock = dlyHead.read();
@@ -583,7 +587,7 @@ import {
   state,
   forSample,
   event,
-  num,
+  div,
   select,
   f32,
   i32,
@@ -687,7 +691,7 @@ export const granularSampler = defineProcessor((ctx) => {
       });
 
       // Per-block: derive grain spawn interval from grainHz.
-      const samplesPerSpawn = num(ctx.sampleRate).div(grainDensity.at(0));
+      const samplesPerSpawn = div(ctx.sampleRate, grainDensity.at(0));
       const grainSamples = grainSize.at(0).mul(ctx.sampleRate / 1000);
 
       forSample((i) => {
@@ -1025,8 +1029,8 @@ export const convolutionReverb = defineProcessor(
     // Snapshot migration chain — when older blob versions show up, lift them
     // forward declaratively. Each entry's from/to is the schema hash computed
     // by `@unworklet/core`'s `compile` function and emitted to
-    // `dist/<processor>.schema-hash.json` by `@unworklet/vite-plugin` as part
-    // of the bundler-integration metadata artifact set (= 07-vite-plugin §6.3).
+    // `dist/<processor>.schema-hash.json` by `@unworklet/unplugin` as part
+    // of the bundler-integration metadata artifact set (= 07-unplugin §6.3).
     // The mono-IR shape stored a single buffer named 'ir'; the stereo-IR shape
     // splits it into irL/irR; the latest schema adds dryGain.
     migrations: [
@@ -1097,7 +1101,7 @@ if (stored) {
 import {
   defineProcessor,
   defineSubgraph,
-  createSubgraph,
+  instantiate,
   audioInput,
   audioOutput,
   param,
@@ -1105,7 +1109,8 @@ import {
   forSample,
   event,
   SAMPLES_PER_BLOCK,
-  num,
+  sub,
+  div,
   select,
   f32,
   i32,
@@ -1116,7 +1121,7 @@ import {
 const NUM_VOICES = 8;
 
 // L2 voice subgraph: simple 1-osc synth voice with ADSR envelope.
-// Lambda argument `sr` is bound at createSubgraph time; method arguments are per-call.
+// Lambda argument `sr` is bound at instantiate time; method arguments are per-call.
 const synthVoice = defineSubgraph((sr: number) => {
   const phase = state.f32(0);
   const env = state.f32(0);
@@ -1129,8 +1134,8 @@ const synthVoice = defineSubgraph((sr: number) => {
       releaseS: Node<"f32">,
     ) => {
       // Envelope coefficients (k-rate inputs).
-      const aCoef = num(1).sub(num(-1).div(attackS.mul(sr)).exp());
-      const rCoef = num(1).sub(num(-1).div(releaseS.mul(sr)).exp());
+      const aCoef = sub(1, div(-1, attackS.mul(sr)).exp());
+      const rCoef = sub(1, div(-1, releaseS.mul(sr)).exp());
 
       // Update envelope sample-by-sample.
       const target = select(gate, velocity, 0);
@@ -1205,7 +1210,7 @@ export const polySynth = defineProcessor((ctx) => {
   // Eight independent synthVoice instances, allocated in declaration scope.
   const voices = [];
   for (let s = 0; s < NUM_VOICES; s++) {
-    voices.push(createSubgraph(synthVoice, ctx.sampleRate));
+    voices.push(instantiate(synthVoice, ctx.sampleRate));
   }
 
   return {
@@ -1233,11 +1238,7 @@ export const polySynth = defineProcessor((ctx) => {
 
       // Per-block: derive the sidechain envelope's attack/release coefficients.
       const aCoef = 0.05;
-      const rCoef = num(1).sub(
-        num(-1)
-          .div(0.2 * ctx.sampleRate)
-          .exp(),
-      );
+      const rCoef = sub(1, div(-1, 0.2 * ctx.sampleRate).exp());
 
       const wpStart = wavePtr.read();
 
@@ -1248,7 +1249,7 @@ export const polySynth = defineProcessor((ctx) => {
         scEnv.write(scPeak.sub(scEnv.read()).mul(scC).add(scEnv.read()));
 
         // Duck factor: 1.0 - duckAmount * scEnv.
-        const duck = num(1).sub(duckAmount.at(0).mul(scEnv.read()));
+        const duck = sub(1, duckAmount.at(0).mul(scEnv.read()));
 
         // Sum voices.
         let mix = f32(0);
@@ -1376,7 +1377,8 @@ export const sysexBridge = defineProcessor((ctx) => {
 
 import { createNode } from "@unworklet/core";
 
-const audioCtx = new AudioContext();
+// ?worklet bakes its coefficients at 48 kHz, so run the context at 48 kHz.
+const audioCtx = new AudioContext({ sampleRate: 48000 });
 const node = await createNode(audioCtx, sysexBridge);
 audioCtx.resume();
 
@@ -1405,7 +1407,7 @@ node.state.targetId.subscribe((id) => deviceIdUI.set(id));
 
 ## 10. Live coding REPL bridge
 
-> **Framework surface vs consumer recipe**: the unworklet surface exercised in this example is `replaceProcessor` (`@unworklet/core`) + `state.snapshot 'persistent'` + the `RestoreResult.ok = false` failure path + the Q63 accumulation warning. **Everything else** in the main-side code (= `URL.createObjectURL(blob)`, `import(/* @vite-ignore */ url)`, source acquisition, REPL UI wiring, blob URL teardown) is a **consumer-side recipe** — not part of unworklet's surface. `/* @vite-ignore */` is a Vite-specific annotation, not an unworklet annotation. In production code a bundler HMR boundary or file watcher (= `07-vite-plugin.md` §4 recipe sketch) provides the same module-acquisition path; unworklet does not own the source-acquisition mechanism.
+> **Framework surface vs consumer recipe**: the unworklet surface exercised in this example is `replaceProcessor` (`@unworklet/core`) + `state.snapshot 'persistent'` + the `RestoreResult.ok = false` failure path + the Q63 accumulation warning. **Everything else** in the main-side code (= `URL.createObjectURL(blob)`, `import(/* @vite-ignore */ url)`, source acquisition, REPL UI wiring, blob URL teardown) is a **consumer-side recipe** — not part of unworklet's surface. `/* @vite-ignore */` is a Vite-specific annotation, not an unworklet annotation. In production code a bundler HMR boundary or file watcher (= `07-unplugin.md` §4 recipe sketch) provides the same module-acquisition path; unworklet does not own the source-acquisition mechanism.
 
 ```typescript
 // initial.processor.ts — The initial processor for the REPL. The user may edit
@@ -1460,9 +1462,10 @@ export const initialOsc = defineProcessor(
 // and error UI are user-land concerns.
 
 import { createNode, replaceProcessor } from "@unworklet/core";
-import { initialOsc } from "./initial.processor.ts?worklet";
+import initialOsc from "./initial.processor.ts?worklet";
 
-const audioCtx = new AudioContext();
+// ?worklet bakes its coefficients at 48 kHz, so run the context at 48 kHz.
+const audioCtx = new AudioContext({ sampleRate: 48000 });
 let node = await createNode(audioCtx, initialOsc);
 node.outputs.main.connect(audioCtx.destination);
 audioCtx.resume();

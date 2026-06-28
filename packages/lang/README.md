@@ -8,12 +8,15 @@ operators and bare reads/writes; `lower()` desugars it to a plain
 > **For AI agents:** `.uwk.ts` is _sugar over the exact same primitives_ as
 > `@unworklet/core`. The declarations are identical; only the bodies change
 > (operators instead of method calls). Don't mix the two styles in one file.
+> One exception: SIMD (`@unworklet/core/simd`) is `.ts`-only — `.uwk.ts` has no
+> SIMD surface.
 
 ```bash
 # Pulled in transitively by the Vite plugin — install that, not this directly:
-npm install -D @unworklet/vite-plugin
+npm install -D @unworklet/unplugin
 npm install @unworklet/core
-# Only needed if you call `lower()` yourself (custom build step):
+# For `.uwk.ts` authoring — the editor plugin, the `unworklet-tsc` build checker,
+# and `lower()`. Add it directly: a bin only resolves for a direct dependency.
 npm install -D @unworklet/lang
 ```
 
@@ -22,12 +25,18 @@ npm install -D @unworklet/lang
 Same declarations as core, but the `process` body uses operators. There is no
 `defineProcessor` wrapper and no `return { process }` — the file _is_ the
 processor body, and `process(() => { ... })` is ambient. The core DSL names
-(`audioInput`, `state`, `param`, `forSample`, …) are ambient too: **write no
-import** — the lowering injects the `@unworklet/core` import for you.
+(`audioInput`, `state`, `param`, `forSample`, …) are ambient too: **the DSL needs
+no import** — the lowering injects the `@unworklet/core` import for you. You can
+still `import` from your own files (shared constants, params, helpers); those are
+kept at module scope and resolve as usual. `ctx` is ambient as well — the same
+`ProcessorContext` that core's `defineProcessor((ctx) => …)` passes you, so
+`ctx.sampleRate` is how a generator reaches the sample rate.
 `.named()` / `.expose({...})` with no name derive it from the binding.
 
-Out of the box, stock TypeScript flags the sugar (`a * b` on two `Node`s is an
-"operator cannot be applied" error), so a `// @ts-nocheck` header is needed.
+Out of the box, stock TypeScript flags the sugar — a `.uwk.ts` imports no DSL
+names, so the authoring names (`audioInput`, `state`, …) are undefined and the
+infix operators on the resulting values don't type-check — so a `// @ts-nocheck`
+header is needed.
 **Install the editor plugin ([IDE support](#ide-support)) and the header goes
 away** — the sugar type-checks, with hover / completion / go-to-definition on
 the operands.
@@ -47,15 +56,21 @@ process(() => {
 });
 ```
 
+Events and MIDI carry no infix sugar — they work exactly as in core. Declare
+`const keys = event.midi({ from: "main" })`, then in `process` handle a message and
+write the result into `state`: `keys.onEvent("noteOn", e => freq.write(f32(e.note)))`
+(the handler's `e.note` / `e.velocity` are `Node<"i32">` — see the core README).
+
 ## The sugar (desugars to core)
 
 | `.uwk.ts`                                    | lowers to `@unworklet/core`                      |
 | -------------------------------------------- | ------------------------------------------------ |
-| `a * b` `a + b` `a - b` `a / b` `a % b` `-a` | `a.mul(b)` … `a.neg()`                           |
+| `a * b` `a + b` `a - b` `a / b` `a % b` `-a` | `mul(a, b)` `add(a, b)` … `neg(a)`               |
 | `a == b` `a < b` `a <= b` `a > b` `a >= b`   | `eq(a, b)` `lt(a, b)` …                          |
 | `!b`                                         | `not(b)`                                         |
 | `cond ? x : y`                               | `select(cond, x, y)`                             |
-| `input.left[i]` / `param[i]` / `buf[i]`      | `.at(i)` / `.read(i)`                            |
+| `input.left[i]` / `param[i]`                 | `input.left.at(i)` / `param.at(i)`               |
+| `buf[i]` (buffer read)                       | `buf.read(i)`                                    |
 | `output.left[i] = v` / `buf[i] = v`          | `output.left.at(i).write(v)` / `buf.write(i, v)` |
 | `state` in a read position                   | `state.read()`                                   |
 | `$prev` (in a subgraph)                      | injected feedback state                          |
@@ -64,7 +79,7 @@ Bare-state sugar is **read-only**: a scalar `state` used in a value position
 lowers to `state.read()`, but you still **write** it explicitly with
 `state.write(v)` (there is no `state = v` for scalars). Buffer / output element
 writes use the index-assignment form above. `number op number` (e.g.
-`SAMPLE_RATE * 0.5`) is left untouched — only expressions involving a
+`ctx.sampleRate * 0.5`) is left untouched — only expressions involving a
 `Node`/`State` are lowered.
 
 ## IDE support
@@ -72,22 +87,21 @@ writes use the index-assignment form above. `number op number` (e.g.
 `.uwk.ts` is syntactically TypeScript, so any editor highlights it and navigates
 it with zero setup. To make the **sugar type-check** — no red squiggles on
 `a * b`, no `// @ts-nocheck` — add the TypeScript-server plugin to your
-`tsconfig.json`, and pull in the shipped ambient `.d.ts` via `files` (it declares
-`audioInput` / `state` / `process` / `input` / `out` / `$prev` … as globals):
+`tsconfig.json`. That single entry is the whole setup: the plugin auto-injects the
+shipped ambient `.d.ts` (it declares `audioInput` / `state` / `process` / `input` /
+`out` / `$prev` … as globals), so there is no `files` or `types` entry to add.
 
 ```jsonc
 {
   "compilerOptions": {
     "plugins": [{ "name": "@unworklet/lang/typescript-plugin" }],
   },
-  "include": ["src"],
-  "files": ["node_modules/@unworklet/lang/dist/ambient.d.ts"],
 }
 ```
 
-(The ambient goes in `files`, not `compilerOptions.types` or `include`: the
-`types` array does not resolve an `exports` subpath in every resolver, and
-`include` globs skip `node_modules`. `files` entries are always loaded.)
+If you use `@unworklet/unplugin`, its `{ "extends": "./.unworklet/tsconfig.json" }`
+setup already carries this plugin — add it yourself only when using `@unworklet/lang`
+on its own.
 
 In VS Code, also run **“TypeScript: Select TypeScript Version → Use Workspace
 Version”** so the editor loads the plugin (TS-server plugins only load under the
@@ -106,6 +120,121 @@ with `lower()`. The plugin is edit-time only; the actual build still runs
 For CI / headless type-checking, the same language plugin drives a Volar program
 proxy — see `createUwkLanguagePlugin` in `@unworklet/lang`.
 
+## Building a `.uwk.ts` project
+
+A Vite build script usually type-checks first, then builds (`tsc && vite build`).
+But `tsc` doesn't run the editor plugin, so it flags the raw `.uwk.ts` sugar
+(`a * b` on two `Node`s) and fails the build.
+
+Use `unworklet-tsc` in place of `tsc`. It's a drop-in `tsc` — every flag passes
+through — that understands `.uwk.ts`, type-checking the sugar with the _same_
+language plugin the editor uses, so your `.uwk.ts` files are checked at build
+rather than skipped:
+
+```jsonc
+// package.json
+{
+  "scripts": {
+    "build": "unworklet-tsc --noEmit && vite build",
+  },
+}
+```
+
+`unworklet-tsc` checks against your existing `tsconfig.json`, so make sure it
+`include`s your `.uwk.ts` files. It injects the language plugin itself — so it
+works whether or not the tsconfig carries the editor's `plugins` entry (that entry
+is only for your editor). Run it ad-hoc the same way:
+
+```bash
+npx unworklet-tsc --noEmit
+```
+
+The Vite plugin lowers + compiles `.uwk.ts` at build regardless (surfacing any
+`lower()` error there); `unworklet-tsc` adds the type-check, and the editor
+plugin gives the same diagnostics while you edit — all three driven by one
+desugar, so they never disagree.
+
+If you'd rather not type-check the sugar at build, `"exclude": ["**/*.uwk.ts"]`
+in `tsconfig.json` keeps plain `tsc` from flagging it (the Vite plugin compiles
+those files regardless; they're just unchecked at build).
+
+## Subgraphs in their own files
+
+A `.uwk.ts` with no `process()` is a **library module**: it exports
+`defineSubgraph(...)` blocks (and any helper constants) for a processor to import.
+Use it to share a reusable filter / oscillator / envelope across processors, or to
+publish one as a package.
+
+```ts
+// onepole.uwk.ts — a subgraph in its own file (no process())
+export const onepole = defineSubgraph((coef: Node<"f32">) => {
+  const z1 = state.f32(0).named("z1");
+  return {
+    tick: (x: Node<"f32">) => {
+      const y = z1 + (x - z1) * coef; // bare `z1` reads; the write is explicit
+      z1.write(y);
+      return y;
+    },
+  };
+});
+```
+
+```ts
+// synth.uwk.ts — a processor that imports and instantiates it
+import { onepole } from "./onepole.uwk.ts";
+
+const input = audioInput({ channels: 1, name: "main" });
+const out = audioOutput({ channels: 1, name: "main" });
+const lpf = instantiate(onepole, 0.2, { name: "lpf" });
+
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = lpf.tick(input.ch(0)[i]);
+  });
+});
+```
+
+Import a subgraph file with a normal import (the explicit `.uwk.ts` extension) — not
+`?worklet`, which is for processors. The library module's sugar is lowered just like
+a processor's, and splitting a subgraph into its own file produces byte-identical
+output to defining it inline.
+
+**Publishing a subgraph library:** declare `@unworklet/core` as a `peerDependency`
+— do not bundle it. The consumer provides one `@unworklet/core`; a second bundled
+copy makes `instantiate(...)` reject the imported subgraph, because its
+`defineSubgraph` marker comes from a different `@unworklet/core` instance.
+
+## Compile in the browser (live coding)
+
+`@unworklet/lang/browser` runs the whole lower → compile → worklet pipeline in the
+browser, so a `.uwk.ts` source **string** becomes a playable processor at runtime
+— the live-coding / editor path, with no Vite plugin or build step involved.
+
+```ts
+import { createNode, replaceProcessor } from "@unworklet/core";
+import { compileSource } from "@unworklet/lang/browser";
+
+const ctx = new AudioContext();
+let node = await createNode(ctx, await compileSource(editor.value));
+node.outputs.main.connect(ctx.destination);
+
+// recompile the edited source and hot-swap it, live:
+runButton.onclick = async () => {
+  const swapped = await replaceProcessor(node, await compileSource(editor.value));
+  node = swapped.node;
+};
+```
+
+`compileSource(source)` returns a `CompiledProcessor` ready for `createNode`;
+`lowerToProcessor(source)` stops at the processor (no worklet module) for an
+in-browser headless render. (For Node, import `lowerToProcessor` from the root
+`@unworklet/lang` — the same call, resolved off disk, pulling in no compiler.)
+The WASM compiler (binaryen) ships in this entry,
+so the browser bundle includes it — import `@unworklet/lang/browser` lazily if you
+only need it behind a live-coding UI. (A build-time `"node:module" … externalized,
+imported by binaryen` warning is expected and harmless: binaryen's Node-only path
+is stubbed for the browser; its in-browser path is what runs.)
+
 ## API
 
 ```ts
@@ -115,14 +244,17 @@ const tsSource = lower(uwkSource, { exportName: "myProcessor" });
 // LowerError carries a source location for malformed sugar.
 ```
 
-Most projects don't import this — `@unworklet/vite-plugin` lowers `.uwk.ts`
+For a headless render, `lowerToProcessor(source)` lowers straight to a
+`CompiledProcessor` for `@unworklet/offline` in Node — see that package's README.
+
+Most projects don't import this — `@unworklet/unplugin` lowers `.uwk.ts`
 imports on the fly. Plain `.ts` / `.processor.ts` processors (the core API) work
 everywhere `.uwk.ts` does; the sugar is opt-in.
 
 ## Related packages
 
 - `@unworklet/core` — the primitives `.uwk.ts` lowers to (`audioInput`, `state`, `param`, `forSample`, …).
-- `@unworklet/vite-plugin` — lowers `.uwk.ts` imports on the fly via `?worklet`.
+- `@unworklet/unplugin` — lowers `.uwk.ts` imports on the fly via `?worklet`.
 - `@unworklet/offline` — render a processor to PCM in Node/Bun/Deno.
 - `@unworklet/test` — audio/event/MIDI assertions for Vitest.
 

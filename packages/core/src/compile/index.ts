@@ -2,7 +2,7 @@
  * `compile(processor)` — public WASM emission entry (`03-compiler.md` §1).
  *
  * Single async named export on `@unworklet/core` that all consumers
- * (`@unworklet/vite-plugin` build pipeline, `@unworklet/offline`'s
+ * (`@unworklet/unplugin` build pipeline, `@unworklet/offline`'s
  * `renderOffline`, `replaceProcessor`, and pure Node / browser host
  * scripts that build processors at runtime) call.
  *
@@ -18,7 +18,7 @@
  *
  * Returns `{ wasm, graph, memory, diagnostics, schemaHash,
  * __compiledProcessor }`. `graph` / `memory` / `diagnostics` are opaque branded
- * casts — consumers treat them as tokens (e.g. vite-plugin / inspect tooling
+ * casts — consumers treat them as tokens (e.g. unplugin / inspect tooling
  * restores the internal types to emit a JSON artifact).
  */
 
@@ -86,6 +86,7 @@ export async function compile<C>(
     memory: memory as unknown as MemoryJson,
     diagnostics: diagnostics as unknown as DiagnosticsJson,
     schemaHash: hash,
+    sampleRate,
     driver: makeDriver(graph, memory, wasm),
     __compiledProcessor: undefined as unknown as C,
   };

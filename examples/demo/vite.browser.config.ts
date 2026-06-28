@@ -8,7 +8,7 @@
  *
  * COOP/COEP enable cross-origin isolation so `SharedArrayBuffer` is available.
  */
-import unworklet from "@unworklet/vite-plugin";
+import unworklet from "@unworklet/unplugin";
 import { playwright } from "vite-plus/test/browser-playwright";
 import { defineConfig } from "vite-plus";
 

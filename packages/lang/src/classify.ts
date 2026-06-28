@@ -173,6 +173,19 @@ function computeDspExpr(checker: ts.TypeChecker, node: ts.Node): boolean {
     return isDspExpr(checker, node.operand);
   }
   if (ts.isConditionalExpression(node)) return isDspExpr(checker, node.condition);
-  if (ts.isCallExpression(node)) return isDspCall(checker, node);
+  if (ts.isCallExpression(node)) {
+    // A method call on a DSP receiver — `buf[i].abs()`, `(a * b).sin()`, a
+    // sugar-bound local's `.frac()`. The receiver mis-types `any` (un-lowered
+    // sugar), so the method result does too and its signature can't be resolved;
+    // recover it structurally. Every `Node<T>` method returns a `Node`, so a
+    // method call on a DSP value is itself a DSP value.
+    if (
+      ts.isPropertyAccessExpression(node.expression) &&
+      isDspExpr(checker, node.expression.expression)
+    ) {
+      return true;
+    }
+    return isDspCall(checker, node);
+  }
   return false;
 }

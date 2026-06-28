@@ -261,14 +261,14 @@ Handle types for every declaration kind are exported from `@unworklet/core` for 
 
 Processor-shape types (= types surrounding `defineProcessor`):
 
-- `ProcessorContext` (= argument to `defineProcessor` body) — `{ sampleRate: Node<'f32'>, hz: Node<'f32'>, samples: Node<'i32'> }`
+- `ProcessorContext` (= argument to `defineProcessor` body) — `{ readonly sampleRate: number }`: the host sample rate as a build-time JS number (e.g. `440 / ctx.sampleRate`)
 - `ProcessorBody` (= return value of `defineProcessor` body) — **strict shape** `{ process: () => void }`; extra fields cause a graph-capture-time error (per the declarative principle: the body consists of exactly one `process` entry)
 - `CompiledProcessor<C>` (= return value of `defineProcessor`) — `{ readonly graph: ProcessorGraph; readonly schemaHash: string }`; the opaque type passed to `createNode` / `replaceProcessor`
 - `UnworkletNode<C>` (= return value of `createNode`) — the public main-side surface; all methods and fields are declared in `05-client.md` §2
 - `Migration` (= entry of `migrations: Migration[]`) — `{ from: string; to: string; migrate: (blob: Uint8Array, helpers: MigrationHelpers) => void | Promise<void> }`; `migrate` may return a Promise, and the framework awaits it on the main thread before applying to the worklet side (= the No-blocking-I/O invariant is audio-thread-only; async is fine on the main thread)
 - `MigrationHelpers` (= second argument to `migrate`) — all methods declared in §8.3.1
 
-The value returned by `createSubgraph(...)` is **the subgraph body's return record itself** (= the author-named methods declared by `defineSubgraph`'s body) — no separate `SubgraphInstance<S>` wrapper type is exported. When a helper signature needs to receive a subgraph instance, use `ReturnType<typeof subgraphDecl>` (TypeScript's standard inference). Authoritative rationale: `decisions-log.md` Q54.
+The value returned by `instantiate(...)` is **the subgraph body's return record itself** (= the author-named methods declared by `defineSubgraph`'s body) — no separate `SubgraphInstance<S>` wrapper type is exported. When a helper signature needs to receive a subgraph instance, use `ReturnType<typeof subgraphDecl>` (TypeScript's standard inference). Authoritative rationale: `decisions-log.md` Q54.
 
 L1 helper signatures and main-side type annotations import these directly (see canonical Ex 2 and Ex 4 for examples).
 
@@ -327,10 +327,10 @@ The convention is hybrid:
   const out = select(eq(useA.at(i), 1), lpfA.process(x), lpfB.process(x));
   ```
 
-- **literal-leading chain** uses the `num(v)` lift helper (= §2.2; JS literals have no methods, so `1.sub(m)` is a parse error):
+- **free function at a literal-leading start** — a JS literal carries no methods (`1.sub(m)` is a parse error), so an expression that leads with a literal uses the free-function form for the first op (the literal lifts per §2.2), then chains methods:
 
   ```typescript
-  const dry = num(1).sub(mix).mul(drySig);
+  const dry = sub(1, mix).mul(drySig);
   ```
 
 Each primitive's argument positions accept either a `Node<T>` or a JS `number` / `boolean` literal that lifts to `Node<T>` according to the **context-dependent literal lift rule** (see `00-foundations.md` §4 + `decisions-log.md` Q1 + Q33 + Q36):
@@ -355,7 +355,7 @@ Math-precision strategy (Q17, `decisions-log.md`): the `@unworklet/core` import 
 
 ### 2.2 Scalar constructors
 
-Six scalar constructors lift JS values to `Node<T>` explicitly. Used wherever the implicit lift does not apply — declarations, ambiguous-call disambiguation, i64 construction, cross-precision conversion between `Node` types, and method-chain starting points (= `num(v)` per Q77):
+Five scalar constructors lift JS values to `Node<T>` explicitly. Used wherever the implicit lift does not apply — declarations, ambiguous-call disambiguation, i64 construction, and cross-precision conversion between `Node` types:
 
 ```typescript
 f32(v: number):  Node<'f32'>;
@@ -363,7 +363,6 @@ f64(v: number):  Node<'f64'>;
 i32(v: number):  Node<'i32'>;
 i64(v: bigint):  Node<'i64'>;
 bool(v: boolean): Node<'bool'>;
-num<T>(v: number | boolean): Node<T>;   // Q77 — context-inferred lift for method chain starts
 ```
 
 ```typescript
@@ -382,16 +381,11 @@ state.i64.read().add(i64(BigInt(123)));
 const wide = f64(f32node);
 const narrow = f32(f64node);
 const idx = i32(f32node); // truncate
-
-// Method-chain starting point (= literal-leading chain, JS literals have no methods):
-const dry = num(1).sub(mix).mul(drySig); // T inferred from .sub(mix) → Node<'f32'>
-const off = num(60).add(noteOffset); // T inferred from .add(noteOffset) → Node<'i32'>
-const trig = num(true).select(activeBranch, idleBranch); // T = 'bool' (literal is bool)
 ```
 
-Constructor naming follows GLSL (`vec3(0.0)` / `float(0)`) and WGSL (`f32(0)`) convention. `num(v)` is the chain-start helper introduced by Q77; its `T` is inferred from the surrounding context (= the type of the value passed to the next method in the chain) via the same context-dependent lift rule as Q33 / Q36, falling back to `'f32'` when no context constrains it. Boolean literals fix `T = 'bool'` unambiguously.
+Constructor naming follows GLSL (`vec3(0.0)` / `float(0)`) and WGSL (`f32(0)`) convention.
 
-Authoritative rationale and rejected alternatives: `decisions-log.md` Q33 + Q77.
+Authoritative rationale and rejected alternatives: `decisions-log.md` Q33.
 
 ## 3. State, buffer, param declarations
 
@@ -667,7 +661,7 @@ A single inbound event may have **multiple `onReceive` registrations**; all of t
 
 State observation inside a handler (Q38-d): `state.read()` reads the value at the start of the current quantum (= the value written by the previous quantum's last write). State written by `state.write(v)` inside the handler is observable in the same quantum's per-block computation and `forSample` callbacks (i.e. handlers can stage values for the per-block code that follows).
 
-Inside a handler, the same expression-scope rules apply as in a `forSample` callback (Q56, `decisions-log.md`): primitive operators, `state.read/write`, buffer access, audio I/O via `audioIn.ch(c).at(i)` / `audioOut.ch(c).at(i).write(v)` / `param.at(i)`, `emitIf`, subgraph methods, and L1 helper calls are all legal. New declarations (`state.*` / `state.buffer.*` / `param.*` / `createSubgraph(...)`) are not allowed. The surrounding `forSample`'s `i` is not in scope (handlers drain before any `forSample` runs); sample-offset arguments accept `Node<'i32'> | number` from any source — the handler's own `atSample` arg (in MIDI handlers), a state slot value, a buffer read, or a JS literal.
+Inside a handler, the same expression-scope rules apply as in a `forSample` callback (Q56, `decisions-log.md`): primitive operators, `state.read/write`, buffer access, audio I/O via `audioIn.ch(c).at(i)` / `audioOut.ch(c).at(i).write(v)` / `param.at(i)`, `emitIf`, subgraph methods, and L1 helper calls are all legal. New declarations (`state.*` / `state.buffer.*` / `param.*` / `instantiate(...)`) are not allowed. The surrounding `forSample`'s `i` is not in scope (handlers drain before any `forSample` runs); sample-offset arguments accept `Node<'i32'> | number` from any source — the handler's own `atSample` arg (in MIDI handlers), a state slot value, a buffer read, or a JS literal.
 
 Options:
 
@@ -774,9 +768,9 @@ Whether L1 helpers can also write to `state.*` references owned by the caller �
 A reusable, stateful DSP block. The `defineSubgraph` wrapper has two framework-level roles that pure TypeScript function reuse cannot match:
 
 1. **Identification.** The wrapper marks its result as a subgraph definition, not an inlined helper. Memory-budget tallying for state slots (Q30), DevTools graph viewer instance grouping (Q23), and snapshot path namespacing all hook off this marker.
-2. **Name scope for snapshots.** Each `createSubgraph(..., { name: 'lpfL' })` call attaches an instance name (Q41) that becomes the prefix of the snapshot path for every state slot inside that instance (e.g. `'lpfL/z1'`). Without the wrapper, the framework has no canonical place to attach the per-instance name.
+2. **Name scope for snapshots.** Each `instantiate(..., { name: 'lpfL' })` call attaches an instance name (Q41) that becomes the prefix of the snapshot path for every state slot inside that instance (e.g. `'lpfL/z1'`). Without the wrapper, the framework has no canonical place to attach the per-instance name.
 
-The body declares `state.*` / `buffer.*` / `param.*` slots in declaration scope and returns a record of author-named methods (see §5.6.1 for the body shape and §5.6.2 for instantiation). Every instance is inlined into the parent's WASM module per `createSubgraph(...)` call — there is no per-instance function-call boundary at audio rate, and instance state is independent across calls.
+The body declares `state.*` / `buffer.*` / `param.*` slots in declaration scope and returns a record of author-named methods (see §5.6.1 for the body shape and §5.6.2 for instantiation). Every instance is inlined into the parent's WASM module per `instantiate(...)` call — there is no per-instance function-call boundary at audio rate, and instance state is independent across calls.
 
 Subgraph method bodies execute top-to-bottom in source order — the same mental model as `defineProcessor` `process` bodies (Q51) — and may contain `forSample` callbacks where per-sample iteration is needed. A method invoked from the parent's `forSample` callback runs at the surrounding `i`; one invoked from per-block top level runs once per block. The conventional pattern is for subgraphs that consume per-sample audio to be invoked from inside a `forSample`, since their method inputs are per-sample values.
 
@@ -802,7 +796,7 @@ L1 helpers are pure TypeScript functions that compose `Node<T>` values into new 
 
 unworklet code lives in two graph-capture-time scopes:
 
-- **Declaration scope** — the body of `defineProcessor` and `defineSubgraph` directly. The declaration kinds canonically listed in `03-compiler.md` §2.6 `scope-violation` are created here: `state.*`, `state.buffer.*`, `param.*`, `audioInput`, `audioOutput`, `event<T>` (`from: 'main'` / `to: 'main'`), `event.midi` (`from: 'main'` / `to: 'main'`), `createSubgraph(...)`. (`defineSubgraph` itself is a module-level subgraph constructor — not a declaration-scope helper; only `createSubgraph(...)` calls inside a processor body create per-processor instances.) Each declaration registers a slot in the graph (and ultimately a region in WASM linear memory).
+- **Declaration scope** — the body of `defineProcessor` and `defineSubgraph` directly. The declaration kinds canonically listed in `03-compiler.md` §2.6 `scope-violation` are created here: `state.*`, `state.buffer.*`, `param.*`, `audioInput`, `audioOutput`, `event<T>` (`from: 'main'` / `to: 'main'`), `event.midi` (`from: 'main'` / `to: 'main'`), `instantiate(...)`. (`defineSubgraph` itself is a module-level subgraph constructor — not a declaration-scope helper; only `instantiate(...)` calls inside a processor body create per-processor instances.) Each declaration registers a slot in the graph (and ultimately a region in WASM linear memory).
 - **Expression scope** — the `process` lambda body (per-block top level + `forSample` / `forSample.byN` callbacks); L1 helper bodies; subgraph method bodies; `everyNSamples` callbacks; `event<T>({ from: 'main' }).onReceive(...)` handler bodies; `event.midi({ from: 'main' }).onEvent(...)` handler bodies (`00-foundations.md` §3 canonical list, 6 contexts). Per-block and per-sample expressions live here. New declarations are forbidden in expression scope.
 
 L1 helpers exist purely in expression scope, callable from either per-block top level or inside a `forSample` callback (depending on what the helper's body does).
@@ -905,7 +899,7 @@ The Q1 "no implicit widening" rule still applies inside the body: mixed-precisio
 Inside an L1 body, the following are **forbidden** and produce a graph-capture-time error:
 
 - New `state.*` / `state.buffer.*` / `param.*` declarations.
-- New `defineSubgraph(...)` declarations or `createSubgraph(...)` instantiations (Q34, `decisions-log.md`).
+- New `defineSubgraph(...)` declarations or `instantiate(...)` instantiations (Q34, `decisions-log.md`).
 - New `audioInput` / `audioOutput` declarations.
 - `event<T>` / `event.midi` declarations.
 
@@ -982,11 +976,11 @@ const oscillator = defineSubgraph((sr: number) => {
 });
 ```
 
-**Lambda arguments vs method arguments**: the outer `defineSubgraph` lambda's arguments (e.g. `sr`, `coef`) are bound **once per instance** at `createSubgraph(...)` time and shared across all methods (closure capture). Each method's own arguments (e.g. `input`, `hz`) are passed **per call**. Subgraphs that need internal per-sample iteration use `forSample` inside a method body.
+**Lambda arguments vs method arguments**: the outer `defineSubgraph` lambda's arguments (e.g. `sr`, `coef`) are bound **once per instance** at `instantiate(...)` time and shared across all methods (closure capture). Each method's own arguments (e.g. `input`, `hz`) are passed **per call**. Subgraphs that need internal per-sample iteration use `forSample` inside a method body.
 
-#### 5.6.2 Instantiation via `createSubgraph(...)`
+#### 5.6.2 Instantiation via `instantiate(...)`
 
-Parent processors instantiate subgraphs through the free function `createSubgraph(subgraph, ...lambdaArgs, options?)`:
+Parent processors instantiate subgraphs through the free function `instantiate(subgraph, ...lambdaArgs, options?)`:
 
 - `subgraph` — the `defineSubgraph(...)` recipe being instantiated.
 - `lambdaArgs` — values bound to the subgraph's outer lambda arguments at instance creation time (e.g. `ctx.sampleRate`).
@@ -995,7 +989,7 @@ Parent processors instantiate subgraphs through the free function `createSubgrap
 (The exact TypeScript signature — generic-parameter binding for the return record, rest-args inference, etc. — is impl-level detail that lives in the emitted `.d.ts`; see `decisions-log.md` Q53.)
 
 ```typescript
-const lpf = createSubgraph(onepole, 0.5); // coef = 0.5 bound at instance creation; no options
+const lpf = instantiate(onepole, 0.5); // coef = 0.5 bound at instance creation; no options
 
 forSample((i) => {
   const y = lpf.process(audioIn.ch(0).at(i)); // input passed per call
@@ -1005,7 +999,7 @@ forSample((i) => {
 // 8-voice synth — build-time loop over NUM_VOICES allocates 8 independent instances:
 const voices = [];
 for (let s = 0; s < NUM_VOICES; s++) {
-  voices.push(createSubgraph(synthVoice, ctx.sampleRate));
+  voices.push(instantiate(synthVoice, ctx.sampleRate));
 }
 forSample((i) => {
   let mix = f32(0);
@@ -1015,15 +1009,15 @@ forSample((i) => {
 });
 
 // With `name` (required when the subgraph carries persistent state and the processor takes snapshots — see §8.1):
-const filterL = createSubgraph(filterCore, ctx.sampleRate, { name: "filterL" });
-const filterR = createSubgraph(filterCore, ctx.sampleRate, { name: "filterR" });
+const filterL = instantiate(filterCore, ctx.sampleRate, { name: "filterL" });
+const filterR = instantiate(filterCore, ctx.sampleRate, { name: "filterR" });
 ```
 
-`createSubgraph(...)` performs state slot allocation. **The returned value is the subgraph body's return record itself** (= the author-named methods declared by `defineSubgraph`'s body), not a wrapper around it (Q54). Callers can invoke those methods from any expression context (§5.6.4) and pass the value to L1 helpers using TypeScript's standard `ReturnType<typeof someSubgraph>` inference where a type annotation is needed.
+`instantiate(...)` performs state slot allocation. **The returned value is the subgraph body's return record itself** (= the author-named methods declared by `defineSubgraph`'s body), not a wrapper around it (Q54). Callers can invoke those methods from any expression context (§5.6.4) and pass the value to L1 helpers using TypeScript's standard `ReturnType<typeof someSubgraph>` inference where a type annotation is needed.
 
 The `options.name` is **optional**: snapshot-free subgraphs need not provide one (Q41). When the subgraph declares persistent state and the parent processor takes snapshots, missing `name` is a graph-capture-time error — see §8.1.
 
-`createSubgraph` mirrors the main-side `createNode` naming convention (see `05-client.md`).
+`instantiate` mirrors the main-side `createNode` naming convention (see `05-client.md`).
 
 #### 5.6.3 Return shape (per method)
 
@@ -1036,14 +1030,14 @@ Each method's return value follows the same shapes allowed for L1 helpers (§5.5
 
 The method call expression's type is inferred from the corresponding return.
 
-#### 5.6.4 Where `createSubgraph(...)` can be called, and method context rules
+#### 5.6.4 Where `instantiate(...)` can be called, and method context rules
 
-`createSubgraph(subgraph, ...args)` can only be called in **declaration scope** — the body of `defineProcessor` or another `defineSubgraph`, before the `return` of the body record. Calling it inside expression scope (a method body, a `forSample` callback, an L1 helper body, a handler body) is a graph-capture-time error. Each instantiation declares an independent state slot region; placing the call in declaration scope keeps state allocation static and the instance count statically determined at build time.
+`instantiate(subgraph, ...args)` can only be called in **declaration scope** — the body of `defineProcessor` or another `defineSubgraph`, before the `return` of the body record. Calling it inside expression scope (a method body, a `forSample` callback, an L1 helper body, a handler body) is a graph-capture-time error. Each instantiation declares an independent state slot region; placing the call in declaration scope keeps state allocation static and the instance count statically determined at build time.
 
 The methods on the returned instance, however, can be called from **any expression context**: `forSample` / `forSample.byN` / `everyNSamples` callbacks, `event.midi({ from: 'main' }).onEvent(...)` handlers, `event<T>({ from: 'main' }).onReceive(...)` handlers, and per-block top level. Method context is unrestricted regardless of return type — `Node<T>`-returning and `void`-returning methods are both callable everywhere. This matches the context rules for `state.read/write` and the primitive operators.
 
 ```typescript
-const osc = createSubgraph(oscillator, ctx.sampleRate);
+const osc = instantiate(oscillator, ctx.sampleRate);
 
 midi.onEvent("noteOn", ({ note }) => {
   osc.setFrequency(noteToHz(note)); // OK (handler context)
@@ -1075,8 +1069,8 @@ const myProcessor = defineProcessor((ctx) => {
   const useA = param.f32({ default: 1, min: 0, max: 1, automationRate: "k-rate" }).named("useA");
 
   // Two filter instances, each with independent state.
-  const lpfA = createSubgraph(onepole, coefA);
-  const lpfB = createSubgraph(onepole, coefB);
+  const lpfA = instantiate(onepole, coefA);
+  const lpfB = instantiate(onepole, coefB);
 
   return {
     process: () => {
@@ -1100,8 +1094,8 @@ Authoritative rationale and rejected alternatives: `decisions-log.md` Q34.
 
 Inside a subgraph body:
 
-- **Declaration scope** (top of the body, before the `return` of the method record) allows new `state.*` / `buffer.*` / `param.*` declarations and `createSubgraph(...)` calls for nested subgraph instantiation.
-- **Expression scope** (inside any method body, including any nested `forSample`) follows the same rules as L1 helpers (§5.5.5): no new declarations, no `createSubgraph(...)` calls; primitives, `read` / `write`, audio-I/O / param access via `audioIn.ch(c).at(i)` / `audioOut.ch(c).at(i).write(v)` / `param.at(...)`, and method calls on subgraph instances passed in scope are allowed.
+- **Declaration scope** (top of the body, before the `return` of the method record) allows new `state.*` / `buffer.*` / `param.*` declarations and `instantiate(...)` calls for nested subgraph instantiation.
+- **Expression scope** (inside any method body, including any nested `forSample`) follows the same rules as L1 helpers (§5.5.5): no new declarations, no `instantiate(...)` calls; primitives, `read` / `write`, audio-I/O / param access via `audioIn.ch(c).at(i)` / `audioOut.ch(c).at(i).write(v)` / `param.at(...)`, and method calls on subgraph instances passed in scope are allowed.
 
 Violations are caught at graph-capture / static-analysis time with refactor-hint error messages, mirroring §5.5.6.
 
@@ -1309,11 +1303,11 @@ const trivialOnepole = defineSubgraph((coef: Node<"f32">) => {
 
 const synth = defineProcessor((ctx) => {
   // Subgraph has a named slot → instance `name` required, contributes 'lpfL/z' / 'lpfR/z' to snapshot.
-  const lpfL = createSubgraph(onepole, cutoff, { name: "lpfL" });
-  const lpfR = createSubgraph(onepole, cutoff, { name: "lpfR" });
+  const lpfL = instantiate(onepole, cutoff, { name: "lpfL" });
+  const lpfR = instantiate(onepole, cutoff, { name: "lpfR" });
 
   // Subgraph has only plain slots → instance `name` optional, no snapshot contribution.
-  const pre = createSubgraph(trivialOnepole, dcBlocker);
+  const pre = instantiate(trivialOnepole, dcBlocker);
 });
 ```
 
@@ -1373,7 +1367,7 @@ const synth = defineProcessor(
 );
 ```
 
-The migration array lives on the **processor's options bag** (the second argument to `defineProcessor`), not in the declaration body — this keeps the processor body focused on the live runtime graph and isolates schema-evolution concerns from per-block / per-sample logic. Each entry's `from` and `to` are schema hashes emitted by `@unworklet/vite-plugin` into `dist/<processor>.schema-hash.json` (per-processor artifact; authoritative shape in `07-vite-plugin.md` §6.3). The framework constructs a directed graph from the entries and finds the path `blob.schemaHash → currentSchemaHash`; entries are applied in order, with each step's output hash verified against its declared `to`.
+The migration array lives on the **processor's options bag** (the second argument to `defineProcessor`), not in the declaration body — this keeps the processor body focused on the live runtime graph and isolates schema-evolution concerns from per-block / per-sample logic. Each entry's `from` and `to` are schema hashes emitted by `@unworklet/unplugin` into `dist/<processor>.schema-hash.json` (per-processor artifact; authoritative shape in `07-unplugin.md` §6.3). The framework constructs a directed graph from the entries and finds the path `blob.schemaHash → currentSchemaHash`; entries are applied in order, with each step's output hash verified against its declared `to`.
 
 #### 8.3.1 `helpers` API
 
@@ -1616,7 +1610,7 @@ const gainSat = defineProcessor((ctx) => {
         const cleanR = inR.mul(g);
         const satL   = inL.mul(g.mul(3.0)).tanh();
         const satR   = inR.mul(g.mul(3.0)).tanh();
-        const m = num(1).sub(d);
+        const m = sub(1, d);
         out.left .at(i).write(cleanL.mul(m).add(satL.mul(d)));
         out.right.at(i).write(cleanR.mul(m).add(satR.mul(d)));
       });
@@ -1674,7 +1668,7 @@ Authoritative rationale and rejected alternatives: see `decisions-log.md` Q22 (Q
 
 ## 11. Worklet-thread escape hatch
 
-The declarative path (= `defineProcessor` + vite-plugin auto `registerProcessor`) covers the vast majority of authoring needs. For the rare case where an author must touch the **web-standard `AudioWorkletProcessor` API surface directly** — `constructor(opts)` for receiving arbitrary `processorOptions` (e.g. SAB refs from an external sample-accurate source), raw `this.port.onmessage` / `postMessage`, the `process()` return-value lifecycle, `static get parameterDescriptors`, or custom methods added to the class — `defineProcessor` exposes a function namespace on `def.worklet` so authors can build their own `class extends AudioWorkletProcessor` (Q80).
+The declarative path (= `defineProcessor` + unplugin auto `registerProcessor`) covers the vast majority of authoring needs. For the rare case where an author must touch the **web-standard `AudioWorkletProcessor` API surface directly** — `constructor(opts)` for receiving arbitrary `processorOptions` (e.g. SAB refs from an external sample-accurate source), raw `this.port.onmessage` / `postMessage`, the `process()` return-value lifecycle, `static get parameterDescriptors`, or custom methods added to the class — `defineProcessor` exposes a function namespace on `def.worklet` so authors can build their own `class extends AudioWorkletProcessor` (Q80).
 
 ### 11.1 Surface
 
@@ -1698,15 +1692,15 @@ def.worklet = {
 ### 11.2 Canonical extends shape
 
 ```typescript
-import { defineProcessor, audioOutput, forSample, num } from "@unworklet/core";
+import { defineProcessor, audioOutput, forSample } from "@unworklet/core";
 
 export const polySynth = defineProcessor((ctx) => {
   const out = audioOutput({ channels: 2, name: "main" });
   return {
     process: () => {
       forSample((i) => {
-        out.ch(0).at(i).write(num(0));
-        out.ch(1).at(i).write(num(0));
+        out.ch(0).at(i).write(0);
+        out.ch(1).at(i).write(0);
       });
     },
   };
@@ -1739,7 +1733,7 @@ registerProcessor("polySynth-with-sidecar", PolySynthWithSidecar);
 
 ### 11.3 Coexistence with the auto-register path
 
-The default vite-plugin output continues to auto-register the processor under its compile-time name (= path α). Authoring `class extends AudioWorkletProcessor { ... }` with `def.worklet` registers an additional processor under a **different name** chosen by the author (= path β). Both names are simultaneously addressable from the main thread; the same `CompiledProcessor<C>` can back either path through `createNode` (path-α default name) or `new AudioWorkletNode(ctx, 'path-β-name', { processorOptions })` (constructed manually by the author).
+The default unplugin output continues to auto-register the processor under its compile-time name (= path α). Authoring `class extends AudioWorkletProcessor { ... }` with `def.worklet` registers an additional processor under a **different name** chosen by the author (= path β). Both names are simultaneously addressable from the main thread; the same `CompiledProcessor<C>` can back either path through `createNode` (path-α default name) or `new AudioWorkletNode(ctx, 'path-β-name', { processorOptions })` (constructed manually by the author).
 
 ### 11.4 Constraints
 

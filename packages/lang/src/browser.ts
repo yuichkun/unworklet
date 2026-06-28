@@ -2,7 +2,7 @@
 /**
  * `@unworklet/lang/browser` — compile a `.uwk.ts` source STRING to a playable
  * processor entirely in the browser, at runtime. This is the live-editing path:
- * the same lower → compile → worklet-module pipeline the vite-plugin runs at
+ * the same lower → compile → worklet-module pipeline the unplugin runs at
  * build time, replayed on the fly so an edited source becomes a new processor.
  *
  *   text → lower() (sugar → core, off the bundled type snapshot)

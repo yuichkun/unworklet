@@ -2,7 +2,44 @@ import { compile } from "@unworklet/core";
 import { expect, test } from "vite-plus/test";
 
 import { captureFsSnapshot } from "./capture.ts";
-import { lowerToProcessor } from "./eval-lowered.ts";
+import { evalLowered, lowerToProcessor } from "./eval-lowered.ts";
+
+/**
+ * `evalLowered` takes an already-lowered `.ts` module and runs it. Its import-strip
+ * / default-export surgery must operate on the parsed AST, not by string regex — a
+ * regex false-matches an `export default` / `import ... from` inside a comment or
+ * string literal in the (user-authored) body.
+ */
+test("ignores a decoy `export default` in a comment / string (AST surgery, not regex)", () => {
+  const lowered =
+    `import { audioOutput, defineProcessor } from "@unworklet/core";\n` +
+    `// export default not-a-real-export\n` +
+    `const label = "export default also-not-real";\n` +
+    `export default defineProcessor(() => {\n` +
+    `  const out = audioOutput({ channels: 1, name: "main" });\n` +
+    `  return { process: () => {} };\n` +
+    `});\n`;
+  const proc = evalLowered(lowered);
+  expect(proc).toHaveProperty("graph");
+});
+
+test("a library module (no default export) is reported as not a processor", () => {
+  const lowered =
+    `import { defineSubgraph } from "@unworklet/core";\n` +
+    `export const onepole = defineSubgraph((coef) => ({ tick: (x) => x }));\n`;
+  expect(() => evalLowered(lowered)).toThrow(/library module|not a processor/i);
+});
+
+test("a residual cross-file import is reported clearly", () => {
+  const lowered =
+    `import { defineProcessor, instantiate } from "@unworklet/core";\n` +
+    `import { onepole } from "./onepole.uwk.ts";\n` +
+    `export default defineProcessor(() => {\n` +
+    `  const lpf = instantiate(onepole);\n` +
+    `  return { process: () => {} };\n` +
+    `});\n`;
+  expect(() => evalLowered(lowered)).toThrow(/cannot import from other files/i);
+});
 
 const DISTORTION = `
 const input = audioInput({ channels: 2, name: "main" });

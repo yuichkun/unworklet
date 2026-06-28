@@ -166,7 +166,7 @@ test("C4 bare State in an emit-payload field auto-reads", async () => {
 
 // ─── Root D: $prev structural gaps ─────────────────────────────────────────
 test("D1 block-bodied subgraph method with $prev", async () => {
-  const decls = `const sg = defineSubgraph((coef: Node<"f32">) => ({ run: (x: Node<"f32">) => { return coef * x + (1 - coef) * $prev; } })); const lp = createSubgraph(sg, f32(0.5), { name: "lp" });`;
+  const decls = `const sg = defineSubgraph((coef: Node<"f32">) => ({ run: (x: Node<"f32">) => { return coef * x + (1 - coef) * $prev; } })); const lp = instantiate(sg, f32(0.5), { name: "lp" });`;
   const r = await renderLowered(
     mono(decls, `out.ch(0).at(i).write(lp.run(input.ch(0).at(i)));`),
     cfg({ main: [new Float32Array(128).fill(1)] }),
@@ -176,7 +176,7 @@ test("D1 block-bodied subgraph method with $prev", async () => {
 });
 
 test("D2 $prev subgraph factory pre-return decls are lowered", async () => {
-  const decls = `const sg = defineSubgraph((coef: Node<"f32">) => { const g = coef * 2; return { run: (x: Node<"f32">) => g * x + $prev }; }); const s = createSubgraph(sg, f32(0.25), { name: "s" });`;
+  const decls = `const sg = defineSubgraph((coef: Node<"f32">) => { const g = coef * 2; return { run: (x: Node<"f32">) => g * x + $prev }; }); const s = instantiate(sg, f32(0.25), { name: "s" });`;
   const r = await renderLowered(
     mono(decls, `out.ch(0).at(i).write(s.run(input.ch(0).at(i)));`),
     cfg({ main: [new Float32Array(128).fill(1)] }),

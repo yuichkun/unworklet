@@ -41,11 +41,14 @@ playwright-report/
 # Vite+ git hooks (generated locally by `vp config` after clone)
 .vite-hooks/
 
-# Transient lowered-`.uwk.ts` temp the vite-plugin build path writes then removes
+# Transient lowered-`.uwk.ts` temp the unplugin build path writes then removes
 *.uwklowered.ts
 
 # Generated editor TS-server plugin bundle (built by @unworklet/lang's build.mjs)
 /packages/lang/typescript-plugin/
+
+# Generated witness dir written by @unworklet/unplugin (project-local tsconfig + worklets.d.ts)
+**/.unworklet/
 
 # Vercel CLI project link (local, per-machine)
 .vercel

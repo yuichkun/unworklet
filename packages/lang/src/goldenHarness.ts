@@ -11,20 +11,21 @@
  *   precedence, literal-lift type, integer vs float ops) that fingerprint
  *   equality alone cannot.
  *
- * The lowered module is evaluated by stripping its `@unworklet/core` import and
- * injecting the real core exports into a `new Function` (no module resolution).
+ * The lowered module is evaluated via the shared {@link evalLowered}
+ * (`eval-lowered.ts`): AST-precise import-strip + default-export rewrite, then run
+ * with the real core exports injected (no module resolution).
  */
 
 import * as core from "@unworklet/core";
 import { compile } from "@unworklet/core";
 import type { RenderOfflineConfig, RenderOfflineResult } from "@unworklet/offline";
 import { renderOffline } from "@unworklet/offline";
-import ts from "typescript";
 import { expect } from "vite-plus/test";
 
+import { evalLowered } from "./eval-lowered.ts";
 import { lower } from "./lower.ts";
 
-export { lower };
+export { evalLowered, lower };
 
 /** Deterministic JSON: sorted object keys + `bigint → "<n>n"`. */
 function stableStringify(value: unknown): string {
@@ -39,24 +40,6 @@ function stableStringify(value: unknown): string {
     }
     return val;
   });
-}
-
-const CORE_KEYS = Object.keys(core).filter((k) => /^[A-Za-z_$][\w$]*$/.test(k));
-
-/** Evaluate a lowered `.ts` module to its exported CompiledProcessor. */
-export function evalLowered(loweredTs: string): core.CompiledProcessor<unknown> {
-  const js = ts.transpileModule(loweredTs, {
-    compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext },
-  }).outputText;
-  const body = js
-    .replace(/import\s*\{[^}]*\}\s*from\s*["']@unworklet\/core["'];?/g, "")
-    .replace(/export\s+default\s+/, "return ");
-  // The injected identifiers ARE the real core exports (equivalent to importing).
-  // oxlint-disable-next-line typescript/no-implied-eval
-  const fn = new Function(...CORE_KEYS, body) as (
-    ...args: unknown[]
-  ) => core.CompiledProcessor<unknown>;
-  return fn(...CORE_KEYS.map((k) => (core as Record<string, unknown>)[k]));
 }
 
 type Fingerprint = { schemaHash: string; graph: string; layout: string };
