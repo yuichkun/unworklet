@@ -1,6 +1,6 @@
 {
   "name": "@unworklet/lang",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Build-time `.uwk.ts` → virtual `.ts` authoring frontend that lowers to `@unworklet/core`.",
   "keywords": [
     "audio",

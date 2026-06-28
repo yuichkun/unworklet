@@ -1,6 +1,6 @@
 {
   "name": "@unworklet/core",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Audio Worklet DSP authored in TypeScript, compiled to WebAssembly.",
   "keywords": [
     "audio",
