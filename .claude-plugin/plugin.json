@@ -1,0 +1,9 @@
+{
+  "name": "unworklet",
+  "description": "Build realtime-safe AudioWorklet DSP with unworklet's declarative TypeScript DSL. Carries the exact DSL/API forms so an agent scaffolds a project and writes correct processors without hallucinating.",
+  "version": "0.1.0",
+  "author": { "name": "yuichkun" },
+  "homepage": "https://github.com/yuichkun/unworklet",
+  "repository": "https://github.com/yuichkun/unworklet",
+  "license": "MIT"
+}

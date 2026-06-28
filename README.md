@@ -135,6 +135,21 @@ Prefer explicit method calls over operator sugar? Write the same processor as a
 plain `.processor.ts` with the core API (`input.left.at(i).mul(drive.at(i))`) —
 the sugar is opt-in and lowers to exactly that.
 
+## Use it with an AI agent
+
+unworklet ships a Claude Code skill carrying the exact DSL forms, so an agent
+scaffolds a project and writes correct processors without hallucinating the API.
+Install it once:
+
+```sh
+/plugin marketplace add yuichkun/unworklet
+/plugin install unworklet@unworklet
+```
+
+Then just ask — **"make an FM synth with unworklet"** — and Claude Code sets up the
+project and implements it. For other LLMs (ChatGPT, Claude.ai), paste
+[`llms.txt`](./llms.txt) into the chat.
+
 ## What you can build
 
 The primitives — `audioInput` / `param` / `state` / `state.buffer` / `event` /

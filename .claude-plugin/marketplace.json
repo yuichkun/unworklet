@@ -1,0 +1,11 @@
+{
+  "name": "unworklet",
+  "owner": { "name": "yuichkun" },
+  "plugins": [
+    {
+      "name": "unworklet",
+      "source": "./",
+      "description": "Build realtime-safe AudioWorklet DSP with unworklet's declarative TypeScript DSL."
+    }
+  ]
+}

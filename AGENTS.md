@@ -13,7 +13,7 @@ Guidance for AI agents implementing unworklet v1.0.0.
 >   [`packages/lang/README.md`](./packages/lang/README.md),
 >   [`packages/offline/README.md`](./packages/offline/README.md),
 >   [`packages/test/README.md`](./packages/test/README.md).
-> - [`.claude/skills/unworklet/SKILL.md`](./.claude/skills/unworklet/SKILL.md) — the same surface as a skill.
+> - [`skills/unworklet/SKILL.md`](./skills/unworklet/SKILL.md) — the same surface as a skill (also shipped as the Claude Code plugin).
 
 ## What this repository is
 

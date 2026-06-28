@@ -52,5 +52,8 @@ ships an unsatisfiable peer range against the bumped siblings.
 ## What ships
 
 Each package publishes its `dist/` plus its `README.md` and `LICENSE` (npm always
-includes those). The root `llms.txt` and `.claude/skills/unworklet/` orient AI
-agents working with the library from the repository / web.
+includes those). The root `llms.txt` and `skills/unworklet/` orient AI agents
+working with the library from the repository / web; `skills/unworklet/` is also
+distributed as a Claude Code plugin via `.claude-plugin/marketplace.json` (the
+repo is its own marketplace — consumers run `/plugin marketplace add
+yuichkun/unworklet` then `/plugin install unworklet@unworklet`).
