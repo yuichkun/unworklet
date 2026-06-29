@@ -131,9 +131,9 @@ osc.start();
 Browsers start an `AudioContext` only after a user gesture, so call
 `ctx.resume()` from a click handler to actually hear it.
 
-Prefer explicit method calls over operator sugar? Write the same processor as a
-plain `.processor.ts` with the core API (`input.left.at(i).mul(drive.at(i))`) —
-the sugar is opt-in and lowers to exactly that.
+`.uwk.ts` is the recommended authoring form. Prefer explicit method calls over the
+operators? Write the same processor as a plain `.processor.ts` with the core API
+(`input.left.at(i).mul(drive.at(i))`) — it lowers to exactly the same result.
 
 ## Use it with an AI agent
 
