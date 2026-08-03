@@ -25,3 +25,8 @@ export { generateVirtualCode } from "./ide/virtualCode.ts";
 export type { GenerateOptions, VirtualCodeResult } from "./ide/virtualCode.ts";
 export { createUwkLanguagePlugin, isUwkScript, UWK_LANGUAGE_ID } from "./ide/languagePlugin.ts";
 export type { UwkLanguagePluginOptions } from "./ide/languagePlugin.ts";
+
+// Cold-checkout tsconfig seed — writes `.unworklet/tsconfig.json` (extended by
+// consumer tsconfigs via `"extends": "./.unworklet/tsconfig.json"`) so a fresh
+// clone can `unworklet-tsc` / `vite build` before anything else runs.
+export { seedUnworkletDir, GENERATED_TSCONFIG } from "./seed-unworklet-dir.ts";
