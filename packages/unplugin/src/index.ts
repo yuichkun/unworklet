@@ -22,12 +22,7 @@ import { fileURLToPath } from "node:url";
 
 import { compile, extractWorkletMeta } from "@unworklet/core";
 import type { CompiledProcessor, WorkletNamespace } from "@unworklet/core";
-import {
-  lower,
-  rewriteImportSpecifiers,
-  seedUnworkletDir,
-  uwkImportSpecifiers,
-} from "@unworklet/lang";
+import { isUwkSource, lowerUwkSource, materializeLowered, seedUnworkletDir } from "@unworklet/lang";
 import { createUnplugin, type UnpluginOptions } from "unplugin";
 import type { Plugin } from "vite";
 
@@ -263,87 +258,9 @@ const importFresh = async (sourcePath: string): Promise<Record<string, unknown>>
 // transforms. Both derive the export name from the filename identically, so the
 // two evaluations of the same source agree on the export key + registration name.
 
-const isUwkSource = (filePath: string): boolean => filePath.endsWith(".uwk.ts");
-
-/**
- * Derive a valid camelCase JS identifier from a `.uwk.ts` filename — the single
- * named export the lowered module exposes (and the `registerProcessor` prefix).
- * The `.uwk.ts` suffix is stripped and kebab/snake segments are camel-cased, so
- * `noise-drive.uwk.ts` → `noiseDrive`; a name with no identifier characters
- * (`123.uwk.ts`) falls back to `processor`.
- */
-const deriveExportName = (sourcePath: string): string => {
-  const base = path.basename(sourcePath).replace(/\.uwk\.ts$/, "");
-  const camel = base
-    .split(/[^A-Za-z0-9]+/)
-    .filter((seg) => seg.length > 0)
-    .map((seg, i) => (i === 0 ? seg : seg[0]!.toUpperCase() + seg.slice(1)))
-    .join("")
-    .replace(/^[^A-Za-z_$]+/, "");
-  return camel.length > 0 ? camel : "processor";
-};
-
-/**
- * Memoize `lower()` by (path, content): the plugin re-evaluates the same source
- * several times per `createNode` (virtual load + worklet entry + middleware) and
- * each `lower()` builds a fresh in-memory ts.Program, so caching the desugared
- * text keeps that cost off the hot path. Keyed by path, invalidated on content
- * change.
- */
-const loweredCache = new Map<string, { source: string; lowered: string }>();
-const lowerUwkSource = (sourcePath: string, source: string): string => {
-  const cached = loweredCache.get(sourcePath);
-  if (cached !== undefined && cached.source === source) return cached.lowered;
-  const lowered = lower(source, { exportName: deriveExportName(sourcePath) });
-  loweredCache.set(sourcePath, { source, lowered });
-  return lowered;
-};
-
-/**
- * Lower `sourcePath` to a temp sibling and recursively lower the transitive
- * `.uwk.ts` imports it makes — a processor importing a subgraph from a sibling
- * library `.uwk.ts` — rewriting each importer's specifier to point at the lowered
- * sibling. Returns the entry temp path; every temp written is pushed to `cleanup`.
- *
- * `.uwklowered.ts` suffix (not `.uwk.ts`) so a temp is never re-lowered; written
- * next to its source so Node's native type-stripping runs and `@unworklet/core`
- * (+ plain `.ts` imports) resolve from the source directory. A single-file
- * processor (no `.uwk.ts` imports) writes exactly one temp.
- */
-const materializeLowered = async (
-  sourcePath: string,
-  done: Map<string, string>,
-  inProgress: Set<string>,
-  cleanup: string[],
-): Promise<string> => {
-  const already = done.get(sourcePath);
-  if (already !== undefined) return already;
-  if (inProgress.has(sourcePath)) {
-    throw new Error(`@unworklet/unplugin: cyclic .uwk.ts import involving ${sourcePath}`);
-  }
-  inProgress.add(sourcePath);
-  const source = await readFile(sourcePath, "utf8");
-  let lowered = lowerUwkSource(sourcePath, source);
-  const dir = path.dirname(sourcePath);
-  const remap: Record<string, string> = {};
-  for (const spec of uwkImportSpecifiers(lowered)) {
-    const targetTemp = await materializeLowered(path.resolve(dir, spec), done, inProgress, cleanup);
-    let rel = path.relative(dir, targetTemp).split(path.sep).join("/");
-    // The temp basename is a dotfile (`.x.<tag>.uwklowered.ts`), so a same-dir
-    // `path.relative` yields a leading-dot name that Node would read as a bare
-    // specifier — force an explicit `./` (or keep an existing `../`).
-    if (!rel.startsWith("./") && !rel.startsWith("../")) rel = `./${rel}`;
-    remap[spec] = rel;
-  }
-  if (Object.keys(remap).length > 0) lowered = rewriteImportSpecifiers(lowered, remap);
-  const tag = createHash("sha256").update(lowered).digest("hex").slice(0, 8);
-  const tempPath = path.join(dir, `.${path.basename(sourcePath)}.${tag}.uwklowered.ts`);
-  await writeFile(tempPath, lowered);
-  done.set(sourcePath, tempPath);
-  inProgress.delete(sourcePath);
-  cleanup.push(tempPath);
-  return tempPath;
-};
+// `isUwkSource`, `deriveExportName`, `lowerUwkSource`, and `materializeLowered`
+// live in `@unworklet/lang` (imported above) so both the Vite plugin and offline
+// / test callers share the same multi-file `.uwk.ts` lowering.
 
 /**
  * Build-path module load. A plain `.ts` is imported fresh via Node; a `.uwk.ts`

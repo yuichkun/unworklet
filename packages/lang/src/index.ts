@@ -30,3 +30,14 @@ export type { UwkLanguagePluginOptions } from "./ide/languagePlugin.ts";
 // consumer tsconfigs via `"extends": "./.unworklet/tsconfig.json"`) so a fresh
 // clone can `unworklet-tsc` / `vite build` before anything else runs.
 export { seedUnworkletDir, GENERATED_TSCONFIG } from "./seed-unworklet-dir.ts";
+
+// Multi-file `.uwk.ts` lowering — writes lowered temp siblings for a file and
+// its transitive `.uwk.ts` imports so Node's native `import()` can load the
+// whole graph. The Vite plugin uses this on the build path; offline / test
+// callers use it to render a multi-file processor without a bundler.
+export {
+  deriveExportName,
+  isUwkSource,
+  lowerUwkSource,
+  materializeLowered,
+} from "./materialize-lowered.ts";
