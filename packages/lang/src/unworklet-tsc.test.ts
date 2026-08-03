@@ -21,7 +21,15 @@
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 
 import { afterAll, beforeAll, expect, test } from "vite-plus/test";
@@ -153,6 +161,36 @@ process(() => {
   const output = `${r.stdout}${r.stderr}`;
   expect(output).toBe("");
   expect(r.status).toBe(0);
+});
+
+test("unworklet-tsc self-seeds .unworklet/ so `extends` doesn't TS5083 on a cold checkout", () => {
+  // Cold-start scenario: consumer's tsconfig extends the plugin-generated
+  // `.unworklet/tsconfig.json`, but nothing has seeded it yet (no `vite dev` /
+  // `vite build` run). `unworklet-tsc` must self-seed before invoking tsc.
+  const cold = path.join(dir, "coldstart");
+  mkdirSync(cold, { recursive: true });
+  writeFileSync(
+    path.join(cold, "tsconfig.json"),
+    JSON.stringify({
+      extends: "./.unworklet/tsconfig.json",
+    }),
+  );
+  writeFileSync(
+    path.join(cold, "check.uwk.ts"),
+    `const out = audioOutput({ channels: 2 });
+process(() => {
+  forSample((i) => {
+    out.left[i] = 0;
+    out.right[i] = 0;
+  });
+});`,
+  );
+  const r = spawnSync("node", [bin, "--noEmit"], { cwd: cold, encoding: "utf8" });
+  const output = `${r.stdout}${r.stderr}`;
+  // The seed step must succeed BEFORE anything else runs — TS5083 (cannot read
+  // `.unworklet/tsconfig.json`) is the exact symptom of a missing seed.
+  expect(output).not.toMatch(/TS5083/);
+  expect(existsSync(path.join(cold, ".unworklet/tsconfig.json"))).toBe(true);
 });
 
 test("unworklet-tsc reports a .uwk.ts type error, mapped to the source, and exits non-zero", () => {
