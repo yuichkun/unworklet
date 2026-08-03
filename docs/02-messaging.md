@@ -149,7 +149,7 @@ Same slot structure as `event<T>({ to: 'main' })` (§5.1), minus `atSample` (mai
 [ payloadOffset : u32 ]
 ```
 
-Per-field wire type is decided by the Q46 uniform lift rule (= all `number` fields → 4-byte i32, all `boolean` fields → 1-byte bool, all typed-array fields → §5.2 variable-length content buffer) — distinct from the `event<T>({ to: 'main' })` per-field emit-time resolution rule of Q71. `event<T>({ from: 'main' })` enters from `node.events.<name>.emit(payload)` on main where the payload is plain JS, so the framework reads each numeric field as a JS `number` and writes an i32 wire word; there is no `Node<T>` site to inspect.
+Per-field wire type is decided **per field**, seeded at the worklet-side proxy. A `number` field defaults to a 4-byte f32 (the declared fractional value survives across the wire); a `boolean` field seals to a 1-byte bool the moment it is consumed in a bool sink (`state.bool.write` / `buffer.bool` write / `select` cond / `not` / `emitIf` cond). Typed-array fields go through the §5.2 variable-length content buffer. The declaration's `fields[].wireType` is the single source of truth read by (a) the WASM `messageFieldRead` emit path, (b) the three transport encode sites (main-side SAB inject / worklet postMessage fallback / offline harness), and (c) the main-side witness type derivation. Distinct from the `event<T>({ to: 'main' })` per-field emit-time rule of Q71: there the field type is decided at the emit call site's `Node<T>`; here it is decided at the worklet-side usage of the proxy field, since `event<T>({ from: 'main' })` enters as plain JS from `node.events.<name>.emit(payload)` on main and there is no `Node<T>` site to inspect at send time.
 
 ### 5.4 `state.publish` shared region
 
