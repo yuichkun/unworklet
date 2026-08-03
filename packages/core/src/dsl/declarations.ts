@@ -33,6 +33,7 @@ import {
   unwrapAst,
   wrapAst,
 } from "../compile/capture.ts";
+import { PAYLOAD_FIELD_META, type PayloadFieldMeta, payloadFieldMeta } from "./payload-field.ts";
 import type {
   AudioInputHandle,
   AudioOutputHandle,
@@ -55,16 +56,6 @@ import type {
   State,
   TypedArrayFieldRef,
 } from "../types.ts";
-
-/**
- * Hidden meta attached to a typed-array payload proxy node identifying which
- * field of which message it refers to. `buf.copyFrom(payloadField)` reads this
- * off the source to build the `bufferCopyFrom` AST (= the public `TypedArrayFieldRef`
- * type exposes only length/at, while the internals are carried via this symbol).
- */
-const PAYLOAD_FIELD_META = Symbol("unworklet.payloadFieldMeta");
-
-type PayloadFieldMeta = { decl: MessageDeclAst; field: string };
 
 /**
  * Inbound sysex `data` proxy (= `TypedArrayFieldRef<'u8'>`) hidden marker: the
@@ -527,9 +518,7 @@ function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer
         });
         return;
       }
-      const meta = (src as unknown as Record<symbol, PayloadFieldMeta | undefined>)[
-        PAYLOAD_FIELD_META
-      ];
+      const meta = payloadFieldMeta(src);
       if (meta === undefined) {
         throw new Error(
           "unworklet: buffer.copyFrom(src) requires a typed-array message payload field",
