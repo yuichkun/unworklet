@@ -16,7 +16,16 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { audioOutput, defineProcessor, forSample, param } from "@unworklet/core";
+import {
+  audioOutput,
+  defineProcessor,
+  event,
+  f32,
+  forSample,
+  param,
+  select,
+  state,
+} from "@unworklet/core";
 import ts from "typescript";
 import { afterAll, beforeAll, expect, test } from "vite-plus/test";
 
@@ -49,6 +58,42 @@ import gain from "./gain.processor.ts?worklet";
 declare const ctx: BaseAudioContext;
 export async function f(): Promise<void> {
   const node = await createNode(ctx, gain);
+${tail}
+}
+`;
+
+// A second real processor that exercises `event` payload types in both
+// directions: `setGain` is a `from: 'main'` message (main-side `.emit(payload)`),
+// `meter` is a `to: 'main'` event (main-side `.on(handler)`). The worklet body
+// consumes `on` in a `select` cond so the per-field wire seal fires (declared
+// `boolean` → bool wire); the witness must reflect the declared shape.
+const eventProc = defineProcessor(() => {
+  const setGain = event<{ gain: number; on: boolean }>({ from: "main", name: "setGain" });
+  const meter = event<{ level: number }>({ to: "main", name: "meter" });
+  const gainState = state.f32(0);
+  const out = audioOutput({ channels: 1, name: "main" });
+  return {
+    process: () => {
+      setGain.onReceive(({ gain, on }) => {
+        gainState.write(select(on, gain, f32(0)));
+      });
+      forSample((i) => {
+        const v = gainState.read();
+        out.ch(0).at(i).write(v);
+        meter.emitIf(true, { level: v });
+      });
+    },
+  };
+});
+
+const EVENT_USAGE = (tail: string): string =>
+  `/// <reference types="@unworklet/unplugin/client" />
+/// <reference path="./event.worklet.d.ts" />
+import { createNode } from "@unworklet/core";
+import proc from "./event.processor.ts?worklet";
+declare const ctx: BaseAudioContext;
+export async function f(): Promise<void> {
+  const node = await createNode(ctx, proc);
 ${tail}
 }
 `;
@@ -86,6 +131,28 @@ beforeAll(() => {
   );
   writeFileSync(path.join(dir, "undeclared.ts"), USAGE("  void node.params.notAParam;"));
   writeFileSync(path.join(dir, "undeclared-output.ts"), USAGE("  void node.outputs.nope;"));
+
+  // Second witness: events with typed payloads. Same directory / tsconfig.
+  writeFileSync(
+    path.join(dir, "event.worklet.d.ts"),
+    workletDts("*/event.processor.ts?worklet", eventProc.worklet),
+  );
+  writeFileSync(
+    path.join(dir, "event-typed-emit.ts"),
+    EVENT_USAGE("  node.events.setGain.emit({ gain: 0.8, on: true });"),
+  );
+  writeFileSync(
+    path.join(dir, "event-wrong-emit-num.ts"),
+    EVENT_USAGE('  node.events.setGain.emit({ gain: "wrong", on: true });'),
+  );
+  writeFileSync(
+    path.join(dir, "event-wrong-emit-bool.ts"),
+    EVENT_USAGE('  node.events.setGain.emit({ gain: 0.8, on: "wrong" });'),
+  );
+  writeFileSync(
+    path.join(dir, "event-typed-on.ts"),
+    EVENT_USAGE("  node.events.meter.on((e) => { void e.level.toFixed(2); });"),
+  );
 });
 
 afterAll(() => {
@@ -118,6 +185,26 @@ test("the per-file witness also types node.outputs.<name> and rejects an undecla
   expect(diagnose("typed.ts")).toEqual([]); // node.outputs.main now resolves
   const msgs = diagnose("undeclared-output.ts");
   expect(msgs.some((m) => /nope/.test(m) && /does not exist/.test(m))).toBe(true);
+});
+
+// Event payload types recovered from the emitted witness. Same shape check as
+// params/outputs: a valid call passes silently, a wrong-typed field errors.
+test("the per-file witness types node.events.<name>.emit payload from declared fields", () => {
+  expect(diagnose("event-typed-emit.ts")).toEqual([]);
+});
+
+test("the per-file witness rejects a wrong-typed number field on emit", () => {
+  const msgs = diagnose("event-wrong-emit-num.ts");
+  expect(msgs.some((m) => /string.*not assignable.*number/is.test(m))).toBe(true);
+});
+
+test("the per-file witness rejects a wrong-typed boolean field on emit", () => {
+  const msgs = diagnose("event-wrong-emit-bool.ts");
+  expect(msgs.some((m) => /string.*not assignable.*boolean/is.test(m))).toBe(true);
+});
+
+test("the per-file witness types the .on handler payload from declared fields", () => {
+  expect(diagnose("event-typed-on.ts")).toEqual([]);
 });
 
 // Unit test of the direction-marker emission (the string the witness writes),
