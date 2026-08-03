@@ -17,7 +17,7 @@ import path from "node:path";
 import { renderOffline } from "@unworklet/offline";
 import { expect, test } from "vite-plus/test";
 
-import { lowerToProcessor } from "./index.ts";
+import { loadUwkProcessor, lowerToProcessor } from "./index.ts";
 import { lower } from "./lower.ts";
 
 test("lowerToProcessor renders a .uwk.ts offline with the sugar actually lowered", async () => {
@@ -71,6 +71,45 @@ test("lowerToProcessor on a library module (subgraph-only) errors clearly", () =
         `}));`,
     ),
   ).toThrow(/library module|not a processor/i);
+});
+
+test("loadUwkProcessor renders a multi-file .uwk.ts (processor + sibling subgraph)", async () => {
+  // The offline / test counterpart to the Vite plugin's `?worklet` build-path
+  // import: `loadUwkProcessor` writes lowered temp siblings for the entry and
+  // its transitive `.uwk.ts` imports, dynamically imports the entry, and returns
+  // the CompiledProcessor. Uses a subgraph in a sibling `.uwk.ts` — the exact
+  // scenario the single-file runtime-compile path throws on.
+  const dir = mkdtempSync(path.join(import.meta.dirname, "..", ".uwk-multifile-test-"));
+  try {
+    writeFileSync(
+      path.join(dir, "gainStep.uwk.ts"),
+      `export const gainStep = defineSubgraph((factor: Node<"f32">) => ({\n` +
+        `  apply: (x: Node<"f32">) => x * factor,\n` +
+        `}));`,
+    );
+    writeFileSync(
+      path.join(dir, "main.uwk.ts"),
+      `import { gainStep } from "./gainStep.uwk.ts";\n` +
+        `const input = audioInput({ channels: 1, name: "main" });\n` +
+        `const out = audioOutput({ channels: 1, name: "main" });\n` +
+        `const g = instantiate(gainStep, f32(3));\n` +
+        `process(() => {\n` +
+        `  forSample((i) => {\n` +
+        `    out.ch(0).at(i).write(g.apply(input.ch(0).at(i)));\n` +
+        `  });\n` +
+        `});`,
+    );
+    const proc = await loadUwkProcessor(path.join(dir, "main.uwk.ts"));
+    const result = await renderOffline(proc, {
+      sampleRate: 48000,
+      duration: 128 / 48000,
+      inputs: { main: [new Float32Array(128).fill(0.1)] },
+    });
+    // 0.1 × factor(3) = 0.3 — the sibling subgraph's method actually ran.
+    expect(result.outputs.main[0]![64]).toBeCloseTo(0.3);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("a .uwk.ts that imports a sibling constant compiles end-to-end (build path)", async () => {

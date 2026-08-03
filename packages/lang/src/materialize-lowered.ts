@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+
+import type { CompiledProcessor } from "@unworklet/core";
 
 import { lower } from "./lower.ts";
 import { rewriteImportSpecifiers, uwkImportSpecifiers } from "./uwk-imports.ts";
@@ -92,3 +94,64 @@ export const materializeLowered = async (
   cleanup.push(tempPath);
   return tempPath;
 };
+
+/**
+ * `.uwk.ts` shape check: a compiled processor has `graph` and a string `schemaHash`.
+ * (Duplicated with the plugin's own check — the shape is stable / small; keeping it
+ * local avoids a public `@unworklet/core` API for this one predicate.)
+ */
+const isCompiledProcessor = (v: unknown): v is CompiledProcessor<unknown> =>
+  typeof v === "object" &&
+  v !== null &&
+  "graph" in v &&
+  "schemaHash" in v &&
+  typeof (v as { schemaHash: unknown }).schemaHash === "string";
+
+/**
+ * Load a `.uwk.ts` file (and its transitive `.uwk.ts` imports) from disk and
+ * evaluate it to a `CompiledProcessor` — the offline / test equivalent of the
+ * Vite plugin's `?worklet` build-path import. Materializes each `.uwk.ts` to a
+ * lowered temp sibling, imports the entry via Node's native `import()`, picks
+ * the single exported `defineProcessor(...)` return value, and cleans the temp
+ * siblings up before returning.
+ *
+ * ```ts
+ * import { loadUwkProcessor } from "@unworklet/lang";
+ * import { renderOffline } from "@unworklet/offline";
+ * const proc = await loadUwkProcessor("./my-synth.uwk.ts");
+ * const result = await renderOffline(proc, { sampleRate: 48000, duration: 1 });
+ * ```
+ *
+ * Multiple processors per file (or none) throw with an actionable message
+ * (`v1.0.0` supports one processor per `.uwk.ts`).
+ */
+export async function loadUwkProcessor(sourcePath: string): Promise<CompiledProcessor<unknown>> {
+  const cleanup: string[] = [];
+  const entryTemp = await materializeLowered(sourcePath, new Map(), new Set(), cleanup);
+  try {
+    const mod = (await import(`${entryTemp}?t=${Date.now()}`)) as Record<string, unknown>;
+    const matches: string[] = [];
+    let found: CompiledProcessor<unknown> | undefined;
+    for (const key of Object.keys(mod)) {
+      if (isCompiledProcessor(mod[key])) {
+        matches.push(key);
+        found = mod[key] as CompiledProcessor<unknown>;
+      }
+    }
+    if (matches.length === 0) {
+      throw new Error(
+        `@unworklet/lang: ${sourcePath} has no defineProcessor exports (a named export of ` +
+          `defineProcessor(...) return value is required).`,
+      );
+    }
+    if (matches.length > 1) {
+      throw new Error(
+        `@unworklet/lang: ${sourcePath} has multiple defineProcessor exports ` +
+          `(${matches.join(", ")}); v1.0.0 supports one processor per file.`,
+      );
+    }
+    return found!;
+  } finally {
+    await Promise.all(cleanup.map((p) => rm(p, { force: true })));
+  }
+}

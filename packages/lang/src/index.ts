@@ -34,10 +34,12 @@ export { seedUnworkletDir, GENERATED_TSCONFIG } from "./seed-unworklet-dir.ts";
 // Multi-file `.uwk.ts` lowering — writes lowered temp siblings for a file and
 // its transitive `.uwk.ts` imports so Node's native `import()` can load the
 // whole graph. The Vite plugin uses this on the build path; offline / test
-// callers use it to render a multi-file processor without a bundler.
+// callers use `loadUwkProcessor` to render a multi-file processor without a
+// bundler.
 export {
   deriveExportName,
   isUwkSource,
+  loadUwkProcessor,
   lowerUwkSource,
   materializeLowered,
 } from "./materialize-lowered.ts";
