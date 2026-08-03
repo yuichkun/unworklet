@@ -15,6 +15,14 @@ import path from "node:path";
 import { runTsc } from "@volar/typescript/lib/quickstart/runTsc.js";
 
 import { createUwkLanguagePlugin } from "./ide/languagePlugin.ts";
+import { seedUnworkletDir } from "./seed-unworklet-dir.ts";
+
+// Materialize `.unworklet/tsconfig.json` (+ empty `worklets.d.ts`) in the cwd
+// before tsc reads any consumer tsconfig, so a cold checkout whose tsconfig
+// `"extends": "./.unworklet/tsconfig.json"` does not fail TS5083 before the
+// build ever runs. Idempotent — a subsequent `vite dev` / `vite build` re-seeds
+// the same file and (in the plugin's case) fills in `worklets.d.ts`.
+seedUnworkletDir(process.cwd());
 
 const tscPath = createRequire(import.meta.url).resolve("typescript/lib/tsc");
 // The shipped ambient (`audioInput` / `state` / `mul` / … as globals) sits next to
