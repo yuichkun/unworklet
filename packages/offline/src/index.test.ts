@@ -288,6 +288,35 @@ test("`renderOffline` defaults message delivery to quantum 0 when atQuantum is o
   expect(result.outputs.main![0]![0]).toBe(5);
 });
 
+// Fractional inbound number field — the i32 wire truncated it (0.8 → 0); the wire
+// must carry f32 so the declared `number` survives (= 型 ⟺ 動く).
+const messageGain = defineProcessor(() => {
+  const out = audioOutput({ channels: 1, name: "main" });
+  const setGain = event<{ gain: number }>({ from: "main", name: "setGain" });
+  const gainState = state.f32(0);
+  return {
+    process: () => {
+      setGain.onReceive(({ gain }) => {
+        // `gain` is a `Node<'f32'>` (a declared `number` rides the f32 wire) — no
+        // cast needed; the fraction survives end to end.
+        gainState.write(gain);
+      });
+      forSample((i) => {
+        out.ch(0).at(i).write(gainState.read());
+      });
+    },
+  };
+});
+
+test("`renderOffline` preserves a fractional inbound number field (no i32 truncation)", async () => {
+  const result = await renderOffline(messageGain, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+    messages: [{ name: "setGain", payload: { gain: 0.8 } }],
+  });
+  expect(result.outputs.main![0]![0]).toBeCloseTo(0.8, 6);
+});
+
 // boolean-valued message field — `flag.write(on)` seals `on` to the bool wire, so
 // the declared `boolean` is a real boolean both sides (no f32 detour).
 const messageFlag = defineProcessor(() => {
