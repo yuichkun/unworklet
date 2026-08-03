@@ -251,7 +251,7 @@ test("`renderOffline` .at(0) on an empty payload returns 0, not stale memory (§
 const messageMul = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
   const setMul = event<{ mul: number }>({ from: "main", name: "setMul" });
-  const mulState = state.i32(1);
+  const mulState = state.f32(1);
   return {
     process: () => {
       setMul.onReceive(({ mul }) => {
@@ -288,7 +288,8 @@ test("`renderOffline` defaults message delivery to quantum 0 when atQuantum is o
   expect(result.outputs.main![0]![0]).toBe(5);
 });
 
-// boolean-valued message field (= Q46: lifted to i32 wire).
+// boolean-valued message field — `flag.write(on)` seals `on` to the bool wire, so
+// the declared `boolean` is a real boolean both sides (no f32 detour).
 const messageFlag = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
   const setOn = event<{ on: boolean }>({ from: "main", name: "setOn" });

@@ -8,8 +8,10 @@ import { event, audioOutput, defineProcessor, forSample, state } from "../../../
 
 export const messageCounter = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
+  // A `number` message field rides the f32 wire, so the reflecting slot is f32 —
+  // `counter.write(value)` needs no cast and a fractional value would survive too.
   const counter = state
-    .i32(0)
+    .f32(0)
     .expose({ name: "counter", snapshot: "transient", publish: { rateFps: 30 } });
   const setCount = event<{ value: number }>({ from: "main", name: "setCount" });
   return {

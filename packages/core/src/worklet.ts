@@ -1435,10 +1435,21 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
                   wasmDataView.setUint32(byteOffset + 4, cursor, true);
                   state.messageContentCursors[i] = cursor + copyBytes;
                 }
-              } else if (typeof value === "boolean") {
-                wasmDataView.setInt32(byteOffset, value ? 1 : 0, true);
-              } else if (typeof value === "number") {
-                wasmDataView.setInt32(byteOffset, value | 0, true);
+              } else if (typeof value === "number" || typeof value === "boolean") {
+                // Inbound scalar field, encoded faithfully by its per-field wire type
+                // (the SSoT sealed at capture): a declared `number` → f32 (its
+                // fraction survives), a declared `boolean` → bool (i32 0/1).
+                switch (field.wireType) {
+                  case "bool":
+                    wasmDataView.setInt32(byteOffset, value ? 1 : 0, true);
+                    break;
+                  case "i32":
+                    wasmDataView.setInt32(byteOffset, Number(value) | 0, true);
+                    break;
+                  default:
+                    wasmDataView.setFloat32(byteOffset, Number(value), true);
+                    break;
+                }
               }
             }
             wasmH[0] = head + 1;

@@ -18,6 +18,7 @@ import { expect, test, vi } from "vite-plus/test";
 
 import { compile } from "./compile/index.ts";
 import { CAPACITY_16, SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
+import { i32 } from "./dsl/constructors.ts";
 import { audioInput, audioOutput, event, param } from "./dsl/declarations.ts";
 import { forSample } from "./dsl/loop.ts";
 import { defineProcessor } from "./processor.ts";
@@ -862,7 +863,9 @@ const messageRecvProc = defineProcessor(() => {
   return {
     process: () => {
       ctrl.onReceive(({ slot }) => {
-        captured.write(slot);
+        // `slot` is a `number` field → `Node<'f32'>` on the wire; convert to the
+        // i32 counter slot explicitly (the inbound number rides the f32 wire).
+        captured.write(i32(slot));
       });
       forSample((i) => {
         out.ch(0).at(i).write(0);
@@ -888,7 +891,8 @@ test("message ring mirror (sab mode): main SAB push → process mirrors into WAS
   });
   // Simulate a main-side push: write slot 0 = 42 into the SAB and Atomics.store head = 1.
   const headerView = new Int32Array(messageRingsBuffer, 0, 3);
-  const slotsView = new Int32Array(messageRingsBuffer, 12);
+  // The inbound `slot` field rides the f32 wire — push 42.0 as f32 bits.
+  const slotsView = new Float32Array(messageRingsBuffer, 12);
   slotsView[0] = 42;
   Atomics.store(headerView, 0, 1); // head = 1
   const inputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
@@ -914,7 +918,8 @@ test("message ring mirror (sab mode): head acquire-load occurs before slot copy 
     },
   });
   const headerView = new Int32Array(messageRingsBuffer, 0, 3);
-  const slotsView = new Int32Array(messageRingsBuffer, 12);
+  // The inbound `slot` field rides the f32 wire — push 42.0 as f32 bits.
+  const slotsView = new Float32Array(messageRingsBuffer, 12);
   slotsView[0] = 42;
   Atomics.store(headerView, 0, 1); // head = 1 (= pending message)
 
@@ -966,7 +971,9 @@ const messagePostProc = defineProcessor(() => {
   return {
     process: () => {
       ctrl.onReceive(({ slot }) => {
-        captured.write(slot);
+        // `slot` is a `number` field → `Node<'f32'>` on the wire; convert to the
+        // i32 counter slot explicitly (the inbound number rides the f32 wire).
+        captured.write(i32(slot));
       });
       forSample((i) => {
         out.ch(0).at(i).write(0);

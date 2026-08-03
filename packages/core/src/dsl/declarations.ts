@@ -33,7 +33,12 @@ import {
   unwrapAst,
   wrapAst,
 } from "../compile/capture.ts";
-import { PAYLOAD_FIELD_META, type PayloadFieldMeta, payloadFieldMeta } from "./payload-field.ts";
+import {
+  PAYLOAD_FIELD_META,
+  type PayloadFieldMeta,
+  payloadFieldMeta,
+  sealInboundFieldBool,
+} from "./payload-field.ts";
 import type {
   AudioInputHandle,
   AudioOutputHandle,
@@ -131,6 +136,10 @@ function liftF32(v: Node<"f32"> | number): AstNode {
  * type extension.
  */
 function liftStoreValue<T extends ScalarType>(type: T, v: Node<T> | ScalarOf<T>): AstNode {
+  // A bare inbound `boolean` payload field written to a `state.bool` slot seals
+  // its wire type to bool (it defaults to f32; a `number` field never reaches a
+  // bool slot, so it keeps the f32 default). No-op for any other value.
+  if (type === "bool") sealInboundFieldBool(v);
   if (typeof v === "number") {
     return { kind: "literal", type, value: v };
   }
@@ -364,6 +373,9 @@ function bufferScalarType(t: BufferElementType): ScalarType {
 /** Lift a buffer write value (= Q33 literal lift, element-type aware). */
 function liftBufferValue(elementType: BufferElementType, v: Node<ScalarType> | number): AstNode {
   const st = bufferScalarType(elementType);
+  // A bare inbound `boolean` payload field written into a `buffer.bool` seals its
+  // wire type to bool (same axis as the state.bool write).
+  if (st === "bool") sealInboundFieldBool(v);
   if (typeof v === "number") {
     return { kind: "literal", type: st, value: st === "i32" ? v | 0 : v };
   }
@@ -541,6 +553,9 @@ function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer
           );
         }
         field.payloadElementType = decl.type;
+        // The typed-array slot is [payloadLen, payloadOffset]; pin the unused scalar
+        // wireType to the canonical `i32` dummy (same as the `.at()`/`.length` seal).
+        field.wireType = "i32";
       }
       addStatement({
         kind: "bufferCopyFrom",
@@ -938,6 +953,8 @@ function eventToMain<T>(options: EventOptions): EventDecl<T> {
   const handle = {
     name: decl.name,
     emitIf: (cond: Node<"bool"> | boolean, payload: Record<string, unknown>) => {
+      // A bare inbound `boolean` field used as the emit condition seals it to bool.
+      sealInboundFieldBool(cond);
       const condAst: AstNode = isWrappedNode(cond)
         ? unwrapAst(cond)
         : { kind: "literal", type: "i32", value: cond ? 1 : 0 };
@@ -1083,20 +1100,29 @@ function makeMessagePayloadProxy(decl: MessageDeclAst): Record<string, unknown> 
         if (typeof prop !== "string") return undefined;
         const fieldName = prop;
         // Stay consistent with the already-sealed field = repeated accesses resolve
-        // to the same field; if unsealed, push as i32.
+        // to the same field; if unsealed, push as f32 (= the inbound number wire is
+        // f32 so fractional values survive; a boolean field is delivered as 0.0/1.0
+        // and converts to bool at its use site).
         if (!decl.fields.some((f) => f.name === fieldName)) {
-          decl.fields.push({ name: fieldName, wireType: "i32" });
+          decl.fields.push({ name: fieldName, wireType: "f32" });
         }
         const sealTypedArray = (): void => {
           const field = decl.fields.find((f) => f.name === fieldName);
-          if (field !== undefined) field.payloadElementType = "f32";
+          if (field !== undefined) {
+            field.payloadElementType = "f32";
+            // A typed-array field's slot is [payloadLen, payloadOffset]; its scalar
+            // wireType is an unused dummy. Pin it to the canonical `i32` (matching
+            // the outbound event typed-array dummy) so the f32 scalar default does
+            // not churn the schemaHash of a typed-array-only processor.
+            field.wireType = "i32";
+          }
         };
-        // scalar view = a Node holding a messageFieldRead i32 as its astPayload.
-        const node = wrapAst<"i32">({
+        // scalar view = a Node holding a messageFieldRead f32 as its astPayload.
+        const node = wrapAst<"f32">({
           kind: "messageFieldRead",
           name: decl.name,
           field: fieldName,
-          wireType: "i32",
+          wireType: "f32",
         }) as unknown as Record<string, unknown>;
         // typed-array view (= §4.3 proxy). The field is typed-array-sealed the moment it is accessed.
         Object.defineProperty(node, "length", {
@@ -1303,6 +1329,8 @@ function midiToMain(options: MidiPortOptions): MidiOutputHandle {
   return {
     name: decl.name,
     emitIf(cond, event) {
+      // A bare inbound `boolean` field used as the emit condition seals it to bool.
+      sealInboundFieldBool(cond);
       const condAst: AstNode = isWrappedNode(cond)
         ? unwrapAst(cond)
         : { kind: "literal", type: "i32", value: cond ? 1 : 0 };

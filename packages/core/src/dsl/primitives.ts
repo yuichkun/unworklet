@@ -24,6 +24,7 @@ import type { AstNode } from "../compile/ast.ts";
 import { inferAstType } from "../compile/ast.ts";
 import { isWrappedNode, registerNodeMethod, unwrapAst, wrapAst } from "../compile/capture.ts";
 import type { Node, ScalarType } from "../types.ts";
+import { sealInboundFieldBool } from "./payload-field.ts";
 
 /**
  * Scalar types every numeric primitive (free-function form) accepts. The method
@@ -304,6 +305,8 @@ registerNodeMethod("gte", function (this: Node<"f32">, other: Node<"f32"> | numb
 
 // `not(b)` lowers to a single `i32.eqz`. bool-only — `not(f32Node)` is a type error.
 export function not(b: Node<"bool"> | boolean): Node<"bool"> {
+  // A bare inbound `boolean` field negated here seals it to the bool wire.
+  sealInboundFieldBool(b);
   return wrapAst<"bool">({ kind: "not", type: "bool", value: lift(b, "bool") });
 }
 registerNodeMethod("not", function (this: Node<"bool">): Node<"bool"> {
@@ -510,6 +513,8 @@ export function select<T extends ScalarType>(
   then: Node<T> | number | boolean,
   else_: Node<T> | number | boolean,
 ): Node<T> {
+  // A bare inbound `boolean` field used as the select condition seals it to bool.
+  sealInboundFieldBool(cond);
   // WASM `select` returns the branch type unchanged; carry it on the AST so
   // downstream inference / emission pick the right type. Literal branches lift
   // to the type of whichever branch is a `Node<T>` (Q33 context-dependent

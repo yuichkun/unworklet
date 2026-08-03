@@ -716,10 +716,21 @@ export async function createNode<C>(
                   messageRingsView.setUint32(byteOffset + 4, cursor, true);
                   messageContentCursors[i] = cursor + copyBytes;
                 }
-              } else if (typeof value === "boolean") {
-                messageRingsView.setInt32(byteOffset, value ? 1 : 0, true);
-              } else if (typeof value === "number") {
-                messageRingsView.setInt32(byteOffset, value | 0, true);
+              } else if (typeof value === "number" || typeof value === "boolean") {
+                // Inbound scalar field, encoded faithfully by its per-field wire type
+                // (the SSoT sealed at capture): a declared `number` → f32 (its
+                // fraction survives), a declared `boolean` → bool (i32 0/1).
+                switch (field.wireType) {
+                  case "bool":
+                    messageRingsView.setInt32(byteOffset, value ? 1 : 0, true);
+                    break;
+                  case "i32":
+                    messageRingsView.setInt32(byteOffset, Number(value) | 0, true);
+                    break;
+                  default:
+                    messageRingsView.setFloat32(byteOffset, Number(value), true);
+                    break;
+                }
               }
             }
           }

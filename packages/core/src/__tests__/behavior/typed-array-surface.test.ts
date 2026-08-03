@@ -58,7 +58,7 @@ test("typed-array surface: element-type contract is verified by vp check typeche
   // Scalar message fields are lifted to Node on the handler side. Leaking them as raw
   // JS values would cause slot + 1 / if(armed) to run against a proxy at capture time
   // and corrupt the graph.
-  expectTrue<AssignableTo<SlotField, Node<"i32">>>();
+  expectTrue<AssignableTo<SlotField, Node<"f32">>>();
   expectFalse<AssignableTo<SlotField, number>>();
   expectTrue<AssignableTo<ArmedField, Node<"bool">>>();
   expectFalse<AssignableTo<ArmedField, boolean>>();

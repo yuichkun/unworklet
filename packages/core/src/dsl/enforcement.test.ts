@@ -168,9 +168,9 @@ test("a message field read used outside its onReceive handler is rejected", asyn
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
     const m = event<{ slot: number }>({ from: "main", name: "m" });
-    let escaped: Node<"i32"> | undefined;
+    let escaped: Node<"f32"> | undefined;
     m.onReceive(({ slot }) => {
-      escaped = slot as Node<"i32">;
+      escaped = slot; // a `number` field is `Node<'f32'>` on the f32 wire
     });
     return {
       process: () => {
@@ -189,10 +189,10 @@ test("a message field read used inside its onReceive handler compiles (no false 
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
     const m = event<{ slot: number }>({ from: "main", name: "m" });
-    const sel = state.named("sel").i32(0);
+    const sel = state.named("sel").f32(0);
     m.onReceive(({ slot }) => {
       // Read inside the handler body — the canonical, valid usage.
-      sel.write(slot as Node<"i32">);
+      sel.write(slot);
     });
     return {
       process: () => {

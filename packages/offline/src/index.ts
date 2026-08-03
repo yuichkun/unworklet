@@ -313,9 +313,15 @@ export async function renderOffline<C>(
           );
           dataView.setInt32(byteOffset, byteLen, true); // payloadLen (= bytes)
           dataView.setInt32(byteOffset + 4, payloadOffset, true); // payloadOffset (= per-slot chunk)
-        } else {
-          // scalar field = Q46: all i32 wire (= number / boolean → i32 word).
+        } else if (field.wireType === "bool") {
+          // boolean → bool wire (i32 0/1).
+          dataView.setInt32(byteOffset, payload[field.name] ? 1 : 0, true);
+        } else if (field.wireType === "i32") {
+          // explicit i32 wire (e.g. a hand-built descriptor) → integer word.
           dataView.setInt32(byteOffset, Number(payload[field.name]) | 0, true);
+        } else {
+          // number → f32 wire; the declared `number` keeps its fraction.
+          dataView.setFloat32(byteOffset, Number(payload[field.name]), true);
         }
       }
       headerView[0] = head + 1; // advance head by 1 slot (= push)

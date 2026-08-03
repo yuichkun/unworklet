@@ -344,8 +344,9 @@ export type EventDecl<T> = {
 /**
  * Worklet-side handler view of a `message<T>` payload (Q46 / Q36-b): the runtime
  * proxy delivers every field as a graph node, so the handler-side type lifts each
- * scalar field to its `Node<T>` form — `number` → `Node<'i32'>`, `boolean` →
- * `Node<'bool'>` (Q46 uniform lift) — and each variable-length typed-array field
+ * scalar field to its `Node<T>` form — `number` → `Node<'f32'>`, `boolean` →
+ * `Node<'bool'>` (the inbound number wire is f32 so fractions survive) — and each
+ * variable-length typed-array field
  * to the `TypedArrayFieldRef` proxy. Lifting scalars to `Node` keeps build-time
  * JS control flow (`slot + 1`, `if (armed)`) a type error, since those would run
  * at graph capture against the proxy rather than emit DSP nodes; the DSL
@@ -360,7 +361,7 @@ export type MessageGraphPayload<T> = {
       : T[K] extends boolean
         ? Node<"bool">
         : T[K] extends number
-          ? Node<"i32">
+          ? Node<"f32">
           : T[K];
 };
 

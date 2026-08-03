@@ -1655,12 +1655,13 @@ test("`messageDecl.onReceive` multiple registrations appear in source order in s
   expect(ctx.statements[1]?.kind).toBe("messageOnReceive");
 });
 
-test("`messageDecl.onReceive` handler argument proxies field access as Node<'i32'> (Q46 uniform lift)", () => {
+test("`messageDecl.onReceive` handler argument proxies field access as Node<'f32'> (number → f32 wire)", () => {
   // When the handler destructures `({ slot }) => ...`, the framework proxies
-  // the "slot" field access and returns it as a Node<'i32'> proxy (Q46 uniform lift).
+  // the "slot" field access and returns it as a `Node<'f32'>` proxy (a declared
+  // `number` rides the f32 wire so its fraction survives).
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const z = state.named("counter").i32(0);
+    const z = state.named("counter").f32(0);
     const reset = event<{ slot: number }>({ from: "main", name: "reset" });
     reset.onReceive(({ slot }) => {
       z.write(slot);
@@ -1671,10 +1672,10 @@ test("`messageDecl.onReceive` handler argument proxies field access as Node<'i32
   expect(onRecv.body).toHaveLength(1);
   expect(onRecv.body[0]).toMatchObject({
     kind: "stateStore",
-    type: "i32",
+    type: "f32",
     name: "counter",
   });
-  // store value = Node<'i32'> produced via the field proxy = messageFieldRead AST
+  // store value = Node<'f32'> produced via the field proxy = messageFieldRead AST
   const storeValue = (onRecv.body[0] as { value: { kind: string; name?: string; field?: string } })
     .value;
   expect(storeValue.kind).toBe("messageFieldRead");
@@ -1703,7 +1704,9 @@ test("`messageDecl.onReceive` accessing the same field multiple times pushes it 
     });
     const decl = ctx.declarations.find((d) => d.kind === "message");
     if (decl?.kind !== "message") throw new Error("expected message decl");
-    expect(decl.fields).toEqual([{ name: "slot", wireType: "i32" }]);
+    // An inbound `number` field defaults to the f32 wire (its fraction survives);
+    // it is not consumed by a bool sink here, so it stays f32.
+    expect(decl.fields).toEqual([{ name: "slot", wireType: "f32" }]);
   });
 });
 
@@ -1729,9 +1732,10 @@ test("`messageDecl.onReceive` typed-array field: `.at` / `.length` produce paylo
   expect((onRecv.body[1] as { value: { kind: string } }).value.kind).toBe("payloadFieldRead");
 });
 
-test("inferAstType: messageFieldRead Node passed as an event emit field seals wireType as i32", () => {
-  // Emitting an event inside a handler and passing a messageFieldRead
-  // Node<'i32'> as a field value seals the event decl.fields entry as i32.
+test("inferAstType: messageFieldRead Node passed as an event emit field seals wireType as f32", () => {
+  // Emitting an event inside a handler and re-passing an inbound `number` field
+  // (a `Node<'f32'>` on the f32 wire) as a field value seals the outbound event
+  // decl.fields entry as f32 — `number` rides the f32 wire end to end.
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const msg = event<{ slot: number }>({ from: "main", name: "preset" });
@@ -1741,7 +1745,7 @@ test("inferAstType: messageFieldRead Node passed as an event emit field seals wi
     });
     const evtDecl = ctx.declarations.find((d) => d.kind === "event");
     if (evtDecl?.kind !== "event") throw new Error("expected event decl");
-    expect(evtDecl.fields).toEqual([{ name: "value", wireType: "i32" }]);
+    expect(evtDecl.fields).toEqual([{ name: "value", wireType: "f32" }]);
   });
 });
 

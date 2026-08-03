@@ -1545,16 +1545,19 @@ export function emitExpression(
         mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32),
         mod.i32.const(field.offsetInSlot),
       );
-      // With the Q46 uniform lift, the sub-phase 7.7 stage seals only
-      // wireType = i32 / bool; f32 / f64 / i64 are filled in a later sub-phase
-      // alongside the typed-array path.
+      // An inbound scalar field is f32 on the wire (= a declared `number` keeps its
+      // fractional value; a boolean is delivered as 0.0/1.0 and converts to bool at
+      // its use site). bool fields that were sealed directly stay an i32 word.
+      if (field.wireType === "f32") {
+        return mod.f32.load(0, BYTES_PER_I32, ptr);
+      }
       if (field.wireType === "i32" || field.wireType === "bool") {
         return mod.i32.load(0, BYTES_PER_I32, ptr);
       }
-      /* v8 ignore next 3 — the Q46 uniform lift path seals only wireType = i32 /
-         bool = unreachable defensive guard */
+      /* v8 ignore next 3 — inbound scalar fields seal to f32 / i32 / bool =
+         unreachable defensive guard */
       throw new Error(
-        `unworklet: unsupported event field wireType "${field.wireType}" (= the sub-phase 7.7 stage supports only i32 / bool)`,
+        `unworklet: unsupported event field wireType "${field.wireType}" (= inbound scalar fields support only f32 / i32 / bool)`,
       );
     }
     case "tempRef":
