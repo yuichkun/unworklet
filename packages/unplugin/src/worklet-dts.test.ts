@@ -223,7 +223,7 @@ test("the witness marks event direction: eventRings → out, messageRings → in
     outputs: [],
   } as unknown as Parameters<typeof workletDts>[1];
   const dts = workletDts("*/x.processor.ts?worklet", ns);
-  expect(dts).toContain('"peak": "out"');
-  expect(dts).toContain('"ctrl": "in"');
-  expect(dts).toContain('"both": "inout"');
+  expect(dts).toContain('"peak": { dir: "out"; fields: {} }');
+  expect(dts).toContain('"ctrl": { dir: "in"; fields: {} }');
+  expect(dts).toContain('"both": { dir: "inout"; fields: {} }');
 });

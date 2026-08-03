@@ -875,24 +875,48 @@ export type EventSurface<T> = {
 };
 
 /**
- * The main-side surface for one declared event, narrowed by the per-name
- * direction marker the `?worklet` witness emits:
- * - `"out"` (`to:'main'`, worklet→main) — receive only (`.on`).
- * - `"in"` (`from:'main'`, main→worklet) — send only (`.emit`).
- * - `"inout"` (a same-name in/out pair, Q87) — both.
- *
- * Any other marker (the legacy `unknown` witness value, or an inline processor's
- * permissive map) keeps the full surface so existing code is unaffected. The
- * wrong-direction method `TypeError`s at runtime, so narrowing turns that into a
- * compile error (type ⟺ runtime). The payload `T` is erased at build time and
- * not recoverable from the runtime namespace, so the witness path carries
- * `unknown`.
+ * Map a witness field marker to its main-side JS payload type. Scalar fields
+ * come as a wire-type string (`"f32"` / `"f64"` / `"i32"` / `"i64"` → `number`,
+ * `"bool"` → `boolean`); typed-array fields come as `{ array: <el> }` (→
+ * `Float32Array` / `Uint8Array` etc.). Anything else falls back to `unknown`.
  */
-export type EventSurfaceFor<D> = D extends "out"
-  ? Omit<EventSurface<unknown>, "emit">
-  : D extends "in"
-    ? Omit<EventSurface<unknown>, "on">
-    : EventSurface<unknown>;
+type WitnessFieldValue<F> = F extends "bool"
+  ? boolean
+  : F extends "f32" | "f64" | "i32" | "i64"
+    ? number
+    : F extends { array: "f32" }
+      ? Float32Array
+      : F extends { array: "u8" }
+        ? Uint8Array
+        : unknown;
+
+type WitnessPayload<Fields> = { [K in keyof Fields]: WitnessFieldValue<Fields[K]> };
+
+/**
+ * The main-side surface for one declared event, narrowed by the per-name
+ * witness marker the `?worklet` witness emits:
+ * - `{ dir: "out"; fields: {…} }` (`to:'main'`, worklet→main) — receive only
+ *   (`.on`), payload derived from `fields`.
+ * - `{ dir: "in"; fields: {…} }` (`from:'main'`, main→worklet) — send only
+ *   (`.emit`), payload derived from `fields`.
+ * - `{ dir: "inout"; fields: {…} }` (a same-name in/out pair, Q87) — both.
+ *
+ * A legacy string marker (`"out"` / `"in"` / `"inout"`) or an inline processor's
+ * permissive map keeps the full surface with an `unknown` payload so existing
+ * code is unaffected. Wrong-direction methods `TypeError` at runtime, so
+ * narrowing turns that into a compile error (type ⟺ runtime).
+ */
+export type EventSurfaceFor<D> = D extends { dir: "out"; fields: infer F }
+  ? Omit<EventSurface<WitnessPayload<F>>, "emit">
+  : D extends { dir: "in"; fields: infer F }
+    ? Omit<EventSurface<WitnessPayload<F>>, "on">
+    : D extends { dir: "inout"; fields: infer F }
+      ? EventSurface<WitnessPayload<F>>
+      : D extends "out"
+        ? Omit<EventSurface<unknown>, "emit">
+        : D extends "in"
+          ? Omit<EventSurface<unknown>, "on">
+          : EventSurface<unknown>;
 
 export type MidiPortSurface = {
   send(event: MidiEvent, atTime?: number): void;

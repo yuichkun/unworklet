@@ -31,24 +31,49 @@ export function workletDts(specifier: string, ns: WorkletNamespace): string {
   // since UnworkletNode maps each name to its fixed handle type.
   const params = named(ns.parameterDescriptors, () => `"f32"`);
   const state = named(ns.publishSlots, (d) => JSON.stringify(d.type as string));
-  // Direction marker per event so the node surface narrows `.on` / `.emit`:
-  // eventRings = `event({ to: 'main' })` (worklet→main) → main receives → "out";
-  // messageRings = `event({ from: 'main' })` (main→worklet) → main sends → "in";
-  // a name declared in both (a same-name in/out pair, Q87) → "inout".
-  const eventDir = new Map<string, { out: boolean; in: boolean }>();
-  for (const r of ns.eventRings) {
-    const name = (r as { name: string }).name;
-    eventDir.set(name, { out: true, in: eventDir.get(name)?.in ?? false });
+  // Per-event witness entry: direction (so `.on` / `.emit` narrows) and the
+  // declared field shape (so the payload types recover the declared `T`).
+  //   eventRings   = `event({ to: 'main' })`   (worklet→main) → main receives → "out"
+  //   messageRings = `event({ from: 'main' })` (main→worklet) → main sends    → "in"
+  //   a same-name in/out pair (Q87)                                          → "inout"
+  // Field markers: a scalar field is its wire type as a string
+  // (`"f32"` / `"i32"` / `"bool"` etc.); a typed-array field is `{ array: <el> }`.
+  // `EventSurfaceFor` in `@unworklet/core` reads these back into payload types.
+  type WitnessField = { name: string; wireType?: string; payloadElementType?: string };
+  type WitnessRing = { name: string; fields?: readonly WitnessField[] };
+  type EventInfo = { out: boolean; in: boolean; fields: Map<string, string> };
+  const eventInfo = new Map<string, EventInfo>();
+  const fieldMarker = (f: WitnessField): string =>
+    f.payloadElementType !== undefined
+      ? `{ array: ${JSON.stringify(f.payloadElementType)} }`
+      : JSON.stringify(f.wireType ?? "unknown");
+  const mergeFields = (info: EventInfo, r: WitnessRing): void => {
+    for (const f of r.fields ?? []) info.fields.set(f.name, fieldMarker(f));
+  };
+  const ensureInfo = (name: string): EventInfo => {
+    const prior = eventInfo.get(name);
+    if (prior !== undefined) return prior;
+    const info: EventInfo = { out: false, in: false, fields: new Map() };
+    eventInfo.set(name, info);
+    return info;
+  };
+  for (const r of ns.eventRings as readonly WitnessRing[]) {
+    const info = ensureInfo(r.name);
+    info.out = true;
+    mergeFields(info, r);
   }
-  for (const r of ns.messageRings) {
-    const name = (r as { name: string }).name;
-    eventDir.set(name, { out: eventDir.get(name)?.out ?? false, in: true });
+  for (const r of ns.messageRings as readonly WitnessRing[]) {
+    const info = ensureInfo(r.name);
+    info.in = true;
+    mergeFields(info, r);
   }
-  const events = [...eventDir]
-    .map(
-      ([name, d]) =>
-        `${JSON.stringify(name)}: ${JSON.stringify(d.out && d.in ? "inout" : d.out ? "out" : "in")}`,
-    )
+  const events = [...eventInfo]
+    .map(([name, info]) => {
+      const dir = info.out && info.in ? "inout" : info.out ? "out" : "in";
+      const fieldsStr = [...info.fields].map(([n, t]) => `${JSON.stringify(n)}: ${t}`).join("; ");
+      const fieldsBody = fieldsStr === "" ? "{}" : `{ ${fieldsStr} }`;
+      return `${JSON.stringify(name)}: { dir: ${JSON.stringify(dir)}; fields: ${fieldsBody} }`;
+    })
     .join("; ");
   const midi = named(ns.midiRings, () => "unknown");
   const inputs = named(ns.inputs, () => "unknown");
