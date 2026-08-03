@@ -132,6 +132,19 @@ declare module "vitest" {
   interface Assertion<T = any> extends UnworkletAudioMatchers<T> {}
 }
 
+// `Assertion` is declared in `@vitest/expect` and re-exported by `vitest`. Module
+// augmentation via `declare module "vitest"` above does NOT merge with the
+// re-exported interface — TS creates a fresh (unused) `vitest.Assertion` instead
+// of extending the one that `expect(x)` actually returns. Augment the source
+// module directly so a stock-vitest consumer sees the chain matchers on
+// `expect(x)` too. `@vitest/expect` is not a direct dep of consumers, but it
+// resolves transitively through `vitest`'s own dep tree — augmentation is a
+// type-only concern, so no runtime import is required.
+declare module "@vitest/expect" {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- match `@vitest/expect`'s own `Assertion<T = any>` signature so the declarations merge.
+  interface Assertion<T = any> extends UnworkletAudioMatchers<T> {}
+}
+
 type MatcherResult = { pass: boolean; message: () => string };
 
 const wrap =

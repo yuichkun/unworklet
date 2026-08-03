@@ -261,6 +261,9 @@ importers:
       '@unworklet/core':
         specifier: workspace:^
         version: link:../core
+      '@vitest/expect':
+        specifier: ^3 || ^4
+        version: 4.1.7
       bumpp:
         specifier: ^11.1.0
         version: 11.1.0
@@ -4372,7 +4375,7 @@ snapshots:
       picomatch: 4.0.4
       postcss: 8.5.15
       rolldown: 1.0.2
-      tinyglobby: 0.2.16
+      tinyglobby: 0.2.17
     optionalDependencies:
       '@types/node': 24.12.4
       '@vitejs/devtools': 0.3.3(typescript@5.9.3)(vite@8.0.14)
@@ -4393,13 +4396,13 @@ snapshots:
       es-module-lexer: 2.1.0
       expect-type: 1.3.0
       magic-string: 0.30.21
-      obug: 2.1.1
+      obug: 2.1.3
       pathe: 2.0.3
       picomatch: 4.0.4
       std-env: 4.1.0
       tinybench: 2.9.0
       tinyexec: 1.2.4
-      tinyglobby: 0.2.16
+      tinyglobby: 0.2.17
       tinyrainbow: 3.1.0
       vite: 8.0.14(@types/node@24.12.4)(@vitejs/devtools@0.3.3)(esbuild@0.28.0)(jiti@2.7.0)(yaml@2.9.0)
       why-is-node-running: 2.3.0

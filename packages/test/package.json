@@ -63,6 +63,7 @@
     "@types/node": "catalog:",
     "@typescript/native-preview": "7.0.0-dev.20260509.2",
     "@unworklet/core": "workspace:^",
+    "@vitest/expect": "^3 || ^4",
     "bumpp": "^11.1.0",
     "typescript": "catalog:",
     "vite-plus": "catalog:",
@@ -70,7 +71,13 @@
   },
   "peerDependencies": {
     "@unworklet/core": "workspace:^",
+    "@vitest/expect": "^3 || ^4",
     "vitest": "^3 || ^4"
+  },
+  "peerDependenciesMeta": {
+    "@vitest/expect": {
+      "optional": true
+    }
   },
   "engines": {
     "node": ">=20"
