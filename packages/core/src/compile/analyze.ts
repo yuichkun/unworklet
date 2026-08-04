@@ -189,6 +189,7 @@ function walkForTypeErrors(node: AstNode, diagnostics: DiagnosticEntry[]): void 
     case "loopCounter":
     case "stateLoad":
     case "messageFieldRead":
+    case "noiseSourceNext":
       break;
   }
 }

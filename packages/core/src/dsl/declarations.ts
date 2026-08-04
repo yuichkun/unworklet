@@ -54,6 +54,8 @@ import type {
   MidiInputHandle,
   MidiOutputHandle,
   Node,
+  NoiseSource,
+  NoiseSourceOptions,
   OutputChannelView,
   Param,
   ScalarOf,
@@ -1499,3 +1501,46 @@ function midiImpl(
 }
 
 export const event: EventFamily = Object.assign(eventImpl, { midi: midiImpl }) as EventFamily;
+
+// ─────────────────────────────────────────────────────────────────────────
+// noiseSource (`01-dsl.md` §2 stateful sources)
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Declare a private xorshift32 white-noise generator. Returns a `NoiseSource`
+ * handle; each `.next()` call advances the internal PRNG state by one step
+ * and returns the next `[-1, 1)` sample.
+ *
+ * Framework allocates one i32 slot per declaration (see
+ * `layout.regions.noiseSources`). Auto seed = declaration order counter
+ * (1, 2, 3, …) if `seed` omitted; explicit seed pins the output byte-for-byte
+ * across code edits (use for golden snapshots / preset reproducibility).
+ * `seed === 0` is silently substituted with a sentinel constant because
+ * xorshift32 locks at zero — the user can still specify `seed: 0` without
+ * hitting the pathological case.
+ *
+ * ```ts
+ * const nL = noiseSource({ seed: 42 });
+ * const nR = noiseSource();  // auto seed = next in order
+ * process(() => {
+ *   forSample((i) => {
+ *     out.left.at(i).write(nL.next().mul(0.3));
+ *     out.right.at(i).write(nR.next().mul(0.3));
+ *   });
+ * });
+ * ```
+ */
+export function noiseSource(options?: NoiseSourceOptions): NoiseSource {
+  const ctx = getCurrentCapture();
+  const idx = ctx.noiseSourceCount;
+  ctx.noiseSourceCount += 1;
+  // Auto seed starts at 1 so we never hand out xorshift32's pathological zero.
+  const seed = options?.seed ?? idx + 1;
+  const name = `${ctx.namePrefix}__noise_${idx}`;
+  addDeclaration({ kind: "noiseSource", name, seed });
+  return {
+    next(): Node<"f32"> {
+      return captureTemp<"f32">({ kind: "noiseSourceNext", type: "f32", name }, "f32");
+    },
+  };
+}

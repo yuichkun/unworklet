@@ -265,6 +265,35 @@ export type AudioOutputHandle<C extends number> = {
 } & (C extends 2 ? StereoOutputSugar : object);
 
 // ─────────────────────────────────────────────────────────────────────────
+// Noise source (`01-dsl.md` §2 stateful sources)
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Options for `noiseSource(...)`.
+ */
+export type NoiseSourceOptions = {
+  /**
+   * Compile-time integer seed for the internal xorshift32 PRNG. Omitted →
+   * framework auto-assigns per declaration order (1, 2, 3, …). Explicit seeds
+   * pin the noise output byte-for-byte across code edits, which is what golden
+   * snapshot tests and preset restoration rely on. `seed === 0` is silently
+   * substituted with a sentinel constant because xorshift32 locks at zero.
+   */
+  seed?: number;
+};
+
+/**
+ * A declared noise source with a private i32 PRNG state slot. Returned by
+ * `noiseSource(...)`. Each `.next()` call advances the internal state one step
+ * (xorshift32) and returns the next `[-1, 1)` sample, so **call count = PRNG
+ * consumption**. To use the same sample in multiple places within one
+ * iteration, hold it once: `const s = src.next()` then reuse `s`.
+ */
+export type NoiseSource = {
+  next(): Node<"f32">;
+};
+
+// ─────────────────────────────────────────────────────────────────────────
 // Messaging surface (`01-dsl.md` §4 + `02-messaging.md`)
 // ─────────────────────────────────────────────────────────────────────────
 

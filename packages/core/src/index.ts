@@ -59,7 +59,7 @@ export {
 export { pipe } from "./dsl/pipe.ts";
 
 // Declaration helpers.
-export { audioInput, audioOutput, event, param, state } from "./dsl/declarations.ts";
+export { audioInput, audioOutput, event, noiseSource, param, state } from "./dsl/declarations.ts";
 
 export type {
   BufferChain,
@@ -170,6 +170,8 @@ export type {
   MigrationHelpers,
   Node,
   NodeErrorEvent,
+  NoiseSource,
+  NoiseSourceOptions,
   OutputChannelSample,
   OutputChannelView,
   Param,

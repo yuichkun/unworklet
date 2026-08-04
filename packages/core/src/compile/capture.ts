@@ -55,6 +55,15 @@ export type CaptureContext = {
    * gives each nesting level its own WASM loop-counter local.
    */
   loopDepth: number;
+  /**
+   * Running count of `noiseSource(...)` declarations in graph capture order.
+   * Used to (a) generate synthetic slot names (`__noise_<idx>`) and (b) assign
+   * auto seeds when the user omits `seed` (auto seed = ++counter, starting from
+   * 1 so we never hand out xorshift32's pathological zero). Same source → same
+   * declaration order → same auto seeds, so noise output is fully reproducible
+   * across builds.
+   */
+  noiseSourceCount: number;
 };
 
 let currentCapture: CaptureContext | null = null;
@@ -69,6 +78,7 @@ export function newCaptureContext(): CaptureContext {
     subgraphCount: 0,
     tempCount: 0,
     loopDepth: 0,
+    noiseSourceCount: 0,
   };
 }
 
