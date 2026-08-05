@@ -132,14 +132,19 @@ export function useUnworkletDemo() {
   }
 
   // Effects only: run the chosen input source through the node.
+  // A "generator" effect (no `audioInput` named "main") skips the source — the
+  // processor synthesises its own signal (e.g. noise, oscillator) into the output.
   async function play(): Promise<void> {
     if (!node) return;
     const c = await ensureCtx();
     if (current?.kind === "effect") {
       stopSource();
-      source = makeSource(c);
-      source.connect(node.inputs["main"]!);
-      source.start();
+      const mainIn = node.inputs["main"];
+      if (mainIn) {
+        source = makeSource(c);
+        source.connect(mainIn);
+        source.start();
+      }
     }
     playing.value = true;
   }
@@ -188,7 +193,9 @@ export function useUnworkletDemo() {
       newMaster.connect(ctx.destination);
       if (current?.kind === "effect" && source) {
         source.disconnect();
-        source.connect(r.node.inputs["main"]!);
+        const nextInput = r.node.inputs["main"];
+        if (nextInput) source.connect(nextInput);
+        else stopSource(); // new processor is a generator (no main input); kill the source
       }
       const t = ctx.currentTime;
       master.gain.setValueAtTime(master.gain.value, t);
