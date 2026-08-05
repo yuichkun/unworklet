@@ -43,6 +43,24 @@ process(() => {
   expect(result.outputs.main[1]![64]).toBeCloseTo(-1.0);
 });
 
+test("lowerToProcessor lowers a `.uwk.ts` using `noiseSource().next()` end-to-end", async () => {
+  const proc = lowerToProcessor(`const out = audioOutput({ channels: 1, name: "main" });
+const n = noiseSource({ seed: 42 });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = n.next() * 0.5;
+  });
+});`);
+  const result = await renderOffline(proc, {
+    sampleRate: 48000,
+    duration: 128 / 48000,
+  });
+  const samples = result.outputs.main[0]!;
+  // Actual PRNG output (not silence, not clipping); all samples in [-0.5, 0.5].
+  expect(samples.some((s) => s !== 0)).toBe(true);
+  expect(samples.every((s) => s >= -0.5 && s < 0.5)).toBe(true);
+});
+
 test("lowerToProcessor reports a clear error for a cross-file import (runtime-compile path)", () => {
   // The in-memory / browser runtime-compile path evaluates the lowered module via
   // `new Function`, which cannot resolve sibling files. A `.uwk.ts` that imports

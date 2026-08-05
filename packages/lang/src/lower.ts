@@ -27,6 +27,7 @@ const CORE_AUTHORING_EXPORTS = new Set<string>([
   "state",
   "param",
   "event",
+  "noiseSource",
   "forSample",
   "select",
   "pipe",

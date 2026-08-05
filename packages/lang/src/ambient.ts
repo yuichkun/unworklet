@@ -28,6 +28,7 @@ declare global {
   const event: typeof import("@unworklet/core").event;
   const defineSubgraph: typeof import("@unworklet/core").defineSubgraph;
   const instantiate: typeof import("@unworklet/core").instantiate;
+  const noiseSource: typeof import("@unworklet/core").noiseSource;
 
   // ── Audio I/O (name optional in .uwk.ts; the auto-name pass fills it) ──
   function audioInput<C extends number>(options: { channels: C; name?: string }): AudioInputHandle<C>;
