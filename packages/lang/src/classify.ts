@@ -116,7 +116,7 @@ function isDspCall(checker: ts.TypeChecker, call: ts.CallExpression): boolean {
   }
 }
 
-/** The sugar binary operators (arithmetic + comparison) the operator pass lowers. */
+/** The sugar binary operators (arithmetic + comparison + bool logical) the operator pass lowers. */
 export function isSugarBinaryOperator(kind: ts.SyntaxKind): boolean {
   switch (kind) {
     case ts.SyntaxKind.PlusToken:
@@ -132,6 +132,15 @@ export function isSugarBinaryOperator(kind: ts.SyntaxKind): boolean {
     case ts.SyntaxKind.GreaterThanToken:
     case ts.SyntaxKind.LessThanEqualsToken:
     case ts.SyntaxKind.GreaterThanEqualsToken:
+    // Bool logical: `a && b` → `and(a, b)`, `a || b` → `or(a, b)`. Both operands
+    // are always evaluated (no JS-style short-circuit) — WASM realtime has no
+    // branch-free short-circuit primitive; consumers wanting that should write
+    // `select(cond, thenExpr, elseExpr)` where the branch position naturally
+    // guards. Fires only when at least one operand classifies as a DSP expr;
+    // when both operands are non-Node the sugar is a no-op and TS reports the
+    // usual JS boolean semantics.
+    case ts.SyntaxKind.AmpersandAmpersandToken:
+    case ts.SyntaxKind.BarBarToken:
       return true;
     default:
       return false;

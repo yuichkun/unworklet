@@ -31,6 +31,9 @@ export const BINARY_FN: Partial<Record<ts.SyntaxKind, string>> = {
   [ts.SyntaxKind.GreaterThanEqualsToken]: "gte",
   [ts.SyntaxKind.EqualsEqualsToken]: "eq",
   [ts.SyntaxKind.EqualsEqualsEqualsToken]: "eq",
+  // `a && b` / `a || b` — bool logical, always evaluates both operands.
+  [ts.SyntaxKind.AmpersandAmpersandToken]: "and",
+  [ts.SyntaxKind.BarBarToken]: "or",
 };
 export const NEGATED_EQ = new Set<ts.SyntaxKind>([
   ts.SyntaxKind.ExclamationEqualsToken,
