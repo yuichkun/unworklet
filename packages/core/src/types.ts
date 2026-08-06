@@ -966,6 +966,24 @@ export type MidiPortSurface = {
   };
 };
 
+/**
+ * The main-side surface for one declared MIDI port, narrowed by the per-name
+ * witness marker the `?worklet` witness emits:
+ * - `{ dir: "in" }` (`from:'main'`, main → worklet) — main sends `.send()` /
+ *   `.connectFromWebMIDI()`; `.onEvent()` is not applicable (main is the
+ *   producer).
+ * - `{ dir: "out" }` (`to:'main'`, worklet → main) — main observes via
+ *   `.onEvent()`; `.send()` / `.connectFromWebMIDI()` are not applicable.
+ * A legacy `unknown` marker (or the permissive-map fallback) keeps the full
+ * surface. Wrong-direction methods `TypeError` at runtime, so narrowing turns
+ * that into a compile error (type ⟺ runtime).
+ */
+export type MidiPortSurfaceFor<D> = D extends { dir: "in" }
+  ? Omit<MidiPortSurface, "onEvent">
+  : D extends { dir: "out" }
+    ? Omit<MidiPortSurface, "send" | "connectFromWebMIDI">
+    : MidiPortSurface;
+
 export type UnworkletNode<P> = UnworkletNodeOf<ConfigOf<P>>;
 
 /**
@@ -1010,7 +1028,7 @@ type UnworkletNodeOf<C> = {
     ? { readonly [K in keyof E]: EventSurfaceFor<E[K]> }
     : Record<string, EventSurface<unknown>>;
   readonly midi: C extends { midi: infer M }
-    ? { readonly [K in keyof M]: MidiPortSurface }
+    ? { readonly [K in keyof M]: MidiPortSurfaceFor<M[K]> }
     : Record<string, MidiPortSurface>;
   readonly diagnostics: { readonly transport: TransportMode };
   snapshot(options?: { profile?: string }): Promise<Uint8Array>;

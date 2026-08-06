@@ -141,6 +141,38 @@ ${tail}
 }
 `;
 
+// A fourth real processor that exercises `event.midi(...)` on both directions:
+// `keys` receives MIDI from main (main should be able to `.send(...)` and
+// `.connectFromWebMIDI(...)`); `arpOut` sends MIDI to main (main should
+// `.onEvent(...)`). Wrong-direction methods must be narrowed away by
+// `MidiPortSurfaceFor<D>` (guidance-dogfood Round 2 gap 3).
+const midiProc = defineProcessor(() => {
+  const keys = event.midi({ from: "main", name: "keys" });
+  const arpOut = event.midi({ to: "main", name: "arpOut" });
+  const out = audioOutput({ channels: 1, name: "main" });
+  return {
+    process: () => {
+      keys.onEvent("noteOn", () => {});
+      forSample((i) => {
+        out.ch(0).at(i).write(f32(0));
+        arpOut.emitIf(false, { type: "noteOn", channel: 0, note: 60, velocity: 100, atSample: i });
+      });
+    },
+  };
+});
+
+const MIDI_USAGE = (tail: string): string =>
+  `/// <reference types="@unworklet/unplugin/client" />
+/// <reference path="./midi.worklet.d.ts" />
+import { createNode } from "@unworklet/core";
+import proc from "./midi.processor.ts?worklet";
+declare const ctx: BaseAudioContext;
+export async function f(): Promise<void> {
+  const node = await createNode(ctx, proc);
+${tail}
+}
+`;
+
 let dir: string;
 
 beforeAll(() => {
@@ -220,6 +252,28 @@ beforeAll(() => {
     path.join(dir, "state-wrong-value-num.ts"),
     STATE_USAGE("  void node.state.meter.value.startsWith('x');"),
   );
+
+  // Fourth witness: MIDI ports both directions. Same dir / tsconfig.
+  writeFileSync(
+    path.join(dir, "midi.worklet.d.ts"),
+    workletDts("*/midi.processor.ts?worklet", midiProc.worklet),
+  );
+  writeFileSync(
+    path.join(dir, "midi-typed-send.ts"),
+    MIDI_USAGE(
+      "  node.midi.keys.send({ type: 'noteOn', channel: 0, note: 60, velocity: 100 });\n" +
+        "  node.midi.keys.connectFromWebMIDI({} as unknown);\n" +
+        "  node.midi.arpOut.onEvent('noteOn', (e) => { void e.note; });",
+    ),
+  );
+  writeFileSync(
+    path.join(dir, "midi-wrong-onEvent-on-in.ts"),
+    MIDI_USAGE("  node.midi.keys.onEvent('noteOn', () => {});"),
+  );
+  writeFileSync(
+    path.join(dir, "midi-wrong-send-on-out.ts"),
+    MIDI_USAGE("  node.midi.arpOut.send({ type: 'noteOn', channel: 0, note: 60, velocity: 100 });"),
+  );
 });
 
 afterAll(() => {
@@ -291,6 +345,48 @@ test("the per-file witness rejects f32-state .value being used as a string", () 
   expect(msgs.some((m) => /startsWith.*not exist.*number|number.*no.*startsWith/is.test(m))).toBe(
     true,
   );
+});
+
+// MIDI port direction — the witness records `{ dir: "in" | "out" }` per port so
+// the main-side surface narrows to the methods that actually apply. An `in`
+// port (from:"main") lets main `.send(...)` / `.connectFromWebMIDI(...)`;
+// `.onEvent(...)` errors because main is the producer. An `out` port
+// (to:"main") reverses that.
+test("the per-file witness allows send/connectFromWebMIDI on an `in` MIDI port and onEvent on an `out` MIDI port", () => {
+  expect(diagnose("midi-typed-send.ts")).toEqual([]);
+});
+
+test("the per-file witness rejects .onEvent on an `in` (from:'main') MIDI port", () => {
+  const msgs = diagnose("midi-wrong-onEvent-on-in.ts");
+  expect(msgs.some((m) => /onEvent.*not exist/is.test(m))).toBe(true);
+});
+
+test("the per-file witness rejects .send on an `out` (to:'main') MIDI port", () => {
+  const msgs = diagnose("midi-wrong-send-on-out.ts");
+  expect(msgs.some((m) => /send.*not exist/is.test(m))).toBe(true);
+});
+
+// Unit test of the MIDI direction emission — mirrors the event-direction test
+// above, driven off a minimal namespace so it covers the marker logic without
+// depending on the full MIDI DSL plumbing.
+test("the witness marks MIDI port direction: `direction: 'in'` → dir:'in', `'out'` → dir:'out'", () => {
+  const ns = {
+    initialize: () => {},
+    process: () => true,
+    parameterDescriptors: [],
+    publishSlots: [],
+    eventRings: [],
+    messageRings: [],
+    midiRings: [
+      { name: "keys", direction: "in" },
+      { name: "arpOut", direction: "out" },
+    ],
+    inputs: [],
+    outputs: [],
+  } as unknown as Parameters<typeof workletDts>[1];
+  const dts = workletDts("*/x.processor.ts?worklet", ns);
+  expect(dts).toContain('"keys": { dir: "in" }');
+  expect(dts).toContain('"arpOut": { dir: "out" }');
 });
 
 // Unit test of the direction-marker emission (the string the witness writes),

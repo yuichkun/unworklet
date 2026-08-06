@@ -75,7 +75,15 @@ export function workletDts(specifier: string, ns: WorkletNamespace): string {
       return `${JSON.stringify(name)}: { dir: ${JSON.stringify(dir)}; fields: ${fieldsBody} }`;
     })
     .join("; ");
-  const midi = named(ns.midiRings, () => "unknown");
+  // Per-port MIDI witness: direction only (`{ dir: "in" | "out" }`). MIDI events
+  // carry a fixed `MidiEvent` union payload (not user-defined), so no `fields`
+  // block — `MidiPortSurfaceFor` in `@unworklet/core` reads `dir` and narrows
+  // the port surface to `.send` (main → worklet, `"in"`) or `.onEvent`
+  // (worklet → main, `"out"`).
+  const midi = named(ns.midiRings, (d) => {
+    const dir = d.direction as "in" | "out";
+    return `{ dir: ${JSON.stringify(dir)} }`;
+  });
   const inputs = named(ns.inputs, () => "unknown");
   const outputs = named(ns.outputs, () => "unknown");
   return `declare module ${JSON.stringify(specifier)} {
