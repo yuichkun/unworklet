@@ -143,7 +143,7 @@ Drop it where `tsc` would go in the build script:
 
 ```jsonc
 // package.json
-{ "scripts": { "build": "unworklet-tsc --noEmit && vite build" } }
+{ "scripts": { "build": "vite build && unworklet-tsc --noEmit" } }
 ```
 
 Ad-hoc: `unworklet-tsc --noEmit`.

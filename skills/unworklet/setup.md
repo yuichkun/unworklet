@@ -86,6 +86,12 @@ export default defineConfig(({ command }) => ({
   host is present; there is no devtools-enable option.
 - The `0.3.3` pin is exact and required (a mismatched host silently shows empty
   panels). Full rationale, the 4 panels, and cross-origin isolation → devtools.md.
+- **`vite.config.ts` itself falls inside the seeded tsconfig's `include`** (the
+  glob picks up every `.ts` in the project). The `.uwk.ts` ambient
+  `process(cb: () => void)` therefore shadows node's `process` global, so
+  writing `process.env.VITEST` above type-errors with `TS2339`. Follow §3's
+  extending pattern and add `"node"` to `types` so `process.env` type-checks in
+  the config file too: `"types": ["@unworklet/unplugin/client", "node"]`.
 
 (Auto-dock hook: `packages/unplugin/src/index.ts:1686-1696`.)
 
@@ -122,6 +128,20 @@ points seed synchronously up front so a single command resolves the chicken/
 egg. The IDE has no seeder — VS Code opened on a fresh clone reports TS5083
 ("Cannot read file `./.unworklet/tsconfig.json`") until you've run one of the
 seeding entry points once.
+
+**Cold-checkout per-processor witness gotcha (build script order matters)**:
+seeding is two-stage. `unworklet-tsc` (and every entry point) writes
+`.unworklet/tsconfig.json` + an EMPTY `.unworklet/worklets.d.ts`; the
+per-processor entries in that witness (which type `import x from
+"./x.processor.ts?worklet"` more specifically than `CompiledProcessor<unknown>`)
+are populated only by `vite build` when it actually compiles each `.uwk.ts` /
+`.processor.ts` through the unplugin. **On a cold clone, run `vite build` (or
+`vite dev`) at least once BEFORE the first `unworklet-tsc --noEmit`** — a
+build script written as `"build": "vite build && unworklet-tsc --noEmit"`
+just works; the flipped `"unworklet-tsc --noEmit && vite build"` order lets
+tsc see the empty witness on run #1 and falls back to the wildcard
+`unknown`-typed `?worklet` module. Subsequent runs are clean either way. On
+CI, prefer the build-then-typecheck order for a clean first run.
 
 **First `vite build` warning**: esbuild reads the extending tsconfig BEFORE the
 plugin's `configResolved` runs, so the very first invocation prints

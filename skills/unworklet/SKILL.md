@@ -32,7 +32,7 @@ unworklet builds Web Audio `AudioWorklet` processors from declarative source. Yo
 4. **Typecheck** with the unworklet CLI — a drop-in `tsc` that also checks `.uwk.ts` sugar. Wire it into build + CI. → ide-and-typecheck.md
    ```jsonc
    // package.json
-   { "scripts": { "build": "unworklet-tsc --noEmit && vite build" } }
+   { "scripts": { "build": "vite build && unworklet-tsc --noEmit" } }
    ```
 5. **Load / wire** the processor: default-import it with `?worklet` and pass it to `createNode` on a 48 kHz `AudioContext`. → setup.md
 
