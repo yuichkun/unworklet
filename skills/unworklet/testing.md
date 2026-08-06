@@ -30,10 +30,15 @@ Cite `packages/test/README.md`, `examples/demo/src/examples.render.test.ts:31`, 
   and the runner reports it. Import `test` from your runner:
   - stock vitest consumer: `import { test } from "vitest";`
   - this Vite+ repo: `import { expect, test } from "vite-plus/test";`
-- Chain form: add once `import "@unworklet/test/extend";` (ideally a setupFile). The
-  shipped type augmentation is `declare module "vitest"` (`packages/test/src/extend.ts:130`),
-  so chain-method TYPES appear automatically for stock vitest. The Vite+ fork bridges the
-  same types via dev-only `packages/test/src/fork-assertion.d.ts` (`declare module "vite-plus/test"`, NOT shipped).
+- Chain form: add once `import "@unworklet/test/extend";` (ideally a setupFile).
+  Two type augmentations ship: `declare module "vitest"` (`packages/test/src/extend.ts:130`)
+  AND `declare module "@vitest/expect"` (`extend.ts:143`). Stock vitest re-exports
+  `Assertion` from `@vitest/expect`, so a `vitest`-only augmentation would type-check
+  as a fresh unused interface; the `@vitest/expect` one is what actually makes
+  `expect(...).toBeCloseToArray(...)` etc. resolve. Both are shipped, so consumers on
+  stock vitest 4 get the chain-method types automatically. The Vite+ fork bridges the
+  same types via dev-only `packages/test/src/fork-assertion.d.ts` (`declare module
+"vite-plus/test"`, NOT shipped).
 
 ```ts
 // vitest.setup.ts
@@ -183,11 +188,25 @@ expect(result).toEmitMidi("out", [midi.noteOn({ note: 72, velocity: 100 })]);
 
 ## Complete real test — PRIMARY: `.uwk.ts` processor
 
-The processor is authored in `.uwk.ts` (the recommended form; full authoring in `uwk.md`).
-In tests, lower the `.uwk.ts` source string to a `CompiledProcessor` with `lowerToProcessor`
-from `@unworklet/lang/browser` (Node-side; `packages/lang/src/browser.ts:38`), then drive it
-through `renderOffline` and assert with `@unworklet/test`. Pattern from
-`examples/demo/src/examples.render.test.ts:14-85`:
+The processor is authored in `.uwk.ts` (the recommended form; full authoring in
+`dsl.md`). Two ways to get from a `.uwk.ts` on disk to a `CompiledProcessor` a
+`renderOffline` call can consume:
+
+- **Single-file source string → `lowerToProcessor`** (`@unworklet/lang/browser`
+  or `@unworklet/lang`, `packages/lang/src/browser.ts:38`). Fast, no disk
+  materialisation. **Only single-file**: throws if the `.uwk.ts` imports from a
+  sibling (subgraph library module split into its own file — the pattern
+  `dsl.md §4` recommends). Use for the common case where the whole processor
+  lives in one file.
+- **Multi-file entry path → `loadUwkProcessor`** (`@unworklet/lang`,
+  `packages/lang/src/index.ts`). Materialises the entry `.uwk.ts` and every
+  sibling `.uwk.ts` it imports as temp `.uwklowered.ts` files next to their
+  sources, dynamically imports the entry, and returns the `CompiledProcessor`.
+  This is the offline / test counterpart to the Vite plugin's `?worklet`
+  build-path import — reach for it when the processor splits into a subgraph
+  library module.
+
+Single-file pattern from `examples/demo/src/examples.render.test.ts:14-85`:
 
 ```ts
 import { renderOffline } from "@unworklet/offline";
@@ -199,7 +218,7 @@ const SR = 48_000,
   FRAMES = 2048;
 
 test("lowpass: a step input ramps smoothly toward it", async () => {
-  const processor = lowerToProcessor(lowpassUwkSource); // .uwk.ts source → CompiledProcessor
+  const processor = lowerToProcessor(lowpassUwkSource); // single-file .uwk.ts source → CompiledProcessor
   const r = await renderOffline(processor, {
     sampleRate: SR,
     duration: FRAMES / SR,
@@ -211,8 +230,28 @@ test("lowpass: a step input ramps smoothly toward it", async () => {
 });
 ```
 
+Multi-file pattern (processor + sibling subgraph):
+
+```ts
+import { loadUwkProcessor } from "@unworklet/lang";
+import { renderOffline } from "@unworklet/offline";
+import { expect, test } from "vite-plus/test";
+
+test("subgraph split across files renders correctly", async () => {
+  // `./main.uwk.ts` imports `./gainStep.uwk.ts`. loadUwkProcessor handles
+  // both — lower each, materialise temp siblings, dynamic-import the entry.
+  const processor = await loadUwkProcessor(new URL("./main.uwk.ts", import.meta.url).pathname);
+  const r = await renderOffline(processor, {
+    sampleRate: 48000,
+    duration: 128 / 48000,
+    inputs: { main: [new Float32Array(128).fill(0.1)] },
+  });
+  expect(r.outputs.main![0]![64]).toBeCloseTo(0.3);
+});
+```
+
 A `.uwk.ts` source is bare top-level declarations + a bare `process(() => forSample(...))`
-— no `defineProcessor` wrapper, no imports (`packages/unplugin/__fixtures__/stereo-gain.uwk.ts`; full rules in `uwk.md`):
+— no `defineProcessor` wrapper, no imports (`packages/unplugin/__fixtures__/stereo-gain.uwk.ts`; full rules in `dsl.md`):
 
 ```ts
 // stereo-gain.uwk.ts   (// @ts-nocheck — the plugin lowers it at build)

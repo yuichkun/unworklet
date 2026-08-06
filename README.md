@@ -31,7 +31,8 @@ DevTools.
 
 ```bash
 npm install @unworklet/core
-npm install -D @unworklet/unplugin @unworklet/lang   # ?worklet loader + .uwk.ts editor support
+npm install -D @unworklet/unplugin @unworklet/lang @unworklet/offline @unworklet/test
+# ?worklet loader + .uwk.ts editor support + headless render + Vitest matchers
 ```
 
 ```ts
@@ -195,9 +196,8 @@ const midi = await navigator.requestMIDIAccess();
 node.midi.keys.connectFromWebMIDI([...midi.inputs.values()][0]);
 ```
 
-Ten worked examples — EQ, lookahead limiter, granular sampler, arpeggiator,
-convolution reverb with state migration, polyphonic synth, sysex bridge, a live
-coding REPL — live in [`docs/12-canonical-examples.md`](./docs/12-canonical-examples.md).
+See `examples/demo/` for live-editable `.uwk.ts` examples (distortion, tremolo,
+lowpass, MIDI synths, arpeggiator, granular voice, …) rendered in the browser.
 
 ## Realtime-safe by construction
 
@@ -345,10 +345,19 @@ clone the repo and start an example locally to try them live.
 
 ## Docs
 
-- **Start here:** [`docs/00-foundations.md`](./docs/00-foundations.md) — vocabulary, the type system, the realtime-safety invariants.
-- **The DSL:** [`docs/01-dsl.md`](./docs/01-dsl.md) · **MIDI:** [`docs/11-midi.md`](./docs/11-midi.md) · **Offline render:** [`docs/13-offline-render.md`](./docs/13-offline-render.md) · **Testing:** [`docs/06-testing.md`](./docs/06-testing.md).
-- **Worked examples:** [`docs/12-canonical-examples.md`](./docs/12-canonical-examples.md).
-- **For AI agents / LLMs:** [`llms.txt`](./llms.txt) carries the exact call forms.
+End-user / AI-agent guidance lives in [`skills/unworklet/`](./skills/unworklet/) —
+the same files the Claude Code plugin bundles and [`llms.txt`](./llms.txt) points
+general LLMs at:
+
+- **Start here:** [`skills/unworklet/SKILL.md`](./skills/unworklet/SKILL.md) — the mandatory workflow (scaffold → author → test → typecheck → wire).
+- **DSL / API reference:** [`skills/unworklet/dsl.md`](./skills/unworklet/dsl.md) — `.uwk.ts` sugar + the underlying `@unworklet/core` declaration API.
+- **Setup:** [`skills/unworklet/setup.md`](./skills/unworklet/setup.md) · **Editor / CI typecheck:** [`skills/unworklet/ide-and-typecheck.md`](./skills/unworklet/ide-and-typecheck.md) · **Headless tests:** [`skills/unworklet/testing.md`](./skills/unworklet/testing.md) · **In-browser DevTools panel:** [`skills/unworklet/devtools.md`](./skills/unworklet/devtools.md).
+- **For AI agents / LLMs:** [`llms.txt`](./llms.txt) is the map with exact call forms.
+
+The `docs/` tree is the internal implementation spec used to build v1.0.0; it is
+disposable and not maintained for end users — treat `skills/unworklet/` as the
+source of truth for authoring, and reach into `docs/` only when you need the
+design rationale behind a decision.
 
 ## Contributing
 
