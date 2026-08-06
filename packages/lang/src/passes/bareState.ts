@@ -81,6 +81,10 @@ export function readsAsBareState(checker: ts.TypeChecker, node: ts.Node): boolea
   if (p !== undefined && ts.isPropertyAccessExpression(p) && p.expression === node) return false;
   // The binding being declared.
   if (p !== undefined && ts.isVariableDeclaration(p) && p.name === node) return false;
+  // The KEY of an object-literal property (`{ step: … }`) is a literal name, not
+  // a value position — do not read-wrap it even if it happens to share a state
+  // slot's identifier. The VALUE side (`p.initializer`) still passes through.
+  if (p !== undefined && ts.isPropertyAssignment(p) && p.name === node) return false;
   // Operator operands are read-wrapped by the operator pass.
   if (isSugarOperatorOperand(checker, node)) return false;
 

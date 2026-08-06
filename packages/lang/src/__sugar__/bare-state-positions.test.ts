@@ -456,3 +456,39 @@ test("STRUCT: explicit s.read().mul(2) does not get a second read", async () => 
     mono(d, `out.ch(0).at(i).write(s.read().mul(2));`),
   );
 });
+
+// ─────────────────────────── emit payload KEY vs VALUE positions ─────────────
+// A property KEY in an emit payload object literal that *happens to share* a
+// state slot's name must stay literal — only the VALUE side auto-reads. Prior
+// to this guard the pass rewrote the KEY as well (`{ step.read(): step.read() }`),
+// producing a parse error in the lowered virtual TS. Found via guidance-dogfood
+// F-07 (Phase 2 blind builder hit it on a direct `emitIf` call — the existing C4
+// regressions test in `regressions.test.ts` uses the `if(...) port.emit(...)`
+// path where if-sugar rewrites AFTER capture and masks the bug).
+
+test("STRUCT: emit payload KEY matching a state-slot name stays literal (VALUE reads)", async () => {
+  const d = `const step = state.i32(0).named("step");
+const port = event<{ step: number; atSample: number }>({ to: "main", name: "p" });`;
+  await expectSameLowering(
+    mono(d, `port.emitIf(gt(input.ch(0).at(i), 0), { step: step, atSample: i });`),
+    mono(d, `port.emitIf(gt(input.ch(0).at(i), 0), { step: step.read(), atSample: i });`),
+  );
+});
+
+test("STRUCT: emit payload KEY matching a typed-payload field name stays literal", async () => {
+  // Same class as the above but the collision is with a payload FIELD (not a
+  // state slot); confirms the KEY guard fires regardless of which "known name"
+  // the identifier collided with.
+  const d = `const note = state.i32(60).named("note");
+const midiOut = event.midi({ to: "main", name: "harmony" });`;
+  await expectSameLowering(
+    mono(
+      d,
+      `midiOut.emitIf(gt(input.ch(0).at(i), 0), { type: "noteOn", channel: 0, note: note, velocity: 100, atSample: i });`,
+    ),
+    mono(
+      d,
+      `midiOut.emitIf(gt(input.ch(0).at(i), 0), { type: "noteOn", channel: 0, note: note.read(), velocity: 100, atSample: i });`,
+    ),
+  );
+});
