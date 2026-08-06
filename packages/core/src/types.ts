@@ -997,7 +997,7 @@ type UnworkletNodeOf<C> = {
     ? { readonly [K in keyof P]: AudioParam }
     : Record<string, AudioParam>;
   readonly state: C extends { state: infer S }
-    ? { readonly [K in keyof S]: StateValueProxy<unknown> | BufferValueProxy<unknown> }
+    ? { readonly [K in keyof S]: StateValueProxy<WitnessFieldValue<S[K]>> }
     : Record<string, StateValueProxy<unknown> | BufferValueProxy<unknown>>;
   readonly events: C extends { events: infer E }
     ? { readonly [K in keyof E]: EventSurfaceFor<E[K]> }

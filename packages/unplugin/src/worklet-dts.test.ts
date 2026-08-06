@@ -98,6 +98,49 @@ ${tail}
 }
 `;
 
+// A third real processor that exercises `state.expose({ publish })` on multiple
+// scalar types (f32 / i32 / bool). Each published slot must reach the main-side
+// `.value` / `.subscribe(handler)` typed to its DECLARED scalar — before this
+// fix the witness carried `"f32"` etc. but the client type erased it to
+// `unknown`, so `.value` was `unknown` and a handler had to `as unknown as
+// number` cast. Guidance-dogfood F-09-state.
+const stateProc = defineProcessor(() => {
+  const meter = state
+    .f32(0)
+    .named("meter")
+    .expose({ publish: { rateFps: 30 } });
+  const stepIdx = state
+    .i32(0)
+    .named("stepIdx")
+    .expose({ publish: { rateFps: 30 } });
+  const running = state
+    .bool(false)
+    .named("running")
+    .expose({ publish: { rateFps: 30 } });
+  const out = audioOutput({ channels: 1, name: "main" });
+  return {
+    process: () => {
+      forSample((i) => {
+        out.ch(0).at(i).write(meter.read());
+        stepIdx.write(i);
+        running.write(true);
+      });
+    },
+  };
+});
+
+const STATE_USAGE = (tail: string): string =>
+  `/// <reference types="@unworklet/unplugin/client" />
+/// <reference path="./state.worklet.d.ts" />
+import { createNode } from "@unworklet/core";
+import proc from "./state.processor.ts?worklet";
+declare const ctx: BaseAudioContext;
+export async function f(): Promise<void> {
+  const node = await createNode(ctx, proc);
+${tail}
+}
+`;
+
 let dir: string;
 
 beforeAll(() => {
@@ -153,6 +196,30 @@ beforeAll(() => {
     path.join(dir, "event-typed-on.ts"),
     EVENT_USAGE("  node.events.meter.on((e) => { void e.level.toFixed(2); });"),
   );
+
+  // Third witness: state.expose({ publish }) on f32 / i32 / bool. Same dir / tsconfig.
+  writeFileSync(
+    path.join(dir, "state.worklet.d.ts"),
+    workletDts("*/state.processor.ts?worklet", stateProc.worklet),
+  );
+  writeFileSync(
+    path.join(dir, "state-typed-subscribe.ts"),
+    STATE_USAGE(
+      "  node.state.meter.subscribe((v) => { void v.toFixed(2); });\n" +
+        "  node.state.stepIdx.subscribe((v) => { void v.toString(10); });\n" +
+        "  node.state.running.subscribe((v) => { void !v; });\n" +
+        "  void node.state.meter.value.toFixed(2);\n" +
+        "  void node.state.running.value === true;",
+    ),
+  );
+  writeFileSync(
+    path.join(dir, "state-wrong-subscribe-bool.ts"),
+    STATE_USAGE("  node.state.running.subscribe((v) => { void v.toFixed(2); });"),
+  );
+  writeFileSync(
+    path.join(dir, "state-wrong-value-num.ts"),
+    STATE_USAGE("  void node.state.meter.value.startsWith('x');"),
+  );
 });
 
 afterAll(() => {
@@ -205,6 +272,25 @@ test("the per-file witness rejects a wrong-typed boolean field on emit", () => {
 
 test("the per-file witness types the .on handler payload from declared fields", () => {
   expect(diagnose("event-typed-on.ts")).toEqual([]);
+});
+
+// State-publish value / subscribe types recovered from the per-slot scalar marker.
+// A published `state.f32` slot's `.value` is `number` and `.subscribe(handler)`
+// receives `(v: number)`; likewise `i32 → number`, `bool → boolean`.
+test("the per-file witness types node.state.<name>.value and subscribe from the declared scalar", () => {
+  expect(diagnose("state-typed-subscribe.ts")).toEqual([]);
+});
+
+test("the per-file witness rejects boolean-state subscribe treating the value as a number", () => {
+  const msgs = diagnose("state-wrong-subscribe-bool.ts");
+  expect(msgs.some((m) => /toFixed.*not exist.*boolean|boolean.*no.*toFixed/is.test(m))).toBe(true);
+});
+
+test("the per-file witness rejects f32-state .value being used as a string", () => {
+  const msgs = diagnose("state-wrong-value-num.ts");
+  expect(msgs.some((m) => /startsWith.*not exist.*number|number.*no.*startsWith/is.test(m))).toBe(
+    true,
+  );
 });
 
 // Unit test of the direction-marker emission (the string the witness writes),
