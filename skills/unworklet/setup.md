@@ -156,6 +156,10 @@ seeded field — for example adding `"strict": true` or replacing `"types"`
 with a superset. That's how you re-enable node types on a test file that
 imports `node:fs`:
 
+```bash
+npm install -D @types/node
+```
+
 ```jsonc
 // tsconfig.json — extending + overriding types to include node
 {
@@ -166,10 +170,13 @@ imports `node:fs`:
 }
 ```
 
-(The seeded `"types": ["@unworklet/unplugin/client"]` disables automatic
-`@types` loading, so consumer test / server code that needs `node:*` must
-re-add `"node"` in its own `"types"` list — a stock TypeScript rule, not
-unworklet-specific.)
+The `npm install -D @types/node` step is required — the seeded
+`"types": ["@unworklet/unplugin/client"]` disables automatic `@types`
+loading, so consumer test / server code that needs `node:*` must both
+`npm install -D @types/node` AND re-add `"node"` in its own `"types"`
+list. Without the install, TypeScript reports `TS2688: Cannot find type
+definition file for 'node'` on any `.ts` that references `process.env`
+or imports `node:*`. Stock TypeScript rule, not unworklet-specific.
 
 Can't restructure an existing tsconfig? Write the settings directly (still no
 `vite-env.d.ts`), matching what `GENERATED_TSCONFIG` seeds so a subgraph

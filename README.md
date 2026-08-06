@@ -292,7 +292,9 @@ imports) and add it to your config. The unworklet plugin itself needs no extra
 config — it auto-docks once the host is present.
 
 ```sh
-npm install -D @vitejs/devtools@0.3.3 @vitejs/devtools-kit@0.3.3
+npm install -D @vitejs/devtools@0.4 @vitejs/devtools-kit@0.4 \
+  @vitejs/devtools-rolldown@0.4 @vitejs/devtools-oxc@0.4 \
+  @vitejs/devtools-vitest@0.4 @vitejs/devtools-vite@0.4
 ```
 
 ```ts
@@ -305,8 +307,10 @@ export default defineConfig(({ command }) => ({
   plugins: [
     unworklet(),
     // Dev only — the DevTools host runs a long-lived server, pointless in a build
-    // and it would keep the test runner from exiting.
-    ...(command === "serve" ? [DevTools({ builtinDevTools: false })] : []),
+    // and it would keep the test runner from exiting. Vitest also passes
+    // `command: "serve"`, so also gate on `!process.env.VITEST` or `vitest run`
+    // hangs 10s at close.
+    ...(command === "serve" && !process.env.VITEST ? [DevTools({ builtinDevTools: false })] : []),
   ],
 }));
 ```
@@ -315,11 +319,12 @@ Run your dev server, open the Vite DevTools overlay, and pick the **unworklet** 
 
 Two gotchas worth knowing up front:
 
-- **Install both at exactly `0.3.3`.** `@unworklet/unplugin` pins this DevTools
-  version (an exact, optional `peerDependency`): the live panels reach the dev server
-  through an anonymous RPC scope whose prefix is coupled to the DevTools major
-  (`devframe:anonymous:` in 0.3), so a mismatched host silently rejects every push and
-  the panels stay empty. The panel's page bridge also imports
+- **Match the 0.4 major across all 6 packages.** `@unworklet/unplugin` pins
+  `@vitejs/devtools-kit` to `^0.4.0` (optional `peerDependency`): the live panels reach
+  the dev server through an anonymous RPC scope whose prefix is coupled to the DevTools
+  major (`devframe:anonymous:` on the current line), so a mismatched-major host silently
+  rejects every push and the panels stay empty. The 0.3 line was Vite 6/7 only — Vite 8
+  requires the 0.4 line. The panel's page bridge also imports
   `@vitejs/devtools-kit/client` as a direct dependency, which must resolve from your
   app — a transitive copy is not enough.
 - **Cross-origin isolation.** The plugin makes the dev server cross-origin

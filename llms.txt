@@ -138,5 +138,6 @@ Name the handle type up front with
   editor plugin and the `unworklet-tsc` drop-in typecheck CLI.
 - **testing.md** — headless tests: `renderOffline` (the Node oracle) plus `@unworklet/test`
   plain matchers, the chain form (`@unworklet/test/extend`), and signal/MIDI generators.
-- **devtools.md** — in-browser inspector: the Vite DevTools dock (4 panels), the pinned
-  `@vitejs/devtools` `0.3.3` install, and cross-origin isolation.
+- **devtools.md** — in-browser inspector: the Vite DevTools dock (4 panels), the
+  `@vitejs/devtools` 0.4.x install (host + kit + 4 adapters, Vite 8 compatible), and
+  cross-origin isolation.

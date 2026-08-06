@@ -276,6 +276,12 @@ state.buffer.f32({ size: number }): Buffer<"f32">
   `.named(name)` / `.expose(options)`. — `declarations.ts:357,450,620`
 - Literal indexes are range-checked at graph-capture time; a `Node<"i32">` index
   is the caller's responsibility.
+- **Default snapshot policy is `"transient"`** — the buffer is NOT captured by
+  `node.snapshot()` and is re-zeroed on `restore()`. A `state.buffer.f32({
+size }).named("tape")` on its own restores to silence, which surprises
+  delay / sampler / reverb authors expecting audio content to survive. Opt in
+  explicitly: `.expose({ snapshot: "persistent" })`. Same default (and same
+  opt-in) applies to scalar `state.<type>` (§Scalar state).
 - In `.uwk.ts`: `buf[i]` (read) / `buf[i] = v` (write).
 - Capacity sizes for messaging rings are the `CAPACITY_16` … `CAPACITY_16384`
   constants (values live at `packages/core/src/dsl/constants.ts:11-23`, re-exported
@@ -323,6 +329,16 @@ event<T>({ to:   "main"; name; capacity?: Capacity; payloadCapacity?: number }) 
   requires it and the runtime uses it for main-thread ordering:
   `port.emitIf(cond, { atSample: i, ...userFields })`. In `forSample((i) =>
 …)` bodies, pass the loop's `i` as `atSample`.
+- **Payload field wire types** — a declared `T = { foo: number; ... }`
+  maps each `number` field to the **f32 wire** by default (that's what
+  the worklet-side capture sees + what the main-thread type surfaces as
+  `number`). The one exception is the implicit `atSample`, which is
+  always `i32`. If you need integer semantics on a user field, write
+  `i32(value)` in the emit call — the witness / type system still sees
+  `number` on both sides but the payload reaches main as an integer.
+  `boolean` fields default to the f32 wire too and are sealed to `bool`
+  the moment the field flows into a boolean position (a `boolean` state
+  write, a `select` cond, a `not()`, an `emitIf` cond, etc.).
 
 ### MIDI ports — `event.midi`
 
@@ -333,6 +349,17 @@ event.midi({ to:   "main"; name; capacity?: Capacity }): MidiOutputHandle  // ou
 
 - Inbound: worklet handles per type with
   `.onEvent("noteOn", ({ note, velocity, … }) => …)`. — `declarations.ts:1290,1455`
+- Per-event-type handler field shapes (all fields are `Node<"i32">`; combine
+  with `f32(...)` for float math). The source of truth is `MidiEvent` in
+  `packages/core/src/types.ts`:
+  - `"noteOn"` / `"noteOff"` — `{ channel, note, velocity, atSample }`
+  - `"cc"` (control change) — `{ channel, controller, value, atSample }`
+  - `"pitchBend"` — `{ channel, value, atSample }` (value is 14-bit signed)
+  - `"programChange"` — `{ channel, program, atSample }`
+  - `"channelPressure"` — `{ channel, pressure, atSample }`
+  - `"aftertouch"` (poly key pressure) — `{ channel, note, pressure, atSample }`
+  - `"sysex"` — `{ bytes, atSample }` where `bytes` is a byte-array field
+  - `"systemRealtime"` — `{ status, atSample }` (status = 0xF8..0xFF)
 - Outbound: worklet sends with `.emitIf(cond, event)` only — same rule as
   typed `event<T>` above (no bare `.emit` on the worklet-side handle). The
   MIDI event must include `atSample: number` (the sample index within the
