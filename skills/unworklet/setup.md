@@ -99,38 +99,78 @@ are typed and `.uwk.ts` sugar type-checks with **no `@ts-nocheck`**:
 { "extends": "./.unworklet/tsconfig.json" }
 ```
 
-(`README.md` L47-62; the plugin seeds `.unworklet/` synchronously on
-`configResolved`: `packages/unplugin/src/index.ts` L824-870, L1033; tests
-`packages/unplugin/src/worklet-dts-emit.test.ts` L65-114,
-`packages/unplugin/src/worklet-dts-integration.test.ts` L110, L129)
+(The plugin seeds `.unworklet/` synchronously in `configResolved`, and
+`unworklet-tsc` self-seeds it too — see `packages/lang/src/seed-unworklet-dir.ts`
+for the exact `GENERATED_TSCONFIG` and `packages/unplugin/src/index.ts:903` for
+where it's called on Vite's side.)
 
-- Add `.unworklet/` to `.gitignore` — it is a generated artifact. (`README.md` L57-59)
+- Add `.unworklet/` to `.gitignore` — it is a generated artifact.
 - Do NOT add your own `include` to this tsconfig: `extends` does not merge
-  `include`, so the generated one must own it. (`README.md` L60-62)
+  `include`, so the generated one must own it.
 - VS Code: run **"TypeScript: Select TypeScript Version → Use Workspace
   Version"** — the editor plugin loads only under the workspace TypeScript.
-  (`README.md` L64-65)
 - Build / CI typecheck: `@unworklet/lang` ships `unworklet-tsc`, a drop-in `tsc`
-  that also checks `.uwk.ts`. See tsc.md.
+  that also checks `.uwk.ts`. See `ide-and-typecheck.md`.
 
-Can't restructure an existing tsconfig? Write the same three settings directly
-(still no `vite-env.d.ts`):
+**Cold-checkout gotcha**: on a fresh clone the extending tsconfig points at a
+file that doesn't exist yet. Running `unworklet-tsc --noEmit` once (or any
+`vite dev` / `vite build`) materialises `.unworklet/tsconfig.json`; both entry
+points seed synchronously up front so a single command resolves the chicken/
+egg. The IDE has no seeder — VS Code opened on a fresh clone reports TS5083
+("Cannot read file `./.unworklet/tsconfig.json`") until you've run one of the
+seeding entry points once.
+
+**First `vite build` warning**: esbuild reads the extending tsconfig BEFORE the
+plugin's `configResolved` runs, so the very first invocation prints
+`▲ [WARNING] Cannot find base config file "./.unworklet/tsconfig.json"` and
+then heals itself the same run. Subsequent builds are clean. `unworklet-tsc`
+does not have this ordering because it seeds before it hands the config to
+tsc.
+
+**Need to override the seeded compilerOptions?** `extends` merges
+compilerOptions (consumer wins), so an extending tsconfig can override any
+seeded field — for example adding `"strict": true` or replacing `"types"`
+with a superset. That's how you re-enable node types on a test file that
+imports `node:fs`:
+
+```jsonc
+// tsconfig.json — extending + overriding types to include node
+{
+  "extends": "./.unworklet/tsconfig.json",
+  "compilerOptions": {
+    "types": ["@unworklet/unplugin/client", "node"],
+  },
+}
+```
+
+(The seeded `"types": ["@unworklet/unplugin/client"]` disables automatic
+`@types` loading, so consumer test / server code that needs `node:*` must
+re-add `"node"` in its own `"types"` list — a stock TypeScript rule, not
+unworklet-specific.)
+
+Can't restructure an existing tsconfig? Write the settings directly (still no
+`vite-env.d.ts`), matching what `GENERATED_TSCONFIG` seeds so a subgraph
+import (`./x.uwk.ts` specifier) doesn't fail with `TS5097`:
 
 ```jsonc
 // tsconfig.json
 {
   "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
     "types": ["@unworklet/unplugin/client"],
     "plugins": [{ "name": "@unworklet/lang/typescript-plugin" }],
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
   },
   "include": ["src", ".unworklet/worklets.d.ts"],
 }
 ```
 
-List `.unworklet/worklets.d.ts` explicitly in `include` — a `**/*` glob skips the
-dot-folder. If this is your first `types` entry, also list the type packages you
-already rely on (e.g. `"node"`), since `types` disables automatic `@types`
-loading. (`README.md` L69-91)
+List `.unworklet/worklets.d.ts` explicitly in `include` — a `**/*` glob skips
+the dot-folder. If this is your first `types` entry, also list the type
+packages you already rely on (e.g. `"node"`), since `types` disables automatic
+`@types` loading.
 
 ## 4. File conventions
 

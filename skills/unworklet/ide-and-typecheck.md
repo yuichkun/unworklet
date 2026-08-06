@@ -154,7 +154,12 @@ Ad-hoc: `unworklet-tsc --noEmit`.
 - **`.ts` files (including `.processor.ts`)** are checked exactly as `tsc` would.
 - **`.uwk.ts` files** get their sugar type-checked instead of being flagged as raw TS — plain
   `tsc` fails on the sugar (e.g. `a * b` on two `Node`s).
-  [cite: packages/lang/src/unworklet-tsc.ts L1-29; packages/lang/README.md L125-132]
+  [cite: packages/lang/src/unworklet-tsc.ts L1-29]
+- **Self-seeds `.unworklet/`** — before it hands anything to tsc, `unworklet-tsc` calls
+  `seedUnworkletDir(process.cwd())` which writes `.unworklet/tsconfig.json` (and an empty
+  `worklets.d.ts` if none exists yet). Safe as the first command on a fresh clone: no prior
+  `vite dev` / `vite build` needed. The seed is idempotent — a later Vite run overwrites the
+  same tsconfig content and fills in `worklets.d.ts`. [cite: packages/lang/src/unworklet-tsc.ts L25]
 - Internally forces **`skipLibCheck: true`** so the injected authoring globals
   (`Node` / `event` / `process`) don't collide with `lib.dom` / `@types/node` as `Duplicate
 identifier`. Your `.uwk.ts` / `.ts` stay fully checked; only `.d.ts` lib/`@types` conflicts are
