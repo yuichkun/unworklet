@@ -72,4 +72,4 @@ node.params.gain.value = 0.5; // fully-typed AudioParam (name auto-derived from 
 - **setup.md** — scaffolding & wiring: which `@unworklet/*` packages to install, `vite.config.ts`, the generated `.unworklet/` dir + tsconfig, file conventions, the `?worklet` import, `createNode`, the `UnworkletNode` surface, and the 48 kHz rate gate.
 - **ide-and-typecheck.md** — editor types & CI: the `@unworklet/lang/typescript-plugin` editor plugin and the `unworklet-tsc` drop-in typecheck CLI.
 - **testing.md** — headless tests: `renderOffline` (the Node oracle) plus `@unworklet/test` plain matchers, the chain form (`@unworklet/test/extend`), signal generators, and MIDI builders.
-- **devtools.md** — in-browser inspector: the Vite DevTools dock (4 panels), the pinned `@vitejs/devtools` `0.3.3` install, and cross-origin isolation.
+- **devtools.md** — in-browser inspector: the Vite DevTools dock (4 panels), the `@vitejs/devtools` 0.4.x install (host + kit + 4 adapters), and cross-origin isolation.

@@ -56,11 +56,12 @@ export default { plugins: [unworklet()] };
 
 (`README.md` L37-42)
 
-With the DevTools dock — install the host + kit pinned to **exactly `0.3.3`**, and
-gate the host to `command === "serve"`:
+With the DevTools dock — install the `@vitejs/devtools` host and its 5 kit / adapter packages at `0.4.x` (Vite 8 compatible; the 0.3 line was Vite 6/7 only), and gate the host to `command === "serve" && !process.env.VITEST`:
 
 ```bash
-npm install -D @vitejs/devtools@0.3.3 @vitejs/devtools-kit@0.3.3
+npm install -D @vitejs/devtools@0.4 @vitejs/devtools-kit@0.4 \
+  @vitejs/devtools-rolldown@0.4 @vitejs/devtools-oxc@0.4 \
+  @vitejs/devtools-vitest@0.4 @vitejs/devtools-vite@0.4
 ```
 
 ```ts
@@ -84,8 +85,7 @@ export default defineConfig(({ command }) => ({
 
 - `unworklet()` needs NO extra config — it auto-docks once the `@vitejs/devtools`
   host is present; there is no devtools-enable option.
-- The `0.3.3` pin is exact and required (a mismatched host silently shows empty
-  panels). Full rationale, the 4 panels, and cross-origin isolation → devtools.md.
+- The `@vitejs/devtools-kit` major must match `@unworklet/unplugin`'s peer (`^0.4.0`). A different major uses a different anonymous-RPC scope and every panel push is silently rejected. Full rationale, the 4 panels, and cross-origin isolation → devtools.md.
 - **`vite.config.ts` itself falls inside the seeded tsconfig's `include`** (the
   glob picks up every `.ts` in the project). The `.uwk.ts` ambient
   `process(cb: () => void)` therefore shadows node's `process` global, so

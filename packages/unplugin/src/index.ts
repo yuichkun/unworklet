@@ -640,7 +640,7 @@ const setupDevtools = async (
   // non-sensitive, so anonymous is the right scope. (MIDI inject below is called from
   // the trusted panel, not the page, so it needs no prefix.)
   const graphState = await ctx.rpc.sharedState.get("unworklet:graph", {
-    initialValue: { nodes: [], edges: [] },
+    initialValue: { nodes: [], edges: [] } as DevAudioGraph,
   });
   const graphUpdate = defineRpcFunction({
     name: "devframe:anonymous:unworklet:graph-update",
@@ -661,7 +661,7 @@ const setupDevtools = async (
   // Live state X-ray — the page-script polls each node's devDump and pushes the
   // decoded scalar slots here; the Live-state panel reads `unworklet:state`.
   const liveState = await ctx.rpc.sharedState.get("unworklet:state", {
-    initialValue: { nodes: [] },
+    initialValue: { nodes: [] } as DevLiveState,
   });
   const stateUpdate = defineRpcFunction({
     name: "devframe:anonymous:unworklet:state-update",
@@ -683,7 +683,7 @@ const setupDevtools = async (
     initialValue: {
       nodes: [],
       context: { sampleRate: 0, baseLatencyMs: 0, outputLatencyMs: 0 },
-    },
+    } as DevSignalsState,
   });
   const signalsUpdate = defineRpcFunction({
     name: "devframe:anonymous:unworklet:signals-update",
@@ -702,7 +702,7 @@ const setupDevtools = async (
   // MIDI — the page-script pushes live port traffic (out events + overflow) here
   // via `unworklet:midi-update`; the MIDI panel reads `unworklet:midi`.
   const midiState = await ctx.rpc.sharedState.get("unworklet:midi", {
-    initialValue: { ports: [], log: [] },
+    initialValue: { ports: [], log: [] } as DevMidiState,
   });
   const midiUpdate = defineRpcFunction({
     name: "devframe:anonymous:unworklet:midi-update",
@@ -725,7 +725,7 @@ const setupDevtools = async (
   const INJECT_QUEUE_MAX = 64;
   let injectSeq = 0;
   const injectState = await ctx.rpc.sharedState.get("unworklet:midi-inject", {
-    initialValue: { commands: [] },
+    initialValue: { commands: [] } as DevMidiInject,
   });
   const midiInject = defineRpcFunction({
     name: "unworklet:midi-inject",

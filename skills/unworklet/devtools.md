@@ -14,14 +14,19 @@ uwk.md. (`README.md` L341)
 
 ## Enable (3 steps)
 
-### 1. Install the host + kit — BOTH pinned to exactly `0.3.3`
+### 1. Install the host + kit + adapters — 0.4.x line
 
 ```sh
-npm install -D @vitejs/devtools@0.3.3 @vitejs/devtools-kit@0.3.3
+npm install -D @vitejs/devtools@0.4 @vitejs/devtools-kit@0.4 \
+  @vitejs/devtools-rolldown@0.4 @vitejs/devtools-oxc@0.4 \
+  @vitejs/devtools-vitest@0.4 @vitejs/devtools-vite@0.4
 ```
 
-Exact `0.3.3`, not a range (see "The exact 0.3.3 pin" below for why).
-(`README.md` L294-296)
+All 6 packages on the same major (0.4). `@unworklet/unplugin` pins
+`@vitejs/devtools-kit` to `^0.4.0` — the anonymous-RPC scope prefix is
+coupled to the major, so a mismatched-major host silently rejects every
+panel push (see "The 0.4 pin" below for why the major matters). The
+0.3 line was Vite 6/7 only; 0.4 is required for Vite 8.
 
 ### 2. Add the DevTools host to `vite.config.ts` (serve-only)
 
@@ -71,15 +76,15 @@ Run the dev server → open the Vite DevTools overlay → pick the **unworklet**
 `/` redirects to `/audio-graph`. (`README.md` L271-274;
 `packages/unplugin/devtools-ui/src/router.ts`)
 
-## The exact `0.3.3` pin
+## The 0.4 pin
 
 `@unworklet/unplugin` declares only `@vitejs/devtools-kit` as a peer — pinned
-exact, marked optional (`packages/unplugin/package.json` L81-90):
+to the 0.4 major, marked optional (`packages/unplugin/package.json`):
 
 ```json
 "peerDependencies": {
   "@unworklet/core": "workspace:^",
-  "@vitejs/devtools-kit": "0.3.3",
+  "@vitejs/devtools-kit": "^0.4.0",
   "vite": "^6 || ^7 || ^8"
 },
 "peerDependenciesMeta": {
@@ -87,11 +92,12 @@ exact, marked optional (`packages/unplugin/package.json` L81-90):
 }
 ```
 
-- `@vitejs/devtools` (the host) `0.3.3` is the install-side pin only (the install
-  line above); it is NOT an unplugin peer.
-- **Why exact:** live panels push to the dev server through an anonymous RPC scope
-  whose prefix is coupled to the DevTools major (`devframe:anonymous:` in 0.3). A
-  mismatched host silently rejects every push (DTK0013) and panels stay empty.
+- `@vitejs/devtools` (the host) install line above matches the major but is not
+  an unplugin peer.
+- **Why coupled to the major:** live panels push to the dev server through an
+  anonymous RPC scope whose prefix is coupled to the DevTools major
+  (`devframe:anonymous:` on the current line). A mismatched-major host silently
+  rejects every push (DTK0013) and panels stay empty.
   (`packages/unplugin/src/index.ts` L708-719)
 - **Must be a direct dep:** the panel's page bridge imports
   `@vitejs/devtools-kit/client`, which must resolve from the app — a transitive
