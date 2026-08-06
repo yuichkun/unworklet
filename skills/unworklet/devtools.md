@@ -1,9 +1,11 @@
 # DevTools
 
 A 4-panel **Vite DevTools** dock that X-rays the audio thread. Values are read
-bit-exact from WASM memory. Dev-only: in a production build the plugin compiles to
-nothing, so the panels add zero runtime weight. (`README.md` L264-269;
-`packages/unplugin/src/index.ts` L656-666)
+bit-exact from WASM memory. Dev-only: the plugin's `define` block sets
+`__UNWORKLET_DEVTOOLS__` to `"true"` in `serve` and `"false"` in `build`
+(`packages/unplugin/src/index.ts` L864-873); the client-side gate that
+tree-shakes the dev traffic is at `packages/core/src/client.ts:1810`. Panels
+add zero runtime weight in production.
 
 Panels visualize any processor imported via `?worklet` (the loading path — see
 loading.md), authored in `.uwk.ts` (primary, recommended form) or `.processor.ts`
@@ -45,7 +47,8 @@ export default defineConfig(({ command }) => ({
 - Activation fires only when the `@vitejs/devtools` host is in the config (via the
   plugin's `devtools.setup` hook).
 
-(`README.md` L298-314; `packages/unplugin/src/index.ts` L1821-1830)
+(`packages/unplugin/src/index.ts` L1686-1696 for the `devtools.setup` hook that
+runs only when the `@vitejs/devtools` host is present.)
 
 ### 3. View it
 
@@ -88,7 +91,9 @@ exact, marked optional (`packages/unplugin/package.json` L81-90):
   (`packages/unplugin/src/index.ts` L708-719)
 - **Must be a direct dep:** the panel's page bridge imports
   `@vitejs/devtools-kit/client`, which must resolve from the app — a transitive
-  copy is not enough. (`README.md` L322-324; `packages/unplugin/src/index.ts` L1233)
+  copy is not enough. (The `import` sits in an injected page-bridge module
+  string at `packages/unplugin/src/index.ts:1098`; the rationale note is at
+  `L1692` on the `devtools.setup` hook.)
 
 ## Cross-origin isolation (`crossOriginIsolation`, default `true`)
 
@@ -101,8 +106,9 @@ app's own COOP/COEP. Production headers stay the app server's job.
 - `Cross-Origin-Embedder-Policy: credentialless`
 
 `credentialless` (not `require-corp`) is least-breaking AND lets the DevTools
-iframe embed; `require-corp` would block it. (`packages/unplugin/src/index.ts`
-L470-487, L999-1029; `README.md` L325-331)
+iframe embed; `require-corp` would block it. (Default header injection is
+in the `config` hook at `packages/unplugin/src/index.ts:L864-893`; the
+DevTools iframe COEP mirror lives in `configureServer` at `L946-967`.)
 
 Opt out:
 
@@ -110,8 +116,9 @@ Opt out:
 unworklet({ crossOriginIsolation: false });
 ```
 
-unworklet then uses the postMessage transport in dev. (`README.md` L329-331;
-`packages/unplugin/src/index.ts` L477-486)
+unworklet then uses the postMessage transport in dev. (Opt-out branch:
+`packages/unplugin/src/index.ts:874`; client-side SAB→postMessage switch:
+`packages/core/src/client.ts:387`.)
 
 ## Plugin options (full surface)
 
@@ -123,8 +130,8 @@ export type UnworkletPluginOptions = {
 ```
 
 There is no devtools-enable option; the panel auto-docks when the
-`@vitejs/devtools` host is in the config. (`packages/unplugin/src/index.ts`
-L470-487)
+`@vitejs/devtools` host is in the config. (`UnworkletPluginOptions` type
+declaration: `packages/unplugin/src/index.ts:392-409`.)
 
 ## Notes
 

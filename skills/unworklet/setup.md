@@ -84,7 +84,7 @@ export default defineConfig(({ command }) => ({
 - The `0.3.3` pin is exact and required (a mismatched host silently shows empty
   panels). Full rationale, the 4 panels, and cross-origin isolation → devtools.md.
 
-(`README.md` L294-296, L298-314; `packages/unplugin/src/index.ts` L1821-1830)
+(Auto-dock hook: `packages/unplugin/src/index.ts:1686-1696`.)
 
 ## 3. TypeScript — extend the generated tsconfig
 
@@ -197,6 +197,6 @@ const ctx = new AudioContext({ sampleRate: 48000 });
 ```
 
 (rate gate `packages/core/src/client.ts` L350-364; rationale
-`packages/core/src/types.ts` L667-676) The full load sequence and the
+`packages/core/src/types.ts` L697-706) The full load sequence and the
 `UnworkletNode` surface (`params` / `state` / `events` / `midi` / `inputs` /
 `outputs`) → loading.md.

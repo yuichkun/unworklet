@@ -65,8 +65,9 @@ the build reads tsconfig (an async write loses the race → "Tsconfig not found"
 - **`.unworklet/tsconfig.json`** — fixed content (below); never changes as you add processors.
 - **`.unworklet/worklets.d.ts`** — (re)written as each `?worklet` import compiles; only regrows
   with new processors; written only on content change (no dev-watch loop).
-  [cite: packages/unplugin/src/index.ts `seedUnworkletDir` L856-878, `writeWorkletsWitness`
-  L921-952; gitignore it — README.md L57-60]
+  [cite: `seedUnworkletDir` lives in `packages/lang/src/seed-unworklet-dir.ts:53-65`
+  (called from `packages/unplugin/src/index.ts:903`); `writeWorkletsWitness` is at
+  `packages/unplugin/src/index.ts:786-817`. Gitignore `.unworklet/`.]
 
 Exact generated `.unworklet/tsconfig.json`:
 
@@ -85,13 +86,15 @@ Exact generated `.unworklet/tsconfig.json`:
 
 (`allowImportingTsExtensions`+`noEmit` let a `.uwk.ts` specifier type-resolve — e.g. importing a
 sibling subgraph; the bundler does the emit.)
-[cite: packages/unplugin/src/index.ts `GENERATED_TSCONFIG` L838-854]
+[cite: `GENERATED_TSCONFIG` lives in `packages/lang/src/seed-unworklet-dir.ts:19-35`
+(re-exported from `packages/lang/src/index.ts:32`).]
 
 ### Gotchas
 
 - **Do NOT add your own `include`** on the extending tsconfig. `extends` does not merge `include`;
   the generated one must own it. Your `compilerOptions` (`module`/`lib`/…) DO merge on top.
-  [cite: packages/unplugin/src/index.ts L823-854; README.md L57-62]
+  [cite: `packages/lang/src/seed-unworklet-dir.ts:4-17` (JSDoc) + `L30` (the `include` field);
+  README.md L57-62.]
 - The `.uwk.ts` checker loads only under **workspace TS** (do the VS Code step above).
 - `**/*` globs skip dot-folders — that's why `worklets.d.ts` is always listed explicitly.
 

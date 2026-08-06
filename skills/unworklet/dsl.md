@@ -278,9 +278,10 @@ state.buffer.f32({ size: number }): Buffer<"f32">
   is the caller's responsibility.
 - In `.uwk.ts`: `buf[i]` (read) / `buf[i] = v` (write).
 - Capacity sizes for messaging rings are the `CAPACITY_16` … `CAPACITY_16384`
-  constants (`packages/core/src/types.ts:44`). SIMD `.loadVec` / `.storeVec`
-  exist on the buffer handle but are a `.processor.ts` + `@unworklet/core/simd`
-  concern (§6).
+  constants (values live at `packages/core/src/dsl/constants.ts:11-23`, re-exported
+  via `packages/core/src/index.ts:9-22`; the `Capacity` type union is at
+  `packages/core/src/types.ts:44-55`). SIMD `.loadVec` / `.storeVec` exist on the
+  buffer handle but are a `.processor.ts` + `@unworklet/core/simd` concern (§6).
 
 ### Slot exposure — `ExposeOptions`
 
