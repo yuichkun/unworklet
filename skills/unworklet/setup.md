@@ -73,8 +73,11 @@ export default defineConfig(({ command }) => ({
   plugins: [
     unworklet(),
     // Dev only — the host is a long-lived server, pointless in a build and it
-    // would keep the test runner from exiting.
-    ...(command === "serve" ? [DevTools({ builtinDevTools: false })] : []),
+    // would keep the test runner from exiting. Vitest passes `command: "serve"`
+    // to plugins, so `command === "serve"` alone is NOT enough — also gate on
+    // `!process.env.VITEST`, or Vitest opens the host and every `vitest run`
+    // hangs 10s at close ("close timed out after 10000ms").
+    ...(command === "serve" && !process.env.VITEST ? [DevTools({ builtinDevTools: false })] : []),
   ],
 }));
 ```

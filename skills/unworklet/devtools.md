@@ -35,15 +35,19 @@ export default defineConfig(({ command }) => ({
   plugins: [
     unworklet(),
     // Dev only — the DevTools host runs a long-lived server, pointless in a
-    // build, and it would keep the test runner from exiting.
-    ...(command === "serve" ? [DevTools({ builtinDevTools: false })] : []),
+    // build, and it would keep the test runner from exiting. Vitest passes
+    // `command: "serve"` to plugins, so the `command === "serve"` gate is NOT
+    // enough on its own — also gate on `!process.env.VITEST` or `vitest run`
+    // hangs 10s at close ("close timed out after 10000ms") on every invocation.
+    ...(command === "serve" && !process.env.VITEST ? [DevTools({ builtinDevTools: false })] : []),
   ],
 }));
 ```
 
 - `unworklet()` needs NO extra config — it auto-docks once the host is present.
   There is no devtools-enable option.
-- Gate the host to `command === "serve"`; pass `builtinDevTools: false`.
+- Gate the host to `command === "serve" && !process.env.VITEST`; pass
+  `builtinDevTools: false`.
 - Activation fires only when the `@vitejs/devtools` host is in the config (via the
   plugin's `devtools.setup` hook).
 
