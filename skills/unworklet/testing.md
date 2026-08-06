@@ -111,7 +111,7 @@ Events / MIDI / state:
 - `expectEventCount(result, name: string, expectedCount: number)`. (`:980`)
 - `expectStateMatches(result, expectedSnapshot: Uint8Array)` — byte-exact snapshot blob. (`:290`)
 - `expectMidiOut(result, portName: string, expectedMidiEvents: ExpectedMidiEvent[], opts?: { tolerance?: number })` — ordered MIDI on a `midiOutput` / `event.midi({to})` port. `ExpectedMidiEvent = MidiEvent & { atSample?: number }` (omit `atSample` = ignore timing). (`:1044`, `:1032`)
-- `expectMidiBalance(result, portName: string, opts?: { hangingNotes?: number })` — noteOn/noteOff balance; a stray noteOff always fails. (`:1097`)
+- `expectMidiBalance(result, portName: string, opts?: { hangingNotes?: number })` — noteOn/noteOff balance; a stray noteOff always fails. `hangingNotes` is an upper bound (default `0`) on unclosed noteOns; there is no "unlimited" sentinel — passing `-1` / `Infinity` does not disable the check and will still fail. If you only want to observe the count without asserting a bound, skip this matcher and read `result.events.filter((e) => e.name === portName && e.payload.type === "noteOn").length` directly. (`:1097`)
 
 `SnapshotOptions = { snapshotPath?: string; snapshotName?: string; sampleRate?: number; tolerance?: number; port?: string }` (`:336`). Precedence: `snapshotPath` > `snapshotName` > auto-infer from test name.
 
