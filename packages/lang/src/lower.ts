@@ -114,6 +114,15 @@ export type LowerOptions = {
    * lazy `import("...")` resolutions the passes trigger — for later browser replay.
    */
   captureInto?: FsSnapshot;
+  /**
+   * Absolute path of the `.uwk.ts` file this source came from (disk-backed mode
+   * only). When provided, the type-directed program roots its in-memory virtuals
+   * in `path.dirname(sourcePath)` so sibling `.uwk.ts` imports resolve — the
+   * fix for the cross-file subgraph bare-state auto-read gap (guidance-dogfood
+   * F-08). Omit for runtime-compile (browser) paths that forbid cross-file
+   * imports; `SELF_DIR` is used as before.
+   */
+  sourcePath?: string;
 };
 
 /** A top-level `name(...)` macro call (e.g. `process(() => {...})`). */
@@ -318,6 +327,7 @@ export function lower(source: string, options: LowerOptions = {}): string {
   const { checker, sourceFile } = buildProgram(source, {
     snapshot: options.snapshot,
     record: options.captureInto,
+    sourcePath: options.sourcePath,
   });
   const sf = ts.transform(sourceFile, [sugarTransformer(checker)]).transformed[0] as ts.SourceFile;
 

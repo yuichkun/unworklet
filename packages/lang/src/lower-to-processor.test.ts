@@ -91,6 +91,51 @@ test("lowerToProcessor on a library module (subgraph-only) errors clearly", () =
   ).toThrow(/library module|not a processor/i);
 });
 
+test("loadUwkProcessor auto-reads a bare State passed into a cross-file subgraph tick (F-08 regression)", async () => {
+  // Guidance-dogfood F-08. Before the sourcePath threading, the type-directed
+  // program placed its virtual input at the lang package's own SELF_DIR, so a
+  // relative import like `./doubler.uwk.ts` in the source couldn't resolve —
+  // the subgraph symbol typed `any`, `bareState.ts` refused to auto-read, and
+  // the bare State reached `unwrapAst` at runtime as a raw handle and crashed.
+  // Threading `sourcePath` roots the virtuals in the source's real directory so
+  // relative imports resolve, the tick param types as `Node<"f32">`, and the
+  // caller's bare state auto-reads exactly like the same-file case.
+  const dir = mkdtempSync(path.join(import.meta.dirname, "..", ".uwk-xfile-bare-state-"));
+  try {
+    writeFileSync(
+      path.join(dir, "doubler.uwk.ts"),
+      `export const doubler = defineSubgraph(() => ({\n` +
+        `  tick: (x: Node<"f32">) => x * 2,\n` +
+        `}));`,
+    );
+    writeFileSync(
+      path.join(dir, "main.uwk.ts"),
+      `import { doubler } from "./doubler.uwk.ts";\n` +
+        `const out = audioOutput({ channels: 1, name: "main" });\n` +
+        `const g = instantiate(doubler);\n` +
+        `const s = state.f32(0.25).named("s");\n` +
+        `process(() => {\n` +
+        `  forSample((i) => {\n` +
+        `    out.ch(0).at(i).write(g.tick(s));\n` +
+        `  });\n` +
+        `});`,
+    );
+    const proc = await loadUwkProcessor(path.join(dir, "main.uwk.ts"));
+    const result = await renderOffline(proc, {
+      sampleRate: 48000,
+      duration: 128 / 48000,
+    });
+    // Auto-read fired: `g.tick(s)` desugars to `g.tick(s.read())`, tick returns
+    // `s.read() * 2`, so the output is 0.25 × 2 = 0.5 across the block. If the
+    // read-wrap failed (or was skipped as a cross-file resolution gap), the
+    // bare State handle would either type-slip past the checker and crash at
+    // graph capture (raw `unwrapAst`), or the value would be missing entirely.
+    expect(result.outputs.main[0]![64]).toBeCloseTo(0.5);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("loadUwkProcessor renders a multi-file .uwk.ts (processor + sibling subgraph)", async () => {
   // The offline / test counterpart to the Vite plugin's `?worklet` build-path
   // import: `loadUwkProcessor` writes lowered temp siblings for the entry and

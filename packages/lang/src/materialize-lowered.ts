@@ -39,7 +39,14 @@ const loweredCache = new Map<string, { source: string; lowered: string }>();
 export const lowerUwkSource = (sourcePath: string, source: string): string => {
   const cached = loweredCache.get(sourcePath);
   if (cached !== undefined && cached.source === source) return cached.lowered;
-  const lowered = lower(source, { exportName: deriveExportName(sourcePath) });
+  // Thread the real path so the type-directed program roots its virtuals in the
+  // source's directory — required for sibling `.uwk.ts` subgraph imports to
+  // resolve during the sugar passes' type queries (bare-state auto-read,
+  // operator dispatch, isDspExpr structural fallback). Guidance-dogfood F-08.
+  const lowered = lower(source, {
+    exportName: deriveExportName(sourcePath),
+    sourcePath,
+  });
   loweredCache.set(sourcePath, { source, lowered });
   return lowered;
 };
