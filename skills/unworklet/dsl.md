@@ -67,10 +67,10 @@ Rules (all in `packages/lang/src/lower.ts`):
 Source: `packages/lang/src/ambient.ts:17` (= shipped `dist/ambient.d.ts`).
 
 - Decl helpers: `state` `param` `event` `defineSubgraph` `instantiate`
-  `audioInput` `audioOutput`
+  `audioInput` `audioOutput` `noiseSource`
 - Loop / control: `forSample` `select`
 - Scalar constructors: `f32` `f64` `i32` `i64` `bool`
-- Free fns: `add sub mul div mod neg eq lt gt lte gte not sin cos tan tanh exp
+- Free fns: `add sub mul div mod neg eq lt gt lte gte not and or sin cos tan tanh exp
 log sqrt floor ceil frac abs min max clamp pipe`
 - Constants: `SAMPLES_PER_BLOCK`, `CAPACITY_16` … `CAPACITY_16384`
 - `.uwk.ts`-only ambients: `process` `migrations` `options` `input` `out` `ctx`
@@ -95,11 +95,18 @@ build-time JS. Operands recurse bottom-up, so JS precedence is preserved.
 | `a == b` / `a === b`                    | `eq(a, b)`                             |
 | `a != b` / `a !== b`                    | `not(eq(a, b))`                        |
 | `a < b` `a > b` `a <= b` `a >= b`       | `lt` `gt` `lte` `gte` `(a, b)`         |
+| `a && b` `a \|\| b` (both bool)         | `and(a, b)` `or(a, b)`                 |
 | `cond ? x : y` (cond is DSP)            | `select(cond, x, y)`                   |
 
 Closed operator set: `classify.ts:120` (`isSugarBinaryOperator`). Method chains
 interoperate with operators in the same body (core `Node` methods classify as
 DSP): `raw.mul(I32_SCALE).tanh()`, `shaped.sub(dcPrev * DC_POLE)`.
+
+**No short-circuit for `&&` / `||`**: both operands always evaluate — WASM
+realtime has no branch-free short-circuit primitive, and every DSP node runs at
+audio rate anyway. If you need "only evaluate B when A is true" semantics,
+rewrite with `select(A, thenBranch, elseBranch)` where the branch position
+naturally guards.
 
 ### Index / element-access (`packages/lang/src/passes/index.ts`)
 
@@ -143,6 +150,16 @@ throws `uwk-unsupported-if` (rewrite to `select(...)`).
 
 — `ifSugar.ts:149,155,159,164`
 
+**Multi-statement bodies with the same `Node<'bool'>` guard**: an `if (c) { s1.write(a); s2.write(b); port.emit(payload) }` isn't one of the 3 shapes. Write each side as its own guarded statement — the sugar lowers each individually and the pass optimizer coalesces them, so the runtime cost is identical:
+
+```ts
+// A block-body `if (c) { s1.write(a); s2.write(b); port.emit(p) }` is not sugar.
+// Write each side explicitly — same runtime, same guard `c` factored per statement.
+if (c) s1.write(a);
+if (c) s2.write(b);
+port.emitIf(c, p);
+```
+
 ### `$prev` — subgraph feedback (`packages/lang/src/passes/prev.ts`)
 
 Inside a `defineSubgraph` method, `$prev` is that method's previous-call return
@@ -177,8 +194,11 @@ plain `state.f32(0)` stays anonymous. — `autoName.ts:104,108,114,124`
 ### Does NOT lower (confirmed absences — do not emit as DSP)
 
 - `number op number` stays build-time JS (intended).
-- Logical `&&` `||`, bitwise `& | ^ << >>`, and compound assignment
-  `+= -= *= /= %=` are **not** sugar. — `classify.ts:120`, `index.ts:43`
+- Bitwise `& | ^ << >>` and compound assignment `+= -= *= /= %=` are **not**
+  sugar. — `classify.ts:120`, `index.ts:43`
+- Logical `&&` / `||` on two `Node<'bool'>` operands **do** lower (to `and` /
+  `or`, both operands evaluate — see §2 operator table), but the JavaScript
+  short-circuit semantics are NOT preserved.
 - A `Node<'bool'>` `if` outside the 3 shapes → `uwk-unsupported-if`; use `select`.
 - `migrations()` / `options()` are processor-only and cannot reference a
   process-body binding → `uwk-options-binding` / `uwk-options-without-process`.
@@ -222,8 +242,16 @@ param.f32({ default: number; min: number; max: number;
 
 ### Scalar state — `state.<type>`
 
+Each constructor takes an initial value in the scalar type's native JS form:
+`number` for the float / int-32 slots, `bigint` for `i64` (no number lift), and
+`boolean` for `bool`.
+
 ```ts
-state.f32(initial) | state.f64(i) | state.i32(i) | state.i64(i) | state.bool(i): State<T>
+state.f32(initial: number):   State<"f32">
+state.f64(initial: number):   State<"f64">
+state.i32(initial: number):   State<"i32">
+state.i64(initial: bigint):   State<"i64">   // bigint only — `state.i64(0)` is a type error, use `state.i64(0n)`
+state.bool(initial: boolean): State<"bool">  // `state.bool(false)`, not `state.bool(0)`
 ```
 
 - Handle: `.read() → Node<T>`, `.write(v: Node<T> | scalar)`, plus order-free
@@ -282,9 +310,18 @@ event<T>({ to:   "main"; name; capacity?: Capacity; payloadCapacity?: number }) 
 
 - Inbound (`from: "main"`): worklet handles with `.onReceive(handler)`. —
   `declarations.ts:1159,1439`
-- Outbound (`to: "main"`): worklet sends with `.emit(payload)` /
-  `.emitIf(cond, payload)`. — `declarations.ts:951`
+- Outbound (`to: "main"`): worklet sends with `.emitIf(cond, payload)` only —
+  there is no bare `.emit(payload)` on the worklet-side handle (calling it
+  throws `TypeError: emit is not a function`). Use `port.emitIf(bool(true), p)`
+  for the unconditional case, or write `if (cond) port.emit(p)` inside the
+  process body and the if-sugar (§2) rewrites it to `emitIf`. —
+  `declarations.ts:951,955`
 - Main-thread side is `node.events.<name>` (§5). — `declarations.ts:828,1466`
+- Every outbound payload has an implicit `atSample: number` field the worklet
+  must fill in (the sample index within the current quantum). The type-checker
+  requires it and the runtime uses it for main-thread ordering:
+  `port.emitIf(cond, { atSample: i, ...userFields })`. In `forSample((i) =>
+…)` bodies, pass the loop's `i` as `atSample`.
 
 ### MIDI ports — `event.midi`
 
@@ -295,18 +332,23 @@ event.midi({ to:   "main"; name; capacity?: Capacity }): MidiOutputHandle  // ou
 
 - Inbound: worklet handles per type with
   `.onEvent("noteOn", ({ note, velocity, … }) => …)`. — `declarations.ts:1290,1455`
-- Outbound: worklet sends with `.emit(...)` / `.emitIf(cond, ...)`. — `declarations.ts:1307`
+- Outbound: worklet sends with `.emitIf(cond, event)` only — same rule as
+  typed `event<T>` above (no bare `.emit` on the worklet-side handle). The
+  MIDI event must include `atSample: number` (the sample index within the
+  current quantum). — `declarations.ts:1307,1331`
 - Events/MIDI carry **no** infix sugar; the helper/handler shapes are identical
   in both forms. Handler BODIES still get operator / bare-state lowering in `.uwk.ts`.
 - Main-thread side is `node.midi.<name>` with the full `MidiEvent` union (§5).
 
 ```ts
-// .uwk.ts MIDI synth (verbatim-verified to lower)
+// .uwk.ts MIDI synth — one binding per `const` statement (the auto-name pass
+// skips comma-separated multi-declarators, so `const hz = …, gate = …` would
+// break `.named()`).
 const out = audioOutput({ channels: 1, name: "main" });
 const keys = event.midi({ from: "main", name: "keys" });
-const hz = state.f32(440).named(),
-  gate = state.f32(0).named(),
-  phase = state.f32(0).named();
+const hz = state.f32(440).named();
+const gate = state.f32(0).named();
+const phase = state.f32(0).named();
 process(() => {
   keys.onEvent("noteOn", ({ note }) => {
     hz.write(exp(f32(note - 69) * (Math.LN2 / 12)) * 440);
@@ -367,20 +409,39 @@ i32(number | Node): Node<"i32">      i64(bigint): Node<"i64">     // bigint only
 bool(boolean | Node): Node<"bool">
 ```
 
+**Cross-type math needs an explicit cast.** Arithmetic primitives (`add` / `mul`
+/ etc.) refuse mixed-scalar operands with `add() got operands of different
+scalar types (i32 and f32)`. Wrap one side in the target-type constructor when
+you need to mix — most often to combine a `param[i]` (which returns
+`Node<"f32">`) with an `i32` counter, or to bring an inbound MIDI field
+(`e.note: Node<"i32">`) into float math:
+
+```ts
+// param.f32 read is Node<"f32">; the counter is Node<"i32">. Cast to combine:
+const bpm = param.f32({ default: 120, min: 40, max: 200 }).named();
+const step = state.i32(0).named();
+step.write(step + (i32(bpm[i]) % 16)); // OR: f32(step) + bpm[i]
+
+// MIDI note comes as Node<"i32">; cast for float pitch math:
+keys.onEvent("noteOn", ({ note }) => {
+  hz.write(exp(f32(note - 69) * (Math.LN2 / 12)) * 440);
+});
+```
+
 ### Math / logic free-functions
 
 `packages/core/src/dsl/primitives.ts`. Each also exists as a `Node` method
 (`a.mul(b)`, `x.tanh()`, `x.clamp(lo, hi)`, …). A bare `number` is accepted
 anywhere a `Node` is and lifts to the operand's type.
 
-| group              | signatures → result                                                                 |
-| ------------------ | ----------------------------------------------------------------------------------- |
-| arithmetic         | `add` `sub` `mul` `div` `mod` `(a, b) → Node<T>`; `neg(x) → Node<T>`                |
-| compare            | `eq` `lt` `gt` `lte` `gte` `(a, b) → Node<"bool">`                                  |
-| logic              | `not(b) → Node<"bool">`                                                             |
-| float math (unary) | `sin cos tan tanh exp log sqrt floor ceil frac (x) → Node<T>`                       |
-| numeric            | `abs(x) → Node<T>`; `min(a, b)` `max(a, b) → Node<T>`; `clamp(x, lo, hi) → Node<T>` |
-| composition        | `pipe(x, f1, f2, …) → applies fns left-to-right`                                    |
+| group              | signatures → result                                                                  |
+| ------------------ | ------------------------------------------------------------------------------------ |
+| arithmetic         | `add` `sub` `mul` `div` `mod` `(a, b) → Node<T>`; `neg(x) → Node<T>`                 |
+| compare            | `eq` `lt` `gt` `lte` `gte` `(a, b) → Node<"bool">`                                   |
+| logic              | `not(b) → Node<"bool">`; `and(a, b)` `or(a, b) → Node<"bool">` (both operands eager) |
+| float math (unary) | `sin cos tan tanh exp log sqrt floor ceil frac (x) → Node<T>`                        |
+| numeric            | `abs(x) → Node<T>`; `min(a, b)` `max(a, b) → Node<T>`; `clamp(x, lo, hi) → Node<T>`  |
+| composition        | `pipe(x, f1, f2, …) → applies fns left-to-right`                                     |
 
 In `.uwk.ts` arithmetic/compare/`neg`/`not` are written with operators (§2); the
 named functions remain available and `sin`/`exp`/`clamp`/`pipe`/etc. are written
@@ -400,10 +461,39 @@ instantiate(subgraph, ...args, options?: { name?: string }): methods
   instantiating inside `forSample` / `everyNSamples` / a handler throws
   (`scope-violation`). Each instance gets independent internal state. — `processor.ts:152,190`
 - A `Node<"f32">` arg also accepts a bare `number` (and a `Node<"bool">` arg a
-  `boolean`); the `.uwk.ts` sugar wraps a bare literal, so `instantiate(onepole,
-0.2)` works. A plain-`number` config arg is not lifted. — `processor.ts:125`
+  `boolean`); the type widening lives in the runtime `LiftArg<A>` union at
+  `packages/core/src/processor.ts:125` — no sugar pass rewrites `instantiate`
+  args, the literal just satisfies the widened signature and any downstream
+  primitive (`mul` / `add` / …) lifts it in place. A plain-`number` config arg
+  is not lifted.
 - An instance with a named / persistent / published internal slot **must** be
   given an explicit `{ name }` (snapshot-path stability). — `processor.ts:214`
+
+### White-noise source — `noiseSource`
+
+```ts
+noiseSource(options?: { seed?: number }): { next(): Node<"f32"> }
+```
+
+Declares a private xorshift32 PRNG. Instantiated in declaration scope like `state` / `param`; the returned handle exposes `.next()` which advances the internal seed one step and returns the next sample in `[-1, 1)`.
+
+```ts
+const n = noiseSource({ seed: 42 }); // pin the output byte-for-byte
+const nL = noiseSource(); // omit seed → framework auto-assigns 1
+const nR = noiseSource(); // 2 (per declaration order, decorrelated from nL)
+
+process(() => {
+  forSample((i) => {
+    out.left[i] = nL.next() * 0.3;
+    out.right[i] = nR.next() * 0.3;
+  });
+});
+```
+
+- **`seed` (optional, compile-time integer)**: pin the output for golden-snapshot tests / preset reproducibility. Omit it to have the framework auto-assign per declaration order (1, 2, 3, …), so two `noiseSource()` declarations in the same processor decorrelate without you picking values.
+- `seed === 0` is silently substituted with a sentinel (xorshift32 locks at zero — the framework prevents the trap).
+- Each `.next()` call advances the internal state; hold a sample in a local (`const s = n.next()`) if you need to reuse it in multiple places within one iteration.
+- The internal seed is framework-managed (private slot allocated at graph capture); no user-visible state.
 
 ### Compile-time context — `ctx.sampleRate`
 
