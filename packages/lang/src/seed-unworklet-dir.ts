@@ -4,26 +4,34 @@ import path from "node:path";
 /**
  * The `.unworklet/tsconfig.json` `seedUnworkletDir` writes next to `worklets.d.ts`.
  * A consumer extends it with one line — `"extends": "./.unworklet/tsconfig.json"` —
- * and inherits the three unworklet type settings, so no `vite-env.d.ts` is needed:
+ * and inherits every setting they need to type-check `.uwk.ts` sugar out of the
+ * box, so no `vite-env.d.ts` is needed:
+ * - `module` / `moduleResolution: "nodenext"` resolves package.json `exports`
+ *   conditions in `@unworklet/*` (without this, tsc falls back to `commonjs` /
+ *   `node` and can't see the modern typed entry points, silently typing bare
+ *   ambient identifiers `any` — a form of the type ⟺ works break that lets
+ *   e.g. `noiseSource() * 0.5` (missing `.next()`) sneak past the type check).
  * - `types` pulls the `*?worklet` ambient (resolves the import).
  * - `plugins` runs the `.uwk.ts` editor type-checker.
+ * - `allowImportingTsExtensions` + `noEmit` allow the explicit `.uwk.ts`
+ *   specifier a sibling-subgraph import uses.
  * - `include` lists `worklets.d.ts` (the per-processor types; a glob skips the
  *   dot-folder) plus the project's sources via `../**​/*.ts`.
  *
  * `extends` does NOT merge `include`, so the consumer must not declare their own
  * `include` on the extending tsconfig (it would shadow this one). Projects that
- * need their own `include` use the manual path instead (the same three settings
- * written directly). `compilerOptions` like `module` / `lib` come from the
- * consumer's tsconfig and merge on top of these.
+ * need their own `include` use the manual path instead (the same settings written
+ * directly). `compilerOptions` like `lib` / `strict` come from the consumer's
+ * tsconfig and merge on top of these; any of the seeded options can be
+ * overridden the same way.
  */
 export const GENERATED_TSCONFIG = `${JSON.stringify(
   {
     compilerOptions: {
+      module: "nodenext",
+      moduleResolution: "nodenext",
       types: ["@unworklet/unplugin/client"],
       plugins: [{ name: "@unworklet/lang/typescript-plugin" }],
-      // Importing a subgraph from a sibling `.uwk.ts` uses the explicit `.uwk.ts`
-      // specifier, which TS only allows with `allowImportingTsExtensions` (itself
-      // requiring `noEmit` — this is a type layer; the bundler does the emit).
       allowImportingTsExtensions: true,
       noEmit: true,
     },

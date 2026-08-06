@@ -208,3 +208,25 @@ process(() => {
   // … reported against the author's `.uwk.ts`, not a virtual file.
   expect(output).toMatch(/check\.uwk\.ts/);
 });
+
+// F-11-types: guidance-dogfood F-11 discovered that misuse of factory-handle
+// primitives (a `NoiseSource` used as a `Node<"f32">` — missing `.next()`)
+// passes tsc silently and only crashes at graph capture. The sugar pass's
+// isDspExpr classifier does not recognise `NoiseSource` as a DSP value, so
+// `n * 0.5` stays verbatim in the virtual, and stock TS catches TS2362
+// (`arithmetic operation must be of type 'number' | 'bigint' | ...`).
+// Pin the diagnostic surfaces so a future classify.ts refactor cannot
+// silently mis-classify these factory handles as Node-like.
+test("unworklet-tsc rejects `noiseSource() * 0.5` (missing .next())", () => {
+  const { code, output } = check(`const out = audioOutput({ channels: 1, name: "main" });
+const n = noiseSource({ seed: 42 });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = n * 0.5;
+  });
+});`);
+  expect(code).not.toBe(0);
+  // TS2362: left-hand side of arithmetic op must be number-ish.
+  expect(output).toMatch(/arithmetic operation|TS2362/);
+  expect(output).toMatch(/check\.uwk\.ts/);
+});
