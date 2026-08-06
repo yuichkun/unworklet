@@ -313,6 +313,36 @@ registerNodeMethod("not", function (this: Node<"bool">): Node<"bool"> {
   return not(this);
 });
 
+// `and(a, b)` / `or(a, b)` — logical binary on bool. `bool` is internally i32
+// 0/1, so bitwise `i32.and` / `i32.or` on the internal representation matches
+// the logical semantics exactly (1&1=1, 1|0=1, 0|0=0). Both operands are eagerly
+// evaluated — WASM realtime has no short-circuit primitive, and every DSP node
+// runs at audio rate anyway; consumers wanting short-circuit should refactor to
+// `select(cond, thenExpr, elseExpr)` where the branch positions naturally guard.
+export function and(a: Node<"bool"> | boolean, b: Node<"bool"> | boolean): Node<"bool"> {
+  // A bare inbound `boolean` field composed here seals it to the bool wire.
+  sealInboundFieldBool(a);
+  sealInboundFieldBool(b);
+  return wrapAst<"bool">({ kind: "and", type: "bool", lhs: lift(a, "bool"), rhs: lift(b, "bool") });
+}
+registerNodeMethod(
+  "and",
+  function (this: Node<"bool">, other: Node<"bool"> | boolean): Node<"bool"> {
+    return and(this, other);
+  },
+);
+export function or(a: Node<"bool"> | boolean, b: Node<"bool"> | boolean): Node<"bool"> {
+  sealInboundFieldBool(a);
+  sealInboundFieldBool(b);
+  return wrapAst<"bool">({ kind: "or", type: "bool", lhs: lift(a, "bool"), rhs: lift(b, "bool") });
+}
+registerNodeMethod(
+  "or",
+  function (this: Node<"bool">, other: Node<"bool"> | boolean): Node<"bool"> {
+    return or(this, other);
+  },
+);
+
 // ─────────────────────────────────────────────────────────────────────────
 // Math (f32 / f64 — `f64` lowering lands with the f64 path; `f32` here)
 // ─────────────────────────────────────────────────────────────────────────

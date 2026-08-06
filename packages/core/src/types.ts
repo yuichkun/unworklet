@@ -115,6 +115,7 @@ type NumericCompare<T> = T extends NumericScalar
   ? (other: Node<T> | number) => Node<"bool">
   : never;
 type BoolUnary<T> = T extends "bool" ? () => Node<"bool"> : never;
+type BoolBinary<T> = T extends "bool" ? (other: Node<"bool"> | boolean) => Node<"bool"> : never;
 
 export interface Node<T extends ScalarType | "f32x4" = ScalarType> {
   readonly [nodeBrand]: T;
@@ -134,6 +135,12 @@ export interface Node<T extends ScalarType | "f32x4" = ScalarType> {
   gte: NumericCompare<T>;
   // Logical negation (bool only; `not()` on a numeric `Node` is a type error).
   not: BoolUnary<T>;
+  // Logical binary (bool only; `and(a, b)` / `or(a, b)` free-function form
+  // symmetric to `not`, method form for chaining. Both operands evaluated —
+  // no short-circuit in WASM realtime; consumers wanting short-circuit
+  // semantics should refactor to `select(cond, thenExpr, elseExpr)`).
+  and: BoolBinary<T>;
+  or: BoolBinary<T>;
   // Math — `sqrt` / `floor` / `ceil` / `frac` / transcendentals are float-only;
   // `abs` is meaningful for every numeric scalar (lowered to `select(x<0,-x,x)`).
   sin: FloatMethod<T>;

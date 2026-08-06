@@ -43,6 +43,8 @@ const CORE_AUTHORING_EXPORTS = new Set<string>([
   "mod",
   "neg",
   "not",
+  "and",
+  "or",
   "eq",
   "lt",
   "gt",

@@ -58,6 +58,8 @@ declare global {
   const lte: typeof import("@unworklet/core").lte;
   const gte: typeof import("@unworklet/core").gte;
   const not: typeof import("@unworklet/core").not;
+  const and: typeof import("@unworklet/core").and;
+  const or: typeof import("@unworklet/core").or;
   const sin: typeof import("@unworklet/core").sin;
   const cos: typeof import("@unworklet/core").cos;
   const tan: typeof import("@unworklet/core").tan;

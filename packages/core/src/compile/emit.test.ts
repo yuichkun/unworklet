@@ -3120,9 +3120,14 @@ async function runCompareAndRead(value: AstNode): Promise<number> {
 }
 
 function cmp(
-  // Scalar binary kinds only (those carrying a `type`); the vec kinds also have
-  // `lhs`/`rhs` but no `type`, and this helper always sets one.
-  kind: Extract<AstNode, { lhs: AstNode; rhs: AstNode; type: ScalarType }>["kind"],
+  // Scalar binary kinds with a variable operand `type` (numeric comparisons
+  // etc.). Excludes `"and"` / `"or"` because their operand type is fixed to
+  // `"bool"` — this helper always hard-codes `type: "f32"` and would produce an
+  // impossible AstNode for a bool-fixed kind.
+  kind: Exclude<
+    Extract<AstNode, { lhs: AstNode; rhs: AstNode; type: ScalarType }>["kind"],
+    "and" | "or"
+  >,
   a: number,
   b: number,
 ): AstNode {

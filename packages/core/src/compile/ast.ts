@@ -31,6 +31,8 @@ export type AstNode =
   | { kind: "abs"; type: ScalarType; value: AstNode }
   | { kind: "neg"; type: ScalarType; value: AstNode }
   | { kind: "not"; type: "bool"; value: AstNode }
+  | { kind: "and"; type: "bool"; lhs: AstNode; rhs: AstNode }
+  | { kind: "or"; type: "bool"; lhs: AstNode; rhs: AstNode }
   | { kind: "sqrt"; type: ScalarType; value: AstNode }
   | { kind: "floor"; type: ScalarType; value: AstNode }
   | { kind: "ceil"; type: ScalarType; value: AstNode }
@@ -476,6 +478,8 @@ export function inferAstType(ast: AstNode): ScalarType {
     case "gt":
     case "lte":
     case "gte":
+    case "and":
+    case "or":
       return "bool";
     case "audioInRead":
     case "paramAt":

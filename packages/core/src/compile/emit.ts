@@ -1327,6 +1327,20 @@ export function emitExpression(
       // bool is internally i32 0/1; logical negation is a single `i32.eqz`
       // (= "equals zero": 1 if the operand is 0, else 0).
       return mod.i32.eqz(emitExpression(node.value, layout, mod, binaryen));
+    case "and":
+      // bool is internally i32 0/1; bitwise `i32.and` on 0/1 operands matches
+      // logical AND exactly (1&1=1, 1&0=0, 0&1=0, 0&0=0). No branch, no
+      // short-circuit — both sides always evaluated (audio-rate DSP context).
+      return mod.i32.and(
+        emitExpression(node.lhs, layout, mod, binaryen),
+        emitExpression(node.rhs, layout, mod, binaryen),
+      );
+    case "or":
+      // Same reasoning as `and` — bitwise `i32.or` on 0/1 = logical OR.
+      return mod.i32.or(
+        emitExpression(node.lhs, layout, mod, binaryen),
+        emitExpression(node.rhs, layout, mod, binaryen),
+      );
     case "sqrt":
       return floatNs(mod, node.type).sqrt(emitExpression(node.value, layout, mod, binaryen));
     case "floor":
@@ -2662,6 +2676,8 @@ function collectUsedMathKinds(graph: CapturedGraph): Set<string> {
       case "gt":
       case "lte":
       case "gte":
+      case "and":
+      case "or":
         visit(node.lhs);
         visit(node.rhs);
         break;
