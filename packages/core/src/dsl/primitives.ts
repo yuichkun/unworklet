@@ -85,6 +85,22 @@ function numberLiteral(value: number, t: ScalarType): AstNode {
   return { kind: "literal", type: t, value: t === "i32" ? value | 0 : value };
 }
 
+/** Detect a `Param` handle (the AudioParam-backed shape from
+ * `packages/core/src/dsl/declarations.ts`): object with `.at`, `.named`,
+ * `.expose` — Node<T> shares none of those, so no false positive on captured
+ * DSL values. Used to catch a `mul(x, someParam)` mistake at capture time
+ * with a message that names Param and the `param[i]` fix (default overload
+ * error text reads "not assignable to Node<'i64'>", which is misleading).
+ * Guidance-dogfood R4 gap 4. */
+function isParamHandle(value: unknown): boolean {
+  if (value === null || typeof value !== "object") return false;
+  if (isWrappedNode(value)) return false;
+  const v = value as { at?: unknown; named?: unknown; expose?: unknown };
+  return (
+    typeof v.at === "function" && typeof v.named === "function" && typeof v.expose === "function"
+  );
+}
+
 /** Lift an operand to an AST node of type `t` (Q33 literal lift). */
 function lift(value: Operand, t: ScalarType): AstNode {
   if (typeof value === "boolean") {
@@ -93,6 +109,13 @@ function lift(value: Operand, t: ScalarType): AstNode {
   }
   if (typeof value === "number") {
     return numberLiteral(value, t);
+  }
+  if (isParamHandle(value)) {
+    throw new Error(
+      "unworklet: a `Param` handle was passed where a `Node<T>` is expected. " +
+        "Sample the param first — write `param[i]` (or `param.at(i)`) to get a " +
+        '`Node<"f32">` and pass that instead. See dsl.md §Params.',
+    );
   }
   return unwrapAst(value);
 }
