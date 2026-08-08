@@ -449,6 +449,40 @@ test("SEMANTIC: nested max(abs(s), s) reads both — JS reference", async () => 
 // pass's job, but a state used as the receiver of an explicit `.read()` chain
 // stays correct and must not double-read.
 
+test("STRUCT: same-file subgraph tick arg auto-reads a bare State (F-08 same-file counterpart, R4 gap 3)", async () => {
+  // F-08 threaded sourcePath to fix cross-file subgraph auto-read; same-file
+  // subgraph tick call was a separate path that never worked. env.tick(gate)
+  // where env is a `defineSubgraph(...)` instance and gate is State<"f32">
+  // should auto-read because tick's parameter type is Node<"f32">.
+  const d = `const adsr = defineSubgraph(() => ({
+  tick: (gate: Node<"f32">) => gate,
+}));
+const env = instantiate(adsr);
+const s = state.f32(0.5).named("s");`;
+  await expectSameLowering(
+    mono(d, `out.ch(0).at(i).write(env.tick(s));`),
+    mono(d, `out.ch(0).at(i).write(env.tick(s.read()));`),
+  );
+});
+
+test("STRUCT: multi-arg subgraph tick (ADSR-shaped) — bare State first arg auto-reads (R4 dogfood repro)", async () => {
+  // The dogfood repro pattern: subgraph tick with 5 args + `instantiate(sg,
+  // { name })` (options obj second arg to instantiate). The dogfooder had to
+  // write `env.tick(gate.read(), attackRate[i], ...)` because the auto-read
+  // didn't fire on the multi-arg call.
+  const d = `const adsr = defineSubgraph(() => ({
+  tick: (gate: Node<"f32">, r1: Node<"f32">, r2: Node<"f32">) => mul(mul(gate, r1), r2),
+}));
+const env = instantiate(adsr, { name: "env" });
+const gate = state.f32(0).named("gate");
+const r1 = state.f32(0.1).named("r1");
+const r2 = state.f32(0.2).named("r2");`;
+  await expectSameLowering(
+    mono(d, `out.ch(0).at(i).write(env.tick(gate, r1, r2));`),
+    mono(d, `out.ch(0).at(i).write(env.tick(gate.read(), r1.read(), r2.read()));`),
+  );
+});
+
 test("STRUCT: explicit s.read().mul(2) does not get a second read", async () => {
   const d = `const s = state.f32(0.5).named("s");`;
   await expectSameLowering(
