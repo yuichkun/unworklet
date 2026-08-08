@@ -209,6 +209,28 @@ process(() => {
   expect(output).toMatch(/check\.uwk\.ts/);
 });
 
+// R4 gap 1: `preventLeadingOffset: true` had TS report the diagnostic's line/col
+// against the VIRTUAL text (which prepends a multi-line ambient prologue), so
+// every error landed N lines above its real position — e.g. the write on L8
+// showed up as `check.uwk.ts(5,8)`. Pin the reported line/col to the author's
+// actual position so a future language-plugin change cannot silently regress it.
+test("unworklet-tsc reports the diagnostic on the author's line/col, not the virtual's", () => {
+  const source =
+    `const out = audioOutput({ channels: 1, name: "main" });\n` + // L1
+    `const s = state.f32(0).named("s");\n` + // L2
+    `\n` + // L3
+    `process(() => {\n` + // L4
+    `  forSample((i) => {\n` + // L5
+    `    // Intentional type error: a string written to a Node<"f32">. Line 7.\n` + // L6
+    `    out.ch(0)[i] = "not a number";\n` + // L7 — error here, col 20 = the string literal
+    `  });\n` + // L8
+    `});\n`; // L9
+  const { code, output } = check(source);
+  expect(code).not.toBe(0);
+  // Column is 1-based and points at the offending argument (`"not a number"`).
+  expect(output).toMatch(/check\.uwk\.ts\(7,20\)/);
+});
+
 // F-11-types: guidance-dogfood F-11 discovered that misuse of factory-handle
 // primitives (a `NoiseSource` used as a `Node<"f32">` — missing `.next()`)
 // passes tsc silently and only crashes at graph capture. The sugar pass's
