@@ -101,3 +101,39 @@ export function readsAsBareState(checker: ts.TypeChecker, node: ts.Node): boolea
 export function tryBareState(checker: ts.TypeChecker, node: ts.Node): ts.Node | undefined {
   return readsAsBareState(checker, node) ? read(node as ts.Expression) : undefined;
 }
+
+/**
+ * ShorthandPropertyAssignment (`{ peak }`) inside an emit / emitIf payload can't
+ * be handled by the identifier-only path above: TypeScript's AST requires
+ * ShorthandPropertyAssignment.name to be an Identifier, so returning `read(peak)`
+ * (a CallExpression) at the identifier position produces invalid syntax (`{ peak:
+ * peak.read() }` on the wire but a `ShorthandPropertyAssignment(CallExpression)`
+ * in the tree — printer emits `{ peak.read() }` and downstream parse fails).
+ *
+ * Rewrite the whole ShorthandPropertyAssignment to a long-form PropertyAssignment
+ * `{ peak: peak.read() }` when the shorthand's identifier is a bare State inside
+ * an emit/emitIf payload. Long-form assignment is what the payload was going to
+ * lower to anyway.
+ */
+export function tryBareStateShorthand(checker: ts.TypeChecker, node: ts.Node): ts.Node | undefined {
+  if (!ts.isShorthandPropertyAssignment(node)) return undefined;
+  const name = node.name;
+  if (classify(checker, name) !== "state") return undefined;
+  // Only rewrite inside an emit / emitIf payload — that's where the field's
+  // runtime type accepts a Node even though its TS type prints `number`. Other
+  // shorthand positions (a plain object literal that's not an emit payload)
+  // aren't a Node context and should stay as-is.
+  const obj = node.parent;
+  /* v8 ignore next 2 — a ShorthandPropertyAssignment always sits in an
+     ObjectLiteralExpression when the source parses. */
+  if (obj === undefined || !ts.isObjectLiteralExpression(obj)) return undefined;
+  const call = obj.parent;
+  if (
+    call === undefined ||
+    !ts.isCallExpression(call) ||
+    !ts.isPropertyAccessExpression(call.expression) ||
+    (call.expression.name.text !== "emit" && call.expression.name.text !== "emitIf")
+  )
+    return undefined;
+  return ts.factory.createPropertyAssignment(name, read(name));
+}

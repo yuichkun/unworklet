@@ -475,6 +475,19 @@ const port = event<{ step: number; atSample: number }>({ to: "main", name: "p" }
   );
 });
 
+test("STRUCT: emit payload ShorthandProperty { peak } — peak is State, rewrites to { peak: peak.read() }", async () => {
+  // Round 4 dogfood gap 2. A ShorthandPropertyAssignment can't carry a
+  // CallExpression as its value slot, so the identifier-only bareState path
+  // produced invalid syntax when peak was a bare State. The dedicated
+  // shorthand handler now rewrites the whole property into long-form.
+  const d = `const peak = state.f32(0).named("peak");
+const port = event<{ peak: number; atSample: number }>({ to: "main", name: "p" });`;
+  await expectSameLowering(
+    mono(d, `port.emitIf(gt(input.ch(0).at(i), 0), { peak, atSample: i });`),
+    mono(d, `port.emitIf(gt(input.ch(0).at(i), 0), { peak: peak.read(), atSample: i });`),
+  );
+});
+
 test("STRUCT: emit payload KEY matching a typed-payload field name stays literal", async () => {
   // Same class as the above but the collision is with a payload FIELD (not a
   // state slot); confirms the KEY guard fires regardless of which "known name"

@@ -8,7 +8,7 @@
 
 import ts from "typescript";
 
-import { tryBareState } from "./bareState.ts";
+import { tryBareState, tryBareStateShorthand } from "./bareState.ts";
 import { tryIfSugar } from "./ifSugar.ts";
 import { tryIndex } from "./index.ts";
 import { tryOperator } from "./operators.ts";
@@ -25,6 +25,8 @@ export function sugarTransformer(checker: ts.TypeChecker): ts.TransformerFactory
       if (lowered !== undefined) return lowered;
       const indexed = tryIndex(checker, node, visit);
       if (indexed !== undefined) return indexed;
+      const readShort = tryBareStateShorthand(checker, node);
+      if (readShort !== undefined) return readShort;
       const read = tryBareState(checker, node);
       if (read !== undefined) return read;
       return ts.visitEachChild(node, visit, context);
