@@ -19,7 +19,7 @@ import type { Readable, Writable } from "node:stream";
 import { audioOutput, defineProcessor, forSample, param } from "@unworklet/core";
 import { afterAll, beforeAll, expect, test } from "vite-plus/test";
 
-import { workletDts } from "./worklet-dts.ts";
+import { workletDts } from "@unworklet/lang";
 
 const UNPLUGIN = path.resolve(import.meta.dirname, "..");
 const REPO = path.resolve(UNPLUGIN, "../..");

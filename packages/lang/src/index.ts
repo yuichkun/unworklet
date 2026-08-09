@@ -31,6 +31,14 @@ export type { UwkLanguagePluginOptions } from "./ide/languagePlugin.ts";
 // clone can `unworklet-tsc` / `vite build` before anything else runs.
 export { seedUnworkletDir, GENERATED_TSCONFIG } from "./seed-unworklet-dir.ts";
 
+// Per-processor `?worklet` type witness generator. Emits the `declare module`
+// entries that make `import x from "./x.uwk.ts?worklet"` type as
+// `CompiledProcessor<{ params; state; events; midi; inputs; outputs }>` — the
+// same string the unplugin writes on `vite build` AND that `unworklet-tsc`
+// writes at startup on a cold checkout (R5 gap 4 root fix). Shared here so both
+// paths produce byte-identical witnesses.
+export { workletDts, workletsDts } from "./worklet-dts.ts";
+
 // Multi-file `.uwk.ts` lowering — writes lowered temp siblings for a file and
 // its transitive `.uwk.ts` imports so Node's native `import()` can load the
 // whole graph. The Vite plugin uses this on the build path; offline / test

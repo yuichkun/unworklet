@@ -31,9 +31,14 @@ import { afterAll, beforeAll, expect, test } from "vite-plus/test";
 
 import { workletDts } from "./worklet-dts.ts";
 
-const UNPLUGIN = path.resolve(import.meta.dirname, "..");
-const REPO = path.resolve(UNPLUGIN, "../..");
+// The witness generator now lives in `@unworklet/lang`, but this integration
+// test still needs the unplugin's `client.d.ts` (its `/// <reference types>`
+// pulls the wildcard `?worklet` module ambient), so both are symlinked into the
+// throwaway consumer's `node_modules`.
+const LANG = path.resolve(import.meta.dirname, "..");
+const REPO = path.resolve(LANG, "../..");
 const CORE = path.join(REPO, "packages/core");
+const UNPLUGIN = path.join(REPO, "packages/unplugin");
 
 // A real processor: one named param `gain`, stereo output `main`.
 const gainProc = defineProcessor(() => {

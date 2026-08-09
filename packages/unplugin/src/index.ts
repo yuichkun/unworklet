@@ -26,7 +26,7 @@ import { isUwkSource, lowerUwkSource, materializeLowered, seedUnworkletDir } fro
 import { createUnplugin, type UnpluginOptions } from "unplugin";
 import type { Plugin } from "vite";
 
-import { workletsDts } from "./worklet-dts.ts";
+import { workletsDts } from "@unworklet/lang";
 
 /**
  * Devframe's untrusted-RPC scope prefix. Every method name registered or called
