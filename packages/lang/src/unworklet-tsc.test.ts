@@ -231,6 +231,133 @@ test("unworklet-tsc reports the diagnostic on the author's line/col, not the vir
   expect(output).toMatch(/check\.uwk\.ts\(7,20\)/);
 });
 
+// R5 gap 4 (D fix): cold-repo `unworklet-tsc` must populate `.unworklet/worklets.d.ts`
+// itself, not fall back to the `?worklet` wildcard `CompiledProcessor<unknown>` and
+// silently pass real payload / state type errors. The dogfooder hit exactly this:
+// `npx unworklet-tsc --noEmit` on a cold clone printed `0 errors`, then `vite build
+// && unworklet-tsc --noEmit` (order that populates the witness first) surfaced a real
+// error the earlier run had hidden. Pin the fixed behavior with two paired tests —
+// one that would silently pass under the old fallback (must now fail) and one that
+// is genuinely valid (must still pass after populate, no false positive).
+test("R5 G4: cold-repo unworklet-tsc populates the per-processor witness and catches a real payload type error the wildcard fallback would hide", () => {
+  // Two-file consumer: a processor with a to-main event carrying a typed payload,
+  // and a main file that reads `.on((p) => p.<name>)`. The main accesses a name
+  // that is NOT in the declared payload, so a properly-populated witness turns
+  // the access into a `Property 'nonexistent' does not exist` error, while the
+  // pre-fix wildcard witness typed `p` as unknown and let it through.
+  const app = path.join(dir, "cold-populate");
+  mkdirSync(app, { recursive: true });
+  writeFileSync(
+    path.join(app, "tsconfig.json"),
+    // extends the plugin-seeded tsconfig — `unworklet-tsc` writes
+    // `.unworklet/tsconfig.json` + an empty `worklets.d.ts` at startup, so this
+    // simulates a real cold-clone consumer whose build script is
+    // `"unworklet-tsc --noEmit && vite build"` (or who has not run vite build
+    // yet). Nothing else populates the witness for this run.
+    // Override `types` to [] because the seeded tsconfig references
+    // `@unworklet/unplugin/client`, which this lang-only fixture doesn't install
+    // (real consumers do install the unplugin; the assertions we care about here
+    // are the per-processor witness contents, not the unplugin's ambient).
+    JSON.stringify({
+      extends: "./.unworklet/tsconfig.json",
+      compilerOptions: { types: [] },
+    }),
+  );
+  writeFileSync(
+    path.join(app, "synth.uwk.ts"),
+    `const out = audioOutput({ channels: 1, name: "main" });
+const meter = event<{ peak: number }>({ to: "main", name: "meter" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = 0;
+    meter.emitIf(bool(true), { peak: 0.5, atSample: i });
+  });
+});`,
+  );
+  writeFileSync(
+    path.join(app, "main.ts"),
+    `import { createNode } from "@unworklet/core";
+import synth from "./synth.uwk.ts?worklet";
+declare const ctx: AudioContext;
+async function boot() {
+  const node = await createNode(ctx, synth);
+  node.events.meter.on((p) => {
+    const _bad: number = p.nonexistent; // ← must fail: 'nonexistent' not in payload
+    console.log(_bad);
+  });
+}
+void boot();`,
+  );
+  // Simulate a cold clone: no witness populated by any prior build.
+  rmSync(path.join(app, ".unworklet"), { recursive: true, force: true });
+  rmSync(path.join(app, "dist"), { recursive: true, force: true });
+
+  const r = spawnSync("node", [bin, "--noEmit"], { cwd: app, encoding: "utf8" });
+  const output = `${r.stdout}${r.stderr}`;
+  expect(r.status).not.toBe(0);
+  // The offending access must be named — a generic 'has no properties' would be
+  // wrong too, so pin the property name specifically.
+  expect(output).toMatch(/nonexistent/);
+  expect(output).toMatch(/main\.ts/);
+});
+
+test("R5 G4: cold-repo unworklet-tsc's witness populate does NOT reject a valid consumer (no false positive)", () => {
+  // Same shape as the failing case, but the main-side access uses a payload
+  // field that IS declared (`peak`). A populated witness must let this through —
+  // otherwise the fix produces false positives that break honest consumers.
+  const app = path.join(dir, "cold-valid");
+  mkdirSync(app, { recursive: true });
+  writeFileSync(
+    path.join(app, "tsconfig.json"),
+    // extends the plugin-seeded tsconfig — `unworklet-tsc` writes
+    // `.unworklet/tsconfig.json` + an empty `worklets.d.ts` at startup, so this
+    // simulates a real cold-clone consumer whose build script is
+    // `"unworklet-tsc --noEmit && vite build"` (or who has not run vite build
+    // yet). Nothing else populates the witness for this run.
+    // Override `types` to [] because the seeded tsconfig references
+    // `@unworklet/unplugin/client`, which this lang-only fixture doesn't install
+    // (real consumers do install the unplugin; the assertions we care about here
+    // are the per-processor witness contents, not the unplugin's ambient).
+    JSON.stringify({
+      extends: "./.unworklet/tsconfig.json",
+      compilerOptions: { types: [] },
+    }),
+  );
+  writeFileSync(
+    path.join(app, "synth.uwk.ts"),
+    `const out = audioOutput({ channels: 1, name: "main" });
+const meter = event<{ peak: number }>({ to: "main", name: "meter" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = 0;
+    meter.emitIf(bool(true), { peak: 0.5, atSample: i });
+  });
+});`,
+  );
+  writeFileSync(
+    path.join(app, "main.ts"),
+    `import { createNode } from "@unworklet/core";
+import synth from "./synth.uwk.ts?worklet";
+declare const ctx: AudioContext;
+async function boot() {
+  const node = await createNode(ctx, synth);
+  node.events.meter.on((p) => {
+    const _peak: number = p.peak; // ← valid, must pass
+    const _at: number = p.atSample;
+    console.log(_peak, _at);
+  });
+}
+void boot();`,
+  );
+  rmSync(path.join(app, ".unworklet"), { recursive: true, force: true });
+  rmSync(path.join(app, "dist"), { recursive: true, force: true });
+
+  const r = spawnSync("node", [bin, "--noEmit"], { cwd: app, encoding: "utf8" });
+  const output = `${r.stdout}${r.stderr}`;
+  expect(output).toBe("");
+  expect(r.status).toBe(0);
+});
+
 // F-11-types: guidance-dogfood F-11 discovered that misuse of factory-handle
 // primitives (a `NoiseSource` used as a `Node<"f32">` — missing `.next()`)
 // passes tsc silently and only crashes at graph capture. The sugar pass's
