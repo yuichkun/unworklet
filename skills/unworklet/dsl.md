@@ -640,7 +640,7 @@ names the type.
 | `node.inputs.<name>`      | `AudioNode` pass-through proxy (one per `audioInput`); connect Web Audio into it                                                                                    |
 | `node.outputs.<name>`     | `{ connect(target: AudioNode \| AudioParam): void; disconnect(): void }`                                                                                            |
 | `node.params.<name>`      | native `AudioParam` (`.value`, `setValueAtTime`, `linearRampToValueAtTime`, …)                                                                                      |
-| `node.state.<name>`       | `{ readonly value; subscribe(handler): () => void }` — latest published value                                                                                       |
+| `node.state.<name>`       | `{ readonly value; subscribe(handler): () => void }` — latest published value. Only slots declared with `publish` appear here; `snapshot: "persistent"` alone is a worklet-side retention flag and does NOT open a main-thread channel — add `publish: { rateFps: N }` alongside to make the slot readable on the main thread (the two options are orthogonal). |
 | `node.events.<name>`      | `EventSurface<T>` — `.on(handler)` (out) / `.emit(payload)` (in) / `.diagnostics.overflowCount()`; direction-narrowed                                               |
 | `node.midi.<name>`        | `{ send(event, atTime?); connectFromWebMIDI(input); onEvent(type, handler); diagnostics }`                                                                          |
 | `node.diagnostics`        | `{ readonly transport: "sab" \| "postMessage" }`                                                                                                                    |
