@@ -10,12 +10,14 @@
  */
 
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { compile } from "@unworklet/core";
 import { expect, test, vi } from "vite-plus/test";
 
-import unworklet, { unworkletPlugin } from "./index.ts";
+import unworklet, { ANONYMOUS_RPC_PREFIX, unworkletPlugin } from "./index.ts";
 
 type ResolveIdFn = (
   this: unknown,
@@ -1831,38 +1833,38 @@ test("devtools.setup wires the graph + live-state + signals shared states and th
   expect(ctx.rpc.__sharedStateGets).toContain("unworklet:midi");
   expect(ctx.rpc.__sharedStateGets).toContain("unworklet:midi-inject");
   const registered = ctx.rpc.__registerCalls.map((f) => (f as { name: string }).name);
-  // The four page-pushed methods MUST carry the `devframe:anonymous:` scope, or the
+  // The four page-pushed methods MUST carry the anonymous-RPC prefix, or the
   // untrusted page client is rejected with DTK0013 and the 33ms signals poll floods
   // the console (blocking the panel). MIDI inject is panel-driven (trusted), so it
   // stays unscoped — locking this distinction is the regression guard.
-  expect(registered).toContain("devframe:anonymous:unworklet:graph-update");
-  expect(registered).toContain("devframe:anonymous:unworklet:state-update");
-  expect(registered).toContain("devframe:anonymous:unworklet:signals-update");
-  expect(registered).toContain("devframe:anonymous:unworklet:midi-update");
+  expect(registered).toContain(`${ANONYMOUS_RPC_PREFIX}unworklet:graph-update`);
+  expect(registered).toContain(`${ANONYMOUS_RPC_PREFIX}unworklet:state-update`);
+  expect(registered).toContain(`${ANONYMOUS_RPC_PREFIX}unworklet:signals-update`);
+  expect(registered).toContain(`${ANONYMOUS_RPC_PREFIX}unworklet:midi-update`);
   expect(registered).toContain("unworklet:midi-inject");
-  expect(registered).not.toContain("devframe:anonymous:unworklet:midi-inject");
+  expect(registered).not.toContain(`${ANONYMOUS_RPC_PREFIX}unworklet:midi-inject`);
 });
 
 test("the devbridge page-script pushes via anonymous-scoped RPC names (the page is an untrusted client)", async () => {
   const js = (await callLoadNoContext("\0unworklet-devbridge")) as string;
   // The page pushes graph / state / signals / MIDI here; each must call the
-  // `devframe:anonymous:`-scoped name registered server-side, or the untrusted page
-  // client is rejected with DTK0013 and the 33ms signals poll floods the console.
-  expect(js).toContain('"devframe:anonymous:unworklet:signals-update"');
-  expect(js).toContain('"devframe:anonymous:unworklet:graph-update"');
-  expect(js).toContain('"devframe:anonymous:unworklet:state-update"');
-  expect(js).toContain('"devframe:anonymous:unworklet:midi-update"');
+  // anonymous-scoped name registered server-side, or the untrusted page client
+  // is rejected with DTK0013 and the 33ms signals poll floods the console.
+  expect(js).toContain(`"${ANONYMOUS_RPC_PREFIX}unworklet:signals-update"`);
+  expect(js).toContain(`"${ANONYMOUS_RPC_PREFIX}unworklet:graph-update"`);
+  expect(js).toContain(`"${ANONYMOUS_RPC_PREFIX}unworklet:state-update"`);
+  expect(js).toContain(`"${ANONYMOUS_RPC_PREFIX}unworklet:midi-update"`);
   // No unscoped page push slipped through.
   expect(js).not.toMatch(/rpcCall\("unworklet:/);
 });
 
-test("the @vitejs/devtools-kit peer is pinned to a devtools major whose anonymous-RPC scope matches the code", () => {
-  // The live panels register under `devframe:anonymous:` — the anonymous-RPC
-  // scope of the @vitejs/devtools 0.4 host (0.3 used the same scope, but a
-  // hypothetical 0.5 could change it). A host on a mismatched major would reject
-  // every untrusted page push with DTK0013 and the panels stay empty. The pin
-  // is therefore coupled to the major that owns the current scope prefix — v0.1.1
-  // ships against 0.4.x (upgrade from the 0.3 that vite@8 no longer accepted).
+test("the @vitejs/devtools-kit peer is pinned to a devtools major whose anonymous-RPC prefix matches the code", () => {
+  // A host on a mismatched major would reject every untrusted page push with
+  // DTK0013 and the panels stay empty. The pin is therefore coupled to the major
+  // that owns the current prefix — v0.1.1 ships against 0.4.x (upgrade from the
+  // 0.3 that vite@8 no longer accepted; devtools 0.4 = devframe 0.8 =
+  // `ANONYMOUS_RPC_PREFIX` "anonymous:", whereas 0.3 = devframe 0.5 =
+  // `"devframe:anonymous:"`).
   const pkg = JSON.parse(
     readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"),
   ) as {
@@ -1875,4 +1877,59 @@ test("the @vitejs/devtools-kit peer is pinned to a devtools major whose anonymou
   // DevTools is a dev-only convenience; a consumer who doesn't open the panel
   // must not be forced to install the kit, so the peer is optional.
   expect(pkg.peerDependenciesMeta?.["@vitejs/devtools-kit"]?.optional).toBe(true);
+});
+
+test("ANONYMOUS_RPC_PREFIX matches devframe's own `ANONYMOUS_RPC_PREFIX` (F-22 regression: the prefix silently changed 0.5 → 0.8)", async () => {
+  // The prefix is version-coupled to devframe (bundled by @vitejs/devtools-kit).
+  // Resolve devframe through the kit's own install so we read the SAME copy the
+  // running host uses — a hoisted or mismatched devframe won't be authoritative.
+  // Historical prefixes: `"vite:anonymous:"` (devframe pre-0.5) → `"devframe:anonymous:"`
+  // (devframe 0.5) → `"anonymous:"` (devframe 0.8). F-22 upgraded the host from 0.3
+  // to 0.4 (= devframe 0.5 → 0.8) but the RPC method literals kept the old prefix
+  // and the panel silently went blank. This test locks the constant against the
+  // real upstream value so a future upstream rename fails here rather than in the
+  // browser.
+  const kitConstantsPath = createRequire(fileURLToPath(import.meta.url)).resolve(
+    "@vitejs/devtools-kit/constants",
+  );
+  // devframe sits next to devtools-kit in the pnpm layout: walk from the kit's
+  // constants file up to `node_modules/`, then read `devframe/dist/constants.mjs`.
+  // (An upstream vendoring change here shows up as a resolve error — treat that
+  // as a signal to re-verify the coupling, not to loosen the test.)
+  const nodeModulesDir = kitConstantsPath.replace(/\/node_modules\/@vitejs\/.*$/, "/node_modules");
+  const devframeConstantsPath = path.join(nodeModulesDir, "devframe/dist/constants.mjs");
+  const devframeSource = readFileSync(devframeConstantsPath, "utf8");
+  const match = devframeSource.match(/ANONYMOUS_RPC_PREFIX\s*=\s*"([^"]+)"/);
+  expect(match, `expected ANONYMOUS_RPC_PREFIX in ${devframeConstantsPath}`).not.toBeNull();
+  expect(ANONYMOUS_RPC_PREFIX).toBe(match![1]);
+});
+
+test("the panel SPA sub-project pins @vitejs/devtools-kit to the SAME major as the parent peer (F-22 regression: the panel bundle silently kept devframe 0.5's auth handshake name after the host upgrade)", () => {
+  // F-22 bumped `packages/unplugin/package.json`'s peer + demo devDep + catalog
+  // to devtools 0.4, but forgot the panel SPA's own dep at
+  // `packages/unplugin/devtools-ui/package.json` — it stayed on `^0.3.3`. That
+  // pinned devframe 0.5's client into the built panel bundle, which calls the
+  // handshake method under its old name `"devframe:anonymous:auth"` (in 0.8 the
+  // name is `"anonymous:devframe:auth"`), so every auth attempt failed with
+  // DTK0011 and the panel rendered empty even for a trusted session. Lock the
+  // panel's dep to the same major as the parent's peer so a future host bump
+  // can't leave the bundle behind.
+  const parentPkg = JSON.parse(
+    readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"),
+  ) as { peerDependencies?: Record<string, string> };
+  const panelPkg = JSON.parse(
+    readFileSync(fileURLToPath(new URL("../devtools-ui/package.json", import.meta.url)), "utf8"),
+  ) as { dependencies?: Record<string, string> };
+  const parentRange = parentPkg.peerDependencies?.["@vitejs/devtools-kit"];
+  const panelRange = panelPkg.dependencies?.["@vitejs/devtools-kit"];
+  expect(parentRange, "parent peer @vitejs/devtools-kit missing").toBeDefined();
+  expect(panelRange, "panel SPA dep @vitejs/devtools-kit missing").toBeDefined();
+  const majorOf = (range: string): string => {
+    // Strips a leading `^` / `~` / `>=` etc., then keeps the leading major segment
+    // (`0.4.0` → `0.4`, `1.2.3` → `1`). A 0.x major is major.minor by npm convention.
+    const stripped = range.replace(/^[^0-9]*/, "");
+    const parts = stripped.split(".");
+    return parts[0] === "0" ? `${parts[0]}.${parts[1]}` : `${parts[0]}`;
+  };
+  expect(majorOf(panelRange!)).toBe(majorOf(parentRange!));
 });

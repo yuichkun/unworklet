@@ -28,6 +28,18 @@ import type { Plugin } from "vite";
 
 import { workletsDts } from "./worklet-dts.ts";
 
+/**
+ * Devframe's untrusted-RPC scope prefix. Every method name registered or called
+ * from an untrusted client (the page-side devbridge) must start with this string
+ * or the anonymous-method gate rejects it (DTK0013), silently emptying every
+ * panel. The value mirrors devframe's own `ANONYMOUS_RPC_PREFIX` (currently
+ * `"anonymous:"` in devframe 0.8, shipped with @vitejs/devtools 0.4). Kept as a
+ * single source of truth so a future upstream rename is caught by
+ * `test/index.test.ts` (which pins this against devframe's dist), not by silent
+ * panel breakage.
+ */
+export const ANONYMOUS_RPC_PREFIX = "anonymous:";
+
 // ─────────────────────────────────────────────────────────────────────────
 // DevTools live audio-graph topology (Wire 4)
 // ─────────────────────────────────────────────────────────────────────────
@@ -603,14 +615,15 @@ const setupDevtools = async (
     url: "/__unworklet/",
     // The panel runs in an iframe the devtools host does NOT inject its client
     // context into (it only does that for the top page). Without `remote`, the
-    // panel would self-connect as an anonymous client, and an anonymous RPC name
-    // is version-coupled to the host's devtools-kit (`vite:anonymous:` in 0.2.x,
-    // `devframe:anonymous:` in 0.3.x) — a panel built against one and embedded in
-    // a host of the other is rejected (DTK0013) and renders empty. `remote` makes
-    // the host inject a session auth token into the iframe URL; the panel calls
-    // `connectRemoteDevTools()` and connects as a TRUSTED client, bypassing the
-    // anonymous-scope check. Auth is then by token, not by a version-matched scope
-    // string, so the panel works against any host the user's toolchain ships.
+    // panel would self-connect as an anonymous client, and the anonymous-RPC
+    // prefix is version-coupled to devframe (`vite:anonymous:` in devtools 0.2.x,
+    // `devframe:anonymous:` in 0.3.x, `anonymous:` in 0.4.x) — a panel built
+    // against one and embedded in a host of the other is rejected (DTK0013) and
+    // renders empty. `remote` makes the host inject a session auth token into the
+    // iframe URL; the panel calls `connectRemoteDevTools()` and connects as a
+    // TRUSTED client, bypassing the anonymous-scope check. Auth is then by token,
+    // not by a version-matched prefix string, so the panel works against any host
+    // the user's toolchain ships.
     //
     // `transport: "query"` (not the default `"fragment"`) is REQUIRED here: the
     // panel SPA uses a hash-mode Vue Router, so a descriptor placed in the URL
@@ -631,19 +644,22 @@ const setupDevtools = async (
   // is an UNTRUSTED devtools client (no auth token), so a normal RPC name is
   // rejected with DTK0013 "Unauthorized access to method" — and the 33ms signals
   // poll turns that into a console flood that blocks the panel. The only bypass is
-  // `@vitejs/devtools`'s anonymous-method mechanism: a method whose name starts with
-  // its internal `ANONYMOUS_SCOPE` skips the client-auth check. That scope is
-  // version-coupled and unexported — `vite:anonymous:` in devtools 0.2.x,
-  // `devframe:anonymous:` in 0.3.x — so the `@vitejs/devtools-kit` peer is pinned to
-  // an exact 0.3 version (not a range): a mismatched version changes this prefix and
-  // silently empties every panel. These pushes are dev-only, local, and
+  // devframe's anonymous-method mechanism: a method whose name starts with
+  // `ANONYMOUS_RPC_PREFIX` skips the client-auth check. The prefix is
+  // version-coupled — `vite:anonymous:` in devtools 0.2.x / devframe pre-0.5,
+  // `devframe:anonymous:` in devtools 0.3.x / devframe 0.5, `anonymous:` in devtools
+  // 0.4.x / devframe 0.8 — so the `@vitejs/devtools-kit` peer is pinned to a
+  // devtools major whose prefix matches {@link ANONYMOUS_RPC_PREFIX} below. A
+  // mismatched host silently empties every panel (`test/index.test.ts` locks the
+  // constant against devframe's own `ANONYMOUS_RPC_PREFIX` so a future upstream
+  // rename cannot regress this again). These pushes are dev-only, local, and
   // non-sensitive, so anonymous is the right scope. (MIDI inject below is called from
   // the trusted panel, not the page, so it needs no prefix.)
   const graphState = await ctx.rpc.sharedState.get("unworklet:graph", {
     initialValue: { nodes: [], edges: [] } as DevAudioGraph,
   });
   const graphUpdate = defineRpcFunction({
-    name: "devframe:anonymous:unworklet:graph-update",
+    name: `${ANONYMOUS_RPC_PREFIX}unworklet:graph-update`,
     type: "action",
     setup: () => ({
       handler: async (graph: DevAudioGraph): Promise<void> => {
@@ -664,7 +680,7 @@ const setupDevtools = async (
     initialValue: { nodes: [] } as DevLiveState,
   });
   const stateUpdate = defineRpcFunction({
-    name: "devframe:anonymous:unworklet:state-update",
+    name: `${ANONYMOUS_RPC_PREFIX}unworklet:state-update`,
     type: "action",
     setup: () => ({
       handler: async (state: DevLiveState): Promise<void> => {
@@ -686,7 +702,7 @@ const setupDevtools = async (
     } as DevSignalsState,
   });
   const signalsUpdate = defineRpcFunction({
-    name: "devframe:anonymous:unworklet:signals-update",
+    name: `${ANONYMOUS_RPC_PREFIX}unworklet:signals-update`,
     type: "action",
     setup: () => ({
       handler: async (signals: DevSignalsState): Promise<void> => {
@@ -705,7 +721,7 @@ const setupDevtools = async (
     initialValue: { ports: [], log: [] } as DevMidiState,
   });
   const midiUpdate = defineRpcFunction({
-    name: "devframe:anonymous:unworklet:midi-update",
+    name: `${ANONYMOUS_RPC_PREFIX}unworklet:midi-update`,
     type: "action",
     setup: () => ({
       handler: async (midi: DevMidiState): Promise<void> => {
@@ -1167,7 +1183,7 @@ const push = () => {
   pending = true;
   queueMicrotask(() => {
     pending = false;
-    rpcCall("devframe:anonymous:unworklet:graph-update", buildGraph());
+    rpcCall(${JSON.stringify(ANONYMOUS_RPC_PREFIX + "unworklet:graph-update")}, buildGraph());
   });
 };
 
@@ -1199,7 +1215,7 @@ const pollState = async () => {
       const { scalars, buffers } = splitSlots(slots, BUFFER_MAX_POINTS);
       nodes.push({ id: idOf(h.node.node), displayName: h.displayName || h.processorName, scalars, buffers });
     }
-    rpcCall("devframe:anonymous:unworklet:state-update", { nodes });
+    rpcCall(${JSON.stringify(ANONYMOUS_RPC_PREFIX + "unworklet:state-update")}, { nodes });
   } finally {
     statePolling = false;
   }
@@ -1279,7 +1295,7 @@ const pollSignals = async () => {
   const context = actx
     ? { sampleRate: actx.sampleRate || 0, baseLatencyMs: (actx.baseLatency || 0) * 1000, outputLatencyMs: (actx.outputLatency || 0) * 1000 }
     : { sampleRate: 0, baseLatencyMs: 0, outputLatencyMs: 0 };
-  rpcCall("devframe:anonymous:unworklet:signals-update", { nodes, context });
+  rpcCall(${JSON.stringify(ANONYMOUS_RPC_PREFIX + "unworklet:signals-update")}, { nodes, context });
 };
 let signalsTimer = null;
 const startSignalsPoll = () => {
@@ -1369,7 +1385,7 @@ const pollMidi = () => {
   const sig = JSON.stringify({ ports, log: midiLog });
   if (sig === lastMidiSig) return;
   lastMidiSig = sig;
-  rpcCall("devframe:anonymous:unworklet:midi-update", { ports, log: midiLog });
+  rpcCall(${JSON.stringify(ANONYMOUS_RPC_PREFIX + "unworklet:midi-update")}, { ports, log: midiLog });
 };
 let midiTimer = null;
 const startMidiPoll = () => {
