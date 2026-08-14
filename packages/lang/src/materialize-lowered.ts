@@ -8,6 +8,7 @@ import ts from "typescript";
 
 import { lower } from "./lower.ts";
 import {
+  moduleSpecifiers,
   plainTsModuleSpecifiers,
   rewriteImportSpecifiers,
   uwkImportSpecifiers,
@@ -116,6 +117,44 @@ export const lowerUwkSource = (sourcePath: string, source: string): string => {
 };
 
 /**
+ * Walk the author's own `.ts` helpers, read-only, looking for a `.uwk.ts` they
+ * pull in. Returns the first one found with the chain that reached it, or
+ * `undefined` if the helpers stay clear of the sugar.
+ *
+ * Read-only on purpose. These are modules this package does not own: it will
+ * look at them to explain a failure, never rewrite them. A helper that cannot be
+ * read is skipped — Node reports a missing import far better than a guess here
+ * would.
+ */
+const uwkReachedThroughHelper = async (
+  fromDir: string,
+  specifiers: string[],
+): Promise<{ via: string; uwk: string; path: string[] } | undefined> => {
+  const seen = new Set<string>();
+  const queue = specifiers.map((spec) => ({ spec, dir: fromDir, trail: [spec] }));
+  while (queue.length > 0) {
+    const { spec, dir, trail } = queue.shift()!;
+    const file = path.resolve(dir, spec);
+    if (seen.has(file)) continue;
+    seen.add(file);
+    let source: string;
+    try {
+      source = await readFile(file, "utf8");
+    } catch {
+      continue;
+    }
+    const nextDir = path.dirname(file);
+    for (const next of moduleSpecifiers(source)) {
+      if (!next.startsWith("./") && !next.startsWith("../")) continue;
+      if (next.endsWith(".uwk.ts")) return { via: trail[0]!, uwk: next, path: [...trail, next] };
+      if (/\.(ts|mts|cts)$/.test(next))
+        queue.push({ spec: next, dir: nextDir, trail: [...trail, next] });
+    }
+  }
+  return undefined;
+};
+
+/**
  * Lower `sourcePath` to a temp sibling and recursively lower the transitive
  * `.uwk.ts` imports it makes — a processor importing a subgraph from a sibling
  * library `.uwk.ts` — rewriting each importer's specifier to point at the lowered
@@ -197,9 +236,9 @@ export const materializeLowered = async (
   // false, is what Node 20 reports for the capability — the property only exists
   // once the capability does, so comparing against `false` would skip the check
   // on the exact runtime it is here for.
-  if (!process.features.typescript) {
-    const plain = plainTsModuleSpecifiers(emitted);
-    if (plain.length > 0) {
+  const plain = plainTsModuleSpecifiers(emitted);
+  if (plain.length > 0) {
+    if (!process.features.typescript) {
       throw new Error(
         `@unworklet/lang: ${path.basename(sourcePath)} imports ${plain.map((s) => `"${s}"`).join(", ")}, ` +
           `and this Node (${process.version}) cannot load TypeScript. Either run Node 22.18+ / 23.6+, ` +
@@ -207,6 +246,23 @@ export const materializeLowered = async (
           `still will not load), or give the helper a JavaScript extension (rename to .mjs and ` +
           `import it as "./helper.mjs"). Sibling .uwk.ts imports are unaffected — those are ` +
           `lowered to JavaScript for you.`,
+      );
+    }
+    // Where Node CAN load the helper, it loads whatever the helper points at —
+    // including a `.uwk.ts`, raw. That file's authoring globals only exist after
+    // lowering, so evaluation dies on `defineSubgraph is not defined` with
+    // nothing naming the helper that led there. Reporting is the whole fix
+    // available: rewriting the helper's specifier means rewriting a module this
+    // package does not own, which is the line drawn just above.
+    const chain = await uwkReachedThroughHelper(dir, plain);
+    if (chain !== undefined) {
+      throw new Error(
+        `@unworklet/lang: ${path.basename(sourcePath)} reaches "${chain.uwk}" through the plain ` +
+          `TypeScript helper "${chain.via}" (${[path.basename(sourcePath), ...chain.path].join(" → ")}). ` +
+          `A .uwk.ts has to be lowered before Node can load it, and only .uwk.ts files are ` +
+          `rewritten — rewriting your own modules would mean guessing their tsconfig. Import ` +
+          `the .uwk.ts directly from a .uwk.ts, or make the helper a .uwk.ts itself (a subgraph ` +
+          `library module: exports, no process()).`,
       );
     }
   }

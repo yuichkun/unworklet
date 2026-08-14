@@ -68,6 +68,14 @@ export function plainTsModuleSpecifiers(emittedJs: string): string[] {
   return out;
 }
 
+/** Every module specifier a source names, in either direction — for walking a
+ * module graph this package does not own and must not rewrite. */
+export function moduleSpecifiers(source: string): string[] {
+  return moduleRefs(ts.createSourceFile("__m.ts", source, ts.ScriptTarget.ESNext, true)).map(
+    (r) => r.spec,
+  );
+}
+
 /** Rewrite a lowered `.ts` module's module specifiers per `map` (original →
  * replacement), in both directions — an `import … from` and a barrel's
  * `export … from` alike. Specifiers absent from `map` are left unchanged. */

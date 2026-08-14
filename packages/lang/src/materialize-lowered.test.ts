@@ -386,3 +386,45 @@ process(() => {
   // And the failure still cleans up after itself.
   expect(readdirSync(dir).filter((f) => f.includes("uwklowered"))).toEqual([]);
 });
+
+test("a .uwk.ts reached through a plain .ts helper is reported, not loaded raw", async () => {
+  // A plain `.ts` barrel re-exporting a subgraph library (`export { voice } from
+  // "./voice.uwk.ts"`) is invisible to lowering: the helper is the author's own
+  // module, so nothing rewrites its specifier, and Node loads `voice.uwk.ts` raw
+  // — bare authoring globals and all. `ReferenceError: defineSubgraph is not
+  // defined` gives no hint of the cause. Reported by @codex on #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-tsbarrel-"));
+  writeFileSync(
+    path.join(dir, "voice.uwk.ts"),
+    `export const voice = defineSubgraph(() => {
+  const phase = state.f32(0).named("phase");
+  return { tick: () => phase };
+});`,
+  );
+  writeFileSync(path.join(dir, "barrel.ts"), `export { voice } from "./voice.uwk.ts";\n`);
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `import { voice } from "./barrel.ts";
+
+const out = audioOutput({ channels: 1, name: "main" });
+const v = instantiate(voice, { name: "v" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = v.tick();
+  });
+});`,
+  );
+
+  const err = await loadUwkProcessor(src).then(
+    () => undefined,
+    (e: unknown) => e as Error,
+  );
+  expect(err?.message).toMatch(/@unworklet\/lang/);
+  // Names both ends of the chain, so the fix is obvious from the message alone.
+  expect(err?.message).toMatch(/barrel\.ts/);
+  expect(err?.message).toMatch(/voice\.uwk\.ts/);
+  expect(err?.message).not.toMatch(/defineSubgraph is not defined/);
+
+  expect(readdirSync(dir).filter((f) => f.includes("uwklowered"))).toEqual([]);
+});
