@@ -27,6 +27,7 @@ import ts from "typescript";
 import { createUwkLanguagePlugin } from "./ide/languagePlugin.ts";
 import { isUwkSource, loadUwkProcessor, NotAProcessorError } from "./materialize-lowered.ts";
 import { seedUnworkletDir } from "./seed-unworklet-dir.ts";
+import { moduleSpecifiers } from "./uwk-imports.ts";
 import { workletsDts } from "./worklet-dts.ts";
 
 /**
@@ -86,6 +87,41 @@ function foreignWitnessBlocks(witness: string): string {
 }
 
 /**
+ * The files the project imports AS processors — every `?worklet` specifier in
+ * it, resolved to a path.
+ *
+ * Needed to tell two things apart that look identical from the loader's side: a
+ * subgraph library pulled in only as another worklet's dependency (correct, and
+ * not a processor), and the same file imported as `./voice.uwk.ts?worklet` by
+ * application code (a mistake the wildcard witness would otherwise let through
+ * as `CompiledProcessor<unknown>`, leaving the Vite loader to reject it later).
+ *
+ * The text check runs first so a project pays a parse only for files that
+ * mention `?worklet` at all.
+ */
+function workletEntryPaths(fileNames: readonly string[]): Set<string> {
+  const out = new Set<string>();
+  for (const file of fileNames) {
+    let text: string;
+    try {
+      text = fs.readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    if (!text.includes("?worklet")) continue;
+    for (const spec of moduleSpecifiers(text)) {
+      if (!spec.endsWith("?worklet")) continue;
+      const target = spec.slice(0, -"?worklet".length);
+      // Relative only. A bare specifier names a package, which cannot be a
+      // processor source in this project.
+      if (!target.startsWith("./") && !target.startsWith("../")) continue;
+      out.add(path.resolve(path.dirname(file), target));
+    }
+  }
+  return out;
+}
+
+/**
  * Compile every `.uwk.ts` the given tsconfig includes and rewrite the `.uwk.ts`
  * half of its `.unworklet/worklets.d.ts`. This is what turns a cold
  * `unworklet-tsc --noEmit` from "silently passes real type errors because
@@ -117,6 +153,7 @@ async function populateWorkletsWitness(tsconfigPath: string | undefined): Promis
   if (raw.error !== undefined) return; // let tsc surface the tsconfig error itself
   const parsed = ts.parseJsonConfigFileContent(raw.config, ts.sys, path.dirname(tsconfigPath));
   const uwkFiles = parsed.fileNames.filter(isUwkSource);
+  const workletEntries = workletEntryPaths(parsed.fileNames);
 
   const entries: { source: string; ns: WorkletNamespace }[] = [];
   const failures: { file: string; reason: string }[] = [];
@@ -128,9 +165,12 @@ async function populateWorkletsWitness(tsconfigPath: string | undefined): Promis
       // A subgraph library is a `.uwk.ts` with exports and no `process()` — the
       // documented multi-file layout. The tsconfig includes it, so it reaches
       // here, and "not a processor" is the correct answer for it, not a failure:
-      // it has no `?worklet` surface to witness, and treating it as broken made
-      // the recommended layout exit 1.
-      if (err instanceof NotAProcessorError) continue;
+      // it has no `?worklet` surface to witness.
+      //
+      // Unless something imports it as one. Then the same error means the app
+      // asked for a processor and this file is not one, which is precisely what
+      // must not pass a typecheck.
+      if (err instanceof NotAProcessorError && !workletEntries.has(path.resolve(file))) continue;
       failures.push({ file, reason: err instanceof Error ? err.message : String(err) });
     }
   }

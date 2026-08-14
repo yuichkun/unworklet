@@ -564,3 +564,38 @@ process(() => {
   expect(output).not.toMatch(/cannot be compiled/);
   expect(r.status, output).toBe(0);
 });
+
+test("a subgraph library imported as ?worklet is reported, not quietly skipped", () => {
+  // Skipping library modules must not extend to one the app imports AS a
+  // processor. There the wildcard witness types it `CompiledProcessor<unknown>`
+  // and the typecheck passes, while the Vite loader rejects the module for having
+  // no processor export — the split between "type-checks" and "runs" this
+  // pre-pass exists to close. Reported by @codex on #43.
+  const app = path.join(dir, "library-as-worklet");
+  mkdirSync(app, { recursive: true });
+  writeFileSync(
+    path.join(app, "tsconfig.json"),
+    JSON.stringify({ extends: "./.unworklet/tsconfig.json", compilerOptions: { types: [] } }),
+  );
+  writeFileSync(
+    path.join(app, "voice.uwk.ts"),
+    `export const voice = defineSubgraph(() => {
+  const p = state.f32(0).named("p");
+  return { tick: () => p.read() };
+});`,
+  );
+  writeFileSync(
+    path.join(app, "main.ts"),
+    `import voice from "./voice.uwk.ts?worklet";
+export const use = voice;`,
+  );
+
+  const r = spawnSync("node", [bin, "--project", "library-as-worklet/tsconfig.json", "--noEmit"], {
+    cwd: dir,
+    encoding: "utf8",
+  });
+  const output = `${r.stdout}${r.stderr}`;
+  expect(output).toMatch(/voice\.uwk\.ts/);
+  expect(output).toMatch(/no defineProcessor exports/);
+  expect(r.status, output).not.toBe(0);
+});
