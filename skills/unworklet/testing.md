@@ -215,8 +215,11 @@ The processor is authored in `.uwk.ts` (the recommended form; full authoring in
   Sibling `.uwk.ts` imports are lowered to JavaScript for you, so they run on any
   supported Node. A plain TypeScript helper (`import { GAIN } from "./constants.ts"`)
   is left as you wrote it, so loading it needs a Node that strips types
-  (22.18+ / 23.6+); on an older one you get an error naming the import. Give the
-  helper a `.mjs` extension if you need to stay on Node 20.
+  (22.18+ / 23.6+) AND a helper that is erasable — stripping removes annotations
+  but cannot build an `enum`, a `namespace` or a parameter property, which Node
+  transforms only behind `--experimental-transform-types`. Either case reports an
+  error naming the import. Give the helper a `.mjs` extension (or keep it
+  erasable — a `const` object rather than an `enum`) to avoid both.
 
 Single-file pattern from `examples/demo/src/examples.render.test.ts:14-85`:
 

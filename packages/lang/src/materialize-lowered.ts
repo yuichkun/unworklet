@@ -203,9 +203,10 @@ export const materializeLowered = async (
       throw new Error(
         `@unworklet/lang: ${path.basename(sourcePath)} imports ${plain.map((s) => `"${s}"`).join(", ")}, ` +
           `and this Node (${process.version}) cannot load TypeScript. Either run Node 22.18+ / 23.6+, ` +
-          `where type-stripping is built in, or give the helper a JavaScript extension ` +
-          `(rename to .mjs and import it as "./helper.mjs"). Sibling .uwk.ts imports are ` +
-          `unaffected — those are lowered to JavaScript for you.`,
+          `which strips types natively as long as the helper is erasable (an enum or namespace ` +
+          `still will not load), or give the helper a JavaScript extension (rename to .mjs and ` +
+          `import it as "./helper.mjs"). Sibling .uwk.ts imports are unaffected — those are ` +
+          `lowered to JavaScript for you.`,
       );
     }
   }
@@ -217,6 +218,47 @@ export const materializeLowered = async (
   cleanup.push(tempPath);
   return tempPath;
 };
+
+/**
+ * Import a materialized temp, translating Node's strip-only refusal into an
+ * error that names this toolchain and a way out.
+ *
+ * The capability guard in `materializeLowered` answers one question: can this
+ * Node load TypeScript at all. Node 22.18+ answers yes — but only for ERASABLE
+ * TypeScript. An `enum`, a `namespace` or a parameter property in a helper needs
+ * a real transform, which Node applies only behind
+ * `--experimental-transform-types`. So a consumer who takes the guard's advice
+ * and upgrades Node can still land on `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`, with
+ * nothing tying it back to the `.uwk.ts` they were loading.
+ *
+ * Catching covers what a check could not: any construct, at any import depth,
+ * under whatever rules the running Node applies — no list here to fall behind
+ * Node's. The original is kept as `cause`, since its stack is what names the
+ * offending file and line.
+ */
+export async function importLoweredEntry(
+  entryTemp: string,
+  sourcePath: string,
+): Promise<Record<string, unknown>> {
+  // A file URL, not a path: an absolute POSIX path happens to work, but a
+  // Windows path (drive letter = URL scheme) or a name without a `./` prefix
+  // does not. The query keeps repeat loads out of the ESM cache.
+  const href = `${pathToFileURL(entryTemp).href}?t=${Date.now()}`;
+  try {
+    return (await import(href)) as Record<string, unknown>;
+  } catch (err) {
+    if ((err as { code?: string }).code !== "ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX") throw err;
+    throw new Error(
+      `@unworklet/lang: loading ${path.basename(sourcePath)} reached a .ts helper that needs a ` +
+        `real TypeScript transform, and this Node (${process.version}) only strips types — ` +
+        `${(err as Error).message}. Node transforms only behind --experimental-transform-types. ` +
+        `Either keep the helper erasable (a const object rather than an enum, for instance) or ` +
+        `give it a JavaScript extension (rename to .mjs and import it as "./helper.mjs"). ` +
+        `Sibling .uwk.ts imports are unaffected — those are lowered to JavaScript for you.`,
+      { cause: err },
+    );
+  }
+}
 
 /**
  * `.uwk.ts` shape check: a compiled processor has `graph` and a string `schemaHash`.
@@ -255,10 +297,7 @@ export async function loadUwkProcessor(sourcePath: string): Promise<CompiledProc
   // those files in the consumer's source tree if cleanup only started afterwards.
   try {
     const entryTemp = await materializeLowered(sourcePath, new Map(), new Set(), cleanup);
-    // A file URL, not a path: an absolute POSIX path happens to work, but a
-    // Windows path or a name without a `./` prefix does not.
-    const href = `${pathToFileURL(entryTemp).href}?t=${Date.now()}`;
-    const mod = (await import(href)) as Record<string, unknown>;
+    const mod = await importLoweredEntry(entryTemp, sourcePath);
     const matches: string[] = [];
     let found: CompiledProcessor<unknown> | undefined;
     for (const key of Object.keys(mod)) {

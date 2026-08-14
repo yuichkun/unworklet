@@ -18,11 +18,17 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import { compile, extractWorkletMeta } from "@unworklet/core";
 import type { CompiledProcessor, WorkletNamespace } from "@unworklet/core";
-import { isUwkSource, lowerUwkSource, materializeLowered, seedUnworkletDir } from "@unworklet/lang";
+import {
+  importLoweredEntry,
+  isUwkSource,
+  lowerUwkSource,
+  materializeLowered,
+  seedUnworkletDir,
+} from "@unworklet/lang";
 import { createUnplugin, type UnpluginOptions } from "unplugin";
 import type { Plugin } from "vite";
 
@@ -287,10 +293,7 @@ const loadProcessorModuleFresh = async (sourcePath: string): Promise<Record<stri
   // temps in the consumer's source tree.
   try {
     const entryTemp = await materializeLowered(sourcePath, new Map(), new Set(), cleanup);
-    // A file URL, not a path: an absolute Windows path starts with a drive letter,
-    // which Node's ESM loader reads as a URL scheme and rejects.
-    const href = `${pathToFileURL(entryTemp).href}?t=${Date.now()}`;
-    return (await import(href)) as Record<string, unknown>;
+    return await importLoweredEntry(entryTemp, sourcePath);
   } finally {
     await Promise.all(cleanup.map((p) => rm(p, { force: true })));
   }

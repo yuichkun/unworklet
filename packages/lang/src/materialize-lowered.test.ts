@@ -339,3 +339,50 @@ process(() => {
   const output = `${r.stdout}${r.stderr}`;
   expect(output).toMatch(/LOADED/);
 });
+
+test("a helper needing a real TypeScript transform is reported, not left as ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX", () => {
+  // The capability guard only asks whether this Node can load TypeScript at all.
+  // Node 22.18+ says yes — but only for ERASABLE TypeScript: an `enum` (or a
+  // `namespace`, or a parameter property) needs a real transform, which lives
+  // behind `--experimental-transform-types`. So the guard's advertised "upgrade
+  // Node" way out can still end in a Node-level syntax error the consumer has no
+  // reason to connect with this toolchain. Reported by @codex on #43.
+  //
+  // Runs in a child process for the same reason the Node-20 cases above do: the
+  // `import()` has to be Node's. In-process it would be Vite's module runner,
+  // which transforms an enum happily and never reaches the failure.
+  dir = mkdtempSync(path.join(LANG, ".mat-enum-"));
+  writeFileSync(path.join(dir, "helper.ts"), `export enum Mode { A, B }\nexport const GAIN = 3;\n`);
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `import { GAIN } from "./helper.ts";
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = GAIN * 0.1;
+  });
+});`,
+  );
+
+  const script = `
+    const { loadUwkProcessor } = await import(${JSON.stringify(pathToFileURL(path.join(LANG, "dist/index.mjs")).href)});
+    try {
+      await loadUwkProcessor(${JSON.stringify(src)});
+      console.log("NO_THROW");
+    } catch (e) {
+      console.log("MSG:" + e.message);
+      console.log("CAUSE:" + e.cause?.code);
+    }
+  `;
+  const r = spawnSync("node", ["--input-type=module", "-e", script], { encoding: "utf8" });
+  const output = `${r.stdout}${r.stderr}`;
+  expect(output).toMatch(/MSG:@unworklet\/lang/);
+  expect(output).toMatch(/experimental-transform-types/);
+  expect(output).toMatch(/\.mjs/);
+  // The original stays reachable — its stack is what names the offending file.
+  expect(output).toMatch(/CAUSE:ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX/);
+
+  // And the failure still cleans up after itself.
+  expect(readdirSync(dir).filter((f) => f.includes("uwklowered"))).toEqual([]);
+});

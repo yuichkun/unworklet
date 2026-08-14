@@ -46,6 +46,7 @@ export { workletDts, workletsDts } from "./worklet-dts.ts";
 // bundler.
 export {
   deriveExportName,
+  importLoweredEntry,
   isUwkSource,
   loadUwkProcessor,
   lowerUwkSource,
