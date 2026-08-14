@@ -3,6 +3,7 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { CompiledProcessor } from "@unworklet/core";
+import ts from "typescript";
 
 import { lower } from "./lower.ts";
 import { rewriteImportSpecifiers, uwkImportSpecifiers } from "./uwk-imports.ts";
@@ -57,9 +58,17 @@ export const lowerUwkSource = (sourcePath: string, source: string): string => {
  * library `.uwk.ts` — rewriting each importer's specifier to point at the lowered
  * sibling. Returns the entry temp path; every temp written is pushed to `cleanup`.
  *
- * `.uwklowered.ts` suffix (not `.uwk.ts`) so a temp is never re-lowered; written
- * next to its source so Node's native type-stripping runs and `@unworklet/core`
- * (+ plain `.ts` imports) resolve from the source directory. A single-file
+ * Each temp is emitted as JavaScript (`.uwklowered.mjs`), not TypeScript. The
+ * lowering produces TypeScript, and importing that directly would depend on
+ * Node's native type-stripping — unavailable before 22.18 / 23.6, so a consumer
+ * on the `>=20` this package declares would get `ERR_UNKNOWN_FILE_EXTENSION`
+ * instead of a processor. `ts.transpileModule` strips the types here rather than
+ * making that Node's problem; it is per-file and needs no type information, which
+ * is all the lowered output requires.
+ *
+ * The `.uwklowered.` infix (not `.uwk.ts`) keeps a temp from ever being
+ * re-lowered, and temps sit next to their source so `@unworklet/core` and any
+ * plain relative imports resolve from the source directory. A single-file
  * processor (no `.uwk.ts` imports) writes exactly one temp.
  *
  * Low-level: the caller is responsible for the dynamic `import()` on the returned
@@ -86,16 +95,28 @@ export const materializeLowered = async (
   for (const spec of uwkImportSpecifiers(lowered)) {
     const targetTemp = await materializeLowered(path.resolve(dir, spec), done, inProgress, cleanup);
     let rel = path.relative(dir, targetTemp).split(path.sep).join("/");
-    // The temp basename is a dotfile (`.x.<tag>.uwklowered.ts`), so a same-dir
+    // The temp basename is a dotfile (`.x.<tag>.uwklowered.mjs`), so a same-dir
     // `path.relative` yields a leading-dot name that Node would read as a bare
     // specifier — force an explicit `./` (or keep an existing `../`).
     if (!rel.startsWith("./") && !rel.startsWith("../")) rel = `./${rel}`;
     remap[spec] = rel;
   }
   if (Object.keys(remap).length > 0) lowered = rewriteImportSpecifiers(lowered, remap);
-  const tag = createHash("sha256").update(lowered).digest("hex").slice(0, 8);
-  const tempPath = path.join(dir, `.${path.basename(sourcePath)}.${tag}.uwklowered.ts`);
-  await writeFile(tempPath, lowered);
+  // Strip types here so the temp is plain ESM every supported Node can import.
+  // `sourcePath` is passed as the file name purely for diagnostics.
+  const emitted = ts.transpileModule(lowered, {
+    fileName: sourcePath,
+    compilerOptions: {
+      target: ts.ScriptTarget.ESNext,
+      module: ts.ModuleKind.ESNext,
+      // Keep import specifiers exactly as the lowering wrote them — the sibling
+      // remap above already points them at the temps.
+      verbatimModuleSyntax: false,
+    },
+  }).outputText;
+  const tag = createHash("sha256").update(emitted).digest("hex").slice(0, 8);
+  const tempPath = path.join(dir, `.${path.basename(sourcePath)}.${tag}.uwklowered.mjs`);
+  await writeFile(tempPath, emitted);
   done.set(sourcePath, tempPath);
   inProgress.delete(sourcePath);
   cleanup.push(tempPath);
