@@ -111,3 +111,32 @@ test("uwkImportSpecifiers finds dynamic and query-bearing worklet dependencies",
     `const d = () => import(\`./d-\${x}.uwk.ts\`);\n`;
   expect(uwkImportSpecifiers(src)).toEqual(["./a.uwk.ts?rev=1", "./b.uwk.ts", "./c.uwk.ts"]);
 });
+
+// Which declarations the EMIT keeps, pinned against `ts.transpileModule` rather
+// than assumed: a named clause whose every specifier is type-only disappears
+// (there is nothing left to import), while a mixed one, a default binding, a
+// namespace, a side-effect import and `export *` all survive.
+// Reported by @codex on #43.
+test("uwkImportSpecifiers returns exactly the .uwk.ts edges the emit keeps", () => {
+  const src =
+    `import { type A } from "./a.uwk.ts";\n` +
+    `import { type B, useB } from "./b.uwk.ts";\n` +
+    `import D from "./d.uwk.ts";\n` +
+    `import * as ns from "./ns.uwk.ts";\n` +
+    `import "./side.uwk.ts";\n` +
+    `import type { T } from "./t.uwk.ts";\n` +
+    `export { type E } from "./e.uwk.ts";\n` +
+    `export { type F, useF } from "./f.uwk.ts";\n` +
+    `export * from "./star.uwk.ts";\n` +
+    `export * as sns from "./sns.uwk.ts";\n` +
+    `export type { G } from "./g.uwk.ts";\n`;
+  expect(uwkImportSpecifiers(src)).toEqual([
+    "./b.uwk.ts",
+    "./d.uwk.ts",
+    "./ns.uwk.ts",
+    "./side.uwk.ts",
+    "./f.uwk.ts",
+    "./star.uwk.ts",
+    "./sns.uwk.ts",
+  ]);
+});

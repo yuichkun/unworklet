@@ -66,6 +66,37 @@ const runtimeRefs = (sf: ts.SourceFile): ModuleRef[] =>
   moduleRefs(sf).filter((r) => r.kind !== "type");
 
 /**
+ * Whether `ts.transpileModule` drops this declaration entirely, leaving Node
+ * with no edge to the module it names.
+ *
+ * Pinned against the emit rather than reasoned about, because the answer is not
+ * where one would look for it: `import { type A } from …` marks the SPECIFIER,
+ * so a clause-level `isTypeOnly` check misses it, and a clause whose every named
+ * specifier is type-only has nothing left to import — the statement goes. What
+ * survives is anything carrying a value: a MIXED clause, a default binding, a
+ * namespace, a bare side-effect import, `export *` and `export * as ns`.
+ *
+ * NOT the same question `runtimeModuleSpecifiers` answers. That one is about
+ * Node's strip-only mode, which keeps the statement for the inline form. Two
+ * different erasers, two different answers, deliberately not shared.
+ */
+function erasedByEmit(stmt: ts.ImportDeclaration | ts.ExportDeclaration): boolean {
+  if (ts.isImportDeclaration(stmt)) {
+    const clause = stmt.importClause;
+    if (clause === undefined) return false; // side-effect import
+    if (clause.isTypeOnly) return true;
+    if (clause.name !== undefined) return false; // default binding is a value
+    const bindings = clause.namedBindings;
+    if (bindings === undefined || !ts.isNamedImports(bindings)) return false; // namespace
+    return bindings.elements.every((e) => e.isTypeOnly);
+  }
+  if (stmt.isTypeOnly) return true;
+  const clause = stmt.exportClause;
+  if (clause === undefined || !ts.isNamedExports(clause)) return false; // `export *` forms
+  return clause.elements.every((e) => e.isTypeOnly);
+}
+
+/**
  * The module specifiers of a lowered `.ts` module that point at a `.uwk.ts`
  * (the transitive sugar imports and re-exports the build must lower too).
  *
@@ -82,16 +113,7 @@ export function uwkImportSpecifiers(loweredTs: string): string[] {
   const sf = ts.createSourceFile("__m.ts", loweredTs, ts.ScriptTarget.ESNext, true);
   const out: string[] = [];
   for (const ref of runtimeRefs(sf)) {
-    // A clause-level `type` erases the statement outright. The inline form
-    // (`import { type A }`) is left in: whether the emit keeps it depends on how
-    // the other bindings are used, and an extra lowered sibling costs a temp
-    // nobody imports, while a missing one costs a crash.
-    if (ref.kind === "declaration") {
-      const typeOnly = ts.isImportDeclaration(ref.stmt)
-        ? ref.stmt.importClause?.isTypeOnly === true
-        : ref.stmt.isTypeOnly;
-      if (typeOnly) continue;
-    }
+    if (ref.kind === "declaration" && erasedByEmit(ref.stmt)) continue;
     if (ref.spec.split(/[?#]/)[0]!.endsWith(".uwk.ts") && !out.includes(ref.spec)) {
       out.push(ref.spec);
     }

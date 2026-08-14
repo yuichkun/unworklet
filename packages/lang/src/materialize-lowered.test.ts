@@ -999,3 +999,40 @@ process(() => {
   const proc = await loadUwkProcessor(src);
   expect(typeof proc.schemaHash).toBe("string");
 });
+
+test("an all-type-only inline import between two .uwk.ts files is not a cycle", async () => {
+  // `import { type Depth } from …` marks the SPECIFIER rather than the clause,
+  // so a clause-level test still walked it as a dependency and reported a cycle.
+  // The emit is unambiguous here: with every named specifier type-only there is
+  // nothing left to import, and the statement goes. (A MIXED declaration is a
+  // different case — its value binding may well survive — and is still walked.)
+  // Reported by @codex on #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-inlinecycle-"));
+  writeFileSync(
+    path.join(dir, "voice.uwk.ts"),
+    `import { type Depth } from "./synth.uwk.ts";
+
+export const voice = defineSubgraph(() => {
+  const p = state.f32(0).named("p");
+  const _depth: Depth = "shallow";
+  return { tick: () => p.read() };
+});`,
+  );
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `import { voice } from "./voice.uwk.ts";
+
+export type Depth = "shallow" | "deep";
+const out = audioOutput({ channels: 1, name: "main" });
+const v = instantiate(voice, { name: "v" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = v.tick();
+  });
+});`,
+  );
+
+  const proc = await loadUwkProcessor(src);
+  expect(typeof proc.schemaHash).toBe("string");
+});
