@@ -505,6 +505,8 @@ noiseSource(options?: { seed?: number }): { next(): Node<"f32"> }
 
 Declares a private xorshift32 PRNG. Instantiated in declaration scope like `state` / `param`; the returned handle exposes `.next()` which advances the internal seed one step and returns the next sample in `[-1, 1)`.
 
+`seed` must be an integer in the int32 range; a fractional or non-finite value throws at graph capture rather than silently truncating to a different stream. `seed: 0` is accepted (the emitter substitutes a non-zero constant, because xorshift32 locks at zero).
+
 ```ts
 const n = noiseSource({ seed: 42 }); // pin the output byte-for-byte
 const nL = noiseSource(); // omit seed → framework auto-assigns 1

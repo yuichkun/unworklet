@@ -9,7 +9,7 @@
 import { expect, test } from "vite-plus/test";
 
 import { newCaptureContext, runCapture, unwrapAst, wrapAst } from "../compile/capture.ts";
-import { audioInput, audioOutput, event, param, state } from "./declarations.ts";
+import { audioInput, audioOutput, event, noiseSource, param, state } from "./declarations.ts";
 import { forSample } from "./loop.ts";
 import { add, gt } from "./primitives.ts";
 
@@ -1780,5 +1780,35 @@ test("`emitIf` field value from a comparison node resolves wireType to bool (inf
     const evtDecl = ctx.declarations.find((d) => d.kind === "event");
     if (evtDecl?.kind !== "event") throw new Error("expected event decl");
     expect(evtDecl.fields).toEqual([{ name: "hot", wireType: "bool" }]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// noiseSource seed validation
+// ─────────────────────────────────────────────────────────────────────────
+
+// `NoiseSourceOptions.seed` is documented as a compile-time INTEGER whose whole
+// purpose is to pin the noise stream byte-for-byte for golden tests and preset
+// restoration. Emission applies `seed | 0`, so `0.5`, `NaN` and `Infinity` all
+// truncate to 0 and get swapped for the zero-seed sentinel — three distinct
+// "explicit" seeds silently producing one identical stream, which defeats the
+// only reason to pass a seed. Reject them at declaration instead.
+// Reported by @codex on #43.
+test("`noiseSource` rejects a seed that is not an int32", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    for (const bad of [0.5, -1.5, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 31, -(2 ** 31) - 1]) {
+      expect(() => noiseSource({ seed: bad }), `seed: ${bad}`).toThrow(/seed/i);
+    }
+  });
+});
+
+test("`noiseSource` accepts the documented integer seeds, including 0", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    // 0 is explicitly supported — emission substitutes the xorshift32 sentinel.
+    for (const ok of [0, 1, 42, -1, 2 ** 31 - 1, -(2 ** 31)]) {
+      expect(() => noiseSource({ seed: ok }), `seed: ${ok}`).not.toThrow();
+    }
   });
 });

@@ -1536,6 +1536,18 @@ export function noiseSource(options?: NoiseSourceOptions): NoiseSource {
   ctx.noiseSourceCount += 1;
   // Auto seed starts at 1 so we never hand out xorshift32's pathological zero.
   const seed = options?.seed ?? idx + 1;
+  // The seed exists to pin the stream byte-for-byte, and emission stores it with
+  // `seed | 0`. A non-int32 would truncate silently — `0.5`, `NaN` and `Infinity`
+  // all land on 0 and then take the zero-seed sentinel, so three distinct seeds
+  // would yield one identical stream. Fail loudly instead. (`0` itself is
+  // supported; the sentinel substitution for it is documented.)
+  if (!Number.isInteger(seed) || seed < -(2 ** 31) || seed > 2 ** 31 - 1) {
+    throw new Error(
+      `unworklet: noiseSource seed must be an integer in the int32 range ` +
+        `[-2147483648, 2147483647], got ${String(seed)}. The seed pins the noise ` +
+        `stream byte-for-byte, and a non-integer would truncate to a different one.`,
+    );
+  }
   const name = `${ctx.namePrefix}__noise_${idx}`;
   addDeclaration({ kind: "noiseSource", name, seed });
   return {
