@@ -137,8 +137,10 @@ export interface Node<T extends ScalarType | "f32x4" = ScalarType> {
   not: BoolUnary<T>;
   // Logical binary (bool only; `and(a, b)` / `or(a, b)` free-function form
   // symmetric to `not`, method form for chaining. Both operands evaluated —
-  // no short-circuit in WASM realtime; consumers wanting short-circuit
-  // semantics should refactor to `select(cond, thenExpr, elseExpr)`).
+  // no short-circuit in WASM realtime. `select(cond, a, b)` does NOT help: it
+  // chooses a value, it does not guard evaluation, so an unchosen
+  // `noiseSource.next()` still advances and an unchosen i32 divide still traps.
+  // Restructure so every operand is safe to evaluate instead.).
   and: BoolBinary<T>;
   or: BoolBinary<T>;
   // Math — `sqrt` / `floor` / `ceil` / `frac` / transcendentals are float-only;

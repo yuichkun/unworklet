@@ -16,7 +16,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -151,23 +151,70 @@ process(() => {
 });`,
   );
 
-  // Run the materialize step in a child Node with stripping off (= Node 20).
-  const script = `
+  // Node 20 does not merely disable the capability — `process.features.typescript`
+  // is ABSENT there, so it reads `undefined`, not `false`. Both shapes are covered:
+  // deleting the property (what Node 20 actually looks like) and a modern Node with
+  // stripping switched off. Testing only the latter is what let a `=== false` check
+  // pass while missing the runtime it was written for.
+  const body = `
     const { materializeLowered } = await import(${JSON.stringify(pathToFileURL(path.join(LANG, "dist/index.mjs")).href)});
     try {
       await materializeLowered(${JSON.stringify(src)}, new Map(), new Set(), []);
       console.log("NO_THROW");
     } catch (e) { console.log("THREW:" + e.message); }
   `;
-  const r = spawnSync(
-    "node",
-    ["--no-experimental-strip-types", "--input-type=module", "-e", script],
-    {
-      encoding: "utf8",
-    },
+  const cases: [string, string[]][] = [
+    [
+      "absent (Node 20)",
+      ["--input-type=module", "-e", `delete process.features.typescript;${body}`],
+    ],
+    ["disabled", ["--no-experimental-strip-types", "--input-type=module", "-e", body]],
+  ];
+  for (const [label, args] of cases) {
+    const r = spawnSync("node", args, { encoding: "utf8" });
+    const output = `${r.stdout}${r.stderr}`;
+    expect(output, label).toMatch(/THREW:/);
+    expect(output, label).toMatch(/constants\.ts/);
+    expect(output, label).toMatch(/22\.18/);
+  }
+});
+
+test("a failed materialization leaves no temp behind in the source tree", async () => {
+  // Siblings are written as the recursion descends, so a failure after one lands
+  // (here: the sibling lowers, then the entry's plain-.ts import is rejected)
+  // used to strand `.uwklowered.mjs` files next to the consumer's sources.
+  // Reported by @codex on #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-leak-"));
+  writeFileSync(path.join(dir, "constants.ts"), `export const GAIN: number = 3;\n`);
+  writeFileSync(
+    path.join(dir, "voice.uwk.ts"),
+    `export const voice = defineSubgraph(() => {
+  const phase = state.f32(0).named("phase");
+  return { tick: () => phase };
+});`,
   );
-  const output = `${r.stdout}${r.stderr}`;
-  expect(output).toMatch(/THREW:/);
-  expect(output).toMatch(/constants\.ts/);
-  expect(output).toMatch(/22\.18/);
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `import { voice } from "./voice.uwk.ts";
+import { GAIN } from "./constants.ts";
+
+const out = audioOutput({ channels: 1, name: "main" });
+const v = instantiate(voice, { name: "v" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = v.tick() * GAIN;
+  });
+});`,
+  );
+
+  const script = `
+    delete process.features.typescript;
+    const { loadUwkProcessor } = await import(${JSON.stringify(pathToFileURL(path.join(LANG, "dist/index.mjs")).href)});
+    try { await loadUwkProcessor(${JSON.stringify(src)}); } catch { /* expected */ }
+  `;
+  spawnSync("node", ["--input-type=module", "-e", script], { encoding: "utf8" });
+
+  const strays = readdirSync(dir).filter((f) => f.includes("uwklowered"));
+  expect(strays, `stray temps: ${strays.join(", ")}`).toEqual([]);
 });

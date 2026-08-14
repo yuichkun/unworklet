@@ -120,7 +120,10 @@ export const materializeLowered = async (
   // tsconfig we would be guessing settings that change meaning (type-only import
   // elision, decorators, class field semantics), and silently altering user code
   // is not something this toolchain does. Fail loudly and name the two ways out.
-  if (process.features.typescript === false) {
+  // Absent, not false, is what Node 20 reports — the property only exists once
+  // the capability does. Comparing against `false` would skip the check on the
+  // exact runtime it is here for.
+  if (!process.features.typescript) {
     const plain = plainTsImportSpecifiers(lowered);
     if (plain.length > 0) {
       throw new Error(
@@ -185,8 +188,11 @@ const isCompiledProcessor = (v: unknown): v is CompiledProcessor<unknown> =>
  */
 export async function loadUwkProcessor(sourcePath: string): Promise<CompiledProcessor<unknown>> {
   const cleanup: string[] = [];
-  const entryTemp = await materializeLowered(sourcePath, new Map(), new Set(), cleanup);
+  // Inside the try: materialization writes each sibling temp as it recurses, so a
+  // failure partway (a sibling lowers, then the entry is rejected) would strand
+  // those files in the consumer's source tree if cleanup only started afterwards.
   try {
+    const entryTemp = await materializeLowered(sourcePath, new Map(), new Set(), cleanup);
     // A file URL, not a path: an absolute POSIX path happens to work, but a
     // Windows path or a name without a `./` prefix does not.
     const href = `${pathToFileURL(entryTemp).href}?t=${Date.now()}`;
