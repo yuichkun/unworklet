@@ -879,3 +879,56 @@ process(() => {
   const proc = await loadUwkProcessor(src);
   expect(typeof proc.schemaHash).toBe("string");
 });
+
+test("concurrent loads sharing a sibling do not delete each other's temps", async () => {
+  // Two entries importing the same subgraph produced the same content-derived
+  // temp path, and each load's cleanup removed it — so whichever finished first
+  // could unlink a file the other had not imported yet, giving an intermittent
+  // ERR_MODULE_NOT_FOUND for an ordinary `Promise.all`. Reported by @codex on #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-concurrent-"));
+  writeFileSync(
+    path.join(dir, "voice.uwk.ts"),
+    `export const voice = defineSubgraph(() => {
+  const p = state.f32(0).named("p");
+  return { tick: () => p };
+});`,
+  );
+  const entry = (name: string, level: string): string => {
+    const file = path.join(dir, name);
+    writeFileSync(
+      file,
+      `import { voice } from "./voice.uwk.ts";
+
+const out = audioOutput({ channels: 1, name: "main" });
+const v = instantiate(voice, { name: "v" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = v.tick() * ${level};
+  });
+});`,
+    );
+    return file;
+  };
+  const a = entry("a.uwk.ts", "0.25");
+  const b = entry("b.uwk.ts", "0.75");
+
+  // The shared sibling must land on a DIFFERENT path per load, so one load's
+  // cleanup can never touch the other's — the property the race turns on,
+  // asserted directly rather than by trying to lose a timing window.
+  const cleanupA: string[] = [];
+  const cleanupB: string[] = [];
+  cleanup.push(...cleanupA, ...cleanupB);
+  await Promise.all([
+    materializeLowered(a, new Map(), new Set(), cleanupA),
+    materializeLowered(b, new Map(), new Set(), cleanupB),
+  ]);
+  const sibling = (list: string[]): string =>
+    list.find((p) => path.basename(p).startsWith(".voice.uwk.ts"))!;
+  expect(sibling(cleanupA)).toBeDefined();
+  expect(sibling(cleanupA)).not.toBe(sibling(cleanupB));
+  for (const p of [...cleanupA, ...cleanupB]) cleanup.push(p);
+
+  const [pa, pb] = await Promise.all([loadUwkProcessor(a), loadUwkProcessor(b)]);
+  expect(typeof pa.schemaHash).toBe("string");
+  expect(typeof pb.schemaHash).toBe("string");
+});
