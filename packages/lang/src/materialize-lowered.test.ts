@@ -661,3 +661,80 @@ process(() => {
   expect(err?.message).toMatch(/voice\.uwk\.ts/);
   expect(err?.message).not.toMatch(/defineSubgraph is not defined/);
 });
+
+test("a second-level helper edited mid-process is reported, never compiled stale", () => {
+  // Only helpers the temp imports directly can have their module URL keyed on
+  // content — a helper reached THROUGH another one is resolved by a specifier in
+  // a module this package does not own. Re-evaluating the outer helper does not
+  // help: Node resolves its `./b.mjs` to the same URL and hands back the cached
+  // module (verified — the outer one re-runs and still sees the old value).
+  //
+  // So the answer is not to compile it stale and stay quiet. The load fails and
+  // names the file. Reported by @codex on #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-deepHelper-"));
+  const b = path.join(dir, "b.mjs");
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(path.join(dir, "a.mjs"), `export { GAIN } from "./b.mjs";\n`);
+  writeFileSync(
+    src,
+    `import { GAIN } from "./a.mjs";
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = GAIN;
+  });
+});`,
+  );
+
+  const script = `
+    const { writeFileSync } = await import("node:fs");
+    const { loadUwkProcessor } = await import(${JSON.stringify(pathToFileURL(path.join(LANG, "dist/index.mjs")).href)});
+    writeFileSync(${JSON.stringify(b)}, "export const GAIN = 0.25;\\n");
+    const first = await loadUwkProcessor(${JSON.stringify(src)});
+    console.log("FIRST_HAS_025:" + JSON.stringify(first.graph).includes("0.25"));
+    writeFileSync(${JSON.stringify(b)}, "export const GAIN = 0.75;\\n");
+    try {
+      const second = await loadUwkProcessor(${JSON.stringify(src)});
+      console.log("SECOND_STALE:" + JSON.stringify(second.graph).includes("0.25"));
+    } catch (e) {
+      console.log("THREW:" + e.message);
+    }
+  `;
+  const r = spawnSync("node", ["--input-type=module", "-e", script], { encoding: "utf8" });
+  const output = `${r.stdout}${r.stderr}`;
+  expect(output).toMatch(/FIRST_HAS_025:true/);
+  expect(output).not.toMatch(/SECOND_STALE:true/);
+  expect(output).toMatch(/THREW:@unworklet\/lang/);
+  expect(output).toMatch(/b\.mjs/);
+  // And it says what to do about it.
+  expect(output).toMatch(/restart/i);
+});
+
+test("an unchanged second-level helper does not trip the staleness check", () => {
+  // The check must only fire on an actual change: loading the same processor
+  // twice with nothing edited is ordinary, and failing there would make the
+  // guard worse than the bug. Reported by @codex on #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-deepHelperOk-"));
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(path.join(dir, "b.mjs"), `export const GAIN = 0.25;\n`);
+  writeFileSync(path.join(dir, "a.mjs"), `export { GAIN } from "./b.mjs";\n`);
+  writeFileSync(
+    src,
+    `import { GAIN } from "./a.mjs";
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = GAIN;
+  });
+});`,
+  );
+
+  const script = `
+    const { loadUwkProcessor } = await import(${JSON.stringify(pathToFileURL(path.join(LANG, "dist/index.mjs")).href)});
+    await loadUwkProcessor(${JSON.stringify(src)});
+    await loadUwkProcessor(${JSON.stringify(src)});
+    console.log("BOTH_OK");
+  `;
+  const r = spawnSync("node", ["--input-type=module", "-e", script], { encoding: "utf8" });
+  expect(`${r.stdout}${r.stderr}`).toMatch(/BOTH_OK/);
+});
