@@ -1849,3 +1849,33 @@ test("forwarding an inbound field that sealed to bool emits a bool outbound fiel
   expect(inboundField!.wireType).toBe("bool");
   expect(outboundField!.wireType).toBe("bool");
 });
+
+// The boundary of the rule above. Wire types are sealed from USAGE — the `boolean`
+// in `event<{ enabled: boolean }>` is erased before the graph is captured, so a
+// field that never flows into a boolean position is indistinguishable from a
+// number and stays on the f32 wire. Forwarding is not a boolean position, so a
+// forward alone cannot establish the type; it can only preserve one already
+// sealed (the test above). Pinned so a later change cannot make the two paths
+// disagree silently. Reported by @codex on #43.
+test("forwarding alone does not seal a field to bool — sealing comes from usage", () => {
+  const proc = defineProcessor(() => {
+    const inbound = event<{ enabled: boolean }>({ from: "main", name: "ctl" });
+    const outbound = event<{ enabled: boolean }>({ to: "main", name: "fwd" });
+    const out = audioOutput({ channels: 1, name: "main" });
+    return {
+      process: () => {
+        inbound.onReceive((e) => {
+          outbound.emitIf(true, { enabled: e.enabled }); // no boolean consumer anywhere
+        });
+        forSample((i) => {
+          out.ch(0).at(i).write(f32(0));
+        });
+      },
+    };
+  });
+
+  const inboundField = proc.worklet.messageRings[0]!.fields!.find((f) => f.name === "enabled");
+  const outboundField = proc.worklet.eventRings[0]!.fields!.find((f) => f.name === "enabled");
+  expect(inboundField!.wireType).toBe("f32");
+  expect(outboundField!.wireType).toBe("f32");
+});

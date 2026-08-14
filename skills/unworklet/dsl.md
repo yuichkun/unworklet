@@ -343,7 +343,12 @@ event<T>({ to:   "main"; name; capacity?: Capacity; payloadCapacity?: number }) 
   `number` on both sides but the payload reaches main as an integer.
   `boolean` fields default to the f32 wire too and are sealed to `bool`
   the moment the field flows into a boolean position (a `boolean` state
-  write, a `select` cond, a `not()`, an `emitIf` cond, etc.).
+  write, a `select` cond, a `not()`, an `emitIf` cond, etc.). Forwarding a
+  field straight into another `emit` is not a boolean position: a field
+  that is only ever forwarded, never consumed, stays on the f32 wire on
+  both sides. That is harmless — it round-trips 0/1 unchanged — but if you
+  want the `bool` wire on a pass-through, consume it once (for example
+  `emitIf(f.on, ...)` or `select(f.on, a, b)`).
 
 ### MIDI ports — `event.midi`
 
