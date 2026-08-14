@@ -25,7 +25,7 @@ import { runTsc } from "@volar/typescript/lib/quickstart/runTsc.js";
 import ts from "typescript";
 
 import { createUwkLanguagePlugin } from "./ide/languagePlugin.ts";
-import { isUwkSource, loadUwkProcessor } from "./materialize-lowered.ts";
+import { isUwkSource, loadUwkProcessor, NotAProcessorError } from "./materialize-lowered.ts";
 import { seedUnworkletDir } from "./seed-unworklet-dir.ts";
 import { workletsDts } from "./worklet-dts.ts";
 
@@ -125,6 +125,12 @@ async function populateWorkletsWitness(tsconfigPath: string | undefined): Promis
       const processor = await loadUwkProcessor(file);
       entries.push({ source: file, ns: processor.worklet });
     } catch (err) {
+      // A subgraph library is a `.uwk.ts` with exports and no `process()` — the
+      // documented multi-file layout. The tsconfig includes it, so it reaches
+      // here, and "not a processor" is the correct answer for it, not a failure:
+      // it has no `?worklet` surface to witness, and treating it as broken made
+      // the recommended layout exit 1.
+      if (err instanceof NotAProcessorError) continue;
       failures.push({ file, reason: err instanceof Error ? err.message : String(err) });
     }
   }

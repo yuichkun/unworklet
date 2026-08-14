@@ -523,3 +523,44 @@ process(() => {
   expect(output).toMatch(/seed must be an integer/);
   expect(r.status, output).not.toBe(0);
 });
+
+test("a subgraph library sibling is not mistaken for a processor that failed to compile", () => {
+  // The documented multi-file pattern puts a subgraph library in its own
+  // `.uwk.ts` — exports, no `process()`. The tsconfig includes it, so the
+  // witness pass tries to load it, and "no defineProcessor exports" is exactly
+  // right: it is not a processor. Counting that as a compilation failure turned
+  // a clean run into exit 1 for the pattern the guide recommends.
+  // Reported by @codex on #43.
+  const app = path.join(dir, "library-sibling");
+  mkdirSync(app, { recursive: true });
+  writeFileSync(
+    path.join(app, "tsconfig.json"),
+    JSON.stringify({ extends: "./.unworklet/tsconfig.json", compilerOptions: { types: [] } }),
+  );
+  writeFileSync(
+    path.join(app, "voice.uwk.ts"),
+    `export const voice = defineSubgraph(() => {
+  const p = state.f32(0).named("p");
+  return { tick: () => p.read() };
+});`,
+  );
+  writeFileSync(
+    path.join(app, "synth.uwk.ts"),
+    `import { voice } from "./voice.uwk.ts";
+const out = audioOutput({ channels: 1, name: "main" });
+const v = instantiate(voice, { name: "v" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = v.tick();
+  });
+});`,
+  );
+
+  const r = spawnSync("node", [bin, "--project", "library-sibling/tsconfig.json", "--noEmit"], {
+    cwd: dir,
+    encoding: "utf8",
+  });
+  const output = `${r.stdout}${r.stderr}`;
+  expect(output).not.toMatch(/cannot be compiled/);
+  expect(r.status, output).toBe(0);
+});

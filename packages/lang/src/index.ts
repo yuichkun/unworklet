@@ -51,4 +51,5 @@ export {
   loadUwkProcessor,
   lowerUwkSource,
   materializeLowered,
+  NotAProcessorError,
 } from "./materialize-lowered.ts";
