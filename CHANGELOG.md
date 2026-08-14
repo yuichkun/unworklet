@@ -117,7 +117,9 @@ processors only. Two consequences:
   The wire type is now decided per field — `number` defaults to f32 and keeps its
   fraction, `boolean` seals to bool when consumed in a boolean position.
 - **`@unworklet/test`'s chain matchers now attach for vitest 4 consumers**
-  (`@vitest/expect` added as an optional peer).
+  (`@vitest/expect` added as a required peer — the matchers cannot register
+  without it, so a missing install surfaces as an install error rather than a
+  silently absent `toRenderSilence`).
 - **DevTools panels render again after the 0.4 upgrade** — the page bridge used
   the pre-0.4 anonymous-RPC prefix and the panel bundle was still built against
   the 0.3 kit, so an authenticated session showed empty panels.
