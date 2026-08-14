@@ -20,7 +20,7 @@
  * manufacture spurious cross-identity errors. A copy keeps both on one core.
  */
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import {
   cpSync,
   existsSync,
@@ -38,16 +38,15 @@ import { afterAll, beforeAll, expect, test } from "vite-plus/test";
 const LANG = path.resolve(import.meta.dirname, "..");
 const REPO = path.resolve(LANG, "../..");
 const CORE = path.join(REPO, "packages/core");
-const VP = path.join(REPO, "node_modules/.bin/vp");
 
 let dir: string;
 let bin: string;
 
 beforeAll(() => {
-  // Build core's dist so `@unworklet/core` resolves to the shipped `.d.mts`, and
-  // build lang's real dist (the publish build) so we run the actual shipped bin.
-  execFileSync(VP, ["pack"], { cwd: CORE, stdio: "ignore" });
-  execFileSync(VP, ["run", "build"], { cwd: LANG, stdio: "ignore" });
+  // Core's shipped `.d.mts` and lang's real dist (the publish build) are built by
+  // the suite's `globalSetup`, not here: `vp pack` empties `dist/` before writing,
+  // and doing that mid-run deleted artefacts that sibling test files' child
+  // processes were importing.
 
   // The project lives inside this package so the bin resolves `@volar/typescript`
   // / `typescript` by walking up to this package's `node_modules`.
