@@ -17,17 +17,30 @@
  * access. Only the input source text differs per call and is overlaid on top.
  */
 
-import path from "node:path";
-
 import ts from "typescript";
 
 import { AMBIENT_DTS } from "./ambient.ts";
 
+/**
+ * `path.dirname` for a FILE path, without the `node:path` import this module
+ * must not have — see the browser note below. Both separators are handled so a
+ * Windows path behaves like a POSIX one, and a bare filename yields `"."`, both
+ * matching `path.dirname`. (A trailing separator is not: these are file paths.)
+ */
+const dirnameOf = (filePath: string): string => {
+  const cut = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
+  if (cut < 0) return ".";
+  return cut === 0 ? filePath.slice(0, 1) : filePath.slice(0, cut);
+};
+
 // The directory the in-memory virtuals are placed under, which disk-backed module
 // resolution (Node) walks up from to find `@unworklet/core`. `import.meta.dirname`
 // is a plain string under Node ESM and `undefined` in the browser — a property
-// read, NOT a `node:url` / `node:path` import (those externalize and crash the
-// browser bundle). The editor TS-plugin is bundled to CJS, where `import.meta` is
+// read, NOT a `node:url` / `node:path` import. Those do not fail the build: Vite
+// swaps them for a stub that throws on the first property read, so the breakage
+// lands wherever the module happens to be used. `browser-entry-purity.test.ts`
+// holds the whole reachable graph to this rule.
+// The editor TS-plugin is bundled to CJS, where `import.meta` is
 // empty but esbuild supplies `__dirname` (the bundle's dir, which sits in
 // `node_modules/@unworklet/lang/dist`, so core resolves from the same install) —
 // `typeof __dirname` is the one safe way to reach it without a ReferenceError in
@@ -308,6 +321,6 @@ export function buildProgram(source: string, options: BuildProgramOptions = {}):
   // the source's siblings (not the lang package's `SELF_DIR`). Without a
   // sourcePath (existing runtime-compile path, no cross-file support), fall
   // back to `SELF_DIR` — the check-only browser path preserves its behaviour.
-  const entryDir = options.sourcePath !== undefined ? path.dirname(options.sourcePath) : SELF_DIR;
+  const entryDir = options.sourcePath !== undefined ? dirnameOf(options.sourcePath) : SELF_DIR;
   return buildFrom(source, diskHost(source, entryDir, options.record), entryDir);
 }
