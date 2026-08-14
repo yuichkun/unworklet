@@ -14,20 +14,52 @@
  */
 import ts from "typescript";
 
-/** Every statement that names another module, in either direction. `export {}`
- * with no `from` clause has no specifier and is skipped by the type guard. */
-type ModuleRef = ts.ImportDeclaration | ts.ExportDeclaration;
+/**
+ * Every way a source can name another module, found by walking the whole tree —
+ * a top-level scan misses two of the four, and both turned out to matter.
+ *
+ * - `declaration` — `import … from` / `export … from`. Carries its node, since
+ *   these are the ones the rewriter can update.
+ * - `type` — `import("./types.ts").Gain`, an ImportTypeNode. No runtime
+ *   dependency, but the checker reads the file, so a type-directed lowering
+ *   depends on it.
+ * - `dynamic` — `import("./x.mjs")` as an expression. A real runtime load, at
+ *   any nesting depth. (A non-literal argument is skipped: nothing here can say
+ *   what it resolves to.)
+ */
+type ModuleRef =
+  | { kind: "declaration"; stmt: ts.ImportDeclaration | ts.ExportDeclaration; spec: string }
+  | { kind: "type"; spec: string }
+  | { kind: "dynamic"; spec: string };
 
-function moduleRefs(sf: ts.SourceFile): { stmt: ModuleRef; spec: string }[] {
-  const out: { stmt: ModuleRef; spec: string }[] = [];
-  for (const stmt of sf.statements) {
-    if (!ts.isImportDeclaration(stmt) && !ts.isExportDeclaration(stmt)) continue;
-    const s = stmt.moduleSpecifier;
-    if (s === undefined || !ts.isStringLiteral(s)) continue;
-    out.push({ stmt, spec: s.text });
-  }
+function moduleRefs(sf: ts.SourceFile): ModuleRef[] {
+  const out: ModuleRef[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      const s = node.moduleSpecifier;
+      if (s !== undefined && ts.isStringLiteral(s)) {
+        out.push({ kind: "declaration", stmt: node, spec: s.text });
+      }
+    } else if (ts.isImportTypeNode(node)) {
+      const arg = node.argument;
+      if (ts.isLiteralTypeNode(arg) && ts.isStringLiteral(arg.literal)) {
+        out.push({ kind: "type", spec: arg.literal.text });
+      }
+    } else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+      const arg = node.arguments[0];
+      if (arg !== undefined && ts.isStringLiteral(arg))
+        out.push({ kind: "dynamic", spec: arg.text });
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sf, visit);
   return out;
 }
+
+/** The refs that load at runtime — everything except a type-position `import()`,
+ * which is erased before anything runs. */
+const runtimeRefs = (sf: ts.SourceFile): ModuleRef[] =>
+  moduleRefs(sf).filter((r) => r.kind !== "type");
 
 /** The module specifiers of a lowered `.ts` module that point at a `.uwk.ts`
  * (the transitive sugar imports and re-exports the build must lower too). */
@@ -57,7 +89,7 @@ export function uwkImportSpecifiers(loweredTs: string): string[] {
 export function plainTsModuleSpecifiers(emittedJs: string): string[] {
   const sf = ts.createSourceFile("__m.js", emittedJs, ts.ScriptTarget.ESNext, true);
   const out: string[] = [];
-  for (const { spec } of moduleRefs(sf)) {
+  for (const { spec } of runtimeRefs(sf)) {
     if (!spec.startsWith("./") && !spec.startsWith("../")) continue;
     // Classified by the file part: ESM allows a query and a fragment on a file
     // URL, and an extension test against the raw specifier misses both.
@@ -94,11 +126,14 @@ export function moduleSpecifiers(source: string): string[] {
 export function runtimeModuleSpecifiers(source: string): string[] {
   const sf = ts.createSourceFile("__m.ts", source, ts.ScriptTarget.ESNext, true);
   const out: string[] = [];
-  for (const { stmt, spec } of moduleRefs(sf)) {
-    const typeOnly = ts.isImportDeclaration(stmt)
-      ? stmt.importClause?.isTypeOnly === true
-      : stmt.isTypeOnly;
-    if (!typeOnly) out.push(spec);
+  for (const ref of runtimeRefs(sf)) {
+    if (ref.kind === "declaration") {
+      const typeOnly = ts.isImportDeclaration(ref.stmt)
+        ? ref.stmt.importClause?.isTypeOnly === true
+        : ref.stmt.isTypeOnly;
+      if (typeOnly) continue;
+    }
+    out.push(ref.spec);
   }
   return out;
 }
@@ -116,9 +151,27 @@ export function runtimeModuleSpecifiers(source: string): string[] {
 export function relativeModuleSpecifiers(emittedJs: string): string[] {
   const sf = ts.createSourceFile("__m.js", emittedJs, ts.ScriptTarget.ESNext, true);
   const out: string[] = [];
-  for (const { spec } of moduleRefs(sf)) {
+  for (const { spec } of runtimeRefs(sf)) {
     if (!spec.startsWith("./") && !spec.startsWith("../")) continue;
     if (!out.includes(spec)) out.push(spec);
+  }
+  return out;
+}
+
+/**
+ * The subset of {@link relativeModuleSpecifiers} that {@link rewriteImportSpecifiers}
+ * can actually change: an `import … from` or `export … from`. A dynamic
+ * `import("./x.mjs")` is an expression, so its specifier stays as written — and
+ * a caller that assumed otherwise would think it had rewritten something it had
+ * not.
+ */
+export function rewritableRelativeSpecifiers(emittedJs: string): string[] {
+  const sf = ts.createSourceFile("__m.js", emittedJs, ts.ScriptTarget.ESNext, true);
+  const out: string[] = [];
+  for (const ref of runtimeRefs(sf)) {
+    if (ref.kind !== "declaration") continue;
+    if (!ref.spec.startsWith("./") && !ref.spec.startsWith("../")) continue;
+    if (!out.includes(ref.spec)) out.push(ref.spec);
   }
   return out;
 }

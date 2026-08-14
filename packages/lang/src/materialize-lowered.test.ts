@@ -738,3 +738,74 @@ process(() => {
   const r = spawnSync("node", ["--input-type=module", "-e", script], { encoding: "utf8" });
   expect(`${r.stdout}${r.stderr}`).toMatch(/BOTH_OK/);
 });
+
+test("a type reached through an import-type expression is part of the lowering cache key", () => {
+  // `(s: import("./types.ts").TickArg)` names a module without an import
+  // declaration, so a scan of top-level statements never saw it — yet it decides
+  // whether the caller's bare state gets an auto-read. Verified both ways: the
+  // lowering does change with `types.ts`, and the cache was serving the old one.
+  // Reported by @codex on #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-importType-"));
+  const types = path.join(dir, "types.ts");
+  const synth = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    path.join(dir, "voice.uwk.ts"),
+    `export const voice = defineSubgraph(() => ({
+  tick: (s: import("./types.ts").TickArg) => f32(1),
+}));`,
+  );
+  const synthText = `import { voice } from "./voice.uwk.ts";
+
+const gain = state.f32(0.5).named("gain");
+const out = audioOutput({ channels: 1, name: "main" });
+const v = instantiate(voice, { name: "v" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = v.tick(gain);
+  });
+});`;
+  writeFileSync(synth, synthText);
+
+  writeFileSync(types, `export type TickArg = State<"f32">;\n`);
+  expect(lowerUwkSource(synth, synthText)).toMatch(/tick\(gain\)/);
+
+  writeFileSync(types, `export type TickArg = Node<"f32">;\n`);
+  expect(lowerUwkSource(synth, synthText)).toMatch(/tick\(gain\.read\(\)\)/);
+});
+
+test("a .uwk.ts a helper imports dynamically is reported like a static one", async () => {
+  // `await import("./voice.uwk.ts")` is a real runtime edge, and scanning only
+  // top-level declarations missed it — so the raw sugar reached Node and failed
+  // on its authoring globals, the same ending the static case now diagnoses.
+  // Reported by @codex on #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-dynimport-"));
+  writeFileSync(
+    path.join(dir, "voice.uwk.ts"),
+    `export const voice = defineSubgraph(() => {
+  const p = state.f32(0).named("p");
+  return { tick: () => p };
+});`,
+  );
+  writeFileSync(
+    path.join(dir, "helper.mjs"),
+    `export const load = () => import("./voice.uwk.ts");\nexport const GAIN = 0.5;\n`,
+  );
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `import { GAIN } from "./helper.mjs";
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = GAIN;
+  });
+});`,
+  );
+
+  const err = await loadUwkProcessor(src).then(
+    () => undefined,
+    (e: unknown) => e as Error,
+  );
+  expect(err?.message).toMatch(/@unworklet\/lang/);
+  expect(err?.message).toMatch(/voice\.uwk\.ts/);
+});
