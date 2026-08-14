@@ -21,6 +21,10 @@ const REPO = path.resolve(LANG, "../..");
 const VP = path.join(REPO, "node_modules/.bin/vp");
 
 export function setup(): void {
+  // Skipped in the workspace run: the root `globalSetup` builds these before any
+  // project starts, and rebuilding here would empty `dist/` again while other
+  // projects' tests are already reading it.
+  if (process.env.UWK_DISTS_BUILT === "1") return;
   execFileSync(VP, ["pack"], { cwd: path.join(REPO, "packages/core"), stdio: "ignore" });
   execFileSync(VP, ["run", "build"], { cwd: LANG, stdio: "ignore" });
 }

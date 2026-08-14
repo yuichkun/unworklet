@@ -123,6 +123,11 @@ export default defineConfig({
     cache: true,
   },
   test: {
+    // Builds every shipped `dist/` before any project starts. The projects below
+    // run in parallel and several of them read those artefacts, so a build that
+    // happens inside one suite deletes files another is importing — see the file
+    // for the failure it removes.
+    globalSetup: ["test/global-setup.ts"],
     // A single `vp test` aggregates node-side + browser e2e (SAB / postMessage)
     // into one stage. Via vitest 4's `projects` feature, each package's
     // vite.config.ts is the default project, and packages/core's two browser
