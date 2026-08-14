@@ -1,22 +1,13 @@
 /**
- * Release invariant: every version string this repo ships moves in lockstep.
+ * Release invariant: the five published packages move in lockstep.
  *
- * Six files carry a version, and a release is only coherent when all six agree:
- * the five published npm packages (their `workspace:^` peers on each other
- * resolve to the published range at publish time, so a missed bump ships an
- * unsatisfiable peer), plus `.claude-plugin/plugin.json`.
+ * They depend on each other through `workspace:^` specifiers, which pnpm rewrites
+ * into a real range against the sibling's version at publish time. Bump four and
+ * forget one, and the four ship a peer range no published version satisfies —
+ * every consumer install breaks.
  *
- * The plugin manifest is the one that is easy to forget and the most damaging to
- * forget. Claude Code treats `plugin.json`'s `version` as the **cache key for
- * update detection** — with it set, users keep their cached copy and
- * `/plugin update` reports "already at the latest version" until the string
- * changes, no matter how many commits land. The plugin ships `skills/unworklet/`,
- * so a stale version silently strands every guide fix. That is exactly what
- * happened between the v0.1.0 tag and this guard: twelve commits changed
- * `skills/` while `plugin.json` sat at `0.1.0`.
- *
- * This test spans every package at once, so it lives in the root project rather
- * than in any single package's suite (see `vite.config.ts`'s `test.include`).
+ * This test spans every package at once, so it belongs to no single package's
+ * suite; it runs in the `release-invariants` project (see `scripts/vite.config.ts`).
  */
 
 import { readFileSync } from "node:fs";
@@ -49,19 +40,8 @@ test("all five published packages carry the same version", () => {
   ).toHaveLength(1);
 });
 
-test("the Claude Code plugin manifest carries the same version as the packages (a stale one strands every guide fix behind `/plugin update`)", () => {
-  const pkgVersion = readVersion("packages/core/package.json");
-  const pluginVersion = readVersion(".claude-plugin/plugin.json");
-  expect(
-    pluginVersion,
-    `.claude-plugin/plugin.json is at ${pluginVersion} but the packages are at ` +
-      `${pkgVersion}. Claude Code pins the plugin to this string, so users keep ` +
-      `their cached copy — bump it with the packages (RELEASE.md step 2).`,
-  ).toBe(pkgVersion);
-});
-
-test("the shared version is plain semver (Claude Code compares it as an opaque string)", () => {
-  // No range operators, no `v` prefix, no build metadata: the plugin cache key is
-  // a literal string comparison, and npm rejects a non-semver `version` outright.
+test("the shared version is plain semver", () => {
+  // No range operators, no `v` prefix, no build metadata — npm rejects a
+  // non-semver `version` outright, and the tag derives from this string.
   expect(readVersion("packages/core/package.json")).toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
 });
