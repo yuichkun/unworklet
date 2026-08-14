@@ -1,5 +1,3 @@
-import path from "node:path";
-
 import type { WorkletNamespace } from "@unworklet/core";
 
 /**
@@ -123,10 +121,31 @@ export function workletDts(specifier: string, ns: WorkletNamespace): string {
  * file and re-emits it on every processor edit; the editor's file watch refreshes
  * `node.params.<name>` completions without a restart (proven in worklet-dts-live).
  *
- * The module pattern is `*​/<basename>?worklet`, so two processors sharing a
- * basename in different folders would collide — the caller must warn rather than
- * silently shadow one.
+ * A basename alone is not always unique — `effects/a/index.uwk.ts` and
+ * `effects/b/index.uwk.ts` would both key on `*​/index.uwk.ts?worklet`, emitting
+ * two `declare module` blocks for one pattern (duplicate identifiers, or one
+ * processor's surface silently standing in for the other). Each pattern therefore
+ * carries the shortest trailing path segments that tell it apart from the others,
+ * so the two above become `*​/a/index.uwk.ts?worklet` and
+ * `*​/b/index.uwk.ts?worklet`. TypeScript prefers the longest matching pattern, so
+ * a longer key still matches the consumer's `./effects/a/index.uwk.ts?worklet`.
  */
 export function workletsDts(entries: { source: string; ns: WorkletNamespace }[]): string {
-  return entries.map((e) => workletDts(`*/${path.basename(e.source)}?worklet`, e.ns)).join("\n");
+  /** The trailing `depth` segments of a path, POSIX-separated. */
+  const tail = (source: string, depth: number): string =>
+    source.split(/[\\/]/).slice(-depth).join("/");
+
+  const patterns = entries.map((e) => {
+    let depth = 1;
+    // Grow until this entry's tail is unique, or until the whole path is used.
+    while (
+      entries.some((other) => other !== e && tail(other.source, depth) === tail(e.source, depth)) &&
+      depth < e.source.split(/[\\/]/).length
+    ) {
+      depth += 1;
+    }
+    return `*/${tail(e.source, depth)}?worklet`;
+  });
+
+  return entries.map((e, i) => workletDts(patterns[i]!, e.ns)).join("\n");
 }

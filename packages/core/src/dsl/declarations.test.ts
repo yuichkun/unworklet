@@ -11,6 +11,8 @@ import { expect, test } from "vite-plus/test";
 import { newCaptureContext, runCapture, unwrapAst, wrapAst } from "../compile/capture.ts";
 import { audioInput, audioOutput, event, noiseSource, param, state } from "./declarations.ts";
 import { forSample } from "./loop.ts";
+import { defineProcessor } from "../processor.ts";
+import { f32 } from "./constructors.ts";
 import { add, gt } from "./primitives.ts";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1811,4 +1813,39 @@ test("`noiseSource` accepts the documented integer seeds, including 0", () => {
       expect(() => noiseSource({ seed: ok }), `seed: ${ok}`).not.toThrow();
     }
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Forwarding an inbound payload field to an outbound event
+// ─────────────────────────────────────────────────────────────────────────
+
+// A `messageFieldRead` node bakes in `wireType: "f32"` when the field is first
+// touched, and the emit path resolves the real type from the declaration, so the
+// WASM load is right. `inferAstType` does not — it returns the stale snapshot, so
+// forwarding a field that later seals to `bool` recorded the OUTBOUND field as
+// f32. The consumer then declared `boolean` on both sides and received 1 / 0
+// typed as `number`. Reported by @codex on #43.
+test("forwarding an inbound field that sealed to bool emits a bool outbound field", () => {
+  const proc = defineProcessor(() => {
+    const inbound = event<{ enabled: boolean }>({ from: "main", name: "ctl" });
+    const outbound = event<{ enabled: boolean }>({ to: "main", name: "fwd" });
+    const gate = state.bool(false).named("gate");
+    const out = audioOutput({ channels: 1, name: "main" });
+    return {
+      process: () => {
+        inbound.onReceive((e) => {
+          gate.write(e.enabled); // seals the inbound field to bool
+          outbound.emitIf(true, { enabled: e.enabled }); // must forward as bool
+        });
+        forSample((i) => {
+          out.ch(0).at(i).write(f32(0));
+        });
+      },
+    };
+  });
+
+  const inboundField = proc.worklet.messageRings[0]!.fields!.find((f) => f.name === "enabled");
+  const outboundField = proc.worklet.eventRings[0]!.fields!.find((f) => f.name === "enabled");
+  expect(inboundField!.wireType).toBe("bool");
+  expect(outboundField!.wireType).toBe("bool");
 });

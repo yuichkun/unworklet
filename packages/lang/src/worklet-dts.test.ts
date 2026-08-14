@@ -30,7 +30,7 @@ import {
 import ts from "typescript";
 import { afterAll, beforeAll, expect, test } from "vite-plus/test";
 
-import { workletDts } from "./worklet-dts.ts";
+import { workletDts, workletsDts } from "./worklet-dts.ts";
 
 // The witness generator now lives in `@unworklet/lang`, but this integration
 // test still needs the unplugin's `client.d.ts` (its `/// <reference types>`
@@ -510,4 +510,33 @@ test("the witness marks event direction: eventRings → out, messageRings → in
   // A pair carries two payloads, so it emits one field map per direction rather
   // than a merged `fields` — see the same-name in/out type test below.
   expect(dts).toContain('"both": { dir: "inout"; outFields: {}; inFields: {} }');
+});
+
+// Two processors can share a basename in different folders. Keying both on
+// `*/index.uwk.ts?worklet` emitted two `declare module` blocks for one pattern —
+// duplicate identifiers, or one processor's surface standing in for the other.
+// Reported by @codex on #43.
+test("processors sharing a basename get distinct module patterns", () => {
+  const ns = {
+    parameterDescriptors: [],
+    publishSlots: [],
+    eventRings: [],
+    messageRings: [],
+    midiRings: [],
+    inputs: [],
+    outputs: [],
+  } as unknown as Parameters<typeof workletDts>[1];
+
+  const dts = workletsDts([
+    { source: "/p/effects/a/index.uwk.ts", ns },
+    { source: "/p/effects/b/index.uwk.ts", ns },
+    { source: "/p/synth.uwk.ts", ns },
+  ]);
+  const patterns = [...dts.matchAll(/declare module "([^"]+)"/g)].map((m) => m[1]!);
+
+  expect(new Set(patterns).size, patterns.join(", ")).toBe(patterns.length);
+  expect(patterns).toContain("*/a/index.uwk.ts?worklet");
+  expect(patterns).toContain("*/b/index.uwk.ts?worklet");
+  // A unique basename keeps the short pattern.
+  expect(patterns).toContain("*/synth.uwk.ts?worklet");
 });

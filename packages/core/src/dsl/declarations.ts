@@ -924,6 +924,20 @@ function liftEmitFieldValue(
 ): { ast: AstNode; wireType: ScalarType } {
   if (isWrappedNode(raw)) {
     const ast = unwrapAst(raw);
+    // A `messageFieldRead` bakes in `wireType: "f32"` when the field is first
+    // touched, and never follows a later seal — the emit path sidesteps that by
+    // resolving the field from its declaration, but `inferAstType` returns the
+    // stale snapshot. Forwarding an inbound field straight into an outbound event
+    // therefore recorded f32 even after the source sealed to bool, so a consumer
+    // who declared `boolean` on both sides received 1 / 0 typed `number`.
+    // Resolve the same way emission does: from the source declaration.
+    if (ast.kind === "messageFieldRead") {
+      const source = getCurrentCapture().declarations.find(
+        (d): d is MessageDeclAst => d.kind === "message" && d.name === ast.name,
+      );
+      const sourceField = source?.fields.find((f) => f.name === ast.field);
+      if (sourceField !== undefined) return { ast, wireType: sourceField.wireType };
+    }
     return { ast, wireType: inferAstType(ast) };
   }
   if (typeof raw === "boolean") {

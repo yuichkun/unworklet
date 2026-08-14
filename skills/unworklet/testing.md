@@ -40,6 +40,12 @@ Cite `packages/test/README.md`, `examples/demo/src/examples.render.test.ts:31`, 
   same types via dev-only `packages/test/src/fork-assertion.d.ts` (`declare module
 "vite-plus/test"`, NOT shipped).
 
+  Because that augmentation has to resolve `@vitest/expect`, it is a **required
+  peer** of `@unworklet/test`, not an optional one. npm installs it for you; under
+  pnpm or Yarn PnP, where a dependency's dependencies are not visible to siblings,
+  add it explicitly (`pnpm add -D @vitest/expect`) or the shipped types fail with
+  `TS2664: Invalid module name in augmentation`.
+
 ```ts
 // vitest.setup.ts
 import "@unworklet/test/extend";
