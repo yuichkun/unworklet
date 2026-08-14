@@ -544,3 +544,82 @@ process(() => {
   expect(withState).toMatch(/tick\(gain\)/);
   expect(withNode).toMatch(/tick\(gain\.read\(\)\)/);
 });
+
+test("a .uwk.ts reached through a JavaScript helper is reported too", async () => {
+  // The diagnostic for the TypeScript case recommends renaming the helper to
+  // `.mjs` — an extension the check itself did not walk, so the recommended way
+  // out led straight back to `defineSubgraph is not defined`.
+  // Reported by @codex on #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-jsbarrel-"));
+  writeFileSync(
+    path.join(dir, "voice.uwk.ts"),
+    `export const voice = defineSubgraph(() => {
+  const phase = state.f32(0).named("phase");
+  return { tick: () => phase };
+});`,
+  );
+  writeFileSync(path.join(dir, "barrel.mjs"), `export { voice } from "./voice.uwk.ts";\n`);
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `import { voice } from "./barrel.mjs";
+
+const out = audioOutput({ channels: 1, name: "main" });
+const v = instantiate(voice, { name: "v" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = v.tick();
+  });
+});`,
+  );
+
+  const err = await loadUwkProcessor(src).then(
+    () => undefined,
+    (e: unknown) => e as Error,
+  );
+  expect(err?.message).toMatch(/@unworklet\/lang/);
+  expect(err?.message).toMatch(/barrel\.mjs/);
+  expect(err?.message).toMatch(/voice\.uwk\.ts/);
+  expect(err?.message).not.toMatch(/defineSubgraph is not defined/);
+});
+
+test("editing a helper between two loads in one process recompiles against the new value", () => {
+  // Node's ESM cache is permanent and keyed by URL. The entry temp is
+  // cache-busted, but its `./constants.mjs` specifier resolved to the same URL
+  // both times, so the second load silently compiled the FIRST run's constant
+  // into the graph — a wrong result with nothing to indicate it.
+  // Runs in a child process because in-process the `import()` would be Vite's
+  // module runner, which has its own invalidation and never shows this.
+  // Reported by @codex on #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-helperCache-"));
+  const constants = path.join(dir, "constants.mjs");
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `import { GAIN } from "./constants.mjs";
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = GAIN;
+  });
+});`,
+  );
+
+  const script = `
+    const { writeFileSync } = await import("node:fs");
+    const { loadUwkProcessor } = await import(${JSON.stringify(pathToFileURL(path.join(LANG, "dist/index.mjs")).href)});
+    writeFileSync(${JSON.stringify(constants)}, "export const GAIN = 0.25;\\n");
+    const a = await loadUwkProcessor(${JSON.stringify(src)});
+    writeFileSync(${JSON.stringify(constants)}, "export const GAIN = 0.75;\\n");
+    const b = await loadUwkProcessor(${JSON.stringify(src)});
+    const j = (p) => JSON.stringify(p.graph);
+    console.log("FIRST_HAS_025:" + j(a).includes("0.25"));
+    console.log("SECOND_HAS_075:" + j(b).includes("0.75"));
+    console.log("SECOND_HAS_025:" + j(b).includes("0.25"));
+  `;
+  const r = spawnSync("node", ["--input-type=module", "-e", script], { encoding: "utf8" });
+  const output = `${r.stdout}${r.stderr}`;
+  expect(output).toMatch(/FIRST_HAS_025:true/);
+  expect(output).toMatch(/SECOND_HAS_075:true/);
+  expect(output).toMatch(/SECOND_HAS_025:false/);
+});

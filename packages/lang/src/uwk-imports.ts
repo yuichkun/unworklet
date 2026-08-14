@@ -100,6 +100,26 @@ export function runtimeModuleSpecifiers(source: string): string[] {
   return out;
 }
 
+/**
+ * The RELATIVE modules an emitted temp still asks Node to load, whatever their
+ * extension — the author's own helper files, JavaScript ones included.
+ *
+ * Separate from `plainTsModuleSpecifiers`, which answers a narrower question
+ * (which of them this Node cannot load at all). Anything reachable from a temp
+ * can lead on to a `.uwk.ts`, and a `.mjs` helper leads there just as easily as
+ * a `.ts` one — more easily, in fact, since `.mjs` is what the TypeScript
+ * diagnostic recommends renaming to.
+ */
+export function relativeModuleSpecifiers(emittedJs: string): string[] {
+  const sf = ts.createSourceFile("__m.js", emittedJs, ts.ScriptTarget.ESNext, true);
+  const out: string[] = [];
+  for (const { spec } of moduleRefs(sf)) {
+    if (!spec.startsWith("./") && !spec.startsWith("../")) continue;
+    if (!out.includes(spec)) out.push(spec);
+  }
+  return out;
+}
+
 /** Rewrite a lowered `.ts` module's module specifiers per `map` (original →
  * replacement), in both directions — an `import … from` and a barrel's
  * `export … from` alike. Specifiers absent from `map` are left unchanged. */
