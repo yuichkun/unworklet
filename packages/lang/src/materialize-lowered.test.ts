@@ -508,3 +508,39 @@ process(() => {
 
   expect(withNode).not.toBe(withState);
 });
+
+test("the lowering cache follows a dependency written with a .js specifier", () => {
+  // NodeNext substitutes extensions: `import type { TickArg } from "./types.js"`
+  // resolves to `types.ts`. Deciding the dependency set by the specifier's
+  // literal extension therefore misses a file whose types the lowering very much
+  // reads — and a stale key is invisible, because the importer's own text and
+  // its sibling's are both unchanged. Reported by @codex on #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-jsspec-"));
+  const types = path.join(dir, "types.ts");
+  const synth = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    path.join(dir, "voice.uwk.ts"),
+    `import type { TickArg } from "./types.js";
+export const voice = defineSubgraph(() => ({ tick: (s: TickArg) => f32(1) }));`,
+  );
+  const synthText = `import { voice } from "./voice.uwk.ts";
+
+const gain = state.f32(0.5).named("gain");
+const out = audioOutput({ channels: 1, name: "main" });
+const v = instantiate(voice, { name: "v" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = v.tick(gain);
+  });
+});`;
+  writeFileSync(synth, synthText);
+
+  writeFileSync(types, `export type TickArg = State<"f32">;\n`);
+  const withState = lowerUwkSource(synth, synthText);
+
+  writeFileSync(types, `export type TickArg = Node<"f32">;\n`);
+  const withNode = lowerUwkSource(synth, synthText);
+
+  expect(withState).toMatch(/tick\(gain\)/);
+  expect(withNode).toMatch(/tick\(gain\.read\(\)\)/);
+});

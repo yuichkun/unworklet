@@ -53,7 +53,13 @@ const SELF_DIR =
   (import.meta as { dirname?: string }).dirname ??
   (typeof __dirname === "string" ? __dirname : "/__uwk__");
 
-const COMPILER_OPTIONS: ts.CompilerOptions = {
+/**
+ * Exported so anything that needs to reason about what this program READS
+ * resolves specifiers by the same rules it does — `.js` substituting to `.ts`,
+ * `allowImportingTsExtensions`, `customConditions`. Re-deriving those elsewhere
+ * is how a dependency goes unnoticed.
+ */
+export const COMPILER_OPTIONS: ts.CompilerOptions = {
   target: ts.ScriptTarget.ESNext,
   // ES libs only — NOT the DOM lib. DOM declares a non-generic `interface Node`,
   // which would collide with the ambient's generic `Node<T>` alias (making a
