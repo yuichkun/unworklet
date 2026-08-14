@@ -68,12 +68,36 @@ export function plainTsModuleSpecifiers(emittedJs: string): string[] {
   return out;
 }
 
-/** Every module specifier a source names, in either direction — for walking a
- * module graph this package does not own and must not rewrite. */
+/** Every module specifier a source names, in either direction — including
+ * type-only edges, which carry no runtime dependency but very much affect a
+ * type-directed lowering. */
 export function moduleSpecifiers(source: string): string[] {
   return moduleRefs(ts.createSourceFile("__m.ts", source, ts.ScriptTarget.ESNext, true)).map(
     (r) => r.spec,
   );
+}
+
+/**
+ * The specifiers a source still loads once Node's strip-only mode has erased its
+ * types — for walking a module graph this package does not own and must not
+ * rewrite, where Node is the loader.
+ *
+ * Only a CLAUSE-level `type` removes the edge (`import type { T } from …`,
+ * `export type { T } from …`). The inline form (`export { type T } from …`)
+ * does not: Node drops the specifier and keeps the statement, so the module is
+ * still loaded. That is the opposite of what `ts.transpileModule` does with the
+ * same syntax, which is why this cannot be shared with the emit-side scan.
+ */
+export function runtimeModuleSpecifiers(source: string): string[] {
+  const sf = ts.createSourceFile("__m.ts", source, ts.ScriptTarget.ESNext, true);
+  const out: string[] = [];
+  for (const { stmt, spec } of moduleRefs(sf)) {
+    const typeOnly = ts.isImportDeclaration(stmt)
+      ? stmt.importClause?.isTypeOnly === true
+      : stmt.isTypeOnly;
+    if (!typeOnly) out.push(spec);
+  }
+  return out;
 }
 
 /** Rewrite a lowered `.ts` module's module specifiers per `map` (original →

@@ -22,7 +22,7 @@ import { pathToFileURL } from "node:url";
 
 import { afterEach, expect, test } from "vite-plus/test";
 
-import { loadUwkProcessor, materializeLowered } from "./materialize-lowered.ts";
+import { loadUwkProcessor, lowerUwkSource, materializeLowered } from "./materialize-lowered.ts";
 
 // The fixtures live inside this package so the lowered temps resolve
 // `@unworklet/core` by walking up to `packages/lang/node_modules`, exactly as a
@@ -427,4 +427,84 @@ process(() => {
   expect(err?.message).not.toMatch(/defineSubgraph is not defined/);
 
   expect(readdirSync(dir).filter((f) => f.includes("uwklowered"))).toEqual([]);
+});
+
+test("a helper's type-only re-export of a .uwk.ts is not treated as a runtime edge", async () => {
+  // Node's strip-only mode erases `export type { X } from "./y.uwk.ts"` entirely
+  // — the module is never loaded — so a helper carrying one is perfectly
+  // loadable and must not be rejected by the diagnostic above. (Its INLINE
+  // cousin, `export { type X } from …`, is a different case: Node drops the
+  // specifier but keeps the module edge, so that one is still a live edge.)
+  // Reported by @codex on #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-typeonly-"));
+  writeFileSync(
+    path.join(dir, "voice.uwk.ts"),
+    `export type VoiceHandle = { tick: () => Node<"f32"> };
+export const voice = defineSubgraph(() => {
+  const phase = state.f32(0).named("phase");
+  return { tick: () => phase };
+});`,
+  );
+  writeFileSync(
+    path.join(dir, "helper.ts"),
+    `export type { VoiceHandle } from "./voice.uwk.ts";\nexport const GAIN = 0.25;\n`,
+  );
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `import { GAIN } from "./helper.ts";
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = GAIN;
+  });
+});`,
+  );
+
+  const proc = await loadUwkProcessor(src);
+  expect(typeof proc.schemaHash).toBe("string");
+});
+
+test("editing a sibling subgraph re-lowers its importer, whose own text did not change", async () => {
+  // `lower()` is type-directed: whether a bare state passed to a subgraph method
+  // gets an auto-inserted `.read()` depends on that method's declared parameter
+  // type, which lives in the SIBLING file. Keying the lowering cache on the
+  // importer's own path and text alone therefore serves a stale lowering to the
+  // dev server's rebuild after a subgraph-only edit. Reported by @codex on #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-sibling-"));
+  const voice = path.join(dir, "voice.uwk.ts");
+  const synth = path.join(dir, "synth.uwk.ts");
+  const synthText = `import { voice } from "./voice.uwk.ts";
+
+const gain = state.f32(0.5).named("gain");
+const out = audioOutput({ channels: 1, name: "main" });
+const v = instantiate(voice, { name: "v" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = v.tick(gain);
+  });
+});`;
+  writeFileSync(synth, synthText);
+
+  // A `State<"f32">` parameter takes the state itself — the bare `gain` stays a
+  // reference.
+  writeFileSync(
+    voice,
+    `export const voice = defineSubgraph(() => ({
+  tick: (s: State<"f32">) => s.read() * f32(2),
+}));`,
+  );
+  const withState = lowerUwkSource(synth, synthText);
+
+  // A `Node<"f32">` parameter takes a value — the same bare `gain` must now be
+  // read.
+  writeFileSync(
+    voice,
+    `export const voice = defineSubgraph(() => ({
+  tick: (x: Node<"f32">) => mul(x, f32(2)),
+}));`,
+  );
+  const withNode = lowerUwkSource(synth, synthText);
+
+  expect(withNode).not.toBe(withState);
 });
