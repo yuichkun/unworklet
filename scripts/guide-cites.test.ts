@@ -10,6 +10,7 @@
  * something a test can catch, but a dangling path is, and that is the failure
  * mode that has actually happened.
  */
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
@@ -83,4 +84,23 @@ test("every line range the guide cites fits inside the file it names", () => {
     })
     .map((r) => `${r.file} → ${r.path} cites L${r.lastLine}, file has ${lineCount.get(r.path)}`);
   expect([...new Set(past)]).toEqual([]);
+});
+
+test("no tracked text file carries a NUL byte", () => {
+  // A single NUL makes Git classify the whole file as binary: `git diff` reports
+  // only "Binary files differ", so every later change to it lands unreviewable
+  // and nothing about the source looks wrong. It reached a central loader module
+  // as a hash delimiter written literally instead of as `\0`.
+  // Reported by @codex on #43.
+  const tracked = execFileSync("git", ["ls-files", "-z", "*.ts", "*.tsx", "*.md", "*.json"], {
+    cwd: REPO,
+    encoding: "buffer",
+  })
+    .toString("utf8")
+    .split("\0")
+    .filter((f) => f !== "");
+  expect(tracked.length).toBeGreaterThan(50);
+
+  const binary = tracked.filter((f) => readFileSync(path.join(REPO, f)).includes(0));
+  expect(binary).toEqual([]);
 });
