@@ -379,3 +379,56 @@ process(() => {
   expect(output).toMatch(/arithmetic operation|TS2362/);
   expect(output).toMatch(/check\.uwk\.ts/);
 });
+
+// `runTsc` honours `--project`, so the witness pre-pass must resolve the same
+// tsconfig. Searching from the cwd instead populated a different project (or
+// none), leaving the checked one on the wildcard witness with real payload
+// errors passing — the exact failure the pre-pass exists to prevent.
+// Reported by @codex on #43.
+test("unworklet-tsc honours --project when populating the witness", () => {
+  const app = path.join(dir, "projflag");
+  mkdirSync(app, { recursive: true });
+  writeFileSync(
+    path.join(app, "tsconfig.json"),
+    JSON.stringify({
+      extends: "./.unworklet/tsconfig.json",
+      compilerOptions: { types: [] },
+    }),
+  );
+  writeFileSync(
+    path.join(app, "synth.uwk.ts"),
+    `const out = audioOutput({ channels: 1, name: "main" });
+const meter = event<{ peak: number }>({ to: "main", name: "meter" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = 0;
+    meter.emitIf(bool(true), { peak: 0.5, atSample: i });
+  });
+});`,
+  );
+  writeFileSync(
+    path.join(app, "main.ts"),
+    `import { createNode } from "@unworklet/core";
+import synth from "./synth.uwk.ts?worklet";
+declare const ctx: AudioContext;
+async function boot() {
+  const node = await createNode(ctx, synth);
+  node.events.meter.on((p) => {
+    const _bad: number = p.nope; // must fail once the witness is populated
+    console.log(_bad);
+  });
+}
+void boot();`,
+  );
+  rmSync(path.join(app, ".unworklet"), { recursive: true, force: true });
+
+  // Run from `dir`, pointing at the subproject — the pre-pass must follow the
+  // flag rather than resolving `dir`'s own tsconfig.
+  const r = spawnSync("node", [bin, "--project", "projflag/tsconfig.json", "--noEmit"], {
+    cwd: dir,
+    encoding: "utf8",
+  });
+  const output = `${r.stdout}${r.stderr}`;
+  expect(output).toMatch(/nope/);
+  expect(existsSync(path.join(app, ".unworklet/worklets.d.ts"))).toBe(true);
+});

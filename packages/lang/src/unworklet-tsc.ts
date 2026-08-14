@@ -29,32 +29,62 @@ import { isUwkSource, loadUwkProcessor } from "./materialize-lowered.ts";
 import { seedUnworkletDir } from "./seed-unworklet-dir.ts";
 import { workletsDts } from "./worklet-dts.ts";
 
-// Materialize `.unworklet/tsconfig.json` (+ empty `worklets.d.ts`) in the cwd
-// before tsc reads any consumer tsconfig, so a cold checkout whose tsconfig
+/**
+ * The directory whose `.unworklet/` this run owns. Both the seed and the witness
+ * belong next to the tsconfig being checked, not next to the cwd: the generated
+ * `.unworklet/tsconfig.json` is reached by the consumer's
+ * `"extends": "./.unworklet/tsconfig.json"`, which resolves relative to that
+ * tsconfig. With `--project sub/tsconfig.json` run from the repo root, seeding
+ * the root would leave `sub/` unseeded and its witness empty.
+ */
+const projectConfig = resolveProjectConfig(process.cwd(), process.argv.slice(2));
+const projectDir = projectConfig === undefined ? process.cwd() : path.dirname(projectConfig);
+
+// Materialize `.unworklet/tsconfig.json` (+ empty `worklets.d.ts`) before tsc
+// reads any consumer tsconfig, so a cold checkout whose tsconfig
 // `"extends": "./.unworklet/tsconfig.json"` does not fail TS5083 before the
 // build ever runs. Idempotent — a subsequent `vite dev` / `vite build` re-seeds
 // the same file and (in the plugin's case) fills in `worklets.d.ts`.
-seedUnworkletDir(process.cwd());
+seedUnworkletDir(projectDir);
 
 /**
- * Compile every `.uwk.ts` file the consumer's tsconfig would include, and
- * OVERWRITE `.unworklet/worklets.d.ts` with the aggregate `?worklet` witness.
- * This is what turns a cold `unworklet-tsc --noEmit` from "silently passes real
- * type errors because payloads fall back to `unknown`" into "sees the same
- * per-processor shapes a warm `vite build` would populate" (R5 gap 4).
+ * The tsconfig this invocation is actually about. `runTsc` honours `--project`
+ * / `-p`, so a pre-pass that always searched from the cwd would populate (or
+ * skip) a different project than the one being checked — leaving the checked
+ * project on the wildcard witness with real payload / state errors passing,
+ * which is the failure this pre-pass exists to prevent. A directory argument
+ * means "the tsconfig.json inside it", matching tsc.
+ */
+function resolveProjectConfig(cwd: string, argv: readonly string[]): string | undefined {
+  const i = argv.findIndex((a) => a === "--project" || a === "-p");
+  const explicit = i >= 0 ? argv[i + 1] : undefined;
+  if (explicit === undefined) return ts.findConfigFile(cwd, ts.sys.fileExists.bind(ts.sys));
+  const resolved = path.resolve(cwd, explicit);
+  if (ts.sys.directoryExists(resolved)) {
+    const inDir = path.join(resolved, "tsconfig.json");
+    return ts.sys.fileExists(inDir) ? inDir : undefined;
+  }
+  return ts.sys.fileExists(resolved) ? resolved : undefined;
+}
+
+/**
+ * Compile every `.uwk.ts` the given tsconfig includes and OVERWRITE its
+ * `.unworklet/worklets.d.ts` with the aggregate `?worklet` witness. This is what
+ * turns a cold `unworklet-tsc --noEmit` from "silently passes real type errors
+ * because payloads fall back to `unknown`" into "sees the same per-processor
+ * shapes a warm `vite build` would populate".
  *
  * Failures on any single file (a `.uwk.ts` with syntax errors, a lowering that
  * throws, a missing sibling import) skip that entry — those show up as real tsc
- * diagnostics moments later, so we do not want the witness step to double-report
- * them. Other processors in the same project keep their populated entries.
+ * diagnostics moments later, so the witness step must not double-report them.
+ * Other processors in the same project keep their populated entries.
  *
  * The `.processor.ts` (explicit form) case is NOT covered: those are ordinary
  * Node-importable TS modules and populating their witness requires a runtime
  * loader (tsx / ts-node) we do not want to pull in. Consumers who mix
  * `.processor.ts` still get the (documented) build-then-typecheck order.
  */
-async function populateWorkletsWitness(cwd: string): Promise<void> {
-  const tsconfigPath = ts.findConfigFile(cwd, ts.sys.fileExists.bind(ts.sys));
+async function populateWorkletsWitness(tsconfigPath: string | undefined): Promise<void> {
   if (tsconfigPath === undefined) return;
   const raw = ts.readConfigFile(tsconfigPath, (p) => fs.readFileSync(p, "utf8"));
   if (raw.error !== undefined) return; // let tsc surface the tsconfig error itself
@@ -75,13 +105,15 @@ async function populateWorkletsWitness(cwd: string): Promise<void> {
   }
   if (entries.length === 0) return;
 
-  const witnessDir = path.join(cwd, ".unworklet");
+  // Next to the tsconfig being checked — the same directory `seedUnworkletDir`
+  // used — so `--project sub/tsconfig.json` writes `sub/.unworklet/`.
+  const witnessDir = path.join(path.dirname(tsconfigPath), ".unworklet");
   fs.mkdirSync(witnessDir, { recursive: true });
   const witnessPath = path.join(witnessDir, "worklets.d.ts");
   fs.writeFileSync(witnessPath, workletsDts(entries));
 }
 
-await populateWorkletsWitness(process.cwd());
+await populateWorkletsWitness(projectConfig);
 
 const tscPath = createRequire(import.meta.url).resolve("typescript/lib/tsc");
 // The shipped ambient (`audioInput` / `state` / `mul` / … as globals) sits next to
