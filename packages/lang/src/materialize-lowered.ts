@@ -8,7 +8,7 @@ import ts from "typescript";
 
 import { lower } from "./lower.ts";
 import {
-  plainTsImportSpecifiers,
+  plainTsModuleSpecifiers,
   rewriteImportSpecifiers,
   uwkImportSpecifiers,
 } from "./uwk-imports.ts";
@@ -170,29 +170,6 @@ export const materializeLowered = async (
     remap[spec] = rel;
   }
   if (Object.keys(remap).length > 0) lowered = rewriteImportSpecifiers(lowered, remap);
-  // A plain `./helper.ts` the author imported survives lowering as-is, so the
-  // temp — JavaScript though it is — still imports raw TypeScript. Only a Node
-  // that strips types can load that, and this package supports older ones.
-  //
-  // We do NOT transpile the author's own modules to make it work: without their
-  // tsconfig we would be guessing settings that change meaning (type-only import
-  // elision, decorators, class field semantics), and silently altering user code
-  // is not something this toolchain does. Fail loudly and name the two ways out.
-  // Absent, not false, is what Node 20 reports — the property only exists once
-  // the capability does. Comparing against `false` would skip the check on the
-  // exact runtime it is here for.
-  if (!process.features.typescript) {
-    const plain = plainTsImportSpecifiers(lowered);
-    if (plain.length > 0) {
-      throw new Error(
-        `@unworklet/lang: ${path.basename(sourcePath)} imports ${plain.map((s) => `"${s}"`).join(", ")}, ` +
-          `and this Node (${process.version}) cannot load TypeScript. Either run Node 22.18+ / 23.6+, ` +
-          `where type-stripping is built in, or give the helper a JavaScript extension ` +
-          `(rename to .mjs and import it as "./helper.mjs"). Sibling .uwk.ts imports are ` +
-          `unaffected — those are lowered to JavaScript for you.`,
-      );
-    }
-  }
   // Strip types here so the temp is plain ESM every supported Node can import.
   // `sourcePath` is passed as the file name purely for diagnostics.
   const emitted = ts.transpileModule(lowered, {
@@ -205,6 +182,33 @@ export const materializeLowered = async (
       verbatimModuleSyntax: false,
     },
   }).outputText;
+  // A plain `./helper.ts` the author imported survives lowering as-is, so the
+  // temp — JavaScript though it is — still points at raw TypeScript. Only a Node
+  // that strips types can load that, and this package supports older ones.
+  //
+  // We do NOT transpile the author's own modules to make it work: without their
+  // tsconfig we would be guessing settings that change meaning (type-only import
+  // elision, decorators, class field semantics), and silently altering user code
+  // is not something this toolchain does. Fail loudly and name the two ways out.
+  //
+  // Read from the emit, not from the lowered source: which specifiers survive is
+  // a property of the emit (a type-only or unused binding is dropped), so
+  // predicting it from the AST reports files Node never asks for. Absent, not
+  // false, is what Node 20 reports for the capability — the property only exists
+  // once the capability does, so comparing against `false` would skip the check
+  // on the exact runtime it is here for.
+  if (!process.features.typescript) {
+    const plain = plainTsModuleSpecifiers(emitted);
+    if (plain.length > 0) {
+      throw new Error(
+        `@unworklet/lang: ${path.basename(sourcePath)} imports ${plain.map((s) => `"${s}"`).join(", ")}, ` +
+          `and this Node (${process.version}) cannot load TypeScript. Either run Node 22.18+ / 23.6+, ` +
+          `where type-stripping is built in, or give the helper a JavaScript extension ` +
+          `(rename to .mjs and import it as "./helper.mjs"). Sibling .uwk.ts imports are ` +
+          `unaffected — those are lowered to JavaScript for you.`,
+      );
+    }
+  }
   const tag = createHash("sha256").update(emitted).digest("hex").slice(0, 8);
   const tempPath = path.join(dir, `.${path.basename(sourcePath)}.${tag}.uwklowered.mjs`);
   await writeFile(tempPath, emitted);

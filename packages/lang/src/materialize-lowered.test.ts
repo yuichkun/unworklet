@@ -270,3 +270,72 @@ process(() => {
   expect(output).toMatch(/THREW:/);
   expect(output).toMatch(/constants\.mts/);
 });
+
+test("a subgraph library re-exported through a barrel .uwk.ts still lowers", async () => {
+  // Dependency discovery walked import declarations only, so a barrel's
+  // `export { x } from "./x.uwk.ts"` was neither lowered nor rewritten: the temp
+  // kept pointing at the raw `.uwk.ts`, whose bare DSL globals only exist after
+  // lowering. Reported by @codex on #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-barrel-"));
+  writeFileSync(
+    path.join(dir, "onepole.uwk.ts"),
+    `export const onepole = defineSubgraph(() => {
+  const z = state.f32(0).named("z");
+  return {
+    tick: (x: Node<"f32">) => {
+      z.write(z + (x - z) * 0.05);
+      return z;
+    },
+  };
+});`,
+  );
+  writeFileSync(path.join(dir, "lib.uwk.ts"), `export { onepole } from "./onepole.uwk.ts";\n`);
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `import { onepole } from "./lib.uwk.ts";
+
+const out = audioOutput({ channels: 1, name: "main" });
+const lp = instantiate(onepole, { name: "lp" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = lp.tick(f32(0.5));
+  });
+});`,
+  );
+
+  const proc = await loadUwkProcessor(src);
+  expect(typeof proc.schemaHash).toBe("string");
+});
+
+test("an inline type-only import is not mistaken for a runtime .ts dependency", () => {
+  // `import { type Gain } from "./types.ts"` sets `isTypeOnly` on the SPECIFIER,
+  // not on the import clause — only `import type { Gain } ...` sets the clause.
+  // The transpile erases both alike, so Node never loads the file and the
+  // capability guard must not reject it. Reported by @codex on #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-inlineType-"));
+  writeFileSync(path.join(dir, "types.ts"), `export type Gain = number;\n`);
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `import { type Gain } from "./types.ts";
+const g: Gain = 0.25;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = g;
+  });
+});`,
+  );
+
+  const script = `
+    delete process.features.typescript;
+    const { materializeLowered } = await import(${JSON.stringify(pathToFileURL(path.join(LANG, "dist/index.mjs")).href)});
+    const temp = await materializeLowered(${JSON.stringify(src)}, new Map(), new Set(), []);
+    await import(temp);
+    console.log("LOADED");
+  `;
+  const r = spawnSync("node", ["--input-type=module", "-e", script], { encoding: "utf8" });
+  const output = `${r.stdout}${r.stderr}`;
+  expect(output).toMatch(/LOADED/);
+});
