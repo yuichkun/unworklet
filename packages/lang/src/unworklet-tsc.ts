@@ -95,10 +95,15 @@ function foreignWitnessBlocks(witness: string): string {
  * This pass owns exactly the `.uwk.ts` entries, and rewrites them to the set it
  * could load — so deleting or renaming a processor removes its entry rather than
  * leaving a witness for a file that is gone (an ambient pattern matches the
- * specifier text, so nothing else would notice). A file that fails to load (a
- * syntax error, a lowering that throws, a missing sibling import) simply has no
- * entry this run and falls back to the wildcard; tsc reports the real cause a
- * moment later, so this step must not double-report it.
+ * specifier text, so nothing else would notice).
+ *
+ * A processor that cannot be loaded is REPORTED and fails the run. Not every such
+ * failure is something tsc goes on to report: `noiseSource({ seed: 0.5 })`
+ * satisfies TypeScript's `number` and throws when the graph is captured, so
+ * swallowing it let the command exit 0 on a processor that cannot be compiled —
+ * and left every consumer of it on the wildcard witness, which is the silent pass
+ * this pre-pass exists to prevent. tsc still runs first, so its own diagnostics
+ * (usually the more precise account) are not displaced by ours.
  *
  * The `.processor.ts` (explicit form) case is NOT covered: those are ordinary
  * Node-importable TS modules and populating their witness requires a runtime
@@ -114,15 +119,32 @@ async function populateWorkletsWitness(tsconfigPath: string | undefined): Promis
   const uwkFiles = parsed.fileNames.filter(isUwkSource);
 
   const entries: { source: string; ns: WorkletNamespace }[] = [];
+  const failures: { file: string; reason: string }[] = [];
   for (const file of uwkFiles) {
     try {
       const processor = await loadUwkProcessor(file);
       entries.push({ source: file, ns: processor.worklet });
-    } catch {
-      // A lowering / compile / import failure here is a real user-facing error
-      // that tsc will surface a moment later — skip populate for this file
-      // (leaves it on the wildcard fallback for this run).
+    } catch (err) {
+      failures.push({ file, reason: err instanceof Error ? err.message : String(err) });
     }
+  }
+  if (failures.length > 0) {
+    // Reported after tsc, so tsc's diagnostics come first: for a file that fails
+    // to load BECAUSE of a type error, tsc's account is the precise one and ours
+    // would only bury it. `runTsc` exits the process itself, and an `exit`
+    // listener is the supported way to raise a zero from there.
+    process.on("exit", (code) => {
+      for (const { file, reason } of failures) {
+        console.error(`\n${path.relative(process.cwd(), file)}: cannot be compiled.\n  ${reason}`);
+      }
+      console.error(
+        `\n@unworklet/lang: ${failures.length} processor(s) could not be compiled, so their ` +
+          `\`?worklet\` imports fall back to \`CompiledProcessor<unknown>\` and real payload / ` +
+          `state / event errors in code that uses them go unreported. Failing the run rather ` +
+          `than passing on a witness that is known to be incomplete.\n`,
+      );
+      if (code === 0) process.exitCode = 1;
+    });
   }
 
   // Next to the tsconfig being checked — the same directory `seedUnworkletDir`

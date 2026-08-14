@@ -488,3 +488,38 @@ declare module "*/legacy.processor.ts?worklet" {
   expect(after).not.toMatch(/gone\.uwk\.ts\?worklet/);
   expect(after).toMatch(/legacy\.processor\.ts\?worklet/);
 });
+
+test("a processor that type-checks but cannot be compiled fails the run instead of passing quietly", () => {
+  // The pre-pass swallowed every load failure on the grounds that tsc reports it
+  // moments later. That holds for a type error; it does not hold for a
+  // capture-time one. `noiseSource({ seed: 0.5 })` satisfies TypeScript's
+  // `number` and throws when the graph is captured — so the witness silently fell
+  // back to the wildcard and the command exited 0, which is the precise failure
+  // this pre-pass exists to prevent (for this processor's consumers as well as
+  // for itself). Reported by @codex on #43.
+  const app = path.join(dir, "uncompilable");
+  mkdirSync(app, { recursive: true });
+  writeFileSync(
+    path.join(app, "tsconfig.json"),
+    JSON.stringify({ extends: "./.unworklet/tsconfig.json", compilerOptions: { types: [] } }),
+  );
+  writeFileSync(
+    path.join(app, "synth.uwk.ts"),
+    `const n = noiseSource({ seed: 0.5 });
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = n.next();
+  });
+});`,
+  );
+
+  const r = spawnSync("node", [bin, "--project", "uncompilable/tsconfig.json", "--noEmit"], {
+    cwd: dir,
+    encoding: "utf8",
+  });
+  const output = `${r.stdout}${r.stderr}`;
+  expect(output).toMatch(/synth\.uwk\.ts/);
+  expect(output).toMatch(/seed must be an integer/);
+  expect(r.status, output).not.toBe(0);
+});
