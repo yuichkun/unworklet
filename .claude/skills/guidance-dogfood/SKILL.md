@@ -1,6 +1,6 @@
 ---
 name: guidance-dogfood
-description: unworklet の AI ガイド(`skills/unworklet/` の skill 一式 + `llms.txt` + `README.md`)が実装と乖離していないかを検証して直す。2 方法を併用する — ① 各ガイドの主張を実装と直接照合する drift 監査(`references/drift-audit-workflow.js` を Workflow で file ごと並列)② ガイドだけを渡した subagent に隔離 repo で公開パッケージから現実のプロジェクトを全機能ぶん作らせる blind dogfood(八百長 = source 読み禁止、`references/dogfood-brief.md`)。出た gap を triage して guide を直し、underlying な library bug は issue 化、blind build が clean になるまで再 dogfood。起動 = ガイドの精度を上げたい / release 前 / 「dogfood して」「ガイドが実態と合ってるか確かめて」。
+description: unworklet の AI ガイド(`skills/unworklet/` の skill 一式 + `README.md`)が実装と乖離していないかを検証して直す。2 方法を併用する — ① 各ガイドの主張を実装と直接照合する drift 監査(`references/drift-audit-workflow.js` を Workflow で file ごと並列)② ガイドだけを渡した subagent に隔離 repo で公開パッケージから現実のプロジェクトを全機能ぶん作らせる blind dogfood(八百長 = source 読み禁止、`references/dogfood-brief.md`)。出た gap を triage して guide を直し、underlying な library bug は issue 化、blind build が clean になるまで再 dogfood。起動 = ガイドの精度を上げたい / release 前 / 「dogfood して」「ガイドが実態と合ってるか確かめて」。
 ---
 
 # guidance-dogfood
@@ -13,7 +13,6 @@ unworklet の **AI ガイド**(consumer / LLM が読む doc)が、実装の現�
 対象 = **唯一の SSoT**:
 
 - `skills/unworklet/` — `SKILL.md` + `dsl.md` + `setup.md` + `ide-and-typecheck.md` + `testing.md` + `devtools.md`(plugin がそのまま配る)
-- `llms.txt` — 一般 LLM 向けの地図
 - `README.md` — user-facing
 
 ## なぜこの形か
@@ -124,7 +123,7 @@ guide を直したら、**新しい subagent**(前回の文脈を持たない)�
 - **subagent にバイアスを注入しない**(事実 context のみ)。
 - **重さを理由に library-bug を defer しない**。
 - ハング可能コマンドは timeout で囲む、commit は 1 対応 1 path 明示、報告は短く 1 行ずつ。
-- 触った配布物(`skills/unworklet/*` / `llms.txt` / `README.md`)は `vp fmt` + commit まで。
+- 触った配布物(`skills/unworklet/*` / `README.md`)は `vp fmt` + commit まで。
 
 ## メンテナンス
 

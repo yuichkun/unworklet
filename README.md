@@ -138,18 +138,28 @@ operators? Write the same processor as a plain `.processor.ts` with the core API
 
 ## Use it with an AI agent
 
-unworklet ships a Claude Code skill carrying the exact DSL forms, so an agent
-scaffolds a project and writes correct processors without hallucinating the API.
-Install it once:
+unworklet ships an agent skill carrying the exact DSL forms, so an agent scaffolds
+a project and writes correct processors without hallucinating the API. Install it
+into your project once:
 
 ```sh
-/plugin marketplace add yuichkun/unworklet
-/plugin install unworklet@unworklet
+npx skills add https://github.com/yuichkun/unworklet/tree/main/skills/unworklet
 ```
 
-Then just ask — **"make an FM synth with unworklet"** — and Claude Code sets up the
-project and implements it. For other LLMs (ChatGPT, Claude.ai), paste
-[`llms.txt`](./llms.txt) into the chat.
+That detects the coding agents you have and installs the skill for each of them —
+Claude Code, Codex, Cursor, opencode, Zed, Copilot and others. Then just ask —
+**"make an FM synth with unworklet"** — and the agent sets up the project and
+implements it. Update later with `npx skills update`.
+
+Prefer not to run the installer? Copy [`skills/unworklet/`](./skills/unworklet/)
+into your project as `.agents/skills/unworklet/` — the directory layout is already
+the convention that Codex, Cursor, opencode, Zed, Copilot and Gemini CLI read.
+Claude Code reads `.claude/skills/` instead, so copy it there for that one. Copy
+the whole folder either way: `SKILL.md` points at its siblings by filename.
+
+For a chat LLM with no repository access (ChatGPT, Claude.ai), paste
+[`skills/unworklet/SKILL.md`](./skills/unworklet/SKILL.md) into the conversation and
+follow its links as you need them.
 
 ## What you can build
 
@@ -351,13 +361,11 @@ clone the repo and start an example locally to try them live.
 ## Docs
 
 End-user / AI-agent guidance lives in [`skills/unworklet/`](./skills/unworklet/) —
-the same files the Claude Code plugin bundles and [`llms.txt`](./llms.txt) points
-general LLMs at:
+the same files `npx skills add` installs into your agents:
 
 - **Start here:** [`skills/unworklet/SKILL.md`](./skills/unworklet/SKILL.md) — the mandatory workflow (scaffold → author → test → typecheck → wire).
 - **DSL / API reference:** [`skills/unworklet/dsl.md`](./skills/unworklet/dsl.md) — `.uwk.ts` sugar + the underlying `@unworklet/core` declaration API.
 - **Setup:** [`skills/unworklet/setup.md`](./skills/unworklet/setup.md) · **Editor / CI typecheck:** [`skills/unworklet/ide-and-typecheck.md`](./skills/unworklet/ide-and-typecheck.md) · **Headless tests:** [`skills/unworklet/testing.md`](./skills/unworklet/testing.md) · **In-browser DevTools panel:** [`skills/unworklet/devtools.md`](./skills/unworklet/devtools.md).
-- **For AI agents / LLMs:** [`llms.txt`](./llms.txt) is the map with exact call forms.
 
 The `docs/` tree is the internal implementation spec used to build v1.0.0; it is
 disposable and not maintained for end users — treat `skills/unworklet/` as the

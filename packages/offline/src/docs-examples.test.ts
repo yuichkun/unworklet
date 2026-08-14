@@ -1,7 +1,7 @@
 /**
  * Living proof for the documented examples — extracted from the docs themselves,
  * not hand-copied. Every complete `defineProcessor(...)` example shown in the
- * package READMEs / the root README / the unworklet Skill / llms.txt is parsed
+ * package READMEs / the root README / the unworklet Skill is parsed
  * out of the markdown and compiled here, and the flagship stereoGain is rendered.
  * If a documented example drifts into something that no longer compiles, this
  * test goes red ("examples are verified, not guessed").
@@ -21,7 +21,6 @@ const DOC_FILES = [
   "README.md",
   "skills/unworklet/SKILL.md",
   "packages/offline/README.md",
-  "llms.txt",
 ];
 
 /** Pull every fenced ```ts block out of a markdown string. */

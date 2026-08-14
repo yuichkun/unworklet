@@ -7,7 +7,7 @@
 ## 渡す前にこちら(orchestrator)が用意するもの
 
 1. 隔離 dir を 1 つ決める。**monorepo の外**(例 `~/Desktop/uwk-dogfood/`)。user の workspace 直下に作らない。場所に迷ったら余湖さんに一言確認する。
-2. ガイド一式を隔離 dir の `_guidance/` に**コピー**する: `skills/unworklet/{SKILL,dsl,setup,ide-and-typecheck,testing,devtools}.md` + `llms.txt`。
+2. ガイド一式を隔離 dir の `_guidance/` に**コピー**する: `skills/unworklet/{SKILL,dsl,setup,ide-and-typecheck,testing,devtools}.md`。
 3. 使う版を決める(`SKILL.md` Phase 0)。公開精度を測る = npm の現公開版。未 release を測る = `vp pm pack` の tgz 群。
 
 unworklet の **source(`packages/*/src`)は渡さない**。

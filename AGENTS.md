@@ -6,14 +6,15 @@ Guidance for AI agents implementing unworklet v1.0.0.
 > implementation_ contract. If you are an AI agent helping someone _build with_
 > unworklet, the consumer-facing entry points are:
 >
-> - [`llms.txt`](./llms.txt) — install-time entry point + DSL quick reference.
 > - Package READMEs with the exact call forms:
 >   [`packages/core/README.md`](./packages/core/README.md),
 >   [`packages/unplugin/README.md`](./packages/unplugin/README.md),
 >   [`packages/lang/README.md`](./packages/lang/README.md),
 >   [`packages/offline/README.md`](./packages/offline/README.md),
 >   [`packages/test/README.md`](./packages/test/README.md).
-> - [`skills/unworklet/SKILL.md`](./skills/unworklet/SKILL.md) — the same surface as a skill (also shipped as the Claude Code plugin).
+> - [`skills/unworklet/SKILL.md`](./skills/unworklet/SKILL.md) — the same surface as an
+>   agent skill, installable into any client with
+>   `npx skills add https://github.com/yuichkun/unworklet/tree/main/skills/unworklet`.
 
 ## What this repository is
 
