@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Guidance for AI agents implementing unworklet v1.0.0.
+Guidance for AI agents working on unworklet itself.
 
 > **Using unworklet (not contributing to it)?** This file is the _contributor /
 > implementation_ contract. If you are an AI agent helping someone _build with_
@@ -25,6 +25,7 @@ Guidance for AI agents implementing unworklet v1.0.0.
 - **The implementation is the truth about behaviour.** There is no separate specification to defer to. A design-time spec drove the v1.0.0 build and was deleted once the implementation shipped and was verified against reality — an unverified second description of the same behaviour can only drift. Recover it from git history at the `v0.1.0` tag if you need the archaeology.
 - **`skills/unworklet/`** is the authoritative _description_ of that behaviour, and the only one kept honest: it is the guide consumers' agents read, its examples compile in CI, and it is re-verified by building real projects from it alone (the `guidance-dogfood` skill). If you change behaviour, change it there in the same commit.
 - **`docs/`** is history only — `decisions-log.md` for why a question was settled the way it was, and the RFCs. Neither describes current behaviour, so neither can contradict it. Do not treat either as a contract.
+- **Citations of the form `01-dsl.md §5` / `05-client.md §2.6`, in source comments and in the kept `docs/` files, point at those deleted chapters.** They are provenance — "this shape was decided there" — not claims about how the code behaves today, which is why they were left in place rather than scrubbed. Read one as history; recover the chapter with `git show v0.1.0:docs/01-dsl.md` if you need it. Never treat one as a specification to conform to, and do not add new ones.
 - If a change requires a decision nobody has made, **stop and surface it** rather than inventing one.
 
 ## Integrity anchor: it runs (HARD CONTRACT)
