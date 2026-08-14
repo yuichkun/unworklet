@@ -50,6 +50,25 @@ test("every path the guide cites exists", () => {
   expect([...new Set(dangling)]).toEqual([]);
 });
 
+test("every sibling guide file the guide sends a reader to exists", () => {
+  // The guide routes between its own files in prose ("see dsl.md"), and renaming
+  // one leaves the others pointing at nothing. A dead pointer costs a reader the
+  // section it was sent to find, and nothing about the text looks wrong — so it
+  // survived a rename and shipped. Reported by @codex on #43.
+  const shipped = new Set(readdirSync(GUIDE_DIR).filter((f) => f.endsWith(".md")));
+  const dangling: string[] = [];
+  let mentions = 0;
+  for (const name of shipped) {
+    const text = readFileSync(path.join(GUIDE_DIR, name), "utf8");
+    for (const [, target] of text.matchAll(/(?<![\w./-])([a-z][a-z-]*\.md)\b/g)) {
+      mentions += 1;
+      if (!shipped.has(target!)) dangling.push(`${name} → ${target!}`);
+    }
+  }
+  expect(mentions).toBeGreaterThan(10);
+  expect([...new Set(dangling)]).toEqual([]);
+});
+
 test("every line range the guide cites fits inside the file it names", () => {
   const lineCount = new Map<string, number>();
   const past = citedRefs()

@@ -18,7 +18,7 @@ Two authoring forms, **same compiled result**:
 Every form below is verified against real source/tests with cited paths. Forms
 not present in the source are omitted, not guessed.
 
-Related references: build-time type-checking → see `tsc.md`; offline render +
+Related references: build-time type-checking → see `ide-and-typecheck.md`; offline render +
 matchers → see `testing.md`; the Vite DevTools dock → see `devtools.md`.
 
 ---
@@ -59,7 +59,7 @@ Rules (all in `packages/lang/src/lower.ts`):
 - **Your own `import`s survive** at module scope (shared consts, sibling
   subgraph files). — `lower.ts:350`
 - **Type-checking:** add `// @ts-nocheck` at the top, OR use the editor plugin /
-  `unworklet-tsc` (see `tsc.md`). The `// @ts-nocheck` is needed _only_ without
+  `unworklet-tsc` (see `ide-and-typecheck.md`). The `// @ts-nocheck` is needed _only_ without
   the editor plugin.
 
 ### Ambient global surface (names usable unimported in `.uwk.ts`)
@@ -722,16 +722,16 @@ defineProcessor<C>((ctx: ProcessorContext) => ProcessorBody, options?: Processor
 
 — `processor.ts:68`. `options.migrations` declares snapshot migrations.
 
-|            | `.uwk.ts` (primary)                                                 | `.processor.ts` (explicit)                                 |
-| ---------- | ------------------------------------------------------------------- | ---------------------------------------------------------- |
-| wrapper    | none — `process(() => …)` ambient macro; file IS the body           | `export const x = defineProcessor((ctx) => ({ process }))` |
-| imports    | none — DSL ambient, injected on lower                               | explicit `import { … } from "@unworklet/core"`             |
-| DSP exprs  | `*`, `[i]`, bare-state read, `?:`, `if`, `$prev`                    | `.mul()` `.add()` `.at(i)` `.read()` `.write()` `select()` |
-| I/O        | ambient stereo injected if omitted                                  | every port declared explicitly                             |
-| `ctx`      | ambient binding                                                     | the `defineProcessor` callback param                       |
-| type-check | `// @ts-nocheck`, OR editor plugin / `unworklet-tsc` (see `tsc.md`) | plain `.ts`, stock `tsc`                                   |
-| SIMD       | none                                                                | full surface incl. `@unworklet/core/simd`                  |
-| extension  | `.uwk.ts`                                                           | `.processor.ts` / `.ts`                                    |
+|            | `.uwk.ts` (primary)                                                               | `.processor.ts` (explicit)                                 |
+| ---------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| wrapper    | none — `process(() => …)` ambient macro; file IS the body                         | `export const x = defineProcessor((ctx) => ({ process }))` |
+| imports    | none — DSL ambient, injected on lower                                             | explicit `import { … } from "@unworklet/core"`             |
+| DSP exprs  | `*`, `[i]`, bare-state read, `?:`, `if`, `$prev`                                  | `.mul()` `.add()` `.at(i)` `.read()` `.write()` `select()` |
+| I/O        | ambient stereo injected if omitted                                                | every port declared explicitly                             |
+| `ctx`      | ambient binding                                                                   | the `defineProcessor` callback param                       |
+| type-check | `// @ts-nocheck`, OR editor plugin / `unworklet-tsc` (see `ide-and-typecheck.md`) | plain `.ts`, stock `tsc`                                   |
+| SIMD       | none                                                                              | full surface incl. `@unworklet/core/simd`                  |
+| extension  | `.uwk.ts`                                                                         | `.processor.ts` / `.ts`                                    |
 
 Do not write a `defineProcessor` wrapper inside a `.uwk.ts`. Mixing operator sugar
 with core `Node` method chains _inside_ a `.uwk.ts` is fine and common (§2).
@@ -744,7 +744,7 @@ with core `Node` method chains _inside_ a `.uwk.ts` is fine and common (§2).
   and serves the DevTools dock (production build compiles the dock to nothing). —
   see `devtools.md`.
 - **Type-check** `.uwk.ts` sugar with the `@unworklet/lang/typescript-plugin`
-  TS-server plugin (editor) or the `unworklet-tsc --noEmit` CLI (CI). — see `tsc.md`.
+  TS-server plugin (editor) or the `unworklet-tsc --noEmit` CLI (CI). — see `ide-and-typecheck.md`.
 - **Browser live-coding:** `compileSource(src)` (full lower→compile→worklet) /
   `lowerToProcessor(src)` from `@unworklet/lang/browser`. **Programmatic:**
   `lower(uwkSource, { exportName })` → virtual `.ts` string. — `packages/lang/src/index.ts:7,19`

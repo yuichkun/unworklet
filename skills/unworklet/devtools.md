@@ -8,9 +8,9 @@ tree-shakes the dev traffic is at `packages/core/src/client.ts:1810`. Panels
 add zero runtime weight in production.
 
 Panels visualize any processor imported via `?worklet` (the loading path — see
-loading.md), authored in `.uwk.ts` (primary, recommended form) or `.processor.ts`
+setup.md), authored in `.uwk.ts` (primary, recommended form) or `.processor.ts`
 (explicit core-method alternative). Both authoring forms render identically; see
-uwk.md. (`README.md` L341)
+dsl.md. (`README.md` L341)
 
 ## Enable (3 steps)
 
@@ -108,7 +108,7 @@ to the 0.4 major, marked optional (`packages/unplugin/package.json`):
 ## Cross-origin isolation (`crossOriginIsolation`, default `true`)
 
 The plugin makes the dev AND preview server cross-origin isolated so
-`SharedArrayBuffer` (the fast main↔worklet transport — see loading.md) works with
+`SharedArrayBuffer` (the fast main↔worklet transport — see dsl.md) works with
 zero app config. It only sets headers the app left unset; it never clobbers an
 app's own COOP/COEP. Production headers stay the app server's job.
 

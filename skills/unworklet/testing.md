@@ -8,8 +8,8 @@ the failure for you. Plain matcher functions throw on failure under any runner; 
 optional `expect(...).to…()` chain form is available via one side-effect import.
 
 The processor under test is authored in `.uwk.ts` (PRIMARY / recommended form — see
-`uwk.md`) or in the `.processor.ts` core method API (`defineProcessor`; the secondary
-explicit alternative — see `loading.md`). Either way it reduces to a
+`dsl.md`) or in the `.processor.ts` core method API (`defineProcessor`; the secondary
+explicit alternative — see `dsl.md`). Either way it reduces to a
 `CompiledProcessor` you feed to `renderOffline`.
 
 ## Package specifiers (exact)
@@ -248,6 +248,8 @@ test("lowpass: a step input ramps smoothly toward it", async () => {
 Multi-file pattern (processor + sibling subgraph):
 
 ```ts
+import { fileURLToPath } from "node:url";
+
 import { loadUwkProcessor } from "@unworklet/lang";
 import { renderOffline } from "@unworklet/offline";
 import { expect, test } from "vite-plus/test";
@@ -255,7 +257,11 @@ import { expect, test } from "vite-plus/test";
 test("subgraph split across files renders correctly", async () => {
   // `./main.uwk.ts` imports `./gainStep.uwk.ts`. loadUwkProcessor handles
   // both — lower each, materialise temp siblings, dynamic-import the entry.
-  const processor = await loadUwkProcessor(new URL("./main.uwk.ts", import.meta.url).pathname);
+  // `fileURLToPath`, not `.pathname`: the latter yields `/C:/…` on Windows and
+  // leaves `%20` in place, so the path never resolves.
+  const processor = await loadUwkProcessor(
+    fileURLToPath(new URL("./main.uwk.ts", import.meta.url)),
+  );
   const r = await renderOffline(processor, {
     sampleRate: 48000,
     duration: 128 / 48000,
@@ -282,7 +288,7 @@ process(() => {
 ```
 
 A shipped consumer instead `import`s the `.uwk.ts` default export (compiled by
-`@unworklet/unplugin` via `?worklet`; see `loading.md`) and passes the resulting
+`@unworklet/unplugin` via `?worklet`; see `setup.md`) and passes the resulting
 `CompiledProcessor` straight to `renderOffline`.
 
 ## Complete real test — SECONDARY: explicit core method API (`.processor.ts`)
