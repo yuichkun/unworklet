@@ -41,38 +41,54 @@ export function workletDts(specifier: string, ns: WorkletNamespace): string {
   // `EventSurfaceFor` in `@unworklet/core` reads these back into payload types.
   type WitnessField = { name: string; wireType?: string; payloadElementType?: string };
   type WitnessRing = { name: string; fields?: readonly WitnessField[] };
-  type EventInfo = { out: boolean; in: boolean; fields: Map<string, string> };
+  // The two directions are separate rings with separate payloads, so their field
+  // sets are tracked separately. Merging them would make a same-name in/out pair
+  // (Q87) demand the outbound fields on `.emit(...)` and promise the inbound ones
+  // to `.on(...)`, neither of which the runtime carries.
+  type EventInfo = { outFields?: Map<string, string>; inFields?: Map<string, string> };
   const eventInfo = new Map<string, EventInfo>();
   const fieldMarker = (f: WitnessField): string =>
     f.payloadElementType !== undefined
       ? `{ array: ${JSON.stringify(f.payloadElementType)} }`
       : JSON.stringify(f.wireType ?? "unknown");
-  const mergeFields = (info: EventInfo, r: WitnessRing): void => {
-    for (const f of r.fields ?? []) info.fields.set(f.name, fieldMarker(f));
+  const collect = (r: WitnessRing, into?: Map<string, string>): Map<string, string> => {
+    const m = into ?? new Map<string, string>();
+    for (const f of r.fields ?? []) m.set(f.name, fieldMarker(f));
+    return m;
   };
   const ensureInfo = (name: string): EventInfo => {
     const prior = eventInfo.get(name);
     if (prior !== undefined) return prior;
-    const info: EventInfo = { out: false, in: false, fields: new Map() };
+    const info: EventInfo = {};
     eventInfo.set(name, info);
     return info;
   };
   for (const r of ns.eventRings as readonly WitnessRing[]) {
     const info = ensureInfo(r.name);
-    info.out = true;
-    mergeFields(info, r);
+    info.outFields = collect(r, info.outFields);
   }
   for (const r of ns.messageRings as readonly WitnessRing[]) {
     const info = ensureInfo(r.name);
-    info.in = true;
-    mergeFields(info, r);
+    info.inFields = collect(r, info.inFields);
   }
+  const fieldsBody = (m: Map<string, string> | undefined): string => {
+    const s = [...(m ?? [])].map(([n, t]) => `${JSON.stringify(n)}: ${t}`).join("; ");
+    return s === "" ? "{}" : `{ ${s} }`;
+  };
   const events = [...eventInfo]
     .map(([name, info]) => {
-      const dir = info.out && info.in ? "inout" : info.out ? "out" : "in";
-      const fieldsStr = [...info.fields].map(([n, t]) => `${JSON.stringify(n)}: ${t}`).join("; ");
-      const fieldsBody = fieldsStr === "" ? "{}" : `{ ${fieldsStr} }`;
-      return `${JSON.stringify(name)}: { dir: ${JSON.stringify(dir)}; fields: ${fieldsBody} }`;
+      const key = JSON.stringify(name);
+      // A single-direction port keeps the flat `fields` shape; only a genuine
+      // in/out pair needs the split, so the common witness stays unchanged.
+      if (info.outFields !== undefined && info.inFields !== undefined) {
+        return (
+          `${key}: { dir: "inout"; outFields: ${fieldsBody(info.outFields)}; ` +
+          `inFields: ${fieldsBody(info.inFields)} }`
+        );
+      }
+      const dir = info.outFields !== undefined ? "out" : "in";
+      const fields = info.outFields ?? info.inFields;
+      return `${key}: { dir: ${JSON.stringify(dir)}; fields: ${fieldsBody(fields)} }`;
     })
     .join("; ");
   // Per-port MIDI witness: direction only (`{ dir: "in" | "out" }`). MIDI events

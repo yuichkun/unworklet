@@ -918,13 +918,19 @@ export type EventSurface<T> = {
  */
 type WitnessFieldValue<F> = F extends "bool"
   ? boolean
-  : F extends "f32" | "f64" | "i32" | "i64"
-    ? number
-    : F extends { array: "f32" }
-      ? Float32Array
-      : F extends { array: "u8" }
-        ? Uint8Array
-        : unknown;
+  : F extends "i64"
+    ? // 64-bit values cross as bigint, not number: the reader is
+      // `DataView.getBigInt64` and the writer `DataView.setBigInt64`. Typing this
+      // `number` used to let `payload.tick + 1` compile and then throw.
+      // (Irrelevant to `node.state.<name>` — `publish` rejects i64.)
+      bigint
+    : F extends "f32" | "f64" | "i32"
+      ? number
+      : F extends { array: "f32" }
+        ? Float32Array
+        : F extends { array: "u8" }
+          ? Uint8Array
+          : unknown;
 
 type WitnessPayload<Fields> = { [K in keyof Fields]: WitnessFieldValue<Fields[K]> };
 
@@ -946,8 +952,14 @@ export type EventSurfaceFor<D> = D extends { dir: "out"; fields: infer F }
   ? Omit<EventSurface<WitnessPayload<F>>, "emit">
   : D extends { dir: "in"; fields: infer F }
     ? Omit<EventSurface<WitnessPayload<F>>, "on">
-    : D extends { dir: "inout"; fields: infer F }
-      ? EventSurface<WitnessPayload<F>>
+    : // A same-name in/out pair is two rings with two payloads: what you send is
+      // not what you receive, so each method is typed from its own field set.
+      D extends { dir: "inout"; outFields: infer O; inFields: infer I }
+      ? {
+          on(handler: (payload: WitnessPayload<O> & { atSample: number }) => void): () => void;
+          emit: (payload: WitnessPayload<I>) => void;
+          readonly diagnostics: { overflowCount(): number };
+        }
       : D extends "out"
         ? Omit<EventSurface<unknown>, "emit">
         : D extends "in"

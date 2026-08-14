@@ -21,6 +21,7 @@ import {
   defineProcessor,
   event,
   f32,
+  i64,
   forSample,
   param,
   select,
@@ -74,7 +75,10 @@ ${tail}
 // `boolean` → bool wire); the witness must reflect the declared shape.
 const eventProc = defineProcessor(() => {
   const setGain = event<{ gain: number; on: boolean }>({ from: "main", name: "setGain" });
-  const meter = event<{ level: number }>({ to: "main", name: "meter" });
+  // `level` seals to f32. `tick` is declared `number` — which `EmitPayload` lets
+  // you satisfy with a `Node<"i64">` — so its wire seals to i64 and the main
+  // thread receives a bigint (`DataView.getBigInt64`). The witness has to say so.
+  const meter = event<{ level: number; tick: number }>({ to: "main", name: "meter" });
   const gainState = state.f32(0);
   const out = audioOutput({ channels: 1, name: "main" });
   return {
@@ -85,7 +89,7 @@ const eventProc = defineProcessor(() => {
       forSample((i) => {
         const v = gainState.read();
         out.ch(0).at(i).write(v);
-        meter.emitIf(true, { level: v });
+        meter.emitIf(true, { level: v, tick: i64(1n) });
       });
     },
   };
@@ -96,6 +100,42 @@ const EVENT_USAGE = (tail: string): string =>
 /// <reference path="./event.worklet.d.ts" />
 import { createNode } from "@unworklet/core";
 import proc from "./event.processor.ts?worklet";
+declare const ctx: BaseAudioContext;
+export async function f(): Promise<void> {
+  const node = await createNode(ctx, proc);
+${tail}
+}
+`;
+
+// A same-name in/out pair (Q87): main sends `{ gain }` and receives `{ level }`
+// under one name. The two directions are separate rings carrying separate
+// payloads, so the witness must keep their field sets apart — merging them makes
+// `.emit()` demand outbound-only fields and `.on()` promise inbound-only ones.
+// Reported by @codex on #43.
+const inoutProc = defineProcessor(() => {
+  const ctlIn = event<{ gain: number }>({ from: "main", name: "ctl" });
+  const ctlOut = event<{ level: number }>({ to: "main", name: "ctl" });
+  const s = state.f32(0);
+  const out = audioOutput({ channels: 1, name: "main" });
+  return {
+    process: () => {
+      ctlIn.onReceive(({ gain }) => {
+        s.write(gain);
+      });
+      forSample((i) => {
+        const v = s.read();
+        out.ch(0).at(i).write(v);
+        ctlOut.emitIf(true, { level: v });
+      });
+    },
+  };
+});
+
+const INOUT_USAGE = (tail: string): string =>
+  `/// <reference types="@unworklet/unplugin/client" />
+/// <reference path="./inout.worklet.d.ts" />
+import { createNode } from "@unworklet/core";
+import proc from "./inout.processor.ts?worklet";
 declare const ctx: BaseAudioContext;
 export async function f(): Promise<void> {
   const node = await createNode(ctx, proc);
@@ -233,6 +273,36 @@ beforeAll(() => {
     path.join(dir, "event-typed-on.ts"),
     EVENT_USAGE("  node.events.meter.on((e) => { void e.level.toFixed(2); });"),
   );
+  // An i64 field arrives as a bigint, so `.toString()` is available …
+  writeFileSync(
+    path.join(dir, "event-i64-on.ts"),
+    EVENT_USAGE("  node.events.meter.on((e) => { void e.tick.toString(); });"),
+  );
+  // … and `.toFixed` is not. Typing i64 as `number` would let this compile and
+  // then throw at runtime, which is the regression this pins.
+  writeFileSync(
+    path.join(dir, "event-i64-wrong.ts"),
+    EVENT_USAGE("  node.events.meter.on((e) => { void e.tick.toFixed(2); });"),
+  );
+
+  // Same-name in/out pair: each direction keeps its own payload.
+  writeFileSync(
+    path.join(dir, "inout.worklet.d.ts"),
+    workletDts("*/inout.processor.ts?worklet", inoutProc.worklet),
+  );
+  writeFileSync(
+    path.join(dir, "inout-emit.ts"),
+    INOUT_USAGE("  node.events.ctl.emit({ gain: 0.8 });"),
+  );
+  writeFileSync(
+    path.join(dir, "inout-on.ts"),
+    INOUT_USAGE("  node.events.ctl.on((e) => { void e.level.toFixed(2); });"),
+  );
+  // `gain` travels main → worklet only, so it is never in a delivered payload.
+  writeFileSync(
+    path.join(dir, "inout-on-wrong.ts"),
+    INOUT_USAGE("  node.events.ctl.on((e) => { void e.gain; });"),
+  );
 
   // Third witness: state.expose({ publish }) on f32 / i32 / bool. Same dir / tsconfig.
   writeFileSync(
@@ -333,6 +403,31 @@ test("the per-file witness types the .on handler payload from declared fields", 
   expect(diagnose("event-typed-on.ts")).toEqual([]);
 });
 
+// A same-name in/out pair carries two independent payloads. Merging them into one
+// field map made `.emit()` demand the outbound fields and `.on()` promise the
+// inbound ones. Reported by @codex on #43.
+test("a same-name in/out event types each direction from its own payload", () => {
+  expect(diagnose("inout-emit.ts")).toEqual([]);
+  expect(diagnose("inout-on.ts")).toEqual([]);
+  const msgs = diagnose("inout-on-wrong.ts");
+  expect(
+    msgs.some((m) => /gain/.test(m)),
+    msgs.join("\n"),
+  ).toBe(true);
+});
+
+// An i64 field is delivered by `DataView.getBigInt64`, i.e. a bigint. Typing it
+// as `number` let `payload.tick + 1` compile and then throw at runtime — a
+// "types say it works, it doesn't" breach. Reported by @codex on #43.
+test("an i64 event field types as bigint, not number", () => {
+  expect(diagnose("event-i64-on.ts")).toEqual([]);
+  const msgs = diagnose("event-i64-wrong.ts");
+  expect(
+    msgs.some((m) => /toFixed/i.test(m)),
+    msgs.join("\n"),
+  ).toBe(true);
+});
+
 // State-publish value / subscribe types recovered from the per-slot scalar marker.
 // A published `state.f32` slot's `.value` is `number` and `.subscribe(handler)`
 // receives `(v: number)`; likewise `i32 → number`, `bool → boolean`.
@@ -412,5 +507,7 @@ test("the witness marks event direction: eventRings → out, messageRings → in
   const dts = workletDts("*/x.processor.ts?worklet", ns);
   expect(dts).toContain('"peak": { dir: "out"; fields: {} }');
   expect(dts).toContain('"ctrl": { dir: "in"; fields: {} }');
-  expect(dts).toContain('"both": { dir: "inout"; fields: {} }');
+  // A pair carries two payloads, so it emits one field map per direction rather
+  // than a merged `fields` — see the same-name in/out type test below.
+  expect(dts).toContain('"both": { dir: "inout"; outFields: {}; inFields: {} }');
 });
