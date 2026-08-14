@@ -26,6 +26,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -431,4 +432,60 @@ void boot();`,
   const output = `${r.stdout}${r.stderr}`;
   expect(output).toMatch(/nope/);
   expect(existsSync(path.join(app, ".unworklet/worklets.d.ts"))).toBe(true);
+});
+
+test("the witness drops a deleted processor and keeps entries this pass does not own", () => {
+  // The pre-pass owns the `.uwk.ts` entries and nothing else. Two failures live
+  // here: removing the last `.uwk.ts` used to leave the old witness in place, so
+  // `import x from "./deleted.uwk.ts?worklet"` kept type-checking against a
+  // processor that no longer exists (an ambient pattern matches the specifier
+  // text, so nothing notices the file is gone); and the pass rewrote the whole
+  // file, deleting the `.processor.ts` entries only `vite build` can produce —
+  // exactly the ones setup.md tells a mixed project to get by building first.
+  // Reported by @codex on #43.
+  const app = path.join(dir, "witness-ownership");
+  mkdirSync(path.join(app, ".unworklet"), { recursive: true });
+  writeFileSync(
+    path.join(app, "tsconfig.json"),
+    JSON.stringify({ extends: "./.unworklet/tsconfig.json", compilerOptions: { types: [] } }),
+  );
+  writeFileSync(
+    path.join(app, "gone.uwk.ts"),
+    `const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = 0;
+  });
+});`,
+  );
+  const witness = path.join(app, ".unworklet/worklets.d.ts");
+
+  // Run once so the pass populates `gone.uwk.ts`.
+  spawnSync("node", [bin, "--project", "witness-ownership/tsconfig.json", "--noEmit"], {
+    cwd: dir,
+    encoding: "utf8",
+  });
+  expect(readFileSync(witness, "utf8")).toMatch(/gone\.uwk\.ts\?worklet/);
+
+  // Stand in for what `vite build` leaves behind for the explicit form.
+  writeFileSync(
+    witness,
+    `${readFileSync(witness, "utf8")}
+declare module "*/legacy.processor.ts?worklet" {
+  const processor: import("@unworklet/core").CompiledProcessor<unknown>;
+  export default processor;
+}
+`,
+  );
+
+  // Delete the only `.uwk.ts` and run again.
+  rmSync(path.join(app, "gone.uwk.ts"));
+  spawnSync("node", [bin, "--project", "witness-ownership/tsconfig.json", "--noEmit"], {
+    cwd: dir,
+    encoding: "utf8",
+  });
+
+  const after = readFileSync(witness, "utf8");
+  expect(after).not.toMatch(/gone\.uwk\.ts\?worklet/);
+  expect(after).toMatch(/legacy\.processor\.ts\?worklet/);
 });

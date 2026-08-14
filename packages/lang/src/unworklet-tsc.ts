@@ -68,21 +68,43 @@ function resolveProjectConfig(cwd: string, argv: readonly string[]): string | un
 }
 
 /**
- * Compile every `.uwk.ts` the given tsconfig includes and OVERWRITE its
- * `.unworklet/worklets.d.ts` with the aggregate `?worklet` witness. This is what
- * turns a cold `unworklet-tsc --noEmit` from "silently passes real type errors
- * because payloads fall back to `unknown`" into "sees the same per-processor
- * shapes a warm `vite build` would populate".
+ * The `declare module` blocks of an existing witness that did NOT come from a
+ * `.uwk.ts` — i.e. the `.processor.ts` entries only `vite build` can produce.
  *
- * Failures on any single file (a `.uwk.ts` with syntax errors, a lowering that
- * throws, a missing sibling import) skip that entry — those show up as real tsc
- * diagnostics moments later, so the witness step must not double-report them.
- * Other processors in the same project keep their populated entries.
+ * Splitting the generated file textually is enough because it is generated:
+ * `workletDts` writes each block starting at column 0 and closing with a `}` at
+ * column 0, so a block boundary is unambiguous. A hand-edit would not survive,
+ * which is correct for a file the toolchain owns and `.gitignore`s.
+ */
+function foreignWitnessBlocks(witness: string): string {
+  return witness
+    .split(/^(?=declare module )/m)
+    .filter(
+      (block) => block.trim() !== "" && !/^declare module "[^"]*\.uwk\.ts\?worklet"/.test(block),
+    )
+    .join("");
+}
+
+/**
+ * Compile every `.uwk.ts` the given tsconfig includes and rewrite the `.uwk.ts`
+ * half of its `.unworklet/worklets.d.ts`. This is what turns a cold
+ * `unworklet-tsc --noEmit` from "silently passes real type errors because
+ * payloads fall back to `unknown`" into "sees the same per-processor shapes a
+ * warm `vite build` would populate".
+ *
+ * This pass owns exactly the `.uwk.ts` entries, and rewrites them to the set it
+ * could load — so deleting or renaming a processor removes its entry rather than
+ * leaving a witness for a file that is gone (an ambient pattern matches the
+ * specifier text, so nothing else would notice). A file that fails to load (a
+ * syntax error, a lowering that throws, a missing sibling import) simply has no
+ * entry this run and falls back to the wildcard; tsc reports the real cause a
+ * moment later, so this step must not double-report it.
  *
  * The `.processor.ts` (explicit form) case is NOT covered: those are ordinary
  * Node-importable TS modules and populating their witness requires a runtime
  * loader (tsx / ts-node) we do not want to pull in. Consumers who mix
- * `.processor.ts` still get the (documented) build-then-typecheck order.
+ * `.processor.ts` still get the (documented) build-then-typecheck order — which
+ * is why those blocks are carried across rather than overwritten.
  */
 async function populateWorkletsWitness(tsconfigPath: string | undefined): Promise<void> {
   if (tsconfigPath === undefined) return;
@@ -90,7 +112,6 @@ async function populateWorkletsWitness(tsconfigPath: string | undefined): Promis
   if (raw.error !== undefined) return; // let tsc surface the tsconfig error itself
   const parsed = ts.parseJsonConfigFileContent(raw.config, ts.sys, path.dirname(tsconfigPath));
   const uwkFiles = parsed.fileNames.filter(isUwkSource);
-  if (uwkFiles.length === 0) return;
 
   const entries: { source: string; ns: WorkletNamespace }[] = [];
   for (const file of uwkFiles) {
@@ -103,14 +124,17 @@ async function populateWorkletsWitness(tsconfigPath: string | undefined): Promis
       // (leaves it on the wildcard fallback for this run).
     }
   }
-  if (entries.length === 0) return;
 
   // Next to the tsconfig being checked — the same directory `seedUnworkletDir`
   // used — so `--project sub/tsconfig.json` writes `sub/.unworklet/`.
   const witnessDir = path.join(path.dirname(tsconfigPath), ".unworklet");
   fs.mkdirSync(witnessDir, { recursive: true });
   const witnessPath = path.join(witnessDir, "worklets.d.ts");
-  fs.writeFileSync(witnessPath, workletsDts(entries));
+  const existing = fs.existsSync(witnessPath) ? fs.readFileSync(witnessPath, "utf8") : "";
+  const next = `${foreignWitnessBlocks(existing)}${workletsDts(entries)}`;
+  // Only on change: the dev-server watcher fires on mtime, and rewriting an
+  // unchanged generated file is enough to start a rebuild loop.
+  if (next !== existing) fs.writeFileSync(witnessPath, next);
 }
 
 await populateWorkletsWitness(projectConfig);
