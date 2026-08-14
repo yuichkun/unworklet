@@ -86,21 +86,37 @@ test("every line range the guide cites fits inside the file it names", () => {
   expect([...new Set(past)]).toEqual([]);
 });
 
+/**
+ * The tracked extensions that are supposed to contain arbitrary bytes. Everything
+ * else is text and is checked below.
+ *
+ * Listing the binary side rather than the text side is deliberate: a new source
+ * or config format is then covered the moment it lands, while adding a binary
+ * asset type is a deliberate edit here. The other direction — enumerating text
+ * extensions — leaves `.js`, `.vue`, `.yml`, `.css`, lockfiles and shell scripts
+ * silently unguarded, which is exactly what it did.
+ */
+const BINARY_EXTENSIONS = new Set([".wav", ".png"]);
+
 test("no tracked text file carries a NUL byte", () => {
   // A single NUL makes Git classify the whole file as binary: `git diff` reports
   // only "Binary files differ", so every later change to it lands unreviewable
   // and nothing about the source looks wrong. It reached a central loader module
   // as a hash delimiter written literally instead of as `\0`.
   // Reported by @codex on #43.
-  const tracked = execFileSync("git", ["ls-files", "-z", "*.ts", "*.tsx", "*.md", "*.json"], {
-    cwd: REPO,
-    encoding: "buffer",
-  })
+  const tracked = execFileSync("git", ["ls-files", "-z"], { cwd: REPO, encoding: "buffer" })
     .toString("utf8")
     .split("\0")
     .filter((f) => f !== "");
-  expect(tracked.length).toBeGreaterThan(50);
+  expect(tracked.length).toBeGreaterThan(200);
 
-  const binary = tracked.filter((f) => readFileSync(path.join(REPO, f)).includes(0));
+  const text = tracked.filter((f) => !BINARY_EXTENSIONS.has(path.extname(f).toLowerCase()));
+  const binary = text.filter((f) => {
+    try {
+      return readFileSync(path.join(REPO, f)).includes(0);
+    } catch {
+      return false; // a submodule entry or a path removed since `ls-files` ran
+    }
+  });
   expect(binary).toEqual([]);
 });
