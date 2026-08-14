@@ -50,10 +50,12 @@ The typed node surface is `params` / `state` / `events` / `midi` / `inputs` / `o
   `unknown` at this boundary.
   [cite: packages/unplugin/client.d.ts L11-21; export `./client` → client.d.ts —
   packages/unplugin/package.json L38-40]
-- **`.unworklet/worklets.d.ts`** (plugin-written) — one `declare module "*/<basename>?worklet"`
-  per processor, carrying its concrete `params`/`state`/`events`/`midi`/`inputs`/`outputs`. This
-  is what makes `node.params.drive` resolve to the real param.
-  [cite: packages/unplugin/src/worklet-dts.ts L20-83]
+- **`.unworklet/worklets.d.ts`** — one `declare module "*/<basename>?worklet"` per processor,
+  carrying its concrete `params`/`state`/`events`/`midi`/`inputs`/`outputs`. This is what makes
+  `node.params.drive` resolve to the real param. Written by the Vite plugin as it compiles, and
+  by `unworklet-tsc` for `.uwk.ts` processors before it runs tsc.
+  [cite: packages/lang/src/worklet-dts.ts L18-163; packages/unplugin/src/index.ts L816;
+  packages/lang/src/unworklet-tsc.ts L87-116]
 - **`@unworklet/lang/typescript-plugin`** — the editor TS plugin that type-checks `.uwk.ts` sugar.
   [cite: packages/lang/package.json L39-42]
 

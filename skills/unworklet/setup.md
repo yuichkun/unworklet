@@ -129,19 +129,26 @@ egg. The IDE has no seeder — VS Code opened on a fresh clone reports TS5083
 ("Cannot read file `./.unworklet/tsconfig.json`") until you've run one of the
 seeding entry points once.
 
-**Cold-checkout per-processor witness gotcha (build script order matters)**:
-seeding is two-stage. `unworklet-tsc` (and every entry point) writes
-`.unworklet/tsconfig.json` + an EMPTY `.unworklet/worklets.d.ts`; the
-per-processor entries in that witness (which type `import x from
-"./x.processor.ts?worklet"` more specifically than `CompiledProcessor<unknown>`)
-are populated only by `vite build` when it actually compiles each `.uwk.ts` /
-`.processor.ts` through the unplugin. **On a cold clone, run `vite build` (or
-`vite dev`) at least once BEFORE the first `unworklet-tsc --noEmit`** — a
-build script written as `"build": "vite build && unworklet-tsc --noEmit"`
-just works; the flipped `"unworklet-tsc --noEmit && vite build"` order lets
-tsc see the empty witness on run #1 and falls back to the wildcard
-`unknown`-typed `?worklet` module. Subsequent runs are clean either way. On
-CI, prefer the build-then-typecheck order for a clean first run.
+**Cold-checkout per-processor witness (`.processor.ts` needs a build first)**:
+seeding is two-stage. Every entry point writes `.unworklet/tsconfig.json` + an
+empty `.unworklet/worklets.d.ts`; the per-processor entries in that witness
+(which type `import x from "./x?worklet"` more specifically than
+`CompiledProcessor<unknown>`) are what make `node.params.<name>` and event
+payloads concrete.
+
+For the recommended `.uwk.ts` form there is no ordering gotcha: `unworklet-tsc`
+lowers and loads every `.uwk.ts` in the project and writes its witness before it
+hands anything to tsc, so a cold clone running `"unworklet-tsc --noEmit && vite
+build"` is fully typed on run #1.
+
+The explicit `.processor.ts` form is not covered — populating it would need a
+runtime TypeScript loader this toolchain does not pull in — so those entries are
+filled only when `vite build` (or `vite dev`) compiles them through the unplugin.
+**If your project has `.processor.ts` processors, run `vite build` at least once
+before the first `unworklet-tsc --noEmit` on a cold clone**, or write the build
+script as `"build": "vite build && unworklet-tsc --noEmit"`. Otherwise run #1
+falls back to the wildcard `unknown`-typed `?worklet` module for those files;
+subsequent runs are clean either way.
 
 **First `vite build` warning**: esbuild reads the extending tsconfig BEFORE the
 plugin's `configResolved` runs, so the very first invocation prints
