@@ -24,8 +24,9 @@ import ts from "typescript";
  *   dependency, but the checker reads the file, so a type-directed lowering
  *   depends on it.
  * - `dynamic` — `import("./x.mjs")` as an expression. A real runtime load, at
- *   any nesting depth. (A non-literal argument is skipped: nothing here can say
- *   what it resolves to.)
+ *   any nesting depth. Both literal spellings count: a backtick with no
+ *   interpolation is exactly as static as a quote. (An INTERPOLATED template, or
+ *   any other expression, is skipped — nothing here can say what it resolves to.)
  */
 type ModuleRef =
   | { kind: "declaration"; stmt: ts.ImportDeclaration | ts.ExportDeclaration; spec: string }
@@ -47,7 +48,10 @@ function moduleRefs(sf: ts.SourceFile): ModuleRef[] {
       }
     } else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
       const arg = node.arguments[0];
-      if (arg !== undefined && ts.isStringLiteral(arg))
+      // `isStringLiteralLike` also accepts a template with no substitutions,
+      // which is exactly as static as a quoted one. An interpolated template is
+      // a different node kind and stays out.
+      if (arg !== undefined && ts.isStringLiteralLike(arg))
         out.push({ kind: "dynamic", spec: arg.text });
     }
     ts.forEachChild(node, visit);
@@ -62,12 +66,14 @@ const runtimeRefs = (sf: ts.SourceFile): ModuleRef[] =>
   moduleRefs(sf).filter((r) => r.kind !== "type");
 
 /** The module specifiers of a lowered `.ts` module that point at a `.uwk.ts`
- * (the transitive sugar imports and re-exports the build must lower too). */
+ * (the transitive sugar imports and re-exports the build must lower too).
+ * Matched on the file part, like every other classifier here: ESM allows a query
+ * and a fragment, and `"./voice.uwk.ts?rev=1"` needs lowering just as much. */
 export function uwkImportSpecifiers(loweredTs: string): string[] {
   const sf = ts.createSourceFile("__m.ts", loweredTs, ts.ScriptTarget.ESNext, true);
   const out: string[] = [];
   for (const { spec } of moduleRefs(sf)) {
-    if (spec.endsWith(".uwk.ts") && !out.includes(spec)) out.push(spec);
+    if (spec.split(/[?#]/)[0]!.endsWith(".uwk.ts") && !out.includes(spec)) out.push(spec);
   }
   return out;
 }
@@ -159,50 +165,66 @@ export function relativeModuleSpecifiers(emittedJs: string): string[] {
 }
 
 /**
- * The subset of {@link relativeModuleSpecifiers} that {@link rewriteImportSpecifiers}
- * can actually change: an `import … from` or `export … from`. A dynamic
- * `import("./x.mjs")` is an expression, so its specifier stays as written — and
- * a caller that assumed otherwise would think it had rewritten something it had
- * not.
+ * Rewrite a module's specifiers per `map` (original → replacement), everywhere
+ * one can appear at runtime: `import … from`, a barrel's `export … from`, and a
+ * dynamic `import(…)` at any depth. Specifiers absent from `map` are unchanged.
+ *
+ * The dynamic case is not optional. Discovery treats `import("./voice.uwk.ts")`
+ * as a dependency and lowers it, so a rewriter that skipped expressions left the
+ * module still pointing at the raw `.uwk.ts` — with a temp written for it that
+ * nothing used.
+ *
+ * Only ever applied to modules this package generated. Rewriting the author's
+ * own files is the line drawn in `materialize-lowered.ts`, and it still holds.
  */
-export function rewritableRelativeSpecifiers(emittedJs: string): string[] {
-  const sf = ts.createSourceFile("__m.js", emittedJs, ts.ScriptTarget.ESNext, true);
-  const out: string[] = [];
-  for (const ref of runtimeRefs(sf)) {
-    if (ref.kind !== "declaration") continue;
-    if (!ref.spec.startsWith("./") && !ref.spec.startsWith("../")) continue;
-    if (!out.includes(ref.spec)) out.push(ref.spec);
-  }
-  return out;
-}
-
-/** Rewrite a lowered `.ts` module's module specifiers per `map` (original →
- * replacement), in both directions — an `import … from` and a barrel's
- * `export … from` alike. Specifiers absent from `map` are left unchanged. */
 export function rewriteImportSpecifiers(loweredTs: string, map: Record<string, string>): string {
   const sf = ts.createSourceFile("__m.ts", loweredTs, ts.ScriptTarget.ESNext, true);
-  const next = (sf: ts.SourceFile): ts.SourceFile =>
-    ts.factory.updateSourceFile(
-      sf,
-      sf.statements.map((stmt) => {
-        const s = ts.isImportDeclaration(stmt) || ts.isExportDeclaration(stmt) ? stmt : undefined;
-        if (s === undefined || s.moduleSpecifier === undefined) return stmt;
-        if (!ts.isStringLiteral(s.moduleSpecifier)) return stmt;
-        const replacement = map[s.moduleSpecifier.text];
-        if (replacement === undefined) return stmt;
-        const lit = ts.factory.createStringLiteral(replacement);
-        return ts.isImportDeclaration(s)
-          ? ts.factory.updateImportDeclaration(s, s.modifiers, s.importClause, lit, s.attributes)
-          : ts.factory.updateExportDeclaration(
-              s,
-              s.modifiers,
-              s.isTypeOnly,
-              s.exportClause,
-              lit,
-              s.attributes,
-            );
-      }),
-    );
+  const transformed = ts.transform(sf, [
+    (context) => (root) => {
+      const visit = (node: ts.Node): ts.Node => {
+        if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+          const s = node.moduleSpecifier;
+          const replacement = s !== undefined && ts.isStringLiteral(s) ? map[s.text] : undefined;
+          if (replacement !== undefined) {
+            const lit = ts.factory.createStringLiteral(replacement);
+            return ts.isImportDeclaration(node)
+              ? ts.factory.updateImportDeclaration(
+                  node,
+                  node.modifiers,
+                  node.importClause,
+                  lit,
+                  node.attributes,
+                )
+              : ts.factory.updateExportDeclaration(
+                  node,
+                  node.modifiers,
+                  node.isTypeOnly,
+                  node.exportClause,
+                  lit,
+                  node.attributes,
+                );
+          }
+        } else if (
+          ts.isCallExpression(node) &&
+          node.expression.kind === ts.SyntaxKind.ImportKeyword
+        ) {
+          const arg = node.arguments[0];
+          const replacement =
+            arg !== undefined && ts.isStringLiteralLike(arg) ? map[arg.text] : undefined;
+          if (replacement !== undefined) {
+            return ts.factory.updateCallExpression(node, node.expression, node.typeArguments, [
+              ts.factory.createStringLiteral(replacement),
+              ...node.arguments.slice(1),
+            ]);
+          }
+        }
+        return ts.visitEachChild(node, visit, context);
+      };
+      return ts.visitNode(root, visit) as ts.SourceFile;
+    },
+  ]);
   const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
-  return printer.printFile(next(sf));
+  const out = printer.printFile(transformed.transformed[0]!);
+  transformed.dispose();
+  return out;
 }

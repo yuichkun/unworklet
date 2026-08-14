@@ -74,3 +74,37 @@ test("plainTsModuleSpecifiers reports what the emit actually references", () => 
   ]);
   expect(plainTsModuleSpecifiers(`export const k = 1;\n`)).toEqual([]);
 });
+
+// Discovery treats a dynamic `import("./voice.uwk.ts")` as a dependency and
+// lowers it, so a rewriter that only touched declarations left the module
+// pointing at the raw `.uwk.ts` — with a temp written for it that nothing used.
+// Reported by @codex on #43.
+test("rewriteImportSpecifiers rewrites dynamic imports, in both literal spellings", () => {
+  const src =
+    `const a = () => import("./onepole.uwk.ts");\n` +
+    "const b = () => import(`./tone.uwk.ts`);\n" +
+    `async function c() { return (await import("./deep.uwk.ts")).x; }\n` +
+    `const skip = (n) => import(\`./gen-\${n}.uwk.ts\`);\n` +
+    `const label = "./onepole.uwk.ts";\n`;
+  const out = rewriteImportSpecifiers(src, {
+    "./onepole.uwk.ts": "./.onepole.aaaa.uwklowered.mjs",
+    "./tone.uwk.ts": "./.tone.bbbb.uwklowered.mjs",
+    "./deep.uwk.ts": "./.deep.cccc.uwklowered.mjs",
+  });
+  expect(out).toContain(`import("./.onepole.aaaa.uwklowered.mjs")`);
+  expect(out).toContain(`import("./.tone.bbbb.uwklowered.mjs")`);
+  expect(out).toContain(`import("./.deep.cccc.uwklowered.mjs")`);
+  // An interpolated template names nothing knowable, and a string that is not a
+  // specifier is not one.
+  expect(out).toContain("`./gen-${n}.uwk.ts`");
+  expect(out).toContain(`const label = "./onepole.uwk.ts"`);
+});
+
+test("uwkImportSpecifiers finds dynamic and query-bearing worklet dependencies", () => {
+  const src =
+    `import { a } from "./a.uwk.ts?rev=1";\n` +
+    `const b = () => import("./b.uwk.ts");\n` +
+    "const c = () => import(`./c.uwk.ts`);\n" +
+    `const d = () => import(\`./d-\${x}.uwk.ts\`);\n`;
+  expect(uwkImportSpecifiers(src)).toEqual(["./a.uwk.ts?rev=1", "./b.uwk.ts", "./c.uwk.ts"]);
+});

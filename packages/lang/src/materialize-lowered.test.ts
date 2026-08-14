@@ -809,3 +809,73 @@ process(() => {
   expect(err?.message).toMatch(/@unworklet\/lang/);
   expect(err?.message).toMatch(/voice\.uwk\.ts/);
 });
+
+test("a template-literal dynamic import is a module reference like any other", async () => {
+  // `import(`./voice.uwk.ts`)` is a NoSubstitutionTemplateLiteral, not a
+  // StringLiteral — just as static as the quoted form, and skipped by the walk,
+  // so the helper loaded raw sugar instead of producing the diagnostic.
+  // Reported by @codex on #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-tmplImport-"));
+  writeFileSync(
+    path.join(dir, "voice.uwk.ts"),
+    `export const voice = defineSubgraph(() => {
+  const p = state.f32(0).named("p");
+  return { tick: () => p };
+});`,
+  );
+  writeFileSync(
+    path.join(dir, "helper.mjs"),
+    "export const load = () => import(`./voice.uwk.ts`);\nexport const GAIN = 0.5;\n",
+  );
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `import { GAIN } from "./helper.mjs";
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = GAIN;
+  });
+});`,
+  );
+
+  const err = await loadUwkProcessor(src).then(
+    () => undefined,
+    (e: unknown) => e as Error,
+  );
+  expect(err?.message).toMatch(/@unworklet\/lang/);
+  expect(err?.message).toMatch(/voice\.uwk\.ts/);
+});
+
+test("a sibling .uwk.ts imported with a query is lowered, not loaded raw", async () => {
+  // The `.uwk.ts` selector tested the raw specifier while every other classifier
+  // had moved to the file part, so `"./voice.uwk.ts?rev=1"` was skipped by
+  // materialization and Node loaded the unlowered source — `defineSubgraph is
+  // not defined`. (TypeScript cannot resolve a query-bearing specifier either,
+  // so this form gets no types; that is tsc's to report, and is no reason to
+  // hand Node raw sugar.) Reported by @codex on #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-uwkQuery-"));
+  writeFileSync(
+    path.join(dir, "voice.uwk.ts"),
+    `export const GAIN = 0.25;
+export const voice = defineSubgraph(() => {
+  const p = state.f32(0).named("p");
+  return { tick: () => p };
+});`,
+  );
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `import { GAIN } from "./voice.uwk.ts?rev=1";
+
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = GAIN;
+  });
+});`,
+  );
+
+  const proc = await loadUwkProcessor(src);
+  expect(typeof proc.schemaHash).toBe("string");
+});
