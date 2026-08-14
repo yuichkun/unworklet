@@ -218,3 +218,55 @@ process(() => {
   const strays = readdirSync(dir).filter((f) => f.includes("uwklowered"));
   expect(strays, `stray temps: ${strays.join(", ")}`).toEqual([]);
 });
+
+test("a reserved-word filename still yields a loadable module", async () => {
+  // `class.uwk.ts` derived the export name `class`, so the temp read
+  // `export const class = defineProcessor(...)` — a syntax error, and neither
+  // loader could import it. Reported by @codex on #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-reserved-"));
+  const src = path.join(dir, "class.uwk.ts");
+  writeFileSync(
+    src,
+    `const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = 0.25;
+  });
+});`,
+  );
+
+  const proc = await loadUwkProcessor(src);
+  expect(typeof proc.schemaHash).toBe("string");
+});
+
+test("a plain .mts / .cts helper import is caught by the same guard as .ts", () => {
+  // Node strips `.ts`, `.mts` and `.cts` alike once it can strip at all, so all
+  // three are unloadable when it cannot — checking only `.ts` let `.mts` through
+  // to the cryptic failure. Reported by @codex on #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-mts-"));
+  writeFileSync(path.join(dir, "constants.mts"), `export const GAIN: number = 3;\n`);
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `import { GAIN } from "./constants.mts";
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = GAIN * 0.1;
+  });
+});`,
+  );
+
+  const script = `
+    delete process.features.typescript;
+    const { materializeLowered } = await import(${JSON.stringify(pathToFileURL(path.join(LANG, "dist/index.mjs")).href)});
+    try {
+      await materializeLowered(${JSON.stringify(src)}, new Map(), new Set(), []);
+      console.log("NO_THROW");
+    } catch (e) { console.log("THREW:" + e.message); }
+  `;
+  const r = spawnSync("node", ["--input-type=module", "-e", script], { encoding: "utf8" });
+  const output = `${r.stdout}${r.stderr}`;
+  expect(output).toMatch(/THREW:/);
+  expect(output).toMatch(/constants\.mts/);
+});

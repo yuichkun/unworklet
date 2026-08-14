@@ -31,8 +31,66 @@ export const deriveExportName = (sourcePath: string): string => {
     .map((seg, i) => (i === 0 ? seg : seg[0]!.toUpperCase() + seg.slice(1)))
     .join("")
     .replace(/^[^A-Za-z_$]+/, "");
-  return camel.length > 0 ? camel : "processor";
+  if (camel.length === 0) return "processor";
+  // `class.uwk.ts` would otherwise emit `export const class = defineProcessor(…)`,
+  // which is a syntax error, so the temp fails to load at all. Suffix rather than
+  // replace, so the name still points back at the file.
+  return RESERVED_WORDS.has(camel) ? `${camel}Processor` : camel;
 };
+
+/**
+ * Words that cannot be a `const` binding. Reserved words plus the contextual ones
+ * that are still errors in a module (modules are always strict, and `await` is
+ * reserved at module top level).
+ */
+const RESERVED_WORDS = new Set([
+  "await",
+  "break",
+  "case",
+  "catch",
+  "class",
+  "const",
+  "continue",
+  "debugger",
+  "default",
+  "delete",
+  "do",
+  "else",
+  "enum",
+  "export",
+  "extends",
+  "false",
+  "finally",
+  "for",
+  "function",
+  "if",
+  "implements",
+  "import",
+  "in",
+  "instanceof",
+  "interface",
+  "let",
+  "new",
+  "null",
+  "package",
+  "private",
+  "protected",
+  "public",
+  "return",
+  "static",
+  "super",
+  "switch",
+  "this",
+  "throw",
+  "true",
+  "try",
+  "typeof",
+  "var",
+  "void",
+  "while",
+  "with",
+  "yield",
+]);
 
 /**
  * Memoize `lower()` by (path, content): callers re-evaluate the same source

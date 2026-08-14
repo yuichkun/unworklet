@@ -35,8 +35,12 @@ export function plainTsImportSpecifiers(loweredTs: string): string[] {
     // A type-only import is erased by the transpile, so it never reaches Node.
     if (stmt.importClause?.isTypeOnly === true) continue;
     const spec = stmt.moduleSpecifier.text;
-    const relative = spec.startsWith("./") || spec.startsWith("../");
-    if (relative && spec.endsWith(".ts") && !spec.endsWith(".uwk.ts")) out.push(spec);
+    if (!spec.startsWith("./") && !spec.startsWith("../")) continue;
+    if (spec.endsWith(".uwk.ts")) continue; // lowered separately
+    // The three extensions Node strips once it can strip at all — and therefore
+    // the three it cannot load when it cannot. (`.tsx` is excluded on purpose:
+    // no Node version loads it, so it is not a capability question.)
+    if (/\.(ts|mts|cts)$/.test(spec)) out.push(spec);
   }
   return out;
 }
