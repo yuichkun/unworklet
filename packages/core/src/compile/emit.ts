@@ -1506,8 +1506,18 @@ export function emitExpression(
           mod.drop(shiftLeft(5)),
           // Store back: memory[slotOffset] = h
           mod.i32.store(slotOffset, BYTES_PER_I32, mod.i32.const(0), getH()),
-          // Return: (signed i32) * (1 / 2^31) — maps [-2^31, 2^31-1] to [-1, 1).
-          mod.f32.mul(mod.f32.convert_s.i32(getH()), mod.f32.const(1 / 2147483648)),
+          // Return: normalize the top 24 bits, `(h >> 8) * 2^-23`, giving
+          // [-1, 1 - 2^-23] — the documented `[-1, 1)`.
+          //
+          // Not `convert_s.i32(h) * 2^-31`: f32 carries a 24-bit significand, so
+          // converting 0x7fffffff rounds it UP to 2147483648 and the product is
+          // exactly 1, breaking the exclusive upper bound (xorshift32 visits every
+          // non-zero state, so every seed reaches it). Taking 24 bits up front is
+          // exact — those are the only bits an f32 could keep anyway.
+          mod.f32.mul(
+            mod.f32.convert_s.i32(mod.i32.shr_s(getH(), mod.i32.const(8))),
+            mod.f32.const(1 / 8388608),
+          ),
         ],
         binaryen.f32,
       );

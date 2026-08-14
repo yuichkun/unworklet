@@ -1097,3 +1097,29 @@ test("`renderOffline` noiseSource `.next()` twice per iteration consumes two sam
   const identical = left.every((v, i) => v === right[i]);
   expect(identical).toBe(false);
 });
+
+// The documented range is `[-1, 1)`, but the normalization multiplied
+// `f32.convert_s.i32(h)` by 2^-31: converting 0x7fffffff to f32 rounds it up to
+// 2147483648, so the product is exactly 1. xorshift32 visits every non-zero
+// state, so every seed reaches it eventually — seed -697516825 hits it on the
+// first sample. Downstream mappings like `floor((n + 1) / 2 * len)` index out of
+// bounds when it does. Reported by @codex on #43.
+test("noiseSource stays strictly below 1 (the documented exclusive upper bound)", async () => {
+  const proc = defineProcessor(() => {
+    const n = noiseSource({ seed: -697516825 });
+    const out = audioOutput({ channels: 1, name: "main" });
+    return {
+      process: () => {
+        forSample((i) => {
+          out.ch(0).at(i).write(n.next());
+        });
+      },
+    };
+  });
+  const result = await renderOffline(proc, { sampleRate: 48000, duration: 4096 / 48000 });
+  const samples = result.outputs.main[0]!;
+  const max = samples.reduce((a, b) => (b > a ? b : a), Number.NEGATIVE_INFINITY);
+  const min = samples.reduce((a, b) => (b < a ? b : a), Number.POSITIVE_INFINITY);
+  expect(max, `max sample was ${max}`).toBeLessThan(1);
+  expect(min).toBeGreaterThanOrEqual(-1);
+});
