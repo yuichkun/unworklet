@@ -121,31 +121,43 @@ export function workletDts(specifier: string, ns: WorkletNamespace): string {
  * file and re-emits it on every processor edit; the editor's file watch refreshes
  * `node.params.<name>` completions without a restart (proven in worklet-dts-live).
  *
- * A basename alone is not always unique — `effects/a/index.uwk.ts` and
- * `effects/b/index.uwk.ts` would both key on `*​/index.uwk.ts?worklet`, emitting
- * two `declare module` blocks for one pattern (duplicate identifiers, or one
- * processor's surface silently standing in for the other). Each pattern therefore
- * carries the shortest trailing path segments that tell it apart from the others,
- * so the two above become `*​/a/index.uwk.ts?worklet` and
- * `*​/b/index.uwk.ts?worklet`. TypeScript prefers the longest matching pattern, so
- * a longer key still matches the consumer's `./effects/a/index.uwk.ts?worklet`.
+ * Two processors CAN share a basename in different folders, and there is no
+ * witness that types them apart. An ambient pattern matches the specifier the
+ * consumer wrote, not the file it resolves to, and both are normally imported as
+ * `"./index.uwk.ts?worklet"` from their own directory — a longer key like
+ * `*​/a/index.uwk.ts?worklet` contains a segment that specifier does not, so it
+ * matches nothing and the import silently falls back to the wildcard
+ * `CompiledProcessor<unknown>`.
+ *
+ * So a collision is reported rather than papered over: the colliding entries are
+ * omitted (their imports keep the wildcard's `unknown`, with no per-processor
+ * surface) and a warning names the files. Emitting one of them would give the
+ * other processor's params and events to both — wrong types are worse than none —
+ * and emitting both would redeclare the same module. Renaming one file fixes it.
  */
 export function workletsDts(entries: { source: string; ns: WorkletNamespace }[]): string {
-  /** The trailing `depth` segments of a path, POSIX-separated. */
-  const tail = (source: string, depth: number): string =>
-    source.split(/[\\/]/).slice(-depth).join("/");
+  const basename = (source: string): string => source.split(/[\\/]/).pop() ?? source;
 
-  const patterns = entries.map((e) => {
-    let depth = 1;
-    // Grow until this entry's tail is unique, or until the whole path is used.
-    while (
-      entries.some((other) => other !== e && tail(other.source, depth) === tail(e.source, depth)) &&
-      depth < e.source.split(/[\\/]/).length
-    ) {
-      depth += 1;
+  const byBasename = new Map<string, { source: string; ns: WorkletNamespace }[]>();
+  for (const e of entries) {
+    const key = basename(e.source);
+    const bucket = byBasename.get(key);
+    if (bucket === undefined) byBasename.set(key, [e]);
+    else bucket.push(e);
+  }
+
+  const out: string[] = [];
+  for (const [name, bucket] of byBasename) {
+    if (bucket.length > 1) {
+      console.warn(
+        `[@unworklet/lang] ${bucket.length} processors share the basename "${name}" ` +
+          `(${bucket.map((e) => e.source).join(", ")}). A \`?worklet\` witness is keyed on the ` +
+          `import specifier, which cannot tell them apart, so none of them gets a typed ` +
+          `surface — \`node.params.<name>\` stays untyped for these. Rename one to fix it.`,
+      );
+      continue;
     }
-    return `*/${tail(e.source, depth)}?worklet`;
-  });
-
-  return entries.map((e, i) => workletDts(patterns[i]!, e.ns)).join("\n");
+    out.push(workletDts(`*/${name}?worklet`, bucket[0]!.ns));
+  }
+  return out.join("\n");
 }

@@ -512,31 +512,50 @@ test("the witness marks event direction: eventRings → out, messageRings → in
   expect(dts).toContain('"both": { dir: "inout"; outFields: {}; inFields: {} }');
 });
 
-// Two processors can share a basename in different folders. Keying both on
-// `*/index.uwk.ts?worklet` emitted two `declare module` blocks for one pattern —
-// duplicate identifiers, or one processor's surface standing in for the other.
+// A witness pattern matches the specifier the consumer wrote, not the file it
+// resolves to. Two processors named `index.uwk.ts` are both imported as
+// `"./index.uwk.ts?worklet"`, so no key can tell them apart: a longer key
+// (`*/fxa/index.uwk.ts?worklet`) contains a segment the specifier lacks and
+// matches nothing, and two identical keys redeclare the same module. The
+// collision is therefore reported and both are left on the wildcard.
 // Reported by @codex on #43.
-test("processors sharing a basename get distinct module patterns", () => {
-  const ns = {
-    parameterDescriptors: [],
-    publishSlots: [],
-    eventRings: [],
-    messageRings: [],
-    midiRings: [],
-    inputs: [],
-    outputs: [],
-  } as unknown as Parameters<typeof workletDts>[1];
+test("processors sharing a basename are omitted with a warning, not mistyped", () => {
+  const warnings: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+  let dtsBoth: string;
+  try {
+    dtsBoth = workletsDts([
+      { source: path.join(dir, "fxa/index.uwk.ts"), ns: gainProc.worklet },
+      { source: path.join(dir, "fxb/index.uwk.ts"), ns: gainProc.worklet },
+      { source: path.join(dir, "solo.uwk.ts"), ns: gainProc.worklet },
+    ]);
+  } finally {
+    console.warn = realWarn;
+  }
 
-  const dts = workletsDts([
-    { source: "/p/effects/a/index.uwk.ts", ns },
-    { source: "/p/effects/b/index.uwk.ts", ns },
-    { source: "/p/synth.uwk.ts", ns },
-  ]);
-  const patterns = [...dts.matchAll(/declare module "([^"]+)"/g)].map((m) => m[1]!);
+  // The unique basename still gets its surface; the colliding pair gets nothing.
+  const patterns = [...dtsBoth.matchAll(/declare module "([^"]+)"/g)].map((m) => m[1]!);
+  expect(patterns).toEqual(["*/solo.uwk.ts?worklet"]);
+  expect(warnings.join("\n")).toMatch(/index\.uwk\.ts/);
 
-  expect(new Set(patterns).size, patterns.join(", ")).toBe(patterns.length);
-  expect(patterns).toContain("*/a/index.uwk.ts?worklet");
-  expect(patterns).toContain("*/b/index.uwk.ts?worklet");
-  // A unique basename keeps the short pattern.
-  expect(patterns).toContain("*/synth.uwk.ts?worklet");
+  // And the omission is honest rather than silent: an undeclared param name on a
+  // colliding import does NOT error, because it resolved to the permissive
+  // wildcard. (A specific witness makes it error — see the gain fixtures above.)
+  writeFileSync(path.join(dir, "collide.worklet.d.ts"), dtsBoth);
+  mkdirSync(path.join(dir, "fxa"), { recursive: true });
+  writeFileSync(
+    path.join(dir, "fxa/use.ts"),
+    `/// <reference types="@unworklet/unplugin/client" />
+/// <reference path="../collide.worklet.d.ts" />
+import { createNode } from "@unworklet/core";
+import proc from "./index.uwk.ts?worklet";
+declare const ctx: BaseAudioContext;
+export async function f(): Promise<void> {
+  const node = await createNode(ctx, proc);
+  void node.params.anything;
+}
+`,
+  );
+  expect(diagnose("fxa/use.ts")).toEqual([]);
 });
