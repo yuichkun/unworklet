@@ -131,13 +131,20 @@ export default defineConfig({
       "packages/*/vite.config.ts",
       "packages/core/vite.browser.config.ts",
       "packages/core/vite.browser-postmessage.config.ts",
+      // Repo-wide release invariants (the lockstep version guard) — checks that
+      // span every package at once, so they belong to no single package's suite.
+      // They need their own project config because listing `projects` replaces
+      // the root config as a collector entirely: a `test.include` written here
+      // is never read, so a test file placed outside these projects would
+      // silently never run.
+      "scripts/vite.config.ts",
     ],
     // examples/demo is NOT aggregated here. It depends on `@vitejs/devtools`, whose
     // peer wiring spins up a second vite-plus-test runner that breaks this shared
     // collector (it hangs). The demo runs in its own CI jobs instead: the node suite
     // standalone (`cd examples/demo && vp test run`) and the runtime-compile browser
-    // e2e on its own config (examples/demo/vite.browser.config.ts). The root's
-    // default project collects nothing; every test comes from the projects above.
+    // e2e on its own config (examples/demo/vite.browser.config.ts). The root config
+    // is not itself a project; every test comes from the projects above.
     include: [],
   },
 });
