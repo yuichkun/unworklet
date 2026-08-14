@@ -4,7 +4,13 @@ A pure-TypeScript authoring layer on top of `@unworklet/core`. End-users write `
 
 ## Status
 
-**Draft.** Not ratified. Not part of the v1.0.0 14-phase roadmap (`10-roadmap.md` §2). Targeted for grilling toward v1.1.0 after v1.0.0 ship.
+**Shipped — this file is the design-time proposal, kept as history.** `.uwk.ts` was
+implemented and is now the primary authoring form. What it actually does is
+described in `skills/unworklet/dsl.md`, which is verified against the
+implementation; read that, not this. Details here may differ from what shipped,
+and citations like `10-roadmap.md §2` point at design-time spec chapters that were
+deleted once the implementation was verified — recover them from git history at the
+`v0.1.0` tag if you need them.
 
 > **Surface note.** This draft predates two ratified core changes: scalar state
 > read/write is `.read()` / `.write()` (not `.load()` / `.store()`), and the

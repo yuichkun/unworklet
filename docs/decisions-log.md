@@ -1,6 +1,18 @@
 # Decisions log
 
-Cross-cutting reference: every resolved design question, recorded with its rationale and the alternatives that were rejected. Component docs link here for the "why" rather than restating it inline.
+Cross-cutting reference: every resolved design question, recorded with its rationale and the alternatives that were rejected.
+
+> **This file is history, not a specification.** It records _why_ each question was
+> settled — knowledge the code cannot express. It does not describe how unworklet
+> behaves today; for that, read `skills/unworklet/` (verified against the
+> implementation) or the implementation itself.
+>
+> The "Authoritative section" column, and citations like `01-dsl.md §5` throughout,
+> point at the design-time spec chapters that drove the v1.0.0 implementation.
+> Those chapters were deleted once the implementation shipped and was verified
+> against reality, because an unverified second description of the same behaviour
+> can only drift. The citations are kept as provenance: the chapters are recoverable
+> from git history at the `v0.1.0` tag (`git show v0.1.0:docs/01-dsl.md`).
 
 ## Status
 

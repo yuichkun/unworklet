@@ -18,44 +18,34 @@ Guidance for AI agents implementing unworklet v1.0.0.
 
 ## What this repository is
 
-A from-scratch implementation of `unworklet` — a TypeScript-first framework for declarative Audio Worklet DSP, compiled to WebAssembly. The v1.0.0 implementation is being driven by AI agents working in parallel against the specifications in `docs/`.
+`unworklet` — a TypeScript-first framework for declarative Audio Worklet DSP, compiled to WebAssembly. It is published: five packages ship from `packages/`, versioned in lockstep (see `RELEASE.md`).
 
 ## Source of truth
 
-- **`docs/`** is the authoritative specification. Read `docs/README.md` first to learn the read order and which component you own. Every component doc links to `docs/decisions-log.md` for the "why" behind any decision.
-- If your work touches an area that is not yet covered in `docs/`, **stop and surface the gap** to the human reviewer rather than inventing the missing decision.
+- **The implementation is the truth about behaviour.** There is no separate specification to defer to. A design-time spec drove the v1.0.0 build and was deleted once the implementation shipped and was verified against reality — an unverified second description of the same behaviour can only drift. Recover it from git history at the `v0.1.0` tag if you need the archaeology.
+- **`skills/unworklet/`** is the authoritative _description_ of that behaviour, and the only one kept honest: it is the guide consumers' agents read, its examples compile in CI, and it is re-verified by building real projects from it alone (the `guidance-dogfood` skill). If you change behaviour, change it there in the same commit.
+- **`docs/`** is history only — `decisions-log.md` for why a question was settled the way it was, and the RFCs. Neither describes current behaviour, so neither can contradict it. Do not treat either as a contract.
+- If a change requires a decision nobody has made, **stop and surface it** rather than inventing one.
 
-## Canonical examples integrity rule (HARD CONTRACT)
+## Integrity anchor: it runs (HARD CONTRACT)
 
-`docs/12-canonical-examples.md` is the **integrity anchor** for the entire spec. It is a curated set of self-contained, end-to-end plugin examples that exercise the full surface of unworklet (every primitive, every declaration, every main-side method). Any change to any other file in `docs/` — primitive shapes, declaration shapes, surface listings, decisions, transport contracts — must be cross-checked against the examples there before the change is accepted.
+The full surface of unworklet — every primitive, declaration, and main-side method — is anchored by things that **execute**, not by prose:
 
-**Required process when modifying any `docs/*.md` (other than `12-canonical-examples.md` itself)**:
+- **`packages/offline/src/canonical.test.ts`** — realistic end-to-end processors rendered through `renderOffline` and asserted on behaviour.
+- **`examples/demo`** — the same shapes driven through the real plugin pipeline in a browser, plus its offline-render tests.
+- **`packages/offline/src/docs-examples.test.ts`** — every complete processor example in the READMEs and the Skill is extracted from the markdown and compiled, so a documented example cannot rot into something that no longer builds.
 
-1. Identify which examples in `12-canonical-examples.md` exercise the surface you are changing (the `## Coverage` table at the top of that doc maps concept → example numbers).
-2. Apply the proposed change to those examples (mentally or as a draft) and verify they still:
-   - Compile under the changed surface (no broken signatures, types, or references).
-   - Make sense for the realistic use case the example was designed for (no awkward workarounds, no apologetic comments).
-   - Preserve the user's mental-model simplicity — the change should not force a production-grade audio plugin author to re-learn a concept they already understood.
-3. **If any example breaks or becomes awkward, the proposed change is rejected** until either (a) the change is revised to preserve the example, or (b) the example is updated together with the change as a single coherent revision (and the resulting UX cost is made visible to the human reviewer in the same diff).
+A markdown set of canonical examples used to hold this role, which meant the anchor could silently disagree with the code. It was deleted for that reason. The rule that replaces it:
 
-This rule is non-negotiable. Spec changes that pass review without an accompanying check against `12-canonical-examples.md` are **out of process**.
+**Any change to the public surface must leave those three green, and must land with the corresponding change to `skills/unworklet/` in the same commit.** If a realistic example becomes awkward to express — workarounds, apologetic comments, a concept the author now has to re-learn — the change is the wrong shape regardless of how clean it looks in isolation. Say so and surface it rather than absorbing the awkwardness.
 
-The same rule applies in the reverse direction: changes to `12-canonical-examples.md` itself trigger a re-read of the affected component docs to ensure the new example shape matches the spec — examples cannot drift from the spec, the spec cannot drift from the examples.
+## Public surface changes (HARD CONTRACT)
 
-The purpose of this rule is to keep one question answerable at any time during spec evolution: **"is the user experience still simple, coherent, and production-ready?"** If the canonical examples no longer read that way, the spec change is the wrong shape regardless of how clean it looks in isolation.
+The library is published, so the surface is a contract with people who already installed it.
 
-## Implementation invariant (HARD CONTRACT)
-
-unworklet v1.0.0 is built incrementally as 14 vertical slices (see `docs/10-roadmap.md` §2). **Minimal / vertical-slice implementations within a phase are by design acceptable**, but the following are **absolutely prohibited**:
-
-1. **Ad hoc implementations that diverge from the spec** — the public API surface (public types, argument shapes, return value shapes, as defined in `09-repo-structure.md` §2.1 + §2.2 and each component doc) must match the spec exactly. Shipping a temporary shape with the intention of fixing it later within a phase is not allowed.
-2. **Implementations that are not forward-compatible** — designs that conflict with surfaces added in later phases (e.g. adding declaration kinds, new primitives, main-side methods, or messaging surface extensions) are not allowed. Whatever is implemented within a phase must be a strict **subset** of the final architecture, shaped so that subsequent phases can expand it to a **superset** without rework.
-
-At the start of each phase, consult every doc that touches the surfaces you are working on (`00-foundations.md`, `01-dsl.md`, the relevant component docs, and the applicable questions in `decisions-log.md`), and implement as a subset of the final target shape. "Minimal" means the smallest correct subset — it does not mean "whatever works now, rewrite later."
-
-Even in skeleton phases (e.g. `docs/10-roadmap.md` §2 Phase 2), **declare public types in their final form**. Stub implementations (`throw new Error('not implemented')`, etc.) are fine for the body, but the public type / argument shape / return value shape must match the spec. Subsequent phases fill in the bodies of the already-declared surface.
-
-Violating this rule means the phase completion criteria are not met. A retract in the same commit is required, exactly as with the canonical examples integrity rule.
+1. **No shape you intend to fix later.** Public types, argument shapes, and return shapes ship as their final form. A temporary shape becomes someone's code.
+2. **Breaking changes are deliberate and versioned, never incidental.** Removing or narrowing a public type, moving a peer-dependency requirement, or making a check start failing builds it used to pass are all breaking. Pre-1.0 they force the minor, because `^0.x.y` resolves `0.x.*` and refuses `0.(x+1).0` — see `RELEASE.md`. Record them in `CHANGELOG.md` with the migration a consumer has to perform.
+3. **Additive by default.** Prefer a shape that widens what is accepted over one that invalidates existing code.
 
 ## Build, test, and lint — Vite+ only
 
@@ -144,15 +134,15 @@ List the applicable paths in `test.coverage.exclude` in each package's `vite.con
 
 ## Boundaries
 
-- Do not modify `docs/` to match the code. `docs/` is the contract; if reality has diverged, surface the mismatch to the human reviewer to fix the spec, not the spec to fit the code.
+- Do not edit `docs/` to match the code. It is a historical record, not a description of current behaviour — rewriting history to match the present destroys the only thing it is for. Behaviour is described in `skills/unworklet/`; change that.
 - Do not push to remote, open / close PRs, or perform shared-system actions without explicit approval.
-- The realtime-safety invariants in `docs/00-foundations.md` §5 are non-negotiable: no allocation, no unbounded loops, no I/O on the audio thread, no GC-triggering operations. If a design appears to require violating one, stop and surface it.
+- The realtime-safety invariants are non-negotiable: no allocation, no unbounded loops, no I/O on the audio thread, no GC-triggering operations. They are enforced in `packages/core/src/dsl/enforcement.test.ts` and by the worklet-realm lint rules in the root `vite.config.ts`. If a design appears to require violating one, stop and surface it.
 
 ## DevTools panel — recurring violations to avoid (HARD CONTRACT)
 
 These 5 design directions surfaced during the 5-F panel grill and were **explicitly rejected** by the reviewer. Treat them as permanently blocked — do not re-introduce them under refactor, plan revisions, or "wouldn't it be nice if..." arguments. Each entry carries the reason so the rule survives future re-evaluation.
 
-1. **MediaRecorder for audio capture.** Reject. WebM is browser-internal; bug reports need to be openable in any DAW or audio tool. The only sanctioned recording path is `AnalyserNode` → main-thread ring buffer (10 s rolling) → in-house 16-bit signed PCM WAV encoder. See `docs/07-unplugin.md` §6 Audio sub-tab.
+1. **MediaRecorder for audio capture.** Reject. WebM is browser-internal; bug reports need to be openable in any DAW or audio tool. The only sanctioned recording path is `AnalyserNode` → main-thread ring buffer (10 s rolling) → in-house 16-bit signed PCM WAV encoder.
 2. **Domain-specific layout baked into the framework UI** (e.g. polysynth "voice 8 grid", envelope chips, amp meter bars). Reject. unworklet does not interpret user domain; the panel surfaces declared `state.publish` / `buffer.publish` slots through type-driven representations + a switchable dropdown. Anything beyond that is user-land UI.
 3. **Jump-to-source button in the Build errors modal.** Reject. The modal already shows the source snippet + line + Why + Fix. Opening an IDE adds a side step the audio engineer didn't ask for.
 4. **Swap history panel for `replaceProcessor`.** Reject. `replaceProcessor` returns `ReplaceResult` synchronously, and the Q63 accumulation warning fires once. There is no need to model a history surface — framework does not orchestrate the swap (`docs/decisions-log.md` Q50).
@@ -164,7 +154,7 @@ If any of these proposals re-appear in a new panel grill, the conversation stops
 
 DevTools UI mocks are not decoration. They are the design contract that real composables get swapped into at the end of Phase 6. Therefore every mock obeys three properties:
 
-1. **Real-world**: drawn from `docs/12-canonical-examples.md` Ex 1-10, not invented for visual polish. Slot names, port names, capacities, sysex byte patterns reflect what an actual unworklet processor would declare.
+1. **Real-world**: drawn from the processors in `packages/offline/src/canonical.test.ts` and `examples/demo`, not invented for visual polish. Slot names, port names, capacities, sysex byte patterns reflect what an actual unworklet processor would declare.
 2. **Diverse**: covers every published type the framework exposes (= `state.f32` / `state.i32` / `state.bool` + `buffer.f32` / `buffer.i32` / `buffer.bool` / `buffer.u8`) through natural use cases rather than padding one type across many slots.
 3. **Integrated**: values move in causally-linked ways across nodes (= polysynth meter rises → limiter gain reduction increases → reverb wet meter trails behind). A mock that puts each slot on an independent random walk fails this rule.
 

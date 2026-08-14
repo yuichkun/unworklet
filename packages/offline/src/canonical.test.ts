@@ -1,9 +1,14 @@
 /**
- * Canonical examples (`docs/12-canonical-examples.md`) driven end-to-end through
- * `renderOffline` — the integrity anchor + acceptance A2/B1. Each test ports a
- * realistic plugin and asserts behavioral correctness (compile success, stable
- * output, expected events/state), exercising the combined surface rather than
- * one primitive in isolation.
+ * Canonical examples driven end-to-end through `renderOffline`. Each test is a
+ * realistic plugin asserted on behaviour (compiles, output stays stable, expected
+ * events / state), exercising the combined surface rather than one primitive in
+ * isolation — so a change that type-checks but breaks a real processor fails here.
+ *
+ * These examples live in this file, not in prose. A markdown set of them used to
+ * be the integrity anchor, which meant the anchor could silently disagree with
+ * the code; a runnable set cannot. The other half of that coverage is
+ * `examples/demo`, which renders the same shapes through the real plugin
+ * pipeline.
  */
 
 import "@unworklet/core";

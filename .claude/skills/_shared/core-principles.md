@@ -6,13 +6,13 @@ live document として上書きで更新する。
 
 ---
 
-## 1. unworklet とは / docs の位置づけ
+## 1. unworklet とは / 何を基準に判断するか
 
-TypeScript-first な宣言的 DSL で書かれた DSP を Audio Worklet 上の WebAssembly に compile するライブラリ。ユーザーは graph を declare するだけで、framework が capture → static analysis → WASM emission → runtime guard を担う。web platform (Web Audio + Web MIDI + WebAssembly) 向けの普通の npm library。
+TypeScript-first な宣言的 DSL で書かれた DSP を Audio Worklet 上の WebAssembly に compile するライブラリ。ユーザーは graph を declare するだけで、framework が capture → static analysis → WASM emission → runtime guard を担う。web platform (Web Audio + Web MIDI + WebAssembly) 向けの普通の npm library。既に publish 済み。
 
-**docs は基準ではなく参考。** `docs/` は v1.0.0 実装までの目標として 80% まで煮詰めた段階で、100% にする前に実装フェーズへ移行した = **メンテ非前提**。実装を docs と**意図して変えている**箇所があり、`docs/12-canonical-examples.md` ですら正しいとは限らない (余湖さん本人が完璧には目を通せていない)。
+**照合先は「動くもの」だけ。** 振る舞いの正本は実装そのもので、それを説明する唯一の面が `skills/unworklet/`(consumer の agent が読む guide、例は CI で compile され、guidance-dogfood で実装と突き合わせ済み)。かつて実装を駆動した spec 文書群は、実装が出荷され検証された時点で削除した — 検証されない二番目の説明は必ず腐るため。`docs/` に残っているのは歴史(`decisions-log.md` = なぜそう決めたか、RFC 群)だけで、**現在の振る舞いを記述していないので契約として扱わない**。
 
-→ 判断の最終基準は**この core principles = プロダクトの方向性**。docs/canonical と実装が食い違ったら「docs と違う = bug」と機械判断せず、「実装が正しい (docs が古い/意図的に変えた) のか、実装が方向性に反してサボっているのか」を方向性に照らして**良心で**判断する。
+→ 判断の最終基準は**この core principles = プロダクトの方向性**。「どこかにこう書いてある」を根拠に機械判断せず、方向性に照らして**良心で**判断する。
 
 ---
 
@@ -21,7 +21,7 @@ TypeScript-first な宣言的 DSL で書かれた DSP を Audio Worklet 上の W
 「unworklet であり続けるために」削れない性質。判断対象がこのいずれかと衝突したら、それが基準。
 
 - **declarative**: user が書いた構造がそのまま WASM になる。framework が意味を変える自動書き換えは列挙限定。意味を変えない最適化 (dead code elimination、SIMD ベクトル化等) は OK だが、user 値を黙って別値に差し替える / 隠れた delay を入れる / sequence を rewrite する系は NG。
-- **realtime-safe**: audio thread (worklet の process() と emit された WASM) は allocation-free / lock-free / GC-free / bounded-loop only (`00-foundations.md` §5.1)。per-quantum の heap alloc・無制限ループ・lock は realtime 違反。SAB / postMessage どちらの transport でも守る。
+- **realtime-safe**: audio thread (worklet の process() と emit された WASM) は allocation-free / lock-free / GC-free / bounded-loop only。per-quantum の heap alloc・無制限ループ・lock は realtime 違反。SAB / postMessage どちらの transport でも守る。強制は `packages/core/src/dsl/enforcement.test.ts` と root `vite.config.ts` の worklet-realm lint。
 - **型 ⟺ 動く**: TypeScript で型が通るコードは動くべき。型で表現した制約は実際に守られ、型をすり抜けて壊れた WASM が compile される穴は核の破れ。型で守れないものは capture / static analysis / runtime guard の層で fail-loud にする。
 - **user free が default**: 制約を入れる方が例外。「mental」「美学」「対称性」で勝手に制約を入れない。制約には仕様 invariant か哲学派生の justify が要る。
 - **AI agent paradigm**: 実装工数で scope を絞らない。取り返しがつかないのは後戻り不可領域 (snapshot blob の wire byte) と mental model に染み出す API surface だけ。工数だけを理由にした defer は NG。

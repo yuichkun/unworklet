@@ -4,7 +4,10 @@ A proposal for extending unworklet so that users can work with learned neural-ne
 
 ## Status
 
-**Draft** — proposed for v1.x.0 (post v1.0.0 additive). Outside v1.0.0 scope; proposed as an additive extension after v1.0.0 ships. Does not affect the integrity rules of the v1.0.0 spec or canonical examples.
+**Draft — not implemented.** Nothing here exists in the shipped library, so this
+file proposes rather than describes. Citations to numbered spec chapters point at
+design-time documents that were deleted once the implementation shipped; recover
+them from git history at the `v0.1.0` tag if you need them.
 
 This RFC is in the proposal stage. It has not been ratified; adoption, revision, and rejection are all open paths. If adopted, corresponding Q entries will be added to `decisions-log.md` and each component doc will be updated accordingly.
 

@@ -367,10 +367,10 @@ the same files `npx skills add` installs into your agents:
 - **DSL / API reference:** [`skills/unworklet/dsl.md`](./skills/unworklet/dsl.md) — `.uwk.ts` sugar + the underlying `@unworklet/core` declaration API.
 - **Setup:** [`skills/unworklet/setup.md`](./skills/unworklet/setup.md) · **Editor / CI typecheck:** [`skills/unworklet/ide-and-typecheck.md`](./skills/unworklet/ide-and-typecheck.md) · **Headless tests:** [`skills/unworklet/testing.md`](./skills/unworklet/testing.md) · **In-browser DevTools panel:** [`skills/unworklet/devtools.md`](./skills/unworklet/devtools.md).
 
-The `docs/` tree is the internal implementation spec used to build v1.0.0; it is
-disposable and not maintained for end users — treat `skills/unworklet/` as the
-source of truth for authoring, and reach into `docs/` only when you need the
-design rationale behind a decision.
+`skills/unworklet/` is the source of truth for how unworklet behaves: it is verified
+against the implementation, and its examples compile in CI. `docs/` holds only
+history — the decisions log (why each design question was settled) and the RFCs.
+Neither describes current behaviour, so neither can contradict it.
 
 ## Contributing
 
