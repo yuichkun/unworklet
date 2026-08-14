@@ -131,3 +131,43 @@ process(() => {
     process.chdir(prevCwd);
   }
 });
+
+test("a plain .ts helper import fails loudly on a Node that cannot strip types, instead of ERR_UNKNOWN_FILE_EXTENSION at import", () => {
+  // Lowering leaves an author's `./constants.ts` specifier alone, so the temp
+  // still imports raw TypeScript. Transpiling the author's own modules would mean
+  // guessing their tsconfig and possibly changing their code's meaning, so this
+  // reports the situation instead. Reported by @codex on #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-plainTs-"));
+  writeFileSync(path.join(dir, "constants.ts"), `export const GAIN: number = 3;\n`);
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `import { GAIN } from "./constants.ts";
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = GAIN * 0.1;
+  });
+});`,
+  );
+
+  // Run the materialize step in a child Node with stripping off (= Node 20).
+  const script = `
+    const { materializeLowered } = await import(${JSON.stringify(pathToFileURL(path.join(LANG, "dist/index.mjs")).href)});
+    try {
+      await materializeLowered(${JSON.stringify(src)}, new Map(), new Set(), []);
+      console.log("NO_THROW");
+    } catch (e) { console.log("THREW:" + e.message); }
+  `;
+  const r = spawnSync(
+    "node",
+    ["--no-experimental-strip-types", "--input-type=module", "-e", script],
+    {
+      encoding: "utf8",
+    },
+  );
+  const output = `${r.stdout}${r.stderr}`;
+  expect(output).toMatch(/THREW:/);
+  expect(output).toMatch(/constants\.ts/);
+  expect(output).toMatch(/22\.18/);
+});

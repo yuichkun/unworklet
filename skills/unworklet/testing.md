@@ -200,11 +200,17 @@ The processor is authored in `.uwk.ts` (the recommended form; full authoring in
   lives in one file.
 - **Multi-file entry path → `loadUwkProcessor`** (`@unworklet/lang`,
   `packages/lang/src/index.ts`). Materialises the entry `.uwk.ts` and every
-  sibling `.uwk.ts` it imports as temp `.uwklowered.ts` files next to their
+  sibling `.uwk.ts` it imports as temp `.uwklowered.mjs` files next to their
   sources, dynamically imports the entry, and returns the `CompiledProcessor`.
   This is the offline / test counterpart to the Vite plugin's `?worklet`
   build-path import — reach for it when the processor splits into a subgraph
   library module.
+
+  Sibling `.uwk.ts` imports are lowered to JavaScript for you, so they run on any
+  supported Node. A plain TypeScript helper (`import { GAIN } from "./constants.ts"`)
+  is left as you wrote it, so loading it needs a Node that strips types
+  (22.18+ / 23.6+); on an older one you get an error naming the import. Give the
+  helper a `.mjs` extension if you need to stay on Node 20.
 
 Single-file pattern from `examples/demo/src/examples.render.test.ts:14-85`:
 

@@ -7,7 +7,11 @@ import type { CompiledProcessor } from "@unworklet/core";
 import ts from "typescript";
 
 import { lower } from "./lower.ts";
-import { rewriteImportSpecifiers, uwkImportSpecifiers } from "./uwk-imports.ts";
+import {
+  plainTsImportSpecifiers,
+  rewriteImportSpecifiers,
+  uwkImportSpecifiers,
+} from "./uwk-imports.ts";
 
 /** True for a `.uwk.ts` source path (the sugar RFC-001 lowers to a plain `.ts`). */
 export const isUwkSource = (filePath: string): boolean => filePath.endsWith(".uwk.ts");
@@ -108,6 +112,26 @@ export const materializeLowered = async (
     remap[spec] = rel;
   }
   if (Object.keys(remap).length > 0) lowered = rewriteImportSpecifiers(lowered, remap);
+  // A plain `./helper.ts` the author imported survives lowering as-is, so the
+  // temp — JavaScript though it is — still imports raw TypeScript. Only a Node
+  // that strips types can load that, and this package supports older ones.
+  //
+  // We do NOT transpile the author's own modules to make it work: without their
+  // tsconfig we would be guessing settings that change meaning (type-only import
+  // elision, decorators, class field semantics), and silently altering user code
+  // is not something this toolchain does. Fail loudly and name the two ways out.
+  if (process.features.typescript === false) {
+    const plain = plainTsImportSpecifiers(lowered);
+    if (plain.length > 0) {
+      throw new Error(
+        `@unworklet/lang: ${path.basename(sourcePath)} imports ${plain.map((s) => `"${s}"`).join(", ")}, ` +
+          `and this Node (${process.version}) cannot load TypeScript. Either run Node 22.18+ / 23.6+, ` +
+          `where type-stripping is built in, or give the helper a JavaScript extension ` +
+          `(rename to .mjs and import it as "./helper.mjs"). Sibling .uwk.ts imports are ` +
+          `unaffected — those are lowered to JavaScript for you.`,
+      );
+    }
+  }
   // Strip types here so the temp is plain ESM every supported Node can import.
   // `sourcePath` is passed as the file name purely for diagnostics.
   const emitted = ts.transpileModule(lowered, {

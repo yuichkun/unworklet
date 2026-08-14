@@ -20,6 +20,27 @@ export function uwkImportSpecifiers(loweredTs: string): string[] {
   return out;
 }
 
+/**
+ * The module specifiers of a lowered `.ts` module that point at a plain relative
+ * `.ts` file — a helper the author imported (`import { GAIN } from
+ * "./constants.ts"`), as opposed to a sibling `.uwk.ts`, which is lowered
+ * separately. These survive lowering untouched, so the temp still imports raw
+ * TypeScript and only a Node that strips types can load it.
+ */
+export function plainTsImportSpecifiers(loweredTs: string): string[] {
+  const sf = ts.createSourceFile("__m.ts", loweredTs, ts.ScriptTarget.ESNext, true);
+  const out: string[] = [];
+  for (const stmt of sf.statements) {
+    if (!ts.isImportDeclaration(stmt) || !ts.isStringLiteral(stmt.moduleSpecifier)) continue;
+    // A type-only import is erased by the transpile, so it never reaches Node.
+    if (stmt.importClause?.isTypeOnly === true) continue;
+    const spec = stmt.moduleSpecifier.text;
+    const relative = spec.startsWith("./") || spec.startsWith("../");
+    if (relative && spec.endsWith(".ts") && !spec.endsWith(".uwk.ts")) out.push(spec);
+  }
+  return out;
+}
+
 /** Rewrite a lowered `.ts` module's import specifiers per `map` (original →
  * replacement). Specifiers absent from `map` are left unchanged. */
 export function rewriteImportSpecifiers(loweredTs: string, map: Record<string, string>): string {
