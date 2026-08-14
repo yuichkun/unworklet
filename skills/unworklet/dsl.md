@@ -102,11 +102,16 @@ Closed operator set: `classify.ts:120` (`isSugarBinaryOperator`). Method chains
 interoperate with operators in the same body (core `Node` methods classify as
 DSP): `raw.mul(I32_SCALE).tanh()`, `shaped.sub(dcPrev * DC_POLE)`.
 
-**No short-circuit for `&&` / `||`**: both operands always evaluate — WASM
+**Nothing here short-circuits.** `&&` / `||` evaluate both operands, and so does
+`select(cond, a, b)` — it picks a value, it does not guard evaluation. WASM
 realtime has no branch-free short-circuit primitive, and every DSP node runs at
-audio rate anyway. If you need "only evaluate B when A is true" semantics,
-rewrite with `select(A, thenBranch, elseBranch)` where the branch position
-naturally guards.
+audio rate anyway, so there is nothing to save.
+
+This matters when a branch is not just a value: an unchosen `noiseSource.next()`
+still advances the PRNG, and an unchosen `i32` division by zero still traps. To
+keep an expression out of the graph, do not write it — restructure so the
+dangerous operand is always safe (clamp the divisor, hoist the read), rather than
+expecting a conditional to skip it.
 
 ### Index / element-access (`packages/lang/src/passes/index.ts`)
 
