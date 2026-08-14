@@ -22,7 +22,7 @@ import { pathToFileURL } from "node:url";
 
 import { afterEach, expect, test } from "vite-plus/test";
 
-import { materializeLowered } from "./materialize-lowered.ts";
+import { loadUwkProcessor, materializeLowered } from "./materialize-lowered.ts";
 
 // The fixtures live inside this package so the lowered temps resolve
 // `@unworklet/core` by walking up to `packages/lang/node_modules`, exactly as a
@@ -104,4 +104,30 @@ process(() => {
   const { code, output } = importWithoutTypeStripping(temp);
   expect(output).not.toMatch(/ERR_UNKNOWN_FILE_EXTENSION/);
   expect(code, output).toBe(0);
+});
+
+test("loadUwkProcessor accepts the documented relative path", async () => {
+  // The published example is `loadUwkProcessor("./my-synth.uwk.ts")`. A relative
+  // input broke twice: the lowering's program could not find the input, and the
+  // temp path `path.join(".", ".x.uwklowered.mjs")` has no `./` prefix, so
+  // `import()` would read it as a bare specifier. Reported by @codex on #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-rel-"));
+  writeFileSync(
+    path.join(dir, "synth.uwk.ts"),
+    `const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = 0.5;
+  });
+});`,
+  );
+
+  const prevCwd = process.cwd();
+  process.chdir(dir);
+  try {
+    const proc = await loadUwkProcessor("./synth.uwk.ts");
+    expect(typeof proc.schemaHash).toBe("string");
+  } finally {
+    process.chdir(prevCwd);
+  }
 });

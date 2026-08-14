@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import type { CompiledProcessor } from "@unworklet/core";
 import ts from "typescript";
@@ -77,11 +78,16 @@ export const lowerUwkSource = (sourcePath: string, source: string): string => {
  * `loadProcessorModuleFresh` and offline / test usage).
  */
 export const materializeLowered = async (
-  sourcePath: string,
+  entryPath: string,
   done: Map<string, string>,
   inProgress: Set<string>,
   cleanup: string[],
 ): Promise<string> => {
+  // Resolve up front. A relative input (the documented `"./my-synth.uwk.ts"`)
+  // otherwise fails twice: the lowering's program cannot locate it, and
+  // `path.join(".", ".x.uwklowered.mjs")` yields a name with no `./` prefix,
+  // which `import()` reads as a bare specifier.
+  const sourcePath = path.resolve(entryPath);
   const already = done.get(sourcePath);
   if (already !== undefined) return already;
   if (inProgress.has(sourcePath)) {
@@ -157,7 +163,10 @@ export async function loadUwkProcessor(sourcePath: string): Promise<CompiledProc
   const cleanup: string[] = [];
   const entryTemp = await materializeLowered(sourcePath, new Map(), new Set(), cleanup);
   try {
-    const mod = (await import(`${entryTemp}?t=${Date.now()}`)) as Record<string, unknown>;
+    // A file URL, not a path: an absolute POSIX path happens to work, but a
+    // Windows path or a name without a `./` prefix does not.
+    const href = `${pathToFileURL(entryTemp).href}?t=${Date.now()}`;
+    const mod = (await import(href)) as Record<string, unknown>;
     const matches: string[] = [];
     let found: CompiledProcessor<unknown> | undefined;
     for (const key of Object.keys(mod)) {
