@@ -623,3 +623,41 @@ process(() => {
   expect(output).toMatch(/SECOND_HAS_075:true/);
   expect(output).toMatch(/SECOND_HAS_025:false/);
 });
+
+test("a query on a helper's specifier does not hide the .uwk.ts behind it", async () => {
+  // `export { voice } from "./voice.uwk.ts?rev=1"` is a legal ESM specifier —
+  // Node accepts a query on a file URL. The walk classified specifiers by their
+  // raw text, so neither the `.uwk.ts` test nor the extension test matched and
+  // the traversal stopped one edge short of what it exists to find.
+  // Reported by @codex on #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-query-"));
+  writeFileSync(
+    path.join(dir, "voice.uwk.ts"),
+    `export const voice = defineSubgraph(() => {
+  const p = state.f32(0).named("p");
+  return { tick: () => p };
+});`,
+  );
+  writeFileSync(path.join(dir, "barrel.mjs"), `export { voice } from "./voice.uwk.ts?rev=1";\n`);
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `import { voice } from "./barrel.mjs";
+
+const out = audioOutput({ channels: 1, name: "main" });
+const v = instantiate(voice, { name: "v" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = v.tick();
+  });
+});`,
+  );
+
+  const err = await loadUwkProcessor(src).then(
+    () => undefined,
+    (e: unknown) => e as Error,
+  );
+  expect(err?.message).toMatch(/@unworklet\/lang/);
+  expect(err?.message).toMatch(/voice\.uwk\.ts/);
+  expect(err?.message).not.toMatch(/defineSubgraph is not defined/);
+});

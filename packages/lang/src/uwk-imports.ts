@@ -59,11 +59,14 @@ export function plainTsModuleSpecifiers(emittedJs: string): string[] {
   const out: string[] = [];
   for (const { spec } of moduleRefs(sf)) {
     if (!spec.startsWith("./") && !spec.startsWith("../")) continue;
-    if (spec.endsWith(".uwk.ts")) continue; // lowered separately, and remapped above
+    // Classified by the file part: ESM allows a query and a fragment on a file
+    // URL, and an extension test against the raw specifier misses both.
+    const asPath = spec.split(/[?#]/)[0]!;
+    if (asPath.endsWith(".uwk.ts")) continue; // lowered separately, and remapped above
     // The three extensions Node strips once it can strip at all — and therefore
     // the three it cannot load when it cannot. (`.tsx` is excluded on purpose:
     // no Node version loads it, so it is not a capability question.)
-    if (/\.(ts|mts|cts)$/.test(spec) && !out.includes(spec)) out.push(spec);
+    if (/\.(ts|mts|cts)$/.test(asPath) && !out.includes(spec)) out.push(spec);
   }
   return out;
 }
