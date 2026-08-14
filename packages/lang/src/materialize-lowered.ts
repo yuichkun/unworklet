@@ -324,10 +324,28 @@ export const materializeLowered = async (
   }
   inProgress.add(sourcePath);
   const source = await readFile(sourcePath, "utf8");
-  let lowered = lowerUwkSource(sourcePath, source);
+  const lowered = lowerUwkSource(sourcePath, source);
   const dir = path.dirname(sourcePath);
+  // Strip types here so the temp is plain ESM every supported Node can import.
+  // `sourcePath` is passed as the file name purely for diagnostics.
+  //
+  // Emitted BEFORE dependencies are looked for, because the emit is the module
+  // graph. Which specifiers survive is not readable off the declarations: a
+  // type-only clause goes, and so does any import whose bindings end up unused,
+  // whatever shape it has. Walking a specifier Node never resolves invents a
+  // dependency — and an invented back-edge is reported as a cyclic import for a
+  // graph that has no cycle in it.
+  let emitted = ts.transpileModule(lowered, {
+    fileName: sourcePath,
+    compilerOptions: {
+      target: ts.ScriptTarget.ESNext,
+      module: ts.ModuleKind.ESNext,
+      // Keep specifiers exactly as written; the remap below points them at temps.
+      verbatimModuleSyntax: false,
+    },
+  }).outputText;
   const remap: Record<string, string> = {};
-  for (const spec of uwkImportSpecifiers(lowered)) {
+  for (const spec of uwkImportSpecifiers(emitted)) {
     // The file part only — a sibling can be imported as `"./voice.uwk.ts?rev=1"`,
     // and the query belongs to the specifier, not to the path on disk.
     const targetTemp = await materializeLowered(
@@ -343,19 +361,7 @@ export const materializeLowered = async (
     if (!rel.startsWith("./") && !rel.startsWith("../")) rel = `./${rel}`;
     remap[spec] = rel;
   }
-  if (Object.keys(remap).length > 0) lowered = rewriteImportSpecifiers(lowered, remap);
-  // Strip types here so the temp is plain ESM every supported Node can import.
-  // `sourcePath` is passed as the file name purely for diagnostics.
-  let emitted = ts.transpileModule(lowered, {
-    fileName: sourcePath,
-    compilerOptions: {
-      target: ts.ScriptTarget.ESNext,
-      module: ts.ModuleKind.ESNext,
-      // Keep import specifiers exactly as the lowering wrote them — the sibling
-      // remap above already points them at the temps.
-      verbatimModuleSyntax: false,
-    },
-  }).outputText;
+  if (Object.keys(remap).length > 0) emitted = rewriteImportSpecifiers(emitted, remap);
   // A plain `./helper.ts` the author imported survives lowering as-is, so the
   // temp — JavaScript though it is — still points at raw TypeScript. Only a Node
   // that strips types can load that, and this package supports older ones.

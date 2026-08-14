@@ -1036,3 +1036,44 @@ process(() => {
   const proc = await loadUwkProcessor(src);
   expect(typeof proc.schemaHash).toBe("string");
 });
+
+test("an unused import of a sibling is not walked as a dependency", async () => {
+  // The emit drops an import whose bindings go unused, whatever shape the
+  // declaration has — so classifying by shape reports an edge Node never sees.
+  // Here `a`'s only edge to `b` is an unused default import while `b` imports
+  // `a` for real: the emitted graph is a single edge, and walking the erased one
+  // met `b` mid-materialization and rejected the load as cyclic.
+  // Reported by @codex on #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-unusedimport-"));
+  writeFileSync(
+    path.join(dir, "a.uwk.ts"),
+    `import Unused from "./b.uwk.ts";
+
+export const GAIN = 0.5;`,
+  );
+  writeFileSync(
+    path.join(dir, "b.uwk.ts"),
+    `import { GAIN } from "./a.uwk.ts";
+
+export const b = defineSubgraph(() => {
+  const p = state.f32(0).named("p");
+  return { tick: () => p.read() * f32(GAIN) };
+});`,
+  );
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `import { b } from "./b.uwk.ts";
+
+const out = audioOutput({ channels: 1, name: "main" });
+const v = instantiate(b, { name: "v" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = v.tick();
+  });
+});`,
+  );
+
+  const proc = await loadUwkProcessor(src);
+  expect(typeof proc.schemaHash).toBe("string");
+});

@@ -66,54 +66,23 @@ const runtimeRefs = (sf: ts.SourceFile): ModuleRef[] =>
   moduleRefs(sf).filter((r) => r.kind !== "type");
 
 /**
- * Whether `ts.transpileModule` drops this declaration entirely, leaving Node
- * with no edge to the module it names.
+ * The `.uwk.ts` modules an EMITTED temp still asks for — the transitive sugar
+ * the build has to lower too.
  *
- * Pinned against the emit rather than reasoned about, because the answer is not
- * where one would look for it: `import { type A } from …` marks the SPECIFIER,
- * so a clause-level `isTypeOnly` check misses it, and a clause whose every named
- * specifier is type-only has nothing left to import — the statement goes. What
- * survives is anything carrying a value: a MIXED clause, a default binding, a
- * namespace, a bare side-effect import, `export *` and `export * as ns`.
- *
- * NOT the same question `runtimeModuleSpecifiers` answers. That one is about
- * Node's strip-only mode, which keeps the statement for the inline form. Two
- * different erasers, two different answers, deliberately not shared.
- */
-function erasedByEmit(stmt: ts.ImportDeclaration | ts.ExportDeclaration): boolean {
-  if (ts.isImportDeclaration(stmt)) {
-    const clause = stmt.importClause;
-    if (clause === undefined) return false; // side-effect import
-    if (clause.isTypeOnly) return true;
-    if (clause.name !== undefined) return false; // default binding is a value
-    const bindings = clause.namedBindings;
-    if (bindings === undefined || !ts.isNamedImports(bindings)) return false; // namespace
-    return bindings.elements.every((e) => e.isTypeOnly);
-  }
-  if (stmt.isTypeOnly) return true;
-  const clause = stmt.exportClause;
-  if (clause === undefined || !ts.isNamedExports(clause)) return false; // `export *` forms
-  return clause.elements.every((e) => e.isTypeOnly);
-}
-
-/**
- * The module specifiers of a lowered `.ts` module that point at a `.uwk.ts`
- * (the transitive sugar imports and re-exports the build must lower too).
+ * Takes the transpiled output, not the lowered TypeScript, because the emit IS
+ * the module graph. Which specifiers survive cannot be read off the
+ * declarations: a type-only clause goes, and so does any import whose bindings
+ * end up unused, whatever shape it has. Reading the emit means this reports the
+ * edges Node will resolve and no others — an invented back-edge is reported as
+ * a cyclic import for a graph that has no cycle in it.
  *
  * Matched on the file part, like every other classifier here: ESM allows a query
  * and a fragment, and `"./voice.uwk.ts?rev=1"` needs lowering just as much.
- *
- * References TypeScript erases are left out. They name no module at runtime, and
- * treating one as a dependency turns an ordinary shape — a sibling naming its
- * importer back in a type position — into a cycle that only exists here: the
- * walk meets the entry mid-materialization and rejects the processor, while the
- * module graph Node sees is acyclic.
  */
-export function uwkImportSpecifiers(loweredTs: string): string[] {
-  const sf = ts.createSourceFile("__m.ts", loweredTs, ts.ScriptTarget.ESNext, true);
+export function uwkImportSpecifiers(emittedJs: string): string[] {
+  const sf = ts.createSourceFile("__m.js", emittedJs, ts.ScriptTarget.ESNext, true);
   const out: string[] = [];
   for (const ref of runtimeRefs(sf)) {
-    if (ref.kind === "declaration" && erasedByEmit(ref.stmt)) continue;
     if (ref.spec.split(/[?#]/)[0]!.endsWith(".uwk.ts") && !out.includes(ref.spec)) {
       out.push(ref.spec);
     }

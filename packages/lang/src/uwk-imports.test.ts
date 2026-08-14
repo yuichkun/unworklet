@@ -43,10 +43,7 @@ test("uwkImportSpecifiers and rewriteImportSpecifiers cover re-exports too", () 
     `export type { Cfg } from "./cfg.uwk.ts";\n` +
     `export { plain } from "./plain.ts";\n` +
     `export {};\n`;
-  // `export type { Cfg } from …` is absent on purpose: TypeScript erases the
-  // statement, so it names no module at runtime and lowering it would only
-  // invite a cycle that does not exist in the module graph Node sees.
-  expect(uwkImportSpecifiers(src)).toEqual(["./onepole.uwk.ts", "./tone.uwk.ts"]);
+  expect(uwkImportSpecifiers(src)).toEqual(["./onepole.uwk.ts", "./tone.uwk.ts", "./cfg.uwk.ts"]);
 
   const out = rewriteImportSpecifiers(src, {
     "./onepole.uwk.ts": "./.onepole.uwk.ts.aaaa1111.uwklowered.mjs",
@@ -112,31 +109,24 @@ test("uwkImportSpecifiers finds dynamic and query-bearing worklet dependencies",
   expect(uwkImportSpecifiers(src)).toEqual(["./a.uwk.ts?rev=1", "./b.uwk.ts", "./c.uwk.ts"]);
 });
 
-// Which declarations the EMIT keeps, pinned against `ts.transpileModule` rather
-// than assumed: a named clause whose every specifier is type-only disappears
-// (there is nothing left to import), while a mixed one, a default binding, a
-// namespace, a side-effect import and `export *` all survive.
+// `uwkImportSpecifiers` reads the EMIT, so it reports every `.uwk.ts` the
+// emitted module still names and asks no questions about type-only syntax —
+// `ts.transpileModule` has already removed whatever it removes, including
+// imports whose bindings ended up unused. Deciding that from declaration shape
+// instead invents edges, and an invented back-edge reads as a cyclic import.
 // Reported by @codex on #43.
-test("uwkImportSpecifiers returns exactly the .uwk.ts edges the emit keeps", () => {
-  const src =
-    `import { type A } from "./a.uwk.ts";\n` +
-    `import { type B, useB } from "./b.uwk.ts";\n` +
-    `import D from "./d.uwk.ts";\n` +
-    `import * as ns from "./ns.uwk.ts";\n` +
+test("uwkImportSpecifiers reports the .uwk.ts edges present in the emitted module", () => {
+  const emitted =
+    `import { onepole } from "./onepole.uwk.ts";\n` +
+    `export * from "./tone.uwk.ts";\n` +
     `import "./side.uwk.ts";\n` +
-    `import type { T } from "./t.uwk.ts";\n` +
-    `export { type E } from "./e.uwk.ts";\n` +
-    `export { type F, useF } from "./f.uwk.ts";\n` +
-    `export * from "./star.uwk.ts";\n` +
-    `export * as sns from "./sns.uwk.ts";\n` +
-    `export type { G } from "./g.uwk.ts";\n`;
-  expect(uwkImportSpecifiers(src)).toEqual([
-    "./b.uwk.ts",
-    "./d.uwk.ts",
-    "./ns.uwk.ts",
+    `const lazy = () => import("./lazy.uwk.ts");\n` +
+    `import { helper } from "./helper.mjs";\n` +
+    `console.log(onepole, lazy, helper);\n`;
+  expect(uwkImportSpecifiers(emitted)).toEqual([
+    "./onepole.uwk.ts",
+    "./tone.uwk.ts",
     "./side.uwk.ts",
-    "./f.uwk.ts",
-    "./star.uwk.ts",
-    "./sns.uwk.ts",
+    "./lazy.uwk.ts",
   ]);
 });
