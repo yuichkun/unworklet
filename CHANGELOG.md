@@ -87,8 +87,11 @@ processors only. Two consequences:
 
 - **`and(a, b)` / `or(a, b)` boolean primitives**, plus `Node#and` / `Node#or`.
   In `.uwk.ts`, `&&` and `||` between two `Node<"bool">` lower to them. Both
-  operands always evaluate — WASM has no branch-free short-circuit — so use
-  `select(cond, a, b)` when you need guarding.
+  operands always evaluate — WASM has no branch-free short-circuit — and neither
+  does `select(cond, a, b)`, which picks a value rather than guarding
+  evaluation. Nothing in the DSL skips an operand, so make every operand safe to
+  evaluate (clamp the divisor, hoist the read) rather than expecting a
+  conditional to skip it.
 - **`noiseSource({ seed })`** — an xorshift32 PRNG declaration primitive; call
   `.next()` per sample. Wired into the `.uwk.ts` ambient surface.
 - **`loadUwkProcessor(path)` in `@unworklet/lang`** — loads a `.uwk.ts` and its
