@@ -43,7 +43,10 @@ test("uwkImportSpecifiers and rewriteImportSpecifiers cover re-exports too", () 
     `export type { Cfg } from "./cfg.uwk.ts";\n` +
     `export { plain } from "./plain.ts";\n` +
     `export {};\n`;
-  expect(uwkImportSpecifiers(src)).toEqual(["./onepole.uwk.ts", "./tone.uwk.ts", "./cfg.uwk.ts"]);
+  // `export type { Cfg } from …` is absent on purpose: TypeScript erases the
+  // statement, so it names no module at runtime and lowering it would only
+  // invite a cycle that does not exist in the module graph Node sees.
+  expect(uwkImportSpecifiers(src)).toEqual(["./onepole.uwk.ts", "./tone.uwk.ts"]);
 
   const out = rewriteImportSpecifiers(src, {
     "./onepole.uwk.ts": "./.onepole.uwk.ts.aaaa1111.uwklowered.mjs",

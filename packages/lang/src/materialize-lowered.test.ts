@@ -932,3 +932,70 @@ process(() => {
   expect(typeof pa.schemaHash).toBe("string");
   expect(typeof pb.schemaHash).toBe("string");
 });
+
+test("a type-only reference between two .uwk.ts files is not a cycle", async () => {
+  // Discovery fed every module reference to materialization, including the ones
+  // TypeScript erases. A sibling naming its importer back in a type position is
+  // then walked as a real dependency, meets the entry mid-materialization, and
+  // the load is rejected as cyclic — while the module graph Node actually sees
+  // has no cycle at all. Reported by @codex on #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-typecycle-"));
+  writeFileSync(
+    path.join(dir, "voice.uwk.ts"),
+    `import type { Depth } from "./synth.uwk.ts";
+
+export const voice = defineSubgraph(() => {
+  const p = state.f32(0).named("p");
+  const _depth: Depth = "shallow";
+  return { tick: () => p.read() };
+});`,
+  );
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `import { voice } from "./voice.uwk.ts";
+
+export type Depth = "shallow" | "deep";
+const out = audioOutput({ channels: 1, name: "main" });
+const v = instantiate(voice, { name: "v" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = v.tick();
+  });
+});`,
+  );
+
+  const proc = await loadUwkProcessor(src);
+  expect(typeof proc.schemaHash).toBe("string");
+});
+
+test("an import-type expression naming a .uwk.ts is not a cycle either", async () => {
+  // Same erasure, written as `import("./synth.uwk.ts").Depth` — the form that
+  // needs no import declaration at all. Reported by @codex on #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-typecycle2-"));
+  writeFileSync(
+    path.join(dir, "voice.uwk.ts"),
+    `export const voice = defineSubgraph(() => {
+  const p = state.f32(0).named("p");
+  const _depth: import("./synth.uwk.ts").Depth = "shallow";
+  return { tick: () => p.read() };
+});`,
+  );
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `import { voice } from "./voice.uwk.ts";
+
+export type Depth = "shallow" | "deep";
+const out = audioOutput({ channels: 1, name: "main" });
+const v = instantiate(voice, { name: "v" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = v.tick();
+  });
+});`,
+  );
+
+  const proc = await loadUwkProcessor(src);
+  expect(typeof proc.schemaHash).toBe("string");
+});

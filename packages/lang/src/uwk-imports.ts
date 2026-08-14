@@ -65,15 +65,36 @@ function moduleRefs(sf: ts.SourceFile): ModuleRef[] {
 const runtimeRefs = (sf: ts.SourceFile): ModuleRef[] =>
   moduleRefs(sf).filter((r) => r.kind !== "type");
 
-/** The module specifiers of a lowered `.ts` module that point at a `.uwk.ts`
+/**
+ * The module specifiers of a lowered `.ts` module that point at a `.uwk.ts`
  * (the transitive sugar imports and re-exports the build must lower too).
+ *
  * Matched on the file part, like every other classifier here: ESM allows a query
- * and a fragment, and `"./voice.uwk.ts?rev=1"` needs lowering just as much. */
+ * and a fragment, and `"./voice.uwk.ts?rev=1"` needs lowering just as much.
+ *
+ * References TypeScript erases are left out. They name no module at runtime, and
+ * treating one as a dependency turns an ordinary shape — a sibling naming its
+ * importer back in a type position — into a cycle that only exists here: the
+ * walk meets the entry mid-materialization and rejects the processor, while the
+ * module graph Node sees is acyclic.
+ */
 export function uwkImportSpecifiers(loweredTs: string): string[] {
   const sf = ts.createSourceFile("__m.ts", loweredTs, ts.ScriptTarget.ESNext, true);
   const out: string[] = [];
-  for (const { spec } of moduleRefs(sf)) {
-    if (spec.split(/[?#]/)[0]!.endsWith(".uwk.ts") && !out.includes(spec)) out.push(spec);
+  for (const ref of runtimeRefs(sf)) {
+    // A clause-level `type` erases the statement outright. The inline form
+    // (`import { type A }`) is left in: whether the emit keeps it depends on how
+    // the other bindings are used, and an extra lowered sibling costs a temp
+    // nobody imports, while a missing one costs a crash.
+    if (ref.kind === "declaration") {
+      const typeOnly = ts.isImportDeclaration(ref.stmt)
+        ? ref.stmt.importClause?.isTypeOnly === true
+        : ref.stmt.isTypeOnly;
+      if (typeOnly) continue;
+    }
+    if (ref.spec.split(/[?#]/)[0]!.endsWith(".uwk.ts") && !out.includes(ref.spec)) {
+      out.push(ref.spec);
+    }
   }
   return out;
 }
