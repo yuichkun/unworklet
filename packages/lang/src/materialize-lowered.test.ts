@@ -1172,3 +1172,26 @@ process(() => {
   expect(output).toMatch(/optional\.uwk\.ts/);
   expect(output).toMatch(/lib\.uwk\.ts/);
 });
+
+test("a filename that is a strict-mode restricted identifier still yields a loadable module", async () => {
+  // `eval` and `arguments` are not reserved words, but an ES module is always
+  // strict and neither may be a lexical binding there — so `eval.uwk.ts` derived
+  // `export const eval = defineProcessor(…)`, a syntax error, and neither loader
+  // could import it. Reported by @codex on #43.
+  for (const name of ["eval", "arguments"]) {
+    dir = mkdtempSync(path.join(LANG, `.mat-strict-${name}-`));
+    const src = path.join(dir, `${name}.uwk.ts`);
+    writeFileSync(
+      src,
+      `const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = 0.25;
+  });
+});`,
+    );
+    const proc = await loadUwkProcessor(src);
+    expect(typeof proc.schemaHash, name).toBe("string");
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

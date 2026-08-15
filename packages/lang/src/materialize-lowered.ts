@@ -72,15 +72,22 @@ export const deriveExportName = (sourcePath: string): string => {
   // `class.uwk.ts` would otherwise emit `export const class = defineProcessor(…)`,
   // which is a syntax error, so the temp fails to load at all. Suffix rather than
   // replace, so the name still points back at the file.
-  return RESERVED_WORDS.has(camel) ? `${camel}Processor` : camel;
+  return CANNOT_BIND.has(camel) ? `${camel}Processor` : camel;
 };
 
 /**
- * Words that cannot be a `const` binding. Reserved words plus the contextual ones
- * that are still errors in a module (modules are always strict, and `await` is
- * reserved at module top level).
+ * Words that cannot be a `const` binding in a module. Reserved words, the
+ * contextual ones that are still errors under strict mode, and `await`, which is
+ * reserved at module top level.
+ *
+ * `eval` and `arguments` are neither reserved nor contextual keywords, and they
+ * belong here all the same: a module is always strict, and strict mode forbids
+ * either as a lexical binding. Their absence made `eval.uwk.ts` emit
+ * `export const eval = …` and fail to parse.
  */
-const RESERVED_WORDS = new Set([
+const CANNOT_BIND = new Set([
+  "arguments",
+  "eval",
   "await",
   "break",
   "case",
