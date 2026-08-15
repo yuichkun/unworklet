@@ -319,13 +319,23 @@ export const materializeLowered = async (
   const sourcePath = path.resolve(entryPath);
   const already = done.get(sourcePath);
   if (already !== undefined) return already;
-  if (inProgress.has(sourcePath)) {
-    throw new Error(`@unworklet/lang: cyclic .uwk.ts import involving ${sourcePath}`);
-  }
+  // The temp path is settled BEFORE the dependencies are, and recorded straight
+  // away. Naming it from its own content instead made every mutual reference
+  // unresolvable — each file's name waiting on the other's — and the recursion
+  // could only report that as a cyclic import. It is not one: a lazy
+  // `() => import("./b.uwk.ts")` is an edge Node resolves when the function
+  // runs, and even a genuine cycle is something ESM handles. Reserving the name
+  // lets the graph be mirrored as the author wrote it, and Node judge it.
+  //
+  // Basename plus this load's tag is already unique: temps sit beside their
+  // source, so two files sharing a basename sit in different directories.
+  const dir = path.dirname(sourcePath);
+  const tempPath = path.join(dir, `.${path.basename(sourcePath)}.${loadTag(done)}.uwklowered.mjs`);
+  done.set(sourcePath, tempPath);
   inProgress.add(sourcePath);
+  cleanup.push(tempPath);
   const source = await readFile(sourcePath, "utf8");
   const lowered = lowerUwkSource(sourcePath, source);
-  const dir = path.dirname(sourcePath);
   // Strip types here so the temp is plain ESM every supported Node can import.
   // `sourcePath` is passed as the file name purely for diagnostics.
   //
@@ -455,15 +465,8 @@ export const materializeLowered = async (
     loadedIndirectHelpers.set(file, rev);
   }
 
-  const tag = createHash("sha256").update(emitted).digest("hex").slice(0, 8);
-  const tempPath = path.join(
-    dir,
-    `.${path.basename(sourcePath)}.${tag}.${loadTag(done)}.uwklowered.mjs`,
-  );
   await writeFile(tempPath, emitted);
-  done.set(sourcePath, tempPath);
   inProgress.delete(sourcePath);
-  cleanup.push(tempPath);
   return tempPath;
 };
 

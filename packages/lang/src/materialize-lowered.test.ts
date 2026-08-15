@@ -1077,3 +1077,43 @@ process(() => {
   const proc = await loadUwkProcessor(src);
   expect(typeof proc.schemaHash).toBe("string");
 });
+
+test("a lazily imported sibling that imports back is not a cycle", async () => {
+  // `const loadC = () => import("./c.uwk.ts")` is an edge Node resolves only if
+  // `loadC` runs, and `c` importing `b` back is then no cycle at all. Naming a
+  // temp from its own content made it one regardless: each file's name waited on
+  // the other's, and the recursion could only report that as a cyclic import.
+  // Reported by @codex on #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-lazycycle-"));
+  writeFileSync(
+    path.join(dir, "b.uwk.ts"),
+    `export const loadC = () => import("./c.uwk.ts");
+
+export const b = defineSubgraph(() => {
+  const p = state.f32(0).named("p");
+  return { tick: () => p.read() };
+});`,
+  );
+  writeFileSync(
+    path.join(dir, "c.uwk.ts"),
+    `import { b } from "./b.uwk.ts";
+
+export const alsoB = b;`,
+  );
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `import { b } from "./b.uwk.ts";
+
+const out = audioOutput({ channels: 1, name: "main" });
+const v = instantiate(b, { name: "v" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = v.tick();
+  });
+});`,
+  );
+
+  const proc = await loadUwkProcessor(src);
+  expect(typeof proc.schemaHash).toBe("string");
+});
