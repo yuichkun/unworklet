@@ -1,9 +1,9 @@
 /**
  * Bool-logical operator sugar (`&&` `||`) → `and(a, b)` / `or(a, b)`. Both
  * operands are always evaluated (no JS-style short-circuit) — WASM realtime
- * has no branch-free short-circuit primitive; consumers wanting short-circuit
- * semantics should refactor to `select(cond, thenExpr, elseExpr)` where the
- * branch position naturally guards.
+ * has no branch-free short-circuit primitive, and `select(cond, a, b)` is no
+ * way around it: it picks a value and evaluates both. Nothing in the DSL skips
+ * an operand, so every operand has to be safe to evaluate.
  *
  * Two oracles (like the other operator-sugar tests):
  * - `expectSameLowering(sugar, explicit)` — the `explicit` form is hand-written

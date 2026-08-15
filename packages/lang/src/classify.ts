@@ -134,9 +134,10 @@ export function isSugarBinaryOperator(kind: ts.SyntaxKind): boolean {
     case ts.SyntaxKind.GreaterThanEqualsToken:
     // Bool logical: `a && b` → `and(a, b)`, `a || b` → `or(a, b)`. Both operands
     // are always evaluated (no JS-style short-circuit) — WASM realtime has no
-    // branch-free short-circuit primitive; consumers wanting that should write
-    // `select(cond, thenExpr, elseExpr)` where the branch position naturally
-    // guards. Fires only when at least one operand classifies as a DSP expr;
+    // branch-free short-circuit primitive, and `select(cond, a, b)` is no way
+    // around it: it picks a value and evaluates both. Nothing in the DSL skips
+    // an operand, so every operand has to be safe to evaluate.
+    // Fires only when at least one operand classifies as a DSP expr;
     // when both operands are non-Node the sugar is a no-op and TS reports the
     // usual JS boolean semantics.
     case ts.SyntaxKind.AmpersandAmpersandToken:

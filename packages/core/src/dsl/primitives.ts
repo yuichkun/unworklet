@@ -340,8 +340,9 @@ registerNodeMethod("not", function (this: Node<"bool">): Node<"bool"> {
 // 0/1, so bitwise `i32.and` / `i32.or` on the internal representation matches
 // the logical semantics exactly (1&1=1, 1|0=1, 0|0=0). Both operands are eagerly
 // evaluated — WASM realtime has no short-circuit primitive, and every DSP node
-// runs at audio rate anyway; consumers wanting short-circuit should refactor to
-// `select(cond, thenExpr, elseExpr)` where the branch positions naturally guard.
+// runs at audio rate anyway. Nor does `select(cond, a, b)` guard: it picks a
+// value and evaluates both. Nothing in the DSL skips an operand, so every
+// operand has to be safe to evaluate — clamp the divisor, hoist the read.
 export function and(a: Node<"bool"> | boolean, b: Node<"bool"> | boolean): Node<"bool"> {
   // A bare inbound `boolean` field composed here seals it to the bool wire.
   sealInboundFieldBool(a);
