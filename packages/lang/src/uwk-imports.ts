@@ -79,13 +79,15 @@ const runtimeRefs = (sf: ts.SourceFile): ModuleRef[] =>
  * Matched on the file part, like every other classifier here: ESM allows a query
  * and a fragment, and `"./voice.uwk.ts?rev=1"` needs lowering just as much.
  */
-export function uwkImportSpecifiers(emittedJs: string): string[] {
+export function uwkImportRefs(emittedJs: string): { spec: string; lazy: boolean }[] {
   const sf = ts.createSourceFile("__m.js", emittedJs, ts.ScriptTarget.ESNext, true);
-  const out: string[] = [];
+  const out: { spec: string; lazy: boolean }[] = [];
   for (const ref of runtimeRefs(sf)) {
-    if (ref.spec.split(/[?#]/)[0]!.endsWith(".uwk.ts") && !out.includes(ref.spec)) {
-      out.push(ref.spec);
-    }
+    if (!ref.spec.split(/[?#]/)[0]!.endsWith(".uwk.ts")) continue;
+    if (out.some((r) => r.spec === ref.spec)) continue;
+    // `lazy` marks a dynamic `import(…)`: the module is resolved when that call
+    // runs, so a caller can treat it as reachable-later rather than required-now.
+    out.push({ spec: ref.spec, lazy: ref.kind === "dynamic" });
   }
   return out;
 }

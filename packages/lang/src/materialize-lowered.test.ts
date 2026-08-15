@@ -1117,3 +1117,58 @@ process(() => {
   const proc = await loadUwkProcessor(src);
   expect(typeof proc.schemaHash).toBe("string");
 });
+
+test("a lazy import of a sibling that cannot be lowered fails when it is used, not when it is loaded", () => {
+  // `() => import("./optional.uwk.ts")` names a module Node resolves when the
+  // function runs. Lowering it eagerly meant a missing or broken target killed
+  // the whole load — with a bare `ENOENT` naming neither the lazy import nor the
+  // file that wrote it. The load now mirrors the lazy graph, and running the
+  // import is what produces the error, in this toolchain's words.
+  // Reported by @codex on #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-lazymissing-"));
+  const lib = path.join(dir, "lib.uwk.ts");
+  writeFileSync(
+    lib,
+    `export const loadOptional = () => import("./optional.uwk.ts");
+
+export const lib = defineSubgraph(() => {
+  const p = state.f32(0).named("p");
+  return { tick: () => p.read() };
+});`,
+  );
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `import { lib } from "./lib.uwk.ts";
+
+const out = audioOutput({ channels: 1, name: "main" });
+const v = instantiate(lib, { name: "v" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = v.tick();
+  });
+});`,
+  );
+
+  const script = `
+    const { loadUwkProcessor, materializeLowered } = await import(${JSON.stringify(pathToFileURL(path.join(LANG, "dist/index.mjs")).href)});
+    const proc = await loadUwkProcessor(${JSON.stringify(src)});
+    console.log("LOADED:" + (typeof proc.schemaHash === "string"));
+
+    const cleanup = [];
+    const temp = await materializeLowered(${JSON.stringify(lib)}, new Map(), new Set(), cleanup);
+    const mod = await import(temp);
+    try {
+      await mod.loadOptional();
+      console.log("NO_THROW");
+    } catch (e) {
+      console.log("THREW:" + e.message);
+    }
+  `;
+  const r = spawnSync("node", ["--input-type=module", "-e", script], { encoding: "utf8" });
+  const output = `${r.stdout}${r.stderr}`;
+  expect(output, output).toMatch(/LOADED:true/);
+  expect(output).toMatch(/THREW:@unworklet\/lang/);
+  expect(output).toMatch(/optional\.uwk\.ts/);
+  expect(output).toMatch(/lib\.uwk\.ts/);
+});

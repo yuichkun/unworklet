@@ -15,7 +15,7 @@ import {
   relativeModuleSpecifiers,
   rewriteImportSpecifiers,
   runtimeModuleSpecifiers,
-  uwkImportSpecifiers,
+  uwkImportRefs,
 } from "./uwk-imports.ts";
 
 /** True for a `.uwk.ts` source path (the sugar RFC-001 lowers to a plain `.ts`). */
@@ -355,15 +355,31 @@ export const materializeLowered = async (
     },
   }).outputText;
   const remap: Record<string, string> = {};
-  for (const spec of uwkImportSpecifiers(emitted)) {
+  for (const { spec, lazy } of uwkImportRefs(emitted)) {
     // The file part only — a sibling can be imported as `"./voice.uwk.ts?rev=1"`,
     // and the query belongs to the specifier, not to the path on disk.
-    const targetTemp = await materializeLowered(
-      path.resolve(dir, modulePath(spec)),
-      done,
-      inProgress,
-      cleanup,
-    );
+    const target = path.resolve(dir, modulePath(spec));
+    let targetTemp: string;
+    try {
+      targetTemp = await materializeLowered(target, done, inProgress, cleanup);
+    } catch (err) {
+      if (!lazy) throw err;
+      // A lazy target that cannot be lowered is not this load's problem — Node
+      // would not have looked at it either until the import ran. But leaving the
+      // specifier alone would send that call to raw `.uwk.ts` and the missing
+      // authoring globals, so the reserved path gets a module that states the
+      // real reason instead. Running the import is what surfaces it.
+      targetTemp = done.get(target)!;
+      inProgress.delete(target);
+      const reason = err instanceof Error ? err.message : String(err);
+      await writeFile(
+        targetTemp,
+        `throw new Error(${JSON.stringify(
+          `@unworklet/lang: ${path.basename(sourcePath)} imports "${spec}" lazily, and that ` +
+            `module could not be lowered: ${reason}`,
+        )});\n`,
+      );
+    }
     let rel = path.relative(dir, targetTemp).split(path.sep).join("/");
     // The temp basename is a dotfile (`.x.<tag>.uwklowered.mjs`), so a same-dir
     // `path.relative` yields a leading-dot name that Node would read as a bare
