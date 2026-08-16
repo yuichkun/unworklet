@@ -218,11 +218,33 @@ function encodeStateInitial(type: ScalarType, value: number | bigint | boolean):
 }
 
 /**
+ * xorshift32's pathological zero-state (state = 0 → xorshifts stay 0 forever)
+ * requires substituting `seed === 0` with a non-zero sentinel. `0x9E3779B9` is
+ * the 32-bit golden-ratio hash constant (`2^32 / phi`), commonly used as a
+ * default seed in PRNG / hashing literature (Knuth). Applied at initialization
+ * only; `noise-source-next.ts` emits raw xorshift on the slot.
+ */
+const NOISE_ZERO_SEED_SENTINEL = 0x9e3779b9;
+
+/**
+ * Effective initial value written into a `noiseSource(...)` slot at
+ * instantiation. Falls back to the sentinel constant only when the declared
+ * seed truncates to zero.
+ */
+function noiseSourceInitialWord(seed: number): number {
+  const truncated = seed | 0;
+  return truncated === 0 ? NOISE_ZERO_SEED_SENTINEL : truncated;
+}
+
+/**
  * Active data segments that seed every `state.<type>` slot with its declared
- * `initial` value at WASM instantiation (= declaration defaults; restore /
- * migration overwrites later). Zero-valued initials are skipped — linear memory
- * is already zero. Both the online worklet and the offline driver instantiate
- * the same binary, so state init is consistent across runtimes.
+ * `initial` value, and every `noiseSource(...)` slot with its effective seed
+ * at WASM instantiation (= declaration defaults; restore / migration
+ * overwrites state later; noise sources have no restore yet). Zero-valued
+ * initials for state are skipped — linear memory is already zero — but noise
+ * seeds are always emitted because the sentinel-substituted value is never
+ * zero. Both the online worklet and the offline driver instantiate the same
+ * binary, so init is consistent across runtimes.
  */
 function stateInitSegments(
   graph: CapturedGraph,
@@ -231,16 +253,28 @@ function stateInitSegments(
 ): { offset: number; data: Uint8Array }[] {
   const segments: { offset: number; data: Uint8Array }[] = [];
   for (const decl of graph.declarations) {
-    if (decl.kind !== "state") continue;
-    const isZero = decl.type === "i64" ? decl.initial === 0n : Number(decl.initial) === 0;
-    if (isZero) continue;
-    const offset = layout.regions.states.slots[decl.name];
-    /* v8 ignore next 2 — the state slot is always pushed by layout = unreachable */
-    if (offset === undefined) throw new Error(`unknown state slot: ${decl.name}`);
-    segments.push({
-      offset: mod.i32.const(offset),
-      data: encodeStateInitial(decl.type, decl.initial),
-    });
+    if (decl.kind === "state") {
+      const isZero = decl.type === "i64" ? decl.initial === 0n : Number(decl.initial) === 0;
+      if (isZero) continue;
+      const offset = layout.regions.states.slots[decl.name];
+      /* v8 ignore next 2 — the state slot is always pushed by layout = unreachable */
+      if (offset === undefined) throw new Error(`unknown state slot: ${decl.name}`);
+      segments.push({
+        offset: mod.i32.const(offset),
+        data: encodeStateInitial(decl.type, decl.initial),
+      });
+    } else if (decl.kind === "noiseSource") {
+      const offset = layout.regions.noiseSources?.slots[decl.name];
+      /* v8 ignore next 2 — declaring a noiseSource always allocates the region + slot */
+      if (offset === undefined) throw new Error(`unknown noise source slot: ${decl.name}`);
+      const word = noiseSourceInitialWord(decl.seed);
+      const data = new Uint8Array(4);
+      new DataView(data.buffer).setInt32(0, word, true);
+      segments.push({
+        offset: mod.i32.const(offset),
+        data,
+      });
+    }
   }
   return segments;
 }
@@ -1293,6 +1327,20 @@ export function emitExpression(
       // bool is internally i32 0/1; logical negation is a single `i32.eqz`
       // (= "equals zero": 1 if the operand is 0, else 0).
       return mod.i32.eqz(emitExpression(node.value, layout, mod, binaryen));
+    case "and":
+      // bool is internally i32 0/1; bitwise `i32.and` on 0/1 operands matches
+      // logical AND exactly (1&1=1, 1&0=0, 0&1=0, 0&0=0). No branch, no
+      // short-circuit — both sides always evaluated (audio-rate DSP context).
+      return mod.i32.and(
+        emitExpression(node.lhs, layout, mod, binaryen),
+        emitExpression(node.rhs, layout, mod, binaryen),
+      );
+    case "or":
+      // Same reasoning as `and` — bitwise `i32.or` on 0/1 = logical OR.
+      return mod.i32.or(
+        emitExpression(node.lhs, layout, mod, binaryen),
+        emitExpression(node.rhs, layout, mod, binaryen),
+      );
     case "sqrt":
       return floatNs(mod, node.type).sqrt(emitExpression(node.value, layout, mod, binaryen));
     case "floor":
@@ -1426,6 +1474,54 @@ export function emitExpression(
         node.type,
         emitExpression(node.value, layout, mod, binaryen),
       );
+    // noiseSource.next() — advance the declared slot's xorshift32 state by one
+    // step, store it back, and return the fresh signed i32 mapped to f32
+    // `[-1, 1)` via multiplication by `1 / 2^31`. The three xorshift steps
+    // (`h ^= h << 13`, `h ^= h >>> 17`, `h ^= h << 5`) reference the running
+    // hash multiple times each; a tee/get chain in `BUFINTERP_I0_LOCAL` (an
+    // existing i32 scratch — reusing means the WASM local declaration table is
+    // unchanged for graphs that don't use noise) evaluates the slot load once,
+    // runs the shifts, and stores the final value back to the slot.
+    case "noiseSourceNext": {
+      const slotOffset = layout.regions.noiseSources?.slots[node.name];
+      /* v8 ignore next 2 — a noiseSourceNext requires a preceding noiseSource declaration */
+      if (slotOffset === undefined) throw new Error(`unknown noise source slot: ${node.name}`);
+      // hstep(shift, dir) = h := h XOR (h shifted `shift` bits in `dir`); returns fresh h.
+      // dir === "left" → i32.shl; dir === "right" → i32.shr_u (logical, unsigned).
+      const NOISE_H_LOCAL = BUFINTERP_I0_LOCAL;
+      const teeH = (v: number): number => mod.local.tee(NOISE_H_LOCAL, v, binaryen.i32);
+      const getH = (): number => mod.local.get(NOISE_H_LOCAL, binaryen.i32);
+      const shiftLeft = (bits: number): number =>
+        teeH(mod.i32.xor(getH(), mod.i32.shl(getH(), mod.i32.const(bits))));
+      const shiftRight = (bits: number): number =>
+        teeH(mod.i32.xor(getH(), mod.i32.shr_u(getH(), mod.i32.const(bits))));
+      return mod.block(
+        null,
+        [
+          // Load slot into local: h = memory[slotOffset]
+          mod.local.set(NOISE_H_LOCAL, mod.i32.load(slotOffset, BYTES_PER_I32, mod.i32.const(0))),
+          // Three xorshift32 rounds (Marsaglia's canonical 13, 17, 5).
+          mod.drop(shiftLeft(13)),
+          mod.drop(shiftRight(17)),
+          mod.drop(shiftLeft(5)),
+          // Store back: memory[slotOffset] = h
+          mod.i32.store(slotOffset, BYTES_PER_I32, mod.i32.const(0), getH()),
+          // Return: normalize the top 24 bits, `(h >> 8) * 2^-23`, giving
+          // [-1, 1 - 2^-23] — the documented `[-1, 1)`.
+          //
+          // Not `convert_s.i32(h) * 2^-31`: f32 carries a 24-bit significand, so
+          // converting 0x7fffffff rounds it UP to 2147483648 and the product is
+          // exactly 1, breaking the exclusive upper bound (xorshift32 visits every
+          // non-zero state, so every seed reaches it). Taking 24 bits up front is
+          // exact — those are the only bits an f32 could keep anyway.
+          mod.f32.mul(
+            mod.f32.convert_s.i32(mod.i32.shr_s(getH(), mod.i32.const(8))),
+            mod.f32.const(1 / 8388608),
+          ),
+        ],
+        binaryen.f32,
+      );
+    }
     case "bufferRead": {
       const base = layout.regions.buffers.slots[node.name];
       if (base === undefined) {
@@ -1545,16 +1641,19 @@ export function emitExpression(
         mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32),
         mod.i32.const(field.offsetInSlot),
       );
-      // With the Q46 uniform lift, the sub-phase 7.7 stage seals only
-      // wireType = i32 / bool; f32 / f64 / i64 are filled in a later sub-phase
-      // alongside the typed-array path.
+      // An inbound scalar field is f32 on the wire (= a declared `number` keeps its
+      // fractional value; a boolean is delivered as 0.0/1.0 and converts to bool at
+      // its use site). bool fields that were sealed directly stay an i32 word.
+      if (field.wireType === "f32") {
+        return mod.f32.load(0, BYTES_PER_I32, ptr);
+      }
       if (field.wireType === "i32" || field.wireType === "bool") {
         return mod.i32.load(0, BYTES_PER_I32, ptr);
       }
-      /* v8 ignore next 3 — the Q46 uniform lift path seals only wireType = i32 /
-         bool = unreachable defensive guard */
+      /* v8 ignore next 3 — inbound scalar fields seal to f32 / i32 / bool =
+         unreachable defensive guard */
       throw new Error(
-        `unworklet: unsupported event field wireType "${field.wireType}" (= the sub-phase 7.7 stage supports only i32 / bool)`,
+        `unworklet: unsupported event field wireType "${field.wireType}" (= inbound scalar fields support only f32 / i32 / bool)`,
       );
     }
     case "tempRef":
@@ -2587,6 +2686,8 @@ function collectUsedMathKinds(graph: CapturedGraph): Set<string> {
       case "gt":
       case "lte":
       case "gte":
+      case "and":
+      case "or":
         visit(node.lhs);
         visit(node.rhs);
         break;
@@ -2702,6 +2803,7 @@ function collectUsedMathKinds(graph: CapturedGraph): Set<string> {
       case "midiSysexLength":
       case "midiSysexCopy":
       case "messageFieldRead":
+      case "noiseSourceNext":
         break;
     }
   };

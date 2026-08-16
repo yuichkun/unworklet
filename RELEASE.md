@@ -1,37 +1,43 @@
 # Releasing unworklet
 
-unworklet ships five public packages from this monorepo:
-`@unworklet/core`, `@unworklet/lang`, `@unworklet/offline`, `@unworklet/test`,
-`@unworklet/unplugin`. They are versioned together.
+unworklet ships five public packages from this monorepo: `@unworklet/core`,
+`@unworklet/lang`, `@unworklet/offline`, `@unworklet/test`, `@unworklet/unplugin`.
+They are versioned together, and `scripts/release-versions.test.ts` fails the
+suite if they ever disagree.
 
-## v1.0.0 acceptance criteria (`docs/10-roadmap.md` §1)
+## The bar
 
-| ID  | Criterion                                                    | Status                                                                                                                                     |
-| --- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| A1  | 5 public packages `vp build` exit 0                          | ✅ each package builds via its `build` script (core/offline/test = `vp pack`; lang/unplugin = `node scripts/build.mjs`, incl. devtools UI) |
-| A2  | Canonical Ex 1–8 WASM emit                                   | ✅ covered by `packages/offline/src/canonical.test.ts` + golden cases                                                                      |
-| A3  | `vp check` (typecheck + oxlint + oxfmt) exit 0               | ✅ root `vp check` clean (0 errors, 0 warnings)                                                                                            |
-| B1  | Canonical Ex 1–8 offline output bit-exact vs reference       | ✅ offline golden / canonical tests pass                                                                                                   |
-| C1  | Realtime-safety invariants enforced (layered)                | ✅ `packages/core/src/dsl/enforcement.test.ts`                                                                                             |
-| D1  | Browser smoke: Chromium × Firefox × Safari × {isolated, not} | ⚠️ Chromium verified (devtools-proto + `packages/core/src/__tests__/browser/` Playwright); Firefox / Safari not yet run on this machine    |
-| E1  | `open-questions.md` empty                                    | ✅ all moved to `decisions-log.md`                                                                                                         |
-| F1  | `.d.ts` public surface matches `decisions-log.md` Q1–Q77     | ✅ public exports stable; verified against the READMEs / Skill                                                                             |
-
-The full unit + integration suite is green (~2000 tests across the six test
-projects); `vp check` and `vp test run` both pass at the repo root.
+- `vp check` clean at the repo root and `vp test run` green.
+- The browser suites pass. `packages/core/src/__tests__/browser/` covers the real
+  worklet thread on Chromium in CI, and `examples/demo` covers the plugin pipeline.
+  **Firefox and Safari are not run anywhere yet** — a release carries that gap
+  knowingly, and it is worth closing before 1.0.
+- The agent guide matches reality. `skills/unworklet/` is what consumers' agents
+  read; if the release changes behaviour, the guide changed with it. Re-run the
+  `guidance-dogfood` skill when a release touches the authoring surface.
 
 ## Cutting a release (manual)
 
-Versions are currently `0.0.0` (unpublished). To cut a release:
+The published line starts at `v0.1.0` (2026-06-28). Pre-1.0, **the minor is the
+breaking-change axis**, because that is what npm's range semantics enforce:
+`^0.1.0` resolves `0.1.x` and refuses `0.2.0`. Anything a consumer on `^0.<minor>.0`
+would receive automatically must therefore be non-breaking. A peer-dependency
+requirement that moves, a public type that narrows, or a check that starts failing
+builds it used to pass, all force the minor. To cut a release:
 
-1. Confirm the bar: `vp check` and `vp test run` clean in every package; the
-   Chromium/Firefox/Safari smoke matrix (D1) green.
-2. Bump all five public packages' `version` in lockstep — edit each
-   `packages/*/package.json` `version` (or `vp dlx bumpp packages/*/package.json`).
-   A bare `vp dlx bumpp` bumps only the private monorepo root, **not** the
-   publishable packages, so name the package files explicitly. Keep the five identical.
-3. Commit the bump and tag: `git tag vX.Y.Z`.
-4. Publish from a clean `main` with **pnpm, recursively**: `vp pm publish -r`
+1. Confirm the bar above.
+2. Decide the number against the previous tag, not against intent: read
+   `git log v<prev>..HEAD` and diff the public surface (each package's
+   `peerDependencies`, each `src/index.ts` export list, the client-facing types in
+   `packages/core/src/types.ts`). Removals, narrowings, and peer moves are
+   breaking. Record the outcome in `CHANGELOG.md` — breaking items first, each
+   with the migration a consumer has to perform.
+3. Bump the five `packages/*/package.json` versions in lockstep, then run
+   `vp test run` so the guard confirms it. `vp dlx bumpp packages/*/package.json`
+   does it; a bare `vp dlx bumpp` bumps only the private monorepo root and none of
+   the publishable packages, so name the files explicitly.
+4. Commit the bump and tag: `git tag vX.Y.Z`.
+5. Publish from a clean `main` with **pnpm, recursively**: `vp pm publish -r`
    (`pnpm -r publish`) — **never `npm publish`**. The `-r` is required: `pnpm publish`
    (singular) at the repo root targets the private monorepo root and publishes none
    of the five packages. pnpm publishes in dependency (topological) order and rewrites
@@ -45,12 +51,24 @@ Versions are currently `0.0.0` (unpublished). To cut a release:
    `master` publish-branch), so release from `main` with the bump committed, or pass
    `--no-git-checks`.
 
-There is no automated changeset/changelog pipeline yet; the cut is manual, so the
-lockstep version bump (step 2) is the operator's responsibility — a missed package
-ships an unsatisfiable peer range against the bumped siblings.
+There is no automated changeset pipeline. Choosing the number (step 2) and writing
+`CHANGELOG.md` are the operator's judgement; the mechanical half — a version left
+behind, which would ship an unsatisfiable peer range against the bumped siblings —
+is what the guard catches.
 
 ## What ships
 
 Each package publishes its `dist/` plus its `README.md` and `LICENSE` (npm always
-includes those). The root `llms.txt` and `.claude/skills/unworklet/` orient AI
-agents working with the library from the repository / web.
+includes those).
+
+`skills/unworklet/` is not published to npm. It is installed straight from this
+repository into whichever coding agents a consumer has:
+
+```sh
+npx skills add https://github.com/yuichkun/unworklet/tree/main/skills/unworklet
+```
+
+That means the guide a consumer installs is whatever sits on the default branch,
+with no release step of its own — so a guide fix reaches people as soon as it
+merges, and a guide that contradicts the published packages is visible immediately.
+Keep it honest at merge time rather than at release time.

@@ -25,6 +25,10 @@ const VP = path.join(REPO, "node_modules/.bin/vp");
 
 beforeAll(() => {
   // Build dist from the current src so the gate reflects HEAD's shipped surface.
+  // Skipped in the workspace run, where the root `globalSetup` has already done
+  // it: `vp pack` empties `dist/` first, and doing that here deleted artefacts
+  // that suites in other (parallel) projects were importing.
+  if (process.env.UWK_DISTS_BUILT === "1") return;
   execFileSync(VP, ["pack"], { cwd: CORE, stdio: "ignore" });
 }, 180_000);
 

@@ -13,7 +13,7 @@ import { audioOutput, defineProcessor, forSample, param } from "@unworklet/core"
 import ts from "typescript";
 import { afterAll, beforeAll, expect, test } from "vite-plus/test";
 
-import { workletsDts } from "./worklet-dts.ts";
+import { workletsDts } from "@unworklet/lang";
 
 const UNPLUGIN = path.resolve(import.meta.dirname, "..");
 const REPO = path.resolve(UNPLUGIN, "../..");

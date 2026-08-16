@@ -233,6 +233,14 @@ export type Layout = {
     };
     /** Per-call-site counter slots for everyNSamples (counterId → byte offset, §9.1). */
     everyNSamplesCounters: { base: number; slots: Record<number, number> };
+    /**
+     * Per-declaration i32 slots for `noiseSource(...)` PRNG state (name → byte
+     * offset). One 4-byte slot per declaration. Init to the effective seed by
+     * an active data segment at instantiation. Absent (not just empty) when
+     * the graph declares no noise sources — that keeps the layout JSON /
+     * schemaHash byte-identical for every pre-noise processor.
+     */
+    noiseSources?: { base: number; slots: Record<string, number> };
     midiRings: { base: number; slots: Record<string, MidiRingSlot> };
     // Per-sysex-port content region (`11-midi.md` §4.3): `chunks` chunks of
     // `perChunk` bytes, each `[length:u32, data bytes]`. The 8-byte ring slot
@@ -500,6 +508,20 @@ export function layout(graph: CapturedGraph): Layout {
   };
   collectEveryNCounters(graph.statements);
 
+  // Per-declaration i32 slots for noiseSource (§2 stateful sources): 4 bytes
+  // per declaration, initialized to the effective seed via an active data
+  // segment in emit. Placed at the tail so totalBytes is unchanged for graphs
+  // with no noiseSource. Named by the synthetic key `__noise_<idx>` assigned
+  // at declaration time.
+  const noiseSourcesBase = cursor;
+  const noiseSourceSlots: Record<string, number> = {};
+  for (const decl of graph.declarations) {
+    if (decl.kind === "noiseSource") {
+      noiseSourceSlots[decl.name] = cursor;
+      cursor += 4;
+    }
+  }
+
   // midiRings packing: based at the end of everyNSamplesCounters, place a
   // per-port ring (header 12 + capacity × 8) in declaration order
   // (`11-midi.md` §4). Each in / out port gets its own header + slot array.
@@ -583,6 +605,12 @@ export function layout(graph: CapturedGraph): Layout {
         base: everyNSamplesCountersBase,
         slots: everyNSamplesCounterSlots,
       },
+      // Only include `noiseSources` when the graph declares at least one — an
+      // absent field is JSON-serialization-equivalent to the pre-noise layout,
+      // so every existing processor's schemaHash / wasmSha stays byte-identical.
+      ...(Object.keys(noiseSourceSlots).length > 0
+        ? { noiseSources: { base: noiseSourcesBase, slots: noiseSourceSlots } }
+        : {}),
       midiRings: { base: midiRingsBase, slots: midiRingSlots },
       sysexContent: { base: sysexContentBase, slots: sysexContentSlots },
       publishShared: { base: publishSharedBase, slots: publishSharedSlots },

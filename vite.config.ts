@@ -120,9 +120,28 @@ export default defineConfig({
     ],
   },
   run: {
-    cache: true,
+    // Vite Task archives and restores a command's files only when the command
+    // declares `output` globs — and `output` is a field of a `vite.config.ts`
+    // task, which a `package.json` script cannot have. Every `build` here is a
+    // script, so caching scripts replays the build's terminal output and writes
+    // no `dist/`. A tree with a warm cache and no `dist/` therefore "builds"
+    // successfully and produces nothing, which is how @unworklet/lang's browser
+    // build came to fail resolving `@unworklet/core/worklet` on a deploy whose
+    // core inputs had not changed since a previous one.
+    //
+    // No task is defined anywhere in this workspace, so `tasks: true` is the
+    // documented default costing nothing, and `scripts: false` (also the
+    // default) is the half that has to stay off until a build that caches is a
+    // task declaring what it produces. `scripts/build-cache-soundness.test.ts`
+    // holds that condition.
+    cache: { tasks: true, scripts: false },
   },
   test: {
+    // Builds every shipped `dist/` before any project starts. The projects below
+    // run in parallel and several of them read those artefacts, so a build that
+    // happens inside one suite deletes files another is importing — see the file
+    // for the failure it removes.
+    globalSetup: ["test/global-setup.ts"],
     // A single `vp test` aggregates node-side + browser e2e (SAB / postMessage)
     // into one stage. Via vitest 4's `projects` feature, each package's
     // vite.config.ts is the default project, and packages/core's two browser
@@ -131,13 +150,20 @@ export default defineConfig({
       "packages/*/vite.config.ts",
       "packages/core/vite.browser.config.ts",
       "packages/core/vite.browser-postmessage.config.ts",
+      // Repo-wide release invariants (the lockstep version guard) — checks that
+      // span every package at once, so they belong to no single package's suite.
+      // They need their own project config because listing `projects` replaces
+      // the root config as a collector entirely: a `test.include` written here
+      // is never read, so a test file placed outside these projects would
+      // silently never run.
+      "scripts/vite.config.ts",
     ],
     // examples/demo is NOT aggregated here. It depends on `@vitejs/devtools`, whose
     // peer wiring spins up a second vite-plus-test runner that breaks this shared
     // collector (it hangs). The demo runs in its own CI jobs instead: the node suite
     // standalone (`cd examples/demo && vp test run`) and the runtime-compile browser
-    // e2e on its own config (examples/demo/vite.browser.config.ts). The root's
-    // default project collects nothing; every test comes from the projects above.
+    // e2e on its own config (examples/demo/vite.browser.config.ts). The root config
+    // is not itself a project; every test comes from the projects above.
     include: [],
   },
 });

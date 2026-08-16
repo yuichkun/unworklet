@@ -17,7 +17,15 @@ import {
   SAMPLES_PER_BLOCK,
   select,
 } from "@unworklet/core";
-import { audioInput, audioOutput, event, forSample, param, state } from "@unworklet/core";
+import {
+  audioInput,
+  audioOutput,
+  event,
+  forSample,
+  noiseSource,
+  param,
+  state,
+} from "@unworklet/core";
 import { expect, test } from "vite-plus/test";
 
 import { renderOffline } from "./index.ts";
@@ -251,7 +259,7 @@ test("`renderOffline` .at(0) on an empty payload returns 0, not stale memory (§
 const messageMul = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
   const setMul = event<{ mul: number }>({ from: "main", name: "setMul" });
-  const mulState = state.i32(1);
+  const mulState = state.f32(1);
   return {
     process: () => {
       setMul.onReceive(({ mul }) => {
@@ -288,7 +296,37 @@ test("`renderOffline` defaults message delivery to quantum 0 when atQuantum is o
   expect(result.outputs.main![0]![0]).toBe(5);
 });
 
-// boolean-valued message field (= Q46: lifted to i32 wire).
+// Fractional inbound number field — the i32 wire truncated it (0.8 → 0); the wire
+// must carry f32 so the declared `number` survives (= 型 ⟺ 動く).
+const messageGain = defineProcessor(() => {
+  const out = audioOutput({ channels: 1, name: "main" });
+  const setGain = event<{ gain: number }>({ from: "main", name: "setGain" });
+  const gainState = state.f32(0);
+  return {
+    process: () => {
+      setGain.onReceive(({ gain }) => {
+        // `gain` is a `Node<'f32'>` (a declared `number` rides the f32 wire) — no
+        // cast needed; the fraction survives end to end.
+        gainState.write(gain);
+      });
+      forSample((i) => {
+        out.ch(0).at(i).write(gainState.read());
+      });
+    },
+  };
+});
+
+test("`renderOffline` preserves a fractional inbound number field (no i32 truncation)", async () => {
+  const result = await renderOffline(messageGain, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+    messages: [{ name: "setGain", payload: { gain: 0.8 } }],
+  });
+  expect(result.outputs.main![0]![0]).toBeCloseTo(0.8, 6);
+});
+
+// boolean-valued message field — `flag.write(on)` seals `on` to the bool wire, so
+// the declared `boolean` is a real boolean both sides (no f32 detour).
 const messageFlag = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
   const setOn = event<{ on: boolean }>({ from: "main", name: "setOn" });
@@ -914,4 +952,174 @@ test("`renderOffline` returns empty events when no event declarations exist", as
     inputs: { main: [new Float32Array(SAMPLES_PER_BLOCK), new Float32Array(SAMPLES_PER_BLOCK)] },
   });
   expect(result.events).toEqual([]);
+});
+
+// noiseSource — declared white-noise generator. Each `.next()` advances the
+// internal xorshift32 state one step; output is in `[-1, 1)`. Two declarations
+// = two independent PRNGs. Same source → same seeds → identical output across
+// renders (reproducibility).
+const noiseStereo = defineProcessor(() => {
+  const nL = noiseSource({ seed: 42 });
+  const nR = noiseSource({ seed: 43 });
+  const out = audioOutput({ channels: 2, name: "main" });
+  return {
+    process: () => {
+      forSample((i) => {
+        out.left.at(i).write(nL.next());
+        out.right.at(i).write(nR.next());
+      });
+    },
+  };
+});
+
+test("`renderOffline` noiseSource().next() samples are all finite and within [-1, 1)", async () => {
+  const durationSamples = 4 * SAMPLES_PER_BLOCK; // 4 quanta = 512 samples
+  const result = await renderOffline(noiseStereo, {
+    sampleRate: 48000,
+    duration: durationSamples / 48000,
+  });
+  for (const ch of result.outputs.main) {
+    for (const v of ch) {
+      expect(Number.isFinite(v)).toBe(true);
+      expect(v).toBeGreaterThanOrEqual(-1);
+      expect(v).toBeLessThan(1);
+    }
+  }
+});
+
+test("`renderOffline` two noiseSource declarations produce decorrelated output", async () => {
+  const durationSamples = 4 * SAMPLES_PER_BLOCK;
+  const result = await renderOffline(noiseStereo, {
+    sampleRate: 48000,
+    duration: durationSamples / 48000,
+  });
+  const [left, right] = result.outputs.main;
+  const identical = [...left!].every((v, i) => v === right![i]);
+  expect(identical).toBe(false);
+});
+
+test("`renderOffline` noiseSource is reproducible: same processor rendered twice yields identical output", async () => {
+  const cfg = { sampleRate: 48000, duration: (2 * SAMPLES_PER_BLOCK) / 48000 };
+  const a = await renderOffline(noiseStereo, cfg);
+  const b = await renderOffline(noiseStereo, cfg);
+  expect([...a.outputs.main[0]!]).toEqual([...b.outputs.main[0]!]);
+  expect([...a.outputs.main[1]!]).toEqual([...b.outputs.main[1]!]);
+});
+
+test("`renderOffline` noiseSource output crosses forSample block boundaries without repeating", async () => {
+  // Regression pin for the block-local `i` bug: if noise re-derived from `i` per
+  // block, samples [0..127] and [128..255] would be bit-exact identical. The
+  // declared PRNG state advances continuously across blocks.
+  const durationSamples = 2 * SAMPLES_PER_BLOCK;
+  const result = await renderOffline(noiseStereo, {
+    sampleRate: 48000,
+    duration: durationSamples / 48000,
+  });
+  const left = result.outputs.main[0]!;
+  const firstBlock = [...left].slice(0, SAMPLES_PER_BLOCK);
+  const secondBlock = [...left].slice(SAMPLES_PER_BLOCK, 2 * SAMPLES_PER_BLOCK);
+  expect(firstBlock).not.toEqual(secondBlock);
+});
+
+test("`renderOffline` noiseSource with omitted seed still produces valid noise (auto-seed path)", async () => {
+  const proc = defineProcessor(() => {
+    const n = noiseSource(); // auto seed = 1
+    const out = audioOutput({ channels: 1, name: "main" });
+    return {
+      process: () => {
+        forSample((i) => {
+          out.ch(0).at(i).write(n.next());
+        });
+      },
+    };
+  });
+  const result = await renderOffline(proc, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+  });
+  const samples = [...result.outputs.main[0]!];
+  for (const v of samples) {
+    expect(Number.isFinite(v)).toBe(true);
+    expect(v).toBeGreaterThanOrEqual(-1);
+    expect(v).toBeLessThan(1);
+  }
+  // Auto seed with N=128 samples: statistically, not all samples should be
+  // identical (a broken PRNG would repeat).
+  const unique = new Set(samples.map((v) => v.toFixed(6)));
+  expect(unique.size).toBeGreaterThan(64);
+});
+
+test("`renderOffline` noiseSource with explicit seed 0 works (sentinel substitution)", async () => {
+  // Explicit seed 0 hits xorshift32's pathological zero-state; the emit path
+  // substitutes a sentinel constant so output stays valid noise, not silence.
+  const proc = defineProcessor(() => {
+    const n = noiseSource({ seed: 0 });
+    const out = audioOutput({ channels: 1, name: "main" });
+    return {
+      process: () => {
+        forSample((i) => {
+          out.ch(0).at(i).write(n.next());
+        });
+      },
+    };
+  });
+  const result = await renderOffline(proc, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+  });
+  const samples = [...result.outputs.main[0]!];
+  const anyNonZero = samples.some((v) => v !== 0);
+  expect(anyNonZero).toBe(true);
+});
+
+test("`renderOffline` noiseSource `.next()` twice per iteration consumes two samples", async () => {
+  // `.next()` is a tick action (advance + return), not observation. Two calls
+  // per iteration = two PRNG samples used, so the L / R channels here differ
+  // (each channel receives every-other sample from one shared source).
+  const proc = defineProcessor(() => {
+    const n = noiseSource({ seed: 42 });
+    const out = audioOutput({ channels: 2, name: "main" });
+    return {
+      process: () => {
+        forSample((i) => {
+          out.left.at(i).write(n.next());
+          out.right.at(i).write(n.next());
+        });
+      },
+    };
+  });
+  const result = await renderOffline(proc, {
+    sampleRate: 48000,
+    duration: SAMPLES_PER_BLOCK / 48000,
+  });
+  const left = [...result.outputs.main[0]!];
+  const right = [...result.outputs.main[1]!];
+  const identical = left.every((v, i) => v === right[i]);
+  expect(identical).toBe(false);
+});
+
+// The documented range is `[-1, 1)`, but the normalization multiplied
+// `f32.convert_s.i32(h)` by 2^-31: converting 0x7fffffff to f32 rounds it up to
+// 2147483648, so the product is exactly 1. xorshift32 visits every non-zero
+// state, so every seed reaches it eventually — seed -697516825 hits it on the
+// first sample. Downstream mappings like `floor((n + 1) / 2 * len)` index out of
+// bounds when it does. Reported by @codex on #43.
+test("noiseSource stays strictly below 1 (the documented exclusive upper bound)", async () => {
+  const proc = defineProcessor(() => {
+    const n = noiseSource({ seed: -697516825 });
+    const out = audioOutput({ channels: 1, name: "main" });
+    return {
+      process: () => {
+        forSample((i) => {
+          out.ch(0).at(i).write(n.next());
+        });
+      },
+    };
+  });
+  const result = await renderOffline(proc, { sampleRate: 48000, duration: 4096 / 48000 });
+  const samples = result.outputs.main[0]!;
+  const max = samples.reduce((a, b) => (b > a ? b : a), Number.NEGATIVE_INFINITY);
+  const min = samples.reduce((a, b) => (b < a ? b : a), Number.POSITIVE_INFINITY);
+  expect(max, `max sample was ${max}`).toBeLessThan(1);
+  expect(min).toBeGreaterThanOrEqual(-1);
 });

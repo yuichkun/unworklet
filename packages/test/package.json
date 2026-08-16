@@ -1,6 +1,6 @@
 {
   "name": "@unworklet/test",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Vitest matchers for `@unworklet/core` processors (wraps `@unworklet/offline`).",
   "keywords": [
     "audio",
@@ -63,6 +63,7 @@
     "@types/node": "catalog:",
     "@typescript/native-preview": "7.0.0-dev.20260509.2",
     "@unworklet/core": "workspace:^",
+    "@vitest/expect": "^3 || ^4",
     "bumpp": "^11.1.0",
     "typescript": "catalog:",
     "vite-plus": "catalog:",
@@ -70,6 +71,7 @@
   },
   "peerDependencies": {
     "@unworklet/core": "workspace:^",
+    "@vitest/expect": "^3 || ^4",
     "vitest": "^3 || ^4"
   },
   "engines": {

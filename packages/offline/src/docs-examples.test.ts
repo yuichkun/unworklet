@@ -1,8 +1,8 @@
 /**
  * Living proof for the documented examples — extracted from the docs themselves,
  * not hand-copied. Every complete `defineProcessor(...)` example shown in the
- * package READMEs / the root README / the unworklet Skill / llms.txt is parsed
- * out of the markdown and compiled here, and the two flagship ones are rendered.
+ * package READMEs / the root README / the unworklet Skill is parsed
+ * out of the markdown and compiled here, and the flagship stereoGain is rendered.
  * If a documented example drifts into something that no longer compiles, this
  * test goes red ("examples are verified, not guessed").
  */
@@ -19,9 +19,8 @@ const ROOT = join(import.meta.dirname, "..", "..", "..");
 const DOC_FILES = [
   "packages/core/README.md",
   "README.md",
-  ".claude/skills/unworklet/SKILL.md",
+  "skills/unworklet/SKILL.md",
   "packages/offline/README.md",
-  "llms.txt",
 ];
 
 /** Pull every fenced ```ts block out of a markdown string. */
@@ -64,13 +63,13 @@ const findBlock = (needle: string): string => {
 };
 
 test("every documented defineProcessor example compiles (docs can't drift from the API)", async () => {
-  // Coverage floor = the complete, self-contained `defineProcessor` examples
-  // currently documented: stereoGain + the sine oscillator (core README), and
-  // stereoGain + midiSynth (Skill). The root README's examples are `.uwk.ts`
-  // sugar — not parsed here (this evals plain-JS processor blocks), but verified
-  // by the demo's offline-render tests. If a documented example is removed, this
-  // notices instead of silently shrinking coverage.
-  expect(docProcessors.length).toBeGreaterThanOrEqual(4);
+  // Coverage floor = the raw `defineProcessor((...) =>` examples currently
+  // documented in DOC_FILES: stereoGain + the sine oscillator (core README).
+  // The Skill and the root README's examples are `.uwk.ts` sugar — not parsed
+  // here (this evals plain-JS processor blocks; the sugar form is verified by
+  // the demo's offline-render tests). If a documented raw example is removed,
+  // this notices instead of silently shrinking coverage.
+  expect(docProcessors.length).toBeGreaterThanOrEqual(2);
   for (const { id, block } of docProcessors) {
     const proc = evalProcessor(block);
     const compiled = await core.compile(proc);
@@ -91,26 +90,5 @@ test("documented stereoGain renders input × gain (from the doc source, not a co
   });
   expect(result.outputs.main[0]![100]).toBeCloseTo(1.0, 5);
   expect(result.outputs.main[1]![100]).toBeCloseTo(1.0, 5);
-  expect([...result.outputs.main[0]!].some(Number.isNaN)).toBe(false);
-});
-
-test("documented midiSynth is silent until noteOn, then sounds (from the doc source)", async () => {
-  const midiSynth = evalProcessor(findBlock('onEvent("noteOn"'));
-  const sr = 48000;
-  const samples = 512;
-  const result = await renderOffline(midiSynth, {
-    sampleRate: sr,
-    duration: samples / sr,
-    inputs: { main: [new Float32Array(samples)] },
-    events: [
-      {
-        name: "notes",
-        payload: { type: "noteOn", channel: 0, note: 69, velocity: 100 },
-        atSample: 0,
-      },
-    ],
-  });
-  const peak = [...result.outputs.main[0]!].reduce((mx, v) => Math.max(mx, Math.abs(v)), 0);
-  expect(peak).toBeGreaterThan(0.1);
   expect([...result.outputs.main[0]!].some(Number.isNaN)).toBe(false);
 });

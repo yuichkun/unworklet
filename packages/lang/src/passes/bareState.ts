@@ -81,6 +81,10 @@ export function readsAsBareState(checker: ts.TypeChecker, node: ts.Node): boolea
   if (p !== undefined && ts.isPropertyAccessExpression(p) && p.expression === node) return false;
   // The binding being declared.
   if (p !== undefined && ts.isVariableDeclaration(p) && p.name === node) return false;
+  // The KEY of an object-literal property (`{ step: … }`) is a literal name, not
+  // a value position — do not read-wrap it even if it happens to share a state
+  // slot's identifier. The VALUE side (`p.initializer`) still passes through.
+  if (p !== undefined && ts.isPropertyAssignment(p) && p.name === node) return false;
   // Operator operands are read-wrapped by the operator pass.
   if (isSugarOperatorOperand(checker, node)) return false;
 
@@ -96,4 +100,72 @@ export function readsAsBareState(checker: ts.TypeChecker, node: ts.Node): boolea
 
 export function tryBareState(checker: ts.TypeChecker, node: ts.Node): ts.Node | undefined {
   return readsAsBareState(checker, node) ? read(node as ts.Expression) : undefined;
+}
+
+/**
+ * Visit an operand, and read it only if the classification still describes what
+ * came back.
+ *
+ * `classify()` answers for the expression AS WRITTEN, and visiting can replace
+ * that expression with something of a different nature: `a && b` becomes
+ * `and(…)`, `c ? x : y` becomes `select(…)`, and both already produce a
+ * `Node<T>`. TypeScript types `State<T> && State<T>` as `State<T>`, so asking
+ * about the original and applying the answer to the replacement emitted a
+ * `.read()` on a call — source that type-checks, then dies at capture with
+ * `and(...).read is not a function`.
+ *
+ * The condition is therefore identity: a node the visitor handed back unchanged
+ * is still what it was classified as. Enumerating "which shapes does the sugar
+ * rewrite" instead would answer the same question by prediction, and go stale
+ * the next time a sugar form is added.
+ *
+ * The positions that DO need the read are unaffected, because nothing rewrites
+ * them: a bare identifier in a boolean position (which `readsAsBareState`
+ * deliberately leaves alone, since its contextual type is `boolean`), and a
+ * property access that resolves to a `State` handle.
+ */
+export function visitAndRead(
+  checker: ts.TypeChecker,
+  expr: ts.Expression,
+  visit: ts.Visitor,
+): ts.Expression {
+  const visited = ts.visitNode(expr, visit) as ts.Expression;
+  if (visited !== expr) return visited;
+  return classify(checker, expr) === "state" ? read(visited) : visited;
+}
+
+/**
+ * ShorthandPropertyAssignment (`{ peak }`) inside an emit / emitIf payload can't
+ * be handled by the identifier-only path above: TypeScript's AST requires
+ * ShorthandPropertyAssignment.name to be an Identifier, so returning `read(peak)`
+ * (a CallExpression) at the identifier position produces invalid syntax (`{ peak:
+ * peak.read() }` on the wire but a `ShorthandPropertyAssignment(CallExpression)`
+ * in the tree — printer emits `{ peak.read() }` and downstream parse fails).
+ *
+ * Rewrite the whole ShorthandPropertyAssignment to a long-form PropertyAssignment
+ * `{ peak: peak.read() }` when the shorthand's identifier is a bare State inside
+ * an emit/emitIf payload. Long-form assignment is what the payload was going to
+ * lower to anyway.
+ */
+export function tryBareStateShorthand(checker: ts.TypeChecker, node: ts.Node): ts.Node | undefined {
+  if (!ts.isShorthandPropertyAssignment(node)) return undefined;
+  const name = node.name;
+  if (classify(checker, name) !== "state") return undefined;
+  // Only rewrite inside an emit / emitIf payload — that's where the field's
+  // runtime type accepts a Node even though its TS type prints `number`. Other
+  // shorthand positions (a plain object literal that's not an emit payload)
+  // aren't a Node context and should stay as-is.
+  const obj = node.parent;
+  /* v8 ignore next 2 — a ShorthandPropertyAssignment always sits in an
+     ObjectLiteralExpression when the source parses. */
+  if (obj === undefined || !ts.isObjectLiteralExpression(obj)) return undefined;
+  const call = obj.parent;
+  if (
+    call === undefined ||
+    !ts.isCallExpression(call) ||
+    !ts.isPropertyAccessExpression(call.expression) ||
+    (call.expression.name.text !== "emit" && call.expression.name.text !== "emitIf")
+  )
+    return undefined;
+  return ts.factory.createPropertyAssignment(name, read(name));
 }

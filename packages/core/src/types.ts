@@ -115,6 +115,7 @@ type NumericCompare<T> = T extends NumericScalar
   ? (other: Node<T> | number) => Node<"bool">
   : never;
 type BoolUnary<T> = T extends "bool" ? () => Node<"bool"> : never;
+type BoolBinary<T> = T extends "bool" ? (other: Node<"bool"> | boolean) => Node<"bool"> : never;
 
 export interface Node<T extends ScalarType | "f32x4" = ScalarType> {
   readonly [nodeBrand]: T;
@@ -134,6 +135,14 @@ export interface Node<T extends ScalarType | "f32x4" = ScalarType> {
   gte: NumericCompare<T>;
   // Logical negation (bool only; `not()` on a numeric `Node` is a type error).
   not: BoolUnary<T>;
+  // Logical binary (bool only; `and(a, b)` / `or(a, b)` free-function form
+  // symmetric to `not`, method form for chaining. Both operands evaluated —
+  // no short-circuit in WASM realtime. `select(cond, a, b)` does NOT help: it
+  // chooses a value, it does not guard evaluation, so an unchosen
+  // `noiseSource.next()` still advances and an unchosen i32 divide still traps.
+  // Restructure so every operand is safe to evaluate instead.).
+  and: BoolBinary<T>;
+  or: BoolBinary<T>;
   // Math — `sqrt` / `floor` / `ceil` / `frac` / transcendentals are float-only;
   // `abs` is meaningful for every numeric scalar (lowered to `select(x<0,-x,x)`).
   sin: FloatMethod<T>;
@@ -265,6 +274,35 @@ export type AudioOutputHandle<C extends number> = {
 } & (C extends 2 ? StereoOutputSugar : object);
 
 // ─────────────────────────────────────────────────────────────────────────
+// Noise source (`01-dsl.md` §2 stateful sources)
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Options for `noiseSource(...)`.
+ */
+export type NoiseSourceOptions = {
+  /**
+   * Compile-time integer seed for the internal xorshift32 PRNG. Omitted →
+   * framework auto-assigns per declaration order (1, 2, 3, …). Explicit seeds
+   * pin the noise output byte-for-byte across code edits, which is what golden
+   * snapshot tests and preset restoration rely on. `seed === 0` is silently
+   * substituted with a sentinel constant because xorshift32 locks at zero.
+   */
+  seed?: number;
+};
+
+/**
+ * A declared noise source with a private i32 PRNG state slot. Returned by
+ * `noiseSource(...)`. Each `.next()` call advances the internal state one step
+ * (xorshift32) and returns the next `[-1, 1)` sample, so **call count = PRNG
+ * consumption**. To use the same sample in multiple places within one
+ * iteration, hold it once: `const s = src.next()` then reuse `s`.
+ */
+export type NoiseSource = {
+  next(): Node<"f32">;
+};
+
+// ─────────────────────────────────────────────────────────────────────────
 // Messaging surface (`01-dsl.md` §4 + `02-messaging.md`)
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -344,8 +382,9 @@ export type EventDecl<T> = {
 /**
  * Worklet-side handler view of a `message<T>` payload (Q46 / Q36-b): the runtime
  * proxy delivers every field as a graph node, so the handler-side type lifts each
- * scalar field to its `Node<T>` form — `number` → `Node<'i32'>`, `boolean` →
- * `Node<'bool'>` (Q46 uniform lift) — and each variable-length typed-array field
+ * scalar field to its `Node<T>` form — `number` → `Node<'f32'>`, `boolean` →
+ * `Node<'bool'>` (the inbound number wire is f32 so fractions survive) — and each
+ * variable-length typed-array field
  * to the `TypedArrayFieldRef` proxy. Lifting scalars to `Node` keeps build-time
  * JS control flow (`slot + 1`, `if (armed)`) a type error, since those would run
  * at graph capture against the proxy rather than emit DSP nodes; the DSL
@@ -360,7 +399,7 @@ export type MessageGraphPayload<T> = {
       : T[K] extends boolean
         ? Node<"bool">
         : T[K] extends number
-          ? Node<"i32">
+          ? Node<"f32">
           : T[K];
 };
 
@@ -874,24 +913,60 @@ export type EventSurface<T> = {
 };
 
 /**
- * The main-side surface for one declared event, narrowed by the per-name
- * direction marker the `?worklet` witness emits:
- * - `"out"` (`to:'main'`, worklet→main) — receive only (`.on`).
- * - `"in"` (`from:'main'`, main→worklet) — send only (`.emit`).
- * - `"inout"` (a same-name in/out pair, Q87) — both.
- *
- * Any other marker (the legacy `unknown` witness value, or an inline processor's
- * permissive map) keeps the full surface so existing code is unaffected. The
- * wrong-direction method `TypeError`s at runtime, so narrowing turns that into a
- * compile error (type ⟺ runtime). The payload `T` is erased at build time and
- * not recoverable from the runtime namespace, so the witness path carries
- * `unknown`.
+ * Map a witness field marker to its main-side JS payload type. Scalar fields
+ * come as a wire-type string (`"f32"` / `"f64"` / `"i32"` / `"i64"` → `number`,
+ * `"bool"` → `boolean`); typed-array fields come as `{ array: <el> }` (→
+ * `Float32Array` / `Uint8Array` etc.). Anything else falls back to `unknown`.
  */
-export type EventSurfaceFor<D> = D extends "out"
-  ? Omit<EventSurface<unknown>, "emit">
-  : D extends "in"
-    ? Omit<EventSurface<unknown>, "on">
-    : EventSurface<unknown>;
+type WitnessFieldValue<F> = F extends "bool"
+  ? boolean
+  : F extends "i64"
+    ? // 64-bit values cross as bigint, not number: the reader is
+      // `DataView.getBigInt64` and the writer `DataView.setBigInt64`. Typing this
+      // `number` used to let `payload.tick + 1` compile and then throw.
+      // (Irrelevant to `node.state.<name>` — `publish` rejects i64.)
+      bigint
+    : F extends "f32" | "f64" | "i32"
+      ? number
+      : F extends { array: "f32" }
+        ? Float32Array
+        : F extends { array: "u8" }
+          ? Uint8Array
+          : unknown;
+
+type WitnessPayload<Fields> = { [K in keyof Fields]: WitnessFieldValue<Fields[K]> };
+
+/**
+ * The main-side surface for one declared event, narrowed by the per-name
+ * witness marker the `?worklet` witness emits:
+ * - `{ dir: "out"; fields: {…} }` (`to:'main'`, worklet→main) — receive only
+ *   (`.on`), payload derived from `fields`.
+ * - `{ dir: "in"; fields: {…} }` (`from:'main'`, main→worklet) — send only
+ *   (`.emit`), payload derived from `fields`.
+ * - `{ dir: "inout"; fields: {…} }` (a same-name in/out pair, Q87) — both.
+ *
+ * A legacy string marker (`"out"` / `"in"` / `"inout"`) or an inline processor's
+ * permissive map keeps the full surface with an `unknown` payload so existing
+ * code is unaffected. Wrong-direction methods `TypeError` at runtime, so
+ * narrowing turns that into a compile error (type ⟺ runtime).
+ */
+export type EventSurfaceFor<D> = D extends { dir: "out"; fields: infer F }
+  ? Omit<EventSurface<WitnessPayload<F>>, "emit">
+  : D extends { dir: "in"; fields: infer F }
+    ? Omit<EventSurface<WitnessPayload<F>>, "on">
+    : // A same-name in/out pair is two rings with two payloads: what you send is
+      // not what you receive, so each method is typed from its own field set.
+      D extends { dir: "inout"; outFields: infer O; inFields: infer I }
+      ? {
+          on(handler: (payload: WitnessPayload<O> & { atSample: number }) => void): () => void;
+          emit: (payload: WitnessPayload<I>) => void;
+          readonly diagnostics: { overflowCount(): number };
+        }
+      : D extends "out"
+        ? Omit<EventSurface<unknown>, "emit">
+        : D extends "in"
+          ? Omit<EventSurface<unknown>, "on">
+          : EventSurface<unknown>;
 
 export type MidiPortSurface = {
   send(event: MidiEvent, atTime?: number): void;
@@ -904,6 +979,24 @@ export type MidiPortSurface = {
     overflowCount(): number;
   };
 };
+
+/**
+ * The main-side surface for one declared MIDI port, narrowed by the per-name
+ * witness marker the `?worklet` witness emits:
+ * - `{ dir: "in" }` (`from:'main'`, main → worklet) — main sends `.send()` /
+ *   `.connectFromWebMIDI()`; `.onEvent()` is not applicable (main is the
+ *   producer).
+ * - `{ dir: "out" }` (`to:'main'`, worklet → main) — main observes via
+ *   `.onEvent()`; `.send()` / `.connectFromWebMIDI()` are not applicable.
+ * A legacy `unknown` marker (or the permissive-map fallback) keeps the full
+ * surface. Wrong-direction methods `TypeError` at runtime, so narrowing turns
+ * that into a compile error (type ⟺ runtime).
+ */
+export type MidiPortSurfaceFor<D> = D extends { dir: "in" }
+  ? Omit<MidiPortSurface, "onEvent">
+  : D extends { dir: "out" }
+    ? Omit<MidiPortSurface, "send" | "connectFromWebMIDI">
+    : MidiPortSurface;
 
 export type UnworkletNode<P> = UnworkletNodeOf<ConfigOf<P>>;
 
@@ -943,13 +1036,13 @@ type UnworkletNodeOf<C> = {
     ? { readonly [K in keyof P]: AudioParam }
     : Record<string, AudioParam>;
   readonly state: C extends { state: infer S }
-    ? { readonly [K in keyof S]: StateValueProxy<unknown> | BufferValueProxy<unknown> }
+    ? { readonly [K in keyof S]: StateValueProxy<WitnessFieldValue<S[K]>> }
     : Record<string, StateValueProxy<unknown> | BufferValueProxy<unknown>>;
   readonly events: C extends { events: infer E }
     ? { readonly [K in keyof E]: EventSurfaceFor<E[K]> }
     : Record<string, EventSurface<unknown>>;
   readonly midi: C extends { midi: infer M }
-    ? { readonly [K in keyof M]: MidiPortSurface }
+    ? { readonly [K in keyof M]: MidiPortSurfaceFor<M[K]> }
     : Record<string, MidiPortSurface>;
   readonly diagnostics: { readonly transport: TransportMode };
   snapshot(options?: { profile?: string }): Promise<Uint8Array>;

@@ -7,8 +7,12 @@
  *
  * A `.uwk.ts` file already carries the `.ts` extension, so TypeScript includes it
  * in the program natively — this plugin only swaps its content for the virtual
- * code. `preventLeadingOffset` keeps the generated offsets identical to the
- * mappings (no whitespace prefix), so positions line up 1:1.
+ * code. Volar prepends a same-line-count whitespace copy of the author source to
+ * the virtual code when computing what TS sees, then rewrites `diagnostic.file.text`
+ * back to the actual author prefix so `ts.formatDiagnostic`'s line/col arithmetic
+ * lands on the author's lines. Under `preventLeadingOffset` that rewrite is skipped
+ * and TS resolves line/col against the virtual text — every diagnostic ends up
+ * reported on the wrong line (pinned by the `unworklet-tsc.test.ts` regression).
  */
 
 import type { LanguagePlugin } from "@volar/language-core";
@@ -62,7 +66,6 @@ export function createUwkLanguagePlugin(
           code: root,
           extension: ".ts",
           scriptKind: ts.ScriptKind.TS,
-          preventLeadingOffset: true,
         };
       },
     },

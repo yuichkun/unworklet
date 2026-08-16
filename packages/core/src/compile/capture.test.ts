@@ -115,6 +115,26 @@ test("`unwrapAst` throws on objects without the AST payload", () => {
   expect(() => unwrapAst({} as never)).toThrow(/AST payload/);
 });
 
+test("`unwrapAst` throws a friendly diagnostic when given undefined", () => {
+  // Simulates a subgraph method with a missing `return`, or a helper chain that
+  // returned undefined — the value flows into a DSL primitive at graph capture
+  // and the raw property access would throw an opaque `Cannot read properties of
+  // undefined (reading 'Symbol(unworklet.astPayload)')`.
+  expect(() => unwrapAst(undefined as never)).toThrow(
+    /expected a Node<T>.*received undefined.*missing `return`|`.next\(\)`/s,
+  );
+});
+
+test("`unwrapAst` throws a friendly diagnostic when given null / a factory handle", () => {
+  // null path.
+  expect(() => unwrapAst(null as never)).toThrow(/received null.*missing `return`/s);
+  // A plain function (e.g. someone forgot to CALL the factory, or passed the
+  // factory itself instead of its output) — reaches unwrapAst as a non-object.
+  expect(() => unwrapAst(((): void => {}) as never)).toThrow(
+    /received a function.*missing `return`|`.next\(\)`/s,
+  );
+});
+
 test("`registerNodeMethod` extends the shared `Node` prototype for wrapped values", () => {
   registerNodeMethod("__captureTestMethod", function method(this: unknown) {
     return this;

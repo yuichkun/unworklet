@@ -449,10 +449,93 @@ test("SEMANTIC: nested max(abs(s), s) reads both — JS reference", async () => 
 // pass's job, but a state used as the receiver of an explicit `.read()` chain
 // stays correct and must not double-read.
 
+test("STRUCT: same-file subgraph tick arg auto-reads a bare State (F-08 same-file counterpart, R4 gap 3)", async () => {
+  // F-08 threaded sourcePath to fix cross-file subgraph auto-read; same-file
+  // subgraph tick call was a separate path that never worked. env.tick(gate)
+  // where env is a `defineSubgraph(...)` instance and gate is State<"f32">
+  // should auto-read because tick's parameter type is Node<"f32">.
+  const d = `const adsr = defineSubgraph(() => ({
+  tick: (gate: Node<"f32">) => gate,
+}));
+const env = instantiate(adsr);
+const s = state.f32(0.5).named("s");`;
+  await expectSameLowering(
+    mono(d, `out.ch(0).at(i).write(env.tick(s));`),
+    mono(d, `out.ch(0).at(i).write(env.tick(s.read()));`),
+  );
+});
+
+test("STRUCT: multi-arg subgraph tick (ADSR-shaped) — bare State first arg auto-reads (R4 dogfood repro)", async () => {
+  // The dogfood repro pattern: subgraph tick with 5 args + `instantiate(sg,
+  // { name })` (options obj second arg to instantiate). The dogfooder had to
+  // write `env.tick(gate.read(), attackRate[i], ...)` because the auto-read
+  // didn't fire on the multi-arg call.
+  const d = `const adsr = defineSubgraph(() => ({
+  tick: (gate: Node<"f32">, r1: Node<"f32">, r2: Node<"f32">) => mul(mul(gate, r1), r2),
+}));
+const env = instantiate(adsr, { name: "env" });
+const gate = state.f32(0).named("gate");
+const r1 = state.f32(0.1).named("r1");
+const r2 = state.f32(0.2).named("r2");`;
+  await expectSameLowering(
+    mono(d, `out.ch(0).at(i).write(env.tick(gate, r1, r2));`),
+    mono(d, `out.ch(0).at(i).write(env.tick(gate.read(), r1.read(), r2.read()));`),
+  );
+});
+
 test("STRUCT: explicit s.read().mul(2) does not get a second read", async () => {
   const d = `const s = state.f32(0.5).named("s");`;
   await expectSameLowering(
     mono(d, `out.ch(0).at(i).write(s.read().mul(2));`),
     mono(d, `out.ch(0).at(i).write(s.read().mul(2));`),
+  );
+});
+
+// ─────────────────────────── emit payload KEY vs VALUE positions ─────────────
+// A property KEY in an emit payload object literal that *happens to share* a
+// state slot's name must stay literal — only the VALUE side auto-reads. Prior
+// to this guard the pass rewrote the KEY as well (`{ step.read(): step.read() }`),
+// producing a parse error in the lowered virtual TS. Found via guidance-dogfood
+// F-07 (Phase 2 blind builder hit it on a direct `emitIf` call — the existing C4
+// regressions test in `regressions.test.ts` uses the `if(...) port.emit(...)`
+// path where if-sugar rewrites AFTER capture and masks the bug).
+
+test("STRUCT: emit payload KEY matching a state-slot name stays literal (VALUE reads)", async () => {
+  const d = `const step = state.i32(0).named("step");
+const port = event<{ step: number; atSample: number }>({ to: "main", name: "p" });`;
+  await expectSameLowering(
+    mono(d, `port.emitIf(gt(input.ch(0).at(i), 0), { step: step, atSample: i });`),
+    mono(d, `port.emitIf(gt(input.ch(0).at(i), 0), { step: step.read(), atSample: i });`),
+  );
+});
+
+test("STRUCT: emit payload ShorthandProperty { peak } — peak is State, rewrites to { peak: peak.read() }", async () => {
+  // Round 4 dogfood gap 2. A ShorthandPropertyAssignment can't carry a
+  // CallExpression as its value slot, so the identifier-only bareState path
+  // produced invalid syntax when peak was a bare State. The dedicated
+  // shorthand handler now rewrites the whole property into long-form.
+  const d = `const peak = state.f32(0).named("peak");
+const port = event<{ peak: number; atSample: number }>({ to: "main", name: "p" });`;
+  await expectSameLowering(
+    mono(d, `port.emitIf(gt(input.ch(0).at(i), 0), { peak, atSample: i });`),
+    mono(d, `port.emitIf(gt(input.ch(0).at(i), 0), { peak: peak.read(), atSample: i });`),
+  );
+});
+
+test("STRUCT: emit payload KEY matching a typed-payload field name stays literal", async () => {
+  // Same class as the above but the collision is with a payload FIELD (not a
+  // state slot); confirms the KEY guard fires regardless of which "known name"
+  // the identifier collided with.
+  const d = `const note = state.i32(60).named("note");
+const midiOut = event.midi({ to: "main", name: "harmony" });`;
+  await expectSameLowering(
+    mono(
+      d,
+      `midiOut.emitIf(gt(input.ch(0).at(i), 0), { type: "noteOn", channel: 0, note: note, velocity: 100, atSample: i });`,
+    ),
+    mono(
+      d,
+      `midiOut.emitIf(gt(input.ch(0).at(i), 0), { type: "noteOn", channel: 0, note: note.read(), velocity: 100, atSample: i });`,
+    ),
   );
 });

@@ -41,8 +41,10 @@ playwright-report/
 # Vite+ git hooks (generated locally by `vp config` after clone)
 .vite-hooks/
 
-# Transient lowered-`.uwk.ts` temp the unplugin build path writes then removes
-*.uwklowered.ts
+# Transient lowered-`.uwk.ts` temps the loader writes then removes (a killed build
+# can strand them)
+*.uwklowered.mjs
+*.uwkfailed.mjs
 
 # Generated editor TS-server plugin bundle (built by @unworklet/lang's build.mjs)
 /packages/lang/typescript-plugin/

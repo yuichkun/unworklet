@@ -1,6 +1,6 @@
 ---
 name: adversarial-review-loop
-description: unworklet の実装コードを、独立した subagent 群による批判的レビュー → agent 自身のトリアージ → 判断が要る項目だけ余湖さんに質問 → TDD で自律 fix → 再レビュー、を「指摘ゼロ or トリアージ結果が要対応ゼロ」に収束するまで回す収束ループ。「バッチレビューして」「adversarial review 回して」「codex-review-loop と同じ手法で」「コードベース全体を客観的に見てもらって」「実装を徹底的に監査して」「review loop 回して」「収束するまでレビュー」「subagent に客観レビューさせて」等で必ず起動。単一実装者バイアス・八百長テスト・既存バグを独立視点で潰すためのもの。対象は実装コード (packages/*/src)。判断基準は docs ではなくプロダクトの方向性 (docs はメンテ非前提の参考)。1〜2 file の軽い確認や grep ベースの check では起動せず、コードベース規模の批判的監査ループでのみ走る。
+description: unworklet の実装コードを、独立した subagent 群による批判的レビュー → agent 自身のトリアージ → 判断が要る項目だけ余湖さんに質問 → TDD で自律 fix → 再レビュー、を「指摘ゼロ or トリアージ結果が要対応ゼロ」に収束するまで回す収束ループ。「バッチレビューして」「adversarial review 回して」「codex-review-loop と同じ手法で」「コードベース全体を客観的に見てもらって」「実装を徹底的に監査して」「review loop 回して」「収束するまでレビュー」「subagent に客観レビューさせて」等で必ず起動。単一実装者バイアス・八百長テスト・既存バグを独立視点で潰すためのもの。対象は実装コード (packages/*/src)。判断基準はプロダクトの方向性 (設計時の spec 文書は削除済みで、照合先は実装と `skills/unworklet/`)。1〜2 file の軽い確認や grep ベースの check では起動せず、コードベース規模の批判的監査ループでのみ走る。
 ---
 
 # adversarial-review-loop
@@ -53,9 +53,9 @@ description: unworklet の実装コードを、独立した subagent 群によ�
 
 **バイアスを一切注入しない**のが核。subagent には「このライブラリは何か」「守るべき invariant は何か」という**事実 context だけ**渡し、「ここは検証済み」「ここは正しいはず」という評価は決して刷り込まない。むしろ「壊れている前提で疑え、code を根拠 (file:line) に示せ、憶測禁止」と adversarial stance を取らせる。reviewer は最近の差分ではなくコードベース全体を全文読みで見る (grep 拾いはサボり)。
 
-**docs は神格化しない** (`../_shared/core-principles.md` §1)。docs はメンテ非前提の参考で、実装を意図的に docs と変えた箇所がある = docs が正しいとは限らない。reviewer には「docs は意図された設計の参考。code と docs の乖離は finding として挙げてよいが、『docs と違う = bug』と断定するな。bug かどうかの基準は docs literalism ではなくプロダクトの方向性」と伝える (bundle 済みの `references/review-workflow.js` の context は既にこの形)。最終判定は Phase 2 の triage で方向性に照らして行う。
+**照合先は「動くもの」** (`../_shared/core-principles.md` §1)。振る舞いの正本は実装で、それを説明する唯一の面が `skills/unworklet/` (例が CI で compile され、guidance-dogfood で実装と突き合わせ済み)。実装を駆動した設計時の spec 文書群は削除済みなので、「spec と違う」という finding 分類自体が存在しない。code と guide が食い違ったらそれは本物の finding だが、どちら側が悪いかは guide literalism ではなく**プロダクトの方向性**で判定する (最終判定は Phase 2 の triage)。
 
-観点の既定セット (`review-workflow.js` の `DIMENSIONS`): realtime-safety / memory-layout / concurrency-SAB / wire-format / graph-capture / docs-divergence / type-contract / test-integrity / lifecycle-resource / error-edge。プロジェクトの核となる性質を attack する軸を選ぶ。docs-divergence は「docs と違う」を中立観察として挙げるだけ (bug 断定は triage で)。
+観点の既定セット (`review-workflow.js` の `DIMENSIONS`): realtime-safety / memory-layout / concurrency-SAB / wire-format / graph-capture / type-contract / test-integrity / lifecycle-resource / error-edge。プロジェクトの核となる性質を attack する軸を選ぶ。guide と実装の突き合わせそのものは `guidance-dogfood` の担当なので、この loop では観点に立てない。
 
 verify は各 finding に独立 skeptic を当て、REFUTE を試させる (default skeptical、コードを読んで確証した時だけ is_real)。これが誤検出と hallucination を落とす。
 
@@ -67,7 +67,7 @@ verify を通った confirmed を、**agent 自身が**さばく。verdict は�
 - **mine vs pre-existing** を区別する (今回入れたものか、branch 以前からか)。pre-existing も real なら拾う (全体レビューの狙い)。
 - **severity** を付け直す (reviewer の付けすぎ / 過小を補正)。
 - **哲学 filter**: `../_shared/core-principles.md` の「守るべき性質 / 醜いもの」に照らす。実装期任せの領域 (TS form 細部、内部 wire、命名) を「bug」として上げているものは落とす or 格下げ。意味を変える自動書き換え・realtime-safety 違反・「型は通るが壊れる」系は核に反するので重く見る。
-- **docs 非神格化**: spec-compliance 系 (code が docs/canonical と違う) の finding は「docs と一致するか」でなく「**方向性に合うか**」で判定する。docs は参考であって基準ではない (実装を意図的に変えた箇所がある)。乖離を見たら「実装が正しい (docs が古い/意図変更) のか、実装が方向性に反するのか」を良心で判断する。docs に寄せるのが正とは限らない — docs の方を直す/捨てる判断もある。
+- **guide 非神格化**: code が `skills/unworklet/` の記述と違う finding は、「guide と一致するか」でなく「**方向性に合うか**」で判定する。乖離を見たら「実装が正しい (guide が古い) のか、実装が方向性に反するのか」を良心で判断する。guide に寄せるのが正とは限らない — guide の方を直す判断もある (どちらに倒しても、正本は 1 つに保つ)。
 - 結果を 4 バケツに分ける: **A 自律で直す明確なバグ** / **B 判断が要る (設計・scope)** / **C 後回し可能な nit** / **D refuted・false**。
 - triage は読む量が多い。多階層の表を TUI に流さず md に書く (`playground/review-triage.md` 等)。TUI には要約 + path + 次の一手だけ。
 

@@ -399,6 +399,29 @@ export function generateVirtualCode(
       return true;
     }
 
+    // ShorthandProperty `{ peak }` where peak is a bare State inside an
+    // emit / emitIf payload — rewrite to long-form `{ peak: peak.read() }` so
+    // the editor's type check matches the build's (see
+    // packages/lang/src/passes/bareState.ts `tryBareStateShorthand`). Without
+    // this the editor flags `Type 'State<T>' is not assignable to 'number'`
+    // even though the build accepts the shorthand.
+    if (ts.isShorthandPropertyAssignment(node) && classify(checker, node.name) === "state") {
+      const obj = node.parent;
+      const call = obj?.parent;
+      if (
+        obj !== undefined &&
+        ts.isObjectLiteralExpression(obj) &&
+        call !== undefined &&
+        ts.isCallExpression(call) &&
+        ts.isPropertyAccessExpression(call.expression) &&
+        (call.expression.name.text === "emit" || call.expression.name.text === "emitIf")
+      ) {
+        flushTo(node.getEnd());
+        b.synth(`: ${node.name.text}.read()`, node.getEnd());
+        return true;
+      }
+    }
+
     return false;
   };
 

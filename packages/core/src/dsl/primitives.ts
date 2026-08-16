@@ -24,6 +24,7 @@ import type { AstNode } from "../compile/ast.ts";
 import { inferAstType } from "../compile/ast.ts";
 import { isWrappedNode, registerNodeMethod, unwrapAst, wrapAst } from "../compile/capture.ts";
 import type { Node, ScalarType } from "../types.ts";
+import { sealInboundFieldBool } from "./payload-field.ts";
 
 /**
  * Scalar types every numeric primitive (free-function form) accepts. The method
@@ -84,6 +85,22 @@ function numberLiteral(value: number, t: ScalarType): AstNode {
   return { kind: "literal", type: t, value: t === "i32" ? value | 0 : value };
 }
 
+/** Detect a `Param` handle (the AudioParam-backed shape from
+ * `packages/core/src/dsl/declarations.ts`): object with `.at`, `.named`,
+ * `.expose` — Node<T> shares none of those, so no false positive on captured
+ * DSL values. Used to catch a `mul(x, someParam)` mistake at capture time
+ * with a message that names Param and the `param[i]` fix (default overload
+ * error text reads "not assignable to Node<'i64'>", which is misleading).
+ * Guidance-dogfood R4 gap 4. */
+function isParamHandle(value: unknown): boolean {
+  if (value === null || typeof value !== "object") return false;
+  if (isWrappedNode(value)) return false;
+  const v = value as { at?: unknown; named?: unknown; expose?: unknown };
+  return (
+    typeof v.at === "function" && typeof v.named === "function" && typeof v.expose === "function"
+  );
+}
+
 /** Lift an operand to an AST node of type `t` (Q33 literal lift). */
 function lift(value: Operand, t: ScalarType): AstNode {
   if (typeof value === "boolean") {
@@ -92,6 +109,13 @@ function lift(value: Operand, t: ScalarType): AstNode {
   }
   if (typeof value === "number") {
     return numberLiteral(value, t);
+  }
+  if (isParamHandle(value)) {
+    throw new Error(
+      "unworklet: a `Param` handle was passed where a `Node<T>` is expected. " +
+        "Sample the param first — write `param[i]` (or `param.at(i)`) to get a " +
+        '`Node<"f32">` and pass that instead. See dsl.md §Params.',
+    );
   }
   return unwrapAst(value);
 }
@@ -304,11 +328,44 @@ registerNodeMethod("gte", function (this: Node<"f32">, other: Node<"f32"> | numb
 
 // `not(b)` lowers to a single `i32.eqz`. bool-only — `not(f32Node)` is a type error.
 export function not(b: Node<"bool"> | boolean): Node<"bool"> {
+  // A bare inbound `boolean` field negated here seals it to the bool wire.
+  sealInboundFieldBool(b);
   return wrapAst<"bool">({ kind: "not", type: "bool", value: lift(b, "bool") });
 }
 registerNodeMethod("not", function (this: Node<"bool">): Node<"bool"> {
   return not(this);
 });
+
+// `and(a, b)` / `or(a, b)` — logical binary on bool. `bool` is internally i32
+// 0/1, so bitwise `i32.and` / `i32.or` on the internal representation matches
+// the logical semantics exactly (1&1=1, 1|0=1, 0|0=0). Both operands are eagerly
+// evaluated — WASM realtime has no short-circuit primitive, and every DSP node
+// runs at audio rate anyway. Nor does `select(cond, a, b)` guard: it picks a
+// value and evaluates both. Nothing in the DSL skips an operand, so every
+// operand has to be safe to evaluate — clamp the divisor, hoist the read.
+export function and(a: Node<"bool"> | boolean, b: Node<"bool"> | boolean): Node<"bool"> {
+  // A bare inbound `boolean` field composed here seals it to the bool wire.
+  sealInboundFieldBool(a);
+  sealInboundFieldBool(b);
+  return wrapAst<"bool">({ kind: "and", type: "bool", lhs: lift(a, "bool"), rhs: lift(b, "bool") });
+}
+registerNodeMethod(
+  "and",
+  function (this: Node<"bool">, other: Node<"bool"> | boolean): Node<"bool"> {
+    return and(this, other);
+  },
+);
+export function or(a: Node<"bool"> | boolean, b: Node<"bool"> | boolean): Node<"bool"> {
+  sealInboundFieldBool(a);
+  sealInboundFieldBool(b);
+  return wrapAst<"bool">({ kind: "or", type: "bool", lhs: lift(a, "bool"), rhs: lift(b, "bool") });
+}
+registerNodeMethod(
+  "or",
+  function (this: Node<"bool">, other: Node<"bool"> | boolean): Node<"bool"> {
+    return or(this, other);
+  },
+);
 
 // ─────────────────────────────────────────────────────────────────────────
 // Math (f32 / f64 — `f64` lowering lands with the f64 path; `f32` here)
@@ -510,6 +567,8 @@ export function select<T extends ScalarType>(
   then: Node<T> | number | boolean,
   else_: Node<T> | number | boolean,
 ): Node<T> {
+  // A bare inbound `boolean` field used as the select condition seals it to bool.
+  sealInboundFieldBool(cond);
   // WASM `select` returns the branch type unchanged; carry it on the AST so
   // downstream inference / emission pick the right type. Literal branches lift
   // to the type of whichever branch is a `Node<T>` (Q33 context-dependent

@@ -9,8 +9,10 @@
 import { expect, test } from "vite-plus/test";
 
 import { newCaptureContext, runCapture, unwrapAst, wrapAst } from "../compile/capture.ts";
-import { audioInput, audioOutput, event, param, state } from "./declarations.ts";
+import { audioInput, audioOutput, event, noiseSource, param, state } from "./declarations.ts";
 import { forSample } from "./loop.ts";
+import { defineProcessor } from "../processor.ts";
+import { f32 } from "./constructors.ts";
 import { add, gt } from "./primitives.ts";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1655,12 +1657,13 @@ test("`messageDecl.onReceive` multiple registrations appear in source order in s
   expect(ctx.statements[1]?.kind).toBe("messageOnReceive");
 });
 
-test("`messageDecl.onReceive` handler argument proxies field access as Node<'i32'> (Q46 uniform lift)", () => {
+test("`messageDecl.onReceive` handler argument proxies field access as Node<'f32'> (number → f32 wire)", () => {
   // When the handler destructures `({ slot }) => ...`, the framework proxies
-  // the "slot" field access and returns it as a Node<'i32'> proxy (Q46 uniform lift).
+  // the "slot" field access and returns it as a `Node<'f32'>` proxy (a declared
+  // `number` rides the f32 wire so its fraction survives).
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
-    const z = state.named("counter").i32(0);
+    const z = state.named("counter").f32(0);
     const reset = event<{ slot: number }>({ from: "main", name: "reset" });
     reset.onReceive(({ slot }) => {
       z.write(slot);
@@ -1671,10 +1674,10 @@ test("`messageDecl.onReceive` handler argument proxies field access as Node<'i32
   expect(onRecv.body).toHaveLength(1);
   expect(onRecv.body[0]).toMatchObject({
     kind: "stateStore",
-    type: "i32",
+    type: "f32",
     name: "counter",
   });
-  // store value = Node<'i32'> produced via the field proxy = messageFieldRead AST
+  // store value = Node<'f32'> produced via the field proxy = messageFieldRead AST
   const storeValue = (onRecv.body[0] as { value: { kind: string; name?: string; field?: string } })
     .value;
   expect(storeValue.kind).toBe("messageFieldRead");
@@ -1703,7 +1706,9 @@ test("`messageDecl.onReceive` accessing the same field multiple times pushes it 
     });
     const decl = ctx.declarations.find((d) => d.kind === "message");
     if (decl?.kind !== "message") throw new Error("expected message decl");
-    expect(decl.fields).toEqual([{ name: "slot", wireType: "i32" }]);
+    // An inbound `number` field defaults to the f32 wire (its fraction survives);
+    // it is not consumed by a bool sink here, so it stays f32.
+    expect(decl.fields).toEqual([{ name: "slot", wireType: "f32" }]);
   });
 });
 
@@ -1729,9 +1734,10 @@ test("`messageDecl.onReceive` typed-array field: `.at` / `.length` produce paylo
   expect((onRecv.body[1] as { value: { kind: string } }).value.kind).toBe("payloadFieldRead");
 });
 
-test("inferAstType: messageFieldRead Node passed as an event emit field seals wireType as i32", () => {
-  // Emitting an event inside a handler and passing a messageFieldRead
-  // Node<'i32'> as a field value seals the event decl.fields entry as i32.
+test("inferAstType: messageFieldRead Node passed as an event emit field seals wireType as f32", () => {
+  // Emitting an event inside a handler and re-passing an inbound `number` field
+  // (a `Node<'f32'>` on the f32 wire) as a field value seals the outbound event
+  // decl.fields entry as f32 — `number` rides the f32 wire end to end.
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const msg = event<{ slot: number }>({ from: "main", name: "preset" });
@@ -1741,7 +1747,7 @@ test("inferAstType: messageFieldRead Node passed as an event emit field seals wi
     });
     const evtDecl = ctx.declarations.find((d) => d.kind === "event");
     if (evtDecl?.kind !== "event") throw new Error("expected event decl");
-    expect(evtDecl.fields).toEqual([{ name: "value", wireType: "i32" }]);
+    expect(evtDecl.fields).toEqual([{ name: "value", wireType: "f32" }]);
   });
 });
 
@@ -1777,4 +1783,99 @@ test("`emitIf` field value from a comparison node resolves wireType to bool (inf
     if (evtDecl?.kind !== "event") throw new Error("expected event decl");
     expect(evtDecl.fields).toEqual([{ name: "hot", wireType: "bool" }]);
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// noiseSource seed validation
+// ─────────────────────────────────────────────────────────────────────────
+
+// `NoiseSourceOptions.seed` is documented as a compile-time INTEGER whose whole
+// purpose is to pin the noise stream byte-for-byte for golden tests and preset
+// restoration. Emission applies `seed | 0`, so `0.5`, `NaN` and `Infinity` all
+// truncate to 0 and get swapped for the zero-seed sentinel — three distinct
+// "explicit" seeds silently producing one identical stream, which defeats the
+// only reason to pass a seed. Reject them at declaration instead.
+// Reported by @codex on #43.
+test("`noiseSource` rejects a seed that is not an int32", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    for (const bad of [0.5, -1.5, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 31, -(2 ** 31) - 1]) {
+      expect(() => noiseSource({ seed: bad }), `seed: ${bad}`).toThrow(/seed/i);
+    }
+  });
+});
+
+test("`noiseSource` accepts the documented integer seeds, including 0", () => {
+  const ctx = newCaptureContext();
+  runCapture(ctx, () => {
+    // 0 is explicitly supported — emission substitutes the xorshift32 sentinel.
+    for (const ok of [0, 1, 42, -1, 2 ** 31 - 1, -(2 ** 31)]) {
+      expect(() => noiseSource({ seed: ok }), `seed: ${ok}`).not.toThrow();
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Forwarding an inbound payload field to an outbound event
+// ─────────────────────────────────────────────────────────────────────────
+
+// A `messageFieldRead` node bakes in `wireType: "f32"` when the field is first
+// touched, and the emit path resolves the real type from the declaration, so the
+// WASM load is right. `inferAstType` does not — it returns the stale snapshot, so
+// forwarding a field that later seals to `bool` recorded the OUTBOUND field as
+// f32. The consumer then declared `boolean` on both sides and received 1 / 0
+// typed as `number`. Reported by @codex on #43.
+test("forwarding an inbound field that sealed to bool emits a bool outbound field", () => {
+  const proc = defineProcessor(() => {
+    const inbound = event<{ enabled: boolean }>({ from: "main", name: "ctl" });
+    const outbound = event<{ enabled: boolean }>({ to: "main", name: "fwd" });
+    const gate = state.bool(false).named("gate");
+    const out = audioOutput({ channels: 1, name: "main" });
+    return {
+      process: () => {
+        inbound.onReceive((e) => {
+          gate.write(e.enabled); // seals the inbound field to bool
+          outbound.emitIf(true, { enabled: e.enabled }); // must forward as bool
+        });
+        forSample((i) => {
+          out.ch(0).at(i).write(f32(0));
+        });
+      },
+    };
+  });
+
+  const inboundField = proc.worklet.messageRings[0]!.fields!.find((f) => f.name === "enabled");
+  const outboundField = proc.worklet.eventRings[0]!.fields!.find((f) => f.name === "enabled");
+  expect(inboundField!.wireType).toBe("bool");
+  expect(outboundField!.wireType).toBe("bool");
+});
+
+// The boundary of the rule above. Wire types are sealed from USAGE — the `boolean`
+// in `event<{ enabled: boolean }>` is erased before the graph is captured, so a
+// field that never flows into a boolean position is indistinguishable from a
+// number and stays on the f32 wire. Forwarding is not a boolean position, so a
+// forward alone cannot establish the type; it can only preserve one already
+// sealed (the test above). Pinned so a later change cannot make the two paths
+// disagree silently. Reported by @codex on #43.
+test("forwarding alone does not seal a field to bool — sealing comes from usage", () => {
+  const proc = defineProcessor(() => {
+    const inbound = event<{ enabled: boolean }>({ from: "main", name: "ctl" });
+    const outbound = event<{ enabled: boolean }>({ to: "main", name: "fwd" });
+    const out = audioOutput({ channels: 1, name: "main" });
+    return {
+      process: () => {
+        inbound.onReceive((e) => {
+          outbound.emitIf(true, { enabled: e.enabled }); // no boolean consumer anywhere
+        });
+        forSample((i) => {
+          out.ch(0).at(i).write(f32(0));
+        });
+      },
+    };
+  });
+
+  const inboundField = proc.worklet.messageRings[0]!.fields!.find((f) => f.name === "enabled");
+  const outboundField = proc.worklet.eventRings[0]!.fields!.find((f) => f.name === "enabled");
+  expect(inboundField!.wireType).toBe("f32");
+  expect(outboundField!.wireType).toBe("f32");
 });

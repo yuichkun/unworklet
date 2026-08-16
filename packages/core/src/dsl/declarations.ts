@@ -33,6 +33,12 @@ import {
   unwrapAst,
   wrapAst,
 } from "../compile/capture.ts";
+import {
+  PAYLOAD_FIELD_META,
+  type PayloadFieldMeta,
+  payloadFieldMeta,
+  sealInboundFieldBool,
+} from "./payload-field.ts";
 import type {
   AudioInputHandle,
   AudioOutputHandle,
@@ -48,6 +54,8 @@ import type {
   MidiInputHandle,
   MidiOutputHandle,
   Node,
+  NoiseSource,
+  NoiseSourceOptions,
   OutputChannelView,
   Param,
   ScalarOf,
@@ -55,16 +63,6 @@ import type {
   State,
   TypedArrayFieldRef,
 } from "../types.ts";
-
-/**
- * Hidden meta attached to a typed-array payload proxy node identifying which
- * field of which message it refers to. `buf.copyFrom(payloadField)` reads this
- * off the source to build the `bufferCopyFrom` AST (= the public `TypedArrayFieldRef`
- * type exposes only length/at, while the internals are carried via this symbol).
- */
-const PAYLOAD_FIELD_META = Symbol("unworklet.payloadFieldMeta");
-
-type PayloadFieldMeta = { decl: MessageDeclAst; field: string };
 
 /**
  * Inbound sysex `data` proxy (= `TypedArrayFieldRef<'u8'>`) hidden marker: the
@@ -140,6 +138,10 @@ function liftF32(v: Node<"f32"> | number): AstNode {
  * type extension.
  */
 function liftStoreValue<T extends ScalarType>(type: T, v: Node<T> | ScalarOf<T>): AstNode {
+  // A bare inbound `boolean` payload field written to a `state.bool` slot seals
+  // its wire type to bool (it defaults to f32; a `number` field never reaches a
+  // bool slot, so it keeps the f32 default). No-op for any other value.
+  if (type === "bool") sealInboundFieldBool(v);
   if (typeof v === "number") {
     return { kind: "literal", type, value: v };
   }
@@ -373,6 +375,9 @@ function bufferScalarType(t: BufferElementType): ScalarType {
 /** Lift a buffer write value (= Q33 literal lift, element-type aware). */
 function liftBufferValue(elementType: BufferElementType, v: Node<ScalarType> | number): AstNode {
   const st = bufferScalarType(elementType);
+  // A bare inbound `boolean` payload field written into a `buffer.bool` seals its
+  // wire type to bool (same axis as the state.bool write).
+  if (st === "bool") sealInboundFieldBool(v);
   if (typeof v === "number") {
     return { kind: "literal", type: st, value: st === "i32" ? v | 0 : v };
   }
@@ -527,9 +532,7 @@ function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer
         });
         return;
       }
-      const meta = (src as unknown as Record<symbol, PayloadFieldMeta | undefined>)[
-        PAYLOAD_FIELD_META
-      ];
+      const meta = payloadFieldMeta(src);
       if (meta === undefined) {
         throw new Error(
           "unworklet: buffer.copyFrom(src) requires a typed-array message payload field",
@@ -552,6 +555,9 @@ function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer
           );
         }
         field.payloadElementType = decl.type;
+        // The typed-array slot is [payloadLen, payloadOffset]; pin the unused scalar
+        // wireType to the canonical `i32` dummy (same as the `.at()`/`.length` seal).
+        field.wireType = "i32";
       }
       addStatement({
         kind: "bufferCopyFrom",
@@ -918,6 +924,20 @@ function liftEmitFieldValue(
 ): { ast: AstNode; wireType: ScalarType } {
   if (isWrappedNode(raw)) {
     const ast = unwrapAst(raw);
+    // A `messageFieldRead` bakes in `wireType: "f32"` when the field is first
+    // touched, and never follows a later seal — the emit path sidesteps that by
+    // resolving the field from its declaration, but `inferAstType` returns the
+    // stale snapshot. Forwarding an inbound field straight into an outbound event
+    // therefore recorded f32 even after the source sealed to bool, so a consumer
+    // who declared `boolean` on both sides received 1 / 0 typed `number`.
+    // Resolve the same way emission does: from the source declaration.
+    if (ast.kind === "messageFieldRead") {
+      const source = getCurrentCapture().declarations.find(
+        (d): d is MessageDeclAst => d.kind === "message" && d.name === ast.name,
+      );
+      const sourceField = source?.fields.find((f) => f.name === ast.field);
+      if (sourceField !== undefined) return { ast, wireType: sourceField.wireType };
+    }
     return { ast, wireType: inferAstType(ast) };
   }
   if (typeof raw === "boolean") {
@@ -949,6 +969,8 @@ function eventToMain<T>(options: EventOptions): EventDecl<T> {
   const handle = {
     name: decl.name,
     emitIf: (cond: Node<"bool"> | boolean, payload: Record<string, unknown>) => {
+      // A bare inbound `boolean` field used as the emit condition seals it to bool.
+      sealInboundFieldBool(cond);
       const condAst: AstNode = isWrappedNode(cond)
         ? unwrapAst(cond)
         : { kind: "literal", type: "i32", value: cond ? 1 : 0 };
@@ -1094,20 +1116,29 @@ function makeMessagePayloadProxy(decl: MessageDeclAst): Record<string, unknown> 
         if (typeof prop !== "string") return undefined;
         const fieldName = prop;
         // Stay consistent with the already-sealed field = repeated accesses resolve
-        // to the same field; if unsealed, push as i32.
+        // to the same field; if unsealed, push as f32 (= the inbound number wire is
+        // f32 so fractional values survive; a boolean field is delivered as 0.0/1.0
+        // and converts to bool at its use site).
         if (!decl.fields.some((f) => f.name === fieldName)) {
-          decl.fields.push({ name: fieldName, wireType: "i32" });
+          decl.fields.push({ name: fieldName, wireType: "f32" });
         }
         const sealTypedArray = (): void => {
           const field = decl.fields.find((f) => f.name === fieldName);
-          if (field !== undefined) field.payloadElementType = "f32";
+          if (field !== undefined) {
+            field.payloadElementType = "f32";
+            // A typed-array field's slot is [payloadLen, payloadOffset]; its scalar
+            // wireType is an unused dummy. Pin it to the canonical `i32` (matching
+            // the outbound event typed-array dummy) so the f32 scalar default does
+            // not churn the schemaHash of a typed-array-only processor.
+            field.wireType = "i32";
+          }
         };
-        // scalar view = a Node holding a messageFieldRead i32 as its astPayload.
-        const node = wrapAst<"i32">({
+        // scalar view = a Node holding a messageFieldRead f32 as its astPayload.
+        const node = wrapAst<"f32">({
           kind: "messageFieldRead",
           name: decl.name,
           field: fieldName,
-          wireType: "i32",
+          wireType: "f32",
         }) as unknown as Record<string, unknown>;
         // typed-array view (= §4.3 proxy). The field is typed-array-sealed the moment it is accessed.
         Object.defineProperty(node, "length", {
@@ -1314,6 +1345,8 @@ function midiToMain(options: MidiPortOptions): MidiOutputHandle {
   return {
     name: decl.name,
     emitIf(cond, event) {
+      // A bare inbound `boolean` field used as the emit condition seals it to bool.
+      sealInboundFieldBool(cond);
       const condAst: AstNode = isWrappedNode(cond)
         ? unwrapAst(cond)
         : { kind: "literal", type: "i32", value: cond ? 1 : 0 };
@@ -1482,3 +1515,58 @@ function midiImpl(
 }
 
 export const event: EventFamily = Object.assign(eventImpl, { midi: midiImpl }) as EventFamily;
+
+// ─────────────────────────────────────────────────────────────────────────
+// noiseSource (`01-dsl.md` §2 stateful sources)
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Declare a private xorshift32 white-noise generator. Returns a `NoiseSource`
+ * handle; each `.next()` call advances the internal PRNG state by one step
+ * and returns the next `[-1, 1)` sample.
+ *
+ * Framework allocates one i32 slot per declaration (see
+ * `layout.regions.noiseSources`). Auto seed = declaration order counter
+ * (1, 2, 3, …) if `seed` omitted; explicit seed pins the output byte-for-byte
+ * across code edits (use for golden snapshots / preset reproducibility).
+ * `seed === 0` is silently substituted with a sentinel constant because
+ * xorshift32 locks at zero — the user can still specify `seed: 0` without
+ * hitting the pathological case.
+ *
+ * ```ts
+ * const nL = noiseSource({ seed: 42 });
+ * const nR = noiseSource();  // auto seed = next in order
+ * process(() => {
+ *   forSample((i) => {
+ *     out.left.at(i).write(nL.next().mul(0.3));
+ *     out.right.at(i).write(nR.next().mul(0.3));
+ *   });
+ * });
+ * ```
+ */
+export function noiseSource(options?: NoiseSourceOptions): NoiseSource {
+  const ctx = getCurrentCapture();
+  const idx = ctx.noiseSourceCount;
+  ctx.noiseSourceCount += 1;
+  // Auto seed starts at 1 so we never hand out xorshift32's pathological zero.
+  const seed = options?.seed ?? idx + 1;
+  // The seed exists to pin the stream byte-for-byte, and emission stores it with
+  // `seed | 0`. A non-int32 would truncate silently — `0.5`, `NaN` and `Infinity`
+  // all land on 0 and then take the zero-seed sentinel, so three distinct seeds
+  // would yield one identical stream. Fail loudly instead. (`0` itself is
+  // supported; the sentinel substitution for it is documented.)
+  if (!Number.isInteger(seed) || seed < -(2 ** 31) || seed > 2 ** 31 - 1) {
+    throw new Error(
+      `unworklet: noiseSource seed must be an integer in the int32 range ` +
+        `[-2147483648, 2147483647], got ${String(seed)}. The seed pins the noise ` +
+        `stream byte-for-byte, and a non-integer would truncate to a different one.`,
+    );
+  }
+  const name = `${ctx.namePrefix}__noise_${idx}`;
+  addDeclaration({ kind: "noiseSource", name, seed });
+  return {
+    next(): Node<"f32"> {
+      return captureTemp<"f32">({ kind: "noiseSourceNext", type: "f32", name }, "f32");
+    },
+  };
+}

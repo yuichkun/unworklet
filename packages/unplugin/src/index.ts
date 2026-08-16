@@ -15,18 +15,36 @@
  */
 
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { compile, extractWorkletMeta } from "@unworklet/core";
 import type { CompiledProcessor, WorkletNamespace } from "@unworklet/core";
-import { lower, rewriteImportSpecifiers, uwkImportSpecifiers } from "@unworklet/lang";
+import {
+  importLoweredEntry,
+  isUwkSource,
+  lowerUwkSource,
+  materializeLowered,
+  seedUnworkletDir,
+} from "@unworklet/lang";
 import { createUnplugin, type UnpluginOptions } from "unplugin";
 import type { Plugin } from "vite";
 
-import { workletsDts } from "./worklet-dts.ts";
+import { workletsDts } from "@unworklet/lang";
+
+/**
+ * Devframe's untrusted-RPC scope prefix. Every method name registered or called
+ * from an untrusted client (the page-side devbridge) must start with this string
+ * or the anonymous-method gate rejects it (DTK0013), silently emptying every
+ * panel. The value mirrors devframe's own `ANONYMOUS_RPC_PREFIX` (currently
+ * `"anonymous:"` in devframe 0.8, shipped with @vitejs/devtools 0.4). Kept as a
+ * single source of truth so a future upstream rename is caught by
+ * `test/index.test.ts` (which pins this against devframe's dist), not by silent
+ * panel breakage.
+ */
+export const ANONYMOUS_RPC_PREFIX = "anonymous:";
 
 // ─────────────────────────────────────────────────────────────────────────
 // DevTools live audio-graph topology (Wire 4)
@@ -258,87 +276,9 @@ const importFresh = async (sourcePath: string): Promise<Record<string, unknown>>
 // transforms. Both derive the export name from the filename identically, so the
 // two evaluations of the same source agree on the export key + registration name.
 
-const isUwkSource = (filePath: string): boolean => filePath.endsWith(".uwk.ts");
-
-/**
- * Derive a valid camelCase JS identifier from a `.uwk.ts` filename — the single
- * named export the lowered module exposes (and the `registerProcessor` prefix).
- * The `.uwk.ts` suffix is stripped and kebab/snake segments are camel-cased, so
- * `noise-drive.uwk.ts` → `noiseDrive`; a name with no identifier characters
- * (`123.uwk.ts`) falls back to `processor`.
- */
-const deriveExportName = (sourcePath: string): string => {
-  const base = path.basename(sourcePath).replace(/\.uwk\.ts$/, "");
-  const camel = base
-    .split(/[^A-Za-z0-9]+/)
-    .filter((seg) => seg.length > 0)
-    .map((seg, i) => (i === 0 ? seg : seg[0]!.toUpperCase() + seg.slice(1)))
-    .join("")
-    .replace(/^[^A-Za-z_$]+/, "");
-  return camel.length > 0 ? camel : "processor";
-};
-
-/**
- * Memoize `lower()` by (path, content): the plugin re-evaluates the same source
- * several times per `createNode` (virtual load + worklet entry + middleware) and
- * each `lower()` builds a fresh in-memory ts.Program, so caching the desugared
- * text keeps that cost off the hot path. Keyed by path, invalidated on content
- * change.
- */
-const loweredCache = new Map<string, { source: string; lowered: string }>();
-const lowerUwkSource = (sourcePath: string, source: string): string => {
-  const cached = loweredCache.get(sourcePath);
-  if (cached !== undefined && cached.source === source) return cached.lowered;
-  const lowered = lower(source, { exportName: deriveExportName(sourcePath) });
-  loweredCache.set(sourcePath, { source, lowered });
-  return lowered;
-};
-
-/**
- * Lower `sourcePath` to a temp sibling and recursively lower the transitive
- * `.uwk.ts` imports it makes — a processor importing a subgraph from a sibling
- * library `.uwk.ts` — rewriting each importer's specifier to point at the lowered
- * sibling. Returns the entry temp path; every temp written is pushed to `cleanup`.
- *
- * `.uwklowered.ts` suffix (not `.uwk.ts`) so a temp is never re-lowered; written
- * next to its source so Node's native type-stripping runs and `@unworklet/core`
- * (+ plain `.ts` imports) resolve from the source directory. A single-file
- * processor (no `.uwk.ts` imports) writes exactly one temp.
- */
-const materializeLowered = async (
-  sourcePath: string,
-  done: Map<string, string>,
-  inProgress: Set<string>,
-  cleanup: string[],
-): Promise<string> => {
-  const already = done.get(sourcePath);
-  if (already !== undefined) return already;
-  if (inProgress.has(sourcePath)) {
-    throw new Error(`@unworklet/unplugin: cyclic .uwk.ts import involving ${sourcePath}`);
-  }
-  inProgress.add(sourcePath);
-  const source = await readFile(sourcePath, "utf8");
-  let lowered = lowerUwkSource(sourcePath, source);
-  const dir = path.dirname(sourcePath);
-  const remap: Record<string, string> = {};
-  for (const spec of uwkImportSpecifiers(lowered)) {
-    const targetTemp = await materializeLowered(path.resolve(dir, spec), done, inProgress, cleanup);
-    let rel = path.relative(dir, targetTemp).split(path.sep).join("/");
-    // The temp basename is a dotfile (`.x.<tag>.uwklowered.ts`), so a same-dir
-    // `path.relative` yields a leading-dot name that Node would read as a bare
-    // specifier — force an explicit `./` (or keep an existing `../`).
-    if (!rel.startsWith("./") && !rel.startsWith("../")) rel = `./${rel}`;
-    remap[spec] = rel;
-  }
-  if (Object.keys(remap).length > 0) lowered = rewriteImportSpecifiers(lowered, remap);
-  const tag = createHash("sha256").update(lowered).digest("hex").slice(0, 8);
-  const tempPath = path.join(dir, `.${path.basename(sourcePath)}.${tag}.uwklowered.ts`);
-  await writeFile(tempPath, lowered);
-  done.set(sourcePath, tempPath);
-  inProgress.delete(sourcePath);
-  cleanup.push(tempPath);
-  return tempPath;
-};
+// `isUwkSource`, `deriveExportName`, `lowerUwkSource`, and `materializeLowered`
+// live in `@unworklet/lang` (imported above) so both the Vite plugin and offline
+// / test callers share the same multi-file `.uwk.ts` lowering.
 
 /**
  * Build-path module load. A plain `.ts` is imported fresh via Node; a `.uwk.ts`
@@ -349,9 +289,11 @@ const materializeLowered = async (
 const loadProcessorModuleFresh = async (sourcePath: string): Promise<Record<string, unknown>> => {
   if (!isUwkSource(sourcePath)) return importFresh(sourcePath);
   const cleanup: string[] = [];
-  const entryTemp = await materializeLowered(sourcePath, new Map(), new Set(), cleanup);
+  // Materialization is inside the try so a partial failure cannot strand sibling
+  // temps in the consumer's source tree.
   try {
-    return (await import(`${entryTemp}?t=${Date.now()}`)) as Record<string, unknown>;
+    const entryTemp = await materializeLowered(sourcePath, new Map(), new Set(), cleanup);
+    return await importLoweredEntry(entryTemp, sourcePath);
   } finally {
     await Promise.all(cleanup.map((p) => rm(p, { force: true })));
   }
@@ -681,14 +623,15 @@ const setupDevtools = async (
     url: "/__unworklet/",
     // The panel runs in an iframe the devtools host does NOT inject its client
     // context into (it only does that for the top page). Without `remote`, the
-    // panel would self-connect as an anonymous client, and an anonymous RPC name
-    // is version-coupled to the host's devtools-kit (`vite:anonymous:` in 0.2.x,
-    // `devframe:anonymous:` in 0.3.x) — a panel built against one and embedded in
-    // a host of the other is rejected (DTK0013) and renders empty. `remote` makes
-    // the host inject a session auth token into the iframe URL; the panel calls
-    // `connectRemoteDevTools()` and connects as a TRUSTED client, bypassing the
-    // anonymous-scope check. Auth is then by token, not by a version-matched scope
-    // string, so the panel works against any host the user's toolchain ships.
+    // panel would self-connect as an anonymous client, and the anonymous-RPC
+    // prefix is version-coupled to devframe (`vite:anonymous:` in devtools 0.2.x,
+    // `devframe:anonymous:` in 0.3.x, `anonymous:` in 0.4.x) — a panel built
+    // against one and embedded in a host of the other is rejected (DTK0013) and
+    // renders empty. `remote` makes the host inject a session auth token into the
+    // iframe URL; the panel calls `connectRemoteDevTools()` and connects as a
+    // TRUSTED client, bypassing the anonymous-scope check. Auth is then by token,
+    // not by a version-matched prefix string, so the panel works against any host
+    // the user's toolchain ships.
     //
     // `transport: "query"` (not the default `"fragment"`) is REQUIRED here: the
     // panel SPA uses a hash-mode Vue Router, so a descriptor placed in the URL
@@ -709,19 +652,22 @@ const setupDevtools = async (
   // is an UNTRUSTED devtools client (no auth token), so a normal RPC name is
   // rejected with DTK0013 "Unauthorized access to method" — and the 33ms signals
   // poll turns that into a console flood that blocks the panel. The only bypass is
-  // `@vitejs/devtools`'s anonymous-method mechanism: a method whose name starts with
-  // its internal `ANONYMOUS_SCOPE` skips the client-auth check. That scope is
-  // version-coupled and unexported — `vite:anonymous:` in devtools 0.2.x,
-  // `devframe:anonymous:` in 0.3.x — so the `@vitejs/devtools-kit` peer is pinned to
-  // an exact 0.3 version (not a range): a mismatched version changes this prefix and
-  // silently empties every panel. These pushes are dev-only, local, and
+  // devframe's anonymous-method mechanism: a method whose name starts with
+  // `ANONYMOUS_RPC_PREFIX` skips the client-auth check. The prefix is
+  // version-coupled — `vite:anonymous:` in devtools 0.2.x / devframe pre-0.5,
+  // `devframe:anonymous:` in devtools 0.3.x / devframe 0.5, `anonymous:` in devtools
+  // 0.4.x / devframe 0.8 — so the `@vitejs/devtools-kit` peer is pinned to a
+  // devtools major whose prefix matches {@link ANONYMOUS_RPC_PREFIX} below. A
+  // mismatched host silently empties every panel (`test/index.test.ts` locks the
+  // constant against devframe's own `ANONYMOUS_RPC_PREFIX` so a future upstream
+  // rename cannot regress this again). These pushes are dev-only, local, and
   // non-sensitive, so anonymous is the right scope. (MIDI inject below is called from
   // the trusted panel, not the page, so it needs no prefix.)
   const graphState = await ctx.rpc.sharedState.get("unworklet:graph", {
-    initialValue: { nodes: [], edges: [] },
+    initialValue: { nodes: [], edges: [] } as DevAudioGraph,
   });
   const graphUpdate = defineRpcFunction({
-    name: "devframe:anonymous:unworklet:graph-update",
+    name: `${ANONYMOUS_RPC_PREFIX}unworklet:graph-update`,
     type: "action",
     setup: () => ({
       handler: async (graph: DevAudioGraph): Promise<void> => {
@@ -739,10 +685,10 @@ const setupDevtools = async (
   // Live state X-ray — the page-script polls each node's devDump and pushes the
   // decoded scalar slots here; the Live-state panel reads `unworklet:state`.
   const liveState = await ctx.rpc.sharedState.get("unworklet:state", {
-    initialValue: { nodes: [] },
+    initialValue: { nodes: [] } as DevLiveState,
   });
   const stateUpdate = defineRpcFunction({
-    name: "devframe:anonymous:unworklet:state-update",
+    name: `${ANONYMOUS_RPC_PREFIX}unworklet:state-update`,
     type: "action",
     setup: () => ({
       handler: async (state: DevLiveState): Promise<void> => {
@@ -761,10 +707,10 @@ const setupDevtools = async (
     initialValue: {
       nodes: [],
       context: { sampleRate: 0, baseLatencyMs: 0, outputLatencyMs: 0 },
-    },
+    } as DevSignalsState,
   });
   const signalsUpdate = defineRpcFunction({
-    name: "devframe:anonymous:unworklet:signals-update",
+    name: `${ANONYMOUS_RPC_PREFIX}unworklet:signals-update`,
     type: "action",
     setup: () => ({
       handler: async (signals: DevSignalsState): Promise<void> => {
@@ -780,10 +726,10 @@ const setupDevtools = async (
   // MIDI — the page-script pushes live port traffic (out events + overflow) here
   // via `unworklet:midi-update`; the MIDI panel reads `unworklet:midi`.
   const midiState = await ctx.rpc.sharedState.get("unworklet:midi", {
-    initialValue: { ports: [], log: [] },
+    initialValue: { ports: [], log: [] } as DevMidiState,
   });
   const midiUpdate = defineRpcFunction({
-    name: "devframe:anonymous:unworklet:midi-update",
+    name: `${ANONYMOUS_RPC_PREFIX}unworklet:midi-update`,
     type: "action",
     setup: () => ({
       handler: async (midi: DevMidiState): Promise<void> => {
@@ -803,7 +749,7 @@ const setupDevtools = async (
   const INJECT_QUEUE_MAX = 64;
   let injectSeq = 0;
   const injectState = await ctx.rpc.sharedState.get("unworklet:midi-inject", {
-    initialValue: { commands: [] },
+    initialValue: { commands: [] } as DevMidiInject,
   });
   const midiInject = defineRpcFunction({
     name: "unworklet:midi-inject",
@@ -818,63 +764,6 @@ const setupDevtools = async (
     }),
   });
   ctx.rpc.register(midiInject as Parameters<typeof ctx.rpc.register>[0]);
-};
-
-/**
- * The `.unworklet/tsconfig.json` the plugin generates next to `worklets.d.ts`. A
- * consumer extends it with one line — `"extends": "./.unworklet/tsconfig.json"` —
- * and inherits the three unworklet type settings, so no `vite-env.d.ts` is needed:
- * - `types` pulls the `*?worklet` ambient (resolves the import).
- * - `plugins` runs the `.uwk.ts` editor type-checker.
- * - `include` lists `worklets.d.ts` (the per-processor types; a glob skips the
- *   dot-folder) plus the project's sources via `../**​/*.ts`.
- *
- * `extends` does NOT merge `include`, so the consumer must not declare their own
- * `include` on the extending tsconfig (it would shadow this one). Projects that
- * need their own `include` use the manual path instead (the same three settings
- * written directly). `compilerOptions` like `module` / `lib` come from the
- * consumer's tsconfig and merge on top of these.
- */
-const GENERATED_TSCONFIG = `${JSON.stringify(
-  {
-    compilerOptions: {
-      types: ["@unworklet/unplugin/client"],
-      plugins: [{ name: "@unworklet/lang/typescript-plugin" }],
-      // Importing a subgraph from a sibling `.uwk.ts` uses the explicit `.uwk.ts`
-      // specifier, which TS only allows with `allowImportingTsExtensions` (itself
-      // requiring `noEmit` — this is a type layer; the bundler does the emit).
-      allowImportingTsExtensions: true,
-      noEmit: true,
-    },
-    include: ["worklets.d.ts", "../**/*.ts", "../**/*.tsx"],
-    exclude: ["../node_modules"],
-  },
-  null,
-  2,
-)}\n`;
-
-/**
- * Synchronously seed `.unworklet/` with the extended `tsconfig.json` (and an empty
- * `worklets.d.ts` if none exists yet) the moment the config resolves. This MUST be
- * synchronous and up front: Vite/Rolldown reads the consumer's
- * `{ "extends": "./.unworklet/tsconfig.json" }` when the build starts, and an async
- * write loses that race — the first `vite build` / `vite dev` on a fresh checkout
- * would otherwise fail with "Tsconfig not found" before the plugin ever writes it.
- * The tsconfig is fixed content; the witness is filled in as each `?worklet` loads.
- * No-op when the root doesn't exist (a synthetic unit-test config), so it never
- * materialises a placeholder tree on disk.
- */
-const seedUnworkletDir = (root: string): void => {
-  if (!root || !existsSync(root)) return;
-  try {
-    const outDir = path.join(root, ".unworklet");
-    mkdirSync(outDir, { recursive: true });
-    writeFileSync(path.join(outDir, "tsconfig.json"), GENERATED_TSCONFIG);
-    const witness = path.join(outDir, "worklets.d.ts");
-    if (!existsSync(witness)) writeFileSync(witness, "");
-  } catch {
-    // Best-effort; the async writeWorkletsWitness warns once on a real failure.
-  }
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1302,7 +1191,7 @@ const push = () => {
   pending = true;
   queueMicrotask(() => {
     pending = false;
-    rpcCall("devframe:anonymous:unworklet:graph-update", buildGraph());
+    rpcCall(${JSON.stringify(ANONYMOUS_RPC_PREFIX + "unworklet:graph-update")}, buildGraph());
   });
 };
 
@@ -1334,7 +1223,7 @@ const pollState = async () => {
       const { scalars, buffers } = splitSlots(slots, BUFFER_MAX_POINTS);
       nodes.push({ id: idOf(h.node.node), displayName: h.displayName || h.processorName, scalars, buffers });
     }
-    rpcCall("devframe:anonymous:unworklet:state-update", { nodes });
+    rpcCall(${JSON.stringify(ANONYMOUS_RPC_PREFIX + "unworklet:state-update")}, { nodes });
   } finally {
     statePolling = false;
   }
@@ -1414,7 +1303,7 @@ const pollSignals = async () => {
   const context = actx
     ? { sampleRate: actx.sampleRate || 0, baseLatencyMs: (actx.baseLatency || 0) * 1000, outputLatencyMs: (actx.outputLatency || 0) * 1000 }
     : { sampleRate: 0, baseLatencyMs: 0, outputLatencyMs: 0 };
-  rpcCall("devframe:anonymous:unworklet:signals-update", { nodes, context });
+  rpcCall(${JSON.stringify(ANONYMOUS_RPC_PREFIX + "unworklet:signals-update")}, { nodes, context });
 };
 let signalsTimer = null;
 const startSignalsPoll = () => {
@@ -1504,7 +1393,7 @@ const pollMidi = () => {
   const sig = JSON.stringify({ ports, log: midiLog });
   if (sig === lastMidiSig) return;
   lastMidiSig = sig;
-  rpcCall("devframe:anonymous:unworklet:midi-update", { ports, log: midiLog });
+  rpcCall(${JSON.stringify(ANONYMOUS_RPC_PREFIX + "unworklet:midi-update")}, { ports, log: midiLog });
 };
 let midiTimer = null;
 const startMidiPoll = () => {

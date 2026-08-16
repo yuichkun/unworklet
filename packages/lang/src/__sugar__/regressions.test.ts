@@ -220,3 +220,82 @@ test("E3 state.expose({...without name}) auto-derives the binding name", async (
     ),
   );
 });
+
+// ── A stale classification applied to a rewritten expression ───────────────
+//
+// `classify()` answers for the expression AS WRITTEN. Visiting can replace that
+// expression — `a && b` becomes `and(…)`, `c ? x : y` becomes `select(…)`, both
+// already `Node<T>` — and four call sites applied the original answer to the
+// replacement, emitting `.read()` on a call. TypeScript types `State<T> && State<T>`
+// as `State<T>`, so every one of these type-checks and then dies at capture with
+// `TypeError: and(...).read is not a function`.
+//
+// Both sugars in each case are documented on their own; only the composition broke.
+// Found by the pre-release audit of #43.
+
+const twoGates = `
+const a = state.bool(true).named("a");
+const b = state.bool(false).named("b");
+const level = state.f32(0).named("level");
+`;
+
+test("REGRESSION: `if (a && b)` over two bare states lowers without double-reading", async () => {
+  await expectSameLowering(
+    mono(twoGates, `if (a && b) level.write(f32(1)); out.ch(0)[i] = level;`),
+    mono(
+      twoGates,
+      `level.write(select(and(a.read(), b.read()), f32(1), level.read())); out.ch(0)[i] = level.read();`,
+    ),
+  );
+});
+
+test("REGRESSION: `(a && b) ? x : y` over two bare states lowers without double-reading", async () => {
+  await expectSameLowering(
+    mono(twoGates, `out.ch(0)[i] = (a && b) ? f32(1) : f32(0);`),
+    mono(twoGates, `out.ch(0).at(i).write(select(and(a.read(), b.read()), f32(1), f32(0)));`),
+  );
+});
+
+test("REGRESSION: `a && b && c` chains without double-reading the inner and", async () => {
+  const three = `${twoGates}const c = state.bool(true).named("c");
+`;
+  await expectSameLowering(
+    mono(three, `out.ch(0)[i] = select(a && b && c, f32(1), f32(0));`),
+    mono(
+      three,
+      `out.ch(0).at(i).write(select(and(and(a.read(), b.read()), c.read()), f32(1), f32(0)));`,
+    ),
+  );
+});
+
+test("REGRESSION: a const bound to `a && b` reads once, not twice", async () => {
+  await expectSameLowering(
+    mono(twoGates, `const g = a && b; out.ch(0)[i] = select(g, f32(1), f32(0));`),
+    mono(
+      twoGates,
+      `const g = and(a.read(), b.read()); out.ch(0).at(i).write(select(g, f32(1), f32(0)));`,
+    ),
+  );
+});
+
+test("REGRESSION: `not()` over a const bound to `a && b` reads once, not twice", async () => {
+  await expectSameLowering(
+    mono(twoGates, `const g = a && b; out.ch(0)[i] = select(not(g), f32(1), f32(0));`),
+    mono(
+      twoGates,
+      `const g = and(a.read(), b.read()); out.ch(0).at(i).write(select(not(g), f32(1), f32(0)));`,
+    ),
+  );
+});
+
+test("REGRESSION: `c ? x : y` with two bare-state branches lowers without double-reading", async () => {
+  const decls = `
+const c = state.bool(true).named("c");
+const x = state.f32(0.25).named("x");
+const y = state.f32(0.75).named("y");
+`;
+  await expectSameLowering(
+    mono(decls, `out.ch(0)[i] = c ? x : y;`),
+    mono(decls, `out.ch(0).at(i).write(select(c.read(), x.read(), y.read()));`),
+  );
+});

@@ -31,7 +31,8 @@ DevTools.
 
 ```bash
 npm install @unworklet/core
-npm install -D @unworklet/unplugin @unworklet/lang   # ?worklet loader + .uwk.ts editor support
+npm install -D @unworklet/unplugin @unworklet/lang @unworklet/offline @unworklet/test
+# ?worklet loader + .uwk.ts editor support + headless render + Vitest matchers
 ```
 
 ```ts
@@ -131,9 +132,34 @@ osc.start();
 Browsers start an `AudioContext` only after a user gesture, so call
 `ctx.resume()` from a click handler to actually hear it.
 
-Prefer explicit method calls over operator sugar? Write the same processor as a
-plain `.processor.ts` with the core API (`input.left.at(i).mul(drive.at(i))`) —
-the sugar is opt-in and lowers to exactly that.
+`.uwk.ts` is the recommended authoring form. Prefer explicit method calls over the
+operators? Write the same processor as a plain `.processor.ts` with the core API
+(`input.left.at(i).mul(drive.at(i))`) — it lowers to exactly the same result.
+
+## Use it with an AI agent
+
+unworklet ships an agent skill carrying the exact DSL forms, so an agent scaffolds
+a project and writes correct processors without hallucinating the API. Install it
+into your project once:
+
+```sh
+npx skills add https://github.com/yuichkun/unworklet/tree/main/skills/unworklet
+```
+
+That detects the coding agents you have and installs the skill for each of them —
+Claude Code, Codex, Cursor, opencode, Zed, Copilot and others. Then just ask —
+**"make an FM synth with unworklet"** — and the agent sets up the project and
+implements it. Update later with `npx skills update`.
+
+Prefer not to run the installer? Copy [`skills/unworklet/`](./skills/unworklet/)
+into your project as `.agents/skills/unworklet/` — the directory layout is already
+the convention that Codex, Cursor, opencode, Zed, Copilot and Gemini CLI read.
+Claude Code reads `.claude/skills/` instead, so copy it there for that one. Copy
+the whole folder either way: `SKILL.md` points at its siblings by filename.
+
+For a chat LLM with no repository access (ChatGPT, Claude.ai), paste
+[`skills/unworklet/SKILL.md`](./skills/unworklet/SKILL.md) into the conversation and
+follow its links as you need them.
 
 ## What you can build
 
@@ -180,9 +206,8 @@ const midi = await navigator.requestMIDIAccess();
 node.midi.keys.connectFromWebMIDI([...midi.inputs.values()][0]);
 ```
 
-Ten worked examples — EQ, lookahead limiter, granular sampler, arpeggiator,
-convolution reverb with state migration, polyphonic synth, sysex bridge, a live
-coding REPL — live in [`docs/12-canonical-examples.md`](./docs/12-canonical-examples.md).
+See `examples/demo/` for live-editable `.uwk.ts` examples (distortion, tremolo,
+lowpass, MIDI synths, arpeggiator, granular voice, …) rendered in the browser.
 
 ## Realtime-safe by construction
 
@@ -277,7 +302,9 @@ imports) and add it to your config. The unworklet plugin itself needs no extra
 config — it auto-docks once the host is present.
 
 ```sh
-npm install -D @vitejs/devtools@0.3.3 @vitejs/devtools-kit@0.3.3
+npm install -D @vitejs/devtools@0.4 @vitejs/devtools-kit@0.4 \
+  @vitejs/devtools-rolldown@0.4 @vitejs/devtools-oxc@0.4 \
+  @vitejs/devtools-vitest@0.4 @vitejs/devtools-vite@0.4
 ```
 
 ```ts
@@ -290,8 +317,10 @@ export default defineConfig(({ command }) => ({
   plugins: [
     unworklet(),
     // Dev only — the DevTools host runs a long-lived server, pointless in a build
-    // and it would keep the test runner from exiting.
-    ...(command === "serve" ? [DevTools({ builtinDevTools: false })] : []),
+    // and it would keep the test runner from exiting. Vitest also passes
+    // `command: "serve"`, so also gate on `!process.env.VITEST` or `vitest run`
+    // hangs 10s at close.
+    ...(command === "serve" && !process.env.VITEST ? [DevTools({ builtinDevTools: false })] : []),
   ],
 }));
 ```
@@ -300,11 +329,12 @@ Run your dev server, open the Vite DevTools overlay, and pick the **unworklet** 
 
 Two gotchas worth knowing up front:
 
-- **Install both at exactly `0.3.3`.** `@unworklet/unplugin` pins this DevTools
-  version (an exact, optional `peerDependency`): the live panels reach the dev server
-  through an anonymous RPC scope whose prefix is coupled to the DevTools major
-  (`devframe:anonymous:` in 0.3), so a mismatched host silently rejects every push and
-  the panels stay empty. The panel's page bridge also imports
+- **Match the 0.4 major across all 6 packages.** `@unworklet/unplugin` pins
+  `@vitejs/devtools-kit` to `^0.4.0` (optional `peerDependency`): the live panels reach
+  the dev server through an anonymous RPC scope whose prefix is coupled to the DevTools
+  major (`devframe:anonymous:` on the current line), so a mismatched-major host silently
+  rejects every push and the panels stay empty. The 0.3 line was Vite 6/7 only — Vite 8
+  requires the 0.4 line. The panel's page bridge also imports
   `@vitejs/devtools-kit/client` as a direct dependency, which must resolve from your
   app — a transitive copy is not enough.
 - **Cross-origin isolation.** The plugin makes the dev server cross-origin
@@ -330,10 +360,18 @@ clone the repo and start an example locally to try them live.
 
 ## Docs
 
-- **Start here:** [`docs/00-foundations.md`](./docs/00-foundations.md) — vocabulary, the type system, the realtime-safety invariants.
-- **The DSL:** [`docs/01-dsl.md`](./docs/01-dsl.md) · **MIDI:** [`docs/11-midi.md`](./docs/11-midi.md) · **Offline render:** [`docs/13-offline-render.md`](./docs/13-offline-render.md) · **Testing:** [`docs/06-testing.md`](./docs/06-testing.md).
-- **Worked examples:** [`docs/12-canonical-examples.md`](./docs/12-canonical-examples.md).
-- **For AI agents / LLMs:** [`llms.txt`](./llms.txt) carries the exact call forms.
+End-user / AI-agent guidance lives in [`skills/unworklet/`](./skills/unworklet/) —
+the same files `npx skills add` installs into your agents:
+
+- **Start here:** [`skills/unworklet/SKILL.md`](./skills/unworklet/SKILL.md) — the mandatory workflow (scaffold → author → test → typecheck → wire).
+- **DSL / API reference:** [`skills/unworklet/dsl.md`](./skills/unworklet/dsl.md) — `.uwk.ts` sugar + the underlying `@unworklet/core` declaration API.
+- **Setup:** [`skills/unworklet/setup.md`](./skills/unworklet/setup.md) · **Editor / CI typecheck:** [`skills/unworklet/ide-and-typecheck.md`](./skills/unworklet/ide-and-typecheck.md) · **Headless tests:** [`skills/unworklet/testing.md`](./skills/unworklet/testing.md) · **In-browser DevTools panel:** [`skills/unworklet/devtools.md`](./skills/unworklet/devtools.md).
+
+`skills/unworklet/` is the source of truth for how unworklet behaves: it is verified
+against the implementation, and CI compiles every complete example in it — the
+`.uwk.ts` ones through the lowering, the `defineProcessor` ones directly. `docs/`
+holds only history — the decisions log (why each design question was settled) and
+the RFCs. Neither describes current behaviour, so neither can contradict it.
 
 ## Contributing
 

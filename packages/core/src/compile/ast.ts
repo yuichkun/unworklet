@@ -31,6 +31,8 @@ export type AstNode =
   | { kind: "abs"; type: ScalarType; value: AstNode }
   | { kind: "neg"; type: ScalarType; value: AstNode }
   | { kind: "not"; type: "bool"; value: AstNode }
+  | { kind: "and"; type: "bool"; lhs: AstNode; rhs: AstNode }
+  | { kind: "or"; type: "bool"; lhs: AstNode; rhs: AstNode }
   | { kind: "sqrt"; type: ScalarType; value: AstNode }
   | { kind: "floor"; type: ScalarType; value: AstNode }
   | { kind: "ceil"; type: ScalarType; value: AstNode }
@@ -50,6 +52,11 @@ export type AstNode =
   | { kind: "gte"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "clamp"; type: ScalarType; x: AstNode; lo: AstNode; hi: AstNode }
   | { kind: "select"; type: ScalarType; cond: AstNode; ifTrue: AstNode; ifFalse: AstNode }
+  // Advance a declared `noiseSource(...)`'s private xorshift32 slot by one step
+  // and return the next `[-1, 1)` sample. `name` keys into the noise-source slot
+  // table `layout.regions.noiseSources.slots[name]`. Runtime state = the slot
+  // itself (framework-managed via the declaration); no user-visible state.
+  | { kind: "noiseSourceNext"; type: "f32"; name: string }
   // SIMD f32x4 (`01-dsl.md` §7, Q59). vec-producing nodes (vecConst/vecSplat/vecAdd…)
   // are `Node<'f32x4'>`; vecLane / vecSumLanes reduce back to `Node<'f32'>`.
   | { kind: "vecConst"; lanes: [AstNode, AstNode, AstNode, AstNode] }
@@ -394,6 +401,22 @@ export type BufferDecl = {
   userNamed?: boolean;
 };
 
+/**
+ * `noiseSource(options)` declaration (`01-dsl.md` §2 stateful sources).
+ *
+ * Each declaration owns one private i32 xorshift32 state slot in the
+ * `noiseSources` layout region. Auto seeds are assigned in declaration order
+ * (1, 2, 3, …) if the user omits `seed`; an explicit `seed` overrides. Names
+ * are synthetic (`__noise_<idx>`) since v0.1.1 doesn't expose `.named()` —
+ * naming for snapshot identity is a v0.1.2+ concern.
+ */
+export type NoiseSourceDecl = {
+  kind: "noiseSource";
+  name: string;
+  /** Effective seed used to initialize the state slot at instantiation. */
+  seed: number;
+};
+
 export type Declaration =
   | AudioPortDecl
   | ParamDecl
@@ -402,7 +425,8 @@ export type Declaration =
   | EventDeclAst
   | MessageDeclAst
   | MidiInputDecl
-  | MidiOutputDecl;
+  | MidiOutputDecl
+  | NoiseSourceDecl;
 
 export type CapturedGraph = {
   declarations: Declaration[];
@@ -454,9 +478,12 @@ export function inferAstType(ast: AstNode): ScalarType {
     case "gt":
     case "lte":
     case "gte":
+    case "and":
+    case "or":
       return "bool";
     case "audioInRead":
     case "paramAt":
+    case "noiseSourceNext":
       return "f32";
     case "loopCounter":
       return "i32";

@@ -19,6 +19,7 @@ import "./../dsl/primitives.ts"; // method form registration side-effect
 import { expect, test, vi } from "vite-plus/test";
 
 import { compile } from "./../compile/index.ts";
+import { i32 } from "./../dsl/constructors.ts";
 import { audioOutput, event, state as stateDecl } from "./../dsl/declarations.ts";
 import { forSample } from "./../dsl/loop.ts";
 import { midiEventToWire } from "./../midiWire.ts";
@@ -327,7 +328,9 @@ test("conformance: the message in-ring mirror matches the model's safe op-order"
     return {
       process: () => {
         ctrl.onReceive(({ slot }) => {
-          captured.write(slot);
+          // `slot` is a `number` field → `Node<'f32'>` on the wire; convert to the
+          // i32 counter slot explicitly.
+          captured.write(i32(slot));
         });
         forSample((i) => {
           out.ch(0).at(i).write(0);
@@ -352,7 +355,8 @@ test("conformance: the message in-ring mirror matches the model's safe op-order"
   });
   // Simulate a main-side push: write slot 0 and release head = 1.
   const headerView = new Int32Array(sab, 0, 3);
-  const slotsView = new Int32Array(sab, 12);
+  // The inbound `slot` field rides the f32 wire — push 42.0 as f32 bits.
+  const slotsView = new Float32Array(sab, 12);
   slotsView[0] = 42;
   Atomics.store(headerView, 0, 1);
 
@@ -429,7 +433,9 @@ test("conformance: the worklet commits the message in-ring tail via compare-exch
     return {
       process: () => {
         ctrl.onReceive(({ slot }) => {
-          captured.write(slot);
+          // `slot` is a `number` field → `Node<'f32'>` on the wire; convert to the
+          // i32 counter slot explicitly.
+          captured.write(i32(slot));
         });
         forSample((i) => {
           out.ch(0).at(i).write(0);
@@ -454,7 +460,7 @@ test("conformance: the worklet commits the message in-ring tail via compare-exch
   });
   // One pending message so the worklet drains (advances tail) and commits it.
   const headerView = new Int32Array(sab, 0, 3);
-  new Int32Array(sab, 12)[0] = 42;
+  new Float32Array(sab, 12)[0] = 42; // inbound `slot` rides the f32 wire
   Atomics.store(headerView, 0, 1);
 
   const q = emptyQuantum();

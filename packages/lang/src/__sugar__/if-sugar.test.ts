@@ -163,6 +163,27 @@ test("shape1 buffer: if(c) buf[i] = v == buf.write(i, select(c, v, buf.read(i)))
   );
 });
 
+test("shape1 buffer: if(c) buf[wp] = v — wp is a bare State<'i32'>, auto-reads on both sides", async () => {
+  // Round 3 dogfood regression. The dogfooder used a moving write pointer:
+  // `if (someBoolNode) buf[wp] = value`, where `wp` is a `State<"i32">`.
+  // Before this test, the ifSugar rewrite emitted `buf.write(wp, select(c, v,
+  // buf.read(wp)))` — but neither `wp` position was read-wrapped (the pass
+  // synthesizes the calls, so the bareState pass never gets a shot at those
+  // synthesized `wp` uses that live inside the injected `.write(wp, ...)` and
+  // `.read(wp)`). Both `wp` uses reached graph capture as raw State handles
+  // and crashed with "expected a Node<T> ... received an object".
+  const d =
+    "const buf = state.buffer.f32({ size: 128 }).named('buf');\n" +
+    "const wp = state.i32(0).named('wp');";
+  await expectSameLowering(
+    mono(d, `if (input.ch(0).at(i) > 0) buf[wp] = input.ch(0).at(i);`),
+    mono(
+      d,
+      `buf.write(wp.read(), select(gt(input.ch(0).at(i), 0), input.ch(0).at(i), buf.read(wp.read())));`,
+    ),
+  );
+});
+
 test("shape1 buffer: index-sugar and write-call forms lower identically", async () => {
   const d = "const buf = state.buffer.f32({ size: 128 }).named('buf');";
   await expectSameLowering(

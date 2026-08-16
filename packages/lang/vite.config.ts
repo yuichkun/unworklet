@@ -17,6 +17,9 @@ export default defineConfig({
   fmt: {},
   test: {
     include: ["src/**/*.test.ts"],
+    // Builds the shipped dist once, before any file runs — see the file for why
+    // it cannot live in a single suite's `beforeAll`.
+    globalSetup: ["test/global-setup.ts"],
     // Each lowering builds a fresh in-memory ts.Program; a single test can lower a
     // dozen sources, and the snapshot capture/replay case does it many times over.
     // Under parallel coverage instrumentation that heaviest case runs ~30s, so the

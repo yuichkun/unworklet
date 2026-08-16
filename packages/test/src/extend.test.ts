@@ -10,9 +10,10 @@
 
 import "./extend.ts";
 
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { encodeWav } from "@unworklet/offline";
 import type { RenderOfflineResult } from "@unworklet/offline";
@@ -442,4 +443,21 @@ test("chain method TS guard refuses non-RenderOfflineResult types", () => {
     // Same for Float32Array[] direct actual — typecheck passes.
     void expect([new Float32Array(8)]).toMatchAudioSnapshot();
   }
+});
+
+test("`@vitest/expect` is a required peer, because the shipped augmentation cannot resolve without it", () => {
+  // `extend.ts` is a module, so its `declare module "@vitest/expect"` is an
+  // augmentation — and an augmentation whose target cannot be resolved is
+  // `TS2664: Invalid module name in augmentation`, raised inside a file the
+  // consumer did not write. Under a hoisting install it resolves transitively
+  // through vitest and nobody notices; under pnpm / PnP it does not. Declaring the
+  // peer optional therefore declared something untrue. Reported by @codex on #43.
+  const pkg = JSON.parse(
+    readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"),
+  ) as {
+    peerDependencies?: Record<string, string>;
+    peerDependenciesMeta?: Record<string, { optional?: boolean }>;
+  };
+  expect(pkg.peerDependencies?.["@vitest/expect"]).toBeDefined();
+  expect(pkg.peerDependenciesMeta?.["@vitest/expect"]?.optional).not.toBe(true);
 });

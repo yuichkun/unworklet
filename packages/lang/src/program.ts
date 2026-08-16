@@ -21,11 +21,26 @@ import ts from "typescript";
 
 import { AMBIENT_DTS } from "./ambient.ts";
 
+/**
+ * `path.dirname` for a FILE path, without the `node:path` import this module
+ * must not have — see the browser note below. Both separators are handled so a
+ * Windows path behaves like a POSIX one, and a bare filename yields `"."`, both
+ * matching `path.dirname`. (A trailing separator is not: these are file paths.)
+ */
+const dirnameOf = (filePath: string): string => {
+  const cut = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
+  if (cut < 0) return ".";
+  return cut === 0 ? filePath.slice(0, 1) : filePath.slice(0, cut);
+};
+
 // The directory the in-memory virtuals are placed under, which disk-backed module
 // resolution (Node) walks up from to find `@unworklet/core`. `import.meta.dirname`
 // is a plain string under Node ESM and `undefined` in the browser — a property
-// read, NOT a `node:url` / `node:path` import (those externalize and crash the
-// browser bundle). The editor TS-plugin is bundled to CJS, where `import.meta` is
+// read, NOT a `node:url` / `node:path` import. Those do not fail the build: Vite
+// swaps them for a stub that throws on the first property read, so the breakage
+// lands wherever the module happens to be used. `browser-entry-purity.test.ts`
+// holds the whole reachable graph to this rule.
+// The editor TS-plugin is bundled to CJS, where `import.meta` is
 // empty but esbuild supplies `__dirname` (the bundle's dir, which sits in
 // `node_modules/@unworklet/lang/dist`, so core resolves from the same install) —
 // `typeof __dirname` is the one safe way to reach it without a ReferenceError in
@@ -38,7 +53,13 @@ const SELF_DIR =
   (import.meta as { dirname?: string }).dirname ??
   (typeof __dirname === "string" ? __dirname : "/__uwk__");
 
-const COMPILER_OPTIONS: ts.CompilerOptions = {
+/**
+ * Exported so anything that needs to reason about what this program READS
+ * resolves specifiers by the same rules it does — `.js` substituting to `.ts`,
+ * `allowImportingTsExtensions`, `customConditions`. Re-deriving those elsewhere
+ * is how a dependency goes unnoticed.
+ */
+export const COMPILER_OPTIONS: ts.CompilerOptions = {
   target: ts.ScriptTarget.ESNext,
   // ES libs only — NOT the DOM lib. DOM declares a non-generic `interface Node`,
   // which would collide with the ambient's generic `Node<T>` alias (making a
@@ -108,6 +129,20 @@ export type BuildProgramOptions = {
    * resolutions the passes trigger — not just the eager program build.
    */
   record?: FsSnapshot;
+  /**
+   * Absolute path of the `.uwk.ts` file being lowered (disk-backed mode only).
+   * When provided, the in-memory virtuals are placed in `path.dirname(sourcePath)`
+   * so relative sibling imports (`./onepole.uwk.ts`, `./env.uwk.ts`) resolve
+   * from the source's actual directory rather than the lang package's own
+   * `SELF_DIR`. Without this, cross-file subgraph binding types fall through to
+   * `any`, silently breaking type-directed sugar passes (bare-state auto-read,
+   * operator dispatch, isDspExpr structural fallback) at every cross-file call
+   * site. Guidance-dogfood F-08.
+   *
+   * Only used on the disk-backed path — the browser / snapshot path forbids
+   * cross-file imports (see `lowerToProcessor` error), so it keeps `SELF_DIR`.
+   */
+  sourcePath?: string;
 };
 
 /** A fresh, empty snapshot ready to be filled by a recording `buildProgram` run. */
@@ -179,17 +214,20 @@ function replayHost(source: string, snap: FsSnapshot): ts.CompilerHost {
 }
 
 /** Disk-backed host (Node) that overlays the in-memory virtuals and, when asked,
- * records every answer into `record` so the run can later be replayed off-disk. */
-function diskHost(source: string, record?: FsSnapshot): ts.CompilerHost {
+ * records every answer into `record` so the run can later be replayed off-disk.
+ * `entryDir` is the directory the virtual input is placed under — the caller's
+ * source dir when its path is known (so relative sibling imports resolve from
+ * there), otherwise the lang package's own `SELF_DIR` (no cross-file resolution). */
+function diskHost(source: string, entryDir: string, record?: FsSnapshot): ts.CompilerHost {
   const host = ts.createCompilerHost(COMPILER_OPTIONS, true);
   if (record) {
     record.defaultLibFileName = host.getDefaultLibFileName(COMPILER_OPTIONS);
     record.currentDirectory = host.getCurrentDirectory();
     record.useCaseSensitiveFileNames = host.useCaseSensitiveFileNames();
     record.newLine = host.getNewLine();
-    record.selfDir = SELF_DIR;
+    record.selfDir = entryDir;
   }
-  const virtuals = virtualsFor(source, SELF_DIR);
+  const virtuals = virtualsFor(source, entryDir);
   const base = {
     getSourceFile: host.getSourceFile.bind(host),
     readFile: host.readFile.bind(host),
@@ -284,5 +322,11 @@ export function buildProgram(source: string, options: BuildProgramOptions = {}):
     // `/__uwk__` fallback, which would never match a Node-recorded snapshot).
     return buildFrom(source, replayHost(source, options.snapshot), options.snapshot.selfDir);
   }
-  return buildFrom(source, diskHost(source, options.record), SELF_DIR);
+  // Disk mode: when the caller knows the source's real path, root virtuals in
+  // its directory so a relative import like `./onepole.uwk.ts` resolves against
+  // the source's siblings (not the lang package's `SELF_DIR`). Without a
+  // sourcePath (existing runtime-compile path, no cross-file support), fall
+  // back to `SELF_DIR` — the check-only browser path preserves its behaviour.
+  const entryDir = options.sourcePath !== undefined ? dirnameOf(options.sourcePath) : SELF_DIR;
+  return buildFrom(source, diskHost(source, entryDir, options.record), entryDir);
 }

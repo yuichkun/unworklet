@@ -10,7 +10,7 @@
     "check": "vp check"
   },
   "dependencies": {
-    "@vitejs/devtools-kit": "^0.3.3",
+    "@vitejs/devtools-kit": "^0.4.0",
     "@vue-flow/background": "catalog:",
     "@vue-flow/controls": "catalog:",
     "@vue-flow/core": "catalog:",

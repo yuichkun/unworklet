@@ -28,6 +28,7 @@ export { bool, f32, f64, i32, i64 } from "./dsl/constructors.ts";
 export {
   abs,
   add,
+  and,
   ceil,
   clamp,
   cos,
@@ -47,6 +48,7 @@ export {
   mul,
   neg,
   not,
+  or,
   select,
   sin,
   sqrt,
@@ -59,7 +61,7 @@ export {
 export { pipe } from "./dsl/pipe.ts";
 
 // Declaration helpers.
-export { audioInput, audioOutput, event, param, state } from "./dsl/declarations.ts";
+export { audioInput, audioOutput, event, noiseSource, param, state } from "./dsl/declarations.ts";
 
 export type {
   BufferChain,
@@ -170,6 +172,8 @@ export type {
   MigrationHelpers,
   Node,
   NodeErrorEvent,
+  NoiseSource,
+  NoiseSourceOptions,
   OutputChannelSample,
   OutputChannelView,
   Param,

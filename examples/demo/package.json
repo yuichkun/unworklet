@@ -28,6 +28,10 @@
     "@unworklet/unplugin": "workspace:*",
     "@vitejs/devtools": "catalog:",
     "@vitejs/devtools-kit": "catalog:",
+    "@vitejs/devtools-oxc": "catalog:",
+    "@vitejs/devtools-rolldown": "catalog:",
+    "@vitejs/devtools-vite": "catalog:",
+    "@vitejs/devtools-vitest": "catalog:",
     "@vitejs/plugin-vue": "catalog:",
     "playwright": "catalog:",
     "vite-plus": "catalog:"

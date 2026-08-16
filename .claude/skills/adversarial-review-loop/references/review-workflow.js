@@ -1,9 +1,9 @@
 export const meta = {
   name: "adversarial-review",
   description:
-    "unworklet コードベース全体の adversarial review (10 観点 fan-out → dedup → 独立 skeptic verify)",
+    "unworklet コードベース全体の adversarial review (9 観点 fan-out → dedup → 独立 skeptic verify)",
   phases: [
-    { title: "Review", detail: "10 観点で並列に全コードを adversarial review" },
+    { title: "Review", detail: "9 観点で並列に全コードを adversarial review" },
     { title: "Verify", detail: "各 finding を独立 skeptic が REFUTE 試行で検証" },
   ],
 };
@@ -24,18 +24,19 @@ what the code does; verify against the code itself):
   replaceProcessor.ts, types.ts, processor.ts
 - packages/offline/src/     — renderOffline: a deterministic pure-JS WASM driver
 - packages/test/src/        — @unworklet/test: vitest matchers + audio/midi test utilities
-- docs/                     — the INTENDED design (00-foundations … 13-offline-render,
-  decisions-log.md with design decisions Q1..Q63). NOT authoritative: docs were settled to
-  ~80% then the project moved to implementation, and some code intentionally diverged from
-  docs. So docs may be outdated or wrong (even canonical-examples). Treat docs as a reference
-  for intent. You MAY surface code-vs-docs divergences as findings, but do NOT assume "differs
-  from docs ⇒ bug" — judge by the product direction (the invariants below), not docs literalism.
-  A maintainer triages each finding against direction afterward.
+- skills/unworklet/         — how the library is documented to behave, for consumers' agents.
+  Verified: its examples compile in CI and it is re-checked by building real projects from it.
+  If code and this guide disagree, that is a real finding — but judge which side is wrong by
+  the product direction (the invariants below), not by assuming the guide is right.
+- docs/                     — history ONLY: decisions-log.md (why each design question was
+  settled) and RFCs. It does not describe current behaviour and is not a contract. Do not
+  raise "code differs from docs" as a finding; there is no spec to differ from. The
+  design-time spec chapters were deleted once the implementation shipped and was verified.
 
 Hard invariants the codebase claims to uphold (verify they actually hold — do NOT assume
 they do):
 - Audio thread (worklet process() and emitted WASM) must be allocation-free, lock-free,
-  GC-free, and bounded-loop only (00-foundations §5.1). Allocations/unbounded work per
+  GC-free, and bounded-loop only. Allocations/unbounded work per
   render quantum are realtime-safety bugs.
 - Ring buffer header is [head:i32, tail:i32, overflowCount:i32] then a fixed-size slot
   array; pointers are slot-indexed; overflow policy is drop-oldest + monotonic counter.
@@ -100,7 +101,7 @@ const VERDICT_SCHEMA = {
 const DIMENSIONS = [
   {
     key: "realtime-safety",
-    focus: `Realtime-safety on the audio thread (00-foundations §5.1). Inspect worklet.ts process()
+    focus: `Realtime-safety on the audio thread. Inspect worklet.ts process()
 and the per-quantum hot path, and the WASM emitted by compile/emit.ts. Hunt for: per-quantum
 heap allocation (new Float32Array/DataView/Uint8Array/object/array inside process() or its
 callees), unbounded loops driven by external input, anything that could trigger GC, and views
@@ -144,22 +145,11 @@ re-evaluation hazards, shared subgraph double-emit, statement ordering, loop-cou
 handler-body capture.`,
   },
   {
-    key: "docs-divergence",
-    focus: `Implementation vs intended design. Read docs/ (especially 01-dsl, 02-messaging,
-04-worklet-runtime, 05-client, 11-midi, decisions-log Q1..Q63) and note where the code diverges
-from what docs describe: documented surface that is missing/wrong, error IDs docs promise but
-code never emits, default values, capacity defaults, drop policy, atSample/atTime semantics,
-RestoreResult shape, the 50-swap warning, etc. IMPORTANT: docs are NOT authoritative (see the
-context above) — report each divergence as a NEUTRAL observation ("code does X, docs say Y")
-with enough detail for a maintainer to judge which is right against the product direction. Do
-NOT assume the code is wrong just because it differs from docs.`,
-  },
-  {
     key: "type-contract",
     focus: `Type safety + public API contract. Inspect types.ts and the exported surface
 (index.ts). Hunt for: discriminated unions with reachable unhandled variants, lift rules
 (number/Node) with holes, unsound casts (as unknown as) that hide real mismatches, public
-function signatures that don't match docs, generic constraints that let wrong types through,
+function signatures that contradict the documented surface, generic constraints that let wrong types through,
 optional fields that should be required. Focus on places where a wrong type would compile but
 fail at runtime.`,
   },
@@ -197,7 +187,7 @@ const reviewPrompt = (d) => `${CONTEXT}
 YOUR REVIEW DIMENSION: ${d.key}
 ${d.focus}
 
-Read the relevant source files in full (and the relevant docs/ for your dimension). Produce a
+Read the relevant source files in full (and skills/unworklet/ where the documented behaviour matters for your dimension). Produce a
 list of concrete findings. Be thorough and exhaustive within your dimension — this is meant to
 be a deep, adversarial audit, not a quick pass. Only report issues you can ground in specific
 code (file:line) with a concrete failure mode. If you find nothing real in your dimension after

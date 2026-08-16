@@ -4,7 +4,11 @@ An **experimental, separately-versioned, downstream library** that provides a Ru
 
 ## Status
 
-**Draft.** Not ratified. Not part of `@unworklet/core`'s v1.0.0 14-phase roadmap (`10-roadmap.md` §2) or v1.1.0 plans. Targeted for an independent prototype phase after RFC-001 (Tier B/C `.uwk.ts`) is in user hands and Tier C's live-coding fit can be measured.
+**Draft — not implemented.** No Ruby frontend exists, so this file proposes rather
+than describes. The `.uwk.ts` frontend it waits on (RFC-001) has since shipped.
+Citations to numbered spec chapters point at design-time documents that were deleted
+once the implementation shipped; recover them from git history at the `v0.1.0` tag
+if you need them.
 
 Author: AI agent draft on branch `claude/dsl-syntax-compiler-design-wGngh`, awaiting human reviewer grilling.
 

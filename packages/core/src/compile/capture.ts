@@ -55,6 +55,15 @@ export type CaptureContext = {
    * gives each nesting level its own WASM loop-counter local.
    */
   loopDepth: number;
+  /**
+   * Running count of `noiseSource(...)` declarations in graph capture order.
+   * Used to (a) generate synthetic slot names (`__noise_<idx>`) and (b) assign
+   * auto seeds when the user omits `seed` (auto seed = ++counter, starting from
+   * 1 so we never hand out xorshift32's pathological zero). Same source → same
+   * declaration order → same auto seeds, so noise output is fully reproducible
+   * across builds.
+   */
+  noiseSourceCount: number;
 };
 
 let currentCapture: CaptureContext | null = null;
@@ -69,6 +78,7 @@ export function newCaptureContext(): CaptureContext {
     subgraphCount: 0,
     tempCount: 0,
     loopDepth: 0,
+    noiseSourceCount: 0,
   };
 }
 
@@ -175,9 +185,39 @@ export function wrapAst<T extends ScalarType | "f32x4">(node: AstNode): Node<T> 
 }
 
 export function unwrapAst(node: Node<ScalarType | "f32x4">): AstNode {
+  // Friendly guard for the two most common builder mistakes that reach here as
+  // a raw JS crash:
+  //   - a subgraph method / helper returned nothing (missing `return`), then
+  //     the caller passed that `undefined` into a DSL primitive.
+  //   - a factory handle (e.g. `noiseSource()`) was passed instead of its
+  //     produced Node (missing `.next()`).
+  // Both surface at graph capture time as an opaque
+  //   TypeError: Cannot read properties of undefined (reading 'Symbol(unworklet.astPayload)')
+  // which does not name the primitive or hint at the missing return. Detect
+  // the shape early and throw with a message that lists the common causes.
+  if (node === null || node === undefined || typeof node !== "object") {
+    const got =
+      node === undefined
+        ? "undefined"
+        : node === null
+          ? "null"
+          : `a ${typeof node} (${String(node)})`;
+    throw new Error(
+      `unworklet: expected a Node<T> at graph capture time but received ${got}. ` +
+        `Common causes:\n` +
+        `  - A subgraph method or helper returned nothing (missing \`return\` in the body).\n` +
+        `  - A factory handle was passed instead of its output — e.g. \`noiseSource()\` without \`.next()\`.\n` +
+        `  - A previous call in the expression chain returned undefined.`,
+    );
+  }
   const ast = (node as WrappedNode<ScalarType | "f32x4">)[astPayload];
   if (!ast) {
-    throw new Error("expected wrapped `Node<T>` with AST payload");
+    throw new Error(
+      "unworklet: value passed as Node<T> is missing its AST payload " +
+        "(the value did not come from a DSL primitive / declaration factory). " +
+        "Common cause: an object literal or a hand-constructed value was used " +
+        "in place of a captured DSL expression.",
+    );
   }
   return ast;
 }

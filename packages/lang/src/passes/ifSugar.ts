@@ -19,6 +19,7 @@ import ts from "typescript";
 
 import { classify, isDspExpr } from "../classify.ts";
 import { LowerError } from "../lower.ts";
+import { visitAndRead } from "./bareState.ts";
 
 const f = ts.factory;
 const method = (obj: ts.Expression, name: string, args: ts.Expression[]): ts.Expression =>
@@ -83,14 +84,23 @@ function detectWrite(checker: ts.TypeChecker, stmt: ts.Statement): Write | undef
   return undefined;
 }
 
-const writeRead = (w: Write): ts.Expression =>
-  w.kind === "state" ? method(w.target, "read", []) : method(w.buf, "read", [w.idx]);
+// Buffer index / write value are synthesized into new AST fragments, so the
+// bareState pass never gets to see them (the sugar visitor short-circuits at
+// tryIfSugar's return). If they name a bare `State<T>`, wrap them here — same
+// intent as bareState, but locally applied to the injected positions.
+const readIfState = (checker: ts.TypeChecker, e: ts.Expression): ts.Expression =>
+  classify(checker, e) === "state" ? method(e, "read", []) : e;
 
-const writeWith = (w: Write, value: ts.Expression): ts.Statement =>
+const writeRead = (checker: ts.TypeChecker, w: Write): ts.Expression =>
+  w.kind === "state"
+    ? method(w.target, "read", [])
+    : method(w.buf, "read", [readIfState(checker, w.idx)]);
+
+const writeWith = (checker: ts.TypeChecker, w: Write, value: ts.Expression): ts.Statement =>
   exprStmt(
     w.kind === "state"
       ? method(w.target, "write", [value])
-      : method(w.buf, "write", [w.idx, value]),
+      : method(w.buf, "write", [readIfState(checker, w.idx), value]),
   );
 
 /** Same write target (by source text) — symmetric-if requires it. */
@@ -137,11 +147,11 @@ export function tryIfSugar(
   if (!isDspExpr(checker, node.expression)) return undefined;
   const v = (e: ts.Expression): ts.Expression => ts.visitNode(e, visit) as ts.Expression;
   // A bare `State<'bool'>` condition sits in a `boolean` contextual position, so
-  // bare-state leaves it untouched — read it here.
-  const cond =
-    classify(checker, node.expression) === "state"
-      ? method(v(node.expression), "read", [])
-      : v(node.expression);
+  // bare-state leaves it untouched — read it here. Only when the condition
+  // survives visiting unchanged: `if (a && b)` visits to an `and(…)` that already
+  // produces a `Node<'bool'>`, and reading THAT is what `visitAndRead` exists to
+  // prevent.
+  const cond = visitAndRead(checker, node.expression, visit);
 
   if (node.elseStatement === undefined) {
     // Shape 3: guarded emit(s).
@@ -156,7 +166,8 @@ export function tryIfSugar(
     const then = stmtList(node.thenStatement);
     if (then.length === 1) {
       const w = detectWrite(checker, then[0]!);
-      if (w !== undefined) return writeWith(w, select(cond, v(w.value), writeRead(w)));
+      if (w !== undefined)
+        return writeWith(checker, w, select(cond, v(w.value), writeRead(checker, w)));
     }
     return unsupportedDspIf();
   }
@@ -168,7 +179,7 @@ export function tryIfSugar(
     const tw = detectWrite(checker, thenStmts[0]!);
     const ew = detectWrite(checker, elseStmts[0]!);
     if (tw !== undefined && ew !== undefined && sameTarget(tw, ew)) {
-      return writeWith(tw, select(cond, v(tw.value), v(ew.value)));
+      return writeWith(checker, tw, select(cond, v(tw.value), v(ew.value)));
     }
   }
   return unsupportedDspIf();

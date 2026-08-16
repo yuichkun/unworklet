@@ -82,6 +82,8 @@ function walkForTypeErrors(node: AstNode, diagnostics: DiagnosticEntry[]): void 
     case "gt":
     case "lte":
     case "gte":
+    case "and":
+    case "or":
       walkForTypeErrors(node.lhs, diagnostics);
       walkForTypeErrors(node.rhs, diagnostics);
       break;
@@ -189,6 +191,7 @@ function walkForTypeErrors(node: AstNode, diagnostics: DiagnosticEntry[]): void 
     case "loopCounter":
     case "stateLoad":
     case "messageFieldRead":
+    case "noiseSourceNext":
       break;
   }
 }
