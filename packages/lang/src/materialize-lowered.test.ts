@@ -1195,3 +1195,184 @@ process(() => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("a genuine eager cycle names the files, not a temp that no longer exists", () => {
+  // The cycle report was removed along with the naming that made a mutual eager
+  // import legible. What a user got instead was `ReferenceError: Cannot access
+  // 'x' before initialization` pointing at an unlinked temp — no mention of
+  // unworklet, of the cycle, or of either source file.
+  // Found by the pre-release audit of #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-eagercycle-"));
+  writeFileSync(
+    path.join(dir, "a.uwk.ts"),
+    `import { b } from "./b.uwk.ts";
+
+export const a = defineSubgraph(() => {
+  const p = state.f32(0).named("p");
+  return { tick: () => p.read() };
+});
+export const alsoB = b;`,
+  );
+  writeFileSync(
+    path.join(dir, "b.uwk.ts"),
+    `import { a } from "./a.uwk.ts";
+
+export const b = defineSubgraph(() => {
+  const p = state.f32(0).named("p");
+  return { tick: () => p.read() };
+});
+export const alsoA = a;`,
+  );
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `import { a } from "./a.uwk.ts";
+
+const out = audioOutput({ channels: 1, name: "main" });
+const v = instantiate(a, { name: "v" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = v.tick();
+  });
+});`,
+  );
+
+  const script = `
+    const { loadUwkProcessor } = await import(${JSON.stringify(pathToFileURL(path.join(LANG, "dist/index.mjs")).href)});
+    try {
+      await loadUwkProcessor(${JSON.stringify(src)});
+      console.log("NO_THROW");
+    } catch (e) { console.log("THREW:" + e.message); }
+  `;
+  const r = spawnSync("node", ["--input-type=module", "-e", script], { encoding: "utf8" });
+  const output = `${r.stdout}${r.stderr}`;
+  expect(output, output).toMatch(/THREW:@unworklet\/lang/);
+  expect(output).toMatch(/a\.uwk\.ts/);
+  expect(output).toMatch(/b\.uwk\.ts/);
+  expect(output).not.toMatch(/uwklowered/);
+});
+
+test("a load that fails before importing anything does not brick a second-level helper", () => {
+  // The staleness guard recorded a helper's digest while materializing. When the
+  // load then failed before importing anything — a sibling materialises fine,
+  // the next one is missing — the record survived anyway, so a later edit to that
+  // helper failed every subsequent load with "restart the process", for a change
+  // no module in this process had ever seen.
+  // Found by the pre-release audit of #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-abortguard-"));
+  const deep = path.join(dir, "deep.mjs");
+  writeFileSync(deep, `export const GAIN = 0.25;\n`);
+  writeFileSync(path.join(dir, "mid.mjs"), `export { GAIN } from "./deep.mjs";\n`);
+  writeFileSync(
+    path.join(dir, "lib.uwk.ts"),
+    `import { GAIN } from "./mid.mjs";
+
+export const lib = defineSubgraph(() => {
+  const p = state.f32(0).named("p");
+  return { tick: () => p.read() * f32(GAIN) };
+});`,
+  );
+  // Materialises `lib.uwk.ts` (recording its deep helper), then fails on the
+  // missing sibling — so nothing is ever imported.
+  const failing = path.join(dir, "failing.uwk.ts");
+  writeFileSync(
+    failing,
+    `import { lib } from "./lib.uwk.ts";
+import { gone } from "./gone.uwk.ts";
+
+const out = audioOutput({ channels: 1, name: "main" });
+const a = instantiate(lib, { name: "a" });
+const b = instantiate(gone, { name: "b" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = a.tick() + b.tick();
+  });
+});`,
+  );
+  const good = path.join(dir, "good.uwk.ts");
+  writeFileSync(
+    good,
+    `import { GAIN } from "./mid.mjs";
+
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = f32(GAIN);
+  });
+});`,
+  );
+
+  const script = `
+    const { writeFileSync } = await import("node:fs");
+    const { loadUwkProcessor } = await import(${JSON.stringify(pathToFileURL(path.join(LANG, "dist/index.mjs")).href)});
+    try { await loadUwkProcessor(${JSON.stringify(failing)}); } catch { /* expected */ }
+    writeFileSync(${JSON.stringify(deep)}, "export const GAIN = 0.75;\\n");
+    try {
+      const p = await loadUwkProcessor(${JSON.stringify(good)});
+      console.log("LOADED:" + JSON.stringify(p.graph).includes("0.75"));
+    } catch (e) { console.log("THREW:" + e.message); }
+  `;
+  const r = spawnSync("node", ["--input-type=module", "-e", script], { encoding: "utf8" });
+  const output = `${r.stdout}${r.stderr}`;
+  expect(output, output).not.toMatch(/restart the process/);
+  expect(output).toMatch(/LOADED:true/);
+});
+
+test("a failed lazy subtree does not hand its stub to a static importer", () => {
+  // Temp paths are reserved in `done` before anything is written, and the lazy
+  // catch tolerates a failure below. Together that left the failed subtree's
+  // reservation in `done` — so a LATER static import of the same module was
+  // handed the lazy stub, and told it had imported lazily something it imports
+  // statically, with the real cause buried inside that sentence.
+  // Found by the pre-release audit of #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-lazyleak-"));
+  // Fails during MATERIALIZATION (a sibling `.uwk.ts` that does not exist),
+  // which is the path the lazy catch tolerates.
+  writeFileSync(
+    path.join(dir, "broken.uwk.ts"),
+    `import { missing } from "./missing.uwk.ts";
+
+export const broken = defineSubgraph(() => {
+  const p = state.f32(0).named("p");
+  return { tick: () => p.read() * missing.k };
+});`,
+  );
+  writeFileSync(
+    path.join(dir, "lazy.uwk.ts"),
+    `export const load = () => import("./broken.uwk.ts");
+
+export const lazy = defineSubgraph(() => {
+  const p = state.f32(0).named("p");
+  return { tick: () => p.read() };
+});`,
+  );
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `import { lazy } from "./lazy.uwk.ts";
+import { broken } from "./broken.uwk.ts";
+
+const out = audioOutput({ channels: 1, name: "main" });
+const a = instantiate(lazy, { name: "a" });
+const b = instantiate(broken, { name: "b" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = a.tick() + b.tick();
+  });
+});`,
+  );
+
+  const script = `
+    const { loadUwkProcessor } = await import(${JSON.stringify(pathToFileURL(path.join(LANG, "dist/index.mjs")).href)});
+    try {
+      await loadUwkProcessor(${JSON.stringify(src)});
+      console.log("NO_THROW");
+    } catch (e) { console.log("THREW:" + e.message); }
+  `;
+  const r = spawnSync("node", ["--input-type=module", "-e", script], { encoding: "utf8" });
+  const output = `${r.stdout}${r.stderr}`;
+  // A static import must be reported as itself. Naming it "lazily" sends the
+  // reader to the one edge that is not their problem.
+  expect(output, output).not.toMatch(/lazily/);
+  expect(output).toMatch(/missing\.uwk\.ts/);
+});

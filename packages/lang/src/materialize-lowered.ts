@@ -290,6 +290,16 @@ const walkHelperGraph = async (
 const loadedIndirectHelpers = new Map<string, string>();
 
 /**
+ * Digests observed while materializing, not yet promoted.
+ *
+ * Materializing proves nothing about Node's module cache — the load can still
+ * abort before importing anything, and `unworklet-tsc` aborts one per subgraph
+ * library in the project. Promotion happens in {@link importLoweredEntry}, once
+ * the modules are actually in that cache.
+ */
+const pendingIndirectHelpers = new Map<string, string>();
+
+/**
  * Lower `sourcePath` to a temp sibling and recursively lower the transitive
  * `.uwk.ts` imports it makes — a processor importing a subgraph from a sibling
  * library `.uwk.ts` — rewriting each importer's specifier to point at the lowered
@@ -324,6 +334,10 @@ export const materializeLowered = async (
   // `path.join(".", ".x.uwklowered.mjs")` yields a name with no `./` prefix,
   // which `import()` reads as a bare specifier.
   const sourcePath = path.resolve(entryPath);
+  // An empty `done` means this is the root of a load — callers pass a fresh map.
+  // Anything the previous load observed and never imported is discarded here, so
+  // a failed load cannot hand its observations to the next one to promote.
+  if (done.size === 0) pendingIndirectHelpers.clear();
   const already = done.get(sourcePath);
   if (already !== undefined) return already;
   // The temp path is settled BEFORE the dependencies are, and recorded straight
@@ -336,6 +350,10 @@ export const materializeLowered = async (
   //
   // Basename plus this load's tag is already unique: temps sit beside their
   // source, so two files sharing a basename sit in different directories.
+  //
+  // A cycle is still REPORTED for eager edges, because ESM's own account of one
+  // is unusable here: `Cannot access 'x' before initialization`, pointing at a
+  // temp that cleanup has already unlinked, naming neither source file.
   const dir = path.dirname(sourcePath);
   const tempPath = path.join(dir, `.${path.basename(sourcePath)}.${loadTag(done)}.uwklowered.mjs`);
   done.set(sourcePath, tempPath);
@@ -366,17 +384,34 @@ export const materializeLowered = async (
     // The file part only — a sibling can be imported as `"./voice.uwk.ts?rev=1"`,
     // and the query belongs to the specifier, not to the path on disk.
     const target = path.resolve(dir, modulePath(spec));
+    // An eager edge back into something still being materialized is a real cycle
+    // — reported here, where both files can be named, rather than left to ESM.
+    if (!lazy && inProgress.has(target)) {
+      throw new Error(
+        `@unworklet/lang: ${path.basename(sourcePath)} and ${path.basename(target)} import each ` +
+          `other eagerly (${sourcePath} → ${target}). Move the shared value into a third ` +
+          `.uwk.ts both import, or make one side lazy with \`() => import("${spec}")\` — Node ` +
+          `resolves that when the call runs, so it is not a cycle at load time.`,
+      );
+    }
     let targetTemp: string;
+    // Everything the subtree reserves is recorded before it is written, so a
+    // failure below has to be unwound: a leftover reservation would remap a LATER
+    // static importer onto a temp that never got written, and its real diagnostic
+    // would come back as `ERR_MODULE_NOT_FOUND` on a path the caller never named.
+    const reservedBefore = new Set(done.keys());
     try {
       targetTemp = await materializeLowered(target, done, inProgress, cleanup);
     } catch (err) {
+      for (const key of done.keys()) if (!reservedBefore.has(key)) done.delete(key);
       if (!lazy) throw err;
       // A lazy target that cannot be lowered is not this load's problem — Node
       // would not have looked at it either until the import ran. But leaving the
       // specifier alone would send that call to raw `.uwk.ts` and the missing
-      // authoring globals, so the reserved path gets a module that states the
-      // real reason instead. Running the import is what surfaces it.
-      targetTemp = done.get(target)!;
+      // authoring globals, so it gets a module that states the real reason
+      // instead. Running the import is what surfaces it.
+      targetTemp = path.join(dir, `.${path.basename(target)}.${loadTag(done)}.uwkfailed.mjs`);
+      cleanup.push(targetTemp);
       inProgress.delete(target);
       const reason = err instanceof Error ? err.message : String(err);
       await writeFile(
@@ -485,7 +520,13 @@ export const materializeLowered = async (
           `.uwk.ts directly — helpers imported there are reloaded for you.`,
       );
     }
-    loadedIndirectHelpers.set(file, rev);
+    // NOT recorded here. A digest written during materialization outlives a load
+    // that then aborts — and `unworklet-tsc` aborts one per subgraph library in
+    // the project — so the next edit to that helper failed every later load for a
+    // change nothing had compiled. `importLoweredEntry` records it once the
+    // module is genuinely in Node's cache, which is the only thing the guard is
+    // about.
+    pendingIndirectHelpers.set(file, rev);
   }
 
   await writeFile(tempPath, emitted);
@@ -519,7 +560,13 @@ export async function importLoweredEntry(
   // does not. The query keeps repeat loads out of the ESM cache.
   const href = `${pathToFileURL(entryTemp).href}?t=${Date.now()}`;
   try {
-    return (await import(href)) as Record<string, unknown>;
+    const mod = (await import(href)) as Record<string, unknown>;
+    // The graph is in Node's cache now, so what the walk observed is what a later
+    // load would be stuck with. Recording it any earlier attributes a cache entry
+    // to a load that never made one.
+    for (const [file, rev] of pendingIndirectHelpers) loadedIndirectHelpers.set(file, rev);
+    pendingIndirectHelpers.clear();
+    return mod;
   } catch (err) {
     if ((err as { code?: string }).code !== "ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX") throw err;
     throw new Error(
