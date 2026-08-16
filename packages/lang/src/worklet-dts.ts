@@ -1,21 +1,6 @@
 import type { WorkletNamespace } from "@unworklet/core";
 
 /**
- * Emit the per-file `?worklet` type witness for a compiled processor.
- *
- * The shipped `@unworklet/unplugin/client` reference declares a WILDCARD
- * `declare module "*?worklet"` typed as `CompiledProcessor<unknown>` — enough to
- * resolve the import, but it erases the per-processor surface so `node.params.x`
- * is an untyped `Record`. This emits a MORE SPECIFIC `declare module` for one
- * processor file, whose default export carries the declared names; TypeScript
- * prefers the longest-matching module pattern, so the specific witness wins over
- * the wildcard and `node.params.<name>` becomes typed (an undeclared name errors).
- *
- * Names come from the compiled `WorkletNamespace` the plugin already evaluates
- * for `compile()`, so the type is derived from the same declarations the WASM is,
- * never hand-maintained.
- */
-/**
  * Marks which source a witness block was generated from.
  *
  * Two things write this file — the Vite plugin as it compiles, and
@@ -31,6 +16,28 @@ export function witnessBlockSource(block: string): string | undefined {
   return new RegExp(`^\\s*${WITNESS_SOURCE_MARK} (.+)$`, "m").exec(block)?.[1]?.trim();
 }
 
+/**
+ * Emit the per-file `?worklet` type witness for a compiled processor.
+ *
+ * The shipped `@unworklet/unplugin/client` reference declares a WILDCARD
+ * `declare module "*?worklet"` typed as `CompiledProcessor<unknown>` — enough to
+ * resolve the import, but it erases the per-processor surface so `node.params.x`
+ * is an untyped `Record`. This emits a more specific `declare module` for one
+ * processor file, whose default export carries the declared names, so
+ * `node.params.<name>` is typed and an undeclared name errors.
+ *
+ * Which of the two a consumer actually gets is decided by DECLARATION ORDER, not
+ * by specificity: TypeScript ranks ambient patterns by the text before the `*`,
+ * and `*?worklet` and `*​/gain.uwk.ts?worklet` both have none, so the first one
+ * loaded wins. The generated `.unworklet/tsconfig.json` lists `worklets.d.ts`
+ * ahead of the consumer's own files, which is what makes the witness win on the
+ * documented path. Anything that loads the client reference earlier reverses it —
+ * see issue #46, which is about making this hold by construction.
+ *
+ * Names come from the compiled `WorkletNamespace` the plugin already evaluates
+ * for `compile()`, so the type is derived from the same declarations the WASM is,
+ * never hand-maintained.
+ */
 export function workletDts(specifier: string, ns: WorkletNamespace, source?: string): string {
   const named = (list: readonly unknown[], value: (d: Record<string, unknown>) => string): string =>
     list
@@ -137,26 +144,30 @@ ${source === undefined ? "" : `  ${WITNESS_SOURCE_MARK} ${source}\n`}  const pro
  * file and re-emits it on every processor edit; the editor's file watch refreshes
  * `node.params.<name>` completions without a restart (proven in worklet-dts-live).
  *
- * Two processors CAN share a basename in different folders, and there is no
- * witness that types them apart. An ambient pattern matches the specifier the
- * consumer wrote, not the file it resolves to, and both are normally imported as
- * `"./index.uwk.ts?worklet"` from their own directory — a longer key like
- * `*​/a/index.uwk.ts?worklet` contains a segment that specifier does not, so it
- * matches nothing and the import silently falls back to the wildcard
- * `CompiledProcessor<unknown>`.
+ * Two processors CAN share a basename in different folders, and how much of the
+ * path a key carries decides which imports it reaches. A pattern matches the
+ * specifier the consumer WROTE, not the file it resolves to, so for
+ * `effects/a/index.uwk.ts` and `effects/b/index.uwk.ts`:
  *
- * So a collision is reported rather than papered over: the colliding entries are
- * omitted (their imports keep the wildcard's `unknown`, with no per-processor
- * surface) and a warning names the files. Emitting one of them would give the
- * other processor's params and events to both — wrong types are worse than none —
- * and emitting both would redeclare the same module. Renaming one file fixes it.
+ * - `*​/effects/a/index.uwk.ts?worklet` matches `"../effects/a/index.uwk.ts?worklet"`
+ *   — the shape any consumer outside that folder writes.
+ * - Nothing matches `"./index.uwk.ts?worklet"` written from inside `effects/a`:
+ *   the specifier carries no folder, so no key can tell the two apart.
+ *
+ * Colliding entries therefore get the shortest tail that separates them, which
+ * types every path-qualified consumer, and a warning covers the same-directory
+ * form that no key can reach — those keep the wildcard's `unknown`. Dropping
+ * both entries instead left EVERY consumer untyped and a param typo passing
+ * silently; emitting one under the shared basename would hand the other
+ * processor's params to both, which is worse than either.
  */
 export function workletsDts(entries: { source: string; ns: WorkletNamespace }[]): string {
-  const basename = (source: string): string => source.split(/[\\/]/).pop() ?? source;
+  const segments = (source: string): string[] => source.split(/[\\/]/).filter((s) => s !== "");
+  const tail = (source: string, depth: number): string => segments(source).slice(-depth).join("/");
 
   const byBasename = new Map<string, { source: string; ns: WorkletNamespace }[]>();
   for (const e of entries) {
-    const key = basename(e.source);
+    const key = tail(e.source, 1);
     const bucket = byBasename.get(key);
     if (bucket === undefined) byBasename.set(key, [e]);
     else bucket.push(e);
@@ -164,16 +175,30 @@ export function workletsDts(entries: { source: string; ns: WorkletNamespace }[])
 
   const out: string[] = [];
   for (const [name, bucket] of byBasename) {
-    if (bucket.length > 1) {
-      console.warn(
-        `[@unworklet/lang] ${bucket.length} processors share the basename "${name}" ` +
-          `(${bucket.map((e) => e.source).join(", ")}). A \`?worklet\` witness is keyed on the ` +
-          `import specifier, which cannot tell them apart, so none of them gets a typed ` +
-          `surface — \`node.params.<name>\` stays untyped for these. Rename one to fix it.`,
-      );
+    if (bucket.length === 1) {
+      out.push(workletDts(`*/${name}?worklet`, bucket[0]!.ns, bucket[0]!.source));
       continue;
     }
-    out.push(workletDts(`*/${name}?worklet`, bucket[0]!.ns, bucket[0]!.source));
+    // Grow the tail until every entry in the bucket has its own key. Bounded by
+    // the longest path, and the sources are distinct, so it terminates.
+    let depth = 2;
+    const longest = Math.max(...bucket.map((e) => segments(e.source).length));
+    while (
+      depth < longest &&
+      new Set(bucket.map((e) => tail(e.source, depth))).size < bucket.length
+    )
+      depth += 1;
+    console.warn(
+      `[@unworklet/lang] ${bucket.length} processors share the basename "${name}" ` +
+        `(${bucket.map((e) => e.source).join(", ")}). Each is typed under a path-qualified ` +
+        `key, so an import that names the folder — "…/${tail(bucket[0]!.source, depth)}?worklet" ` +
+        `— is typed. An import written from inside its own folder as "./${name}?worklet" ` +
+        `carries nothing to tell them apart and stays on \`CompiledProcessor<unknown>\`. ` +
+        `Rename one to type those too.`,
+    );
+    for (const e of bucket) {
+      out.push(workletDts(`*/${tail(e.source, depth)}?worklet`, e.ns, e.source));
+    }
   }
   return out.join("\n");
 }

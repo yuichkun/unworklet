@@ -519,7 +519,14 @@ test("the witness marks event direction: eventRings → out, messageRings → in
 // matches nothing, and two identical keys redeclare the same module. The
 // collision is therefore reported and both are left on the wildcard.
 // Reported by @codex on #43.
-test("processors sharing a basename are omitted with a warning, not mistyped", () => {
+
+test("processors sharing a basename are keyed by the shortest tail that tells them apart", () => {
+  // Dropping both entries — the previous behaviour — left every consumer of a
+  // colliding processor untyped, so a param typo passed silently. A key carrying
+  // enough of the path DOES match a path-qualified import (verified against stock
+  // tsc), so the pair keeps its surface for those, and the warning covers the
+  // same-directory `./index.uwk.ts?worklet` form that no key can reach.
+  // Found by the pre-release audit of #43.
   const warnings: string[] = [];
   const realWarn = console.warn;
   console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
@@ -534,20 +541,39 @@ test("processors sharing a basename are omitted with a warning, not mistyped", (
     console.warn = realWarn;
   }
 
-  // The unique basename still gets its surface; the colliding pair gets nothing.
   const patterns = [...dtsBoth.matchAll(/declare module "([^"]+)"/g)].map((m) => m[1]!);
-  expect(patterns).toEqual(["*/solo.uwk.ts?worklet"]);
+  expect(patterns).toEqual([
+    "*/fxa/index.uwk.ts?worklet",
+    "*/fxb/index.uwk.ts?worklet",
+    "*/solo.uwk.ts?worklet",
+  ]);
   expect(warnings.join("\n")).toMatch(/index\.uwk\.ts/);
 
-  // And the omission is honest rather than silent: an undeclared param name on a
-  // colliding import does NOT error, because it resolved to the permissive
-  // wildcard. (A specific witness makes it error — see the gain fixtures above.)
   writeFileSync(path.join(dir, "collide.worklet.d.ts"), dtsBoth);
   mkdirSync(path.join(dir, "fxa"), { recursive: true });
+
+  // A path-qualified import IS typed: an undeclared param errors.
+  writeFileSync(
+    path.join(dir, "qualified.ts"),
+    `/// <reference path="./collide.worklet.d.ts" />
+/// <reference types="@unworklet/unplugin/client" />
+import { createNode } from "@unworklet/core";
+import proc from "./fxa/index.uwk.ts?worklet";
+declare const ctx: BaseAudioContext;
+export async function f(): Promise<void> {
+  const node = await createNode(ctx, proc);
+  void node.params.notAParam;
+}
+`,
+  );
+  expect(diagnose("qualified.ts").join("\n")).toMatch(/notAParam/);
+
+  // A same-directory import still cannot be told apart, so it keeps the
+  // wildcard's `unknown` — no types rather than another processor's types.
   writeFileSync(
     path.join(dir, "fxa/use.ts"),
-    `/// <reference types="@unworklet/unplugin/client" />
-/// <reference path="../collide.worklet.d.ts" />
+    `/// <reference path="../collide.worklet.d.ts" />
+/// <reference types="@unworklet/unplugin/client" />
 import { createNode } from "@unworklet/core";
 import proc from "./index.uwk.ts?worklet";
 declare const ctx: BaseAudioContext;
