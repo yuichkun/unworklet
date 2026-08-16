@@ -34,7 +34,7 @@ unworklet builds Web Audio `AudioWorklet` processors from declarative source. Yo
    // package.json
    { "scripts": { "build": "vite build && unworklet-tsc --noEmit" } }
    ```
-5. **Load / wire** the processor: default-import it with `?worklet` and pass it to `createNode` on a 48 kHz `AudioContext`. → setup.md
+5. **Load / wire** the processor: default-import it with `?worklet` and pass it to `createNode` on a 48 kHz `AudioContext`. → dsl.md §5
 
 ## A `.uwk.ts` taste
 
@@ -68,8 +68,8 @@ node.params.gain.value = 0.5; // fully-typed AudioParam (name auto-derived from 
 
 ## Read more (siblings)
 
-- **dsl.md** — authoring the processor: the `.uwk.ts` sugar (operators, index, bare-state read, `if`/`?:`, `$prev`, auto-name, subgraphs) and the underlying `@unworklet/core` declaration API (`audioInput`/`audioOutput`, `param`, `state`, `state.buffer`, `event`/`event.midi`, `forSample`, `defineSubgraph`/`instantiate`, math ops); plus the `.processor.ts` alternative.
-- **setup.md** — scaffolding & wiring: which `@unworklet/*` packages to install, `vite.config.ts`, the generated `.unworklet/` dir + tsconfig, file conventions, the `?worklet` import, `createNode`, the `UnworkletNode` surface, and the 48 kHz rate gate.
+- **dsl.md** — authoring the processor AND loading it: the `.uwk.ts` sugar (operators, index, bare-state read, `if`/`?:`, `$prev`, auto-name, subgraphs), the underlying `@unworklet/core` declaration API (`audioInput`/`audioOutput`, `param`, `state`, `state.buffer`, `event`/`event.midi`, `forSample`, `defineSubgraph`/`instantiate`, math ops), the `?worklet` import + `createNode` + the `UnworkletNode` surface (§5), and the `.processor.ts` alternative.
+- **setup.md** — scaffolding & wiring: which `@unworklet/*` packages to install, `vite.config.ts`, the generated `.unworklet/` dir + tsconfig, file conventions, and the 48 kHz rate gate.
 - **ide-and-typecheck.md** — editor types & CI: the `@unworklet/lang/typescript-plugin` editor plugin and the `unworklet-tsc` drop-in typecheck CLI.
 - **testing.md** — headless tests: `renderOffline` (the Node oracle) plus `@unworklet/test` plain matchers, the chain form (`@unworklet/test/extend`), signal generators, and MIDI builders.
 - **devtools.md** — in-browser inspector: the Vite DevTools dock (4 panels), the `@vitejs/devtools` 0.4.x install (host + kit + 4 adapters), and cross-origin isolation.

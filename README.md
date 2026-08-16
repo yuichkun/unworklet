@@ -368,9 +368,10 @@ the same files `npx skills add` installs into your agents:
 - **Setup:** [`skills/unworklet/setup.md`](./skills/unworklet/setup.md) · **Editor / CI typecheck:** [`skills/unworklet/ide-and-typecheck.md`](./skills/unworklet/ide-and-typecheck.md) · **Headless tests:** [`skills/unworklet/testing.md`](./skills/unworklet/testing.md) · **In-browser DevTools panel:** [`skills/unworklet/devtools.md`](./skills/unworklet/devtools.md).
 
 `skills/unworklet/` is the source of truth for how unworklet behaves: it is verified
-against the implementation, and its examples compile in CI. `docs/` holds only
-history — the decisions log (why each design question was settled) and the RFCs.
-Neither describes current behaviour, so neither can contradict it.
+against the implementation, and CI compiles every complete example in it — the
+`.uwk.ts` ones through the lowering, the `defineProcessor` ones directly. `docs/`
+holds only history — the decisions log (why each design question was settled) and
+the RFCs. Neither describes current behaviour, so neither can contradict it.
 
 ## Contributing
 

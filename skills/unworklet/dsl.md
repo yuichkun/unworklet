@@ -1,4 +1,4 @@
-# unworklet — DSL / API reference
+| `node.midi.<name>` | direction-narrowed: `{ from: "main" }` → `send(event, atTime?)` / `connectFromWebMIDI(input)` / `diagnostics`; `{ to: "main" }` → `onEvent(type, handler)` / `diagnostics`# unworklet — DSL / API reference
 
 TypeScript-first declarative Audio Worklet DSP, compiled to WebAssembly. You
 declare ports/params/state and write a per-sample `process` body; the toolchain
@@ -597,7 +597,7 @@ bundle a second copy).
 The plugin lowers (if `.uwk.ts`) + compiles, and the **default** export is a
 `CompiledProcessor<C>` augmented with bundler URLs + identity + baked rate. Typing
 needs a one-line triple-slash reference (like `vite/client`); only the default
-import is typed. — `packages/unplugin/src/index.ts:261,1760`, `client.d.ts:11`
+import is typed. — `packages/unplugin/src/index.ts:1551-1613`, `client.d.ts:11`
 
 ```ts
 /// <reference types="@unworklet/unplugin/client" />

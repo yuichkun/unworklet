@@ -3,8 +3,8 @@
 Scaffold an unworklet project: install the `@unworklet/*` packages, register the
 Vite plugin (optionally with the DevTools dock), wire TypeScript through the
 generated tsconfig, and create the `AudioContext` at the baked 48 kHz. This file
-is the project wiring — including the load / `createNode` API; authoring the DSP
-has its own file (dsl.md).
+is the project wiring. Authoring the DSP and the load / `createNode` API both live
+in dsl.md — §1-4 and §5 respectively.
 
 **`.uwk.ts` is the primary, recommended authoring form.** `.processor.ts` (the
 explicit `@unworklet/core` method API) is the secondary, lower-level alternative —
@@ -218,8 +218,8 @@ packages you already rely on (e.g. `"node"`), since `types` disables automatic
 
 Both compile to the same `CompiledProcessor` and both load identically via
 `?worklet`. (`packages/unplugin/src/client-types.test.ts` L136-138) Authoring
-detail (sugar, the core method API, subgraphs) → dsl.md; the `?worklet` import +
-`createNode` is section 4 below.
+detail (sugar, the core method API, subgraphs) → dsl.md §1-4; the `?worklet` import +
+`createNode` → dsl.md §5.
 
 ## 5. AudioContext — must run at 48 kHz
 
@@ -236,4 +236,4 @@ const ctx = new AudioContext({ sampleRate: 48000 });
 (rate gate `packages/core/src/client.ts` L350-364; rationale
 `packages/core/src/types.ts` L697-706) The full load sequence and the
 `UnworkletNode` surface (`params` / `state` / `events` / `midi` / `inputs` /
-`outputs`) are in section 4 above.
+`outputs`) → dsl.md §5.
