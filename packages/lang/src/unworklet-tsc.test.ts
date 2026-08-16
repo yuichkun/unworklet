@@ -599,3 +599,88 @@ export const use = voice;`,
   expect(output).toMatch(/no defineProcessor exports/);
   expect(r.status, output).not.toBe(0);
 });
+
+test("--version and --help do not load processors, so a broken one cannot fail them", () => {
+  // `unworklet-tsc` is documented as a drop-in `tsc`, and `tsc --version` always
+  // exits 0. The witness pre-pass ran before any flag was inspected, so one
+  // unloadable processor anywhere in the project made a version probe — or a
+  // doctor script, or a tool wrapper — fail. Found by the pre-release audit of #43.
+  const app = path.join(dir, "flags-only");
+  mkdirSync(app, { recursive: true });
+  writeFileSync(
+    path.join(app, "tsconfig.json"),
+    JSON.stringify({ extends: "./.unworklet/tsconfig.json", compilerOptions: { types: [] } }),
+  );
+  writeFileSync(
+    path.join(app, "broken.uwk.ts"),
+    `const n = noiseSource({ seed: 0.5 });
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = n.next();
+  });
+});`,
+  );
+
+  for (const flag of ["--version", "--help"]) {
+    const r = spawnSync("node", [bin, "--project", "flags-only/tsconfig.json", flag], {
+      cwd: dir,
+      encoding: "utf8",
+    });
+    const output = `${r.stdout}${r.stderr}`;
+    expect(output, flag).not.toMatch(/cannot be compiled/);
+    expect(r.status, `${flag}: ${output}`).toBe(0);
+  }
+});
+
+test("the witness pass keeps .uwk.ts entries for processors outside its own file set", () => {
+  // `vite build` writes a witness entry for every `?worklet` it compiles, which
+  // in a monorepo includes processors that no single tsconfig lists. The pass
+  // kept only non-`.uwk.ts` blocks, so the documented
+  // `"build": "vite build && unworklet-tsc --noEmit"` had the typecheck strip
+  // what the build had just produced. Found by the pre-release audit of #43.
+  const app = path.join(dir, "witness-foreign");
+  mkdirSync(path.join(app, ".unworklet"), { recursive: true });
+  writeFileSync(
+    path.join(app, "tsconfig.json"),
+    JSON.stringify({
+      extends: "./.unworklet/tsconfig.json",
+      compilerOptions: { types: [] },
+      include: ["mine.uwk.ts"],
+    }),
+  );
+  writeFileSync(
+    path.join(app, "mine.uwk.ts"),
+    `const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = 0;
+  });
+});`,
+  );
+  const witness = path.join(app, ".unworklet/worklets.d.ts");
+
+  // Stand in for what `vite build` leaves behind for a processor this tsconfig
+  // does not list — including the `// source:` mark it writes, which is what
+  // lets the pass tell "not mine" from "deleted".
+  const elsewhere = path.join(dir, "elsewhere.uwk.ts");
+  writeFileSync(elsewhere, `// a processor in a sibling package\n`);
+  writeFileSync(
+    witness,
+    `declare module "*/elsewhere.uwk.ts?worklet" {
+  // source: ${elsewhere}
+  const processor: import("@unworklet/core").CompiledProcessor<unknown>;
+  export default processor;
+}
+`,
+  );
+
+  spawnSync("node", [bin, "--project", "witness-foreign/tsconfig.json", "--noEmit"], {
+    cwd: dir,
+    encoding: "utf8",
+  });
+
+  const after = readFileSync(witness, "utf8");
+  expect(after).toMatch(/mine\.uwk\.ts\?worklet/);
+  expect(after).toMatch(/elsewhere\.uwk\.ts\?worklet/);
+});

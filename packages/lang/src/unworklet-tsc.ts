@@ -28,7 +28,7 @@ import { createUwkLanguagePlugin } from "./ide/languagePlugin.ts";
 import { isUwkSource, loadUwkProcessor, NotAProcessorError } from "./materialize-lowered.ts";
 import { seedUnworkletDir } from "./seed-unworklet-dir.ts";
 import { moduleSpecifiers } from "./uwk-imports.ts";
-import { workletsDts } from "./worklet-dts.ts";
+import { witnessBlockSource, workletsDts } from "./worklet-dts.ts";
 
 /**
  * The directory whose `.unworklet/` this run owns. Both the seed and the witness
@@ -69,21 +69,49 @@ function resolveProjectConfig(cwd: string, argv: readonly string[]): string | un
 }
 
 /**
- * The `declare module` blocks of an existing witness that did NOT come from a
- * `.uwk.ts` — i.e. the `.processor.ts` entries only `vite build` can produce.
+ * The blocks of an existing witness this run must not touch: everything it did
+ * not look at.
+ *
+ * Two kinds qualify. The `.processor.ts` entries, which only `vite build` can
+ * produce. And `.uwk.ts` entries for processors outside this tsconfig's file
+ * set — a monorepo app importing `?worklet` from a sibling package has them, and
+ * dropping those made the documented `vite build && unworklet-tsc --noEmit`
+ * order strip what the build had just written.
+ *
+ * `mine` is the resolved source paths this run compiled. A block whose recorded
+ * source is one of those is rewritten; one whose source no longer exists is
+ * dropped (nothing will refresh it); anything else is left alone.
  *
  * Splitting the generated file textually is enough because it is generated:
  * `workletDts` writes each block starting at column 0 and closing with a `}` at
  * column 0, so a block boundary is unambiguous. A hand-edit would not survive,
  * which is correct for a file the toolchain owns and `.gitignore`s.
  */
-function foreignWitnessBlocks(witness: string): string {
+function blocksThisPassDoesNotOwn(witness: string, mine: ReadonlySet<string>): string {
   return witness
     .split(/^(?=declare module )/m)
-    .filter(
-      (block) => block.trim() !== "" && !/^declare module "[^"]*\.uwk\.ts\?worklet"/.test(block),
-    )
+    .filter((block) => {
+      if (block.trim() === "") return false;
+      if (!/^declare module "[^"]*\.uwk\.ts\?worklet"/.test(block)) return true; // `.processor.ts`
+      const source = witnessBlockSource(block);
+      // No recorded source: written before blocks carried one, so it cannot be
+      // attributed. Rewriting it is the safe half of the guess — a stale entry
+      // types imports against a processor that may not exist, and this run is
+      // about to write a correct one for everything it can see.
+      if (source === undefined) return false;
+      if (mine.has(source)) return false; // this run compiled it
+      // Not this run's, and the file is gone: nothing will ever refresh it.
+      return fs.existsSync(source);
+    })
     .join("");
+}
+
+/** Whether this invocation type-checks anything. `tsc --version` / `--help` /
+ * `--init` print and exit without reading a program, and always exit 0 — so
+ * loading every processor first (and failing on one) makes a drop-in `tsc`
+ * behave like nothing else in the ecosystem. */
+function isTypeCheckRun(argv: readonly string[]): boolean {
+  return !argv.some((a) => ["--version", "-v", "--help", "-h", "-?", "--init"].includes(a));
 }
 
 /**
@@ -149,6 +177,10 @@ function workletEntryPaths(fileNames: readonly string[]): Set<string> {
  */
 async function populateWorkletsWitness(tsconfigPath: string | undefined): Promise<void> {
   if (tsconfigPath === undefined) return;
+  // Nothing to witness for an invocation that checks nothing, and loading every
+  // processor to answer `--version` is how a broken one came to fail a version
+  // probe.
+  if (!isTypeCheckRun(process.argv.slice(2))) return;
   const raw = ts.readConfigFile(tsconfigPath, (p) => fs.readFileSync(p, "utf8"));
   if (raw.error !== undefined) return; // let tsc surface the tsconfig error itself
   const parsed = ts.parseJsonConfigFileContent(raw.config, ts.sys, path.dirname(tsconfigPath));
@@ -199,7 +231,8 @@ async function populateWorkletsWitness(tsconfigPath: string | undefined): Promis
   fs.mkdirSync(witnessDir, { recursive: true });
   const witnessPath = path.join(witnessDir, "worklets.d.ts");
   const existing = fs.existsSync(witnessPath) ? fs.readFileSync(witnessPath, "utf8") : "";
-  const next = `${foreignWitnessBlocks(existing)}${workletsDts(entries)}`;
+  const mine = new Set(uwkFiles.map((f) => path.resolve(f)));
+  const next = `${blocksThisPassDoesNotOwn(existing, mine)}${workletsDts(entries)}`;
   // Only on change: the dev-server watcher fires on mtime, and rewriting an
   // unchanged generated file is enough to start a rebuild loop.
   if (next !== existing) fs.writeFileSync(witnessPath, next);

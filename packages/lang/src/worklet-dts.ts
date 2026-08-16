@@ -15,7 +15,23 @@ import type { WorkletNamespace } from "@unworklet/core";
  * for `compile()`, so the type is derived from the same declarations the WASM is,
  * never hand-maintained.
  */
-export function workletDts(specifier: string, ns: WorkletNamespace): string {
+/**
+ * Marks which source a witness block was generated from.
+ *
+ * Two things write this file — the Vite plugin as it compiles, and
+ * `unworklet-tsc` for the `.uwk.ts` it can load — and neither may throw away the
+ * other's work. Basename alone cannot tell "this processor was deleted" from
+ * "this processor belongs to a tsconfig I am not checking": both are simply
+ * absent from my file set. Recording the source settles it.
+ */
+export const WITNESS_SOURCE_MARK = "// source:";
+
+/** The source path a witness block records, if it carries one. */
+export function witnessBlockSource(block: string): string | undefined {
+  return new RegExp(`^\\s*${WITNESS_SOURCE_MARK} (.+)$`, "m").exec(block)?.[1]?.trim();
+}
+
+export function workletDts(specifier: string, ns: WorkletNamespace, source?: string): string {
   const named = (list: readonly unknown[], value: (d: Record<string, unknown>) => string): string =>
     list
       .map((d) => {
@@ -101,7 +117,7 @@ export function workletDts(specifier: string, ns: WorkletNamespace): string {
   const inputs = named(ns.inputs, () => "unknown");
   const outputs = named(ns.outputs, () => "unknown");
   return `declare module ${JSON.stringify(specifier)} {
-  const processor: import("@unworklet/core").CompiledProcessor<{
+${source === undefined ? "" : `  ${WITNESS_SOURCE_MARK} ${source}\n`}  const processor: import("@unworklet/core").CompiledProcessor<{
     params: { ${params} };
     state: { ${state} };
     events: { ${events} };
@@ -157,7 +173,7 @@ export function workletsDts(entries: { source: string; ns: WorkletNamespace }[])
       );
       continue;
     }
-    out.push(workletDts(`*/${name}?worklet`, bucket[0]!.ns));
+    out.push(workletDts(`*/${name}?worklet`, bucket[0]!.ns, bucket[0]!.source));
   }
   return out.join("\n");
 }
