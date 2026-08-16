@@ -15,22 +15,11 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import ts from "typescript";
 import { expect, test } from "vite-plus/test";
 
-const SRC = import.meta.dirname;
+import { moduleSpecifiers } from "./uwk-imports.ts";
 
-/** Every module specifier a source names, imports and re-exports alike. */
-function specifiersOf(source: string, fileName: string): string[] {
-  const sf = ts.createSourceFile(fileName, source, ts.ScriptTarget.ESNext, true);
-  const out: string[] = [];
-  for (const stmt of sf.statements) {
-    if (!ts.isImportDeclaration(stmt) && !ts.isExportDeclaration(stmt)) continue;
-    const s = stmt.moduleSpecifier;
-    if (s !== undefined && ts.isStringLiteral(s)) out.push(s.text);
-  }
-  return out;
-}
+const SRC = import.meta.dirname;
 
 /** The relative module graph rooted at `entry`, plus every bare specifier seen. */
 function walk(entry: string): { files: string[]; bare: { from: string; spec: string }[] } {
@@ -41,7 +30,11 @@ function walk(entry: string): { files: string[]; bare: { from: string; spec: str
     const file = queue.shift()!;
     if (files.includes(file)) continue;
     files.push(file);
-    for (const spec of specifiersOf(readFileSync(file, "utf8"), file)) {
+    // `moduleSpecifiers` walks the whole tree, so a `node:` builtin behind a
+    // dynamic `import()` or nested in a branch is seen too. A top-level scan of
+    // import declarations enforced less than this test's name promises, which is
+    // the one way a guard is worse than none.
+    for (const spec of moduleSpecifiers(readFileSync(file, "utf8"))) {
       if (!spec.startsWith("./") && !spec.startsWith("../")) {
         bare.push({ from: path.relative(SRC, file), spec });
         continue;

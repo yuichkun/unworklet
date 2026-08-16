@@ -1376,3 +1376,55 @@ process(() => {
   expect(output, output).not.toMatch(/lazily/);
   expect(output).toMatch(/missing\.uwk\.ts/);
 });
+
+test("dependency discovery reports the edges the EMIT has, not the ones the source names", () => {
+  // The tests around this asserted only that a load succeeded, which it does
+  // either way — so reverting discovery to walk declarations left all of them
+  // green. What has to be pinned is the SET discovered: a type-only edge and an
+  // unused import name modules the emit does not, and walking them invents
+  // dependencies (and, when one points back, a cycle that does not exist).
+  //
+  // `cleanup` receives one temp per materialized `.uwk.ts`, so it is the
+  // discovered set, observable without reaching inside.
+  // Found by the pre-release audit of #43.
+  dir = mkdtempSync(path.join(LANG, ".mat-discovery-"));
+  const lib = (name: string): void =>
+    writeFileSync(
+      path.join(dir, `${name}.uwk.ts`),
+      `export type Cfg = { depth: number };
+export const ${name} = defineSubgraph(() => {
+  const p = state.f32(0).named("p");
+  return { tick: () => p.read() };
+});`,
+    );
+  for (const n of ["used", "typeOnly", "inlineType", "unused"]) lib(n);
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `import { used } from "./used.uwk.ts";
+import type { Cfg } from "./typeOnly.uwk.ts";
+import { type Cfg as Cfg2 } from "./inlineType.uwk.ts";
+import { unused } from "./unused.uwk.ts";
+
+const _a: Cfg = { depth: 1 };
+const _b: Cfg2 = { depth: 2 };
+const out = audioOutput({ channels: 1, name: "main" });
+const v = instantiate(used, { name: "v" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = v.tick();
+  });
+});`,
+  );
+
+  return materializeLowered(src, new Map(), new Set(), cleanup).then(() => {
+    const materialized = cleanup
+      .map((p) => path.basename(p))
+      .filter((b) => b.includes(".uwk.ts."))
+      .map((b) => b.replace(/^\./, "").replace(/\.uwk\.ts\..*$/, ""))
+      .sort();
+    // `used` survives the emit. The two type-only forms are erased, and `unused`
+    // is dropped for having no live binding — so none of them is a dependency.
+    expect(materialized).toEqual(["synth", "used"]);
+  });
+});
