@@ -50,6 +50,19 @@ builds it used to pass, all force the minor. To cut a release:
    `@unworklet/unplugin`. pnpm runs git checks by default (clean tree + a `main` /
    `master` publish-branch), so release from `main` with the bump committed, or pass
    `--no-git-checks`.
+6. Create the GitHub Release from the tag. The Releases page is the first place a
+   consumer who does not read npm looks, and a release carrying breaking changes is
+   where that matters most. Write a summary and link to `CHANGELOG.md` **at the
+   tag** rather than pasting the section in: nothing propagates a CHANGELOG
+   correction to a release body, and CHANGELOG entries do get corrected. Pin
+   `--latest` rather than letting GitHub infer it, so the page cannot advertise an
+   older version as current, and pass `--verify-tag` so a tag that was never pushed
+   fails the command instead of being created for you against the default branch.
+
+   ```sh
+   gh release create vX.Y.Z --verify-tag --latest \
+     --title "vX.Y.Z — <the headline>" --notes-file <notes.md>
+   ```
 
 There is no automated changeset pipeline. Choosing the number (step 2) and writing
 `CHANGELOG.md` are the operator's judgement; the mechanical half — a version left
