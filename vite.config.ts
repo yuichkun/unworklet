@@ -120,7 +120,21 @@ export default defineConfig({
     ],
   },
   run: {
-    cache: true,
+    // Vite Task archives and restores a command's files only when the command
+    // declares `output` globs — and `output` is a field of a `vite.config.ts`
+    // task, which a `package.json` script cannot have. Every `build` here is a
+    // script, so caching scripts replays the build's terminal output and writes
+    // no `dist/`. A tree with a warm cache and no `dist/` therefore "builds"
+    // successfully and produces nothing, which is how @unworklet/lang's browser
+    // build came to fail resolving `@unworklet/core/worklet` on a deploy whose
+    // core inputs had not changed since a previous one.
+    //
+    // No task is defined anywhere in this workspace, so `tasks: true` is the
+    // documented default costing nothing, and `scripts: false` (also the
+    // default) is the half that has to stay off until a build that caches is a
+    // task declaring what it produces. `scripts/build-cache-soundness.test.ts`
+    // holds that condition.
+    cache: { tasks: true, scripts: false },
   },
   test: {
     // Builds every shipped `dist/` before any project starts. The projects below
