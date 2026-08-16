@@ -103,6 +103,38 @@ export function tryBareState(checker: ts.TypeChecker, node: ts.Node): ts.Node | 
 }
 
 /**
+ * Visit an operand, and read it only if the classification still describes what
+ * came back.
+ *
+ * `classify()` answers for the expression AS WRITTEN, and visiting can replace
+ * that expression with something of a different nature: `a && b` becomes
+ * `and(…)`, `c ? x : y` becomes `select(…)`, and both already produce a
+ * `Node<T>`. TypeScript types `State<T> && State<T>` as `State<T>`, so asking
+ * about the original and applying the answer to the replacement emitted a
+ * `.read()` on a call — source that type-checks, then dies at capture with
+ * `and(...).read is not a function`.
+ *
+ * The condition is therefore identity: a node the visitor handed back unchanged
+ * is still what it was classified as. Enumerating "which shapes does the sugar
+ * rewrite" instead would answer the same question by prediction, and go stale
+ * the next time a sugar form is added.
+ *
+ * The positions that DO need the read are unaffected, because nothing rewrites
+ * them: a bare identifier in a boolean position (which `readsAsBareState`
+ * deliberately leaves alone, since its contextual type is `boolean`), and a
+ * property access that resolves to a `State` handle.
+ */
+export function visitAndRead(
+  checker: ts.TypeChecker,
+  expr: ts.Expression,
+  visit: ts.Visitor,
+): ts.Expression {
+  const visited = ts.visitNode(expr, visit) as ts.Expression;
+  if (visited !== expr) return visited;
+  return classify(checker, expr) === "state" ? read(visited) : visited;
+}
+
+/**
  * ShorthandPropertyAssignment (`{ peak }`) inside an emit / emitIf payload can't
  * be handled by the identifier-only path above: TypeScript's AST requires
  * ShorthandPropertyAssignment.name to be an Identifier, so returning `read(peak)`

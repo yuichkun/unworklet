@@ -52,7 +52,9 @@ function computeClassify(checker: ts.TypeChecker, node: ts.Node): ValueClass {
   // select result types as `Node<T> | State<T>`) is a Node value — check before
   // State so the (unspecified) union member print order can't flip it.
   if (s.startsWith("Node<") || (s.includes(" | ") && s.includes("Node<"))) return "node";
-  if (s.startsWith("State<")) return "state";
+  // A printed `State<T>` is trustworthy unless TypeScript read it off the
+  // OPERANDS of an expression the sugar replaces — see {@link typedFromOperands}.
+  if (s.startsWith("State<")) return typedFromOperands(checker, node) ? "node" : "state";
   if (s.startsWith("Buffer<")) return "buffer";
   if (s === "Param") return "param";
   if (s.startsWith("InputChannelView<")) return "inputChannel";
@@ -61,6 +63,55 @@ function computeClassify(checker: ts.TypeChecker, node: ts.Node): ValueClass {
   // binding whose initializer is itself a DSP expression is a DSP value.
   if (ts.isIdentifier(node) && isDspBoundLocal(checker, node)) return "node";
   return "other";
+}
+
+/**
+ * Whether TypeScript printed this expression's type from its OPERANDS rather
+ * than from what it evaluates to.
+ *
+ * `&&`, `||` and `?:` each RETURN one of their operands, so TS gives
+ * `State<T> && State<T>` the type `State<T>` — while the sugar lowers all three
+ * to a call returning `Node<T>`. The print therefore describes the source and
+ * not the result, and a caller that believed it emitted `.read()` on a Node:
+ * source that type-checks, then `and(...).read is not a function` at capture.
+ *
+ * Exactly these three shapes, plus a parenthesis or a binding over one. Every
+ * other sugar form is mis-typed `number` / `any` instead, which the fallbacks
+ * below already recover — widening this predicate to "anything the sugar
+ * rewrites" would take `state.f32(0).named("x")` with it and stop reading real
+ * states.
+ */
+function typedFromOperands(checker: ts.TypeChecker, node: ts.Node): boolean {
+  if (ts.isParenthesizedExpression(node)) return typedFromOperands(checker, node.expression);
+  if (ts.isConditionalExpression(node)) return isDspExpr(checker, node.condition);
+  if (ts.isBinaryExpression(node)) {
+    const kind = node.operatorToken.kind;
+    if (kind !== ts.SyntaxKind.AmpersandAmpersandToken && kind !== ts.SyntaxKind.BarBarToken) {
+      return false;
+    }
+    return isDspExpr(checker, node.left) || isDspExpr(checker, node.right);
+  }
+  // A binding inherits the lie: `const g = a && b` prints `State<"bool">` and
+  // holds the `and(…)` the lowering put there.
+  if (ts.isIdentifier(node)) {
+    const decl = checker.getSymbolAtLocation(node)?.valueDeclaration;
+    if (
+      decl === undefined ||
+      !ts.isVariableDeclaration(decl) ||
+      decl.initializer === undefined ||
+      decl.initializer === node ||
+      inFlight.has(decl)
+    ) {
+      return false;
+    }
+    inFlight.add(decl);
+    try {
+      return typedFromOperands(checker, decl.initializer);
+    } finally {
+      inFlight.delete(decl);
+    }
+  }
+  return false;
 }
 
 /** A local `const X = <DSP expr>` binding (stock TS mis-types it `number`/`any`). */

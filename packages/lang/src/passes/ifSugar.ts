@@ -19,6 +19,7 @@ import ts from "typescript";
 
 import { classify, isDspExpr } from "../classify.ts";
 import { LowerError } from "../lower.ts";
+import { visitAndRead } from "./bareState.ts";
 
 const f = ts.factory;
 const method = (obj: ts.Expression, name: string, args: ts.Expression[]): ts.Expression =>
@@ -146,11 +147,11 @@ export function tryIfSugar(
   if (!isDspExpr(checker, node.expression)) return undefined;
   const v = (e: ts.Expression): ts.Expression => ts.visitNode(e, visit) as ts.Expression;
   // A bare `State<'bool'>` condition sits in a `boolean` contextual position, so
-  // bare-state leaves it untouched — read it here.
-  const cond =
-    classify(checker, node.expression) === "state"
-      ? method(v(node.expression), "read", [])
-      : v(node.expression);
+  // bare-state leaves it untouched — read it here. Only when the condition
+  // survives visiting unchanged: `if (a && b)` visits to an `and(…)` that already
+  // produces a `Node<'bool'>`, and reading THAT is what `visitAndRead` exists to
+  // prevent.
+  const cond = visitAndRead(checker, node.expression, visit);
 
   if (node.elseStatement === undefined) {
     // Shape 3: guarded emit(s).

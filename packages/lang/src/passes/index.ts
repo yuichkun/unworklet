@@ -16,6 +16,7 @@
 import ts from "typescript";
 
 import { classify } from "../classify.ts";
+import { visitAndRead } from "./bareState.ts";
 
 const f = ts.factory;
 const callMethod = (obj: ts.Expression, name: string, args: ts.Expression[]): ts.CallExpression =>
@@ -28,8 +29,7 @@ const callMethod = (obj: ts.Expression, name: string, args: ts.Expression[]): ts
  * on, so it would otherwise pass a `State` handle where a `Node` is expected.
  */
 function operand(checker: ts.TypeChecker, e: ts.Expression, visit: ts.Visitor): ts.Expression {
-  const visited = ts.visitNode(e, visit) as ts.Expression;
-  return classify(checker, e) === "state" ? callMethod(visited, "read", []) : visited;
+  return visitAndRead(checker, e, visit);
 }
 
 export function tryIndex(

@@ -17,7 +17,8 @@
 
 import ts from "typescript";
 
-import { classify, isDspExpr, isSugarBinaryOperator } from "../classify.ts";
+import { isDspExpr, isSugarBinaryOperator } from "../classify.ts";
+import { visitAndRead } from "./bareState.ts";
 
 export const BINARY_FN: Partial<Record<ts.SyntaxKind, string>> = {
   [ts.SyntaxKind.PlusToken]: "add",
@@ -44,24 +45,13 @@ function call(fn: string, args: ts.Expression[]): ts.CallExpression {
   return ts.factory.createCallExpression(ts.factory.createIdentifier(fn), undefined, args);
 }
 
-/** Wrap a bare `State<T>` operand in `.read()`; leave Nodes / numbers as-is. */
-function readWrap(expr: ts.Expression, isState: boolean): ts.Expression {
-  if (!isState) return expr;
-  return ts.factory.createCallExpression(
-    ts.factory.createPropertyAccessExpression(expr, "read"),
-    undefined,
-    [],
-  );
-}
-
 /** Lower a sugar operator node, or return undefined if this isn't one. */
 export function tryOperator(
   checker: ts.TypeChecker,
   node: ts.Node,
   visit: ts.Visitor,
 ): ts.Node | undefined {
-  const operand = (e: ts.Expression): ts.Expression =>
-    readWrap(ts.visitNode(e, visit) as ts.Expression, classify(checker, e) === "state");
+  const operand = (e: ts.Expression): ts.Expression => visitAndRead(checker, e, visit);
 
   if (ts.isBinaryExpression(node) && isSugarBinaryOperator(node.operatorToken.kind)) {
     if (isDspExpr(checker, node.left) || isDspExpr(checker, node.right)) {
