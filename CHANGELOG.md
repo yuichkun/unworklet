@@ -7,7 +7,7 @@ lockstep, so one entry covers all of them.
 This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 `^0.1.0` range semantics (`^0.1.0` accepts `0.1.x` and refuses `0.2.0`).
 
-## 0.2.0 — 2026-08-14
+## 0.2.0 — 2026-08-17
 
 Adds `and` / `or` / `noiseSource`, headless multi-file `.uwk.ts` rendering, and a
 one-command install for the agent guide. Type-level narrowing and a DevTools peer
@@ -59,16 +59,33 @@ node.events.meter.on((p) => p.peak); // 0.1.0: unknown, needed a cast. 0.2.0: nu
 node.events.meter.on((p) => p.pk); // 0.1.0: compiled. 0.2.0: Property 'pk' does not exist
 ```
 
-Remove the casts; fix what the new types reject.
+Remove the casts; fix what the new types reject. One gap remains: if two
+processors in a project share a file basename (`a/tone.uwk.ts` and
+`b/tone.uwk.ts`), only one of them gets the typed surface and the other still
+resolves to `unknown` — see [#46](https://github.com/yuichkun/unworklet/issues/46).
 
 **`unworklet-tsc` now type-checks against real processor types on a cold
 checkout, so it can surface errors it previously hid.** It generates
 `.unworklet/worklets.d.ts` itself at startup instead of waiting for a `vite build`
 to write it. Before, a first run on a fresh clone fell back to the wildcard
 `CompiledProcessor<unknown>` and silently passed genuine mistakes. A build that
-passed on 0.1.0 can therefore fail on 0.2.0 — the errors were always real. Cold
-runs now compile every `.uwk.ts` in your tsconfig, which costs a few hundred
-milliseconds; warm runs are unchanged.
+passed on 0.1.0 can therefore fail on 0.2.0 — the errors were always real.
+
+Two costs come with it. Every run compiles every `.uwk.ts` in your tsconfig, warm
+or cold — there is no caching — which adds a few hundred milliseconds per
+processor. And a `.uwk.ts` that cannot be compiled **at all** now fails the run,
+even when `tsc` itself reports no type error: the file is named with the reason,
+and the exit code is non-zero, because the alternative is passing a typecheck on
+a witness known to be incomplete. A file that legitimately has no `process()` (a
+subgraph library) is not a failure unless something imports it as a processor.
+
+**`uwkImportSpecifiers` is now `uwkImportRefs`, and takes emitted JS.** The
+`@unworklet/lang` helper returned `string[]` from lowered `.uwk.ts` source; it
+returns `{ spec, lazy }[]` from the module's _emitted_ JavaScript. Reading the
+emit rather than the declarations is what lets a subgraph reached only through
+`instantiate()` be discovered, and `lazy` marks the edges that resolve through
+`import()`. If you called it directly, read `.spec` off each entry and pass the
+emit.
 
 **Processors that declare an inbound `event` / `message` with payload fields get
 a new `schemaHash`.** Inbound payload fields carry a per-field wire type now (see
@@ -86,7 +103,8 @@ processors only. Two consequences:
 ### Added
 
 - **`and(a, b)` / `or(a, b)` boolean primitives**, plus `Node#and` / `Node#or`.
-  In `.uwk.ts`, `&&` and `||` between two `Node<"bool">` lower to them. Both
+  In `.uwk.ts`, `&&` and `||` between two `Node<"bool">` lower to them, and a
+  bare `state.bool` operand reads first, so `a && b` over two states works. Both
   operands always evaluate — WASM has no branch-free short-circuit — and neither
   does `select(cond, a, b)`, which picks a value rather than guarding
   evaluation. Nothing in the DSL skips an operand, so make every operand safe to
@@ -109,8 +127,9 @@ processors only. Two consequences:
 - **`unworklet-tsc` self-seeds `.unworklet/tsconfig.json`**, so a cold clone whose
   tsconfig `extends` it no longer fails with TS5083 before anything has run.
 - `@unworklet/lang` additionally exports `seedUnworkletDir`, `GENERATED_TSCONFIG`,
-  `isUwkSource`, `lowerUwkSource`, `materializeLowered`, `deriveExportName`,
-  `workletDts`, and `workletsDts` for tooling built on top of it.
+  `isUwkSource`, `lowerUwkSource`, `materializeLowered`, `importLoweredEntry`,
+  `deriveExportName`, `uwkImportRefs`, `workletDts`, and `workletsDts` for tooling
+  built on top of it.
 
 ### Fixed
 
@@ -119,18 +138,29 @@ processors only. Two consequences:
   `emit({ gain: 0.8 })` arrived as `0`; boolean fields only worked by accident.
   The wire type is now decided per field — `number` defaults to f32 and keeps its
   fraction, `boolean` seals to bool when consumed in a boolean position.
-- **`@unworklet/test`'s chain matchers now attach for vitest 4 consumers**
-  (`@vitest/expect` added as a required peer — the matchers cannot register
-  without it, so a missing install surfaces as an install error rather than a
-  silently absent `toRenderSilence`).
+- **`@unworklet/test`'s chain matchers now type-check for vitest 4 consumers**
+  (`@vitest/expect` added as a required peer). The chain entry point augments
+  `@vitest/expect`'s `Matchers` interface, so without it installed the
+  augmentation had nothing to attach to and `expect(result).toBeSilent()` failed
+  to compile with TS2664. Declaring the peer turns that into an install error.
 - **DevTools panels render again after the 0.4 upgrade** — the page bridge used
   the pre-0.4 anonymous-RPC prefix and the panel bundle was still built against
   the 0.3 kit, so an authenticated session showed empty panels.
-- **DevTools no longer hangs `vitest` for 10 seconds** — the plugin's DevTools
-  host is gated off under `VITEST`.
 - **`unworklet-tsc` reports the right line and column.** Diagnostics were
   resolved against the virtual module's text, so every error landed a few lines
   above its real position.
+- **`&&` / `||` / `?:` over bare state no longer crash the lowering.** `if (a && b)`,
+  `(a && b) ? x : y`, `a && b && c`, and `cond ? x : y` with bare-state operands
+  threw `and(...).read is not a function`: TypeScript types `State<T> && State<T>`
+  as `State<T>`, so the auto-read pass added a `.read()` to an expression the
+  operator pass had already replaced with `and(…)`.
+- **A multi-file `.uwk.ts` graph that fails to load reports what went wrong
+  instead of failing later and elsewhere.** A cycle between two eagerly-imported
+  subgraphs surfaced as a raw `ReferenceError` about a deleted temp file; a
+  failure under a lazy edge left temp paths recorded but never written, so a
+  later static import of the same file was pointed at a file that does not exist;
+  and an interrupted load could record a helper as loaded that never was, making
+  a subsequent edit to it fail permanently until the process restarted.
 - `.uwk.ts` bare-state auto-read now fires in three more positions it missed: a
   buffer index synthesized by `if` sugar, an object-literal shorthand in an
   `emit` payload (`{ peak }`), and a property-name position that previously
@@ -150,7 +180,12 @@ processors only. Two consequences:
 The agent-facing guide (`skills/unworklet/`) was rewritten around `.uwk.ts` as the
 primary authoring form and then corrected across five rounds of building real
 projects from the guide alone — API names, commands, setup order, and every code
-sample now match the implementation.
+sample now match the implementation. CI compiles every complete example in it.
+
+The guide also documents a `vitest` interaction it cannot fix from inside the
+plugin: with the DevTools panel enabled, a `vitest` run hangs 10 seconds at close
+(`close timed out after 10000ms`). Gate the DevTools plugins out under `VITEST`
+in your own `vite.config.ts` — `setup.md` and `devtools.md` show the two lines.
 
 The design-time specification that drove the v1.0.0 build was deleted, along with
 `llms.txt`. Both restated behaviour that `skills/unworklet/` describes, without
