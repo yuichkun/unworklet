@@ -1086,6 +1086,52 @@ process(() => {
   expect(lowered.indexOf("export function id")).toBeLessThan(lowered.indexOf("defineProcessor("));
 });
 
+test("a type parameter does not hide a VALUE of the same name", () => {
+  // The complement of the test above: `min` here is read as an expression, and
+  // a type parameter names no value, so this reaches the DSL-tied const.
+  try {
+    lower(`
+const min = state.f32(0);
+export function read<min>(): number {
+  return min.read();
+}
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(min.read());
+  });
+});
+`);
+    expect.unreachable("lower() must see the value reference under a type parameter");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("a parameter does not hide a TYPE of the same name", () => {
+  // The annotation `: Level` reads the module's type alias, not the parameter,
+  // so the alias has to travel to module scope with the export that names it.
+  const lowered = lower(`
+type Level = number;
+export function read(Level: number): Level {
+  return Level;
+}
+const min = state.f32(0);
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(min.read());
+  });
+});
+`);
+  const wrapper = lowered.indexOf("defineProcessor(");
+  const alias = lowered.indexOf("type Level");
+  expect(lowered.indexOf("export function read")).toBeLessThan(wrapper);
+  expect(alias).toBeGreaterThanOrEqual(0);
+  expect(alias).toBeLessThan(wrapper);
+});
+
 test("a class static block scopes its own nested `var`", () => {
   const lowered = lower(`
 export function pick(ok: boolean): number {

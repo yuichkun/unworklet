@@ -728,6 +728,19 @@ function partitionModuleScopeExports(
    */
   type RefPosition = "value" | "type" | "typeQuery";
 
+  /**
+   * The names an enclosing scope hides, kept per namespace because TypeScript
+   * has two: a type parameter hides a type of the same name and leaves the
+   * value alone, and a parameter does the reverse.
+   */
+  type ScopedNames = { readonly value: ReadonlySet<string>; readonly type: ReadonlySet<string> };
+
+  const NO_SCOPED_NAMES: ScopedNames = { value: new Set(), type: new Set() };
+
+  /** The half of a scope a reference in this position can be hidden by. */
+  const hiddenIn = (scoped: ScopedNames, position: RefPosition): ReadonlySet<string> =>
+    position === "type" ? scoped.type : scoped.value;
+
   const NO_BINDINGS: readonly number[] = [];
 
   /**
@@ -828,29 +841,37 @@ function partitionModuleScopeExports(
    * names, so a reference has to be resolved against the scopes enclosing it —
    * matching on spelling alone rejects pure helpers that never touch the DSL.
    */
-  const scopeBindings = (n: ts.Node): Set<string> | null => {
-    const names = new Set<string>();
+  const scopeBindings = (n: ts.Node): ScopedNames | null => {
+    const value = new Set<string>();
+    const type = new Set<string>();
     const addStatementBindings = (body: readonly ts.Statement[]): void => {
-      for (const name of statementBoundNames(body)) names.add(name);
+      // A statement can declare a value, a type, or both (a class, an enum, a
+      // namespace, an import alias), so its names stand in both namespaces.
+      for (const name of statementBoundNames(body)) {
+        value.add(name);
+        type.add(name);
+      }
     };
     // A type parameter binds its name for the declaration that introduces it,
-    // so `function id<input>(...)` is that declaration's `input`.
+    // so `function id<input>(...)` is that declaration's `input` — but only
+    // where a TYPE is read. The expression `input` in the same body is still
+    // the module's value, because a type parameter names no value at all.
     const typeParameters = (n as { typeParameters?: ts.NodeArray<ts.TypeParameterDeclaration> })
       .typeParameters;
     if (typeParameters !== undefined) {
-      for (const tp of typeParameters) names.add(tp.name.text);
+      for (const tp of typeParameters) type.add(tp.name.text);
     }
     // A mapped type carries a singular `typeParameter` — `{ [K in Keys]: T }`.
-    if (ts.isMappedTypeNode(n)) names.add(n.typeParameter.name.text);
+    if (ts.isMappedTypeNode(n)) type.add(n.typeParameter.name.text);
     if (ts.isClassStaticBlockDeclaration(n)) {
       // Its own `var` scope, collected here so the block sees its nested
       // declarations without leaking them into the enclosing function.
-      collectFunctionScopedVars(n, names);
+      collectFunctionScopedVars(n, value);
     }
     if (ts.isFunctionLike(n)) {
-      for (const p of n.parameters) collectBindingNames(p.name, names);
+      for (const p of n.parameters) collectBindingNames(p.name, value);
       if ((ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n)) && n.name !== undefined) {
-        names.add(n.name.text);
+        value.add(n.name.text);
       }
       // Body `var`s are NOT added here: a default parameter initializer is
       // evaluated in the parameter scope, before the body's bindings exist, so
@@ -859,27 +880,29 @@ function partitionModuleScopeExports(
       addStatementBindings(n.statements);
       // A namespace body is its own `var` scope: the outer collector stops at
       // the boundary, so the block collects what is nested inside it.
-      if (ts.isModuleBlock(n)) collectFunctionScopedVars(n, names);
+      if (ts.isModuleBlock(n)) collectFunctionScopedVars(n, value);
     } else if (ts.isCaseBlock(n)) {
       // One block scope spans every clause of the switch.
       for (const clause of n.clauses) addStatementBindings(clause.statements);
     } else if (ts.isCatchClause(n)) {
       if (n.variableDeclaration !== undefined)
-        collectBindingNames(n.variableDeclaration.name, names);
+        collectBindingNames(n.variableDeclaration.name, value);
     } else if (ts.isForStatement(n) || ts.isForOfStatement(n) || ts.isForInStatement(n)) {
       const init = n.initializer;
       if (init !== undefined && ts.isVariableDeclarationList(init)) {
-        for (const d of init.declarations) collectBindingNames(d.name, names);
+        for (const d of init.declarations) collectBindingNames(d.name, value);
       }
     } else if ((ts.isClassDeclaration(n) || ts.isClassExpression(n)) && n.name !== undefined) {
-      names.add(n.name.text);
+      // A class name declares a value and a type at once.
+      value.add(n.name.text);
+      type.add(n.name.text);
     } else if (ts.isEnumDeclaration(n)) {
       // A member is in scope for the members after it (`Copy = input`).
       for (const member of n.members) {
-        if (ts.isIdentifier(member.name)) names.add(member.name.text);
+        if (ts.isIdentifier(member.name)) value.add(member.name.text);
       }
     }
-    return names.size > 0 ? names : null;
+    return value.size > 0 || type.size > 0 ? { value, type } : null;
   };
 
   const refs = statements.map((stmt) => {
@@ -891,7 +914,7 @@ function partitionModuleScopeExports(
     // specifiers locally would drag an unrelated declaration that happens to
     // share a name out of the wrapper with it.
     const isReExport = ts.isExportDeclaration(stmt) && stmt.moduleSpecifier !== undefined;
-    const visit = (n: ts.Node, shadowed: ReadonlySet<string>, position: RefPosition): void => {
+    const visit = (n: ts.Node, shadowed: ScopedNames, position: RefPosition): void => {
       // An export specifier names a binding directly rather than referencing
       // one, and it chooses its namespace: `export { type Level }` takes the
       // type, a plain `export { Level }` takes the value and carries the type
@@ -907,7 +930,7 @@ function partitionModuleScopeExports(
         }
         return;
       }
-      if (ts.isIdentifier(n) && !isNamePosition(n) && !shadowed.has(n.text)) {
+      if (ts.isIdentifier(n) && !isNamePosition(n) && !hiddenIn(shadowed, position).has(n.text)) {
         const declaring = resolveBinding(n.text, position);
         // A module-scope declaration owns the name throughout the module, DSL
         // root or not — `export const clamp = ...` is the file's `clamp`, and
@@ -927,7 +950,13 @@ function partitionModuleScopeExports(
         else if (!imported.other.has(n.text) && DSL_TAINT_ROOTS.has(n.text)) dsl.add(n.text);
       }
       const opened = scopeBindings(n);
-      const inner = opened === null ? shadowed : new Set([...shadowed, ...opened]);
+      const inner: ScopedNames =
+        opened === null
+          ? shadowed
+          : {
+              value: new Set([...shadowed.value, ...opened.value]),
+              type: new Set([...shadowed.type, ...opened.type]),
+            };
       // `typeof X` sits inside a type but names a VALUE, so its entity name
       // keeps resolving in the value namespace all the way down.
       const childPosition: RefPosition = ts.isTypeQueryNode(n)
@@ -946,14 +975,19 @@ function partitionModuleScopeExports(
         const vars = new Set<string>();
         collectFunctionScopedVars(n, vars);
         scopedChild = (n as { body?: ts.Node }).body;
-        if (vars.size > 0) scopedNames = new Set([...inner, ...vars]);
+        if (vars.size > 0) {
+          scopedNames = { value: new Set([...inner.value, ...vars]), type: inner.type };
+        }
       } else if (ts.isConditionalTypeNode(n)) {
         // `T extends infer X ? X : never` — the infer'd name is bound for the
         // TRUE branch alone; the constraint and the false branch never see it.
+        // Like a type parameter, it names a type and no value.
         const inferred = new Set<string>();
         collectInferNames(n.extendsType, inferred);
         scopedChild = n.trueType;
-        if (inferred.size > 0) scopedNames = new Set([...inner, ...inferred]);
+        if (inferred.size > 0) {
+          scopedNames = { value: inner.value, type: new Set([...inner.type, ...inferred]) };
+        }
       }
       // A class `extends` clause is an EXPRESSION that runs at evaluation, even
       // though its node satisfies `isTypeNode` like an interface's heritage
@@ -978,7 +1012,7 @@ function partitionModuleScopeExports(
     };
     // The statement's own top-level bindings stay visible: they are the module
     // bindings the dependency edges are drawn between.
-    visit(stmt, new Set<string>(), "value");
+    visit(stmt, NO_SCOPED_NAMES, "value");
     return { bindings, dsl };
   });
 
