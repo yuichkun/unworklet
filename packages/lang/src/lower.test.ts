@@ -1001,6 +1001,73 @@ process(() => {
   }
 });
 
+test("an aliased core import is not the generated binding it shadows", () => {
+  // The local name is `audioInput`, but it is bound to `defineProcessor` — the
+  // ambient declaration would call the wrong factory.
+  try {
+    lower(`
+import { defineProcessor as audioInput } from "@unworklet/core";
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(0.25);
+  });
+});
+`);
+    expect.unreachable("lower() must reject an alias that shadows a generated name");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-reserved-binding");
+  }
+});
+
+test("a nested module-scoped `var` collides with a generated name too", () => {
+  // The `if` moves into the callback, where its function-scoped `var` shadows
+  // the injected import for the synthesized call.
+  try {
+    lower(`
+if (false) {
+  var audioInput = 1;
+}
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(0.25);
+  });
+});
+`);
+    expect.unreachable("lower() must reject a nested var that shadows a generated name");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-reserved-binding");
+  }
+});
+
+test("a class static block is its own `var` scope, not the helper's", () => {
+  try {
+    lower(`
+export function pick(): unknown {
+  class C {
+    static {
+      var input = 1;
+      void input;
+    }
+  }
+  void C;
+  return input;
+}
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(0.25);
+  });
+});
+`);
+    expect.unreachable("lower() must reject a helper reading the ambient input");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;

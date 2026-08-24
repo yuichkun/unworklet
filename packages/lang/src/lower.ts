@@ -203,6 +203,32 @@ function importBoundNames(
   return names;
 }
 
+/**
+ * Names imported from the core module as VALUES under their own name — the only
+ * imports that can stand in for a binding the lowering generates. An alias
+ * (`{ defineProcessor as audioInput }`) binds a different export under the name,
+ * and a namespace or default import binds the module rather than the export.
+ */
+function unaliasedCoreValueImports(
+  imports: readonly ts.ImportDeclaration[],
+  coreModule: string,
+): Set<string> {
+  const names = new Set<string>();
+  for (const decl of imports) {
+    if (moduleSpecifierOf(decl) !== coreModule) continue;
+    const clause = decl.importClause;
+    if (clause === undefined || clause.isTypeOnly) continue;
+    const bindings = clause.namedBindings;
+    if (bindings === undefined || ts.isNamespaceImport(bindings)) continue;
+    for (const el of bindings.elements) {
+      if (el.isTypeOnly) continue;
+      if (el.propertyName !== undefined && el.propertyName.text !== el.name.text) continue;
+      names.add(el.name.text);
+    }
+  }
+  return names;
+}
+
 /** Every name a binding pattern introduces (`a`, `{ b }`, `[c, ...d]`). */
 function collectBindingNames(name: ts.BindingName, into: Set<string>): void {
   if (ts.isIdentifier(name)) {
@@ -223,7 +249,8 @@ function collectBindingNames(name: ts.BindingName, into: Set<string>): void {
  */
 function collectFunctionScopedVars(node: ts.Node, into: Set<string>): void {
   const walk = (n: ts.Node): void => {
-    if (ts.isFunctionLike(n)) return;
+    // A function and a class static block each open their own `var` scope.
+    if (ts.isFunctionLike(n) || ts.isClassStaticBlockDeclaration(n)) return;
     if (
       ts.isVariableDeclarationList(n) &&
       (n.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0
@@ -954,11 +981,17 @@ export function lower(source: string, options: LowerOptions = {}): string {
   // it still occupies the name beside the injected import). The one exception
   // is a VALUE import of the same name from the core: that is the very binding
   // the generated code wants, and the injected import stands down for it.
-  const coreValueImports = importBoundNames(
-    userImports.filter((d) => moduleSpecifierOf(d) === coreModule),
-    { valuesOnly: true },
-  );
+  // That exemption requires the local name and the imported export to be the
+  // SAME: `{ defineProcessor as audioInput }` binds `audioInput` to the wrong
+  // factory, and the ambient declaration would call it.
+  const coreValueImports = unaliasedCoreValueImports(userImports, coreModule);
   const boundHere = statementBoundNames(declarations);
+  // A `var` nested in a control statement binds at module scope and, once the
+  // statement moves into the callback, shadows the injected import there.
+  for (const stmt of declarations) {
+    if (ts.isFunctionLike(stmt)) continue;
+    collectFunctionScopedVars(stmt, boundHere);
+  }
   for (const name of importBoundNames(userImports)) {
     if (!coreValueImports.has(name)) boundHere.add(name);
   }
