@@ -1148,6 +1148,38 @@ process(() => {
   expect(lowered.indexOf("export type Keys")).toBeLessThan(lowered.indexOf("defineProcessor("));
 });
 
+test("a namespace sees the `var`s nested inside its own body", () => {
+  const lowered = lower(`
+export namespace Cfg {
+  if (true) {
+    var input = 1;
+  }
+  export const copy = input;
+}
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(Cfg.copy / 10);
+  });
+});
+`);
+  expect(lowered.indexOf("namespace Cfg")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
+test("an `infer` parameter shadows a module value inside the true branch", () => {
+  const lowered = lower(`
+const min = state.f32(0);
+export type Element<T> = T extends infer min ? min : never;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(min.read());
+  });
+});
+`);
+  expect(lowered.indexOf("export type Element")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;

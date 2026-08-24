@@ -270,6 +270,15 @@ function collectFunctionScopedVars(node: ts.Node, into: Set<string>): void {
   ts.forEachChild(node, walk);
 }
 
+/** Names bound by `infer X` anywhere in a conditional type's extends clause. */
+function collectInferNames(node: ts.Node, into: Set<string>): void {
+  const walk = (n: ts.Node): void => {
+    if (ts.isInferTypeNode(n)) into.add(n.typeParameter.name.text);
+    ts.forEachChild(n, walk);
+  };
+  walk(node);
+}
+
 /** The names a statement list binds in the scope it belongs to. */
 function statementBoundNames(statements: readonly ts.Statement[]): Set<string> {
   const names = new Set<string>();
@@ -567,6 +576,8 @@ function partitionModuleScopeExports(
     // the type, not the `gain` a statement may declare beside it.
     if (ts.isPropertySignature(p) && p.name === n) return true;
     if (ts.isMethodSignature(p) && p.name === n) return true;
+    // A type parameter's name declares it — `<T>` and `infer X` alike.
+    if (ts.isTypeParameterDeclaration(p) && p.name === n) return true;
     // A statement label lives in its own namespace and reads no value.
     if (ts.isLabeledStatement(p) && p.label === n) return true;
     if (ts.isBreakStatement(p) && p.label === n) return true;
@@ -609,6 +620,9 @@ function partitionModuleScopeExports(
       // `visit` applies them to the body child alone.
     } else if (ts.isBlock(n) || ts.isModuleBlock(n)) {
       addStatementBindings(n.statements);
+      // A namespace body is its own `var` scope: the outer collector stops at
+      // the boundary, so the block collects what is nested inside it.
+      if (ts.isModuleBlock(n)) collectFunctionScopedVars(n, names);
     } else if (ts.isCaseBlock(n)) {
       // One block scope spans every clause of the switch.
       for (const clause of n.clauses) addStatementBindings(clause.statements);
@@ -689,15 +703,23 @@ function partitionModuleScopeExports(
       // A function's body sees its `var`s throughout, but a default parameter
       // initializer is evaluated before any of them exist — so the body child
       // gets the wider scope and the parameters keep the narrower one.
-      let bodyScope = inner;
+      let scopedChild: ts.Node | undefined;
+      let scopedNames = inner;
       if (ts.isFunctionLike(n)) {
         const vars = new Set<string>();
         collectFunctionScopedVars(n, vars);
-        if (vars.size > 0) bodyScope = new Set([...inner, ...vars]);
+        scopedChild = (n as { body?: ts.Node }).body;
+        if (vars.size > 0) scopedNames = new Set([...inner, ...vars]);
+      } else if (ts.isConditionalTypeNode(n)) {
+        // `T extends infer X ? X : never` — the infer'd name is bound for the
+        // TRUE branch alone; the constraint and the false branch never see it.
+        const inferred = new Set<string>();
+        collectInferNames(n.extendsType, inferred);
+        scopedChild = n.trueType;
+        if (inferred.size > 0) scopedNames = new Set([...inner, ...inferred]);
       }
-      const bodyNode = ts.isFunctionLike(n) ? (n as { body?: ts.Node }).body : undefined;
       ts.forEachChild(n, (child) => {
-        visit(child, child === bodyNode ? bodyScope : inner, childPosition);
+        visit(child, child === scopedChild ? scopedNames : inner, childPosition);
       });
     };
     // The statement's own top-level bindings stay visible: they are the module
