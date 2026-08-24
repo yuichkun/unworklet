@@ -1987,6 +1987,48 @@ process(() => {
   }
 });
 
+test("an import alias binds its name against a write", () => {
+  const lowered = lower(`
+const helper = { value: 0 };
+namespace Source {
+  export const helper = { value: 0 };
+}
+namespace N {
+  import helper = Source.helper;
+  helper.value = 1;
+}
+export const value = helper.value;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
+test("an import alias binds its name against a DSL root", () => {
+  // `state` here is the alias, so nothing in this file reaches the DSL.
+  const lowered = lower(`
+namespace Source {
+  export const value = 3;
+}
+namespace N {
+  import state = Source;
+  export const tag = state.value;
+}
+export const value = N.tag;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;

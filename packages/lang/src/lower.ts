@@ -475,7 +475,10 @@ function statementBoundNames(
       (ts.isFunctionDeclaration(stmt) ||
         ts.isClassDeclaration(stmt) ||
         ts.isEnumDeclaration(stmt) ||
-        ts.isModuleDeclaration(stmt)) &&
+        ts.isModuleDeclaration(stmt) ||
+        // `import helper = Source.helper` binds `helper` here the way an
+        // ordinary import binds it at module scope.
+        ts.isImportEqualsDeclaration(stmt)) &&
       stmt.name !== undefined &&
       ts.isIdentifier(stmt.name)
     ) {
