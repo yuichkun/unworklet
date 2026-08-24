@@ -608,15 +608,6 @@ const assetBaseName = (sourcePath: string): string => {
   return base;
 };
 
-/**
- * `JSON.stringify` replacer that renders a `bigint` (= an `i64` literal / state
- * `initial`) as a `"<n>n"` string — matching `schemaHash.ts`'s convention — so the
- * build-time analysis artifacts serialize as valid JSON instead of throwing
- * "Do not know how to serialize a BigInt".
- */
-const bigintReplacer = (_key: string, value: unknown): unknown =>
-  typeof value === "bigint" ? `${value}n` : value;
-
 // ─────────────────────────────────────────────────────────────────────────
 // Phase 6 final step 5-F DevTools — collapse everything into a single dock
 // entry that hosts a Vue SPA
@@ -1642,35 +1633,23 @@ ensureClient();
         bakedSampleRate = result.sampleRate;
 
         if (emitAnalysisArtifacts) {
-          // Opt-in only (default false): the serialize below can produce a
-          // graph JSON in the hundreds of MB for loop-heavy processors, and
-          // dist/ is what deploy pipelines ship. The size gate skips any
-          // single artifact past the cap so even an opt-in build cannot be
-          // silently dominated by the DAG dump (issue #40).
+          // Opt-in only (default false): the graph DAG serializes to hundreds
+          // of MB for loop-heavy processors, and dist/ is what deploy pipelines
+          // ship. Values are handed over unserialized so the gate can charge
+          // the cap as it walks them and abandon one that cannot fit, rather
+          // than building the string first and measuring it (issue #40).
           const { emit, skipped } = partitionAnalysisArtifacts([
-            {
-              name: `${baseName}.graph.json`,
-              source: `${JSON.stringify(result.graph, bigintReplacer, 2)}\n`,
-            },
-            {
-              name: `${baseName}.memory.json`,
-              source: `${JSON.stringify(result.memory, bigintReplacer, 2)}\n`,
-            },
-            {
-              name: `${baseName}.diagnostics.json`,
-              source: `${JSON.stringify(result.diagnostics, bigintReplacer, 2)}\n`,
-            },
-            {
-              name: `${baseName}.schema-hash.json`,
-              source: `${JSON.stringify({ schemaHash: result.schemaHash }, bigintReplacer, 2)}\n`,
-            },
+            { name: `${baseName}.graph.json`, value: result.graph },
+            { name: `${baseName}.memory.json`, value: result.memory },
+            { name: `${baseName}.diagnostics.json`, value: result.diagnostics },
+            { name: `${baseName}.schema-hash.json`, value: { schemaHash: result.schemaHash } },
           ]);
           for (const artifact of emit) {
             this.emitFile({ type: "asset", name: artifact.name, source: artifact.source });
           }
           for (const s of skipped) {
             console.warn(
-              `@unworklet/unplugin: skipped analysis artifact ${s.name} (${Math.round(s.bytes / 1024 / 1024)} MB > ${ANALYSIS_ARTIFACT_MAX_BYTES / 1024 / 1024} MB cap) — the graph DAG scales with build-time-unrolled loops; consume it from a dev-side tool instead of dist/.`,
+              `@unworklet/unplugin: skipped analysis artifact ${s.name} — past the ${ANALYSIS_ARTIFACT_MAX_BYTES / 1024 / 1024} MB cap. The graph DAG scales with build-time-unrolled loops; consume it from a dev-side tool instead of dist/.`,
             );
           }
         }
