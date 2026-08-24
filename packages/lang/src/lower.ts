@@ -211,8 +211,12 @@ function statementBoundNames(statements: readonly ts.Statement[]): Set<string> {
     if (ts.isVariableStatement(stmt)) {
       for (const d of stmt.declarationList.declarations) collectBindingNames(d.name, names);
     } else if (
-      (ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) &&
-      stmt.name !== undefined
+      (ts.isFunctionDeclaration(stmt) ||
+        ts.isClassDeclaration(stmt) ||
+        ts.isEnumDeclaration(stmt) ||
+        ts.isModuleDeclaration(stmt)) &&
+      stmt.name !== undefined &&
+      ts.isIdentifier(stmt.name)
     ) {
       names.add(stmt.name.text);
     }
@@ -405,9 +409,15 @@ function partitionModuleScopeExports(
         if (ts.isIdentifier(d.name)) bindingOf.set(d.name.text, idx);
       }
     } else if (
-      (ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) &&
-      stmt.name !== undefined
+      (ts.isFunctionDeclaration(stmt) ||
+        ts.isClassDeclaration(stmt) ||
+        ts.isEnumDeclaration(stmt) ||
+        ts.isModuleDeclaration(stmt)) &&
+      stmt.name !== undefined &&
+      ts.isIdentifier(stmt.name)
     ) {
+      // Enums and namespaces bind a runtime value, so an export reading one
+      // depends on it exactly as it would on a const.
       bindingOf.set(stmt.name.text, idx);
     }
   });

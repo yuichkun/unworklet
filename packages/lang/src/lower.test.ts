@@ -541,6 +541,25 @@ process(() => {
   }
 });
 
+test("a hoisted export pulls a module-level enum along with it", () => {
+  // An enum is a runtime value, so an export reading a member depends on it the
+  // same way it would on a const — leaving it in the wrapper puts the export's
+  // initializer out of scope at module evaluation.
+  const lowered = lower(`
+enum Mode { Soft, Hard }
+export const DEFAULT_MODE = Mode.Soft;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(DEFAULT_MODE);
+  });
+});
+`);
+  const defineAt = lowered.indexOf("defineProcessor(");
+  expect(lowered.indexOf("enum Mode")).toBeLessThan(defineAt);
+  expect(lowered.indexOf("export const DEFAULT_MODE")).toBeLessThan(defineAt);
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;
