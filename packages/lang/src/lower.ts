@@ -185,6 +185,35 @@ function importBoundNames(imports: readonly ts.ImportDeclaration[]): Set<string>
   return names;
 }
 
+/** Every name a binding pattern introduces (`a`, `{ b }`, `[c, ...d]`). */
+function collectBindingNames(name: ts.BindingName, into: Set<string>): void {
+  if (ts.isIdentifier(name)) {
+    into.add(name.text);
+    return;
+  }
+  // ObjectBindingPattern | ArrayBindingPattern — array holes are
+  // OmittedExpression, not BindingElement, so they are skipped.
+  for (const element of name.elements) {
+    if (ts.isBindingElement(element)) collectBindingNames(element.name, into);
+  }
+}
+
+/** The names a statement list binds in the scope it belongs to. */
+function statementBoundNames(statements: readonly ts.Statement[]): Set<string> {
+  const names = new Set<string>();
+  for (const stmt of statements) {
+    if (ts.isVariableStatement(stmt)) {
+      for (const d of stmt.declarationList.declarations) collectBindingNames(d.name, names);
+    } else if (
+      (ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) &&
+      stmt.name !== undefined
+    ) {
+      names.add(stmt.name.text);
+    }
+  }
+  return names;
+}
+
 function makeCoreImport(names: readonly string[], coreModule: string): ts.ImportDeclaration {
   const specifiers = names.map((name) =>
     ts.factory.createImportSpecifier(false, undefined, ts.factory.createIdentifier(name)),
@@ -381,17 +410,6 @@ function partitionModuleScopeExports(statements: readonly ts.Statement[]): {
     return false;
   };
 
-  /** Every name a binding pattern introduces (`a`, `{ b }`, `[c, ...d]`). */
-  const collectBindingNames = (name: ts.BindingName, into: Set<string>): void => {
-    if (ts.isIdentifier(name)) {
-      into.add(name.text);
-      return;
-    }
-    for (const element of name.elements) {
-      if (ts.isBindingElement(element)) collectBindingNames(element.name, into);
-    }
-  };
-
   /**
    * The names a node binds in the scope it opens, or null when it opens none.
    * `input`, `min`, `out` and friends are DSL roots AND everyday parameter
@@ -401,16 +419,7 @@ function partitionModuleScopeExports(statements: readonly ts.Statement[]): {
   const scopeBindings = (n: ts.Node): Set<string> | null => {
     const names = new Set<string>();
     const addStatementBindings = (body: readonly ts.Statement[]): void => {
-      for (const s of body) {
-        if (ts.isVariableStatement(s)) {
-          for (const d of s.declarationList.declarations) collectBindingNames(d.name, names);
-        } else if (
-          (ts.isFunctionDeclaration(s) || ts.isClassDeclaration(s)) &&
-          s.name !== undefined
-        ) {
-          names.add(s.name.text);
-        }
-      }
+      for (const name of statementBoundNames(body)) names.add(name);
     };
     if (ts.isFunctionLike(n)) {
       for (const p of n.parameters) collectBindingNames(p.name, names);
@@ -441,9 +450,14 @@ function partitionModuleScopeExports(statements: readonly ts.Statement[]): {
     const dsl = new Set<string>();
     const visit = (n: ts.Node, shadowed: ReadonlySet<string>): void => {
       if (ts.isIdentifier(n) && !isNamePosition(n) && !shadowed.has(n.text)) {
-        if (DSL_TAINT_ROOTS.has(n.text)) dsl.add(n.text);
         const b = bindingOf.get(n.text);
+        // A module-scope declaration owns the name throughout the module, DSL
+        // root or not — `export const clamp = ...` is the file's `clamp`, and
+        // its own declaration name is not a reference to the ambient one. Taint
+        // still reaches it through the dependency edge when that declaration is
+        // itself DSL-tied.
         if (b !== undefined) bindings.add(b);
+        else if (DSL_TAINT_ROOTS.has(n.text)) dsl.add(n.text);
       }
       const opened = scopeBindings(n);
       const inner = opened === null ? shadowed : new Set([...shadowed, ...opened]);
@@ -659,6 +673,7 @@ export function lower(source: string, options: LowerOptions = {}): string {
     }
     const used = collectUsedCoreExports(sf);
     for (const name of importBoundNames(userImports)) used.delete(name);
+    for (const name of statementBoundNames(declarations)) used.delete(name);
     const importDecl = makeCoreImport([...used].sort(), coreModule);
     const lowered = ts.factory.updateSourceFile(sf, [...userImports, importDecl, ...declarations]);
     const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
@@ -679,27 +694,7 @@ export function lower(source: string, options: LowerOptions = {}): string {
   // declarations are moved into the defineProcessor callback, but the options
   // argument is attached outside it, so such a reference would be out of scope at
   // module evaluation. (Reported by @codex on #12.)
-  const bodyBindings = new Set<string>();
-  const collectBindingNames = (name: ts.BindingName): void => {
-    if (ts.isIdentifier(name)) {
-      bodyBindings.add(name.text);
-      return;
-    }
-    // ObjectBindingPattern | ArrayBindingPattern — recurse into each element
-    // (array holes are OmittedExpression, not BindingElement, so they are skipped).
-    for (const el of name.elements) {
-      if (ts.isBindingElement(el)) collectBindingNames(el.name);
-    }
-  };
-  for (const decl of inner) {
-    if (ts.isVariableStatement(decl)) {
-      for (const d of decl.declarationList.declarations) collectBindingNames(d.name);
-    } else if (ts.isFunctionDeclaration(decl) && decl.name !== undefined) {
-      bodyBindings.add(decl.name.text);
-    } else if (ts.isClassDeclaration(decl) && decl.name !== undefined) {
-      bodyBindings.add(decl.name.text);
-    }
-  }
+  const bodyBindings = statementBoundNames(inner);
   const optionRefs = (expr: ts.Expression | undefined): string[] => {
     if (expr === undefined) return [];
     const hits = new Set<string>();
@@ -742,6 +737,11 @@ export function lower(source: string, options: LowerOptions = {}): string {
   // double-binds it (their import provides it). This also strips the user
   // import's own specifier identifiers, which `collectUsedCoreExports` counts.
   for (const name of importBoundNames(userImports)) used.delete(name);
+  // Same for a name the file declares itself: a hoisted `export const clamp`
+  // sits at module scope beside the import (a duplicate binding), and a
+  // declaration left inside the wrapper shadows the import for the whole body,
+  // so no reference could reach it either way.
+  for (const name of statementBoundNames(declarations)) used.delete(name);
   const importDecl = makeCoreImport([...used].sort(), coreModule);
   const optionsArg = makeOptionsArg(migrationsArg, optionsObject);
   const exported = makeDefineProcessor(

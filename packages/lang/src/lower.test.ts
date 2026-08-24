@@ -443,6 +443,38 @@ process(() => {
   );
 });
 
+test("an exported binding whose own name is a DSL root hoists without double-binding it", () => {
+  // The file's `clamp` owns that name for the whole module, so its declaration
+  // is not a reference to the ambient DSL `clamp` — and the injected core
+  // import must not bind the name a second time (a duplicate top-level binding
+  // is a SyntaxError in the emitted module).
+  const lowered = lower(`
+export const clamp = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(clamp(0.25));
+  });
+});
+`);
+  expect(lowered.indexOf("export const clamp")).toBeLessThan(lowered.indexOf("defineProcessor("));
+  expect(importedNames(lowered)).not.toContain("clamp");
+});
+
+test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
+  const lowered = lower(`
+const min = 0.25;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(min);
+  });
+});
+`);
+  expect(importedNames(lowered)).not.toContain("min");
+  expect(lowered.indexOf("const min = 0.25;")).toBeGreaterThan(lowered.indexOf("defineProcessor("));
+});
+
 test("a local binding shadowing a DSL name does not untaint an unshadowed DSL reference", () => {
   // The arrow's own `state` parameter is local, but the initializer also names
   // the real DSL `state` — scope resolution must keep that one tainted.
