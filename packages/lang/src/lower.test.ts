@@ -423,6 +423,46 @@ process(() => {
   );
 });
 
+test("a pure helper whose parameters shadow DSL names hoists (taint resolves through scopes)", () => {
+  // `min` / `max` / `input` are DSL roots, and they are also ordinary parameter
+  // names. A spelling-only scan marks this helper DSL-tainted and rejects it —
+  // the reference has to resolve to its binding, which here is the parameter.
+  const lowered = lower(`
+export function clampTo(input: number, min: number, max: number): number {
+  return input < min ? min : input > max ? max : input;
+}
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(clampTo(0.25, 0, 1));
+  });
+});
+`);
+  expect(lowered.indexOf("export function clampTo")).toBeLessThan(
+    lowered.indexOf("defineProcessor("),
+  );
+});
+
+test("a local binding shadowing a DSL name does not untaint an unshadowed DSL reference", () => {
+  // The arrow's own `state` parameter is local, but the initializer also names
+  // the real DSL `state` — scope resolution must keep that one tainted.
+  try {
+    lower(`
+export const level = ((state: number) => state * 2)(0.5) + state.f32(0).read();
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(level);
+  });
+});
+`);
+    expect.unreachable("lower() must reject an export reaching the real DSL `state`");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
 test("a local export list (`export { X }`) hoists together with its bindings", () => {
   const lowered = lower(`
 const GAIN = 0.5;

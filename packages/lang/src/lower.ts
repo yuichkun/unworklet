@@ -381,18 +381,79 @@ function partitionModuleScopeExports(statements: readonly ts.Statement[]): {
     return false;
   };
 
+  /** Every name a binding pattern introduces (`a`, `{ b }`, `[c, ...d]`). */
+  const collectBindingNames = (name: ts.BindingName, into: Set<string>): void => {
+    if (ts.isIdentifier(name)) {
+      into.add(name.text);
+      return;
+    }
+    for (const element of name.elements) {
+      if (ts.isBindingElement(element)) collectBindingNames(element.name, into);
+    }
+  };
+
+  /**
+   * The names a node binds in the scope it opens, or null when it opens none.
+   * `input`, `min`, `out` and friends are DSL roots AND everyday parameter
+   * names, so a reference has to be resolved against the scopes enclosing it —
+   * matching on spelling alone rejects pure helpers that never touch the DSL.
+   */
+  const scopeBindings = (n: ts.Node): Set<string> | null => {
+    const names = new Set<string>();
+    const addStatementBindings = (body: readonly ts.Statement[]): void => {
+      for (const s of body) {
+        if (ts.isVariableStatement(s)) {
+          for (const d of s.declarationList.declarations) collectBindingNames(d.name, names);
+        } else if (
+          (ts.isFunctionDeclaration(s) || ts.isClassDeclaration(s)) &&
+          s.name !== undefined
+        ) {
+          names.add(s.name.text);
+        }
+      }
+    };
+    if (ts.isFunctionLike(n)) {
+      for (const p of n.parameters) collectBindingNames(p.name, names);
+      if ((ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n)) && n.name !== undefined) {
+        names.add(n.name.text);
+      }
+    } else if (ts.isBlock(n) || ts.isModuleBlock(n)) {
+      addStatementBindings(n.statements);
+    } else if (ts.isCaseBlock(n)) {
+      // One block scope spans every clause of the switch.
+      for (const clause of n.clauses) addStatementBindings(clause.statements);
+    } else if (ts.isCatchClause(n)) {
+      if (n.variableDeclaration !== undefined)
+        collectBindingNames(n.variableDeclaration.name, names);
+    } else if (ts.isForStatement(n) || ts.isForOfStatement(n) || ts.isForInStatement(n)) {
+      const init = n.initializer;
+      if (init !== undefined && ts.isVariableDeclarationList(init)) {
+        for (const d of init.declarations) collectBindingNames(d.name, names);
+      }
+    } else if ((ts.isClassDeclaration(n) || ts.isClassExpression(n)) && n.name !== undefined) {
+      names.add(n.name.text);
+    }
+    return names.size > 0 ? names : null;
+  };
+
   const refs = statements.map((stmt) => {
     const bindings = new Set<number>();
     const dsl = new Set<string>();
-    const visit = (n: ts.Node): void => {
-      if (ts.isIdentifier(n) && !isNamePosition(n)) {
+    const visit = (n: ts.Node, shadowed: ReadonlySet<string>): void => {
+      if (ts.isIdentifier(n) && !isNamePosition(n) && !shadowed.has(n.text)) {
         if (DSL_TAINT_ROOTS.has(n.text)) dsl.add(n.text);
         const b = bindingOf.get(n.text);
         if (b !== undefined) bindings.add(b);
       }
-      ts.forEachChild(n, visit);
+      const opened = scopeBindings(n);
+      const inner = opened === null ? shadowed : new Set([...shadowed, ...opened]);
+      ts.forEachChild(n, (child) => {
+        visit(child, inner);
+      });
     };
-    visit(stmt);
+    // The statement's own top-level bindings stay visible: they are the module
+    // bindings the dependency edges are drawn between.
+    visit(stmt, new Set<string>());
     return { bindings, dsl };
   });
 
