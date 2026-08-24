@@ -329,6 +329,15 @@ function statementWrites(stmt: ts.Statement): Set<string> {
   };
   const walk = (n: ts.Node, shadowed: ReadonlySet<string>): void => {
     if (ts.isFunctionLike(n)) return;
+    // An INSTANCE field initializer runs when an instance is constructed, not
+    // where the class stands — like a function body. A static field (and a
+    // static block) runs at class definition, so those keep counting.
+    if (
+      ts.isPropertyDeclaration(n) &&
+      !(ts.getModifiers(n) ?? []).some((m) => m.kind === ts.SyntaxKind.StaticKeyword)
+    ) {
+      return;
+    }
     if (ts.isBinaryExpression(n) && isAssignmentOperator(n.operatorToken.kind)) {
       target(n.left, shadowed);
     }

@@ -1598,6 +1598,71 @@ process(() => {
   }
 });
 
+test("an instance field initializer is not a write where the class stands", () => {
+  // It runs when an instance is constructed, so it does not precede the export
+  // the way a statement does.
+  const lowered = lower(`
+const helper = { value: 0 };
+class C {
+  field = (helper.value = 1);
+}
+void C;
+export const value = helper.value;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
+test("a STATIC field initializer does write where the class stands", () => {
+  try {
+    lower(`
+const helper = { value: 0 };
+class C {
+  static field = (helper.value = 1);
+}
+void C;
+export const value = helper.value;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+    expect.unreachable("lower() must see a static field initializer's write");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("a destructuring default target is a write", () => {
+  try {
+    lower(`
+let helper = 0;
+const source = { x: 2 };
+({ x: helper = 1 } = source);
+export const value = helper;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+    expect.unreachable("lower() must see a destructuring default target as a write");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+    expect((e as LowerError).message).toContain("helper");
+  }
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;
