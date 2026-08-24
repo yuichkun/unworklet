@@ -1195,6 +1195,26 @@ process(() => {
   expect(lowered.indexOf("export type Signal")).toBeLessThan(lowered.indexOf("defineProcessor("));
 });
 
+test("a class `extends` expression is a value, not an erased heritage type", () => {
+  // `extends makeBase(input)` runs at class evaluation, so it reads the ambient
+  // input that lives inside the capture — the class cannot leave the wrapper.
+  try {
+    lower(`
+const makeBase = (x: unknown): unknown => class {};
+export class Helper extends (makeBase(input) as new () => object) {}
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(0.25);
+  });
+});
+`);
+    expect.unreachable("lower() must reject a class whose heritage reads the ambient input");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;

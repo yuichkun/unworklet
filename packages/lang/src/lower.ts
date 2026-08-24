@@ -721,8 +721,25 @@ function partitionModuleScopeExports(
         scopedChild = n.trueType;
         if (inferred.size > 0) scopedNames = new Set([...inner, ...inferred]);
       }
+      // A class `extends` clause is an EXPRESSION that runs at evaluation, even
+      // though its node satisfies `isTypeNode` like an interface's heritage
+      // does. Reading it as erased would drop a real dependency.
+      const heritage = n.parent as ts.Node | undefined;
+      const classExtendsExpr =
+        ts.isExpressionWithTypeArguments(n) &&
+        heritage !== undefined &&
+        ts.isHeritageClause(heritage) &&
+        heritage.token === ts.SyntaxKind.ExtendsKeyword &&
+        heritage.parent !== undefined &&
+        (ts.isClassDeclaration(heritage.parent) || ts.isClassExpression(heritage.parent))
+          ? n.expression
+          : undefined;
       ts.forEachChild(n, (child) => {
-        visit(child, child === scopedChild ? scopedNames : inner, childPosition);
+        visit(
+          child,
+          child === scopedChild ? scopedNames : inner,
+          child === classExtendsExpr ? "value" : childPosition,
+        );
       });
     };
     // The statement's own top-level bindings stay visible: they are the module
