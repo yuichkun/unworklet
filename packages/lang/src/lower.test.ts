@@ -696,6 +696,44 @@ process(() => {
   expect(lowered.indexOf("interface Level")).toBeLessThan(lowered.indexOf("defineProcessor("));
 });
 
+test("every declaration of a merged binding travels with a hoisted export", () => {
+  // Namespaces (and interfaces, and function overloads) merge across
+  // statements. Carrying only the last one out leaves the hoisted name missing
+  // half of itself.
+  const lowered = lower(`
+namespace Tuning { export const A4 = 440; }
+namespace Tuning { export const REF = 69; }
+export const BASE = Tuning.A4 / Tuning.REF;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(BASE);
+  });
+});
+`);
+  const defineAt = lowered.indexOf("defineProcessor(");
+  expect(lowered.indexOf("A4 = 440")).toBeLessThan(defineAt);
+  expect(lowered.indexOf("REF = 69")).toBeLessThan(defineAt);
+  expect(lowered.indexOf("export const BASE")).toBeLessThan(defineAt);
+});
+
+test("a destructuring property key is a name, not a reference to the DSL", () => {
+  // `input` here is the key being read from, not a value the helper depends on
+  // — the only binding it introduces is `value`.
+  const lowered = lower(`
+export function read({ input: value }: { input: number }): number {
+  return value;
+}
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(read({ input: 0.25 }));
+  });
+});
+`);
+  expect(lowered.indexOf("export function read")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;

@@ -406,12 +406,20 @@ function partitionModuleScopeExports(
   // (`const Level = ...` beside `interface Level {}`). One map would let
   // whichever came last answer for both, so a value reference could resolve to
   // a type declaration and follow the wrong dependency out of the wrapper.
-  const valueBindingOf = new Map<string, number>();
-  const typeBindingOf = new Map<string, number>();
+  // Each name maps to EVERY statement declaring it: namespaces, interfaces and
+  // function overloads merge across statements, and a hoisted export needs all
+  // the pieces of what it names, not the last one written.
+  const valueBindingOf = new Map<string, number[]>();
+  const typeBindingOf = new Map<string, number[]>();
+  const record = (map: Map<string, number[]>, name: string, idx: number): void => {
+    const existing = map.get(name);
+    if (existing === undefined) map.set(name, [idx]);
+    else existing.push(idx);
+  };
   statements.forEach((stmt, idx) => {
     if (ts.isVariableStatement(stmt)) {
       for (const d of stmt.declarationList.declarations) {
-        if (ts.isIdentifier(d.name)) valueBindingOf.set(d.name.text, idx);
+        if (ts.isIdentifier(d.name)) record(valueBindingOf, d.name.text, idx);
       }
       return;
     }
@@ -427,7 +435,7 @@ function partitionModuleScopeExports(
       ts.isEnumDeclaration(stmt) ||
       ts.isModuleDeclaration(stmt)
     ) {
-      valueBindingOf.set(name, idx);
+      record(valueBindingOf, name, idx);
     }
     // A type alias or interface binds nothing at runtime, but an exported
     // declaration annotated with one still needs it in scope beside it.
@@ -437,7 +445,7 @@ function partitionModuleScopeExports(
       ts.isTypeAliasDeclaration(stmt) ||
       ts.isInterfaceDeclaration(stmt)
     ) {
-      typeBindingOf.set(name, idx);
+      record(typeBindingOf, name, idx);
     }
   });
 
@@ -447,16 +455,20 @@ function partitionModuleScopeExports(
    */
   type RefPosition = "value" | "type" | "typeQuery";
 
-  const resolveBinding = (name: string, position: RefPosition): number | undefined => {
-    if (position === "value") return valueBindingOf.get(name);
-    if (position === "typeQuery") return valueBindingOf.get(name) ?? typeBindingOf.get(name);
+  const NO_BINDINGS: readonly number[] = [];
+
+  const resolveBinding = (name: string, position: RefPosition): readonly number[] => {
+    if (position === "value") return valueBindingOf.get(name) ?? NO_BINDINGS;
+    if (position === "typeQuery") {
+      return valueBindingOf.get(name) ?? typeBindingOf.get(name) ?? NO_BINDINGS;
+    }
     // A type position falls back to the value namespace for the declarations
     // that name both (class / enum / namespace).
-    return typeBindingOf.get(name) ?? valueBindingOf.get(name);
+    return typeBindingOf.get(name) ?? valueBindingOf.get(name) ?? NO_BINDINGS;
   };
 
-  const addBinding = (into: Set<number>, idx: number | undefined): void => {
-    if (idx !== undefined) into.add(idx);
+  const addBindings = (into: Set<number>, indices: readonly number[]): void => {
+    for (const idx of indices) into.add(idx);
   };
 
   /** Identifier is a NAME position (`a.foo`, `{ foo: v }`), not a value reference. */
@@ -470,6 +482,12 @@ function partitionModuleScopeExports(
     if (ts.isPropertyAssignment(p) && p.name === n) return true;
     if (ts.isMethodDeclaration(p) && p.name === n) return true;
     if (ts.isPropertyDeclaration(p) && p.name === n) return true;
+    // `{ input: value }` — the key names what is read out of the object, not a
+    // binding the statement depends on.
+    if (ts.isBindingElement(p) && p.propertyName === n) return true;
+    if (ts.isEnumMember(p) && p.name === n) return true;
+    if (ts.isGetAccessorDeclaration(p) && p.name === n) return true;
+    if (ts.isSetAccessorDeclaration(p) && p.name === n) return true;
     return false;
   };
 
@@ -520,21 +538,21 @@ function partitionModuleScopeExports(
       if (ts.isExportSpecifier(n)) {
         const local = n.propertyName?.text ?? n.name.text;
         if (n.isTypeOnly || exportIsTypeOnly) {
-          addBinding(bindings, typeBindingOf.get(local) ?? valueBindingOf.get(local));
+          addBindings(bindings, resolveBinding(local, "type"));
         } else {
-          addBinding(bindings, valueBindingOf.get(local));
-          addBinding(bindings, typeBindingOf.get(local));
+          addBindings(bindings, valueBindingOf.get(local) ?? NO_BINDINGS);
+          addBindings(bindings, typeBindingOf.get(local) ?? NO_BINDINGS);
         }
         return;
       }
       if (ts.isIdentifier(n) && !isNamePosition(n) && !shadowed.has(n.text)) {
-        const b = resolveBinding(n.text, position);
+        const declaring = resolveBinding(n.text, position);
         // A module-scope declaration owns the name throughout the module, DSL
         // root or not — `export const clamp = ...` is the file's `clamp`, and
         // its own declaration name is not a reference to the ambient one. Taint
         // still reaches it through the dependency edge when that declaration is
         // itself DSL-tied.
-        if (b !== undefined) bindings.add(b);
+        if (declaring.length > 0) addBindings(bindings, declaring);
         // A name reached only through a type is erased at emit, so it cannot
         // tie the declaration to the capture — `export type Signal =
         // Node<"f32">` names the DSL without depending on it. The dependency
@@ -637,12 +655,13 @@ function partitionModuleScopeExports(
           // `export type { Level }`) takes the type declaration, a plain
           // `export { Level }` takes the value.
           const local = spec.propertyName?.text ?? spec.name.text;
-          const dep = resolveBinding(local, spec.isTypeOnly || stmt.isTypeOnly ? "type" : "value");
-          if (dep === undefined || tainted[dep]) {
+          const deps = resolveBinding(local, spec.isTypeOnly || stmt.isTypeOnly ? "type" : "value");
+          const blocked = deps.find((d) => tainted[d]);
+          if (deps.length === 0 || blocked !== undefined) {
             throw new LowerError(
               "uwk-export-unsupported",
               `\`export { ${spec.name.text} }\` cannot move to module scope: ` +
-                `${dep === undefined ? "the binding is not a top-level declaration" : taintReason(dep)}. ` +
+                `${blocked === undefined ? "the binding is not a top-level declaration" : taintReason(blocked)}. ` +
                 "A value tied to the DSL lives only inside the processor capture — expose it " +
                 "through the processor surface (param / state / event) instead.",
             );
