@@ -2266,6 +2266,55 @@ outer();
   expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
 });
 
+test("`new` runs what the class defers", () => {
+  try {
+    loweredWithMutation(`
+class C {
+  f = (helper.value = 1);
+  constructor() {
+    helper.value = 2;
+  }
+}
+void new C();
+`);
+    expect.unreachable("lower() must see a constructor's and an instance field's writes");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("`new` on a class expression bound to a name is followed", () => {
+  try {
+    loweredWithMutation(`
+const C = class {
+  constructor() {
+    helper.value = 1;
+  }
+};
+void new C();
+`);
+    expect.unreachable("lower() must follow `new` through a named class expression");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("naming a class without `new` runs none of it", () => {
+  const lowered = loweredWithMutation(`
+class C {
+  f = (helper.value = 1);
+  constructor() {
+    helper.value = 2;
+  }
+}
+void C;
+[0].forEach(C as never);
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;

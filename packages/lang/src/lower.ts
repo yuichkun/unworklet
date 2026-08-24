@@ -280,14 +280,17 @@ function collectFunctionScopedVars(
           continue;
         }
         const init = unwrapExpression(d.initializer);
-        if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) {
-          bodies.get(d.name.text)?.push(init);
-        }
+        if (isCallableDeclaration(init)) bodies.get(d.name.text)?.push(init);
       }
     }
     ts.forEachChild(n, walk);
   };
   ts.forEachChild(node, walk);
+}
+
+/** An expression that IS the code a name stands for — not one that computes it. */
+function isCallableDeclaration(expr: ts.Expression): boolean {
+  return ts.isArrowFunction(expr) || ts.isFunctionExpression(expr) || ts.isClassExpression(expr);
 }
 
 /**
@@ -421,6 +424,30 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
         }
         if (!ts.isIdentifier(expr)) continue;
         for (const body of resolve(expr.text)) {
+          // `new C()` runs what the class itself defers: the instance field
+          // initializers and the constructor. Reaching a class any other way
+          // runs neither, so only the callee of a `new` follows it.
+          if (ts.isClassLike(body.node)) {
+            if (!ts.isNewExpression(n) || passed !== n.expression) continue;
+            for (const member of body.node.members) {
+              if (
+                !ts.isConstructorDeclaration(member) &&
+                !(
+                  ts.isPropertyDeclaration(member) &&
+                  !(ts.getModifiers(member) ?? []).some(
+                    (m) => m.kind === ts.SyntaxKind.StaticKeyword,
+                  )
+                )
+              ) {
+                continue;
+              }
+              if (followed.has(member)) continue;
+              followed.add(member);
+              runsNow.add(member);
+              walk(member, body.shadowed, body.resolve);
+            }
+            continue;
+          }
           if (followed.has(body.node)) continue;
           followed.add(body.node);
           runsNow.add(body.node);
@@ -433,6 +460,7 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
     // static block) runs at class definition, so those keep counting.
     if (
       ts.isPropertyDeclaration(n) &&
+      !runsNow.has(n) &&
       !(ts.getModifiers(n) ?? []).some((m) => m.kind === ts.SyntaxKind.StaticKeyword)
     ) {
       walkDecorators(n, shadowed, resolve);
@@ -511,15 +539,16 @@ function scopedFunctionBodies(node: ts.Node, opened: ReadonlySet<string>): Map<s
   for (const name of opened) bodies.set(name, []);
   const fromStatements = (statements: readonly ts.Statement[]): void => {
     for (const stmt of statements) {
-      if (ts.isFunctionDeclaration(stmt) && stmt.name !== undefined) {
+      if (
+        (ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) &&
+        stmt.name !== undefined
+      ) {
         bodies.get(stmt.name.text)?.push(stmt);
       } else if (ts.isVariableStatement(stmt)) {
         for (const d of stmt.declarationList.declarations) {
           if (!ts.isIdentifier(d.name) || d.initializer === undefined) continue;
           const init = unwrapExpression(d.initializer);
-          if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) {
-            bodies.get(d.name.text)?.push(init);
-          }
+          if (isCallableDeclaration(init)) bodies.get(d.name.text)?.push(init);
         }
       }
     }
@@ -1314,14 +1343,15 @@ function partitionModuleScopeExports(
     for (const decl of valueBindingOf.get(name) ?? NO_BINDINGS) {
       const declared = statements[decl];
       if (declared === undefined) continue;
-      if (ts.isFunctionDeclaration(declared)) bodies.push(declared);
-      else if (ts.isVariableStatement(declared)) {
+      if (ts.isFunctionDeclaration(declared) || ts.isClassDeclaration(declared)) {
+        bodies.push(declared);
+      } else if (ts.isVariableStatement(declared)) {
         for (const d of declared.declarationList.declarations) {
           if (!ts.isIdentifier(d.name) || d.name.text !== name || d.initializer === undefined) {
             continue;
           }
           const init = unwrapExpression(d.initializer);
-          if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) bodies.push(init);
+          if (isCallableDeclaration(init)) bodies.push(init);
         }
       }
     }
