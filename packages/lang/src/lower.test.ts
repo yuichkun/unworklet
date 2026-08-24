@@ -640,6 +640,62 @@ process(() => {
   expect(lowered.indexOf("export const CURRENT")).toBeLessThan(defineAt);
 });
 
+test("`typeof X` reads the value namespace even when a type shares the name", () => {
+  // `typeof Level` names the const, so hoisting the alias would need that
+  // DSL-tied value at module scope — the interface must not answer for it.
+  try {
+    lower(`
+const Level = state.f32(0);
+interface Level { db: number }
+export type Snapshot = typeof Level;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(0.25);
+  });
+});
+`);
+    expect.unreachable("lower() must reject a type query reaching a DSL-tied value");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("`export { type X }` selects the type declaration, not the value sharing its name", () => {
+  const lowered = lower(`
+const Level = state.f32(0);
+interface Level { db: number }
+export { type Level };
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(Level.read());
+  });
+});
+`);
+  const defineAt = lowered.indexOf("defineProcessor(");
+  expect(lowered.indexOf("interface Level")).toBeLessThan(defineAt);
+  expect(lowered.indexOf("export { type Level }")).toBeLessThan(defineAt);
+  // The DSL-tied const belongs to the capture and stays in the wrapper.
+  expect(lowered.indexOf("const Level = state.f32(0)")).toBeGreaterThan(defineAt);
+});
+
+test("`export type { X }` selects the type declaration too", () => {
+  const lowered = lower(`
+const Level = state.f32(0);
+interface Level { db: number }
+export type { Level };
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(Level.read());
+  });
+});
+`);
+  expect(lowered.indexOf("interface Level")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;

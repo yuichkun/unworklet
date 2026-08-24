@@ -441,6 +441,24 @@ function partitionModuleScopeExports(
     }
   });
 
+  /**
+   * Which namespace a reference reads. `typeQuery` is a `typeof X` inside a
+   * type: erased like any type, but naming a VALUE.
+   */
+  type RefPosition = "value" | "type" | "typeQuery";
+
+  const resolveBinding = (name: string, position: RefPosition): number | undefined => {
+    if (position === "value") return valueBindingOf.get(name);
+    if (position === "typeQuery") return valueBindingOf.get(name) ?? typeBindingOf.get(name);
+    // A type position falls back to the value namespace for the declarations
+    // that name both (class / enum / namespace).
+    return typeBindingOf.get(name) ?? valueBindingOf.get(name);
+  };
+
+  const addBinding = (into: Set<number>, idx: number | undefined): void => {
+    if (idx !== undefined) into.add(idx);
+  };
+
   /** Identifier is a NAME position (`a.foo`, `{ foo: v }`), not a value reference. */
   const isNamePosition = (n: ts.Identifier): boolean => {
     // Synthesized nodes (auto-name / sugar factory updates) carry no parent;
@@ -493,14 +511,24 @@ function partitionModuleScopeExports(
   const refs = statements.map((stmt) => {
     const bindings = new Set<number>();
     const dsl = new Set<string>();
-    const visit = (n: ts.Node, shadowed: ReadonlySet<string>, inType: boolean): void => {
+    const exportIsTypeOnly = ts.isExportDeclaration(stmt) && stmt.isTypeOnly;
+    const visit = (n: ts.Node, shadowed: ReadonlySet<string>, position: RefPosition): void => {
+      // An export specifier names a binding directly rather than referencing
+      // one, and it chooses its namespace: `export { type Level }` takes the
+      // type, a plain `export { Level }` takes the value and carries the type
+      // of a merged name along with it.
+      if (ts.isExportSpecifier(n)) {
+        const local = n.propertyName?.text ?? n.name.text;
+        if (n.isTypeOnly || exportIsTypeOnly) {
+          addBinding(bindings, typeBindingOf.get(local) ?? valueBindingOf.get(local));
+        } else {
+          addBinding(bindings, valueBindingOf.get(local));
+          addBinding(bindings, typeBindingOf.get(local));
+        }
+        return;
+      }
       if (ts.isIdentifier(n) && !isNamePosition(n) && !shadowed.has(n.text)) {
-        // A type position resolves in the type namespace, falling back to the
-        // value one for the declarations that name both (class / enum /
-        // namespace) and for a `typeof x` query.
-        const b = inType
-          ? (typeBindingOf.get(n.text) ?? valueBindingOf.get(n.text))
-          : valueBindingOf.get(n.text);
+        const b = resolveBinding(n.text, position);
         // A module-scope declaration owns the name throughout the module, DSL
         // root or not — `export const clamp = ...` is the file's `clamp`, and
         // its own declaration name is not a reference to the ambient one. Taint
@@ -512,21 +540,28 @@ function partitionModuleScopeExports(
         // Node<"f32">` names the DSL without depending on it. The dependency
         // edge above still applies: an annotation's own type alias has to
         // travel with the declaration it annotates.
-        else if (inType) return;
+        else if (position !== "value") return;
         else if (imported.dsl.has(n.text)) dsl.add(n.text);
         else if (!imported.other.has(n.text) && DSL_TAINT_ROOTS.has(n.text)) dsl.add(n.text);
       }
       const opened = scopeBindings(n);
       const inner = opened === null ? shadowed : new Set([...shadowed, ...opened]);
-      const childInType =
-        inType || ts.isTypeNode(n) || ts.isTypeAliasDeclaration(n) || ts.isInterfaceDeclaration(n);
+      // `typeof X` sits inside a type but names a VALUE, so its entity name
+      // keeps resolving in the value namespace all the way down.
+      const childPosition: RefPosition = ts.isTypeQueryNode(n)
+        ? "typeQuery"
+        : position !== "value"
+          ? position
+          : ts.isTypeNode(n) || ts.isTypeAliasDeclaration(n) || ts.isInterfaceDeclaration(n)
+            ? "type"
+            : "value";
       ts.forEachChild(n, (child) => {
-        visit(child, inner, childInType);
+        visit(child, inner, childPosition);
       });
     };
     // The statement's own top-level bindings stay visible: they are the module
     // bindings the dependency edges are drawn between.
-    visit(stmt, new Set<string>(), false);
+    visit(stmt, new Set<string>(), "value");
     return { bindings, dsl };
   });
 
@@ -598,10 +633,11 @@ function partitionModuleScopeExports(
       // `export { a, b }` — every named binding must be hoistable.
       if (stmt.exportClause !== undefined && ts.isNamedExports(stmt.exportClause)) {
         for (const spec of stmt.exportClause.elements) {
-          // An export list can name either namespace (`export { Level }` for
-          // the value, `export { type Level }` for the type).
+          // An export list picks its namespace: `export { type Level }` (or
+          // `export type { Level }`) takes the type declaration, a plain
+          // `export { Level }` takes the value.
           const local = spec.propertyName?.text ?? spec.name.text;
-          const dep = valueBindingOf.get(local) ?? typeBindingOf.get(local);
+          const dep = resolveBinding(local, spec.isTypeOnly || stmt.isTypeOnly ? "type" : "value");
           if (dep === undefined || tainted[dep]) {
             throw new LowerError(
               "uwk-export-unsupported",
