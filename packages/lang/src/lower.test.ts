@@ -2075,6 +2075,81 @@ process(() => {
   expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
 });
 
+/** Sources sharing the write-blocking shape: a mutation reached through a call. */
+function loweredWithMutation(body: string): string {
+  return lower(`
+const helper = { value: 0 };
+${body}
+export const value = helper.value;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+}
+
+test("a call to a function declared here carries its writes", () => {
+  try {
+    loweredWithMutation(`function mutate() {\n  helper.value = 1;\n}\nmutate();`);
+    expect.unreachable("lower() must see the write the call performs");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("a callback handed to a call is not deferred", () => {
+  try {
+    loweredWithMutation(`[0].forEach(() => {\n  helper.value = 1;\n});`);
+    expect.unreachable("lower() must see the write inside a callback argument");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("an immediately invoked function is not deferred", () => {
+  try {
+    loweredWithMutation(`(() => {\n  helper.value = 1;\n})();`);
+    expect.unreachable("lower() must see the write inside an IIFE");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("a called function's parameter shadows the module name", () => {
+  const lowered = loweredWithMutation(`
+const other = { value: 0 };
+function set(helper: { value: number }) {
+  helper.value = 1;
+}
+set(other);
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
+test("following calls terminates on mutual recursion", () => {
+  try {
+    loweredWithMutation(`
+function a() {
+  b();
+}
+function b() {
+  a();
+  helper.value = 1;
+}
+a();
+`);
+    expect.unreachable("lower() must see the write behind a recursive call pair");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;

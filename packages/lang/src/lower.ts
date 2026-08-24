@@ -293,8 +293,16 @@ function unwrapExpression(expr: ts.Expression): ts.Expression {
   }
 }
 
-function statementWrites(stmt: ts.Statement): Set<string> {
+/** The function bodies a called name stands for, when this file declares it. */
+type CalleeBodies = (name: string) => readonly ts.Node[];
+
+function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<string> {
   const names = new Set<string>();
+  // Function bodies that run while this statement does, rather than whenever
+  // someone later calls them: a callback handed to a call, an IIFE, and the
+  // body of a function this file declares and this statement calls.
+  const runsNow = new Set<ts.Node>();
+  const followed = new Set<ts.Node>();
   // A write to a name a nested block declares for itself is that local's, not
   // the module binding's — the same spelling-versus-resolution rule the export
   // taint follows. Only block-scoped declarations shadow: a `var` inside a
@@ -340,13 +348,34 @@ function statementWrites(stmt: ts.Statement): Set<string> {
     for (const d of ts.getDecorators(n) ?? []) walk(d.expression, shadowed);
   };
   const walk = (n: ts.Node, shadowed: ReadonlySet<string>): void => {
-    if (ts.isFunctionLike(n)) {
+    if (ts.isFunctionLike(n) && !runsNow.has(n)) {
       walkDecorators(n, shadowed);
       walkComputedName(n, shadowed);
       // A parameter DECORATOR is applied with the class; a parameter DEFAULT is
       // evaluated per call, so only the decorators count where the class stands.
       for (const p of n.parameters) walkDecorators(p, shadowed);
       return;
+    }
+    // A call runs code the statement does not contain. Where that code is in
+    // this file its writes belong to the statement, because they land before
+    // the statement after it reads anything. A call whose body this file cannot
+    // see — an import, a method, an expression callee — is not followed.
+    if (ts.isCallExpression(n) || ts.isNewExpression(n)) {
+      for (const arg of [n.expression, ...(n.arguments ?? [])]) {
+        const fn = unwrapExpression(arg);
+        if (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) runsNow.add(fn);
+      }
+      const callee = unwrapExpression(n.expression);
+      if (ts.isIdentifier(callee) && calleeBodies !== undefined) {
+        for (const fn of calleeBodies(callee.text)) {
+          if (followed.has(fn)) continue;
+          followed.add(fn);
+          runsNow.add(fn);
+          // Its own scope, so it starts from nothing shadowed: what its body
+          // writes free resolves at module scope, which is what is at stake.
+          walk(fn, new Set<string>());
+        }
+      }
     }
     // An INSTANCE field initializer runs when an instance is constructed, not
     // where the class stands — like a function body. A static field (and a
@@ -382,8 +411,19 @@ function statementWrites(stmt: ts.Statement): Set<string> {
     }
     const opened = blockScopedNames(n);
     const inner = opened === null ? shadowed : new Set([...shadowed, ...opened]);
+    // A function's body sees its `var`s throughout, but a default parameter
+    // initializer runs before any of them exist — so the body child gets the
+    // wider scope and the parameters keep the narrower one.
+    let body: ts.Node | undefined;
+    let bodyNames = inner;
+    if (ts.isFunctionLike(n)) {
+      const vars = new Set<string>();
+      collectFunctionScopedVars(n, vars);
+      body = (n as { body?: ts.Node }).body;
+      if (vars.size > 0) bodyNames = new Set([...inner, ...vars]);
+    }
     ts.forEachChild(n, (child) => {
-      walk(child, inner);
+      walk(child, child === body ? bodyNames : inner);
     });
   };
   walk(stmt, new Set<string>());
@@ -403,6 +443,17 @@ function blockScopedNames(node: ts.Node): Set<string> | null {
   // A class static block is its own `var` scope, so a `var` inside one is the
   // block's — the exclusion below applies to ordinary blocks, where a `var`
   // belongs to the enclosing function or module.
+  // Only asked of a function whose body actually runs here — the walk stops at
+  // a deferred one before getting this far.
+  if (ts.isFunctionLike(node)) {
+    for (const p of node.parameters) collectBindingNames(p.name, names);
+    if (
+      (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) &&
+      node.name !== undefined
+    ) {
+      names.add(node.name.text);
+    }
+  }
   if (ts.isClassStaticBlockDeclaration(node)) collectFunctionScopedVars(node, names);
   // A class binds its own name inside itself: in `class helper { static {
   // helper.x = 1 } }` that write lands on the class, not on a module `helper`.
@@ -1152,9 +1203,29 @@ function partitionModuleScopeExports(
   // makes it read a value the source never gives it — silently. A write that
   // stands after what it cannot affect is fine: source order already gives the
   // earlier statement the pre-write value.
+  // The function bodies a called name stands for. Only a name this file
+  // declares as a function resolves; anything else the write walk leaves alone.
+  const calleeBodies = (name: string): readonly ts.Node[] => {
+    const bodies: ts.Node[] = [];
+    for (const decl of valueBindingOf.get(name) ?? NO_BINDINGS) {
+      const declared = statements[decl];
+      if (declared === undefined) continue;
+      if (ts.isFunctionDeclaration(declared)) bodies.push(declared);
+      else if (ts.isVariableStatement(declared)) {
+        for (const d of declared.declarationList.declarations) {
+          if (!ts.isIdentifier(d.name) || d.name.text !== name || d.initializer === undefined) {
+            continue;
+          }
+          const init = unwrapExpression(d.initializer);
+          if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) bodies.push(init);
+        }
+      }
+    }
+    return bodies;
+  };
   for (const [i, stmt] of statements.entries()) {
     if (mustHoist.has(i)) continue;
-    const written = statementWrites(stmt);
+    const written = statementWrites(stmt, calleeBodies);
     if (written.size === 0) continue;
     // `const alias = helper; alias.value = 1` writes what `helper` holds, so a
     // write follows a chain of bare-identifier aliases back to its source. An
