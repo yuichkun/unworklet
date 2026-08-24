@@ -153,9 +153,18 @@ to a 0.2.x build.
   JavaScript. Exports now hoist to module scope together with their
   (DSL-free) dependency closure; a DSL-tied or unsupported export is a loud
   `uwk-export-unsupported` LowerError instead of broken emit. Whether an export
-  touches the DSL is decided by resolving each reference against the scopes
-  around it, so a pure helper is not rejected for naming its parameters after
-  DSL identifiers (`export function clampTo(input, min, max)` hoists).
+  touches the DSL is decided by resolving each reference against the scopes and
+  namespaces around it, so a pure helper is not rejected for naming its
+  parameters after DSL identifiers (`export function clampTo(input, min, max)`
+  hoists), and a hoisted declaration takes its whole dependency closure with it
+  — values, the type aliases its annotations name, and every declaration of a
+  merged name.
+- **A `.uwk.ts` cannot rebind what the lowering generates.** `defineProcessor`
+  always, and the ambient `input` / `out` plus `audioInput` / `audioOutput`
+  when the file declares no audio I/O, are reserved: a declaration of one would
+  silently take the generated code's place. It is a `uwk-reserved-binding`
+  LowerError. Declaring your own output suppresses the ambient injection, so
+  `const out = audioOutput({...})` is unaffected.
 - **Re-exporting the processor as `default` is accepted.** `export const wave
 = defineProcessor(...); export default wave;` was rejected as "multiple
   processors"; the count is now by value identity, and the named binding wins

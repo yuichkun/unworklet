@@ -69,7 +69,15 @@ Rules (all in `packages/lang/src/lower.ts`):
   to the DSL (`export const gain = param.f32(...)`), an `export default`, or an
   exported destructuring declaration is rejected with `uwk-export-unsupported`
   — expose DSL values through the processor surface (param / state / event)
-  instead.
+  instead. Whether a declaration is DSL-tied is decided by what its references
+  resolve to, not how they are spelled: naming a parameter `input` or `min`, or
+  declaring your own `clamp`, is fine.
+- **The names the lowering generates are reserved** — `defineProcessor` always,
+  and the ambient `input` / `out` plus `audioInput` / `audioOutput` when the
+  file declares no audio I/O of its own. Declaring one is
+  `uwk-reserved-binding`, because the generated code would resolve to your
+  binding instead. Declaring your own output (`const out = audioOutput({...})`)
+  suppresses the injection, so that canonical line is unaffected.
 - **Type-checking:** add `// @ts-nocheck` at the top, OR use the editor plugin /
   `unworklet-tsc` (see `ide-and-typecheck.md`). The `// @ts-nocheck` is needed _only_ without
   the editor plugin.
