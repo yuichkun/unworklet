@@ -390,22 +390,15 @@ function statementWrites(stmt: ts.Statement): Set<string> {
   return names;
 }
 
-/** Names a node block-scopes, or null when it scopes none. `var` is excluded: it
- * belongs to the enclosing function or module, so it shadows nothing here. */
+/** Names a node block-scopes, or null when it scopes none. A `var` is excluded
+ * where it belongs to the enclosing function or module; the scopes that own
+ * their own `var`s — a class static block, a namespace body — collect theirs. */
 function blockScopedNames(node: ts.Node): Set<string> | null {
   const names = new Set<string>();
+  // The same list the reference walker binds from, so the two cannot drift over
+  // which declaration forms name something.
   const fromStatements = (body: readonly ts.Statement[]): void => {
-    for (const s of body) {
-      if (ts.isVariableStatement(s)) {
-        if ((s.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) continue;
-        for (const d of s.declarationList.declarations) collectBindingNames(d.name, names);
-      } else if (
-        (ts.isFunctionDeclaration(s) || ts.isClassDeclaration(s)) &&
-        s.name !== undefined
-      ) {
-        names.add(s.name.text);
-      }
-    }
+    for (const name of statementBoundNames(body, { blockScopedOnly: true })) names.add(name);
   };
   // A class static block is its own `var` scope, so a `var` inside one is the
   // block's — the exclusion below applies to ordinary blocks, where a `var`
@@ -416,8 +409,12 @@ function blockScopedNames(node: ts.Node): Set<string> | null {
   // A declaration's name is block-scoped by its enclosing block as well; an
   // expression's is bound here and nowhere else.
   if (ts.isClassLike(node) && node.name !== undefined) names.add(node.name.text);
-  if (ts.isBlock(node) || ts.isModuleBlock(node)) fromStatements(node.statements);
-  else if (ts.isCaseBlock(node)) for (const c of node.clauses) fromStatements(c.statements);
+  if (ts.isBlock(node) || ts.isModuleBlock(node)) {
+    fromStatements(node.statements);
+    // A namespace body is its own `var` scope: the outer collector stops at the
+    // boundary, so the block collects what is nested inside it.
+    if (ts.isModuleBlock(node)) collectFunctionScopedVars(node, names);
+  } else if (ts.isCaseBlock(node)) for (const c of node.clauses) fromStatements(c.statements);
   else if (ts.isCatchClause(node) && node.variableDeclaration !== undefined) {
     collectBindingNames(node.variableDeclaration.name, names);
   } else if (ts.isForStatement(node) || ts.isForOfStatement(node) || ts.isForInStatement(node)) {
@@ -458,10 +455,21 @@ function collectInferNames(node: ts.Node, into: Set<string>): void {
 }
 
 /** The names a statement list binds in the scope it belongs to. */
-function statementBoundNames(statements: readonly ts.Statement[]): Set<string> {
+function statementBoundNames(
+  statements: readonly ts.Statement[],
+  options?: { readonly blockScopedOnly?: boolean },
+): Set<string> {
   const names = new Set<string>();
   for (const stmt of statements) {
     if (ts.isVariableStatement(stmt)) {
+      // A `var` belongs to the enclosing function or module, so a caller asking
+      // what a BLOCK binds does not get it.
+      if (
+        options?.blockScopedOnly === true &&
+        (stmt.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0
+      ) {
+        continue;
+      }
       for (const d of stmt.declarationList.declarations) collectBindingNames(d.name, names);
     } else if (
       (ts.isFunctionDeclaration(stmt) ||

@@ -1901,6 +1901,92 @@ process(() => {
   }
 });
 
+test("a namespace body is its own `var` scope for writes", () => {
+  const lowered = lower(`
+const helper = { value: 0 };
+namespace N {
+  var helper = { value: 0 };
+  helper.value = 1;
+}
+export const value = helper.value;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
+test("a namespace's NESTED `var` belongs to the namespace", () => {
+  const lowered = lower(`
+const helper = { value: 0 };
+namespace N {
+  {
+    var helper = { value: 0 };
+  }
+  helper.value = 1;
+}
+export const value = helper.value;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
+test("a block-scoped namespace or enum name shadows a write target", () => {
+  const lowered = lower(`
+const helper = { value: 0 };
+{
+  namespace helper {
+    export const x = 1;
+  }
+  helper.value = 1;
+}
+{
+  enum helper {
+    A,
+  }
+  helper.value = 1;
+}
+export const value = helper.value;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
+test("a namespace's UNshadowed write is still seen", () => {
+  try {
+    lower(`
+const helper = { value: 0 };
+namespace N {
+  helper.value = 1;
+}
+export const value = helper.value;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+    expect.unreachable("lower() must see a write a namespace does not shadow");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;
