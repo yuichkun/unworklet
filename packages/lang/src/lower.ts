@@ -249,8 +249,16 @@ function collectBindingNames(name: ts.BindingName, into: Set<string>): void {
  */
 function collectFunctionScopedVars(node: ts.Node, into: Set<string>): void {
   const walk = (n: ts.Node): void => {
-    // A function and a class static block each open their own `var` scope.
-    if (ts.isFunctionLike(n) || ts.isClassStaticBlockDeclaration(n)) return;
+    // A function, a class static block and a namespace each open their own
+    // `var` scope, so a `var` inside one is not the outer scope's.
+    if (
+      ts.isFunctionLike(n) ||
+      ts.isClassStaticBlockDeclaration(n) ||
+      ts.isModuleDeclaration(n) ||
+      ts.isModuleBlock(n)
+    ) {
+      return;
+    }
     if (
       ts.isVariableDeclarationList(n) &&
       (n.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0
@@ -584,6 +592,8 @@ function partitionModuleScopeExports(
     if (typeParameters !== undefined) {
       for (const tp of typeParameters) names.add(tp.name.text);
     }
+    // A mapped type carries a singular `typeParameter` — `{ [K in Keys]: T }`.
+    if (ts.isMappedTypeNode(n)) names.add(n.typeParameter.name.text);
     if (ts.isClassStaticBlockDeclaration(n)) {
       // Its own `var` scope, collected here so the block sees its nested
       // declarations without leaking them into the enclosing function.

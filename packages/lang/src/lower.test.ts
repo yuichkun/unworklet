@@ -1110,6 +1110,44 @@ process(() => {
   expect(lowered.indexOf("export function pick")).toBeLessThan(lowered.indexOf("defineProcessor("));
 });
 
+test("a `var` inside a namespace is that namespace's, not the module's", () => {
+  // Recording it as an outer binding would make the export look like it
+  // depends on the pure namespace instead of the DSL, and hoist it.
+  try {
+    lower(`
+namespace N {
+  var state = 1;
+  void state;
+}
+export const gain = state.f32(0);
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(gain.read());
+  });
+});
+`);
+    expect.unreachable("lower() must reject an export tied to the DSL `state`");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("a mapped type's parameter shadows a module value of the same name", () => {
+  const lowered = lower(`
+const min = state.f32(0);
+export type Keys = { [min in "x"]: min };
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(min.read());
+  });
+});
+`);
+  expect(lowered.indexOf("export type Keys")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;
