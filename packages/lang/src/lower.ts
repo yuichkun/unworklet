@@ -411,6 +411,11 @@ function blockScopedNames(node: ts.Node): Set<string> | null {
   // block's — the exclusion below applies to ordinary blocks, where a `var`
   // belongs to the enclosing function or module.
   if (ts.isClassStaticBlockDeclaration(node)) collectFunctionScopedVars(node, names);
+  // A class binds its own name inside itself: in `class helper { static {
+  // helper.x = 1 } }` that write lands on the class, not on a module `helper`.
+  // A declaration's name is block-scoped by its enclosing block as well; an
+  // expression's is bound here and nowhere else.
+  if (ts.isClassLike(node) && node.name !== undefined) names.add(node.name.text);
   if (ts.isBlock(node) || ts.isModuleBlock(node)) fromStatements(node.statements);
   else if (ts.isCaseBlock(node)) for (const c of node.clauses) fromStatements(c.statements);
   else if (ts.isCatchClause(node) && node.variableDeclaration !== undefined) {

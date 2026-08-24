@@ -1819,6 +1819,88 @@ process(() => {
   expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
 });
 
+test("a named class expression binds its own name inside itself", () => {
+  const lowered = lower(`
+const helper = { value: 0 };
+const C = class helper {
+  static { helper.value = 1; }
+};
+void C;
+export const value = helper.value;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
+test("a class expression's decorator sees the class name, not the module's", () => {
+  // The decorator list is built inside the scope that holds the class name, so
+  // `helper` there is the class — never the module binding of the same name.
+  const lowered = lower(`
+const helper = { value: 0 };
+const C = (@((helper.value = 1), (() => {})) class helper {});
+void C;
+export const value = helper.value;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
+test("a class expression writing an OUTER name is still seen", () => {
+  try {
+    lower(`
+const helper = { value: 0 };
+const C = class Other {
+  static { helper.value = 1; }
+};
+void C;
+export const value = helper.value;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+    expect.unreachable("lower() must see a write to a name the class does not bind");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("an anonymous class expression binds nothing", () => {
+  try {
+    lower(`
+const helper = { value: 0 };
+const C = class {
+  static { helper.value = 1; }
+};
+void C;
+export const value = helper.value;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+    expect.unreachable("lower() must see a write inside an anonymous class expression");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;
