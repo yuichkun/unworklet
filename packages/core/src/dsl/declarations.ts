@@ -23,7 +23,7 @@ import type {
   StateDecl,
 } from "../compile/ast.ts";
 import { inferAstType } from "../compile/ast.ts";
-import { SAMPLES_PER_BLOCK } from "./constants.ts";
+import { SAMPLES_PER_BLOCK, SIMD_LANE_COUNT } from "./constants.ts";
 import {
   addDeclaration,
   addStatement,
@@ -468,6 +468,22 @@ function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer
     }
     return unwrapAst(idx);
   };
+  // A lane window spans SIMD_LANE_COUNT elements, so a buffer holding fewer has
+  // no in-bounds offset at all: the runtime index clamp saturates into
+  // `[0, size - SIMD_LANE_COUNT]`, which is empty here, and the 16-byte access
+  // would still run past the buffer into the next region. Rejected at capture —
+  // a dynamic offset carries no literal for `liftIndex` to range-check.
+  const requireVecWindow = (op: string): void => {
+    if (decl.size < SIMD_LANE_COUNT) {
+      throw new Error(
+        `unworklet: buffer "${decl.name}" ${op}() needs at least ${SIMD_LANE_COUNT} elements, ` +
+          `but the buffer holds ${decl.size} — a ${SIMD_LANE_COUNT}-lane access reads/writes ` +
+          `${SIMD_LANE_COUNT * 4} bytes and no offset keeps that inside the buffer. Declare it ` +
+          `with size >= ${SIMD_LANE_COUNT}, or use read() / write(). ` +
+          `(stable ID 'simd-buffer-too-small')`,
+      );
+    }
+  };
   const handle = {
     get size() {
       return decl.size;
@@ -571,17 +587,20 @@ function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer
     // SIMD buffer I/O (= §7; the type is restricted to f32 via the declaration
     // merge in @unworklet/core/simd). The offset is in element units = ×4 bytes on
     // the emit side. Load/store 4 lanes as a v128.
-    loadVec: (offset: Node<"i32"> | number) =>
-      wrapAst<"f32x4">({
+    loadVec: (offset: Node<"i32"> | number) => {
+      requireVecWindow("loadVec");
+      return wrapAst<"f32x4">({
         kind: "bufferLoadVec",
         name: decl.name,
-        offset: liftIndex(offset, "loadVec", 4),
-      }),
+        offset: liftIndex(offset, "loadVec", SIMD_LANE_COUNT),
+      });
+    },
     storeVec: (offset: Node<"i32"> | number, value: Node<"f32x4">) => {
+      requireVecWindow("storeVec");
       addStatement({
         kind: "bufferStoreVec",
         name: decl.name,
-        offset: liftIndex(offset, "storeVec", 4),
+        offset: liftIndex(offset, "storeVec", SIMD_LANE_COUNT),
         value: unwrapAst(value),
       });
     },

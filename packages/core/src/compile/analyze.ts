@@ -18,6 +18,7 @@
 
 import type { AstNode, CapturedGraph } from "./ast.ts";
 import { inferAstType } from "./ast.ts";
+import { SIMD_LANE_COUNT } from "../dsl/constants.ts";
 import { SYSEX_PER_CHUNK_BYTES } from "./layout.ts";
 
 export type DiagnosticEntry = {
@@ -156,6 +157,7 @@ function walkForTypeErrors(node: AstNode, diagnostics: DiagnosticEntry[]): void 
     case "forSample":
     case "messageOnReceive":
     case "everyNSamples":
+    case "midiOnEvent":
       for (const child of node.body) walkForTypeErrors(child, diagnostics);
       break;
     case "eventEmitIf":
@@ -463,6 +465,53 @@ function walkSysexBufferFit(
   }
 }
 
+/**
+ * SIMD buffer-window backstop (issue: undersized `loadVec` / `storeVec`): a
+ * lane window spans `SIMD_LANE_COUNT` elements, so a buffer holding fewer has
+ * no in-bounds offset — the emitted index clamp saturates into an empty range
+ * and the 16-byte access still crosses into the next memory region. The buffer
+ * factories reject this at capture; a hand-built graph bypasses them.
+ */
+function walkVecBufferFit(
+  graph: CapturedGraph,
+  body: readonly AstNode[],
+  diagnostics: DiagnosticEntry[],
+): void {
+  const undersized = new Set(
+    graph.declarations
+      .filter((d) => d.kind === "buffer" && d.size < SIMD_LANE_COUNT)
+      .map((d) => d.name),
+  );
+  if (undersized.size === 0) return;
+  const seen = new Set<string>();
+  const visit = (node: AstNode): void => {
+    if (
+      (node.kind === "bufferLoadVec" || node.kind === "bufferStoreVec") &&
+      undersized.has(node.name) &&
+      !seen.has(node.name)
+    ) {
+      seen.add(node.name);
+      const decl = graph.declarations.find((d) => d.kind === "buffer" && d.name === node.name);
+      const size = decl !== undefined && decl.kind === "buffer" ? decl.size : 0;
+      diagnostics.push({
+        id: "simd-buffer-too-small",
+        severity: "error",
+        message: `unworklet: buffer "${node.name}" is used with a SIMD lane op but holds ${size} element(s) — a ${SIMD_LANE_COUNT}-lane access reads/writes ${SIMD_LANE_COUNT * 4} bytes and no offset keeps that inside the buffer. Declare it with size >= ${SIMD_LANE_COUNT}, or use read() / write(). (stable ID 'simd-buffer-too-small')`,
+      });
+    }
+    for (const child of exprChildren(node)) visit(child);
+    if (
+      node.kind === "forSample" ||
+      node.kind === "everyNSamples" ||
+      node.kind === "messageOnReceive" ||
+      node.kind === "midiOnEvent"
+    ) {
+      for (const child of node.body) visit(child);
+    }
+  };
+  for (const node of body) visit(node);
+}
+
 export function analyze(graph: CapturedGraph): DiagnosticEntry[] {
   const diagnostics: DiagnosticEntry[] = [];
   // Buffer publish backstop (issue #38): the declaration factories throw at
@@ -481,6 +530,7 @@ export function analyze(graph: CapturedGraph): DiagnosticEntry[] {
   walkForLoopErrors(graph.statements, diagnostics);
   checkPayloadFieldLimit(graph, diagnostics);
   walkSysexBufferFit(graph, graph.statements, diagnostics);
+  walkVecBufferFit(graph, graph.statements, diagnostics);
   walkHandlerFieldEscape(graph.statements, null, diagnostics);
   for (const stmt of graph.statements) {
     if (stmt.kind === "forSample") {

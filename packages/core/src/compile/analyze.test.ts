@@ -441,6 +441,86 @@ test("`analyze`: a buffer declaration carrying publish is rejected (backstop for
   );
 });
 
+test("`analyze`: a SIMD lane op on a buffer holding fewer than four elements is rejected (backstop for hand-built graphs)", () => {
+  // A lane window spans 4 elements, so a 2-element buffer has no in-bounds
+  // offset — the emitted clamp saturates into an empty range and the 16-byte
+  // access still crosses into the next region.
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "audioOutput", name: "main", channels: 1 },
+      { kind: "buffer", name: "tiny", type: "f32", size: 2, userNamed: true } as never,
+    ],
+    statements: [
+      {
+        kind: "forSample",
+        body: [
+          {
+            kind: "bufferStoreVec",
+            name: "tiny",
+            offset: { kind: "loopCounter" },
+            value: { kind: "vecSplat", value: { kind: "literal", type: "f32", value: 1 } },
+          },
+        ],
+      } as never,
+    ],
+  };
+  const diags = analyze(graph);
+  expect(diags.some((d) => d.id === "simd-buffer-too-small" && d.severity === "error")).toBe(true);
+});
+
+test("`analyze`: a SIMD lane op nested in a MIDI handler body is reached by the buffer-window check", () => {
+  // Handler bodies are a separate statement list; a walker that only descends
+  // into forSample would pass this graph through to emit.
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "audioOutput", name: "main", channels: 1 },
+      { kind: "buffer", name: "tiny", type: "f32", size: 3, userNamed: true } as never,
+    ],
+    statements: [
+      {
+        kind: "midiOnEvent",
+        port: "in",
+        eventType: "noteOn",
+        body: [
+          {
+            kind: "bufferStoreVec",
+            name: "tiny",
+            offset: { kind: "literal", type: "i32", value: 0 },
+            value: { kind: "vecSplat", value: { kind: "literal", type: "f32", value: 1 } },
+          },
+        ],
+      } as never,
+    ],
+  };
+  expect(analyze(graph).some((d) => d.id === "simd-buffer-too-small")).toBe(true);
+});
+
+test("`analyze`: a small buffer never touched by a SIMD lane op is accepted", () => {
+  // The rule is about the access, not the declaration — scalar read/write on a
+  // 2-element buffer is in bounds and stays legal.
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "audioOutput", name: "main", channels: 1 },
+      { kind: "buffer", name: "tiny", type: "f32", size: 2, userNamed: true } as never,
+    ],
+    statements: [
+      {
+        kind: "forSample",
+        body: [
+          {
+            kind: "bufferWrite",
+            elementType: "f32",
+            name: "tiny",
+            index: { kind: "literal", type: "i32", value: 0 },
+            value: { kind: "literal", type: "f32", value: 1 },
+          },
+        ],
+      } as never,
+    ],
+  };
+  expect(analyze(graph).some((d) => d.id === "simd-buffer-too-small")).toBe(false);
+});
+
 test("`analyze`: a sysex emit whose source buffer exceeds the content chunk is rejected at compile", () => {
   // The sysex content chunk holds perChunk-4 = 1020 payload bytes. A source
   // buffer.u8 bigger than that could never ship whole — truncating at emit

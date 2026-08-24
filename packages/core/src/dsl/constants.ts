@@ -10,6 +10,14 @@
 
 export const SAMPLES_PER_BLOCK = 128 as const;
 
+/**
+ * Elements one `f32x4` lane window covers — the span a `loadVec` / `storeVec`
+ * touches from its offset. Internal (not re-exported from the package index):
+ * it is the shared definition behind the SIMD buffer-size rule in the buffer
+ * factories and its analyzer backstop.
+ */
+export const SIMD_LANE_COUNT = 4 as const;
+
 export const CAPACITY_16 = 16 as const;
 export const CAPACITY_32 = 32 as const;
 export const CAPACITY_64 = 64 as const;
