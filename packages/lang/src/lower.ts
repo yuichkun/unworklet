@@ -550,6 +550,11 @@ function partitionModuleScopeExports(
       }
     } else if ((ts.isClassDeclaration(n) || ts.isClassExpression(n)) && n.name !== undefined) {
       names.add(n.name.text);
+    } else if (ts.isEnumDeclaration(n)) {
+      // A member is in scope for the members after it (`Copy = input`).
+      for (const member of n.members) {
+        if (ts.isIdentifier(member.name)) names.add(member.name.text);
+      }
     }
     return names.size > 0 ? names : null;
   };

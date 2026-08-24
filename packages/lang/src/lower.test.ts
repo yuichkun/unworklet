@@ -889,6 +889,22 @@ process(() => {
   expect(lowered.indexOf("export function scan")).toBeLessThan(lowered.indexOf("defineProcessor("));
 });
 
+test("an enum member is in scope for a later member's initializer", () => {
+  const lowered = lower(`
+export enum Mode {
+  input = 1,
+  Copy = input,
+}
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(Mode.Copy / 10);
+  });
+});
+`);
+  expect(lowered.indexOf("enum Mode")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;
