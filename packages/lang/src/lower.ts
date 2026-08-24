@@ -554,12 +554,18 @@ function partitionModuleScopeExports(
     const bindings = new Set<number>();
     const dsl = new Set<string>();
     const exportIsTypeOnly = ts.isExportDeclaration(stmt) && stmt.isTypeOnly;
+    // `export { x } from "./other.ts"` names the OTHER module's exports. It
+    // binds nothing here and depends on nothing here, so resolving its
+    // specifiers locally would drag an unrelated declaration that happens to
+    // share a name out of the wrapper with it.
+    const isReExport = ts.isExportDeclaration(stmt) && stmt.moduleSpecifier !== undefined;
     const visit = (n: ts.Node, shadowed: ReadonlySet<string>, position: RefPosition): void => {
       // An export specifier names a binding directly rather than referencing
       // one, and it chooses its namespace: `export { type Level }` takes the
       // type, a plain `export { Level }` takes the value and carries the type
       // of a merged name along with it.
       if (ts.isExportSpecifier(n)) {
+        if (isReExport) return;
         const local = n.propertyName?.text ?? n.name.text;
         if (n.isTypeOnly || exportIsTypeOnly) {
           addBindings(bindings, resolveBinding(local, "type"));

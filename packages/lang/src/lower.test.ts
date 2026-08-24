@@ -850,6 +850,25 @@ process(() => {
   expect(lowered.indexOf("export function pick")).toBeLessThan(lowered.indexOf("defineProcessor("));
 });
 
+test("a re-export names the other module's binding, never a local one", () => {
+  // `export { gain } from "./constants.ts"` says nothing about the `gain` this
+  // file declares — dragging that DSL-tied const out with it would run a
+  // capture-only call at module scope.
+  const lowered = lower(`
+const gain = state.f32(0);
+export { gain } from "./constants.ts";
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(gain.read());
+  });
+});
+`);
+  const defineAt = lowered.indexOf("defineProcessor(");
+  expect(lowered.indexOf('export { gain } from "./constants.ts"')).toBeLessThan(defineAt);
+  expect(lowered.indexOf("const gain = state.f32(0)")).toBeGreaterThan(defineAt);
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;
