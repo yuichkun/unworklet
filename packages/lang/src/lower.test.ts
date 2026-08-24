@@ -1353,6 +1353,52 @@ process(() => {
   }
 });
 
+test("a `delete` through a hoisted dependency blocks too", () => {
+  try {
+    lower(`
+const helper: { value?: number } = { value: 1 };
+delete helper.value;
+export const value = helper.value ?? 0;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+    expect.unreachable("lower() must reject an export whose dependency has a property deleted");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+    expect((e as LowerError).message).toContain("helper");
+  }
+});
+
+test("a for-of that assigns into an existing binding blocks too", () => {
+  // The loop initializer is a target, not a declaration — it writes `slot`
+  // every iteration.
+  try {
+    lower(`
+let slot = 0;
+for (slot of [1, 2]) {
+  void slot;
+}
+export const value = slot;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+    expect.unreachable("lower() must reject an export whose dependency a loop assigns");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+    expect((e as LowerError).message).toContain("slot");
+  }
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;

@@ -298,6 +298,16 @@ function statementWrites(stmt: ts.Statement): Set<string> {
   const walk = (n: ts.Node): void => {
     if (ts.isFunctionLike(n)) return;
     if (ts.isBinaryExpression(n) && isAssignmentOperator(n.operatorToken.kind)) target(n.left);
+    // `delete helper.value` removes from what `helper` holds.
+    if (ts.isDeleteExpression(n)) target(n.expression);
+    // `for (slot of xs)` — an initializer that is an expression rather than a
+    // declaration assigns into an existing binding on every iteration.
+    if (
+      (ts.isForOfStatement(n) || ts.isForInStatement(n)) &&
+      !ts.isVariableDeclarationList(n.initializer)
+    ) {
+      target(n.initializer);
+    }
     if (ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) {
       if (
         n.operator === ts.SyntaxKind.PlusPlusToken ||
