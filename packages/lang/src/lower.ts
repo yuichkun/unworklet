@@ -247,7 +247,13 @@ function collectBindingNames(name: ts.BindingName, into: Set<string>): void {
  * the enclosing function, not the block it sits in, so `{ var input = 1; }` and
  * a later `return input` are the same binding. Nested functions own theirs.
  */
-function collectFunctionScopedVars(node: ts.Node, into: Set<string>): void {
+function collectFunctionScopedVars(
+  node: ts.Node,
+  into: Set<string>,
+  /** When given, the function bodies those names are bound to. Every name
+   * becomes a key, so one bound to a non-function stops a lookup here. */
+  bodies?: Map<string, ts.Node[]>,
+): void {
   const walk = (n: ts.Node): void => {
     // A function, a class static block and a namespace each open their own
     // `var` scope, so a `var` inside one is not the outer scope's.
@@ -263,7 +269,21 @@ function collectFunctionScopedVars(node: ts.Node, into: Set<string>): void {
       ts.isVariableDeclarationList(n) &&
       (n.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0
     ) {
-      for (const d of n.declarations) collectBindingNames(d.name, into);
+      for (const d of n.declarations) {
+        const declared = new Set<string>();
+        collectBindingNames(d.name, declared);
+        for (const name of declared) {
+          into.add(name);
+          if (bodies !== undefined && !bodies.has(name)) bodies.set(name, []);
+        }
+        if (bodies === undefined || !ts.isIdentifier(d.name) || d.initializer === undefined) {
+          continue;
+        }
+        const init = unwrapExpression(d.initializer);
+        if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) {
+          bodies.get(d.name.text)?.push(init);
+        }
+      }
     }
     ts.forEachChild(n, walk);
   };
@@ -457,14 +477,27 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
     // wider scope and the parameters keep the narrower one.
     let body: ts.Node | undefined;
     let bodyNames = inner;
+    let bodyResolve = innerResolve;
     if (ts.isFunctionLike(n)) {
       const vars = new Set<string>();
-      collectFunctionScopedVars(n, vars);
+      const varBodies = new Map<string, ts.Node[]>();
+      collectFunctionScopedVars(n, vars, varBodies);
       body = (n as { body?: ts.Node }).body;
-      if (vars.size > 0) bodyNames = new Set([...inner, ...vars]);
+      if (vars.size > 0) {
+        const names = new Set([...inner, ...vars]);
+        const lookup: BodyResolver = (name) => {
+          const here = varBodies.get(name);
+          return here === undefined
+            ? innerResolve(name)
+            : here.map((node) => ({ node, shadowed: names, resolve: lookup }));
+        };
+        bodyNames = names;
+        bodyResolve = lookup;
+      }
     }
     ts.forEachChild(n, (child) => {
-      walk(child, child === body ? bodyNames : inner, innerResolve);
+      const isBody = child === body;
+      walk(child, isBody ? bodyNames : inner, isBody ? bodyResolve : innerResolve);
     });
   };
   walk(stmt, NO_NAMES, moduleResolve);
@@ -493,6 +526,11 @@ function scopedFunctionBodies(node: ts.Node, opened: ReadonlySet<string>): Map<s
   };
   if (ts.isBlock(node) || ts.isModuleBlock(node)) fromStatements(node.statements);
   else if (ts.isCaseBlock(node)) for (const c of node.clauses) fromStatements(c.statements);
+  // A namespace body and a class static block own their `var`s wherever those
+  // sit inside them, so a callable one is found the same way its name was.
+  if (ts.isModuleBlock(node) || ts.isClassStaticBlockDeclaration(node)) {
+    collectFunctionScopedVars(node, new Set<string>(), bodies);
+  }
   return bodies;
 }
 

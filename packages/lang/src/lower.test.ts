@@ -2194,6 +2194,78 @@ void mutate;
   expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
 });
 
+test("a `var` callee inside a followed function is resolved", () => {
+  try {
+    loweredWithMutation(`
+function outer() {
+  var mutate = () => {
+    helper.value = 1;
+  };
+  mutate();
+}
+outer();
+`);
+    expect.unreachable("lower() must resolve a function-scoped `var` callee");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("a `var` callee inside a class static block is resolved", () => {
+  try {
+    loweredWithMutation(`
+class C {
+  static {
+    var mutate = () => {
+      helper.value = 1;
+    };
+    mutate();
+  }
+}
+void C;
+`);
+    expect.unreachable("lower() must resolve a static block's own `var` callee");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("a `var` callee nested inside a namespace body is resolved", () => {
+  try {
+    loweredWithMutation(`
+namespace N {
+  {
+    var mutate = () => {
+      helper.value = 1;
+    };
+  }
+  mutate();
+}
+`);
+    expect.unreachable("lower() must resolve a namespace's own `var` callee");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("a `var` name does not borrow the body of an outer one it hides", () => {
+  const lowered = loweredWithMutation(`
+function mutate() {
+  helper.value = 1;
+}
+void mutate;
+function outer() {
+  var mutate = () => {};
+  mutate();
+}
+outer();
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;
