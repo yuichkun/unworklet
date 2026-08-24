@@ -37,8 +37,8 @@ opted in, a single artifact past ~8 MB is skipped with a warning.
 sysex payload over 1020 bytes (stable ID `sysex-payload-too-large` — a
 truncated sysex loses its 0xF7 terminator, which is worse than no message) and
 on sysex to a port with no sysex region (`sysex-unsupported-port` — the
-processor neither handles nor emits sysex there, and the old path corrupted
-the ring by advancing `head` over a slot it never wrote). An outbound
+processor neither handles nor emits sysex there, and delivering it anyway
+corrupted the ring by advancing `head` over a slot it never wrote). An outbound
 `emitIf` follows the same rule on its `length`: a build-time-known length past
 1020 bytes, or past its own source `buffer.u8`, is a build error
 (`sysex-emit-exceeds-chunk`); a runtime length that overruns either bound drops
@@ -56,9 +56,9 @@ hand-built graphs). Migration: size the buffer to 4 or more elements, or use
 scalar `read` / `write`.
 
 **Snapshot blobs are format v2.** The blob gains an optional processor
-identity block; 0.3.0 reads v1 blobs unchanged (they restore exactly as
-before), but blobs saved by 0.3.0 are not readable by 0.2.x. Migration: none
-for upgraders; do not feed new blobs to old builds.
+identity block; 0.3.0 reads v1 blobs unchanged, but blobs saved by 0.3.0 are
+not readable by 0.2.x. Migration: none for upgraders; do not feed 0.3.0 blobs
+to a 0.2.x build.
 
 ### Added
 
@@ -70,8 +70,9 @@ for upgraders; do not feed new blobs to old builds.
   other and corrupted its state. When both blob and processor carry an id,
   `restore()` refuses a mismatch with `{ ok: false, error: { step:
 "identity" } }` (stable ID `processor-mismatch`); `renderOffline`'s
-  `config.restore` throws. Id-less blobs and processors keep the legacy
-  matching. `inspect()` surfaces the blob's id.
+  `config.restore` throws. An id-less blob or processor matches on schema hash
+  and slot names alone, as it does without this option. `inspect()` surfaces
+  the blob's id.
 - **`renderOffline` result `diagnostics.scrubbedSamples`** — output samples
   the compiled processor's non-finite scrub replaced with 0 (see Fixed). `0`
   for a healthy render.
