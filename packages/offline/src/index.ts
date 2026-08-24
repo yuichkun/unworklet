@@ -125,6 +125,13 @@ export type RenderOfflineResult = {
      * bug that would have propagated silence/clicks through Web Audio.
      */
     scrubbedSamples: number;
+    /**
+     * Outbound sysex messages the emit path refused because the requested
+     * length does not fit the destination chunk or the source buffer. Shipping
+     * the prefix that fits would deliver a sysex without its 0xF7 terminator,
+     * so the message is dropped whole; this is how that loss is observed.
+     */
+    droppedSysexMessages: number;
   };
 };
 
@@ -607,6 +614,9 @@ export async function renderOffline<C>(
     events: emittedEvents,
     state,
     sampleRate: config.sampleRate,
-    diagnostics: { scrubbedSamples: instance.scrubbedSamples() },
+    diagnostics: {
+      scrubbedSamples: instance.scrubbedSamples(),
+      droppedSysexMessages: instance.droppedSysexMessages(),
+    },
   };
 }

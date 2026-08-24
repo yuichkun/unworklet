@@ -259,11 +259,11 @@ test("offline drops a sysex event sent to a port with no sysex region (no crash)
   expect(r.outputs.main![0]![0]).toBe(0); // no note delivered, default state
 });
 
-test("sysex emit with a runtime-negative length clamps to 0 instead of trapping (memory.copy safety)", async () => {
-  // A user-computed `length` that goes negative used to flow through a signed
-  // min into `memory.copy`, where it reads as a ~4 GiB unsigned size — an OOB
-  // trap that latches permanent silence. The clamp floors it at 0: the event
-  // still fires, carrying an empty payload.
+test("sysex emit with a runtime-negative length is dropped, never a ~4 GiB memory.copy", async () => {
+  // A user-computed `length` gone negative reads as a ~4 GiB unsigned size at
+  // `memory.copy` — an OOB trap that latches permanent silence. A length
+  // outside [0, chunk] takes the drop path instead, so no copy is issued at
+  // all and the loss is counted rather than delivered as an empty message.
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
     const sysexIn = event.midi({ from: "main", name: "sysexIn" });
@@ -293,9 +293,53 @@ test("sysex emit with a runtime-negative length clamps to 0 instead of trapping 
       },
     ],
   });
-  const outEvents = result.events.filter((e) => e.name === "sysexOut");
-  expect(outEvents).toHaveLength(1);
-  const ev = outEvents[0]!.payload as Extract<MidiEvent, { type: "sysex" }>;
-  expect(ev.type).toBe("sysex");
-  expect(ev.data.length).toBe(0);
+  expect(result.events.filter((e) => e.name === "sysexOut")).toHaveLength(0);
+  expect(result.diagnostics.droppedSysexMessages).toBe(1);
+});
+
+test("a sysex emit whose runtime length overruns its buffer ships nothing", async () => {
+  // Shipping the prefix that fits drops the 0xF7 terminator, which a receiving
+  // device reads as a different (unterminated) message — worse than no message.
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const sysexOut = event.midi({ to: "main", name: "sysexOut" });
+    const buf = state.buffer.u8({ size: 8 });
+    const len = state.i32(64); // read at runtime, so no literal for the analyzer
+    return {
+      process: () => {
+        sysexOut.emitIf(true, { type: "sysex", data: buf, length: len.read(), atSample: 0 });
+        forSample((i) => {
+          out.ch(0).at(i).write(0);
+        });
+      },
+    };
+  });
+  const result = await renderOffline(proc, { sampleRate: 48000, duration: 128 / 48000 });
+  expect(result.events.filter((e) => e.name === "sysexOut")).toHaveLength(0);
+  expect(result.diagnostics.droppedSysexMessages).toBe(1);
+});
+
+test("a sysex emit whose runtime length fits ships that many bytes", async () => {
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const sysexOut = event.midi({ to: "main", name: "sysexOut" });
+    const buf = state.buffer.u8({ size: 8 });
+    const len = state.i32(4);
+    return {
+      process: () => {
+        buf.write(0, 0xf0);
+        buf.write(3, 0xf7);
+        sysexOut.emitIf(true, { type: "sysex", data: buf, length: len.read(), atSample: 0 });
+        forSample((i) => {
+          out.ch(0).at(i).write(0);
+        });
+      },
+    };
+  });
+  const result = await renderOffline(proc, { sampleRate: 48000, duration: 128 / 48000 });
+  const out = result.events.filter((e) => e.name === "sysexOut");
+  expect(out).toHaveLength(1);
+  const ev = out[0]!.payload as Extract<MidiEvent, { type: "sysex" }>;
+  expect(Array.from(ev.data)).toEqual([0xf0, 0, 0, 0xf7]);
+  expect(result.diagnostics.droppedSysexMessages).toBe(0);
 });

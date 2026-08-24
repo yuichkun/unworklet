@@ -135,6 +135,7 @@ export function makeDriver(graph: CapturedGraph, lay: Layout, wasm: Uint8Array):
       const memory = instance.exports["memory"] as WebAssembly.Memory;
       const proc = instance.exports["process"] as () => void;
       const scrubGlobal = instance.exports["scrubbedSamples"] as WebAssembly.Global;
+      const sysexDropGlobal = instance.exports["droppedSysexMessages"] as WebAssembly.Global;
 
       const inputBase = (portName: string, channel: number): number =>
         lay.regions.ioScratch.inputs[portName]! + channel * CHANNEL_STRIDE_BYTES;
@@ -174,6 +175,9 @@ export function makeDriver(graph: CapturedGraph, lay: Layout, wasm: Uint8Array):
         },
         scrubbedSamples() {
           return scrubGlobal.value as number;
+        },
+        droppedSysexMessages() {
+          return sysexDropGlobal.value as number;
         },
       };
     },

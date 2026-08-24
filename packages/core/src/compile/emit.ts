@@ -208,6 +208,15 @@ const DEFAULT_EMIT_SAMPLE_RATE = 48000;
 const SCRUB_GLOBAL = "scrubbedSamples";
 
 /**
+ * Count of outbound sysex messages the emit path refused because the requested
+ * length does not fit the destination chunk (or its source buffer). Shipping
+ * the prefix that fits would deliver a sysex without its 0xF7 terminator — a
+ * different message as far as the receiving device is concerned — so the
+ * message is dropped whole, and this makes the loss readable instead of silent.
+ */
+const SYSEX_DROP_GLOBAL = "droppedSysexMessages";
+
+/**
  * Little-endian byte encoding of a `state.<type>(initial)` value, sized to the
  * slot's element width. `bool` is held as i32 (0/1). Used to seed state slots
  * via active data segments at WASM instantiation (= declaration defaults).
@@ -454,6 +463,8 @@ export async function emit(
   mod.addFunctionExport("process", "process");
   mod.addGlobal(SCRUB_GLOBAL, binaryen.i32, true, mod.i32.const(0));
   mod.addGlobalExport(SCRUB_GLOBAL, SCRUB_GLOBAL);
+  mod.addGlobal(SYSEX_DROP_GLOBAL, binaryen.i32, true, mod.i32.const(0));
+  mod.addGlobalExport(SYSEX_DROP_GLOBAL, SYSEX_DROP_GLOBAL);
 
   // Layer A: prove the emitted audio path is realtime-safe by construction
   // (allocation-free, no unbounded loop, no deliberate trap) before it can ever
@@ -2683,7 +2694,8 @@ function emitMidiEmitIf(
     mod.i32.add(head(), mod.i32.const(1)),
   );
 
-  let body: number[];
+  /** Statements to run once the emit condition holds. */
+  let guarded: number[];
   if (node.eventType === "sysex") {
     // Sysex: status=0xF0 + chunkIdx (= head % chunks) in data1; content chunk
     // `[length, bytes]` filled from the source (worklet buffer.u8 or an inbound
@@ -2730,20 +2742,7 @@ function emitMidiEmitIf(
         mod.i32.const(region.perChunk),
       );
     const contentChunk = (): number => mod.i32.add(mod.i32.const(region.base), chunkOffset());
-    body = [
-      srcSet,
-      mod.local.set(PAYLOAD_CLAMP_LOCAL, minI32(mod, lengthExpr, mod.i32.const(maxBody))),
-      // Floor at 0: memory.copy takes the size as UNSIGNED, so a runtime-
-      // negative user length would become a ~4 GiB copy = OOB trap = permanent
-      // silence latch.
-      mod.local.set(
-        PAYLOAD_CLAMP_LOCAL,
-        mod.select(
-          mod.i32.lt_s(mod.local.get(PAYLOAD_CLAMP_LOCAL, binaryen.i32), mod.i32.const(0)),
-          mod.i32.const(0),
-          mod.local.get(PAYLOAD_CLAMP_LOCAL, binaryen.i32),
-        ),
-      ),
+    const shipped = [
       mod.local.set(
         EVENT_SLOT_PTR_LOCAL,
         mod.i32.add(
@@ -2772,9 +2771,31 @@ function emitMidiEmitIf(
       mod.i32.store(4, BYTES_PER_I32, slotPtr(), atSample),
       advanceHead,
     ];
+    const len = (): number => mod.local.get(PAYLOAD_CLAMP_LOCAL, binaryen.i32);
+    // The message ships whole or not at all: a prefix that fits the chunk is a
+    // sysex without its 0xF7 terminator, which the receiving device reads as a
+    // different message. A length outside [0, maxBody] — including a
+    // runtime-negative one, which `memory.copy` would read as a ~4 GiB size and
+    // trap on — leaves the ring untouched (the drop-oldest prologue runs only
+    // on the shipping path, so nothing is evicted for a message never written).
+    guarded = [
+      srcSet,
+      mod.local.set(PAYLOAD_CLAMP_LOCAL, lengthExpr),
+      mod.if(
+        mod.i32.and(
+          mod.i32.ge_s(len(), mod.i32.const(0)),
+          mod.i32.le_s(len(), mod.i32.const(maxBody)),
+        ),
+        mod.block(null, [...prologue, ...shipped]),
+        mod.global.set(
+          SYSEX_DROP_GLOBAL,
+          mod.i32.add(mod.global.get(SYSEX_DROP_GLOBAL, binaryen.i32), mod.i32.const(1)),
+        ),
+      ),
+    ];
   } else {
     const { status, data1, data2 } = emitMidiWireBytes(node, layout, mod, binaryen);
-    body = [
+    const body = [
       mod.local.set(
         EVENT_SLOT_PTR_LOCAL,
         mod.i32.add(
@@ -2791,12 +2812,10 @@ function emitMidiEmitIf(
       mod.i32.store(4, BYTES_PER_I32, slotPtr(), atSample),
       advanceHead,
     ];
+    guarded = [...prologue, ...body];
   }
 
-  return mod.if(
-    emitExpression(node.cond, layout, mod, binaryen),
-    mod.block(null, [...prologue, ...body]),
-  );
+  return mod.if(emitExpression(node.cond, layout, mod, binaryen), mod.block(null, guarded));
 }
 
 // ─────────────────────────────────────────────────────────────────────────

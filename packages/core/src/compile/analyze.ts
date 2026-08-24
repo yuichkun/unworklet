@@ -436,21 +436,34 @@ function walkSysexBufferFit(
   body: readonly AstNode[],
   diagnostics: DiagnosticEntry[],
 ): void {
-  const maxBody = SYSEX_PER_CHUNK_BYTES - 4;
+  const chunkBody = SYSEX_PER_CHUNK_BYTES - 4;
   for (const node of body) {
     if (
       node.kind === "midiEmitIf" &&
       node.eventType === "sysex" &&
-      node.sysexBufferName !== undefined
+      node.sysexLength !== undefined &&
+      node.sysexLength.kind === "literal"
     ) {
-      const decl = graph.declarations.find(
-        (d) => d.kind === "buffer" && d.name === node.sysexBufferName,
-      );
-      if (decl !== undefined && decl.kind === "buffer" && decl.size > maxBody) {
+      // The emitted LENGTH decides whether a message can leave whole; a larger
+      // backing buffer is fine as long as the emit selects a prefix that fits.
+      // The buffer bounds it too — a length past the buffer would copy the
+      // neighboring region's bytes into the message.
+      const decl =
+        node.sysexBufferName !== undefined
+          ? graph.declarations.find((d) => d.kind === "buffer" && d.name === node.sysexBufferName)
+          : undefined;
+      const cap =
+        decl !== undefined && decl.kind === "buffer" ? Math.min(chunkBody, decl.size) : chunkBody;
+      const length = node.sysexLength.value;
+      if (length > cap) {
+        const source =
+          node.sysexBufferName !== undefined
+            ? ` from buffer "${node.sysexBufferName}"`
+            : " as a thru";
         diagnostics.push({
-          id: "sysex-buffer-exceeds-chunk",
+          id: "sysex-emit-exceeds-chunk",
           severity: "error",
-          message: `unworklet: midi port "${node.port}" emits sysex from buffer "${node.sysexBufferName}" (${decl.size} bytes), which exceeds the ${maxBody}-byte sysex content chunk — the message could never ship whole, and truncating would drop the 0xF7 terminator. Use a buffer of <= ${maxBody} bytes, or split the transfer. (stable ID 'sysex-buffer-exceeds-chunk')`,
+          message: `unworklet: midi port "${node.port}" emits ${length} sysex bytes${source}, past the ${cap}-byte limit for that emit (the ${chunkBody}-byte content chunk, bounded by the source buffer). The message could not leave whole, and shipping the prefix would drop its 0xF7 terminator. Emit at most ${cap} bytes, or split the transfer. (stable ID 'sysex-emit-exceeds-chunk')`,
         });
       }
     }

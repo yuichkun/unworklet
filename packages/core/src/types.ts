@@ -877,6 +877,12 @@ export type CompileInstance = {
    * (NaN / ±Inf produced by the processor's own DSP). 0 for a healthy render.
    */
   scrubbedSamples(): number;
+  /**
+   * Lifetime count of outbound sysex messages the emit path refused because the
+   * requested length does not fit its destination chunk or source buffer.
+   * 0 unless a processor asks to ship more bytes than can leave whole.
+   */
+  droppedSysexMessages(): number;
 };
 
 export type CompileInstanceDeclaration =
