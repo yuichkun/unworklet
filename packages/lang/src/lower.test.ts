@@ -2444,6 +2444,83 @@ retain(() => {
   expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
 });
 
+test("a concise arrow handing the callback back can run it", () => {
+  try {
+    loweredWithMutation(`
+const give = (cb: () => void) => cb;
+give(() => {
+  helper.value = 1;
+})();
+`);
+    expect.unreachable("lower() must read a concise arrow body as what it returns");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("a callback put in a returned object can run", () => {
+  try {
+    loweredWithMutation(`
+function box(cb: () => void) {
+  return { run: cb };
+}
+box(() => {
+  helper.value = 1;
+}).run();
+`);
+    expect.unreachable("lower() must treat a callback carried out in an object as runnable");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("a callback stored on a property can run", () => {
+  try {
+    loweredWithMutation(`
+const store: { cb?: () => void } = {};
+function keep(cb: () => void) {
+  store.cb = cb;
+}
+keep(() => {
+  helper.value = 1;
+});
+store.cb?.();
+`);
+    expect.unreachable("lower() must treat a stored-out callback as runnable");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("a bare mention of the callback discards it", () => {
+  const lowered = loweredWithMutation(`
+function retain(cb: () => void) {
+  cb;
+}
+retain(() => {
+  helper.value = 1;
+});
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
+test("a property spelled like the callback is not the callback", () => {
+  const lowered = loweredWithMutation(`
+function retain(cb: () => void) {
+  const o = { cb: 1 };
+  void o.cb;
+  void cb;
+}
+retain(() => {
+  helper.value = 1;
+});
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;

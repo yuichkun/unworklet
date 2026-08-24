@@ -314,7 +314,12 @@ function calleeSignatures(callee: ts.Expression, resolve: BodyResolver): ts.Node
 
 /** Whether calling a function can run the argument at `index` — itself, or by
  * handing it to something else that might, including back to its own caller.
- * Only a callee that ignores or discards the argument answers no. Reading
+ * Only a callee that ignores or discards the argument answers no.
+ *
+ * The ways an argument can get out are open-ended — a call, a return, an
+ * object it is put in, a property it is stored on, an arrow that closes over
+ * it — so what is enumerated here is the other list: the positions that
+ * demonstrably lead nowhere. Anything else counts as running it. Reading
  * nothing also means yes: over-running an argument refuses valid code loudly,
  * and missing one goes quiet. */
 function invokesParameter(fn: ts.Node, index: number): boolean {
@@ -337,6 +342,17 @@ function invokesParameter(fn: ts.Node, index: number): boolean {
   let runs = false;
   const look = (node: ts.Node): void => {
     if (runs) return;
+    // A type mentions no value, so a name that only appears in one is not this
+    // argument at all.
+    if (ts.isTypeNode(node)) return;
+    // `void cb` and `typeof cb` read it and drop it.
+    if ((ts.isVoidExpression(node) || ts.isTypeOfExpression(node)) && isAlias(node.expression)) {
+      return;
+    }
+    // `cb;` on its own line does nothing with it either.
+    if (ts.isExpressionStatement(node) && isAlias(node.expression)) return;
+    // `const invoke = cb` carries it no further than the new name, which is
+    // tracked from here on and judged by what IT does.
     if (
       ts.isVariableDeclaration(node) &&
       ts.isIdentifier(node.name) &&
@@ -344,23 +360,28 @@ function invokesParameter(fn: ts.Node, index: number): boolean {
       isAlias(node.initializer)
     ) {
       aliases.add(node.name.text);
+      return;
     }
     if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
       const target = unwrapExpression(node.left);
-      if (ts.isIdentifier(target) && isAlias(node.right)) aliases.add(target.text);
+      if (ts.isIdentifier(target) && isAlias(node.right)) {
+        aliases.add(target.text);
+        return;
+      }
     }
-    // Handed back out, so whoever made this call can run it afterwards.
-    if (ts.isReturnStatement(node) && node.expression !== undefined && isAlias(node.expression)) {
-      runs = true;
+    // A member name and an object-literal key are spellings, not references.
+    if (ts.isPropertyAccessExpression(node)) {
+      look(node.expression);
       return;
     }
-    if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
-      if (isAlias(node.expression)) runs = true;
-      // Handed to another call, which may be the one that runs it.
-      for (const argument of node.arguments ?? []) {
-        if (isAlias(argument)) runs = true;
-      }
-      if (runs) return;
+    if (ts.isPropertyAssignment(node)) {
+      look(node.initializer);
+      return;
+    }
+    // Every other mention hands it somewhere this walk cannot follow.
+    if (ts.isIdentifier(node) && aliases.has(node.text)) {
+      runs = true;
+      return;
     }
     ts.forEachChild(node, look);
   };
