@@ -12,7 +12,7 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 The correctness-and-honesty batch: the audio-thread transport gains its missing
 consumer feedback and loses its last per-quantum allocation, buffer DSP gets
 the same numeric hygiene as scalar state, and several declared-but-broken or
-silently-lossy surfaces now refuse loudly instead. Seven changes are breaking —
+silently-lossy surfaces now refuse loudly instead. Eight changes are breaking —
 read the migrations.
 
 ### Breaking
@@ -72,6 +72,15 @@ the whole object.
 (`@unworklet/core/dev`) resolved to the slot array alone, so the render-health
 counter the worklet already put on the wire had nowhere to arrive. Migration:
 read `(await handle.devDump()).slots` where the array was used directly.
+
+**A `.uwk.ts` cannot bind a name the lowering generates.** `defineProcessor`
+always, and the ambient `input` / `out` plus `audioInput` / `audioOutput` when
+the file declares no audio I/O, are written by the lowering itself — binding
+one, by declaration or by import, had the generated code resolve to it and
+produce a module that exports something other than a processor. It is a
+`uwk-reserved-binding` LowerError. Migration: rename the binding, or import it
+under an alias; declaring your own output suppresses the ambient injection, so
+`const out = audioOutput({...})` is unaffected.
 
 **Snapshot blobs are format v2.** The blob gains an optional processor
 identity block; 0.3.0 reads v1 blobs unchanged, but blobs saved by 0.3.0 are
@@ -159,12 +168,6 @@ to a 0.2.x build.
   hoists), and a hoisted declaration takes its whole dependency closure with it
   — values, the type aliases its annotations name, and every declaration of a
   merged name.
-- **A `.uwk.ts` cannot rebind what the lowering generates.** `defineProcessor`
-  always, and the ambient `input` / `out` plus `audioInput` / `audioOutput`
-  when the file declares no audio I/O, are reserved: a declaration of one would
-  silently take the generated code's place. It is a `uwk-reserved-binding`
-  LowerError. Declaring your own output suppresses the ambient injection, so
-  `const out = audioOutput({...})` is unaffected.
 - **Re-exporting the processor as `default` is accepted.** `export const wave
 = defineProcessor(...); export default wave;` was rejected as "multiple
   processors"; the count is now by value identity, and the named binding wins
