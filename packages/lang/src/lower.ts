@@ -312,6 +312,15 @@ function calleeSignatures(callee: ts.Expression, resolve: BodyResolver): ts.Node
   return found;
 }
 
+/** One scope's view of the names standing for a callback argument: those it
+ * carries, and those it binds to something else. */
+type AliasScope = {
+  readonly carried: Set<string>;
+  readonly rebound: Set<string>;
+  readonly parent: AliasScope | null;
+  readonly isFunction: boolean;
+};
+
 /** Whether calling a function can run the argument at `index` — itself, or by
  * handing it to something else that might, including back to its own caller.
  * Only a callee that ignores or discards the argument answers no.
@@ -334,16 +343,36 @@ function invokesParameter(fn: ts.Node, index: number): boolean {
   // `const invoke = cb` carries the parameter, so calling `invoke` calls it.
   // A chain of bare-identifier aliases is followed; one built by anything else
   // is not, the same limit the write walk keeps for aliases of a binding.
-  // A nested scope declaring the same name declares something else: in
-  // `retain(cb) { { const cb = () => {}; cb(); } }` the inner `cb` is not the
-  // argument, so it drops out of the set for that scope — and a scope may put
-  // a new name in, which is why the set travels with the scope.
+  // Which names carry it is a per-scope question — `retain(cb) { { const cb =
+  // () => {} } }` binds that name to something else inside the block, and a
+  // `const invoke = cb` in there is gone once the block ends — so each scope
+  // holds what it carries and what it rebinds, and a lookup walks outward to
+  // the first scope that says either.
+  const carries = (scope: AliasScope, name: string): boolean => {
+    for (let s: AliasScope | null = scope; s !== null; s = s.parent) {
+      if (s.carried.has(name)) return true;
+      if (s.rebound.has(name)) return false;
+    }
+    return false;
+  };
+  // Where a name lives: the scope that binds it, or the enclosing function for
+  // a `var` and for an assignment to something no scope here declared.
+  const homeOf = (scope: AliasScope, name: string): AliasScope => {
+    for (let s: AliasScope | null = scope; s !== null; s = s.parent) {
+      if (s.carried.has(name) || s.rebound.has(name) || s.isFunction) return s;
+    }
+    return scope;
+  };
+  const carry = (scope: AliasScope, name: string): void => {
+    scope.rebound.delete(name);
+    scope.carried.add(name);
+  };
   let runs = false;
-  const look = (node: ts.Node, aliases: Set<string>): void => {
+  const look = (node: ts.Node, scope: AliasScope): void => {
     if (runs) return;
     const isAliasHere = (expr: ts.Expression): boolean => {
       const inner = unwrapExpression(expr);
-      return ts.isIdentifier(inner) && aliases.has(inner.text);
+      return ts.isIdentifier(inner) && carries(scope, inner.text);
     };
     // A type mentions no value, so a name that only appears in one is not this
     // argument at all.
@@ -358,64 +387,68 @@ function invokesParameter(fn: ts.Node, index: number): boolean {
     // `cb;` on its own line does nothing with it either.
     if (ts.isExpressionStatement(node) && isAliasHere(node.expression)) return;
     // `const invoke = cb` carries it no further than the new name, which is
-    // tracked from here on and judged by what IT does.
-    if (
-      ts.isVariableDeclaration(node) &&
-      ts.isIdentifier(node.name) &&
-      node.initializer !== undefined &&
-      isAliasHere(node.initializer)
-    ) {
-      aliases.add(node.name.text);
+    // then judged by what IT does. A `let` or `const` belongs to this scope; a
+    // `var` to the function around it.
+    if (ts.isVariableDeclarationList(node)) {
+      const blockScoped = (node.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;
+      for (const declaration of node.declarations) {
+        if (declaration.initializer === undefined) continue;
+        if (ts.isIdentifier(declaration.name) && isAliasHere(declaration.initializer)) {
+          carry(blockScoped ? scope : homeOf(scope, declaration.name.text), declaration.name.text);
+          continue;
+        }
+        look(declaration.initializer, scope);
+      }
       return;
     }
     if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
       const target = unwrapExpression(node.left);
       if (ts.isIdentifier(target) && isAliasHere(node.right)) {
-        aliases.add(target.text);
+        carry(homeOf(scope, target.text), target.text);
         return;
       }
     }
     // A member name and an object-literal key are spellings, not references.
     if (ts.isPropertyAccessExpression(node)) {
-      look(node.expression, aliases);
+      look(node.expression, scope);
       return;
     }
     if (ts.isPropertyAssignment(node)) {
-      look(node.initializer, aliases);
+      look(node.initializer, scope);
       return;
     }
     // Every other mention hands it somewhere this walk cannot follow.
-    if (ts.isIdentifier(node) && aliases.has(node.text)) {
+    if (ts.isIdentifier(node) && carries(scope, node.text)) {
       runs = true;
       return;
     }
-    // A scope that rebinds none of these names shares the set, so a name added
-    // inside it is still seen after — which is what a `var` does.
-    const without = (opened: ReadonlySet<string>): Set<string> =>
-      [...aliases].some((name) => opened.has(name))
-        ? new Set([...aliases].filter((name) => !opened.has(name)))
-        : aliases;
     const opened = blockScopedNames(node);
-    const inner = opened === null ? aliases : without(opened);
+    const inner: AliasScope =
+      opened === null
+        ? scope
+        : { carried: new Set(), rebound: new Set(opened), parent: scope, isFunction: false };
     // A function's body sees its `var`s throughout, but a default parameter
     // initializer runs before any of them exist and still reads the outer name.
     let functionBody: ts.Node | undefined;
-    let bodyAliases = inner;
+    let bodyScope = inner;
     if (ts.isFunctionLike(node)) {
       const vars = new Set<string>();
       collectFunctionScopedVars(node, vars);
       functionBody = (node as { body?: ts.Node }).body;
-      if (vars.size > 0) {
-        bodyAliases = [...inner].some((name) => vars.has(name))
-          ? new Set([...inner].filter((name) => !vars.has(name)))
-          : inner;
-      }
+      bodyScope = { carried: new Set(), rebound: vars, parent: inner, isFunction: true };
     }
     ts.forEachChild(node, (child) => {
-      look(child, child === functionBody ? bodyAliases : inner);
+      look(child, child === functionBody ? bodyScope : inner);
     });
   };
-  look(body, new Set<string>([parameter.name.text]));
+  const own = new Set<string>();
+  collectFunctionScopedVars(fn, own);
+  look(body, {
+    carried: new Set([parameter.name.text]),
+    rebound: own,
+    parent: null,
+    isFunction: true,
+  });
   return runs;
 }
 

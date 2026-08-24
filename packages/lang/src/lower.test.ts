@@ -2595,6 +2595,45 @@ run(() => {
   }
 });
 
+test("an alias declared in a block does not outlive it", () => {
+  // The outer `invoke` is a different binding, and calling it says nothing.
+  const lowered = loweredWithMutation(`
+function retain(cb: () => void) {
+  const invoke = () => {};
+  {
+    const invoke = cb;
+    void invoke;
+  }
+  invoke();
+}
+retain(() => {
+  helper.value = 1;
+});
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
+test("an alias assigned to an outer binding outlives the block", () => {
+  try {
+    loweredWithMutation(`
+function run(cb: () => void) {
+  let invoke: (() => void) | undefined;
+  {
+    invoke = cb;
+  }
+  invoke?.();
+}
+run(() => {
+  helper.value = 1;
+});
+`);
+    expect.unreachable("lower() must carry an alias assigned to an outer binding");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;
