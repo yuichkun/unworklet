@@ -38,9 +38,12 @@ sysex payload over 1020 bytes (stable ID `sysex-payload-too-large` — a
 truncated sysex loses its 0xF7 terminator, which is worse than no message) and
 on sysex to a port with no sysex region (`sysex-unsupported-port` — the
 processor neither handles nor emits sysex there, and the old path corrupted
-the ring by advancing `head` over a slot it never wrote). A sysex emit whose
-source `buffer.u8` exceeds 1020 bytes is now a build error
-(`sysex-buffer-exceeds-chunk`). Migration: split larger transfers into
+the ring by advancing `head` over a slot it never wrote). An outbound
+`emitIf` follows the same rule on its `length`: a build-time-known length past
+1020 bytes, or past its own source `buffer.u8`, is a build error
+(`sysex-emit-exceeds-chunk`); a runtime length that overruns either bound drops
+the whole message and counts it. The backing buffer may be any size — the
+emitted `length` is what has to fit. Migration: split larger transfers into
 multiple messages; declare a sysex handler on ports you inject sysex into.
 
 **SIMD lane ops require a buffer of at least 4 elements.** `loadVec` /
@@ -72,6 +75,11 @@ for upgraders; do not feed new blobs to old builds.
 - **`renderOffline` result `diagnostics.scrubbedSamples`** — output samples
   the compiled processor's non-finite scrub replaced with 0 (see Fixed). `0`
   for a healthy render.
+- **`renderOffline` result `diagnostics.droppedSysexMessages`** — outbound
+  sysex messages the emit path refused because the requested `length` does not
+  fit the destination chunk or the source buffer. The audio thread cannot
+  throw, and shipping the prefix that fits would deliver a sysex without its
+  0xF7 terminator, so the message is dropped whole and counted here.
 - **`renderOffline` reuses compiles.** Repeat renders of the same processor at
   the same sample rate skip the compile pipeline (~8 s reported on a mid-size
   processor per render, which made one-render-per-test suites time out).
@@ -101,9 +109,10 @@ for upgraders; do not feed new blobs to old builds.
   pooled transferable frame whose buffers main pre-allocates and recycles
   (ownership ping-pong, with consumed-tail acks piggybacked on the recycle).
   The message envelope and its transfer list are bound once at initialize and
-  rewritten in place, so a quantum carrying egress adds no JS object to the
-  audio thread's heap. The internal page↔worklet wire protocol changed
-  accordingly.
+  rewritten in place, so nothing on the send path allocates. Receiving a
+  returned buffer still rebinds its two views — a transferred ArrayBuffer
+  arrives as a fresh identity — but that cost is fixed rather than scaling with
+  the frame. The internal page↔worklet wire protocol changed accordingly.
 - **A hidden tab no longer loses events and MIDI (stuck notes).** The
   main-side drain ran only on `requestAnimationFrame`, which throttles to ~0
   in hidden tabs while the audio thread keeps emitting; the drain now falls

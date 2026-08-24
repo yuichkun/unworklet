@@ -29,6 +29,7 @@ result.outputs.main; // Float32Array[] per channel
 result.events; // worklet → main events (event({to:'main'}) + outbound MIDI), with atSample
 result.state; // snapshot blob captured at the end of the render
 result.diagnostics.scrubbedSamples; // output samples replaced with 0 because the DSP produced NaN/±Inf (0 = healthy)
+result.diagnostics.droppedSysexMessages; // outbound sysex refused because its length would not fit whole (0 = healthy)
 
 // Repeat renders of the same processor at the same sampleRate reuse the compiled
 // artifact (instantiation stays fresh per render, so state never leaks) — write

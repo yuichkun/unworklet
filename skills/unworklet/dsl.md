@@ -423,9 +423,13 @@ event.midi({ to:   "main"; name; capacity?: Capacity }): MidiOutputHandle  // ou
   `sysex-unsupported-port`). One sysex message holds at most **1020 bytes**
   (including 0xF0/0xF7): `send()` throws past the limit rather than
   truncate-and-deliver a terminator-less message (stable ID
-  `sysex-payload-too-large`), and an outbound emit whose source `buffer.u8` is
-  bigger than 1020 bytes is a build error (stable ID
-  `sysex-buffer-exceeds-chunk`). Split larger transfers into multiple messages.
+  `sysex-payload-too-large`). An outbound `emitIf` follows the same rule on its
+  `length`: a build-time-known length past 1020 bytes — or past its own source
+  `buffer.u8` — is a build error (stable ID `sysex-emit-exceeds-chunk`), and a
+  length computed at runtime that overruns either bound drops the whole message
+  and counts it in `renderOffline(...).diagnostics.droppedSysexMessages`. The
+  buffer itself may be any size; the emitted `length` is what has to fit. Split
+  larger transfers into multiple messages.
 - Outbound: worklet sends with `.emitIf(cond, event)` only — same rule as
   typed `event<T>` above (no bare `.emit` on the worklet-side handle). The
   MIDI event must include `atSample: number` (the sample index within the

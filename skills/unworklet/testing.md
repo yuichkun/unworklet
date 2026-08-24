@@ -87,6 +87,11 @@ function renderOffline<C>(
   a runaway accumulator). `0` for a healthy render; assert it when a processor
   divides or feeds back, because the scrubbed output itself looks like clean
   silence.
+- `diagnostics.droppedSysexMessages: number` — outbound sysex messages refused
+  because the emitted `length` does not fit the destination chunk (1020 bytes)
+  or the source `buffer.u8`. `0` unless a processor asks to ship more than can
+  leave whole; assert it when the length is computed at runtime, since a
+  dropped message is indistinguishable from one that was never emitted.
 
 Repeat renders of the SAME processor value at the SAME `sampleRate` reuse the
 compiled artifact automatically (the compile dominates wall time; instantiation
