@@ -312,6 +312,15 @@ function calleeSignatures(callee: ts.Expression, resolve: BodyResolver): ts.Node
   return found;
 }
 
+/** `&&`, `||` and `??` — the right side may not run at all. */
+function isShortCircuitOperator(kind: ts.SyntaxKind): boolean {
+  return (
+    kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+    kind === ts.SyntaxKind.BarBarToken ||
+    kind === ts.SyntaxKind.QuestionQuestionToken
+  );
+}
+
 /** One scope's view of the names standing for a callback argument: those it
  * carries, and those it binds to something else. */
 type AliasScope = {
@@ -355,20 +364,28 @@ function invokesParameter(fn: ts.Node, index: number): boolean {
     }
     return false;
   };
-  // Where a name lives: the scope that binds it, or the enclosing function for
-  // a `var` and for an assignment to something no scope here declared.
-  const homeOf = (scope: AliasScope, name: string): AliasScope => {
+  // Where a name lives, or null when nothing here declares it — which means it
+  // is declared outside the callee, so assigning the argument to it puts the
+  // argument outside too.
+  const homeOf = (scope: AliasScope, name: string): AliasScope | null => {
     for (let s: AliasScope | null = scope; s !== null; s = s.parent) {
-      if (s.carried.has(name) || s.rebound.has(name) || s.isFunction) return s;
+      if (s.carried.has(name) || s.rebound.has(name)) return s;
     }
-    return scope;
+    return null;
   };
   const carry = (scope: AliasScope, name: string): void => {
     scope.rebound.delete(name);
     scope.carried.add(name);
   };
+  const release = (scope: AliasScope, name: string): void => {
+    scope.carried.delete(name);
+    scope.rebound.add(name);
+  };
   let runs = false;
-  const look = (node: ts.Node, scope: AliasScope): void => {
+  // `certain` is false inside anything that may not run — a branch, a loop
+  // body, a short-circuit. An overwrite there does not settle what the name
+  // holds afterwards, so only a straight-line one takes the argument away.
+  const look = (node: ts.Node, scope: AliasScope, certain: boolean): void => {
     if (runs) return;
     const isAliasHere = (expr: ts.Expression): boolean => {
       const inner = unwrapExpression(expr);
@@ -394,27 +411,44 @@ function invokesParameter(fn: ts.Node, index: number): boolean {
       for (const declaration of node.declarations) {
         if (declaration.initializer === undefined) continue;
         if (ts.isIdentifier(declaration.name) && isAliasHere(declaration.initializer)) {
-          carry(blockScoped ? scope : homeOf(scope, declaration.name.text), declaration.name.text);
+          const home = blockScoped ? scope : (homeOf(scope, declaration.name.text) ?? scope);
+          carry(home, declaration.name.text);
           continue;
         }
-        look(declaration.initializer, scope);
+        look(declaration.initializer, scope, certain);
       }
       return;
     }
     if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
       const target = unwrapExpression(node.left);
-      if (ts.isIdentifier(target) && isAliasHere(node.right)) {
-        carry(homeOf(scope, target.text), target.text);
+      if (ts.isIdentifier(target)) {
+        const home = homeOf(scope, target.text);
+        if (isAliasHere(node.right)) {
+          // Nothing here declares the target, so this hands the argument to a
+          // binding that outlives the call.
+          if (home === null) {
+            runs = true;
+            return;
+          }
+          carry(home, target.text);
+          return;
+        }
+        // Overwritten with something else, so the name stops standing for the
+        // argument — but only where the overwrite certainly happened.
+        if (certain && home !== null && carries(scope, target.text)) {
+          release(home, target.text);
+        }
+        look(node.right, scope, certain);
         return;
       }
     }
     // A member name and an object-literal key are spellings, not references.
     if (ts.isPropertyAccessExpression(node)) {
-      look(node.expression, scope);
+      look(node.expression, scope, certain);
       return;
     }
     if (ts.isPropertyAssignment(node)) {
-      look(node.initializer, scope);
+      look(node.initializer, scope, certain);
       return;
     }
     // Every other mention hands it somewhere this walk cannot follow.
@@ -437,18 +471,32 @@ function invokesParameter(fn: ts.Node, index: number): boolean {
       functionBody = (node as { body?: ts.Node }).body;
       bodyScope = { carried: new Set(), rebound: vars, parent: inner, isFunction: true };
     }
+    // Inside a branch, a loop or a short-circuit, nothing is settled — and a
+    // function body runs on its own schedule, so it settles nothing here either.
+    const settled =
+      certain &&
+      !ts.isIfStatement(node) &&
+      !ts.isConditionalExpression(node) &&
+      !ts.isSwitchStatement(node) &&
+      !ts.isTryStatement(node) &&
+      !ts.isForStatement(node) &&
+      !ts.isForOfStatement(node) &&
+      !ts.isForInStatement(node) &&
+      !ts.isWhileStatement(node) &&
+      !ts.isDoStatement(node) &&
+      !ts.isFunctionLike(node) &&
+      !(ts.isBinaryExpression(node) && isShortCircuitOperator(node.operatorToken.kind));
     ts.forEachChild(node, (child) => {
-      look(child, child === functionBody ? bodyScope : inner);
+      look(child, child === functionBody ? bodyScope : inner, settled);
     });
   };
   const own = new Set<string>();
   collectFunctionScopedVars(fn, own);
-  look(body, {
-    carried: new Set([parameter.name.text]),
-    rebound: own,
-    parent: null,
-    isFunction: true,
-  });
+  look(
+    body,
+    { carried: new Set([parameter.name.text]), rebound: own, parent: null, isFunction: true },
+    true,
+  );
   return runs;
 }
 

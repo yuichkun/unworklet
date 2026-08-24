@@ -2634,6 +2634,83 @@ run(() => {
   }
 });
 
+test("a callback stored into a binding outside the callee escapes", () => {
+  try {
+    loweredWithMutation(`
+let saved = () => {};
+function keep(cb: () => void) {
+  saved = cb;
+}
+keep(() => {
+  helper.value = 1;
+});
+saved();
+`);
+    expect.unreachable("lower() must treat a store into an outer binding as an escape");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("an alias overwritten before the call no longer stands for the callback", () => {
+  const lowered = loweredWithMutation(`
+function retain(cb: () => void) {
+  let invoke = cb;
+  invoke = () => {};
+  invoke();
+}
+retain(() => {
+  helper.value = 1;
+});
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
+test("an alias overwritten only in a branch still stands for the callback", () => {
+  try {
+    loweredWithMutation(`
+declare const flag: boolean;
+function run(cb: () => void) {
+  let invoke = cb;
+  if (flag) {
+    invoke = () => {};
+  }
+  invoke();
+}
+run(() => {
+  helper.value = 1;
+});
+`);
+    expect.unreachable("lower() must keep an alias a branch may not have overwritten");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("an alias overwritten only in a loop still stands for the callback", () => {
+  try {
+    loweredWithMutation(`
+declare const times: number;
+function run(cb: () => void) {
+  let invoke = cb;
+  for (let i = 0; i < times; i += 1) {
+    invoke = () => {};
+  }
+  invoke();
+}
+run(() => {
+  helper.value = 1;
+});
+`);
+    expect.unreachable("lower() must keep an alias a loop may not have overwritten");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;
