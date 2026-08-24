@@ -415,3 +415,57 @@ test("`analyze` does NOT flag select with matching f32 branches", () => {
   };
   expect(analyze(graph).some((d) => d.id === "select-branch-type-mismatch")).toBe(false);
 });
+
+test("`analyze`: a buffer declaration carrying publish is rejected (backstop for hand-built graphs, issue #38)", () => {
+  // The declaration factories already throw at capture; a graph built by hand
+  // (or by external tooling) bypasses them, so analyze re-checks — the publish
+  // pipeline is scalar-only and a published buffer would silently never reach
+  // `node.state`.
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "audioOutput", name: "main", channels: 1 },
+      {
+        kind: "buffer",
+        name: "scope",
+        type: "f32",
+        size: 8,
+        userNamed: true,
+        publish: { rateFps: 30 },
+      } as never,
+    ],
+    statements: [],
+  };
+  const diags = analyze(graph);
+  expect(diags.some((d) => d.id === "buffer-publish-unsupported" && d.severity === "error")).toBe(
+    true,
+  );
+});
+
+test("`analyze`: a sysex emit whose source buffer exceeds the content chunk is rejected at compile", () => {
+  // The sysex content chunk holds perChunk-4 = 1020 payload bytes. A source
+  // buffer.u8 bigger than that could never ship whole — truncating at emit
+  // would deliver a corrupt sysex (no 0xF7 terminator), so the mismatch is a
+  // build error, not a runtime surprise.
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "audioOutput", name: "main", channels: 1 },
+      { kind: "midiOutput", name: "mo", capacity: 256 },
+      { kind: "buffer", name: "big", type: "u8", size: 2048, userNamed: true },
+    ] as never[],
+    statements: [
+      {
+        kind: "midiEmitIf",
+        port: "mo",
+        eventType: "sysex",
+        cond: { kind: "stateLoad", name: "g", type: "bool" },
+        sysexBufferName: "big",
+        sysexLength: { kind: "literal", type: "i32", value: 2048 },
+        fields: [],
+      } as never,
+    ],
+  };
+  const diags = analyze(graph);
+  expect(diags.some((d) => d.id === "sysex-buffer-exceeds-chunk" && d.severity === "error")).toBe(
+    true,
+  );
+});

@@ -10,6 +10,7 @@ import "@unworklet/core";
 import {
   audioOutput,
   event,
+  decodeSnapshot,
   defineProcessor,
   encodeScalar,
   encodeSnapshot,
@@ -139,4 +140,52 @@ test("restore runs the migration chain on a schema-hash mismatch", async () => {
   });
   // The migration renamed legacy → renamed, so the processor reads 99.
   expect(r.outputs.main![0]![0]).toBe(99);
+});
+
+// ── processor identity gate (issue #28) ──────────────────────────────────────
+
+const makeIdentityProc = (id: string | undefined, marker: number) =>
+  defineProcessor(
+    () => {
+      const out = audioOutput({ channels: 1, name: "main" });
+      const x = state.f32(marker).named("x").expose({ snapshot: "persistent" });
+      return {
+        process: () => {
+          forSample((i) => {
+            out.ch(0).at(i).write(x.read());
+          });
+        },
+      };
+    },
+    id === undefined ? undefined : { id },
+  );
+
+test("renderOffline stamps processor.id into result.state, and a cross-processor restore refuses", async () => {
+  const lowpass = makeIdentityProc("lowpass", 0.25);
+  const distortion = makeIdentityProc("distortion", 0.5);
+  const r = await renderOffline(lowpass, { sampleRate: 48000, duration: 128 / 48000 });
+  expect(decodeSnapshot(r.state).processorId).toBe("lowpass");
+
+  await expect(
+    renderOffline(distortion, {
+      sampleRate: 48000,
+      duration: 128 / 48000,
+      restore: r.state,
+    }),
+  ).rejects.toThrow(/processor-mismatch/);
+});
+
+test("an id-less blob still restores into an id-carrying processor (legacy path)", async () => {
+  const legacySource = makeIdentityProc(undefined, 0.75);
+  const target = makeIdentityProc("distortion", 0.5);
+  const r = await renderOffline(legacySource, { sampleRate: 48000, duration: 128 / 48000 });
+  expect(decodeSnapshot(r.state).processorId).toBeNull();
+
+  const restored = await renderOffline(target, {
+    sampleRate: 48000,
+    duration: 128 / 48000,
+    restore: r.state,
+  });
+  // The blob's x=0.75 landed (schema + name match, no identity to refuse).
+  expect(restored.outputs.main![0]![0]).toBeCloseTo(0.75, 6);
 });

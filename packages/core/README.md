@@ -133,11 +133,14 @@ handler and reading that `state` back in `process`; lift one into float math wit
 `out.emitIf(flag.read(), …)` in `process`.
 
 `.named("x")` (quick) and `.expose({ name, snapshot, publish })` (full) both name
-a slot for main-thread access. `publish` (state/buffer, `{ rateFps }`) streams a
-value to `node.state.<name>.subscribe(...)`. A named scalar `state` is **persistent
-by default** — captured in `node.snapshot()` and offline `result.state`; pass
-`snapshot: "transient"` to opt a named slot out. Buffers are the reverse (transient
-unless `snapshot: "persistent"`). Naming is required for `publish`/`persistent`.
+a slot for main-thread access. `publish` (scalar `state.f32`/`i32`/`bool` only,
+`{ rateFps }`) streams a value to `node.state.<name>.subscribe(...)`; on a buffer
+it is rejected at graph capture (stable ID `buffer-publish-unsupported`) — fan
+values out into scalar slots to observe a buffer live. A named scalar `state` is
+**persistent by default** — captured in `node.snapshot()` and offline
+`result.state`; pass `snapshot: "transient"` to opt a named slot out. Buffers are
+the reverse (transient unless `snapshot: "persistent"`). Naming is required for
+`publish`/`persistent`.
 
 ### Read / write (the part most often guessed wrong)
 

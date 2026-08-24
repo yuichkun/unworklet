@@ -67,7 +67,7 @@ const allScalarStates = defineProcessor(() => {
   };
 });
 
-// ── buffer: every element type + read/write/readInterpolated + publish ───────
+// ── buffer: every element type + read/write/readInterpolated ─────────────────
 const allBufferTypes = defineProcessor(() => {
   const input = audioInput({ channels: 1, name: "in" });
   const out = audioOutput({ channels: 1, name: "out" });
@@ -76,10 +76,7 @@ const allBufferTypes = defineProcessor(() => {
   const bi32 = state.buffer.i32({ size: 8 }).named("bi32");
   const bi64 = state.buffer.i64({ size: 8 }).named("bi64");
   const bbool = state.buffer.bool({ size: 8 }).named("bbool");
-  const bu8 = state.buffer
-    .u8({ size: 8 })
-    .named("bu8")
-    .expose({ publish: { rateFps: 30 } });
+  const bu8 = state.buffer.u8({ size: 8 }).named("bu8");
   const head = state.i32(0).named("head");
   return {
     process: () => {

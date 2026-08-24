@@ -84,7 +84,7 @@ const MIDI_HEADER_BYTES = 12;
  * `SYSEX_PER_CHUNK_BYTES` each (= `[length:u32, data...]`), drop-oldest cycled
  * by the slot's `chunkIdx`. 1 KiB/chunk × 16 chunks = 16 KiB per sysex port.
  */
-const SYSEX_PER_CHUNK_BYTES = 1024;
+export const SYSEX_PER_CHUNK_BYTES = 1024;
 const SYSEX_CHUNKS = 16;
 
 /**

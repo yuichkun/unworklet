@@ -35,7 +35,8 @@ import type {
 } from "./compile/ast.ts";
 import { layout, type Layout } from "./compile/layout.ts";
 import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
-import { atomicMonotoneMax, ringCount, ringSlotIndex } from "./ringIndex.ts";
+import { EGRESS_HEADER_BYTES, EGRESS_SECTION_HEADER_BYTES, alignUp4 } from "./egressFrame.ts";
+import { atomicMonotoneMax, ringCount, ringLeads, ringSlotIndex } from "./ringIndex.ts";
 import { checkRingHeader } from "./selfcheck.ts";
 
 /**
@@ -251,6 +252,16 @@ type WorkletState = {
   readonly lastSentEventHeads: number[];
   readonly lastSentEventOverflows: number[];
   /**
+   * postMessage-path egress buffer pool (see `egressFrame.ts` for the wire
+   * format and the ownership ping-pong). Buffers arrive from main via
+   * `{ kind: 'egress-buffer' }` (initial seed) and `{ kind: 'egress-recycle' }`
+   * (returned after consumption, carrying consumed-tail acks); the per-quantum
+   * egress pops one, encodes the frame, and transfers it back. Views are bound
+   * in the port handler — never in the process() hot path — so the hot path
+   * stays allocation-free. Empty on the SAB path.
+   */
+  readonly egressPool: Array<{ buffer: ArrayBuffer; dv: DataView; u8: Uint8Array }>;
+  /**
    * message ring SAB ↔ WASM mirror meta (sub-phase 7.7d). Same zip pattern as
    * the event ring, but the push direction is reversed (main → worklet): at the
    * start of process, mirror SAB → WASM (bulk-copy the slots main pushed into
@@ -358,7 +369,7 @@ type WorkletState = {
 };
 
 type SelfWithState = {
-  port: { postMessage: (m: unknown) => void };
+  port: { postMessage: (m: unknown, transfer?: Transferable[]) => void };
   [STATE_KEY]?: WorkletState;
   [INIT_CALLED_KEY]?: boolean;
   [INIT_NOT_CALLED_POSTED_KEY]?: boolean;
@@ -488,6 +499,131 @@ type ProcessorOptionsBag = {
     sysexContentSabOffsets?: readonly number[];
   };
 };
+
+/**
+ * postMessage-path egress: encode one quantum's worklet→main ring news (event
+ * rings + MIDI out rings) into a pooled transferable frame and post it. See
+ * `egressFrame.ts` for the wire format and the ownership ping-pong.
+ *
+ * Allocation-free payload path by construction: the frame buffer and its views
+ * come pre-bound from the pool (bound in the port handler when main seeded /
+ * recycled them), slot bytes are copied with plain byte loops (a `subarray`
+ * per slot would allocate a view object), and with no news — or no free
+ * buffer — nothing is taken and nothing is sent. A starved quantum leaves the
+ * `lastSent*` anchors unchanged, so the data stays in the WASM rings (bounded
+ * by drop-oldest) and rides a later quantum's frame. The one irreducible
+ * allocation is the postMessage envelope (`{ kind, buffer }` + the transfer
+ * list) — inherent to the transport itself, which structured-clones every
+ * message; the pool removes the per-quantum payload copies, which is what the
+ * realtime budget actually feels.
+ */
+function postEgressFrame(self: SelfWithState, state: WorkletState): void {
+  const eventRings = state.eventRings;
+  const midiRings = state.midiRings;
+  let news = false;
+  for (let i = 0; i < eventRings.length && !news; i++) {
+    const wasmH = state.eventRingsWasmHeaderViews[i]!;
+    if (
+      wasmH[0]! !== state.lastSentEventHeads[i]! ||
+      wasmH[2]! !== state.lastSentEventOverflows[i]!
+    )
+      news = true;
+  }
+  for (let i = 0; i < midiRings.length && !news; i++) {
+    if (midiRings[i]!.direction !== "out") continue;
+    const wasmH = state.midiRingsWasmHeaderViews[i]!;
+    if (wasmH[0]! !== state.lastSentMidiHeads[i]! || wasmH[2]! !== state.lastSentMidiOverflows[i]!)
+      news = true;
+  }
+  if (!news) return;
+  const entry = state.egressPool.pop();
+  if (entry === undefined) return;
+  const { dv, u8 } = entry;
+  let cursor = EGRESS_HEADER_BYTES;
+  let eventSections = 0;
+  for (let i = 0; i < eventRings.length; i++) {
+    const ring = eventRings[i]!;
+    const wasmH = state.eventRingsWasmHeaderViews[i]!;
+    const head = wasmH[0]!;
+    const tail = wasmH[1]!;
+    const overflow = wasmH[2]!;
+    if (head === state.lastSentEventHeads[i] && overflow === state.lastSentEventOverflows[i])
+      continue;
+    // drop-oldest may have advanced tail past the last sent head — re-anchor
+    // to whichever leads (serial order; the overflowed slots are already gone).
+    const lastSent = state.lastSentEventHeads[i]!;
+    const from = ringLeads(tail, lastSent) ? tail : lastSent;
+    const newSlotCount = ringCount(head, from);
+    const contentWasm = state.eventContentWasmViews[i];
+    const contentLen = contentWasm !== null && newSlotCount > 0 ? contentWasm.byteLength : 0;
+    dv.setUint32(cursor, i, true);
+    dv.setInt32(cursor + 4, head, true);
+    dv.setUint32(cursor + 8, newSlotCount, true);
+    dv.setInt32(cursor + 12, overflow, true);
+    dv.setUint32(cursor + 16, contentLen, true);
+    cursor += EGRESS_SECTION_HEADER_BYTES;
+    const wasmRawView = state.eventRingsWasmViews[i]!;
+    const slotSize = ring.slotSize;
+    for (let k = 0; k < newSlotCount; k++) {
+      const slotIdx = ringSlotIndex(from + k, ring.capacity);
+      const srcOffset = 12 + slotIdx * slotSize;
+      const dstOffset = cursor + k * slotSize;
+      // Byte loop, not `.set(subarray(...))` — a subarray allocates a view.
+      for (let b = 0; b < slotSize; b++) u8[dstOffset + b] = wasmRawView[srcOffset + b]!;
+    }
+    cursor += newSlotCount * slotSize;
+    if (contentLen > 0) {
+      u8.set(contentWasm!, cursor);
+    }
+    cursor = alignUp4(cursor + contentLen);
+    state.lastSentEventHeads[i] = head;
+    state.lastSentEventOverflows[i] = overflow;
+    eventSections++;
+  }
+  let midiSections = 0;
+  for (let i = 0; i < midiRings.length; i++) {
+    const ring = midiRings[i]!;
+    if (ring.direction !== "out") continue;
+    const wasmH = state.midiRingsWasmHeaderViews[i]!;
+    const head = wasmH[0]!;
+    const tail = wasmH[1]!;
+    const overflow = wasmH[2]!;
+    if (head === state.lastSentMidiHeads[i] && overflow === state.lastSentMidiOverflows[i])
+      continue;
+    const lastSent = state.lastSentMidiHeads[i]!;
+    const from = ringLeads(tail, lastSent) ? tail : lastSent;
+    const newSlotCount = ringCount(head, from);
+    const sysexWasm = state.sysexContentWasmViews[i];
+    const sysexLen = sysexWasm !== null && newSlotCount > 0 ? sysexWasm.byteLength : 0;
+    dv.setUint32(cursor, i, true);
+    dv.setInt32(cursor + 4, head, true);
+    dv.setUint32(cursor + 8, newSlotCount, true);
+    dv.setInt32(cursor + 12, overflow, true);
+    dv.setUint32(cursor + 16, sysexLen, true);
+    cursor += EGRESS_SECTION_HEADER_BYTES;
+    const wasmRawView = state.midiRingsWasmViews[i]!;
+    for (let k = 0; k < newSlotCount; k++) {
+      const slotIdx = ringSlotIndex(from + k, ring.capacity);
+      const srcOffset = 12 + slotIdx * MIDI_SLOT_BYTES;
+      const dstOffset = cursor + k * MIDI_SLOT_BYTES;
+      // Byte loop, not `.set(subarray(...))` — a subarray allocates a view.
+      for (let b = 0; b < MIDI_SLOT_BYTES; b++) u8[dstOffset + b] = wasmRawView[srcOffset + b]!;
+    }
+    cursor += newSlotCount * MIDI_SLOT_BYTES;
+    if (sysexLen > 0) {
+      u8.set(sysexWasm!, cursor);
+    }
+    cursor = alignUp4(cursor + sysexLen);
+    state.lastSentMidiHeads[i] = head;
+    state.lastSentMidiOverflows[i] = overflow;
+    midiSections++;
+  }
+  dv.setUint32(0, eventSections, true);
+  dv.setUint32(4, midiSections, true);
+  self.port.postMessage({ kind: "egress", buffer: entry.buffer, byteLength: cursor }, [
+    entry.buffer,
+  ]);
+}
 
 const fillOutputsSilent = (outputs: Float32Array[][]): void => {
   for (const port of outputs) {
@@ -713,6 +849,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       // quantum). The SAB path never references it, so it stays at the initial 0.
       const lastSentEventHeads = eventRings.map(() => 0);
       const lastSentEventOverflows = eventRings.map(() => 0);
+      const egressPool: Array<{ buffer: ArrayBuffer; dv: DataView; u8: Uint8Array }> = [];
       // WASM views = needed on both transports (the path where the worklet reads
       // the WASM ring is common to SAB / postMessage). SAB views = bound only when
       // SAB is present (the postMessage path has no eventRingsBuffer).
@@ -911,6 +1048,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         eventContentSabViews,
         lastSentEventHeads,
         lastSentEventOverflows,
+        egressPool,
         messageRingsBuffer,
         messageRings,
         messageRingSabOffsets,
@@ -943,6 +1081,26 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         lastSentMidiInOverflows,
         failed: false,
       };
+
+      // Minimum pool-buffer size for this node's worst-case egress frame
+      // (`egressFrame.ts`), computed against the SAME views the encoder reads.
+      // An undersized buffer arriving on the port (malformed or foreign
+      // message) is rejected at the boundary — accepting it would let
+      // `postEgressFrame` overrun the DataView mid-quantum.
+      let egressFrameBytes = EGRESS_HEADER_BYTES;
+      for (let i = 0; i < eventRings.length; i++) {
+        egressFrameBytes +=
+          EGRESS_SECTION_HEADER_BYTES +
+          eventRings[i]!.capacity * eventRings[i]!.slotSize +
+          alignUp4(eventContentWasmViews[i]?.byteLength ?? 0);
+      }
+      for (let i = 0; i < midiRingsMeta.length; i++) {
+        if (midiRingsMeta[i]!.direction !== "out") continue;
+        egressFrameBytes +=
+          EGRESS_SECTION_HEADER_BYTES +
+          midiRingsMeta[i]!.capacity * MIDI_SLOT_BYTES +
+          alignUp4(sysexContentWasmViews[i]?.byteLength ?? 0);
+      }
 
       // Incoming-message listener for the postMessage path (receive on the audio
       // thread what the main-side sender sends via `port.postMessage({ kind: 'message',
@@ -1137,10 +1295,57 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
                 requestId?: unknown;
                 profile?: unknown;
                 slots?: unknown;
+                buffer?: unknown;
+                eventTails?: unknown;
+                midiTails?: unknown;
               }
             | null
             | undefined;
           if (typeof data !== "object" || data === null) return;
+          if (data.kind === "egress-buffer" || data.kind === "egress-recycle") {
+            // A pool buffer arriving from main — the initial seed, or a frame
+            // coming back after consumption (`egressFrame.ts`). Views are bound
+            // HERE, in the port handler: a transferred-back ArrayBuffer is a
+            // fresh identity, and binding outside process() keeps the
+            // per-quantum hot path allocation-free. Undersized buffers are
+            // rejected — the encoder sizes against `egressFrameBytes` and
+            // never bounds-checks in the hot path.
+            if (data.buffer instanceof ArrayBuffer && data.buffer.byteLength >= egressFrameBytes) {
+              egressPool.push({
+                buffer: data.buffer,
+                dv: new DataView(data.buffer),
+                u8: new Uint8Array(data.buffer),
+              });
+            }
+            if (data.kind === "egress-recycle") {
+              // Consumed-tail acknowledgements — the consumer→producer feedback
+              // of the postMessage path (the SAB path reads the shared tail
+              // word instead). Serial-order guarded: the WASM drop-oldest also
+              // advances these words, so they only ever move forward.
+              if (Array.isArray(data.eventTails)) {
+                for (const pair of data.eventTails) {
+                  if (!Array.isArray(pair)) continue;
+                  const [idx, tail] = pair as [unknown, unknown];
+                  if (typeof idx !== "number" || typeof tail !== "number") continue;
+                  if (idx < 0 || idx >= eventRings.length) continue;
+                  const wasmH = eventRingsWasmHeaderViews[idx]!;
+                  if (ringLeads(tail, wasmH[1]!)) wasmH[1] = tail;
+                }
+              }
+              if (Array.isArray(data.midiTails)) {
+                for (const pair of data.midiTails) {
+                  if (!Array.isArray(pair)) continue;
+                  const [idx, tail] = pair as [unknown, unknown];
+                  if (typeof idx !== "number" || typeof tail !== "number") continue;
+                  if (idx < 0 || idx >= midiRingsMeta.length) continue;
+                  if (midiRingsMeta[idx]!.direction !== "out") continue;
+                  const wasmH = midiRingsWasmHeaderViews[idx]!;
+                  if (ringLeads(tail, wasmH[1]!)) wasmH[1] = tail;
+                }
+              }
+            }
+            return;
+          }
           if (data.kind === "snapshot-request") {
             const profile = typeof data.profile === "string" ? data.profile : undefined;
             // capture must always answer: an unhandled throw posts nothing and
@@ -1170,6 +1375,11 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
               kind: "dev-dump-response",
               requestId: data.requestId,
               slots,
+              // Render-health counter (issue #27): output samples the non-finite
+              // scrub replaced with 0. Rides the dev dump — DevTools-facing, so
+              // it costs no public API — read from the exported WASM global.
+              scrubbedSamples: (instance.exports["scrubbedSamples"] as WebAssembly.Global)
+                .value as number,
             });
             return;
           }
@@ -1527,6 +1737,35 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       }
     }
 
+    // Consumer→producer tail feedback for the worklet→main rings. Main commits
+    // how far it drained into the SAB tail word (monotone-max on its side);
+    // mirror that into the WASM header BEFORE process() so the WASM-side
+    // `head - tail >= capacity` overflow check sees real ring occupancy.
+    // Without this the WASM tail only ever advances via drop-oldest, so the
+    // check saturates after `capacity` lifetime emits and every later emit
+    // false-fires drop-oldest with a lying overflowCount. Serial-order guarded
+    // (`ringLeads`): the WASM drop-oldest also moves this word, so it only
+    // ever moves forward.
+    if (state.transport === "sab") {
+      if (state.eventRingsBuffer !== null) {
+        const wasmHeaders = state.eventRingsWasmHeaderViews;
+        const sabHeaders = state.eventRingsSabHeaderViews;
+        for (let i = 0; i < wasmHeaders.length; i++) {
+          const wasmH = wasmHeaders[i]!;
+          const consumed = Atomics.load(sabHeaders[i]!, 1);
+          if (ringLeads(consumed, wasmH[1]!)) wasmH[1] = consumed;
+        }
+      }
+      if (state.midiRingsBuffer !== null) {
+        for (let i = 0; i < state.midiRings.length; i++) {
+          if (state.midiRings[i]!.direction !== "out") continue;
+          const wasmH = state.midiRingsWasmHeaderViews[i]!;
+          const consumed = Atomics.load(state.midiRingsSabHeaderViews[i]!, 1);
+          if (ringLeads(consumed, wasmH[1]!)) wasmH[1] = consumed;
+        }
+      }
+    }
+
     try {
       state.process();
     } catch (err) {
@@ -1609,98 +1848,45 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       }
     }
 
-    // event ring copy = the route branches on transport mode:
-    //
-    // - SAB available: existing SAB bulk copy (mirror the whole ring into the SAB) +
-    //   header Atomics.store (main does rAF polling + Atomics.load to take the head
-    //   release fence and guarantee visibility of the slot run).
-    // - SAB unavailable: no shared buffer (structured clone gives main / worklet
-    //   separate ring instances) = extract the newly emitted range (lastSentHead ..
-    //   currentHead) as a Uint8Array slice + deliver via port.postMessage (main turns
-    //   it into payload objects on onEventMessage + dispatches to subscribers;
-    //   overflowCount is carried on the payload to update the main mirror). An
-    //   unchanged quantum is skipped.
-    //
-    // Note: the per-quantum `new Uint8Array(...)` allocation on the postMessage path is
-    // slated to be refactored, before v1.0.0 ship, to the 02-messaging §4 "pre-allocated
-    // transferable buffers + ownership transfer" ping-pong path (this wave is "make it work").
-    if (state.eventRings.length > 0) {
-      const wasmViews = state.eventRingsWasmViews;
+    // event ring copy — SAB path: slot-region bulk copy (NOT the header) +
+    // header Atomics commits. The postMessage path is handled by the pooled
+    // egress frame below, shared with the MIDI out rings (`egressFrame.ts`).
+    if (
+      state.eventRings.length > 0 &&
+      state.transport === "sab" &&
+      state.eventRingsBuffer !== null
+    ) {
       const sabSlotViews = state.eventRingsSabSlotViews;
       const wasmSlotViews = state.eventRingsWasmSlotViews;
       const wasmHeaders = state.eventRingsWasmHeaderViews;
       const sabHeaders = state.eventRingsSabHeaderViews;
-      const isSab = state.transport === "sab";
       for (let i = 0; i < state.eventRings.length; i++) {
-        const ring = state.eventRings[i]!;
         const wasmH = wasmHeaders[i]!;
         const currentHead = wasmH[0]!;
         const currentTail = wasmH[1]!;
         const currentOverflow = wasmH[2]!;
-        if (isSab && state.eventRingsBuffer !== null) {
-          // SAB path = slot-region bulk copy (NOT the header) + header Atomics.store.
-          // Copying the header here would write `head` with a plain store before the
-          // release store below, letting a consumer read-from it without the
-          // happens-before that publishes the slots (a torn read).
-          sabSlotViews[i]!.set(wasmSlotViews[i]!);
-          // §4.3 with a typed-array field = mirror the content region WASM → SAB
-          // (before the head Atomics.store = the release fence lets main observe it through the slots).
-          const contentWasm = state.eventContentWasmViews[i];
-          const contentSab = state.eventContentSabViews[i];
-          if (contentWasm !== null && contentSab !== null) {
-            contentSab.set(contentWasm);
-          }
-          const sabH = sabHeaders[i]!;
-          // head is the release point: commit tail + overflow FIRST so a consumer
-          // that acquire-loads the new head already sees the matching window. Storing
-          // head first lets a cross-thread reader pair a new head with a stale tail /
-          // overflow and miscompute the drop-oldest clamp (= event garble race).
-          Atomics.store(sabH, 1, currentTail);
-          Atomics.store(sabH, 2, currentOverflow);
-          Atomics.store(sabH, 0, currentHead);
-        } else {
-          // postMessage path = extract the newly emitted range + deliver via port.postMessage
-          const lastSentHead = state.lastSentEventHeads[i]!;
-          const lastSentOverflow = state.lastSentEventOverflows[i]!;
-          if (currentHead === lastSentHead && currentOverflow === lastSentOverflow) continue;
-          // drop-oldest may have advanced tail past lastSentHead = re-anchor with max
-          // (the old slots have already overflowed, so skip them).
-          const from = lastSentHead < currentTail ? currentTail : lastSentHead;
-          const newSlotCount = currentHead - from;
-          const slotSize = ring.slotSize;
-          const capacity = ring.capacity;
-          const wasmRawView = wasmViews[i]!;
-          // bulk-copy the new slots into a Uint8Array (main decodes the fields)
-          const slotsBytes = new Uint8Array(newSlotCount * slotSize);
-          for (let k = 0; k < newSlotCount; k++) {
-            const slotIdx = ringSlotIndex(from + k, capacity);
-            const srcOffset = 12 + slotIdx * slotSize;
-            slotsBytes.set(wasmRawView.subarray(srcOffset, srcOffset + slotSize), k * slotSize);
-          }
-          const eventMsg: {
-            kind: "event";
-            ringIndex: number;
-            newSlotsBytes: ArrayBuffer;
-            newSlotCount: number;
-            overflowCount: number;
-            contentBytes?: ArrayBuffer;
-          } = {
-            kind: "event",
-            ringIndex: i,
-            newSlotsBytes: slotsBytes.buffer,
-            newSlotCount,
-            overflowCount: currentOverflow,
-          };
-          // §4.3 with a typed-array field = bundle a content-region snapshot (main never
-          // touches WASM memory = it slices from here using the slot's payloadOffset/Len).
-          const contentWasm = state.eventContentWasmViews[i];
-          if (contentWasm !== null) {
-            eventMsg.contentBytes = contentWasm.slice().buffer;
-          }
-          self.port.postMessage(eventMsg);
-          state.lastSentEventHeads[i] = currentHead;
-          state.lastSentEventOverflows[i] = currentOverflow;
+        // Slot region only — copying the header would write `head` with a plain
+        // store before the release store below, letting a consumer read-from it
+        // without the happens-before that publishes the slots (a torn read).
+        sabSlotViews[i]!.set(wasmSlotViews[i]!);
+        // §4.3 with a typed-array field = mirror the content region WASM → SAB
+        // (before the head Atomics.store = the release fence lets main observe it through the slots).
+        const contentWasm = state.eventContentWasmViews[i];
+        const contentSab = state.eventContentSabViews[i];
+        if (contentWasm !== null && contentSab !== null) {
+          contentSab.set(contentWasm);
         }
+        const sabH = sabHeaders[i]!;
+        // head is the release point: commit tail + overflow FIRST so a consumer
+        // that acquire-loads the new head already sees the matching window. Storing
+        // head first lets a cross-thread reader pair a new head with a stale tail /
+        // overflow and miscompute the drop-oldest clamp (= event garble race).
+        // tail is a two-writer word (WASM drop-oldest here, the main drain
+        // commit on the consumer side) — monotone-max, never a plain store
+        // that could rewind the consumer's commit (lost update).
+        atomicMonotoneMax(sabH, 1, currentTail);
+        Atomics.store(sabH, 2, currentOverflow);
+        Atomics.store(sabH, 0, currentHead);
       }
     }
 
@@ -1753,10 +1939,12 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         const ring = state.midiRings[i]!;
         const wasmH = state.midiRingsWasmHeaderViews[i]!;
         if (ring.direction === "out") {
-          const currentHead = wasmH[0]!;
-          const currentTail = wasmH[1]!;
-          const currentOverflow = wasmH[2]!;
+          // SAB path only — the postMessage path rides the pooled egress frame
+          // below, shared with the event rings (`egressFrame.ts`).
           if (isSab && state.midiRingsBuffer !== null) {
+            const currentHead = wasmH[0]!;
+            const currentTail = wasmH[1]!;
+            const currentOverflow = wasmH[2]!;
             // Slot-region copy only — the header is carried by the release
             // Atomics.store below, never the plain bulk copy (= no torn read).
             state.midiRingsSabSlotViews[i]!.set(state.midiRingsWasmSlotViews[i]!);
@@ -1768,50 +1956,12 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             const sabH = state.midiRingsSabHeaderViews[i]!;
             // head is the release point: commit tail + overflow FIRST so a consumer
             // that acquire-loads the new head already sees the matching window
-            // (= same release order as the event out ring).
-            Atomics.store(sabH, 1, currentTail);
+            // (= same release order as the event out ring). tail is two-writer
+            // (WASM drop-oldest here, the main drain commit) — monotone-max,
+            // never a plain store that could rewind the consumer's commit.
+            atomicMonotoneMax(sabH, 1, currentTail);
             Atomics.store(sabH, 2, currentOverflow);
             Atomics.store(sabH, 0, currentHead);
-          } else {
-            const lastSentHead = state.lastSentMidiHeads[i]!;
-            const lastSentOverflow = state.lastSentMidiOverflows[i]!;
-            if (currentHead === lastSentHead && currentOverflow === lastSentOverflow) continue;
-            const from = lastSentHead < currentTail ? currentTail : lastSentHead;
-            const newSlotCount = currentHead - from;
-            const capacity = ring.capacity;
-            const wasmRawView = state.midiRingsWasmViews[i]!;
-            const slotsBytes = new Uint8Array(newSlotCount * MIDI_SLOT_BYTES);
-            for (let k = 0; k < newSlotCount; k++) {
-              const slotIdx = ringSlotIndex(from + k, capacity);
-              const srcOffset = 12 + slotIdx * MIDI_SLOT_BYTES;
-              slotsBytes.set(
-                wasmRawView.subarray(srcOffset, srcOffset + MIDI_SLOT_BYTES),
-                k * MIDI_SLOT_BYTES,
-              );
-            }
-            const midiOutMsg: {
-              kind: "midiOut";
-              ringIndex: number;
-              newSlotsBytes: ArrayBuffer;
-              newSlotCount: number;
-              overflowCount: number;
-              sysexBytes?: ArrayBuffer;
-            } = {
-              kind: "midiOut",
-              ringIndex: i,
-              newSlotsBytes: slotsBytes.buffer,
-              newSlotCount,
-              overflowCount: currentOverflow,
-            };
-            // sysex port = bundle a content-region snapshot (main never touches WASM =
-            // it reads the length-prefixed bytes from here using the slot's chunkIdx).
-            const sysexWasm = state.sysexContentWasmViews[i];
-            if (sysexWasm !== null) {
-              midiOutMsg.sysexBytes = sysexWasm.slice().buffer;
-            }
-            self.port.postMessage(midiOutMsg);
-            state.lastSentMidiHeads[i] = currentHead;
-            state.lastSentMidiOverflows[i] = currentOverflow;
           }
         } else {
           // in port = expose the WASM drain tail to main / notify overflow
@@ -1832,6 +1982,16 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
           }
         }
       }
+    }
+
+    // postMessage egress: one pooled transferable frame per quantum carrying
+    // every worklet→main ring's news (event + MIDI out). See `egressFrame.ts`
+    // and `postEgressFrame` for the wire format and the no-allocation shape.
+    // The publish / *-overflow notifications above stay as small standalone
+    // posts: they are edge-triggered and rate-bounded (a changed value at most
+    // per rateFps / per overflow change), not per-quantum data-plane traffic.
+    if (state.transport !== "sab") {
+      postEgressFrame(self, state);
     }
 
     // Layer F: debug-only invariant monitor. Every quantum, assert each SAB ring

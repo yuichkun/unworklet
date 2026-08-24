@@ -44,6 +44,7 @@ import type {
   AudioOutputHandle,
   Buffer,
   BufferElementType,
+  BufferExposeOptions,
   Capacity,
   EventDecl,
   ExposeOptions,
@@ -364,7 +365,7 @@ export interface BufferChain {
   readonly bool: BufferFactory<"bool">;
   readonly u8: BufferFactory<"u8">;
   named(name: string): BufferChain;
-  expose(options: ExposeOptions): BufferChain;
+  expose(options: BufferExposeOptions): BufferChain;
 }
 
 /** The scalar type a buffer element surfaces as (= `u8` is accessed via i32). */
@@ -400,23 +401,22 @@ function checkBufferName(name: string, excludeDecl: BufferDecl | null = null): v
 }
 
 /**
- * Publish / snapshot consistency check for a buffer slot (= `01-dsl.md` §3.2).
- * Same axis as state, but with no type restriction on publish (= publish is
- * allowed for every element type, Q27-a/e). A persistent snapshot / publish
- * requires a main-side identity = requires userNamed.
+ * Snapshot consistency check for a buffer slot, plus the publish gate (issue
+ * #38): the publish pipeline is scalar-only — a published buffer never appears
+ * on `node.state` — so an accepted-but-inert declaration is rejected loudly at
+ * capture instead of surfacing later as a distant `TypeError`. The type surface
+ * (`BufferExposeOptions`) already omits `publish`; this guards JS callers and
+ * casts. A persistent snapshot requires a main-side identity = requires
+ * userNamed.
  */
 function validateBufferDecl(decl: BufferDecl): void {
   if (decl.publish !== undefined) {
-    if (!Number.isFinite(decl.publish.rateFps) || decl.publish.rateFps <= 0) {
-      throw new Error(
-        `unworklet: publish rateFps must be a positive finite number, got ${decl.publish.rateFps}`,
-      );
-    }
-    if (!decl.userNamed) {
-      throw new Error(
-        `unworklet: buffer with publish requires user-defined name (= via .named('X') or .expose({ name: 'X' }))`,
-      );
-    }
+    throw new Error(
+      `unworklet: buffer "${decl.name}" declares publish, but buffer publish is not wired to the ` +
+        `main thread — the slot would never appear on node.state. To observe a buffer live, ` +
+        `fan the values out into scalar state slots (state.f32(0).expose({ name, publish })), ` +
+        `or read the whole buffer back via node.snapshot(). (stable ID 'buffer-publish-unsupported')`,
+    );
   }
   if (decl.snapshot === "persistent" && !decl.userNamed) {
     throw new Error(

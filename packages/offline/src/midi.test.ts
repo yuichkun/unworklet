@@ -7,7 +7,16 @@
 
 import "@unworklet/core";
 import type { MidiEvent } from "@unworklet/core";
-import { audioOutput, defineProcessor, event, f32, forSample, i32, state } from "@unworklet/core";
+import {
+  audioOutput,
+  defineProcessor,
+  event,
+  f32,
+  forSample,
+  i32,
+  state,
+  sub,
+} from "@unworklet/core";
 import { expect, test } from "vite-plus/test";
 
 import { renderOffline } from "./index.ts";
@@ -248,4 +257,45 @@ test("offline drops a sysex event sent to a port with no sysex region (no crash)
     ],
   });
   expect(r.outputs.main![0]![0]).toBe(0); // no note delivered, default state
+});
+
+test("sysex emit with a runtime-negative length clamps to 0 instead of trapping (memory.copy safety)", async () => {
+  // A user-computed `length` that goes negative used to flow through a signed
+  // min into `memory.copy`, where it reads as a ~4 GiB unsigned size — an OOB
+  // trap that latches permanent silence. The clamp floors it at 0: the event
+  // still fires, carrying an empty payload.
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const sysexIn = event.midi({ from: "main", name: "sysexIn" });
+    const sysexOut = event.midi({ to: "main", name: "sysexOut" });
+    const buf = state.buffer.u8({ size: 16 });
+    return {
+      process: () => {
+        sysexIn.onEvent("sysex", ({ data, length, atSample }) => {
+          buf.copyFrom(data);
+          // length - 1000: negative for any real-world sysex in this test.
+          sysexOut.emitIf(true, { type: "sysex", data: buf, length: sub(length, 1000), atSample });
+        });
+        forSample((i) => {
+          out.ch(0).at(i).write(0);
+        });
+      },
+    };
+  });
+  const result = await renderOffline(proc, {
+    sampleRate: 48000,
+    duration: 128 / 48000,
+    events: [
+      {
+        name: "sysexIn",
+        payload: { type: "sysex", data: new Uint8Array([0xf0, 0x10, 0xf7]) },
+        atSample: 0,
+      },
+    ],
+  });
+  const outEvents = result.events.filter((e) => e.name === "sysexOut");
+  expect(outEvents).toHaveLength(1);
+  const ev = outEvents[0]!.payload as Extract<MidiEvent, { type: "sysex" }>;
+  expect(ev.type).toBe("sysex");
+  expect(ev.data.length).toBe(0);
 });

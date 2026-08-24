@@ -32,6 +32,22 @@ export function ringCount(head: number, tail: number): number {
 }
 
 /**
+ * Whether ring counter `a` is strictly ahead of `b` in serial-number order.
+ *
+ * Ring counters are monotone i32 words, so "ahead" cannot be a plain signed
+ * `a > b`: in the window where one counter has wrapped past 2^31 and the other
+ * has not, the signed comparison inverts and a legitimate lead reads as a lag
+ * (rebasing a drain cursor onto a drop-oldest tail would then be skipped,
+ * re-delivering overwritten slots). The distance between two live cursors is
+ * bounded by the ring capacity — far below 2^31 — so the signed 32-bit
+ * difference `(a - b) | 0` is positive exactly when `a` leads `b`, across the
+ * wrap included (same argument as `atomicMonotoneMax`).
+ */
+export function ringLeads(a: number, b: number): boolean {
+  return ((a - b) | 0) > 0;
+}
+
+/**
  * Atomically advance the i32 ring counter `view[index]` to `target` if `target`
  * is AHEAD of the current value, and return the resulting value. A behind-or-
  * equal target leaves the word unchanged (never a rewind).

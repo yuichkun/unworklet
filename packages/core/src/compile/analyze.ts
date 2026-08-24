@@ -18,6 +18,7 @@
 
 import type { AstNode, CapturedGraph } from "./ast.ts";
 import { inferAstType } from "./ast.ts";
+import { SYSEX_PER_CHUNK_BYTES } from "./layout.ts";
 
 export type DiagnosticEntry = {
   readonly id: string;
@@ -420,10 +421,66 @@ function walkHandlerFieldEscape(
   }
 }
 
+/**
+ * A sysex emit's source `buffer.u8` must fit inside one content chunk
+ * (`SYSEX_PER_CHUNK_BYTES - 4` payload bytes). A bigger buffer could never
+ * ship whole, and truncating at emit would deliver a corrupt sysex (no 0xF7
+ * terminator) — so the mismatch is a build error, not a runtime surprise.
+ * Recurses into handler / loop bodies (the echo shape emits inside a
+ * `midiOnEvent` handler).
+ */
+function walkSysexBufferFit(
+  graph: CapturedGraph,
+  body: readonly AstNode[],
+  diagnostics: DiagnosticEntry[],
+): void {
+  const maxBody = SYSEX_PER_CHUNK_BYTES - 4;
+  for (const node of body) {
+    if (
+      node.kind === "midiEmitIf" &&
+      node.eventType === "sysex" &&
+      node.sysexBufferName !== undefined
+    ) {
+      const decl = graph.declarations.find(
+        (d) => d.kind === "buffer" && d.name === node.sysexBufferName,
+      );
+      if (decl !== undefined && decl.kind === "buffer" && decl.size > maxBody) {
+        diagnostics.push({
+          id: "sysex-buffer-exceeds-chunk",
+          severity: "error",
+          message: `unworklet: midi port "${node.port}" emits sysex from buffer "${node.sysexBufferName}" (${decl.size} bytes), which exceeds the ${maxBody}-byte sysex content chunk — the message could never ship whole, and truncating would drop the 0xF7 terminator. Use a buffer of <= ${maxBody} bytes, or split the transfer. (stable ID 'sysex-buffer-exceeds-chunk')`,
+        });
+      }
+    }
+    if (
+      node.kind === "forSample" ||
+      node.kind === "everyNSamples" ||
+      node.kind === "messageOnReceive" ||
+      node.kind === "midiOnEvent"
+    ) {
+      walkSysexBufferFit(graph, node.body, diagnostics);
+    }
+  }
+}
+
 export function analyze(graph: CapturedGraph): DiagnosticEntry[] {
   const diagnostics: DiagnosticEntry[] = [];
+  // Buffer publish backstop (issue #38): the declaration factories throw at
+  // capture, but a hand-built graph bypasses them. The publish pipeline is
+  // scalar-only — a published buffer never appears on `node.state` — so reject
+  // rather than compile a declaration whose runtime surface does not exist.
+  for (const decl of graph.declarations) {
+    if (decl.kind === "buffer" && decl.publish !== undefined) {
+      diagnostics.push({
+        id: "buffer-publish-unsupported",
+        severity: "error",
+        message: `unworklet: buffer "${decl.name}" declares publish, but buffer publish is not wired to the main thread — the slot would never appear on node.state. Fan the values out into scalar state slots, or read the buffer back via node.snapshot(). (stable ID 'buffer-publish-unsupported')`,
+      });
+    }
+  }
   walkForLoopErrors(graph.statements, diagnostics);
   checkPayloadFieldLimit(graph, diagnostics);
+  walkSysexBufferFit(graph, graph.statements, diagnostics);
   walkHandlerFieldEscape(graph.statements, null, diagnostics);
   for (const stmt of graph.statements) {
     if (stmt.kind === "forSample") {

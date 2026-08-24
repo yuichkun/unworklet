@@ -21,6 +21,7 @@ import { expect, test, vi } from "vite-plus/test";
 import { compile } from "./compile/index.ts";
 import { CAPACITY_16 } from "./dsl/constants.ts";
 import { event } from "./dsl/declarations.ts";
+import { egressPoolBufferBytes } from "./egressFrame.ts";
 import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
 import { midiEventToWire, wireToMidiEvent } from "./midiWire.ts";
 import { defineProcessor } from "./processor.ts";
@@ -107,28 +108,50 @@ const ringOffsets = (rings: readonly MidiRingSlotDescriptor[]): number[] => {
 const ringsTotalBytes = (rings: readonly MidiRingSlotDescriptor[]): number =>
   rings.reduce((acc, r) => acc + 12 + r.capacity * 8, 0);
 
-// Collect the `{ kind: 'midiOut' }` messages the worklet posted and decode each
-// 8-byte slot back into a `MidiEvent` (+ raw atSample) via the production codec.
+// Seed the worklet's postMessage egress pool (the frame buffers main would
+// pre-allocate and transfer; see `egressFrame.ts`).
+const seedEgressPool = (self: MockSelf, midiRings: readonly MidiRingSlotDescriptor[]): void => {
+  fireToWorklet(self, {
+    kind: "egress-buffer",
+    buffer: new ArrayBuffer(egressPoolBufferBytes([], midiRings)),
+  });
+};
+
+// Collect the `{ kind: 'egress' }` frames the worklet posted and decode the
+// requested MIDI section's 8-byte slots back into `MidiEvent` (+ raw atSample)
+// via the production codec. These fixtures declare no event rings, so the
+// event-section half of the frame is asserted empty rather than parsed.
 const drainPostedMidiOut = (
   self: MockSelf,
   ringIndex: number,
 ): Array<{ event: MidiEvent; atSample: number }> => {
   const out: Array<{ event: MidiEvent; atSample: number }> = [];
   for (const msg of self.messages) {
-    const m = msg as {
-      kind?: string;
-      ringIndex?: number;
-      newSlotsBytes?: ArrayBuffer;
-      newSlotCount?: number;
-    };
-    if (m.kind !== "midiOut" || m.ringIndex !== ringIndex) continue;
-    const view = new DataView(m.newSlotsBytes!);
-    for (let k = 0; k < (m.newSlotCount ?? 0); k++) {
-      const off = k * 8;
-      out.push({
-        event: wireToMidiEvent(view.getUint8(off), view.getUint8(off + 1), view.getUint8(off + 2)),
-        atSample: view.getUint32(off + 4, true),
-      });
+    const m = msg as { kind?: string; buffer?: ArrayBuffer };
+    if (m.kind !== "egress" || !(m.buffer instanceof ArrayBuffer)) continue;
+    const view = new DataView(m.buffer);
+    expect(view.getUint32(0, true)).toBe(0); // no event sections in these fixtures
+    const midiSections = view.getUint32(4, true);
+    let cursor = 8;
+    for (let s = 0; s < midiSections; s++) {
+      const sectionRing = view.getUint32(cursor, true);
+      const slotCount = view.getUint32(cursor + 8, true);
+      const sysexLen = view.getUint32(cursor + 16, true);
+      cursor += 20;
+      for (let k = 0; k < slotCount; k++) {
+        if (sectionRing !== ringIndex) continue;
+        const off = cursor + k * 8;
+        out.push({
+          event: wireToMidiEvent(
+            view.getUint8(off),
+            view.getUint8(off + 1),
+            view.getUint8(off + 2),
+          ),
+          atSample: view.getUint32(off + 4, true),
+        });
+      }
+      cursor += slotCount * 8;
+      cursor = (cursor + sysexLen + 3) & ~3;
     }
   }
   return out;
@@ -150,6 +173,7 @@ test("postMessage: an inbound noteOn round-trips unchanged through the WASM thru
       sysexContentSabOffsets: midiRings.map(() => 0),
     },
   });
+  seedEgressPool(self, midiRings);
   const inIndex = midiRings.findIndex((r) => r.direction === "in");
   const outIndex = midiRings.findIndex((r) => r.direction === "out");
 
@@ -183,6 +207,7 @@ test("postMessage: cc and pitchBend survive the 14-bit / controller encoding rou
       sysexContentSabOffsets: midiRings.map(() => 0),
     },
   });
+  seedEgressPool(self, midiRings);
   const inIndex = midiRings.findIndex((r) => r.direction === "in");
   const outIndex = midiRings.findIndex((r) => r.direction === "out");
 
@@ -220,6 +245,7 @@ test("postMessage: two inbound events in one quantum both drain (handler not bro
       sysexContentSabOffsets: midiRings.map(() => 0),
     },
   });
+  seedEgressPool(self, midiRings);
   const inIndex = midiRings.findIndex((r) => r.direction === "in");
   const outIndex = midiRings.findIndex((r) => r.direction === "out");
 

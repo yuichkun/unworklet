@@ -234,6 +234,17 @@ test("out-ring publish: a slots-only bulk copy is SAFE on every interleaving", (
   expect(result.violations).toEqual([]);
 });
 
+test("out-ring publish: the drop-oldest tail commit (atomic monotone-max) is SAFE on every interleaving", () => {
+  // The drop-oldest quantum adds an indivisible rmw on `tail` before the head
+  // release store. It must not weaken the head-publish proof — the release
+  // store stays the sole synchronization point for the slot run. (The
+  // two-writer tail composition itself is proven by `splitWriterTailSpec`.)
+  const inv = freshDelivery("main", "h", "t", "s", RING_SLOT_MARKER);
+  const result = explore(outRingPublishSpec({ touchesHeader: false, tailAdvances: true }), [inv]);
+  expect(result.terminals).toBeGreaterThan(0);
+  expect(result.violations).toEqual([]);
+});
+
 // ── ring protocol proof: in-ring mirror non-acquire bound (bug #2) ──────────
 
 test("in-ring mirror: a header-clobbering bulk copy IS a torn read", () => {

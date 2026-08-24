@@ -131,18 +131,27 @@ const PAYLOAD_CLAMP_LOCAL = 17;
 /**
  * v128 temp local for SIMD `sumLanes` (= §7). vec is evaluated once and held,
  * then its 4 lanes are pulled out with `extract_lane` (= avoids evaluating the
- * vec expression 4 times).
+ * vec expression 4 times). Also holds the teed store value for the lane-wise
+ * subnormal flush in `bufferStoreVec` (never live simultaneously: a `sumLanes`
+ * inside the stored expression completes before the outer tee runs).
  */
 const VEC_TEMP_LOCAL = 18;
 
 /**
+ * i32 temp local for the `audioOutWrite` non-finite scrub: holds the
+ * NaN-or-Inf condition so it is evaluated once and shared by the diagnostic
+ * counter bump and the store's `select`.
+ */
+const SCRUB_COND_LOCAL = 19;
+
+/**
  * Base local index for mutable-read temp locals (= `03-compiler.md` §2.7, issue
- * #8). The 19 fixed temp locals above occupy indices 0–18; per-read temps from
- * `captureTemp` occupy `TEMP_LOCAL_BASE + tempId` (= 19, 20, …). `emit` scans
+ * #8). The 20 fixed temp locals above occupy indices 0–19; per-read temps from
+ * `captureTemp` occupy `TEMP_LOCAL_BASE + tempId` (= 20, 21, …). `emit` scans
  * the graph for `tempAssign` nodes and declares one local of the matching type
  * per `tempId`, in `tempId` order, after the fixed block.
  */
-const TEMP_LOCAL_BASE = 19;
+const TEMP_LOCAL_BASE = 20;
 
 /**
  * Per-emit loop-counter local mapping for nested `forSample` (= Q58). A loop /
@@ -189,6 +198,14 @@ export type EmitOptions = {
 };
 
 const DEFAULT_EMIT_SAMPLE_RATE = 48000;
+
+/**
+ * Name of the exported mutable i32 global counting output samples the
+ * non-finite scrub replaced with 0 (see `audioOutWrite`). A global, not a
+ * linear-memory word: it adds no layout region, so no processor's memory map
+ * or state addressing shifts underneath the diagnostic.
+ */
+const SCRUB_GLOBAL = "scrubbedSamples";
 
 /**
  * Little-endian byte encoding of a `state.<type>(initial)` value, sized to the
@@ -424,7 +441,8 @@ export async function emit(
       binaryen.f32, // BUFINTERP_POS_LOCAL
       binaryen.i32, // BUFINTERP_I0_LOCAL
       binaryen.i32, // PAYLOAD_CLAMP_LOCAL (= at OOB clamp idx)
-      binaryen.v128, // VEC_TEMP_LOCAL (= for SIMD sumLanes)
+      binaryen.v128, // VEC_TEMP_LOCAL (= for SIMD sumLanes / storeVec flush)
+      binaryen.i32, // SCRUB_COND_LOCAL (= audioOutWrite non-finite condition)
       // Mutable-read temp locals (= TEMP_LOCAL_BASE +, issue #8, in capture order).
       ...tempLocals,
       // Extra i32 loop-counter locals for nested forSample (= depth >= 1, Q58).
@@ -434,6 +452,8 @@ export async function emit(
     body,
   );
   mod.addFunctionExport("process", "process");
+  mod.addGlobal(SCRUB_GLOBAL, binaryen.i32, true, mod.i32.const(0));
+  mod.addGlobalExport(SCRUB_GLOBAL, SCRUB_GLOBAL);
 
   // Layer A: prove the emitted audio path is realtime-safe by construction
   // (allocation-free, no unbounded loop, no deliberate trap) before it can ever
@@ -804,9 +824,13 @@ function clampBufferIndex(
   binaryen: BinaryenAPI,
   indexExpr: number,
   length: number,
+  // Elements the access touches starting at the index: 1 for scalar
+  // loads/stores, 4 for the v128 lane ops (so the whole 16-byte access
+  // saturates inside the buffer, not just its first lane).
+  span = 1,
 ): number {
   const clamp = (): number => mod.local.get(PAYLOAD_CLAMP_LOCAL, binaryen.i32);
-  const upper = (): number => mod.i32.const(Math.max(0, length - 1));
+  const upper = (): number => mod.i32.const(Math.max(0, length - span));
   return mod.block(
     null,
     [
@@ -846,15 +870,19 @@ function emitBufferLoad(mod: BinaryenModule, elementType: BufferElementType, ptr
 
 function emitBufferStore(
   mod: BinaryenModule,
+  binaryen: BinaryenAPI,
   elementType: BufferElementType,
   ptr: number,
   value: number,
 ): number {
   switch (elementType) {
     case "f32":
-      return mod.f32.store(0, BYTES_PER_F32, ptr, value);
+      // Buffer stores carry delay-line / comb feedback — flush subnormals the
+      // way scalar state stores do, or a decaying tail parks in the denormal
+      // range and costs 10-100× CPU on the audio thread (issue #27).
+      return mod.f32.store(0, BYTES_PER_F32, ptr, subnormalGuardF32Expr(mod, binaryen, value));
     case "f64":
-      return mod.f64.store(0, BYTES_PER_F64, ptr, value);
+      return mod.f64.store(0, BYTES_PER_F64, ptr, subnormalGuardF64Expr(mod, binaryen, value));
     case "i32":
     case "bool":
       return mod.i32.store(0, BYTES_PER_I32, ptr, value);
@@ -1175,10 +1203,22 @@ function emitVec(
       if (base === undefined) {
         throw new Error(`unknown buffer: ${node.name}`);
       }
-      // addr = bufferBase + offset × 4 (f32 element). v128.load = 4 lanes (16 bytes).
+      // addr = bufferBase + offset × 4 (f32 element). v128.load = 4 lanes (16
+      // bytes), so the offset saturates to [0, size-4] like the scalar
+      // `buffer[i]` clamp — an out-of-range vector access must neither trap
+      // (permanent-silence latch) nor read a neighboring region.
       const addr = mod.i32.add(
         mod.i32.const(base),
-        mod.i32.mul(scalar(node.offset), mod.i32.const(BYTES_PER_F32)),
+        mod.i32.mul(
+          clampBufferIndex(
+            mod,
+            binaryen,
+            scalar(node.offset),
+            layout.regions.buffers.lengths[node.name] ?? 0,
+            4,
+          ),
+          mod.i32.const(BYTES_PER_F32),
+        ),
       );
       return mod.v128.load(0, BYTES_PER_F32, addr);
     }
@@ -1746,12 +1786,38 @@ export function emitStatement(
           mod.i32.const(BYTES_PER_F32),
         ),
       );
-      return mod.f32.store(
-        0,
-        BYTES_PER_F32,
-        ptr,
+      // Non-finite scrub (issue #27): a NaN / ±Inf produced by user DSP
+      // (0/0, x/0, a runaway accumulator) must not reach the output — Web
+      // Audio propagates it as silence/clicks across the downstream graph.
+      // Scrub to 0 and count into the exported `scrubbedSamples` global, so
+      // the replacement is observable rather than silent. `v != v` catches
+      // NaN; `|v| == +Inf` catches both infinities. The value is teed once;
+      // the condition is held in a local shared by the counter bump and the
+      // store's select (both select arms are local.get/const = eager-safe).
+      const teedValue = mod.local.tee(
+        SUBNORMAL_F32_LOCAL,
         emitExpression(node.value, layout, mod, binaryen),
+        binaryen.f32,
       );
+      const getValue = (): number => mod.local.get(SUBNORMAL_F32_LOCAL, binaryen.f32);
+      const getCond = (): number => mod.local.get(SCRUB_COND_LOCAL, binaryen.i32);
+      return mod.block(null, [
+        mod.local.set(
+          SCRUB_COND_LOCAL,
+          mod.i32.or(
+            mod.f32.ne(teedValue, getValue()),
+            mod.f32.eq(mod.f32.abs(getValue()), mod.f32.const(Infinity)),
+          ),
+        ),
+        mod.if(
+          getCond(),
+          mod.global.set(
+            SCRUB_GLOBAL,
+            mod.i32.add(mod.global.get(SCRUB_GLOBAL, binaryen.i32), mod.i32.const(1)),
+          ),
+        ),
+        mod.f32.store(0, BYTES_PER_F32, ptr, mod.select(getCond(), mod.f32.const(0), getValue())),
+      ]);
     }
     case "forSample": {
       // Depth 0 keeps LOOP_COUNTER_LOCAL (byte-identical to the single-loop case);
@@ -1805,6 +1871,7 @@ export function emitStatement(
       );
       return emitBufferStore(
         mod,
+        binaryen,
         node.elementType,
         ptr,
         emitExpression(node.value, layout, mod, binaryen),
@@ -1818,14 +1885,39 @@ export function emitStatement(
       if (base === undefined) {
         throw new Error(`unknown buffer: ${node.name}`);
       }
+      // Offset saturates to [0, size-4] like the scalar buffer clamp (the
+      // 16-byte store must land wholly inside the buffer).
       const addr = mod.i32.add(
         mod.i32.const(base),
         mod.i32.mul(
-          emitExpression(node.offset, layout, mod, binaryen),
+          clampBufferIndex(
+            mod,
+            binaryen,
+            emitExpression(node.offset, layout, mod, binaryen),
+            layout.regions.buffers.lengths[node.name] ?? 0,
+            4,
+          ),
           mod.i32.const(BYTES_PER_F32),
         ),
       );
-      return mod.v128.store(0, BYTES_PER_F32, addr, emitVec(node.value, layout, mod, binaryen));
+      // Lane-wise subnormal flush, mirroring the scalar buffer-store guard:
+      // hold the vec in a local once, zero every lane whose |value| is under
+      // the threshold via bitselect (mask lanes are all-ones where true). The
+      // local.set is a SEPARATE statement, not a tee inside the bitselect —
+      // bitselect evaluates its value operand before its mask operand, so a
+      // tee buried in the mask would let the value's local.get read the
+      // local's stale contents (the same eager-evaluation pitfall the scalar
+      // guard documents).
+      const getVec = (): number => mod.local.get(VEC_TEMP_LOCAL, binaryen.v128);
+      const mask = mod.f32x4.lt(
+        mod.f32x4.abs(getVec()),
+        mod.f32x4.splat(mod.f32.const(SUBNORMAL_THRESHOLD)),
+      );
+      const flushed = mod.v128.bitselect(mod.f32x4.splat(mod.f32.const(0)), getVec(), mask);
+      return mod.block(null, [
+        mod.local.set(VEC_TEMP_LOCAL, emitVec(node.value, layout, mod, binaryen)),
+        mod.v128.store(0, BYTES_PER_F32, addr, flushed),
+      ]);
     }
     case "everyNSamples": {
       // §9.1: run the body when (counter % divisor) == 0, then counter += stride.
@@ -1889,19 +1981,17 @@ export function emitStatement(
  * produce NaN "in the context of an audioInRead after forSample" (= measured),
  * and was resolved by refactoring to a single-evaluation-via-local path.
  */
-function emitSubnormalGuardF32(
-  valueNode: AstNode,
-  layout: Layout,
-  mod: BinaryenModule,
-  binaryen: BinaryenAPI,
-): number {
-  // WASM `select` is eager evaluation = it evaluates all 3 arguments before
-  // choosing. This triggered a pitfall where the `local.get` inside ifFalse was
-  // "evaluated before `local.tee`" and picked up the local's initial value 0
-  // (= measured). `if-else` is lazy evaluation = the condition runs `local.tee`
-  // first, then only one of then / else is evaluated = the else-side `local.get`
-  // runs only after the local is guaranteed to hold v.
-  const v = emitExpression(valueNode, layout, mod, binaryen);
+/**
+ * Wrap an already-emitted f32 value expression in the subnormal flush.
+ *
+ * WASM `select` is eager evaluation = it evaluates all 3 arguments before
+ * choosing. This triggered a pitfall where the `local.get` inside ifFalse was
+ * "evaluated before `local.tee`" and picked up the local's initial value 0
+ * (= measured). `if-else` is lazy evaluation = the condition runs `local.tee`
+ * first, then only one of then / else is evaluated = the else-side `local.get`
+ * runs only after the local is guaranteed to hold v.
+ */
+function subnormalGuardF32Expr(mod: BinaryenModule, binaryen: BinaryenAPI, v: number): number {
   const teed = mod.local.tee(SUBNORMAL_F32_LOCAL, v, binaryen.f32);
   return mod.if(
     mod.f32.lt(mod.f32.abs(teed), mod.f32.const(SUBNORMAL_THRESHOLD)),
@@ -1910,19 +2000,31 @@ function emitSubnormalGuardF32(
   );
 }
 
-function emitSubnormalGuardF64(
-  valueNode: AstNode,
-  layout: Layout,
-  mod: BinaryenModule,
-  binaryen: BinaryenAPI,
-): number {
-  const v = emitExpression(valueNode, layout, mod, binaryen);
+function subnormalGuardF64Expr(mod: BinaryenModule, binaryen: BinaryenAPI, v: number): number {
   const teed = mod.local.tee(SUBNORMAL_F64_LOCAL, v, binaryen.f64);
   return mod.if(
     mod.f64.lt(mod.f64.abs(teed), mod.f64.const(SUBNORMAL_THRESHOLD)),
     mod.f64.const(0),
     mod.local.get(SUBNORMAL_F64_LOCAL, binaryen.f64),
   );
+}
+
+function emitSubnormalGuardF32(
+  valueNode: AstNode,
+  layout: Layout,
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): number {
+  return subnormalGuardF32Expr(mod, binaryen, emitExpression(valueNode, layout, mod, binaryen));
+}
+
+function emitSubnormalGuardF64(
+  valueNode: AstNode,
+  layout: Layout,
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): number {
+  return subnormalGuardF64Expr(mod, binaryen, emitExpression(valueNode, layout, mod, binaryen));
 }
 
 const EVENT_HEADER_BYTES = 12;
@@ -2353,10 +2455,14 @@ function emitMidiSysexCopy(
     mod.memory.copy(
       mod.i32.const(bufferBase),
       mod.i32.add(mod.local.get(BUFINTERP_I0_LOCAL, binaryen.i32), mod.i32.const(4)),
-      minI32(
+      // [0, bufferSize] clamp — the chunk-header length is our own write, but
+      // memory.copy reads the size unsigned, so a corrupted/negative header
+      // must clamp rather than turn into a ~4 GiB copy (OOB trap).
+      clampLenI32(
         mod,
+        binaryen,
         mod.i32.load(0, BYTES_PER_I32, mod.local.get(BUFINTERP_I0_LOCAL, binaryen.i32)),
-        mod.i32.const(node.bufferSize),
+        node.bufferSize,
       ),
     ),
   ]);
@@ -2365,6 +2471,29 @@ function emitMidiSysexCopy(
 /** `min` of two i32 expressions (each evaluated once). */
 function minI32(mod: BinaryenModule, a: number, b: number): number {
   return mod.select(mod.i32.lt_s(a, b), a, b);
+}
+
+/**
+ * Clamp an i32 byte-length expression to `[0, cap]`. `memory.copy` reads its
+ * size operand as UNSIGNED, so a runtime-negative length (a user-computed
+ * `length` gone wrong) would otherwise become a ~4 GiB copy — an OOB trap that
+ * latches permanent silence. Uses `PAYLOAD_CLAMP_LOCAL` as the scratch.
+ */
+function clampLenI32(
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+  lenExpr: number,
+  cap: number,
+): number {
+  const len = (): number => mod.local.get(PAYLOAD_CLAMP_LOCAL, binaryen.i32);
+  return mod.block(
+    null,
+    [
+      mod.local.set(PAYLOAD_CLAMP_LOCAL, minI32(mod, lenExpr, mod.i32.const(cap))),
+      mod.select(mod.i32.lt_s(len(), mod.i32.const(0)), mod.i32.const(0), len()),
+    ],
+    binaryen.i32,
+  );
 }
 
 /**
@@ -2564,7 +2693,15 @@ function emitMidiEmitIf(
     /* v8 ignore next 2 — a port that emits sysex has its content region reserved by layout */
     if (region === undefined)
       throw new Error(`unworklet: midiOutput "${node.port}" has no sysex content region`);
-    const maxBody = region.perChunk - 4;
+    // Cap the runtime length by the chunk body AND, for a buffer-sourced emit,
+    // by the declared buffer size (a length past the buffer would copy the
+    // neighboring region's bytes into the message). Both caps are build-time
+    // constants; the [0, cap] clamp below handles runtime-negative lengths.
+    const chunkBody = region.perChunk - 4;
+    const maxBody =
+      node.sysexBufferName !== undefined
+        ? Math.min(chunkBody, layout.regions.buffers.lengths[node.sysexBufferName] ?? chunkBody)
+        : chunkBody;
     const lengthExpr = node.sysexLength
       ? emitExpression(node.sysexLength, layout, mod, binaryen)
       : mod.i32.const(0);
@@ -2596,6 +2733,17 @@ function emitMidiEmitIf(
     body = [
       srcSet,
       mod.local.set(PAYLOAD_CLAMP_LOCAL, minI32(mod, lengthExpr, mod.i32.const(maxBody))),
+      // Floor at 0: memory.copy takes the size as UNSIGNED, so a runtime-
+      // negative user length would become a ~4 GiB copy = OOB trap = permanent
+      // silence latch.
+      mod.local.set(
+        PAYLOAD_CLAMP_LOCAL,
+        mod.select(
+          mod.i32.lt_s(mod.local.get(PAYLOAD_CLAMP_LOCAL, binaryen.i32), mod.i32.const(0)),
+          mod.i32.const(0),
+          mod.local.get(PAYLOAD_CLAMP_LOCAL, binaryen.i32),
+        ),
+      ),
       mod.local.set(
         EVENT_SLOT_PTR_LOCAL,
         mod.i32.add(

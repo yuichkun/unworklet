@@ -4,6 +4,11 @@
 
 import { expect, test } from "vite-plus/test";
 
+import "./dsl/primitives.ts";
+import { audioOutput } from "./dsl/declarations.ts";
+import { forSample } from "./dsl/loop.ts";
+import { defineProcessor } from "./processor.ts";
+
 import { encodeScalar, type SnapshotSlot } from "./snapshot.ts";
 import { decodeSnapshot, encodeSnapshot, inspectSnapshot, runMigrations } from "./snapshotBlob.ts";
 import type { Migration } from "./types.ts";
@@ -24,7 +29,7 @@ test("encode → decode round-trips slots of every kind/type", () => {
   ];
   const blob = encodeSnapshot("abc123", "preset", slots);
   const decoded = decodeSnapshot(blob);
-  expect(decoded.version).toBe(1);
+  expect(decoded.version).toBe(2);
   expect(decoded.schemaHash).toBe("abc123");
   expect(decoded.profile).toBe("preset");
   expect(decoded.slots.map((s) => s.name)).toEqual([
@@ -67,7 +72,8 @@ test("decode throws a clear error when the header is cut mid-field", () => {
 
 // Kind/type bytes of the (only) slot of `encodeSnapshot("h", null, [{name:"x",...}])`:
 //   magic(4)+version(4)+hashLen(4)+hash"h"(1)+hasProfile(1)+profileLen(4)
-//   +slotCount(4)+nameLen(4)+name"x"(1) → kind at 27, type at 28.
+//   +idFlag(1)+idLen(4) (v2)
+//   +slotCount(4)+nameLen(4)+name"x"(1) → kind at 32, type at 33.
 const oneSlotBlob = (): Uint8Array =>
   encodeSnapshot("h", null, [
     { name: "x", kind: "state", type: "i32", data: encodeScalar("i32", 7) },
@@ -75,15 +81,15 @@ const oneSlotBlob = (): Uint8Array =>
 
 test("decode rejects an out-of-range slot kind code (corrupt blob, not silent undefined)", () => {
   const blob = oneSlotBlob();
-  expect(blob[27]).toBe(0); // KIND_CODE.state
-  blob[27] = 3; // KIND_BY_CODE only has codes 0..2
+  expect(blob[32]).toBe(0); // KIND_CODE.state
+  blob[32] = 3; // KIND_BY_CODE only has codes 0..2
   expect(() => decodeSnapshot(blob)).toThrow(/corrupt/i);
 });
 
 test("decode rejects an out-of-range slot type code (corrupt blob, not silent undefined)", () => {
   const blob = oneSlotBlob();
-  expect(blob[28]).toBe(2); // TYPE_CODE.i32
-  blob[28] = 6; // TYPE_BY_CODE only has codes 0..5
+  expect(blob[33]).toBe(2); // TYPE_CODE.i32
+  blob[33] = 6; // TYPE_BY_CODE only has codes 0..5
   expect(() => decodeSnapshot(blob)).toThrow(/corrupt/i);
 });
 
@@ -212,4 +218,74 @@ test("runMigrations: walks a multi-step chain in order", () => {
   if (!r.ok) return;
   expect(r.applied).toEqual(["h0 -> h1", "h1 -> h2"]);
   expect(inspectSnapshot(r.blob).slots.v).toEqual({ kind: "state", type: "i32", value: 22 }); // (1+10)*2
+});
+
+// ── processor identity in the blob (issue #28) ───────────────────────────────
+// `schemaHash` hashes declarations only (deliberate: a body edit must not break
+// presets), so two logically different processors with the same slot schema
+// share a hash — a lowpass preset restored "successfully" into a distortion.
+// The blob therefore carries an optional processor identity, checked before
+// anything is applied. Legacy (id-less) blobs keep the old behavior.
+
+test("encodeSnapshot carries an optional processor id that decodeSnapshot recovers", () => {
+  const blob = encodeSnapshot("abc123", null, [], "my-lowpass");
+  const decoded = decodeSnapshot(blob);
+  expect(decoded.processorId).toBe("my-lowpass");
+  expect(decoded.schemaHash).toBe("abc123");
+});
+
+test("a blob encoded without an id decodes with processorId null", () => {
+  const blob = encodeSnapshot("abc123", "preset", []);
+  expect(decodeSnapshot(blob).processorId).toBeNull();
+});
+
+test("a version-1 blob (pre-id format) still decodes, with processorId null", () => {
+  // Hand-built v1 bytes: magic | version=1 | hashLen | hash | profileFlag=0 |
+  // profileLen=0 | slotCount=0.
+  const hash = new TextEncoder().encode("legacy");
+  const buf = new ArrayBuffer(4 + 4 + 4 + hash.length + 1 + 4 + 4);
+  const dv = new DataView(buf);
+  const bytes = new Uint8Array(buf);
+  let p = 0;
+  dv.setUint32(p, 0x55574b31, true); // 'UWK1'
+  p += 4;
+  dv.setUint32(p, 1, true); // version 1
+  p += 4;
+  dv.setUint32(p, hash.length, true);
+  p += 4;
+  bytes.set(hash, p);
+  p += hash.length;
+  dv.setUint8(p, 0); // no profile
+  p += 1;
+  dv.setUint32(p, 0, true);
+  p += 4;
+  dv.setUint32(p, 0, true); // no slots
+  const decoded = decodeSnapshot(bytes);
+  expect(decoded.schemaHash).toBe("legacy");
+  expect(decoded.processorId).toBeNull();
+  expect(decoded.slots).toEqual([]);
+});
+
+test("defineProcessor carries options.id onto the compiled processor", () => {
+  const p = defineProcessor(
+    () => {
+      const out = audioOutput({ channels: 1, name: "main" });
+      return {
+        process: () => {
+          forSample((i) => {
+            out.ch(0).at(i).write(0);
+          });
+        },
+      };
+    },
+    { id: "my-lowpass" },
+  );
+  expect(p.id).toBe("my-lowpass");
+});
+
+test("inspectSnapshot surfaces the processor id", () => {
+  const withId = encodeSnapshot("h", null, [], "my-lowpass");
+  expect(inspectSnapshot(withId).processorId).toBe("my-lowpass");
+  const withoutId = encodeSnapshot("h", null, []);
+  expect(inspectSnapshot(withoutId).processorId).toBeNull();
 });

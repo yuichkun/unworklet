@@ -203,3 +203,40 @@ test("dev-dump is a strict superset of the persistent-profile snapshot", async (
   expect(snap).not.toContain("stransient");
   expect(dump).toContain("stransient");
 });
+
+test("dev-dump carries the scrubbedSamples render-health counter (0 healthy, counts non-finite output)", async () => {
+  // A processor whose output is NaN every sample (0/0 through two zero states)
+  // — the audioOutWrite scrub replaces each with 0 and bumps the exported
+  // counter the dump reports.
+  const nanProc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const a = state.f32(0);
+    const b = state.f32(0);
+    return {
+      process: () => {
+        forSample((i) => {
+          out.ch(0).at(i).write(a.read().div(b.read()));
+        });
+      },
+    };
+  });
+  const { wasm } = await compile(nanProc);
+  const self = makeMockSelf();
+  nanProc.worklet.initialize(self, { processorOptions: { wasm } });
+
+  fireToWorklet(self, { kind: "dev-dump-request", requestId: 1 });
+  const before = self.messages.find(
+    (m) => (m as { kind?: string }).kind === "dev-dump-response",
+  ) as { scrubbedSamples?: number };
+  expect(before.scrubbedSamples).toBe(0);
+
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  nanProc.worklet.process(self, [], outputs, {});
+  expect(Array.from(outputs[0]![0]!).every((v) => v === 0)).toBe(true);
+
+  fireToWorklet(self, { kind: "dev-dump-request", requestId: 2 });
+  const after = self.messages
+    .filter((m) => (m as { kind?: string }).kind === "dev-dump-response")
+    .at(-1) as { scrubbedSamples?: number };
+  expect(after.scrubbedSamples).toBe(SAMPLES_PER_BLOCK);
+});
