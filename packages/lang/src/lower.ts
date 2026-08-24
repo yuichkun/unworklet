@@ -579,6 +579,8 @@ function partitionModuleScopeExports(
     // the type, not the `gain` a statement may declare beside it.
     if (ts.isPropertySignature(p) && p.name === n) return true;
     if (ts.isMethodSignature(p) && p.name === n) return true;
+    // `[min: number]` — the tuple label names the slot, nothing else.
+    if (ts.isNamedTupleMember(p) && p.name === n) return true;
     // A type parameter's name declares it — `<T>` and `infer X` alike.
     if (ts.isTypeParameterDeclaration(p) && p.name === n) return true;
     // A statement label lives in its own namespace and reads no value.

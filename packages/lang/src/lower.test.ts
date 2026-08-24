@@ -1215,6 +1215,20 @@ process(() => {
   }
 });
 
+test("a named tuple label is a name, not a reference", () => {
+  const lowered = lower(`
+const min = state.f32(0);
+export type Pair = [min: number, max: number];
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(min.read());
+  });
+});
+`);
+  expect(lowered.indexOf("export type Pair")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;
