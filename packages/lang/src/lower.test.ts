@@ -2521,6 +2521,80 @@ retain(() => {
   expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
 });
 
+test("a name shadowing the callback is not the callback", () => {
+  const lowered = loweredWithMutation(`
+function retain(cb: () => void) {
+  {
+    const cb = () => {};
+    cb();
+  }
+  void cb;
+}
+retain(() => {
+  helper.value = 1;
+});
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
+test("a `var` in a nested function shadows the callback too", () => {
+  const lowered = loweredWithMutation(`
+function retain(cb: () => void) {
+  function g() {
+    var cb = 1;
+    void cb;
+  }
+  void g;
+  void cb;
+}
+retain(() => {
+  helper.value = 1;
+});
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
+test("the callback is still seen after a scope that shadowed it", () => {
+  try {
+    loweredWithMutation(`
+function run(cb: () => void) {
+  {
+    const cb = () => {};
+    void cb;
+  }
+  cb();
+}
+run(() => {
+  helper.value = 1;
+});
+`);
+    expect.unreachable("lower() must see the outer callback once the shadow ends");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("a `var` alias of the callback outlives the block declaring it", () => {
+  try {
+    loweredWithMutation(`
+function run(cb: () => void) {
+  {
+    var invoke = cb;
+  }
+  invoke();
+}
+run(() => {
+  helper.value = 1;
+});
+`);
+    expect.unreachable("lower() must carry a `var` alias past its block");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;
