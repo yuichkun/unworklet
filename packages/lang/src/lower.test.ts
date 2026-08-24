@@ -599,6 +599,47 @@ process(() => {
   expect(lowered.indexOf("export const DEFAULT")).toBeLessThan(defineAt);
 });
 
+test("a type and a value sharing a name keep separate dependency edges", () => {
+  // TS puts them in different namespaces, so the export's `Level.read()` is the
+  // DSL-tied const — the interface must not stand in for it and let the export
+  // hoist away from the value its initializer needs.
+  try {
+    lower(`
+const Level = state.f32(0);
+interface Level { db: number }
+export const RESULT = Level.read();
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(RESULT);
+  });
+});
+`);
+    expect.unreachable("lower() must reject an export reaching the DSL-tied value");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("a type and a value sharing a name both travel with a pure export", () => {
+  const lowered = lower(`
+interface Level { db: number }
+const Level: Level = { db: 6 };
+export const CURRENT: Level = Level;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(CURRENT.db);
+  });
+});
+`);
+  const defineAt = lowered.indexOf("defineProcessor(");
+  expect(lowered.indexOf("interface Level")).toBeLessThan(defineAt);
+  expect(lowered.indexOf("const Level: Level")).toBeLessThan(defineAt);
+  expect(lowered.indexOf("export const CURRENT")).toBeLessThan(defineAt);
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;

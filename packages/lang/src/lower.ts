@@ -402,27 +402,42 @@ function partitionModuleScopeExports(
   hoisted: ts.Statement[];
   inner: ts.Statement[];
 } {
-  const bindingOf = new Map<string, number>();
+  // Value and type live in separate namespaces, and one name can hold both
+  // (`const Level = ...` beside `interface Level {}`). One map would let
+  // whichever came last answer for both, so a value reference could resolve to
+  // a type declaration and follow the wrong dependency out of the wrapper.
+  const valueBindingOf = new Map<string, number>();
+  const typeBindingOf = new Map<string, number>();
   statements.forEach((stmt, idx) => {
     if (ts.isVariableStatement(stmt)) {
       for (const d of stmt.declarationList.declarations) {
-        if (ts.isIdentifier(d.name)) bindingOf.set(d.name.text, idx);
+        if (ts.isIdentifier(d.name)) valueBindingOf.set(d.name.text, idx);
       }
-    } else if (
-      (ts.isFunctionDeclaration(stmt) ||
-        ts.isClassDeclaration(stmt) ||
-        ts.isEnumDeclaration(stmt) ||
-        ts.isModuleDeclaration(stmt) ||
-        // A type alias or interface binds nothing at runtime, but an exported
-        // declaration annotated with one still needs it in scope beside it.
-        ts.isTypeAliasDeclaration(stmt) ||
-        ts.isInterfaceDeclaration(stmt)) &&
-      stmt.name !== undefined &&
-      ts.isIdentifier(stmt.name)
+      return;
+    }
+    const declared = (stmt as { name?: ts.Node }).name;
+    if (declared === undefined || !ts.isIdentifier(declared)) return;
+    const name = declared.text;
+    // Enums, classes and namespaces bind a runtime value, so an export reading
+    // one depends on it exactly as it would on a const — and they name a type
+    // as well, which an annotation may reach.
+    if (
+      ts.isFunctionDeclaration(stmt) ||
+      ts.isClassDeclaration(stmt) ||
+      ts.isEnumDeclaration(stmt) ||
+      ts.isModuleDeclaration(stmt)
     ) {
-      // Enums and namespaces bind a runtime value, so an export reading one
-      // depends on it exactly as it would on a const.
-      bindingOf.set(stmt.name.text, idx);
+      valueBindingOf.set(name, idx);
+    }
+    // A type alias or interface binds nothing at runtime, but an exported
+    // declaration annotated with one still needs it in scope beside it.
+    if (
+      ts.isClassDeclaration(stmt) ||
+      ts.isEnumDeclaration(stmt) ||
+      ts.isTypeAliasDeclaration(stmt) ||
+      ts.isInterfaceDeclaration(stmt)
+    ) {
+      typeBindingOf.set(name, idx);
     }
   });
 
@@ -480,7 +495,12 @@ function partitionModuleScopeExports(
     const dsl = new Set<string>();
     const visit = (n: ts.Node, shadowed: ReadonlySet<string>, inType: boolean): void => {
       if (ts.isIdentifier(n) && !isNamePosition(n) && !shadowed.has(n.text)) {
-        const b = bindingOf.get(n.text);
+        // A type position resolves in the type namespace, falling back to the
+        // value one for the declarations that name both (class / enum /
+        // namespace) and for a `typeof x` query.
+        const b = inType
+          ? (typeBindingOf.get(n.text) ?? valueBindingOf.get(n.text))
+          : valueBindingOf.get(n.text);
         // A module-scope declaration owns the name throughout the module, DSL
         // root or not — `export const clamp = ...` is the file's `clamp`, and
         // its own declaration name is not a reference to the ambient one. Taint
@@ -578,7 +598,10 @@ function partitionModuleScopeExports(
       // `export { a, b }` — every named binding must be hoistable.
       if (stmt.exportClause !== undefined && ts.isNamedExports(stmt.exportClause)) {
         for (const spec of stmt.exportClause.elements) {
-          const dep = bindingOf.get(spec.propertyName?.text ?? spec.name.text);
+          // An export list can name either namespace (`export { Level }` for
+          // the value, `export { type Level }` for the type).
+          const local = spec.propertyName?.text ?? spec.name.text;
+          const dep = valueBindingOf.get(local) ?? typeBindingOf.get(local);
           if (dep === undefined || tainted[dep]) {
             throw new LowerError(
               "uwk-export-unsupported",
