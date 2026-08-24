@@ -461,6 +461,46 @@ process(() => {
   expect(importedNames(lowered)).not.toContain("clamp");
 });
 
+test("an export built from a helper imported under a DSL name hoists", () => {
+  // The import is explicit: `clamp` here is the sibling module's, not the
+  // ambient DSL one, so the export is not DSL-tied.
+  const lowered = lower(`
+import { clamp } from "./math.ts";
+export const normalized = clamp(0.5);
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(normalized);
+  });
+});
+`);
+  expect(lowered.indexOf("export const normalized")).toBeLessThan(
+    lowered.indexOf("defineProcessor("),
+  );
+  expect(importedNames(lowered)).not.toContain("clamp");
+});
+
+test("an export built from a helper imported FROM the core keeps DSL semantics", () => {
+  // `clamp` imported from @unworklet/core is the DSL one — a value built with
+  // it belongs to the capture, so hoisting it to module scope is still refused.
+  try {
+    lower(`
+import { clamp } from "@unworklet/core";
+export const limited = clamp(state.f32(0).read(), 0, 1);
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(limited);
+  });
+});
+`);
+    expect.unreachable("lower() must reject an export tied to the core DSL");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;

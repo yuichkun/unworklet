@@ -165,6 +165,12 @@ function collectUsedCoreExports(node: ts.Node): Set<string> {
   return used;
 }
 
+/** The module an import declaration names, or undefined when it is not a literal. */
+function moduleSpecifierOf(decl: ts.ImportDeclaration): string | undefined {
+  const spec = decl.moduleSpecifier;
+  return ts.isStringLiteral(spec) ? spec.text : undefined;
+}
+
 /** The local binding names a user import introduces (default / namespace / named,
  * each as its in-scope alias). The injected core import drops these so a name the
  * user imports explicitly is never double-bound (e.g. `import { state }`). */
@@ -378,7 +384,15 @@ const DSL_TAINT_ROOTS = new Set<string>([
  * untainted statements move only if a hoisted export's closure needs them —
  * everything else keeps its place (and its per-capture evaluation timing).
  */
-function partitionModuleScopeExports(statements: readonly ts.Statement[]): {
+function partitionModuleScopeExports(
+  statements: readonly ts.Statement[],
+  /**
+   * Names bound by the file's own imports from modules OTHER than the core.
+   * Such a name is the imported module's, whatever it is spelled — only an
+   * ambient (or core-imported) identifier carries DSL meaning.
+   */
+  importedNonDsl: ReadonlySet<string>,
+): {
   hoisted: ts.Statement[];
   inner: ts.Statement[];
 } {
@@ -457,7 +471,7 @@ function partitionModuleScopeExports(statements: readonly ts.Statement[]): {
         // still reaches it through the dependency edge when that declaration is
         // itself DSL-tied.
         if (b !== undefined) bindings.add(b);
-        else if (DSL_TAINT_ROOTS.has(n.text)) dsl.add(n.text);
+        else if (!importedNonDsl.has(n.text) && DSL_TAINT_ROOTS.has(n.text)) dsl.add(n.text);
       }
       const opened = scopeBindings(n);
       const inner = opened === null ? shadowed : new Set([...shadowed, ...opened]);
@@ -688,7 +702,10 @@ export function lower(source: string, options: LowerOptions = {}): string {
 
   // Module-scope exports leave the wrapper (with their dependency closure);
   // everything else becomes the defineProcessor body (issue #44).
-  const { hoisted, inner } = partitionModuleScopeExports(declarations);
+  const { hoisted, inner } = partitionModuleScopeExports(
+    declarations,
+    importBoundNames(userImports.filter((d) => moduleSpecifierOf(d) !== coreModule)),
+  );
 
   // Reject options() / migrations() that reference a processor-body binding: the
   // declarations are moved into the defineProcessor callback, but the options
