@@ -511,6 +511,10 @@ function partitionModuleScopeExports(
     // the type, not the `gain` a statement may declare beside it.
     if (ts.isPropertySignature(p) && p.name === n) return true;
     if (ts.isMethodSignature(p) && p.name === n) return true;
+    // A statement label lives in its own namespace and reads no value.
+    if (ts.isLabeledStatement(p) && p.label === n) return true;
+    if (ts.isBreakStatement(p) && p.label === n) return true;
+    if (ts.isContinueStatement(p) && p.label === n) return true;
     return false;
   };
 

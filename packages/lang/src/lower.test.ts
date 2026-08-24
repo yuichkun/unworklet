@@ -869,6 +869,26 @@ process(() => {
   expect(lowered.indexOf("const gain = state.f32(0)")).toBeGreaterThan(defineAt);
 });
 
+test("a statement label is a name in its own namespace, not a DSL reference", () => {
+  const lowered = lower(`
+export function scan(n: number): number {
+  let total = 0;
+  input: for (let i = 0; i < n; i++) {
+    if (i > 2) break input;
+    total += i;
+  }
+  return total;
+}
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(scan(4) / 10);
+  });
+});
+`);
+  expect(lowered.indexOf("export function scan")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;
