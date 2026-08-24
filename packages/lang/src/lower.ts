@@ -312,9 +312,11 @@ function calleeSignatures(callee: ts.Expression, resolve: BodyResolver): ts.Node
   return found;
 }
 
-/** Whether a function runs the argument at `index` rather than storing,
- * returning or ignoring it. Reading nothing means yes: over-running an
- * argument refuses valid code loudly, and missing one goes quiet. */
+/** Whether calling a function can run the argument at `index` — itself, or by
+ * handing it to something else that might, including back to its own caller.
+ * Only a callee that ignores or discards the argument answers no. Reading
+ * nothing also means yes: over-running an argument refuses valid code loudly,
+ * and missing one goes quiet. */
 function invokesParameter(fn: ts.Node, index: number): boolean {
   const parameters = (fn as { parameters?: readonly ts.ParameterDeclaration[] }).parameters ?? [];
   const last = parameters.at(-1);
@@ -324,17 +326,39 @@ function invokesParameter(fn: ts.Node, index: number): boolean {
   if (parameter.dotDotDotToken !== undefined || !ts.isIdentifier(parameter.name)) return true;
   const body = (fn as { body?: ts.Node }).body;
   if (body === undefined) return true;
-  const name = parameter.name.text;
+  // `const invoke = cb` carries the parameter, so calling `invoke` calls it.
+  // A chain of bare-identifier aliases is followed; one built by anything else
+  // is not, the same limit the write walk keeps for aliases of a binding.
+  const aliases = new Set<string>([parameter.name.text]);
+  const isAlias = (expr: ts.Expression): boolean => {
+    const inner = unwrapExpression(expr);
+    return ts.isIdentifier(inner) && aliases.has(inner.text);
+  };
   let runs = false;
   const look = (node: ts.Node): void => {
     if (runs) return;
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer !== undefined &&
+      isAlias(node.initializer)
+    ) {
+      aliases.add(node.name.text);
+    }
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      const target = unwrapExpression(node.left);
+      if (ts.isIdentifier(target) && isAlias(node.right)) aliases.add(target.text);
+    }
+    // Handed back out, so whoever made this call can run it afterwards.
+    if (ts.isReturnStatement(node) && node.expression !== undefined && isAlias(node.expression)) {
+      runs = true;
+      return;
+    }
     if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
-      const callee = unwrapExpression(node.expression);
-      if (ts.isIdentifier(callee) && callee.text === name) runs = true;
+      if (isAlias(node.expression)) runs = true;
       // Handed to another call, which may be the one that runs it.
       for (const argument of node.arguments ?? []) {
-        const passed = unwrapExpression(argument);
-        if (ts.isIdentifier(passed) && passed.text === name) runs = true;
+        if (isAlias(argument)) runs = true;
       }
       if (runs) return;
     }

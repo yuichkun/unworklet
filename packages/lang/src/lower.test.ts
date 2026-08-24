@@ -2396,6 +2396,54 @@ void new Derived();
   }
 });
 
+test("a callee calling the callback through an alias runs it", () => {
+  try {
+    loweredWithMutation(`
+function run(cb: () => void) {
+  const invoke = cb;
+  invoke();
+}
+run(() => {
+  helper.value = 1;
+});
+`);
+    expect.unreachable("lower() must follow a callback called through an alias");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("a callee handing the callback back can still run it", () => {
+  try {
+    loweredWithMutation(`
+function give(cb: () => void) {
+  return cb;
+}
+give(() => {
+  helper.value = 1;
+})();
+`);
+    expect.unreachable("lower() must treat a callback handed back as runnable");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("an alias the callee only stores is not run", () => {
+  const lowered = loweredWithMutation(`
+function retain(cb: () => void) {
+  const kept = cb;
+  void kept;
+}
+retain(() => {
+  helper.value = 1;
+});
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;
