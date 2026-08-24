@@ -12,7 +12,7 @@
  *   control exactly when the ready ack is dispatched
  */
 
-import { expect, test, vi } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 
 import { createNode, inspect } from "./client.ts";
 import { getDevNodes } from "./devRegistry.ts";
@@ -375,12 +375,39 @@ const makeMockProcessor = (overrides?: {
     __compiledProcessor: undefined,
   }) as unknown as CompiledProcessor<unknown>;
 
+/**
+ * Nodes handed out by `startCreate`, disposed after every test.
+ *
+ * A subscribed node keeps a drain loop armed until `dispose()`, and in a realm
+ * without `requestAnimationFrame` — which is every test that does not install
+ * the rAF mock — that loop is a self-renewing 250 ms timer. Left running, it
+ * fires inside a LATER test and arms itself against whatever scheduler that
+ * test installed, so a test asserting on the rAF mock sees a poll it never
+ * made. Disposal here is idempotent, so a test that tears its own node down
+ * loses nothing.
+ */
+const liveNodes: Array<{ dispose: () => void }> = [];
+
+afterEach(() => {
+  for (const node of liveNodes.splice(0)) {
+    try {
+      node.dispose();
+    } catch {
+      // The test may already have restored the globals the node was built on.
+    }
+  }
+});
+
 const startCreate = async <T>(fn: () => Promise<T>, fire: () => void): Promise<T> => {
   const promise = fn();
   // Allow microtasks (= addModule + fetch) to resolve before firing ready.
   await new Promise((r) => setTimeout(r, 0));
   fire();
-  return promise;
+  const created = await promise;
+  if (typeof (created as { dispose?: unknown } | null)?.dispose === "function") {
+    liveNodes.push(created as { dispose: () => void });
+  }
+  return created;
 };
 
 test("createNode throws when processor has no moduleUrl", async () => {
