@@ -961,6 +961,46 @@ process(() => {
   }
 });
 
+test("a module-scoped `var` nested in a statement travels with the export that reads it", () => {
+  // `var` belongs to the module, not the `if` it sits in, so the export
+  // depends on that whole statement.
+  const lowered = lower(`
+if (true) {
+  var helper = 1;
+}
+export const value = helper;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+  const defineAt = lowered.indexOf("defineProcessor(");
+  expect(lowered.indexOf("var helper = 1")).toBeLessThan(defineAt);
+  expect(lowered.indexOf("export const value")).toBeLessThan(defineAt);
+});
+
+test("a type-only import of a generated name is refused (it binds no value)", () => {
+  // TypeScript erases it, so it cannot supply the wrapper's `defineProcessor`,
+  // and keeping the injected value import beside it would double-bind the name.
+  try {
+    lower(`
+import type { defineProcessor } from "@unworklet/core";
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(0.25);
+  });
+});
+`);
+    expect.unreachable("lower() must reject a type-only import of a generated name");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-reserved-binding");
+  }
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;

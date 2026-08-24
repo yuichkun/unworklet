@@ -174,18 +174,30 @@ function moduleSpecifierOf(decl: ts.ImportDeclaration): string | undefined {
 /** The local binding names a user import introduces (default / namespace / named,
  * each as its in-scope alias). The injected core import drops these so a name the
  * user imports explicitly is never double-bound (e.g. `import { state }`). */
-function importBoundNames(imports: readonly ts.ImportDeclaration[]): Set<string> {
+function importBoundNames(
+  imports: readonly ts.ImportDeclaration[],
+  /**
+   * Skip the names a type-only import binds. Those carry no runtime value, so
+   * they cannot stand in for a binding the generated code calls — but they do
+   * occupy the name, which is why the reserved-binding check counts them.
+   */
+  options?: { valuesOnly?: boolean },
+): Set<string> {
   const names = new Set<string>();
   for (const decl of imports) {
     const clause = decl.importClause;
     if (clause === undefined) continue;
+    if (options?.valuesOnly === true && clause.isTypeOnly) continue;
     if (clause.name !== undefined) names.add(clause.name.text);
     const bindings = clause.namedBindings;
     if (bindings === undefined) continue;
     if (ts.isNamespaceImport(bindings)) {
       names.add(bindings.name.text);
     } else {
-      for (const el of bindings.elements) names.add(el.name.text);
+      for (const el of bindings.elements) {
+        if (options?.valuesOnly === true && el.isTypeOnly) continue;
+        names.add(el.name.text);
+      }
     }
   }
   return names;
@@ -441,6 +453,15 @@ function partitionModuleScopeExports(
         if (ts.isIdentifier(d.name)) record(valueBindingOf, d.name.text, idx);
       }
       return;
+    }
+    // A `var` inside a control statement belongs to the module, not the block
+    // it sits in — an export reading it depends on the whole statement, so the
+    // closure has to carry that statement out. A function's own body vars stay
+    // its own, which is why a function-like statement is skipped here.
+    if (!ts.isFunctionLike(stmt)) {
+      const nestedVars = new Set<string>();
+      collectFunctionScopedVars(stmt, nestedVars);
+      for (const name of nestedVars) record(valueBindingOf, name, idx);
     }
     const declared = (stmt as { name?: ts.Node }).name;
     if (declared === undefined || !ts.isIdentifier(declared)) return;
@@ -851,7 +872,7 @@ export function lower(source: string, options: LowerOptions = {}): string {
       );
     }
     const used = collectUsedCoreExports(sf);
-    for (const name of importBoundNames(userImports)) used.delete(name);
+    for (const name of importBoundNames(userImports, { valuesOnly: true })) used.delete(name);
     for (const name of statementBoundNames(declarations)) used.delete(name);
     const importDecl = makeCoreImport([...used].sort(), coreModule);
     const lowered = ts.factory.updateSourceFile(sf, [...userImports, importDecl, ...declarations]);
@@ -928,13 +949,18 @@ export function lower(source: string, options: LowerOptions = {}): string {
     generatedBindings.add("out");
     generatedBindings.add("audioOutput");
   }
-  // A non-core import binds the name just as a declaration does, and the
-  // injected core import drops it the same way — so it collides the same way.
+  // Any local binding of a generated name collides — a declaration, an import
+  // from elsewhere, or a type-only import (erased, so it supplies no value, yet
+  // it still occupies the name beside the injected import). The one exception
+  // is a VALUE import of the same name from the core: that is the very binding
+  // the generated code wants, and the injected import stands down for it.
+  const coreValueImports = importBoundNames(
+    userImports.filter((d) => moduleSpecifierOf(d) === coreModule),
+    { valuesOnly: true },
+  );
   const boundHere = statementBoundNames(declarations);
-  for (const name of importBoundNames(
-    userImports.filter((d) => moduleSpecifierOf(d) !== coreModule),
-  )) {
-    boundHere.add(name);
+  for (const name of importBoundNames(userImports)) {
+    if (!coreValueImports.has(name)) boundHere.add(name);
   }
   const reserved = [...generatedBindings].find((name) => boundHere.has(name));
   if (reserved !== undefined) {
@@ -954,7 +980,7 @@ export function lower(source: string, options: LowerOptions = {}): string {
   // Drop any name the user imports explicitly so the injected core import never
   // double-binds it (their import provides it). This also strips the user
   // import's own specifier identifiers, which `collectUsedCoreExports` counts.
-  for (const name of importBoundNames(userImports)) used.delete(name);
+  for (const name of importBoundNames(userImports, { valuesOnly: true })) used.delete(name);
   // Same for a name the file declares itself: a hoisted `export const clamp`
   // sits at module scope beside the import (a duplicate binding), and a
   // declaration left inside the wrapper shadows the import for the whole body,
