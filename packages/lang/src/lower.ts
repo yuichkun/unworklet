@@ -279,7 +279,15 @@ function statementWrites(stmt: ts.Statement): Set<string> {
   const names = new Set<string>();
   const target = (expr: ts.Expression): void => {
     if (ts.isIdentifier(expr)) names.add(expr.text);
-    else if (ts.isArrayLiteralExpression(expr)) for (const el of expr.elements) target(el);
+    // `helper.value = 1` / `table[0] = 1` mutate what `helper` and `table`
+    // hold, so the binding at the root of the access is what was written.
+    else if (ts.isPropertyAccessExpression(expr) || ts.isElementAccessExpression(expr)) {
+      let root: ts.Expression = expr.expression;
+      while (ts.isPropertyAccessExpression(root) || ts.isElementAccessExpression(root)) {
+        root = root.expression;
+      }
+      if (ts.isIdentifier(root)) names.add(root.text);
+    } else if (ts.isArrayLiteralExpression(expr)) for (const el of expr.elements) target(el);
     else if (ts.isObjectLiteralExpression(expr)) {
       for (const p of expr.properties) {
         if (ts.isShorthandPropertyAssignment(p)) names.add(p.name.text);

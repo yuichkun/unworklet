@@ -1307,6 +1307,52 @@ process(() => {
   expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
 });
 
+test("a write THROUGH a hoisted dependency blocks the same way a direct one does", () => {
+  // `helper.value = 1` mutates the object the export reads, so leaving it in
+  // the wrapper gives the export the pre-write contents.
+  try {
+    lower(`
+const helper = { value: 0 };
+helper.value = 1;
+export const value = helper.value;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+    expect.unreachable(
+      "lower() must reject an export whose dependency is mutated through a property",
+    );
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+    expect((e as LowerError).message).toContain("helper");
+  }
+});
+
+test("an indexed write through a hoisted dependency blocks too", () => {
+  try {
+    lower(`
+const table = [0, 0];
+table[0] = 1;
+export const first = table[0];
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(first / 10);
+  });
+});
+`);
+    expect.unreachable("lower() must reject an export whose dependency is mutated by index");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+    expect((e as LowerError).message).toContain("table");
+  }
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;
