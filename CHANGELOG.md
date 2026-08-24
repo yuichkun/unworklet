@@ -12,7 +12,7 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 The correctness-and-honesty batch: the audio-thread transport gains its missing
 consumer feedback and loses its last per-quantum allocation, buffer DSP gets
 the same numeric hygiene as scalar state, and several declared-but-broken or
-silently-lossy surfaces now refuse loudly instead. Five changes are breaking —
+silently-lossy surfaces now refuse loudly instead. Six changes are breaking —
 read the migrations.
 
 ### Breaking
@@ -55,6 +55,19 @@ stable ID `simd-buffer-too-small` (the analyzer carries the same rule for
 hand-built graphs). Migration: size the buffer to 4 or more elements, or use
 scalar `read` / `write`.
 
+**`RenderOfflineResult` carries a required `diagnostics` field.** It holds two
+counters the renderer keeps about corrections it had to make:
+`scrubbedSamples` (output samples the non-finite scrub replaced with 0 — see
+Fixed; `0` for a healthy render) and `droppedSysexMessages` (outbound sysex
+refused because its `length` would not leave whole — see the sysex entry
+above). Reading a result is unaffected, but the field is required, so anything
+that CONSTRUCTS a `RenderOfflineResult` — a hand-built test fixture — or
+deep-compares a whole result now has to account for it. Migration: add
+`diagnostics: { scrubbedSamples: 0, droppedSysexMessages: 0 }` to hand-built
+fixtures, or type them as `RenderResultLike` from `@unworklet/test`, which
+takes `diagnostics` as optional; compare the fields you care about rather than
+the whole object.
+
 **Snapshot blobs are format v2.** The blob gains an optional processor
 identity block; 0.3.0 reads v1 blobs unchanged, but blobs saved by 0.3.0 are
 not readable by 0.2.x. Migration: none for upgraders; do not feed 0.3.0 blobs
@@ -73,14 +86,8 @@ to a 0.2.x build.
   `config.restore` throws. An id-less blob or processor matches on schema hash
   and slot names alone, as it does without this option. `inspect()` surfaces
   the blob's id.
-- **`renderOffline` result `diagnostics.scrubbedSamples`** — output samples
-  the compiled processor's non-finite scrub replaced with 0 (see Fixed). `0`
-  for a healthy render.
-- **`renderOffline` result `diagnostics.droppedSysexMessages`** — outbound
-  sysex messages the emit path refused because the requested `length` does not
-  fit the destination chunk or the source buffer. The audio thread cannot
-  throw, and shipping the prefix that fits would deliver a sysex without its
-  0xF7 terminator, so the message is dropped whole and counted here.
+- **`renderOffline` reports what it had to correct** — see the `diagnostics`
+  entry under Breaking for the two counters and what they mean.
 - **`renderOffline` reuses compiles.** Repeat renders of the same processor at
   the same sample rate skip the compile pipeline (~8 s reported on a mid-size
   processor per render, which made one-render-per-test suites time out).
