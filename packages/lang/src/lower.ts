@@ -346,7 +346,16 @@ function invokesParameter(fn: ts.Node, index: number): boolean {
   const parameter = parameters[index] ?? (last?.dotDotDotToken !== undefined ? last : undefined);
   if (parameter === undefined) return false;
   // A rest or a destructured parameter does not name the argument on its own.
-  if (parameter.dotDotDotToken !== undefined || !ts.isIdentifier(parameter.name)) return true;
+  // Neither does a parameter PROPERTY — `constructor(public cb)` also stores it
+  // on the instance, by a write that appears nowhere in the body, so the
+  // argument outlives the call whatever the body does with the name.
+  if (
+    parameter.dotDotDotToken !== undefined ||
+    !ts.isIdentifier(parameter.name) ||
+    (ts.getModifiers(parameter) ?? []).length > 0
+  ) {
+    return true;
+  }
   const body = (fn as { body?: ts.Node }).body;
   if (body === undefined) return true;
   // `const invoke = cb` carries the parameter, so calling `invoke` calls it.

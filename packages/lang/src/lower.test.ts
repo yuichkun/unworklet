@@ -2730,6 +2730,39 @@ run(() => {
   }
 });
 
+test("a constructor's parameter property keeps the callback past the call", () => {
+  try {
+    loweredWithMutation(`
+class Runner {
+  constructor(public cb: () => void) {
+    this.cb();
+  }
+}
+void new Runner(() => {
+  helper.value = 1;
+});
+`);
+    expect.unreachable("lower() must treat a parameter property as keeping the callback");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("a plain constructor parameter that is discarded still hoists", () => {
+  const lowered = loweredWithMutation(`
+class Ignorer {
+  constructor(cb: () => void) {
+    void cb;
+  }
+}
+void new Ignorer(() => {
+  helper.value = 1;
+});
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;
