@@ -66,6 +66,41 @@ export function ringLeads(a: number, b: number): boolean {
  * back negative through the `Int32Array`. A signed `target > cur` would instead
  * reject the legitimate advance at the wrap and latch the ring (see `ringCount`).
  */
+/**
+ * Producer-side drop-oldest on a full ring: free exactly one slot by advancing
+ * `tail`, and report whether THIS producer is the one that freed it.
+ *
+ * The return value is what the overflow counter must be gated on. `tail` has a
+ * second writer — the consumer's drain-commit — so between reading the
+ * occupancy and writing the tail, the consumer can drain the ring. Advancing
+ * through a monotone-max there correctly declines the stale proposal, but the
+ * producer cannot tell "declined because the consumer already freed room" from
+ * "advanced, a slot was overwritten" — counting both as overflow reports losses
+ * that never happened, and overflow counts are what a user sizes a ring by.
+ * The compare-exchange answers it: winning from the observed `tail` means this
+ * producer dropped the slot; losing means the consumer moved, so occupancy is
+ * re-evaluated against its value and the drop may no longer be needed at all.
+ *
+ * Terminating: a losing exchange returns a strictly-leading `tail` (both writers
+ * only ever advance it), so each retry strictly lowers the occupancy against the
+ * fixed `head` and the loop ends by winning or by finding room. Main-thread
+ * only — the audio thread's producers are the WASM ring writers.
+ */
+export function dropOldestIfFull(
+  view: Int32Array,
+  tailIndex: number,
+  head: number,
+  capacity: number,
+): boolean {
+  let tail = Atomics.load(view, tailIndex);
+  while (ringCount(head, tail) >= capacity) {
+    const prev = Atomics.compareExchange(view, tailIndex, tail, (tail + 1) | 0);
+    if (prev === tail) return true;
+    tail = prev;
+  }
+  return false;
+}
+
 export function atomicMonotoneMax(view: Int32Array, index: number, target: number): number {
   let cur = Atomics.load(view, index);
   while (((target - cur) | 0) > 0) {

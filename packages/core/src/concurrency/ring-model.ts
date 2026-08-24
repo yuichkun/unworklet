@@ -499,6 +499,14 @@ export type TailWriteMode = "store" | "max" | "add";
  * both directions — the in-rings (message / MIDI-in: main send drop-oldest ×
  * worklet drain-commit) and the out-rings (event / MIDI-out: worklet
  * drop-oldest × main drain-commit) — so this one spec proves both.
+ *
+ * The in-ring producer (`dropOldestIfFull` in `ringIndex.ts`) additionally
+ * requires its exchange to SUCCEED from the tail it observed, and re-checks
+ * occupancy when it does not: a producer that only knows "my proposal did not
+ * lead" cannot tell an overwritten slot from a slot the consumer had already
+ * drained, and the overflow counter needs that distinction. That gate only ever
+ * removes advances from the set modeled here, so the two properties proven
+ * below — never rewinds, never over-advances — carry over unchanged.
  */
 export const splitWriterTailSpec = (mode: TailWriteMode): ModelSpec => {
   const mainOps: Op[] = [{ kind: "load", loc: "tail", into: "rMain", mode: "acquire" }];

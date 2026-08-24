@@ -2832,6 +2832,50 @@ test("node.events.<name>.emit(payload): overflow path increments overflowCount w
   }
 });
 
+test("node.events.<name>.emit(payload): a worklet drain between the occupancy read and the tail advance is not counted as overflow", async () => {
+  // The ring reads full, then the worklet drains it before this sender writes
+  // the tail. Nothing was overwritten in that interleaving, so the drop-oldest
+  // must stand down — an overflowCount that ticks here reports a loss that did
+  // not happen, and overflowCount is what a user reads to size their ring.
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  const realLoad = Atomics.load;
+  try {
+    const smallRing = { ...presetMessageRing, capacity: 4 };
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ messageRings: [smallRing] })),
+      h.fireReady,
+    );
+    const msgBuf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .messageRingsBuffer as SharedArrayBuffer;
+    const header = new Int32Array(msgBuf, 0, 3);
+    const send = node.events["preset"].emit;
+    for (let k = 1; k <= 4; k++) send({ slot: k });
+    expect(realLoad(header, 0)).toBe(4); // head, ring exactly full
+
+    let fired = false;
+    Atomics.load = ((view: Int32Array, index: number): number => {
+      const value = realLoad(view, index);
+      if (!fired && index === 1 && view.buffer === msgBuf) {
+        fired = true;
+        // The worklet consumes the whole ring right after this read.
+        Atomics.store(view, 1, realLoad(view, 0));
+      }
+      return value;
+    }) as unknown as typeof Atomics.load;
+    send({ slot: 5 });
+    Atomics.load = realLoad;
+
+    expect(fired).toBe(true);
+    expect(Atomics.load(header, 0)).toBe(5); // head advanced by the send
+    expect(Atomics.load(header, 1)).toBe(4); // the worklet's drain stands
+    expect(Atomics.load(header, 2)).toBe(0); // nothing was dropped
+    expect(node.events["preset"].diagnostics.overflowCount()).toBe(0);
+  } finally {
+    Atomics.load = realLoad;
+    h.cleanup();
+  }
+});
+
 test("node.events.<name>.diagnostics.overflowCount reads from the SAB via Atomics.load (message ring)", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
   try {

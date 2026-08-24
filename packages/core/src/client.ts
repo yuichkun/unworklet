@@ -36,7 +36,7 @@ import {
   alignUp4,
   egressPoolBufferBytes,
 } from "./egressFrame.ts";
-import { atomicMonotoneMax, ringCount, ringLeads, ringSlotIndex } from "./ringIndex.ts";
+import { atomicMonotoneMax, dropOldestIfFull, ringLeads, ringSlotIndex } from "./ringIndex.ts";
 import { decodeScalar, type SnapshotSlot } from "./snapshot.ts";
 import { decodeSnapshot, encodeSnapshot, inspectSnapshot, runMigrations } from "./snapshotBlob.ts";
 import type { RestoreResult } from "./types.ts";
@@ -687,12 +687,10 @@ export async function createNode<C>(
           // SAB path = direct SAB write + head/tail management
           const headerView = messageRingsHeaderView;
           const head = Atomics.load(headerView, headWordIdx);
-          const tail = Atomics.load(headerView, tailWordIdx);
-          if (ringCount(head, tail) >= ring.capacity) {
-            // Monotone-max drop-oldest: the worklet drain-commit also writes this
-            // tail, so a plain store could rewind its advance (a lost update that
-            // re-delivers a slot). Advance only if still ahead.
-            atomicMonotoneMax(headerView, tailWordIdx, tail + 1);
+          // Drop-oldest, counted only when this sender is the one that dropped:
+          // the worklet's drain-commit shares this tail word, so a full-looking
+          // ring can be emptied before the advance lands (see dropOldestIfFull).
+          if (dropOldestIfFull(headerView, tailWordIdx, head, ring.capacity)) {
             Atomics.store(
               headerView,
               overflowWordIdx,
@@ -907,12 +905,9 @@ export async function createNode<C>(
         if (isSab && midiRingsView !== null && midiRingsHeaderView !== null) {
           const headerView = midiRingsHeaderView;
           const head = Atomics.load(headerView, headWordIdx);
-          const tail = Atomics.load(headerView, tailWordIdx);
-          if (ringCount(head, tail) >= ring.capacity) {
-            // Monotone-max drop-oldest: the worklet drain-commit also writes this
-            // tail, so a plain store could rewind its advance (a lost update that
-            // re-delivers a slot). Advance only if still ahead.
-            atomicMonotoneMax(headerView, tailWordIdx, tail + 1);
+          // Drop-oldest, counted only when this sender is the one that dropped
+          // (same two-writer tail as the message ring above).
+          if (dropOldestIfFull(headerView, tailWordIdx, head, ring.capacity)) {
             Atomics.store(
               headerView,
               overflowWordIdx,
