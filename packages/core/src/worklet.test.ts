@@ -990,6 +990,53 @@ test("egress frame (postMessage): the message envelope and transfer list are reu
   expect(self.sent[1]!.transfer).toEqual([frames[1]]);
 });
 
+test("egress-recycle: rebinding a returned buffer costs two views, independent of frame size", async () => {
+  // A transferred buffer comes back as a fresh ArrayBuffer identity, so its two
+  // views have to be rebound — that pair is the floor for this transport, and
+  // it belongs in the port handler rather than process(). What must never
+  // appear here is work that scales: a per-slot view, a payload copy, or a
+  // second pair for the same buffer.
+  const { wasm } = await compile(eventEmitProc);
+  const self = makeMockSelf();
+  const eventRings = eventEmitProc.worklet.eventRings;
+  eventEmitProc.worklet.initialize(self, {
+    processorOptions: {
+      wasm,
+      eventRings,
+      eventRingSabOffsets: [0],
+      transport: "postMessage",
+    },
+  });
+  const frameBytes = egressPoolBufferBytes(eventRings, []);
+  const buffers = [new ArrayBuffer(frameBytes), new ArrayBuffer(frameBytes)];
+
+  const RealU8 = globalThis.Uint8Array;
+  const RealDataView = globalThis.DataView;
+  let ctorCount = 0;
+  globalThis.Uint8Array = new Proxy(RealU8, {
+    construct(target, args, newTarget) {
+      ctorCount++;
+      return Reflect.construct(target, args, newTarget);
+    },
+  }) as typeof Uint8Array;
+  globalThis.DataView = new Proxy(RealDataView, {
+    construct(target, args, newTarget) {
+      ctorCount++;
+      return Reflect.construct(target, args, newTarget);
+    },
+  }) as typeof DataView;
+  try {
+    for (const buffer of buffers) {
+      firePortMessage(self, { kind: "egress-recycle", buffer, eventTails: [[0, 4]] });
+    }
+  } finally {
+    globalThis.Uint8Array = RealU8;
+    globalThis.DataView = RealDataView;
+  }
+
+  expect(ctorCount).toBe(2 * buffers.length);
+});
+
 test("egress-recycle: malformed or stale tail acks are ignored without throwing (port input is a boundary)", async () => {
   const { wasm } = await compile(eventEmitProc);
   const self = makeMockSelf();

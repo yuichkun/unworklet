@@ -523,9 +523,15 @@ type ProcessorOptionsBag = {
  * loops (a `subarray` per slot would allocate a view object), and with no news
  * — or no free buffer — nothing is taken and nothing is sent. A starved quantum
  * leaves the `lastSent*` anchors unchanged, so the data stays in the WASM rings
- * (bounded by drop-oldest) and rides a later quantum's frame. What the
- * transport does internally to serialize the message is the transport's own
- * cost; this path adds no JS object to the audio thread's heap.
+ * (bounded by drop-oldest) and rides a later quantum's frame.
+ *
+ * The transport still allocates in this realm on the RECEIVE side, which no
+ * design here can remove: delivering a message constructs its data object, and
+ * a transferred buffer arrives as a fresh ArrayBuffer identity whose two views
+ * must be rebound (see the `egress-buffer` / `egress-recycle` handler). What
+ * the pool removes is everything that SCALES — the per-quantum frame buffer and
+ * the per-slot copies. This is the fallback for realms without a
+ * SharedArrayBuffer, where the primary path exchanges no messages at all.
  */
 function postEgressFrame(self: SelfWithState, state: WorkletState): void {
   const eventRings = state.eventRings;
@@ -1332,8 +1338,11 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             // coming back after consumption (`egressFrame.ts`). Views are bound
             // HERE, in the port handler: a transferred-back ArrayBuffer is a
             // fresh identity, and binding outside process() keeps the
-            // per-quantum hot path allocation-free. Undersized buffers are
-            // rejected — the encoder sizes against `egressFrameBytes` and
+            // per-quantum hot path allocation-free. Two views per returned
+            // buffer is the floor for a transfer-based pool, and it does not
+            // grow with the frame — sending ready-made views instead would only
+            // move their construction into the deserializer. Undersized buffers
+            // are rejected — the encoder sizes against `egressFrameBytes` and
             // never bounds-checks in the hot path.
             if (data.buffer instanceof ArrayBuffer && data.buffer.byteLength >= egressFrameBytes) {
               egressPool.push({
