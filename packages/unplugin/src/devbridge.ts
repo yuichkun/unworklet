@@ -246,3 +246,21 @@ export function toSendableMidiEvent<E extends { type: string; data?: unknown }>(
   }
   return { ...event, data: Uint8Array.from(data as number[]) };
 }
+
+/**
+ * The MIDI log's wire shape: sysex bytes as a plain array.
+ *
+ * The log crosses the DevTools RPC boundary, where a `Uint8Array` serializes as
+ * an indexed object rather than the `data: number[]` the `DevMidiEvent`
+ * contract states — the panel would read a malformed entry. Sending still wants
+ * the typed form (`toSendableMidiEvent`), so the conversion belongs at the log,
+ * not at the send.
+ */
+export function toLoggableMidiEvent<E extends { type: string; data?: unknown }>(
+  event: E,
+): E | (Omit<E, "data"> & { data: number[] }) {
+  if (event.type !== "sysex" || event.data === undefined) return event;
+  if (Array.isArray(event.data)) return event;
+  if (!ArrayBuffer.isView(event.data)) return event;
+  return { ...event, data: Array.from(event.data as Uint8Array) };
+}

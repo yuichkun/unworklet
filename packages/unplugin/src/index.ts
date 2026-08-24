@@ -1131,7 +1131,7 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
         return `
 import { getDevNodes, onDevNodesChanged } from "@unworklet/core/dev";
 import { decodeScalar, decodeTypedArray } from "@unworklet/core";
-import { appendBounded, downsampleTo, drainInjects, foldProxyGraph, frameLevels, normalizeFreqDb, slotMemory, splitSlots, toSendableMidiEvent } from "@unworklet/unplugin/devbridge";
+import { appendBounded, downsampleTo, drainInjects, foldProxyGraph, frameLevels, normalizeFreqDb, slotMemory, splitSlots, toLoggableMidiEvent, toSendableMidiEvent } from "@unworklet/unplugin/devbridge";
 import { getDevToolsClientContext } from "@vitejs/devtools-kit/client";
 
 globalThis.__unworklet_getDevNodes = getDevNodes;
@@ -1340,7 +1340,6 @@ let lastMidiSig = "";
 const midiTapped = new WeakSet();
 let lastInjectSeq = 0;
 let midiInjectSubscribed = false;
-const eventToJson = (e) => (e && e.type === "sysex" && e.data ? { type: "sysex", data: Array.from(e.data) } : e);
 const tapMidiOut = (h) => {
   const awn = h.node.node;
   if (midiTapped.has(awn)) return;
@@ -1354,7 +1353,7 @@ const tapMidiOut = (h) => {
     for (const t of MIDI_TYPES) {
       try {
         port.onEvent(t, (e) => {
-          midiLog = appendBounded(midiLog, { seq: ++midiSeq, ts: Date.now(), dir: "out", nodeId: id, port: pm.name, event: eventToJson(e) }, MIDI_LOG_MAX);
+          midiLog = appendBounded(midiLog, { seq: ++midiSeq, ts: Date.now(), dir: "out", nodeId: id, port: pm.name, event: toLoggableMidiEvent(e) }, MIDI_LOG_MAX);
         });
       } catch (err) { /* dev only */ }
     }
@@ -1384,7 +1383,7 @@ const ensureMidiInjectSub = () => {
         if (!sendable) { console.warn("unworklet devtools: dropped malformed MIDI inject", c.event); continue; }
         try {
           port.send(sendable);
-          midiLog = appendBounded(midiLog, { seq: ++midiSeq, ts: Date.now(), dir: "inject", nodeId: c.nodeId, port: c.port, event: sendable }, MIDI_LOG_MAX);
+          midiLog = appendBounded(midiLog, { seq: ++midiSeq, ts: Date.now(), dir: "inject", nodeId: c.nodeId, port: c.port, event: toLoggableMidiEvent(sendable) }, MIDI_LOG_MAX);
         } catch (err) { /* dev only */ }
       }
     };

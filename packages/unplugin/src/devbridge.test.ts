@@ -11,6 +11,7 @@ import {
   type RawSlot,
   slotMemory,
   splitSlots,
+  toLoggableMidiEvent,
   toSendableMidiEvent,
 } from "./devbridge.ts";
 
@@ -305,4 +306,22 @@ test("toSendableMidiEvent: accepts sysex data already carried as a Uint8Array", 
   const data = new Uint8Array([0xf0, 0x7e, 0xf7]);
   const out = toSendableMidiEvent({ type: "sysex", data });
   expect(out!.data).toBe(data);
+});
+
+test("toLoggableMidiEvent: renders sysex bytes as a plain array (the DevMidiEvent wire shape)", () => {
+  // The MIDI log crosses the RPC boundary, where a Uint8Array serializes as an
+  // indexed object rather than the `data: number[]` the panel contract states.
+  const out = toLoggableMidiEvent({ type: "sysex", data: new Uint8Array([0xf0, 0x7e, 0xf7]) });
+  expect(Array.isArray(out.data)).toBe(true);
+  expect(out.data).toEqual([0xf0, 0x7e, 0xf7]);
+});
+
+test("toLoggableMidiEvent: leaves an already-plain sysex payload as an array", () => {
+  const out = toLoggableMidiEvent({ type: "sysex", data: [0xf0, 0x01, 0xf7] });
+  expect(out.data).toEqual([0xf0, 0x01, 0xf7]);
+});
+
+test("toLoggableMidiEvent: passes non-sysex events through unchanged", () => {
+  const noteOn = { type: "noteOn", channel: 0, note: 60, velocity: 100 };
+  expect(toLoggableMidiEvent(noteOn)).toBe(noteOn);
 });
