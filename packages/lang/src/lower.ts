@@ -270,6 +270,17 @@ function collectFunctionScopedVars(node: ts.Node, into: Set<string>): void {
   ts.forEachChild(node, walk);
 }
 
+/** Whether this qualified name is (part of) an `import("...")` type's qualifier. */
+function isImportTypeQualifier(name: ts.QualifiedName): boolean {
+  let node: ts.Node = name;
+  let parent = node.parent as ts.Node | undefined;
+  while (parent !== undefined && ts.isQualifiedName(parent)) {
+    node = parent;
+    parent = parent.parent as ts.Node | undefined;
+  }
+  return parent !== undefined && ts.isImportTypeNode(parent) && parent.qualifier === node;
+}
+
 /** Names bound by `infer X` anywhere in a conditional type's extends clause. */
 function collectInferNames(node: ts.Node, into: Set<string>): void {
   const walk = (n: ts.Node): void => {
@@ -566,6 +577,10 @@ function partitionModuleScopeExports(
     // `Types.min` in a type — the right side names a member of the left, the
     // same way a property access does in an expression.
     if (ts.isQualifiedName(p) && p.right === n) return true;
+    // `import("./types.ts").min` — every part of the qualifier names something
+    // in THAT module, the leftmost included: there is no local binding to read.
+    if (ts.isImportTypeNode(p) && p.qualifier === n) return true;
+    if (ts.isQualifiedName(p) && p.left === n && isImportTypeQualifier(p)) return true;
     if (ts.isPropertyAssignment(p) && p.name === n) return true;
     if (ts.isMethodDeclaration(p) && p.name === n) return true;
     if (ts.isPropertyDeclaration(p) && p.name === n) return true;

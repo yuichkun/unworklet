@@ -1229,6 +1229,23 @@ process(() => {
   expect(lowered.indexOf("export type Pair")).toBeLessThan(lowered.indexOf("defineProcessor("));
 });
 
+test("an import-type qualifier names a member of that module, not a local", () => {
+  const lowered = lower(`
+const min = state.f32(0);
+export type Signal = import("./types.ts").min;
+export type Deep = import("./types.ts").min.inner;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(min.read());
+  });
+});
+`);
+  const defineAt = lowered.indexOf("defineProcessor(");
+  expect(lowered.indexOf("export type Signal")).toBeLessThan(defineAt);
+  expect(lowered.indexOf("export type Deep")).toBeLessThan(defineAt);
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;
