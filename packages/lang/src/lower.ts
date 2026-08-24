@@ -412,7 +412,11 @@ function partitionModuleScopeExports(
       (ts.isFunctionDeclaration(stmt) ||
         ts.isClassDeclaration(stmt) ||
         ts.isEnumDeclaration(stmt) ||
-        ts.isModuleDeclaration(stmt)) &&
+        ts.isModuleDeclaration(stmt) ||
+        // A type alias or interface binds nothing at runtime, but an exported
+        // declaration annotated with one still needs it in scope beside it.
+        ts.isTypeAliasDeclaration(stmt) ||
+        ts.isInterfaceDeclaration(stmt)) &&
       stmt.name !== undefined &&
       ts.isIdentifier(stmt.name)
     ) {
@@ -474,7 +478,7 @@ function partitionModuleScopeExports(
   const refs = statements.map((stmt) => {
     const bindings = new Set<number>();
     const dsl = new Set<string>();
-    const visit = (n: ts.Node, shadowed: ReadonlySet<string>): void => {
+    const visit = (n: ts.Node, shadowed: ReadonlySet<string>, inType: boolean): void => {
       if (ts.isIdentifier(n) && !isNamePosition(n) && !shadowed.has(n.text)) {
         const b = bindingOf.get(n.text);
         // A module-scope declaration owns the name throughout the module, DSL
@@ -483,18 +487,26 @@ function partitionModuleScopeExports(
         // still reaches it through the dependency edge when that declaration is
         // itself DSL-tied.
         if (b !== undefined) bindings.add(b);
+        // A name reached only through a type is erased at emit, so it cannot
+        // tie the declaration to the capture — `export type Signal =
+        // Node<"f32">` names the DSL without depending on it. The dependency
+        // edge above still applies: an annotation's own type alias has to
+        // travel with the declaration it annotates.
+        else if (inType) return;
         else if (imported.dsl.has(n.text)) dsl.add(n.text);
         else if (!imported.other.has(n.text) && DSL_TAINT_ROOTS.has(n.text)) dsl.add(n.text);
       }
       const opened = scopeBindings(n);
       const inner = opened === null ? shadowed : new Set([...shadowed, ...opened]);
+      const childInType =
+        inType || ts.isTypeNode(n) || ts.isTypeAliasDeclaration(n) || ts.isInterfaceDeclaration(n);
       ts.forEachChild(n, (child) => {
-        visit(child, inner);
+        visit(child, inner, childInType);
       });
     };
     // The statement's own top-level bindings stay visible: they are the module
     // bindings the dependency edges are drawn between.
-    visit(stmt, new Set<string>());
+    visit(stmt, new Set<string>(), false);
     return { bindings, dsl };
   });
 

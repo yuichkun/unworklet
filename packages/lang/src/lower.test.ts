@@ -560,6 +560,45 @@ process(() => {
   expect(lowered.indexOf("export const DEFAULT_MODE")).toBeLessThan(defineAt);
 });
 
+test("a core name reached only through a type is erased, so the export hoists", () => {
+  // `Node` here is a type import used in type positions: it disappears at
+  // emit and carries no dependency on the capture.
+  const lowered = lower(`
+import type { Node } from "@unworklet/core";
+export type Signal = Node<"f32">;
+export function describe(_x: Node<"f32">): string {
+  return "signal";
+}
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(0.25);
+  });
+});
+`);
+  const defineAt = lowered.indexOf("defineProcessor(");
+  expect(lowered.indexOf("export type Signal")).toBeLessThan(defineAt);
+  expect(lowered.indexOf("export function describe")).toBeLessThan(defineAt);
+});
+
+test("a hoisted export carries the type alias its annotation names", () => {
+  // The alias is erased at emit, but the annotation still has to resolve where
+  // the declaration lands — leaving it in the callback puts it out of scope.
+  const lowered = lower(`
+type Gain = number;
+export const DEFAULT: Gain = 0.5;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(DEFAULT);
+  });
+});
+`);
+  const defineAt = lowered.indexOf("defineProcessor(");
+  expect(lowered.indexOf("type Gain = number;")).toBeLessThan(defineAt);
+  expect(lowered.indexOf("export const DEFAULT")).toBeLessThan(defineAt);
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;
