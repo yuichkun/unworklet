@@ -293,16 +293,35 @@ function unwrapExpression(expr: ts.Expression): ts.Expression {
   }
 }
 
-/** The function bodies a called name stands for, when this file declares it. */
+/** The module-scope function bodies a name stands for, when this file has them. */
 type CalleeBodies = (name: string) => readonly ts.Node[];
+
+/** A function body a name resolves to, carrying the scope it was declared in —
+ * what its own free names see is decided there, not at the call. */
+type ResolvedBody = {
+  readonly node: ts.Node;
+  readonly shadowed: ReadonlySet<string>;
+  readonly resolve: BodyResolver;
+};
+
+/** Innermost-first lookup of the function bodies a name stands for. */
+type BodyResolver = (name: string) => readonly ResolvedBody[];
+
+const NO_NAMES: ReadonlySet<string> = new Set<string>();
 
 function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<string> {
   const names = new Set<string>();
   // Function bodies that run while this statement does, rather than whenever
-  // someone later calls them: a callback handed to a call, an IIFE, and the
+  // someone later calls them: a function handed to a call, an IIFE, and the
   // body of a function this file declares and this statement calls.
   const runsNow = new Set<ts.Node>();
   const followed = new Set<ts.Node>();
+  const moduleResolve: BodyResolver = (name) =>
+    (calleeBodies?.(name) ?? []).map((node) => ({
+      node,
+      shadowed: NO_NAMES,
+      resolve: moduleResolve,
+    }));
   // A write to a name a nested block declares for itself is that local's, not
   // the module binding's — the same spelling-versus-resolution rule the export
   // taint follows. Only block-scoped declarations shadow: a `var` inside a
@@ -337,43 +356,55 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
   };
   // A member's body may be deferred while its NAME is not: `[helper.value = 1]()`
   // computes that key where the class stands, whoever calls the method later.
-  const walkComputedName = (n: ts.Node, shadowed: ReadonlySet<string>): void => {
+  const walkComputedName = (
+    n: ts.Node,
+    shadowed: ReadonlySet<string>,
+    resolve: BodyResolver,
+  ): void => {
     const name = (n as { name?: ts.Node }).name;
-    if (name !== undefined && ts.isComputedPropertyName(name)) walk(name.expression, shadowed);
+    if (name !== undefined && ts.isComputedPropertyName(name)) {
+      walk(name.expression, shadowed, resolve);
+    }
   };
   // A decorator is applied where its class stands, so its expression runs there
   // too — `@register(helper.value = 1) m() {}` writes before any call to `m`.
-  const walkDecorators = (n: ts.Node, shadowed: ReadonlySet<string>): void => {
+  const walkDecorators = (
+    n: ts.Node,
+    shadowed: ReadonlySet<string>,
+    resolve: BodyResolver,
+  ): void => {
     if (!ts.canHaveDecorators(n)) return;
-    for (const d of ts.getDecorators(n) ?? []) walk(d.expression, shadowed);
+    for (const d of ts.getDecorators(n) ?? []) walk(d.expression, shadowed, resolve);
   };
-  const walk = (n: ts.Node, shadowed: ReadonlySet<string>): void => {
+  const walk = (n: ts.Node, shadowed: ReadonlySet<string>, resolve: BodyResolver): void => {
     if (ts.isFunctionLike(n) && !runsNow.has(n)) {
-      walkDecorators(n, shadowed);
-      walkComputedName(n, shadowed);
+      walkDecorators(n, shadowed, resolve);
+      walkComputedName(n, shadowed, resolve);
       // A parameter DECORATOR is applied with the class; a parameter DEFAULT is
       // evaluated per call, so only the decorators count where the class stands.
-      for (const p of n.parameters) walkDecorators(p, shadowed);
+      for (const p of n.parameters) walkDecorators(p, shadowed, resolve);
       return;
     }
     // A call runs code the statement does not contain. Where that code is in
     // this file its writes belong to the statement, because they land before
-    // the statement after it reads anything. A call whose body this file cannot
-    // see — an import, a method, an expression callee — is not followed.
+    // the statement after it reads anything. The callee and every argument are
+    // read the same way — `run(() => ...)` and `run(mutate)` hand over the same
+    // body — and a name that names no function this file can read, or no
+    // function at all, is simply not followed.
     if (ts.isCallExpression(n) || ts.isNewExpression(n)) {
-      for (const arg of [n.expression, ...(n.arguments ?? [])]) {
-        const fn = unwrapExpression(arg);
-        if (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) runsNow.add(fn);
-      }
-      const callee = unwrapExpression(n.expression);
-      if (ts.isIdentifier(callee) && calleeBodies !== undefined) {
-        for (const fn of calleeBodies(callee.text)) {
-          if (followed.has(fn)) continue;
-          followed.add(fn);
-          runsNow.add(fn);
-          // Its own scope, so it starts from nothing shadowed: what its body
-          // writes free resolves at module scope, which is what is at stake.
-          walk(fn, new Set<string>());
+      for (const passed of [n.expression, ...(n.arguments ?? [])]) {
+        const expr = unwrapExpression(passed);
+        if (ts.isArrowFunction(expr) || ts.isFunctionExpression(expr)) {
+          // Written right here, so the walk below reaches it with this scope.
+          runsNow.add(expr);
+          continue;
+        }
+        if (!ts.isIdentifier(expr)) continue;
+        for (const body of resolve(expr.text)) {
+          if (followed.has(body.node)) continue;
+          followed.add(body.node);
+          runsNow.add(body.node);
+          walk(body.node, body.shadowed, body.resolve);
         }
       }
     }
@@ -384,8 +415,8 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
       ts.isPropertyDeclaration(n) &&
       !(ts.getModifiers(n) ?? []).some((m) => m.kind === ts.SyntaxKind.StaticKeyword)
     ) {
-      walkDecorators(n, shadowed);
-      walkComputedName(n, shadowed);
+      walkDecorators(n, shadowed, resolve);
+      walkComputedName(n, shadowed, resolve);
       return;
     }
     if (ts.isBinaryExpression(n) && isAssignmentOperator(n.operatorToken.kind)) {
@@ -411,6 +442,16 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
     }
     const opened = blockScopedNames(n);
     const inner = opened === null ? shadowed : new Set([...shadowed, ...opened]);
+    // Every name this scope opens is a key, so one bound to something that is
+    // not a function stops the lookup here instead of reaching an outer
+    // function of the same spelling.
+    const declared = opened === null ? null : scopedFunctionBodies(n, opened);
+    const innerResolve: BodyResolver = (name) => {
+      const here = declared?.get(name);
+      return here === undefined
+        ? resolve(name)
+        : here.map((node) => ({ node, shadowed: inner, resolve: innerResolve }));
+    };
     // A function's body sees its `var`s throughout, but a default parameter
     // initializer runs before any of them exist — so the body child gets the
     // wider scope and the parameters keep the narrower one.
@@ -423,11 +464,36 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
       if (vars.size > 0) bodyNames = new Set([...inner, ...vars]);
     }
     ts.forEachChild(n, (child) => {
-      walk(child, child === body ? bodyNames : inner);
+      walk(child, child === body ? bodyNames : inner, innerResolve);
     });
   };
-  walk(stmt, new Set<string>());
+  walk(stmt, NO_NAMES, moduleResolve);
   return names;
+}
+
+/** The function bodies a scope's own names are bound to. Every name the scope
+ * opens is present, mapped to nothing when it is bound to a non-function. */
+function scopedFunctionBodies(node: ts.Node, opened: ReadonlySet<string>): Map<string, ts.Node[]> {
+  const bodies = new Map<string, ts.Node[]>();
+  for (const name of opened) bodies.set(name, []);
+  const fromStatements = (statements: readonly ts.Statement[]): void => {
+    for (const stmt of statements) {
+      if (ts.isFunctionDeclaration(stmt) && stmt.name !== undefined) {
+        bodies.get(stmt.name.text)?.push(stmt);
+      } else if (ts.isVariableStatement(stmt)) {
+        for (const d of stmt.declarationList.declarations) {
+          if (!ts.isIdentifier(d.name) || d.initializer === undefined) continue;
+          const init = unwrapExpression(d.initializer);
+          if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) {
+            bodies.get(d.name.text)?.push(init);
+          }
+        }
+      }
+    }
+  };
+  if (ts.isBlock(node) || ts.isModuleBlock(node)) fromStatements(node.statements);
+  else if (ts.isCaseBlock(node)) for (const c of node.clauses) fromStatements(c.statements);
+  return bodies;
 }
 
 /** Names a node block-scopes, or null when it scopes none. A `var` is excluded

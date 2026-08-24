@@ -2150,6 +2150,50 @@ a();
   }
 });
 
+test("a callee declared in the calling block is followed", () => {
+  try {
+    loweredWithMutation(`{\n  const mutate = () => {\n    helper.value = 1;\n  };\n  mutate();\n}`);
+    expect.unreachable("lower() must follow a block-local callee");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("a function declared in the calling block is followed", () => {
+  try {
+    loweredWithMutation(`{\n  function mutate() {\n    helper.value = 1;\n  }\n  mutate();\n}`);
+    expect.unreachable("lower() must follow a block-local function declaration");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("a callback passed by name is followed like an inline one", () => {
+  try {
+    loweredWithMutation(`const mutate = () => {\n  helper.value = 1;\n};\n[0].forEach(mutate);`);
+    expect.unreachable("lower() must follow a callback passed by name");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("a local name does not borrow the body of an outer one it hides", () => {
+  const lowered = loweredWithMutation(`
+function mutate() {
+  helper.value = 1;
+}
+void mutate;
+{
+  const mutate = () => {};
+  mutate();
+}
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;
