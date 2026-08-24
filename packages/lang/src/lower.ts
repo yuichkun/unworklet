@@ -488,6 +488,10 @@ function partitionModuleScopeExports(
     if (ts.isEnumMember(p) && p.name === n) return true;
     if (ts.isGetAccessorDeclaration(p) && p.name === n) return true;
     if (ts.isSetAccessorDeclaration(p) && p.name === n) return true;
+    // Type-member keys (`interface Levels { gain: number }`) name a member of
+    // the type, not the `gain` a statement may declare beside it.
+    if (ts.isPropertySignature(p) && p.name === n) return true;
+    if (ts.isMethodSignature(p) && p.name === n) return true;
     return false;
   };
 
@@ -557,8 +561,10 @@ function partitionModuleScopeExports(
         // tie the declaration to the capture — `export type Signal =
         // Node<"f32">` names the DSL without depending on it. The dependency
         // edge above still applies: an annotation's own type alias has to
-        // travel with the declaration it annotates.
-        else if (position !== "value") return;
+        // travel with the declaration it annotates. A `typeof X` is the
+        // exception: erased too, but it names a VALUE, and a hoisted alias
+        // still has to see that value where it lands — so it taints like one.
+        else if (position === "type") return;
         else if (imported.dsl.has(n.text)) dsl.add(n.text);
         else if (!imported.other.has(n.text) && DSL_TAINT_ROOTS.has(n.text)) dsl.add(n.text);
       }
@@ -655,7 +661,16 @@ function partitionModuleScopeExports(
           // `export type { Level }`) takes the type declaration, a plain
           // `export { Level }` takes the value.
           const local = spec.propertyName?.text ?? spec.name.text;
-          const deps = resolveBinding(local, spec.isTypeOnly || stmt.isTypeOnly ? "type" : "value");
+          // A plain `export { Level }` carries BOTH declarations of a merged
+          // name out, so both have to be hoistable — checking only the value
+          // side passes a pure const standing beside a DSL-tied type alias.
+          const deps =
+            spec.isTypeOnly || stmt.isTypeOnly
+              ? resolveBinding(local, "type")
+              : [
+                  ...(valueBindingOf.get(local) ?? NO_BINDINGS),
+                  ...(typeBindingOf.get(local) ?? NO_BINDINGS),
+                ];
           const blocked = deps.find((d) => tainted[d]);
           if (deps.length === 0 || blocked !== undefined) {
             throw new LowerError(

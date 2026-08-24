@@ -734,6 +734,45 @@ process(() => {
   expect(lowered.indexOf("export function read")).toBeLessThan(lowered.indexOf("defineProcessor("));
 });
 
+test("`export { X }` refuses when the type sharing the name is DSL-tied", () => {
+  // `typeof input` names a VALUE that lives inside the capture, so the alias
+  // cannot sit at module scope — and a plain `export { Level }` carries both
+  // declarations of the name, so checking only the pure const is not enough.
+  try {
+    lower(`
+const Level = 1;
+type Level = typeof input;
+export { Level };
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(Level);
+  });
+});
+`);
+    expect.unreachable("lower() must reject an export whose type side reaches the DSL");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("an interface member key is a name, not a reference to the const sharing it", () => {
+  const lowered = lower(`
+const gain = state.f32(0);
+export interface Levels { gain: number; read(): number }
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(gain.read());
+  });
+});
+`);
+  expect(lowered.indexOf("export interface Levels")).toBeLessThan(
+    lowered.indexOf("defineProcessor("),
+  );
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;
