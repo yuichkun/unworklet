@@ -310,6 +310,10 @@ state.buffer.f32({ size: number }): Buffer<"f32">
   trapping or touching a neighboring region. Out-of-range reads return the
   nearest element's value; wrap-around (a circular delay line) is still yours to
   express with `% size`.
+- `loadVec` / `storeVec` require `size >= 4`. A lane window covers 4 elements,
+  so a smaller buffer has no in-bounds offset to saturate to — the declaration
+  rejects the call at capture (`simd-buffer-too-small`) rather than emit a
+  16-byte access that crosses into the next region.
 - Float buffer stores flush subnormals to `0` (|v| < 1e-30), the same policy as
   scalar state stores — a decaying feedback tail (delay line / comb / reverb)
   cannot park in the denormal range and spike the audio-thread CPU. Applies to

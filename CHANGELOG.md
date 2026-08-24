@@ -12,7 +12,7 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 The correctness-and-honesty batch: the audio-thread transport gains its missing
 consumer feedback and loses its last per-quantum allocation, buffer DSP gets
 the same numeric hygiene as scalar state, and several declared-but-broken or
-silently-lossy surfaces now refuse loudly instead. Four changes are breaking —
+silently-lossy surfaces now refuse loudly instead. Five changes are breaking —
 read the migrations.
 
 ### Breaking
@@ -42,6 +42,15 @@ the ring by advancing `head` over a slot it never wrote). A sysex emit whose
 source `buffer.u8` exceeds 1020 bytes is now a build error
 (`sysex-buffer-exceeds-chunk`). Migration: split larger transfers into
 multiple messages; declare a sysex handler on ports you inject sysex into.
+
+**SIMD lane ops require a buffer of at least 4 elements.** `loadVec` /
+`storeVec` read and write 16 bytes from their offset, so a buffer holding fewer
+than 4 elements has no in-bounds offset at all — the index clamp saturated into
+an empty range and the access still crossed into the neighboring region. A
+declaration that uses them on a smaller buffer now fails at graph capture with
+stable ID `simd-buffer-too-small` (the analyzer carries the same rule for
+hand-built graphs). Migration: size the buffer to 4 or more elements, or use
+scalar `read` / `write`.
 
 **Snapshot blobs are format v2.** The blob gains an optional processor
 identity block; 0.3.0 reads v1 blobs unchanged (they restore exactly as
@@ -79,12 +88,22 @@ for upgraders; do not feed new blobs to old builds.
   lifetime emits — `overflowCount` lied upward and a slow drain lost real
   events. Main now commits its consumed tail (atomically, wrap-safe) and the
   worklet reads it back before each quantum, on both transports.
+- **A concurrent drain is no longer counted as an overflow.** On the SAB path,
+  `node.events.<name>.emit()` and `node.midi.<name>.send()` read the occupancy,
+  then advanced the shared tail; when the worklet drained the ring in between,
+  the advance was correctly declined but `overflowCount` ticked anyway,
+  reporting losses that never happened. The advance is now a compare-exchange
+  from the observed tail, and only the sender that wins it — the one that
+  actually overwrote a slot — counts an overflow.
 - **The postMessage fallback's audio thread no longer allocates per quantum.**
   Event and MIDI-out egress rode fresh `Uint8Array`s and content-region
   copies built on the audio thread every quantum; they now ride a single
   pooled transferable frame whose buffers main pre-allocates and recycles
   (ownership ping-pong, with consumed-tail acks piggybacked on the recycle).
-  The internal page↔worklet wire protocol changed accordingly.
+  The message envelope and its transfer list are bound once at initialize and
+  rewritten in place, so a quantum carrying egress adds no JS object to the
+  audio thread's heap. The internal page↔worklet wire protocol changed
+  accordingly.
 - **A hidden tab no longer loses events and MIDI (stuck notes).** The
   main-side drain ran only on `requestAnimationFrame`, which throttles to ~0
   in hidden tabs while the audio thread keeps emitting; the drain now falls
@@ -101,7 +120,8 @@ for upgraders; do not feed new blobs to old builds.
   scalar buffer clamp never covered the vector ops: an out-of-range vector
   access read or wrote neighboring regions, or trapped and latched permanent
   silence. (One golden fixture's frozen PCM turned out to be the product of
-  such an out-of-bounds read.)
+  such an out-of-bounds read.) Buffers too small to hold a lane window are
+  rejected outright — see Breaking.
 - **A runtime-negative sysex `length` no longer traps.** `memory.copy` reads
   its size operand unsigned, so a user-computed length gone negative became a
   ~4 GiB copy — an OOB trap that silenced the node permanently. Lengths clamp
@@ -110,7 +130,10 @@ for upgraders; do not feed new blobs to old builds.
   be swallowed into the `defineProcessor` wrapper, emitting invalid
   JavaScript. Exports now hoist to module scope together with their
   (DSL-free) dependency closure; a DSL-tied or unsupported export is a loud
-  `uwk-export-unsupported` LowerError instead of broken emit.
+  `uwk-export-unsupported` LowerError instead of broken emit. Whether an export
+  touches the DSL is decided by resolving each reference against the scopes
+  around it, so a pure helper is not rejected for naming its parameters after
+  DSL identifiers (`export function clampTo(input, min, max)` hoists).
 - **Re-exporting the processor as `default` is accepted.** `export const wave
 = defineProcessor(...); export default wave;` was rejected as "multiple
   processors"; the count is now by value identity, and the named binding wins
