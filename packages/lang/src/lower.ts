@@ -293,6 +293,57 @@ function isCallableDeclaration(expr: ts.Expression): boolean {
   return ts.isArrowFunction(expr) || ts.isFunctionExpression(expr) || ts.isClassExpression(expr);
 }
 
+/** The bodies a callee expression stands for, when this file holds them. Empty
+ * means it could not be read, not that there are none. */
+function calleeSignatures(callee: ts.Expression, resolve: BodyResolver): ts.Node[] {
+  const expr = unwrapExpression(callee);
+  if (ts.isArrowFunction(expr) || ts.isFunctionExpression(expr)) return [expr];
+  if (!ts.isIdentifier(expr)) return [];
+  const found: ts.Node[] = [];
+  for (const body of resolve(expr.text)) {
+    if (!ts.isClassLike(body.node)) {
+      found.push(body.node);
+      continue;
+    }
+    // What `new C(cb)` hands `cb` to is the constructor.
+    const ctor = body.node.members.find((m) => ts.isConstructorDeclaration(m));
+    if (ctor !== undefined) found.push(ctor);
+  }
+  return found;
+}
+
+/** Whether a function runs the argument at `index` rather than storing,
+ * returning or ignoring it. Reading nothing means yes: over-running an
+ * argument refuses valid code loudly, and missing one goes quiet. */
+function invokesParameter(fn: ts.Node, index: number): boolean {
+  const parameters = (fn as { parameters?: readonly ts.ParameterDeclaration[] }).parameters ?? [];
+  const last = parameters.at(-1);
+  const parameter = parameters[index] ?? (last?.dotDotDotToken !== undefined ? last : undefined);
+  if (parameter === undefined) return false;
+  // A rest or a destructured parameter does not name the argument on its own.
+  if (parameter.dotDotDotToken !== undefined || !ts.isIdentifier(parameter.name)) return true;
+  const body = (fn as { body?: ts.Node }).body;
+  if (body === undefined) return true;
+  const name = parameter.name.text;
+  let runs = false;
+  const look = (node: ts.Node): void => {
+    if (runs) return;
+    if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+      const callee = unwrapExpression(node.expression);
+      if (ts.isIdentifier(callee) && callee.text === name) runs = true;
+      // Handed to another call, which may be the one that runs it.
+      for (const argument of node.arguments ?? []) {
+        const passed = unwrapExpression(argument);
+        if (ts.isIdentifier(passed) && passed.text === name) runs = true;
+      }
+      if (runs) return;
+    }
+    ts.forEachChild(node, look);
+  };
+  look(body);
+  return runs;
+}
+
 /**
  * Names a statement assigns to when it runs — `x = 1`, `x += 1`, `x++`,
  * `[x] = ...`. A function body is skipped: it assigns when CALLED, so a helper
@@ -415,45 +466,61 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
     // body — and a name that names no function this file can read, or no
     // function at all, is simply not followed.
     if (ts.isCallExpression(n) || ts.isNewExpression(n)) {
-      for (const passed of [n.expression, ...(n.arguments ?? [])]) {
+      // `new C()` runs what the class itself defers — the instance field
+      // initializers, the constructor, and the same for every base it extends,
+      // since constructing the derived one constructs those first.
+      const construct = (cls: ts.ClassLikeDeclaration, at: ResolvedBody): void => {
+        if (followed.has(cls)) return;
+        followed.add(cls);
+        for (const member of cls.members) {
+          const instanceField =
+            ts.isPropertyDeclaration(member) &&
+            !(ts.getModifiers(member) ?? []).some((m) => m.kind === ts.SyntaxKind.StaticKeyword);
+          if (!ts.isConstructorDeclaration(member) && !instanceField) continue;
+          runsNow.add(member);
+          walk(member, at.shadowed, at.resolve);
+        }
+        for (const clause of cls.heritageClauses ?? []) {
+          if (clause.token !== ts.SyntaxKind.ExtendsKeyword) continue;
+          for (const type of clause.types) {
+            const base = unwrapExpression(type.expression);
+            if (!ts.isIdentifier(base)) continue;
+            for (const found of at.resolve(base.text)) {
+              if (ts.isClassLike(found.node)) construct(found.node, found);
+            }
+          }
+        }
+      };
+      const enter = (passed: ts.Expression, runs: boolean): void => {
         const expr = unwrapExpression(passed);
         if (ts.isArrowFunction(expr) || ts.isFunctionExpression(expr)) {
           // Written right here, so the walk below reaches it with this scope.
-          runsNow.add(expr);
-          continue;
+          if (runs) runsNow.add(expr);
+          return;
         }
-        if (!ts.isIdentifier(expr)) continue;
+        if (!ts.isIdentifier(expr)) return;
         for (const body of resolve(expr.text)) {
-          // `new C()` runs what the class itself defers: the instance field
-          // initializers and the constructor. Reaching a class any other way
-          // runs neither, so only the callee of a `new` follows it.
           if (ts.isClassLike(body.node)) {
-            if (!ts.isNewExpression(n) || passed !== n.expression) continue;
-            for (const member of body.node.members) {
-              if (
-                !ts.isConstructorDeclaration(member) &&
-                !(
-                  ts.isPropertyDeclaration(member) &&
-                  !(ts.getModifiers(member) ?? []).some(
-                    (m) => m.kind === ts.SyntaxKind.StaticKeyword,
-                  )
-                )
-              ) {
-                continue;
-              }
-              if (followed.has(member)) continue;
-              followed.add(member);
-              runsNow.add(member);
-              walk(member, body.shadowed, body.resolve);
-            }
+            // Reaching a class any other way constructs nothing.
+            if (ts.isNewExpression(n) && passed === n.expression) construct(body.node, body);
             continue;
           }
-          if (followed.has(body.node)) continue;
+          if (!runs || followed.has(body.node)) continue;
           followed.add(body.node);
           runsNow.add(body.node);
           walk(body.node, body.shadowed, body.resolve);
         }
-      }
+      };
+      // The callee is what the call runs, so it always runs. Whether an
+      // ARGUMENT runs is the callee's business: a callee this file can read
+      // answers it, and one it cannot — a method, an import — is assumed to
+      // run what it is handed, because a callback that runs and is missed is
+      // the failure that stays silent.
+      enter(n.expression, true);
+      const invoked = calleeSignatures(n.expression, resolve);
+      (n.arguments ?? []).forEach((argument, index) => {
+        enter(argument, invoked.length === 0 || invoked.some((fn) => invokesParameter(fn, index)));
+      });
     }
     // An INSTANCE field initializer runs when an instance is constructed, not
     // where the class stands — like a function body. A static field (and a

@@ -2315,6 +2315,87 @@ void C;
   expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
 });
 
+test("a callback the callee only stores is not run", () => {
+  const lowered = loweredWithMutation(`
+function retain(cb: () => void) {
+  void cb;
+}
+retain(() => {
+  helper.value = 1;
+});
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
+test("a callback the callee calls is run", () => {
+  try {
+    loweredWithMutation(`
+function run(cb: () => void) {
+  cb();
+}
+run(() => {
+  helper.value = 1;
+});
+`);
+    expect.unreachable("lower() must run a callback its callee calls");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("a callback the callee hands on is run", () => {
+  try {
+    loweredWithMutation(`
+function other(c: () => void) {
+  c();
+}
+function pass(cb: () => void) {
+  other(cb);
+}
+pass(() => {
+  helper.value = 1;
+});
+`);
+    expect.unreachable("lower() must run a callback handed on to another call");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("a callee this file cannot read is assumed to run what it is handed", () => {
+  try {
+    loweredWithMutation(`[0].forEach(() => {\n  helper.value = 1;\n});`);
+    expect.unreachable("lower() must run a callback handed to an unreadable callee");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("`new` runs what every base in the chain defers", () => {
+  try {
+    loweredWithMutation(`
+class Base {
+  f = (helper.value = 1);
+}
+class Middle extends Base {
+  constructor() {
+    super();
+    helper.value = 2;
+  }
+}
+class Derived extends Middle {}
+void new Derived();
+`);
+    expect.unreachable("lower() must construct the bases of a derived class");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;
