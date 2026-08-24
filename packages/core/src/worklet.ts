@@ -1410,8 +1410,10 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
               requestId: data.requestId,
               slots,
               // Render-health counter (issue #27): output samples the non-finite
-              // scrub replaced with 0. Rides the dev dump — DevTools-facing, so
-              // it costs no public API — read from the exported WASM global.
+              // scrub replaced with 0, read from the exported WASM global. Rides
+              // the dump so a live node can be asked the same question a render
+              // answers through `renderOffline(...).diagnostics`; the main side
+              // hands it back as part of `devDump()`.
               scrubbedSamples: (instance.exports["scrubbedSamples"] as WebAssembly.Global)
                 .value as number,
             });

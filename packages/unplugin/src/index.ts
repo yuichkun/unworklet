@@ -1231,7 +1231,7 @@ const pollState = async () => {
     const nodes = [];
     for (const h of getDevNodes()) {
       let slots;
-      try { slots = await h.devDump(); } catch (e) { slots = []; }
+      try { slots = (await h.devDump()).slots; } catch (e) { slots = []; }
       // splitSlots (unit-tested) decodes scalars + downsamples buffers.
       const { scalars, buffers } = splitSlots(slots, BUFFER_MAX_POINTS);
       nodes.push({ id: idOf(h.node.node), displayName: h.displayName || h.processorName, scalars, buffers });
@@ -1304,7 +1304,7 @@ const pollSignals = async () => {
     }
     let mem = memoryByNode.get(id);
     if (!mem) {
-      try { mem = slotMemory(await h.devDump()); memoryByNode.set(id, mem); }
+      try { mem = slotMemory((await h.devDump()).slots); memoryByNode.set(id, mem); }
       catch (e) { mem = { entries: [], totalBytes: 0 }; }
     }
     nodes.push({ id, displayName: h.displayName || h.processorName, ports, memory: mem.entries, memoryBytes: mem.totalBytes });

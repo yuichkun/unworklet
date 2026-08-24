@@ -40,7 +40,12 @@ import { atomicMonotoneMax, dropOldestIfFull, ringLeads, ringSlotIndex } from ".
 import { decodeScalar, type SnapshotSlot } from "./snapshot.ts";
 import { decodeSnapshot, encodeSnapshot, inspectSnapshot, runMigrations } from "./snapshotBlob.ts";
 import type { RestoreResult } from "./types.ts";
-import { type DevNodeHandle, registerDevNode, unregisterDevNode } from "./devRegistry.ts";
+import {
+  type DevDump,
+  type DevNodeHandle,
+  registerDevNode,
+  unregisterDevNode,
+} from "./devRegistry.ts";
 
 // Dev-only gate (DevTools integration §4): the Vite plugin defines this as
 // `true` in serve mode and `false` in build, so production tree-shakes the
@@ -1676,7 +1681,7 @@ export async function createNode<C>(
   // Dev X-ray dumps share the request-id sequence + the snapshot port listener.
   const pendingDevDumps = new Map<
     number,
-    { resolve: (slots: SnapshotSlot[]) => void; reject: (err: Error) => void }
+    { resolve: (dump: DevDump) => void; reject: (err: Error) => void }
   >();
   // Settle (= reject) every in-flight snapshot / restore, then clear. The worklet
   // response is the only resolve signal, so on teardown (dispose) or a dead audio
@@ -1700,6 +1705,7 @@ export async function createNode<C>(
           kind?: unknown;
           requestId?: unknown;
           slots?: unknown;
+          scrubbedSamples?: unknown;
           applied?: unknown;
           skipped?: unknown;
           missing?: unknown;
@@ -1726,7 +1732,10 @@ export async function createNode<C>(
       const pending = pendingDevDumps.get(data.requestId);
       if (pending === undefined) return;
       pendingDevDumps.delete(data.requestId);
-      pending.resolve(Array.isArray(data.slots) ? (data.slots as SnapshotSlot[]) : []);
+      pending.resolve({
+        slots: Array.isArray(data.slots) ? (data.slots as SnapshotSlot[]) : [],
+        scrubbedSamples: typeof data.scrubbedSamples === "number" ? data.scrubbedSamples : 0,
+      });
     }
   };
   node.port.addEventListener("message", onSnapshotMessage);
@@ -1960,12 +1969,12 @@ export async function createNode<C>(
   // (zero-config — no app code involved). The dump round-trips through the same
   // block-atomic port + pending map / listener as snapshot.
   if (typeof __UNWORKLET_DEVTOOLS__ !== "undefined" && __UNWORKLET_DEVTOOLS__ === true) {
-    const devDump = (): Promise<SnapshotSlot[]> => {
+    const devDump = (): Promise<DevDump> => {
       if (disposed) {
         return Promise.reject(new Error("unworklet: devDump() called on a disposed node"));
       }
       const requestId = snapshotRequestSeq++;
-      return new Promise<SnapshotSlot[]>((resolve, reject) => {
+      return new Promise<DevDump>((resolve, reject) => {
         pendingDevDumps.set(requestId, { resolve, reject });
         node.port.postMessage({ kind: "dev-dump-request", requestId });
       });

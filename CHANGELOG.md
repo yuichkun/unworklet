@@ -12,7 +12,7 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 The correctness-and-honesty batch: the audio-thread transport gains its missing
 consumer feedback and loses its last per-quantum allocation, buffer DSP gets
 the same numeric hygiene as scalar state, and several declared-but-broken or
-silently-lossy surfaces now refuse loudly instead. Six changes are breaking —
+silently-lossy surfaces now refuse loudly instead. Seven changes are breaking —
 read the migrations.
 
 ### Breaking
@@ -67,6 +67,11 @@ deep-compares a whole result now has to account for it. Migration: add
 fixtures, or type them as `RenderResultLike` from `@unworklet/test`, which
 takes `diagnostics` as optional; compare the fields you care about rather than
 the whole object.
+
+**`devDump()` returns `{ slots, scrubbedSamples }`.** The dev-subpath X-ray
+(`@unworklet/core/dev`) resolved to the slot array alone, so the render-health
+counter the worklet already put on the wire had nowhere to arrive. Migration:
+read `(await handle.devDump()).slots` where the array was used directly.
 
 **Snapshot blobs are format v2.** The blob gains an optional processor
 identity block; 0.3.0 reads v1 blobs unchanged, but blobs saved by 0.3.0 are

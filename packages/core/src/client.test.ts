@@ -3791,9 +3791,12 @@ test("devtools on: createNode auto-registers, devDump round-trips, dispose unreg
         },
       } as MessageEvent);
     }
-    const slots = await dumpPromise;
-    expect(slots).toHaveLength(1);
-    expect(slots[0]!.name).toBe("meterL");
+    const dump = await dumpPromise;
+    expect(dump.slots).toHaveLength(1);
+    expect(dump.slots[0]!.name).toBe("meterL");
+    // The worklet reports the render-health counter alongside the slots; a
+    // response without one reads as a healthy render.
+    expect(dump.scrubbedSamples).toBe(0);
 
     node.dispose();
     expect(getDevNodes().some((x) => x.node === node)).toBe(false);
