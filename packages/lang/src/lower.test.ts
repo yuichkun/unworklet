@@ -1506,6 +1506,98 @@ process(() => {
   }
 });
 
+test("an export reading through an alias still sees a write to the source", () => {
+  // The write names `helper`; the export names `alias`. They are the same
+  // object, so the export's closure — not just its direct references — decides.
+  try {
+    lower(`
+const helper = { value: 0 };
+const alias = helper;
+helper.value = 1;
+export const value = alias.value;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+    expect.unreachable(
+      "lower() must reject an export reading through an alias of a written source",
+    );
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("an object-rest assignment target is a write", () => {
+  try {
+    lower(`
+let helper = { value: 0 };
+const source = { value: 1 };
+({ ...helper } = source);
+export const value = helper.value;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+    expect.unreachable("lower() must reject an export whose dependency is a rest target");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("a class static block scopes its own write target", () => {
+  const lowered = lower(`
+const helper = { value: 0 };
+class C {
+  static {
+    let helper = { value: 0 };
+    helper.value = 1;
+  }
+}
+void C;
+export const value = helper.value;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
+test("a class static block's UNshadowed write is still seen", () => {
+  try {
+    lower(`
+const helper = { value: 0 };
+class C {
+  static {
+    helper.value = 1;
+  }
+}
+void C;
+export const value = helper.value;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+    expect.unreachable("lower() must see a write inside a static block");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;

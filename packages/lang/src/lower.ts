@@ -321,6 +321,9 @@ function statementWrites(stmt: ts.Statement): Set<string> {
       for (const p of expr.properties) {
         if (ts.isShorthandPropertyAssignment(p)) add(p.name.text);
         else if (ts.isPropertyAssignment(p)) target(p.initializer, shadowed);
+        // `({ ...helper } = source)` — the rest target, an object-literal
+        // counterpart of the array spread below.
+        else if (ts.isSpreadAssignment(p)) target(p.expression, shadowed);
       }
     } else if (ts.isSpreadElement(expr)) target(expr.expression, shadowed);
   };
@@ -682,6 +685,20 @@ function partitionModuleScopeExports(
    * puts `helper` in the chain, transitively. Only a plain identifier
    * initializer counts: anything computed is not an alias this can follow.
    */
+  /** Whether statement `from` reaches `target` through its dependency edges. */
+  const dependsOn = (from: number, target: number): boolean => {
+    const seen = new Set<number>();
+    const queue = [...refs[from]!.bindings];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      if (current === target) return true;
+      if (seen.has(current)) continue;
+      seen.add(current);
+      queue.push(...refs[current]!.bindings);
+    }
+    return false;
+  };
+
   const aliasChain = (name: string): Set<string> => {
     const chain = new Set<string>([name]);
     const queue = [name];
@@ -1062,9 +1079,11 @@ function partitionModuleScopeExports(
     for (const name of [...written].flatMap((n) => [...aliasChain(n)])) {
       for (const decl of valueBindingOf.get(name) ?? NO_BINDINGS) {
         if (!mustHoist.has(decl)) continue;
-        // The statement that READS it is what the write has to precede.
+        // The statement that READS it is what the write has to precede — read
+        // through its whole closure, not just its direct references: an export
+        // naming `alias` still reads what `helper` holds.
         const reader = statements.findIndex(
-          (_, j) => j > i && mustHoist.has(j) && refs[j]!.bindings.has(decl),
+          (_, j) => j > i && mustHoist.has(j) && dependsOn(j, decl),
         );
         if (reader === -1) continue;
         throw new LowerError(
