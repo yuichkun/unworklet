@@ -905,6 +905,62 @@ process(() => {
   expect(lowered.indexOf("enum Mode")).toBeLessThan(lowered.indexOf("defineProcessor("));
 });
 
+test("importing a generated name from another module is the same collision", () => {
+  // The injected core import drops any name the file binds itself, an import
+  // included — so this would leave the wrapper calling the sibling's helper.
+  try {
+    lower(`
+import { defineProcessor } from "./helper.ts";
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(0.25);
+  });
+});
+`);
+    expect.unreachable("lower() must reject an import that shadows generated code");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-reserved-binding");
+  }
+});
+
+test("importing a generated name FROM the core is the same binding, so it is fine", () => {
+  const lowered = lower(`
+import { defineProcessor } from "@unworklet/core";
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(0.25);
+  });
+});
+`);
+  expect(lowered).toContain("defineProcessor(");
+});
+
+test("a body `var` does not shadow what a parameter initializer reads", () => {
+  // JavaScript evaluates a default in the parameter scope, where the body's
+  // `var input` does not exist yet — so `value = input` reads the ambient DSL
+  // input, and the helper cannot leave the capture.
+  try {
+    lower(`
+export function read(value = input): unknown {
+  var input = 1;
+  return value ?? input;
+}
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(0.25);
+  });
+});
+`);
+    expect.unreachable("lower() must reject a helper whose default reads the ambient input");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;
