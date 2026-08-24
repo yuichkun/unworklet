@@ -4029,6 +4029,32 @@ test("drain scheduler: dispose removes the visibilitychange listener", async () 
   }
 });
 
+test("drain scheduler: a failed createNode leaves no visibilitychange listener behind", async () => {
+  // The caller of a rejected createNode has no handle to dispose, so a listener
+  // registered before the node exists is unreachable — and it retains the whole
+  // creation closure. Retrying the connection would stack one per attempt.
+  const fakeDoc = installFakeDocument("visible");
+  const raf = installRafMock();
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  const RealNode = (globalThis as Record<string, unknown>)["AudioWorkletNode"];
+  (globalThis as Record<string, unknown>)["AudioWorkletNode"] = class {
+    constructor() {
+      throw new Error("AudioWorkletNode construction failed");
+    }
+  };
+  try {
+    await expect(createNode(h.context as never, makeMockProcessor(publishFixture))).rejects.toThrow(
+      /AudioWorkletNode construction failed/,
+    );
+    expect(fakeDoc.doc.__listeners.length).toBe(0);
+  } finally {
+    (globalThis as Record<string, unknown>)["AudioWorkletNode"] = RealNode;
+    h.cleanup();
+    raf.restore();
+    fakeDoc.restore();
+  }
+});
+
 // ── restore identity gate (issue #28) ────────────────────────────────────────
 // schemaHash hashes declarations only, so two logically different processors
 // with the same slot schema share it — a lowpass preset restored into a

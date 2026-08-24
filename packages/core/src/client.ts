@@ -1247,7 +1247,6 @@ export async function createNode<C>(
     if (disposed || !hasAnySubscribers()) return;
     armDrain();
   };
-  pageDocument()?.addEventListener?.("visibilitychange", onVisibilityChange);
 
   // Whether every publish slot + every event ring + every midi-out port has
   // zero subscribers. Used to decide when to stop rAF polling once unsubscribe
@@ -1384,6 +1383,13 @@ export async function createNode<C>(
     }
     throw err;
   }
+
+  // Registered only once the node is live. `dispose()` is the sole way to
+  // remove it, and a caller of a rejected `createNode` never receives one — a
+  // listener attached before this point would outlive the failed attempt,
+  // retaining this whole closure, once per retry. Nothing is missed by waiting:
+  // the drain arms on subscribe, which needs the node this call returns.
+  pageDocument()?.addEventListener?.("visibilitychange", onVisibilityChange);
 
   const paramDescriptors = ns.parameterDescriptors as readonly { name: string }[];
   const params = buildParams(node, paramDescriptors);
