@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { encodeWav } from "@unworklet/offline";
-import type { RenderOfflineResult } from "@unworklet/offline";
+import type { RenderResultLike } from "./index.ts";
 import { expect, test } from "vite-plus/test";
 
 import {
@@ -55,14 +55,14 @@ const filled = (length: number, value: number): Float32Array => {
   return a;
 };
 
-const monoResult = (channel: Float32Array, portName = "main"): RenderOfflineResult => ({
+const monoResult = (channel: Float32Array, portName = "main"): RenderResultLike => ({
   outputs: { [portName]: [channel] },
   events: [],
   state: new Uint8Array(0),
   sampleRate: 48000,
 });
 
-const stereoResult = (left: Float32Array, right: Float32Array): RenderOfflineResult => ({
+const stereoResult = (left: Float32Array, right: Float32Array): RenderResultLike => ({
   outputs: { main: [left, right] },
   events: [],
   state: new Uint8Array(0),
@@ -87,7 +87,7 @@ test("`expectAudioMatches`: single-port `Float32Array[]` value mismatch throws (
 });
 
 test("`expectAudioMatches`: multi-port actual + `Float32Array[]` expected throws (= ambiguous port)", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: { main: [filled(8, 0.5)], send: [filled(8, 0.3)] },
     events: [],
     state: new Uint8Array(0),
@@ -119,7 +119,7 @@ test("`expectAudioMatches`: full result form port set mismatch throws (= expecte
 });
 
 test("`expectAudioMatches`: full result form port count mismatch throws (= actual has more ports)", () => {
-  const a: RenderOfflineResult = {
+  const a: RenderResultLike = {
     outputs: { main: [filled(8, 0.5)], send: [filled(8, 0.3)] },
     events: [],
     state: new Uint8Array(0),
@@ -155,13 +155,13 @@ test("`expectAudioMatches`: tolerance default = 0 = bit-exact (= even tiny diff 
 
 test("`expectAudioMatches`: sampleRate mismatch = throw (= same PCM / different rate catches pitch and timing bugs)", () => {
   const sameData = new Float32Array([0.1, 0.2, 0.3]);
-  const a: RenderOfflineResult = {
+  const a: RenderResultLike = {
     outputs: { main: [sameData] },
     events: [],
     state: new Uint8Array(0),
     sampleRate: 48000,
   };
-  const b: RenderOfflineResult = {
+  const b: RenderResultLike = {
     outputs: { main: [sameData] },
     events: [],
     state: new Uint8Array(0),
@@ -198,7 +198,7 @@ test("`expectNoNaN`: scans all ports and all channels", () => {
   const ch0 = filled(8, 0.5);
   const ch1 = filled(8, 0.5);
   ch1[5] = NaN; // target for detection
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: { main: [ch0], send: [ch0, ch1] },
     events: [],
     state: new Uint8Array(0),
@@ -240,7 +240,7 @@ test("`expectRmsUnder`: silence (RMS = 0 = -Infinity dBFS) passes any threshold"
 });
 
 test("`expectRmsUnder`: empty outputs (= count 0 path) treated as silence", () => {
-  const empty: RenderOfflineResult = {
+  const empty: RenderResultLike = {
     outputs: {},
     events: [],
     state: new Uint8Array(0),
@@ -256,7 +256,7 @@ test("`expectEventsEqual`: empty arrays match (= Phase 4 subset path)", () => {
 });
 
 test("`expectEventsEqual`: same name + payload + atSample sequence matches", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [{ name: "peak", payload: { level: 0.5 }, atSample: 10 }],
     state: new Uint8Array(0),
@@ -268,7 +268,7 @@ test("`expectEventsEqual`: same name + payload + atSample sequence matches", () 
 });
 
 test("`expectEventsEqual`: length mismatch throws", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [{ name: "peak", payload: {}, atSample: 0 }],
     state: new Uint8Array(0),
@@ -278,7 +278,7 @@ test("`expectEventsEqual`: length mismatch throws", () => {
 });
 
 test("`expectEventsEqual`: name mismatch throws", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [{ name: "peak", payload: {}, atSample: 0 }],
     state: new Uint8Array(0),
@@ -290,7 +290,7 @@ test("`expectEventsEqual`: name mismatch throws", () => {
 });
 
 test("`expectEventsEqual`: atSample mismatch throws", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [{ name: "peak", payload: {}, atSample: 5 }],
     state: new Uint8Array(0),
@@ -302,7 +302,7 @@ test("`expectEventsEqual`: atSample mismatch throws", () => {
 });
 
 test("`expectEventsEqual`: payload mismatch throws", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [{ name: "peak", payload: { level: 0.5 }, atSample: 0 }],
     state: new Uint8Array(0),
@@ -320,7 +320,7 @@ test("`expectStateMatches`: empty blobs match (= Phase 4 subset path)", () => {
 });
 
 test("`expectStateMatches`: same bytes match", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [],
     state: new Uint8Array([1, 2, 3, 4]),
@@ -330,7 +330,7 @@ test("`expectStateMatches`: same bytes match", () => {
 });
 
 test("`expectStateMatches`: length mismatch throws", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [],
     state: new Uint8Array([1, 2, 3]),
@@ -340,7 +340,7 @@ test("`expectStateMatches`: length mismatch throws", () => {
 });
 
 test("`expectStateMatches`: byte content mismatch throws", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [],
     state: new Uint8Array([1, 2, 3]),
@@ -390,7 +390,7 @@ test("`expectAudioMatchesGolden`: sampleRate mismatch = throw (= same PCM / diff
 
 test("`expectAudioMatchesGolden`: multi-port actual throws (= cannot infer single port)", () => {
   const path = tmpWav([filled(128, 0.5)]);
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: { main: [filled(128, 0.5)], send: [filled(128, 0.3)] },
     events: [],
     state: new Uint8Array(0),
@@ -410,7 +410,7 @@ test("`expectAudioMatchesSnapshot`: round-trip = first run writes snapshot, seco
 test("`expectAudioMatchesSnapshot`: multi-port + opts.port not specified = throw", async () => {
   const dir = mkdtempSync(join(tmpdir(), "unworklet-snapshot-"));
   const path = join(dir, "ref.wav");
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: { main: [filled(8, 0.5)], send: [filled(8, 0.3)] },
     events: [],
     state: new Uint8Array(0),
@@ -422,7 +422,7 @@ test("`expectAudioMatchesSnapshot`: multi-port + opts.port not specified = throw
 });
 
 test("`expectAudioMatchesSnapshot`: opts.port specified resolves the target port from multi-port result", async () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: { main: [filled(8, 0.5)], send: [filled(8, 0.3)] },
     events: [],
     state: new Uint8Array(0),
@@ -559,7 +559,7 @@ test("`expectPeakAtSample`: within tolerance = pass", () => {
 });
 
 test("`expectPeakAtSample`: multi-port + opts.port not specified = throw", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: { main: [impulse(8)], send: [impulse(8, { atSample: 5 })] },
     events: [],
     state: new Uint8Array(0),
@@ -569,7 +569,7 @@ test("`expectPeakAtSample`: multi-port + opts.port not specified = throw", () =>
 });
 
 test("`expectPeakAtSample`: opts.port specified resolves the target port from multi-port result", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: { main: [impulse(8)], send: [impulse(8, { atSample: 5 })] },
     events: [],
     state: new Uint8Array(0),
@@ -607,7 +607,7 @@ test("`expectDcOffsetUnder`: oscillating signal (= mean ~0) = pass", () => {
 });
 
 test("`expectDcOffsetUnder`: empty channel (= length 0) = mean 0 = pass", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: { main: [new Float32Array(0)] },
     events: [],
     state: new Uint8Array(0),
@@ -636,7 +636,7 @@ test("`expectGainAtFreq`: silence (= -Infinity dB) vs 0 dB expected = throw", ()
 });
 
 test("`expectGainAtFreq`: multi-port = throw", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: { main: [silence(1024)], send: [silence(1024)] },
     events: [],
     state: new Uint8Array(0),
@@ -646,7 +646,7 @@ test("`expectGainAtFreq`: multi-port = throw", () => {
 });
 
 test("`expectGainAtFreq`: empty channel = throw", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: { main: [new Float32Array(0)] },
     events: [],
     state: new Uint8Array(0),
@@ -712,7 +712,7 @@ test("`expectLatency`: within tolerance band = pass", () => {
 });
 
 test("`expectLatency`: multi-port = throw", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: { main: [impulse(8)], send: [impulse(8)] },
     events: [],
     state: new Uint8Array(0),
@@ -747,7 +747,7 @@ test("`expectLatency`: silent buffer + expectedSamples 0 = throw (= prevents mut
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━ expectEventCount ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 test("`expectEventCount`: matching count for a given name = pass", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [
       { name: "peak", payload: {}, atSample: 0 },
@@ -761,7 +761,7 @@ test("`expectEventCount`: matching count for a given name = pass", () => {
 });
 
 test("`expectEventCount`: count mismatch = throw", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [{ name: "peak", payload: {}, atSample: 0 }],
     state: new Uint8Array(0),
@@ -777,7 +777,7 @@ test("`expectEventCount`: absent name = 0 = pass", () => {
 // ━━━━━━━━━━━━━━━━━━━━━━━━ expectEventsContaining ━━━━━━━━━━━━━━━━━━━━━━━━
 
 test("`expectEventsContaining`: all partial entries exist in result = pass", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [
       { name: "peak", payload: { level: 0.5 }, atSample: 10 },
@@ -790,7 +790,7 @@ test("`expectEventsContaining`: all partial entries exist in result = pass", () 
 });
 
 test("`expectEventsContaining`: partial payload match", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [{ name: "peak", payload: { level: 0.5 }, atSample: 10 }],
     state: new Uint8Array(0),
@@ -802,7 +802,7 @@ test("`expectEventsContaining`: partial payload match", () => {
 });
 
 test("`expectEventsContaining`: payload mismatch = throw", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [{ name: "peak", payload: { level: 0.5 }, atSample: 10 }],
     state: new Uint8Array(0),
@@ -814,7 +814,7 @@ test("`expectEventsContaining`: payload mismatch = throw", () => {
 });
 
 test("`expectEventsContaining`: atSample match path", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [{ name: "peak", payload: {}, atSample: 10 }],
     state: new Uint8Array(0),
@@ -824,7 +824,7 @@ test("`expectEventsContaining`: atSample match path", () => {
 });
 
 test("`expectEventsContaining`: atSample mismatch = throw", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [{ name: "peak", payload: {}, atSample: 10 }],
     state: new Uint8Array(0),
@@ -836,7 +836,7 @@ test("`expectEventsContaining`: atSample mismatch = throw", () => {
 });
 
 test("`expectEventsContaining`: extra events are tolerated (= unordered / partial match)", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [
       { name: "noise", payload: {}, atSample: 0 },
@@ -857,7 +857,7 @@ test("`expectEventsContaining`: empty partial = pass", () => {
 // `Math.abs(NaN) > x = false` / `NaN >= x = false` means NaN input can produce
 // false passes. Each matcher blocks this at the start via `expectNoNaN(result)`.
 
-const nanResult = (): RenderOfflineResult => {
+const nanResult = (): RenderResultLike => {
   const ch = filled(8, 0.5);
   ch[3] = NaN;
   return monoResult(ch);
@@ -1119,7 +1119,7 @@ test("`midi.sequence`: converts array to OfflineEvent[]", () => {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━ expectMidiOut ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 test("`expectMidiOut`: order + type + payload match = pass", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [
       { name: "out", payload: midi.noteOn({ note: 60, velocity: 100 }), atSample: 0 },
@@ -1137,7 +1137,7 @@ test("`expectMidiOut`: order + type + payload match = pass", () => {
 });
 
 test("`expectMidiOut`: count mismatch = throw", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [{ name: "out", payload: midi.noteOn({ note: 60, velocity: 100 }), atSample: 0 }],
     state: new Uint8Array(0),
@@ -1147,7 +1147,7 @@ test("`expectMidiOut`: count mismatch = throw", () => {
 });
 
 test("`expectMidiOut`: type mismatch = throw", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [{ name: "out", payload: midi.noteOn({ note: 60, velocity: 100 }), atSample: 0 }],
     state: new Uint8Array(0),
@@ -1157,7 +1157,7 @@ test("`expectMidiOut`: type mismatch = throw", () => {
 });
 
 test("`expectMidiOut`: atSample exceeds tolerance = throw", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [{ name: "out", payload: midi.noteOn({ note: 60, velocity: 100 }), atSample: 100 }],
     state: new Uint8Array(0),
@@ -1169,7 +1169,7 @@ test("`expectMidiOut`: atSample exceeds tolerance = throw", () => {
 });
 
 test("`expectMidiOut`: payload field mismatch = throw", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [{ name: "out", payload: midi.noteOn({ note: 60, velocity: 100 }), atSample: 0 }],
     state: new Uint8Array(0),
@@ -1183,7 +1183,7 @@ test("`expectMidiOut`: payload field mismatch = throw", () => {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━ expectMidiBalance ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 test("`expectMidiBalance`: fully paired noteOn/noteOff = pass", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [
       { name: "out", payload: midi.noteOn({ note: 60, velocity: 100 }), atSample: 0 },
@@ -1196,7 +1196,7 @@ test("`expectMidiBalance`: fully paired noteOn/noteOff = pass", () => {
 });
 
 test("`expectMidiBalance`: hanging noteOn = throw", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [{ name: "out", payload: midi.noteOn({ note: 60, velocity: 100 }), atSample: 0 }],
     state: new Uint8Array(0),
@@ -1206,7 +1206,7 @@ test("`expectMidiBalance`: hanging noteOn = throw", () => {
 });
 
 test("`expectMidiBalance`: opts.hangingNotes allows a permitted number of hanging notes", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [
       { name: "out", payload: midi.noteOn({ note: 60, velocity: 100 }), atSample: 0 },
@@ -1219,7 +1219,7 @@ test("`expectMidiBalance`: opts.hangingNotes allows a permitted number of hangin
 });
 
 test("`expectMidiBalance`: different channels are tracked as separate notes", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [
       { name: "out", payload: midi.noteOn({ note: 60, velocity: 100, channel: 0 }), atSample: 0 },
@@ -1234,7 +1234,7 @@ test("`expectMidiBalance`: different channels are tracked as separate notes", ()
 
 test("`expectMidiBalance`: stray noteOff (= noteOn without a matching pair) = throw", () => {
   // a lone noteOff = invalid lifecycle = always fails (no tolerance opt).
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [{ name: "out", payload: midi.noteOff({ note: 60 }), atSample: 0 }],
     state: new Uint8Array(0),
@@ -1245,7 +1245,7 @@ test("`expectMidiBalance`: stray noteOff (= noteOn without a matching pair) = th
 
 test("`expectMidiBalance`: double noteOff (= noteOn 1 → noteOff 2) = throw", () => {
   // sending noteOff twice for the same note = noteOff over-count = stray fail.
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [
       { name: "out", payload: midi.noteOn({ note: 60, velocity: 100 }), atSample: 0 },
@@ -1260,7 +1260,7 @@ test("`expectMidiBalance`: double noteOff (= noteOn 1 → noteOff 2) = throw", (
 
 test("`expectMidiBalance`: stray noteOff cannot be pardoned by hangingNotes opt", () => {
   // hangingNotes only applies to hanging noteOns; stray noteOffs always fail.
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [{ name: "out", payload: midi.noteOff({ note: 60 }), atSample: 0 }],
     state: new Uint8Array(0),
@@ -1272,7 +1272,7 @@ test("`expectMidiBalance`: stray noteOff cannot be pardoned by hangingNotes opt"
 test("`expectMidiBalance`: noteOff before noteOn (= reversed order, net 0) = throw", () => {
   // A final-sum approach would pass because on/off cancel out, but the running
   // counter catches the stray noteOff immediately — regression guard.
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [
       { name: "out", payload: midi.noteOff({ note: 60 }), atSample: 0 },
@@ -1403,7 +1403,7 @@ test("`expectMidiBalance`: non-noteOn/noteOff MIDI messages (= cc / pitchBend et
   // Hits the `else` branch (neither noteOn nor noteOff) inside `expectMidiBalance`,
   // e.g. cc / pitchBend / programChange / sysex / etc. These do not affect
   // the running note count and therefore pass as balanced.
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [
       {
