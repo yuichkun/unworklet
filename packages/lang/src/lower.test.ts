@@ -1461,6 +1461,51 @@ process(() => {
   }
 });
 
+test("a write to a shadowing local is not a write to the module binding", () => {
+  // The block mutates its OWN `helper`; the export's dependency is untouched,
+  // so the same spelling must not block it.
+  const lowered = lower(`
+const helper = { value: 0 };
+{
+  const helper = { value: 0 };
+  helper.value = 1;
+}
+export const value = helper.value;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
+test("a `var` in a block still writes the module binding it belongs to", () => {
+  // `var` is not block-scoped, so this one really does write the outer name.
+  try {
+    lower(`
+let helper = 0;
+{
+  var helper2 = 0;
+  helper = 1;
+  void helper2;
+}
+export const value = helper;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+    expect.unreachable("lower() must still see a write that is not shadowed");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;

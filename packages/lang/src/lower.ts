@@ -295,9 +295,16 @@ function unwrapExpression(expr: ts.Expression): ts.Expression {
 
 function statementWrites(stmt: ts.Statement): Set<string> {
   const names = new Set<string>();
-  const target = (raw: ts.Expression): void => {
+  // A write to a name a nested block declares for itself is that local's, not
+  // the module binding's — the same spelling-versus-resolution rule the export
+  // taint follows. Only block-scoped declarations shadow: a `var` inside a
+  // block IS the outer binding.
+  const target = (raw: ts.Expression, shadowed: ReadonlySet<string>): void => {
     const expr = unwrapExpression(raw);
-    if (ts.isIdentifier(expr)) names.add(expr.text);
+    const add = (name: string): void => {
+      if (!shadowed.has(name)) names.add(name);
+    };
+    if (ts.isIdentifier(expr)) add(expr.text);
     // `helper.value = 1` / `table[0] = 1` mutate what `helper` and `table`
     // hold, so the binding at the root of the access is what was written.
     // Parentheses and TS-only wrappers (`as`, `satisfies`, `!`) sit between the
@@ -307,40 +314,81 @@ function statementWrites(stmt: ts.Statement): Set<string> {
       while (ts.isPropertyAccessExpression(root) || ts.isElementAccessExpression(root)) {
         root = unwrapExpression(root.expression);
       }
-      if (ts.isIdentifier(root)) names.add(root.text);
-    } else if (ts.isArrayLiteralExpression(expr)) for (const el of expr.elements) target(el);
+      if (ts.isIdentifier(root)) add(root.text);
+    } else if (ts.isArrayLiteralExpression(expr))
+      for (const el of expr.elements) target(el, shadowed);
     else if (ts.isObjectLiteralExpression(expr)) {
       for (const p of expr.properties) {
-        if (ts.isShorthandPropertyAssignment(p)) names.add(p.name.text);
-        else if (ts.isPropertyAssignment(p)) target(p.initializer);
+        if (ts.isShorthandPropertyAssignment(p)) add(p.name.text);
+        else if (ts.isPropertyAssignment(p)) target(p.initializer, shadowed);
       }
-    } else if (ts.isSpreadElement(expr)) target(expr.expression);
+    } else if (ts.isSpreadElement(expr)) target(expr.expression, shadowed);
   };
-  const walk = (n: ts.Node): void => {
+  const walk = (n: ts.Node, shadowed: ReadonlySet<string>): void => {
     if (ts.isFunctionLike(n)) return;
-    if (ts.isBinaryExpression(n) && isAssignmentOperator(n.operatorToken.kind)) target(n.left);
+    if (ts.isBinaryExpression(n) && isAssignmentOperator(n.operatorToken.kind)) {
+      target(n.left, shadowed);
+    }
     // `delete helper.value` removes from what `helper` holds.
-    if (ts.isDeleteExpression(n)) target(n.expression);
+    if (ts.isDeleteExpression(n)) target(n.expression, shadowed);
     // `for (slot of xs)` — an initializer that is an expression rather than a
     // declaration assigns into an existing binding on every iteration.
     if (
       (ts.isForOfStatement(n) || ts.isForInStatement(n)) &&
       !ts.isVariableDeclarationList(n.initializer)
     ) {
-      target(n.initializer);
+      target(n.initializer, shadowed);
     }
     if (ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) {
       if (
         n.operator === ts.SyntaxKind.PlusPlusToken ||
         n.operator === ts.SyntaxKind.MinusMinusToken
       ) {
-        target(n.operand as ts.Expression);
+        target(n.operand as ts.Expression, shadowed);
       }
     }
-    ts.forEachChild(n, walk);
+    const opened = blockScopedNames(n);
+    const inner = opened === null ? shadowed : new Set([...shadowed, ...opened]);
+    ts.forEachChild(n, (child) => {
+      walk(child, inner);
+    });
   };
-  walk(stmt);
+  walk(stmt, new Set<string>());
   return names;
+}
+
+/** Names a node block-scopes, or null when it scopes none. `var` is excluded: it
+ * belongs to the enclosing function or module, so it shadows nothing here. */
+function blockScopedNames(node: ts.Node): Set<string> | null {
+  const names = new Set<string>();
+  const fromStatements = (body: readonly ts.Statement[]): void => {
+    for (const s of body) {
+      if (ts.isVariableStatement(s)) {
+        if ((s.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) continue;
+        for (const d of s.declarationList.declarations) collectBindingNames(d.name, names);
+      } else if (
+        (ts.isFunctionDeclaration(s) || ts.isClassDeclaration(s)) &&
+        s.name !== undefined
+      ) {
+        names.add(s.name.text);
+      }
+    }
+  };
+  if (ts.isBlock(node) || ts.isModuleBlock(node)) fromStatements(node.statements);
+  else if (ts.isCaseBlock(node)) for (const c of node.clauses) fromStatements(c.statements);
+  else if (ts.isCatchClause(node) && node.variableDeclaration !== undefined) {
+    collectBindingNames(node.variableDeclaration.name, names);
+  } else if (ts.isForStatement(node) || ts.isForOfStatement(node) || ts.isForInStatement(node)) {
+    const init = node.initializer;
+    if (
+      init !== undefined &&
+      ts.isVariableDeclarationList(init) &&
+      (init.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0
+    ) {
+      for (const d of init.declarations) collectBindingNames(d.name, names);
+    }
+  }
+  return names.size > 0 ? names : null;
 }
 
 function isAssignmentOperator(kind: ts.SyntaxKind): boolean {
