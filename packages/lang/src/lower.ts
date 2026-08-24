@@ -327,8 +327,17 @@ function statementWrites(stmt: ts.Statement): Set<string> {
       }
     } else if (ts.isSpreadElement(expr)) target(expr.expression, shadowed);
   };
+  // A member's body may be deferred while its NAME is not: `[helper.value = 1]()`
+  // computes that key where the class stands, whoever calls the method later.
+  const walkComputedName = (n: ts.Node, shadowed: ReadonlySet<string>): void => {
+    const name = (n as { name?: ts.Node }).name;
+    if (name !== undefined && ts.isComputedPropertyName(name)) walk(name.expression, shadowed);
+  };
   const walk = (n: ts.Node, shadowed: ReadonlySet<string>): void => {
-    if (ts.isFunctionLike(n)) return;
+    if (ts.isFunctionLike(n)) {
+      walkComputedName(n, shadowed);
+      return;
+    }
     // An INSTANCE field initializer runs when an instance is constructed, not
     // where the class stands — like a function body. A static field (and a
     // static block) runs at class definition, so those keep counting.
@@ -336,6 +345,7 @@ function statementWrites(stmt: ts.Statement): Set<string> {
       ts.isPropertyDeclaration(n) &&
       !(ts.getModifiers(n) ?? []).some((m) => m.kind === ts.SyntaxKind.StaticKeyword)
     ) {
+      walkComputedName(n, shadowed);
       return;
     }
     if (ts.isBinaryExpression(n) && isAssignmentOperator(n.operatorToken.kind)) {
@@ -386,6 +396,10 @@ function blockScopedNames(node: ts.Node): Set<string> | null {
       }
     }
   };
+  // A class static block is its own `var` scope, so a `var` inside one is the
+  // block's — the exclusion below applies to ordinary blocks, where a `var`
+  // belongs to the enclosing function or module.
+  if (ts.isClassStaticBlockDeclaration(node)) collectFunctionScopedVars(node, names);
   if (ts.isBlock(node) || ts.isModuleBlock(node)) fromStatements(node.statements);
   else if (ts.isCaseBlock(node)) for (const c of node.clauses) fromStatements(c.statements);
   else if (ts.isCatchClause(node) && node.variableDeclaration !== undefined) {

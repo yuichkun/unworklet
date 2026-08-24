@@ -1663,6 +1663,74 @@ process(() => {
   }
 });
 
+test("a computed member name is evaluated where the class stands", () => {
+  // The method body is deferred; its key is not.
+  try {
+    lower(`
+const helper = { value: 0 };
+class C {
+  [helper.value = 1]() {}
+}
+void C;
+export const value = helper.value;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+    expect.unreachable("lower() must see a write in a computed method name");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("a computed name on a deferred instance field is evaluated too", () => {
+  try {
+    lower(`
+const helper = { value: 0 };
+class C {
+  [helper.value = 1] = 0;
+}
+void C;
+export const value = helper.value;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+    expect.unreachable("lower() must see a write in a computed field name");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("a `var` inside a class static block belongs to that block", () => {
+  const lowered = lower(`
+const helper = { value: 0 };
+class C {
+  static {
+    var helper = { value: 0 };
+    helper.value = 1;
+  }
+}
+void C;
+export const value = helper.value;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;
