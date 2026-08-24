@@ -2711,6 +2711,25 @@ run(() => {
   }
 });
 
+test("an overwrite's right side runs before the name is taken back", () => {
+  try {
+    loweredWithMutation(`
+function run(cb: () => void) {
+  let invoke = cb;
+  invoke = (invoke(), () => {});
+  invoke();
+}
+run(() => {
+  helper.value = 1;
+});
+`);
+    expect.unreachable("lower() must read an overwrite's right side as the old binding");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;

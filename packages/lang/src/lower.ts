@@ -434,11 +434,12 @@ function invokesParameter(fn: ts.Node, index: number): boolean {
           return;
         }
         // Overwritten with something else, so the name stops standing for the
-        // argument — but only where the overwrite certainly happened.
+        // argument — but only where the overwrite certainly happened, and only
+        // after the right side, which runs first and can still use the old one.
+        look(node.right, scope, certain);
         if (certain && home !== null && carries(scope, target.text)) {
           release(home, target.text);
         }
-        look(node.right, scope, certain);
         return;
       }
     }
