@@ -82,10 +82,24 @@ function renderOffline<C>(
 - `events: { name: string; payload: unknown; atSample: number }[]` — emitted (worklet→main + `midiOutput`). `atSample` is BLOCK-LOCAL (0..127), NOT absolute.
 - `state: Uint8Array` — end-of-render snapshot blob (persistent slots).
 - `sampleRate: number` — carried through from config.
+- `diagnostics.scrubbedSamples: number` — output samples the compiled processor's
+  non-finite scrub replaced with 0 (a NaN / ±Inf the DSP produced: `0/0`, `x/0`,
+  a runaway accumulator). `0` for a healthy render; assert it when a processor
+  divides or feeds back, because the scrubbed output itself looks like clean
+  silence.
+
+Repeat renders of the SAME processor value at the SAME `sampleRate` reuse the
+compiled artifact automatically (the compile dominates wall time; instantiation
+is fresh per render, so state never leaks between renders). Write one render per
+test naturally — no manual memoization. A processor is treated as immutable once
+rendered.
 
 ## Plain matchers — USE these (exact names + signatures)
 
-Cite `packages/test/src/index.ts`. `result` = `RenderOfflineResult`. All throw on failure; `void` return unless noted.
+Cite `packages/test/src/index.ts`. `result` = `RenderOfflineResult` (a hand-built
+result-shaped object is also accepted — `diagnostics` is optional on the matcher
+input side, exported as `RenderResultLike`). All throw on failure; `void` return
+unless noted.
 
 Audio compare:
 

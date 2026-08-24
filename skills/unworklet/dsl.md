@@ -57,7 +57,19 @@ Rules (all in `packages/lang/src/lower.ts`):
 - **`ctx` is ambient** — it is the `defineProcessor((ctx) => …)` parameter, so
   `ctx.sampleRate` reaches the host rate. — `lower.ts:207`
 - **Your own `import`s survive** at module scope (shared consts, sibling
-  subgraph files). — `lower.ts:350`
+  subgraph files). Write relative imports WITH the file extension
+  (`./tables.ts`, not `./tables`): the build path evaluates processor modules
+  under Node ESM resolution, which demands explicit extensions — an
+  extensionless specifier fails the build (the error names the exact suffix to
+  add). — `lower.ts:350`
+- **Your own `export`s survive too** — an exported declaration moves to module
+  scope in the lowered module, together with any module-level bindings it
+  references, as long as none of them touch the DSL (`export const GAIN = 0.5`
+  shared with a sibling file works as written). An export whose value is tied
+  to the DSL (`export const gain = param.f32(...)`), an `export default`, or an
+  exported destructuring declaration is rejected with `uwk-export-unsupported`
+  — expose DSL values through the processor surface (param / state / event)
+  instead.
 - **Type-checking:** add `// @ts-nocheck` at the top, OR use the editor plugin /
   `unworklet-tsc` (see `ide-and-typecheck.md`). The `// @ts-nocheck` is needed _only_ without
   the editor plugin.
@@ -207,6 +219,19 @@ plain `state.f32(0)` stays anonymous. — `autoName.ts:104,108,114,124`
 - A `Node<'bool'>` `if` outside the 3 shapes → `uwk-unsupported-if`; use `select`.
 - `migrations()` / `options()` are processor-only and cannot reference a
   process-body binding → `uwk-options-binding` / `uwk-options-without-process`.
+- `options({ id: "my-synth" })` sets the processor's stable IDENTITY (also
+  `defineProcessor(body, { id })` in `.processor.ts`). It is stamped into every
+  snapshot blob: `schemaHash` covers declarations only, so two different
+  processors with the same slot schema share a hash — without an id, a preset
+  from one restores "successfully" into the other and corrupts its state. When
+  both a blob and a processor carry an id, a mismatch makes `restore()` return
+  `{ ok: false, error: { step: "identity" } }` (stable ID `processor-mismatch`;
+  `renderOffline`'s `config.restore` throws instead — a cross-processor restore
+  in a test is a test bug). Id-less blobs and processors keep the legacy
+  hash-and-name matching. Set it for any processor whose presets you save, and
+  KEEP IT STABLE — renaming orphans saved blobs the way a schema change without
+  a migration does. `replaceProcessor` across two DIFFERENT ids refuses the
+  same way (its dev-flow use — reloading an edited processor — keeps one id).
 - **No SIMD in `.uwk.ts`** (only the `Node<"f32x4">` type alias exists). Use
   `.processor.ts` + `@unworklet/core/simd` (§6).
 
@@ -279,8 +304,22 @@ state.buffer.f32({ size: number }): Buffer<"f32">
 - Handle: `.read(i) → Node<T>`, `.write(i, v)`,
   `.readInterpolated(pos: Node<"f32"> | number) → Node<T>` (2-tap), order-free
   `.named(name)` / `.expose(options)`. — `declarations.ts:357,450,620`
-- Literal indexes are range-checked at graph-capture time; a `Node<"i32">` index
-  is the caller's responsibility.
+- Literal indexes are range-checked at graph-capture time. A runtime
+  `Node<"i32">` index SATURATES to the buffer bounds — `[0, size-1]` for scalar
+  `read`/`write`, `[0, size-4]` for the 4-lane `loadVec`/`storeVec` — instead of
+  trapping or touching a neighboring region. Out-of-range reads return the
+  nearest element's value; wrap-around (a circular delay line) is still yours to
+  express with `% size`.
+- Float buffer stores flush subnormals to `0` (|v| < 1e-30), the same policy as
+  scalar state stores — a decaying feedback tail (delay line / comb / reverb)
+  cannot park in the denormal range and spike the audio-thread CPU. Applies to
+  `write`, and lane-wise to `storeVec`.
+- Audio OUTPUT samples are scrubbed at the write: a NaN / ±Inf produced by the
+  DSP (`0/0`, `x/0`, runaway accumulator) is replaced with `0` instead of
+  propagating silence/clicks through the Web Audio graph downstream. Each
+  replacement is counted — read it as `renderOffline(...).diagnostics
+.scrubbedSamples` in tests (a healthy render reports `0`). The value itself is
+  unchanged inside expressions; only the output boundary scrubs.
 - **Default snapshot policy is `"transient"`** — the buffer is NOT captured by
   `node.snapshot()` and is re-zeroed on `restore()`. A `state.buffer.f32({
 size }).named("tape")` on its own restores to silence, which surprises
@@ -307,8 +346,12 @@ type ExposeOptions = {
 ```
 
 - `publish` is allowed only on `state.f32` / `state.i32` / `state.bool`, requires
-  a user-defined name, and `rateFps` must be positive finite. `snapshot:
-"persistent"` also requires a user-defined name. — `declarations.ts:229,240`
+  a user-defined name, and `rateFps` must be positive finite. On a BUFFER,
+  `publish` is rejected at graph capture (stable ID `buffer-publish-unsupported`;
+  the type surface `BufferExposeOptions` omits it too) — the publish pipeline is
+  scalar-only, so fan values out into scalar state slots to observe a buffer
+  live, or read it back via `node.snapshot()`. `snapshot: "persistent"` also
+  requires a user-defined name. — `declarations.ts:229,240`
 - A published slot is read on the main thread as `node.state.<name>` (§5).
 
 ### Events — `event<T>` (typed message ports)
@@ -370,6 +413,15 @@ event.midi({ to:   "main"; name; capacity?: Capacity }): MidiOutputHandle  // ou
   - `"aftertouch"` (poly key pressure) — `{ channel, note, pressure, atSample }`
   - `"sysex"` — `{ bytes, atSample }` where `bytes` is a byte-array field
   - `"systemRealtime"` — `{ status, atSample }` (status = 0xF8..0xFF)
+- Sysex boundaries: a port accepts/produces sysex only when the processor
+  handles or emits sysex on it (that is what allocates its content region);
+  `node.midi.<name>.send()` THROWS on sysex to a port without one (stable ID
+  `sysex-unsupported-port`). One sysex message holds at most **1020 bytes**
+  (including 0xF0/0xF7): `send()` throws past the limit rather than
+  truncate-and-deliver a terminator-less message (stable ID
+  `sysex-payload-too-large`), and an outbound emit whose source `buffer.u8` is
+  bigger than 1020 bytes is a build error (stable ID
+  `sysex-buffer-exceeds-chunk`). Split larger transfers into multiple messages.
 - Outbound: worklet sends with `.emitIf(cond, event)` only — same rule as
   typed `event<T>` above (no bare `.emit` on the worklet-side handle). The
   MIDI event must include `atSample: number` (the sample index within the
