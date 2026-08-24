@@ -1180,6 +1180,21 @@ process(() => {
   expect(lowered.indexOf("export type Element")).toBeLessThan(lowered.indexOf("defineProcessor("));
 });
 
+test("the right side of a qualified type name is a member, not a reference", () => {
+  const lowered = lower(`
+import type * as Types from "./types.ts";
+const min = state.f32(0);
+export type Signal = Types.min;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(min.read());
+  });
+});
+`);
+  expect(lowered.indexOf("export type Signal")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;

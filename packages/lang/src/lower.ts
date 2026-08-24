@@ -563,6 +563,9 @@ function partitionModuleScopeExports(
     const p = n.parent as ts.Node | undefined;
     if (p === undefined) return false;
     if (ts.isPropertyAccessExpression(p) && p.name === n) return true;
+    // `Types.min` in a type — the right side names a member of the left, the
+    // same way a property access does in an expression.
+    if (ts.isQualifiedName(p) && p.right === n) return true;
     if (ts.isPropertyAssignment(p) && p.name === n) return true;
     if (ts.isMethodDeclaration(p) && p.name === n) return true;
     if (ts.isPropertyDeclaration(p) && p.name === n) return true;
