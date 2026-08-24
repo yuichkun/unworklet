@@ -1246,6 +1246,67 @@ process(() => {
   expect(lowered.indexOf("export type Deep")).toBeLessThan(defineAt);
 });
 
+test("a write standing before a hoisted export is refused, not silently skipped", () => {
+  // The declaration and the export hoist; a bare `helper = 1` between them has
+  // nothing referencing it, so it would stay in the wrapper and the exported
+  // value would read 0 — a value the source never says.
+  try {
+    lower(`
+let helper = 0;
+helper = 1;
+export const value = helper;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+    expect.unreachable("lower() must reject an export whose dependency is mutated before it");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+    expect((e as LowerError).message).toContain("helper");
+  }
+});
+
+test("a write standing AFTER the export it cannot affect is left alone", () => {
+  // Source order already gives the export the pre-write value, so hoisting it
+  // past a later write changes nothing.
+  const lowered = lower(`
+let helper = 0;
+export const value = helper;
+helper = 1;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write((value + helper) / 10);
+  });
+});
+`);
+  const defineAt = lowered.indexOf("defineProcessor(");
+  expect(lowered.indexOf("export const value")).toBeLessThan(defineAt);
+  expect(lowered.indexOf("helper = 1;")).toBeGreaterThan(defineAt);
+});
+
+test("a helper that assigns without running is not mistaken for a write", () => {
+  const lowered = lower(`
+let helper = 0;
+const bump = (): void => {
+  helper = 1;
+};
+export const value = helper;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  bump();
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;

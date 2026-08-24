@@ -270,6 +270,44 @@ function collectFunctionScopedVars(node: ts.Node, into: Set<string>): void {
   ts.forEachChild(node, walk);
 }
 
+/**
+ * Names a statement assigns to when it runs — `x = 1`, `x += 1`, `x++`,
+ * `[x] = ...`. A function body is skipped: it assigns when CALLED, so a helper
+ * that merely contains an assignment is not a write at statement time.
+ */
+function statementWrites(stmt: ts.Statement): Set<string> {
+  const names = new Set<string>();
+  const target = (expr: ts.Expression): void => {
+    if (ts.isIdentifier(expr)) names.add(expr.text);
+    else if (ts.isArrayLiteralExpression(expr)) for (const el of expr.elements) target(el);
+    else if (ts.isObjectLiteralExpression(expr)) {
+      for (const p of expr.properties) {
+        if (ts.isShorthandPropertyAssignment(p)) names.add(p.name.text);
+        else if (ts.isPropertyAssignment(p)) target(p.initializer);
+      }
+    } else if (ts.isSpreadElement(expr)) target(expr.expression);
+  };
+  const walk = (n: ts.Node): void => {
+    if (ts.isFunctionLike(n)) return;
+    if (ts.isBinaryExpression(n) && isAssignmentOperator(n.operatorToken.kind)) target(n.left);
+    if (ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) {
+      if (
+        n.operator === ts.SyntaxKind.PlusPlusToken ||
+        n.operator === ts.SyntaxKind.MinusMinusToken
+      ) {
+        target(n.operand as ts.Expression);
+      }
+    }
+    ts.forEachChild(n, walk);
+  };
+  walk(stmt);
+  return names;
+}
+
+function isAssignmentOperator(kind: ts.SyntaxKind): boolean {
+  return kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
+}
+
 /** Whether this qualified name is (part of) an `import("...")` type's qualifier. */
 function isImportTypeQualifier(name: ts.QualifiedName): boolean {
   let node: ts.Node = name;
@@ -891,6 +929,35 @@ function partitionModuleScopeExports(
       if (!mustHoist.has(dep)) {
         mustHoist.add(dep);
         queue.push(dep);
+      }
+    }
+  }
+
+  // A hoisted declaration keeps its initializer, but a bare `helper = 1` is a
+  // statement nothing references, so the closure has no reason to carry it and
+  // it stays in the wrapper. Moving a hoisted declaration PAST such a write
+  // makes it read a value the source never gives it — silently. A write that
+  // stands after what it cannot affect is fine: source order already gives the
+  // earlier statement the pre-write value.
+  for (const [i, stmt] of statements.entries()) {
+    if (mustHoist.has(i)) continue;
+    const written = statementWrites(stmt);
+    if (written.size === 0) continue;
+    for (const name of written) {
+      for (const decl of valueBindingOf.get(name) ?? NO_BINDINGS) {
+        if (!mustHoist.has(decl)) continue;
+        // The statement that READS it is what the write has to precede.
+        const reader = statements.findIndex(
+          (_, j) => j > i && mustHoist.has(j) && refs[j]!.bindings.has(decl),
+        );
+        if (reader === -1) continue;
+        throw new LowerError(
+          "uwk-export-unsupported",
+          `\`export ${exportName(statements[reader]!)}\` cannot move to module scope: ` +
+            `\`${name}\` is assigned by an earlier statement that stays inside the processor, ` +
+            `so the export would read the value from before that assignment. Compute the ` +
+            `exported value in its own initializer rather than assigning to it beforehand.`,
+        );
       }
     }
   }
