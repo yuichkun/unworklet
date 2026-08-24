@@ -1068,6 +1068,48 @@ process(() => {
   }
 });
 
+test("a type parameter shadows a module value of the same name", () => {
+  // `min` is both a DSL root and this file's own DSL-tied const, so a type
+  // parameter spelled the same would otherwise inherit that dependency.
+  const lowered = lower(`
+const min = state.f32(0);
+export function id<min>(value: min): min {
+  return value;
+}
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(min.read());
+  });
+});
+`);
+  expect(lowered.indexOf("export function id")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
+test("a class static block scopes its own nested `var`", () => {
+  const lowered = lower(`
+export function pick(ok: boolean): number {
+  class C {
+    static {
+      if (ok) {
+        var input = 1;
+      }
+      void input;
+    }
+  }
+  void C;
+  return 2;
+}
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(pick(true) / 10);
+  });
+});
+`);
+  expect(lowered.indexOf("export function pick")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;

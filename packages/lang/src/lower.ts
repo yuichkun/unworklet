@@ -577,6 +577,18 @@ function partitionModuleScopeExports(
     const addStatementBindings = (body: readonly ts.Statement[]): void => {
       for (const name of statementBoundNames(body)) names.add(name);
     };
+    // A type parameter binds its name for the declaration that introduces it,
+    // so `function id<input>(...)` is that declaration's `input`.
+    const typeParameters = (n as { typeParameters?: ts.NodeArray<ts.TypeParameterDeclaration> })
+      .typeParameters;
+    if (typeParameters !== undefined) {
+      for (const tp of typeParameters) names.add(tp.name.text);
+    }
+    if (ts.isClassStaticBlockDeclaration(n)) {
+      // Its own `var` scope, collected here so the block sees its nested
+      // declarations without leaking them into the enclosing function.
+      collectFunctionScopedVars(n, names);
+    }
     if (ts.isFunctionLike(n)) {
       for (const p of n.parameters) collectBindingNames(p.name, names);
       if ((ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n)) && n.name !== undefined) {
