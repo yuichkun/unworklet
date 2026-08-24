@@ -262,6 +262,17 @@ type WorkletState = {
    */
   readonly egressPool: Array<{ buffer: ArrayBuffer; dv: DataView; u8: Uint8Array }>;
   /**
+   * The egress `postMessage` envelope and its transfer list, bound once and
+   * rewritten in place per post. Built inside process(), the object literal and
+   * the one-element array would be two escaping allocations every quantum that
+   * carries egress — small, but handed to the collector at audio rate. The
+   * transport structured-clones the envelope before `postMessage` returns, so a
+   * delivered message never sees the next quantum's rewrite. Unused on the SAB
+   * path (the shared views carry the data instead).
+   */
+  readonly egressMessage: { kind: "egress"; buffer: ArrayBuffer | null; byteLength: number };
+  readonly egressTransfer: Transferable[];
+  /**
    * message ring SAB ↔ WASM mirror meta (sub-phase 7.7d). Same zip pattern as
    * the event ring, but the push direction is reversed (main → worklet): at the
    * start of process, mirror SAB → WASM (bulk-copy the slots main pushed into
@@ -505,17 +516,16 @@ type ProcessorOptionsBag = {
  * rings + MIDI out rings) into a pooled transferable frame and post it. See
  * `egressFrame.ts` for the wire format and the ownership ping-pong.
  *
- * Allocation-free payload path by construction: the frame buffer and its views
- * come pre-bound from the pool (bound in the port handler when main seeded /
- * recycled them), slot bytes are copied with plain byte loops (a `subarray`
- * per slot would allocate a view object), and with no news — or no free
- * buffer — nothing is taken and nothing is sent. A starved quantum leaves the
- * `lastSent*` anchors unchanged, so the data stays in the WASM rings (bounded
- * by drop-oldest) and rides a later quantum's frame. The one irreducible
- * allocation is the postMessage envelope (`{ kind, buffer }` + the transfer
- * list) — inherent to the transport itself, which structured-clones every
- * message; the pool removes the per-quantum payload copies, which is what the
- * realtime budget actually feels.
+ * Allocation-free by construction: the frame buffer and its views come
+ * pre-bound from the pool (bound in the port handler when main seeded /
+ * recycled them), the message envelope and its transfer list are bound at
+ * initialize and rewritten in place, slot bytes are copied with plain byte
+ * loops (a `subarray` per slot would allocate a view object), and with no news
+ * — or no free buffer — nothing is taken and nothing is sent. A starved quantum
+ * leaves the `lastSent*` anchors unchanged, so the data stays in the WASM rings
+ * (bounded by drop-oldest) and rides a later quantum's frame. What the
+ * transport does internally to serialize the message is the transport's own
+ * cost; this path adds no JS object to the audio thread's heap.
  */
 function postEgressFrame(self: SelfWithState, state: WorkletState): void {
   const eventRings = state.eventRings;
@@ -620,9 +630,14 @@ function postEgressFrame(self: SelfWithState, state: WorkletState): void {
   }
   dv.setUint32(0, eventSections, true);
   dv.setUint32(4, midiSections, true);
-  self.port.postMessage({ kind: "egress", buffer: entry.buffer, byteLength: cursor }, [
-    entry.buffer,
-  ]);
+  // Rewrite the pre-bound envelope + transfer list rather than building them:
+  // postMessage clones synchronously, so the delivered message keeps this
+  // quantum's values while the next post reuses the same two objects.
+  const message = state.egressMessage;
+  message.buffer = entry.buffer;
+  message.byteLength = cursor;
+  state.egressTransfer[0] = entry.buffer;
+  self.port.postMessage(message, state.egressTransfer);
 }
 
 const fillOutputsSilent = (outputs: Float32Array[][]): void => {
@@ -850,6 +865,14 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       const lastSentEventHeads = eventRings.map(() => 0);
       const lastSentEventOverflows = eventRings.map(() => 0);
       const egressPool: Array<{ buffer: ArrayBuffer; dv: DataView; u8: Uint8Array }> = [];
+      // Bound here, off the hot path: process() rewrites these two in place
+      // rather than building a fresh envelope + transfer list per quantum.
+      const egressMessage: {
+        kind: "egress";
+        buffer: ArrayBuffer | null;
+        byteLength: number;
+      } = { kind: "egress", buffer: null, byteLength: 0 };
+      const egressTransfer: Transferable[] = [];
       // WASM views = needed on both transports (the path where the worklet reads
       // the WASM ring is common to SAB / postMessage). SAB views = bound only when
       // SAB is present (the postMessage path has no eventRingsBuffer).
@@ -1049,6 +1072,8 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         lastSentEventHeads,
         lastSentEventOverflows,
         egressPool,
+        egressMessage,
+        egressTransfer,
         messageRingsBuffer,
         messageRings,
         messageRingSabOffsets,

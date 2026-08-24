@@ -30,22 +30,34 @@ type PortListener = (event: MessageEvent) => void;
 
 type MockSelf = {
   port: {
-    postMessage: (m: CollectedMessage) => void;
+    postMessage: (m: CollectedMessage, transfer?: unknown[]) => void;
     addEventListener: (kind: string, fn: PortListener) => void;
     start: () => void;
     __listeners: PortListener[];
     __startCalled: boolean;
   };
   messages: CollectedMessage[];
+  /**
+   * The message objects and transfer lists exactly as `postMessage` received
+   * them. `messages` holds snapshots instead (the transport structured-clones,
+   * so a sender is free to reuse one envelope object), and reuse is precisely
+   * what the allocation guard asserts — so identity has to be kept somewhere.
+   */
+  sent: Array<{ message: CollectedMessage; transfer: unknown[] | undefined }>;
 };
 
 const makeMockSelf = (): MockSelf => {
   const messages: CollectedMessage[] = [];
+  const sent: MockSelf["sent"] = [];
   const listeners: PortListener[] = [];
   const self: MockSelf = {
     port: {
-      postMessage: (m: CollectedMessage) => {
-        messages.push(m);
+      postMessage: (m: CollectedMessage, transfer?: unknown[]) => {
+        sent.push({ message: m, transfer });
+        // Snapshot at send time = the structured-clone boundary of the real
+        // port: a later mutation of the sender's envelope cannot rewrite an
+        // already-delivered message.
+        messages.push(typeof m === "object" && m !== null && !ArrayBuffer.isView(m) ? { ...m } : m);
       },
       addEventListener: (kind: string, fn: PortListener) => {
         if (kind === "message") listeners.push(fn);
@@ -57,6 +69,7 @@ const makeMockSelf = (): MockSelf => {
       __startCalled: false,
     },
     messages,
+    sent,
   };
   return self;
 };
@@ -935,6 +948,46 @@ test("egress frame (postMessage): process does not allocate Uint8Array/DataView 
   // Zero constructions inside process(): slots are copied with byte loops into
   // pool views bound at receive time; only the postMessage envelope remains.
   expect(ctorCount).toBe(0);
+});
+
+test("egress frame (postMessage): the message envelope and transfer list are reused across quanta (no per-quantum object literal)", async () => {
+  // The pooled buffer removes the per-quantum payload copy, but an envelope
+  // object plus a transfer array built inside process() is still garbage the
+  // audio thread hands to the collector every quantum. Both are bound once at
+  // initialize and mutated in place, so identity is stable across posts.
+  const { wasm } = await compile(eventEmitProc);
+  const self = makeMockSelf();
+  const eventRings = eventEmitProc.worklet.eventRings;
+  eventEmitProc.worklet.initialize(self, {
+    processorOptions: {
+      wasm,
+      eventRings,
+      eventRingSabOffsets: [0],
+      transport: "postMessage",
+    },
+  });
+  const frameBytes = egressPoolBufferBytes(eventRings, []);
+  for (let k = 0; k < 2; k++) {
+    firePortMessage(self, { kind: "egress-buffer", buffer: new ArrayBuffer(frameBytes) });
+  }
+  self.messages.length = 0;
+  self.sent.length = 0;
+
+  const inputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(0.25)]];
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  eventEmitProc.worklet.process(self, inputs, outputs, {});
+  eventEmitProc.worklet.process(self, inputs, outputs, {});
+
+  expect(self.sent.length).toBe(2);
+  expect(self.sent[0]!.message).toBe(self.sent[1]!.message);
+  expect(self.sent[0]!.transfer).toBe(self.sent[1]!.transfer);
+
+  // Reuse must not blur the two frames: each carries its own pool buffer, and
+  // the snapshots taken at send time keep their own byteLength.
+  const frames = postedEgressFrames(self);
+  expect(frames.length).toBe(2);
+  expect(frames[0]).not.toBe(frames[1]);
+  expect(self.sent[1]!.transfer).toEqual([frames[1]]);
 });
 
 test("egress-recycle: malformed or stale tail acks are ignored without throwing (port input is a boundary)", async () => {
