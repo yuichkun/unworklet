@@ -275,16 +275,37 @@ function collectFunctionScopedVars(node: ts.Node, into: Set<string>): void {
  * `[x] = ...`. A function body is skipped: it assigns when CALLED, so a helper
  * that merely contains an assignment is not a write at statement time.
  */
+/** Strip parentheses and the TS-only wrappers that leave the value untouched. */
+function unwrapExpression(expr: ts.Expression): ts.Expression {
+  let current = expr;
+  for (;;) {
+    if (
+      ts.isParenthesizedExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isSatisfiesExpression(current) ||
+      ts.isNonNullExpression(current) ||
+      ts.isTypeAssertionExpression(current)
+    ) {
+      current = current.expression;
+      continue;
+    }
+    return current;
+  }
+}
+
 function statementWrites(stmt: ts.Statement): Set<string> {
   const names = new Set<string>();
-  const target = (expr: ts.Expression): void => {
+  const target = (raw: ts.Expression): void => {
+    const expr = unwrapExpression(raw);
     if (ts.isIdentifier(expr)) names.add(expr.text);
     // `helper.value = 1` / `table[0] = 1` mutate what `helper` and `table`
     // hold, so the binding at the root of the access is what was written.
+    // Parentheses and TS-only wrappers (`as`, `satisfies`, `!`) sit between the
+    // access and that root without changing which binding it is.
     else if (ts.isPropertyAccessExpression(expr) || ts.isElementAccessExpression(expr)) {
-      let root: ts.Expression = expr.expression;
+      let root: ts.Expression = unwrapExpression(expr.expression);
       while (ts.isPropertyAccessExpression(root) || ts.isElementAccessExpression(root)) {
-        root = root.expression;
+        root = unwrapExpression(root.expression);
       }
       if (ts.isIdentifier(root)) names.add(root.text);
     } else if (ts.isArrayLiteralExpression(expr)) for (const el of expr.elements) target(el);
@@ -607,6 +628,31 @@ function partitionModuleScopeExports(
   type RefPosition = "value" | "type" | "typeQuery";
 
   const NO_BINDINGS: readonly number[] = [];
+
+  /**
+   * `name` plus every binding it is a bare alias of — `const alias = helper`
+   * puts `helper` in the chain, transitively. Only a plain identifier
+   * initializer counts: anything computed is not an alias this can follow.
+   */
+  const aliasChain = (name: string): Set<string> => {
+    const chain = new Set<string>([name]);
+    const queue = [name];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      for (const idx of valueBindingOf.get(current) ?? NO_BINDINGS) {
+        const stmt = statements[idx];
+        if (stmt === undefined || !ts.isVariableStatement(stmt)) continue;
+        for (const d of stmt.declarationList.declarations) {
+          if (!ts.isIdentifier(d.name) || d.name.text !== current) continue;
+          const init = d.initializer === undefined ? undefined : unwrapExpression(d.initializer);
+          if (init === undefined || !ts.isIdentifier(init) || chain.has(init.text)) continue;
+          chain.add(init.text);
+          queue.push(init.text);
+        }
+      }
+    }
+    return chain;
+  };
 
   const resolveBinding = (name: string, position: RefPosition): readonly number[] => {
     if (position === "value") return valueBindingOf.get(name) ?? NO_BINDINGS;
@@ -961,7 +1007,11 @@ function partitionModuleScopeExports(
     if (mustHoist.has(i)) continue;
     const written = statementWrites(stmt);
     if (written.size === 0) continue;
-    for (const name of written) {
+    // `const alias = helper; alias.value = 1` writes what `helper` holds, so a
+    // write follows a chain of bare-identifier aliases back to its source. An
+    // alias built by anything else — a call, a conditional, a property read —
+    // is not followed, the same limit as mutation through a call.
+    for (const name of [...written].flatMap((n) => [...aliasChain(n)])) {
       for (const decl of valueBindingOf.get(name) ?? NO_BINDINGS) {
         if (!mustHoist.has(decl)) continue;
         // The statement that READS it is what the write has to precede.

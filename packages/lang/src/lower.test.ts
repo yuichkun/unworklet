@@ -1399,6 +1399,68 @@ process(() => {
   }
 });
 
+test("a write through a plain alias reaches the binding it aliases", () => {
+  try {
+    lower(`
+const helper = { value: 0 };
+const alias = helper;
+alias.value = 1;
+export const value = helper.value;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+    expect.unreachable("lower() must reject an export mutated through an alias");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("an assertion or non-null wrapper does not hide the write's root", () => {
+  try {
+    lower(`
+const helper: { value?: number } = { value: 0 };
+(helper as { value: number }).value = 1;
+export const value = helper.value ?? 0;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+    expect.unreachable("lower() must see through an `as` wrapper on a write target");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+    expect((e as LowerError).message).toContain("helper");
+  }
+});
+
+test("a non-null wrapper does not hide the write's root either", () => {
+  try {
+    lower(`
+const helper: { value?: number } | null = { value: 0 };
+helper!.value = 1;
+export const value = helper?.value ?? 0;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+    expect.unreachable("lower() must see through a `!` wrapper on a write target");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;
