@@ -67,6 +67,54 @@ function toRunnableBody(loweredTs: string): string {
       parts.push(printer.printNode(ts.EmitHint.Unspecified, ret, sf));
       continue;
     }
+    if (ts.isExportDeclaration(stmt)) {
+      if (stmt.moduleSpecifier !== undefined) {
+        const spec = ts.isStringLiteral(stmt.moduleSpecifier) ? stmt.moduleSpecifier.text : "";
+        throw new Error(
+          "unworklet: a .uwk.ts compiled in the browser / in-memory runtime cannot re-export " +
+            `from other files (found "${spec}"). Cross-file exports resolve through the ` +
+            "bundler (`?worklet`) build path; in the runtime-compile path, inline the value instead.",
+        );
+      }
+      // A local `export { A }` list is a module-surface marker with no runtime
+      // effect inside a function body — the processor is the return value.
+      continue;
+    }
+    if (
+      ts.canHaveModifiers(stmt) &&
+      ts.getModifiers(stmt)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
+    ) {
+      // A hoisted `export const GAIN = ...` (issue #44) — keep the declaration
+      // (the default-export expression may reference it), drop the modifier
+      // (`export` cannot appear inside a function body).
+      const mods = ts.getModifiers(stmt)!.filter((m) => m.kind !== ts.SyntaxKind.ExportKeyword);
+      let stripped: ts.Statement = stmt;
+      if (ts.isVariableStatement(stmt)) {
+        stripped = ts.factory.updateVariableStatement(stmt, mods, stmt.declarationList);
+      } else if (ts.isFunctionDeclaration(stmt)) {
+        stripped = ts.factory.updateFunctionDeclaration(
+          stmt,
+          mods,
+          stmt.asteriskToken,
+          stmt.name,
+          stmt.typeParameters,
+          stmt.parameters,
+          stmt.type,
+          stmt.body,
+        );
+      } else if (ts.isClassDeclaration(stmt)) {
+        stripped = ts.factory.updateClassDeclaration(
+          stmt,
+          mods,
+          stmt.name,
+          stmt.typeParameters,
+          stmt.heritageClauses,
+          stmt.members,
+        );
+      }
+      parts.push(printer.printNode(ts.EmitHint.Unspecified, stripped, sf));
+      continue;
+    }
     parts.push(printer.printNode(ts.EmitHint.Unspecified, stmt, sf));
   }
   if (!sawDefault) {

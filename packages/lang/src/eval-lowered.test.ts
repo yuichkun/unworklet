@@ -64,3 +64,32 @@ test("lowering off a captured snapshot compiles to a real (non-empty) WASM", asy
   const { wasm } = await compile(proc);
   expect((wasm as Uint8Array).byteLength).toBeGreaterThan(200);
 });
+
+test("a processor with a module-scope export evaluates end-to-end (issue #44 repro)", () => {
+  // Pre-fix, the export was swallowed into the defineProcessor callback and the
+  // emitted module threw `SyntaxError: Unexpected token 'export'` at eval.
+  const processor = lowerToProcessor(`
+export const GAIN = 0.5;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(GAIN);
+  });
+});
+`);
+  expect(processor).toBeTruthy();
+  expect(typeof processor.schemaHash).toBe("string");
+});
+
+test("options({ id }) flows through to the compiled processor's identity", () => {
+  const processor = lowerToProcessor(`
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(0);
+  });
+});
+options({ id: "synth-x" });
+`);
+  expect(processor.id).toBe("synth-x");
+});

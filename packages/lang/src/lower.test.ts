@@ -352,3 +352,145 @@ test("omitting exportName keeps the default export (lang golden compatibility)",
   expect(out).toContain("export default defineProcessor(");
   expect(out).not.toMatch(/export const \w+ = defineProcessor/);
 });
+
+// ── module-scope exports in a processor file (issue #44) ─────────────────────
+// Lowering wraps the file body into defineProcessor((ctx) => {...}); an
+// `export` swallowed into the callback is a SyntaxError in the emitted module.
+// Exported declarations whose dependency closure never touches the DSL are
+// hoisted (closure included) to module scope; DSL-dependent exports are a
+// loud LowerError instead of invalid emit.
+
+const EXPORT_REPRO = `
+export const GAIN = 0.5;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(GAIN);
+  });
+});
+`;
+
+test("a module-scope export hoists out of the defineProcessor wrapper (issue #44 repro)", () => {
+  const lowered = lower(EXPORT_REPRO);
+  expect(lowered).toContain("export const GAIN = 0.5;");
+  expect(lowered.indexOf("export const GAIN")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
+test("a hoisted export pulls its non-exported dependencies along (closure hoist)", () => {
+  const lowered = lower(`
+const SCALE = 2;
+export const GAIN = 0.25 * SCALE;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(GAIN);
+  });
+});
+`);
+  const defineAt = lowered.indexOf("defineProcessor(");
+  expect(lowered.indexOf("const SCALE = 2;")).toBeLessThan(defineAt);
+  expect(lowered.indexOf("export const GAIN")).toBeLessThan(defineAt);
+});
+
+test("an untainted local NOT referenced by any hoisted export stays inside the wrapper", () => {
+  const lowered = lower(`
+export const GAIN = 0.5;
+const bias = 0.1;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(GAIN + bias);
+  });
+});
+`);
+  expect(lowered.indexOf("const bias = 0.1;")).toBeGreaterThan(lowered.indexOf("defineProcessor("));
+});
+
+test("an exported helper function hoists to module scope", () => {
+  const lowered = lower(`
+export function midiToHz(n: number): number {
+  return 440 * 2 ** ((n - 69) / 12);
+}
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(midiToHz(69) / 1000);
+  });
+});
+`);
+  expect(lowered.indexOf("export function midiToHz")).toBeLessThan(
+    lowered.indexOf("defineProcessor("),
+  );
+});
+
+test("a local export list (`export { X }`) hoists together with its bindings", () => {
+  const lowered = lower(`
+const GAIN = 0.5;
+export { GAIN };
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(GAIN);
+  });
+});
+`);
+  const defineAt = lowered.indexOf("defineProcessor(");
+  expect(lowered.indexOf("const GAIN = 0.5;")).toBeLessThan(defineAt);
+  expect(lowered.indexOf("export { GAIN };")).toBeLessThan(defineAt);
+});
+
+test("a DSL-dependent export is a loud LowerError, never invalid emit", () => {
+  try {
+    lower(`
+export const gain = param.f32({ default: 1, min: 0, max: 4 });
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(gain.at(i));
+  });
+});
+`);
+    expect.unreachable("lower() must reject a DSL-dependent export");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+    expect((e as LowerError).message).toContain("gain");
+  }
+});
+
+test("`export default` in a processor file is a loud LowerError (the processor owns that slot)", () => {
+  try {
+    lower(`
+export default 42;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(0);
+  });
+});
+`);
+    expect.unreachable("lower() must reject export default in a processor file");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("an exported destructuring declaration is a loud LowerError (unsupported form)", () => {
+  try {
+    lower(`
+const pair = { a: 1, b: 2 };
+export const { a } = pair;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(0);
+  });
+});
+`);
+    expect.unreachable("lower() must reject an exported destructuring declaration");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});

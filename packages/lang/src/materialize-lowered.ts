@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -41,17 +41,77 @@ const modulePath = (specifier: string): string => specifier.split(/[?#]/)[0]!;
  * the recursion threads it through. Held weakly, so nothing outlives the load it
  * belongs to.
  */
-const PROCESS_TAG = `${process.pid.toString(36)}${randomBytes(3).toString("hex")}`;
+// Delimited, versioned tag (`u1-<pid36>-<nonce>-<load>`): the pid is
+// UNAMBIGUOUSLY parseable back out of a temp filename, which is what lets the
+// crash sweep below tell a dead owner's stranded temp from a live concurrent
+// materialization's in-flight one (issue #21).
+const PROCESS_TAG = `u1-${process.pid.toString(36)}-${randomBytes(3).toString("hex")}`;
 const loadTags = new WeakMap<object, string>();
 let loadCounter = 0;
 const loadTag = (done: Map<string, string>): string => {
   let tag = loadTags.get(done);
   if (tag === undefined) {
-    tag = `${PROCESS_TAG}${(loadCounter++).toString(36)}`;
+    tag = `${PROCESS_TAG}-${(loadCounter++).toString(36)}`;
     loadTags.set(done, tag);
   }
   return tag;
 };
+
+// ── crash-stranded temp sweep (issue #21) ────────────────────────────────────
+// Temps must sit next to their source (relative imports resolve against them),
+// so an OS tempdir is not an option and the normal-path `finally` removal is
+// the only cleanup — a crashed process strands its temps in the consumer's
+// source tree. Sweep each directory once per process, at the next
+// materialization that touches it. Deletion is deliberately conservative: a
+// parseable owner pid must be provably DEAD (`EPERM` counts as alive); an
+// unparseable name (an older tag format, or something merely similar) goes
+// only past an age threshold no in-flight load can reach.
+
+const SWEPT_DIRS = new Set<string>();
+const TEMP_FILE_RE = /\.(uwklowered|uwkfailed)\.mjs$/;
+const OWNED_TAG_RE = /\.u1-([0-9a-z]+)-[0-9a-f]+-[0-9a-z]+\.(uwklowered|uwkfailed)\.mjs$/;
+const LEGACY_TEMP_MAX_AGE_MS = 60 * 60 * 1000;
+
+const pidAlive = (pid: number): boolean => {
+  if (!Number.isInteger(pid) || pid <= 0) return true; // unparseable = assume alive
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM = exists but not ours = alive. ESRCH (and anything else) = dead.
+    return (err as { code?: string }).code === "EPERM";
+  }
+};
+
+function sweepStaleTemps(dir: string): void {
+  if (SWEPT_DIRS.has(dir)) return;
+  SWEPT_DIRS.add(dir);
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return; // sweep is best-effort; the materialization itself will surface real fs problems
+  }
+  for (const ent of entries) {
+    if (!ent.isFile() || !TEMP_FILE_RE.test(ent.name)) continue;
+    const full = path.join(dir, ent.name);
+    try {
+      const owned = OWNED_TAG_RE.exec(ent.name);
+      if (owned !== null) {
+        const pid = parseInt(owned[1]!, 36);
+        if (pid === process.pid) continue; // our own in-flight temps
+        if (pidAlive(pid)) continue; // a live concurrent materialization
+        rmSync(full, { force: true });
+        continue;
+      }
+      if (Date.now() - statSync(full).mtimeMs > LEGACY_TEMP_MAX_AGE_MS) {
+        rmSync(full, { force: true });
+      }
+    } catch {
+      // Racing the owner's own cleanup is fine — the goal state is "gone".
+    }
+  }
+}
 
 /**
  * Derive a valid camelCase JS identifier from a `.uwk.ts` filename — the single
@@ -355,6 +415,7 @@ export const materializeLowered = async (
   // is unusable here: `Cannot access 'x' before initialization`, pointing at a
   // temp that cleanup has already unlinked, naming neither source file.
   const dir = path.dirname(sourcePath);
+  sweepStaleTemps(dir);
   const tempPath = path.join(dir, `.${path.basename(sourcePath)}.${loadTag(done)}.uwklowered.mjs`);
   done.set(sourcePath, tempPath);
   inProgress.add(sourcePath);

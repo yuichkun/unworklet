@@ -318,6 +318,208 @@ function referencesCall(nodes: readonly ts.Node[], calleeName: string): boolean 
   return found;
 }
 
+/**
+ * Identifiers whose presence in a statement pins it to the processor body: the
+ * ambient DSL surface (only meaningful inside the `defineProcessor` capture),
+ * the injected stereo I/O handles, and the top-level macros.
+ */
+const DSL_TAINT_ROOTS = new Set<string>([
+  ...CORE_AUTHORING_EXPORTS,
+  "input",
+  "out",
+  "process",
+  "migrations",
+  "options",
+  "$prev",
+]);
+
+/**
+ * Split the processor file's non-macro statements into module-scope `hoisted`
+ * and wrapper-body `inner` (issue #44). Lowering wraps the body into
+ * `defineProcessor((ctx) => {...})`, and an `export` swallowed into that
+ * callback emits invalid JavaScript — so an exported declaration moves OUT,
+ * together with its dependency closure, but only when nothing in that closure
+ * touches the DSL (a DSL declaration only exists inside the capture). A
+ * DSL-dependent or structurally-unsupported export is a loud `LowerError`
+ * (`uwk-export-unsupported`) — never an emit that fails later and elsewhere.
+ *
+ * Taint is computed as a fixpoint over identifier references: a statement is
+ * tainted by naming a DSL root, by referencing a tainted binding, or by being
+ * a form the hoist cannot carry (a destructuring declaration). Non-exported
+ * untainted statements move only if a hoisted export's closure needs them —
+ * everything else keeps its place (and its per-capture evaluation timing).
+ */
+function partitionModuleScopeExports(statements: readonly ts.Statement[]): {
+  hoisted: ts.Statement[];
+  inner: ts.Statement[];
+} {
+  const bindingOf = new Map<string, number>();
+  statements.forEach((stmt, idx) => {
+    if (ts.isVariableStatement(stmt)) {
+      for (const d of stmt.declarationList.declarations) {
+        if (ts.isIdentifier(d.name)) bindingOf.set(d.name.text, idx);
+      }
+    } else if (
+      (ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) &&
+      stmt.name !== undefined
+    ) {
+      bindingOf.set(stmt.name.text, idx);
+    }
+  });
+
+  /** Identifier is a NAME position (`a.foo`, `{ foo: v }`), not a value reference. */
+  const isNamePosition = (n: ts.Identifier): boolean => {
+    // Synthesized nodes (auto-name / sugar factory updates) carry no parent;
+    // treat them as value references (the conservative direction — a name
+    // position mistaken for a reference can only ADD taint, never lose it).
+    const p = n.parent as ts.Node | undefined;
+    if (p === undefined) return false;
+    if (ts.isPropertyAccessExpression(p) && p.name === n) return true;
+    if (ts.isPropertyAssignment(p) && p.name === n) return true;
+    if (ts.isMethodDeclaration(p) && p.name === n) return true;
+    if (ts.isPropertyDeclaration(p) && p.name === n) return true;
+    return false;
+  };
+
+  const refs = statements.map((stmt) => {
+    const bindings = new Set<number>();
+    const dsl = new Set<string>();
+    const visit = (n: ts.Node): void => {
+      if (ts.isIdentifier(n) && !isNamePosition(n)) {
+        if (DSL_TAINT_ROOTS.has(n.text)) dsl.add(n.text);
+        const b = bindingOf.get(n.text);
+        if (b !== undefined) bindings.add(b);
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(stmt);
+    return { bindings, dsl };
+  });
+
+  const isDestructuredDecl = (stmt: ts.Statement): boolean =>
+    ts.isVariableStatement(stmt) &&
+    stmt.declarationList.declarations.some((d) => !ts.isIdentifier(d.name));
+
+  // Taint fixpoint. A destructuring declaration is treated as tainted for
+  // closure purposes: the hoist cannot carry it, so an export depending on it
+  // is blocked (with the error naming it below).
+  const tainted = statements.map((stmt, i) => refs[i]!.dsl.size > 0 || isDestructuredDecl(stmt));
+  for (let changed = true; changed; ) {
+    changed = false;
+    statements.forEach((_, i) => {
+      if (tainted[i]) return;
+      for (const dep of refs[i]!.bindings) {
+        if (dep !== i && tainted[dep]) {
+          tainted[i] = true;
+          changed = true;
+          return;
+        }
+      }
+    });
+  }
+
+  /** First DSL name reachable from statement `i` — the "why" for the error. */
+  const taintReason = (start: number): string => {
+    const seen = new Set<number>();
+    const queue = [start];
+    while (queue.length > 0) {
+      const i = queue.shift()!;
+      if (seen.has(i)) continue;
+      seen.add(i);
+      const dsl = [...refs[i]!.dsl];
+      if (dsl.length > 0) return `it reaches the DSL identifier \`${dsl[0]}\``;
+      if (isDestructuredDecl(statements[i]!)) {
+        return "it depends on a destructuring declaration, which the hoist cannot carry";
+      }
+      for (const dep of refs[i]!.bindings) queue.push(dep);
+    }
+    return "it depends on a declaration that must stay inside the processor body";
+  };
+
+  const exportName = (stmt: ts.Statement): string => {
+    if (ts.isVariableStatement(stmt)) {
+      const first = stmt.declarationList.declarations[0];
+      if (first !== undefined && ts.isIdentifier(first.name)) return first.name.text;
+    }
+    if ((ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) && stmt.name !== undefined)
+      return stmt.name.text;
+    return "(export)";
+  };
+
+  const mustHoist = new Set<number>();
+  statements.forEach((stmt, i) => {
+    if (ts.isExportAssignment(stmt)) {
+      throw new LowerError(
+        "uwk-export-unsupported",
+        "`export default` cannot appear in a processor .uwk.ts — the lowered module's " +
+          "export IS the processor. Export a named value instead.",
+      );
+    }
+    if (ts.isExportDeclaration(stmt)) {
+      if (stmt.moduleSpecifier !== undefined) {
+        // `export ... from "./x"` is import-like: no local bindings involved.
+        mustHoist.add(i);
+        return;
+      }
+      // `export { a, b }` — every named binding must be hoistable.
+      if (stmt.exportClause !== undefined && ts.isNamedExports(stmt.exportClause)) {
+        for (const spec of stmt.exportClause.elements) {
+          const dep = bindingOf.get(spec.propertyName?.text ?? spec.name.text);
+          if (dep === undefined || tainted[dep]) {
+            throw new LowerError(
+              "uwk-export-unsupported",
+              `\`export { ${spec.name.text} }\` cannot move to module scope: ` +
+                `${dep === undefined ? "the binding is not a top-level declaration" : taintReason(dep)}. ` +
+                "A value tied to the DSL lives only inside the processor capture — expose it " +
+                "through the processor surface (param / state / event) instead.",
+            );
+          }
+        }
+      }
+      mustHoist.add(i);
+      return;
+    }
+    if (!isExportedStatement(stmt)) return;
+    if (isDestructuredDecl(stmt)) {
+      throw new LowerError(
+        "uwk-export-unsupported",
+        `exported destructuring declarations are not supported in a processor .uwk.ts — ` +
+          `export each value as its own \`export const <name> = ...\`.`,
+      );
+    }
+    if (tainted[i]) {
+      throw new LowerError(
+        "uwk-export-unsupported",
+        `\`export ${exportName(stmt)}\` cannot move to module scope: ${taintReason(i)}. ` +
+          "A value tied to the DSL lives only inside the processor capture — expose it " +
+          "through the processor surface (param / state / event), or move pure helpers " +
+          "to a separate module.",
+      );
+    }
+    mustHoist.add(i);
+  });
+
+  // Closure: pull the (untainted, by fixpoint) dependencies of every hoisted
+  // statement out with it.
+  const queue = [...mustHoist];
+  while (queue.length > 0) {
+    const i = queue.pop()!;
+    for (const dep of refs[i]!.bindings) {
+      if (!mustHoist.has(dep)) {
+        mustHoist.add(dep);
+        queue.push(dep);
+      }
+    }
+  }
+
+  const hoisted: ts.Statement[] = [];
+  const inner: ts.Statement[] = [];
+  statements.forEach((stmt, i) => {
+    (mustHoist.has(i) ? hoisted : inner).push(stmt);
+  });
+  return { hoisted, inner };
+}
+
 /** Lower a `.uwk.ts` source string to a virtual `.ts` module string. */
 export function lower(source: string, options: LowerOptions = {}): string {
   const coreModule = options.coreModule ?? "@unworklet/core";
@@ -408,6 +610,10 @@ export function lower(source: string, options: LowerOptions = {}): string {
     );
   }
 
+  // Module-scope exports leave the wrapper (with their dependency closure);
+  // everything else becomes the defineProcessor body (issue #44).
+  const { hoisted, inner } = partitionModuleScopeExports(declarations);
+
   // Reject options() / migrations() that reference a processor-body binding: the
   // declarations are moved into the defineProcessor callback, but the options
   // argument is attached outside it, so such a reference would be out of scope at
@@ -424,7 +630,7 @@ export function lower(source: string, options: LowerOptions = {}): string {
       if (ts.isBindingElement(el)) collectBindingNames(el.name);
     }
   };
-  for (const decl of declarations) {
+  for (const decl of inner) {
     if (ts.isVariableStatement(decl)) {
       for (const d of decl.declarationList.declarations) collectBindingNames(d.name);
     } else if (ts.isFunctionDeclaration(decl) && decl.name !== undefined) {
@@ -456,8 +662,8 @@ export function lower(source: string, options: LowerOptions = {}): string {
 
   // S12: inject ambient stereo input / out when the file declares neither, so a
   // Tier-C .uwk.ts needs no explicit I/O. An explicit declaration suppresses it.
-  const needInput = !referencesCall(declarations, "audioInput");
-  const needOutput = !referencesCall(declarations, "audioOutput");
+  const needInput = !referencesCall(inner, "audioInput");
+  const needOutput = !referencesCall(inner, "audioOutput");
   const ambient: ts.Statement[] = [];
   if (needInput) {
     ambient.push(makeAudioDecl("input", "audioInput", 2, "input"));
@@ -465,7 +671,7 @@ export function lower(source: string, options: LowerOptions = {}): string {
   if (needOutput) {
     ambient.push(makeAudioDecl("out", "audioOutput", 2, "out"));
   }
-  const allDeclarations = [...ambient, ...declarations];
+  const allDeclarations = [...ambient, ...inner];
 
   const used = collectUsedCoreExports(sf);
   if (needInput) used.add("audioInput");
@@ -484,7 +690,12 @@ export function lower(source: string, options: LowerOptions = {}): string {
     options.exportName,
   );
 
-  const lowered = ts.factory.updateSourceFile(sf, [...userImports, importDecl, exported]);
+  const lowered = ts.factory.updateSourceFile(sf, [
+    ...userImports,
+    importDecl,
+    ...hoisted,
+    exported,
+  ]);
   const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
   return printer.printFile(lowered);
 }
