@@ -773,6 +773,83 @@ process(() => {
   );
 });
 
+test("declaring a name the lowering itself generates is a loud error", () => {
+  // The wrapper the lowering emits calls `defineProcessor`. A file that binds
+  // that name would have its own helper called instead, and the module would
+  // export something that is not a processor.
+  try {
+    lower(`
+export const defineProcessor = (x: unknown): unknown => x;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(0.25);
+  });
+});
+`);
+    expect.unreachable("lower() must reject a declaration colliding with generated code");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-reserved-binding");
+    expect((e as LowerError).message).toContain("defineProcessor");
+  }
+});
+
+test("declaring the ambient I/O name the lowering would synthesize is a loud error", () => {
+  // With no audio declaration of its own, the file gets `const out =
+  // audioOutput(...)` injected — a file-level `out` would be the name that
+  // declaration binds.
+  try {
+    lower(`
+export const out = 0.5;
+process(() => {
+  forSample((i) => {
+    void i;
+  });
+});
+`);
+    expect.unreachable("lower() must reject a declaration colliding with the ambient I/O");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-reserved-binding");
+  }
+});
+
+test("the canonical `const out = audioOutput(...)` is untouched by that rule", () => {
+  // The name is only reserved when the lowering is about to generate it, and
+  // a file that declares its own output suppresses the injection.
+  const lowered = lower(`
+const out = audioOutput({ channels: 1, name: "main" });
+export const GAIN = 0.5;
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(GAIN);
+  });
+});
+`);
+  expect(lowered.indexOf("export const GAIN")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
+test("a function-scoped `var` shadows a DSL name across the whole helper", () => {
+  // `var` is scoped to the function, not the block it sits in, so the later
+  // reference is the helper's own binding.
+  const lowered = lower(`
+export function pick(): number {
+  {
+    var input = 2;
+  }
+  return input;
+}
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(pick() / 10);
+  });
+});
+`);
+  expect(lowered.indexOf("export function pick")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;
