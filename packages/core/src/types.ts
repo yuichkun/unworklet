@@ -766,6 +766,11 @@ export type Migration = {
    * offline renderer, so an async migrate cannot be honored consistently and is
    * rejected at runtime. (`void` is permissive in TS, so an accidental async
    * function still type-checks but fails loud during `restore`.)
+   *
+   * `blob` is the state as this step receives it, re-encoded in the CURRENT
+   * blob format — not the caller's original bytes. Read it through `helpers`,
+   * which decode either format; the step to apply is chosen by `from` / `to`,
+   * so the blob's own format version is not a signal a migration should read.
    */
   migrate: (blob: Uint8Array, helpers: MigrationHelpers) => void;
 };

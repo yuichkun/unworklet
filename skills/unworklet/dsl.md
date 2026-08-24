@@ -747,8 +747,9 @@ const off = node.onError((e) => errors.push(e));
 ### `inspect(blob)`
 
 Pure, non-realtime blob decode — needs no `AudioContext` or live node.
-`InspectionResult = { version; schemaHash; profile; slots }`. — `client.ts:1824`,
-`types.ts:994`
+`InspectionResult = { version; schemaHash; profile; processorId; slots }`.
+`processorId` is the identity a v2 blob carries, `null` for an id-less or v1
+blob. — `client.ts:1996`, `types.ts:1121`
 
 (`replaceProcessor` live-swaps a processor while preserving state; it is exported
 but out of scope here.)
