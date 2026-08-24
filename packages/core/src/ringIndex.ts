@@ -79,7 +79,7 @@ export function ringLeads(a: number, b: number): boolean {
  * that never happened, and overflow counts are what a user sizes a ring by.
  * The compare-exchange answers it: winning from the observed `tail` means this
  * producer dropped the slot; losing means the consumer moved, so occupancy is
- * re-evaluated against its value and the drop may no longer be needed at all.
+ * re-evaluated against its value, which may leave no slot to drop at all.
  *
  * Terminating: a losing exchange returns a strictly-leading `tail` (both writers
  * only ever advance it), so each retry strictly lowers the occupancy against the
