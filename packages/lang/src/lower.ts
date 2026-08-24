@@ -333,9 +333,19 @@ function statementWrites(stmt: ts.Statement): Set<string> {
     const name = (n as { name?: ts.Node }).name;
     if (name !== undefined && ts.isComputedPropertyName(name)) walk(name.expression, shadowed);
   };
+  // A decorator is applied where its class stands, so its expression runs there
+  // too — `@register(helper.value = 1) m() {}` writes before any call to `m`.
+  const walkDecorators = (n: ts.Node, shadowed: ReadonlySet<string>): void => {
+    if (!ts.canHaveDecorators(n)) return;
+    for (const d of ts.getDecorators(n) ?? []) walk(d.expression, shadowed);
+  };
   const walk = (n: ts.Node, shadowed: ReadonlySet<string>): void => {
     if (ts.isFunctionLike(n)) {
+      walkDecorators(n, shadowed);
       walkComputedName(n, shadowed);
+      // A parameter DECORATOR is applied with the class; a parameter DEFAULT is
+      // evaluated per call, so only the decorators count where the class stands.
+      for (const p of n.parameters) walkDecorators(p, shadowed);
       return;
     }
     // An INSTANCE field initializer runs when an instance is constructed, not
@@ -345,6 +355,7 @@ function statementWrites(stmt: ts.Statement): Set<string> {
       ts.isPropertyDeclaration(n) &&
       !(ts.getModifiers(n) ?? []).some((m) => m.kind === ts.SyntaxKind.StaticKeyword)
     ) {
+      walkDecorators(n, shadowed);
       walkComputedName(n, shadowed);
       return;
     }

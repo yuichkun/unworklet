@@ -1710,6 +1710,94 @@ process(() => {
   }
 });
 
+test("a member decorator is evaluated where the class stands", () => {
+  // The method body is deferred; the decorator applied to it is not.
+  try {
+    lower(`
+const helper = { value: 0 };
+class C {
+  @((helper.value = 1), (() => {})) m() {}
+}
+void C;
+export const value = helper.value;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+    expect.unreachable("lower() must see a write in a method decorator");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("a decorator on a deferred instance field is evaluated too", () => {
+  try {
+    lower(`
+const helper = { value: 0 };
+class C {
+  @((helper.value = 1), (() => {})) f = 0;
+}
+void C;
+export const value = helper.value;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+    expect.unreachable("lower() must see a write in a field decorator");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("a parameter decorator is evaluated with the class", () => {
+  try {
+    lower(`
+const helper = { value: 0 };
+class C {
+  m(@((helper.value = 1), (() => {})) p: number) { void p; }
+}
+void C;
+export const value = helper.value;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+    expect.unreachable("lower() must see a write in a parameter decorator");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("a parameter default stays with the call, not with the class", () => {
+  const lowered = lower(`
+const helper = { value: 0 };
+class C {
+  m(p = (helper.value = 1)) { void p; }
+}
+void C;
+export const value = helper.value;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(value / 10);
+  });
+});
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
 test("a `var` inside a class static block belongs to that block", () => {
   const lowered = lower(`
 const helper = { value: 0 };
