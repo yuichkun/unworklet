@@ -387,11 +387,13 @@ const DSL_TAINT_ROOTS = new Set<string>([
 function partitionModuleScopeExports(
   statements: readonly ts.Statement[],
   /**
-   * Names bound by the file's own imports from modules OTHER than the core.
-   * Such a name is the imported module's, whatever it is spelled — only an
-   * ambient (or core-imported) identifier carries DSL meaning.
+   * How the file's own imports classify the names they bind. A name imported
+   * from a module OTHER than the core is that module's, whatever it is spelled;
+   * a name imported FROM the core is the DSL under whatever local name it was
+   * given (`{ state as makeState }`, `* as core`), which no spelling test on
+   * `DSL_TAINT_ROOTS` would catch.
    */
-  importedNonDsl: ReadonlySet<string>,
+  imported: { readonly dsl: ReadonlySet<string>; readonly other: ReadonlySet<string> },
 ): {
   hoisted: ts.Statement[];
   inner: ts.Statement[];
@@ -471,7 +473,8 @@ function partitionModuleScopeExports(
         // still reaches it through the dependency edge when that declaration is
         // itself DSL-tied.
         if (b !== undefined) bindings.add(b);
-        else if (!importedNonDsl.has(n.text) && DSL_TAINT_ROOTS.has(n.text)) dsl.add(n.text);
+        else if (imported.dsl.has(n.text)) dsl.add(n.text);
+        else if (!imported.other.has(n.text) && DSL_TAINT_ROOTS.has(n.text)) dsl.add(n.text);
       }
       const opened = scopeBindings(n);
       const inner = opened === null ? shadowed : new Set([...shadowed, ...opened]);
@@ -702,10 +705,10 @@ export function lower(source: string, options: LowerOptions = {}): string {
 
   // Module-scope exports leave the wrapper (with their dependency closure);
   // everything else becomes the defineProcessor body (issue #44).
-  const { hoisted, inner } = partitionModuleScopeExports(
-    declarations,
-    importBoundNames(userImports.filter((d) => moduleSpecifierOf(d) !== coreModule)),
-  );
+  const { hoisted, inner } = partitionModuleScopeExports(declarations, {
+    dsl: importBoundNames(userImports.filter((d) => moduleSpecifierOf(d) === coreModule)),
+    other: importBoundNames(userImports.filter((d) => moduleSpecifierOf(d) !== coreModule)),
+  });
 
   // Reject options() / migrations() that reference a processor-body binding: the
   // declarations are moved into the defineProcessor callback, but the options

@@ -501,6 +501,46 @@ process(() => {
   }
 });
 
+test("an export built through an ALIASED core import is still refused", () => {
+  // The alias is spelled nothing like a DSL root, but it is one — hoisting the
+  // export would call the DSL at module scope, outside any capture.
+  try {
+    lower(`
+import { state as makeState } from "@unworklet/core";
+export const level = makeState.f32(0).read();
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(level);
+  });
+});
+`);
+    expect.unreachable("lower() must reject an export built through an aliased core import");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("an export built through a core NAMESPACE import is still refused", () => {
+  try {
+    lower(`
+import * as core from "@unworklet/core";
+export const level = core.state.f32(0).read();
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(level);
+  });
+});
+`);
+    expect.unreachable("lower() must reject an export built through a core namespace import");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;
