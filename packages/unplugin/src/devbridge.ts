@@ -221,3 +221,28 @@ export function slotMemory(slots: readonly RawSlot[]): {
   });
   return { entries, totalBytes };
 }
+
+/**
+ * Prepare a DevTools-injected MIDI event for `MidiPortSurface.send`.
+ *
+ * The panel serializes events over RPC, so a sysex payload arrives as a plain
+ * `number[]` — but `send()` expects the main-side `MidiEvent` shape, whose
+ * sysex `data` is a `Uint8Array` (a plain array throws on the SAB path and
+ * mis-decodes on the postMessage path). Conversion validates first:
+ * `Uint8Array.from` would silently wrap 300 → 44 and truncate 1.5 → 1, turning
+ * a malformed panel payload into a DIFFERENT message. Returns `null` for a
+ * payload that cannot be represented byte-for-byte; non-sysex events pass
+ * through untouched.
+ */
+export function toSendableMidiEvent<E extends { type: string; data?: unknown }>(
+  event: E,
+): E | (Omit<E, "data"> & { data: Uint8Array }) | null {
+  if (event.type !== "sysex") return event;
+  const data = event.data;
+  if (data instanceof Uint8Array) return event;
+  if (!Array.isArray(data)) return null;
+  for (const b of data) {
+    if (typeof b !== "number" || !Number.isInteger(b) || b < 0 || b > 255) return null;
+  }
+  return { ...event, data: Uint8Array.from(data as number[]) };
+}

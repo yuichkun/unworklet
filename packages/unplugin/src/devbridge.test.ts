@@ -11,6 +11,7 @@ import {
   type RawSlot,
   slotMemory,
   splitSlots,
+  toSendableMidiEvent,
 } from "./devbridge.ts";
 
 // ── byte builders (black-box: construct the raw LE bytes devDump would return) ──
@@ -277,4 +278,31 @@ test("drainInjects: nothing new leaves lastSeq untouched", () => {
   const out = drainInjects([{ seq: 2 }, { seq: 1 }], 2);
   expect(out.fresh).toEqual([]);
   expect(out.lastSeq).toBe(2);
+});
+
+test("toSendableMidiEvent: passes non-sysex events through unchanged", () => {
+  const noteOn = { type: "noteOn", channel: 0, note: 60, velocity: 100 };
+  expect(toSendableMidiEvent(noteOn)).toBe(noteOn);
+});
+
+test("toSendableMidiEvent: converts a sysex number[] payload to Uint8Array (send() expects typed data)", () => {
+  const out = toSendableMidiEvent({ type: "sysex", data: [0xf0, 0x7e, 0x01, 0xf7] });
+  expect(out).not.toBeNull();
+  const data = out!.data;
+  expect(data).toBeInstanceOf(Uint8Array);
+  expect(Array.from(data as Uint8Array)).toEqual([0xf0, 0x7e, 0x01, 0xf7]);
+});
+
+test("toSendableMidiEvent: rejects malformed sysex bytes instead of silently wrapping mod 256", () => {
+  // Uint8Array.from(300) would silently become 44 — a different message.
+  expect(toSendableMidiEvent({ type: "sysex", data: [0xf0, 300, 0xf7] })).toBeNull();
+  expect(toSendableMidiEvent({ type: "sysex", data: [0xf0, -1, 0xf7] })).toBeNull();
+  expect(toSendableMidiEvent({ type: "sysex", data: [0xf0, 1.5, 0xf7] })).toBeNull();
+  expect(toSendableMidiEvent({ type: "sysex", data: "f07ef7" })).toBeNull();
+});
+
+test("toSendableMidiEvent: accepts sysex data already carried as a Uint8Array", () => {
+  const data = new Uint8Array([0xf0, 0x7e, 0xf7]);
+  const out = toSendableMidiEvent({ type: "sysex", data });
+  expect(out!.data).toBe(data);
 });
