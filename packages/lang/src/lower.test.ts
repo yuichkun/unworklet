@@ -2840,6 +2840,12 @@ test("a named property off a literal picks the value that key holds", () => {
     ['({ selected: noop, unselected: mutate })["selected"]', "hoists"],
     ["({ 0: noop, 1: mutate })[0]", "hoists"],
     ["({ selected: noop, unselected: mutate })[key]", "refuses"],
+    // A method IS the value its key holds — both what it is not, and what it is.
+    ["({ selected() {}, unselected: mutate }).selected", "hoists"],
+    ['({ selected() {}, unselected: mutate })["selected"]', "hoists"],
+    ["({ selected() { helper.value = 1; } }).selected", "refuses"],
+    // An accessor runs code to answer, so what comes back cannot be told.
+    ["({ get selected() { return noop; }, unselected: mutate }).selected", "refuses"],
   ];
   for (const [argument, expected] of cases) {
     const source = `

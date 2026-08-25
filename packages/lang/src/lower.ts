@@ -301,8 +301,8 @@ const UNKNOWN_PROPERTY = Symbol("unknown property");
 function literalProperty(
   object: ts.ObjectLiteralExpression,
   key: string,
-): ts.Expression | null | typeof UNKNOWN_PROPERTY {
-  let value: ts.Expression | null = null;
+): ts.Expression | ts.MethodDeclaration | null | typeof UNKNOWN_PROPERTY {
+  let value: ts.Expression | ts.MethodDeclaration | null = null;
   let clouded = false;
   for (const property of object.properties) {
     const name = property.name;
@@ -319,8 +319,13 @@ function literalProperty(
     } else if (ts.isShorthandPropertyAssignment(property)) {
       value = property.name;
       clouded = false;
+    } else if (ts.isMethodDeclaration(property)) {
+      // A method IS the value the key holds.
+      value = property;
+      clouded = false;
     } else {
-      // A method or an accessor: the value is code this walk enters elsewhere.
+      // An accessor: reading the key runs code, and what comes back is that
+      // code's business rather than anything written here.
       return UNKNOWN_PROPERTY;
     }
   }
@@ -704,7 +709,12 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
       const enter = (passed: ts.Expression, runs: boolean, isCallee: boolean): void => {
         const seen = (node: ts.Node, top: boolean): void => {
           const expr = ts.isExpression(node) ? unwrapExpression(node) : node;
-          if (ts.isArrowFunction(expr) || ts.isFunctionExpression(expr)) {
+          if (
+            ts.isArrowFunction(expr) ||
+            ts.isFunctionExpression(expr) ||
+            // A literal's method, selected by key: the walk reaches it in place.
+            ts.isMethodDeclaration(expr)
+          ) {
             if (runs) runsNow.add(expr);
             return;
           }
