@@ -16,7 +16,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -1427,4 +1427,182 @@ process(() => {
     // is dropped for having no live binding — so none of them is a dependency.
     expect(materialized).toEqual(["synth", "used"]);
   });
+});
+
+test("a processor with a module-scope export loads through the real ESM temp (issue #44 repro)", async () => {
+  // Pre-fix the export was swallowed into the defineProcessor callback and the
+  // temp threw `SyntaxError: Unexpected token 'export'` at import — through
+  // BOTH loadUwkProcessor and the Vite build path (same temp).
+  dir = mkdtempSync(path.join(LANG, ".mat-export-"));
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `export const GAIN = 0.5;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = GAIN;
+  });
+});`,
+  );
+
+  const processor = await loadUwkProcessor(src);
+  expect(processor).toBeTruthy();
+  expect(typeof processor.schemaHash).toBe("string");
+});
+
+// ── crash-stranded temp sweep (issue #21) ────────────────────────────────────
+// Temps are removed in `finally` on the normal path, but a crashed process
+// leaves them next to the consumer's sources, where a stale one can be picked
+// up by a later editor/typecheck pass. Temps must live in the source directory
+// (relative imports resolve against them), so the recovery is a sweep at the
+// next materialization: a temp whose embedded owner pid is dead is removed; a
+// live owner's temp is never touched.
+
+const spawnDeadPid = (): number => {
+  const r = spawnSync("node", ["-e", ""], { encoding: "utf8" });
+  if (typeof r.pid !== "number") throw new Error("spawn failed");
+  return r.pid;
+};
+
+test("sweep: a stranded temp whose owner process is dead is removed on the next materialization", async () => {
+  dir = mkdtempSync(path.join(LANG, ".mat-sweep-dead-"));
+  const deadPid = spawnDeadPid();
+  const stranded = path.join(dir, `.crashed.u1-${deadPid.toString(36)}-abc123-0.uwklowered.mjs`);
+  writeFileSync(stranded, "export const zombie = 1;\n");
+  const strandedFailed = path.join(
+    dir,
+    `.crashed.u1-${deadPid.toString(36)}-abc123-1.uwkfailed.mjs`,
+  );
+  writeFileSync(strandedFailed, "throw new Error('stub');\n");
+
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = 0.5;
+  });
+});`,
+  );
+  await loadUwkProcessor(src);
+
+  const leftovers = readdirSync(dir).filter((f) => f.includes("uwk"));
+  expect(leftovers).toEqual(["synth.uwk.ts"]);
+});
+
+test("sweep: a temp owned by a LIVE process is never touched", async () => {
+  dir = mkdtempSync(path.join(LANG, ".mat-sweep-live-"));
+  // Our own pid stands in for a concurrent live materialization.
+  const live = path.join(dir, `.other.u1-${process.pid.toString(36)}-def456-0.uwklowered.mjs`);
+  writeFileSync(live, "export const inFlight = 1;\n");
+
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = 0.5;
+  });
+});`,
+  );
+  await loadUwkProcessor(src);
+
+  expect(readdirSync(dir)).toContain(path.basename(live));
+});
+
+test("sweep: a name without the delimited owner tag is never removed", async () => {
+  // Tag formats older than `u1-` ran the pid, a nonce and a counter together
+  // with no delimiter, which no rule tells apart from an ordinary lowercase
+  // word — so nothing but a provable owner is swept, at any age. Deleting a
+  // file out of somebody's tree is worse than leaving a stray from a version
+  // that predates this one. Reported by @codex on #48.
+  dir = mkdtempSync(path.join(LANG, ".mat-sweep-legacy-"));
+  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  const ambiguous = [".old.abcdef012.uwklowered.mjs", ".saved.custom.uwklowered.mjs"];
+  for (const name of ambiguous) {
+    const p = path.join(dir, name);
+    writeFileSync(p, "export const notOurs = 1;\n");
+    utimesSync(p, twoHoursAgo, twoHoursAgo);
+  }
+
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = 0.5;
+  });
+});`,
+  );
+  await loadUwkProcessor(src);
+
+  const leftovers = readdirSync(dir).filter((f) => f.includes("uwklowered"));
+  expect(leftovers.sort()).toEqual([...ambiguous].sort());
+});
+
+test("sweep: a file that only ends like a temp is never removed", async () => {
+  // `saved.uwklowered.mjs` is somebody's own file: every temp this module
+  // writes is a dotfile carrying a source basename and a tag, and the suffix
+  // alone is not ownership. Reported by @codex on #48.
+  dir = mkdtempSync(path.join(LANG, ".mat-sweep-owned-"));
+  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  const theirs = path.join(dir, "saved.uwklowered.mjs");
+  writeFileSync(theirs, "export const mine = 1;\n");
+  utimesSync(theirs, twoHoursAgo, twoHoursAgo);
+  const theirDotfile = path.join(dir, ".saved.uwkfailed.mjs");
+  writeFileSync(theirDotfile, "export const alsoMine = 1;\n");
+  utimesSync(theirDotfile, twoHoursAgo, twoHoursAgo);
+
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = 0.5;
+  });
+});`,
+  );
+  await loadUwkProcessor(src);
+
+  const survivors = readdirSync(dir).filter((f) => f.includes("uwk") && f !== "synth.uwk.ts");
+  expect(survivors.sort()).toEqual([".saved.uwkfailed.mjs", "saved.uwklowered.mjs"]);
+});
+
+test("sweep: a tag shaped unlike anything the generator writes is not owned", async () => {
+  // The nonce is always `randomBytes(3).toString("hex")` — six hex characters,
+  // never one — and a pid or a load counter in base36 never carries a leading
+  // zero. A name that gets those wrong was written by somebody else, even when
+  // the pid inside it happens to be dead. Reported by @codex on #48.
+  dir = mkdtempSync(path.join(LANG, ".mat-sweep-shape-"));
+  const deadPid = spawnDeadPid();
+  const theirs = [
+    `.saved.u1-${deadPid.toString(36)}-f-0.uwklowered.mjs`,
+    `.saved.u1-${deadPid.toString(36)}-abc1234-0.uwklowered.mjs`,
+    `.saved.u1-0${deadPid.toString(36)}-abc123-0.uwklowered.mjs`,
+    `.saved.u1-${deadPid.toString(36)}-abc123-01.uwklowered.mjs`,
+  ];
+  for (const name of theirs) writeFileSync(path.join(dir, name), "export const mine = 1;\n");
+  // The real shape, same dead owner, is swept.
+  const ours = `.crashed.u1-${deadPid.toString(36)}-abc123-0.uwklowered.mjs`;
+  writeFileSync(path.join(dir, ours), "export const zombie = 1;\n");
+
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = 0.5;
+  });
+});`,
+  );
+  await loadUwkProcessor(src);
+
+  const left = readdirSync(dir).filter((f) => f.includes("uwklowered"));
+  expect(left.sort()).toEqual([...theirs].sort());
 });

@@ -11,6 +11,8 @@ import {
   type RawSlot,
   slotMemory,
   splitSlots,
+  toLoggableMidiEvent,
+  toSendableMidiEvent,
 } from "./devbridge.ts";
 
 // ── byte builders (black-box: construct the raw LE bytes devDump would return) ──
@@ -277,4 +279,49 @@ test("drainInjects: nothing new leaves lastSeq untouched", () => {
   const out = drainInjects([{ seq: 2 }, { seq: 1 }], 2);
   expect(out.fresh).toEqual([]);
   expect(out.lastSeq).toBe(2);
+});
+
+test("toSendableMidiEvent: passes non-sysex events through unchanged", () => {
+  const noteOn = { type: "noteOn", channel: 0, note: 60, velocity: 100 };
+  expect(toSendableMidiEvent(noteOn)).toBe(noteOn);
+});
+
+test("toSendableMidiEvent: converts a sysex number[] payload to Uint8Array (send() expects typed data)", () => {
+  const out = toSendableMidiEvent({ type: "sysex", data: [0xf0, 0x7e, 0x01, 0xf7] });
+  expect(out).not.toBeNull();
+  const data = out!.data;
+  expect(data).toBeInstanceOf(Uint8Array);
+  expect(Array.from(data as Uint8Array)).toEqual([0xf0, 0x7e, 0x01, 0xf7]);
+});
+
+test("toSendableMidiEvent: rejects malformed sysex bytes instead of silently wrapping mod 256", () => {
+  // Uint8Array.from(300) would silently become 44 — a different message.
+  expect(toSendableMidiEvent({ type: "sysex", data: [0xf0, 300, 0xf7] })).toBeNull();
+  expect(toSendableMidiEvent({ type: "sysex", data: [0xf0, -1, 0xf7] })).toBeNull();
+  expect(toSendableMidiEvent({ type: "sysex", data: [0xf0, 1.5, 0xf7] })).toBeNull();
+  expect(toSendableMidiEvent({ type: "sysex", data: "f07ef7" })).toBeNull();
+});
+
+test("toSendableMidiEvent: accepts sysex data already carried as a Uint8Array", () => {
+  const data = new Uint8Array([0xf0, 0x7e, 0xf7]);
+  const out = toSendableMidiEvent({ type: "sysex", data });
+  expect(out!.data).toBe(data);
+});
+
+test("toLoggableMidiEvent: renders sysex bytes as a plain array (the DevMidiEvent wire shape)", () => {
+  // The MIDI log crosses the RPC boundary, where a Uint8Array serializes as an
+  // indexed object rather than the `data: number[]` the panel contract states.
+  const out = toLoggableMidiEvent({ type: "sysex", data: new Uint8Array([0xf0, 0x7e, 0xf7]) });
+  expect(Array.isArray(out.data)).toBe(true);
+  expect(out.data).toEqual([0xf0, 0x7e, 0xf7]);
+});
+
+test("toLoggableMidiEvent: leaves an already-plain sysex payload as an array", () => {
+  const out = toLoggableMidiEvent({ type: "sysex", data: [0xf0, 0x01, 0xf7] });
+  expect(out.data).toEqual([0xf0, 0x01, 0xf7]);
+});
+
+test("toLoggableMidiEvent: passes non-sysex events through unchanged", () => {
+  const noteOn = { type: "noteOn", channel: 0, note: 60, velocity: 100 };
+  expect(toLoggableMidiEvent(noteOn)).toBe(noteOn);
 });

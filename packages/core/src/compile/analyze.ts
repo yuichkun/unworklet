@@ -18,6 +18,8 @@
 
 import type { AstNode, CapturedGraph } from "./ast.ts";
 import { inferAstType } from "./ast.ts";
+import { SIMD_LANE_COUNT } from "../dsl/constants.ts";
+import { SYSEX_PER_CHUNK_BYTES } from "./layout.ts";
 
 export type DiagnosticEntry = {
   readonly id: string;
@@ -155,6 +157,7 @@ function walkForTypeErrors(node: AstNode, diagnostics: DiagnosticEntry[]): void 
     case "forSample":
     case "messageOnReceive":
     case "everyNSamples":
+    case "midiOnEvent":
       for (const child of node.body) walkForTypeErrors(child, diagnostics);
       break;
     case "eventEmitIf":
@@ -420,10 +423,127 @@ function walkHandlerFieldEscape(
   }
 }
 
+/**
+ * A sysex emit's source `buffer.u8` must fit inside one content chunk
+ * (`SYSEX_PER_CHUNK_BYTES - 4` payload bytes). A bigger buffer could never
+ * ship whole, and truncating at emit would deliver a corrupt sysex (no 0xF7
+ * terminator) — so the mismatch is a build error, not a runtime surprise.
+ * Recurses into handler / loop bodies (the echo shape emits inside a
+ * `midiOnEvent` handler).
+ */
+function walkSysexBufferFit(
+  graph: CapturedGraph,
+  body: readonly AstNode[],
+  diagnostics: DiagnosticEntry[],
+): void {
+  const chunkBody = SYSEX_PER_CHUNK_BYTES - 4;
+  for (const node of body) {
+    if (
+      node.kind === "midiEmitIf" &&
+      node.eventType === "sysex" &&
+      node.sysexLength !== undefined &&
+      node.sysexLength.kind === "literal"
+    ) {
+      // The emitted LENGTH decides whether a message can leave whole; a larger
+      // backing buffer is fine as long as the emit selects a prefix that fits.
+      // The buffer bounds it too — a length past the buffer would copy the
+      // neighboring region's bytes into the message.
+      const decl =
+        node.sysexBufferName !== undefined
+          ? graph.declarations.find((d) => d.kind === "buffer" && d.name === node.sysexBufferName)
+          : undefined;
+      const cap =
+        decl !== undefined && decl.kind === "buffer" ? Math.min(chunkBody, decl.size) : chunkBody;
+      const length = node.sysexLength.value;
+      if (length > cap) {
+        const source =
+          node.sysexBufferName !== undefined
+            ? ` from buffer "${node.sysexBufferName}"`
+            : " as a thru";
+        diagnostics.push({
+          id: "sysex-emit-exceeds-chunk",
+          severity: "error",
+          message: `unworklet: midi port "${node.port}" emits ${length} sysex bytes${source}, past the ${cap}-byte limit for that emit (the ${chunkBody}-byte content chunk, bounded by the source buffer). The message could not leave whole, and shipping the prefix would drop its 0xF7 terminator. Emit at most ${cap} bytes, or split the transfer. (stable ID 'sysex-emit-exceeds-chunk')`,
+        });
+      }
+    }
+    if (
+      node.kind === "forSample" ||
+      node.kind === "everyNSamples" ||
+      node.kind === "messageOnReceive" ||
+      node.kind === "midiOnEvent"
+    ) {
+      walkSysexBufferFit(graph, node.body, diagnostics);
+    }
+  }
+}
+
+/**
+ * SIMD buffer-window backstop (issue: undersized `loadVec` / `storeVec`): a
+ * lane window spans `SIMD_LANE_COUNT` elements, so a buffer holding fewer has
+ * no in-bounds offset — the emitted index clamp saturates into an empty range
+ * and the 16-byte access still crosses into the next memory region. The buffer
+ * factories reject this at capture; a hand-built graph bypasses them.
+ */
+function walkVecBufferFit(
+  graph: CapturedGraph,
+  body: readonly AstNode[],
+  diagnostics: DiagnosticEntry[],
+): void {
+  const undersized = new Set(
+    graph.declarations
+      .filter((d) => d.kind === "buffer" && d.size < SIMD_LANE_COUNT)
+      .map((d) => d.name),
+  );
+  if (undersized.size === 0) return;
+  const seen = new Set<string>();
+  const visit = (node: AstNode): void => {
+    if (
+      (node.kind === "bufferLoadVec" || node.kind === "bufferStoreVec") &&
+      undersized.has(node.name) &&
+      !seen.has(node.name)
+    ) {
+      seen.add(node.name);
+      const decl = graph.declarations.find((d) => d.kind === "buffer" && d.name === node.name);
+      const size = decl !== undefined && decl.kind === "buffer" ? decl.size : 0;
+      diagnostics.push({
+        id: "simd-buffer-too-small",
+        severity: "error",
+        message: `unworklet: buffer "${node.name}" is used with a SIMD lane op but holds ${size} element(s) — a ${SIMD_LANE_COUNT}-lane access reads/writes ${SIMD_LANE_COUNT * 4} bytes and no offset keeps that inside the buffer. Declare it with size >= ${SIMD_LANE_COUNT}, or use read() / write(). (stable ID 'simd-buffer-too-small')`,
+      });
+    }
+    for (const child of exprChildren(node)) visit(child);
+    if (
+      node.kind === "forSample" ||
+      node.kind === "everyNSamples" ||
+      node.kind === "messageOnReceive" ||
+      node.kind === "midiOnEvent"
+    ) {
+      for (const child of node.body) visit(child);
+    }
+  };
+  for (const node of body) visit(node);
+}
+
 export function analyze(graph: CapturedGraph): DiagnosticEntry[] {
   const diagnostics: DiagnosticEntry[] = [];
+  // Buffer publish backstop (issue #38): the declaration factories throw at
+  // capture, but a hand-built graph bypasses them. The publish pipeline is
+  // scalar-only — a published buffer never appears on `node.state` — so reject
+  // rather than compile a declaration whose runtime surface does not exist.
+  for (const decl of graph.declarations) {
+    if (decl.kind === "buffer" && decl.publish !== undefined) {
+      diagnostics.push({
+        id: "buffer-publish-unsupported",
+        severity: "error",
+        message: `unworklet: buffer "${decl.name}" declares publish, but buffer publish is not wired to the main thread — the slot would never appear on node.state. Fan the values out into scalar state slots, or read the buffer back via node.snapshot(). (stable ID 'buffer-publish-unsupported')`,
+      });
+    }
+  }
   walkForLoopErrors(graph.statements, diagnostics);
   checkPayloadFieldLimit(graph, diagnostics);
+  walkSysexBufferFit(graph, graph.statements, diagnostics);
+  walkVecBufferFit(graph, graph.statements, diagnostics);
   walkHandlerFieldEscape(graph.statements, null, diagnostics);
   for (const stmt of graph.statements) {
     if (stmt.kind === "forSample") {

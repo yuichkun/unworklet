@@ -23,6 +23,16 @@ import { decodeWav, encodeWav } from "@unworklet/offline";
 import type { OfflineEmittedEvent, OfflineEvent, RenderOfflineResult } from "@unworklet/offline";
 import { expect } from "vitest";
 
+/**
+ * What the audio matchers accept: a real `renderOffline` result, or a
+ * hand-built result-shaped object. The matchers read outputs / events / state
+ * / sampleRate only, so the render-health `diagnostics` block is optional here
+ * — a fixture built in a test (a documented pattern) does not have to invent
+ * one.
+ */
+export type RenderResultLike = Omit<RenderOfflineResult, "diagnostics"> &
+  Partial<Pick<RenderOfflineResult, "diagnostics">>;
+
 export type AudioMatchOptions = {
   /**
    * Sample-absolute-difference tolerance. Default `0` means bit-exact, because
@@ -69,7 +79,7 @@ const assertChannelsFinite = (label: string, channels: Float32Array[]): void => 
  * `expected` side of `expectAudioMatches` also goes through this path when it is
  * a `RenderOfflineResult`.
  */
-const assertResultFinite = (label: string, result: RenderOfflineResult): void => {
+const assertResultFinite = (label: string, result: RenderResultLike): void => {
   for (const port of Object.keys(result.outputs)) {
     const channels = result.outputs[port]!;
     for (let c = 0; c < channels.length; c++) {
@@ -134,8 +144,8 @@ const compareChannels = (
  * Chain form: `expect(actual).toMatchAudio(expected, opts?)` (`@unworklet/test/extend`).
  */
 export function expectAudioMatches(
-  actual: RenderOfflineResult,
-  expected: RenderOfflineResult | Float32Array[],
+  actual: RenderResultLike,
+  expected: RenderResultLike | Float32Array[],
   opts?: AudioMatchOptions,
 ): void {
   // Reject NaN / ±Infinity input up front on both the actual and expected
@@ -181,7 +191,7 @@ export function expectAudioMatches(
  *
  * Chain form: `expect(result).toBeFinite()` (`@unworklet/test/extend`).
  */
-export function expectNoNaN(result: RenderOfflineResult): void {
+export function expectNoNaN(result: RenderResultLike): void {
   assertResultFinite("expectNoNaN", result);
 }
 
@@ -192,7 +202,7 @@ const linearToDb = (linear: number): number => 20 * Math.log10(linear);
  *
  * Chain form: `expect(result).toHavePeakUnder(dbfs)` (`@unworklet/test/extend`).
  */
-export function expectPeakUnder(result: RenderOfflineResult, dbfs: number): void {
+export function expectPeakUnder(result: RenderResultLike, dbfs: number): void {
   // Since `Math.abs(NaN) > peak` is `false`, peak would stay 0 and db would be
   // -Infinity, falling below the threshold and passing falsely; reject NaN first
   // to close that path.
@@ -220,7 +230,7 @@ export function expectPeakUnder(result: RenderOfflineResult, dbfs: number): void
  *
  * Chain form: `expect(result).toHaveRmsUnder(dbfs)` (`@unworklet/test/extend`).
  */
-export function expectRmsUnder(result: RenderOfflineResult, dbfs: number): void {
+export function expectRmsUnder(result: RenderResultLike, dbfs: number): void {
   // A NaN mixed into sumSq makes rms NaN, and `NaN >= dbfs` is `false`, which
   // would pass falsely.
   expectNoNaN(result);
@@ -249,10 +259,7 @@ export function expectRmsUnder(result: RenderOfflineResult, dbfs: number): void 
  *
  * Chain form: `expect(result).toMatchEvents(expectedEvents)` (`@unworklet/test/extend`).
  */
-export function expectEventsEqual(
-  result: RenderOfflineResult,
-  expectedEvents: ExpectedEvent[],
-): void {
+export function expectEventsEqual(result: RenderResultLike, expectedEvents: ExpectedEvent[]): void {
   const actual: OfflineEmittedEvent[] = result.events;
   if (actual.length !== expectedEvents.length) {
     throw new Error(
@@ -287,10 +294,7 @@ export function expectEventsEqual(
  *
  * Chain form: `expect(result).toMatchState(expectedSnapshot)` (`@unworklet/test/extend`).
  */
-export function expectStateMatches(
-  result: RenderOfflineResult,
-  expectedSnapshot: Uint8Array,
-): void {
+export function expectStateMatches(result: RenderResultLike, expectedSnapshot: Uint8Array): void {
   const actual = result.state;
   if (actual.length !== expectedSnapshot.length) {
     throw new Error(
@@ -317,7 +321,7 @@ export function expectStateMatches(
  * Chain form: `expect(actual).toMatchAudioFile(wavPath, opts?)` (`@unworklet/test/extend`).
  */
 export function expectAudioMatchesGolden(
-  actual: RenderOfflineResult,
+  actual: RenderResultLike,
   wavPath: string,
   opts?: AudioMatchOptions,
 ): void {
@@ -461,12 +465,12 @@ const resolveSnapshotPath = (state: SnapshotResolutionState, opts: SnapshotOptio
  * form.
  */
 export async function expectAudioMatchesSnapshotWithState(
-  actual: RenderOfflineResult | Float32Array | Float32Array[],
+  actual: RenderResultLike | Float32Array | Float32Array[],
   opts: SnapshotOptions,
   state: SnapshotResolutionState,
 ): Promise<void> {
   // Normalize actual: a Float32Array / Float32Array[] is wrapped into RenderOfflineResult form.
-  let result: RenderOfflineResult;
+  let result: RenderResultLike;
   if (actual instanceof Float32Array) {
     result = {
       outputs: { main: [actual] },
@@ -587,7 +591,7 @@ export async function expectAudioMatchesSnapshotWithState(
  * Chain form: `await expect(actual).toMatchAudioSnapshot(opts?)` (`@unworklet/test/extend`).
  */
 export async function expectAudioMatchesSnapshot(
-  actual: RenderOfflineResult | Float32Array | Float32Array[],
+  actual: RenderResultLike | Float32Array | Float32Array[],
   opts: SnapshotOptions = {},
 ): Promise<void> {
   // Plain form: via the global `expect.getState()`, a sequential-only path
@@ -606,7 +610,7 @@ export async function expectAudioMatchesSnapshot(
  *
  * Chain form: `expect(result).toBeStable()` (`@unworklet/test/extend`).
  */
-export function expectStable(result: RenderOfflineResult): void {
+export function expectStable(result: RenderResultLike): void {
   expectNoNaN(result);
 }
 
@@ -625,7 +629,7 @@ export type MasterOptions = {
  *
  * Chain form: `expect(result).toBeMasterReady(opts?)` (`@unworklet/test/extend`).
  */
-export function expectMaster(result: RenderOfflineResult, opts: MasterOptions = {}): void {
+export function expectMaster(result: RenderResultLike, opts: MasterOptions = {}): void {
   const peakDbfs = opts.peakDbfs ?? -0.1;
   const rmsDbfs = opts.rmsDbfs ?? -14;
   expectNoNaN(result);
@@ -639,10 +643,7 @@ export function expectMaster(result: RenderOfflineResult, opts: MasterOptions = 
  *
  * Chain form: `expect(result).toBeSilent(opts?)` (`@unworklet/test/extend`).
  */
-export function expectSilence(
-  result: RenderOfflineResult,
-  opts: { tolerance?: number } = {},
-): void {
+export function expectSilence(result: RenderResultLike, opts: { tolerance?: number } = {}): void {
   // Since `Math.abs(NaN) > tolerance` is `false`, a NaN sample would pass falsely
   // as silence; reject NaN first to close that path.
   expectNoNaN(result);
@@ -678,7 +679,7 @@ export type PeakAtSampleOptions = {
  * Chain form: `expect(result).toHavePeakAtSample(expectedAtSample, opts?)` (`@unworklet/test/extend`).
  */
 export function expectPeakAtSample(
-  result: RenderOfflineResult,
+  result: RenderResultLike,
   expectedAtSample: number,
   opts: PeakAtSampleOptions = {},
 ): void {
@@ -810,7 +811,7 @@ export type GainAtFreqOptions = {
  * Chain form: `expect(result).toHaveGainAtFreq(freqHz, expectedDb, tolerance, opts?)` (`@unworklet/test/extend`).
  */
 export function expectGainAtFreq(
-  result: RenderOfflineResult,
+  result: RenderResultLike,
   freqHz: number,
   expectedDb: number,
   tolerance: number,
@@ -889,7 +890,7 @@ export function expectGainAtFreq(
  * Chain form: `expect(result).toHaveLatency(expectedSamples, opts?)` (`@unworklet/test/extend`).
  */
 export function expectLatency(
-  result: RenderOfflineResult,
+  result: RenderResultLike,
   expectedSamples: number,
   opts: { tolerance?: number; channel?: number } = {},
 ): void {
@@ -951,7 +952,7 @@ export function expectLatency(
  *
  * Chain form: `expect(result).toHaveDcOffsetUnder(threshold)` (`@unworklet/test/extend`).
  */
-export function expectDcOffsetUnder(result: RenderOfflineResult, threshold: number): void {
+export function expectDcOffsetUnder(result: RenderResultLike, threshold: number): void {
   // A NaN mixed into the sum makes the mean NaN, and `NaN >= threshold` is
   // `false`, which would pass falsely.
   expectNoNaN(result);
@@ -978,7 +979,7 @@ export function expectDcOffsetUnder(result: RenderOfflineResult, threshold: numb
  * Chain form: `expect(result).toHaveEventCount(name, expectedCount)` (`@unworklet/test/extend`).
  */
 export function expectEventCount(
-  result: RenderOfflineResult,
+  result: RenderResultLike,
   name: string,
   expectedCount: number,
 ): void {
@@ -1006,7 +1007,7 @@ export type PartialExpectedEvent = {
  * Chain form: `expect(result).toContainEvents(partial)` (`@unworklet/test/extend`).
  */
 export function expectEventsContaining(
-  result: RenderOfflineResult,
+  result: RenderResultLike,
   partial: PartialExpectedEvent[],
 ): void {
   for (let i = 0; i < partial.length; i++) {
@@ -1042,7 +1043,7 @@ export type ExpectedMidiEvent = MidiEvent & { atSample?: number };
  * Chain form: `expect(result).toEmitMidi(portName, expectedMidiEvents, opts?)` (`@unworklet/test/extend`).
  */
 export function expectMidiOut(
-  result: RenderOfflineResult,
+  result: RenderResultLike,
   portName: string,
   expectedMidiEvents: ExpectedMidiEvent[],
   opts: { tolerance?: number } = {},
@@ -1095,7 +1096,7 @@ export function expectMidiOut(
  * Chain form: `expect(result).toHaveBalancedMidi(portName, opts?)` (`@unworklet/test/extend`).
  */
 export function expectMidiBalance(
-  result: RenderOfflineResult,
+  result: RenderResultLike,
   portName: string,
   opts: { hangingNotes?: number } = {},
 ): void {

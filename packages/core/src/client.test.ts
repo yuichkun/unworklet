@@ -12,7 +12,7 @@
  *   control exactly when the ready ack is dispatched
  */
 
-import { expect, test, vi } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 
 import { createNode, inspect } from "./client.ts";
 import { getDevNodes } from "./devRegistry.ts";
@@ -343,11 +343,13 @@ const makeMockProcessor = (overrides?: {
   }>;
   migrations?: CompiledProcessor<unknown>["migrations"];
   bakedSampleRate?: number;
+  id?: string;
 }): CompiledProcessor<unknown> =>
   ({
     graph: {} as never,
     schemaHash: "test",
     migrations: overrides?.migrations,
+    ...(overrides && "id" in overrides ? { id: overrides.id } : {}),
     worklet: {
       initialize: () => {},
       process: () => true,
@@ -373,12 +375,39 @@ const makeMockProcessor = (overrides?: {
     __compiledProcessor: undefined,
   }) as unknown as CompiledProcessor<unknown>;
 
+/**
+ * Nodes handed out by `startCreate`, disposed after every test.
+ *
+ * A subscribed node keeps a drain loop armed until `dispose()`, and in a realm
+ * without `requestAnimationFrame` — which is every test that does not install
+ * the rAF mock — that loop is a self-renewing 250 ms timer. Left running, it
+ * fires inside a LATER test and arms itself against whatever scheduler that
+ * test installed, so a test asserting on the rAF mock sees a poll it never
+ * made. Disposal here is idempotent, so a test that tears its own node down
+ * loses nothing.
+ */
+const liveNodes: Array<{ dispose: () => void }> = [];
+
+afterEach(() => {
+  for (const node of liveNodes.splice(0)) {
+    try {
+      node.dispose();
+    } catch {
+      // The test may already have restored the globals the node was built on.
+    }
+  }
+});
+
 const startCreate = async <T>(fn: () => Promise<T>, fire: () => void): Promise<T> => {
   const promise = fn();
   // Allow microtasks (= addModule + fetch) to resolve before firing ready.
   await new Promise((r) => setTimeout(r, 0));
   fire();
-  return promise;
+  const created = await promise;
+  if (typeof (created as { dispose?: unknown } | null)?.dispose === "function") {
+    liveNodes.push(created as { dispose: () => void });
+  }
+  return created;
 };
 
 test("createNode throws when processor has no moduleUrl", async () => {
@@ -2536,11 +2565,65 @@ test("node.events.<name>.on: f64 / i64 / bool fields are delivered as plain JS v
   }
 });
 
+/**
+ * Build a postMessage-path egress frame (`egressFrame.ts` wire format) the way
+ * the worklet's `postEgressFrame` would — for injecting into the port listener.
+ */
+const buildEgressFrame = (
+  events: Array<{
+    ringIndex: number;
+    head: number;
+    overflowCount: number;
+    slotSize: number;
+    slotsBytes: Uint8Array;
+    contentBytes?: Uint8Array;
+  }>,
+  midis: Array<{
+    ringIndex: number;
+    head: number;
+    overflowCount: number;
+    slotsBytes: Uint8Array;
+    sysexBytes?: Uint8Array;
+  }>,
+): ArrayBuffer => {
+  const align4 = (n: number): number => (n + 3) & ~3;
+  let total = 8;
+  for (const s of events)
+    total += 20 + s.slotsBytes.byteLength + align4(s.contentBytes?.byteLength ?? 0);
+  for (const s of midis)
+    total += 20 + s.slotsBytes.byteLength + align4(s.sysexBytes?.byteLength ?? 0);
+  const buf = new ArrayBuffer(total);
+  const dv = new DataView(buf);
+  const u8 = new Uint8Array(buf);
+  dv.setUint32(0, events.length, true);
+  dv.setUint32(4, midis.length, true);
+  let cursor = 8;
+  const writeSection = (
+    s: { ringIndex: number; head: number; overflowCount: number; slotsBytes: Uint8Array },
+    slotSize: number,
+    extra: Uint8Array | undefined,
+  ): void => {
+    dv.setUint32(cursor, s.ringIndex, true);
+    dv.setInt32(cursor + 4, s.head, true);
+    dv.setUint32(cursor + 8, s.slotsBytes.byteLength / slotSize, true);
+    dv.setInt32(cursor + 12, s.overflowCount, true);
+    dv.setUint32(cursor + 16, extra?.byteLength ?? 0, true);
+    cursor += 20;
+    u8.set(s.slotsBytes, cursor);
+    cursor += s.slotsBytes.byteLength;
+    if (extra !== undefined) u8.set(extra, cursor);
+    cursor = align4(cursor + (extra?.byteLength ?? 0));
+  };
+  for (const s of events) writeSection(s, s.slotSize, s.contentBytes);
+  for (const s of midis) writeSection(s, 8, s.sysexBytes);
+  return buf;
+};
+
 test("node.events.<name>.on: postMessage transport updates subscribers and diagnostics immediately via port.onmessage", async () => {
-  // postMessage path: the worklet posts `{ kind: 'event', ringIndex,
-  // newSlotsBytes, newSlotCount, overflowCount }`. The main side decodes the
-  // payload via onEventMessage, fires subscribers immediately, and mirrors
-  // overflowCount. No rAF flush needed.
+  // postMessage path: the worklet posts one `{ kind: 'egress' }` frame per
+  // quantum (`egressFrame.ts`). The main side decodes it via onEgressMessage,
+  // fires subscribers immediately, mirrors overflowCount, and returns the
+  // buffer with consumed-tail acks. No rAF flush needed.
   const raf = installRafMock();
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   try {
@@ -2550,31 +2633,77 @@ test("node.events.<name>.on: postMessage transport updates subscribers and diagn
     );
     const calls: unknown[] = [];
     node.events["peak"]!.on((p) => calls.push(p));
-    // Build a newSlotsBytes buffer for 1 slot (atSample i32 + level f32 = 8 bytes)
-    const slotBuf = new ArrayBuffer(8);
-    const view = new DataView(slotBuf);
-    view.setInt32(0, 3, true);
-    view.setFloat32(4, 0.5, true);
-    // simulate an event message dispatch via the port listener
+    // One slot (atSample i32 + level f32 = 8 bytes), producer head at 1.
+    const slotBytes = new Uint8Array(8);
+    const slotView = new DataView(slotBytes.buffer);
+    slotView.setInt32(0, 3, true);
+    slotView.setFloat32(4, 0.5, true);
+    const frame = buildEgressFrame(
+      [{ ringIndex: 0, head: 1, overflowCount: 7, slotSize: 8, slotsBytes: slotBytes }],
+      [],
+    );
+    // Capture the recycle ack the client posts back after consuming.
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (m: unknown) => posted.push(m);
     for (const listener of h.lastNode!.port.__listeners) {
-      listener({
-        data: {
-          kind: "event",
-          ringIndex: 0,
-          newSlotsBytes: slotBuf,
-          newSlotCount: 1,
-          overflowCount: 7,
-        },
-      } as MessageEvent);
+      listener({ data: { kind: "egress", buffer: frame } } as MessageEvent);
     }
     expect(calls).toEqual([{ atSample: 3, level: 0.5 }]);
     expect(node.events["peak"]!.diagnostics.overflowCount()).toBe(7);
+    // The buffer went back to the pool with the consumed tail (= head).
+    expect(posted).toEqual([
+      { kind: "egress-recycle", buffer: frame, eventTails: [[0, 1]], midiTails: [] },
+    ]);
     // rAF flush produces no additional fires (port-driven, no polling needed)
     raf.flush();
     expect(calls).toEqual([{ atSample: 3, level: 0.5 }]);
   } finally {
     h.cleanup();
     raf.restore();
+  }
+});
+
+test("egress frame: an out-of-range ring index stops the parse and a subscriber-less section still acks — the buffer always recycles", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ eventRings: [peakEventRing] })),
+      h.fireReady,
+    );
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (m: unknown) => posted.push(m);
+
+    // Out-of-range ring index: the section cannot be attributed, so the parse
+    // stops — but the buffer must still return to the pool (an unreturned
+    // buffer would shrink the pool forever).
+    const bogus = buildEgressFrame(
+      [{ ringIndex: 5, head: 1, overflowCount: 0, slotSize: 8, slotsBytes: new Uint8Array(8) }],
+      [],
+    );
+    for (const l of h.lastNode!.port.__listeners) {
+      l({ data: { kind: "egress", buffer: bogus } } as MessageEvent);
+    }
+    expect(posted).toEqual([
+      { kind: "egress-recycle", buffer: bogus, eventTails: [], midiTails: [] },
+    ]);
+
+    // A valid section with zero subscribers: no dispatch, but the consumed
+    // tail is still acknowledged (the data was delivered to main; nobody
+    // listening is main's business, not the producer's).
+    posted.length = 0;
+    const quiet = buildEgressFrame(
+      [{ ringIndex: 0, head: 2, overflowCount: 0, slotSize: 8, slotsBytes: new Uint8Array(16) }],
+      [],
+    );
+    for (const l of h.lastNode!.port.__listeners) {
+      l({ data: { kind: "egress", buffer: quiet } } as MessageEvent);
+    }
+    expect(posted).toEqual([
+      { kind: "egress-recycle", buffer: quiet, eventTails: [[0, 2]], midiTails: [] },
+    ]);
+    expect(node.events["peak"]).toBeDefined();
+  } finally {
+    h.cleanup();
   }
 });
 
@@ -2726,6 +2855,50 @@ test("node.events.<name>.emit(payload): overflow path increments overflowCount w
     expect(Atomics.load(header, 2)).toBe(1);
     expect(node.events["preset"].diagnostics.overflowCount()).toBe(1);
   } finally {
+    h.cleanup();
+  }
+});
+
+test("node.events.<name>.emit(payload): a worklet drain between the occupancy read and the tail advance is not counted as overflow", async () => {
+  // The ring reads full, then the worklet drains it before this sender writes
+  // the tail. Nothing was overwritten in that interleaving, so the drop-oldest
+  // must stand down — an overflowCount that ticks here reports a loss that did
+  // not happen, and overflowCount is what a user reads to size their ring.
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  const realLoad = Atomics.load;
+  try {
+    const smallRing = { ...presetMessageRing, capacity: 4 };
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ messageRings: [smallRing] })),
+      h.fireReady,
+    );
+    const msgBuf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .messageRingsBuffer as SharedArrayBuffer;
+    const header = new Int32Array(msgBuf, 0, 3);
+    const send = node.events["preset"].emit;
+    for (let k = 1; k <= 4; k++) send({ slot: k });
+    expect(realLoad(header, 0)).toBe(4); // head, ring exactly full
+
+    let fired = false;
+    Atomics.load = ((view: Int32Array, index: number): number => {
+      const value = realLoad(view, index);
+      if (!fired && index === 1 && view.buffer === msgBuf) {
+        fired = true;
+        // The worklet consumes the whole ring right after this read.
+        Atomics.store(view, 1, realLoad(view, 0));
+      }
+      return value;
+    }) as unknown as typeof Atomics.load;
+    send({ slot: 5 });
+    Atomics.load = realLoad;
+
+    expect(fired).toBe(true);
+    expect(Atomics.load(header, 0)).toBe(5); // head advanced by the send
+    expect(Atomics.load(header, 1)).toBe(4); // the worklet's drain stands
+    expect(Atomics.load(header, 2)).toBe(0); // nothing was dropped
+    expect(node.events["preset"].diagnostics.overflowCount()).toBe(0);
+  } finally {
+    Atomics.load = realLoad;
     h.cleanup();
   }
 });
@@ -2910,6 +3083,68 @@ test("node.midi.<in>.send: postMessage transport encodes to wire bytes and deliv
   }
 });
 
+const midiInSysexFixture = {
+  name: "sin",
+  direction: "in" as const,
+  wasmRingBase: 1024,
+  capacity: 256,
+  sysex: { wasmBase: 8192, perChunk: 1024, chunks: 16 },
+};
+
+test("node.midi.<in>.send: sysex larger than the slot content limit throws at the API boundary (never truncate-and-deliver)", async () => {
+  // A truncated sysex loses its 0xF7 terminator and corrupts downstream device
+  // state — worse than no message. `send` is main-thread JS, so the boundary
+  // can throw; nothing reaches the ring.
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ midiRings: [midiInSysexFixture] })),
+      h.fireReady,
+    );
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (m: unknown) => posted.push(m);
+    const oversized = new Uint8Array(1021); // limit is perChunk - 4 = 1020
+    oversized[0] = 0xf0;
+    expect(() => node.midi["sin"]!.send({ type: "sysex", data: oversized })).toThrow(
+      /sysex-payload-too-large/,
+    );
+    expect(() => node.midi["sin"]!.send({ type: "sysex", data: oversized })).toThrow(/1020/);
+    expect(posted).toEqual([]);
+    // At the limit it goes through.
+    const maxed = new Uint8Array(1020);
+    maxed[0] = 0xf0;
+    expect(() => node.midi["sin"]!.send({ type: "sysex", data: maxed })).not.toThrow();
+    expect(posted.length).toBe(1);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.midi.<in>.send: sysex to a port with no sysex region throws instead of corrupting the ring", async () => {
+  // A port's sysex content region exists only when the processor handles or
+  // emits sysex on it. Pre-guard, the SAB path advanced `head` over a slot it
+  // never wrote — a consumer then decoded stale bytes (issue #19).
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ midiRings: [midiInFixture] })),
+      h.fireReady,
+    );
+    const options = h.lastNode!.__constructorRecord.options.processorOptions as {
+      midiRingsBuffer?: SharedArrayBuffer;
+      midiRingSabOffsets?: number[];
+    };
+    expect(() =>
+      node.midi["in"]!.send({ type: "sysex", data: new Uint8Array([0xf0, 0x7e, 0xf7]) }),
+    ).toThrow(/sysex-unsupported-port/);
+    // The ring header is untouched: head still 0, no stale slot published.
+    const header = new Int32Array(options.midiRingsBuffer!, options.midiRingSabOffsets![0]!, 3);
+    expect(header[0]).toBe(0);
+  } finally {
+    h.cleanup();
+  }
+});
+
 test("node.midi.<out>.onEvent: postMessage transport decodes a midiOut slot and dispatches to matching type handler", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   try {
@@ -2919,16 +3154,18 @@ test("node.midi.<out>.onEvent: postMessage transport decodes a midiOut slot and 
     );
     const got: MidiEvent[] = [];
     node.midi["out"]!.onEvent("noteOn", (e) => got.push(e));
-    const slot = new ArrayBuffer(8);
-    const dv = new DataView(slot);
+    const slotBytes = new Uint8Array(8);
+    const dv = new DataView(slotBytes.buffer);
     dv.setUint8(0, 0x95); // noteOn channel 5
     dv.setUint8(1, 64);
     dv.setUint8(2, 120);
     dv.setUint32(4, 7, true);
+    const frame = buildEgressFrame(
+      [],
+      [{ ringIndex: 0, head: 1, overflowCount: 0, slotsBytes: slotBytes }],
+    );
     for (const l of h.lastNode!.port.__listeners) {
-      l({
-        data: { kind: "midiOut", ringIndex: 0, newSlotsBytes: slot, newSlotCount: 1 },
-      } as MessageEvent);
+      l({ data: { kind: "egress", buffer: frame } } as MessageEvent);
     }
     expect(got).toEqual([{ type: "noteOn", channel: 5, note: 64, velocity: 120 }]);
   } finally {
@@ -2948,15 +3185,17 @@ test("node.midi.<out>.onEvent: handler does not fire when the event type does no
     node.midi["out"]!.onEvent("noteOn", (e) => notes.push(e));
     node.midi["out"]!.onEvent("cc", (e) => ccs.push(e));
     // a cc slot — only the cc handler should fire
-    const slot = new ArrayBuffer(8);
-    const dv = new DataView(slot);
+    const slotBytes = new Uint8Array(8);
+    const dv = new DataView(slotBytes.buffer);
     dv.setUint8(0, 0xb2); // cc channel 2
     dv.setUint8(1, 74);
     dv.setUint8(2, 33);
+    const frame = buildEgressFrame(
+      [],
+      [{ ringIndex: 0, head: 1, overflowCount: 0, slotsBytes: slotBytes }],
+    );
     for (const l of h.lastNode!.port.__listeners) {
-      l({
-        data: { kind: "midiOut", ringIndex: 0, newSlotsBytes: slot, newSlotCount: 1 },
-      } as MessageEvent);
+      l({ data: { kind: "egress", buffer: frame } } as MessageEvent);
     }
     expect(notes).toEqual([]);
     expect(ccs).toEqual([{ type: "cc", channel: 2, controller: 74, value: 33 }]);
@@ -3552,9 +3791,12 @@ test("devtools on: createNode auto-registers, devDump round-trips, dispose unreg
         },
       } as MessageEvent);
     }
-    const slots = await dumpPromise;
-    expect(slots).toHaveLength(1);
-    expect(slots[0]!.name).toBe("meterL");
+    const dump = await dumpPromise;
+    expect(dump.slots).toHaveLength(1);
+    expect(dump.slots[0]!.name).toBe("meterL");
+    // The worklet reports the render-health counter alongside the slots; a
+    // response without one reads as a healthy render.
+    expect(dump.scrubbedSamples).toBe(0);
 
     node.dispose();
     expect(getDevNodes().some((x) => x.node === node)).toBe(false);
@@ -3638,5 +3880,277 @@ test("rAF loop does not re-arm after dispose() is called from inside a subscribe
   } finally {
     h.cleanup();
     raf.restore();
+  }
+});
+
+// ── drain scheduler: hidden-tab / no-rAF fallback (issue #26) ────────────────
+// rAF throttles to ~0 in a hidden tab while the audio thread keeps emitting
+// into the rings (drop-oldest) — an rAF-only drain loses MIDI note-offs (stuck
+// notes) exactly when the UI goes away. The scheduler must fall back to a
+// timer whenever rAF is unavailable OR the page is hidden, flush immediately
+// on visibility transitions, and tear its listener down on dispose.
+
+type FakeDocument = {
+  visibilityState: "visible" | "hidden";
+  addEventListener: (kind: string, fn: () => void) => void;
+  removeEventListener: (kind: string, fn: () => void) => void;
+  __listeners: Array<() => void>;
+  __fire: () => void;
+};
+
+const installFakeDocument = (
+  initial: "visible" | "hidden",
+): { doc: FakeDocument; restore: () => void } => {
+  const listeners: Array<() => void> = [];
+  const doc: FakeDocument = {
+    visibilityState: initial,
+    addEventListener: (kind, fn) => {
+      if (kind === "visibilitychange") listeners.push(fn);
+    },
+    removeEventListener: (kind, fn) => {
+      const i = listeners.indexOf(fn);
+      if (i >= 0) listeners.splice(i, 1);
+    },
+    __listeners: listeners,
+    __fire: () => {
+      // oxlint-disable-next-line unicorn/no-useless-spread -- snapshot against listener removal during dispatch
+      for (const fn of [...listeners]) fn();
+    },
+  };
+  const target = globalThis as unknown as { document?: unknown };
+  const prev = target.document;
+  const had = "document" in target;
+  target.document = doc;
+  return {
+    doc,
+    restore: () => {
+      if (had) target.document = prev;
+      else delete target.document;
+    },
+  };
+};
+
+const publishFixture = {
+  publishSlots: [{ name: "v", type: "i32" as const, sharedOffset: 0, counterOffset: 4 }],
+};
+
+test("drain scheduler: without requestAnimationFrame, a timer still drives the drain (no-rAF realm)", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  const target = globalThis as unknown as { requestAnimationFrame?: (cb: () => void) => number };
+  const prevRaf = target.requestAnimationFrame;
+  delete target.requestAnimationFrame;
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor(publishFixture)),
+      h.fireReady,
+    );
+    const buf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .publishBuffer as SharedArrayBuffer;
+    const view = new Int32Array(buf);
+    const calls: unknown[] = [];
+    // Fake timers AFTER the ready handshake (which needs real timers), BEFORE
+    // subscribe (which arms the drain timer).
+    vi.useFakeTimers();
+    node.state["v"]!.subscribe((value) => calls.push(value));
+    Atomics.store(view, 0, 42);
+    Atomics.store(view, 2, 1);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(calls).toEqual([42]);
+    node.dispose();
+  } finally {
+    vi.useRealTimers();
+    h.cleanup();
+    if (prevRaf !== undefined) target.requestAnimationFrame = prevRaf;
+  }
+});
+
+test("drain scheduler: a hidden page drains on the timer even though rAF never fires", async () => {
+  const fakeDoc = installFakeDocument("hidden");
+  const raf = installRafMock(); // present but never flushed = the throttled hidden tab
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor(publishFixture)),
+      h.fireReady,
+    );
+    const buf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .publishBuffer as SharedArrayBuffer;
+    const view = new Int32Array(buf);
+    const calls: unknown[] = [];
+    vi.useFakeTimers();
+    node.state["v"]!.subscribe((value) => calls.push(value));
+    Atomics.store(view, 0, 7);
+    Atomics.store(view, 2, 1);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(calls).toEqual([7]);
+    node.dispose();
+  } finally {
+    vi.useRealTimers();
+    h.cleanup();
+    raf.restore();
+    fakeDoc.restore();
+  }
+});
+
+test("drain scheduler: visibility transitions flush immediately and swap the backend", async () => {
+  const fakeDoc = installFakeDocument("visible");
+  const raf = installRafMock();
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor(publishFixture)),
+      h.fireReady,
+    );
+    const buf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .publishBuffer as SharedArrayBuffer;
+    const view = new Int32Array(buf);
+    const calls: unknown[] = [];
+    vi.useFakeTimers();
+    node.state["v"]!.subscribe((value) => calls.push(value));
+    expect(raf.pending).toBeGreaterThan(0); // visible = rAF backend
+
+    // Emissions land, then the tab goes hidden: the transition itself flushes
+    // (no rAF tick, no timer advance needed).
+    Atomics.store(view, 0, 1);
+    Atomics.store(view, 2, 1);
+    fakeDoc.doc.visibilityState = "hidden";
+    fakeDoc.doc.__fire();
+    expect(calls).toEqual([1]);
+
+    // While hidden the timer keeps draining.
+    Atomics.store(view, 0, 2);
+    Atomics.store(view, 2, 2);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(calls).toEqual([1, 2]);
+
+    // Back to visible: the transition flushes and re-arms rAF.
+    Atomics.store(view, 0, 3);
+    Atomics.store(view, 2, 3);
+    fakeDoc.doc.visibilityState = "visible";
+    fakeDoc.doc.__fire();
+    expect(calls).toEqual([1, 2, 3]);
+    expect(raf.pending).toBeGreaterThan(0);
+    node.dispose();
+  } finally {
+    vi.useRealTimers();
+    h.cleanup();
+    raf.restore();
+    fakeDoc.restore();
+  }
+});
+
+test("drain scheduler: dispose removes the visibilitychange listener", async () => {
+  const fakeDoc = installFakeDocument("visible");
+  const raf = installRafMock();
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor(publishFixture)),
+      h.fireReady,
+    );
+    node.state["v"]!.subscribe(() => {});
+    expect(fakeDoc.doc.__listeners.length).toBe(1);
+    node.dispose();
+    expect(fakeDoc.doc.__listeners.length).toBe(0);
+  } finally {
+    h.cleanup();
+    raf.restore();
+    fakeDoc.restore();
+  }
+});
+
+test("drain scheduler: a failed createNode leaves no visibilitychange listener behind", async () => {
+  // The caller of a rejected createNode has no handle to dispose, so a listener
+  // registered before the node exists is unreachable — and it retains the whole
+  // creation closure. Retrying the connection would stack one per attempt.
+  const fakeDoc = installFakeDocument("visible");
+  const raf = installRafMock();
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  const RealNode = (globalThis as Record<string, unknown>)["AudioWorkletNode"];
+  (globalThis as Record<string, unknown>)["AudioWorkletNode"] = class {
+    constructor() {
+      throw new Error("AudioWorkletNode construction failed");
+    }
+  };
+  try {
+    await expect(createNode(h.context as never, makeMockProcessor(publishFixture))).rejects.toThrow(
+      /AudioWorkletNode construction failed/,
+    );
+    expect(fakeDoc.doc.__listeners.length).toBe(0);
+  } finally {
+    (globalThis as Record<string, unknown>)["AudioWorkletNode"] = RealNode;
+    h.cleanup();
+    raf.restore();
+    fakeDoc.restore();
+  }
+});
+
+// ── restore identity gate (issue #28) ────────────────────────────────────────
+// schemaHash hashes declarations only, so two logically different processors
+// with the same slot schema share it — a lowpass preset restored into a
+// distortion landed in its slots and reported ok:true. When both the blob and
+// the processor carry an id, a mismatch refuses BEFORE anything reaches the
+// worklet; id-less blobs/processors keep the legacy matching.
+
+test("restore refuses a blob whose processor id differs (nothing reaches the worklet)", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ id: "distortion" })),
+      h.fireReady,
+    );
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (m: unknown) => posted.push(m);
+    const blob = encodeSnapshot("test", null, [], "lowpass"); // schemaHash matches, id does not
+    const result = await node.restore(blob);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.step).toBe("identity");
+      expect(result.error.message).toContain("processor-mismatch");
+      expect(result.error.message).toContain("lowpass");
+      expect(result.error.message).toContain("distortion");
+    }
+    expect(posted).toEqual([]); // the worklet never saw a restore request
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("restore proceeds when the blob carries no id (legacy blobs keep working)", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ id: "distortion" })),
+      h.fireReady,
+    );
+    const posted: Array<{ kind?: string }> = [];
+    h.lastNode!.port.postMessage = (m: unknown) => posted.push(m as { kind?: string });
+    const legacy = encodeSnapshot("test", null, []); // no id
+    void node.restore(legacy); // resolves only when the worklet answers; the send is the assertion
+    await new Promise((r) => setTimeout(r, 0));
+    expect(posted.map((m) => m.kind)).toEqual(["restore"]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.snapshot() stamps the processor id into the blob", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ id: "my-synth" })),
+      h.fireReady,
+    );
+    const pending = node.snapshot();
+    await new Promise((r) => setTimeout(r, 0));
+    // Answer the worklet's snapshot request through the port listeners.
+    const req = 0; // first request id
+    for (const listener of h.lastNode!.port.__listeners) {
+      listener({ data: { kind: "snapshot-response", requestId: req, slots: [] } });
+    }
+    const blob = await pending;
+    expect(decodeSnapshot(blob).processorId).toBe("my-synth");
+  } finally {
+    h.cleanup();
   }
 });

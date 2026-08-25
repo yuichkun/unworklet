@@ -20,6 +20,9 @@ import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { ANALYSIS_ARTIFACT_MAX_BYTES, partitionAnalysisArtifacts } from "./analysis-artifacts.ts";
+import { withExtensionHint } from "./native-import-hint.ts";
+
 import { compile, extractWorkletMeta } from "@unworklet/core";
 import type { CompiledProcessor, WorkletNamespace } from "@unworklet/core";
 import {
@@ -260,7 +263,11 @@ const computeProcessorName = (
  */
 const importFresh = async (sourcePath: string): Promise<Record<string, unknown>> => {
   const s = await stat(sourcePath);
-  return (await import(`${sourcePath}?t=${s.mtimeMs}`)) as Record<string, unknown>;
+  try {
+    return (await import(`${sourcePath}?t=${s.mtimeMs}`)) as Record<string, unknown>;
+  } catch (err) {
+    throw withExtensionHint(err);
+  }
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -411,8 +418,13 @@ const resolveDevtoolsUiRoot = (): string => {
 
 export type UnworkletPluginOptions = {
   /**
-   * Whether to emit analysis JSON artifacts to `dist/` during `vite build`.
-   * Default `true`.
+   * Whether to emit analysis JSON artifacts (graph / memory / diagnostics /
+   * schema-hash) to `dist/` during `vite build`. Default `false`: the graph
+   * DAG scales with build-time-unrolled loops and has reached hundreds of MB
+   * in `dist/` for ordinary tap/voice unrolls — diagnostic data does not
+   * belong in a deployed bundle by default. Opt in when you consume the
+   * artifacts; even then, any single artifact past ~8 MB is skipped with a
+   * warning.
    */
   emitAnalysisArtifacts?: boolean;
   /**
@@ -555,25 +567,35 @@ const pickCompiledProcessor = (
   sourceModule: Record<string, unknown>,
   sourcePath: string,
 ): PickedProcessor => {
-  const matches: string[] = [];
-  let found: { exportName: string; processor: CompiledProcessor<unknown> } | undefined;
+  // Count DISTINCT processor VALUES, not export bindings: `export const wave =
+  // defineProcessor(...); export default wave;` is one processor under two
+  // names (the `?worklet` import is a default import, tests import the named
+  // binding — both needs pull toward the alias shape, issue #42). Two
+  // separately-created processors still reject, even if their graphs match.
+  const bindings = new Map<CompiledProcessor<unknown>, string[]>();
   for (const key of Object.keys(sourceModule)) {
-    if (isCompiledProcessor(sourceModule[key])) {
-      matches.push(key);
-      found = { exportName: key, processor: sourceModule[key] as CompiledProcessor<unknown> };
-    }
+    const value = sourceModule[key];
+    if (!isCompiledProcessor(value)) continue;
+    const names = bindings.get(value);
+    if (names === undefined) bindings.set(value, [key]);
+    else names.push(key);
   }
-  if (matches.length === 0) {
+  if (bindings.size === 0) {
     throw new Error(
       `@unworklet/unplugin: ${sourcePath} has no defineProcessor exports (a named export of \`defineProcessor(...)\` return value is required).`,
     );
   }
-  if (matches.length > 1) {
+  if (bindings.size > 1) {
+    const all = [...bindings.values()].flat();
     throw new Error(
-      `@unworklet/unplugin: ${sourcePath} has multiple defineProcessor exports (${matches.join(", ")}); v1.0.0 supports one processor per file.`,
+      `@unworklet/unplugin: ${sourcePath} has multiple defineProcessor exports (${all.join(", ")}); v1.0.0 supports one processor per file.`,
     );
   }
-  return found!;
+  const [processor, names] = [...bindings.entries()][0]!;
+  // The canonical name feeds `registerProcessor` / display naming — prefer the
+  // named binding over its `default` alias.
+  const exportName = names.find((n) => n !== "default") ?? names[0]!;
+  return { exportName, processor };
 };
 
 const assetBaseName = (sourcePath: string): string => {
@@ -585,15 +607,6 @@ const assetBaseName = (sourcePath: string): string => {
   if (base.endsWith(".uwk")) base = base.slice(0, -".uwk".length);
   return base;
 };
-
-/**
- * `JSON.stringify` replacer that renders a `bigint` (= an `i64` literal / state
- * `initial`) as a `"<n>n"` string — matching `schemaHash.ts`'s convention — so the
- * build-time analysis artifacts serialize as valid JSON instead of throwing
- * "Do not know how to serialize a BigInt".
- */
-const bigintReplacer = (_key: string, value: unknown): unknown =>
-  typeof value === "bigint" ? `${value}n` : value;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Phase 6 final step 5-F DevTools — collapse everything into a single dock
@@ -791,7 +804,7 @@ const setupDevtools = async (
  *   `vp dev`) is filled in a follow-up sub-step.
  */
 function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
-  const emitAnalysisArtifacts = options?.emitAnalysisArtifacts ?? true;
+  const emitAnalysisArtifacts = options?.emitAnalysisArtifacts ?? false;
   const crossOriginIsolation = options?.crossOriginIsolation ?? true;
   const uiRoot = resolveDevtoolsUiRoot();
   let isServe = false;
@@ -1118,7 +1131,7 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
         return `
 import { getDevNodes, onDevNodesChanged } from "@unworklet/core/dev";
 import { decodeScalar, decodeTypedArray } from "@unworklet/core";
-import { appendBounded, downsampleTo, drainInjects, foldProxyGraph, frameLevels, normalizeFreqDb, slotMemory, splitSlots } from "@unworklet/unplugin/devbridge";
+import { appendBounded, downsampleTo, drainInjects, foldProxyGraph, frameLevels, normalizeFreqDb, slotMemory, splitSlots, toLoggableMidiEvent, toSendableMidiEvent } from "@unworklet/unplugin/devbridge";
 import { getDevToolsClientContext } from "@vitejs/devtools-kit/client";
 
 globalThis.__unworklet_getDevNodes = getDevNodes;
@@ -1218,7 +1231,7 @@ const pollState = async () => {
     const nodes = [];
     for (const h of getDevNodes()) {
       let slots;
-      try { slots = await h.devDump(); } catch (e) { slots = []; }
+      try { slots = (await h.devDump()).slots; } catch (e) { slots = []; }
       // splitSlots (unit-tested) decodes scalars + downsamples buffers.
       const { scalars, buffers } = splitSlots(slots, BUFFER_MAX_POINTS);
       nodes.push({ id: idOf(h.node.node), displayName: h.displayName || h.processorName, scalars, buffers });
@@ -1291,7 +1304,7 @@ const pollSignals = async () => {
     }
     let mem = memoryByNode.get(id);
     if (!mem) {
-      try { mem = slotMemory(await h.devDump()); memoryByNode.set(id, mem); }
+      try { mem = slotMemory((await h.devDump()).slots); memoryByNode.set(id, mem); }
       catch (e) { mem = { entries: [], totalBytes: 0 }; }
     }
     nodes.push({ id, displayName: h.displayName || h.processorName, ports, memory: mem.entries, memoryBytes: mem.totalBytes });
@@ -1327,7 +1340,6 @@ let lastMidiSig = "";
 const midiTapped = new WeakSet();
 let lastInjectSeq = 0;
 let midiInjectSubscribed = false;
-const eventToJson = (e) => (e && e.type === "sysex" && e.data ? { type: "sysex", data: Array.from(e.data) } : e);
 const tapMidiOut = (h) => {
   const awn = h.node.node;
   if (midiTapped.has(awn)) return;
@@ -1341,7 +1353,7 @@ const tapMidiOut = (h) => {
     for (const t of MIDI_TYPES) {
       try {
         port.onEvent(t, (e) => {
-          midiLog = appendBounded(midiLog, { seq: ++midiSeq, ts: Date.now(), dir: "out", nodeId: id, port: pm.name, event: eventToJson(e) }, MIDI_LOG_MAX);
+          midiLog = appendBounded(midiLog, { seq: ++midiSeq, ts: Date.now(), dir: "out", nodeId: id, port: pm.name, event: toLoggableMidiEvent(e) }, MIDI_LOG_MAX);
         });
       } catch (err) { /* dev only */ }
     }
@@ -1364,9 +1376,14 @@ const ensureMidiInjectSub = () => {
         if (!h) continue;
         const port = (h.node.midi || {})[c.port];
         if (!port || typeof port.send !== "function") continue;
+        // Panel events arrive RPC-serialized (sysex data = number[]); convert
+        // to the Uint8Array shape send() expects, refusing malformed bytes
+        // rather than letting Uint8Array.from wrap them into a different message.
+        const sendable = toSendableMidiEvent(c.event);
+        if (!sendable) { console.warn("unworklet devtools: dropped malformed MIDI inject", c.event); continue; }
         try {
-          port.send(c.event);
-          midiLog = appendBounded(midiLog, { seq: ++midiSeq, ts: Date.now(), dir: "inject", nodeId: c.nodeId, port: c.port, event: c.event }, MIDI_LOG_MAX);
+          port.send(sendable);
+          midiLog = appendBounded(midiLog, { seq: ++midiSeq, ts: Date.now(), dir: "inject", nodeId: c.nodeId, port: c.port, event: toLoggableMidiEvent(sendable) }, MIDI_LOG_MAX);
         } catch (err) { /* dev only */ }
       }
     };
@@ -1615,26 +1632,25 @@ ensureClient();
         bakedSampleRate = result.sampleRate;
 
         if (emitAnalysisArtifacts) {
-          this.emitFile({
-            type: "asset",
-            name: `${baseName}.graph.json`,
-            source: `${JSON.stringify(result.graph, bigintReplacer, 2)}\n`,
-          });
-          this.emitFile({
-            type: "asset",
-            name: `${baseName}.memory.json`,
-            source: `${JSON.stringify(result.memory, bigintReplacer, 2)}\n`,
-          });
-          this.emitFile({
-            type: "asset",
-            name: `${baseName}.diagnostics.json`,
-            source: `${JSON.stringify(result.diagnostics, bigintReplacer, 2)}\n`,
-          });
-          this.emitFile({
-            type: "asset",
-            name: `${baseName}.schema-hash.json`,
-            source: `${JSON.stringify({ schemaHash: result.schemaHash }, bigintReplacer, 2)}\n`,
-          });
+          // Opt-in only (default false): the graph DAG serializes to hundreds
+          // of MB for loop-heavy processors, and dist/ is what deploy pipelines
+          // ship. Values are handed over unserialized so the gate can charge
+          // the cap as it walks them and abandon one that cannot fit, rather
+          // than building the string first and measuring it (issue #40).
+          const { emit, skipped } = partitionAnalysisArtifacts([
+            { name: `${baseName}.graph.json`, value: result.graph },
+            { name: `${baseName}.memory.json`, value: result.memory },
+            { name: `${baseName}.diagnostics.json`, value: result.diagnostics },
+            { name: `${baseName}.schema-hash.json`, value: { schemaHash: result.schemaHash } },
+          ]);
+          for (const artifact of emit) {
+            this.emitFile({ type: "asset", name: artifact.name, source: artifact.source });
+          }
+          for (const s of skipped) {
+            console.warn(
+              `@unworklet/unplugin: skipped analysis artifact ${s.name} — past the ${ANALYSIS_ARTIFACT_MAX_BYTES / 1024 / 1024} MB cap. The graph DAG scales with build-time-unrolled loops; consume it from a dev-side tool instead of dist/.`,
+            );
+          }
         }
       }
 

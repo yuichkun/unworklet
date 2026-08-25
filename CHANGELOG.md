@@ -7,6 +7,185 @@ lockstep, so one entry covers all of them.
 This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 `^0.1.0` range semantics (`^0.1.0` accepts `0.1.x` and refuses `0.2.0`).
 
+## 0.3.0 — unreleased
+
+The correctness-and-honesty batch: the audio-thread transport gains its missing
+consumer feedback and loses its last per-quantum allocation, buffer DSP gets
+the same numeric hygiene as scalar state, and several declared-but-broken or
+silently-lossy surfaces now refuse loudly instead. Eight changes are breaking —
+read the migrations.
+
+### Breaking
+
+**`publish` on a buffer is rejected at graph capture.** It was accepted but
+inert — the publish pipeline is scalar-only, so the slot never appeared on
+`node.state` and the first symptom was a distant `TypeError`. A build that
+declared it now fails with stable ID `buffer-publish-unsupported` (the type
+surface `BufferExposeOptions` omits `publish` too). Migration: remove the
+`publish` from buffer `.expose(...)` and fan the values you want to observe
+into scalar `state.f32(0).expose({ name, publish })` slots, or read the buffer
+back via `node.snapshot()`. Buffer publish returns as a first-class reader in
+the upcoming state/buffer rework.
+
+**`emitAnalysisArtifacts` defaults to `false`.** The graph JSON scales with
+build-time-unrolled loops and reached hundreds of MB inside `dist/` — data a
+deploy pipeline then ships. Migration: pass
+`unworklet({ emitAnalysisArtifacts: true })` if you consume the artifacts; even
+opted in, a single artifact past ~8 MB is skipped with a warning.
+
+**Sysex boundaries are enforced.** `node.midi.<name>.send()` now throws on a
+sysex payload over 1020 bytes (stable ID `sysex-payload-too-large` — a
+truncated sysex loses its 0xF7 terminator, which is worse than no message) and
+on sysex to a port with no sysex region (`sysex-unsupported-port` — the
+processor neither handles nor emits sysex there, and delivering it anyway
+corrupted the ring by advancing `head` over a slot it never wrote). An outbound
+`emitIf` follows the same rule on its `length`: a build-time-known length past
+1020 bytes, or past its own source `buffer.u8`, is a build error
+(`sysex-emit-exceeds-chunk`); a runtime length that overruns either bound drops
+the whole message and counts it. The backing buffer may be any size — the
+emitted `length` is what has to fit. Migration: split larger transfers into
+multiple messages; declare a sysex handler on ports you inject sysex into.
+
+**SIMD lane ops require a buffer of at least 4 elements.** `loadVec` /
+`storeVec` read and write 16 bytes from their offset, so a buffer holding fewer
+than 4 elements has no in-bounds offset at all — the index clamp saturated into
+an empty range and the access still crossed into the neighboring region. A
+declaration that uses them on a smaller buffer now fails at graph capture with
+stable ID `simd-buffer-too-small` (the analyzer carries the same rule for
+hand-built graphs). Migration: size the buffer to 4 or more elements, or use
+scalar `read` / `write`.
+
+**`RenderOfflineResult` carries a required `diagnostics` field.** It holds two
+counters the renderer keeps about corrections it had to make:
+`scrubbedSamples` (output samples the non-finite scrub replaced with 0 — see
+Fixed; `0` for a healthy render) and `droppedSysexMessages` (outbound sysex
+refused because its `length` would not leave whole — see the sysex entry
+above). Reading a result is unaffected, but the field is required, so anything
+that CONSTRUCTS a `RenderOfflineResult` — a hand-built test fixture — or
+deep-compares a whole result now has to account for it. Migration: add
+`diagnostics: { scrubbedSamples: 0, droppedSysexMessages: 0 }` to hand-built
+fixtures, or type them as `RenderResultLike` from `@unworklet/test`, which
+takes `diagnostics` as optional; compare the fields you care about rather than
+the whole object.
+
+**`devDump()` returns `{ slots, scrubbedSamples }`.** The dev-subpath X-ray
+(`@unworklet/core/dev`) resolved to the slot array alone, so the render-health
+counter the worklet already put on the wire had nowhere to arrive. Migration:
+read `(await handle.devDump()).slots` where the array was used directly.
+
+**A `.uwk.ts` cannot bind a name the lowering generates.** `defineProcessor`
+always, and the ambient `input` / `out` plus `audioInput` / `audioOutput` when
+the file declares no audio I/O, are written by the lowering itself — binding
+one, by declaration or by import, had the generated code resolve to it and
+produce a module that exports something other than a processor. It is a
+`uwk-reserved-binding` LowerError. Migration: rename the binding, or import it
+under an alias; declaring your own output suppresses the ambient injection, so
+`const out = audioOutput({...})` is unaffected.
+
+**Snapshot blobs are format v2.** The blob gains an optional processor
+identity block; 0.3.0 reads v1 blobs unchanged, but blobs saved by 0.3.0 are
+not readable by 0.2.x. Migration: none for upgraders; do not feed 0.3.0 blobs
+to a 0.2.x build.
+
+### Added
+
+- **`ProcessorOptions.id`** — a stable, human-chosen processor identity
+  (`defineProcessor(body, { id: "my-synth" })`, or `options({ id })` in
+  `.uwk.ts`), stamped into every snapshot blob. `schemaHash` covers
+  declarations only, so two logically different processors with the same slot
+  schema share a hash — a preset from one restored "successfully" into the
+  other and corrupted its state. When both blob and processor carry an id,
+  `restore()` refuses a mismatch with `{ ok: false, error: { step:
+"identity" } }` (stable ID `processor-mismatch`); `renderOffline`'s
+  `config.restore` throws. An id-less blob or processor matches on schema hash
+  and slot names alone, as it does without this option. `inspect()` surfaces
+  the blob's id.
+- **`renderOffline` reports what it had to correct** — see the `diagnostics`
+  entry under Breaking for the two counters and what they mean.
+- **`renderOffline` reuses compiles.** Repeat renders of the same processor at
+  the same sample rate skip the compile pipeline (~8 s reported on a mid-size
+  processor per render, which made one-render-per-test suites time out).
+  Instantiation stays fresh per render, so state never leaks between renders.
+- **`@unworklet/test` accepts hand-built results** — matcher inputs are typed
+  as `RenderResultLike` (a `RenderOfflineResult` whose `diagnostics` is
+  optional), so test fixtures built inline keep compiling.
+
+### Fixed
+
+- **A promptly-drained event or MIDI-out ring no longer reports overflow
+  forever.** The consumer's drain position never flowed back to the producer,
+  so the WASM-side `head - tail >= capacity` check saturated after `capacity`
+  lifetime emits — `overflowCount` lied upward and a slow drain lost real
+  events. Main now commits its consumed tail (atomically, wrap-safe) and the
+  worklet reads it back before each quantum, on both transports.
+- **A concurrent drain is no longer counted as an overflow.** On the SAB path,
+  `node.events.<name>.emit()` and `node.midi.<name>.send()` read the occupancy,
+  then advanced the shared tail; when the worklet drained the ring in between,
+  the advance was correctly declined but `overflowCount` ticked anyway,
+  reporting losses that never happened. The advance is now a compare-exchange
+  from the observed tail, and only the sender that wins it — the one that
+  actually overwrote a slot — counts an overflow.
+- **The postMessage fallback's audio thread no longer allocates per quantum.**
+  Event and MIDI-out egress rode fresh `Uint8Array`s and content-region
+  copies built on the audio thread every quantum; they now ride a single
+  pooled transferable frame whose buffers main pre-allocates and recycles
+  (ownership ping-pong, with consumed-tail acks piggybacked on the recycle).
+  The message envelope and its transfer list are bound once at initialize and
+  rewritten in place, so nothing on the send path allocates. Receiving a
+  returned buffer still rebinds its two views — a transferred ArrayBuffer
+  arrives as a fresh identity — but that cost is fixed rather than scaling with
+  the frame. The internal page↔worklet wire protocol changed accordingly.
+- **A hidden tab no longer loses events and MIDI (stuck notes).** The
+  main-side drain ran only on `requestAnimationFrame`, which throttles to ~0
+  in hidden tabs while the audio thread keeps emitting; the drain now falls
+  back to a timer when the page is hidden or rAF is missing, and flushes
+  immediately on visibility transitions.
+- **Buffer-backed feedback flushes subnormals; non-finite output is
+  scrubbed.** Float buffer stores (and SIMD `storeVec` lanes) flush
+  `|v| < 1e-30` to 0 like scalar state always did — a decaying delay-line tail
+  parked in the denormal range cost 10-100× CPU on the audio thread. A NaN /
+  ±Inf produced by user DSP is replaced with 0 AT THE OUTPUT ONLY (expression
+  semantics are unchanged) and counted into `scrubbedSamples`, instead of
+  propagating silence/clicks through the downstream Web Audio graph.
+- **SIMD `loadVec` / `storeVec` offsets saturate to the buffer bounds.** The
+  scalar buffer clamp never covered the vector ops: an out-of-range vector
+  access read or wrote neighboring regions, or trapped and latched permanent
+  silence. (One golden fixture's frozen PCM turned out to be the product of
+  such an out-of-bounds read.) Buffers too small to hold a lane window are
+  rejected outright — see Breaking.
+- **A runtime-negative sysex `length` no longer traps.** `memory.copy` reads
+  its size operand unsigned, so a user-computed length gone negative became a
+  ~4 GiB copy — an OOB trap that silenced the node permanently. Lengths clamp
+  to `[0, cap]` on every sysex copy path.
+- **`.uwk.ts` module-scope exports work.** An `export`ed declaration used to
+  be swallowed into the `defineProcessor` wrapper, emitting invalid
+  JavaScript. Exports now hoist to module scope together with their
+  (DSL-free) dependency closure; a DSL-tied or unsupported export is a loud
+  `uwk-export-unsupported` LowerError instead of broken emit. Whether an export
+  touches the DSL is decided by resolving each reference against the scopes and
+  namespaces around it, so a pure helper is not rejected for naming its
+  parameters after DSL identifiers (`export function clampTo(input, min, max)`
+  hoists), and a hoisted declaration takes its whole dependency closure with it
+  — values, the type aliases its annotations name, and every declaration of a
+  merged name.
+- **Re-exporting the processor as `default` is accepted.** `export const wave
+= defineProcessor(...); export default wave;` was rejected as "multiple
+  processors"; the count is now by value identity, and the named binding wins
+  as the canonical name.
+- **An extensionless relative import inside a processor module fails with the
+  fix spelled out.** The build path evaluates processor sources under Node ESM
+  resolution (extensions required); the raw `ERR_MODULE_NOT_FOUND` is rewrapped
+  with the rule and, when the sibling file exists, the exact specifier to
+  write.
+- **Crash-stranded `.uwklowered.mjs` / `.uwkfailed.mjs` temps are swept.** The
+  temp tag now embeds a parseable owner pid; the next materialization removes
+  temps whose owner is provably dead (older-format strays go by age), and
+  never touches a live process's files.
+- **DevTools MIDI panel sysex injection reaches the processor.** The panel's
+  RPC-serialized `number[]` payload is validated and converted to the
+  `Uint8Array` that `send()` expects; malformed bytes are dropped with a
+  warning instead of silently wrapping into a different message.
+
 ## 0.2.0 — 2026-08-17
 
 Adds `and` / `or` / `noiseSource`, headless multi-file `.uwk.ts` rendering, and a

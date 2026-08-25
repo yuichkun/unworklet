@@ -24,7 +24,12 @@ import { audioOutput, event, state as stateDecl } from "./../dsl/declarations.ts
 import { forSample } from "./../dsl/loop.ts";
 import { midiEventToWire } from "./../midiWire.ts";
 import { defineProcessor } from "./../processor.ts";
-import { type AbstractRingOp, IN_RING_MIRROR_OPS, OUT_RING_PUBLISH_OPS } from "./ring-model.ts";
+import {
+  type AbstractRingOp,
+  IN_RING_MIRROR_OPS,
+  OUT_RING_PUBLISH_OPS,
+  OUT_RING_PUBLISH_OPS_TAIL_ADVANCE,
+} from "./ring-model.ts";
 
 // ── mock audio-thread `self` ────────────────────────────────────────────────
 
@@ -89,6 +94,25 @@ const capturePublish = (
     return realStore(ta, index, value);
   }) as typeof Atomics.store);
 
+  // The out-ring tail commits through `atomicMonotoneMax` — a compareExchange
+  // composition — captured as one abstract `atomic-max` op (a successful CAS on
+  // a single-threaded run makes exactly one call; a skipped commit makes none).
+  const realCx = Atomics.compareExchange.bind(Atomics);
+  const cxSpy = vi.spyOn(Atomics, "compareExchange").mockImplementation(((
+    ta: Int32Array,
+    index: number,
+    expected: number,
+    replacement: number,
+  ): number => {
+    if (ta.buffer === sab && ta.byteOffset === ringSabOffset && ta.length === 3) {
+      captured.push({
+        op: "atomic-max",
+        word: index === 0 ? "head" : index === 1 ? "tail" : "overflow",
+      });
+    }
+    return realCx(ta, index, expected, replacement);
+  }) as typeof Atomics.compareExchange);
+
   // oxlint-disable-next-line typescript/unbound-method -- saved to restore the native method; only ever invoked via .call(this)
   const realSet = Uint8Array.prototype.set;
   // eslint-disable-next-line no-extend-native -- restored in finally
@@ -107,6 +131,7 @@ const capturePublish = (
     run();
   } finally {
     storeSpy.mockRestore();
+    cxSpy.mockRestore();
     Uint8Array.prototype.set = realSet;
   }
   return captured;
@@ -258,6 +283,45 @@ test("conformance: the event out-ring publish matches the model's safe op-order"
   });
 
   expect(captured).toEqual(OUT_RING_PUBLISH_OPS);
+});
+
+test("conformance: a drop-oldest quantum commits the advanced tail via atomic monotone-max", async () => {
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "out" });
+    const peak = event<{ level: number }>({ to: "main", name: "peak", capacity: 16 });
+    return {
+      process: () => {
+        peak.emitIf(true, { atSample: 0, level: 0.5 });
+        out.ch(0).at(0).write(0);
+      },
+    };
+  });
+  const { wasm } = await compile(proc);
+  const eventRings = proc.worklet.eventRings;
+  const ringTotalBytes = 12 + eventRings[0]!.capacity * eventRings[0]!.slotSize;
+  const sab = new ArrayBuffer(ringTotalBytes);
+  const self = makeMockSelf();
+  proc.worklet.initialize(self, {
+    processorOptions: {
+      wasm,
+      transport: "sab",
+      eventRings,
+      eventRingsBuffer: sab,
+      eventRingSabOffsets: [0],
+    },
+  });
+
+  const q = emptyQuantum();
+  // Fill the ring without any consumer drain: the 17th emit into a capacity-16
+  // ring fires the WASM drop-oldest, advancing the WASM tail past the SAB tail.
+  for (let quantum = 0; quantum < 16; quantum++) {
+    proc.worklet.process(self, q.inputs, q.outputs, q.parameters);
+  }
+  const captured = capturePublish(sab, 0, ringTotalBytes, () => {
+    proc.worklet.process(self, q.inputs, q.outputs, q.parameters);
+  });
+
+  expect(captured).toEqual(OUT_RING_PUBLISH_OPS_TAIL_ADVANCE);
 });
 
 // ── MIDI out-ring (worklet.ts MIDI publish) ─────────────────────────────────

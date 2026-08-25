@@ -415,3 +415,186 @@ test("`analyze` does NOT flag select with matching f32 branches", () => {
   };
   expect(analyze(graph).some((d) => d.id === "select-branch-type-mismatch")).toBe(false);
 });
+
+test("`analyze`: a buffer declaration carrying publish is rejected (backstop for hand-built graphs, issue #38)", () => {
+  // The declaration factories already throw at capture; a graph built by hand
+  // (or by external tooling) bypasses them, so analyze re-checks — the publish
+  // pipeline is scalar-only and a published buffer would silently never reach
+  // `node.state`.
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "audioOutput", name: "main", channels: 1 },
+      {
+        kind: "buffer",
+        name: "scope",
+        type: "f32",
+        size: 8,
+        userNamed: true,
+        publish: { rateFps: 30 },
+      } as never,
+    ],
+    statements: [],
+  };
+  const diags = analyze(graph);
+  expect(diags.some((d) => d.id === "buffer-publish-unsupported" && d.severity === "error")).toBe(
+    true,
+  );
+});
+
+test("`analyze`: a SIMD lane op on a buffer holding fewer than four elements is rejected (backstop for hand-built graphs)", () => {
+  // A lane window spans 4 elements, so a 2-element buffer has no in-bounds
+  // offset — the emitted clamp saturates into an empty range and the 16-byte
+  // access still crosses into the next region.
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "audioOutput", name: "main", channels: 1 },
+      { kind: "buffer", name: "tiny", type: "f32", size: 2, userNamed: true } as never,
+    ],
+    statements: [
+      {
+        kind: "forSample",
+        body: [
+          {
+            kind: "bufferStoreVec",
+            name: "tiny",
+            offset: { kind: "loopCounter" },
+            value: { kind: "vecSplat", value: { kind: "literal", type: "f32", value: 1 } },
+          },
+        ],
+      } as never,
+    ],
+  };
+  const diags = analyze(graph);
+  expect(diags.some((d) => d.id === "simd-buffer-too-small" && d.severity === "error")).toBe(true);
+});
+
+test("`analyze`: a SIMD lane op nested in a MIDI handler body is reached by the buffer-window check", () => {
+  // Handler bodies are a separate statement list; a walker that only descends
+  // into forSample would pass this graph through to emit.
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "audioOutput", name: "main", channels: 1 },
+      { kind: "buffer", name: "tiny", type: "f32", size: 3, userNamed: true } as never,
+    ],
+    statements: [
+      {
+        kind: "midiOnEvent",
+        port: "in",
+        eventType: "noteOn",
+        body: [
+          {
+            kind: "bufferStoreVec",
+            name: "tiny",
+            offset: { kind: "literal", type: "i32", value: 0 },
+            value: { kind: "vecSplat", value: { kind: "literal", type: "f32", value: 1 } },
+          },
+        ],
+      } as never,
+    ],
+  };
+  expect(analyze(graph).some((d) => d.id === "simd-buffer-too-small")).toBe(true);
+});
+
+test("`analyze`: a small buffer never touched by a SIMD lane op is accepted", () => {
+  // The rule is about the access, not the declaration — scalar read/write on a
+  // 2-element buffer is in bounds and stays legal.
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "audioOutput", name: "main", channels: 1 },
+      { kind: "buffer", name: "tiny", type: "f32", size: 2, userNamed: true } as never,
+    ],
+    statements: [
+      {
+        kind: "forSample",
+        body: [
+          {
+            kind: "bufferWrite",
+            elementType: "f32",
+            name: "tiny",
+            index: { kind: "literal", type: "i32", value: 0 },
+            value: { kind: "literal", type: "f32", value: 1 },
+          },
+        ],
+      } as never,
+    ],
+  };
+  expect(analyze(graph).some((d) => d.id === "simd-buffer-too-small")).toBe(false);
+});
+
+test("`analyze`: a sysex emit whose literal length exceeds the content chunk is rejected at compile", () => {
+  // The sysex content chunk holds perChunk-4 = 1020 payload bytes. An emit
+  // asking for more could never ship whole — shipping the prefix would deliver
+  // a corrupt sysex (no 0xF7 terminator), so a length known at build time is a
+  // build error, not a runtime drop.
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "audioOutput", name: "main", channels: 1 },
+      { kind: "midiOutput", name: "mo", capacity: 256 },
+      { kind: "buffer", name: "big", type: "u8", size: 2048, userNamed: true },
+    ] as never[],
+    statements: [
+      {
+        kind: "midiEmitIf",
+        port: "mo",
+        eventType: "sysex",
+        cond: { kind: "stateLoad", name: "g", type: "bool" },
+        sysexBufferName: "big",
+        sysexLength: { kind: "literal", type: "i32", value: 2048 },
+        fields: [],
+      } as never,
+    ],
+  };
+  const diags = analyze(graph);
+  expect(diags.some((d) => d.id === "sysex-emit-exceeds-chunk" && d.severity === "error")).toBe(
+    true,
+  );
+});
+
+test("`analyze`: a large scratch buffer emitting a prefix that fits the chunk is accepted", () => {
+  // The emitted length decides whether a message can leave whole. A reusable
+  // buffer bigger than the chunk is fine as long as the emit selects a prefix
+  // that fits — rejecting it would ban the buffer for every other use too.
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "audioOutput", name: "main", channels: 1 },
+      { kind: "midiOutput", name: "mo", capacity: 256 },
+      { kind: "buffer", name: "scratch", type: "u8", size: 2048, userNamed: true },
+    ] as never[],
+    statements: [
+      {
+        kind: "midiEmitIf",
+        port: "mo",
+        eventType: "sysex",
+        cond: { kind: "stateLoad", name: "g", type: "bool" },
+        sysexBufferName: "scratch",
+        sysexLength: { kind: "literal", type: "i32", value: 100 },
+        fields: [],
+      } as never,
+    ],
+  };
+  expect(analyze(graph).some((d) => d.id === "sysex-emit-exceeds-chunk")).toBe(false);
+});
+
+test("`analyze`: a sysex emit reading past its own source buffer is rejected at compile", () => {
+  // 64 bytes requested out of a 16-byte buffer: the extra bytes would be the
+  // neighboring region's, so the emit is refused even though 64 < 1020.
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "audioOutput", name: "main", channels: 1 },
+      { kind: "midiOutput", name: "mo", capacity: 256 },
+      { kind: "buffer", name: "small", type: "u8", size: 16, userNamed: true },
+    ] as never[],
+    statements: [
+      {
+        kind: "midiEmitIf",
+        port: "mo",
+        eventType: "sysex",
+        cond: { kind: "stateLoad", name: "g", type: "bool" },
+        sysexBufferName: "small",
+        sysexLength: { kind: "literal", type: "i32", value: 64 },
+        fields: [],
+      } as never,
+    ],
+  };
+  expect(analyze(graph).some((d) => d.id === "sysex-emit-exceeds-chunk")).toBe(true);
+});

@@ -98,7 +98,7 @@ one-time console warning).
 
 ```ts
 unworklet({
-  emitAnalysisArtifacts: true, // default — emit <name>.graph/memory/diagnostics/schema-hash.json on build
+  emitAnalysisArtifacts: true, // default false — opt in to emit <name>.graph/memory/diagnostics/schema-hash.json on build (a loop-heavy graph DAG can reach 100s of MB in dist/; artifacts past ~8 MB are skipped with a warning)
   crossOriginIsolation: true, // default — set COOP/COEP on the dev server so SharedArrayBuffer works
 });
 ```

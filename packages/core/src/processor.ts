@@ -82,6 +82,7 @@ export function defineProcessor<C = unknown>(
     schemaHash: schemaHash(captured),
     worklet: makeWorkletNamespace(captured),
     migrations: options?.migrations,
+    ...(options?.id !== undefined ? { id: options.id } : {}),
     // Re-capture thunk: `compile` binds the real `ctx.sampleRate` here so
     // coefficient precomputation (`440 / ctx.sampleRate`, etc.) uses the host rate.
     __capture: (sampleRate: number) => brandGraph(captureProcessor(body, sampleRate)),

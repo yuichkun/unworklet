@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, rmSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -41,17 +41,81 @@ const modulePath = (specifier: string): string => specifier.split(/[?#]/)[0]!;
  * the recursion threads it through. Held weakly, so nothing outlives the load it
  * belongs to.
  */
-const PROCESS_TAG = `${process.pid.toString(36)}${randomBytes(3).toString("hex")}`;
+// Delimited, versioned tag (`u1-<pid36>-<nonce>-<load>`): the pid is
+// UNAMBIGUOUSLY parseable back out of a temp filename, which is what lets the
+// crash sweep below tell a dead owner's stranded temp from a live concurrent
+// materialization's in-flight one (issue #21).
+const PROCESS_TAG = `u1-${process.pid.toString(36)}-${randomBytes(3).toString("hex")}`;
 const loadTags = new WeakMap<object, string>();
 let loadCounter = 0;
 const loadTag = (done: Map<string, string>): string => {
   let tag = loadTags.get(done);
   if (tag === undefined) {
-    tag = `${PROCESS_TAG}${(loadCounter++).toString(36)}`;
+    tag = `${PROCESS_TAG}-${(loadCounter++).toString(36)}`;
     loadTags.set(done, tag);
   }
   return tag;
 };
+
+// ── crash-stranded temp sweep (issue #21) ────────────────────────────────────
+// Temps must sit next to their source (relative imports resolve against them),
+// so an OS tempdir is not an option and the normal-path `finally` removal is
+// the only cleanup — a crashed process strands its temps in the consumer's
+// source tree. Sweep each directory once per process, at the next
+// materialization that touches it.
+//
+// Only a name this module can PROVE it wrote is a candidate: the delimited tag
+// carries the owner pid, and that pid must be provably dead (`EPERM` counts as
+// alive). Nothing else is swept. Earlier tag formats ran the pid, a nonce and a
+// counter together with no delimiter, which no rule can tell apart from an
+// ordinary lowercase word — and deleting a file out of somebody's source tree
+// is worse than leaving a stray from a version that predates this one.
+const SWEPT_DIRS = new Set<string>();
+// A temp is a DOTFILE carrying the source basename and the tag before the
+// suffix (`.synth.uwk.ts.u1-<pid36>-<nonce>-<load>.uwklowered.mjs`). A file that
+// merely ends the same way — `saved.uwklowered.mjs` — was written by somebody
+// else. The suffix alone is not ownership; the whole shape is.
+// The tag is exactly what `loadTag` writes and nothing looser: a base36 pid, a
+// six-character hex nonce, a base36 counter. Neither number carries a leading
+// zero in base36, and the nonce is never another length — a name that gets any
+// of that wrong was written by somebody else, dead pid inside it or not.
+const OWNED_TAG_RE =
+  /^\..+\.u1-([1-9a-z][0-9a-z]*)-[0-9a-f]{6}-(?:0|[1-9a-z][0-9a-z]*)\.(uwklowered|uwkfailed)\.mjs$/;
+
+const pidAlive = (pid: number): boolean => {
+  if (!Number.isInteger(pid) || pid <= 0) return true; // unparseable = assume alive
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM = exists but not ours = alive. ESRCH (and anything else) = dead.
+    return (err as { code?: string }).code === "EPERM";
+  }
+};
+
+function sweepStaleTemps(dir: string): void {
+  if (SWEPT_DIRS.has(dir)) return;
+  SWEPT_DIRS.add(dir);
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return; // sweep is best-effort; the materialization itself will surface real fs problems
+  }
+  for (const ent of entries) {
+    if (!ent.isFile()) continue;
+    const owned = OWNED_TAG_RE.exec(ent.name);
+    if (owned === null) continue;
+    const pid = parseInt(owned[1]!, 36);
+    if (pid === process.pid) continue; // our own in-flight temps
+    if (pidAlive(pid)) continue; // a live concurrent materialization
+    try {
+      rmSync(path.join(dir, ent.name), { force: true });
+    } catch {
+      // Racing the owner's own cleanup is fine — the goal state is "gone".
+    }
+  }
+}
 
 /**
  * Derive a valid camelCase JS identifier from a `.uwk.ts` filename — the single
@@ -355,6 +419,7 @@ export const materializeLowered = async (
   // is unusable here: `Cannot access 'x' before initialization`, pointing at a
   // temp that cleanup has already unlinked, naming neither source file.
   const dir = path.dirname(sourcePath);
+  sweepStaleTemps(dir);
   const tempPath = path.join(dir, `.${path.basename(sourcePath)}.${loadTag(done)}.uwklowered.mjs`);
   done.set(sourcePath, tempPath);
   inProgress.add(sourcePath);

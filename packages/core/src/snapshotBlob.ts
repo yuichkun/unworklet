@@ -12,8 +12,18 @@
  *
  * Layout (all integers little-endian):
  *   magic 'UWK1' (4) | version:u32 | hashLen:u32 | hash:utf8
- *   | profileFlag:u8 | profileLen:u32 | profile:utf8 | slotCount:u32
+ *   | profileFlag:u8 | profileLen:u32 | profile:utf8
+ *   | (version >= 2) idFlag:u8 | idLen:u32 | id:utf8
+ *   | slotCount:u32
  *   per slot: nameLen:u32 | name:utf8 | kind:u8 | type:u8 | dataLen:u32 | data
+ *
+ * Version 2 adds the optional PROCESSOR IDENTITY (issue #28): `schemaHash`
+ * deliberately hashes declarations only (a body edit must not break presets),
+ * so two logically different processors with the same slot schema share a hash
+ * — restore matched a lowpass preset into a distortion and reported `ok`. The
+ * id, when both blob and processor carry one, is checked before anything is
+ * applied. Version-1 blobs decode with `processorId: null` and keep the old
+ * behavior.
  */
 
 import {
@@ -34,7 +44,7 @@ import type {
   TypedArrayOf,
 } from "./types.ts";
 
-export const SNAPSHOT_VERSION = 1;
+export const SNAPSHOT_VERSION = 2;
 const MAGIC = 0x55574b31; // 'UWK1'
 
 const KIND_CODE: Record<SnapshotSlotKind, number> = { state: 0, param: 1, buffer: 2 };
@@ -56,6 +66,8 @@ export type DecodedSnapshot = {
   version: number;
   schemaHash: string;
   profile: string | null;
+  /** Processor identity carried by v2 blobs; `null` for id-less / v1 blobs. */
+  processorId: string | null;
   slots: SnapshotSlot[];
 };
 
@@ -63,14 +75,18 @@ export function encodeSnapshot(
   schemaHash: string,
   profile: string | null,
   slots: readonly SnapshotSlot[],
+  processorId?: string | null,
 ): Uint8Array {
+  const id = processorId ?? null;
   const hashBytes = utf8.encode(schemaHash);
   const profileBytes = profile === null ? new Uint8Array(0) : utf8.encode(profile);
+  const idBytes = id === null ? new Uint8Array(0) : utf8.encode(id);
   const slotChunks = slots.map((s) => {
     const nameBytes = utf8.encode(s.name);
     return { s, nameBytes };
   });
-  let total = 4 + 4 + 4 + hashBytes.length + 1 + 4 + profileBytes.length + 4;
+  let total =
+    4 + 4 + 4 + hashBytes.length + 1 + 4 + profileBytes.length + 1 + 4 + idBytes.length + 4;
   for (const { s, nameBytes } of slotChunks) {
     total += 4 + nameBytes.length + 1 + 1 + 4 + s.data.length;
   }
@@ -92,6 +108,12 @@ export function encodeSnapshot(
   p += 4;
   bytes.set(profileBytes, p);
   p += profileBytes.length;
+  dv.setUint8(p, id === null ? 0 : 1);
+  p += 1;
+  dv.setUint32(p, idBytes.length, true);
+  p += 4;
+  bytes.set(idBytes, p);
+  p += idBytes.length;
   dv.setUint32(p, slots.length, true);
   p += 4;
   for (const { s, nameBytes } of slotChunks) {
@@ -148,6 +170,20 @@ export function decodeSnapshot(blob: Uint8Array): DecodedSnapshot {
   need(profileLen);
   const profile = hasProfile ? utf8d.decode(blob.subarray(p, p + profileLen)) : null;
   p += profileLen;
+  // v2 adds the optional processor identity block; a v1 blob goes straight to
+  // the slot count and decodes with no id (issue #28 back-compat).
+  let processorId: string | null = null;
+  if (version >= 2) {
+    need(1);
+    const hasId = dv.getUint8(p) === 1;
+    p += 1;
+    need(4);
+    const idLen = dv.getUint32(p, true);
+    p += 4;
+    need(idLen);
+    processorId = hasId ? utf8d.decode(blob.subarray(p, p + idLen)) : null;
+    p += idLen;
+  }
   need(4);
   const slotCount = dv.getUint32(p, true);
   p += 4;
@@ -186,7 +222,7 @@ export function decodeSnapshot(blob: Uint8Array): DecodedSnapshot {
     slots.push({ name, kind, type, data: blob.slice(p, p + dataLen) });
     p += dataLen;
   }
-  return { version, schemaHash, profile, slots };
+  return { version, schemaHash, profile, processorId, slots };
 }
 
 // ── inspect ─────────────────────────────────────────────────────────────────
@@ -215,6 +251,7 @@ export function inspectSnapshot(blob: Uint8Array): InspectionResult {
     version: decoded.version,
     schemaHash: decoded.schemaHash,
     profile: decoded.profile,
+    processorId: decoded.processorId,
     slots,
   };
 }
@@ -343,7 +380,7 @@ export function runMigrations(
       // TS so an accidental async function still reaches here as a Promise; read
       // the result as `unknown` to detect + reject it at runtime.
       const r: unknown = step.migrate(
-        encodeSnapshot(current.schemaHash, current.profile, current.slots),
+        encodeSnapshot(current.schemaHash, current.profile, current.slots, current.processorId),
         helpers,
       );
       if (r instanceof Promise) {
@@ -373,13 +410,16 @@ export function runMigrations(
       version: SNAPSHOT_VERSION,
       schemaHash: step.to,
       profile: current.profile,
+      // Identity survives migration: the chain reshapes slots, it does not
+      // change which processor the preset belongs to.
+      processorId: current.processorId,
       slots: [...out.values()],
     };
     applied.push(stepLabel(step.from, step.to));
   }
   return {
     ok: true,
-    blob: encodeSnapshot(current.schemaHash, current.profile, current.slots),
+    blob: encodeSnapshot(current.schemaHash, current.profile, current.slots, current.processorId),
     applied,
   };
 }

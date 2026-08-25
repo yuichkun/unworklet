@@ -134,7 +134,7 @@ unworklet then uses the postMessage transport in dev. (Opt-out branch:
 
 ```ts
 export type UnworkletPluginOptions = {
-  emitAnalysisArtifacts?: boolean; // default true
+  emitAnalysisArtifacts?: boolean; // default false — opt in to emit graph/memory/diagnostics/schema-hash JSON on build (the graph DAG can reach 100s of MB for loop-heavy processors; artifacts past ~8 MB are skipped with a warning)
   crossOriginIsolation?: boolean; // default true
 };
 ```

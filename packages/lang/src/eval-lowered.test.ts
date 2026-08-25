@@ -64,3 +64,60 @@ test("lowering off a captured snapshot compiles to a real (non-empty) WASM", asy
   const { wasm } = await compile(proc);
   expect((wasm as Uint8Array).byteLength).toBeGreaterThan(200);
 });
+
+test("a processor with a module-scope export evaluates end-to-end (issue #44 repro)", () => {
+  // Pre-fix, the export was swallowed into the defineProcessor callback and the
+  // emitted module threw `SyntaxError: Unexpected token 'export'` at eval.
+  const processor = lowerToProcessor(`
+export const GAIN = 0.5;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(GAIN);
+  });
+});
+`);
+  expect(processor).toBeTruthy();
+  expect(typeof processor.schemaHash).toBe("string");
+});
+
+test("options({ id }) flows through to the compiled processor's identity", () => {
+  const processor = lowerToProcessor(`
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(0);
+  });
+});
+options({ id: "synth-x" });
+`);
+  expect(processor.id).toBe("synth-x");
+});
+
+test("a hoisted enum survives the runtime-compile path", () => {
+  // The export partition hoists enums (and namespaces) to module scope, so the
+  // runtime path has to turn them into something a function body can hold.
+  const lowered =
+    `import { audioOutput, defineProcessor, forSample } from "@unworklet/core";\n` +
+    `export enum Mode { Soft = 1, Hard = 2 }\n` +
+    `export default defineProcessor(() => {\n` +
+    `  const out = audioOutput({ channels: 1, name: "main" });\n` +
+    `  return { process: () => { forSample((i) => { out.ch(0).at(i).write(Mode.Soft / 10); }); } };\n` +
+    `});\n`;
+  const proc = evalLowered(lowered);
+  expect(proc).toHaveProperty("graph");
+  expect(typeof proc.schemaHash).toBe("string");
+});
+
+test("a hoisted namespace survives the runtime-compile path", () => {
+  const lowered =
+    `import { audioOutput, defineProcessor, forSample } from "@unworklet/core";\n` +
+    `export namespace Tuning { export const A4 = 440; }\n` +
+    `export default defineProcessor(() => {\n` +
+    `  const out = audioOutput({ channels: 1, name: "main" });\n` +
+    `  return { process: () => { forSample((i) => { out.ch(0).at(i).write(Tuning.A4 / 1000); }); } };\n` +
+    `});\n`;
+  const proc = evalLowered(lowered);
+  expect(proc).toHaveProperty("graph");
+  expect(typeof proc.schemaHash).toBe("string");
+});

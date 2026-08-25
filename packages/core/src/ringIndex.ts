@@ -32,6 +32,22 @@ export function ringCount(head: number, tail: number): number {
 }
 
 /**
+ * Whether ring counter `a` is strictly ahead of `b` in serial-number order.
+ *
+ * Ring counters are monotone i32 words, so "ahead" cannot be a plain signed
+ * `a > b`: in the window where one counter has wrapped past 2^31 and the other
+ * has not, the signed comparison inverts and a legitimate lead reads as a lag
+ * (rebasing a drain cursor onto a drop-oldest tail would then be skipped,
+ * re-delivering overwritten slots). The distance between two live cursors is
+ * bounded by the ring capacity — far below 2^31 — so the signed 32-bit
+ * difference `(a - b) | 0` is positive exactly when `a` leads `b`, across the
+ * wrap included (same argument as `atomicMonotoneMax`).
+ */
+export function ringLeads(a: number, b: number): boolean {
+  return ((a - b) | 0) > 0;
+}
+
+/**
  * Atomically advance the i32 ring counter `view[index]` to `target` if `target`
  * is AHEAD of the current value, and return the resulting value. A behind-or-
  * equal target leaves the word unchanged (never a rewind).
@@ -50,6 +66,41 @@ export function ringCount(head: number, tail: number): number {
  * back negative through the `Int32Array`. A signed `target > cur` would instead
  * reject the legitimate advance at the wrap and latch the ring (see `ringCount`).
  */
+/**
+ * Producer-side drop-oldest on a full ring: free exactly one slot by advancing
+ * `tail`, and report whether THIS producer is the one that freed it.
+ *
+ * The return value is what the overflow counter must be gated on. `tail` has a
+ * second writer — the consumer's drain-commit — so between reading the
+ * occupancy and writing the tail, the consumer can drain the ring. Advancing
+ * through a monotone-max there correctly declines the stale proposal, but the
+ * producer cannot tell "declined because the consumer already freed room" from
+ * "advanced, a slot was overwritten" — counting both as overflow reports losses
+ * that never happened, and overflow counts are what a user sizes a ring by.
+ * The compare-exchange answers it: winning from the observed `tail` means this
+ * producer dropped the slot; losing means the consumer moved, so occupancy is
+ * re-evaluated against its value, which may leave no slot to drop at all.
+ *
+ * Terminating: a losing exchange returns a strictly-leading `tail` (both writers
+ * only ever advance it), so each retry strictly lowers the occupancy against the
+ * fixed `head` and the loop ends by winning or by finding room. Main-thread
+ * only — the audio thread's producers are the WASM ring writers.
+ */
+export function dropOldestIfFull(
+  view: Int32Array,
+  tailIndex: number,
+  head: number,
+  capacity: number,
+): boolean {
+  let tail = Atomics.load(view, tailIndex);
+  while (ringCount(head, tail) >= capacity) {
+    const prev = Atomics.compareExchange(view, tailIndex, tail, (tail + 1) | 0);
+    if (prev === tail) return true;
+    tail = prev;
+  }
+  return false;
+}
+
 export function atomicMonotoneMax(view: Int32Array, index: number, target: number): number {
   let cur = Atomics.load(view, index);
   while (((target - cur) | 0) > 0) {

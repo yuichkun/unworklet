@@ -194,7 +194,7 @@ export interface Buffer<T extends BufferElementType> {
   ): Node<T extends "u8" ? "i32" : Extract<T, ScalarType>>;
   copyFrom(src: TypedArrayFieldRef<T>): void;
   named(name: string): Buffer<T>;
-  expose(options: ExposeOptions): Buffer<T>;
+  expose(options: BufferExposeOptions): Buffer<T>;
   /**
    * SIMD buffer I/O: load / store four contiguous f32 lanes (element-units
    * offset). Real only for `Buffer<'f32'>`, `never` otherwise. The runtime lives
@@ -231,6 +231,16 @@ export type ExposeOptions = {
   snapshot?: SnapshotPolicy;
   publish?: PublishOptions;
 };
+
+/**
+ * What a buffer's `.expose(...)` accepts: everything but `publish`. The publish
+ * pipeline is scalar-only — a published buffer would never appear on
+ * `node.state` — so the option is rejected at the type level (and at graph
+ * capture, stable ID 'buffer-publish-unsupported') rather than accepted and
+ * silently ignored. Fan values out into scalar state slots to observe a buffer
+ * live, or read it back via `node.snapshot()`.
+ */
+export type BufferExposeOptions = Omit<ExposeOptions, "publish">;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Audio I/O (`01-dsl.md` §1.1 / §1.2 / §1.3)
@@ -718,6 +728,8 @@ export type WorkletNamespace = {
 export type CompiledProcessor<C> = {
   readonly graph: ProcessorGraph;
   readonly schemaHash: string;
+  /** Stable processor identity from `ProcessorOptions.id`; see its docs. */
+  readonly id?: string;
   readonly worklet: WorkletNamespace;
   /**
    * Declarative schema-migration chain from the processor's options bag
@@ -754,6 +766,11 @@ export type Migration = {
    * offline renderer, so an async migrate cannot be honored consistently and is
    * rejected at runtime. (`void` is permissive in TS, so an accidental async
    * function still type-checks but fails loud during `restore`.)
+   *
+   * `blob` is the state as this step receives it, re-encoded in the CURRENT
+   * blob format — not the caller's original bytes. Read it through `helpers`,
+   * which decode either format; the step to apply is chosen by `from` / `to`,
+   * so the blob's own format version is not a signal a migration should read.
    */
   migrate: (blob: Uint8Array, helpers: MigrationHelpers) => void;
 };
@@ -788,6 +805,17 @@ export type MigrationHelpers = {
 export type ProcessorOptions = {
   migrations?: Migration[];
   migrationsStrict?: boolean;
+  /**
+   * Stable, human-chosen processor identity carried into snapshot blobs
+   * (issue #28). `schemaHash` hashes declarations only, so two logically
+   * different processors with the same slot schema share a hash — a preset
+   * from one would restore "successfully" into the other and corrupt its
+   * state. When both a blob and a processor carry an id, `restore()` refuses
+   * a mismatch. Choose something meaningful and KEEP IT STABLE across
+   * releases (renaming it orphans saved presets, exactly like changing a
+   * schema without a migration).
+   */
+  id?: string;
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -849,6 +877,17 @@ export type CompileInstance = {
   writeParam(paramName: string, blockData: Float32Array): void;
   /** Caller invariant: `dest.length === SAMPLES_PER_BLOCK`. */
   readOutput(portName: string, channel: number, dest: Float32Array): void;
+  /**
+   * Lifetime count of output samples the non-finite scrub replaced with 0
+   * (NaN / ±Inf produced by the processor's own DSP). 0 for a healthy render.
+   */
+  scrubbedSamples(): number;
+  /**
+   * Lifetime count of outbound sysex messages the emit path refused because the
+   * requested length does not fit its destination chunk or source buffer.
+   * 0 unless a processor asks to ship more bytes than can leave whole.
+   */
+  droppedSysexMessages(): number;
 };
 
 export type CompileInstanceDeclaration =
@@ -1088,5 +1127,7 @@ export type InspectionResult = {
   version: number;
   schemaHash: string;
   profile: string | null;
+  /** Processor identity carried by v2 blobs; `null` for id-less / v1 blobs. */
+  processorId: string | null;
   slots: Record<string, SlotInspection>;
 };

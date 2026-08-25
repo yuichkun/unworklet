@@ -165,21 +165,1165 @@ function collectUsedCoreExports(node: ts.Node): Set<string> {
   return used;
 }
 
+/** The module an import declaration names, or undefined when it is not a literal. */
+function moduleSpecifierOf(decl: ts.ImportDeclaration): string | undefined {
+  const spec = decl.moduleSpecifier;
+  return ts.isStringLiteral(spec) ? spec.text : undefined;
+}
+
 /** The local binding names a user import introduces (default / namespace / named,
  * each as its in-scope alias). The injected core import drops these so a name the
  * user imports explicitly is never double-bound (e.g. `import { state }`). */
-function importBoundNames(imports: readonly ts.ImportDeclaration[]): Set<string> {
+function importBoundNames(
+  imports: readonly ts.ImportDeclaration[],
+  /**
+   * Skip the names a type-only import binds. Those carry no runtime value, so
+   * they cannot stand in for a binding the generated code calls — but they do
+   * occupy the name, which is why the reserved-binding check counts them.
+   */
+  options?: { valuesOnly?: boolean },
+): Set<string> {
   const names = new Set<string>();
   for (const decl of imports) {
     const clause = decl.importClause;
     if (clause === undefined) continue;
+    if (options?.valuesOnly === true && clause.isTypeOnly) continue;
     if (clause.name !== undefined) names.add(clause.name.text);
     const bindings = clause.namedBindings;
     if (bindings === undefined) continue;
     if (ts.isNamespaceImport(bindings)) {
       names.add(bindings.name.text);
     } else {
-      for (const el of bindings.elements) names.add(el.name.text);
+      for (const el of bindings.elements) {
+        if (options?.valuesOnly === true && el.isTypeOnly) continue;
+        names.add(el.name.text);
+      }
+    }
+  }
+  return names;
+}
+
+/**
+ * Names imported from the core module as VALUES under their own name — the only
+ * imports that can stand in for a binding the lowering generates. An alias
+ * (`{ defineProcessor as audioInput }`) binds a different export under the name,
+ * and a namespace or default import binds the module rather than the export.
+ */
+function unaliasedCoreValueImports(
+  imports: readonly ts.ImportDeclaration[],
+  coreModule: string,
+): Set<string> {
+  const names = new Set<string>();
+  for (const decl of imports) {
+    if (moduleSpecifierOf(decl) !== coreModule) continue;
+    const clause = decl.importClause;
+    if (clause === undefined || clause.isTypeOnly) continue;
+    const bindings = clause.namedBindings;
+    if (bindings === undefined || ts.isNamespaceImport(bindings)) continue;
+    for (const el of bindings.elements) {
+      if (el.isTypeOnly) continue;
+      if (el.propertyName !== undefined && el.propertyName.text !== el.name.text) continue;
+      names.add(el.name.text);
+    }
+  }
+  return names;
+}
+
+/** Every name a binding pattern introduces (`a`, `{ b }`, `[c, ...d]`). */
+function collectBindingNames(name: ts.BindingName, into: Set<string>): void {
+  if (ts.isIdentifier(name)) {
+    into.add(name.text);
+    return;
+  }
+  // ObjectBindingPattern | ArrayBindingPattern — array holes are
+  // OmittedExpression, not BindingElement, so they are skipped.
+  for (const element of name.elements) {
+    if (ts.isBindingElement(element)) collectBindingNames(element.name, into);
+  }
+}
+
+/**
+ * `var` names declared anywhere inside `node`'s own body — `var` is scoped to
+ * the enclosing function, not the block it sits in, so `{ var input = 1; }` and
+ * a later `return input` are the same binding. Nested functions own theirs.
+ */
+function collectFunctionScopedVars(
+  node: ts.Node,
+  into: Set<string>,
+  /** When given, the function bodies those names are bound to. Every name
+   * becomes a key, so one bound to a non-function stops a lookup here. */
+  bodies?: Map<string, ts.Node[]>,
+): void {
+  const walk = (n: ts.Node): void => {
+    // A function, a class static block and a namespace each open their own
+    // `var` scope, so a `var` inside one is not the outer scope's.
+    if (
+      ts.isFunctionLike(n) ||
+      ts.isClassStaticBlockDeclaration(n) ||
+      ts.isModuleDeclaration(n) ||
+      ts.isModuleBlock(n)
+    ) {
+      return;
+    }
+    if (
+      ts.isVariableDeclarationList(n) &&
+      (n.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0
+    ) {
+      for (const d of n.declarations) {
+        const declared = new Set<string>();
+        collectBindingNames(d.name, declared);
+        for (const name of declared) {
+          into.add(name);
+          if (bodies !== undefined && !bodies.has(name)) bodies.set(name, []);
+        }
+        if (bodies === undefined || !ts.isIdentifier(d.name) || d.initializer === undefined) {
+          continue;
+        }
+        const init = unwrapExpression(d.initializer);
+        if (isCallableDeclaration(init)) bodies.get(d.name.text)?.push(init);
+      }
+    }
+    ts.forEachChild(n, walk);
+  };
+  ts.forEachChild(node, walk);
+}
+
+/** `literalProperty` could not tell what the key holds. */
+const UNKNOWN_PROPERTY = Symbol("unknown property");
+
+/** Whether an expression plainly is not `undefined`: a value written in place.
+ * Anything else — a name, a call, a conditional — could be, and this says so
+ * rather than guessing. */
+function certainlyDefined(expr: ts.Expression): boolean {
+  return (
+    ts.isStringLiteral(expr) ||
+    ts.isNumericLiteral(expr) ||
+    ts.isBigIntLiteral(expr) ||
+    ts.isNoSubstitutionTemplateLiteral(expr) ||
+    ts.isTemplateExpression(expr) ||
+    ts.isRegularExpressionLiteral(expr) ||
+    expr.kind === ts.SyntaxKind.TrueKeyword ||
+    expr.kind === ts.SyntaxKind.FalseKeyword ||
+    expr.kind === ts.SyntaxKind.NullKeyword ||
+    ts.isArrayLiteralExpression(expr) ||
+    ts.isObjectLiteralExpression(expr) ||
+    ts.isArrowFunction(expr) ||
+    ts.isFunctionExpression(expr) ||
+    ts.isClassExpression(expr) ||
+    ts.isNewExpression(expr)
+  );
+}
+
+/** The key a bracketed expression reads, when it is written as a literal. */
+function readLiteralKey(argument: ts.Expression): string | undefined {
+  const at = unwrapExpression(argument);
+  return ts.isStringLiteral(at) || ts.isNumericLiteral(at) ? at.text : undefined;
+}
+
+/** The key a property name states, or undefined when it is computed at runtime.
+ * Brackets around a literal — `["other"]` — state a key as plainly as a bare
+ * name does; brackets around anything else do not. */
+function staticPropertyKey(name: ts.PropertyName): string | undefined {
+  if (ts.isComputedPropertyName(name)) {
+    const inner = unwrapExpression(name.expression);
+    return ts.isStringLiteral(inner) ||
+      ts.isNumericLiteral(inner) ||
+      ts.isNoSubstitutionTemplateLiteral(inner)
+      ? inner.text
+      : undefined;
+  }
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) {
+    return name.text;
+  }
+  return undefined;
+}
+
+/**
+ * What an object literal gives for `key`: the expression, `null` when it gives
+ * none, or `UNKNOWN_PROPERTY` when it cannot be told. The last write to a key
+ * is the one that lands, so a spread or a computed name only clouds the answer
+ * when it comes AFTER the named property — the same way a spread only shifts
+ * the array elements that follow it.
+ */
+function literalProperty(object: ts.ObjectLiteralExpression, key: string): LiteralAnswer {
+  let value: ts.Expression | ts.MethodDeclaration | null = null;
+  let clouded = false;
+  // The accessor that claims this key by name, and the ones whose key is only
+  // known at runtime and so might.
+  let claimed: ts.GetAccessorDeclaration | undefined;
+  let maybe: ts.GetAccessorDeclaration[] = [];
+  for (const property of object.properties) {
+    const name = property.name;
+    const states = name === undefined ? undefined : staticPropertyKey(name);
+    // A spread, or a key computed at runtime, could put anything under this
+    // name — including replacing what is here.
+    if (ts.isSpreadAssignment(property) || states === undefined) {
+      if (ts.isGetAccessorDeclaration(property)) maybe.push(property);
+      value = null;
+      clouded = true;
+      continue;
+    }
+    if (states !== key) continue;
+    // Naming the key takes it, so nothing written before this is under it any
+    // more — not a value, not a doubt, not an accessor with a runtime name.
+    clouded = false;
+    if (ts.isSetAccessorDeclaration(property)) {
+      // Except a setter, which takes only the half it writes: it lands ON an
+      // accessor rather than over it, so the getter stays whatever it is —
+      // including one whose name is only known at runtime. What it cannot
+      // leave standing is a data value.
+      value = null;
+      continue;
+    }
+    maybe = [];
+    if (ts.isPropertyAssignment(property)) {
+      value = property.initializer;
+      claimed = undefined;
+    } else if (ts.isShorthandPropertyAssignment(property)) {
+      value = property.name;
+      claimed = undefined;
+    } else if (ts.isMethodDeclaration(property)) {
+      // A method IS the value the key holds.
+      value = property;
+      claimed = undefined;
+    } else if (ts.isGetAccessorDeclaration(property)) {
+      // Reading the key runs this, and what comes back is its business.
+      value = null;
+      claimed = property;
+    }
+  }
+  const getters = claimed === undefined ? maybe : [claimed, ...maybe];
+  return { value: clouded || getters.length > 0 ? UNKNOWN_PROPERTY : value, getters, clouded };
+}
+
+/** What reading a key off an object literal gives: the value when that can be
+ * told, the accessors that answer it (which RUN on the read), and whether
+ * something in the literal could still put anything else there. */
+type LiteralAnswer = {
+  readonly value: ts.Expression | ts.MethodDeclaration | null | typeof UNKNOWN_PROPERTY;
+  readonly getters: readonly ts.GetAccessorDeclaration[];
+  readonly clouded: boolean;
+};
+
+/**
+ * The expressions a function hands back, each with the lookup that reads names
+ * where it stands — a returned name is often declared inside the function, and
+ * the scope at the call site has never heard of it. Returns from a function
+ * nested inside are left out: those belong to whoever calls that one.
+ */
+function returnedExpressions(
+  fn: ts.FunctionLikeDeclaration,
+  outer: BodyResolver,
+): { readonly expression: ts.Expression; readonly resolve: BodyResolver }[] {
+  const returned: { expression: ts.Expression; resolve: BodyResolver }[] = [];
+  if (fn.body === undefined) return returned;
+  const walk = (node: ts.Node, resolve: BodyResolver): void => {
+    if (ts.isFunctionLike(node) && node !== fn) return;
+    if (ts.isReturnStatement(node) && node.expression !== undefined) {
+      returned.push({ expression: node.expression, resolve });
+    }
+    const opened = blockScopedNames(node);
+    const vars = new Set<string>();
+    const bodies =
+      opened === null ? new Map<string, ts.Node[]>() : scopedFunctionBodies(node, opened);
+    if (node === fn) collectFunctionScopedVars(node, vars, bodies);
+    const inner: BodyResolver =
+      bodies.size === 0
+        ? resolve
+        : (name) => {
+            const here = bodies.get(name);
+            return here === undefined
+              ? resolve(name)
+              : here.map((found) => ({ node: found, shadowed: NO_NAMES, resolve: inner }));
+          };
+    ts.forEachChild(node, (child) => {
+      walk(child, inner);
+    });
+  };
+  walk(fn, outer);
+  return returned;
+}
+
+/** An expression that IS what a name stands for — not one that computes it.
+ * An object literal is here because reading a key off it can run a getter, the
+ * same way calling one of the others runs a body. */
+function isCallableDeclaration(expr: ts.Expression): boolean {
+  return (
+    ts.isArrowFunction(expr) ||
+    ts.isFunctionExpression(expr) ||
+    ts.isClassExpression(expr) ||
+    ts.isObjectLiteralExpression(expr)
+  );
+}
+
+/**
+ * Object literals ASSIGNED to a name anywhere under `node`, on top of whatever
+ * it was declared with — `box = { get x() {...} }` puts a getter behind a name
+ * whose declaration had none, and by the time the name is read it may hold any
+ * of them. Only names already in `into` are added to when `only` is given, so a
+ * scope keeps saying nothing about names it does not open.
+ */
+function collectAssignedLiterals(
+  node: ts.Node,
+  into: Map<string, ts.Node[]>,
+  only: "existing" | "any",
+): void {
+  const walk = (n: ts.Node): void => {
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      const target = unwrapExpression(n.left);
+      const value = unwrapExpression(n.right);
+      if (ts.isIdentifier(target) && ts.isObjectLiteralExpression(value)) {
+        const held = into.get(target.text);
+        if (held !== undefined) held.push(value);
+        else if (only === "any") into.set(target.text, [value]);
+      }
+    }
+    ts.forEachChild(n, walk);
+  };
+  ts.forEachChild(node, walk);
+}
+
+/** The object literals a receiver stands for — written in place, or reached
+ * through a name this file binds to one — each with the scope it was written
+ * in, since one reached by name sits in another statement entirely. */
+function literalsBehind(
+  receiver: ts.Expression,
+  shadowed: ReadonlySet<string>,
+  resolve: BodyResolver,
+): { literal: ts.ObjectLiteralExpression; shadowed: ReadonlySet<string>; resolve: BodyResolver }[] {
+  const expr = unwrapExpression(receiver);
+  if (ts.isObjectLiteralExpression(expr)) return [{ literal: expr, shadowed, resolve }];
+  if (!ts.isIdentifier(expr)) return [];
+  const found = [];
+  for (const body of resolve(expr.text)) {
+    if (ts.isObjectLiteralExpression(body.node)) {
+      found.push({ literal: body.node, shadowed: body.shadowed, resolve: body.resolve });
+    }
+  }
+  return found;
+}
+
+/** The bodies a callee expression stands for, when this file holds them. Empty
+ * means it could not be read, not that there are none. */
+function calleeSignatures(callee: ts.Expression, resolve: BodyResolver): ts.Node[] {
+  const expr = unwrapExpression(callee);
+  if (ts.isArrowFunction(expr) || ts.isFunctionExpression(expr)) return [expr];
+  if (!ts.isIdentifier(expr)) return [];
+  const found: ts.Node[] = [];
+  for (const body of resolve(expr.text)) {
+    // An object literal is not something a call runs, so it says nothing about
+    // what a call does with its arguments.
+    if (ts.isObjectLiteralExpression(body.node)) continue;
+    if (!ts.isClassLike(body.node)) {
+      found.push(body.node);
+      continue;
+    }
+    // What `new C(cb)` hands `cb` to is the constructor.
+    const ctor = body.node.members.find((m) => ts.isConstructorDeclaration(m));
+    if (ctor !== undefined) found.push(ctor);
+  }
+  return found;
+}
+
+/** `&&`, `||` and `??` — the right side may not run at all. */
+function isShortCircuitOperator(kind: ts.SyntaxKind): boolean {
+  return (
+    kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+    kind === ts.SyntaxKind.BarBarToken ||
+    kind === ts.SyntaxKind.QuestionQuestionToken
+  );
+}
+
+/** One scope's view of the names standing for a callback argument: those it
+ * carries, and those it binds to something else. */
+type AliasScope = {
+  readonly carried: Set<string>;
+  readonly rebound: Set<string>;
+  readonly parent: AliasScope | null;
+  readonly isFunction: boolean;
+};
+
+/** Whether calling a function can run the argument at `index` — itself, or by
+ * handing it to something else that might, including back to its own caller.
+ * Only a callee that ignores or discards the argument answers no.
+ *
+ * The ways an argument can get out are open-ended — a call, a return, an
+ * object it is put in, a property it is stored on, an arrow that closes over
+ * it — so what is enumerated here is the other list: the positions that
+ * demonstrably lead nowhere. Anything else counts as running it. Reading
+ * nothing also means yes: over-running an argument refuses valid code loudly,
+ * and missing one goes quiet. */
+function invokesParameter(
+  fn: ts.Node,
+  index: number,
+  /** Whether THIS call leaves the argument at that position for the parameter's
+   * own default to supply. A default nobody left out never runs. */
+  omitted: (at: number) => boolean,
+): boolean {
+  const parameters = (fn as { parameters?: readonly ts.ParameterDeclaration[] }).parameters ?? [];
+  const last = parameters.at(-1);
+  const parameter = parameters[index] ?? (last?.dotDotDotToken !== undefined ? last : undefined);
+  if (parameter === undefined) return false;
+  // A rest or a destructured parameter does not name the argument on its own.
+  // Neither does a parameter PROPERTY — `constructor(public cb)` also stores it
+  // on the instance, by a write that appears nowhere in the body, so the
+  // argument outlives the call whatever the body does with the name.
+  if (
+    parameter.dotDotDotToken !== undefined ||
+    !ts.isIdentifier(parameter.name) ||
+    (ts.getModifiers(parameter) ?? []).length > 0
+  ) {
+    return true;
+  }
+  const body = (fn as { body?: ts.Node }).body;
+  if (body === undefined) return true;
+  // `const invoke = cb` carries the parameter, so calling `invoke` calls it.
+  // A chain of bare-identifier aliases is followed; one built by anything else
+  // is not, the same limit the write walk keeps for aliases of a binding.
+  // Which names carry it is a per-scope question — `retain(cb) { { const cb =
+  // () => {} } }` binds that name to something else inside the block, and a
+  // `const invoke = cb` in there is gone once the block ends — so each scope
+  // holds what it carries and what it rebinds, and a lookup walks outward to
+  // the first scope that says either.
+  const carries = (scope: AliasScope, name: string): boolean => {
+    for (let s: AliasScope | null = scope; s !== null; s = s.parent) {
+      if (s.carried.has(name)) return true;
+      if (s.rebound.has(name)) return false;
+    }
+    return false;
+  };
+  // Where a name lives, or null when nothing here declares it — which means it
+  // is declared outside the callee, so assigning the argument to it puts the
+  // argument outside too.
+  const homeOf = (scope: AliasScope, name: string): AliasScope | null => {
+    for (let s: AliasScope | null = scope; s !== null; s = s.parent) {
+      if (s.carried.has(name) || s.rebound.has(name)) return s;
+    }
+    return null;
+  };
+  const carry = (scope: AliasScope, name: string): void => {
+    scope.rebound.delete(name);
+    scope.carried.add(name);
+  };
+  const release = (scope: AliasScope, name: string): void => {
+    scope.carried.delete(name);
+    scope.rebound.add(name);
+  };
+  let runs = false;
+  // `certain` is false inside anything that may not run — a branch, a loop
+  // body, a short-circuit. An overwrite there does not settle what the name
+  // holds afterwards, so only a straight-line one takes the argument away.
+  const look = (node: ts.Node, scope: AliasScope, certain: boolean): void => {
+    if (runs) return;
+    const isAliasHere = (expr: ts.Expression): boolean => {
+      const inner = unwrapExpression(expr);
+      return ts.isIdentifier(inner) && carries(scope, inner.text);
+    };
+    // A type mentions no value, so a name that only appears in one is not this
+    // argument at all.
+    if (ts.isTypeNode(node)) return;
+    // `void cb` and `typeof cb` read it and drop it.
+    if (
+      (ts.isVoidExpression(node) || ts.isTypeOfExpression(node)) &&
+      isAliasHere(node.expression)
+    ) {
+      return;
+    }
+    // `cb;` on its own line does nothing with it either.
+    if (ts.isExpressionStatement(node) && isAliasHere(node.expression)) return;
+    // `const invoke = cb` carries it no further than the new name, which is
+    // then judged by what IT does. A `let` or `const` belongs to this scope; a
+    // `var` to the function around it.
+    if (ts.isVariableDeclarationList(node)) {
+      const blockScoped = (node.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;
+      for (const declaration of node.declarations) {
+        if (declaration.initializer === undefined) continue;
+        if (ts.isIdentifier(declaration.name) && isAliasHere(declaration.initializer)) {
+          const home = blockScoped ? scope : (homeOf(scope, declaration.name.text) ?? scope);
+          carry(home, declaration.name.text);
+          continue;
+        }
+        look(declaration.initializer, scope, certain);
+      }
+      return;
+    }
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      const target = unwrapExpression(node.left);
+      if (ts.isIdentifier(target)) {
+        const home = homeOf(scope, target.text);
+        if (isAliasHere(node.right)) {
+          // Nothing here declares the target, so this hands the argument to a
+          // binding that outlives the call.
+          if (home === null) {
+            runs = true;
+            return;
+          }
+          carry(home, target.text);
+          return;
+        }
+        // Overwritten with something else, so the name stops standing for the
+        // argument — but only where the overwrite certainly happened, and only
+        // after the right side, which runs first and can still use the old one.
+        look(node.right, scope, certain);
+        if (certain && home !== null && carries(scope, target.text)) {
+          release(home, target.text);
+        }
+        return;
+      }
+    }
+    // A member name and an object-literal key are spellings, not references.
+    if (ts.isPropertyAccessExpression(node)) {
+      look(node.expression, scope, certain);
+      return;
+    }
+    if (ts.isPropertyAssignment(node)) {
+      look(node.initializer, scope, certain);
+      return;
+    }
+    // Every other mention hands it somewhere this walk cannot follow.
+    if (ts.isIdentifier(node) && carries(scope, node.text)) {
+      runs = true;
+      return;
+    }
+    const opened = blockScopedNames(node);
+    const inner: AliasScope =
+      opened === null
+        ? scope
+        : { carried: new Set(), rebound: new Set(opened), parent: scope, isFunction: false };
+    // A function's body sees its `var`s throughout, but a default parameter
+    // initializer runs before any of them exist and still reads the outer name.
+    let functionBody: ts.Node | undefined;
+    let bodyScope = inner;
+    if (ts.isFunctionLike(node)) {
+      const vars = new Set<string>();
+      collectFunctionScopedVars(node, vars);
+      functionBody = (node as { body?: ts.Node }).body;
+      bodyScope = { carried: new Set(), rebound: vars, parent: inner, isFunction: true };
+    }
+    // Inside a branch, a loop or a short-circuit, nothing is settled — and a
+    // function body runs on its own schedule, so it settles nothing here either.
+    const settled =
+      certain &&
+      !ts.isIfStatement(node) &&
+      !ts.isConditionalExpression(node) &&
+      !ts.isSwitchStatement(node) &&
+      !ts.isTryStatement(node) &&
+      !ts.isForStatement(node) &&
+      !ts.isForOfStatement(node) &&
+      !ts.isForInStatement(node) &&
+      !ts.isWhileStatement(node) &&
+      !ts.isDoStatement(node) &&
+      !ts.isFunctionLike(node) &&
+      !(ts.isBinaryExpression(node) && isShortCircuitOperator(node.operatorToken.kind));
+    ts.forEachChild(node, (child) => {
+      look(child, child === functionBody ? bodyScope : inner, settled);
+    });
+  };
+  // A parameter default runs when THIS call leaves its argument out, before the
+  // body does anything — and it is evaluated in the parameter scope, where the
+  // body's `var`s do not exist yet. Its own default cannot name it, so that one
+  // is skipped.
+  for (const [at, other] of parameters.entries()) {
+    if (other === parameter || other.initializer === undefined || !omitted(at)) continue;
+    look(
+      other.initializer,
+      {
+        carried: new Set([parameter.name.text]),
+        rebound: new Set<string>(),
+        parent: null,
+        isFunction: true,
+      },
+      true,
+    );
+  }
+  const own = new Set<string>();
+  collectFunctionScopedVars(fn, own);
+  look(
+    body,
+    { carried: new Set([parameter.name.text]), rebound: own, parent: null, isFunction: true },
+    true,
+  );
+  return runs;
+}
+
+/**
+ * Names a statement assigns to when it runs — `x = 1`, `x += 1`, `x++`,
+ * `[x] = ...`. A function body is skipped: it assigns when CALLED, so a helper
+ * that merely contains an assignment is not a write at statement time.
+ */
+/** Strip parentheses and the TS-only wrappers that leave the value untouched. */
+function unwrapExpression(expr: ts.Expression): ts.Expression {
+  let current = expr;
+  for (;;) {
+    if (
+      ts.isParenthesizedExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isSatisfiesExpression(current) ||
+      ts.isNonNullExpression(current) ||
+      ts.isTypeAssertionExpression(current)
+    ) {
+      current = current.expression;
+      continue;
+    }
+    return current;
+  }
+}
+
+/** A body a name stands for, together with the node to walk in from to reach
+ * it. The two differ whenever the body sits deeper than the scope holding the
+ * name — assigned inside a nested block, or a `var` hoisted out of one — and
+ * the walk in is what reads its free names where they were written. */
+type ScopedBody = { readonly node: ts.Node; readonly within: ts.Node };
+
+/** The module-scope function bodies a name stands for, when this file has them. */
+type CalleeBodies = (name: string) => readonly ScopedBody[];
+
+/** A function body a name resolves to, carrying the scope it was declared in —
+ * what its own free names see is decided there, not at the call. */
+type ResolvedBody = {
+  readonly node: ts.Node;
+  readonly shadowed: ReadonlySet<string>;
+  readonly resolve: BodyResolver;
+};
+
+/** Innermost-first lookup of the function bodies a name stands for. */
+type BodyResolver = (name: string) => readonly ResolvedBody[];
+
+const NO_NAMES: ReadonlySet<string> = new Set<string>();
+
+function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<string> {
+  const names = new Set<string>();
+  // Function bodies that run while this statement does, rather than whenever
+  // someone later calls them: a function handed to a call, an IIFE, and the
+  // body of a function this file declares and this statement calls.
+  const runsNow = new Set<ts.Node>();
+  const followed = new Set<ts.Node>();
+  const moduleResolve: BodyResolver = (name) =>
+    (calleeBodies?.(name) ?? []).map((held) =>
+      scopeIn(held.within, held.node, NO_NAMES, moduleResolve),
+    );
+  // A write to a name a nested block declares for itself is that local's, not
+  // the module binding's — the same spelling-versus-resolution rule the export
+  // taint follows. Only block-scoped declarations shadow: a `var` inside a
+  // block IS the outer binding.
+  const target = (raw: ts.Expression, shadowed: ReadonlySet<string>): void => {
+    const expr = unwrapExpression(raw);
+    const add = (name: string): void => {
+      if (!shadowed.has(name)) names.add(name);
+    };
+    if (ts.isIdentifier(expr)) add(expr.text);
+    // `helper.value = 1` / `table[0] = 1` mutate what `helper` and `table`
+    // hold, so the binding at the root of the access is what was written.
+    // Parentheses and TS-only wrappers (`as`, `satisfies`, `!`) sit between the
+    // access and that root without changing which binding it is.
+    else if (ts.isPropertyAccessExpression(expr) || ts.isElementAccessExpression(expr)) {
+      let root: ts.Expression = unwrapExpression(expr.expression);
+      while (ts.isPropertyAccessExpression(root) || ts.isElementAccessExpression(root)) {
+        root = unwrapExpression(root.expression);
+      }
+      if (ts.isIdentifier(root)) add(root.text);
+    } else if (ts.isArrayLiteralExpression(expr))
+      for (const el of expr.elements) target(el, shadowed);
+    else if (ts.isObjectLiteralExpression(expr)) {
+      for (const p of expr.properties) {
+        if (ts.isShorthandPropertyAssignment(p)) add(p.name.text);
+        else if (ts.isPropertyAssignment(p)) target(p.initializer, shadowed);
+        // `({ ...helper } = source)` — the rest target, an object-literal
+        // counterpart of the array spread below.
+        else if (ts.isSpreadAssignment(p)) target(p.expression, shadowed);
+      }
+    } else if (ts.isSpreadElement(expr)) target(expr.expression, shadowed);
+  };
+  // A member's body may be deferred while its NAME is not: `[helper.value = 1]()`
+  // computes that key where the class stands, whoever calls the method later.
+  const walkComputedName = (
+    n: ts.Node,
+    shadowed: ReadonlySet<string>,
+    resolve: BodyResolver,
+  ): void => {
+    const name = (n as { name?: ts.Node }).name;
+    if (name !== undefined && ts.isComputedPropertyName(name)) {
+      walk(name.expression, shadowed, resolve);
+    }
+  };
+  // A decorator is applied where its class stands, so its expression runs there
+  // too — `@register(helper.value = 1) m() {}` writes before any call to `m`.
+  const walkDecorators = (
+    n: ts.Node,
+    shadowed: ReadonlySet<string>,
+    resolve: BodyResolver,
+  ): void => {
+    if (!ts.canHaveDecorators(n)) return;
+    for (const d of ts.getDecorators(n) ?? []) walk(d.expression, shadowed, resolve);
+  };
+  const walk = (n: ts.Node, shadowed: ReadonlySet<string>, resolve: BodyResolver): void => {
+    // Reading a key a literal's getter answers runs that getter, and a read is
+    // a read whether or not the value goes on to a call. The walk reaches the
+    // getter below; this only says it is not deferred.
+    const readKey = ts.isPropertyAccessExpression(n)
+      ? n.name.text
+      : ts.isElementAccessExpression(n)
+        ? readLiteralKey(n.argumentExpression)
+        : undefined;
+    if (readKey !== undefined) {
+      const receiver = (n as ts.PropertyAccessExpression | ts.ElementAccessExpression).expression;
+      for (const from of literalsBehind(receiver, shadowed, resolve)) {
+        for (const getter of literalProperty(from.literal, readKey).getters) {
+          if (followed.has(getter)) continue;
+          followed.add(getter);
+          runsNow.add(getter);
+          // A literal reached by name lives in another statement, which this
+          // walk never descends into on its own.
+          walk(getter, from.shadowed, from.resolve);
+        }
+      }
+    }
+    if (ts.isFunctionLike(n) && !runsNow.has(n)) {
+      walkDecorators(n, shadowed, resolve);
+      walkComputedName(n, shadowed, resolve);
+      // A parameter DECORATOR is applied with the class; a parameter DEFAULT is
+      // evaluated per call, so only the decorators count where the class stands.
+      for (const p of n.parameters) walkDecorators(p, shadowed, resolve);
+      return;
+    }
+    // A call runs code the statement does not contain. Where that code is in
+    // this file its writes belong to the statement, because they land before
+    // the statement after it reads anything. The callee and every argument are
+    // read the same way — `run(() => ...)` and `run(mutate)` hand over the same
+    // body — and a name that names no function this file can read, or no
+    // function at all, is simply not followed.
+    if (ts.isCallExpression(n) || ts.isNewExpression(n)) {
+      // `new C()` runs what the class itself defers — the instance field
+      // initializers, the constructor, and the same for every base it extends,
+      // since constructing the derived one constructs those first.
+      const construct = (cls: ts.ClassLikeDeclaration, at: ResolvedBody): void => {
+        if (followed.has(cls)) return;
+        followed.add(cls);
+        for (const member of cls.members) {
+          const instanceField =
+            ts.isPropertyDeclaration(member) &&
+            !(ts.getModifiers(member) ?? []).some((m) => m.kind === ts.SyntaxKind.StaticKeyword);
+          if (!ts.isConstructorDeclaration(member) && !instanceField) continue;
+          runsNow.add(member);
+          walk(member, at.shadowed, at.resolve);
+        }
+        for (const clause of cls.heritageClauses ?? []) {
+          if (clause.token !== ts.SyntaxKind.ExtendsKeyword) continue;
+          for (const type of clause.types) {
+            const base = unwrapExpression(type.expression);
+            if (!ts.isIdentifier(base)) continue;
+            for (const found of at.resolve(base.text)) {
+              if (ts.isClassLike(found.node)) construct(found.node, found);
+            }
+          }
+        }
+      };
+      // A function can arrive wrapped: `run(mutate.bind(null))`, `run(flag ? a
+      // : b)`, `runAll([mutate])`. Every function the expression names is one
+      // the call may be handed, so each is entered. A function WRITTEN here is
+      // entered as itself rather than scanned through — its body runs on its
+      // own terms, and the walk reaches it with this scope.
+      const enter = (passed: ts.Expression, runs: boolean, isCallee: boolean): void => {
+        // Reading a key off a literal. True once this has said everything there
+        // is to say about the key; false leaves the caller to fall back.
+        const takeFromLiteral = (
+          from: ts.ObjectLiteralExpression,
+          key: string,
+          within: BodyResolver,
+        ): boolean => {
+          const answer = literalProperty(from, key);
+          if (answer.value !== UNKNOWN_PROPERTY) {
+            if (answer.value !== null) seen(answer.value, false, within);
+            return true;
+          }
+          // A getter that can answer RUNS on the read — right there, on the way
+          // to the call, whatever the callee then does with what it hands back.
+          // A name it returns is read where the getter stands, not here.
+          for (const getter of answer.getters) {
+            runsNow.add(getter);
+            for (const returned of returnedExpressions(getter, within)) {
+              seen(returned.expression, false, returned.resolve);
+            }
+          }
+          // Only a spread or a runtime key leaves the value genuinely open.
+          return !answer.clouded;
+        };
+        const seen = (node: ts.Node, top: boolean, within: BodyResolver = resolve): void => {
+          const expr = ts.isExpression(node) ? unwrapExpression(node) : node;
+          if (
+            ts.isArrowFunction(expr) ||
+            ts.isFunctionExpression(expr) ||
+            // A literal's method, selected by key: the walk reaches it in place.
+            ts.isMethodDeclaration(expr)
+          ) {
+            if (runs) runsNow.add(expr);
+            return;
+          }
+          // A member NAME is a spelling, not a reference to anything here —
+          // except off a literal, where the name says which value is taken.
+          if (ts.isPropertyAccessExpression(expr)) {
+            const behind = literalsBehind(expr.expression, NO_NAMES, within);
+            if (
+              behind.length > 0 &&
+              behind.every((from) => takeFromLiteral(from.literal, expr.name.text, from.resolve))
+            ) {
+              return;
+            }
+            seen(expr.expression, false, within);
+            return;
+          }
+          // Only what the expression can YIELD is handed over. A comma yields
+          // its right side, a conditional either branch, a constant index into
+          // a literal array that element — reading the rest hands the call a
+          // function it never sees.
+          if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+            seen(expr.right, false, within);
+            return;
+          }
+          if (ts.isConditionalExpression(expr)) {
+            seen(expr.whenTrue, false, within);
+            seen(expr.whenFalse, false, within);
+            return;
+          }
+          if (ts.isElementAccessExpression(expr)) {
+            const from = unwrapExpression(expr.expression);
+            const at = unwrapExpression(expr.argumentExpression);
+            // A literal key in brackets says the same thing a name after a dot
+            // says, so it is read the same way.
+            const key = readLiteralKey(expr.argumentExpression);
+            if (key !== undefined) {
+              const behind = literalsBehind(expr.expression, NO_NAMES, within);
+              if (
+                behind.length > 0 &&
+                behind.every((one) => takeFromLiteral(one.literal, key, one.resolve))
+              ) {
+                return;
+              }
+            }
+            if (ts.isArrayLiteralExpression(from) && ts.isNumericLiteral(at)) {
+              // A spread shifts everything AFTER it by a length nothing here
+              // knows, so only an index ahead of the first one is the element
+              // it looks like. Past that, every element is still a candidate.
+              const spread = from.elements.findIndex((e) => ts.isSpreadElement(e));
+              const index = Number(at.text);
+              if (spread === -1 || index < spread) {
+                const picked = from.elements[index];
+                if (picked !== undefined) seen(picked, false, within);
+                return;
+              }
+            }
+          }
+          if (!ts.isIdentifier(expr)) {
+            ts.forEachChild(expr, (child) => {
+              seen(child, false, within);
+            });
+            return;
+          }
+          for (const body of within(expr.text)) {
+            if (ts.isClassLike(body.node)) {
+              // Reaching a class any other way constructs nothing.
+              if (top && isCallee && ts.isNewExpression(n)) construct(body.node, body);
+              continue;
+            }
+            // Handing over an object is not handing over code to run; only
+            // reading a key off it does anything, and the walk sees that.
+            if (ts.isObjectLiteralExpression(body.node)) continue;
+            if (!runs || followed.has(body.node)) continue;
+            followed.add(body.node);
+            runsNow.add(body.node);
+            walk(body.node, body.shadowed, body.resolve);
+          }
+        };
+        seen(passed, true);
+      };
+      // The callee is what the call runs, so it always runs. Whether an
+      // ARGUMENT runs is the callee's business: a callee this file can read
+      // answers it, and one it cannot — a method, an import — is assumed to
+      // run what it is handed, because a callback that runs and is missed is
+      // the failure that stays silent.
+      enter(n.expression, true, true);
+      const invoked = calleeSignatures(n.expression, resolve);
+      const args = n.arguments ?? ts.factory.createNodeArray<ts.Expression>();
+      // A parameter falls back to its own default unless this call hands it
+      // something that is certainly there. What counts as certainly there is
+      // the short list — a value written in place — because `undefined` can
+      // arrive under any other spelling, and missing that goes quiet.
+      const omitted = (at: number): boolean => {
+        const argument = args[at];
+        return argument === undefined || !certainlyDefined(unwrapExpression(argument));
+      };
+      args.forEach((argument, index) => {
+        const runs =
+          invoked.length === 0 || invoked.some((fn) => invokesParameter(fn, index, omitted));
+        enter(argument, runs, false);
+      });
+    }
+    // An INSTANCE field initializer runs when an instance is constructed, not
+    // where the class stands — like a function body. A static field (and a
+    // static block) runs at class definition, so those keep counting.
+    if (
+      ts.isPropertyDeclaration(n) &&
+      !runsNow.has(n) &&
+      !(ts.getModifiers(n) ?? []).some((m) => m.kind === ts.SyntaxKind.StaticKeyword)
+    ) {
+      walkDecorators(n, shadowed, resolve);
+      walkComputedName(n, shadowed, resolve);
+      return;
+    }
+    if (ts.isBinaryExpression(n) && isAssignmentOperator(n.operatorToken.kind)) {
+      target(n.left, shadowed);
+    }
+    // `delete helper.value` removes from what `helper` holds.
+    if (ts.isDeleteExpression(n)) target(n.expression, shadowed);
+    // `for (slot of xs)` — an initializer that is an expression rather than a
+    // declaration assigns into an existing binding on every iteration.
+    if (
+      (ts.isForOfStatement(n) || ts.isForInStatement(n)) &&
+      !ts.isVariableDeclarationList(n.initializer)
+    ) {
+      target(n.initializer, shadowed);
+    }
+    if (ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) {
+      if (
+        n.operator === ts.SyntaxKind.PlusPlusToken ||
+        n.operator === ts.SyntaxKind.MinusMinusToken
+      ) {
+        target(n.operand as ts.Expression, shadowed);
+      }
+    }
+    const at = scopeUnder(n, shadowed, resolve);
+    ts.forEachChild(n, (child) => {
+      const scope = at(child);
+      walk(child, scope.shadowed, scope.resolve);
+    });
+  };
+  walk(stmt, NO_NAMES, moduleResolve);
+  return names;
+}
+
+/** The scope in force at each child of `n`, given the one `n` itself stands in.
+ * A name the scope opens resolves to the bodies bound to it, each read where it
+ * was WRITTEN rather than where the name lives — the two are the same place for
+ * a declaration and a different one for anything reached by walking in. */
+function scopeUnder(
+  n: ts.Node,
+  shadowed: ReadonlySet<string>,
+  resolve: BodyResolver,
+): (child: ts.Node) => { shadowed: ReadonlySet<string>; resolve: BodyResolver } {
+  const opened = blockScopedNames(n);
+  const inner = opened === null ? shadowed : new Set([...shadowed, ...opened]);
+  // Every name this scope opens is a key, so one bound to something that is
+  // not a function stops the lookup here instead of reaching an outer
+  // function of the same spelling.
+  const declared = opened === null ? null : scopedFunctionBodies(n, opened);
+  const innerResolve: BodyResolver = (name) => {
+    const here = declared?.get(name);
+    return here === undefined ? resolve(name) : here.map((body) => scopeAt(n, body, at));
+  };
+  // A function's body sees its `var`s throughout, but a default parameter
+  // initializer runs before any of them exist — so the body child gets the
+  // wider scope and the parameters keep the narrower one.
+  let body: ts.Node | undefined;
+  let bodyNames = inner;
+  let bodyResolve = innerResolve;
+  if (ts.isFunctionLike(n)) {
+    const vars = new Set<string>();
+    const varBodies = new Map<string, ts.Node[]>();
+    collectFunctionScopedVars(n, vars, varBodies);
+    body = (n as { body?: ts.Node }).body;
+    if (vars.size > 0) {
+      const names = new Set([...inner, ...vars]);
+      const lookup: BodyResolver = (name) => {
+        const here = varBodies.get(name);
+        return here === undefined ? innerResolve(name) : here.map((v) => scopeAt(n, v, at));
+      };
+      bodyNames = names;
+      bodyResolve = lookup;
+    }
+  }
+  function at(child: ts.Node): { shadowed: ReadonlySet<string>; resolve: BodyResolver } {
+    return child === body
+      ? { shadowed: bodyNames, resolve: bodyResolve }
+      : { shadowed: inner, resolve: innerResolve };
+  }
+  return at;
+}
+
+/** Where a body stands, walking in from the scope that holds its name. Every
+ * scope on the way in is entered, so a body written inside a nested block reads
+ * that block's names — the outer scope has never heard of them. */
+function scopeAt(
+  home: ts.Node,
+  node: ts.Node,
+  at: (child: ts.Node) => { shadowed: ReadonlySet<string>; resolve: BodyResolver },
+): ResolvedBody {
+  const chain = (n: ts.Node): ts.Node[] | null => {
+    if (n === node) return [];
+    let found: ts.Node[] | null = null;
+    ts.forEachChild(n, (child) => {
+      const rest = chain(child);
+      if (rest === null) return undefined;
+      found = [child, ...rest];
+      return true;
+    });
+    return found;
+  };
+  const path = chain(home) ?? [];
+  let scope = at(path[0] ?? node);
+  for (let i = 0; i + 1 < path.length; i++) {
+    scope = scopeUnder(path[i]!, scope.shadowed, scope.resolve)(path[i + 1]!);
+  }
+  return { node, shadowed: scope.shadowed, resolve: scope.resolve };
+}
+
+/** `scopeAt` from outside `home`, for a caller holding the scope `home` itself
+ * stands in rather than the one it hands its children. */
+function scopeIn(
+  home: ts.Node,
+  node: ts.Node,
+  shadowed: ReadonlySet<string>,
+  resolve: BodyResolver,
+): ResolvedBody {
+  if (home === node) return { node, shadowed, resolve };
+  return scopeAt(home, node, scopeUnder(home, shadowed, resolve));
+}
+
+/** The function bodies a scope's own names are bound to. Every name the scope
+ * opens is present, mapped to nothing when it is bound to a non-function. */
+function scopedFunctionBodies(node: ts.Node, opened: ReadonlySet<string>): Map<string, ts.Node[]> {
+  const bodies = new Map<string, ts.Node[]>();
+  for (const name of opened) bodies.set(name, []);
+  const fromStatements = (statements: readonly ts.Statement[]): void => {
+    for (const stmt of statements) {
+      if (
+        (ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) &&
+        stmt.name !== undefined
+      ) {
+        bodies.get(stmt.name.text)?.push(stmt);
+      } else if (ts.isVariableStatement(stmt)) {
+        for (const d of stmt.declarationList.declarations) {
+          if (!ts.isIdentifier(d.name) || d.initializer === undefined) continue;
+          const init = unwrapExpression(d.initializer);
+          if (isCallableDeclaration(init)) bodies.get(d.name.text)?.push(init);
+        }
+      }
+    }
+  };
+  if (ts.isBlock(node) || ts.isModuleBlock(node)) fromStatements(node.statements);
+  else if (ts.isCaseBlock(node)) for (const c of node.clauses) fromStatements(c.statements);
+  collectAssignedLiterals(node, bodies, "existing");
+  // A namespace body and a class static block own their `var`s wherever those
+  // sit inside them, so a callable one is found the same way its name was.
+  if (ts.isModuleBlock(node) || ts.isClassStaticBlockDeclaration(node)) {
+    collectFunctionScopedVars(node, new Set<string>(), bodies);
+  }
+  return bodies;
+}
+
+/** Names a node block-scopes, or null when it scopes none. A `var` is excluded
+ * where it belongs to the enclosing function or module; the scopes that own
+ * their own `var`s — a class static block, a namespace body — collect theirs. */
+function blockScopedNames(node: ts.Node): Set<string> | null {
+  const names = new Set<string>();
+  // The same list the reference walker binds from, so the two cannot drift over
+  // which declaration forms name something.
+  const fromStatements = (body: readonly ts.Statement[]): void => {
+    for (const name of statementBoundNames(body, { blockScopedOnly: true })) names.add(name);
+  };
+  // A class static block is its own `var` scope, so a `var` inside one is the
+  // block's — the exclusion below applies to ordinary blocks, where a `var`
+  // belongs to the enclosing function or module.
+  // Only asked of a function whose body actually runs here — the walk stops at
+  // a deferred one before getting this far.
+  if (ts.isFunctionLike(node)) {
+    for (const p of node.parameters) collectBindingNames(p.name, names);
+    if (
+      (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) &&
+      node.name !== undefined
+    ) {
+      names.add(node.name.text);
+    }
+  }
+  if (ts.isClassStaticBlockDeclaration(node)) collectFunctionScopedVars(node, names);
+  // A class binds its own name inside itself: in `class helper { static {
+  // helper.x = 1 } }` that write lands on the class, not on a module `helper`.
+  // A declaration's name is block-scoped by its enclosing block as well; an
+  // expression's is bound here and nowhere else.
+  if (ts.isClassLike(node) && node.name !== undefined) names.add(node.name.text);
+  if (ts.isBlock(node) || ts.isModuleBlock(node)) {
+    fromStatements(node.statements);
+    // A namespace body is its own `var` scope: the outer collector stops at the
+    // boundary, so the block collects what is nested inside it.
+    if (ts.isModuleBlock(node)) collectFunctionScopedVars(node, names);
+  } else if (ts.isCaseBlock(node)) for (const c of node.clauses) fromStatements(c.statements);
+  else if (ts.isCatchClause(node) && node.variableDeclaration !== undefined) {
+    collectBindingNames(node.variableDeclaration.name, names);
+  } else if (ts.isForStatement(node) || ts.isForOfStatement(node) || ts.isForInStatement(node)) {
+    const init = node.initializer;
+    if (
+      init !== undefined &&
+      ts.isVariableDeclarationList(init) &&
+      (init.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0
+    ) {
+      for (const d of init.declarations) collectBindingNames(d.name, names);
+    }
+  }
+  return names.size > 0 ? names : null;
+}
+
+function isAssignmentOperator(kind: ts.SyntaxKind): boolean {
+  return kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
+}
+
+/** Whether this qualified name is (part of) an `import("...")` type's qualifier. */
+function isImportTypeQualifier(name: ts.QualifiedName): boolean {
+  let node: ts.Node = name;
+  let parent = node.parent as ts.Node | undefined;
+  while (parent !== undefined && ts.isQualifiedName(parent)) {
+    node = parent;
+    parent = parent.parent as ts.Node | undefined;
+  }
+  return parent !== undefined && ts.isImportTypeNode(parent) && parent.qualifier === node;
+}
+
+/** Names bound by `infer X` anywhere in a conditional type's extends clause. */
+function collectInferNames(node: ts.Node, into: Set<string>): void {
+  const walk = (n: ts.Node): void => {
+    if (ts.isInferTypeNode(n)) into.add(n.typeParameter.name.text);
+    ts.forEachChild(n, walk);
+  };
+  walk(node);
+}
+
+/** The names a statement list binds in the scope it belongs to. */
+function statementBoundNames(
+  statements: readonly ts.Statement[],
+  options?: { readonly blockScopedOnly?: boolean },
+): Set<string> {
+  const names = new Set<string>();
+  for (const stmt of statements) {
+    if (ts.isVariableStatement(stmt)) {
+      // A `var` belongs to the enclosing function or module, so a caller asking
+      // what a BLOCK binds does not get it.
+      if (
+        options?.blockScopedOnly === true &&
+        (stmt.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0
+      ) {
+        continue;
+      }
+      for (const d of stmt.declarationList.declarations) collectBindingNames(d.name, names);
+    } else if (
+      (ts.isFunctionDeclaration(stmt) ||
+        ts.isClassDeclaration(stmt) ||
+        ts.isEnumDeclaration(stmt) ||
+        ts.isModuleDeclaration(stmt) ||
+        // `import helper = Source.helper` binds `helper` here the way an
+        // ordinary import binds it at module scope.
+        ts.isImportEqualsDeclaration(stmt)) &&
+      stmt.name !== undefined &&
+      ts.isIdentifier(stmt.name)
+    ) {
+      names.add(stmt.name.text);
     }
   }
   return names;
@@ -318,6 +1462,608 @@ function referencesCall(nodes: readonly ts.Node[], calleeName: string): boolean 
   return found;
 }
 
+/**
+ * Identifiers whose presence in a statement pins it to the processor body: the
+ * ambient DSL surface (only meaningful inside the `defineProcessor` capture),
+ * the injected stereo I/O handles, and the top-level macros.
+ */
+const DSL_TAINT_ROOTS = new Set<string>([
+  ...CORE_AUTHORING_EXPORTS,
+  "input",
+  "out",
+  "process",
+  "migrations",
+  "options",
+  "$prev",
+]);
+
+/**
+ * Split the processor file's non-macro statements into module-scope `hoisted`
+ * and wrapper-body `inner` (issue #44). Lowering wraps the body into
+ * `defineProcessor((ctx) => {...})`, and an `export` swallowed into that
+ * callback emits invalid JavaScript — so an exported declaration moves OUT,
+ * together with its dependency closure, but only when nothing in that closure
+ * touches the DSL (a DSL declaration only exists inside the capture). A
+ * DSL-dependent or structurally-unsupported export is a loud `LowerError`
+ * (`uwk-export-unsupported`) — never an emit that fails later and elsewhere.
+ *
+ * Taint is computed as a fixpoint over identifier references: a statement is
+ * tainted by naming a DSL root, by referencing a tainted binding, or by being
+ * a form the hoist cannot carry (a destructuring declaration). Non-exported
+ * untainted statements move only if a hoisted export's closure needs them —
+ * everything else keeps its place (and its per-capture evaluation timing).
+ */
+function partitionModuleScopeExports(
+  statements: readonly ts.Statement[],
+  /**
+   * How the file's own imports classify the names they bind. A name imported
+   * from a module OTHER than the core is that module's, whatever it is spelled;
+   * a name imported FROM the core is the DSL under whatever local name it was
+   * given (`{ state as makeState }`, `* as core`), which no spelling test on
+   * `DSL_TAINT_ROOTS` would catch.
+   */
+  imported: { readonly dsl: ReadonlySet<string>; readonly other: ReadonlySet<string> },
+): {
+  hoisted: ts.Statement[];
+  inner: ts.Statement[];
+} {
+  // Value and type live in separate namespaces, and one name can hold both
+  // (`const Level = ...` beside `interface Level {}`). One map would let
+  // whichever came last answer for both, so a value reference could resolve to
+  // a type declaration and follow the wrong dependency out of the wrapper.
+  // Each name maps to EVERY statement declaring it: namespaces, interfaces and
+  // function overloads merge across statements, and a hoisted export needs all
+  // the pieces of what it names, not the last one written.
+  const valueBindingOf = new Map<string, number[]>();
+  const typeBindingOf = new Map<string, number[]>();
+  const record = (map: Map<string, number[]>, name: string, idx: number): void => {
+    const existing = map.get(name);
+    if (existing === undefined) map.set(name, [idx]);
+    else existing.push(idx);
+  };
+  statements.forEach((stmt, idx) => {
+    if (ts.isVariableStatement(stmt)) {
+      for (const d of stmt.declarationList.declarations) {
+        if (ts.isIdentifier(d.name)) record(valueBindingOf, d.name.text, idx);
+      }
+      return;
+    }
+    // A `var` inside a control statement belongs to the module, not the block
+    // it sits in — an export reading it depends on the whole statement, so the
+    // closure has to carry that statement out. A function's own body vars stay
+    // its own, which is why a function-like statement is skipped here.
+    if (!ts.isFunctionLike(stmt)) {
+      const nestedVars = new Set<string>();
+      collectFunctionScopedVars(stmt, nestedVars);
+      for (const name of nestedVars) record(valueBindingOf, name, idx);
+    }
+    const declared = (stmt as { name?: ts.Node }).name;
+    if (declared === undefined || !ts.isIdentifier(declared)) return;
+    const name = declared.text;
+    // Enums, classes and namespaces bind a runtime value, so an export reading
+    // one depends on it exactly as it would on a const — and they name a type
+    // as well, which an annotation may reach.
+    if (
+      ts.isFunctionDeclaration(stmt) ||
+      ts.isClassDeclaration(stmt) ||
+      ts.isEnumDeclaration(stmt) ||
+      ts.isModuleDeclaration(stmt)
+    ) {
+      record(valueBindingOf, name, idx);
+    }
+    // A type alias or interface binds nothing at runtime, but an exported
+    // declaration annotated with one still needs it in scope beside it.
+    if (
+      ts.isClassDeclaration(stmt) ||
+      ts.isEnumDeclaration(stmt) ||
+      ts.isTypeAliasDeclaration(stmt) ||
+      ts.isInterfaceDeclaration(stmt)
+    ) {
+      record(typeBindingOf, name, idx);
+    }
+  });
+
+  /**
+   * Which namespace a reference reads. `typeQuery` is a `typeof X` inside a
+   * type: erased like any type, but naming a VALUE.
+   */
+  type RefPosition = "value" | "type" | "typeQuery";
+
+  /**
+   * The names an enclosing scope hides, kept per namespace because TypeScript
+   * has two: a type parameter hides a type of the same name and leaves the
+   * value alone, and a parameter does the reverse.
+   */
+  type ScopedNames = { readonly value: ReadonlySet<string>; readonly type: ReadonlySet<string> };
+
+  const NO_SCOPED_NAMES: ScopedNames = { value: new Set(), type: new Set() };
+
+  /** The half of a scope a reference in this position can be hidden by. */
+  const hiddenIn = (scoped: ScopedNames, position: RefPosition): ReadonlySet<string> =>
+    position === "type" ? scoped.type : scoped.value;
+
+  const NO_BINDINGS: readonly number[] = [];
+
+  /**
+   * `name` plus every binding it is a bare alias of — `const alias = helper`
+   * puts `helper` in the chain, transitively. Only a plain identifier
+   * initializer counts: anything computed is not an alias this can follow.
+   */
+  /** Whether statement `from` reaches `target` through its dependency edges. */
+  const dependsOn = (from: number, target: number): boolean => {
+    const seen = new Set<number>();
+    const queue = [...refs[from]!.bindings];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      if (current === target) return true;
+      if (seen.has(current)) continue;
+      seen.add(current);
+      queue.push(...refs[current]!.bindings);
+    }
+    return false;
+  };
+
+  const aliasChain = (name: string): Set<string> => {
+    const chain = new Set<string>([name]);
+    const queue = [name];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      for (const idx of valueBindingOf.get(current) ?? NO_BINDINGS) {
+        const stmt = statements[idx];
+        if (stmt === undefined || !ts.isVariableStatement(stmt)) continue;
+        for (const d of stmt.declarationList.declarations) {
+          if (!ts.isIdentifier(d.name) || d.name.text !== current) continue;
+          const init = d.initializer === undefined ? undefined : unwrapExpression(d.initializer);
+          if (init === undefined || !ts.isIdentifier(init) || chain.has(init.text)) continue;
+          chain.add(init.text);
+          queue.push(init.text);
+        }
+      }
+    }
+    return chain;
+  };
+
+  const resolveBinding = (name: string, position: RefPosition): readonly number[] => {
+    if (position === "value") return valueBindingOf.get(name) ?? NO_BINDINGS;
+    if (position === "typeQuery") {
+      return valueBindingOf.get(name) ?? typeBindingOf.get(name) ?? NO_BINDINGS;
+    }
+    // A type position falls back to the value namespace for the declarations
+    // that name both (class / enum / namespace).
+    return typeBindingOf.get(name) ?? valueBindingOf.get(name) ?? NO_BINDINGS;
+  };
+
+  const addBindings = (into: Set<number>, indices: readonly number[]): void => {
+    for (const idx of indices) into.add(idx);
+  };
+
+  /** Identifier is a NAME position (`a.foo`, `{ foo: v }`), not a value reference. */
+  const isNamePosition = (n: ts.Identifier): boolean => {
+    // Synthesized nodes (auto-name / sugar factory updates) carry no parent;
+    // treat them as value references (the conservative direction — a name
+    // position mistaken for a reference can only ADD taint, never lose it).
+    const p = n.parent as ts.Node | undefined;
+    if (p === undefined) return false;
+    if (ts.isPropertyAccessExpression(p) && p.name === n) return true;
+    // `Types.min` in a type — the right side names a member of the left, the
+    // same way a property access does in an expression.
+    if (ts.isQualifiedName(p) && p.right === n) return true;
+    // `import("./types.ts").min` — every part of the qualifier names something
+    // in THAT module, the leftmost included: there is no local binding to read.
+    if (ts.isImportTypeNode(p) && p.qualifier === n) return true;
+    if (ts.isQualifiedName(p) && p.left === n && isImportTypeQualifier(p)) return true;
+    if (ts.isPropertyAssignment(p) && p.name === n) return true;
+    if (ts.isMethodDeclaration(p) && p.name === n) return true;
+    if (ts.isPropertyDeclaration(p) && p.name === n) return true;
+    // `{ input: value }` — the key names what is read out of the object, not a
+    // binding the statement depends on.
+    if (ts.isBindingElement(p) && p.propertyName === n) return true;
+    if (ts.isEnumMember(p) && p.name === n) return true;
+    if (ts.isGetAccessorDeclaration(p) && p.name === n) return true;
+    if (ts.isSetAccessorDeclaration(p) && p.name === n) return true;
+    // Type-member keys (`interface Levels { gain: number }`) name a member of
+    // the type, not the `gain` a statement may declare beside it.
+    if (ts.isPropertySignature(p) && p.name === n) return true;
+    if (ts.isMethodSignature(p) && p.name === n) return true;
+    // `[min: number]` — the tuple label names the slot, nothing else.
+    if (ts.isNamedTupleMember(p) && p.name === n) return true;
+    // A type parameter's name declares it — `<T>` and `infer X` alike.
+    if (ts.isTypeParameterDeclaration(p) && p.name === n) return true;
+    // A statement label lives in its own namespace and reads no value.
+    if (ts.isLabeledStatement(p) && p.label === n) return true;
+    if (ts.isBreakStatement(p) && p.label === n) return true;
+    if (ts.isContinueStatement(p) && p.label === n) return true;
+    return false;
+  };
+
+  /**
+   * The names a node binds in the scope it opens, or null when it opens none.
+   * `input`, `min`, `out` and friends are DSL roots AND everyday parameter
+   * names, so a reference has to be resolved against the scopes enclosing it —
+   * matching on spelling alone rejects pure helpers that never touch the DSL.
+   */
+  const scopeBindings = (n: ts.Node): ScopedNames | null => {
+    const value = new Set<string>();
+    const type = new Set<string>();
+    const addStatementBindings = (body: readonly ts.Statement[]): void => {
+      // A statement can declare a value, a type, or both (a class, an enum, a
+      // namespace, an import alias), so its names stand in both namespaces.
+      for (const name of statementBoundNames(body)) {
+        value.add(name);
+        type.add(name);
+      }
+    };
+    // A type parameter binds its name for the declaration that introduces it,
+    // so `function id<input>(...)` is that declaration's `input` — but only
+    // where a TYPE is read. The expression `input` in the same body is still
+    // the module's value, because a type parameter names no value at all.
+    const typeParameters = (n as { typeParameters?: ts.NodeArray<ts.TypeParameterDeclaration> })
+      .typeParameters;
+    if (typeParameters !== undefined) {
+      for (const tp of typeParameters) type.add(tp.name.text);
+    }
+    // A mapped type carries a singular `typeParameter` — `{ [K in Keys]: T }`.
+    if (ts.isMappedTypeNode(n)) type.add(n.typeParameter.name.text);
+    if (ts.isClassStaticBlockDeclaration(n)) {
+      // Its own `var` scope, collected here so the block sees its nested
+      // declarations without leaking them into the enclosing function.
+      collectFunctionScopedVars(n, value);
+    }
+    if (ts.isFunctionLike(n)) {
+      for (const p of n.parameters) collectBindingNames(p.name, value);
+      if ((ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n)) && n.name !== undefined) {
+        value.add(n.name.text);
+      }
+      // Body `var`s are NOT added here: a default parameter initializer is
+      // evaluated in the parameter scope, before the body's bindings exist, so
+      // `visit` applies them to the body child alone.
+    } else if (ts.isBlock(n) || ts.isModuleBlock(n)) {
+      addStatementBindings(n.statements);
+      // A namespace body is its own `var` scope: the outer collector stops at
+      // the boundary, so the block collects what is nested inside it.
+      if (ts.isModuleBlock(n)) collectFunctionScopedVars(n, value);
+    } else if (ts.isCaseBlock(n)) {
+      // One block scope spans every clause of the switch.
+      for (const clause of n.clauses) addStatementBindings(clause.statements);
+    } else if (ts.isCatchClause(n)) {
+      if (n.variableDeclaration !== undefined)
+        collectBindingNames(n.variableDeclaration.name, value);
+    } else if (ts.isForStatement(n) || ts.isForOfStatement(n) || ts.isForInStatement(n)) {
+      const init = n.initializer;
+      if (init !== undefined && ts.isVariableDeclarationList(init)) {
+        for (const d of init.declarations) collectBindingNames(d.name, value);
+      }
+    } else if ((ts.isClassDeclaration(n) || ts.isClassExpression(n)) && n.name !== undefined) {
+      // A class name declares a value and a type at once.
+      value.add(n.name.text);
+      type.add(n.name.text);
+    } else if (ts.isEnumDeclaration(n)) {
+      // A member is in scope for the members after it (`Copy = input`).
+      for (const member of n.members) {
+        if (ts.isIdentifier(member.name)) value.add(member.name.text);
+      }
+    }
+    return value.size > 0 || type.size > 0 ? { value, type } : null;
+  };
+
+  const refs = statements.map((stmt) => {
+    const bindings = new Set<number>();
+    const dsl = new Set<string>();
+    const exportIsTypeOnly = ts.isExportDeclaration(stmt) && stmt.isTypeOnly;
+    // `export { x } from "./other.ts"` names the OTHER module's exports. It
+    // binds nothing here and depends on nothing here, so resolving its
+    // specifiers locally would drag an unrelated declaration that happens to
+    // share a name out of the wrapper with it.
+    const isReExport = ts.isExportDeclaration(stmt) && stmt.moduleSpecifier !== undefined;
+    const visit = (n: ts.Node, shadowed: ScopedNames, position: RefPosition): void => {
+      // An export specifier names a binding directly rather than referencing
+      // one, and it chooses its namespace: `export { type Level }` takes the
+      // type, a plain `export { Level }` takes the value and carries the type
+      // of a merged name along with it.
+      if (ts.isExportSpecifier(n)) {
+        if (isReExport) return;
+        const local = n.propertyName?.text ?? n.name.text;
+        if (n.isTypeOnly || exportIsTypeOnly) {
+          addBindings(bindings, resolveBinding(local, "type"));
+        } else {
+          addBindings(bindings, valueBindingOf.get(local) ?? NO_BINDINGS);
+          addBindings(bindings, typeBindingOf.get(local) ?? NO_BINDINGS);
+        }
+        return;
+      }
+      if (ts.isIdentifier(n) && !isNamePosition(n) && !hiddenIn(shadowed, position).has(n.text)) {
+        const declaring = resolveBinding(n.text, position);
+        // A module-scope declaration owns the name throughout the module, DSL
+        // root or not — `export const clamp = ...` is the file's `clamp`, and
+        // its own declaration name is not a reference to the ambient one. Taint
+        // still reaches it through the dependency edge when that declaration is
+        // itself DSL-tied.
+        if (declaring.length > 0) addBindings(bindings, declaring);
+        // A name reached only through a type is erased at emit, so it cannot
+        // tie the declaration to the capture — `export type Signal =
+        // Node<"f32">` names the DSL without depending on it. The dependency
+        // edge above still applies: an annotation's own type alias has to
+        // travel with the declaration it annotates. A `typeof X` is the
+        // exception: erased too, but it names a VALUE, and a hoisted alias
+        // still has to see that value where it lands — so it taints like one.
+        else if (position === "type") return;
+        else if (imported.dsl.has(n.text)) dsl.add(n.text);
+        else if (!imported.other.has(n.text) && DSL_TAINT_ROOTS.has(n.text)) dsl.add(n.text);
+      }
+      const opened = scopeBindings(n);
+      const inner: ScopedNames =
+        opened === null
+          ? shadowed
+          : {
+              value: new Set([...shadowed.value, ...opened.value]),
+              type: new Set([...shadowed.type, ...opened.type]),
+            };
+      // `typeof X` sits inside a type but names a VALUE, so its entity name
+      // keeps resolving in the value namespace all the way down.
+      const childPosition: RefPosition = ts.isTypeQueryNode(n)
+        ? "typeQuery"
+        : position !== "value"
+          ? position
+          : ts.isTypeNode(n) || ts.isTypeAliasDeclaration(n) || ts.isInterfaceDeclaration(n)
+            ? "type"
+            : "value";
+      // A function's body sees its `var`s throughout, but a default parameter
+      // initializer is evaluated before any of them exist — so the body child
+      // gets the wider scope and the parameters keep the narrower one.
+      let scopedChild: ts.Node | undefined;
+      let scopedNames = inner;
+      if (ts.isFunctionLike(n)) {
+        const vars = new Set<string>();
+        collectFunctionScopedVars(n, vars);
+        scopedChild = (n as { body?: ts.Node }).body;
+        if (vars.size > 0) {
+          scopedNames = { value: new Set([...inner.value, ...vars]), type: inner.type };
+        }
+      } else if (ts.isConditionalTypeNode(n)) {
+        // `T extends infer X ? X : never` — the infer'd name is bound for the
+        // TRUE branch alone; the constraint and the false branch never see it.
+        // Like a type parameter, it names a type and no value.
+        const inferred = new Set<string>();
+        collectInferNames(n.extendsType, inferred);
+        scopedChild = n.trueType;
+        if (inferred.size > 0) {
+          scopedNames = { value: inner.value, type: new Set([...inner.type, ...inferred]) };
+        }
+      }
+      // A class `extends` clause is an EXPRESSION that runs at evaluation, even
+      // though its node satisfies `isTypeNode` like an interface's heritage
+      // does. Reading it as erased would drop a real dependency.
+      const heritage = n.parent as ts.Node | undefined;
+      const classExtendsExpr =
+        ts.isExpressionWithTypeArguments(n) &&
+        heritage !== undefined &&
+        ts.isHeritageClause(heritage) &&
+        heritage.token === ts.SyntaxKind.ExtendsKeyword &&
+        heritage.parent !== undefined &&
+        (ts.isClassDeclaration(heritage.parent) || ts.isClassExpression(heritage.parent))
+          ? n.expression
+          : undefined;
+      ts.forEachChild(n, (child) => {
+        visit(
+          child,
+          child === scopedChild ? scopedNames : inner,
+          child === classExtendsExpr ? "value" : childPosition,
+        );
+      });
+    };
+    // The statement's own top-level bindings stay visible: they are the module
+    // bindings the dependency edges are drawn between.
+    visit(stmt, NO_SCOPED_NAMES, "value");
+    return { bindings, dsl };
+  });
+
+  const isDestructuredDecl = (stmt: ts.Statement): boolean =>
+    ts.isVariableStatement(stmt) &&
+    stmt.declarationList.declarations.some((d) => !ts.isIdentifier(d.name));
+
+  // Taint fixpoint. A destructuring declaration is treated as tainted for
+  // closure purposes: the hoist cannot carry it, so an export depending on it
+  // is blocked (with the error naming it below).
+  const tainted = statements.map((stmt, i) => refs[i]!.dsl.size > 0 || isDestructuredDecl(stmt));
+  for (let changed = true; changed; ) {
+    changed = false;
+    statements.forEach((_, i) => {
+      if (tainted[i]) return;
+      for (const dep of refs[i]!.bindings) {
+        if (dep !== i && tainted[dep]) {
+          tainted[i] = true;
+          changed = true;
+          return;
+        }
+      }
+    });
+  }
+
+  /** First DSL name reachable from statement `i` — the "why" for the error. */
+  const taintReason = (start: number): string => {
+    const seen = new Set<number>();
+    const queue = [start];
+    while (queue.length > 0) {
+      const i = queue.shift()!;
+      if (seen.has(i)) continue;
+      seen.add(i);
+      const dsl = [...refs[i]!.dsl];
+      if (dsl.length > 0) return `it reaches the DSL identifier \`${dsl[0]}\``;
+      if (isDestructuredDecl(statements[i]!)) {
+        return "it depends on a destructuring declaration, which the hoist cannot carry";
+      }
+      for (const dep of refs[i]!.bindings) queue.push(dep);
+    }
+    return "it depends on a declaration that must stay inside the processor body";
+  };
+
+  const exportName = (stmt: ts.Statement): string => {
+    if (ts.isVariableStatement(stmt)) {
+      const first = stmt.declarationList.declarations[0];
+      if (first !== undefined && ts.isIdentifier(first.name)) return first.name.text;
+    }
+    if ((ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) && stmt.name !== undefined)
+      return stmt.name.text;
+    return "(export)";
+  };
+
+  const mustHoist = new Set<number>();
+  statements.forEach((stmt, i) => {
+    if (ts.isExportAssignment(stmt)) {
+      throw new LowerError(
+        "uwk-export-unsupported",
+        "`export default` cannot appear in a processor .uwk.ts — the lowered module's " +
+          "export IS the processor. Export a named value instead.",
+      );
+    }
+    if (ts.isExportDeclaration(stmt)) {
+      if (stmt.moduleSpecifier !== undefined) {
+        // `export ... from "./x"` is import-like: no local bindings involved.
+        mustHoist.add(i);
+        return;
+      }
+      // `export { a, b }` — every named binding must be hoistable.
+      if (stmt.exportClause !== undefined && ts.isNamedExports(stmt.exportClause)) {
+        for (const spec of stmt.exportClause.elements) {
+          // An export list picks its namespace: `export { type Level }` (or
+          // `export type { Level }`) takes the type declaration, a plain
+          // `export { Level }` takes the value.
+          const local = spec.propertyName?.text ?? spec.name.text;
+          // A plain `export { Level }` carries BOTH declarations of a merged
+          // name out, so both have to be hoistable — checking only the value
+          // side passes a pure const standing beside a DSL-tied type alias.
+          const deps =
+            spec.isTypeOnly || stmt.isTypeOnly
+              ? resolveBinding(local, "type")
+              : [
+                  ...(valueBindingOf.get(local) ?? NO_BINDINGS),
+                  ...(typeBindingOf.get(local) ?? NO_BINDINGS),
+                ];
+          const blocked = deps.find((d) => tainted[d]);
+          if (deps.length === 0 || blocked !== undefined) {
+            throw new LowerError(
+              "uwk-export-unsupported",
+              `\`export { ${spec.name.text} }\` cannot move to module scope: ` +
+                `${blocked === undefined ? "the binding is not a top-level declaration" : taintReason(blocked)}. ` +
+                "A value tied to the DSL lives only inside the processor capture — expose it " +
+                "through the processor surface (param / state / event) instead.",
+            );
+          }
+        }
+      }
+      mustHoist.add(i);
+      return;
+    }
+    if (!isExportedStatement(stmt)) return;
+    if (isDestructuredDecl(stmt)) {
+      throw new LowerError(
+        "uwk-export-unsupported",
+        `exported destructuring declarations are not supported in a processor .uwk.ts — ` +
+          `export each value as its own \`export const <name> = ...\`.`,
+      );
+    }
+    if (tainted[i]) {
+      throw new LowerError(
+        "uwk-export-unsupported",
+        `\`export ${exportName(stmt)}\` cannot move to module scope: ${taintReason(i)}. ` +
+          "A value tied to the DSL lives only inside the processor capture — expose it " +
+          "through the processor surface (param / state / event), or move pure helpers " +
+          "to a separate module.",
+      );
+    }
+    mustHoist.add(i);
+  });
+
+  // Closure: pull the (untainted, by fixpoint) dependencies of every hoisted
+  // statement out with it.
+  const queue = [...mustHoist];
+  while (queue.length > 0) {
+    const i = queue.pop()!;
+    for (const dep of refs[i]!.bindings) {
+      if (!mustHoist.has(dep)) {
+        mustHoist.add(dep);
+        queue.push(dep);
+      }
+    }
+  }
+
+  // A hoisted declaration keeps its initializer, but a bare `helper = 1` is a
+  // statement nothing references, so the closure has no reason to carry it and
+  // it stays in the wrapper. Moving a hoisted declaration PAST such a write
+  // makes it read a value the source never gives it — silently. A write that
+  // stands after what it cannot affect is fine: source order already gives the
+  // earlier statement the pre-write value.
+  // The function bodies a called name stands for. Only a name this file
+  // declares as a function resolves; anything else the write walk leaves alone.
+  // An object literal put behind a name by assignment rather than declaration.
+  // Names are collected across the whole file: a read cannot tell which
+  // assignment ran, and missing the one that did goes quiet.
+  const reassigned = new Map<string, ScopedBody[]>();
+  for (const stmt of statements) {
+    const here = new Map<string, ts.Node[]>();
+    collectAssignedLiterals(stmt, here, "any");
+    for (const [name, literals] of here) {
+      const held = reassigned.get(name) ?? [];
+      for (const node of literals) held.push({ node, within: stmt });
+      reassigned.set(name, held);
+    }
+  }
+  const calleeBodies = (name: string): readonly ScopedBody[] => {
+    const bodies: ScopedBody[] = [...(reassigned.get(name) ?? [])];
+    for (const decl of valueBindingOf.get(name) ?? NO_BINDINGS) {
+      const declared = statements[decl];
+      if (declared === undefined) continue;
+      if (ts.isFunctionDeclaration(declared) || ts.isClassDeclaration(declared)) {
+        bodies.push({ node: declared, within: declared });
+      } else if (ts.isVariableStatement(declared)) {
+        for (const d of declared.declarationList.declarations) {
+          if (!ts.isIdentifier(d.name) || d.name.text !== name || d.initializer === undefined) {
+            continue;
+          }
+          const init = unwrapExpression(d.initializer);
+          if (isCallableDeclaration(init)) bodies.push({ node: init, within: declared });
+        }
+      }
+    }
+    return bodies;
+  };
+  for (const [i, stmt] of statements.entries()) {
+    if (mustHoist.has(i)) continue;
+    const written = statementWrites(stmt, calleeBodies);
+    if (written.size === 0) continue;
+    // `const alias = helper; alias.value = 1` writes what `helper` holds, so a
+    // write follows a chain of bare-identifier aliases back to its source. An
+    // alias built by anything else — a call, a conditional, a property read —
+    // is not followed, the same limit as mutation through a call.
+    for (const name of [...written].flatMap((n) => [...aliasChain(n)])) {
+      for (const decl of valueBindingOf.get(name) ?? NO_BINDINGS) {
+        if (!mustHoist.has(decl)) continue;
+        // The statement that READS it is what the write has to precede — read
+        // through its whole closure, not just its direct references: an export
+        // naming `alias` still reads what `helper` holds.
+        const reader = statements.findIndex(
+          (_, j) => j > i && mustHoist.has(j) && dependsOn(j, decl),
+        );
+        if (reader === -1) continue;
+        throw new LowerError(
+          "uwk-export-unsupported",
+          `\`export ${exportName(statements[reader]!)}\` cannot move to module scope: ` +
+            `\`${name}\` is assigned by an earlier statement that stays inside the processor, ` +
+            `so the export would read the value from before that assignment. Compute the ` +
+            `exported value in its own initializer rather than assigning to it beforehand.`,
+        );
+      }
+    }
+  }
+
+  const hoisted: ts.Statement[] = [];
+  const inner: ts.Statement[] = [];
+  statements.forEach((stmt, i) => {
+    (mustHoist.has(i) ? hoisted : inner).push(stmt);
+  });
+  return { hoisted, inner };
+}
+
 /** Lower a `.uwk.ts` source string to a virtual `.ts` module string. */
 export function lower(source: string, options: LowerOptions = {}): string {
   const coreModule = options.coreModule ?? "@unworklet/core";
@@ -395,7 +2141,8 @@ export function lower(source: string, options: LowerOptions = {}): string {
       );
     }
     const used = collectUsedCoreExports(sf);
-    for (const name of importBoundNames(userImports)) used.delete(name);
+    for (const name of importBoundNames(userImports, { valuesOnly: true })) used.delete(name);
+    for (const name of statementBoundNames(declarations)) used.delete(name);
     const importDecl = makeCoreImport([...used].sort(), coreModule);
     const lowered = ts.factory.updateSourceFile(sf, [...userImports, importDecl, ...declarations]);
     const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
@@ -408,31 +2155,18 @@ export function lower(source: string, options: LowerOptions = {}): string {
     );
   }
 
+  // Module-scope exports leave the wrapper (with their dependency closure);
+  // everything else becomes the defineProcessor body (issue #44).
+  const { hoisted, inner } = partitionModuleScopeExports(declarations, {
+    dsl: importBoundNames(userImports.filter((d) => moduleSpecifierOf(d) === coreModule)),
+    other: importBoundNames(userImports.filter((d) => moduleSpecifierOf(d) !== coreModule)),
+  });
+
   // Reject options() / migrations() that reference a processor-body binding: the
   // declarations are moved into the defineProcessor callback, but the options
   // argument is attached outside it, so such a reference would be out of scope at
   // module evaluation. (Reported by @codex on #12.)
-  const bodyBindings = new Set<string>();
-  const collectBindingNames = (name: ts.BindingName): void => {
-    if (ts.isIdentifier(name)) {
-      bodyBindings.add(name.text);
-      return;
-    }
-    // ObjectBindingPattern | ArrayBindingPattern — recurse into each element
-    // (array holes are OmittedExpression, not BindingElement, so they are skipped).
-    for (const el of name.elements) {
-      if (ts.isBindingElement(el)) collectBindingNames(el.name);
-    }
-  };
-  for (const decl of declarations) {
-    if (ts.isVariableStatement(decl)) {
-      for (const d of decl.declarationList.declarations) collectBindingNames(d.name);
-    } else if (ts.isFunctionDeclaration(decl) && decl.name !== undefined) {
-      bodyBindings.add(decl.name.text);
-    } else if (ts.isClassDeclaration(decl) && decl.name !== undefined) {
-      bodyBindings.add(decl.name.text);
-    }
-  }
+  const bodyBindings = statementBoundNames(inner);
   const optionRefs = (expr: ts.Expression | undefined): string[] => {
     if (expr === undefined) return [];
     const hits = new Set<string>();
@@ -456,8 +2190,8 @@ export function lower(source: string, options: LowerOptions = {}): string {
 
   // S12: inject ambient stereo input / out when the file declares neither, so a
   // Tier-C .uwk.ts needs no explicit I/O. An explicit declaration suppresses it.
-  const needInput = !referencesCall(declarations, "audioInput");
-  const needOutput = !referencesCall(declarations, "audioOutput");
+  const needInput = !referencesCall(inner, "audioInput");
+  const needOutput = !referencesCall(inner, "audioOutput");
   const ambient: ts.Statement[] = [];
   if (needInput) {
     ambient.push(makeAudioDecl("input", "audioInput", 2, "input"));
@@ -465,7 +2199,54 @@ export function lower(source: string, options: LowerOptions = {}): string {
   if (needOutput) {
     ambient.push(makeAudioDecl("out", "audioOutput", 2, "out"));
   }
-  const allDeclarations = [...ambient, ...declarations];
+  const allDeclarations = [...ambient, ...inner];
+
+  // The lowering writes code of its own: the `defineProcessor` wrapper, and —
+  // when the file declares no audio I/O — the ambient `input` / `out` and the
+  // factories they call. A file that binds one of those names would have the
+  // generated code resolve to ITS binding, exporting something that is not a
+  // processor or wiring I/O that is not the DSL's. Refuse instead: the name is
+  // only reserved when the lowering is actually about to generate it, so
+  // `const out = audioOutput(...)` — which suppresses the injection — is
+  // unaffected.
+  const generatedBindings = new Set<string>(["defineProcessor"]);
+  if (needInput) {
+    generatedBindings.add("input");
+    generatedBindings.add("audioInput");
+  }
+  if (needOutput) {
+    generatedBindings.add("out");
+    generatedBindings.add("audioOutput");
+  }
+  // Any local binding of a generated name collides — a declaration, an import
+  // from elsewhere, or a type-only import (erased, so it supplies no value, yet
+  // it still occupies the name beside the injected import). The one exception
+  // is a VALUE import of the same name from the core: that is the very binding
+  // the generated code wants, and the injected import stands down for it.
+  // That exemption requires the local name and the imported export to be the
+  // SAME: `{ defineProcessor as audioInput }` binds `audioInput` to the wrong
+  // factory, and the ambient declaration would call it.
+  const coreValueImports = unaliasedCoreValueImports(userImports, coreModule);
+  const boundHere = statementBoundNames(declarations);
+  // A `var` nested in a control statement binds at module scope and, once the
+  // statement moves into the callback, shadows the injected import there.
+  for (const stmt of declarations) {
+    if (ts.isFunctionLike(stmt)) continue;
+    collectFunctionScopedVars(stmt, boundHere);
+  }
+  for (const name of importBoundNames(userImports)) {
+    if (!coreValueImports.has(name)) boundHere.add(name);
+  }
+  const reserved = [...generatedBindings].find((name) => boundHere.has(name));
+  if (reserved !== undefined) {
+    throw new LowerError(
+      "uwk-reserved-binding",
+      `\`${reserved}\` is generated by the lowering in this file, so binding that name here — ` +
+        `by declaration or by import from another module — would take its place. Rename it, or ` +
+        `import it under an alias. (The ambient \`input\` / \`out\` and their factories are only ` +
+        `generated when the file declares no audio I/O of its own.)`,
+    );
+  }
 
   const used = collectUsedCoreExports(sf);
   if (needInput) used.add("audioInput");
@@ -474,7 +2255,12 @@ export function lower(source: string, options: LowerOptions = {}): string {
   // Drop any name the user imports explicitly so the injected core import never
   // double-binds it (their import provides it). This also strips the user
   // import's own specifier identifiers, which `collectUsedCoreExports` counts.
-  for (const name of importBoundNames(userImports)) used.delete(name);
+  for (const name of importBoundNames(userImports, { valuesOnly: true })) used.delete(name);
+  // Same for a name the file declares itself: a hoisted `export const clamp`
+  // sits at module scope beside the import (a duplicate binding), and a
+  // declaration left inside the wrapper shadows the import for the whole body,
+  // so no reference could reach it either way.
+  for (const name of statementBoundNames(declarations)) used.delete(name);
   const importDecl = makeCoreImport([...used].sort(), coreModule);
   const optionsArg = makeOptionsArg(migrationsArg, optionsObject);
   const exported = makeDefineProcessor(
@@ -484,7 +2270,12 @@ export function lower(source: string, options: LowerOptions = {}): string {
     options.exportName,
   );
 
-  const lowered = ts.factory.updateSourceFile(sf, [...userImports, importDecl, exported]);
+  const lowered = ts.factory.updateSourceFile(sf, [
+    ...userImports,
+    importDecl,
+    ...hoisted,
+    exported,
+  ]);
   const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
   return printer.printFile(lowered);
 }
