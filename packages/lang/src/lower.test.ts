@@ -2826,6 +2826,48 @@ run(${argument});
   }
 });
 
+test("a named property off a literal picks the value that key holds", () => {
+  // The last write to a key is the one that lands, so a spread or a computed
+  // name clouds the answer only when it comes after the named property.
+  const cases: readonly [string, "hoists" | "refuses"][] = [
+    ["({ selected: noop, unselected: mutate }).selected", "hoists"],
+    ["({ selected: mutate }).selected", "refuses"],
+    ["({ mutate, noop }).mutate", "refuses"],
+    ["({ selected: noop, ...{ selected: mutate } }).selected", "refuses"],
+    ["({ ...{ selected: mutate }, selected: noop }).selected", "hoists"],
+    ["({ selected: noop, [key]: mutate }).selected", "refuses"],
+  ];
+  for (const [argument, expected] of cases) {
+    const source = `
+declare const key: string;
+function mutate() {
+  helper.value = 1;
+}
+function noop() {}
+function run(cb: () => void) {
+  cb();
+}
+void mutate;
+void noop;
+run(${argument});
+`;
+    if (expected === "hoists") {
+      const lowered = loweredWithMutation(source);
+      expect(lowered.indexOf("export const value"), `${argument} should hoist`).toBeLessThan(
+        lowered.indexOf("defineProcessor("),
+      );
+      continue;
+    }
+    try {
+      loweredWithMutation(source);
+      expect.unreachable(`lower() must follow the mutator in ${argument}`);
+    } catch (e) {
+      expect(e).toBeInstanceOf(LowerError);
+      expect((e as LowerError).id).toBe("uwk-export-unsupported");
+    }
+  }
+});
+
 test("an argument naming something that is not a function follows nothing", () => {
   const lowered = loweredWithMutation(`
 function take(x: unknown) {

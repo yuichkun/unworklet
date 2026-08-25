@@ -288,6 +288,45 @@ function collectFunctionScopedVars(
   ts.forEachChild(node, walk);
 }
 
+/** `literalProperty` could not tell what the key holds. */
+const UNKNOWN_PROPERTY = Symbol("unknown property");
+
+/**
+ * What an object literal gives for `key`: the expression, `null` when it gives
+ * none, or `UNKNOWN_PROPERTY` when it cannot be told. The last write to a key
+ * is the one that lands, so a spread or a computed name only clouds the answer
+ * when it comes AFTER the named property — the same way a spread only shifts
+ * the array elements that follow it.
+ */
+function literalProperty(
+  object: ts.ObjectLiteralExpression,
+  key: string,
+): ts.Expression | null | typeof UNKNOWN_PROPERTY {
+  let value: ts.Expression | null = null;
+  let clouded = false;
+  for (const property of object.properties) {
+    const name = property.name;
+    if (ts.isSpreadAssignment(property) || name === undefined || ts.isComputedPropertyName(name)) {
+      value = null;
+      clouded = true;
+      continue;
+    }
+    if (!ts.isIdentifier(name) && !ts.isStringLiteral(name) && !ts.isNumericLiteral(name)) continue;
+    if (name.text !== key) continue;
+    if (ts.isPropertyAssignment(property)) {
+      value = property.initializer;
+      clouded = false;
+    } else if (ts.isShorthandPropertyAssignment(property)) {
+      value = property.name;
+      clouded = false;
+    } else {
+      // A method or an accessor: the value is code this walk enters elsewhere.
+      return UNKNOWN_PROPERTY;
+    }
+  }
+  return clouded ? UNKNOWN_PROPERTY : value;
+}
+
 /** An expression that IS the code a name stands for — not one that computes it. */
 function isCallableDeclaration(expr: ts.Expression): boolean {
   return ts.isArrowFunction(expr) || ts.isFunctionExpression(expr) || ts.isClassExpression(expr);
@@ -669,8 +708,17 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
             if (runs) runsNow.add(expr);
             return;
           }
-          // A member NAME is a spelling, not a reference to anything here.
+          // A member NAME is a spelling, not a reference to anything here —
+          // except off a literal, where the name says which value is taken.
           if (ts.isPropertyAccessExpression(expr)) {
+            const from = unwrapExpression(expr.expression);
+            if (ts.isObjectLiteralExpression(from)) {
+              const picked = literalProperty(from, expr.name.text);
+              if (picked !== UNKNOWN_PROPERTY) {
+                if (picked !== null) seen(picked, false);
+                return;
+              }
+            }
             seen(expr.expression, false);
             return;
           }
