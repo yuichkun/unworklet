@@ -2955,9 +2955,8 @@ retain(({ get selected() { return mutate; } }).selected);
   expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
 });
 
-test("a parameter default that calls another parameter runs it", () => {
-  try {
-    loweredWithMutation(`
+test("a parameter default runs only where the call leaves the argument out", () => {
+  const source = (call: string): string => `
 function mutate() {
   helper.value = 1;
 }
@@ -2965,13 +2964,39 @@ function run(cb: () => void, trigger: unknown = cb()) {
   void trigger;
 }
 void mutate;
-run(mutate);
-`);
-    expect.unreachable("lower() must see a callback a parameter default calls");
-  } catch (e) {
-    expect(e).toBeInstanceOf(LowerError);
-    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+${call};
+`;
+  for (const call of ["run(mutate)", "run(mutate, undefined)"]) {
+    try {
+      loweredWithMutation(source(call));
+      expect.unreachable(`lower() must see the callback ${call} lets the default run`);
+    } catch (e) {
+      expect(e).toBeInstanceOf(LowerError);
+      expect((e as LowerError).id).toBe("uwk-export-unsupported");
+    }
   }
+  const lowered = loweredWithMutation(source("run(mutate, false)"));
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
+test("a plain read runs the getter that answers the key", () => {
+  for (const read of [
+    "({ get selected() { helper.value = 1; return 0; } }).selected",
+    '({ get selected() { helper.value = 1; return 0; } })["selected"]',
+  ]) {
+    try {
+      loweredWithMutation(`const ignored = ${read};\nvoid ignored;`);
+      expect.unreachable(`lower() must run the getter read by ${read}`);
+    } catch (e) {
+      expect(e).toBeInstanceOf(LowerError);
+      expect((e as LowerError).id).toBe("uwk-export-unsupported");
+    }
+  }
+  const lowered = loweredWithMutation(`
+const ignored = ({ get other() { helper.value = 1; return 0; }, selected: 2 }).selected;
+void ignored;
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
 });
 
 test("an argument naming something that is not a function follows nothing", () => {

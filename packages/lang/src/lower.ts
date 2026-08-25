@@ -291,6 +291,12 @@ function collectFunctionScopedVars(
 /** `literalProperty` could not tell what the key holds. */
 const UNKNOWN_PROPERTY = Symbol("unknown property");
 
+/** The key a bracketed expression reads, when it is written as a literal. */
+function readLiteralKey(argument: ts.Expression): string | undefined {
+  const at = unwrapExpression(argument);
+  return ts.isStringLiteral(at) || ts.isNumericLiteral(at) ? at.text : undefined;
+}
+
 /** The key a property name states, or undefined when it is computed at runtime.
  * Brackets around a literal — `["other"]` — state a key as plainly as a bare
  * name does; brackets around anything else do not. */
@@ -467,7 +473,13 @@ type AliasScope = {
  * demonstrably lead nowhere. Anything else counts as running it. Reading
  * nothing also means yes: over-running an argument refuses valid code loudly,
  * and missing one goes quiet. */
-function invokesParameter(fn: ts.Node, index: number): boolean {
+function invokesParameter(
+  fn: ts.Node,
+  index: number,
+  /** Whether THIS call leaves the argument at that position for the parameter's
+   * own default to supply. A default nobody left out never runs. */
+  omitted: (at: number) => boolean,
+): boolean {
   const parameters = (fn as { parameters?: readonly ts.ParameterDeclaration[] }).parameters ?? [];
   const last = parameters.at(-1);
   const parameter = parameters[index] ?? (last?.dotDotDotToken !== undefined ? last : undefined);
@@ -627,12 +639,12 @@ function invokesParameter(fn: ts.Node, index: number): boolean {
       look(child, child === functionBody ? bodyScope : inner, settled);
     });
   };
-  // A parameter default runs when its argument is left out, before the body
-  // does anything — and it is evaluated in the parameter scope, where the
+  // A parameter default runs when THIS call leaves its argument out, before the
+  // body does anything — and it is evaluated in the parameter scope, where the
   // body's `var`s do not exist yet. Its own default cannot name it, so that one
   // is skipped.
-  for (const other of parameters) {
-    if (other === parameter || other.initializer === undefined) continue;
+  for (const [at, other] of parameters.entries()) {
+    if (other === parameter || other.initializer === undefined || !omitted(at)) continue;
     look(
       other.initializer,
       {
@@ -761,6 +773,22 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
     for (const d of ts.getDecorators(n) ?? []) walk(d.expression, shadowed, resolve);
   };
   const walk = (n: ts.Node, shadowed: ReadonlySet<string>, resolve: BodyResolver): void => {
+    // Reading a key a literal's getter answers runs that getter, and a read is
+    // a read whether or not the value goes on to a call. The walk reaches the
+    // getter below; this only says it is not deferred.
+    const readKey = ts.isPropertyAccessExpression(n)
+      ? n.name.text
+      : ts.isElementAccessExpression(n)
+        ? readLiteralKey(n.argumentExpression)
+        : undefined;
+    if (readKey !== undefined) {
+      const from = unwrapExpression(
+        (n as ts.PropertyAccessExpression | ts.ElementAccessExpression).expression,
+      );
+      if (ts.isObjectLiteralExpression(from)) {
+        for (const getter of literalProperty(from, readKey).getters) runsNow.add(getter);
+      }
+    }
     if (ts.isFunctionLike(n) && !runsNow.has(n)) {
       walkDecorators(n, shadowed, resolve);
       walkComputedName(n, shadowed, resolve);
@@ -920,8 +948,18 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
       // the failure that stays silent.
       enter(n.expression, true, true);
       const invoked = calleeSignatures(n.expression, resolve);
-      (n.arguments ?? []).forEach((argument, index) => {
-        const runs = invoked.length === 0 || invoked.some((fn) => invokesParameter(fn, index));
+      const args = n.arguments ?? ts.factory.createNodeArray<ts.Expression>();
+      // A parameter whose argument this call does not supply — past the end, or
+      // written as `undefined` — falls back to its own default, which then runs.
+      const omitted = (at: number): boolean => {
+        const argument = args[at];
+        if (argument === undefined) return true;
+        const value = unwrapExpression(argument);
+        return ts.isIdentifier(value) && value.text === "undefined";
+      };
+      args.forEach((argument, index) => {
+        const runs =
+          invoked.length === 0 || invoked.some((fn) => invokesParameter(fn, index, omitted));
         enter(argument, runs, false);
       });
     }
