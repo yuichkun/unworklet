@@ -738,6 +738,18 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
           if (ts.isElementAccessExpression(expr)) {
             const from = unwrapExpression(expr.expression);
             const at = unwrapExpression(expr.argumentExpression);
+            // A literal key in brackets says the same thing a name after a dot
+            // says, so it is read the same way.
+            if (
+              ts.isObjectLiteralExpression(from) &&
+              (ts.isStringLiteral(at) || ts.isNumericLiteral(at))
+            ) {
+              const picked = literalProperty(from, at.text);
+              if (picked !== UNKNOWN_PROPERTY) {
+                if (picked !== null) seen(picked, false);
+                return;
+              }
+            }
             if (ts.isArrayLiteralExpression(from) && ts.isNumericLiteral(at)) {
               // A spread shifts everything AFTER it by a length nothing here
               // knows, so only an index ahead of the first one is the element

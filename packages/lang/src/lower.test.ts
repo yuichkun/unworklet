@@ -2836,6 +2836,10 @@ test("a named property off a literal picks the value that key holds", () => {
     ["({ selected: noop, ...{ selected: mutate } }).selected", "refuses"],
     ["({ ...{ selected: mutate }, selected: noop }).selected", "hoists"],
     ["({ selected: noop, [key]: mutate }).selected", "refuses"],
+    // A literal key in brackets says what a name after a dot says.
+    ['({ selected: noop, unselected: mutate })["selected"]', "hoists"],
+    ["({ 0: noop, 1: mutate })[0]", "hoists"],
+    ["({ selected: noop, unselected: mutate })[key]", "refuses"],
   ];
   for (const [argument, expected] of cases) {
     const source = `
