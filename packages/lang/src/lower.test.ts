@@ -2787,6 +2787,45 @@ run(${argument});
   }
 });
 
+test("a spread decides which indexes into a literal array are still knowable", () => {
+  // A spread shifts what comes after it by a length nothing here knows, so an
+  // index at or past it names no particular element. Before it, it still does.
+  const cases: readonly [string, "hoists" | "refuses"][] = [
+    ["[...cbs, mutate][0]", "refuses"],
+    ["[...cbs, noop, mutate][1]", "refuses"],
+    ["[noop, ...cbs, mutate][0]", "hoists"],
+  ];
+  for (const [argument, expected] of cases) {
+    const source = `
+declare const cbs: (() => void)[];
+function mutate() {
+  helper.value = 1;
+}
+function noop() {}
+function run(cb: () => void) {
+  cb();
+}
+void mutate;
+void noop;
+run(${argument});
+`;
+    if (expected === "hoists") {
+      const lowered = loweredWithMutation(source);
+      expect(lowered.indexOf("export const value"), `${argument} should hoist`).toBeLessThan(
+        lowered.indexOf("defineProcessor("),
+      );
+      continue;
+    }
+    try {
+      loweredWithMutation(source);
+      expect.unreachable(`lower() must follow every element for ${argument}`);
+    } catch (e) {
+      expect(e).toBeInstanceOf(LowerError);
+      expect((e as LowerError).id).toBe("uwk-export-unsupported");
+    }
+  }
+});
+
 test("an argument naming something that is not a function follows nothing", () => {
   const lowered = loweredWithMutation(`
 function take(x: unknown) {

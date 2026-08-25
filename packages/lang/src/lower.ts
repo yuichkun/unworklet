@@ -691,9 +691,16 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
             const from = unwrapExpression(expr.expression);
             const at = unwrapExpression(expr.argumentExpression);
             if (ts.isArrayLiteralExpression(from) && ts.isNumericLiteral(at)) {
-              const picked = from.elements[Number(at.text)];
-              if (picked !== undefined) seen(picked, false);
-              return;
+              // A spread shifts everything AFTER it by a length nothing here
+              // knows, so only an index ahead of the first one is the element
+              // it looks like. Past that, every element is still a candidate.
+              const spread = from.elements.findIndex((e) => ts.isSpreadElement(e));
+              const index = Number(at.text);
+              if (spread === -1 || index < spread) {
+                const picked = from.elements[index];
+                if (picked !== undefined) seen(picked, false);
+                return;
+              }
             }
           }
           if (!ts.isIdentifier(expr)) {
