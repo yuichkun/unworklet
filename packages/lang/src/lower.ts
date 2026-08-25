@@ -376,18 +376,42 @@ type LiteralAnswer = {
   readonly clouded: boolean;
 };
 
-/** The expressions a function hands back, not counting those a function nested
- * inside it hands back — those belong to whoever calls that one. */
-function returnedExpressions(fn: ts.FunctionLikeDeclaration): ts.Expression[] {
-  const returned: ts.Expression[] = [];
-  const body = fn.body;
-  if (body === undefined) return returned;
-  const walk = (node: ts.Node): void => {
-    if (ts.isFunctionLike(node)) return;
-    if (ts.isReturnStatement(node) && node.expression !== undefined) returned.push(node.expression);
-    ts.forEachChild(node, walk);
+/**
+ * The expressions a function hands back, each with the lookup that reads names
+ * where it stands — a returned name is often declared inside the function, and
+ * the scope at the call site has never heard of it. Returns from a function
+ * nested inside are left out: those belong to whoever calls that one.
+ */
+function returnedExpressions(
+  fn: ts.FunctionLikeDeclaration,
+  outer: BodyResolver,
+): { readonly expression: ts.Expression; readonly resolve: BodyResolver }[] {
+  const returned: { expression: ts.Expression; resolve: BodyResolver }[] = [];
+  if (fn.body === undefined) return returned;
+  const walk = (node: ts.Node, resolve: BodyResolver): void => {
+    if (ts.isFunctionLike(node) && node !== fn) return;
+    if (ts.isReturnStatement(node) && node.expression !== undefined) {
+      returned.push({ expression: node.expression, resolve });
+    }
+    const opened = blockScopedNames(node);
+    const vars = new Set<string>();
+    const bodies =
+      opened === null ? new Map<string, ts.Node[]>() : scopedFunctionBodies(node, opened);
+    if (node === fn) collectFunctionScopedVars(node, vars, bodies);
+    const inner: BodyResolver =
+      bodies.size === 0
+        ? resolve
+        : (name) => {
+            const here = bodies.get(name);
+            return here === undefined
+              ? resolve(name)
+              : here.map((found) => ({ node: found, shadowed: NO_NAMES, resolve: inner }));
+          };
+    ts.forEachChild(node, (child) => {
+      walk(child, inner);
+    });
   };
-  walk(body);
+  walk(fn, outer);
   return returned;
 }
 
@@ -768,22 +792,29 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
       const enter = (passed: ts.Expression, runs: boolean, isCallee: boolean): void => {
         // Reading a key off a literal. True once this has said everything there
         // is to say about the key; false leaves the caller to fall back.
-        const takeFromLiteral = (from: ts.ObjectLiteralExpression, key: string): boolean => {
+        const takeFromLiteral = (
+          from: ts.ObjectLiteralExpression,
+          key: string,
+          within: BodyResolver,
+        ): boolean => {
           const answer = literalProperty(from, key);
           if (answer.value !== UNKNOWN_PROPERTY) {
-            if (answer.value !== null) seen(answer.value, false);
+            if (answer.value !== null) seen(answer.value, false, within);
             return true;
           }
           // A getter that can answer RUNS on the read — right there, not
-          // whenever something calls it — and hands back what it returns.
+          // whenever something calls it — and hands back what it returns. A
+          // name it returns is read where the getter stands, not here.
           for (const getter of answer.getters) {
             if (runs) runsNow.add(getter);
-            for (const returned of returnedExpressions(getter)) seen(returned, false);
+            for (const returned of returnedExpressions(getter, within)) {
+              seen(returned.expression, false, returned.resolve);
+            }
           }
           // Only a spread or a runtime key leaves the value genuinely open.
           return !answer.clouded;
         };
-        const seen = (node: ts.Node, top: boolean): void => {
+        const seen = (node: ts.Node, top: boolean, within: BodyResolver = resolve): void => {
           const expr = ts.isExpression(node) ? unwrapExpression(node) : node;
           if (
             ts.isArrowFunction(expr) ||
@@ -798,8 +829,13 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
           // except off a literal, where the name says which value is taken.
           if (ts.isPropertyAccessExpression(expr)) {
             const from = unwrapExpression(expr.expression);
-            if (ts.isObjectLiteralExpression(from) && takeFromLiteral(from, expr.name.text)) return;
-            seen(expr.expression, false);
+            if (
+              ts.isObjectLiteralExpression(from) &&
+              takeFromLiteral(from, expr.name.text, within)
+            ) {
+              return;
+            }
+            seen(expr.expression, false, within);
             return;
           }
           // Only what the expression can YIELD is handed over. A comma yields
@@ -807,12 +843,12 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
           // a literal array that element — reading the rest hands the call a
           // function it never sees.
           if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.CommaToken) {
-            seen(expr.right, false);
+            seen(expr.right, false, within);
             return;
           }
           if (ts.isConditionalExpression(expr)) {
-            seen(expr.whenTrue, false);
-            seen(expr.whenFalse, false);
+            seen(expr.whenTrue, false, within);
+            seen(expr.whenFalse, false, within);
             return;
           }
           if (ts.isElementAccessExpression(expr)) {
@@ -823,7 +859,7 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
             if (
               ts.isObjectLiteralExpression(from) &&
               (ts.isStringLiteral(at) || ts.isNumericLiteral(at)) &&
-              takeFromLiteral(from, at.text)
+              takeFromLiteral(from, at.text, within)
             ) {
               return;
             }
@@ -835,18 +871,18 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
               const index = Number(at.text);
               if (spread === -1 || index < spread) {
                 const picked = from.elements[index];
-                if (picked !== undefined) seen(picked, false);
+                if (picked !== undefined) seen(picked, false, within);
                 return;
               }
             }
           }
           if (!ts.isIdentifier(expr)) {
             ts.forEachChild(expr, (child) => {
-              seen(child, false);
+              seen(child, false, within);
             });
             return;
           }
-          for (const body of resolve(expr.text)) {
+          for (const body of within(expr.text)) {
             if (ts.isClassLike(body.node)) {
               // Reaching a class any other way constructs nothing.
               if (top && isCallee && ts.isNewExpression(n)) construct(body.node, body);

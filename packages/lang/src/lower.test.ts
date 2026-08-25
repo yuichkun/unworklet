@@ -2882,6 +2882,16 @@ test("a named property off a literal picks the value that key holds", () => {
     ],
     ["({ get [key]() { return mutate; }, set selected(_v: unknown) {} }).selected", "refuses"],
     ["({ [key]: mutate, set selected(_v: unknown) {} }).selected", "hoists"],
+    // A name a getter hands back is read where the getter stands.
+    [
+      "({ get selected() { const local = () => { helper.value = 1; }; return local; } }).selected",
+      "refuses",
+    ],
+    [
+      "({ get selected() { if (key) { const local = () => { helper.value = 1; }; return local; } return noop; } }).selected",
+      "refuses",
+    ],
+    ["({ get selected() { const local = () => {}; return local; } }).selected", "hoists"],
   ];
   for (const [argument, expected] of cases) {
     const source = `
