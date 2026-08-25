@@ -68,8 +68,15 @@ const loadTag = (done: Map<string, string>): string => {
 // only past an age threshold no in-flight load can reach.
 
 const SWEPT_DIRS = new Set<string>();
-const TEMP_FILE_RE = /\.(uwklowered|uwkfailed)\.mjs$/;
-const OWNED_TAG_RE = /\.u1-([0-9a-z]+)-[0-9a-f]+-[0-9a-z]+\.(uwklowered|uwkfailed)\.mjs$/;
+// Every temp this module has ever written is a DOTFILE carrying the source
+// basename and a tag before the suffix (`.synth.uwk.ts.<tag>.uwklowered.mjs`).
+// An ordinary file that merely ends the same way — `saved.uwklowered.mjs` — was
+// written by somebody else, and nothing here may remove it. The suffix alone is
+// not ownership; the whole shape is.
+const OWNED_TAG_RE = /^\..+\.u1-([0-9a-z]+)-[0-9a-f]+-[0-9a-z]+\.(uwklowered|uwkfailed)\.mjs$/;
+// The tag shapes written before that one: a content hash, then a pid/nonce/
+// counter run. Both are lowercase alphanumeric and never short.
+const LEGACY_TEMP_RE = /^\..+\.[0-9a-z]{6,}\.(uwklowered|uwkfailed)\.mjs$/;
 const LEGACY_TEMP_MAX_AGE_MS = 60 * 60 * 1000;
 
 const pidAlive = (pid: number): boolean => {
@@ -93,10 +100,11 @@ function sweepStaleTemps(dir: string): void {
     return; // sweep is best-effort; the materialization itself will surface real fs problems
   }
   for (const ent of entries) {
-    if (!ent.isFile() || !TEMP_FILE_RE.test(ent.name)) continue;
+    if (!ent.isFile()) continue;
+    const owned = OWNED_TAG_RE.exec(ent.name);
+    if (owned === null && !LEGACY_TEMP_RE.test(ent.name)) continue;
     const full = path.join(dir, ent.name);
     try {
-      const owned = OWNED_TAG_RE.exec(ent.name);
       if (owned !== null) {
         const pid = parseInt(owned[1]!, 36);
         if (pid === process.pid) continue; // our own in-flight temps

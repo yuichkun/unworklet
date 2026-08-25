@@ -1537,3 +1537,32 @@ process(() => {
   const leftovers = readdirSync(dir).filter((f) => f.includes("uwklowered"));
   expect(leftovers).toEqual([path.basename(freshTemp)]);
 });
+
+test("sweep: a file that only ends like a temp is never removed", async () => {
+  // `saved.uwklowered.mjs` is somebody's own file: every temp this module
+  // writes is a dotfile carrying a source basename and a tag, and the suffix
+  // alone is not ownership. Reported by @codex on #48.
+  dir = mkdtempSync(path.join(LANG, ".mat-sweep-owned-"));
+  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  const theirs = path.join(dir, "saved.uwklowered.mjs");
+  writeFileSync(theirs, "export const mine = 1;\n");
+  utimesSync(theirs, twoHoursAgo, twoHoursAgo);
+  const theirDotfile = path.join(dir, ".saved.uwkfailed.mjs");
+  writeFileSync(theirDotfile, "export const alsoMine = 1;\n");
+  utimesSync(theirDotfile, twoHoursAgo, twoHoursAgo);
+
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = 0.5;
+  });
+});`,
+  );
+  await loadUwkProcessor(src);
+
+  const survivors = readdirSync(dir).filter((f) => f.includes("uwk") && f !== "synth.uwk.ts");
+  expect(survivors.sort()).toEqual([".saved.uwkfailed.mjs", "saved.uwklowered.mjs"]);
+});
