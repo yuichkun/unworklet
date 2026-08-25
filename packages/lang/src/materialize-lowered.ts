@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, rmSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -62,22 +62,20 @@ const loadTag = (done: Map<string, string>): string => {
 // so an OS tempdir is not an option and the normal-path `finally` removal is
 // the only cleanup — a crashed process strands its temps in the consumer's
 // source tree. Sweep each directory once per process, at the next
-// materialization that touches it. Deletion is deliberately conservative: a
-// parseable owner pid must be provably DEAD (`EPERM` counts as alive); an
-// unparseable name (an older tag format, or something merely similar) goes
-// only past an age threshold no in-flight load can reach.
-
+// materialization that touches it.
+//
+// Only a name this module can PROVE it wrote is a candidate: the delimited tag
+// carries the owner pid, and that pid must be provably dead (`EPERM` counts as
+// alive). Nothing else is swept. Earlier tag formats ran the pid, a nonce and a
+// counter together with no delimiter, which no rule can tell apart from an
+// ordinary lowercase word — and deleting a file out of somebody's source tree
+// is worse than leaving a stray from a version that predates this one.
 const SWEPT_DIRS = new Set<string>();
-// Every temp this module has ever written is a DOTFILE carrying the source
-// basename and a tag before the suffix (`.synth.uwk.ts.<tag>.uwklowered.mjs`).
-// An ordinary file that merely ends the same way — `saved.uwklowered.mjs` — was
-// written by somebody else, and nothing here may remove it. The suffix alone is
-// not ownership; the whole shape is.
+// A temp is a DOTFILE carrying the source basename and the tag before the
+// suffix (`.synth.uwk.ts.u1-<pid36>-<nonce>-<load>.uwklowered.mjs`). A file that
+// merely ends the same way — `saved.uwklowered.mjs` — was written by somebody
+// else. The suffix alone is not ownership; the whole shape is.
 const OWNED_TAG_RE = /^\..+\.u1-([0-9a-z]+)-[0-9a-f]+-[0-9a-z]+\.(uwklowered|uwkfailed)\.mjs$/;
-// The tag shapes written before that one: a content hash, then a pid/nonce/
-// counter run. Both are lowercase alphanumeric and never short.
-const LEGACY_TEMP_RE = /^\..+\.[0-9a-z]{6,}\.(uwklowered|uwkfailed)\.mjs$/;
-const LEGACY_TEMP_MAX_AGE_MS = 60 * 60 * 1000;
 
 const pidAlive = (pid: number): boolean => {
   if (!Number.isInteger(pid) || pid <= 0) return true; // unparseable = assume alive
@@ -102,19 +100,12 @@ function sweepStaleTemps(dir: string): void {
   for (const ent of entries) {
     if (!ent.isFile()) continue;
     const owned = OWNED_TAG_RE.exec(ent.name);
-    if (owned === null && !LEGACY_TEMP_RE.test(ent.name)) continue;
-    const full = path.join(dir, ent.name);
+    if (owned === null) continue;
+    const pid = parseInt(owned[1]!, 36);
+    if (pid === process.pid) continue; // our own in-flight temps
+    if (pidAlive(pid)) continue; // a live concurrent materialization
     try {
-      if (owned !== null) {
-        const pid = parseInt(owned[1]!, 36);
-        if (pid === process.pid) continue; // our own in-flight temps
-        if (pidAlive(pid)) continue; // a live concurrent materialization
-        rmSync(full, { force: true });
-        continue;
-      }
-      if (Date.now() - statSync(full).mtimeMs > LEGACY_TEMP_MAX_AGE_MS) {
-        rmSync(full, { force: true });
-      }
+      rmSync(path.join(dir, ent.name), { force: true });
     } catch {
       // Racing the owner's own cleanup is fine — the goal state is "gone".
     }

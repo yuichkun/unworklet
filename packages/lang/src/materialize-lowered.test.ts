@@ -1513,14 +1513,20 @@ process(() => {
   expect(readdirSync(dir)).toContain(path.basename(live));
 });
 
-test("sweep: a legacy-format temp is removed only past the age threshold", async () => {
+test("sweep: a name without the delimited owner tag is never removed", async () => {
+  // Tag formats older than `u1-` ran the pid, a nonce and a counter together
+  // with no delimiter, which no rule tells apart from an ordinary lowercase
+  // word — so nothing but a provable owner is swept, at any age. Deleting a
+  // file out of somebody's tree is worse than leaving a stray from a version
+  // that predates this one. Reported by @codex on #48.
   dir = mkdtempSync(path.join(LANG, ".mat-sweep-legacy-"));
-  const oldTemp = path.join(dir, ".old.abcdef012.uwklowered.mjs");
-  writeFileSync(oldTemp, "export const zombie = 1;\n");
   const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
-  utimesSync(oldTemp, twoHoursAgo, twoHoursAgo);
-  const freshTemp = path.join(dir, ".fresh.abcdef345.uwklowered.mjs");
-  writeFileSync(freshTemp, "export const maybeInFlight = 1;\n");
+  const ambiguous = [".old.abcdef012.uwklowered.mjs", ".saved.custom.uwklowered.mjs"];
+  for (const name of ambiguous) {
+    const p = path.join(dir, name);
+    writeFileSync(p, "export const notOurs = 1;\n");
+    utimesSync(p, twoHoursAgo, twoHoursAgo);
+  }
 
   const src = path.join(dir, "synth.uwk.ts");
   writeFileSync(
@@ -1535,7 +1541,7 @@ process(() => {
   await loadUwkProcessor(src);
 
   const leftovers = readdirSync(dir).filter((f) => f.includes("uwklowered"));
-  expect(leftovers).toEqual([path.basename(freshTemp)]);
+  expect(leftovers.sort()).toEqual([...ambiguous].sort());
 });
 
 test("sweep: a file that only ends like a temp is never removed", async () => {
