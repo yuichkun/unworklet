@@ -674,6 +674,28 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
             seen(expr.expression, false);
             return;
           }
+          // Only what the expression can YIELD is handed over. A comma yields
+          // its right side, a conditional either branch, a constant index into
+          // a literal array that element — reading the rest hands the call a
+          // function it never sees.
+          if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+            seen(expr.right, false);
+            return;
+          }
+          if (ts.isConditionalExpression(expr)) {
+            seen(expr.whenTrue, false);
+            seen(expr.whenFalse, false);
+            return;
+          }
+          if (ts.isElementAccessExpression(expr)) {
+            const from = unwrapExpression(expr.expression);
+            const at = unwrapExpression(expr.argumentExpression);
+            if (ts.isArrayLiteralExpression(from) && ts.isNumericLiteral(at)) {
+              const picked = from.elements[Number(at.text)];
+              if (picked !== undefined) seen(picked, false);
+              return;
+            }
+          }
           if (!ts.isIdentifier(expr)) {
             ts.forEachChild(expr, (child) => {
               seen(child, false);
