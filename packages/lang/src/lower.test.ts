@@ -2924,6 +2924,56 @@ run(${argument});
   }
 });
 
+test("a selected getter runs on the way to the call, whatever the callee does", () => {
+  try {
+    loweredWithMutation(`
+function retain(cb: unknown) {
+  void cb;
+}
+function noop() {}
+void noop;
+retain(({ get selected() { helper.value = 1; return noop; } }).selected);
+`);
+    expect.unreachable("lower() must run a getter the argument expression reads");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
+test("what a selected getter returns still depends on the callee", () => {
+  const lowered = loweredWithMutation(`
+function mutate() {
+  helper.value = 1;
+}
+function retain(cb: unknown) {
+  void cb;
+}
+void mutate;
+retain(({ get selected() { return mutate; } }).selected);
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
+test("a parameter default that calls another parameter runs it", () => {
+  try {
+    loweredWithMutation(`
+function mutate() {
+  helper.value = 1;
+}
+function run(cb: () => void, trigger: unknown = cb()) {
+  void trigger;
+}
+void mutate;
+run(mutate);
+`);
+    expect.unreachable("lower() must see a callback a parameter default calls");
+  } catch (e) {
+    expect(e).toBeInstanceOf(LowerError);
+    expect((e as LowerError).id).toBe("uwk-export-unsupported");
+  }
+});
+
 test("an argument naming something that is not a function follows nothing", () => {
   const lowered = loweredWithMutation(`
 function take(x: unknown) {

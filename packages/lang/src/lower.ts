@@ -627,6 +627,23 @@ function invokesParameter(fn: ts.Node, index: number): boolean {
       look(child, child === functionBody ? bodyScope : inner, settled);
     });
   };
+  // A parameter default runs when its argument is left out, before the body
+  // does anything — and it is evaluated in the parameter scope, where the
+  // body's `var`s do not exist yet. Its own default cannot name it, so that one
+  // is skipped.
+  for (const other of parameters) {
+    if (other === parameter || other.initializer === undefined) continue;
+    look(
+      other.initializer,
+      {
+        carried: new Set([parameter.name.text]),
+        rebound: new Set<string>(),
+        parent: null,
+        isFunction: true,
+      },
+      true,
+    );
+  }
   const own = new Set<string>();
   collectFunctionScopedVars(fn, own);
   look(
@@ -802,11 +819,11 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
             if (answer.value !== null) seen(answer.value, false, within);
             return true;
           }
-          // A getter that can answer RUNS on the read — right there, not
-          // whenever something calls it — and hands back what it returns. A
-          // name it returns is read where the getter stands, not here.
+          // A getter that can answer RUNS on the read — right there, on the way
+          // to the call, whatever the callee then does with what it hands back.
+          // A name it returns is read where the getter stands, not here.
           for (const getter of answer.getters) {
-            if (runs) runsNow.add(getter);
+            runsNow.add(getter);
             for (const returned of returnedExpressions(getter, within)) {
               seen(returned.expression, false, returned.resolve);
             }
