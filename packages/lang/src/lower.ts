@@ -291,6 +291,24 @@ function collectFunctionScopedVars(
 /** `literalProperty` could not tell what the key holds. */
 const UNKNOWN_PROPERTY = Symbol("unknown property");
 
+/** The key a property name states, or undefined when it is computed at runtime.
+ * Brackets around a literal — `["other"]` — state a key as plainly as a bare
+ * name does; brackets around anything else do not. */
+function staticPropertyKey(name: ts.PropertyName): string | undefined {
+  if (ts.isComputedPropertyName(name)) {
+    const inner = unwrapExpression(name.expression);
+    return ts.isStringLiteral(inner) ||
+      ts.isNumericLiteral(inner) ||
+      ts.isNoSubstitutionTemplateLiteral(inner)
+      ? inner.text
+      : undefined;
+  }
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) {
+    return name.text;
+  }
+  return undefined;
+}
+
 /**
  * What an object literal gives for `key`: the expression, `null` when it gives
  * none, or `UNKNOWN_PROPERTY` when it cannot be told. The last write to a key
@@ -306,13 +324,13 @@ function literalProperty(
   let clouded = false;
   for (const property of object.properties) {
     const name = property.name;
-    if (ts.isSpreadAssignment(property) || name === undefined || ts.isComputedPropertyName(name)) {
+    const states = name === undefined ? undefined : staticPropertyKey(name);
+    if (ts.isSpreadAssignment(property) || states === undefined) {
       value = null;
       clouded = true;
       continue;
     }
-    if (!ts.isIdentifier(name) && !ts.isStringLiteral(name) && !ts.isNumericLiteral(name)) continue;
-    if (name.text !== key) continue;
+    if (states !== key) continue;
     if (ts.isPropertyAssignment(property)) {
       value = property.initializer;
       clouded = false;
@@ -712,12 +730,10 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
       const runGetters = (object: ts.ObjectLiteralExpression, key: string): void => {
         for (const property of object.properties) {
           if (!ts.isGetAccessorDeclaration(property)) continue;
-          const name = property.name;
-          const answers =
-            ts.isComputedPropertyName(name) ||
-            ((ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) &&
-              name.text === key);
-          if (answers) runsNow.add(property);
+          // A key computed at runtime could be this one; a key merely written
+          // in brackets is still the key it spells.
+          const states = staticPropertyKey(property.name);
+          if (states === undefined || states === key) runsNow.add(property);
         }
       };
       const enter = (passed: ts.Expression, runs: boolean, isCallee: boolean): void => {

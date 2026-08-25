@@ -2850,6 +2850,12 @@ test("a named property off a literal picks the value that key holds", () => {
     ["({ get selected() { helper.value = 1; return noop; } }).selected", "refuses"],
     ['({ get selected() { helper.value = 1; return noop; } })["selected"]', "refuses"],
     ["({ get other() { helper.value = 1; return noop; }, selected: noop }).selected", "hoists"],
+    // Brackets around a literal spell a key as plainly as a bare name does.
+    ['({ selected: noop, ["other"]: mutate }).selected', "hoists"],
+    ['({ selected: noop, ["selected"]: mutate }).selected', "refuses"],
+    ['({ selected: noop, get ["other"]() { helper.value = 1; return noop; } }).selected', "hoists"],
+    ['({ get ["selected"]() { helper.value = 1; return noop; } }).selected', "refuses"],
+    ["({ selected: noop, get [key]() { helper.value = 1; return noop; } }).selected", "refuses"],
   ];
   for (const [argument, expected] of cases) {
     const source = `
