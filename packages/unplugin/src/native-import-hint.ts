@@ -45,7 +45,9 @@ const specifierFrom = (importer: string, target: string): string | undefined => 
 export const withExtensionHint = (err: unknown): unknown => {
   const e = err as { code?: string; message?: string };
   if (e?.code !== "ERR_MODULE_NOT_FOUND" || typeof e.message !== "string") return err;
-  const m = /Cannot find module '([^']+)' imported from ([^\s]+)/.exec(e.message);
+  // The importer runs to the end: Node prints the path verbatim, and a path
+  // with spaces in it is still one path.
+  const m = /Cannot find module '([^']+)' imported from (.+)$/.exec(e.message.trim());
   if (m === null) return err;
   const missing = m[1]!;
   if (path.extname(missing) !== "") return err; // a genuinely missing file, not the extension rule

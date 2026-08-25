@@ -93,3 +93,15 @@ test("unrelated errors pass through untouched", () => {
   otherCode.code = "ERR_UNSUPPORTED_DIR_IMPORT";
   expect(withExtensionHint(otherCode)).toBe(otherCode);
 });
+
+test("an importer path containing spaces is captured whole", () => {
+  // Node prints the importer verbatim, so a capture that stops at whitespace
+  // computes the suggestion from the wrong directory. Reported by @codex on #48.
+  dir = mkdtempSync(path.join(tmpdir(), "uwk-hint-"));
+  const spaced = path.join(dir, "audio project");
+  mkdirSync(path.join(spaced, "helpers"), { recursive: true });
+  writeFileSync(path.join(spaced, "helpers", "tables.ts"), "export const TABLE = [1];\n");
+  const missing = path.join(spaced, "helpers", "tables");
+  const wrapped = withExtensionHint(nodeNotFound(missing, path.join(spaced, "main.mjs"))) as Error;
+  expect(wrapped.message).toContain('"./helpers/tables.ts"');
+});
