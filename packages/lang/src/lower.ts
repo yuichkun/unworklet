@@ -338,6 +338,14 @@ function literalProperty(object: ts.ObjectLiteralExpression, key: string): Liter
     // Naming the key takes it, so nothing written before this is under it any
     // more — not a value, not a doubt, not an accessor with a runtime name.
     clouded = false;
+    if (ts.isSetAccessorDeclaration(property)) {
+      // Except a setter, which takes only the half it writes: it lands ON an
+      // accessor rather than over it, so the getter stays whatever it is —
+      // including one whose name is only known at runtime. What it cannot
+      // leave standing is a data value.
+      value = null;
+      continue;
+    }
     maybe = [];
     if (ts.isPropertyAssignment(property)) {
       value = property.initializer;
@@ -353,10 +361,6 @@ function literalProperty(object: ts.ObjectLiteralExpression, key: string): Liter
       // Reading the key runs this, and what comes back is its business.
       value = null;
       claimed = property;
-    } else {
-      // A setter makes the key an accessor, which a data value cannot survive —
-      // but its own getter, written as the other half of the pair, it keeps.
-      value = null;
     }
   }
   const getters = claimed === undefined ? maybe : [claimed, ...maybe];

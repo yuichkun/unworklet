@@ -2874,6 +2874,14 @@ test("a named property off a literal picks the value that key holds", () => {
     ["({ selected: mutate, set selected(_v: unknown) {} }).selected", "hoists"],
     ["({ get selected() { return mutate; }, set selected(_v: unknown) {} }).selected", "refuses"],
     ["({ set selected(_v: unknown) {}, get selected() { return mutate; } }).selected", "refuses"],
+    // A setter takes only the half it writes, so a getter survives it whatever
+    // its name is spelled like — a data value does not.
+    [
+      "({ get selected() { return noop; }, get [key]() { return mutate; }, set selected(_v: unknown) {} }).selected",
+      "refuses",
+    ],
+    ["({ get [key]() { return mutate; }, set selected(_v: unknown) {} }).selected", "refuses"],
+    ["({ [key]: mutate, set selected(_v: unknown) {} }).selected", "hoists"],
   ];
   for (const [argument, expected] of cases) {
     const source = `
