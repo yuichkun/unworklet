@@ -706,6 +706,20 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
       // the call may be handed, so each is entered. A function WRITTEN here is
       // entered as itself rather than scanned through — its body runs on its
       // own terms, and the walk reaches it with this scope.
+      // Reading a key a getter answers RUNS that getter, right there — so its
+      // body is not deferred the way a plain function value's is. What it hands
+      // back is still unknown, which is what the fallback below is for.
+      const runGetters = (object: ts.ObjectLiteralExpression, key: string): void => {
+        for (const property of object.properties) {
+          if (!ts.isGetAccessorDeclaration(property)) continue;
+          const name = property.name;
+          const answers =
+            ts.isComputedPropertyName(name) ||
+            ((ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) &&
+              name.text === key);
+          if (answers) runsNow.add(property);
+        }
+      };
       const enter = (passed: ts.Expression, runs: boolean, isCallee: boolean): void => {
         const seen = (node: ts.Node, top: boolean): void => {
           const expr = ts.isExpression(node) ? unwrapExpression(node) : node;
@@ -728,6 +742,7 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
                 if (picked !== null) seen(picked, false);
                 return;
               }
+              runGetters(from, expr.name.text);
             }
             seen(expr.expression, false);
             return;
@@ -759,6 +774,7 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
                 if (picked !== null) seen(picked, false);
                 return;
               }
+              runGetters(from, at.text);
             }
             if (ts.isArrayLiteralExpression(from) && ts.isNumericLiteral(at)) {
               // A spread shifts everything AFTER it by a length nothing here

@@ -2844,8 +2844,12 @@ test("a named property off a literal picks the value that key holds", () => {
     ["({ selected() {}, unselected: mutate }).selected", "hoists"],
     ['({ selected() {}, unselected: mutate })["selected"]', "hoists"],
     ["({ selected() { helper.value = 1; } }).selected", "refuses"],
-    // An accessor runs code to answer, so what comes back cannot be told.
+    // An accessor runs code to answer, so what comes back cannot be told — but
+    // the answering happens on the read, so what it DOES is seen.
     ["({ get selected() { return noop; }, unselected: mutate }).selected", "refuses"],
+    ["({ get selected() { helper.value = 1; return noop; } }).selected", "refuses"],
+    ['({ get selected() { helper.value = 1; return noop; } })["selected"]', "refuses"],
+    ["({ get other() { helper.value = 1; return noop; }, selected: noop }).selected", "hoists"],
   ];
   for (const [argument, expected] of cases) {
     const source = `
