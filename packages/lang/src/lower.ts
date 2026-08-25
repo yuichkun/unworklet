@@ -769,8 +769,14 @@ function unwrapExpression(expr: ts.Expression): ts.Expression {
   }
 }
 
+/** A body a name stands for, together with the node to walk in from to reach
+ * it. The two differ whenever the body sits deeper than the scope holding the
+ * name — assigned inside a nested block, or a `var` hoisted out of one — and
+ * the walk in is what reads its free names where they were written. */
+type ScopedBody = { readonly node: ts.Node; readonly within: ts.Node };
+
 /** The module-scope function bodies a name stands for, when this file has them. */
-type CalleeBodies = (name: string) => readonly ts.Node[];
+type CalleeBodies = (name: string) => readonly ScopedBody[];
 
 /** A function body a name resolves to, carrying the scope it was declared in —
  * what its own free names see is decided there, not at the call. */
@@ -793,11 +799,9 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
   const runsNow = new Set<ts.Node>();
   const followed = new Set<ts.Node>();
   const moduleResolve: BodyResolver = (name) =>
-    (calleeBodies?.(name) ?? []).map((node) => ({
-      node,
-      shadowed: NO_NAMES,
-      resolve: moduleResolve,
-    }));
+    (calleeBodies?.(name) ?? []).map((held) =>
+      scopeIn(held.within, held.node, NO_NAMES, moduleResolve),
+    );
   // A write to a name a nested block declares for itself is that local's, not
   // the module binding's — the same spelling-versus-resolution rule the export
   // taint follows. Only block-scoped declarations shadow: a `var` inside a
@@ -1087,48 +1091,101 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
         target(n.operand as ts.Expression, shadowed);
       }
     }
-    const opened = blockScopedNames(n);
-    const inner = opened === null ? shadowed : new Set([...shadowed, ...opened]);
-    // Every name this scope opens is a key, so one bound to something that is
-    // not a function stops the lookup here instead of reaching an outer
-    // function of the same spelling.
-    const declared = opened === null ? null : scopedFunctionBodies(n, opened);
-    const innerResolve: BodyResolver = (name) => {
-      const here = declared?.get(name);
-      return here === undefined
-        ? resolve(name)
-        : here.map((node) => ({ node, shadowed: inner, resolve: innerResolve }));
-    };
-    // A function's body sees its `var`s throughout, but a default parameter
-    // initializer runs before any of them exist — so the body child gets the
-    // wider scope and the parameters keep the narrower one.
-    let body: ts.Node | undefined;
-    let bodyNames = inner;
-    let bodyResolve = innerResolve;
-    if (ts.isFunctionLike(n)) {
-      const vars = new Set<string>();
-      const varBodies = new Map<string, ts.Node[]>();
-      collectFunctionScopedVars(n, vars, varBodies);
-      body = (n as { body?: ts.Node }).body;
-      if (vars.size > 0) {
-        const names = new Set([...inner, ...vars]);
-        const lookup: BodyResolver = (name) => {
-          const here = varBodies.get(name);
-          return here === undefined
-            ? innerResolve(name)
-            : here.map((node) => ({ node, shadowed: names, resolve: lookup }));
-        };
-        bodyNames = names;
-        bodyResolve = lookup;
-      }
-    }
+    const at = scopeUnder(n, shadowed, resolve);
     ts.forEachChild(n, (child) => {
-      const isBody = child === body;
-      walk(child, isBody ? bodyNames : inner, isBody ? bodyResolve : innerResolve);
+      const scope = at(child);
+      walk(child, scope.shadowed, scope.resolve);
     });
   };
   walk(stmt, NO_NAMES, moduleResolve);
   return names;
+}
+
+/** The scope in force at each child of `n`, given the one `n` itself stands in.
+ * A name the scope opens resolves to the bodies bound to it, each read where it
+ * was WRITTEN rather than where the name lives — the two are the same place for
+ * a declaration and a different one for anything reached by walking in. */
+function scopeUnder(
+  n: ts.Node,
+  shadowed: ReadonlySet<string>,
+  resolve: BodyResolver,
+): (child: ts.Node) => { shadowed: ReadonlySet<string>; resolve: BodyResolver } {
+  const opened = blockScopedNames(n);
+  const inner = opened === null ? shadowed : new Set([...shadowed, ...opened]);
+  // Every name this scope opens is a key, so one bound to something that is
+  // not a function stops the lookup here instead of reaching an outer
+  // function of the same spelling.
+  const declared = opened === null ? null : scopedFunctionBodies(n, opened);
+  const innerResolve: BodyResolver = (name) => {
+    const here = declared?.get(name);
+    return here === undefined ? resolve(name) : here.map((body) => scopeAt(n, body, at));
+  };
+  // A function's body sees its `var`s throughout, but a default parameter
+  // initializer runs before any of them exist — so the body child gets the
+  // wider scope and the parameters keep the narrower one.
+  let body: ts.Node | undefined;
+  let bodyNames = inner;
+  let bodyResolve = innerResolve;
+  if (ts.isFunctionLike(n)) {
+    const vars = new Set<string>();
+    const varBodies = new Map<string, ts.Node[]>();
+    collectFunctionScopedVars(n, vars, varBodies);
+    body = (n as { body?: ts.Node }).body;
+    if (vars.size > 0) {
+      const names = new Set([...inner, ...vars]);
+      const lookup: BodyResolver = (name) => {
+        const here = varBodies.get(name);
+        return here === undefined ? innerResolve(name) : here.map((v) => scopeAt(n, v, at));
+      };
+      bodyNames = names;
+      bodyResolve = lookup;
+    }
+  }
+  function at(child: ts.Node): { shadowed: ReadonlySet<string>; resolve: BodyResolver } {
+    return child === body
+      ? { shadowed: bodyNames, resolve: bodyResolve }
+      : { shadowed: inner, resolve: innerResolve };
+  }
+  return at;
+}
+
+/** Where a body stands, walking in from the scope that holds its name. Every
+ * scope on the way in is entered, so a body written inside a nested block reads
+ * that block's names — the outer scope has never heard of them. */
+function scopeAt(
+  home: ts.Node,
+  node: ts.Node,
+  at: (child: ts.Node) => { shadowed: ReadonlySet<string>; resolve: BodyResolver },
+): ResolvedBody {
+  const chain = (n: ts.Node): ts.Node[] | null => {
+    if (n === node) return [];
+    let found: ts.Node[] | null = null;
+    ts.forEachChild(n, (child) => {
+      const rest = chain(child);
+      if (rest === null) return undefined;
+      found = [child, ...rest];
+      return true;
+    });
+    return found;
+  };
+  const path = chain(home) ?? [];
+  let scope = at(path[0] ?? node);
+  for (let i = 0; i + 1 < path.length; i++) {
+    scope = scopeUnder(path[i]!, scope.shadowed, scope.resolve)(path[i + 1]!);
+  }
+  return { node, shadowed: scope.shadowed, resolve: scope.resolve };
+}
+
+/** `scopeAt` from outside `home`, for a caller holding the scope `home` itself
+ * stands in rather than the one it hands its children. */
+function scopeIn(
+  home: ts.Node,
+  node: ts.Node,
+  shadowed: ReadonlySet<string>,
+  resolve: BodyResolver,
+): ResolvedBody {
+  if (home === node) return { node, shadowed, resolve };
+  return scopeAt(home, node, scopeUnder(home, shadowed, resolve));
 }
 
 /** The function bodies a scope's own names are bound to. Every name the scope
@@ -1941,22 +1998,30 @@ function partitionModuleScopeExports(
   // An object literal put behind a name by assignment rather than declaration.
   // Names are collected across the whole file: a read cannot tell which
   // assignment ran, and missing the one that did goes quiet.
-  const reassigned = new Map<string, ts.Node[]>();
-  for (const stmt of statements) collectAssignedLiterals(stmt, reassigned, "any");
-  const calleeBodies = (name: string): readonly ts.Node[] => {
-    const bodies: ts.Node[] = [...(reassigned.get(name) ?? [])];
+  const reassigned = new Map<string, ScopedBody[]>();
+  for (const stmt of statements) {
+    const here = new Map<string, ts.Node[]>();
+    collectAssignedLiterals(stmt, here, "any");
+    for (const [name, literals] of here) {
+      const held = reassigned.get(name) ?? [];
+      for (const node of literals) held.push({ node, within: stmt });
+      reassigned.set(name, held);
+    }
+  }
+  const calleeBodies = (name: string): readonly ScopedBody[] => {
+    const bodies: ScopedBody[] = [...(reassigned.get(name) ?? [])];
     for (const decl of valueBindingOf.get(name) ?? NO_BINDINGS) {
       const declared = statements[decl];
       if (declared === undefined) continue;
       if (ts.isFunctionDeclaration(declared) || ts.isClassDeclaration(declared)) {
-        bodies.push(declared);
+        bodies.push({ node: declared, within: declared });
       } else if (ts.isVariableStatement(declared)) {
         for (const d of declared.declarationList.declarations) {
           if (!ts.isIdentifier(d.name) || d.name.text !== name || d.initializer === undefined) {
             continue;
           }
           const init = unwrapExpression(d.initializer);
-          if (isCallableDeclaration(init)) bodies.push(init);
+          if (isCallableDeclaration(init)) bodies.push({ node: init, within: declared });
         }
       }
     }

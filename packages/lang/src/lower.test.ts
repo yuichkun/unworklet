@@ -3032,6 +3032,38 @@ void ignored;
   expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
 });
 
+test("a body written inside a block reads that block's names, not the outer scope's", () => {
+  const mutate = "const mutate = () => {\n    helper.value = 1;\n  };";
+  for (const body of [
+    // A literal assigned to a module name from inside a block: its getter calls
+    // something only that block declares.
+    `let box: any;\n{\n  ${mutate}\n  box = {\n    get selected() {\n      mutate();\n      return 0;\n    },\n  };\n}\nconst ignored = box.selected;\nvoid ignored;`,
+    // The same, one scope in: the name belongs to the outer block, the literal
+    // to the inner one.
+    `{\n  let box: any = { selected: 0 };\n  {\n    ${mutate}\n    box = {\n      get selected() {\n        mutate();\n        return 0;\n      },\n    };\n  }\n  const ignored = box.selected;\n  void ignored;\n}`,
+    // A `var` belongs to the function, but the arrow bound to it was written in
+    // a block and calls what that block declares.
+    `function outer() {\n  {\n    ${mutate}\n    var f = () => {\n      mutate();\n    };\n  }\n  f();\n}\nouter();`,
+  ]) {
+    try {
+      loweredWithMutation(body);
+      expect.unreachable(`lower() must read a body's free names where it was written: ${body}`);
+    } catch (e) {
+      expect(e).toBeInstanceOf(LowerError);
+      expect((e as LowerError).id).toBe("uwk-export-unsupported");
+    }
+  }
+  const lowered = loweredWithMutation(`
+let box: any;
+{
+  box = { selected: 1 };
+}
+const ignored = box.selected;
+void ignored;
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
 test("a plain read runs the getter that answers the key", () => {
   for (const read of [
     "({ get selected() { helper.value = 1; return 0; } }).selected",
