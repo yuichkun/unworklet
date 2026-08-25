@@ -16,12 +16,31 @@
 
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * Candidate suffixes an extensionless Vite-style relative import usually means
  * under Node ESM resolution.
  */
 const EXTENSION_CANDIDATES = [".ts", ".tsx", ".mts", ".js", ".mjs", "/index.ts", "/index.js"];
+
+/**
+ * The specifier the importer would have to write for `target`. A nested import
+ * keeps its directories — suggesting the basename alone for `./helpers/tables`
+ * names a different file, or none.
+ */
+const specifierFrom = (importer: string, target: string): string | undefined => {
+  let from: string;
+  try {
+    from = importer.startsWith("file:") ? fileURLToPath(importer) : importer;
+  } catch {
+    return undefined;
+  }
+  if (!path.isAbsolute(from) || !path.isAbsolute(target)) return undefined;
+  const relative = path.relative(path.dirname(from), target).split(path.sep).join("/");
+  if (relative.length === 0) return undefined;
+  return relative.startsWith(".") ? relative : `./${relative}`;
+};
 
 export const withExtensionHint = (err: unknown): unknown => {
   const e = err as { code?: string; message?: string };
@@ -31,10 +50,13 @@ export const withExtensionHint = (err: unknown): unknown => {
   const missing = m[1]!;
   if (path.extname(missing) !== "") return err; // a genuinely missing file, not the extension rule
   const candidate = EXTENSION_CANDIDATES.find((suffix) => existsSync(`${missing}${suffix}`));
+  const specifier =
+    candidate === undefined ? undefined : specifierFrom(m[2]!, `${missing}${candidate}`);
   const fix =
-    candidate !== undefined
-      ? ` The file exists as "${missing}${candidate}" — write the import specifier with that suffix (e.g. "./${path.basename(missing)}${candidate}").`
-      : ` Add the file extension to the import specifier (e.g. "./name.ts").`;
+    candidate === undefined
+      ? ` Add the file extension to the import specifier (e.g. "./name.ts").`
+      : ` The file exists as "${missing}${candidate}" — write the import specifier with that suffix` +
+        (specifier === undefined ? `.` : ` (e.g. "${specifier}").`);
   return new Error(
     `@unworklet/unplugin: processor modules are evaluated with Node ESM resolution at build ` +
       `time, which requires an explicit file extension in relative imports — ` +

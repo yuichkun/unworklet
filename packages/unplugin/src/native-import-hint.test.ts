@@ -11,9 +11,10 @@
  * resolves specifiers Vite-style, so the native resolution never runs.
  */
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { afterEach, expect, test } from "vite-plus/test";
 
@@ -37,11 +38,38 @@ test("an extensionless miss whose .ts sibling exists is rewrapped with the exact
   dir = mkdtempSync(path.join(tmpdir(), "uwk-hint-"));
   writeFileSync(path.join(dir, "tables.ts"), "export const TABLE = [1];\n");
   const missing = path.join(dir, "tables");
-  const wrapped = withExtensionHint(nodeNotFound(missing, "/src/my.processor.ts")) as Error;
+  const wrapped = withExtensionHint(
+    nodeNotFound(missing, path.join(dir, "my.processor.ts")),
+  ) as Error;
   expect(wrapped.message).toContain("explicit file extension");
   expect(wrapped.message).toContain(`${missing}.ts`);
-  expect(wrapped.message).toContain("./tables.ts");
+  expect(wrapped.message).toContain('"./tables.ts"');
   expect(wrapped.cause).toBeInstanceOf(Error);
+});
+
+test("a nested extensionless miss keeps its directories in the suggested specifier", () => {
+  // `path.basename` alone turned `./helpers/tables` into `./tables.ts`, which
+  // names a different file or none. Reported by @codex on #48.
+  dir = mkdtempSync(path.join(tmpdir(), "uwk-hint-"));
+  mkdirSync(path.join(dir, "helpers"));
+  writeFileSync(path.join(dir, "helpers", "tables.ts"), "export const TABLE = [1];\n");
+  const missing = path.join(dir, "helpers", "tables");
+  const wrapped = withExtensionHint(
+    nodeNotFound(missing, path.join(dir, "my.processor.ts")),
+  ) as Error;
+  expect(wrapped.message).toContain('"./helpers/tables.ts"');
+  expect(wrapped.message).not.toContain('"./tables.ts"');
+});
+
+test("a file-URL importer is understood the same as a path", () => {
+  dir = mkdtempSync(path.join(tmpdir(), "uwk-hint-"));
+  mkdirSync(path.join(dir, "helpers"));
+  writeFileSync(path.join(dir, "helpers", "tables.ts"), "export const TABLE = [1];\n");
+  const missing = path.join(dir, "helpers", "tables");
+  const wrapped = withExtensionHint(
+    nodeNotFound(missing, pathToFileURL(path.join(dir, "my.processor.ts")).href),
+  ) as Error;
+  expect(wrapped.message).toContain('"./helpers/tables.ts"');
 });
 
 test("an extensionless miss with no matching sibling still states the rule and the generic fix", () => {
