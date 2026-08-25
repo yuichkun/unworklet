@@ -1572,3 +1572,37 @@ process(() => {
   const survivors = readdirSync(dir).filter((f) => f.includes("uwk") && f !== "synth.uwk.ts");
   expect(survivors.sort()).toEqual([".saved.uwkfailed.mjs", "saved.uwklowered.mjs"]);
 });
+
+test("sweep: a tag shaped unlike anything the generator writes is not owned", async () => {
+  // The nonce is always `randomBytes(3).toString("hex")` — six hex characters,
+  // never one — and a pid or a load counter in base36 never carries a leading
+  // zero. A name that gets those wrong was written by somebody else, even when
+  // the pid inside it happens to be dead. Reported by @codex on #48.
+  dir = mkdtempSync(path.join(LANG, ".mat-sweep-shape-"));
+  const deadPid = spawnDeadPid();
+  const theirs = [
+    `.saved.u1-${deadPid.toString(36)}-f-0.uwklowered.mjs`,
+    `.saved.u1-${deadPid.toString(36)}-abc1234-0.uwklowered.mjs`,
+    `.saved.u1-0${deadPid.toString(36)}-abc123-0.uwklowered.mjs`,
+    `.saved.u1-${deadPid.toString(36)}-abc123-01.uwklowered.mjs`,
+  ];
+  for (const name of theirs) writeFileSync(path.join(dir, name), "export const mine = 1;\n");
+  // The real shape, same dead owner, is swept.
+  const ours = `.crashed.u1-${deadPid.toString(36)}-abc123-0.uwklowered.mjs`;
+  writeFileSync(path.join(dir, ours), "export const zombie = 1;\n");
+
+  const src = path.join(dir, "synth.uwk.ts");
+  writeFileSync(
+    src,
+    `const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = 0.5;
+  });
+});`,
+  );
+  await loadUwkProcessor(src);
+
+  const left = readdirSync(dir).filter((f) => f.includes("uwklowered"));
+  expect(left.sort()).toEqual([...theirs].sort());
+});

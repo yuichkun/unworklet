@@ -75,7 +75,12 @@ const SWEPT_DIRS = new Set<string>();
 // suffix (`.synth.uwk.ts.u1-<pid36>-<nonce>-<load>.uwklowered.mjs`). A file that
 // merely ends the same way — `saved.uwklowered.mjs` — was written by somebody
 // else. The suffix alone is not ownership; the whole shape is.
-const OWNED_TAG_RE = /^\..+\.u1-([0-9a-z]+)-[0-9a-f]+-[0-9a-z]+\.(uwklowered|uwkfailed)\.mjs$/;
+// The tag is exactly what `loadTag` writes and nothing looser: a base36 pid, a
+// six-character hex nonce, a base36 counter. Neither number carries a leading
+// zero in base36, and the nonce is never another length — a name that gets any
+// of that wrong was written by somebody else, dead pid inside it or not.
+const OWNED_TAG_RE =
+  /^\..+\.u1-([1-9a-z][0-9a-z]*)-[0-9a-f]{6}-(?:0|[1-9a-z][0-9a-z]*)\.(uwklowered|uwkfailed)\.mjs$/;
 
 const pidAlive = (pid: number): boolean => {
   if (!Number.isInteger(pid) || pid <= 0) return true; // unparseable = assume alive
