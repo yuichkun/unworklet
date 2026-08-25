@@ -2868,6 +2868,12 @@ test("a named property off a literal picks the value that key holds", () => {
     ],
     ["({ get selected() { return mutate; } }).selected", "refuses"],
     ["({ get selected() { return noop; }, [key]: mutate }).selected", "refuses"],
+    // Naming the key takes it — from a doubt, and from a data value.
+    ["({ [key]: mutate, get selected() { return noop; } }).selected", "hoists"],
+    ["({ [key]: mutate, selected: noop }).selected", "hoists"],
+    ["({ selected: mutate, set selected(_v: unknown) {} }).selected", "hoists"],
+    ["({ get selected() { return mutate; }, set selected(_v: unknown) {} }).selected", "refuses"],
+    ["({ set selected(_v: unknown) {}, get selected() { return mutate; } }).selected", "refuses"],
   ];
   for (const [argument, expected] of cases) {
     const source = `

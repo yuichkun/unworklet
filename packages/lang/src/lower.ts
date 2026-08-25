@@ -319,39 +319,47 @@ function staticPropertyKey(name: ts.PropertyName): string | undefined {
 function literalProperty(object: ts.ObjectLiteralExpression, key: string): LiteralAnswer {
   let value: ts.Expression | ts.MethodDeclaration | null = null;
   let clouded = false;
-  let getters: ts.GetAccessorDeclaration[] = [];
+  // The accessor that claims this key by name, and the ones whose key is only
+  // known at runtime and so might.
+  let claimed: ts.GetAccessorDeclaration | undefined;
+  let maybe: ts.GetAccessorDeclaration[] = [];
   for (const property of object.properties) {
     const name = property.name;
     const states = name === undefined ? undefined : staticPropertyKey(name);
     // A spread, or a key computed at runtime, could put anything under this
-    // name — including replacing it, so it does not clear a getter either.
+    // name — including replacing what is here.
     if (ts.isSpreadAssignment(property) || states === undefined) {
-      if (ts.isGetAccessorDeclaration(property)) getters.push(property);
+      if (ts.isGetAccessorDeclaration(property)) maybe.push(property);
       value = null;
       clouded = true;
       continue;
     }
     if (states !== key) continue;
+    // Naming the key takes it, so nothing written before this is under it any
+    // more — not a value, not a doubt, not an accessor with a runtime name.
+    clouded = false;
+    maybe = [];
     if (ts.isPropertyAssignment(property)) {
       value = property.initializer;
+      claimed = undefined;
     } else if (ts.isShorthandPropertyAssignment(property)) {
       value = property.name;
+      claimed = undefined;
     } else if (ts.isMethodDeclaration(property)) {
       // A method IS the value the key holds.
       value = property;
+      claimed = undefined;
     } else if (ts.isGetAccessorDeclaration(property)) {
       // Reading the key runs this, and what comes back is its business.
       value = null;
-      getters = [property];
-      continue;
+      claimed = property;
     } else {
-      // A setter answers nothing on a read.
-      continue;
+      // A setter makes the key an accessor, which a data value cannot survive —
+      // but its own getter, written as the other half of the pair, it keeps.
+      value = null;
     }
-    // Whatever came before, this is what the key holds now.
-    clouded = false;
-    getters = [];
   }
+  const getters = claimed === undefined ? maybe : [claimed, ...maybe];
   return { value: clouded || getters.length > 0 ? UNKNOWN_PROPERTY : value, getters, clouded };
 }
 
