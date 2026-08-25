@@ -316,16 +316,17 @@ function staticPropertyKey(name: ts.PropertyName): string | undefined {
  * when it comes AFTER the named property — the same way a spread only shifts
  * the array elements that follow it.
  */
-function literalProperty(
-  object: ts.ObjectLiteralExpression,
-  key: string,
-): ts.Expression | ts.MethodDeclaration | null | typeof UNKNOWN_PROPERTY {
+function literalProperty(object: ts.ObjectLiteralExpression, key: string): LiteralAnswer {
   let value: ts.Expression | ts.MethodDeclaration | null = null;
   let clouded = false;
+  let getters: ts.GetAccessorDeclaration[] = [];
   for (const property of object.properties) {
     const name = property.name;
     const states = name === undefined ? undefined : staticPropertyKey(name);
+    // A spread, or a key computed at runtime, could put anything under this
+    // name — including replacing it, so it does not clear a getter either.
     if (ts.isSpreadAssignment(property) || states === undefined) {
+      if (ts.isGetAccessorDeclaration(property)) getters.push(property);
       value = null;
       clouded = true;
       continue;
@@ -333,21 +334,49 @@ function literalProperty(
     if (states !== key) continue;
     if (ts.isPropertyAssignment(property)) {
       value = property.initializer;
-      clouded = false;
     } else if (ts.isShorthandPropertyAssignment(property)) {
       value = property.name;
-      clouded = false;
     } else if (ts.isMethodDeclaration(property)) {
       // A method IS the value the key holds.
       value = property;
-      clouded = false;
+    } else if (ts.isGetAccessorDeclaration(property)) {
+      // Reading the key runs this, and what comes back is its business.
+      value = null;
+      getters = [property];
+      continue;
     } else {
-      // An accessor: reading the key runs code, and what comes back is that
-      // code's business rather than anything written here.
-      return UNKNOWN_PROPERTY;
+      // A setter answers nothing on a read.
+      continue;
     }
+    // Whatever came before, this is what the key holds now.
+    clouded = false;
+    getters = [];
   }
-  return clouded ? UNKNOWN_PROPERTY : value;
+  return { value: clouded || getters.length > 0 ? UNKNOWN_PROPERTY : value, getters, clouded };
+}
+
+/** What reading a key off an object literal gives: the value when that can be
+ * told, the accessors that answer it (which RUN on the read), and whether
+ * something in the literal could still put anything else there. */
+type LiteralAnswer = {
+  readonly value: ts.Expression | ts.MethodDeclaration | null | typeof UNKNOWN_PROPERTY;
+  readonly getters: readonly ts.GetAccessorDeclaration[];
+  readonly clouded: boolean;
+};
+
+/** The expressions a function hands back, not counting those a function nested
+ * inside it hands back — those belong to whoever calls that one. */
+function returnedExpressions(fn: ts.FunctionLikeDeclaration): ts.Expression[] {
+  const returned: ts.Expression[] = [];
+  const body = fn.body;
+  if (body === undefined) return returned;
+  const walk = (node: ts.Node): void => {
+    if (ts.isFunctionLike(node)) return;
+    if (ts.isReturnStatement(node) && node.expression !== undefined) returned.push(node.expression);
+    ts.forEachChild(node, walk);
+  };
+  walk(body);
+  return returned;
 }
 
 /** An expression that IS the code a name stands for — not one that computes it. */
@@ -724,19 +753,24 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
       // the call may be handed, so each is entered. A function WRITTEN here is
       // entered as itself rather than scanned through — its body runs on its
       // own terms, and the walk reaches it with this scope.
-      // Reading a key a getter answers RUNS that getter, right there — so its
-      // body is not deferred the way a plain function value's is. What it hands
-      // back is still unknown, which is what the fallback below is for.
-      const runGetters = (object: ts.ObjectLiteralExpression, key: string): void => {
-        for (const property of object.properties) {
-          if (!ts.isGetAccessorDeclaration(property)) continue;
-          // A key computed at runtime could be this one; a key merely written
-          // in brackets is still the key it spells.
-          const states = staticPropertyKey(property.name);
-          if (states === undefined || states === key) runsNow.add(property);
-        }
-      };
       const enter = (passed: ts.Expression, runs: boolean, isCallee: boolean): void => {
+        // Reading a key off a literal. True once this has said everything there
+        // is to say about the key; false leaves the caller to fall back.
+        const takeFromLiteral = (from: ts.ObjectLiteralExpression, key: string): boolean => {
+          const answer = literalProperty(from, key);
+          if (answer.value !== UNKNOWN_PROPERTY) {
+            if (answer.value !== null) seen(answer.value, false);
+            return true;
+          }
+          // A getter that can answer RUNS on the read — right there, not
+          // whenever something calls it — and hands back what it returns.
+          for (const getter of answer.getters) {
+            if (runs) runsNow.add(getter);
+            for (const returned of returnedExpressions(getter)) seen(returned, false);
+          }
+          // Only a spread or a runtime key leaves the value genuinely open.
+          return !answer.clouded;
+        };
         const seen = (node: ts.Node, top: boolean): void => {
           const expr = ts.isExpression(node) ? unwrapExpression(node) : node;
           if (
@@ -752,14 +786,7 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
           // except off a literal, where the name says which value is taken.
           if (ts.isPropertyAccessExpression(expr)) {
             const from = unwrapExpression(expr.expression);
-            if (ts.isObjectLiteralExpression(from)) {
-              const picked = literalProperty(from, expr.name.text);
-              if (picked !== UNKNOWN_PROPERTY) {
-                if (picked !== null) seen(picked, false);
-                return;
-              }
-              runGetters(from, expr.name.text);
-            }
+            if (ts.isObjectLiteralExpression(from) && takeFromLiteral(from, expr.name.text)) return;
             seen(expr.expression, false);
             return;
           }
@@ -783,14 +810,10 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
             // says, so it is read the same way.
             if (
               ts.isObjectLiteralExpression(from) &&
-              (ts.isStringLiteral(at) || ts.isNumericLiteral(at))
+              (ts.isStringLiteral(at) || ts.isNumericLiteral(at)) &&
+              takeFromLiteral(from, at.text)
             ) {
-              const picked = literalProperty(from, at.text);
-              if (picked !== UNKNOWN_PROPERTY) {
-                if (picked !== null) seen(picked, false);
-                return;
-              }
-              runGetters(from, at.text);
+              return;
             }
             if (ts.isArrayLiteralExpression(from) && ts.isNumericLiteral(at)) {
               // A spread shifts everything AFTER it by a length nothing here

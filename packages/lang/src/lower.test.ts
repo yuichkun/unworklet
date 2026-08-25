@@ -2846,7 +2846,7 @@ test("a named property off a literal picks the value that key holds", () => {
     ["({ selected() { helper.value = 1; } }).selected", "refuses"],
     // An accessor runs code to answer, so what comes back cannot be told — but
     // the answering happens on the read, so what it DOES is seen.
-    ["({ get selected() { return noop; }, unselected: mutate }).selected", "refuses"],
+    ["({ get selected() { return noop; }, unselected: mutate }).selected", "hoists"],
     ["({ get selected() { helper.value = 1; return noop; } }).selected", "refuses"],
     ['({ get selected() { helper.value = 1; return noop; } })["selected"]', "refuses"],
     ["({ get other() { helper.value = 1; return noop; }, selected: noop }).selected", "hoists"],
@@ -2856,6 +2856,18 @@ test("a named property off a literal picks the value that key holds", () => {
     ['({ selected: noop, get ["other"]() { helper.value = 1; return noop; } }).selected', "hoists"],
     ['({ get ["selected"]() { helper.value = 1; return noop; } }).selected', "refuses"],
     ["({ selected: noop, get [key]() { helper.value = 1; return noop; } }).selected", "refuses"],
+    // A getter answers only until something later takes the key from it, and
+    // only the one that answers is read — what it returns included.
+    [
+      "({ get selected() { helper.value = 1; return mutate; }, selected: noop }).selected",
+      "hoists",
+    ],
+    [
+      '({ get selected() { return noop; }, get ["other"]() { return mutate; } }).selected',
+      "hoists",
+    ],
+    ["({ get selected() { return mutate; } }).selected", "refuses"],
+    ["({ get selected() { return noop; }, [key]: mutate }).selected", "refuses"],
   ];
   for (const [argument, expected] of cases) {
     const source = `
