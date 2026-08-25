@@ -291,6 +291,29 @@ function collectFunctionScopedVars(
 /** `literalProperty` could not tell what the key holds. */
 const UNKNOWN_PROPERTY = Symbol("unknown property");
 
+/** Whether an expression plainly is not `undefined`: a value written in place.
+ * Anything else — a name, a call, a conditional — could be, and this says so
+ * rather than guessing. */
+function certainlyDefined(expr: ts.Expression): boolean {
+  return (
+    ts.isStringLiteral(expr) ||
+    ts.isNumericLiteral(expr) ||
+    ts.isBigIntLiteral(expr) ||
+    ts.isNoSubstitutionTemplateLiteral(expr) ||
+    ts.isTemplateExpression(expr) ||
+    ts.isRegularExpressionLiteral(expr) ||
+    expr.kind === ts.SyntaxKind.TrueKeyword ||
+    expr.kind === ts.SyntaxKind.FalseKeyword ||
+    expr.kind === ts.SyntaxKind.NullKeyword ||
+    ts.isArrayLiteralExpression(expr) ||
+    ts.isObjectLiteralExpression(expr) ||
+    ts.isArrowFunction(expr) ||
+    ts.isFunctionExpression(expr) ||
+    ts.isClassExpression(expr) ||
+    ts.isNewExpression(expr)
+  );
+}
+
 /** The key a bracketed expression reads, when it is written as a literal. */
 function readLiteralKey(argument: ts.Expression): string | undefined {
   const at = unwrapExpression(argument);
@@ -421,9 +444,36 @@ function returnedExpressions(
   return returned;
 }
 
-/** An expression that IS the code a name stands for — not one that computes it. */
+/** An expression that IS what a name stands for — not one that computes it.
+ * An object literal is here because reading a key off it can run a getter, the
+ * same way calling one of the others runs a body. */
 function isCallableDeclaration(expr: ts.Expression): boolean {
-  return ts.isArrowFunction(expr) || ts.isFunctionExpression(expr) || ts.isClassExpression(expr);
+  return (
+    ts.isArrowFunction(expr) ||
+    ts.isFunctionExpression(expr) ||
+    ts.isClassExpression(expr) ||
+    ts.isObjectLiteralExpression(expr)
+  );
+}
+
+/** The object literals a receiver stands for — written in place, or reached
+ * through a name this file binds to one — each with the scope it was written
+ * in, since one reached by name sits in another statement entirely. */
+function literalsBehind(
+  receiver: ts.Expression,
+  shadowed: ReadonlySet<string>,
+  resolve: BodyResolver,
+): { literal: ts.ObjectLiteralExpression; shadowed: ReadonlySet<string>; resolve: BodyResolver }[] {
+  const expr = unwrapExpression(receiver);
+  if (ts.isObjectLiteralExpression(expr)) return [{ literal: expr, shadowed, resolve }];
+  if (!ts.isIdentifier(expr)) return [];
+  const found = [];
+  for (const body of resolve(expr.text)) {
+    if (ts.isObjectLiteralExpression(body.node)) {
+      found.push({ literal: body.node, shadowed: body.shadowed, resolve: body.resolve });
+    }
+  }
+  return found;
 }
 
 /** The bodies a callee expression stands for, when this file holds them. Empty
@@ -434,6 +484,9 @@ function calleeSignatures(callee: ts.Expression, resolve: BodyResolver): ts.Node
   if (!ts.isIdentifier(expr)) return [];
   const found: ts.Node[] = [];
   for (const body of resolve(expr.text)) {
+    // An object literal is not something a call runs, so it says nothing about
+    // what a call does with its arguments.
+    if (ts.isObjectLiteralExpression(body.node)) continue;
     if (!ts.isClassLike(body.node)) {
       found.push(body.node);
       continue;
@@ -782,11 +835,16 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
         ? readLiteralKey(n.argumentExpression)
         : undefined;
     if (readKey !== undefined) {
-      const from = unwrapExpression(
-        (n as ts.PropertyAccessExpression | ts.ElementAccessExpression).expression,
-      );
-      if (ts.isObjectLiteralExpression(from)) {
-        for (const getter of literalProperty(from, readKey).getters) runsNow.add(getter);
+      const receiver = (n as ts.PropertyAccessExpression | ts.ElementAccessExpression).expression;
+      for (const from of literalsBehind(receiver, shadowed, resolve)) {
+        for (const getter of literalProperty(from.literal, readKey).getters) {
+          if (followed.has(getter)) continue;
+          followed.add(getter);
+          runsNow.add(getter);
+          // A literal reached by name lives in another statement, which this
+          // walk never descends into on its own.
+          walk(getter, from.shadowed, from.resolve);
+        }
       }
     }
     if (ts.isFunctionLike(n) && !runsNow.has(n)) {
@@ -873,10 +931,10 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
           // A member NAME is a spelling, not a reference to anything here —
           // except off a literal, where the name says which value is taken.
           if (ts.isPropertyAccessExpression(expr)) {
-            const from = unwrapExpression(expr.expression);
+            const behind = literalsBehind(expr.expression, NO_NAMES, within);
             if (
-              ts.isObjectLiteralExpression(from) &&
-              takeFromLiteral(from, expr.name.text, within)
+              behind.length > 0 &&
+              behind.every((from) => takeFromLiteral(from.literal, expr.name.text, from.resolve))
             ) {
               return;
             }
@@ -901,12 +959,15 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
             const at = unwrapExpression(expr.argumentExpression);
             // A literal key in brackets says the same thing a name after a dot
             // says, so it is read the same way.
-            if (
-              ts.isObjectLiteralExpression(from) &&
-              (ts.isStringLiteral(at) || ts.isNumericLiteral(at)) &&
-              takeFromLiteral(from, at.text, within)
-            ) {
-              return;
+            const key = readLiteralKey(expr.argumentExpression);
+            if (key !== undefined) {
+              const behind = literalsBehind(expr.expression, NO_NAMES, within);
+              if (
+                behind.length > 0 &&
+                behind.every((one) => takeFromLiteral(one.literal, key, one.resolve))
+              ) {
+                return;
+              }
             }
             if (ts.isArrayLiteralExpression(from) && ts.isNumericLiteral(at)) {
               // A spread shifts everything AFTER it by a length nothing here
@@ -933,6 +994,9 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
               if (top && isCallee && ts.isNewExpression(n)) construct(body.node, body);
               continue;
             }
+            // Handing over an object is not handing over code to run; only
+            // reading a key off it does anything, and the walk sees that.
+            if (ts.isObjectLiteralExpression(body.node)) continue;
             if (!runs || followed.has(body.node)) continue;
             followed.add(body.node);
             runsNow.add(body.node);
@@ -949,13 +1013,13 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
       enter(n.expression, true, true);
       const invoked = calleeSignatures(n.expression, resolve);
       const args = n.arguments ?? ts.factory.createNodeArray<ts.Expression>();
-      // A parameter whose argument this call does not supply — past the end, or
-      // written as `undefined` — falls back to its own default, which then runs.
+      // A parameter falls back to its own default unless this call hands it
+      // something that is certainly there. What counts as certainly there is
+      // the short list — a value written in place — because `undefined` can
+      // arrive under any other spelling, and missing that goes quiet.
       const omitted = (at: number): boolean => {
         const argument = args[at];
-        if (argument === undefined) return true;
-        const value = unwrapExpression(argument);
-        return ts.isIdentifier(value) && value.text === "undefined";
+        return argument === undefined || !certainlyDefined(unwrapExpression(argument));
       };
       args.forEach((argument, index) => {
         const runs =

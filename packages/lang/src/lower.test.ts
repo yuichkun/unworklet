@@ -2966,16 +2966,46 @@ function run(cb: () => void, trigger: unknown = cb()) {
 void mutate;
 ${call};
 `;
-  for (const call of ["run(mutate)", "run(mutate, undefined)"]) {
+  for (const call of [
+    "run(mutate)",
+    "run(mutate, undefined)",
+    "run(mutate, void 0)",
+    "run(mutate, maybe)",
+  ]) {
     try {
-      loweredWithMutation(source(call));
-      expect.unreachable(`lower() must see the callback ${call} lets the default run`);
+      loweredWithMutation(`declare const maybe: unknown;\n${source(call)}`);
+      expect.unreachable(`lower() must see the callback ${call} can let the default run`);
     } catch (e) {
       expect(e).toBeInstanceOf(LowerError);
       expect((e as LowerError).id).toBe("uwk-export-unsupported");
     }
   }
   const lowered = loweredWithMutation(source("run(mutate, false)"));
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
+test("a getter reached through a name that holds the literal still runs", () => {
+  const box = `const box = { get selected() { helper.value = 1; return 0; } };`;
+  for (const read of ["const ignored = box.selected;\nvoid ignored;", "retain(box.selected);"]) {
+    try {
+      loweredWithMutation(`
+function retain(cb: unknown) {
+  void cb;
+}
+${box}
+${read}
+`);
+      expect.unreachable(`lower() must run the getter behind ${read}`);
+    } catch (e) {
+      expect(e).toBeInstanceOf(LowerError);
+      expect((e as LowerError).id).toBe("uwk-export-unsupported");
+    }
+  }
+  const lowered = loweredWithMutation(`
+const box = { selected: 2 };
+const ignored = box.selected;
+void ignored;
+`);
   expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
 });
 
