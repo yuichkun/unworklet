@@ -657,35 +657,53 @@ function statementWrites(stmt: ts.Statement, calleeBodies?: CalleeBodies): Set<s
           }
         }
       };
-      const enter = (passed: ts.Expression, runs: boolean): void => {
-        const expr = unwrapExpression(passed);
-        if (ts.isArrowFunction(expr) || ts.isFunctionExpression(expr)) {
-          // Written right here, so the walk below reaches it with this scope.
-          if (runs) runsNow.add(expr);
-          return;
-        }
-        if (!ts.isIdentifier(expr)) return;
-        for (const body of resolve(expr.text)) {
-          if (ts.isClassLike(body.node)) {
-            // Reaching a class any other way constructs nothing.
-            if (ts.isNewExpression(n) && passed === n.expression) construct(body.node, body);
-            continue;
+      // A function can arrive wrapped: `run(mutate.bind(null))`, `run(flag ? a
+      // : b)`, `runAll([mutate])`. Every function the expression names is one
+      // the call may be handed, so each is entered. A function WRITTEN here is
+      // entered as itself rather than scanned through — its body runs on its
+      // own terms, and the walk reaches it with this scope.
+      const enter = (passed: ts.Expression, runs: boolean, isCallee: boolean): void => {
+        const seen = (node: ts.Node, top: boolean): void => {
+          const expr = ts.isExpression(node) ? unwrapExpression(node) : node;
+          if (ts.isArrowFunction(expr) || ts.isFunctionExpression(expr)) {
+            if (runs) runsNow.add(expr);
+            return;
           }
-          if (!runs || followed.has(body.node)) continue;
-          followed.add(body.node);
-          runsNow.add(body.node);
-          walk(body.node, body.shadowed, body.resolve);
-        }
+          // A member NAME is a spelling, not a reference to anything here.
+          if (ts.isPropertyAccessExpression(expr)) {
+            seen(expr.expression, false);
+            return;
+          }
+          if (!ts.isIdentifier(expr)) {
+            ts.forEachChild(expr, (child) => {
+              seen(child, false);
+            });
+            return;
+          }
+          for (const body of resolve(expr.text)) {
+            if (ts.isClassLike(body.node)) {
+              // Reaching a class any other way constructs nothing.
+              if (top && isCallee && ts.isNewExpression(n)) construct(body.node, body);
+              continue;
+            }
+            if (!runs || followed.has(body.node)) continue;
+            followed.add(body.node);
+            runsNow.add(body.node);
+            walk(body.node, body.shadowed, body.resolve);
+          }
+        };
+        seen(passed, true);
       };
       // The callee is what the call runs, so it always runs. Whether an
       // ARGUMENT runs is the callee's business: a callee this file can read
       // answers it, and one it cannot — a method, an import — is assumed to
       // run what it is handed, because a callback that runs and is missed is
       // the failure that stays silent.
-      enter(n.expression, true);
+      enter(n.expression, true, true);
       const invoked = calleeSignatures(n.expression, resolve);
       (n.arguments ?? []).forEach((argument, index) => {
-        enter(argument, invoked.length === 0 || invoked.some((fn) => invokesParameter(fn, index)));
+        const runs = invoked.length === 0 || invoked.some((fn) => invokesParameter(fn, index));
+        enter(argument, runs, false);
       });
     }
     // An INSTANCE field initializer runs when an instance is constructed, not

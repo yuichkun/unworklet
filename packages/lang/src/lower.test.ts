@@ -2763,6 +2763,40 @@ void new Ignorer(() => {
   expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
 });
 
+test("a callback handed over wrapped is still followed", () => {
+  // `.bind`, a conditional, an array — each names the function it hands over.
+  for (const argument of ["mutate.bind(null)", "flag ? mutate : noop", "[mutate][0]"]) {
+    try {
+      loweredWithMutation(`
+declare const flag: boolean;
+function mutate() {
+  helper.value = 1;
+}
+function noop() {}
+function run(cb: () => void) {
+  cb();
+}
+void noop;
+run(${argument});
+`);
+      expect.unreachable(`lower() must follow a callback handed over as ${argument}`);
+    } catch (e) {
+      expect(e).toBeInstanceOf(LowerError);
+      expect((e as LowerError).id).toBe("uwk-export-unsupported");
+    }
+  }
+});
+
+test("an argument naming something that is not a function follows nothing", () => {
+  const lowered = loweredWithMutation(`
+function take(x: unknown) {
+  void x;
+}
+take(helper);
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
 test("a wrapper-local declaration sharing a DSL name is not imported either", () => {
   const lowered = lower(`
 const min = 0.25;
