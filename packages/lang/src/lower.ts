@@ -456,6 +456,33 @@ function isCallableDeclaration(expr: ts.Expression): boolean {
   );
 }
 
+/**
+ * Object literals ASSIGNED to a name anywhere under `node`, on top of whatever
+ * it was declared with — `box = { get x() {...} }` puts a getter behind a name
+ * whose declaration had none, and by the time the name is read it may hold any
+ * of them. Only names already in `into` are added to when `only` is given, so a
+ * scope keeps saying nothing about names it does not open.
+ */
+function collectAssignedLiterals(
+  node: ts.Node,
+  into: Map<string, ts.Node[]>,
+  only: "existing" | "any",
+): void {
+  const walk = (n: ts.Node): void => {
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      const target = unwrapExpression(n.left);
+      const value = unwrapExpression(n.right);
+      if (ts.isIdentifier(target) && ts.isObjectLiteralExpression(value)) {
+        const held = into.get(target.text);
+        if (held !== undefined) held.push(value);
+        else if (only === "any") into.set(target.text, [value]);
+      }
+    }
+    ts.forEachChild(n, walk);
+  };
+  ts.forEachChild(node, walk);
+}
+
 /** The object literals a receiver stands for — written in place, or reached
  * through a name this file binds to one — each with the scope it was written
  * in, since one reached by name sits in another statement entirely. */
@@ -1127,6 +1154,7 @@ function scopedFunctionBodies(node: ts.Node, opened: ReadonlySet<string>): Map<s
   };
   if (ts.isBlock(node) || ts.isModuleBlock(node)) fromStatements(node.statements);
   else if (ts.isCaseBlock(node)) for (const c of node.clauses) fromStatements(c.statements);
+  collectAssignedLiterals(node, bodies, "existing");
   // A namespace body and a class static block own their `var`s wherever those
   // sit inside them, so a callable one is found the same way its name was.
   if (ts.isModuleBlock(node) || ts.isClassStaticBlockDeclaration(node)) {
@@ -1910,8 +1938,13 @@ function partitionModuleScopeExports(
   // earlier statement the pre-write value.
   // The function bodies a called name stands for. Only a name this file
   // declares as a function resolves; anything else the write walk leaves alone.
+  // An object literal put behind a name by assignment rather than declaration.
+  // Names are collected across the whole file: a read cannot tell which
+  // assignment ran, and missing the one that did goes quiet.
+  const reassigned = new Map<string, ts.Node[]>();
+  for (const stmt of statements) collectAssignedLiterals(stmt, reassigned, "any");
   const calleeBodies = (name: string): readonly ts.Node[] => {
-    const bodies: ts.Node[] = [];
+    const bodies: ts.Node[] = [...(reassigned.get(name) ?? [])];
     for (const decl of valueBindingOf.get(name) ?? NO_BINDINGS) {
       const declared = statements[decl];
       if (declared === undefined) continue;

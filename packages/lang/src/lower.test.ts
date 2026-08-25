@@ -3009,6 +3009,29 @@ void ignored;
   expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
 });
 
+test("a name holds every literal assigned to it, not just its first", () => {
+  const getter = "{ get selected() { helper.value = 1; return 0; } }";
+  for (const body of [
+    `let box = { selected: 0 };\nbox = ${getter};\nconst ignored = box.selected;\nvoid ignored;`,
+    `{\n  let box = { selected: 0 };\n  box = ${getter};\n  const ignored = box.selected;\n  void ignored;\n}`,
+  ]) {
+    try {
+      loweredWithMutation(body);
+      expect.unreachable("lower() must run a getter assigned to the name after its declaration");
+    } catch (e) {
+      expect(e).toBeInstanceOf(LowerError);
+      expect((e as LowerError).id).toBe("uwk-export-unsupported");
+    }
+  }
+  const lowered = loweredWithMutation(`
+let box = { selected: 0 };
+box = { selected: 1 };
+const ignored = box.selected;
+void ignored;
+`);
+  expect(lowered.indexOf("export const value")).toBeLessThan(lowered.indexOf("defineProcessor("));
+});
+
 test("a plain read runs the getter that answers the key", () => {
   for (const read of [
     "({ get selected() { helper.value = 1; return 0; } }).selected",
