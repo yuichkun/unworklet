@@ -1,8 +1,8 @@
 # v0.3.0 candidate validation
 
-Status: **final sustained-run check in progress**. The candidate builds on PR #48
+Status: **local release candidate prepared; publication awaits separate approval**. The candidate builds on PR #48
 at `2f7706850b67b448c51746d3037c08436b50004f`, retaining its history and adding
-local stabilization commits. No remote update, merge, tag, or publication has
+local stabilization commits. The implementation checkpoint is `ba97653`. No remote update, merge, tag, or publication has
 been performed. CI configuration is prepared; these local changes have not run
 on GitHub Actions.
 
@@ -40,7 +40,7 @@ Both failures were reproduced before the corresponding fixes.
 | Isolated guide-only consumer                                        | Cold typecheck/build, three node annotation forms, and 10 behavior tests pass                                                  |
 | Consumer live browser operation                                     | Headless Chromium: MIDI in/out, control reply, nonzero audio-derived state, save/restore, and re-saved values pass             |
 | Listening artifact                                                  | Five-second stereo 48 kHz float PCM WAV; finite samples, peak below -6 dBFS, zero correction diagnostics, exact WAV round trip |
-| Both transports for 30 minutes with real hidden/visible transitions | In progress; no completion claimed                                                                                             |
+| Both transports for 30 minutes with real hidden/visible transitions | Pass: fresh headless run completed on both transports                                                                          |
 
 The package branch gate is measured separately for every package:
 
@@ -65,6 +65,35 @@ ATTW retains the existing ESM-only profile and `fallback-condition` exception.
 The lang tsserver-plugin entry also retains `untyped-resolution`, because it is
 loaded by name and intentionally has no public type declaration. No additional
 packaging exception was added. CI packs through Vite+ and checks those tarballs.
+
+## Sustained browser run
+
+Both transports completed the requested 1,800-second run in headless Chromium,
+with native tab selection and no override of `document.visibilityState`. Their
+WASM SHA-256 matches a fresh compile of the committed processor source:
+`9ed68ad77537af8af025f4a50f741a528ca8cd947ddb1bc882ebda14d2be11b0`.
+
+| Measurement                                      |     Shared memory |       postMessage |
+| ------------------------------------------------ | ----------------: | ----------------: |
+| Wall duration                                    |        1,801.77 s |        1,802.28 s |
+| AudioContext clock                               |        1,798.78 s |        1,798.58 s |
+| Processing quanta                                |           674,532 |           674,438 |
+| Hidden / visible duration                        | 900.50 / 901.27 s | 902.80 / 899.47 s |
+| Observed hidden / visible transitions            |           16 / 16 |           16 / 15 |
+| Received notifications, all six streams          |            51,188 |            51,176 |
+| Gaps / duplicates / reversals / corrupt payloads |     0 / 0 / 0 / 0 |     0 / 0 / 0 / 0 |
+| Overflow / reported errors / stalled intervals   |         0 / 0 / 0 |         0 / 0 / 0 |
+
+All sent MIDI/sysex pairs returned. Each automatic scalar/typed/sysex stream
+starts at sequence 1 with no gaps; the MIDI sequence also passes across its wire
+counter wraps. Wall time and audio time are separate observations, not assumed
+to be identical. The harness requires the full wall duration, continuing audio
+and processor progress, consistent complete streams, and zero normal-rate loss.
+
+The headed attempt was interrupted at the owner's request and is not counted
+as a completed run. A separate headless preflight passed, followed by the fresh
+full-duration run above. Browser and local server processes are closed when the
+runner finishes. Raw per-transport receipts and metadata accompany the candidate.
 
 ## What the regressions establish
 
