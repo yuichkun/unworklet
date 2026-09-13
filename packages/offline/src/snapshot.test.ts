@@ -17,11 +17,40 @@ import {
   f32,
   forSample,
   inspectSnapshot,
+  param,
   state,
 } from "@unworklet/core";
 import { expect, test } from "vite-plus/test";
 
 import { renderOffline } from "./index.ts";
+
+test("offline parameter automation takes precedence over restored snapshot parameters", async () => {
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const gain = param
+      .f32({ default: 0.75, min: 0, max: 1, automationRate: "k-rate" })
+      .named("gain");
+    return { process: () => forSample((i) => out.ch(0).at(i).write(gain.at(i))) };
+  });
+  const first = await renderOffline(proc, {
+    sampleRate: 48000,
+    duration: 128 / 48000,
+    params: { gain: [0.25] },
+  });
+  for (const [params, value] of [
+    [undefined, 0.75],
+    [{ gain: [0.5] }, 0.5],
+  ] as const) {
+    const restored = await renderOffline(proc, {
+      sampleRate: 48000,
+      duration: 128 / 48000,
+      restore: first.state,
+      params: params === undefined ? undefined : { gain: [...params.gain] },
+    });
+    expect(Array.from(restored.outputs.main![0]!)).toEqual(Array(128).fill(value));
+    expect(inspectSnapshot(restored.state).slots.gain).toEqual({ kind: "param", value });
+  }
+});
 
 // Counter that the per-block code increments; each sample outputs the current
 // value, so block b outputs the value as of that block's start.

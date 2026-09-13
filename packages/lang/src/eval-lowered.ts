@@ -84,9 +84,8 @@ function toRunnableBody(loweredTs: string): string {
       ts.canHaveModifiers(stmt) &&
       ts.getModifiers(stmt)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
     ) {
-      // A hoisted `export const GAIN = ...` (issue #44) — keep the declaration
-      // (the default-export expression may reference it), drop the modifier
-      // (`export` cannot appear inside a function body).
+      // The default-export expression may reference a named declaration;
+      // only its module-scope modifier is invalid inside a function body.
       const mods = ts.getModifiers(stmt)!.filter((m) => m.kind !== ts.SyntaxKind.ExportKeyword);
       let stripped: ts.Statement = stmt;
       if (ts.isVariableStatement(stmt)) {

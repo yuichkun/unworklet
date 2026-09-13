@@ -9,10 +9,71 @@
 import { expect, test } from "vite-plus/test";
 
 import { analyze, checkMemoryBudget } from "./analyze.ts";
-import type { CapturedGraph } from "./ast.ts";
+import type { AstNode, CapturedGraph } from "./ast.ts";
 
 const MIB = 1024 * 1024;
 const GIB = 1024 * 1024 * 1024;
+
+test.each(["bufferRead", "bufferReadInterpolated"] as const)(
+  "type analysis visits expressions used as a %s position",
+  (kind) => {
+    const invalid: AstNode = {
+      kind: "select",
+      type: "i32",
+      cond: { kind: "literal", type: "bool", value: 1 },
+      ifTrue: { kind: "literal", type: "i32", value: 0 },
+      ifFalse: { kind: "literal", type: "f32", value: 1 },
+    };
+    const read: AstNode =
+      kind === "bufferRead"
+        ? { kind, elementType: "f32", name: "samples", index: invalid }
+        : { kind, elementType: "f32", name: "samples", pos: invalid };
+    const graph: CapturedGraph = {
+      declarations: [{ kind: "buffer", type: "f32", name: "samples", size: 4, userNamed: true }],
+      statements: [read],
+    };
+    expect(analyze(graph)).toContainEqual(
+      expect.objectContaining({
+        id: "select-branch-type-mismatch",
+        severity: "error",
+      }),
+    );
+  },
+);
+
+test("sysex thru rejects a literal length that cannot fit its content chunk", () => {
+  const graph: CapturedGraph = {
+    declarations: [
+      { kind: "midiInput", name: "input", capacity: 16 },
+      { kind: "midiOutput", name: "output", capacity: 16 },
+    ],
+    statements: [
+      {
+        kind: "midiOnEvent",
+        port: "input",
+        eventType: "sysex",
+        body: [
+          {
+            kind: "midiEmitIf",
+            port: "output",
+            eventType: "sysex",
+            cond: { kind: "literal", type: "bool", value: 1 },
+            atSample: { kind: "literal", type: "i32", value: 0 },
+            sysexSourcePort: "input",
+            sysexLength: { kind: "literal", type: "i32", value: 1021 },
+          },
+        ],
+      },
+    ],
+  };
+  expect(analyze(graph)).toContainEqual(
+    expect.objectContaining({
+      id: "sysex-emit-exceeds-chunk",
+      severity: "error",
+      message: expect.stringContaining("as a thru"),
+    }),
+  );
+});
 
 test("checkMemoryBudget: under 64 MiB produces no diagnostic", () => {
   expect(checkMemoryBudget(0)).toEqual([]);

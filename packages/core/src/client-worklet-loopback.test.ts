@@ -21,7 +21,7 @@
 
 import "./dsl/primitives.ts"; // side-effect: register `Node<T>` method forms
 
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 
 import { createNode } from "./client.ts";
 import { compile } from "./compile/index.ts";
@@ -48,6 +48,7 @@ type LoopbackHarness = {
   readyToInitialize: () => boolean;
   /** Fire every rAF callback queued at entry (one main-thread drain pass). */
   pumpRaf: () => void;
+  repeatLastRaf: () => void;
   cleanup: () => void;
 };
 
@@ -151,6 +152,7 @@ const installLoopback = (
 
   // ---- manual rAF pump ----
   const rafQueue: Array<() => void> = [];
+  let lastRaf: (() => void) | undefined;
   const rafTarget = globalThis as unknown as {
     requestAnimationFrame?: (cb: () => void) => number;
     cancelAnimationFrame?: (h: number) => void;
@@ -178,8 +180,12 @@ const installLoopback = (
     readyToInitialize,
     pumpRaf: () => {
       const batch = rafQueue.splice(0, rafQueue.length);
-      for (const cb of batch) cb();
+      for (const cb of batch) {
+        lastRaf = cb;
+        cb();
+      }
     },
+    repeatLastRaf: () => lastRaf?.(),
     cleanup: () => {
       globalThis.fetch = originalFetch;
       delete (globalThis as Record<string, unknown>).AudioWorkletNode;
@@ -294,8 +300,8 @@ const makeWaveProcessor = () =>
 const makeSysexEchoProcessor = () =>
   defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const sysexIn = event.midi({ from: "main", name: "sin" });
-    const sysexOut = event.midi({ to: "main", name: "sout" });
+    const sysexIn = event.midi({ from: "main", name: "sin", capacity: CAPACITY_16 });
+    const sysexOut = event.midi({ to: "main", name: "sout", capacity: CAPACITY_16 });
     const buf = state.buffer.u8({ size: 16 });
     return {
       process: () => {
@@ -320,7 +326,7 @@ for (const transport of ["sab", "postMessage"] as const) {
     const session = await bootLoopback(processor, { crossOriginIsolated: coi });
     try {
       const received: unknown[] = [];
-      const events = session.node.events as Record<
+      const events = session.node.events as unknown as Record<
         string,
         {
           on: (h: (p: unknown) => void) => void;
@@ -372,7 +378,7 @@ for (const transport of ["sab", "postMessage"] as const) {
     const session = await bootLoopback(processor, { crossOriginIsolated: coi });
     try {
       const received: Array<Record<string, unknown>> = [];
-      const events = session.node.events as Record<
+      const events = session.node.events as unknown as Record<
         string,
         { on: (h: (p: Record<string, unknown>) => void) => void }
       >;
@@ -414,6 +420,364 @@ for (const transport of ["sab", "postMessage"] as const) {
       const echoed = (received[0] as Extract<MidiEvent, { type: "sysex" }>).data;
       expect(Array.from(echoed)).toEqual(Array.from(sent));
     } finally {
+      session.node.dispose();
+      session.harness.cleanup();
+    }
+  });
+}
+
+const makeSequenceProcessor = () =>
+  defineProcessor(() => {
+    const n = state.f32(0);
+    const data = state.buffer.f32({ size: 4 });
+    const tick = event<{ n: number; data: Float32Array }>({
+      to: "main",
+      name: "tick",
+      capacity: CAPACITY_16,
+    });
+    return {
+      process: () => {
+        data.write(0, n.read());
+        data.write(1, n.read().add(100));
+        data.write(2, n.read().add(200));
+        data.write(3, n.read().add(300));
+        tick.emitIf(true, { n: n.read(), data, length: 4 });
+        n.write(n.read().add(1));
+      },
+    };
+  });
+
+type SequenceEvent = { n: number; data: Float32Array };
+const sequenceSurface = (session: LoopbackSession) =>
+  (
+    session.node.events as unknown as Record<
+      string,
+      {
+        on(handler: (value: SequenceEvent) => void): () => void;
+        diagnostics: { overflowCount(): number };
+      }
+    >
+  ).tick!;
+
+for (const boundary of ["slots", "content"] as const) {
+  test(`SAB snapshot: drain during ${boundary} publication never delivers an overwritten slot`, async () => {
+    const session = await bootLoopback(makeSequenceProcessor(), { crossOriginIsolated: true });
+    const received: SequenceEvent[] = [];
+    const surface = sequenceSurface(session);
+    surface.on((value) => received.push(value));
+    const options = session.harness.capturedProcessorOptions();
+    const target = options[boundary === "slots" ? "eventRingsBuffer" : "eventContentBuffer"];
+    // oxlint-disable-next-line typescript/unbound-method -- restored in finally and invoked with an explicit receiver
+    const realSet = Uint8Array.prototype.set;
+    let interrupted = false;
+    try {
+      for (let q = 0; q < 16; q++) session.runQuantum();
+      Uint8Array.prototype.set = function (source, offset) {
+        if (this.buffer !== target || interrupted) return realSet.call(this, source, offset);
+        interrupted = true;
+        const bytes = source as Uint8Array;
+        const midpoint = Math.floor(bytes.length / 2);
+        realSet.call(this, bytes.subarray(0, midpoint), offset);
+        session.harness.pumpRaf();
+        return realSet.call(this, bytes.subarray(midpoint), (offset ?? 0) + midpoint);
+      };
+      session.runQuantum();
+      Uint8Array.prototype.set = realSet;
+      session.harness.pumpRaf();
+      expect(interrupted).toBe(true);
+      expect(received.map((value) => value.n)).toEqual(Array.from({ length: 16 }, (_, i) => i + 1));
+      for (const value of received) {
+        expect(Array.from(value.data)).toEqual([
+          value.n,
+          value.n + 100,
+          value.n + 200,
+          value.n + 300,
+        ]);
+      }
+      expect(surface.diagnostics.overflowCount()).toBe(1);
+    } finally {
+      Uint8Array.prototype.set = realSet;
+      session.node.dispose();
+      session.harness.cleanup();
+    }
+  });
+}
+
+test("SAB snapshot: callbacks can advance the producer and reenter draining without rewriting the captured batch", async () => {
+  const session = await bootLoopback(makeSequenceProcessor(), { crossOriginIsolated: true });
+  const received: SequenceEvent[] = [];
+  const surface = sequenceSurface(session);
+  let interrupted = false;
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  surface.on((value) => {
+    received.push(value);
+    if (!interrupted) {
+      interrupted = true;
+      for (let q = 0; q < 16; q++) session.runQuantum();
+      session.harness.repeatLastRaf();
+      throw new Error("subscriber failed");
+    }
+  });
+  try {
+    for (let q = 0; q < 4; q++) session.runQuantum();
+    session.harness.pumpRaf();
+    session.harness.pumpRaf();
+    expect(received.map((value) => value.n)).toEqual(Array.from({ length: 20 }, (_, i) => i));
+    expect(Array.from(received[0]!.data)).toEqual([0, 100, 200, 300]);
+    expect(Array.from(received[3]!.data)).toEqual([3, 103, 203, 303]);
+    expect(surface.diagnostics.overflowCount()).toBe(0);
+    expect(error).toHaveBeenCalledOnce();
+  } finally {
+    error.mockRestore();
+    session.node.dispose();
+    session.harness.cleanup();
+  }
+});
+
+for (const boundary of ["slots", "sysex"] as const) {
+  test(`SAB snapshot: MIDI drain during ${boundary} publication keeps complete sysex messages`, async () => {
+    const processor = makeSysexEchoProcessor();
+    const session = await bootLoopback(processor, { crossOriginIsolated: true });
+    const received: number[][] = [];
+    const midi = session.node.midi as Record<
+      string,
+      {
+        send(event: MidiEvent): void;
+        onEvent(
+          type: "sysex",
+          handler: (event: Extract<MidiEvent, { type: "sysex" }>) => void,
+        ): () => void;
+        diagnostics: { overflowCount(): number };
+      }
+    >;
+    midi.sout!.onEvent("sysex", (event) => received.push(Array.from(event.data)));
+    const options = session.harness.capturedProcessorOptions();
+    const target = options[boundary === "slots" ? "midiRingsBuffer" : "sysexContentBuffer"];
+    // oxlint-disable-next-line typescript/unbound-method -- restored in finally and invoked with an explicit receiver
+    const realSet = Uint8Array.prototype.set;
+    let interrupted = false;
+    const bytes = (n: number) => [0xf0, 0x7e, n, n + 1, n + 2, 0xf7];
+    try {
+      for (let n = 0; n < 16; n++)
+        midi.sin!.send({ type: "sysex", data: Uint8Array.from(bytes(n)) });
+      session.runQuantum();
+      midi.sin!.send({ type: "sysex", data: Uint8Array.from(bytes(16)) });
+      Uint8Array.prototype.set = function (source, offset) {
+        if (this.buffer !== target || interrupted) return realSet.call(this, source, offset);
+        interrupted = true;
+        const bytes = source as Uint8Array;
+        const midpoint = Math.floor(bytes.length / 2);
+        realSet.call(this, bytes.subarray(0, midpoint), offset);
+        session.harness.pumpRaf();
+        return realSet.call(this, bytes.subarray(midpoint), (offset ?? 0) + midpoint);
+      };
+      session.runQuantum();
+      Uint8Array.prototype.set = realSet;
+      session.harness.pumpRaf();
+      expect(interrupted).toBe(true);
+      expect(received).toEqual(Array.from({ length: 16 }, (_, i) => bytes(i + 1)));
+      expect(midi.sout!.diagnostics.overflowCount()).toBe(1);
+    } finally {
+      Uint8Array.prototype.set = realSet;
+      session.node.dispose();
+      session.harness.cleanup();
+    }
+  });
+}
+
+for (const quanta of [3, 20]) {
+  test(`SAB snapshot: a busy reader delays ${quanta} publications and recovers with bounded overflow`, async () => {
+    const session = await bootLoopback(makeSequenceProcessor(), { crossOriginIsolated: true });
+    const options = session.harness.capturedProcessorOptions();
+    const access = new Int32Array(options.egressAccessBuffer as SharedArrayBuffer);
+    const received: number[] = [];
+    const surface = sequenceSurface(session);
+    surface.on((value) => received.push(value.n));
+    const attempts = vi.spyOn(Atomics, "compareExchange");
+    try {
+      Atomics.store(access, 0, 1);
+      for (let q = 0; q < quanta; q++) session.runQuantum();
+      const attemptsAtRing = attempts.mock.calls.filter(([view]) => view.buffer === access.buffer);
+      expect(attemptsAtRing).toHaveLength(quanta);
+      expect(new Int32Array(options.eventRingsBuffer as SharedArrayBuffer)[0]).toBe(0);
+      Atomics.store(access, 0, 0);
+      session.runQuantum();
+      session.harness.pumpRaf();
+      const total = quanta + 1;
+      const dropped = Math.max(0, total - 16);
+      expect(received).toEqual(Array.from({ length: Math.min(total, 16) }, (_, i) => i + dropped));
+      expect(surface.diagnostics.overflowCount()).toBe(dropped);
+    } finally {
+      attempts.mockRestore();
+      session.node.dispose();
+      session.harness.cleanup();
+    }
+  });
+}
+
+for (const crossOriginIsolated of [false, true]) {
+  test(`uploaded state publishes typed content and scalar fields across content reuse (SAB=${crossOriginIsolated})`, async () => {
+    const processor = defineProcessor(() => {
+      const upload = event<{ samples: Float32Array; enabled: boolean; gain: number }>({
+        from: "main",
+        name: "upload",
+        payloadCapacity: 16,
+      });
+      const result = event<{ data: Float32Array; enabled: boolean; gain: number }>({
+        to: "main",
+        name: "result",
+        payloadCapacity: 16,
+      });
+      const buf = state.buffer.f32({ size: 3 });
+      const changed = state.bool(false);
+      const enabledState = state.bool(false);
+      const gainState = state.f32(0);
+      return {
+        process: () => {
+          upload.onReceive(({ samples, enabled, gain }) => {
+            buf.copyFrom(samples);
+            enabledState.write(enabled);
+            gainState.write(gain);
+            changed.write(true);
+          });
+          result.emitIf(changed.read(), {
+            data: buf,
+            length: 3,
+            enabled: enabledState.read(),
+            gain: gainState.read(),
+          });
+          changed.write(false);
+        },
+      };
+    });
+    const session = await bootLoopback(processor, { crossOriginIsolated });
+    const received: unknown[] = [];
+    const events = session.node.events as Record<
+      string,
+      {
+        emit(value: unknown): void;
+        on(handler: (value: unknown) => void): () => void;
+      }
+    >;
+    events.result!.on((value) => received.push(value));
+    try {
+      for (let n = 0; n < 25; n++) {
+        const samples = Float32Array.from([n, n + 1, n + 2]);
+        events.upload!.emit({ samples, enabled: n % 2 === 0, gain: 0.5 });
+        session.runQuantum();
+        session.harness.pumpRaf();
+        expect(received[n]).toEqual({
+          atSample: 0,
+          data: samples,
+          enabled: n % 2 === 0,
+          gain: 0.5,
+        });
+      }
+      session.runQuantum();
+      session.harness.pumpRaf();
+      expect(received).toHaveLength(25);
+    } finally {
+      session.node.dispose();
+      session.harness.cleanup();
+    }
+  });
+}
+
+test("SAB snapshot: dispose inside a subscriber releases the guard and stops the captured batch", async () => {
+  const session = await bootLoopback(makeSequenceProcessor(), { crossOriginIsolated: true });
+  const options = session.harness.capturedProcessorOptions();
+  const received: number[] = [];
+  sequenceSurface(session).on((value) => {
+    received.push(value.n);
+    session.node.dispose();
+  });
+  try {
+    for (let q = 0; q < 3; q++) session.runQuantum();
+    session.harness.pumpRaf();
+    expect(received).toEqual([0]);
+    expect(new Int32Array(options.egressAccessBuffer as SharedArrayBuffer)[0]).toBe(0);
+    expect(new Int32Array(options.eventRingsBuffer as SharedArrayBuffer)[1]).toBe(3);
+  } finally {
+    session.node.dispose();
+    session.harness.cleanup();
+  }
+});
+
+test("SAB snapshot: audio advances during a main-thread copy and publishes the backlog on release", async () => {
+  const session = await bootLoopback(makeSequenceProcessor(), { crossOriginIsolated: true });
+  const shared = session.harness.capturedProcessorOptions().eventRingsBuffer;
+  const received: number[] = [];
+  const surface = sequenceSurface(session);
+  surface.on((value) => received.push(value.n));
+  // oxlint-disable-next-line typescript/unbound-method -- restored in finally and invoked with an explicit receiver
+  const realSet = Uint8Array.prototype.set;
+  let interrupted = false;
+  try {
+    session.runQuantum();
+    Uint8Array.prototype.set = function (source, offset) {
+      const bytes = source as Uint8Array;
+      if (bytes.buffer !== shared || interrupted) return realSet.call(this, source, offset);
+      interrupted = true;
+      const midpoint = Math.floor(bytes.length / 2);
+      realSet.call(this, bytes.subarray(0, midpoint), offset);
+      session.runQuantum();
+      expect(new Int32Array(shared as SharedArrayBuffer)[0]).toBe(1);
+      return realSet.call(this, bytes.subarray(midpoint), (offset ?? 0) + midpoint);
+    };
+    session.harness.pumpRaf();
+    Uint8Array.prototype.set = realSet;
+    session.runQuantum();
+    session.harness.pumpRaf();
+    expect(interrupted).toBe(true);
+    expect(received).toEqual([0, 1, 2]);
+    expect(surface.diagnostics.overflowCount()).toBe(0);
+  } finally {
+    Uint8Array.prototype.set = realSet;
+    session.node.dispose();
+    session.harness.cleanup();
+  }
+});
+
+for (const quanta of [3, 20]) {
+  test(`SAB snapshot: MIDI input keeps draining while its output defers ${quanta} publications`, async () => {
+    const processor = makeSysexEchoProcessor();
+    const session = await bootLoopback(processor, { crossOriginIsolated: true });
+    const midi = session.node.midi as Record<
+      string,
+      {
+        send(event: MidiEvent): void;
+        onEvent(
+          type: "sysex",
+          handler: (event: Extract<MidiEvent, { type: "sysex" }>) => void,
+        ): () => void;
+        diagnostics: { overflowCount(): number };
+      }
+    >;
+    const options = session.harness.capturedProcessorOptions();
+    const access = new Int32Array(options.egressAccessBuffer as SharedArrayBuffer);
+    const outIndex = processor.worklet.midiRings.findIndex((ring) => ring.direction === "out");
+    const accessIndex = processor.worklet.eventRings.length + outIndex;
+    const received: number[] = [];
+    midi.sout!.onEvent("sysex", (event) => received.push(event.data[2]!));
+    const compare = vi.spyOn(Atomics, "compareExchange");
+    try {
+      access[accessIndex] = 1;
+      for (let n = 0; n < quanta; n++) {
+        midi.sin!.send({ type: "sysex", data: Uint8Array.from([0xf0, 0x7e, n, 0xf7]) });
+        session.runQuantum();
+      }
+      expect(compare.mock.calls.filter(([view]) => view.buffer === access.buffer)).toHaveLength(
+        quanta,
+      );
+      expect(midi.sin!.diagnostics.overflowCount()).toBe(0);
+      access[accessIndex] = 0;
+      session.runQuantum();
+      session.harness.pumpRaf();
+      const dropped = Math.max(0, quanta - 16);
+      expect(received).toEqual(Array.from({ length: Math.min(16, quanta) }, (_, i) => i + dropped));
+      expect(midi.sout!.diagnostics.overflowCount()).toBe(dropped);
+    } finally {
+      compare.mockRestore();
       session.node.dispose();
       session.harness.cleanup();
     }

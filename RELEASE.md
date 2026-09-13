@@ -8,6 +8,10 @@ suite if they ever disagree.
 ## The bar
 
 - `vp check` clean at the repo root and `vp test run` green.
+- Each published package passes `vp test run --coverage --maxWorkers=2` from its
+  own directory, with branch coverage at least 98%. Build all packages first and
+  set `UWK_DISTS_BUILT=1` during those runs so parallel verification does not
+  delete another suite's build artifacts. An unmeasured package is not a pass.
 - The browser suites pass. `packages/core/src/__tests__/browser/` covers the real
   worklet thread on Chromium in CI, and `examples/demo` covers the plugin pipeline.
   **Firefox and Safari are not run anywhere yet** — a release carries that gap
@@ -15,6 +19,10 @@ suite if they ever disagree.
 - The agent guide matches reality. `skills/unworklet/` is what consumers' agents
   read; if the release changes behaviour, the guide changed with it. Re-run the
   `guidance-dogfood` skill when a release touches the authoring surface.
+- A transport release passes `vp exec node scripts/release-soak/run.mjs`:
+  30 minutes each on SAB and postMessage, with real hidden/visible transitions.
+  Keep the JSON result with the release evidence. A shorter preflight is not a
+  substitute for the full duration.
 
 ## Cutting a release (manual)
 

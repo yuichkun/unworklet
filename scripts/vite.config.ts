@@ -12,6 +12,6 @@ import { defineConfig } from "vite-plus";
 export default defineConfig({
   test: {
     name: "release-invariants",
-    include: ["*.test.ts"],
+    include: ["*.test.ts", "release-soak/*.test.ts"],
   },
 });

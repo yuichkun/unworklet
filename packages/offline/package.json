@@ -1,6 +1,6 @@
 {
   "name": "@unworklet/offline",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Pure-JS offline renderer for `@unworklet/core` processors (Node / Bun / Deno).",
   "keywords": [
     "audio",
@@ -56,8 +56,7 @@
     "@typescript/native-preview": "7.0.0-dev.20260509.2",
     "@unworklet/core": "workspace:^",
     "bumpp": "^11.1.0",
-    "typescript": "catalog:",
-    "vite-plus": "catalog:"
+    "typescript": "catalog:"
   },
   "peerDependencies": {
     "@unworklet/core": "workspace:^"

@@ -1,4 +1,4 @@
-| `node.midi.<name>` | direction-narrowed: `{ from: "main" }` → `send(event, atTime?)` / `connectFromWebMIDI(input)` / `diagnostics`; `{ to: "main" }` → `onEvent(type, handler)` / `diagnostics`# unworklet — DSL / API reference
+# unworklet — DSL / API reference
 
 TypeScript-first declarative Audio Worklet DSP, compiled to WebAssembly. You
 declare ports/params/state and write a per-sample `process` body; the toolchain
@@ -10,7 +10,7 @@ Two authoring forms, **same compiled result**:
 - **`.uwk.ts` — the primary, recommended form.** No imports, no wrapper; infix
   operators and `x[i]` index sugar. The plugin _lowers_ it to a plain
   `@unworklet/core` module that makes the exact same DSL calls a hand-written
-  core processor makes, so it compiles byte-identically. — `packages/lang/src/lower.ts:310`
+  core processor makes, so it compiles byte-identically. — `lower()` in `packages/lang/src/lower.ts`
 - **`.processor.ts` — the explicit, lower-level alternative (§6).** Plain `.ts`
   with `defineProcessor` + method chains + explicit imports. Use it only for a
   surface `.uwk.ts` does not expose (e.g. SIMD).
@@ -48,30 +48,28 @@ Rules (all in `packages/lang/src/lower.ts`):
   into `export default defineProcessor((ctx) => { …decls; return { process } })`
   (or `export const <name> = …` when an export name is given). Zero `process` +
   no export → throws `uwk-empty`; more than one → `uwk-multiple-process`. —
-  `lower.ts:187,328,364,391`
+  `lower()` / `callbackBody()` in `lower.ts`
 - **DSL names are ambient — write no imports.** Lowering injects the
-  `@unworklet/core` import listing only the names actually used. — `lower.ts:138,457`
+  `@unworklet/core` import listing only the names actually used. — `collectUsedCoreExports()` in `lower.ts`
 - **Ambient stereo I/O is injected when omitted:** with no `audioInput`
   referenced, `const input = audioInput({ channels: 2, name: "input" })` is
-  added (same for `out`). An explicit declaration suppresses it. — `lower.ts:445`
+  added (same for `out`). An explicit declaration suppresses it. — `makeAudioDecl()` in `lower.ts`
 - **`ctx` is ambient** — it is the `defineProcessor((ctx) => …)` parameter, so
-  `ctx.sampleRate` reaches the host rate. — `lower.ts:207`
+  `ctx.sampleRate` reaches the host rate. — `makeDefineProcessor()` in `lower.ts`
 - **Your own `import`s survive** at module scope (shared consts, sibling
   subgraph files). Write relative imports WITH the file extension
   (`./tables.ts`, not `./tables`): the build path evaluates processor modules
   under Node ESM resolution, which demands explicit extensions — an
   extensionless specifier fails the build (the error names the exact suffix to
-  add). — `lower.ts:350`
-- **Your own `export`s survive too** — an exported declaration moves to module
-  scope in the lowered module, together with any module-level bindings it
-  references, as long as none of them touch the DSL (`export const GAIN = 0.5`
-  shared with a sibling file works as written). An export whose value is tied
-  to the DSL (`export const gain = param.f32(...)`), an `export default`, or an
-  exported destructuring declaration is rejected with `uwk-export-unsupported`
-  — expose DSL values through the processor surface (param / state / event)
-  instead. Whether a declaration is DSL-tied is decided by what its references
-  resolve to, not how they are spelled: naming a parameter `input` or `min`, or
-  declaring your own `clamp`, is fine.
+  add). — `lower()` in `lower.ts`
+- **A processor file cannot export additional declarations.** A `.uwk.ts`
+  containing `process()` rejects authored module-level exports with
+  `uwk-export-unsupported`, including values, types, default exports, and
+  re-exports. Put shared constants, types, and helpers in a separate `.ts` or
+  library-only `.uwk.ts` file and import them into the processor. A library-only
+  `.uwk.ts` has no `process()` and keeps its exports. The lowering does not move
+  declarations across statements or predict callbacks' effects. Expose runtime
+  DSP values through the processor surface (param / state / event).
 - **The names the lowering generates are reserved** — `defineProcessor` always,
   and the ambient `input` / `out` plus `audioInput` / `audioOutput` when the
   file declares no audio I/O of its own. Declaring one is
@@ -621,7 +619,7 @@ per host rate from this value.
 
 A `.uwk.ts` with **no `process()` but ≥1 export** is a library module: its
 exports are emitted verbatim at module scope, subgraph-body sugar still lowers,
-and there is no `defineProcessor` wrap / no ambient I/O. — `lower.ts:364`
+and there is no `defineProcessor` wrap / no ambient I/O. — the library-module branch of `lower()`
 
 ```ts
 // onepole.uwk.ts
@@ -690,6 +688,15 @@ context+url), compiles the WASM, picks the transport (`"sab"` when
 `SharedArrayBuffer` + `crossOriginIsolated`, else `"postMessage"`), constructs the
 `AudioWorkletNode`, and resolves on a `ready` port message (rejects on init error
 / `processorerror` / 10 s timeout).
+
+`"postMessage"` is a compatibility transport with bounded egress buffer reuse.
+Receiving messages and recycling transferred buffers can allocate on the audio
+thread, so this path is outside the allocation-free and GC-free guarantee.
+The emitted DSP's fixed-memory, bounded-work constraints apply to both paths.
+Neither transport waits for the main thread while processing audio. Shared
+out-ring publication uses a single try-acquire; contention postpones publication
+while DSP continues. A full WASM ring follows its drop-oldest policy and reports
+overflow through the ring's diagnostics.
 
 ```ts
 const ctx = new AudioContext({ sampleRate: 48000 });

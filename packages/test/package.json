@@ -1,6 +1,6 @@
 {
   "name": "@unworklet/test",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Vitest matchers for `@unworklet/core` processors (wraps `@unworklet/offline`).",
   "keywords": [
     "audio",
@@ -66,7 +66,6 @@
     "@vitest/expect": "^3 || ^4",
     "bumpp": "^11.1.0",
     "typescript": "catalog:",
-    "vite-plus": "catalog:",
     "vitest": "catalog:"
   },
   "peerDependencies": {

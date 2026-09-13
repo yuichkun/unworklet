@@ -18,7 +18,7 @@
 
 import { expect, test } from "vite-plus/test";
 
-import { audioOutput, defineProcessor, f32, forSample, select, state } from "@unworklet/core";
+import { audioOutput, defineProcessor, f32, forSample, i32, select, state } from "@unworklet/core";
 import { addVec, mulVec, splat, sumLanes, vec4 } from "@unworklet/core/simd";
 
 import { renderOffline } from "./index.ts";
@@ -159,6 +159,40 @@ test("SIMD storeVec lanes flush subnormals to exactly 0 (vector delay-line decay
   expect(ch[0]).toBe(1);
   expect(ch[20]).toBeCloseTo(0.5 ** 20, 10);
   expect(ch[110]).toBe(0);
+});
+
+test("SIMD storeVec with a computed offset flushes only subnormal lanes", async () => {
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 4, name: "main" });
+    const buf = state.buffer.f32({ size: 6 });
+    const position = state.f32(0.25);
+    const scale = state.f32(1e-15);
+    return {
+      process: () => {
+        forSample((i) => {
+          buf.storeVec(
+            i32(sumLanes(splat(position.read()))),
+            mulVec(vec4(1, -2, 1e-20, -1e-20), splat(sumLanes(splat(scale.read())).mul(0.25))),
+          );
+          out.ch(0).at(i).write(buf.read(1));
+          out.ch(1).at(i).write(buf.read(2));
+          out.ch(2).at(i).write(buf.read(3));
+          out.ch(3).at(i).write(buf.read(4));
+        });
+      },
+    };
+  });
+  const result = await renderOffline(proc, { sampleRate: RATE, duration: 256 / RATE });
+  const channels = result.outputs.main!;
+  for (let sample = 0; sample < 256; sample++) {
+    expect(channels.map((channel) => channel[sample])).toEqual([
+      Math.fround(1e-15),
+      Math.fround(-2e-15),
+      0,
+      0,
+    ]);
+  }
+  expect(result.diagnostics.scrubbedSamples).toBe(0);
 });
 
 test("SIMD loadVec/storeVec offsets saturate to the buffer bounds instead of trapping", async () => {

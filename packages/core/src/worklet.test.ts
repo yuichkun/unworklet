@@ -19,7 +19,7 @@ import { expect, test, vi } from "vite-plus/test";
 import { compile } from "./compile/index.ts";
 import { CAPACITY_16, SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
 import { egressPoolBufferBytes } from "./egressFrame.ts";
-import { i32 } from "./dsl/constructors.ts";
+import { f32, i32 } from "./dsl/constructors.ts";
 import { audioInput, audioOutput, event, param } from "./dsl/declarations.ts";
 import { forSample } from "./dsl/loop.ts";
 import { defineProcessor } from "./processor.ts";
@@ -777,6 +777,28 @@ const eventEmitProc = defineProcessor(() => {
   };
 });
 
+for (const egressAccessBuffer of [undefined, new SharedArrayBuffer(0)]) {
+  test(`SAB out-ring initialization refuses an absent or undersized access buffer (${egressAccessBuffer?.byteLength})`, async () => {
+    const { wasm } = await compile(eventEmitProc);
+    const self = makeMockSelf();
+    const ring = eventEmitProc.worklet.eventRings[0]!;
+    eventEmitProc.worklet.initialize(self, {
+      processorOptions: {
+        wasm,
+        transport: "sab",
+        eventRings: eventEmitProc.worklet.eventRings,
+        eventRingsBuffer: new SharedArrayBuffer(12 + ring.capacity * ring.slotSize),
+        eventRingSabOffsets: [0],
+        egressAccessBuffer,
+      },
+    });
+    expect(self.messages).toContainEqual({
+      kind: "init-error",
+      message: "unworklet: SAB out-rings require an egress access word for each ring",
+    });
+  });
+}
+
 test("event ring copy (sab mode): WASM emit reflected into SAB header + slots via Atomics", async () => {
   const { wasm } = await compile(eventEmitProc);
   const self = makeMockSelf();
@@ -787,6 +809,7 @@ test("event ring copy (sab mode): WASM emit reflected into SAB header + slots vi
     processorOptions: {
       wasm,
       eventRingsBuffer,
+      egressAccessBuffer: new SharedArrayBuffer(4),
       eventRings: eventEmitProc.worklet.eventRings,
       eventRingSabOffsets: [0],
       transport: "sab",
@@ -1459,4 +1482,357 @@ test("no message/midi rings: a port message listener is still registered + start
   monoGain.worklet.initialize(self, { processorOptions: { wasm } });
   expect(self.port.__listeners.length).toBe(1);
   expect(self.port.__startCalled).toBe(true);
+});
+
+test("fallback MIDI rejects malformed port traffic, bounds a burst, and ignores stale recycle acknowledgements", async () => {
+  const processor = defineProcessor(() => {
+    const input = event.midi({ from: "main", name: "in", capacity: CAPACITY_16 });
+    const output = event.midi({ to: "main", name: "out", capacity: CAPACITY_16 });
+    const audio = audioOutput({ channels: 1, name: "main" });
+    const note = stateDecl.f32(0);
+    return {
+      process: () => {
+        input.onEvent("noteOn", ({ note: incoming }) => note.write(f32(incoming)));
+        output.emitIf(true, { type: "noteOn", channel: 0, note: 60, velocity: 100, atSample: 0 });
+        forSample((i) => audio.ch(0).at(i).write(note.read()));
+      },
+    };
+  });
+  const { wasm } = await compile(processor);
+  const self = makeMockSelf();
+  const midiRings = processor.worklet.midiRings;
+  processor.worklet.initialize(self, {
+    processorOptions: { wasm, transport: "postMessage", midiRings },
+  });
+  const inIndex = midiRings.findIndex((ring) => ring.direction === "in");
+  const outIndex = midiRings.findIndex((ring) => ring.direction === "out");
+  for (const data of [
+    { kind: "midi" },
+    { kind: "midi", ringIndex: "0", item: {} },
+    { kind: "midi", ringIndex: 99, item: {} },
+    { kind: "midi", ringIndex: outIndex, item: {} },
+    { kind: "midi", ringIndex: inIndex, item: null },
+    { kind: "midi", ringIndex: inIndex, item: 7 },
+  ])
+    firePortMessage(self, data);
+  for (let n = 0; n < 20; n++)
+    firePortMessage(self, {
+      kind: "midi",
+      ringIndex: inIndex,
+      item: { status: 0x90, data1: n, data2: 100, atSample: 0 },
+    });
+  firePortMessage(self, {
+    kind: "egress-buffer",
+    buffer: new ArrayBuffer(egressPoolBufferBytes([], midiRings)),
+  });
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  processor.worklet.process(self, [], outputs, {});
+  expect(outputs[0]![0]![0]).toBe(19);
+  expect(self.messages).toContainEqual({
+    kind: "midi-overflow",
+    ringIndex: inIndex,
+    overflowCount: 4,
+  });
+  const frame = postedEgressFrames(self)[0]!;
+  firePortMessage(self, {
+    kind: "egress-recycle",
+    buffer: frame,
+    midiTails: [null, ["x", 1], [outIndex], [99, 1], [inIndex, 1], [outIndex, 1], [outIndex, 0]],
+  });
+  self.messages.length = 0;
+  processor.worklet.process(self, [], outputs, {});
+  expect(outputs[0]![0]![0]).toBe(19);
+  expect(
+    self.messages.some((message) => (message as { kind?: string }).kind === "midi-overflow"),
+  ).toBe(false);
+  expect(postedEgressFrames(self)).toHaveLength(1);
+});
+
+test("snapshot restore reports unknown buffers and omitted persistent buffers without corrupting live data", async () => {
+  const processor = defineProcessor(() => {
+    const stored = stateDecl.buffer
+      .expose({ name: "stored", snapshot: "persistent" })
+      .f32({ size: 4 });
+    const transient = stateDecl.buffer.named("scratch").f32({ size: 4 });
+    const rate = param
+      .f32({ default: 440, min: 20, max: 20000, automationRate: "k-rate" })
+      .named("rate");
+    const out = audioOutput({ channels: 1, name: "main" });
+    return {
+      process: () => {
+        forSample((i) =>
+          out
+            .ch(0)
+            .at(i)
+            .write(stored.read(0).add(transient.read(0)).add(rate.at(i))),
+        );
+      },
+    };
+  });
+  const { wasm } = await compile(processor);
+  const self = makeMockSelf();
+  processor.worklet.initialize(self, { processorOptions: { wasm } });
+  firePortMessage(self, {
+    kind: "restore",
+    requestId: 1,
+    slots: [
+      { kind: "buffer", name: "unknown", type: "f32", data: new Uint8Array(16) },
+      { kind: "param", name: "rate", type: "f32", data: new Uint8Array(4) },
+      { kind: "param", name: "absent", type: "f32", data: new Uint8Array(4) },
+    ],
+  });
+  expect(self.messages).toContainEqual({
+    kind: "restore-done",
+    requestId: 1,
+    applied: ["rate"],
+    skipped: ["unknown", "absent"],
+    missing: ["stored"],
+  });
+  firePortMessage(self, { kind: "restore", requestId: 2, slots: false });
+  expect(self.messages).toContainEqual({
+    kind: "restore-done",
+    requestId: 2,
+    applied: [],
+    skipped: [],
+    missing: ["stored", "rate"],
+  });
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  processor.worklet.process(self, [], outputs, {});
+  expect(outputs[0]![0]![0]).toBe(440);
+});
+
+for (const omitted of ["start", "addEventListener"] as const) {
+  test(`worklet boot accepts a minimal host port without ${omitted}`, async () => {
+    const { wasm } = await compile(ioOnly);
+    const self = makeMockSelf();
+    Reflect.deleteProperty(self.port, omitted);
+    ioOnly.worklet.initialize(self, { processorOptions: { wasm } });
+    expect(self.messages).toContainEqual({ kind: "ready" });
+    const inputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(0.25)]];
+    const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+    expect(ioOnly.worklet.process(self, inputs, outputs, {})).toBe(true);
+    expect(outputs[0]![0]![0]).toBe(0.25);
+  });
+}
+
+test("fallback frames include only the event or MIDI rings that changed in a quantum", async () => {
+  const processor = defineProcessor(() => {
+    const phase = stateDecl.i32(0);
+    const a = event<{ n: number }>({ to: "main", name: "a", capacity: CAPACITY_16 });
+    const b = event<{ n: number }>({ to: "main", name: "b", capacity: CAPACITY_16 });
+    const m = event.midi({ to: "main", name: "m", capacity: CAPACITY_16 });
+    const quiet = event.midi({ to: "main", name: "quiet", capacity: CAPACITY_16 });
+    return {
+      process: () => {
+        a.emitIf(phase.read().eq(0), { n: 1 });
+        b.emitIf(phase.read().eq(1), { n: 2 });
+        m.emitIf(phase.read().eq(2), {
+          type: "noteOn",
+          channel: 0,
+          note: 60,
+          velocity: 100,
+          atSample: 0,
+        });
+        quiet.emitIf(false, { type: "noteOn", channel: 0, note: 61, velocity: 100, atSample: 0 });
+        phase.write(phase.read().add(1));
+      },
+    };
+  });
+  const { wasm } = await compile(processor);
+  const self = makeMockSelf();
+  const eventRings = processor.worklet.eventRings;
+  const midiRings = processor.worklet.midiRings;
+  processor.worklet.initialize(self, {
+    processorOptions: { wasm, transport: "postMessage", eventRings, midiRings },
+  });
+  for (let i = 0; i < 3; i++)
+    firePortMessage(self, {
+      kind: "egress-buffer",
+      buffer: new ArrayBuffer(egressPoolBufferBytes(eventRings, midiRings)),
+    });
+  for (let q = 0; q < 4; q++) processor.worklet.process(self, [], [], {});
+  const frames = postedEgressFrames(self).map((buffer) => new DataView(buffer));
+  expect(
+    frames.map((frame) => [
+      frame.getUint32(0, true),
+      frame.getUint32(4, true),
+      frame.getUint32(8, true),
+    ]),
+  ).toEqual([
+    [1, 0, 0],
+    [1, 0, 1],
+    [0, 1, 0],
+  ]);
+});
+
+test("fallback MIDI pool starvation keeps the retained window and reports overwritten slots on recovery", async () => {
+  const processor = defineProcessor(() => {
+    const n = stateDecl.i32(0);
+    const output = event.midi({ to: "main", name: "out", capacity: CAPACITY_16 });
+    return {
+      process: () => {
+        output.emitIf(true, {
+          type: "noteOn",
+          channel: 0,
+          note: n.read(),
+          velocity: 100,
+          atSample: 0,
+        });
+        n.write(n.read().add(1));
+      },
+    };
+  });
+  const { wasm } = await compile(processor);
+  const self = makeMockSelf();
+  const midiRings = processor.worklet.midiRings;
+  processor.worklet.initialize(self, {
+    processorOptions: { wasm, transport: "postMessage", midiRings },
+  });
+  for (let q = 0; q < 20; q++) processor.worklet.process(self, [], [], {});
+  expect(postedEgressFrames(self)).toEqual([]);
+  firePortMessage(self, {
+    kind: "egress-buffer",
+    buffer: new ArrayBuffer(egressPoolBufferBytes([], midiRings)),
+  });
+  processor.worklet.process(self, [], [], {});
+  const buffer = postedEgressFrames(self)[0]!;
+  const frame = new DataView(buffer);
+  expect(frame.getUint32(16, true)).toBe(16);
+  expect(frame.getInt32(20, true)).toBe(5);
+  expect(Array.from({ length: 16 }, (_, i) => frame.getUint8(28 + i * 8 + 1))).toEqual(
+    Array.from({ length: 16 }, (_, i) => i + 5),
+  );
+  firePortMessage(self, { kind: "egress-recycle", buffer, midiTails: [[0, 21]] });
+  self.messages.length = 0;
+  processor.worklet.process(self, [], [], {});
+  const next = new DataView(postedEgressFrames(self)[0]!);
+  expect(next.getUint32(16, true)).toBe(1);
+  expect(next.getInt32(20, true)).toBe(5);
+  expect(next.getUint8(29)).toBe(21);
+});
+
+test("restore skips prototype-property names without abandoning other valid slots", async () => {
+  const processor = defineProcessor(() => {
+    const value = stateDecl.named("value").f32(1);
+    const table = stateDecl.buffer.named("table").f32({ size: 4 });
+    const out = audioOutput({ channels: 1, name: "main" });
+    return {
+      process: () =>
+        forSample((i) =>
+          out
+            .ch(0)
+            .at(i)
+            .write(value.read().add(table.read(0))),
+        ),
+    };
+  });
+  const { wasm } = await compile(processor);
+  const self = makeMockSelf();
+  processor.worklet.initialize(self, { processorOptions: { wasm } });
+  const data = new Uint8Array(new Float32Array([2]).buffer);
+  firePortMessage(self, {
+    kind: "restore",
+    requestId: 1,
+    slots: [
+      { kind: "state", name: "constructor", type: "f32", data },
+      { kind: "buffer", name: "__proto__", type: "f32", data: new Uint8Array(16) },
+      { kind: "state", name: "value", type: "f32", data },
+    ],
+  });
+  expect(self.messages).toContainEqual({
+    kind: "restore-done",
+    requestId: 1,
+    applied: ["value"],
+    skipped: ["constructor", "__proto__"],
+    missing: [],
+  });
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  processor.worklet.process(self, [], outputs, {});
+  expect(outputs[0]![0]![0]).toBe(2);
+});
+
+for (const kind of ["message", "midi"] as const) {
+  test(`an undequeued ${kind} ring accounts for overwrites across separate fallback quanta`, async () => {
+    const processor = defineProcessor(() => {
+      if (kind === "message")
+        event<{ n: number }>({ from: "main", name: "in", capacity: CAPACITY_16 });
+      else event.midi({ from: "main", name: "in", capacity: CAPACITY_16 });
+      return { process: () => {} };
+    });
+    const { wasm } = await compile(processor);
+    const self = makeMockSelf();
+    processor.worklet.initialize(self, {
+      processorOptions: {
+        wasm,
+        transport: "postMessage",
+        messageRings: processor.worklet.messageRings,
+        midiRings: processor.worklet.midiRings,
+      },
+    });
+    for (let quantum = 0; quantum < 2; quantum++) {
+      for (let n = 0; n < 16; n++) {
+        firePortMessage(
+          self,
+          kind === "message"
+            ? { kind, ringIndex: 0, payload: { n } }
+            : { kind, ringIndex: 0, item: { status: 0x90, data1: n, data2: 100, atSample: 0 } },
+        );
+      }
+      processor.worklet.process(self, [], [], {});
+    }
+    expect(self.messages).toContainEqual({
+      kind: `${kind}-overflow`,
+      ringIndex: 0,
+      overflowCount: 16,
+    });
+    self.messages.length = 0;
+    processor.worklet.process(self, [], [], {});
+    expect(self.messages).toEqual([]);
+  });
+}
+
+test("malformed typed-array and scalar message fields do not trap the audio processor", async () => {
+  const processor = defineProcessor(() => {
+    const input = event<{ samples: Float32Array; value: number }>({
+      from: "main",
+      name: "upload",
+      payloadCapacity: 16,
+    });
+    const buffer = stateDecl.buffer.f32({ size: 4 });
+    const scalar = stateDecl.f32(0);
+    const out = audioOutput({ channels: 1, name: "main" });
+    return {
+      process: () => {
+        input.onReceive(({ samples, value }) => {
+          buffer.copyFrom(samples);
+          scalar.write(value);
+        });
+        forSample((i) => out.ch(0).at(i).write(buffer.read(0).add(scalar.read())));
+      },
+    };
+  });
+  const { wasm } = await compile(processor);
+  const self = makeMockSelf();
+  processor.worklet.initialize(self, {
+    processorOptions: {
+      wasm,
+      transport: "postMessage",
+      messageRings: processor.worklet.messageRings,
+    },
+  });
+  firePortMessage(self, {
+    kind: "message",
+    ringIndex: 0,
+    payload: { samples: null, value: "invalid" },
+  });
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  expect(processor.worklet.process(self, [], outputs, {})).toBe(true);
+  expect(outputs[0]![0]!.every(Number.isFinite)).toBe(true);
+  firePortMessage(self, {
+    kind: "message",
+    ringIndex: 0,
+    payload: { samples: Float32Array.from([1, 2, 3, 4]), value: 0.5 },
+  });
+  expect(processor.worklet.process(self, [], outputs, {})).toBe(true);
+  expect(outputs[0]![0]![0]).toBe(1.5);
 });

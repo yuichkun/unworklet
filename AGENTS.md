@@ -52,6 +52,10 @@ The library is published, so the surface is a contract with people who already i
 
 This project uses [Vite+](https://viteplus.dev). All workflows go through `vp`. **Never invoke `npm`, `pnpm`, `yarn`, or `npx` directly** — not in shell, not in scripts, not in CI config, not in test-plan commands.
 
+The workspace root owns the `vite-plus` development dependency. Package and demo
+configs import it from that shared installation: separate copies with different
+peer dependencies create distinct Vitest collectors and break aggregated tests.
+
 | Action                                                                          | Command                                                        |
 | ------------------------------------------------------------------------------- | -------------------------------------------------------------- |
 | Install deps                                                                    | `vp install` (alias `vp i`)                                    |
@@ -137,7 +141,8 @@ List the applicable paths in `test.coverage.exclude` in each package's `vite.con
 
 - Do not edit `docs/` to match the code. It is a historical record, not a description of current behaviour — rewriting history to match the present destroys the only thing it is for. Behaviour is described in `skills/unworklet/`; change that.
 - Do not push to remote, open / close PRs, or perform shared-system actions without explicit approval.
-- The realtime-safety invariants are non-negotiable: no allocation, no unbounded loops, no I/O on the audio thread, no GC-triggering operations. They are enforced in `packages/core/src/dsl/enforcement.test.ts` and by the worklet-realm lint rules in the root `vite.config.ts`. If a design appears to require violating one, stop and surface it.
+- The emitted DSP must not allocate, grow memory, perform I/O, or use unbounded loops. Audio-thread transport must not block or wait for another thread; a single atomic try-acquire that skips publication on contention is allowed. These constraints are enforced in `packages/core/src/dsl/enforcement.test.ts`, transport tests, and the worklet-realm lint rules in the root `vite.config.ts`.
+- **Explicit compatibility exception:** the `postMessage` fallback may allocate while receiving/recycling transferred buffers and delivering its control messages. It has no allocation-free or GC-free guarantee. Keep its frame pool bounded and its egress buffers/views/envelope reused during `process()`. This exception permits neither blocking nor unbounded DSP work, and does not weaken the emitted DSP contract. Describe this boundary in consumer guidance; do not claim the complete fallback audio thread is allocation-free.
 
 ## DevTools panel — recurring violations to avoid (HARD CONTRACT)
 

@@ -33,7 +33,6 @@
     "@vitejs/devtools-vite": "catalog:",
     "@vitejs/devtools-vitest": "catalog:",
     "@vitejs/plugin-vue": "catalog:",
-    "playwright": "catalog:",
-    "vite-plus": "catalog:"
+    "playwright": "catalog:"
   }
 }

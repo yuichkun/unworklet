@@ -131,9 +131,7 @@ const PAYLOAD_CLAMP_LOCAL = 17;
 /**
  * v128 temp local for SIMD `sumLanes` (= §7). vec is evaluated once and held,
  * then its 4 lanes are pulled out with `extract_lane` (= avoids evaluating the
- * vec expression 4 times). Also holds the teed store value for the lane-wise
- * subnormal flush in `bufferStoreVec` (never live simultaneously: a `sumLanes`
- * inside the stored expression completes before the outer tee runs).
+ * vec expression 4 times).
  */
 const VEC_TEMP_LOCAL = 18;
 
@@ -144,14 +142,17 @@ const VEC_TEMP_LOCAL = 18;
  */
 const SCRUB_COND_LOCAL = 19;
 
+// The store value stays live while its address can evaluate `sumLanes`.
+const VEC_STORE_LOCAL = 20;
+
 /**
  * Base local index for mutable-read temp locals (= `03-compiler.md` §2.7, issue
- * #8). The 20 fixed temp locals above occupy indices 0–19; per-read temps from
- * `captureTemp` occupy `TEMP_LOCAL_BASE + tempId` (= 20, 21, …). `emit` scans
+ * #8). The 21 fixed temp locals above occupy indices 0–20; per-read temps from
+ * `captureTemp` occupy `TEMP_LOCAL_BASE + tempId` (= 21, 22, …). `emit` scans
  * the graph for `tempAssign` nodes and declares one local of the matching type
  * per `tempId`, in `tempId` order, after the fixed block.
  */
-const TEMP_LOCAL_BASE = 20;
+const TEMP_LOCAL_BASE = 21;
 
 /**
  * Per-emit loop-counter local mapping for nested `forSample` (= Q58). A loop /
@@ -450,8 +451,9 @@ export async function emit(
       binaryen.f32, // BUFINTERP_POS_LOCAL
       binaryen.i32, // BUFINTERP_I0_LOCAL
       binaryen.i32, // PAYLOAD_CLAMP_LOCAL (= at OOB clamp idx)
-      binaryen.v128, // VEC_TEMP_LOCAL (= for SIMD sumLanes / storeVec flush)
+      binaryen.v128, // VEC_TEMP_LOCAL (= SIMD sumLanes)
       binaryen.i32, // SCRUB_COND_LOCAL (= audioOutWrite non-finite condition)
+      binaryen.v128, // VEC_STORE_LOCAL (= storeVec flush)
       // Mutable-read temp locals (= TEMP_LOCAL_BASE +, issue #8, in capture order).
       ...tempLocals,
       // Extra i32 loop-counter locals for nested forSample (= depth >= 1, Q58).
@@ -1225,7 +1227,7 @@ function emitVec(
             mod,
             binaryen,
             scalar(node.offset),
-            layout.regions.buffers.lengths[node.name] ?? 0,
+            layout.regions.buffers.lengths[node.name]!,
             4,
           ),
           mod.i32.const(BYTES_PER_F32),
@@ -1586,7 +1588,7 @@ export function emitExpression(
           mod,
           binaryen,
           emitExpression(node.index, layout, mod, binaryen),
-          layout.regions.buffers.lengths[node.name] ?? 0,
+          layout.regions.buffers.lengths[node.name]!,
         ),
       );
       return emitBufferLoad(mod, node.elementType, ptr);
@@ -1877,7 +1879,7 @@ export function emitStatement(
           mod,
           binaryen,
           emitExpression(node.index, layout, mod, binaryen),
-          layout.regions.buffers.lengths[node.name] ?? 0,
+          layout.regions.buffers.lengths[node.name]!,
         ),
       );
       return emitBufferStore(
@@ -1905,7 +1907,7 @@ export function emitStatement(
             mod,
             binaryen,
             emitExpression(node.offset, layout, mod, binaryen),
-            layout.regions.buffers.lengths[node.name] ?? 0,
+            layout.regions.buffers.lengths[node.name]!,
             4,
           ),
           mod.i32.const(BYTES_PER_F32),
@@ -1919,14 +1921,14 @@ export function emitStatement(
       // tee buried in the mask would let the value's local.get read the
       // local's stale contents (the same eager-evaluation pitfall the scalar
       // guard documents).
-      const getVec = (): number => mod.local.get(VEC_TEMP_LOCAL, binaryen.v128);
+      const getVec = (): number => mod.local.get(VEC_STORE_LOCAL, binaryen.v128);
       const mask = mod.f32x4.lt(
         mod.f32x4.abs(getVec()),
         mod.f32x4.splat(mod.f32.const(SUBNORMAL_THRESHOLD)),
       );
       const flushed = mod.v128.bitselect(mod.f32x4.splat(mod.f32.const(0)), getVec(), mask);
       return mod.block(null, [
-        mod.local.set(VEC_TEMP_LOCAL, emitVec(node.value, layout, mod, binaryen)),
+        mod.local.set(VEC_STORE_LOCAL, emitVec(node.value, layout, mod, binaryen)),
         mod.v128.store(0, BYTES_PER_F32, addr, flushed),
       ]);
     }

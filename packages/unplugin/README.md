@@ -72,8 +72,9 @@ silent.
 
 ## Cross-origin isolation (SharedArrayBuffer)
 
-unworklet shares audio data between the main thread and the worklet through a
-`SharedArrayBuffer` — no copies, no postMessage round-trips, realtime-safe. The
+unworklet shares event, MIDI, and published-state data between the main thread
+and the worklet through `SharedArrayBuffer`, avoiding postMessage round-trips.
+Outbound rings use guarded copies into main-thread snapshots. The
 browser only exposes `SharedArrayBuffer` on a **cross-origin isolated** page,
 which takes two response headers:
 

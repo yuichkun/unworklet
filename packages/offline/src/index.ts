@@ -572,8 +572,7 @@ export async function renderOffline<C>(
   const snapshotSlots: SnapshotSlot[] = [];
   for (const s of meta.states) {
     if (!s.userNamed || !isPersistent(s.snapshot, "persistent", config.profile)) continue;
-    const off = meta.layout.regions.states.slots[s.name];
-    if (off === undefined) continue;
+    const off = meta.layout.regions.states.slots[s.name]!;
     snapshotSlots.push({
       name: s.name,
       kind: "state",
@@ -583,8 +582,7 @@ export async function renderOffline<C>(
   }
   for (const buf of meta.buffers) {
     if (!buf.userNamed || !isPersistent(buf.snapshot, "transient", config.profile)) continue;
-    const off = meta.layout.regions.buffers.slots[buf.name];
-    if (off === undefined) continue;
+    const off = meta.layout.regions.buffers.slots[buf.name]!;
     const byteLen = buf.size * ELEMENT_BYTES[buf.type]!;
     snapshotSlots.push({
       name: buf.name,

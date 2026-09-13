@@ -1678,7 +1678,7 @@ ensureClient();
         `};`,
         ``,
         `export default __unworkletAugmented;`,
-        `export { __unworkletAugmented as ${exportName} };`,
+        ...(exportName === "default" ? [] : [`export { __unworkletAugmented as ${exportName} };`]),
         ``,
       ].join("\n");
     },

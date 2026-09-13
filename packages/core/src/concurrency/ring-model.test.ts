@@ -27,8 +27,29 @@ import {
   inRingMirrorSpec,
   monotoneLocation,
   outRingPublishSpec,
+  outRingSnapshotSpec,
   splitWriterTailSpec,
 } from "./ring-model.ts";
+
+const coherentSnapshot = (s: FinalState): string | null => {
+  const read = s.regs.C!;
+  if (read.acquired !== 0 || read.head! <= read.tail!) return null;
+  const expected = read.head === 1 ? 0 : 1;
+  return read.slot === expected && read.content === expected
+    ? null
+    : `mixed snapshot: head=${read.head}, slot=${read.slot}, content=${read.content}`;
+};
+
+test("out-ring overwrite: unguarded copying admits a mixed slot/content snapshot", () => {
+  const result = explore(outRingSnapshotSpec(false), [coherentSnapshot]);
+  expect(result.violations.length).toBeGreaterThan(0);
+});
+
+test("out-ring overwrite: one-attempt ownership keeps the copied batch consistent", () => {
+  const result = explore(outRingSnapshotSpec(true), [coherentSnapshot]);
+  expect(result.terminals).toBeGreaterThan(0);
+  expect(result.violations).toEqual([]);
+});
 
 const MARKER = 7;
 
@@ -225,7 +246,7 @@ test("out-ring publish: a header-touching bulk copy IS a torn read", () => {
   expect(result.violations.length).toBeGreaterThan(0);
 });
 
-test("out-ring publish: a slots-only bulk copy is SAFE on every interleaving", () => {
+test("head publication: a slots-only copy preserves visibility in the single-publication model", () => {
   // With the header left untouched, the release store is the only `head` write,
   // so any consumer that observes the new head synchronizes-with it.
   const inv = freshDelivery("main", "h", "t", "s", RING_SLOT_MARKER);
@@ -234,7 +255,7 @@ test("out-ring publish: a slots-only bulk copy is SAFE on every interleaving", (
   expect(result.violations).toEqual([]);
 });
 
-test("out-ring publish: the drop-oldest tail commit (atomic monotone-max) is SAFE on every interleaving", () => {
+test("head publication: a tail advance preserves visibility in the single-publication model", () => {
   // The drop-oldest quantum adds an indivisible rmw on `tail` before the head
   // release store. It must not weaken the head-publish proof — the release
   // store stays the sole synchronization point for the slot run. (The
@@ -296,4 +317,16 @@ test("split-writer tail: a naive Atomics.add of deltas over-advances tail (so NO
   const result = explore(splitWriterTailSpec("add"), [correctTail]);
   expect(result.terminals).toBeGreaterThan(0);
   expect(result.violations.length).toBeGreaterThan(0);
+});
+
+test("diagnostic invariants handle absent register observations without throwing", () => {
+  const memory: FinalState["memory"] = new Map([
+    ["tail", [{ id: 0, loc: "tail", value: 7, isRelease: true, published: new Set<number>() }]],
+  ]);
+  expect(correctTail({ regs: {}, memory })).toBeNull();
+  expect(correctTail({ regs: { main: {}, worklet: {} }, memory })).toBeNull();
+  const invariant = freshDelivery("main", "head", "tail", "slot", 7);
+  expect(invariant({ regs: {}, memory })).toBeNull();
+  expect(invariant({ regs: { main: {} }, memory })).toBeNull();
+  expect(invariant({ regs: { main: { head: 1 } }, memory })).toContain("torn read");
 });

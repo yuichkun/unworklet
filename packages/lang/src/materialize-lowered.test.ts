@@ -942,7 +942,7 @@ test("a type-only reference between two .uwk.ts files is not a cycle", async () 
   dir = mkdtempSync(path.join(LANG, ".mat-typecycle-"));
   writeFileSync(
     path.join(dir, "voice.uwk.ts"),
-    `import type { Depth } from "./synth.uwk.ts";
+    `import type { Depth } from "./shared.uwk.ts";
 
 export const voice = defineSubgraph(() => {
   const p = state.f32(0).named("p");
@@ -950,12 +950,16 @@ export const voice = defineSubgraph(() => {
   return { tick: () => p.read() };
 });`,
   );
+  writeFileSync(
+    path.join(dir, "shared.uwk.ts"),
+    `import { voice } from "./voice.uwk.ts";
+export type Depth = "shallow" | "deep";
+export { voice };`,
+  );
   const src = path.join(dir, "synth.uwk.ts");
   writeFileSync(
     src,
-    `import { voice } from "./voice.uwk.ts";
-
-export type Depth = "shallow" | "deep";
+    `import { voice } from "./shared.uwk.ts";
 const out = audioOutput({ channels: 1, name: "main" });
 const v = instantiate(voice, { name: "v" });
 process(() => {
@@ -970,23 +974,27 @@ process(() => {
 });
 
 test("an import-type expression naming a .uwk.ts is not a cycle either", async () => {
-  // Same erasure, written as `import("./synth.uwk.ts").Depth` — the form that
+  // Same erasure, written as `import("./shared.uwk.ts").Depth` — the form that
   // needs no import declaration at all. Reported by @codex on #43.
   dir = mkdtempSync(path.join(LANG, ".mat-typecycle2-"));
   writeFileSync(
     path.join(dir, "voice.uwk.ts"),
     `export const voice = defineSubgraph(() => {
   const p = state.f32(0).named("p");
-  const _depth: import("./synth.uwk.ts").Depth = "shallow";
+  const _depth: import("./shared.uwk.ts").Depth = "shallow";
   return { tick: () => p.read() };
 });`,
+  );
+  writeFileSync(
+    path.join(dir, "shared.uwk.ts"),
+    `import { voice } from "./voice.uwk.ts";
+export type Depth = "shallow" | "deep";
+export { voice };`,
   );
   const src = path.join(dir, "synth.uwk.ts");
   writeFileSync(
     src,
-    `import { voice } from "./voice.uwk.ts";
-
-export type Depth = "shallow" | "deep";
+    `import { voice } from "./shared.uwk.ts";
 const out = audioOutput({ channels: 1, name: "main" });
 const v = instantiate(voice, { name: "v" });
 process(() => {
@@ -1010,7 +1018,7 @@ test("an all-type-only inline import between two .uwk.ts files is not a cycle", 
   dir = mkdtempSync(path.join(LANG, ".mat-inlinecycle-"));
   writeFileSync(
     path.join(dir, "voice.uwk.ts"),
-    `import { type Depth } from "./synth.uwk.ts";
+    `import { type Depth } from "./shared.uwk.ts";
 
 export const voice = defineSubgraph(() => {
   const p = state.f32(0).named("p");
@@ -1018,12 +1026,16 @@ export const voice = defineSubgraph(() => {
   return { tick: () => p.read() };
 });`,
   );
+  writeFileSync(
+    path.join(dir, "shared.uwk.ts"),
+    `import { voice } from "./voice.uwk.ts";
+export type Depth = "shallow" | "deep";
+export { voice };`,
+  );
   const src = path.join(dir, "synth.uwk.ts");
   writeFileSync(
     src,
-    `import { voice } from "./voice.uwk.ts";
-
-export type Depth = "shallow" | "deep";
+    `import { voice } from "./shared.uwk.ts";
 const out = audioOutput({ channels: 1, name: "main" });
 const v = instantiate(voice, { name: "v" });
 process(() => {
@@ -1429,26 +1441,15 @@ process(() => {
   });
 });
 
-test("a processor with a module-scope export loads through the real ESM temp (issue #44 repro)", async () => {
-  // Pre-fix the export was swallowed into the defineProcessor callback and the
-  // temp threw `SyntaxError: Unexpected token 'export'` at import — through
-  // BOTH loadUwkProcessor and the Vite build path (same temp).
+test("processor exports fail before writing an ESM temp", async () => {
   dir = mkdtempSync(path.join(LANG, ".mat-export-"));
   const src = path.join(dir, "synth.uwk.ts");
-  writeFileSync(
-    src,
-    `export const GAIN = 0.5;
-const out = audioOutput({ channels: 1, name: "main" });
-process(() => {
-  forSample((i) => {
-    out.ch(0)[i] = GAIN;
+  writeFileSync(src, `export const GAIN = 0.5;\nprocess(() => {});`);
+  await expect(loadUwkProcessor(src)).rejects.toMatchObject({
+    id: "uwk-export-unsupported",
+    message: expect.stringMatching(/separate shared module.*import/i),
   });
-});`,
-  );
-
-  const processor = await loadUwkProcessor(src);
-  expect(processor).toBeTruthy();
-  expect(typeof processor.schemaHash).toBe("string");
+  expect(readdirSync(dir)).toEqual(["synth.uwk.ts"]);
 });
 
 // ── crash-stranded temp sweep (issue #21) ────────────────────────────────────

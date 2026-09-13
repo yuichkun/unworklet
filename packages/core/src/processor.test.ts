@@ -10,7 +10,7 @@
 
 import { expect, test } from "vite-plus/test";
 
-import { defineProcessor } from "./processor.ts";
+import { defineProcessor, instantiate } from "./processor.ts";
 
 test("`defineProcessor` invokes the body lambda with a `ProcessorContext`", () => {
   let observedSampleRate: number | null = null;
@@ -58,4 +58,14 @@ test("`defineProcessor` propagates throws from the `process` lambda", () => {
       },
     })),
   ).toThrow("process fail");
+});
+
+test("instantiate rejects an object that was not declared with defineSubgraph", () => {
+  expect(() =>
+    defineProcessor(() => {
+      // @ts-expect-error JavaScript callers can pass objects without subgraph branding.
+      instantiate({});
+      return { process: () => {} };
+    }),
+  ).toThrow(/instantiate requires a defineSubgraph/);
 });

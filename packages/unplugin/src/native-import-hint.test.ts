@@ -105,3 +105,33 @@ test("an importer path containing spaces is captured whole", () => {
   const wrapped = withExtensionHint(nodeNotFound(missing, path.join(spaced, "main.mjs"))) as Error;
   expect(wrapped.message).toContain('"./helpers/tables.ts"');
 });
+
+test("a sibling outside the importer directory is suggested with its parent-relative path", () => {
+  dir = mkdtempSync(path.join(tmpdir(), "uwk-hint-"));
+  writeFileSync(path.join(dir, "tables.ts"), "export const TABLE = [1];\n");
+  const wrapped = withExtensionHint(
+    nodeNotFound(path.join(dir, "tables"), path.join(dir, "processors", "main.ts")),
+  ) as Error;
+  expect(wrapped.message).toContain('"../tables.ts"');
+});
+
+test.each(["file://remote-host/processor.ts", "relative/processor.ts"])(
+  "an unusable importer %s retains the exact existing file without fabricating a relative path",
+  (importer) => {
+    dir = mkdtempSync(path.join(tmpdir(), "uwk-hint-"));
+    writeFileSync(path.join(dir, "tables.ts"), "export const TABLE = [1];\n");
+    const wrapped = withExtensionHint(nodeNotFound(path.join(dir, "tables"), importer)) as Error;
+    expect(wrapped.message).toContain(`The file exists as "${path.join(dir, "tables.ts")}"`);
+    expect(wrapped.message).toContain("write the import specifier with that suffix.");
+    expect(wrapped.message).not.toContain("(e.g.");
+  },
+);
+
+test("module-not-found errors without Node's relative-module message pass through unchanged", () => {
+  const packageMiss = Object.assign(new Error("Cannot find package 'missing'"), {
+    code: "ERR_MODULE_NOT_FOUND",
+  });
+  const structured = { code: "ERR_MODULE_NOT_FOUND", message: 42 };
+  expect(withExtensionHint(packageMiss)).toBe(packageMiss);
+  expect(withExtensionHint(structured)).toBe(structured);
+});

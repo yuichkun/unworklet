@@ -194,9 +194,15 @@ forSample.byN(4, (i) => {
 
 ## Realtime safety
 
-The compiler enforces the audio-thread contract at build time: no heap
-allocation, no unbounded loops, no exceptions, no blocking I/O, no GC. A
-processor that compiles is realtime-safe.
+The emitted DSP uses preallocated WASM memory and bounded loops, without
+JavaScript allocation, GC, or blocking I/O. Transport correctness is also
+validated with runtime and concurrency tests. WASM traps are reported through
+`onError` and silence the failed processor.
+
+The `postMessage` compatibility transport reuses bounded egress buffers, but
+receiving messages and recycling them can allocate on the audio thread. That
+transport has no allocation-free or GC-free guarantee. `node.diagnostics.transport`
+reports the selected transport; shared memory requires cross-origin isolation.
 
 ## Related packages
 

@@ -586,6 +586,16 @@ test("resolveId passes through WORKLET_ENTRY_PREFIX ids without modification", (
   expect(callResolveId(id, undefined)).toBe(id);
 });
 
+test("the DevTools bridge resolves to the module that can be loaded by the injected page", async () => {
+  const id = "\0unworklet-devbridge";
+  const resolved = callResolveId(id, undefined);
+  expect(resolved).toBe(id);
+  const code = await callLoadNoContext(resolved as string);
+  expect(typeof code).toBe("string");
+  expect(code).toContain("toSendableMidiEvent");
+  expect(code).toContain("toLoggableMidiEvent");
+});
+
 // ─────────────────────────────────────────────────────────────────────────
 // Dev mode (= command === "serve") = middleware URL emission
 // ─────────────────────────────────────────────────────────────────────────

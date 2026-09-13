@@ -92,3 +92,19 @@ test("a different sample rate is a different compile (rate-dependent folding mus
   });
   expect(calls).toBe(2);
 });
+
+test("a rejected capture is evicted so a corrected processor can render", async () => {
+  let rejectCapture = false;
+  const proc = defineProcessor(() => {
+    if (rejectCapture) throw new Error("table unavailable");
+    const out = audioOutput({ channels: 1, name: "main" });
+    return { process: () => forSample((i) => out.ch(0).at(i).write(0.25)) };
+  });
+  rejectCapture = true;
+  await expect(renderOffline(proc, { sampleRate: 48000, duration: 128 / 48000 })).rejects.toThrow(
+    "table unavailable",
+  );
+  rejectCapture = false;
+  const result = await renderOffline(proc, { sampleRate: 48000, duration: 128 / 48000 });
+  expect(Array.from(result.outputs.main![0]!)).toEqual(Array(128).fill(0.25));
+});

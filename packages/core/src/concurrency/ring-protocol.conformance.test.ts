@@ -76,6 +76,7 @@ const capturePublish = (
   ringSabOffset: number,
   ringTotalBytes: number,
   run: () => void,
+  accessBuffer: ArrayBufferLike,
 ): AbstractRingOp[] => {
   const captured: AbstractRingOp[] = [];
 
@@ -85,6 +86,7 @@ const capturePublish = (
     index: number,
     value: number,
   ): number => {
+    if (ta.buffer === accessBuffer) captured.push({ op: "release-access" });
     if (ta.buffer === sab && ta.byteOffset === ringSabOffset && ta.length === 3) {
       captured.push({
         op: "atomic-store",
@@ -104,6 +106,7 @@ const capturePublish = (
     expected: number,
     replacement: number,
   ): number => {
+    if (ta.buffer === accessBuffer) captured.push({ op: "try-access" });
     if (ta.buffer === sab && ta.byteOffset === ringSabOffset && ta.length === 3) {
       captured.push({
         op: "atomic-max",
@@ -264,6 +267,7 @@ test("conformance: the event out-ring publish matches the model's safe op-order"
     total += 12 + r.capacity * r.slotSize;
   }
   const sab = new ArrayBuffer(total);
+  const egressAccessBuffer = new SharedArrayBuffer(eventRings.length * 4);
   const self = makeMockSelf();
   proc.worklet.initialize(self, {
     processorOptions: {
@@ -271,6 +275,7 @@ test("conformance: the event out-ring publish matches the model's safe op-order"
       transport: "sab",
       eventRings,
       eventRingsBuffer: sab,
+      egressAccessBuffer,
       eventRingSabOffsets: offsets,
     },
   });
@@ -278,9 +283,15 @@ test("conformance: the event out-ring publish matches the model's safe op-order"
   const ringSabOffset = offsets[0]!;
   const ringTotalBytes = 12 + eventRings[0]!.capacity * eventRings[0]!.slotSize;
   const q = emptyQuantum();
-  const captured = capturePublish(sab, ringSabOffset, ringTotalBytes, () => {
-    proc.worklet.process(self, q.inputs, q.outputs, q.parameters);
-  });
+  const captured = capturePublish(
+    sab,
+    ringSabOffset,
+    ringTotalBytes,
+    () => {
+      proc.worklet.process(self, q.inputs, q.outputs, q.parameters);
+    },
+    egressAccessBuffer,
+  );
 
   expect(captured).toEqual(OUT_RING_PUBLISH_OPS);
 });
@@ -300,6 +311,7 @@ test("conformance: a drop-oldest quantum commits the advanced tail via atomic mo
   const eventRings = proc.worklet.eventRings;
   const ringTotalBytes = 12 + eventRings[0]!.capacity * eventRings[0]!.slotSize;
   const sab = new ArrayBuffer(ringTotalBytes);
+  const egressAccessBuffer = new SharedArrayBuffer(eventRings.length * 4);
   const self = makeMockSelf();
   proc.worklet.initialize(self, {
     processorOptions: {
@@ -307,6 +319,7 @@ test("conformance: a drop-oldest quantum commits the advanced tail via atomic mo
       transport: "sab",
       eventRings,
       eventRingsBuffer: sab,
+      egressAccessBuffer,
       eventRingSabOffsets: [0],
     },
   });
@@ -317,9 +330,15 @@ test("conformance: a drop-oldest quantum commits the advanced tail via atomic mo
   for (let quantum = 0; quantum < 16; quantum++) {
     proc.worklet.process(self, q.inputs, q.outputs, q.parameters);
   }
-  const captured = capturePublish(sab, 0, ringTotalBytes, () => {
-    proc.worklet.process(self, q.inputs, q.outputs, q.parameters);
-  });
+  const captured = capturePublish(
+    sab,
+    0,
+    ringTotalBytes,
+    () => {
+      proc.worklet.process(self, q.inputs, q.outputs, q.parameters);
+    },
+    egressAccessBuffer,
+  );
 
   expect(captured).toEqual(OUT_RING_PUBLISH_OPS_TAIL_ADVANCE);
 });
@@ -347,6 +366,7 @@ test("conformance: the MIDI out-ring publish matches the model's safe op-order",
     total += 12 + r.capacity * 8;
   }
   const sab = new ArrayBuffer(total);
+  const egressAccessBuffer = new SharedArrayBuffer(midiRings.length * 4);
   const self = makeMockSelf();
   thru.worklet.initialize(self, {
     processorOptions: {
@@ -354,6 +374,7 @@ test("conformance: the MIDI out-ring publish matches the model's safe op-order",
       transport: "sab",
       midiRings,
       midiRingsBuffer: sab,
+      egressAccessBuffer,
       midiRingSabOffsets: offsets,
       sysexContentSabOffsets: midiRings.map(() => 0),
     },
@@ -375,9 +396,15 @@ test("conformance: the MIDI out-ring publish matches the model's safe op-order",
   const outOffset = offsets[outIndex]!;
   const ringTotalBytes = 12 + midiRings[outIndex]!.capacity * 8;
   const q = emptyQuantum();
-  const captured = capturePublish(sab, outOffset, ringTotalBytes, () => {
-    thru.worklet.process(self, q.inputs, q.outputs, q.parameters);
-  });
+  const captured = capturePublish(
+    sab,
+    outOffset,
+    ringTotalBytes,
+    () => {
+      thru.worklet.process(self, q.inputs, q.outputs, q.parameters);
+    },
+    egressAccessBuffer,
+  );
 
   expect(captured).toEqual(OUT_RING_PUBLISH_OPS);
 });
@@ -462,6 +489,7 @@ test("conformance: the MIDI in-ring mirror matches the model's safe op-order", a
       transport: "sab",
       midiRings,
       midiRingsBuffer: sab,
+      egressAccessBuffer: new SharedArrayBuffer(midiRings.length * 4),
       midiRingSabOffsets: offsets,
       sysexContentSabOffsets: midiRings.map(() => 0),
     },
@@ -565,6 +593,7 @@ test("conformance: the worklet commits the MIDI in-ring tail via compare-exchang
       transport: "sab",
       midiRings,
       midiRingsBuffer: sab,
+      egressAccessBuffer: new SharedArrayBuffer(midiRings.length * 4),
       midiRingSabOffsets: offsets,
       sysexContentSabOffsets: midiRings.map(() => 0),
     },

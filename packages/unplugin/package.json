@@ -1,6 +1,6 @@
 {
   "name": "@unworklet/unplugin",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Vite plugin for `@unworklet/core` processors (`?worklet` imports, source maps, DevTools panels, analysis JSON).",
   "keywords": [
     "audio",
@@ -75,8 +75,7 @@
     "@vitejs/devtools-kit": "catalog:",
     "bumpp": "^11.1.0",
     "typescript": "catalog:",
-    "vite": "catalog:",
-    "vite-plus": "catalog:"
+    "vite": "catalog:"
   },
   "peerDependencies": {
     "@unworklet/core": "workspace:^",

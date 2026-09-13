@@ -205,6 +205,7 @@ type WorkletState = {
   readonly publishSlots: readonly PublishSlotDescriptor[];
   readonly lastVersions: number[];
   readonly transport: TransportMode;
+  readonly egressAccess: Int32Array | null;
   readonly publishWasmSharedViews: readonly Int32Array[];
   readonly publishWasmCounterViews: readonly Int32Array[];
   /**
@@ -423,6 +424,7 @@ type ProcessorOptionsBag = {
      * (the safer fallback).
      */
     transport?: TransportMode;
+    egressAccessBuffer?: SharedArrayBuffer | ArrayBuffer;
     /**
      * Shared buffer for the event ring buffer (sub-phase 7.6 commit 5b). A
      * single SAB (allocated by main) holding all event rings laid out
@@ -999,6 +1001,17 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       // in port = same as message (main → WASM); out port = same as event (WASM → main).
       const midiRingsBuffer = opts.processorOptions?.midiRingsBuffer ?? null;
       const midiRingsMeta = opts.processorOptions?.midiRings ?? [];
+      const egressAccessBuffer = opts.processorOptions?.egressAccessBuffer ?? null;
+      if (
+        transport === "sab" &&
+        (eventRingsBuffer !== null ||
+          (midiRingsBuffer !== null && midiRingsMeta.some((ring) => ring.direction === "out"))) &&
+        (egressAccessBuffer === null ||
+          egressAccessBuffer.byteLength < (eventRings.length + midiRingsMeta.length) * 4)
+      ) {
+        throw new Error("unworklet: SAB out-rings require an egress access word for each ring");
+      }
+      const egressAccess = egressAccessBuffer === null ? null : new Int32Array(egressAccessBuffer);
       const midiRingSabOffsets = opts.processorOptions?.midiRingSabOffsets ?? [];
       const sysexContentBuffer = opts.processorOptions?.sysexContentBuffer ?? null;
       const sysexContentSabOffsets = opts.processorOptions?.sysexContentSabOffsets ?? [];
@@ -1062,6 +1075,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         publishSlots,
         lastVersions,
         transport,
+        egressAccess,
         publishWasmSharedViews,
         publishWasmCounterViews,
         eventRingsBuffer,
@@ -1150,8 +1164,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         const buf = memory.buffer;
         for (const s of meta.states) {
           if (s.userNamed !== true || !isPersistent(s.snapshot, "persistent", profile)) continue;
-          const off = lay.regions.states.slots[s.name];
-          if (off === undefined) continue;
+          const off = lay.regions.states.slots[s.name]!;
           out.push({
             name: s.name,
             kind: "state",
@@ -1161,8 +1174,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         }
         for (const b of meta.buffers) {
           if (b.userNamed !== true || !isPersistent(b.snapshot, "transient", profile)) continue;
-          const off = lay.regions.buffers.slots[b.name];
-          if (off === undefined) continue;
+          const off = lay.regions.buffers.slots[b.name]!;
           const byteLen = b.size * SNAPSHOT_ELEMENT_BYTES[b.type]!;
           out.push({
             name: b.name,
@@ -1192,8 +1204,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         const out: SnapshotSlot[] = [];
         const buf = memory.buffer;
         for (const s of meta.states) {
-          const off = lay.regions.states.slots[s.name];
-          if (off === undefined) continue;
+          const off = lay.regions.states.slots[s.name]!;
           out.push({
             name: s.name,
             kind: "state",
@@ -1202,8 +1213,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
           });
         }
         for (const b of meta.buffers) {
-          const off = lay.regions.buffers.slots[b.name];
-          if (off === undefined) continue;
+          const off = lay.regions.buffers.slots[b.name]!;
           const byteLen = b.size * SNAPSHOT_ELEMENT_BYTES[b.type]!;
           out.push({
             name: b.name,
@@ -1897,32 +1907,26 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       const wasmHeaders = state.eventRingsWasmHeaderViews;
       const sabHeaders = state.eventRingsSabHeaderViews;
       for (let i = 0; i < state.eventRings.length; i++) {
-        const wasmH = wasmHeaders[i]!;
-        const currentHead = wasmH[0]!;
-        const currentTail = wasmH[1]!;
-        const currentOverflow = wasmH[2]!;
-        // Slot region only — copying the header would write `head` with a plain
-        // store before the release store below, letting a consumer read-from it
-        // without the happens-before that publishes the slots (a torn read).
-        sabSlotViews[i]!.set(wasmSlotViews[i]!);
-        // §4.3 with a typed-array field = mirror the content region WASM → SAB
-        // (before the head Atomics.store = the release fence lets main observe it through the slots).
-        const contentWasm = state.eventContentWasmViews[i];
-        const contentSab = state.eventContentSabViews[i];
-        if (contentWasm !== null && contentSab !== null) {
-          contentSab.set(contentWasm);
+        const access = state.egressAccess!;
+        // A busy reader owns a complete snapshot in progress. Keep the WASM
+        // backlog for another quantum; the audio thread never waits for main.
+        if (Atomics.compareExchange(access, i, 0, 1) !== 0) continue;
+        try {
+          const wasmH = wasmHeaders[i]!;
+          const currentHead = wasmH[0]!;
+          const currentTail = wasmH[1]!;
+          const currentOverflow = wasmH[2]!;
+          sabSlotViews[i]!.set(wasmSlotViews[i]!);
+          const contentWasm = state.eventContentWasmViews[i];
+          const contentSab = state.eventContentSabViews[i];
+          if (contentWasm !== null && contentSab !== null) contentSab.set(contentWasm);
+          const sabH = sabHeaders[i]!;
+          atomicMonotoneMax(sabH, 1, currentTail);
+          Atomics.store(sabH, 2, currentOverflow);
+          Atomics.store(sabH, 0, currentHead);
+        } finally {
+          Atomics.store(access, i, 0);
         }
-        const sabH = sabHeaders[i]!;
-        // head is the release point: commit tail + overflow FIRST so a consumer
-        // that acquire-loads the new head already sees the matching window. Storing
-        // head first lets a cross-thread reader pair a new head with a stale tail /
-        // overflow and miscompute the drop-oldest clamp (= event garble race).
-        // tail is a two-writer word (WASM drop-oldest here, the main drain
-        // commit on the consumer side) — monotone-max, never a plain store
-        // that could rewind the consumer's commit (lost update).
-        atomicMonotoneMax(sabH, 1, currentTail);
-        Atomics.store(sabH, 2, currentOverflow);
-        Atomics.store(sabH, 0, currentHead);
       }
     }
 
@@ -1978,26 +1982,24 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
           // SAB path only — the postMessage path rides the pooled egress frame
           // below, shared with the event rings (`egressFrame.ts`).
           if (isSab && state.midiRingsBuffer !== null) {
-            const currentHead = wasmH[0]!;
-            const currentTail = wasmH[1]!;
-            const currentOverflow = wasmH[2]!;
-            // Slot-region copy only — the header is carried by the release
-            // Atomics.store below, never the plain bulk copy (= no torn read).
-            state.midiRingsSabSlotViews[i]!.set(state.midiRingsWasmSlotViews[i]!);
-            const sysexWasm = state.sysexContentWasmViews[i];
-            const sysexSab = state.sysexContentSabViews[i];
-            if (sysexWasm !== null && sysexSab !== null) {
-              sysexSab.set(sysexWasm);
+            const access = state.egressAccess!;
+            const accessIndex = state.eventRings.length + i;
+            if (Atomics.compareExchange(access, accessIndex, 0, 1) !== 0) continue;
+            try {
+              const currentHead = wasmH[0]!;
+              const currentTail = wasmH[1]!;
+              const currentOverflow = wasmH[2]!;
+              state.midiRingsSabSlotViews[i]!.set(state.midiRingsWasmSlotViews[i]!);
+              const sysexWasm = state.sysexContentWasmViews[i];
+              const sysexSab = state.sysexContentSabViews[i];
+              if (sysexWasm !== null && sysexSab !== null) sysexSab.set(sysexWasm);
+              const sabH = state.midiRingsSabHeaderViews[i]!;
+              atomicMonotoneMax(sabH, 1, currentTail);
+              Atomics.store(sabH, 2, currentOverflow);
+              Atomics.store(sabH, 0, currentHead);
+            } finally {
+              Atomics.store(access, accessIndex, 0);
             }
-            const sabH = state.midiRingsSabHeaderViews[i]!;
-            // head is the release point: commit tail + overflow FIRST so a consumer
-            // that acquire-loads the new head already sees the matching window
-            // (= same release order as the event out ring). tail is two-writer
-            // (WASM drop-oldest here, the main drain commit) — monotone-max,
-            // never a plain store that could rewind the consumer's commit.
-            atomicMonotoneMax(sabH, 1, currentTail);
-            Atomics.store(sabH, 2, currentOverflow);
-            Atomics.store(sabH, 0, currentHead);
           }
         } else {
           // in port = expose the WASM drain tail to main / notify overflow

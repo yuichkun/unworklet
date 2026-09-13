@@ -5,9 +5,8 @@
  * Why this exists: the SAB ring is concurrent. A race surfaces once in a million
  * runs, by the luck of timing — a passing browser run proves nothing about the
  * next interleaving. Code coverage cannot see "did the bad interleaving happen?".
- * The only honest answer is to **enumerate every interleaving and prove the bad
- * one is absent** (or witness it, for a buggy protocol). This file is that
- * enumerator.
+ * The enumerator checks every interleaving within each declared fragment. Its
+ * result covers those operations and invariants, not the whole transport.
  *
  * ## The modeled fragment (and its honest limits)
  *
@@ -60,7 +59,7 @@ export interface StoreEvent {
 /** A thread's local registers (named scalar locals). */
 export type Regs = Record<string, number>;
 
-export type Op =
+export type Op = (
   | {
       readonly kind: "store";
       readonly loc: string;
@@ -73,7 +72,8 @@ export type Op =
       readonly loc: string;
       readonly update: (cur: number, r: Regs) => number;
       readonly into?: string;
-    };
+    }
+) & { readonly when?: (registers: Regs) => boolean };
 
 export interface ThreadSpec {
   readonly name: string;
@@ -149,6 +149,11 @@ const readFloor = (t: IThread, loc: string, arr: readonly StoreEvent[]): number 
 
 /** Expand one operation of thread `ti` into all of its possible next states. */
 const stepOptions = (s: IState, ti: number, op: Op): IState[] => {
+  if (op.when !== undefined && !op.when(s.threads[ti]!.regs)) {
+    const ns = cloneState(s);
+    ns.threads[ti]!.pc++;
+    return [ns];
+  }
   if (op.kind === "store") {
     const ns = cloneState(s);
     const t = ns.threads[ti]!;
@@ -334,15 +339,17 @@ export type HeaderWord = "head" | "tail" | "overflow";
  * to one descriptor is what stops the model drifting into a false green.
  */
 export type AbstractRingOp =
+  | { readonly op: "try-access" | "release-access" }
   | { readonly op: "bulk-copy"; readonly touchesHeader: boolean }
   | { readonly op: "atomic-store"; readonly word: HeaderWord }
   | { readonly op: "atomic-max"; readonly word: HeaderWord }
   | { readonly op: "atomic-load"; readonly word: HeaderWord };
 
 /**
- * The op-sequence the **fixed** out-ring publish must emit on a steady quantum
- * (no drop-oldest advance): a slot-region-only bulk copy (never the header),
- * then overflow and `head` release stores with `head` last. The out-ring tail
+ * Out-ring publication without a drop-oldest advance or variable content:
+ * one access attempt, slot-only copy, overflow/head stores, then release.
+ * A failed attempt publishes nothing and does not release another owner.
+ * The out-ring tail
  * is a two-writer word — the worklet's drop-oldest and the main drain-commit —
  * composed through an atomic monotone-max, and a proposal that does not lead
  * the current value is skipped entirely, which is why no tail op appears here.
@@ -350,9 +357,11 @@ export type AbstractRingOp =
  * sequence to this.
  */
 export const OUT_RING_PUBLISH_OPS: readonly AbstractRingOp[] = [
+  { op: "try-access" },
   { op: "bulk-copy", touchesHeader: false },
   { op: "atomic-store", word: "overflow" },
   { op: "atomic-store", word: "head" },
+  { op: "release-access" },
 ];
 
 /**
@@ -362,18 +371,68 @@ export const OUT_RING_PUBLISH_OPS: readonly AbstractRingOp[] = [
  * so a consumer acquiring the new head sees the matching window.
  */
 export const OUT_RING_PUBLISH_OPS_TAIL_ADVANCE: readonly AbstractRingOp[] = [
+  { op: "try-access" },
   { op: "bulk-copy", touchesHeader: false },
   { op: "atomic-max", word: "tail" },
   { op: "atomic-store", word: "overflow" },
   { op: "atomic-store", word: "head" },
+  { op: "release-access" },
 ];
 
 /**
- * Model of the **out-ring publish** (worklet → main), e.g. an event/MIDI-out
- * ring. The worklet copies its WASM ring into the SAB and then release-stores
- * tail, overflow, head (head last, the release point). The consumer (main rAF
- * poll, `client.ts` `pollEventRings`) acquire-loads head and tail, then
- * plain-reads the slot.
+ * One overwritten slot and its separate content, protected through the same
+ * access word. The consumer copies both under ownership and acknowledges its
+ * captured head. Callbacks run on private bytes outside this modeled section.
+ */
+export function outRingSnapshotSpec(guarded: boolean): ModelSpec {
+  const acquired = (r: Regs): boolean => r.acquired === 0;
+  const enter: Op = {
+    kind: "rmw",
+    loc: "access",
+    update: (cur) => (guarded && cur === 0 ? 1 : cur),
+    into: "acquired",
+  };
+  const leave: Op = {
+    kind: "store",
+    loc: "access",
+    value: () => 0,
+    mode: "release",
+    when: acquired,
+  };
+  return {
+    locations: { access: 0, head: 1, tail: 0, slot: 0, content: 0 },
+    threads: [
+      {
+        name: "P",
+        ops: [
+          enter,
+          { kind: "store", loc: "slot", value: () => 1, mode: "plain", when: acquired },
+          { kind: "store", loc: "content", value: () => 1, mode: "plain", when: acquired },
+          { kind: "rmw", loc: "tail", update: (cur) => Math.max(cur, 1), when: acquired },
+          { kind: "store", loc: "head", value: () => 2, mode: "release", when: acquired },
+          leave,
+        ],
+      },
+      {
+        name: "C",
+        ops: [
+          enter,
+          { kind: "load", loc: "head", into: "head", mode: "acquire", when: acquired },
+          { kind: "load", loc: "tail", into: "tail", mode: "acquire", when: acquired },
+          { kind: "load", loc: "slot", into: "slot", mode: "plain", when: acquired },
+          { kind: "load", loc: "content", into: "content", mode: "plain", when: acquired },
+          { kind: "rmw", loc: "tail", update: (cur, r) => Math.max(cur, r.head!), when: acquired },
+          leave,
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * Head-publication litmus for an empty out-ring receiving one slot. This
+ * isolates acquire visibility; it does not cover overwrite of an unread slot.
+ * `outRingSnapshotSpec` covers that case and the access-word ownership.
  *
  * `touchesHeader: true` reproduces the bug — the bulk `.set()` spans the whole
  * ring including the 12-byte header, so it writes `head` with a plain store

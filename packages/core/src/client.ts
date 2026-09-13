@@ -36,7 +36,8 @@ import {
   alignUp4,
   egressPoolBufferBytes,
 } from "./egressFrame.ts";
-import { atomicMonotoneMax, dropOldestIfFull, ringLeads, ringSlotIndex } from "./ringIndex.ts";
+import { dropOldestIfFull, ringLeads, ringSlotIndex } from "./ringIndex.ts";
+import { captureOutRing, createOutRingSnapshot } from "./outRingSnapshot.ts";
 import { decodeScalar, type SnapshotSlot } from "./snapshot.ts";
 import { decodeSnapshot, encodeSnapshot, inspectSnapshot, runMigrations } from "./snapshotBlob.ts";
 import type { RestoreResult } from "./types.ts";
@@ -397,6 +398,11 @@ export async function createNode<C>(
     typeof globalThis !== "undefined" &&
     (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated === true;
   const transportMode: "sab" | "postMessage" = sabAvailable ? "sab" : "postMessage";
+  const egressAccessBuffer =
+    sabAvailable && (eventRings.length > 0 || midiRings.some((ring) => ring.direction === "out"))
+      ? new SharedArrayBuffer((eventRings.length + midiRings.length) * 4)
+      : null;
+  const egressAccess = egressAccessBuffer === null ? null : new Int32Array(egressAccessBuffer);
 
   // Make the SAB fallback visible by default. `onError({ code: 'sab-unavailable' })`
   // is opt-in, so a dev who never subscribes would otherwise hit the slower
@@ -546,6 +552,7 @@ export async function createNode<C>(
   let rafHandle: number | null = null;
   let drainTimer: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
+  let draining = false;
   let publishSharedView: Int32Array | null = null;
   // Internal mirror for the postMessage path (= holds valueBits / version in
   // slotIndex order, updated in port.onmessage and read by the `.value` getter /
@@ -619,6 +626,23 @@ export async function createNode<C>(
   // slot's [len, offset] and slice a fresh typed array from here.
   const eventContentBytes: Uint8Array | null =
     eventContentBuffer !== null ? new Uint8Array(eventContentBuffer) : null;
+  const eventSnapshots = eventRings.map((ring, i) =>
+    eventRingsBuffer === null
+      ? null
+      : createOutRingSnapshot(
+          eventRingsBuffer,
+          eventRingSabOffsets[i]!,
+          ring.capacity * ring.slotSize,
+          ring.payloadContent === undefined
+            ? null
+            : eventContentBytes!.subarray(
+                eventContentSabOffsets[i]!,
+                eventContentSabOffsets[i]! + ring.payloadContent.capacity,
+              ),
+          egressAccess!,
+          i,
+        ),
+  );
   if (eventRings.length > 0) {
     for (let i = 0; i < eventRings.length; i++) {
       const ring = eventRings[i]!;
@@ -799,6 +823,23 @@ export async function createNode<C>(
   }
   const sysexContentBytes: Uint8Array | null =
     sysexContentBuffer !== null ? new Uint8Array(sysexContentBuffer) : null;
+  const midiOutSnapshots = midiRings.map((ring, i) =>
+    midiRingsBuffer === null || ring.direction !== "out"
+      ? null
+      : createOutRingSnapshot(
+          midiRingsBuffer,
+          midiRingSabOffsets[i]!,
+          ring.capacity * 8,
+          ring.sysex === undefined
+            ? null
+            : sysexContentBytes!.subarray(
+                sysexContentSabOffsets[i]!,
+                sysexContentSabOffsets[i]! + ring.sysex.perChunk * ring.sysex.chunks,
+              ),
+          egressAccess!,
+          eventRings.length + i,
+        ),
+  );
 
   // atTime → block-local atSample (§4.2). Omitting atTime = 0 (= the next block
   // boundary). A given atTime clamps the sample offset from now into one block
@@ -1009,46 +1050,21 @@ export async function createNode<C>(
   // tail→head + decode + dispatch (= same lifecycle as the event ring poll).
   // Skip in ports.
   function pollMidiOutRings(): void {
-    if (midiRingsView === null || midiRingsHeaderView === null) return;
+    if (disposed || midiRingsView === null || midiRingsHeaderView === null) return;
     for (let i = 0; i < midiRings.length; i++) {
       const ring = midiRings[i]!;
       if (ring.direction !== "out") continue;
-      const sabOffset = midiRingSabOffsets[i]!;
-      const headSabWordIdx = sabOffset >>> 2;
-      const currentHead = Atomics.load(midiRingsHeaderView, headSabWordIdx);
-      const tailSabWordIdx = headSabWordIdx + 1;
-      const sabTail = Atomics.load(midiRingsHeaderView, tailSabWordIdx);
-      const localTail = midiOutLocalTails[i]!;
-      // Serial-number rebase + `ringLeads` loop bound, for the same reasons as
-      // the event ring drain above (wrap safety; the producer can advance the
-      // shared tail past this pass's head snapshot mid-drain).
-      let tail = ringLeads(sabTail, localTail) ? sabTail : localTail;
-      if (!ringLeads(currentHead, tail)) continue;
-      const slotsBase = sabOffset + 12;
-      const contentBytes =
-        ring.sysex !== undefined && sysexContentBytes !== null
-          ? sysexContentBytes.subarray(
-              sysexContentSabOffsets[i]!,
-              sysexContentSabOffsets[i]! + ring.sysex.perChunk * ring.sysex.chunks,
-            )
-          : null;
-      while (ringLeads(currentHead, tail)) {
-        const slotByteOffset = slotsBase + ringSlotIndex(tail, ring.capacity) * 8;
-        const { event } = decodeMidiSlot(midiRingsView, slotByteOffset, i, contentBytes);
-        // Revalidate after decode, before dispatch — a concurrent drop-oldest
-        // past this slot means its bytes were re-used for a newer emit.
-        const tailNow = Atomics.load(midiRingsHeaderView, tailSabWordIdx);
-        if (ringLeads(tailNow, tail)) {
-          tail = tailNow;
-          continue;
-        }
+      const snapshot = midiOutSnapshots[i]!;
+      if (!captureOutRing(snapshot, midiOutLocalTails[i]!)) continue;
+      const currentHead = snapshot.head;
+      let tail = snapshot.from;
+      midiOutLocalTails[i] = currentHead;
+      while (ringLeads(currentHead, tail) && !disposed) {
+        const slotByteOffset = ringSlotIndex(tail, ring.capacity) * 8;
+        const { event } = decodeMidiSlot(snapshot.view, slotByteOffset, i, snapshot.content);
         dispatchMidiEvent(ring.name, event);
-        tail += 1;
+        tail = (tail + 1) | 0;
       }
-      midiOutLocalTails[i] = tail;
-      // Consumer→producer feedback: commit the drain position (monotone-max —
-      // the worklet's drop-oldest writes this word too).
-      atomicMonotoneMax(midiRingsHeaderView, tailSabWordIdx, tail);
     }
   }
 
@@ -1062,19 +1078,13 @@ export async function createNode<C>(
     for (let i = 0; i < publishSlots.length; i++) {
       const slot = publishSlots[i]!;
       const versionSlotIdx = i * 3 + 2;
-      const currentVersion =
-        transportMode === "sab"
-          ? Atomics.load(publishSharedView, versionSlotIdx)
-          : publishSharedView[versionSlotIdx]!;
+      const currentVersion = Atomics.load(publishSharedView, versionSlotIdx);
       if (currentVersion === lastSeenVersions[i]) continue;
       lastSeenVersions[i] = currentVersion;
       const subscribers = stateSubscribers.get(slot.name);
       if (!subscribers || subscribers.size === 0) continue;
       const valueSlotIdx = i * 3;
-      const bits =
-        transportMode === "sab"
-          ? Atomics.load(publishSharedView, valueSlotIdx)
-          : publishSharedView[valueSlotIdx]!;
+      const bits = Atomics.load(publishSharedView, valueSlotIdx);
       const value = convertStateValue(bits, slot.type);
       for (const handler of subscribers) {
         try {
@@ -1087,67 +1097,35 @@ export async function createNode<C>(
   }
 
   function pollEventRings(): void {
-    if (eventRingsView === null || eventRingsHeaderView === null) return;
+    if (disposed || eventRingsView === null || eventRingsHeaderView === null) return;
     for (let i = 0; i < eventRings.length; i++) {
+      const snapshot = eventSnapshots[i]!;
+      if (!captureOutRing(snapshot, eventLocalTails[i]!)) continue;
       const ring = eventRings[i]!;
-      const sabOffset = eventRingSabOffsets[i]!;
-      const headSabWordIdx = sabOffset >>> 2;
-      const currentHead =
-        transportMode === "sab"
-          ? Atomics.load(eventRingsHeaderView, headSabWordIdx)
-          : eventRingsHeaderView[headSabWordIdx]!;
-      // drop-oldest may have fired on the worklet side → the SAB tail may have
-      // advanced past the main-local tail, so rebase to whichever leads
-      // (serial-number order — a plain `<` inverts across the 2^31 wrap) and
-      // drain. The loop bound is `ringLeads`, not `!==`: the producer can
-      // advance the shared tail past this pass's `currentHead` snapshot while
-      // handlers run, and an equality bound would walk the wrapped ring forever.
-      const tailSabWordIdx = headSabWordIdx + 1;
-      const sabTail =
-        transportMode === "sab"
-          ? Atomics.load(eventRingsHeaderView, tailSabWordIdx)
-          : eventRingsHeaderView[tailSabWordIdx]!;
-      const localTail = eventLocalTails[i]!;
-      let tail = ringLeads(sabTail, localTail) ? sabTail : localTail;
-      if (!ringLeads(currentHead, tail)) continue;
+      const currentHead = snapshot.head;
+      let tail = snapshot.from;
+      eventLocalTails[i] = currentHead;
       const subscribers = eventSubscribers.get(ring.name);
-      const slotsBase = sabOffset + 12;
-      while (ringLeads(currentHead, tail)) {
-        const slotIdx = ringSlotIndex(tail, ring.capacity);
-        const slotByteOffset = slotsBase + slotIdx * ring.slotSize;
+      while (ringLeads(currentHead, tail) && !disposed) {
+        const slotByteOffset = ringSlotIndex(tail, ring.capacity) * ring.slotSize;
         if (subscribers !== undefined && subscribers.size > 0) {
           const payload: Record<string, unknown> = {};
           for (const field of ring.fields) {
             const fieldByteOffset = slotByteOffset + field.offsetInSlot;
-            if (field.payloadElementType !== undefined && eventContentBytes !== null) {
-              // typed-array field = read the slot's [payloadLen, payloadOffset]
-              // and slice a fresh typed array from the SAB content region (= §4.3).
-              const payloadLen = eventRingsView.getInt32(fieldByteOffset, true);
-              const payloadOffset = eventRingsView.getInt32(fieldByteOffset + 4, true);
-              const absBase = eventContentSabOffsets[i]! + payloadOffset;
+            if (field.payloadElementType !== undefined && snapshot.content !== null) {
+              const payloadLen = snapshot.view.getInt32(fieldByteOffset, true);
+              const payloadOffset = snapshot.view.getInt32(fieldByteOffset + 4, true);
               payload[field.name] = sliceTypedArray(
-                eventContentBytes.subarray(absBase, absBase + payloadLen),
+                snapshot.content.subarray(payloadOffset, payloadOffset + payloadLen),
                 field.payloadElementType,
               );
             } else {
               payload[field.name] = readEventFieldValue(
-                eventRingsView,
+                snapshot.view,
                 fieldByteOffset,
                 field.wireType,
               );
             }
-          }
-          // Revalidate AFTER decoding, BEFORE dispatch: a concurrent drop-oldest
-          // that advanced the shared tail past this slot re-used its bytes for a
-          // newer emit, so what was just decoded may be a torn old/new mix.
-          // Discard it and resume the drain at the producer's tail.
-          const tailNow =
-            transportMode === "sab"
-              ? Atomics.load(eventRingsHeaderView, tailSabWordIdx)
-              : eventRingsHeaderView[tailSabWordIdx]!;
-          if (ringLeads(tailNow, tail)) {
-            tail = tailNow;
-            continue;
           }
           for (const handler of subscribers) {
             try {
@@ -1157,14 +1135,8 @@ export async function createNode<C>(
             }
           }
         }
-        tail += 1;
+        tail = (tail + 1) | 0;
       }
-      eventLocalTails[i] = tail;
-      // Commit the drain position so the producer's overflow check sees real
-      // occupancy (consumer→producer feedback). Monotone-max: the worklet's
-      // drop-oldest writes this word too, and a plain store could rewind its
-      // advance (lost update → re-delivered slot).
-      atomicMonotoneMax(eventRingsHeaderView, tailSabWordIdx, tail);
     }
   }
 
@@ -1187,10 +1159,17 @@ export async function createNode<C>(
 
   const pageHidden = (): boolean => pageDocument()?.visibilityState === "hidden";
 
-  function drainOnce(): void {
-    pollPublishSlots();
-    pollEventRings();
-    pollMidiOutRings();
+  function drainOnce(): boolean {
+    if (draining || disposed) return false;
+    draining = true;
+    try {
+      pollPublishSlots();
+      pollEventRings();
+      pollMidiOutRings();
+      return true;
+    } finally {
+      draining = false;
+    }
   }
 
   // The polls fire user handlers synchronously, and a handler may dispose() the
@@ -1202,7 +1181,7 @@ export async function createNode<C>(
   function drainTick(): void {
     rafHandle = null;
     drainTimer = null;
-    drainOnce();
+    if (!drainOnce()) return;
     if (disposed || !hasAnySubscribers()) return;
     armDrain();
   }
@@ -1211,6 +1190,7 @@ export async function createNode<C>(
   // idles with the display), a recursive timer when rAF is missing (worker-ish
   // realms) or the page is hidden (rAF throttles to ~0 there).
   function armDrain(): void {
+    if (rafHandle !== null || drainTimer !== null) return;
     const raf = (globalThis as { requestAnimationFrame?: (cb: () => void) => number })
       .requestAnimationFrame;
     if (raf !== undefined && !pageHidden()) {
@@ -1245,7 +1225,7 @@ export async function createNode<C>(
   // and the show flush delivers whatever accumulated while hidden without
   // waiting a frame.
   const onVisibilityChange = (): void => {
-    if (disposed) return;
+    if (disposed || draining) return;
     if (rafHandle === null && drainTimer === null) return; // no active loop = nothing to swap
     stopRafLoop();
     drainOnce();
@@ -1296,6 +1276,7 @@ export async function createNode<C>(
     // `new WebAssembly.Instance(module)` (= no sync compile on the audio
     // thread = no first-quantum glitch potential).
     processorOptions: {
+      ...(egressAccessBuffer === null ? {} : { egressAccessBuffer }),
       module: wasmModule,
       // When there are publish slots = hand over the descriptor + transport for
       // both transport modes (= the worklet template receives them in initialize

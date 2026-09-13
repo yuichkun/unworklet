@@ -54,3 +54,19 @@ test("an oversized artifact stops being serialized instead of being measured aft
   // ~32 MB of payload against an 8 MB cap: a full walk would touch all 8000.
   expect(touched).toBeLessThan(items.length / 2);
 });
+
+test("a throwing artifact getter preserves the failure instead of reporting a size skip", () => {
+  const failure = new Error("cannot read diagnostic graph");
+  expect(() =>
+    partitionAnalysisArtifacts([
+      {
+        name: "graph.json",
+        value: {
+          get graph(): never {
+            throw failure;
+          },
+        },
+      },
+    ]),
+  ).toThrow(failure);
+});

@@ -9,13 +9,21 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 
 ## 0.3.0 — unreleased
 
-The correctness-and-honesty batch: the audio-thread transport gains its missing
-consumer feedback and loses its last per-quantum allocation, buffer DSP gets
-the same numeric hygiene as scalar state, and several declared-but-broken or
-silently-lossy surfaces now refuse loudly instead. Eight changes are breaking —
-read the migrations.
+The stability batch: ring consumption flows back to the producer, outbound
+shared-memory reads use consistent snapshots, fallback egress reuses buffers,
+and buffer DSP gets the same numeric hygiene as scalar state. Unsupported
+surfaces report actionable errors. Nine public surface changes are breaking —
+read the migrations. Processor-file exports are refused with migration guidance
+instead of moving declarations across their side effects.
 
 ### Breaking
+
+**Processor `.uwk.ts` files reject additional module-level exports.** Value,
+type, default, and re-export forms report `uwk-export-unsupported` when the file
+contains `process()`. Type-only exports that erased during transpilation also
+fall under this rule. Migration: put shared constants, types, and helpers in a
+separate `.ts` or library-only `.uwk.ts` file, and import them into the processor.
+A library-only file contains no `process()` and keeps its exports.
 
 **`publish` on a buffer is rejected at graph capture.** It was accepted but
 inert — the publish pipeline is scalar-only, so the slot never appeared on
@@ -125,21 +133,27 @@ to a 0.2.x build.
   reporting losses that never happened. The advance is now a compare-exchange
   from the observed tail, and only the sender that wins it — the one that
   actually overwrote a slot — counts an overflow.
-- **The postMessage fallback's audio thread no longer allocates per quantum.**
+- **The postMessage fallback reuses egress buffers and envelopes.**
   Event and MIDI-out egress rode fresh `Uint8Array`s and content-region
   copies built on the audio thread every quantum; they now ride a single
   pooled transferable frame whose buffers main pre-allocates and recycles
   (ownership ping-pong, with consumed-tail acks piggybacked on the recycle).
   The message envelope and its transfer list are bound once at initialize and
-  rewritten in place, so nothing on the send path allocates. Receiving a
-  returned buffer still rebinds its two views — a transferred ArrayBuffer
-  arrives as a fresh identity — but that cost is fixed rather than scaling with
-  the frame. The internal page↔worklet wire protocol changed accordingly.
-- **A hidden tab no longer loses events and MIDI (stuck notes).** The
+  rewritten in place. Receiving a returned buffer binds its two views and a
+  pool entry; message delivery also allocates in the receiving realm. The
+  complete fallback audio thread has no allocation-free or GC-free guarantee.
+  The emitted DSP retains its fixed-memory, bounded-work contract.
+- **A hidden tab continues draining events and MIDI.** The
   main-side drain ran only on `requestAnimationFrame`, which throttles to ~0
   in hidden tabs while the audio thread keeps emitting; the drain now falls
   back to a timer when the page is hidden or rAF is missing, and flushes
-  immediately on visibility transitions.
+  immediately on visibility transitions. Browser scheduling delays can still
+  exceed ring capacity and cause observable overflow.
+- **Outbound SAB events and MIDI are copied as consistent snapshots.** Each
+  ring's publication and main-thread snapshot use a single atomic try-acquire.
+  The audio thread skips a contended publication without waiting and retains
+  its WASM backlog. Main releases the guard before decoding and notifying
+  subscribers, preventing slot/payload mixtures and reentrant scratch reuse.
 - **Buffer-backed feedback flushes subnormals; non-finite output is
   scrubbed.** Float buffer stores (and SIMD `storeVec` lanes) flush
   `|v| < 1e-30` to 0 like scalar state always did — a decaying delay-line tail
@@ -153,21 +167,21 @@ to a 0.2.x build.
   silence. (One golden fixture's frozen PCM turned out to be the product of
   such an out-of-bounds read.) Buffers too small to hold a lane window are
   rejected outright — see Breaking.
+- **SIMD stores preserve their value while computing the offset.** A store's
+  lane-flush temporary is separate from the temporary used by `sumLanes`, so
+  a computed offset cannot overwrite the vector being stored.
 - **A runtime-negative sysex `length` no longer traps.** `memory.copy` reads
   its size operand unsigned, so a user-computed length gone negative became a
-  ~4 GiB copy — an OOB trap that silenced the node permanently. Lengths clamp
-  to `[0, cap]` on every sysex copy path.
-- **`.uwk.ts` module-scope exports work.** An `export`ed declaration used to
-  be swallowed into the `defineProcessor` wrapper, emitting invalid
-  JavaScript. Exports now hoist to module scope together with their
-  (DSL-free) dependency closure; a DSL-tied or unsupported export is a loud
-  `uwk-export-unsupported` LowerError instead of broken emit. Whether an export
-  touches the DSL is decided by resolving each reference against the scopes and
-  namespaces around it, so a pure helper is not rejected for naming its
-  parameters after DSL identifiers (`export function clampTo(input, min, max)`
-  hoists), and a hoisted declaration takes its whole dependency closure with it
-  — values, the type aliases its annotations name, and every declaration of a
-  merged name.
+  ~4 GiB copy — an OOB trap that silenced the node permanently. Invalid outbound
+  lengths drop the whole message and increment its diagnostic counter.
+- **A processor `.uwk.ts` reports additional exports at lowering.** A file
+  containing `process()` rejects authored module-level value/type exports,
+  default exports, and re-exports with `uwk-export-unsupported`. Shared values,
+  types, and helpers belong in a separate `.ts` or library-only `.uwk.ts` file,
+  imported by the processor. A library-only file keeps its exports. Declarations
+  retain their source order; the lowering does not infer callback effects or
+  move exported initializers past mutations. Migration: move the shared
+  declarations into a separate module and import them into the processor.
 - **Re-exporting the processor as `default` is accepted.** `export const wave
 = defineProcessor(...); export default wave;` was rejected as "multiple
   processors"; the count is now by value identity, and the named binding wins
@@ -179,8 +193,8 @@ to a 0.2.x build.
   write.
 - **Crash-stranded `.uwklowered.mjs` / `.uwkfailed.mjs` temps are swept.** The
   temp tag now embeds a parseable owner pid; the next materialization removes
-  temps whose owner is provably dead (older-format strays go by age), and
-  never touches a live process's files.
+  temps whose owner is provably dead. Files without the owned tag and files
+  belonging to a live process are left untouched.
 - **DevTools MIDI panel sysex injection reaches the processor.** The panel's
   RPC-serialized `number[]` payload is validated and converted to the
   `Uint8Array` that `send()` expects; malformed bytes are dropped with a

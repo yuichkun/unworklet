@@ -65,20 +65,13 @@ test("lowering off a captured snapshot compiles to a real (non-empty) WASM", asy
   expect((wasm as Uint8Array).byteLength).toBeGreaterThan(200);
 });
 
-test("a processor with a module-scope export evaluates end-to-end (issue #44 repro)", () => {
-  // Pre-fix, the export was swallowed into the defineProcessor callback and the
-  // emitted module threw `SyntaxError: Unexpected token 'export'` at eval.
-  const processor = lowerToProcessor(`
-export const GAIN = 0.5;
-const out = audioOutput({ channels: 1, name: "main" });
-process(() => {
-  forSample((i) => {
-    out.ch(0).at(i).write(GAIN);
-  });
-});
-`);
-  expect(processor).toBeTruthy();
-  expect(typeof processor.schemaHash).toBe("string");
+test("runtime compilation rejects authored processor exports with migration guidance", () => {
+  expect(() => lowerToProcessor(`export const GAIN = 0.5;\nprocess(() => {});`)).toThrow(
+    expect.objectContaining({
+      id: "uwk-export-unsupported",
+      message: expect.stringMatching(/separate shared module.*import/i),
+    }),
+  );
 });
 
 test("options({ id }) flows through to the compiled processor's identity", () => {
@@ -94,9 +87,7 @@ options({ id: "synth-x" });
   expect(processor.id).toBe("synth-x");
 });
 
-test("a hoisted enum survives the runtime-compile path", () => {
-  // The export partition hoists enums (and namespaces) to module scope, so the
-  // runtime path has to turn them into something a function body can hold.
+test("an enum in an already-lowered module evaluates", () => {
   const lowered =
     `import { audioOutput, defineProcessor, forSample } from "@unworklet/core";\n` +
     `export enum Mode { Soft = 1, Hard = 2 }\n` +
@@ -109,7 +100,7 @@ test("a hoisted enum survives the runtime-compile path", () => {
   expect(typeof proc.schemaHash).toBe("string");
 });
 
-test("a hoisted namespace survives the runtime-compile path", () => {
+test("a namespace in an already-lowered module evaluates", () => {
   const lowered =
     `import { audioOutput, defineProcessor, forSample } from "@unworklet/core";\n` +
     `export namespace Tuning { export const A4 = 440; }\n` +

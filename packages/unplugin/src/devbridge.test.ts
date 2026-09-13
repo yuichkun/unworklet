@@ -222,6 +222,15 @@ test("normalizeFreqDb: maps dB into 0..1 over [minDb, maxDb] and clamps", () => 
   expect(out[4]).toBe(1); // 0 dB clamps to 1
 });
 
+test("normalizeFreqDb: empty input or no requested bins produces no display data", () => {
+  expect(normalizeFreqDb([], 8)).toEqual([]);
+  expect(normalizeFreqDb([-80, -60], 0)).toEqual([]);
+});
+
+test("normalizeFreqDb: equal display bounds keep the result finite and clamped", () => {
+  expect(normalizeFreqDb([-81, -80, -79], 3, -80, -80)).toEqual([0, 0, 1]);
+});
+
 // ── slotMemory ──────────────────────────────────────────────────────────────
 
 test("slotMemory: bytes per slot come from the real dumped byte length", () => {
@@ -324,4 +333,11 @@ test("toLoggableMidiEvent: leaves an already-plain sysex payload as an array", (
 test("toLoggableMidiEvent: passes non-sysex events through unchanged", () => {
   const noteOn = { type: "noteOn", channel: 0, note: 60, velocity: 100 };
   expect(toLoggableMidiEvent(noteOn)).toBe(noteOn);
+});
+
+test("toLoggableMidiEvent: does not invent bytes for an absent or opaque sysex payload", () => {
+  const absent = { type: "sysex" };
+  const opaque = { type: "sysex", data: { diagnostic: "unavailable" } };
+  expect(toLoggableMidiEvent(absent)).toBe(absent);
+  expect(toLoggableMidiEvent(opaque)).toBe(opaque);
 });
