@@ -661,6 +661,7 @@ test("publish copy (sab mode): due tick at end of quantum copies value to SAB vi
       publishBuffer,
       publishSlots: publishProc.worklet.publishSlots,
       transport: "sab",
+      ingressAccessBuffer: new SharedArrayBuffer(8),
     },
   });
 
@@ -725,6 +726,7 @@ test("publish copy: view unchanged when block is not yet due (= skip path)", asy
       publishBuffer,
       publishSlots: publishProc.worklet.publishSlots,
       transport: "sab",
+      ingressAccessBuffer: new SharedArrayBuffer(8),
     },
   });
 
@@ -786,6 +788,7 @@ for (const egressAccessBuffer of [undefined, new SharedArrayBuffer(0)]) {
       processorOptions: {
         wasm,
         transport: "sab",
+        ingressAccessBuffer: new SharedArrayBuffer(8),
         eventRings: eventEmitProc.worklet.eventRings,
         eventRingsBuffer: new SharedArrayBuffer(12 + ring.capacity * ring.slotSize),
         eventRingSabOffsets: [0],
@@ -813,6 +816,7 @@ test("event ring copy (sab mode): WASM emit reflected into SAB header + slots vi
       eventRings: eventEmitProc.worklet.eventRings,
       eventRingSabOffsets: [0],
       transport: "sab",
+      ingressAccessBuffer: new SharedArrayBuffer(8),
     },
   });
   const input = new Float32Array(SAMPLES_PER_BLOCK).fill(0.25);
@@ -1162,6 +1166,7 @@ test("message ring mirror (sab mode): main SAB push → process mirrors into WAS
       messageRings: messageRecvProc.worklet.messageRings,
       messageRingSabOffsets: [0],
       transport: "sab",
+      ingressAccessBuffer: new SharedArrayBuffer(8),
     },
   });
   // Simulate a main-side push: write slot 0 = 42 into the SAB and Atomics.store head = 1.
@@ -1190,6 +1195,7 @@ test("message ring mirror (sab mode): head acquire-load occurs before slot copy 
       messageRings: messageRecvProc.worklet.messageRings,
       messageRingSabOffsets: [0],
       transport: "sab",
+      ingressAccessBuffer: new SharedArrayBuffer(8),
     },
   });
   const headerView = new Int32Array(messageRingsBuffer, 0, 3);

@@ -140,109 +140,80 @@ const capturePublish = (
   return captured;
 };
 
-/**
- * Run `run()` while recording, in execution order, the worklet's in-ring mirror
- * of one ring: each header `Atomics.load` (acquire) and the bulk `.set()` copy
- * whose SOURCE is the SAB ring (tagged with whether the source starts at the
- * header — i.e. whether the copy spans the 12-byte header).
- */
+/** Capture acquisition, private copy, acknowledgment and ownership release. */
 const captureMirror = (
   sab: ArrayBuffer,
   sabRingOffset: number,
   ringTotalBytes: number,
+  accessBuffer: ArrayBufferLike,
   run: () => void,
 ): AbstractRingOp[] => {
   const captured: AbstractRingOp[] = [];
-  // The mirror runs at the START of the quantum and ends at its bulk copy; stop
-  // recording after it so a later same-ring access (e.g. the tail-commit load)
-  // is not folded into the mirror sequence.
   let done = false;
-
   const realLoad = Atomics.load.bind(Atomics);
+  const realStore = Atomics.store.bind(Atomics);
+  const realCompare = Atomics.compareExchange.bind(Atomics);
   const loadSpy = vi.spyOn(Atomics, "load").mockImplementation(((
-    ta: Int32Array,
+    view: Int32Array,
     index: number,
-  ): number => {
-    if (!done && ta.buffer === sab && ta.byteOffset === sabRingOffset && ta.length === 3) {
+  ) => {
+    if (!done && view.buffer === sab && view.byteOffset === sabRingOffset && view.length === 3) {
       captured.push({
         op: "atomic-load",
         word: index === 0 ? "head" : index === 1 ? "tail" : "overflow",
       });
     }
-    return realLoad(ta, index);
+    return realLoad(view, index);
   }) as typeof Atomics.load);
-
-  // oxlint-disable-next-line typescript/unbound-method -- saved to restore the native method; only ever invoked via .call(this)
-  const realSet = Uint8Array.prototype.set;
-  // eslint-disable-next-line no-extend-native -- restored in finally
-  Uint8Array.prototype.set = function (this: Uint8Array, src: ArrayLike<number>, offset?: number) {
-    if (!done && ArrayBuffer.isView(src)) {
-      const v = src as ArrayBufferView;
-      if (
-        v.buffer === sab &&
-        v.byteOffset >= sabRingOffset &&
-        v.byteOffset < sabRingOffset + ringTotalBytes
-      ) {
-        captured.push({ op: "bulk-copy", touchesHeader: v.byteOffset === sabRingOffset });
-        done = true;
-      }
+  const compareSpy = vi.spyOn(Atomics, "compareExchange").mockImplementation(((
+    view: Int32Array,
+    index: number,
+    expected: number,
+    value: number,
+  ) => {
+    if (!done && view.buffer === accessBuffer) captured.push({ op: "try-access" });
+    return realCompare(view, index, expected, value);
+  }) as typeof Atomics.compareExchange);
+  const storeSpy = vi.spyOn(Atomics, "store").mockImplementation(((
+    view: Int32Array,
+    index: number,
+    value: number,
+  ) => {
+    if (!done && view.buffer === sab && view.byteOffset === sabRingOffset && view.length === 3) {
+      captured.push({
+        op: "atomic-store",
+        word: index === 0 ? "head" : index === 1 ? "tail" : "overflow",
+      });
     }
-    return offset === undefined ? realSet.call(this, src) : realSet.call(this, src, offset);
+    if (!done && view.buffer === accessBuffer) {
+      captured.push({ op: "release-access" });
+      done = true;
+    }
+    return realStore(view, index, value);
+  }) as typeof Atomics.store);
+  // oxlint-disable-next-line typescript/unbound-method -- restored in finally
+  const realSet = Uint8Array.prototype.set;
+  Uint8Array.prototype.set = function (source, offset) {
+    const bytes = source as Uint8Array;
+    if (
+      !done &&
+      bytes.buffer === sab &&
+      bytes.byteOffset >= sabRingOffset &&
+      bytes.byteOffset < sabRingOffset + ringTotalBytes
+    ) {
+      captured.push({ op: "bulk-copy", touchesHeader: bytes.byteOffset === sabRingOffset });
+    }
+    return realSet.call(this, source, offset);
   };
-
   try {
     run();
   } finally {
     loadSpy.mockRestore();
+    compareSpy.mockRestore();
+    storeSpy.mockRestore();
     Uint8Array.prototype.set = realSet;
   }
   return captured;
-};
-
-/**
- * Run `run()` while recording, in order, how the worklet writes the `tail` word
- * (index 1) of one in-ring's SAB header: via a plain `Atomics.store` (the lost-
- * update-prone form) or an `Atomics.compareExchange` (the monotone-max form).
- * The in-ring tail has a second writer (the main drop-oldest), so the safe form
- * is the compare-exchange.
- */
-const captureTailCommit = (
-  sab: ArrayBuffer,
-  ringSabOffset: number,
-  run: () => void,
-): Array<"store" | "cas"> => {
-  const writes: Array<"store" | "cas"> = [];
-  const isTail = (ta: Int32Array, index: number): boolean =>
-    ta.buffer === sab && ta.byteOffset === ringSabOffset && ta.length === 3 && index === 1;
-
-  const realStore = Atomics.store.bind(Atomics);
-  const storeSpy = vi.spyOn(Atomics, "store").mockImplementation(((
-    ta: Int32Array,
-    index: number,
-    value: number,
-  ): number => {
-    if (isTail(ta, index)) writes.push("store");
-    return realStore(ta, index, value);
-  }) as typeof Atomics.store);
-
-  const realCx = Atomics.compareExchange.bind(Atomics);
-  const cxSpy = vi.spyOn(Atomics, "compareExchange").mockImplementation(((
-    ta: Int32Array,
-    index: number,
-    expected: number,
-    replacement: number,
-  ): number => {
-    if (isTail(ta, index)) writes.push("cas");
-    return realCx(ta, index, expected, replacement);
-  }) as typeof Atomics.compareExchange);
-
-  try {
-    run();
-  } finally {
-    storeSpy.mockRestore();
-    cxSpy.mockRestore();
-  }
-  return writes;
 };
 
 // ── event out-ring (worklet.ts event publish) ───────────────────────────────
@@ -273,6 +244,7 @@ test("conformance: the event out-ring publish matches the model's safe op-order"
     processorOptions: {
       wasm,
       transport: "sab",
+      ingressAccessBuffer: new SharedArrayBuffer(8),
       eventRings,
       eventRingsBuffer: sab,
       egressAccessBuffer,
@@ -317,6 +289,7 @@ test("conformance: a drop-oldest quantum commits the advanced tail via atomic mo
     processorOptions: {
       wasm,
       transport: "sab",
+      ingressAccessBuffer: new SharedArrayBuffer(8),
       eventRings,
       eventRingsBuffer: sab,
       egressAccessBuffer,
@@ -372,6 +345,7 @@ test("conformance: the MIDI out-ring publish matches the model's safe op-order",
     processorOptions: {
       wasm,
       transport: "sab",
+      ingressAccessBuffer: new SharedArrayBuffer(8),
       midiRings,
       midiRingsBuffer: sab,
       egressAccessBuffer,
@@ -435,10 +409,12 @@ test("conformance: the message in-ring mirror matches the model's safe op-order"
   const ringTotalBytes = 12 + ring.capacity * ring.slotSize;
   const sab = new ArrayBuffer(ringTotalBytes);
   const self = makeMockSelf();
+  const ingressAccessBuffer = new SharedArrayBuffer(8);
   proc.worklet.initialize(self, {
     processorOptions: {
       wasm,
       transport: "sab",
+      ingressAccessBuffer,
       messageRings,
       messageRingsBuffer: sab,
       messageRingSabOffsets: [0],
@@ -452,7 +428,7 @@ test("conformance: the message in-ring mirror matches the model's safe op-order"
   Atomics.store(headerView, 0, 1);
 
   const q = emptyQuantum();
-  const captured = captureMirror(sab, 0, ringTotalBytes, () => {
+  const captured = captureMirror(sab, 0, ringTotalBytes, ingressAccessBuffer, () => {
     proc.worklet.process(self, q.inputs, q.outputs, q.parameters);
   });
 
@@ -483,10 +459,12 @@ test("conformance: the MIDI in-ring mirror matches the model's safe op-order", a
   }
   const sab = new ArrayBuffer(total);
   const self = makeMockSelf();
+  const ingressAccessBuffer = new SharedArrayBuffer(8);
   thru.worklet.initialize(self, {
     processorOptions: {
       wasm,
       transport: "sab",
+      ingressAccessBuffer,
       midiRings,
       midiRingsBuffer: sab,
       egressAccessBuffer: new SharedArrayBuffer(midiRings.length * 4),
@@ -508,7 +486,7 @@ test("conformance: the MIDI in-ring mirror matches the model's safe op-order", a
 
   const inRingTotalBytes = 12 + midiRings[inIndex]!.capacity * 8;
   const q = emptyQuantum();
-  const captured = captureMirror(sab, inOffset, inRingTotalBytes, () => {
+  const captured = captureMirror(sab, inOffset, inRingTotalBytes, ingressAccessBuffer, () => {
     thru.worklet.process(self, q.inputs, q.outputs, q.parameters);
   });
 
@@ -516,104 +494,3 @@ test("conformance: the MIDI in-ring mirror matches the model's safe op-order", a
 });
 
 // ── in-ring tail commit mechanism (bug #3: split-writer tail) ───────────────
-
-test("conformance: the worklet commits the message in-ring tail via compare-exchange", async () => {
-  const proc = defineProcessor(() => {
-    const out = audioOutput({ channels: 1, name: "out" });
-    const captured = stateDecl.named("captured").i32(0);
-    const ctrl = event<{ slot: number }>({ from: "main", name: "ctrl", capacity: 16 });
-    return {
-      process: () => {
-        ctrl.onReceive(({ slot }) => {
-          // `slot` is a `number` field → `Node<'f32'>` on the wire; convert to the
-          // i32 counter slot explicitly.
-          captured.write(i32(slot));
-        });
-        forSample((i) => {
-          out.ch(0).at(i).write(0);
-        });
-      },
-    };
-  });
-  const { wasm } = await compile(proc);
-  const messageRings = proc.worklet.messageRings;
-  const ring = messageRings[0]!;
-  const ringTotalBytes = 12 + ring.capacity * ring.slotSize;
-  const sab = new ArrayBuffer(ringTotalBytes);
-  const self = makeMockSelf();
-  proc.worklet.initialize(self, {
-    processorOptions: {
-      wasm,
-      transport: "sab",
-      messageRings,
-      messageRingsBuffer: sab,
-      messageRingSabOffsets: [0],
-    },
-  });
-  // One pending message so the worklet drains (advances tail) and commits it.
-  const headerView = new Int32Array(sab, 0, 3);
-  new Float32Array(sab, 12)[0] = 42; // inbound `slot` rides the f32 wire
-  Atomics.store(headerView, 0, 1);
-
-  const q = emptyQuantum();
-  const writes = captureTailCommit(sab, 0, () => {
-    proc.worklet.process(self, q.inputs, q.outputs, q.parameters);
-  });
-
-  // The tail is written by compare-exchange (monotone-max), never a plain store
-  // that could rewind the main drop-oldest's advance.
-  expect(writes).toEqual(["cas"]);
-});
-
-test("conformance: the worklet commits the MIDI in-ring tail via compare-exchange", async () => {
-  const thru = defineProcessor(() => {
-    const midiIn = event.midi({ from: "main", name: "in" });
-    const midiOut = event.midi({ to: "main", name: "out" });
-    return {
-      process: () => {
-        midiIn.onEvent("noteOn", ({ channel, note, velocity, atSample }) => {
-          midiOut.emitIf(true, { type: "noteOn", channel, note, velocity, atSample });
-        });
-      },
-    };
-  });
-  const { wasm } = await compile(thru);
-  const midiRings = thru.worklet.midiRings;
-  let total = 0;
-  const offsets: number[] = [];
-  for (const r of midiRings) {
-    offsets.push(total);
-    total += 12 + r.capacity * 8;
-  }
-  const sab = new ArrayBuffer(total);
-  const self = makeMockSelf();
-  thru.worklet.initialize(self, {
-    processorOptions: {
-      wasm,
-      transport: "sab",
-      midiRings,
-      midiRingsBuffer: sab,
-      egressAccessBuffer: new SharedArrayBuffer(midiRings.length * 4),
-      midiRingSabOffsets: offsets,
-      sysexContentSabOffsets: midiRings.map(() => 0),
-    },
-  });
-
-  const inIndex = midiRings.findIndex((r) => r.direction === "in");
-  const inOffset = offsets[inIndex]!;
-  const inHeader = new Int32Array(sab, inOffset, 3);
-  const dv = new DataView(sab);
-  const wire = midiEventToWire({ type: "noteOn", channel: 0, note: 60, velocity: 100 });
-  dv.setUint8(inOffset + 12, wire.status);
-  dv.setUint8(inOffset + 13, wire.data1);
-  dv.setUint8(inOffset + 14, wire.data2);
-  dv.setUint32(inOffset + 16, 0, true);
-  Atomics.store(inHeader, 0, 1);
-
-  const q = emptyQuantum();
-  const writes = captureTailCommit(sab, inOffset, () => {
-    thru.worklet.process(self, q.inputs, q.outputs, q.parameters);
-  });
-
-  expect(writes).toEqual(["cas"]);
-});

@@ -112,3 +112,22 @@ test("a namespace in an already-lowered module evaluates", () => {
   expect(proc).toHaveProperty("graph");
   expect(typeof proc.schemaHash).toBe("string");
 });
+
+test("named helper exports and a local export list remain usable in lowered modules", () => {
+  const proc = evalLowered(`import { defineProcessor } from "@unworklet/core";
+export function helper() { return 0.5; }
+export class Gain { value = helper(); }
+const instance = new Gain();
+export { instance };
+export default defineProcessor(() => ({ process() { void instance; } }));`);
+  expect(proc).toHaveProperty("graph");
+});
+
+test.each(['export * from "./other.ts";', 'export { value } from "./other.ts";'])(
+  "runtime evaluation reports a cross-file re-export: %s",
+  (declaration) => {
+    expect(() => evalLowered(`${declaration}\nexport default {};`)).toThrow(
+      /cannot re-export from other files/,
+    );
+  },
+);

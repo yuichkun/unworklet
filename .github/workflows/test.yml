@@ -47,7 +47,7 @@ jobs:
   coverage:
     name: Branch coverage (${{ matrix.package }})
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -121,6 +121,7 @@ jobs:
         # dist target, a broken .d.mts, an unresolved subpath) still fail the gate.
         run: |
           set -e
+          packed_dir="$(mktemp -d)"
           for p in core lang offline test unplugin; do
             echo "::group::@unworklet/$p"
             # lang's ./typescript-plugin export is a tsserver plugin (referenced by
@@ -128,8 +129,8 @@ jobs:
             # ships no .d.ts → ignore attw's untyped-resolution for lang only.
             ignore=(fallback-condition)
             if [ "$p" = "lang" ]; then ignore=(fallback-condition untyped-resolution); fi
-            ( cd "packages/$p" \
-              && vp dlx publint \
-              && vp dlx @arethetypeswrong/cli --pack --profile esm-only --ignore-rules "${ignore[@]}" )
+            ( cd "packages/$p" && vp pm pack --pack-destination "$packed_dir" )
+            vp dlx -- publint "$packed_dir/unworklet-$p-"*.tgz --strict
+            vp dlx -- @arethetypeswrong/cli "$packed_dir/unworklet-$p-"*.tgz --profile esm-only --ignore-rules "${ignore[@]}"
             echo "::endgroup::"
           done

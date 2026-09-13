@@ -747,16 +747,6 @@ export type CompiledProcessor<C> = {
   readonly __compiledProcessor: C;
 };
 
-/**
- * Resolve a node-handle config from either the config directly or a
- * `CompiledProcessor<config>` (a `?worklet` import), so `UnworkletNode<P>` can be
- * named with the processor itself —
- * `let node: UnworkletNode<typeof import("./x.processor.ts?worklet")>` — and not
- * only its inner config. A config (no `CompiledProcessor` shape) passes through
- * unchanged, so `createNode`'s internal `UnworkletNode<C>` is unaffected.
- */
-type ConfigOf<P> = P extends CompiledProcessor<infer C> ? C : P;
-
 export type Migration = {
   from: string;
   to: string;
@@ -1037,7 +1027,13 @@ export type MidiPortSurfaceFor<D> = D extends { dir: "in" }
     ? Omit<MidiPortSurface, "send" | "connectFromWebMIDI">
     : MidiPortSurface;
 
-export type UnworkletNode<P> = UnworkletNodeOf<ConfigOf<P>>;
+/** Resolve a config, compiled processor, or module namespace with a default processor. */
+export type UnworkletNode<P> =
+  P extends CompiledProcessor<infer C>
+    ? UnworkletNodeOf<C>
+    : P extends { default: CompiledProcessor<infer C> }
+      ? UnworkletNodeOf<C>
+      : UnworkletNodeOf<P>;
 
 /**
  * The structural node-handle surface, resolved against a processor's config `C`.

@@ -1,6 +1,13 @@
 import { expect, test } from "vite-plus/test";
 
-import { plainTsModuleSpecifiers, rewriteImportSpecifiers, uwkImportRefs } from "./uwk-imports.ts";
+import {
+  moduleSpecifiers,
+  plainTsModuleSpecifiers,
+  relativeModuleSpecifiers,
+  runtimeModuleSpecifiers,
+  rewriteImportSpecifiers,
+  uwkImportRefs,
+} from "./uwk-imports.ts";
 
 test("uwkImportRefs returns only .uwk.ts import specifiers", () => {
   const src =
@@ -148,4 +155,38 @@ test("uwkImportRefs marks dynamic worklet edges as lazy and static ones as not",
     { spec: "./onepole.uwk.ts", lazy: false },
     { spec: "./later.uwk.ts", lazy: true },
   ]);
+});
+
+test("dependency discovery deduplicates repeated worklet and relative imports", () => {
+  const source = `import { value } from "./shared.uwk.ts";
+export { other } from "./shared.uwk.ts";
+import "./shared.uwk.ts";
+import "./helper.ts";
+import "./helper.ts";`;
+  expect(uwkImportRefs(source)).toEqual([{ spec: "./shared.uwk.ts", lazy: false }]);
+  expect(relativeModuleSpecifiers(source)).toEqual(["./shared.uwk.ts", "./helper.ts"]);
+  expect(plainTsModuleSpecifiers(source)).toEqual(["./helper.ts"]);
+});
+
+test("runtime helper dependencies preserve inline type imports and discard type-only clauses", () => {
+  const source = `import type { Type } from "./types.ts";
+import { type Inline } from "./inline.ts";
+import "./side-effect.ts";
+export type { Exported } from "./exported.ts";
+type Query = import("./query.ts").Query;`;
+  expect(runtimeModuleSpecifiers(source)).toEqual(["./inline.ts", "./side-effect.ts"]);
+  expect(moduleSpecifiers(source)).toEqual([
+    "./types.ts",
+    "./inline.ts",
+    "./side-effect.ts",
+    "./exported.ts",
+    "./query.ts",
+  ]);
+});
+
+test("module discovery tolerates nonliteral references in incomplete editor input", () => {
+  expect(
+    moduleSpecifiers(`type Pending = import(123);
+const loaded = import(name);`),
+  ).toEqual([]);
 });

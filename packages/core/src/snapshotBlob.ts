@@ -306,10 +306,14 @@ function makeHelpers(
       written.add(name);
     },
     writeBuffer: <T extends BufferElementType>(name: string, type: T, data: TypedArrayOf<T>) => {
+      const storage =
+        type === "bool"
+          ? Int32Array.from(data as Uint8Array, (value) => Number(value !== 0))
+          : data;
       const bytes = new Uint8Array(
-        (data as { buffer: ArrayBufferLike }).buffer,
-        (data as { byteOffset: number }).byteOffset,
-        (data as { byteLength: number }).byteLength,
+        (storage as { buffer: ArrayBufferLike }).buffer,
+        (storage as { byteOffset: number }).byteOffset,
+        (storage as { byteLength: number }).byteLength,
       );
       out.set(name, { name, kind: "buffer", type, data: bytes.slice() });
       written.add(name);

@@ -297,11 +297,11 @@ const makeWaveProcessor = () =>
   });
 
 /** Echoes inbound sysex back out through a u8 buffer (offline/midi.test.ts shape). */
-const makeSysexEchoProcessor = () =>
+const makeSysexEchoProcessor = (capacity: 16 | 512 = CAPACITY_16) =>
   defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const sysexIn = event.midi({ from: "main", name: "sin", capacity: CAPACITY_16 });
-    const sysexOut = event.midi({ to: "main", name: "sout", capacity: CAPACITY_16 });
+    const sysexIn = event.midi({ from: "main", name: "sin", capacity });
+    const sysexOut = event.midi({ to: "main", name: "sout", capacity });
     const buf = state.buffer.u8({ size: 16 });
     return {
       process: () => {
@@ -783,3 +783,212 @@ for (const quanta of [3, 20]) {
     }
   });
 }
+
+test("SAB ingress snapshots input while a producer sends across the copy", async () => {
+  const processor = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "out" });
+    const incoming = event<{ n: number }>({
+      from: "main",
+      name: "incoming",
+      capacity: CAPACITY_16,
+    });
+    const sum = state.f32(0);
+    return {
+      process: () => {
+        incoming.onReceive(({ n }) => sum.write(sum.read().add(n)));
+        forSample((i) => out.ch(0).at(i).write(sum.read()));
+      },
+    };
+  });
+  const session = await bootLoopback(processor, { crossOriginIsolated: true });
+  const incoming = session.node.events.incoming!;
+  const shared = session.harness.capturedProcessorOptions().messageRingsBuffer;
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  // oxlint-disable-next-line typescript/unbound-method -- restored in finally
+  const realSet = Uint8Array.prototype.set;
+  let injected = false;
+  try {
+    for (let n = 0; n < 16; n++) incoming.emit({ n });
+    Uint8Array.prototype.set = function (source, offset) {
+      if ((source as Uint8Array).buffer === shared && !injected) {
+        injected = true;
+        incoming.emit({ n: 16 });
+      }
+      return realSet.call(this, source, offset);
+    };
+    processor.worklet.process(session.harness.workletSelf as never, [], outputs, {});
+    Uint8Array.prototype.set = realSet;
+    expect(injected).toBe(true);
+    expect(outputs[0]![0]![0]).toBe(120);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    processor.worklet.process(session.harness.workletSelf as never, [], outputs, {});
+    expect(outputs[0]![0]![0]).toBe(136);
+    expect(incoming.diagnostics.overflowCount()).toBe(0);
+  } finally {
+    Uint8Array.prototype.set = realSet;
+    session.node.dispose();
+    session.harness.cleanup();
+  }
+});
+
+for (const crossOriginIsolated of [true, false]) {
+  test(`typed ingress batches retain differently sized payloads (SAB=${crossOriginIsolated})`, async () => {
+    const processor = defineProcessor(() => {
+      const incoming = event<{ samples: Float32Array }>({
+        from: "main",
+        name: "incoming",
+        capacity: CAPACITY_16,
+        payloadCapacity: 16,
+      });
+      const result = event<{ first: number; length: number }>({
+        to: "main",
+        name: "result",
+        capacity: CAPACITY_16,
+      });
+      return {
+        process: () =>
+          incoming.onReceive(({ samples }) => {
+            result.emitIf(true, { first: samples.at(0), length: samples.length });
+          }),
+      };
+    });
+    const session = await bootLoopback(processor, { crossOriginIsolated });
+    const received: Array<{ first: number; length: number }> = [];
+    session.node.events.result!.on((value) =>
+      received.push(value as { first: number; length: number; atSample: number }),
+    );
+    try {
+      for (let batch = 0; batch < 3; batch++) {
+        for (let i = 0; i < 20; i++) {
+          session.node.events.incoming!.emit({
+            samples: new Float32Array(1 + (i % 4)).fill(batch * 20 + i),
+          });
+        }
+        session.runQuantum();
+        session.harness.pumpRaf();
+      }
+      expect(received.map(({ first, length }) => [first, length])).toEqual(
+        Array.from({ length: 3 }, (_, batch) =>
+          Array.from({ length: 16 }, (_, i) => [batch * 20 + 4 + i, 1 + (i % 4)]),
+        ).flat(),
+      );
+      expect(session.node.events.incoming!.diagnostics.overflowCount()).toBe(12);
+    } finally {
+      session.node.dispose();
+      session.harness.cleanup();
+    }
+  });
+}
+
+test("SAB ingress retries without subscribers, snapshots caller bytes and cancels on dispose", async () => {
+  const processor = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "out" });
+    const incoming = event<{ samples: Float32Array }>({
+      from: "main",
+      name: "incoming",
+      capacity: CAPACITY_16,
+      payloadCapacity: 16,
+    });
+    const sum = state.f32(0);
+    return {
+      process: () => {
+        incoming.onReceive(({ samples }) => sum.write(sum.read().add(samples.at(0))));
+        forSample((i) => out.ch(0).at(i).write(sum.read()));
+      },
+    };
+  });
+  const session = await bootLoopback(processor, { crossOriginIsolated: true });
+  const options = session.harness.capturedProcessorOptions();
+  const access = new Int32Array(options.ingressAccessBuffer as SharedArrayBuffer);
+  const shared = new Int32Array(options.messageRingsBuffer as SharedArrayBuffer, 0, 3);
+  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  vi.useFakeTimers();
+  try {
+    access[0] = 1;
+    const samples = Float32Array.of(10);
+    session.node.events.incoming!.emit({ samples });
+    samples[0] = 99;
+    session.node.events.incoming!.emit({ samples: Float32Array.of(20) });
+    expect(vi.getTimerCount()).toBe(1);
+    access[0] = 0;
+    await vi.advanceTimersByTimeAsync(4);
+    processor.worklet.process(session.harness.workletSelf as never, [], outputs, {});
+    expect(outputs[0]![0]![0]).toBe(30);
+    expect(vi.getTimerCount()).toBe(0);
+    access[0] = 1;
+    session.node.events.incoming!.emit({ samples });
+    expect(vi.getTimerCount()).toBe(1);
+    session.node.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+    access[0] = 0;
+    await vi.advanceTimersByTimeAsync(100);
+    expect(shared[0]).toBe(2);
+  } finally {
+    vi.useRealTimers();
+    session.node.dispose();
+    session.harness.cleanup();
+  }
+});
+
+for (const crossOriginIsolated of [true, false]) {
+  test(`sysex ingress retains and rebases more than 256 payloads (SAB=${crossOriginIsolated})`, async () => {
+    const session = await bootLoopback(makeSysexEchoProcessor(512), { crossOriginIsolated });
+    const received: number[] = [];
+    session.node.midi.sout!.onEvent("sysex", (value) =>
+      received.push(value.data[2]! + 128 * value.data[3]!),
+    );
+    try {
+      for (let n = 0; n < 600; n++) {
+        session.node.midi.sin!.send({
+          type: "sysex",
+          data: Uint8Array.from([0xf0, 0x7e, n % 128, Math.floor(n / 128), 0xf7]),
+        });
+      }
+      session.runQuantum();
+      session.harness.pumpRaf();
+      expect(received).toEqual(Array.from({ length: 512 }, (_, i) => i + 88));
+      expect(session.node.midi.sin!.diagnostics.overflowCount()).toBe(88);
+      expect(session.node.midi.sout!.diagnostics.overflowCount()).toBe(0);
+    } finally {
+      session.node.dispose();
+      session.harness.cleanup();
+    }
+  });
+}
+
+test("SAB sysex sends during copying are queued as immutable complete messages", async () => {
+  const session = await bootLoopback(makeSysexEchoProcessor(), { crossOriginIsolated: true });
+  const options = session.harness.capturedProcessorOptions();
+  const received: number[] = [];
+  session.node.midi.sout!.onEvent("sysex", (value) => received.push(value.data[2]!));
+  // oxlint-disable-next-line typescript/unbound-method -- restored in finally
+  const realSet = Uint8Array.prototype.set;
+  let injected = false;
+  try {
+    for (let n = 0; n < 16; n++)
+      session.node.midi.sin!.send({ type: "sysex", data: Uint8Array.from([0xf0, 0x7e, n, 0xf7]) });
+    Uint8Array.prototype.set = function (source, offset) {
+      if ((source as Uint8Array).buffer === options.sysexContentBuffer && !injected) {
+        injected = true;
+        const data = Uint8Array.from([0xf0, 0x7e, 16, 0xf7]);
+        session.node.midi.sin!.send({ type: "sysex", data });
+        data[2] = 99;
+      }
+      return realSet.call(this, source, offset);
+    };
+    session.runQuantum();
+    Uint8Array.prototype.set = realSet;
+    session.harness.pumpRaf();
+    expect(injected).toBe(true);
+    expect(received).toEqual(Array.from({ length: 16 }, (_, i) => i));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    session.runQuantum();
+    session.harness.pumpRaf();
+    expect(received).toEqual(Array.from({ length: 17 }, (_, i) => i));
+    expect(session.node.midi.sin!.diagnostics.overflowCount()).toBe(0);
+  } finally {
+    Uint8Array.prototype.set = realSet;
+    session.node.dispose();
+    session.harness.cleanup();
+  }
+});

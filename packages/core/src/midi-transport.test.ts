@@ -285,6 +285,7 @@ test("sab: an inbound noteOn written to the shared ring round-trips through the 
     processorOptions: {
       wasm,
       transport: "sab",
+      ingressAccessBuffer: new SharedArrayBuffer(8),
       midiRings,
       midiRingsBuffer: midiBuf,
       egressAccessBuffer: new SharedArrayBuffer(midiRings.length * 4),
@@ -354,6 +355,7 @@ test("sab: inbound ring overflow drops oldest and advances the overflow counter"
     processorOptions: {
       wasm,
       transport: "sab",
+      ingressAccessBuffer: new SharedArrayBuffer(8),
       midiRings,
       midiRingsBuffer: midiBuf,
       egressAccessBuffer: new SharedArrayBuffer(midiRings.length * 4),
@@ -410,6 +412,7 @@ test("sab: the out-ring producer stores head LAST (release order, not torn)", as
     processorOptions: {
       wasm,
       transport: "sab",
+      ingressAccessBuffer: new SharedArrayBuffer(8),
       midiRings,
       midiRingsBuffer: midiBuf,
       egressAccessBuffer: new SharedArrayBuffer(midiRings.length * 4),

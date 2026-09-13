@@ -2859,46 +2859,40 @@ test("node.events.<name>.emit(payload): overflow path increments overflowCount w
   }
 });
 
-test("node.events.<name>.emit(payload): a worklet drain between the occupancy read and the tail advance is not counted as overflow", async () => {
-  // The ring reads full, then the worklet drains it before this sender writes
-  // the tail. Nothing was overwritten in that interleaving, so the drop-oldest
-  // must stand down — an overflowCount that ticks here reports a loss that did
-  // not happen, and overflowCount is what a user reads to size their ring.
+test("node.events.<name>.emit(payload): ownership transfer uses the consumer's fresh acknowledgment", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]));
-  const realLoad = Atomics.load;
+  const compare = Atomics.compareExchange;
   try {
     const smallRing = { ...presetMessageRing, capacity: 4 };
     const node = await startCreate(
       () => createNode(h.context as never, makeMockProcessor({ messageRings: [smallRing] })),
       h.fireReady,
     );
-    const msgBuf = h.lastNode!.__constructorRecord.options.processorOptions!
-      .messageRingsBuffer as SharedArrayBuffer;
-    const header = new Int32Array(msgBuf, 0, 3);
-    const send = node.events["preset"].emit;
-    for (let k = 1; k <= 4; k++) send({ slot: k });
-    expect(realLoad(header, 0)).toBe(4); // head, ring exactly full
-
+    const options = h.lastNode!.__constructorRecord.options.processorOptions!;
+    const header = new Int32Array(options.messageRingsBuffer as SharedArrayBuffer, 0, 3);
+    const access = options.ingressAccessBuffer;
+    for (let k = 1; k <= 4; k++) node.events.preset.emit({ slot: k });
     let fired = false;
-    Atomics.load = ((view: Int32Array, index: number): number => {
-      const value = realLoad(view, index);
-      if (!fired && index === 1 && view.buffer === msgBuf) {
+    Atomics.compareExchange = ((
+      view: Int32Array,
+      index: number,
+      expected: number,
+      value: number,
+    ): number => {
+      if (!fired && view.buffer === access) {
         fired = true;
-        // The worklet consumes the whole ring right after this read.
-        Atomics.store(view, 1, realLoad(view, 0));
+        Atomics.store(header, 1, 4);
       }
-      return value;
-    }) as unknown as typeof Atomics.load;
-    send({ slot: 5 });
-    Atomics.load = realLoad;
-
+      return compare(view, index, expected, value);
+    }) as typeof Atomics.compareExchange;
+    node.events.preset.emit({ slot: 5 });
     expect(fired).toBe(true);
-    expect(Atomics.load(header, 0)).toBe(5); // head advanced by the send
-    expect(Atomics.load(header, 1)).toBe(4); // the worklet's drain stands
-    expect(Atomics.load(header, 2)).toBe(0); // nothing was dropped
-    expect(node.events["preset"].diagnostics.overflowCount()).toBe(0);
+    expect(Atomics.load(header, 0)).toBe(5);
+    expect(Atomics.load(header, 1)).toBe(4);
+    expect(node.events.preset.diagnostics.overflowCount()).toBe(0);
+    node.dispose();
   } finally {
-    Atomics.load = realLoad;
+    Atomics.compareExchange = compare;
     h.cleanup();
   }
 });
@@ -4673,6 +4667,40 @@ test("restore converts a non-Error transport rejection into a structured failure
       ok: false,
       error: { message: "restore did not complete" },
     });
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("SAB event serialization isolates a reentrant getter from its outer payload", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const ring = {
+      ...presetMessageRing,
+      slotSize: 8,
+      fields: [
+        { name: "a", offsetInSlot: 0, wireType: "f32" as const, byteSize: 4 },
+        { name: "b", offsetInSlot: 4, wireType: "f32" as const, byteSize: 4 },
+      ],
+    };
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ messageRings: [ring] })),
+      h.fireReady,
+    );
+    const options = h.lastNode!.__constructorRecord.options.processorOptions!;
+    const access = new Int32Array(options.ingressAccessBuffer as SharedArrayBuffer);
+    node.events.preset.emit({
+      a: 10,
+      get b() {
+        expect(access[0]).toBe(0);
+        node.events.preset.emit({ a: 2, b: 3 });
+        return 20;
+      },
+    });
+    const shared = options.messageRingsBuffer as SharedArrayBuffer;
+    expect(new Int32Array(shared, 0, 3)[0]).toBe(2);
+    expect(Array.from(new Float32Array(shared, 12, 4))).toEqual([2, 3, 10, 20]);
+    node.dispose();
   } finally {
     h.cleanup();
   }

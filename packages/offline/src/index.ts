@@ -27,6 +27,7 @@ import {
   encodeSnapshot,
   extractWorkletMeta,
   midiEventToWire,
+  ringCount,
   ringSlotIndex,
   runMigrations,
   SAMPLES_PER_BLOCK,
@@ -356,6 +357,10 @@ export async function renderOffline<C>(
       const memory = instance.memory.buffer;
       const headerView = new Int32Array(memory, ring.base, 3);
       const head = headerView[0]!;
+      if (ringCount(head, headerView[1]!) >= ring.capacity) {
+        headerView[1] = headerView[1]! + 1;
+        headerView[2] = headerView[2]! + 1;
+      }
       const slotByteOffset =
         ring.base + MESSAGE_HEADER_BYTES + ringSlotIndex(head, ring.capacity) * ring.slotSize;
       const dataView = new DataView(memory);
@@ -363,12 +368,6 @@ export async function renderOffline<C>(
       for (const field of ring.fields) {
         const byteOffset = slotByteOffset + field.offsetInSlot;
         if (field.payloadElementType !== undefined) {
-          // typed-array field = write the contents into payloadContent's per-slot
-          // chunk and set [payloadLen(bytes), payloadOffset] on the slot (= §5.2 / Q85).
-          // To keep content from being overwritten when multiple messages are queued
-          // within one quantum, split the chunk per slot as
-          // (head % chunks) × perChunk (= symmetric with emit / SAB). Bursts beyond
-          // the chunk budget recycle cyclically = drop-oldest (= no trap).
           const src = payload[field.name] as Float32Array;
           const content = ring.payloadContent!;
           const perChunk = Math.floor(content.capacity / content.chunks);
@@ -414,16 +413,23 @@ export async function renderOffline<C>(
         // no sysex handler) has nowhere to land — drop it rather than dereferencing
         // the absent region and crashing.
         if (port.sysex === undefined) continue;
-        // Sysex: bytes → content chunk `[length, data]`, slot carries
-        // `[0xF0, chunkIdx, _pad, _pad, atSample]` (`11-midi.md` §4.3).
         const region = port.sysex;
+        const len = payload.data.length;
+        const limit = region.perChunk - 4;
+        if (len > limit) {
+          throw new Error(
+            `unworklet: renderOffline MIDI port "${port.name}" received ${len} sysex bytes, ` +
+              `exceeding its ${limit}-byte limit. Split the transfer into complete ` +
+              `<= ${limit}-byte messages. (stable ID 'sysex-payload-too-large')`,
+          );
+        }
         const chunkIdx = ringSlotIndex(head, region.chunks);
         const chunkBase = region.base + chunkIdx * region.perChunk;
-        const len = Math.min(payload.data.length, region.perChunk - 4);
         dv.setUint32(chunkBase, len, true);
-        new Uint8Array(memory, chunkBase + 4, len).set(payload.data.subarray(0, len));
+        new Uint8Array(memory, chunkBase + 4, len).set(payload.data);
         dv.setUint8(slotByteOffset, 0xf0);
-        dv.setUint8(slotByteOffset + 1, chunkIdx);
+        dv.setUint16(slotByteOffset + 1, chunkIdx, true);
+        dv.setUint8(slotByteOffset + 3, 0);
         dv.setUint32(slotByteOffset + 4, ev.atSample % SAMPLES_PER_BLOCK, true);
       } else {
         const { status, data1, data2 } = midiEventToWire(payload);
@@ -432,6 +438,10 @@ export async function renderOffline<C>(
         dv.setUint8(slotByteOffset + 2, data2);
         dv.setUint8(slotByteOffset + 3, 0);
         dv.setUint32(slotByteOffset + 4, ev.atSample % SAMPLES_PER_BLOCK, true);
+      }
+      if (ringCount(head, headerView[1]!) >= port.capacity) {
+        headerView[1] = headerView[1]! + 1;
+        headerView[2] = headerView[2]! + 1;
       }
       headerView[0] = head + 1;
     }
@@ -534,9 +544,9 @@ export async function renderOffline<C>(
         const slotAtSample = dv.getUint32(slotByteOffset + 4, true);
         let payload: MidiEvent;
         if (status === 0xf0 && port.sysex !== undefined) {
-          // Sysex: chunkIdx = data1, content chunk = [length, bytes...].
           const region = port.sysex;
-          const chunkBase = region.base + (data1 % region.chunks) * region.perChunk;
+          const chunkIndex = dv.getUint16(slotByteOffset + 1, true);
+          const chunkBase = region.base + chunkIndex * region.perChunk;
           const len = dv.getUint32(chunkBase, true);
           payload = {
             type: "sysex",

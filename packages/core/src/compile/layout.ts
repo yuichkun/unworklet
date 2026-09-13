@@ -73,8 +73,8 @@ const EVENT_HEADER_BYTES = 12;
 
 /**
  * MIDI ringbuffer slot (`11-midi.md` §4.1): `[status:u8, data1:u8, data2:u8,
- * _pad:u8, atSample:u32]` = 8 bytes. For sysex, status=0xF0 and data1 carries
- * the chunk index into the sysex content region (§4.3, filled in C.4).
+ * _pad:u8, atSample:u32]` = 8 bytes. For sysex, status=0xF0 and bytes 1–2
+ * carry the unsigned 16-bit chunk index into the sysex content region.
  */
 const MIDI_SLOT_BYTES = 8;
 const MIDI_HEADER_BYTES = 12;
@@ -82,10 +82,9 @@ const MIDI_HEADER_BYTES = 12;
 /**
  * Per-sysex-port content region sizing (`11-midi.md` §4.3). `chunks` chunks of
  * `SYSEX_PER_CHUNK_BYTES` each (= `[length:u32, data...]`), drop-oldest cycled
- * by the slot's `chunkIdx`. 1 KiB/chunk × 16 chunks = 16 KiB per sysex port.
+ * by the slot's `chunkIdx`. Each ring slot has its own content chunk.
  */
 export const SYSEX_PER_CHUNK_BYTES = 1024;
-const SYSEX_CHUNKS = 16;
 
 /**
  * Bytes a typed-array field occupies within a slot (`[payloadLen:u32,
@@ -98,20 +97,6 @@ const PAYLOAD_SLOT_BYTES = 8;
  * Overridden by an explicit `payloadCapacity`.
  */
 const DEFAULT_PAYLOAD_CAPACITY = 65536;
-
-/**
- * Upper bound on the number of typed-array payload contents held concurrently
- * (Q85). The content region is `perPayload × min(capacity, MAX_CONTENT_SLOTS)`
- * bytes. Even though the ring can hold `capacity` slots (default 256),
- * reserving content for that many slots would be excessive for large payloads
- * (64KB × 256 = 16MB), so the number of payloads whose content is held
- * concurrently is capped at 16. The producer cycles through the slots: only
- * payloads pushed beyond the 16 slots before a drain overwrite the oldest
- * content (drop-oldest, no trap). main → worklet keeps everything as long as it
- * does not fire 17 or more typed-array messages within a single quantum
- * (≈ 2.7ms).
- */
-const MAX_CONTENT_SLOTS = 16;
 
 /**
  * Byte size of the atSample field in an `event<T>` ringbuffer
@@ -244,7 +229,7 @@ export type Layout = {
     midiRings: { base: number; slots: Record<string, MidiRingSlot> };
     // Per-sysex-port content region (`11-midi.md` §4.3): `chunks` chunks of
     // `perChunk` bytes, each `[length:u32, data bytes]`. The 8-byte ring slot
-    // carries `[0xF0, chunkIdx, _pad, _pad, atSample]`; `chunkIdx` indexes here.
+    // carries `[0xF0:u8, chunkIdx:u16, _pad:u8, atSample:u32]`.
     sysexContent: {
       base: number;
       slots: Record<string, { base: number; perChunk: number; chunks: number }>;
@@ -442,11 +427,6 @@ export function layout(graph: CapturedGraph): Layout {
     }
   }
 
-  // payloadContent packing: the region holding the variable-length content of
-  // typed-array fields for message<T> (main→worklet) / event<T> (worklet→main)
-  // (§5.2). For each declaration with a typed-array field, allocate
-  // payloadCapacity bytes (the default when omitted). Placing it at the tail
-  // keeps the bases unchanged for a graph with no typed arrays.
   const payloadContentBase = cursor;
   // Maps split by kind (a same-named message/event does not share a region;
   // separated by namespace kind).
@@ -463,19 +443,15 @@ export function layout(graph: CapturedGraph): Layout {
       (decl.kind === "message" || decl.kind === "event") &&
       decl.fields.some((f) => f.payloadElementType !== undefined)
     ) {
-      // Round the per-chunk capacity up to 4 bytes so every chunk base stays
-      // 4-aligned: the main side builds a `Float32Array` view at
-      // contentOffset + chunkIdx * perPayload, which throws RangeError on a
-      // misaligned offset (a custom payloadCapacity need not be a multiple of 4).
-      const perPayload = align4(decl.payloadCapacity ?? DEFAULT_PAYLOAD_CAPACITY);
-      // The content keeps each payload in its own chunk, so multiple payloads
-      // piling up in the ring before the next drain are not overwritten (§5.2).
-      // The number of slots is capped at MAX_CONTENT_SLOTS to keep
-      // large-payload × ring-capacity from growing excessive (Q85). message and
-      // event share the same shape. Slot-indexed writers (event emit / offline
-      // inject) take modulo `chunks`, while cursor-based writers (client /
-      // worklet postMessage) wrap at the region size — both share the same cycle.
-      const chunks = Math.min(decl.capacity, MAX_CONTENT_SLOTS);
+      const elementType = decl.fields.find(
+        (field) => field.payloadElementType !== undefined,
+      )!.payloadElementType!;
+      const alignment = Math.max(4, BUFFER_ELEMENT_BYTES[elementType]);
+      cursor = Math.ceil(cursor / alignment) * alignment;
+      const perPayload =
+        Math.ceil((decl.payloadCapacity ?? DEFAULT_PAYLOAD_CAPACITY) / alignment) * alignment;
+      // Slot metadata and its content must have the same retention lifetime.
+      const chunks = decl.capacity;
       const capacity = perPayload * chunks;
       const target = decl.kind === "event" ? payloadContentEventSlots : payloadContentMessageSlots;
       target[decl.name] = { base: cursor, capacity, chunks };
@@ -575,9 +551,9 @@ export function layout(graph: CapturedGraph): Layout {
       sysexContentSlots[decl.name] = {
         base: cursor,
         perChunk: SYSEX_PER_CHUNK_BYTES,
-        chunks: SYSEX_CHUNKS,
+        chunks: decl.capacity,
       };
-      cursor += SYSEX_PER_CHUNK_BYTES * SYSEX_CHUNKS;
+      cursor += SYSEX_PER_CHUNK_BYTES * decl.capacity;
     }
   }
 

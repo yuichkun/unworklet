@@ -480,21 +480,19 @@ export const outRingPublishSpec = (opts: {
   };
 };
 
-/**
- * The op-sequence the **fixed** in-ring mirror must emit: three header acquire
- * loads, then a slot-region-only bulk copy. The copy must NOT span the header —
- * clobbering it would replace the acquire-loaded head with a non-synchronized
- * plain re-read, making the drain bound unsynchronized.
- */
+/** Single-slot inbound ownership transfer, excluding optional payload content. */
 export const IN_RING_MIRROR_OPS: readonly AbstractRingOp[] = [
+  { op: "try-access" },
   { op: "atomic-load", word: "head" },
   { op: "atomic-load", word: "tail" },
-  { op: "atomic-load", word: "overflow" },
   { op: "bulk-copy", touchesHeader: false },
+  { op: "atomic-load", word: "overflow" },
+  { op: "atomic-store", word: "tail" },
+  { op: "release-access" },
 ];
 
 /**
- * Model of the **in-ring mirror** (main → worklet), e.g. a message/MIDI-in ring.
+ * Empty-ring publication litmus; concurrent overwrite requires ownership.
  * The producer (main `send`) writes the slot then release-stores head. The
  * consumer (worklet) acquire-loads head/tail/overflow from the SAB, bulk-copies
  * the SAB ring into its WASM ring, and drains using its WASM header.
@@ -551,21 +549,10 @@ const DRAINED = 2;
 export type TailWriteMode = "store" | "max" | "add";
 
 /**
- * Model of the **split-writer ring tail**. Two threads advance the SAB `tail`:
- * one side's drop-oldest (`tail := loaded + 1` when the ring is full) and the
- * other side's drain-commit (`tail := quantum-start tail + entries drained`).
- * They must compose so tail only moves forward. The same word algebra covers
- * both directions — the in-rings (message / MIDI-in: main send drop-oldest ×
- * worklet drain-commit) and the out-rings (event / MIDI-out: worklet
- * drop-oldest × main drain-commit) — so this one spec proves both.
- *
- * The in-ring producer (`dropOldestIfFull` in `ringIndex.ts`) additionally
- * requires its exchange to SUCCEED from the tail it observed, and re-checks
- * occupancy when it does not: a producer that only knows "my proposal did not
- * lead" cannot tell an overwritten slot from a slot the consumer had already
- * drained, and the overflow counter needs that distinction. That gate only ever
- * removes advances from the set modeled here, so the two properties proven
- * below — never rewinds, never over-advances — carry over unchanged.
+ * Monotone composition of outbound tail updates. A main-thread snapshot can
+ * acknowledge entries while the producer holds an earlier mirrored cursor.
+ * Combining those proposals must neither rewind consumption nor advance past
+ * either writer's progress. This model covers that word algebra.
  */
 export const splitWriterTailSpec = (mode: TailWriteMode): ModelSpec => {
   const mainOps: Op[] = [{ kind: "load", loc: "tail", into: "rMain", mode: "acquire" }];
@@ -612,3 +599,56 @@ export const correctTail: Invariant = (s) => {
   const expected = Math.max(TAIL0, rMain + 1, rWork + DRAINED);
   return final === expected ? null : `tail = ${final}, expected max-of-proposals ${expected}`;
 };
+
+/** Main publication and audio ownership transfer of one overwriteable slot. */
+export function inRingSnapshotSpec(guarded: boolean): ModelSpec {
+  const acquired = (r: Regs): boolean => r.acquired === 0;
+  const enter: Op = {
+    kind: "rmw",
+    loc: "access",
+    update: (cur) => (guarded && cur === 0 ? 1 : cur),
+    into: "acquired",
+  };
+  const leave: Op = {
+    kind: "store",
+    loc: "access",
+    value: () => 0,
+    mode: "release",
+    when: acquired,
+  };
+  return {
+    locations: { access: 0, head: 1, tail: 0, slot: 0, content: 0 },
+    threads: [
+      {
+        name: "P",
+        ops: [
+          enter,
+          { kind: "load", loc: "tail", into: "tail", mode: "acquire", when: acquired },
+          { kind: "store", loc: "slot", value: () => 1, mode: "plain", when: acquired },
+          { kind: "store", loc: "content", value: () => 1, mode: "plain", when: acquired },
+          {
+            kind: "store",
+            loc: "tail",
+            value: (r) => Math.max(r.tail!, 1),
+            mode: "release",
+            when: acquired,
+          },
+          { kind: "store", loc: "head", value: () => 2, mode: "release", when: acquired },
+          leave,
+        ],
+      },
+      {
+        name: "C",
+        ops: [
+          enter,
+          { kind: "load", loc: "head", into: "head", mode: "acquire", when: acquired },
+          { kind: "load", loc: "tail", into: "tail", mode: "acquire", when: acquired },
+          { kind: "load", loc: "slot", into: "slot", mode: "plain", when: acquired },
+          { kind: "load", loc: "content", into: "content", mode: "plain", when: acquired },
+          { kind: "store", loc: "tail", value: (r) => r.head!, mode: "release", when: acquired },
+          leave,
+        ],
+      },
+    ],
+  };
+}

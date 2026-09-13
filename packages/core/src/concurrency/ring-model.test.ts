@@ -25,6 +25,7 @@ import {
   explore,
   freshDelivery,
   inRingMirrorSpec,
+  inRingSnapshotSpec,
   monotoneLocation,
   outRingPublishSpec,
   outRingSnapshotSpec,
@@ -277,7 +278,7 @@ test("in-ring mirror: a header-clobbering bulk copy IS a torn read", () => {
   expect(result.violations.length).toBeGreaterThan(0);
 });
 
-test("in-ring mirror: a slots-only bulk copy is SAFE on every interleaving", () => {
+test("empty in-ring publication: acquired head gives the matching slot visibility", () => {
   // Keeping the acquire-loaded head means the drain bound carries the producer's
   // happens-before, so the slot it reads is the one the producer published.
   const inv = freshDelivery("worklet", "hDrain", "t", "s", RING_SLOT_MARKER);
@@ -329,4 +330,15 @@ test("diagnostic invariants handle absent register observations without throwing
   expect(invariant({ regs: {}, memory })).toBeNull();
   expect(invariant({ regs: { main: {} }, memory })).toBeNull();
   expect(invariant({ regs: { main: { head: 1 } }, memory })).toContain("torn read");
+});
+
+test("in-ring overwrite: header acquisition alone permits mismatched slot/content", () => {
+  const result = explore(inRingSnapshotSpec(false), [coherentSnapshot, monotoneLocation("tail")]);
+  expect(result.violations.length).toBeGreaterThan(0);
+});
+
+test("in-ring ownership transfer: snapshot and acknowledgment stay coherent", () => {
+  const result = explore(inRingSnapshotSpec(true), [coherentSnapshot, monotoneLocation("tail")]);
+  expect(result.terminals).toBeGreaterThan(0);
+  expect(result.violations).toEqual([]);
 });

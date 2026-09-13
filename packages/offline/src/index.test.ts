@@ -237,9 +237,6 @@ test("`renderOffline` samples.at out-of-bounds read clamps to [0,length-1] witho
   expect(result.outputs.main![0]![0]).toBe(40);
 });
 
-// Multiple typed-array messages queued in the same quantum are each preserved without overwriting
-// (§5.2 / Q85: content = perPayload × min(capacity, 16) slots).
-// The handler runs per-slot in the drain loop, accumulating samples.at(0) from each slot into state.
 const twoUploads = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
   const upload = event<{ samples: Float32Array }>({ from: "main", name: "upload" });
@@ -269,9 +266,7 @@ test("`renderOffline` two messages in the same quantum are both preserved withou
   expect(result.outputs.main![0]![0]).toBeCloseTo(30, 4);
 });
 
-test("`renderOffline` render completes without trapping when messages exceed the content capacity of 16 (Q85: drop-oldest)", () => {
-  // Queue 17 messages in one quantum: the 17th wraps and overwrites the oldest chunk.
-  // The only guarantees are: no crash (trap / OOB) and the result is a finite value.
+test("`renderOffline` preserves all 17 payloads queued within the declared capacity", () => {
   const messages = Array.from({ length: 17 }, (_, k) => ({
     name: "upload",
     atQuantum: 0,
@@ -282,7 +277,7 @@ test("`renderOffline` render completes without trapping when messages exceed the
     duration: SAMPLES_PER_BLOCK / 48000,
     messages,
   }).then((result) => {
-    expect(Number.isFinite(result.outputs.main![0]![0])).toBe(true);
+    expect(result.outputs.main![0]![0]).toBe(153);
   });
 });
 
@@ -319,7 +314,7 @@ test("`renderOffline` resolves samples.length to the delivered payload length", 
 // With a stale read, length-1=-1 collapses the clamp to idx 0, exposing chunk 0's [42].
 const emptyPayloadReader = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
-  const upload = event<{ x: Float32Array }>({ from: "main", name: "upload" });
+  const upload = event<{ x: Float32Array }>({ from: "main", name: "upload", capacity: 16 });
   const last = state.f32(-1);
   return {
     process: () => {

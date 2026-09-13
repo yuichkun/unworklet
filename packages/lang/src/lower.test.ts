@@ -497,3 +497,31 @@ test("a wrapper-local declaration sharing a DSL name is not imported", () => {
   expect(importedNames(lowered)).not.toContain("clamp");
   expect(lowered.indexOf("const clamp")).toBeGreaterThan(lowered.indexOf("defineProcessor("));
 });
+
+test.each(["migrations([]);", 'options({ id: "library" });'])(
+  "a library cannot carry processor options: %s",
+  (macro) => {
+    expect(() => lower(`export const VALUE = 1;\n${macro}`)).toThrow(
+      expect.objectContaining({ id: "uwk-options-without-process" }),
+    );
+  },
+);
+
+test("namespace and side-effect imports survive a processor module", () => {
+  const lowered = lower(`import "./side-effect.mjs";
+import * as helpers from "./helpers.mjs";
+import * as core from "@unworklet/core";
+void helpers;
+void core;
+process(() => {});`);
+  expect(lowered).toContain('import "./side-effect.mjs"');
+  expect(lowered).toContain('import * as helpers from "./helpers.mjs"');
+  expect(lowered).toContain('import * as core from "@unworklet/core"');
+});
+
+test("a state shorthand outside a payload remains a state object", () => {
+  const lowered = lower(`const gain = state.f32(0);
+const object = { gain };
+process(() => {});`);
+  expect(lowered).toContain("const object = { gain }");
+});

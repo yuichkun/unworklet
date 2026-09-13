@@ -125,6 +125,50 @@ test("runMigrations: hash already current → no-op (applied empty)", () => {
   }
 });
 
+test("boolean buffer inspection and migrations preserve logical elements in four-byte storage", () => {
+  const source = new Uint8Array(new Int32Array([0, 1, 0, 1]).buffer);
+  const blob = encodeSnapshot("from", null, [
+    { name: "held", kind: "buffer", type: "bool", data: source },
+  ]);
+  expect(inspectSnapshot(blob).slots.held).toEqual({
+    kind: "buffer",
+    type: "bool",
+    length: 4,
+    head: [0, 1, 0, 1],
+  });
+  const result = runMigrations(
+    blob,
+    [
+      {
+        from: "from",
+        to: "to",
+        migrate(input, helpers) {
+          const held = helpers.parseBuffer(input, "held", "bool")!;
+          expect(held).toBeInstanceOf(Uint8Array);
+          expect(Array.from(held)).toEqual([0, 1, 0, 1]);
+          held[2] = 1;
+          held[3] = 0;
+          helpers.writeBuffer("held", "bool", held.subarray(1));
+          held.fill(0);
+        },
+      },
+    ],
+    "to",
+  );
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw result.error.cause;
+  expect(inspectSnapshot(result.blob).slots.held).toEqual({
+    kind: "buffer",
+    type: "bool",
+    length: 3,
+    head: [1, 1, 0],
+  });
+  expect(decodeSnapshot(result.blob).slots[0]!.data).toEqual(
+    new Uint8Array(new Int32Array([1, 1, 0]).buffer),
+  );
+  expect(inspectSnapshot(blob).slots.held).toMatchObject({ head: [0, 1, 0, 1] });
+});
+
 test("runMigrations: renames a slot and auto-carries the rest", () => {
   const old = encodeSnapshot("aaaaaaaa", null, [
     { name: "lpfZ1", kind: "state", type: "f32", data: encodeScalar("f32", 0.3) },

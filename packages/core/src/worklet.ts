@@ -37,6 +37,7 @@ import { layout, type Layout } from "./compile/layout.ts";
 import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
 import { EGRESS_HEADER_BYTES, EGRESS_SECTION_HEADER_BYTES, alignUp4 } from "./egressFrame.ts";
 import { atomicMonotoneMax, ringCount, ringLeads, ringSlotIndex } from "./ringIndex.ts";
+import { bindSabIngress, consumeSabIngress, type SabIngressRing } from "./sabIngress.ts";
 import { checkRingHeader } from "./selfcheck.ts";
 
 /**
@@ -206,6 +207,11 @@ type WorkletState = {
   readonly lastVersions: number[];
   readonly transport: TransportMode;
   readonly egressAccess: Int32Array | null;
+  readonly ingressAccess: Int32Array | null;
+  readonly messageIngressShared: readonly SabIngressRing[];
+  readonly messageIngressWasm: readonly SabIngressRing[];
+  readonly midiIngressShared: ReadonlyArray<SabIngressRing | null>;
+  readonly midiIngressWasm: ReadonlyArray<SabIngressRing | null>;
   readonly publishWasmSharedViews: readonly Int32Array[];
   readonly publishWasmCounterViews: readonly Int32Array[];
   /**
@@ -273,50 +279,11 @@ type WorkletState = {
    */
   readonly egressMessage: { kind: "egress"; buffer: ArrayBuffer | null; byteLength: number };
   readonly egressTransfer: Transferable[];
-  /**
-   * message ring SAB ↔ WASM mirror meta (sub-phase 7.7d). Same zip pattern as
-   * the event ring, but the push direction is reversed (main → worklet): at the
-   * start of process, mirror SAB → WASM (bulk-copy the slots main pushed into
-   * the WASM ring + commit head into the WASM ring); at the tail of the drain,
-   * commit the WASM tail into the SAB tail (so main observes "drained").
-   */
   readonly messageRingsBuffer: SharedArrayBuffer | ArrayBuffer | null;
   readonly messageRings: readonly MessageRingSlotDescriptor[];
-  readonly messageRingSabOffsets: readonly number[];
-  readonly messageRingsWasmViews: readonly Uint8Array[];
-  /**
-   * For the postMessage inject path = a DataView bound once over each message
-   * ring's WASM region (for per-field setInt32). Allocating a
-   * `new DataView(...)` every quantum in process() would allocate on the audio
-   * thread, so it is reserved at init (same region as `messageRingsWasmViews`,
-   * `00-foundations.md` §5.1).
-   */
   readonly messageRingsWasmDataViews: readonly DataView[];
-  readonly messageRingsSabViews: readonly Uint8Array[];
-  /**
-   * Slot-region-only views (ring minus the 12-byte header) for the in-ring
-   * mirror. The SAB → WASM copy must NOT span the header: the WASM header is set
-   * by the acquire-loads, and a whole-ring copy would clobber it with a
-   * non-synchronized plain re-read (an unsynchronized drain bound).
-   */
-  readonly messageRingsWasmSlotViews: readonly Uint8Array[];
-  readonly messageRingsSabSlotViews: readonly Uint8Array[];
   readonly messageRingsWasmHeaderViews: readonly Int32Array[];
-  readonly messageRingsSabHeaderViews: readonly Int32Array[];
-  /**
-   * §5.2 variable-length content buffer per-ring view (non-null only for
-   * messages with a typed-array field, zipped with ring index). WASM = the
-   * write target (both transports); SAB = the source mirroring what main has
-   * pushed (SAB only).
-   */
   readonly messageContentWasmViews: ReadonlyArray<Uint8Array | null>;
-  readonly messageContentSabViews: ReadonlyArray<Uint8Array | null>;
-  /**
-   * For the postMessage path = each message ring's content-region write cursor
-   * (advanced by byteLen per payload, then wraps). Unused on the SAB path,
-   * which uses main's cursor (the worklet mirrors the whole region).
-   */
-  readonly messageContentCursors: number[];
   /**
    * For the postMessage path = a temporary queue holding payloads that main
    * sent via `port.postMessage({ kind: 'message', ringIndex, payload })`,
@@ -347,7 +314,6 @@ type WorkletState = {
   /** Pre-bound DataView over all of WASM memory (for writing wire bytes / the atSample u32). */
   readonly midiWasmDataView: DataView | null;
   readonly midiRingsWasmHeaderViews: readonly Int32Array[];
-  readonly midiRingsSabViews: readonly Uint8Array[];
   /**
    * Slot-region-only views (ring minus the 12-byte header) for the header-safe
    * bulk copy on both directions (out publish / in mirror). The header is
@@ -425,6 +391,7 @@ type ProcessorOptionsBag = {
      */
     transport?: TransportMode;
     egressAccessBuffer?: SharedArrayBuffer | ArrayBuffer;
+    ingressAccessBuffer?: SharedArrayBuffer | ArrayBuffer;
     /**
      * Shared buffer for the event ring buffer (sub-phase 7.6 commit 5b). A
      * single SAB (allocated by main) holding all event rings laid out
@@ -920,20 +887,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         }
       }
 
-      // message ring meta + buffer pre-bind. Same zip pattern as the event ring, but
-      // the mirror direction is reversed (main → worklet). The route branches on
-      // transport mode:
-      //
-      // - SAB available: main pushes into the SAB + the worklet bulk-copies SAB →
-      //   WASM at the start of process + commits the WASM tail into the SAB tail at the tail of the drain
-      // - SAB unavailable: no shared buffer, main sends directly via `port.postMessage({
-      //   kind:'message', ringIndex, payload })` = the worklet receives it on
-      //   self.port.onmessage + pushes to messageQueueMirrors + injects per field into
-      //   the WASM ring at the start of process + notifies main of the in-WASM
-      //   overflowCount via port.postMessage at the tail (updates the main mirror).
-      //
-      // WASM views = needed on both transports (the worklet writes the WASM ring).
-      // SAB views = bound only when SAB is present.
+      // SAB ownership covers copying; the WASM ring retains entries until its handler drains them.
       const messageRingsBuffer = opts.processorOptions?.messageRingsBuffer ?? null;
       const messageRings = opts.processorOptions?.messageRings ?? [];
       const messageRingSabOffsets = opts.processorOptions?.messageRingSabOffsets ?? [];
@@ -946,13 +900,9 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       const messageRingsWasmViews: Uint8Array[] = [];
       const messageRingsWasmDataViews: DataView[] = [];
       const messageRingsSabViews: Uint8Array[] = [];
-      const messageRingsWasmSlotViews: Uint8Array[] = [];
-      const messageRingsSabSlotViews: Uint8Array[] = [];
       const messageRingsWasmHeaderViews: Int32Array[] = [];
-      const messageRingsSabHeaderViews: Int32Array[] = [];
       const messageContentWasmViews: Array<Uint8Array | null> = [];
       const messageContentSabViews: Array<Uint8Array | null> = [];
-      const messageContentCursors: number[] = messageRings.map(() => 0);
       const messageQueueMirrors: Array<Array<Record<string, unknown>>> = messageRings.map(() => []);
       const lastSentMessageOverflows = messageRings.map(() => 0);
       for (let i = 0; i < messageRings.length; i++) {
@@ -964,19 +914,10 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         messageRingsWasmDataViews.push(
           new DataView(memory.buffer, ring.wasmRingBase, ringTotalBytes),
         );
-        messageRingsWasmSlotViews.push(
-          new Uint8Array(memory.buffer, ring.wasmRingBase + 12, ringTotalBytes - 12),
-        );
         messageRingsWasmHeaderViews.push(new Int32Array(memory.buffer, ring.wasmRingBase, 3));
         if (messageRingsBuffer !== null) {
           messageRingsSabViews.push(
             new Uint8Array(messageRingsBuffer, messageRingSabOffsets[i]!, ringTotalBytes),
-          );
-          messageRingsSabSlotViews.push(
-            new Uint8Array(messageRingsBuffer, messageRingSabOffsets[i]! + 12, ringTotalBytes - 12),
-          );
-          messageRingsSabHeaderViews.push(
-            new Int32Array(messageRingsBuffer, messageRingSabOffsets[i]!, 3),
           );
         }
         const content = ring.payloadContent;
@@ -1012,6 +953,18 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         throw new Error("unworklet: SAB out-rings require an egress access word for each ring");
       }
       const egressAccess = egressAccessBuffer === null ? null : new Int32Array(egressAccessBuffer);
+      const ingressAccessBuffer = opts.processorOptions?.ingressAccessBuffer ?? null;
+      if (
+        transport === "sab" &&
+        (messageRingsBuffer !== null ||
+          (midiRingsBuffer !== null && midiRingsMeta.some((ring) => ring.direction === "in"))) &&
+        (ingressAccessBuffer === null ||
+          ingressAccessBuffer.byteLength < (messageRings.length + midiRingsMeta.length) * 4)
+      ) {
+        throw new Error("unworklet: SAB in-rings require an ingress access word for each ring");
+      }
+      const ingressAccess =
+        ingressAccessBuffer === null ? null : new Int32Array(ingressAccessBuffer);
       const midiRingSabOffsets = opts.processorOptions?.midiRingSabOffsets ?? [];
       const sysexContentBuffer = opts.processorOptions?.sysexContentBuffer ?? null;
       const sysexContentSabOffsets = opts.processorOptions?.sysexContentSabOffsets ?? [];
@@ -1063,6 +1016,42 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         }
       }
 
+      const messageIngressShared = messageRingsSabViews.map((bytes, i) =>
+        bindSabIngress(
+          bytes,
+          messageContentSabViews[i]!,
+          messageRings[i]!.capacity,
+          (messageRings[i]!.fields.find((field) => field.payloadElementType !== undefined)
+            ?.offsetInSlot ?? -5) + 4,
+          false,
+        ),
+      );
+      const messageIngressWasm = messageIngressShared.map((shared, i) =>
+        bindSabIngress(
+          messageRingsWasmViews[i]!,
+          messageContentWasmViews[i]!,
+          shared.capacity,
+          shared.contentOffset,
+          false,
+        ),
+      );
+      const midiIngressShared = midiRingsSabViews.map((bytes, i) =>
+        midiRingsMeta[i]!.direction === "out"
+          ? null
+          : bindSabIngress(bytes, sysexContentSabViews[i]!, midiRingsMeta[i]!.capacity, -1, true),
+      );
+      const midiIngressWasm = midiIngressShared.map((shared, i) =>
+        shared === null
+          ? null
+          : bindSabIngress(
+              midiRingsWasmViews[i]!,
+              sysexContentWasmViews[i]!,
+              shared.capacity,
+              -1,
+              true,
+            ),
+      );
+
       (self as SelfWithState)[STATE_KEY] = {
         process: procFn,
         audioInputs,
@@ -1076,6 +1065,11 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         lastVersions,
         transport,
         egressAccess,
+        ingressAccess,
+        messageIngressShared,
+        messageIngressWasm,
+        midiIngressShared,
+        midiIngressWasm,
         publishWasmSharedViews,
         publishWasmCounterViews,
         eventRingsBuffer,
@@ -1096,17 +1090,9 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         egressTransfer,
         messageRingsBuffer,
         messageRings,
-        messageRingSabOffsets,
-        messageRingsWasmViews,
         messageRingsWasmDataViews,
-        messageRingsSabViews,
-        messageRingsWasmSlotViews,
-        messageRingsSabSlotViews,
         messageRingsWasmHeaderViews,
-        messageRingsSabHeaderViews,
         messageContentWasmViews,
-        messageContentSabViews,
-        messageContentCursors,
         messageQueueMirrors,
         lastSentMessageOverflows,
         midiRingsBuffer,
@@ -1114,7 +1100,6 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         midiRingsWasmViews,
         midiWasmDataView,
         midiRingsWasmHeaderViews,
-        midiRingsSabViews,
         midiRingsWasmSlotViews,
         midiRingsSabSlotViews,
         midiRingsSabHeaderViews,
@@ -1606,49 +1591,16 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       }
     }
 
-    // message ring mirror = the route branches on transport mode (at the start of
-    // process, inject what main pushed into the WASM ring + the drain logic runs inside WASM):
-    //
-    // - SAB available: main has pushed into the SAB = acquire the header via Atomics.load
-    //   first, then bulk-copy SAB → WASM (§5.5 acquire-before-read) + reflect into the WASM ring.
-    // - SAB unavailable: no shared buffer = main sends directly via port.postMessage
-    //   = it is accumulated in messageQueueMirrors[i] = at the start of process, inject
-    //   each payload per field into a WASM ring slot + fire drop-oldest on overflow +
-    //   internal overflowCount += 1 (notified to main at the tail).
     if (state.messageRings.length > 0) {
       const isSab = state.transport === "sab";
       if (isSab && state.messageRingsBuffer !== null) {
-        // SAB path = SAB → WASM slot-region copy + header acquire-loads
-        const wasmSlotViews = state.messageRingsWasmSlotViews;
-        const sabSlotViews = state.messageRingsSabSlotViews;
-        const wasmHeaders = state.messageRingsWasmHeaderViews;
-        const sabHeaders = state.messageRingsSabHeaderViews;
-        for (let i = 0; i < wasmSlotViews.length; i++) {
-          const sabH = sabHeaders[i]!;
-          const wasmH = wasmHeaders[i]!;
-          const prevHead = wasmH[0]!;
-          // §5.5 consumer protocol: acquire-load head, then copy the slot data.
-          // The producer (main) writes the slot → release-store(head) in that order,
-          // so if acquire-load(head) comes before the slot copy, "the slot bytes head
-          // observed" are visible via happens-before. Placing the copy before the
-          // acquire would torn-read a concurrent producer write.
-          wasmH[0] = Atomics.load(sabH, 0);
-          wasmH[1] = Atomics.load(sabH, 1);
-          wasmH[2] = Atomics.load(sabH, 2);
-          // Copy the slot region ONLY — never the header. A whole-ring copy would
-          // clobber the acquire-loaded head above with a non-synchronized plain
-          // re-read, making the drain bound unsynchronized (a torn read).
-          wasmSlotViews[i]!.set(sabSlotViews[i]!);
-          // For a ring with a typed-array field = mirror the entire content region
-          // SAB → WASM only on quanta where head advanced (§5.2; the slot's payloadOffset
-          // is an absolute index relative to the region base = a full mirror keeps the
-          // addressing consistent). If head is unchanged there is no new payload = skip
-          // the large region memcpy.
-          const contentWasm = state.messageContentWasmViews[i];
-          const contentSab = state.messageContentSabViews[i];
-          if (contentWasm !== null && contentSab !== null && wasmH[0]! !== prevHead) {
-            contentWasm.set(contentSab);
-          }
+        for (let i = 0; i < state.messageIngressShared.length; i++) {
+          consumeSabIngress(
+            state.ingressAccess!,
+            i,
+            state.messageIngressShared[i]!,
+            state.messageIngressWasm[i]!,
+          );
         }
       } else {
         // postMessage path = inject messageQueueMirrors into the WASM ring
@@ -1681,15 +1633,13 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
                 if (contentWasm !== null && ArrayBuffer.isView(value)) {
                   // Truncate a payload larger than the content region (Q85: no-trap.
                   // Without clamping, contentWasm.set would throw a RangeError on the audio thread).
-                  const copyBytes = Math.min(value.byteLength, contentWasm.length);
+                  const perSlot = contentWasm.byteLength / capacity;
+                  const copyBytes = Math.min(value.byteLength, perSlot);
+                  const cursor = ringSlotIndex(head, capacity) * perSlot;
                   const src = new Uint8Array(value.buffer, value.byteOffset, copyBytes);
-                  let cursor = state.messageContentCursors[i]!;
-                  // If it would straddle the end of the region, wrap to the start (drop-oldest).
-                  if (cursor + copyBytes > contentWasm.length) cursor = 0;
                   contentWasm.set(src, cursor);
                   wasmDataView.setUint32(byteOffset, copyBytes, true);
                   wasmDataView.setUint32(byteOffset + 4, cursor, true);
-                  state.messageContentCursors[i] = cursor + copyBytes;
                 }
               } else if (typeof value === "number" || typeof value === "boolean") {
                 // Inbound scalar field, encoded faithfully by its per-field wire type
@@ -1715,13 +1665,6 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       }
     }
 
-    // MIDI in-ring inject = same transport as message (main → WASM). Q38-b: the handler
-    // drains before per-block / forSample, so the inject happens before the WASM process.
-    //
-    // - SAB available: main has pushed into the SAB ring = acquire-load the header first,
-    //   then bulk-copy SAB → WASM (§5.5 acquire-before-read) + also mirror sysex content when head advances.
-    // - SAB unavailable: accumulated in midiInQueues = write each item into a WASM ring slot
-    //   as wire bytes + drop-oldest on overflow + internal overflowCount += 1.
     if (state.midiRings.length > 0) {
       const isSab = state.transport === "sab";
       const dv = state.midiWasmDataView!;
@@ -1730,20 +1673,12 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         if (ring.direction !== "in") continue;
         const wasmH = state.midiRingsWasmHeaderViews[i]!;
         if (isSab && state.midiRingsBuffer !== null) {
-          // SAB path = SAB → WASM slot-region copy after the header acquire-loads
-          const sabH = state.midiRingsSabHeaderViews[i]!;
-          const prevHead = wasmH[0]!;
-          wasmH[0] = Atomics.load(sabH, 0);
-          wasmH[1] = Atomics.load(sabH, 1);
-          wasmH[2] = Atomics.load(sabH, 2);
-          // Slot region only — never the header, which is the acquire-loaded value
-          // above (a whole-ring copy would clobber it with a non-synchronized read).
-          state.midiRingsWasmSlotViews[i]!.set(state.midiRingsSabSlotViews[i]!);
-          const sysexWasm = state.sysexContentWasmViews[i];
-          const sysexSab = state.sysexContentSabViews[i];
-          if (sysexWasm !== null && sysexSab !== null && wasmH[0]! !== prevHead) {
-            sysexWasm.set(sysexSab);
-          }
+          consumeSabIngress(
+            state.ingressAccess!,
+            state.messageRings.length + i,
+            state.midiIngressShared[i]!,
+            state.midiIngressWasm[i]!,
+          );
         } else {
           // postMessage path = inject midiInQueues into the WASM ring as wire bytes
           const queue = state.midiInQueues[i]!;
@@ -1767,7 +1702,8 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
               dv.setUint32(ring.sysex.wasmBase + chunkBase, len, true);
               sysexWasm.set(item.sysex.subarray(0, len), chunkBase + 4);
               dv.setUint8(ring.wasmRingBase + slotByteOffset, 0xf0);
-              dv.setUint8(ring.wasmRingBase + slotByteOffset + 1, chunkIdx);
+              dv.setUint16(ring.wasmRingBase + slotByteOffset + 1, chunkIdx, true);
+              dv.setUint8(ring.wasmRingBase + slotByteOffset + 3, 0);
               dv.setUint32(ring.wasmRingBase + slotByteOffset + 4, item.atSample, true);
             } else {
               dv.setUint8(ring.wasmRingBase + slotByteOffset, item.status);
@@ -1930,49 +1866,20 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       }
     }
 
-    // message ring tail commit / overflow notify = the route branches on transport mode:
-    //
-    // - SAB available: commit the tail advanced by the WASM drain into the SAB (main
-    //   observes "up to drained" via Atomics.load on the SAB tail).
-    // - SAB unavailable: when drop-oldest fired inside WASM = overflowCount has changed
-    //   = notify main via port.postMessage (main's messageOverflowMirror updates + it is
-    //   readable via diagnostics.overflowCount()). No tail commit is needed (this path has
-    //   no main-side mirror = no SAB tail observation).
-    if (state.messageRings.length > 0) {
-      const isSab = state.transport === "sab";
-      const wasmHeaders = state.messageRingsWasmHeaderViews;
-      if (isSab && state.messageRingsBuffer !== null) {
-        const sabHeaders = state.messageRingsSabHeaderViews;
-        for (let i = 0; i < wasmHeaders.length; i++) {
-          const wasmH = wasmHeaders[i]!;
-          const sabH = sabHeaders[i]!;
-          // Monotone-max, not a plain store: the main `send` drop-oldest also
-          // writes this tail, and a plain store from either side can clobber the
-          // other's advance (a lost update) and rewind tail, re-delivering a slot.
-          atomicMonotoneMax(sabH, 1, wasmH[1]!);
-        }
-      } else {
-        for (let i = 0; i < wasmHeaders.length; i++) {
-          const wasmH = wasmHeaders[i]!;
-          const currentOverflow = wasmH[2]!;
-          if (currentOverflow !== state.lastSentMessageOverflows[i]) {
-            self.port.postMessage({
-              kind: "message-overflow",
-              ringIndex: i,
-              overflowCount: currentOverflow,
-            });
-            state.lastSentMessageOverflows[i] = currentOverflow;
-          }
+    if (state.transport !== "sab") {
+      for (let i = 0; i < state.messageRingsWasmHeaderViews.length; i++) {
+        const currentOverflow = state.messageRingsWasmHeaderViews[i]![2]!;
+        if (currentOverflow !== state.lastSentMessageOverflows[i]) {
+          self.port.postMessage({
+            kind: "message-overflow",
+            ringIndex: i,
+            overflowCount: currentOverflow,
+          });
+          state.lastSentMessageOverflows[i] = currentOverflow;
         }
       }
     }
 
-    // MIDI ring copy / commit = the route branches on direction (`11-midi.md` §4.4):
-    //
-    // - out port (same as event): SAB = WASM ring → SAB bulk copy + sysex content mirror
-    //   + header Atomics.store. postMessage = extract the new slots + deliver `{ kind:'midiOut' }`.
-    // - in port (same as message): SAB = commit the WASM drain tail into the SAB tail (the
-    //   source main observes for its drop-oldest decision). postMessage = notify overflow changes via `{ kind:'midi-overflow' }`.
     if (state.midiRings.length > 0) {
       const isSab = state.transport === "sab";
       for (let i = 0; i < state.midiRings.length; i++) {
@@ -2002,12 +1909,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             }
           }
         } else {
-          // in port = expose the WASM drain tail to main / notify overflow
-          if (isSab && state.midiRingsBuffer !== null) {
-            // Monotone-max, not a plain store (= same split-writer tail race as
-            // the message in-ring: the main drop-oldest also writes this tail).
-            atomicMonotoneMax(state.midiRingsSabHeaderViews[i]!, 1, wasmH[1]!);
-          } else {
+          if (!isSab) {
             const currentOverflow = wasmH[2]!;
             if (currentOverflow !== state.lastSentMidiInOverflows[i]) {
               self.port.postMessage({

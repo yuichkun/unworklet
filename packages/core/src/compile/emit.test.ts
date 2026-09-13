@@ -473,24 +473,24 @@ test("`emitStatement(audioOutWrite)` lowers to the fixed WAT", async () => {
      (export "memory" (memory $0))
      (func $probe
       (local $0 i32)
-      (local.set $19
+      (local.set $1
        (i32.or
         (f32.ne
-         (local.tee $1
+         (local.tee $0
           (f32.const 0.25)
          )
-         (local.get $1)
+         (local.get $0)
         )
         (f32.eq
          (f32.abs
-          (local.get $1)
+          (local.get $0)
          )
          (f32.const inf)
         )
        )
       )
       (if
-       (local.get $19)
+       (local.get $1)
        (then
         (global.set $scrubbedSamples
          (i32.add
@@ -510,8 +510,8 @@ test("`emitStatement(audioOutWrite)` lowers to the fixed WAT", async () => {
        )
        (select
         (f32.const 0)
+        (local.get $0)
         (local.get $1)
-        (local.get $19)
        )
       )
      )

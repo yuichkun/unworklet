@@ -25,5 +25,6 @@ export const WORKLET_REALM_FILES = [
   "src/dsl/constants.ts",
   "src/egressFrame.ts",
   "src/ringIndex.ts",
+  "src/sabIngress.ts",
   "src/selfcheck.ts",
 ] as const;

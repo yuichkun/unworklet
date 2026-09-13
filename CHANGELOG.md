@@ -12,11 +12,24 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 The stability batch: ring consumption flows back to the producer, outbound
 shared-memory reads use consistent snapshots, fallback egress reuses buffers,
 and buffer DSP gets the same numeric hygiene as scalar state. Unsupported
-surfaces report actionable errors. Nine public surface changes are breaking —
+surfaces report actionable errors. Ten public surface changes are breaking —
 read the migrations. Processor-file exports are refused with migration guidance
 instead of moving declarations across their side effects.
 
 ### Breaking
+
+**Typed payload and sysex storage covers the declared queue capacity.** Each
+retained slot owns its payload bytes. The allocation is `capacity` times the
+aligned per-payload byte budget, rather than content for sixteen slots. A typed
+ring at the defaults reserves 16 MiB of WASM content; a sysex port reserves
+256 KiB. Shared mirrors, snapshots, and input staging require additional memory.
+Large configurations can therefore reach the existing memory-budget limit or
+exceed a device's available memory. Migration: set `payloadCapacity` to the
+largest message you need and choose `capacity` for the backlog you need to retain.
+An oversized typed payload is clamped to its aligned per-message byte budget;
+it cannot borrow the storage reserved for other messages.
+The renderer and both live transports discard complete oldest entries when a
+queue exceeds its capacity; retained payloads do not overwrite one another.
 
 **Processor `.uwk.ts` files reject additional module-level exports.** Value,
 type, default, and re-export forms report `uwk-export-unsupported` when the file
@@ -53,6 +66,8 @@ corrupted the ring by advancing `head` over a slot it never wrote). An outbound
 the whole message and counts it. The backing buffer may be any size — the
 emitted `length` is what has to fit. Migration: split larger transfers into
 multiple messages; declare a sysex handler on ports you inject sysex into.
+`renderOffline` also rejects oversized input for a declared sysex port with
+`sysex-payload-too-large`, instead of delivering a truncated prefix.
 
 **SIMD lane ops require a buffer of at least 4 elements.** `loadVec` /
 `storeVec` read and write 16 bytes from their offset, so a buffer holding fewer
@@ -120,6 +135,14 @@ to a 0.2.x build.
 
 ### Fixed
 
+- **Explicit node annotations accept the created node.** `UnworkletNode` resolves
+  both the compiled default import and its module namespace, preserving declared
+  names, message payload types, and input/output directions.
+- **Boolean preset buffers retain their logical indexes in inspection and
+  migration helpers.** A four-byte stored boolean decodes to one `Uint8Array`
+  element; writing a migrated buffer restores the four-byte representation.
+  The snapshot format and raw saved data remain unchanged.
+
 - **A promptly-drained event or MIDI-out ring no longer reports overflow
   forever.** The consumer's drain position never flowed back to the producer,
   so the WASM-side `head - tail >= capacity` check saturated after `capacity`
@@ -154,6 +177,12 @@ to a 0.2.x build.
   The audio thread skips a contended publication without waiting and retains
   its WASM backlog. Main releases the guard before decoding and notifying
   subscribers, preventing slot/payload mixtures and reentrant scratch reuse.
+- **Inbound SAB events and MIDI keep their order across concurrent sends.**
+  Main copies caller data synchronously into bounded staging, and retries a
+  contended publication without blocking audio. Audio copies complete entries
+  into its own ring and acknowledges ownership transfer while holding the
+  shared guard, then releases it to run handlers. Each stage counts its actual
+  drop-oldest losses. Pending retries are cancelled by disposal.
 - **Buffer-backed feedback flushes subnormals; non-finite output is
   scrubbed.** Float buffer stores (and SIMD `storeVec` lanes) flush
   `|v| < 1e-30` to 0 like scalar state always did — a decaying delay-line tail
@@ -170,6 +199,12 @@ to a 0.2.x build.
 - **SIMD stores preserve their value while computing the offset.** A store's
   lane-flush temporary is separate from the temporary used by `sumLanes`, so
   a computed offset cannot overwrite the vector being stored.
+- **Nested DSP operations and event replies keep independent live values.**
+  A compile-time temporary pool reserves values across nested expressions and
+  handler bodies, including input-field pointers. It reuses temporaries across
+  independent operations, so a sequence of writes does not grow the number of
+  locals. An incoming message can emit a reply without changing the drain's
+  termination value. This adds no runtime allocation or memory growth.
 - **A runtime-negative sysex `length` no longer traps.** `memory.copy` reads
   its size operand unsigned, so a user-computed length gone negative became a
   ~4 GiB copy — an OOB trap that silenced the node permanently. Invalid outbound

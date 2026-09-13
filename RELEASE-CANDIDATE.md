@@ -3,17 +3,17 @@
 This release focuses on dependable audio processing, useful failure messages,
 and shorter development cycles.
 
-**Not ready for publication:** unresolved transport and code-generation defects
-are listed in [RELEASE-VALIDATION.md](./RELEASE-VALIDATION.md), together with the
-completed and pending checks.
+Validation results and remaining checks are recorded in
+[RELEASE-VALIDATION.md](./RELEASE-VALIDATION.md).
 
 ## What users gain
 
-- Event and MIDI ring consumption flows back to the producer. Shared outbound
-  messages are read from consistent snapshots, including typed payloads and
-  sysex. A hidden page continues draining through a timer; capacity limits and
-  browser scheduling still apply.
-- SIMD stores preserve their value when their offset contains vector arithmetic.
+- Incoming and outgoing events and MIDI use consistent shared-memory copies.
+  Retained messages keep their own typed payloads and sysex bytes. A hidden page
+  continues draining through a timer; capacity limits and browser scheduling
+  still apply.
+- Nested calculations and message replies preserve their intermediate values.
+  SIMD stores preserve their value when their offset contains vector arithmetic.
   Buffer feedback flushes subnormals, and non-finite output is scrubbed with a
   diagnostic count.
 - An optional processor identity protects presets against cross-processor
@@ -25,13 +25,19 @@ completed and pending checks.
 
 ## Migration
 
-The nine public surface changes and their migrations are in
+The ten public surface changes and their migrations are in
 [CHANGELOG.md](./CHANGELOG.md#breaking). This includes the processor export rule:
 a `.uwk.ts` containing `process()` cannot contain authored module-level exports,
 including types and re-exports. Place shared declarations in a separate `.ts` or
 library-only `.uwk.ts` and import them into the processor. A library-only file
 contains no `process()` and keeps its exports. Shared declarations are not
 automatically moved across statements.
+
+Typed messages and sysex reserve payload storage for the requested capacity.
+The default typed ring's WASM content is 16 MiB, with additional transport
+storage. Set `payloadCapacity` to the largest payload you send; for example,
+128 float samples need 512 bytes per slot. This retains the requested message
+count without a hidden sixteen-message content limit.
 
 ## Guarantee boundaries
 
@@ -61,11 +67,16 @@ existing examples. Start with a low monitoring level.
    intended changes are audible and no unrelated part of the sound changes.
 3. Switch to another browser tab and return. Check that sound continues and
    controls respond on return.
-4. Save and restore a preset for the same processor. Check its audible settings.
+
+The isolated Orbit Echo acceptance demo also includes save/restore controls and
+a five-second rendered listening sample. Its location and verification results
+are recorded in the validation report.
 
 The unattended transport check is
 `vp exec node scripts/release-soak/run.mjs`. Its default duration is 30 minutes
-for each transport. A preflight of shorter duration is only a harness check.
+for each transport, using headless Chromium with audio muted. It switches real
+tab visibility without opening a browser window. `--headed` explicitly enables
+a visible window. A preflight of shorter duration is only a harness check.
 
 Publication, a release tag, and remote PR changes require the owner's approval
 of the candidate and its verification results.

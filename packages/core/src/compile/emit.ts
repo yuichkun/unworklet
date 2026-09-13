@@ -12,10 +12,8 @@
  * `00-foundations.md` §5.1 invariant). Exports = `process` (= no arguments,
  * Q-F) + `memory` (= the host marshals I/O at fixed offsets).
  *
- * forSample = a bounded loop (= ported from the Phase 1 step-1.7 path) that
- * advances by `stride` each iteration, with the loop counter held in local 0.
- * Phase 3 assumes a single forSample level (= canonical Ex 1 minus the meter);
- * nested forSample / forSample.byN support is filled in by a later phase.
+ * forSample advances by its declared stride in a bounded loop. Each nesting
+ * depth has a stable counter; expression scratch follows lexical lifetimes.
  */
 
 import type { AstNode, CapturedGraph } from "./ast.ts";
@@ -32,148 +30,67 @@ const BYTES_PER_I32 = 4;
 const BYTES_PER_I64 = 8;
 const CHANNEL_STRIDE_BYTES = 128 * BYTES_PER_F32;
 const PAGE_BYTES = 65536;
-const LOOP_COUNTER_LOCAL = 0;
-/**
- * Subnormal-guard temp locals for f32 / f64 (= function locals array index 1 / 2).
- *
- * When the subnormal guard builds `|v| < 1e-30 ? 0 : v`, v has to be referenced
- * twice: once in the `abs / lt` condition and once in the `select` else branch.
- * Naively calling `emitExpression(valueNode, ...)` twice makes binaryen enter a
- * shared / malformed expression-generation path for v "in the context of an
- * audioInRead after forSample", producing NaN (= measured). The standard path
- * is `local.tee`: evaluate v once, store it in a local, pass the value through,
- * and re-fetch it with `local.get` whenever it is needed again = no duplicate
- * evaluation and no traversal of binaryen's internal sharing path.
- */
-const SUBNORMAL_F32_LOCAL = 1;
-const SUBNORMAL_F64_LOCAL = 2;
-/**
- * i32 temp local for the publish scheduler (= sub-phase 7.3). For each publish
- * slot, the sample counter is evaluated once after += 128, the threshold check
- * runs, and on the due path the counter is re-fetched as counter -= threshold
- * (= avoids duplicate evaluation and sidesteps the binaryen internal-path
- * pitfall, same approach as the subnormal guard).
- */
-const PUBLISH_COUNTER_LOCAL = 3;
+type ProcessLocals = {
+  types: number[];
+  loops: Map<number, number>;
+  free: Map<number, number[]>;
+  scopes: number[][];
+  inputSlot?: number;
+};
 
-/**
- * i32 temp locals for `event.emitIf` (= sub-phase 7.6 commit 4).
- *
- * - `EVENT_HEAD_LOCAL` = load the ring head once, then re-fetch it for the
- *   overflow check, the slot-offset computation, and the head += 1 store
- *   (= no duplicate evaluation).
- * - `EVENT_SLOT_PTR_LOCAL` = compute the slot pointer (= base + 12 +
- *   (head % capacity) × slotSize) once and re-fetch it for each field store
- *   (= avoids recomputation and the binaryen-path pitfall).
- */
-const EVENT_HEAD_LOCAL = 4;
-const EVENT_SLOT_PTR_LOCAL = 5;
-/**
- * i32 temp local for the `message.onReceive` drain (= sub-phase 7.7c).
- * - `MESSAGE_TAIL_LOCAL` = load the ring tail once, advance it by += 1 inside
- *   the drain loop, and commit it to the SAB at the end of the drain.
- * EVENT_HEAD_LOCAL / EVENT_SLOT_PTR_LOCAL are shared by the message ring drain
- * (= forSample / event emit and message drain run mutually exclusively within
- *   the same `process` call, so there is no local-lifetime conflict).
- */
-const MESSAGE_TAIL_LOCAL = 6;
+// Parent scopes reserve scratch across their operands and handler bodies.
+// Completed operands leave results on the WASM stack, so siblings can reuse
+// their scratch. These scopes exist only while compiling, never in the DSP.
+const processLocals = new WeakMap<BinaryenModule, ProcessLocals>();
 
-/**
- * f32 temp local for `frac`. frac(x) = x - floor(x) references x twice =
- * `tee` evaluates it once and holds it in the local, and the floor side
- * re-fetches it with `get`. Because WASM has strict left-to-right evaluation and
- * emit runs no optimizer, as long as the `get(L)` consumes the value right after
- * `tee(L,…)` with no write to L in between, even nesting (= frac(frac(x))) cannot
- * mix the values up (= the inner expression is fully evaluated before the outer
- * tee overwrites L).
- */
-const FRAC_F32_LOCAL = 7;
+function localsFor(mod: BinaryenModule): ProcessLocals {
+  let locals = processLocals.get(mod);
+  if (locals === undefined) {
+    locals = { types: [], loops: new Map(), free: new Map(), scopes: [] };
+    processLocals.set(mod, locals);
+  }
+  return locals;
+}
 
-/**
- * Three f32 temp locals for `mod`. mod(a,b) = a - trunc(a/b)·b references a / b /
- * quotient multiple times = each is evaluated once and held in a local. The
- * quotient (= MOD_Q) is referenced twice by the infinite-divisor guard
- * (= avoids `0·Inf=NaN`, see below). Nesting safety: a is pushed onto the stack
- * as the left operand of the outermost `sub` and carried through, while b /
- * quotient are read only after the rhs is evaluated and the quotient is
- * computed, so even if an inner mod overwrites the same locals there is no mix-up.
- */
-const MOD_A_F32_LOCAL = 8;
-const MOD_B_F32_LOCAL = 9;
-const MOD_Q_F32_LOCAL = 10;
+function withLocalScope<T>(mod: BinaryenModule, emitBody: () => T): T {
+  const locals = localsFor(mod);
+  const scope: number[] = [];
+  locals.scopes.push(scope);
+  try {
+    return emitBody();
+  } finally {
+    locals.scopes.pop();
+    for (const index of scope) {
+      const type = locals.types[index]!;
+      const free = locals.free.get(type) ?? [];
+      free.push(index);
+      locals.free.set(type, free);
+    }
+  }
+}
 
-/**
- * f64 temp locals (= same roles as the f32 versions, for the f64 path). Used by
- * the frac double-evaluation guard and the JS `%`-conforming special impl of mod.
- */
-const FRAC_F64_LOCAL = 11;
-const MOD_A_F64_LOCAL = 12;
-const MOD_B_F64_LOCAL = 13;
-const MOD_Q_F64_LOCAL = 14;
+function allocateLocal(mod: BinaryenModule, type: number): number {
+  const locals = localsFor(mod);
+  const index = locals.free.get(type)?.pop() ?? locals.types.push(type) - 1;
+  locals.scopes[locals.scopes.length - 1]!.push(index);
+  return index;
+}
 
-/**
- * Temp locals for `buffer.readInterpolated`. pos is evaluated once and held in
- * an f32 local (= referenced twice, for the floor index and the frac), and the
- * truncated integer index is held in an i32 local (= referenced twice, for the
- * i / i+1 two-tap addresses). Avoids double evaluation.
- */
-const BUFINTERP_POS_LOCAL = 15;
-const BUFINTERP_I0_LOCAL = 16;
-
-/**
- * i32 temp local for the OOB clamp of `payloadField.at(idx)` (= §4.3). idx is
- * evaluated once and held in the local, then rounded into [0, length-1] by a
- * two-stage select `min(idx, length-1)` → `max(_, 0)` before the content load
- * (= eliminates runtime traps; idx is referenced multiple times).
- */
-const PAYLOAD_CLAMP_LOCAL = 17;
-
-/**
- * v128 temp local for SIMD `sumLanes` (= §7). vec is evaluated once and held,
- * then its 4 lanes are pulled out with `extract_lane` (= avoids evaluating the
- * vec expression 4 times).
- */
-const VEC_TEMP_LOCAL = 18;
-
-/**
- * i32 temp local for the `audioOutWrite` non-finite scrub: holds the
- * NaN-or-Inf condition so it is evaluated once and shared by the diagnostic
- * counter bump and the store's `select`.
- */
-const SCRUB_COND_LOCAL = 19;
-
-// The store value stays live while its address can evaluate `sumLanes`.
-const VEC_STORE_LOCAL = 20;
-
-/**
- * Base local index for mutable-read temp locals (= `03-compiler.md` §2.7, issue
- * #8). The 21 fixed temp locals above occupy indices 0–20; per-read temps from
- * `captureTemp` occupy `TEMP_LOCAL_BASE + tempId` (= 21, 22, …). `emit` scans
- * the graph for `tempAssign` nodes and declares one local of the matching type
- * per `tempId`, in `tempId` order, after the fixed block.
- */
-const TEMP_LOCAL_BASE = 21;
-
-/**
- * Per-emit loop-counter local mapping for nested `forSample` (= Q58). A loop /
- * `loopCounter` at nesting depth `d` uses local `loopCounterLocal(d)`: depth 0
- * reuses `LOOP_COUNTER_LOCAL` (= byte-identical to the single-loop case), deeper
- * levels get fresh i32 locals appended after the mutable-read temp locals
- * (`nestBase + (d - 1)`). `nestBase` is set per-emit; `maxDepth` (the deepest loop
- * seen) drives how many extra locals the function declares. Reset at the top of
- * `emit()`; emit runs synchronously after the binaryen import, so a concurrent
- * compile cannot interleave. Depth is carried on the AST node (not a runtime
- * stack), so each case is a pure depth → local computation.
- */
-const loopEmit = { nestBase: 0, maxDepth: 0 };
-const loopCounterLocal = (depth: number): number =>
-  depth === 0 ? LOOP_COUNTER_LOCAL : loopEmit.nestBase + (depth - 1);
+function loopCounterLocal(mod: BinaryenModule, binaryen: BinaryenAPI, depth: number): number {
+  const loops = localsFor(mod).loops;
+  let local = loops.get(depth);
+  if (local === undefined) {
+    local = localsFor(mod).types.push(binaryen.i32) - 1;
+    loops.set(depth, local);
+  }
+  return local;
+}
 
 /**
  * The polynomial-approximation math primitives (= sin / cos / tan / tanh / exp /
  * log, Q17) are emitted as shared private WASM functions (= `(f32) -> f32`, not
  * exported), and the call sites reference them via `call`. Each function has its
- * own locals, so they do not interfere with `process`'s fixed temp locals. Only
+ * own locals, so they do not interfere with `process`'s temporaries. Only
  * the kinds actually used in the graph are added (= `collectUsedMathKinds`).
  */
 const MATH_FN_PREFIX = "$unworklet_";
@@ -381,12 +298,14 @@ export async function emit(
   // onReceive registrations for the same message are merged into one drain loop,
   // and at each slot all registration bodies fire back-to-back in registration
   // order (= Q38-c).
-  // Mutable-read temp locals occupy TEMP_LOCAL_BASE.. ; nested loop-counter
-  // locals (if any) are appended after them. Reset the per-emit loop state before
-  // building the body (the forSample case fills `maxDepth`).
-  const tempLocals = collectTempLocals(graph, binaryen);
-  loopEmit.nestBase = TEMP_LOCAL_BASE + tempLocals.length;
-  loopEmit.maxDepth = 0;
+  // Capture IDs retain stable locals independent of emission order.
+  const locals: ProcessLocals = {
+    types: collectTempLocals(graph, binaryen),
+    loops: new Map(),
+    free: new Map(),
+    scopes: [],
+  };
+  processLocals.set(mod, locals);
 
   const onReceiveByMessage = new Map<string, AstNode[]>();
   // MIDI inbound handlers grouped per port (= Q38-b: drain before per-block /
@@ -408,13 +327,17 @@ export async function emit(
     }
   }
   const onReceiveEmits = [...onReceiveByMessage.entries()].map(([name, body]) =>
-    emitMessageOnReceive({ kind: "messageOnReceive", name, body }, layout, mod, binaryen),
+    withLocalScope(mod, () =>
+      emitMessageOnReceive({ kind: "messageOnReceive", name, body }, layout, mod, binaryen),
+    ),
   );
   const midiDrainEmits = [...midiHandlersByPort.entries()].map(([port, handlers]) =>
-    emitMidiInputDrain(port, handlers, layout, mod, binaryen),
+    withLocalScope(mod, () => emitMidiInputDrain(port, handlers, layout, mod, binaryen)),
   );
   const otherEmits = otherStmts.map((s) => emitStatement(s, layout, mod, binaryen));
-  const schedulerBlocks = emitPublishScheduler(graph, layout, sampleRate, mod, binaryen);
+  const schedulerBlocks = withLocalScope(mod, () =>
+    emitPublishScheduler(graph, layout, sampleRate, mod, binaryen),
+  );
   const body = mod.block(null, [
     ...onReceiveEmits,
     ...midiDrainEmits,
@@ -422,46 +345,7 @@ export async function emit(
     ...schedulerBlocks,
   ]);
 
-  // function locals = [i32 loop counter, f32 subnormal guard temp, f64 subnormal guard temp,
-  //                    i32 publish counter temp, i32 event head temp, i32 event/message slot ptr temp,
-  //                    i32 message tail temp].
-  // Event emit evaluates head / slot ptr once and re-fetches them for each field
-  // store; the message drain loads tail once, advances it in the drain loop, and
-  // commits it.
-  mod.addFunction(
-    "process",
-    binaryen.none,
-    binaryen.none,
-    [
-      binaryen.i32,
-      binaryen.f32,
-      binaryen.f64,
-      binaryen.i32,
-      binaryen.i32,
-      binaryen.i32,
-      binaryen.i32,
-      binaryen.f32, // FRAC_F32_LOCAL (= frac temp)
-      binaryen.f32, // MOD_A_F32_LOCAL (= mod dividend temp)
-      binaryen.f32, // MOD_B_F32_LOCAL (= mod divisor temp)
-      binaryen.f32, // MOD_Q_F32_LOCAL (= mod quotient temp)
-      binaryen.f64, // FRAC_F64_LOCAL
-      binaryen.f64, // MOD_A_F64_LOCAL
-      binaryen.f64, // MOD_B_F64_LOCAL
-      binaryen.f64, // MOD_Q_F64_LOCAL
-      binaryen.f32, // BUFINTERP_POS_LOCAL
-      binaryen.i32, // BUFINTERP_I0_LOCAL
-      binaryen.i32, // PAYLOAD_CLAMP_LOCAL (= at OOB clamp idx)
-      binaryen.v128, // VEC_TEMP_LOCAL (= SIMD sumLanes)
-      binaryen.i32, // SCRUB_COND_LOCAL (= audioOutWrite non-finite condition)
-      binaryen.v128, // VEC_STORE_LOCAL (= storeVec flush)
-      // Mutable-read temp locals (= TEMP_LOCAL_BASE +, issue #8, in capture order).
-      ...tempLocals,
-      // Extra i32 loop-counter locals for nested forSample (= depth >= 1, Q58).
-      // Empty when no forSample nests, so the single-loop case stays byte-identical.
-      ...Array.from({ length: Math.max(0, loopEmit.maxDepth - 1) }, () => binaryen.i32),
-    ],
-    body,
-  );
+  mod.addFunction("process", binaryen.none, binaryen.none, locals.types, body);
   mod.addFunctionExport("process", "process");
   mod.addGlobal(SCRUB_GLOBAL, binaryen.i32, true, mod.i32.const(0));
   mod.addGlobalExport(SCRUB_GLOBAL, SCRUB_GLOBAL);
@@ -488,7 +372,7 @@ export async function emit(
  *
  * For each state slot carrying a publish flag, inlined at the end of the process
  * function:
- * 1. local PUBLISH_COUNTER_LOCAL = `i32.load(counterOffset) + SAMPLES_PER_BLOCK`
+ * 1. counter = `i32.load(counterOffset) + SAMPLES_PER_BLOCK`
  * 2. if local >= threshold:
  *    - copy the state value into publishShared (= per-type load + store)
  *    - i32.store(versionOffset, i32.load(versionOffset) + 1)
@@ -505,6 +389,7 @@ function emitPublishScheduler(
   mod: BinaryenModule,
   binaryen: BinaryenAPI,
 ): number[] {
+  const counterLocal = allocateLocal(mod, binaryen.i32);
   const blocks: number[] = [];
   for (const decl of graph.declarations) {
     if (decl.kind !== "state" || decl.publish === undefined) continue;
@@ -531,19 +416,16 @@ function emitPublishScheduler(
 
     blocks.push(
       mod.block(null, [
-        // local PUBLISH_COUNTER_LOCAL = i32.load(counterOffset) + SAMPLES_PER_BLOCK
+        // local counterLocal = i32.load(counterOffset) + SAMPLES_PER_BLOCK
         mod.local.set(
-          PUBLISH_COUNTER_LOCAL,
+          counterLocal,
           mod.i32.add(
             mod.i32.load(0, BYTES_PER_I32, mod.i32.const(counterOffset)),
             mod.i32.const(128),
           ),
         ),
         mod.if(
-          mod.i32.ge_s(
-            mod.local.get(PUBLISH_COUNTER_LOCAL, binaryen.i32),
-            mod.i32.const(threshold),
-          ),
+          mod.i32.ge_s(mod.local.get(counterLocal, binaryen.i32), mod.i32.const(threshold)),
           // due path: copy + version increment + counter -= threshold
           mod.block(null, [
             storeValueFn(loadValue),
@@ -560,10 +442,7 @@ function emitPublishScheduler(
               0,
               BYTES_PER_I32,
               mod.i32.const(counterOffset),
-              mod.i32.sub(
-                mod.local.get(PUBLISH_COUNTER_LOCAL, binaryen.i32),
-                mod.i32.const(threshold),
-              ),
+              mod.i32.sub(mod.local.get(counterLocal, binaryen.i32), mod.i32.const(threshold)),
             ),
           ]),
           // not due path: just save the new counter
@@ -571,7 +450,7 @@ function emitPublishScheduler(
             0,
             BYTES_PER_I32,
             mod.i32.const(counterOffset),
-            mod.local.get(PUBLISH_COUNTER_LOCAL, binaryen.i32),
+            mod.local.get(counterLocal, binaryen.i32),
           ),
         ),
       ]),
@@ -827,10 +706,7 @@ function bufferElementPtr(
  * `buffer[i]` saturates to the nearest element instead of trapping or
  * reading/writing an adjacent memory region (the audio path must never trap —
  * a single trap latches the processor to permanent silence). The index is
- * evaluated exactly once into PAYLOAD_CLAMP_LOCAL (so a side-effecting index is
- * safe), then rounded by a two-stage select. The local is reused from a fully
- * bottom-up evaluation, so a nested payload read that also uses it has already
- * completed before the outer `set`.
+ * evaluated exactly once, then clamped using a local owned by this operation.
  */
 function clampBufferIndex(
   mod: BinaryenModule,
@@ -842,20 +718,18 @@ function clampBufferIndex(
   // saturates inside the buffer, not just its first lane).
   span = 1,
 ): number {
-  const clamp = (): number => mod.local.get(PAYLOAD_CLAMP_LOCAL, binaryen.i32);
+  const indexLocal = allocateLocal(mod, binaryen.i32);
+  const clamp = (): number => mod.local.get(indexLocal, binaryen.i32);
   const upper = (): number => mod.i32.const(Math.max(0, length - span));
   return mod.block(
     null,
     [
-      mod.local.set(PAYLOAD_CLAMP_LOCAL, indexExpr),
+      mod.local.set(indexLocal, indexExpr),
       // clamp = min(clamp, length - 1)
-      mod.local.set(
-        PAYLOAD_CLAMP_LOCAL,
-        mod.select(mod.i32.gt_s(clamp(), upper()), upper(), clamp()),
-      ),
+      mod.local.set(indexLocal, mod.select(mod.i32.gt_s(clamp(), upper()), upper(), clamp())),
       // clamp = max(clamp, 0)
       mod.local.set(
-        PAYLOAD_CLAMP_LOCAL,
+        indexLocal,
         mod.select(mod.i32.lt_s(clamp(), mod.i32.const(0)), mod.i32.const(0), clamp()),
       ),
       clamp(),
@@ -962,6 +836,8 @@ function emitBufferReadInterpolated(
   mod: BinaryenModule,
   binaryen: BinaryenAPI,
 ): number {
+  const indexLocal = allocateLocal(mod, binaryen.i32);
+  const positionLocal = allocateLocal(mod, binaryen.f32);
   const base = layout.regions.buffers.slots[node.name];
   if (base === undefined) {
     throw new Error(`unknown buffer: ${node.name}`);
@@ -969,7 +845,7 @@ function emitBufferReadInterpolated(
   const et = node.elementType;
   const f = binaryen.f32;
   const i = binaryen.i32;
-  const i0 = (): number => mod.local.get(BUFINTERP_I0_LOCAL, i);
+  const i0 = (): number => mod.local.get(indexLocal, i);
   const aF32 = bufferElementToF32(
     mod,
     et,
@@ -981,7 +857,7 @@ function emitBufferReadInterpolated(
     emitBufferLoad(mod, et, bufferElementPtr(mod, base, et, mod.i32.add(i0(), mod.i32.const(1)))),
   );
   // frac = pos - f32(i0)
-  const frac = mod.f32.sub(mod.local.get(BUFINTERP_POS_LOCAL, f), mod.f32.convert_s.i32(i0()));
+  const frac = mod.f32.sub(mod.local.get(positionLocal, f), mod.f32.convert_s.i32(i0()));
   // result = a + (b - a)·frac  (f32 domain)
   const interp = mod.f32.add(aF32, mod.f32.mul(mod.f32.sub(bF32, aF32), frac));
   const resultScalar = et === "u8" ? "i32" : et;
@@ -996,11 +872,8 @@ function emitBufferReadInterpolated(
   return mod.block(
     null,
     [
-      mod.local.set(BUFINTERP_POS_LOCAL, emitExpression(node.pos, layout, mod, binaryen)),
-      mod.local.set(
-        BUFINTERP_I0_LOCAL,
-        mod.i32.trunc_s_sat.f32(mod.local.get(BUFINTERP_POS_LOCAL, f)),
-      ),
+      mod.local.set(positionLocal, emitExpression(node.pos, layout, mod, binaryen)),
+      mod.local.set(indexLocal, mod.i32.trunc_s_sat.f32(mod.local.get(positionLocal, f))),
       f32ToBufferElement(mod, et, interp),
     ],
     resultTy,
@@ -1009,7 +882,7 @@ function emitBufferReadInterpolated(
 
 // ─────────────────────────────────────────────────────────────────────────
 // typed-array payload reads (= `01-dsl.md` §4.3, message onReceive handler).
-// The slot's [payloadLen, payloadOffset] (= via EVENT_SLOT_PTR_LOCAL) plus the
+// The input slot's [payloadLen, payloadOffset] plus the
 // per-message payloadContent region base give index-read access to the
 // variable-length content / its element count.
 // ─────────────────────────────────────────────────────────────────────────
@@ -1051,7 +924,10 @@ function emitPayloadFieldLength(
   const payloadLen = mod.i32.load(
     0,
     BYTES_PER_I32,
-    mod.i32.add(mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32), mod.i32.const(offsetInSlot)),
+    mod.i32.add(
+      mod.local.get(localsFor(mod).inputSlot!, binaryen.i32),
+      mod.i32.const(offsetInSlot),
+    ),
   );
   return mod.i32.div_s(payloadLen, mod.i32.const(elemBytes));
 }
@@ -1062,8 +938,9 @@ function emitPayloadFieldRead(
   mod: BinaryenModule,
   binaryen: BinaryenAPI,
 ): number {
+  const indexLocal = allocateLocal(mod, binaryen.i32);
   const { offsetInSlot, contentBase, elemBytes } = payloadSlotMeta(node, layout);
-  const slotPtr = (): number => mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32);
+  const slotPtr = (): number => mod.local.get(localsFor(mod).inputSlot!, binaryen.i32);
   // length = payloadLen (bytes) / sizeof. OOB-clamp upper bound = length - 1.
   const upper = (): number =>
     mod.i32.sub(
@@ -1073,7 +950,7 @@ function emitPayloadFieldRead(
       ),
       mod.i32.const(1),
     );
-  const clamp = (): number => mod.local.get(PAYLOAD_CLAMP_LOCAL, binaryen.i32);
+  const clamp = (): number => mod.local.get(indexLocal, binaryen.i32);
   // Load payloadOffset (= byte offset within contentBase) from the slot's offsetInSlot+4.
   const payloadOffset = mod.i32.load(
     0,
@@ -1119,15 +996,12 @@ function emitPayloadFieldRead(
   return mod.block(
     null,
     [
-      mod.local.set(PAYLOAD_CLAMP_LOCAL, emitExpression(node.index, layout, mod, binaryen)),
+      mod.local.set(indexLocal, emitExpression(node.index, layout, mod, binaryen)),
       // clamp = min(clamp, length - 1)
-      mod.local.set(
-        PAYLOAD_CLAMP_LOCAL,
-        mod.select(mod.i32.gt_s(clamp(), upper()), upper(), clamp()),
-      ),
+      mod.local.set(indexLocal, mod.select(mod.i32.gt_s(clamp(), upper()), upper(), clamp())),
       // clamp = max(clamp, 0)
       mod.local.set(
-        PAYLOAD_CLAMP_LOCAL,
+        indexLocal,
         mod.select(mod.i32.lt_s(clamp(), mod.i32.const(0)), mod.i32.const(0), clamp()),
       ),
       // length === 0 → 0, otherwise the clamped content load (= prevents stale leak from an empty payload).
@@ -1160,7 +1034,7 @@ function emitBufferCopyFrom(
   }
   const elemBytes = BUFFER_ELEMENT_BYTES_EMIT[node.elementType];
   // Load payloadLen (= bytes) / payloadOffset from the slot (= a fresh node per evaluation).
-  const slotPtr = (): number => mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32);
+  const slotPtr = (): number => mod.local.get(localsFor(mod).inputSlot!, binaryen.i32);
   const payloadLen = (): number =>
     mod.i32.load(0, BYTES_PER_I32, mod.i32.add(slotPtr(), mod.i32.const(field.offsetInSlot)));
   const payloadOffset = mod.i32.load(
@@ -1247,6 +1121,15 @@ export function emitExpression(
   mod: BinaryenModule,
   binaryen: BinaryenAPI,
 ): number {
+  return withLocalScope(mod, () => emitExpressionInScope(node, layout, mod, binaryen));
+}
+
+function emitExpressionInScope(
+  node: AstNode,
+  layout: Layout,
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): number {
   switch (node.kind) {
     case "literal": {
       // An i64 literal is a bigint (= Q33-c).
@@ -1270,7 +1153,7 @@ export function emitExpression(
     case "loopCounter":
       // Read this level's own counter local, so an outer `i` read inside an inner
       // loop body (= a lower depth) still reads the outer counter.
-      return mod.local.get(loopCounterLocal(node.depth ?? 0), binaryen.i32);
+      return mod.local.get(loopCounterLocal(mod, binaryen, node.depth ?? 0), binaryen.i32);
     case "mul":
     case "add":
     case "sub":
@@ -1292,11 +1175,6 @@ export function emitExpression(
     //     etc. flowing into the divisor does not corrupt a finite dividend,
     //     reported by @codex on #6). Inf%5 / Inf%Inf keep quotient≠0 and so
     //     preserve NaN.
-    // Nesting safety: a is pushed onto the stack as the left operand of the
-    // outermost `sub` and carried through, while b / quotient are read only after
-    // the rhs is evaluated and the quotient is computed = no mix-up with an inner
-    // mod overwriting the locals. The select sees MOD_Q / MOD_B already fixed by
-    // the immediately preceding set.
     case "mod": {
       // Integer remainder = signed `rem_s` (= WASM standard, sign follows the
       // dividend). float (f32 / f64) uses the JS `%`-conforming special impl below.
@@ -1312,62 +1190,56 @@ export function emitExpression(
           emitExpression(node.rhs, layout, mod, binaryen),
         );
       }
+      const type = binaryenTypeOf(node.type, binaryen);
+      const aLocal = allocateLocal(mod, type);
+      const bLocal = allocateLocal(mod, type);
+      const quotientLocal = allocateLocal(mod, type);
       // f64: the same JS `%`-conforming special impl as the f32 version, using f64 locals.
       if (node.type === "f64") {
         const aTeedF64 = mod.local.tee(
-          MOD_A_F64_LOCAL,
+          aLocal,
           emitExpression(node.lhs, layout, mod, binaryen),
           binaryen.f64,
         );
         const setQuotientF64 = mod.local.set(
-          MOD_Q_F64_LOCAL,
+          quotientLocal,
           mod.f64.trunc(
             mod.f64.div(
-              mod.local.get(MOD_A_F64_LOCAL, binaryen.f64),
-              mod.local.tee(
-                MOD_B_F64_LOCAL,
-                emitExpression(node.rhs, layout, mod, binaryen),
-                binaryen.f64,
-              ),
+              mod.local.get(aLocal, binaryen.f64),
+              mod.local.tee(bLocal, emitExpression(node.rhs, layout, mod, binaryen), binaryen.f64),
             ),
           ),
         );
         const productF64 = mod.select(
-          mod.f64.eq(mod.local.get(MOD_Q_F64_LOCAL, binaryen.f64), mod.f64.const(0)),
+          mod.f64.eq(mod.local.get(quotientLocal, binaryen.f64), mod.f64.const(0)),
           mod.f64.const(0),
           mod.f64.mul(
-            mod.local.get(MOD_Q_F64_LOCAL, binaryen.f64),
-            mod.local.get(MOD_B_F64_LOCAL, binaryen.f64),
+            mod.local.get(quotientLocal, binaryen.f64),
+            mod.local.get(bLocal, binaryen.f64),
           ),
         );
         return mod.f64.sub(aTeedF64, mod.block(null, [setQuotientF64, productF64], binaryen.f64));
       }
       const aTeed = mod.local.tee(
-        MOD_A_F32_LOCAL,
+        aLocal,
         emitExpression(node.lhs, layout, mod, binaryen),
         binaryen.f32,
       );
-      // get(MOD_A) is read before the rhs is evaluated = a (before any inner mod
-      // overwrites it). b is tee'd at the same time.
       const setQuotient = mod.local.set(
-        MOD_Q_F32_LOCAL,
+        quotientLocal,
         mod.f32.trunc(
           mod.f32.div(
-            mod.local.get(MOD_A_F32_LOCAL, binaryen.f32),
-            mod.local.tee(
-              MOD_B_F32_LOCAL,
-              emitExpression(node.rhs, layout, mod, binaryen),
-              binaryen.f32,
-            ),
+            mod.local.get(aLocal, binaryen.f32),
+            mod.local.tee(bLocal, emitExpression(node.rhs, layout, mod, binaryen), binaryen.f32),
           ),
         ),
       );
       const product = mod.select(
-        mod.f32.eq(mod.local.get(MOD_Q_F32_LOCAL, binaryen.f32), mod.f32.const(0)),
+        mod.f32.eq(mod.local.get(quotientLocal, binaryen.f32), mod.f32.const(0)),
         mod.f32.const(0),
         mod.f32.mul(
-          mod.local.get(MOD_Q_F32_LOCAL, binaryen.f32),
-          mod.local.get(MOD_B_F32_LOCAL, binaryen.f32),
+          mod.local.get(quotientLocal, binaryen.f32),
+          mod.local.get(bLocal, binaryen.f32),
         ),
       );
       return mod.f32.sub(aTeed, mod.block(null, [setQuotient, product], binaryen.f32));
@@ -1401,23 +1273,24 @@ export function emitExpression(
     case "ceil":
       return floatNs(mod, node.type).ceil(emitExpression(node.value, layout, mod, binaryen));
     // frac(x) = x - floor(x) (= GLSL fract, result in [0,1)). x is tee'd into
-    // FRAC_F32_LOCAL so it is evaluated once, then re-fetched on the floor side
+    // valueLocal so it is evaluated once, then re-fetched on the floor side
     // with get (= avoids double evaluation).
     case "frac": {
+      const valueLocal = allocateLocal(mod, binaryenTypeOf(node.type, binaryen));
       if (node.type === "f64") {
         const teedF64 = mod.local.tee(
-          FRAC_F64_LOCAL,
+          valueLocal,
           emitExpression(node.value, layout, mod, binaryen),
           binaryen.f64,
         );
-        return mod.f64.sub(teedF64, mod.f64.floor(mod.local.get(FRAC_F64_LOCAL, binaryen.f64)));
+        return mod.f64.sub(teedF64, mod.f64.floor(mod.local.get(valueLocal, binaryen.f64)));
       }
       const teed = mod.local.tee(
-        FRAC_F32_LOCAL,
+        valueLocal,
         emitExpression(node.value, layout, mod, binaryen),
         binaryen.f32,
       );
-      return mod.f32.sub(teed, mod.f32.floor(mod.local.get(FRAC_F32_LOCAL, binaryen.f32)));
+      return mod.f32.sub(teed, mod.f32.floor(mod.local.get(valueLocal, binaryen.f32)));
     }
     // The polynomial-approximation math primitives call a shared function
     // (= `(f32) -> f32`). The f64 form uses the f32 bridge: demote → call →
@@ -1531,19 +1404,16 @@ export function emitExpression(
     // step, store it back, and return the fresh signed i32 mapped to f32
     // `[-1, 1)` via multiplication by `1 / 2^31`. The three xorshift steps
     // (`h ^= h << 13`, `h ^= h >>> 17`, `h ^= h << 5`) reference the running
-    // hash multiple times each; a tee/get chain in `BUFINTERP_I0_LOCAL` (an
-    // existing i32 scratch — reusing means the WASM local declaration table is
-    // unchanged for graphs that don't use noise) evaluates the slot load once,
-    // runs the shifts, and stores the final value back to the slot.
+    // hash multiple times each; an operation-owned local holds the value.
     case "noiseSourceNext": {
       const slotOffset = layout.regions.noiseSources?.slots[node.name];
       /* v8 ignore next 2 — a noiseSourceNext requires a preceding noiseSource declaration */
       if (slotOffset === undefined) throw new Error(`unknown noise source slot: ${node.name}`);
       // hstep(shift, dir) = h := h XOR (h shifted `shift` bits in `dir`); returns fresh h.
       // dir === "left" → i32.shl; dir === "right" → i32.shr_u (logical, unsigned).
-      const NOISE_H_LOCAL = BUFINTERP_I0_LOCAL;
-      const teeH = (v: number): number => mod.local.tee(NOISE_H_LOCAL, v, binaryen.i32);
-      const getH = (): number => mod.local.get(NOISE_H_LOCAL, binaryen.i32);
+      const hashLocal = allocateLocal(mod, binaryen.i32);
+      const teeH = (v: number): number => mod.local.tee(hashLocal, v, binaryen.i32);
+      const getH = (): number => mod.local.get(hashLocal, binaryen.i32);
       const shiftLeft = (bits: number): number =>
         teeH(mod.i32.xor(getH(), mod.i32.shl(getH(), mod.i32.const(bits))));
       const shiftRight = (bits: number): number =>
@@ -1552,7 +1422,7 @@ export function emitExpression(
         null,
         [
           // Load slot into local: h = memory[slotOffset]
-          mod.local.set(NOISE_H_LOCAL, mod.i32.load(slotOffset, BYTES_PER_I32, mod.i32.const(0))),
+          mod.local.set(hashLocal, mod.i32.load(slotOffset, BYTES_PER_I32, mod.i32.const(0))),
           // Three xorshift32 rounds (Marsaglia's canonical 13, 17, 5).
           mod.drop(shiftLeft(13)),
           mod.drop(shiftRight(17)),
@@ -1604,12 +1474,13 @@ export function emitExpression(
       return mod.f32x4.extract_lane(emitVec(node.value, layout, mod, binaryen), node.index);
     // sumLanes = hold vec in a v128 local, then extract + add the 4 lanes (= §7).
     case "vecSumLanes": {
+      const vectorLocal = allocateLocal(mod, binaryen.v128);
       const lane = (idx: number): number =>
-        mod.f32x4.extract_lane(mod.local.get(VEC_TEMP_LOCAL, binaryen.v128), idx);
+        mod.f32x4.extract_lane(mod.local.get(vectorLocal, binaryen.v128), idx);
       return mod.block(
         null,
         [
-          mod.local.set(VEC_TEMP_LOCAL, emitVec(node.value, layout, mod, binaryen)),
+          mod.local.set(vectorLocal, emitVec(node.value, layout, mod, binaryen)),
           mod.f32.add(mod.f32.add(lane(0), lane(1)), mod.f32.add(lane(2), lane(3))),
         ],
         binaryen.f32,
@@ -1676,8 +1547,6 @@ export function emitExpression(
       }
     }
     case "messageFieldRead": {
-      // Inside the drain loop, MESSAGE_SLOT_PTR (= shared with EVENT_SLOT_PTR_LOCAL)
-      // is already set = fetch it via local.get and memory.load at + the field offset.
       const slot = layout.regions.messageRings.slots[node.name];
       /* v8 ignore next 3 — the slot is already checked in emitMessageOnReceive =
          unreachable defensive guard */
@@ -1691,7 +1560,7 @@ export function emitExpression(
         throw new Error(`unknown message field: ${node.name}.${node.field}`);
       }
       const ptr = mod.i32.add(
-        mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32),
+        mod.local.get(localsFor(mod).inputSlot!, binaryen.i32),
         mod.i32.const(field.offsetInSlot),
       );
       // An inbound scalar field is f32 on the wire (= a declared `number` keeps its
@@ -1712,7 +1581,7 @@ export function emitExpression(
     case "tempRef":
       // Read the per-read temp local (= issue #8). The matching `tempAssign`
       // ran earlier in statement order, so the local is already set.
-      return mod.local.get(TEMP_LOCAL_BASE + node.tempId, binaryenTypeOf(node.type, binaryen));
+      return mod.local.get(node.tempId, binaryenTypeOf(node.type, binaryen));
     case "midiFieldRead":
       return emitMidiFieldRead(node, mod, binaryen);
     case "midiSysexLength":
@@ -1735,6 +1604,15 @@ export function emitExpression(
 }
 
 export function emitStatement(
+  node: AstNode,
+  layout: Layout,
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): number {
+  return withLocalScope(mod, () => emitStatementInScope(node, layout, mod, binaryen));
+}
+
+function emitStatementInScope(
   node: AstNode,
   layout: Layout,
   mod: BinaryenModule,
@@ -1787,6 +1665,8 @@ export function emitStatement(
       }
     }
     case "audioOutWrite": {
+      const valueLocal = allocateLocal(mod, binaryen.f32);
+      const conditionLocal = allocateLocal(mod, binaryen.i32);
       const portBase = layout.regions.ioScratch.outputs[node.portName];
       if (portBase === undefined) {
         throw new Error(`unknown audioOutput port: ${node.portName}`);
@@ -1808,15 +1688,15 @@ export function emitStatement(
       // the condition is held in a local shared by the counter bump and the
       // store's select (both select arms are local.get/const = eager-safe).
       const teedValue = mod.local.tee(
-        SUBNORMAL_F32_LOCAL,
+        valueLocal,
         emitExpression(node.value, layout, mod, binaryen),
         binaryen.f32,
       );
-      const getValue = (): number => mod.local.get(SUBNORMAL_F32_LOCAL, binaryen.f32);
-      const getCond = (): number => mod.local.get(SCRUB_COND_LOCAL, binaryen.i32);
+      const getValue = (): number => mod.local.get(valueLocal, binaryen.f32);
+      const getCond = (): number => mod.local.get(conditionLocal, binaryen.i32);
       return mod.block(null, [
         mod.local.set(
-          SCRUB_COND_LOCAL,
+          conditionLocal,
           mod.i32.or(
             mod.f32.ne(teedValue, getValue()),
             mod.f32.eq(mod.f32.abs(getValue()), mod.f32.const(Infinity)),
@@ -1833,11 +1713,8 @@ export function emitStatement(
       ]);
     }
     case "forSample": {
-      // Depth 0 keeps LOOP_COUNTER_LOCAL (byte-identical to the single-loop case);
-      // deeper levels get a fresh local appended after the temp locals.
       const depth = node.depth ?? 0;
-      const counterLocal = loopCounterLocal(depth);
-      if (depth + 1 > loopEmit.maxDepth) loopEmit.maxDepth = depth + 1;
+      const counterLocal = loopCounterLocal(mod, binaryen, depth);
       const loopBody = node.body.map((s) => emitStatement(s, layout, mod, binaryen));
       // Depth 0 keeps the bare break/continue labels; nested levels get a per-depth
       // suffix so a nested loop never aliases the outer targets. Label names are not
@@ -1893,6 +1770,7 @@ export function emitStatement(
     case "bufferCopyFrom":
       return emitBufferCopyFrom(node, layout, mod, binaryen);
     case "bufferStoreVec": {
+      const vectorLocal = allocateLocal(mod, binaryen.v128);
       const base = layout.regions.buffers.slots[node.name];
       /* v8 ignore next 3 — the buffer is declared = its slot is already pushed in layout = unreachable */
       if (base === undefined) {
@@ -1921,14 +1799,14 @@ export function emitStatement(
       // tee buried in the mask would let the value's local.get read the
       // local's stale contents (the same eager-evaluation pitfall the scalar
       // guard documents).
-      const getVec = (): number => mod.local.get(VEC_STORE_LOCAL, binaryen.v128);
+      const getVec = (): number => mod.local.get(vectorLocal, binaryen.v128);
       const mask = mod.f32x4.lt(
         mod.f32x4.abs(getVec()),
         mod.f32x4.splat(mod.f32.const(SUBNORMAL_THRESHOLD)),
       );
       const flushed = mod.v128.bitselect(mod.f32x4.splat(mod.f32.const(0)), getVec(), mask);
       return mod.block(null, [
-        mod.local.set(VEC_STORE_LOCAL, emitVec(node.value, layout, mod, binaryen)),
+        mod.local.set(vectorLocal, emitVec(node.value, layout, mod, binaryen)),
         mod.v128.store(0, BYTES_PER_F32, addr, flushed),
       ]);
     }
@@ -1966,10 +1844,7 @@ export function emitStatement(
       return emitMessageOnReceive(node, layout, mod, binaryen);
     case "tempAssign":
       // Evaluate a mutable read once into its per-read local (= issue #8).
-      return mod.local.set(
-        TEMP_LOCAL_BASE + node.tempId,
-        emitExpression(node.value, layout, mod, binaryen),
-      );
+      return mod.local.set(node.tempId, emitExpression(node.value, layout, mod, binaryen));
     case "midiEmitIf":
       return emitMidiEmitIf(node, layout, mod, binaryen);
     case "midiSysexCopy":
@@ -2005,20 +1880,22 @@ export function emitStatement(
  * runs only after the local is guaranteed to hold v.
  */
 function subnormalGuardF32Expr(mod: BinaryenModule, binaryen: BinaryenAPI, v: number): number {
-  const teed = mod.local.tee(SUBNORMAL_F32_LOCAL, v, binaryen.f32);
+  const valueLocal = allocateLocal(mod, binaryen.f32);
+  const teed = mod.local.tee(valueLocal, v, binaryen.f32);
   return mod.if(
     mod.f32.lt(mod.f32.abs(teed), mod.f32.const(SUBNORMAL_THRESHOLD)),
     mod.f32.const(0),
-    mod.local.get(SUBNORMAL_F32_LOCAL, binaryen.f32),
+    mod.local.get(valueLocal, binaryen.f32),
   );
 }
 
 function subnormalGuardF64Expr(mod: BinaryenModule, binaryen: BinaryenAPI, v: number): number {
-  const teed = mod.local.tee(SUBNORMAL_F64_LOCAL, v, binaryen.f64);
+  const valueLocal = allocateLocal(mod, binaryen.f64);
+  const teed = mod.local.tee(valueLocal, v, binaryen.f64);
   return mod.if(
     mod.f64.lt(mod.f64.abs(teed), mod.f64.const(SUBNORMAL_THRESHOLD)),
     mod.f64.const(0),
-    mod.local.get(SUBNORMAL_F64_LOCAL, binaryen.f64),
+    mod.local.get(valueLocal, binaryen.f64),
   );
 }
 
@@ -2049,11 +1926,11 @@ const EVENT_OVERFLOW_OFFSET = 8;
  * `event.emitIf` WASM emit (= sub-phase 7.6 commit 4, `02-messaging.md` §4 + §5.1).
  *
  * The fire path, when cond is truthy:
- * 1. load head once + hold it in `EVENT_HEAD_LOCAL`
+ * 1. load head once
  * 2. overflow check (= head + 1 - tail >= capacity) → drop-oldest:
  *    overflowCount += 1 + tail += 1
  * 3. compute slot ptr = base + 12 + (head % capacity) × slotSize once + hold it
- *    in `EVENT_SLOT_PTR_LOCAL`
+ *    in an operation-owned local
  * 4. store atSample + each field into the slot (= matching the per-field offset /
  *    wireType of layout.regions.eventRings.slots[name].fields)
  * 5. store head += 1
@@ -2067,6 +1944,8 @@ function emitEventEmitIf(
   mod: BinaryenModule,
   binaryen: BinaryenAPI,
 ): number {
+  const headLocal = allocateLocal(mod, binaryen.i32);
+  const slotLocal = allocateLocal(mod, binaryen.i32);
   const slot = layout.regions.eventRings.slots[node.name];
   if (slot === undefined) {
     throw new Error(`unknown event slot: ${node.name}`);
@@ -2095,7 +1974,7 @@ function emitEventEmitIf(
   const overflowBlock = mod.if(
     mod.i32.ge_s(
       mod.i32.sub(
-        mod.local.get(EVENT_HEAD_LOCAL, binaryen.i32),
+        mod.local.get(headLocal, binaryen.i32),
         mod.i32.load(0, BYTES_PER_I32, mod.i32.const(ringBase + EVENT_TAIL_OFFSET)),
       ),
       mod.i32.const(capacity),
@@ -2124,11 +2003,11 @@ function emitEventEmitIf(
 
   // slot ptr = slotsBase + (head % capacity) × slotSize, computed once + held in a local
   const slotPtrTee = mod.local.tee(
-    EVENT_SLOT_PTR_LOCAL,
+    slotLocal,
     mod.i32.add(
       mod.i32.const(slotsBase),
       mod.i32.mul(
-        mod.i32.rem_u(mod.local.get(EVENT_HEAD_LOCAL, binaryen.i32), mod.i32.const(capacity)),
+        mod.i32.rem_u(mod.local.get(headLocal, binaryen.i32), mod.i32.const(capacity)),
         mod.i32.const(slotSize),
       ),
     ),
@@ -2153,7 +2032,7 @@ function emitEventEmitIf(
     // main drains all at once after the render, content must be held separately
     // per slot. copyBytes = min(length × sizeof, chunkBytes). Since atSample is
     // always idx 0, a typed-array field is idx ≥ 1 = after slotPtrTee =
-    // EVENT_SLOT_PTR_LOCAL is already fixed.
+    // slotLocal is already fixed.
     if (field.payloadElementType !== undefined) {
       const emitField = emitFieldByName.get(field.name);
       const content = layout.regions.payloadContent.eventSlots[node.name];
@@ -2172,9 +2051,6 @@ function emitEventEmitIf(
         throw new Error(`event "${node.name}" typed-array field "${field.name}" missing emit meta`);
       }
       const elemBytes = BUFFER_ELEMENT_BYTES_EMIT[field.payloadElementType];
-      // The chunk cycles within the content.chunks budget (= min(capacity,
-      // MAX_CONTENT_SLOTS), Q85). Even when ring capacity exceeds chunks, content
-      // reuses the chunks budget drop-oldest.
       const chunkBytes = Math.floor(content.capacity / content.chunks);
       // Copy upper bound = the smaller of the chunk and the source buffer. Without
       // this, when length exceeds the buffer size (= author misspecification),
@@ -2183,16 +2059,10 @@ function emitEventEmitIf(
       const bufferBytes = emitField.bufferSize * elemBytes;
       const copyCap = Math.min(chunkBytes, bufferBytes);
       const slotFieldPtr = (): number =>
-        mod.i32.add(
-          mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32),
-          mod.i32.const(field.offsetInSlot),
-        );
+        mod.i32.add(mod.local.get(slotLocal, binaryen.i32), mod.i32.const(field.offsetInSlot));
       const payloadOffset = (): number =>
         mod.i32.mul(
-          mod.i32.rem_u(
-            mod.local.get(EVENT_HEAD_LOCAL, binaryen.i32),
-            mod.i32.const(content.chunks),
-          ),
+          mod.i32.rem_u(mod.local.get(headLocal, binaryen.i32), mod.i32.const(content.chunks)),
           mod.i32.const(chunkBytes),
         );
       const lengthBytes = (): number =>
@@ -2230,10 +2100,7 @@ function emitEventEmitIf(
     const ptr =
       idx === 0
         ? slotPtrTee // hold in the local at the first store
-        : mod.i32.add(
-            mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32),
-            mod.i32.const(field.offsetInSlot),
-          );
+        : mod.i32.add(mod.local.get(slotLocal, binaryen.i32), mod.i32.const(field.offsetInSlot));
     const valueExpr = emitExpression(valueAst, layout, mod, binaryen);
     switch (field.wireType) {
       case "f32":
@@ -2255,7 +2122,7 @@ function emitEventEmitIf(
   // fire body: head load + overflow check + slot fill + head += 1
   const fireBlock = mod.block(null, [
     mod.local.set(
-      EVENT_HEAD_LOCAL,
+      headLocal,
       mod.i32.load(0, BYTES_PER_I32, mod.i32.const(ringBase + EVENT_HEAD_OFFSET)),
     ),
     overflowBlock,
@@ -2264,7 +2131,7 @@ function emitEventEmitIf(
       0,
       BYTES_PER_I32,
       mod.i32.const(ringBase + EVENT_HEAD_OFFSET),
-      mod.i32.add(mod.local.get(EVENT_HEAD_LOCAL, binaryen.i32), mod.i32.const(1)),
+      mod.i32.add(mod.local.get(headLocal, binaryen.i32), mod.i32.const(1)),
     ),
   ]);
 
@@ -2297,6 +2164,9 @@ function emitMessageOnReceive(
   mod: BinaryenModule,
   binaryen: BinaryenAPI,
 ): number {
+  const headLocal = allocateLocal(mod, binaryen.i32);
+  const slotLocal = allocateLocal(mod, binaryen.i32);
+  const tailLocal = allocateLocal(mod, binaryen.i32);
   const slot = layout.regions.messageRings.slots[node.name];
   if (slot === undefined) {
     throw new Error(`unknown message slot: ${node.name}`);
@@ -2310,17 +2180,15 @@ function emitMessageOnReceive(
 
   // handler body emit (= messageFieldRead resolves via $slot_ptr through the
   // existing emit path).
+  const locals = localsFor(mod);
+  const enclosingInputSlot = locals.inputSlot;
+  locals.inputSlot = slotLocal;
   const bodyEmits = node.body.map((s) => emitStatement(s, layout, mod, binaryen));
+  locals.inputSlot = enclosingInputSlot;
 
   return mod.block(null, [
-    mod.local.set(
-      MESSAGE_TAIL_LOCAL,
-      mod.i32.load(0, BYTES_PER_I32, mod.i32.const(ringBase + TAIL_OFFSET)),
-    ),
-    mod.local.set(
-      EVENT_HEAD_LOCAL,
-      mod.i32.load(0, BYTES_PER_I32, mod.i32.const(ringBase + HEAD_OFFSET)),
-    ),
+    mod.local.set(tailLocal, mod.i32.load(0, BYTES_PER_I32, mod.i32.const(ringBase + TAIL_OFFSET))),
+    mod.local.set(headLocal, mod.i32.load(0, BYTES_PER_I32, mod.i32.const(ringBase + HEAD_OFFSET))),
     mod.block("break", [
       mod.loop(
         "continue",
@@ -2328,29 +2196,26 @@ function emitMessageOnReceive(
           mod.br_if(
             "break",
             mod.i32.eq(
-              mod.local.get(MESSAGE_TAIL_LOCAL, binaryen.i32),
-              mod.local.get(EVENT_HEAD_LOCAL, binaryen.i32),
+              mod.local.get(tailLocal, binaryen.i32),
+              mod.local.get(headLocal, binaryen.i32),
             ),
           ),
           mod.local.set(
-            EVENT_SLOT_PTR_LOCAL,
+            slotLocal,
             mod.i32.add(
               mod.i32.const(slotsBase),
               slotSize === 0
                 ? mod.i32.const(0)
                 : mod.i32.mul(
-                    mod.i32.rem_u(
-                      mod.local.get(MESSAGE_TAIL_LOCAL, binaryen.i32),
-                      mod.i32.const(capacity),
-                    ),
+                    mod.i32.rem_u(mod.local.get(tailLocal, binaryen.i32), mod.i32.const(capacity)),
                     mod.i32.const(slotSize),
                   ),
             ),
           ),
           ...bodyEmits,
           mod.local.set(
-            MESSAGE_TAIL_LOCAL,
-            mod.i32.add(mod.local.get(MESSAGE_TAIL_LOCAL, binaryen.i32), mod.i32.const(1)),
+            tailLocal,
+            mod.i32.add(mod.local.get(tailLocal, binaryen.i32), mod.i32.const(1)),
           ),
           mod.br("continue"),
         ]),
@@ -2360,7 +2225,7 @@ function emitMessageOnReceive(
       0,
       BYTES_PER_I32,
       mod.i32.const(ringBase + TAIL_OFFSET),
-      mod.local.get(MESSAGE_TAIL_LOCAL, binaryen.i32),
+      mod.local.get(tailLocal, binaryen.i32),
     ),
   ]);
 }
@@ -2388,13 +2253,13 @@ const MIDI_STATUS_NIBBLE: Partial<Record<string, number>> = {
   pitchBend: 0xe0,
 };
 
-/** `midiFieldRead` (= decode drain-slot bytes, via EVENT_SLOT_PTR_LOCAL). */
+/** `midiFieldRead` (= decode drain-slot bytes, via slotLocal). */
 function emitMidiFieldRead(
   field: AstNode & { kind: "midiFieldRead" },
   mod: BinaryenModule,
   binaryen: BinaryenAPI,
 ): number {
-  const ptr = (): number => mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32);
+  const ptr = (): number => mod.local.get(localsFor(mod).inputSlot!, binaryen.i32);
   switch (field.field) {
     case "status":
       return mod.i32.load8_u(0, 1, ptr());
@@ -2418,7 +2283,7 @@ function emitMidiFieldRead(
 /**
  * Address of the current inbound drain slot's sysex content chunk (`11-midi.md`
  * §4.3): `contentBase + chunkIdx × perChunk`, where `chunkIdx` = the slot's
- * data1 byte (= EVENT_SLOT_PTR_LOCAL + 1). The chunk is `[length:u32, bytes...]`.
+ * little-endian u16 at slot offset 1. The chunk is `[length:u32, bytes...]`.
  */
 function sysexContentChunkPtr(
   port: string,
@@ -2433,7 +2298,7 @@ function sysexContentChunkPtr(
   return mod.i32.add(
     mod.i32.const(region.base),
     mod.i32.mul(
-      mod.i32.load8_u(1, 1, mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32)),
+      mod.i32.load16_u(1, 1, mod.local.get(localsFor(mod).inputSlot!, binaryen.i32)),
       mod.i32.const(region.perChunk),
     ),
   );
@@ -2456,25 +2321,26 @@ function emitMidiSysexCopy(
   mod: BinaryenModule,
   binaryen: BinaryenAPI,
 ): number {
+  const chunkLocal = allocateLocal(mod, binaryen.i32);
   const bufferBase = layout.regions.buffers.slots[node.bufferName];
   /* v8 ignore next 2 — the buffer is reserved by layout */
   if (bufferBase === undefined) throw new Error(`unknown buffer: ${node.bufferName}`);
   const chunkPtr = sysexContentChunkPtr(node.port, layout, mod, binaryen);
   // copy min(contentLength, bufferSize) bytes from chunk+4 (= after the length
-  // header) into the buffer. Use BUFINTERP_I0_LOCAL as the chunk-ptr scratch so
+  // header) into the buffer. Use chunkLocal as the chunk-ptr scratch so
   // the length re-read and the copy address agree.
   return mod.block(null, [
-    mod.local.set(BUFINTERP_I0_LOCAL, chunkPtr),
+    mod.local.set(chunkLocal, chunkPtr),
     mod.memory.copy(
       mod.i32.const(bufferBase),
-      mod.i32.add(mod.local.get(BUFINTERP_I0_LOCAL, binaryen.i32), mod.i32.const(4)),
+      mod.i32.add(mod.local.get(chunkLocal, binaryen.i32), mod.i32.const(4)),
       // [0, bufferSize] clamp — the chunk-header length is our own write, but
       // memory.copy reads the size unsigned, so a corrupted/negative header
       // must clamp rather than turn into a ~4 GiB copy (OOB trap).
       clampLenI32(
         mod,
         binaryen,
-        mod.i32.load(0, BYTES_PER_I32, mod.local.get(BUFINTERP_I0_LOCAL, binaryen.i32)),
+        mod.i32.load(0, BYTES_PER_I32, mod.local.get(chunkLocal, binaryen.i32)),
         node.bufferSize,
       ),
     ),
@@ -2490,7 +2356,7 @@ function minI32(mod: BinaryenModule, a: number, b: number): number {
  * Clamp an i32 byte-length expression to `[0, cap]`. `memory.copy` reads its
  * size operand as UNSIGNED, so a runtime-negative length (a user-computed
  * `length` gone wrong) would otherwise become a ~4 GiB copy — an OOB trap that
- * latches permanent silence. Uses `PAYLOAD_CLAMP_LOCAL` as the scratch.
+ * latches permanent silence.
  */
 function clampLenI32(
   mod: BinaryenModule,
@@ -2498,11 +2364,12 @@ function clampLenI32(
   lenExpr: number,
   cap: number,
 ): number {
-  const len = (): number => mod.local.get(PAYLOAD_CLAMP_LOCAL, binaryen.i32);
+  const lengthLocal = allocateLocal(mod, binaryen.i32);
+  const len = (): number => mod.local.get(lengthLocal, binaryen.i32);
   return mod.block(
     null,
     [
-      mod.local.set(PAYLOAD_CLAMP_LOCAL, minI32(mod, lenExpr, mod.i32.const(cap))),
+      mod.local.set(lengthLocal, minI32(mod, lenExpr, mod.i32.const(cap))),
       mod.select(mod.i32.lt_s(len(), mod.i32.const(0)), mod.i32.const(0), len()),
     ],
     binaryen.i32,
@@ -2513,7 +2380,7 @@ function clampLenI32(
  * Drain one `midiInput` port at the block boundary (Q38-b): walk tail→head,
  * and for each registered handler emit `if (status matches eventType) { body }`
  * (registration order, Q38-c). Handler `midiFieldRead` nodes resolve against
- * EVENT_SLOT_PTR_LOCAL (= the current slot pointer, shared with message drain).
+ * the slot pointer reserved for this input handler.
  */
 function emitMidiInputDrain(
   port: string,
@@ -2522,14 +2389,15 @@ function emitMidiInputDrain(
   mod: BinaryenModule,
   binaryen: BinaryenAPI,
 ): number {
+  const slotLocal = allocateLocal(mod, binaryen.i32);
+  const tailLocal = allocateLocal(mod, binaryen.i32);
   const slot = layout.regions.midiRings.slots[port];
   /* v8 ignore next 2 — a midiInput port is always pushed by layout = unreachable */
   if (slot === undefined) throw new Error(`unknown midiInput port: ${port}`);
   const ringBase = slot.base;
   const capacity = slot.capacity;
   const slotsBase = ringBase + MIDI_HEADER_BYTES_EMIT;
-  const status = (): number =>
-    mod.i32.load8_u(0, 1, mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32));
+  const status = (): number => mod.i32.load8_u(0, 1, mod.local.get(slotLocal, binaryen.i32));
 
   // status byte → event-type predicate. channel-voice = high-nibble match,
   // systemRealtime = 0xF8..0xFF (= status & 0xF8 == 0xF8).
@@ -2544,6 +2412,9 @@ function emitMidiInputDrain(
     return mod.i32.eq(mod.i32.and(status(), mod.i32.const(0xf0)), mod.i32.const(nibble));
   };
 
+  const locals = localsFor(mod);
+  const enclosingInputSlot = locals.inputSlot;
+  locals.inputSlot = slotLocal;
   const dispatch: number[] = [];
   for (const h of handlers) {
     const body = h.body.map((s) => emitStatement(s, layout, mod, binaryen));
@@ -2552,14 +2423,10 @@ function emitMidiInputDrain(
     );
   }
 
-  // The loop condition re-reads `head` from memory each iteration (not a cached
-  // local): a handler may `emitIf` to another port, and that emit reuses
-  // EVENT_HEAD_LOCAL / EVENT_SLOT_PTR_LOCAL — so the drain must not depend on
-  // those surviving the handler body. `head` is stable during the drain (the
-  // producer is main / injection, never the handler).
+  locals.inputSlot = enclosingInputSlot;
   return mod.block(null, [
     mod.local.set(
-      MESSAGE_TAIL_LOCAL,
+      tailLocal,
       mod.i32.load(0, BYTES_PER_I32, mod.i32.const(ringBase + MIDI_TAIL_OFFSET)),
     ),
     mod.block("break", [
@@ -2569,27 +2436,24 @@ function emitMidiInputDrain(
           mod.br_if(
             "break",
             mod.i32.eq(
-              mod.local.get(MESSAGE_TAIL_LOCAL, binaryen.i32),
+              mod.local.get(tailLocal, binaryen.i32),
               mod.i32.load(0, BYTES_PER_I32, mod.i32.const(ringBase)),
             ),
           ),
           mod.local.set(
-            EVENT_SLOT_PTR_LOCAL,
+            slotLocal,
             mod.i32.add(
               mod.i32.const(slotsBase),
               mod.i32.mul(
-                mod.i32.rem_u(
-                  mod.local.get(MESSAGE_TAIL_LOCAL, binaryen.i32),
-                  mod.i32.const(capacity),
-                ),
+                mod.i32.rem_u(mod.local.get(tailLocal, binaryen.i32), mod.i32.const(capacity)),
                 mod.i32.const(MIDI_SLOT_BYTES_EMIT),
               ),
             ),
           ),
           ...dispatch,
           mod.local.set(
-            MESSAGE_TAIL_LOCAL,
-            mod.i32.add(mod.local.get(MESSAGE_TAIL_LOCAL, binaryen.i32), mod.i32.const(1)),
+            tailLocal,
+            mod.i32.add(mod.local.get(tailLocal, binaryen.i32), mod.i32.const(1)),
           ),
           mod.br("continue"),
         ]),
@@ -2599,7 +2463,7 @@ function emitMidiInputDrain(
       0,
       BYTES_PER_I32,
       mod.i32.const(ringBase + MIDI_TAIL_OFFSET),
-      mod.local.get(MESSAGE_TAIL_LOCAL, binaryen.i32),
+      mod.local.get(tailLocal, binaryen.i32),
     ),
   ]);
 }
@@ -2644,6 +2508,8 @@ function emitMidiEmitIf(
   mod: BinaryenModule,
   binaryen: BinaryenAPI,
 ): number {
+  const headLocal = allocateLocal(mod, binaryen.i32);
+  const slotLocal = allocateLocal(mod, binaryen.i32);
   const slot = layout.regions.midiRings.slots[node.port];
   /* v8 ignore next 2 — a midiOutput port is always pushed by layout = unreachable */
   if (slot === undefined) throw new Error(`unknown midiOutput port: ${node.port}`);
@@ -2651,13 +2517,13 @@ function emitMidiEmitIf(
   const capacity = slot.capacity;
   const slotsBase = ringBase + MIDI_HEADER_BYTES_EMIT;
 
-  const slotPtr = (): number => mod.local.get(EVENT_SLOT_PTR_LOCAL, binaryen.i32);
-  const head = (): number => mod.local.get(EVENT_HEAD_LOCAL, binaryen.i32);
+  const slotPtr = (): number => mod.local.get(slotLocal, binaryen.i32);
+  const head = (): number => mod.local.get(headLocal, binaryen.i32);
   const atSample = emitExpression(node.atSample, layout, mod, binaryen);
 
   // Common prologue: load head, drop-oldest on overflow, compute the dest slot ptr.
   const prologue: number[] = [
-    mod.local.set(EVENT_HEAD_LOCAL, mod.i32.load(0, BYTES_PER_I32, mod.i32.const(ringBase))),
+    mod.local.set(headLocal, mod.i32.load(0, BYTES_PER_I32, mod.i32.const(ringBase))),
     mod.if(
       mod.i32.ge_s(
         mod.i32.sub(
@@ -2699,10 +2565,10 @@ function emitMidiEmitIf(
   /** Statements to run once the emit condition holds. */
   let guarded: number[];
   if (node.eventType === "sysex") {
+    const sourceLocal = allocateLocal(mod, binaryen.i32);
+    const lengthLocal = allocateLocal(mod, binaryen.i32);
     // Sysex: status=0xF0 + chunkIdx (= head % chunks) in data1; content chunk
-    // `[length, bytes]` filled from the source (worklet buffer.u8 or an inbound
-    // sysex content chunk for thru). Capture source ptr + copyLen BEFORE the
-    // dest slot ptr overwrites EVENT_SLOT_PTR_LOCAL (thru reads the source slot).
+    // `[length, bytes]` is copied from the buffer or the input handler slot.
     const region = layout.regions.sysexContent.slots[node.port];
     /* v8 ignore next 2 — a port that emits sysex has its content region reserved by layout */
     if (region === undefined)
@@ -2719,20 +2585,22 @@ function emitMidiEmitIf(
     const lengthExpr = node.sysexLength
       ? emitExpression(node.sysexLength, layout, mod, binaryen)
       : mod.i32.const(0);
-    // SRC scratch = BUFINTERP_I0_LOCAL (= source byte address), LEN = PAYLOAD_CLAMP_LOCAL.
     let srcSet: number;
     if (node.sysexBufferName !== undefined) {
       const bufferBase = layout.regions.buffers.slots[node.sysexBufferName]!;
-      srcSet = mod.local.set(BUFINTERP_I0_LOCAL, mod.i32.const(bufferBase));
+      srcSet = mod.local.set(sourceLocal, mod.i32.const(bufferBase));
     } else {
       // thru: source = source port's current drain chunk + 4 (after length header).
       const srcRegion = layout.regions.sysexContent.slots[node.sysexSourcePort!]!;
       srcSet = mod.local.set(
-        BUFINTERP_I0_LOCAL,
+        sourceLocal,
         mod.i32.add(
           mod.i32.add(
             mod.i32.const(srcRegion.base),
-            mod.i32.mul(mod.i32.load8_u(1, 1, slotPtr()), mod.i32.const(srcRegion.perChunk)),
+            mod.i32.mul(
+              mod.i32.load16_u(1, 1, mod.local.get(localsFor(mod).inputSlot!, binaryen.i32)),
+              mod.i32.const(srcRegion.perChunk),
+            ),
           ),
           mod.i32.const(4),
         ),
@@ -2746,7 +2614,7 @@ function emitMidiEmitIf(
     const contentChunk = (): number => mod.i32.add(mod.i32.const(region.base), chunkOffset());
     const shipped = [
       mod.local.set(
-        EVENT_SLOT_PTR_LOCAL,
+        slotLocal,
         mod.i32.add(
           mod.i32.const(slotsBase),
           mod.i32.mul(
@@ -2756,24 +2624,20 @@ function emitMidiEmitIf(
         ),
       ),
       // content chunk = [length:u32, bytes...]
-      mod.i32.store(
-        0,
-        BYTES_PER_I32,
-        contentChunk(),
-        mod.local.get(PAYLOAD_CLAMP_LOCAL, binaryen.i32),
-      ),
+      mod.i32.store(0, BYTES_PER_I32, contentChunk(), mod.local.get(lengthLocal, binaryen.i32)),
       mod.memory.copy(
         mod.i32.add(contentChunk(), mod.i32.const(4)),
-        mod.local.get(BUFINTERP_I0_LOCAL, binaryen.i32),
-        mod.local.get(PAYLOAD_CLAMP_LOCAL, binaryen.i32),
+        mod.local.get(sourceLocal, binaryen.i32),
+        mod.local.get(lengthLocal, binaryen.i32),
       ),
-      // slot = [0xF0, chunkIdx, _pad, _pad, atSample]
+      // slot = [0xF0:u8, chunkIdx:u16, padding:u8, atSample:u32]
       mod.i32.store8(0, 1, slotPtr(), mod.i32.const(0xf0)),
-      mod.i32.store8(1, 1, slotPtr(), mod.i32.rem_u(head(), mod.i32.const(region.chunks))),
+      mod.i32.store16(1, 1, slotPtr(), mod.i32.rem_u(head(), mod.i32.const(region.chunks))),
+      mod.i32.store8(3, 1, slotPtr(), mod.i32.const(0)),
       mod.i32.store(4, BYTES_PER_I32, slotPtr(), atSample),
       advanceHead,
     ];
-    const len = (): number => mod.local.get(PAYLOAD_CLAMP_LOCAL, binaryen.i32);
+    const len = (): number => mod.local.get(lengthLocal, binaryen.i32);
     // The message ships whole or not at all: a prefix that fits the chunk is a
     // sysex without its 0xF7 terminator, which the receiving device reads as a
     // different message. A length outside [0, maxBody] — including a
@@ -2782,7 +2646,7 @@ function emitMidiEmitIf(
     // on the shipping path, so nothing is evicted for a message never written).
     guarded = [
       srcSet,
-      mod.local.set(PAYLOAD_CLAMP_LOCAL, lengthExpr),
+      mod.local.set(lengthLocal, lengthExpr),
       mod.if(
         mod.i32.and(
           mod.i32.ge_s(len(), mod.i32.const(0)),
@@ -2799,7 +2663,7 @@ function emitMidiEmitIf(
     const { status, data1, data2 } = emitMidiWireBytes(node, layout, mod, binaryen);
     const body = [
       mod.local.set(
-        EVENT_SLOT_PTR_LOCAL,
+        slotLocal,
         mod.i32.add(
           mod.i32.const(slotsBase),
           mod.i32.mul(

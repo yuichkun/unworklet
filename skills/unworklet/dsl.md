@@ -330,12 +330,11 @@ state.buffer.f32({ size: number }): Buffer<"f32">
   replacement is counted — read it as `renderOffline(...).diagnostics
 .scrubbedSamples` in tests (a healthy render reports `0`). The value itself is
   unchanged inside expressions; only the output boundary scrubs.
-- **Default snapshot policy is `"transient"`** — the buffer is NOT captured by
-  `node.snapshot()` and is re-zeroed on `restore()`. A `state.buffer.f32({
-size }).named("tape")` on its own restores to silence, which surprises
-  delay / sampler / reverb authors expecting audio content to survive. Opt in
-  explicitly: `.expose({ snapshot: "persistent" })`. Same default (and same
-  opt-in) applies to scalar `state.<type>` (§Scalar state).
+- **Buffers default to `"transient"`** and are omitted from snapshots. Use
+  `.expose({ snapshot: "persistent" })` to save their content. Named scalar
+  states default to `"persistent"`. Restoring on a running node does not clear
+  an omitted buffer; a fresh processor instance starts with its declared
+  initial content.
 - In `.uwk.ts`: `buf[i]` (read) / `buf[i] = v` (write).
 - Capacity sizes for messaging rings are the `CAPACITY_16` … `CAPACITY_16384`
   constants (values live at `packages/core/src/dsl/constants.ts:11-23`, re-exported
@@ -382,11 +381,21 @@ event<T>({ to:   "main"; name; capacity?: Capacity; payloadCapacity?: number }) 
   process body and the if-sugar (§2) rewrites it to `emitIf`. —
   `declarations.ts:951,955`
 - Main-thread side is `node.events.<name>` (§5). — `declarations.ts:828,1466`
-- Every outbound payload has an implicit `atSample: number` field the worklet
-  must fill in (the sample index within the current quantum). The type-checker
-  requires it and the runtime uses it for main-thread ordering:
-  `port.emitIf(cond, { atSample: i, ...userFields })`. In `forSample((i) =>
-…)` bodies, pass the loop's `i` as `atSample`.
+- Outbound `atSample` is optional. Omission uses the enclosing `forSample`
+  index, or zero at block level. Set it explicitly with
+  `port.emitIf(cond, { atSample: i, ...userFields })` when another offset is
+  intended. It is a sample index within the render quantum.
+- **Payload retention and memory:** each typed-array ring reserves one content
+  chunk per `capacity` slot. `payloadCapacity` is the byte budget for one
+  payload, rounded to its element alignment; the default is 65,536 bytes.
+  With default `capacity: 256`, this reserves 16 MiB of WASM content per typed
+  ring. Shared transport buffers, main-thread snapshots, and bounded input
+  staging use additional memory. Set `payloadCapacity` to the largest payload
+  you need, such as 512 bytes for 128 float samples. `capacity` controls queued
+  message count independently of payload length; variable-length payloads do
+  not share storage while retained. Payloads larger than their per-message
+  budget are truncated to that budget. The memory-budget diagnostic rejects
+  layouts beyond the WASM address-space limit without allocating them.
 - **Payload field wire types** — a declared `T = { foo: number; ... }`
   maps each `number` field to the **f32 wire** by default (that's what
   the worklet-side capture sees + what the main-thread type surfaces as
@@ -398,10 +407,10 @@ event<T>({ to:   "main"; name; capacity?: Capacity; payloadCapacity?: number }) 
   the moment the field flows into a boolean position (a `boolean` state
   write, a `select` cond, a `not()`, an `emitIf` cond, etc.). Forwarding a
   field straight into another `emit` is not a boolean position: a field
-  that is only ever forwarded, never consumed, stays on the f32 wire on
-  both sides. That is harmless — it round-trips 0/1 unchanged — but if you
-  want the `bool` wire on a pass-through, consume it once (for example
-  `emitIf(f.on, ...)` or `select(f.on, a, b)`).
+  that is only forwarded stays on the f32 wire and arrives as numeric 0/1.
+  Use `bool(f.on)` in the outbound payload when the receiver needs a JavaScript
+  boolean, or consume the inbound field in a boolean position such as
+  `emitIf(f.on, ...)`.
 
 ### MIDI ports — `event.midi`
 
@@ -421,7 +430,8 @@ event.midi({ to:   "main"; name; capacity?: Capacity }): MidiOutputHandle  // ou
   - `"programChange"` — `{ channel, program, atSample }`
   - `"channelPressure"` — `{ channel, pressure, atSample }`
   - `"aftertouch"` (poly key pressure) — `{ channel, note, pressure, atSample }`
-  - `"sysex"` — `{ bytes, atSample }` where `bytes` is a byte-array field
+  - `"sysex"` — `{ data, length, atSample }`; `data` is a read-only byte field
+    and `length` is a `Node<"i32">`
   - `"systemRealtime"` — `{ status, atSample }` (status = 0xF8..0xFF)
 - Sysex boundaries: a port accepts/produces sysex only when the processor
   handles or emits sysex on it (that is what allocates its content region);
@@ -429,7 +439,10 @@ event.midi({ to:   "main"; name; capacity?: Capacity }): MidiOutputHandle  // ou
   `sysex-unsupported-port`). One sysex message holds at most **1020 bytes**
   (including 0xF0/0xF7): `send()` throws past the limit rather than
   truncate-and-deliver a terminator-less message (stable ID
-  `sysex-payload-too-large`). An outbound `emitIf` follows the same rule on its
+  `sysex-payload-too-large`). `renderOffline` rejects oversized input on a
+  declared sysex port with the same diagnostic. Sysex storage reserves 1024
+  bytes per ring slot (256 KiB for default capacity 256), including a four-byte
+  length prefix. An outbound `emitIf` follows the same rule on its
   `length`: a build-time-known length past 1020 bytes — or past its own source
   `buffer.u8` — is a build error (stable ID `sysex-emit-exceeds-chunk`), and a
   length computed at runtime that overruns either bound drops the whole message
@@ -698,6 +711,15 @@ out-ring publication uses a single try-acquire; contention postpones publication
 while DSP continues. A full WASM ring follows its drop-oldest policy and reports
 overflow through the ring's diagnostics.
 
+For shared inbound events and MIDI, `emit` / `send` copies caller data
+synchronously into bounded main-thread staging. Publication retries if the
+audio thread owns the shared ring. Audio takes ownership of copied entries in
+its own bounded WASM ring, acknowledges that transfer, and runs handlers without
+holding the shared ring. Staging, the shared ring, and the WASM ring each retain
+at most the declared capacity; overflow counts actual entries discarded at those
+stages. In-flight copies can therefore use additional storage. Disposal cancels
+pending retries.
+
 ```ts
 const ctx = new AudioContext({ sampleRate: 48000 });
 const node = await createNode(ctx, stereoGain, { initial: { gain: 0.5 } });
@@ -717,9 +739,10 @@ new OfflineAudioContext({ numberOfChannels: 2, length, sampleRate: 48000 });
 
 ### `UnworkletNode<C>` surface
 
-`packages/core/src/types.ts:908`, built in `client.ts:1711`. `C` may be the config
-or a `CompiledProcessor`, so `UnworkletNode<typeof import("./x.uwk.ts?worklet")>`
-names the type.
+`C` may be the config, a `CompiledProcessor`, or a module namespace whose default
+export is a processor. `UnworkletNode<typeof import("./x.uwk.ts?worklet")>` and
+`UnworkletNode<typeof processor>` both name the type of the node created from
+that default import, including its declared parameters and message payloads.
 
 | member                    | type / behavior                                                                                                                                                                                                                                                                                                                                                 |
 | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -757,6 +780,11 @@ Pure, non-realtime blob decode — needs no `AudioContext` or live node.
 `InspectionResult = { version; schemaHash; profile; processorId; slots }`.
 `processorId` is the identity a v2 blob carries, `null` for an id-less or v1
 blob. — `client.ts:1996`, `types.ts:1121`
+
+Buffer inspection reports logical element counts and a preview of up to 64
+elements. Boolean buffers use `0` and `1` at their declared indexes. Migration
+helpers read and write boolean buffers as `Uint8Array` values; the snapshot's
+four-byte storage per boolean is handled by the codec.
 
 (`replaceProcessor` live-swaps a processor while preserving state; it is exported
 but out of scope here.)

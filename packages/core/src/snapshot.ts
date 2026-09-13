@@ -110,5 +110,10 @@ export function decodeTypedArray<T extends BufferElementType>(
   const Ctor = TYPED_ARRAY_CTOR[type];
   // copy to a fresh aligned buffer (= blob bytes may be unaligned subarray).
   const copy = data.slice();
+  if (type === "bool") {
+    return Uint8Array.from(new Int32Array(copy.buffer), (value) =>
+      Number(value !== 0),
+    ) as TypedArrayOf<T>;
+  }
   return new Ctor(copy.buffer) as unknown as TypedArrayOf<T>;
 }

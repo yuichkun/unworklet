@@ -13,11 +13,12 @@ import { validateReceipt } from "./integrity.mjs";
 const args = process.argv.slice(2);
 if (args.includes("--help")) {
   console.log(
-    "vp exec node scripts/release-soak/run.mjs [--seconds 1800] [--out /absolute/report-directory]",
+    "vp exec node scripts/release-soak/run.mjs [--seconds 1800] [--out /absolute/report-directory] [--headed]",
   );
   process.exit(0);
 }
 let seconds = 1800;
+let headed = false;
 let output = join(
   tmpdir(),
   `unworklet-release-soak-${new Date().toISOString().replaceAll(":", "-")}`,
@@ -25,6 +26,7 @@ let output = join(
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--seconds") seconds = Number(args[++i]);
   else if (args[i] === "--out") output = resolve(args[++i]);
+  else if (args[i] === "--headed") headed = true;
   else throw new Error(`Unknown argument: ${args[i]}`);
 }
 if (!Number.isFinite(seconds) || seconds < 5 || seconds > 86400) {
@@ -44,7 +46,7 @@ const metadata = {
     cwd: repository,
     encoding: "utf8",
   }).trim(),
-  browserMode: "headed Chromium; audio muted; native tab visibility",
+  browserMode: `${headed ? "headed" : "headless"} Chromium; audio muted; native tab visibility`,
   browserConnection:
     "CDP noDefaults; dedicated temporary profile; browser default focus and timer behavior",
   cadenceSamples: 8192,
@@ -75,6 +77,7 @@ async function launchBrowser() {
   browserProcess = spawn(
     chromium.executablePath(),
     [
+      ...(headed ? [] : ["--headless=new"]),
       `--user-data-dir=${profile}`,
       "--remote-debugging-port=0",
       "--remote-debugging-address=127.0.0.1",

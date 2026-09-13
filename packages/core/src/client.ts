@@ -36,7 +36,8 @@ import {
   alignUp4,
   egressPoolBufferBytes,
 } from "./egressFrame.ts";
-import { dropOldestIfFull, ringLeads, ringSlotIndex } from "./ringIndex.ts";
+import { ringLeads, ringSlotIndex } from "./ringIndex.ts";
+import { bindSabIngress, createSabIngressWriter, type SabIngressWriter } from "./sabIngress.ts";
 import { captureOutRing, createOutRingSnapshot } from "./outRingSnapshot.ts";
 import { decodeScalar, type SnapshotSlot } from "./snapshot.ts";
 import { decodeSnapshot, encodeSnapshot, inspectSnapshot, runMigrations } from "./snapshotBlob.ts";
@@ -403,6 +404,11 @@ export async function createNode<C>(
       ? new SharedArrayBuffer((eventRings.length + midiRings.length) * 4)
       : null;
   const egressAccess = egressAccessBuffer === null ? null : new Int32Array(egressAccessBuffer);
+  const ingressAccessBuffer =
+    sabAvailable && (messageRings.length > 0 || midiRings.some((ring) => ring.direction === "in"))
+      ? new SharedArrayBuffer((messageRings.length + midiRings.length) * 4)
+      : null;
+  const ingressAccess = ingressAccessBuffer === null ? null : new Int32Array(ingressAccessBuffer);
 
   // Make the SAB fallback visible by default. `onError({ code: 'sab-unavailable' })`
   // is opt-in, so a dev who never subscribes would otherwise hit the slower
@@ -498,7 +504,6 @@ export async function createNode<C>(
   if (messageContentByteLength > 0 && sabAvailable) {
     messageContentBuffer = new SharedArrayBuffer(messageContentByteLength);
   }
-  const messageContentCursors: number[] = messageRings.map(() => 0);
 
   // MIDI ring buffer (`11-midi.md` §4.4). An `in` port uses the same transport
   // as message (main → SAB / postMessage → worklet); an `out` port uses the
@@ -552,6 +557,19 @@ export async function createNode<C>(
   let rafHandle: number | null = null;
   let drainTimer: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
+  const ingressWriters: SabIngressWriter[] = [];
+  let ingressTimer: ReturnType<typeof setTimeout> | null = null;
+  const retryIngress = (): void => {
+    ingressTimer = null;
+    if (disposed) return;
+    for (const writer of ingressWriters) writer.flush();
+    scheduleIngress();
+  };
+  const scheduleIngress = (): void => {
+    if (!disposed && ingressTimer === null && ingressWriters.some((writer) => writer.pending())) {
+      ingressTimer = setTimeout(retryIngress, 4);
+    }
+  };
   let draining = false;
   let publishSharedView: Int32Array | null = null;
   // Internal mirror for the postMessage path (= holds valueBits / version in
@@ -690,89 +708,70 @@ export async function createNode<C>(
   //   port.postMessage (= updates messageOverflowMirror).
   //   diagnostics.overflowCount() = read from the mirror.
   const messageOverflowMirror: number[] = messageRings.map(() => 0);
-  let messageRingsView: DataView | null = null;
   let messageRingsHeaderView: Int32Array | null = null;
   if (messageRingsBuffer !== null && messageRings.length > 0) {
-    messageRingsView = new DataView(messageRingsBuffer);
     messageRingsHeaderView = new Int32Array(messageRingsBuffer);
   }
-  // Byte view of the §5.2 content buffer (= SAB only). When sending a
-  // typed-array field, push the array bytes here and write [payloadLen,
-  // payloadOffset] into the slot.
-  const messageContentView: Uint8Array | null =
-    messageContentBuffer !== null ? new Uint8Array(messageContentBuffer) : null;
   if (messageRings.length > 0) {
     for (let i = 0; i < messageRings.length; i++) {
       const ring = messageRings[i]!;
       const sabOffset = messageRingSabOffsets[i]!;
       const headWordIdx = sabOffset >>> 2;
-      const tailWordIdx = headWordIdx + 1;
       const overflowWordIdx = headWordIdx + 2;
-      const slotsBase = sabOffset + 12;
       const isSab = transportMode === "sab";
       const ringIndex = i;
+      const writer =
+        isSab && messageRingsBuffer !== null
+          ? createSabIngressWriter(
+              ingressAccess!,
+              i,
+              bindSabIngress(
+                new Uint8Array(messageRingsBuffer, sabOffset, 12 + ring.capacity * ring.slotSize),
+                messageContentBuffer !== null && ring.payloadContent !== undefined
+                  ? new Uint8Array(
+                      messageContentBuffer,
+                      messageContentSabOffsets[i]!,
+                      ring.payloadContent.capacity,
+                    )
+                  : null,
+                ring.capacity,
+                (ring.fields.find((field) => field.payloadElementType !== undefined)
+                  ?.offsetInSlot ?? -5) + 4,
+                false,
+              ),
+            )
+          : null;
+      if (writer !== null) ingressWriters.push(writer);
       const sender = (payload: Record<string, unknown>): void => {
-        if (isSab && messageRingsView !== null && messageRingsHeaderView !== null) {
-          // SAB path = direct SAB write + head/tail management
-          const headerView = messageRingsHeaderView;
-          const head = Atomics.load(headerView, headWordIdx);
-          // Drop-oldest, counted only when this sender is the one that dropped:
-          // the worklet's drain-commit shares this tail word, so a full-looking
-          // ring can be emptied before the advance lands (see dropOldestIfFull).
-          if (dropOldestIfFull(headerView, tailWordIdx, head, ring.capacity)) {
-            Atomics.store(
-              headerView,
-              overflowWordIdx,
-              Atomics.load(headerView, overflowWordIdx) + 1,
-            );
-          }
-          if (ring.slotSize > 0) {
-            const slotByteOffset = slotsBase + ringSlotIndex(head, ring.capacity) * ring.slotSize;
+        if (disposed) return;
+        if (writer !== null) {
+          writer.enqueue((slot, content) => {
             for (const field of ring.fields) {
               const value = payload[field.name];
-              const byteOffset = slotByteOffset + field.offsetInSlot;
+              const byteOffset = field.offsetInSlot;
               if (field.payloadElementType !== undefined) {
-                // typed-array field = write bytes into the content SAB and store
-                // [payloadLen(bytes), payloadOffset(relative to region)] in the
-                // slot. The worklet mirrors the content region 1:1, so the offset
-                // matches relative to the region base.
-                if (messageContentView !== null && ArrayBuffer.isView(value)) {
-                  const capacity = ring.payloadContent?.capacity ?? 0;
-                  // A payload larger than the content region is truncated on
-                  // copy (= Q85: no-trap; without clamping, Uint8Array.set throws
-                  // RangeError).
-                  const copyBytes = Math.min(value.byteLength, capacity);
-                  const src = new Uint8Array(value.buffer, value.byteOffset, copyBytes);
-                  const contentBase = messageContentSabOffsets[i]!;
-                  let cursor = messageContentCursors[i]!;
-                  if (cursor + copyBytes > capacity) cursor = 0;
-                  messageContentView.set(src, contentBase + cursor);
-                  messageRingsView.setUint32(byteOffset, copyBytes, true);
-                  messageRingsView.setUint32(byteOffset + 4, cursor, true);
-                  messageContentCursors[i] = cursor + copyBytes;
+                if (content !== null && ArrayBuffer.isView(value)) {
+                  const copyBytes = Math.min(value.byteLength, content.byteLength);
+                  content.set(new Uint8Array(value.buffer, value.byteOffset, copyBytes));
+                  slot.setUint32(byteOffset, copyBytes, true);
                 }
               } else if (typeof value === "number" || typeof value === "boolean") {
-                // Inbound scalar field, encoded faithfully by its per-field wire type
-                // (the SSoT sealed at capture): a declared `number` → f32 (its
-                // fraction survives), a declared `boolean` → bool (i32 0/1).
                 switch (field.wireType) {
                   case "bool":
-                    messageRingsView.setInt32(byteOffset, value ? 1 : 0, true);
+                    slot.setInt32(byteOffset, value ? 1 : 0, true);
                     break;
                   case "i32":
-                    messageRingsView.setInt32(byteOffset, Number(value) | 0, true);
+                    slot.setInt32(byteOffset, Number(value) | 0, true);
                     break;
                   default:
-                    messageRingsView.setFloat32(byteOffset, Number(value), true);
+                    slot.setFloat32(byteOffset, Number(value), true);
                     break;
                 }
               }
             }
-          }
-          Atomics.store(headerView, headWordIdx, head + 1);
+          });
+          scheduleIngress();
         } else {
-          // postMessage path = send directly via port.postMessage. The worklet
-          // injects field by field into the WASM ring, so carry the payload as-is.
           node.port.postMessage({ kind: "message", ringIndex, payload });
         }
       };
@@ -876,7 +875,7 @@ export async function createNode<C>(
     const atSample = view.getUint32(slotByteOffset + 4, true);
     const sysex = midiRings[ringIndex]!.sysex;
     if (status === 0xf0 && sysex !== undefined && contentBytes !== null) {
-      const base = (data1 % sysex.chunks) * sysex.perChunk;
+      const base = (view.getUint16(slotByteOffset + 1, true) % sysex.chunks) * sysex.perChunk;
       const len = new DataView(contentBytes.buffer, contentBytes.byteOffset).getUint32(base, true);
       const data = contentBytes.slice(base + 4, base + 4 + len);
       return { event: { type: "sysex", data }, atSample };
@@ -909,15 +908,34 @@ export async function createNode<C>(
       const ringIndex = i;
       const sabOffset = midiRingSabOffsets[i]!;
       const headWordIdx = sabOffset >>> 2;
-      const tailWordIdx = headWordIdx + 1;
       const overflowWordIdx = headWordIdx + 2;
-      const slotsBase = sabOffset + 12;
       const isSab = transportMode === "sab";
 
       // inbound (= main → worklet). SAB = write a slot into the ring + head++
       // (drop-oldest); postMessage = send `{ kind:'midi', ringIndex, item }` directly.
+      const writer =
+        isSab && ring.direction === "in" && midiRingsBuffer !== null
+          ? createSabIngressWriter(
+              ingressAccess!,
+              messageRings.length + i,
+              bindSabIngress(
+                new Uint8Array(midiRingsBuffer, sabOffset, 12 + ring.capacity * 8),
+                sysexContentBuffer !== null && ring.sysex !== undefined
+                  ? new Uint8Array(
+                      sysexContentBuffer,
+                      sysexContentSabOffsets[i]!,
+                      ring.sysex.chunks * ring.sysex.perChunk,
+                    )
+                  : null,
+                ring.capacity,
+                -1,
+                true,
+              ),
+            )
+          : null;
+      if (writer !== null) ingressWriters.push(writer);
       const send = (event: MidiEvent, atTime?: number): void => {
-        if (ring.direction !== "in") return;
+        if (disposed || ring.direction !== "in") return;
         // Sysex boundary validation — `send` is main-thread JS, so a programmer
         // error throws HERE instead of corrupting the ring or silently mangling
         // the message (issues #19 / #20):
@@ -948,38 +966,25 @@ export async function createNode<C>(
           }
         }
         const atSample = atSampleFromTime(atTime);
-        if (isSab && midiRingsView !== null && midiRingsHeaderView !== null) {
-          const headerView = midiRingsHeaderView;
-          const head = Atomics.load(headerView, headWordIdx);
-          // Drop-oldest, counted only when this sender is the one that dropped
-          // (same two-writer tail as the message ring above).
-          if (dropOldestIfFull(headerView, tailWordIdx, head, ring.capacity)) {
-            Atomics.store(
-              headerView,
-              overflowWordIdx,
-              Atomics.load(headerView, overflowWordIdx) + 1,
-            );
-          }
-          const slotByteOffset = slotsBase + ringSlotIndex(head, ring.capacity) * 8;
-          if (event.type === "sysex" && ring.sysex !== undefined && sysexContentBytes !== null) {
-            const sysex = ring.sysex;
-            const chunkIdx = ringSlotIndex(head, sysex.chunks);
-            const contentBase = sysexContentSabOffsets[i]! + chunkIdx * sysex.perChunk;
-            const len = Math.min(event.data.length, sysex.perChunk - 4);
-            new DataView(sysexContentBytes.buffer).setUint32(contentBase, len, true);
-            sysexContentBytes.set(event.data.subarray(0, len), contentBase + 4);
-            midiRingsView.setUint8(slotByteOffset, 0xf0);
-            midiRingsView.setUint8(slotByteOffset + 1, chunkIdx);
-            midiRingsView.setUint32(slotByteOffset + 4, atSample, true);
-          } else if (event.type !== "sysex") {
-            const { status, data1, data2 } = midiEventToWire(event);
-            midiRingsView.setUint8(slotByteOffset, status);
-            midiRingsView.setUint8(slotByteOffset + 1, data1);
-            midiRingsView.setUint8(slotByteOffset + 2, data2);
-            midiRingsView.setUint8(slotByteOffset + 3, 0);
-            midiRingsView.setUint32(slotByteOffset + 4, atSample, true);
-          }
-          Atomics.store(headerView, headWordIdx, head + 1);
+        if (writer !== null) {
+          writer.enqueue((slot, content) => {
+            if (event.type === "sysex") {
+              new DataView(content!.buffer, content!.byteOffset).setUint32(
+                0,
+                event.data.length,
+                true,
+              );
+              content!.set(event.data, 4);
+              slot.setUint8(0, 0xf0);
+            } else {
+              const { status, data1, data2 } = midiEventToWire(event);
+              slot.setUint8(0, status);
+              slot.setUint8(1, data1);
+              slot.setUint8(2, data2);
+            }
+            slot.setUint32(4, atSample, true);
+          });
+          scheduleIngress();
         } else {
           const item =
             event.type === "sysex"
@@ -1277,6 +1282,7 @@ export async function createNode<C>(
     // thread = no first-quantum glitch potential).
     processorOptions: {
       ...(egressAccessBuffer === null ? {} : { egressAccessBuffer }),
+      ...(ingressAccessBuffer === null ? {} : { ingressAccessBuffer }),
       module: wasmModule,
       // When there are publish slots = hand over the descriptor + transport for
       // both transport modes (= the worklet template receives them in initialize
@@ -1861,7 +1867,7 @@ export async function createNode<C>(
   // referenced here so `dispose()` can unregister it.
   let devHandle: DevNodeHandle | undefined;
 
-  const unworkletNode: UnworkletNode<C> = {
+  const unworkletNode: { [K in keyof UnworkletNode<unknown>]: UnworkletNode<C>[K] } = {
     node,
     inputs: inputHandles as UnworkletNode<C>["inputs"],
     outputs: buildOutputs(node, outputs) as UnworkletNode<C>["outputs"],
@@ -1875,6 +1881,8 @@ export async function createNode<C>(
     dispose(): void {
       if (disposed) return;
       disposed = true;
+      if (ingressTimer !== null) clearTimeout(ingressTimer);
+      ingressTimer = null;
       // Settle any in-flight snapshot / restore before tearing down listeners, so
       // awaiting callers get a rejection instead of hanging on a dead node.
       rejectAllPending("node disposed before the worklet responded");
@@ -1971,7 +1979,8 @@ export async function createNode<C>(
     registerDevNode(devHandle);
   }
 
-  return unworkletNode;
+  // The mapped shape checks every member while C's conditional branch is unresolved.
+  return unworkletNode as UnworkletNode<C>;
 }
 
 export function inspect(blob: Uint8Array): InspectionResult {

@@ -21,6 +21,200 @@ import { expect, test } from "vite-plus/test";
 
 import { renderOffline } from "./index.ts";
 
+const sysexEcho = defineProcessor(() => {
+  const input = event.midi({ from: "main", name: "input" });
+  const output = event.midi({ to: "main", name: "output" });
+  const data = state.buffer.u8({ size: 1020 });
+  return {
+    process: () => {
+      input.onEvent("sysex", ({ data: source, length, atSample }) => {
+        data.copyFrom(source);
+        output.emitIf(true, { type: "sysex", data, length, atSample });
+      });
+    },
+  };
+});
+
+test("offline rejects oversized sysex instead of delivering a prefix without its terminator", async () => {
+  const data = new Uint8Array(1021).fill(0x12);
+  data[0] = 0xf0;
+  data[data.length - 1] = 0xf7;
+  await expect(
+    renderOffline(sysexEcho, {
+      sampleRate: 48000,
+      duration: 128 / 48000,
+      events: [{ name: "input", atSample: 0, payload: { type: "sysex", data } }],
+    }),
+  ).rejects.toThrow(/sysex-payload-too-large/);
+});
+
+test("offline delivers a sysex message at the 1020-byte boundary whole", async () => {
+  const data = new Uint8Array(1020).fill(0x12);
+  data[0] = 0xf0;
+  data[data.length - 1] = 0xf7;
+  const result = await renderOffline(sysexEcho, {
+    sampleRate: 48000,
+    duration: 128 / 48000,
+    events: [{ name: "input", atSample: 0, payload: { type: "sysex", data } }],
+  });
+  expect(result.events).toEqual([
+    { name: "output", atSample: 0, payload: { type: "sysex", data } },
+  ]);
+});
+
+test("offline ignores oversized sysex addressed to an undeclared port", async () => {
+  const result = await renderOffline(sysexEcho, {
+    sampleRate: 48000,
+    duration: 128 / 48000,
+    events: [
+      { name: "missing", atSample: 0, payload: { type: "sysex", data: new Uint8Array(1021) } },
+    ],
+  });
+  expect(result.events).toEqual([]);
+});
+
+test("unsupported sysex cannot evict a note from a full note-only MIDI queue", async () => {
+  const proc = defineProcessor(() => {
+    const input = event.midi({ from: "main", name: "input", capacity: 16 });
+    const sum = state.i32(0);
+    const output = audioOutput({ channels: 1, name: "main" });
+    return {
+      process: () => {
+        input.onEvent("noteOn", ({ note }) => sum.write(sum.read().add(note)));
+        forSample((i) => output.ch(0).at(i).write(f32(sum.read())));
+      },
+    };
+  });
+  const result = await renderOffline(proc, {
+    sampleRate: 48000,
+    duration: 128 / 48000,
+    events: [
+      ...Array.from({ length: 16 }, (_, index) => ({
+        name: "input",
+        atSample: 0,
+        payload: { type: "noteOn", channel: 0, note: index + 1, velocity: 100 },
+      })),
+      {
+        name: "input",
+        atSample: 0,
+        payload: { type: "sysex", data: new Uint8Array([0xf0, 0x12, 0xf7]) },
+      },
+    ],
+  });
+  expect(Array.from(result.outputs.main![0]!)).toEqual(Array(128).fill(136));
+});
+
+for (const [capacity, count] of [
+  [32, 17],
+  [512, 300],
+  [32, 41],
+] as const) {
+  test(`inbound mixed MIDI retains each sysex body (${count}/${capacity})`, async () => {
+    const proc = defineProcessor(() => {
+      const midi = event.midi({ from: "main", name: "midi", capacity });
+      const data = state.buffer.u8({ size: 5 });
+      const sums = state.buffer.i32({ size: 4 });
+      const out = audioOutput({ channels: 1, name: "main" });
+      return {
+        process: () => {
+          midi.onEvent("sysex", ({ data: source, length }) => {
+            data.copyFrom(source);
+            sums.write(0, sums.read(0).add(1));
+            sums.write(1, sums.read(1).add(data.read(1).add(data.read(2).mul(128))));
+            sums.write(2, sums.read(2).add(length));
+          });
+          midi.onEvent("noteOn", ({ note }) => sums.write(3, sums.read(3).add(note)));
+          forSample((i) =>
+            out
+              .ch(0)
+              .at(i)
+              .write(f32(sums.read(i.mod(4)))),
+          );
+        },
+      };
+    });
+    const payloads: MidiEvent[] = Array.from({ length: count }, (_, id) =>
+      id % 3 === 2
+        ? { type: "noteOn", channel: 0, note: id % 128, velocity: 100 }
+        : {
+            type: "sysex",
+            data: new Uint8Array([0xf0, id % 128, Math.floor(id / 128), 0x12, 0xf7]),
+          },
+    );
+    const retained = payloads.slice(-capacity);
+    const result = await renderOffline(proc, {
+      sampleRate: 48000,
+      duration: 128 / 48000,
+      events: payloads.map((payload) => ({ name: "midi", payload, atSample: 0 })),
+    });
+    expect(Array.from(result.outputs.main![0]!.slice(0, 4))).toEqual([
+      retained.filter((payload) => payload.type === "sysex").length,
+      retained.reduce(
+        (sum, payload) =>
+          sum + (payload.type === "sysex" ? payload.data[1]! + payload.data[2]! * 128 : 0),
+        0,
+      ),
+      retained.reduce(
+        (sum, payload) => sum + (payload.type === "sysex" ? payload.data.length : 0),
+        0,
+      ),
+      retained.reduce((sum, payload) => sum + (payload.type === "noteOn" ? payload.note : 0), 0),
+    ]);
+  });
+}
+
+for (const capacity of [32, 512] as const) {
+  test(`outbound mixed MIDI preserves sysex bodies and fixed messages through capacity ${capacity}`, async () => {
+    const proc = defineProcessor(() => {
+      const midi = event.midi({ to: "main", name: "midi", capacity });
+      const data = state.buffer.u8({ size: 5 });
+      return {
+        process: () =>
+          forSample((i) => {
+            for (let j = 0; j < 3; j++) {
+              const id = i.mul(3).add(j);
+              data.write(0, 0xf0);
+              data.write(1, id.mod(128));
+              data.write(2, id.div(128));
+              data.write(3, 0x12);
+              data.write(4, 0xf7);
+              midi.emitIf(id.lt(384), { type: "sysex", data, length: 5, atSample: i });
+            }
+            midi.emitIf(i.lt(128), {
+              type: "noteOn",
+              channel: 0,
+              note: i,
+              velocity: 100,
+              atSample: i,
+            });
+          }),
+      };
+    });
+    const result = await renderOffline(proc, { sampleRate: 48000, duration: 128 / 48000 });
+    const expected = Array.from({ length: 128 }, (_, i) => [
+      ...Array.from({ length: 3 }, (_, j) => {
+        const id = i * 3 + j;
+        return {
+          name: "midi",
+          atSample: i,
+          payload: {
+            type: "sysex",
+            data: new Uint8Array([0xf0, id % 128, Math.floor(id / 128), 0x12, 0xf7]),
+          },
+        };
+      }),
+      {
+        name: "midi",
+        atSample: i,
+        payload: { type: "noteOn", channel: 0, note: i, velocity: 100 },
+      },
+    ])
+      .flat()
+      .slice(-capacity);
+    expect(result.events).toEqual(expected);
+  });
+}
+
 test("inbound noteOn: handler stores the note, observable in output", async () => {
   const synth = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });

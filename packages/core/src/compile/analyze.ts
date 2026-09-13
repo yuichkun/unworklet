@@ -278,8 +278,8 @@ export function checkMemoryBudget(totalBytes: number): DiagnosticEntry[] {
         severity: "error",
         message:
           `unworklet: declaration memory sum (${totalBytes} bytes) exceeds the WASM 32-bit ` +
-          `linear-memory ceiling of 4 GiB. Reduce buffer sizes or move large content to a ` +
-          `message<T> upload pattern. (stable ID 'memory-budget')`,
+          `linear-memory ceiling of 4 GiB. Reduce buffer sizes, event capacity, or ` +
+          `payloadCapacity. (stable ID 'memory-budget')`,
       },
     ];
   }
@@ -290,7 +290,7 @@ export function checkMemoryBudget(totalBytes: number): DiagnosticEntry[] {
         severity: "warning",
         message:
           `unworklet: declaration memory sum (${totalBytes} bytes) exceeds 64 MiB — this loads ` +
-          `slowly on low-end devices. Consider reducing buffer sizes. (stable ID 'memory-budget')`,
+          `slowly on low-end devices. Consider reducing buffer sizes, event capacity, or payloadCapacity. (stable ID 'memory-budget')`,
       },
     ];
   }
